@@ -302,6 +302,7 @@ impl WatcherFixture {
             12,
             &ChatInboxParams {
                 include_all: true,
+                state: None,
                 because: None,
                 from: None,
                 thread_id: None,

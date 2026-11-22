@@ -241,6 +241,7 @@ impl ChatService {
             }));
         }
         if request.is::<ChatInbox>() {
+            let _ = self.mailbox.release_due_snoozes_for(member);
             return Some(run_call::<ChatInbox>(request, |p| {
                 self.office.chat_inbox(member, p)
             }));
@@ -354,6 +355,7 @@ impl ChatService {
                         member,
                         org_proto::chat::ChatInboxParams {
                             include_all: true,
+                            state: None,
                             because: None,
                             from: None,
                             thread_id: None,

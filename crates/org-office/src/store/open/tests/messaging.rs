@@ -1208,3 +1208,340 @@ fn b7_structured_asks_all_question_types_defaults_required_withdraw_and_rebuild(
         reopened.close().unwrap();
     }
 }
+
+fn snooze_transition_op(
+    here: &OfficeIdentity,
+    msg_id: &str,
+    member: &Id,
+    state: MessageLifecycleState,
+    until: Option<&str>,
+    note: Option<&str>,
+    now_utc: &str,
+) -> MailboxUpdateStateOp {
+    MailboxUpdateStateOp {
+        here: here.clone(),
+        input: crate::LocalTransitionInput {
+            id: msg_id.to_owned(),
+            to_member_id: member.clone(),
+            state,
+            snoozed_until: until.map(str::to_owned),
+            snooze_after_task: false,
+            reason: note.map(str::to_owned),
+            now_utc: now_utc.to_owned(),
+            owner_office_id: here.office_id.clone(),
+            origin_incarnation: "inc-1".into(),
+            org_position: org_proto::Position { epoch: 1, seq: 2 },
+            expired_waiting_person: false,
+        },
+    }
+}
+
+fn defer_transition_op(
+    here: &OfficeIdentity,
+    msg_id: &str,
+    member: &Id,
+    until: Option<&str>,
+    note: Option<&str>,
+    now_utc: &str,
+) -> MailboxDeferOp {
+    MailboxDeferOp {
+        here: here.clone(),
+        input: snooze_transition_op(
+            here,
+            msg_id,
+            member,
+            MessageLifecycleState::Snoozed,
+            until,
+            note,
+            now_utc,
+        )
+        .input,
+    }
+}
+
+fn add_third_person(store: &OfficeStore, here: &OfficeIdentity, owner: &Id) -> Id {
+    let bob = id(201);
+    let top_team = creation_command().team_id;
+    let add_bob = AddPersonOp {
+        operation_id: id(3),
+        here: here.clone(),
+        owner: owner.clone(),
+        by: Actor::Employee(owner.clone()),
+        command: crate::organization::features::AddPerson::new(bob.clone(), "bob", "Bob", top_team),
+    };
+    assert_eq!(store.run(add_bob).unwrap().outcome, Outcome::Completed);
+    bob
+}
+
+fn send_snooze_fixtures(
+    store: &OfficeStore,
+    here: &OfficeIdentity,
+    owner: &Id,
+    ada: &Id,
+    t0_ms: u64,
+    now: &str,
+) -> (String, String) {
+    let ch_msg_id = id(601).as_str().to_owned();
+    store
+        .run(ChatSendOp {
+            here: here.clone(),
+            owner: owner.clone(),
+            caller: ada.clone(),
+            params: ChatSendParams {
+                id: ch_msg_id.clone(),
+                to: "#general".into(),
+                kind: "msg".into(),
+                priority: None,
+                subject: Some("Channel mention".into()),
+                body: "Checking with @owner and @bob".into(),
+                meta: Meta::new(),
+                reply_to: None,
+                also_in_channel: false,
+                reason: None,
+            },
+            org_seq: 2,
+            now_utc: now.to_owned(),
+        })
+        .unwrap()
+        .unwrap();
+
+    let ask_id = id(602).as_str().to_owned();
+    store
+        .run(MsgAskOp {
+            here: here.clone(),
+            owner: owner.clone(),
+            caller: ada.clone(),
+            params: org_proto::ask::ChatAskParams {
+                id: ask_id.clone(),
+                to: "owner".into(),
+                body: None,
+                subject: Some("Timed ask".into()),
+                questions: vec![org_proto::ask::AskQuestion {
+                    id: "q1".into(),
+                    question_type: org_proto::ask::AskQuestionType::YesNo,
+                    prompt: "Approve deploy?".into(),
+                    options: Vec::new(),
+                    allow_multiple: false,
+                    default_value: None,
+                    optional: false,
+                }],
+                required: false,
+                wait_ms: Some(300_000),
+                hold_ms: Some(0),
+                blocks: None,
+                approval: false,
+                addressed_to: None,
+                meta: Meta::new(),
+            },
+            org_seq: 2,
+            now_ms: t0_ms,
+        })
+        .unwrap()
+        .unwrap();
+    (ch_msg_id, ask_id)
+}
+
+fn assert_snoozed_owner_views(
+    store: &OfficeStore,
+    owner: &Id,
+    bob: &Id,
+    ask_id: &str,
+    ch_msg_id: &str,
+    engine: EngineChoice,
+) {
+    let (active, _) = store
+        .read(ChatInboxRead {
+            owner: owner.clone(),
+            caller: owner.clone(),
+            params: ChatInboxParams::default(),
+        })
+        .unwrap();
+    assert!(active.unwrap().items.is_empty(), "{engine:?}");
+
+    // Multi-recipient isolation: Bob still has ch_msg_id Unread after Owner snoozed it.
+    let (bob_active, _) = store
+        .read(ChatInboxRead {
+            owner: owner.clone(),
+            caller: bob.clone(),
+            params: ChatInboxParams::default(),
+        })
+        .unwrap();
+    let bob_items = bob_active.unwrap().items;
+    assert_eq!(bob_items.len(), 1, "{engine:?}: bob must stay unaffected");
+    assert_eq!(bob_items[0].id, ch_msg_id);
+    assert_eq!(bob_items[0].state, MessageLifecycleState::Unread);
+
+    let (owner_entries, _) = store
+        .read(OpenOwnerInboxRead {
+            owner: owner.clone(),
+            limit: 50,
+        })
+        .unwrap();
+    assert!(owner_entries.is_empty(), "{engine:?}");
+
+    // Multi-page Snoozed pagination where local_seq (ch=1, ask=2) opposes snoozed_until (ask sooner).
+    let (p1, _) = store
+        .read(ChatInboxRead {
+            owner: owner.clone(),
+            caller: owner.clone(),
+            params: ChatInboxParams {
+                state: Some(MessageLifecycleState::Snoozed),
+                limit: Some(1),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    let p1 = p1.unwrap();
+    assert_eq!(p1.items.len(), 1, "{engine:?}");
+    assert_eq!(p1.items[0].id, ask_id, "soonest snoozed_until first");
+    assert_eq!(p1.next_cursor, Some(1));
+
+    let (p2, _) = store
+        .read(ChatInboxRead {
+            owner: owner.clone(),
+            caller: owner.clone(),
+            params: ChatInboxParams {
+                state: Some(MessageLifecycleState::Snoozed),
+                limit: Some(1),
+                cursor: p1.next_cursor,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    let p2 = p2.unwrap();
+    assert_eq!(p2.items.len(), 1, "{engine:?}");
+    assert_eq!(p2.items[0].id, ch_msg_id);
+    assert_eq!(p2.items[0].snooze_note.as_deref(), Some("check later"));
+    assert_eq!(p2.next_cursor, None);
+
+    // Unknown state filter is refused with InvalidRequest.
+    let (unknown_res, _) = store
+        .read(ChatInboxRead {
+            owner: owner.clone(),
+            caller: owner.clone(),
+            params: ChatInboxParams {
+                state: Some(MessageLifecycleState::Unknown),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    assert_eq!(unknown_res.unwrap_err().code, ErrorCode::InvalidRequest);
+}
+
+#[test]
+fn task81_snooze_unsnooze_isolation_ask_expiry_and_rebuild() {
+    for engine in ENGINES {
+        let place = Place::new();
+        let (store, owner, ada) = seed_org_with_two_people(&place, engine);
+        let here = identity();
+        let bob = add_third_person(&store, &here, &owner);
+        let t0_ms = 1_795_262_400_000u64;
+        let now = crate::time::format_rfc3339_ms(t0_ms);
+        let (ch_msg_id, ask_id) = send_snooze_fixtures(&store, &here, &owner, &ada, t0_ms, &now);
+
+        let later = crate::time::format_rfc3339_ms(t0_ms + 600_000);
+        let sooner = crate::time::format_rfc3339_ms(t0_ms + 120_000);
+        let exact_exp = crate::time::format_rfc3339_ms(t0_ms + 86_400_000);
+        let after_exp = crate::time::format_rfc3339_ms(t0_ms + 90_000_000);
+
+        // Snoozing at exact expires_at OR after already expired is refused via MailboxDeferOp.
+        let err_eq = store
+            .run(defer_transition_op(
+                &here,
+                &ask_id,
+                &owner,
+                Some(&exact_exp),
+                None,
+                &now,
+            ))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(err_eq.code, ErrorCode::InvalidRequest, "{engine:?}");
+        let err_expired = store
+            .run(defer_transition_op(
+                &here,
+                &ask_id,
+                &owner,
+                Some(&after_exp),
+                None,
+                &exact_exp,
+            ))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(err_expired.code, ErrorCode::InvalidRequest, "{engine:?}");
+
+        let snoozed_ch = store
+            .run(defer_transition_op(
+                &here,
+                &ch_msg_id,
+                &owner,
+                Some(&later),
+                Some("check later"),
+                &now,
+            ))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (snoozed_ch.state, snoozed_ch.triage_gen),
+            (MessageLifecycleState::Snoozed, 1)
+        );
+        let snoozed_ask = store
+            .run(defer_transition_op(
+                &here,
+                &ask_id,
+                &owner,
+                Some(&sooner),
+                Some("before expiry"),
+                &now,
+            ))
+            .unwrap()
+            .unwrap();
+        assert_eq!(snoozed_ask.state, MessageLifecycleState::Snoozed);
+
+        assert_snoozed_owner_views(&store, &owner, &bob, &ask_id, &ch_msg_id, engine);
+
+        let before = store.dump();
+        store.close().unwrap();
+        if engine == EngineChoice::Sqlite {
+            let office_db = place.config(engine, Opening::Existing).projection_path();
+            std::fs::remove_dir_all(office_db.parent().unwrap()).unwrap();
+        }
+        let reopened = place.reopen(engine);
+        assert_eq!(
+            before,
+            reopened.dump(),
+            "{engine:?}: snooze rebuild mismatch"
+        );
+
+        let unsnoozed = reopened
+            .run(MailboxUnsnoozeOp {
+                here: here.clone(),
+                input: snooze_transition_op(
+                    &here,
+                    &ask_id,
+                    &owner,
+                    MessageLifecycleState::Unread,
+                    None,
+                    None,
+                    &now,
+                )
+                .input,
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(unsnoozed.state, MessageLifecycleState::Unread);
+        assert_eq!(unsnoozed.triage_gen, 2);
+        assert_eq!(unsnoozed.snoozed_until, None);
+        assert_eq!(unsnoozed.snooze_note, None);
+
+        let (owner_after, _) = reopened
+            .read(OpenOwnerInboxRead {
+                owner: owner.clone(),
+                limit: 50,
+            })
+            .unwrap();
+        assert_eq!(owner_after.len(), 1);
+        assert_eq!(owner_after[0].header.id, ask_id);
+        reopened.close().unwrap();
+    }
+}

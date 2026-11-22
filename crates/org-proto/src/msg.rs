@@ -730,6 +730,34 @@ impl Call for MsgDefer {
     type Result = MsgDeferResult;
 }
 
+/// `msg.unsnooze`: release a snoozed message addressed to the bound member back to active `unread`
+/// early (`TASK-81`). Clears `snoozed_until`, `snooze_after_task`, and `snooze_note`, bumps
+/// `triage_gen`, and publishes `message.state_changed`.
+///
+/// Errors: `not_found` (not addressed to the caller), `invalid_request` (not currently snoozed),
+/// `not_bound`, `storage_error`.
+pub struct MsgUnsnooze;
+
+/// `msg.unsnooze`'s params.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MsgUnsnoozeParams {
+    pub id: String,
+}
+
+/// `msg.unsnooze`'s result: the message's restored active state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MsgUnsnoozeResult {
+    pub id: String,
+    pub state: MessageLifecycleState,
+    pub triage_gen: u64,
+}
+
+impl Call for MsgUnsnooze {
+    const METHOD: &'static str = "msg.unsnooze";
+    type Params = MsgUnsnoozeParams;
+    type Result = MsgUnsnoozeResult;
+}
+
 /// `msg.done`: close a message addressed to the bound member without replying. Agent-bound or
 /// app-bound to a member. A done message never resurfaces.
 ///
@@ -1387,6 +1415,7 @@ mod tests {
             MsgReply::METHOD,
             MsgAsk::METHOD,
             MsgDefer::METHOD,
+            MsgUnsnooze::METHOD,
             MsgDone::METHOD,
             MsgNotify::METHOD,
             MsgWait::METHOD,
@@ -1411,6 +1440,7 @@ mod tests {
                 "msg.reply",
                 "msg.ask",
                 "msg.defer",
+                "msg.unsnooze",
                 "msg.done",
                 "msg.notify",
                 "msg.wait",

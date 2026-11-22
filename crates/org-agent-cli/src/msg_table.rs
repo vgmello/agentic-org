@@ -308,6 +308,11 @@ const MSG_INBOX_INPUT: &[Field] = &[
         "Include read, snoozed, and done messages in addition to unread",
     ),
     Field::optional(
+        "state",
+        Type::Enum(&["unread", "snoozed", "read", "done"]),
+        "Filter by recipient lifecycle state (e.g. snoozed)",
+    ),
+    Field::optional(
         "from",
         Type::String,
         "Filter by sender employee ID or handle",
@@ -443,6 +448,18 @@ const MSG_DEFER_OUTPUT: &[Field] = &[
         Type::Boolean,
         "Whether snoozed until after current task",
     ),
+];
+
+const MSG_UNSNOOZE_INPUT: &[Field] = &[Field::required(
+    "id",
+    Type::String,
+    "Snoozed message ID to release back to unread",
+)];
+
+const MSG_UNSNOOZE_OUTPUT: &[Field] = &[
+    Field::required("id", Type::String, "Message ID"),
+    Field::required("state", Type::String, "Restored lifecycle state (unread)"),
+    Field::required("triage_gen", Type::Integer, "Triage generation counter"),
 ];
 
 const MSG_WAIT_INPUT: &[Field] = &[
@@ -787,6 +804,24 @@ pub static MSG_COMMANDS: &[Command] = &[
         example: Example {
             input: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","after_task":true}"#,
             output: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","state":"snoozed","triage_gen":1,"snooze_after_task":true}"#,
+        },
+    },
+    Command {
+        resource: "msg",
+        verb: "unsnooze",
+        summary: "Un-snooze a message early",
+        call: "msg.unsnooze",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::No,
+        },
+        input: MSG_UNSNOOZE_INPUT,
+        content_field: None,
+        output: MSG_UNSNOOZE_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000101"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","state":"unread","triage_gen":2}"#,
         },
     },
     Command {

@@ -34,9 +34,9 @@ use crate::{
         ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, ConversationByIdRead,
         DeliverAnswerCandidatesOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
         InspectAskStatusRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead,
-        ListConversationsRead, ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxUpdateStateOp,
-        MsgAcceptOp, MsgAskOp, MsgWithdrawOp, OpenOwnerInboxRead, OrgChangesAfterRead,
-        PeekUnreadRead,
+        ListConversationsRead, ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxDeferOp,
+        MailboxUnsnoozeOp, MailboxUpdateStateOp, MsgAcceptOp, MsgAskOp, MsgWithdrawOp,
+        OpenOwnerInboxRead, OrgChangesAfterRead, PeekUnreadRead,
     },
     time,
 };
@@ -658,6 +658,30 @@ impl Office {
     ) -> Result<Result<MessageHeader, ApiError>, OfficeError> {
         self.store
             .run(MailboxUpdateStateOp {
+                here: self.identity.clone(),
+                input,
+            })
+            .map_err(storage)
+    }
+
+    pub fn mailbox_defer_local(
+        &self,
+        input: LocalTransitionInput,
+    ) -> Result<Result<MessageHeader, ApiError>, OfficeError> {
+        self.store
+            .run(MailboxDeferOp {
+                here: self.identity.clone(),
+                input,
+            })
+            .map_err(storage)
+    }
+
+    pub fn mailbox_unsnooze_local(
+        &self,
+        input: LocalTransitionInput,
+    ) -> Result<Result<MessageHeader, ApiError>, OfficeError> {
+        self.store
+            .run(MailboxUnsnoozeOp {
                 here: self.identity.clone(),
                 input,
             })

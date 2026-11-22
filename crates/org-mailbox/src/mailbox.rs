@@ -4,11 +4,10 @@ use std::time::{Duration, Instant};
 use org_proto::msg::{
     is_urgent, json_string_len, DeliveryFailedReason, HeaderPage, Message,
     MessageDeliveryFailedData, MessageHeader, MessageLifecycleState, MessagePriority,
-    MessageReceivedData, MessageStateChangedData, Meta, MsgDeferParams, MsgDeferResult,
-    MsgDoneParams, MsgDoneResult, MsgInboxParams, MsgReadParams, MsgReadResult, MsgSendParams,
-    MsgWaitParams, MsgWaitResult, NotifyReason, SendResult, SnoozeTarget, DEFAULT_PAGE_LIMIT,
+    MessageReceivedData, MessageStateChangedData, Meta, MsgInboxParams, MsgReadParams,
+    MsgReadResult, MsgSendParams, MsgWaitParams, MsgWaitResult, SendResult, DEFAULT_PAGE_LIMIT,
     KIND_DELIVERY_FAILED, KIND_REQUEST, MAX_BODY_BYTES, MAX_HANDLE_BYTES, MAX_ID_BYTES,
-    MAX_META_BYTES, MAX_NOTE_BYTES, MAX_PAGE_LIMIT, MAX_SUBJECT_BYTES, MAX_WAIT_MS, OFFICE_SENDER,
+    MAX_META_BYTES, MAX_PAGE_LIMIT, MAX_SUBJECT_BYTES, MAX_WAIT_MS, OFFICE_SENDER,
 };
 use org_proto::{ulid_time_ms, uuid_v7_time_ms, AgentStatus, Member, MemberKind, Position};
 
@@ -22,7 +21,7 @@ use crate::{
     TriageStore, MAX_EXPIRED_IDS,
 };
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // Protected operations only change bookkeeping and never invoke user code.
     mutex.lock().unwrap_or_else(|error| error.into_inner())
 }
@@ -48,20 +47,20 @@ pub struct OfficeIdentity {
 pub struct Mailbox {
     pub(crate) store: Arc<dyn MessageStore + Send + Sync>,
     /// `None` for a Mailbox made with [`Mailbox::new`]: triage calls are `unavailable`.
-    triage: Option<Arc<dyn TriageStore + Send + Sync>>,
+    pub(crate) triage: Option<Arc<dyn TriageStore + Send + Sync>>,
     pub(crate) directory: Arc<dyn MemberDirectory + Send + Sync>,
-    office: OfficeIdentity,
-    clock: Arc<dyn Clock>,
-    events: Arc<dyn MessageEvents>,
+    pub(crate) office: OfficeIdentity,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) events: Arc<dyn MessageEvents>,
     pub(crate) waiters: WaiterRegistry,
     /// Never locked across a store call.
-    snoozes: Mutex<SnoozeTimers>,
+    pub(crate) snoozes: Mutex<SnoozeTimers>,
     /// Held across a local triage write (`update_state_local`) and the snooze timer update
     /// that follows it, so the timers apply concurrent writes in the order the store did:
     /// otherwise two defers of one message could reach the store as A then B but the timers
     /// as B then A, leaving A's deadline (or none) while the store holds B's. Taken before
     /// `snoozes`, never inside it. Events and waiter wake-ups happen after it is released.
-    triage_writes: Mutex<()>,
+    pub(crate) triage_writes: Mutex<()>,
 }
 
 impl Mailbox {
@@ -349,22 +348,29 @@ impl Mailbox {
                 }
             }
         }
-        let stored = self
-            .store
-            .claim_read(bound_member_id, params.id.as_deref(), &now)?;
+        let (stored, claimed) = {
+            let _ordered = lock(&self.triage_writes);
+            let stored = self
+                .store
+                .claim_read(bound_member_id, params.id.as_deref(), &now)?;
+            let claimed = stored.as_ref().is_some_and(|stored| {
+                let header = &stored.message.header;
+                header.state == MessageLifecycleState::Read
+                    && header.read_at.as_deref() == Some(now.as_str())
+            });
+            if claimed {
+                if let Some(stored) = &stored {
+                    lock(&self.snoozes).remove(bound_member_id, &stored.message.header.id);
+                }
+            }
+            (stored, claimed)
+        };
         if params.id.is_some() && stored.is_none() {
             return Err(MailboxError::NotFound);
         }
-        if let Some(stored) = &stored {
-            let header = &stored.message.header;
-            // The store stamps read_at with this call's time only when it made the claim;
-            // an already read message keeps its earlier read_at and publishes nothing. (A
-            // re-read in the same millisecond as the claim may publish a duplicate
-            // state_changed event; events are idempotent state, so that is harmless.)
-            if header.state == MessageLifecycleState::Read
-                && header.read_at.as_deref() == Some(now.as_str())
-            {
-                self.publish_state(header, None, &now);
+        if claimed {
+            if let Some(stored) = &stored {
+                self.publish_state(&stored.message.header, None, &now);
             }
         }
         Ok(MsgReadResult {
@@ -518,118 +524,19 @@ impl Mailbox {
         })
     }
 
-    /// `msg.defer`: snooze a message addressed to the bound member until a time or its next
-    /// break (ADR-0003 §2.3). It leaves the default inbox and every wait until it's due, and
-    /// its `triage_gen` goes up. A time snooze gets a timer, so a held wait returns it when
-    /// it comes due.
-    pub fn defer(
-        &self,
-        bound_member_id: &str,
-        params: MsgDeferParams,
-    ) -> Result<MsgDeferResult, MailboxError> {
-        let (_, position) = self.bound_member(bound_member_id)?;
-        let triage = self.triage()?;
-        size(&params.id, MAX_ID_BYTES)?;
-        optional_size(params.note.as_deref(), MAX_NOTE_BYTES)?;
-        let now_ms = self.clock.now_ms();
-        let now = format_utc(now_ms).ok_or(MailboxError::StorageError)?;
-        let (snoozed_until, snooze_after_task) = match params.until {
-            SnoozeTarget::Until { at } => {
-                // parse_utc reads only canonical 24-byte timestamps, so `at` is bounded.
-                if !parse_utc(&at).is_some_and(|at_ms| at_ms > now_ms) {
-                    return Err(MailboxError::InvalidRequest);
-                }
-                (Some(at), false)
-            }
-            SnoozeTarget::AfterTask => (None, true),
-            _ => return Err(MailboxError::InvalidRequest),
-        };
-        let header = {
-            let _ordered = lock(&self.triage_writes);
-            let header = triage.update_state_local(LocalStateTransition {
-                snoozed_until,
-                snooze_after_task,
-                reason: params.note,
-                ..self.transition(
-                    &params.id,
-                    bound_member_id,
-                    MessageLifecycleState::Snoozed,
-                    position,
-                    &now,
-                )
-            })?;
-            let mut timers = lock(&self.snoozes);
-            match header.snoozed_until.as_deref() {
-                Some(at) => timers.insert(
-                    parse_utc(at).map_or(0, epoch_ms),
-                    bound_member_id,
-                    &header.id,
-                ),
-                None => timers.remove(&header.id),
-            }
-            header
-        };
-        // A held wait recomputes its bound with the new timer.
-        self.waiters.notify(bound_member_id);
-        self.publish_state(&header, header.snooze_note.clone(), &now);
-        Ok(MsgDeferResult {
-            id: header.id,
-            triage_gen: header.triage_gen,
-            snoozed_until: header.snoozed_until,
-            snooze_after_task: header.snooze_after_task,
-            snooze_note: header.snooze_note,
-        })
-    }
-
-    /// `msg.done`: close a message addressed to the bound member without replying. It never
-    /// resurfaces. Done again is accepted (the store keeps the first close); `resolved_at`
-    /// is this call's time, and its `state_changed` carries this call's note.
-    pub fn done(
-        &self,
-        bound_member_id: &str,
-        params: MsgDoneParams,
-    ) -> Result<MsgDoneResult, MailboxError> {
-        let (_, position) = self.bound_member(bound_member_id)?;
-        let triage = self.triage()?;
-        size(&params.id, MAX_ID_BYTES)?;
-        optional_size(params.note.as_deref(), MAX_NOTE_BYTES)?;
-        let now = self.now_utc()?;
-        let header = {
-            let _ordered = lock(&self.triage_writes);
-            let header = triage.update_state_local(LocalStateTransition {
-                reason: params.note.clone(),
-                ..self.transition(
-                    &params.id,
-                    bound_member_id,
-                    MessageLifecycleState::Done,
-                    position,
-                    &now,
-                )
-            })?;
-            lock(&self.snoozes).remove(&header.id);
-            header
-        };
-        self.waiters.notify(bound_member_id);
-        self.publish_state(&header, params.note, &now);
-        Ok(MsgDoneResult {
-            id: header.id,
-            resolved_at: now,
-        })
-    }
-
     /// Held `wait` registrations right now. Diagnostics and tests: a cancelled, finished or
     /// timed-out wait leaves none behind.
     pub fn held_waits(&self) -> usize {
         self.waiters.len()
     }
 
-    fn triage(&self) -> Result<&(dyn TriageStore + Send + Sync), MailboxError> {
+    pub(crate) fn triage(&self) -> Result<&(dyn TriageStore + Send + Sync), MailboxError> {
         self.triage.as_deref().ok_or(MailboxError::Unavailable)
     }
 
     /// A local transition of `id` (addressed to `member_id`) to `state`, with no snooze,
     /// reason or flag.
-    fn transition(
+    pub(crate) fn transition(
         &self,
         id: &str,
         member_id: &str,
@@ -650,48 +557,6 @@ impl Mailbox {
             org_position: position,
             expired_waiting_person: false,
         }
-    }
-
-    /// Releases the member's due time snoozes (§2.2) through `check_notify`, before a wait
-    /// peeks. Only when the timers say one is due, and only with triage.
-    fn release_due_snoozes(
-        &self,
-        member: &str,
-        now_ms: u64,
-        now: &str,
-    ) -> Result<(), MailboxError> {
-        let Some(triage) = self.triage.as_deref() else {
-            return Ok(());
-        };
-        let due = lock(&self.snoozes).take_due(member, epoch_ms(now_ms));
-        if due.is_empty() {
-            return Ok(());
-        }
-        // Sweep nothing (the epoch): only the releases matter here, not what is listed.
-        let sweep_before = format_utc(0).ok_or(MailboxError::StorageError)?;
-        let candidates = match triage.check_notify(member, false, false, &sweep_before, now) {
-            Ok(candidates) => candidates,
-            Err(error) => {
-                let mut timers = lock(&self.snoozes);
-                for (at_ms, id) in due {
-                    timers.restore(at_ms, member, &id);
-                }
-                return Err(error.into());
-            }
-        };
-        // The due timers were taken above; a released message's timer is not removed here,
-        // since a defer since check_notify may have set a new one.
-        let released: Vec<_> = candidates
-            .into_iter()
-            .filter(|candidate| candidate.reason == NotifyReason::Due)
-            .collect();
-        if !released.is_empty() {
-            self.waiters.notify(member);
-        }
-        for candidate in &released {
-            self.publish_state(&candidate.header, None, now);
-        }
-        Ok(())
     }
 
     /// Acts on a message past its deadline, addressed to `recipient` (with triage; without
@@ -740,7 +605,7 @@ impl Mailbox {
             };
             // An expired message has no snooze; a person's flagged ask keeps whatever it has.
             if header.state == MessageLifecycleState::Expired {
-                lock(&self.snoozes).remove(&header.id);
+                lock(&self.snoozes).remove(&recipient.id, &header.id);
             }
             header
         };
@@ -954,7 +819,7 @@ impl Mailbox {
     /// `Done` or `Expired` returns `Ok` with the header unchanged, and the Mailbox can't tell
     /// a repeat from a change (a known limit), so a repeat publishes again. Events are
     /// idempotent state, so that is harmless.
-    fn publish_state(&self, header: &MessageHeader, reason: Option<String>, now: &str) {
+    pub(crate) fn publish_state(&self, header: &MessageHeader, reason: Option<String>, now: &str) {
         self.events
             .publish(MessageEvent::StateChanged(MessageStateChangedData {
                 id: header.id.clone(),
@@ -1030,7 +895,7 @@ enum NoticeFailure {
 }
 
 /// Wall-clock epoch milliseconds as the snooze timers key them.
-fn epoch_ms(ms: u64) -> i64 {
+pub(crate) fn epoch_ms(ms: u64) -> i64 {
     i64::try_from(ms).unwrap_or(i64::MAX)
 }
 
@@ -1083,7 +948,7 @@ mod tests {
     use std::sync::{mpsc, Barrier};
     use std::thread;
 
-    use org_proto::msg::{Meta, KIND_MSG};
+    use org_proto::msg::{Meta, MsgDeferParams, MsgUnsnoozeParams, SnoozeTarget, KIND_MSG};
 
     use super::*;
     use crate::testkit::fixture::*;
@@ -1110,6 +975,20 @@ mod tests {
                 self.release.wait();
             }
             result
+        }
+        fn defer_local(&self, change: LocalStateTransition) -> Result<MessageHeader, StoreError> {
+            let result = self.inner.defer_local(change);
+            if self.gated.swap(false, Ordering::SeqCst) {
+                lock(&self.applied).send(()).unwrap();
+                self.release.wait();
+            }
+            result
+        }
+        fn unsnooze_local(
+            &self,
+            change: LocalStateTransition,
+        ) -> Result<MessageHeader, StoreError> {
+            self.inner.unsnooze_local(change)
         }
         fn check_notify(
             &self,
@@ -1478,5 +1357,344 @@ mod tests {
         assert_eq!(stored.message.header.to_display_name, PAT_HANDLE);
         assert_eq!(events.received(), [notice]);
         assert_eq!(events.delivery_failed().len(), 1);
+    }
+
+    fn test_triage_mailbox(clock: Arc<ManualClock>, events: Arc<RecordingEvents>) -> Mailbox {
+        let store = Arc::new(InMemoryStore::new());
+        let dir = Arc::new(InMemoryDirectory::new(members(), POSITION));
+        Mailbox::with_triage(
+            store.clone(),
+            store,
+            dir,
+            OfficeIdentity {
+                office_id: OFFICE_ID.into(),
+                incarnation: INCARNATION.into(),
+                is_hq: true,
+            },
+            clock,
+            events,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn unsnooze_and_release_all_due_snoozes_resurface_and_emit_events() {
+        let clock = Arc::new(ManualClock::new(NOW_MS));
+        let events = Arc::new(RecordingEvents::default());
+        let mb = test_triage_mailbox(Arc::clone(&clock), Arc::clone(&events));
+        let sent = mb
+            .send(
+                PAT_ID,
+                MsgSendParams {
+                    id: msg_id(71),
+                    to: ADA_ID.into(),
+                    kind: KIND_MSG.into(),
+                    priority: None,
+                    subject: Some("Snooze test".into()),
+                    body: "hello".into(),
+                    meta: Meta::new(),
+                    reply_to: None,
+                },
+            )
+            .unwrap();
+        let target = format_utc(NOW_MS + 5_000).unwrap();
+        let deferred = mb
+            .defer(
+                ADA_ID,
+                MsgDeferParams {
+                    id: sent.id.clone(),
+                    until: SnoozeTarget::Until { at: target },
+                    note: Some("after standup".into()),
+                },
+            )
+            .unwrap();
+        assert_eq!(deferred.triage_gen, 1);
+        assert!(mb.next_snooze_deadline_ms().is_some());
+
+        // Early un-snooze returns to Unread, clears timer, increments triage_gen.
+        let unsnoozed = mb
+            .unsnooze(
+                ADA_ID,
+                MsgUnsnoozeParams {
+                    id: sent.id.clone(),
+                },
+            )
+            .unwrap();
+        assert_eq!(unsnoozed.state, MessageLifecycleState::Unread);
+        assert_eq!(unsnoozed.triage_gen, 2);
+        assert_eq!(mb.next_snooze_deadline_ms(), None);
+
+        // Re-snooze and advance clock past deadline: release_all_due_snoozes resurfaces it.
+        let due_at = format_utc(NOW_MS + 2_000).unwrap();
+        mb.defer(
+            ADA_ID,
+            MsgDeferParams {
+                id: sent.id.clone(),
+                until: SnoozeTarget::Until { at: due_at },
+                note: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(mb.release_all_due_snoozes().unwrap(), 0);
+        clock.set(NOW_MS + 2_500);
+        assert_eq!(mb.release_all_due_snoozes().unwrap(), 1);
+        let inbox = mb
+            .inbox(
+                ADA_ID,
+                MsgInboxParams {
+                    from: None,
+                    thread_id: None,
+                    include_all: false,
+                    cursor: None,
+                    limit: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(inbox.headers.len(), 1);
+        assert_eq!(inbox.headers[0].state, MessageLifecycleState::Unread);
+        assert_eq!(events.state_changed().len(), 4);
+    }
+
+    #[test]
+    fn defer_rejects_past_expiry_and_does_not_leak_to_non_recipients() {
+        let clock = Arc::new(ManualClock::new(NOW_MS));
+        let events = Arc::new(RecordingEvents::default());
+        let store = Arc::new(InMemoryStore::new());
+        let dir = Arc::new(InMemoryDirectory::new(members(), POSITION));
+        let mb = Mailbox::with_triage(
+            store.clone(),
+            store.clone(),
+            dir,
+            OfficeIdentity {
+                office_id: OFFICE_ID.into(),
+                incarnation: INCARNATION.into(),
+                is_hq: true,
+            },
+            clock,
+            events,
+        )
+        .unwrap();
+        let mut ask = crate::testkit::conformance::expired_request(72, PAT_ID, ADA_ID);
+        ask.message.header.expires_at = Some(format_utc(NOW_MS + 120_000).unwrap());
+        ask.message.header.ttl_ms = Some(120_000);
+        let ask_id = ask.message.header.id.clone();
+        store.commit_message(ask).unwrap();
+
+        // Non-recipient gets NotFound even when snoozing past expiry (no existence leak).
+        let past_exp = format_utc(NOW_MS + 180_000).unwrap();
+        assert_eq!(
+            mb.defer(
+                PAT_ID,
+                MsgDeferParams {
+                    id: ask_id.clone(),
+                    until: SnoozeTarget::Until {
+                        at: past_exp.clone()
+                    },
+                    note: None,
+                },
+            ),
+            Err(MailboxError::NotFound)
+        );
+        // Recipient cannot snooze at/past ask expires_at, nor in the past.
+        assert_eq!(
+            mb.defer(
+                ADA_ID,
+                MsgDeferParams {
+                    id: ask_id.clone(),
+                    until: SnoozeTarget::Until { at: past_exp },
+                    note: None,
+                },
+            ),
+            Err(MailboxError::InvalidRequest)
+        );
+        let in_past = format_utc(NOW_MS - 1_000).unwrap();
+        assert_eq!(
+            mb.defer(
+                ADA_ID,
+                MsgDeferParams {
+                    id: ask_id.clone(),
+                    until: SnoozeTarget::Until { at: in_past },
+                    note: None,
+                },
+            ),
+            Err(MailboxError::InvalidRequest)
+        );
+        // Strictly before expires_at succeeds.
+        let before_exp = format_utc(NOW_MS + 30_000).unwrap();
+        assert!(mb
+            .defer(
+                ADA_ID,
+                MsgDeferParams {
+                    id: ask_id,
+                    until: SnoozeTarget::Until { at: before_exp },
+                    note: None,
+                },
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn unsnooze_refuses_non_snoozed_and_read_racing_defer_keeps_timer() {
+        let clock = Arc::new(ManualClock::new(NOW_MS));
+        let events = Arc::new(RecordingEvents::default());
+        let mb = test_triage_mailbox(Arc::clone(&clock), Arc::clone(&events));
+        let sent = mb
+            .send(
+                PAT_ID,
+                MsgSendParams {
+                    id: msg_id(73),
+                    to: ADA_ID.into(),
+                    kind: KIND_MSG.into(),
+                    priority: None,
+                    subject: Some("Race".into()),
+                    body: "hello".into(),
+                    meta: Meta::new(),
+                    reply_to: None,
+                },
+            )
+            .unwrap();
+        // Unread -> unsnooze refused.
+        assert_eq!(
+            mb.unsnooze(
+                ADA_ID,
+                MsgUnsnoozeParams {
+                    id: sent.id.clone()
+                }
+            ),
+            Err(MailboxError::InvalidRequest)
+        );
+        // Read -> unsnooze refused; defer after read installs timer cleanly.
+        let read = mb
+            .read(
+                ADA_ID,
+                MsgReadParams {
+                    id: Some(sent.id.clone()),
+                },
+            )
+            .unwrap();
+        assert!(read.message.is_some());
+        assert_eq!(
+            mb.unsnooze(
+                ADA_ID,
+                MsgUnsnoozeParams {
+                    id: sent.id.clone()
+                }
+            ),
+            Err(MailboxError::InvalidRequest)
+        );
+        let until = format_utc(NOW_MS + 3_000).unwrap();
+        mb.defer(
+            ADA_ID,
+            MsgDeferParams {
+                id: sent.id.clone(),
+                until: SnoozeTarget::Until { at: until },
+                note: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(mb.next_snooze_deadline_ms(), Some(epoch_ms(NOW_MS + 3_000)));
+        // Done -> unsnooze refused and timer removed.
+        mb.done(
+            ADA_ID,
+            org_proto::msg::MsgDoneParams {
+                id: sent.id.clone(),
+                note: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(mb.next_snooze_deadline_ms(), None);
+        assert_eq!(
+            mb.unsnooze(ADA_ID, MsgUnsnoozeParams { id: sent.id }),
+            Err(MailboxError::InvalidRequest)
+        );
+    }
+
+    struct FailingNotifyTriage(Arc<InMemoryStore>);
+
+    impl TriageStore for FailingNotifyTriage {
+        fn update_state_local(
+            &self,
+            change: LocalStateTransition,
+        ) -> Result<MessageHeader, StoreError> {
+            self.0.update_state_local(change)
+        }
+        fn defer_local(&self, change: LocalStateTransition) -> Result<MessageHeader, StoreError> {
+            self.0.defer_local(change)
+        }
+        fn unsnooze_local(
+            &self,
+            change: LocalStateTransition,
+        ) -> Result<MessageHeader, StoreError> {
+            self.0.unsnooze_local(change)
+        }
+        fn check_notify(
+            &self,
+            _to_member_id: &str,
+            _after_task: bool,
+            _urgent_only: bool,
+            _sweep_before_utc: &str,
+            _now_utc: &str,
+        ) -> Result<Vec<NotifyCandidate>, StoreError> {
+            Err(StoreError::new("simulated db outage"))
+        }
+        fn list_active_snooze_deadlines(&self) -> Result<Vec<SnoozeDeadline>, StoreError> {
+            self.0.list_active_snooze_deadlines()
+        }
+    }
+
+    #[test]
+    fn release_all_due_snoozes_restores_timers_and_propagates_store_error() {
+        let clock = Arc::new(ManualClock::new(NOW_MS));
+        let store = Arc::new(InMemoryStore::new());
+        let triage = Arc::new(FailingNotifyTriage(Arc::clone(&store)));
+        let mb = Mailbox::with_triage(
+            store,
+            triage,
+            Arc::new(InMemoryDirectory::new(members(), POSITION)),
+            OfficeIdentity {
+                office_id: OFFICE_ID.into(),
+                incarnation: INCARNATION.into(),
+                is_hq: true,
+            },
+            clock.clone(),
+            Arc::new(NoMessageEvents),
+        )
+        .unwrap();
+        let sent = mb
+            .send(
+                PAT_ID,
+                MsgSendParams {
+                    id: msg_id(74),
+                    to: ADA_ID.into(),
+                    kind: KIND_MSG.into(),
+                    priority: None,
+                    subject: None,
+                    body: "hi".into(),
+                    meta: Meta::new(),
+                    reply_to: None,
+                },
+            )
+            .unwrap();
+        mb.defer(
+            ADA_ID,
+            MsgDeferParams {
+                id: sent.id,
+                until: SnoozeTarget::Until {
+                    at: format_utc(NOW_MS + 1_000).unwrap(),
+                },
+                note: None,
+            },
+        )
+        .unwrap();
+        clock.set(NOW_MS + 2_000);
+        assert_eq!(
+            mb.release_all_due_snoozes(),
+            Err(MailboxError::StorageError)
+        );
+        assert_eq!(
+            mb.next_snooze_deadline_ms(),
+            Some(epoch_ms(NOW_MS + 1_000)),
+            "failed check_notify must restore timers for retry"
+        );
     }
 }

@@ -440,6 +440,11 @@ impl Shared {
         }
     }
 
+    /// Returns the office's mailbox port when messaging is enabled.
+    pub(crate) fn mailbox(&self) -> Option<Arc<Mailbox>> {
+        self.ports.mailbox.clone()
+    }
+
     /// Track organization changes for revocation even when no subscription feed is served.
     pub(crate) fn watch_directory_changes(
         &mut self,
@@ -1226,6 +1231,9 @@ fn answer_inbox_or_operation(
                 ErrorCode::NotAuthorized,
                 "inbox is for the live owner",
             ));
+        }
+        if let (Some(mb), Binding::Member { id, .. }) = (&shared.ports.mailbox, binding) {
+            let _ = mb.release_due_snoozes_for(id);
         }
         return Some(match request.params::<org_proto::inbox::InboxList>() {
             Ok(params) => match inbox.list(params) {

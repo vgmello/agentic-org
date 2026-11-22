@@ -41,8 +41,9 @@ pub use messaging_ops::{
     ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, ConversationByIdRead,
     DeliverAnswerCandidatesOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
     InspectAskStatusRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead, ListConversationsRead,
-    ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxUpdateStateOp, MsgAcceptOp, MsgAskOp,
-    MsgWithdrawOp, OpenOwnerInboxRead, OrgChangesAfterRead, PeekUnreadRead,
+    ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxDeferOp, MailboxUnsnoozeOp,
+    MailboxUpdateStateOp, MsgAcceptOp, MsgAskOp, MsgWithdrawOp, OpenOwnerInboxRead,
+    OrgChangesAfterRead, PeekUnreadRead,
 };
 pub use operations::{
     AddPersonOp, AddProjectTeamOp, AgentExecutionById, ArchiveTeamOp, CheckHrMessageAccess,

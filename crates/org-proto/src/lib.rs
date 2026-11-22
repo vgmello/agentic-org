@@ -103,6 +103,7 @@ pub mod private_notes;
 pub mod processes;
 pub mod projects;
 pub mod retired;
+pub mod rfc3339;
 pub mod sessions;
 pub mod tasks;
 pub mod web;
@@ -147,6 +148,7 @@ pub use principal::{
 };
 pub use recovery::RecoveryCode;
 pub use retired::Retired;
+pub use rfc3339::{canonicalize_rfc3339_utc, format_rfc3339_ms, parse_rfc3339_ms};
 pub use token::zero as zero_bytes;
 pub use token::{
     GrantKey, GrantMac, OfficeSecretsKey, GRANT_KEY_BYTES, GRANT_MAC_BYTES,

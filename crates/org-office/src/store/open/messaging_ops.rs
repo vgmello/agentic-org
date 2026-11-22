@@ -430,13 +430,15 @@ impl ReadOp for OpenOwnerInboxRead {
                 continue;
             };
             let card = asks::parse_ask_card(&msg);
+            // Snoozed messages (including snoozed asks) stay hidden from active Inbox and
+            // excluded from active badge counts until `snoozed_until` or early un-snooze (`TASK-81`).
             let include = match &card {
-                Some(ask_card) => {
+                Some(_) => {
                     asks::is_open_ask_card(snapshot, &msg)
-                        && (matches!(
+                        && matches!(
                             st.state,
                             MessageLifecycleState::Unread | MessageLifecycleState::Read
-                        ) || (ask_card.required && st.state == MessageLifecycleState::Snoozed))
+                        )
                 }
                 None => st.state == MessageLifecycleState::Unread,
             };
@@ -1151,54 +1153,178 @@ fn apply_local_transition(
     Ok(mutated)
 }
 
+fn check_snooze_expiry_guard(
+    msg: &MessageRecord,
+    inp: &LocalTransitionInput,
+) -> Result<(), Refusal> {
+    if inp.state != MessageLifecycleState::Snoozed {
+        return Ok(());
+    }
+    let Some(exp) = msg.expires_at.as_deref() else {
+        return Ok(());
+    };
+    let (already_expired, snooze_past_expiry) = match (
+        crate::time::parse_rfc3339_ms(exp),
+        crate::time::parse_rfc3339_ms(&inp.now_utc),
+    ) {
+        (Some(e), Some(n)) => {
+            let past = inp
+                .snoozed_until
+                .as_deref()
+                .is_some_and(|at| crate::time::parse_rfc3339_ms(at).is_none_or(|a| a >= e));
+            (e <= n, past)
+        }
+        // Fail closed on corrupted expires_at / now_utc.
+        _ => (true, true),
+    };
+    if already_expired || snooze_past_expiry {
+        return Err(Refusal::rejected(
+            serde_json::to_vec(&ApiError::new(
+                ErrorCode::InvalidRequest,
+                "snoozed_until must be earlier than the ask expires_at deadline",
+            ))
+            .unwrap(),
+        ));
+    }
+    Ok(())
+}
+
+fn stamp_local_sync(st: &mut RecipientStateRecord, inp: &LocalTransitionInput) {
+    st.updated_at = inp.now_utc.clone();
+    st.owner_office_id = inp.owner_office_id.clone();
+    st.origin_incarnation = inp.origin_incarnation.clone();
+    st.org_epoch = inp.org_position.epoch.max(1);
+    st.org_sequence = inp.org_position.seq;
+}
+
+fn not_found_refusal() -> Refusal {
+    Refusal::rejected(
+        serde_json::to_vec(&ApiError::new(ErrorCode::NotFound, "message not found")).unwrap(),
+    )
+}
+
+fn run_local_state_op<E: OfficeEngine>(
+    store: &Store<E>,
+    here: OfficeIdentity,
+    input: LocalTransitionInput,
+    enforce_expiry_guard: bool,
+) -> Result<Result<MessageHeader, ApiError>, StoreError> {
+    let out = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let slot = std::sync::Arc::clone(&out);
+    let reply = store.submit(None, false, move |uow| {
+        let inp = &input;
+        let mut st = uow
+            .view()
+            .recipient_state(&inp.id, &inp.to_member_id)
+            .map_err(|_| storage_refusal("read state"))?
+            .ok_or_else(not_found_refusal)?;
+        let msg = uow
+            .view()
+            .message(&inp.id)
+            .map_err(|_| storage_refusal("read message"))?
+            .ok_or_else(not_found_refusal)?;
+        if enforce_expiry_guard {
+            check_snooze_expiry_guard(&msg, inp)?;
+        }
+        let mutated = apply_local_transition(&mut st, inp)?;
+        let mut change = Change::new(Ack::Committed);
+        if mutated {
+            stamp_local_sync(&mut st, inp);
+            change = upsert_state_change(
+                uow.view(),
+                &here.organization_id,
+                &st.conversation_id,
+                &inp.to_member_id,
+                st.clone(),
+                change,
+            )?;
+        }
+        let seq = resolve_local_seq(uow.view(), &msg).map_err(|_| storage_refusal("local_seq"))?;
+        *slot.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some(to_wire_header(&msg, Some(&st), seq));
+        Ok(change)
+    });
+    unwrap_reply(reply, out)
+}
+
 impl StoreOp for MailboxUpdateStateOp {
+    type Out = Result<Result<MessageHeader, ApiError>, StoreError>;
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        run_local_state_op(store, self.here, self.input, false)
+    }
+}
+
+pub struct MailboxDeferOp {
+    pub here: OfficeIdentity,
+    pub input: LocalTransitionInput,
+}
+
+impl StoreOp for MailboxDeferOp {
+    type Out = Result<Result<MessageHeader, ApiError>, StoreError>;
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        run_local_state_op(store, self.here, self.input, true)
+    }
+}
+
+pub struct MailboxUnsnoozeOp {
+    pub here: OfficeIdentity,
+    pub input: LocalTransitionInput,
+}
+
+fn apply_unsnooze_record(
+    st: &mut RecipientStateRecord,
+    inp: &LocalTransitionInput,
+) -> Result<(), Refusal> {
+    if st.state != MessageLifecycleState::Snoozed || inp.expired_waiting_person {
+        return Err(Refusal::rejected(
+            serde_json::to_vec(&ApiError::new(
+                ErrorCode::Conflict,
+                "message is not snoozed",
+            ))
+            .unwrap(),
+        ));
+    }
+    st.state = MessageLifecycleState::Unread;
+    st.triage_generation = st.triage_generation.saturating_add(1);
+    st.snoozed_until = None;
+    st.snooze_after_task = false;
+    st.snooze_note = None;
+    st.triaged_at = Some(inp.now_utc.clone());
+    st.read_at = None;
+    stamp_local_sync(st, inp);
+    Ok(())
+}
+
+impl StoreOp for MailboxUnsnoozeOp {
     type Out = Result<Result<MessageHeader, ApiError>, StoreError>;
     fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
             let inp = &self.input;
-            let not_found = || {
-                Refusal::rejected(
-                    serde_json::to_vec(&ApiError::new(ErrorCode::NotFound, "message not found"))
-                        .unwrap(),
-                )
-            };
-            let Some(mut st) = uow
+            let mut st = uow
                 .view()
                 .recipient_state(&inp.id, &inp.to_member_id)
                 .map_err(|_| storage_refusal("read state"))?
-            else {
-                return Err(not_found());
-            };
-            let Some(msg) = uow
+                .ok_or_else(not_found_refusal)?;
+            let msg = uow
                 .view()
                 .message(&inp.id)
                 .map_err(|_| storage_refusal("read message"))?
-            else {
-                return Err(not_found());
-            };
-            let mutated = apply_local_transition(&mut st, inp)?;
-            let mut change = Change::new(Ack::Committed);
-            if mutated {
-                st.updated_at = inp.now_utc.clone();
-                st.owner_office_id = inp.owner_office_id.clone();
-                st.origin_incarnation = inp.origin_incarnation.clone();
-                st.org_epoch = inp.org_position.epoch.max(1);
-                st.org_sequence = inp.org_position.seq;
-                change = upsert_state_change(
-                    uow.view(),
-                    &self.here.organization_id,
-                    &st.conversation_id,
-                    &inp.to_member_id,
-                    st.clone(),
-                    change,
-                )?;
-            }
+                .ok_or_else(not_found_refusal)?;
+            apply_unsnooze_record(&mut st, inp)?;
+            let change = upsert_state_change(
+                uow.view(),
+                &self.here.organization_id,
+                &st.conversation_id,
+                &inp.to_member_id,
+                st.clone(),
+                Change::new(Ack::Committed),
+            )?;
             let seq =
                 resolve_local_seq(uow.view(), &msg).map_err(|_| storage_refusal("local_seq"))?;
-            let hdr = to_wire_header(&msg, Some(&st), seq);
-            *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(hdr);
+            *slot.lock().unwrap_or_else(|p| p.into_inner()) =
+                Some(to_wire_header(&msg, Some(&st), seq));
             Ok(change)
         });
         unwrap_reply(reply, out)
@@ -1229,7 +1355,16 @@ fn evaluate_notify_state(
 ) -> (Option<NotifyReason>, bool) {
     let urgent = org_proto::msg::is_urgent(&msg.kind, msg.priority);
     if st.state == MessageLifecycleState::Snoozed {
-        let time_due = st.snoozed_until.as_deref().is_some_and(|at| at <= now_utc);
+        // Per TriageStore::check_notify contract, an unreadable snoozed_until releases as due.
+        let time_due = st.snoozed_until.as_deref().is_some_and(|at| {
+            match (
+                crate::time::parse_rfc3339_ms(at),
+                crate::time::parse_rfc3339_ms(now_utc),
+            ) {
+                (Some(a), Some(n)) => a <= n,
+                _ => true,
+            }
+        });
         let task_due = after_task && st.snooze_after_task;
         if time_due || task_due {
             st.state = MessageLifecycleState::Unread;

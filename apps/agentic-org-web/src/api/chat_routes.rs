@@ -14,7 +14,10 @@ use org_proto::chat::{
     ChatSend, ChatSendParams, DmOpen, DmOpenParams, MsgAccept, MsgAcceptParams,
 };
 use org_proto::inbox::{InboxList, InboxListParams};
-use org_proto::msg::{MsgDefer, MsgDeferParams, MsgDone, MsgDoneParams, MsgReply, MsgReplyParams};
+use org_proto::msg::{
+    MsgDefer, MsgDeferParams, MsgDone, MsgDoneParams, MsgReply, MsgReplyParams, MsgUnsnooze,
+    MsgUnsnoozeParams,
+};
 use org_proto::web::{ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
 
@@ -43,6 +46,7 @@ pub enum ChatRoute {
     Reply(CallerAuth, String),
     Done(CallerAuth, String),
     Defer(CallerAuth, String),
+    Unsnooze(CallerAuth, String),
     Ask(CallerAuth, String),
     Answer(CallerAuth, String),
     Withdraw(CallerAuth, String),
@@ -67,6 +71,7 @@ pub enum ChatCall {
     Reply(CallerAuth, String, Box<MsgReplyParams>),
     Done(CallerAuth, String, MsgDoneParams),
     Defer(CallerAuth, String, MsgDeferParams),
+    Unsnooze(CallerAuth, String, MsgUnsnoozeParams),
     Ask(CallerAuth, String, Box<ChatAskParams>),
     Answer(CallerAuth, String, Box<ChatAnswerParams>),
     Withdraw(CallerAuth, String, MsgWithdrawParams),
@@ -134,6 +139,7 @@ fn route_chat(
         ["reply"] if post => Some(auth_org(api, request, org, ChatRoute::Reply)),
         ["done"] if post => Some(auth_org(api, request, org, ChatRoute::Done)),
         ["defer"] if post => Some(auth_org(api, request, org, ChatRoute::Defer)),
+        ["unsnooze"] if post => Some(auth_org(api, request, org, ChatRoute::Unsnooze)),
         ["ask"] if post => Some(auth_org(api, request, org, ChatRoute::Ask)),
         ["ask", "wait"] if post => Some(auth_org(api, request, org, ChatRoute::WaitAsk)),
         ["answer"] if post => Some(auth_org(api, request, org, ChatRoute::Answer)),
@@ -155,6 +161,11 @@ fn empty(bytes: &[u8]) -> Result<(), ApiReply> {
 }
 
 pub(super) fn prepare(route: ChatRoute, bytes: &[u8]) -> Result<PreparedCall<Call>, ApiReply> {
+    let call = prepare_chat_call(route, bytes)?;
+    Ok(PreparedCall::read(Call::Chat(call), bytes.len()))
+}
+
+fn prepare_chat_call(route: ChatRoute, bytes: &[u8]) -> Result<ChatCall, ApiReply> {
     let call = match route {
         ChatRoute::Channels(c, o) => {
             empty(bytes)?;
@@ -177,7 +188,14 @@ pub(super) fn prepare(route: ChatRoute, bytes: &[u8]) -> Result<PreparedCall<Cal
         ChatRoute::Accept(c, o) => ChatCall::Accept(c, o, decode(bytes)?),
         ChatRoute::Reply(c, o) => ChatCall::Reply(c, o, Box::new(decode(bytes)?)),
         ChatRoute::Done(c, o) => ChatCall::Done(c, o, decode(bytes)?),
-        ChatRoute::Defer(c, o) => ChatCall::Defer(c, o, decode(bytes)?),
+        ChatRoute::Defer(c, o) => {
+            let mut p: MsgDeferParams = decode(bytes)?;
+            if let org_proto::msg::SnoozeTarget::Until { at } = &mut p.until {
+                *at = org_proto::canonicalize_rfc3339_utc(at).ok_or_else(invalid)?;
+            }
+            ChatCall::Defer(c, o, p)
+        }
+        ChatRoute::Unsnooze(c, o) => ChatCall::Unsnooze(c, o, decode(bytes)?),
         ChatRoute::Ask(c, o) => {
             let mut p: ChatAskParams = decode(bytes)?;
             p.hold_ms = Some(0);
@@ -195,7 +213,7 @@ pub(super) fn prepare(route: ChatRoute, bytes: &[u8]) -> Result<PreparedCall<Cal
             ChatCall::OwnerInbox(c, o)
         }
     };
-    Ok(PreparedCall::read(Call::Chat(call), bytes.len()))
+    Ok(call)
 }
 
 async fn run_office<C: org_proto::Call>(
@@ -297,6 +315,7 @@ pub(super) async fn execute(api: &SessionApi, call: ChatCall) -> ApiReply {
         ChatCall::Reply(c, o, p) => run_office::<MsgReply>(api, c, &o, &p, false).await,
         ChatCall::Done(c, o, p) => run_office::<MsgDone>(api, c, &o, &p, false).await,
         ChatCall::Defer(c, o, p) => run_office::<MsgDefer>(api, c, &o, &p, false).await,
+        ChatCall::Unsnooze(c, o, p) => run_office::<MsgUnsnooze>(api, c, &o, &p, false).await,
         ChatCall::Ask(c, o, p) => run_office::<ChatAsk>(api, c, &o, &p, false).await,
         ChatCall::Answer(c, o, p) => run_office::<ChatAnswer>(api, c, &o, &p, false).await,
         ChatCall::Withdraw(c, o, p) => run_office::<MsgWithdraw>(api, c, &o, &p, false).await,
@@ -312,5 +331,56 @@ pub(super) async fn execute(api: &SessionApi, call: ChatCall) -> ApiReply {
             };
             run_office::<InboxList>(api, c, &o, &params, true).await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::CallerAuth;
+
+    fn dummy_auth() -> CallerAuth {
+        CallerAuth::LocalAuthless
+    }
+
+    #[test]
+    fn defer_canonicalizes_rfc3339_and_unsnooze_and_snoozed_inbox_prepare() {
+        let defer_bytes = br#"{"id":"0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa","until":{"type":"until","at":"2026-11-23T11:00:00+02:00"}}"#;
+        let Ok(ChatCall::Defer(_, _, p)) =
+            prepare_chat_call(ChatRoute::Defer(dummy_auth(), "org-1".into()), defer_bytes)
+        else {
+            panic!("expected ChatCall::Defer");
+        };
+        assert_eq!(
+            p.until,
+            org_proto::msg::SnoozeTarget::Until {
+                at: "2026-11-23T09:00:00.000Z".into()
+            }
+        );
+
+        let bad_defer = br#"{"id":"0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa","until":{"type":"until","at":"not-a-timestamp"}}"#;
+        assert!(
+            prepare_chat_call(ChatRoute::Defer(dummy_auth(), "org-1".into()), bad_defer).is_err()
+        );
+
+        let unsnooze_bytes = br#"{"id":"0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa"}"#;
+        let Ok(ChatCall::Unsnooze(_, _, up)) = prepare_chat_call(
+            ChatRoute::Unsnooze(dummy_auth(), "org-1".into()),
+            unsnooze_bytes,
+        ) else {
+            panic!("expected ChatCall::Unsnooze");
+        };
+        assert_eq!(up.id, "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa");
+
+        let inbox_bytes = br#"{"state":"snoozed","limit":10}"#;
+        let Ok(ChatCall::Inbox(_, _, ip)) =
+            prepare_chat_call(ChatRoute::Inbox(dummy_auth(), "org-1".into()), inbox_bytes)
+        else {
+            panic!("expected ChatCall::Inbox");
+        };
+        assert_eq!(
+            ip.state,
+            Some(org_proto::msg::MessageLifecycleState::Snoozed)
+        );
     }
 }

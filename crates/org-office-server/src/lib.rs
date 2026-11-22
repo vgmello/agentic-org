@@ -684,12 +684,29 @@ fn run_serve_loop(
         Arc::clone(&wake_stop),
         std::time::Duration::from_secs(2),
     );
+    let snooze_thread = shared.mailbox().map(|mailbox| {
+        let stop_flag = Arc::clone(&wake_stop);
+        std::thread::Builder::new()
+            .name("snooze-resurfacer".into())
+            .spawn(move || {
+                while !stop_flag.load(Ordering::SeqCst) {
+                    if let Err(err) = mailbox.release_all_due_snoozes() {
+                        eprintln!("agentic-org-office: snooze resurfacer error: {err}");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+            })
+            .ok()
+    });
     serve::run(listener, shared, stop);
     wake_stop.store(true, Ordering::SeqCst);
     if let Some(t) = wake_thread {
         let _ = t.join();
     }
     let _ = watch_thread.join();
+    if let Some(Some(t)) = snooze_thread {
+        let _ = t.join();
+    }
     session_manager.stop_all("office shutdown");
 }
 

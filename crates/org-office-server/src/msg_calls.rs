@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use org_mailbox::{Cancellation, Mailbox, MailboxError};
 use org_proto::msg::{
-    MsgDefer, MsgDone, MsgGet, MsgInbox, MsgList, MsgRead, MsgReply, MsgSend, MsgWait,
+    MsgDefer, MsgDone, MsgGet, MsgInbox, MsgList, MsgRead, MsgReply, MsgSend, MsgUnsnooze, MsgWait,
     MsgWaitParams, MAX_WAIT_MS,
 };
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
@@ -34,14 +34,20 @@ pub(crate) fn answer(
 }
 
 fn is_mailbox_call(request: &Request) -> bool {
+    is_send_or_read_call(request) || is_triage_call(request)
+}
+
+fn is_send_or_read_call(request: &Request) -> bool {
     request.is::<MsgSend>()
         || request.is::<MsgReply>()
         || request.is::<MsgInbox>()
         || request.is::<MsgRead>()
         || request.is::<MsgList>()
         || request.is::<MsgGet>()
-        || request.is::<MsgDone>()
-        || request.is::<MsgDefer>()
+}
+
+fn is_triage_call(request: &Request) -> bool {
+    request.is::<MsgDone>() || request.is::<MsgDefer>() || request.is::<MsgUnsnooze>()
 }
 
 fn dispatch_send_or_read(
@@ -81,6 +87,11 @@ fn dispatch_triage(request: &Request, mailbox: &Mailbox, member: Option<&str>) -
     }
     if request.is::<MsgDefer>() {
         return Some(run::<MsgDefer>(request, member, |m, p| mailbox.defer(m, p)));
+    }
+    if request.is::<MsgUnsnooze>() {
+        return Some(run::<MsgUnsnooze>(request, member, |m, p| {
+            mailbox.unsnooze(m, p)
+        }));
     }
     None
 }
