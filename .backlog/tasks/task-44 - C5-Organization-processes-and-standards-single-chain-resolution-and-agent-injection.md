@@ -7,12 +7,13 @@ status: In Progress
 assignee:
   - '@lead'
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-22T08:42:00Z'
+updated_date: '2026-11-22T14:40:00Z'
 labels:
   - backend
   - rust
   - agents
   - m1
+  - blog
 milestone: m-0
 dependencies:
   - TASK-42
