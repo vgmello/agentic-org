@@ -1875,13 +1875,17 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   color: #FFE4E6 !important;
 }
 .hb-deny-guard {
-  display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  padding: 2px 3px 2px 10px; border-radius: 7px;
+  display: flex; flex-direction: column; gap: 8px;
+  flex: 1 1 100%; order: 10;
+  padding: 10px 12px; border-radius: 8px;
   background: rgba(251, 113, 133, .10);
   box-shadow: inset 0 0 0 1px rgba(251, 113, 133, .32);
 }
-.hb-deny-guard-lbl { font-size: 0.78125rem; font-weight: 600; color: #FDA4AF; margin-right: 2px; }
-.hb-deny-guard .btn { min-height: 32px; padding: 0 11px; }
+.hb-deny-guard-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.hb-deny-guard-lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8125rem; font-weight: 600; color: #FDA4AF; }
+.hb-deny-guard-acts { display: inline-flex; align-items: center; gap: 6px; }
+.hb-deny-guard .btn { min-height: 32px; padding: 0 12px; }
+.hb-deny-input { min-height: 36px; padding: 6px 10px; font-size: 0.8125rem; border-radius: 6px; }
 .hb-deny-confirm {
   background: #DC2626 !important; color: #FFFFFF !important;
   box-shadow: none !important;
@@ -4558,10 +4562,17 @@ function itemActionsV4(it, opts = {}) {
     : `<button class="btn ${style} sm" type="button" data-act="${act}" data-id="${it.id}"${v ? ` data-v="${esc(v)}"` : ""}>${icon ? ic(icon, "ic16") : ""}${esc(label)}</button>`;
   const denySlot = (label, outcome, icon = "deny") => {
     if (S.confirmDeny === it.id) {
+      const who = esc(M[it.from] ? M[it.from].name : "agent");
       return `<div class="hb-deny-guard" role="group" aria-label="Confirm ${esc(label.toLowerCase())}">
-        <span class="hb-deny-guard-lbl">Confirm ${esc(label.toLowerCase())}?</span>
-        <button class="btn sm hb-deny-confirm" type="button" data-act="deny-confirm" data-id="${it.id}" data-v="${esc(outcome)}">Confirm</button>
-        <button class="btn ghost sm" type="button" data-act="deny-keep" data-id="${it.id}">Keep</button>
+        <div class="hb-deny-guard-top">
+          <span class="hb-deny-guard-lbl">${ic(icon, "ic14")}<span>Confirm ${esc(label.toLowerCase())}?</span></span>
+          <div class="hb-deny-guard-acts">
+            <button class="btn sm hb-deny-confirm" type="button" data-act="deny-confirm" data-id="${it.id}" data-v="${esc(outcome)}">Confirm</button>
+            <button class="btn ghost sm" type="button" data-act="deny-keep" data-id="${it.id}">Keep</button>
+          </div>
+        </div>
+        <label class="sr-only" for="deny-msg-${it.id}">Optional message for ${who}</label>
+        <input class="field hb-deny-input" id="deny-msg-${it.id}" data-deny-id="${it.id}" data-deny-outcome="${esc(outcome)}" type="text" placeholder="Optional reason for ${who}…" autocomplete="off">
       </div>`;
     }
     return `<button class="btn outline sm hb-deny-btn" type="button" data-act="deny-arm" data-id="${it.id}">${ic(icon, "ic16")}${esc(label)}</button>`;
@@ -4580,7 +4591,7 @@ function itemActionsV4(it, opts = {}) {
   else if (it.kind === "decision") it.opts.forEach((o, i) => b.push(btn(i ? "outline" : "primary", "handle", "Chose: " + o, i ? null : "check", o, "win")));
   else if (it.kind === "problem") { if (it.resume) b.push(btn("primary", "handle", "Goal resumed", "play", "Resume", "win")); if (it.assign) b.push(btn("primary", "assign", "", "user-plus", "Assign…", "win")); if (it.dismiss) guardedHtml = denySlot("Dismiss", "Dismissed", "x"); }
   if (guardedHtml) {
-    b.push(`<span class="hb-act-sep" aria-hidden="true"></span>`);
+    if (S.confirmDeny !== it.id) b.push(`<span class="hb-act-sep" aria-hidden="true"></span>`);
     b.push(guardedHtml);
   }
   if (open) b.push(open);
@@ -7240,13 +7251,20 @@ document.addEventListener("click", (e) => {
     case "handle": S.confirmDeny = null; handle(id, v); break;
     case "deny-arm": {
       S.confirmDeny = id; render(false);
-      const cf = document.querySelector(`[data-act="deny-confirm"][data-id="${CSS.escape(id || "")}"]`);
-      if (cf) cf.focus();
+      const inp = document.getElementById("deny-msg-" + id);
+      if (inp) inp.focus();
+      else {
+        const cf = document.querySelector(`[data-act="deny-confirm"][data-id="${CSS.escape(id || "")}"]`);
+        if (cf) cf.focus();
+      }
       break;
     }
     case "deny-confirm": {
+      const inp = document.getElementById("deny-msg-" + id);
+      const msg = inp ? inp.value.trim() : "";
       S.confirmDeny = null;
-      handle(id, v || "Denied");
+      const base = v || "Denied";
+      handle(id, msg ? `${base}: ${msg}` : base);
       break;
     }
     case "deny-keep": {
@@ -7501,6 +7519,14 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape" && e.target.tagName === "TEXTAREA" && /^r-/.test(e.target.id || "")) {
     const c = document.querySelector(`[data-act="cancel-reply"][data-id="${CSS.escape(e.target.id.slice(2))}"]`); if (c) { e.preventDefault(); c.click(); return; }
+  }
+  if (e.key === "Enter" && e.target.classList && e.target.classList.contains("hb-deny-input")) {
+    e.preventDefault();
+    const cid = e.target.dataset.denyId, cout = e.target.dataset.denyOutcome || "Denied";
+    const msg = e.target.value.trim();
+    S.confirmDeny = null;
+    handle(cid, msg ? `${cout}: ${msg}` : cout);
+    return;
   }
   if (e.key === "Escape") {
     if (S.confirmDeny) {
