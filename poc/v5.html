@@ -3253,6 +3253,17 @@ html[data-theme^="report"] .sheet { background: #FFFFFF; backdrop-filter: none; 
 html[data-theme^="report"] .sheet th, html[data-theme^="report"] .sheet header h2 { color: #0B101B; }
 html[data-theme^="report"] .sheet td { color: #2C3646; }
 html[data-theme^="report"] .skel-b, html[data-theme^="report"] .skel-c { border-radius: 3px; background: #EEF1F6; }
+html[data-theme^="report"] .hb-skel-grid { gap: 0; border-bottom: 1px solid #E2E7EF; }
+html[data-theme^="report"] .hb-proj-sec .hb-skel-grid { border-bottom: 0; }
+html[data-theme^="report"] .hb-skel-card {
+  border-radius: 0; background: transparent; box-shadow: none;
+  padding: 24px 28px 24px 0;
+}
+html[data-theme^="report"] .hb-skel-card + .hb-skel-card {
+  border-left: 1px solid #EEF1F6;
+  padding-left: 28px;
+}
+html[data-theme^="report"] .hb-skel-card:last-child { padding-right: 0; }
 html[data-theme^="report"] .ctx > summary { color: #1B365D; }
 html[data-theme^="report"] .ctx-body { border-radius: 3px; background: #F7F8FA; color: #2C3646; box-shadow: inset 2px 0 0 #CBD3DF; }
 html[data-theme^="report"] .card,
@@ -3412,8 +3423,8 @@ html[data-theme="report-dark"] .cmdk-foot kbd { background: #1e2939; box-shadow:
 
 /* Report Night Full-Width Report Canvas (Exact Classic Palette) */
 html[data-theme="report-dark"] .hb {
-  --hb-surface: #243144;
-  --hb-surface-hi: #29384d;
+  --hb-surface: #1e2939;
+  --hb-surface-hi: #243144;
   --hb-well: #1a2433;
   --hb-border: rgba(255, 255, 255, .10);
   --hb-border-hi: rgba(255, 255, 255, .18);
@@ -3421,9 +3432,9 @@ html[data-theme="report-dark"] .hb {
   --hb-body: #d1d5dc;
   --hb-muted: #99a1af;
   --hb-dim: #99a1af;
-  --hb-emerald: #05df72;
-  --hb-amber: #ffd230;
-  --hb-rose: #ffa2a2;
+  --hb-emerald: #6EE7B7;
+  --hb-amber: #FDE68A;
+  --hb-rose: #FDA4AF;
   background: #1e2939;
 }
 html[data-theme="report-dark"] .hb-hero { border-bottom-color: rgba(255, 255, 255, .16); }
@@ -3700,7 +3711,9 @@ html[data-theme="report-dark"] .hb-err-meta .ic { color: #a3b3ff; }
 html[data-theme="report-dark"] .sheet { background: #182230; box-shadow: inset 1px 0 0 rgba(255, 255, 255, .12); }
 html[data-theme="report-dark"] .sheet th, html[data-theme="report-dark"] .sheet header h2 { color: #ffffff; }
 html[data-theme="report-dark"] .sheet td { color: #d1d5dc; }
-html[data-theme="report-dark"] .skel-b, html[data-theme="report-dark"] .skel-c { background: #243144; }
+html[data-theme="report-dark"] .skel-b, html[data-theme="report-dark"] .skel-c { background: #29374b; }
+html[data-theme="report-dark"] .hb-skel-grid { border-bottom-color: rgba(255, 255, 255, .09); }
+html[data-theme="report-dark"] .hb-skel-card + .hb-skel-card { border-left-color: rgba(255, 255, 255, .08); }
 html[data-theme="report-dark"] .ctx > summary { color: #a3b3ff; }
 html[data-theme="report-dark"] .ctx-body { background: #16202e; color: #d1d5dc; box-shadow: inset 2px 0 0 #7c86ff; }
 html[data-theme="report-dark"] .card,
