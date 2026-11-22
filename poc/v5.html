@@ -1973,10 +1973,27 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .30);
 }
 .hb-cos-memo {
-  display: flex; flex-direction: column; gap: 15px; flex: 1;
+  display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0;
   padding: 18px 20px; border-radius: 12px;
   background: linear-gradient(150deg, rgba(56, 189, 248, .07) 0%, rgba(12, 24, 44, .46) 100%);
   box-shadow: inset 3px 0 0 #38BDF8, inset 0 0 0 1px rgba(125, 211, 252, .16);
+}
+.hb-cos-scroll {
+  display: flex; flex-direction: column; gap: 15px;
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, .35) transparent;
+}
+.hb-cos-scroll::-webkit-scrollbar { width: 5px; }
+.hb-cos-scroll::-webkit-scrollbar-track { background: transparent; }
+.hb-cos-scroll::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, .32); border-radius: 999px; }
+.hb-cos-scroll::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, .55); }
+@media (min-width: 1121px) {
+  .hb-stage:not(.is-single) .hb-catchup { height: 0; min-height: 100%; overflow: hidden; }
+}
+@media (max-width: 1120px) {
+  .hb-cos-scroll { max-height: 360px; }
 }
 .hb-cos-sec { display: flex; flex-direction: column; gap: 5px; }
 .hb-cos-k {
@@ -4851,7 +4868,9 @@ function pageHome() {
 
       ${st === "loading" ? skel(4, "Tess is preparing your executive brief…") : `
       <div class="hb-cos-memo">
-        ${briefSections}
+        <div class="hb-cos-scroll" tabindex="0" aria-label="Executive brief content">
+          ${briefSections}
+        </div>
         <div class="hb-cos-sig">
           <a class="hb-cos-sig-who" href="#/members/tess" title="Open Tess's profile">
             <span class="hb-cos-mark" aria-hidden="true">${ic("sparkle", "ic14")}</span>
