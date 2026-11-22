@@ -1915,23 +1915,23 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   font-size: 0.72rem; font-weight: 500; color: var(--hb-muted);
 }
 
-.hb-digest { display: flex; flex-direction: column; gap: 5px; flex: 1; justify-content: flex-start; }
+.hb-digest { display: flex; flex-direction: column; gap: 6px; flex: 1; justify-content: flex-start; }
 .hb-dig-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 10px; border-radius: 7px;
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 9px 11px; border-radius: 8px;
   background: var(--hb-well);
   box-shadow: inset 0 1px 0 rgba(186, 226, 255, .10), inset 0 0 0 1px rgba(186, 226, 255, .10);
-  font-size: 0.765rem; line-height: 1.28; color: var(--hb-body);
+  font-size: 0.80rem; line-height: 1.38; color: var(--hb-body);
   transition: background-color .14s ease, box-shadow .14s ease;
 }
 a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 226, 255, .20), inset 0 0 0 1px var(--hb-border-hi); }
-.hb-dig-ico { width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.hb-dig-ico { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; margin-top: 2px; flex: none; }
 .hb-dig-item b { color: var(--hb-ink); font-weight: 600; }
 .hb-dig-item .muted { color: var(--hb-muted); }
 
-/* Compact Catch-up Digest Footer & Timestamps */
-.hb-dig-body { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hb-dig-time { font-size: 0.6875rem; font-weight: 500; color: var(--hb-dim); white-space: nowrap; flex: none; font-variant-numeric: tabular-nums; }
+/* Balanced Catch-up Digest Footer & Timestamps */
+.hb-dig-body { flex: 1; min-width: 0; }
+.hb-dig-time { font-size: 0.7rem; font-weight: 500; color: var(--hb-dim); white-space: nowrap; flex: none; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .hb-cu-foot {
   margin-top: auto; padding-top: 12px;
   border-top: 1px solid var(--hb-border);
@@ -3225,33 +3225,40 @@ html[data-theme="report"] .hb-arrow-btn:hover:not(:disabled) {
   background: #0B101B; box-shadow: inset 0 0 0 1px #0B101B; color: #FFFFFF;
 }
 html[data-theme="report"] .hb-spot-rec {
-  border-radius: 4px; background: #EEF2F7;
-  box-shadow: inset 3px 0 0 #1B365D, inset 0 0 0 1px #CFD9E6;
-  color: #0B101B; font-style: normal;
+  border-radius: 0 4px 4px 0;
+  background: #F7F9FC;
+  box-shadow: inset 3px 0 0 #1B365D;
+  padding: 11px 14px;
+  color: #0B101B; font-style: normal; font-weight: 450;
 }
 html[data-theme="report"] .hb-spot-rec .ic { color: #1B365D; }
 html[data-theme="report"] .hb-spot-meta {
-  border-radius: 4px; background: #EEF2F7;
-  box-shadow: inset 0 0 0 1px #CFD9E6;
-  padding: 13px 6px;
+  border-radius: 0; background: #FFFFFF;
+  box-shadow: none;
+  border-top: 1px solid #D8E0EC;
+  border-bottom: 1px solid #D8E0EC;
+  padding: 14px 0;
 }
-html[data-theme="report"] .hb-spot-cell + .hb-spot-cell { border-left: 1px solid #CFD9E6; }
-html[data-theme="report"] .hb-spot-well { border-radius: 4px; background: #E3ECF6; box-shadow: inset 0 0 0 1px #C5D4E6; color: #1B365D; }
-html[data-theme="report"] .hb-spot-well.ok { background: #E1F3EE; box-shadow: inset 0 0 0 1px #B8DFD5; color: #146C5B; }
-html[data-theme="report"] .hb-spot-well.warn { background: #F7ECDA; box-shadow: inset 0 0 0 1px #E4CEAA; color: #975A16; }
-html[data-theme="report"] .hb-spot-well.muted { background: #E6EBF2; box-shadow: inset 0 0 0 1px #CBD5E1; color: #475569; }
+html[data-theme="report"] .hb-spot-cell { padding: 0 16px; }
+html[data-theme="report"] .hb-spot-cell:first-child { padding-left: 0; }
+html[data-theme="report"] .hb-spot-cell:last-child { padding-right: 0; }
+html[data-theme="report"] .hb-spot-cell + .hb-spot-cell { border-left: 1px solid #E5EAF2; }
+html[data-theme="report"] .hb-spot-well { border-radius: 6px; background: #EDF3FA; box-shadow: none; color: #1B365D; }
+html[data-theme="report"] .hb-spot-well.ok { background: #E7F6F1; box-shadow: none; color: #0F6A56; }
+html[data-theme="report"] .hb-spot-well.warn { background: #FDF3E1; box-shadow: none; color: #9A5B0B; }
+html[data-theme="report"] .hb-spot-well.muted { background: #F1F4F8; box-shadow: none; color: #475569; }
 html[data-theme="report"] .hb-spot-cell-val { color: #0B101B; font-weight: 650; }
 html[data-theme="report"] .hb-spot-cell-sub { color: #475569; }
 html[data-theme="report"] .h4-ctx-toggle { color: #1B365D; font-weight: 600; border-radius: 4px; }
-html[data-theme="report"] .h4-ctx-toggle:hover { background: #EEF2F7; color: #0B101B; }
-html[data-theme="report"] .h4-ctx-body { border-radius: 4px; background: #EEF2F7; color: #2C3646; box-shadow: inset 2px 0 0 #94A3B8, inset 0 0 0 1px #CFD9E6; }
+html[data-theme="report"] .h4-ctx-toggle:hover { background: #F1F5F9; color: #0B101B; }
+html[data-theme="report"] .h4-ctx-body { border-radius: 0 4px 4px 0; background: #F7F9FC; color: #2C3646; box-shadow: inset 2px 0 0 #94A3B8; }
 html[data-theme="report"] .hb-spot-next {
-  border-radius: 4px; background: #EEF2F7; box-shadow: inset 0 0 0 1px #CFD9E6;
+  border-radius: 6px; background: #FFFFFF; box-shadow: inset 0 0 0 1px #D5DDE8;
 }
-html[data-theme="report"] .hb-spot-next:hover { background: #E3EAF3; box-shadow: inset 0 0 0 1px #B8C4D4; }
-html[data-theme="report"] .hb-spot-next-lbl { color: #475569; }
+html[data-theme="report"] .hb-spot-next:hover { background: #F8FAFC; box-shadow: inset 0 0 0 1px #94A3B8; }
+html[data-theme="report"] .hb-spot-next-lbl { color: #475569; font-weight: 700; }
 html[data-theme="report"] .hb-spot-next-exp {
-  border-radius: 3px; background: #F7ECDA; box-shadow: inset 0 0 0 1px #E4CEAA; color: #8A520B;
+  border-radius: 3px; background: #FDF3E1; box-shadow: none; color: #8A520B;
 }
 html[data-theme="report"] .hb-spot-next-exp .ic { color: #B7791F; }
 html[data-theme="report"] .hb-spot-foot { border-top: 1px solid #E2E7EF; }
@@ -3282,8 +3289,8 @@ html[data-theme="report"] .hb-cu-window {
 html[data-theme="report"] .hb-digest { gap: 0; }
 html[data-theme="report"] .hb-dig-item {
   border-radius: 0; background: transparent; box-shadow: none;
-  padding: 8px 6px; font-size: 0.78125rem; line-height: 1.28;
-  border-top: 1px solid #EEF1F6;
+  padding: 11px 6px; font-size: 0.8125rem; line-height: 1.38;
+  border-top: 1px solid #EAEEF4;
 }
 html[data-theme="report"] .hb-dig-item:first-child { border-top: 1px solid #DCE2EC; }
 html[data-theme="report"] a.hb-dig-item:hover { background: #F4F6F9; box-shadow: none; border-radius: 4px; }
@@ -4704,7 +4711,7 @@ function pageHome() {
       <div class="hb-dig-body"><b>${esc(d.outcome)}</b> — ${esc(d.what)} (${esc(M[d.from].name)} notified)</div>
       <span class="hb-dig-time">Now</span>
     </a>`);
-    const shownRows = [...liveAgentRows, ...dynamicRows, ...staticRows].slice(0, 9).join("");
+    const shownRows = [...liveAgentRows, ...dynamicRows, ...staticRows].slice(0, 8).join("");
     return `<aside class="hb-catchup" aria-label="Autonomous catch-up">
       <div class="hb-cu-hd">
         <div class="hb-cu-title">${ic("signal", "ic16")}<span class="lbl-std">Catch-up</span><span class="lbl-rep">Operations &amp; Activity Brief</span></div>
