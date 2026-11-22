@@ -132,11 +132,7 @@ html[data-ui-theme='ocean'] {
 	--exec-avatar-bg: #142238;
 	--exec-avatar-ring: #0a1424;
 
-	--exec-cos-bg: linear-gradient(
-		150deg,
-		rgba(56, 189, 248, 0.07) 0%,
-		rgba(12, 24, 44, 0.46) 100%
-	);
+	--exec-cos-bg: linear-gradient(150deg, rgba(56, 189, 248, 0.07) 0%, rgba(12, 24, 44, 0.46) 100%);
 	--exec-cos-fade: rgba(12, 24, 44, 0.94);
 	--exec-cos-border: rgba(125, 211, 252, 0.16);
 	--exec-cos-rule: var(--tone-accent);
