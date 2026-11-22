@@ -96,6 +96,7 @@
 	);
 
 	let shellLoadSeq = 0;
+	let leaving = false;
 
 	function loadShellData(id: string, reset = false) {
 		const seq = ++shellLoadSeq;
@@ -113,7 +114,7 @@
 			inboxApi.list(id),
 			officesApi.overview(id)
 		]).then(([orgRes, workRes, inboxRes, officesRes]) => {
-			if (cancelled || seq !== shellLoadSeq) return;
+			if (leaving || cancelled || seq !== shellLoadSeq) return;
 			if (orgRes.status === 'fulfilled') shellSnapshot = orgRes.value.snapshot;
 			if (workRes.status === 'fulfilled') shellWork = workRes.value.items;
 			if (inboxRes.status === 'fulfilled') shellInbox = inboxRes.value;
@@ -152,7 +153,6 @@
 	});
 
 	let stop: (() => void) | undefined;
-	let leaving = false;
 	function listen() {
 		orgApi
 			.onFeed((notice) => {

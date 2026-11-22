@@ -142,7 +142,14 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	await expect(page.getByText("Approve publishing Kai's sync update to v1.0")).toBeVisible();
 	await expect(page.getByText("Reroute Jules's 3 queued tasks to Maya & Rowan")).toBeVisible();
 
+	// Opening a POC work item exercises workApi.get() & workApi.activity() without error
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Work' }).click();
+	await expect(page).toHaveURL(/\/work$/);
+	await page.getByRole('button', { name: 'Custody lock fix' }).click();
+	await expect(page.getByRole('dialog')).toContainText('Custody lock fix');
+	await expect(page.getByRole('dialog')).toContainText('Implementation and unit checks complete');
+
 	if (captureDir) {
-		await page.screenshot({ path: `${captureDir}/poc-mirror-inbox-report.png` });
+		await page.screenshot({ path: `${captureDir}/poc-mirror-work-sheet-report.png` });
 	}
 });

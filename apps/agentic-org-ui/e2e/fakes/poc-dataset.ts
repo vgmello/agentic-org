@@ -2,13 +2,16 @@
  * POC-mirror dataset (`?mock=poc`) mirroring `poc/v6.html` across canonical domain fakes so the Svelte app and
  * `poc/v6.html` can be compared side by side without modifying production builds or default Northwind/Atlas fixtures.
  */
-import type { OrgSnapshot, WorkEvent, WorkItem, WorkItemSummary } from '$lib/proto';
+import type { OrgSnapshot } from '../../src/lib/proto';
+import type { ItemStatus, WorkEvent, WorkItem, WorkItemSummary } from '../../src/lib/proto-work';
 import type { ActivityRow } from '../../src/lib/modules/activity/types';
 import type {
 	AgentBudgets,
+	BudgetPeriodState,
 	OrganizationCost,
 	PeriodRequest,
-	ProjectInvestments
+	ProjectInvestment,
+	UsageTotals
 } from '../../src/lib/modules/costs/types';
 import type { HomeProject } from '../../src/lib/modules/home/types';
 import type { InboxItem } from '../../src/lib/modules/inbox/types';
@@ -25,7 +28,7 @@ const aheadIso = (mins: number) => new Date(Date.now() + mins * MINUTE).toISOStr
 
 export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 	return {
-		position: { incarnation: 1, seq: 120 },
+		position: { epoch: 1, seq: 120 },
 		teams: [
 			{
 				id: 'leadership',
@@ -75,7 +78,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 					role: 'chief_of_staff',
 					title: 'Chief of Staff',
 					messaging_name: 'tess',
-					runtime: 'builtin',
+					runtime: { other: 'builtin' },
 					model: 'Chief of Staff (Built-in AI)'
 				},
 				version: 1
@@ -98,7 +101,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 					role: 'engineering_manager',
 					title: 'Engineering Manager',
 					messaging_name: 'ada',
-					runtime: 'claude',
+					runtime: 'claude_code',
 					model: 'Claude Opus'
 				},
 				version: 1
@@ -114,7 +117,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 					role: 'staff_engineer',
 					title: 'Staff Engineer',
 					messaging_name: 'rowan',
-					runtime: 'claude',
+					runtime: 'claude_code',
 					model: 'Claude Opus'
 				},
 				version: 1
@@ -130,7 +133,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 					role: 'product_designer',
 					title: 'Product Designer',
 					messaging_name: 'eden',
-					runtime: 'claude',
+					runtime: 'claude_code',
 					model: 'Claude Opus'
 				},
 				version: 1
@@ -146,7 +149,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 					role: 'product_manager',
 					title: 'Product Manager',
 					messaging_name: 'emery',
-					runtime: 'claude',
+					runtime: 'claude_code',
 					model: 'Claude Opus'
 				},
 				version: 1
@@ -162,7 +165,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 					role: 'code_reviewer',
 					title: 'Code Reviewer',
 					messaging_name: 'tomas',
-					runtime: 'claude',
+					runtime: 'claude_code',
 					model: 'Claude Opus'
 				},
 				version: 1
@@ -257,7 +260,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 					role: 'support_engineer',
 					title: 'Support Engineer',
 					messaging_name: 'noor',
-					runtime: 'claude',
+					runtime: 'claude_code',
 					model: 'Claude Sonnet'
 				},
 				version: 1
@@ -377,8 +380,9 @@ export function pocProjectRows(): ProjectRow[] {
 			slug: 'v0.9',
 			name: 'Office federation',
 			archived: false,
-			ownerTeam: { id: 'platform', name: 'Platform (Rust)' },
+			ownerTeam: { id: 'platform', ref: 'TEAM-3', name: 'Platform (Rust)' },
 			contributors: [],
+			developmentProcess: null,
 			tasks: { todo: 1, inProgress: 2, blocked: 1, done: 1, cancelled: 0 },
 			bugs: { critical: 1, major: 0, minor: 0, trivial: 0, unset: 0 }
 		},
@@ -388,12 +392,13 @@ export function pocProjectRows(): ProjectRow[] {
 			slug: 'v1.0',
 			name: 'Agentic Org v1.0',
 			archived: false,
-			ownerTeam: { id: 'leadership', name: 'Leadership' },
+			ownerTeam: { id: 'leadership', ref: 'TEAM-1', name: 'Leadership' },
 			contributors: [
-				{ id: 'platform', name: 'Platform (Rust)' },
-				{ id: 'app', name: 'App (Svelte)' },
-				{ id: 'quality', name: 'Quality' }
+				{ id: 'platform', ref: 'TEAM-3', name: 'Platform (Rust)' },
+				{ id: 'app', ref: 'TEAM-4', name: 'App (Svelte)' },
+				{ id: 'quality', ref: 'TEAM-5', name: 'Quality' }
 			],
+			developmentProcess: null,
 			tasks: { todo: 2, inProgress: 1, blocked: 1, done: 8, cancelled: 0 },
 			bugs: { critical: 0, major: 0, minor: 2, trivial: 0, unset: 0 }
 		},
@@ -403,8 +408,9 @@ export function pocProjectRows(): ProjectRow[] {
 			slug: 'v1.1',
 			name: 'Look & feel refresh',
 			archived: false,
-			ownerTeam: { id: 'product', name: 'Product & Design' },
-			contributors: [{ id: 'app', name: 'App (Svelte)' }],
+			ownerTeam: { id: 'product', ref: 'TEAM-2', name: 'Product & Design' },
+			contributors: [{ id: 'app', ref: 'TEAM-4', name: 'App (Svelte)' }],
+			developmentProcess: null,
 			tasks: { todo: 0, inProgress: 3, blocked: 0, done: 3, cancelled: 0 },
 			bugs: { critical: 0, major: 0, minor: 1, trivial: 0, unset: 0 }
 		},
@@ -414,8 +420,9 @@ export function pocProjectRows(): ProjectRow[] {
 			slug: 'v0.1',
 			name: 'Early UI prototype',
 			archived: true,
-			ownerTeam: { id: 'product', name: 'Product & Design' },
+			ownerTeam: { id: 'product', ref: 'TEAM-2', name: 'Product & Design' },
 			contributors: [],
+			developmentProcess: null,
 			tasks: { todo: 0, inProgress: 0, blocked: 0, done: 6, cancelled: 0 },
 			bugs: { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 }
 		}
@@ -549,7 +556,7 @@ export function pocWorkItems(): WorkItemSummary[] {
 		short_id: string,
 		kind: WorkItemSummary['kind'],
 		title: string,
-		status: string,
+		status: ItemStatus,
 		project_id: string,
 		assignee_id: string | undefined,
 		extra: Partial<WorkItemSummary> = {}
@@ -566,13 +573,20 @@ export function pocWorkItems(): WorkItemSummary[] {
 		created_by: assignee_id ?? 'ada',
 		created_at: agoIso(180),
 		updated_at: agoIso(20),
+		severity_confirmed: kind === 'bug',
+		fixes: [],
+		fixed_by: [],
 		checklist: {
 			total: 3,
 			done: status === 'done' || status === 'closed' ? 3 : 2,
 			required_left: 0
 		},
+		done_anyway: false,
+		owner_office_id: POC_HQ_OFFICE_ID,
+		generation: 1,
 		reopen_count: 0,
 		version: 1,
+		deleted: false,
 		...extra
 	});
 
@@ -591,7 +605,7 @@ export function pocWorkItems(): WorkItemSummary[] {
 			'office-federation',
 			'quinn',
 			{
-				priority: 'medium'
+				priority: 'normal'
 			}
 		),
 		mk(
@@ -642,7 +656,7 @@ export function pocWorkItems(): WorkItemSummary[] {
 			}
 		),
 		mk('w-t121', 'T-121', 'task', 'Split codec 2a.3.2b', 'in_progress', 'agency-v1', 'kai', {
-			priority: 'medium'
+			priority: 'normal'
 		}),
 		mk('w-t124', 'T-124', 'task', 'CSP gates in the UI suite', 'blocked', 'agency-v1', 'jules', {
 			priority: 'high',
@@ -652,7 +666,7 @@ export function pocWorkItems(): WorkItemSummary[] {
 			priority: 'high'
 		}),
 		mk('w-t142', 'T-142', 'task', 'Write the v1.0 release notes', 'done', 'agency-v1', 'you', {
-			priority: 'medium'
+			priority: 'normal'
 		}),
 		mk(
 			'w-t144',
@@ -735,7 +749,7 @@ export function pocWorkItems(): WorkItemSummary[] {
 			'look-feel',
 			'eden',
 			{
-				priority: 'medium'
+				priority: 'normal'
 			}
 		),
 		mk(
@@ -794,6 +808,7 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: true,
 			canSignIn: true,
+			directReports: 4,
 			presence: { id: 'available' }
 		},
 		{
@@ -805,7 +820,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: true,
-			homeTeam: { id: 'leadership', name: 'Leadership' },
+			directReports: 0,
+			homeTeam: { id: 'leadership', ref: 'TEAM-1', name: 'Leadership' },
 			presence: { id: 'offline', detail: 'Last seen yesterday' },
 			reportsTo: { id: 'you', name: 'You' }
 		},
@@ -818,7 +834,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'leadership', name: 'Leadership' },
+			directReports: 0,
+			homeTeam: { id: 'leadership', ref: 'TEAM-1', name: 'Leadership' },
 			office: hq,
 			presence: { id: 'available', detail: 'Synthesizing executive brief' },
 			reportsTo: { id: 'you', name: 'You' }
@@ -832,7 +849,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'leadership', name: 'Leadership' },
+			directReports: 8,
+			homeTeam: { id: 'leadership', ref: 'TEAM-1', name: 'Leadership' },
 			office: hq,
 			presence: { id: 'working', detail: 'Re-sequence nav slices for IA v2' },
 			reportsTo: { id: 'you', name: 'You' },
@@ -851,7 +869,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'platform', name: 'Platform (Rust)' },
+			directReports: 0,
+			homeTeam: { id: 'platform', ref: 'TEAM-3', name: 'Platform (Rust)' },
 			office: hq,
 			presence: { id: 'working', detail: 'Custody lock fix ruling' },
 			reportsTo: { id: 'ada', name: 'Ada' },
@@ -870,7 +889,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'product', name: 'Product & Design' },
+			directReports: 0,
+			homeTeam: { id: 'product', ref: 'TEAM-2', name: 'Product & Design' },
 			office: hq,
 			presence: { id: 'working', detail: 'Presence vocabulary across screens' },
 			reportsTo: { id: 'you', name: 'You' },
@@ -889,7 +909,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'product', name: 'Product & Design' },
+			directReports: 0,
+			homeTeam: { id: 'product', ref: 'TEAM-2', name: 'Product & Design' },
 			office: hq,
 			presence: { id: 'working', detail: 'Information architecture v2 prototype' },
 			reportsTo: { id: 'ada', name: 'Ada' },
@@ -908,7 +929,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'quality', name: 'Quality' },
+			directReports: 1,
+			homeTeam: { id: 'quality', ref: 'TEAM-5', name: 'Quality' },
 			office: hq,
 			presence: { id: 'working', detail: "Review of Sage's lock fix 492e59e4" },
 			reportsTo: { id: 'ada', name: 'Ada' }
@@ -922,7 +944,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'platform', name: 'Platform (Rust)' },
+			directReports: 0,
+			homeTeam: { id: 'platform', ref: 'TEAM-3', name: 'Platform (Rust)' },
 			office: hq,
 			presence: { id: 'with_you', detail: 'Codec split 2a.3.2b' },
 			reportsTo: { id: 'ada', name: 'Ada' },
@@ -937,7 +960,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'platform', name: 'Platform (Rust)' },
+			directReports: 0,
+			homeTeam: { id: 'platform', ref: 'TEAM-3', name: 'Platform (Rust)' },
 			office: hq,
 			presence: { id: 'working', detail: 'Custody lock fix' },
 			reportsTo: { id: 'ada', name: 'Ada' },
@@ -952,7 +976,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'platform', name: 'Platform (Rust)' },
+			directReports: 0,
+			homeTeam: { id: 'platform', ref: 'TEAM-3', name: 'Platform (Rust)' },
 			office: sat,
 			presence: { id: 'offline', detail: 'Build box office offline' },
 			reportsTo: { id: 'ada', name: 'Ada' }
@@ -966,7 +991,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'app', name: 'App (Svelte)' },
+			directReports: 0,
+			homeTeam: { id: 'app', ref: 'TEAM-4', name: 'App (Svelte)' },
 			office: hq,
 			presence: { id: 'offline', detail: 'Monthly budget reached' },
 			reportsTo: { id: 'ada', name: 'Ada' },
@@ -985,7 +1011,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'paused',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'app', name: 'App (Svelte)' },
+			directReports: 0,
+			homeTeam: { id: 'app', ref: 'TEAM-4', name: 'App (Svelte)' },
 			office: hq,
 			presence: { id: 'paused' },
 			reportsTo: { id: 'ada', name: 'Ada' }
@@ -999,7 +1026,8 @@ export function pocMemberRows(): MemberRow[] {
 			status: 'active',
 			owner: false,
 			canSignIn: false,
-			homeTeam: { id: 'quality', name: 'Quality' },
+			directReports: 0,
+			homeTeam: { id: 'quality', ref: 'TEAM-5', name: 'Quality' },
 			office: null,
 			presence: { id: 'offline', detail: 'Not placed in an office' },
 			reportsTo: { id: 'tomas', name: 'Tomas' }
@@ -1016,7 +1044,7 @@ export function pocOfficesOverview(): OfficesOverview {
 				officeId: sat.id,
 				where: 'mac-mini-2 (satellite)',
 				lastSeenAt: agoIso(120),
-				sync: { kind: 'catching_up', changes: 4 },
+				sync: { kind: 'behind', changes: 4 },
 				version: '1.0.0-rc.3',
 				follows: ['Office federation'],
 				tasks: 1
@@ -1031,7 +1059,7 @@ export function pocOfficesOverview(): OfficesOverview {
 				officeId: sat.id,
 				officeName: 'Build box',
 				description: 'Resume Quinn task T-135 snapshot sync',
-				state: 'queued',
+				state: 'pending',
 				since: agoIso(95)
 			}
 		],
@@ -1047,19 +1075,20 @@ export function pocOrganizationCost(request: PeriodRequest): OrganizationCost {
 	const now = new Date();
 	const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
 	const end = now.toISOString();
-	const totals = (microUsd: number, records: number) => ({
+	const totals = (microUsd: number, records: number): UsageTotals => ({
 		records,
 		knownCostMicroUsd: microUsd,
-		knownTokens: { input: records * 18_000, output: records * 6_000, total: records * 24_000 },
-		apiEquivalentCount: 0,
-		unpricedCount: 0,
-		missingTokensCount: 0,
-		missingRuntimeCount: 0
+		knownTokens: records * 24_000,
+		cacheReadTokens: records * 4_000,
+		tokenIncompleteRecords: 0,
+		costIncompleteRecords: 0,
+		unpricedRecords: 0,
+		unknownCostRecords: 0,
+		includesApiEquivalent: false
 	});
 	return {
 		period: {
 			kind: request.kind,
-			label: 'This month',
 			startsAt: start,
 			endsAt: end,
 			timeZone: request.timeZone,
@@ -1069,7 +1098,6 @@ export function pocOrganizationCost(request: PeriodRequest): OrganizationCost {
 		previous: {
 			period: {
 				kind: 'last_month',
-				label: 'Last month',
 				startsAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString(),
 				endsAt: start,
 				timeZone: request.timeZone,
@@ -1162,16 +1190,14 @@ export function pocAgentBudgets(): AgentBudgets {
 	const startsAt = new Date(Date.UTC(y, m, 1)).toISOString();
 	const endsAt = new Date(Date.UTC(y, m + 1, 1)).toISOString();
 	const periodKey = `${y}-${String(m + 1).padStart(2, '0')}`;
-	const mkMonthly = (spent: number, limit: number, hold?: 'held') => ({
-		unit: 'usd' as const,
+	const mkMonthly = (spent: number, limit: number, hold?: 'held'): BudgetPeriodState => ({
+		unit: 'usd',
 		limit,
 		spent,
 		complete: true,
 		warned: spent / limit >= 0.8,
 		...(hold ? { hold } : {}),
-		periodKey,
-		startsAt,
-		endsAt
+		period: { key: periodKey, startsAt, endsAt }
 	});
 	// Total monthly budget = $180 ($180,000,000 micro-USD); spent = $142 (79%), Jules at cap ($40 / $40)
 	return {
@@ -1186,7 +1212,7 @@ export function pocAgentBudgets(): AgentBudgets {
 	};
 }
 
-export function pocProjectInvestments(request: { timeZone: string }): ProjectInvestments {
+export function pocProjectInvestments(request: { timeZone: string }): ProjectInvestment {
 	const cost = pocOrganizationCost({ kind: 'this_month', timeZone: request.timeZone });
 	return {
 		scope: 'organization',
@@ -1401,8 +1427,14 @@ export function pocWorkItemById(idOrRef: string): WorkItem | undefined {
 		(i) => i.id.toLowerCase() === needle || i.short_id.toLowerCase() === needle
 	);
 	if (!summary) return undefined;
+	const done =
+		summary.status === 'done' || summary.status === 'closed' || summary.status === 'approved';
+	const asOf = new Date().toISOString();
+	const leadMs = Math.max(0, Date.parse(asOf) - Date.parse(summary.created_at));
 	return {
-		...summary,
+		summary,
+		backlinks_more: false,
+		watchers_more: false,
 		description: summary.blocked_reason
 			? `${summary.title} — ${summary.blocked_reason}.`
 			: `${summary.title} tracked in Agentic Org POC mirror dataset.`,
@@ -1412,19 +1444,28 @@ export function pocWorkItemById(idOrRef: string): WorkItem | undefined {
 				text: 'Implementation and unit checks complete',
 				done: true,
 				required: true,
-				position: 0
+				version: 1
 			},
 			{
 				id: `${summary.id}-step-2`,
 				text: 'Peer review verified',
-				done: summary.status === 'done' || summary.status === 'closed',
+				done,
 				required: false,
-				position: 1
+				version: 1
 			}
 		],
-		watchers: summary.assignee_id ? [summary.assignee_id] : [],
 		links: [],
-		comments: []
+		backlinks: [],
+		watchers: summary.assignee_id ? [summary.assignee_id] : [],
+		time: {
+			lead_ms: leadMs,
+			waiting_on_owner_ms: 0,
+			blocked_ms: 0,
+			rest_ms: leadMs,
+			open: !done,
+			rounds: 1,
+			as_of: asOf
+		}
 	};
 }
 
@@ -1433,11 +1474,12 @@ export function pocWorkActivity(idOrRef: string): WorkEvent[] {
 	if (!item) return [];
 	return [
 		{
-			id: `ev-${item.id}-1`,
-			item_id: item.id,
-			kind: 'created',
-			actor_id: item.created_by,
-			at: item.created_at
+			target_id: item.summary.id,
+			version: 1,
+			at: item.summary.created_at,
+			actor_id: item.summary.created_by,
+			org_position: { epoch: 1, seq: 1 },
+			change: { type: 'created' }
 		}
 	];
 }

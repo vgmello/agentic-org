@@ -71,8 +71,7 @@ export function pocBuildOffice(): OfficeInfo {
 		name: 'Build box',
 		role: 'satellite',
 		host: 'mac-mini-2',
-		status: 'offline',
-		status_reason: 'unreachable'
+		status: 'offline'
 	};
 }
 
