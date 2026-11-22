@@ -209,7 +209,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .topbar::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: linear-gradient(180deg, rgba(6, 13, 25, .74) 0%, rgba(6, 13, 25, .42) 72%, rgba(6, 13, 25, 0) 100%); backdrop-filter: blur(18px) saturate(145%); -webkit-backdrop-filter: blur(18px) saturate(145%); -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 76%, transparent 100%); mask-image: linear-gradient(180deg, #000 0%, #000 76%, transparent 100%); }
 .topbar .menu-btn { position: absolute; left: 12px; }
 
-/* Unified Floating Command & Org AI Bar */
+/* Unified Floating Command & Ask Org Bar */
 .cmdk-shell {
   display: inline-flex; align-items: center;
   width: min(640px, 100%); height: 46px; padding: 5px 6px 5px 6px;
@@ -1896,7 +1896,7 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 .hb-err-meta .ic { width: 13px; height: 13px; color: #7DD3FC; }
 .hb-cleared-acts { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
 
-/* Right: Autonomous Catch-up Digest + Interactive Org AI Ask Panel */
+/* Right: Autonomous Catch-up Digest + Interactive Ask Org Panel */
 .hb-catchup {
   display: flex; flex-direction: column; gap: 14px;
   padding: 20px 22px 18px; border-radius: 18px;
@@ -3806,7 +3806,7 @@ html[data-theme="report-dark"] .split .list { background: #161B24; }
     <div class="cmdk-shell" id="cmdk-shell">
       <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog">
         <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
-        <span class="cmdk-ph" id="cmdk-ph">Search, run a command, or ask Org AI…</span>
+        <span class="cmdk-ph" id="cmdk-ph">Search, run a command, or ask Org…</span>
         <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
       </button>
       <span class="cmdk-sep" aria-hidden="true"></span>
@@ -3821,21 +3821,21 @@ html[data-theme="report-dark"] .split .list { background: #161B24; }
 
 <div id="overlay-root"></div>
 <div class="cmdk-backdrop" id="cmdk-root" hidden>
-  <div class="cmdk-dialog" id="cmdk-dialog" role="dialog" aria-modal="true" aria-label="Command palette and Org AI">
+  <div class="cmdk-dialog" id="cmdk-dialog" role="dialog" aria-modal="true" aria-label="Command palette and Ask Org">
     <div class="cmdk-tabs">
       <div class="cmdk-tab-grp" role="tablist" aria-label="Palette mode">
         <button class="cmdk-tab" id="cmdk-tab-cmd" type="button" role="tab" aria-selected="true" aria-controls="cmdk-list" data-act="cmdk-mode" data-v="cmd">
           <svg class="ic ic14" aria-hidden="true"><use href="#i-search"/></svg><span>Search &amp; Commands</span>
         </button>
         <button class="cmdk-tab" id="cmdk-tab-ai" type="button" role="tab" aria-selected="false" aria-controls="cmdk-list" data-act="cmdk-mode" data-v="ai">
-          <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Ask Org AI</span>
+          <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Ask Org</span>
         </button>
       </div>
       <button type="button" class="cmdk-esc" data-act="cmdk-close" aria-label="Close command palette">ESC</button>
     </div>
     <div class="cmdk-in-row">
       <svg class="ic ic20" id="cmdk-in-ico" aria-hidden="true"><use href="#i-search"/></svg>
-      <input id="cmdk-input" type="search" placeholder="Type a command, search anything, or ask a question…" autocomplete="off" aria-label="Search, run a command, or ask Org AI" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="cmdk-list">
+      <input id="cmdk-input" type="search" placeholder="Type a command, search anything, or ask a question…" autocomplete="off" aria-label="Search, run a command, or ask Org" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="cmdk-list">
       <button class="cmdk-ask-go" id="cmdk-ask-go" type="button" data-act="cmdk-ai-submit" hidden>Ask</button>
     </div>
     <div class="cmdk-list" id="cmdk-list" role="listbox" aria-label="Commands and search results"></div>
@@ -4949,7 +4949,7 @@ function pageHome() {
       ${st === "loading" ? skel(4, "Synthesizing executive brief…") : `
       <div class="hb-ai-brief">
         <div class="hb-ai-hd-row">
-          <div class="hb-ai-eyebrow">${ic("sparkle", "ic14")}<span>Org AI · ${lens === "board" ? "Board Memo" : lens === "week" ? "7-Day Synthesis" : "Chief of Staff"}</span></div>
+          <div class="hb-ai-eyebrow">${ic("sparkle", "ic14")}<span>Ask Org · ${lens === "board" ? "Board Memo" : lens === "week" ? "7-Day Synthesis" : "Chief of Staff"}</span></div>
           <span class="hb-ai-updated">Live · 2m ago</span>
         </div>
         ${lensBody}
@@ -5177,7 +5177,7 @@ function pageHome() {
       const queuedPct = Math.max(1, 100 - agentPct - ciPct - humanPct);
       const queuedHighCls = queuedPct > 30 ? " is-high" : "";
       const constraint = S.aiRebalanced
-        ? `Org AI activated ${idleSpecsN} idle specialists onto queued tasks — agent wait time dropped from 47% to ${queuedPct}%.`
+        ? `Ask Org activated ${idleSpecsN} idle specialists onto queued tasks — agent wait time dropped from 47% to ${queuedPct}%.`
         : queuedPct >= 40
           ? `${queuedPct}% of open task time is waiting for an agent. Reconnecting the Build box office and activating ${idleSpecsN} idle specialists will speed up delivery.`
           : humanPct >= 25
@@ -6605,16 +6605,16 @@ function renderNav(route) {
   if (cmdkTr) {
     cmdkTr.classList.toggle("is-offline", homeError);
     cmdkTr.disabled = homeError;
-    cmdkTr.title = homeError ? "Search & commands unavailable while HQ office is offline" : "Search, run a command, or ask Org AI";
+    cmdkTr.title = homeError ? "Search & commands unavailable while HQ office is offline" : "Search, run a command, or ask Org";
   }
-  if (cmdkPh) cmdkPh.textContent = homeError ? "HQ office offline — search & AI unavailable" : "Search, run a command, or ask Org AI…";
+  if (cmdkPh) cmdkPh.textContent = homeError ? "HQ office offline — search & AI unavailable" : "Search, run a command, or ask Org…";
   if (aiBtn) {
     aiBtn.classList.toggle("is-offline", homeError);
     aiBtn.disabled = homeError;
     aiBtn.innerHTML = homeError
       ? `${ic("offline", "ic14")}<span>Offline</span>`
       : `${ic("sparkle", "ic14")}<span>Ask</span>`;
-    aiBtn.title = homeError ? "Org AI unavailable while HQ office is offline" : "Ask Org AI";
+    aiBtn.title = homeError ? "Ask Org unavailable while HQ office is offline" : "Ask Org";
   }
   if (homeError && CMDK.open) closeCmdk(false);
   const item = (href, label, icon, cur, extra = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span>${extra}</a></li>`;
@@ -6808,11 +6808,11 @@ function cmdkCommands() {
     { group: "Actions", label: "New message", sub: "Start a conversation in Chat", icon: "chat", tag: "Command", run: () => toast("New message (prototype action)") },
     { group: "Actions", label: "Add a person", sub: "Invite a teammate to this organization", icon: "user-plus", tag: "Command", run: () => toast("Add a person (prototype action)") },
     ...(isEmpty ? [
-      { group: "Ask Org AI", label: "Ask: How do I launch my first project?", sub: "Walk through setting up projects and hiring agents", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("How do I launch my first project?") }
+      { group: "Ask Org", label: "Ask: How do I launch my first project?", sub: "Walk through setting up projects and hiring agents", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("How do I launch my first project?") }
     ] : [
-      { group: "Ask Org AI", label: "Ask: What's slowing v1.0?", sub: "Summarize active blockers and pending sign-offs", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("What's slowing v1.0?") },
-      { group: "Ask Org AI", label: "Ask: Budget, capacity & idle agents", sub: "Check monthly spend, AI capacity & idle specialists", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Budget, capacity & idle agents") },
-      { group: "Ask Org AI", label: "Ask: Next 14 days milestones", sub: "Review upcoming deliverables and schedule pace", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Next 14 days milestones") }
+      { group: "Ask Org", label: "Ask: What's slowing v1.0?", sub: "Summarize active blockers and pending sign-offs", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("What's slowing v1.0?") },
+      { group: "Ask Org", label: "Ask: Budget, capacity & idle agents", sub: "Check monthly spend, AI capacity & idle specialists", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Budget, capacity & idle agents") },
+      { group: "Ask Org", label: "Ask: Next 14 days milestones", sub: "Review upcoming deliverables and schedule pace", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Next 14 days milestones") }
     ]),
     { group: "Navigate", label: "Go to Home", sub: "Executive briefing & decision spotlight", icon: "home", href: "#/home" },
     { group: "Navigate", label: "Go to Inbox", sub: `${isEmpty ? 0 : unhandled().length} waiting on you`, icon: "inbox", href: "#/inbox" },
@@ -6849,7 +6849,7 @@ function setCmdkMode(mode) {
 }
 function openCmdk(prefill = "", mode = "cmd") {
   if (route()[0] === "home" && S.homeState === "error") {
-    toast("HQ office is offline — reconnect to use search and Org AI.", "offline");
+    toast("HQ office is offline — reconnect to use search and Ask Org.", "offline");
     return;
   }
   CMDK.returnTo = document.activeElement;
@@ -6900,7 +6900,7 @@ function renderCmdk() {
   if (footNav) footNav.style.display = isAi ? "none" : "";
   if (inp) {
     inp.placeholder = isAi
-      ? "Ask Org AI — what's blocked, release pace, budget, or idle agents…"
+      ? "Ask Org — what's blocked, release pace, budget, or idle agents…"
       : "Type a command, search anything, or ask a question…";
   }
 
@@ -6913,7 +6913,7 @@ function renderCmdk() {
     const prevTurns = CMDK.aiHistory.slice(1);
     const ansHtml = curTurn ? `<div class="cmdk-ai-card" role="status" aria-live="polite">
       <div class="cmdk-ai-card-hd">
-        <span>${ic("sparkle", "ic14")} Org AI · “${esc(curTurn.q)}”</span>
+        <span>${ic("sparkle", "ic14")} Ask Org · “${esc(curTurn.q)}”</span>
         <button type="button" data-act="cmdk-ai-clear">${prevTurns.length ? "Clear history" : "Clear"}</button>
       </div>
       <div>${curTurn.html}</div>
@@ -6940,7 +6940,7 @@ function renderCmdk() {
   if (!q) {
     const byGrp = {};
     cmds.forEach((c) => { (byGrp[c.group] = byGrp[c.group] || []).push(c); });
-    ["Actions", "Ask Org AI", "Navigate", "Workspace"].forEach((g) => { if (byGrp[g]) groups.push([g, byGrp[g]]); });
+    ["Actions", "Ask Org", "Navigate", "Workspace"].forEach((g) => { if (byGrp[g]) groups.push([g, byGrp[g]]); });
   } else {
     const matchedCmds = cmds.filter((c) => c.label.toLowerCase().includes(q) || c.sub.toLowerCase().includes(q));
     if (matchedCmds.length) groups.push(["Commands", matchedCmds]);
@@ -6951,8 +6951,8 @@ function renderCmdk() {
         if (inboxHits.length) groups.push(["Needs you", inboxHits]);
         searchResults(q, 4).forEach(([g, items]) => groups.push([g, items]));
       }
-      groups.push(["Ask Org AI", [
-        { label: `Ask Org AI: “${raw}”`, sub: "Get an instant answer right here from live org state", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk(raw) },
+      groups.push(["Ask Org", [
+        { label: `Ask Org: “${raw}”`, sub: "Get an instant answer right here from live org state", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk(raw) },
         ...(S.homeState === "empty" ? [] : [{ label: `See all search results for “${raw}”`, sub: "Open full search page", icon: "search", href: "#/search?q=" + encodeURIComponent(raw) }])
       ]]);
     }
@@ -7250,7 +7250,7 @@ document.addEventListener("click", (e) => {
       toast("Board memo copied to clipboard.");
       break;
     }
-    case "ai-rebalance-idle": S.aiRebalanced = !S.aiRebalanced; render(false); toast(S.aiRebalanced ? "Org AI activated 3 idle specialists — agent wait dropped from 47% to 15%." : "Restored previous agent allocation."); break;
+    case "ai-rebalance-idle": S.aiRebalanced = !S.aiRebalanced; render(false); toast(S.aiRebalanced ? "Ask Org activated 3 idle specialists — agent wait dropped from 47% to 15%." : "Restored previous agent allocation."); break;
     case "cmdk-ai-submit": askInCmdk(CMDK.q); break;
     case "cmdk-ai-clear": CMDK.aiAns = null; CMDK.aiHistory = []; renderCmdk(); { const i = document.getElementById("cmdk-input"); if (i) i.focus(); } break;
     case "cmdk-run": runCmdkItem(Number(v)); break;

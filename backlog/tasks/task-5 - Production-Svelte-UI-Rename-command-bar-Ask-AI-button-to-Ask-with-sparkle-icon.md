@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-22T01:26:00Z'
+updated_date: '2026-11-22T02:06:00Z'
 labels:
   - ui
   - shell
@@ -19,11 +20,12 @@ ordinal: 5000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Update ExecutiveCommandBar.svelte so the AI action button displays the sparkle icon + 'Ask' instead of 'Ask AI' across all themes, and update any affected unit/e2e tests.
+Update ExecutiveCommandBar.svelte so the AI action button displays sparkle icon + 'Ask', and rename all 'Ask Org AI' / 'Org AI' copy (placeholder, modal tab, group headings, aria labels) to 'Ask Org' across all themes.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 ExecutiveCommandBar.svelte renders sparkle icon + 'Ask' label across all themes
 - [ ] #2 All Svelte unit tests, e2e specs, and ui-gate checks pass
+- [ ] #3 Command bar placeholder, modal tab, and headings say 'Ask Org' (button says sparkle + 'Ask')
 <!-- AC:END -->
