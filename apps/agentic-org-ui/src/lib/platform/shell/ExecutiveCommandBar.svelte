@@ -9,6 +9,7 @@
 	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import Users from '@lucide/svelte/icons/users';
 	import * as Dialog from '$lib/components/ui/dialog';
+	import { cn } from '$lib/utils';
 	import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/modules/inbox/types';
 	import { answerExecutiveQuestion, type OrgAiAnswer } from '$lib/home/model';
@@ -273,14 +274,14 @@
 	class="sticky top-0 z-30 flex h-[68px] shrink-0 items-center justify-center border-b border-[var(--exec-border)] bg-[color-mix(in_srgb,var(--exec-bg)_88%,transparent)] px-6 backdrop-blur-md"
 >
 	<div
-		class="flex h-[46px] w-full max-w-[640px] items-center rounded-[14px] bg-[var(--exec-surface)] p-1.5 shadow-[var(--exec-shadow)] [backdrop-filter:var(--exec-blur)]"
+		class="exec-cmdk-bar flex h-[46px] w-full max-w-[640px] items-center rounded-[14px] bg-[var(--exec-surface)] p-1.5 shadow-[var(--exec-shadow)] [backdrop-filter:var(--exec-blur)] [-webkit-backdrop-filter:var(--exec-blur)]"
 	>
 		<button
 			type="button"
 			onclick={() => openModal('cmd')}
 			aria-haspopup="dialog"
 			aria-expanded={open}
-			class="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-[10px] px-3 text-left text-sm text-[var(--exec-muted)] transition-colors hover:text-[var(--exec-ink)]"
+			class="exec-cmdk-trigger flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-[10px] px-3 text-left text-sm text-[var(--exec-muted)] transition-colors hover:text-[var(--exec-ink)]"
 		>
 			<Search class="size-[17px] shrink-0" aria-hidden="true" />
 			<span class="min-w-0 flex-1 truncate">Search, run a command, or ask Org AI…</span>
@@ -290,7 +291,7 @@
 		<button
 			type="button"
 			onclick={() => openModal('ai')}
-			class="inline-flex h-[34px] shrink-0 items-center gap-1.5 rounded-[9px] bg-[var(--exec-accent-soft)] px-3.5 text-xs font-semibold text-[var(--exec-accent-ink)] shadow-[inset_0_0_0_1px_var(--exec-accent-ring)] transition-colors hover:bg-[var(--exec-accent)] hover:text-[var(--on-emphasis)]"
+			class="exec-ai-btn inline-flex h-[34px] shrink-0 items-center gap-1.5 rounded-[9px] bg-[var(--exec-accent-soft)] px-3.5 text-xs font-semibold text-[var(--exec-accent-ink)] shadow-[inset_0_0_0_1px_var(--exec-accent-ring)] transition-colors hover:bg-[var(--exec-accent)] hover:text-[var(--exec-on-accent)]"
 		>
 			<Sparkles class="size-3.5 shrink-0" aria-hidden="true" />
 			<span>Ask</span>
@@ -361,7 +362,7 @@
 					<span>Ask Org AI</span>
 				</button>
 			</div>
-			<Dialog.Close class={[kbdClass, 'px-2 py-1 text-[11px]']}>ESC</Dialog.Close>
+			<Dialog.Close class={cn(kbdClass, 'px-2 py-1 text-[11px]')}>ESC</Dialog.Close>
 		</div>
 
 		<div class="flex items-center gap-3 border-b border-[var(--exec-border)] px-4 py-3.5">

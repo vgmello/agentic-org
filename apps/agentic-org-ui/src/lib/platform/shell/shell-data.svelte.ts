@@ -1,4 +1,4 @@
-import { createContext } from 'svelte';
+import { createContext, untrack } from 'svelte';
 import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import { inboxApi } from '$lib/modules/inbox/api';
 import type { InboxItem } from '$lib/modules/inbox/types';
@@ -19,6 +19,7 @@ export class ShellData {
 	snapshot = $state.raw<OrgSnapshot | undefined>(undefined);
 	workItems = $state.raw<WorkItemSummary[]>([]);
 	workError = $state.raw<unknown>(undefined);
+	workErrorSeq = $state(0);
 	inboxItems = $state.raw<InboxItem[]>([]);
 	#layeredOffices = $state.raw<OfficeInfo[]>([]);
 	loaded = $state(false);
@@ -59,7 +60,7 @@ export class ShellData {
 			this.loaded = false;
 			this.loadedOrganizationId = undefined;
 		}
-		const baseOffices = this.#options.getBaseOffices();
+		const baseOffices = untrack(() => this.#options.getBaseOffices());
 		const promise = Promise.allSettled([
 			orgApi.view(id),
 			workApi.snapshot(id),
@@ -73,6 +74,7 @@ export class ShellData {
 				this.workError = undefined;
 			} else {
 				this.workError = workRes.reason;
+				this.workErrorSeq += 1;
 			}
 			if (inboxRes.status === 'fulfilled') this.inboxItems = inboxRes.value;
 			this.#layeredOffices = officesRes.status === 'fulfilled' ? officesRes.value : baseOffices;

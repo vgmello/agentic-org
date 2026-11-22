@@ -36,7 +36,7 @@
 	let denyInputEl = $state<HTMLInputElement | null>(null);
 	let openContextIds = $state<Record<string, boolean>>({});
 	let nowMs = $state(Date.now());
-	let lastReportedError: unknown = undefined;
+	let lastReportedErrorSeq = untrack(() => (shellData.loaded ? shellData.workErrorSeq : 0));
 
 	const allDecisions = $derived(
 		deriveDecisionSpotlight(items ?? [], snapshot, ownerId, nowMs, inboxItems)
@@ -59,9 +59,10 @@
 	});
 
 	$effect(() => {
+		const seq = shellData.workErrorSeq;
 		const rawError = shellData.workError;
-		if (!rawError || rawError === lastReportedError) return;
-		lastReportedError = rawError;
+		if (!rawError || seq === lastReportedErrorSeq) return;
+		lastReportedErrorSeq = seq;
 		const err = toAppError(rawError);
 		if (err.source === 'api' && (err.code === 'unsupported' || err.code === 'unavailable')) return;
 		toast.error(err.message);

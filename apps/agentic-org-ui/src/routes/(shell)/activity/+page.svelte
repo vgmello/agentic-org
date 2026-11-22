@@ -95,7 +95,9 @@
 		return kindFilter === 'all' ? mapped : mapped.filter((e) => e.kind === kindFilter);
 	});
 
-	const loading = $derived(activityRows === undefined);
+	const loading = $derived(
+		activityRows === undefined || (activityRows.length === 0 && workItems === undefined)
+	);
 
 	let loadSeq = 0;
 
