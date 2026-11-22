@@ -3,9 +3,11 @@ id: TASK-50
 title: >-
   L8: Private task notes — isolated store, ADR-0031 access boundary, API, and
   CLI
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lead'
 created_date: '2026-11-21T00:11:00Z'
+updated_date: '2026-11-22T02:56:00Z'
 labels:
   - backend
   - rust
