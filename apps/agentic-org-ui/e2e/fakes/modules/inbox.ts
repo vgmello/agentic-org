@@ -94,7 +94,7 @@ export const inboxApi: InboxApi = {
 	},
 	async act(organizationId, itemId, request) {
 		const all = await load(organizationId);
-		await mockLatency(350);
+		await mockLatency();
 		const item = all.find((i) => i.id === itemId);
 		if (!item) throw new Error('This item is gone.');
 		if (item.state === 'handled') throw new Error('It was already resolved, so nothing changed.');

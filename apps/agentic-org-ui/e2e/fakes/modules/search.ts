@@ -11,7 +11,7 @@ const has = (q: string, ...t: (string | undefined)[]) =>
 export const searchApi: SearchPageApi = {
 	async results(organizationId, query) {
 		const { snapshot } = await orgApi.view(organizationId);
-		await mockLatency(300);
+		await mockLatency();
 		if (mockMode().includes('error')) throw new Error('The office did not answer in time.');
 		const projects: SearchHit[] = (snapshot.projects ?? [])
 			.filter((p) => !p.archived && has(query, p.name, p.key))

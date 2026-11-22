@@ -31,7 +31,7 @@ const fail = (code: string, message: string) =>
 const modes = () => mockMode().split(',');
 
 async function overview(organizationId: string): Promise<AccessOverview> {
-	await mockLatency(250);
+	await mockLatency();
 	if (modes().includes('fails'))
 		throw fail('internal', "HQ didn't answer. Check that it's running, then try again.");
 	if (modes().includes('unavailable')) await unavailableCall();

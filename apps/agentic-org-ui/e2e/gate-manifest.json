@@ -573,11 +573,6 @@
 			"why": "The top-bar New menu opens the existing creation flows (request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."
 		},
 		{
-			"from": "src/routes/(shell)/+layout.svelte",
-			"to": "src/lib/modules/messaging/index.ts",
-			"why": "The layout only calls provideDraftStore (kept shared in messaging/drafts); the barrel is loaded on every page, so an import-time failure in any chat file shows in the always-run journeys."
-		},
-		{
 			"from": "e2e/*.spec.ts",
 			"to": "src/routes/(onboarding)/*/+page.svelte",
 			"why": "Every spec creates its organization through /create or /welcome as set-up; the org-lifecycle category and the create/open journeys cover those pages."
@@ -624,8 +619,8 @@
 		},
 		{
 			"from": "src/routes/(shell)/{+layout,home/+page}.svelte",
-			"to": "src/lib/modules/offices/index.ts",
-			"why": "The Executive shell and Home Workforce & Offices KPI read layered satellite office counts through the offices module's public index (officesApi, layerOffices); the offices specs cover that module."
+			"to": "src/lib/modules/offices/{index,api,layer}.ts",
+			"why": "The Executive shell and Home Workforce & Offices KPI read layered satellite office counts through the offices module's API/layer helpers (officesApi, layerOffices); the offices specs cover that module."
 		},
 		{
 			"from": "e2e/fakes/modules/org-chart.ts",

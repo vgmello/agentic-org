@@ -505,7 +505,7 @@ const member = async (organizationId: string, memberId: string) => {
  */
 async function signInGate(memberId: string) {
 	await gate();
-	await mockLatency(250);
+	await mockLatency();
 	if (modes().includes('refuse') || modes().includes('viewer'))
 		throw fail('not_authorized', 'Only the owner or the administrator changes sign-in access.');
 	if (modes().includes('gone') && memberId === 'leo') state.left.add('leo');

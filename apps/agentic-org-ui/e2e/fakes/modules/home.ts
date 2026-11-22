@@ -41,7 +41,7 @@ export const homeApi: HomeApi = {
 	},
 	async workingNow(organizationId) {
 		const { snapshot } = await orgApi.view(organizationId);
-		await mockLatency(350);
+		await mockLatency();
 		const mode = mockMode();
 		if (mode.includes('nopresence')) return { live: false, agents: [] };
 		if (mode.includes('nobody')) return { live: true, agents: [] };
@@ -59,7 +59,7 @@ export const homeApi: HomeApi = {
 		};
 	},
 	async month() {
-		await mockLatency(450);
+		await mockLatency();
 		return mockMode().includes('nomonth') ? null : summary.month;
 	}
 };

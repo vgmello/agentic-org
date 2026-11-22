@@ -68,14 +68,14 @@ const fail = (code: string, message: string, extra: Record<string, unknown> = {}
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
 
 async function read() {
-	await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 200));
+	if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 	if (on('unavailable')) await unavailableCall();
 	if (on('fails'))
 		throw fail('internal', "HQ didn't answer. Check that the office is running, then try again.");
 }
 
 async function write(name?: string) {
-	await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 400));
+	if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 	if (on('unavailable')) await unavailableCall();
 	if (on('stale'))
 		throw fail('storage_error', "HQ can't be reached, so nothing was saved. Try again.");

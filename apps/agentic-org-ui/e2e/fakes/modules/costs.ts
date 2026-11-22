@@ -89,7 +89,7 @@ const fail = (code: string, message: string, extra: Record<string, unknown> = {}
 	Object.assign(new Error(message), { source: 'api', code, message, ...extra });
 
 async function read() {
-	await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 200));
+	if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 	if (on('unavailable')) await unavailableCall();
 	if (on('fails'))
 		throw fail('internal', "HQ didn't answer. Check that the office is running, then try again.");
@@ -423,7 +423,7 @@ export const costsApi: CostsApi = {
 	},
 
 	async addPrice(_organizationId, draft) {
-		await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 500));
+		if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 		if (on('unavailable')) await unavailableCall();
 		const replay = operations.get(draft.operationId);
 		if (replay) return structuredClone(replay);
@@ -476,7 +476,7 @@ export const costsApi: CostsApi = {
 	},
 
 	async priceOperation(_organizationId, operationId) {
-		await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 300));
+		if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 		if (on('unavailable')) await unavailableCall();
 		const price = operations.get(operationId);
 		return price

@@ -6,23 +6,20 @@
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
 
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { afterNavigate, goto, invalidate } from '$app/navigation';
 	import { selectDesktopSection } from '$lib/platform/shell/desktop-navigation';
 	import { navigating, page } from '$app/state';
-	import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { orgApi } from '$lib/org/api';
-	import { owner } from '$lib/org/model';
 	import { noteChanged } from '$lib/org/live';
 	import { liveState } from '$lib/org/live-state.svelte';
-	import { workApi } from '$lib/work';
-	import { needsYou } from '$lib/work/saved';
 	import { areaFor } from '$lib/nav';
-	import { inboxApi, type InboxItem } from '$lib/modules/inbox';
-	import { officesApi, layerOffices } from '$lib/modules/offices';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
-	import { provideDraftStore } from '$lib/modules/messaging';
+	import { provideShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
+	import { officesApi } from '$lib/modules/offices/api';
+	import { layerOffices } from '$lib/modules/offices/layer';
 
 	let { data, children } = $props();
 	const organizationId = $derived(data.connection.organization.id);
@@ -82,51 +79,25 @@
 	}
 	onDestroy(() => clearTimeout(sidebarLeaveTimer));
 
-	let shellSnapshot = $state.raw<OrgSnapshot | undefined>();
-	let shellWork = $state.raw<WorkItemSummary[]>([]);
-	let shellInbox = $state.raw<InboxItem[]>([]);
-	let shellOffices = $state.raw<OfficeInfo[]>([]);
-	const shellOwnerId = $derived(shellSnapshot ? (owner(shellSnapshot)?.id ?? 'owner') : 'owner');
-	const shellOpenInbox = $derived(shellInbox.filter((i) => i.state === 'open').length);
-	const shellNeedsYou = $derived(
-		shellOpenInbox > 0 ? shellOpenInbox : needsYou(shellWork, shellOwnerId)
-	);
-	const activeOffices = $derived(
-		shellOffices.length > 0 ? shellOffices : data.connection.organization.offices
-	);
+	const shellData = provideShellData({
+		getOrganizationId: () => organizationId,
+		getBaseOffices: () => data.connection.organization.offices,
+		loadOffices: (id, baseOffices) =>
+			officesApi
+				.overview(id)
+				.then((overview) => layerOffices(baseOffices, overview))
+				.catch(() => baseOffices)
+	});
 
-	let shellLoadSeq = 0;
 	let leaving = false;
 
-	function loadShellData(id: string, reset = false) {
-		const seq = ++shellLoadSeq;
-		let cancelled = false;
-		if (reset) {
-			shellSnapshot = undefined;
-			shellWork = [];
-			shellInbox = [];
-			shellOffices = [];
-		}
-		const baseOffices = data.connection.organization.offices;
-		void Promise.allSettled([
-			orgApi.view(id),
-			workApi.snapshot(id),
-			inboxApi.list(id),
-			officesApi.overview(id)
-		]).then(([orgRes, workRes, inboxRes, officesRes]) => {
-			if (leaving || cancelled || seq !== shellLoadSeq) return;
-			if (orgRes.status === 'fulfilled') shellSnapshot = orgRes.value.snapshot;
-			if (workRes.status === 'fulfilled') shellWork = workRes.value.items;
-			if (inboxRes.status === 'fulfilled') shellInbox = inboxRes.value;
-			const overview = officesRes.status === 'fulfilled' ? officesRes.value : undefined;
-			shellOffices = layerOffices(baseOffices, overview);
-		});
-		return () => {
-			cancelled = true;
-		};
-	}
-
-	$effect(() => loadShellData(organizationId, true));
+	$effect(() => {
+		const id = organizationId;
+		const reset = untrack(() => shellData.loadedOrganizationId !== id);
+		const { cancel } = shellData.load(id, reset);
+		return cancel;
+	});
+	onDestroy(() => shellData.dispose());
 
 	function focusDesktopNavigation() {
 		desktopNavigation?.querySelector<HTMLElement>('a[aria-current="page"]')?.focus();
@@ -139,7 +110,7 @@
 			if (page.url.href !== from) return;
 		}
 		await invalidate('app:org');
-		loadShellData(organizationId);
+		void shellData.refresh();
 	}
 
 	let cannotListen = $state(false);
@@ -213,8 +184,8 @@
 	>
 		<ExecutiveSidebar
 			connection={data.connection}
-			needsYouCount={shellNeedsYou}
-			projects={shellSnapshot?.projects ?? []}
+			needsYouCount={shellData.needsYouCount}
+			projects={shellData.snapshot?.projects ?? []}
 			collapsed={sidebarCollapsed}
 			pinned={sidebarPinned}
 			onToggleCollapse={toggleSidebarPin}
@@ -235,18 +206,18 @@
 		<div class="flex items-center gap-2 px-4 min-[640px]:hidden">
 			<MobileNavigation
 				connection={data.connection}
-				needsYouCount={shellNeedsYou}
-				projects={shellSnapshot?.projects ?? []}
+				needsYouCount={shellData.needsYouCount}
+				projects={shellData.snapshot?.projects ?? []}
 				onWiden={focusDesktopNavigation}
 			/>
 			<span class="text-sm font-semibold">{areaFor(page.url.pathname) ?? 'Agentic Org'}</span>
 		</div>
 		<ExecutiveCommandBar
-			snapshot={shellSnapshot}
-			items={shellWork}
-			inboxItems={shellInbox}
-			offices={activeOffices}
-			ownerId={shellOwnerId}
+			snapshot={shellData.snapshot}
+			items={shellData.workItems}
+			inboxItems={shellData.inboxItems}
+			offices={shellData.offices}
+			ownerId={shellData.ownerId}
 		/>
 		{#if showPaused}<LiveBanner
 				loadedAt={liveState.loadedAt[organizationId]}

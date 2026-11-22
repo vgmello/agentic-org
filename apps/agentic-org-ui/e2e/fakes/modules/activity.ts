@@ -146,7 +146,7 @@ export const activityApi: ActivityApi = {
 	},
 	async thread(organizationId, threadId): Promise<ActivityThread> {
 		await load(organizationId);
-		await mockLatency(200);
+		await mockLatency();
 		if (mockMode().includes('threaderror'))
 			throw new Error('The office could not read this thread.');
 		const found = (

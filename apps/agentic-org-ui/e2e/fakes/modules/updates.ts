@@ -33,7 +33,7 @@ function check(): UpdateCheck {
 
 export const updatesApi: UpdatesApi = {
 	async overview(organizationId) {
-		await new Promise((r) => setTimeout(r, on('slow') ? 4000 : 250));
+		if (on('slow')) await new Promise((r) => setTimeout(r, 4000));
 		if (on('unavailable')) await unavailableCall();
 		const failOnce = on('fails-once') && !failedOnce;
 		if (failOnce) failedOnce = true;

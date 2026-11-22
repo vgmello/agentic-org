@@ -23,8 +23,10 @@ export const mockMode = (): string => {
 	}
 };
 
-export const mockLatency = (ms = 250) =>
-	new Promise<void>((done) => setTimeout(done, mockMode().includes('slow') ? 4000 : ms));
+export const mockLatency = (ms = 0) => {
+	const delay = mockMode().includes('slow') ? 4000 : ms;
+	return delay > 0 ? new Promise<void>((done) => setTimeout(done, delay)) : Promise.resolve();
+};
 
 /**
  * POC-mirror dataset mode (`?mock=poc`, persisted across route navigations in localStorage, cleared by `?mock=default`).

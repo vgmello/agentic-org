@@ -30,7 +30,7 @@ const query = () => new URLSearchParams(location.search);
 const switches = () =>
 	[query().get('mock'), query().get('offices')].flatMap((v) => (v ? v.split(',') : []));
 const on = (name: string) => switches().includes(name);
-const wait = () => new Promise((r) => setTimeout(r, on('slow') ? 2500 : 200));
+const wait = () => (on('slow') ? new Promise<void>((r) => setTimeout(r, 2500)) : Promise.resolve());
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 const ahead = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
 

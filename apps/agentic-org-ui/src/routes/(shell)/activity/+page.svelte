@@ -7,25 +7,29 @@
 	import Clock from '@lucide/svelte/icons/clock';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import Play from '@lucide/svelte/icons/play';
-	import type { WorkItemSummary } from '$lib/proto';
 	import { isItemDone, relativeAge } from '$lib/home/model';
+	import { activityApi } from '$lib/modules/activity/api';
 	import {
-		activityApi,
 		KIND_WORD,
 		type ActivityKindFilter,
 		type ActivityRow
-	} from '$lib/modules/activity';
+	} from '$lib/modules/activity/types';
 	import { pageTitle } from '$lib/nav';
 	import { memberById } from '$lib/org/model';
-	import { workApi } from '$lib/work';
+	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 
 	let { data } = $props();
 	const organizationId = $derived(data.connection.organization.id);
 	const snapshot = $derived(data.snapshot);
 	const projectsById = $derived(new Map((snapshot.projects ?? []).map((p) => [p.id, p.name])));
+	const shellData = useShellData();
 
 	let activityRows = $state.raw<ActivityRow[] | undefined>(undefined);
-	let workItems = $state.raw<WorkItemSummary[] | undefined>(undefined);
+	const workItems = $derived(
+		shellData.loaded && shellData.loadedOrganizationId === organizationId
+			? shellData.workItems
+			: undefined
+	);
 	let kindFilter = $state<ActivityKindFilter>('all');
 	let nowMs = $state(Date.now());
 
@@ -91,7 +95,7 @@
 		return kindFilter === 'all' ? mapped : mapped.filter((e) => e.kind === kindFilter);
 	});
 
-	const loading = $derived(activityRows === undefined && workItems === undefined);
+	const loading = $derived(activityRows === undefined);
 
 	let loadSeq = 0;
 
@@ -100,15 +104,18 @@
 		const seq = ++loadSeq;
 		let cancelled = false;
 		activityRows = undefined;
-		workItems = undefined;
-		void Promise.allSettled([activityApi.feed(id, { kind: 'all' }, 40), workApi.snapshot(id)]).then(
-			([actRes, workRes]) => {
+		void activityApi
+			.feed(id, { kind: 'all' }, 40)
+			.then((res) => {
 				if (cancelled || seq !== loadSeq) return;
-				activityRows = actRes.status === 'fulfilled' ? actRes.value.rows : [];
-				workItems = workRes.status === 'fulfilled' ? workRes.value.items : [];
+				activityRows = res.rows;
 				nowMs = Date.now();
-			}
-		);
+			})
+			.catch(() => {
+				if (cancelled || seq !== loadSeq) return;
+				activityRows = [];
+				nowMs = Date.now();
+			});
 		return () => {
 			cancelled = true;
 		};

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
@@ -12,22 +12,23 @@
 	import ShieldAlert from '@lucide/svelte/icons/shield-alert';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
 	import Zap from '@lucide/svelte/icons/zap';
-	import type { WorkItemSummary } from '$lib/proto';
-	import { inboxApi, type InboxItem } from '$lib/modules/inbox';
 	import { executeDecisionAction } from '$lib/home/actions';
 	import { deriveDecisionSpotlight, isDenyAction, type SpotlightDecision } from '$lib/home/model';
 	import { pageTitle } from '$lib/nav';
 	import { toAppError } from '$lib/office/api';
 	import { owner } from '$lib/org/model';
-	import { workApi } from '$lib/work';
+	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 
 	let { data } = $props();
 	const organizationId = $derived(data.connection.organization.id);
 	const snapshot = $derived(data.snapshot);
 	const ownerId = $derived(owner(snapshot)?.id ?? 'owner');
+	const shellData = useShellData();
 
-	let items = $state.raw<WorkItemSummary[] | undefined>(undefined);
-	let inboxItems = $state.raw<InboxItem[]>([]);
+	const ready = $derived(shellData.loaded && shellData.loadedOrganizationId === organizationId);
+	const items = $derived(ready ? shellData.workItems : undefined);
+	const inboxItems = $derived(ready ? shellData.inboxItems : []);
+
 	let filter = $state<'all' | 'approval' | 'decision' | 'problem' | 'work'>('all');
 	let busyId = $state<string | undefined>(undefined);
 	let decliningId = $state<string | undefined>(undefined);
@@ -35,6 +36,7 @@
 	let denyInputEl = $state<HTMLInputElement | null>(null);
 	let openContextIds = $state<Record<string, boolean>>({});
 	let nowMs = $state(Date.now());
+	let lastReportedError: unknown = undefined;
 
 	const allDecisions = $derived(
 		deriveDecisionSpotlight(items ?? [], snapshot, ownerId, nowMs, inboxItems)
@@ -45,46 +47,24 @@
 		return allDecisions.filter((d) => d.category === filter);
 	});
 
-	let loadSeq = 0;
-	let destroyed = false;
-
-	async function load(targetOrgId = organizationId, isCancelled: () => boolean = () => false) {
-		const seq = ++loadSeq;
-		const [workRes, inboxRes] = await Promise.allSettled([
-			workApi.snapshot(targetOrgId),
-			inboxApi.list(targetOrgId)
-		]);
-		if (destroyed || isCancelled() || seq !== loadSeq) return;
-		if (workRes.status === 'fulfilled') {
-			items = workRes.value.items;
-		} else {
-			const err = toAppError(workRes.reason);
-			if (err.source === 'api' && (err.code === 'unsupported' || err.code === 'unavailable')) {
-				items = [];
-			} else {
-				toast.error(err.message);
-				items = [];
-			}
-		}
-		inboxItems = inboxRes.status === 'fulfilled' ? inboxRes.value : [];
-		nowMs = Date.now();
-	}
-
 	$effect(() => {
 		const id = organizationId;
-		let cancelled = false;
-		items = undefined;
-		inboxItems = [];
 		decliningId = undefined;
 		declineReason = '';
-		void load(id, () => cancelled);
-		return () => {
-			cancelled = true;
-		};
+		if (untrack(() => shellData.loaded && shellData.loadedOrganizationId === id)) {
+			void shellData.refresh().then(() => {
+				nowMs = Date.now();
+			});
+		}
 	});
 
-	onDestroy(() => {
-		destroyed = true;
+	$effect(() => {
+		const rawError = shellData.workError;
+		if (!rawError || rawError === lastReportedError) return;
+		lastReportedError = rawError;
+		const err = toAppError(rawError);
+		if (err.source === 'api' && (err.code === 'unsupported' || err.code === 'unavailable')) return;
+		toast.error(err.message);
 	});
 
 	async function armDeny(id: string) {
@@ -142,7 +122,8 @@
 				return;
 			}
 			if (res.message) toast.success(res.message);
-			await load();
+			await shellData.refresh();
+			nowMs = Date.now();
 		} catch (e) {
 			toast.error(toAppError(e).message);
 		} finally {
