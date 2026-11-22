@@ -1159,6 +1159,9 @@ fn mark_ask_recipients_done(
     for mut st in all_states {
         if st.message_id == ask.id && st.state != MessageLifecycleState::Done {
             st.state = MessageLifecycleState::Done;
+            st.snoozed_until = None;
+            st.snooze_after_task = false;
+            st.snooze_note = None;
             st.updated_at = now_utc.to_owned();
             st.org_sequence = org_seq;
             let emp_id = st.employee_id.clone();

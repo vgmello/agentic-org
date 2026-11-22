@@ -1371,6 +1371,59 @@ fn record_usage(
         recorded_at: org_office::format_rfc3339_ms(now_ms()),
     };
     store.append_usage(&entry)?;
+    let _ = office.record_office_usage(org_proto::costs::CostUsageRecordParams {
+        id: None,
+        producer_id: format!("watcher-{}", office.info().office_id),
+        source_event_id: id.clone(),
+        run_id: None,
+        actor_kind: if entry.employee_id.is_some() {
+            org_proto::costs::UsageActorKind::Agent
+        } else {
+            org_proto::costs::UsageActorKind::OneOff
+        },
+        employee_id: entry.employee_id.clone(),
+        runtime: entry.feature.clone(),
+        provider: None,
+        model: entry.model_profile_id.clone(),
+        occurred_at: entry.recorded_at.clone(),
+        source_metadata_json: Some(
+            serde_json::json!({
+                "conversation_id": entry.conversation_id,
+                "outcome": entry.outcome,
+                "duration_ms": entry.duration_ms,
+            })
+            .to_string(),
+        ),
+        input_tokens: entry.input_tokens,
+        output_tokens: entry.output_tokens,
+        cache_read_tokens: (entry.input_tokens.is_some() || entry.output_tokens.is_some())
+            .then_some(0),
+        cache_write_tokens: (entry.input_tokens.is_some() || entry.output_tokens.is_some())
+            .then_some(0),
+        reasoning_tokens: (entry.input_tokens.is_some() || entry.output_tokens.is_some())
+            .then_some(0),
+        token_issue: None,
+        runtime_cost_micro_usd: None,
+        is_subscription: false,
+        scope_kind: if entry.project_id.is_some() {
+            org_proto::costs::UsageScopeKind::Project
+        } else {
+            org_proto::costs::UsageScopeKind::Organization
+        },
+        task_id: None,
+        project_id: entry.project_id.clone(),
+        team_id: None,
+        feature_id: None,
+        milestone_id: None,
+        release_id: None,
+        task_type_snapshot: None,
+        work_type: None,
+        attribution_basis: if entry.project_id.is_some() {
+            org_proto::costs::AttributionBasis::ExplicitContext
+        } else {
+            org_proto::costs::AttributionBasis::Unattributed
+        },
+    });
     Ok(id)
 }
 

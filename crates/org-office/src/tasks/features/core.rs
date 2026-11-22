@@ -130,6 +130,7 @@ impl CreateTask {
             labels,
             reference_files,
             modified_files,
+            repositories: Vec::new(),
             details,
             meta: TaskMeta::created(&actor.id, &at),
         };

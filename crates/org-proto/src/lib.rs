@@ -90,18 +90,25 @@ mod identity;
 pub mod selected_bootstrap;
 pub use identity::{is_uuid_v7, uuid_v7_time_ms};
 pub mod ask;
+pub mod budgets;
 pub mod chat;
+pub mod costs;
 pub mod directory;
 pub mod frame;
+pub mod git;
 pub mod hiring;
 pub mod inbox;
 pub mod location;
 pub mod msg;
 pub mod org;
+pub mod private_notes;
+pub mod processes;
 pub mod projects;
 pub mod retired;
+pub mod rfc3339;
 pub mod sessions;
 pub mod tasks;
+pub mod tz;
 pub mod web;
 pub mod work;
 
@@ -144,6 +151,7 @@ pub use principal::{
 };
 pub use recovery::RecoveryCode;
 pub use retired::Retired;
+pub use rfc3339::{canonicalize_rfc3339_utc, format_rfc3339_ms, parse_rfc3339_ms};
 pub use token::zero as zero_bytes;
 pub use token::{
     GrantKey, GrantMac, OfficeSecretsKey, GRANT_KEY_BYTES, GRANT_MAC_BYTES,

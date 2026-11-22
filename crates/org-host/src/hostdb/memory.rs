@@ -146,6 +146,8 @@ impl Inner {
             revoked_at_ms: row.revoked_at_ms,
             password_changed_at_ms: row.password_changed_at_ms,
             links,
+            time_zone: None,
+            last_org_id: None,
         })
     }
 

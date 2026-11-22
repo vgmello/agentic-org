@@ -44,6 +44,8 @@ pub(crate) enum PumpCommand {
 
 pub(crate) type TurnEndedHook = Arc<dyn Fn(&str) + Send + Sync>;
 pub(crate) type OpenRequiredAsksHook = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+/// Records normalized runtime usage from a supervised session turn into the office accounting ledger (`L2`/`L3`).
+pub(crate) type UsageHook = Arc<dyn Fn(&str, &str, &org_agent_runtime::Usage) + Send + Sync>;
 /// Returns `true` when durable suspension was recorded (non-empty required asks), `false` if
 /// all required asks were answered/withdrawn before suspension took effect (`High #3`).
 pub(crate) type SuspendedHook =
@@ -120,6 +122,7 @@ pub(crate) struct PumpContext {
     pub has_open_required_asks: Option<OpenRequiredAsksHook>,
     pub on_turn_ended: Option<TurnEndedHook>,
     pub on_suspended: Option<SuspendedHook>,
+    pub on_usage: Option<UsageHook>,
 }
 
 enum ReaderMsg {
@@ -558,6 +561,16 @@ fn handle_event(
         SessionEvent::StartFailed { reason } => {
             state.last_error = Some(format!("start failed: {reason:?}"));
             state.state = SessionState::Stopped;
+        }
+        SessionEvent::Usage(usage) => {
+            state.backgrounds.record_usage(usage);
+            let run_id = ctx.run_id.clone();
+            let emp_id = ctx.employee_id.clone();
+            let hook = ctx.on_usage.clone();
+            drop(state);
+            if let Some(cb) = hook {
+                cb(&emp_id, &run_id, usage);
+            }
         }
         other => return handle_tool_or_approval_event(&mut state, other),
     }

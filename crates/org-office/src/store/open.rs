@@ -12,8 +12,10 @@
 //! - Adding a family: one bound on [`OfficeEngine`] and one projector in `open_on`.
 //! - Adding an engine: one arm of [`EngineChoice`] and of [`OfficeStore`].
 
+pub(crate) mod git_ops;
 pub(crate) mod messaging_ops;
 mod operations;
+pub(crate) mod process_ops;
 pub(crate) mod task_ops;
 #[cfg(test)]
 mod tests;
@@ -29,14 +31,19 @@ use org_store::{
     Status, Store, StoreError, StoreParts, WriterAuthority,
 };
 
+pub use git_ops::{
+    AttachProjectRepositoryOp, RecordTaskRepoBranchOp, RegisterRepositoryOp, RepositoriesList,
+    RepositoryResolve, TaskGitContext, TaskGitContextRead,
+};
 pub use messaging_ops::{
     ChannelCreateOp, ChannelMembershipOp, ChannelMessagesForCallerRead, ChannelMessagesRawRead,
     ChatAnswerOp, ChatInboxRead, ChatMarkReadOp, ChatMessagesRead, ChatMuteOp, ChatReactOp,
     ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, ConversationByIdRead,
     DeliverAnswerCandidatesOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
     InspectAskStatusRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead, ListConversationsRead,
-    ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxUpdateStateOp, MsgAcceptOp, MsgAskOp,
-    MsgWithdrawOp, OpenOwnerInboxRead, OrgChangesAfterRead, PeekUnreadRead,
+    ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxDeferOp, MailboxUnsnoozeOp,
+    MailboxUpdateStateOp, MsgAcceptOp, MsgAskOp, MsgWithdrawOp, OpenOwnerInboxRead,
+    OrgChangesAfterRead, PeekUnreadRead,
 };
 pub use operations::{
     AddPersonOp, AddProjectTeamOp, AgentExecutionById, ArchiveTeamOp, CheckHrMessageAccess,
@@ -48,17 +55,88 @@ pub use operations::{
     TopTeamId, UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
 };
 
-use super::sqlite::SqliteEngine;
+use super::sqlite::{
+    accounting::SqliteAccountingStore, budgets::SqliteBudgetStore,
+    private_notes::SqlitePrivateNotesStore, SqliteEngine,
+};
 use crate::{
+    accounting::AccountingStore,
+    budgets::BudgetStore,
+    error::OfficeError,
     messaging::projector::MessagingFiles,
     office_local::{clean_stop, projector::OfficeLocalFiles, records::CleanStop},
     organization::projector::OrganizationFiles,
+    private_notes::PrivateNotesStore,
+    processes::projector::ProcessFiles,
     projects::projector::ProjectFiles,
     tasks::{
         ports::{TasksEngine, TasksRead},
         projector::TaskFiles,
     },
 };
+
+/// Opens the isolated per-author private task notes store (`TASK-50`, `L8`, `ADR-0016`)
+/// at `<runtime-root>/<office-id>/private/task-notes.db` for SQLite or in-memory for tests.
+pub(crate) fn open_private_notes(
+    engine: EngineChoice,
+    runtime_root: &Path,
+    office_id: &str,
+) -> Result<Arc<dyn PrivateNotesStore>, OfficeError> {
+    match engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqlitePrivateNotesStore::open(
+            runtime_root,
+            office_id,
+        )?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(
+            crate::private_notes::memory::MemoryPrivateNotesStore::new(),
+        )),
+    }
+}
+
+/// Opens the isolated `L2` usage & cost accounting store (`TASK-53`, `doc-87`, `ADR-0016`)
+/// backed by `<durable-root>/accounting/` and `<runtime-root>/<office-id>/protected/accounting.db`.
+pub(crate) fn open_accounting(
+    engine: EngineChoice,
+    durable_root: &Path,
+    runtime_root: &Path,
+    office_id: &str,
+    org_id: &str,
+) -> Result<Arc<dyn AccountingStore>, OfficeError> {
+    match engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqliteAccountingStore::open(
+            durable_root,
+            runtime_root,
+            office_id,
+            org_id,
+        )?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(
+            crate::accounting::memory::MemoryAccountingStore::new(),
+        )),
+    }
+}
+
+/// Opens the isolated `L3` budgets & holds store (`TASK-53`, `doc-92`, `ADR-0016`)
+/// backed by `<durable-root>/budgets/` and `<runtime-root>/<office-id>/protected/budgets.db`.
+pub(crate) fn open_budgets(
+    engine: EngineChoice,
+    durable_root: &Path,
+    runtime_root: &Path,
+    office_id: &str,
+    org_id: &str,
+) -> Result<Arc<dyn BudgetStore>, OfficeError> {
+    match engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqliteBudgetStore::open(
+            durable_root,
+            runtime_root,
+            office_id,
+            org_id,
+        )?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(crate::budgets::memory::MemoryBudgetStore::new())),
+    }
+}
 
 /// The file of an office's projection, under `<runtime-root>/<office-id>/`.
 const PROJECTION_FILE: &str = "office.db";
@@ -229,10 +307,17 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let projects: Arc<dyn Projector<E>> = Arc::new(ProjectFiles::new(organization.clone()));
     let messaging: Arc<dyn Projector<E>> = Arc::new(MessagingFiles::new(organization.clone()));
     let tasks: Arc<dyn Projector<E>> = Arc::new(TaskFiles::new());
+    let processes: Arc<dyn Projector<E>> = Arc::new(ProcessFiles::new());
     let local = OfficeLocalFiles::new(organization, here.office_id.clone());
     #[cfg_attr(not(any(test, feature = "testkit")), allow(unused_mut))]
-    let mut projectors: Vec<Arc<dyn Projector<E>>> =
-        vec![files, projects, messaging, tasks, Arc::new(local)];
+    let mut projectors: Vec<Arc<dyn Projector<E>>> = vec![
+        files,
+        projects,
+        messaging,
+        tasks,
+        processes,
+        Arc::new(local),
+    ];
     #[cfg(any(test, feature = "testkit"))]
     if let Some(probe) = &config.testing.probe {
         projectors.push(probe.projector());

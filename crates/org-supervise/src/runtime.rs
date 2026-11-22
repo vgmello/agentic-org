@@ -157,6 +157,10 @@ const REVIEWED_ENV_SWITCHES: &[&str] = &[
     "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
     "CLAUDE_CONFIG_DIR",
     "CODEX_HOME",
+    "CODEX_DISABLE_TELEMETRY",
+    "AGY_DISABLE_AUTOUPDATE",
+    "AGY_SUBPROCESS_ENV_SCRUB",
+    "AGY_CONFIG_DIR",
 ];
 
 /// The runtime-only lifecycle metadata, retained for the pump/stop layer.

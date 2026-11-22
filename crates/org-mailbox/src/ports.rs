@@ -171,6 +171,17 @@ pub trait TriageStore {
     /// the change as a local edit with the next local sequence.
     fn update_state_local(&self, change: LocalStateTransition)
         -> Result<MessageHeader, StoreError>;
+    /// Snooze a message for `change.to_member_id` via `msg.defer` (`TASK-81`). Checks recipient
+    /// ownership first (`StoreError::NotFound`), refuses snoozing an already-expired ask or past
+    /// its `expires_at` deadline (`StoreError::InvalidTransition`), and otherwise applies the
+    /// `Snoozed` transition atomically.
+    fn defer_local(&self, change: LocalStateTransition) -> Result<MessageHeader, StoreError>;
+    /// Early un-snooze (`TASK-81`): transitions a `Snoozed` message for `change.to_member_id`
+    /// back to `Unread`, clearing `snoozed_until`, `snooze_after_task`, `snooze_note`, and
+    /// `read_at`, and bumping `triage_gen += 1`. Returns `StoreError::NotFound` if the message
+    /// does not exist or is not addressed to `change.to_member_id`, and
+    /// `StoreError::InvalidTransition` if the message is not currently `Snoozed`.
+    fn unsnooze_local(&self, change: LocalStateTransition) -> Result<MessageHeader, StoreError>;
     /// In one atomic step, for `to_member_id`: release every time snooze with
     /// `snoozed_until <= now_utc` (to `unread`, `triage_gen += 1`, reason `Due`) and, with
     /// `after_task`, every after-task snooze too (reason `AfterTask`); and select every open

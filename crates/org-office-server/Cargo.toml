@@ -16,6 +16,7 @@ zeroize = "=1.9.1"
 org-socket = { path = "../org-socket" }
 org-proto = { path = "../org-proto" }
 org-office = { path = "../org-office" }
+org-git = { path = "../org-git" }
 org-copilot = { path = "../org-copilot" }
 # The writer custody contract the office's store calls, implemented over the host channel.
 org-store = { path = "../org-store" }

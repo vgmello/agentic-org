@@ -1505,6 +1505,12 @@ impl<S: TriageStore> TriageStore for StalePeek<S> {
     ) -> Result<MessageHeader, StoreError> {
         self.inner.update_state_local(change)
     }
+    fn defer_local(&self, change: LocalStateTransition) -> Result<MessageHeader, StoreError> {
+        self.inner.defer_local(change)
+    }
+    fn unsnooze_local(&self, change: LocalStateTransition) -> Result<MessageHeader, StoreError> {
+        self.inner.unsnooze_local(change)
+    }
     fn check_notify(
         &self,
         to_member_id: &str,

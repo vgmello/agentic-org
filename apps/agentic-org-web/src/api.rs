@@ -10,10 +10,13 @@
 //! header. Nothing else forwards to the host or a local socket.
 mod account_routes;
 mod chat_routes;
+mod cost_routes;
+mod git_routes;
 mod hiring_routes;
 mod instance_routes;
 mod open_routes;
 mod org_routes;
+mod process_routes;
 mod session_routes;
 mod task_routes;
 
@@ -169,6 +172,9 @@ pub enum Route {
     Sessions(session_routes::SessionRoute),
     Chat(chat_routes::ChatRoute),
     Tasks(task_routes::TaskRoute),
+    Git(git_routes::GitRoute),
+    Process(process_routes::ProcessRoute),
+    Cost(cost_routes::CostRoute),
 }
 
 pub enum Call {
@@ -205,6 +211,9 @@ pub enum Call {
     Sessions(session_routes::SessionCall),
     Chat(chat_routes::ChatCall),
     Tasks(task_routes::TaskCall),
+    Git(git_routes::GitCall),
+    Process(process_routes::ProcessCall),
+    Cost(cost_routes::CostCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -468,6 +477,8 @@ fn view(instance_id: &str, session: BrowserSession) -> Result<SessionView, Failu
         account: AccountView {
             id: session.account.id,
             login: session.account.login,
+            time_zone: session.account.time_zone,
+            last_org_id: session.account.last_org_id,
         },
         admin: session.admin,
         organizations: session
@@ -821,6 +832,9 @@ impl ApiBackend for SessionApi {
             ["api", "v1", "account", "password"] if post => Route::Account(
                 account_routes::AccountRoute::ChangePassword(self.caller_auth(request)?),
             ),
+            ["api", "v1", "account", "preferences"] if post => Route::Account(
+                account_routes::AccountRoute::PreferencesSet(self.caller_auth(request)?),
+            ),
             ["api", "v1", "instance", "admin", "handover"] if post => Route::Account(
                 account_routes::AccountRoute::AdminHandover(self.caller_auth(request)?),
             ),
@@ -882,6 +896,7 @@ impl ApiBackend for SessionApi {
             | ["api", "v1", "links", "register", "sign-in"]
             | ["api", "v1", "links", "set-password"]
             | ["api", "v1", "account", "password"]
+            | ["api", "v1", "account", "preferences"]
             | ["api", "v1", "instance", "admin", "handover"]
             | ["api", "v1", "session"]
             | ["api", "v1", "session", "sign-out"]
@@ -1000,6 +1015,9 @@ impl ApiBackend for SessionApi {
             Route::Sessions(route) => return session_routes::prepare(route, bytes),
             Route::Chat(route) => return chat_routes::prepare(route, bytes),
             Route::Tasks(route) => return task_routes::prepare(route, bytes),
+            Route::Git(route) => return git_routes::prepare(route, bytes),
+            Route::Process(route) => return process_routes::prepare(route, bytes),
+            Route::Cost(route) => return cost_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -1105,6 +1123,24 @@ impl ApiBackend for SessionApi {
                 ),
                 streaming: false,
             },
+            Call::Git(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(git_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
+            Call::Process(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(process_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
+            Call::Cost(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(cost_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
         }
     }
@@ -1124,6 +1160,9 @@ impl ApiBackend for SessionApi {
             Call::Sessions(_) => unreachable!("Call::Sessions is dispatched asynchronously"),
             Call::Chat(_) => unreachable!("Call::Chat is dispatched asynchronously"),
             Call::Tasks(_) => unreachable!("Call::Tasks is dispatched asynchronously"),
+            Call::Git(_) => unreachable!("Call::Git is dispatched asynchronously"),
+            Call::Process(_) => unreachable!("Call::Process is dispatched asynchronously"),
+            Call::Cost(_) => unreachable!("Call::Cost is dispatched asynchronously"),
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))

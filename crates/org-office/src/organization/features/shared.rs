@@ -166,10 +166,11 @@ pub(super) struct Moved {
 }
 
 /// Every file below the team at the end of `old` once that team's chain is `new`: each
-/// descendant team's file and every profile homed in the team or below it, unchanged but
-/// for the path. The team's own file is the caller's, since its record changes.
+/// descendant team's file, every profile homed in the team or below it, and every team
+/// process/standard document in the moved subtree, unchanged but for the path.
+/// The team's own file is the caller's, since its record changes.
 pub(super) fn relocate(
-    view: &impl OrganizationRead,
+    view: &impl crate::projects::ports::ProjectsRead,
     old: &[Id],
     new: &[Id],
 ) -> Result<Vec<Moved>, Refusal> {
@@ -222,6 +223,30 @@ pub(super) fn relocate(
             to: records::hire_request_path(to, &req.id)
                 .or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))?,
             bytes: records::encode_hire_request(&req),
+        });
+    }
+    for doc in view.structure_documents()? {
+        let Some(ref tid) = doc.team_id else {
+            continue;
+        };
+        let Some((from, to)) = chains.get(tid) else {
+            continue;
+        };
+        moved.push(Moved {
+            from: crate::processes::records::structure_document_path(
+                doc.kind,
+                &doc.id,
+                Some(from),
+                None,
+            )?,
+            to: crate::processes::records::structure_document_path(
+                doc.kind,
+                &doc.id,
+                Some(to),
+                None,
+            )
+            .or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))?,
+            bytes: crate::processes::records::encode_structure_document(&doc),
         });
     }
     Ok(moved)

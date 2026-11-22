@@ -10,6 +10,9 @@
 //! a folder. The organization family (`organization_family`) holds the organization's
 //! rules; `rules` reads the native protocol's organization commands.
 
+pub mod accounting;
+pub mod budgets;
+pub mod git;
 pub mod hq_creation;
 mod organization;
 pub use organization::{directory, import};
@@ -46,6 +49,8 @@ mod office_file;
 /// feature: a CA fixture.
 pub mod office_local;
 mod private_fs;
+pub mod private_notes;
+pub mod processes;
 pub mod projects;
 pub mod rules;
 mod store;
@@ -62,7 +67,7 @@ pub use store::open::{
     open_store, AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
     DirectoryGeneration, DirectorySnapshot, EngineChoice, ImportOrganizationOp, MovePersonOp,
     MoveTeamOp, OfficeEngine, OfficeStanding, OfficeStore, ReadOp, Standing, StoreConfig, StoreOp,
-    StructureOp, UpdatePersonOp, UpdateTeamOp,
+    StructureOp, TaskGitContext, UpdatePersonOp, UpdateTeamOp,
 };
 mod time;
 pub use time::format_rfc3339_ms;

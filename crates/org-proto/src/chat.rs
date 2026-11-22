@@ -457,6 +457,11 @@ pub struct ChatInbox;
 pub struct ChatInboxParams {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub include_all: bool,
+    /// Optional explicit lifecycle state filter (e.g., `snoozed` for the Snoozed inbox view).
+    /// When set, returns only items in that state; when omitted, `include_all` controls whether
+    /// non-`unread` items are included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<crate::msg::MessageLifecycleState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

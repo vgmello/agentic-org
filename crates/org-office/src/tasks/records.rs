@@ -176,6 +176,17 @@ impl TaskDetailsRecord {
     }
 }
 
+/// One repository attached to a task with its branch and optional integrated commit
+/// (`task_repositories` in `schema.sql`, `doc-35`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskRepositoryRecord {
+    pub repository_id: Id,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrated_commit: Option<String>,
+}
+
 /// Core unified task record (`work/tasks/<task-id>/task.json`, `doc-77`, `TASK-49`, `TASK-77`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskRecord {
@@ -218,6 +229,8 @@ pub struct TaskRecord {
     pub reference_files: Vec<String>,
     #[serde(default)]
     pub modified_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repositories: Vec<TaskRepositoryRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<TaskDetailsRecord>,
     pub meta: TaskMeta,

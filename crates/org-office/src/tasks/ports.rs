@@ -3,6 +3,7 @@
 use org_store::{Engine, EngineError, Id};
 
 use crate::messaging::ports::{MessagingRead, MessagingWrite};
+use crate::processes::ports::{ProcessesRead, ProcessesWrite};
 
 use super::records::{
     parse_task_key, ChecklistStepRecord, OfficeTaskCounterRecord, TaskCommentRecord,
@@ -10,7 +11,7 @@ use super::records::{
 };
 
 /// Read-only queries over the tasks projection (Memory and SQLite, `ENG-1`).
-pub trait TasksRead: MessagingRead {
+pub trait TasksRead: MessagingRead + ProcessesRead {
     fn task(&self, id: &Id) -> Result<Option<TaskRecord>, EngineError>;
     fn task_by_key(
         &self,
@@ -59,7 +60,7 @@ pub trait TasksRead: MessagingRead {
 }
 
 /// Write operations on the tasks projection inside a transaction.
-pub trait TasksWrite: TasksRead + MessagingWrite {
+pub trait TasksWrite: TasksRead + MessagingWrite + ProcessesWrite {
     fn put_task(&mut self, record: &TaskRecord) -> Result<(), EngineError>;
     fn remove_task(&mut self, id: &Id) -> Result<(), EngineError>;
     fn put_office_task_counter(

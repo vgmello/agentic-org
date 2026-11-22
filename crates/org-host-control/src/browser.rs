@@ -159,6 +159,10 @@ pub struct BrowserSession {
 pub struct BrowserAccount {
     pub id: String,
     pub login: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_zone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_org_id: Option<String>,
 }
 
 /// `instance.view`: the instance's display state behind the browser's `GET /instance`. The web

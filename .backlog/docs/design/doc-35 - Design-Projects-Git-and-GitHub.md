@@ -3,7 +3,7 @@ id: doc-35
 title: 'Design: Projects, Git and GitHub'
 type: specification
 created_date: '2026-11-21T00:19:00Z'
-updated_date: '2026-11-21T00:19:00Z'
+updated_date: '2026-11-22T04:30:00Z'
 tags:
   - design
   - git
@@ -15,14 +15,14 @@ tags:
 > [!NOTE] Review note (2026-11-21)
 > Reviewed against Organization Data contracts and `doc-1` (Vision).
 > - **Delivery timing:** Bare cache and per-task worktrees (`org-git`) are planned for `C7` (`TASK-50`). Provider-managed GitHub App (§8) is explicitly `v2`.
-> - **Unresolved design prerequisites (Open Questions #1–#3, #5–#10):** Git credential binding, durable branch records, cache writes in dedicated-account isolation mode (`L16`), owner commit identity, `durable/checkpoints/` format, and `integrated_commit` semantics must be settled before `C7` implementation (#4 UUIDv7 and #11 ADR-0019 task numbering are settled).
+> - **Design prerequisites settled (2026-11-22, `TASK-51` C7):** All 11 open questions below are resolved and recorded for v1 plain-Git implementation (`org-git`, `org-office` ports, `org-office-server` composition, `/api/v1` BFF, and `agent-os` `repo`/`worktree` commands).
 
 # Design and plan: projects, repository registrations and Git
 
 <a id="design-and-plan-projects-as-git-repositories-connected-to-github"></a>
 <a id="design-and-plan-projects-repository-registrations-and-github"></a>
 
-**Status: design only.** Nothing in this document is implemented. The workspace has no crate, command or handler that runs Git: `org-git` is a planned crate with no code, and `org-github` is v2. Sentences in the present tense describe the selected design, not shipped behaviour.
+**Status: v1 plain-Git backend and CLI in progress (`TASK-51` / C7); `org-github` is v2.** `crates/org-git`, `org-office` repository/project/task-branch projections, `org-office-server` `GitService`, `/api/v1` BFF routes, and `agent-os`/`agentic-org` `repo`/`worktree` commands are implemented; remote credential store wiring, post-closure cleanup/handoff orchestration, and G5 Web UI remain pending (tracked in `doc-3` `FC-139`/`FC-140`).
 
 Two rules frame everything below:
 
@@ -44,7 +44,7 @@ A project is a long-lived scope of product work owned by one accountable team, w
 | Local work | Per-office caches, per-task worktrees, local-only repositories | Unchanged |
 | After a push | A person opens any pull request and merges, with the host's own tools | The product opens pull requests and reads CI results |
 | Organization repository | Must be remote; reached the same plain way | Unchanged |
-| Crates | `org-git` (planned, no code) | `org-github` (deferred, no code) |
+| Crates | `org-git` (implemented in `crates/org-git`) | `org-github` (deferred, no code) |
 
 ## What lives where
 
@@ -55,7 +55,7 @@ A project is a long-lived scope of product work owned by one accountable team, w
   - `teams/<root-team-id>/teams/<child-team-id>/.../agents/<employee-id>/projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/`: the worktree of a project task for one repository.
   - `teams/<root-team-id>/.../agents/<employee-id>/tasks/<task-id>/repositories/<repository-id>/`: the worktree of a projectless (team) task.
   - `office.db`: the runtime-only rows `repository_caches` (office, repository, `bare_path`) and `task_workspaces` (office, employee, task, repository, `worktree_path`).
-- **Local-only code:** `durable/local/offices/<office-id>/repositories/<repository-id>.yaml` holds the machine-specific `origin_path`. No remote backs this code up. Its history and edits must be preserved in `durable/checkpoints/` before a cache is deleted, and moving it to another office needs an explicit bundle and import, or a remote.
+- **Local-only code:** `durable/local/offices/<office-id>/repositories/<repository-id>.json` holds the machine-specific `origin_path`. No remote backs this code up. Its history and edits must be preserved in `durable/checkpoints/` before a cache is deleted, and moving it to another office needs an explicit bundle and import, or a remote.
 - **Git credentials:** the office's credentials for remotes are secrets. They are held by the host's credential provider or as key material only the service account can read. They never appear in organization Git, in a database in plaintext, in a cache's configuration, in a worktree, in a log, or anywhere under `runtime/` ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)).
 - **Protection at rest:** Git files are ordinary files. Disk encryption, private file permissions and the agent isolation mode protect them ([ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md), ADR-0016). Nothing here is encrypted by the application.
 
@@ -256,9 +256,9 @@ When v2 is planned, it should change only how the office obtains the credential 
 
 ## Code layout (architecture rules)
 
-Follow the [architecture rules](../doc-8%20-%20Architecture-Rules.md) and the [v1 project structure](doc-68%20-%20Design-v1-Project-Structure.md). No crate named here exists yet.
+Follow the [architecture rules](../doc-8%20-%20Architecture-Rules.md) and the [v1 project structure](doc-68%20-%20Design-v1-Project-Structure.md).
 
-- **`org-git`** (planned, no code): runs the host's `git` through the hardened runner. It owns cache creation and fetch, worktree add, move and remove, push, tagging, the compare-and-swap deletes and the per-repository lock. It knows paths, URLs and commit IDs. It does not know projects, tasks, the office database or the office's domain types.
+- **`org-git`** (`crates/org-git`): runs the host's `git` through the hardened runner. It owns cache creation and fetch, worktree add, move and remove, push, tagging, the compare-and-swap deletes and the per-repository lock. It knows paths, URLs and commit IDs. It does not know projects, tasks, the office database or the office's domain types.
 - **The office's domain** defines the small contracts it needs from Git (prepare a cache, create a workspace, push a task branch, clean up) and owns the records and admission rules. It does not depend on `org-git`.
 - **`agentic-org-office`** composes the two: it implements the domain's contracts by calling `org-git`, supplies the credential, and derives the session's writable roots and deny rules.
 - **`agent-os`** gains the `repo` and `worktree` commands of the [agent command line](doc-28%20-%20Design-agent-os-Command-Line.md) (section 3.6), among them `repo push`. Each is a socket call only and does not depend on `org-git`.
@@ -300,22 +300,22 @@ Registration and project-link writes belong to the organization and project cont
 7. Cleanup happens only after task closure, with a `merged/<branch>` or `archive/<branch>` tag and a compare-and-swap delete. Handoff never triggers cleanup.
 8. **v2, to be confirmed again:** one provider app managed by HQ, with short-lived tokens scoped to one repository; new repositories private, under the owner's account.
 
-## Open questions
+## Open questions (resolved 2026-11-22 for C7 / TASK-51)
 
-These are gaps or tensions between this design and the selected contracts. They are listed, not resolved here. Where the v1 part needs an answer to be written at all, it states the assumption it made.
+All 11 design questions are settled for v1 plain-Git delivery:
 
-1. **Git credentials have no selected record.** No contract says where an office's credential for a remote is bound, how it is entered, or where the office's known-hosts file lives. This document only fixes where it must not be.
-2. **Branch records have no durable home.** `task_repositories` holds `branch` and `integrated_commit`; `task_workspaces` holds `worktree_path`. Nothing selected holds the base commit, the pushed head, the branch state or the worktree's administrative directory name.
-3. **Cache writes in `dedicated-user` mode.** ADR-0015 says the agent account owns only its workspaces. A linked worktree must also write into the cache, which is outside them. This document assumes group-shared write access to the listed cache directories. The alternative is a self-contained clone in each workspace that the office fetches from, which would restore a cache agents never write but is not the "one bare clone and worktrees" shape of the storage contract.
+1. **Git credentials (settled 2026-11-22).** Office-local remote credentials and `known_hosts` live outside `durable/`, `office.db`, and `runtime/` under the office's service-account-only `<office-home>/git-credentials/` (`0o700` dir, `0o600` files) or host credential store. HTTPS secrets are supplied per invocation via an office-controlled helper reading from an inherited descriptor/pipe (never CLI args, URLs, cache configs, or `runtime/`); SSH uses per-invocation `GIT_SSH_COMMAND` with `-F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=<office-known-hosts> -i <key-path>`. Local repositories need no credential.
+2. **Branch and workspace records (settled 2026-11-22).** Shared organization records (`task_repositories`: `repository_id`, `branch`, `integrated_commit`) live durably on each task record under `state/work/tasks/<task-id>/task.json` and project into `task_repositories`. Office-local runtime state (`base_commit`, `pushed_head`, `branch_state`, `admin_dir_name`, `worktree_path`, `cache_state`, `last_error`) is stored under `<runtime>/<office-id>/git-state.json` (and projected into runtime `repository_caches`/`task_workspaces`) so machine-local paths never enter `durable/`.
+3. **Cache writes in `dedicated-user` mode (settled 2026-11-22).** Confirm the selected one-bare-cache-plus-worktrees layout: in `dedicated-user` mode the cache sets `core.sharedRepository = group` and grants group write access only to `objects/` (excluding `objects/info/`), `refs/heads/task/`, `logs/refs/heads/task/`, and each worktree's own `worktrees/<name>/` (excluding `commondir`, `gitdir`, `config.worktree`), while supplying exact `safe.directory` entries through environment-level Git configuration.
 4. **Identifier format (settled 2026-11-17).** Stable IDs are UUIDv7 here and in the [identity contract](../organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md).
-5. **The owner's commit identity.** No selected field holds the owner's commit name and email, or an agent's co-author address.
-6. **Projectless tasks.** A team task can target a repository but has no project link, so nothing selects its base branch or the branch that proves it merged.
-7. **Organization publication.** Which office pushes `state_branch`, and how `durable/state/` becomes a commit, is not defined. This document assumes only the transport.
-8. **Local repositories.** The contract names `origin_path` but not whether the office may write task branches into that repository, which is what `agent-os repo push` would otherwise do for a local repository.
-9. **Code checkpoints.** `durable/checkpoints/` is named for unpushed and local-only code, but its format, its triggers and its restore path are not defined. Handoff and cache deletion here depend on it.
-10. **`integrated_commit`.** The contract does not say whether it is the task head that was integrated or the integration-branch commit that contains it.
-11. **Branch names for unnumbered tasks.** Not open. There are none: the creating office numbers a task at once ([ADR-0019](../../decisions/decision-19%20-%20ADR-0019-Task-numbers-are-minted-by-the-creating-office.md)), so `task/<ref>-<slug>` always has its `<ref>`, for example `task/T-B37-fix-login`.
+5. **Owner commit identity & agent co-author address (settled 2026-11-22).** Commits default to the organization owner's employee `name` and `<owner-handle>@<org-slug>.local` (overridable by office-local owner Git identity config), with agent co-author trailer `Co-authored-by: <agent-name> <<agent-handle>@<org-slug>.local>`.
+6. **Projectless tasks (settled 2026-11-22).** A projectless (team) task targeting a registered repository requires an explicit `base_branch` (or falls back to the repository's remote `HEAD` symbolic ref resolved via `git ls-remote --symref`, refused if absent/ambiguous). For project tasks, the project link's `integration_branch` is mandatory and authoritative.
+7. **Organization publication (settled 2026-11-22 — deferred to S1 / TASK-52).** C7 implements code repository caches, task worktrees, and `task/*` branch push; multi-office `state_branch` publishing is owned by S1 (`TASK-52`) reusing `org-git`'s hardened runner.
+8. **Local repositories and `repo push` (settled 2026-11-22).** For `kind: local` repositories, `git.push` pushes `refs/heads/task/<name>` into the bound `origin_path` over the `file` transport under the same recorded-base, fast-forward, and non-integration-branch rules, refusing if `origin_path`'s checked-out `HEAD` is on that branch.
+9. **Code checkpoints (settled 2026-11-22).** `durable/checkpoints/<task-id>/<repo-id>/` stores a Git bundle (`git bundle create`) covering `<base>..<head>` plus an optional unified diff for uncommitted edits before cache deletion or cross-office handoff (bundle creation lives in `org-git`; cross-office transfer orchestration lands in S1 `TASK-52`).
+10. **`integrated_commit` (settled 2026-11-22).** Records the task branch head commit SHA confirmed as an ancestor of `refs/remotes/origin/<integration_branch>` after fetch, remaining deterministic across merge commits and repeated fetches.
+11. **Branch names for unnumbered tasks (settled).** There are none: the creating office numbers a task at once ([ADR-0019](../../decisions/decision-19%20-%20ADR-0019-Task-numbers-are-minted-by-the-creating-office.md)), so `task/<ref>-<slug>` always has its `<ref>`, for example `task/T-B37-fix-login`.
 
 ## What the code does today
 
-Nothing runs Git. `org-process` has pure one-open-branch rules and `org-agent-runtime` has sandbox specification types. Both were written before this design, name a different clone layout in their comments, and are adapted when `org-git` is built.
+`crates/org-git` implements the hardened `GitRunner`, canonical bare-cache integrity verification, `RepoLocks`, isolated per-task worktrees, non-force commit-OID push, cleanup tags/CAS deletes, checkpoint bundles, and `FC-103` sandbox rules; `org-office-server` (`GitService`), `/api/v1` BFF (`git_routes.rs`), and `org-agent-cli`/`agentic-org` (`repo`/`worktree`) compose it over `org-office`'s `project_repositories` and `task_repositories` records. Remote credential store loading, post-closure cleanup/handoff triggers, periodic fetch, and G5 Web UI remain follow-up work.

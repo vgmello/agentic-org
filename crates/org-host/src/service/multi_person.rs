@@ -5,9 +5,10 @@
 
 use org_host_control::browser::SessionValidateParams;
 use org_host_control::browser_accounts::{
-    BrowserAdminHandover, BrowserChangePassword, BrowserOrgAccessList, BrowserOrgAccessListResult,
-    BrowserOrgInvite, BrowserOrgOwnerHandover, BrowserOrgPasswordResetLink, BrowserOrgRemoveAccess,
-    IssuedLinkResult, LinkInspect, LinkRegisterAttach, LinkSetPassword,
+    BrowserAccountPreferencesSet, BrowserAccountPreferencesSetResult, BrowserAdminHandover,
+    BrowserChangePassword, BrowserOrgAccessList, BrowserOrgAccessListResult, BrowserOrgInvite,
+    BrowserOrgOwnerHandover, BrowserOrgPasswordResetLink, BrowserOrgRemoveAccess, IssuedLinkResult,
+    LinkInspect, LinkRegisterAttach, LinkSetPassword,
 };
 use org_host_control::OneTimeLinkUrl;
 use org_proto::{ApiError, Call, Empty, ErrorCode, Request, Response};
@@ -28,6 +29,7 @@ pub(super) fn is_multi_person_op(request: &Request) -> bool {
         LinkRegisterAttach::METHOD,
         LinkSetPassword::METHOD,
         BrowserChangePassword::METHOD,
+        BrowserAccountPreferencesSet::METHOD,
         BrowserOrgAccessList::METHOD,
         BrowserOrgInvite::METHOD,
         BrowserOrgPasswordResetLink::METHOD,
@@ -55,6 +57,8 @@ pub(super) fn dispatch(
         handle_link_set_password(authentication, request, connection);
     } else if request.is::<BrowserChangePassword>() {
         handle_change_password(authentication, request, connection);
+    } else if request.is::<BrowserAccountPreferencesSet>() {
+        handle_account_preferences_set(authentication, request, connection);
     } else if request.is::<BrowserOrgAccessList>() {
         handle_org_access_list(authentication, request, connection);
     } else if request.is::<BrowserOrgInvite>() {
@@ -230,6 +234,69 @@ fn handle_change_password(
     finish_ended_browser_sessions(authentication, connection, ended);
     match result {
         Ok(()) => connection.send_response(ok::<BrowserChangePassword>(request.id, &Empty {})),
+        Err(error) => connection.send_response(Response::error(request.id, error)),
+    }
+}
+
+fn handle_account_preferences_set(
+    authentication: &Authentication,
+    request: &Request,
+    connection: &Connection,
+) {
+    let mut ended = Vec::new();
+    let result = browser_now_ms().and_then(|now| {
+        let params = request
+            .params::<BrowserAccountPreferencesSet>()
+            .map_err(|_| invalid())?;
+        if params.time_zone.is_some() && params.clear_time_zone
+            || params.last_org_id.is_some() && params.clear_last_org_id
+        {
+            return Err(invalid());
+        }
+        let account =
+            authentication.browser_auth_account(connection, &params.auth, now, &mut ended)?;
+        let tz_patch = if params.clear_time_zone {
+            Some(None)
+        } else if let Some(ref tz) = params.time_zone {
+            if !org_proto::tz::validate_iana_timezone(tz) {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "time_zone must be a valid IANA time zone",
+                ));
+            }
+            Some(Some(tz.as_str()))
+        } else {
+            None
+        };
+        let org_patch = if params.clear_last_org_id {
+            Some(None)
+        } else if let Some(ref org_id) = params.last_org_id {
+            if !account.links().iter().any(|l| l.org_id() == org_id) {
+                return Err(forbidden("account is not linked to that organization"));
+            }
+            Some(Some(org_id.as_str()))
+        } else {
+            None
+        };
+        let (db, _) = authentication.provisioning_storage();
+        let acc_id = AccountId::parse(account.account_id()).map_err(|_| invalid())?;
+        let (time_zone, last_org_id) = db
+            .set_account_preferences(&acc_id, tz_patch, org_patch)
+            .map_err(|_| ApiError::new(ErrorCode::Unavailable, "could not save preferences"))?;
+        Ok((
+            account.account_id().to_owned(),
+            BrowserAccountPreferencesSetResult {
+                time_zone,
+                last_org_id,
+            },
+        ))
+    });
+    finish_ended_browser_sessions(authentication, connection, ended);
+    match result {
+        Ok((account_id, res)) => {
+            notify_account_changed(connection, &account_id);
+            connection.send_response(ok::<BrowserAccountPreferencesSet>(request.id, &res));
+        }
         Err(error) => connection.send_response(Response::error(request.id, error)),
     }
 }

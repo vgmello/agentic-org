@@ -5,8 +5,9 @@ use hyper::{http::request::Parts, Method, StatusCode};
 use org_proto::sessions::{
     MemberSessionApprovalDecide, MemberSessionApprovalDecideParams, MemberSessionClearStall,
     MemberSessionClearStallParams, MemberSessionGrants, MemberSessionGrantsParams,
-    MemberSessionInspect, MemberSessionInspectParams, MemberSessionStart, MemberSessionStartParams,
-    MemberSessionStop, MemberSessionStopParams, ProviderCredentialRevoke,
+    MemberSessionInspect, MemberSessionInspectParams, MemberSessionList, MemberSessionListParams,
+    MemberSessionStart, MemberSessionStartParams, MemberSessionStop, MemberSessionStopParams,
+    MemberSessionTranscript, MemberSessionTranscriptParams, ProviderCredentialRevoke,
     ProviderCredentialRevokeParams, ProviderCredentialStatus, ProviderCredentialStatusParams,
     ProviderEnrollmentCancel, ProviderEnrollmentCancelParams, ProviderEnrollmentStart,
     ProviderEnrollmentStartParams, ProviderEnrollmentStatus, ProviderEnrollmentStatusParams,
@@ -29,6 +30,8 @@ pub enum SessionRoute {
     Start(CallerAuth, String, String),
     Stop(CallerAuth, String, String),
     Inspect(CallerAuth, String, String),
+    ListSessions(CallerAuth, String, MemberSessionListParams),
+    Transcript(CallerAuth, String, MemberSessionTranscriptParams),
     Grants(CallerAuth, String, String),
     Approval(CallerAuth, String, String),
     ClearStall(CallerAuth, String, String),
@@ -44,6 +47,8 @@ pub enum SessionCall {
     Start(CallerAuth, String, MemberSessionStartParams),
     Stop(CallerAuth, String, MemberSessionStopParams),
     Inspect(CallerAuth, String, String),
+    ListSessions(CallerAuth, String, MemberSessionListParams),
+    Transcript(CallerAuth, String, MemberSessionTranscriptParams),
     Grants(CallerAuth, String, String),
     Approval(CallerAuth, String, MemberSessionApprovalDecideParams),
     ClearStall(CallerAuth, String, MemberSessionClearStallParams),
@@ -119,7 +124,7 @@ fn valid_id(id: &str) -> Result<(), ApiReply> {
     ok.then_some(()).ok_or_else(invalid)
 }
 
-/// Attempts to route C3 paths under `/api/v1/organizations/{org}/...`.
+/// Attempts to route C3/C4 paths under `/api/v1/organizations/{org}/...`.
 pub(super) fn try_route(
     api: &SessionApi,
     request: &Parts,
@@ -129,13 +134,170 @@ pub(super) fn try_route(
     post: bool,
     query: bool,
 ) -> Option<Result<Route, ApiReply>> {
-    let is_get = matches!(request.method, Method::GET | Method::HEAD) && !query;
+    let is_get_method = matches!(request.method, Method::GET | Method::HEAD);
+    let is_get = is_get_method && !query;
     match tail {
+        ["agents", id, "sessions"] => {
+            route_agent_sessions_list(api, request, org, id, is_get_method)
+        }
+        ["agents", id, "transcript"] => {
+            route_agent_transcript(api, request, org, id, None, is_get_method)
+        }
+        ["agents", id, "sessions", session_id, "transcript"] => {
+            route_agent_transcript(api, request, org, id, Some(session_id), is_get_method)
+        }
         ["agents", id, action] => route_agent_session(api, request, org, id, action, is_get, post),
         ["provider-connections", id, rest @ ..] => {
             route_provider_conn(api, request, org, id, rest, is_get, post)
         }
         _ => None,
+    }
+}
+
+fn route_agent_sessions_list(
+    api: &SessionApi,
+    request: &Parts,
+    org: &str,
+    id: &str,
+    is_get_method: bool,
+) -> Option<Result<Route, ApiReply>> {
+    if !is_get_method {
+        return Some(Err(invalid()));
+    }
+    Some(build_sessions_list_route(api, request, org, id))
+}
+
+fn build_sessions_list_route(
+    api: &SessionApi,
+    request: &Parts,
+    org: &str,
+    id: &str,
+) -> Result<Route, ApiReply> {
+    let caller = api.caller_auth(request)?;
+    valid_org_id(org)?;
+    if !org_office_launch::is_storage_id(id) {
+        return Err(invalid());
+    }
+    let limit = parse_list_query(request.uri.query())?;
+    Ok(Route::Sessions(SessionRoute::ListSessions(
+        caller,
+        org.to_owned(),
+        MemberSessionListParams {
+            employee_id: Some(id.to_owned()),
+            limit,
+        },
+    )))
+}
+
+fn route_agent_transcript(
+    api: &SessionApi,
+    request: &Parts,
+    org: &str,
+    id: &str,
+    session_id: Option<&str>,
+    is_get_method: bool,
+) -> Option<Result<Route, ApiReply>> {
+    if !is_get_method {
+        return Some(Err(invalid()));
+    }
+    Some(build_transcript_route(api, request, org, id, session_id))
+}
+
+fn build_transcript_route(
+    api: &SessionApi,
+    request: &Parts,
+    org: &str,
+    id: &str,
+    session_id: Option<&str>,
+) -> Result<Route, ApiReply> {
+    let caller = api.caller_auth(request)?;
+    valid_org_id(org)?;
+    if !org_office_launch::is_storage_id(id) {
+        return Err(invalid());
+    }
+    if let Some(sid) = session_id {
+        valid_session_id(sid)?;
+    }
+    let mut params = parse_transcript_query(request.uri.query())?;
+    params.employee_id = Some(id.to_owned());
+    params.session_id = session_id.map(ToOwned::to_owned);
+    Ok(Route::Sessions(SessionRoute::Transcript(
+        caller,
+        org.to_owned(),
+        params,
+    )))
+}
+
+fn valid_session_id(id: &str) -> Result<(), ApiReply> {
+    let ok = !id.is_empty()
+        && id.len() <= 128
+        && !id.contains("..")
+        && id != "."
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
+    ok.then_some(()).ok_or_else(invalid)
+}
+
+fn parse_list_query(query: Option<&str>) -> Result<Option<u32>, ApiReply> {
+    let Some(raw) = query.filter(|q| !q.is_empty()) else {
+        return Ok(None);
+    };
+    let mut limit = None;
+    for pair in raw.split('&') {
+        let (k, v) = pair.split_once('=').ok_or_else(invalid)?;
+        match k {
+            "limit" if limit.is_none() => {
+                let parsed: u32 = v.parse().map_err(|_| invalid())?;
+                if parsed == 0 {
+                    return Err(invalid());
+                }
+                limit = Some(parsed);
+            }
+            _ => return Err(invalid()),
+        }
+    }
+    Ok(limit)
+}
+
+fn parse_transcript_query(query: Option<&str>) -> Result<MemberSessionTranscriptParams, ApiReply> {
+    let mut params = MemberSessionTranscriptParams::default();
+    let Some(raw) = query.filter(|q| !q.is_empty()) else {
+        return Ok(params);
+    };
+    for pair in raw.split('&') {
+        let (k, v) = pair.split_once('=').ok_or_else(invalid)?;
+        match k {
+            "include_tool_calls" if params.include_tool_calls.is_none() => {
+                params.include_tool_calls = Some(parse_bool_param(v)?);
+            }
+            "include_file_changes" if params.include_file_changes.is_none() => {
+                params.include_file_changes = Some(parse_bool_param(v)?);
+            }
+            "include_subagents" if params.include_subagents.is_none() => {
+                params.include_subagents = Some(parse_bool_param(v)?);
+            }
+            "cursor" if params.cursor.is_none() => {
+                params.cursor = Some(v.parse().map_err(|_| invalid())?);
+            }
+            "limit" if params.limit.is_none() => {
+                let parsed: u32 = v.parse().map_err(|_| invalid())?;
+                if parsed == 0 {
+                    return Err(invalid());
+                }
+                params.limit = Some(parsed);
+            }
+            _ => return Err(invalid()),
+        }
+    }
+    Ok(params)
+}
+
+fn parse_bool_param(raw: &str) -> Result<bool, ApiReply> {
+    match raw {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(invalid()),
     }
 }
 
@@ -355,6 +517,8 @@ fn read_call(call: SessionCall, bytes: &[u8]) -> Result<PreparedCall<Call>, ApiR
 pub(super) fn prepare(route: SessionRoute, bytes: &[u8]) -> Result<PreparedCall<Call>, ApiReply> {
     match route {
         SessionRoute::Inspect(c, o, id) => read_call(SessionCall::Inspect(c, o, id), bytes),
+        SessionRoute::ListSessions(c, o, p) => read_call(SessionCall::ListSessions(c, o, p), bytes),
+        SessionRoute::Transcript(c, o, p) => read_call(SessionCall::Transcript(c, o, p), bytes),
         SessionRoute::Grants(c, o, id) => read_call(SessionCall::Grants(c, o, id), bytes),
         SessionRoute::EnrollStatus(c, o, id, login) => {
             read_call(SessionCall::EnrollStatus(c, o, id, login), bytes)
@@ -583,6 +747,8 @@ pub(super) async fn execute(api: &SessionApi, call: SessionCall) -> ApiReply {
         SessionCall::Start(..)
         | SessionCall::Stop(..)
         | SessionCall::Inspect(..)
+        | SessionCall::ListSessions(..)
+        | SessionCall::Transcript(..)
         | SessionCall::Grants(..)
         | SessionCall::Approval(..)
         | SessionCall::ClearStall(..) => execute_agent(api, call).await,
@@ -601,6 +767,12 @@ async fn execute_agent(api: &SessionApi, call: SessionCall) -> ApiReply {
                 employee_id: Some(employee_id),
             };
             run_office::<MemberSessionInspect>(api, c, &o, &params, true).await
+        }
+        SessionCall::ListSessions(c, o, p) => {
+            run_office::<MemberSessionList>(api, c, &o, &p, true).await
+        }
+        SessionCall::Transcript(c, o, p) => {
+            run_office::<MemberSessionTranscript>(api, c, &o, &p, true).await
         }
         SessionCall::Grants(c, o, employee_id) => {
             let params = MemberSessionGrantsParams {
@@ -644,5 +816,38 @@ async fn execute_provider(api: &SessionApi, call: SessionCall) -> ApiReply {
             run_office::<ProviderCredentialRevoke>(api, c, &o, &p, false).await
         }
         _ => unreachable!(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transcript_query_and_session_id_validation() {
+        let parsed = parse_transcript_query(Some(
+            "include_tool_calls=false&include_file_changes=0&include_subagents=true&cursor=25&limit=100",
+        ))
+        .ok()
+        .expect("valid transcript query");
+        assert_eq!(parsed.include_tool_calls, Some(false));
+        assert_eq!(parsed.include_file_changes, Some(false));
+        assert_eq!(parsed.include_subagents, Some(true));
+        assert_eq!(parsed.cursor, Some(25));
+        assert_eq!(parsed.limit, Some(100));
+
+        assert!(parse_transcript_query(Some("unknown=1")).is_err());
+        assert!(parse_transcript_query(Some("limit=0")).is_err());
+        assert!(parse_transcript_query(Some("limit=5&limit=10")).is_err());
+        assert!(parse_transcript_query(Some("include_tool_calls=maybe")).is_err());
+        assert_eq!(parse_list_query(Some("limit=20")).ok(), Some(Some(20)));
+        assert!(parse_list_query(Some("limit=0")).is_err());
+        assert!(parse_list_query(Some("limit=1&limit=2")).is_err());
+
+        assert!(valid_session_id("sess-0193a5c0_1.v1").is_ok());
+        assert!(valid_session_id("..").is_err());
+        assert!(valid_session_id("../etc").is_err());
+        assert!(valid_session_id("a..b").is_err());
+        assert!(valid_session_id("").is_err());
     }
 }

@@ -42,6 +42,7 @@ fn try_msg<T: OfficeTransport + ?Sized>(
         "list" => Some(read_msg_list(transport, request)),
         "done" => Some(write_msg_done(transport, request)),
         "defer" => Some(write_msg_defer(transport, request)),
+        "unsnooze" => Some(write_msg_unsnooze(transport, request)),
         "wait" => Some(read_msg_wait(transport, request)),
         _ => None,
     }
@@ -355,6 +356,7 @@ fn read_msg_inbox<T: OfficeTransport + ?Sized>(
     if opt_bool(request, "all").unwrap_or(false) {
         params.insert("include_all".into(), Value::Bool(true));
     }
+    insert_opt(&mut params, "state", opt_str(request, "state"));
     insert_opt(&mut params, "from", opt_str(request, "from"));
     insert_opt(&mut params, "thread_id", opt_str(request, "thread"));
     insert_opt(&mut params, "because", opt_str(request, "because"));
@@ -541,7 +543,23 @@ fn write_msg_defer<T: OfficeTransport + ?Sized>(
 ) -> Result<Answer, Refusal> {
     let id = require_str(request, "id")?;
     let until = match (opt_str(request, "until"), opt_bool(request, "after_task")) {
-        (Some(at), _) => org_proto::msg::SnoozeTarget::Until { at: at.to_owned() },
+        (Some(_), Some(true)) => {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                "Pass either `--until <rfc3339>` or `--after-task`, not both.",
+                "Run `agent-os msg defer --help` for usage.",
+            ));
+        }
+        (Some(at), _) => {
+            let canonical = org_proto::canonicalize_rfc3339_utc(at).ok_or_else(|| {
+                Refusal::new(
+                    ErrorCode::InvalidRequest,
+                    "`--until` must be a valid RFC 3339 timestamp.",
+                    "Example: `2026-11-23T09:00:00Z` or `2026-11-23T11:00:00+02:00`.",
+                )
+            })?;
+            org_proto::msg::SnoozeTarget::Until { at: canonical }
+        }
         (None, Some(true)) => org_proto::msg::SnoozeTarget::AfterTask,
         _ => {
             return Err(Refusal::new(
@@ -570,6 +588,26 @@ fn write_msg_defer<T: OfficeTransport + ?Sized>(
         Value::Bool(res.snooze_after_task),
     );
     Ok(with_ack(Answer::completed(Value::Object(obj)), request))
+}
+
+fn write_msg_unsnooze<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let id = require_str(request, "id")?;
+    let wire = org_proto::msg::MsgUnsnoozeParams { id: id.to_owned() };
+    let params = serde_json::to_value(&wire).map_err(|_| decode_err("msg.unsnooze"))?;
+    let raw = transport.call_method("msg.unsnooze", params)?;
+    let res: org_proto::msg::MsgUnsnoozeResult =
+        serde_json::from_value(raw).map_err(|_| decode_err("msg.unsnooze"))?;
+    Ok(with_ack(
+        Answer::completed(json!({
+            "id": res.id,
+            "state": res.state,
+            "triage_gen": res.triage_gen,
+        })),
+        request,
+    ))
 }
 
 fn read_msg_wait_ask<T: OfficeTransport + ?Sized>(
@@ -997,5 +1035,106 @@ mod tests {
         assert!(parsed["data"]["derived_notice"]
             .as_str()
             .is_some_and(|s| s.contains("never instructions")));
+    }
+
+    #[test]
+    fn msg_unsnooze_and_inbox_state_filter_dispatch() {
+        let mut t = TransportOffice(RecordingTransport {
+            last_method: None,
+            last_timeout: None,
+            response: json!({
+                "id": "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa",
+                "state": "unread",
+                "triage_gen": 2
+            }),
+        });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "unsnooze".into(),
+                "--id".into(),
+                "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa".into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        assert_eq!(t.0.last_method.as_deref(), Some("msg.unsnooze"));
+        let parsed: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(parsed["data"]["state"], "unread");
+        assert_eq!(parsed["data"]["triage_gen"], 2);
+
+        let mut inbox_t = TransportOffice(RecordingTransport {
+            last_method: None,
+            last_timeout: None,
+            response: json!({ "items": [], "next_cursor": null }),
+        });
+        let inbox_out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "inbox".into(),
+                "--state".into(),
+                "snoozed".into(),
+            ],
+            &mut inbox_t,
+        );
+        assert_eq!(inbox_out.exit_code, 0, "{}", inbox_out.stdout);
+        assert_eq!(inbox_t.0.last_method.as_deref(), Some("chat.inbox"));
+
+        // msg defer canonicalizes non-canonical RFC3339 offsets and rejects invalid / conflicting flags.
+        let mut defer_t = TransportOffice(RecordingTransport {
+            last_method: None,
+            last_timeout: None,
+            response: json!({
+                "id": "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa",
+                "triage_gen": 1,
+                "snoozed_until": "2026-11-23T09:00:00.000Z",
+                "snooze_after_task": false
+            }),
+        });
+        let defer_ok = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "defer".into(),
+                "--id".into(),
+                "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa".into(),
+                "--until".into(),
+                "2026-11-23T11:00:00+02:00".into(),
+            ],
+            &mut defer_t,
+        );
+        assert_eq!(defer_ok.exit_code, 0, "{}", defer_ok.stdout);
+        assert_eq!(defer_t.0.last_method.as_deref(), Some("msg.defer"));
+
+        let defer_bad = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "defer".into(),
+                "--id".into(),
+                "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa".into(),
+                "--until".into(),
+                "not-a-time".into(),
+            ],
+            &mut defer_t,
+        );
+        assert_ne!(defer_bad.exit_code, 0, "{}", defer_bad.stdout);
+
+        let defer_both = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "defer".into(),
+                "--id".into(),
+                "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa".into(),
+                "--until".into(),
+                "2026-11-23T09:00:00Z".into(),
+                "--after-task".into(),
+            ],
+            &mut defer_t,
+        );
+        assert_ne!(defer_both.exit_code, 0, "{}", defer_both.stdout);
     }
 }

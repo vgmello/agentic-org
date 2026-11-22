@@ -136,6 +136,15 @@ pub type ChatFn = Box<
 /// Dispatches B4/B5/B4b unified `tasks.*` RPCs (`TASK-49`, `TASK-77`).
 pub type TasksFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches C7 repository, worktree, and Git push RPCs (`TASK-51`).
+pub type GitFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
+/// Dispatches C5 organization processes, standards, and built-in skills RPCs (`TASK-44`).
+pub type ProcessesFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
+/// Dispatches L2/L3 usage, cost accounting, and budget RPCs (`TASK-53`).
+pub type CostsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
@@ -166,6 +175,12 @@ pub struct OfficePorts {
     pub chat: Option<ChatFn>,
     /// B4/B5/B4b unified typed tasks dispatcher (`TASK-49`, `TASK-77`).
     pub tasks: Option<TasksFn>,
+    /// C7 repository, worktree, and Git push dispatcher (`TASK-51`).
+    pub git: Option<GitFn>,
+    /// C5 organization processes, standards, and built-in skills dispatcher (`TASK-44`).
+    pub processes: Option<ProcessesFn>,
+    /// L2/L3 usage, cost accounting, and budget controls dispatcher (`TASK-53`).
+    pub costs: Option<CostsFn>,
     /// Who a `msg.bind` names.
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
@@ -428,6 +443,11 @@ impl Shared {
                 },
             ),
         }
+    }
+
+    /// Returns the office's mailbox port when messaging is enabled.
+    pub(crate) fn mailbox(&self) -> Option<Arc<Mailbox>> {
+        self.ports.mailbox.clone()
     }
 
     /// Track organization changes for revocation even when no subscription feed is served.
@@ -1217,6 +1237,9 @@ fn answer_inbox_or_operation(
                 "inbox is for the live owner",
             ));
         }
+        if let (Some(mb), Binding::Member { id, .. }) = (&shared.ports.mailbox, binding) {
+            let _ = mb.release_due_snoozes_for(id);
+        }
         return Some(match request.params::<org_proto::inbox::InboxList>() {
             Ok(params) => match inbox.list(params) {
                 Ok(result) => Response::ok::<org_proto::inbox::InboxList>(request.id, &result)
@@ -1449,11 +1472,14 @@ fn is_hiring_method(request: &Request) -> bool {
 fn is_session_control_method(request: &Request) -> bool {
     use org_proto::sessions::{
         MemberSessionApprovalDecide, MemberSessionClearStall, MemberSessionGrants,
-        MemberSessionInspect, MemberSessionStart, MemberSessionStop,
+        MemberSessionInspect, MemberSessionList, MemberSessionStart, MemberSessionStop,
+        MemberSessionTranscript,
     };
     request.is::<MemberSessionStart>()
         || request.is::<MemberSessionStop>()
         || request.is::<MemberSessionInspect>()
+        || request.is::<MemberSessionList>()
+        || request.is::<MemberSessionTranscript>()
         || request.is::<MemberSessionGrants>()
         || request.is::<MemberSessionApprovalDecide>()
         || request.is::<MemberSessionClearStall>()
@@ -1481,6 +1507,92 @@ fn project_or_hiring(request: &Request, shared: &Shared, binding: &Binding) -> O
         .or_else(|| hiring_rpc(request, shared, binding))
         .or_else(|| sessions_rpc(request, shared, binding))
         .or_else(|| tasks_rpc(request, shared, binding))
+        .or_else(|| git_rpc(request, shared, binding))
+        .or_else(|| processes_rpc(request, shared, binding))
+        .or_else(|| costs_rpc(request, shared, binding))
+}
+
+fn costs_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::cost_calls::is_cost_or_budget_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(costs) = &shared.ports.costs {
+        if let Some(response) = costs(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
+}
+
+fn processes_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::process_calls::is_process_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(processes) = &shared.ports.processes {
+        if let Some(response) = processes(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
+}
+
+fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::git_calls::is_git_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if (request.is::<org_proto::git::RepoRegister>() || request.is::<org_proto::git::RepoAttach>())
+        && !binding.via_grant()
+    {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "repository registration and project attachment require a verified owner grant",
+            ),
+        ));
+    }
+    if let Some(git) = &shared.ports.git {
+        if let Some(response) = git(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
 }
 
 fn tasks_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
@@ -2823,6 +2935,9 @@ mod tests {
             mailbox: Some(mailbox),
             chat: None,
             tasks: None,
+            git: None,
+            processes: None,
+            costs: None,
             directory,
         }
     }
@@ -3288,6 +3403,9 @@ mod tests {
                 mailbox: Some(mailbox),
                 chat: None,
                 tasks: None,
+                git: None,
+                processes: None,
+                costs: None,
                 directory,
             },
             launch_key(),
@@ -3767,6 +3885,9 @@ mod tests {
                     mailbox: Some(mailbox),
                     chat: None,
                     tasks: None,
+                    git: None,
+                    processes: None,
+                    costs: None,
                     directory,
                 },
                 launch_key(),
@@ -4271,6 +4392,9 @@ mod tests {
                 mailbox: Some(mailbox),
                 chat: None,
                 tasks: None,
+                git: None,
+                processes: None,
+                costs: None,
                 directory,
             },
             launch_key(),

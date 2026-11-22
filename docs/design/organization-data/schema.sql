@@ -2532,7 +2532,7 @@ CREATE INDEX documents_by_project_path ON documents(organization_id, project_id,
 -- TASK-8 (M-07): uniqueness, cycle guards, terminal immutability, and counter monotonicity.
 CREATE UNIQUE INDEX one_project_brief ON documents(organization_id, project_id) WHERE kind = 'brief';
 CREATE UNIQUE INDEX documents_key_unique ON documents(organization_id, project_id, key) WHERE key IS NOT NULL;
-CREATE UNIQUE INDEX structure_documents_key_unique ON structure_documents(organization_id, key) WHERE key IS NOT NULL;
+CREATE UNIQUE INDEX structure_documents_key_unique ON structure_documents(organization_id, COALESCE(team_id, ''), COALESCE(project_id, ''), key) WHERE key IS NOT NULL;
 
 CREATE TRIGGER feature_replacement_no_cycle_insert AFTER INSERT ON features
 WHEN NEW.replaced_by_feature_id IS NOT NULL

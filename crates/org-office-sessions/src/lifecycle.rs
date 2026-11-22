@@ -280,6 +280,11 @@ impl SessionManager {
             .is_some()
     }
 
+    /// Retries any agents held on a budget hold after a raise, clear, extension, or reset (`L3`, `ASK-8`).
+    pub fn retry_budget_held(&self) {
+        self.process_due_wakes();
+    }
+
     /// Called when a paused agent is resumed (`ADR-0030` d3).
     pub fn on_agent_resumed(&self, employee_id: &str) {
         let _ = self.process_due_wakes_for(employee_id);
@@ -394,7 +399,14 @@ impl SessionManager {
         out
     }
 
-    pub(crate) fn build_pump_hooks(&self) -> (OpenRequiredAsksHook, TurnEndedHook, SuspendedHook) {
+    pub(crate) fn build_pump_hooks(
+        &self,
+    ) -> (
+        OpenRequiredAsksHook,
+        TurnEndedHook,
+        SuspendedHook,
+        crate::pump::UsageHook,
+    ) {
         let open_asks_check = Arc::clone(&self.open_required_asks);
         let has_open: OpenRequiredAsksHook = Arc::new(move |emp_id: &str| {
             open_asks_check
@@ -443,10 +455,20 @@ impl SessionManager {
             window_ms: self.config.wake_window.as_millis() as u64,
         };
         let on_turn_ended: TurnEndedHook = Arc::new(move |emp_id: &str| {
+            let _ = drain_ctx.office.mark_budget_holds_stopped(emp_id);
             drain_pending_wakes_into_live_pump(emp_id, &drain_ctx);
         });
 
-        (has_open, on_turn_ended, on_suspended)
+        let usage_office = Arc::clone(&self.office);
+        let usage_seq = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let usage_baselines: Arc<Mutex<std::collections::HashMap<String, CumulativeBaseline>>> =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let on_usage: crate::pump::UsageHook = Arc::new(move |emp_id, run_id, usage| {
+            let seq = usage_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            record_session_usage(&usage_office, &usage_baselines, emp_id, run_id, seq, usage);
+        });
+
+        (has_open, on_turn_ended, on_suspended, on_usage)
     }
 
     fn load_agent_employee(&self, employee_id: &str) -> Option<Employee> {
@@ -497,6 +519,7 @@ impl SessionManager {
     fn queue_hold_reason(
         &self,
         employee: &Employee,
+        task_id: Option<&str>,
         person_triggered: bool,
         ts: u64,
     ) -> Option<(WakeHoldReason, Option<u64>)> {
@@ -514,7 +537,7 @@ impl SessionManager {
         if self.has_live_active_turn(employee.id.as_str()) {
             return Some((WakeHoldReason::Busy, None));
         }
-        if self.is_budget_held() {
+        if self.is_budget_held_for(employee.id.as_str(), task_id) {
             return Some((WakeHoldReason::BudgetHold, None));
         }
         if !person_triggered {
@@ -534,11 +557,19 @@ impl SessionManager {
         None
     }
 
-    fn is_budget_held(&self) -> bool {
-        self.budget_hold
+    fn is_budget_held_for(&self, employee_id: &str, task_id: Option<&str>) -> bool {
+        if self
+            .budget_hold
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .is_some()
+        {
+            return true;
+        }
+        self.office
+            .active_budget_holds(Some(employee_id), task_id)
+            .map(|holds| !holds.is_empty())
+            .unwrap_or(false)
     }
 
     fn try_dispatch_deadlock_breaker(
@@ -580,8 +611,13 @@ impl SessionManager {
                 };
             }
             let person_triggered = matching.iter().any(|i| i.sender_is_person);
+            let task_ref = matching
+                .iter()
+                .find(|i| i.kind == WakeKind::TaskAssignment)
+                .map(|i| i.source_id.as_str())
+                .filter(|s| !s.is_empty());
             if let Some((reason, retry_after)) =
-                self.queue_hold_reason(employee, person_triggered, ts)
+                self.queue_hold_reason(employee, task_ref, person_triggered, ts)
             {
                 queue.set_hold(reason, ts, retry_after);
                 self.write_wakes_redacted(&queue);
@@ -623,10 +659,16 @@ impl SessionManager {
             "waited_ms": held_since.map(|s| ts.saturating_sub(s)),
             "at": rfc3339_now(),
         });
+        let task_ref = matching
+            .iter()
+            .find(|i| i.kind == WakeKind::TaskAssignment)
+            .map(|i| i.source_id.as_str())
+            .filter(|s| !s.is_empty());
         match self.spawn_or_send_autonomous(
             employee,
             objective,
             susp.runtime_session_id.as_deref(),
+            task_ref,
             trigger,
         ) {
             Ok(_) => {
@@ -671,8 +713,14 @@ impl SessionManager {
                 let _ = self.store.clear_pending_wakes(emp_id);
                 return WakeOutcome::Ignored;
             }
+            let task_ref = queue
+                .items
+                .iter()
+                .find(|i| i.kind == WakeKind::TaskAssignment)
+                .map(|i| i.source_id.as_str())
+                .filter(|s| !s.is_empty());
             if let Some((reason, retry_after)) =
-                self.queue_hold_reason(employee, queue.has_person_item(), ts)
+                self.queue_hold_reason(employee, task_ref, queue.has_person_item(), ts)
             {
                 let first = queue.items[0].clone();
                 let changed = queue.hold_reason != Some(reason);
@@ -722,7 +770,19 @@ impl SessionManager {
             "waited_ms": waited_ms,
             "at": rfc3339_now(),
         });
-        match self.spawn_or_send_autonomous(employee, objective, resume_rsid.as_deref(), trigger) {
+        let task_ref = queue
+            .items
+            .iter()
+            .find(|i| i.kind == WakeKind::TaskAssignment)
+            .map(|i| i.source_id.as_str())
+            .filter(|s| !s.is_empty());
+        match self.spawn_or_send_autonomous(
+            employee,
+            objective,
+            resume_rsid.as_deref(),
+            task_ref,
+            trigger,
+        ) {
             Ok(_) => {
                 let _lock = self
                     .lifecycle_lock
@@ -769,7 +829,7 @@ impl SessionManager {
             }
             let hold = if employee.status == EmployeeStatus::Paused {
                 Some(WakeHoldReason::Paused)
-            } else if self.is_budget_held() {
+            } else if self.is_budget_held_for(employee_id, None) {
                 Some(WakeHoldReason::BudgetHold)
             } else {
                 None
@@ -821,6 +881,7 @@ impl SessionManager {
             employee,
             objective,
             susp.runtime_session_id.as_deref(),
+            None,
             trigger,
         ) {
             Ok(_) => {
@@ -1088,11 +1149,22 @@ fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) 
     let ts = now_ms();
     let tokens = ctx.bindings.active_tokens();
     let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
-    if ctx
-        .budget_hold
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .is_some()
+    let queue_task_id = queue
+        .items
+        .iter()
+        .find(|i| i.kind == WakeKind::TaskAssignment)
+        .map(|i| i.source_id.as_str());
+    let office_held = ctx
+        .office
+        .active_budget_holds(Some(employee_id), queue_task_id)
+        .map(|h| !h.is_empty())
+        .unwrap_or(false);
+    if office_held
+        || ctx
+            .budget_hold
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_some()
     {
         queue.set_hold(WakeHoldReason::BudgetHold, ts, None);
         let _ = ctx.store.write_pending_wakes_redacted(&queue, &refs);
@@ -1142,6 +1214,112 @@ fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) 
         );
         let _ = ctx.store.clear_pending_wakes(employee_id);
     }
+}
+
+#[derive(Default)]
+struct CumulativeBaseline {
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_write: u64,
+    reasoning: u64,
+    cost_micro_usd: u64,
+}
+
+fn record_session_usage(
+    office: &Office,
+    baselines: &Mutex<std::collections::HashMap<String, CumulativeBaseline>>,
+    emp_id: &str,
+    run_id: &str,
+    seq: u64,
+    usage: &org_agent_runtime::Usage,
+) {
+    use org_agent_runtime::{CostBasis, UsageScope};
+    use org_proto::costs::{
+        AttributionBasis, CostUsageRecordParams, UsageActorKind, UsageScopeKind,
+    };
+    let mut map = baselines.lock().unwrap_or_else(|p| p.into_inner());
+    let base = map.entry(run_id.to_owned()).or_default();
+    let (in_tok, out_tok, cr_tok, cw_tok, reas_tok) = match usage.token_scope {
+        UsageScope::Cumulative => {
+            let d = (
+                usage.input.saturating_sub(base.input),
+                usage.output.saturating_sub(base.output),
+                usage.cache_read.saturating_sub(base.cache_read),
+                usage.cache_write.saturating_sub(base.cache_write),
+                usage.reasoning.saturating_sub(base.reasoning),
+            );
+            base.input = base.input.max(usage.input);
+            base.output = base.output.max(usage.output);
+            base.cache_read = base.cache_read.max(usage.cache_read);
+            base.cache_write = base.cache_write.max(usage.cache_write);
+            base.reasoning = base.reasoning.max(usage.reasoning);
+            d
+        }
+        _ => (
+            usage.input,
+            usage.output,
+            usage.cache_read,
+            usage.cache_write,
+            usage.reasoning,
+        ),
+    };
+    let raw_cost = match usage.cost_basis {
+        CostBasis::ListPriceEstimate => usage
+            .cost_usd
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .map(|v| (v * 1_000_000.0).round() as u64),
+        _ => None,
+    };
+    let runtime_cost_micro_usd = match (raw_cost, usage.cost_scope) {
+        (Some(total), UsageScope::Cumulative) => {
+            let delta = total.saturating_sub(base.cost_micro_usd);
+            base.cost_micro_usd = base.cost_micro_usd.max(total);
+            Some(delta)
+        }
+        (Some(delta), _) => Some(delta),
+        (None, _) => None,
+    };
+    drop(map);
+    let meta = serde_json::json!({
+        "token_scope": format!("{:?}", usage.token_scope),
+        "cost_scope": format!("{:?}", usage.cost_scope),
+        "cost_basis": format!("{:?}", usage.cost_basis),
+    })
+    .to_string();
+    let params = CostUsageRecordParams {
+        id: None,
+        producer_id: format!("session-{emp_id}"),
+        source_event_id: format!("{run_id}:{seq}"),
+        run_id: Some(run_id.to_owned()),
+        actor_kind: UsageActorKind::Agent,
+        employee_id: Some(emp_id.to_owned()),
+        runtime: "agent_session".into(),
+        provider: None,
+        model: usage.model.clone(),
+        occurred_at: rfc3339_now(),
+        source_metadata_json: Some(meta),
+        input_tokens: Some(in_tok),
+        output_tokens: Some(out_tok),
+        cache_read_tokens: Some(cr_tok),
+        cache_write_tokens: Some(cw_tok),
+        reasoning_tokens: Some(reas_tok),
+        token_issue: None,
+        runtime_cost_micro_usd,
+        is_subscription: false,
+        // `doc-87` / `doc-51` COST-3: unattributed session usage is NEVER defaulted to home team.
+        scope_kind: UsageScopeKind::Organization,
+        task_id: None,
+        project_id: None,
+        team_id: None,
+        feature_id: None,
+        milestone_id: None,
+        release_id: None,
+        task_type_snapshot: None,
+        work_type: None,
+        attribution_basis: AttributionBasis::Unattributed,
+    };
+    let _ = office.record_office_usage(params);
 }
 
 /// Spawns a lightweight background wake-retry thread that sleeps in short 50ms slices so

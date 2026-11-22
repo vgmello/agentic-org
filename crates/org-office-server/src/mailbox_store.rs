@@ -161,29 +161,55 @@ impl MessageStore for OfficeMailboxStore {
     }
 }
 
+fn build_transition_input(
+    office: &Office,
+    change: LocalStateTransition,
+) -> Result<LocalTransitionInput, StoreError> {
+    let to_member_id = Id::parse(&change.to_member_id).map_err(|_| StoreError::NotFound)?;
+    let owner_office_id = Id::parse(&change.owner_office_id)
+        .unwrap_or_else(|_| Id::parse(&office.info().office_id).expect("valid office id"));
+    Ok(LocalTransitionInput {
+        id: change.id,
+        to_member_id,
+        state: change.state,
+        snoozed_until: change.snoozed_until,
+        snooze_after_task: change.snooze_after_task,
+        reason: change.reason,
+        now_utc: change.now_utc,
+        owner_office_id,
+        origin_incarnation: change.origin_incarnation,
+        org_position: change.org_position,
+        expired_waiting_person: change.expired_waiting_person,
+    })
+}
+
 impl TriageStore for OfficeMailboxStore {
     fn update_state_local(
         &self,
         change: LocalStateTransition,
     ) -> Result<MessageHeader, StoreError> {
-        let to_member_id = Id::parse(&change.to_member_id).map_err(|_| StoreError::NotFound)?;
-        let owner_office_id = Id::parse(&change.owner_office_id)
-            .unwrap_or_else(|_| Id::parse(&self.office.info().office_id).expect("valid office id"));
-        let input = LocalTransitionInput {
-            id: change.id,
-            to_member_id,
-            state: change.state,
-            snoozed_until: change.snoozed_until,
-            snooze_after_task: change.snooze_after_task,
-            reason: change.reason,
-            now_utc: change.now_utc,
-            owner_office_id,
-            origin_incarnation: change.origin_incarnation,
-            org_position: change.org_position,
-            expired_waiting_person: change.expired_waiting_person,
-        };
+        let input = build_transition_input(&self.office, change)?;
         self.office
             .mailbox_update_state_local(input)
+            .map_err(StoreError::new)?
+            .map_err(map_api_err)
+    }
+
+    fn defer_local(&self, change: LocalStateTransition) -> Result<MessageHeader, StoreError> {
+        let input = build_transition_input(&self.office, change)?;
+        self.office
+            .mailbox_defer_local(input)
+            .map_err(StoreError::new)?
+            .map_err(map_api_err)
+    }
+
+    fn unsnooze_local(&self, change: LocalStateTransition) -> Result<MessageHeader, StoreError> {
+        let mut input = build_transition_input(&self.office, change)?;
+        input.snoozed_until = None;
+        input.snooze_after_task = false;
+        input.reason = None;
+        self.office
+            .mailbox_unsnooze_local(input)
             .map_err(StoreError::new)?
             .map_err(map_api_err)
     }

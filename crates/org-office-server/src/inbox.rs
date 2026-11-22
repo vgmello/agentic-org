@@ -33,8 +33,13 @@ impl Hq {
             office_id,
         );
         let mailbox_source = crate::mailbox_store::MailboxInboxSource::new(Arc::clone(&office));
+        let budget_source = crate::cost_calls::BudgetInboxSource::new(Arc::clone(&office));
         Ok(Self {
-            sources: vec![Arc::new(source), Arc::new(mailbox_source)],
+            sources: vec![
+                Arc::new(source),
+                Arc::new(mailbox_source),
+                Arc::new(budget_source),
+            ],
             clock: Clock::new(format!("{:032x}", u128::from_be_bytes(epoch))),
             list_office: Some(office),
         })

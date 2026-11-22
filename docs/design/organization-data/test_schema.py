@@ -2354,6 +2354,16 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         assert_refused(self, self.db, "UNIQUE constraint failed", lambda: insert(
             self.db, "structure_documents", organization_id="org", id="sd2", key="coding-std",
             schema_version=1, revision=1, kind="standard", title="Std 2"))
+        # Same key at a lower scope (team or project) is allowed to override (doc-34 §3.1/§5).
+        insert(self.db, "structure_documents", organization_id="org", id="sd3", key="coding-std",
+               schema_version=1, revision=1, kind="standard", title="Team Std 1", team_id="payments")
+        insert(self.db, "structure_documents", organization_id="org", id="sd4", key="coding-std",
+               schema_version=1, revision=1, kind="standard", title="Project Std 1", project_id="project")
+        self.db.commit()
+        # Duplicate key within the same team scope is refused.
+        assert_refused(self, self.db, "UNIQUE constraint failed", lambda: insert(
+            self.db, "structure_documents", organization_id="org", id="sd5", key="coding-std",
+            schema_version=1, revision=1, kind="standard", title="Team Std Dup", team_id="payments"))
 
         # M-07: hire_requests agent-only employee & terminal immutability.
         assert_refused(self, self.db, "hire request employee must be an agent", lambda: insert(

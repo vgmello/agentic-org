@@ -597,6 +597,8 @@ impl Authentication {
             account: BrowserAccount {
                 id: account.account_id().into(),
                 login: account.login().into(),
+                time_zone: account.time_zone().map(str::to_owned),
+                last_org_id: account.last_org_id().map(str::to_owned),
             },
             admin: account.admin(),
             orgs: account

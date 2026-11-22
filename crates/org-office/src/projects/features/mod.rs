@@ -2,9 +2,11 @@
 
 pub mod contributing_teams;
 pub mod create_project;
+pub mod repositories;
 
 pub use contributing_teams::{AddProjectTeam, RemoveProjectTeam};
 pub use create_project::{CreateProject, OwnerTeamChoice, ProjectCreated};
+pub use repositories::{resolve_repository, AttachProjectRepository, RegisterRepository};
 
 use org_store::{Actor, Change, Engine, Id, OfficeIdentity, Operation, Refusal, UnitOfWork};
 use serde::Serialize;

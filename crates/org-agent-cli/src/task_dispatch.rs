@@ -2,6 +2,12 @@
 //! (`TASK-49` AC #3 `CLI-15` + `TASK-77` B4b).
 
 use org_command::{Ack, Answer, Refusal, Request, Status};
+use org_proto::private_notes::{
+    TaskNotePublishResult, TaskNoteRemovedResult, TaskNoteResult, TasksNotesAdd,
+    TasksNotesAddParams, TasksNotesGet, TasksNotesGetParams, TasksNotesList, TasksNotesListParams,
+    TasksNotesListResult, TasksNotesPublish, TasksNotesPublishParams, TasksNotesRemove,
+    TasksNotesRemoveParams, TasksNotesUpdate, TasksNotesUpdateParams,
+};
 use org_proto::tasks::{
     LabelMatchMode, PatchField, TaskDependenciesResult, TaskInspectResult, TaskPriority,
     TaskSortMode, TaskStatus, TaskView, TasksAddDependency, TasksAddDependencyParams, TasksAssign,
@@ -29,6 +35,7 @@ pub fn try_execute<T: OfficeTransport + ?Sized>(
     match request.command.resource {
         "task" => try_task(transport, request),
         "checklist" => try_checklist(transport, request),
+        "task-note" => try_task_note(transport, request),
         _ => None,
     }
 }
@@ -66,6 +73,21 @@ fn try_checklist<T: OfficeTransport + ?Sized>(
         "edit" => Some(write_checklist_edit(transport, request)),
         "remove" => Some(write_checklist_remove(transport, request)),
         "move" => Some(write_checklist_move(transport, request)),
+        _ => None,
+    }
+}
+
+fn try_task_note<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Option<Result<Answer, Refusal>> {
+    match request.command.verb {
+        "add" => Some(write_note_add(transport, request)),
+        "list" => Some(read_note_list(transport, request)),
+        "get" => Some(read_note_get(transport, request)),
+        "update" => Some(write_note_update(transport, request)),
+        "remove" => Some(write_note_remove(transport, request)),
+        "publish" => Some(write_note_publish(transport, request)),
         _ => None,
     }
 }
@@ -719,6 +741,108 @@ fn write_checklist_move<T: OfficeTransport + ?Sized>(
     )
 }
 
+fn write_note_add<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesAddParams {
+        command_id: cmd_id(request)?,
+        task: req_str(&request.input, "task")?.to_owned(),
+        note_id: entity_id(request, "task-note-add")?,
+        body_markdown: req_str(&request.input, "text")?.to_owned(),
+    };
+    let raw = transport.call_method(TasksNotesAdd::METHOD, json!(params))?;
+    let res: TaskNoteResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        json!(res.note),
+        Some(res.note.revision),
+    ))
+}
+
+fn read_note_list<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesListParams {
+        task: req_str(&request.input, "task")?.to_owned(),
+        author_id: opt_str(&request.input, "author_id"),
+    };
+    let raw = transport.call_method(TasksNotesList::METHOD, json!(params))?;
+    let res: TasksNotesListResult = serde_json::from_value(raw).map_err(decode_err)?;
+    let items: Vec<Value> = res.notes.into_iter().map(|n| json!(n)).collect();
+    Ok(list_answer(items))
+}
+
+fn read_note_get<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesGetParams {
+        note_id: req_str(&request.input, "id")?.to_owned(),
+    };
+    let raw = transport.call_method(TasksNotesGet::METHOD, json!(params))?;
+    let res: TaskNoteResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(Answer::completed(json!(res.note)))
+}
+
+fn write_note_update<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesUpdateParams {
+        command_id: cmd_id(request)?,
+        note_id: req_str(&request.input, "id")?.to_owned(),
+        expected_revision: require_revision(request)?,
+        body_markdown: req_str(&request.input, "text")?.to_owned(),
+    };
+    let raw = transport.call_method(TasksNotesUpdate::METHOD, json!(params))?;
+    let res: TaskNoteResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        json!(res.note),
+        Some(res.note.revision),
+    ))
+}
+
+fn write_note_remove<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesRemoveParams {
+        command_id: cmd_id(request)?,
+        note_id: req_str(&request.input, "id")?.to_owned(),
+        expected_revision: require_revision(request)?,
+    };
+    let raw = transport.call_method(TasksNotesRemove::METHOD, json!(params))?;
+    let res: TaskNoteRemovedResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(request, json!(res), Some(res.revision)))
+}
+
+fn write_note_publish<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesPublishParams {
+        command_id: cmd_id(request)?,
+        note_id: req_str(&request.input, "id")?.to_owned(),
+        expected_revision: require_revision(request)?,
+        comment_id: entity_id(request, "task-note-publish-comment")?,
+    };
+    let raw = transport.call_method(TasksNotesPublish::METHOD, json!(params))?;
+    let res: TaskNotePublishResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        json!({
+            "note": res.note,
+            "comment": res.comment,
+            "task_id": res.task.id,
+            "key": res.task.key,
+        }),
+        Some(res.task.revision),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -770,6 +894,28 @@ mod tests {
                 "tasks.labels" => {
                     Ok(json!({ "labels": [{ "label": "security", "task_count": 2 }] }))
                 }
+                "tasks.notes.add" | "tasks.notes.get" | "tasks.notes.update" => Ok(json!({
+                    "note": {
+                        "id": "0193a5c0-0000-7000-8000-000000000400",
+                        "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                        "author_id": "0193a5c0-0000-7000-8000-000000000001",
+                        "revision": 1,
+                        "body_markdown": "Private note",
+                        "created_at": "2026-11-22T00:00:00.000Z",
+                        "updated_at": "2026-11-22T00:00:00.000Z",
+                        "editable": true
+                    }
+                })),
+                "tasks.notes.list" => Ok(json!({
+                    "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                    "notes": []
+                })),
+                "tasks.notes.remove" => Ok(json!({
+                    "note_id": "0193a5c0-0000-7000-8000-000000000400",
+                    "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                    "revision": 2,
+                    "deleted_at": "2026-11-22T00:01:00.000Z"
+                })),
                 "tasks.checklist.add" | "tasks.checklist.check" => Ok(json!({
                     "task": {
                         "id": "0193a5c0-0000-7000-8000-000000000100",
@@ -930,5 +1076,40 @@ mod tests {
         let uncheck_out = crate::execute_with_office("agent-os", &uncheck_args, &mut office);
         assert_eq!(uncheck_out.exit_code, 0, "stdout: {}", uncheck_out.stdout);
         assert_eq!(office.0.seen.last().unwrap().1["done"], json!(false));
+
+        // `task note add|list|update|remove` alias rewrites to `task-note` (TASK-50 AC #3).
+        let note_add: Vec<String> = [
+            "task",
+            "note",
+            "add",
+            "--idempotency-key",
+            "note-key-1",
+            "--task",
+            "T-A1",
+            "--text",
+            "My private plan",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let n1 = crate::execute_with_office("agent-os", &note_add, &mut office);
+        let n2 = crate::execute_with_office("agent-os", &note_add, &mut office);
+        assert_eq!(n1.exit_code, 0, "stdout: {}", n1.stdout);
+        assert_eq!(n2.exit_code, 0, "stdout: {}", n2.stdout);
+        let len = office.0.seen.len();
+        assert_eq!(office.0.seen[len - 2].0, "tasks.notes.add");
+        assert_eq!(
+            office.0.seen[len - 2].1["note_id"],
+            office.0.seen[len - 1].1["note_id"]
+        );
+
+        let note_list: Vec<String> = ["task", "note", "list", "--task", "T-A1"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            crate::execute_with_office("agent-os", &note_list, &mut office).exit_code,
+            0
+        );
     }
 }

@@ -302,6 +302,7 @@ impl WatcherFixture {
             12,
             &ChatInboxParams {
                 include_all: true,
+                state: None,
                 because: None,
                 from: None,
                 thread_id: None,
@@ -818,6 +819,47 @@ fn watch_8_and_10_summarize_and_confident_person_only_wake_rule() {
     assert_eq!(entry.consumer_kind, "employee");
     assert_eq!(entry.employee_id.as_deref(), Some(fx.ada.as_str()));
     assert_eq!(entry.feature, "channel.summarize");
+    // When watcher provider omits token usage (`usage: None`), accounting ledger records Unavailable (`Pass 2 Low #7`).
+    let _ = super::record_usage(
+        &fx.office,
+        fx.watcher.store(),
+        super::UsageContext {
+            consumer_kind: "office",
+            employee_id: None,
+            project_id: None,
+            conversation_id: "conv-no-usage",
+            feature: "watcher.no_usage_probe",
+            model_profile_id: None,
+            question_ids: Vec::new(),
+            outcome: "ok",
+            usage: None,
+            duration: Duration::from_millis(5),
+        },
+    )
+    .unwrap();
+    let q_res = fx
+        .office
+        .cost_query(
+            &fx.owner_id,
+            org_proto::costs::CostQueryParams {
+                include_records: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let ledger_rec = q_res
+        .records
+        .iter()
+        .find(|r| r.runtime == "watcher.no_usage_probe")
+        .expect("watcher no-usage record mirrored to office accounting ledger");
+    assert_eq!(
+        ledger_rec.token_status,
+        org_proto::costs::CompletenessStatus::Unavailable
+    );
+    assert_eq!(ledger_rec.cache_read_tokens, None);
+    assert_eq!(ledger_rec.cache_write_tokens, None);
+    assert_eq!(ledger_rec.reasoning_tokens, None);
 
     // 2. WATCH-8: verify confident-match wake filter rejects unconfident and agent-authored
     // matches (and passes only confident person-authored matches).

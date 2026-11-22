@@ -148,6 +148,10 @@ pub struct SignInParams {
 pub struct AccountView {
     pub id: String,
     pub login: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_zone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_org_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

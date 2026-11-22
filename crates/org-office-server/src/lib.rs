@@ -18,9 +18,11 @@
 
 mod bounded;
 mod chat_calls;
+mod cost_calls;
 mod directory;
 pub mod fdswap;
 mod follow;
+mod git_calls;
 mod grant;
 mod hq_creation;
 pub mod inbox;
@@ -29,6 +31,7 @@ mod live;
 mod mailbox_store;
 mod msg_calls;
 mod org_feed;
+mod process_calls;
 mod revocations;
 mod serve;
 mod signals;
@@ -682,12 +685,29 @@ fn run_serve_loop(
         Arc::clone(&wake_stop),
         std::time::Duration::from_secs(2),
     );
+    let snooze_thread = shared.mailbox().map(|mailbox| {
+        let stop_flag = Arc::clone(&wake_stop);
+        std::thread::Builder::new()
+            .name("snooze-resurfacer".into())
+            .spawn(move || {
+                while !stop_flag.load(Ordering::SeqCst) {
+                    if let Err(err) = mailbox.release_all_due_snoozes() {
+                        eprintln!("agentic-org-office: snooze resurfacer error: {err}");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+            })
+            .ok()
+    });
     serve::run(listener, shared, stop);
     wake_stop.store(true, Ordering::SeqCst);
     if let Some(t) = wake_thread {
         let _ = t.join();
     }
     let _ = watch_thread.join();
+    if let Some(Some(t)) = snooze_thread {
+        let _ = t.join();
+    }
     session_manager.stop_all("office shutdown");
 }
 
@@ -1025,6 +1045,42 @@ fn notify_org_command_lifecycle(
     }
 }
 
+fn build_submit_port(
+    office: &Arc<Office>,
+    wake: &Arc<org_feed::FeedWake>,
+    session_manager: &Arc<org_office_sessions::SessionManager>,
+    channel_watcher: &Arc<watcher::ChannelWatcher>,
+) -> serve::SubmitFn {
+    let office = Arc::clone(office);
+    let wake = Arc::clone(wake);
+    let sessions = Arc::clone(session_manager);
+    let watcher = Arc::clone(channel_watcher);
+    Box::new(move |member, command, dry_run| {
+        let answer = if dry_run {
+            office.check_org(member, command)
+        } else {
+            let lifecycle_cmd = match &command {
+                org_office::rules::OrgCommand::MemberSetAgentStatus(p) => Some(
+                    org_office::rules::OrgCommand::MemberSetAgentStatus(p.clone()),
+                ),
+                org_office::rules::OrgCommand::MemberOffboard(p) => {
+                    Some(org_office::rules::OrgCommand::MemberOffboard(p.clone()))
+                }
+                _ => None,
+            };
+            let res = office.submit_org(member, command);
+            if matches!(res, Ok(Ok(_))) {
+                wake.notify();
+                if let Some(cmd) = lifecycle_cmd.as_ref() {
+                    notify_org_command_lifecycle(&sessions, &watcher, cmd);
+                }
+            }
+            res
+        };
+        answer.map_err(|e| logged("command", &e))
+    })
+}
+
 /// Composes the office RPC ports passed to `serve::Shared`.
 fn build_office_ports(
     office: Arc<Office>,
@@ -1036,6 +1092,16 @@ fn build_office_ports(
     let messaging = build_messaging_ports(&office, &live, wake, &session_manager, &channel_watcher);
     let session_hooks = build_session_hooks(&session_manager);
     let hiring = build_hiring_port(&office, wake, &session_manager, &channel_watcher);
+    let submit = build_submit_port(&office, wake, &session_manager, &channel_watcher);
+    let task_svc = Arc::new(task_calls::TaskService::new(
+        Arc::clone(&office),
+        Arc::clone(&live),
+        Some(Arc::clone(&session_manager)),
+    ));
+    let git_svc = Arc::new(git_calls::GitService::new(
+        Arc::clone(&office),
+        Arc::clone(&live),
+    ));
     serve::OfficePorts {
         work: Box::new(|_, _| Ok(Err(unsupported("work", "B4")))),
         operation_get: {
@@ -1108,45 +1174,34 @@ fn build_office_ports(
         feed: Some(messaging.feed),
         mailbox: Some(messaging.mailbox),
         chat: Some(messaging.chat),
-        tasks: Some({
-            let svc = Arc::new(task_calls::TaskService::new(
-                Arc::clone(&office),
-                live,
-                Some(Arc::clone(&session_manager)),
-            ));
-            Box::new(move |member, request| svc.dispatch(member, request))
-        }),
-        directory: messaging.directory,
-        submit: {
+        tasks: Some(Box::new(move |member, request| {
+            task_svc.dispatch(member, request)
+        })),
+        git: Some(Box::new(move |member, request| {
+            git_svc.dispatch(member, request)
+        })),
+        processes: {
             let office = Arc::clone(&office);
-            let wake = Arc::clone(wake);
-            let sessions = Arc::clone(&session_manager);
-            let watcher = Arc::clone(&channel_watcher);
-            Box::new(move |member, command, dry_run| {
-                let answer = if dry_run {
-                    office.check_org(member, command)
-                } else {
-                    let lifecycle_cmd = match &command {
-                        org_office::rules::OrgCommand::MemberSetAgentStatus(p) => Some(
-                            org_office::rules::OrgCommand::MemberSetAgentStatus(p.clone()),
-                        ),
-                        org_office::rules::OrgCommand::MemberOffboard(p) => {
-                            Some(org_office::rules::OrgCommand::MemberOffboard(p.clone()))
-                        }
-                        _ => None,
-                    };
-                    let res = office.submit_org(member, command);
-                    if matches!(res, Ok(Ok(_))) {
-                        wake.notify();
-                        if let Some(cmd) = lifecycle_cmd.as_ref() {
-                            notify_org_command_lifecycle(&sessions, &watcher, cmd);
-                        }
-                    }
-                    res
-                };
-                answer.map_err(|e| logged("command", &e))
-            })
+            Some(Box::new(move |member, request| {
+                process_calls::dispatch_process_rpc(&office, member, request)
+            }))
         },
+        costs: {
+            let office = Arc::clone(&office);
+            let sessions = Arc::clone(&session_manager);
+            let live = Arc::clone(&live);
+            Some(Box::new(move |member, request| {
+                cost_calls::dispatch_cost_budget_rpc(
+                    &office,
+                    Some(&sessions),
+                    &live,
+                    member,
+                    request,
+                )
+            }))
+        },
+        directory: messaging.directory,
+        submit,
     }
 }
 

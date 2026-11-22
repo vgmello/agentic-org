@@ -308,6 +308,11 @@ const MSG_INBOX_INPUT: &[Field] = &[
         "Include read, snoozed, and done messages in addition to unread",
     ),
     Field::optional(
+        "state",
+        Type::Enum(&["unread", "snoozed", "read", "done"]),
+        "Filter by recipient lifecycle state (e.g. snoozed)",
+    ),
+    Field::optional(
         "from",
         Type::String,
         "Filter by sender employee ID or handle",
@@ -443,6 +448,18 @@ const MSG_DEFER_OUTPUT: &[Field] = &[
         Type::Boolean,
         "Whether snoozed until after current task",
     ),
+];
+
+const MSG_UNSNOOZE_INPUT: &[Field] = &[Field::required(
+    "id",
+    Type::String,
+    "Snoozed message ID to release back to unread",
+)];
+
+const MSG_UNSNOOZE_OUTPUT: &[Field] = &[
+    Field::required("id", Type::String, "Message ID"),
+    Field::required("state", Type::String, "Restored lifecycle state (unread)"),
+    Field::required("triage_gen", Type::Integer, "Triage generation counter"),
 ];
 
 const MSG_WAIT_INPUT: &[Field] = &[
@@ -621,7 +638,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "send",
-        summary: "Send a message to a person, agent, or #channel with @handle mention detection",
+        summary: "Send a message to a member or #channel",
         call: "chat.send",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -639,7 +656,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "ask",
-        summary: "Send a 1-to-8 structured question ask with bounded wait and short hold",
+        summary: "Send a structured ask with bounded wait",
         call: "chat.ask",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -675,7 +692,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "reply",
-        summary: "Reply to a message in its thread or submit structured answers to an ask",
+        summary: "Reply to a message or answer an ask",
         call: "msg.reply",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -726,7 +743,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "read",
-        summary: "Read a specific message by ID or claim the next unread message",
+        summary: "Read a message or claim next unread",
         call: "msg.read",
         kind: Kind::Read,
         input: MSG_READ_INPUT,
@@ -774,7 +791,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "defer",
-        summary: "Snooze or defer a message until a time or after the current task",
+        summary: "Snooze or defer a message",
         call: "msg.defer",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -791,8 +808,26 @@ pub static MSG_COMMANDS: &[Command] = &[
     },
     Command {
         resource: "msg",
+        verb: "unsnooze",
+        summary: "Un-snooze a message early",
+        call: "msg.unsnooze",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::No,
+        },
+        input: MSG_UNSNOOZE_INPUT,
+        content_field: None,
+        output: MSG_UNSNOOZE_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000101"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","state":"unread","triage_gen":2}"#,
+        },
+    },
+    Command {
+        resource: "msg",
         verb: "wait",
-        summary: "Hold for at most the short hold (90s) until a matching message arrives",
+        summary: "Wait for a matching message (up to 90s)",
         call: "msg.wait",
         kind: Kind::Read,
         input: MSG_WAIT_INPUT,
@@ -858,7 +893,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "channel",
         verb: "summarize",
-        summary: "Answer a question about a channel from caller-visible messages (ADR-0024)",
+        summary: "Summarize a channel question (ADR-0024)",
         call: "chat.channel_summarize",
         kind: Kind::Read,
         input: CHANNEL_SUMMARIZE_INPUT,

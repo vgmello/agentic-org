@@ -1,32 +1,30 @@
-//! Processes (`docs/design/processes.md`): how agents work, written down and inherited. Pure:
-//! no SQL, git, network or clock, and no ports. It reads a process file and its place,
-//! resolves which processes apply to an agent's work, keys the resolved sets for caching,
-//! merges a new task's checklist, renders the "Your processes" section and checks the
-//! one-open-task-branch rule (§4.2).
+//! Organization processes and standards (`doc-34`, `FC-110`, `FC-111`, `FC-112`, `FC-184`).
+//!
+//! Pure domain crate: no SQL, Git, network, filesystem I/O, or clock.
+//! Implements single-chain inheritance resolution (`organization -> accountable team chain -> project`),
+//! non-overridable standard protection, write validation (including agent project-scope rules),
+//! instruction rendering (full mandatory section + 24 KiB capped overridable guidance), and the
+//! built-in product skills catalog (`agent-os skill list|read`).
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-mod checklist;
-mod file;
-mod fingerprint;
-mod one_branch;
-mod place;
+mod model;
 mod render;
 mod resolve;
+mod skills;
+mod write;
 
-pub use checklist::checklist;
-pub use file::{Moments, Problem, ProblemKind, ProcessFile, Status, Step};
-pub use fingerprint::{fingerprint, fingerprint_without_work, Fingerprint};
-pub use one_branch::{
-    check_start, guarded_move, own_work, rule_on, Caller, Exception, Found, Move, OneBranchOpen,
-    OwnWork, Record, Refused, Role, Start, State, Target, TaskRef, Tip, Tips,
+pub use model::{
+    summarize_body, DocumentKind, DocumentStatus, ProcessKey, Scope, StructureDocInput,
 };
-pub use place::{location, Level, Location, MemberId, Place, ProcessKey, ProjectKey, Repo, TeamId};
-pub use render::{render, FileText, Moment, RenderInput, Rendered};
+pub use render::{render_instructions, RenderError, RenderInput, Rendered, OVERRIDABLE_CAP_BYTES};
 pub use resolve::{
-    resolve, ChainError, Conflict, Drift, EffectiveSet, Entry, Input, Inputs, Kind, Layer, Outcome,
-    PrivateReason, TurnedOff, Winner, Work,
+    resolve_single_chain, EffectiveEntry, EffectiveSet, Layer, LayerOutcome, SingleChainInputs,
+    Winner, WinnerKind,
 };
+pub use skills::{find_builtin_skill, list_builtin_skills, BuiltinSkill};
+pub use write::{validate_write, CallerKind, WriteCheckInput, WriteViolation};
 
 #[cfg(test)]
 mod tests;

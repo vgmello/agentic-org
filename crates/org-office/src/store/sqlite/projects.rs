@@ -7,7 +7,7 @@ use rusqlite::{types::Value, Connection, Row};
 
 use crate::projects::{
     ports::{ProjectsRead, ProjectsWrite},
-    records::{Project, ProjectAllocation, ProjectCounter},
+    records::{Project, ProjectAllocation, ProjectCounter, ProjectRepositoryLink},
 };
 
 use super::{
@@ -33,6 +33,7 @@ fn project_row(row: &Row<'_>) -> rusqlite::Result<Project> {
         archived: archived_int != 0,
         development_process_id: optional_id(row, 6)?,
         contributing_team_ids: Vec::new(),
+        repositories: Vec::new(),
         meta: meta(row, 7)?,
     })
 }
@@ -52,12 +53,33 @@ fn load_contributing_teams(
     )
 }
 
+fn load_project_repositories(
+    db: &Connection,
+    scope: &str,
+    project_id: &Id,
+) -> Result<Vec<ProjectRepositoryLink>, EngineError> {
+    let sql = "SELECT repository_id, integration_branch FROM project_repositories \
+               WHERE organization_id = ?1 AND project_id = ?2 ORDER BY repository_id";
+    all(
+        db,
+        sql,
+        vec![text(scope), text(project_id.as_str())],
+        |row| {
+            Ok(ProjectRepositoryLink {
+                repository_id: id(row, 0)?,
+                integration_branch: row.get(1)?,
+            })
+        },
+    )
+}
+
 fn attach_contributing_teams(
     db: &Connection,
     scope: &str,
     mut project: Project,
 ) -> Result<Project, EngineError> {
     project.contributing_team_ids = load_contributing_teams(db, scope, &project.id)?;
+    project.repositories = load_project_repositories(db, scope, &project.id)?;
     Ok(project)
 }
 
@@ -133,6 +155,7 @@ macro_rules! sqlite_projects_read {
                 for project in &mut rows {
                     project.contributing_team_ids =
                         load_contributing_teams(db, scope, &project.id)?;
+                    project.repositories = load_project_repositories(db, scope, &project.id)?;
                 }
                 Ok(rows)
             }
@@ -196,12 +219,37 @@ impl ProjectsWrite for SqliteTx {
                 ],
             )?;
         }
+
+        run(
+            db,
+            "DELETE FROM project_repositories WHERE organization_id = ?1 AND project_id = ?2",
+            vec![text(scope), text(record.id.as_str())],
+        )?;
+        for link in &record.repositories {
+            run(
+                db,
+                "INSERT INTO project_repositories \
+                 (organization_id, project_id, repository_id, integration_branch) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                vec![
+                    text(scope),
+                    text(record.id.as_str()),
+                    text(link.repository_id.as_str()),
+                    text(&link.integration_branch),
+                ],
+            )?;
+        }
         Ok(())
     }
 
     fn remove_project(&mut self, project_id: &Id) -> Result<(), EngineError> {
         let (db, scope) = self.view()?;
         let pair = || vec![text(scope), text(project_id.as_str())];
+        run(
+            db,
+            "DELETE FROM project_repositories WHERE organization_id = ?1 AND project_id = ?2",
+            pair(),
+        )?;
         run(
             db,
             "DELETE FROM project_contributing_teams WHERE organization_id = ?1 AND project_id = ?2",

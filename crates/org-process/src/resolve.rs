@@ -1,494 +1,383 @@
-//! Which processes apply to an agent's work (processes.md §3): [`resolve`] applies §3.2's rules
-//! 1-9, in order, to plain data, and says what happened to every file (PROC-2 to PROC-9).
+//! Pure single-chain resolution (`doc-34` §3.1):
+//! `organization -> accountable team ancestry (root to leaf) -> project`.
+//! Contributing teams add no documents; there is one chain and no multi-chain conflicts.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::file::{Problem, ProblemKind, ProcessFile, Status};
-use crate::place::{MemberId, Place, ProcessKey, ProjectKey, TeamId};
+use crate::model::{DocumentKind, DocumentStatus, ProcessKey, Scope, StructureDocInput};
 
-mod chains;
-mod lower;
-
-/// One file at one of §2.2's places, as read: the valid file, or its problem.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Input {
-    /// Where it lives.
-    pub place: Place,
-    /// Its path in its repository, to name it.
-    pub path: String,
-    /// What [`crate::Location::read`] gave.
-    pub read: Result<ProcessFile, Problem>,
+/// Inputs to single-chain process and standard resolution.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SingleChainInputs {
+    /// Accountable team ancestry from root team down to the accountable team (may be empty for
+    /// organization-only inspection).
+    pub team_chain: Vec<String>,
+    /// Optional project ID at the bottom of the chain.
+    pub project_id: Option<String>,
+    /// All candidate structure documents in the organization.
+    pub documents: Vec<StructureDocInput>,
+    /// Display names for scopes (team/project names); defaults to scope ID or `"Organization"`.
+    pub scope_names: BTreeMap<Scope, String>,
 }
 
-/// The agent's current work: a project and its teams (§3.1). Built only by [`Work::new`], which
-/// checks the chains:
-///
-/// ```compile_fail,E0451
-/// use org_process::{ProjectKey, Work};
-/// let made = Work { project: ProjectKey::new("atlas").unwrap(), chains: vec![] };
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Work {
-    project: ProjectKey,
-    chains: Vec<Vec<TeamId>>,
-}
-
-/// Why [`Work::new`] refused the chains.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ChainError {
-    /// A chain names no team.
-    Empty,
-    /// A chain names this team twice.
-    Repeated(TeamId),
-    /// This team has different ancestors in two chains: a chain is its last team's parent path,
-    /// so a team always has the same ones.
-    Ancestors(TeamId),
-}
-
-impl Work {
-    /// The project's work, with, for each team linked to the project, its chain from the
-    /// outermost parent down to it. Refused: an empty chain, a team twice in one chain, and a
-    /// team whose ancestors differ between chains. A chain that is a prefix of another (a linked
-    /// ancestor of another linked team) or a copy of one is accepted, and dropped when resolving.
-    pub fn new(project: ProjectKey, chains: Vec<Vec<TeamId>>) -> Result<Work, ChainError> {
-        for chain in &chains {
-            if chain.is_empty() {
-                return Err(ChainError::Empty);
-            }
-            if let Some(i) = (1..chain.len()).find(|&i| chain[..i].contains(&chain[i])) {
-                return Err(ChainError::Repeated(chain[i].clone()));
-            }
-        }
-        // No chain repeats a team now, so `position` finds its only place in a chain.
-        for chain in &chains {
-            for (i, team) in chain.iter().enumerate() {
-                let differ = |other: &Vec<TeamId>| {
-                    let at = other.iter().position(|t| t == team);
-                    at.is_some_and(|at| other[..at] != chain[..i])
-                };
-                if chains.iter().any(differ) {
-                    return Err(ChainError::Ancestors(team.clone()));
-                }
-            }
-        }
-        Ok(Work { project, chains })
-    }
-
-    /// The project.
-    pub fn project(&self) -> &ProjectKey {
-        &self.project
-    }
-
-    /// The chains, as given.
-    pub fn chains(&self) -> &[Vec<TeamId>] {
-        &self.chains
-    }
-}
-
-/// What agent A's set is computed from.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Inputs {
-    /// A.
-    pub agent: MemberId,
-    /// A's current work; with none the set is O ⊕ G (PROC-2).
-    pub work: Option<Work>,
-    /// The files: O, the teams', J (none without a repository) and G. A file of another place
-    /// (another agent, project or team) takes no part.
-    pub files: Vec<Input>,
-    /// The names the app shows for places, for "Turned off for <name>: <reason>". A place with
-    /// none is named by its team id or project key, or "the organization".
-    pub names: BTreeMap<Place, String>,
-}
-
-/// The effective set (§3.2 Output).
+/// Output of [`resolve_single_chain`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EffectiveSet {
-    /// The places that took part, in resolution order: the organization, the chains' teams
-    /// outermost first, the project, the agent.
-    pub inputs: Vec<Place>,
-    /// One per key a taking-part file has (drafts and retired files aside), by key.
-    pub entries: Vec<Entry>,
-    /// The keys a surviving `off` removed (rule 7).
-    pub turned_off: Vec<TurnedOff>,
-    /// Team versions that disagree, which the project hasn't settled (rule 5).
-    pub conflicts: Vec<Conflict>,
-    /// Every file left out with something to fix: invalid, clashed, refused (sealed, or maybe
-    /// sealed by a file whose key can't be read) or a private file that doesn't only add.
+    /// Exact ordered scope chain evaluated: `[Organization, Team(..)..., Project(..)?]`.
+    pub chain: Vec<Scope>,
+    /// Resolved entries (one per unique key, plus one per keyless `current` document).
+    pub entries: Vec<EffectiveEntry>,
+    /// Every document in the chain left out due to an error, clash, or non-overridable refusal.
     pub problems: Vec<Layer>,
 }
 
-/// A key: the file that applies, if any, and every layer, as `process why` prints it (PROC-8).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Entry {
-    /// The key.
-    pub key: ProcessKey,
-    /// What applies; none when nothing does (turned off, refused, a conflict with no fallback).
-    pub winner: Option<Winner>,
-    /// Each file with the key, organization first, private last; drafts and retired files aside.
-    pub chain: Vec<Layer>,
+impl EffectiveSet {
+    /// Looks up the entry for a given key (used by `process.why` and `process inspect --why`).
+    pub fn find_by_key(&self, key: &str) -> Option<&EffectiveEntry> {
+        self.entries
+            .iter()
+            .find(|e| e.key.as_ref().map(ProcessKey::as_str) == Some(key))
+    }
+
+    /// Looks up the winning document by key or document ID.
+    pub fn winner_by_key_or_id(&self, key_or_id: &str) -> Option<&Winner> {
+        self.entries.iter().find_map(|e| {
+            let w = e.winner.as_ref()?;
+            let matches_key = w.doc.key.as_ref().map(ProcessKey::as_str) == Some(key_or_id);
+            let matches_id = w.doc.id == key_or_id;
+            (matches_key || matches_id).then_some(w)
+        })
+    }
 }
 
-/// The file that applies.
+/// One resolved entry (keyed across levels, or a single keyless document).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectiveEntry {
+    /// Stable identifier for this row: the key text when keyed, else the document ID.
+    pub entry_id: String,
+    /// Key when the entry is keyed across levels.
+    pub key: Option<ProcessKey>,
+    /// Kind of the winning (or first) document.
+    pub kind: DocumentKind,
+    /// Winning document, or `None` if clashed/invalid with no applying fallback.
+    pub winner: Option<Winner>,
+    /// Every non-draft, non-deprecated layer in chain order (organization first, project last).
+    pub layers: Vec<Layer>,
+}
+
+/// The applying document for an [`EffectiveEntry`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Winner {
-    /// Its path.
-    pub path: String,
-    /// The file.
-    pub file: ProcessFile,
-    /// How it came to apply.
-    pub kind: Kind,
-    /// For an override: whether its parent changed since it was written (rule 9).
-    pub drift: Option<Drift>,
+    /// Winning document metadata and Markdown body.
+    pub doc: StructureDocInput,
+    /// Whether this document was inherited from the organization, replaced one above, or added.
+    pub kind: WinnerKind,
+    /// The higher-level document replaced by this winner, when `kind == WinnerKind::Override`.
+    pub replaces: Option<StructureDocInput>,
+    /// Human-readable label for `doc.scope`.
+    pub scope_name: String,
 }
 
-/// How the winning file relates to the levels above it.
+/// How the winning document relates to higher scopes in the chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    /// The organization's own version.
+pub enum WinnerKind {
+    /// From the organization scope (top of the chain).
     Inherited,
-    /// A team's or the project's version of a key that applied above it, or of a conflict.
+    /// Replaced an overridable document from a higher scope.
     Override,
-    /// A key nothing above it has.
+    /// Added at a team or project scope with no document above it.
     Addition,
 }
 
-/// An override's drift (PROC-9).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Drift {
-    /// It was written against the parent's current version.
-    Current,
-    /// "Parent changed": its `overrides` names a version below the parent's current one.
-    ParentChanged {
-        /// The parent's place.
-        parent: Place,
-        /// The parent's current version.
-        version: u32,
-    },
-    /// It has no `overrides`, names a version above the parent's current one, or settles a
-    /// conflict with no version applying.
-    Unknown,
-}
-
-/// One file's part in resolving its key.
+/// One document's participation and outcome in the inheritance chain.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layer {
-    /// Where it lives.
-    pub place: Place,
-    /// Its path.
-    pub path: String,
-    /// Its key, if it could be read.
-    pub key: Option<ProcessKey>,
-    /// Its version, if it is valid.
-    pub version: Option<u32>,
-    /// What happened to it.
-    pub outcome: Outcome,
+    /// Document metadata and body.
+    pub doc: StructureDocInput,
+    /// Human-readable label for `doc.scope`.
+    pub scope_name: String,
+    /// Outcome in single-chain resolution.
+    pub outcome: LayerOutcome,
 }
 
-/// What happened to a file.
+/// What happened to one document during resolution (`doc-34` §3.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Outcome {
-    /// It applies.
-    Applied,
-    /// It applies as an `off`: the key is turned off (rule 7).
-    TurnedOff,
-    /// A nearer or lower version won.
-    Overridden,
-    /// A team version in a conflict that doesn't apply (rule 5).
-    Conflict,
-    /// "Details not recognized (<field>)": front matter, place or file name (rule 1).
-    Invalid(Problem),
-    /// Another file uses its key at its level and scope (rule 2).
-    Clashed,
-    /// It overrides or turns off a sealed key (rule 3).
+pub enum LayerOutcome {
+    /// Active winner in the effective set.
+    Applies,
+    /// Valid document replaced by a lower-level overridable override.
+    Replaced,
+    /// Refused because a higher level sealed this key (`overridable: false`).
     Refused {
-        /// The sealing level.
-        sealed_by: Place,
+        /// Scope that sealed the key.
+        sealed_by_scope: Scope,
+        /// Display name of the sealing scope.
+        sealed_by_name: String,
+        /// ID of the sealing document.
+        sealed_by_id: String,
+        /// Title of the sealing document.
+        sealed_by_title: String,
     },
-    /// "Can't tell: <path> can't be read": a file above it whose key can't be read might seal its
-    /// key, or use it (for a private file), so it is left out (rules 2, 3 and 8).
-    RefusedUnknown {
-        /// That file's path.
-        path: String,
+    /// Invalid front matter or path/scope mismatch.
+    Invalid {
+        /// Name of the invalid field.
+        field: String,
     },
-    /// A private file that doesn't only add (rule 8).
-    PrivateOnlyAdds(PrivateReason),
+    /// Two or more active documents share the same key at the same scope.
+    Clash {
+        /// Display name of the scope where the clash occurred.
+        scope_name: String,
+    },
 }
 
-/// The case a private file is flagged for (processes-ux.md decision 5).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PrivateReason {
-    /// It sets `overrides`.
-    Overrides,
-    /// It is `status: off`.
-    TurnsOff,
-    /// An organization, team or project file of this work uses its key, in any state.
-    Inherited,
-}
-
-/// A key turned off: "Turned off for <name>: <reason>" (PROC-4).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TurnedOff {
-    /// The key.
-    pub key: ProcessKey,
-    /// The place of the `off`.
-    pub place: Place,
-    /// That place's name, from [`Inputs::names`], else its team id or project key, or "the
-    /// organization".
-    pub name: String,
-    /// Its reason.
-    pub reason: String,
-}
-
-impl TurnedOff {
-    /// The app's line.
-    pub fn message(&self) -> String {
-        format!("Turned off for {}: {}", self.name, self.reason)
+fn scope_label(names: &BTreeMap<Scope, String>, scope: &Scope) -> String {
+    if let Some(name) = names.get(scope) {
+        return name.clone();
+    }
+    match scope {
+        Scope::Organization => "Organization".to_owned(),
+        Scope::Team(id) | Scope::Project(id) => id.clone(),
     }
 }
 
-/// Teams that disagree on a key, which the project hasn't settled (decision 4, PROC-6).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Conflict {
-    /// The key.
-    pub key: ProcessKey,
-    /// The disagreeing versions' places (a team that sealed what it inherited, or can't be shown
-    /// not to have, stands for it).
-    pub teams: Vec<Place>,
-    /// The teams that sealed the key; in a chain whose seal is a "can't tell", the outermost team
-    /// below it whose own file seals the key (its file is refused there, but it is named, beside
-    /// [`Conflict::unknown`]).
-    pub sealed_by: Vec<Place>,
-    /// "Can't tell: <path> can't be read": in a disagreeing chain, a file whose key can't be read
-    /// might seal the key, so it counts as that chain's seal (rule 2, failing closed), but no
-    /// team is named as sealing it. Each such file's path.
-    pub unknown: Vec<String>,
-    /// What applies until the project decides: the organization's, a sealed team's (one counted
-    /// in [`Conflict::unknown`] included), or nothing.
-    pub applies: Option<Place>,
-}
-
-/// The name the app shows for `place`: its name in `names`, else its team id, project key or
-/// member id, or "the organization".
-pub(crate) fn place_name(names: &BTreeMap<Place, String>, place: &Place) -> String {
-    let scope = || {
-        place
-            .scope()
-            .map_or("the organization".into(), str::to_owned)
-    };
-    names.get(place).cloned().unwrap_or_else(scope)
-}
-
-impl EffectiveSet {
-    /// The entry for `key`, which `process why` prints.
-    pub fn why(&self, key: &ProcessKey) -> Option<&Entry> {
-        self.entries.iter().find(|entry| entry.key == *key)
-    }
-}
-
-/// A taking-part file, with what the rules found.
-struct Item<'a> {
-    /// Its place's position in the resolution order.
-    rank: usize,
-    input: &'a Input,
-    key: Option<ProcessKey>,
-    /// The file, if it is valid.
-    file: Option<&'a ProcessFile>,
-    /// A valid draft or retired file: left out silently.
-    quiet: bool,
-    /// A draft or retired file, valid or not: it never seals or clashes (rule 2).
-    exempt: bool,
-    /// It seals its key, or can't be shown not to (rule 2).
-    seals: bool,
-    /// Set when a rule leaves it out.
-    outcome: Option<Outcome>,
-}
-
-struct Resolver<'a> {
-    inputs: &'a Inputs,
-    chains: Vec<Vec<Place>>,
-    items: Vec<Item<'a>>,
-    /// What each override replaced (rule 9): a version, or none for a settled conflict.
-    parents: BTreeMap<usize, Option<usize>>,
-}
-
-/// Agent A's effective set for its work: §3.2's rules 1-9, in order.
-pub fn resolve(inputs: &Inputs) -> EffectiveSet {
-    let mut places = vec![Place::Organization];
-    let mut chains = Vec::new();
-    if let Some(work) = &inputs.work {
-        chains = chains::kept(work.chains());
-        for place in chains.iter().flatten() {
-            if !places.contains(place) {
-                places.push(place.clone());
-            }
+fn build_chain(inputs: &SingleChainInputs) -> Vec<Scope> {
+    let mut chain = Vec::with_capacity(1 + inputs.team_chain.len() + 1);
+    chain.push(Scope::Organization);
+    let mut seen_teams = BTreeSet::new();
+    for team_id in &inputs.team_chain {
+        if seen_teams.insert(team_id.as_str()) {
+            chain.push(Scope::Team(team_id.clone()));
         }
-        places.push(Place::Project(work.project().clone()));
     }
-    places.push(Place::Agent(inputs.agent.clone()));
-    let mut r = Resolver {
-        inputs,
-        chains,
-        items: read_files(inputs, &places),
-        parents: BTreeMap::new(),
-    };
-    let keys: BTreeSet<ProcessKey> = r
-        .items
+    if let Some(project_id) = &inputs.project_id {
+        chain.push(Scope::Project(project_id.clone()));
+    }
+    chain
+}
+
+#[derive(Clone)]
+struct SealInfo {
+    scope: Scope,
+    scope_name: String,
+    doc_id: String,
+    doc_title: String,
+}
+
+/// Resolves organization processes and standards along one chain (`doc-34` §3.1).
+pub fn resolve_single_chain(inputs: &SingleChainInputs) -> EffectiveSet {
+    let chain = build_chain(inputs);
+    let rank_of = |scope: &Scope| chain.iter().position(|s| s == scope);
+
+    // Filter to documents on this chain that are not silently inactive (draft/deprecated).
+    let mut active_docs: Vec<(usize, &StructureDocInput)> = inputs
+        .documents
         .iter()
-        .filter(|i| !i.quiet)
-        .filter_map(|i| i.key.clone())
+        .filter(|doc| !doc.is_inactive())
+        .filter_map(|doc| rank_of(&doc.scope).map(|rank| (rank, doc)))
         .collect();
-    let mut set = EffectiveSet {
-        inputs: places,
-        ..EffectiveSet::default()
-    };
-    for key in &keys {
-        r.key(key, &mut set);
+    active_docs.sort_by(|(ra, a), (rb, b)| (ra, &a.id, &a.path).cmp(&(rb, &b.id, &b.path)));
+
+    let mut keyed: BTreeMap<ProcessKey, Vec<(usize, &StructureDocInput)>> = BTreeMap::new();
+    let mut keyless: Vec<(usize, &StructureDocInput)> = Vec::new();
+    for (rank, doc) in active_docs {
+        if let Some(key) = &doc.key {
+            keyed.entry(key.clone()).or_default().push((rank, doc));
+        } else {
+            keyless.push((rank, doc));
+        }
     }
-    let left_out = r
-        .items
-        .iter()
-        .filter_map(|item| Some(layer(item, item.outcome.clone()?)));
-    set.problems = left_out.collect();
+
+    let mut set = EffectiveSet {
+        chain,
+        entries: Vec::new(),
+        problems: Vec::new(),
+    };
+
+    for (key, docs_for_key) in keyed {
+        let entry = resolve_keyed_group(&key, &docs_for_key, &inputs.scope_names, &mut set);
+        set.entries.push(entry);
+    }
+
+    for (_rank, doc) in keyless {
+        let entry = resolve_keyless_doc(doc, &inputs.scope_names, &mut set);
+        set.entries.push(entry);
+    }
+
+    set.entries.sort_by(|a, b| {
+        let rank_a = a
+            .winner
+            .as_ref()
+            .map(|w| w.doc.scope.level_rank())
+            .unwrap_or(99);
+        let rank_b = b
+            .winner
+            .as_ref()
+            .map(|w| w.doc.scope.level_rank())
+            .unwrap_or(99);
+        (rank_a, a.kind, &a.entry_id).cmp(&(rank_b, b.kind, &b.entry_id))
+    });
+
     set
 }
 
-/// Rules 1 and 2 for every taking-part file, sorted in resolution order, then by path.
-fn read_files<'a>(inputs: &'a Inputs, places: &[Place]) -> Vec<Item<'a>> {
-    let mut items = Vec::new();
-    for input in &inputs.files {
-        let Some(rank) = places.iter().position(|p| *p == input.place) else {
-            continue;
+fn resolve_keyless_doc(
+    doc: &StructureDocInput,
+    names: &BTreeMap<Scope, String>,
+    set: &mut EffectiveSet,
+) -> EffectiveEntry {
+    let sname = scope_label(names, &doc.scope);
+    if let Some(field) = &doc.invalid_field {
+        let layer = Layer {
+            doc: doc.clone(),
+            scope_name: sname,
+            outcome: LayerOutcome::Invalid {
+                field: field.clone(),
+            },
         };
-        // Rule 1: valid files only. A file read at another place than its input's is out of
-        // place (failing closed), naming the field that differs; a valid draft or retired file
-        // is left out silently.
-        let read: Result<&ProcessFile, Problem> = match &input.read {
-            Ok(file) if file.place == input.place => Ok(file),
-            Ok(file) => Err(Problem {
-                field: match file.place.level() == input.place.level() {
-                    true => "scope".into(),
-                    false => "level".into(),
-                },
-                kind: ProblemKind::WrongPlace,
-                key: Some(file.key.clone()),
-                sealed: Some(file.seals()),
-                status: Some(file.status),
-            }),
-            Err(problem) => Err(problem.clone()),
+        set.problems.push(layer.clone());
+        return EffectiveEntry {
+            entry_id: doc.id.clone(),
+            key: None,
+            kind: doc.kind,
+            winner: None,
+            layers: vec![layer],
         };
-        let (key, seals, status) = match &read {
-            Ok(file) => (Some(file.key.clone()), file.seals(), Some(file.status)),
-            Err(problem) => (
-                problem.key.clone(),
-                problem.sealed != Some(false),
-                problem.status,
-            ),
-        };
-        let file = read.as_ref().ok().copied();
-        let exempt = matches!(status, Some(Status::Draft | Status::Retired));
-        items.push(Item {
-            rank,
-            input,
-            key,
-            quiet: file.is_some() && exempt,
-            exempt,
-            file,
-            seals,
-            outcome: read.err().map(Outcome::Invalid),
-        });
     }
-    items.sort_by(|a, b| (a.rank, &a.input.path).cmp(&(b.rank, &b.input.path)));
-    // Rule 2: two files with one key at one place are both left out. An invalid file whose key
-    // could be read is one of them (failing closed: PROC-1's "two files use the key"), unless
-    // it is a draft or retired one.
-    let clashed: Vec<bool> = items
-        .iter()
-        .map(|a| {
-            let twin = |b: &&Item| !b.exempt && b.rank == a.rank && b.key == a.key;
-            !a.exempt && a.key.is_some() && items.iter().filter(twin).count() > 1
-        })
-        .collect();
-    for (item, _) in items
-        .iter_mut()
-        .zip(clashed)
-        .filter(|(_, clashed)| *clashed)
-    {
-        item.outcome.get_or_insert(Outcome::Clashed);
+    let wkind = if doc.scope == Scope::Organization {
+        WinnerKind::Inherited
+    } else {
+        WinnerKind::Addition
+    };
+    let layer = Layer {
+        doc: doc.clone(),
+        scope_name: sname.clone(),
+        outcome: LayerOutcome::Applies,
+    };
+    EffectiveEntry {
+        entry_id: doc.id.clone(),
+        key: None,
+        kind: doc.kind,
+        winner: Some(Winner {
+            doc: doc.clone(),
+            kind: wkind,
+            replaces: None,
+            scope_name: sname,
+        }),
+        layers: vec![layer],
     }
-    items
 }
 
-impl<'a> Resolver<'a> {
-    fn key(&mut self, key: &ProcessKey, set: &mut EffectiveSet) {
-        let org = self.live(&Place::Organization, key);
-        let (folds, winner, conflict) = self.teams(key, org);
-        let (winner, conflict) = self.project(key, &folds, winner, conflict);
-        let off = self.turn_off(key, winner, set);
-        let winner = self.private(key).or(winner.filter(|_| off.is_none()));
-        let conflicting =
-            |n: &usize| conflict.is_some() && folds.iter().any(|f| f.winner == Some(*n));
-        let mut chain = Vec::new();
-        for (n, item) in self.items.iter().enumerate() {
-            if item.quiet || item.key.as_ref() != Some(key) {
-                continue;
-            }
-            let outcome = item.outcome.clone().unwrap_or(match Some(n) {
-                n if n == winner => Outcome::Applied,
-                n if n == off => Outcome::TurnedOff,
-                Some(n) if conflicting(&n) => Outcome::Conflict,
-                _ => Outcome::Overridden,
-            });
-            chain.push(layer(item, outcome));
-        }
-        let winner = winner.map(|w| self.winner(w));
-        set.entries.push(Entry {
-            key: key.clone(),
-            winner,
-            chain,
-        });
-        set.conflicts.extend(conflict);
+fn resolve_keyed_group(
+    key: &ProcessKey,
+    docs: &[(usize, &StructureDocInput)],
+    names: &BTreeMap<Scope, String>,
+    set: &mut EffectiveSet,
+) -> EffectiveEntry {
+    // Group by rank (scope position in the single chain) to detect same-scope clashes.
+    let mut by_rank: BTreeMap<usize, Vec<&StructureDocInput>> = BTreeMap::new();
+    for &(rank, doc) in docs {
+        by_rank.entry(rank).or_default().push(doc);
     }
 
-    fn winner(&self, w: usize) -> Winner {
-        let file = self.file(w);
-        let parent = self.parents.get(&w).copied();
-        let kind = match (&file.place, parent) {
-            (Place::Organization, _) => Kind::Inherited,
-            (_, Some(_)) => Kind::Override,
-            (_, None) => Kind::Addition,
+    let mut seal: Option<SealInfo> = None;
+    let mut current_winner_idx: Option<usize> = None;
+    let mut prev_winner_doc: Option<StructureDocInput> = None;
+    let mut layers: Vec<Layer> = Vec::new();
+
+    for group in by_rank.values() {
+        let is_clash = group.len() > 1;
+        for &doc in group {
+            let sname = scope_label(names, &doc.scope);
+            let outcome = evaluate_layer_doc(doc, &sname, is_clash, &seal);
+            let applied = matches!(outcome, LayerOutcome::Applies);
+
+            if doc.seals_key() && seal.is_none() {
+                seal = Some(SealInfo {
+                    scope: doc.scope.clone(),
+                    scope_name: sname.clone(),
+                    doc_id: doc.id.clone(),
+                    doc_title: doc.title.clone(),
+                });
+            }
+
+            if applied {
+                if let Some(prev_idx) = current_winner_idx {
+                    prev_winner_doc = Some(layers[prev_idx].doc.clone());
+                    layers[prev_idx].outcome = LayerOutcome::Replaced;
+                }
+                current_winner_idx = Some(layers.len());
+            }
+
+            let layer = Layer {
+                doc: doc.clone(),
+                scope_name: sname,
+                outcome,
+            };
+            if !matches!(
+                layer.outcome,
+                LayerOutcome::Applies | LayerOutcome::Replaced
+            ) {
+                set.problems.push(layer.clone());
+            }
+            layers.push(layer);
+        }
+    }
+
+    let kind = current_winner_idx
+        .map(|i| layers[i].doc.kind)
+        .or_else(|| layers.first().map(|l| l.doc.kind))
+        .unwrap_or(DocumentKind::Process);
+
+    let winner = current_winner_idx.map(|idx| {
+        let w = &layers[idx];
+        let wkind = if prev_winner_doc.is_some() {
+            WinnerKind::Override
+        } else if w.doc.scope == Scope::Organization {
+            WinnerKind::Inherited
+        } else {
+            WinnerKind::Addition
         };
         Winner {
-            path: self.items[w].input.path.clone(),
-            file: file.clone(),
-            kind,
-            drift: parent.map(|parent| self.drift(file, parent)),
+            doc: w.doc.clone(),
+            kind: wkind,
+            replaces: prev_winner_doc,
+            scope_name: w.scope_name.clone(),
         }
-    }
+    });
 
-    /// The live file with `key` at `place`: valid, active or off, not left out by a rule.
-    fn live(&self, place: &Place, key: &ProcessKey) -> Option<usize> {
-        self.items.iter().position(|item| {
-            item.input.place == *place
-                && item.outcome.is_none()
-                && !item.quiet
-                && item.key.as_ref() == Some(key)
-        })
-    }
-
-    fn file(&self, n: usize) -> &'a ProcessFile {
-        self.items[n].file.expect("a live item is valid")
+    EffectiveEntry {
+        entry_id: key.as_str().to_owned(),
+        key: Some(key.clone()),
+        kind,
+        winner,
+        layers,
     }
 }
 
-fn layer(item: &Item<'_>, outcome: Outcome) -> Layer {
-    Layer {
-        place: item.input.place.clone(),
-        path: item.input.path.clone(),
-        key: item.key.clone(),
-        version: item.file.map(|file| file.version),
-        outcome,
+fn evaluate_layer_doc(
+    doc: &StructureDocInput,
+    scope_name: &str,
+    is_clash: bool,
+    seal: &Option<SealInfo>,
+) -> LayerOutcome {
+    if let Some(field) = &doc.invalid_field {
+        return LayerOutcome::Invalid {
+            field: field.clone(),
+        };
     }
+    if is_clash {
+        return LayerOutcome::Clash {
+            scope_name: scope_name.to_owned(),
+        };
+    }
+    if let Some(sealed) = seal {
+        return LayerOutcome::Refused {
+            sealed_by_scope: sealed.scope.clone(),
+            sealed_by_name: sealed.scope_name.clone(),
+            sealed_by_id: sealed.doc_id.clone(),
+            sealed_by_title: sealed.doc_title.clone(),
+        };
+    }
+    debug_assert_eq!(doc.status, DocumentStatus::Current);
+    LayerOutcome::Applies
 }
-
-#[cfg(test)]
-mod tests;

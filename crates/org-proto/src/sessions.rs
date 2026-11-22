@@ -257,6 +257,225 @@ impl Call for MemberSessionClearStall {
 }
 
 // ---------------------------------------------------------------------------
+// C4: Session discovery & read-only conversation log viewer (`REQ-05`, `SUB-6`, `FC-150`)
+// ---------------------------------------------------------------------------
+
+/// Conversation transcript source format parsed on the office.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TranscriptFormat {
+    Claude,
+    Codex,
+    Agy,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Normalized conversation entry kind shared across Claude, Codex, and Agy logs (`REQ-05`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TranscriptEntryKind {
+    UserMessage,
+    AssistantMessage,
+    Thinking,
+    ToolCall,
+    ToolResult,
+    FileEvent,
+    Usage,
+    Notice,
+    SubagentRun,
+    Raw,
+    #[serde(other)]
+    Unknown,
+}
+
+/// File operation classified for file-based visualization toggles (`REQ-05`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum FileEventKind {
+    Read,
+    Write,
+    Edit,
+    Delete,
+    Reference,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Aggregated file touch entry for file-based visualization panels (`REQ-05`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileTouchSummary {
+    pub path: String,
+    pub operations: Vec<FileEventKind>,
+    pub count: u32,
+    pub last_turn_index: u32,
+}
+
+/// Aggregated or per-entry token usage metrics extracted from a transcript.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TranscriptUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub reasoning_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// Nested sub-agent conversation transcript attached to the parent turn that launched it (`SUB-6`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubagentTranscriptView {
+    pub agent_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_tool_use_id: Option<String>,
+    pub format: TranscriptFormat,
+    pub entry_count: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entries: Vec<TranscriptEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<FileTouchSummary>,
+    #[serde(default)]
+    pub usage: TranscriptUsage,
+}
+
+/// One normalized, secret-redacted conversation log entry (`REQ-05`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TranscriptEntry {
+    pub id: String,
+    pub turn_index: u32,
+    pub kind: TranscriptEntryKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_input: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_output: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_action: Option<FileEventKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TranscriptUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<SubagentTranscriptView>,
+}
+
+/// Metadata summary of one discovered conversation session inside an agent's private home.
+/// Never exposes raw host filesystem paths.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionSummaryView {
+    pub session_id: String,
+    pub format: TranscriptFormat,
+    pub is_live: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    pub size_bytes: u64,
+    pub subagent_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+}
+
+/// Result of `member.session_list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionListResult {
+    pub employee_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_session_id: Option<String>,
+    pub sessions: Vec<SessionSummaryView>,
+}
+
+/// Result of `member.session_transcript` (`REQ-05`, `SUB-6`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionTranscriptResult {
+    pub employee_id: String,
+    pub session_id: String,
+    pub format: TranscriptFormat,
+    pub is_live: bool,
+    pub file_size_bytes: u64,
+    pub total_entries: u64,
+    pub truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<u64>,
+    #[serde(default)]
+    pub usage: TranscriptUsage,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<FileTouchSummary>,
+    pub entries: Vec<TranscriptEntry>,
+}
+
+pub struct MemberSessionList;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemberSessionListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub employee_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+impl Call for MemberSessionList {
+    const METHOD: &'static str = "member.session_list";
+    type Params = MemberSessionListParams;
+    type Result = SessionListResult;
+}
+
+pub struct MemberSessionTranscript;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemberSessionTranscriptParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub employee_id: Option<String>,
+    /// Optional vendor/runtime session ID; omits to open the live or most recent session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// Toggle tool call and tool result visibility (defaults to `true`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_tool_calls: Option<bool>,
+    /// Toggle file-based change/reference entries and file summary panel (defaults to `true`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_file_changes: Option<bool>,
+    /// Toggle nested sub-agent transcripts (`SUB-6`; defaults to `true`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_subagents: Option<bool>,
+    /// Entry offset cursor for pagination or live tailing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<u64>,
+    /// Maximum entries returned in this page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+impl Call for MemberSessionTranscript {
+    const METHOD: &'static str = "member.session_transcript";
+    type Params = MemberSessionTranscriptParams;
+    type Result = SessionTranscriptResult;
+}
+
+// ---------------------------------------------------------------------------
 // Provider CLI enrollment & wrapped credential custody (ADR-0032 / ENROLL-1..6)
 // ---------------------------------------------------------------------------
 

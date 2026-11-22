@@ -88,6 +88,24 @@ fn route_projects(
     }
 }
 
+fn try_route_organization_subroutes(
+    api: &SessionApi,
+    request: &Parts,
+    org: &str,
+    tail: &[&str],
+    get: bool,
+    post: bool,
+    query: bool,
+) -> Option<Result<Route, ApiReply>> {
+    super::hiring_routes::try_route(api, request, org, tail, get, post, query)
+        .or_else(|| super::session_routes::try_route(api, request, org, tail, get, post, query))
+        .or_else(|| super::git_routes::try_route(api, request, org, tail, get, post, query))
+        .or_else(|| super::process_routes::try_route(api, request, org, tail, get, post, query))
+        .or_else(|| super::cost_routes::try_route(api, request, org, tail, get, post, query))
+        .or_else(|| super::chat_routes::try_route(api, request, org, tail, get, post, query))
+        .or_else(|| super::task_routes::try_route(api, request, org, tail, get, post, query))
+}
+
 pub(super) fn route_organization(
     api: &SessionApi,
     request: &Parts,
@@ -112,19 +130,9 @@ pub(super) fn route_organization(
     if let ["projects", rest @ ..] = tail {
         return route_projects(api, request, org, rest, post, query);
     }
-    if let Some(routed) = super::hiring_routes::try_route(api, request, org, tail, get, post, query)
-    {
-        return routed;
-    }
     if let Some(routed) =
-        super::session_routes::try_route(api, request, org, tail, get, post, query)
+        try_route_organization_subroutes(api, request, org, tail, get, post, query)
     {
-        return routed;
-    }
-    if let Some(routed) = super::chat_routes::try_route(api, request, org, tail, get, post, query) {
-        return routed;
-    }
-    if let Some(routed) = super::task_routes::try_route(api, request, org, tail, get, post, query) {
         return routed;
     }
     Ok(match tail {

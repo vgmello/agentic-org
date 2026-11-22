@@ -6,13 +6,19 @@
 #![deny(unsafe_code)]
 
 pub mod attach;
+pub mod budget_dispatch;
+pub mod budget_table;
 pub mod dispatch;
+pub mod git_dispatch;
+pub mod git_table;
 pub mod hiring_dispatch;
 pub mod hiring_table;
 pub mod keys;
 pub mod msg_dispatch;
 pub mod msg_table;
 pub mod office;
+pub mod process_dispatch;
+pub mod process_table;
 pub mod session_dispatch;
 pub mod session_table;
 pub mod sources;
@@ -42,6 +48,12 @@ pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Offi
         rewritten.push("directory".to_owned());
         rewritten.push("list".to_owned());
         rewritten.extend_from_slice(&args[1..]);
+        normalized = rewritten;
+        &normalized
+    } else if matches!(args, [a, b, ..] if a == "task" && b == "note") {
+        let mut rewritten = Vec::with_capacity(args.len().saturating_sub(1));
+        rewritten.push("task-note".to_owned());
+        rewritten.extend_from_slice(&args[2..]);
         normalized = rewritten;
         &normalized
     } else {

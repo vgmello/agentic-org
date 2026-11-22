@@ -1143,3 +1143,238 @@ fn c10_who_reports_available_presence_and_send_returns_presence_without_waking_o
         "DM must return recipient presence: {dm_res:?}"
     );
 }
+
+fn open_owner_inbox_count(fx: &LiveOfficeFixture) -> u64 {
+    let req = Request::new::<org_proto::inbox::InboxList>(
+        599,
+        &org_proto::inbox::InboxListParams {
+            state: org_proto::inbox::InboxState::Open,
+            kinds: None,
+            project: None,
+            team: None,
+            cursor: None,
+            limit: None,
+        },
+    )
+    .unwrap();
+    let resp = fx.shared.answer_for_test(&req, &fx.owner_id, true);
+    let Outcome::Result(val) = resp.outcome else {
+        panic!("inbox.list failed: {resp:?}");
+    };
+    let page: org_proto::inbox::InboxListResult = serde_json::from_value(val).unwrap();
+    page.counts.total
+}
+
+fn chat_inbox_ids(
+    fx: &LiveOfficeFixture,
+    member: &str,
+    is_owner: bool,
+    state: Option<org_proto::msg::MessageLifecycleState>,
+) -> Vec<String> {
+    let req = Request::new::<org_proto::chat::ChatInbox>(
+        598,
+        &org_proto::chat::ChatInboxParams {
+            state,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let resp = fx.shared.answer_for_test(&req, member, is_owner);
+    let Outcome::Result(val) = resp.outcome else {
+        panic!("chat.inbox failed: {resp:?}");
+    };
+    let page: org_proto::chat::ChatInboxResult = serde_json::from_value(val).unwrap();
+    page.items.into_iter().map(|i| i.id).collect()
+}
+
+fn future_rfc3339(offset_ms: u64) -> String {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    org_office::format_rfc3339_ms(now_ms.saturating_add(offset_ms))
+}
+
+fn wait_for_state_and_inbox_hint(
+    reader: &mut BufReader<UnixStream>,
+    expected_state: &str,
+    expected_total: u64,
+) {
+    let (mut got_state, mut got_hint) = (false, false);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline && (!got_state || !got_hint) {
+        if let Some(frame) = read_frame_with_timeout(reader, Duration::from_millis(200)) {
+            match frame.get("event").and_then(Value::as_str) {
+                Some("message.state_changed")
+                    if frame["data"]["state"].as_str() == Some(expected_state) =>
+                {
+                    got_state = true;
+                }
+                Some("inbox.changed")
+                    if frame["data"]["counts"]["total"].as_u64() == Some(expected_total) =>
+                {
+                    got_hint = true;
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(got_state, "missing message.state_changed={expected_state}");
+    assert!(got_hint, "missing inbox.changed total={expected_total}");
+}
+
+#[test]
+fn task81_snooze_unsnooze_resurface_access_and_live_hints() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let fx = LiveOfficeFixture::start();
+
+    let (mut sub_stream, server_stream) = UnixStream::pair().unwrap();
+    let mut reader = BufReader::new(sub_stream.try_clone().unwrap());
+    let sub_stop = Arc::new(AtomicBool::new(false));
+    let sub_thread = {
+        let shared = Arc::clone(&fx.shared);
+        let stop = Arc::clone(&sub_stop);
+        let owner = fx.owner_id.clone();
+        std::thread::spawn(move || {
+            serve::serve_grant_bound_stream_for_test(server_stream, &shared, 9002, &stop, &owner);
+        })
+    };
+    let snap = fx.office.org_snapshot().unwrap();
+    let sub_req = Request::new::<Subscribe>(
+        1,
+        &SubscribeParams {
+            from_position: Some(snap.position),
+            from_work_position: None,
+        },
+    )
+    .unwrap();
+    frame::write_message(&mut sub_stream, &sub_req).unwrap();
+    let ack: Response = frame::read_message(&mut reader).unwrap().unwrap();
+    assert!(matches!(ack.outcome, Outcome::Result(_)), "{ack:?}");
+
+    // 1. HR sends DM to owner; owner inbox count is 1.
+    let msg_id = uuidv7(810);
+    let send_req = Request::new::<ChatSend>(
+        501,
+        &ChatSendParams {
+            id: msg_id.clone(),
+            to: "owner".into(),
+            kind: "msg".into(),
+            priority: None,
+            subject: Some("Snooze E2E".into()),
+            body: "Review budget".into(),
+            meta: Meta::new(),
+            reply_to: None,
+            also_in_channel: false,
+            reason: None,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        fx.shared
+            .answer_for_test(&send_req, &fx.hr_id, false)
+            .outcome,
+        Outcome::Result(_)
+    ));
+    assert_eq!(open_owner_inbox_count(&fx), 1);
+
+    // 2. Unauthorized caller (HR) cannot snooze or un-snooze owner's message; past timestamp rejected.
+    let defer_req = |id_num: u64, at: String| {
+        Request::new::<org_proto::msg::MsgDefer>(
+            id_num,
+            &org_proto::msg::MsgDeferParams {
+                id: msg_id.clone(),
+                until: org_proto::msg::SnoozeTarget::Until { at },
+                note: Some("later".into()),
+            },
+        )
+        .unwrap()
+    };
+    let unauth =
+        fx.shared
+            .answer_for_test(&defer_req(502, future_rfc3339(60_000)), &fx.hr_id, false);
+    assert!(matches!(
+        unauth.outcome,
+        Outcome::Error(ref e) if e.code == ErrorCode::NotFound
+    ));
+    let past = fx.shared.answer_for_test(
+        &defer_req(503, "2020-01-01T00:00:00.000Z".into()),
+        &fx.owner_id,
+        true,
+    );
+    assert!(matches!(
+        past.outcome,
+        Outcome::Error(ref e) if e.code == ErrorCode::InvalidRequest
+    ));
+
+    // 3. Owner snoozes: hidden from active Inbox & badge count, visible in Snoozed view, live event emitted.
+    let deferred =
+        fx.shared
+            .answer_for_test(&defer_req(504, future_rfc3339(600_000)), &fx.owner_id, true);
+    assert!(
+        matches!(deferred.outcome, Outcome::Result(_)),
+        "{deferred:?}"
+    );
+    assert_eq!(open_owner_inbox_count(&fx), 0);
+    assert!(chat_inbox_ids(&fx, &fx.owner_id, true, None).is_empty());
+    assert_eq!(
+        chat_inbox_ids(
+            &fx,
+            &fx.owner_id,
+            true,
+            Some(org_proto::msg::MessageLifecycleState::Snoozed),
+        ),
+        vec![msg_id.clone()]
+    );
+    wait_for_state_and_inbox_hint(&mut reader, "snoozed", 0);
+
+    // 4. Early un-snooze restores to active Inbox & badge count and emits state_changed + inbox.changed.
+    let unsnooze_req = Request::new::<org_proto::msg::MsgUnsnooze>(
+        505,
+        &org_proto::msg::MsgUnsnoozeParams { id: msg_id.clone() },
+    )
+    .unwrap();
+    let unauth_u = fx.shared.answer_for_test(&unsnooze_req, &fx.hr_id, false);
+    assert!(matches!(
+        unauth_u.outcome,
+        Outcome::Error(ref e) if e.code == ErrorCode::NotFound
+    ));
+    let unsnoozed = fx.shared.answer_for_test(&unsnooze_req, &fx.owner_id, true);
+    assert!(
+        matches!(unsnoozed.outcome, Outcome::Result(_)),
+        "{unsnoozed:?}"
+    );
+    assert_eq!(open_owner_inbox_count(&fx), 1);
+    assert_eq!(
+        chat_inbox_ids(&fx, &fx.owner_id, true, None),
+        vec![msg_id.clone()]
+    );
+    wait_for_state_and_inbox_hint(&mut reader, "unread", 1);
+
+    // 5. Short snooze resurfaces automatically via release_all_due_snoozes once due.
+    let short_defer =
+        fx.shared
+            .answer_for_test(&defer_req(506, future_rfc3339(600)), &fx.owner_id, true);
+    assert!(
+        matches!(short_defer.outcome, Outcome::Result(_)),
+        "{short_defer:?}"
+    );
+    assert_eq!(open_owner_inbox_count(&fx), 0);
+    wait_for_state_and_inbox_hint(&mut reader, "snoozed", 0);
+    std::thread::sleep(Duration::from_millis(650));
+    let released = fx
+        .shared
+        .mailbox()
+        .unwrap()
+        .release_all_due_snoozes()
+        .unwrap();
+    assert_eq!(released, 1);
+    assert_eq!(open_owner_inbox_count(&fx), 1);
+    assert_eq!(chat_inbox_ids(&fx, &fx.owner_id, true, None), vec![msg_id]);
+    wait_for_state_and_inbox_hint(&mut reader, "unread", 1);
+
+    sub_stop.store(true, Ordering::SeqCst);
+    drop(sub_stream);
+    drop(reader);
+    let _ = sub_thread.join();
+}

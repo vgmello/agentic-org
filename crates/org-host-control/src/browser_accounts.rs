@@ -115,6 +115,37 @@ impl Call for BrowserChangePassword {
     type Result = Empty;
 }
 
+/// `browser.account.preferences.set`: update the signed-in account's persisted IANA time zone
+/// (`FC-008`) and/or last authorized organization (`OPEN-1`, `FC-015`).
+pub struct BrowserAccountPreferencesSet;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserAccountPreferencesSetParams {
+    pub auth: BrowserAuth,
+    #[serde(default)]
+    pub time_zone: Option<String>,
+    #[serde(default)]
+    pub clear_time_zone: bool,
+    #[serde(default)]
+    pub last_org_id: Option<String>,
+    #[serde(default)]
+    pub clear_last_org_id: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserAccountPreferencesSetResult {
+    pub time_zone: Option<String>,
+    pub last_org_id: Option<String>,
+}
+
+impl Call for BrowserAccountPreferencesSet {
+    const METHOD: &'static str = "browser.account.preferences.set";
+    type Params = BrowserAccountPreferencesSetParams;
+    type Result = BrowserAccountPreferencesSetResult;
+}
+
 /// One person's sign-in access state inside a specific organization (never lists instance-wide
 /// accounts outside this organization).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -365,6 +365,7 @@ where
         archived: false,
         development_process_id: None,
         contributing_team_ids,
+        repositories: Vec::new(),
         meta: Meta::created(&admitted.by, admitted.now),
     };
     let project_allocation = ProjectAllocation {

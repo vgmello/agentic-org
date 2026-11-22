@@ -137,7 +137,28 @@ fn validate_project_record(
         return Err(refuse(&path, "duplicate project name"));
     }
     validate_project_teams(project, &path, ctx)?;
+    validate_project_repositories(project, &path, ctx)?;
     validate_project_actors(project, &path, &ctx.employees)
+}
+
+fn validate_project_repositories(
+    project: &Project,
+    path: &DurablePath,
+    ctx: &ValidationContext,
+) -> Result<(), ProjectionError> {
+    let mut seen = BTreeSet::new();
+    for link in &project.repositories {
+        if !seen.insert(&link.repository_id) {
+            return Err(refuse(path, "duplicate repository attached to project"));
+        }
+        if !ctx.repositories.contains(&link.repository_id) {
+            return Err(refuse(path, "attached repository does not exist"));
+        }
+        if !crate::organization::records::is_branch(&link.integration_branch) {
+            return Err(refuse(path, "invalid repository integration_branch"));
+        }
+    }
+    Ok(())
 }
 
 fn validate_project_teams(

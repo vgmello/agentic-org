@@ -130,6 +130,7 @@ fn apply_kind<Tx: TasksWrite>(
 /// across both Memory and SQLite engines (`ADR-0018`).
 fn validate_tasks<Tx: TasksWrite>(tx: &Tx) -> Result<(), ProjectionError> {
     let tasks = tx.tasks()?;
+    let repo_ids: BTreeSet<Id> = tx.repositories()?.into_iter().map(|r| r.id).collect();
     let mut keys: BTreeSet<(String, u64)> = BTreeSet::new();
     let mut task_ids: BTreeSet<Id> = BTreeSet::new();
     for t in &tasks {
@@ -152,6 +153,15 @@ fn validate_tasks<Tx: TasksWrite>(tx: &Tx) -> Result<(), ProjectionError> {
                     &path,
                     "project task owning team must match project owner team",
                 ));
+            }
+        }
+        let mut seen_repos = BTreeSet::new();
+        for tr in &t.repositories {
+            if !seen_repos.insert(&tr.repository_id) {
+                return Err(refuse(&path, "duplicate repository on task"));
+            }
+            if !repo_ids.contains(&tr.repository_id) {
+                return Err(refuse(&path, "task repository does not exist"));
             }
         }
         task_ids.insert(t.id.clone());

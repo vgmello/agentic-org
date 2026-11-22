@@ -106,6 +106,9 @@ impl ProjectsWrite for MemoryTx {
     fn put_project(&mut self, record: &Project) -> Result<(), EngineError> {
         let mut normalized = record.clone();
         normalized.contributing_team_ids.sort();
+        normalized
+            .repositories
+            .sort_by(|a, b| a.repository_id.cmp(&b.repository_id));
         let tables: &mut ProjectsTables = self.table_mut()?;
         tables.projects.insert(normalized.id.clone(), normalized);
         let org: &mut crate::organization::testkit::OrganizationTables = self.table_mut()?;

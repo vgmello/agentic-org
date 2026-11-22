@@ -12,6 +12,7 @@ mod ports;
 mod queries;
 mod snoozes;
 mod time;
+mod triage;
 mod waiters;
 
 #[cfg(any(test, feature = "testkit"))]

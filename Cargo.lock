@@ -783,6 +783,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-agent-runtime-agy"
+version = "0.0.0"
+dependencies = [
+ "org-agent-runtime",
+ "serde_json",
+]
+
+[[package]]
 name = "org-agent-runtime-claude"
 version = "0.0.0"
 dependencies = [
@@ -791,6 +799,14 @@ dependencies = [
  "org-supervise",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "org-agent-runtime-codex"
+version = "0.0.0"
+dependencies = [
+ "org-agent-runtime",
+ "serde_json",
 ]
 
 [[package]]
@@ -830,6 +846,13 @@ version = "0.0.0"
 dependencies = [
  "saphyr-parser",
  "serde_json",
+]
+
+[[package]]
+name = "org-git"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]
@@ -894,6 +917,7 @@ dependencies = [
  "org-docs",
  "org-office-launch",
  "org-platform",
+ "org-process",
  "org-proto",
  "org-store",
  "proc-macro2",
@@ -924,6 +948,7 @@ dependencies = [
  "org-agent-runtime",
  "org-client",
  "org-copilot",
+ "org-git",
  "org-mailbox",
  "org-office",
  "org-office-launch",
@@ -952,7 +977,9 @@ dependencies = [
  "libc",
  "org-agent-cli",
  "org-agent-runtime",
+ "org-agent-runtime-agy",
  "org-agent-runtime-claude",
+ "org-agent-runtime-codex",
  "org-command",
  "org-office",
  "org-pki",

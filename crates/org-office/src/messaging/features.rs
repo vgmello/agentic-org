@@ -1657,13 +1657,20 @@ where
     )
 }
 
+fn matches_inbox_state(state: MessageLifecycleState, params: &ChatInboxParams) -> bool {
+    match params.state {
+        Some(wanted) => state == wanted,
+        None => params.include_all || state == MessageLifecycleState::Unread,
+    }
+}
+
 fn inbox_item_if_matching(
     read: &impl MessagingRead,
     st: RecipientStateRecord,
     params: &ChatInboxParams,
     from_filter: Option<&Id>,
 ) -> Result<Option<ChatInboxItem>, ApiError> {
-    if !params.include_all && st.state != MessageLifecycleState::Unread {
+    if !matches_inbox_state(st.state, params) {
         return Ok(None);
     }
     if params.because.is_some_and(|b| st.delivered_because != b) {
@@ -1686,7 +1693,9 @@ fn inbox_item_if_matching(
         .message_local_seq(&msg.id)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read local_seq"))?
         .unwrap_or(msg.origin_sequence);
-    if params.cursor.is_some_and(|c| seq >= c) {
+    if params.state != Some(MessageLifecycleState::Snoozed)
+        && params.cursor.is_some_and(|c| seq >= c)
+    {
         return Ok(None);
     }
     Ok(Some(ChatInboxItem {
@@ -1717,12 +1726,73 @@ fn inbox_item_if_matching(
     }))
 }
 
+fn sort_chat_inbox_items(items: &mut [ChatInboxItem], state: Option<MessageLifecycleState>) {
+    if state == Some(MessageLifecycleState::Snoozed) {
+        items.sort_by(compare_snoozed_inbox_items);
+    } else {
+        items.sort_by(|a, b| b.local_seq.cmp(&a.local_seq).then_with(|| b.id.cmp(&a.id)));
+    }
+}
+
+fn compare_snoozed_inbox_items(a: &ChatInboxItem, b: &ChatInboxItem) -> std::cmp::Ordering {
+    match (&a.snoozed_until, &b.snoozed_until) {
+        (Some(x), Some(y)) => {
+            let cmp = match (
+                crate::time::parse_rfc3339_ms(x),
+                crate::time::parse_rfc3339_ms(y),
+            ) {
+                (Some(xm), Some(ym)) => xm.cmp(&ym),
+                _ => x.cmp(y),
+            };
+            cmp.then_with(|| b.local_seq.cmp(&a.local_seq))
+                .then_with(|| b.id.cmp(&a.id))
+        }
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => b.local_seq.cmp(&a.local_seq).then_with(|| b.id.cmp(&a.id)),
+    }
+}
+
+fn paginate_chat_inbox(
+    mut items: Vec<ChatInboxItem>,
+    params: &ChatInboxParams,
+    limit: usize,
+) -> ChatInboxResult {
+    sort_chat_inbox_items(&mut items, params.state);
+    if params.state == Some(MessageLifecycleState::Snoozed) {
+        let offset = usize::try_from(params.cursor.unwrap_or(0)).unwrap_or(usize::MAX);
+        if offset >= items.len() {
+            items.clear();
+        } else {
+            items.drain(..offset);
+        }
+        let more = items.len() > limit;
+        items.truncate(limit);
+        let next_cursor = more.then(|| (offset + items.len()) as u64);
+        return ChatInboxResult { items, next_cursor };
+    }
+    let more = items.len() > limit;
+    items.truncate(limit);
+    let next_cursor = if more {
+        items.last().map(|i| i.local_seq)
+    } else {
+        None
+    };
+    ChatInboxResult { items, next_cursor }
+}
+
 pub fn list_chat_inbox(
     read: &impl MessagingRead,
     owner: &Id,
     caller: &Id,
     params: &ChatInboxParams,
 ) -> Result<ChatInboxResult, ApiError> {
+    if params.state == Some(MessageLifecycleState::Unknown) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "unknown message state filter",
+        ));
+    }
     let limit = params.limit.unwrap_or(DEFAULT_PAGE_LIMIT);
     if limit == 0 || limit > MAX_PAGE_LIMIT {
         return Err(ApiError::new(
@@ -1746,15 +1816,7 @@ pub fn list_chat_inbox(
             items.push(item);
         }
     }
-    items.sort_by(|a, b| b.local_seq.cmp(&a.local_seq).then_with(|| b.id.cmp(&a.id)));
-    let more = items.len() > limit as usize;
-    items.truncate(limit as usize);
-    let next_cursor = if more {
-        items.last().map(|i| i.local_seq)
-    } else {
-        None
-    };
-    Ok(ChatInboxResult { items, next_cursor })
+    Ok(paginate_chat_inbox(items, params, limit as usize))
 }
 
 fn resolve_messages_target(
