@@ -14,7 +14,8 @@ use crate::tasks::{
     ports::{TasksRead, TasksWrite},
     records::{
         ChecklistStepRecord, OfficeTaskCounterRecord, TaskCommentRecord, TaskDetailsRecord,
-        TaskEventRecord, TaskLinkRecord, TaskMeta, TaskRecord, TaskWatcherRecord,
+        TaskEventRecord, TaskLinkRecord, TaskMeta, TaskRecord, TaskRepositoryRecord,
+        TaskWatcherRecord,
     },
 };
 
@@ -90,6 +91,7 @@ fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskRecord> {
         labels: Vec::new(),
         reference_files: Vec::new(),
         modified_files: Vec::new(),
+        repositories: Vec::new(),
         details: None,
         meta: TaskMeta::from_org_meta(meta(row, 20)?),
     })
@@ -143,6 +145,19 @@ fn hydrate_task(
             _ => {}
         }
     }
+    task.repositories = all(
+        db,
+        "SELECT repository_id, branch, integrated_commit FROM task_repositories \
+         WHERE organization_id = ?1 AND task_id = ?2 ORDER BY repository_id",
+        vec![text(scope), text(task.id.as_str())],
+        |r| {
+            Ok(TaskRepositoryRecord {
+                repository_id: id(r, 0)?,
+                branch: r.get(1)?,
+                integrated_commit: r.get(2)?,
+            })
+        },
+    )?;
     let det_sql = format!(
         "SELECT {DETAIL_COLS} FROM task_details WHERE organization_id = ?1 AND task_id = ?2"
     );
@@ -522,12 +537,43 @@ impl TasksWrite for SqliteTx {
                 vec![text(scope), text(record.id.as_str()), text(path)],
             )?;
         }
+
+        run(
+            db,
+            "DELETE FROM task_repositories WHERE organization_id = ?1 AND task_id = ?2",
+            vec![text(scope), text(record.id.as_str())],
+        )?;
+        for repo in &record.repositories {
+            run(
+                db,
+                "INSERT INTO task_repositories \
+                 (organization_id, task_id, repository_id, branch, integrated_commit) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                vec![
+                    text(scope),
+                    text(record.id.as_str()),
+                    text(repo.repository_id.as_str()),
+                    opt_text_val(repo.branch.as_deref()),
+                    opt_text_val(repo.integrated_commit.as_deref()),
+                ],
+            )?;
+        }
         Ok(())
     }
 
     fn remove_task(&mut self, task_id: &Id) -> Result<(), EngineError> {
         let (db, scope) = self.view()?;
         let pair = || vec![text(scope), text(task_id.as_str())];
+        run(
+            db,
+            "DELETE FROM task_workspaces WHERE organization_id = ?1 AND task_id = ?2",
+            pair(),
+        )?;
+        run(
+            db,
+            "DELETE FROM task_repositories WHERE organization_id = ?1 AND task_id = ?2",
+            pair(),
+        )?;
         run(
             db,
             "DELETE FROM task_labels WHERE organization_id = ?1 AND task_id = ?2",

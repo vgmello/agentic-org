@@ -89,10 +89,12 @@ pub enum Op {
     CreateProject,
     AddProjectTeam,
     RemoveProjectTeam,
+    RegisterRepository,
+    AttachProjectRepository,
 }
 
 impl Op {
-    pub const ALL: [Op; 28] = [
+    pub const ALL: [Op; 30] = [
         Op::CreateOrganization,
         Op::ImportOrganization,
         Op::CreateTeam,
@@ -121,6 +123,8 @@ impl Op {
         Op::CreateProject,
         Op::AddProjectTeam,
         Op::RemoveProjectTeam,
+        Op::RegisterRepository,
+        Op::AttachProjectRepository,
     ];
 
     /// Structure changes answer only once durable (ADR-0014).
@@ -159,6 +163,8 @@ impl Op {
             Op::CreateProject => "organization.create_project",
             Op::AddProjectTeam => "organization.add_project_team",
             Op::RemoveProjectTeam => "organization.remove_project_team",
+            Op::RegisterRepository => "organization.register_repository",
+            Op::AttachProjectRepository => "organization.attach_project_repository",
         }
     }
 }

@@ -18,6 +18,7 @@
 
 mod creation;
 mod folder;
+mod git;
 mod hiring;
 mod intent;
 mod messaging;
@@ -135,6 +136,7 @@ pub struct Office {
     folder: PathBuf,
     info: OfficeInfo,
     durable: PathBuf,
+    runtime_root: PathBuf,
     identity: OfficeIdentity,
     /// The member whose account owns the organization: the creator.
     owner: Id,
@@ -325,6 +327,7 @@ impl Office {
             folder,
             info,
             durable: roots.durable,
+            runtime_root: roots.runtime,
             identity: custody.identity,
             owner,
             creation,

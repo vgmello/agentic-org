@@ -7,6 +7,8 @@
 
 pub mod attach;
 pub mod dispatch;
+pub mod git_dispatch;
+pub mod git_table;
 pub mod hiring_dispatch;
 pub mod hiring_table;
 pub mod keys;

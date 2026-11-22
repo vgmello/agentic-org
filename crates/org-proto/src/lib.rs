@@ -93,6 +93,7 @@ pub mod ask;
 pub mod chat;
 pub mod directory;
 pub mod frame;
+pub mod git;
 pub mod hiring;
 pub mod inbox;
 pub mod location;

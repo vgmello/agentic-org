@@ -136,6 +136,9 @@ pub type ChatFn = Box<
 /// Dispatches B4/B5/B4b unified `tasks.*` RPCs (`TASK-49`, `TASK-77`).
 pub type TasksFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches C7 repository, worktree, and Git push RPCs (`TASK-51`).
+pub type GitFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
@@ -166,6 +169,8 @@ pub struct OfficePorts {
     pub chat: Option<ChatFn>,
     /// B4/B5/B4b unified typed tasks dispatcher (`TASK-49`, `TASK-77`).
     pub tasks: Option<TasksFn>,
+    /// C7 repository, worktree, and Git push dispatcher (`TASK-51`).
+    pub git: Option<GitFn>,
     /// Who a `msg.bind` names.
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
@@ -1481,6 +1486,42 @@ fn project_or_hiring(request: &Request, shared: &Shared, binding: &Binding) -> O
         .or_else(|| hiring_rpc(request, shared, binding))
         .or_else(|| sessions_rpc(request, shared, binding))
         .or_else(|| tasks_rpc(request, shared, binding))
+        .or_else(|| git_rpc(request, shared, binding))
+}
+
+fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::git_calls::is_git_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if (request.is::<org_proto::git::RepoRegister>() || request.is::<org_proto::git::RepoAttach>())
+        && !binding.via_grant()
+    {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "repository registration and project attachment require a verified owner grant",
+            ),
+        ));
+    }
+    if let Some(git) = &shared.ports.git {
+        if let Some(response) = git(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
 }
 
 fn tasks_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
@@ -2823,6 +2864,7 @@ mod tests {
             mailbox: Some(mailbox),
             chat: None,
             tasks: None,
+            git: None,
             directory,
         }
     }
@@ -3288,6 +3330,7 @@ mod tests {
                 mailbox: Some(mailbox),
                 chat: None,
                 tasks: None,
+                git: None,
                 directory,
             },
             launch_key(),
@@ -3767,6 +3810,7 @@ mod tests {
                     mailbox: Some(mailbox),
                     chat: None,
                     tasks: None,
+                    git: None,
                     directory,
                 },
                 launch_key(),
@@ -4271,6 +4315,7 @@ mod tests {
                 mailbox: Some(mailbox),
                 chat: None,
                 tasks: None,
+                git: None,
                 directory,
             },
             launch_key(),

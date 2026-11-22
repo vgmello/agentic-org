@@ -833,6 +833,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-git"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "org-host"
 version = "0.0.0"
 dependencies = [
@@ -924,6 +931,7 @@ dependencies = [
  "org-agent-runtime",
  "org-client",
  "org-copilot",
+ "org-git",
  "org-mailbox",
  "org-office",
  "org-office-launch",

@@ -3,7 +3,7 @@ id: doc-74
 title: Organization Data — Schema Coverage and Integrity Review
 type: specification
 created_date: '2026-11-21T01:30:00Z'
-updated_date: '2026-11-22T03:11:00Z'
+updated_date: '2026-11-22T04:30:00Z'
 tags:
   - organization-data
   - contract
@@ -90,7 +90,7 @@ As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `
 | `hire_requests` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `features` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `links` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` (`TASK-77` depends_on DAG + links) |
-| `local_repository_locations` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `local_repository_locations` | table | Different shape in code | DDL loaded in `schema.sql`; currently persisted outside Git as per-repo JSON at `durable/local/offices/<office-id>/repositories/<repo-id>.json` (`crates/org-office/src/git/mod.rs`, `TASK-51`) |
 | `message_attachments` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet |
 | `message_reactions` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet |
 | `message_recipient_states` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet (legacy `msg_state`/`msg_unread` deleted) |
@@ -119,7 +119,7 @@ As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `
 | `development_process_tabs` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `development_processes` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `project_contributing_teams` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `project_teams` deleted) |
-| `project_repositories` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `project_repositories` | table | Implemented | Active in `crates/org-office/src/store/sqlite/projects.rs` and `projects/testkit.rs` (`TASK-51` `ProjectRepositoryLink`) |
 | `projects` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `org.db` table deleted) |
 | `provider_connections` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `record_refs` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
@@ -132,7 +132,7 @@ As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `
 | `release_tasks` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `releases` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `repositories` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
-| `repository_caches` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `repository_caches` | table | Different shape in code | DDL loaded in `schema.sql`; currently persisted in office runtime JSON at `runtime/<office-id>/git-state.json` (`crates/org-office/src/git/mod.rs` + `crates/org-office-server/src/git_calls.rs`, `TASK-51`) |
 | `roles` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
 | `structure_documents` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `task_details` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` |
@@ -140,8 +140,8 @@ As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `
 | `task_events` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` (verbatim `schema.sql`) |
 | `task_files` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` (`TASK-77` reference & modified files) |
 | `task_labels` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` (`TASK-77` searchable labels) |
-| `task_repositories` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `task_workspaces` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `task_repositories` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` and `tasks/testkit.rs` (`TASK-51` `TaskRepositoryRecord`) |
+| `task_workspaces` | table | Different shape in code | DDL loaded in `schema.sql`; currently persisted in office runtime JSON at `runtime/<office-id>/git-state.json` (`crates/org-office/src/git/mod.rs` + `crates/org-office-server/src/git_calls.rs`, `TASK-51`) |
 | `tasks` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` (`TASK-49` + `TASK-77` rank_order) |
 | `teams` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
 | `tombstones` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |

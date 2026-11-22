@@ -621,7 +621,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "send",
-        summary: "Send a message to a person, agent, or #channel with @handle mention detection",
+        summary: "Send a message to a member or #channel",
         call: "chat.send",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -639,7 +639,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "ask",
-        summary: "Send a 1-to-8 structured question ask with bounded wait and short hold",
+        summary: "Send a structured ask with bounded wait",
         call: "chat.ask",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -675,7 +675,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "reply",
-        summary: "Reply to a message in its thread or submit structured answers to an ask",
+        summary: "Reply to a message or answer an ask",
         call: "msg.reply",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -726,7 +726,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "read",
-        summary: "Read a specific message by ID or claim the next unread message",
+        summary: "Read a message or claim next unread",
         call: "msg.read",
         kind: Kind::Read,
         input: MSG_READ_INPUT,
@@ -774,7 +774,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "defer",
-        summary: "Snooze or defer a message until a time or after the current task",
+        summary: "Snooze or defer a message",
         call: "msg.defer",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -792,7 +792,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "wait",
-        summary: "Hold for at most the short hold (90s) until a matching message arrives",
+        summary: "Wait for a matching message (up to 90s)",
         call: "msg.wait",
         kind: Kind::Read,
         input: MSG_WAIT_INPUT,
@@ -858,7 +858,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "channel",
         verb: "summarize",
-        summary: "Answer a question about a channel from caller-visible messages (ADR-0024)",
+        summary: "Summarize a channel question (ADR-0024)",
         call: "chat.channel_summarize",
         kind: Kind::Read,
         input: CHANNEL_SUMMARIZE_INPUT,

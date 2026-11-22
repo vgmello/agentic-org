@@ -70,6 +70,13 @@ pub fn derive_slug(name: &str) -> String {
     }
 }
 
+/// One project-to-repository link (`project_repositories`, `doc-35`).
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct ProjectRepositoryLink {
+    pub repository_id: Id,
+    pub integration_branch: String,
+}
+
 /// A project record (`state/projects/<project-id>/project.yaml`, data contract document 02).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Project {
@@ -81,6 +88,7 @@ pub struct Project {
     pub archived: bool,
     pub development_process_id: Option<Id>,
     pub contributing_team_ids: Vec<Id>,
+    pub repositories: Vec<ProjectRepositoryLink>,
     pub meta: Meta,
 }
 
@@ -134,7 +142,18 @@ pub fn encode_project(record: &Project) -> Vec<u8> {
         .map(Id::as_str)
         .collect();
     fields.insert("contributing_team_ids".into(), json!(contributing));
-    fields.insert("repositories".into(), Value::Array(Vec::new()));
+    let mut sorted_repos = record.repositories.clone();
+    sorted_repos.sort_by(|a, b| a.repository_id.cmp(&b.repository_id));
+    let repo_entries: Vec<Value> = sorted_repos
+        .into_iter()
+        .map(|link| {
+            json!({
+                "repository_id": link.repository_id.as_str(),
+                "integration_branch": link.integration_branch,
+            })
+        })
+        .collect();
+    fields.insert("repositories".into(), Value::Array(repo_entries));
     yaml::encode(&fields)
 }
 
@@ -168,13 +187,19 @@ pub fn decode_project(bytes: &[u8]) -> Result<Project, RecordError> {
         };
         contributing_team_ids.push(team_id);
     }
-    // B3 writes empty repositories; accept empty array for forward compatibility with C7.
-    let repos = reader.list("repositories")?;
-    if !repos.is_empty() {
-        return Err(reader.error(
-            "repositories",
-            "project repositories are not supported in B3",
-        ));
+    let repos_raw = reader.list("repositories")?;
+    let mut repositories = Vec::with_capacity(repos_raw.len());
+    for mut entry in repos_raw {
+        let repository_id = read_id(&mut entry, "repository_id")?;
+        let integration_branch = entry.text("integration_branch")?;
+        if !records::is_branch(&integration_branch) {
+            return Err(entry.error("integration_branch", "not a valid branch name"));
+        }
+        entry.finish()?;
+        repositories.push(ProjectRepositoryLink {
+            repository_id,
+            integration_branch,
+        });
     }
     reader.finish()?;
     Ok(Project {
@@ -186,6 +211,7 @@ pub fn decode_project(bytes: &[u8]) -> Result<Project, RecordError> {
         archived,
         development_process_id,
         contributing_team_ids,
+        repositories,
         meta,
     })
 }

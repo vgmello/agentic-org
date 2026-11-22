@@ -313,6 +313,7 @@ impl Office {
             folder,
             info,
             durable: roots.durable,
+            runtime_root: roots.runtime,
             identity: here,
             owner,
             creation,

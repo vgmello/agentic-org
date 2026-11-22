@@ -239,7 +239,11 @@ impl TasksWrite for MemoryTx {
                 .or_default()
                 .insert(record.id.clone());
         }
-        tables.tasks.insert(record.id.clone(), record.clone());
+        let mut normalized = record.clone();
+        normalized
+            .repositories
+            .sort_by(|a, b| a.repository_id.cmp(&b.repository_id));
+        tables.tasks.insert(record.id.clone(), normalized);
         Ok(())
     }
 

@@ -10,6 +10,7 @@
 //! header. Nothing else forwards to the host or a local socket.
 mod account_routes;
 mod chat_routes;
+mod git_routes;
 mod hiring_routes;
 mod instance_routes;
 mod open_routes;
@@ -169,6 +170,7 @@ pub enum Route {
     Sessions(session_routes::SessionRoute),
     Chat(chat_routes::ChatRoute),
     Tasks(task_routes::TaskRoute),
+    Git(git_routes::GitRoute),
 }
 
 pub enum Call {
@@ -205,6 +207,7 @@ pub enum Call {
     Sessions(session_routes::SessionCall),
     Chat(chat_routes::ChatCall),
     Tasks(task_routes::TaskCall),
+    Git(git_routes::GitCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -1000,6 +1003,7 @@ impl ApiBackend for SessionApi {
             Route::Sessions(route) => return session_routes::prepare(route, bytes),
             Route::Chat(route) => return chat_routes::prepare(route, bytes),
             Route::Tasks(route) => return task_routes::prepare(route, bytes),
+            Route::Git(route) => return git_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -1105,6 +1109,12 @@ impl ApiBackend for SessionApi {
                 ),
                 streaming: false,
             },
+            Call::Git(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(git_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
         }
     }
@@ -1124,6 +1134,7 @@ impl ApiBackend for SessionApi {
             Call::Sessions(_) => unreachable!("Call::Sessions is dispatched asynchronously"),
             Call::Chat(_) => unreachable!("Call::Chat is dispatched asynchronously"),
             Call::Tasks(_) => unreachable!("Call::Tasks is dispatched asynchronously"),
+            Call::Git(_) => unreachable!("Call::Git is dispatched asynchronously"),
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))

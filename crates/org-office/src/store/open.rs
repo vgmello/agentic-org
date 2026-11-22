@@ -12,6 +12,7 @@
 //! - Adding a family: one bound on [`OfficeEngine`] and one projector in `open_on`.
 //! - Adding an engine: one arm of [`EngineChoice`] and of [`OfficeStore`].
 
+pub(crate) mod git_ops;
 pub(crate) mod messaging_ops;
 mod operations;
 pub(crate) mod task_ops;
@@ -29,6 +30,10 @@ use org_store::{
     Status, Store, StoreError, StoreParts, WriterAuthority,
 };
 
+pub use git_ops::{
+    AttachProjectRepositoryOp, RecordTaskRepoBranchOp, RegisterRepositoryOp, RepositoriesList,
+    RepositoryResolve, TaskGitContext, TaskGitContextRead,
+};
 pub use messaging_ops::{
     ChannelCreateOp, ChannelMembershipOp, ChannelMessagesForCallerRead, ChannelMessagesRawRead,
     ChatAnswerOp, ChatInboxRead, ChatMarkReadOp, ChatMessagesRead, ChatMuteOp, ChatReactOp,

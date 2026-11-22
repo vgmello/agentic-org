@@ -273,7 +273,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "role",
         verb: "list",
-        summary: "List roles in the organization role catalog",
+        summary: "List catalog roles",
         call: "role.list",
         kind: Kind::List,
         input: &[],
@@ -288,7 +288,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "role",
         verb: "inspect",
-        summary: "Inspect a catalog role by ID, key, or unique name",
+        summary: "Inspect a catalog role",
         call: "role.inspect",
         kind: Kind::Read,
         input: ROLE_INSPECT_INPUT,
@@ -303,7 +303,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "role",
         verb: "create",
-        summary: "Create a role in the organization role catalog",
+        summary: "Create a catalog role",
         call: "role.create",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -321,7 +321,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "role",
         verb: "update",
-        summary: "Update a catalog role's name, key, or description",
+        summary: "Update a catalog role",
         call: "role.update",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -369,7 +369,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "hr",
         verb: "hire",
-        summary: "Hire an agent (one-shot), draft a hire proposal (--draft), or confirm/withdraw an existing request (--id)",
+        summary: "Hire, draft, confirm, or withdraw an agent hire",
         call: "hr.hire",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -387,7 +387,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "agent",
         verb: "update",
-        summary: "Update an agent's profile fields, role, or reporting manager",
+        summary: "Update agent profile or manager",
         call: "member.agent_update",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -477,7 +477,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "member",
         verb: "set-hiring",
-        summary: "Grant or revoke an employee's hiring permission",
+        summary: "Grant or revoke hiring authority",
         call: "member.set_may_hire",
         kind: Kind::Write {
             ack: Ack::Committed,

@@ -106,6 +106,11 @@ impl ApiReply {
         self.status
     }
 
+    #[cfg(test)]
+    pub(crate) fn body_bytes(&self) -> &[u8] {
+        &self.body
+    }
+
     fn into_http(self, head: bool) -> Response<WebBody> {
         let mut response = response(
             self.status,

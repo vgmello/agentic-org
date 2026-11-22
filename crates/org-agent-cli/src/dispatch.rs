@@ -52,6 +52,9 @@ pub fn execute<T: OfficeTransport + ?Sized>(
     if let Some(outcome) = crate::task_dispatch::try_execute(transport, request) {
         return outcome;
     }
+    if let Some(outcome) = crate::git_dispatch::try_execute(transport, request) {
+        return outcome;
+    }
     match (request.command.resource, request.command.verb) {
         ("org", "inspect") => read_org_inspect(transport),
         ("team", "list") => read_team_list(transport, request),

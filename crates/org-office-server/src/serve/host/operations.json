@@ -40,6 +40,7 @@
   {"method":"checklist.remove","policy":"serve"},
   {"method":"checklist.unlink_task","policy":"serve"},
   {"method":"dm.open","policy":"serve"},
+  {"method":"git.push","policy":"serve"},
   {"method":"hello","policy":"hello"},
   {"method":"hr.hire","policy":"serve"},
   {"method":"hr.hire.confirm","policy":"serve"},
@@ -107,6 +108,10 @@
   {"method":"provider.enrollment_start","policy":"serve"},
   {"method":"provider.enrollment_status","policy":"serve"},
   {"method":"provider.enrollment_submit","policy":"serve"},
+  {"method":"repo.attach","policy":"serve"},
+  {"method":"repo.list","policy":"serve"},
+  {"method":"repo.register","policy":"serve"},
+  {"method":"repo.status","policy":"serve"},
   {"method":"role.create","policy":"serve"},
   {"method":"role.inspect","policy":"serve"},
   {"method":"role.list","policy":"serve"},
@@ -162,5 +167,7 @@
   {"method":"work.times","policy":"unserved"},
   {"method":"work.undo","policy":"serve"},
   {"method":"work.unlink","policy":"serve"},
-  {"method":"work.watch","policy":"serve"}
+  {"method":"work.watch","policy":"serve"},
+  {"method":"worktree.list","policy":"serve"},
+  {"method":"worktree.prepare","policy":"serve"}
 ]

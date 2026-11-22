@@ -1,0 +1,12 @@
+[package]
+name = "org-git"
+description = "Hardened plain-Git runner, bare caches, per-task worktrees, and office push for Agentic Org."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+tempfile.workspace = true
