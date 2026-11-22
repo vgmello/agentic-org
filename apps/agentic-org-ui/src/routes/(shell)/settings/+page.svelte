@@ -102,12 +102,12 @@
 				Appearance &amp; Theme
 			</h2>
 			<p class="mt-0.5 text-sm" style="color: var(--exec-muted);">
-				Choose between Frosted Ocean Dark, Daylight Light, or Classic v0 Slate (flat surfaces without shadows).
+				Choose between Frosted Ocean, Classic Slate, Report (Modern 2D Day), or Report Night.
 			</p>
 		</div>
 
 		<div
-			class="grid grid-cols-1 gap-3 sm:grid-cols-3"
+			class="grid grid-cols-1 gap-3 sm:grid-cols-2"
 			role="radiogroup"
 			aria-labelledby="settings-theme-h"
 		>
@@ -134,7 +134,7 @@
 						{#if selected}
 							<span
 								class="flex size-5 items-center justify-center rounded-full"
-								style="background: var(--exec-accent); color: #fff;"
+								style="background: var(--exec-accent); color: var(--exec-on-accent);"
 							>
 								<Check class="size-3.5" aria-hidden="true" />
 							</span>

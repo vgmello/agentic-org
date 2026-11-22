@@ -31,6 +31,8 @@
 	--surface-raised: color-mix(in oklab, var(--tint) 5%, transparent);
 	/* chips, secondary buttons, stronger hover */
 	--surface-overlay: color-mix(in oklab, var(--tint) 10%, transparent);
+	/* unfilled progress and meter bar tracks (overridden per theme) */
+	--bar-track: rgba(148, 163, 184, 0.2);
 
 	/* Lines */
 	/* row and header dividers */
@@ -139,6 +141,7 @@ html {
 	--color-shade: var(--shade);
 	--color-surface-raised: var(--surface-raised);
 	--color-surface-overlay: var(--surface-overlay);
+	--color-bar-track: var(--bar-track);
 	--color-line-subtle: var(--line-subtle);
 	--color-line: var(--line);
 	--color-line-strong: var(--line-strong);

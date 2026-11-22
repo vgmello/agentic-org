@@ -1,0 +1,201 @@
+/*
+ * Theme: report-dark — Modern 2D Executive Report · Night
+ * Inherits the open boxless 2D layout from `html[data-ui-theme^='report']` in `report.css`,
+ * paired with Classic's exact #1e2939 / #161f2d / #615fff / #FBBF24 / rgba(148, 163, 184, 0.2) palette.
+ * Strictly scoped to `html[data-ui-theme='report-dark']` and `.swatch-report-dark`.
+ * Binds both executive tokens and app-wide look tokens to Report Night's single semantic ramp.
+ */
+
+html[data-ui-theme='report-dark'] {
+	color-scheme: dark;
+
+	/* Intra-theme unified semantic tokens (exact Classic palette) */
+	--bar-track: rgba(148, 163, 184, 0.2);
+
+	--tone-accent: #615fff;
+	--tone-accent-bar: #615fff;
+	--tone-accent-hi: #7c86ff;
+	--tone-accent-ink: #a3b3ff;
+	--tone-accent-bg: rgba(97, 95, 255, 0.14);
+	--tone-accent-ring: rgba(124, 134, 255, 0.32);
+
+	--tone-ok: #34d399;
+	--tone-ok-bar: #34d399;
+	--tone-ok-ink: #6ee7b7;
+	--tone-ok-bg: rgba(52, 211, 153, 0.12);
+	--tone-ok-ring: rgba(52, 211, 153, 0.26);
+
+	--tone-warn: #fbbf24;
+	--tone-warn-bar: #fbbf24;
+	--tone-warn-ink: #fbbf24;
+	--tone-warn-bg: rgba(251, 191, 36, 0.12);
+	--tone-warn-ring: rgba(251, 191, 36, 0.32);
+
+	--tone-bad: #fb7185;
+	--tone-bad-bar: #fb7185;
+	--tone-bad-ink: #fda4af;
+	--tone-bad-bg: rgba(251, 113, 133, 0.12);
+	--tone-bad-ring: rgba(251, 113, 133, 0.28);
+
+	--tone-queued: #a78bfa;
+	--tone-queued-ink: #c4b5fd;
+
+	/* App-wide look tokens (Work, Projects, Teams, Offices, Chat, Costs, Settings, Pills) */
+	--surface: #1e2939;
+	--surface-sunken: #161f2d;
+	--surface-chip: #243144;
+	--fg: #ffffff;
+	--fg-bright: #ffffff;
+	--fg-body: #d1d5dc;
+	--fg-secondary: #d1d5dc;
+	--fg-muted: #99a1af;
+	--fg-subtle: #99a1af;
+
+	--primary: var(--tone-accent);
+	--primary-hover: var(--tone-accent-hi);
+	--ring: var(--tone-accent-hi);
+	--brand: var(--tone-accent-hi);
+	--focus: var(--tone-accent-hi);
+	--link: var(--tone-accent-ink);
+	--brand-text: var(--tone-accent-ink);
+	--brand-text-strong: #c7d2fe;
+	--brand-text-stronger: #e0e7ff;
+
+	--info: var(--tone-accent);
+	--info-emphasis: var(--tone-accent);
+	--info-text: var(--tone-accent-ink);
+	--info-text-strong: #c7d2fe;
+	--info-text-stronger: #e0e7ff;
+
+	--success: var(--tone-ok);
+	--success-emphasis: var(--tone-ok);
+	--success-text: var(--tone-ok-ink);
+	--positive: var(--tone-ok);
+	--positive-emphasis: var(--tone-ok);
+	--positive-text: var(--tone-ok-ink);
+	--positive-text-strong: var(--tone-ok-ink);
+
+	--warning: var(--tone-warn);
+	--warning-emphasis: var(--tone-warn);
+	--warning-deep: var(--tone-warn);
+	--warning-text: var(--tone-warn-ink);
+	--warning-text-strong: var(--tone-warn-ink);
+	--warning-text-stronger: var(--tone-warn-ink);
+
+	--danger: var(--tone-bad);
+	--danger-emphasis: var(--tone-bad);
+	--danger-text: var(--tone-bad-ink);
+	--danger-text-strong: var(--tone-bad-ink);
+	--danger-text-stronger: var(--tone-bad-ink);
+
+	/* shadcn-svelte semantic bindings */
+	--background: #1e2939;
+	--foreground: #ffffff;
+	--card: #1e2939;
+	--card-foreground: #ffffff;
+	--popover: #182230;
+	--popover-foreground: #ffffff;
+	--primary-foreground: #ffffff;
+	--border: rgba(255, 255, 255, 0.1);
+
+	/* Report Night surfaces (exact Classic palette) */
+	--exec-bg: #1e2939;
+	--exec-sidebar-bg: #161f2d;
+	--exec-surface: #1e2939;
+	--exec-surface-hi: #243144;
+	--exec-well: #1a2433;
+	--exec-border: rgba(255, 255, 255, 0.1);
+	--exec-border-hi: rgba(255, 255, 255, 0.18);
+	--exec-blur: none;
+	--exec-shadow: none;
+	--exec-shadow-hi: none;
+	--exec-ink: #ffffff;
+	--exec-body: #d1d5dc;
+	--exec-muted: #99a1af;
+	--exec-dim: #99a1af;
+	--exec-on-accent: #ffffff;
+
+	/* Flat 2D bars bound to unified --tone-*-bar ramp */
+	--exec-bar-budget: var(--tone-accent-bar);
+	--exec-bar-sky: var(--tone-accent-bar);
+	--exec-bar-ok: var(--tone-ok-bar);
+	--exec-bar-warn: var(--tone-warn-bar);
+	--exec-bar-bad: var(--tone-bad-bar);
+	--exec-seg-agents: var(--tone-accent-bar);
+	--exec-seg-ci: var(--tone-ok-bar);
+	--exec-seg-human: var(--tone-warn-bar);
+	--exec-seg-queued: var(--tone-queued);
+	--exec-seg-queued-high: var(--tone-bad-bar);
+
+	--exec-cta-bg: #615fff;
+	--exec-cta-fill: #7c86ff;
+	--exec-cta-glass-bg: rgba(97, 95, 255, 0.14);
+	--exec-cta-glass-ink: #e0e7ff;
+	--exec-avatar-bg: #1e2939;
+	--exec-avatar-ring: #1e2939;
+
+	/* Deny guard */
+	--exec-deny-bg: transparent;
+	--exec-deny-bg-hover: rgba(251, 113, 133, 0.14);
+	--exec-deny-ink: var(--tone-bad-ink);
+	--exec-deny-ink-hover: #ffe4e6;
+	--exec-deny-ring: var(--tone-bad-ring);
+	--exec-deny-ring-hover: rgba(251, 113, 133, 0.52);
+	--exec-deny-guard-bg: var(--tone-bad-bg);
+	--exec-deny-guard-ring: var(--tone-bad-ring);
+	--exec-deny-confirm-bg: #dc2626;
+	--exec-deny-confirm-hover: #b91c1c;
+	--exec-deny-confirm-ink: #ffffff;
+
+	/* Executive Brief memo */
+	--exec-cos-bg: #16202e;
+	--exec-cos-fade: #16202e;
+	--exec-cos-border: rgba(255, 255, 255, 0.09);
+	--exec-cos-rule: #7c86ff;
+
+	/* Unread rail dot */
+	--exec-nav-dot: var(--tone-warn);
+	--exec-nav-dot-halo: rgba(251, 191, 36, 0.16);
+	--exec-nav-dot-ring: #161f2d;
+
+	/* Report Night structural rules */
+	--report-rule: rgba(255, 255, 255, 0.09);
+	--report-rule-subtle: rgba(255, 255, 255, 0.08);
+	--report-masthead-rule: rgba(255, 255, 255, 0.16);
+	--report-accent-bar: #7c86ff;
+}
+
+html[data-ui-theme='report-dark'] .hb-h1 em {
+	text-decoration: underline;
+	text-decoration-thickness: 2.5px;
+	text-underline-offset: 5px;
+}
+
+html[data-ui-theme='report-dark'] .hb-h1 em.tone-warn {
+	color: var(--tone-warn-ink);
+	text-decoration-color: var(--tone-warn);
+}
+
+html[data-ui-theme='report-dark'] .hb-h1 em.tone-calm {
+	color: var(--tone-accent-ink);
+	text-decoration-color: var(--tone-accent-hi);
+}
+
+html[data-ui-theme='report-dark'] .hb-h1 em.tone-ok {
+	color: var(--tone-ok-ink);
+	text-decoration-color: var(--tone-ok);
+}
+
+html[data-ui-theme='report-dark'] .hb-h1 em.tone-bad {
+	color: var(--tone-bad-ink);
+	text-decoration-color: var(--tone-bad);
+}
+
+/* Settings preview swatch */
+.swatch-report-dark {
+	background: linear-gradient(90deg, #161f2d 0%, #161f2d 28%, #1e2939 28%, #1e2939 100%);
+}
+
+.swatch-report-dark .swatch-bar {
+	background: linear-gradient(90deg, #615fff 0%, #fbbf24 55%, #34d399 100%);
+}

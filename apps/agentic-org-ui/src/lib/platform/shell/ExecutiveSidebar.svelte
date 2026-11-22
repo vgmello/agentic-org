@@ -25,15 +25,25 @@
 		needsYouCount = 0,
 		projects = [],
 		collapsed = false,
+		pinned = true,
 		onNavigate,
-		onToggleCollapse
+		onToggleCollapse,
+		onPointerEnter,
+		onPointerLeave,
+		onFocusIn,
+		onFocusOut
 	}: {
 		connection: Connection;
 		needsYouCount?: number;
 		projects?: ProjectSummary[];
 		collapsed?: boolean;
+		pinned?: boolean;
 		onNavigate?: (event: MouseEvent, href: string) => void;
 		onToggleCollapse?: () => void;
+		onPointerEnter?: () => void;
+		onPointerLeave?: () => void;
+		onFocusIn?: (event: FocusEvent) => void;
+		onFocusOut?: (event: FocusEvent) => void;
 	} = $props();
 
 	const pathname = $derived(page.url.pathname);
@@ -52,17 +62,27 @@
 
 <aside
 	aria-label="Sidebar"
+	onpointerenter={onPointerEnter}
+	onpointerleave={onPointerLeave}
+	onfocusin={onFocusIn}
+	onfocusout={onFocusOut}
 	class="exec-sidebar flex h-full min-w-0 flex-col overflow-hidden"
 	data-collapsed={collapsed ? 'true' : undefined}
 >
-	<div class="flex min-h-14 shrink-0 items-center justify-between gap-2 px-3 pt-2">
+	<div class={['flex min-h-14 shrink-0 items-center pt-2', collapsed ? 'justify-center px-2' : 'justify-between gap-2 px-3']}>
 		<a
 			href={resolve('/home')}
 			onclick={(event) => onNavigate?.(event, '/home')}
-			class="exec-logo flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5"
+			class={[
+				'exec-logo flex min-w-0 items-center rounded-lg py-1.5',
+				collapsed ? 'size-11 justify-center px-0' : 'flex-1 gap-2.5 px-2'
+			]}
 			title={connection.organization.name}
 		>
-			<span class="exec-brand-mark flex size-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-on-emphasis" aria-hidden="true">
+			<span
+				class="exec-brand-mark flex size-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-on-emphasis"
+				aria-hidden="true"
+			>
 				A
 			</span>
 			{#if !collapsed}
@@ -71,33 +91,39 @@
 				</span>
 			{/if}
 		</a>
-		{#if onToggleCollapse}
+		{#if onToggleCollapse && !collapsed}
 			<button
 				type="button"
 				onclick={onToggleCollapse}
-				aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-				aria-pressed={collapsed}
-				title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-				class="exec-icon-btn flex size-7 shrink-0 items-center justify-center rounded-md"
+				aria-label={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
+				aria-pressed={pinned}
+				title={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
+				class={['exec-icon-btn flex size-7 shrink-0 items-center justify-center rounded-md', pinned && 'is-pinned']}
 			>
 				<PanelLeft class="size-4" aria-hidden="true" />
 			</button>
 		{/if}
 	</div>
 
-	<nav aria-label="Main" class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3 py-3">
-		<div>
+	<nav
+		aria-label="Main"
+		class={[
+			'flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto py-3',
+			collapsed ? 'items-center gap-3 px-2' : 'gap-5 px-3'
+		]}
+	>
+		<div class={collapsed ? 'w-full' : undefined}>
 			{#if !collapsed}
 				<div class="exec-nav-label px-2.5 pb-1.5">Focus</div>
 			{/if}
-			<ul class="flex flex-col gap-0.5">
+			<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
 				<li>
 					<a
 						href={resolve('/home')}
 						onclick={(e) => onNavigate?.(e, '/home')}
 						aria-current={isActive('/home') ? 'page' : undefined}
 						title="Home"
-						class={['exec-nav-item', isActive('/home') && 'is-active']}
+						class={['exec-nav-item', collapsed && 'is-rail', isActive('/home') && 'is-active']}
 					>
 						<House class="size-[18px] shrink-0" aria-hidden="true" />
 						{#if !collapsed}<span class="truncate">Home</span>{/if}
@@ -108,35 +134,37 @@
 						href={resolve('/inbox')}
 						onclick={(e) => onNavigate?.(e, '/inbox')}
 						aria-current={isActive('/inbox') ? 'page' : undefined}
-						title="Inbox"
-						class={['exec-nav-item', isActive('/inbox') && 'is-active']}
+						title={needsYouCount > 0 ? `Inbox (${needsYouCount} waiting on you)` : 'Inbox'}
+						class={['exec-nav-item', collapsed && 'is-rail', isActive('/inbox') && 'is-active']}
 					>
 						<Inbox class="size-[18px] shrink-0" aria-hidden="true" />
 						{#if !collapsed}
 							<span class="truncate">Inbox</span>
-							{#if needsYouCount > 0}
-								<span class="exec-inbox-badge ml-auto" aria-label="{needsYouCount} items need you">
-									{needsYouCount}
-								</span>
-							{/if}
+						{/if}
+						{#if needsYouCount > 0}
+							<span
+								class={['exec-nav-dot', collapsed && 'is-rail']}
+								aria-hidden="true"
+							></span>
+							<span class="sr-only">, {needsYouCount} waiting on you</span>
 						{/if}
 					</a>
 				</li>
 			</ul>
 		</div>
 
-		<div>
+		<div class={collapsed ? 'w-full' : undefined}>
 			{#if !collapsed}
 				<div class="exec-nav-label px-2.5 pb-1.5">Workspace</div>
 			{/if}
-			<ul class="flex flex-col gap-0.5">
+			<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
 				<li>
 					<a
 						href={resolve('/work')}
 						onclick={(e) => onNavigate?.(e, '/work')}
 						aria-current={isActive('/work') ? 'page' : undefined}
 						title="Work"
-						class={['exec-nav-item', isActive('/work') && 'is-active']}
+						class={['exec-nav-item', collapsed && 'is-rail', isActive('/work') && 'is-active']}
 					>
 						<ClipboardList class="size-[18px] shrink-0" aria-hidden="true" />
 						{#if !collapsed}<span class="truncate">Work</span>{/if}
@@ -148,7 +176,7 @@
 						onclick={(e) => onNavigate?.(e, '/chat')}
 						aria-current={isActive('/chat') ? 'page' : undefined}
 						title="Chat"
-						class={['exec-nav-item', isActive('/chat') && 'is-active']}
+						class={['exec-nav-item', collapsed && 'is-rail', isActive('/chat') && 'is-active']}
 					>
 						<MessageSquare class="size-[18px] shrink-0" aria-hidden="true" />
 						{#if !collapsed}<span class="truncate">Chat</span>{/if}
@@ -160,7 +188,7 @@
 						onclick={(e) => onNavigate?.(e, '/activity')}
 						aria-current={isActive('/activity') ? 'page' : undefined}
 						title="Activity"
-						class={['exec-nav-item', isActive('/activity') && 'is-active']}
+						class={['exec-nav-item', collapsed && 'is-rail', isActive('/activity') && 'is-active']}
 					>
 						<Activity class="size-[18px] shrink-0" aria-hidden="true" />
 						{#if !collapsed}<span class="truncate">Activity</span>{/if}
@@ -172,7 +200,7 @@
 						onclick={(e) => onNavigate?.(e, '/projects')}
 						aria-current={isActive('/projects') ? 'page' : undefined}
 						title="Projects"
-						class={['exec-nav-item', isActive('/projects') && 'is-active']}
+						class={['exec-nav-item', collapsed && 'is-rail', isActive('/projects') && 'is-active']}
 					>
 						<Folder class="size-[18px] shrink-0" aria-hidden="true" />
 						{#if !collapsed}<span class="truncate">Projects</span>{/if}
@@ -206,18 +234,18 @@
 			</div>
 		{/if}
 
-		<div>
+		<div class={collapsed ? 'w-full' : undefined}>
 			{#if !collapsed}
 				<div class="exec-nav-label px-2.5 pb-1.5">Organization</div>
 			{/if}
-			<ul class="flex flex-col gap-0.5">
+			<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
 				<li>
 					<a
 						href={resolve('/org-chart')}
 						onclick={(e) => onNavigate?.(e, '/org-chart')}
 						aria-current={isActive('/org-chart') ? 'page' : undefined}
 						title="Org chart"
-						class={['exec-nav-item', isActive('/org-chart') && 'is-active']}
+						class={['exec-nav-item', collapsed && 'is-rail', isActive('/org-chart') && 'is-active']}
 					>
 						<Network class="size-[18px] shrink-0" aria-hidden="true" />
 						{#if !collapsed}<span class="truncate">Org chart</span>{/if}
@@ -229,7 +257,7 @@
 						onclick={(e) => onNavigate?.(e, '/agents')}
 						aria-current={isActive('/agents') ? 'page' : undefined}
 						title="Agents"
-						class={['exec-nav-item', isActive('/agents') && 'is-active']}
+						class={['exec-nav-item', collapsed && 'is-rail', isActive('/agents') && 'is-active']}
 					>
 						<Bot class="size-[18px] shrink-0" aria-hidden="true" />
 						{#if !collapsed}<span class="truncate">Agents</span>{/if}
@@ -241,7 +269,7 @@
 						onclick={(e) => onNavigate?.(e, '/processes')}
 						aria-current={isActive('/processes') ? 'page' : undefined}
 						title="Processes"
-						class={['exec-nav-item', isActive('/processes') && 'is-active']}
+						class={['exec-nav-item', collapsed && 'is-rail', isActive('/processes') && 'is-active']}
 					>
 						<Workflow class="size-[18px] shrink-0" aria-hidden="true" />
 						{#if !collapsed}<span class="truncate">Processes</span>{/if}
@@ -253,7 +281,7 @@
 						onclick={(e) => onNavigate?.(e, '/offices')}
 						aria-current={isActive('/offices') ? 'page' : undefined}
 						title="Offices"
-						class={['exec-nav-item', isActive('/offices') && 'is-active']}
+						class={['exec-nav-item', collapsed && 'is-rail', isActive('/offices') && 'is-active']}
 					>
 						<Building2 class="size-[18px] shrink-0" aria-hidden="true" />
 						{#if !collapsed}<span class="truncate">Offices</span>{/if}
@@ -265,7 +293,7 @@
 						onclick={(e) => onNavigate?.(e, '/settings')}
 						aria-current={isActive('/settings') ? 'page' : undefined}
 						title="Settings"
-						class={['exec-nav-item', isActive('/settings') && 'is-active']}
+						class={['exec-nav-item', collapsed && 'is-rail', isActive('/settings') && 'is-active']}
 					>
 						<Settings class="size-[18px] shrink-0" aria-hidden="true" />
 						{#if !collapsed}<span class="truncate">Settings</span>{/if}
@@ -275,15 +303,23 @@
 		</div>
 	</nav>
 
-	<div class="exec-sidebar-foot shrink-0 px-3 py-2.5">
+	<div class={['exec-sidebar-foot shrink-0 py-2.5', collapsed ? 'flex flex-col items-center gap-1 px-2' : 'px-3']}>
 		{#if !collapsed}
-			<div class="exec-theme-pills mb-2.5 grid grid-cols-3 gap-1 rounded-lg p-1" role="group" aria-label="Theme">
+			<div
+				class="exec-theme-pills mb-2.5 grid grid-cols-4 gap-0.5 rounded-lg p-1"
+				role="group"
+				aria-label="Theme"
+			>
 				{#each UI_THEMES as option (option.id)}
 					<button
 						type="button"
 						onclick={() => uiPrefs.setTheme(option.id)}
 						aria-pressed={uiPrefs.theme === option.id}
-						class={['exec-theme-pill rounded-md px-2 py-1 text-[11px] font-semibold', uiPrefs.theme === option.id && 'is-on']}
+						title={option.label}
+						class={[
+							'exec-theme-pill truncate rounded-md px-1 py-1 text-[11px] font-semibold',
+							uiPrefs.theme === option.id && 'is-on'
+						]}
 					>
 						{option.shortLabel}
 					</button>
@@ -293,10 +329,16 @@
 		<a
 			href={resolve('/welcome')}
 			onclick={(e) => onNavigate?.(e, '/welcome')}
-			class="exec-foot-link flex items-center gap-2.5 rounded-lg px-2 py-1.5"
+			class={[
+				'exec-foot-link flex items-center rounded-lg',
+				collapsed ? 'size-11 justify-center p-0' : 'gap-2.5 px-2 py-1.5'
+			]}
 			title="Switch organization ({connection.organization.name})"
 		>
-			<span class="exec-foot-av flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold" style="color: var(--exec-ink);">
+			<span
+				class="exec-foot-av flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+				style="color: var(--exec-ink);"
+			>
 				Y
 			</span>
 			{#if !collapsed}
@@ -313,7 +355,10 @@
 		<a
 			href={resolve('/offices')}
 			onclick={(e) => onNavigate?.(e, '/offices')}
-			class="exec-foot-link mt-1 flex items-center gap-2 rounded-lg px-2 py-1 text-[11px]"
+			class={[
+				'exec-foot-link flex items-center rounded-lg text-[11px]',
+				collapsed ? 'size-11 justify-center p-0' : 'mt-1 gap-2 px-2 py-1'
+			]}
 			title="{connection.office.host} · {connection.office.name} · {officeOnline ? 'Online' : 'Offline'}"
 		>
 			{#if officeOnline}
@@ -347,6 +392,13 @@
 	}
 	.exec-icon-btn {
 		color: var(--exec-muted);
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease;
+	}
+	.exec-icon-btn.is-pinned {
+		color: var(--exec-accent-ink);
+		background: var(--exec-accent-soft);
 	}
 	.exec-nav-label {
 		font-size: 0.6875rem;
@@ -357,6 +409,7 @@
 		color: var(--exec-dim);
 	}
 	.exec-nav-item {
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: 10px;
@@ -365,6 +418,18 @@
 		font-size: 0.875rem;
 		font-weight: 500;
 		color: var(--exec-muted);
+		white-space: nowrap;
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease,
+			box-shadow 0.14s ease;
+	}
+	.exec-nav-item.is-rail {
+		width: 44px;
+		height: 44px;
+		justify-content: center;
+		padding: 0;
+		gap: 0;
 	}
 	.exec-nav-item:hover {
 		background: var(--exec-accent-soft);
@@ -379,16 +444,21 @@
 	.exec-nav-item.is-active :global(svg) {
 		color: var(--exec-accent-ink);
 	}
-	.exec-inbox-badge {
+	.exec-nav-dot {
+		margin-left: auto;
+		width: 7px;
+		height: 7px;
 		border-radius: 999px;
-		padding: 0 7px;
-		font-size: 11px;
-		line-height: 18px;
-		font-weight: 650;
-		font-variant-numeric: tabular-nums;
-		background: var(--exec-warn-bg);
-		color: var(--exec-warn);
-		box-shadow: inset 0 0 0 1px var(--exec-warn-ring);
+		flex: none;
+		background: var(--exec-nav-dot);
+		box-shadow: 0 0 0 3px var(--exec-nav-dot-halo);
+	}
+	.exec-nav-dot.is-rail {
+		position: absolute;
+		top: 9px;
+		right: 9px;
+		margin-left: 0;
+		box-shadow: 0 0 0 2px var(--exec-nav-dot-ring);
 	}
 	.exec-sidebar-foot {
 		border-top: 1px solid var(--exec-border);

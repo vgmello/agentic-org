@@ -23,6 +23,8 @@ export interface SpotlightDecision {
 	projectId?: string;
 	title: string;
 	recommendation: string;
+	backgroundContext: string;
+	auditChecks: string[];
 	risk: SpotlightCell;
 	impact: SpotlightCell;
 	proof: SpotlightCell;
@@ -278,16 +280,34 @@ export function deriveDecisionSpotlight(
 					};
 
 			const primaryAction: SpotlightDecision['primaryAction'] = isRequest
-				? { kind: 'approve_request', label: 'Approve' }
+				? { kind: 'approve_request', label: 'Approve request' }
 				: isFixedBug
-					? { kind: 'verify_bug', label: 'Verify & close' }
+					? { kind: 'verify_bug', label: 'Verify fix' }
 					: isNewBug
-						? { kind: 'triage_bug', label: 'Triage' }
-						: { kind: 'unblock_task', label: 'Resume work' };
+						? { kind: 'triage_bug', label: 'Triage bug' }
+						: { kind: 'unblock_task', label: 'Resume task' };
 
 			const secondaryAction: SpotlightDecision['secondaryAction'] = isRequest
-				? { kind: 'decline_request', label: 'Decline' }
+				? { kind: 'decline_request', label: 'Deny' }
 				: { kind: 'open_work', label: 'Inspect' };
+
+			const backgroundContext = isRequest
+				? `${item.short_id} in ${projectName} is scoped and ready for approval. Approving converts the scoped outcome into executable work items assigned to the team; denying returns it with your note.`
+				: isFixedBug
+					? `${item.short_id} (${item.severity ?? 'reported'} severity) in ${projectName} was marked fixed by ${actorName}. Verifying closes the bug and clears it from the delivery queue.`
+					: isNewBug
+						? `${item.short_id} was reported in ${projectName}${item.severity ? ` with ${item.severity} severity` : ''}. Triaging routes it to the responsible area and sets priority for an agent or owner.`
+						: `${item.short_id} in ${projectName} is currently blocked${item.blocked_reason ? ` (${item.blocked_reason})` : ''}. Resuming moves it back to in-progress so ${actorName} can continue.`;
+
+			const auditChecks: string[] = [];
+			if (item.checklist.total > 0) {
+				auditChecks.push(
+					`${item.checklist.done}/${item.checklist.total} checklist steps completed`
+				);
+			}
+			auditChecks.push(`Ref ${item.short_id}`);
+			if (item.priority) auditChecks.push(`Priority: ${item.priority}`);
+			if (item.severity) auditChecks.push(`Severity: ${item.severity}`);
 
 			const detailHref = isRequest ? `/work?request=${encodeURIComponent(item.id)}` : '/work';
 
@@ -303,6 +323,8 @@ export function deriveDecisionSpotlight(
 				projectId: item.project_id,
 				title: item.title,
 				recommendation,
+				backgroundContext,
+				auditChecks,
 				risk,
 				impact,
 				proof,
@@ -626,6 +648,99 @@ export function deriveCatchUpDigest(
 	});
 
 	return rows;
+}
+
+export interface ExecutiveBriefSection {
+	id: string;
+	kicker: string;
+	tone: 'ok' | 'warn' | 'accent';
+	body: string;
+}
+
+export interface ExecutiveBrief {
+	sections: ExecutiveBriefSection[];
+	copyText: string;
+	updatedLabel: string;
+}
+
+export function deriveExecutiveBrief(
+	snapshot: OrgSnapshot,
+	items: readonly WorkItemSummary[],
+	offices: readonly OfficeInfo[],
+	ownerId: string,
+	organizationName = 'Organization',
+	nowMs = Date.now()
+): ExecutiveBrief {
+	const kpis = deriveKpiMetrics(snapshot, items, offices, ownerId);
+	const spotlight = deriveDecisionSpotlight(items, snapshot, ownerId, nowMs);
+	const projects = deriveProjectCards(snapshot, items);
+	const attentionProjects = projects.filter((p) => p.health !== 'On track');
+
+	const liveBody =
+		kpis.totalAgents > 0
+			? `${kpis.activeAgents} of ${kpis.totalAgents} agents are active across ${kpis.projectsTotal} ${kpis.projectsTotal === 1 ? 'project' : 'projects'} (${kpis.autonomyPct}% autonomous execution). ${kpis.doneCount} ${kpis.doneCount === 1 ? 'item' : 'items'} completed with ${kpis.completionPct}% overall progress and ${kpis.firstTryPassPct}% clean delivery.`
+			: `${kpis.openCount} open ${kpis.openCount === 1 ? 'item' : 'items'} and ${kpis.doneCount} completed across ${kpis.projectsTotal} ${kpis.projectsTotal === 1 ? 'project' : 'projects'}. Add or activate agents to increase autonomous delivery.`;
+
+	const riskParts: string[] = [];
+	if (kpis.offlineOffices > 0) {
+		riskParts.push(
+			`${kpis.offlineOffices} ${kpis.offlineOffices === 1 ? 'office is' : 'offices are'} offline (${kpis.offlineOfficeNames.join(', ')}).`
+		);
+	}
+	if (kpis.blockedCount > 0) {
+		riskParts.push(
+			`${kpis.blockedCount} ${kpis.blockedCount === 1 ? 'item is' : 'items are'} blocked.`
+		);
+	}
+	if (attentionProjects.length > 0) {
+		riskParts.push(
+			`${attentionProjects.length} ${attentionProjects.length === 1 ? 'project needs' : 'projects need'} attention: ${attentionProjects
+				.slice(0, 2)
+				.map((p) => `${p.name} (${p.health})`)
+				.join(', ')}.`
+		);
+	}
+	const problemsBody =
+		riskParts.length > 0
+			? riskParts.join(' ')
+			: 'All connected offices are online, no work items are blocked, and every active project is tracking cleanly.';
+
+	const queueBody =
+		spotlight.length > 0
+			? `${spotlight.length} ${spotlight.length === 1 ? 'decision is' : 'decisions are'} queued for your review, led by “${spotlight[0].title}” (${spotlight[0].kindLabel} · ${spotlight[0].projectName}).`
+			: 'Your decision queue is clear — nothing is waiting on owner sign-off right now.';
+
+	const sections: ExecutiveBriefSection[] = [
+		{
+			id: 'live',
+			kicker: 'Live Status & Highlights',
+			tone: 'ok',
+			body: liveBody
+		},
+		{
+			id: 'problems',
+			kicker: 'Problems Needing Attention',
+			tone: riskParts.length > 0 ? 'warn' : 'ok',
+			body: problemsBody
+		},
+		{
+			id: 'queue',
+			kicker: 'Queued For You',
+			tone: 'accent',
+			body: queueBody
+		}
+	];
+
+	const copyText = [
+		`Executive Brief — ${organizationName}`,
+		...sections.map((s) => `• ${s.kicker}: ${s.body}`)
+	].join('\n');
+
+	return {
+		sections,
+		copyText,
+		updatedLabel: 'Live summary'
+	};
 }
 
 export function answerExecutiveQuestion(

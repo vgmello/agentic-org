@@ -9,5 +9,6 @@
 
 @import './base.css';
 @import './ocean.css';
-@import './light.css';
 @import './classic.css';
+@import './report.css';
+@import './report-dark.css';

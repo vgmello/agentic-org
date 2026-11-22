@@ -178,8 +178,9 @@ export const allowlist: Record<string, string> = {
 	'src/app.css': 'The token definitions: the only place palette values are named.',
 	'src/lib/styles/themes/base.css': 'Shared executive theme fallback tokens and surfaces.',
 	'src/lib/styles/themes/ocean.css': 'Ocean Dark theme token definitions and canvas palette.',
-	'src/lib/styles/themes/light.css': 'Executive Frosted Light theme token definitions and canvas palette.',
 	'src/lib/styles/themes/classic.css': 'Classic Slate theme token definitions and flat surface palette.',
+	'src/lib/styles/themes/report.css': 'Report (Modern 2D Executive Day) theme tokens and editorial layout.',
+	'src/lib/styles/themes/report-dark.css': 'Report Night (Modern 2D Executive Dark) theme tokens and palette.',
 	'src/lib/platform/tooling/look-tokens.ts': 'This mapping table.',
 	'src/lib/platform/tooling/look-tokens.test.ts': 'The guard and its fixtures.'
 };

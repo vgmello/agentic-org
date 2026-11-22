@@ -78,6 +78,47 @@
 	});
 	onMount(() => void appSession.boot());
 	let desktopNavigation = $state<HTMLDivElement | null>(null);
+	let sidebarHovered = $state(false);
+	let sidebarFocused = $state(false);
+	let sidebarLeaveTimer: ReturnType<typeof setTimeout> | undefined;
+	const sidebarPinned = $derived(!uiPrefs.navCollapsed);
+	const sidebarCollapsed = $derived(uiPrefs.navCollapsed && !sidebarHovered && !sidebarFocused);
+
+	function handleSidebarEnter() {
+		clearTimeout(sidebarLeaveTimer);
+		sidebarHovered = true;
+	}
+	function handleSidebarLeave() {
+		clearTimeout(sidebarLeaveTimer);
+		sidebarLeaveTimer = setTimeout(() => {
+			sidebarHovered = false;
+		}, 240);
+	}
+	function handleSidebarFocusIn(event: FocusEvent) {
+		const target = event.target;
+		if (target instanceof HTMLElement && target.matches(':focus-visible')) {
+			clearTimeout(sidebarLeaveTimer);
+			sidebarFocused = true;
+		}
+	}
+	function handleSidebarFocusOut(event: FocusEvent) {
+		const next = event.relatedTarget;
+		if (next instanceof Node && desktopNavigation?.contains(next)) return;
+		clearTimeout(sidebarLeaveTimer);
+		sidebarLeaveTimer = setTimeout(() => {
+			sidebarFocused = false;
+		}, 160);
+	}
+	function toggleSidebarPin() {
+		clearTimeout(sidebarLeaveTimer);
+		uiPrefs.toggleNavCollapsed();
+		if (uiPrefs.navCollapsed) {
+			sidebarHovered = false;
+			sidebarFocused = false;
+		}
+	}
+	onDestroy(() => clearTimeout(sidebarLeaveTimer));
+
 	let shellSnapshot = $state.raw<OrgSnapshot | undefined>();
 	let shellWork = $state.raw<WorkItemSummary[]>([]);
 	const shellOwnerId = $derived(shellSnapshot ? (owner(shellSnapshot)?.id ?? 'owner') : 'owner');
@@ -188,24 +229,29 @@
 		<div
 			bind:this={desktopNavigation}
 			class={[
-				'fixed inset-y-0 z-40 hidden flex-col transition-[width] duration-200 min-[640px]:flex',
-				uiPrefs.navCollapsed ? 'w-[68px]' : 'w-[264px]'
+				'fixed inset-y-0 z-40 hidden flex-col transition-[width] duration-300 ease-out min-[640px]:flex',
+				sidebarCollapsed ? 'w-[68px]' : 'w-[264px]'
 			]}
 		>
 			<ExecutiveSidebar
 				connection={data.connection}
 				needsYouCount={shellNeedsYou}
 				projects={shellSnapshot?.projects ?? []}
-				collapsed={uiPrefs.navCollapsed}
-				onToggleCollapse={() => uiPrefs.toggleNavCollapsed()}
+				collapsed={sidebarCollapsed}
+				pinned={sidebarPinned}
+				onToggleCollapse={toggleSidebarPin}
+				onPointerEnter={handleSidebarEnter}
+				onPointerLeave={handleSidebarLeave}
+				onFocusIn={handleSidebarFocusIn}
+				onFocusOut={handleSidebarFocusOut}
 				onNavigate={(event, href) => selectDesktopSection(event, href, goto)}
 			/>
 		</div>
 		<main
 			aria-labelledby="shell-page-title"
 			class={[
-				'exec-legacy-compat relative z-10 h-full overflow-y-auto transition-[padding] duration-200',
-				uiPrefs.navCollapsed ? 'min-[640px]:pl-[68px]' : 'min-[640px]:pl-[264px]'
+				'exec-legacy-compat relative z-10 h-full overflow-y-auto transition-[padding] duration-300 ease-out',
+				sidebarCollapsed ? 'min-[640px]:pl-[68px]' : 'min-[640px]:pl-[264px]'
 			]}
 		>
 			<div class="flex items-center gap-2 px-4 min-[640px]:hidden">

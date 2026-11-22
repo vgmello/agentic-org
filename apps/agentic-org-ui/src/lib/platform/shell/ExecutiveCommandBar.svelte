@@ -209,7 +209,7 @@
 			class="exec-ai-btn inline-flex h-[34px] shrink-0 items-center gap-1.5 rounded-[9px] px-3.5 text-xs font-semibold"
 		>
 			<Sparkles class="size-3.5 shrink-0" aria-hidden="true" />
-			<span>Ask AI</span>
+			<span>Ask</span>
 		</button>
 	</div>
 </header>
@@ -488,7 +488,7 @@
 	}
 	.exec-ask-go {
 		background: var(--exec-accent);
-		color: #ffffff;
+		color: var(--exec-on-accent);
 	}
 	.exec-ask-go:disabled {
 		opacity: 0.45;

@@ -4,7 +4,7 @@ import { visit } from './ready';
 
 const captureDir = process.env.CAPTURE_EXEC_SHOTS_DIR;
 
-test('Executive UI v2 feature flag, 3 themes (Ocean/Light/Classic), Home, Inbox, Activity, and Org AI', async ({
+test('Executive UI v6: 4 themes (Ocean/Classic/Report/Report Night), Home, Executive Brief, Inbox, Activity, and Ask', async ({
 	page
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
@@ -26,12 +26,17 @@ test('Executive UI v2 feature flag, 3 themes (Ocean/Light/Classic), Home, Inbox,
 		await page.screenshot({ path: `${captureDir}/prod-settings-ocean.png` });
 	}
 
-	// Open Executive Home and wait for live KPIs to load
+	// Open Executive Home and wait for live KPIs & Executive Brief to load
 	await page.getByRole('button', { name: 'Open Executive Home' }).click();
 	await expect(page).toHaveURL(/\/home$/);
 	await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 	await expect(page.getByText('Work & Flow')).toBeVisible();
-	await expect(page.getByText('Catch-up')).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
+
+	// Copy brief button morphs immediately into Copied
+	const copyBtn = page.getByRole('button', { name: 'Copy brief' });
+	await copyBtn.click();
+	await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
 
 	// Verify Projects is the last item under Workspace in the Executive Sidebar
 	const navLinks = await page
@@ -53,23 +58,30 @@ test('Executive UI v2 feature flag, 3 themes (Ocean/Light/Classic), Home, Inbox,
 		await page.screenshot({ path: `${captureDir}/prod-home-ocean.png` });
 	}
 
-	// Switch to Light theme via sidebar theme switcher
-	await page.getByRole('group', { name: 'Theme' }).getByRole('button', { name: 'Light' }).click();
-	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'light');
+	// Switch to Report (Modern 2D Day) theme via sidebar theme switcher
+	await page.getByRole('group', { name: 'Theme' }).getByRole('button', { name: 'Report', exact: true }).click();
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'report');
 	if (captureDir) {
-		await page.screenshot({ path: `${captureDir}/prod-home-light.png` });
+		await page.screenshot({ path: `${captureDir}/prod-home-report.png` });
+	}
+
+	// Switch to Report Night theme via sidebar theme switcher
+	await page.getByRole('group', { name: 'Theme' }).getByRole('button', { name: 'Night', exact: true }).click();
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'report-dark');
+	if (captureDir) {
+		await page.screenshot({ path: `${captureDir}/prod-home-report-dark.png` });
 	}
 
 	// Switch to Classic (v0 Flat) theme via sidebar theme switcher
-	await page.getByRole('group', { name: 'Theme' }).getByRole('button', { name: 'Classic' }).click();
+	await page.getByRole('group', { name: 'Theme' }).getByRole('button', { name: 'Classic', exact: true }).click();
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'classic');
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/prod-home-classic.png` });
 	}
 
-	// Switch back to Ocean and test Ask Org AI modal
-	await page.getByRole('group', { name: 'Theme' }).getByRole('button', { name: 'Ocean' }).click();
-	await page.getByRole('button', { name: 'Ask AI' }).click();
+	// Switch back to Ocean and test Ask modal
+	await page.getByRole('group', { name: 'Theme' }).getByRole('button', { name: 'Ocean', exact: true }).click();
+	await page.getByRole('button', { name: 'Ask', exact: true }).click();
 	const dialog = page.getByRole('dialog', { name: 'Command palette and Org AI' });
 	await expect(dialog).toBeVisible();
 	await dialog.getByRole('button', { name: 'Team & office status' }).click();
@@ -78,7 +90,7 @@ test('Executive UI v2 feature flag, 3 themes (Ocean/Light/Classic), Home, Inbox,
 	await expect(dialog).toBeHidden();
 
 	// Navigate to Inbox & Activity
-	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Inbox' }).click();
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
 	await expect(page).toHaveURL(/\/inbox$/);
 	await expect(page.getByRole('heading', { level: 1, name: 'Inbox' })).toBeVisible();
 

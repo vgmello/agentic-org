@@ -1,4 +1,4 @@
-export type UiTheme = 'ocean' | 'light' | 'classic';
+export type UiTheme = 'ocean' | 'classic' | 'report' | 'report-dark';
 export type UiColorScheme = 'dark' | 'light';
 
 export const UI_THEMES: readonly {
@@ -10,23 +10,30 @@ export const UI_THEMES: readonly {
 }[] = [
 	{
 		id: 'ocean',
-		label: 'Ocean (Frosted)',
+		label: 'Ocean',
 		shortLabel: 'Ocean',
 		description: 'Deep ocean canvas with subtle translucent frosted panels and sky accents.',
 		scheme: 'dark'
 	},
 	{
-		id: 'light',
-		label: 'Light (Frosted)',
-		shortLabel: 'Light',
-		description: 'Frosted platinum glass panels over a crisp dot canvas with obsidian and deep-navy accents.',
+		id: 'classic',
+		label: 'Classic',
+		shortLabel: 'Classic',
+		description: 'Original v0 slate and indigo palette, flat hairline borders, no shadows or blur.',
+		scheme: 'dark'
+	},
+	{
+		id: 'report',
+		label: 'Report',
+		shortLabel: 'Report',
+		description: 'Modern 2D executive layout on a crisp white canvas with ink and steel-blue accents.',
 		scheme: 'light'
 	},
 	{
-		id: 'classic',
-		label: 'Classic (v0 Flat)',
-		shortLabel: 'Classic',
-		description: 'Original v0 slate and indigo palette, flat hairline borders, no shadows or blur.',
+		id: 'report-dark',
+		label: 'Report Night',
+		shortLabel: 'Night',
+		description: 'Modern 2D executive layout paired with Classic slate surfaces and indigo accents.',
 		scheme: 'dark'
 	}
 ] as const;
@@ -44,6 +51,14 @@ const THEME_SCHEMES = new Map<UiTheme, UiColorScheme>(UI_THEMES.map((t) => [t.id
 
 export function isUiTheme(value: unknown): value is UiTheme {
 	return typeof value === 'string' && VALID_THEMES.has(value as UiTheme);
+}
+
+/**
+ * Migrate retired theme IDs cleanly: `'light'` maps to `'report'`.
+ */
+export function normalizeUiTheme(value: unknown): UiTheme | undefined {
+	if (value === 'light') return 'report';
+	return isUiTheme(value) ? value : undefined;
 }
 
 export function isLightTheme(theme: UiTheme): boolean {
@@ -80,22 +95,24 @@ export function resolveInitialPreferences({
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const params = new URLSearchParams(search);
 	const urlUi = params.get('ui');
-	const urlTheme = params.get('theme');
+	const urlTheme = normalizeUiTheme(params.get('theme'));
 
 	let storedExec: string | null = null;
-	let storedTheme: string | null = null;
+	let storedThemeRaw: string | null = null;
 	let storedCollapsed: string | null = null;
 	let storedFavs: string | null = null;
 	let storedSingleKey: string | null = null;
 	try {
 		storedExec = storage?.getItem(STORAGE_KEYS.executiveUi) ?? null;
-		storedTheme = storage?.getItem(STORAGE_KEYS.theme) ?? null;
+		storedThemeRaw = storage?.getItem(STORAGE_KEYS.theme) ?? null;
 		storedCollapsed = storage?.getItem(STORAGE_KEYS.navCollapsed) ?? null;
 		storedFavs = storage?.getItem(STORAGE_KEYS.favorites) ?? null;
 		storedSingleKey = storage?.getItem(STORAGE_KEYS.singleKey) ?? null;
 	} catch {
 		// Private browsing or blocked storage: fall back safely to defaults.
 	}
+
+	const storedTheme = normalizeUiTheme(storedThemeRaw);
 
 	const executiveUi =
 		urlUi === 'v2' || urlUi === '1' || urlUi === 'true'
@@ -109,11 +126,7 @@ export function resolveInitialPreferences({
 						: envExecutiveDefault;
 
 	const defaultTheme: UiTheme = executiveUi ? 'ocean' : 'classic';
-	const theme: UiTheme = isUiTheme(urlTheme)
-		? urlTheme
-		: isUiTheme(storedTheme)
-			? storedTheme
-			: defaultTheme;
+	const theme: UiTheme = urlTheme ?? storedTheme ?? defaultTheme;
 
 	let favoriteProjects: string[] = [];
 	if (storedFavs) {
@@ -177,19 +190,23 @@ class UiPreferencesStore {
 		this.singleKeyShortcuts = resolved.singleKeyShortcuts;
 		this.#hydrated = true;
 
-		// Persist explicit URL overrides so navigation preserves the chosen flag/theme.
+		// Persist explicit URL overrides and auto-migrate persisted 'light' -> 'report'.
 		const params = new URLSearchParams(search);
-		const storedTheme = (() => {
+		const urlTheme = normalizeUiTheme(params.get('theme'));
+		const storedThemeRaw = (() => {
 			try {
 				return storage?.getItem(STORAGE_KEYS.theme) ?? null;
 			} catch {
 				return null;
 			}
 		})();
-		this.#explicitTheme = isUiTheme(params.get('theme')) || isUiTheme(storedTheme);
+		const storedTheme = normalizeUiTheme(storedThemeRaw);
+		this.#explicitTheme = Boolean(urlTheme || storedTheme);
 		if (params.has('ui')) this.#save(STORAGE_KEYS.executiveUi, this.executiveUi ? '1' : '0');
-		if (params.has('theme') && isUiTheme(params.get('theme'))) {
+		if (urlTheme) {
 			this.#save(STORAGE_KEYS.theme, this.theme);
+		} else if (storedThemeRaw === 'light' && storedTheme === 'report') {
+			this.#save(STORAGE_KEYS.theme, 'report');
 		}
 		this.syncDom();
 	}
@@ -208,10 +225,11 @@ class UiPreferencesStore {
 	}
 
 	setTheme(next: UiTheme): void {
-		if (!isUiTheme(next)) return;
-		this.theme = next;
+		const normalized = normalizeUiTheme(next);
+		if (!normalized) return;
+		this.theme = normalized;
 		this.#explicitTheme = true;
-		this.#save(STORAGE_KEYS.theme, next);
+		this.#save(STORAGE_KEYS.theme, normalized);
 		this.syncDom();
 	}
 

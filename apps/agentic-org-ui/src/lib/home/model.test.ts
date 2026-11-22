@@ -4,6 +4,7 @@ import { sampleOrg } from '$lib/org/sample';
 import {
 	answerExecutiveQuestion,
 	deriveDecisionSpotlight,
+	deriveExecutiveBrief,
 	deriveKpiMetrics,
 	deriveProjectCards,
 	deriveTaskTimeBreakdown
@@ -95,9 +96,33 @@ describe('executive home view model', () => {
 		expect(spot).toHaveLength(2);
 		expect(spot[0].id).toBe('b1');
 		expect(spot[0].risk.label).toBe('Moderate risk');
+		expect(spot[0].primaryAction.label).toBe('Triage bug');
+		expect(spot[0].backgroundContext).toContain('T-1');
 		expect(spot[1].id).toBe('r1');
 		expect(spot[1].primaryAction.kind).toBe('approve_request');
+		expect(spot[1].primaryAction.label).toBe('Approve request');
+		expect(spot[1].secondaryAction?.label).toBe('Deny');
 		expect(spot[1].risk.label).toBe('Low risk');
+	});
+
+	it('builds an executive brief with live sections and plain-text copy payload', () => {
+		const snap = sampleOrg('hq');
+		const items = [
+			makeItem({ id: 'r1', kind: 'request', status: 'scoped', title: 'Approve theme rollout', project_id: 'beacon' })
+		];
+		const brief = deriveExecutiveBrief(
+			snap,
+			items,
+			offices,
+			'you',
+			'Acme Executive',
+			Date.parse('2026-11-21T05:00:00Z')
+		);
+		expect(brief.sections).toHaveLength(3);
+		expect(brief.sections[1].tone).toBe('warn');
+		expect(brief.sections[1].body).toContain('Linux runner');
+		expect(brief.copyText).toContain('Executive Brief');
+		expect(brief.copyText).toContain('Approve theme rollout');
 	});
 
 	it('derives project health and executive AI answers from real snapshot + work items', () => {

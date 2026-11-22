@@ -202,7 +202,10 @@
 									type="button"
 									disabled={busyId === d.id}
 									onclick={() => void act(d, 'secondary')}
-									class="inbox-outline inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold"
+									class={[
+										'inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold',
+										d.secondaryAction.kind === 'decline_request' ? 'inbox-deny' : 'inbox-outline'
+									]}
 								>
 									<Ban class="size-3.5" aria-hidden="true" />
 									<span>{d.secondaryAction.label}</span>
@@ -244,6 +247,16 @@
 		background: var(--exec-well);
 		color: var(--exec-ink);
 		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+	}
+	.inbox-deny {
+		background: var(--exec-deny-bg);
+		color: var(--exec-deny-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-deny-ring);
+	}
+	.inbox-deny:hover {
+		background: var(--exec-deny-bg-hover);
+		color: var(--exec-deny-ink-hover);
+		box-shadow: inset 0 0 0 1px var(--exec-deny-ring-hover);
 	}
 	.inbox-ok-ring {
 		background: var(--exec-ok-bg);

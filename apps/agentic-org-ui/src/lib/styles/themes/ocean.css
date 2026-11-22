@@ -1,16 +1,98 @@
 /*
  * Theme: ocean — Frosted Ocean Dark (default for Executive UI v2)
  * Strictly scoped to `html[data-ui-theme='ocean']` and `.swatch-ocean`.
+ * Binds both executive tokens and app-wide look tokens to Ocean's single semantic ramp.
  */
 
 html[data-ui-theme='ocean'] {
 	color-scheme: dark;
+
+	/* Intra-theme unified semantic tokens */
+	--bar-track: rgba(186, 222, 255, 0.14);
+
+	--tone-accent: #38bdf8;
+	--tone-accent-bar: linear-gradient(90deg, #38bdf8, #7dd3fc);
+	--tone-accent-hi: #0ea5e9;
+	--tone-accent-ink: #7dd3fc;
+	--tone-accent-bg: rgba(56, 189, 248, 0.13);
+	--tone-accent-ring: rgba(125, 211, 252, 0.3);
+
+	--tone-ok: #34d399;
+	--tone-ok-bar: linear-gradient(90deg, #10b981, #34d399);
+	--tone-ok-ink: #6ee7b7;
+	--tone-ok-bg: rgba(52, 211, 153, 0.12);
+	--tone-ok-ring: rgba(52, 211, 153, 0.28);
+
+	--tone-warn: #fbbf24;
+	--tone-warn-bar: #fbbf24;
+	--tone-warn-ink: #fde68a;
+	--tone-warn-bg: rgba(251, 191, 36, 0.13);
+	--tone-warn-ring: rgba(251, 191, 36, 0.32);
+
+	--tone-bad: #fb7185;
+	--tone-bad-bar: #fb7185;
+	--tone-bad-ink: #fda4af;
+	--tone-bad-bg: rgba(251, 113, 133, 0.12);
+	--tone-bad-ring: rgba(251, 113, 133, 0.28);
+
+	--tone-queued: #a78bfa;
+	--tone-queued-ink: #c4b5fd;
+
+	/* App-wide look tokens (Work, Projects, Teams, Offices, Chat, Costs, Settings, Pills) */
+	--surface: #0a1424;
+	--surface-sunken: #060b14;
+	--surface-chip: #142238;
+	--fg: #f8fafc;
+	--fg-bright: #f1f5f9;
+	--fg-body: #d6e1ee;
+	--fg-secondary: #cbd5e1;
+	--fg-muted: #a3b5cc;
+	--fg-subtle: #8599b2;
+
+	--primary: #0284c7;
+	--primary-hover: #0369a1;
+	--ring: var(--tone-accent);
+	--brand: var(--tone-accent);
+	--focus: var(--tone-accent);
+	--link: var(--tone-accent-ink);
+	--brand-text: var(--tone-accent-ink);
+	--brand-text-strong: #bae6fd;
+	--brand-text-stronger: #e0f2fe;
+
+	--info: var(--tone-accent);
+	--info-emphasis: #0284c7;
+	--info-text: var(--tone-accent-ink);
+	--info-text-strong: #bae6fd;
+	--info-text-stronger: #e0f2fe;
+
+	--success: var(--tone-ok);
+	--success-emphasis: var(--tone-ok);
+	--success-text: var(--tone-ok-ink);
+	--positive: var(--tone-ok);
+	--positive-emphasis: var(--tone-ok);
+	--positive-text: var(--tone-ok-ink);
+	--positive-text-strong: var(--tone-ok-ink);
+
+	--warning: var(--tone-warn);
+	--warning-emphasis: var(--tone-warn);
+	--warning-deep: var(--tone-warn);
+	--warning-text: var(--tone-warn-ink);
+	--warning-text-strong: var(--tone-warn-ink);
+	--warning-text-stronger: var(--tone-warn-ink);
+
+	--danger: var(--tone-bad);
+	--danger-emphasis: var(--tone-bad);
+	--danger-text: var(--tone-bad-ink);
+	--danger-text-strong: var(--tone-bad-ink);
+	--danger-text-stronger: var(--tone-bad-ink);
+
+	/* shadcn-svelte semantic bindings */
 	--background: #060b14;
 	--card: #0c1729;
 	--popover: #0b1426;
-	--primary: #0284c7;
-	--ring: #38bdf8;
 	--border: rgba(186, 222, 255, 0.12);
+
+	/* Ocean frosted surfaces */
 	--exec-bg: #060b14;
 	--exec-sidebar-bg: rgba(9, 17, 30, 0.58);
 	--exec-surface: rgba(10, 19, 35, 0.28);
@@ -30,16 +112,38 @@ html[data-ui-theme='ocean'] {
 	--exec-muted: #a3b5cc;
 	--exec-dim: #8599b2;
 	--exec-accent: #0284c7;
-	--exec-accent-hi: #0ea5e9;
-	--exec-accent-ink: #7dd3fc;
-	--exec-accent-soft: rgba(56, 189, 248, 0.13);
-	--exec-accent-ring: rgba(125, 211, 252, 0.3);
+
+	/* Progress bars & chart fills bound to unified --tone-*-bar ramp */
+	--exec-bar-budget: linear-gradient(90deg, #38bdf8 0%, #fbbf24 100%);
+	--exec-bar-sky: var(--tone-accent-bar);
+	--exec-bar-ok: var(--tone-ok-bar);
+	--exec-bar-warn: var(--tone-warn-bar);
+	--exec-bar-bad: var(--tone-bad-bar);
+	--exec-seg-agents: var(--tone-accent-bar);
+	--exec-seg-ci: var(--tone-ok-bar);
+	--exec-seg-human: var(--tone-warn-bar);
+	--exec-seg-queued: linear-gradient(90deg, #7c3aed 0%, #a78bfa 100%);
+	--exec-seg-queued-high: var(--tone-bad-bar);
+
 	--exec-cta-bg: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
 	--exec-cta-fill: linear-gradient(135deg, #0369a1 0%, #0284c7 55%, #0ea5e9 100%);
 	--exec-cta-glass-bg: rgba(56, 189, 248, 0.13);
 	--exec-cta-glass-ink: #e0f2fe;
 	--exec-avatar-bg: #142238;
 	--exec-avatar-ring: #0a1424;
+
+	--exec-cos-bg: linear-gradient(
+		150deg,
+		rgba(56, 189, 248, 0.07) 0%,
+		rgba(12, 24, 44, 0.46) 100%
+	);
+	--exec-cos-fade: rgba(12, 24, 44, 0.94);
+	--exec-cos-border: rgba(125, 211, 252, 0.16);
+	--exec-cos-rule: var(--tone-accent);
+
+	--exec-nav-dot: var(--tone-warn);
+	--exec-nav-dot-halo: rgba(251, 191, 36, 0.18);
+	--exec-nav-dot-ring: #09111e;
 }
 
 html[data-ui-theme='ocean'] .exec-canvas::before {
@@ -50,9 +154,24 @@ html[data-ui-theme='ocean'] .exec-canvas::before {
 	pointer-events: none;
 	background:
 		radial-gradient(rgba(148, 179, 214, 0.11) 1px, transparent 1px) 0 0 / 28px 28px,
-		radial-gradient(ellipse 68% 58% at 84% 14%, rgba(56, 189, 248, 0.24) 0%, rgba(14, 116, 144, 0.1) 42%, transparent 72%),
-		radial-gradient(ellipse 64% 56% at 16% 18%, rgba(30, 100, 175, 0.26) 0%, rgba(14, 74, 128, 0.1) 44%, transparent 74%),
-		radial-gradient(ellipse 58% 52% at 54% 88%, rgba(28, 110, 168, 0.22) 0%, rgba(14, 82, 130, 0.08) 46%, transparent 74%),
+		radial-gradient(
+			ellipse 68% 58% at 84% 14%,
+			rgba(56, 189, 248, 0.24) 0%,
+			rgba(14, 116, 144, 0.1) 42%,
+			transparent 72%
+		),
+		radial-gradient(
+			ellipse 64% 56% at 16% 18%,
+			rgba(30, 100, 175, 0.26) 0%,
+			rgba(14, 74, 128, 0.1) 44%,
+			transparent 74%
+		),
+		radial-gradient(
+			ellipse 58% 52% at 54% 88%,
+			rgba(28, 110, 168, 0.22) 0%,
+			rgba(14, 82, 130, 0.08) 46%,
+			transparent 74%
+		),
 		linear-gradient(160deg, #060b14 0%, #0a1424 50%, #070e1a 100%);
 }
 

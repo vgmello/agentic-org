@@ -44,7 +44,7 @@
 	<span class="flex items-center gap-x-3">
 		<span
 			aria-hidden="true"
-			class="h-2 min-w-12 flex-1 overflow-hidden rounded-full bg-surface-overlay"
+			class="h-2 min-w-12 flex-1 overflow-hidden rounded-full bg-bar-track"
 		>
 			<span class="block h-full rounded-full bg-brand" style:width="{pct ?? 0}%"></span>
 		</span>

@@ -57,7 +57,7 @@
 		aria-valuemax={100}
 		aria-valuenow={Math.min(percent, 100)}
 		aria-valuetext={budgetAmountText(budget)}
-		class="relative mt-2 h-2 overflow-hidden rounded-full bg-surface-overlay"
+		class="relative mt-2 h-2 overflow-hidden rounded-full bg-bar-track"
 	>
 		<span
 			class="absolute inset-y-0 left-0 rounded-full {state?.tone === 'owner'

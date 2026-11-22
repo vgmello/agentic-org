@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
 	STORAGE_KEYS,
+	UI_THEMES,
+	isLightTheme,
 	isUiTheme,
+	normalizeUiTheme,
 	resolveInitialPreferences,
 	type StorageLike
 } from './ui-preferences.svelte';
@@ -35,14 +38,18 @@ describe('ui preferences and executive UI feature flag', () => {
 		expect(viaEnv.theme).toBe('ocean');
 	});
 
-	it('gives URL query params priority over storage for quick team testing', () => {
+	it('gives URL query params priority over storage and supports all 4 v6 themes', () => {
 		const storage = memoryStorage({
 			[STORAGE_KEYS.executiveUi]: '0',
 			[STORAGE_KEYS.theme]: 'ocean'
 		});
-		const on = resolveInitialPreferences({ search: '?ui=v2&theme=light', storage });
+		const on = resolveInitialPreferences({ search: '?ui=v2&theme=report', storage });
 		expect(on.executiveUi).toBe(true);
-		expect(on.theme).toBe('light');
+		expect(on.theme).toBe('report');
+
+		const night = resolveInitialPreferences({ search: '?ui=v2&theme=report-dark', storage });
+		expect(night.executiveUi).toBe(true);
+		expect(night.theme).toBe('report-dark');
 
 		const off = resolveInitialPreferences({
 			search: '?ui=v1&theme=classic',
@@ -50,6 +57,23 @@ describe('ui preferences and executive UI feature flag', () => {
 		});
 		expect(off.executiveUi).toBe(false);
 		expect(off.theme).toBe('classic');
+	});
+
+	it('auto-migrates persisted or URL light theme cleanly to report', () => {
+		const fromStorage = resolveInitialPreferences({
+			storage: memoryStorage({
+				[STORAGE_KEYS.executiveUi]: '1',
+				[STORAGE_KEYS.theme]: 'light'
+			})
+		});
+		expect(fromStorage.theme).toBe('report');
+
+		const fromUrl = resolveInitialPreferences({
+			search: '?ui=v2&theme=light',
+			storage: memoryStorage({ [STORAGE_KEYS.theme]: 'ocean' })
+		});
+		expect(fromUrl.theme).toBe('report');
+		expect(normalizeUiTheme('light')).toBe('report');
 	});
 
 	it('ignores invalid theme values and malformed favorites JSON safely', () => {
@@ -67,11 +91,19 @@ describe('ui preferences and executive UI feature flag', () => {
 		expect(resolved.singleKeyShortcuts).toBe(false);
 	});
 
-	it('validates theme ids strictly', () => {
+	it('validates the 4 v6 theme ids and color schemes strictly', () => {
+		expect(UI_THEMES.map((t) => t.id)).toEqual(['ocean', 'classic', 'report', 'report-dark']);
 		expect(isUiTheme('ocean')).toBe(true);
-		expect(isUiTheme('light')).toBe(true);
 		expect(isUiTheme('classic')).toBe(true);
+		expect(isUiTheme('report')).toBe(true);
+		expect(isUiTheme('report-dark')).toBe(true);
+		expect(isUiTheme('light')).toBe(false);
 		expect(isUiTheme('dark')).toBe(false);
 		expect(isUiTheme(null)).toBe(false);
+
+		expect(isLightTheme('report')).toBe(true);
+		expect(isLightTheme('report-dark')).toBe(false);
+		expect(isLightTheme('ocean')).toBe(false);
+		expect(isLightTheme('classic')).toBe(false);
 	});
 });

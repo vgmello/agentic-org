@@ -1,16 +1,99 @@
 /*
- * Theme: classic — Original v0 Slate + Indigo, flat professional (zero shadows or blur)
+ * Theme: classic — Classic Slate (v0 #1e2939 canvas, #161f2d sidebar, #615fff indigo,
+ * #FBBF24 unified gold, #34D399/#6EE7B7 emerald, #FB7185/#FDA4AF rose, flat zero-blur surfaces)
  * Strictly scoped to `html[data-ui-theme='classic']` and `.swatch-classic`.
+ * Binds both executive tokens and app-wide look tokens to Classic's single semantic ramp.
  */
 
 html[data-ui-theme='classic'] {
 	color-scheme: dark;
+
+	/* Intra-theme unified semantic tokens */
+	--bar-track: rgba(148, 163, 184, 0.2);
+
+	--tone-accent: #615fff;
+	--tone-accent-bar: #615fff;
+	--tone-accent-hi: #7c86ff;
+	--tone-accent-ink: #a3b3ff;
+	--tone-accent-bg: rgba(97, 95, 255, 0.14);
+	--tone-accent-ring: rgba(124, 134, 255, 0.32);
+
+	--tone-ok: #34d399;
+	--tone-ok-bar: #34d399;
+	--tone-ok-ink: #6ee7b7;
+	--tone-ok-bg: rgba(52, 211, 153, 0.12);
+	--tone-ok-ring: rgba(52, 211, 153, 0.26);
+
+	--tone-warn: #fbbf24;
+	--tone-warn-bar: #fbbf24;
+	--tone-warn-ink: #fbbf24;
+	--tone-warn-bg: rgba(251, 191, 36, 0.12);
+	--tone-warn-ring: rgba(251, 191, 36, 0.32);
+
+	--tone-bad: #fb7185;
+	--tone-bad-bar: #fb7185;
+	--tone-bad-ink: #fda4af;
+	--tone-bad-bg: rgba(251, 113, 133, 0.12);
+	--tone-bad-ring: rgba(251, 113, 133, 0.28);
+
+	--tone-queued: #a78bfa;
+	--tone-queued-ink: #c4b5fd;
+
+	/* App-wide look tokens (Work, Projects, Teams, Offices, Chat, Costs, Settings, Pills) */
+	--surface: #1e2939;
+	--surface-sunken: #161f2d;
+	--surface-chip: #243144;
+	--fg: #ffffff;
+	--fg-bright: #ffffff;
+	--fg-body: #d1d5dc;
+	--fg-secondary: #d1d5dc;
+	--fg-muted: #99a1af;
+	--fg-subtle: #99a1af;
+
+	--primary: var(--tone-accent);
+	--primary-hover: var(--tone-accent-hi);
+	--ring: var(--tone-accent-hi);
+	--brand: var(--tone-accent-hi);
+	--focus: var(--tone-accent-hi);
+	--link: var(--tone-accent-ink);
+	--brand-text: var(--tone-accent-ink);
+	--brand-text-strong: #c7d2fe;
+	--brand-text-stronger: #e0e7ff;
+
+	--info: var(--tone-accent);
+	--info-emphasis: var(--tone-accent);
+	--info-text: var(--tone-accent-ink);
+	--info-text-strong: #c7d2fe;
+	--info-text-stronger: #e0e7ff;
+
+	--success: var(--tone-ok);
+	--success-emphasis: var(--tone-ok);
+	--success-text: var(--tone-ok-ink);
+	--positive: var(--tone-ok);
+	--positive-emphasis: var(--tone-ok);
+	--positive-text: var(--tone-ok-ink);
+	--positive-text-strong: var(--tone-ok-ink);
+
+	--warning: var(--tone-warn);
+	--warning-emphasis: var(--tone-warn);
+	--warning-deep: var(--tone-warn);
+	--warning-text: var(--tone-warn-ink);
+	--warning-text-strong: var(--tone-warn-ink);
+	--warning-text-stronger: var(--tone-warn-ink);
+
+	--danger: var(--tone-bad);
+	--danger-emphasis: var(--tone-bad);
+	--danger-text: var(--tone-bad-ink);
+	--danger-text-strong: var(--tone-bad-ink);
+	--danger-text-stronger: var(--tone-bad-ink);
+
+	/* shadcn-svelte semantic bindings */
 	--background: #1e2939;
 	--card: #243144;
-	--popover: #243144;
-	--primary: #615fff;
-	--ring: #7c86ff;
+	--popover: #182230;
 	--border: rgba(255, 255, 255, 0.1);
+
+	/* Classic flat surfaces */
 	--exec-bg: #1e2939;
 	--exec-sidebar-bg: #161f2d;
 	--exec-surface: #243144;
@@ -25,20 +108,34 @@ html[data-ui-theme='classic'] {
 	--exec-body: #d1d5dc;
 	--exec-muted: #99a1af;
 	--exec-dim: #99a1af;
-	--exec-accent: #615fff;
-	--exec-accent-hi: #7c86ff;
-	--exec-accent-ink: #a3b3ff;
-	--exec-accent-soft: rgba(97, 95, 255, 0.16);
-	--exec-accent-ring: rgba(124, 134, 255, 0.34);
-	--exec-sky: #a3b3ff;
-	--exec-sky-bg: rgba(97, 95, 255, 0.14);
-	--exec-sky-ring: rgba(124, 134, 255, 0.3);
-	--exec-cta-bg: linear-gradient(135deg, #615fff 0%, #615fff 100%);
-	--exec-cta-fill: linear-gradient(135deg, #7c86ff 0%, #7c86ff 100%);
+
+	/* Solid flat bars bound to unified --tone-*-bar ramp */
+	--exec-bar-budget: var(--tone-accent-bar);
+	--exec-bar-sky: var(--tone-accent-bar);
+	--exec-bar-ok: var(--tone-ok-bar);
+	--exec-bar-warn: var(--tone-warn-bar);
+	--exec-bar-bad: var(--tone-bad-bar);
+	--exec-seg-agents: var(--tone-accent-bar);
+	--exec-seg-ci: var(--tone-ok-bar);
+	--exec-seg-human: var(--tone-warn-bar);
+	--exec-seg-queued: var(--tone-queued);
+	--exec-seg-queued-high: var(--tone-bad-bar);
+
+	--exec-cta-bg: #615fff;
+	--exec-cta-fill: #7c86ff;
 	--exec-cta-glass-bg: rgba(97, 95, 255, 0.14);
 	--exec-cta-glass-ink: #e0e7ff;
 	--exec-avatar-bg: #1e2939;
 	--exec-avatar-ring: #243144;
+
+	--exec-cos-bg: #16202e;
+	--exec-cos-fade: #16202e;
+	--exec-cos-border: rgba(255, 255, 255, 0.09);
+	--exec-cos-rule: #7c86ff;
+
+	--exec-nav-dot: var(--tone-warn);
+	--exec-nav-dot-halo: rgba(251, 191, 36, 0.16);
+	--exec-nav-dot-ring: #161f2d;
 }
 
 html[data-ui-theme='classic'] .exec-canvas::before {

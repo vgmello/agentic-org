@@ -174,7 +174,7 @@
 								aria-valuemax={project.total}
 								aria-valuenow={project.done}
 							>
-								<div class="h-1.5 overflow-hidden rounded-full bg-surface-overlay">
+								<div class="h-1.5 overflow-hidden rounded-full bg-bar-track">
 									<div class="h-full rounded-full bg-primary" style:width="{pct}%"></div>
 								</div>
 							</div>

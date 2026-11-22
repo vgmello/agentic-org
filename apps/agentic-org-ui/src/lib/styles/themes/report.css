@@ -1,0 +1,435 @@
+/*
+ * Theme: report — Modern 2D Executive Report (Day) + shared structural rules for Report & Report Night
+ * Crisp #FFFFFF canvas, #F9FAFC sidebar, #0B101B ink, #1D4E89 blue,
+ * #16A34A/#15803D/#ECFDF3 green, #EAB308/#A16207/#FEF9C3 yellow, #B83232/#9B2424/#FBEDED red,
+ * #E5EAF1 unified --bar-track, open boxless KPI strip & flat hairline rules.
+ * Strictly scoped to `html[data-ui-theme^='report']`, `html[data-ui-theme='report']`, and `.swatch-report`.
+ * Binds both executive tokens and app-wide look tokens to Report Day's single semantic ramp.
+ */
+
+html[data-ui-theme='report'] {
+	color-scheme: light;
+
+	/* Intra-theme unified semantic tokens */
+	--bar-track: #e5eaf1;
+
+	--tone-accent: #1d4e89;
+	--tone-accent-bar: #1d4e89;
+	--tone-accent-hi: #163c6b;
+	--tone-accent-ink: #1d4e89;
+	--tone-accent-bg: #eef4fa;
+	--tone-accent-ring: #c5d4e6;
+
+	--tone-ok: #16a34a;
+	--tone-ok-bar: #16a34a;
+	--tone-ok-ink: #15803d;
+	--tone-ok-bg: #ecfdf3;
+	--tone-ok-ring: #bbf7d0;
+
+	--tone-warn: #eab308;
+	--tone-warn-bar: #eab308;
+	--tone-warn-ink: #a16207;
+	--tone-warn-bg: #fef9c3;
+	--tone-warn-ring: #fde68a;
+
+	--tone-bad: #b83232;
+	--tone-bad-bar: #b83232;
+	--tone-bad-ink: #9b2424;
+	--tone-bad-bg: #fbeded;
+	--tone-bad-ring: #e6bebe;
+
+	--tone-queued: #52489c;
+	--tone-queued-ink: #52489c;
+
+	/* App-wide look tokens (Work, Projects, Teams, Offices, Chat, Costs, Settings, Pills) */
+	--surface: #ffffff;
+	--surface-sunken: #f9fafc;
+	--surface-chip: #eef1f6;
+	--tooltip: #0b101b;
+	--scrim: #0b101b;
+	--tint: #0b101b;
+	--shade: #0b101b;
+	--surface-raised: #f7f8fa;
+	--surface-overlay: #eef1f6;
+
+	--line-subtle: #eef1f6;
+	--line: #e2e7ef;
+	--line-strong: #cbd3df;
+	--field-border: #cbd3df;
+
+	--fg: #0b101b;
+	--fg-bright: #0b101b;
+	--fg-body: #2c3646;
+	--fg-secondary: #334155;
+	--fg-muted: #526074;
+	--fg-subtle: #6b788c;
+	--on-emphasis: #ffffff;
+	--on-warning: #0b101b;
+	--on-warning-strong: #0b101b;
+
+	--quiet: #64748b;
+	--quiet-emphasis: #475569;
+
+	--primary: #0b101b;
+	--primary-hover: var(--tone-accent);
+	--ring: var(--tone-accent);
+	--brand: var(--tone-accent);
+	--focus: var(--tone-accent);
+	--link: var(--tone-accent-ink);
+	--brand-text: var(--tone-accent-ink);
+	--brand-text-strong: var(--tone-accent-hi);
+	--brand-text-stronger: #0b101b;
+
+	--info: var(--tone-accent);
+	--info-emphasis: var(--tone-accent);
+	--info-text: var(--tone-accent-ink);
+	--info-text-strong: var(--tone-accent-hi);
+	--info-text-stronger: #0b101b;
+
+	--success: var(--tone-ok);
+	--success-emphasis: var(--tone-ok);
+	--success-text: var(--tone-ok-ink);
+	--positive: var(--tone-ok);
+	--positive-emphasis: var(--tone-ok);
+	--positive-text: var(--tone-ok-ink);
+	--positive-text-strong: var(--tone-ok-ink);
+
+	--warning: var(--tone-warn);
+	--warning-emphasis: var(--tone-warn);
+	--warning-deep: var(--tone-warn-ink);
+	--warning-text: var(--tone-warn-ink);
+	--warning-text-strong: var(--tone-warn-ink);
+	--warning-text-stronger: var(--tone-warn-ink);
+
+	--danger: var(--tone-bad);
+	--danger-emphasis: var(--tone-bad);
+	--danger-text: var(--tone-bad-ink);
+	--danger-text-strong: var(--tone-bad-ink);
+	--danger-text-stronger: var(--tone-bad-ink);
+
+	/* shadcn-svelte semantic bindings */
+	--background: #ffffff;
+	--foreground: #0b101b;
+	--card: #ffffff;
+	--card-foreground: #0b101b;
+	--popover: #ffffff;
+	--popover-foreground: #0b101b;
+	--primary-foreground: #ffffff;
+	--secondary: #eef1f6;
+	--secondary-foreground: #0b101b;
+	--muted: #f4f6f9;
+	--muted-foreground: #526074;
+	--accent: #eef4fa;
+	--accent-foreground: #0b101b;
+	--destructive: var(--tone-bad);
+	--border: #e2e7ef;
+	--input: #dce2ec;
+
+	/* Report Day surfaces & typography */
+	--exec-bg: #ffffff;
+	--exec-sidebar-bg: #f9fafc;
+	--exec-surface: #ffffff;
+	--exec-surface-hi: #f8fafc;
+	--exec-well: #f7f8fa;
+	--exec-border: #eef1f6;
+	--exec-border-hi: #dce2ec;
+	--exec-blur: none;
+	--exec-shadow: none;
+	--exec-shadow-hi: none;
+	--exec-ink: #0b101b;
+	--exec-body: #2c3646;
+	--exec-muted: #526074;
+	--exec-dim: #6b788c;
+	--exec-on-accent: #ffffff;
+
+	/* Flat 2D bars bound to unified --tone-*-bar ramp */
+	--exec-bar-budget: linear-gradient(90deg, #1d4e89 0%, #3b82c4 52%, #eab308 100%);
+	--exec-bar-sky: var(--tone-accent-bar);
+	--exec-bar-ok: var(--tone-ok-bar);
+	--exec-bar-warn: var(--tone-warn-bar);
+	--exec-bar-bad: var(--tone-bad-bar);
+	--exec-seg-agents: var(--tone-accent-bar);
+	--exec-seg-ci: var(--tone-ok-bar);
+	--exec-seg-human: var(--tone-warn-bar);
+	--exec-seg-queued: var(--tone-queued);
+	--exec-seg-queued-high: var(--tone-bad-bar);
+
+	/* Authoritative monochrome CTAs & steel-blue hover */
+	--exec-cta-bg: #0b101b;
+	--exec-cta-fill: #1d4e89;
+	--exec-cta-glass-bg: #1d4e89;
+	--exec-cta-glass-ink: #ffffff;
+	--exec-avatar-bg: #f1f4f8;
+	--exec-avatar-ring: #ffffff;
+
+	/* Deny guard */
+	--exec-deny-bg: #ffffff;
+	--exec-deny-bg-hover: var(--tone-bad-bg);
+	--exec-deny-ink: var(--tone-bad-ink);
+	--exec-deny-ink-hover: #7f1d1d;
+	--exec-deny-ring: var(--tone-bad-ring);
+	--exec-deny-ring-hover: var(--tone-bad);
+	--exec-deny-guard-bg: var(--tone-bad-bg);
+	--exec-deny-guard-ring: var(--tone-bad-ring);
+	--exec-deny-confirm-bg: var(--tone-bad);
+	--exec-deny-confirm-hover: var(--tone-bad-ink);
+	--exec-deny-confirm-ink: #ffffff;
+
+	/* Executive Brief memo */
+	--exec-cos-bg: #f7f9fc;
+	--exec-cos-fade: #f7f9fc;
+	--exec-cos-border: #dce2ec;
+	--exec-cos-rule: var(--tone-accent);
+
+	/* Unread rail dot */
+	--exec-nav-dot: var(--tone-warn);
+	--exec-nav-dot-halo: rgba(234, 179, 8, 0.2);
+	--exec-nav-dot-ring: #f9fafc;
+
+	/* Report structural rules */
+	--report-rule: #e2e7ef;
+	--report-rule-subtle: #eef1f6;
+	--report-masthead-rule: #0b101b;
+	--report-accent-bar: #0b101b;
+}
+
+/* ── Shared Modern 2D Executive Report Structural Layout (Day & Night) ── */
+html[data-ui-theme^='report'] .exec-canvas::before,
+html[data-ui-theme^='report'] .exec-canvas::after {
+	display: none;
+}
+
+html[data-ui-theme^='report'] .exec-well {
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+	border-radius: 4px;
+	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+}
+
+html[data-ui-theme^='report'] .exec-cta {
+	border-radius: 4px;
+}
+
+html[data-ui-theme^='report'] .exec-cta .exec-cta-sheen {
+	display: none;
+}
+
+html[data-ui-theme^='report'] .hb-rep-only {
+	display: flex;
+}
+
+html[data-ui-theme='report'] .t-green,
+html[data-ui-theme='report'] .t-amber,
+html[data-ui-theme='report'] .t-red {
+	border-radius: 3px;
+	box-shadow: none;
+}
+
+/* Open, borderless editorial Home canvas */
+html[data-ui-theme^='report'] .hb-page {
+	max-width: none;
+	gap: 0;
+}
+
+html[data-ui-theme^='report'] .hb-hero {
+	padding-bottom: 18px;
+	border-bottom: 1.5px solid var(--report-masthead-rule);
+	align-items: flex-end;
+}
+
+html[data-ui-theme^='report'] .hb-h1 {
+	font-weight: 700;
+	letter-spacing: -0.038em;
+}
+
+html[data-ui-theme='report'] .hb-h1 em {
+	color: #0b101b;
+	text-decoration: underline;
+	text-decoration-thickness: 2.5px;
+	text-underline-offset: 5px;
+}
+
+html[data-ui-theme='report'] .hb-h1 em.tone-warn,
+html[data-ui-theme='report'] .hb-h1 em.tone-bad {
+	text-decoration-color: var(--tone-bad);
+}
+
+html[data-ui-theme='report'] .hb-h1 em.tone-calm {
+	text-decoration-color: var(--tone-accent);
+}
+
+html[data-ui-theme='report'] .hb-h1 em.tone-ok {
+	text-decoration-color: var(--tone-ok);
+}
+
+/* Section 01: Open Boxless KPI Summary Strip */
+html[data-ui-theme^='report'] .hb-pillars {
+	gap: 0;
+	padding: 22px 0 26px;
+	border-bottom: 1px solid var(--report-rule);
+}
+
+html[data-ui-theme^='report'] .hb-pillar {
+	border-radius: 0;
+	border: 0;
+	box-shadow: none;
+	background: transparent;
+	padding: 4px 28px;
+}
+
+html[data-ui-theme^='report'] .hb-pillar:first-child {
+	padding-left: 0;
+}
+
+html[data-ui-theme^='report'] .hb-pillar:last-child {
+	padding-right: 0;
+}
+
+html[data-ui-theme^='report'] .hb-pillar + .hb-pillar {
+	border-left: 1px solid var(--report-rule-subtle);
+}
+
+html[data-ui-theme^='report'] .hb-pillar:hover {
+	background: transparent;
+	box-shadow: none;
+}
+
+html[data-ui-theme^='report'] .hb-pil-num {
+	font-size: 2.2rem;
+	line-height: 1.05;
+	font-weight: 750;
+	letter-spacing: -0.045em;
+}
+
+html[data-ui-theme^='report'] .hb-pil-pill {
+	border-radius: 3px;
+}
+
+html[data-ui-theme='report'] .hb-pil-pill {
+	box-shadow: none;
+}
+
+html[data-ui-theme^='report'] .hb-bar-track {
+	height: 6px;
+	border-radius: 1px;
+}
+
+html[data-ui-theme^='report'] .hb-bar-track > span {
+	border-radius: 1px;
+}
+
+/* Section 02: Open 2-Column Executive Stage */
+html[data-ui-theme^='report'] .hb-stage {
+	gap: 0;
+	padding: 32px 0 34px;
+	border-bottom: 1px solid var(--report-rule);
+}
+
+html[data-ui-theme^='report'] .hb-spot {
+	border-radius: 0;
+	box-shadow: none;
+	background: transparent;
+	padding: 0 36px 0 0;
+}
+
+html[data-ui-theme^='report'] .hb-spot::before {
+	display: none;
+}
+
+html[data-ui-theme^='report'] .hb-brief-card {
+	border-radius: 0;
+	box-shadow: none;
+	background: transparent;
+	border-left: 1px solid var(--report-rule-subtle);
+	padding: 0 0 0 36px;
+}
+
+html[data-ui-theme^='report'] .hb-spot:hover,
+html[data-ui-theme^='report'] .hb-brief-card:hover,
+html[data-ui-theme^='report'] .hb-time-card:hover {
+	background: transparent;
+	box-shadow: none;
+}
+
+/* Section 03: Open Borderless Portfolio Columns */
+html[data-ui-theme^='report'] .hb-proj-sec {
+	padding: 32px 0 34px;
+	border-bottom: 1px solid var(--report-rule);
+}
+
+html[data-ui-theme^='report'] .hb-bento {
+	gap: 0;
+}
+
+html[data-ui-theme^='report'] .hb-proj-card {
+	border-radius: 0;
+	box-shadow: none;
+	background: transparent;
+	padding: 4px 28px;
+}
+
+html[data-ui-theme^='report'] .hb-proj-card:first-child {
+	padding-left: 0;
+}
+
+html[data-ui-theme^='report'] .hb-proj-card:last-child {
+	padding-right: 0;
+}
+
+html[data-ui-theme^='report'] .hb-proj-card + .hb-proj-card {
+	border-left: 1px solid var(--report-rule-subtle);
+}
+
+html[data-ui-theme^='report'] .hb-proj-card:hover {
+	background: transparent;
+	box-shadow: none;
+}
+
+/* Section 04: Open 2D Stacked Bar */
+html[data-ui-theme^='report'] .hb-time-card {
+	border-radius: 0;
+	box-shadow: none;
+	background: transparent;
+	padding: 32px 0 8px;
+}
+
+html[data-ui-theme^='report'] .hb-time-bar {
+	height: 14px;
+	border-radius: 1px;
+}
+
+html[data-ui-theme^='report'] .hb-time-bar > a {
+	border-radius: 1px;
+}
+
+@media (max-width: 1279px) {
+	html[data-ui-theme^='report'] .hb-spot {
+		padding: 0 0 24px;
+	}
+	html[data-ui-theme^='report'] .hb-brief-card {
+		border-left: 0;
+		border-top: 1px solid var(--report-rule-subtle);
+		padding: 24px 0 0;
+	}
+}
+
+@media (max-width: 1023px) {
+	html[data-ui-theme^='report'] .hb-pillar,
+	html[data-ui-theme^='report'] .hb-proj-card {
+		padding: 16px 0;
+	}
+	html[data-ui-theme^='report'] .hb-pillar + .hb-pillar,
+	html[data-ui-theme^='report'] .hb-proj-card + .hb-proj-card {
+		border-left: 0;
+		border-top: 1px solid var(--report-rule-subtle);
+	}
+}
+
+/* Settings preview swatch */
+.swatch-report {
+	background: linear-gradient(90deg, #f9fafc 0%, #f9fafc 28%, #ffffff 28%, #ffffff 100%);
+}
+
+.swatch-report .swatch-bar {
+	background: linear-gradient(90deg, #0b101b 0%, #1d4e89 65%, #16a34a 100%);
+}

@@ -2,56 +2,146 @@
  * Agentic Org — Executive Theme System (Shared Base & Structural Primitives)
  *
  * Shared contract only:
- *   - :root fallback tokens
+ *   - :root fallback tokens (including shared --bar-track & --tone-* semantic tone ramps)
  *   - Structural primitives (.exec-canvas, .exec-card, .exec-well, .exec-cta, .exec-cta-glass)
+ *   - Status pills (.t-green, .t-amber, .t-red) bound to --tone-* tokens
  *   - Shared light-scheme readability bridge (`html.light .exec-legacy-compat`)
  *
- * Individual themes live in sibling files (ocean.css, light.css, classic.css)
- * and only scope their rules to `html[data-ui-theme='<id>']` and `.swatch-<id>`.
+ * Individual themes live in sibling files (ocean.css, classic.css, report.css, report-dark.css)
+ * and only scope their rules to `html[data-ui-theme='<id>']` (or `^='report'`) and `.swatch-<id>`.
  *
  * Strictly CSP-safe: zero data: URIs, zero external URLs.
  */
 
 :root {
+	/* Shared intra-theme semantic tone ramps (overridden per theme so all widgets stay in sync) */
+	--bar-track: rgba(148, 163, 184, 0.2);
+
+	--tone-accent: #615fff;
+	--tone-accent-bar: #615fff;
+	--tone-accent-hi: #7c86ff;
+	--tone-accent-ink: #a3b3ff;
+	--tone-accent-bg: rgba(97, 95, 255, 0.14);
+	--tone-accent-ring: rgba(124, 134, 255, 0.32);
+
+	--tone-ok: #34d399;
+	--tone-ok-bar: #34d399;
+	--tone-ok-ink: #6ee7b7;
+	--tone-ok-bg: rgba(52, 211, 153, 0.12);
+	--tone-ok-ring: rgba(52, 211, 153, 0.26);
+
+	--tone-warn: #fbbf24;
+	--tone-warn-bar: #fbbf24;
+	--tone-warn-ink: #fbbf24;
+	--tone-warn-bg: rgba(251, 191, 36, 0.12);
+	--tone-warn-ring: rgba(251, 191, 36, 0.32);
+
+	--tone-bad: #fb7185;
+	--tone-bad-bar: #fb7185;
+	--tone-bad-ink: #fda4af;
+	--tone-bad-bg: rgba(251, 113, 133, 0.12);
+	--tone-bad-ring: rgba(251, 113, 133, 0.28);
+
+	--tone-queued: #a78bfa;
+	--tone-queued-ink: #c4b5fd;
+
+	/* Executive shell surface & typography tokens */
 	--exec-bg: #1e2939;
-	--exec-sidebar-bg: #1b2533;
-	--exec-surface: #182230;
-	--exec-surface-hi: #1d2838;
-	--exec-well: #131c28;
+	--exec-sidebar-bg: #161f2d;
+	--exec-surface: #243144;
+	--exec-surface-hi: #29384d;
+	--exec-well: #1a2433;
 	--exec-border: rgba(255, 255, 255, 0.1);
-	--exec-border-hi: rgba(255, 255, 255, 0.2);
+	--exec-border-hi: rgba(255, 255, 255, 0.18);
 	--exec-blur: none;
 	--exec-shadow: inset 0 0 0 1px var(--exec-border);
 	--exec-shadow-hi: inset 0 0 0 1px var(--exec-border-hi);
 	--exec-ink: #ffffff;
 	--exec-body: #d1d5dc;
 	--exec-muted: #99a1af;
-	--exec-dim: #7b8494;
-	--exec-accent: #615fff;
-	--exec-accent-hi: #7c86ff;
-	--exec-accent-ink: #a3b3ff;
-	--exec-accent-soft: rgba(97, 95, 255, 0.14);
-	--exec-accent-ring: rgba(124, 134, 255, 0.34);
-	--exec-ok: #6ee7b7;
-	--exec-ok-bg: rgba(52, 211, 153, 0.12);
-	--exec-ok-ring: rgba(52, 211, 153, 0.28);
-	--exec-warn: #fde68a;
-	--exec-warn-bg: rgba(251, 191, 36, 0.13);
-	--exec-warn-ring: rgba(251, 191, 36, 0.32);
-	--exec-bad: #fda4af;
-	--exec-bad-bg: rgba(251, 113, 133, 0.12);
-	--exec-bad-ring: rgba(251, 113, 133, 0.28);
-	--exec-sky: #7dd3fc;
-	--exec-sky-bg: rgba(56, 189, 248, 0.12);
-	--exec-sky-ring: rgba(125, 211, 252, 0.28);
-	--exec-purple: #c4b5fd;
-	--exec-bar-track: rgba(186, 222, 255, 0.12);
-	--exec-cta-bg: linear-gradient(135deg, #615fff 0%, #7c86ff 100%);
-	--exec-cta-fill: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+	--exec-dim: #99a1af;
+	--exec-on-accent: #ffffff;
+
+	/* Aliased executive tone tokens (bound to shared --tone-* & --bar-track) */
+	--exec-accent: var(--tone-accent);
+	--exec-accent-hi: var(--tone-accent-hi);
+	--exec-accent-ink: var(--tone-accent-ink);
+	--exec-accent-soft: var(--tone-accent-bg);
+	--exec-accent-ring: var(--tone-accent-ring);
+	--exec-ok: var(--tone-ok-ink);
+	--exec-ok-bg: var(--tone-ok-bg);
+	--exec-ok-ring: var(--tone-ok-ring);
+	--exec-warn: var(--tone-warn-ink);
+	--exec-warn-bg: var(--tone-warn-bg);
+	--exec-warn-ring: var(--tone-warn-ring);
+	--exec-bad: var(--tone-bad-ink);
+	--exec-bad-bg: var(--tone-bad-bg);
+	--exec-bad-ring: var(--tone-bad-ring);
+	--exec-sky: var(--tone-accent-ink);
+	--exec-sky-bg: var(--tone-accent-bg);
+	--exec-sky-ring: var(--tone-accent-ring);
+	--exec-purple: var(--tone-queued-ink);
+	--exec-bar-track: var(--bar-track);
+
+	/* Progress bars & task-time chart fills (all bound to --tone-*-bar) */
+	--exec-bar-budget: var(--tone-accent-bar);
+	--exec-bar-sky: var(--tone-accent-bar);
+	--exec-bar-ok: var(--tone-ok-bar);
+	--exec-bar-warn: var(--tone-warn-bar);
+	--exec-bar-bad: var(--tone-bad-bar);
+	--exec-seg-agents: var(--tone-accent-bar);
+	--exec-seg-ci: var(--tone-ok-bar);
+	--exec-seg-human: var(--tone-warn-bar);
+	--exec-seg-queued: var(--tone-queued);
+	--exec-seg-queued-high: var(--tone-bad-bar);
+
+	/* Interactive CTA, Deny guard, Executive Brief & Rail Dot tokens */
+	--exec-cta-bg: #615fff;
+	--exec-cta-fill: #7c86ff;
 	--exec-cta-glass-bg: rgba(97, 95, 255, 0.14);
 	--exec-cta-glass-ink: #e0e7ff;
-	--exec-avatar-bg: #1e293b;
-	--exec-avatar-ring: #182230;
+	--exec-avatar-bg: #1e2939;
+	--exec-avatar-ring: #243144;
+
+	--exec-deny-bg: transparent;
+	--exec-deny-bg-hover: rgba(251, 113, 133, 0.14);
+	--exec-deny-ink: var(--tone-bad-ink);
+	--exec-deny-ink-hover: #ffe4e6;
+	--exec-deny-ring: var(--tone-bad-ring);
+	--exec-deny-ring-hover: rgba(251, 113, 133, 0.52);
+	--exec-deny-guard-bg: var(--tone-bad-bg);
+	--exec-deny-guard-ring: var(--tone-bad-ring);
+	--exec-deny-confirm-bg: #dc2626;
+	--exec-deny-confirm-hover: #b91c1c;
+	--exec-deny-confirm-ink: #ffffff;
+
+	--exec-cos-bg: #16202e;
+	--exec-cos-fade: #16202e;
+	--exec-cos-border: rgba(255, 255, 255, 0.09);
+	--exec-cos-rule: var(--tone-accent-hi);
+
+	--exec-nav-dot: var(--tone-warn);
+	--exec-nav-dot-halo: rgba(251, 191, 36, 0.18);
+	--exec-nav-dot-ring: #161f2d;
+}
+
+/* Shared semantic status pills */
+.t-green {
+	background: var(--tone-ok-bg);
+	color: var(--tone-ok-ink);
+	box-shadow: inset 0 0 0 1px var(--tone-ok-ring);
+}
+
+.t-amber {
+	background: var(--tone-warn-bg);
+	color: var(--tone-warn-ink);
+	box-shadow: inset 0 0 0 1px var(--tone-warn-ring);
+}
+
+.t-red {
+	background: var(--tone-bad-bg);
+	color: var(--tone-bad-ink);
+	box-shadow: inset 0 0 0 1px var(--tone-bad-ring);
 }
 
 /* Canvas base when Executive UI is active */
@@ -91,13 +181,15 @@
 	overflow: hidden;
 	border-radius: 9px;
 	padding: 0 14px;
-	height: 36px;
+	min-height: 36px;
 	font-size: 0.8125rem;
 	font-weight: 600;
-	color: #ffffff;
+	color: var(--exec-on-accent);
 	background: var(--exec-cta-bg);
 	cursor: pointer;
-	transition: transform 0.16s ease, box-shadow 0.16s ease;
+	transition:
+		transform 0.16s ease,
+		box-shadow 0.16s ease;
 }
 
 .exec-cta .exec-cta-fill {
@@ -116,7 +208,12 @@
 	bottom: -20%;
 	left: 0;
 	width: 42%;
-	background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.26) 50%, transparent 100%);
+	background: linear-gradient(
+		90deg,
+		transparent 0%,
+		rgba(255, 255, 255, 0.26) 50%,
+		transparent 100%
+	);
 	transform: translateX(-160%) skewX(-22deg);
 	transition: transform 0s;
 	pointer-events: none;
@@ -148,23 +245,28 @@
 
 .exec-cta-glass:hover,
 .exec-cta-glass:focus-visible {
-	color: #ffffff;
+	color: var(--exec-on-accent);
+}
+
+/* Report-only headings hidden by default on Ocean & Classic */
+.hb-rep-only {
+	display: none;
 }
 
 /*
  * Light-scheme readability bridge for existing Tailwind Plus screens (/projects, /work,
- * /offices, /org-chart, /agents, /chat, /processes) whenever ANY light theme is active.
+ * /offices, /org-chart, /agents, /chat, /processes) whenever ANY light theme (Report) is active.
  */
 html.light {
 	background: var(--exec-bg);
 }
 
 html.light .exec-legacy-compat .text-white {
-	color: #0f172a;
+	color: #0b101b;
 }
 
 html.light .exec-legacy-compat .text-gray-300 {
-	color: #334155;
+	color: #2c3646;
 }
 
 html.light .exec-legacy-compat .text-gray-400 {
@@ -181,26 +283,26 @@ html.light .exec-legacy-compat .bg-gray-800 {
 
 html.light .exec-legacy-compat .bg-gray-900,
 html.light .exec-legacy-compat .bg-gray-950 {
-	background-color: #f8fafc;
+	background-color: #f9fafc;
 }
 
 html.light .exec-legacy-compat .bg-white\/5 {
-	background-color: rgba(15, 23, 42, 0.045);
+	background-color: rgba(11, 16, 27, 0.04);
 }
 
 html.light .exec-legacy-compat .bg-white\/10 {
-	background-color: rgba(15, 23, 42, 0.08);
+	background-color: rgba(11, 16, 27, 0.07);
 }
 
 html.light .exec-legacy-compat .border-white\/5,
 html.light .exec-legacy-compat .border-white\/10,
 html.light .exec-legacy-compat .divide-white\/5 > :not(:first-child) {
-	border-color: rgba(15, 23, 42, 0.09);
+	border-color: #e2e7ef;
 }
 
 html.light .exec-legacy-compat .ring-white\/5,
 html.light .exec-legacy-compat .ring-white\/10 {
-	--tw-ring-color: rgba(15, 23, 42, 0.1);
+	--tw-ring-color: #dce2ec;
 }
 
 /* Preserve white text on intentional solid primary buttons inside any light theme */
