@@ -3132,6 +3132,20 @@ html[data-theme="report"] .hb-pillar-bar .seg-rework { background: #D5DCE6; }
 html[data-theme="report"] .hb-pillar-sub { border-top: 1px solid #F1F4F8; padding-top: 10px; }
 html[data-theme="report"] .hb-sub-lbl { font-size: 0.68rem; font-weight: 550; color: #64748B; text-transform: uppercase; letter-spacing: .05em; }
 
+/* Report-only large executive section headings (hidden on Ocean/Light/Classic) */
+.hb-rep-only, .lbl-rep { display: none; }
+html[data-theme="report"] .lbl-std { display: none; }
+html[data-theme="report"] .lbl-rep { display: inline; }
+html[data-theme="report"] .hb-rep-only { display: flex; }
+html[data-theme="report"] .hb-rep-sec-hd {
+  align-items: baseline; justify-content: space-between; gap: 12px;
+  margin-bottom: 4px;
+}
+html[data-theme="report"] .hb-rep-sec-title {
+  font-size: 1.25rem; line-height: 1.25; font-weight: 700;
+  letter-spacing: -.028em; color: #0B101B;
+}
+
 /* Section 02: Open 2-Column Executive Stage (Key Decision | Briefing Log) */
 html[data-theme="report"] .hb-stage {
   gap: 0;
@@ -3214,10 +3228,12 @@ html[data-theme="report"] .hb-catchup {
   padding: 0 0 0 38px;
   background: transparent;
 }
+html[data-theme="report"] .hb-cu-hd { align-items: baseline; margin-bottom: 4px; }
 html[data-theme="report"] .hb-cu-title {
-  font-size: 0.72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #475569;
+  font-size: 1.25rem; line-height: 1.25; font-weight: 700;
+  letter-spacing: -.028em; text-transform: none; color: #0B101B;
 }
-html[data-theme="report"] .hb-cu-title .ic { color: #1B365D; }
+html[data-theme="report"] .hb-cu-title .ic { display: none; }
 html[data-theme="report"] .hb-cu-window {
   border-radius: 3px; background: #F4F6F9; box-shadow: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; color: #475569;
@@ -3236,10 +3252,13 @@ html[data-theme="report"] .hb-cu-foot { border-top: 1px solid #F1F4F8; }
 html[data-theme="report"] .hb-proj-sec {
   padding: 36px 0 38px;
   border-bottom: 1px solid #E2E7EF;
-  gap: 18px;
+  gap: 20px;
 }
+html[data-theme="report"] .hb-proj-head { align-items: baseline; }
+html[data-theme="report"] .hb-proj-head h2,
 html[data-theme="report"] .hb-proj-title {
-  font-size: 0.72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #0B101B;
+  font-size: 1.25rem; line-height: 1.25; font-weight: 700;
+  letter-spacing: -.028em; text-transform: none; color: #0B101B;
 }
 html[data-theme="report"] .hb-proj-head .link,
 html[data-theme="report"] .hb-inline-act { color: #1B365D; font-weight: 600; }
@@ -3300,11 +3319,12 @@ html[data-theme="report"] .hb-hor-date strong { color: #FFFFFF; }
 html[data-theme="report"] .hb-time {
   border-radius: 0; border: 0; box-shadow: none;
   padding: 36px 0 12px;
-  gap: 14px;
+  gap: 16px;
   background: transparent;
 }
 html[data-theme="report"] .hb-time-title {
-  font-size: 0.72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #0B101B;
+  font-size: 1.25rem; line-height: 1.25; font-weight: 700;
+  letter-spacing: -.028em; text-transform: none; color: #0B101B;
 }
 html[data-theme="report"] .hb-time-unit { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; color: #526074; }
 html[data-theme="report"] .hb-time-bar {
@@ -4492,6 +4512,9 @@ function pageHome() {
       return `<button type="button" class="${cls}" data-act="spot-go" data-v="${idx}" aria-label="Decision ${idx + 1} of ${queue.length}: ${esc(q.what)}" ${idx === S.spotIdx ? 'aria-current="true"' : ""}></button>`;
     }).join("");
     return `<section class="hb-spot${isUrgent ? " is-urgent" : ""}${it.handled ? " is-done" : ""}" id="hb-spotlight" aria-label="Decision spotlight">
+      <div class="hb-rep-only hb-rep-sec-hd">
+        <h2 class="hb-rep-sec-title">Decision &amp; Approval Queue</h2>
+      </div>
       <div class="hb-spot-bar">
         <span class="hb-spot-badge${isUrgent ? " urgent" : ""}">${ic(isUrgent ? "clock" : k.icon, "ic14")}${it.handled ? "Handled" : isUrgent ? esc(it.expires) : esc(it.sub)}</span>
         <div class="hb-spot-nav">
@@ -4586,7 +4609,7 @@ function pageHome() {
     const shownRows = [...dynamicRows, ...staticRows].slice(0, 3).join("");
     return `<aside class="hb-catchup" aria-label="Autonomous catch-up">
       <div class="hb-cu-hd">
-        <div class="hb-cu-title">${ic("signal", "ic16")}<span>Catch-up</span></div>
+        <div class="hb-cu-title">${ic("signal", "ic16")}<span class="lbl-std">Catch-up</span><span class="lbl-rep">Operations &amp; Activity Brief</span></div>
         <span class="hb-cu-window"><span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>Last 4 hours</span>
       </div>
 
@@ -4779,7 +4802,7 @@ function pageHome() {
     ${st === "error" || st === "empty" ? "" : `<section class="hb-proj-sec" aria-labelledby="hb-projs-h">
       <div class="hb-proj-head">
         <div class="hb-proj-head-l">
-          <h2 id="hb-projs-h">Projects</h2>
+          <h2 id="hb-projs-h"><span class="lbl-std">Projects</span><span class="lbl-rep">Project Delivery Scorecard</span></h2>
           ${st !== "loading" ? `<span>${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}</span>` : ""}
         </div>
         <a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>
@@ -4803,7 +4826,7 @@ function pageHome() {
           : "Work is flowing smoothly across agents, automated checks, and your approvals.";
       return `<section class="hb-time" aria-labelledby="hb-time-h">
         <div class="hb-time-hd">
-          <h2 class="hb-time-title" id="hb-time-h">Where task time goes</h2>
+          <h2 class="hb-time-title" id="hb-time-h"><span class="lbl-std">Where task time goes</span><span class="lbl-rep">Capacity &amp; Bottleneck Analysis</span></h2>
           <span class="hb-time-unit">${totalHrs.toFixed(1)}h total across ${W.filter(OPEN).length} open tasks</span>
         </div>
         <div class="hb-time-bar" role="group" aria-label="Task time breakdown across open tasks">
