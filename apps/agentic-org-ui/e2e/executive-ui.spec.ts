@@ -97,19 +97,33 @@ test('Executive UI v6 (always-on): 4 themes, Home KPIs, 3-lens Executive Brief, 
 	await dialog.getByRole('button', { name: 'ESC' }).click();
 	await expect(dialog).toBeHidden();
 
-	// Inbox renders real pending decisions from inboxApi (never empty by default)
+	// Inbox renders split master-detail approval & triage workspace from inboxApi
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
 	await expect(page).toHaveURL(/\/inbox$/);
 	await expect(page.getByRole('heading', { level: 1, name: 'Inbox' })).toBeVisible();
-	await expect(page.getByText('waiting on you')).toBeVisible();
+	await expect(page.getByRole('main').getByText('waiting on you')).toBeVisible();
+	if (captureDir) {
+		await page.screenshot({ path: `${captureDir}/prod-inbox-ocean.png` });
+	}
 
-	// Activity renders canonical activity feed
+	// Activity lands on Assembly Line Matrix FIRST by default, with toggle to Activity stream
 	await page
 		.getByRole('navigation', { name: 'Main' })
 		.getByRole('link', { name: 'Activity' })
 		.click();
 	await expect(page).toHaveURL(/\/activity$/);
 	await expect(page.getByRole('heading', { level: 1, name: 'Activity' })).toBeVisible();
+	await expect(
+		page.getByRole('main').getByRole('button', { name: 'Assembly line', exact: true })
+	).toHaveAttribute('aria-pressed', 'true');
+	await expect(page.getByRole('region', { name: 'Assembly line matrix' })).toBeVisible();
+	if (captureDir) {
+		await page.screenshot({ path: `${captureDir}/prod-activity-assembly-ocean.png` });
+	}
+	await page.getByRole('main').getByRole('button', { name: 'Activity', exact: true }).click();
+	await expect(
+		page.getByRole('main').getByRole('button', { name: 'Activity', exact: true })
+	).toHaveAttribute('aria-pressed', 'true');
 
 	// Settings shows 4-theme Appearance selector (no legacy toggle)
 	await page
@@ -139,8 +153,24 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	// Persists across route navigation without re-specifying ?mock=poc
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
 	await expect(page).toHaveURL(/\/inbox$/);
-	await expect(page.getByText("Approve publishing Kai's sync update to v1.0")).toBeVisible();
+	await expect(
+		page.getByRole('heading', { level: 2, name: "Approve publishing Kai's sync update to v1.0" })
+	).toBeVisible();
 	await expect(page.getByText("Reroute Jules's 3 queued tasks to Maya & Rowan")).toBeVisible();
+	if (captureDir) {
+		await page.screenshot({ path: `${captureDir}/poc-mirror-inbox-report.png` });
+	}
+
+	// Activity Assembly Line in Report Day shows POC projects first by default
+	await page
+		.getByRole('navigation', { name: 'Main' })
+		.getByRole('link', { name: 'Activity' })
+		.click();
+	await expect(page).toHaveURL(/\/activity$/);
+	await expect(page.getByRole('region', { name: 'Assembly line matrix' })).toBeVisible();
+	if (captureDir) {
+		await page.screenshot({ path: `${captureDir}/poc-mirror-activity-assembly-report.png` });
+	}
 
 	// Opening a POC work item exercises workApi.get() & workApi.activity() without error
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Work' }).click();
