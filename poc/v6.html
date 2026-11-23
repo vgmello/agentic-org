@@ -651,8 +651,6 @@ body.nokeys .search kbd { display: none; }
 .tab:focus-visible { outline-offset: -2px; }
 .tcount { border-radius: 99px; background: var(--hover); padding: 1px 8px; font-size: 0.75rem; line-height: 1.125rem; font-weight: 500; color: var(--gray-300); }
 .subbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px var(--gutter); border-bottom: 1px solid var(--line); flex-shrink: 0; }
-.work-display { margin-inline-start: auto; }
-.work-display .menu button[aria-checked="false"] .ic20,
 .menu [role="menuitemcheckbox"][aria-checked="false"] .ic20 { visibility: hidden; }
 .seg { display: inline-flex; align-items: stretch; gap: 2px; min-height: 2.25rem; padding: 3px; border-radius: var(--radius-md); background: rgba(15, 23, 42, .45); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10); }
 .seg button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border-radius: 4px; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 600; color: var(--gray-400); }
@@ -878,10 +876,6 @@ html[data-hide-work-subtasks] .work-subtasks { display: none; }
 .switch[aria-checked="true"] { background: var(--indigo-500); box-shadow: none; }
 .switch[aria-checked="true"]::after { transform: translateX(20px); }
 
-/* Unavailable page */
-.unavail { padding: 96px var(--gutter); text-align: center; }
-.unavail h1 { margin-top: 16px; font-size: 30px; line-height: 36px; font-weight: 600; letter-spacing: -.02em; }
-.unavail p { margin-top: 24px; color: var(--gray-400); }
 .reply { display: flex; flex-direction: column; gap: 8px; }
 textarea, input.field, select.field { width: 100%; background: var(--hover); color: #fff; border: 0; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--gray-500); padding: 6px 12px; font: inherit; font-size: 0.875rem; line-height: 1.5rem; }
 input.field, select.field { min-height: var(--control-height); }
@@ -998,6 +992,7 @@ textarea::placeholder, input.field::placeholder { color: var(--gray-400); }
 .tree ul > li::before { content: ""; position: absolute; left: -26px; top: 30px; width: 22px; border-top: 1px solid var(--line2); }
 .node { display: inline-flex; align-items: center; gap: 12px; padding: 8px 14px 8px 8px; border-radius: var(--radius-lg); box-shadow: inset 0 0 0 1px var(--line2); min-width: 280px; max-width: 100%; }
 .node > span { min-width: 0; }
+.node-presence { margin-inline-start: auto; }
 .node:hover { background: var(--hover); }
 .node .nm { font-weight: 600; }
 .node .rl { display: block; font-size: 12px; line-height: 18px; color: var(--gray-400); }
@@ -1014,7 +1009,7 @@ textarea::placeholder, input.field::placeholder { color: var(--gray-400); }
 .prof h1 .role { font-size: 0.875rem; font-weight: 400; letter-spacing: normal; color: var(--gray-400); }
 .prof .meta { margin-top: 2px; }
 .prof .now { margin-top: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--gray-300); }
-.grid2 { display: grid; grid-template-columns: 1fr 340px; gap: 0; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 0; }
 .grid2 > aside { border-left: 1px solid var(--line); padding: 24px; min-width: 0; }
 .setup h2 { font-size: 0.875rem; font-weight: 600; margin-bottom: 12px; }
 .setup .dl { grid-template-columns: 110px 1fr; }
@@ -1025,8 +1020,15 @@ textarea::placeholder, input.field::placeholder { color: var(--gray-400); }
 .journal ul { list-style: disc; padding-left: 18px; margin-top: 4px; }
 
 /* Settings */
-.settings { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 102px); }
-.settings > div { min-width: 0; }
+.settings { display: grid; grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: auto 1fr; min-height: 100dvh; }
+.settings > .ph { grid-column: 1 / -1; }
+.settings-picker { display: none; }
+@media (max-width: 639px) {
+  .settings-rows > li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 10px; row-gap: 6px; }
+  .settings-rows > li > .pill { grid-column: 2 / -1; justify-self: start; max-width: 100%; white-space: normal; }
+  .settings-rows > li > .ic20:last-child { grid-column: 3; grid-row: 1; }
+  .settings-rows .grow { min-width: 0; overflow-wrap: anywhere; }
+}
 .subnav { border-right: 1px solid var(--line); padding: 24px 16px; display: flex; flex-direction: column; gap: 2px; }
 .subnav a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--radius-md); color: var(--gray-400); font-weight: 600; white-space: nowrap; }
 .subnav a:hover { background: var(--hover); color: var(--white); }
@@ -1175,7 +1177,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .dialog label.opt { display: flex; align-items: center; gap: 10px; }
 
 /* Responsive */
-@media (max-width: 1279px) { .cols2, .grid2 { grid-template-columns: 1fr; } .cols2 > .section + .section { border-left: 0; } .grid2 > aside { border-left: 0; border-top: 1px solid var(--line); } .chat.withthread { grid-template-columns: 220px 1fr; } .chat.withthread .thread { position: fixed; right: 0; top: 0; bottom: 0; width: min(360px, 100%); z-index: 80; background: var(--gray-800); } }
+@media (max-width: 1279px) { .cols2, .grid2 { grid-template-columns: minmax(0, 1fr); } .cols2 > .section + .section { border-left: 0; } .grid2 > aside { border-left: 0; border-top: 1px solid var(--line); } .chat.withthread { grid-template-columns: 220px 1fr; } .chat.withthread .thread { position: fixed; right: 0; top: 0; bottom: 0; width: min(360px, 100%); z-index: 80; background: var(--gray-800); } }
 @media (max-width: 1120px) {
   .agent-shell { grid-template-columns: 1fr; flex: none; min-height: auto; }
   .agent-main { min-height: auto; }
@@ -1183,15 +1185,14 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 }
 @media (max-width: 959px) {
   :root { --gutter: 24px; }
-  .settings { align-content: start; }
-  .split, .settings { grid-template-columns: 1fr; }
+  .settings { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 1fr; }
+  .split { grid-template-columns: 1fr; }
   .split .list { border-right: 0; }
   .split .detail { display: none; }
-  .subnav { flex-direction: row; gap: 24px; overflow-x: auto; overflow-y: hidden; padding: 0 var(--gutter); border-right: 0; border-bottom: 1px solid var(--line2); }
-  .subnav a { flex: none; border-radius: 0; padding: 0.875rem 0.25rem; box-shadow: inset 0 -2px 0 transparent; white-space: nowrap; }
-  .subnav a:hover { background: none; box-shadow: inset 0 -2px 0 rgb(255 255 255 / .2); }
-  .subnav a[aria-current="page"] { background: none; box-shadow: inset 0 -2px 0 var(--indigo-400); }
-  .subnav a:focus-visible { outline-offset: -2px; }
+  .settings > .subnav { display: none; }
+  .settings-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 12px var(--gutter); border-bottom: 1px solid var(--line); }
+  .settings-picker label { color: var(--gray-300); font-weight: 600; }
+  .settings-picker select { flex: 1; min-width: min(100%, 12rem); max-width: 100%; }
   .chat, .chat.withthread { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; height: auto; }
   .chlist { border-right: 0; }
 }
@@ -1244,7 +1245,10 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   .btn.xs { min-height: 44px; }
   .hide-sm { display: none; }
   .only-sm { display: block; } .only-wide { display: none; }
-  .node { min-width: 0; }
+  .tree ul { margin-left: 8px; padding-left: 12px; }
+  .tree ul > li::before { left: -12px; width: 12px; }
+  .node { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; }
+  .node .node-presence { grid-column: 2; margin-inline-start: 0; }
   .tree ul { margin-left: 8px; padding-left: 12px; }
   .tree ul > li::before { left: -12px; width: 8px; }
   .btn, .btn.sm { height: auto; min-height: 44px; }
@@ -2719,7 +2723,7 @@ html[data-theme="ocean"]:where([data-interior-page]) {
   & body::before { background: var(--ocean-canvas); }
   & body::after { background: none; }
   & .topbar::before,
-  & :is(.ph, .chhead, .prof, .queue-header, .unavail) { background: var(--ocean-header); }
+  & :is(.ph, .chhead, .prof, .queue-header) { background: var(--ocean-header); }
   & .queue-headline { background: none; }
   & .sidebar {
     background: var(--ocean-glass-sheen), color-mix(in srgb, var(--ocean-rail) 82%, transparent);
@@ -4342,7 +4346,7 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
         <svg class="ic ic20 acct-chev" aria-hidden="true"><use href="#i-chev-updown"/></svg>
       </button>
       <div class="menu up" id="menu-acct" role="menu" hidden>
-        <button role="menuitem" type="button" data-act="go" data-v="#/preferences"><svg class="ic ic20" aria-hidden="true"><use href="#i-adjustments"/></svg>Your preferences</button>
+        <button role="menuitem" type="button" data-act="go" data-v="#/settings/appearance"><svg class="ic ic20" aria-hidden="true"><use href="#i-adjustments"/></svg>Your preferences</button>
         <button role="menuitem" type="button" data-act="proto" data-v="Switch organization (goes to the welcome screen)"><svg class="ic ic20" aria-hidden="true"><use href="#i-arrows-updown"/></svg>Switch organization</button>
         <button role="menuitem" type="button" data-act="proto" data-v="About Agentic Org"><svg class="ic ic20" aria-hidden="true"><use href="#i-info"/></svg>About</button>
       </div>
@@ -4896,8 +4900,19 @@ const PAST_SESSIONS = [
 
 /* ---------------------------------------------------------------- state */
 const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
-  projLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
+  scopedWorkLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
   taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false, confirmDeny: null, briefCopied: false };
+const ORG_NAME_STORE = "agentic-org.v6.organizationName";
+let orgName = "Agentic Org";
+try { orgName = localStorage.getItem(ORG_NAME_STORE)?.trim().slice(0, 80) || orgName; } catch (e) {}
+function showOrgName() {
+  const logo = document.querySelector(".sidebar .logo"), name = logo.querySelector(".name");
+  name.textContent = orgName;
+  name.title = orgName;
+  logo.title = `${orgName} home`;
+  logo.setAttribute("aria-label", logo.title);
+}
+showOrgName();
 const THEME_STORE = "agentic-org.v6.theme";
 const COZY_CONTRAST_STORE = "agentic-org.v6.cozyContrast";
 S.cozyContrast = false;
@@ -5082,23 +5097,21 @@ function displayCheckbox(action, label, checked) {
   return `<button role="menuitemcheckbox" tabindex="-1" aria-checked="${checked}" type="button" data-act="${action}">${ic("check", "ic20")}${label}</button>`;
 }
 function workListDisplayOptions() {
-  return `<hr>${displayCheckbox("work-subtasks", "Show subtasks", S.workSubtasks)}${displayCheckbox("work-dividers", "Row dividers", S.workDividers)}`;
+  return `${displayCheckbox("work-subtasks", "Show subtasks", S.workSubtasks)}${displayCheckbox("work-dividers", "Row dividers", S.workDividers)}`;
 }
-function workDisplayMenu(layoutKey) {
-  const layout = S[layoutKey];
-  return `<div class="menu-wrap work-display">
-    <button class="btn outline" type="button" data-act="menu" data-id="work-display"
-      aria-haspopup="menu" aria-expanded="false" aria-controls="menu-work-display">${ic("adjustments", "ic16")}Display</button>
-    <div class="menu" id="menu-work-display" role="menu" aria-label="Work display" hidden>
-      <p class="menu-h" id="work-display-layout">Layout</p>
-      <div role="group" aria-labelledby="work-display-layout">
-        ${[["list", "List"], ["board", "Board"]].map(([value, label]) =>
-          `<button role="menuitemradio" tabindex="-1" aria-checked="${layout === value}" type="button" data-act="set" data-k="${layoutKey}" data-v="${value}">${ic("check", "ic20")}${label}</button>`
-        ).join("")}
-      </div>
-      ${layout === "list" ? workListDisplayOptions() : ""}
-    </div>
+function workLayoutToggle(key) {
+  return `<div class="work-layout-toggle" role="group" aria-label="Work layout">
+    ${[["list", "List"], ["board", "Board"]].map(([layout, label]) => `<button class="queue-tab" type="button"
+      data-act="set" data-k="${key}" data-v="${layout}" aria-pressed="${S[key] === layout}" aria-controls="work-results">${ic(layout, "ic16")}${label}</button>`).join("")}
   </div>`;
+}
+function scopedWork(items) {
+  const list = S.scopedWorkLayout === "list";
+  const display = list ? `<div class="queue-controls">${showMenu("work-display", [], {
+    icon: "adjustments", label: "Work display", footer: workListDisplayOptions(),
+  })}</div>` : "";
+  return `<div class="subbar scoped-work-tools">${workLayoutToggle("scopedWorkLayout")}${display}</div>
+    ${workWorkspace(list ? workList(items) : board(items), items)}`;
 }
 function showMenu(id, groups, { align = "", icon, label, active, footer = "" } = {}) {
   const cur = groups.map(([k, , opts]) => { const o = opts.find((x) => String(x[0]) === String(S[k])); return o && o[0] !== "all" ? o[1] : null; }).filter(Boolean);
@@ -5305,20 +5318,23 @@ function workList(items, groupBy, emptyText = "No work here yet.") {
   });
   return `<div class="work-items">${sections.join("")}</div>`;
 }
-function board(items, kind) {
-  const cols = kind ? STATUSES[kind] : ALL_STATUSES.filter((st) => items.some((w) => w.status === st));
+function board(items) {
+  const cols = ALL_STATUSES.filter((st) => items.some((w) => w.status === st));
   if (!cols.length) return `<p class="empty-row">No work here yet.</p>`;
   return `<div class="board">${cols.map((st) => {
     const col = items.filter((w) => w.status === st);
-    return `<section class="bcol" aria-label="${esc(st)}"><h3><span>${esc(st)}</span><span class="muted">${col.length}</span></h3>${col.map((w) => `<div class="bcard" data-work-id="${esc(w.id)}">${workTitle(w, "t")}<span class="m"><span class="mono">${w.id}</span>${SEP}${esc(P[w.proj].name)}</span><span class="m">${av(w.who, 24)}${w.who ? mlink(w.who) : "Unassigned"}</span>${showsNeedsYou(w) ? `<span>${pill("Needs you", "amber", "bell", true)}</span>` : ""}</div>`).join("") || '<p class="muted" style="font-size:13px">None</p>'}</section>`;
+    return `<section class="bcol" aria-label="${esc(st)}"><h3><span>${esc(st)}</span><span class="muted">${col.length}</span></h3>${col.map((w) => `<div class="bcard" data-work-id="${esc(w.id)}">${workTitle(w, "t")}<span class="m"><span class="mono">${w.id}</span>${SEP}${esc(P[w.proj].name)}</span><span class="m">${av(w.who, 24)}${w.who ? mlink(w.who) : "Unassigned"}</span>${showsNeedsYou(w) ? `<span>${pill("Needs you", "amber", "bell", true)}</span>` : ""}</div>`).join("")}</section>`;
   }).join("")}</div>`;
 }
 
 function workItemHref(item) {
-  const [page, project, tab] = route();
+  const [page, entity, tab] = route();
   const projectWork = page === "projects" && tab === "work";
-  const path = projectWork ? `#/projects/${encodeURIComponent(project)}/work` : "#/work";
-  const params = projectWork || page === "work" ? qs() : new URLSearchParams();
+  const teamWork = page === "teams" && own(TEAMS, entity) && (!tab || tab === "work");
+  const memberWork = page === "members" && tab === "work" && M[entity]?.kind === "person";
+  const scoped = projectWork || teamWork || memberWork;
+  const path = scoped ? `#/${page}/${encodeURIComponent(entity)}${tab ? "/" + tab : ""}` : "#/work";
+  const params = scoped || page === "work" ? qs() : new URLSearchParams();
   if (item) params.set("item", item);
   else params.delete("item");
   return params.size ? `${path}?${params}` : path;
@@ -6604,9 +6620,9 @@ function projectBody(id, tab) {
       <section class="section"><div class="sec-h"><h2>${ic("bell", "ic20 c-amber")}Needs you for this project</h2></div>${needs.length ? `<div class="cards">${needs.map(needsCard).join("")}</div>` : `<p class="muted" style="padding-bottom:24px">Nothing needs you on this project.</p>`}</section>
     </div><aside class="compact"><div class="sec-h"><h2 style="font-size:14px;font-weight:600">Recent activity</h2></div>${feed(acts().filter((a) => a.proj === id).slice(0, 5), { noProj: true })}</aside></div>`;
   }
-  if (tab === "work") return `<div class="subbar">${workDisplayMenu("projLayout")}</div>` + workWorkspace(S.projLayout === "board" ? board(ws.filter((w) => w.kind === "task"), "task") : workList(ws), ws);
+  if (tab === "work") return scopedWork(ws);
   if (tab === "team") return projectTeams(id) + memberRows(projMembers(id), { emptyText: "No members yet." });
-  if (tab === "activity") return feed(acts().filter((a) => a.proj === id), { noProj: true });
+  if (tab === "activity") return activityTimeline(acts().filter((a) => a.proj === id), { noProj: true });
   if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
   return notFound();
 }
@@ -6753,7 +6769,7 @@ function workViewControls(group) {
   ], {
     icon: "adjustments", label: "Work display",
     active: (listLayout && group !== "none") || S.workSort !== "default" || S.workOrder !== "asc",
-    footer: listLayout ? workListDisplayOptions() : "",
+    footer: listLayout ? "<hr>" + workListDisplayOptions() : "",
   });
   return `<div class="queue-controls" role="group" aria-label="Work view controls">${filter}${display}</div>`;
 }
@@ -6777,10 +6793,7 @@ function pageWork() {
         ${WORK_PRESETS.map(([value, label]) => `<button class="queue-tab" type="button" data-act="work-preset"
           data-v="${value}" aria-pressed="${selection.view === value}">${label}<span data-work-count="${value}">${workPresetItems(filtered, value).length}</span></button>`).join("")}
       </div>
-      <div class="work-layout-toggle" role="group" aria-label="Work layout">
-        ${[["list", "List"], ["board", "Board"]].map(([layout, label]) => `<button class="queue-tab" type="button"
-          data-act="set" data-k="workLayout" data-v="${layout}" aria-pressed="${S.workLayout === layout}" aria-controls="work-results">${ic(layout, "ic16")}${label}</button>`).join("")}
-      </div>
+      ${workLayoutToggle("workLayout")}
       ${workViewControls(selection.group)}
       <button class="btn primary" id="work-new-task" type="button" data-act="work-new-task">${ic("plus", "ic16")}New task</button>
     </div>
@@ -7084,7 +7097,7 @@ function activityEventTime(time, now) {
   return { day: time, age: Number.isNaN(date.getTime()) ? Infinity : (now - date) / 60_000 };
 }
 
-function activityTimeline(items) {
+function activityTimeline(items, options = {}) {
   if (!items.length) return feed(items);
   const now = new Date(), groups = new Map();
   const events = items.map((event) => ({ event, ...activityEventTime(event.time, now) }))
@@ -7094,7 +7107,7 @@ function activityTimeline(items) {
     groups.get(day).push(event);
   }
   return [...groups].map(([day, events]) => `<section class="activity-day">
-    <h2>${esc(day)}</h2>${feed(events, { triage: true, day })}
+    <h2>${esc(day)}</h2>${feed(events, { triage: true, ...options, day })}
   </section>`).join("");
 }
 
@@ -7156,9 +7169,9 @@ function pageTeam(id, tab) {
   tab = tab || "work";
   const ws = W.filter((w) => t.members.includes(w.who));
   let body;
-  if (tab === "work") body = workList(ws);
+  if (tab === "work") body = scopedWork(ws);
   else if (tab === "projects") body = `<ul class="rows" role="list">${Object.keys(P).filter((p) => P[p].teams.includes(id)).map((p) => `<li class="linked"><div class="grow"><p class="rt"><a class="stretch" href="#/projects/${p}">${esc(P[p].name)}</a>${leadOf(p) ? `<span class="sec">${esc(leadTxt(p))}</span>` : ""}</p><div style="max-width:320px;margin-top:8px">${progress(p)}</div></div>${projPill(p)}</li>`).join("")}</ul>`;
-  else if (tab === "activity") body = feed(acts().filter((a) => t.members.includes(a.who)));
+  else if (tab === "activity") body = activityTimeline(acts().filter((a) => t.members.includes(a.who)));
   else body = `<div class="section">${conversationPreview(t.channel)}</div>`;
   const shown = t.members.slice(0, MEMBER_CAP);
   return head("#/teams", "Teams") +
@@ -7174,7 +7187,7 @@ function pageMembersDir() {
     memberRows(ids, { emptyText: "No members match this filter." });
 }
 function pageOrgChart() {
-  const node = (id) => `<a class="node" href="#/members/${id}">${av(id, 32, "word")}<span><span class="nm">${esc(M[id].name)}</span><span class="rl">${esc(M[id].role)} · ${kindWord(id)}</span></span><span style="margin-left:auto">${presInline(id)}</span></a>`;
+  const node = (id) => `<a class="node" href="#/members/${id}">${av(id, 32, "word")}<span><span class="nm">${esc(M[id].name)}</span><span class="rl">${esc(M[id].role)} · ${kindWord(id)}</span></span><span class="node-presence">${presInline(id)}</span></a>`;
   const tree = (id) => { const kids = memberIds().filter((k) => M[k].mgr === id); return `<li>${node(id)}${kids.length ? `<ul>${kids.map(tree).join("")}</ul>` : ""}</li>`; };
   const roots = memberIds().filter((k) => M[k].mgr === "you");
   return hdr("Org chart", `By reporting line · ${plural(memberIds().length, "member", "members")}`, hireMenu()) + teamsTabs("org-chart") +
@@ -7224,11 +7237,11 @@ function pageMember(id, tab) {
         <section class="section compact"><div class="sec-h"><h2>Recent activity</h2></div>${feed(myActs.slice(0, 5))}</section>`;
       const aside = `<div class="setup"><h2>About</h2><dl class="dl"><dt>Kind</dt><dd>${owner ? "Owner" : "Person"}</dd><dt>Role</dt><dd>${esc(m.role)}</dd><dt>Access</dt><dd>${owner ? "Owner · not a member of any team" : "Member"}</dd></dl></div>`;
       body = `<div class="grid2"><div>${left}</div><aside>${aside}</aside></div>`;
-    } else if (tab === "work") body = workList(myW);
+    } else if (tab === "work") body = scopedWork(myW);
     else if (tab === "conversations") {
       const chs = Object.keys(CH).filter((k) => CH[k].msgs.some((x) => x.who === id || (x.thread || []).some((r) => r.who === id)));
       body = chs.length ? `<ul class="rows" role="list">${chs.map((k) => { const c = CH[k], last = c.msgs[c.msgs.length - 1]; return `<li class="linked">${c.kind === "channel" ? ic("hash", "ic20 chev") : ic(c.kind === "dm" ? "chat" : "eye", "ic20 chev")}<div class="grow"><p class="rt"><a class="stretch" href="#/chat/${k}">${c.kind === "channel" ? "#" : ""}${esc(c.name)}</a></p><p class="meta">${esc(M[last.who].name)}: ${esc(last.text)}</p></div><span class="muted" style="font-size:0.75rem">${esc(last.time)}</span></li>`; }).join("")}</ul>` : `<p class="empty-row">No conversations yet.</p>`;
-    } else if (tab === "activity") body = feed(myActs);
+    } else if (tab === "activity") body = activityTimeline(myActs);
     else body = notFound();
   } else {
     const avail = agentSessionAvailability(id);
@@ -7332,47 +7345,62 @@ function setupCard(id) {
     <p style="margin-top:16px"><a class="link" href="#/settings/agents/${id}">Open in Agent setup${ic("chev-right", "ic16")}</a></p></div>`;
 }
 
-const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["processes", "Processes", "refresh"], ["access", "Members and access", "key"], ["updates", "Updates", "download"]];
+const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["processes", "Processes", "refresh"], ["access", "Members and access", "key"], ["updates", "Updates", "download"], ["appearance", "Appearance", "adjustments"]];
 const health = (a) => (M[a].offboarded ? "Offboarded" : M[a].setup.needs ? "Needs setup: " + M[a].setup.needs : M[a].paused ? "Paused" : "Ready");
 const healthMark = (a) => { const h = health(a); const [icon, tone] = h === "Ready" ? ["check-circle", "green"] : (h === "Paused" || h === "Offboarded") ? ["pause", "gray"] : ["wrench", "amber"]; return pill(h, tone, icon); };
-const LOGO = `<svg width="48" height="48" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="8" fill="#615fff"/><path d="M10 22 16 9l6 13M12.5 17h7" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-const unavailable = (title) => `<div class="unavail">${LOGO}<h1 tabindex="-1">${esc(title)} isn't available yet</h1><p>This release doesn't include ${esc(title)}.</p></div>`;
-function pageSettings(sec, sub) {
-  sec = sec || "general";
-  const nav = `<nav class="subnav" aria-label="Organization settings">${SET.map(([k, l, i]) => `<a href="#/settings${k === "general" ? "" : "/" + k}" ${sec === k ? 'aria-current="page"' : ""}>${ic(i, "ic20")}${l}</a>`).join("")}
-    <a href="#/preferences">${ic("adjustments", "ic20")}Appearance</a></nav>`;
-  let body;
+function settingsFrame(active, header, content) {
+  const path = (key) => key === "general" ? "#/settings" : "#/settings/" + key;
+  return `<div class="settings">
+    ${header}
+    <nav class="subnav" aria-label="Organization settings">${SET.map(([key, label, icon]) =>
+      `<a href="${path(key)}"${active === key ? ' aria-current="page"' : ""}>${ic(icon, "ic20")}${label}</a>`).join("")}</nav>
+    <div class="settings-picker">
+      <label for="settings-section">Settings section</label>
+      <select class="field" id="settings-section">${SET.map(([key, label]) =>
+        `<option value="${path(key)}"${active === key ? " selected" : ""}>${label}</option>`).join("")}</select>
+    </div>
+    <div class="settings-body">${content}</div>
+  </div>`;
+}
+function pageSettings(sec = "general", sub) {
+  if (sec === "appearance") return pagePreferences();
+  const label = SET.find(([key]) => key === sec)[1];
+  let header = hdr(label, "Organization settings"), body;
   const agents = Object.keys(M).filter((k) => M[k].kind === "agent");
-  if (sec === "general") body = hdr("General", "Organization settings") + `<div class="form"><div><label for="o-name">Organization name</label><input class="field" id="o-name" value="Agentic Org"><p class="help">Shown in the sidebar and to every member.</p></div>
+  if (sec === "general") body = `<form class="form" data-form="org-settings"><div><label for="o-name">Organization name</label><input class="field" id="o-name" name="name" value="${esc(orgName)}" required maxlength="80" aria-describedby="org-name-help"><p class="help" id="org-name-help">Shown in this prototype’s sidebar.</p></div>
     <div><label for="o-owner">Owner</label><input class="field" id="o-owner" value="You" disabled></div><div><label for="o-data">Data location</label><input class="field" id="o-data" value="This Mac · HQ office" disabled><p class="help">Change where things run in Offices.</p></div>
-    <div><button class="btn primary" type="button" data-act="proto" data-v="Save organization settings">Save changes</button></div></div>`;
-  else if (sec === "offices") body = hdr("Offices", "2 offices · 1 online") + `<p class="desc">Where your agents run. HQ is this Mac; another office syncs with it.</p><ul class="rows" role="list" style="margin-top:8px">${Object.entries(OFFICES).map(([k, o]) => {
+    <div><button class="btn primary" type="submit">Save changes</button></div></form>`;
+  else if (sec === "offices") {
+    header = hdr("Offices", "2 offices · 1 online");
+    body = `<p class="desc">Where your agents run. HQ is this Mac; another office syncs with it.</p><ul class="rows settings-rows" role="list" style="margin-top:8px">${Object.entries(OFFICES).map(([k, o]) => {
     const here = agents.filter((a) => M[a].setup.office === k);
     return `<li>${ic("office", "ic20 chev")}<div class="grow"><p class="rt">${esc(o.name)}<span class="sec">${esc(o.machine)}</span></p><div class="meta"><span>${esc(o.note)}</span>${SEP}<span>${plural(here.length, "agent", "agents")}: ${here.map((a) => mlink(a)).join(", ")}</span></div><div style="margin-top:8px">${avStack(here, 10)}</div></div>${pill(o.status, o.tone, o.icon)}</li>`;
   }).join("")}</ul><div class="section"><button class="btn outline" type="button" data-act="proto" data-v="Add an office">${ic("plus", "ic20")}Add an office</button></div>`;
-  else if (sec === "agents" && sub && M[sub] && M[sub].kind === "agent") body = agentDetail(sub);
-  else if (sec === "agents") body = hdr("Agent setup", [plural(agents.length, "agent", "agents"), agents.filter((a) => M[a].setup.needs).length + " need setup", agents.filter((a) => M[a].paused && !M[a].setup.needs).length + " paused"].join(" · "), `<button class="btn outline" type="button" data-act="proto" data-v="Hire an agent">${ic("user-plus", "ic20")}Hire an agent</button>`) +
-    `<p class="desc">How each agent runs. To see an agent as a colleague (work, conversations, activity), open its profile.</p>
+  } else if (sec === "agents" && M[sub]?.kind === "agent") {
+    const agent = M[sub];
+    header = hdr(agent.name, esc(agent.role) + " · Agent setup", `<a class="btn outline" href="#/members/${sub}/sessions">${ic("terminal", "ic20")}Sessions</a><a class="btn outline" href="#/members/${sub}">${ic("user", "ic20")}View profile</a>`);
+    body = back("#/settings/agents", "Agent setup") + `<div class="section" style="padding-bottom:0">${healthMark(sub)} ${presPill(sub, true)}</div>` + agentSetupFields(sub);
+  } else if (sec === "agents") {
+    header = hdr("Agent setup", [plural(agents.length, "agent", "agents"), agents.filter((a) => M[a].setup.needs).length + " need setup", agents.filter((a) => M[a].paused && !M[a].setup.needs).length + " paused"].join(" · "), `<button class="btn outline" type="button" data-act="proto" data-v="Hire an agent">${ic("user-plus", "ic20")}Hire an agent</button>`);
+    body = `<p class="desc">How each agent runs. To see an agent as a colleague (work, conversations, activity), open its profile.</p>
     <div class="only-wide" style="overflow-x:auto;margin-top:12px"><table class="tbl"><thead><tr><th scope="col">Agent</th><th scope="col">Runtime</th><th scope="col">Model</th><th scope="col">How it runs</th><th scope="col">Office</th><th scope="col">Health</th></tr></thead><tbody>${agents.map((a) => {
       const s = M[a].setup;
       return `<tr><td><a class="nm" href="#/settings/agents/${a}">${av(a, 24)}${esc(M[a].name)}</a><span class="muted" style="display:block;font-size:12px;padding-left:34px">${esc(M[a].role)}</span></td><td>${esc(s.runtime)}</td><td>${esc(s.model)}</td><td>${esc(s.how)}</td><td>${esc(officeName(s.office))}</td><td>${healthMark(a)}</td></tr>`;
     }).join("")}</tbody></table></div>
-    <ul class="rows only-sm" role="list" style="margin-top:8px">${agents.map((a) => { const s = M[a].setup; return `<li class="linked">${av(a, 32)}<div class="grow"><p class="rt"><a class="stretch" href="#/settings/agents/${a}">${esc(M[a].name)}</a><span class="sec">${esc(M[a].role)}</span></p><div class="meta"><span>${esc(s.runtime)} · ${esc(s.model)}</span>${SEP}<span>${esc(s.how)}</span>${SEP}<span>${esc(officeName(s.office))}</span></div></div>${healthMark(a)}${ic("chev-right", "ic20 chev")}</li>`; }).join("")}</ul>`;
-  else if (sec === "roles") body = hdr("Roles", "") + empty("id", "Not in this release", "Roles will define what each agent does.");
-  else if (sec === "processes") body = unavailable("Processes");
-  else if (sec === "access") body = hdr("Members and access", "") + empty("key", "Not in this release", "Members and access will manage who can use this organization.");
-  else body = hdr("Updates", "") + empty("download", "Not in this release", "Updates will install new versions of Agentic Org.");
-  if (sec === "processes") return body;
-  return `<div class="settings">${nav}<div>${body}</div></div>`;
-}
-function agentDetail(id) {
-  const m = M[id];
-  return back("#/settings/agents", "Agent setup") + hdr(m.name, esc(m.role) + " · Agent setup", `<a class="btn outline" href="#/members/${id}/sessions">${ic("terminal", "ic20")}Sessions</a><a class="btn outline" href="#/members/${id}">${ic("user", "ic20")}View profile</a>`) +
-    `<div class="section" style="padding-bottom:0"><p>${healthMark(id)}</p></div>` +
-    agentSetupFields(id, false);
+    <ul class="rows only-sm settings-rows" role="list" style="margin-top:8px">${agents.map((a) => { const s = M[a].setup; return `<li class="linked">${av(a, 32)}<div class="grow"><p class="rt"><a class="stretch" href="#/settings/agents/${a}">${esc(M[a].name)}</a><span class="sec">${esc(M[a].role)}</span></p><div class="meta"><span>${esc(s.runtime)} · ${esc(s.model)}</span>${SEP}<span>${esc(s.how)}</span>${SEP}<span>${esc(officeName(s.office))}</span></div></div>${healthMark(a)}${ic("chev-right", "ic20 chev")}</li>`; }).join("")}</ul>`;
+  } else {
+    const [icon, description] = {
+      roles: ["id", "Roles define what each agent does."],
+      processes: ["refresh", "Processes define how work moves through the organization."],
+      access: ["key", "Members and access manages who can use this organization."],
+      updates: ["download", "Updates installs new versions of Agentic Org."],
+    }[sec];
+    body = empty(icon, "Not available in this prototype", description);
+  }
+  return settingsFrame(sec, header, body);
 }
 function pagePreferences() {
-  return hdr("Your preferences", "") + `<section class="section" aria-labelledby="h-theme"><div class="sec-h"><h2 id="h-theme">Appearance</h2></div>
+  return settingsFrame("appearance", hdr("Your preferences", ""), `<section class="section" aria-labelledby="h-theme"><div class="sec-h"><h2 id="h-theme">Appearance</h2></div>
     <div class="pref theme-pref">${seg("theme", THEME_OPTIONS, "Theme")}
       ${S.theme === "cozy" ? `<div class="pref theme-contrast">
         <div><p class="lbl" id="cozy-contrast-label">AA Contrast</p><p class="muted help" id="cozy-contrast-help">Makes glass surfaces more opaque and text easier to read.</p></div>
@@ -7381,7 +7409,7 @@ function pagePreferences() {
     </div></section>
     <section class="section" aria-labelledby="h-keys"><div class="sec-h"><h2 id="h-keys">Keyboard</h2></div>
     <div class="pref"><div><p class="lbl" id="sk-l">Single-key shortcuts</p><p class="muted" id="sk-d" style="font-size:13px">N opens New task and / focuses Search, outside text fields.</p></div>
-    <button class="switch" type="button" role="switch" aria-checked="${S.singleKey}" aria-labelledby="sk-l" aria-describedby="sk-d" data-act="single-key"></button></div></section>`;
+    <button class="switch" type="button" role="switch" aria-checked="${S.singleKey}" aria-labelledby="sk-l" aria-describedby="sk-d" data-act="single-key"></button></div></section>`);
 }
 function pageSearch(q) {
   const groups = q.trim() ? searchResults(q.trim(), Infinity) : [];
@@ -8439,7 +8467,7 @@ function renderNav(route) {
           </div>
           ${teamsOpen ? `<div class="subwrap" id="nav-sub-teams" data-fold="teams"><ul class="nav-sub" role="list" aria-label="Teams">${teams.slice(0, NAV_CAP).map((t) => subIcon("#/teams/" + t, TEAMS[t].name, TEAM_ICON[t] || "user-group", r0 === "teams" && r1 === t)).join("")}${teams.length > NAV_CAP ? more("#/teams", "View all teams") : ""}</ul></div>` : ""}
         </li>
-        ${item("#/settings", "Settings", "cog", r0 === "settings")}
+        ${item("#/settings", "Settings", "cog", r0 === "settings" || r0 === "preferences")}
       </ul>
     </li>
   </ul>`;
@@ -8540,12 +8568,12 @@ const PAGE_SEARCH = {
   work: { id: "work-search", queryKey: "workQuery", label: "Search this work view", placeholder: "Search work…" }
 };
 function placeSearchToolbar(main, page) {
-  const heading = page === "home" ? null : main.querySelector("h1")?.closest(".ph, .prof, .chhead, .unavail");
+  const heading = page === "home" ? null : main.querySelector("h1")?.closest(".ph, .prof, .chhead");
   const search = own(PAGE_SEARCH, page) ? PAGE_SEARCH[page] : null;
   if (heading) {
     heading.classList.add("has-page-toolbar");
     heading.prepend(drawerButton);
-    heading.insertBefore(pageSearchTools, heading.querySelector(":scope.unavail > p"));
+    heading.append(pageSearchTools);
     pageSearchTools.append(commandBar);
   } else if (commandBar.parentElement !== homeToolbar) {
     homeToolbar.append(drawerButton, commandBar);
@@ -8608,6 +8636,13 @@ function render(focus = true) {
   const shell = document.getElementById("agent-shell");
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
   placeSearchToolbar(main, r0);
+  for (const current of main.querySelectorAll(".tabs > [aria-current=page]")) {
+    const tabs = current.parentElement;
+    const { left, right } = current.getBoundingClientRect();
+    const bounds = tabs.getBoundingClientRect();
+    if (left < bounds.left) tabs.scrollLeft += left - bounds.left;
+    if (right > bounds.right) tabs.scrollLeft += right - bounds.right;
+  }
   renderNav(r);
   renderBanner(r0);
   const titleBase = r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found");
@@ -8620,6 +8655,12 @@ function render(focus = true) {
     document.getElementById("content").scrollTop = 0;
     focusTarget?.focus({ preventScroll: true });
     const selectedWork = main.querySelector('#work-results .work-item-link[aria-current="true"]');
+    const reading = focusTarget?.closest(".work-reading");
+    if (r0 !== "work" && reading) {
+      const toolbar = main.querySelector(".scoped-work-tools");
+      const target = toolbar?.getClientRects().length ? toolbar : reading;
+      target.scrollIntoView({ block: "start" });
+    }
     (selectedWork || (keep?.matches(".work-item-link") ? keep : null))?.scrollIntoView({ block: "nearest", inline: "nearest" });
   } else if (toolbarFocus) {
     const control = document.getElementById(toolbarFocus);
@@ -9322,6 +9363,7 @@ document.addEventListener("input", (e) => {
     S.workQuery = e.target.value;
     refreshWorkResults();
   }
+  if (e.target.id === "o-name") e.target.setCustomValidity("");
   if (e.target.name === "title" && e.target.form?.dataset.form === "work-create") e.target.setCustomValidity("");
   if (e.target === homeSearchInput && !CMDK.inline) { openCmdk(homeSearchInput.value, "cmd", homeSearchInput, true); return; }
   if (e.target === homeSearchInput || e.target.id === "cmdk-input") {
@@ -9332,6 +9374,10 @@ document.addEventListener("input", (e) => {
 });
 document.addEventListener("change", (e) => {
   if (e.target.matches("[data-work-criterion]")) changeWorkCriterion(e.target);
+  if (e.target.id === "settings-section") {
+    S.focusAfter = "#settings-section";
+    location.hash = e.target.value;
+  }
   if (e.target.id === "activity-project") {
     S.actProject = e.target.value;
     render(false);
@@ -9356,6 +9402,24 @@ document.addEventListener("submit", (e) => {
   if (e.target.id === "c-prompt-form" || e.target.id === "hb-ask-form") return;
   e.preventDefault();
   if (["inbox-comment", "work-comment"].includes(e.target.dataset.form)) { postDetailComment(e.target); return; }
+  if (e.target.dataset.form === "org-settings") {
+    const field = e.target.elements.name;
+    const name = field.value.trim();
+    if (!name) {
+      field.setCustomValidity("Enter an organization name.");
+      field.reportValidity();
+      return;
+    }
+    orgName = field.value = name;
+    showOrgName();
+    try {
+      localStorage.setItem(ORG_NAME_STORE, name);
+      toast("Organization name saved.", "check-circle");
+    } catch (e) {
+      toast("Organization name updated for this session.");
+    }
+    return;
+  }
   if (e.target.dataset.form === "work-create") { createWorkTask(e.target); return; }
   if (e.target.dataset.form === "send") { const inp = document.getElementById("compose"); const txt = inp.value.trim(); if (!txt) return; CH[e.target.dataset.id].msgs.push({ id: "u" + Date.now(), who: "you", time: "now", text: txt }); render(false); const c = document.getElementById("compose"); if (c) c.focus(); const ms = document.querySelector(".chmain .msgs"); if (ms) ms.scrollTop = ms.scrollHeight; }
 });
@@ -9433,7 +9497,7 @@ document.addEventListener("keydown", (e) => {
     }
     if (e.key === "Tab") {
       closeMenus();
-      if (openMenu.closest(".work-display, .queue-controls")) document.querySelector(`[aria-controls="${openMenu.id}"]`)?.focus();
+      if (openMenu.closest(".queue-controls")) document.querySelector(`[aria-controls="${openMenu.id}"]`)?.focus();
     }
   }
   if (e.key === "Escape" && e.target.tagName === "TEXTAREA" && /^r-/.test(e.target.id || "")) {
