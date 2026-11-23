@@ -5891,17 +5891,22 @@ function inboxDetail(it) {
     <div class="triage-sender">${av(it.from, 40)}<div><p>${mlink(it.from)} <span class="muted">· ${esc(m.role)} · ${kindWord(it.from)}</span></p>
       <p class="triage-status">${it.handled ? pill("Handled", "gray", "check-circle") : pill("Needs you", "amber", "bell")}<span>${esc(it.sub)} · ${esc(it.time)}</span></p></div></div>
     <h2 tabindex="-1" id="triage-detail-title">${esc(it.what)}</h2>
-    <div class="triage-why"><h3>Why</h3><p>${esc(it.why)}</p></div>
-    ${it.rec ? `<div class="triage-recommendation">${ic(inboxUrgent(it) ? "info" : "sparkle", "ic20")}<div><h3>Recommendation</h3><p>${esc(it.rec)}</p></div></div>` : ""}
-    <dl class="triage-fields">
-      <dt>Kind</dt><dd>${esc(k.label)} · ${esc(it.sub)}</dd>
-      <dt>Project</dt><dd>${plink(it.proj)}</dd>
-      ${it.task ? `<dt>Work item</dt><dd>${inboxCopy(it.task, it.task, it.task)}${work ? `<span>${esc(work.title)}</span>` : ""}</dd>` : ""}
-      <dt>Expires</dt><dd${it.expires && !it.handled ? ' class="triage-expiry"' : ""}>${esc(it.expires || "No expiry")}</dd>
-      <dt>Clears</dt><dd>${esc(it.clears || k.clears)}</dd>
-      <dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd>
-    </dl>
-    ${it.audit?.length ? `<details class="triage-audit"><summary>${ic("chev-right", "ic16")}${ic("check-circle", "ic16")}Checks and audit trail <span>${plural(it.audit.length, "entry", "entries")}</span></summary><ul>${it.audit.map((line) => `<li>${esc(line)}</li>`).join("")}</ul></details>` : ""}
+    <div class="triage-narrative">
+      <div class="triage-why"><h3>Why</h3><p>${esc(it.why)}</p></div>
+      ${it.rec ? `<div class="triage-recommendation">${ic(inboxUrgent(it) ? "info" : "sparkle", "ic20")}<div><h3>Recommendation</h3><p>${esc(it.rec)}</p></div></div>` : ""}
+    </div>
+    <section class="triage-context" aria-label="Request details">
+      <h3 class="triage-context-title">Request details</h3>
+      <dl class="triage-fields">
+        <dt>Kind</dt><dd>${esc(k.label)} · ${esc(it.sub)}</dd>
+        <dt>Project</dt><dd>${plink(it.proj)}</dd>
+        ${it.task ? `<dt>Work item</dt><dd>${inboxCopy(it.task, it.task, it.task)}${work ? `<span>${esc(work.title)}</span>` : ""}</dd>` : ""}
+        <dt>Expires</dt><dd${it.expires && !it.handled ? ' class="triage-expiry"' : ""}>${esc(it.expires || "No expiry")}</dd>
+        <dt>Clears</dt><dd>${esc(it.clears || k.clears)}</dd>
+        <dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd>
+      </dl>
+      ${it.audit?.length ? `<details class="triage-audit"><summary>${ic("chev-right", "ic16")}${ic("check-circle", "ic16")}Checks and audit trail <span>${plural(it.audit.length, "entry", "entries")}</span></summary><ul>${it.audit.map((line) => `<li>${esc(line)}</li>`).join("")}</ul></details>` : ""}
+    </section>
     <div class="triage-actions">${itemActionsV4(it, { hideDetails: true })}${it.handled
       ? `<button class="btn outline sm" type="button" data-act="inbox-reopen" data-id="${it.id}">${ic("refresh", "ic16")}Reopen item</button>`
       : `<a class="btn ghost sm" href="${source.href}">${ic("open", "ic16")}${esc(source.label)}</a>`}</div>
