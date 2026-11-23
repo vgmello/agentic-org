@@ -5879,14 +5879,29 @@ function inboxItems(kind = S.inboxKind) {
 function inboxTabLabel(key) {
   return key === "all" ? "All" : key === "handled" ? "Handled" : KIND[key].plural;
 }
+function inboxViewControls() {
+  const inboxFiltered = S.inboxUrgent || S.inboxProj !== "all" || S.inboxTeam !== "all";
+  const filter = showMenu("inbox-filter", [
+    ["inboxUrgent", "Urgency", [[false, "All items"], [true, "Urgent only"]]],
+    ["inboxProj", "Project", [["all", "All projects"], ...Object.keys(P).filter((p) => !P[p].archived).map((p) => [p, P[p].name])]],
+    ["inboxTeam", "Team", [["all", "All teams"], ...Object.keys(TEAMS).map((t) => [t, TEAMS[t].name])]],
+  ], { icon: "filter", label: "Filter inbox", active: inboxFiltered });
+  const display = showMenu("inbox-display", [
+    ["inboxOrder", "Grouping", [["priority", "Priority first"], ["date", "By date"]]],
+  ], { icon: "adjustments", label: "Inbox display", active: S.inboxOrder === "date" });
+  return `<div class="triage-controls" role="group" aria-label="Inbox view controls">${filter}${display}</div>`;
+}
 function inboxCategories() {
   const moreActive = INBOX_MORE.includes(S.inboxKind);
-  return `<div class="triage-tabs" role="group" aria-label="Inbox categories">${INBOX_TABS.map((key) => `
+  return `<div class="triage-tabs" role="group" aria-label="Inbox queue controls">${INBOX_TABS.map((key) => `
     <button class="triage-tab" type="button" data-act="inbox-category" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}
-    <div class="menu-wrap"><button class="triage-tab" type="button" data-act="menu" data-id="inbox-kinds"
-      aria-haspopup="menu" aria-expanded="false" aria-controls="menu-inbox-kinds"${moreActive ? ' data-current-kind' : ""}>${moreActive ? inboxTabLabel(S.inboxKind) : "More"}${moreActive ? `<span>${inboxItems().length}</span>` : ""}${ic("chev-down", "ic14")}</button>
-      <div class="menu" id="menu-inbox-kinds" role="menu" aria-label="More inbox categories" hidden>${INBOX_MORE.map((key) => `
-        <button type="button" role="menuitemradio" aria-checked="${S.inboxKind === key}" data-act="inbox-category" data-v="${key}">${inboxTabLabel(key)}<span class="triage-menu-count">${inboxItems(key).length}</span></button>`).join("")}</div></div>
+    <div class="triage-tab-tools">
+      <div class="menu-wrap"><button class="triage-tab" type="button" data-act="menu" data-id="inbox-kinds"
+        aria-haspopup="menu" aria-expanded="false" aria-controls="menu-inbox-kinds"${moreActive ? ' data-current-kind' : ""}>${moreActive ? inboxTabLabel(S.inboxKind) : "More"}${moreActive ? `<span>${inboxItems().length}</span>` : ""}${ic("chev-down", "ic14")}</button>
+        <div class="menu" id="menu-inbox-kinds" role="menu" aria-label="More inbox categories" hidden>${INBOX_MORE.map((key) => `
+          <button type="button" role="menuitemradio" aria-checked="${S.inboxKind === key}" data-act="inbox-category" data-v="${key}">${inboxTabLabel(key)}<span class="triage-menu-count">${inboxItems(key).length}</span></button>`).join("")}</div></div>
+      ${inboxViewControls()}
+    </div>
   </div>`;
 }
 function inboxSelection(items, sel) {
@@ -5911,24 +5926,12 @@ function inboxQueue(items, selected) {
 }
 function pageInbox(sel) {
   const items = inboxItems(), item = inboxSelection(items, sel);
-  const inboxFiltered = S.inboxUrgent || S.inboxProj !== "all" || S.inboxTeam !== "all";
-  const filter = showMenu("inbox-filter", [
-    ["inboxUrgent", "Urgency", [[false, "All items"], [true, "Urgent only"]]],
-    ["inboxProj", "Project", [["all", "All projects"], ...Object.keys(P).filter((p) => !P[p].archived).map((p) => [p, P[p].name])]],
-    ["inboxTeam", "Team", [["all", "All teams"], ...Object.keys(TEAMS).map((t) => [t, TEAMS[t].name])]],
-  ], { icon: "filter", label: "Filter inbox", active: inboxFiltered });
   const byDate = S.inboxOrder === "date";
-  const display = showMenu("inbox-display", [
-    ["inboxOrder", "Grouping", [["priority", "Priority first"], ["date", "By date"]]],
-  ], { icon: "adjustments", label: "Inbox display", active: byDate });
   return `<section class="triage-workspace${sel && item ? " triage-has-detail" : ""}" aria-label="Inbox workspace">
     <header class="triage-header">
       <div class="ph triage-headline"><div class="ph-t"><h1 tabindex="-1">Inbox</h1><span class="cnt triage-waiting" role="status"><i aria-hidden="true"></i>${unhandled().length} waiting on you</span></div>
       </div>
-      <div class="triage-toolbar">
-        <div id="triage-categories">${inboxCategories()}</div>
-        <div class="triage-controls" role="group" aria-label="Inbox view controls">${filter}${display}</div>
-      </div>
+      <div class="triage-toolbar" id="triage-categories">${inboxCategories()}</div>
     </header>
     <div class="triage-split">
       <section class="triage-queue" aria-label="Inbox queue"><div class="triage-queue-summary"><span>${S.inboxKind === "handled" ? "Handled items" : byDate ? "By date" : "Priority first"}</span><span id="triage-visible" role="status">${plural(items.length, "item in view", "items in view")}</span></div>
