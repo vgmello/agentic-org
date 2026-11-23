@@ -24,10 +24,15 @@ const heading = (page: Page) => page.locator('#agent-heading');
 const health = (page: Page) => page.getByTestId('health');
 
 async function noSidewaysScroll(page: Page) {
-	const overflow = await page.evaluate(
-		() => document.documentElement.scrollWidth - document.documentElement.clientWidth
-	);
-	expect(overflow).toBeLessThanOrEqual(0);
+	const overflow = await page.evaluate(() => {
+		const main = document.querySelector('main');
+		return {
+			page: document.documentElement.scrollWidth - innerWidth,
+			main: main ? main.scrollWidth - main.clientWidth : 0
+		};
+	});
+	expect(overflow.page).toBeLessThanOrEqual(0);
+	expect(overflow.main).toBeLessThanOrEqual(0);
 }
 
 test('AS-1, AS-2: the list shows each agent with runtime, model, profile, office and one Health word', async ({

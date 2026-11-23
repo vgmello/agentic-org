@@ -13,7 +13,6 @@
 -->
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
-	import { beforeNavigate } from '$app/navigation';
 	import {
 		errorClass,
 		helpClass,
@@ -104,20 +103,14 @@
 	const newTeamName = $derived(name.trim() || 'named after the project');
 	const waitingForTeams = $derived(!teams);
 
+	function closeFromBack() {
+		if (busy) return;
+		open = false;
+	}
+
 	// Back with the sheet open closes it only, and focus returns to its opener (app-shell-ux §6).
 	$effect.pre(() => {
-		if (open) return registerModalBack(() => (open = false));
-	});
-	beforeNavigate((navigation) => {
-		if (
-			window.navigation ||
-			!open ||
-			navigation.type !== 'popstate' ||
-			(navigation.delta ?? 0) >= 0
-		)
-			return;
-		navigation.cancel();
-		open = false;
+		if (open) return registerModalBack(closeFromBack);
 	});
 
 	let teamsSeq = 0;
@@ -154,7 +147,7 @@
 	 */
 	export function start(presetTeamId?: string) {
 		open = true;
-		if (unresolved) return;
+		if (busy || unresolved) return;
 		name = '';
 		slug = '';
 		slugEdited = false;

@@ -9,7 +9,7 @@
   Hire flow with this team preset. The Org chart uses it too, with its home team starting at the top-level team.
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
 	import { errorClass, helpClass, inputClass, selectClass } from '$lib/components/classes';
@@ -49,7 +49,11 @@
 	 * and leave them out. Until that read answers, or if it fails, HQ still refuses an archived team on submit.
 	 */
 	let archived = $state.raw<ReadonlySet<string>>(new Set());
+	let archivedForOrg = $state<string | undefined>();
+	let inFlightOrg: string | undefined;
+	let inFlightPromise: Promise<void> | undefined;
 	let archivedSeq = 0;
+	const archivedLoading = $derived(archivedForOrg !== organization.id);
 	const teams = $derived(teamOptions(snapshot).filter((o) => !archived.has(o.team.id)));
 	// Every current employee, the owner's person included: ownership is no employee field (§7.1, OWNER-2).
 	const managers = $derived(
@@ -78,20 +82,46 @@
 	);
 
 	function refreshArchived(orgId: string) {
+		// Reuse an in-flight read for the same organization instead of superseding it.
+		if (inFlightOrg === orgId && inFlightPromise) return inFlightPromise;
 		const seq = ++archivedSeq;
-		void teamsApi.list(orgId).then(
-			(rows) => {
-				if (seq !== archivedSeq || orgId !== organization.id) return;
-				archived = new Set(rows.filter((t) => t.status === 'archived').map((t) => t.id));
-			},
-			() => {}
-		);
+		inFlightOrg = orgId;
+		const promise = teamsApi
+			.list(orgId)
+			.then(
+				(rows) => {
+					if (seq !== archivedSeq || orgId !== organization.id) return;
+					archived = new Set(rows.filter((t) => t.status === 'archived').map((t) => t.id));
+					archivedForOrg = orgId;
+				},
+				() => {
+					if (seq !== archivedSeq || orgId !== organization.id) return;
+					// Keep the last known archived set; HQ still refuses archived teams on submit.
+					archivedForOrg = orgId;
+				}
+			)
+			.finally(() => {
+				if (inFlightPromise === promise) {
+					inFlightOrg = undefined;
+					inFlightPromise = undefined;
+				}
+			});
+		inFlightPromise = promise;
+		return promise;
 	}
 
 	$effect(() => {
 		const orgId = organization.id;
-		void open;
-		refreshArchived(orgId);
+		const isOpen = open;
+		untrack(() => {
+			if (archivedForOrg && archivedForOrg !== orgId) {
+				archived = new Set();
+				archivedForOrg = undefined;
+			}
+			if (isOpen || archivedForOrg !== orgId) {
+				void refreshArchived(orgId);
+			}
+		});
 	});
 
 	function start() {
@@ -110,7 +140,7 @@
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
-		if (busy) return;
+		if (busy || archivedLoading) return;
 		touched = true;
 		const form = event.currentTarget as HTMLFormElement;
 		if (nameProblem(name) || handleProblem(handle) || !homeTeamId) {
@@ -236,14 +266,19 @@
 					<select
 						id="team-person-home"
 						bind:value={homeTeamId}
-						disabled={busy}
+						disabled={busy || archivedLoading}
+						aria-busy={archivedLoading}
 						required
 						class="mt-2 {selectClass}"
 						aria-describedby="team-person-home-help"
 					>
-						{#each teams as option (option.team.id)}
-							<option value={option.team.id}>{option.path}</option>
-						{/each}
+						{#if archivedLoading}
+							<option value={homeTeamId}>Loading teams…</option>
+						{:else}
+							{#each teams as option (option.team.id)}
+								<option value={option.team.id}>{option.path}</option>
+							{/each}
+						{/if}
 					</select>
 					<p id="team-person-home-help" class={helpClass}>
 						One team, required. They can be moved later from their profile.
@@ -284,8 +319,11 @@
 					class="max-[639px]:h-11"
 					onclick={() => (open = false)}>Cancel</Button
 				>
-				<Button type="submit" disabled={busy} aria-busy={busy} class="max-[639px]:h-11"
-					>{busy ? 'Adding…' : 'Add person'}</Button
+				<Button
+					type="submit"
+					disabled={busy || archivedLoading}
+					aria-busy={busy}
+					class="max-[639px]:h-11">{busy ? 'Adding…' : 'Add person'}</Button
 				>
 			</div>
 		</form>

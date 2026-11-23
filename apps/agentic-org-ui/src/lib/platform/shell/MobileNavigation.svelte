@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { tick } from 'svelte';
 	import { innerWidth } from 'svelte/reactivity/window';
@@ -26,76 +26,22 @@
 	let content = $state<HTMLDivElement | null>(null);
 	let trigger = $state<HTMLButtonElement | null>(null);
 	let closingForNavigation = false;
-	let legacyReturnUrl: string | undefined;
-	let legacyHistoryLength = 0;
-	let legacyAppendedFragment: string | undefined;
-	let openedOnUntrackedLegacyEntry = false;
 
 	// A viewport change must release the modal before the desktop navigation takes over.
 	$effect(() => {
 		if ((innerWidth.current ?? 0) >= 640 && open) open = false;
 	});
 
-	$effect(() => {
+	$effect.pre(() => {
 		if (open)
 			return registerModalBack(() => {
 				open = false;
 			});
 	});
 
-	afterNavigate(() => {
-		if (window.navigation) return;
-		legacyHistoryLength = window.history.length;
-		legacyAppendedFragment = undefined;
-	});
-
-	beforeNavigate((navigation) => {
-		if (
-			window.navigation ||
-			!open ||
-			navigation.type !== 'popstate' ||
-			(navigation.delta ?? 0) >= 0 ||
-			openedOnUntrackedLegacyEntry
-		)
-			return;
-		legacyReturnUrl = navigation.from?.url.href;
-		navigation.cancel();
-		open = false;
-	});
-
-	function handleFragmentChange({ oldURL, newURL }: HashChangeEvent) {
-		if (!open || legacyAppendedFragment !== oldURL || newURL.includes('#')) return;
-		const from = new URL(oldURL);
-		const to = new URL(newURL);
-		if (from.pathname !== to.pathname || from.search !== to.search) return;
-		legacyReturnUrl = oldURL;
-		window.history.forward();
-		open = false;
-	}
-
-	function handlePopState(event: PopStateEvent) {
-		if (window.navigation) return;
-		if (legacyReturnUrl) {
-			const url = legacyReturnUrl;
-			legacyReturnUrl = undefined;
-			requestAnimationFrame(() => {
-				if (!open && trigger?.isConnected && window.location.href === url) focusNavigationControl();
-			});
-		} else if (!open) {
-			const length = window.history.length;
-			legacyAppendedFragment =
-				event.state === null && length > legacyHistoryLength && window.location.hash
-					? window.location.href
-					: undefined;
-			legacyHistoryLength = length;
-		}
-	}
-
 	function menuOpenChanged(value: boolean) {
 		if (!value) return;
 		closingForNavigation = false;
-		legacyReturnUrl = undefined;
-		openedOnUntrackedLegacyEntry = !window.navigation && window.history.state === null;
 	}
 
 	function closeForNavigation() {
@@ -139,8 +85,6 @@
 		}
 	}
 </script>
-
-<svelte:window onhashchange={handleFragmentChange} onpopstate={handlePopState} />
 
 <Sheet.Root bind:open onOpenChange={menuOpenChanged}>
 	<Sheet.Trigger

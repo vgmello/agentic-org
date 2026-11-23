@@ -681,7 +681,7 @@
 	@media (max-width: 720px), (pointer: coarse) {
 		.exec-topbar {
 			height: auto;
-			min-height: var(--exec-topbar-height);
+			min-height: max(68px, var(--exec-topbar-height));
 			padding-block: 7px;
 		}
 		.exec-cmdk-bar {
@@ -697,19 +697,19 @@
 	}
 	@media (height <= 320px) {
 		.exec-topbar {
-			height: 44px;
+			height: auto;
 			min-height: 44px;
-			padding-block: 2px;
+			padding-block: 0;
 		}
 		.exec-cmdk-bar {
-			height: 40px;
-			min-height: 40px;
-			padding: 2px 4px;
+			height: auto;
+			min-height: 44px;
+			padding: 0 4px;
 		}
 		.exec-cmdk-trigger,
 		.exec-ai-btn {
-			height: 36px;
-			min-height: 36px;
+			height: auto;
+			min-height: 44px;
 		}
 	}
 </style>

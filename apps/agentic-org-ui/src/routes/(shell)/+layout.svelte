@@ -17,6 +17,7 @@
 	import { areaFor } from '$lib/nav';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
+	import { noteModalBackNavigation } from '$lib/platform/shell/modal-back';
 	import { provideShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
 	import { officesApi } from '$lib/modules/offices/api';
@@ -30,6 +31,7 @@
 
 	// Route changes reset internal <main> scroll (except hash targets) and focus the destination heading (app-shell-ux §0).
 	afterNavigate((move) => {
+		noteModalBackNavigation();
 		const routeChanged = move.from?.url?.pathname !== move.to?.url?.pathname;
 		if (routeChanged && !move.to?.url?.hash && mainEl) {
 			mainEl.scrollTop = 0;

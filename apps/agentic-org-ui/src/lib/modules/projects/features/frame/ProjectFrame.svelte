@@ -92,6 +92,8 @@
 	let cancelTabFocus: (() => void) | undefined;
 	onDestroy(() => cancelTabFocus?.());
 	afterNavigate((move) => {
+		cancelTabFocus?.();
+		cancelTabFocus = undefined;
 		if (move.type === 'enter' || !move.from || !move.to || !project) return;
 		const base = projectHref(projectId);
 		const inProject = (p: string) => p === base || p.startsWith(`${base}/`);
@@ -101,13 +103,20 @@
 			tabAt(move.to.url.pathname, projectId, tabs).id
 		)
 			return;
-		cancelTabFocus?.();
 		let cancelled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		void tick().then(() => {
 			if (cancelled) return;
 			timer = setTimeout(() => {
-				if (!cancelled) focusHeading('project-tab-heading');
+				if (cancelled) return;
+				const active = document.activeElement;
+				const idle =
+					!active ||
+					active === document.body ||
+					active.id === 'shell-page-title' ||
+					active.id === 'project-heading' ||
+					Boolean(active.closest('nav[aria-label$=" views"]'));
+				if (idle) focusHeading('project-tab-heading');
 			}, 0);
 		});
 		cancelTabFocus = () => {
