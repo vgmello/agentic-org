@@ -4088,6 +4088,10 @@ html[data-theme="graphite"] {
     text-transform: none;
   }
   & :is(.nav-item, .nav-collapse-btn, .nav-fold-btn, .nav-group-all, .nav-group-title .ic, .nav-fav-empty) { color: var(--gray-400); }
+  &[data-interior-page] {
+    & :is(.nav-label, .nav-group-title, .nav-group-title .ic) { color: #85888E; }
+    & .nav-item { color: var(--gray-300); }
+  }
   & .nav-item .ic { color: var(--gray-400); }
   & .nav-item .ic.tone-ok { color: var(--tone-ok-icon); }
   & .nav-item .ic.tone-warn { color: var(--tone-warn-icon); }
