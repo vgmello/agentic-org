@@ -125,7 +125,7 @@
 	--exec-nav-dot-ring: #161f2d;
 
 	/* Executive layout & density tokens (carded defaults for Ocean & Classic; overridden by Report) */
-	--exec-page-max-w: 1260px;
+	--exec-page-max-w: none;
 	--exec-page-gap: 1.5rem;
 	--exec-hero-align: center;
 	--exec-hero-pad-b: 0px;

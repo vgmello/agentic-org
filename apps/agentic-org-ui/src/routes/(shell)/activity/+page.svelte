@@ -126,7 +126,7 @@
 
 <svelte:head><title>{pageTitle('Activity')}</title></svelte:head>
 
-<div class="act-page mx-auto flex w-full max-w-[1100px] flex-col gap-5 px-6 pt-3 pb-12 sm:px-8">
+<div class="act-page flex w-full flex-col gap-5 px-6 pt-3 pb-12 sm:px-8">
 	<div class="act-head flex flex-wrap items-center justify-between gap-4">
 		<div>
 			<h1

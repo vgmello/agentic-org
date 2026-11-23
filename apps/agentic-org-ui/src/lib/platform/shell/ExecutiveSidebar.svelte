@@ -6,6 +6,7 @@
 	import Bot from '@lucide/svelte/icons/bot';
 	import Building2 from '@lucide/svelte/icons/building-2';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import ClipboardList from '@lucide/svelte/icons/clipboard-list';
 	import Folder from '@lucide/svelte/icons/folder';
 	import House from '@lucide/svelte/icons/house';
@@ -60,6 +61,7 @@
 	const officeOnline = $derived(isOfficeOnline(connection.office));
 
 	const activeProjects = $derived(projects.filter((p) => !p.archived));
+	let favoritesOpen = $state(true);
 	const favoriteList = $derived.by(() => {
 		if (uiPrefs.favoriteProjects.length > 0) {
 			const favSet = new Set(uiPrefs.favoriteProjects);
@@ -127,7 +129,7 @@
 			aria-label="Main"
 			class={[
 				'flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto py-3',
-				collapsed ? 'items-center gap-3 px-2' : 'gap-5 px-3'
+				collapsed ? 'items-center gap-3 px-2' : 'gap-3.5 px-3'
 			]}
 		>
 			<div class={collapsed ? 'w-full' : undefined}>
@@ -234,26 +236,57 @@
 
 			{#if !collapsed && favoriteList.length > 0}
 				<div>
-					<div class="exec-nav-label flex items-center gap-1.5 px-2.5 pb-1.5">
-						<Star class="size-3" aria-hidden="true" />
-						<span>Favorite projects</span>
+					<div class="flex items-center justify-between gap-1 px-2.5 pb-1.5">
+						<div class="exec-nav-label flex items-center gap-1.5">
+							<Star class="size-3" aria-hidden="true" />
+							<span>Favorite projects</span>
+						</div>
+						<button
+							type="button"
+							onclick={() => (favoritesOpen = !favoritesOpen)}
+							aria-expanded={favoritesOpen}
+							aria-controls="exec-nav-favs"
+							aria-label={favoritesOpen ? 'Collapse favorite projects' : 'Expand favorite projects'}
+							class="exec-icon-btn flex size-6 items-center justify-center rounded-md"
+						>
+							<ChevronRight
+								class={['size-3.5 transition-transform duration-150', favoritesOpen && 'rotate-90']}
+								aria-hidden="true"
+							/>
+						</button>
 					</div>
-					<ul class="flex flex-col gap-0.5">
-						{#each favoriteList as proj (proj.id)}
-							{@const href = `/projects/${proj.id}/work`}
-							<li>
-								<a
-									href={resolve(href as '/projects')}
-									onclick={(e) => onNavigate?.(e, href)}
-									aria-current={isActive(`/projects/${proj.id}`) ? 'page' : undefined}
-									class={['exec-nav-item', isActive(`/projects/${proj.id}`) && 'is-active']}
-								>
-									<Folder class="size-4 shrink-0" aria-hidden="true" />
-									<span class="truncate">{proj.name}</span>
-								</a>
-							</li>
-						{/each}
-					</ul>
+					{#if favoritesOpen}
+						<ul id="exec-nav-favs" class="flex flex-col gap-0.5">
+							{#each favoriteList as proj (proj.id)}
+								{@const href = `/projects/${proj.id}/work`}
+								<li class="group flex items-center gap-0.5">
+									<a
+										href={resolve(href as '/projects')}
+										onclick={(e) => onNavigate?.(e, href)}
+										aria-current={isActive(`/projects/${proj.id}`) ? 'page' : undefined}
+										class={[
+											'exec-nav-item min-w-0 flex-1',
+											isActive(`/projects/${proj.id}`) && 'is-active'
+										]}
+									>
+										<Folder class="size-4 shrink-0" aria-hidden="true" />
+										<span class="truncate">{proj.name}</span>
+									</a>
+									{#if uiPrefs.isFavorite(proj.id)}
+										<button
+											type="button"
+											onclick={() => uiPrefs.toggleFavorite(proj.id)}
+											aria-label="Remove {proj.name} from favorites"
+											title="Unpin from favorites"
+											class="exec-fav-unpin flex size-6 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+										>
+											<Star class="size-3.5 fill-current" aria-hidden="true" />
+										</button>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					{/if}
 				</div>
 			{/if}
 
@@ -443,6 +476,13 @@
 	.exec-icon-btn.is-pinned {
 		color: var(--exec-accent-ink);
 		background: var(--exec-accent-soft);
+	}
+	.exec-fav-unpin {
+		color: var(--tone-warn);
+	}
+	.exec-fav-unpin:hover {
+		color: var(--tone-warn-ink);
+		background: var(--tone-warn-bg);
 	}
 	.exec-nav-label {
 		font-size: 0.6875rem;

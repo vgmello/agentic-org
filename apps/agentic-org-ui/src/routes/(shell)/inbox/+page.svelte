@@ -135,7 +135,7 @@
 
 <svelte:head><title>{pageTitle('Inbox')}</title></svelte:head>
 
-<div class="inbox-page mx-auto flex w-full max-w-[1100px] flex-col gap-5 px-6 pt-3 pb-12 sm:px-8">
+<div class="inbox-page flex w-full flex-col gap-5 px-6 pt-3 pb-12 sm:px-8">
 	<div class="inbox-head flex flex-wrap items-center justify-between gap-4">
 		<div>
 			<h1

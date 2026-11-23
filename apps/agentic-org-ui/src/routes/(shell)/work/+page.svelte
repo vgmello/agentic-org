@@ -206,7 +206,7 @@
 
 <svelte:head><title>Work · Agentic Org</title></svelte:head>
 
-<div class="work-page mx-auto flex w-full max-w-[1260px] flex-col gap-5 px-4 pt-3 pb-12 sm:px-8">
+<div class="work-page flex w-full flex-col gap-5 px-4 pt-3 pb-12 sm:px-8">
 	<header
 		class="work-head flex flex-wrap items-end justify-between gap-4 border-b border-line pb-4"
 	>
