@@ -7,10 +7,20 @@
 
 	let { data } = $props();
 
+	const isCozyTheme = $derived(uiPrefs.theme === 'cozy');
+
 	function selectTheme(theme: UiTheme) {
 		uiPrefs.setTheme(theme);
 		const found = UI_THEMES.find((t) => t.id === theme);
 		toast.success(`Theme switched to ${found?.label ?? theme}.`);
+	}
+
+	function toggleCozyHighContrast() {
+		const next = !uiPrefs.cozyHighContrast;
+		uiPrefs.setCozyHighContrast(next);
+		toast.success(
+			next ? 'Cozy Glass high contrast enabled.' : 'Cozy Glass high contrast disabled.'
+		);
 	}
 </script>
 
@@ -27,12 +37,12 @@
 	<div class="max-w-4xl">
 		<h3 id="settings-theme-h" class="text-base/7 font-semibold text-fg">Appearance &amp; Theme</h3>
 		<p class="mt-1 max-w-3xl text-sm/6 text-fg-muted">
-			Choose between Frosted Ocean, Classic Slate, Report (Modern 2D Day), or Report Night. Saved on
-			this browser.
+			Choose between Ocean, Classic, Graphite, Cozy Glass, Report (Modern 2D Day), or Report Night.
+			Saved on this browser.
 		</p>
 
 		<div
-			class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
+			class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
 			role="radiogroup"
 			aria-labelledby="settings-theme-h"
 		>
@@ -71,6 +81,45 @@
 				</button>
 			{/each}
 		</div>
+
+		<div
+			class={[
+				'contrast-card mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl px-4 py-3.5',
+				isCozyTheme && 'is-active-theme'
+			]}
+		>
+			<div class="min-w-0 flex-1">
+				<div class="flex flex-wrap items-center gap-2">
+					<span id="cozy-contrast-label" class="text-sm/6 font-semibold text-fg">
+						Cozy Glass high contrast
+					</span>
+					<span class="contrast-badge rounded-full px-2 py-0.5 text-[11px] font-medium">
+						{isCozyTheme ? 'Active theme' : 'Applies in Cozy Glass'}
+					</span>
+				</div>
+				<p id="cozy-contrast-help" class="mt-0.5 text-xs/5 text-fg-muted">
+					Makes frosted glass surfaces more opaque and strengthens border and text contrast when
+					Cozy Glass is active.
+				</p>
+			</div>
+			<button
+				type="button"
+				role="switch"
+				aria-checked={uiPrefs.cozyHighContrast}
+				aria-labelledby="cozy-contrast-label"
+				aria-describedby="cozy-contrast-help"
+				data-testid="cozy-high-contrast-toggle"
+				onclick={toggleCozyHighContrast}
+				class={[
+					'contrast-switch relative inline-flex h-11 min-w-11 shrink-0 items-center justify-center rounded-lg px-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid',
+					uiPrefs.cozyHighContrast && 'is-on'
+				]}
+			>
+				<span class="contrast-track relative inline-flex h-6 w-11 items-center rounded-full p-0.5">
+					<span class="contrast-thumb block size-5 rounded-full"></span>
+				</span>
+			</button>
+		</div>
 	</div>
 </section>
 
@@ -106,5 +155,57 @@
 		bottom: 6px;
 		height: 5px;
 		border-radius: 999px;
+	}
+	.contrast-card {
+		background: var(--exec-well);
+		box-shadow: inset 0 0 0 1px var(--exec-border);
+	}
+	.contrast-card.is-active-theme {
+		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+	}
+	.contrast-badge {
+		background: var(--exec-accent-soft);
+		color: var(--exec-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
+	.contrast-switch {
+		cursor: pointer;
+	}
+	.contrast-track {
+		background: var(--exec-surface-hi);
+		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+		transition:
+			background-color 0.16s ease,
+			box-shadow 0.16s ease;
+	}
+	.contrast-switch.is-on .contrast-track {
+		background: var(--exec-accent);
+		box-shadow: inset 0 0 0 1px var(--tone-accent);
+	}
+	.contrast-thumb {
+		background: var(--exec-ink);
+		transform: translateX(0);
+		transition:
+			transform 0.16s ease,
+			background-color 0.16s ease;
+	}
+	.contrast-switch.is-on .contrast-thumb {
+		background: var(--exec-on-accent);
+		transform: translateX(20px);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.contrast-track,
+		.contrast-thumb {
+			transition: none;
+		}
+	}
+	@media (forced-colors: active) {
+		.theme-card.is-selected,
+		.contrast-track {
+			border: 2px solid ButtonText;
+		}
+		.contrast-thumb {
+			background: ButtonText;
+		}
 	}
 </style>

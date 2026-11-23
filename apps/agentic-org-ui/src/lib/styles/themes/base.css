@@ -275,6 +275,16 @@
 	--exec-proj-row-mt: 0px;
 	--exec-proj-row-pt-md: 1.25rem;
 	--exec-proj-row-mt-md: 0px;
+
+	/* Home below-fold scroll cue tokens */
+	--exec-scroll-hint-bg: var(--exec-bg);
+	--exec-scroll-hint-ink: var(--exec-muted);
+	--exec-scroll-hint-ink-hover: var(--exec-ink);
+}
+
+/* Ocean blends the Home scroll cue transparently over its ambient radial canvas */
+html[data-ui-theme='ocean'] {
+	--exec-scroll-hint-bg: transparent;
 }
 
 /* Shared semantic status pills */

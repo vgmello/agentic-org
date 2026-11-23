@@ -418,13 +418,13 @@
 
 		<div
 			class={[
-				'exec-sidebar-foot shrink-0 py-2.5',
+				'exec-sidebar-foot shrink-0 py-2',
 				collapsed ? 'flex flex-col items-center gap-1 px-2' : 'px-3'
 			]}
 		>
 			{#if !collapsed}
 				<div
-					class="exec-theme-pills mb-2.5 grid grid-cols-4 gap-0.5 rounded-lg p-1"
+					class="exec-theme-pills mb-2 grid grid-cols-3 gap-1 rounded-lg p-1"
 					role="group"
 					aria-label="Theme"
 				>
@@ -435,7 +435,7 @@
 							aria-pressed={uiPrefs.theme === option.id}
 							title={option.label}
 							class={[
-								'exec-theme-pill truncate rounded-md px-1 py-1 text-[11px] font-semibold',
+								'exec-theme-pill min-h-7 truncate rounded-md px-1.5 py-0.5 text-[11px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid',
 								uiPrefs.theme === option.id && 'is-on'
 							]}
 						>
@@ -608,5 +608,15 @@
 		background: var(--exec-accent-soft);
 		color: var(--exec-ink);
 		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
+	@media (max-width: 720px), (pointer: coarse) {
+		.exec-theme-pill {
+			min-height: 44px;
+		}
+	}
+	@media (forced-colors: active) {
+		.exec-theme-pill.is-on {
+			border: 2px solid ButtonText;
+		}
 	}
 </style>

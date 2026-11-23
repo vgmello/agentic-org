@@ -1,6 +1,6 @@
 import { SvelteURLSearchParams } from 'svelte/reactivity';
 
-export type UiTheme = 'ocean' | 'classic' | 'report' | 'report-dark';
+export type UiTheme = 'ocean' | 'classic' | 'graphite' | 'cozy' | 'report' | 'report-dark';
 export type UiColorScheme = 'dark' | 'light';
 
 export const UI_THEMES: readonly {
@@ -25,6 +25,22 @@ export const UI_THEMES: readonly {
 		scheme: 'dark'
 	},
 	{
+		id: 'graphite',
+		label: 'Graphite',
+		shortLabel: 'Graphite',
+		description:
+			'Matte dark graphite surfaces, compact density, crisp hairline borders, and lavender-slate accents.',
+		scheme: 'dark'
+	},
+	{
+		id: 'cozy',
+		label: 'Cozy Glass',
+		shortLabel: 'Cozy',
+		description:
+			'Warm espresso frosted glass over an ambient studio room with emerald and teal accents.',
+		scheme: 'dark'
+	},
+	{
 		id: 'report',
 		label: 'Report',
 		shortLabel: 'Report',
@@ -44,6 +60,7 @@ export const UI_THEMES: readonly {
 
 export const STORAGE_KEYS = {
 	theme: 'agentic-org.ui.theme',
+	cozyHighContrast: 'agentic-org.ui.cozyHighContrast',
 	navCollapsed: 'agentic-org.ui.navCollapsed',
 	favorites: 'agentic-org.ui.favoriteProjects',
 	singleKey: 'agentic-org.ui.singleKey'
@@ -75,6 +92,7 @@ export interface StorageLike {
 
 export interface UiPrefBootstrap {
 	theme: UiTheme;
+	cozyHighContrast: boolean;
 	navCollapsed: boolean;
 	favoriteProjects: string[];
 	singleKeyShortcuts: boolean;
@@ -96,11 +114,13 @@ export function resolveInitialPreferences({
 	const urlTheme = normalizeUiTheme(params.get('theme'));
 
 	let storedThemeRaw: string | null = null;
+	let storedCozyContrast: string | null = null;
 	let storedCollapsed: string | null = null;
 	let storedFavs: string | null = null;
 	let storedSingleKey: string | null = null;
 	try {
 		storedThemeRaw = storage?.getItem(STORAGE_KEYS.theme) ?? null;
+		storedCozyContrast = storage?.getItem(STORAGE_KEYS.cozyHighContrast) ?? null;
 		storedCollapsed = storage?.getItem(STORAGE_KEYS.navCollapsed) ?? null;
 		storedFavs = storage?.getItem(STORAGE_KEYS.favorites) ?? null;
 		storedSingleKey = storage?.getItem(STORAGE_KEYS.singleKey) ?? null;
@@ -125,6 +145,7 @@ export function resolveInitialPreferences({
 
 	return {
 		theme,
+		cozyHighContrast: storedCozyContrast === '1',
 		navCollapsed: storedCollapsed === '1',
 		favoriteProjects,
 		singleKeyShortcuts: storedSingleKey !== '0'
@@ -132,10 +153,19 @@ export function resolveInitialPreferences({
 }
 
 /** Apply active theme attributes to the document root cleanly (zero inline scripts). */
-export function applyUiAttributes(root: HTMLElement | undefined, theme: UiTheme): void {
+export function applyUiAttributes(
+	root: HTMLElement | undefined,
+	theme: UiTheme,
+	cozyHighContrast = false
+): void {
 	if (!root) return;
 	root.dataset.uiMode = 'executive';
 	root.dataset.uiTheme = theme;
+	if (cozyHighContrast) {
+		root.dataset.cozyContrast = 'high';
+	} else {
+		delete root.dataset.cozyContrast;
+	}
 	const isLight = isLightTheme(theme);
 	root.classList.toggle('dark', !isLight);
 	root.classList.toggle('light', isLight);
@@ -143,6 +173,7 @@ export function applyUiAttributes(root: HTMLElement | undefined, theme: UiTheme)
 
 class UiPreferencesStore {
 	theme = $state<UiTheme>('ocean');
+	cozyHighContrast = $state(false);
 	navCollapsed = $state(false);
 	favoriteProjects = $state<string[]>([]);
 	singleKeyShortcuts = $state(true);
@@ -152,6 +183,7 @@ class UiPreferencesStore {
 		const storage = typeof window !== 'undefined' ? window.localStorage : undefined;
 		const resolved = resolveInitialPreferences({ search, storage });
 		this.theme = resolved.theme;
+		this.cozyHighContrast = resolved.cozyHighContrast;
 		this.navCollapsed = resolved.navCollapsed;
 		this.favoriteProjects = resolved.favoriteProjects;
 		this.singleKeyShortcuts = resolved.singleKeyShortcuts;
@@ -188,6 +220,16 @@ class UiPreferencesStore {
 		this.syncDom();
 	}
 
+	setCozyHighContrast(enabled: boolean): void {
+		this.cozyHighContrast = enabled;
+		this.#save(STORAGE_KEYS.cozyHighContrast, enabled ? '1' : '0');
+		this.syncDom();
+	}
+
+	toggleCozyHighContrast(): void {
+		this.setCozyHighContrast(!this.cozyHighContrast);
+	}
+
 	toggleNavCollapsed(): void {
 		this.navCollapsed = !this.navCollapsed;
 		this.#save(STORAGE_KEYS.navCollapsed, this.navCollapsed ? '1' : '0');
@@ -213,7 +255,7 @@ class UiPreferencesStore {
 
 	syncDom(): void {
 		if (typeof document === 'undefined') return;
-		applyUiAttributes(document.documentElement, this.theme);
+		applyUiAttributes(document.documentElement, this.theme, this.cozyHighContrast);
 	}
 
 	#save(key: string, value: string): void {

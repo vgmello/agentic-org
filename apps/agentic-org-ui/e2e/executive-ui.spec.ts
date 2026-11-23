@@ -4,7 +4,7 @@ import { visit } from './ready';
 
 const captureDir = process.env.CAPTURE_EXEC_SHOTS_DIR;
 
-test('Executive UI v6 (always-on): 4 themes, Home KPIs, 3-lens Executive Brief, Inbox, Activity, and Ask', async ({
+test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, Inbox, Activity, and Ask', async ({
 	page
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
@@ -54,12 +54,41 @@ test('Executive UI v6 (always-on): 4 themes, Home KPIs, 3-lens Executive Brief, 
 		await page.screenshot({ path: `${captureDir}/prod-home-ocean.png` });
 	}
 
-	// Switch across all 4 themes via sidebar theme switcher
+	// Switch across all 6 themes via sidebar theme switcher
+	await page
+		.getByRole('group', { name: 'Theme' })
+		.getByRole('button', { name: 'Graphite', exact: true })
+		.click();
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
+	await expect(page.locator('.cozy-room')).toBeHidden();
+	if (captureDir) {
+		await expect(page.locator('.exec-cta-glass').first()).toHaveCSS(
+			'background-color',
+			'rgb(94, 82, 161)'
+		);
+		await page.screenshot({ path: `${captureDir}/prod-home-graphite.png` });
+	}
+
+	await page
+		.getByRole('group', { name: 'Theme' })
+		.getByRole('button', { name: 'Cozy', exact: true })
+		.click();
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'cozy');
+	await expect(page.locator('.cozy-room')).toBeVisible();
+	const askRadius = await page
+		.getByRole('button', { name: 'Ask', exact: true })
+		.evaluate((el) => getComputedStyle(el).borderRadius);
+	expect(askRadius).toBe('9999px');
+	if (captureDir) {
+		await page.screenshot({ path: `${captureDir}/prod-home-cozy.png` });
+	}
+
 	await page
 		.getByRole('group', { name: 'Theme' })
 		.getByRole('button', { name: 'Report', exact: true })
 		.click();
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'report');
+	await expect(page.locator('.cozy-room')).toBeHidden();
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/prod-home-report.png` });
 	}
@@ -125,14 +154,68 @@ test('Executive UI v6 (always-on): 4 themes, Home KPIs, 3-lens Executive Brief, 
 		page.getByRole('main').getByRole('button', { name: 'Activity', exact: true })
 	).toHaveAttribute('aria-pressed', 'true');
 
-	// Settings shows 4-theme Appearance selector (no legacy toggle)
+	// Settings shows 6-theme Appearance selector + Cozy Glass High Contrast toggle (no legacy toggle)
 	await page
 		.getByRole('navigation', { name: 'Main' })
 		.getByRole('link', { name: 'Settings' })
 		.click();
 	await expect(page).toHaveURL(/\/settings$/);
 	await expect(page.getByTestId('executive-ui-toggle')).toHaveCount(0);
+	await expect(page.getByTestId('theme-option-graphite')).toBeVisible();
+	await expect(page.getByTestId('theme-option-cozy')).toBeVisible();
 	await expect(page.getByTestId('theme-option-report')).toBeVisible();
+
+	await page.getByTestId('theme-option-cozy').click();
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'cozy');
+	const cozyContrastToggle = page.getByTestId('cozy-high-contrast-toggle');
+	await expect(cozyContrastToggle).toHaveAttribute('aria-checked', 'false');
+	await cozyContrastToggle.click();
+	await expect(cozyContrastToggle).toHaveAttribute('aria-checked', 'true');
+	await expect(page.locator('html')).toHaveAttribute('data-cozy-contrast', 'high');
+
+	if (captureDir) {
+		await page
+			.getByRole('navigation', { name: 'Main' })
+			.getByRole('link', { name: 'Home' })
+			.click();
+		await expect(page).toHaveURL(/\/home$/);
+		await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
+		await page.screenshot({ path: `${captureDir}/prod-home-cozy-hc.png` });
+		await page
+			.getByRole('navigation', { name: 'Main' })
+			.getByRole('link', { name: 'Settings' })
+			.click();
+		await expect(page).toHaveURL(/\/settings$/);
+	}
+
+	await page.getByTestId('cozy-high-contrast-toggle').click();
+	await expect(page.getByTestId('cozy-high-contrast-toggle')).toHaveAttribute(
+		'aria-checked',
+		'false'
+	);
+	await expect(page.locator('html')).not.toHaveAttribute('data-cozy-contrast', 'high');
+});
+
+test('Home scroll cue: appears when below-fold content exists, scrolls smoothly, and hides on scroll', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1440, height: 700 });
+	await visit(page, '/home?theme=graphite&mock=poc');
+
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
+	await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
+
+	const hint = page.getByTestId('home-scroll-hint');
+	await expect(hint).toBeVisible();
+	await expect(hint).toContainText('Scroll for more');
+
+	if (captureDir) {
+		await page.screenshot({ path: `${captureDir}/poc-home-scroll-cue-graphite.png` });
+	}
+
+	await hint.click();
+	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBeGreaterThan(16);
+	await expect(hint).toBeHidden();
 });
 
 test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.html data', async ({

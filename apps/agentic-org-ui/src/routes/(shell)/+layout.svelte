@@ -2,6 +2,7 @@
 	import ExecutiveCommandBar from '$lib/platform/shell/ExecutiveCommandBar.svelte';
 	import ExecutiveSidebar from '$lib/platform/shell/ExecutiveSidebar.svelte';
 	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
+	import HomeScrollHint from '$lib/modules/home/features/HomeScrollHint.svelte';
 	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
@@ -38,6 +39,7 @@
 	onMount(() => void appSession.boot());
 
 	let desktopNavigation = $state<HTMLDivElement | null>(null);
+	let mainEl = $state<HTMLElement | null>(null);
 	let sidebarHovered = $state(false);
 	let sidebarFocused = $state(false);
 	let sidebarLeaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -175,6 +177,13 @@
 
 <!-- The app fills the window edge to edge. -->
 <div class="exec-canvas fixed inset-0 overflow-hidden">
+	<div class="cozy-room" aria-hidden="true">
+		<div class="cozy-alcove"></div>
+		<div class="cozy-credenza"></div>
+		<div class="cozy-plant"></div>
+		<div class="cozy-alcove"></div>
+	</div>
+	<div class="cozy-shell" aria-hidden="true"></div>
 	<div
 		bind:this={desktopNavigation}
 		class={[
@@ -219,6 +228,7 @@
 			ownerId={shellData.ownerId}
 		/>
 		<main
+			bind:this={mainEl}
 			aria-label={areaFor(page.url.pathname) ?? 'Agentic Org'}
 			class="flex min-h-0 flex-1 flex-col overflow-y-auto"
 		>
@@ -227,6 +237,9 @@
 				</div>{/if}
 			{@render children()}
 		</main>
+		{#if page.url.pathname === '/home'}
+			<HomeScrollHint scrollContainer={mainEl} />
+		{/if}
 	</div>
 </div>
 <Toaster position="bottom-right" />
