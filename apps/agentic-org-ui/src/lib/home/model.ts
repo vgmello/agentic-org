@@ -859,6 +859,19 @@ export function deriveProjectCards(
 		const projMembers = allMembers.filter((m) => memberIds.has(m.id));
 		const lead = homeProj?.lead ?? teams.map((t) => leadOf(snapshot, t)).find(Boolean);
 
+		const nowDate = new Date(nowMs);
+		const todayUtc = Date.UTC(
+			nowDate.getUTCFullYear(),
+			nowDate.getUTCMonth(),
+			nowDate.getUTCDate(),
+			12
+		);
+		const dueDt = homeProj?.due ? parseIsoDateUtc(homeProj.due) : null;
+		const remainingCount = Math.max(0, totalCount - doneCount);
+		const isOverdue = Boolean(
+			dueDt && dueDt.getTime() < todayUtc && (totalCount === 0 || doneCount < totalCount)
+		);
+
 		let health: ProjectBentoCard['health'] = 'On track';
 		let healthTone: ProjectBentoCard['healthTone'] = 'ok';
 		let statusPillClass: ProjectBentoCard['statusPillClass'] = 't-green';
@@ -872,6 +885,7 @@ export function deriveProjectCards(
 			healthTone = 'bad';
 			statusPillClass = 't-red';
 		} else if (
+			isOverdue ||
 			blockedCount > 0 ||
 			scopedReqs.length > 0 ||
 			projInbox.length >= 2 ||
@@ -881,19 +895,6 @@ export function deriveProjectCards(
 			healthTone = 'warn';
 			statusPillClass = 't-amber';
 		}
-
-		const nowDate = new Date(nowMs);
-		const todayUtc = Date.UTC(
-			nowDate.getUTCFullYear(),
-			nowDate.getUTCMonth(),
-			nowDate.getUTCDate(),
-			12
-		);
-		const dueDt = homeProj?.due ? parseIsoDateUtc(homeProj.due) : null;
-		const remainingCount = Math.max(0, totalCount - doneCount);
-		const isOverdue = Boolean(
-			dueDt && dueDt.getTime() < todayUtc && (totalCount === 0 || doneCount < totalCount)
-		);
 
 		const workHref = `/projects/${projectId}/work`;
 		let blockerText = '';
@@ -1027,7 +1028,8 @@ export function deriveKpiMetrics(
 	items: readonly WorkItemSummary[],
 	offices: readonly OfficeInfo[],
 	ownerId: string,
-	domain?: HomeDomainData
+	domain?: HomeDomainData,
+	nowMs = Date.now()
 ): ExecutiveKpis {
 	const liveItems = items.filter((i) => !i.deleted);
 	const openItems = liveItems.filter(isItemOpen);
@@ -1115,7 +1117,7 @@ export function deriveKpiMetrics(
 	const officePillTone: SignalTone =
 		offlineOffices > 0 ? 'bad' : offices.length > 0 ? 'ok' : 'muted';
 
-	const projectCards = deriveProjectCards(snapshot, liveItems, domain);
+	const projectCards = deriveProjectCards(snapshot, liveItems, domain, nowMs);
 	const offTrackProjects = projectCards.filter((p) => p.health === 'Off track').length;
 	const atRiskProjects = projectCards.filter((p) => p.health === 'At risk').length;
 	const projectsAttention = offTrackProjects + atRiskProjects;
@@ -1644,7 +1646,7 @@ export function answerExecutiveQuestion(
 		decisionId,
 		decision
 	}: {
-		snapshot: OrgSnapshot;
+		snapshot?: OrgSnapshot;
 		items: readonly WorkItemSummary[];
 		offices: readonly OfficeInfo[];
 		ownerId: string;
@@ -1655,6 +1657,47 @@ export function answerExecutiveQuestion(
 ): OrgAiAnswer {
 	const query = rawQuery.trim();
 	const q = query.toLowerCase();
+
+	const formatDecisionAnswer = (decisionMatch: DecisionAiContext): OrgAiAnswer => ({
+		query,
+		headline: `${decisionMatch.title} — ${decisionMatch.risk.label} · ${decisionMatch.impact.label}`,
+		bullets: [
+			{
+				text: `Recommendation: ${decisionMatch.recommendation}`,
+				href: decisionMatch.detailHref,
+				linkLabel: 'Open details'
+			},
+			{
+				text: `Risk & impact: ${decisionMatch.risk.label} (${decisionMatch.risk.sub}); ${decisionMatch.impact.label} (${decisionMatch.impact.sub}).`
+			},
+			{
+				text: `Background: ${decisionMatch.backgroundContext}`,
+				href: decisionMatch.projectId ? `/projects/${decisionMatch.projectId}/work` : '/inbox',
+				linkLabel: decisionMatch.projectId ? `Open ${decisionMatch.projectName}` : 'Open Inbox'
+			}
+		]
+	});
+
+	// Prefer the caller's explicit decision snapshot so Ask works even while the shell snapshot is
+	// still hydrating or holding an older copy of the same decision ID.
+	if (decision) {
+		return formatDecisionAnswer(decision);
+	}
+
+	if (!snapshot) {
+		return {
+			query,
+			headline: 'Workspace context is still loading.',
+			bullets: [
+				{
+					text: 'Try asking again once the organization snapshot finishes loading.',
+					href: '/home',
+					linkLabel: 'Open Home'
+				}
+			]
+		};
+	}
+
 	const kpis = deriveKpiMetrics(snapshot, items, offices, ownerId, domain);
 	const spotlight = deriveDecisionSpotlight(
 		items,
@@ -1669,30 +1712,11 @@ export function answerExecutiveQuestion(
 	const explainMatch = query.match(/^explain the risk, impact, and recommendation for:\s*(.+)$/i);
 	const decisionMatch =
 		(decisionId ? spotlight.find((d) => d.id === decisionId) : undefined) ??
-		decision ??
 		(explainMatch
 			? spotlight.find((d) => d.title.toLowerCase() === explainMatch[1].trim().toLowerCase())
 			: undefined);
 	if (decisionMatch) {
-		return {
-			query,
-			headline: `${decisionMatch.title} — ${decisionMatch.risk.label} · ${decisionMatch.impact.label}`,
-			bullets: [
-				{
-					text: `Recommendation: ${decisionMatch.recommendation}`,
-					href: decisionMatch.detailHref,
-					linkLabel: 'Open details'
-				},
-				{
-					text: `Risk & impact: ${decisionMatch.risk.label} (${decisionMatch.risk.sub}); ${decisionMatch.impact.label} (${decisionMatch.impact.sub}).`
-				},
-				{
-					text: `Background: ${decisionMatch.backgroundContext}`,
-					href: decisionMatch.projectId ? `/projects/${decisionMatch.projectId}/work` : '/inbox',
-					linkLabel: decisionMatch.projectId ? `Open ${decisionMatch.projectName}` : 'Open Inbox'
-				}
-			]
-		};
+		return formatDecisionAnswer(decisionMatch);
 	}
 
 	if (/spend|cost|budget|money|cap|dollar/.test(q)) {

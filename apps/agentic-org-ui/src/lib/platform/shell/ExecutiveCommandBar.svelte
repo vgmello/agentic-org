@@ -301,7 +301,7 @@
 
 	function submitAi(raw: string, opts?: ShellAiAskOptions) {
 		const trimmed = raw.trim();
-		if (!trimmed || !snapshot) return;
+		if (!trimmed || (!snapshot && !opts?.decision)) return;
 		const ans = answerExecutiveQuestion(trimmed, {
 			snapshot,
 			items,

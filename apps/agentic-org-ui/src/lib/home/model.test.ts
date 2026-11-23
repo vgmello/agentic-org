@@ -534,44 +534,46 @@ describe('executive home view model', () => {
 	});
 
 	it('marks 199/200 and 198/200 past-due projects as Overdue without claiming on schedule', () => {
-		const snap = sampleOrg('hq');
+		const base = sampleOrg('hq');
+		const snap = {
+			...base,
+			projects: (base.projects ?? []).filter((p) => p.id === 'atlas' || p.id === 'beacon')
+		};
 		const nowMs = Date.parse('2026-11-25T12:00:00Z');
-		const cards = deriveProjectCards(
-			snap,
-			[],
-			{
-				homeProjects: [
-					{
-						id: 'atlas',
-						name: 'Atlas',
-						done: 199,
-						total: 200,
-						open: 1,
-						blocked: 0,
-						due: '2026-11-24',
-						lead: { id: 'ada', name: 'Ada' },
-						members: 3
-					},
-					{
-						id: 'beacon',
-						name: 'Beacon',
-						done: 198,
-						total: 200,
-						open: 2,
-						blocked: 0,
-						due: '2026-11-24',
-						lead: { id: 'sam', name: 'Sam' },
-						members: 2
-					}
-				]
-			},
-			nowMs
-		);
+		const domain = {
+			homeProjects: [
+				{
+					id: 'atlas',
+					name: 'Atlas',
+					done: 199,
+					total: 200,
+					open: 1,
+					blocked: 0,
+					due: '2026-11-24',
+					lead: { id: 'ada', name: 'Ada' },
+					members: 3
+				},
+				{
+					id: 'beacon',
+					name: 'Beacon',
+					done: 198,
+					total: 200,
+					open: 2,
+					blocked: 0,
+					due: '2026-11-24',
+					lead: { id: 'sam', name: 'Sam' },
+					members: 2
+				}
+			]
+		};
+		const cards = deriveProjectCards(snap, [], domain, nowMs);
 
 		const atlas = cards.find((c) => c.id === 'atlas');
 		expect(atlas?.pct).toBe(100);
 		expect(atlas?.paceLabel).toBe('Overdue');
 		expect(atlas?.paceTone).toBe('bad');
+		expect(atlas?.health).toBe('At risk');
+		expect(atlas?.healthTone).toBe('warn');
 		expect(atlas?.isClear).toBe(false);
 		expect(atlas?.clearNote).toBe('Past due date · 1 open');
 		expect(atlas?.blockerText).toBe('Past due date · 1 open');
@@ -579,38 +581,93 @@ describe('executive home view model', () => {
 		const beacon = cards.find((c) => c.id === 'beacon');
 		expect(beacon?.paceLabel).toBe('Overdue');
 		expect(beacon?.paceTone).toBe('bad');
+		expect(beacon?.health).toBe('At risk');
+		expect(beacon?.healthTone).toBe('warn');
 		expect(beacon?.isClear).toBe(false);
 		expect(beacon?.clearNote).toBe('Past due date · 2 open');
 		expect(beacon?.blockerText).toBe('Past due date · 2 open');
+
+		const kpis = deriveKpiMetrics(snap, [], offices, 'you', domain, nowMs);
+		expect(kpis.projectsAttention).toBe(2);
+		expect(kpis.atRiskProjects).toBe(2);
+
+		const onTimeKpis = deriveKpiMetrics(
+			snap,
+			[],
+			offices,
+			'you',
+			{
+				homeProjects: domain.homeProjects.map((p) => ({ ...p, due: '2026-12-10' }))
+			},
+			nowMs
+		);
+		expect(onTimeKpis.projectsAttention).toBe(0);
 	});
 
-	it('answers with explicit decision context even when shell inboxItems has not hydrated yet', () => {
+	it('answers with explicit decision context even when shell snapshot is pending or stale', () => {
 		const snap = sampleOrg('hq');
-		const ans = answerExecutiveQuestion(
-			'Explain the risk, impact, and recommendation for: Approve production failover',
+		const freshDecision = {
+			id: 'in-shared',
+			title: 'Approve production failover (updated)',
+			recommendation: 'Ada recommends: approve failover to secondary cluster.',
+			risk: { label: 'Moderate risk', sub: '2-minute write pause' },
+			impact: { label: 'High impact', sub: 'Restores EU availability' },
+			backgroundContext: 'Primary node disk latency crossed threshold.',
+			detailHref: '/inbox?item=in-shared',
+			projectId: 'atlas',
+			projectName: 'Atlas'
+		};
+
+		const ansNoSnap = answerExecutiveQuestion(
+			'Explain the risk, impact, and recommendation for: Approve production failover (updated)',
+			{
+				snapshot: undefined,
+				items: [],
+				offices,
+				ownerId: 'you',
+				domain: { inboxItems: [] },
+				decisionId: 'in-shared',
+				decision: freshDecision
+			}
+		);
+		expect(ansNoSnap.headline).toContain('Approve production failover (updated)');
+		expect(ansNoSnap.headline).not.toContain('All clear');
+		expect(ansNoSnap.bullets[0].text).toContain(
+			'Ada recommends: approve failover to secondary cluster.'
+		);
+		expect(ansNoSnap.bullets[0].href).toBe('/inbox?item=in-shared');
+
+		const ansStaleShell = answerExecutiveQuestion(
+			'Explain the risk, impact, and recommendation for: Approve production failover (updated)',
 			{
 				snapshot: snap,
 				items: [],
 				offices,
 				ownerId: 'you',
-				domain: { inboxItems: [] },
-				decisionId: 'in-unhydrated',
-				decision: {
-					id: 'in-unhydrated',
-					title: 'Approve production failover',
-					recommendation: 'Ada recommends: approve failover to secondary cluster.',
-					risk: { label: 'Moderate risk', sub: '2-minute write pause' },
-					impact: { label: 'High impact', sub: 'Restores EU availability' },
-					backgroundContext: 'Primary node disk latency crossed threshold.',
-					detailHref: '/inbox?item=in-unhydrated',
-					projectId: 'atlas',
-					projectName: 'Atlas'
-				}
+				domain: {
+					inboxItems: [
+						{
+							id: 'in-shared',
+							kind: 'approval',
+							source: 'Release sign-off',
+							state: 'open',
+							title: 'Stale shell title',
+							why: 'Stale reason',
+							who: { id: 'ada', name: 'Ada', kind: 'agent' },
+							project: { id: 'atlas', name: 'Atlas' },
+							created_at: '2026-11-23T09:00:00.000Z',
+							actions: ['approve', 'deny']
+						}
+					]
+				},
+				decisionId: 'in-shared',
+				decision: freshDecision
 			}
 		);
-		expect(ans.headline).toContain('Approve production failover');
-		expect(ans.headline).not.toContain('All clear');
-		expect(ans.bullets[0].text).toContain('Ada recommends: approve failover to secondary cluster.');
-		expect(ans.bullets[0].href).toBe('/inbox?item=in-unhydrated');
+		expect(ansStaleShell.headline).toContain('Approve production failover (updated)');
+		expect(ansStaleShell.headline).not.toContain('Stale shell title');
+		expect(ansStaleShell.bullets[0].text).toContain(
+			'Ada recommends: approve failover to secondary cluster.'
+		);
 	});
 });
