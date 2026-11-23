@@ -849,7 +849,10 @@ html[data-work-dividers] .work-row:is(:hover, :focus-within) { box-shadow: inset
 .pref { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; max-width: 640px; }
 .pref .lbl { font-weight: 500; }
 .theme-pref, .theme-options { flex-wrap: wrap; }
+.theme-pref { align-items: center; }
 .seg.theme-options { max-width: 100%; }
+.theme-contrast { flex: 1 1 100%; align-items: center; border-top: 1px solid var(--line); padding-top: 16px; }
+.theme-contrast .switch[aria-checked="true"] { background: var(--tone-accent-solid); }
 .switch { position: relative; flex: none; width: 44px; height: 24px; border-radius: 99px; background: var(--gray-700); box-shadow: inset 0 0 0 1px var(--gray-500); }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 99px; background: #fff; transition: transform .1s; }
 .switch[aria-checked="true"] { background: var(--indigo-500); box-shadow: none; }
@@ -4322,8 +4325,6 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
         <span>Ask</span>
       </button>
     </div>
-    <button class="btn outline cozy-contrast" id="cozy-contrast" type="button" data-act="cozy-contrast"
-      aria-label="Cozy Glass / AA Contrast" aria-pressed="false" hidden><span aria-hidden="true">Cozy Glass</span><svg class="ic ic16 cozy-contrast-icon" aria-hidden="true"><use href="#i-adjustments"/></svg></button>
   </header>
   <main id="main" tabindex="-1"></main>
 </div>
@@ -4626,13 +4627,7 @@ if (VALID_THEMES.has(urlTheme)) {
   } catch (e) {}
 }
 function applyCozyContrast() {
-  const cozy = S.theme === "cozy";
-  const active = cozy && S.cozyContrast;
-  const toggle = document.getElementById("cozy-contrast");
-  document.body.classList.toggle("a11y-mode", active);
-  toggle.hidden = !cozy;
-  toggle.setAttribute("aria-pressed", String(active));
-  toggle.firstElementChild.textContent = active ? "AA Contrast" : "Cozy Glass";
+  document.body.classList.toggle("a11y-mode", S.theme === "cozy" && S.cozyContrast);
 }
 function applyTheme(remember = false) {
   const t = VALID_THEMES.has(normalizeTheme(S.theme)) ? normalizeTheme(S.theme) : "ocean";
@@ -5855,11 +5850,10 @@ function inboxTabLabel(key) {
 }
 function inboxCategories() {
   const moreActive = INBOX_MORE.includes(S.inboxKind);
-  return `<div class="triage-categories">
-    <div class="triage-tabs" role="group" aria-label="Inbox categories">${INBOX_TABS.map((key) => `
-      <button class="triage-tab" type="button" data-act="inbox-filter" data-k="inboxKind" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}</div>
+  return `<div class="triage-tabs" role="group" aria-label="Inbox categories">${INBOX_TABS.map((key) => `
+    <button class="triage-tab" type="button" data-act="inbox-filter" data-k="inboxKind" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}
     <div class="menu-wrap"><button class="triage-tab" type="button" data-act="menu" data-id="inbox-kinds"
-      aria-haspopup="menu" aria-expanded="false" aria-controls="menu-inbox-kinds">${moreActive ? inboxTabLabel(S.inboxKind) : "+ More"}${moreActive ? `<span>${inboxItems().length}</span>` : ""}${ic("chev-down", "ic14")}</button>
+      aria-haspopup="menu" aria-expanded="false" aria-controls="menu-inbox-kinds"${moreActive ? ' data-current-kind' : ""}>${moreActive ? inboxTabLabel(S.inboxKind) : "More"}${moreActive ? `<span>${inboxItems().length}</span>` : ""}${ic("chev-down", "ic14")}</button>
       <div class="menu" id="menu-inbox-kinds" role="menu" aria-label="More inbox categories" hidden>${INBOX_MORE.map((key) => `
         <button type="button" role="menuitemradio" aria-checked="${S.inboxKind === key}" data-act="inbox-filter" data-k="inboxKind" data-v="${key}">${inboxTabLabel(key)}<span class="triage-menu-count">${inboxItems(key).length}</span></button>`).join("")}</div></div>
   </div>`;
@@ -5892,8 +5886,11 @@ function pageInbox(sel) {
   return `<section class="triage-workspace${sel && item ? " triage-has-detail" : ""}" aria-label="Inbox workspace">
     <header class="triage-header">
       <div class="ph triage-headline"><div class="ph-t"><h1 tabindex="-1">Inbox</h1><span class="cnt triage-waiting" role="status"><i aria-hidden="true"></i>${unhandled().length} waiting on you</span></div>
-        <div class="ph-actions triage-controls">${scope}<button class="btn outline sm" type="button" data-act="inbox-filter" data-k="inboxUrgent" data-v="${!S.inboxUrgent}" aria-pressed="${S.inboxUrgent}">${ic("clock", "ic16")}Urgent only</button></div>
-      </div><div id="triage-categories">${inboxCategories()}</div>
+      </div>
+      <div class="triage-toolbar">
+        <div id="triage-categories">${inboxCategories()}</div>
+        <div class="triage-controls" role="group" aria-label="Inbox filters">${scope}<button class="btn sm triage-urgent" type="button" data-act="inbox-filter" data-k="inboxUrgent" data-v="${!S.inboxUrgent}" aria-pressed="${S.inboxUrgent}">${ic("clock", "ic16")}Urgent only</button></div>
+      </div>
     </header>
     <div class="triage-split">
       <section class="triage-queue" aria-label="Inbox queue"><div class="triage-queue-summary"><span>${S.inboxKind === "handled" ? "Handled items" : "Priority first"}</span><span id="triage-visible" role="status">${plural(items.length, "item in view", "items in view")}</span></div>
@@ -6559,7 +6556,8 @@ const LOGO = `<svg width="48" height="48" viewBox="0 0 32 32" aria-hidden="true"
 const unavailable = (title) => `<div class="unavail">${LOGO}<h1 tabindex="-1">${esc(title)} isn't available yet</h1><p>This release doesn't include ${esc(title)}.</p></div>`;
 function pageSettings(sec, sub) {
   sec = sec || "general";
-  const nav = `<nav class="subnav" aria-label="Organization settings">${SET.map(([k, l, i]) => `<a href="#/settings${k === "general" ? "" : "/" + k}" ${sec === k ? 'aria-current="page"' : ""}>${ic(i, "ic20")}${l}</a>`).join("")}</nav>`;
+  const nav = `<nav class="subnav" aria-label="Organization settings">${SET.map(([k, l, i]) => `<a href="#/settings${k === "general" ? "" : "/" + k}" ${sec === k ? 'aria-current="page"' : ""}>${ic(i, "ic20")}${l}</a>`).join("")}
+    <a href="#/preferences">${ic("adjustments", "ic20")}Appearance</a></nav>`;
   let body;
   const agents = Object.keys(M).filter((k) => M[k].kind === "agent");
   if (sec === "general") body = hdr("General", "Organization settings") + `<div class="form"><div><label for="o-name">Organization name</label><input class="field" id="o-name" value="Agentic Org"><p class="help">Shown in the sidebar and to every member.</p></div>
@@ -6592,8 +6590,12 @@ function agentDetail(id) {
 }
 function pagePreferences() {
   return hdr("Your preferences", "") + `<section class="section" aria-labelledby="h-theme"><div class="sec-h"><h2 id="h-theme">Appearance</h2></div>
-    <div class="pref theme-pref"><p class="muted" style="font-size:13px">Graphite uses charcoal surfaces and a compact desktop layout.</p>
-    ${seg("theme", THEME_OPTIONS, "Theme")}</div></section>
+    <div class="pref theme-pref">${seg("theme", THEME_OPTIONS, "Theme")}
+      ${S.theme === "cozy" ? `<div class="pref theme-contrast">
+        <div><p class="lbl" id="cozy-contrast-label">AA Contrast</p><p class="muted help" id="cozy-contrast-help">Makes glass surfaces more opaque and text easier to read.</p></div>
+        <button class="switch" type="button" role="switch" data-act="cozy-contrast" aria-checked="${S.cozyContrast}" aria-labelledby="cozy-contrast-label" aria-describedby="cozy-contrast-help"></button>
+      </div>` : ""}
+    </div></section>
     <section class="section" aria-labelledby="h-keys"><div class="sec-h"><h2 id="h-keys">Keyboard</h2></div>
     <div class="pref"><div><p class="lbl" id="sk-l">Single-key shortcuts</p><p class="muted" id="sk-d" style="font-size:13px">N opens New task and / focuses Search, outside text fields.</p></div>
     <button class="switch" type="button" role="switch" aria-checked="${S.singleKey}" aria-labelledby="sk-l" aria-describedby="sk-d" data-act="single-key"></button></div></section>`;
@@ -7570,7 +7572,7 @@ function renderNav(route) {
     cmdkTr.title = homeError ? "Search & commands unavailable while HQ office is offline" : localSearch ? "Search workspace" : "Search, run a command, or ask Tess";
     if (r0 !== "home") cmdkTr.setAttribute("aria-label", "Search workspace");
     else cmdkTr.removeAttribute("aria-label");
-    cmdkTr.querySelector("use").setAttribute("href", localSearch ? "#i-arrows-updown" : "#i-search");
+    cmdkTr.querySelector("use").setAttribute("href", r0 === "inbox" ? "#i-terminal" : localSearch ? "#i-arrows-updown" : "#i-search");
   }
   if (cmdkPh) cmdkPh.textContent = homeError ? "HQ office offline — search & AI unavailable"
     : r0 === "home" ? "Search, run a command, or ask Tess…" : localSearch ? "Workspace" : "Search workspace…";
@@ -7747,7 +7749,7 @@ const own = (o, k) => k != null && Object.prototype.hasOwnProperty.call(o, k);
 const TITLES = { home: "Home", inbox: "Inbox", projects: "Projects", work: "Work", chat: "Chat", activity: "Activity", teams: "Teams", members: "Member", settings: "Organization settings", preferences: "Your preferences", search: "Search" };
 const MEMBER_ALIASES = ["members", "people", "everyone"];
 const homeToolbar = document.getElementById("home-toolbar");
-const [drawerButton, commandBar, contrastToggle] = homeToolbar.children;
+const [drawerButton, commandBar] = homeToolbar.children;
 const pageSearchTools = document.createElement("div");
 pageSearchTools.id = "page-search-tools";
 const localSearchHost = document.getElementById("cmdk-local");
@@ -7762,9 +7764,9 @@ function placeSearchToolbar(main, page) {
     heading.classList.add("has-page-toolbar");
     heading.prepend(drawerButton);
     heading.insertBefore(pageSearchTools, heading.querySelector(":scope > .ph-actions, :scope.unavail > p"));
-    pageSearchTools.append(commandBar, contrastToggle);
+    pageSearchTools.append(commandBar);
   } else if (commandBar.parentElement !== homeToolbar) {
-    homeToolbar.append(drawerButton, commandBar, contrastToggle);
+    homeToolbar.append(drawerButton, commandBar);
   }
   homeToolbar.hidden = Boolean(heading);
   commandBar.classList.toggle("has-local-search", Boolean(search));
@@ -8275,6 +8277,7 @@ document.addEventListener("click", (e) => {
       S.cozyContrast = !S.cozyContrast;
       try { localStorage.setItem(COZY_CONTRAST_STORE, S.cozyContrast ? "1" : "0"); } catch (e) {}
       applyCozyContrast();
+      t.setAttribute("aria-checked", String(S.cozyContrast));
       break;
     case "work-new-task": openWorkTask(t); break;
     case "work-cancel-task": t.closest("dialog").close(); break;

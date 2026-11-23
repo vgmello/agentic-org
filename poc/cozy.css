@@ -374,19 +374,11 @@ html[data-theme="cozy"] {
   & .cmdk-trigger:hover { background: var(--hover); color: var(--white); }
   & .cmdk-sep { background: var(--line); }
   & .cmdk-ai-btn { min-height: 36px; border-radius: 999px; }
-  & .cozy-contrast { flex: none; min-height: 36px; }
-  & .cozy-contrast > span { min-width: 11ch; }
-  & .cozy-contrast[aria-pressed="true"] { border-color: var(--tone-accent-ink); }
   & :focus-visible { outline-color: var(--tone-accent-ink); }
   & body.a11y-mode :is(.field, .search, .cmdk-shell) { border: 1px solid var(--line2); }
 
-  @media (min-width: 1120px) {
-    & .topbar .cozy-contrast { position: absolute; inset-inline-end: var(--gutter); }
-    & .topbar .cmdk-shell { max-width: calc(100% - 290px); }
-  }
   @media (max-width: 639px) {
     & .topbar { padding-inline: 60px 10px; }
-    & .cozy-contrast { padding-inline: 8px; font-size: .75rem; }
     & .cmdk-ai-btn { padding-inline: 8px; }
   }
   @media (max-width: 359px) {
