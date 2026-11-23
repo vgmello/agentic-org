@@ -138,18 +138,49 @@
 .triage-document h2 { font-size: clamp(1.375rem, 1.7vw, 1.625rem); line-height: 1.28; letter-spacing: -.015em; overflow-wrap: anywhere; }
 .triage-narrative, .triage-context { display: grid; align-content: start; min-width: 0; gap: 16px; }
 .triage-context-title { display: none; }
-.triage-why, .triage-recommendation p { max-width: 64ch; }
-.triage-why h3, .triage-recommendation h3 { color: var(--white); font-size: var(--item-title-size); font-weight: 600; margin-bottom: 4px; }
-.triage-recommendation {
+.triage-why, .recommendation p { max-width: 64ch; }
+.triage-why h3 { color: var(--white); font-size: var(--item-title-size); font-weight: 600; margin-bottom: 4px; }
+.recommendation {
+  --recommendation-ink: var(--gray-300);
+  --recommendation-ring: var(--line2);
+  --recommendation-fill: var(--hover);
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 12px 14px;
-  border: 1px solid var(--tone-accent-ring);
-  border-radius: 8px;
-  background: var(--tone-accent-soft);
+  border: 1px solid var(--recommendation-ring);
+  border-inline-start: 3px solid var(--recommendation-ink);
+  border-radius: var(--radius-lg);
+  background: var(--recommendation-fill);
+  color: var(--white);
+  font-size: var(--item-title-size);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
-.triage-recommendation > .ic { margin-top: 2px; color: var(--tone-accent-ink); }
+.recommendation[data-tone="ok"] {
+  --recommendation-ink: var(--tone-ok-ink);
+  --recommendation-ring: var(--tone-ok-ring);
+  --recommendation-fill: var(--tone-ok-soft);
+}
+.recommendation[data-tone="warn"] {
+  --recommendation-ink: var(--tone-warn-ink);
+  --recommendation-ring: var(--tone-warn-ring);
+  --recommendation-fill: var(--tone-warn-soft);
+}
+.recommendation[data-tone="bad"] {
+  --recommendation-ink: var(--tone-bad-ink);
+  --recommendation-ring: var(--tone-bad-ring);
+  --recommendation-fill: var(--tone-bad-soft);
+}
+.recommendation > .ic,
+.recommendation-label { color: var(--recommendation-ink); }
+.recommendation-label {
+  margin-bottom: 3px;
+  font-size: .75rem;
+  font-weight: 650;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
 .triage-fields { display: grid; grid-template-columns: minmax(68px, 96px) minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; border-block: 1px solid var(--line); }
 .triage-fields dt { color: var(--gray-300); font-size: .8125rem; font-weight: 600; }
 .triage-fields dd { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; min-width: 0; overflow-wrap: anywhere; }
