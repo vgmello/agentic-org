@@ -597,7 +597,12 @@ body.nokeys .search kbd { display: none; }
 .cnt { font-size: 0.75rem; line-height: 1.5rem; color: var(--gray-400); font-weight: 400; }
 .ph-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .ph.work-header { padding-block: 12px; gap: 8px 16px; }
-.work-header .ph-actions { flex: 1 1 auto; }
+.work-header .ph-actions { flex: 1 1 auto; min-width: 0; gap: 8px; }
+.work-header .work-search { flex: 1 1 11rem; width: auto; min-width: 0; }
+.work-header .work-status-filter { max-width: 100%; }
+@media (max-width: 639px) {
+  .work-header .work-search { flex-basis: 100%; }
+}
 .back { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-400); font-weight: 600; font-size: 0.8125rem; padding: 12px var(--gutter) 0; }
 .back:hover { color: var(--white); }
 .desc { padding: 16px var(--gutter) 0; color: var(--gray-400); max-width: 820px; }
@@ -1100,6 +1105,21 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .k-doc ul { list-style: disc; padding-left: 18px; margin-top: 4px; }
 
 /* Overlays */
+.work-task-dialog {
+  width: min(30rem, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  padding: clamp(16px, 4vw, 24px);
+  border: 1px solid var(--line2);
+  border-radius: var(--radius-lg);
+  background: var(--gray-800);
+  color: var(--white);
+}
+.work-task-dialog::backdrop { background: rgb(4 7 16 / .58); }
+.work-task-form { display: grid; gap: 14px; margin-top: 16px; }
+.work-task-form label { display: grid; gap: 4px; min-width: 0; font-weight: 500; }
+.work-task-form .field { width: 100%; min-width: 0; }
+.work-task-form .work-task-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: 12px; }
+.work-task-form .actions { justify-content: flex-end; }
 .overlay { position: fixed; inset: 0; z-index: 90; background: rgba(4, 7, 16, .58); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 .sheet { position: fixed; top: 0; right: 0; bottom: 0; z-index: 100; width: min(680px, 100%); background: rgba(12, 19, 37, .74); backdrop-filter: blur(28px) saturate(175%); -webkit-backdrop-filter: blur(28px) saturate(175%); box-shadow: inset 1px 0 0 rgba(255, 255, 255, .13), -20px 0 56px rgba(0, 0, 0, .58); display: flex; flex-direction: column; }
 .sheet header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--line); }
@@ -4637,7 +4657,7 @@ function applyShortcuts() {
   if (nb) { if (on) { nb.setAttribute("aria-keyshortcuts", "N"); nb.title = "New · N"; } else { nb.removeAttribute("aria-keyshortcuts"); nb.title = "New"; } }
 }
 const inTextField = (el) => !!el && (["input", "textarea", "select"].includes((el.tagName || "").toLowerCase()) || !!el.isContentEditable);
-const overlayOpen = () => !!(document.querySelector(".sheet") || document.querySelector(".menu:not([hidden])") || document.body.classList.contains("drawer"));
+const overlayOpen = () => !!(document.querySelector(".sheet, .work-task-dialog[open]") || document.querySelector(".menu:not([hidden])") || document.body.classList.contains("drawer"));
 const qs = () => new URLSearchParams((location.hash.split("?")[1]) || "");
 
 /* ---------------------------------------------------------------- helpers */
@@ -4687,7 +4707,7 @@ const mlink = (id, cls = "alink") => !M[id] ? "Unassigned" : M[id].owner ? esc(M
 const plink = (p) => `<a class="alink" href="#/projects/${p}">${esc(P[p].name)}</a>`;
 const joinSep = (parts) => parts.filter(Boolean).join(SEP);
 const STATUSES = { task: ["To do", "In progress", "Blocked", "Done"], bug: ["New", "Triaged", "In progress", "Fixed", "Closed"], request: ["Not routed", "Rowan is scoping", "Scoped", "Approved"] };
-const ALL_STATUSES = [...new Set([...STATUSES.task, ...STATUSES.bug, ...STATUSES.request])];
+const ALL_STATUSES = [...new Set([...STATUSES.task, ...STATUSES.bug, ...STATUSES.request, ...W.map((w) => w.status)])];
 const OPEN = (w) => !["Done", "Fixed", "Closed", "Approved", "Declined"].includes(w.status);
 const NEEDS_ME_SUBS = ["Review requested", "Hand-off"];
 const blockedOnOwner = (w) => w.status === "Blocked" && w.waitsOn === "you";
@@ -4882,7 +4902,7 @@ function workRow(w, isSubtask = false) {
   const team = memberships.find((id) => P[w.proj].teams.includes(id)) ?? memberships[0];
   const task = w.kind === "task";
   const eta = w.etaHours != null ? `${w.etaHours}h` : (task && OPEN(w) ? "TBD" : "");
-  return `<li class="${isSubtask ? "work-subtask" : "work-item"}"><div class="work-row"${team ? ` data-team="${esc(team)}"` : ""}>
+  return `<li class="${isSubtask ? "work-subtask" : "work-item"}"><div class="work-row" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}>
     <div class="work-summary">
       <span class="work-ident">${task ? workPriority(w.pri) : ""}<span class="work-ref">${esc(w.id)}</span></span>
       <span class="work-heading">
@@ -4902,10 +4922,15 @@ function workList(items, groupBy, emptyText = "No work here yet.") {
   if (!items.length) return `<p class="empty-row">${emptyText}</p>`;
   const list = (rows) => `<ul class="work-list" role="list">${rows.map((w) => workRow(w)).join("")}</ul>`;
   if (!groupBy) return `<div class="work-items">${list(items)}</div>`;
-  const groups = {};
-  items.forEach((w) => { const k = groupBy === "proj" ? w.proj : (w.who || "none"); (groups[k] = groups[k] || []).push(w); });
-  const sections = Object.entries(groups).map(([k, ws]) => {
-    const title = groupBy === "proj" ? esc(P[k].name) : (M[k] ? esc(M[k].name) + " · " + kindWord(k) : "Unassigned");
+  const groups = new Map();
+  for (const w of items) {
+    const key = w[groupBy] ?? "none";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(w);
+  }
+  const entries = groupBy === "status" ? ALL_STATUSES.filter((status) => groups.has(status)).map((status) => [status, groups.get(status)]) : [...groups];
+  const sections = entries.map(([k, ws]) => {
+    const title = groupBy === "status" ? esc(k) : groupBy === "proj" ? esc(P[k].name) : (M[k] ? esc(M[k].name) + " · " + kindWord(k) : "Unassigned");
     return `<div class="work-group"><h3 class="work-group-title">${title}<span class="cnt">${ws.length}</span></h3>${list(ws)}</div>`;
   });
   return `<div class="work-items">${sections.join("")}</div>`;
@@ -4915,7 +4940,7 @@ function board(items, kind) {
   if (!cols.length) return `<p class="empty-row">No work here yet.</p>`;
   return `<div class="board">${cols.map((st) => {
     const col = items.filter((w) => w.status === st);
-    return `<section class="bcol" aria-label="${esc(st)}"><h3><span>${esc(st)}</span><span class="muted">${col.length}</span></h3>${col.map((w) => `<div class="bcard"><span class="t">${esc(w.title)}</span><span class="m"><span class="mono">${w.id}</span>${SEP}${esc(P[w.proj].name)}</span><span class="m">${av(w.who, 24)}${w.who ? mlink(w.who) : "Unassigned"}</span>${showsNeedsYou(w) ? `<span>${pill("Needs you", "amber", "bell", true)}</span>` : ""}</div>`).join("") || '<p class="muted" style="font-size:13px">None</p>'}</section>`;
+    return `<section class="bcol" aria-label="${esc(st)}"><h3><span>${esc(st)}</span><span class="muted">${col.length}</span></h3>${col.map((w) => `<div class="bcard" data-work-id="${esc(w.id)}"><span class="t">${esc(w.title)}</span><span class="m"><span class="mono">${w.id}</span>${SEP}${esc(P[w.proj].name)}</span><span class="m">${av(w.who, 24)}${w.who ? mlink(w.who) : "Unassigned"}</span>${showsNeedsYou(w) ? `<span>${pill("Needs you", "amber", "bell", true)}</span>` : ""}</div>`).join("") || '<p class="muted" style="font-size:13px">None</p>'}</section>`;
   }).join("")}</div>`;
 }
 
@@ -5874,20 +5899,51 @@ function memberRows(ids, opts = {}) {
   }).join("")}</ul>`;
 }
 
-const WORK_VIEWS = [["needs-me", "Needs me"], ["mine", "Mine"], ["by-project", "By project"], ["by-assignee", "By assignee"]];
+const WORK_VIEWS = [["needs-me", "Needs me"], ["mine", "Mine"], ["by-project", "By project"], ["by-assignee", "By assignee"], ["by-status", "By status"]];
+const WORK_GROUPS = { "by-project": "proj", "by-assignee": "who", "by-status": "status" };
+const TASK_PRIORITIES = ["Low", "Medium", "High"];
+const WORK_TASK_STORE = "agentic-org.v6.task.";
+S.workQuery = "";
+S.workStatus = "all";
+
 function workView() {
   const v = qs().get("view");
   if (WORK_VIEWS.some(([k]) => k === v)) return v;
   return W.some(needsMe) ? "needs-me" : "mine";
 }
+
+function workResults(view) {
+  const query = S.workQuery.trim().toLowerCase();
+  const status = S.workStatus;
+  let items = W;
+  if (view === "needs-me") items = items.filter(needsMe);
+  if (view === "mine") items = items.filter((w) => w.who === "you");
+  if (status !== "all") items = items.filter((w) => w.status === status);
+  if (query) items = items.filter((w) => [
+    w.id, w.title, P[w.proj].name, M[w.who]?.name,
+    ...((w.subtasks ?? []).flatMap((task) => [task.id, task.title])),
+  ].some((value) => value?.toLowerCase().includes(query)));
+
+  if (!items.length) {
+    const text = query || status !== "all" ? "No work matches these filters."
+      : view === "needs-me" ? "Nothing needs you in Work."
+      : view === "mine" ? "Nothing is assigned to you." : "No work items yet.";
+    return `<p class="empty-row">${text}</p>`;
+  }
+  return S.workLayout === "board" ? board(items) : workList(items, WORK_GROUPS[view]);
+}
+
+function refreshWorkResults() {
+  document.getElementById("work-results").innerHTML = workResults(workView());
+}
+
+function statusOptions(statuses, selected) {
+  return statuses.map((status) => `<option${status === selected ? " selected" : ""}>${esc(status)}</option>`).join("");
+}
+
 function pageWork() {
-  const view = workView(); S.workView = view;
-  let sel = W, group = null;
-  if (view === "needs-me") sel = W.filter(needsMe);
-  else if (view === "mine") sel = W.filter((w) => w.who === "you");
-  else if (view === "by-project") group = "proj";
-  else group = "who";
-  const emptyText = view === "needs-me" ? "Nothing needs you in Work." : view === "mine" ? "Nothing is assigned to you." : `No work items yet. Use New${ic("chev-down", "ic16")} to add one.`;
+  const view = workView();
+  S.workView = view;
   return `<header class="ph work-header">
     <div class="ph-t">
       <h1 tabindex="-1">Work</h1>
@@ -5895,10 +5951,101 @@ function pageWork() {
     </div>
     <div class="ph-actions">
       ${showMenu("wshow", [["workView", "Show", WORK_VIEWS]], "left")}
+      <input class="field work-search" id="work-search" type="search" aria-label="Search this work view" placeholder="Search work…" autocomplete="off" value="${esc(S.workQuery)}">
+      <select class="field work-status-filter" id="work-status-filter" aria-label="Filter by status">
+        <option value="all">All statuses</option>${statusOptions(ALL_STATUSES, S.workStatus)}
+      </select>
       ${workDisplayMenu("workLayout")}
+      <button class="btn primary" id="work-new-task" type="button" data-act="work-new-task">${ic("plus", "ic16")}New task</button>
     </div>
-  </header>` +
-    (S.workLayout === "board" ? (sel.length ? board(sel) : `<p class="empty-row">${emptyText}</p>`) : workList(sel, group, emptyText));
+  </header><div id="work-results">${workResults(view)}</div>`;
+}
+
+function openWorkTask(trigger) {
+  const status = STATUSES.task.includes(S.workStatus) ? S.workStatus : STATUSES.task[0];
+  const projects = Object.entries(P).filter(([, project]) => !project.archived);
+  const form = `<dialog class="work-task-dialog" id="work-task-dialog" aria-labelledby="work-task-title">
+    <h2 id="work-task-title">New task</h2>
+    <form class="work-task-form" data-form="work-create">
+      <label>Title<input class="field" name="title" required maxlength="160" autofocus></label>
+      <label>Project<select class="field" name="project">${projects.map(([id, project]) => `<option value="${esc(id)}">${esc(project.name)}</option>`).join("")}</select></label>
+      <div class="work-task-fields">
+        <label>Assignee<select class="field" name="assignee">
+          ${memberIds().map((id) => `<option value="${esc(id)}"${id === "you" ? " selected" : ""}>${esc(M[id].name)}</option>`).join("")}
+          <option value="">Unassigned</option>
+        </select></label>
+        <label>Status<select class="field" name="status">${statusOptions(STATUSES.task, status)}</select></label>
+        <label>Priority<select class="field" name="priority">${statusOptions(TASK_PRIORITIES, "Medium")}</select></label>
+        <label>ETA (hours)<input class="field" name="eta" type="number" min="0" step="any" placeholder="Optional"></label>
+      </div>
+      <div class="actions">
+        <button class="btn outline" type="button" data-act="work-cancel-task">Cancel</button>
+        <button class="btn primary" type="submit">Create task</button>
+      </div>
+    </form>
+  </dialog>`;
+  const overlay = document.getElementById("overlay-root");
+  overlay.insertAdjacentHTML("beforeend", form);
+  const dialog = document.getElementById("work-task-dialog");
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  trigger.focus({ preventScroll: true });
+  dialog.showModal();
+}
+
+function loadWorkTasks() {
+  try {
+    const tasks = [];
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith(WORK_TASK_STORE)) continue;
+      try {
+        const { id, title, proj, who, status, pri, etaHours, createdAt } = JSON.parse(localStorage.getItem(key));
+        if (key !== WORK_TASK_STORE + id || !/^T-[0-9A-F]{8}$/.test(id) || typeof title !== "string" || !title.trim() ||
+          !own(P, proj) || (who !== null && !own(M, who)) || !STATUSES.task.includes(status) || !TASK_PRIORITIES.includes(pri) ||
+          (etaHours != null && (!Number.isFinite(etaHours) || etaHours < 0)) || !Number.isFinite(createdAt)) continue;
+        tasks.push({ id, title, proj, who, status, pri, etaHours, createdAt, kind: "task" });
+      } catch (e) {}
+    }
+    tasks.sort((a, b) => b.createdAt - a.createdAt);
+    W.unshift(...tasks);
+  } catch (e) {}
+}
+
+function createWorkTask(form) {
+  const data = new FormData(form);
+  const title = data.get("title").trim();
+  if (!title) {
+    form.elements.title.setCustomValidity("Enter a task title.");
+    form.elements.title.reportValidity();
+    return;
+  }
+  let id;
+  do { id = "T-" + crypto.randomUUID().slice(0, 8).toUpperCase(); } while (W.some((w) => w.id === id));
+  const task = {
+    id, title, kind: "task", createdAt: Date.now(),
+    proj: data.get("project"), who: data.get("assignee") || null,
+    status: data.get("status"), pri: data.get("priority"),
+    etaHours: data.get("eta") === "" ? null : Number(data.get("eta")),
+  };
+  let saved = true;
+  try { localStorage.setItem(WORK_TASK_STORE + id, JSON.stringify(task)); } catch (e) { saved = false; }
+  W.unshift(task);
+  form.closest("dialog").close();
+  S.workQuery = "";
+  S.workStatus = "all";
+
+  const reveal = () => {
+    document.getElementById("work-new-task")?.focus({ preventScroll: true });
+    document.querySelector(`#work-results [data-work-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    toast(saved ? `Created ${id}` : `Created ${id} for this session`);
+  };
+  const view = workView();
+  if (view === "needs-me" || (view === "mine" && task.who !== "you")) {
+    window.addEventListener("hashchange", reveal, { once: true });
+    location.hash = "#/work?view=by-project";
+  } else {
+    render(false);
+    reveal();
+  }
 }
 
 function msgHtml(m) {
@@ -7763,6 +7910,8 @@ document.addEventListener("click", (e) => {
       const again = menuId ? document.querySelector(`[aria-controls="${menuId}"]`) : scope?.querySelector(`[data-k="${t.dataset.k}"][data-v="${v}"]`);
       if (again) again.focus(); break;
     }
+    case "work-new-task": openWorkTask(t); break;
+    case "work-cancel-task": t.closest("dialog").close(); break;
     case "run": S.openRuns[id] = !S.openRuns[id]; render(false); { const b = document.querySelector(`[data-act="run"][data-id="${id}"]`); if (b) b.focus(); } break;
     case "v4-acc": S.v4Open[id] = !S.v4Open[id]; render(false); { const b = document.querySelector(`[data-act="v4-acc"][data-id="${id}"]`); if (b) b.focus(); } break;
     case "spot-step": {
@@ -7916,15 +8065,31 @@ document.addEventListener("click", (e) => {
   if (CMDK.open && e.target.closest && e.target.closest('.cmdk-ai-card a[href^="#/"]')) { closeCmdk(false); }
 });
 document.addEventListener("input", (e) => {
+  if (e.target.id === "work-search") {
+    S.workQuery = e.target.value;
+    refreshWorkResults();
+  }
+  if (e.target.name === "title" && e.target.form?.dataset.form === "work-create") e.target.setCustomValidity("");
   if (e.target.id === "cmdk-input") { CMDK.q = e.target.value; CMDK.active = 0; renderCmdk(); }
+});
+document.addEventListener("change", (e) => {
+  if (e.target.id !== "work-status-filter") return;
+  S.workStatus = e.target.value;
+  refreshWorkResults();
+});
+document.addEventListener("mousedown", (e) => {
+  // Keep focus in the menu until the pointer selection is dispatched.
+  if (e.target.closest?.(".work-header .menu button")) e.preventDefault();
 });
 document.addEventListener("focusin", (e) => { if (e.target.closest && !e.target.closest(".menu-wrap")) closeMenus(); });
 document.addEventListener("submit", (e) => {
   if (e.target.id === "c-prompt-form" || e.target.id === "hb-ask-form") return;
   e.preventDefault();
+  if (e.target.dataset.form === "work-create") { createWorkTask(e.target); return; }
   if (e.target.dataset.form === "send") { const inp = document.getElementById("compose"); const txt = inp.value.trim(); if (!txt) return; CH[e.target.dataset.id].msgs.push({ id: "u" + Date.now(), who: "you", time: "now", text: txt }); render(false); const c = document.getElementById("compose"); if (c) c.focus(); const ms = document.querySelector(".chmain .msgs"); if (ms) ms.scrollTop = ms.scrollHeight; }
 });
 document.addEventListener("keydown", (e) => {
+  if (e.target.closest?.(".work-task-dialog")) return;
   if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K")) {
     e.preventDefault();
     if (CMDK.open) closeCmdk(true); else openCmdk();
@@ -8038,7 +8203,7 @@ document.addEventListener("keydown", (e) => {
 });
 if (window.matchMedia) { const mq = window.matchMedia("(max-width: 959px)"); const onMq = () => render(false); if (mq.addEventListener) mq.addEventListener("change", onMq); else if (mq.addListener) mq.addListener(onMq);
   const mqp = window.matchMedia("(max-width: 639px)"); if (mqp.addEventListener) mqp.addEventListener("change", applyShortcuts); else if (mqp.addListener) mqp.addListener(applyShortcuts); }
-window.addEventListener("hashchange", () => { document.body.classList.remove("drawer"); S.thread = null; S.replying = null; S.replyMode = null; S.confirmDeny = null; IN.forEach((i) => { if (i.handled) i.handledNow = false; }); render(true); });
+window.addEventListener("hashchange", () => { document.querySelector(".work-task-dialog[open]")?.close(); document.body.classList.remove("drawer"); S.thread = null; S.replying = null; S.replyMode = null; S.confirmDeny = null; IN.forEach((i) => { if (i.handled) i.handledNow = false; }); render(true); });
 
 /* ---------------------------------------------------------------- dialogs */
 let sheetReturn = null;
@@ -8210,6 +8375,7 @@ applyNavCollapsed();
 if (!location.hash) {
   try { history.replaceState(null, "", "#/home"); } catch (e) {}
 }
+loadWorkTasks();
 render(true);
 </script>
 </body>
