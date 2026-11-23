@@ -113,7 +113,7 @@ html[data-theme="cozy"] {
     --cozy-secondary-edge: var(--line2);
   }
 
-  & body::before, & body::after, & .topbar::before,
+  & body::before, & body::after,
   & .h4-cta-fill, & .h4-cta-sheen, & .hb-spot::before { display: none; }
 
   & .cozy-room {
@@ -209,18 +209,24 @@ html[data-theme="cozy"] {
     pointer-events: none;
   }
 
-  & :is(.cozy-shell, .sidebar, .topbar, .proto-banner) {
+  & :is(.cozy-shell, .sidebar, .proto-banner) {
     background: var(--cozy-shell);
     backdrop-filter: blur(28px) saturate(135%);
     -webkit-backdrop-filter: blur(28px) saturate(135%);
   }
 
   & .sidebar { box-shadow: inset -1px 0 var(--line); }
-  & .topbar { border-bottom: 1px solid var(--line); gap: 8px; }
+  & .topbar { gap: 8px; }
+  & .topbar::before {
+    background: var(--cozy-shell);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    mask-image: linear-gradient(#000 30%, transparent);
+  }
   & .proto-banner { border-bottom-color: var(--line); box-shadow: var(--cozy-panel-shadow); }
   & .proto-hotzone::after { background: var(--line2); }
   & .proto-hotzone:hover::after { background: var(--gray-400); }
-  & .home-scroll-hint { background: var(--cozy-shell); }
+  & .home-scroll-hint { background: transparent; }
 
   & .hb {
     --hb-surface: var(--cozy-panel);
@@ -374,6 +380,10 @@ html[data-theme="cozy"] {
   & :focus-visible { outline-color: var(--tone-accent-ink); }
   & body.a11y-mode :is(.field, .search, .cmdk-shell) { border: 1px solid var(--line2); }
 
+  @media (min-width: 1120px) {
+    & .topbar .cozy-contrast { position: absolute; inset-inline-end: var(--gutter); }
+    & .topbar .cmdk-shell { max-width: calc(100% - 290px); }
+  }
   @media (max-width: 639px) {
     & .topbar { padding-inline: 60px 10px; }
     & .cozy-contrast { padding-inline: 8px; font-size: .75rem; }
