@@ -10,7 +10,9 @@ use org_proto::budgets::{
     BudgetScopeKind, BudgetSet, BudgetStop,
 };
 use org_proto::costs::{
-    CostExportCsv, CostPriceList, CostPriceSet, CostQuery, CostUsageCorrect, CostUsageRecord,
+    CostExportCsv, CostPriceList, CostPriceSet, CostQuery, CostSubscriptionUsageCollect,
+    CostSubscriptionUsageCredentialRevoke, CostSubscriptionUsageCredentialSet,
+    CostSubscriptionUsageList, CostUsageCorrect, CostUsageRecord,
 };
 use org_proto::inbox::{
     Action, InboxClears, InboxCounts, InboxItem, InboxKind, InboxState, Open, OpenTarget,
@@ -23,13 +25,27 @@ use crate::live::LiveEvents;
 
 /// Whether `request` belongs to the `L2`/`L3` `cost.*` or `budget.*` RPC families.
 pub(crate) fn is_cost_or_budget_method(request: &Request) -> bool {
+    is_cost_method(request) || is_subscription_usage_method(request) || is_budget_method(request)
+}
+
+fn is_cost_method(request: &Request) -> bool {
     request.is::<CostPriceSet>()
         || request.is::<CostPriceList>()
         || request.is::<CostUsageRecord>()
         || request.is::<CostUsageCorrect>()
         || request.is::<CostQuery>()
         || request.is::<CostExportCsv>()
-        || request.is::<BudgetSet>()
+}
+
+fn is_subscription_usage_method(request: &Request) -> bool {
+    request.is::<CostSubscriptionUsageList>()
+        || request.is::<CostSubscriptionUsageCollect>()
+        || request.is::<CostSubscriptionUsageCredentialSet>()
+        || request.is::<CostSubscriptionUsageCredentialRevoke>()
+}
+
+fn is_budget_method(request: &Request) -> bool {
+    request.is::<BudgetSet>()
         || request.is::<BudgetClear>()
         || request.is::<BudgetExtendOnce>()
         || request.is::<BudgetStop>()
@@ -106,6 +122,63 @@ fn dispatch_cost_rpc(
         return Some(run_call::<CostExportCsv>(request, |p| {
             map_office(office.cost_export_csv(caller, p))
         }));
+    }
+    dispatch_subscription_usage_rpc(office, sessions, caller, request)
+}
+
+fn dispatch_subscription_usage_rpc(
+    office: &Office,
+    sessions: Option<&Arc<SessionManager>>,
+    caller: &str,
+    request: &Request,
+) -> Option<Response> {
+    if request.is::<CostSubscriptionUsageList>() {
+        return Some(run_call::<CostSubscriptionUsageList>(request, |p| {
+            if let Some(mgr) = sessions {
+                mgr.subscription_usage_list(caller, p)
+            } else {
+                map_office(office.cost_subscription_usage_list(caller, p))
+            }
+        }));
+    }
+    if request.is::<CostSubscriptionUsageCollect>() {
+        return Some(run_call::<CostSubscriptionUsageCollect>(request, |p| {
+            let mgr = sessions.ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::Unsupported,
+                    "session manager unavailable for subscription usage collection",
+                )
+            })?;
+            mgr.subscription_usage_collect(caller, p)
+        }));
+    }
+    if request.is::<CostSubscriptionUsageCredentialSet>() {
+        return Some(run_call::<CostSubscriptionUsageCredentialSet>(
+            request,
+            |p| {
+                let mgr = sessions.ok_or_else(|| {
+                    ApiError::new(
+                        ErrorCode::Unsupported,
+                        "session manager unavailable for usage credential custody",
+                    )
+                })?;
+                mgr.subscription_usage_credential_set(caller, p)
+            },
+        ));
+    }
+    if request.is::<CostSubscriptionUsageCredentialRevoke>() {
+        return Some(run_call::<CostSubscriptionUsageCredentialRevoke>(
+            request,
+            |p| {
+                let mgr = sessions.ok_or_else(|| {
+                    ApiError::new(
+                        ErrorCode::Unsupported,
+                        "session manager unavailable for usage credential custody",
+                    )
+                })?;
+                mgr.subscription_usage_credential_revoke(caller, p)
+            },
+        ));
     }
     None
 }

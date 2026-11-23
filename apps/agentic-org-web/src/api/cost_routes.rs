@@ -11,8 +11,11 @@ use org_proto::budgets::{
 };
 use org_proto::costs::{
     CostExportCsv, CostPriceList, CostPriceListParams, CostPriceSet, CostPriceSetParams, CostQuery,
-    CostQueryParams, CostUsageCorrect, CostUsageCorrectParams, CostUsageRecord,
-    CostUsageRecordParams,
+    CostQueryParams, CostSubscriptionUsageCollect, CostSubscriptionUsageCollectParams,
+    CostSubscriptionUsageCredentialRevoke, CostSubscriptionUsageCredentialRevokeParams,
+    CostSubscriptionUsageCredentialSet, CostSubscriptionUsageCredentialSetParams,
+    CostSubscriptionUsageList, CostSubscriptionUsageListParams, CostUsageCorrect,
+    CostUsageCorrectParams, CostUsageRecord, CostUsageRecordParams,
 };
 use org_proto::web::{ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
@@ -30,6 +33,10 @@ pub enum CostRoute {
     CostExport(CallerAuth, String),
     UsageRecord(CallerAuth, String),
     UsageCorrect(CallerAuth, String),
+    SubscriptionUsageList(CallerAuth, String, CostSubscriptionUsageListParams),
+    SubscriptionUsageCollect(CallerAuth, String),
+    SubscriptionUsageCredentialSet(CallerAuth, String),
+    SubscriptionUsageCredentialRevoke(CallerAuth, String),
     BudgetList(CallerAuth, String, BudgetListParams),
     BudgetGet(CallerAuth, String),
     BudgetSet(CallerAuth, String),
@@ -46,6 +53,14 @@ pub enum CostCall {
     CostExport(CallerAuth, String, CostQueryParams),
     UsageRecord(CallerAuth, String, Box<CostUsageRecordParams>),
     UsageCorrect(CallerAuth, String, CostUsageCorrectParams),
+    SubscriptionUsageList(CallerAuth, String, CostSubscriptionUsageListParams),
+    SubscriptionUsageCollect(CallerAuth, String, CostSubscriptionUsageCollectParams),
+    SubscriptionUsageCredentialSet(CallerAuth, String, CostSubscriptionUsageCredentialSetParams),
+    SubscriptionUsageCredentialRevoke(
+        CallerAuth,
+        String,
+        CostSubscriptionUsageCredentialRevokeParams,
+    ),
     BudgetList(CallerAuth, String, BudgetListParams),
     BudgetGet(CallerAuth, String, BudgetGetParams),
     BudgetSet(CallerAuth, String, BudgetSetParams),
@@ -169,6 +184,29 @@ pub(super) fn try_route(
         ["costs", "usage", "correct"] if post && !query => {
             Some(route_post(api, request, org, CostRoute::UsageCorrect))
         }
+        ["costs", "subscriptions", "usage"] if is_get => {
+            Some(route_subscription_usage_list(api, request, org))
+        }
+        ["costs", "subscriptions", "usage", "collect"] if post && !query => Some(route_post(
+            api,
+            request,
+            org,
+            CostRoute::SubscriptionUsageCollect,
+        )),
+        ["costs", "subscriptions", "usage", "credentials"] if post && !query => Some(route_post(
+            api,
+            request,
+            org,
+            CostRoute::SubscriptionUsageCredentialSet,
+        )),
+        ["costs", "subscriptions", "usage", "credentials", "revoke"] if post && !query => {
+            Some(route_post(
+                api,
+                request,
+                org,
+                CostRoute::SubscriptionUsageCredentialRevoke,
+            ))
+        }
         ["budgets"] if is_get => Some(route_budget_list(api, request, org)),
         ["budgets", "get"] if post && !query => {
             Some(route_post(api, request, org, CostRoute::BudgetGet))
@@ -190,6 +228,61 @@ pub(super) fn try_route(
         }
         _ => None,
     }
+}
+
+fn parse_subscription_usage_list_query(
+    query: Option<&str>,
+) -> Result<CostSubscriptionUsageListParams, ApiReply> {
+    let mut out = CostSubscriptionUsageListParams::default();
+    for (k, v) in parse_query_pairs(query)? {
+        match k.as_str() {
+            "connection_id" => out.connection_id = Some(v),
+            "provider_type" => out.provider_type = Some(v),
+            "include_archived" => {
+                out.include_archived = match v.as_str() {
+                    "true" | "1" => true,
+                    "false" | "0" => false,
+                    _ => return Err(invalid()),
+                };
+            }
+            "limit" => {
+                let n: u32 = v.parse().map_err(|_| invalid())?;
+                if n == 0 || n > 100 {
+                    return Err(invalid());
+                }
+                out.limit = Some(n);
+            }
+            "cursor" => {
+                if v.is_empty() || v.len() > 256 {
+                    return Err(invalid());
+                }
+                out.cursor = Some(v);
+            }
+            "totals_cursor" => {
+                if v.is_empty() || v.len() > 256 {
+                    return Err(invalid());
+                }
+                out.totals_cursor = Some(v);
+            }
+            _ => return Err(invalid()),
+        }
+    }
+    Ok(out)
+}
+
+fn route_subscription_usage_list(
+    api: &SessionApi,
+    request: &Parts,
+    org: &str,
+) -> Result<Route, ApiReply> {
+    let pair = api.caller_auth(request)?;
+    valid_org_id(org)?;
+    let params = parse_subscription_usage_list_query(request.uri.query())?;
+    Ok(Route::Cost(CostRoute::SubscriptionUsageList(
+        pair,
+        org.to_owned(),
+        params,
+    )))
 }
 
 fn route_price_list(api: &SessionApi, request: &Parts, org: &str) -> Result<Route, ApiReply> {
@@ -245,6 +338,26 @@ pub(super) fn prepare(route: CostRoute, bytes: &[u8]) -> Result<PreparedCall<Cal
         }
         CostRoute::UsageCorrect(pair, org) => {
             CostCall::UsageCorrect(pair, org, decode_body(bytes)?)
+        }
+        CostRoute::SubscriptionUsageList(pair, org, params) => {
+            if !bytes.is_empty() {
+                return Err(invalid());
+            }
+            CostCall::SubscriptionUsageList(pair, org, params)
+        }
+        CostRoute::SubscriptionUsageCollect(pair, org) => {
+            let params = if bytes.is_empty() {
+                CostSubscriptionUsageCollectParams::default()
+            } else {
+                decode_body(bytes)?
+            };
+            CostCall::SubscriptionUsageCollect(pair, org, params)
+        }
+        CostRoute::SubscriptionUsageCredentialSet(pair, org) => {
+            CostCall::SubscriptionUsageCredentialSet(pair, org, decode_body(bytes)?)
+        }
+        CostRoute::SubscriptionUsageCredentialRevoke(pair, org) => {
+            CostCall::SubscriptionUsageCredentialRevoke(pair, org, decode_body(bytes)?)
         }
         CostRoute::BudgetList(pair, org, params) => {
             if !bytes.is_empty() {
@@ -332,6 +445,55 @@ async fn run_office<C: org_proto::Call>(
     }
 }
 
+async fn run_office_isolated_collect(
+    api: &SessionApi,
+    pair: CallerAuth,
+    org_id: &str,
+    params: &CostSubscriptionUsageCollectParams,
+) -> ApiReply {
+    let mut office_id = match resolve_hq_office(api, pair, org_id).await {
+        Ok(id) => id,
+        Err(Failure::Refused(_)) => return unavailable(),
+        Err(error) => return failure(error),
+    };
+    let auth = api.auth(&pair);
+    // Verify live owner authority (and warm the shared Web channel) on the fast read path
+    // BEFORE allocating a bounded isolated collection channel slot.
+    let probe = CostSubscriptionUsageListParams {
+        limit: Some(1),
+        ..Default::default()
+    };
+    let mut auth_check = api
+        .offices
+        .call_typed::<CostSubscriptionUsageList>(&auth, &office_id, &probe, true)
+        .await;
+    if matches!(
+        &auth_check,
+        Err(OfficeFailure::Refused(e)) if e.code == org_proto::ErrorCode::NotAuthorized
+    ) {
+        office_id = match revalidate_and_resolve_hq(api, pair, org_id).await {
+            Ok(id) => id,
+            Err(Failure::Refused(_)) => return unavailable(),
+            Err(error) => return failure(error),
+        };
+        auth_check = api
+            .offices
+            .call_typed::<CostSubscriptionUsageList>(&auth, &office_id, &probe, true)
+            .await;
+    }
+    if let Err(err) = auth_check {
+        return map_office_failure(err);
+    }
+    match api
+        .offices
+        .call_typed_isolated::<CostSubscriptionUsageCollect>(&auth, &office_id, params)
+        .await
+    {
+        Ok(res) => result(res),
+        Err(err) => map_office_failure(err),
+    }
+}
+
 pub(super) async fn execute(api: &SessionApi, call: CostCall) -> ApiReply {
     match call {
         CostCall::PriceList(pair, org, params) => {
@@ -357,6 +519,22 @@ pub(super) async fn execute(api: &SessionApi, call: CostCall) -> ApiReply {
         }
         CostCall::UsageCorrect(pair, org, params) => {
             run_office::<CostUsageCorrect>(api, pair, &org, &params, false).await
+        }
+        CostCall::SubscriptionUsageList(pair, org, params) => {
+            run_office::<CostSubscriptionUsageList>(api, pair, &org, &params, true).await
+        }
+        CostCall::SubscriptionUsageCollect(pair, org, mut params) => {
+            if params.time_zone.is_none() {
+                params.time_zone = api.validate(pair).ok().and_then(|s| s.account.time_zone);
+            }
+            run_office_isolated_collect(api, pair, &org, &params).await
+        }
+        CostCall::SubscriptionUsageCredentialSet(pair, org, params) => {
+            run_office::<CostSubscriptionUsageCredentialSet>(api, pair, &org, &params, false).await
+        }
+        CostCall::SubscriptionUsageCredentialRevoke(pair, org, params) => {
+            run_office::<CostSubscriptionUsageCredentialRevoke>(api, pair, &org, &params, false)
+                .await
         }
         CostCall::BudgetList(pair, org, params) => {
             run_office::<BudgetList>(api, pair, &org, &params, true).await
@@ -404,5 +582,24 @@ mod tests {
         assert_eq!(budgets.scope_kind, Some(BudgetScopeKind::Agent));
         assert_eq!(budgets.agent_id.as_deref(), Some("a1"));
         assert!(parse_budget_list_query(Some("scope_kind=project")).is_err());
+
+        let sub = parse_subscription_usage_list_query(Some(
+            "connection_id=c1&provider_type=anthropic&include_archived=true&limit=25&cursor=claude-a&totals_cursor=claude-sonnet-4",
+        ))
+        .ok()
+        .expect("parse subscription usage query");
+        assert_eq!(sub.connection_id.as_deref(), Some("c1"));
+        assert_eq!(sub.provider_type.as_deref(), Some("anthropic"));
+        assert!(sub.include_archived);
+        assert_eq!(sub.limit, Some(25));
+        assert_eq!(sub.cursor.as_deref(), Some("claude-a"));
+        assert_eq!(sub.totals_cursor.as_deref(), Some("claude-sonnet-4"));
+        assert!(parse_subscription_usage_list_query(Some("cursor=")).is_err());
+        assert!(parse_subscription_usage_list_query(Some("totals_cursor=")).is_err());
+        assert!(parse_subscription_usage_list_query(Some("limit=0")).is_err());
+        assert!(parse_subscription_usage_list_query(Some("limit=101")).is_err());
+        assert!(parse_subscription_usage_list_query(Some("limit=abc")).is_err());
+        assert!(parse_subscription_usage_list_query(Some("include_archived=maybe")).is_err());
+        assert!(parse_subscription_usage_list_query(Some("bogus=1")).is_err());
     }
 }

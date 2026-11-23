@@ -1939,3 +1939,223 @@ fn l2_and_l3_conformance_on_sqlite_with_protected_db_delete_and_rebuild() {
         .unwrap();
     reopened.close().unwrap();
 }
+
+fn seed_subscription_connection(office: &Office, owner: &str) -> String {
+    use org_proto::hiring::{ProviderConnectionCreate, ProviderConnectionCreateParams};
+    use org_proto::Request;
+    let conn_id = next_uuid();
+    let req = Request::new::<ProviderConnectionCreate>(
+        1,
+        &ProviderConnectionCreateParams {
+            command_id: next_uuid(),
+            connection_id: conn_id.clone(),
+            default_profile_id: next_uuid(),
+            key: "sub-claude-1".into(),
+            name: "Claude Sub 1".into(),
+            provider_type: "anthropic".into(),
+            auth_mode: "subscription_cli".into(),
+            subscription_identity: Some("sub-ident-1".into()),
+            runtime_driver: "claude".into(),
+            endpoint_url: None,
+            max_concurrent_turns: 1,
+        },
+    )
+    .unwrap();
+    let resp = office.dispatch_hiring_rpc(Some(owner), &req).unwrap();
+    assert!(matches!(resp.outcome, org_proto::Outcome::Result(_)));
+    conn_id
+}
+
+fn sample_subscription_snapshot(
+    office: &Office,
+    conn_id: &str,
+    now_ms: u64,
+    attempt_seq: u64,
+    daily_tokens: u64,
+) -> crate::accounting::StoredSubscriptionUsageSnapshot {
+    use org_proto::costs::{
+        SubscriptionModelUsageView, SubscriptionUsageAuthSource, SubscriptionUsageStatus,
+        SubscriptionUsageWindowView,
+    };
+    let ts = crate::time::format_rfc3339_ms(now_ms);
+    crate::accounting::StoredSubscriptionUsageSnapshot {
+        organization_id: office.info().org_id.clone(),
+        office_id: office.info().office_id.clone(),
+        connection_id: conn_id.to_owned(),
+        attempt_seq,
+        status: SubscriptionUsageStatus::Ok,
+        auth_source: SubscriptionUsageAuthSource::DedicatedUsageCredential,
+        collected_at: ts.clone(),
+        last_ok_collected_at: Some(ts),
+        fresh_until: Some(crate::time::format_rfc3339_ms(
+            now_ms + crate::accounting::SUBSCRIPTION_USAGE_FRESHNESS_MS,
+        )),
+        issue_code: None,
+        message: None,
+        models: vec![SubscriptionModelUsageView {
+            model: "claude-sonnet-4".into(),
+            total: SubscriptionUsageWindowView {
+                requests: Some(40),
+                total_tokens: Some(250_000),
+                ..Default::default()
+            },
+            short_term: None,
+            daily: SubscriptionUsageWindowView {
+                requests: Some(5),
+                total_tokens: Some(daily_tokens),
+                utilization_bps: Some(1_250),
+                ..Default::default()
+            },
+            weekly: SubscriptionUsageWindowView {
+                requests: Some(25),
+                total_tokens: Some(140_000),
+                utilization_bps: Some(4_500),
+                ..Default::default()
+            },
+        }],
+    }
+}
+
+fn verify_sqlite_subscription_usage_rebuild(fx: CostBudgetFixture) {
+    use org_proto::costs::{CostSubscriptionUsageListParams, SubscriptionUsageStatus};
+    let acc_db = fx
+        .roots
+        .runtime
+        .join(&fx.office.info().office_id)
+        .join("protected")
+        .join("accounting.db");
+    assert!(acc_db.exists());
+    let CostBudgetFixture {
+        _tmp,
+        folder,
+        roots,
+        custody,
+        clock,
+        office,
+        owner,
+        ..
+    } = fx;
+    office.close().unwrap();
+    for suffix in ["", "-wal", "-shm"] {
+        let mut p = acc_db.as_os_str().to_owned();
+        p.push(suffix);
+        let _ = std::fs::remove_file(std::path::Path::new(&p));
+    }
+    let instance_id = custody.identity.instance_id.as_str().to_owned();
+    let reopened = Office::open_with(
+        folder,
+        None,
+        &instance_id,
+        roots,
+        custody,
+        Options {
+            engine: EngineChoice::Sqlite,
+            clock,
+            testing: Default::default(),
+            before_final_checks: None,
+        },
+    )
+    .expect("reopen after deleting protected/accounting.db");
+    let rebuilt = reopened
+        .cost_subscription_usage_list(&owner, CostSubscriptionUsageListParams::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(rebuilt.snapshots.len(), 1);
+    assert_eq!(rebuilt.snapshots[0].status, SubscriptionUsageStatus::Ok);
+    assert_eq!(rebuilt.snapshots[0].models.len(), 1);
+    assert_eq!(
+        rebuilt.snapshots[0].models[0].daily.total_tokens,
+        Some(30_000)
+    );
+    assert!(rebuilt.snapshots[0].stale);
+    assert!(rebuilt.partial_totals);
+    assert_eq!(rebuilt.excluded_snapshot_count, 1);
+    assert!(rebuilt.totals_by_model.is_empty());
+
+    // After restart, next_subscription_attempt_seq seeds above persisted high-water mark (200)
+    // so new refreshes overwrite cleanly instead of being silently fenced out.
+    let next_seq = reopened.next_subscription_attempt_seq();
+    assert!(next_seq > 200);
+    let refreshed = sample_subscription_snapshot(
+        &reopened,
+        &rebuilt.snapshots[0].connection_id,
+        reopened.current_time_ms(),
+        next_seq,
+        42_000,
+    );
+    reopened
+        .save_subscription_usage_snapshot(refreshed)
+        .unwrap()
+        .unwrap();
+    let after_refresh = reopened
+        .cost_subscription_usage_list(&owner, CostSubscriptionUsageListParams::default())
+        .unwrap()
+        .unwrap();
+    assert!(!after_refresh.snapshots[0].stale);
+    assert_eq!(
+        after_refresh.totals_by_model[0].daily.total_tokens,
+        Some(42_000)
+    );
+    reopened.close().unwrap();
+}
+
+#[test]
+fn task79_subscription_usage_dual_engine_staleness_and_sqlite_rebuild() {
+    use org_proto::costs::CostSubscriptionUsageListParams;
+    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
+        let fx = seed_fixture(engine);
+        let conn_id = seed_subscription_connection(&fx.office, &fx.owner);
+        assert_eq!(
+            fx.office
+                .cost_subscription_usage_list(
+                    &fx.pm_person,
+                    CostSubscriptionUsageListParams::default()
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotAuthorized
+        );
+        let now_ms = fx.office.current_time_ms();
+        let newer = sample_subscription_snapshot(&fx.office, &conn_id, now_ms, 200, 30_000);
+        fx.office
+            .save_subscription_usage_snapshot(newer)
+            .unwrap()
+            .unwrap();
+        // Stale lower attempt_seq must be fenced out and NOT overwrite the newer snapshot!
+        let older_attempt =
+            sample_subscription_snapshot(&fx.office, &conn_id, now_ms, 199, 999_999);
+        fx.office
+            .save_subscription_usage_snapshot(older_attempt)
+            .unwrap()
+            .unwrap();
+        let fresh = fx
+            .office
+            .cost_subscription_usage_list(&fx.owner, CostSubscriptionUsageListParams::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(fresh.snapshots.len(), 1);
+        assert!(!fresh.snapshots[0].stale);
+        assert!(!fresh.is_api_equivalent_estimate);
+        assert!(!fresh.partial_totals);
+        assert_eq!(fresh.excluded_snapshot_count, 0);
+        assert_eq!(fresh.totals_by_model[0].daily.total_tokens, Some(30_000));
+        assert_eq!(fresh.totals_by_model[0].weekly.total_tokens, Some(140_000));
+
+        fx.clock
+            .set(now_ms + crate::accounting::SUBSCRIPTION_USAGE_FRESHNESS_MS + 1_000);
+        let stale = fx
+            .office
+            .cost_subscription_usage_list(&fx.owner, CostSubscriptionUsageListParams::default())
+            .unwrap()
+            .unwrap();
+        assert!(stale.snapshots[0].stale);
+        assert!(stale.partial_totals);
+        assert_eq!(stale.excluded_snapshot_count, 1);
+        assert!(stale.totals_by_model.is_empty());
+
+        if engine == EngineChoice::Sqlite {
+            verify_sqlite_subscription_usage_rebuild(fx);
+        }
+    }
+}

@@ -23,6 +23,8 @@ pub mod recovery;
 pub mod router;
 pub mod runtime_registry;
 pub mod subagents;
+pub mod subscription_usage;
+mod subscription_usage_parse;
 pub mod transcript;
 pub mod wake;
 
@@ -51,6 +53,11 @@ pub use subagents::{
     build_general_subagent_definition, subset_tools, BackgroundKind, BackgroundRegistry,
     BackgroundTaskState, BackgroundWake, SubagentDefinition,
 };
+pub use subscription_usage::{
+    HttpUsageResponse, ProviderSubscriptionUsageCollector, SubscriptionUsageCollectOutcome,
+    SubscriptionUsageCollectRequest, SubscriptionUsageCollector, SubscriptionUsageTransport,
+    SystemHttpsUsageTransport, UsageTransportError,
+};
 pub use wake::{
     PendingAskAnswer, PendingWakeItem, PendingWakeQueueRecord, SuspendedAskEntry,
     SuspendedStateRecord, WakeHoldReason, WakeKind, WakeOutcome, WakeQuotaRecord,
@@ -59,6 +66,8 @@ pub use wake::{
 
 #[cfg(test)]
 mod pool_tests;
+#[cfg(test)]
+mod subscription_usage_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

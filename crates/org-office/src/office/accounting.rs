@@ -5,27 +5,40 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use org_proto::costs::{
     CostExportResult, CostPriceListParams, CostPriceListResult, CostPriceSetParams,
-    CostPriceSetResult, CostQueryParams, CostQueryResult, CostUsageCorrectParams,
-    CostUsageCorrectResult, CostUsageRecordParams, CostUsageRecordResult, UsageRecordView,
-    UsageScopeKind,
+    CostPriceSetResult, CostQueryParams, CostQueryResult, CostSubscriptionUsageListParams,
+    CostSubscriptionUsageListResult, CostUsageCorrectParams, CostUsageCorrectResult,
+    CostUsageRecordParams, CostUsageRecordResult, UsageRecordView, UsageScopeKind,
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::Sha256;
 
 use crate::accounting::query::{execute_cost_query, export_cost_csv};
 use crate::accounting::{
-    build_attribution_correction, build_model_price, build_usage_record, CostViewerScope,
-    UsageBuildMeta,
+    aggregate_totals_by_model, build_attribution_correction, build_model_price,
+    build_snapshot_view, build_usage_record, validate_stored_snapshot, CostViewerScope,
+    StoredSubscriptionUsageSnapshot, SubscriptionCredentialPresence, UsageBuildMeta,
 };
 use crate::error::OfficeError;
-use crate::organization::records::{Employee, EmployeeKind, EmployeeStatus};
+use crate::organization::records::{Employee, EmployeeKind, EmployeeStatus, ProviderAuthMode};
 use crate::time::format_rfc3339_ms;
 
 use super::Office;
 
 static UUID_SEQ: AtomicU64 = AtomicU64::new(1);
+static SUBSCRIPTION_ATTEMPT_SEQ: AtomicU64 = AtomicU64::new(1);
+const MAX_LIST_RESPONSE_BYTES: usize = 512 * 1024;
 
 impl Office {
+    /// Mints a restart-safe monotonic attempt generation seeded above persisted snapshot sequences.
+    pub fn next_subscription_attempt_seq(&self) -> u64 {
+        if let Ok(snaps) = self.accounting.list_subscription_usage(&self.info.org_id) {
+            let max_stored = snaps.iter().map(|s| s.attempt_seq).max().unwrap_or(0);
+            if max_stored > 0 {
+                SUBSCRIPTION_ATTEMPT_SEQ.fetch_max(max_stored.saturating_add(1), Ordering::SeqCst);
+            }
+        }
+        SUBSCRIPTION_ATTEMPT_SEQ.fetch_add(1, Ordering::SeqCst)
+    }
     /// Mints a valid canonical lowercase RFC 9562 UUIDv7 using monotonic ms + counter + office hash.
     pub(crate) fn next_uuid_v7(&self) -> String {
         mint_uuid_v7(self)
@@ -103,6 +116,64 @@ impl Office {
         params: CostQueryParams,
     ) -> Result<Result<CostExportResult, ApiError>, OfficeError> {
         op_cost_export_csv(self, actor, params)
+    }
+
+    /// Ensures `actor` is the active organization owner (used by owner-only subscription usage APIs).
+    pub fn require_owner_member(
+        &self,
+        actor: &str,
+    ) -> Result<Result<Employee, ApiError>, OfficeError> {
+        require_owner_for(self, actor)
+    }
+
+    /// Persists one validated office-local subscription usage snapshot (`TASK-79`).
+    pub fn save_subscription_usage_snapshot(
+        &self,
+        snapshot: StoredSubscriptionUsageSnapshot,
+    ) -> Result<Result<(), ApiError>, OfficeError> {
+        op_save_subscription_usage(self, snapshot)
+    }
+
+    /// Reads one persisted subscription usage snapshot by `connection_id` (`TASK-79`).
+    pub fn get_subscription_usage_snapshot(
+        &self,
+        connection_id: &str,
+    ) -> Result<Option<StoredSubscriptionUsageSnapshot>, OfficeError> {
+        self.accounting
+            .get_subscription_usage(&self.info.org_id, connection_id)
+    }
+
+    /// `cost.subscription_usage.list` without live vault metadata (fallback when no session manager).
+    pub fn cost_subscription_usage_list(
+        &self,
+        actor: &str,
+        params: CostSubscriptionUsageListParams,
+    ) -> Result<Result<CostSubscriptionUsageListResult, ApiError>, OfficeError> {
+        op_subscription_usage_list(self, actor, params, |_| {
+            SubscriptionCredentialPresence::default()
+        })
+    }
+
+    /// `cost.subscription_usage.list` enriched with live private credential presence (`TASK-79`).
+    pub fn subscription_usage_list_with_credentials(
+        &self,
+        actor: &str,
+        params: CostSubscriptionUsageListParams,
+        cred_lookup: impl Fn(&str) -> SubscriptionCredentialPresence,
+    ) -> Result<Result<CostSubscriptionUsageListResult, ApiError>, OfficeError> {
+        op_subscription_usage_list(self, actor, params, cred_lookup)
+    }
+
+    /// Returns `connection_id -> collected_at` for persisted snapshots (used to prioritize oldest targets).
+    pub fn subscription_usage_collected_at_map(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, String>, OfficeError> {
+        Ok(self
+            .accounting
+            .list_subscription_usage(&self.info.org_id)?
+            .into_iter()
+            .map(|s| (s.connection_id, s.collected_at))
+            .collect())
     }
 }
 
@@ -537,4 +608,191 @@ fn format_uuid_bytes(b: &[u8; 16]) -> String {
         out.push(HEX[(byte & 0x0f) as usize] as char);
     }
     out
+}
+
+fn require_owner_for(
+    office: &Office,
+    actor: &str,
+) -> Result<Result<Employee, ApiError>, OfficeError> {
+    let caller = match require_active_member_for(office, actor)? {
+        Ok(emp) => emp,
+        Err(e) => return Ok(Err(e)),
+    };
+    if caller.id.as_str() != office.owner.as_str() {
+        return Ok(Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "only the organization owner can access subscription usage data",
+        )));
+    }
+    Ok(Ok(caller))
+}
+
+fn op_save_subscription_usage(
+    office: &Office,
+    snapshot: StoredSubscriptionUsageSnapshot,
+) -> Result<Result<(), ApiError>, OfficeError> {
+    if snapshot.organization_id != office.info.org_id || snapshot.office_id != office.info.office_id
+    {
+        return Ok(Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "subscription usage snapshot organization or office mismatch",
+        )));
+    }
+    if let Err(err) = validate_stored_snapshot(&snapshot) {
+        return Ok(Err(err));
+    }
+    office
+        .accounting
+        .save_subscription_usage(&office.info.org_id, snapshot)?;
+    Ok(Ok(()))
+}
+
+fn op_subscription_usage_list(
+    office: &Office,
+    actor: &str,
+    params: CostSubscriptionUsageListParams,
+    cred_lookup: impl Fn(&str) -> SubscriptionCredentialPresence,
+) -> Result<Result<CostSubscriptionUsageListResult, ApiError>, OfficeError> {
+    if let Err(e) = require_owner_for(office, actor)? {
+        return Ok(Err(e));
+    }
+    let conns = office.load_provider_connections()?;
+    let stored_map: std::collections::BTreeMap<String, StoredSubscriptionUsageSnapshot> = office
+        .accounting
+        .list_subscription_usage(&office.info.org_id)?
+        .into_iter()
+        .map(|s| (s.connection_id.clone(), s))
+        .collect();
+    let now_ms = office.current_time_ms();
+    let provider_filter = params
+        .provider_type
+        .as_deref()
+        .map(|p| p.trim().to_ascii_lowercase())
+        .filter(|p| !p.is_empty());
+
+    let mut all_snapshots = Vec::new();
+    let mut collected_as_of: Option<String> = None;
+    for conn in &conns {
+        if conn.auth_mode != ProviderAuthMode::SubscriptionCli {
+            continue;
+        }
+        if !params.include_archived && conn.archived {
+            continue;
+        }
+        if let Some(ref cid) = params.connection_id {
+            let matches = if org_proto::is_uuid_v7(cid) {
+                conn.id.as_str() == cid
+            } else {
+                conn.key == *cid
+            };
+            if !matches {
+                continue;
+            }
+        }
+        if let Some(ref pf) = provider_filter {
+            if conn.provider_type.to_ascii_lowercase() != *pf {
+                continue;
+            }
+        }
+        let stored = stored_map.get(conn.id.as_str());
+        let cred = cred_lookup(conn.id.as_str());
+        let view = build_snapshot_view(conn, &office.info.office_id, stored, &cred, now_ms);
+        if let Some(ref at) = view.collected_at {
+            if collected_as_of
+                .as_deref()
+                .is_none_or(|cur| at.as_str() > cur)
+            {
+                collected_as_of = Some(at.clone());
+            }
+        }
+        all_snapshots.push(view);
+    }
+    all_snapshots.sort_by(|a, b| a.connection_id.cmp(&b.connection_id));
+    let rollup = aggregate_totals_by_model(&all_snapshots);
+    let (totals_by_model, next_totals_cursor, totals_bytes) =
+        paginate_totals(rollup.totals_by_model, params.totals_cursor.as_deref());
+    let (snapshots, next_cursor) = paginate_snapshots(
+        all_snapshots,
+        params.cursor.as_deref(),
+        params.limit,
+        totals_bytes,
+    );
+    Ok(Ok(CostSubscriptionUsageListResult {
+        snapshots,
+        totals_by_model,
+        collected_as_of,
+        next_cursor,
+        next_totals_cursor,
+        partial_totals: rollup.partial_totals,
+        excluded_snapshot_count: rollup.excluded_snapshot_count,
+        is_api_equivalent_estimate: false,
+    }))
+}
+
+const MAX_TOTALS_RESPONSE_BYTES: usize = 256 * 1024;
+
+fn paginate_totals(
+    all: Vec<org_proto::costs::SubscriptionModelUsageView>,
+    cursor: Option<&str>,
+) -> (
+    Vec<org_proto::costs::SubscriptionModelUsageView>,
+    Option<String>,
+    usize,
+) {
+    let mut used = 0usize;
+    let mut page = Vec::new();
+    let mut has_more = false;
+    for row in all {
+        if let Some(cur) = cursor {
+            if row.model.as_str() <= cur {
+                continue;
+            }
+        }
+        let item_bytes = serde_json::to_vec(&row).map_or(0, |v| v.len()) + 16;
+        if !page.is_empty() && used.saturating_add(item_bytes) > MAX_TOTALS_RESPONSE_BYTES {
+            has_more = true;
+            break;
+        }
+        used = used.saturating_add(item_bytes);
+        page.push(row);
+    }
+    let next = has_more
+        .then(|| page.last().map(|r| r.model.clone()))
+        .flatten();
+    (page, next, used)
+}
+
+fn paginate_snapshots(
+    all: Vec<org_proto::costs::SubscriptionUsageSnapshotView>,
+    cursor: Option<&str>,
+    limit: Option<u32>,
+    totals_bytes: usize,
+) -> (
+    Vec<org_proto::costs::SubscriptionUsageSnapshotView>,
+    Option<String>,
+) {
+    let cap = limit.map_or(100, |n| (n as usize).clamp(1, 100));
+    let mut used_bytes = totals_bytes.saturating_add(4096);
+    let mut page = Vec::new();
+    let mut has_more = false;
+    for snap in all {
+        if let Some(cur) = cursor {
+            if snap.connection_id.as_str() <= cur {
+                continue;
+            }
+        }
+        let item_bytes = serde_json::to_vec(&snap).map_or(0, |v| v.len()) + 16;
+        if page.len() >= cap
+            || (!page.is_empty() && used_bytes.saturating_add(item_bytes) > MAX_LIST_RESPONSE_BYTES)
+        {
+            has_more = true;
+            break;
+        }
+        used_bytes = used_bytes.saturating_add(item_bytes);
+        page.push(snap);
+    }
+    let next_cursor = has_more
+        .then(|| page.last().map(|s| s.connection_id.clone()))
+        .flatten();
+    (page, next_cursor)
 }

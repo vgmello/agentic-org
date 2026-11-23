@@ -6,7 +6,10 @@ use std::sync::Mutex;
 use org_proto::costs::{CostPriceListParams, ModelPriceView, UsageRecordView};
 use org_proto::{ApiError, ErrorCode};
 
-use super::{same_price_semantics, AccountingStore, UsageCoverageSummary, UsageStreamCheckpoint};
+use super::{
+    same_price_semantics, AccountingStore, StoredSubscriptionUsageSnapshot, UsageCoverageSummary,
+    UsageStreamCheckpoint,
+};
 use crate::error::OfficeError;
 
 #[derive(Default)]
@@ -16,6 +19,7 @@ struct State {
     source_keys: BTreeMap<(String, String, String, String), String>,
     superseded: BTreeSet<(String, String)>,
     checkpoints: BTreeMap<(String, String, String), UsageStreamCheckpoint>,
+    subscription_usage: BTreeMap<(String, String), StoredSubscriptionUsageSnapshot>,
 }
 
 /// In-memory [`AccountingStore`] enforcing all `doc-87` immutability, replay, and supersession rules.
@@ -270,5 +274,54 @@ impl AccountingStore for MemoryAccountingStore {
             coverage_as_of: as_of,
             checkpoint_ref,
         })
+    }
+
+    fn save_subscription_usage(
+        &self,
+        org_id: &str,
+        mut snapshot: StoredSubscriptionUsageSnapshot,
+    ) -> Result<(), OfficeError> {
+        let mut s = self.lock()?;
+        let key = (org_id.to_owned(), snapshot.connection_id.clone());
+        let existing = s.subscription_usage.get(&key);
+        if let Some(prev) = existing {
+            if snapshot.attempt_seq > 0 && prev.attempt_seq > snapshot.attempt_seq {
+                return Ok(());
+            }
+        }
+        super::merge_prior_for_unavailable(&mut snapshot, existing);
+        if super::validate_stored_snapshot(&snapshot).is_err() {
+            return Err(OfficeError::Invalid(
+                "merged subscription usage snapshot exceeds validation bounds",
+            ));
+        }
+        s.subscription_usage.insert(key, snapshot);
+        Ok(())
+    }
+
+    fn list_subscription_usage(
+        &self,
+        org_id: &str,
+    ) -> Result<Vec<StoredSubscriptionUsageSnapshot>, OfficeError> {
+        let s = self.lock()?;
+        let mut out: Vec<StoredSubscriptionUsageSnapshot> = s
+            .subscription_usage
+            .iter()
+            .filter(|((o, _), _)| o == org_id)
+            .map(|(_, v)| v.clone())
+            .collect();
+        out.sort_by(|a, b| a.connection_id.cmp(&b.connection_id));
+        Ok(out)
+    }
+
+    fn get_subscription_usage(
+        &self,
+        org_id: &str,
+        connection_id: &str,
+    ) -> Result<Option<StoredSubscriptionUsageSnapshot>, OfficeError> {
+        let s = self.lock()?;
+        Ok(s.subscription_usage
+            .get(&(org_id.to_owned(), connection_id.to_owned()))
+            .cloned())
     }
 }

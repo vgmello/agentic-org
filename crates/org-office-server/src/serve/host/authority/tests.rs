@@ -214,3 +214,31 @@ fn expiry_is_strict_at_zero_adjacent_and_maximum_boundaries() {
         );
     }
 }
+
+#[test]
+fn subscription_usage_methods_require_owner_at_host_authority() {
+    for method in [
+        "cost.subscription_usage.list",
+        "cost.subscription_usage.collect",
+        "cost.subscription_usage.credential_set",
+        "cost.subscription_usage.credential_revoke",
+    ] {
+        let mut req = request(claims());
+        req.method = method.into();
+        let checks = Probe {
+            owner: None,
+            ..Probe::default()
+        };
+        assert_eq!(
+            authorize(&req, "channel", &office(), &checks),
+            Err(ErrorCode::NotAuthorized),
+            "non-owner must be rejected for {method}"
+        );
+        let owner_checks = Probe::default();
+        assert_eq!(
+            authorize(&req, "channel", &office(), &owner_checks),
+            Ok("owner".into()),
+            "owner must be allowed for {method}"
+        );
+    }
+}

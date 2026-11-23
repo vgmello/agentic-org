@@ -15,6 +15,7 @@ use org_pki::wrap::{
     derive_wrapping_key, unwrap_provider_credential, wrap_provider_credential, KeyClass,
     ProviderCredentialBinding, WrapError,
 };
+use org_proto::costs::SubscriptionUsageCredentialView;
 use org_proto::sessions::{EnrollmentSessionView, EnrollmentState, ProviderCredentialView};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
@@ -63,6 +64,15 @@ impl From<WrapError> for EnrollmentVaultError {
     }
 }
 
+/// Unwrapped secret together with its non-secret custody metadata (`TASK-79`).
+pub struct UnwrappedCredential {
+    pub secret: Zeroizing<Vec<u8>>,
+    pub enrolled_at: String,
+    pub expires_at: Option<String>,
+    pub account_hint: Option<String>,
+    pub bound_origin: Option<String>,
+}
+
 /// Non-secret metadata stored alongside wrapped ciphertext (`ENROLL-3`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CredentialMetadata {
@@ -76,6 +86,8 @@ pub struct CredentialMetadata {
     pub expires_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_origin: Option<String>,
     pub wrapped_b64: String,
 }
 
@@ -171,6 +183,7 @@ impl CredentialVault {
             enrolled_at: enrolled_at.clone(),
             expires_at: expires_at.clone(),
             account_hint: account_hint.clone(),
+            bound_origin: None,
             wrapped_b64: BASE64.encode(&wrapped),
         };
         let bytes = serde_json::to_vec_pretty(&record)
@@ -191,19 +204,200 @@ impl CredentialVault {
         &self,
         connection_id: &str,
     ) -> Result<Option<Zeroizing<Vec<u8>>>, EnrollmentVaultError> {
+        Ok(self
+            .load_unwrapped_with_meta(connection_id)?
+            .map(|c| c.secret))
+    }
+
+    /// Unwraps and returns the enrolled credential together with expiry & account metadata.
+    pub fn load_unwrapped_with_meta(
+        &self,
+        connection_id: &str,
+    ) -> Result<Option<UnwrappedCredential>, EnrollmentVaultError> {
         let path = self.credential_path(connection_id)?;
+        self.load_unwrapped_from_path(&path, connection_id, connection_id)
+    }
+
+    /// Returns the office-local path for a connection's dedicated usage-API credential (`TASK-79`).
+    pub fn usage_credential_path(
+        &self,
+        connection_id: &str,
+    ) -> Result<PathBuf, EnrollmentVaultError> {
+        if !is_safe_id(connection_id) {
+            return Err(EnrollmentVaultError::InvalidInput(
+                "invalid connection_id".to_owned(),
+            ));
+        }
+        Ok(self
+            .durable_root
+            .join("local")
+            .join("offices")
+            .join(&self.office_id)
+            .join("auth")
+            .join(connection_id)
+            .join("usage-credential.v1.json"))
+    }
+
+    /// Encrypts and atomically stores a private usage-API credential under origin- and
+    /// domain-separated AAD (`{connection_id}:usage:{bound_origin}`, mode `0600`, outside org Git).
+    pub fn store_wrapped_usage(
+        &self,
+        connection_id: &str,
+        provider: &str,
+        bound_origin: &str,
+        secret: &[u8],
+        expires_at: Option<String>,
+        account_hint: Option<String>,
+    ) -> Result<SubscriptionUsageCredentialView, EnrollmentVaultError> {
+        let key = self.wrapping_key()?;
+        let path = self.usage_credential_path(connection_id)?;
+        let parent = path.parent().ok_or_else(|| {
+            EnrollmentVaultError::Io("usage credential path has no parent".into())
+        })?;
+        ensure_owner_dirs(parent)?;
+
+        let aad_conn = format!("{connection_id}:usage:{bound_origin}");
+        let wrapped = wrap_provider_credential(&key, &self.binding(&aad_conn), secret)?;
+        let configured_at = rfc3339_now();
+        let record = CredentialMetadata {
+            version: CREDENTIAL_VERSION,
+            organization_id: self.organization_id.clone(),
+            office_id: self.office_id.clone(),
+            connection_id: format!("{connection_id}:usage"),
+            provider: provider.to_owned(),
+            enrolled_at: configured_at.clone(),
+            expires_at: expires_at.clone(),
+            account_hint: account_hint.clone(),
+            bound_origin: Some(bound_origin.to_owned()),
+            wrapped_b64: BASE64.encode(&wrapped),
+        };
+        let bytes = serde_json::to_vec_pretty(&record)
+            .map_err(|_| EnrollmentVaultError::Io("could not encode usage credential".into()))?;
+        write_private_atomic(parent, &path, &bytes)?;
+        Ok(SubscriptionUsageCredentialView {
+            connection_id: connection_id.to_owned(),
+            office_id: self.office_id.clone(),
+            configured: true,
+            configured_at: Some(configured_at),
+            expires_at,
+            account_hint,
+        })
+    }
+
+    /// Unwraps and returns the dedicated usage-API credential + metadata only when its bound
+    /// destination origin matches `expected_origin` (`TASK-79`).
+    pub fn load_unwrapped_usage_with_meta(
+        &self,
+        connection_id: &str,
+        expected_origin: &str,
+    ) -> Result<Option<UnwrappedCredential>, EnrollmentVaultError> {
+        let path = self.usage_credential_path(connection_id)?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = fs::read(&path)
+            .map_err(|_| EnrollmentVaultError::Io("could not read usage credential".into()))?;
+        let record: CredentialMetadata = serde_json::from_slice(&raw)
+            .map_err(|_| EnrollmentVaultError::Crypto("malformed usage credential file".into()))?;
+        let expected_conn = format!("{connection_id}:usage");
+        if record.version != CREDENTIAL_VERSION
+            || record.organization_id != self.organization_id
+            || record.office_id != self.office_id
+            || record.connection_id != expected_conn
+        {
+            return Err(EnrollmentVaultError::Crypto(
+                "usage credential binding metadata mismatch".into(),
+            ));
+        }
+        if record.bound_origin.as_deref() != Some(expected_origin) {
+            return Err(EnrollmentVaultError::Conflict(
+                "usage credential is bound to a different endpoint origin; re-configure credential"
+                    .into(),
+            ));
+        }
+        let key = self.wrapping_key()?;
+        let aad_conn = format!("{connection_id}:usage:{expected_origin}");
+        let ciphertext = BASE64
+            .decode(&record.wrapped_b64)
+            .map_err(|_| EnrollmentVaultError::Crypto("invalid credential base64".into()))?;
+        let plaintext = unwrap_provider_credential(&key, &self.binding(&aad_conn), &ciphertext)?;
+        Ok(Some(UnwrappedCredential {
+            secret: plaintext,
+            enrolled_at: record.enrolled_at,
+            expires_at: record.expires_at,
+            account_hint: record.account_hint,
+            bound_origin: record.bound_origin,
+        }))
+    }
+
+    /// Returns non-secret status metadata for a connection's dedicated usage-API credential.
+    pub fn usage_status(
+        &self,
+        connection_id: &str,
+    ) -> Result<SubscriptionUsageCredentialView, EnrollmentVaultError> {
+        let path = self.usage_credential_path(connection_id)?;
+        if !path.exists() {
+            return Ok(SubscriptionUsageCredentialView {
+                connection_id: connection_id.to_owned(),
+                office_id: self.office_id.clone(),
+                configured: false,
+                configured_at: None,
+                expires_at: None,
+                account_hint: None,
+            });
+        }
+        let raw = fs::read(&path)
+            .map_err(|_| EnrollmentVaultError::Io("could not read usage credential".into()))?;
+        let record: CredentialMetadata = serde_json::from_slice(&raw)
+            .map_err(|_| EnrollmentVaultError::Crypto("malformed usage credential file".into()))?;
+        let expected_conn = format!("{connection_id}:usage");
+        if record.version != CREDENTIAL_VERSION
+            || record.organization_id != self.organization_id
+            || record.office_id != self.office_id
+            || record.connection_id != expected_conn
+        {
+            return Err(EnrollmentVaultError::Crypto(
+                "usage credential binding metadata mismatch".into(),
+            ));
+        }
+        Ok(SubscriptionUsageCredentialView {
+            connection_id: connection_id.to_owned(),
+            office_id: self.office_id.clone(),
+            configured: true,
+            configured_at: Some(record.enrolled_at),
+            expires_at: record.expires_at,
+            account_hint: record.account_hint,
+        })
+    }
+
+    /// Revokes and removes a connection's dedicated usage-API credential durably (`TASK-79`).
+    pub fn revoke_usage(
+        &self,
+        connection_id: &str,
+    ) -> Result<SubscriptionUsageCredentialView, EnrollmentVaultError> {
+        let path = self.usage_credential_path(connection_id)?;
+        remove_file_durably(&path)?;
+        self.usage_status(connection_id)
+    }
+
+    fn load_unwrapped_from_path(
+        &self,
+        path: &Path,
+        expected_connection_id: &str,
+        aad_connection_id: &str,
+    ) -> Result<Option<UnwrappedCredential>, EnrollmentVaultError> {
         if !path.exists() {
             return Ok(None);
         }
         let key = self.wrapping_key()?;
-        let raw = fs::read(&path)
+        let raw = fs::read(path)
             .map_err(|_| EnrollmentVaultError::Io("could not read credential".into()))?;
         let record: CredentialMetadata = serde_json::from_slice(&raw)
             .map_err(|_| EnrollmentVaultError::Crypto("malformed credential file".into()))?;
         if record.version != CREDENTIAL_VERSION
             || record.organization_id != self.organization_id
             || record.office_id != self.office_id
-            || record.connection_id != connection_id
+            || record.connection_id != expected_connection_id
         {
             return Err(EnrollmentVaultError::Crypto(
                 "credential binding metadata mismatch".into(),
@@ -213,8 +407,14 @@ impl CredentialVault {
             .decode(&record.wrapped_b64)
             .map_err(|_| EnrollmentVaultError::Crypto("invalid credential base64".into()))?;
         let plaintext =
-            unwrap_provider_credential(&key, &self.binding(connection_id), &ciphertext)?;
-        Ok(Some(plaintext))
+            unwrap_provider_credential(&key, &self.binding(aad_connection_id), &ciphertext)?;
+        Ok(Some(UnwrappedCredential {
+            secret: plaintext,
+            enrolled_at: record.enrolled_at,
+            expires_at: record.expires_at,
+            account_hint: record.account_hint,
+            bound_origin: record.bound_origin,
+        }))
     }
 
     /// Returns non-secret status metadata for `connection_id` (`ENROLL-3`, `ENROLL-5`).
@@ -253,12 +453,51 @@ impl CredentialVault {
         connection_id: &str,
     ) -> Result<ProviderCredentialView, EnrollmentVaultError> {
         let path = self.credential_path(connection_id)?;
-        if path.exists() {
-            fs::remove_file(&path)
-                .map_err(|_| EnrollmentVaultError::Io("could not remove credential".into()))?;
-        }
+        remove_file_durably(&path)?;
         self.status(connection_id)
     }
+}
+
+fn remove_file_durably(path: &Path) -> Result<(), EnrollmentVaultError> {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(_) => {
+            return Err(EnrollmentVaultError::Io(
+                "could not remove credential".into(),
+            ))
+        }
+    }
+    if let Some(parent) = path.parent() {
+        if parent.exists() {
+            sync_dir(parent)?;
+        }
+    }
+    Ok(())
+}
+
+fn sync_dir(dir: &Path) -> Result<(), EnrollmentVaultError> {
+    let handle = fs::File::open(dir)
+        .map_err(|_| EnrollmentVaultError::Io("could not open credential directory".into()))?;
+    handle
+        .sync_all()
+        .map_err(|_| EnrollmentVaultError::Io("could not sync credential directory".into()))?;
+    Ok(())
+}
+
+fn sync_ancestor_dirs(dir: &Path, depth: usize) -> Result<(), EnrollmentVaultError> {
+    let mut cur = Some(dir);
+    for _ in 0..depth {
+        let Some(d) = cur else {
+            break;
+        };
+        if d.as_os_str().is_empty() || d.parent().is_none() {
+            break;
+        }
+        sync_dir(d)?;
+        cur = d.parent();
+    }
+    Ok(())
 }
 
 /// Redacts all known active secret values and recognizable provider token prefixes (`ENROLL-3`).
@@ -397,9 +636,9 @@ impl EnrollmentDriver for CliEnrollmentDriver {
         provider: &str,
         _temp_dir: &Path,
     ) -> Result<EnrollmentPrompt, EnrollmentVaultError> {
-        let normalized = provider.trim().to_ascii_lowercase();
+        let normalized = org_office::accounting::canonical_provider_namespace(provider);
         match normalized.as_str() {
-            "anthropic" | "claude" | "claude-code" => Ok(EnrollmentPrompt {
+            "anthropic" => Ok(EnrollmentPrompt {
                 state: EnrollmentState::AwaitingCode,
                 auth_url: Some("https://claude.ai/oauth/authorize".to_owned()),
                 device_code: None,
@@ -408,7 +647,7 @@ impl EnrollmentDriver for CliEnrollmentDriver {
                         .to_owned(),
                 ),
             }),
-            "openai" | "codex" | "codex-cli" | "gpt" => Ok(EnrollmentPrompt {
+            "openai" => Ok(EnrollmentPrompt {
                 state: EnrollmentState::PendingBrowser,
                 auth_url: Some("https://auth.openai.com/codex/device".to_owned()),
                 device_code: Some(format!(
@@ -421,7 +660,7 @@ impl EnrollmentDriver for CliEnrollmentDriver {
                         .to_owned(),
                 ),
             }),
-            "google" | "agy" | "antigravity" | "antigravity-cli" | "gemini" => {
+            "google" => {
                 Ok(EnrollmentPrompt {
                     state: EnrollmentState::AwaitingCode,
                     auth_url: Some("https://antigravity.google/auth".to_owned()),
@@ -828,7 +1067,10 @@ fn write_private_atomic(
     fs::rename(&tmp, dest).map_err(|_| {
         let _ = fs::remove_file(&tmp);
         EnrollmentVaultError::Io("could not commit credential file".into())
-    })
+    })?;
+    // Sync <conn_id>, auth, <office_id>, offices, and local so retries after any
+    // earlier ancestor sync failure always persist the directory chain durably.
+    sync_ancestor_dirs(parent, 5)
 }
 
 fn ensure_owner_dirs(path: &Path) -> Result<(), EnrollmentVaultError> {
@@ -837,10 +1079,15 @@ fn ensure_owner_dirs(path: &Path) -> Result<(), EnrollmentVaultError> {
     }
     let mut current = PathBuf::new();
     for component in path.components() {
+        let prev = current.clone();
         current.push(component);
         if !current.exists() {
             match org_platform::fs::create_owner_only_dir(&current) {
-                Ok(()) => {}
+                Ok(()) => {
+                    if !prev.as_os_str().is_empty() {
+                        sync_dir(&prev)?;
+                    }
+                }
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(_) => {
                     return Err(EnrollmentVaultError::Io(

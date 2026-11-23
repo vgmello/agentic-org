@@ -4,6 +4,14 @@
 
 pub mod memory;
 pub mod query;
+pub mod subscription_usage;
+
+pub use subscription_usage::{
+    aggregate_totals_by_model, build_snapshot_view, canonical_provider_namespace,
+    merge_prior_for_unavailable, validate_stored_snapshot, StoredSubscriptionUsageSnapshot,
+    SubscriptionCredentialPresence, MAX_MODEL_NAME_BYTES, MAX_SUBSCRIPTION_MODELS,
+    SUBSCRIPTION_USAGE_FRESHNESS_MS,
+};
 
 use std::collections::BTreeMap;
 
@@ -107,6 +115,23 @@ pub trait AccountingStore: Send + Sync {
     fn effective_records(&self, org_id: &str) -> Result<Vec<UsageRecordView>, OfficeError>;
 
     fn coverage_summary(&self, org_id: &str) -> Result<UsageCoverageSummary, OfficeError>;
+
+    fn save_subscription_usage(
+        &self,
+        org_id: &str,
+        snapshot: StoredSubscriptionUsageSnapshot,
+    ) -> Result<(), OfficeError>;
+
+    fn list_subscription_usage(
+        &self,
+        org_id: &str,
+    ) -> Result<Vec<StoredSubscriptionUsageSnapshot>, OfficeError>;
+
+    fn get_subscription_usage(
+        &self,
+        org_id: &str,
+        connection_id: &str,
+    ) -> Result<Option<StoredSubscriptionUsageSnapshot>, OfficeError>;
 }
 
 /// Compares semantic fields of two model price versions (ignoring wall-clock `created_at`
