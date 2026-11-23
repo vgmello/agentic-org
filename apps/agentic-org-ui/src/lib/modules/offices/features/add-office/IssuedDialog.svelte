@@ -25,7 +25,11 @@
 </script>
 
 <Dialog bind:open>
-	<DialogContent {onCloseAutoFocus} class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+	<DialogContent
+		{onCloseAutoFocus}
+		interactOutsideBehavior="ignore"
+		class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
+	>
 		<DialogHeader>
 			<DialogTitle text={`New invitation for ${issued?.invitation.officeName ?? ''}`} />
 			<DialogDescription

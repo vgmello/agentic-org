@@ -131,7 +131,7 @@
 		onfocusout={(event) =>
 			(focusWithin =
 				event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))}
-		class="group relative grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 rounded-md px-2 py-2 transition-colors max-[640px]:gap-x-[12px] max-[640px]:px-[8px] hover:bg-surface-raised focus-within:bg-surface-raised"
+		class="group relative grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 rounded-md px-2 py-2 transition-colors [@media(width<=640px)]:gap-x-[12px] [@media(width<=640px)]:px-[8px] hover:bg-surface-raised focus-within:bg-surface-raised"
 		data-testid="message"
 		data-kind={message.kind}
 		data-id={message.id}

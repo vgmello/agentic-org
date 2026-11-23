@@ -13,6 +13,7 @@
 -->
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
+	import { beforeNavigate } from '$app/navigation';
 	import {
 		errorClass,
 		helpClass,
@@ -104,8 +105,19 @@
 	const waitingForTeams = $derived(!teams);
 
 	// Back with the sheet open closes it only, and focus returns to its opener (app-shell-ux §6).
-	$effect(() => {
+	$effect.pre(() => {
 		if (open) return registerModalBack(() => (open = false));
+	});
+	beforeNavigate((navigation) => {
+		if (
+			window.navigation ||
+			!open ||
+			navigation.type !== 'popstate' ||
+			(navigation.delta ?? 0) >= 0
+		)
+			return;
+		navigation.cancel();
+		open = false;
 	});
 
 	let teamsSeq = 0;

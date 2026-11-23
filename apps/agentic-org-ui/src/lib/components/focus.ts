@@ -1,3 +1,5 @@
+import { tick } from 'svelte';
+
 // Removing an item focuses the next one, else the previous one, else a fallback, never the body (app-shell-ux §6a).
 const FOCUSABLE =
 	'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])';
@@ -34,12 +36,24 @@ export function focusHeading(id: string): boolean {
  * after both, and only when nothing else has taken focus meanwhile. Returns a function that cancels it.
  */
 export function focusHeadingAfterShell(id: string): () => void {
-	const timer = setTimeout(() => {
-		const active = document.activeElement;
-		const idle = !active || active === document.body || active.matches('main h1, header h1');
-		if (idle) focusHeading(id);
-	}, 0);
-	return () => clearTimeout(timer);
+	let cancelled = false;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	void tick().then(() => {
+		if (cancelled) return;
+		timer = setTimeout(() => {
+			if (cancelled) return;
+			const active = document.activeElement;
+			const idle =
+				!active ||
+				active === document.body ||
+				active.matches('#shell-page-title, main h1, main h2, header h1');
+			if (idle) focusHeading(id);
+		}, 0);
+	});
+	return () => {
+		cancelled = true;
+		clearTimeout(timer);
+	};
 }
 
 /**

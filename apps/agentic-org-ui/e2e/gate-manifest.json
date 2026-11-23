@@ -37,6 +37,10 @@
 			"why": "new spec; not yet run on WebKit (BUG-169b)"
 		},
 		{
+			"spec": "executive-ui.spec.ts",
+			"why": "new executive shell spec; not yet run on WebKit (BUG-169b)"
+		},
+		{
 			"spec": "agents-roster.spec.ts",
 			"why": "not yet run on WebKit (BUG-169b)"
 		},
@@ -714,6 +718,7 @@
 			"e2e/fakes/**",
 			"../../.github/workflows/**",
 			"e2e/ready.ts",
+			"e2e/theme-token.ts",
 			"e2e/mock-organization.ts",
 			"e2e/web-session.ts",
 			"e2e/shot.ts",

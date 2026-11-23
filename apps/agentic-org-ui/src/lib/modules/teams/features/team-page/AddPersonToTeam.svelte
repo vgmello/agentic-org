@@ -49,6 +49,7 @@
 	 * and leave them out. Until that read answers, or if it fails, HQ still refuses an archived team on submit.
 	 */
 	let archived = $state.raw<ReadonlySet<string>>(new Set());
+	let archivedSeq = 0;
 	const teams = $derived(teamOptions(snapshot).filter((o) => !archived.has(o.team.id)));
 	// Every current employee, the owner's person included: ownership is no employee field (§7.1, OWNER-2).
 	const managers = $derived(
@@ -76,6 +77,23 @@
 		handleRefusal ?? (touched || handleEdited ? handleProblem(handle) : undefined)
 	);
 
+	function refreshArchived(orgId: string) {
+		const seq = ++archivedSeq;
+		void teamsApi.list(orgId).then(
+			(rows) => {
+				if (seq !== archivedSeq || orgId !== organization.id) return;
+				archived = new Set(rows.filter((t) => t.status === 'archived').map((t) => t.id));
+			},
+			() => {}
+		);
+	}
+
+	$effect(() => {
+		const orgId = organization.id;
+		void open;
+		refreshArchived(orgId);
+	});
+
 	function start() {
 		name = '';
 		handle = '';
@@ -88,12 +106,6 @@
 		handleRefusal = undefined;
 		failure = undefined;
 		open = true;
-		void teamsApi.list(organization.id).then(
-			(rows) => {
-				archived = new Set(rows.filter((t) => t.status === 'archived').map((t) => t.id));
-			},
-			() => {}
-		);
 	}
 
 	async function submit(event: SubmitEvent) {

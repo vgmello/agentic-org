@@ -681,17 +681,35 @@
 	@media (max-width: 720px), (pointer: coarse) {
 		.exec-topbar {
 			height: auto;
-			min-height: 60px;
-			padding-block: 8px;
+			min-height: var(--exec-topbar-height);
+			padding-block: 7px;
 		}
 		.exec-cmdk-bar {
 			height: auto;
-			min-height: 54px;
+			min-height: 52px;
+			padding: 4px 6px;
 		}
 		.exec-cmdk-trigger,
 		.exec-ai-btn {
 			height: auto;
 			min-height: 44px;
+		}
+	}
+	@media (height <= 320px) {
+		.exec-topbar {
+			height: 44px;
+			min-height: 44px;
+			padding-block: 2px;
+		}
+		.exec-cmdk-bar {
+			height: 40px;
+			min-height: 40px;
+			padding: 2px 4px;
+		}
+		.exec-cmdk-trigger,
+		.exec-ai-btn {
+			height: 36px;
+			min-height: 36px;
 		}
 	}
 </style>

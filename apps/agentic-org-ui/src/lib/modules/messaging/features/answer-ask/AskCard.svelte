@@ -116,7 +116,7 @@
 <div
 	data-ask-id={message.id}
 	class={[
-		'rounded-lg p-4 max-[640px]:px-[8px] max-[640px]:py-3',
+		'rounded-lg p-4 [@media(width<=640px)]:px-[8px] [@media(width<=640px)]:py-3',
 		done ? 'border border-line bg-surface-raised' : isAsk ? 'chat-ask-open' : 'chat-handoff-open'
 	]}
 	data-testid={isAsk ? 'ask-card' : 'handoff-card'}

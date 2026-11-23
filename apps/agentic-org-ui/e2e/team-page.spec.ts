@@ -297,7 +297,7 @@ test('TEAM-9: Delete leaves for Teams without showing the team as not found, and
 	await dialog.getByRole('button', { name: 'Delete Temp' }).click();
 	await expect(page).toHaveURL(/\/teams$/);
 	await expect(page.getByText('Deleted Temp.')).toBeVisible();
-	await expect(page.getByRole('heading', { level: 1, name: 'Teams' })).toBeFocused();
+	await expect(page.getByRole('heading', { name: /^Teams\b/ })).toBeFocused();
 	await expect(page.getByRole('link', { name: /^Temp , level 2/ })).toHaveCount(0);
 	expect(
 		await page.evaluate(

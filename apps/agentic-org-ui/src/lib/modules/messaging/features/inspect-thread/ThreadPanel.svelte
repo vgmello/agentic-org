@@ -105,7 +105,7 @@
 		>
 	</div>
 	<div
-		class="flex min-h-16 flex-1 flex-col gap-1 overflow-y-auto px-2 py-3 max-[640px]:px-[8px]"
+		class="flex min-h-16 flex-1 flex-col gap-1 overflow-y-auto px-2 py-3 [@media(width<=640px)]:px-[8px]"
 		data-focus-scope
 	>
 		{#key threadId}

@@ -133,7 +133,15 @@
 		const rect = target.getBoundingClientRect();
 		const x = rect.x + rect.width / 2;
 		const inset = Math.min(1, rect.height / 2);
-		const scrollMargin = Number.parseFloat(getComputedStyle(target).scrollMarginBlockStart) || 0;
+		const headerBottom =
+			(
+				document.querySelector('header.exec-topbar') ??
+				document.querySelector('[data-shell-header]')
+			)?.getBoundingClientRect().bottom ?? 0;
+		const scrollMargin = Math.max(
+			Number.parseFloat(getComputedStyle(target).scrollMarginBlockStart) || 0,
+			headerBottom
+		);
 		const clippedByViewport = rect.top < scrollMargin || rect.bottom > innerHeight;
 		const covered = ![rect.top + inset, rect.bottom - inset].every((y) =>
 			target.contains(document.elementFromPoint(x, y))
@@ -963,7 +971,7 @@
 			aria-label="Conversation"
 		>
 			<div
-				class="chat-conv-head flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3 max-[640px]:px-[8px]"
+				class="chat-conv-head flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3 [@media(width<=640px)]:px-[8px]"
 			>
 				<div class="min-w-0 max-w-full">
 					<div class="flex min-w-0 flex-wrap items-center gap-2">
@@ -1004,7 +1012,7 @@
 							{subtitle}{#if conversation.archived}{' · Archived'}{/if}
 						</p>{/if}
 				</div>
-				<div class="flex max-w-full flex-wrap items-center gap-2 max-[640px]:w-full">
+				<div class="flex max-w-full flex-wrap items-center gap-2 [@media(width<=640px)]:w-full">
 					<Badge variant="secondary" data-testid="sample-data-note">Sample data</Badge>
 					{#if conversation && !searching}
 						<Button
@@ -1017,7 +1025,7 @@
 							><Users aria-hidden="true" /> Members</Button
 						>
 					{/if}
-					<div class="relative min-w-0 max-w-full max-[640px]:w-full">
+					<div class="relative min-w-0 max-w-full [@media(width<=640px)]:w-full">
 						<Search
 							class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-fg-muted"
 							aria-hidden="true"
@@ -1029,7 +1037,7 @@
 							value={query}
 							oninput={(event) => changeQuery(event.currentTarget.value)}
 							placeholder="Search · from:@ada in:#atlas has:ask"
-							class="w-56 max-w-full rounded-md bg-surface-raised py-1.5 pr-3 pl-8 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus max-[640px]:w-full"
+							class="w-56 max-w-full rounded-md bg-surface-raised py-1.5 pr-3 pl-8 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus [@media(width<=640px)]:w-full"
 							data-testid="chat-search"
 						/>
 					</div>
@@ -1055,7 +1063,7 @@
 			<div
 				bind:this={listEl}
 				data-focus-scope
-				class="min-h-16 flex-1 overflow-y-auto px-3 py-3 max-[640px]:px-[8px]"
+				class="min-h-16 flex-1 overflow-y-auto px-3 py-3 [@media(width<=640px)]:px-[8px]"
 				data-testid="message-list"
 				tabindex="-1"
 				role="region"
@@ -1393,10 +1401,6 @@
 	@media (width < 640px), (height <= 320px) {
 		.chat-frame {
 			min-height: 28rem;
-		}
-		/* Include the sticky shell header when scrolling brings focus into view. */
-		.chat-frame :global(:focus) {
-			scroll-margin-block-start: var(--chat-header-height);
 		}
 	}
 </style>

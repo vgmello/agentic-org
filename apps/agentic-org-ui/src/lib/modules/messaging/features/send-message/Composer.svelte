@@ -404,4 +404,9 @@
 			max-block-size: min(128px, calc(100dvh - var(--chat-header-height, 4rem)));
 		}
 	}
+	@media (height <= 320px) {
+		textarea {
+			max-block-size: min(128px, calc(100dvh - 104px));
+		}
+	}
 </style>

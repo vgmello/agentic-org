@@ -7,7 +7,7 @@
   unavailable, error with Retry, not found, archived, and the last copy while HQ can't be reached (PRJ-4).
 -->
 <script lang="ts">
-	import { untrack, type Snippet } from 'svelte';
+	import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 	import { afterNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -35,7 +35,7 @@
 	import TeamLink from '../../components/TeamLink.svelte';
 	import StaleNotice from '../../components/StaleNotice.svelte';
 	import { setProjectFrame } from './context';
-	import { focusHeadingAfterShell } from '$lib/components/focus';
+	import { focusHeading, focusHeadingAfterShell } from '$lib/components/focus';
 	import { takeArrival } from './arrival';
 	import { lookUpProject } from './lookup';
 	import FrameSkeleton from './FrameSkeleton.svelte';
@@ -88,7 +88,9 @@
 	});
 
 	// Changing tab moves focus to the tab's heading, so what was shown is announced (app-shell §0). The shell focuses
-	// its h1 a tick after a navigation; this runs after it.
+	// its destination heading a tick after navigation; this runs strictly after it.
+	let cancelTabFocus: (() => void) | undefined;
+	onDestroy(() => cancelTabFocus?.());
 	afterNavigate((move) => {
 		if (move.type === 'enter' || !move.from || !move.to || !project) return;
 		const base = projectHref(projectId);
@@ -99,7 +101,19 @@
 			tabAt(move.to.url.pathname, projectId, tabs).id
 		)
 			return;
-		setTimeout(() => document.getElementById('project-tab-heading')?.focus(), 0);
+		cancelTabFocus?.();
+		let cancelled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		void tick().then(() => {
+			if (cancelled) return;
+			timer = setTimeout(() => {
+				if (!cancelled) focusHeading('project-tab-heading');
+			}, 0);
+		});
+		cancelTabFocus = () => {
+			cancelled = true;
+			clearTimeout(timer);
+		};
 	});
 	const barFill: Record<ProjectBarTone, string> = {
 		ok: 'var(--tone-ok-bar)',

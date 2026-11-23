@@ -1,5 +1,6 @@
 type BackEntry = { source: string; destination: string };
 
+let installed = false;
 let onModalPopState: ((event: PopStateEvent) => void) | undefined;
 let returningTo: { key: string; arrive: () => void } | undefined;
 
@@ -8,14 +9,20 @@ let returningTo: { key: string; arrive: () => void } | undefined;
  * Install before its router so neither the dismissed Back nor its return publishes route state.
  */
 export function installModalBack() {
-	window.addEventListener('popstate', (event) => {
-		if (returningTo && window.navigation?.currentEntry?.key === returningTo.key) {
-			event.stopImmediatePropagation();
-			returningTo.arrive();
-		} else {
-			onModalPopState?.(event);
-		}
-	});
+	if (installed) return;
+	installed = true;
+	window.addEventListener(
+		'popstate',
+		(event) => {
+			if (returningTo && window.navigation?.currentEntry?.key === returningTo.key) {
+				event.stopImmediatePropagation();
+				returningTo.arrive();
+			} else {
+				onModalPopState?.(event);
+			}
+		},
+		{ capture: true }
+	);
 }
 
 export function registerModalBack(close: () => void) {
@@ -27,10 +34,14 @@ export function registerModalBack(close: () => void) {
 	function rememberBack(event: NavigateEvent) {
 		const current = navigation.currentEntry;
 		const destination = event.destination;
-		back = event.navigationType === 'traverse' && destination.sameDocument
-			&& current && destination.index >= 0 && destination.index < current.index
-			? { source: current.key, destination: destination.key }
-			: undefined;
+		back =
+			event.navigationType === 'traverse' &&
+			destination.sameDocument &&
+			current &&
+			destination.index >= 0 &&
+			destination.index < current.index
+				? { source: current.key, destination: destination.key }
+				: undefined;
 	}
 
 	function handlePopState(event: PopStateEvent) {
@@ -39,7 +50,9 @@ export function registerModalBack(close: () => void) {
 		back = undefined;
 		event.stopImmediatePropagation();
 		let arrive!: () => void;
-		const arrived = new Promise<void>((resolve) => { arrive = resolve; });
+		const arrived = new Promise<void>((resolve) => {
+			arrive = resolve;
+		});
 		const pending = { key: source, arrive };
 		returningTo = pending;
 
