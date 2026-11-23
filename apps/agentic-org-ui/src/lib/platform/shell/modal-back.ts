@@ -4,7 +4,6 @@ type LegacyReturn = {
 	href: string;
 	index: number | undefined;
 	targetCursor: number;
-	owner: (event: PopStateEvent) => void;
 	close: () => void;
 };
 
@@ -275,11 +274,22 @@ export function registerModalBack(close: () => void) {
 			if (delta <= 0) return;
 
 			event.stopImmediatePropagation();
+			let targetCursor = currentCursor;
+			// Keep legacyCursor aligned with the browser's actual history position immediately.
+			if (nextCursor >= 0) {
+				legacyCursor = nextCursor;
+				legacyEntries[nextCursor] = entry;
+			} else {
+				legacyEntries.unshift(entry);
+				legacyCursor = 0;
+				targetCursor = currentCursor + 1;
+			}
+			legacyHistoryLength = window.history.length;
+
 			const pending: LegacyReturn = {
 				href: currentEntry.href,
 				index: currentEntry.index,
-				targetCursor: currentCursor,
-				owner: handleLegacyPopState,
+				targetCursor,
 				close: () => {
 					if (onModalPopState === handleLegacyPopState) close();
 				}
@@ -293,7 +303,6 @@ export function registerModalBack(close: () => void) {
 
 		onModalPopState = handleLegacyPopState;
 		return () => {
-			if (legacyReturning?.owner === handleLegacyPopState) legacyReturning = undefined;
 			if (onModalPopState === handleLegacyPopState) onModalPopState = undefined;
 			legacyHistoryLength = window.history.length;
 		};

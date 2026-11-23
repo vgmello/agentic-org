@@ -414,21 +414,22 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		unregister();
 	});
 
-	it('cancels queued rAF return on route navigation or modal teardown so a new modal intercepts Back cleanly', async () => {
-		const env = await setup('http://localhost/teams', { 'sveltekit:history': 0 }, 1);
-		env.setEntry('http://localhost/projects', { 'sveltekit:history': 1 }, 2);
+	it('truncates deleted source entry when a route push with a new sveltekit:history index supersedes an intercepted Back', async () => {
+		const env = await setup('http://localhost/teams', { 'sveltekit:history': 100 }, 1);
+		env.setEntry('http://localhost/projects', { 'sveltekit:history': 101 }, 2);
 		env.noteModalBackNavigation();
 
 		const close1 = vi.fn();
 		const unregister1 = env.registerModalBack(close1);
 
-		// Back queues rAF return for modal 1
-		const back1 = env.dispatchPopState('http://localhost/teams', { 'sveltekit:history': 0 }, 2);
+		// Back moves browser to /teams (100) and queues rAF return to /projects (101)
+		const back1 = env.dispatchPopState('http://localhost/teams', { 'sveltekit:history': 100 }, 2);
 		expect(back1.stopped).toBe(true);
 
-		// Before rAF fires, modal 1 tears down and a new route push occurs
+		// Before rAF fires, app pushes a NEW incremented SvelteKit index (102) from /teams,
+		// replacing the old forward entry (101), and modal 1 tears down.
 		unregister1();
-		env.setEntry('http://localhost/work', { 'sveltekit:history': 1 }, 2);
+		env.setEntry('http://localhost/work', { 'sveltekit:history': 102 }, 2);
 		env.noteModalBackNavigation();
 
 		// Flushing queued rAF must NOT call history.go or close modal 1
@@ -436,19 +437,58 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		expect(env.goCalls).toEqual([]);
 		expect(close1).not.toHaveBeenCalled();
 
-		// Opening a new modal on /work intercepts Back cleanly
+		// Opening a new modal on /work (102) and pressing Back to /teams (100) must compute
+		// delta 1 (NOT 2, because 101 was truncated when 102 was pushed at cursor 0 + 1).
 		const close2 = vi.fn();
 		const unregister2 = env.registerModalBack(close2);
-		const back2 = env.dispatchPopState('http://localhost/teams', { 'sveltekit:history': 0 }, 2);
+		const back2 = env.dispatchPopState('http://localhost/teams', { 'sveltekit:history': 100 }, 2);
 		expect(back2.stopped).toBe(true);
 		env.flushRaf();
 		expect(env.goCalls).toEqual([1]);
 
-		const return2 = env.dispatchPopState('http://localhost/work', { 'sveltekit:history': 1 }, 2);
+		const return2 = env.dispatchPopState('http://localhost/work', { 'sveltekit:history': 102 }, 2);
 		expect(return2.stopped).toBe(true);
 		env.flushRaf();
 		expect(close2).toHaveBeenCalledTimes(1);
 
 		unregister2();
+	});
+
+	it('still resyncs browser URL via queued rAF when a modal unmounts without a route push, without calling stale close', async () => {
+		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
+		env.setEntry('http://localhost/projects', { 'sveltekit:history': 11 }, 2);
+		env.noteModalBackNavigation();
+
+		const routerPop = vi.fn();
+		env.fakeWindow.addEventListener('popstate', routerPop);
+
+		const close = vi.fn();
+		const unregister = env.registerModalBack(close);
+
+		// Back intercepts traversal to /teams (10) and queues rAF return to /projects (11)
+		const backEvent = env.dispatchPopState(
+			'http://localhost/teams',
+			{ 'sveltekit:history': 10 },
+			2
+		);
+		expect(backEvent.stopped).toBe(true);
+
+		// Modal unmounts before rAF fires, with NO route push
+		unregister();
+
+		// Queued rAF still executes history.go(1) to keep browser URL aligned with SvelteKit's /projects
+		env.flushRaf();
+		expect(env.goCalls).toEqual([1]);
+
+		// Matching return popstate is swallowed cleanly, and unmounted close() is NOT called
+		const returnEvent = env.dispatchPopState(
+			'http://localhost/projects',
+			{ 'sveltekit:history': 11 },
+			2
+		);
+		expect(returnEvent.stopped).toBe(true);
+		expect(routerPop).not.toHaveBeenCalled();
+		env.flushRaf();
+		expect(close).not.toHaveBeenCalled();
 	});
 });
