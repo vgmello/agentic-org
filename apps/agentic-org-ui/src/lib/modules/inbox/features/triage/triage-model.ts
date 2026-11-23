@@ -172,8 +172,6 @@ export function parseInboxCommentsJson(raw: string | null): InboxCommentEntry[] 
 	}
 }
 
-const UNBUILT_WORK_REF_RE = /^\/work\/[^/]+/;
-const RETIRED_SEARCH_RE = /^\/search(?:$|[/?#])/;
 const ROUTE_TEMPLATE_BRACKET_RE = /[[\]]/;
 
 export function isInternalAppPath(path: string | undefined): path is string {
@@ -182,30 +180,52 @@ export function isInternalAppPath(path: string | undefined): path is string {
 	return trimmed.startsWith('/') && !trimmed.startsWith('//') && !trimmed.startsWith('/\\');
 }
 
-const ROUTE_GROUP_SEGMENT_RE = /(?:^|\/)\([^/]+\)(?:\/|$)/;
+const ROUTE_GROUP_SEGMENT_RE = /^\(.+\)$/;
+const PERCENT_ENCODED_RE = /%[0-9a-fA-F]{2}/;
+
+function decodeSegmentFully(rawSegment: string): string | undefined {
+	let current = rawSegment;
+	for (let i = 0; i < 4; i += 1) {
+		try {
+			const next = decodeURIComponent(current);
+			if (next === current) return current;
+			current = next;
+		} catch {
+			return undefined;
+		}
+	}
+	return PERCENT_ENCODED_RE.test(current) ? undefined : current;
+}
 
 function parseNormalizedInternalUrl(
 	rawPath: string | undefined
-): { pathname: string; search: string; hash: string } | undefined {
+): { pathname: string; segments: string[]; search: string; hash: string } | undefined {
 	if (!isInternalAppPath(rawPath)) return undefined;
 	const trimmed = rawPath.trim();
 	try {
 		const parsed = new URL(trimmed, 'https://app.invalid');
 		if (parsed.origin !== 'https://app.invalid') return undefined;
-		const decoded = decodeURIComponent(parsed.pathname);
-		if (decoded.includes('\\')) return undefined;
-		const canonical = new URL(decoded, 'https://app.invalid');
-		if (canonical.origin !== 'https://app.invalid') return undefined;
-		const normPath = canonical.pathname.replace(/\/+/g, '/');
-		if (
-			ROUTE_TEMPLATE_BRACKET_RE.test(parsed.pathname) ||
-			ROUTE_TEMPLATE_BRACKET_RE.test(normPath) ||
-			ROUTE_GROUP_SEGMENT_RE.test(parsed.pathname) ||
-			ROUTE_GROUP_SEGMENT_RE.test(normPath)
-		) {
-			return undefined;
+		const normPath = parsed.pathname.replace(/\/+/g, '/');
+		const rawSegments = normPath.split('/').filter(Boolean);
+		const segments: string[] = [];
+		for (const rawSeg of rawSegments) {
+			const decoded = decodeSegmentFully(rawSeg);
+			if (decoded === undefined) return undefined;
+			if (
+				decoded === '.' ||
+				decoded === '..' ||
+				decoded.includes('/') ||
+				decoded.includes('\\') ||
+				ROUTE_TEMPLATE_BRACKET_RE.test(rawSeg) ||
+				ROUTE_TEMPLATE_BRACKET_RE.test(decoded) ||
+				ROUTE_GROUP_SEGMENT_RE.test(rawSeg) ||
+				ROUTE_GROUP_SEGMENT_RE.test(decoded)
+			) {
+				return undefined;
+			}
+			segments.push(decoded);
 		}
-		return { pathname: normPath, search: parsed.search, hash: parsed.hash };
+		return { pathname: normPath, segments, search: parsed.search, hash: parsed.hash };
 	} catch {
 		return undefined;
 	}
@@ -213,7 +233,9 @@ function parseNormalizedInternalUrl(
 
 export function isUnbuiltWorkRefPath(path: string | undefined): boolean {
 	const parsed = parseNormalizedInternalUrl(path);
-	return Boolean(parsed && UNBUILT_WORK_REF_RE.test(parsed.pathname));
+	return Boolean(
+		parsed && parsed.segments[0]?.toLowerCase() === 'work' && parsed.segments.length >= 2
+	);
 }
 
 export function safeWorkListHref(projectId: string | undefined): string {
@@ -226,8 +248,9 @@ export function sanitizeOpenHref(
 ): string | undefined {
 	const parsed = parseNormalizedInternalUrl(rawPath);
 	if (!parsed) return undefined;
-	if (RETIRED_SEARCH_RE.test(parsed.pathname)) return undefined;
-	if (UNBUILT_WORK_REF_RE.test(parsed.pathname)) {
+	const head = parsed.segments[0]?.toLowerCase();
+	if (head === 'search') return undefined;
+	if (head === 'work' && parsed.segments.length >= 2) {
 		return safeWorkListHref(projectId);
 	}
 	return `${parsed.pathname}${parsed.search}${parsed.hash}`;

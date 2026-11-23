@@ -436,12 +436,17 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		expect(sanitizeOpenHref('/(shell)/search', 'agency-v1')).toBeUndefined();
 		expect(sanitizeOpenHref('/(shell)/work/T-121', 'agency-v1')).toBeUndefined();
 		expect(sanitizeOpenHref('/%73earch', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('/%2573earch', 'agency-v1')).toBeUndefined();
 		expect(sanitizeOpenHref('/%77ork/T-121', 'agency-v1')).toBe('/projects/agency-v1/work');
+		expect(sanitizeOpenHref('/%2577ork/T-121', 'agency-v1')).toBe('/projects/agency-v1/work');
 		expect(sanitizeOpenHref('/settings/%2e%2e/search', 'agency-v1')).toBeUndefined();
 		expect(sanitizeOpenHref('/%28shell%29/search', 'agency-v1')).toBeUndefined();
 		expect(sanitizeOpenHref('/projects/%5Bid%5D/work', 'agency-v1')).toBeUndefined();
 		expect(sanitizeOpenHref('/%2f/evil.test', 'agency-v1')).toBeUndefined();
 		expect(sanitizeOpenHref('/%ZZ', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('/projects/team%23ops/work', 'agency-v1')).toBe(
+			'/projects/team%23ops/work'
+		);
 
 		// Verify relatedHref on derived items rejects external, normalized /search, bracket, and /work//<ref> paths
 		const unsafeItems: InboxItem[] = [
