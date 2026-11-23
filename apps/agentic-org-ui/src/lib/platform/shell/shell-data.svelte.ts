@@ -7,6 +7,11 @@ import { owner } from '$lib/org/model';
 import { workApi } from '$lib/work';
 import { needsYou } from '$lib/work/saved';
 
+export interface ShellRefreshResult {
+	inboxUpdated: boolean;
+	workUpdated: boolean;
+}
+
 export interface ShellDataOptions {
 	getOrganizationId: () => string;
 	getBaseOffices: () => OfficeInfo[];
@@ -27,6 +32,8 @@ export class ShellData {
 
 	#loadSeq = 0;
 	#leaving = false;
+	#latestLoad: { seq: number; orgId: string; promise: Promise<ShellRefreshResult> } | undefined =
+		undefined;
 
 	constructor(options: ShellDataOptions) {
 		this.#options = options;
@@ -48,7 +55,10 @@ export class ShellData {
 		return this.#layeredOffices.length > 0 ? this.#layeredOffices : this.#options.getBaseOffices();
 	}
 
-	load(id = this.organizationId, reset = false): { promise: Promise<void>; cancel: () => void } {
+	load(
+		id = this.organizationId,
+		reset = false
+	): { promise: Promise<ShellRefreshResult>; cancel: () => void } {
 		const seq = ++this.#loadSeq;
 		let cancelled = false;
 		if (reset) {
@@ -61,26 +71,39 @@ export class ShellData {
 			this.loadedOrganizationId = undefined;
 		}
 		const baseOffices = untrack(() => this.#options.getBaseOffices());
-		const promise = Promise.allSettled([
+		const promise: Promise<ShellRefreshResult> = Promise.allSettled([
 			orgApi.view(id),
 			workApi.snapshot(id),
 			inboxApi.list(id),
 			this.#options.loadOffices(id, baseOffices)
-		]).then(([orgRes, workRes, inboxRes, officesRes]) => {
-			if (this.#leaving || cancelled || seq !== this.#loadSeq) return;
+		]).then(async ([orgRes, workRes, inboxRes, officesRes]): Promise<ShellRefreshResult> => {
+			if (this.#leaving || cancelled) return { inboxUpdated: false, workUpdated: false };
+			if (seq !== this.#loadSeq) {
+				// If superseded by a newer load for the same org, await and return the winning load's publication result.
+				const winning = this.#latestLoad;
+				if (winning && winning.orgId === id && winning.seq > seq) {
+					return await winning.promise;
+				}
+				return { inboxUpdated: false, workUpdated: false };
+			}
 			if (orgRes.status === 'fulfilled') this.snapshot = orgRes.value.snapshot;
-			if (workRes.status === 'fulfilled') {
+			const workUpdated = workRes.status === 'fulfilled';
+			if (workUpdated) {
 				this.workItems = workRes.value.items;
 				this.workError = undefined;
 			} else {
 				this.workError = workRes.reason;
 				this.workErrorSeq += 1;
 			}
-			if (inboxRes.status === 'fulfilled') this.inboxItems = inboxRes.value;
+			const inboxUpdated = inboxRes.status === 'fulfilled';
+			if (inboxUpdated) this.inboxItems = inboxRes.value;
 			this.#layeredOffices = officesRes.status === 'fulfilled' ? officesRes.value : baseOffices;
 			this.loadedOrganizationId = id;
 			this.loaded = true;
+			return { inboxUpdated, workUpdated };
 		});
+		// Retain #latestLoad until overwritten by a newer load or dispose() so slower superseded loads can read its result.
+		this.#latestLoad = { seq, orgId: id, promise };
 		return {
 			promise,
 			cancel: () => {
@@ -89,12 +112,13 @@ export class ShellData {
 		};
 	}
 
-	refresh(): Promise<void> {
+	refresh(): Promise<ShellRefreshResult> {
 		return this.load(this.organizationId, false).promise;
 	}
 
 	dispose(): void {
 		this.#leaving = true;
+		this.#latestLoad = undefined;
 	}
 }
 

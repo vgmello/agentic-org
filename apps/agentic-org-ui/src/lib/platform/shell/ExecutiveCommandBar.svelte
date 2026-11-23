@@ -14,6 +14,7 @@
 	import type { InboxItem } from '$lib/modules/inbox/types';
 	import { answerExecutiveQuestion, type OrgAiAnswer } from '$lib/home/model';
 	import { nonOwners } from '$lib/org/model';
+	import { isEditableTarget, singleKeyShortcutsOn } from './shortcuts';
 	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
 
 	let {
@@ -234,15 +235,22 @@
 		}
 		if (
 			!open &&
-			uiPrefs.singleKeyShortcuts &&
+			singleKeyShortcutsOn() &&
 			event.key === '/' &&
+			!event.repeat &&
+			!event.isComposing &&
 			!event.metaKey &&
 			!event.ctrlKey &&
 			!event.altKey &&
+			!event.shiftKey &&
+			!isEditableTarget(event.target) &&
 			!(
-				event.target instanceof HTMLInputElement ||
-				event.target instanceof HTMLTextAreaElement ||
-				(event.target instanceof HTMLElement && event.target.isContentEditable)
+				event.target instanceof HTMLElement &&
+				Boolean(
+					event.target.closest(
+						'[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"]'
+					)
+				)
 			)
 		) {
 			event.preventDefault();
