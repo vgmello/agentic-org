@@ -91,6 +91,7 @@
   padding-block: 12px 4px;
   border-bottom: 0;
 }
+.triage-headline .ph-t { align-items: center; }
 .triage-headline #page-search-tools .cmdk-shell {
   width: min(28rem, 54vw);
   height: var(--control-height);
