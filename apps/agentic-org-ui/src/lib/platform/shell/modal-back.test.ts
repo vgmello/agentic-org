@@ -542,4 +542,34 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		expect(close2).toHaveBeenCalledTimes(1);
 		unregister2();
 	});
+
+	it('does not mistake Forward for Back when an anchor href repeats (#a -> #b -> #a)', async () => {
+		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
+		env.dispatchHashChange('http://localhost/teams#a', null, 2);
+		env.dispatchHashChange('http://localhost/teams#b', null, 3);
+		env.dispatchHashChange('http://localhost/teams#a', null, 4);
+
+		// Go Back from second #a to #b (now stamped with index 12)
+		env.dispatchPopState('http://localhost/teams#b', { 'sveltekit:history': 12 }, 4);
+
+		const routerPop = vi.fn();
+		env.fakeWindow.addEventListener('popstate', routerPop);
+
+		const close = vi.fn();
+		const unregister = env.registerModalBack(close);
+
+		// Press Forward to the later #a (stamped with index 13): must NOT be swallowed as Back
+		const forwardEvent = env.dispatchPopState(
+			'http://localhost/teams#a',
+			{ 'sveltekit:history': 13 },
+			4
+		);
+		expect(forwardEvent.stopped).toBe(false);
+		expect(routerPop).toHaveBeenCalledTimes(1);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([]);
+		expect(close).not.toHaveBeenCalled();
+
+		unregister();
+	});
 });

@@ -43,6 +43,7 @@ function samePathAndSearch(a: string, b: string): boolean {
 
 function findLegacyCursor(entry: LegacyEntry): number {
 	if (entry.index !== undefined) {
+		const currentIndex = legacyEntries[legacyCursor]?.index;
 		let best = -1;
 		let bestDist = Infinity;
 		let bestUntracked = -1;
@@ -57,8 +58,31 @@ function findLegacyCursor(entry: LegacyEntry): number {
 				}
 			} else if (candidate.index === undefined && candidate.href === entry.href) {
 				// Anchor/fragment entries recorded before SvelteKit assigns sveltekit:history.
+				// Respect monotonic sveltekit:history ordering so Forward never matches an earlier duplicate href.
+				if (currentIndex !== undefined) {
+					if (entry.index > currentIndex && i <= legacyCursor) continue;
+					if (entry.index < currentIndex && i >= legacyCursor) continue;
+				}
+				let monotonic = true;
+				for (let j = i - 1; j >= 0; j--) {
+					const prevIdx = legacyEntries[j].index;
+					if (prevIdx !== undefined) {
+						if (entry.index <= prevIdx) monotonic = false;
+						break;
+					}
+				}
+				for (let j = i + 1; j < legacyEntries.length && monotonic; j++) {
+					const nextIdx = legacyEntries[j].index;
+					if (nextIdx !== undefined) {
+						if (entry.index >= nextIdx) monotonic = false;
+						break;
+					}
+				}
+				if (!monotonic) continue;
 				const dist = Math.abs(i - legacyCursor) + (i === legacyCursor ? 0.5 : 0);
-				if (dist < bestUntrackedDist) {
+				// On an exact distance tie across legacyCursor with unknown direction, prefer Forward
+				// (i > legacyCursor) so an ambiguous Forward is never swallowed as Back.
+				if (dist < bestUntrackedDist || (dist === bestUntrackedDist && i > legacyCursor)) {
 					bestUntracked = i;
 					bestUntrackedDist = dist;
 				}
