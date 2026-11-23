@@ -1842,7 +1842,6 @@ fn l2_and_l3_conformance_on_sqlite_with_protected_db_delete_and_rebuild() {
     assert!(acc_db.is_file());
     assert!(bud_db.is_file());
 
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(
@@ -2157,5 +2156,244 @@ fn task79_subscription_usage_dual_engine_staleness_and_sqlite_rebuild() {
         if engine == EngineChoice::Sqlite {
             verify_sqlite_subscription_usage_rebuild(fx);
         }
+    }
+}
+
+fn make_task_usage_record(
+    fx: &CostBudgetFixture,
+    now_utc: &str,
+    cost_micro_usd: u64,
+) -> org_proto::costs::UsageRecordView {
+    let mut usage = org_proto::costs::UsageRecordView {
+        id: next_uuid(),
+        origin_office_id: fx.office.info().office_id.clone(),
+        producer_id: "prod-1".into(),
+        source_event_id: next_uuid(),
+        source_sequence: 1,
+        execution_office_id: Some(fx.office.info().office_id.clone()),
+        run_id: Some(next_uuid()),
+        actor_kind: org_proto::costs::UsageActorKind::Agent,
+        employee_id: Some(fx.worker_agent.clone()),
+        runtime: "claude".into(),
+        provider: Some("anthropic".into()),
+        model: Some("claude-sonnet-4".into()),
+        occurred_at: now_utc.to_owned(),
+        recorded_at: now_utc.to_owned(),
+        recorded_by_kind: "system".into(),
+        recorded_by_id: None,
+        normalization_version: 1,
+        source_metadata_json: "{}".into(),
+        payload_sha256: String::new(),
+        input_tokens: Some(100),
+        output_tokens: Some(100),
+        cache_read_tokens: Some(0),
+        cache_write_tokens: Some(0),
+        reasoning_tokens: Some(0),
+        token_status: org_proto::costs::CompletenessStatus::Complete,
+        token_issue: None,
+        price_id: None,
+        cost_micro_usd: Some(cost_micro_usd),
+        cost_basis: org_proto::costs::UsageCostBasis::TokenEstimate,
+        cost_status: org_proto::costs::CompletenessStatus::Complete,
+        cost_issue: None,
+        scope_kind: org_proto::costs::UsageScopeKind::Task,
+        task_id: Some(fx.task_a.clone()),
+        project_id: Some(fx.project_a.clone()),
+        team_id: None,
+        feature_id: None,
+        milestone_id: None,
+        release_id: None,
+        task_type_snapshot: Some("task".into()),
+        work_type: Some(org_proto::costs::WorkType::Build),
+        attribution_basis: org_proto::costs::AttributionBasis::CurrentTask,
+        supersedes_id: None,
+        correction_kind: None,
+        correction_reason: None,
+    };
+    usage.payload_sha256 =
+        crate::accounting::compute_usage_payload_sha256(&fx.office.info().org_id, &usage);
+    usage
+}
+
+fn stage_crashed_stop_intent(
+    fx: &CostBudgetFixture,
+    budget_id: &str,
+    stop_op_id: &str,
+    expected_revision: u64,
+    reason: Option<String>,
+    now_utc: String,
+) {
+    let task_cmd_id = next_uuid();
+    let mut agg = fx
+        .office
+        .budgets
+        .get_by_id(&fx.office.info().org_id, budget_id)
+        .unwrap()
+        .unwrap();
+    let hex_of = |digest: org_store::Sha256| -> String {
+        let mut hex = String::with_capacity(64);
+        for b in digest.as_bytes() {
+            use std::fmt::Write;
+            let _ = write!(&mut hex, "{b:02x}");
+        }
+        hex
+    };
+    let req_bytes = serde_json::to_vec(&serde_json::json!({
+        "budget_id": budget_id,
+        "reason": reason,
+    }))
+    .unwrap();
+    let req_hash = hex_of(org_store::Sha256::of(&req_bytes));
+    let transition_params = TasksTransitionParams {
+        command_id: task_cmd_id.clone(),
+        task: fx.task_a.clone(),
+        expected_revision,
+        status: TaskStatus::Cancelled,
+        blocked_reason: None,
+        resolution: reason.clone(),
+        note: reason.clone(),
+    };
+    let fields = serde_json::to_vec(&transition_params).unwrap();
+    let task_cmd_fp = hex_of(org_store::Sha256::of_parts(&[
+        b"tasks.transition",
+        b"\0",
+        &fields,
+    ]));
+    agg.pending_stop = Some(crate::budgets::PendingStopIntent {
+        operation_id: stop_op_id.to_owned(),
+        actor_id: fx.owner.clone(),
+        task_id: fx.task_a.clone(),
+        task_command_id: task_cmd_id,
+        task_command_fingerprint: Some(task_cmd_fp),
+        request_hash: req_hash,
+        reason,
+        created_at: now_utc,
+    });
+    fx.office
+        .budgets
+        .save_aggregate(&agg, &[(fx.owner.clone(), "person")])
+        .unwrap()
+        .unwrap();
+    fx.office
+        .task_transition(&fx.owner, transition_params)
+        .unwrap()
+        .unwrap();
+}
+
+#[test]
+fn budget_stop_intent_crash_recovery_and_eval_blocks_in_progress_task() {
+    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
+        let fx = seed_fixture(engine);
+        let inspected = fx.office.task_inspect(&fx.task_a).unwrap().unwrap();
+        fx.office
+            .task_transition(
+                &fx.owner,
+                TasksTransitionParams {
+                    command_id: next_uuid(),
+                    task: fx.task_a.clone(),
+                    expected_revision: inspected.task.revision,
+                    status: TaskStatus::InProgress,
+                    blocked_reason: None,
+                    resolution: None,
+                    note: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let set_res = fx
+            .office
+            .budget_set(
+                &fx.owner,
+                BudgetSetParams {
+                    operation_id: next_uuid(),
+                    scope_kind: BudgetScopeKind::Task,
+                    task_id: Some(fx.task_a.clone()),
+                    agent_id: None,
+                    release_id: None,
+                    period_kind: BudgetPeriodKind::Lifetime,
+                    unit: BudgetUnit::MicroUsd,
+                    limit_amount: 100,
+                    time_zone: Some("UTC".into()),
+                    time_zone_source: Some(BudgetTimeZoneSource::OwnerPerson),
+                    reason: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let budget_id = set_res.budget.id.clone();
+
+        // Simulate usage committing before `budget.get` wins `budget_op_lock` (Pass 7 Finding #3).
+        let now_utc = crate::time::format_rfc3339_ms(fx.office.current_time_ms());
+        let usage = make_task_usage_record(&fx, &now_utc, 250);
+        fx.office
+            .accounting
+            .append_usage(&fx.office.info().org_id, usage)
+            .unwrap()
+            .unwrap();
+        let got = fx
+            .office
+            .budget_get(
+                &fx.owner,
+                BudgetGetParams {
+                    budget_id: Some(budget_id.clone()),
+                    scope_kind: None,
+                    task_id: None,
+                    agent_id: None,
+                    release_id: None,
+                    period_kind: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(got.budget.unwrap().hold_state.is_some());
+        let after_get = fx.office.task_inspect(&fx.task_a).unwrap().unwrap();
+        assert_eq!(after_get.task.status, TaskStatus::Blocked);
+
+        // Simulate crash between durable task cancellation and final budget save (Pass 7 Finding #2).
+        let stop_op_id = next_uuid();
+        let reason = Some("crash-recovery stop".to_owned());
+        stage_crashed_stop_intent(
+            &fx,
+            &budget_id,
+            &stop_op_id,
+            after_get.task.revision,
+            reason.clone(),
+            now_utc,
+        );
+
+        // Retry `budget.stop` with the exact same `operation_id`: must reconcile to `"cancelled"`,
+        // NOT `"already_closed"`, resolve the notice, and clear `pending_stop`.
+        let retried = fx
+            .office
+            .budget_stop(
+                &fx.owner,
+                BudgetStopParams {
+                    operation_id: stop_op_id.clone(),
+                    budget_id: budget_id.clone(),
+                    reason,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(retried.replayed);
+        let final_agg = fx
+            .office
+            .budgets
+            .get_by_id(&fx.office.info().org_id, &budget_id)
+            .unwrap()
+            .unwrap();
+        assert!(final_agg.pending_stop.is_none());
+        assert!(final_agg
+            .notices
+            .iter()
+            .filter(|n| n.kind == "budget_reached")
+            .all(|n| n.delivery_state == "resolved"));
+        let stop_ev = final_agg
+            .events
+            .iter()
+            .find(|e| e.operation_id == stop_op_id)
+            .expect("stop_requested event finalized");
+        let payload: serde_json::Value = serde_json::from_str(&stop_ev.payload_json).unwrap();
+        assert_eq!(payload["outcome"], "cancelled");
     }
 }

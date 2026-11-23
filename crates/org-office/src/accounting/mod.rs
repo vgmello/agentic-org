@@ -33,9 +33,26 @@ pub struct UsageStreamCheckpoint {
     pub origin_office_id: String,
     pub producer_id: String,
     pub high_water_sequence: u64,
+    /// Canonical `payload_sha256` of the record at `high_water_sequence` (`schema.sql:1129`).
     pub head_sha256: Option<String>,
+    /// Running per-stream SHA-256 chain over `(prev_chain, id, source_sequence, recorded_at,
+    /// payload_sha256)` binding immutable record identity and archive ordering (`TASK-97`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_sha256: Option<String>,
     pub state: String,
     pub checkpointed_at: String,
+}
+
+/// Structured verified stream watermark (zero delimiter aliasing) carrying the running
+/// chain digest so budget evaluation detects missing, regressed, or replaced/forked streams
+/// (`TASK-97` / Final Gate Pass 8 #1/#3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerifiedStreamWatermark {
+    pub origin_office_id: String,
+    pub producer_id: String,
+    pub high_water_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_sha256: Option<String>,
 }
 
 /// Summary of durable stream coverage (`usage_stream_coverage` / `ledger_incomplete_streams`).
@@ -43,6 +60,7 @@ pub struct UsageStreamCheckpoint {
 pub struct UsageCoverageSummary {
     pub incomplete_streams: u64,
     pub coverage_as_of: Option<String>,
+    /// Canonical JSON encoding of verified stream watermarks only (never unverified checkpoints).
     pub checkpoint_ref: Option<String>,
 }
 
@@ -115,6 +133,15 @@ pub trait AccountingStore: Send + Sync {
     fn effective_records(&self, org_id: &str) -> Result<Vec<UsageRecordView>, OfficeError>;
 
     fn coverage_summary(&self, org_id: &str) -> Result<UsageCoverageSummary, OfficeError>;
+
+    /// Returns `true` iff `(prior.origin_office_id, prior.producer_id)` is currently a verified
+    /// stream with `high_water_sequence >= prior.high_water_sequence` AND matching chain digest
+    /// at `prior.high_water_sequence` (`TASK-97` / Final Gate Pass 8 #1).
+    fn stream_continues_watermark(
+        &self,
+        org_id: &str,
+        prior: &VerifiedStreamWatermark,
+    ) -> Result<bool, OfficeError>;
 
     fn save_subscription_usage(
         &self,
@@ -237,6 +264,7 @@ pub fn compute_usage_payload_sha256(org_id: &str, rec: &UsageRecordView) -> Stri
     map.insert("recorded_by_kind", rec.recorded_by_kind.clone().into());
     map.insert("release_id", rec.release_id.clone().into());
     map.insert("run_id", rec.run_id.clone().into());
+    map.insert("runtime", rec.runtime.clone().into());
     map.insert("schema_version", 1u64.into());
     map.insert("scope_kind", rec.scope_kind.as_str().into());
     map.insert("source_event_id", rec.source_event_id.clone().into());
@@ -259,6 +287,33 @@ pub fn compute_usage_payload_sha256(org_id: &str, rec: &UsageRecordView) -> Stri
         let _ = write!(&mut hex, "{b:02x}");
     }
     hex
+}
+
+/// Advances a per-stream SHA-256 hash chain binding immutable record identity (`id`),
+/// `source_sequence`, `recorded_at`, and canonical `payload_sha256` into
+/// `usage_stream_checkpoints.chain_sha256` so altering any record's ID, timestamp, or content
+/// breaks stream coverage verification (`TASK-97`).
+pub fn chain_usage_stream_head(prev_chain: Option<&str>, rec: &UsageRecordView) -> String {
+    let seq_bytes = rec.source_sequence.to_be_bytes();
+    let prev = prev_chain.unwrap_or("");
+    let digest = Sha256::of_parts(&[
+        b"usage-stream-head/v1\0",
+        prev.as_bytes(),
+        b"\0",
+        rec.id.as_bytes(),
+        b"\0",
+        &seq_bytes,
+        b"\0",
+        rec.recorded_at.as_bytes(),
+        b"\0",
+        rec.payload_sha256.as_bytes(),
+    ]);
+    let mut out = String::with_capacity(64);
+    for b in digest.as_bytes() {
+        use std::fmt::Write;
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
 }
 
 /// Validates token completeness and reasoning subset invariant (`doc-87`).

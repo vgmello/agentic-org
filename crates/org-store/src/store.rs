@@ -13,7 +13,7 @@ use std::{
 };
 
 use crate::{
-    change::{Bytes, Change, Clock, Operation, Outcome, Refusal},
+    change::{Bytes, Change, Clock, DurablePath, Operation, Outcome, Refusal},
     changes::{ChangeStream, Changes, Resync},
     custody::{JournalHead, OfficeIdentity, WriterAuthority},
     disk::{Disk, RealDisk},
@@ -73,6 +73,8 @@ pub struct StoreParts<E: Engine> {
     pub engine: Arc<E>,
     /// One projector per family. The store adds its own receipt family.
     pub projectors: Vec<Arc<dyn Projector<E>>>,
+    /// Durable subtrees owned by independent companion stores (pruned before rebuild walks).
+    pub excluded_prefixes: Vec<DurablePath>,
     pub clock: Arc<dyn Clock>,
     /// How long appended entries may wait for a flush nobody asked for.
     pub flush_interval: Duration,
@@ -97,6 +99,7 @@ impl<E: Engine> StoreParts<E> {
             custody,
             engine,
             projectors,
+            excluded_prefixes: Vec::new(),
             clock,
             flush_interval: Duration::from_millis(50),
             opening: Opening::Existing,
@@ -341,6 +344,7 @@ impl<E: Engine> Store<E> {
             custody,
             engine,
             projectors,
+            excluded_prefixes,
             clock,
             flush_interval,
             opening,
@@ -371,7 +375,8 @@ impl<E: Engine> Store<E> {
             Opening::Existing => Journal::open_on(disk, &durable, &identity, custody.as_ref())?,
         };
         journal.set_segment_bytes(limits.segment_bytes);
-        let projectors = Projectors::new(projectors, &identity.office_id);
+        let projectors =
+            Projectors::new_with_exclusions(projectors, &identity.office_id, excluded_prefixes);
         if let Some(through) = materialize(&files, &journal)? {
             journal.set_materialized(through)?;
         }

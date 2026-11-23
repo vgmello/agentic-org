@@ -19,10 +19,10 @@ org-pki = { path = "../org-pki" }
 org-platform = { path = "../org-platform" }
 org-proto = { path = "../org-proto" }
 org-supervise = { path = "../org-supervise" }
-ring = "0.17"
+ring = "=0.17.14"
 serde.workspace = true
 serde_json.workspace = true
-zeroize = "1.8"
+zeroize = "=1.9.1"
 
 [dev-dependencies]
 org-office = { path = "../org-office", features = ["testkit"] }

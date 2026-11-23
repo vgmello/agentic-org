@@ -62,6 +62,7 @@ pub(crate) type RateLimitHook = Arc<dyn Fn(&str, Option<&str>) + Send + Sync>;
 #[derive(Clone, Debug)]
 pub(crate) struct FailoverRequest {
     pub employee_id: String,
+    pub failed_run_id: String,
     pub failed_connection_id: String,
     pub objective: String,
     pub workspace: Option<String>,
@@ -888,6 +889,7 @@ fn evaluate_turn_failover(
     }
     loop_state.failover_pending = Some(FailoverRequest {
         employee_id: ctx.employee_id.clone(),
+        failed_run_id: ctx.run_id.clone(),
         failed_connection_id: conn_id.clone(),
         objective: loop_state.current_objective.clone(),
         workspace: ctx.workspace.clone(),

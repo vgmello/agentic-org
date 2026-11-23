@@ -248,7 +248,7 @@ impl WatcherFixture {
                     reports_to_employee_id: Some(owner.to_owned()),
                     office_id: Some(office.info().office_id.clone()),
                     model_profile_id: Some(profile_id.to_owned()),
-                    model_id: Some("claude-sonnet-4".into()),
+                    model_id: Some("claude-sonnet-4-6".into()),
                     permission_preset: Some("safe_ask".into()),
                     tools_config: Vec::new(),
                     system_prompt_markdown: Some("Be helpful.".into()),

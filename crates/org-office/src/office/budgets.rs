@@ -15,10 +15,10 @@ use org_proto::{ApiError, ErrorCode};
 use org_store::Sha256;
 use serde_json::json;
 
-use crate::budgets::eval::{apply_extend_once, evaluate_budget, EvalOutcome};
+use crate::budgets::eval::{apply_extend_once, evaluate_budget, EvalOutcome, ExtendOnceRequest};
 use crate::budgets::{
     ActiveBudgetHoldInfo, BudgetAggregate, BudgetEventRecord, BudgetPolicyVersion, BudgetRecord,
-    OpenBudgetInboxNotice,
+    OpenBudgetInboxNotice, PendingStopIntent,
 };
 use crate::error::OfficeError;
 use crate::organization::records::{Employee, EmployeeKind, EmployeeStatus};
@@ -42,12 +42,19 @@ struct ResolvedTz {
 }
 
 impl Office {
+    pub(super) fn lock_budget_ops(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.budget_op_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// `budget.set`: sets, raises, or lowers a task, agent (day/month), or release budget.
     pub fn budget_set(
         &self,
         actor: &str,
         params: BudgetSetParams,
     ) -> Result<Result<BudgetMutationResult, ApiError>, OfficeError> {
+        let _guard = self.lock_budget_ops();
         op_budget_set(self, actor, params)
     }
 
@@ -57,6 +64,7 @@ impl Office {
         actor: &str,
         params: BudgetClearParams,
     ) -> Result<Result<BudgetMutationResult, ApiError>, OfficeError> {
+        let _guard = self.lock_budget_ops();
         op_budget_clear(self, actor, params)
     }
 
@@ -66,6 +74,7 @@ impl Office {
         actor: &str,
         params: BudgetExtendOnceParams,
     ) -> Result<Result<BudgetMutationResult, ApiError>, OfficeError> {
+        let _guard = self.lock_budget_ops();
         op_budget_extend_once(self, actor, params)
     }
 
@@ -75,6 +84,7 @@ impl Office {
         actor: &str,
         params: BudgetStopParams,
     ) -> Result<Result<BudgetMutationResult, ApiError>, OfficeError> {
+        let _guard = self.lock_budget_ops();
         op_budget_stop(self, actor, params)
     }
 
@@ -84,6 +94,7 @@ impl Office {
         actor: &str,
         params: BudgetKeepPausedParams,
     ) -> Result<Result<BudgetMutationResult, ApiError>, OfficeError> {
+        let _guard = self.lock_budget_ops();
         op_budget_keep_paused(self, actor, params)
     }
 
@@ -93,6 +104,7 @@ impl Office {
         actor: &str,
         params: BudgetGetParams,
     ) -> Result<Result<BudgetGetResult, ApiError>, OfficeError> {
+        let _guard = self.lock_budget_ops();
         op_budget_get(self, actor, params)
     }
 
@@ -103,6 +115,7 @@ impl Office {
         actor: &str,
         params: BudgetListParams,
     ) -> Result<Result<BudgetListResult, ApiError>, OfficeError> {
+        let _guard = self.lock_budget_ops();
         op_budget_list(self, actor, params)
     }
 
@@ -112,20 +125,8 @@ impl Office {
         actor: &str,
         params: BudgetAgentOwnParams,
     ) -> Result<Result<BudgetAgentOwnResult, ApiError>, OfficeError> {
+        let _guard = self.lock_budget_ops();
         op_budget_agent_own(self, actor, params)
-    }
-
-    /// Re-evaluates all budgets potentially affected by `rec` (`doc-92`).
-    pub(crate) fn reevaluate_budgets_for_record(
-        &self,
-        rec: &UsageRecordView,
-    ) -> Result<(), OfficeError> {
-        op_reevaluate_for_record(self, rec)
-    }
-
-    /// Checks whether `task_id` currently has a reached active task budget (`doc-92`).
-    pub(crate) fn is_task_budget_reached(&self, task_id: &str) -> Result<bool, OfficeError> {
-        op_is_task_reached(self, task_id)
     }
 
     /// Returns any unreleased holds affecting `agent_id` or `task_id`, catching calendar resets first.
@@ -134,16 +135,19 @@ impl Office {
         agent_id: Option<&str>,
         task_id: Option<&str>,
     ) -> Result<Vec<ActiveBudgetHoldInfo>, OfficeError> {
+        let _guard = self.lock_budget_ops();
         op_active_holds(self, agent_id, task_id)
     }
 
     /// Transitions any `stop_pending` holds for `agent_id` (and tasks assigned to it) to `held`.
     pub fn mark_budget_holds_stopped(&self, agent_id: &str) -> Result<bool, OfficeError> {
+        let _guard = self.lock_budget_ops();
         op_mark_holds_stopped(self, agent_id)
     }
 
     /// Returns all unresolved owner `budget_reached` notices for `inbox.list` & `inbox.changed`.
     pub fn open_budget_inbox_notices(&self) -> Result<Vec<OpenBudgetInboxNotice>, OfficeError> {
+        let _guard = self.lock_budget_ops();
         op_open_inbox_notices(self)
     }
 }
@@ -204,7 +208,7 @@ fn op_budget_set(
         Ok(v) => v,
         Err(e) => return Ok(Err(e)),
     };
-    let existing = office.budgets.find_by_target(
+    let mut existing = office.budgets.find_by_target(
         &office.info.org_id,
         params.scope_kind,
         target.task_id.as_deref(),
@@ -215,6 +219,9 @@ fn op_budget_set(
     // Authorize BEFORE checking operation_id replay (`Pass 1 High #2`).
     if let Err(e) = authorize_budget_set(office, &caller, &params, &target, existing.as_ref())? {
         return Ok(Err(e));
+    }
+    if let Some(ref mut agg) = existing {
+        reconcile_pending_stop(office, agg)?;
     }
     let req_hash = request_fingerprint(&json!({
         "scope_kind": params.scope_kind.as_str(),
@@ -236,8 +243,11 @@ fn op_budget_set(
             &req_hash,
         ) {
             Ok(true) => {
+                // Reconcile any active task hold before acknowledging a replay in case a crash
+                // occurred between saving the hold and transitioning the task (`TASK-97` / Pass 8).
+                ensure_held_task_blocked(office, agg)?;
                 return Ok(Ok(BudgetMutationResult {
-                    budget: agg.to_view(true),
+                    budget: render_budget_view(office, agg, true)?,
                     replayed: true,
                 }));
             }
@@ -283,7 +293,7 @@ fn apply_set_and_persist(
         }
     }
     // Evaluate in-memory once; if timezone shift collides with a closed period, refuse cleanly.
-    let outcome = match evaluate_in_memory(office, &mut agg, now_ms, &now_utc)? {
+    let _outcome = match evaluate_in_memory(office, &mut agg, now_ms, &now_utc)? {
         Ok(o) => o,
         Err(e) => return Ok(Err(e)),
     };
@@ -311,13 +321,13 @@ fn apply_set_and_persist(
         &now_utc,
         payload,
     );
-    // Single atomic durable + SQLite save (`Pass 1 Med #14`).
-    save_budget_aggregate(office, &agg)?;
-    if let Some(tid) = outcome.newly_reached_task_id {
-        block_task_for_budget(office, &tid)?;
+    // Single atomic durable + SQLite save (`Pass 1 Med #14`, `TASK-97` Pass 5 #2).
+    if let Err(err) = save_budget_aggregate(office, &agg)? {
+        return Ok(Err(err));
     }
+    ensure_held_task_blocked(office, &agg)?;
     Ok(Ok(BudgetMutationResult {
-        budget: agg.to_view(true),
+        budget: render_budget_view(office, &agg, true)?,
         replayed: false,
     }))
 }
@@ -349,6 +359,7 @@ fn new_aggregate(
         events: Vec::new(),
         notices: Vec::new(),
         holds: Vec::new(),
+        pending_stop: None,
     }
 }
 
@@ -445,6 +456,7 @@ fn op_budget_clear(
     if let Err(e) = require_budget_actor(office, &caller, &agg, true)? {
         return Ok(Err(e));
     }
+    reconcile_pending_stop(office, &mut agg)?;
     let req_hash = request_fingerprint(&json!({
         "budget_id": params.budget_id,
         "reason": params.reason,
@@ -457,8 +469,9 @@ fn op_budget_clear(
         &req_hash,
     ) {
         Ok(true) => {
+            ensure_held_task_blocked(office, &agg)?;
             return Ok(Ok(BudgetMutationResult {
-                budget: agg.to_view(true),
+                budget: render_budget_view(office, &agg, true)?,
                 replayed: true,
             }));
         }
@@ -499,9 +512,11 @@ fn op_budget_clear(
         json!({ "action": "budget.clear", "request_hash": req_hash, "reason": params.reason })
             .to_string(),
     );
-    save_budget_aggregate(office, &agg)?;
+    if let Err(err) = save_budget_aggregate(office, &agg)? {
+        return Ok(Err(err));
+    }
     Ok(Ok(BudgetMutationResult {
-        budget: agg.to_view(true),
+        budget: render_budget_view(office, &agg, true)?,
         replayed: false,
     }))
 }
@@ -527,6 +542,7 @@ fn op_budget_extend_once(
     if let Err(e) = require_budget_actor(office, &caller, &agg, true)? {
         return Ok(Err(e));
     }
+    reconcile_pending_stop(office, &mut agg)?;
     let req_hash = request_fingerprint(&json!({
         "budget_id": params.budget_id,
         "reason": params.reason,
@@ -539,8 +555,9 @@ fn op_budget_extend_once(
         &req_hash,
     ) {
         Ok(true) => {
+            ensure_held_task_blocked(office, &agg)?;
             return Ok(Ok(BudgetMutationResult {
-                budget: agg.to_view(true),
+                budget: render_budget_view(office, &agg, true)?,
                 replayed: true,
             }));
         }
@@ -552,21 +569,29 @@ fn op_budget_extend_once(
     if let Err(e) = evaluate_in_memory(office, &mut agg, now_ms, &now_utc)? {
         return Ok(Err(e));
     }
+    let cov = office.accounting.coverage_summary(&office.info.org_id)?;
+    let regressed = period_watermark_regressed(office, &agg)?;
+    let incomplete_streams = cov.incomplete_streams.saturating_add(u64::from(regressed));
     let mut next_id = || office.next_uuid_v7();
     if let Err(e) = apply_extend_once(
         &mut agg,
-        &params.operation_id,
-        caller.id.as_str(),
-        &req_hash,
-        params.reason,
-        &now_utc,
+        ExtendOnceRequest {
+            operation_id: &params.operation_id,
+            actor_id: caller.id.as_str(),
+            req_hash: &req_hash,
+            reason: params.reason,
+            incomplete_streams,
+            now_utc: &now_utc,
+        },
         &mut next_id,
     ) {
         return Ok(Err(e));
     }
-    save_budget_aggregate(office, &agg)?;
+    if let Err(err) = save_budget_aggregate(office, &agg)? {
+        return Ok(Err(err));
+    }
     Ok(Ok(BudgetMutationResult {
-        budget: agg.to_view(true),
+        budget: render_budget_view(office, &agg, true)?,
         replayed: false,
     }))
 }
@@ -599,6 +624,9 @@ fn op_budget_stop(
             "release warning caps do not stop or pause execution",
         )));
     }
+    // Reconcile any previously crashed stop intent before replay check so a retry after a crash
+    // preserves the original task-cancellation receipt outcome (`TASK-97` / Pass 7 Finding #2).
+    reconcile_pending_stop(office, &mut agg)?;
     let req_hash = request_fingerprint(&json!({
         "budget_id": params.budget_id,
         "reason": params.reason,
@@ -611,8 +639,12 @@ fn op_budget_stop(
         &req_hash,
     ) {
         Ok(true) => {
+            ensure_held_task_blocked(office, &agg)?;
+            if let Some(refusal) = stop_refusal_for_operation(&agg, &params.operation_id) {
+                return Ok(Err(refusal));
+            }
             return Ok(Ok(BudgetMutationResult {
-                budget: agg.to_view(true),
+                budget: render_budget_view(office, &agg, true)?,
                 replayed: true,
             }));
         }
@@ -624,16 +656,10 @@ fn op_budget_stop(
     if let Err(e) = evaluate_in_memory(office, &mut agg, now_ms, &now_utc)? {
         return Ok(Err(e));
     }
-    let outcome = execute_stop_action(
-        office,
-        &mut agg,
-        caller.id.as_str(),
-        params.reason.as_deref(),
-    )?;
-    // Resolve owner Inbox notice ONLY for stopped tasks, NOT agent keep-paused (`Pass 1 Med #11`).
     if agg.budget.scope_kind == BudgetScopeKind::Task {
-        resolve_reached_notices(&mut agg, &now_utc);
+        return execute_task_budget_stop(office, &mut agg, &caller, &params, req_hash, now_utc);
     }
+    mark_open_periods_kept_paused(&mut agg);
     push_budget_event(
         office,
         &mut agg,
@@ -645,31 +671,72 @@ fn op_budget_stop(
             "action": "budget.stop",
             "request_hash": req_hash,
             "reason": params.reason,
-            "outcome": outcome,
+            "outcome": "kept_paused",
         })
         .to_string(),
     );
-    save_budget_aggregate(office, &agg)?;
+    if let Err(err) = save_budget_aggregate(office, &agg)? {
+        return Ok(Err(err));
+    }
     Ok(Ok(BudgetMutationResult {
-        budget: agg.to_view(true),
+        budget: render_budget_view(office, &agg, true)?,
         replayed: false,
     }))
 }
 
-fn execute_stop_action(
+fn execute_task_budget_stop(
     office: &Office,
     agg: &mut BudgetAggregate,
-    actor: &str,
-    reason: Option<&str>,
-) -> Result<String, OfficeError> {
-    if agg.budget.scope_kind == BudgetScopeKind::Task {
-        return match agg.budget.task_id.as_deref() {
-            Some(tid) => cancel_task_for_budget(office, actor, tid, reason),
-            None => Ok("missing_task".into()),
-        };
+    caller: &Employee,
+    params: &BudgetStopParams,
+    req_hash: String,
+    now_utc: String,
+) -> Result<Result<BudgetMutationResult, ApiError>, OfficeError> {
+    if let Some(tid) = agg.budget.task_id.clone() {
+        agg.pending_stop = Some(PendingStopIntent {
+            operation_id: params.operation_id.clone(),
+            actor_id: caller.id.as_str().to_owned(),
+            task_id: tid,
+            task_command_id: office.next_uuid_v7(),
+            task_command_fingerprint: None,
+            request_hash: req_hash,
+            reason: params.reason.clone(),
+            created_at: now_utc,
+        });
+        if let Err(err) = save_budget_aggregate(office, agg)? {
+            return Ok(Err(err));
+        }
+        if let Some(refusal) = reconcile_pending_stop(office, agg)? {
+            return Ok(Err(refusal));
+        }
+        return Ok(Ok(BudgetMutationResult {
+            budget: render_budget_view(office, agg, true)?,
+            replayed: false,
+        }));
     }
-    mark_open_periods_kept_paused(agg);
-    Ok("kept_paused".into())
+    resolve_reached_notices(agg, &now_utc);
+    push_budget_event(
+        office,
+        agg,
+        &params.operation_id,
+        "stop_requested",
+        caller.id.as_str(),
+        &now_utc,
+        json!({
+            "action": "budget.stop",
+            "request_hash": req_hash,
+            "reason": params.reason,
+            "outcome": "missing_task",
+        })
+        .to_string(),
+    );
+    if let Err(err) = save_budget_aggregate(office, agg)? {
+        return Ok(Err(err));
+    }
+    Ok(Ok(BudgetMutationResult {
+        budget: render_budget_view(office, agg, true)?,
+        replayed: false,
+    }))
 }
 
 fn op_budget_keep_paused(
@@ -716,7 +783,7 @@ fn op_budget_keep_paused(
     ) {
         Ok(true) => {
             return Ok(Ok(BudgetMutationResult {
-                budget: agg.to_view(true),
+                budget: render_budget_view(office, &agg, true)?,
                 replayed: true,
             }));
         }
@@ -744,9 +811,11 @@ fn op_budget_keep_paused(
         })
         .to_string(),
     );
-    save_budget_aggregate(office, &agg)?;
+    if let Err(err) = save_budget_aggregate(office, &agg)? {
+        return Ok(Err(err));
+    }
     Ok(Ok(BudgetMutationResult {
-        budget: agg.to_view(true),
+        budget: render_budget_view(office, &agg, true)?,
         replayed: false,
     }))
 }
@@ -956,13 +1025,15 @@ fn load_own_task_budget(
         return Ok(Ok(None));
     };
     evaluate_and_save_budget(office, &mut agg, now_ms, now_utc)?;
-    Ok(Ok(Some(agg.to_view(true))))
+    Ok(Ok(Some(render_budget_view(office, &agg, true)?)))
 }
 
-fn op_reevaluate_for_record(office: &Office, rec: &UsageRecordView) -> Result<(), OfficeError> {
+pub(super) fn op_reevaluate_for_record(
+    office: &Office,
+    rec: &UsageRecordView,
+) -> Result<(), OfficeError> {
     let now_ms = office.monotonic_now_ms();
     let now_utc = format_rfc3339_ms(now_ms);
-    let mut newly_reached_tasks = Vec::new();
     for mut agg in office.budgets.list_all(&office.info.org_id)? {
         let matches = match agg.budget.scope_kind {
             BudgetScopeKind::Task => rec.task_id.is_some() && rec.task_id == agg.budget.task_id,
@@ -977,18 +1048,12 @@ fn op_reevaluate_for_record(office: &Office, rec: &UsageRecordView) -> Result<()
         if !matches {
             continue;
         }
-        let out = evaluate_and_save_budget(office, &mut agg, now_ms, &now_utc)?;
-        if let Some(tid) = out.newly_reached_task_id {
-            newly_reached_tasks.push(tid);
-        }
-    }
-    for tid in newly_reached_tasks {
-        block_task_for_budget(office, &tid)?;
+        evaluate_and_save_budget(office, &mut agg, now_ms, &now_utc)?;
     }
     Ok(())
 }
 
-fn op_is_task_reached(office: &Office, task_id: &str) -> Result<bool, OfficeError> {
+pub(super) fn op_is_task_reached(office: &Office, task_id: &str) -> Result<bool, OfficeError> {
     let Some(mut agg) = office.budgets.find_by_target(
         &office.info.org_id,
         BudgetScopeKind::Task,
@@ -1006,7 +1071,7 @@ fn op_is_task_reached(office: &Office, task_id: &str) -> Result<bool, OfficeErro
     Ok(agg.active_hold().is_some())
 }
 
-fn op_active_holds(
+pub(super) fn op_active_holds(
     office: &Office,
     agent_id: Option<&str>,
     task_id: Option<&str>,
@@ -1069,7 +1134,9 @@ fn op_mark_holds_stopped(office: &Office, agent_id: &str) -> Result<bool, Office
             }
         }
         if changed {
-            save_budget_aggregate(office, &agg)?;
+            if let Err(err) = save_budget_aggregate(office, &agg)? {
+                return Err(OfficeError::storage(std::io::Error::other(err.message)));
+            }
         }
     }
     Ok(any)
@@ -1121,7 +1188,34 @@ fn load_and_eval_agent_budget(
         return Ok(None);
     };
     evaluate_and_save_budget(office, &mut agg, now_ms, now_utc)?;
-    Ok(Some(agg.to_view(true)))
+    Ok(Some(render_budget_view(office, &agg, true)?))
+}
+
+fn period_watermark_regressed(office: &Office, agg: &BudgetAggregate) -> Result<bool, OfficeError> {
+    let Some(prev) = agg
+        .open_period()
+        .and_then(|p| p.ledger_checkpoint_ref.as_deref())
+    else {
+        return Ok(false);
+    };
+    let mut storage_err: Option<OfficeError> = None;
+    let res = crate::budgets::eval::checkpoint_ref_regressed(Some(prev), &mut |wm| match office
+        .accounting
+        .stream_continues_watermark(&office.info.org_id, wm)
+    {
+        Ok(ok) => Ok(ok),
+        Err(err) => {
+            storage_err = Some(err);
+            Err(ApiError::new(
+                ErrorCode::StorageError,
+                "failed to verify stream watermark continuity",
+            ))
+        }
+    });
+    if let Some(err) = storage_err {
+        return Err(err);
+    }
+    Ok(res.unwrap_or(true))
 }
 
 fn evaluate_in_memory(
@@ -1132,15 +1226,34 @@ fn evaluate_in_memory(
 ) -> Result<Result<EvalOutcome, ApiError>, OfficeError> {
     let effective = office.accounting.effective_records(&office.info.org_id)?;
     let coverage = office.accounting.coverage_summary(&office.info.org_id)?;
+    let mut storage_err: Option<OfficeError> = None;
+    let mut continues = |wm: &crate::accounting::VerifiedStreamWatermark| match office
+        .accounting
+        .stream_continues_watermark(&office.info.org_id, wm)
+    {
+        Ok(ok) => Ok(ok),
+        Err(err) => {
+            storage_err = Some(err);
+            Err(ApiError::new(
+                ErrorCode::StorageError,
+                "failed to verify stream watermark continuity",
+            ))
+        }
+    };
     let mut next_id = || office.next_uuid_v7();
-    Ok(evaluate_budget(
+    let res = evaluate_budget(
         agg,
         &effective,
         &coverage,
         now_ms,
         now_utc,
+        &mut continues,
         &mut next_id,
-    ))
+    );
+    if let Some(err) = storage_err {
+        return Err(err);
+    }
+    Ok(res)
 }
 
 fn evaluate_and_save_budget(
@@ -1149,20 +1262,24 @@ fn evaluate_and_save_budget(
     now_ms: u64,
     now_utc: &str,
 ) -> Result<EvalOutcome, OfficeError> {
+    reconcile_pending_stop(office, agg)?;
     let outcome = evaluate_in_memory(office, agg, now_ms, now_utc)?
         .map_err(|e| OfficeError::storage(std::io::Error::other(e.message)))?;
     if outcome.changed {
-        save_budget_aggregate(office, agg)?;
+        if let Err(err) = save_budget_aggregate(office, agg)? {
+            return Err(OfficeError::storage(std::io::Error::other(err.message)));
+        }
     }
+    ensure_held_task_blocked(office, agg)?;
     Ok(outcome)
 }
 
-fn save_budget_aggregate(office: &Office, agg: &BudgetAggregate) -> Result<(), OfficeError> {
+fn save_budget_aggregate(
+    office: &Office,
+    agg: &BudgetAggregate,
+) -> Result<Result<(), ApiError>, OfficeError> {
     let emp_kinds = collect_employee_kinds(office, agg)?;
-    office
-        .budgets
-        .save_aggregate(agg, &emp_kinds)?
-        .map_err(|e| OfficeError::storage(std::io::Error::other(e.message)))
+    office.budgets.save_aggregate(agg, &emp_kinds)
 }
 
 fn collect_employee_kinds(
@@ -1178,6 +1295,9 @@ fn collect_employee_kinds(
     }
     ids.extend(agg.events.iter().filter_map(|e| e.actor_id.clone()));
     ids.extend(agg.notices.iter().filter_map(|n| n.recipient_id.clone()));
+    if let Some(intent) = &agg.pending_stop {
+        ids.insert(intent.actor_id.clone());
+    }
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
         let kind = match office.load_employee(&id)? {
@@ -1366,13 +1486,28 @@ fn is_pm_of_task(office: &Office, caller: &Employee, task_id: &str) -> Result<bo
     Ok(pm_projects.iter().any(|p| p == &pid))
 }
 
+fn render_budget_view(
+    office: &Office,
+    agg: &BudgetAggregate,
+    amounts_visible: bool,
+) -> Result<BudgetView, OfficeError> {
+    let mut view = agg.to_view(amounts_visible);
+    if view.can_extend_once {
+        let cov = office.accounting.coverage_summary(&office.info.org_id)?;
+        if cov.incomplete_streams > 0 || period_watermark_regressed(office, agg)? {
+            view.can_extend_once = false;
+        }
+    }
+    Ok(view)
+}
+
 fn budget_view_for_caller(
     office: &Office,
     caller: &Employee,
     agg: &BudgetAggregate,
 ) -> Result<Option<BudgetView>, OfficeError> {
     if caller.id.as_str() == office.owner.as_str() {
-        return Ok(Some(agg.to_view(true)));
+        return Ok(Some(render_budget_view(office, agg, true)?));
     }
     match agg.budget.scope_kind {
         // Release & Agent budgets fail closed to owner-only until release ownership exists (`Pass 1 High #4`).
@@ -1382,63 +1517,404 @@ fn budget_view_for_caller(
                 Some(tid) => is_pm_of_task(office, caller, tid)?,
                 None => false,
             };
-            Ok(Some(agg.to_view(is_pm)))
+            Ok(Some(render_budget_view(office, agg, is_pm)?))
         }
         _ => Ok(None),
     }
 }
 
-fn block_task_for_budget(office: &Office, task_id: &str) -> Result<(), OfficeError> {
-    let Ok(inspected) = office.task_inspect(task_id)? else {
-        return Ok(());
-    };
-    if inspected.task.status != TaskStatus::InProgress {
+const MAX_TASK_TRANSITION_RETRIES: usize = 8;
+
+/// Reconciles any active (unreleased) task budget hold by transitioning an `InProgress` task to
+/// `Blocked`, retrying revision `Conflict`s cleanly (`doc-92`, `TASK-97` Pass 7 Finding #3).
+fn ensure_held_task_blocked(office: &Office, agg: &BudgetAggregate) -> Result<(), OfficeError> {
+    if agg.budget.scope_kind != BudgetScopeKind::Task || agg.active_hold().is_none() {
         return Ok(());
     }
-    let _ = office.task_transition(
-        office.owner.as_str(),
-        TasksTransitionParams {
-            command_id: office.next_uuid_v7(),
-            task: task_id.to_owned(),
-            expected_revision: inspected.task.revision,
-            status: TaskStatus::Blocked,
-            blocked_reason: Some("Budget reached".into()),
-            resolution: None,
-            note: Some("Task blocked because its budget was reached.".into()),
-        },
-    )?;
+    if let Some(tid) = agg.budget.task_id.as_deref() {
+        block_task_for_budget(office, tid)?;
+    }
     Ok(())
 }
 
-fn cancel_task_for_budget(
-    office: &Office,
-    actor: &str,
-    task_id: &str,
-    reason: Option<&str>,
-) -> Result<String, OfficeError> {
-    let Ok(inspected) = office.task_inspect(task_id)? else {
-        return Ok("task_not_found".into());
-    };
-    if matches!(
-        inspected.task.status,
-        TaskStatus::Cancelled | TaskStatus::Done
-    ) {
-        return Ok("already_closed".into());
+fn block_task_for_budget(office: &Office, task_id: &str) -> Result<(), OfficeError> {
+    for _ in 0..MAX_TASK_TRANSITION_RETRIES {
+        let inspected = match office.task_inspect(task_id)? {
+            Ok(v) => v,
+            Err(e) if e.code == ErrorCode::NotFound => return Ok(()),
+            Err(e) => return Err(OfficeError::storage(std::io::Error::other(e.message))),
+        };
+        if inspected.task.status != TaskStatus::InProgress {
+            // Confirm durable flush & host custody of the observed non-InProgress status before
+            // treating blocking as complete (`TASK-97` / Pass 11 Finding #4).
+            office
+                .store
+                .sync()
+                .map_err(|e| OfficeError::storage(std::io::Error::other(e.to_string())))?;
+            if office.store.status().stopped.is_some() {
+                return Err(OfficeError::storage(std::io::Error::other(
+                    "store stopped before confirming task block state",
+                )));
+            }
+            let confirmed = match office.task_inspect(task_id)? {
+                Ok(v) => v,
+                Err(e) if e.code == ErrorCode::NotFound => return Ok(()),
+                Err(e) => return Err(OfficeError::storage(std::io::Error::other(e.message))),
+            };
+            if confirmed.task.revision == inspected.task.revision
+                && confirmed.task.status != TaskStatus::InProgress
+            {
+                return Ok(());
+            }
+            continue;
+        }
+        match office.task_transition(
+            office.owner.as_str(),
+            TasksTransitionParams {
+                command_id: office.next_uuid_v7(),
+                task: task_id.to_owned(),
+                expected_revision: inspected.task.revision,
+                status: TaskStatus::Blocked,
+                blocked_reason: Some("Budget reached".into()),
+                resolution: None,
+                note: Some("Task blocked because its budget was reached.".into()),
+            },
+        )? {
+            Ok(_) => return Ok(()),
+            Err(e) if e.code == ErrorCode::Conflict => continue,
+            Err(e) if e.code == ErrorCode::NotFound => return Ok(()),
+            Err(e) => return Err(OfficeError::storage(std::io::Error::other(e.message))),
+        }
     }
-    match office.task_transition(
-        actor,
-        TasksTransitionParams {
-            command_id: office.next_uuid_v7(),
-            task: task_id.to_owned(),
+    Err(OfficeError::storage(std::io::Error::other(
+        "budget hold task transition conflicted after retries",
+    )))
+}
+
+enum StopExecutionOutcome {
+    Closed(&'static str),
+    Refused(String),
+}
+
+fn stop_refusal_for_operation(agg: &BudgetAggregate, operation_id: &str) -> Option<ApiError> {
+    let ev = agg
+        .events
+        .iter()
+        .find(|e| e.operation_id == operation_id && e.kind == "stop_requested")?;
+    let parsed: serde_json::Value = serde_json::from_str(&ev.payload_json).ok()?;
+    let outcome = parsed.get("outcome").and_then(|v| v.as_str())?;
+    let reason = outcome.strip_prefix("transition_refused:")?;
+    Some(ApiError::new(ErrorCode::Conflict, reason.to_owned()))
+}
+
+/// Reconciles a persisted `pending_stop` intent against `org-store`'s flushed and host-confirmed
+/// task transition receipt before finalizing the `stop_requested` event (`TASK-97` / Pass 7 & 8).
+///
+/// Resolves `budget_reached` notices ONLY on a verified closing outcome (`cancelled` or
+/// `already_closed`). Retryable revision conflicts and unconfirmed receipts keep `pending_stop`
+/// intact and return `Err`, while terminal task-transition refusals leave the notice open and
+/// return `Ok(Some(ApiError))` so callers observe the refusal.
+fn reconcile_pending_stop(
+    office: &Office,
+    agg: &mut BudgetAggregate,
+) -> Result<Option<ApiError>, OfficeError> {
+    let Some(mut intent) = agg.pending_stop.clone() else {
+        return Ok(None);
+    };
+    if agg.has_operation(&intent.operation_id) {
+        let refusal = stop_refusal_for_operation(agg, &intent.operation_id);
+        agg.pending_stop = None;
+        if let Err(err) = save_budget_aggregate(office, agg)? {
+            return Err(OfficeError::storage(std::io::Error::other(err.message)));
+        }
+        return Ok(refusal);
+    }
+    let outcome = execute_or_reconcile_stop_intent(office, agg, &mut intent)?;
+    let now_utc = format_rfc3339_ms(office.monotonic_now_ms());
+    let (outcome_str, refusal) = match outcome {
+        StopExecutionOutcome::Closed(label) => {
+            resolve_reached_notices(agg, &now_utc);
+            (label.to_owned(), None)
+        }
+        StopExecutionOutcome::Refused(msg) => (
+            format!("transition_refused:{msg}"),
+            Some(ApiError::new(ErrorCode::Conflict, msg)),
+        ),
+    };
+    push_budget_event(
+        office,
+        agg,
+        &intent.operation_id,
+        "stop_requested",
+        &intent.actor_id,
+        &now_utc,
+        json!({
+            "action": "budget.stop",
+            "request_hash": intent.request_hash,
+            "reason": intent.reason,
+            "outcome": outcome_str,
+            "task_command_id": intent.task_command_id,
+        })
+        .to_string(),
+    );
+    agg.pending_stop = None;
+    if let Err(err) = save_budget_aggregate(office, agg)? {
+        return Err(OfficeError::storage(std::io::Error::other(err.message)));
+    }
+    Ok(refusal)
+}
+
+fn rotate_stop_intent_command(
+    office: &Office,
+    agg: &mut BudgetAggregate,
+    intent: &mut PendingStopIntent,
+) -> Result<(), OfficeError> {
+    intent.task_command_id = office.next_uuid_v7();
+    intent.task_command_fingerprint = None;
+    agg.pending_stop = Some(intent.clone());
+    if let Err(err) = save_budget_aggregate(office, agg)? {
+        return Err(OfficeError::storage(std::io::Error::other(err.message)));
+    }
+    Ok(())
+}
+
+fn confirm_terminal_task_state(
+    office: &Office,
+    task_id: &str,
+    observed_revision: u64,
+) -> Result<Option<StopExecutionOutcome>, OfficeError> {
+    // Confirm that the observed terminal task state is flushed and host-confirmed before
+    // finalizing `already_closed` (`TASK-97` / Pass 9 Finding #1).
+    office
+        .store
+        .sync()
+        .map_err(|e| OfficeError::storage(std::io::Error::other(e.to_string())))?;
+    if office.store.status().stopped.is_some() {
+        return Err(OfficeError::storage(std::io::Error::other(
+            "store stopped before confirming terminal task state",
+        )));
+    }
+    let confirmed = match office.task_inspect(task_id)? {
+        Ok(v) => v,
+        Err(e) if e.code == ErrorCode::NotFound => {
+            return Ok(Some(StopExecutionOutcome::Refused("task not found".into())));
+        }
+        Err(e) => return Err(OfficeError::storage(std::io::Error::other(e.message))),
+    };
+    // Require the post-sync read to match the exact pre-sync revision so a newly appended close
+    // after `sync()` started can never bypass durability (`Pass 10 #1`).
+    if confirmed.task.revision == observed_revision
+        && matches!(
+            confirmed.task.status,
+            TaskStatus::Cancelled | TaskStatus::Done
+        )
+    {
+        return Ok(Some(StopExecutionOutcome::Closed("already_closed")));
+    }
+    Ok(None)
+}
+
+fn execute_or_reconcile_stop_intent(
+    office: &Office,
+    agg: &mut BudgetAggregate,
+    intent: &mut PendingStopIntent,
+) -> Result<StopExecutionOutcome, OfficeError> {
+    for _ in 0..MAX_TASK_TRANSITION_RETRIES {
+        if let Some(receipt_outcome) = lookup_task_transition_receipt(office, intent)? {
+            match receipt_outcome {
+                TaskReceiptOutcome::Final(outcome) => return Ok(outcome),
+                TaskReceiptOutcome::RevisionConflict => {
+                    rotate_stop_intent_command(office, agg, intent)?;
+                    continue;
+                }
+            }
+        }
+        let inspected = match office.task_inspect(&intent.task_id)? {
+            Ok(v) => v,
+            Err(e) if e.code == ErrorCode::NotFound => {
+                return Ok(StopExecutionOutcome::Refused("task not found".into()));
+            }
+            Err(e) => return Err(OfficeError::storage(std::io::Error::other(e.message))),
+        };
+        if matches!(
+            inspected.task.status,
+            TaskStatus::Cancelled | TaskStatus::Done
+        ) {
+            if let Some(outcome) =
+                confirm_terminal_task_state(office, &intent.task_id, inspected.task.revision)?
+            {
+                return Ok(outcome);
+            }
+            continue;
+        }
+        let transition_params = TasksTransitionParams {
+            command_id: intent.task_command_id.clone(),
+            task: intent.task_id.clone(),
             expected_revision: inspected.task.revision,
             status: TaskStatus::Cancelled,
             blocked_reason: None,
-            resolution: Some(reason.unwrap_or("Stopped at budget limit").to_owned()),
-            note: Some(reason.unwrap_or("Task stopped at budget limit.").to_owned()),
-        },
-    )? {
-        Ok(_) => Ok("cancelled".into()),
-        Err(e) => Ok(format!("transition_refused:{}", e.message)),
+            resolution: Some(
+                intent
+                    .reason
+                    .as_deref()
+                    .unwrap_or("Stopped at budget limit")
+                    .to_owned(),
+            ),
+            note: Some(
+                intent
+                    .reason
+                    .as_deref()
+                    .unwrap_or("Task stopped at budget limit.")
+                    .to_owned(),
+            ),
+        };
+        let fp = task_transition_fingerprint(&transition_params);
+        if intent.task_command_fingerprint.as_deref() != Some(fp.as_str()) {
+            // Persist the exact transition fingerprint BEFORE submitting `tasks.transition` so a
+            // clock-rollback command ID collision with another task can never falsely finalize
+            // this stop (`TASK-97` / Final Gate Finding #3).
+            intent.task_command_fingerprint = Some(fp);
+            agg.pending_stop = Some(intent.clone());
+            if let Err(err) = save_budget_aggregate(office, agg)? {
+                return Err(OfficeError::storage(std::io::Error::other(err.message)));
+            }
+        }
+        match office.task_transition(&intent.actor_id, transition_params)? {
+            Ok(_) => return Ok(StopExecutionOutcome::Closed("cancelled")),
+            Err(e) if e.code == ErrorCode::Conflict => {
+                rotate_stop_intent_command(office, agg, intent)?;
+                continue;
+            }
+            Err(e)
+                if matches!(
+                    e.code,
+                    ErrorCode::InvalidRequest | ErrorCode::NotAuthorized | ErrorCode::NotFound
+                ) =>
+            {
+                // Flush & confirm the journaled domain refusal receipt before clearing
+                // `pending_stop` (`TASK-97` / Pass 14 Finding #2).
+                office
+                    .store
+                    .sync()
+                    .map_err(|err| OfficeError::storage(std::io::Error::other(err.to_string())))?;
+                if office.store.status().stopped.is_some() {
+                    return Err(OfficeError::storage(std::io::Error::other(
+                        "store stopped before confirming task refusal receipt",
+                    )));
+                }
+                return Ok(StopExecutionOutcome::Refused(e.message));
+            }
+            // Ambiguous/storage errors (e.g., commit succeeded before snapshot read failed)
+            // keep `pending_stop` intact so reconciliation resolves via the confirmed receipt
+            // (`TASK-97` / Pass 13 Finding #1).
+            Err(e) => return Err(OfficeError::storage(std::io::Error::other(e.message))),
+        }
+    }
+    Err(OfficeError::storage(std::io::Error::other(
+        "budget stop task cancellation conflicted after retries",
+    )))
+}
+
+enum TaskReceiptOutcome {
+    Final(StopExecutionOutcome),
+    RevisionConflict,
+}
+
+fn sha256_hex(digest: &Sha256) -> String {
+    let mut hex = String::with_capacity(64);
+    for b in digest.as_bytes() {
+        use std::fmt::Write;
+        let _ = write!(&mut hex, "{b:02x}");
+    }
+    hex
+}
+
+/// Computes the exact `org-store` operation fingerprint produced by `task_ops::task_op`
+/// for `"tasks.transition"` so stop recovery can reject command ID collisions from another task.
+fn task_transition_fingerprint(params: &TasksTransitionParams) -> String {
+    let fields = serde_json::to_vec(params).unwrap_or_default();
+    sha256_hex(&Sha256::of_parts(&[b"tasks.transition", b"\0", &fields]))
+}
+
+fn lookup_task_transition_receipt(
+    office: &Office,
+    intent: &PendingStopIntent,
+) -> Result<Option<TaskReceiptOutcome>, OfficeError> {
+    let (Ok(op_id), Ok(actor_id)) = (
+        org_store::Id::parse(&intent.task_command_id),
+        org_store::Id::parse(&intent.actor_id),
+    ) else {
+        return Ok(None);
+    };
+    let (receipt, _) = office
+        .store
+        .read(crate::store::open::ReceiptById(op_id))
+        .map_err(|e| OfficeError::storage(std::io::Error::other(e.to_string())))?;
+    let Some(receipt) = receipt else {
+        return Ok(None);
+    };
+    if receipt.kind != "tasks.transition" || receipt.actor != org_store::Actor::Employee(actor_id) {
+        return Ok(Some(TaskReceiptOutcome::RevisionConflict));
+    }
+    let Some(expected_fp) = intent.task_command_fingerprint.as_deref() else {
+        // An unfingerprinted intent has not yet submitted `tasks.transition`; any existing
+        // receipt for `task_command_id` is a collision (e.g., clock rollback) and must rotate
+        // to a fresh command ID rather than finalizing this stop (`Final Gate Pass 2 #2`).
+        return Ok(Some(TaskReceiptOutcome::RevisionConflict));
+    };
+    if sha256_hex(&receipt.fingerprint) != expected_fp {
+        return Ok(Some(TaskReceiptOutcome::RevisionConflict));
+    }
+    // Never finalize a budget stop from an unconfirmed projection receipt (`TASK-97` / Pass 8):
+    // require both journal flush and host custody confirmation through `receipt.ordinal`.
+    let mut status = office.store.status();
+    if status.stopped.is_none()
+        && (status.flushed < receipt.ordinal || status.confirmed < receipt.ordinal)
+    {
+        office
+            .store
+            .sync()
+            .map_err(|e| OfficeError::storage(std::io::Error::other(e.to_string())))?;
+        status = office.store.status();
+    }
+    if status.stopped.is_some()
+        || status.flushed < receipt.ordinal
+        || status.confirmed < receipt.ordinal
+    {
+        return Err(OfficeError::storage(std::io::Error::other(
+            "task cancellation receipt is not yet flushed and confirmed",
+        )));
+    }
+    match receipt.outcome {
+        org_store::Outcome::Completed => {
+            let reply_task_id = serde_json::from_slice::<serde_json::Value>(&receipt.reply)
+                .ok()
+                .and_then(|v| v.get("task_id")?.as_str().map(str::to_owned));
+            if reply_task_id.as_deref() != Some(intent.task_id.as_str()) {
+                return Ok(Some(TaskReceiptOutcome::RevisionConflict));
+            }
+            Ok(Some(TaskReceiptOutcome::Final(
+                StopExecutionOutcome::Closed("cancelled"),
+            )))
+        }
+        org_store::Outcome::Rejected => {
+            let api_err = serde_json::from_slice::<ApiError>(&receipt.reply).unwrap_or_else(|_| {
+                ApiError::new(ErrorCode::InvalidRequest, "task operation refused")
+            });
+            if matches!(
+                api_err.code,
+                ErrorCode::Conflict
+                    | ErrorCode::StorageError
+                    | ErrorCode::Unavailable
+                    | ErrorCode::Timeout
+            ) {
+                Ok(Some(TaskReceiptOutcome::RevisionConflict))
+            } else {
+                Ok(Some(TaskReceiptOutcome::Final(
+                    StopExecutionOutcome::Refused(api_err.message),
+                )))
+            }
+        }
     }
 }
 
@@ -1449,14 +1925,18 @@ fn invalid_op_id() -> ApiError {
     )
 }
 
+/// Maximum representable base limit whose +20% extension (`L + L/5`) stays `<= i64::MAX`,
+/// keeping validation, display, extension, and SQLite enforcement thresholds identical.
+const MAX_BUDGET_LIMIT: u64 = (i64::MAX as u64) / 6 * 5;
+
 fn validate_set_params(params: &BudgetSetParams) -> Result<(), ApiError> {
     if !org_proto::is_uuid_v7(&params.operation_id) {
         return Err(invalid_op_id());
     }
-    if params.limit_amount == 0 {
+    if params.limit_amount == 0 || params.limit_amount > MAX_BUDGET_LIMIT {
         return Err(ApiError::new(
             ErrorCode::InvalidRequest,
-            "limit_amount must be greater than zero",
+            "limit_amount must be between 1 and the maximum extendable 64-bit budget limit",
         ));
     }
     if !matches!(params.unit, BudgetUnit::MicroUsd | BudgetUnit::Tokens) {

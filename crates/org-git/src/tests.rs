@@ -83,7 +83,6 @@ fn url_validation_enforces_https_and_ssh_only() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn symlink_tampering_on_cache_config_and_worktree_dot_git_is_refused() {
     use std::os::unix::fs::symlink;

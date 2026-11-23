@@ -106,6 +106,21 @@ pub(crate) struct LiveSessionHandle {
 pub(crate) struct SessionRegistry {
     pub live: HashMap<String, LiveSessionHandle>,
     pub starting: HashSet<String>,
+    pub draining: bool,
+    pub shutting_down: bool,
+    pub bg_spawning: usize,
+    pub bg_workers: Vec<JoinHandle<()>>,
+}
+
+struct BgSpawnGuard<'a> {
+    registry: &'a Mutex<SessionRegistry>,
+}
+
+impl Drop for BgSpawnGuard<'_> {
+    fn drop(&mut self) {
+        let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.bg_spawning = reg.bg_spawning.saturating_sub(1);
+    }
 }
 
 struct StartSlotGuard<'a> {
@@ -453,7 +468,9 @@ impl SessionManager {
                 .take()
             {
                 let _ = self.office.release_turn_permit(&pid);
-                self.process_due_wakes();
+                if !is_admissions_closed(self) {
+                    self.process_due_wakes();
+                }
             }
             let view = handle
                 .state
@@ -469,15 +486,16 @@ impl SessionManager {
         self.idle_view_for(employee_id)
     }
 
-    /// Stops every live session cleanly when the office shuts down.
+    /// Stops every live session cleanly while waiting for any in-flight starts and background
+    /// workers to settle, then flushes all deferred session usage into office accounting.
     pub fn stop_all(&self, reason: &str) {
-        let ids: Vec<String> = {
-            let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-            reg.live.keys().cloned().collect()
-        };
-        for id in ids {
-            let _ = self.stop_session(&id, reason);
-        }
+        stop_all_inner(self, reason, false);
+    }
+
+    /// Permanently closes admissions, stops every live session, joins in-flight starts and
+    /// background workers, and flushes all deferred session usage before the office shuts down.
+    pub fn shutdown(&self, reason: &str) {
+        stop_all_inner(self, reason, true);
     }
 
     /// Starts (or sends a direct turn to) an agent's supervised session (`AC #1`, `LIVE-9..13`).
@@ -1234,25 +1252,11 @@ impl SessionManager {
     ) -> Result<(Option<SessionView>, Option<LiveSessionHandle>), ApiError> {
         let emp_id = employee.id.as_str();
         let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-        if reg.starting.contains(emp_id) {
-            return Err(ApiError::new(
-                ErrorCode::Conflict,
-                "agent session start is already in progress",
-            ));
-        }
+        check_registry_startable(&reg, emp_id)?;
         let finished = if let Some(handle) = reg.live.get(emp_id) {
             let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
             let workspace_matches = handle.workspace.as_deref() == requested_workspace;
-            if workspace_matches
-                && !matches!(
-                    state.state,
-                    SessionState::Stopped
-                        | SessionState::Stopping
-                        | SessionState::Suspended
-                        | SessionState::StallLocked
-                        | SessionState::RecoveryRequired
-                )
-            {
+            if workspace_matches && is_warm_state_reusable(state.state) {
                 if let Some(text) = objective {
                     let text = self.prepend_watch_notices(emp_id, text);
                     let tx = handle.tx.clone();
@@ -1625,62 +1629,27 @@ impl SessionManager {
         &self,
         prepared: PreparedSessionLaunch,
     ) -> Result<SessionView, ApiError> {
+        let runtime_state = Arc::new(Mutex::new(build_initial_runtime_state(
+            self.office.info().office_id.clone(),
+            self.config.stall_timeout,
+            &prepared,
+        )));
         let PreparedSessionLaunch {
             emp_id,
             run_id,
-            session_id,
-            runtime_id,
             connection_id,
             route_digest,
             workspace_arg,
             permit,
             task_ref,
             tried_connections,
-            home,
-            preset_cfg,
-            spec_hash,
             objective,
-            persisted_stalls,
             spawned,
-            session,
+            mut session,
             lifecycle,
+            ..
         } = prepared;
         let active_permit = Arc::new(Mutex::new(permit));
-        let runtime_state = Arc::new(Mutex::new(SessionRuntimeState {
-            employee_id: emp_id.clone(),
-            office_id: self.office.info().office_id.clone(),
-            state: SessionState::Starting,
-            run_id: Some(run_id.clone()),
-            session_id: Some(session_id),
-            runtime_id: Some(runtime_id),
-            runtime_session_id: lifecycle
-                .runtime_session_id
-                .as_ref()
-                .map(|s| s.as_str().to_owned()),
-            private_home: home.display().to_string(),
-            permission_preset: preset_cfg.preset.as_str().to_owned(),
-            sandbox_enabled: preset_cfg.sandbox.enabled,
-            spec_hash,
-            watchdog: StallWatchdog::from_persisted(
-                self.config.stall_timeout,
-                Instant::now(),
-                persisted_stalls,
-                false,
-            ),
-            recovery_required: false,
-            last_reply: None,
-            last_error: None,
-            backgrounds: BackgroundRegistry::new(),
-            pending_approvals: Vec::new(),
-            policy: preset_cfg.policy,
-            preset: preset_cfg.preset,
-            suspended_on_asks: Vec::new(),
-            waiting_for_member_id: None,
-            waiting_for_name: None,
-            suspended_since: None,
-            pending_wake_count: 0,
-            pending_wake_reason: None,
-        }));
         let (tx, rx) = mpsc::channel();
         if !objective.is_empty() {
             let _ = tx.send(PumpCommand::SendTurn(objective));
@@ -1701,35 +1670,41 @@ impl SessionManager {
             cleanup_paths: lifecycle.cleanup_after_exit,
             hooks,
         };
-        let thread_name = format!("org-session-{}", &emp_id[..emp_id.len().min(8)]);
-        let spawned_child = spawned;
-        let thread = match thread::Builder::new().name(thread_name).spawn({
-            let ctx = pump_ctx;
-            move || run_pump(spawned_child, session, rx, ctx)
-        }) {
-            Ok(handle) => handle,
-            Err(_) => {
-                // Note: if spawn fails, the closure (holding spawned_child) drops, which reaps the
-                // child via OwnedChild::drop, and we revoke the run binding & permit explicitly.
-                self.bindings.revoke(&emp_id, None);
-                if let Some((pid, _)) = active_permit
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .take()
-                {
-                    let _ = self.office.release_turn_permit(&pid);
-                }
-                return Err(ApiError::new(
-                    ErrorCode::Unavailable,
-                    "could not start session pump thread",
-                ));
-            }
-        };
+        if is_admissions_closed(self) {
+            return Err(abort_pre_pump_shutdown(
+                self,
+                &emp_id,
+                spawned,
+                &mut session,
+                &pump_ctx,
+                &active_permit,
+            ));
+        }
+        let thread = spawn_pump_thread(
+            self,
+            &emp_id,
+            spawned,
+            session,
+            rx,
+            pump_ctx,
+            &active_permit,
+        )?;
         let view = runtime_state
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .to_view();
         let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if reg.draining || reg.shutting_down {
+            drop(reg);
+            return Err(abort_post_spawn_shutdown(
+                self,
+                &emp_id,
+                tx,
+                thread,
+                &runtime_state,
+                &active_permit,
+            ));
+        }
         reg.live.insert(
             emp_id,
             LiveSessionHandle {
@@ -1902,10 +1877,17 @@ impl SessionManager {
         push_glob(&durable.join("state"));
         push_glob(&durable.join("journal"));
         push_glob(&durable.join("authority"));
+        push_glob(&durable.join("private"));
+        push_glob(&durable.join("messaging"));
+        push_glob(&durable.join("budgets"));
+        push_glob(&durable.join("accounting"));
+        push_glob(&durable.join("recovery"));
         push_glob(&office_local.join("auth"));
         push_glob(&office_local.join("connections"));
         push_glob(&office_local.join("sessions"));
         push_glob(&office_local.join("enroll-tmp"));
+        push_glob(&office_local.join("security"));
+        push_glob(&office_local.join("subscription-usage"));
         if let Some(org_dir) = durable.parent() {
             push_glob(&org_dir.join("runtime"));
         }
@@ -1935,6 +1917,274 @@ impl SessionManager {
             sandbox_enabled,
         ))
     }
+}
+
+pub(crate) fn is_admissions_closed(mgr: &SessionManager) -> bool {
+    let reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+    reg.draining || reg.shutting_down
+}
+
+pub(crate) fn spawn_bg_worker(
+    mgr: &Arc<SessionManager>,
+    name: &str,
+    f: impl FnOnce(Arc<SessionManager>) + Send + 'static,
+) {
+    {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if reg.draining || reg.shutting_down {
+            return;
+        }
+        reg.bg_workers.retain(|h| !h.is_finished());
+        reg.bg_spawning += 1;
+    }
+    let _spawn_guard = BgSpawnGuard {
+        registry: &mgr.registry,
+    };
+    let cloned = Arc::clone(mgr);
+    if let Ok(handle) = thread::Builder::new()
+        .name(name.to_owned())
+        .spawn(move || f(cloned))
+    {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.bg_workers.push(handle);
+    }
+}
+
+fn stop_all_inner(mgr: &SessionManager, reason: &str, permanent: bool) {
+    {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.draining = true;
+        if permanent {
+            reg.shutting_down = true;
+        }
+    }
+    loop {
+        let ids: Vec<String> = {
+            let reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.live.keys().cloned().collect()
+        };
+        for id in ids {
+            let _ = mgr.stop_session(&id, reason);
+        }
+        let bg_handles: Vec<JoinHandle<()>> = {
+            let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+            std::mem::take(&mut reg.bg_workers)
+        };
+        for handle in bg_handles {
+            let _ = handle.join();
+        }
+        let settled = {
+            let reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.live.is_empty()
+                && reg.starting.is_empty()
+                && reg.bg_spawning == 0
+                && reg.bg_workers.is_empty()
+        };
+        if settled {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let _ = mgr.flush_all_pending_usage();
+    if !permanent {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.draining = false;
+    }
+}
+
+fn check_registry_startable(reg: &SessionRegistry, emp_id: &str) -> Result<(), ApiError> {
+    if reg.draining || reg.shutting_down {
+        return Err(ApiError::new(
+            ErrorCode::Unavailable,
+            "office session manager is shutting down",
+        ));
+    }
+    if reg.starting.contains(emp_id) {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "agent session start is already in progress",
+        ));
+    }
+    Ok(())
+}
+
+fn is_warm_state_reusable(state: SessionState) -> bool {
+    !matches!(
+        state,
+        SessionState::Stopped
+            | SessionState::Stopping
+            | SessionState::Suspended
+            | SessionState::StallLocked
+            | SessionState::RecoveryRequired
+    )
+}
+
+fn build_initial_runtime_state(
+    office_id: String,
+    stall_timeout: Duration,
+    prepared: &PreparedSessionLaunch,
+) -> SessionRuntimeState {
+    SessionRuntimeState {
+        employee_id: prepared.emp_id.clone(),
+        office_id,
+        state: SessionState::Starting,
+        run_id: Some(prepared.run_id.clone()),
+        session_id: Some(prepared.session_id.clone()),
+        runtime_id: Some(prepared.runtime_id.clone()),
+        runtime_session_id: prepared
+            .lifecycle
+            .runtime_session_id
+            .as_ref()
+            .map(|s| s.as_str().to_owned()),
+        private_home: prepared.home.display().to_string(),
+        permission_preset: prepared.preset_cfg.preset.as_str().to_owned(),
+        sandbox_enabled: prepared.preset_cfg.sandbox.enabled,
+        spec_hash: prepared.spec_hash.clone(),
+        watchdog: StallWatchdog::from_persisted(
+            stall_timeout,
+            Instant::now(),
+            prepared.persisted_stalls,
+            false,
+        ),
+        recovery_required: false,
+        last_reply: None,
+        last_error: None,
+        backgrounds: BackgroundRegistry::new(),
+        pending_approvals: Vec::new(),
+        policy: prepared.preset_cfg.policy.clone(),
+        preset: prepared.preset_cfg.preset,
+        suspended_on_asks: Vec::new(),
+        waiting_for_member_id: None,
+        waiting_for_name: None,
+        suspended_since: None,
+        pending_wake_count: 0,
+        pending_wake_reason: None,
+    }
+}
+
+fn spawn_pump_thread(
+    mgr: &SessionManager,
+    emp_id: &str,
+    spawned: org_supervise::Spawned,
+    session: Box<dyn org_agent_runtime::Session>,
+    rx: mpsc::Receiver<PumpCommand>,
+    pump_ctx: PumpContext,
+    active_permit: &Arc<Mutex<Option<(String, u64)>>>,
+) -> Result<JoinHandle<()>, ApiError> {
+    let thread_name = format!("org-session-{}", &emp_id[..emp_id.len().min(8)]);
+    match thread::Builder::new()
+        .name(thread_name)
+        .spawn(move || run_pump(spawned, session, rx, pump_ctx))
+    {
+        Ok(handle) => Ok(handle),
+        Err(_) => {
+            mgr.bindings.revoke(emp_id, None);
+            if let Some((pid, _)) = active_permit
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take()
+            {
+                let _ = mgr.office.release_turn_permit(&pid);
+            }
+            Err(ApiError::new(
+                ErrorCode::Unavailable,
+                "could not start session pump thread",
+            ))
+        }
+    }
+}
+
+fn abort_pre_pump_shutdown(
+    mgr: &SessionManager,
+    emp_id: &str,
+    spawned: org_supervise::Spawned,
+    session: &mut Box<dyn org_agent_runtime::Session>,
+    pump_ctx: &PumpContext,
+    active_permit: &Arc<Mutex<Option<(String, u64)>>>,
+) -> ApiError {
+    let cleanup_verified = crate::pump::finalize_child(
+        spawned.child,
+        spawned.stdin,
+        session,
+        pump_ctx,
+        org_supervise::StopMode::Graceful,
+        false,
+    );
+    if let Some((pid, _)) = active_permit
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take()
+    {
+        if cleanup_verified {
+            let _ = mgr.office.release_turn_permit(&pid);
+        } else {
+            let _ = mgr.office.mark_turn_permit_release_pending(&pid);
+        }
+    }
+    persist_shutdown_cancellation(mgr, emp_id, &pump_ctx.run_id, !cleanup_verified)
+}
+
+fn abort_post_spawn_shutdown(
+    mgr: &SessionManager,
+    emp_id: &str,
+    tx: Sender<PumpCommand>,
+    thread: JoinHandle<()>,
+    runtime_state: &Arc<Mutex<SessionRuntimeState>>,
+    active_permit: &Arc<Mutex<Option<(String, u64)>>>,
+) -> ApiError {
+    mgr.bindings.revoke(emp_id, None);
+    let _ = tx.send(PumpCommand::Stop {
+        reason: "office shutdown".into(),
+    });
+    let joined_ok = thread.join().is_ok();
+    let (cancelled_run_id, recovery_required) = {
+        let st = runtime_state.lock().unwrap_or_else(|p| p.into_inner());
+        (st.run_id.clone(), !joined_ok || st.recovery_required)
+    };
+    if let Some((pid, _)) = active_permit
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take()
+    {
+        // If `run_pump` did not finish cleanly to take the permit itself, fail closed (`AE-07`).
+        let _ = mgr.office.mark_turn_permit_release_pending(&pid);
+    }
+    if let Some(cancelled_run_id) = cancelled_run_id {
+        return persist_shutdown_cancellation(mgr, emp_id, &cancelled_run_id, recovery_required);
+    }
+    ApiError::new(
+        ErrorCode::Unavailable,
+        "office session manager is shutting down",
+    )
+}
+
+fn persist_shutdown_cancellation(
+    mgr: &SessionManager,
+    emp_id: &str,
+    run_id: &str,
+    recovery_required: bool,
+) -> ApiError {
+    if let Err(io_err) = mgr.store.update_active_turn(emp_id, |rec| {
+        if rec.run_id == run_id {
+            rec.active = false;
+            if recovery_required {
+                rec.recovery_required = true;
+            }
+            rec.updated_at = rfc3339_now();
+        }
+    }) {
+        eprintln!(
+            "org-office-sessions: error: failed to persist shutdown cancellation for {emp_id}: {io_err}"
+        );
+        return ApiError::new(
+            ErrorCode::StorageError,
+            "could not persist session shutdown cancellation",
+        );
+    }
+    ApiError::new(
+        ErrorCode::Unavailable,
+        "office session manager is shutting down",
+    )
 }
 
 struct LaunchRouteOpts<'a> {
@@ -2096,14 +2346,30 @@ fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
     }
     let dead_handle = {
         let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
-        if reg.starting.contains(&req.employee_id) {
+        if reg.draining || reg.shutting_down || reg.starting.contains(&req.employee_id) {
             return;
+        }
+        if let Some(existing) = reg.live.get(&req.employee_id) {
+            let matches_failed_run = existing
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .run_id
+                .as_deref()
+                == Some(req.failed_run_id.as_str());
+            if !matches_failed_run {
+                // A newer replacement pump is already registered; leave it intact so shutdown can stop it.
+                return;
+            }
         }
         let old = reg.live.remove(&req.employee_id);
         reg.starting.insert(req.employee_id.clone());
         old
     };
     if let Some(mut old) = dead_handle {
+        let _ = old.tx.send(PumpCommand::Stop {
+            reason: "pool_failover".into(),
+        });
         if let Some(thread) = old.thread.take() {
             let _ = thread.join();
         }

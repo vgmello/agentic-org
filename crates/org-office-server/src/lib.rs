@@ -709,7 +709,7 @@ fn run_serve_loop(
     if let Some(Some(t)) = snooze_thread {
         let _ = t.join();
     }
-    session_manager.stop_all("office shutdown");
+    session_manager.shutdown("office shutdown");
 }
 
 fn start_transfers(

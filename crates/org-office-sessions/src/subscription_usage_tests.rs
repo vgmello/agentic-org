@@ -658,7 +658,6 @@ fn seed_usage_credentials_and_verify_vault(
     assert!(vault.load_unwrapped(claude_a).unwrap().is_none());
     let usage_path = vault.usage_credential_path(claude_a).unwrap();
     assert!(usage_path.exists());
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(
