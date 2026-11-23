@@ -614,6 +614,7 @@
 		border-radius: var(--exec-cmdk-trigger-radius);
 		color: var(--exec-cmdk-trigger-ink);
 		font-size: 0.875rem;
+		line-height: 1.2;
 		font-weight: 450;
 		letter-spacing: -0.005em;
 		transition:

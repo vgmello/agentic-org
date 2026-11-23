@@ -702,4 +702,65 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		expect(close).toHaveBeenCalledTimes(1);
 		unregister();
 	});
+
+	it('does not swallow Forward across repeated unindexed fragments (#one -> #two -> #one)', async () => {
+		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
+		env.dispatchHashChange('http://localhost/teams#one', null, 2);
+		env.dispatchHashChange('http://localhost/teams#two', null, 3);
+		env.dispatchHashChange('http://localhost/teams#one', null, 4);
+
+		// Go Back to unindexed #two
+		env.dispatchPopState('http://localhost/teams#two', null, 4);
+
+		const routerPop = vi.fn();
+		env.fakeWindow.addEventListener('popstate', routerPop);
+		const close = vi.fn();
+		const unregister = env.registerModalBack(close);
+
+		// Press Forward to the later unindexed #one: MUST pass through unstopped
+		const forwardEvent = env.dispatchPopState('http://localhost/teams#one', null, 4);
+		expect(forwardEvent.stopped).toBe(false);
+		expect(routerPop).toHaveBeenCalledTimes(1);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([]);
+		expect(close).not.toHaveBeenCalled();
+
+		unregister();
+	});
+
+	it('swallows rapid second Back when modal is locked (e.g. pending creation) and returns to the locked entry', async () => {
+		const env = await setup('http://localhost/home', { 'sveltekit:history': 1 }, 1);
+		env.setEntry('http://localhost/teams', { 'sveltekit:history': 2 }, 2);
+		env.noteModalBackNavigation();
+		env.setEntry('http://localhost/projects', { 'sveltekit:history': 3 }, 3);
+		env.noteModalBackNavigation();
+
+		const routerPop = vi.fn();
+		env.fakeWindow.addEventListener('popstate', routerPop);
+		const close = vi.fn();
+		const unregister = env.registerModalBack(close, { locked: () => true });
+
+		// First Back moves to /teams (2), swallowed
+		const back1 = env.dispatchPopState('http://localhost/teams', { 'sveltekit:history': 2 }, 3);
+		expect(back1.stopped).toBe(true);
+
+		// Rapid second Back before rAF moves to /home (1): MUST ALSO be swallowed and reschedule go(2)
+		const back2 = env.dispatchPopState('http://localhost/home', { 'sveltekit:history': 1 }, 3);
+		expect(back2.stopped).toBe(true);
+		expect(routerPop).not.toHaveBeenCalled();
+
+		env.flushRaf();
+		expect(env.goCalls).toEqual([2]);
+
+		const returned = env.dispatchPopState(
+			'http://localhost/projects',
+			{ 'sveltekit:history': 3 },
+			3
+		);
+		expect(returned.stopped).toBe(true);
+		env.flushRaf();
+		expect(close).toHaveBeenCalledTimes(1);
+
+		unregister();
+	});
 });

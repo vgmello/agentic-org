@@ -50,11 +50,14 @@
 	 */
 	let archived = $state.raw<ReadonlySet<string>>(new Set());
 	let archivedForOrg = $state<string | undefined>();
+	let archivedRefreshing = $state(false);
 	let archivedError = $state<string | undefined>();
 	let inFlightOrg: string | undefined;
 	let inFlightPromise: Promise<void> | undefined;
 	let archivedSeq = 0;
-	const archivedLoading = $derived(archivedForOrg !== organization.id);
+	const archivedLoading = $derived(
+		archivedForOrg !== organization.id || archivedRefreshing || Boolean(archivedError)
+	);
 	const teams = $derived(teamOptions(snapshot).filter((o) => !archived.has(o.team.id)));
 	// Every current employee, the owner's person included: ownership is no employee field (§7.1, OWNER-2).
 	const managers = $derived(
@@ -87,6 +90,7 @@
 		if (!force && inFlightOrg === orgId && inFlightPromise) return inFlightPromise;
 		const seq = ++archivedSeq;
 		inFlightOrg = orgId;
+		archivedRefreshing = true;
 		archivedError = undefined;
 		const promise = teamsApi
 			.list(orgId)
@@ -99,12 +103,12 @@
 				},
 				(e) => {
 					if (seq !== archivedSeq || orgId !== organization.id) return;
-					// Never mark an unverified initial read as ready; keep picker gated and offer Retry.
-					if (archivedForOrg !== orgId)
-						archivedError = toAppError(e).message.trim() || "Couldn't load active teams.";
+					// Keep picker gated and expose Retry whenever the current read (initial or reopen) fails.
+					archivedError = toAppError(e).message.trim() || "Couldn't load active teams.";
 				}
 			)
 			.finally(() => {
+				if (seq === archivedSeq) archivedRefreshing = false;
 				if (inFlightPromise === promise) {
 					inFlightOrg = undefined;
 					inFlightPromise = undefined;

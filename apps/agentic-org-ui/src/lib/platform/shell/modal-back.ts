@@ -4,6 +4,7 @@ type LegacyReturn = {
 	href: string;
 	index: number | undefined;
 	targetCursor: number;
+	locked?: () => boolean;
 	close: () => void;
 };
 
@@ -97,11 +98,14 @@ function findLegacyCursor(entry: LegacyEntry): number {
 		const candidate = legacyEntries[i];
 		if (candidate.href !== entry.href) continue;
 		const dist = Math.abs(i - legacyCursor) + (i === legacyCursor ? 0.5 : 0);
-		if (candidate.index === undefined && dist < bestUntrackedDist) {
+		if (
+			candidate.index === undefined &&
+			(dist < bestUntrackedDist || (dist === bestUntrackedDist && i > legacyCursor))
+		) {
 			bestUntracked = i;
 			bestUntrackedDist = dist;
 		}
-		if (dist < bestAnyDist) {
+		if (dist < bestAnyDist || (dist === bestAnyDist && i > legacyCursor)) {
 			bestAny = i;
 			bestAnyDist = dist;
 		}
@@ -252,9 +256,20 @@ export function installModalBack() {
 					requestAnimationFrame(() => pending.close());
 					return;
 				}
-				// A second popstate arrived before or instead of the expected return: cancel any
-				// undispatched return and update cursor cleanly without swallowing this event.
+				// A second popstate arrived before or instead of the expected return.
 				syncLegacyEntry(entry, true);
+				if (pending.locked?.() && legacyCursor < pending.targetCursor) {
+					// Locked modal (e.g. pending creation): swallow the rapid second Back too and
+					// resync all the way back to the locked entry.
+					event.stopImmediatePropagation();
+					const nextDelta = pending.targetCursor - legacyCursor;
+					const rescheduled: LegacyReturn = { ...pending };
+					legacyReturning = rescheduled;
+					requestAnimationFrame(() => {
+						if (legacyReturning !== rescheduled) return;
+						window.history.go(nextDelta);
+					});
+				}
 				return;
 			}
 			if (onModalPopState) {
@@ -269,7 +284,7 @@ export function installModalBack() {
 	);
 }
 
-export function registerModalBack(close: () => void) {
+export function registerModalBack(close: () => void, options?: { locked?: () => boolean }) {
 	const navigation = window.navigation;
 	if (!navigation) {
 		let savedState = window.history.state;
@@ -358,6 +373,7 @@ export function registerModalBack(close: () => void) {
 				href: currentEntry.href,
 				index: currentEntry.index,
 				targetCursor,
+				locked: options?.locked,
 				close: () => {
 					if (onModalPopState === handleLegacyPopState) close();
 				}

@@ -13,6 +13,7 @@
 -->
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
+	import { beforeNavigate } from '$app/navigation';
 	import {
 		errorClass,
 		helpClass,
@@ -104,13 +105,19 @@
 	const waitingForTeams = $derived(!teams);
 
 	function closeFromBack() {
-		if (busy) return;
+		if (locked) return;
 		open = false;
 	}
 
+	// Never let rapid Back or navigation unmount the sheet while creation/check is locked,
+	// preserving the operation ID needed to resolve unknown outcomes (work-items-ux §12).
+	beforeNavigate((navigation) => {
+		if (open && locked) navigation.cancel();
+	});
+
 	// Back with the sheet open closes it only, and focus returns to its opener (app-shell-ux §6).
 	$effect.pre(() => {
-		if (open) return registerModalBack(closeFromBack);
+		if (open) return registerModalBack(closeFromBack, { locked: () => locked });
 	});
 
 	let teamsSeq = 0;

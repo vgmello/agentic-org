@@ -27,7 +27,7 @@ async function noSidewaysScroll(page: Page) {
 	const overflow = await page.evaluate(() => {
 		const main = document.querySelector('main');
 		return {
-			page: document.documentElement.scrollWidth - innerWidth,
+			page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
 			main: main ? main.scrollWidth - main.clientWidth : 0
 		};
 	});
