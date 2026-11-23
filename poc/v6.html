@@ -8046,7 +8046,7 @@ function placeSearchToolbar(main, page) {
   if (heading) {
     heading.classList.add("has-page-toolbar");
     heading.prepend(drawerButton);
-    heading.insertBefore(pageSearchTools, heading.querySelector(":scope > .ph-actions, :scope.unavail > p"));
+    heading.insertBefore(pageSearchTools, heading.querySelector(":scope.unavail > p"));
     pageSearchTools.append(commandBar);
   } else if (commandBar.parentElement !== homeToolbar) {
     homeToolbar.append(drawerButton, commandBar);
