@@ -321,10 +321,9 @@
   align-items: baseline;
   flex-wrap: wrap;
   gap: 3px 6px;
-  color: var(--gray-400);
-  line-height: 1.4;
+  color: var(--gray-300);
 }
-.triage-from-time { font-size: .75rem; }
+.triage-from-time { color: var(--gray-400); font-size: .75rem; }
 .triage-from-member { position: relative; }
 .triage-from-member > a { color: var(--white); font-weight: 600; }
 .triage-from-member > a:is(:hover, :focus-visible) { text-decoration: underline; }
@@ -351,9 +350,7 @@
 .triage-from-card strong { display: block; color: var(--white); font-size: .875rem; font-weight: 600; }
 .triage-document h2 { font-size: clamp(1.5rem, 3.5cqi, 1.875rem); line-height: 1.22; letter-spacing: -.025em; overflow-wrap: anywhere; }
 .triage-document h3:not(.recommendation-label) { color: var(--white); font-size: var(--item-title-size); font-weight: 600; }
-.triage-why { max-width: 75ch; }
-.triage-why h3 { margin-bottom: 4px; }
-.triage-why p { color: var(--gray-300); overflow-wrap: anywhere; }
+.triage-description { max-width: 75ch; color: var(--gray-300); overflow-wrap: anywhere; }
 .triage-context, .triage-decision { display: grid; min-width: 0; gap: 12px; }
 .triage-context { padding-block: 12px 14px; border-block: 1px solid var(--line); }
 .recommendation p { max-width: 64ch; }
