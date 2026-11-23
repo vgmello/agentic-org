@@ -80,11 +80,23 @@ function findLegacyCursor(entry: LegacyEntry): number {
 				}
 				if (!monotonic) continue;
 				const dist = Math.abs(i - legacyCursor) + (i === legacyCursor ? 0.5 : 0);
-				// On an exact distance tie across legacyCursor with unknown direction, prefer Forward
-				// (i > legacyCursor) so an ambiguous Forward is never swallowed as Back.
-				if (dist < bestUntrackedDist || (dist === bestUntrackedDist && i > legacyCursor)) {
+				if (dist < bestUntrackedDist) {
 					bestUntracked = i;
 					bestUntrackedDist = dist;
+				} else if (dist === bestUntrackedDist && bestUntracked < legacyCursor && i > legacyCursor) {
+					// Equidistant untracked duplicate hrefs (e.g. #a -> unindexed #b -> #a):
+					// if entry.index is the immediate next SvelteKit index after the entry preceding
+					// bestUntracked, it belongs to the earlier slot (Back); otherwise prefer Forward.
+					let prevIdx: number | undefined;
+					for (let j = bestUntracked - 1; j >= 0; j--) {
+						if (legacyEntries[j].index !== undefined) {
+							prevIdx = legacyEntries[j].index;
+							break;
+						}
+					}
+					if (prevIdx === undefined || entry.index > prevIdx + 1) {
+						bestUntracked = i;
+					}
 				}
 			}
 		}
@@ -189,6 +201,22 @@ export function installModalBack() {
 		() => {
 			if (window.navigation || onModalPopState || legacyReturning) return;
 			syncLegacyEntry(currentLegacyEntry(), true);
+			const recordedHref = window.location.href;
+			const recordedCursor = legacyCursor;
+			queueMicrotask(() => {
+				if (window.navigation || legacyCursor !== recordedCursor) return;
+				const current = legacyEntries[recordedCursor];
+				const idx = sveltekitHistoryIndex(window.history.state);
+				if (
+					current &&
+					current.index === undefined &&
+					current.href === recordedHref &&
+					window.location.href === recordedHref &&
+					idx !== undefined
+				) {
+					legacyEntries[recordedCursor] = { href: recordedHref, index: idx };
+				}
+			});
 		},
 		{ capture: true }
 	);

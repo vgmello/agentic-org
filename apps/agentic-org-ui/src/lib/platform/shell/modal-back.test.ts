@@ -572,4 +572,49 @@ describe('modal-back legacy (!window.navigation) path', () => {
 
 		unregister();
 	});
+
+	it('distinguishes Back (index prev+1) from Forward (index > prev+1) across an unindexed middle fragment (#a -> unindexed #b -> #a)', async () => {
+		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
+		// Click #a (later assigned 11), type #b in address bar (null), click #a (later assigned 12)
+		env.dispatchHashChange('http://localhost/teams#a', null, 2);
+		env.dispatchHashChange('http://localhost/teams#b', null, 3);
+		env.dispatchHashChange('http://localhost/teams#a', null, 4);
+
+		// Go Back to unindexed #b
+		env.dispatchPopState('http://localhost/teams#b', null, 4);
+
+		// Open modal on #b and press Back to earlier #a (11): MUST intercept and restore #b
+		const close1 = vi.fn();
+		const unregister1 = env.registerModalBack(close1);
+		const backEvent = env.dispatchPopState(
+			'http://localhost/teams#a',
+			{ 'sveltekit:history': 11 },
+			4
+		);
+		expect(backEvent.stopped).toBe(true);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([1]);
+		const returnEvent = env.dispatchPopState('http://localhost/teams#b', null, 4);
+		expect(returnEvent.stopped).toBe(true);
+		env.flushRaf();
+		expect(close1).toHaveBeenCalledTimes(1);
+		unregister1();
+
+		// Reopen modal on #b and press Forward to later #a (12): MUST pass through unstopped
+		const routerPop = vi.fn();
+		env.fakeWindow.addEventListener('popstate', routerPop);
+		const close2 = vi.fn();
+		const unregister2 = env.registerModalBack(close2);
+		const forwardEvent = env.dispatchPopState(
+			'http://localhost/teams#a',
+			{ 'sveltekit:history': 12 },
+			4
+		);
+		expect(forwardEvent.stopped).toBe(false);
+		expect(routerPop).toHaveBeenCalledTimes(1);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([1]);
+		expect(close2).not.toHaveBeenCalled();
+		unregister2();
+	});
 });
