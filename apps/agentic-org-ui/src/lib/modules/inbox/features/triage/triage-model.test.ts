@@ -433,6 +433,8 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		expect(sanitizeOpenHref('/settings/../search', 'agency-v1')).toBeUndefined();
 		expect(sanitizeOpenHref('/settings/../search?q=foo', 'agency-v1')).toBeUndefined();
 		expect(sanitizeOpenHref('/projects/[id]/work', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('/(shell)/search', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('/(shell)/work/T-121', 'agency-v1')).toBeUndefined();
 
 		// Verify relatedHref on derived items rejects external, normalized /search, bracket, and /work//<ref> paths
 		const unsafeItems: InboxItem[] = [

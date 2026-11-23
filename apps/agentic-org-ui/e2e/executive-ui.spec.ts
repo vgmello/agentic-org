@@ -643,11 +643,15 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 	await expect(memberCard).toBeVisible();
 	const linkBox = (await memberLink.boundingBox())!;
 	const cardBox = (await memberCard.boundingBox())!;
-	// Move pointer step-by-step across the seam from trigger to card without losing hover
+	// Move pointer slowly pixel-by-pixel across the 4px padding bridge from trigger to card without losing hover
 	await page.mouse.move(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height - 1);
-	await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + 2);
+	await page.mouse.move(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height + 2, {
+		steps: 4
+	});
 	await expect(memberCard).toBeVisible();
-	await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
+	await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2, {
+		steps: 8
+	});
 	await expect(memberCard).toBeVisible();
 	await page.keyboard.press('Escape');
 	await expect(memberWrap).toHaveAttribute('data-preview-dismissed', '');

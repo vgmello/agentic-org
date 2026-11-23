@@ -466,17 +466,21 @@
 								{item.actorName}
 							</a>
 							<span
-								class="triage-from-card"
-								role="tooltip"
+								class="triage-from-popover"
 								data-flip-above={previewFlipAbove ? '' : undefined}
 								style:--preview-shift-x="{previewShiftX}px"
 								style:--preview-shift-y="{previewShiftY}px"
-								style:--preview-max-h={previewMaxHeight ? `${previewMaxHeight}px` : undefined}
 							>
-								<span class="triage-from-av" aria-hidden="true">{item.actorInitials}</span>
-								<span>
-									<strong aria-hidden="true">{item.actorName}</strong>
-									<span id="triage-from-role-{item.id}">{item.actorRole}</span>
+								<span
+									class="triage-from-card"
+									role="tooltip"
+									style:--preview-max-h={previewMaxHeight ? `${previewMaxHeight}px` : undefined}
+								>
+									<span class="triage-from-av" aria-hidden="true">{item.actorInitials}</span>
+									<span>
+										<strong aria-hidden="true">{item.actorName}</strong>
+										<span id="triage-from-role-{item.id}">{item.actorRole}</span>
+									</span>
 								</span>
 							</span>
 						</span>
@@ -1004,13 +1008,27 @@
 	.triage-from-link:is(:hover, :focus-visible) {
 		text-decoration: underline;
 	}
-	.triage-from-card {
+	/* Outer popover sits flush against trigger with 4px padding bridge (never clipped by card scroll) */
+	.triage-from-popover {
 		position: absolute;
 		z-index: 10;
 		inset-block-start: 100%;
 		inset-inline-start: 0;
-		margin-block-start: 4px;
 		display: none;
+		padding-block-start: 4px;
+		transform: translate(var(--preview-shift-x, 0px), var(--preview-shift-y, 0px));
+	}
+	.triage-from-popover[data-flip-above] {
+		inset-block-start: auto;
+		inset-block-end: 100%;
+		padding-block-start: 0;
+		padding-block-end: 4px;
+	}
+	.triage-from-member:not([data-preview-dismissed]):is(:hover, :focus-within) .triage-from-popover {
+		display: block;
+	}
+	.triage-from-card {
+		display: flex;
 		align-items: center;
 		gap: 10px;
 		width: max-content;
@@ -1025,26 +1043,6 @@
 		color: var(--exec-body);
 		font-size: 0.75rem;
 		line-height: 1.45;
-		transform: translate(var(--preview-shift-x, 0px), var(--preview-shift-y, 0px));
-	}
-	/* Invisible hover bridge covers the 4px seam so pointer travel to the card never drops :hover (WCAG 1.4.13) */
-	.triage-from-card::before {
-		content: '';
-		position: absolute;
-		inset: -8px 0 auto 0;
-		height: 8px;
-	}
-	.triage-from-card[data-flip-above] {
-		inset-block-start: auto;
-		inset-block-end: 100%;
-		margin-block-start: 0;
-		margin-block-end: 4px;
-	}
-	.triage-from-card[data-flip-above]::before {
-		inset: auto 0 -8px 0;
-	}
-	.triage-from-member:not([data-preview-dismissed]):is(:hover, :focus-within) .triage-from-card {
-		display: flex;
 	}
 	.triage-from-card strong {
 		display: block;

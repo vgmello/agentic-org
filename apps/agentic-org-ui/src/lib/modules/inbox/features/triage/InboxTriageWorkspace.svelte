@@ -1,8 +1,11 @@
 <script module lang="ts">
 	const COMMENT_DRAFTS_SESSION_KEY = 'agentic-org.inbox.commentDrafts';
 	let memoryCommentDrafts: Record<string, string> = {};
+	let hasMemoryCommentDrafts = false;
 
 	function readPersistedCommentDrafts(): Record<string, string> {
+		if (hasMemoryCommentDrafts) return { ...memoryCommentDrafts };
+		hasMemoryCommentDrafts = true;
 		if (typeof window === 'undefined') return { ...memoryCommentDrafts };
 		try {
 			const raw = window.sessionStorage.getItem(COMMENT_DRAFTS_SESSION_KEY);
@@ -11,18 +14,19 @@
 			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
 				return { ...memoryCommentDrafts };
 			}
-			const clean: Record<string, string> = { ...memoryCommentDrafts };
+			const clean: Record<string, string> = {};
 			for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
 				if (typeof v === 'string') clean[k] = v;
 			}
 			memoryCommentDrafts = clean;
-			return clean;
+			return { ...clean };
 		} catch {
 			return { ...memoryCommentDrafts };
 		}
 	}
 
 	function writePersistedCommentDrafts(next: Record<string, string>): void {
+		hasMemoryCommentDrafts = true;
 		memoryCommentDrafts = { ...next };
 		if (typeof window === 'undefined') return;
 		try {
@@ -31,7 +35,7 @@
 				JSON.stringify(memoryCommentDrafts)
 			);
 		} catch {
-			// Fall back to in-memory module cache when sessionStorage is unavailable.
+			// Keep authoritative in-memory drafts when sessionStorage is unavailable or over quota.
 		}
 	}
 </script>

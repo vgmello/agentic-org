@@ -191,7 +191,9 @@ function parseNormalizedInternalUrl(
 		const parsed = new URL(trimmed, 'https://app.invalid');
 		if (parsed.origin !== 'https://app.invalid') return undefined;
 		const normPath = parsed.pathname.replace(/\/+/g, '/');
-		if (ROUTE_TEMPLATE_BRACKET_RE.test(normPath)) return undefined;
+		if (ROUTE_TEMPLATE_BRACKET_RE.test(normPath) || /(?:^|\/)\([^/]+\)(?:\/|$)/.test(normPath)) {
+			return undefined;
+		}
 		return { pathname: normPath, search: parsed.search, hash: parsed.hash };
 	} catch {
 		return undefined;
