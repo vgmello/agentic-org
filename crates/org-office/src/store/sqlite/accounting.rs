@@ -20,7 +20,8 @@ use org_proto::{ApiError, ErrorCode};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::accounting::{
-    same_price_semantics, AccountingStore, UsageCoverageSummary, UsageStreamCheckpoint,
+    same_price_semantics, AccountingStore, StoredSubscriptionUsageSnapshot, UsageCoverageSummary,
+    UsageStreamCheckpoint,
 };
 use crate::error::OfficeError;
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
@@ -67,17 +68,31 @@ CREATE TABLE IF NOT EXISTS usage_stream_checkpoints (
     checkpointed_at TEXT NOT NULL,
     PRIMARY KEY (organization_id, origin_office_id, producer_id)
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS subscription_usage_snapshots (
+    organization_id TEXT NOT NULL,
+    connection_id TEXT NOT NULL,
+    office_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    collected_at TEXT NOT NULL,
+    fresh_until TEXT,
+    json_payload TEXT NOT NULL,
+    PRIMARY KEY (organization_id, connection_id)
+) STRICT;
 "#;
 
 /// Isolated durable JSONL + SQLite [`AccountingStore`].
 pub struct SqliteAccountingStore {
     durable_root: PathBuf,
+    local_usage_dir: PathBuf,
+    office_id: String,
     conn: Mutex<Connection>,
 }
 
 impl SqliteAccountingStore {
     /// Opens `<runtime_root>/<office_id>/protected/accounting.db`, rebuilding automatically
-    /// from `<durable_root>/accounting/` whenever the projection is missing or empty.
+    /// from `<durable_root>/accounting/` and `<durable_root>/local/offices/<office_id>/subscription-usage/`
+    /// whenever the projection is missing or empty.
     pub fn open(
         durable_root: &Path,
         runtime_root: &Path,
@@ -86,6 +101,11 @@ impl SqliteAccountingStore {
     ) -> Result<Self, OfficeError> {
         let durable_acc = durable_root.join("accounting");
         private_dir(&durable_acc).map_err(OfficeError::storage)?;
+        let local_usage_dir = durable_root
+            .join("local")
+            .join("offices")
+            .join(office_id)
+            .join("subscription-usage");
         let office_dir = runtime_root.join(office_id);
         private_dir(&office_dir).map_err(OfficeError::storage)?;
         let protected = office_dir.join("protected");
@@ -108,6 +128,8 @@ impl SqliteAccountingStore {
 
         let store = Self {
             durable_root: durable_acc,
+            local_usage_dir,
+            office_id: office_id.to_owned(),
             conn: Mutex::new(conn),
         };
         store.reconcile_durable(org_id)?;
@@ -120,15 +142,19 @@ impl SqliteAccountingStore {
             .map_err(|_| OfficeError::Invalid("accounting sqlite connection poisoned"))
     }
 
-    /// Reconciles durable price JSON, usage JSONL, and checkpoints into `protected/accounting.db`
-    /// on every startup so both full rebuilds and partial-crash tail writes recover (`doc-87`).
+    /// Reconciles durable price JSON, usage JSONL, checkpoints, and office-local subscription
+    /// usage snapshots into `protected/accounting.db` on every startup (`doc-87`, `TASK-79`).
     fn reconcile_durable(&self, org_id: &str) -> Result<(), OfficeError> {
         let mut conn = self.lock()?;
         let prices = load_durable_prices(&self.durable_root)?;
         let records = load_durable_usage_records(&self.durable_root)?;
         let checkpoints = load_durable_checkpoints(&self.durable_root)?;
-        if prices.is_empty() && records.is_empty() && checkpoints.is_empty() {
-            return Ok(());
+        let sub_snapshots =
+            load_durable_subscription_usage(&self.local_usage_dir, org_id, &self.office_id)?;
+        if !sub_snapshots.is_empty() {
+            // Ensure on-disk snapshot directory entries are durably synced before promoting
+            // disk snapshots into the SQLite projection on startup.
+            sync_usage_dir_and_parent(&self.local_usage_dir)?;
         }
         let tx = conn.transaction().map_err(OfficeError::storage)?;
         for price in &prices {
@@ -139,6 +165,16 @@ impl SqliteAccountingStore {
         }
         for cp in &checkpoints {
             upsert_checkpoint_row(&tx, cp)?;
+        }
+        // Subscription usage snapshots are mutable; always reconcile the full table for `org_id`
+        // so deleted durable files never leave stale rows behind.
+        tx.execute(
+            "DELETE FROM subscription_usage_snapshots WHERE organization_id=?1",
+            [org_id],
+        )
+        .map_err(OfficeError::storage)?;
+        for snap in &sub_snapshots {
+            upsert_subscription_usage_row(&tx, org_id, snap)?;
         }
         tx.commit().map_err(OfficeError::storage)?;
         Ok(())
@@ -461,6 +497,224 @@ impl AccountingStore for SqliteAccountingStore {
             checkpoint_ref: (!refs.is_empty()).then(|| refs.join(",")),
         })
     }
+
+    fn save_subscription_usage(
+        &self,
+        org_id: &str,
+        mut snapshot: StoredSubscriptionUsageSnapshot,
+    ) -> Result<(), OfficeError> {
+        let mut conn = self.lock()?;
+        let sqlite_existing: Option<StoredSubscriptionUsageSnapshot> = conn
+            .query_row(
+                "SELECT json_payload FROM subscription_usage_snapshots \
+                 WHERE organization_id=?1 AND connection_id=?2",
+                params![org_id, &snapshot.connection_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(OfficeError::storage)?
+            .and_then(|raw| serde_json::from_str(&raw).ok());
+        let durable_existing =
+            read_durable_snapshot_if_present(&self.local_usage_dir, &snapshot.connection_id)?;
+        let sqlite_seq = sqlite_existing.as_ref().map_or(0, |s| s.attempt_seq);
+        let durable_seq = durable_existing.as_ref().map_or(0, |s| s.attempt_seq);
+        if let Some(ref dur) = durable_existing {
+            if durable_seq > sqlite_seq {
+                // Ensure the on-disk snapshot directory entry is durably synced before
+                // promoting a disk-only snapshot into SQLite.
+                sync_usage_dir_and_parent(&self.local_usage_dir)?;
+                let tx = conn.transaction().map_err(OfficeError::storage)?;
+                upsert_subscription_usage_row(&tx, org_id, dur)?;
+                tx.commit().map_err(OfficeError::storage)?;
+            }
+        }
+        let winning_existing = if durable_seq >= sqlite_seq {
+            durable_existing.as_ref().or(sqlite_existing.as_ref())
+        } else {
+            sqlite_existing.as_ref().or(durable_existing.as_ref())
+        };
+        let max_existing = sqlite_seq.max(durable_seq);
+        if snapshot.attempt_seq > 0 && max_existing > snapshot.attempt_seq {
+            return Ok(());
+        }
+        crate::accounting::merge_prior_for_unavailable(&mut snapshot, winning_existing);
+        if crate::accounting::validate_stored_snapshot(&snapshot).is_err() {
+            return Err(OfficeError::Invalid(
+                "merged subscription usage snapshot exceeds validation bounds",
+            ));
+        }
+        write_durable_subscription_usage(&self.local_usage_dir, &snapshot)?;
+        let tx = conn.transaction().map_err(OfficeError::storage)?;
+        upsert_subscription_usage_row(&tx, org_id, &snapshot)?;
+        tx.commit().map_err(OfficeError::storage)?;
+        Ok(())
+    }
+
+    fn list_subscription_usage(
+        &self,
+        org_id: &str,
+    ) -> Result<Vec<StoredSubscriptionUsageSnapshot>, OfficeError> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT json_payload FROM subscription_usage_snapshots \
+                 WHERE organization_id=?1 ORDER BY connection_id ASC",
+            )
+            .map_err(OfficeError::storage)?;
+        let rows = stmt
+            .query_map([org_id], |r| r.get::<_, String>(0))
+            .map_err(OfficeError::storage)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let json = row.map_err(OfficeError::storage)?;
+            out.push(serde_json::from_str(&json).map_err(OfficeError::storage)?);
+        }
+        Ok(out)
+    }
+
+    fn get_subscription_usage(
+        &self,
+        org_id: &str,
+        connection_id: &str,
+    ) -> Result<Option<StoredSubscriptionUsageSnapshot>, OfficeError> {
+        let conn = self.lock()?;
+        let json: Option<String> = conn
+            .query_row(
+                "SELECT json_payload FROM subscription_usage_snapshots \
+                 WHERE organization_id=?1 AND connection_id=?2",
+                params![org_id, connection_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(OfficeError::storage)?;
+        json.map(|raw| serde_json::from_str(&raw).map_err(OfficeError::storage))
+            .transpose()
+    }
+}
+
+fn upsert_subscription_usage_row(
+    conn: &Connection,
+    org_id: &str,
+    snap: &StoredSubscriptionUsageSnapshot,
+) -> Result<(), OfficeError> {
+    let payload = serde_json::to_string(snap).map_err(OfficeError::storage)?;
+    conn.execute(
+        "INSERT INTO subscription_usage_snapshots \
+         (organization_id, connection_id, office_id, status, collected_at, fresh_until, json_payload) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+         ON CONFLICT(organization_id, connection_id) DO UPDATE SET \
+         office_id=excluded.office_id, status=excluded.status, \
+         collected_at=excluded.collected_at, fresh_until=excluded.fresh_until, \
+         json_payload=excluded.json_payload",
+        params![
+            org_id,
+            &snap.connection_id,
+            &snap.office_id,
+            snap.status.as_str(),
+            &snap.collected_at,
+            &snap.fresh_until,
+            &payload,
+        ],
+    )
+    .map_err(OfficeError::storage)?;
+    Ok(())
+}
+
+fn sync_usage_dir_and_parent(dir: &Path) -> Result<(), OfficeError> {
+    let cur = fs::File::open(dir).map_err(OfficeError::storage)?;
+    cur.sync_all().map_err(OfficeError::storage)?;
+    if let Some(parent) = dir.parent() {
+        let handle = fs::File::open(parent).map_err(OfficeError::storage)?;
+        handle.sync_all().map_err(OfficeError::storage)?;
+    }
+    Ok(())
+}
+
+fn write_durable_subscription_usage(
+    dir: &Path,
+    snap: &StoredSubscriptionUsageSnapshot,
+) -> Result<(), OfficeError> {
+    private_dir(dir).map_err(OfficeError::storage)?;
+    tighten_dir(dir).map_err(OfficeError::storage)?;
+    sync_usage_dir_and_parent(dir)?;
+    let path = dir.join(format!("{}.json", snap.connection_id));
+    let bytes = serde_json::to_vec_pretty(snap).map_err(OfficeError::storage)?;
+    write_atomic(&path, &bytes)
+}
+
+const MAX_DURABLE_SNAPSHOT_FILE_BYTES: u64 = 64 * 1024;
+
+fn read_bounded_snapshot_file(path: &Path) -> Result<Vec<u8>, OfficeError> {
+    use std::io::Read;
+    let file = fs::File::open(path).map_err(OfficeError::storage)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_DURABLE_SNAPSHOT_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(OfficeError::storage)?;
+    if bytes.len() as u64 > MAX_DURABLE_SNAPSHOT_FILE_BYTES {
+        return Err(OfficeError::Invalid(
+            "durable subscription usage snapshot file exceeds size limit",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn read_durable_snapshot_if_present(
+    dir: &Path,
+    connection_id: &str,
+) -> Result<Option<StoredSubscriptionUsageSnapshot>, OfficeError> {
+    let path = dir.join(format!("{connection_id}.json"));
+    match fs::File::open(&path) {
+        Ok(_) => {
+            let bytes = read_bounded_snapshot_file(&path)?;
+            let snap: StoredSubscriptionUsageSnapshot =
+                serde_json::from_slice(&bytes).map_err(OfficeError::storage)?;
+            Ok(Some(snap))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(OfficeError::storage(err)),
+    }
+}
+
+fn load_durable_subscription_usage(
+    dir: &Path,
+    org_id: &str,
+    office_id: &str,
+) -> Result<Vec<StoredSubscriptionUsageSnapshot>, OfficeError> {
+    let entries = match fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(OfficeError::storage(err)),
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let path = entry.map_err(OfficeError::storage)?.path();
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for path in files {
+        let bytes = read_bounded_snapshot_file(&path)?;
+        let snap: StoredSubscriptionUsageSnapshot =
+            serde_json::from_slice(&bytes).map_err(OfficeError::storage)?;
+        let expected_name = format!("{}.json", snap.connection_id);
+        let actual_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if snap.organization_id != org_id
+            || snap.office_id != office_id
+            || actual_name != expected_name
+            || crate::accounting::validate_stored_snapshot(&snap).is_err()
+            || !seen.insert(snap.connection_id.clone())
+        {
+            return Err(OfficeError::Invalid(
+                "invalid or mismatched durable subscription usage snapshot file",
+            ));
+        }
+        out.push(snap);
+    }
+    Ok(out)
 }
 
 type DedupReplay = Option<Result<(UsageRecordView, bool), ApiError>>;
@@ -807,9 +1061,8 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), OfficeError> {
     tighten_file(&tmp)?;
     fs::rename(&tmp, path).map_err(OfficeError::storage)?;
     if let Some(parent) = path.parent() {
-        if let Ok(dir) = fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
+        let dir = fs::File::open(parent).map_err(OfficeError::storage)?;
+        dir.sync_all().map_err(OfficeError::storage)?;
     }
     tighten_file(path)
 }

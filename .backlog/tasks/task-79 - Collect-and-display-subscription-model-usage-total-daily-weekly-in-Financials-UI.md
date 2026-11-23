@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@lead'
 created_date: '2026-11-22T01:47:00Z'
-updated_date: '2026-11-22T14:43:00Z'
+updated_date: '2026-11-23T05:21:00Z'
 labels:
   - backend
   - ui
@@ -41,8 +41,8 @@ The v1 usage ledger tracks internal turn-level tokens and API-equivalent USD est
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Backend supports authenticated collection of subscription model usage (total, daily, and weekly) per provider subscription connection, storing any required user/API credentials securely outside organization Git and failing closed or reporting an explicit auth-needed/unavailable state when credentials are missing, expired, or unsupported by a provider.
-- [ ] #2 Backend persists and serves subscription model usage snapshots (total, daily, and weekly per model/subscription, with collection freshness/status) via the Financials/Costs API under owner-scoped visibility rules.
+- [x] #1 Backend supports authenticated collection of subscription model usage (total, daily, and weekly) per provider subscription connection, storing any required user/API credentials securely outside organization Git and failing closed or reporting an explicit auth-needed/unavailable state when credentials are missing, expired, or unsupported by a provider.
+- [x] #2 Backend persists and serves subscription model usage snapshots (total, daily, and weekly per model/subscription, with collection freshness/status) via the Financials/Costs API under owner-scoped visibility rules.
 - [ ] #3 Financials/Costs UI displays total, daily, and weekly usage by model for active subscriptions, clearly distinguished from API-equivalent cost estimates, with loading, empty, auth-required, stale/incomplete, and error states.
 - [ ] #4 Automated backend and UI tests verify authenticated collection, missing/expired auth and provider-unavailable handling, authorization scoping, and daily/weekly/total UI rendering.
 <!-- AC:END -->
@@ -62,4 +62,6 @@ Backend Implementation Blueprint & Handoff (TASK-79):
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-22 Handover checkpoint: Full backend slice implemented and all 10 Pass 1 fresh Neon review findings (4H/3M/3L) fixed in working tree. Resume step: confirm verification suite + Repowise exit 0, run Pass 2 separate fresh final review until VERDICT: APPROVE, check AC #1 & #2, and commit on v1. AC #3 & UI portion of AC #4 remain for ui-dev.
+
+Backend vertical slice complete and approved (gpt-6.2-sol xhigh VERDICT: APPROVE + separate fresh gpt-6.2-sol max VERDICT: APPROVE; Repowise exit 0; cargo clippy --workspace --all-targets -- -D warnings; org-proto/org-office/org-office-sessions/org-office-server/agentic-org-web + test_schema.py 118/118 green). Implemented 4 owner-only RPCs (cost.subscription_usage.{list,collect,credential_set,credential_revoke}), dual-engine Memory+Sqlite AccountingStore with durable 0600 JSON & isolated protected/accounting.db rebuild, restart-safe attempt_seq fencing, office-local domain-separated private usage credential vault (AAD bound to destination origin, 5-level ancestor dir sync), isolated curl HTTPS transport with DNS permit cap + pinned --resolve + paired expiry/batch deadlines, strict duplicate-key-rejecting typed JSON decoders (Anthropic/OpenAI/structured), isolated bounded Web collect channels with cold-open coalescing, and independently pageable list/totals APIs. Remaining work: AC #3 (Financials UI screen) and UI portion of AC #4.
 <!-- SECTION:NOTES:END -->

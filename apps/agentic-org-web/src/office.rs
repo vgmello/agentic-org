@@ -71,6 +71,17 @@ impl MultiplexedChannel {
         channels: Arc<Mutex<BTreeMap<String, Arc<Self>>>>,
         hub: EventHub,
     ) -> io::Result<Arc<Self>> {
+        Self::from_std_with_permit(office_id, channel_id, stream, channels, hub, None)
+    }
+
+    fn from_std_with_permit(
+        office_id: String,
+        channel_id: String,
+        stream: StdUnixStream,
+        channels: Arc<Mutex<BTreeMap<String, Arc<Self>>>>,
+        hub: EventHub,
+        slot_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) -> io::Result<Arc<Self>> {
         stream.set_nonblocking(true)?;
         let stream = UnixStream::from_std(stream)?;
         let (read_half, write_half) = stream.into_split();
@@ -83,7 +94,13 @@ impl MultiplexedChannel {
         });
         tokio::spawn(write_loop(write_half, write_rx));
         tokio::spawn(read_loop(
-            read_half, pending, channels, office_id, channel_id, hub,
+            read_half,
+            pending,
+            channels,
+            office_id,
+            channel_id,
+            hub,
+            slot_permit,
         ));
         Ok(channel)
     }
@@ -126,11 +143,15 @@ impl MultiplexedChannel {
     }
 }
 
+const MAX_ISOLATED_COLLECT_CHANNELS: usize = 2;
+
 /// Manages async multiplexed host-opened Web channels to offices.
 #[derive(Clone)]
 pub struct OfficeBridge {
     host: Arc<HostControl>,
     channels: Arc<Mutex<BTreeMap<String, Arc<MultiplexedChannel>>>>,
+    open_locks: Arc<Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    isolated_slots: Arc<tokio::sync::Semaphore>,
     hub: EventHub,
     next_id: Arc<AtomicU64>,
 }
@@ -140,6 +161,8 @@ impl OfficeBridge {
         Self {
             host,
             channels: Arc::new(Mutex::new(BTreeMap::new())),
+            open_locks: Arc::new(Mutex::new(BTreeMap::new())),
+            isolated_slots: Arc::new(tokio::sync::Semaphore::new(MAX_ISOLATED_COLLECT_CHANNELS)),
             hub,
             next_id: Arc::new(AtomicU64::new(2)),
         }
@@ -149,11 +172,28 @@ impl OfficeBridge {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
+    fn open_lock_for(&self, office_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.open_locks.lock().unwrap_or_else(|e| e.into_inner());
+        Arc::clone(
+            locks
+                .entry(office_id.to_owned())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        )
+    }
+
     async fn get_or_open(
         &self,
         auth: &BrowserAuth,
         office_id: &str,
     ) -> Result<Arc<MultiplexedChannel>, OfficeFailure> {
+        if let Ok(channels) = self.channels.lock() {
+            if let Some(existing) = channels.get(office_id) {
+                return Ok(Arc::clone(existing));
+            }
+        }
+        // Coalesce concurrent cold channel opens per office so parallel callers share one Web slot.
+        let office_lock = self.open_lock_for(office_id);
+        let _guard = office_lock.lock().await;
         if let Ok(channels) = self.channels.lock() {
             if let Some(existing) = channels.get(office_id) {
                 return Ok(Arc::clone(existing));
@@ -219,6 +259,90 @@ impl OfficeBridge {
                 self.call_typed_once::<C>(auth, office_id, params).await
             }
             other => other,
+        }
+    }
+
+    /// Sends one typed `org-proto` RPC over a bounded dedicated one-shot host channel (capped at
+    /// `MAX_ISOLATED_COLLECT_CHANNELS = 2` so ordinary Web channels always retain capacity).
+    /// Runs the channel roundtrip in a spawned task so the permit stays held until the office
+    /// finishes even if the caller drops the HTTP request early.
+    pub async fn call_typed_isolated<C>(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        params: &C::Params,
+    ) -> Result<C::Result, OfficeFailure>
+    where
+        C: org_proto::Call,
+        C::Params: Clone + Send + Sync + 'static,
+        C::Result: Send + 'static,
+    {
+        let Ok(permit) = Arc::clone(&self.isolated_slots).try_acquire_owned() else {
+            return Err(OfficeFailure::Refused(org_proto::ApiError::new(
+                org_proto::ErrorCode::Conflict,
+                "too many concurrent subscription usage collections in progress",
+            )));
+        };
+        let bridge = self.clone();
+        let auth = auth.clone();
+        let office_id = office_id.to_owned();
+        let params = params.clone();
+        tokio::spawn(async move {
+            bridge
+                .call_typed_isolated_inner::<C>(&auth, &office_id, &params, permit)
+                .await
+        })
+        .await
+        .map_err(|_| OfficeFailure::Transport)?
+    }
+
+    async fn call_typed_isolated_inner<C: org_proto::Call>(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        params: &C::Params,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> Result<C::Result, OfficeFailure> {
+        let (channel_id, stream) = self
+            .host
+            .open_office_channel_async(auth.clone(), office_id.to_owned())
+            .await
+            .map_err(OfficeFailure::BeforeDispatch)?;
+        let isolated_channels = Arc::new(Mutex::new(BTreeMap::new()));
+        // Move `permit` into the socket's read loop so the admission slot stays held until the
+        // office physically closes its end of the channel (EOF), even on early reply timeout.
+        let channel = MultiplexedChannel::from_std_with_permit(
+            office_id.to_owned(),
+            channel_id.clone(),
+            stream,
+            isolated_channels,
+            self.hub.clone(),
+            Some(permit),
+        )
+        .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        if negotiate(&channel).await.is_err() {
+            return Err(OfficeFailure::BeforeDispatch(Failure::Unavailable));
+        }
+        let principal = match self.grant(auth, office_id, &channel.channel_id).await {
+            Ok(principal) => principal,
+            Err(Failure::Unavailable) => return Err(OfficeFailure::Transport),
+            Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
+        };
+        let rpc_id = self.next_rpc_id();
+        let request = Request::new::<C>(rpc_id, params)
+            .and_then(|req| req.with_principal(&principal))
+            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        let raw = channel
+            .roundtrip_raw(&request, rpc_id)
+            .await
+            .map_err(|_| OfficeFailure::Transport)?;
+        let response: Response =
+            serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
+        match response.outcome {
+            Outcome::Result(value) => {
+                serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
+            }
+            Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
         }
     }
 
@@ -582,7 +706,9 @@ async fn read_loop(
     office_id: String,
     channel_id: String,
     hub: EventHub,
+    slot_permit: Option<tokio::sync::OwnedSemaphorePermit>,
 ) {
+    let _slot_permit = slot_permit;
     let mut reader = BufReader::new(read_half);
     let mut line = Vec::with_capacity(4096);
     loop {

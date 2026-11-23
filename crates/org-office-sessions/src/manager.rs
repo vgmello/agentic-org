@@ -50,6 +50,11 @@ use crate::runtime_registry::RuntimeRegistry;
 use crate::subagents::{
     build_general_subagent_definition, write_subagent_definition, BackgroundRegistry,
 };
+use crate::subscription_usage::{
+    collect_subscription_usage, list_subscription_usage, revoke_subscription_usage_credential,
+    set_subscription_usage_credential, ProviderSubscriptionUsageCollector,
+    SubscriptionUsageCollector,
+};
 
 use crate::wake::{
     SuspendedAskEntry, DEFAULT_HOURLY_WAKE_LIMIT, DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
@@ -67,6 +72,7 @@ pub struct SessionManagerConfig {
     pub suspend_grace: Duration,
     pub runtimes: RuntimeRegistry,
     pub enrollment_driver: Arc<dyn EnrollmentDriver>,
+    pub subscription_usage_collector: Arc<dyn SubscriptionUsageCollector>,
 }
 
 impl SessionManagerConfig {
@@ -81,6 +87,7 @@ impl SessionManagerConfig {
             suspend_grace: DEFAULT_SUSPEND_GRACE,
             runtimes: RuntimeRegistry::production(),
             enrollment_driver: Arc::new(CliEnrollmentDriver),
+            subscription_usage_collector: Arc::new(ProviderSubscriptionUsageCollector::production()),
         }
     }
 }
@@ -298,6 +305,44 @@ impl SessionManager {
 
     pub fn bindings(&self) -> &RunBindingRegistry {
         &self.bindings
+    }
+
+    pub fn subscription_usage_list(
+        &self,
+        actor: &str,
+        params: org_proto::costs::CostSubscriptionUsageListParams,
+    ) -> Result<org_proto::costs::CostSubscriptionUsageListResult, ApiError> {
+        list_subscription_usage(&self.office, self.enrollment.vault(), actor, params)
+    }
+
+    pub fn subscription_usage_collect(
+        &self,
+        actor: &str,
+        params: org_proto::costs::CostSubscriptionUsageCollectParams,
+    ) -> Result<org_proto::costs::CostSubscriptionUsageCollectResult, ApiError> {
+        collect_subscription_usage(
+            &self.office,
+            self.enrollment.vault(),
+            self.config.subscription_usage_collector.as_ref(),
+            actor,
+            params,
+        )
+    }
+
+    pub fn subscription_usage_credential_set(
+        &self,
+        actor: &str,
+        params: org_proto::costs::CostSubscriptionUsageCredentialSetParams,
+    ) -> Result<org_proto::costs::CostSubscriptionUsageCredentialSetResult, ApiError> {
+        set_subscription_usage_credential(&self.office, self.enrollment.vault(), actor, params)
+    }
+
+    pub fn subscription_usage_credential_revoke(
+        &self,
+        actor: &str,
+        params: org_proto::costs::CostSubscriptionUsageCredentialRevokeParams,
+    ) -> Result<org_proto::costs::CostSubscriptionUsageCredentialRevokeResult, ApiError> {
+        revoke_subscription_usage_credential(&self.office, self.enrollment.vault(), actor, params)
     }
 
     /// Registers an office-local provider supplying pending channel watch-ended notices to prepend

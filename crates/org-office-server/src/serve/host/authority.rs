@@ -83,6 +83,10 @@ fn requires_owner(method: &str) -> bool {
             | "provider.enrollment_cancel"
             | "provider.credential_status"
             | "provider.credential_revoke"
+            | "cost.subscription_usage.list"
+            | "cost.subscription_usage.collect"
+            | "cost.subscription_usage.credential_set"
+            | "cost.subscription_usage.credential_revoke"
     )
 }
 
