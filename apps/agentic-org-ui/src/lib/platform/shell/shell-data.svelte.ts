@@ -26,6 +26,7 @@ export class ShellData {
 	workError = $state.raw<unknown>(undefined);
 	workErrorSeq = $state(0);
 	inboxItems = $state.raw<InboxItem[]>([]);
+	inboxLoadedOrganizationId = $state<string | undefined>(undefined);
 	#layeredOffices = $state.raw<OfficeInfo[]>([]);
 	loaded = $state(false);
 	loadedOrganizationId = $state<string | undefined>(undefined);
@@ -66,6 +67,7 @@ export class ShellData {
 			this.workItems = [];
 			this.workError = undefined;
 			this.inboxItems = [];
+			this.inboxLoadedOrganizationId = undefined;
 			this.#layeredOffices = [];
 			this.loaded = false;
 			this.loadedOrganizationId = undefined;
@@ -96,7 +98,10 @@ export class ShellData {
 				this.workErrorSeq += 1;
 			}
 			const inboxUpdated = inboxRes.status === 'fulfilled';
-			if (inboxUpdated) this.inboxItems = inboxRes.value;
+			if (inboxUpdated) {
+				this.inboxItems = inboxRes.value;
+				this.inboxLoadedOrganizationId = id;
+			}
 			this.#layeredOffices = officesRes.status === 'fulfilled' ? officesRes.value : baseOffices;
 			this.loadedOrganizationId = id;
 			this.loaded = true;
@@ -119,6 +124,7 @@ export class ShellData {
 	dispose(): void {
 		this.#leaving = true;
 		this.#latestLoad = undefined;
+		this.inboxLoadedOrganizationId = undefined;
 	}
 }
 

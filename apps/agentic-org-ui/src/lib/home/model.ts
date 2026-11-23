@@ -19,10 +19,13 @@ import { needsYou } from '$lib/work/saved';
 export type SignalTone = 'ok' | 'warn' | 'bad' | 'sky' | 'muted';
 export type BriefLens = 'today' | 'week' | 'board';
 
+export type HomeInboxState = 'loading' | 'ready' | 'unavailable';
+
 export interface HomeDomainData {
 	orgCost?: OrganizationCost;
 	agentBudgets?: AgentBudgets;
 	inboxItems?: readonly InboxItem[];
+	inboxState?: HomeInboxState;
 	memberRows?: readonly MemberRow[];
 	projectRows?: readonly ProjectRow[];
 	homeProjects?: readonly HomeProject[];
@@ -1260,10 +1263,17 @@ export function deriveExecutiveBrief(
 			? riskParts.join(' ')
 			: 'All connected offices are online, no work items are blocked, and every active project is tracking cleanly.';
 
+	const inboxState = domain?.inboxState ?? 'ready';
+	const inboxLoading = inboxState === 'loading' && spotlight.length === 0;
+	const inboxUnavailable = inboxState === 'unavailable' && spotlight.length === 0;
 	const queueBody =
 		spotlight.length > 0
 			? `${spotlight.length} ${spotlight.length === 1 ? 'decision is' : 'decisions are'} queued for your review, led by “${spotlight[0].title}” (${spotlight[0].kindLabel} · ${spotlight[0].projectName}).`
-			: 'Your decision queue is clear — nothing is waiting on owner sign-off right now.';
+			: inboxLoading
+				? 'Checking Inbox for pending decisions…'
+				: inboxUnavailable
+					? 'Inbox status unavailable — check Inbox directly for pending decisions.'
+					: 'Your decision queue is clear — nothing is waiting on owner sign-off right now.';
 
 	const todaySections: ExecutiveBriefSection[] = [
 		{ id: 'live', kicker: 'Live Status & Highlights', tone: 'ok', body: liveBody },
@@ -1273,7 +1283,12 @@ export function deriveExecutiveBrief(
 			tone: riskParts.length > 0 ? 'warn' : 'ok',
 			body: problemsBody
 		},
-		{ id: 'queue', kicker: 'Queued For You', tone: 'accent', body: queueBody }
+		{
+			id: 'queue',
+			kicker: 'Queued For You',
+			tone: inboxUnavailable ? 'warn' : 'accent',
+			body: queueBody
+		}
 	];
 
 	const weekSections: ExecutiveBriefSection[] = [
@@ -1310,7 +1325,13 @@ export function deriveExecutiveBrief(
 			tone: attentionProjects.length > 0 ? 'accent' : 'ok',
 			body:
 				projects.length > 0
-					? `${projects.length - attentionProjects.length} of ${projects.length} active projects are on track; ${spotlight.length} owner ${spotlight.length === 1 ? 'sign-off remains' : 'sign-offs remain'} in the decision queue.`
+					? `${projects.length - attentionProjects.length} of ${projects.length} active projects are on track; ${
+							inboxLoading
+								? 'Checking Inbox for pending decisions…'
+								: inboxUnavailable
+									? 'Inbox status unavailable — check Inbox directly for pending decisions.'
+									: `${spotlight.length} owner ${spotlight.length === 1 ? 'sign-off remains' : 'sign-offs remain'} in the decision queue.`
+						}`
 					: 'No active projects registered yet.'
 		},
 		{

@@ -281,4 +281,48 @@ describe('executive home view model', () => {
 		expect(ai.bullets.some((b) => b.text.includes('Linux runner'))).toBe(true);
 		expect(ai.bullets.some((b) => b.href === '/settings/offices')).toBe(true);
 	});
+
+	it('distinguishes Inbox loading and unavailable states in Executive Brief when spotlight is empty', () => {
+		const snap = sampleOrg('Acme');
+		const loadingBrief = deriveExecutiveBrief(
+			snap,
+			[],
+			offices,
+			'you',
+			'Acme',
+			Date.parse('2026-11-21T06:00:00Z'),
+			{
+				inboxItems: [],
+				inboxState: 'loading'
+			}
+		);
+		expect(loadingBrief.lenses.today.sections.find((s) => s.id === 'queue')?.body).toBe(
+			'Checking Inbox for pending decisions…'
+		);
+		expect(loadingBrief.lenses.board.sections.find((s) => s.id === 'readiness')?.body).toContain(
+			'Checking Inbox for pending decisions…'
+		);
+
+		const unavailableBrief = deriveExecutiveBrief(
+			snap,
+			[],
+			offices,
+			'you',
+			'Acme',
+			Date.parse('2026-11-21T06:00:00Z'),
+			{
+				inboxItems: [],
+				inboxState: 'unavailable'
+			}
+		);
+		const queue = unavailableBrief.lenses.today.sections.find((s) => s.id === 'queue');
+		expect(queue?.body).toBe(
+			'Inbox status unavailable — check Inbox directly for pending decisions.'
+		);
+		expect(queue?.body).not.toContain('queue is clear');
+		const readiness = unavailableBrief.lenses.board.sections.find((s) => s.id === 'readiness');
+		expect(readiness?.body).toContain(
+			'Inbox status unavailable — check Inbox directly for pending decisions.'
+		);
+	});
 });

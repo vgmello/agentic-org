@@ -296,7 +296,9 @@
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-<header class="exec-topbar sticky top-0 z-30 flex shrink-0 items-center justify-center px-6">
+<header
+	class="exec-topbar relative z-30 flex shrink-0 items-center justify-center overflow-visible px-6"
+>
 	<div class="exec-cmdk-bar flex w-full max-w-[640px] items-center">
 		<button
 			type="button"
@@ -578,6 +580,10 @@
 		height: var(--exec-topbar-height);
 		background: var(--exec-topbar-bg);
 		border-bottom: var(--exec-topbar-border);
+		overflow: visible;
+	}
+	:global(html[data-ui-theme='ocean']) .exec-topbar::before {
+		bottom: -14px;
 	}
 	.exec-cmdk-bar {
 		height: 46px;

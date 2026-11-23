@@ -37,12 +37,14 @@ export const updatesApi: UpdatesApi = {
 		if (on('unavailable')) await unavailableCall();
 		const failOnce = on('fails-once') && !failedOnce;
 		if (failOnce) failedOnce = true;
-		if (on('fails') || failOnce)
+		if (on('fails') || failOnce) {
+			if (on('fails')) await new Promise((r) => setTimeout(r, 120));
 			throw Object.assign(new Error("HQ didn't answer. Check that it's running, then try again."), {
 				source: 'app',
 				code: 'unreachable',
 				message: "HQ didn't answer. Check that it's running, then try again."
 			});
+		}
 		const hq: OfficeVersion = {
 			id: `office-${organizationId}`,
 			name: data.hq.name,

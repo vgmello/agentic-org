@@ -17,7 +17,7 @@
 	import Zap from '@lucide/svelte/icons/zap';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { executeDecisionAction } from '$lib/home/actions';
-	import { isDenyAction, type SpotlightDecision } from '$lib/home/model';
+	import { isDenyAction, type HomeInboxState, type SpotlightDecision } from '$lib/home/model';
 	import { toAppError } from '$lib/office/api';
 	import HomeDayOne from './HomeDayOne.svelte';
 
@@ -26,10 +26,18 @@
 		organizationId: string;
 		snapshot: OrgSnapshot;
 		isDayOne: boolean;
+		inboxState?: HomeInboxState;
 		onRefresh: () => Promise<void>;
 	}
 
-	let { spotlight, organizationId, snapshot, isDayOne, onRefresh }: Props = $props();
+	let {
+		spotlight,
+		organizationId,
+		snapshot,
+		isDayOne,
+		inboxState = 'ready',
+		onRefresh
+	}: Props = $props();
 
 	let spotIdx = $derived.by(() => {
 		void organizationId;
@@ -446,7 +454,7 @@
 			</button>
 		{/if}
 	{:else}
-		<HomeDayOne {isDayOne} />
+		<HomeDayOne {isDayOne} {inboxState} />
 	{/if}
 </article>
 

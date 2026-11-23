@@ -7,6 +7,8 @@
 	import Building2 from '@lucide/svelte/icons/building-2';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import CircleAlert from '@lucide/svelte/icons/circle-alert';
+	import CircleHelp from '@lucide/svelte/icons/circle-help';
 	import ClipboardList from '@lucide/svelte/icons/clipboard-list';
 	import Folder from '@lucide/svelte/icons/folder';
 	import House from '@lucide/svelte/icons/house';
@@ -20,7 +22,6 @@
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import Workflow from '@lucide/svelte/icons/workflow';
 	import type { Connection, ProjectSummary } from '$lib/proto';
-	import { isOfficeOnline } from '$lib/home/model';
 	import ShellAccountMenu from './ShellAccountMenu.svelte';
 	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
 
@@ -58,7 +59,35 @@
 				!pathname.startsWith('/teams/members') &&
 				!pathname.startsWith('/teams/org-chart'))
 	);
-	const officeOnline = $derived(isOfficeOnline(connection.office));
+	interface FooterOfficeState {
+		label: string;
+		tone: 'ok' | 'bad' | 'warn' | 'muted';
+		icon: 'online' | 'offline' | 'warn' | 'unknown';
+	}
+
+	function connectedOfficeStatus(office: Connection['office']): FooterOfficeState {
+		switch (office.status) {
+			case 'active':
+				return { label: 'Online', tone: 'ok', icon: 'online' };
+			case 'starting':
+				return { label: 'Starting', tone: 'muted', icon: 'unknown' };
+			case 'pending':
+				return { label: 'Invited', tone: 'muted', icon: 'unknown' };
+			case 'unavailable':
+				return { label: 'Stopped', tone: 'bad', icon: 'offline' };
+			case 'offline':
+				return office.role === 'hq'
+					? { label: 'Stopped', tone: 'bad', icon: 'offline' }
+					: { label: 'Offline', tone: 'muted', icon: 'offline' };
+			case 'update_needed':
+				return { label: 'Update needed', tone: 'warn', icon: 'warn' };
+			default:
+				return { label: 'Status unknown', tone: 'muted', icon: 'unknown' };
+		}
+	}
+
+	const officeStatus = $derived(connectedOfficeStatus(connection.office));
+	const officeStatusLabel = $derived(`${connection.office.name} office · ${officeStatus.label}`);
 
 	const activeProjects = $derived(projects.filter((p) => !p.archived));
 	let favoritesOpen = $state(true);
@@ -102,11 +131,9 @@
 				>
 					A
 				</span>
-				{#if !collapsed}
-					<span class="exec-logo-name truncate">
-						{connection.organization.name}
-					</span>
-				{/if}
+				<span class={collapsed ? 'sr-only' : 'exec-logo-name truncate'}>
+					{connection.organization.name}
+				</span>
 			</a>
 			{#if onToggleCollapse && !collapsed}
 				<button
@@ -146,7 +173,7 @@
 							class={['exec-nav-item', collapsed && 'is-rail', isActive('/home') && 'is-active']}
 						>
 							<House class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}<span class="truncate">Home</span>{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Home</span>
 						</a>
 					</li>
 					<li>
@@ -158,9 +185,7 @@
 							class={['exec-nav-item', collapsed && 'is-rail', isActive('/inbox') && 'is-active']}
 						>
 							<Inbox class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}
-								<span class="truncate">Inbox</span>
-							{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Inbox</span>
 							{#if needsYouCount > 0}
 								<span class={['exec-nav-dot', collapsed && 'is-rail']} aria-hidden="true"></span>
 								<span class="sr-only">, {needsYouCount} waiting on you</span>
@@ -184,7 +209,7 @@
 							class={['exec-nav-item', collapsed && 'is-rail', isActive('/work') && 'is-active']}
 						>
 							<ClipboardList class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}<span class="truncate">Work</span>{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Work</span>
 						</a>
 					</li>
 					<li>
@@ -196,7 +221,7 @@
 							class={['exec-nav-item', collapsed && 'is-rail', isActive('/chat') && 'is-active']}
 						>
 							<MessageSquare class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}<span class="truncate">Chat</span>{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Chat</span>
 						</a>
 					</li>
 					<li>
@@ -212,7 +237,7 @@
 							]}
 						>
 							<Activity class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}<span class="truncate">Activity</span>{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Activity</span>
 						</a>
 					</li>
 					<li>
@@ -228,7 +253,7 @@
 							]}
 						>
 							<Folder class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}<span class="truncate">Projects</span>{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Projects</span>
 						</a>
 					</li>
 				</ul>
@@ -304,7 +329,7 @@
 							class={['exec-nav-item', collapsed && 'is-rail', isTeamsActive && 'is-active']}
 						>
 							<Users class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}<span class="truncate">Teams</span>{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Teams</span>
 						</a>
 					</li>
 					<li>
@@ -320,7 +345,7 @@
 							]}
 						>
 							<Network class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}<span class="truncate">Org chart</span>{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Org chart</span>
 						</a>
 					</li>
 					<li>
@@ -336,7 +361,7 @@
 							]}
 						>
 							<Bot class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}<span class="truncate">Members</span>{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Members</span>
 						</a>
 					</li>
 					<li>
@@ -352,7 +377,7 @@
 							]}
 						>
 							<Workflow class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}<span class="truncate">Processes</span>{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Processes</span>
 						</a>
 					</li>
 					<li>
@@ -368,7 +393,7 @@
 							]}
 						>
 							<Building2 class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}<span class="truncate">Offices</span>{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Offices</span>
 						</a>
 					</li>
 					<li>
@@ -384,7 +409,7 @@
 							]}
 						>
 							<Settings class="size-[18px] shrink-0" aria-hidden="true" />
-							{#if !collapsed}<span class="truncate">Settings</span>{/if}
+							<span class={collapsed ? 'sr-only' : 'truncate'}>Settings</span>
 						</a>
 					</li>
 				</ul>
@@ -423,28 +448,41 @@
 			<a
 				href={resolve('/settings/offices')}
 				onclick={(e) => onNavigate?.(e, '/settings/offices')}
+				aria-label={officeStatusLabel}
 				class={[
-					'exec-foot-link flex items-center rounded-lg text-xs leading-5',
+					'exec-foot-link flex items-center rounded-lg text-xs leading-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11',
 					collapsed ? 'size-11 justify-center p-0' : 'mt-1 gap-2 px-2 py-1'
 				]}
-				title="{connection.office.host} · {connection.office.name} · {officeOnline
-					? 'Online'
-					: 'Offline'}"
+				title="{connection.office.host} · {officeStatusLabel}"
 			>
-				{#if officeOnline}
+				{#if officeStatus.icon === 'online'}
 					<CheckCircle2
 						class="size-3.5 shrink-0"
 						style="color: var(--exec-ok);"
 						aria-hidden="true"
 					/>
+				{:else if officeStatus.icon === 'offline'}
+					<WifiOff
+						class="size-3.5 shrink-0"
+						style="color: {officeStatus.tone === 'bad' ? 'var(--exec-bad)' : 'var(--exec-muted)'};"
+						aria-hidden="true"
+					/>
+				{:else if officeStatus.icon === 'warn'}
+					<CircleAlert
+						class="size-3.5 shrink-0"
+						style="color: var(--exec-warn);"
+						aria-hidden="true"
+					/>
 				{:else}
-					<WifiOff class="size-3.5 shrink-0" style="color: var(--exec-bad);" aria-hidden="true" />
+					<CircleHelp
+						class="size-3.5 shrink-0"
+						style="color: var(--exec-muted);"
+						aria-hidden="true"
+					/>
 				{/if}
 				{#if !collapsed}
-					<span class="truncate" style="color: var(--exec-muted);">
-						{connection.office.host} · {connection.office.name} · {officeOnline
-							? 'Online'
-							: 'Offline'}
+					<span class="min-w-0 [overflow-wrap:anywhere]" style="color: var(--exec-muted);">
+						{officeStatusLabel}
 					</span>
 				{/if}
 			</a>

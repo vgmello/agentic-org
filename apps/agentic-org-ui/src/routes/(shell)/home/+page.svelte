@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { resolve } from '$app/paths';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -11,7 +11,9 @@
 	import HomeKpiStrip from '$lib/modules/home/features/HomeKpiStrip.svelte';
 	import HomeSkeleton from '$lib/modules/home/features/HomeSkeleton.svelte';
 	import ProjectScorecard from '$lib/modules/home/features/ProjectScorecard.svelte';
-	import { layerOffices, officesApi } from '$lib/modules/offices';
+	import { officesApi } from '$lib/modules/offices/api';
+	import { layerOffices } from '$lib/modules/offices/layer';
+	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import {
 		deriveCatchUpDigest,
 		deriveDecisionSpotlight,
@@ -20,7 +22,8 @@
 		deriveProjectCards,
 		deriveTaskTimeBreakdown,
 		greetingForHour,
-		type HomeDomainData
+		type HomeDomainData,
+		type HomeInboxState
 	} from '$lib/home/model';
 	import { pageTitle } from '$lib/nav';
 	import { owner } from '$lib/org/model';
@@ -30,42 +33,105 @@
 	const snapshot = $derived(data.snapshot);
 	const ownerMember = $derived(owner(snapshot));
 	const ownerId = $derived(ownerMember?.id ?? 'owner');
+	const shellData = useShellData();
 
 	const live = new HomeLiveState({
 		overview: (id) => officesApi.overview(id),
 		layer: layerOffices
 	});
 
-	$effect(() => live.connect(organizationId, data.connection.organization.offices));
+	$effect(() => {
+		const id = organizationId;
+		const baseOffices = data.connection.organization.offices;
+		return untrack(() => {
+			const seed =
+				shellData.loaded &&
+				shellData.loadedOrganizationId === id &&
+				shellData.workError === undefined
+					? {
+							items: shellData.workItems,
+							inboxItems:
+								shellData.inboxLoadedOrganizationId === id ? shellData.inboxItems : undefined,
+							offices: shellData.offices
+						}
+					: undefined;
+			return live.connect(id, baseOffices, seed);
+		});
+	});
 
 	onDestroy(() => {
 		live.destroy();
 	});
 
+	const liveForOrg = $derived(live.loadedOrganizationId === organizationId);
+	const liveItems = $derived(liveForOrg ? live.items : undefined);
+	const liveWorkFromSeed = $derived(liveForOrg ? live.workFromSeed : false);
+	const liveRetryingWork = $derived(liveForOrg ? live.retryingWork : false);
+	const liveAllowShellFallback = $derived(liveForOrg ? live.allowShellFallback : true);
+	const liveInboxLoaded = $derived(liveForOrg ? live.inboxLoaded : false);
+	const liveInboxSettled = $derived(liveForOrg ? live.inboxSettled : false);
+	const liveInboxItems = $derived(liveForOrg ? live.inboxItems : []);
+	const liveOffices = $derived(liveForOrg ? live.offices : []);
+	const liveLoadError = $derived(liveForOrg ? live.loadError : undefined);
+
+	const shellSeedReady = $derived(
+		shellData.loaded && shellData.loadedOrganizationId === organizationId
+	);
+	const shellWorkFailed = $derived(shellSeedReady && shellData.workError !== undefined);
+	const shellWorkHydrationAllowed = $derived(
+		shellSeedReady && !shellWorkFailed && liveAllowShellFallback
+	);
+	const hydratedItems = $derived(
+		liveItems ?? (shellWorkHydrationAllowed ? shellData.workItems : undefined)
+	);
+	const usableWorkItems = $derived(
+		liveRetryingWork || (liveWorkFromSeed && shellWorkFailed) ? undefined : hydratedItems
+	);
+	const shellInboxReady = $derived(shellData.inboxLoadedOrganizationId === organizationId);
+	const hydratedInboxLoaded = $derived(liveInboxLoaded || shellInboxReady);
+	const inboxState = $derived<HomeInboxState>(
+		hydratedInboxLoaded ? 'ready' : liveInboxSettled ? 'unavailable' : 'loading'
+	);
+	const hydratedInboxItems = $derived(
+		liveInboxLoaded ? liveInboxItems : shellInboxReady ? shellData.inboxItems : []
+	);
 	const activeOffices = $derived(
-		live.offices.length > 0 ? live.offices : data.connection.organization.offices
+		liveOffices.length > 0
+			? liveOffices
+			: shellSeedReady && shellData.offices.length > 0
+				? shellData.offices
+				: data.connection.organization.offices
 	);
+	const hasOpenLiveInbox = $derived(liveInboxItems.some((item) => item.state === 'open'));
 	const coreReady = $derived(
-		live.items !== undefined || (live.inboxLoaded && live.inboxItems.length > 0)
+		usableWorkItems !== undefined ||
+			(liveInboxLoaded &&
+				hasOpenLiveInbox &&
+				liveLoadError === undefined &&
+				!shellWorkFailed &&
+				!liveRetryingWork)
 	);
-	const loading = $derived(!coreReady && live.loadError === undefined);
-	const workItems = $derived(live.items ?? []);
+	const loading = $derived(!coreReady && liveLoadError === undefined);
+	const workItems = $derived(usableWorkItems ?? []);
 	const domain = $derived<HomeDomainData>({
-		orgCost: live.orgCost,
-		agentBudgets: live.agentBudgets,
-		inboxItems: live.inboxItems,
-		memberRows: live.memberRows,
-		projectRows: live.projectRows,
-		homeProjects: live.homeProjects,
-		activityRows: live.activityRows
+		orgCost: liveForOrg ? live.orgCost : undefined,
+		agentBudgets: liveForOrg ? live.agentBudgets : undefined,
+		inboxItems: hydratedInboxItems,
+		inboxState,
+		memberRows: liveForOrg ? live.memberRows : undefined,
+		projectRows: liveForOrg ? live.projectRows : undefined,
+		homeProjects: liveForOrg ? live.homeProjects : undefined,
+		activityRows: liveForOrg ? live.activityRows : undefined
 	});
 
 	const kpis = $derived(deriveKpiMetrics(snapshot, workItems, activeOffices, ownerId, domain));
 	const spotlight = $derived(
-		deriveDecisionSpotlight(workItems, snapshot, ownerId, live.nowMs, live.inboxItems)
+		deriveDecisionSpotlight(workItems, snapshot, ownerId, live.nowMs, hydratedInboxItems)
 	);
 	const projectCards = $derived(deriveProjectCards(snapshot, workItems, domain));
-	const catchUp = $derived(deriveCatchUpDigest(workItems, snapshot, live.nowMs, live.activityRows));
+	const catchUp = $derived(
+		deriveCatchUpDigest(workItems, snapshot, live.nowMs, liveForOrg ? live.activityRows : undefined)
+	);
 	const brief = $derived(
 		deriveExecutiveBrief(
 			snapshot,
@@ -82,11 +148,11 @@
 	);
 	const greeting = $derived(greetingForHour(new Date(live.nowMs).getHours()));
 	const isDayOne = $derived(
-		live.items !== undefined &&
-			live.inboxLoaded &&
-			!live.loadError &&
+		usableWorkItems !== undefined &&
+			hydratedInboxLoaded &&
+			!liveLoadError &&
 			workItems.length === 0 &&
-			live.inboxItems.length === 0 &&
+			hydratedInboxItems.length === 0 &&
 			projectCards.length === 0 &&
 			kpis.totalAgents === 0
 	);
@@ -102,7 +168,7 @@
 	<!-- Zone 1: Executive Greeting Header -->
 	<section class="home-hero flex flex-wrap justify-between gap-4">
 		<h1 id="shell-page-title" tabindex="-1" class="home-h1 focus:outline-none">
-			{#if live.loadError}
+			{#if liveLoadError}
 				{greeting} <em class="tone-bad">Office unreachable.</em>
 			{:else if loading}
 				{greeting}
@@ -115,8 +181,10 @@
 					{spotlight.length === 1 ? 'decision' : 'decisions'}
 				</em>
 				{spotlight.length === 1 ? 'needs' : 'need'} you.
-			{:else}
+			{:else if usableWorkItems !== undefined && hydratedInboxLoaded}
 				{greeting} <em class="tone-ok">All clear</em> across your organization.
+			{:else}
+				{greeting}
 			{/if}
 		</h1>
 		<a href={resolve('/work')} class="exec-cta exec-cta-glass">
@@ -129,13 +197,13 @@
 		</a>
 	</section>
 
-	{#if live.loadError}
+	{#if liveLoadError}
 		<section class="exec-card flex flex-col items-center gap-3 px-6 py-12 text-center" role="alert">
 			<span class="err-ring flex size-12 items-center justify-center rounded-full">
 				<AlertTriangle class="size-6" aria-hidden="true" />
 			</span>
 			<h2 class="text-base font-semibold text-[var(--exec-ink)]">Couldn't reach live work data</h2>
-			<p class="max-w-md text-sm text-[var(--exec-muted)]">{live.loadError}</p>
+			<p class="max-w-md text-sm text-[var(--exec-muted)]">{liveLoadError}</p>
 			<button type="button" onclick={() => void refreshLive()} class="exec-cta mt-2">
 				<span class="exec-cta-fill" aria-hidden="true"></span>
 				<span class="exec-cta-inner">
@@ -155,6 +223,7 @@
 				{organizationId}
 				{snapshot}
 				{isDayOne}
+				{inboxState}
 				onRefresh={refreshLive}
 			/>
 			<ExecutiveBriefCard {brief} {catchUp} />

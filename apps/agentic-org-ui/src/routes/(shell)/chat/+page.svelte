@@ -934,6 +934,7 @@
 	onfocusin={revealChatFocus}
 	class="chat-frame relative flex min-h-0 min-w-0"
 >
+	<h1 id="shell-page-title" tabindex="-1" class="sr-only focus:outline-none">Chat</h1>
 	{#if loadError}
 		<p class="m-8 text-sm/6 text-danger" role="alert">{loadError}</p>
 	{:else if !chatState || !bar}

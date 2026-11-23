@@ -196,14 +196,13 @@
 			onNavigate={(event, href) => selectDesktopSection(event, href, goto)}
 		/>
 	</div>
-	<main
-		aria-label={areaFor(page.url.pathname) ?? 'Agentic Org'}
+	<div
 		class={[
-			'exec-legacy-compat relative z-10 h-full overflow-y-auto transition-[padding] duration-300 ease-out',
+			'exec-shell-main exec-legacy-compat relative z-10 flex h-full flex-col overflow-hidden transition-[padding] duration-300 ease-out',
 			sidebarCollapsed ? 'min-[640px]:pl-[68px]' : 'min-[640px]:pl-[264px]'
 		]}
 	>
-		<div class="flex items-center gap-2 px-4 min-[640px]:hidden">
+		<div data-shell-header class="flex shrink-0 items-center gap-2 px-4 min-[640px]:hidden">
 			<MobileNavigation
 				connection={data.connection}
 				needsYouCount={shellData.needsYouCount}
@@ -219,12 +218,31 @@
 			offices={shellData.offices}
 			ownerId={shellData.ownerId}
 		/>
-		{#if showPaused}<LiveBanner
-				loadedAt={liveState.loadedAt[organizationId]}
-				{retrying}
-				onretry={retry}
-			/>{/if}
-		{@render children()}
-	</main>
+		<main
+			aria-label={areaFor(page.url.pathname) ?? 'Agentic Org'}
+			class="flex min-h-0 flex-1 flex-col overflow-y-auto"
+		>
+			{#if showPaused}<div class="shrink-0">
+					<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />
+				</div>{/if}
+			{@render children()}
+		</main>
+	</div>
 </div>
 <Toaster position="bottom-right" />
+
+<style>
+	.exec-shell-main main > :global(:not(.chat-frame)) {
+		flex-shrink: 0;
+	}
+	.exec-shell-main :global(.chat-frame) {
+		flex: 1 1 0%;
+		min-height: 0;
+		height: auto;
+	}
+	@media (height <= 320px) {
+		.exec-shell-main :global(.chat-frame) {
+			min-height: 28rem;
+		}
+	}
+</style>
