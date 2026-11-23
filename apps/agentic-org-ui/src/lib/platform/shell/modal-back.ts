@@ -1,14 +1,16 @@
 type BackEntry = { source: string; destination: string };
-type LegacyEntry = { href: string; index: number | undefined };
+type LegacyEntry = { href: string; index: number | undefined; slot: number | undefined };
 type LegacyReturn = {
 	href: string;
 	index: number | undefined;
+	slot: number | undefined;
 	targetCursor: number;
 	locked?: () => boolean;
 	close: () => void;
 };
 
 const HISTORY_INDEX = 'sveltekit:history';
+const MODAL_BACK_SLOT = '__ao_modal_back_slot';
 
 let installed = false;
 let onModalPopState: ((event: PopStateEvent) => void) | undefined;
@@ -17,6 +19,8 @@ let legacyReturning: LegacyReturn | undefined;
 let legacyEntries: LegacyEntry[] = [];
 let legacyCursor = -1;
 let legacyHistoryLength = 0;
+let legacySlotSeq = 0;
+let nativeReplaceState: History['replaceState'] | undefined;
 
 function sveltekitHistoryIndex(state: unknown): number | undefined {
 	if (typeof state !== 'object' || state === null) return undefined;
@@ -24,12 +28,38 @@ function sveltekitHistoryIndex(state: unknown): number | undefined {
 	return typeof index === 'number' ? index : undefined;
 }
 
+function modalBackSlot(state: unknown): number | undefined {
+	if (typeof state !== 'object' || state === null) return undefined;
+	const slot = (state as Record<string, unknown>)[MODAL_BACK_SLOT];
+	return typeof slot === 'number' ? slot : undefined;
+}
+
 function currentLegacyEntry(state: unknown = window.history.state): LegacyEntry {
-	return { href: window.location.href, index: sveltekitHistoryIndex(state) };
+	return {
+		href: window.location.href,
+		index: sveltekitHistoryIndex(state),
+		slot: modalBackSlot(state)
+	};
+}
+
+function stampUnindexedFragmentSlot(): void {
+	if (window.navigation || !nativeReplaceState) return;
+	const state = window.history.state;
+	if (sveltekitHistoryIndex(state) !== undefined || modalBackSlot(state) !== undefined) return;
+	if (state !== null && typeof state !== 'object') return;
+	const nextState =
+		state === null
+			? { [MODAL_BACK_SLOT]: ++legacySlotSeq }
+			: { ...(state as Record<string, unknown>), [MODAL_BACK_SLOT]: ++legacySlotSeq };
+	try {
+		nativeReplaceState.call(window.history, nextState, '', window.location.href);
+	} catch {
+		// Ignore restricted history environments.
+	}
 }
 
 function sameEntry(a: LegacyEntry | undefined, b: LegacyEntry): boolean {
-	return Boolean(a) && a!.href === b.href && a!.index === b.index;
+	return Boolean(a) && a!.href === b.href && a!.index === b.index && a!.slot === b.slot;
 }
 
 function samePathAndSearch(a: string, b: string): boolean {
@@ -43,6 +73,11 @@ function samePathAndSearch(a: string, b: string): boolean {
 }
 
 function findLegacyCursor(entry: LegacyEntry): number {
+	if (entry.slot !== undefined) {
+		for (let i = 0; i < legacyEntries.length; i++) {
+			if (legacyEntries[i].slot === entry.slot) return i;
+		}
+	}
 	if (entry.index !== undefined) {
 		const currentIndex = legacyEntries[legacyCursor]?.index;
 		let best = -1;
@@ -192,6 +227,7 @@ export function installModalBack() {
 		// immediately with zero timer or microtask race.
 		if (typeof window.history.replaceState === 'function') {
 			const origReplaceState = window.history.replaceState;
+			nativeReplaceState = origReplaceState;
 			try {
 				window.history.replaceState = function replaceState(...args) {
 					const result = origReplaceState.apply(this, args);
@@ -226,6 +262,7 @@ export function installModalBack() {
 		'hashchange',
 		() => {
 			if (window.navigation || onModalPopState || legacyReturning) return;
+			stampUnindexedFragmentSlot();
 			syncLegacyEntry(currentLegacyEntry(), true);
 		},
 		{ capture: true }
@@ -244,7 +281,8 @@ export function installModalBack() {
 				const entry = currentLegacyEntry(event.state);
 				const matchesReturn =
 					entry.href === pending.href &&
-					(pending.index === undefined || entry.index === pending.index);
+					(pending.index === undefined || entry.index === pending.index) &&
+					(pending.slot === undefined || entry.slot === pending.slot);
 				legacyReturning = undefined;
 				if (matchesReturn) {
 					event.stopImmediatePropagation();
@@ -372,6 +410,7 @@ export function registerModalBack(close: () => void, options?: { locked?: () => 
 			const pending: LegacyReturn = {
 				href: currentEntry.href,
 				index: currentEntry.index,
+				slot: currentEntry.slot,
 				targetCursor,
 				locked: options?.locked,
 				close: () => {

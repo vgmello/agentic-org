@@ -97,9 +97,13 @@
 			.then(
 				(rows) => {
 					if (seq !== archivedSeq || orgId !== organization.id) return;
-					archived = new Set(rows.filter((t) => t.status === 'archived').map((t) => t.id));
+					const nextArchived = new Set(
+						rows.filter((t) => t.status === 'archived').map((t) => t.id)
+					);
+					archived = nextArchived;
 					archivedForOrg = orgId;
 					archivedError = undefined;
+					if (homeTeamId && nextArchived.has(homeTeamId)) homeTeamId = '';
 				},
 				(e) => {
 					if (seq !== archivedSeq || orgId !== organization.id) return;

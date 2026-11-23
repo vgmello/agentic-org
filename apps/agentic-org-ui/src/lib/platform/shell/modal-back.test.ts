@@ -703,29 +703,44 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		unregister();
 	});
 
-	it('does not swallow Forward across repeated unindexed fragments (#one -> #two -> #one)', async () => {
+	it('distinguishes BOTH Back and Forward across repeated unindexed fragments (#one -> #two -> #one)', async () => {
 		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
 		env.dispatchHashChange('http://localhost/teams#one', null, 2);
+		const slotOneFirst = env.fakeWindow.history.state;
 		env.dispatchHashChange('http://localhost/teams#two', null, 3);
+		const slotTwo = env.fakeWindow.history.state;
 		env.dispatchHashChange('http://localhost/teams#one', null, 4);
+		const slotOneSecond = env.fakeWindow.history.state;
 
-		// Go Back to unindexed #two
-		env.dispatchPopState('http://localhost/teams#two', null, 4);
+		// Go Back to unindexed #two (carrying its stamped slot)
+		env.dispatchPopState('http://localhost/teams#two', slotTwo, 4);
 
+		// 1) Open modal on #two and press Back to earlier #one: MUST intercept and close modal
+		const close1 = vi.fn();
+		const unregister1 = env.registerModalBack(close1);
+		const backEvent = env.dispatchPopState('http://localhost/teams#one', slotOneFirst, 4);
+		expect(backEvent.stopped).toBe(true);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([1]);
+		const returnEvent = env.dispatchPopState('http://localhost/teams#two', slotTwo, 4);
+		expect(returnEvent.stopped).toBe(true);
+		env.flushRaf();
+		expect(close1).toHaveBeenCalledTimes(1);
+		unregister1();
+
+		// 2) Reopen modal on #two and press Forward to later #one: MUST pass through unstopped
 		const routerPop = vi.fn();
 		env.fakeWindow.addEventListener('popstate', routerPop);
-		const close = vi.fn();
-		const unregister = env.registerModalBack(close);
-
-		// Press Forward to the later unindexed #one: MUST pass through unstopped
-		const forwardEvent = env.dispatchPopState('http://localhost/teams#one', null, 4);
+		const close2 = vi.fn();
+		const unregister2 = env.registerModalBack(close2);
+		const forwardEvent = env.dispatchPopState('http://localhost/teams#one', slotOneSecond, 4);
 		expect(forwardEvent.stopped).toBe(false);
 		expect(routerPop).toHaveBeenCalledTimes(1);
 		env.flushRaf();
-		expect(env.goCalls).toEqual([]);
-		expect(close).not.toHaveBeenCalled();
+		expect(env.goCalls).toEqual([1]);
+		expect(close2).not.toHaveBeenCalled();
 
-		unregister();
+		unregister2();
 	});
 
 	it('swallows rapid second Back when modal is locked (e.g. pending creation) and returns to the locked entry', async () => {

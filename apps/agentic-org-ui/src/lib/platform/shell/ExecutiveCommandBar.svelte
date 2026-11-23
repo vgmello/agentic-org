@@ -658,6 +658,7 @@
 		box-shadow: var(--exec-ai-shadow);
 		color: var(--exec-ai-ink);
 		font-size: 0.8125rem;
+		line-height: 1.2;
 		font-weight: 600;
 		letter-spacing: -0.005em;
 		transition:
