@@ -4414,7 +4414,7 @@ const M = {
   you:   { name: "You", kind: "person", role: "Owner", owner: true, teams: [], mgr: null, live: "available", task: "", proj: null },
   tess: { name: "Tess", kind: "agent", tier: "builtin", builtin: true, role: "Chief of Staff", teams: ["leadership"], mgr: "you", live: "available", task: "Synthesizing executive brief & unblocking queues", proj: null, goal: "Tactical Execution & Squad Supervisor — synthesizes live operations into the Executive Brief, surfaces risks early, and queues actionable proposals for the owner.", setup: { runtime: "Built-in", model: "Chief of Staff (Built-in AI)", how: "On demand & scheduled brief", office: "hq", home: "system/tess" } },
   maya:  { name: "Maya Chen", kind: "person", role: "Operations", teams: ["leadership"], mgr: "you", live: "offline", task: "", proj: null, last: "Signed out · last seen yesterday" },
-  ada:   { name: "Ada", kind: "agent", tier: "lead", role: "Engineering Manager", teams: ["leadership"], mgr: "you", live: "working", task: "Re-sequence the nav slices for IA v2", proj: "agency-v1", goal: "Every BUG-70 slice re-planned against IA v2, with owners and order", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Always on", office: "hq", home: "projects/ac/agents/ac-staff-engineer-ada" } },
+  ada:   { name: "Ada", kind: "agent", tier: "lead", role: "Engineering Manager", teams: ["leadership"], mgr: "you", live: "working", task: "Re-sequence the nav slices for IA v2", proj: "agency-v1", goal: "Every T-A70 slice re-planned against IA v2, with owners and order", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Always on", office: "hq", home: "projects/ac/agents/ac-staff-engineer-ada" } },
   rowan: { name: "Rowan", kind: "agent", tier: "lead", role: "Staff Engineer", teams: ["platform"], mgr: "ada", live: "working", task: "Custody lock fix ruling", proj: "office-federation", goal: "A written ruling on the custody lock with the tests that pin it", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-fullstack-engineer-rowan" } },
   eden:  { name: "Eden Lin", kind: "agent", tier: "lead", role: "Product Designer", teams: ["product"], mgr: "you", live: "working", task: "Presence vocabulary across screens", proj: "look-feel", goal: "One presence set used in roster, chat, team and profile", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-product-designer-eden" } },
   emery: { name: "Emery Park", kind: "agent", tier: "lead", role: "Product Manager", teams: ["product"], mgr: "ada", live: "working", task: "Information architecture v2 prototype", proj: "look-feel", goal: "A clickable IA v2 prototype the owner can iterate on", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-product-manager-emery" } },
@@ -4422,7 +4422,7 @@ const M = {
   kai:   { name: "Kai", kind: "agent", tier: "specialist", role: "Rust Developer", teams: ["platform"], mgr: "ada", live: "withyou", task: "Codec split 2a.3.2b", proj: "agency-v1", goal: "2a.3.2b merged into v1 with the full suite green", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-kai" } },
   sage:  { name: "Sage", kind: "agent", tier: "specialist", role: "Rust Developer", teams: ["platform"], mgr: "ada", live: "working", task: "Custody lock fix", proj: "office-federation", goal: "Lock fix merged after the owner picks lease or per-office lock", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-sage" } },
   quinn: { name: "Quinn", kind: "agent", tier: "specialist", role: "Rust Developer", teams: ["platform"], mgr: "ada", live: "asleep", task: "", proj: "office-federation", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "On a schedule (weekdays 09:00)", office: "sat", home: "projects/ac/agents/ac-software-engineer-quinn" } },
-  jules: { name: "Jules", kind: "agent", tier: "specialist", role: "Svelte Developer", teams: ["app"], mgr: "ada", live: "asleep", budgetCapped: true, task: "Search placeholder contrast (BUG-84)", proj: "look-feel", goal: "BUG-84 fixed with an e2e test that fails before the fix", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-jules" } },
+  jules: { name: "Jules", kind: "agent", tier: "specialist", role: "Svelte Developer", teams: ["app"], mgr: "ada", live: "asleep", budgetCapped: true, task: "Search placeholder contrast (T-A84)", proj: "look-feel", goal: "T-A84 fixed with an e2e test that fails before the fix", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-jules" } },
   avery: { name: "Avery", kind: "agent", tier: "specialist", role: "Svelte Developer", teams: ["app"], mgr: "ada", live: "available", paused: true, task: "", proj: "look-feel", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-avery" } },
   noor:  { name: "Noor Haddad", kind: "agent", tier: "specialist", role: "Support Engineer", teams: ["quality"], mgr: "tomas", live: "asleep", task: "", proj: null, setup: { runtime: "Claude Code", model: "Claude Sonnet", how: "Wakes when called", office: null, home: "projects/ac/agents/ac-support-engineer-noor", needs: "not placed in an office" } }
 };
@@ -4441,47 +4441,279 @@ const P = {
 };
 const HEALTH = { "On track": { tone: "green", icon: "check-circle" }, "At risk": { tone: "red", icon: "warn" }, "Off track": { tone: "red", icon: "x-circle" } };
 const W = [
-  { id: "T-112", kind: "task", title: "Re-sequence BUG-70 nav slices for IA v2", status: "Done", proj: "agency-v1", who: "ada", pri: "High", criteria: [{ text: "Sequence the slices", done: true }, { text: "Assign owners", done: true }, { text: "Review dependencies", done: true }, { text: "Publish the plan", done: true }] },
-  { id: "T-118", kind: "task", title: "Custody lock fix", status: "Blocked", waitsOn: "you", proj: "office-federation", who: "sage", pri: "High", etaHours: 6 },
-  { id: "T-121", kind: "task", title: "Split codec 2a.3.2b", status: "In progress", proj: "agency-v1", who: "kai", pri: "Medium", etaHours: 2, criteria: [{ text: "Split encoders", done: true }, { text: "Split decoders", done: false }, { text: "Run compatibility tests", done: false }, { text: "Review fixtures", done: false }] },
-  { id: "T-124", kind: "task", title: "CSP gates in the UI suite", status: "Blocked", waitsOn: "you", proj: "agency-v1", who: "jules", pri: "High", etaHours: 8, subtasks: [
-    { id: "T-147", title: "Inventory CSP fixtures", status: "Done", pri: "Medium", criteria: [
-      { text: "List covered policies", done: true }, { text: "Record fixture gaps", done: true }
-    ] },
-    { id: "T-148", title: "Verify browser test permissions", status: "Blocked", pri: "High", criteria: [
-      { text: "Identify required permissions", done: true }, { text: "Verify permissions in the test runner", done: false }
-    ] },
-    { id: "T-149", title: "Run the CSP gate suite", status: "To do", pri: "Medium", etaHours: 2, criteria: [
-      { text: "Run browser checks", done: false }, { text: "Record results", done: false }
-    ] },
-  ] },
-  { id: "T-130", kind: "task", title: "Presence vocabulary across screens", status: "In progress", proj: "look-feel", who: "eden", pri: "Medium", etaHours: 3 },
-  { id: "T-131", kind: "task", title: "Information architecture v2 prototype", status: "In progress", proj: "look-feel", who: "emery", pri: "High", etaHours: 5, criteria: [{ text: "Map primary routes", done: true }, { text: "Link prototype views", done: true }, { text: "Review navigation", done: true }, { text: "Record the walkthrough", done: false }] },
-  { id: "T-133", kind: "task", title: "Restyle status pills", status: "Done", proj: "look-feel", who: "avery", pri: "Low" },
-  { id: "T-135", kind: "task", title: "HQ to satellite snapshot sync", status: "To do", proj: "office-federation", who: "quinn", pri: "Medium", etaHours: 12, criteria: [{ text: "Create a snapshot", done: false }, { text: "Transfer to the satellite", done: false }, { text: "Verify replay", done: false }] },
-  { id: "T-138", kind: "task", title: "Enrollment certificates for new offices", status: "In progress", proj: "office-federation", who: "rowan", pri: "Low", etaHours: 10 },
-  { id: "T-140", kind: "task", title: "Review Sage's lock fix 492e59e4", status: "Done", proj: "agency-v1", who: "tomas", pri: "High" },
-  { id: "T-142", kind: "task", title: "Write the v1.0 release notes", status: "Done", proj: "agency-v1", who: "you", pri: "Medium" },
-  { id: "T-144", kind: "task", title: "Onboarding checklist for new people", status: "Done", proj: "agency-v1", who: "maya", pri: "Low" },
-  { id: "T-146", kind: "task", title: "Sign the Apple developer agreement for notarization", status: "To do", proj: "agency-v1", who: "ada", pri: "High", subtasks: [
-    { id: "T-150", title: "Confirm the agreement version", status: "Done", pri: "Low", criteria: [
-      { text: "Match the agreement to the developer account", done: true }
-    ] },
-    { id: "T-151", title: "Check who can sign", status: "In progress", pri: "High", etaHours: 1.5, criteria: [
-      { text: "Find the account holder", done: true }, { text: "Confirm signing authority", done: false }
-    ] },
-  ] },
-  { id: "BUG-70", kind: "bug", title: "Landing page hides what needs you", status: "Fixed", proj: "agency-v1", who: "ada", pri: "Major" },
-  { id: "BUG-76", kind: "bug", title: "Status pill truncates letter by letter at 390 px", status: "Fixed", proj: "look-feel", who: "avery", pri: "Minor" },
-  { id: "BUG-81", kind: "bug", title: "Satellite stays Offline after the Mac wakes", status: "Fixed", proj: "office-federation", who: "sage", pri: "Critical" },
-  { id: "BUG-84", kind: "bug", title: "Search placeholder fails contrast", status: "In progress", pipeline: "ci", proj: "look-feel", who: "jules", pri: "Minor" },
-  { id: "BUG-86", kind: "bug", title: "Chat scrolls to top after sending", status: "Fixed", proj: "agency-v1", who: "jules", pri: "Major" },
-  { id: "BUG-88", kind: "bug", title: "Inbox loses replies when the office restarts", status: "New", proj: "agency-v1", who: null, pri: "Critical" },
-  { id: "R-9",  kind: "request", title: "Read-only view of an agent's journal and memory", status: "Approved", proj: "agency-v1", who: "emery", pri: "by Emery" },
-  { id: "R-11", kind: "request", title: "Invite flow for a second office", status: "Rowan is scoping", proj: "office-federation", who: "rowan", pri: "Sent Nov 9" },
-  { id: "R-12", kind: "request", title: "Export activity as CSV", status: "Approved", proj: "agency-v1", who: "maya", pri: "From Maya Chen" },
-  { id: "R-7",  kind: "request", title: "Dark-only look for v1.0", status: "Approved", proj: "look-feel", who: "eden", pri: "Approved Nov 10" }
+  { id: "T-A112", kind: "task", title: "Re-sequence T-A70 nav slices for IA v2",
+    description: "Reorder the IA v2 navigation work so the page structure lands before the visual polish. The revised sequence gives each owner a dependency they can verify before handing off their slice.",
+    status: "Done", proj: "agency-v1", who: "ada", pri: "High",
+    criteria: [
+      { text: "Sequence the slices", done: true },
+      { text: "Assign owners", done: true },
+      { text: "Review dependencies", done: true },
+      { text: "Publish the plan", done: true }
+    ]
+  },
+  { id: "T-A118", kind: "task", title: "Custody lock fix",
+    description: "Keep a single writer in charge when an office goes offline during a custody transfer. Verify the lock clears after the office reconnects so work can resume without a manual reset. The release decision is waiting in Inbox.",
+    status: "Blocked", waitsOn: "you", proj: "office-federation", who: "sage", pri: "High", etaHours: 6,
+    criteria: [
+      { text: "Prevent a second office from taking the same lock", done: true },
+      { text: "Verify recovery after reconnecting", done: false }
+    ]
+  },
+  { id: "T-A121", kind: "task", title: "Split codec 2a.3.2b",
+    description: "Split the 2a.3.2b codec into encoder and decoder changes so each can be reviewed on its own. Keep the existing wire format and confirm that a satellite on the previous version can still sync.\n\nReview the shared fixtures before requesting the release sign-off.",
+    status: "In progress", proj: "agency-v1", who: "kai", pri: "Medium", etaHours: 2,
+    criteria: [
+      { text: "Split encoders", done: true },
+      { text: "Split decoders", done: false },
+      { text: "Run compatibility tests", done: false },
+      { text: "Review fixtures", done: false }
+    ]
+  },
+  { id: "T-A124", kind: "task", title: "CSP gates in the UI suite",
+    description: "Add regression checks for the UI’s Content Security Policy across the browser suite. Inventory the existing fixtures, confirm which local test permissions the runner needs, then run the suite against the app build.\n\nThe suite is waiting on approval for the local test gateway.",
+    status: "Blocked", waitsOn: "you", proj: "agency-v1", who: "jules", pri: "High", etaHours: 8,
+    subtasks: [
+      { id: "T-A147", title: "Inventory CSP fixtures",
+        description: "Compare the current browser fixtures against the policies the app serves. Record which directives are already covered and identify the fixtures the suite still needs.",
+        status: "Done", pri: "Medium", criteria: [
+        { text: "List covered policies", done: true }, { text: "Record fixture gaps", done: true }
+      ] },
+      { id: "T-A148", title: "Verify browser test permissions",
+        description: "Confirm the runner can reach the local test gateway using the test profile. Record the permissions the browser suite needs so the parent task can proceed after approval.",
+        status: "Blocked", pri: "High", criteria: [
+        { text: "Identify required permissions", done: true }, { text: "Verify permissions in the test runner", done: false }
+      ] },
+      { id: "T-A149", title: "Run the CSP gate suite",
+        description: "Run the UI policy checks once the environment is ready. Save the results and separately flag any failures that need to be reproduced before the release gate can clear.",
+        status: "To do", pri: "Medium", etaHours: 2, criteria: [
+        { text: "Run browser checks", done: false }, { text: "Record results", done: false }
+      ] },
+    ]
+  },
+  { id: "T-A130", kind: "task", title: "Presence vocabulary across screens",
+    description: "Use the same presence words wherever members appear in the UI. Cover active, paused and offline states in the directory, org chart and conversation list, with text that works alongside each icon.",
+    status: "In progress", proj: "look-feel", who: "eden", pri: "Medium", etaHours: 3,
+    criteria: [
+      { text: "Agree on presence labels", done: true },
+      { text: "Use the labels in the directory, org chart and Chat", done: false }
+    ]
+  },
+  { id: "T-A131", kind: "task", title: "Information architecture v2 prototype",
+    description: "Build the clickable IA v2 prototype around the daily workflow. Make it easy to open an Inbox item, find its task and navigate back with the keyboard.\n\nThe primary routes are linked. Record a walkthrough of the remaining cases before the design handoff.",
+    status: "In progress", proj: "look-feel", who: "emery", pri: "High", etaHours: 5,
+    criteria: [
+      { text: "Map primary routes", done: true },
+      { text: "Link prototype views", done: true },
+      { text: "Review navigation", done: true },
+      { text: "Record the walkthrough", done: false }
+    ]
+  },
+  { id: "T-A133", kind: "task", title: "Restyle status pills",
+    description: "Update status pills to use the shared semantic colors and typography. Check that the label stays readable in both compact rows and narrow layouts.",
+    status: "Done", proj: "look-feel", who: "avery", pri: "Low",
+    criteria: [
+      { text: "Apply the shared status colors", done: true },
+      { text: "Verify labels on a narrow screen", done: true }
+    ]
+  },
+  { id: "T-A135", kind: "task", title: "HQ to satellite snapshot sync",
+    description: "Send a small snapshot from HQ to the satellite office and verify that the replay produces the same records. Keep this as the first end-to-end check once the build box comes back online.",
+    status: "To do", proj: "office-federation", who: "quinn", pri: "Medium", etaHours: 12,
+    criteria: [
+      { text: "Create a snapshot", done: false },
+      { text: "Transfer to the satellite", done: false },
+      { text: "Verify replay", done: false }
+    ]
+  },
+  { id: "T-A138", kind: "task", title: "Enrollment certificates for new offices",
+    description: "Set up enrollment certificates for the new offices. Verify that a newly enrolled office can connect to HQ and that a revoked enrollment is refused.",
+    status: "In progress", proj: "office-federation", who: "rowan", pri: "Low", etaHours: 10,
+    criteria: [
+      { text: "Enroll a new office with a valid certificate", done: true },
+      { text: "Verify revoked enrollment is refused", done: false }
+    ]
+  },
+  { id: "T-A140", kind: "task", title: "Review Sage's lock fix 492e59e4",
+    description: "Review the custody lock change at revision 492e59e4. Check the lease-release path and leave reproducible notes for Sage on any findings that affect the handoff.",
+    status: "Done", proj: "agency-v1", who: "tomas", pri: "High",
+    criteria: [
+      { text: "Review how the lease is released", done: true },
+      { text: "Leave handoff notes for Sage", done: true }
+    ]
+  },
+  { id: "T-A142", kind: "task", title: "Write the v1.0 release notes",
+    description: "Write the v1.0 release notes for the people installing and operating an office. Call out the sync changes, the new checks and any steps the reader needs to take before upgrading.",
+    status: "Done", proj: "agency-v1", who: "you", pri: "Medium",
+    criteria: [
+      { text: "Summarize the sync changes and release checks", done: true },
+      { text: "Document the upgrade steps", done: true }
+    ]
+  },
+  { id: "T-A144", kind: "task", title: "Onboarding checklist for new people",
+    description: "Give new people a short checklist for joining an office, finding their team and opening their first task. Include the links they need to finish setup without waiting for an introduction.",
+    status: "Done", proj: "agency-v1", who: "maya", pri: "Low",
+    criteria: [
+      { text: "Link the team directory and first task", done: true },
+      { text: "Walk through the checklist with a new member", done: true }
+    ]
+  },
+  { id: "T-A146", kind: "task", title: "Sign the Apple developer agreement for notarization",
+    description: "Complete the Apple Developer agreement required for notarization. Confirm the agreement version in the developer account, then identify the account holder who can sign it.\n\nKeep the release gate open until the signed agreement is confirmed.",
+    status: "To do", proj: "agency-v1", who: "ada", pri: "High",
+    subtasks: [
+      { id: "T-A150", title: "Confirm the agreement version",
+        description: "Match the agreement version in the Apple Developer account to the one listed on the notarization requirement. Record the result for the signer.",
+        status: "Done", pri: "Low", criteria: [
+        { text: "Match the agreement to the developer account", done: true }
+      ] },
+      { id: "T-A151", title: "Check who can sign",
+        description: "Confirm who holds signing authority for the developer account and share that contact with the release team.",
+        status: "In progress", pri: "High", etaHours: 1.5, criteria: [
+        { text: "Find the account holder", done: true }, { text: "Confirm signing authority", done: false }
+      ] },
+    ]
+  },
+  { id: "T-A70", kind: "bug", title: "Landing page hides what needs you",
+    description: "The landing page pushed items needing a decision below the first screen. Verify that urgent requests are visible when the briefing opens, including at shorter viewport heights.",
+    status: "Fixed", proj: "agency-v1", who: "ada", pri: "Major",
+    criteria: [
+      { text: "Keep urgent decisions visible on the first screen", done: true },
+      { text: "Verify the briefing on short viewports", done: true }
+    ]
+  },
+  { id: "T-A76", kind: "bug", title: "Status pill truncates letter by letter at 390 px",
+    description: "At a 390-pixel viewport, the status label could wrap one letter at a time. Verify the label keeps a readable shape beside a long work item title.",
+    status: "Fixed", proj: "look-feel", who: "avery", pri: "Minor",
+    criteria: [
+      { text: "Reproduce the label wrapping at 390 pixels", done: true },
+      { text: "Verify the label beside a long title", done: true }
+    ]
+  },
+  { id: "T-A81", kind: "bug", title: "Satellite stays Offline after the Mac wakes",
+    description: "The satellite stayed offline in the UI after the Mac woke up. Verify that the connection recovers and the presence status updates after sleep.",
+    status: "Fixed", proj: "office-federation", who: "sage", pri: "Critical",
+    criteria: [
+      { text: "Reconnect the satellite after the Mac wakes", done: true },
+      { text: "Refresh presence after reconnecting", done: true }
+    ]
+  },
+  { id: "T-A84", kind: "bug", title: "Search placeholder fails contrast",
+    description: "The search placeholder is hard to read in some themes. Compare it against the field background in unfocused and focused states, including the contrast setting.",
+    status: "In progress", pipeline: "ci", proj: "look-feel", who: "jules", pri: "Minor",
+    criteria: [
+      { text: "Record the theme and field state where contrast fails", done: true },
+      { text: "Verify placeholder contrast in every theme", done: false }
+    ]
+  },
+  { id: "T-A86", kind: "bug", title: "Chat scrolls to top after sending",
+    description: "After sending a message, Chat jumped to the oldest entries. Keep focus in the composer and bring the newly sent message into view.",
+    status: "Fixed", proj: "agency-v1", who: "jules", pri: "Major",
+    criteria: [
+      { text: "Keep focus in the composer after sending", done: true },
+      { text: "Scroll to the newest message", done: true }
+    ]
+  },
+  { id: "T-A88", kind: "bug", title: "Inbox loses replies when the office restarts",
+    description: "A reply recorded in Inbox could disappear after an office restart. Confirm that the thread still shows the saved reply and that the request keeps the correct state after reconnecting.",
+    status: "New", proj: "agency-v1", who: null, pri: "Critical",
+    criteria: [
+      { text: "Record a reply and restart the office", done: false },
+      { text: "Verify the reply and request status survive", done: false }
+    ]
+  },
+  { id: "T-A9",  kind: "request", title: "Read-only view of an agent's journal and memory",
+    description: "Provide a read-only view of an agent’s journal and remembered context so an owner can understand recent decisions before assigning work.",
+    status: "Approved", proj: "agency-v1", who: "emery", pri: "by Emery" },
+  { id: "T-A11", kind: "request", title: "Invite flow for a second office",
+    description: "Explore the invitation flow for someone joining a second office. Show which office they are joining and what happens before their first sync completes.",
+    status: "Rowan is scoping", proj: "office-federation", who: "rowan", pri: "Sent Nov 9",
+    criteria: [
+      { text: "Map the steps for joining the second office", done: true },
+      { text: "Explain when the first sync is ready", done: false }
+    ]
+  },
+  { id: "T-A12", kind: "request", title: "Export activity as CSV",
+    description: "Let an owner export the current Activity view to CSV for monthly reporting. Include timestamps, people, projects and event types, and apply the filters visible on the page.",
+    status: "Approved", proj: "agency-v1", who: "maya", pri: "From Maya Chen",
+    criteria: [
+      { text: "Agree on the CSV columns", done: true },
+      { text: "Export the filtered Activity view", done: false }
+    ]
+  },
+  { id: "T-A7",  kind: "request", title: "Dark-only look for v1.0",
+    description: "Record the initial decision to begin with a dark theme for v1.0 so the team can focus on the core workflows during the first implementation pass.",
+    status: "Approved", proj: "look-feel", who: "eden", pri: "Approved Nov 10" }
 ];
+const WORK_DISCUSSIONS = {
+  "T-A12": {
+    events: [
+      ["check-circle", "Maya’s export request was approved", "Yesterday"],
+      ["clipboard", "Maya requested monthly Activity exports", "2d"],
+    ],
+    comments: [["maya", "The export should reflect the date range and filters on screen. I’ll use it to reconcile the monthly report.", "Yesterday"]],
+  },
+  "T-A84": {
+    events: [
+      ["flag", "Tess proposed reassigning the contrast fix after Jules hit the budget cap", "4m"],
+      ["clipboard", "Jules recorded the affected themes", "2h"],
+    ],
+    comments: [["jules", "Start with the keyboard-focused search field in Ocean and Cozy. The placeholder is the hardest to see there.", "2h"]],
+  },
+  "T-A112": { events: [
+    ["check-circle", "Ada published the revised sequence and assigned owners", "Yesterday"],
+    ["clipboard", "Ada linked T-A70 to the navigation work", "Yesterday"],
+  ] },
+  "T-A118": {
+    events: [
+      ["chat", "Rowan shared the custody lock ruling in #platform", "25m"],
+      ["pause", "Sage paused the fix pending the file-access decision", "26m"],
+    ],
+    comments: [["rowan", "Automatic expiry gives us a recovery path if the satellite disappears mid-transfer. Keep the reconnect check in the handoff.", "25m"]],
+  },
+  "T-A121": {
+    events: [
+      ["terminal", "Kai finished the codec run. All 412 checks passed.", "12m"],
+      ["check-circle", "Tomas marked the review ready", "14m"],
+      ["flag", "Ada approved splitting the change into two slices", "20m"],
+    ],
+    comments: [
+      ["tomas", "The encoder changes are ready. Please keep the decoder compatibility fixtures with the second slice so we can review them together.", "14m"],
+      ["kai", "The run is green. I’ve linked the release sign-off so the owner can approve it from Inbox.", "12m"],
+    ],
+  },
+  "T-A124": {
+    events: [
+      ["pause", "Jules moved the task to Blocked while the local test permission is pending", "3h"],
+      ["check-circle", "Jules finished the fixture inventory in T-A147", "4h"],
+      ["clipboard", "Ada assigned the browser checks to Jules", "Yesterday"],
+    ],
+    comments: [
+      ["ada", "Please keep the three browser checks under this task so we can see which check is holding up the release.", "Yesterday"],
+      ["jules", "The fixture inventory is complete. I’m waiting for the testing approval before running the suite.", "3h"],
+    ],
+  },
+  "T-A131": {
+    events: [
+      ["flag", "Emery sent draft 4.1 for design review", "Yesterday"],
+      ["check-circle", "Emery finished the navigation pass", "Yesterday"],
+    ],
+    comments: [["eden", "The route hierarchy looks right. Include a keyboard-only pass from Inbox to a task in the walkthrough.", "Yesterday"]],
+  },
+  "T-A135": { events: [
+    ["pause", "Quinn’s run paused while the build box is offline", "4h"],
+    ["clipboard", "Rowan queued the snapshot check for the second office", "Yesterday"],
+  ] },
+  "T-A146": {
+    events: [
+      ["check-circle", "Ada confirmed the agreement version in T-A150", "2h"],
+      ["clipboard", "Ada added a signing-authority check in T-A151", "Yesterday"],
+    ],
+    comments: [["ada", "The agreement version is confirmed. I’m checking who can sign before I mark the release gate ready.", "2h"]],
+  },
+  "T-A147": { events: [["check-circle", "Jules finished the inventory and documented the fixture gaps", "4h"]] },
+  "T-A148": { events: [["pause", "Jules requested local test access in Inbox", "3h"]] },
+  "T-A150": { events: [["check-circle", "Ada matched the agreement to the developer account", "2h"]] },
+};
 const KIND = {
   approval:   { label: "Approval", plural: "Approvals", icon: "check-circle", clears: "Only when you approve or deny" },
   suggestion: { label: "Suggestion", plural: "Suggestions", icon: "sparkle", clears: "When you apply or dismiss" },
@@ -4495,52 +4727,52 @@ const RECOMMENDATION_TONES = {
   bad: ["shield-alert", "Use caution"]
 };
 const IN = [
-  { id: "in1", kind: "approval", sub: "Release sign-off", from: "ada", time: "12m", group: "Today", what: "Approve publishing Kai's sync update to v1.0", cta: "Approve Kai's sync", why: "Kai's update makes office syncing cleaner and more reliable for v1.0. All 412 automated checks passed and Tomas approved review with zero open issues. High-impact release changes require your final sign-off before publishing.", audit: ["412 automated checks passing", "Tomas reviewed — 0 open issues", "Reversible release gate · T-121"], recTone: "ok", rec: "Ada recommends: approve. Tomas completed review with no open issues.", impact: [["shield-check", "ok", "Low risk", "Easy to roll back"], ["bolt", "", "High impact", "Unblocks v1.0 launch"], ["check-circle", "ok", "Checks passed", "412 automated checks"]], proj: "agency-v1", task: "T-121", expires: "Expires in 4 hours (release window)" },
-  { id: "in18", kind: "suggestion", sub: "Tess suggestion", from: "tess", time: "4m", group: "Today", what: "Reroute Jules's 3 queued tasks to Maya & Rowan", cta: "Apply Jules reroute", why: "Jules reached its $210 monthly budget cap and 3 assigned tasks are sitting stalled in the queue. Maya and Rowan have available capacity in the same repositories with zero context-switch overhead and zero added spend.", audit: ["Maya & Rowan capacity verified", "$0 added monthly spend", "Recovers ~6h of queued wait · BUG-84"], recTone: "ok", rec: "Tess suggests: apply reroute. Recovers ~6h of queued wait time at $0 extra spend.", impact: [["shield-check", "ok", "Zero added spend", "Stays under $210 cap"], ["bolt", "", "Recovers ~6h wait", "Unblocks 3 queued tasks"], ["check-circle", "ok", "Capacity verified", "Maya & Rowan available"]], proj: "look-feel", task: "BUG-84", expires: "",
+  { id: "in1", kind: "approval", sub: "Release sign-off", from: "ada", time: "12m", group: "Today", what: "Approve publishing Kai's sync update to v1.0", cta: "Approve Kai's sync", why: "Kai's update makes office syncing cleaner and more reliable for v1.0. All 412 automated checks passed and Tomas approved review with zero open issues. High-impact release changes require your final sign-off before publishing.", audit: ["412 automated checks passing", "Tomas reviewed — 0 open issues", "Reversible release gate · T-A121"], recTone: "ok", rec: "Ada recommends: approve. Tomas completed review with no open issues.", impact: [["shield-check", "ok", "Low risk", "Easy to roll back"], ["bolt", "", "High impact", "Unblocks v1.0 launch"], ["check-circle", "ok", "Checks passed", "412 automated checks"]], proj: "agency-v1", task: "T-A121", expires: "Expires in 4 hours (release window)" },
+  { id: "in18", kind: "suggestion", sub: "Tess suggestion", from: "tess", time: "4m", group: "Today", what: "Reroute Jules's 3 queued tasks to Maya & Rowan", cta: "Apply Jules reroute", why: "Jules reached its $210 monthly budget cap and 3 assigned tasks are sitting stalled in the queue. Maya and Rowan have available capacity in the same repositories with zero context-switch overhead and zero added spend.", audit: ["Maya & Rowan capacity verified", "$0 added monthly spend", "Recovers ~6h of queued wait · T-A84"], recTone: "ok", rec: "Tess suggests: apply reroute. Recovers ~6h of queued wait time at $0 extra spend.", impact: [["shield-check", "ok", "Zero added spend", "Stays under $210 cap"], ["bolt", "", "Recovers ~6h wait", "Unblocks 3 queued tasks"], ["check-circle", "ok", "Capacity verified", "Maya & Rowan available"]], proj: "look-feel", task: "T-A84", expires: "",
     acts: [["Apply Jules reroute", "Rerouted 3 tasks to Maya & Rowan", "sparkle"], ["Dismiss", "Suggestion dismissed", "x", "deny"]], clears: "When you apply or dismiss Tess's suggestion" },
-  { id: "in5", kind: "approval", sub: "Access request", from: "jules", time: "3h", group: "Today", what: "Allow local test access for Jules's security checks", cta: "Allow test access", why: "Jules needs temporary permission to run security checks against the local test server only. No live customer or company data is exposed, and only the owner can grant local access permissions.", audit: ["Scoped to local test sandbox only", "Zero production or customer data", "Auto-expires after security run · T-124"], recTone: "ok", rec: "Jules recommends: allow for testing only.", impact: [["shield-check", "ok", "Low risk", "Test sandbox only"], ["bolt", "", "High impact", "Unblocks v1.0 security"], ["lock", "", "Limited scope", "No live data access"]], proj: "agency-v1", task: "T-124", expires: "Expires tomorrow" },
-  { id: "in2", kind: "decision", sub: "Direction needed", from: "sage", time: "25m", group: "Today", what: "Choose how offices coordinate shared files: timed access or fixed lock", why: "Work on second-office syncing is paused until you pick. Automatic timed access recovers cleanly if an office goes offline; a fixed per-office lock is a day faster to finish.", audit: ["Rowan & Sage aligned on timed access", "Auto-recovers from office disconnects", "Unblocks Office federation · T-118"], recTone: "warn", rec: "Sage recommends timed access. Rowan agrees.", impact: [["shield-alert", "warn", "Moderate risk", "Harder to change later"], ["bolt", "warn", "High impact", "Unblocks Office sync"], ["scale", "", "Safety vs. speed", "Auto-recovers · +1 day"]], proj: "office-federation", task: "T-118", opts: ["Use timed access", "Fixed office lock"], expires: "" },
-  { id: "in16", kind: "approval", sub: "Company standard", from: "rowan", time: "45m", group: "Today", what: "Require automated checks before every release?", cta: "Adopt CI standard", why: "Agentic Org v1.0 and Look & feel refresh both cut revision rates by running automated checks before handoff. Adopting this company-wide means every new project enforces the same quality bar automatically.", audit: ["Proven across 2 active projects", "Overridable per project anytime", "Keeps first-try approval >80% · T-121"], recTone: "ok", rec: "Rowan & Ada recommend: adopt standard. Keeps first-try approval rates above 80%.", impact: [["shield-check", "ok", "Low risk", "Proven across 2 projects"], ["sparkle", "", "Org-wide impact", "Applies to future projects"], ["adjustments", "muted", "Reversible", "Override per project"]], proj: "agency-v1", task: "T-121", expires: "",
+  { id: "in5", kind: "approval", sub: "Access request", from: "jules", time: "3h", group: "Today", what: "Allow local test access for Jules's security checks", cta: "Allow test access", why: "Jules needs temporary permission to run security checks against the local test server only. No live customer or company data is exposed, and only the owner can grant local access permissions.", audit: ["Scoped to local test sandbox only", "Zero production or customer data", "Auto-expires after security run · T-A124"], recTone: "ok", rec: "Jules recommends: allow for testing only.", impact: [["shield-check", "ok", "Low risk", "Test sandbox only"], ["bolt", "", "High impact", "Unblocks v1.0 security"], ["lock", "", "Limited scope", "No live data access"]], proj: "agency-v1", task: "T-A124", expires: "Expires tomorrow" },
+  { id: "in2", kind: "decision", sub: "Direction needed", from: "sage", time: "25m", group: "Today", what: "Choose how offices coordinate shared files: timed access or fixed lock", why: "Work on second-office syncing is paused until you pick. Automatic timed access recovers cleanly if an office goes offline; a fixed per-office lock is a day faster to finish.", audit: ["Rowan & Sage aligned on timed access", "Auto-recovers from office disconnects", "Unblocks Office federation · T-A118"], recTone: "warn", rec: "Sage recommends timed access. Rowan agrees.", impact: [["shield-alert", "warn", "Moderate risk", "Harder to change later"], ["bolt", "warn", "High impact", "Unblocks Office sync"], ["scale", "", "Safety vs. speed", "Auto-recovers · +1 day"]], proj: "office-federation", task: "T-A118", opts: ["Use timed access", "Fixed office lock"], expires: "" },
+  { id: "in16", kind: "approval", sub: "Company standard", from: "rowan", time: "45m", group: "Today", what: "Require automated checks before every release?", cta: "Adopt CI standard", why: "Agentic Org v1.0 and Look & feel refresh both cut revision rates by running automated checks before handoff. Adopting this company-wide means every new project enforces the same quality bar automatically.", audit: ["Proven across 2 active projects", "Overridable per project anytime", "Keeps first-try approval >80% · T-A121"], recTone: "ok", rec: "Rowan & Ada recommend: adopt standard. Keeps first-try approval rates above 80%.", impact: [["shield-check", "ok", "Low risk", "Proven across 2 projects"], ["sparkle", "", "Org-wide impact", "Applies to future projects"], ["adjustments", "muted", "Reversible", "Override per project"]], proj: "agency-v1", task: "T-A121", expires: "",
     acts: [["Adopt CI standard", "Adopted as company standard", "sparkle"], ["Keep project-only", "Kept project-only", "x", "deny"]], clears: "When you adopt or keep it project-only" },
-  { id: "in17", kind: "approval", sub: "Design sign-off", from: "emery", time: "1h", group: "Today", what: "Approve final design polish for Look & feel refresh", cta: "Approve design polish", why: "Half of the v1.1 refresh is already shipped (3 of 6 tasks done, 1 day ahead). Approving the final design polish unlocks the remaining 3 screens for the Nov 28 milestone, well within your monthly budget.", audit: ["Eden & Emery design review passed", "3 of 6 milestone tasks shipped", "1 day ahead of Nov 28 target · T-131"], recTone: "ok", rec: "Emery & Eden recommend: approve. All design and budget checks passed.", impact: [["shield-check", "ok", "Low risk", "Visual polish only"], ["bolt", "", "Medium impact", "Unlocks final 3 screens"], ["calendar-check", "ok", "1 day ahead", "3 of 6 tasks done"]], proj: "look-feel", task: "T-131", expires: "",
+  { id: "in17", kind: "approval", sub: "Design sign-off", from: "emery", time: "1h", group: "Today", what: "Approve final design polish for Look & feel refresh", cta: "Approve design polish", why: "Half of the v1.1 refresh is already shipped (3 of 6 tasks done, 1 day ahead). Approving the final design polish unlocks the remaining 3 screens for the Nov 28 milestone, well within your monthly budget.", audit: ["Eden & Emery design review passed", "3 of 6 milestone tasks shipped", "1 day ahead of Nov 28 target · T-A131"], recTone: "ok", rec: "Emery & Eden recommend: approve. All design and budget checks passed.", impact: [["shield-check", "ok", "Low risk", "Visual polish only"], ["bolt", "", "Medium impact", "Unlocks final 3 screens"], ["calendar-check", "ok", "1 day ahead", "3 of 6 tasks done"]], proj: "look-feel", task: "T-A131", expires: "",
     acts: [["Approve design polish", "Design polish approved", "check"], ["Request changes", "Changes requested", "pencil", "changes"]], clears: "When you approve or request changes" },
-  { id: "in3", kind: "question", sub: "Question", from: "eden", time: "1h", group: "Today", what: "Should the org chart show people and agents in one tree?", why: "Presence vocabulary (T-130). Splitting them makes reporting lines harder to follow; one tree needs the kind word on every node.", recTone: "warn", rec: "Eden recommends: one tree, with the kind word on each node.", proj: "look-feel", task: "T-130", expires: "" },
+  { id: "in3", kind: "question", sub: "Question", from: "eden", time: "1h", group: "Today", what: "Should the org chart show people and agents in one tree?", why: "Presence vocabulary (T-A130). Splitting them makes reporting lines harder to follow; one tree needs the kind word on every node.", recTone: "warn", rec: "Eden recommends: one tree, with the kind word on each node.", proj: "look-feel", task: "T-A130", expires: "" },
   { id: "in4", kind: "approval", sub: "Hire request", from: "ada", time: "2h", group: "Today", what: "Hire a QA engineer for the Quality team", why: "Tomas reviews every branch and UI validation queues behind him: 6 branches are waiting today.", recTone: "warn", rec: "ada recommends: one agent, Playwright focus, reports to Tomas.", proj: "agency-v1", task: "", expires: "" },
-  { id: "in11", kind: "approval", sub: "Fix to verify", from: "sage", time: "3h", group: "Today", what: "Verify fix: BUG-81", why: "Sage fixed the satellite staying Offline after the Mac wakes. Tomas's review is READY and the wake test passes on a test satellite. Approving closes the bug; reopening sends it back to Sage.", recTone: "ok", rec: "Sage recommends: approve the fix.", proj: "office-federation", task: "BUG-81", expires: "",
+  { id: "in11", kind: "approval", sub: "Fix to verify", from: "sage", time: "3h", group: "Today", what: "Verify fix: T-A81", why: "Sage fixed the satellite staying Offline after the Mac wakes. Tomas's review is READY and the wake test passes on a test satellite. Approving closes the bug; reopening sends it back to Sage.", recTone: "ok", rec: "Sage recommends: approve the fix.", proj: "office-federation", task: "T-A81", expires: "",
     acts: [["Approve fix", "Fix approved", "check"], ["Reopen", "Reopened", "refresh"]], sets: { "Fix approved": "Closed", "Reopened": "Triaged" }, clears: "When you approve the fix or reopen the bug" },
   { id: "in12", kind: "problem", sub: "Budget reached", from: "jules", time: "3h", group: "Today", what: "Budget reached for this month", why: "Jules has used this month's model budget. New runs wait until December 1, or until you raise the budget in Agent setup.", rec: "", proj: "look-feel", task: "", expires: "",
     acts: [["Dismiss for this month", "Dismissed for this month", "x"]], src: { href: "#/settings/agents/jules", label: "Open Agent setup" }, clears: "When you dismiss it for this month, or the budget resets" },
   { id: "in13", kind: "problem", sub: "Unplaced agent", from: "noor", time: "5h", group: "Today", what: "Noor Haddad isn't placed in an office yet", why: "Noor was hired yesterday, but no office runs Noor yet, so Noor can't pick up work. Choose an office in Agent setup.", rec: "", proj: "agency-v1", task: "", expires: "",
     src: { href: "#/settings/agents/noor", label: "Open Agent setup" }, clears: "When Noor is placed in an office" },
-  { id: "in9", kind: "problem", sub: "Goal paused", from: "quinn", time: "4h", group: "Today", what: "Quinn's goal is paused: the Build box office is offline", why: "T-135 can't start until the satellite office is back. Resume the goal once it's online, or move T-135 to HQ.", rec: "", proj: "office-federation", task: "T-135", expires: "", resume: true, clears: "When the goal resumes" },
-  { id: "in6", kind: "approval", sub: "Review requested", from: "emery", time: "Yesterday", group: "Earlier", what: "Review T-131: the IA v2 prototype, draft 4.1", why: "Emery applied Eden's draft-4 recheck and asks for your review before the stories go to engineering.", recTone: "ok", rec: "Eden recommends: approve. Her recheck findings are fixed.", proj: "look-feel", task: "T-131", expires: "",
+  { id: "in9", kind: "problem", sub: "Goal paused", from: "quinn", time: "4h", group: "Today", what: "Quinn's goal is paused: the Build box office is offline", why: "T-A135 can't start until the satellite office is back. Resume the goal once it's online, or move T-A135 to HQ.", rec: "", proj: "office-federation", task: "T-A135", expires: "", resume: true, clears: "When the goal resumes" },
+  { id: "in6", kind: "approval", sub: "Review requested", from: "emery", time: "Yesterday", group: "Earlier", what: "Review T-A131: the IA v2 prototype, draft 4.1", why: "Emery applied Eden's draft-4 recheck and asks for your review before the stories go to engineering.", recTone: "ok", rec: "Eden recommends: approve. Her recheck findings are fixed.", proj: "look-feel", task: "T-A131", expires: "",
     acts: [["Approve", "Approved", "check"], ["Request changes", "Changes requested", "pencil", "changes"]], clears: "When you answer, here or anywhere" },
-  { id: "in14", kind: "approval", sub: "Hand-off", from: "ada", time: "1h", group: "Today", what: "Take on T-146: sign the Apple developer agreement", why: "Notarizing the v1.0 build needs the account holder to accept Apple's updated agreement. Only you can sign it, so ada handed T-146 to you.", rec: "", proj: "agency-v1", task: "T-146", expires: "",
+  { id: "in14", kind: "approval", sub: "Hand-off", from: "ada", time: "1h", group: "Today", what: "Take on T-A146: sign the Apple developer agreement", why: "Notarizing the v1.0 build needs the account holder to accept Apple's updated agreement. Only you can sign it, so ada handed T-A146 to you.", rec: "", proj: "agency-v1", task: "T-A146", expires: "",
     acts: [["Accept", "Accepted", "check"]], assignTo: { "Accepted": "you" }, clears: "When you accept it, here or in Chat" },
-  { id: "in7", kind: "question", sub: "Question", from: "rowan", time: "Yesterday", group: "Earlier", what: "Keep the old codec behind a flag for one release?", why: "Removing it now saves 400 lines; keeping it lets a satellite on the old version still sync.", recTone: "warn", rec: "Rowan recommends: keep it for one release.", proj: "agency-v1", task: "T-121", expires: "" },
-  { id: "in15", kind: "problem", sub: "Critical bug", from: "tomas", time: "2h", group: "Today", what: "Critical bug: BUG-88, the Inbox loses replies when the office restarts", why: "Tomas reproduced it twice: a reply sent while the office restarts never reaches the agent. Nobody is assigned yet.", recTone: "bad", rec: "Tomas recommends: assign it to Rowan.", proj: "agency-v1", task: "BUG-88", expires: "", assign: true, clears: "When it's assigned to anyone, or closed" },
-  { id: "in10", kind: "problem", sub: "Crash", from: "rowan", time: "Yesterday", group: "Earlier", what: "A run on T-138 crashed", why: "The run stopped with an error after 3 minutes: the certificate tool wasn't found on PATH. Nothing was changed.", rec: "", proj: "office-federation", task: "T-138", expires: "", dismiss: true, clears: "When you dismiss it, or the next run succeeds" },
+  { id: "in7", kind: "question", sub: "Question", from: "rowan", time: "Yesterday", group: "Earlier", what: "Keep the old codec behind a flag for one release?", why: "Removing it now saves 400 lines; keeping it lets a satellite on the old version still sync.", recTone: "warn", rec: "Rowan recommends: keep it for one release.", proj: "agency-v1", task: "T-A121", expires: "" },
+  { id: "in15", kind: "problem", sub: "Critical bug", from: "tomas", time: "2h", group: "Today", what: "Critical bug: T-A88, the Inbox loses replies when the office restarts", why: "Tomas reproduced it twice: a reply sent while the office restarts never reaches the agent. Nobody is assigned yet.", recTone: "bad", rec: "Tomas recommends: assign it to Rowan.", proj: "agency-v1", task: "T-A88", expires: "", assign: true, clears: "When it's assigned to anyone, or closed" },
+  { id: "in10", kind: "problem", sub: "Crash", from: "rowan", time: "Yesterday", group: "Earlier", what: "A run on T-A138 crashed", why: "The run stopped with an error after 3 minutes: the certificate tool wasn't found on PATH. Nothing was changed.", rec: "", proj: "office-federation", task: "T-A138", expires: "", dismiss: true, clears: "When you dismiss it, or the next run succeeds" },
   { id: "in8", kind: "approval", sub: "Run approval", from: "rowan", time: "Nov 10", group: "Earlier", what: "Approve the A-OC1 pins", why: "Pins the office contract versions for v1.0.", rec: "", proj: "office-federation", task: "", expires: "", handled: true, outcome: "Approved" }
 ];
 const A = [
-  { id: "a1", type: "run", who: "kai", time: "12m", proj: "agency-v1", text: "finished a run on T-121 Split codec 2a.3.2b", summary: "Woken by ada's message · 12 min · finished", log: [["09:29", "Woken by ada's message in #agency-v1"], ["09:30", "Read T-121 and Tomas's review notes"], ["09:33", "Changed 3 files in org-sync-proto"], ["09:38", "Ran the Rust suite: 412 passed"], ["09:40", "Pushed 0a520e5b and asked Tomas for review"], ["09:41", "Finished · 12 min"]] },
+  { id: "a1", type: "run", who: "kai", time: "12m", proj: "agency-v1", text: "finished a run on T-A121 Split codec 2a.3.2b", summary: "Woken by ada's message · 12 min · finished", log: [["09:29", "Woken by ada's message in #agency-v1"], ["09:30", "Read T-A121 and Tomas's review notes"], ["09:33", "Changed 3 files in org-sync-proto"], ["09:38", "Ran the Rust suite: 412 passed"], ["09:40", "Pushed 0a520e5b and asked Tomas for review"], ["09:41", "Finished · 12 min"]] },
   { id: "a2", type: "work", who: "tomas", time: "14m", proj: "agency-v1", text: "marked the review of 0a520e5b READY" },
   { id: "a3", type: "decision", who: "ada", time: "20m", proj: "agency-v1", text: "approved splitting 2a.3.2b into two slices" },
   { id: "a4", type: "conversation", who: "rowan", time: "25m", proj: "office-federation", text: "posted the custody lock ruling in #platform" },
-  { id: "a5", type: "run", who: "sage", time: "26m", proj: "office-federation", text: "stopped a run on T-118 Custody lock fix", summary: "Woken on schedule · 6 min · stopped, needs you", log: [["09:12", "Woken on schedule"], ["09:13", "Read Rowan's ruling"], ["09:17", "Two options left; asked you to decide"], ["09:18", "Stopped · waiting on you"]] },
+  { id: "a5", type: "run", who: "sage", time: "26m", proj: "office-federation", text: "stopped a run on T-A118 Custody lock fix", summary: "Woken on schedule · 6 min · stopped, needs you", log: [["09:12", "Woken on schedule"], ["09:13", "Read Rowan's ruling"], ["09:17", "Two options left; asked you to decide"], ["09:18", "Stopped · waiting on you"]] },
   { id: "a13", type: "org", who: "ada", time: "40m", proj: "agency-v1", text: "asked to hire a QA engineer for Quality" },
-  { id: "a6", type: "work", who: "jules", time: "3h", proj: "agency-v1", text: "moved T-124 CSP gates to Blocked" },
+  { id: "a6", type: "work", who: "jules", time: "3h", proj: "agency-v1", text: "moved T-A124 CSP gates to Blocked" },
   { id: "a7", type: "conversation", who: "eden", time: "1h", proj: "look-feel", text: "asked you about the org chart tree" },
   { id: "a8", type: "run", who: "tomas", time: "1h", proj: "agency-v1", text: "finished a review run on 492e59e4", summary: "Woken by Sage's request · 18 min · finished", log: [["08:20", "Woken by Sage's request"], ["08:21", "Checked out 492e59e4 in a clean worktree"], ["08:30", "Ran clippy and the workspace tests"], ["08:38", "Verdict: CHANGES NEEDED, 2 findings"]] },
-  { id: "a9", type: "work", who: "avery", time: "2h", proj: "look-feel", text: "marked T-133 Restyle status pills Done" },
+  { id: "a9", type: "work", who: "avery", time: "2h", proj: "look-feel", text: "marked T-A133 Restyle status pills Done" },
   { id: "a14", type: "org", who: "you", time: "2h", proj: "look-feel", text: "paused Avery" },
   { id: "a10", type: "decision", who: "you", time: "Nov 10", proj: "office-federation", text: "approved the A-OC1 pins" },
-  { id: "a11", type: "work", who: "emery", time: "Nov 10", proj: "look-feel", text: "created T-131 Information architecture v2 prototype" },
-  { id: "a12", type: "conversation", who: "maya", time: "Nov 10", proj: "agency-v1", text: "asked for an activity export (R-12)" }
+  { id: "a11", type: "work", who: "emery", time: "Nov 10", proj: "look-feel", text: "created T-A131 Information architecture v2 prototype" },
+  { id: "a12", type: "conversation", who: "maya", time: "Nov 10", proj: "agency-v1", text: "asked for an activity export (T-A12)" }
 ];
 const CH = {
   "general":   { name: "general", kind: "channel", topic: "Everyone in Agentic Org", msgs: [
-    { id: "g1", who: "maya", time: "Nov 10, 16:02", text: "Could we export the activity feed for the monthly report? Filed as R-12." },
+    { id: "g1", who: "maya", time: "Nov 10, 16:02", text: "Could we export the activity feed for the monthly report? Filed as T-A12." },
     { id: "g2", who: "you", time: "Nov 10, 16:20", text: "Yes, later. Leaving it unrouted for now." } ] },
   "agency-v1": { name: "agency-v1", kind: "channel", topic: "Agency v1.0 delivery", proj: "agency-v1", msgs: [
     { id: "m1", who: "ada", time: "09:12", text: "Morning. Codec split is in review; CSP gates next. I am re-planning the nav slices for IA v2 today." },
@@ -4551,7 +4783,7 @@ const CH = {
     { id: "m3", who: "jules", time: "09:52", text: "The CSP gateway test can't reach the gateway without a local permission.", ask: { id: "ask1", inbox: "in5", q: "Allow localhost:8443 for the dev profile?", opts: ["Allow", "Not now", "Ask why"] } },
     { id: "m4", who: "you", time: "10:01", text: "Looking at it now." } ] },
   "platform":  { name: "platform", kind: "channel", topic: "Office server, sync and core", proj: "office-federation", msgs: [
-    { id: "p1", who: "rowan", time: "09:10", text: "Ruling on the custody lock: the lease is safer, the per-office lock is faster. Owner decides; details in T-118." },
+    { id: "p1", who: "rowan", time: "09:10", text: "Ruling on the custody lock: the lease is safer, the per-office lock is faster. Owner decides; details in T-A118." },
     { id: "p2", who: "sage", time: "09:18", text: "Waiting until the owner picks one. Asked in the Inbox." } ] },
   "design":    { name: "design", kind: "channel", topic: "Look, feel and information architecture", proj: "look-feel", msgs: [
     { id: "d1", who: "emery", time: "08:55", text: "IA v2 draft 4.1 is up as a clickable prototype, with Eden's design system v2 applied. Feedback welcome." },
@@ -4562,7 +4794,7 @@ const CH = {
   "dm-eden":   { name: "Eden", kind: "dm", with: "eden", msgs: [
     { id: "y1", who: "eden", time: "09:06", text: "Quick one in your Inbox about the org chart, whenever you have a minute." } ] },
   "dm-maya":   { name: "Maya Chen", kind: "dm", with: "maya", msgs: [
-    { id: "z1", who: "maya", time: "Nov 10", text: "I'll draft the onboarding checklist this week (T-144)." } ] },
+    { id: "z1", who: "maya", time: "Nov 10", text: "I'll draft the onboarding checklist this week (T-A144)." } ] },
   "a2a-kai-rowan": { name: "Kai and Rowan", kind: "a2a", pair: ["kai", "rowan"], msgs: [
     { id: "k1", who: "kai", time: "09:20", text: "The codec frame header changes size in 2a.3.2b. Does the satellite need to read both for a release?" },
     { id: "k2", who: "rowan", time: "09:24", text: "Yes, one release. Keep the old decoder behind a flag; I'll ask the owner if it's worth the 400 lines." },
@@ -4594,17 +4826,17 @@ const NOTES = {
   }),
   ada: {
     journal: [
-      { d: "2026-11-18", items: ["Re-sequenced BUG-70 nav slices against IA v2 draft 4.1.", "Reviewed Kai's codec split 0a520e5b with Tomas; escalated Tier-A merge approval to the owner.", "Handed T-146 (Apple developer agreement) to the owner since only the account holder can sign."] },
+      { d: "2026-11-18", items: ["Re-sequenced T-A70 nav slices against IA v2 draft 4.1.", "Reviewed Kai's codec split 0a520e5b with Tomas; escalated Tier-A merge approval to the owner.", "Handed T-A146 (Apple developer agreement) to the owner since only the account holder can sign."] },
       { d: "2026-11-17", items: ["Flagged Agency v1.0 as At risk (3-day slip) pending CSP gateway permission.", "Drafted QA engineer hire request for Quality team to clear Tomas's 6-branch review queue."] }
     ],
     memory: {
       decisions: [
         "Tier-A merges (sync protocol, custody locks, auth) always require owner approval before landing on main.",
-        "Unassigned critical bugs (like BUG-88) must be triaged to an owner within one cycle."
+        "Unassigned critical bugs (like T-A88) must be triaged to an owner within one cycle."
       ],
       context: [
         "Agency v1.0 target ship date is Dec 5, 2026; primary bottleneck is review throughput behind Tomas.",
-        "Emery and Eden own IA v2 and design system v2 alignment before engineering starts BUG-70 slices."
+        "Emery and Eden own IA v2 and design system v2 alignment before engineering starts T-A70 slices."
       ]
     }
   },
@@ -4634,7 +4866,7 @@ const KNOWLEDGE = {
   },
   ada: [
     { id: "k1", folder: "adrs", title: "ADR-014 · Tiered merge risk & owner gates", path: "projects/ac/agents/ac-staff-engineer-ada/knowledge/adrs/tier-a-merge-gates.md", updated: "Today", summary: "Defines Risk Tier A/B/C criteria and when an approval card is routed to the owner's Inbox.", body: "Tier A changes touch sync framing, custody locks, enrollment certificates, or permission boundaries. They require:\n1. Tomas's READY review verdict.\n2. Full workspace suite green on the merge commit.\n3. Explicit owner approval via Inbox before fast-forward." },
-    { id: "k2", folder: "specs", title: "BUG-70 · IA v2 navigation slice plan", path: "projects/ac/agents/ac-staff-engineer-ada/knowledge/specs/bug-70-slices.md", updated: "Today", summary: "Sequenced engineering slices mapping Emery's IA v2 prototype onto the Svelte desktop app.", body: "Slice 1: Unified sidebar + Home Needs You cards.\nSlice 2: Agent Profile with live Orb, Context Window, and 7-tab workspace.\nSlice 3: Work List/Board toggle and Inbox kind filters." },
+    { id: "k2", folder: "specs", title: "T-A70 · IA v2 navigation slice plan", path: "projects/ac/agents/ac-staff-engineer-ada/knowledge/specs/t-a70-slices.md", updated: "Today", summary: "Sequenced engineering slices mapping Emery's IA v2 prototype onto the Svelte desktop app.", body: "Slice 1: Unified sidebar + Home Needs You cards.\nSlice 2: Agent Profile with live Orb, Context Window, and 7-tab workspace.\nSlice 3: Work List/Board toggle and Inbox kind filters." },
     { id: "k3", folder: "rules", title: "Architecture rules (coupling & boundaries)", path: "docs/architecture-rules.md", updated: "Nov 10", summary: "Shared engineering invariants enforced across every Rust and Svelte pull request.", body: "Core principles:\n• Dependency direction flows inward toward domain invariants.\n• Agents coordinate via shared contracts and peer journals, never editing another agent's home directory." }
   ],
   eden: [
@@ -4907,7 +5139,7 @@ const menuItem = (act, v, icon, label, extra = "") => `<button role="menuitem" t
 /* ---------------------------------------------------------------- inbox items */
 function sourceOf(it) {
   if (it.src) return it.src;
-  return it.task ? { href: `#/projects/${it.proj}/work`, label: "Open " + it.task } : { href: `#/chat/${P[it.proj].channel}`, label: "Open #" + CH[P[it.proj].channel].name };
+  return it.task ? { href: workHref("all", "none", it.task), label: "Open " + it.task } : { href: `#/chat/${P[it.proj].channel}`, label: "Open #" + CH[P[it.proj].channel].name };
 }
 function itemActions(it, where) {
   if (it.handled) return `<p class="handled" id="handled-${esc(it.id)}">${esc(it.outcome)}</p>`;
@@ -4986,11 +5218,11 @@ function workPriority(priority) {
   return `<span class="work-priority-mark" data-level="${esc(priority.toLowerCase())}" role="img" aria-label="${label}" title="${label}"><span></span><span></span><span></span></span>`;
 }
 
-function workCriteria(criteria) {
+function workCriteria(criteria, id) {
   if (!criteria?.length) return "";
   const done = criteria.filter((item) => item.done).length;
   const label = `${done} of ${criteria.length} acceptance criteria complete`;
-  return `<span class="work-criteria${done === criteria.length ? " is-complete" : ""}" title="${label}"><span aria-hidden="true">${done}/${criteria.length}</span><span class="sr-only">${label}</span></span>`;
+  return `<span class="work-criteria${done === criteria.length ? " is-complete" : ""}" data-work-progress="${esc(id)}" title="${label}"><span aria-hidden="true">${done}/${criteria.length}</span><span class="sr-only">${label}</span></span>`;
 }
 
 function workEta(w) {
@@ -4999,7 +5231,8 @@ function workEta(w) {
 
 function workTitle(w, className) {
   const href = workItemHref(w.id);
-  return `<a class="work-item-link ${className}" data-item="${esc(w.id)}" href="${esc(href)}"${href === location.hash ? ' aria-current="true"' : ""}>${esc(w.title)}</a>`;
+  const selected = canonicalWorkRef(qs().get("item")) === w.id;
+  return `<a class="work-item-link ${className}" data-item="${esc(w.id)}" href="${esc(href)}"${selected ? ' aria-current="true"' : ""}>${esc(w.title)}</a>`;
 }
 
 function workChild(parent, subtask) {
@@ -5029,7 +5262,7 @@ function workRow(w, isSubtask = false) {
     <div class="work-summary">
       <span class="work-ident">${task ? workPriority(w.pri) : ""}<span class="work-ref">${esc(w.id)}</span></span>
       <span class="work-heading">
-        <span class="work-markers">${workStatus(w.status, showsNeedsYou(w))}${workCriteria(w.criteria)}</span>
+        <span class="work-markers">${workStatus(w.status, showsNeedsYou(w))}${workCriteria(w.criteria, w.id)}</span>
         <span>${workTitle(w, "work-title")}${eta ? ` <span class="work-eta">ETA ${esc(eta)}</span>` : ""}</span>
       </span>
     </div>
@@ -5077,8 +5310,13 @@ function workItemHref(item) {
   return params.size ? `${path}?${params}` : path;
 }
 
-function workWorkspace(results, items = W) {
-  const id = qs().get("item");
+function canonicalWorkRef(ref) {
+  const value = ref?.trim().toUpperCase() || "";
+  return W.find((item) => item.legacyId === value)?.id || value.replace(/^(?:T|BUG|R)-(\d+)$/, "T-A$1");
+}
+
+function findWorkItem(ref, items = W) {
+  const id = canonicalWorkRef(ref);
   let item = items.find((w) => w.id === id), parent;
   if (id && !item) {
     for (const task of items) {
@@ -5090,6 +5328,11 @@ function workWorkspace(results, items = W) {
       }
     }
   }
+  return { item, parent };
+}
+
+function workWorkspace(results, items = W) {
+  const { item, parent } = findWorkItem(qs().get("item"), items);
   return `<div class="work-workspace${item ? " has-work-detail" : ""}">
     <div id="work-results">${results}</div>
     ${item ? workDetail(item, parent) : ""}
@@ -5101,34 +5344,120 @@ function workDetail(w, parent) {
   return `<section class="triage-reading work-reading" aria-labelledby="work-detail-title">
     <article class="triage-document">
       <div class="work-detail-bar">
-        <p class="work-detail-id">${workStatus(w.status, showsNeedsYou(w))}${esc(w.id)}</p>
-        <button class="btn ghost icon sm" type="button" data-act="work-close-detail" aria-label="Close work details" title="Close work details">${ic("x", "ic16")}</button>
+        <p class="work-detail-id">${workStatus(w.status, showsNeedsYou(w))}${esc(w.id)}<span class="work-kind">${{ task: "Task", bug: "Bug", request: "Request" }[w.kind]}</span></p>
+        <div class="work-detail-actions">
+          <button class="btn ghost icon sm" type="button" data-act="work-comment-focus" aria-label="Leave a comment" title="Leave a comment">${ic("chat", "ic16")}</button>
+          <button class="btn ghost icon sm" type="button" data-act="work-copy-link" data-id="${esc(w.id)}" aria-label="Copy task link" title="Copy task link">${ic("copy", "ic16")}</button>
+          <button class="btn ghost icon sm" type="button" data-act="work-close-detail" aria-label="Close work details" title="Close work details">${ic("x", "ic16")}</button>
+        </div>
       </div>
       <header class="triage-intro">
         ${parent ? `<a class="work-parent alink" href="${esc(workItemHref(parent.id))}">${esc(parent.id)} · ${esc(parent.title)}</a>` : ""}
         <h2 tabindex="-1" id="work-detail-title">${esc(w.title)}</h2>
+        ${w.description ? `<p class="triage-description work-description">${esc(w.description)}</p>` : ""}
       </header>
       <section class="triage-context" aria-labelledby="work-detail-context">
         <h3 id="work-detail-context">Work details</h3>
         <dl class="triage-fields">
           <div><dt>Status</dt><dd>${esc(w.status)}${showsNeedsYou(w) ? '<span class="work-detail-attention">· Needs you</span>' : ""}</dd></div>
           <div><dt>Assignee</dt><dd>${mlink(w.who)}</dd></div>
-          <div><dt>Priority</dt><dd>${esc(w.pri)}</dd></div>
+          ${w.kind !== "request" ? `<div><dt>Priority</dt><dd>${esc(w.pri)}</dd></div>` : ""}
           <div><dt>Project</dt><dd>${plink(w.proj)}</dd></div>
           ${team ? `<div><dt>Team</dt><dd><a class="alink" href="#/teams/${esc(team)}">${esc(TEAMS[team].name)}</a></dd></div>` : ""}
           ${eta ? `<div><dt>ETA</dt><dd>${esc(eta)}</dd></div>` : ""}
         </dl>
       </section>
       ${w.criteria?.length ? `<section class="work-detail-section" aria-labelledby="work-detail-criteria">
-        <h3 id="work-detail-criteria">Acceptance criteria ${workCriteria(w.criteria)}</h3>
-        <ul role="list">${w.criteria.map((criterion) => `<li>${workStatus(criterion.done ? "Done" : "To do")}${esc(criterion.text)}</li>`).join("")}</ul>
+        <h3 id="work-detail-criteria">Acceptance criteria ${workCriteria(w.criteria, w.id)}</h3>
+        <ul class="work-checklist" role="list">${w.criteria.map((criterion, index) => `<li>
+          <label><input type="checkbox" data-work-criterion="${esc(w.id)}" data-index="${index}"${criterion.done ? " checked" : ""}><span>${esc(criterion.text)}</span></label>
+        </li>`).join("")}</ul>
+        <p id="work-criteria-status" class="sr-only" role="status"></p>
       </section>` : ""}
       ${w.subtasks?.length ? `<section class="work-detail-section" aria-labelledby="work-detail-subtasks">
         <h3 id="work-detail-subtasks">Subtasks</h3>
-        <ul role="list">${w.subtasks.map((subtask) => `<li>${workStatus(subtask.status)}<a class="alink" href="${esc(workItemHref(subtask.id))}"><span class="work-ref">${esc(subtask.id)}</span>${esc(subtask.title)}</a></li>`).join("")}</ul>
+        <ul class="work-detail-links" role="list">${w.subtasks.map((subtask) => `<li>
+          <a class="alink" href="${esc(workItemHref(subtask.id))}">${workStatus(subtask.status)}<span class="work-ref">${esc(subtask.id)}</span><span>${esc(subtask.title)}</span>${workCriteria(subtask.criteria, subtask.id)}</a>
+        </li>`).join("")}</ul>
       </section>` : ""}
+      ${workRelatedInbox(w)}
+      ${workDiscussion(w)}
     </article>
   </section>`;
+}
+
+function workRelatedInbox(w) {
+  const items = IN.filter((item) => item.task === w.id);
+  if (!items.length) return "";
+  return `<section class="work-detail-section" aria-labelledby="work-detail-inbox">
+    <h3 id="work-detail-inbox">Related inbox items</h3>
+    <ul class="work-detail-links" role="list">${items.map((item) => `<li>
+      <a class="alink" href="#/inbox/${esc(item.id)}">${ic(KIND[item.kind].icon, "ic16")}
+        <span>${esc(item.what)}</span>
+        <span class="work-related-state">${item.handled ? "Handled" : esc(KIND[item.kind].label)}</span>
+      </a>
+    </li>`).join("")}</ul>
+  </section>`;
+}
+
+const workCommentPrefix = (id) => "agentic-org.v6.work-comment." + id + ".";
+const workCriteriaPrefix = (id) => "agentic-org.v6.work-criterion." + id + ".";
+
+function workCriterionChanges(item) {
+  return localDetailRecords(workCriteriaPrefix(item.id))
+    .filter(({ index, done }) => Number.isInteger(index) && item.criteria?.[index] && typeof done === "boolean");
+}
+
+function changeWorkCriterion(input) {
+  const { item } = findWorkItem(input.dataset.workCriterion);
+  const index = Number(input.dataset.index), criterion = item?.criteria?.[index];
+  if (!criterion) return;
+  try {
+    localStorage.setItem(workCriteriaPrefix(item.id) + crypto.randomUUID(), JSON.stringify({ index, done: input.checked, at: Date.now() }));
+  } catch (e) {
+    input.checked = criterion.done;
+    toast("Could not save the checklist change on this device.");
+    return;
+  }
+  criterion.done = input.checked;
+  for (const progress of document.querySelectorAll(`[data-work-progress="${CSS.escape(item.id)}"]`)) {
+    progress.outerHTML = workCriteria(item.criteria, item.id);
+  }
+  document.getElementById("work-history").innerHTML = workHistory(item);
+  document.getElementById("work-criteria-status").textContent = `${item.criteria.filter((entry) => entry.done).length} of ${item.criteria.length} complete.`;
+}
+
+function workHistory(w) {
+  const recent = workCriterionChanges(w).reverse().map(({ index, done, at }) =>
+    detailEvent(done ? "check-circle" : "refresh", `<strong>You</strong> ${done ? "completed" : "reopened"} “${esc(w.criteria[index].text)}”`, inboxActivityTime(at)));
+  const events = (WORK_DISCUSSIONS[w.id]?.events || []).map(([icon, text, time]) =>
+    detailEvent(icon, esc(text), `<span class="triage-event-time">${esc(time)}</span>`));
+  if (Number.isFinite(w.createdAt)) events.push(detailEvent("plus", "<strong>You</strong> created this task", inboxActivityTime(w.createdAt)));
+  return recent.length || events.length
+    ? `<h4 id="work-history-title">Task history</h4><ol class="triage-activity-log" role="list" aria-labelledby="work-history-title">${recent.concat(events).join("")}</ol>`
+    : "";
+}
+
+function workDiscussion(w) {
+  const prefix = workCommentPrefix(w.id);
+  return `<section class="triage-activity work-discussion" aria-labelledby="work-activity-title">
+    <h3 id="work-activity-title">Activity</h3>
+    <form class="triage-comment-form" data-form="work-comment" data-id="${esc(w.id)}">
+      <label class="sr-only" for="work-comment">Comment on this task</label>
+      <textarea id="work-comment" name="comment" rows="2" maxlength="2000" placeholder="Leave a comment…" aria-keyshortcuts="Meta+Enter Control+Enter" required>
+${esc(detailCommentDrafts.get(prefix) || "")}</textarea>
+      <button class="btn outline icon triage-send" type="submit" aria-label="Send comment" title="Send comment">${ic("send", "ic16")}</button>
+    </form>
+    <p id="work-comment-status" class="sr-only" role="status"></p>
+    <div id="work-comments">${workCommentsHtml(w.id)}</div>
+    <div class="triage-history" id="work-history">${workHistory(w)}</div>
+  </section>`;
+}
+
+function fitWorkComment(field) {
+  if (!field || CSS.supports("field-sizing", "content")) return;
+  field.style.height = "auto";
+  field.style.height = `${field.scrollHeight}px`;
 }
 
 /* ---------------------------------------------------------------- pages */
@@ -5346,9 +5675,9 @@ function answerOrgQuestion(rawQ) {
   if (/block|slow|v1|ship|merge/.test(t)) {
     const v1Only = /v1/.test(t);
     const scopedBlocked = v1Only ? blocked.filter((b) => b.proj === "agency-v1") : blocked;
-    const plainBlocker = (b) => b.id === "T-118"
+    const plainBlocker = (b) => b.id === "T-A118"
       ? `${spotLink("in2", "file-access choice")} for <a href="#/members/sage">Sage</a> <em>(Office federation)</em>`
-      : b.id === "T-124"
+      : b.id === "T-A124"
         ? `${spotLink("in5", "local test access")} for <a href="#/members/jules">Jules</a> (security checks)`
         : `<a href="#/projects/${b.proj}/work">${esc(b.title)}</a>`;
     const syncLi = in1 && !in1.handled
@@ -6070,7 +6399,7 @@ function pageInbox(sel) {
 }
 const inboxEmptyDetail = () => `<div class="triage-empty">${ic("inbox", "ic20")}<h2>No item selected</h2><p>Your queue appears on the left.</p></div>`;
 const inboxCopy = (label, value, title) => `<button class="triage-copy" type="button" data-act="inbox-copy" data-v="${esc(value)}" aria-label="Copy ${esc(title)}">${ic("copy", "ic14")}<span>${esc(label)}</span></button>`;
-const inboxCommentDrafts = new Map();
+const detailCommentDrafts = new Map();
 const inboxCommentPrefix = (id) => "agentic-org.v6.inbox-comment." + id + ".";
 
 function inboxActivityTime(at) {
@@ -6079,43 +6408,52 @@ function inboxActivityTime(at) {
   return `<time class="triage-event-time" datetime="${date.toISOString()}">${esc(date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }))}</time>`;
 }
 
-function inboxCommentsHtml(id) {
-  const comments = [];
+function localDetailRecords(prefix) {
+  const records = [];
   try {
-    const prefix = inboxCommentPrefix(id);
     for (const key of Object.keys(localStorage)) {
       if (!key.startsWith(prefix)) continue;
       try {
         const entry = JSON.parse(localStorage.getItem(key));
-        if (typeof entry.text === "string" && entry.text.trim() && entry.text.length <= 2000 && Number.isFinite(entry.at) && Number.isFinite(new Date(entry.at).getTime())) {
-          comments.push({ text: entry.text, at: entry.at });
-        }
+        if (Number.isFinite(entry?.at) && Number.isFinite(new Date(entry.at).getTime())) records.push(entry);
       } catch (e) {}
     }
   } catch (e) {}
-  if (!comments.length) return "";
+  return records.sort((a, b) => a.at - b.at);
+}
 
-  comments.sort((a, b) => a.at - b.at);
-  return `<section class="triage-comments" aria-labelledby="triage-comments-title">
-    <h4 id="triage-comments-title">Comments</h4>
-    <ol class="triage-comment-list" role="list" aria-labelledby="triage-comments-title">${comments.map(({ text, at }) => `
-      <li>${av("you", 24)}<div><p><strong>You</strong> ${inboxActivityTime(at)}</p>
+function detailCommentsHtml(prefix, heading, seeded = []) {
+  const stored = localDetailRecords(prefix)
+    .filter(({ text }) => typeof text === "string" && text.trim() && text.length <= 2000)
+    .map((entry) => ({ ...entry, who: "you" }));
+  const comments = seeded.map(([who, text, time]) => ({ who, text, time })).concat(stored);
+  if (!comments.length) return "";
+  return `<section class="triage-comments" aria-labelledby="${heading}">
+    <h4 id="${heading}">Comments</h4>
+    <ol class="triage-comment-list" role="list" aria-labelledby="${heading}">${comments.map(({ who, text, time, at }) => `
+      <li>${av(who, 24)}<div><p><strong>${who === "you" ? "You" : mlink(who)}</strong> ${time ? `<span class="triage-event-time">${esc(time)}</span>` : inboxActivityTime(at)}</p>
       <p class="triage-comment-text">${esc(text)}</p></div></li>`).join("")}</ol>
   </section>`;
 }
 
+const inboxCommentsHtml = (id) => detailCommentsHtml(inboxCommentPrefix(id), "triage-comments-title");
+const workCommentsHtml = (id) => detailCommentsHtml(workCommentPrefix(id), "work-comments-title", WORK_DISCUSSIONS[id]?.comments);
+
+function detailEvent(icon, text, time = "") {
+  return `<li><span class="triage-event-marker">${ic(icon, "ic16")}</span><p>${text} ${time}</p></li>`;
+}
+
 function inboxActivityRows(it) {
-  const event = (icon, text, time = "") => `<li><span class="triage-event-marker">${ic(icon, "ic16")}</span><p>${text} ${time}</p></li>`;
   const outcomes = it.activity || (it.handled ? [{ icon: "check-circle", text: it.outcome }] : []);
   return [
-    event("inbox", `<strong>${esc(M[it.from].name)}</strong> opened this request`, `<span class="triage-event-time">${esc(it.time)}</span>`),
-    event("clock", it.kind === "approval" ? "Waiting for approval" : "Waiting for your input"),
-    ...(it.audit || []).map((text) => event("check-circle", `<span class="sr-only">Audit entry. </span>${esc(text)}`)),
-    ...outcomes.map(({ icon, text, at }) => event(icon, esc(text), inboxActivityTime(at)))
+    detailEvent("inbox", `<strong>${esc(M[it.from].name)}</strong> opened this request`, `<span class="triage-event-time">${esc(it.time)}</span>`),
+    detailEvent("clock", it.kind === "approval" ? "Waiting for approval" : "Waiting for your input"),
+    ...(it.audit || []).map((text) => detailEvent("check-circle", `<span class="sr-only">Audit entry. </span>${esc(text)}`)),
+    ...outcomes.map(({ icon, text, at }) => detailEvent(icon, esc(text), inboxActivityTime(at)))
   ].join("");
 }
 
-function postInboxComment(form) {
+function postDetailComment(form) {
   const field = form.elements.comment;
   const text = field.value.trim();
   if (!text) {
@@ -6123,18 +6461,20 @@ function postInboxComment(form) {
     field.reportValidity();
     return;
   }
-  const id = form.dataset.id;
+  const id = form.dataset.id, work = form.dataset.form === "work-comment";
+  const prefix = work ? workCommentPrefix(id) : inboxCommentPrefix(id);
   try {
-    localStorage.setItem(inboxCommentPrefix(id) + crypto.randomUUID(), JSON.stringify({ text, at: Date.now() }));
+    localStorage.setItem(prefix + crypto.randomUUID(), JSON.stringify({ text, at: Date.now() }));
   } catch (e) {
     toast("Could not save the comment on this device.");
     field.focus();
     return;
   }
-  inboxCommentDrafts.delete(id);
+  detailCommentDrafts.delete(prefix);
   field.value = "";
-  document.getElementById("triage-comments").innerHTML = inboxCommentsHtml(id);
-  document.getElementById("triage-comment-status").textContent = "Comment posted.";
+  if (work) fitWorkComment(field);
+  document.getElementById(work ? "work-comments" : "triage-comments").innerHTML = work ? workCommentsHtml(id) : inboxCommentsHtml(id);
+  document.getElementById(work ? "work-comment-status" : "triage-comment-status").textContent = "Comment posted.";
   field.focus();
 }
 
@@ -6144,7 +6484,7 @@ function inboxActivity(it) {
     <form class="triage-comment-form" data-form="inbox-comment" data-id="${esc(it.id)}">
       <label class="sr-only" for="triage-comment">Comment on this request</label>
       <textarea id="triage-comment" name="comment" rows="2" maxlength="2000" placeholder="Leave a comment…" required>
-${esc(inboxCommentDrafts.get(it.id) || "")}</textarea>
+${esc(detailCommentDrafts.get(inboxCommentPrefix(it.id)) || "")}</textarea>
       <button class="btn outline icon triage-send" type="submit" aria-label="Send comment" title="Send comment">${ic("send", "ic16")}</button>
     </form>
     <p id="triage-comment-status" class="sr-only" role="status"></p>
@@ -6158,7 +6498,7 @@ ${esc(inboxCommentDrafts.get(it.id) || "")}</textarea>
 
 function inboxDetail(it) {
   const m = M[it.from], k = KIND[it.kind], project = P[it.proj];
-  const channel = CH[project.channel], work = it.task && W.find((w) => w.id === it.task);
+  const channel = CH[project.channel], work = it.task && findWorkItem(it.task).item;
   return `<article class="triage-document" aria-labelledby="triage-detail-title">
     <a class="triage-back btn ghost sm" href="#/inbox">${ic("chev-left", "ic16")}Back to Inbox</a>
     <header class="triage-intro">
@@ -6181,7 +6521,7 @@ function inboxDetail(it) {
       <dl class="triage-fields">
         <div><dt>Kind</dt><dd>${esc(k.label)} · ${esc(it.sub)}</dd></div>
         <div><dt>Project</dt><dd>${plink(it.proj)}</dd></div>
-        ${it.task ? `<div><dt>Work item</dt><dd><a class="alink" href="#/projects/${it.proj}/work">${esc(it.task)}${work ? " · " + esc(work.title) : ""}</a>${inboxCopy("Copy", it.task, it.task)}</dd></div>` : ""}
+        ${it.task ? `<div><dt>Work item</dt><dd><a class="alink" href="${esc(workHref("all", "none", it.task))}">${esc(it.task)}${work ? " · " + esc(work.title) : ""}</a>${inboxCopy("Copy", it.task, it.task)}</dd></div>` : ""}
         ${it.expires ? `<div><dt>Expires</dt><dd${it.handled ? "" : ' class="triage-expiry"'}>${esc(it.expires)}</dd></div>` : ""}
         <div><dt>Clears</dt><dd>${esc(it.clears || k.clears)}</dd></div>
         ${channel ? `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd></div>` : ""}
@@ -6312,10 +6652,11 @@ function workSelection() {
   };
 }
 
-function workHref(view, group) {
+function workHref(view, group, item) {
   const params = new URLSearchParams();
   if (view !== "all") params.set("view", view);
   if (group !== "none") params.set("group", group);
+  if (item) params.set("item", item);
   return params.size ? "#/work?" + params : "#/work";
 }
 
@@ -6341,14 +6682,14 @@ function workHasFilters() {
 }
 
 function workFilteredItems() {
-  const query = S.workQuery.trim().toLowerCase();
+  const query = canonicalWorkRef(S.workQuery).toLowerCase();
   const { workStatus: status, workProject: project, workTeam: team } = S;
   return W.filter((w) => {
     if (status !== "all" && w.status !== status) return false;
     if (project !== "all" && w.proj !== project) return false;
     if (team !== "all" && (workTeam(w) ?? "none") !== team) return false;
-    return !query || [w.id, w.title, P[w.proj].name, M[w.who]?.name,
-      ...(w.subtasks ?? []).flatMap((task) => [task.id, task.title]),
+    return !query || [w.id, w.title, w.description, P[w.proj].name, M[w.who]?.name,
+      ...(w.subtasks ?? []).flatMap((task) => [task.id, task.title, task.description]),
     ].some((value) => value?.toLowerCase().includes(query));
   });
 }
@@ -6439,6 +6780,7 @@ function openWorkTask(trigger) {
     <h2 id="work-task-title">New task</h2>
     <form class="work-task-form" data-form="work-create">
       <label>Title<input class="field" name="title" required maxlength="160" autofocus></label>
+      <label>Description <textarea class="field" name="description" rows="4" maxlength="4000"></textarea></label>
       <label>Project<select class="field" name="project">${projects.map(([id, project]) => `<option value="${esc(id)}"${id === S.workProject ? " selected" : ""}>${esc(project.name)}</option>`).join("")}</select></label>
       <div class="work-task-fields">
         <label>Assignee<select class="field" name="assignee">
@@ -6463,25 +6805,73 @@ function openWorkTask(trigger) {
   dialog.showModal();
 }
 
-function loadWorkTasks() {
+const HQ_WORK_REF = /^T-A([1-9]\d*)$/;
+const OLD_LOCAL_WORK_REF = /^T-[0-9A-F]{8}$/;
+const workRefNumber = (ref) => Number(ref?.match(HQ_WORK_REF)?.[1]);
+
+function savedWorkTasks() {
+  const tasks = [];
   try {
-    const tasks = [];
     for (const key of Object.keys(localStorage)) {
       if (!key.startsWith(WORK_TASK_STORE)) continue;
       try {
-        const { id, title, proj, who, status, pri, etaHours, createdAt } = JSON.parse(localStorage.getItem(key));
-        if (key !== WORK_TASK_STORE + id || !/^T-[0-9A-F]{8}$/.test(id) || typeof title !== "string" || !title.trim() ||
-          !own(P, proj) || (who !== null && !own(M, who)) || !STATUSES.task.includes(status) || !TASK_PRIORITIES.includes(pri) ||
-          (etaHours != null && (!Number.isFinite(etaHours) || etaHours < 0)) || !Number.isFinite(createdAt)) continue;
-        tasks.push({ id, title, proj, who, status, pri, etaHours, createdAt, kind: "task" });
+        const { id, ref, title, description, proj, who, status, pri, etaHours, createdAt } = JSON.parse(localStorage.getItem(key));
+        if (typeof id !== "string" || key !== WORK_TASK_STORE + id ||
+          typeof title !== "string" || !title.trim() || !own(P, proj) || (who !== null && !own(M, who)) ||
+          !STATUSES.task.includes(status) || !TASK_PRIORITIES.includes(pri) ||
+          (etaHours != null && (!Number.isFinite(etaHours) || etaHours < 0)) ||
+          !Number.isFinite(createdAt) || !Number.isFinite(new Date(createdAt).getTime())) continue;
+        const legacy = OLD_LOCAL_WORK_REF.test(id);
+        const number = typeof ref === "string" ? workRefNumber(ref) : workRefNumber(id);
+        const validRef = Number.isSafeInteger(number) && (ref == null ? !legacy : legacy || id === ref);
+        if (!validRef && !legacy) continue;
+        tasks.push({
+          id: validRef ? ref ?? id : id,
+          legacyId: legacy && (!validRef || ref !== id) ? id : undefined,
+          title, description: typeof description === "string" ? description.slice(0, 4000) : "",
+          proj, who, status, pri, etaHours, createdAt, kind: "task",
+        });
       } catch (e) {}
     }
-    tasks.sort((a, b) => b.createdAt - a.createdAt);
-    W.unshift(...tasks);
   } catch (e) {}
+  return tasks.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
 
-function createWorkTask(form) {
+function workItems() {
+  return W.flatMap((task) => [task, ...(task.subtasks ?? []).map((child) => workChild(task, child))]);
+}
+
+function lastWorkNumber(saved) {
+  return [...workItems(), ...saved].reduce((last, { id, legacyId }) =>
+    Math.max(last, (id === legacyId ? 0 : workRefNumber(id)) || 0), 0);
+}
+
+function saveWorkTask(task) {
+  const id = task.legacyId || task.id;
+  try {
+    localStorage.setItem(WORK_TASK_STORE + id, JSON.stringify({ ...task, id, ref: task.id }));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function loadWorkTasks() {
+  const saved = savedWorkTasks();
+  let last = lastWorkNumber(saved);
+  for (const task of saved) {
+    if (task.id !== task.legacyId) continue;
+    task.id = "T-A" + ++last;
+    saveWorkTask(task);
+  }
+  W.unshift(...saved.reverse());
+  for (const task of workItems()) {
+    if (!task.criteria?.length) continue;
+    for (const { index, done } of workCriterionChanges(task)) task.criteria[index].done = done;
+  }
+}
+
+async function createWorkTask(form) {
   const data = new FormData(form);
   const title = data.get("title").trim();
   if (!title) {
@@ -6489,32 +6879,33 @@ function createWorkTask(form) {
     form.elements.title.reportValidity();
     return;
   }
-  let id;
-  do { id = "T-" + crypto.randomUUID().slice(0, 8).toUpperCase(); } while (W.some((w) => w.id === id));
-  const task = {
-    id, title, kind: "task", createdAt: Date.now(),
-    proj: data.get("project"), who: data.get("assignee") || null,
-    status: data.get("status"), pri: data.get("priority"),
-    etaHours: data.get("eta") === "" ? null : Number(data.get("eta")),
+  const dialog = form.closest("dialog");
+  const submit = form.querySelector('[type="submit"]');
+  submit.disabled = true;
+  const create = () => {
+    if (!dialog.open || !dialog.isConnected) return;
+    const task = {
+      id: "T-A" + (lastWorkNumber(savedWorkTasks()) + 1),
+      title, description: data.get("description").trim(), kind: "task", createdAt: Date.now(),
+      proj: data.get("project"), who: data.get("assignee") || null,
+      status: data.get("status"), pri: data.get("priority"),
+      etaHours: data.get("eta") === "" ? null : Number(data.get("eta")),
+    };
+    const saved = saveWorkTask(task);
+    W.unshift(task);
+    dialog.close();
+    Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all" });
+    const { view, group } = workSelection();
+    location.hash = workHref(workPresetItems([task], view).length ? view : "all", group, task.id);
+    toast(saved ? `Created ${task.id}` : `Created ${task.id} for this session`);
   };
-  let saved = true;
-  try { localStorage.setItem(WORK_TASK_STORE + id, JSON.stringify(task)); } catch (e) { saved = false; }
-  W.unshift(task);
-  form.closest("dialog").close();
-  Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all" });
-
-  const reveal = () => {
-    document.getElementById("work-new-task")?.focus({ preventScroll: true });
-    document.querySelector(`#work-results [data-work-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    toast(saved ? `Created ${id}` : `Created ${id} for this session`);
-  };
-  const { view, group } = workSelection();
-  if (!workPresetItems([task], view).length) {
-    window.addEventListener("hashchange", reveal, { once: true });
-    location.hash = workHref("all", group);
-  } else {
-    render(false);
-    reveal();
+  try {
+    if (navigator.locks) await navigator.locks.request(WORK_TASK_STORE, create);
+    else create();
+  } catch (e) {
+    toast("Could not create the task. Try again.");
+  } finally {
+    submit.disabled = false;
   }
 }
 
@@ -6564,9 +6955,9 @@ const ACTIVITY_STAGES = [
   ["queue", "Queue"], ["agents", "Agents"], ["ci", "CI"], ["review", "Human review"], ["merged", "Merged"]
 ];
 const ASSEMBLY_FEATURES = {
-  "agency-v1": [["Office sync & release", ["T-121", "T-140", "T-142", "T-146"]], ["UI quality & onboarding", ["T-112", "T-124", "T-144", "BUG-70", "BUG-86", "BUG-88"]]],
-  "office-federation": [["Distributed file access", ["T-118", "T-135", "BUG-81"]], ["Office enrollment", ["T-138"]]],
-  "look-feel": [["Navigation & presence", ["T-130", "T-131"]], ["Theme & accessibility", ["T-133", "BUG-76", "BUG-84"]]]
+  "agency-v1": [["Office sync & release", ["T-A121", "T-A140", "T-A142", "T-A146"]], ["UI quality & onboarding", ["T-A112", "T-A124", "T-A144", "T-A70", "T-A86", "T-A88"]]],
+  "office-federation": [["Distributed file access", ["T-A118", "T-A135", "T-A81"]], ["Office enrollment", ["T-A138"]]],
+  "look-feel": [["Navigation & presence", ["T-A130", "T-A131"]], ["Theme & accessibility", ["T-A133", "T-A76", "T-A84"]]]
 };
 const ACTIVITY_TRIAGE = { a2: "in1", a5: "in2", a6: "in5", a7: "in3", a13: "in4" };
 const DELIVERY_HISTORY = {
@@ -8223,6 +8614,7 @@ function render(focus = true) {
   }
   S.lastRoute = key; S.focusAfter = null;
   mountHomeProjectHint();
+  fitWorkComment(document.getElementById("work-comment"));
   applyShortcuts();
 }
 
@@ -8240,10 +8632,11 @@ function conversationResults(query, channelsOnly = false) {
 }
 
 function searchResults(q, max = 5) {
-  const t = q.toLowerCase(), has = (s) => String(s || "").toLowerCase().includes(t);
+  const t = q.toLowerCase(), workRef = canonicalWorkRef(q);
+  const has = (s) => String(s || "").toLowerCase().includes(t);
   return [
     ["Projects", Object.keys(P).filter((p) => has(P[p].name) || has(P[p].goal)).slice(0, max).map((p) => ({ href: "#/projects/" + p, label: P[p].name, sub: P[p].archived ? "Archived" : [P[p].health, leadTxt(p)].filter(Boolean).join(" · "), icon: "folder" }))],
-    ["Work", W.filter((w) => has(w.id) || has(w.title)).slice(0, max).map((w) => ({ href: `#/projects/${w.proj}/work`, label: w.id + " " + w.title, sub: P[w.proj].name + " · " + w.status, icon: "clipboard" }))],
+    ["Work", workItems().filter((w) => w.id === workRef || has(w.id) || has(w.title)).slice(0, max).map((w) => ({ href: workHref("all", "none", w.id), label: w.id + " " + w.title, sub: P[w.proj].name + " · " + w.status, icon: "clipboard" }))],
     ["Members", memberIds().filter((k) => has(M[k].name) || has(M[k].role)).slice(0, max).map((k) => ({ href: "#/members/" + k, label: M[k].name, sub: M[k].role + " · " + kindWord(k), av: k }))]
   ].filter((g) => g[1].length);
 }
@@ -8681,11 +9074,19 @@ document.addEventListener("click", (e) => {
     case "work-preset":
       selectWorkView(v, workSelection().group, `[data-act="work-preset"][data-v="${v}"]`);
       break;
+    case "work-copy-link":
     case "inbox-copy": {
+      const taskLink = t.dataset.act === "work-copy-link";
+      const value = taskLink ? new URL(`#/work?item=${encodeURIComponent(id)}`, location.href).href : v;
       if (!navigator.clipboard) { toast("Clipboard access is unavailable."); break; }
-      navigator.clipboard.writeText(v).then(() => toast(`Copied ${v}.`, "check-circle"), () => toast("Clipboard access is unavailable."));
+      navigator.clipboard.writeText(value).then(
+        () => toast(taskLink ? "Task link copied." : `Copied ${v}.`, "check-circle"),
+        () => toast("Clipboard access is unavailable."));
       break;
     }
+    case "work-comment-focus":
+      document.getElementById("work-comment")?.focus();
+      break;
     case "inbox-reopen": {
       const item = IN.find((candidate) => candidate.id === id);
       if (item?.handled) {
@@ -8716,7 +9117,7 @@ document.addEventListener("click", (e) => {
       t.setAttribute("aria-checked", String(S.cozyContrast));
       break;
     case "work-close-detail":
-      S.focusAfter = `#work-results .work-item-link[data-item="${CSS.escape(qs().get("item"))}"]`;
+      S.focusAfter = `#work-results .work-item-link[data-item="${CSS.escape(canonicalWorkRef(qs().get("item")))}"]`;
       location.hash = workItemHref();
       break;
     case "work-new-task": openWorkTask(t); break;
@@ -8897,9 +9298,11 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("input", (e) => {
   if (e.target.id === "triage-search") { S.inboxQuery = e.target.value; refreshInboxSearch(); }
-  if (e.target.id === "triage-comment") {
+  if (e.target.id === "triage-comment" || e.target.id === "work-comment") {
     e.target.setCustomValidity("");
-    inboxCommentDrafts.set(e.target.form.dataset.id, e.target.value);
+    const id = e.target.form.dataset.id, work = e.target.id === "work-comment";
+    detailCommentDrafts.set(work ? workCommentPrefix(id) : inboxCommentPrefix(id), e.target.value);
+    if (work) fitWorkComment(e.target);
   }
   if (e.target.id === "work-search") {
     S.workQuery = e.target.value;
@@ -8914,6 +9317,7 @@ document.addEventListener("input", (e) => {
   }
 });
 document.addEventListener("change", (e) => {
+  if (e.target.matches("[data-work-criterion]")) changeWorkCriterion(e.target);
   if (e.target.id === "activity-project") {
     S.actProject = e.target.value;
     render(false);
@@ -8937,12 +9341,17 @@ document.addEventListener("focusin", (e) => {
 document.addEventListener("submit", (e) => {
   if (e.target.id === "c-prompt-form" || e.target.id === "hb-ask-form") return;
   e.preventDefault();
-  if (e.target.dataset.form === "inbox-comment") { postInboxComment(e.target); return; }
+  if (["inbox-comment", "work-comment"].includes(e.target.dataset.form)) { postDetailComment(e.target); return; }
   if (e.target.dataset.form === "work-create") { createWorkTask(e.target); return; }
   if (e.target.dataset.form === "send") { const inp = document.getElementById("compose"); const txt = inp.value.trim(); if (!txt) return; CH[e.target.dataset.id].msgs.push({ id: "u" + Date.now(), who: "you", time: "now", text: txt }); render(false); const c = document.getElementById("compose"); if (c) c.focus(); const ms = document.querySelector(".chmain .msgs"); if (ms) ms.scrollTop = ms.scrollHeight; }
 });
 document.addEventListener("keydown", (e) => {
   if (e.isComposing || e.target.closest?.(".work-task-dialog")) return;
+  if (e.target.id === "work-comment" && (e.metaKey || e.ctrlKey) && e.key === "Enter") {
+    e.preventDefault();
+    e.target.form.requestSubmit();
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K")) {
     e.preventDefault();
     const pageInput = pageSearchInput();

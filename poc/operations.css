@@ -541,7 +541,7 @@ html[data-theme^="report"] .triage-queue {
 .triage-actions .actions { margin-top: 0; }
 .triage-actions .reply { flex: 1 1 100%; }
 .triage-activity { padding-block-start: 24px; border-top: 1px solid var(--line); }
-.triage-activity #triage-activity-title { margin-block-end: 14px; font-size: 1.125rem; }
+.triage-activity :is(#triage-activity-title, #work-activity-title) { margin-block-end: 14px; font-size: 1.125rem; }
 .triage-activity h4 { margin-block-end: 8px; font-size: 1rem; font-weight: 600; }
 .triage-history, .triage-comments { margin-block-start: 24px; }
 .triage-activity-log li, .triage-comment-list li {
@@ -578,7 +578,7 @@ html[data-theme^="report"] .triage-queue {
   background: var(--hover);
 }
 .triage-comment-form:has(textarea:focus-visible) { border-color: var(--gray-400); }
-.triage-comment-form #triage-comment {
+.triage-comment-form :is(#triage-comment, #work-comment) {
   width: 100%;
   min-width: 0;
   min-height: calc(2lh + 4px);
@@ -594,7 +594,7 @@ html[data-theme^="report"] .triage-queue {
   font: inherit;
 }
 @supports (field-sizing: content) {
-  .triage-comment-form #triage-comment { field-sizing: content; resize: none; }
+  .triage-comment-form :is(#triage-comment, #work-comment) { field-sizing: content; resize: none; }
 }
 .triage-comment-form textarea::placeholder { color: var(--gray-400); }
 .triage-comment-form .triage-send {
@@ -687,17 +687,25 @@ html[data-theme^="report"] .triage-queue {
 .bcard:has(.work-item-link[aria-current="true"]) { background: var(--tone-accent-soft); }
 .work-row:has(.work-item-link[aria-current="true"]) { border-radius: var(--radius-md); }
 
-.work-detail-bar, .work-detail-id { display: flex; align-items: center; gap: 8px; }
+.work-detail-bar, .work-detail-id, .work-detail-actions { display: flex; align-items: center; gap: 8px; }
 .work-detail-bar { justify-content: space-between; }
 .work-detail-id, .work-parent { color: var(--gray-300); font-size: .8125rem; }
 .work-detail-id { font-variant-numeric: tabular-nums; }
+.work-kind { padding-inline-start: 8px; border-inline-start: 1px solid var(--line2); color: var(--gray-400); }
+.work-detail-actions { gap: 4px; flex-shrink: 0; }
 .work-detail-attention { color: var(--tone-warn-ink); }
 .work-reading .triage-document { padding-block-start: clamp(16px, 3cqi, 32px); }
+.work-description { white-space: pre-wrap; }
 .work-detail-section { display: grid; gap: 8px; min-width: 0; }
-.work-detail-section li { display: flex; align-items: baseline; gap: 10px; padding-block: 5px; overflow-wrap: anywhere; }
-.work-detail-section li > .work-status { align-self: center; }
-.work-detail-section .work-ref { margin-inline-end: 8px; }
+.work-detail-section li { padding-block: 5px; overflow-wrap: anywhere; }
+.work-checklist label { display: flex; align-items: baseline; gap: 10px; cursor: pointer; }
+.work-checklist input { flex-shrink: 0; accent-color: var(--tone-ok-ink); }
+.work-checklist input:checked + span { color: var(--gray-300); }
+.work-detail-links a { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.work-related-state { color: var(--gray-400); font-size: .8125rem; }
 .work-detail-section h3 .work-criteria { margin-inline-start: 6px; }
+.work-discussion .triage-comment-form #work-comment { max-height: 12rem; resize: none; }
+.work-discussion :is(#work-comments, #work-history):empty { display: none; }
 
 @media (min-width: 960px) {
   .work-workspace.has-work-detail {
@@ -711,7 +719,9 @@ html[data-theme^="report"] .triage-queue {
   .work-reading { border-inline-start: 1px solid var(--line); overflow-x: hidden; }
 }
 @media (max-width: 959px) {
-  .has-work-detail #work-results { display: none; }
+  .has-work-detail #work-results,
+  .work-header:has(+ .has-work-detail) .work-toolbar,
+  .subbar:has(+ .has-work-detail) { display: none; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .work-reading .triage-document { animation: work-detail-enter .22s ease-out; }
