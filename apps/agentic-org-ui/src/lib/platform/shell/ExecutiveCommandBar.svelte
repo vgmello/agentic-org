@@ -700,6 +700,7 @@
 			height: auto;
 			min-height: 44px;
 			padding-block: 0;
+			border-bottom: 0;
 		}
 		.exec-cmdk-bar {
 			height: auto;

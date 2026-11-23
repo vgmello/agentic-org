@@ -1,15 +1,17 @@
 type BackEntry = { source: string; destination: string };
 
+const HISTORY_INDEX = 'sveltekit:history';
+
 let installed = false;
 let onModalPopState: ((event: PopStateEvent) => void) | undefined;
 let returningTo: { key: string; arrive: () => void } | undefined;
-let legacyReturning: { url: string; close: () => void } | undefined;
+let legacyReturning: { href: string; index: number | undefined; close: () => void } | undefined;
 let legacyHistoryLength = 0;
 let legacyAppendedFragment: string | undefined;
 
-function sveltekitIndex(state: unknown): number | undefined {
+function sveltekitHistoryIndex(state: unknown): number | undefined {
 	if (typeof state !== 'object' || state === null) return undefined;
-	const index = (state as Record<string, unknown>)['sveltekit:index'];
+	const index = (state as Record<string, unknown>)[HISTORY_INDEX];
 	return typeof index === 'number' ? index : undefined;
 }
 
@@ -51,10 +53,19 @@ export function installModalBack() {
 				return;
 			}
 			if (legacyReturning && !window.navigation) {
-				event.stopImmediatePropagation();
 				const pending = legacyReturning;
+				const nextIndex = sveltekitHistoryIndex(event.state);
+				const matchesReturn =
+					window.location.href === pending.href &&
+					(pending.index === undefined || nextIndex === pending.index);
 				legacyReturning = undefined;
-				requestAnimationFrame(() => pending.close());
+				if (matchesReturn) {
+					event.stopImmediatePropagation();
+					requestAnimationFrame(() => pending.close());
+					return;
+				}
+				// An unrelated popstate (e.g. a second Back over a native fragment) aborted the return;
+				// do not swallow it as the return.
 				return;
 			}
 			if (onModalPopState) {
@@ -80,7 +91,7 @@ export function registerModalBack(close: () => void) {
 		const savedUrl = window.location.href;
 		const savedHash = window.location.hash;
 		const savedState = window.history.state;
-		const savedIndex = sveltekitIndex(savedState);
+		const savedIndex = sveltekitHistoryIndex(savedState);
 		const savedWasAppendedFragment = legacyAppendedFragment === savedUrl;
 		if (!savedWasAppendedFragment && legacyAppendedFragment !== undefined) {
 			legacyAppendedFragment = undefined;
@@ -89,7 +100,7 @@ export function registerModalBack(close: () => void) {
 
 		function handleLegacyPopState(event: PopStateEvent) {
 			if (legacyReturning) return;
-			const nextIndex = sveltekitIndex(event.state);
+			const nextIndex = sveltekitHistoryIndex(event.state);
 			const nextUrl = window.location.href;
 			const sameRoute = samePathAndSearch(savedUrl, nextUrl);
 
@@ -112,7 +123,8 @@ export function registerModalBack(close: () => void) {
 
 			event.stopImmediatePropagation();
 			legacyReturning = {
-				url: savedUrl,
+				href: savedUrl,
+				index: savedIndex,
 				close: () => {
 					if (onModalPopState === handleLegacyPopState) close();
 				}

@@ -50,6 +50,7 @@
 	 */
 	let archived = $state.raw<ReadonlySet<string>>(new Set());
 	let archivedForOrg = $state<string | undefined>();
+	let archivedError = $state<string | undefined>();
 	let inFlightOrg: string | undefined;
 	let inFlightPromise: Promise<void> | undefined;
 	let archivedSeq = 0;
@@ -81,11 +82,12 @@
 		handleRefusal ?? (touched || handleEdited ? handleProblem(handle) : undefined)
 	);
 
-	function refreshArchived(orgId: string) {
+	function refreshArchived(orgId: string, force = false) {
 		// Reuse an in-flight read for the same organization instead of superseding it.
-		if (inFlightOrg === orgId && inFlightPromise) return inFlightPromise;
+		if (!force && inFlightOrg === orgId && inFlightPromise) return inFlightPromise;
 		const seq = ++archivedSeq;
 		inFlightOrg = orgId;
+		archivedError = undefined;
 		const promise = teamsApi
 			.list(orgId)
 			.then(
@@ -93,11 +95,12 @@
 					if (seq !== archivedSeq || orgId !== organization.id) return;
 					archived = new Set(rows.filter((t) => t.status === 'archived').map((t) => t.id));
 					archivedForOrg = orgId;
+					archivedError = undefined;
 				},
-				() => {
+				(e) => {
 					if (seq !== archivedSeq || orgId !== organization.id) return;
-					// Keep the last known archived set; HQ still refuses archived teams on submit.
-					archivedForOrg = orgId;
+					// Never mark an unverified initial read as ready; keep picker gated and offer Retry.
+					if (archivedForOrg !== orgId) archivedError = toAppError(e).message;
 				}
 			)
 			.finally(() => {
@@ -117,6 +120,7 @@
 			if (archivedForOrg && archivedForOrg !== orgId) {
 				archived = new Set();
 				archivedForOrg = undefined;
+				archivedError = undefined;
 			}
 			if (isOpen || archivedForOrg !== orgId) {
 				void refreshArchived(orgId);
@@ -267,22 +271,41 @@
 						id="team-person-home"
 						bind:value={homeTeamId}
 						disabled={busy || archivedLoading}
-						aria-busy={archivedLoading}
+						aria-busy={archivedLoading && !archivedError}
 						required
 						class="mt-2 {selectClass}"
-						aria-describedby="team-person-home-help"
+						aria-describedby={archivedError ? 'team-person-home-error' : 'team-person-home-help'}
 					>
 						{#if archivedLoading}
-							<option value={homeTeamId}>Loading teams…</option>
+							<option value={homeTeamId}
+								>{archivedError ? "Couldn't load active teams" : 'Loading teams…'}</option
+							>
 						{:else}
 							{#each teams as option (option.team.id)}
 								<option value={option.team.id}>{option.path}</option>
 							{/each}
 						{/if}
 					</select>
-					<p id="team-person-home-help" class={helpClass}>
-						One team, required. They can be moved later from their profile.
-					</p>
+					{#if archivedError}
+						<div
+							id="team-person-home-error"
+							role="alert"
+							class="mt-2 rounded-md border border-line p-3 text-sm/6"
+						>
+							<p class="font-semibold text-danger-text">Couldn't check active teams</p>
+							<p class="mt-1 text-fg-secondary [overflow-wrap:anywhere]">{archivedError}</p>
+							<Button
+								type="button"
+								variant="outline"
+								class="mt-2 min-h-9 max-[639px]:min-h-11"
+								onclick={() => void refreshArchived(organization.id, true)}>Retry</Button
+							>
+						</div>
+					{:else}
+						<p id="team-person-home-help" class={helpClass}>
+							One team, required. They can be moved later from their profile.
+						</p>
+					{/if}
 				</div>
 
 				<div>

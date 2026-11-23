@@ -8,7 +8,7 @@
 -->
 <script lang="ts">
 	import { onDestroy, tick, untrack, type Snippet } from 'svelte';
-	import { afterNavigate } from '$app/navigation';
+	import { afterNavigate, beforeNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
@@ -91,6 +91,10 @@
 	// its destination heading a tick after navigation; this runs strictly after it.
 	let cancelTabFocus: (() => void) | undefined;
 	onDestroy(() => cancelTabFocus?.());
+	beforeNavigate(() => {
+		cancelTabFocus?.();
+		cancelTabFocus = undefined;
+	});
 	afterNavigate((move) => {
 		cancelTabFocus?.();
 		cancelTabFocus = undefined;
@@ -115,7 +119,8 @@
 					active === document.body ||
 					active.id === 'shell-page-title' ||
 					active.id === 'project-heading' ||
-					Boolean(active.closest('nav[aria-label$=" views"]'));
+					(active.getAttribute('aria-current') === 'page' &&
+						Boolean(active.closest('nav[aria-label$=" views"]')));
 				if (idle) focusHeading('project-tab-heading');
 			}, 0);
 		});
