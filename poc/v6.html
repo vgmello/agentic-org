@@ -129,7 +129,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 
 /* Shell */
 .sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 50; display: flex; flex-direction: column; gap: 14px; overflow: hidden; background: rgba(9, 17, 30, .58); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); box-shadow: inset -1px 0 0 rgba(186, 222, 255, .10); padding: 0 18px; transition: width .32s cubic-bezier(.22, 1, .36, 1), padding .32s cubic-bezier(.22, 1, .36, 1), box-shadow .32s ease; }
-.content { position: relative; z-index: 1; height: 100%; overflow-y: auto; padding-left: 264px; display: flex; flex-direction: column; background: transparent; transition: padding-left .32s cubic-bezier(.22, 1, .36, 1); }
+.content { position: relative; z-index: 1; height: 100%; overflow-y: auto; display: flex; flex-direction: column; background: transparent; }
+:is(.content, .report-scroll-hint) { padding-left: 264px; transition: padding-left .32s cubic-bezier(.22, 1, .36, 1); }
 .content > main { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 .sidebar-hd { display: flex; align-items: center; gap: 6px; min-height: 56px; flex: none; padding-top: 6px; }
 .logo { display: flex; align-items: center; gap: 11px; height: 44px; flex: 1; min-width: 0; margin: 0 0 0 -6px; padding: 0 6px; border-radius: 8px; text-align: left; transition: padding .32s cubic-bezier(.22, 1, .36, 1), margin .32s cubic-bezier(.22, 1, .36, 1), gap .32s cubic-bezier(.22, 1, .36, 1), background-color .14s ease; }
@@ -1141,7 +1142,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 }
 @media (min-width: 640px) and (max-width: 959px) {
   .sidebar { width: 64px; padding: 0 8px; gap: 12px; overflow: visible; }
-  .content { padding-left: 64px; }
+  :is(.content, .report-scroll-hint) { padding-left: 64px; }
   .proto-banner, .proto-hotzone { left: 64px; }
   .logo { justify-content: center; margin: 8px auto 0; width: 48px; height: 48px; padding: 0; }
   .logo .name { display: none; }
@@ -1166,7 +1167,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   .sidebar { transform: translateX(-100%); transition: transform .15s; }
   body.drawer .sidebar { transform: none; }
   body.drawer .scrim { display: block; }
-  .content { padding-left: 0; }
+  :is(.content, .report-scroll-hint) { padding-left: 0; }
   .topbar { height: 52px; padding: 0 16px 0 60px; }
   .cmdk-shell { width: 100%; }
   .cmdk-trigger kbd { display: none; }
@@ -2570,7 +2571,7 @@ a.hb-tleg:hover { color: var(--hb-ink); }
   .sidebar .nav-item .lbl { opacity: 1; transition: opacity .22s ease .07s; }
   .sidebar .foot .acct-txt { white-space: nowrap; transition: opacity .22s ease .07s; }
   body.nav-collapsed .sidebar { width: 68px; padding: 0 12px; gap: 14px; overflow: hidden; }
-  body.nav-collapsed .content { padding-left: 68px; }
+  body.nav-collapsed :is(.content, .report-scroll-hint) { padding-left: 68px; }
   body.nav-collapsed .proto-banner, body.nav-collapsed .proto-hotzone { left: 68px; }
   body.nav-collapsed .sidebar-hd { gap: 0; }
   body.nav-collapsed .logo { width: 44px; height: 44px; margin: 0; padding: 0 7px; gap: 0; flex: none; }
@@ -2628,10 +2629,11 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 html[data-theme="ocean"]:where([data-interior-page]) {
   --gray-400: #b0bfd1;
   --ocean-glass-sheen: linear-gradient(155deg, rgb(167 215 250 / .055), transparent 72%);
-  --ocean-glass-panel: var(--ocean-glass-sheen), rgb(9 20 36 / .34);
+  --ocean-glass-panel: var(--ocean-glass-sheen), rgb(9 20 36 / .27);
 
   & body::before {
     background:
+      radial-gradient(circle, rgb(148 179 214 / .035), rgb(148 179 214 / .012) .9px, transparent 2px) 0 0 / 28px 28px,
       radial-gradient(ellipse 76% 64% at 88% 12%, rgb(59 165 208 / .24), transparent),
       radial-gradient(ellipse 70% 68% at 5% 16%, rgb(62 111 176 / .25), transparent),
       radial-gradient(ellipse 65% 58% at 56% 96%, rgb(28 110 168 / .17), transparent),
@@ -3329,13 +3331,22 @@ html[data-theme^="report"] .hb-proj-sec {
   gap: 20px;
 }
 html[data-theme^="report"] .hb-proj-head { align-items: baseline; }
-html[data-theme^="report"] #hb-projs-h { scroll-margin-block-start: 5rem; }
-.hb-scroll-cue {
-  background: var(--hb-surface);
-  border: 1px solid var(--hb-border-hi);
-  color: var(--hb-ink);
+html[data-theme^="report"] { --report-hint-height: max(2.5rem, calc(1.75rem + env(safe-area-inset-bottom))); }
+.content:has(+ .report-scroll-hint:not([hidden])) { height: calc(100% - var(--report-hint-height)); }
+.report-scroll-hint {
+  position: relative;
+  z-index: 1;
+  height: var(--report-hint-height);
+  padding-bottom: env(safe-area-inset-bottom);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--gray-800);
+  color: var(--gray-400);
+  font-size: .8125rem;
+  font-weight: 500;
 }
-.hb-scroll-cue:hover { background: var(--hb-well); }
 html[data-theme^="report"] .hb-proj-head h2,
 html[data-theme^="report"] .hb-proj-title {
   font-size: 1.25rem; line-height: 1.25; font-weight: 700;
@@ -4255,6 +4266,9 @@ html[data-theme="graphite"] {
   </header>
   <main id="main" tabindex="-1"></main>
 </div>
+<p class="report-scroll-hint" id="report-scroll-hint" hidden>
+  Scroll for more <svg class="ic ic16" aria-hidden="true"><use href="#i-chev-down"/></svg>
+</p>
 
 <div id="overlay-root"></div>
 <div class="cmdk-backdrop" id="cmdk-root" hidden>
@@ -5652,9 +5666,6 @@ function pageHome() {
             <span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>New task</span></span>
           </span>
         </button>
-        ${st === "filled" && S.theme.startsWith("report") ? `<button class="btn hb-scroll-cue" type="button" aria-controls="hb-projects" id="report-scroll-more" hidden>
-          Scroll for more${ic("chev-down", "ic16")}
-        </button>` : ""}
       </div>` : ""}
     </header>
 
@@ -5674,7 +5685,7 @@ function pageHome() {
       <section class="hb-proj-sec" id="hb-projects" aria-labelledby="hb-projs-h">
         <div class="hb-proj-head">
           <div class="hb-proj-head-l">
-            <h2 id="hb-projs-h" tabindex="-1"><span class="lbl-std">Projects</span><span class="lbl-rep">Project Delivery Scorecard</span></h2>
+            <h2 id="hb-projs-h"><span class="lbl-std">Projects</span><span class="lbl-rep">Project Delivery Scorecard</span></h2>
             ${st !== "loading" ? `<span>${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}</span>` : ""}
           </div>
           <a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>
@@ -7240,35 +7251,37 @@ let stopReportProjects;
 function mountReportProjects() {
   stopReportProjects?.();
   stopReportProjects = null;
-  const cue = document.getElementById("report-scroll-more");
-  if (!cue) return;
+  const hint = document.getElementById("report-scroll-hint");
+  hint.hidden = true;
+  if (!S.theme.startsWith("report") || S.homeState !== "filled") return;
+
+  const projects = document.getElementById("hb-projects");
+  if (!projects) return;
 
   const content = document.getElementById("content");
-  const projects = document.getElementById("hb-projects");
-  const heading = document.getElementById("hb-projs-h");
   const wrapper = projects.parentElement;
-  const projectsTop = () =>
-    wrapper.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
-  const fitProjects = () => {
-    // Check the natural layout before the cue or wrapper padding can affect the fit.
-    cue.style.position = "absolute";
-    const height = content.clientHeight;
-    const fits = projectsTop() + projects.getBoundingClientRect().height <= height;
-    cue.hidden = fits;
-    cue.style.position = "";
-    const padding = fits ? 0 : Math.max(0, Math.ceil(height - projectsTop()));
-    wrapper.style.paddingBlockStart = padding ? `${padding}px` : "";
+  let projectsBelowFold = false;
+  const updateHint = () => {
+    hint.hidden = !projectsBelowFold || content.scrollTop > 0;
   };
-
-  cue.addEventListener("click", () => {
-    heading.focus({ preventScroll: true });
-    heading.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "instant" : "smooth" });
-  });
+  const fitProjects = () => {
+    // The full viewport stays the same when the hint reserves a strip at the bottom.
+    const height = document.body.clientHeight;
+    const top = wrapper.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
+    projectsBelowFold = top + projects.getBoundingClientRect().height > height;
+    const padding = projectsBelowFold ? Math.max(0, Math.ceil(height - top)) : 0;
+    wrapper.style.paddingBlockStart = padding ? `${padding}px` : "";
+    updateHint();
+  };
   fitProjects();
   const observer = new ResizeObserver(fitProjects);
-  [content, projects, ...wrapper.parentElement.querySelectorAll(".hb-hero, .hb-pillars, .hb-stage")]
+  [document.body, projects, ...wrapper.parentElement.querySelectorAll(".hb-hero, .hb-pillars, .hb-stage")]
     .forEach((element) => observer.observe(element));
-  stopReportProjects = () => observer.disconnect();
+  content.addEventListener("scroll", updateHint, { passive: true });
+  stopReportProjects = () => {
+    observer.disconnect();
+    content.removeEventListener("scroll", updateHint);
+  };
 }
 
 /* ---------------------------------------------------------------- router */
