@@ -315,11 +315,39 @@
   line-height: 1.6;
 }
 .triage-document .triage-back { display: none; }
-.triage-intro { display: grid; gap: 14px; }
-.triage-sender { display: flex; align-items: center; gap: 12px; line-height: 1.35; }
-.triage-sender > div { display: grid; gap: 4px; min-width: 0; }
-.triage-sender .muted, .triage-status { color: var(--gray-300); }
-.triage-status { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: .8125rem; }
+.triage-intro { display: grid; gap: 8px; }
+.triage-from {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 6px;
+  color: var(--gray-400);
+  font-size: .75rem;
+  line-height: 1.4;
+}
+.triage-from-member { position: relative; }
+.triage-from-member > a { color: var(--white); font-weight: 600; }
+.triage-from-member > a:is(:hover, :focus-visible) { text-decoration: underline; }
+.triage-from-card {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: 100%;
+  inset-inline-start: 0;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: min(17rem, 65cqi);
+  padding: 9px 12px;
+  border: 1px solid var(--line2);
+  border-radius: var(--radius-lg);
+  background: var(--gray-900);
+  box-shadow: 0 8px 24px rgb(0 0 0 / .2);
+  color: var(--gray-300);
+  line-height: 1.45;
+}
+.triage-from-member:not([data-preview-dismissed]):is(:hover, :focus-within) .triage-from-card { display: flex; }
+.triage-from-card strong { display: block; color: var(--white); font-size: .875rem; font-weight: 600; }
 .triage-document h2 { font-size: clamp(1.5rem, 3.5cqi, 1.875rem); line-height: 1.22; letter-spacing: -.025em; overflow-wrap: anywhere; }
 .triage-document h3:not(.recommendation-label) { color: var(--white); font-size: var(--item-title-size); font-weight: 600; }
 .triage-why { max-width: 75ch; }
@@ -389,26 +417,26 @@
 .triage-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .triage-actions .actions { margin-top: 0; }
 .triage-actions .reply { flex: 1 1 100%; }
-.triage-activity { padding-block-start: 16px; border-top: 1px solid var(--line); }
-.triage-activity h3 { margin-block-end: 10px; }
-.triage-activity h4 { margin-block-end: 6px; font-size: .875rem; font-weight: 600; }
-.triage-history, .triage-comments { margin-block-start: 16px; }
+.triage-activity { padding-block-start: 24px; border-top: 1px solid var(--line); }
+.triage-activity #triage-activity-title { margin-block-end: 14px; font-size: 1.125rem; }
+.triage-activity h4 { margin-block-end: 8px; font-size: 1rem; font-weight: 600; }
+.triage-history, .triage-comments { margin-block-start: 24px; }
 .triage-activity-log li, .triage-comment-list li {
   position: relative;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   align-items: start;
   gap: 10px;
-  min-height: 34px;
-  padding-block: 4px 6px;
+  min-height: 42px;
+  padding-block: 8px;
   color: var(--gray-300);
-  font-size: .875rem;
+  font-size: .9375rem;
   overflow-wrap: anywhere;
 }
 .triage-activity-log li:not(:last-child)::after {
   content: "";
   position: absolute;
-  inset-block: 29px 0;
+  inset-block: 33px 1px;
   inset-inline-start: 11px;
   width: 1px;
   background: var(--line2);
@@ -416,7 +444,8 @@
 .triage-event-marker { display: grid; place-items: center; width: 24px; height: 24px; color: var(--gray-400); }
 .triage-activity strong { color: var(--white); font-weight: 600; }
 .triage-event-time { margin-inline-start: 8px; color: var(--gray-400); font-size: .75rem; }
-.triage-comment-text { margin-block-start: 3px; white-space: pre-wrap; }
+.triage-comment-list .av { align-self: start; }
+.triage-comment-text { margin-block-start: 4px; white-space: pre-wrap; }
 .triage-comment-form {
   display: grid;
   justify-items: end;
@@ -430,8 +459,8 @@
 .triage-comment-form #triage-comment {
   width: 100%;
   min-width: 0;
-  min-height: 4rem;
-  resize: none;
+  min-height: calc(2lh + 4px);
+  resize: vertical;
   padding: 2px 0;
   border: 0;
   outline: none;
@@ -441,6 +470,9 @@
   box-shadow: none;
   color: var(--white);
   font: inherit;
+}
+@supports (field-sizing: content) {
+  .triage-comment-form #triage-comment { field-sizing: content; resize: none; }
 }
 .triage-comment-form textarea::placeholder { color: var(--gray-400); }
 .triage-comment-form .triage-send {
