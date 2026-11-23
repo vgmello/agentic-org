@@ -373,7 +373,7 @@ html[data-theme="cozy"] {
   & .cmdk-trigger { border-radius: 999px; }
   & .cmdk-trigger:hover { background: var(--hover); color: var(--white); }
   & .cmdk-sep { background: var(--line); }
-  & .cmdk-ai-btn { min-height: 36px; }
+  & .cmdk-ai-btn { min-height: 36px; border-radius: 999px; }
   & .cozy-contrast { flex: none; min-height: 36px; }
   & .cozy-contrast > span { min-width: 11ch; }
   & .cozy-contrast[aria-pressed="true"] { border-color: var(--tone-accent-ink); }
