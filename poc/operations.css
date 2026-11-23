@@ -500,7 +500,9 @@
   .queue-tab { gap: 4px; padding-inline: 8px; }
 }
 
-/* Graphite Inbox uses a continuous matte canvas with quiet pane dividers. */
+/* Graphite Work and Inbox share a matte reading canvas. */
+html[data-theme="graphite"] #content:has(.triage-workspace, .work-header) { background: #18191A; }
+
 html[data-theme="graphite"]:has(.triage-workspace) {
   --graphite-inbox-line: #262728;
 
@@ -508,9 +510,11 @@ html[data-theme="graphite"]:has(.triage-workspace) {
     background: #131516;
     box-shadow: inset -1px 0 var(--graphite-inbox-line);
   }
-  & #content { background: #171819; }
-  & :is(.triage-queue, .triage-group h2) { background: transparent; }
-  & .triage-queue { border-inline-end-color: var(--graphite-inbox-line); }
+  & .triage-queue {
+    background: #171819;
+    border-inline-end-color: var(--graphite-inbox-line);
+  }
+  & .triage-group h2 { background: transparent; }
 }
 
 /* Activity command center */
