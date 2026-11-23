@@ -5,22 +5,18 @@
   min-width: 0;
   min-height: min(700px, calc(100dvh - 68px));
 }
-.triage-header { border-bottom: 1px solid var(--line); }
-.triage-headline, .activity-header {
-  padding: 16px var(--gutter) 14px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px 24px;
+.triage-header {
+  position: relative;
+  z-index: 1;
+  container: inbox-header / inline-size;
+  border-bottom: 1px solid var(--line);
 }
-.triage-headline h1, .activity-header h1 { font-size: 1.125rem; line-height: 1.3; }
+.triage-headline { padding-block-end: 12px; border-bottom: 0; }
 .triage-waiting {
   display: inline-flex;
   align-items: center;
   gap: 7px;
   color: var(--gray-400);
-  font-size: .8125rem;
 }
 .triage-waiting i, .assembly-legend i {
   display: inline-block;
@@ -30,19 +26,12 @@
   background: var(--tone-accent);
   flex: none;
 }
-.triage-controls, .activity-header-controls {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
 .triage-search {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 36px;
-  padding: 0 10px;
+  min-height: var(--control-height);
+  padding: 0 12px;
   border: 1px solid var(--line2);
   border-radius: 8px;
   background: var(--hover);
@@ -63,19 +52,20 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 var(--gutter) 12px;
+  gap: 8px;
+  padding: 0 var(--gutter) 16px;
 }
-.triage-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.triage-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
 .triage-tab {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
-  min-height: 36px;
+  padding: 5px 12px;
+  min-height: var(--control-height);
   border: 1px solid transparent;
   border-radius: 8px;
   color: var(--gray-400);
+  font-weight: 600;
   white-space: nowrap;
 }
 .triage-tab:hover { background: var(--hover); color: var(--white); }
@@ -90,7 +80,7 @@
   font-size: .75rem;
 }
 .triage-menu-count { margin-inline-start: auto; }
-.triage-split { display: grid; grid-template-columns: minmax(320px, 365px) minmax(0, 1fr); flex: 1 1 auto; min-height: 0; }
+.triage-split { display: grid; grid-template-columns: clamp(19rem, 25vw, 22rem) minmax(0, 1fr); flex: 1 1 auto; min-height: 0; }
 .triage-queue {
   min-width: 0;
   display: flex;
@@ -123,7 +113,7 @@
 .triage-person strong { font-size: .8125rem; font-weight: 600; }
 .triage-person time { margin-inline-start: auto; color: var(--gray-400); font-size: .75rem; }
 .triage-kind { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-400); font-size: .75rem; }
-.triage-title { color: var(--white); font-weight: 600; line-height: 1.44; padding-inline-start: 32px; }
+.triage-title { color: var(--white); font-size: var(--item-title-size); font-weight: 600; line-height: 1.44; padding-inline-start: 32px; }
 .triage-meta { display: flex; flex-wrap: wrap; gap: 1px 8px; padding-inline-start: 32px; color: var(--gray-400); font-size: .75rem; }
 .triage-expiry { display: inline-flex; align-items: center; gap: 4px; color: var(--tone-warn-ink); }
 .triage-reading {
@@ -135,7 +125,7 @@
   padding: clamp(20px, 2.5vw, 42px) var(--gutter);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
   color: var(--white);
   font-size: .9375rem;
   line-height: 1.6;
@@ -149,7 +139,7 @@
 .triage-narrative, .triage-context { display: grid; align-content: start; min-width: 0; gap: 16px; }
 .triage-context-title { display: none; }
 .triage-why, .triage-recommendation p { max-width: 64ch; }
-.triage-why h3, .triage-recommendation h3 { color: var(--white); font-size: .875rem; font-weight: 650; margin-bottom: 3px; }
+.triage-why h3, .triage-recommendation h3 { color: var(--white); font-size: var(--item-title-size); font-weight: 600; margin-bottom: 4px; }
 .triage-recommendation {
   display: flex;
   align-items: flex-start;
@@ -174,7 +164,8 @@
 .triage-audit summary span { margin-inline-start: auto; color: var(--gray-300); font-size: .8125rem; font-weight: 400; }
 .triage-audit ul { padding: 0 14px 10px 35px; font-size: .875rem; }
 .triage-audit li { padding: 4px 0; border-top: 1px solid var(--line); }
-.triage-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.triage-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 16px; border-top: 1px solid var(--line); }
+.triage-actions .actions { margin-top: 0; }
 .triage-actions .reply { flex: 1 1 100%; }
 .triage-empty { display: grid; justify-items: start; gap: 4px; padding: 24px; color: var(--gray-400); }
 .triage-empty h2 { color: var(--white); font-size: .9375rem; }
@@ -182,19 +173,19 @@
 @media (min-width: 960px) {
   .triage-workspace { height: max(600px, calc(100dvh - 68px)); }
   #triage-list, .triage-reading { overflow-y: auto; overscroll-behavior-y: contain; }
-  @container inbox-reading (min-width: 860px) {
+  @container inbox-reading (min-width: 800px) {
     .triage-document {
       max-width: 1200px;
       margin-inline: auto;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) clamp(16.5rem, 27cqi, 19rem);
+      grid-template-columns: minmax(0, 1fr) clamp(21rem, 36cqi, 27rem);
       align-items: start;
       column-gap: 24px;
     }
     .triage-document > :is(.triage-sender, h2, .triage-actions) { grid-column: 1 / -1; }
-    .triage-context { gap: 12px; padding-inline-start: 16px; border-inline-start: 1px solid var(--line); }
-    .triage-context-title { display: block; font-size: .875rem; font-weight: 650; }
-    .triage-context .triage-fields { grid-template-columns: max-content minmax(0, 1fr); gap: 8px 12px; padding-top: 0; border-top: 0; }
+    .triage-context { gap: 12px; padding-inline-start: 20px; border-inline-start: 1px solid var(--line); }
+    .triage-context-title { display: block; font-size: var(--item-title-size); font-weight: 600; }
+    .triage-context .triage-fields { grid-template-columns: max-content minmax(0, 1fr); gap: 10px 16px; padding-top: 0; border-top: 0; }
     .triage-audit summary { flex-wrap: wrap; }
   }
 }
@@ -204,26 +195,36 @@
   .triage-workspace:not(.triage-has-detail) .triage-reading, .triage-has-detail :is(.triage-header, .triage-queue) { display: none; }
   .triage-document .triage-back { display: inline-flex; align-self: start; padding-inline-start: 0; color: var(--gray-300); }
 }
+@media (max-width: 720px), (pointer: coarse) {
+  .triage-search input { font-size: 1rem; }
+  .triage-copy { min-height: var(--control-height); min-width: var(--control-height); }
+}
+@container inbox-header (max-width: 760px) {
+  .triage-categories { position: relative; }
+  .triage-categories .menu-wrap { position: static; }
+  .triage-categories .menu { inset-inline: var(--gutter) auto; top: calc(100% - 10px); }
+}
 @media (max-width: 520px) {
   .triage-controls { width: 100%; }
   .triage-search { width: 100%; }
   .triage-search input { width: 100%; }
   .triage-tabs { gap: 4px; }
   .triage-tab { padding-inline: 7px; }
-  .triage-categories .menu { right: auto; left: 0; }
+  .triage-controls .menu { right: auto; left: 0; }
 }
 
 /* Activity command center */
-.activity-header { border-bottom: 1px solid var(--line); }
 .activity-scope, .activity-scope select { max-width: 100%; }
-.activity-scope select { min-height: 36px; }
-.activity-switch button { min-height: 36px; }
+.activity-switch { min-height: var(--control-height); }
+@media (max-width: 720px), (pointer: coarse) {
+  .activity-switch button { min-height: var(--control-height); }
+}
 .activity-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(230px, 260px);
   align-items: start;
   gap: 16px;
-  padding: 18px var(--gutter) 32px;
+  padding: 24px var(--gutter) 32px;
 }
 .activity-main { min-width: 0; }
 .assembly-view, .activity-feed, .activity-rail {
@@ -241,7 +242,7 @@
   padding: 14px 16px;
 }
 .assembly-eyebrow { color: var(--tone-accent-ink); font-size: .75rem; font-weight: 650; }
-.assembly-summary h2 { color: var(--white); font-size: 1.25rem; line-height: 1.3; }
+.assembly-summary h2 { color: var(--white); font-size: var(--section-title-size); line-height: 1.3; font-weight: 600; letter-spacing: -.01em; }
 .assembly-metrics {
   display: flex;
   flex-wrap: wrap;

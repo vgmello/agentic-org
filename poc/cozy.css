@@ -347,8 +347,7 @@ html[data-theme="cozy"] {
   }
   & :is(.btn.outline, .work-header .textbtn, .cmdk-ai-btn, .cmdk-esc):hover { background: var(--hover); }
   & :is(.ph-actions, .subbar, .hb-quick-acts) .btn,
-  & :is(.seg button, .cmdk-tab, .cmdk-ask-go, .cmdk-esc, .subbar .field) { min-height: 36px; }
-  & .work-header :is(.work-status-filter, .work-search) { height: 36px; }
+  & :is(.seg:not(.activity-switch) button, .cmdk-tab, .cmdk-ask-go, .cmdk-esc, .subbar .field) { min-height: var(--control-height); }
   & .ao-mark-bg { fill: #386f54; }
   & .nav-item { min-height: 44px; }
   & .topbar .menu-btn,
