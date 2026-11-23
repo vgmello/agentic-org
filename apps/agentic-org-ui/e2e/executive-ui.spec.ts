@@ -273,9 +273,27 @@ test('Home scroll cue: keyboard-reachable before below-fold content, moves focus
 	expect(activeId.tag).not.toBe('BODY');
 	expect(activeId.id).toBe('exec-projects-heading');
 
-	// Navigating away while scrolled down and returning to /home resets main.scrollTop to 0 and shows cue again
+	// Navigating away while scrolled down and returning via popstate (Back) OR link resets main.scrollTop to 0 and shows cue again
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
-	await expect(page).toHaveURL(/\/inbox$/);
+	await expect(page).toHaveURL(/\/inbox/);
+	await expect(page.getByRole('heading', { level: 1, name: 'Inbox' })).toBeVisible();
+	await expect(page.getByRole('region', { name: 'Item details' })).toBeVisible();
+	// Scroll Inbox down too so popstate back to /home proves <main>.scrollTop resets cleanly
+	await page.locator('main').evaluate((el) => {
+		el.scrollTop = 120;
+	});
+	await page.goBack();
+	await expect(page).toHaveURL(/\/home/);
+	await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
+	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBe(0);
+	await expect(hint).toBeVisible();
+
+	await hint.click();
+	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBeGreaterThan(16);
+	await expect(hint).toBeHidden();
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
+	await expect(page).toHaveURL(/\/inbox/);
+	await expect(page.getByRole('heading', { level: 1, name: 'Inbox' })).toBeVisible();
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Home' }).click();
 	await expect(page).toHaveURL(/\/home$/);
 	await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();

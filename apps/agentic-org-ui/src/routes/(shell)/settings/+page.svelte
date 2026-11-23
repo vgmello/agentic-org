@@ -204,7 +204,7 @@
 	}
 	.contrast-track {
 		background: var(--exec-surface-hi);
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+		box-shadow: inset 0 0 0 1px var(--field-border);
 		transition:
 			background-color 0.16s ease,
 			box-shadow 0.16s ease;

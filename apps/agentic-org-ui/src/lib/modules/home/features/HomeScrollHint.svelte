@@ -97,15 +97,20 @@
 			}
 		}
 
-		const step = Math.max(120, Math.round(container.clientHeight * 0.72));
-		const nextTop = container.scrollTop + step;
-		container.scrollTo({ top: nextTop, behavior });
+		const viewport = container.clientHeight;
+		const maxScroll = Math.max(0, container.scrollHeight - viewport);
+		const targetTop = Math.min(
+			maxScroll,
+			container.scrollTop + Math.max(120, Math.round(viewport * 0.72))
+		);
+		container.scrollTo({ top: targetTop, behavior });
 
 		const candidates = container.querySelectorAll<HTMLElement>('h2, h3, section[aria-labelledby]');
 		let fallbackTarget: HTMLElement | null = null;
 		for (const candidate of candidates) {
-			const top = candidate.getBoundingClientRect().top - containerRect.top + container.scrollTop;
-			if (top >= container.scrollTop + container.clientHeight - 48) {
+			const headingOffsetTop =
+				candidate.getBoundingClientRect().top - containerRect.top + container.scrollTop;
+			if (headingOffsetTop >= targetTop && headingOffsetTop <= targetTop + viewport - 24) {
 				fallbackTarget = candidate;
 				break;
 			}

@@ -28,10 +28,10 @@
 	$effect.pre(() => chatDrafts.syncScope());
 	onDestroy(() => chatDrafts.dispose());
 
-	// Route changes reset main scroll (except popstate/hash) and focus the destination heading (app-shell-ux §0).
+	// Route changes reset internal <main> scroll (except hash targets) and focus the destination heading (app-shell-ux §0).
 	afterNavigate((move) => {
-		const routeChanged = move.from?.url.pathname !== move.to?.url.pathname;
-		if (routeChanged && move.type !== 'popstate' && !move.to?.url.hash && mainEl) {
+		const routeChanged = move.from?.url?.pathname !== move.to?.url?.pathname;
+		if (routeChanged && !move.to?.url?.hash && mainEl) {
 			mainEl.scrollTop = 0;
 		}
 		if (move.type !== 'link' && move.type !== 'popstate') return;

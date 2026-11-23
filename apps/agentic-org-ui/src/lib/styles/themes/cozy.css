@@ -224,7 +224,7 @@ html[data-ui-theme='cozy'] {
 	--exec-seg-queued: var(--tone-queued);
 	--exec-seg-queued-high: var(--tone-bad-bar);
 
-	/* Emerald frosted glass primary CTA (white >= 7.08:1 rest, >= 5.53:1 composited hover over peak glow) */
+	/* Emerald frosted glass primary CTA (white >= 7.08:1 rest, >= 5.37:1 composited hover over peak glow) */
 	--exec-cta-bg: linear-gradient(180deg, rgba(24, 108, 70, 0.84), rgba(18, 86, 55, 0.9));
 	--exec-cta-fill: linear-gradient(180deg, rgba(28, 122, 78, 0.9), rgba(20, 96, 62, 0.94));
 	--exec-cta-shadow:

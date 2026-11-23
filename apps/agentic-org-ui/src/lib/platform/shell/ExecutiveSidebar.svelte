@@ -609,7 +609,7 @@
 		color: var(--exec-ink);
 		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
 	}
-	@media (width < 640px), (pointer: coarse) {
+	@media (max-width: 720px), (pointer: coarse) {
 		.exec-theme-pill {
 			min-height: 44px;
 		}
