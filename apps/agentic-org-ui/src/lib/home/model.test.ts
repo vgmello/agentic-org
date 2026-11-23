@@ -665,6 +665,36 @@ describe('executive home view model', () => {
 			}
 		);
 		expect(ans.bullets[0].href).toBe('/projects/atlas/work');
+
+		// Inbox-backed decisions whose open.path targets unbuilt /work/<ref> also fall back to /inbox?item=<id>
+		const inboxDecisions = deriveDecisionSpotlight([], snap, 'you', Date.now(), [
+			{
+				id: 'in-1',
+				kind: 'approval',
+				source: 'Release sign-off',
+				state: 'open',
+				title: "Approve publishing Kai's sync update to v1.0",
+				why: 'Ready to ship.',
+				who: { id: 'ada', name: 'Ada', kind: 'agent' },
+				project: { id: 'atlas', name: 'Atlas' },
+				created_at: '2026-11-23T09:00:00.000Z',
+				actions: ['approve', 'deny'],
+				open: { path: '/work/T-121', label: 'Open T-121' }
+			}
+		]);
+		expect(inboxDecisions[0]?.detailHref).toBe('/inbox?item=in-1');
+		const inboxAns = answerExecutiveQuestion(
+			"Explain the risk, impact, and recommendation for: Approve publishing Kai's sync update to v1.0",
+			{
+				snapshot: snap,
+				items: [],
+				offices,
+				ownerId: 'you',
+				decisionId: 'in-1',
+				decision: inboxDecisions[0]
+			}
+		);
+		expect(inboxAns.bullets[0].href).toBe('/inbox?item=in-1');
 	});
 
 	it('answers with explicit decision context even when shell snapshot is pending or stale', () => {

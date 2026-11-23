@@ -538,7 +538,10 @@ function inboxToSpotlight(item: InboxItem, nowMs: number): SpotlightDecision {
 		proof,
 		primaryAction,
 		secondaryAction,
-		detailHref: item.open?.path ?? `/inbox?item=${encodeURIComponent(item.id)}`,
+		detailHref:
+			item.open?.path && !/^\/work\/[^/?#]+/.test(item.open.path)
+				? item.open.path
+				: `/inbox?item=${encodeURIComponent(item.id)}`,
 		ageLabel: relativeAge(item.created_at, nowMs)
 	};
 }
