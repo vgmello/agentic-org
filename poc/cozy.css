@@ -228,6 +228,9 @@ html[data-theme="cozy"] {
   & .proto-hotzone:hover::after { background: var(--gray-400); }
   & .home-scroll-hint { background: transparent; }
 
+  & #content:has(.work-header) { background: #463c30; }
+  & body.a11y-mode #content:has(.work-header) { background: var(--cozy-shell); }
+
   & .hb {
     --hb-surface: var(--cozy-panel);
     --hb-surface-hi: var(--cozy-panel);
