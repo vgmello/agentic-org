@@ -116,9 +116,6 @@
 .has-page-toolbar .ph-t { overflow-wrap: anywhere; }
 .prof.has-page-toolbar .grow { min-width: 0; }
 .chhead.has-page-toolbar .ph-t { align-items: center; }
-.unavail.has-page-toolbar { display: flex; align-items: center; flex-wrap: wrap; padding: 16px var(--gutter); }
-.unavail.has-page-toolbar h1 { margin: 0; }
-.unavail.has-page-toolbar p { flex-basis: 100%; margin-block: 12px; text-align: start; }
 @media (max-width: 720px), (pointer: coarse) {
   #page-search-tools .cmdk-shell { height: calc(var(--control-height) + 6px); }
   #page-search-tools #cmdk-trigger { min-width: var(--control-height); justify-content: center; }
@@ -130,7 +127,7 @@
 }
 
 /* Keep Workspace search aligned with the title and allow page actions to wrap. */
-#main .has-page-toolbar:where(.ph:not(.queue-headline), .chhead, .prof, .unavail) {
+#main .has-page-toolbar:where(.ph:not(.queue-headline), .chhead, .prof) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -161,13 +158,13 @@
     justify-self: end;
   }
 
-  &:is(.prof, .unavail) {
+  &.prof {
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
-  &.prof > .grow > h1, &.unavail > h1 { grid-column: 2; }
+  &.prof > .grow > h1 { grid-column: 2; }
 
-  &.prof > .av, &.unavail > svg {
+  &.prof > .av {
     grid-column: 1;
     grid-row: 1;
   }
@@ -176,13 +173,6 @@
   &.prof > .grow > :is(.meta, .now) {
     grid-column: 2 / -1;
     margin: 0;
-  }
-
-  &.unavail { text-align: start; }
-  &.unavail > p {
-    grid-column: 2 / -1;
-    margin: 0;
-    text-align: start;
   }
 
   @media (min-width: 1360px) {
@@ -225,8 +215,7 @@
 
     &.prof > .av { grid-column: 2; }
     &.prof > .grow > h1 { grid-column: 3; }
-    &.prof > .grow > :is(.meta, .now), &.unavail > p { grid-column: 1 / -1; }
-    &.unavail > svg { display: none; }
+    &.prof > .grow > :is(.meta, .now) { grid-column: 1 / -1; }
   }
 }
 
@@ -267,6 +256,8 @@
   padding-inline-start: 8px;
   border-inline-start: 1px solid var(--line);
 }
+.scoped-work-tools .work-layout-toggle { padding-inline-start: 0; border-inline-start: 0; }
+.scoped-work-tools .menu { inset-inline: 0 auto; }
 .work-layout-toggle .queue-tab { border-radius: var(--radius-md); }
 .work-layout-toggle .queue-tab[aria-pressed="true"] {
   background: var(--hover);
@@ -292,7 +283,7 @@
   background: currentColor;
 }
 .queue-controls .menu { max-height: min(60dvh, 28rem); overflow-y: auto; }
-#main :is(.work-toolbar, .work-display) .menu {
+#main :is(.work-toolbar, .scoped-work-tools) .menu {
   background: var(--gray-800);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -715,6 +706,7 @@ html[data-theme^="report"] .triage-queue {
     flex: 1 1 auto;
     min-height: 16rem;
   }
+  .scoped-work-tools + .has-work-detail { min-height: max(26rem, calc(100dvh - 6rem)); }
   .has-work-detail #work-results { overflow-y: auto; overscroll-behavior-y: contain; }
   .work-reading { border-inline-start: 1px solid var(--line); overflow-x: hidden; }
 }
@@ -990,7 +982,7 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 .activity-timeline {
   --activity-entry-padding: 14px;
 }
-.activity-feed .activity-timeline > li {
+.activity-timeline > li {
   position: relative;
   padding-block: var(--activity-entry-padding);
   border-bottom: 0;
@@ -1009,7 +1001,7 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 .activity-stage-bar { display: flex; gap: 1px; min-width: 78px; max-width: 180px; flex: 1; height: 5px; overflow: hidden; border-radius: 10px; background: var(--bar-track); }
 .activity-triage { display: grid; justify-items: start; gap: 6px; width: min(100%, 560px); margin: 8px 0 0 32px; padding: 8px 10px; border: 1px solid var(--line2); border-radius: 8px; background: var(--hover); }
 .activity-triage:focus { outline: 2px solid var(--tone-accent); outline-offset: 1px; }
-.activity-feed .runlog, .activity-triage { max-width: calc(100% - 32px); }
+.activity-timeline .runlog, .activity-triage { max-width: calc(100% - 32px); }
 @media (max-width: 1250px) {
   .activity-layout, .activity-layout:has(.activity-feed) { grid-template-columns: minmax(0, 1fr); }
   .activity-layout:has(.activity-feed) .activity-rail { margin: 0 var(--gutter); }
