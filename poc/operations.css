@@ -558,6 +558,19 @@
   .queue-tab { gap: 4px; padding-inline: 8px; }
 }
 
+/* Graphite Inbox uses a continuous matte canvas with quiet pane dividers. */
+html[data-theme="graphite"]:has(.triage-workspace) {
+  --graphite-inbox-line: #262728;
+
+  & .sidebar {
+    background: #131516;
+    box-shadow: inset -1px 0 var(--graphite-inbox-line);
+  }
+  & #content { background: #171819; }
+  & :is(.triage-queue, .triage-group h2) { background: transparent; }
+  & .triage-queue { border-inline-end-color: var(--graphite-inbox-line); }
+}
+
 /* Activity command center */
 .activity-scope, .activity-scope select { max-width: 100%; }
 .activity-switch { min-height: var(--control-height); }
