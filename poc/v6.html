@@ -615,6 +615,8 @@ body.nokeys .search kbd { display: none; }
 .tab:focus-visible { outline-offset: -2px; }
 .tcount { border-radius: 99px; background: var(--hover); padding: 1px 8px; font-size: 0.75rem; line-height: 1.125rem; font-weight: 500; color: var(--gray-300); }
 .subbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px var(--gutter); border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.work-display { margin-inline-start: auto; }
+.work-display .menu button[aria-checked="false"] .ic20 { visibility: hidden; }
 .seg { display: inline-flex; align-items: stretch; gap: 2px; min-height: 2.25rem; padding: 3px; border-radius: var(--radius-md); background: rgba(15, 23, 42, .45); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10); }
 .seg button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border-radius: 4px; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 600; color: var(--gray-400); }
 .seg button:hover { color: #fff; }
@@ -683,6 +685,124 @@ body.nokeys .search kbd { display: none; }
 .chev { color: var(--gray-400); }
 .empty-row { padding: 48px var(--gutter); text-align: center; color: var(--gray-400); }
 .grp-h { padding: 8px var(--gutter); font-size: 12px; font-weight: 600; color: var(--gray-400); background: rgb(0 0 0 / .1); border-bottom: 1px solid var(--line); border-top: 1px solid var(--line); }
+
+/* Compact work rows shared by all themes. */
+.work-items { container-type: inline-size; margin: 8px var(--gutter) 24px; min-width: 0; }
+.compact .work-items { margin-inline: 0; }
+.work-group + .work-group { margin-top: 8px; }
+.work-group-title {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-radius: var(--radius-md); background: var(--hover);
+  font-size: .8125rem; font-weight: 600; line-height: 1.5; color: var(--white);
+}
+.work-group-title .cnt { color: var(--gray-400); }
+.work-row {
+  display: flex; align-items: center; gap: 8px 16px; min-width: 0;
+  min-height: 2.625rem; padding: 6px 12px;
+  font-size: .8125rem; line-height: 1.4;
+}
+.work-row:is(:hover, :focus-within) { background: var(--hover); }
+html[data-work-dividers] .work-row { box-shadow: inset 0 -1px var(--line); }
+html[data-work-dividers] .work-row:is(:hover, :focus-within) { box-shadow: inset 0 -1px var(--line2); }
+.work-summary {
+  flex: 1 1 auto; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline;
+  gap: 8px; min-width: 0; color: var(--white);
+}
+.work-ident, .work-markers { display: inline-flex; align-items: center; gap: 7px; }
+.work-ident { min-width: 4.65rem; }
+.work-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 8px; min-width: 0; }
+.work-ref { min-width: 3.65rem; color: var(--gray-400); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.work-title { font-weight: 600; overflow-wrap: anywhere; }
+.work-eta {
+  display: inline-block; max-width: calc(100% - 8px); margin-inline-start: 8px; color: var(--gray-400);
+  font-size: .75rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}
+.work-criteria {
+  color: var(--gray-400); font-size: .75rem; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.work-criteria.is-complete { color: var(--tone-ok-ink); }
+.work-status, .work-priority-mark {
+  position: relative; display: inline-flex; flex: none; align-items: center;
+  justify-content: center; width: 1rem; height: 1rem; color: var(--gray-400);
+}
+.work-status[data-tone="active"] { color: var(--tone-warn-ink); }
+.work-status[data-tone="done"] { color: var(--tone-ok-ink); }
+.work-status[data-tone="blocked"] { color: var(--tone-bad-ink); }
+.work-status[data-tone="review"] { color: var(--tone-accent-ink); }
+.work-status[data-attention]::after {
+  content: ""; position: absolute; inset: 0 0 auto auto; width: .35rem; height: .35rem;
+  border-radius: 50%; background: var(--tone-warn-ink); box-shadow: 0 0 0 1px var(--gray-900);
+}
+.work-status-ring {
+  display: inline-grid; place-items: center; width: .875rem; height: .875rem;
+  border: 1.5px solid currentColor; border-radius: 50%;
+}
+.work-status[data-tone="active"] .work-status-ring::before {
+  content: ""; height: 75%; aspect-ratio: 1 / 2;
+  border-radius: 0 100% 100% 0; border-inline-end: .24rem solid currentColor;
+  transform: translateX(50%);
+}
+.work-priority-mark { align-items: flex-end; gap: 2px; padding-bottom: 3px; color: var(--work-team-color, var(--gray-400)); }
+.work-priority-mark span { width: .15rem; height: .28rem; border-radius: 1px; background: currentColor; }
+.work-priority-mark span:nth-child(2) { height: .44rem; }
+.work-priority-mark span:nth-child(3) { height: .6rem; }
+.work-priority-mark[data-level="low"] span:nth-child(n+2),
+.work-priority-mark[data-level="medium"] span:nth-child(3) { opacity: .32; }
+@media (forced-colors: active) {
+  html[data-work-dividers] .work-row { border-block-end: 1px solid CanvasText; }
+  .work-row:is(:hover, :focus-within) { outline: 1px solid Highlight; outline-offset: -1px; }
+  .work-priority-mark span, .work-status[data-attention]::after {
+    forced-color-adjust: none; background: CanvasText;
+  }
+  .work-status[data-attention]::after { box-shadow: 0 0 0 1px Canvas; }
+}
+.work-subtasks { margin-inline-start: 1rem; }
+.work-subtask {
+  --work-tree-line: color-mix(in srgb, var(--gray-400) 65%, var(--line2));
+  --work-tree-junction: 1.3125rem;
+  position: relative; padding-inline-start: 12px;
+}
+.work-subtask::before, .work-subtask::after {
+  content: ""; position: absolute; inset-inline-start: 0; pointer-events: none;
+}
+.work-subtask::before { inset-block: 0; border-inline-start: 1px solid var(--work-tree-line); }
+.work-subtask:last-child::before { inset-block-end: calc(100% - var(--work-tree-junction)); }
+.work-subtask::after { inset-block-start: var(--work-tree-junction); width: 9px; border-top: 1px solid var(--work-tree-line); }
+.work-facts {
+  display: flex; flex: 0 1 auto; justify-content: flex-end; align-items: center; flex-wrap: wrap;
+  gap: 4px 10px; min-width: 0; color: var(--gray-400); font-size: .75rem;
+}
+.work-owner { display: inline-flex; align-items: center; gap: 6px; }
+.work-facts > :is(.alink, .work-owner, .work-priority) { overflow-wrap: anywhere; }
+.work-team {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 7px;
+  border: 1px solid var(--line2); border-radius: 999px; color: var(--gray-300);
+}
+.work-team::before {
+  content: ""; width: 7px; height: 7px; flex: none;
+  border-radius: 50%; background: var(--work-team-color, var(--gray-500));
+}
+.work-items [data-team="leadership"] { --work-team-color: light-dark(#8d5119, #e4ac75); }
+.work-items [data-team="product"] { --work-team-color: light-dark(#7847a4, #c5a0f1); }
+.work-items [data-team="platform"] { --work-team-color: light-dark(#196794, #78bae7); }
+.work-items [data-team="app"] { --work-team-color: light-dark(#16785d, #70c8a5); }
+.work-items [data-team="quality"] { --work-team-color: light-dark(#ac3c64, #ee91b3); }
+@container (max-width: 54rem) {
+  .work-row { align-items: stretch; flex-direction: column; gap: 4px; }
+  .work-facts { justify-content: flex-start; }
+}
+@container (max-width: 27rem) {
+  .work-items .work-row { padding-inline: 8px; }
+  .work-subtasks { margin-inline-start: .625rem; }
+}
+@container (max-width: 20rem) {
+  .work-summary { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
+@media (pointer: coarse) {
+  .work-facts a { display: inline-flex; align-items: center; min-height: 2rem; }
+}
+
 .more-row { padding: 12px var(--gutter) 16px; }
 
 /* Cards */
@@ -710,6 +830,8 @@ body.nokeys .search kbd { display: none; }
 /* Switch */
 .pref { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; max-width: 640px; }
 .pref .lbl { font-weight: 500; }
+.theme-pref, .theme-options { flex-wrap: wrap; }
+.seg.theme-options { max-width: 100%; }
 .switch { position: relative; flex: none; width: 44px; height: 24px; border-radius: 99px; background: var(--gray-700); box-shadow: inset 0 0 0 1px var(--gray-500); }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 99px; background: #fff; transition: transform .1s; }
 .switch[aria-checked="true"] { background: var(--indigo-500); box-shadow: none; }
@@ -2238,6 +2360,11 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
 .hb-proj-head h2 { font-size: 0.96875rem; font-weight: 600; letter-spacing: -.01em; color: var(--hb-ink); }
 .hb-proj-head span { font-size: 0.8125rem; color: var(--hb-muted); }
 .hb-proj-head h2 span { font-size: inherit; color: inherit; }
+html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) .hb-proj-head-l {
+  flex-wrap: wrap; gap: 4px 10px;
+}
+html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) .hb-proj-head h2 { font-size: 1.25rem; }
+html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) .hb-proj-head-l > span { font-size: .9375rem; }
 .hb-proj-head .link { color: var(--tone-accent-ink); }
 .hb-proj-head .link:hover { color: var(--tone-accent-hover); }
 .hb-bento { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
@@ -2495,6 +2622,38 @@ a.hb-tleg:hover { color: var(--hb-ink); }
   .h4-acc-title { white-space: normal; }
   .h4-acc-body { padding-left: 16px; }
   .h4-sec-acc-preview { display: none; }
+}
+
+/* Ocean glass on interior pages shares a single smooth canvas. */
+html[data-theme="ocean"]:where([data-interior-page]) {
+  --gray-400: #b0bfd1;
+  --ocean-glass-sheen: linear-gradient(155deg, rgb(167 215 250 / .055), transparent 72%);
+  --ocean-glass-panel: var(--ocean-glass-sheen), rgb(9 20 36 / .34);
+
+  & body::before {
+    background:
+      radial-gradient(ellipse 76% 64% at 88% 12%, rgb(59 165 208 / .24), transparent),
+      radial-gradient(ellipse 70% 68% at 5% 16%, rgb(62 111 176 / .25), transparent),
+      radial-gradient(ellipse 65% 58% at 56% 96%, rgb(28 110 168 / .17), transparent),
+      linear-gradient(160deg, #07111F, #0A1424 52%, #070E1A);
+  }
+  & body::after { display: none; }
+
+  & :is(.content, .sidebar, .proto-banner, .sheet, .toast, .menu, .sres, .cmdk-dialog,
+    .ph, .subbar, .chhead, .thread, .compose, .grp-h, .work-group-title, .bcol) {
+    background-image: var(--ocean-glass-sheen);
+  }
+  & .work-items {
+    background: var(--ocean-glass-panel);
+    border-radius: var(--radius-lg);
+  }
+  & :is(.card, .bcard, .c-entry, .k-doc, .agent-rail, .chlist, .prof, .subnav, .split .list,
+    .seg, .cmdk-shell, .search, select.field, input.field, textarea) {
+    background-image: var(--ocean-glass-sheen);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  & :is(.nav-label, .nav-group-title, .cmdk-grp, .cmdk-opt-sub, .cmdk-foot) { color: var(--gray-400); }
 }
 
 /* ── Theme 3: Classic Slate (v0 colors, flat professional, zero shadows) ─ */
@@ -3170,6 +3329,13 @@ html[data-theme^="report"] .hb-proj-sec {
   gap: 20px;
 }
 html[data-theme^="report"] .hb-proj-head { align-items: baseline; }
+html[data-theme^="report"] #hb-projs-h { scroll-margin-block-start: 5rem; }
+.hb-scroll-cue {
+  background: var(--hb-surface);
+  border: 1px solid var(--hb-border-hi);
+  color: var(--hb-ink);
+}
+.hb-scroll-cue:hover { background: var(--hb-well); }
 html[data-theme^="report"] .hb-proj-head h2,
 html[data-theme^="report"] .hb-proj-title {
   font-size: 1.25rem; line-height: 1.25; font-weight: 700;
@@ -3750,6 +3916,200 @@ html[data-theme="report-dark"] .chlist,
 html[data-theme="report-dark"] .prof,
 html[data-theme="report-dark"] .subnav,
 html[data-theme="report-dark"] .split .list { background: #1b2533; }
+
+/* Graphite: matte surfaces, compact lists and restrained color. */
+html[data-theme="graphite"] {
+  --graphite-canvas: #121213;
+  --graphite-rail: var(--graphite-canvas);
+  --graphite-panel: #1b1d20;
+  --graphite-raised: #202226;
+  --graphite-active: #2a2d32;
+  --gray-950: var(--graphite-rail);
+  --gray-900: var(--graphite-panel);
+  --gray-800: var(--graphite-raised);
+  --gray-700: #383b42;
+  --gray-500: #696c74;
+  --gray-400: #a2a5ad;
+  --gray-300: #c6c8ce;
+  --white: #f1f1f3;
+  --line: #282a2e;
+  --line2: #35373d;
+  --hover: #23252a;
+  --radius-md: 5px;
+  --radius-lg: 7px;
+  --gutter: clamp(16px, 2vw, 28px);
+  --bar-track: #303238;
+  --tone-accent: #9c92e2;
+  --tone-accent-bar: var(--tone-accent);
+  --tone-accent-ink: #bab1f4;
+  --tone-accent-hover: #d4cdfa;
+  --tone-accent-on-soft: #e1dcfa;
+  --tone-accent-on-dark: var(--tone-accent-ink);
+  --tone-accent-solid: #5e52a1;
+  --tone-accent-solid-hi: #685bb1;
+  --tone-accent-soft: rgb(156 146 226 / .12);
+  --tone-accent-soft-hi: rgb(156 146 226 / .2);
+  --tone-accent-ring: rgb(156 146 226 / .34);
+  --tone-ok: #71c598;
+  --tone-ok-bar: var(--tone-ok);
+  --tone-ok-ink: #91d9b0;
+  --tone-ok-soft: rgb(113 197 152 / .10);
+  --tone-ok-ring: rgb(113 197 152 / .25);
+  --tone-warn: #dbb65e;
+  --tone-warn-bar: var(--tone-warn);
+  --tone-warn-ink: #eccf8c;
+  --tone-warn-soft: rgb(219 182 94 / .10);
+  --tone-warn-ring: rgb(219 182 94 / .25);
+  --tone-bad: #e18b92;
+  --tone-bad-bar: var(--tone-bad);
+  --tone-bad-ink: #f0aab0;
+  --tone-bad-hover: #f5c7cc;
+  --tone-bad-soft: rgb(225 139 146 / .10);
+  --tone-bad-ring: rgb(225 139 146 / .26);
+  --tone-bad-solid: #9f434d;
+  --tone-bad-solid-hi: #ae4954;
+  --tone-queued: #969aa5;
+  --tone-queued-bar: var(--tone-queued);
+  --tone-queued-ink: #b8bbc4;
+  --bar-fill-spend: var(--tone-accent);
+  --blocker-bad-bg: var(--tone-bad-soft);
+  --blocker-bad-ring: var(--tone-bad-ring);
+  --blocker-warn-bg: var(--tone-warn-soft);
+  --blocker-warn-ring: var(--tone-warn-ring);
+  --blocker-ok-bg: var(--tone-ok-soft);
+  --blocker-ok-ring: var(--tone-ok-ring);
+  --blocker-accent-bg: var(--tone-accent-soft);
+  --blocker-accent-ring: var(--tone-accent-ring);
+  --nav-dot-halo: transparent;
+  --dot-idle: #6d7077;
+  --dot-hover: var(--gray-400);
+  --dot-urgent: var(--tone-warn);
+  --dot-cleared: var(--tone-ok);
+  background: var(--graphite-canvas);
+
+  & body { background: var(--graphite-canvas); }
+  & body::before, & body::after, & .topbar::before, & .hb-spot::before,
+  & :is(.h4-cta-fill, .h4-cta-sheen) { display: none; }
+  & .ao-mark-bg { fill: var(--tone-accent-solid); }
+  & .sidebar {
+    background: #09090A;
+    box-shadow: inset -1px 0 var(--line);
+    backdrop-filter: none;
+  }
+  & :is(.nav-label, .nav-group-title) {
+    color: var(--gray-300);
+    font-size: .8125rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  & :is(.nav-item, .nav-collapse-btn, .nav-fold-btn, .nav-group-all, .nav-group-title .ic, .nav-fav-empty) { color: var(--gray-400); }
+  & .nav-item .ic { color: var(--gray-400); }
+  & .nav-item .ic.tone-ok { color: var(--tone-ok-icon); }
+  & .nav-item .ic.tone-warn { color: var(--tone-warn-icon); }
+  & .nav-item .ic.tone-bad { color: var(--tone-bad-icon); }
+  & :is(.logo, .nav-item, .nav-collapse-btn, .nav-fold-btn, .nav-group-all) { border-radius: var(--radius-md); }
+  & :is(.logo, .nav-item, .nav-collapse-btn, .nav-fold-btn, .nav-group-all):hover { background: var(--hover); color: var(--white); }
+  & .nav-item:is([aria-current="page"], .cur) { background: var(--graphite-active); color: var(--white); box-shadow: none; }
+  & .nav-sub { border-left-color: var(--line2); }
+  & .foot { border-top-color: var(--line); }
+  & :is(.proto-banner, .topbar) { background: var(--graphite-canvas); border-bottom: 1px solid var(--line); }
+  & .proto-banner { backdrop-filter: none; box-shadow: none; }
+  & .proto-hotzone::after { background: var(--gray-500); }
+  & .proto-hotzone:hover::after { background: var(--gray-400); }
+  & :is(.seg, .cmdk-shell, .cmdk-tab-grp, .cmdk-trigger kbd, .cmdk-esc, .cmdk-ai-btn, .cmdk-ai-chip, .cmdk-ai-prev-chip) {
+    background: var(--graphite-panel);
+    box-shadow: inset 0 0 0 1px var(--line2);
+    backdrop-filter: none;
+    border-radius: var(--radius-md);
+  }
+  & :is(.cmdk-shell, .cmdk-ai-btn):hover { background: var(--hover); box-shadow: inset 0 0 0 1px var(--gray-500); transform: none; }
+  & :is(.cmdk-trigger, .cmdk-trigger .ic, .cmdk-tab, .cmdk-grp, .cmdk-opt .ic, .cmdk-opt-sub, .cmdk-empty, .cmdk-foot),
+  & .cmdk-in-row input::placeholder { color: var(--gray-400); }
+  & .cmdk-trigger { border-radius: var(--radius-md); }
+  & .cmdk-trigger:hover { color: var(--white); background: var(--hover); }
+  & :is(.seg button[aria-pressed="true"], .seg button[aria-selected="true"], .cmdk-tab[aria-selected="true"]) {
+    background: var(--graphite-active);
+    color: var(--white);
+    box-shadow: none;
+  }
+  & .cmdk-opt:hover { background: var(--hover); box-shadow: none; }
+  & .cmdk-opt[aria-selected="true"] {
+    background: var(--graphite-active);
+    color: var(--white);
+    box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+  }
+  & .cmdk-opt[aria-selected="true"] .ic { color: var(--tone-accent-ink); }
+  & :is(.cmdk-tabs, .cmdk-foot, .cmdk-in-row) { border-color: var(--line); }
+  & .cmdk-sep { background: var(--line2); }
+  & :is(.cmdk-tabs, .cmdk-foot, .split .list, .chlist, .subnav, .prof, .agent-rail, .bcol) { background: var(--graphite-rail); }
+  & :is(.cmdk-dialog, .menu, .sheet, .toast, .sres) {
+    background: var(--graphite-raised);
+    box-shadow: inset 0 0 0 1px var(--line2), 0 12px 34px rgb(0 0 0 / .35);
+    backdrop-filter: none;
+  }
+  & :is(.cmdk-dialog, .menu, .toast, .sres) { border-radius: var(--radius-lg); }
+  & :is(.overlay, .cmdk-backdrop) { background: rgb(0 0 0 / .58); backdrop-filter: none; }
+  & :is(.card, .bcard, .c-entry, .k-doc, .grp-h, .chhead) { background: var(--graphite-panel); }
+  & :is(.rows > li.linked, .ibx):hover { background: var(--hover); }
+  & .ibx[aria-current="true"] { background: var(--graphite-active); box-shadow: inset 2px 0 var(--tone-accent); }
+  & .t-outline { box-shadow: inset 0 0 0 1px var(--line2); }
+  & :is(.btn.h4-cta, .cmdk-ask-go:not(:disabled)) { background: var(--tone-accent-solid); color: #fff; box-shadow: none; }
+  & :is(.btn.h4-cta:hover, .btn.h4-cta:focus-visible, .cmdk-ask-go:hover:not(:disabled)) {
+    background: var(--tone-accent-solid-hi); color: #fff; box-shadow: none; transform: none;
+  }
+  & .h4-cta.hb-cta-glass { border-radius: var(--radius-md); backdrop-filter: none; }
+  & .h4-cta.hb-cta-glass .ic { color: #fff; }
+
+  & .hb {
+    --hb-surface: var(--graphite-panel);
+    --hb-surface-hi: var(--graphite-raised);
+    --hb-well: var(--graphite-rail);
+    --hb-border: var(--line);
+    --hb-border-hi: var(--line2);
+    --hb-blur: none;
+    --hb-shadow: inset 0 0 0 1px var(--hb-border);
+    --hb-shadow-hi: inset 0 0 0 1px var(--hb-border-hi);
+    --hb-ink: var(--white);
+    --hb-body: var(--gray-300);
+    --hb-muted: var(--gray-400);
+    --hb-dim: var(--gray-400);
+    gap: 20px;
+  }
+  & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-skel-card, .hb-ai-brief) { border-radius: var(--radius-lg); }
+  & .hb-card:hover { transform: none; }
+  & .hb-spot.is-pulse { box-shadow: inset 0 0 0 1px var(--tone-accent); }
+  & .hb-catchup { background: var(--hb-surface); }
+  & .hb-cos-memo { --hb-cos-fade: var(--graphite-canvas); }
+  & :is(.hb-eyebrow, .hb-eyebrow-meta, .hb-eyebrow-meta a) { color: var(--gray-400); }
+  & .hb-eyebrow-meta a:hover { color: var(--white); }
+  & :is(.hb-ai-brief, .hb-pill-link, .hb-spot-meta, .hb-spot-next, .hb-ai-chip, .hb-cos-memo, .hb-brief-lenses, .hb-dig-item,
+    .hb-cu-window, .hb-rel-tag, .hb-card-ver, .hb-hor-item, .hb-hor-date, .hb-err-meta, .ctx-body) {
+    background: var(--graphite-canvas);
+    box-shadow: inset 0 0 0 1px var(--line2);
+    backdrop-filter: none;
+  }
+  & :is(.hb-pill-link, .hb-spot-next, .hb-dig-item, .hb-hor-item):hover { background: var(--hover); box-shadow: inset 0 0 0 1px var(--gray-500); }
+  & :is(.hb-card-foot, .hb-spot-foot, .hb-horizon, .hb-spot-cell + .hb-spot-cell) { border-color: var(--line2); }
+  & :is(.hb-spot-cell-sub, .hb-rel-tag, .hb-card-ver) { color: var(--gray-400); }
+
+  @media (min-width: 960px) and (pointer: fine) {
+    & .sidebar { gap: 10px; }
+    & body:not(.nav-collapsed) .nav-item { padding-block: 5px; }
+    & .nav > ul.nav-scroll { gap: 14px; }
+  }
+  @media (min-width: 720px) and (pointer: fine) {
+    & .topbar { height: 58px; }
+    & .cmdk-shell { height: 42px; width: min(560px, 100%); }
+    & .ph { padding-block: 12px; }
+    & .subbar { padding-block: 8px; }
+    & .tabs { gap: 18px; }
+    & .tab { padding-block: 9px; }
+    & :is(.rows > li, .feed > li, .ibx) { padding-block: 10px; }
+    & .grp-h { padding-block: 5px; }
+    & :is(.hb-pillars, .hb-stage, .hb-bento) { gap: 12px; }
+  }
+}
 .h4-cta.hb-cta-glass { min-height: 36px; }
 .cmdk-ai-btn { min-height: 34px; }
 @media (max-width: 720px), (pointer: coarse) {
@@ -3960,19 +4320,36 @@ const P = {
 };
 const HEALTH = { "On track": { tone: "green", icon: "check-circle" }, "At risk": { tone: "red", icon: "warn" }, "Off track": { tone: "red", icon: "x-circle" } };
 const W = [
-  { id: "T-112", kind: "task", title: "Re-sequence BUG-70 nav slices for IA v2", status: "Done", proj: "agency-v1", who: "ada", pri: "High" },
-  { id: "T-118", kind: "task", title: "Custody lock fix", status: "Blocked", waitsOn: "you", proj: "office-federation", who: "sage", pri: "High" },
-  { id: "T-121", kind: "task", title: "Split codec 2a.3.2b", status: "In progress", proj: "agency-v1", who: "kai", pri: "Medium" },
-  { id: "T-124", kind: "task", title: "CSP gates in the UI suite", status: "Blocked", waitsOn: "you", proj: "agency-v1", who: "jules", pri: "High" },
-  { id: "T-130", kind: "task", title: "Presence vocabulary across screens", status: "In progress", proj: "look-feel", who: "eden", pri: "Medium" },
-  { id: "T-131", kind: "task", title: "Information architecture v2 prototype", status: "In progress", proj: "look-feel", who: "emery", pri: "High" },
+  { id: "T-112", kind: "task", title: "Re-sequence BUG-70 nav slices for IA v2", status: "Done", proj: "agency-v1", who: "ada", pri: "High", criteria: [{ text: "Sequence the slices", done: true }, { text: "Assign owners", done: true }, { text: "Review dependencies", done: true }, { text: "Publish the plan", done: true }] },
+  { id: "T-118", kind: "task", title: "Custody lock fix", status: "Blocked", waitsOn: "you", proj: "office-federation", who: "sage", pri: "High", etaHours: 6 },
+  { id: "T-121", kind: "task", title: "Split codec 2a.3.2b", status: "In progress", proj: "agency-v1", who: "kai", pri: "Medium", etaHours: 2, criteria: [{ text: "Split encoders", done: true }, { text: "Split decoders", done: false }, { text: "Run compatibility tests", done: false }, { text: "Review fixtures", done: false }] },
+  { id: "T-124", kind: "task", title: "CSP gates in the UI suite", status: "Blocked", waitsOn: "you", proj: "agency-v1", who: "jules", pri: "High", etaHours: 8, subtasks: [
+    { id: "T-147", title: "Inventory CSP fixtures", status: "Done", pri: "Medium", criteria: [
+      { text: "List covered policies", done: true }, { text: "Record fixture gaps", done: true }
+    ] },
+    { id: "T-148", title: "Verify browser test permissions", status: "Blocked", pri: "High", criteria: [
+      { text: "Identify required permissions", done: true }, { text: "Verify permissions in the test runner", done: false }
+    ] },
+    { id: "T-149", title: "Run the CSP gate suite", status: "To do", pri: "Medium", etaHours: 2, criteria: [
+      { text: "Run browser checks", done: false }, { text: "Record results", done: false }
+    ] },
+  ] },
+  { id: "T-130", kind: "task", title: "Presence vocabulary across screens", status: "In progress", proj: "look-feel", who: "eden", pri: "Medium", etaHours: 3 },
+  { id: "T-131", kind: "task", title: "Information architecture v2 prototype", status: "In progress", proj: "look-feel", who: "emery", pri: "High", etaHours: 5, criteria: [{ text: "Map primary routes", done: true }, { text: "Link prototype views", done: true }, { text: "Review navigation", done: true }, { text: "Record the walkthrough", done: false }] },
   { id: "T-133", kind: "task", title: "Restyle status pills", status: "Done", proj: "look-feel", who: "avery", pri: "Low" },
-  { id: "T-135", kind: "task", title: "HQ to satellite snapshot sync", status: "To do", proj: "office-federation", who: "quinn", pri: "Medium" },
-  { id: "T-138", kind: "task", title: "Enrollment certificates for new offices", status: "In progress", proj: "office-federation", who: "rowan", pri: "Low" },
+  { id: "T-135", kind: "task", title: "HQ to satellite snapshot sync", status: "To do", proj: "office-federation", who: "quinn", pri: "Medium", etaHours: 12, criteria: [{ text: "Create a snapshot", done: false }, { text: "Transfer to the satellite", done: false }, { text: "Verify replay", done: false }] },
+  { id: "T-138", kind: "task", title: "Enrollment certificates for new offices", status: "In progress", proj: "office-federation", who: "rowan", pri: "Low", etaHours: 10 },
   { id: "T-140", kind: "task", title: "Review Sage's lock fix 492e59e4", status: "Done", proj: "agency-v1", who: "tomas", pri: "High" },
   { id: "T-142", kind: "task", title: "Write the v1.0 release notes", status: "Done", proj: "agency-v1", who: "you", pri: "Medium" },
   { id: "T-144", kind: "task", title: "Onboarding checklist for new people", status: "Done", proj: "agency-v1", who: "maya", pri: "Low" },
-  { id: "T-146", kind: "task", title: "Sign the Apple developer agreement for notarization", status: "To do", proj: "agency-v1", who: "ada", pri: "High" },
+  { id: "T-146", kind: "task", title: "Sign the Apple developer agreement for notarization", status: "To do", proj: "agency-v1", who: "ada", pri: "High", subtasks: [
+    { id: "T-150", title: "Confirm the agreement version", status: "Done", pri: "Low", criteria: [
+      { text: "Match the agreement to the developer account", done: true }
+    ] },
+    { id: "T-151", title: "Check who can sign", status: "In progress", pri: "High", etaHours: 1.5, criteria: [
+      { text: "Find the account holder", done: true }, { text: "Confirm signing authority", done: false }
+    ] },
+  ] },
   { id: "BUG-70", kind: "bug", title: "Landing page hides what needs you", status: "Fixed", proj: "agency-v1", who: "ada", pri: "Major" },
   { id: "BUG-76", kind: "bug", title: "Status pill truncates letter by letter at 390 px", status: "Fixed", proj: "look-feel", who: "avery", pri: "Minor" },
   { id: "BUG-81", kind: "bug", title: "Satellite stays Offline after the Mac wakes", status: "Fixed", proj: "office-federation", who: "sage", pri: "Critical" },
@@ -4149,25 +4526,42 @@ const PAST_SESSIONS = [
 const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
   projLayout: "list", actFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
   taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false, confirmDeny: null, briefCopied: false };
-const THEME_STORE = "agentic-org.v5.theme";
-const VALID_THEMES = new Set(["ocean", "classic", "report", "report-dark"]);
+const THEME_STORE = "agentic-org.v6.theme";
+const THEME_OPTIONS = [
+  ["ocean", "Ocean"], ["classic", "Classic"], ["report", "Report"],
+  ["report-dark", "Report Night"], ["graphite", "Graphite"]
+];
+const VALID_THEMES = new Set(THEME_OPTIONS.map(([value]) => value));
 const normalizeTheme = (t) => (t === "light" ? "report" : t);
-try {
-  const urlTheme = normalizeTheme(new URLSearchParams(location.search).get("theme"));
-  const savedTheme = normalizeTheme(localStorage.getItem(THEME_STORE));
-  if (urlTheme && VALID_THEMES.has(urlTheme)) S.theme = urlTheme;
-  else if (savedTheme && VALID_THEMES.has(savedTheme)) S.theme = savedTheme;
-} catch (e) {}
-function applyTheme() {
+const urlTheme = normalizeTheme(new URLSearchParams(location.search).get("theme"));
+if (VALID_THEMES.has(urlTheme)) {
+  S.theme = urlTheme;
+} else {
+  try {
+    const savedTheme = normalizeTheme(localStorage.getItem(THEME_STORE) ?? localStorage.getItem("agentic-org.v5.theme"));
+    if (VALID_THEMES.has(savedTheme)) S.theme = savedTheme;
+  } catch (e) {}
+}
+function applyTheme(remember = false) {
   const t = VALID_THEMES.has(normalizeTheme(S.theme)) ? normalizeTheme(S.theme) : "ocean";
   S.theme = t;
   const isLight = t === "report";
   document.documentElement.dataset.theme = t;
   document.documentElement.classList.toggle("dark", !isLight);
   document.documentElement.classList.toggle("light", isLight);
+  if (!remember) return;
   try { localStorage.setItem(THEME_STORE, t); } catch (e) {}
+  const url = new URL(location.href);
+  if (url.searchParams.has("theme")) {
+    url.searchParams.delete("theme");
+    history.replaceState(history.state, "", url);
+  }
 }
 applyTheme();
+const WORK_DIVIDERS_STORE = "agentic-org.v6.workDividers";
+S.workDividers = false;
+try { S.workDividers = localStorage.getItem(WORK_DIVIDERS_STORE) === "1"; } catch (e) {}
+document.documentElement.toggleAttribute("data-work-dividers", S.workDividers);
 const NAV_PIN_STORE = "agentic-org.v5.navPinned";
 S.navPinned = false;
 S.navHover = false;
@@ -4258,9 +4652,6 @@ const kindWord = (id) => (M[id].owner ? "Owner" : M[id].kind === "agent" ? "Agen
 const mlink = (id, cls = "alink") => !M[id] ? "Unassigned" : M[id].owner ? esc(M[id].name) : `<a class="${cls}" href="#/members/${id}">${esc(M[id].name)}</a>`;
 const plink = (p) => `<a class="alink" href="#/projects/${p}">${esc(P[p].name)}</a>`;
 const joinSep = (parts) => parts.filter(Boolean).join(SEP);
-const STATUS_TONE = { "To do": "gray", "In progress": "indigo", "Blocked": "red", "Done": "green", "New": "gray", "Triaged": "indigo", "Fixed": "green", "Closed": "outline", "Not routed": "gray", "Rowan is scoping": "gray", "Scoped": "gray", "Approved": "green", "Declined": "outline" };
-const STATUS_ICON = { "Scoped": "doc-check" };
-const statusPill = (st) => pill(st, STATUS_TONE[st] || "gray", STATUS_ICON[st] || null, true);
 const STATUSES = { task: ["To do", "In progress", "Blocked", "Done"], bug: ["New", "Triaged", "In progress", "Fixed", "Closed"], request: ["Not routed", "Rowan is scoping", "Scoped", "Approved"] };
 const ALL_STATUSES = [...new Set([...STATUSES.task, ...STATUSES.bug, ...STATUSES.request])];
 const OPEN = (w) => !["Done", "Fixed", "Closed", "Approved", "Declined"].includes(w.status);
@@ -4299,10 +4690,23 @@ function btnTabs(key, tabs, label, panel) {
 }
 const tabPanel = (key, panel) => `id="${panel}" role="tabpanel" aria-labelledby="tab-${key}-${S[key]}"`;
 function seg(key, opts, label) {
-  return `<span class="seg-label" id="sl-${key}">${esc(label)}</span><div class="seg" role="group" aria-labelledby="sl-${key}">${opts.map(([v, l, i]) => `<button type="button" data-act="set" data-k="${key}" data-v="${v}" aria-pressed="${S[key] === v}">${i ? ic(i, "ic16") : ""}${esc(l)}</button>`).join("")}</div>`;
+  return `<span class="seg-label" aria-hidden="true">${esc(label)}</span><div class="seg${key === "theme" ? " theme-options" : ""}" role="group" aria-label="${esc(label)}">${opts.map(([v, l, i]) => `<button type="button" data-act="set" data-k="${key}" data-v="${v}" aria-pressed="${S[key] === v}">${i ? ic(i, "ic16") : ""}${esc(l)}</button>`).join("")}</div>`;
 }
-function layoutToggle(key) {
-  return `<div class="seg icons" role="group" aria-label="Layout">${[["list", "List", "list"], ["board", "Board", "board"]].map(([v, l, i]) => `<button type="button" data-act="set" data-k="${key}" data-v="${v}" aria-pressed="${S[key] === v}" aria-label="${l}" title="${l}">${ic(i, "ic20")}</button>`).join("")}</div>`;
+function workDisplayMenu(layoutKey) {
+  const layout = S[layoutKey];
+  return `<div class="menu-wrap work-display">
+    <button class="btn outline" type="button" data-act="menu" data-id="work-display"
+      aria-haspopup="menu" aria-expanded="false" aria-controls="menu-work-display">${ic("adjustments", "ic16")}Display</button>
+    <div class="menu" id="menu-work-display" role="menu" aria-label="Work display" hidden>
+      <p class="menu-h" id="work-display-layout">Layout</p>
+      <div role="group" aria-labelledby="work-display-layout">
+        ${[["list", "List"], ["board", "Board"]].map(([value, label]) =>
+          `<button role="menuitemradio" tabindex="-1" aria-checked="${layout === value}" type="button" data-act="set" data-k="${layoutKey}" data-v="${value}">${ic("check", "ic20")}${label}</button>`
+        ).join("")}
+      </div>
+      ${layout === "list" ? `<hr><button role="menuitemcheckbox" tabindex="-1" aria-checked="${S.workDividers}" type="button" data-act="work-dividers">${ic("check", "ic20")}Row dividers</button>` : ""}
+    </div>
+  </div>`;
 }
 function showMenu(id, groups, align = "") {
   const cur = groups.map(([k, , opts]) => { const o = opts.find((x) => String(x[0]) === String(S[k])); return o && o[0] !== "all" ? o[1] : null; }).filter(Boolean);
@@ -4399,22 +4803,78 @@ function feed(items, opts = {}) {
 }
 
 /* ---------------------------------------------------------------- work */
-function workRow(w) {
-  const sev = w.kind === "bug" ? (["Critical", "Major"].includes(w.pri) ? `<span class="pin ${w.pri === "Critical" ? "c-red" : "c-gray"}">${ic(w.pri === "Critical" ? "warn" : "exclaim", "ic14")}${w.pri}</span>` : `<span>${w.pri}</span>`) : w.kind === "task" ? `<span>${w.pri} priority</span>` : `<span>${esc(w.pri)}</span>`;
-  return `<li>${av(w.who, 32)}<div class="grow"><p class="rt"><span class="mono">${w.id}</span><span>${esc(w.title)}</span></p>
-    <div class="meta">${plink(w.proj)}${SEP}<span>${w.who ? mlink(w.who) : "Unassigned"}</span>${SEP}${sev}</div></div>
-    ${showsNeedsYou(w) ? pill("Needs you", "amber", "bell", true) : statusPill(w.status)}</li>`;
+const WORK_STATUS = {
+  "In progress": ["active"], "Rowan is scoping": ["active"],
+  "Blocked": ["blocked", "pause"], "Declined": ["blocked", "deny"],
+  "Triaged": ["review", "doc-check"], "Scoped": ["review", "doc-check"],
+  "Done": ["done", "check-circle"], "Fixed": ["done", "check-circle"],
+  "Approved": ["done", "check-circle"], "Closed": ["", "deny"],
+};
+
+function workStatus(status, attention = false) {
+  const [tone, icon] = WORK_STATUS[status] ?? [""];
+  const label = esc(attention ? `${status} · Needs you` : status);
+  return `<span class="work-status" data-tone="${tone}"${attention ? " data-attention" : ""} role="img" aria-label="${label}" title="${label}">${icon ? ic(icon, "ic16") : '<span class="work-status-ring" aria-hidden="true"></span>'}</span>`;
+}
+
+function workPriority(priority) {
+  const label = esc(`${priority} priority`);
+  return `<span class="work-priority-mark" data-level="${esc(priority.toLowerCase())}" role="img" aria-label="${label}" title="${label}"><span></span><span></span><span></span></span>`;
+}
+
+function workCriteria(criteria) {
+  if (!criteria?.length) return "";
+  const done = criteria.filter((item) => item.done).length;
+  const label = `${done} of ${criteria.length} acceptance criteria complete`;
+  return `<span class="work-criteria${done === criteria.length ? " is-complete" : ""}" title="${label}"><span aria-hidden="true">${done}/${criteria.length}</span><span class="sr-only">${label}</span></span>`;
+}
+
+function workTitle(title, eta) {
+  return `<span><span class="work-title">${esc(title)}</span>${eta ? ` <span class="work-eta">ETA ${esc(eta)}</span>` : ""}</span>`;
+}
+
+function workSubtasks(parent) {
+  if (!parent.subtasks?.length) return "";
+  return `<ul class="work-subtasks" role="list" aria-label="Subtasks">${parent.subtasks.map((subtask) =>
+    workRow({ ...subtask, kind: "task", proj: parent.proj, who: parent.who }, true)
+  ).join("")}</ul>`;
+}
+
+function workRow(w, isSubtask = false) {
+  const sev = ["Critical", "Major"].includes(w.pri)
+    ? `<span class="pin ${w.pri === "Critical" ? "c-red" : "c-gray"}">${ic(w.pri === "Critical" ? "warn" : "exclaim", "ic14")}${esc(w.pri)}</span>`
+    : esc(w.pri);
+  const memberships = M[w.who]?.teams ?? [];
+  const team = memberships.find((id) => P[w.proj].teams.includes(id)) ?? memberships[0];
+  const task = w.kind === "task";
+  const eta = w.etaHours != null ? `${w.etaHours}h` : (task && OPEN(w) ? "TBD" : "");
+  return `<li class="${isSubtask ? "work-subtask" : "work-item"}"><div class="work-row"${team ? ` data-team="${esc(team)}"` : ""}>
+    <div class="work-summary">
+      <span class="work-ident">${task ? workPriority(w.pri) : ""}<span class="work-ref">${esc(w.id)}</span></span>
+      <span class="work-heading">
+        <span class="work-markers">${workStatus(w.status, showsNeedsYou(w))}${workCriteria(w.criteria)}</span>
+        ${workTitle(w.title, eta)}
+      </span>
+    </div>
+    <div class="work-facts">
+      ${task ? "" : `<span class="work-priority">${sev}</span>`}
+      ${plink(w.proj)}
+      <span class="work-team">${team ? esc(TEAMS[team].name) : "No team"}</span>
+      ${isSubtask ? "" : `<span class="work-owner">${av(w.who, 24)}${mlink(w.who)}</span>`}
+    </div></div>${workSubtasks(w)}</li>`;
 }
 const showsNeedsYou = (w) => needsMe(w) && w.status !== "Scoped";
 function workList(items, groupBy, emptyText = "No work here yet.") {
   if (!items.length) return `<p class="empty-row">${emptyText}</p>`;
-  if (!groupBy) return `<ul class="rows" role="list">${items.map(workRow).join("")}</ul>`;
+  const list = (rows) => `<ul class="work-list" role="list">${rows.map((w) => workRow(w)).join("")}</ul>`;
+  if (!groupBy) return `<div class="work-items">${list(items)}</div>`;
   const groups = {};
   items.forEach((w) => { const k = groupBy === "proj" ? w.proj : (w.who || "none"); (groups[k] = groups[k] || []).push(w); });
-  return Object.entries(groups).map(([k, ws]) => {
+  const sections = Object.entries(groups).map(([k, ws]) => {
     const title = groupBy === "proj" ? esc(P[k].name) : (M[k] ? esc(M[k].name) + " · " + kindWord(k) : "Unassigned");
-    return `<h3 class="grp-h">${title} <span class="muted">(${ws.length})</span></h3><ul class="rows" role="list">${ws.map(workRow).join("")}</ul>`;
-  }).join("");
+    return `<div class="work-group"><h3 class="work-group-title">${title}<span class="cnt">${ws.length}</span></h3>${list(ws)}</div>`;
+  });
+  return `<div class="work-items">${sections.join("")}</div>`;
 }
 function board(items, kind) {
   const cols = kind ? STATUSES[kind] : ALL_STATUSES.filter((st) => items.some((w) => w.status === st));
@@ -5192,6 +5652,9 @@ function pageHome() {
             <span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>New task</span></span>
           </span>
         </button>
+        ${st === "filled" && S.theme.startsWith("report") ? `<button class="btn hb-scroll-cue" type="button" aria-controls="hb-projects" id="report-scroll-more" hidden>
+          Scroll for more${ic("chev-down", "ic16")}
+        </button>` : ""}
       </div>` : ""}
     </header>
 
@@ -5207,16 +5670,18 @@ function pageHome() {
       ${renderCatchupPanel()}
     </div>`}
 
-    ${st === "error" || st === "empty" ? "" : `<section class="hb-proj-sec" aria-labelledby="hb-projs-h">
-      <div class="hb-proj-head">
-        <div class="hb-proj-head-l">
-          <h2 id="hb-projs-h"><span class="lbl-std">Projects</span><span class="lbl-rep">Project Delivery Scorecard</span></h2>
-          ${st !== "loading" ? `<span>${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}</span>` : ""}
+    ${st === "error" || st === "empty" ? "" : `<div>
+      <section class="hb-proj-sec" id="hb-projects" aria-labelledby="hb-projs-h">
+        <div class="hb-proj-head">
+          <div class="hb-proj-head-l">
+            <h2 id="hb-projs-h" tabindex="-1"><span class="lbl-std">Projects</span><span class="lbl-rep">Project Delivery Scorecard</span></h2>
+            ${st !== "loading" ? `<span>${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}</span>` : ""}
+          </div>
+          <a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>
         </div>
-        <a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>
-      </div>
-      ${st === "loading" ? skelCards(3, "Loading projects…") : `<div class="hb-bento">${projs.map(renderProjBento).join("")}</div>`}
-    </section>`}
+        ${st === "loading" ? skelCards(3, "Loading projects…") : `<div class="hb-bento">${projs.map(renderProjBento).join("")}</div>`}
+      </section>
+    </div>`}
 
     ${st === "loading" ? skel(1, "Analyzing where task time goes…") : st === "error" || st === "empty" ? "" : (() => {
       const agentH = 10.0, ciH = 1.9, queuedH = 18.0;
@@ -5335,7 +5800,7 @@ function projectBody(id, tab) {
       <section class="section"><div class="sec-h"><h2>${ic("bell", "ic20 c-amber")}Needs you for this project</h2></div>${needs.length ? `<div class="cards">${needs.map(needsCard).join("")}</div>` : `<p class="muted" style="padding-bottom:24px">Nothing needs you on this project.</p>`}</section>
     </div><aside class="compact"><div class="sec-h"><h2 style="font-size:14px;font-weight:600">Recent activity</h2></div>${feed(acts().filter((a) => a.proj === id).slice(0, 5), { noProj: true })}</aside></div>`;
   }
-  if (tab === "work") return `<div class="subbar"><span style="flex:1"></span>${layoutToggle("projLayout")}</div>` + (S.projLayout === "board" ? board(ws.filter((w) => w.kind === "task"), "task") : workList(ws));
+  if (tab === "work") return `<div class="subbar">${workDisplayMenu("projLayout")}</div>` + (S.projLayout === "board" ? board(ws.filter((w) => w.kind === "task"), "task") : workList(ws));
   if (tab === "team") return projectTeams(id) + memberRows(projMembers(id), { emptyText: "No members yet." });
   if (tab === "activity") return feed(acts().filter((a) => a.proj === id), { noProj: true });
   if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
@@ -5393,7 +5858,7 @@ function pageWork() {
   else group = "who";
   const emptyText = view === "needs-me" ? "Nothing needs you in Work." : view === "mine" ? "Nothing is assigned to you." : `No work items yet. Use New${ic("chev-down", "ic16")} to add one.`;
   return hdr("Work", `${W.filter(OPEN).length} open · ${W.filter(needsMe).length} need you`) +
-    `<div class="subbar">${showMenu("wshow", [["workView", "Show", WORK_VIEWS]], "left")}<span style="flex:1"></span>${layoutToggle("workLayout")}</div>` +
+    `<div class="subbar">${showMenu("wshow", [["workView", "Show", WORK_VIEWS]], "left")}${workDisplayMenu("workLayout")}</div>` +
     (S.workLayout === "board" ? (sel.length ? board(sel) : `<p class="empty-row">${emptyText}</p>`) : workList(sel, group, emptyText));
 }
 
@@ -5681,8 +6146,8 @@ function agentDetail(id) {
 }
 function pagePreferences() {
   return hdr("Your preferences", "") + `<section class="section" aria-labelledby="h-theme"><div class="sec-h"><h2 id="h-theme">Appearance</h2></div>
-    <div class="pref"><div><p class="lbl" id="th-l">Theme</p><p class="muted" id="th-d" style="font-size:13px">Ocean (frosted dark), Classic (v0 slate), Report (2D executive day), or Report Night (2D executive in Classic slate).</p></div>
-    ${seg("theme", [["ocean", "Ocean"], ["classic", "Classic"], ["report", "Report"], ["report-dark", "Report Night"]], "Theme")}</div></section>
+    <div class="pref theme-pref"><p class="muted" style="font-size:13px">Graphite uses charcoal surfaces and a compact desktop layout.</p>
+    ${seg("theme", THEME_OPTIONS, "Theme")}</div></section>
     <section class="section" aria-labelledby="h-keys"><div class="sec-h"><h2 id="h-keys">Keyboard</h2></div>
     <div class="pref"><div><p class="lbl" id="sk-l">Single-key shortcuts</p><p class="muted" id="sk-d" style="font-size:13px">N opens New task and / focuses Search, outside text fields.</p></div>
     <button class="switch" type="button" role="switch" aria-checked="${S.singleKey}" aria-labelledby="sk-l" aria-describedby="sk-d" data-act="single-key"></button></div></section>`;
@@ -6766,9 +7231,44 @@ let fitRaf = 0;
 window.addEventListener("resize", () => { cancelAnimationFrame(fitRaf); fitRaf = requestAnimationFrame(fitNav); });
 function renderBanner(r0) {
   const el = document.getElementById("banner-ctl"); if (!el) return;
-  const themeCtl = seg("theme", [["ocean", "Ocean"], ["classic", "Classic"], ["report", "Report"], ["report-dark", "Report Night"]], "Theme");
+  const themeCtl = seg("theme", THEME_OPTIONS, "Theme");
   const homeCtl = r0 === "home" ? seg("homeState", [["filled", "Filled"], ["empty", "Empty"], ["loading", "Loading"], ["error", "Error"]], "Home sections") : "";
   el.innerHTML = themeCtl + homeCtl;
+}
+
+let stopReportProjects;
+function mountReportProjects() {
+  stopReportProjects?.();
+  stopReportProjects = null;
+  const cue = document.getElementById("report-scroll-more");
+  if (!cue) return;
+
+  const content = document.getElementById("content");
+  const projects = document.getElementById("hb-projects");
+  const heading = document.getElementById("hb-projs-h");
+  const wrapper = projects.parentElement;
+  const projectsTop = () =>
+    wrapper.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
+  const fitProjects = () => {
+    // Check the natural layout before the cue or wrapper padding can affect the fit.
+    cue.style.position = "absolute";
+    const height = content.clientHeight;
+    const fits = projectsTop() + projects.getBoundingClientRect().height <= height;
+    cue.hidden = fits;
+    cue.style.position = "";
+    const padding = fits ? 0 : Math.max(0, Math.ceil(height - projectsTop()));
+    wrapper.style.paddingBlockStart = padding ? `${padding}px` : "";
+  };
+
+  cue.addEventListener("click", () => {
+    heading.focus({ preventScroll: true });
+    heading.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "instant" : "smooth" });
+  });
+  fitProjects();
+  const observer = new ResizeObserver(fitProjects);
+  [content, projects, ...wrapper.parentElement.querySelectorAll(".hb-hero, .hb-pillars, .hb-stage")]
+    .forEach((element) => observer.observe(element));
+  stopReportProjects = () => observer.disconnect();
 }
 
 /* ---------------------------------------------------------------- router */
@@ -6788,6 +7288,7 @@ function render(focus = true) {
   }
   stopAgentOrb();
   const r = route(), [r0, r1, r2] = r;
+  document.documentElement.toggleAttribute("data-interior-page", r0 !== "home");
   let html;
   switch (r0) {
     case "home": html = pageHome(); break;
@@ -6818,6 +7319,7 @@ function render(focus = true) {
     document.getElementById("content").scrollTop = 0;
   }
   S.lastRoute = key; S.focusAfter = null;
+  mountReportProjects();
   applyShortcuts();
 }
 
@@ -7196,10 +7698,11 @@ document.addEventListener("click", (e) => {
         S.focusAfter = sel; location.hash = "#/work?view=" + v; break;
       }
       let val = v; if (val === "true") val = true; else if (val === "false") val = false;
+      const scope = t.dataset.k === "theme" ? t.closest("#main, #banner-ctl") : document;
       S[t.dataset.k] = val;
-      if (t.dataset.k === "theme") applyTheme();
+      if (t.dataset.k === "theme") applyTheme(true);
       render(false);
-      const again = menuId ? document.querySelector(`[aria-controls="${menuId}"]`) : document.querySelector(`[data-k="${t.dataset.k}"][data-v="${v}"]`);
+      const again = menuId ? document.querySelector(`[aria-controls="${menuId}"]`) : scope?.querySelector(`[data-k="${t.dataset.k}"][data-v="${v}"]`);
       if (again) again.focus(); break;
     }
     case "run": S.openRuns[id] = !S.openRuns[id]; render(false); { const b = document.querySelector(`[data-act="run"][data-id="${id}"]`); if (b) b.focus(); } break;
@@ -7214,6 +7717,13 @@ document.addEventListener("click", (e) => {
     case "hb-ask-chip": S.askQ = ""; S.askAns = answerOrgQuestion(v); render(false); { const r = document.getElementById("hb-ai-reply"); if (r) r.scrollIntoView({ block: "nearest" }); } break;
     case "hb-ask-clear": S.askAns = null; S.askQ = ""; render(false); { const i = document.getElementById("hb-ask-input"); if (i) i.focus(); } break;
     case "nav-collapse": toggleNavPinned(); break;
+    case "work-dividers": {
+      S.workDividers = !S.workDividers;
+      document.documentElement.toggleAttribute("data-work-dividers", S.workDividers);
+      t.setAttribute("aria-checked", String(S.workDividers));
+      try { localStorage.setItem(WORK_DIVIDERS_STORE, S.workDividers ? "1" : "0"); } catch (e) {}
+      break;
+    }
     case "fav-proj": {
       const idx = S.favProjs.indexOf(id);
       if (idx >= 0) { S.favProjs.splice(idx, 1); toast(`Removed ${P[id].name} from favorites.`); }
@@ -7403,8 +7913,19 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "ArrowUp") return go(i - 1);
     if (e.key === "Home") return go(0);
     if (e.key === "End") return go(items.length - 1);
-    if (e.key === "Escape") { e.preventDefault(); const tr = document.querySelector(`[aria-controls="${openMenu.id}"]`); closeMenus(); if (tr) tr.focus(); return; }
-    if (e.key === "Tab") closeMenus();
+    const applyDividers = e.key === "Enter" && e.target.dataset.act === "work-dividers";
+    if (e.key === "Escape" || applyDividers) {
+      e.preventDefault();
+      if (applyDividers) e.target.click();
+      const trigger = document.querySelector(`[aria-controls="${openMenu.id}"]`);
+      closeMenus();
+      trigger?.focus();
+      return;
+    }
+    if (e.key === "Tab") {
+      closeMenus();
+      if (openMenu.id === "menu-work-display") document.querySelector('[aria-controls="menu-work-display"]')?.focus();
+    }
   }
   if (e.key === "Escape" && e.target.tagName === "TEXTAREA" && /^r-/.test(e.target.id || "")) {
     const c = document.querySelector(`[data-act="cancel-reply"][data-id="${CSS.escape(e.target.id.slice(2))}"]`); if (c) { e.preventDefault(); c.click(); return; }
