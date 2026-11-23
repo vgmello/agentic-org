@@ -4360,7 +4360,7 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
         <input id="cmdk-home-input" type="search" placeholder="Search, run a command, or ask Tess…" autocomplete="off" aria-label="Search, run a command, or ask Tess" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cmdk-list">
         <kbd id="cmdk-home-kbd" aria-hidden="true">⌘K</kbd>
       </label>
-      <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-label="Search workspace" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog">
+      <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-label="Search workspace" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog">
         <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
         <span class="cmdk-ph" id="cmdk-ph">Search workspace…</span>
         <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
@@ -8020,8 +8020,11 @@ function placeSearchToolbar(main, page) {
     homeToolbar.append(drawerButton, commandBar);
   }
   homeToolbar.hidden = Boolean(heading);
-  homeSearchField.hidden = page !== "home";
-  document.getElementById("cmdk-trigger").hidden = page === "home";
+  const isHome = page === "home";
+  homeSearchField.hidden = !isHome;
+  document.getElementById("cmdk-trigger").hidden = isHome;
+  document.getElementById("cmdk-ai-trigger").hidden = !isHome;
+  commandBar.querySelector(".cmdk-sep").hidden = !isHome;
   commandBar.classList.toggle("has-local-search", Boolean(search));
   localSearchHost.hidden = !search;
   const showShortcut = Boolean(search) && S.singleKey;
