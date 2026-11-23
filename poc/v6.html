@@ -5948,6 +5948,21 @@ function inboxCategories() {
 function inboxSelection(items, sel) {
   return IN.find((item) => item.id === sel) || (narrow() ? null : items[0]);
 }
+function inboxQueueRow(item, selected) {
+  const kind = KIND[item.kind];
+  const state = item.handled ? "handled" : inboxUrgent(item) ? "urgent" : "pending";
+  const stateLabel = { handled: "Handled", urgent: "Urgent", pending: kind.label }[state];
+  const stateIcon = { handled: "check-circle", urgent: "bell", pending: item.kind === "approval" ? "inbox" : kind.icon }[state];
+  return `<li><a class="triage-item" href="#/inbox/${item.id}" ${selected?.id === item.id ? 'aria-current="true"' : ""}>
+    <span class="triage-person">
+      ${av(item.from, 24)}
+      <span class="triage-sender"><strong>${esc(M[item.from].name)}</strong><span class="triage-kind">${ic(kind.icon, "ic14")}${esc(item.sub)}</span></span>
+      <span class="triage-stamp"><span class="triage-state-icon" data-state="${state}">${ic(stateIcon, "ic14")}<span class="sr-only">${esc(stateLabel)}</span></span><time>${esc(item.time)}</time></span>
+    </span>
+    <span class="triage-title">${esc(item.what)}</span>
+    <span class="triage-meta">${esc(P[item.proj].name)}${item.handled ? `<span>${esc(item.outcome)}</span>` : item.expires ? `<span class="triage-expiry">${ic("clock", "ic14")}${esc(item.expires)}</span>` : ""}</span>
+  </a></li>`;
+}
 function inboxQueue(items, selected) {
   if (!items.length) return `<div class="triage-empty">${ic("inbox", "ic20")}<h2>${S.inboxQuery.trim() ? "No matching items" : "Queue cleared for this view"}</h2><p>${S.inboxQuery.trim() ? "Try another search." : "Pick another category to see more items."}</p></div>`;
   const groups = [["Today", (i) => i.group === "Today"], ["Earlier", () => true]];
@@ -5957,12 +5972,7 @@ function inboxQueue(items, selected) {
     const group = remaining.filter(includes);
     remaining = remaining.filter((item) => !includes(item));
     if (!group.length) return "";
-    return `<section class="triage-group"><h2>${label}</h2><ul class="triage-list">${group.map((item) => `
-      <li><a class="triage-item" href="#/inbox/${item.id}" ${selected?.id === item.id ? 'aria-current="true"' : ""}>
-        <span class="triage-person">${av(item.from, 24)}<strong>${esc(M[item.from].name)}</strong><span class="triage-kind">${ic(KIND[item.kind].icon, "ic14")}${esc(item.sub)}</span><time>${esc(item.time)}</time></span>
-        <span class="triage-title">${esc(item.what)}</span>
-        <span class="triage-meta">${esc(P[item.proj].name)}${item.handled ? `<span>${esc(item.outcome)}</span>` : item.expires ? `<span class="triage-expiry">${ic("clock", "ic14")}${esc(item.expires)}</span>` : ""}</span>
-      </a></li>`).join("")}</ul></section>`;
+    return `<section class="triage-group"><h2>${label}</h2><ul class="triage-list">${group.map((item) => inboxQueueRow(item, selected)).join("")}</ul></section>`;
   }).join("");
 }
 function pageInbox(sel) {
