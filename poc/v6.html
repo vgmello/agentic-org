@@ -314,6 +314,22 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
   font-family: inherit; font-size: 0.72rem; font-weight: 600; color: #94A3B8;
   flex: none;
 }
+#home-toolbar .cmdk-shell { position: relative; }
+.cmdk-home-field { cursor: text; }
+.cmdk-home-field:focus-within { outline: 1px solid var(--gray-400); outline-offset: -1px; }
+.cmdk-home-field input {
+  flex: 1; min-width: 0; padding: 0; border: 0; background: transparent;
+  color: var(--white); font: inherit; text-overflow: ellipsis;
+}
+.cmdk-home-field input::placeholder { color: var(--gray-400); opacity: 1; }
+.cmdk-home-field input:focus-visible { outline: none; }
+.cmdk-home-field.is-offline { cursor: not-allowed; }
+#home-toolbar .cmdk-home-results {
+  position: absolute; top: calc(100% + 6px); inset-inline: 0;
+  width: auto; max-height: min(26rem, 55dvh);
+  background: var(--gray-800);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
 .cmdk-sep { width: 1px; height: 22px; background: rgba(186, 222, 255, .13); margin: 0 6px; flex: none; }
 .cmdk-ai-btn {
   height: 34px; padding: 0 14px; border-radius: 9px; flex: none;
@@ -345,8 +361,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
   position: fixed; inset: 0; z-index: 140;
   display: flex; align-items: flex-start; justify-content: center;
   padding: 9vh 16px 24px;
-  background: rgba(4, 8, 18, .60);
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  background: rgb(0 0 0 / .26);
 }
 .cmdk-backdrop[hidden] { display: none !important; }
 .cmdk-dialog {
@@ -1206,6 +1221,10 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   .topbar { height: 52px; padding: 0 16px 0 60px; }
   .cmdk-shell { width: 100%; }
   .cmdk-trigger kbd { display: none; }
+  .cmdk-home-field input { font-size: 1rem; }
+  .cmdk-home-results .cmdk-opt-txt { display: grid; gap: 2px; }
+  .cmdk-home-results .cmdk-opt-lbl { white-space: normal; overflow-wrap: anywhere; }
+  .cmdk-home-results .cmdk-opt-tag { display: none; }
   .btn.menu-btn { display: inline-flex; }
   .search { display: none; }
   body.searching .search { display: grid; grid-template-columns: 1fr auto; position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; border-radius: 0; z-index: 10; background: #091324; }
@@ -3080,7 +3099,6 @@ html[data-theme^="report"] .cmdk-ai-btn:hover { background: var(--tone-accent); 
 html[data-theme^="report"] .cmdk-ai-btn.is-offline {
   background: #EEF1F6; color: #64748B; box-shadow: none;
 }
-html[data-theme^="report"] .cmdk-backdrop { background: rgba(11, 16, 27, .36); backdrop-filter: none; -webkit-backdrop-filter: none; }
 html[data-theme^="report"] .cmdk-dialog {
   background: #FFFFFF; border-radius: 6px;
   backdrop-filter: none; -webkit-backdrop-filter: none;
@@ -3724,7 +3742,6 @@ html[data-theme="report-dark"] .cmdk-ai-btn {
 html[data-theme="report-dark"] .cmdk-ai-btn .ic { color: var(--tone-accent-ink); }
 html[data-theme="report-dark"] .cmdk-ai-btn:hover { background: var(--tone-accent); box-shadow: inset 0 0 0 1px var(--indigo-400); color: #ffffff; }
 html[data-theme="report-dark"] .cmdk-ai-btn:hover .ic { color: #ffffff; }
-html[data-theme="report-dark"] .cmdk-backdrop { background: rgba(3, 7, 18, .66); }
 html[data-theme="report-dark"] .cmdk-dialog { background: #182230; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14), 0 24px 60px -16px rgba(0, 0, 0, .58); }
 html[data-theme="report-dark"] .cmdk-tabs,
 html[data-theme="report-dark"] .cmdk-in-row { border-bottom-color: rgba(255, 255, 255, .07); }
@@ -4116,7 +4133,7 @@ html[data-theme="graphite"] {
     backdrop-filter: none;
   }
   & :is(.cmdk-dialog, .menu, .toast, .sres) { border-radius: var(--radius-lg); }
-  & :is(.overlay, .cmdk-backdrop) { background: rgb(0 0 0 / .58); backdrop-filter: none; }
+  & .overlay { background: rgb(0 0 0 / .58); backdrop-filter: none; }
   & :is(.card, .bcard, .c-entry, .k-doc, .grp-h, .chhead) { background: var(--graphite-panel); }
   & :is(.work-group-title, .grp-h) { background: #1E2021; }
   & :is(.rows > li.linked, .ibx):hover { background: var(--hover); }
@@ -4338,9 +4355,14 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
     <button class="btn ghost icon menu-btn" type="button" data-act="drawer" aria-label="Open navigation" aria-controls="sidebar"><svg class="ic ic20" aria-hidden="true"><use href="#i-menu"/></svg></button>
     <div class="cmdk-shell" id="cmdk-shell">
       <div class="cmdk-local" id="cmdk-local" hidden></div>
-      <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog">
+      <label class="cmdk-trigger cmdk-home-field" id="cmdk-home-field" hidden>
         <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
-        <span class="cmdk-ph" id="cmdk-ph">Search, run a command, or ask Tess…</span>
+        <input id="cmdk-home-input" type="search" placeholder="Search, run a command, or ask Tess…" autocomplete="off" aria-label="Search, run a command, or ask Tess" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cmdk-list">
+        <kbd id="cmdk-home-kbd" aria-hidden="true">⌘K</kbd>
+      </label>
+      <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-label="Search workspace" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog">
+        <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
+        <span class="cmdk-ph" id="cmdk-ph">Search workspace…</span>
         <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
       </button>
       <span class="cmdk-sep" aria-hidden="true"></span>
@@ -4348,6 +4370,7 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
         <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg>
         <span>Ask</span>
       </button>
+      <div class="cmdk-dialog cmdk-home-results" id="cmdk-home-results" hidden></div>
     </div>
   </header>
   <main id="main" tabindex="-1"></main>
@@ -5966,7 +5989,10 @@ function inboxDetail(it) {
         <dt>Clears</dt><dd>${esc(it.clears || k.clears)}</dd>
         <dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd>
       </dl>
-      ${it.audit?.length ? `<details class="triage-audit"><summary>${ic("chev-right", "ic16")}${ic("check-circle", "ic16")}Checks and audit trail <span>${plural(it.audit.length, "entry", "entries")}</span></summary><ul>${it.audit.map((line) => `<li>${esc(line)}</li>`).join("")}</ul></details>` : ""}
+      ${it.audit?.length ? `<section class="triage-audit" aria-labelledby="triage-audit-title">
+        <div class="triage-audit-header"><h4 id="triage-audit-title">${ic("check-circle", "ic16")}Checks and audit trail</h4><span>${plural(it.audit.length, "entry", "entries")}</span></div>
+        <ul>${it.audit.map((line) => `<li>${esc(line)}</li>`).join("")}</ul>
+      </section>` : ""}
     </section>
     <div class="triage-actions">${itemActionsV4(it, { hideDetails: true })}${it.handled
       ? `<button class="btn outline sm" type="button" data-act="inbox-reopen" data-id="${it.id}">${ic("refresh", "ic16")}Reopen item</button>`
@@ -7605,18 +7631,18 @@ function renderNav(route) {
   const cmdkShell = document.getElementById("cmdk-shell");
   const cmdkTr = document.getElementById("cmdk-trigger");
   const cmdkPh = document.getElementById("cmdk-ph");
+  homeSearchField.classList.toggle("is-offline", homeError);
+  homeSearchInput.disabled = homeError;
+  homeSearchInput.placeholder = homeError ? "HQ office offline — search & AI unavailable" : "Search, run a command, or ask Tess…";
   const localSearch = cmdkShell.classList.contains("has-local-search");
   if (cmdkShell) cmdkShell.classList.toggle("is-offline", homeError);
   if (cmdkTr) {
     cmdkTr.classList.toggle("is-offline", homeError);
     cmdkTr.disabled = homeError;
-    cmdkTr.title = homeError ? "Search & commands unavailable while HQ office is offline" : localSearch ? "Search workspace" : "Search, run a command, or ask Tess";
-    if (r0 !== "home") cmdkTr.setAttribute("aria-label", "Search workspace");
-    else cmdkTr.removeAttribute("aria-label");
+    cmdkTr.title = "Search workspace";
     cmdkTr.querySelector("use").setAttribute("href", r0 === "inbox" ? "#i-terminal" : localSearch ? "#i-arrows-updown" : "#i-search");
   }
-  if (cmdkPh) cmdkPh.textContent = homeError ? "HQ office offline — search & AI unavailable"
-    : r0 === "home" ? "Search, run a command, or ask Tess…" : localSearch ? "Workspace" : "Search workspace…";
+  if (cmdkPh) cmdkPh.textContent = localSearch ? "Workspace" : "Search workspace…";
   if (aiBtn) {
     aiBtn.classList.toggle("is-offline", homeError);
     aiBtn.disabled = homeError;
@@ -7794,6 +7820,9 @@ const [drawerButton, commandBar] = homeToolbar.children;
 const pageSearchTools = document.createElement("div");
 pageSearchTools.id = "page-search-tools";
 const localSearchHost = document.getElementById("cmdk-local");
+const homeSearchField = document.getElementById("cmdk-home-field");
+const homeSearchInput = document.getElementById("cmdk-home-input");
+const homeSearchResults = document.getElementById("cmdk-home-results");
 const PAGE_SEARCH = {
   inbox: { id: "triage-search", queryKey: "inboxQuery", label: "Search inbox", placeholder: "Search inbox…" },
   work: { id: "work-search", queryKey: "workQuery", label: "Search this work view", placeholder: "Search work…" }
@@ -7810,10 +7839,13 @@ function placeSearchToolbar(main, page) {
     homeToolbar.append(drawerButton, commandBar);
   }
   homeToolbar.hidden = Boolean(heading);
+  homeSearchField.hidden = page !== "home";
+  document.getElementById("cmdk-trigger").hidden = page === "home";
   commandBar.classList.toggle("has-local-search", Boolean(search));
   localSearchHost.hidden = !search;
+  const showShortcut = page === "inbox" && S.singleKey;
   localSearchHost.innerHTML = search
-    ? `<label>${ic("search", "ic16")}<span class="sr-only">${search.label}</span><input id="${search.id}" type="search" value="${esc(S[search.queryKey])}" placeholder="${search.placeholder}" autocomplete="off"></label>`
+    ? `<label>${ic("search", "ic16")}<span class="sr-only">${search.label}</span><input id="${search.id}" type="search" value="${esc(S[search.queryKey])}" placeholder="${search.placeholder}" autocomplete="off"${showShortcut ? ' aria-keyshortcuts="/"' : ""}>${showShortcut ? '<kbd aria-hidden="true">/</kbd>' : ""}</label>`
     : "";
 }
 const pageSearchInput = () => localSearchHost.querySelector("input");
@@ -7881,11 +7913,12 @@ function searchResults(q, max = 5) {
     ["Members", memberIds().filter((k) => has(M[k].name) || has(M[k].role)).slice(0, max).map((k) => ({ href: "#/members/" + k, label: M[k].name, sub: M[k].role + " · " + kindWord(k), av: k }))]
   ].filter((g) => g[1].length);
 }
-const CMDK = { open: false, mode: "cmd", q: "", active: 0, flat: [], aiAns: null, aiHistory: [], returnTo: null };
+const CMDK = { open: false, inline: false, mode: "cmd", q: "", active: 0, flat: [], aiAns: null, aiHistory: [], returnTo: null };
 const isMacPlatform = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || "");
 {
-  const kbd = document.getElementById("cmdk-kbd");
-  if (kbd) kbd.textContent = isMacPlatform ? "⌘K" : "Ctrl K";
+  for (const id of ["cmdk-kbd", "cmdk-home-kbd"]) {
+    document.getElementById(id).textContent = isMacPlatform ? "⌘K" : "Ctrl K";
+  }
   const skbd = document.getElementById("cmdk-switch-kbd");
   if (skbd) skbd.textContent = isMacPlatform ? "⌘/" : "Ctrl /";
 }
@@ -7929,6 +7962,7 @@ function cmdkCommands() {
 function askInCmdk(rawQ) {
   const q = String(rawQ || "").trim();
   if (!q) return;
+  if (CMDK.inline) openCmdk(q, "ai", homeSearchInput);
   CMDK.mode = "ai";
   const ans = answerOrgQuestion(q);
   if (ans) {
@@ -7942,6 +7976,10 @@ function askInCmdk(rawQ) {
   renderCmdk();
 }
 function setCmdkMode(mode) {
+  if (CMDK.inline) {
+    if (mode === "ai") openCmdk(CMDK.q, "ai", homeSearchInput);
+    return;
+  }
   CMDK.mode = mode === "ai" ? "ai" : "cmd";
   CMDK.active = 0;
   renderCmdk();
@@ -7953,7 +7991,9 @@ function openCmdk(prefill = "", mode = "cmd", trigger = document.activeElement) 
     toast("HQ office is offline — reconnect to use search and Ask Tess.", "offline");
     return;
   }
-  CMDK.returnTo = trigger;
+  if (CMDK.open) closeCmdk(false);
+  CMDK.inline = route()[0] === "home" && mode === "cmd";
+  CMDK.returnTo = CMDK.inline ? homeSearchInput : trigger;
   CMDK.open = true;
   CMDK.mode = mode === "ai" ? "ai" : "cmd";
   CMDK.q = prefill;
@@ -7961,17 +8001,31 @@ function openCmdk(prefill = "", mode = "cmd", trigger = document.activeElement) 
   if (S.homeState === "empty" && CMDK.aiAns && CMDK.aiAns._state !== "empty") { CMDK.aiAns = null; CMDK.aiHistory = []; }
   if (S.homeState !== "empty" && CMDK.aiAns && CMDK.aiAns._state === "empty") { CMDK.aiAns = null; CMDK.aiHistory = []; }
   closeMenus();
-  const root = document.getElementById("cmdk-root");
-  const inp = document.getElementById("cmdk-input");
-  const tr = document.getElementById("cmdk-trigger");
-  if (root) root.hidden = false;
-  if (tr) tr.setAttribute("aria-expanded", "true");
-  if (inp) { inp.value = prefill; inp.focus(); }
+  const list = document.getElementById("cmdk-list");
+  const input = CMDK.inline ? homeSearchInput : document.getElementById("cmdk-input");
+  if (CMDK.inline) {
+    homeSearchResults.append(list);
+    homeSearchResults.hidden = false;
+    homeSearchInput.setAttribute("aria-expanded", "true");
+  } else {
+    document.querySelector("#cmdk-dialog .cmdk-foot").before(list);
+    document.getElementById("cmdk-root").hidden = false;
+    document.getElementById("cmdk-trigger").setAttribute("aria-expanded", "true");
+  }
+  if (input.value !== prefill) input.value = prefill;
+  input.focus();
   renderCmdk();
 }
 function closeCmdk(restoreFocus = true) {
   if (!CMDK.open) return;
   CMDK.open = false;
+  if (CMDK.inline) {
+    homeSearchResults.hidden = true;
+    homeSearchInput.setAttribute("aria-expanded", "false");
+    homeSearchInput.removeAttribute("aria-activedescendant");
+    homeSearchInput.value = "";
+  }
+  CMDK.inline = false;
   CMDK.q = "";
   CMDK.flat = [];
   const root = document.getElementById("cmdk-root");
@@ -7985,7 +8039,7 @@ function closeCmdk(restoreFocus = true) {
 }
 function renderCmdk() {
   const list = document.getElementById("cmdk-list");
-  const inp = document.getElementById("cmdk-input");
+  const inp = CMDK.inline ? homeSearchInput : document.getElementById("cmdk-input");
   const tabCmd = document.getElementById("cmdk-tab-cmd");
   const tabAi = document.getElementById("cmdk-tab-ai");
   const inIco = document.getElementById("cmdk-in-ico");
@@ -7999,7 +8053,7 @@ function renderCmdk() {
   if (askGo) { askGo.hidden = !isAi; askGo.disabled = !CMDK.q.trim(); }
   const footNav = document.getElementById("cmdk-foot-nav");
   if (footNav) footNav.style.display = isAi ? "none" : "";
-  if (inp) {
+  if (inp && !CMDK.inline) {
     inp.placeholder = isAi
       ? "Ask Tess — what's blocked, release pace, budget, or idle agents…"
       : "Type a command, search anything, or ask a question…";
@@ -8052,10 +8106,10 @@ function renderCmdk() {
         if (inboxHits.length) groups.push(["Needs you", inboxHits]);
         searchResults(q, 4).forEach(([g, items]) => groups.push([g, items]));
       }
-      groups.push(["Ask Tess", [
-        { label: `Ask Tess: “${raw}”`, sub: "Get an instant answer right here from live org state", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk(raw) },
-        ...(S.homeState === "empty" ? [] : [{ label: `See all search results for “${raw}”`, sub: "Open full search page", icon: "search", href: "#/search?q=" + encodeURIComponent(raw) }])
-      ]]);
+      const ask = { label: `Ask Tess: “${raw}”`, sub: "Get an instant answer right here from live org state", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk(raw) };
+      const fullSearch = S.homeState === "empty" ? [] : [{ label: `See all search results for “${raw}”`, sub: "Open full search page", icon: "search", href: "#/search?q=" + encodeURIComponent(raw) }];
+      if (CMDK.inline && fullSearch.length) groups.push(["Search", fullSearch]);
+      groups.push(["Ask Tess", CMDK.inline ? [ask] : [ask, ...fullSearch]]);
     }
   }
   CMDK.flat = groups.flatMap((g) => g[1]);
@@ -8461,7 +8515,7 @@ document.addEventListener("click", (e) => {
     case "cmdk-ai-submit": askInCmdk(CMDK.q); break;
     case "cmdk-ai-clear": CMDK.aiAns = null; CMDK.aiHistory = []; renderCmdk(); { const i = document.getElementById("cmdk-input"); if (i) i.focus(); } break;
     case "cmdk-run": runCmdkItem(Number(v)); break;
-    case "banner-close": { const b = document.getElementById("banner"); if (b) b.remove(); const hz = document.getElementById("banner-hotzone"); if (hz) hz.remove(); const c = document.getElementById("cmdk-trigger"); if (c) c.focus(); } break;
+    case "banner-close": { const b = document.getElementById("banner"); if (b) b.remove(); const hz = document.getElementById("banner-hotzone"); if (hz) hz.remove(); const c = homeSearchField.hidden ? document.getElementById("cmdk-trigger") : homeSearchInput; c.focus(); } break;
     case "close-sheet": closeSheet(); break;
     case "drawer": document.body.classList.add("drawer"); document.querySelector("#nav a").focus(); break;
     case "drawer-close": document.body.classList.remove("drawer"); break;
@@ -8469,6 +8523,7 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("click", (e) => {
   if (e.target && e.target.id === "cmdk-root") { closeCmdk(true); return; }
+  if (CMDK.inline && !homeSearchField.contains(e.target) && !homeSearchResults.contains(e.target)) closeCmdk(false);
   if (CMDK.open && e.target.closest && e.target.closest('.cmdk-ai-card a[href^="#/"]')) { closeCmdk(false); }
 });
 document.addEventListener("input", (e) => {
@@ -8478,7 +8533,12 @@ document.addEventListener("input", (e) => {
     refreshWorkResults();
   }
   if (e.target.name === "title" && e.target.form?.dataset.form === "work-create") e.target.setCustomValidity("");
-  if (e.target.id === "cmdk-input") { CMDK.q = e.target.value; CMDK.active = 0; renderCmdk(); }
+  if (e.target === homeSearchInput && !CMDK.inline) { openCmdk(homeSearchInput.value); return; }
+  if (e.target === homeSearchInput || e.target.id === "cmdk-input") {
+    CMDK.q = e.target.value;
+    CMDK.active = 0;
+    renderCmdk();
+  }
 });
 document.addEventListener("change", (e) => {
   if (e.target.id === "activity-project") {
@@ -8492,10 +8552,13 @@ document.addEventListener("change", (e) => {
   refreshWorkResults();
 });
 document.addEventListener("mousedown", (e) => {
-  // Keep focus in the menu until the pointer selection is dispatched.
-  if (e.target.closest?.(".work-header .menu button, .triage-header .menu button")) e.preventDefault();
+  // Keep focus in the active field or menu until the pointer selection is dispatched.
+  if (e.target.closest?.(".cmdk-home-results .cmdk-opt, .work-header .menu button, .triage-header .menu button")) e.preventDefault();
 });
-document.addEventListener("focusin", (e) => { if (e.target.closest && !e.target.closest(".menu-wrap")) closeMenus(); });
+document.addEventListener("focusin", (e) => {
+  if (CMDK.inline && e.target !== homeSearchInput && !homeSearchResults.contains(e.target)) closeCmdk(false);
+  if (e.target.closest && !e.target.closest(".menu-wrap")) closeMenus();
+});
 document.addEventListener("submit", (e) => {
   if (e.target.id === "c-prompt-form" || e.target.id === "hb-ask-form") return;
   e.preventDefault();
@@ -8503,10 +8566,15 @@ document.addEventListener("submit", (e) => {
   if (e.target.dataset.form === "send") { const inp = document.getElementById("compose"); const txt = inp.value.trim(); if (!txt) return; CH[e.target.dataset.id].msgs.push({ id: "u" + Date.now(), who: "you", time: "now", text: txt }); render(false); const c = document.getElementById("compose"); if (c) c.focus(); const ms = document.querySelector(".chmain .msgs"); if (ms) ms.scrollTop = ms.scrollHeight; }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.target.closest?.(".work-task-dialog")) return;
+  if (e.isComposing || e.target.closest?.(".work-task-dialog")) return;
   if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K")) {
     e.preventDefault();
     if (CMDK.open) closeCmdk(true); else openCmdk(pageSearchInput()?.value || "");
+    return;
+  }
+  if (!CMDK.open && e.target === homeSearchInput && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    e.preventDefault();
+    openCmdk(homeSearchInput.value);
     return;
   }
   if (CMDK.open) {
@@ -8517,6 +8585,7 @@ document.addEventListener("keydown", (e) => {
     }
     if (e.key === "Escape") { e.preventDefault(); closeCmdk(true); return; }
     if (e.key === "Tab") {
+      if (CMDK.inline) { closeCmdk(false); return; }
       const dlg = document.getElementById("cmdk-dialog");
       if (dlg) {
         const focusable = [...dlg.querySelectorAll('button:not([hidden]):not([disabled]), input:not([disabled]), a[href]')];
@@ -8539,7 +8608,7 @@ document.addEventListener("keydown", (e) => {
       renderCmdk();
       return;
     }
-    if (e.key === "Enter" && e.target.id === "cmdk-input") { e.preventDefault(); runCmdkItem(CMDK.active); return; }
+    if (e.key === "Enter" && (e.target === homeSearchInput || e.target.id === "cmdk-input")) { e.preventDefault(); runCmdkItem(CMDK.active); return; }
     return;
   }
   const openMenu = e.target.closest && e.target.closest(".menu:not([hidden])");
@@ -8634,7 +8703,7 @@ document.addEventListener("keydown", (e) => {
 });
 if (window.matchMedia) { const mq = window.matchMedia("(max-width: 959px)"); const onMq = () => render(false); if (mq.addEventListener) mq.addEventListener("change", onMq); else if (mq.addListener) mq.addListener(onMq);
   const mqp = window.matchMedia("(max-width: 639px)"); if (mqp.addEventListener) mqp.addEventListener("change", applyShortcuts); else if (mqp.addListener) mqp.addListener(applyShortcuts); }
-window.addEventListener("hashchange", () => { document.querySelector(".work-task-dialog[open]")?.close(); document.body.classList.remove("drawer"); S.thread = null; S.replying = null; S.replyMode = null; S.confirmDeny = null; IN.forEach((i) => { if (i.handled) i.handledNow = false; }); render(true); });
+window.addEventListener("hashchange", () => { closeCmdk(false); document.querySelector(".work-task-dialog[open]")?.close(); document.body.classList.remove("drawer"); S.thread = null; S.replying = null; S.replyMode = null; S.confirmDeny = null; IN.forEach((i) => { if (i.handled) i.handledNow = false; }); render(true); });
 
 /* ---------------------------------------------------------------- dialogs */
 let sheetReturn = null;

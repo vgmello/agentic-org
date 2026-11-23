@@ -279,7 +279,7 @@ html[data-theme="cozy"] {
   }
 
   & :is(.triage-queue, .triage-audit, .activity-triage) { box-shadow: none; }
-  & :is(.overlay, .cmdk-backdrop, .scrim), & .work-task-dialog::backdrop { background: rgb(16 13 11 / .62); }
+  & :is(.overlay, .scrim), & .work-task-dialog::backdrop { background: rgb(16 13 11 / .62); }
   & .work-status[data-tone="active"] { color: var(--tone-accent); }
   & .work-status[data-tone="review"] { color: var(--tone-warn); }
 
