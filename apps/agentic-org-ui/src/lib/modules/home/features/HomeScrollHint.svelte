@@ -173,7 +173,7 @@
 			0 6px 18px -6px color-mix(in srgb, var(--shade) 55%, transparent);
 	}
 
-	@media (width < 640px), (pointer: coarse) {
+	@media (max-width: 720px), (pointer: coarse) {
 		.home-scroll-hint-btn {
 			min-height: 44px;
 		}

@@ -47,6 +47,7 @@ html[data-ui-theme='ocean'] {
 	--line-subtle: rgba(186, 222, 255, 0.08);
 	--line: rgba(186, 222, 255, 0.12);
 	--line-strong: rgba(186, 222, 255, 0.22);
+	--field-border: #73859c;
 	--fg: #f8fafc;
 	--fg-bright: #f1f5f9;
 	--fg-body: #d6e1ee;

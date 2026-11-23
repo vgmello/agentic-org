@@ -607,7 +607,7 @@
 	.exec-theme-pill.is-on {
 		background: var(--exec-accent-soft);
 		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+		box-shadow: inset 0 0 0 1.5px var(--tone-accent-ink);
 	}
 	@media (max-width: 720px), (pointer: coarse) {
 		.exec-theme-pill {

@@ -164,7 +164,7 @@
 			});
 		}
 
-		if (!q) return list.slice(0, 14);
+		if (!q) return list.slice(0, 15);
 		return list
 			.filter((e) => e.label.toLowerCase().includes(q) || e.sub.toLowerCase().includes(q))
 			.slice(0, 12);
@@ -678,7 +678,7 @@
 	.exec-ai-btn:focus-visible :global(.exec-ai-ico) {
 		color: var(--exec-ai-ico-hover);
 	}
-	@media (width < 640px), (pointer: coarse) {
+	@media (max-width: 720px), (pointer: coarse) {
 		.exec-topbar {
 			height: auto;
 			min-height: 60px;

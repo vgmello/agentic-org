@@ -113,7 +113,7 @@
 	--accent-foreground: var(--fg);
 	--destructive: var(--danger);
 	--border: color-mix(in srgb, var(--tint) 10%, transparent);
-	--input: color-mix(in srgb, var(--tint) 10%, transparent);
+	--input: var(--field-border);
 	--radius: 0.5rem;
 	--sidebar: color-mix(in srgb, var(--shade) 10%, transparent);
 	--sidebar-foreground: var(--fg);

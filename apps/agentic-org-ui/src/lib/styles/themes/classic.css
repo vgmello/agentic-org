@@ -43,6 +43,7 @@ html[data-ui-theme='classic'] {
 	--surface: #1e2939;
 	--surface-sunken: #161f2d;
 	--surface-chip: #243144;
+	--field-border: #7e889b;
 	--fg: #ffffff;
 	--fg-bright: #ffffff;
 	--fg-body: #d1d5dc;

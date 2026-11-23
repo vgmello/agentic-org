@@ -197,6 +197,23 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await cozyContrastToggle.click();
 	await expect(cozyContrastToggle).toHaveAttribute('aria-checked', 'true');
 	await expect(page.locator('html')).toHaveAttribute('data-cozy-contrast', 'high');
+	const hcContrast = await cozyContrastToggle.evaluate((el) => {
+		const card = el.closest('.exec-card') ?? document.body;
+		const fgStr = getComputedStyle(card).color;
+		const bgStr = getComputedStyle(card).backgroundColor;
+		const parseRgb = (s: string) => (s.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+		const lum = ([r, g, b]: number[]) => {
+			const c = [r, g, b].map((v) => {
+				const n = v / 255;
+				return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+			});
+			return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+		};
+		const l1 = lum(parseRgb(fgStr));
+		const l2 = lum(parseRgb(bgStr));
+		return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+	});
+	expect(hcContrast).toBeGreaterThanOrEqual(7);
 	const afterInk = await page
 		.locator('html')
 		.evaluate((el) => getComputedStyle(el).getPropertyValue('--exec-ink').trim());
@@ -250,6 +267,21 @@ test('Home scroll cue: keyboard-reachable before below-fold content, moves focus
 	const hint = page.getByTestId('home-scroll-hint');
 	await expect(hint).toBeVisible();
 	await expect(hint).toContainText('Scroll for more');
+
+	// Verify 640-720px fine-pointer targets meet 44px minimum (sidebar theme pill, Ask pill, Home cue)
+	await page.setViewportSize({ width: 680, height: 700 });
+	await expect(hint).toBeVisible();
+	const pillBox = await page
+		.getByRole('group', { name: 'Theme' })
+		.getByRole('button', { name: 'Graphite' })
+		.boundingBox();
+	const askBox = await page.getByRole('button', { name: 'Ask', exact: true }).boundingBox();
+	const hintBox = await hint.boundingBox();
+	expect(pillBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+	expect(askBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+	expect(hintBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+	await page.setViewportSize({ width: 1440, height: 700 });
+	await expect(hint).toBeVisible();
 
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/poc-home-scroll-cue-graphite.png` });

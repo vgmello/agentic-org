@@ -119,7 +119,7 @@ html[data-ui-theme='graphite'] {
 	--muted-foreground: #a2a5ad;
 	--accent: var(--graphite-active);
 	--accent-foreground: #f1f1f3;
-	--destructive: #9f434d;
+	--destructive: var(--tone-bad-ink);
 	--border: #282a2e;
 	--input: #737782;
 
