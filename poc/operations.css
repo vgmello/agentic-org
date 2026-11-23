@@ -20,7 +20,7 @@
 #page-search-tools .cmdk-trigger { gap: 6px; padding-inline: 8px; }
 #page-search-tools .cmdk-ai-btn { height: 100%; min-height: 0; padding-inline: 9px; }
 #page-search-tools .has-local-search .cmdk-trigger { flex: 0 0 auto; font-size: .75rem; }
-#page-search-tools .has-local-search :is(.cmdk-trigger > .ic, kbd) { display: none; }
+#page-search-tools .has-local-search :is(.cmdk-trigger > .ic, .cmdk-trigger kbd) { display: none; }
 .cmdk-local {
   flex: 1 1 auto;
   min-width: 0;
@@ -111,10 +111,17 @@
   background: var(--hover);
 }
 .triage-headline .cmdk-local label { padding-inline: 10px; }
-.triage-headline .cmdk-local:focus-within {
-  border-color: transparent;
-  outline: 2px solid var(--tone-accent-ink);
-  outline-offset: -2px;
+.triage-headline .cmdk-local:focus-within { border-color: var(--gray-400); outline: none; }
+.triage-headline .cmdk-local kbd {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--line2);
+  border-radius: 4px;
+  color: var(--gray-400);
+  font-size: .75rem;
+}
+@media (max-width: 720px), (pointer: coarse) {
+  .triage-headline .cmdk-local kbd { display: none; }
 }
 .triage-headline .cmdk-local input:focus { outline: none; }
 .triage-headline #page-search-tools .cmdk-trigger {
@@ -351,11 +358,10 @@
 .triage-copy .ic { align-self: center; }
 .triage-copy:hover { background: var(--hover); color: var(--white); }
 .triage-audit { border: 1px solid var(--line2); border-radius: 8px; background: var(--hover); }
-.triage-audit summary { display: flex; align-items: center; gap: 6px; padding: 9px 12px; cursor: pointer; font-size: .875rem; font-weight: 600; }
-.triage-audit summary::-webkit-details-marker { display: none; }
-.triage-audit summary .ic:nth-child(2) { color: var(--tone-ok-ink); }
-.triage-audit[open] summary .ic:first-child { transform: rotate(90deg); }
-.triage-audit summary span { margin-inline-start: auto; color: var(--gray-300); font-size: .8125rem; font-weight: 400; }
+.triage-audit-header { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 9px 12px; }
+.triage-audit-header h4 { display: flex; align-items: center; gap: 6px; font-size: .875rem; font-weight: 600; }
+.triage-audit-header .ic { flex: none; color: var(--tone-ok-ink); }
+.triage-audit-header > span { margin-inline-start: auto; color: var(--gray-300); font-size: .8125rem; }
 .triage-audit ul { padding: 0 14px 10px 35px; font-size: .875rem; }
 .triage-audit li { padding: 4px 0; border-top: 1px solid var(--line); }
 .triage-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 16px; border-top: 1px solid var(--line); }
@@ -379,7 +385,6 @@
     .triage-document > :is(.triage-sender, h2, .triage-actions) { grid-column: 1 / -1; }
     .triage-context { gap: 12px; padding-inline-start: 20px; border-inline-start: 1px solid var(--line); }
     .triage-context .triage-fields { grid-template-columns: max-content minmax(0, 1fr); gap: 8px 12px; }
-    .triage-audit summary { flex-wrap: wrap; }
   }
 }
 @media (max-width: 959px) {
@@ -392,7 +397,7 @@
 }
 @media (max-width: 720px), (pointer: coarse) {
   .triage-copy { min-height: var(--control-height); min-width: var(--control-height); }
-  .triage-audit summary, .triage-toolbar .menu button { min-height: var(--control-height); }
+  .triage-toolbar .menu button { min-height: var(--control-height); }
 }
 @container inbox-header (min-width: 52rem) {
   .triage-headline {
