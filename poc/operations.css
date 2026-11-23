@@ -93,8 +93,9 @@
 }
 .triage-headline .ph-t { align-items: center; }
 .triage-headline #page-search-tools .cmdk-shell {
-  width: min(28rem, 54vw);
-  height: var(--control-height);
+  align-items: center;
+  width: min(35rem, 60vw);
+  height: max(2.5rem, var(--control-height));
   gap: 8px;
   padding: 0;
   border: 0;
@@ -160,20 +161,19 @@
   max-width: 100%;
   margin-inline-start: auto;
 }
-.triage-controls .menu-wrap, .triage-controls .textbtn { min-width: 0; max-width: 100%; }
-.triage-controls .textbtn, .triage-controls .triage-urgent {
-  border: 1px solid transparent;
-  padding-inline: 9px;
-  font-size: .8125rem;
+.triage-controls .btn.icon { position: relative; color: var(--gray-300); }
+.triage-controls .btn.icon[aria-expanded="true"] { background: var(--hover); color: var(--white); }
+.triage-controls .btn.icon[data-active] { color: var(--tone-accent-ink); }
+.triage-controls .btn.icon[data-active]::after {
+  content: "";
+  position: absolute;
+  inset: 5px 5px auto auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
 }
-.triage-controls .textbtn .cur { overflow: hidden; text-overflow: ellipsis; }
-.triage-controls .triage-urgent { color: var(--gray-300); }
-.triage-controls .triage-urgent:hover { background: var(--hover); color: var(--white); }
-.triage-controls .triage-urgent[aria-pressed="true"] {
-  background: var(--tone-warn-soft);
-  border-color: var(--tone-warn-ring);
-  color: var(--tone-warn-ink);
-}
+.triage-controls .menu { max-height: min(60dvh, 28rem); overflow-y: auto; }
 .triage-waiting {
   display: inline-flex;
   align-items: center;
@@ -383,7 +383,7 @@
   .triage-toolbar .menu-wrap { position: static; }
   .triage-toolbar .menu { inset-inline: var(--gutter) auto; max-width: calc(100% - 2 * var(--gutter)); }
   .triage-toolbar .menu button { white-space: normal; }
-  .triage-controls { margin-inline-start: 0; }
+  .triage-toolbar .triage-controls .menu { inset-inline: auto var(--gutter); }
 }
 @container inbox-header (max-width: 38rem) {
   .triage-headline { gap: 4px 8px; }
@@ -393,6 +393,8 @@
   }
   .triage-headline #page-search-tools .cmdk-shell { width: auto; }
   .triage-headline #page-search-tools :is(.cmdk-trigger, .cmdk-ai-btn) { padding-inline: 8px; }
+  .triage-toolbar #triage-categories { flex: 1 1 0; min-width: 0; }
+  .triage-controls { align-self: flex-start; }
   .triage-tab { gap: 4px; padding-inline: 8px; }
 }
 

@@ -4277,6 +4277,7 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 15V3" /> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /> <path d="m7 10 5 5 5-5" /></symbol>
   <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" /> <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" /></symbol>
   <symbol id="i-ellipsis" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1" /> <circle cx="19" cy="12" r="1" /> <circle cx="5" cy="12" r="1" /></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M3 6h18M7 12h10m-7 6h4" /></symbol>
   <symbol id="i-adjustments" viewBox="0 0 24 24"><path d="M10 5H3" /> <path d="M12 19H3" /> <path d="M14 3v4" /> <path d="M16 17v4" /> <path d="M21 12h-9" /> <path d="M21 19h-5" /> <path d="M21 5h-7" /> <path d="M8 10v4" /> <path d="M8 12H3" /></symbol>
   <symbol id="i-arrows-updown" viewBox="0 0 24 24"><path d="m21 16-4 4-4-4" /> <path d="M17 20V4" /> <path d="m3 8 4-4 4 4" /> <path d="M7 4v16" /></symbol>
   <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z" /></symbol>
@@ -4627,7 +4628,7 @@ const PAST_SESSIONS = [
 ];
 
 /* ---------------------------------------------------------------- state */
-const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, replying: null, replyMode: null, workLayout: "list", focusAfter: null,
+const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
   projLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
   taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false, confirmDeny: null, briefCopied: false };
 const THEME_STORE = "agentic-org.v6.theme";
@@ -4819,10 +4820,15 @@ function workDisplayMenu(layoutKey) {
     </div>
   </div>`;
 }
-function showMenu(id, groups, align = "") {
+function showMenu(id, groups, { align = "", icon, label, active } = {}) {
   const cur = groups.map(([k, , opts]) => { const o = opts.find((x) => String(x[0]) === String(S[k])); return o && o[0] !== "all" ? o[1] : null; }).filter(Boolean);
-  return `<div class="menu-wrap"><button class="btn textbtn" type="button" data-act="menu" data-id="${id}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${id}">Show <span class="cur">${esc(cur.length ? cur.join(", ") : "all")}</span>${ic("chev-down", "ic16 muted")}</button>
-    <div class="menu ${align}" id="menu-${id}" role="menu" hidden>${groups.map(([k, title, opts], gi) => `${gi ? "<hr>" : ""}<p class="menu-h" id="mh-${id}-${gi}">${esc(title)}</p><div role="group" aria-labelledby="mh-${id}-${gi}">${opts.map(([v, l, n]) => { const on = String(S[k]) === String(v); return `<button role="menuitemradio" aria-checked="${on}" type="button" data-act="set" data-k="${k}" data-v="${v}">${on ? ic("check", "ic20") : '<span class="spacer20" aria-hidden="true"></span>'}<span style="flex:1">${esc(l)}</span>${n != null ? `<span class="muted tnum">${n}</span>` : ""}</button>`; }).join("")}</div>`).join("")}</div></div>`;
+  const triggerAttrs = icon
+    ? `class="btn ghost icon" aria-label="${esc(label)}" title="${esc(label)}"${active ? " data-active" : ""}`
+    : 'class="btn textbtn"';
+  const triggerContent = icon ? ic(icon, "ic20")
+    : `Show <span class="cur">${esc(cur.length ? cur.join(", ") : "all")}</span>${ic("chev-down", "ic16 muted")}`;
+  return `<div class="menu-wrap"><button ${triggerAttrs} type="button" data-act="menu" data-id="${id}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${id}">${triggerContent}</button>
+    <div class="menu ${align}" id="menu-${id}" role="menu"${label ? ` aria-label="${esc(label)}"` : ""} hidden>${groups.map(([k, title, opts], gi) => `${gi ? "<hr>" : ""}<p class="menu-h" id="mh-${id}-${gi}">${esc(title)}</p><div role="group" aria-labelledby="mh-${id}-${gi}">${opts.map(([v, l, n]) => { const on = String(S[k]) === String(v); return `<button role="menuitemradio" aria-checked="${on}" type="button" data-act="set" data-k="${k}" data-v="${v}">${on ? ic("check", "ic20") : '<span class="spacer20" aria-hidden="true"></span>'}<span style="flex:1">${esc(l)}</span>${n != null ? `<span class="muted tnum">${n}</span>` : ""}</button>`; }).join("")}</div>`).join("")}</div></div>`;
 }
 const empty = (icon, title, text, cls = "", action = "") => `<div class="empty ${cls}">${ic(icon, "ic48")}<h3>${esc(title)}</h3><p>${esc(text)}</p>${action ? `<div style="margin-top:24px">${action}</div>` : ""}</div>`;
 const skel = (n, label, avatar = true) => `<div class="skel" aria-busy="true"><span class="sr-only">${esc(label)}</span>${Array.from({ length: n }, (_, i) => `<div class="skel-row" aria-hidden="true">${avatar ? '<span class="skel-c"></span>' : ""}<span style="flex:1;display:flex;flex-direction:column;gap:8px"><span class="skel-b" style="width:${60 - i * 8}%"></span><span class="skel-b" style="width:${35 + i * 5}%;height:10px"></span></span></div>`).join("")}</div>`;
@@ -5859,6 +5865,7 @@ const INBOX_MORE = ["suggestion", "handled"];
 const inboxUrgent = (item) => Boolean(item.expires || item.assign);
 function inboxItems(kind = S.inboxKind) {
   const query = S.inboxQuery.trim().toLowerCase();
+  const priorityFirst = S.inboxOrder === "priority";
   return IN.filter((item) => {
     if (kind === "handled" ? !item.handled : item.handled || (kind !== "all" && item.kind !== kind)) return false;
     if (S.inboxProj !== "all" && item.proj !== S.inboxProj) return false;
@@ -5866,7 +5873,8 @@ function inboxItems(kind = S.inboxKind) {
     if (S.inboxUrgent && !inboxUrgent(item)) return false;
     return !query || [item.what, item.why, item.rec, item.sub, item.task, M[item.from].name, P[item.proj].name, CH[P[item.proj].channel].name]
       .some((value) => value && value.toLowerCase().includes(query));
-  }).sort((a, b) => Number(inboxUrgent(b)) - Number(inboxUrgent(a)) || Number(b.group === "Today") - Number(a.group === "Today"));
+  }).sort((a, b) => (priorityFirst ? Number(inboxUrgent(b)) - Number(inboxUrgent(a)) : 0)
+    || Number(b.group === "Today") - Number(a.group === "Today"));
 }
 function inboxTabLabel(key) {
   return key === "all" ? "All" : key === "handled" ? "Handled" : KIND[key].plural;
@@ -5874,11 +5882,11 @@ function inboxTabLabel(key) {
 function inboxCategories() {
   const moreActive = INBOX_MORE.includes(S.inboxKind);
   return `<div class="triage-tabs" role="group" aria-label="Inbox categories">${INBOX_TABS.map((key) => `
-    <button class="triage-tab" type="button" data-act="inbox-filter" data-k="inboxKind" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}
+    <button class="triage-tab" type="button" data-act="inbox-category" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}
     <div class="menu-wrap"><button class="triage-tab" type="button" data-act="menu" data-id="inbox-kinds"
       aria-haspopup="menu" aria-expanded="false" aria-controls="menu-inbox-kinds"${moreActive ? ' data-current-kind' : ""}>${moreActive ? inboxTabLabel(S.inboxKind) : "More"}${moreActive ? `<span>${inboxItems().length}</span>` : ""}${ic("chev-down", "ic14")}</button>
       <div class="menu" id="menu-inbox-kinds" role="menu" aria-label="More inbox categories" hidden>${INBOX_MORE.map((key) => `
-        <button type="button" role="menuitemradio" aria-checked="${S.inboxKind === key}" data-act="inbox-filter" data-k="inboxKind" data-v="${key}">${inboxTabLabel(key)}<span class="triage-menu-count">${inboxItems(key).length}</span></button>`).join("")}</div></div>
+        <button type="button" role="menuitemradio" aria-checked="${S.inboxKind === key}" data-act="inbox-category" data-v="${key}">${inboxTabLabel(key)}<span class="triage-menu-count">${inboxItems(key).length}</span></button>`).join("")}</div></div>
   </div>`;
 }
 function inboxSelection(items, sel) {
@@ -5886,7 +5894,8 @@ function inboxSelection(items, sel) {
 }
 function inboxQueue(items, selected) {
   if (!items.length) return `<div class="triage-empty">${ic("inbox", "ic20")}<h2>${S.inboxQuery.trim() ? "No matching items" : "Queue cleared for this view"}</h2><p>${S.inboxQuery.trim() ? "Try another search." : "Pick another category to see more items."}</p></div>`;
-  const groups = [["Urgent", (i) => !i.handled && inboxUrgent(i)], ["Today", (i) => i.group === "Today"], ["Earlier", () => true]];
+  const groups = [["Today", (i) => i.group === "Today"], ["Earlier", () => true]];
+  if (S.inboxOrder === "priority") groups.unshift(["Urgent", (i) => !i.handled && inboxUrgent(i)]);
   let remaining = items.slice();
   return groups.map(([label, includes]) => {
     const group = remaining.filter(includes);
@@ -5902,21 +5911,27 @@ function inboxQueue(items, selected) {
 }
 function pageInbox(sel) {
   const items = inboxItems(), item = inboxSelection(items, sel);
-  const scope = showMenu("show", [
+  const inboxFiltered = S.inboxUrgent || S.inboxProj !== "all" || S.inboxTeam !== "all";
+  const filter = showMenu("inbox-filter", [
+    ["inboxUrgent", "Urgency", [[false, "All items"], [true, "Urgent only"]]],
     ["inboxProj", "Project", [["all", "All projects"], ...Object.keys(P).filter((p) => !P[p].archived).map((p) => [p, P[p].name])]],
-    ["inboxTeam", "Team", [["all", "All teams"], ...Object.keys(TEAMS).map((t) => [t, TEAMS[t].name])]]
-  ]);
+    ["inboxTeam", "Team", [["all", "All teams"], ...Object.keys(TEAMS).map((t) => [t, TEAMS[t].name])]],
+  ], { icon: "filter", label: "Filter inbox", active: inboxFiltered });
+  const byDate = S.inboxOrder === "date";
+  const display = showMenu("inbox-display", [
+    ["inboxOrder", "Grouping", [["priority", "Priority first"], ["date", "By date"]]],
+  ], { icon: "adjustments", label: "Inbox display", active: byDate });
   return `<section class="triage-workspace${sel && item ? " triage-has-detail" : ""}" aria-label="Inbox workspace">
     <header class="triage-header">
       <div class="ph triage-headline"><div class="ph-t"><h1 tabindex="-1">Inbox</h1><span class="cnt triage-waiting" role="status"><i aria-hidden="true"></i>${unhandled().length} waiting on you</span></div>
       </div>
       <div class="triage-toolbar">
         <div id="triage-categories">${inboxCategories()}</div>
-        <div class="triage-controls" role="group" aria-label="Inbox filters">${scope}<button class="btn sm triage-urgent" type="button" data-act="inbox-filter" data-k="inboxUrgent" data-v="${!S.inboxUrgent}" aria-pressed="${S.inboxUrgent}">${ic("clock", "ic16")}Urgent only</button></div>
+        <div class="triage-controls" role="group" aria-label="Inbox view controls">${filter}${display}</div>
       </div>
     </header>
     <div class="triage-split">
-      <section class="triage-queue" aria-label="Inbox queue"><div class="triage-queue-summary"><span>${S.inboxKind === "handled" ? "Handled items" : "Priority first"}</span><span id="triage-visible" role="status">${plural(items.length, "item in view", "items in view")}</span></div>
+      <section class="triage-queue" aria-label="Inbox queue"><div class="triage-queue-summary"><span>${S.inboxKind === "handled" ? "Handled items" : byDate ? "By date" : "Priority first"}</span><span id="triage-visible" role="status">${plural(items.length, "item in view", "items in view")}</span></div>
         <div id="triage-list">${inboxQueue(items, item)}</div>
       </section>
       <section class="triage-reading" id="triage-reading" aria-label="Item details">${item ? inboxDetail(item) : inboxEmptyDetail()}</section>
@@ -6103,7 +6118,7 @@ function pageWork() {
       <p class="cnt">${W.filter(OPEN).length} open · ${W.filter(needsMe).length} need you</p>
     </div>
     <div class="ph-actions">
-      ${showMenu("wshow", [["workView", "Show", WORK_VIEWS]], "left")}
+      ${showMenu("wshow", [["workView", "Show", WORK_VIEWS]], { align: "left" })}
       <select class="field work-status-filter" id="work-status-filter" aria-label="Filter by status">
         <option value="all">All statuses</option>${statusOptions(ALL_STATUSES, S.workStatus)}
       </select>
@@ -8256,14 +8271,11 @@ document.addEventListener("click", (e) => {
       panel?.scrollIntoView({ block: "nearest" });
       break;
     }
-    case "inbox-filter": {
-      const key = t.dataset.k;
-      S[key] = key === "inboxUrgent" ? v === "true" : v;
+    case "inbox-category": {
+      S.inboxKind = v;
       resetInboxSelection();
       render(false);
-      const button = key === "inboxUrgent"
-        ? document.querySelector('[data-k="inboxUrgent"]')
-        : document.querySelector(`.triage-tabs [data-v="${v}"]`) || document.querySelector('[aria-controls="menu-inbox-kinds"]');
+      const button = document.querySelector(`.triage-tabs [data-v="${v}"]`) || document.querySelector('[aria-controls="menu-inbox-kinds"]');
       button?.focus();
       break;
     }
@@ -8291,7 +8303,7 @@ document.addEventListener("click", (e) => {
       const scope = t.dataset.k === "theme" ? t.closest("#main, #banner-ctl") : document;
       S[t.dataset.k] = val;
       if (t.dataset.k === "theme") applyTheme(true);
-      if (t.dataset.k === "inboxProj" || t.dataset.k === "inboxTeam") resetInboxSelection();
+      if (menuId === "menu-inbox-filter") resetInboxSelection();
       render(false);
       const again = menuId ? document.querySelector(`[aria-controls="${menuId}"]`) : scope?.querySelector(`[data-k="${t.dataset.k}"][data-v="${v}"]`);
       if (again) again.focus(); break;
@@ -8546,7 +8558,7 @@ document.addEventListener("keydown", (e) => {
     }
     if (e.key === "Tab") {
       closeMenus();
-      if (openMenu.id === "menu-work-display") document.querySelector('[aria-controls="menu-work-display"]')?.focus();
+      if (openMenu.closest(".work-display, .triage-controls")) document.querySelector(`[aria-controls="${openMenu.id}"]`)?.focus();
     }
   }
   if (e.key === "Escape" && e.target.tagName === "TEXTAREA" && /^r-/.test(e.target.id || "")) {
