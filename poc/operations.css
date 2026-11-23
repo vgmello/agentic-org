@@ -360,6 +360,7 @@
 .triage-queue {
   --triage-queue-gutter: max(16px, calc(var(--gutter) - 8px));
   --triage-row-inset: 8px;
+  --triage-row-gap: 4px;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -384,14 +385,17 @@
   font-size: .75rem;
   font-weight: 600;
 }
-.triage-list > li {
-  position: relative;
-  padding: 2px var(--triage-row-inset);
+.triage-list {
+  display: grid;
+  gap: var(--triage-row-gap);
+  padding: var(--triage-row-gap) var(--triage-row-inset);
 }
+.triage-list > li { position: relative; }
 html[data-inbox-dividers] .triage-list > li:not(:last-child)::after {
   position: absolute;
-  inset: auto var(--triage-row-inset) 0;
+  inset: auto 0 calc(var(--triage-row-gap) / -2);
   border-block-end: 1px solid var(--line);
+  pointer-events: none;
   content: "";
 }
 html[data-inbox-dividers] .triage-list > li:not(:last-child):is(:hover, :focus-within)::after {
@@ -403,8 +407,15 @@ html[data-inbox-dividers] .triage-list > li:not(:last-child):is(:hover, :focus-w
   padding: 12px calc(var(--triage-queue-gutter) - var(--triage-row-inset));
   border-radius: var(--radius-md);
 }
-.triage-item:is(:hover, :focus-visible) { background-color: var(--hover); outline-offset: -2px; }
-.triage-item[aria-current="true"] { background-color: var(--tone-accent-soft); }
+.triage-item:is(:hover, :focus-visible) {
+  background-color: var(--triage-row-hover, var(--hover));
+  outline-offset: -2px;
+}
+.triage-item[aria-current="true"] { background-color: var(--triage-row-selected, var(--tone-accent-soft)); }
+html[data-theme^="report"] .triage-queue {
+  --triage-row-hover: color-mix(in srgb, var(--gray-400) 12%, var(--hover));
+  --triage-row-selected: color-mix(in srgb, var(--tone-accent-ink) 18%, var(--hover));
+}
 @media (forced-colors: active) {
   .triage-item[aria-current="true"], .work-layout-toggle .queue-tab[aria-pressed="true"] {
     outline: 1px solid Highlight;
