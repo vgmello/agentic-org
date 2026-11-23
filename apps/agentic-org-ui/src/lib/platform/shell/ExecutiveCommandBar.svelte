@@ -182,7 +182,9 @@
 			const dest =
 				item.kind === 'request'
 					? `/work?request=${encodeURIComponent(item.id)}`
-					: `/work/${encodeURIComponent(item.short_id)}`;
+					: item.project_id
+						? `/projects/${encodeURIComponent(item.project_id)}/work`
+						: '/work';
 			list.push({
 				id: `work-${item.id}`,
 				group: 'Work',
@@ -194,24 +196,33 @@
 		}
 
 		if (!q) return list.slice(0, 15);
-		const matched = list
-			.filter(
-				(e) =>
-					e.label.toLowerCase().includes(q) ||
-					e.sub.toLowerCase().includes(q) ||
-					e.group.toLowerCase().includes(q) ||
-					(e.keywords ? e.keywords.toLowerCase().includes(q) : false)
-			)
-			.slice(0, 11);
+		const allMatched = list.filter(
+			(e) =>
+				e.label.toLowerCase().includes(q) ||
+				e.sub.toLowerCase().includes(q) ||
+				e.group.toLowerCase().includes(q) ||
+				(e.keywords ? e.keywords.toLowerCase().includes(q) : false)
+		);
+		const shown = !open && allMatched.length > 11 ? allMatched.slice(0, 11) : [...allMatched];
 
-		matched.push({
-			id: 'search-all-fallback',
-			group: 'Search',
-			label: `Search all for '${trimmed}'`,
-			sub: 'Open full organization search',
-			href: `/search?q=${encodeURIComponent(trimmed)}`
+		if (!open && allMatched.length > 11) {
+			shown.push({
+				id: 'show-all-matches',
+				group: 'Search',
+				label: `Show all ${allMatched.length} matches`,
+				sub: 'Open full searchable results list',
+				action: () => openModalWithQuery('cmd', trimmed)
+			});
+		}
+
+		shown.push({
+			id: 'ask-org-ai-fallback',
+			group: 'Org AI',
+			label: `Ask Org AI about '${trimmed}'`,
+			sub: 'Get an executive summary for this query',
+			action: () => askQuestion(trimmed)
 		});
-		return matched;
+		return shown;
 	});
 
 	const safeActiveIdx = $derived(entries.length > 0 ? Math.min(activeIdx, entries.length - 1) : 0);
@@ -262,6 +273,15 @@
 		activeIdx = 0;
 	}
 
+	function openModalWithQuery(nextMode: 'cmd' | 'ai', nextQuery: string) {
+		skipRestoreFocus = false;
+		query = nextQuery;
+		mode = nextMode;
+		open = true;
+		activeIdx = 0;
+		void tick().then(() => inputEl?.focus());
+	}
+
 	function closeModal(restoreFocus = true) {
 		skipRestoreFocus = !restoreFocus;
 		open = false;
@@ -288,7 +308,8 @@
 			offices,
 			ownerId,
 			domain: { inboxItems },
-			decisionId: opts?.decisionId
+			decisionId: opts?.decisionId,
+			decision: opts?.decision
 		});
 		aiHistory = [
 			ans,
@@ -404,11 +425,19 @@
 		}
 		if (event.key === 'ArrowDown') {
 			event.preventDefault();
-			if (isHome && !open && !inlineOpen) inlineOpen = true;
+			if (isHome && !open && !inlineOpen) {
+				inlineOpen = true;
+				activeIdx = 0;
+				return;
+			}
 			activeIdx = entries.length > 0 ? (safeActiveIdx + 1) % entries.length : 0;
 		} else if (event.key === 'ArrowUp') {
 			event.preventDefault();
-			if (isHome && !open && !inlineOpen) inlineOpen = true;
+			if (isHome && !open && !inlineOpen) {
+				inlineOpen = true;
+				activeIdx = entries.length > 0 ? entries.length - 1 : 0;
+				return;
+			}
 			activeIdx = entries.length > 0 ? (safeActiveIdx - 1 + entries.length) % entries.length : 0;
 		} else if (event.key === 'Enter') {
 			const canRun = (open && mode === 'cmd') || (isHome && !open && inlineOpen);
@@ -647,7 +676,14 @@
 					<span>Ask Org AI</span>
 				</button>
 			</div>
-			<Dialog.Close class={cn(kbdClass, 'px-2 py-1 text-[11px]')}>ESC</Dialog.Close>
+			<Dialog.Close
+				class={cn(
+					kbdClass,
+					'exec-cmdk-close inline-flex min-h-9 min-w-9 items-center justify-center px-2.5 text-[11px]'
+				)}
+			>
+				ESC
+			</Dialog.Close>
 		</div>
 
 		<div
@@ -986,9 +1022,13 @@
 		.exec-cmdk-trigger,
 		.exec-ai-btn,
 		.exec-cmdk-home-opt,
-		.exec-cmdk-opt {
+		.exec-cmdk-opt,
+		:global(.exec-cmdk-close) {
 			height: auto;
 			min-height: 44px;
+		}
+		:global(.exec-cmdk-close) {
+			min-width: 44px;
 		}
 	}
 	@media (height <= 320px) {

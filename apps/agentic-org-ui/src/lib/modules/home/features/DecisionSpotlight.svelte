@@ -108,7 +108,6 @@
 
 	const safeIdx = $derived(spotlight.length > 0 ? Math.min(spotIdx, spotlight.length - 1) : 0);
 	const visibleDots = $derived(spotlight.slice(0, 6));
-	const activeDotIdx = $derived(safeIdx < visibleDots.length ? safeIdx : 0);
 	const currentDecision = $derived(spotlight[safeIdx]);
 	const nextDecision = $derived(
 		spotlight.length > 1 ? spotlight[(safeIdx + 1) % spotlight.length] : undefined
@@ -121,18 +120,6 @@
 		spotIdx = index;
 		decliningId = undefined;
 		declineReason = '';
-	}
-
-	function handleDotKeydown(event: KeyboardEvent, index: number) {
-		const count = visibleDots.length;
-		if (count <= 1) return;
-		const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
-		if (!step && event.key !== 'Home' && event.key !== 'End') return;
-		event.preventDefault();
-		const nextIdx =
-			event.key === 'Home' ? 0 : event.key === 'End' ? count - 1 : (index + step + count) % count;
-		selectDecision(nextIdx);
-		void tick().then(() => document.getElementById(`exec-spot-dot-${nextIdx}`)?.focus());
 	}
 
 	function armDeny(id: string) {
@@ -163,7 +150,18 @@
 
 	function askAboutDecision(decision: SpotlightDecision) {
 		shellAi?.ask(`Explain the risk, impact, and recommendation for: ${decision.title}`, {
-			decisionId: decision.id
+			decisionId: decision.id,
+			decision: {
+				id: decision.id,
+				title: decision.title,
+				recommendation: decision.recommendation,
+				risk: decision.risk,
+				impact: decision.impact,
+				backgroundContext: decision.backgroundContext,
+				detailHref: decision.detailHref,
+				projectId: decision.projectId,
+				projectName: decision.projectName
+			}
 		});
 	}
 
@@ -229,20 +227,10 @@
 				<Clock class="size-3.5" aria-hidden="true" />
 				<span>{currentDecision.badgeText}</span>
 			</span>
-			<div class="flex items-center gap-2.5">
-				<div class="flex items-center gap-1" role="tablist" aria-label="Priority queue">
+			<div class="flex flex-wrap items-center gap-2.5">
+				<div class="queue-dots flex items-center gap-1.5" aria-hidden="true">
 					{#each visibleDots as d, i (d.id)}
-						<button
-							type="button"
-							role="tab"
-							id="exec-spot-dot-{i}"
-							aria-selected={i === safeIdx}
-							aria-label="Decision {i + 1}: {d.title}"
-							tabindex={i === activeDotIdx ? 0 : -1}
-							onclick={() => selectDecision(i)}
-							onkeydown={(e) => handleDotKeydown(e, i)}
-							class={['queue-dot', i === safeIdx && 'is-cur', d.urgent && 'is-urgent']}
-						></button>
+						<span class={['queue-dot', i === safeIdx && 'is-cur', d.urgent && 'is-urgent']}></span>
 					{/each}
 				</div>
 				<span class="text-xs font-semibold text-[var(--exec-muted)] tabular-nums">
@@ -638,39 +626,24 @@
 		box-shadow: inset 0 0 0 1px var(--exec-warn-ring);
 	}
 	.queue-dot {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 24px;
-		min-height: 36px;
-		padding: 0;
-		border-radius: 999px;
-		background: transparent;
-		transition: min-width 0.2s ease;
-	}
-	.queue-dot::after {
-		content: '';
-		display: block;
+		display: inline-block;
 		width: 8px;
 		height: 8px;
 		border-radius: 999px;
-		background: var(--exec-border-hi);
+		background: var(--field-border);
 		transition:
 			width 0.2s ease,
 			background-color 0.16s ease;
 	}
-	.queue-dot.is-urgent::after {
-		background: var(--tone-warn);
+	.queue-dot.is-urgent {
+		background: var(--tone-warn-ink);
 	}
 	.queue-dot.is-cur {
-		min-width: 32px;
-	}
-	.queue-dot.is-cur::after {
 		width: 22px;
-		background: var(--tone-accent);
+		background: var(--tone-accent-ink);
 	}
-	.queue-dot.is-cur.is-urgent::after {
-		background: var(--tone-warn);
+	.queue-dot.is-cur.is-urgent {
+		background: var(--tone-warn-ink);
 	}
 	.stepper-arrow {
 		background: var(--exec-well);
@@ -893,8 +866,7 @@
 		.deny-input {
 			min-height: 44px;
 		}
-		.stepper-arrow,
-		.queue-dot {
+		.stepper-arrow {
 			min-width: 44px;
 			min-height: 44px;
 		}

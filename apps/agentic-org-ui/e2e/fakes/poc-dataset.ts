@@ -334,6 +334,14 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 	};
 }
 
+function isoDaysFromToday(offsetDays: number): string {
+	const d = new Date(Date.now() + offsetDays * 86_400_000);
+	const yyyy = d.getUTCFullYear();
+	const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+	const dd = String(d.getUTCDate()).padStart(2, '0');
+	return `${yyyy}-${mm}-${dd}`;
+}
+
 export function pocHomeProjects(): HomeProject[] {
 	return [
 		{
@@ -343,7 +351,7 @@ export function pocHomeProjects(): HomeProject[] {
 			total: 5,
 			open: 4,
 			blocked: 1,
-			due: '2026-11-26',
+			due: isoDaysFromToday(3),
 			lead: { id: 'rowan', name: 'Rowan' },
 			members: 4
 		},
@@ -354,7 +362,7 @@ export function pocHomeProjects(): HomeProject[] {
 			total: 12,
 			open: 4,
 			blocked: 1,
-			due: '2026-12-05',
+			due: isoDaysFromToday(12),
 			lead: { id: 'ada', name: 'Ada' },
 			members: 8
 		},
@@ -365,7 +373,7 @@ export function pocHomeProjects(): HomeProject[] {
 			total: 6,
 			open: 3,
 			blocked: 0,
-			due: '2026-11-28',
+			due: isoDaysFromToday(5),
 			lead: { id: 'eden', name: 'Eden Lin' },
 			members: 4
 		}

@@ -280,8 +280,17 @@ html[data-ui-theme='graphite'] .exec-well {
 	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
 }
 
-html[data-ui-theme='graphite'] .exec-cta {
+html[data-ui-theme='graphite'] .exec-cta,
+html[data-ui-theme='graphite'] .exec-cta-glass {
 	border-radius: 5px;
+	border: 1px solid #858891;
+}
+
+html[data-ui-theme='graphite'] .exec-cta:hover,
+html[data-ui-theme='graphite'] .exec-cta:focus-visible,
+html[data-ui-theme='graphite'] .exec-cta-glass:hover,
+html[data-ui-theme='graphite'] .exec-cta-glass:focus-visible {
+	border-color: #a8a8a8;
 }
 
 html[data-ui-theme='graphite'] .exec-cta .exec-cta-sheen {

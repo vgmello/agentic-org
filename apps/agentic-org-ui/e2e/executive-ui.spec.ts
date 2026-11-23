@@ -63,7 +63,7 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await expect(homeCombo).toHaveAttribute('aria-controls', 'exec-cmdk-home-listbox');
 	await expect(inlineListbox.getByRole('option', { name: /^Theme: Classic/ })).toBeVisible();
 	await expect(
-		inlineListbox.getByRole('option', { name: /Search all for 'Theme: Classic'/ })
+		inlineListbox.getByRole('option', { name: /Ask Org AI about 'Theme: Classic'/ })
 	).toBeVisible();
 
 	// First Escape closes popup without clearing query; pressing Enter while closed does NOT execute hidden option
@@ -74,15 +74,21 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await homeCombo.press('Enter');
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ocean');
 
-	// Re-open with ArrowDown and close cleanly with Tab
+	// Re-open with ArrowDown selects index 0 (not index 1), and Tab closes cleanly
 	await homeCombo.press('ArrowDown');
 	await expect(inlineListbox).toBeVisible();
+	await expect(homeCombo).toHaveAttribute('aria-activedescendant', 'exec-cmdk-home-opt-0');
 	await homeCombo.press('Tab');
 	await expect(inlineListbox).toBeHidden();
 
-	// Re-focus, select Theme: Classic via Enter
-	await homeCombo.click();
+	// Escape -> ArrowDown -> Enter selects index 0 (Theme: Classic), not index 1
+	await homeCombo.focus();
 	await expect(inlineListbox).toBeVisible();
+	await homeCombo.press('Escape');
+	await expect(inlineListbox).toBeHidden();
+	await homeCombo.press('ArrowDown');
+	await expect(inlineListbox).toBeVisible();
+	await expect(homeCombo).toHaveAttribute('aria-activedescendant', 'exec-cmdk-home-opt-0');
 	await homeCombo.press('Enter');
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'classic');
 	await expect(page).toHaveURL(/\/home$/);
@@ -201,6 +207,7 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	});
 	expect(oceanInteriorCanvasBg).not.toBe(oceanHomeCanvasBg);
 	expect(oceanInteriorCanvasBg).toContain('linear-gradient');
+	expect(oceanInteriorCanvasBg).not.toContain('radial-gradient');
 	await expect(page.getByRole('heading', { level: 1, name: 'Inbox' })).toBeVisible();
 	await expect(page.getByRole('main').getByText('waiting on you')).toBeVisible();
 	if (captureDir) {
@@ -460,16 +467,22 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	).toBeVisible();
 	await expect(page.locator('.hor-item').first()).toBeVisible();
 
-	// Home inline search finds real POC work & inbox items (not truncated before filtering)
+	// Home inline search finds real POC work items and navigates to a real working project route (never NotBuilt)
 	const pocCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Org AI' });
 	await pocCombo.click();
 	await pocCombo.fill('Custody lock');
-	await expect(
-		page.locator('#exec-cmdk-home-listbox').getByRole('option', { name: /Custody lock fix/ })
-	).toBeVisible();
+	const custodyOption = page
+		.locator('#exec-cmdk-home-listbox')
+		.getByRole('option', { name: /^Custody lock fix/ });
+	await expect(custodyOption).toBeVisible();
 	await pocCombo.press('Escape');
-	await pocCombo.press('Escape');
-	await expect(pocCombo).toHaveValue('');
+	await pocCombo.press('ArrowDown');
+	await expect(pocCombo).toHaveAttribute('aria-activedescendant', 'exec-cmdk-home-opt-0');
+	await pocCombo.press('Enter');
+	await expect(page).toHaveURL(/\/projects\/office-federation\/work$/);
+	await expect(page.getByText('This area is not built yet')).toHaveCount(0);
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Home' }).click();
+	await expect(page).toHaveURL(/\/home$/);
 
 	// Decision Spotlight "Ask about this" opens Org AI with that decision's answer
 	await page.getByRole('button', { name: 'Ask about this' }).click();
@@ -488,6 +501,8 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	await newTaskDialog.getByRole('button', { name: 'Cancel' }).click();
 	await expect(newTaskDialog).toBeHidden();
 	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(page.getByRole('heading', { name: 'Work' })).toBeVisible();
 	await expect(page.getByRole('dialog', { name: 'New task' })).toHaveCount(0);
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Home' }).click();
 	await expect(page).toHaveURL(/\/home$/);

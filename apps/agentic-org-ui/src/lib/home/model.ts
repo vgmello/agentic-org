@@ -882,13 +882,30 @@ export function deriveProjectCards(
 			statusPillClass = 't-amber';
 		}
 
+		const nowDate = new Date(nowMs);
+		const todayUtc = Date.UTC(
+			nowDate.getUTCFullYear(),
+			nowDate.getUTCMonth(),
+			nowDate.getUTCDate(),
+			12
+		);
+		const dueDt = homeProj?.due ? parseIsoDateUtc(homeProj.due) : null;
+		const remainingCount = Math.max(0, totalCount - doneCount);
+		const isOverdue = Boolean(
+			dueDt && dueDt.getTime() < todayUtc && (totalCount === 0 || doneCount < totalCount)
+		);
+
 		const workHref = `/projects/${projectId}/work`;
 		let blockerText = '';
 		let blockerTone: ProjectBentoCard['blockerTone'] = 'ok';
 		let actionLabel = 'Open work';
 		let actionHref = workHref;
 		let spotDecisionId: string | undefined;
-		const clearNote = 'All checks passing · on schedule';
+		const clearNote = isOverdue
+			? remainingCount > 0
+				? `Past due date · ${remainingCount} open`
+				: 'Past due date · review remaining work'
+			: 'All checks passing · on schedule';
 
 		if (projProblems.length > 0) {
 			blockerText = projProblems[0].title;
@@ -942,20 +959,13 @@ export function deriveProjectCards(
 			actionHref = `/projects/${projectId}/team`;
 		}
 
-		const isClear = blockerText === '';
-		if (isClear) {
+		const isClear = blockerText === '' && !isOverdue;
+		if (blockerText === '') {
 			blockerText = clearNote;
+			if (isOverdue) {
+				blockerTone = 'bad';
+			}
 		}
-
-		const nowDate = new Date(nowMs);
-		const todayUtc = Date.UTC(
-			nowDate.getUTCFullYear(),
-			nowDate.getUTCMonth(),
-			nowDate.getUTCDate(),
-			12
-		);
-		const dueDt = homeProj?.due ? parseIsoDateUtc(homeProj.due) : null;
-		const isOverdue = Boolean(dueDt && dueDt.getTime() < todayUtc && pct < 100);
 
 		const paceLabel = isOverdue
 			? 'Overdue'
@@ -1611,6 +1621,18 @@ export function deriveExecutiveBrief(
 	};
 }
 
+export interface DecisionAiContext {
+	id: string;
+	title: string;
+	recommendation: string;
+	risk: { label: string; sub: string };
+	impact: { label: string; sub: string };
+	backgroundContext: string;
+	detailHref: string;
+	projectId?: string;
+	projectName: string;
+}
+
 export function answerExecutiveQuestion(
 	rawQuery: string,
 	{
@@ -1619,7 +1641,8 @@ export function answerExecutiveQuestion(
 		offices,
 		ownerId,
 		domain,
-		decisionId
+		decisionId,
+		decision
 	}: {
 		snapshot: OrgSnapshot;
 		items: readonly WorkItemSummary[];
@@ -1627,6 +1650,7 @@ export function answerExecutiveQuestion(
 		ownerId: string;
 		domain?: HomeDomainData;
 		decisionId?: string;
+		decision?: DecisionAiContext;
 	}
 ): OrgAiAnswer {
 	const query = rawQuery.trim();
@@ -1643,11 +1667,12 @@ export function answerExecutiveQuestion(
 	const time = deriveTaskTimeBreakdown(items, ownerId, kpis.offlineOffices, domain);
 
 	const explainMatch = query.match(/^explain the risk, impact, and recommendation for:\s*(.+)$/i);
-	const decisionMatch = decisionId
-		? spotlight.find((d) => d.id === decisionId)
-		: explainMatch
+	const decisionMatch =
+		(decisionId ? spotlight.find((d) => d.id === decisionId) : undefined) ??
+		decision ??
+		(explainMatch
 			? spotlight.find((d) => d.title.toLowerCase() === explainMatch[1].trim().toLowerCase())
-			: undefined;
+			: undefined);
 	if (decisionMatch) {
 		return {
 			query,

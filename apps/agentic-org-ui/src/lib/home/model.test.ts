@@ -519,6 +519,9 @@ describe('executive home view model', () => {
 		const atlas = cards.find((c) => c.id === 'atlas');
 		expect(atlas?.paceLabel).toBe('Overdue');
 		expect(atlas?.paceTone).toBe('bad');
+		expect(atlas?.isClear).toBe(false);
+		expect(atlas?.blockerText).toBe('Past due date · 4 open');
+		expect(atlas?.blockerText).not.toContain('on schedule');
 
 		const kpisWithBudget = deriveKpiMetrics(snap, [], offices, 'you', {
 			orgCost: sampleOrgCost,
@@ -528,5 +531,86 @@ describe('executive home view model', () => {
 
 		const kpisNoBudget = deriveKpiMetrics(snap, [], offices, 'you');
 		expect(kpisNoBudget.budgetRemainingPct).toBeNull();
+	});
+
+	it('marks 199/200 and 198/200 past-due projects as Overdue without claiming on schedule', () => {
+		const snap = sampleOrg('hq');
+		const nowMs = Date.parse('2026-11-25T12:00:00Z');
+		const cards = deriveProjectCards(
+			snap,
+			[],
+			{
+				homeProjects: [
+					{
+						id: 'atlas',
+						name: 'Atlas',
+						done: 199,
+						total: 200,
+						open: 1,
+						blocked: 0,
+						due: '2026-11-24',
+						lead: { id: 'ada', name: 'Ada' },
+						members: 3
+					},
+					{
+						id: 'beacon',
+						name: 'Beacon',
+						done: 198,
+						total: 200,
+						open: 2,
+						blocked: 0,
+						due: '2026-11-24',
+						lead: { id: 'sam', name: 'Sam' },
+						members: 2
+					}
+				]
+			},
+			nowMs
+		);
+
+		const atlas = cards.find((c) => c.id === 'atlas');
+		expect(atlas?.pct).toBe(100);
+		expect(atlas?.paceLabel).toBe('Overdue');
+		expect(atlas?.paceTone).toBe('bad');
+		expect(atlas?.isClear).toBe(false);
+		expect(atlas?.clearNote).toBe('Past due date · 1 open');
+		expect(atlas?.blockerText).toBe('Past due date · 1 open');
+
+		const beacon = cards.find((c) => c.id === 'beacon');
+		expect(beacon?.paceLabel).toBe('Overdue');
+		expect(beacon?.paceTone).toBe('bad');
+		expect(beacon?.isClear).toBe(false);
+		expect(beacon?.clearNote).toBe('Past due date · 2 open');
+		expect(beacon?.blockerText).toBe('Past due date · 2 open');
+	});
+
+	it('answers with explicit decision context even when shell inboxItems has not hydrated yet', () => {
+		const snap = sampleOrg('hq');
+		const ans = answerExecutiveQuestion(
+			'Explain the risk, impact, and recommendation for: Approve production failover',
+			{
+				snapshot: snap,
+				items: [],
+				offices,
+				ownerId: 'you',
+				domain: { inboxItems: [] },
+				decisionId: 'in-unhydrated',
+				decision: {
+					id: 'in-unhydrated',
+					title: 'Approve production failover',
+					recommendation: 'Ada recommends: approve failover to secondary cluster.',
+					risk: { label: 'Moderate risk', sub: '2-minute write pause' },
+					impact: { label: 'High impact', sub: 'Restores EU availability' },
+					backgroundContext: 'Primary node disk latency crossed threshold.',
+					detailHref: '/inbox?item=in-unhydrated',
+					projectId: 'atlas',
+					projectName: 'Atlas'
+				}
+			}
+		);
+		expect(ans.headline).toContain('Approve production failover');
+		expect(ans.headline).not.toContain('All clear');
+		expect(ans.bullets[0].text).toContain('Ada recommends: approve failover to secondary cluster.');
+		expect(ans.bullets[0].href).toBe('/inbox?item=in-unhydrated');
 	});
 });
