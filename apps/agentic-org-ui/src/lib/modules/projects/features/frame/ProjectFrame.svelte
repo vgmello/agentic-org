@@ -24,6 +24,7 @@
 		doneText,
 		progressPercent,
 		projectBarTone,
+		projectHealthLabel,
 		projectHref,
 		projectRef,
 		projectTabs,
@@ -107,6 +108,14 @@
 		accent: 'var(--tone-accent-bar)',
 		archived: 'var(--quiet)'
 	};
+
+	function healthPillClass(tone: ProjectBarTone): string {
+		if (tone === 'bad') return 't-red';
+		if (tone === 'warn') return 't-amber';
+		if (tone === 'ok') return 't-green';
+		if (tone === 'accent') return 'proj-pill-accent';
+		return 'bg-surface-raised text-fg-secondary ring-1 ring-line ring-inset';
+	}
 </script>
 
 <svelte:head><title>{title}</title></svelte:head>
@@ -145,17 +154,19 @@
 				>
 					<h2
 						id="project-heading"
-						class="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere] focus:outline-none"
+						class="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere] focus:outline-none"
 					>
 						{p.name}
 						<span
 							class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs/5 font-normal text-fg-muted ring-1 ring-line ring-inset"
 							>{projectRef(p)}</span
 						>
-						{#if p.archived}<span
-								class="inline-flex shrink-0 items-center rounded-full bg-surface-raised px-2 py-0.5 text-xs/5 font-medium whitespace-nowrap text-fg-secondary ring-1 ring-line ring-inset"
-								>Archived</span
-							>{/if}
+						<span
+							class={[
+								'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs/5 font-semibold whitespace-nowrap',
+								healthPillClass(tone)
+							]}>{projectHealthLabel(tone)}</span
+						>
 					</h2>
 					<ul role="list" class="mt-2 {factsLine} text-sm/6 text-fg-muted">
 						<li class={fact} data-testid="owner-team">
@@ -189,7 +200,8 @@
 							></span>
 						</div>
 						{#if totalTasks > 0}
-							<span class="shrink-0 text-xs/5 font-medium text-fg-muted tabular-nums">{pct}%</span>
+							<span class="shrink-0 text-xs/5 font-semibold text-fg-muted tabular-nums">{pct}%</span
+							>
 						{/if}
 					</div>
 				</header>
@@ -224,3 +236,14 @@
 		{/snippet}
 	</Loaded>
 {/if}
+
+<style>
+	.proj-pill-accent {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+	:global(html[data-ui-theme^='report']) .project-masthead {
+		border-bottom: 1.5px solid var(--report-masthead-rule);
+	}
+</style>

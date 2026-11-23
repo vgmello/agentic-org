@@ -22,6 +22,7 @@
 	import { sessionFor } from '$lib/org/session';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { membersApi } from '../../api';
+	import { rowPresence } from '../../present';
 	import DirectoryRow from './DirectoryRow.svelte';
 	import {
 		DIRECTORY_FILTERS,
@@ -90,7 +91,22 @@
 	/** The row tinted for two seconds after it appeared. */
 	let justAdded = $state<string | undefined>();
 	const view = $derived(directoryView(members.data ?? [], filter));
+	const workforce = $derived.by(() => {
+		const currentAll = (members.data ?? []).filter((r) => r.status !== 'inactive');
+		let active = 0;
+		let attention = 0;
+		let idle = 0;
+		for (const m of currentAll) {
+			const p = rowPresence(m)?.id;
+			if (p === 'working' || p === 'available' || p === 'with_you') active++;
+			else if (p === 'needs_you' || p === 'waiting_answer') attention++;
+			else if (p === 'paused' || p === 'offline') idle++;
+			else if (m.kind === 'agent' && m.office === null) attention++;
+		}
+		return { active, attention, idle };
+	});
 	const hireHref = resolve('/teams/hire' as '/');
+	const actionBtn = `min-h-9 ${mobileButton} [@media(pointer:coarse)]:min-h-11`;
 
 	// When the list itself is at least 56rem wide the facts line up in columns: avatar · member · home team · working on
 	// · presence. It is a container query in rem, so a narrow window or 200% text keeps the stacked rows. Rows are
@@ -153,7 +169,7 @@
 	{#if snapshot}<Button
 			variant={primary ? 'default' : 'outline'}
 			data-add-person
-			class={mobileButton}
+			class={actionBtn}
 			onclick={() => (adding = true)}
 		>
 			<MiniIcon name="plus" class="-ml-0.5 size-5" /> Add a person
@@ -161,20 +177,22 @@
 {/snippet}
 
 {#snippet hireAgent()}
-	<Button variant="outline" class={mobileButton} href={hireHref}>Hire an agent</Button>
+	<Button variant="outline" class={actionBtn} href={hireHref}>Hire an agent</Button>
 {/snippet}
 
-<PageHeader
-	title="Members"
-	count={members.data ? view.counts.all : undefined}
-	countLabel="members"
-	description="Everyone in {organizationName}: people and agents. Agents can reach every person added here. Adding a person gives no sign-in and no authority; a person gets an account only when invited to sign in."
->
-	{#snippet actions()}
-		{@render hireAgent()}
-		{@render addPerson(true)}
-	{/snippet}
-</PageHeader>
+<div class="members-masthead">
+	<PageHeader
+		title="Members"
+		count={members.data ? view.counts.all : undefined}
+		countLabel="members"
+		description="Everyone in {organizationName}: people and agents. Agents can reach every person added here. Adding a person gives no sign-in and no authority; a person gets an account only when invited to sign in."
+	>
+		{#snippet actions()}
+			{@render hireAgent()}
+			{@render addPerson(true)}
+		{/snippet}
+	</PageHeader>
+</div>
 
 <Loaded
 	resource={members}
@@ -189,13 +207,60 @@
 	emptyDescription="Everyone in {organizationName} is listed here, people and agents. Its owner and the HR lead join when it's created; if no one shows, HQ hasn't sent the members yet."
 >
 	{#snippet emptyAction()}{@render addPerson(false)}{/snippet}
+
+	{#if view.counts.all > 0}
+		<section
+			aria-label="Workforce summary"
+			class="members-kpi-strip grid grid-cols-1 gap-3 px-4 pt-5 min-[640px]:grid-cols-2 min-[640px]:px-6 min-[1024px]:grid-cols-4 min-[1024px]:px-8"
+		>
+			<div class="members-kpi-tile flex flex-col gap-1">
+				<span class="members-kpi-label">Workforce</span>
+				<p class="members-kpi-num">{view.counts.all}</p>
+				<p class="text-xs/5 text-fg-muted tabular-nums">
+					{view.counts.people}
+					{view.counts.people === 1 ? 'person' : 'people'} · {view.counts.agents}
+					{view.counts.agents === 1 ? 'agent' : 'agents'}
+				</p>
+			</div>
+			<div class="members-kpi-tile flex flex-col gap-1">
+				<span class="members-kpi-label inline-flex items-center gap-1.5">
+					<span class="m-dot dot-ok" aria-hidden="true"></span>Active now
+				</span>
+				<p class="members-kpi-num">{workforce.active}</p>
+				<p class="text-xs/5 text-fg-muted">Working or available</p>
+			</div>
+			<div class="members-kpi-tile flex flex-col gap-1">
+				<div class="flex items-center justify-between gap-2">
+					<span class="members-kpi-label inline-flex items-center gap-1.5">
+						<span class="m-dot dot-warn" aria-hidden="true"></span>Needs attention
+					</span>
+					{#if workforce.attention > 0}
+						<span
+							class="t-amber inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold"
+							>Review</span
+						>
+					{/if}
+				</div>
+				<p class="members-kpi-num">{workforce.attention}</p>
+				<p class="text-xs/5 text-fg-muted">Waiting or unplaced</p>
+			</div>
+			<div class="members-kpi-tile flex flex-col gap-1">
+				<span class="members-kpi-label inline-flex items-center gap-1.5">
+					<span class="m-dot dot-muted" aria-hidden="true"></span>Idle or paused
+				</span>
+				<p class="members-kpi-num">{workforce.idle}</p>
+				<p class="text-xs/5 text-fg-muted">Asleep or paused</p>
+			</div>
+		</section>
+	{/if}
+
 	<div class="px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
 		<fieldset class="exec-well inline-flex flex-wrap items-center gap-1 p-1">
 			<legend class="sr-only">Show members</legend>
 			{#each DIRECTORY_FILTERS as f (f.id)}
 				<label
 					class={[
-						'dir-filter inline-flex min-h-9 cursor-pointer items-center gap-x-1.5 rounded-lg px-3 text-sm/6 font-semibold transition-colors has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-focus max-[639px]:min-h-11',
+						'dir-filter inline-flex min-h-9 cursor-pointer items-center gap-x-1.5 rounded-lg px-3 text-sm/6 font-semibold transition-colors has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-focus max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11',
 						filter === f.id ? 'is-on' : 'text-fg-muted hover:text-fg'
 					]}
 				>
@@ -241,60 +306,65 @@
 			{/if}
 		</div>
 	{:else}
-		<div class="@container border-t border-line-subtle" data-testid="members-list">
-			<div class={GRID}>
-				<div
-					aria-hidden="true"
-					class="hidden border-b border-line px-4 py-3 text-xs/5 font-semibold text-fg-muted min-[640px]:px-6 min-[1024px]:px-8 {SUBGRID}"
-				>
-					<span class="col-span-2">Member</span><span>Home team</span><span>Working on</span><span
-						>Presence</span
+		<div class="px-4 pb-5 min-[640px]:px-6 min-[1024px]:px-8">
+			<div class="exec-card @container overflow-hidden" data-testid="members-list">
+				<div class={GRID}>
+					<div
+						aria-hidden="true"
+						class="hidden border-b border-line px-4 py-3 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase min-[640px]:px-6 {SUBGRID}"
 					>
+						<span class="col-span-2">Member</span><span>Home team</span><span>Working on</span><span
+							>Presence</span
+						>
+					</div>
+					<ul role="list" class="divide-y divide-line-subtle {SUBGRID}" aria-label="Members">
+						{#each view.current as member (member.id)}
+							<DirectoryRow {member} highlight={justAdded === member.id} />
+						{/each}
+					</ul>
 				</div>
-				<ul
-					role="list"
-					class="divide-y divide-line-subtle border-b border-line-subtle {SUBGRID}"
-					aria-label="Members"
-				>
-					{#each view.current as member (member.id)}
-						<DirectoryRow {member} highlight={justAdded === member.id} />
-					{/each}
-				</ul>
 			</div>
 		</div>
 	{/if}
 
 	{#if view.former.length > 0}
-		<details class="group border-b border-line-subtle" data-testid="former-members">
-			<summary
-				class="flex min-h-6 cursor-pointer list-none items-center gap-x-1 px-4 py-4 text-sm/6 font-semibold text-fg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 min-[640px]:px-6 min-[1024px]:px-8 [&::-webkit-details-marker]:hidden"
-			>
-				<svg
-					viewBox="0 0 20 20"
-					fill="currentColor"
-					aria-hidden="true"
-					class="size-5 shrink-0 text-fg-muted transition-transform group-open:rotate-90 motion-reduce:transition-none"
-					><path
-						fill-rule="evenodd"
-						d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z"
-						clip-rule="evenodd"
-					/></svg
+		<div class="px-4 pb-6 min-[640px]:px-6 min-[1024px]:px-8">
+			<details class="exec-card group overflow-hidden" data-testid="former-members">
+				<summary
+					class="flex min-h-9 cursor-pointer list-none items-center gap-x-1 px-4 py-3.5 text-sm/6 font-semibold text-fg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 min-[640px]:px-6 [@media(pointer:coarse)]:min-h-11 [&::-webkit-details-marker]:hidden"
 				>
-				Former members <span class="ml-1 font-normal text-fg-muted">{view.former.length}</span>
-			</summary>
-			<p class="-mt-2 px-4 pb-3 text-xs/5 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">
-				Their profiles, handles and history stay.
-			</p>
-			<div class="@container border-t border-line-subtle">
-				<div class={GRID}>
-					<ul role="list" class="divide-y divide-line-subtle {SUBGRID}" aria-label="Former members">
-						{#each view.former as member (member.id)}
-							<DirectoryRow {member} />
-						{/each}
-					</ul>
+					<svg
+						viewBox="0 0 20 20"
+						fill="currentColor"
+						aria-hidden="true"
+						class="size-5 shrink-0 text-fg-muted transition-transform group-open:rotate-90 motion-reduce:transition-none"
+						><path
+							fill-rule="evenodd"
+							d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z"
+							clip-rule="evenodd"
+						/></svg
+					>
+					Former members
+					<span class="ml-1 font-normal text-fg-muted tabular-nums">{view.former.length}</span>
+				</summary>
+				<p class="-mt-1 px-4 pb-3 text-xs/5 text-fg-muted min-[640px]:px-6">
+					Their profiles, handles and history stay.
+				</p>
+				<div class="@container border-t border-line-subtle">
+					<div class={GRID}>
+						<ul
+							role="list"
+							class="divide-y divide-line-subtle {SUBGRID}"
+							aria-label="Former members"
+						>
+							{#each view.former as member (member.id)}
+								<DirectoryRow {member} />
+							{/each}
+						</ul>
+					</div>
 				</div>
-			</div>
-		</details>
+			</details>
+		</div>
 	{/if}
 </Loaded>
 
@@ -309,9 +379,81 @@
 {/if}
 
 <style>
+	.members-masthead :global(h2) {
+		font-size: 1.25rem;
+		line-height: 1.75rem;
+		letter-spacing: -0.02em;
+	}
+	:global(html[data-ui-theme^='report']) .members-masthead :global(header) {
+		border-bottom: 1.5px solid var(--report-masthead-rule);
+	}
 	.dir-filter.is-on {
 		background: var(--exec-accent-soft);
 		color: var(--exec-ink);
 		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
+	.members-kpi-tile {
+		background: var(--exec-panel-bg);
+		backdrop-filter: var(--exec-panel-blur);
+		-webkit-backdrop-filter: var(--exec-panel-blur);
+		box-shadow: var(--exec-panel-shadow);
+		border-radius: var(--exec-panel-radius);
+		padding: 1rem 1.125rem;
+		min-width: 0;
+	}
+	.members-kpi-label {
+		font-size: 0.7rem;
+		font-weight: 650;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--exec-muted);
+	}
+	.members-kpi-num {
+		font-size: 1.5rem;
+		line-height: 1.15;
+		font-weight: 700;
+		letter-spacing: -0.03em;
+		color: var(--exec-ink);
+		font-variant-numeric: tabular-nums;
+	}
+	.m-dot {
+		width: 0.4375rem;
+		height: 0.4375rem;
+		border-radius: 999px;
+		flex: none;
+	}
+	.dot-ok {
+		background: var(--tone-ok);
+	}
+	.dot-warn {
+		background: var(--tone-warn);
+	}
+	.dot-muted {
+		background: var(--fg-muted);
+	}
+	:global(html[data-ui-theme^='report']) .members-kpi-strip {
+		gap: 0;
+		border-bottom: 1px solid var(--report-rule);
+		padding-bottom: 0.75rem;
+	}
+	:global(html[data-ui-theme^='report']) .members-kpi-tile {
+		padding: 0.625rem 0;
+	}
+	:global(html[data-ui-theme^='report']) .members-kpi-tile + .members-kpi-tile {
+		border-top: 1px solid var(--report-rule-subtle);
+	}
+	@media (min-width: 1024px) {
+		:global(html[data-ui-theme^='report']) .members-kpi-tile {
+			padding: 0.5rem 1.25rem;
+			border-top: 0;
+			border-left: 1px solid var(--report-rule-subtle);
+		}
+		:global(html[data-ui-theme^='report']) .members-kpi-tile:first-child {
+			border-left: 0;
+			padding-left: 0;
+		}
+		:global(html[data-ui-theme^='report']) .members-kpi-tile + .members-kpi-tile {
+			border-top: 0;
+		}
 	}
 </style>

@@ -328,6 +328,7 @@
 
 	const linkClass =
 		'rounded-sm text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
+	const actionBtn = `min-h-9 ${mobileButton} [@media(pointer:coarse)]:min-h-11`;
 </script>
 
 <svelte:head><title>{title}</title></svelte:head>
@@ -374,13 +375,10 @@
 							<h2
 								bind:this={nameHeading}
 								tabindex="-1"
-								class="flex flex-wrap items-center gap-x-2 gap-y-1 text-base/7 font-semibold text-fg [overflow-wrap:anywhere]"
+								class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere]"
 							>
 								{p.name}{p.viewer.isSelf ? ' (you)' : ''}
-								{#if p.owner}<StatusPill
-										label="Owner"
-										class="bg-brand/10 text-brand-text ring-brand/30"
-									/>{/if}
+								{#if p.owner}<StatusPill label="Owner" class="profile-owner-pill" />{/if}
 							</h2>
 							<div class={factsWrap}>
 								<ul role="list" class="{factsList} text-sm/6 text-fg-secondary">
@@ -454,28 +452,24 @@
 						</div>
 					</div>
 					{#if active}
-						<div class="flex flex-wrap items-center gap-3">
+						<div class="flex flex-wrap items-center gap-2.5">
 							{#if p.kind === 'agent'}
 								<Button
 									variant="outline"
-									class={mobileButton}
+									class={actionBtn}
 									onclick={(e) => act('run', e.currentTarget)}>Run now</Button
 								>
 							{/if}
 							<Button
 								variant="outline"
-								class={mobileButton}
+								class={actionBtn}
 								onclick={(e) => act('assign', e.currentTarget)}>Assign task</Button
 							>
 							{#if manage}
 								<DropdownMenu>
 									<DropdownMenuTrigger>
 										{#snippet child({ props })}
-											<Button
-												{...props}
-												bind:ref={moreButton}
-												variant="outline"
-												class={mobileButton}
+											<Button {...props} bind:ref={moreButton} variant="outline" class={actionBtn}
 												>More<span class="sr-only"> actions for {p.name}</span></Button
 											>
 										{/snippet}
@@ -619,5 +613,13 @@
 <style>
 	.profile-masthead {
 		background: var(--exec-well);
+	}
+	:global(html[data-ui-theme^='report']) .profile-masthead {
+		border-bottom: 1.5px solid var(--report-masthead-rule);
+	}
+	:global(.profile-owner-pill) {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
 	}
 </style>

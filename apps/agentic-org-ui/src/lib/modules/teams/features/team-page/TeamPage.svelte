@@ -145,14 +145,14 @@
 				{@const archived = d.team.status === 'archived'}
 				{@const parent = d.path.at(-1)}
 				<header
-					class="border-b border-line-subtle px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8"
+					class="team-masthead border-b border-line px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8"
 				>
 					<div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
 						<!-- Wide enough that the facts don't wrap one at a time: the actions move below first. -->
 						<div class="min-w-0 flex-1 basis-80">
 							<h2
 								id="team-heading"
-								class="flex flex-wrap items-baseline gap-x-2 text-base/7 font-semibold text-fg [overflow-wrap:anywhere]"
+								class="flex flex-wrap items-baseline gap-x-2 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere]"
 							>
 								{d.team.name}
 							</h2>
@@ -190,7 +190,8 @@
 								<Button
 									href={resolve(hireUrl({ teamId: d.team.id }) as '/')}
 									variant="outline"
-									class="max-[639px]:h-11">Hire an agent</Button
+									class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+									>Hire an agent</Button
 								>
 								<AddPersonToTeam {connection} {snapshot} teamId={d.team.id} onadded={reload} />
 								<TeamMenu team={d.team} onaction={(action, t) => dialogs?.open(action, t)} />
@@ -250,3 +251,9 @@
 		}
 	}}
 />
+
+<style>
+	:global(html[data-ui-theme^='report']) .team-masthead {
+		border-bottom: 1.5px solid var(--report-masthead-rule);
+	}
+</style>

@@ -41,7 +41,7 @@
 </script>
 
 <li
-	class="relative grid grid-cols-[2.25rem_minmax(0,1fr)] gap-x-4 gap-y-1 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8 @max-[20rem]:grid-cols-1 @min-[56rem]:col-span-full @min-[56rem]:grid-cols-subgrid @min-[56rem]:items-center {highlight
+	class="relative grid grid-cols-[2.25rem_minmax(0,1fr)] gap-x-4 gap-y-1 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:px-6 @max-[20rem]:grid-cols-1 @min-[56rem]:col-span-full @min-[56rem]:grid-cols-subgrid @min-[56rem]:items-center {highlight
 		? 'bg-primary/10'
 		: ''}"
 	data-member={member.id}
@@ -61,14 +61,14 @@
 			<span
 				aria-hidden="true"
 				class={[
-					'inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px]/4 font-medium ring-1 ring-inset',
+					'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold',
 					member.kind === 'agent'
-						? 'bg-brand/10 text-brand-text ring-brand/25'
-						: 'bg-surface-overlay text-fg-secondary ring-line'
+						? 'member-kind-agent'
+						: 'bg-surface-overlay text-fg-secondary ring-1 ring-line ring-inset'
 				]}>{kindWord(member.kind)}</span
 			>
 			<!-- The member profile's Owner badge (ProfileFrame), so the owner reads the same everywhere. -->
-			{#if owner}<StatusPill label="Owner" class="bg-brand/10 text-brand-text ring-brand/30" />{/if}
+			{#if owner}<StatusPill label="Owner" class="member-owner-pill" />{/if}
 		</p>
 		<p class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-fg-muted">
 			{#if member.role}<span class="[overflow-wrap:anywhere]">{member.role}</span><span
@@ -87,14 +87,14 @@
 	{#if presence}
 		<!-- StatusPill truncates its label; here the words wrap whole instead (app-shell-ux §6a), inside the row. -->
 		<div
-			class="relative col-start-2 min-w-0 @max-[20rem]:col-start-1 max-w-full justify-self-start @min-[56rem]:col-start-5 @min-[56rem]:row-start-1 [&_[title]]:overflow-visible [&_[title]]:whitespace-normal"
+			class="relative col-start-2 max-w-full min-w-0 justify-self-start @max-[20rem]:col-start-1 @min-[56rem]:col-start-5 @min-[56rem]:row-start-1 [&_[title]]:overflow-visible [&_[title]]:whitespace-normal"
 		>
 			<PresenceBadge {presence} class="max-w-full" />
 		</div>
 	{/if}
 
 	<p
-		class="col-start-2 text-xs/5 @max-[20rem]:col-start-1 text-fg-muted @min-[56rem]:col-start-3 @min-[56rem]:row-start-1 @min-[56rem]:text-sm/6 [overflow-wrap:anywhere]"
+		class="col-start-2 text-xs/5 text-fg-muted [overflow-wrap:anywhere] @max-[20rem]:col-start-1 @min-[56rem]:col-start-3 @min-[56rem]:row-start-1 @min-[56rem]:text-sm/6"
 	>
 		{#if former}
 			{formerText(member)}
@@ -108,11 +108,27 @@
 
 	{#if working}
 		<p
-			class="col-start-2 text-xs/5 @max-[20rem]:col-start-1 text-fg-muted @min-[56rem]:col-start-4 @min-[56rem]:row-start-1 @min-[56rem]:text-sm/6 [overflow-wrap:anywhere]"
+			class="col-start-2 text-xs/5 text-fg-muted [overflow-wrap:anywhere] @max-[20rem]:col-start-1 @min-[56rem]:col-start-4 @min-[56rem]:row-start-1 @min-[56rem]:text-sm/6"
 		>
 			<span class="@min-[56rem]:sr-only">Working on</span>
-			<span class="font-mono @min-[56rem]:text-xs/5">{working.ref}</span>
-			<span class="text-fg-secondary">{working.title}</span>
+			<span
+				class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[11px]/4 text-fg-muted tabular-nums ring-1 ring-line ring-inset"
+				>{working.ref}</span
+			>
+			<span class="ml-1 text-fg-secondary">{working.title}</span>
 		</p>
 	{/if}
 </li>
+
+<style>
+	.member-kind-agent {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+	:global(.member-owner-pill) {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+</style>

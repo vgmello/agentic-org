@@ -179,11 +179,6 @@
       "count": 1
     }
   },
-  "src/routes/(shell)/work/+page.svelte": {
-    "svelte/prefer-svelte-reactivity": {
-      "count": 1
-    }
-  },
   "src/routes/+error.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 1

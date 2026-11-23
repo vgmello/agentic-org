@@ -9,6 +9,8 @@ import {
 	openText,
 	progressPercent,
 	projectBarTone,
+	projectHealthLabel,
+	projectsPortfolioSummary,
 	projectTabs,
 	slugFrom,
 	slugProblem,
@@ -167,6 +169,30 @@ describe('counts', () => {
 		expect(
 			projectBarTone({ todo: 2, inProgress: 1, blocked: 0, done: 3, cancelled: 0 }, noBugs, false)
 		).toBe('accent');
+		expect(projectHealthLabel('bad')).toBe('At risk');
+		expect(projectHealthLabel('warn')).toBe('Needs attention');
+		expect(projectHealthLabel('ok')).toBe('On track');
+		expect(projectHealthLabel('accent')).toBe('Active');
+		expect(projectHealthLabel('archived')).toBe('Archived');
+		expect(
+			projectsPortfolioSummary([
+				{ archived: false, tasks: t, bugs: { ...noBugs, critical: 1 } },
+				{
+					archived: false,
+					tasks: { todo: 1, inProgress: 0, blocked: 0, done: 2, cancelled: 0 },
+					bugs: noBugs
+				},
+				{ archived: true, tasks: t, bugs: { ...noBugs, critical: 2 } }
+			])
+		).toEqual({
+			active: 2,
+			archived: 1,
+			openTasks: 6,
+			blockedTasks: 1,
+			openBugs: 1,
+			criticalBugs: 1,
+			attentionProjects: 1
+		});
 	});
 });
 

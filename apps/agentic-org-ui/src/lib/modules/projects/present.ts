@@ -159,6 +159,60 @@ export function projectBarTone(
 	return 'accent';
 }
 
+/** Short executive health label paired with `projectBarTone`. */
+export function projectHealthLabel(tone: ProjectBarTone): string {
+	if (tone === 'bad') return 'At risk';
+	if (tone === 'warn') return 'Needs attention';
+	if (tone === 'ok') return 'On track';
+	if (tone === 'archived') return 'Archived';
+	return 'Active';
+}
+
+export interface ProjectsPortfolioSummary {
+	active: number;
+	archived: number;
+	openTasks: number;
+	blockedTasks: number;
+	openBugs: number;
+	criticalBugs: number;
+	attentionProjects: number;
+}
+
+/** Aggregate portfolio counts across projects for the Projects KPI strip. */
+export function projectsPortfolioSummary(
+	rows: readonly Pick<ProjectRow, 'archived' | 'tasks' | 'bugs'>[]
+): ProjectsPortfolioSummary {
+	let active = 0;
+	let archived = 0;
+	let openTaskCount = 0;
+	let blockedTasks = 0;
+	let openBugCount = 0;
+	let criticalBugs = 0;
+	let attentionProjects = 0;
+	for (const r of rows) {
+		if (r.archived) {
+			archived++;
+			continue;
+		}
+		active++;
+		openTaskCount += openTasks(r.tasks);
+		blockedTasks += r.tasks.blocked;
+		openBugCount += openBugs(r.bugs);
+		criticalBugs += r.bugs.critical;
+		const tone = projectBarTone(r.tasks, r.bugs, false);
+		if (tone === 'bad' || tone === 'warn') attentionProjects++;
+	}
+	return {
+		active,
+		archived,
+		openTasks: openTaskCount,
+		blockedTasks,
+		openBugs: openBugCount,
+		criticalBugs,
+		attentionProjects
+	};
+}
+
 const SEVERITIES: [keyof BugCounts, string][] = [
 	['critical', 'critical'],
 	['major', 'major'],

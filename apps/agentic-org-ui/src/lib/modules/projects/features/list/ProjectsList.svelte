@@ -24,7 +24,7 @@
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { projectsApi } from '../../api';
-	import { investmentResource, investmentWords } from '../../investment';
+	import { investmentResource, investmentWords, portfolioInvestmentWords } from '../../investment';
 	import {
 		CHANGES_PAUSED,
 		bugParts,
@@ -35,8 +35,10 @@
 		openText,
 		progressPercent,
 		projectBarTone,
+		projectHealthLabel,
 		projectHref,
 		projectRef,
+		projectsPortfolioSummary,
 		sortProjects,
 		type ProjectBarTone
 	} from '../../present';
@@ -54,7 +56,9 @@
 	const investment = investmentResource(() => organizationId);
 	const overview = $derived(resource.data);
 	const rows = $derived(overview ? sortProjects(overview.projects) : []);
+	const summary = $derived(projectsPortfolioSummary(rows));
 	const amounts = $derived(investment.data?.allowed ? investment.data.value : undefined);
+	const orgTotalInvestment = $derived(portfolioInvestmentWords(amounts));
 	const canCreate = $derived(!!overview?.viewer.canCreate);
 	const paused = $derived(!!overview?.stale);
 
@@ -101,9 +105,11 @@
 		else focusHeading('projects-heading');
 	}
 
-	const columns = 'min-[1024px]:grid min-[1024px]:items-start min-[1024px]:gap-x-6';
-	const withMoney = 'min-[1024px]:grid-cols-[minmax(0,1fr)_13rem_13.5rem_10rem]';
-	const withoutMoney = 'min-[1024px]:grid-cols-[minmax(0,1fr)_13rem_13.5rem]';
+	// Container-driven columns so the Project column never collapses below 12rem when the sidebar narrows main.
+	const withMoney =
+		'@min-[54rem]:grid @min-[54rem]:items-start @min-[54rem]:gap-x-6 @min-[54rem]:grid-cols-[minmax(12rem,1fr)_12.5rem_12.5rem_9.5rem]';
+	const withoutMoney =
+		'@min-[44rem]:grid @min-[44rem]:items-start @min-[44rem]:gap-x-6 @min-[44rem]:grid-cols-[minmax(12rem,1fr)_12.5rem_12.5rem]';
 
 	const barFill: Record<ProjectBarTone, string> = {
 		ok: 'var(--tone-ok-bar)',
@@ -112,6 +118,14 @@
 		accent: 'var(--tone-accent-bar)',
 		archived: 'var(--quiet)'
 	};
+
+	function healthPillClass(tone: ProjectBarTone): string {
+		if (tone === 'bad') return 't-red';
+		if (tone === 'warn') return 't-amber';
+		if (tone === 'ok') return 't-green';
+		if (tone === 'accent') return 'proj-pill-accent';
+		return 'bg-surface-raised text-fg-secondary ring-1 ring-line ring-inset';
+	}
 </script>
 
 {#snippet createButton(idPrefix: string)}
@@ -135,33 +149,35 @@
 		amounts?.coverage,
 		amounts?.scope === 'organization' || !!amounts?.byProject.has(r.id)
 	)}
-	<p class="text-sm/6 text-fg-secondary tabular-nums min-[1024px]:text-right">
-		<span class="text-fg-muted min-[1024px]:sr-only">Investment:</span>
+	<p class="text-sm/6 font-medium text-fg-secondary tabular-nums @min-[54rem]:text-right">
+		<span class="text-fg-muted @min-[54rem]:sr-only">Investment:</span>
 		{m.toDate}
 	</p>
-	{#if m.thisMonth}<p class="text-xs/5 text-fg-muted tabular-nums min-[1024px]:text-right">
+	{#if m.thisMonth}<p class="text-xs/5 text-fg-muted tabular-nums @min-[54rem]:text-right">
 			{m.thisMonth}
 		</p>{/if}
-	{#if m.note}<p class="text-xs/5 text-fg-muted min-[1024px]:text-right">
+	{#if m.note}<p class="text-xs/5 text-fg-muted @min-[54rem]:text-right">
 			{m.note}{#if m.detail}<span class="sr-only"
 					>: {m.detail.replace(/^Usage incomplete: /, '')}</span
 				>{/if}
 		</p>{/if}
 {/snippet}
 
-<PageHeader
-	id="projects-heading"
-	title="Projects"
-	count={overview?.projects.length}
-	countLabel={overview?.projects.length === 1 ? 'project' : 'projects'}
-	description="What the organization's teams work on. Each project has one accountable team; other teams can contribute."
->
-	{#snippet actions()}
-		{#if overview && canCreate && overview.projects.length > 0}
-			{@render createButton('header')}
-		{/if}
-	{/snippet}
-</PageHeader>
+<div class="projects-masthead">
+	<PageHeader
+		id="projects-heading"
+		title="Projects"
+		count={overview?.projects.length}
+		countLabel={overview?.projects.length === 1 ? 'project' : 'projects'}
+		description="What the organization's teams work on. Each project has one accountable team; other teams can contribute."
+	>
+		{#snippet actions()}
+			{#if overview && canCreate && overview.projects.length > 0}
+				{@render createButton('header')}
+			{/if}
+		{/snippet}
+	</PageHeader>
+</div>
 
 {#if overview?.stale}
 	<StaleNotice
@@ -189,129 +205,243 @@
 				{/snippet}
 			</EmptyState>
 		{:else}
-			{#if investment.state === 'error'}
-				<p
-					class="px-4 pt-4 text-xs/5 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8"
-					role="status"
+			<div class="flex flex-col gap-5 px-4 py-5 min-[640px]:px-6 min-[1024px]:px-8">
+				<section
+					aria-label="Projects summary"
+					class={[
+						'proj-kpi-strip grid grid-cols-1 gap-3 min-[640px]:grid-cols-2',
+						orgTotalInvestment ? 'min-[1024px]:grid-cols-4' : 'min-[1024px]:grid-cols-3'
+					]}
 				>
-					Couldn't load the investment figures: {investment.message}
-					<button
-						type="button"
-						class="ml-1 inline-flex min-h-6 items-center rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
-						disabled={investment.reloading}
-						onclick={() => investment.reload()}
-						>{investment.reloading ? 'Retrying…' : 'Retry'}</button
-					>
-				</p>
-			{/if}
-			<div
-				class="hidden border-b border-line px-4 py-2.5 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase min-[640px]:px-6 min-[1024px]:px-8 {columns} {amounts
-					? withMoney
-					: withoutMoney}"
-				aria-hidden="true"
-			>
-				<span>Project</span>
-				<span>Tasks &amp; progress</span>
-				<span>Open bugs</span>
-				{#if amounts}<span class="text-right">Investment</span>{/if}
-			</div>
-			<ul role="list" class="divide-y divide-line-subtle" aria-labelledby="projects-heading">
-				{#each rows as r (r.id)}
-					{@const total = countedTasks(r.tasks)}
-					{@const pct = progressPercent(r.tasks)}
-					{@const tone = projectBarTone(r.tasks, r.bugs, r.archived)}
-					<li
-						class="group relative px-4 py-4 transition-colors duration-150 hover:bg-surface-raised motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8 {columns} {amounts
-							? withMoney
-							: withoutMoney}"
-						data-testid="project-row"
-						data-project={r.id}
-					>
-						<div class="min-w-0">
-							<p class="flex flex-wrap items-baseline gap-x-2 text-sm/6">
-								<a href={resolve(projectHref(r.id) as '/')} class={rowTitleLink}
-									><span class="absolute inset-0" aria-hidden="true"></span>{r.name}</a
-								>
-								<span
-									class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[11px]/4 text-fg-muted ring-1 ring-line ring-inset"
-									>{projectRef(r)}</span
-								>
-								{#if r.archived}<span
-										class="inline-flex shrink-0 items-center rounded-full bg-surface-raised px-2 py-0.5 text-[11px]/4 font-medium whitespace-nowrap text-fg-secondary ring-1 ring-line ring-inset"
-										>Archived</span
-									>{/if}
-							</p>
-							<ul role="list" class="mt-1.5 flex flex-col gap-0.5 text-xs/5 text-fg-muted">
-								<li class={fact} data-testid="owner-team">
-									Accountable team: <TeamLink team={r.ownerTeam} size="xs" />
-								</li>
-								{#if r.contributors.length}
-									<li class={fact} data-testid="contributors">
-										Contributors: {#each r.contributors as t, i (t.id)}{#if i > 0},
-											{/if}<TeamLink team={t} size="xs" />{/each}
-									</li>
-								{/if}
-							</ul>
-						</div>
-						<div class="mt-2.5 flex flex-col gap-1 min-[1024px]:mt-0">
-							<p
+					<div class="proj-kpi-tile flex flex-col gap-1">
+						<div class="flex items-center justify-between gap-2">
+							<span class="proj-kpi-label">Active projects</span>
+							<span
 								class={[
-									'text-sm/6 tabular-nums',
-									r.tasks.blocked > 0 ? 'font-medium text-warning-text' : 'text-fg-secondary'
+									'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold',
+									summary.attentionProjects > 0 ? 't-amber' : 't-green'
 								]}
-								data-testid="open-tasks"
 							>
-								{openText(r.tasks)}
-							</p>
-							<div class="flex items-center gap-2">
-								<div
-									class="h-1.5 flex-1 overflow-hidden rounded-full bg-bar-track"
-									role="progressbar"
-									aria-label="{r.name} progress"
-									aria-valuemin="0"
-									aria-valuemax={total}
-									aria-valuenow={r.tasks.done}
-									aria-valuetext={doneText(r.tasks)}
-								>
-									<span
-										class="block h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none"
-										style:width="{pct}%"
-										style:background={barFill[tone]}
-									></span>
-								</div>
-								{#if total > 0}
-									<span class="shrink-0 text-[11px]/4 font-medium text-fg-muted tabular-nums"
-										>{pct}%</span
-									>
-								{/if}
-							</div>
-							<p class="text-xs/5 text-fg-muted tabular-nums">{doneText(r.tasks)}</p>
+								{summary.attentionProjects > 0
+									? `${summary.attentionProjects} attention`
+									: 'On track'}
+							</span>
 						</div>
-						<div class="mt-2 min-[1024px]:mt-0" data-testid="bugs">
-							<p class="text-sm/6 text-fg-secondary tabular-nums">
-								<span class="sr-only">{bugsText(r.bugs)}</span><span aria-hidden="true"
-									>{openBugs(r.bugs) === 0
-										? 'No open bugs'
-										: `${openBugs(r.bugs)} open ${openBugs(r.bugs) === 1 ? 'bug' : 'bugs'}`}</span
-								>
-							</p>
-							{#if openBugs(r.bugs) > 0}
-								<p class="mt-1 flex flex-wrap gap-1.5 text-xs/5 text-fg-muted" aria-hidden="true">
-									{#each bugParts(r.bugs) as part (part.key)}<SeverityMark
-											severity={part.key}
-											text={part.text}
-										/>{/each}
+						<p class="proj-kpi-num">{summary.active}</p>
+						<p class="text-xs/5 text-fg-muted tabular-nums">
+							{summary.archived > 0 ? `${summary.archived} archived` : 'All active'}
+						</p>
+					</div>
+
+					<div class="proj-kpi-tile flex flex-col gap-1">
+						<div class="flex items-center justify-between gap-2">
+							<span class="proj-kpi-label">Open tasks</span>
+							<span
+								class={[
+									'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold tabular-nums',
+									summary.blockedTasks > 0 ? 't-amber' : 't-green'
+								]}
+							>
+								{summary.blockedTasks > 0 ? `${summary.blockedTasks} blocked` : 'Clear'}
+							</span>
+						</div>
+						<p class="proj-kpi-num">{summary.openTasks}</p>
+						<p class="text-xs/5 text-fg-muted">Across active projects</p>
+					</div>
+
+					<div class="proj-kpi-tile flex flex-col gap-1">
+						<div class="flex items-center justify-between gap-2">
+							<span class="proj-kpi-label">Open bugs</span>
+							<span
+								class={[
+									'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold tabular-nums',
+									summary.criticalBugs > 0 ? 't-red' : summary.openBugs > 0 ? 't-amber' : 't-green'
+								]}
+							>
+								{summary.criticalBugs > 0
+									? `${summary.criticalBugs} critical`
+									: summary.openBugs > 0
+										? 'Active'
+										: 'None open'}
+							</span>
+						</div>
+						<p class="proj-kpi-num">{summary.openBugs}</p>
+						<p class="text-xs/5 text-fg-muted">Across active projects</p>
+					</div>
+
+					{#if orgTotalInvestment}
+						<div class="proj-kpi-tile flex flex-col gap-1" data-testid="portfolio-investment">
+							<span class="proj-kpi-label">Investment</span>
+							<p class="proj-kpi-num">{orgTotalInvestment.toDate.amount}</p>
+							{#if !orgTotalInvestment.thisMonth && !orgTotalInvestment.toDate.qualification && !orgTotalInvestment.toDate.apiEquivalent}
+								<p class="text-xs/5 text-fg-muted">To date</p>
+							{/if}
+							{#if orgTotalInvestment.toDate.qualification}
+								<p class="text-xs/5 text-warning-text [overflow-wrap:anywhere]">
+									To date: {orgTotalInvestment.toDate.qualification}
 								</p>
 							{/if}
+							{#if orgTotalInvestment.toDate.apiEquivalent}
+								<p class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
+									To date: {orgTotalInvestment.toDate.apiEquivalent}
+								</p>
+							{/if}
+							{#if orgTotalInvestment.thisMonth}
+								<p class="text-xs/5 font-medium text-fg-secondary tabular-nums">
+									{orgTotalInvestment.thisMonth.amount} this month
+								</p>
+								{#if orgTotalInvestment.thisMonth.qualification}
+									<p class="text-xs/5 text-warning-text [overflow-wrap:anywhere]">
+										This month: {orgTotalInvestment.thisMonth.qualification}
+									</p>
+								{/if}
+								{#if orgTotalInvestment.thisMonth.apiEquivalent}
+									<p class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
+										This month: {orgTotalInvestment.thisMonth.apiEquivalent}
+									</p>
+								{/if}
+							{/if}
 						</div>
-						{#if amounts}
-							<div class="mt-2 min-[1024px]:mt-0" data-testid="investment">
-								{@render money(r)}
-							</div>
-						{/if}
-					</li>
-				{/each}
-			</ul>
+					{/if}
+				</section>
+
+				{#if investment.state === 'error'}
+					<p class="text-xs/5 text-fg-muted" role="status">
+						Couldn't load the investment figures: {investment.message}
+						<button
+							type="button"
+							class="ml-1 inline-flex min-h-6 items-center rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
+							disabled={investment.reloading}
+							onclick={() => investment.reload()}
+							>{investment.reloading ? 'Retrying…' : 'Retry'}</button
+						>
+					</p>
+				{/if}
+
+				<div class="exec-card @container overflow-hidden">
+					<div
+						class="hidden border-b border-line px-4 py-2.5 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase min-[640px]:px-6 {amounts
+							? withMoney
+							: withoutMoney}"
+						aria-hidden="true"
+					>
+						<span>Project</span>
+						<span>Tasks &amp; progress</span>
+						<span>Open bugs</span>
+						{#if amounts}<span class="text-right">Investment</span>{/if}
+					</div>
+					<ul role="list" class="divide-y divide-line-subtle" aria-labelledby="projects-heading">
+						{#each rows as r (r.id)}
+							{@const total = countedTasks(r.tasks)}
+							{@const pct = progressPercent(r.tasks)}
+							{@const tone = projectBarTone(r.tasks, r.bugs, r.archived)}
+							<li
+								class="group relative px-4 py-4 transition-colors duration-150 hover:bg-surface-raised motion-reduce:transition-none min-[640px]:px-6 {amounts
+									? withMoney
+									: withoutMoney}"
+								data-testid="project-row"
+								data-project={r.id}
+							>
+								<div class="min-w-0">
+									<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6">
+										<a href={resolve(projectHref(r.id) as '/')} class={rowTitleLink}
+											><span class="absolute inset-0" aria-hidden="true"></span>{r.name}</a
+										>
+										<span
+											class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[11px]/4 text-fg-muted ring-1 ring-line ring-inset"
+											>{projectRef(r)}</span
+										>
+										<span
+											class={[
+												'inline-flex max-w-full shrink-0 items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold whitespace-nowrap',
+												healthPillClass(tone)
+											]}>{projectHealthLabel(tone)}</span
+										>
+									</p>
+									<ul role="list" class="mt-1.5 flex flex-col gap-0.5 text-xs/5 text-fg-muted">
+										<li class={fact} data-testid="owner-team">
+											Accountable team: <TeamLink team={r.ownerTeam} size="xs" />
+										</li>
+										{#if r.contributors.length}
+											<li class={fact} data-testid="contributors">
+												Contributors: {#each r.contributors as t, i (t.id)}{#if i > 0},
+													{/if}<TeamLink team={t} size="xs" />{/each}
+											</li>
+										{/if}
+									</ul>
+								</div>
+								<div
+									class={[
+										'mt-2.5 flex min-w-0 flex-col gap-1',
+										amounts ? '@min-[54rem]:mt-0' : '@min-[44rem]:mt-0'
+									]}
+								>
+									<p
+										class={[
+											'text-sm/6 tabular-nums',
+											r.tasks.blocked > 0 ? 'font-medium text-warning-text' : 'text-fg-secondary'
+										]}
+										data-testid="open-tasks"
+									>
+										{openText(r.tasks)}
+									</p>
+									<div class="flex items-center gap-2">
+										<div
+											class="h-1.5 flex-1 overflow-hidden rounded-full bg-bar-track"
+											role="progressbar"
+											aria-label="{r.name} progress"
+											aria-valuemin="0"
+											aria-valuemax={total}
+											aria-valuenow={r.tasks.done}
+											aria-valuetext={doneText(r.tasks)}
+										>
+											<span
+												class="block h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none"
+												style:width="{pct}%"
+												style:background={barFill[tone]}
+											></span>
+										</div>
+										{#if total > 0}
+											<span class="shrink-0 text-[11px]/4 font-semibold text-fg-muted tabular-nums"
+												>{pct}%</span
+											>
+										{/if}
+									</div>
+									<p class="text-xs/5 text-fg-muted tabular-nums">{doneText(r.tasks)}</p>
+								</div>
+								<div
+									class={['mt-2 min-w-0', amounts ? '@min-[54rem]:mt-0' : '@min-[44rem]:mt-0']}
+									data-testid="bugs"
+								>
+									<p class="text-sm/6 text-fg-secondary tabular-nums">
+										<span class="sr-only">{bugsText(r.bugs)}</span><span aria-hidden="true"
+											>{openBugs(r.bugs) === 0
+												? 'No open bugs'
+												: `${openBugs(r.bugs)} open ${openBugs(r.bugs) === 1 ? 'bug' : 'bugs'}`}</span
+										>
+									</p>
+									{#if openBugs(r.bugs) > 0}
+										<p
+											class="mt-1 flex flex-wrap gap-1.5 text-xs/5 text-fg-muted"
+											aria-hidden="true"
+										>
+											{#each bugParts(r.bugs) as part (part.key)}<SeverityMark
+													severity={part.key}
+													text={part.text}
+												/>{/each}
+										</p>
+									{/if}
+								</div>
+								{#if amounts}
+									<div class="mt-2 min-w-0 @min-[54rem]:mt-0" data-testid="investment">
+										{@render money(r)}
+									</div>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				</div>
+			</div>
 		{/if}
 	{/snippet}
 </Loaded>
@@ -322,3 +452,68 @@
 	oncreated={created}
 	onCloseAutoFocus={restoreFocus}
 />
+
+<style>
+	.projects-masthead :global(h2) {
+		font-size: 1.25rem;
+		line-height: 1.75rem;
+		letter-spacing: -0.02em;
+	}
+	:global(html[data-ui-theme^='report']) .projects-masthead :global(header) {
+		border-bottom: 1.5px solid var(--report-masthead-rule);
+	}
+	.proj-kpi-tile {
+		background: var(--exec-panel-bg);
+		backdrop-filter: var(--exec-panel-blur);
+		-webkit-backdrop-filter: var(--exec-panel-blur);
+		box-shadow: var(--exec-panel-shadow);
+		border-radius: var(--exec-panel-radius);
+		padding: 1rem 1.125rem;
+		min-width: 0;
+	}
+	.proj-kpi-label {
+		font-size: 0.7rem;
+		font-weight: 650;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--exec-muted);
+	}
+	.proj-kpi-num {
+		font-size: 1.5rem;
+		line-height: 1.15;
+		font-weight: 700;
+		letter-spacing: -0.03em;
+		color: var(--exec-ink);
+		font-variant-numeric: tabular-nums;
+	}
+	.proj-pill-accent {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+	:global(html[data-ui-theme^='report']) .proj-kpi-strip {
+		gap: 0;
+		border-bottom: 1px solid var(--report-rule);
+		padding-bottom: 0.75rem;
+	}
+	:global(html[data-ui-theme^='report']) .proj-kpi-tile {
+		padding: 0.625rem 0;
+	}
+	:global(html[data-ui-theme^='report']) .proj-kpi-tile + .proj-kpi-tile {
+		border-top: 1px solid var(--report-rule-subtle);
+	}
+	@media (min-width: 1024px) {
+		:global(html[data-ui-theme^='report']) .proj-kpi-tile {
+			padding: 0.5rem 1.25rem;
+			border-top: 0;
+			border-left: 1px solid var(--report-rule-subtle);
+		}
+		:global(html[data-ui-theme^='report']) .proj-kpi-tile:first-child {
+			border-left: 0;
+			padding-left: 0;
+		}
+		:global(html[data-ui-theme^='report']) .proj-kpi-tile + .proj-kpi-tile {
+			border-top: 0;
+		}
+	}
+</style>
