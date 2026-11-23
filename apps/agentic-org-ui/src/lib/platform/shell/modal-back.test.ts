@@ -266,6 +266,7 @@ describe('modal-back legacy (!window.navigation) path', () => {
 	it('intercepts Back from a freshly appended native fragment and passes Forward through', async () => {
 		const env = await setup('http://localhost/activity', { 'sveltekit:history': 2 }, 2);
 		env.dispatchPopState('http://localhost/activity#section', null, 3);
+		const sectionState = env.fakeWindow.history.state;
 
 		const close = vi.fn();
 		const unregister = env.registerModalBack(close);
@@ -277,7 +278,7 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		env.flushRaf();
 		expect(env.goCalls).toEqual([1]);
 
-		const returnEvent = env.dispatchPopState('http://localhost/activity#section', null, 3);
+		const returnEvent = env.dispatchPopState('http://localhost/activity#section', sectionState, 3);
 		expect(returnEvent.stopped).toBe(true);
 		env.flushRaf();
 		expect(close).toHaveBeenCalledTimes(1);
@@ -285,12 +286,14 @@ describe('modal-back legacy (!window.navigation) path', () => {
 
 		// Push #one, #two, #three, go(-2) to #one, then open modal: Forward to #two passes through.
 		env.dispatchPopState('http://localhost/activity#one', null, 4);
+		const oneState = env.fakeWindow.history.state;
 		env.dispatchPopState('http://localhost/activity#two', null, 5);
+		const twoState = env.fakeWindow.history.state;
 		env.dispatchPopState('http://localhost/activity#three', null, 6);
-		env.dispatchPopState('http://localhost/activity#one', null, 6);
+		env.dispatchPopState('http://localhost/activity#one', oneState, 6);
 		const close2 = vi.fn();
 		const unregister2 = env.registerModalBack(close2);
-		const forwardFrag = env.dispatchPopState('http://localhost/activity#two', null, 6);
+		const forwardFrag = env.dispatchPopState('http://localhost/activity#two', twoState, 6);
 		expect(forwardFrag.stopped).toBe(false);
 		expect(close2).not.toHaveBeenCalled();
 		unregister2();
@@ -594,6 +597,7 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		);
 
 		env.dispatchHashChange('http://localhost/teams#b', null, 3);
+		const slotB = env.fakeWindow.history.state;
 
 		env.dispatchHashChange('http://localhost/teams#a', null, 4);
 		env.fakeWindow.history.replaceState(
@@ -603,7 +607,7 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		);
 
 		// Immediately Back to unindexed #b (no timer flush needed!)
-		env.dispatchPopState('http://localhost/teams#b', null, 4);
+		env.dispatchPopState('http://localhost/teams#b', slotB, 4);
 
 		// Open modal on #b and press Back to earlier #a (11): MUST intercept and restore #b
 		const close1 = vi.fn();
@@ -616,7 +620,7 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		expect(backEvent.stopped).toBe(true);
 		env.flushRaf();
 		expect(env.goCalls).toEqual([1]);
-		const returnEvent = env.dispatchPopState('http://localhost/teams#b', null, 4);
+		const returnEvent = env.dispatchPopState('http://localhost/teams#b', slotB, 4);
 		expect(returnEvent.stopped).toBe(true);
 		env.flushRaf();
 		expect(close1).toHaveBeenCalledTimes(1);
@@ -646,6 +650,7 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		// Model B: unindexed #a, unindexed #b, then clicked #a (SvelteKit stamps 11 via replaceState)
 		env.dispatchHashChange('http://localhost/teams#a', null, 2);
 		env.dispatchHashChange('http://localhost/teams#b', null, 3);
+		const slotB = env.fakeWindow.history.state;
 		env.dispatchHashChange('http://localhost/teams#a', null, 4);
 		env.fakeWindow.history.replaceState(
 			{ 'sveltekit:history': 11 },
@@ -654,7 +659,7 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		);
 
 		// Immediately Back to unindexed #b, open modal, press Forward to indexed #a (11)
-		env.dispatchPopState('http://localhost/teams#b', null, 4);
+		env.dispatchPopState('http://localhost/teams#b', slotB, 4);
 		const routerPop = vi.fn();
 		env.fakeWindow.addEventListener('popstate', routerPop);
 		const close = vi.fn();
@@ -779,17 +784,26 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		unregister();
 	});
 
-	it('treats a newly stamped duplicate fragment slot as a new push after replacing Forward history (#one -> #two -> #three -> Back -> #one)', async () => {
+	it('treats a newly stamped duplicate fragment slot as a new push after replacing Forward history in browser popstate+hashchange order (#one -> #two -> #three -> Back -> #one)', async () => {
 		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
-		env.dispatchHashChange('http://localhost/teams#one', null, 2);
-		env.dispatchHashChange('http://localhost/teams#two', null, 3);
-		const slotTwo = env.fakeWindow.history.state;
-		env.dispatchHashChange('http://localhost/teams#three', null, 4);
+		const appendFragment = (url: string, len: number) => {
+			// HTML Standard browser order for fragment navigation: popstate (state=null) fires before hashchange.
+			env.dispatchPopState(url, null, len);
+			const stamped = env.fakeWindow.history.state;
+			env.dispatchHashChange(url, stamped, len);
+			return env.fakeWindow.history.state;
+		};
 
-		// Go Back to #two, then append #one (replacing #three; length stays 4)
+		appendFragment('http://localhost/teams#one', 2);
+		const slotTwo = appendFragment('http://localhost/teams#two', 3);
+		appendFragment('http://localhost/teams#three', 4);
+
+		// Go Back to #two (popstate with slotTwo, then hashchange)
 		env.dispatchPopState('http://localhost/teams#two', slotTwo, 4);
-		env.dispatchHashChange('http://localhost/teams#one', null, 4);
-		const slotOneNew = env.fakeWindow.history.state;
+		env.dispatchHashChange('http://localhost/teams#two', slotTwo, 4);
+
+		// Append #one from #two (replaces #three; length stays 4; popstate(null) fires first!)
+		const slotOneNew = appendFragment('http://localhost/teams#one', 4);
 
 		const close = vi.fn();
 		const unregister = env.registerModalBack(close);

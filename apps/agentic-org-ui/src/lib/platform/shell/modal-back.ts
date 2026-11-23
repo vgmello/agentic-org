@@ -317,7 +317,10 @@ export function installModalBack() {
 				return;
 			}
 			if (!window.navigation) {
-				syncLegacyEntry(currentLegacyEntry(event.state), true);
+				if (event.state === null && window.location.hash) {
+					stampUnindexedFragmentSlot();
+				}
+				syncLegacyEntry(currentLegacyEntry(), true);
 			}
 		},
 		{ capture: true }
