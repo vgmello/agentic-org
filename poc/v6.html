@@ -2673,8 +2673,8 @@ a.hb-tleg:hover { color: var(--hb-ink); }
   .h4-sec-acc-preview { display: none; }
 }
 
-/* Ocean shares the Inbox's navy palette across the app. */
-html[data-theme="ocean"] {
+/* Ocean shares the Inbox's navy palette on interior pages. */
+html[data-theme="ocean"]:where([data-interior-page]) {
   --ocean-rail: #0b162a;
   --ocean-panel: #121f35;
   --ocean-well: #14223b;
@@ -2688,6 +2688,7 @@ html[data-theme="ocean"] {
   --gray-950: var(--ocean-rail);
   --gray-900: var(--ocean-well);
   --gray-800: var(--ocean-selected);
+  --gray-400: #b0bfd1;
   --line: rgb(147 169 199 / .15);
   --line2: rgb(147 169 199 / .27);
 
@@ -2719,17 +2720,6 @@ html[data-theme="ocean"] {
   & :is(.seg, .cmdk-shell, .search, select.field, input.field, textarea) {
     background-image: var(--ocean-glass-sheen);
   }
-  & .hb {
-    --hb-surface: var(--ocean-glass-sheen), var(--ocean-glass-fill);
-    --hb-surface-hi: var(--ocean-glass-hover);
-    --hb-well: color-mix(in srgb, var(--ocean-rail) 55%, transparent);
-    --hb-border: var(--line);
-    --hb-border-hi: var(--line2);
-  }
-}
-
-html[data-theme="ocean"]:where([data-interior-page]) {
-  --gray-400: #b0bfd1;
   & .work-items { border-radius: var(--radius-lg); }
   & :is(.card, .bcard, .c-entry, .k-doc, .agent-rail, .chlist, .prof, .subnav, .split .list,
     .seg, .cmdk-shell, .search, select.field, input.field, textarea) {
