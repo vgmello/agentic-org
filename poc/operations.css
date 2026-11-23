@@ -678,6 +678,55 @@ html[data-theme^="report"] .triage-queue {
   .queue-tab { gap: 4px; padding-inline: 8px; }
 }
 
+/* Work uses the Inbox reading layout inside its list and board views. */
+.work-row, .bcard { position: relative; }
+.work-item-link::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius-md); }
+:is(.work-facts, .bcard) a:not(.work-item-link) { position: relative; z-index: 1; }
+.work-item-link:focus-visible::after { outline: 2px solid var(--tone-accent-ink); outline-offset: -2px; }
+.work-row:has(.work-item-link[aria-current="true"]),
+.bcard:has(.work-item-link[aria-current="true"]) { background: var(--tone-accent-soft); }
+.work-row:has(.work-item-link[aria-current="true"]) { border-radius: var(--radius-md); }
+
+.work-detail-bar, .work-detail-id { display: flex; align-items: center; gap: 8px; }
+.work-detail-bar { justify-content: space-between; }
+.work-detail-id, .work-parent { color: var(--gray-300); font-size: .8125rem; }
+.work-detail-id { font-variant-numeric: tabular-nums; }
+.work-detail-attention { color: var(--tone-warn-ink); }
+.work-reading .triage-document { padding-block-start: clamp(16px, 3cqi, 32px); }
+.work-detail-section { display: grid; gap: 8px; min-width: 0; }
+.work-detail-section li { display: flex; align-items: baseline; gap: 10px; padding-block: 5px; overflow-wrap: anywhere; }
+.work-detail-section li > .work-status { align-self: center; }
+.work-detail-section .work-ref { margin-inline-end: 8px; }
+.work-detail-section h3 .work-criteria { margin-inline-start: 6px; }
+
+@media (min-width: 960px) {
+  .work-workspace.has-work-detail {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(23rem, 46%, 45rem);
+    grid-template-rows: minmax(0, 1fr);
+    flex: 1 1 auto;
+    min-height: 16rem;
+  }
+  .has-work-detail #work-results { overflow-y: auto; overscroll-behavior-y: contain; }
+  .work-reading { border-inline-start: 1px solid var(--line); overflow-x: hidden; }
+}
+@media (max-width: 959px) {
+  .has-work-detail #work-results { display: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .work-reading .triage-document { animation: work-detail-enter .22s ease-out; }
+  @keyframes work-detail-enter {
+    from { opacity: 0; transform: translateX(16px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+}
+@media (forced-colors: active) {
+  .work-item-link:is([aria-current="true"], :focus-visible)::after {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
 /* Graphite Work and Inbox share a matte reading canvas. */
 html[data-theme="graphite"] #content:has(.triage-workspace, .work-header) { background: #18191A; }
 

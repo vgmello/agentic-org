@@ -4992,14 +4992,23 @@ function workCriteria(criteria) {
   return `<span class="work-criteria${done === criteria.length ? " is-complete" : ""}" title="${label}"><span aria-hidden="true">${done}/${criteria.length}</span><span class="sr-only">${label}</span></span>`;
 }
 
-function workTitle(title, eta) {
-  return `<span><span class="work-title">${esc(title)}</span>${eta ? ` <span class="work-eta">ETA ${esc(eta)}</span>` : ""}</span>`;
+function workEta(w) {
+  return w.etaHours != null ? `${w.etaHours}h` : w.kind === "task" && OPEN(w) ? "TBD" : "";
+}
+
+function workTitle(w, className) {
+  const href = workItemHref(w.id);
+  return `<a class="work-item-link ${className}" data-item="${esc(w.id)}" href="${esc(href)}"${href === location.hash ? ' aria-current="true"' : ""}>${esc(w.title)}</a>`;
+}
+
+function workChild(parent, subtask) {
+  return { ...subtask, kind: "task", proj: parent.proj, who: parent.who };
 }
 
 function workSubtasks(parent) {
   if (!parent.subtasks?.length) return "";
   return `<ul class="work-subtasks" role="list" aria-label="Subtasks">${parent.subtasks.map((subtask) =>
-    workRow({ ...subtask, kind: "task", proj: parent.proj, who: parent.who }, true)
+    workRow(workChild(parent, subtask), true)
   ).join("")}</ul>`;
 }
 
@@ -5014,13 +5023,13 @@ function workRow(w, isSubtask = false) {
     : esc(w.pri);
   const team = workTeam(w);
   const task = w.kind === "task";
-  const eta = w.etaHours != null ? `${w.etaHours}h` : (task && OPEN(w) ? "TBD" : "");
+  const eta = workEta(w);
   return `<li class="${isSubtask ? "work-subtask" : "work-item"}"><div class="work-row" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}>
     <div class="work-summary">
       <span class="work-ident">${task ? workPriority(w.pri) : ""}<span class="work-ref">${esc(w.id)}</span></span>
       <span class="work-heading">
         <span class="work-markers">${workStatus(w.status, showsNeedsYou(w))}${workCriteria(w.criteria)}</span>
-        ${workTitle(w.title, eta)}
+        <span>${workTitle(w, "work-title")}${eta ? ` <span class="work-eta">ETA ${esc(eta)}</span>` : ""}</span>
       </span>
     </div>
     <div class="work-facts">
@@ -5053,8 +5062,72 @@ function board(items, kind) {
   if (!cols.length) return `<p class="empty-row">No work here yet.</p>`;
   return `<div class="board">${cols.map((st) => {
     const col = items.filter((w) => w.status === st);
-    return `<section class="bcol" aria-label="${esc(st)}"><h3><span>${esc(st)}</span><span class="muted">${col.length}</span></h3>${col.map((w) => `<div class="bcard" data-work-id="${esc(w.id)}"><span class="t">${esc(w.title)}</span><span class="m"><span class="mono">${w.id}</span>${SEP}${esc(P[w.proj].name)}</span><span class="m">${av(w.who, 24)}${w.who ? mlink(w.who) : "Unassigned"}</span>${showsNeedsYou(w) ? `<span>${pill("Needs you", "amber", "bell", true)}</span>` : ""}</div>`).join("") || '<p class="muted" style="font-size:13px">None</p>'}</section>`;
+    return `<section class="bcol" aria-label="${esc(st)}"><h3><span>${esc(st)}</span><span class="muted">${col.length}</span></h3>${col.map((w) => `<div class="bcard" data-work-id="${esc(w.id)}">${workTitle(w, "t")}<span class="m"><span class="mono">${w.id}</span>${SEP}${esc(P[w.proj].name)}</span><span class="m">${av(w.who, 24)}${w.who ? mlink(w.who) : "Unassigned"}</span>${showsNeedsYou(w) ? `<span>${pill("Needs you", "amber", "bell", true)}</span>` : ""}</div>`).join("") || '<p class="muted" style="font-size:13px">None</p>'}</section>`;
   }).join("")}</div>`;
+}
+
+function workItemHref(item) {
+  const [page, project, tab] = route();
+  const projectWork = page === "projects" && tab === "work";
+  const path = projectWork ? `#/projects/${encodeURIComponent(project)}/work` : "#/work";
+  const params = projectWork || page === "work" ? qs() : new URLSearchParams();
+  if (item) params.set("item", item);
+  else params.delete("item");
+  return params.size ? `${path}?${params}` : path;
+}
+
+function workWorkspace(results, items = W) {
+  const id = qs().get("item");
+  let item = items.find((w) => w.id === id), parent;
+  if (id && !item) {
+    for (const task of items) {
+      const subtask = task.subtasks?.find((child) => child.id === id);
+      if (subtask) {
+        parent = task;
+        item = workChild(parent, subtask);
+        break;
+      }
+    }
+  }
+  return `<div class="work-workspace${item ? " has-work-detail" : ""}">
+    <div id="work-results">${results}</div>
+    ${item ? workDetail(item, parent) : ""}
+  </div>`;
+}
+
+function workDetail(w, parent) {
+  const team = workTeam(w), eta = workEta(w);
+  return `<section class="triage-reading work-reading" aria-labelledby="work-detail-title">
+    <article class="triage-document">
+      <div class="work-detail-bar">
+        <p class="work-detail-id">${workStatus(w.status, showsNeedsYou(w))}${esc(w.id)}</p>
+        <button class="btn ghost icon sm" type="button" data-act="work-close-detail" aria-label="Close work details" title="Close work details">${ic("x", "ic16")}</button>
+      </div>
+      <header class="triage-intro">
+        ${parent ? `<a class="work-parent alink" href="${esc(workItemHref(parent.id))}">${esc(parent.id)} · ${esc(parent.title)}</a>` : ""}
+        <h2 tabindex="-1" id="work-detail-title">${esc(w.title)}</h2>
+      </header>
+      <section class="triage-context" aria-labelledby="work-detail-context">
+        <h3 id="work-detail-context">Work details</h3>
+        <dl class="triage-fields">
+          <div><dt>Status</dt><dd>${esc(w.status)}${showsNeedsYou(w) ? '<span class="work-detail-attention">· Needs you</span>' : ""}</dd></div>
+          <div><dt>Assignee</dt><dd>${mlink(w.who)}</dd></div>
+          <div><dt>Priority</dt><dd>${esc(w.pri)}</dd></div>
+          <div><dt>Project</dt><dd>${plink(w.proj)}</dd></div>
+          ${team ? `<div><dt>Team</dt><dd><a class="alink" href="#/teams/${esc(team)}">${esc(TEAMS[team].name)}</a></dd></div>` : ""}
+          ${eta ? `<div><dt>ETA</dt><dd>${esc(eta)}</dd></div>` : ""}
+        </dl>
+      </section>
+      ${w.criteria?.length ? `<section class="work-detail-section" aria-labelledby="work-detail-criteria">
+        <h3 id="work-detail-criteria">Acceptance criteria ${workCriteria(w.criteria)}</h3>
+        <ul role="list">${w.criteria.map((criterion) => `<li>${workStatus(criterion.done ? "Done" : "To do")}${esc(criterion.text)}</li>`).join("")}</ul>
+      </section>` : ""}
+      ${w.subtasks?.length ? `<section class="work-detail-section" aria-labelledby="work-detail-subtasks">
+        <h3 id="work-detail-subtasks">Subtasks</h3>
+        <ul role="list">${w.subtasks.map((subtask) => `<li>${workStatus(subtask.status)}<a class="alink" href="${esc(workItemHref(subtask.id))}"><span class="work-ref">${esc(subtask.id)}</span>${esc(subtask.title)}</a></li>`).join("")}</ul>
+      </section>` : ""}
+    </article>
+  </section>`;
 }
 
 /* ---------------------------------------------------------------- pages */
@@ -6176,7 +6249,7 @@ function projectBody(id, tab) {
       <section class="section"><div class="sec-h"><h2>${ic("bell", "ic20 c-amber")}Needs you for this project</h2></div>${needs.length ? `<div class="cards">${needs.map(needsCard).join("")}</div>` : `<p class="muted" style="padding-bottom:24px">Nothing needs you on this project.</p>`}</section>
     </div><aside class="compact"><div class="sec-h"><h2 style="font-size:14px;font-weight:600">Recent activity</h2></div>${feed(acts().filter((a) => a.proj === id).slice(0, 5), { noProj: true })}</aside></div>`;
   }
-  if (tab === "work") return `<div class="subbar">${workDisplayMenu("projLayout")}</div>` + (S.projLayout === "board" ? board(ws.filter((w) => w.kind === "task"), "task") : workList(ws));
+  if (tab === "work") return `<div class="subbar">${workDisplayMenu("projLayout")}</div>` + workWorkspace(S.projLayout === "board" ? board(ws.filter((w) => w.kind === "task"), "task") : workList(ws), ws);
   if (tab === "team") return projectTeams(id) + memberRows(projMembers(id), { emptyText: "No members yet." });
   if (tab === "activity") return feed(acts().filter((a) => a.proj === id), { noProj: true });
   if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
@@ -6355,7 +6428,7 @@ function pageWork() {
       ${workViewControls(selection.group)}
       <button class="btn primary" id="work-new-task" type="button" data-act="work-new-task">${ic("plus", "ic16")}New task</button>
     </div>
-  </header><div id="work-results">${workResults(filtered, selection)}</div>`;
+  </header>${workWorkspace(workResults(filtered, selection))}`;
 }
 
 function openWorkTask(trigger) {
@@ -8099,8 +8172,12 @@ function render(focus = true) {
   const key = location.hash;
   if (focus && key !== S.lastRoute) {
     const keep = S.focusAfter && document.querySelector(S.focusAfter);
-    const h1 = keep || (r0 === "inbox" && r1 && main.querySelector("#triage-detail-title")) || main.querySelector("h1"); if (h1) h1.focus({ preventScroll: true });
+    const focusTarget = keep || (r0 === "inbox" && r1 && main.querySelector("#triage-detail-title"))
+      || main.querySelector("#work-detail-title") || main.querySelector("h1");
     document.getElementById("content").scrollTop = 0;
+    focusTarget?.focus({ preventScroll: true });
+    const selectedWork = main.querySelector('#work-results .work-item-link[aria-current="true"]');
+    (selectedWork || (keep?.matches(".work-item-link") ? keep : null))?.scrollIntoView({ block: "nearest", inline: "nearest" });
   } else if (toolbarFocus) {
     const control = document.getElementById(toolbarFocus);
     control?.focus({ preventScroll: true });
@@ -8456,8 +8533,9 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     document.body.classList.remove("drawer");
     closeMenus();
-    if (location.hash === href) render(true);
-    else location.hash = href;
+    if (location.hash !== href) location.hash = href;
+    else if (link.matches(".work-item-link")) document.getElementById("work-detail-title")?.focus({ preventScroll: true });
+    else render(true);
     return;
   }
   const t = e.target.closest("[data-act]");
@@ -8579,6 +8657,10 @@ document.addEventListener("click", (e) => {
       try { localStorage.setItem(COZY_CONTRAST_STORE, S.cozyContrast ? "1" : "0"); } catch (e) {}
       applyCozyContrast();
       t.setAttribute("aria-checked", String(S.cozyContrast));
+      break;
+    case "work-close-detail":
+      S.focusAfter = `#work-results .work-item-link[data-item="${CSS.escape(qs().get("item"))}"]`;
+      location.hash = workItemHref();
       break;
     case "work-new-task": openWorkTask(t); break;
     case "work-cancel-task": t.closest("dialog").close(); break;
@@ -8883,6 +8965,12 @@ document.addEventListener("keydown", (e) => {
     if (sender) {
       sender.dataset.previewDismissed = "";
       e.preventDefault();
+      return;
+    }
+    const closeWork = e.target.closest(".work-reading")?.querySelector('[data-act="work-close-detail"]');
+    if (closeWork) {
+      e.preventDefault();
+      closeWork.click();
       return;
     }
     if (S.confirmDeny) {
