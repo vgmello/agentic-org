@@ -16,10 +16,12 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 
 	// Home loads live domain KPIs, Project Scorecard, and 3-lens Executive Brief
 	await visit(page, '/home');
+	await expect(page.locator('html')).not.toHaveAttribute('data-interior-page');
 	await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-	await expect(page.getByText('Financials')).toBeVisible();
-	await expect(page.getByText('Workforce & Offices')).toBeVisible();
-	await expect(page.getByText('Work & Flow')).toBeVisible();
+	await expect(page.getByRole('region', { name: /Executive overview/ })).toBeVisible();
+	await expect(page.locator('#hb-pil-fin')).toHaveText('Financials');
+	await expect(page.locator('#hb-pil-team')).toHaveText('Team');
+	await expect(page.locator('#hb-pil-proj')).toHaveText('Delivery');
 	await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
 
 	// 3-lens Executive Brief switching (Today / 7-Day / Board) + Copy brief -> Copied
@@ -33,6 +35,40 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	const copyBtn = page.getByRole('button', { name: 'Copy brief' });
 	await copyBtn.click();
 	await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
+
+	// Executive Brief Show full brief / Show less disclosure at stacked viewport (<1280px)
+	await page.setViewportSize({ width: 1024, height: 900 });
+	const expandBtn = page.getByRole('button', { name: 'Show full brief' });
+	await expect(expandBtn).toBeVisible();
+	await expect(expandBtn).toHaveAttribute('aria-expanded', 'false');
+	await expandBtn.click();
+	const collapseBtn = page.getByRole('button', { name: 'Show less' });
+	await expect(collapseBtn).toBeVisible();
+	await expect(collapseBtn).toHaveAttribute('aria-expanded', 'true');
+	await collapseBtn.click();
+	await expect(page.getByRole('button', { name: 'Show full brief' })).toHaveAttribute(
+		'aria-expanded',
+		'false'
+	);
+	await page.setViewportSize({ width: 1440, height: 900 });
+
+	// Inline Home search combobox filters live and applies keyboard selection without leaving /home
+	const homeCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Org AI' });
+	await expect(homeCombo).toBeVisible();
+	await homeCombo.click();
+	await homeCombo.fill('Theme: Classic');
+	const inlineListbox = page.locator('#exec-cmdk-home-listbox');
+	await expect(inlineListbox).toBeVisible();
+	await expect(inlineListbox.getByRole('option', { name: /Theme: Classic/ })).toBeVisible();
+	await homeCombo.press('Enter');
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'classic');
+	await expect(page).toHaveURL(/\/home$/);
+	await expect(inlineListbox).toBeHidden();
+	await page
+		.getByRole('group', { name: 'Theme' })
+		.getByRole('button', { name: 'Ocean', exact: true })
+		.click();
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ocean');
 
 	// Verify Projects is last under Workspace and Teams is reachable in Organization
 	const navLinks = await page
@@ -63,7 +99,7 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await expect(page.locator('.cozy-room')).toBeHidden();
 	await expect(page.locator('.exec-cta-glass').first()).toHaveCSS(
 		'background-color',
-		'rgb(94, 82, 161)'
+		'rgb(83, 83, 83)'
 	);
 	await expect(page.locator('.exec-cta-glass').first()).toHaveCSS('border-radius', '5px');
 	if (captureDir) {
@@ -130,6 +166,7 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	// Inbox renders split master-detail approval & triage workspace from inboxApi
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
 	await expect(page).toHaveURL(/\/inbox$/);
+	await expect(page.locator('html')).toHaveAttribute('data-interior-page');
 	await expect(page.getByRole('heading', { level: 1, name: 'Inbox' })).toBeVisible();
 	await expect(page.getByRole('main').getByText('waiting on you')).toBeVisible();
 	if (captureDir) {
@@ -382,6 +419,28 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	await expect(page.getByText('Agentic Org v1.0').first()).toBeVisible();
 	await expect(page.getByText('Look & feel refresh').first()).toBeVisible();
 	await expect(page.getByText("Approve Kai's sync")).toBeVisible();
+
+	// Upcoming milestones · Next 14 days renders on /home?mock=poc
+	await expect(
+		page.getByRole('heading', { name: 'Upcoming milestones · Next 14 days' })
+	).toBeVisible();
+
+	// Decision Spotlight "Ask about this" opens Org AI with that decision's answer
+	await page.getByRole('button', { name: 'Ask about this' }).click();
+	const aiDialog = page.getByRole('dialog', { name: 'Command palette and Org AI' });
+	await expect(aiDialog).toBeVisible();
+	await expect(aiDialog).toContainText("Approve publishing Kai's sync update to v1.0");
+	await expect(aiDialog).toContainText('Ada recommends: approve.');
+	await aiDialog.getByRole('button', { name: 'ESC' }).click();
+	await expect(aiDialog).toBeHidden();
+
+	// Project card spot-jump jumps directly to the matching Spotlight decision
+	const spotJumpBtn = page.locator('button[data-spot-jump="in2"]').first();
+	await expect(spotJumpBtn).toBeVisible();
+	await spotJumpBtn.click();
+	await expect(page.locator('#hb-spotlight')).toContainText(
+		'Choose how offices coordinate shared files: timed access or fixed lock'
+	);
 
 	// Persists across route navigation without re-specifying ?mock=poc
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();

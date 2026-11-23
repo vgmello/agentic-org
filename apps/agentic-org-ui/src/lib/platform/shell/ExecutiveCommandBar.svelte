@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import Clock from '@lucide/svelte/icons/clock';
 	import Folder from '@lucide/svelte/icons/folder';
 	import Inbox from '@lucide/svelte/icons/inbox';
@@ -22,13 +23,15 @@
 		items = [],
 		inboxItems = [],
 		offices = [],
-		ownerId = 'owner'
+		ownerId = 'owner',
+		registerAsk
 	}: {
 		snapshot?: OrgSnapshot;
 		items?: WorkItemSummary[];
 		inboxItems?: readonly InboxItem[];
 		offices?: OfficeInfo[];
 		ownerId?: string;
+		registerAsk?: (fn: (prompt: string) => void) => void;
 	} = $props();
 
 	interface CommandEntry {
@@ -43,12 +46,17 @@
 	const kbdClass =
 		'inline-flex h-[22px] items-center justify-center rounded-md bg-[var(--exec-well)] px-[7px] text-[0.7rem] font-semibold text-[var(--exec-muted)] shadow-[inset_0_0_0_1px_var(--exec-border)]';
 
+	const isHome = $derived(page.url.pathname === '/home');
+
 	let open = $state(false);
+	let inlineOpen = $state(false);
 	let mode = $state<'cmd' | 'ai'>('cmd');
 	let query = $state('');
 	let activeIdx = $state(0);
 	let aiHistory = $state<OrgAiAnswer[]>([]);
 	let inputEl = $state<HTMLInputElement | null>(null);
+	let homeInputEl = $state<HTMLInputElement | null>(null);
+	let homeShellEl = $state<HTMLDivElement | null>(null);
 	let skipRestoreFocus = false;
 
 	const AI_STARTERS = [
@@ -166,7 +174,12 @@
 
 		if (!q) return list.slice(0, 15);
 		return list
-			.filter((e) => e.label.toLowerCase().includes(q) || e.sub.toLowerCase().includes(q))
+			.filter(
+				(e) =>
+					e.label.toLowerCase().includes(q) ||
+					e.sub.toLowerCase().includes(q) ||
+					e.group.toLowerCase().includes(q)
+			)
 			.slice(0, 12);
 	});
 
@@ -174,17 +187,43 @@
 	const activeOptionId = $derived(
 		mode === 'cmd' && entries.length > 0 ? `exec-cmdk-opt-${safeActiveIdx}` : undefined
 	);
+	const inlineActiveOptionId = $derived(
+		inlineOpen && entries.length > 0 ? `exec-cmdk-home-opt-${safeActiveIdx}` : undefined
+	);
 	const currentAi = $derived(aiHistory[0]);
 	const earlierAi = $derived(aiHistory.slice(1, 5));
 	const askedSet = $derived(new Set(aiHistory.map((h) => h.query.toLowerCase())));
 	const followUps = $derived(AI_STARTERS.filter((s) => !askedSet.has(s.toLowerCase())));
+
+	afterNavigate(() => {
+		if (inlineOpen) {
+			closeInline(true);
+		}
+	});
 
 	function resetModalState() {
 		query = '';
 		activeIdx = 0;
 	}
 
+	function closeInline(clearQuery = true) {
+		inlineOpen = false;
+		if (clearQuery) {
+			query = '';
+		}
+		activeIdx = 0;
+	}
+
+	function openInline() {
+		open = false;
+		mode = 'cmd';
+		inlineOpen = true;
+		activeIdx = 0;
+		void tick().then(() => homeInputEl?.focus());
+	}
+
 	function openModal(nextMode: 'cmd' | 'ai') {
+		closeInline(false);
 		skipRestoreFocus = false;
 		mode = nextMode;
 		open = true;
@@ -198,7 +237,12 @@
 	}
 
 	function runEntry(entry: CommandEntry) {
-		closeModal(!entry.href);
+		const fromInline = inlineOpen;
+		if (fromInline) {
+			closeInline(true);
+		} else {
+			closeModal(!entry.href);
+		}
 		if (entry.action) entry.action();
 		else if (entry.href) void goto(resolve(entry.href as '/'));
 	}
@@ -220,17 +264,52 @@
 		query = '';
 	}
 
+	function askQuestion(prompt: string) {
+		closeInline(true);
+		skipRestoreFocus = false;
+		mode = 'ai';
+		open = true;
+		activeIdx = 0;
+		submitAi(prompt);
+		void tick().then(() => inputEl?.focus());
+	}
+
+	$effect(() => {
+		registerAsk?.(askQuestion);
+	});
+
+	function handleWindowPointerDown(event: PointerEvent) {
+		if (!inlineOpen) return;
+		const target = event.target;
+		if (target instanceof Node && homeShellEl?.contains(target)) return;
+		closeInline(false);
+	}
+
 	function handleWindowKeydown(event: KeyboardEvent) {
 		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
 			event.preventDefault();
-			if (open) closeModal();
-			else openModal('cmd');
+			if (open) {
+				closeModal();
+			} else if (isHome) {
+				if (inlineOpen && document.activeElement === homeInputEl) {
+					closeInline(true);
+					homeInputEl?.blur();
+				} else {
+					openInline();
+				}
+			} else {
+				openModal('cmd');
+			}
 			return;
 		}
-		if (open && (event.metaKey || event.ctrlKey) && event.key === '/') {
+		if ((event.metaKey || event.ctrlKey) && event.key === '/') {
 			event.preventDefault();
-			mode = mode === 'cmd' ? 'ai' : 'cmd';
-			void tick().then(() => inputEl?.focus());
+			if (open) {
+				mode = mode === 'cmd' ? 'ai' : 'cmd';
+				void tick().then(() => inputEl?.focus());
+			} else {
+				openModal('ai');
+			}
 			return;
 		}
 		if (
@@ -254,14 +333,18 @@
 			)
 		) {
 			event.preventDefault();
-			openModal('cmd');
+			if (isHome) openInline();
+			else openModal('cmd');
 		}
 	}
 
 	$effect(() => {
-		if (!open || mode !== 'cmd' || entries.length === 0) return;
+		if ((!open || mode !== 'cmd') && !inlineOpen) return;
+		if (entries.length === 0) return;
 		void query;
-		const targetId = `exec-cmdk-opt-${safeActiveIdx}`;
+		const targetId = inlineOpen
+			? `exec-cmdk-home-opt-${safeActiveIdx}`
+			: `exec-cmdk-opt-${safeActiveIdx}`;
 		let cancelled = false;
 		void tick().then(() => {
 			if (!cancelled) {
@@ -274,7 +357,7 @@
 	});
 
 	function handleInputKeydown(event: KeyboardEvent) {
-		if (mode === 'ai') {
+		if (mode === 'ai' && open) {
 			if (event.key === 'Enter' && query.trim()) {
 				event.preventDefault();
 				submitAi(query);
@@ -283,43 +366,175 @@
 		}
 		if (event.key === 'ArrowDown') {
 			event.preventDefault();
+			if (isHome && !open && !inlineOpen) inlineOpen = true;
 			activeIdx = entries.length > 0 ? (safeActiveIdx + 1) % entries.length : 0;
 		} else if (event.key === 'ArrowUp') {
 			event.preventDefault();
+			if (isHome && !open && !inlineOpen) inlineOpen = true;
 			activeIdx = entries.length > 0 ? (safeActiveIdx - 1 + entries.length) % entries.length : 0;
 		} else if (event.key === 'Enter' && entries[safeActiveIdx]) {
 			event.preventDefault();
 			runEntry(entries[safeActiveIdx]);
+		} else if (event.key === 'Escape' && inlineOpen) {
+			event.preventDefault();
+			closeInline(true);
 		}
 	}
 </script>
 
-<svelte:window onkeydown={handleWindowKeydown} />
+<svelte:window onkeydown={handleWindowKeydown} onpointerdown={handleWindowPointerDown} />
 
 <header
 	class="exec-topbar relative z-30 flex shrink-0 items-center justify-center overflow-visible px-6"
 >
-	<div class="exec-cmdk-bar flex w-full max-w-[640px] items-center">
-		<button
-			type="button"
-			onclick={() => openModal('cmd')}
-			aria-haspopup="dialog"
-			aria-expanded={open}
-			class="exec-cmdk-trigger flex min-w-0 flex-1 items-center text-left"
-		>
-			<Search class="exec-cmdk-ico size-[18px] shrink-0" aria-hidden="true" />
-			<span class="min-w-0 flex-1 truncate">Search, run a command, or ask Org AI…</span>
-			<kbd class="exec-cmdk-kbd hidden sm:inline-flex">⌘K</kbd>
-		</button>
+	<div
+		bind:this={homeShellEl}
+		class="exec-cmdk-bar relative flex w-full max-w-[640px] items-center"
+	>
+		{#if isHome}
+			<label
+				class="exec-cmdk-trigger exec-cmdk-home-field flex min-w-0 flex-1 items-center text-left"
+			>
+				<Search class="exec-cmdk-ico size-[18px] shrink-0" aria-hidden="true" />
+				<input
+					bind:this={homeInputEl}
+					bind:value={query}
+					type="search"
+					autocomplete="off"
+					placeholder="Search, run a command, or ask Org AI…"
+					aria-label="Search, run a command, or ask Org AI"
+					role="combobox"
+					aria-autocomplete="list"
+					aria-expanded={inlineOpen}
+					aria-controls="exec-cmdk-home-listbox"
+					aria-activedescendant={inlineActiveOptionId}
+					onfocus={() => {
+						inlineOpen = true;
+						activeIdx = 0;
+					}}
+					oninput={() => {
+						inlineOpen = true;
+						activeIdx = 0;
+					}}
+					onkeydown={handleInputKeydown}
+					class="exec-cmdk-home-input min-w-0 flex-1 bg-transparent text-sm text-[var(--exec-ink)] outline-none"
+				/>
+				<kbd class="exec-cmdk-kbd hidden sm:inline-flex" aria-hidden="true">⌘K</kbd>
+			</label>
+		{:else}
+			<button
+				type="button"
+				onclick={() => openModal('cmd')}
+				aria-haspopup="dialog"
+				aria-expanded={open}
+				class="exec-cmdk-trigger flex min-w-0 flex-1 items-center text-left"
+			>
+				<Search class="exec-cmdk-ico size-[18px] shrink-0" aria-hidden="true" />
+				<span class="min-w-0 flex-1 truncate">Search, run a command, or ask Org AI…</span>
+				<kbd class="exec-cmdk-kbd hidden sm:inline-flex">⌘K</kbd>
+			</button>
+		{/if}
 		<span class="exec-cmdk-sep mx-1.5 h-[22px] w-px shrink-0" aria-hidden="true"></span>
 		<button
 			type="button"
-			onclick={() => openModal('ai')}
+			onclick={() => {
+				const pending = query.trim();
+				if (isHome && pending) {
+					askQuestion(pending);
+				} else {
+					openModal('ai');
+				}
+			}}
 			class="exec-ai-btn inline-flex shrink-0 items-center px-3.5"
 		>
 			<Sparkles class="exec-ai-ico size-[15px] shrink-0" aria-hidden="true" />
 			<span>Ask</span>
 		</button>
+
+		{#if isHome && inlineOpen}
+			<div
+				class="exec-cmdk-home-results flex flex-col overflow-hidden rounded-[14px] bg-[var(--popover)] shadow-[inset_0_0_0_1px_var(--exec-border-hi),0_18px_42px_color-mix(in_srgb,var(--shade)_36%,transparent)]"
+			>
+				<div class="min-h-0 flex-1 overflow-y-auto p-2">
+					{#if entries.length === 0}
+						<div class="flex flex-col items-center gap-2 py-6 text-center">
+							<p class="text-sm text-[var(--exec-muted)]">
+								No matches for “{query}”.
+							</p>
+							{#if query.trim()}
+								<button
+									type="button"
+									onmousedown={(e) => e.preventDefault()}
+									onclick={() => askQuestion(query)}
+									class="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-[var(--exec-accent-soft)] px-3 text-xs font-semibold text-[var(--exec-accent-ink)] shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]"
+								>
+									<Sparkles class="size-3.5" aria-hidden="true" />
+									<span>Ask Org AI “{query.trim()}”</span>
+								</button>
+							{/if}
+						</div>
+					{:else}
+						<ul
+							id="exec-cmdk-home-listbox"
+							class="flex flex-col gap-0.5"
+							role="listbox"
+							aria-label="Search results"
+						>
+							{#each entries as entry, idx (entry.id)}
+								<li>
+									<button
+										type="button"
+										id="exec-cmdk-home-opt-{idx}"
+										role="option"
+										tabindex={-1}
+										aria-selected={idx === safeActiveIdx}
+										onmousedown={(e) => e.preventDefault()}
+										onmouseenter={() => (activeIdx = idx)}
+										onclick={() => runEntry(entry)}
+										class={[
+											'flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-left text-sm transition-colors',
+											idx === safeActiveIdx
+												? 'bg-[var(--exec-accent-soft)] text-[var(--exec-ink)] shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]'
+												: 'text-[var(--exec-body)] hover:bg-[var(--exec-accent-soft)] hover:text-[var(--exec-ink)] hover:shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]'
+										]}
+									>
+										{#if entry.group === 'Projects'}
+											<Folder class="size-4 shrink-0" aria-hidden="true" />
+										{:else if entry.group === 'Team'}
+											<Users class="size-4 shrink-0" aria-hidden="true" />
+										{:else if entry.group === 'Work'}
+											<Inbox class="size-4 shrink-0" aria-hidden="true" />
+										{:else}
+											<Search class="size-4 shrink-0" aria-hidden="true" />
+										{/if}
+										<span class="min-w-0 flex-1 truncate font-medium">{entry.label}</span>
+										<span class="hidden truncate text-xs text-[var(--exec-dim)] sm:inline">
+											{entry.sub}
+										</span>
+										<span
+											class="shrink-0 rounded-[5px] bg-[var(--exec-well)] px-[7px] py-[1px] text-[0.6875rem] font-medium text-[var(--exec-muted)]"
+										>
+											{entry.group}
+										</span>
+									</button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</div>
+				<div
+					class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--exec-border)] bg-[var(--exec-well)] px-3.5 py-2 text-[11px] text-[var(--exec-dim)]"
+					aria-hidden="true"
+				>
+					<div class="flex items-center gap-3">
+						<span><kbd class={[kbdClass, 'mr-1']}>↑↓</kbd> Move</span>
+						<span><kbd class={[kbdClass, 'mr-1']}>↵</kbd> Open</span>
+						<span><kbd class={[kbdClass, 'mr-1']}>Esc</kbd> Close</span>
+					</div>
+					<span><kbd class={[kbdClass, 'mr-1']}>⌘/</kbd> Ask Org AI</span>
+				</div>
+			</div>
+		{/if}
 	</div>
 </header>
 
@@ -331,6 +546,7 @@
 >
 	<Dialog.Content
 		showCloseButton={false}
+		overlayClass="exec-cmdk-overlay"
 		onOpenAutoFocus={(event) => {
 			event.preventDefault();
 			inputEl?.focus();
@@ -598,8 +814,9 @@
 			box-shadow 0.18s ease,
 			transform 0.18s ease;
 	}
-	.exec-cmdk-input::placeholder {
-		color: var(--exec-muted);
+	.exec-cmdk-input::placeholder,
+	.exec-cmdk-home-input::placeholder {
+		color: var(--exec-cmdk-trigger-ink);
 		opacity: 1;
 	}
 	.exec-cmdk-bar:hover {
@@ -620,6 +837,25 @@
 		transition:
 			color 0.14s ease,
 			background-color 0.14s ease;
+	}
+	.exec-cmdk-home-field {
+		cursor: text;
+	}
+	.exec-cmdk-home-field:focus-within {
+		outline: 1px solid var(--exec-muted);
+		outline-offset: -1px;
+	}
+	.exec-cmdk-home-input:focus-visible {
+		outline: none;
+	}
+	.exec-cmdk-home-results {
+		position: absolute;
+		top: calc(100% + 6px);
+		inset-inline: 0;
+		z-index: 40;
+		max-height: min(26rem, 55dvh);
+		-webkit-backdrop-filter: none;
+		backdrop-filter: none;
 	}
 	.exec-cmdk-trigger:hover {
 		color: var(--exec-ink);

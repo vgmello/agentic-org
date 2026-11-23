@@ -348,6 +348,51 @@ html[data-ui-theme^='report'] {
 	--exec-proj-row-mt: 20px;
 	--exec-proj-row-pt-md: 20px;
 	--exec-proj-row-mt-md: 16px;
+
+	/* Release horizon / milestones in Report Day & Night */
+	--exec-horizon-pad: 22px 0;
+	--exec-hor-item-bg: var(--exec-well);
+	--exec-hor-item-bg-hover: var(--exec-surface-hi);
+	--exec-hor-date-bg: var(--exec-ink);
+	--exec-hor-date-month-ink: var(--exec-surface);
+	--exec-hor-date-day-ink: var(--exec-surface);
+}
+
+html[data-ui-theme='report'] {
+	--exec-hor-date-bg: #0b101b;
+	--exec-hor-date-month-ink: #94a3b8;
+	--exec-hor-date-day-ink: #ffffff;
+}
+
+html[data-ui-theme^='report'] .exec-lbl-std {
+	display: none;
+}
+
+html[data-ui-theme^='report'] .exec-lbl-rep {
+	display: inline;
+}
+
+html[data-ui-theme^='report'] .home-brief::before {
+	content: 'EXECUTIVE OPERATIONS BRIEFING  ·  LIVE EDITION';
+	display: block;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.65rem;
+	line-height: 1;
+	font-weight: 600;
+	letter-spacing: 0.16em;
+	color: var(--exec-dim);
+	margin-bottom: 5px;
+}
+
+html[data-ui-theme^='report'] .brief-title-ico {
+	display: none;
+}
+
+html[data-ui-theme^='report'] .exec-cos-mark {
+	background: var(--tone-accent);
+	color: #ffffff;
+	box-shadow: none;
+	border-radius: 4px;
 }
 
 /* ── Shared Modern 2D Executive Report Structural Primitives (Day & Night) ── */

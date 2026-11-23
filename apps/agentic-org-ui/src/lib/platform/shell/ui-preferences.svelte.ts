@@ -29,7 +29,7 @@ export const UI_THEMES: readonly {
 		label: 'Graphite',
 		shortLabel: 'Graphite',
 		description:
-			'Matte dark graphite surfaces, compact density, crisp hairline borders, and lavender-slate accents.',
+			'Matte dark graphite surfaces, compact density, crisp hairline borders, and neutral charcoal accents.',
 		scheme: 'dark'
 	},
 	{

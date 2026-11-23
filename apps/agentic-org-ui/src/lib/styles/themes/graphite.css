@@ -2,7 +2,7 @@
  * Theme: graphite — Matte Graphite Dark (Linear-inspired)
  * Matte #161718 canvas, #141516 sidebar rail, #1b1d20 panels, #202226 raised surfaces,
  * #2a2d32 active state, crisp 5px/7px radii, zero backdrop blur, zero glow,
- * restrained lavender-slate accents (#9c92e2 / #bab1f4, solid #5e52a1 / #685bb1).
+ * neutral matte charcoal/silver accents (#a8a8a8 / #c5c5c5 / #dedede, solid #535353 / #616161).
  * Strictly scoped to `html[data-ui-theme='graphite']` and `.swatch-graphite`.
  * Binds both executive tokens and app-wide look tokens to Graphite's single semantic ramp.
  */
@@ -21,12 +21,12 @@ html[data-ui-theme='graphite'] {
 	/* Intra-theme unified semantic tokens */
 	--bar-track: #303238;
 
-	--tone-accent: #9c92e2;
-	--tone-accent-bar: #9c92e2;
-	--tone-accent-hi: #b0a7ea;
-	--tone-accent-ink: #bab1f4;
-	--tone-accent-bg: rgba(156, 146, 226, 0.12);
-	--tone-accent-ring: rgba(156, 146, 226, 0.75);
+	--tone-accent: #a8a8a8;
+	--tone-accent-bar: #a8a8a8;
+	--tone-accent-hi: #dedede;
+	--tone-accent-ink: #c5c5c5;
+	--tone-accent-bg: rgba(184, 184, 184, 0.09);
+	--tone-accent-ring: rgba(184, 184, 184, 0.75);
 
 	--tone-ok: #71c598;
 	--tone-ok-bar: #71c598;
@@ -68,21 +68,21 @@ html[data-ui-theme='graphite'] {
 	--fg-subtle: #8e919a;
 	--on-emphasis: #ffffff;
 
-	--primary: #5e52a1;
-	--primary-hover: #685bb1;
+	--primary: #535353;
+	--primary-hover: #616161;
 	--ring: var(--tone-accent);
 	--brand: var(--tone-accent);
 	--focus: var(--tone-accent);
 	--link: var(--tone-accent-ink);
 	--brand-text: var(--tone-accent-ink);
-	--brand-text-strong: #d4cdfa;
-	--brand-text-stronger: #e1dcfa;
+	--brand-text-strong: #dedede;
+	--brand-text-stronger: #e5e5e5;
 
 	--info: var(--tone-accent);
-	--info-emphasis: #5e52a1;
+	--info-emphasis: #535353;
 	--info-text: var(--tone-accent-ink);
-	--info-text-strong: #d4cdfa;
-	--info-text-stronger: #e1dcfa;
+	--info-text-strong: #dedede;
+	--info-text-stronger: #e5e5e5;
 
 	--success: var(--tone-ok);
 	--success-emphasis: var(--tone-ok);
@@ -145,7 +145,7 @@ html[data-ui-theme='graphite'] {
 	--exec-dim: #a2a5ad;
 	--exec-pillar-name-ink: #a2a5ad;
 	--exec-on-accent: #ffffff;
-	--exec-accent: #5e52a1;
+	--exec-accent: #535353;
 
 	/* Compact radii (5px controls, 7px panels) */
 	--exec-panel-radius: 7px;
@@ -189,7 +189,7 @@ html[data-ui-theme='graphite'] {
 	--exec-ai-ink: #f1f1f3;
 	--exec-ai-ink-hover: #ffffff;
 	--exec-ai-ico: var(--tone-accent-ink);
-	--exec-ai-ico-hover: #e1dcfa;
+	--exec-ai-ico-hover: #e5e5e5;
 
 	/* Flat bars bound to Graphite semantic tones */
 	--exec-bar-budget: var(--tone-accent-bar);
@@ -203,15 +203,15 @@ html[data-ui-theme='graphite'] {
 	--exec-seg-queued: var(--tone-queued);
 	--exec-seg-queued-high: var(--tone-bad-bar);
 
-	/* Solid flat lavender-slate CTAs (white on #5e52a1 = 6.57:1, hover #685bb1 = 5.65:1) */
-	--exec-cta-bg: #5e52a1;
-	--exec-cta-fill: #685bb1;
+	/* Solid flat neutral charcoal CTAs (white on #535353 = 7.69:1, hover #616161 = 6.19:1) */
+	--exec-cta-bg: #535353;
+	--exec-cta-fill: #616161;
 	--exec-cta-shadow: none;
 	--exec-cta-shadow-hover: none;
 	--exec-cta-hover-lift: none;
 	--exec-cta-glass-radius: 5px;
-	--exec-cta-glass-bg: #5e52a1;
-	--exec-cta-glass-bg-hover: #685bb1;
+	--exec-cta-glass-bg: #535353;
+	--exec-cta-glass-bg-hover: #616161;
 	--exec-cta-glass-blur: none;
 	--exec-cta-glass-shadow: none;
 	--exec-cta-glass-shadow-hover: none;
@@ -256,6 +256,12 @@ html[data-ui-theme='graphite'] {
 	--exec-scroll-hint-pill-bg: #1b1d20;
 	--exec-scroll-hint-ink: #c6c8ce;
 	--exec-scroll-hint-ink-hover: #f1f1f3;
+
+	--exec-hor-item-bg: var(--graphite-canvas);
+	--exec-hor-item-bg-hover: var(--graphite-hover);
+	--exec-hor-date-bg: var(--graphite-panel);
+	--exec-hor-date-month-ink: #a2a5ad;
+	--exec-hor-date-day-ink: #f1f1f3;
 }
 
 html[data-ui-theme='graphite'] .exec-canvas::before,
@@ -292,14 +298,14 @@ html[data-ui-theme='graphite'] .exec-nav-item.is-active {
 	background: var(--graphite-active);
 	color: var(--exec-ink);
 	box-shadow:
-		inset 2px 0 0 #9c92e2,
+		inset 2px 0 0 #a8a8a8,
 		inset 0 0 0 1px #737782;
 }
 
 html[data-ui-theme='graphite'] .exec-theme-pill.is-on {
 	background: var(--graphite-active);
 	color: var(--exec-ink);
-	box-shadow: inset 0 0 0 1.5px rgba(156, 146, 226, 0.85);
+	box-shadow: inset 0 0 0 1.5px rgba(184, 184, 184, 0.85);
 }
 
 /* Settings preview swatch */
@@ -308,5 +314,5 @@ html[data-ui-theme='graphite'] .exec-theme-pill.is-on {
 }
 
 .swatch-graphite .swatch-bar {
-	background: linear-gradient(90deg, #5e52a1 0%, #9c92e2 62%, #71c598 100%);
+	background: linear-gradient(90deg, #535353 0%, #a8a8a8 62%, #71c598 100%);
 }

@@ -79,12 +79,17 @@ export interface SpotlightDecision {
 	kindLabel: string;
 	urgent: boolean;
 	badgeText: string;
+	expiresShort?: string;
+	actorId?: string;
 	actorName: string;
 	actorInitials: string;
+	isChiefOfStaff?: boolean;
 	projectName: string;
 	projectId?: string;
 	title: string;
 	recommendation: string;
+	recTone: 'ok' | 'warn' | 'bad' | 'neutral';
+	recRiskLabel?: string;
 	backgroundContext: string;
 	auditChecks: string[];
 	risk: SpotlightCell;
@@ -107,6 +112,9 @@ export interface ExecutiveKpis {
 	pausedAgents: number;
 	unplacedAgents: number;
 	totalAgents: number;
+	leadsCount: number;
+	specialistsCount: number;
+	aiCapacityPct: number;
 	peopleCount: number;
 	autonomyPct: number;
 	onlineOffices: number;
@@ -116,6 +124,8 @@ export interface ExecutiveKpis {
 	officePillTone: SignalTone;
 	projectsTotal: number;
 	projectsAttention: number;
+	offTrackProjects: number;
+	atRiskProjects: number;
 	openBugs: number;
 	criticalBugs: number;
 	firstTryPassPct: number;
@@ -132,14 +142,32 @@ export interface ProjectBentoCard {
 	totalCount: number;
 	pct: number;
 	dueLabel?: string;
+	paceLabel?: string;
+	paceTone?: 'ok' | 'warn' | 'bad';
 	blockerText: string;
 	blockerTone: 'ok' | 'warn' | 'bad' | 'sky';
+	isClear: boolean;
+	clearNote: string;
 	actionLabel: string;
 	actionHref: string;
+	spotDecisionId?: string;
 	workHref: string;
 	leadName: string;
 	memberInitials: string[];
 	extraMembers: number;
+}
+
+export interface HomeMilestone {
+	id: string;
+	month: string;
+	day: string;
+	title: string;
+	releaseTag?: string;
+	note: string;
+	statusLabel: string;
+	tone: 'ok' | 'warn' | 'bad' | 'sky';
+	spotId?: string;
+	href: string;
 }
 
 export interface CatchUpRow {
@@ -193,6 +221,7 @@ export interface ExecutiveBrief {
 	sections: ExecutiveBriefSection[];
 	copyText: string;
 	updatedLabel: string;
+	chiefOfStaff?: { id: string; name: string; role: string };
 	lenses: Record<BriefLens, ExecutiveBriefLensContent>;
 }
 
@@ -462,6 +491,27 @@ function inboxToSpotlight(item: InboxItem, nowMs: number): SpotlightDecision {
 	if (item.open?.label) auditChecks.push(item.open.label);
 	if (item.expires_at) auditChecks.push(formatExpiryBadge(item.expires_at, nowMs));
 
+	const recTone: SpotlightDecision['recTone'] =
+		item.kind === 'problem'
+			? 'bad'
+			: item.kind === 'decision' || item.kind === 'question'
+				? 'warn'
+				: item.recommendation
+					? 'ok'
+					: 'neutral';
+	const recRiskLabel =
+		recTone === 'ok'
+			? 'Low risk'
+			: recTone === 'warn'
+				? 'Investigate'
+				: recTone === 'bad'
+					? 'Use caution'
+					: undefined;
+	const isChiefOfStaff =
+		item.who.id === 'tess' ||
+		item.source.toLowerCase().includes('tess') ||
+		item.source.toLowerCase().includes('chief of staff');
+
 	return {
 		id: item.id,
 		sourceKind: 'inbox',
@@ -470,12 +520,17 @@ function inboxToSpotlight(item: InboxItem, nowMs: number): SpotlightDecision {
 		kindLabel: item.source,
 		urgent,
 		badgeText,
+		expiresShort: item.expires_at ? formatExpiryBadge(item.expires_at, nowMs) : undefined,
+		actorId: item.who.id,
 		actorName: item.who.name,
 		actorInitials: initialsOf(item.who.name),
+		isChiefOfStaff,
 		projectName,
 		projectId: item.project?.id,
 		title: item.title,
 		recommendation: item.recommendation ?? item.why,
+		recTone,
+		recRiskLabel,
 		backgroundContext: item.why,
 		auditChecks,
 		risk,
@@ -671,6 +726,23 @@ export function deriveDecisionSpotlight(
 				? `/work?request=${encodeURIComponent(item.id)}`
 				: `/work/${encodeURIComponent(item.short_id)}`;
 
+			const workRecTone: SpotlightDecision['recTone'] =
+				item.severity === 'critical'
+					? 'bad'
+					: urgent || isNewBug
+						? 'warn'
+						: isFixedBug || isRequest
+							? 'ok'
+							: 'neutral';
+			const workRecRiskLabel =
+				workRecTone === 'ok'
+					? 'Low risk'
+					: workRecTone === 'warn'
+						? 'Investigate'
+						: workRecTone === 'bad'
+							? 'Use caution'
+							: undefined;
+
 			return {
 				id: item.id,
 				sourceKind: 'work',
@@ -679,12 +751,16 @@ export function deriveDecisionSpotlight(
 				kindLabel,
 				urgent,
 				badgeText,
+				actorId: actor?.id,
 				actorName,
 				actorInitials: initialsOf(actorName),
+				isChiefOfStaff: actor?.agent?.role === 'chief_of_staff',
 				projectName,
 				projectId: item.project_id,
 				title: item.title,
 				recommendation,
+				recTone: workRecTone,
+				recRiskLabel: workRecRiskLabel,
 				backgroundContext,
 				auditChecks,
 				risk,
@@ -806,21 +882,44 @@ export function deriveProjectCards(
 		}
 
 		const workHref = `/projects/${projectId}/work`;
-		let blockerText = 'All active work flowing cleanly';
+		let blockerText = '';
 		let blockerTone: ProjectBentoCard['blockerTone'] = 'ok';
 		let actionLabel = 'Open work';
 		let actionHref = workHref;
+		let spotDecisionId: string | undefined;
+		const clearNote = 'All checks passing · on schedule';
 
 		if (projProblems.length > 0) {
 			blockerText = projProblems[0].title;
 			blockerTone = 'bad';
 			actionLabel = 'Inspect';
 			actionHref = `/inbox?item=${encodeURIComponent(projProblems[0].id)}`;
+			spotDecisionId = projProblems[0].id;
+		} else if (projApprovals.length > 0 && healthTone === 'bad') {
+			blockerText = blockedItems[0]?.blocked_reason || projApprovals[0].title;
+			blockerTone = 'bad';
+			actionLabel = 'Unblock';
+			actionHref = `/inbox?item=${encodeURIComponent(projApprovals[0].id)}`;
+			spotDecisionId = projApprovals[0].id;
 		} else if (criticalBugs > 0) {
 			blockerText = `${criticalBugs} ${criticalBugs === 1 ? 'serious bug' : 'serious bugs'} open`;
 			blockerTone = 'bad';
 			actionLabel = 'Inspect';
 			actionHref = workHref;
+		} else if (projApprovals.length > 0) {
+			blockerText =
+				projApprovals.length === 1
+					? projApprovals[0].title
+					: `${projApprovals.length} sign-offs waiting in Inbox`;
+			blockerTone = healthTone === 'warn' ? 'warn' : 'sky';
+			actionLabel =
+				projApprovals.length > 1
+					? `Review (${projApprovals.length})`
+					: healthTone === 'ok'
+						? 'Sign off'
+						: 'Review';
+			actionHref = `/inbox?item=${encodeURIComponent(projApprovals[0].id)}`;
+			spotDecisionId = projApprovals[0].id;
 		} else if (blockedCount > 0) {
 			blockerText =
 				blockedItems[0]?.blocked_reason ||
@@ -828,25 +927,35 @@ export function deriveProjectCards(
 			blockerTone = 'warn';
 			actionLabel = 'Unblock';
 			actionHref = '/inbox';
-		} else if (projApprovals.length > 0) {
-			blockerText =
-				projApprovals.length === 1
-					? projApprovals[0].title
-					: `${projApprovals.length} sign-offs waiting in Inbox`;
-			blockerTone = healthTone === 'warn' ? 'warn' : 'sky';
-			actionLabel = projApprovals.length > 1 ? `Review (${projApprovals.length})` : 'Review';
-			actionHref = `/inbox?item=${encodeURIComponent(projApprovals[0].id)}`;
+			if (blockedItems[0]) spotDecisionId = blockedItems[0].id;
 		} else if (scopedReqs.length > 0) {
 			blockerText = `${scopedReqs.length} scoped ${scopedReqs.length === 1 ? 'request' : 'requests'} waiting sign-off`;
 			blockerTone = 'sky';
 			actionLabel = 'Review';
 			actionHref = '/inbox';
+			spotDecisionId = scopedReqs[0].id;
 		} else if (teams.length === 0 && !row) {
 			blockerText = 'No team assigned yet';
 			blockerTone = 'warn';
 			actionLabel = 'Assign';
 			actionHref = `/projects/${projectId}/team`;
 		}
+
+		const isClear = blockerText === '';
+		if (isClear) {
+			blockerText = clearNote;
+		}
+
+		const paceLabel =
+			health === 'Off track'
+				? 'Behind pace'
+				: health === 'At risk'
+					? 'At risk'
+					: pct >= 50
+						? 'On pace'
+						: undefined;
+		const paceTone: ProjectBentoCard['paceTone'] =
+			health === 'Off track' ? 'bad' : health === 'At risk' ? 'warn' : 'ok';
 
 		const shown = projMembers.slice(0, 4).map((m) => initialsOf(m.name));
 		const extraMembers = Math.max(0, (homeProj?.members ?? projMembers.length) - shown.length);
@@ -862,10 +971,15 @@ export function deriveProjectCards(
 			totalCount,
 			pct,
 			dueLabel: homeProj?.due ? formatDueShort(homeProj.due) : undefined,
+			paceLabel,
+			paceTone,
 			blockerText,
 			blockerTone,
+			isClear,
+			clearNote,
 			actionLabel,
 			actionHref,
+			spotDecisionId,
 			workHref,
 			leadName:
 				lead?.name ??
@@ -975,7 +1089,21 @@ export function deriveKpiMetrics(
 		offlineOffices > 0 ? 'bad' : offices.length > 0 ? 'ok' : 'muted';
 
 	const projectCards = deriveProjectCards(snapshot, liveItems, domain);
-	const projectsAttention = projectCards.filter((p) => p.health !== 'On track').length;
+	const offTrackProjects = projectCards.filter((p) => p.health === 'Off track').length;
+	const atRiskProjects = projectCards.filter((p) => p.health === 'At risk').length;
+	const projectsAttention = offTrackProjects + atRiskProjects;
+
+	const leadIds = new Set(
+		snapshot.teams.map((t) => t.lead_member_id).filter((id): id is string => Boolean(id))
+	);
+	const allActiveAgents = agentsOf(nonOwners(snapshot).filter((m) => !isFormer(m)));
+	const leadsCount = allActiveAgents.filter(
+		(a) =>
+			leadIds.has(a.id) ||
+			a.agent?.role === 'chief_of_staff' ||
+			a.agent?.role === 'engineering_manager'
+	).length;
+	const specialistsCount = Math.max(0, totalAgents - leadsCount);
 
 	const workOpenBugs = openItems.filter((i) => i.kind === 'bug').length;
 	const rowOpenBugs = projectRows.reduce(
@@ -999,6 +1127,12 @@ export function deriveKpiMetrics(
 				: 0;
 
 	const financials = deriveFinancialKpi(domain?.orgCost, domain?.agentBudgets, doneCount);
+	const aiCapacityPct =
+		financials.available && financials.budgetMicroUsd !== null
+			? Math.max(0, Math.min(100, 100 - financials.usagePct))
+			: totalAgents > 0
+				? Math.max(0, Math.min(100, Math.round(((totalAgents - activeAgents) * 100) / totalAgents)))
+				: 100;
 
 	return {
 		financials,
@@ -1011,6 +1145,9 @@ export function deriveKpiMetrics(
 		pausedAgents,
 		unplacedAgents,
 		totalAgents,
+		leadsCount,
+		specialistsCount,
+		aiCapacityPct,
 		peopleCount,
 		autonomyPct,
 		onlineOffices,
@@ -1020,10 +1157,90 @@ export function deriveKpiMetrics(
 		officePillTone,
 		projectsTotal: projectCards.length,
 		projectsAttention,
+		offTrackProjects,
+		atRiskProjects,
 		openBugs,
 		criticalBugs,
 		firstTryPassPct
 	};
+}
+
+function parseIsoDateUtc(isoDate: string): Date | null {
+	const parts = isoDate.split('-').map(Number);
+	if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
+	return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12));
+}
+
+export function deriveUpcomingMilestones(
+	snapshot: OrgSnapshot,
+	items: readonly WorkItemSummary[],
+	nowMs = Date.now(),
+	domain?: Pick<HomeDomainData, 'projectRows' | 'homeProjects' | 'inboxItems'>
+): HomeMilestone[] {
+	const homeProjects = domain?.homeProjects ?? [];
+	const dated = homeProjects.filter((p): p is HomeProject & { due: string } => Boolean(p.due));
+	if (dated.length === 0) return [];
+
+	const cardsById = new Map(
+		deriveProjectCards(snapshot, items, domain).map((card) => [card.id, card])
+	);
+	const monthFmt = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' });
+	const nowDate = new Date(nowMs);
+	const todayUtc = Date.UTC(
+		nowDate.getUTCFullYear(),
+		nowDate.getUTCMonth(),
+		nowDate.getUTCDate(),
+		12
+	);
+
+	return [...dated]
+		.sort((a, b) => a.due.localeCompare(b.due))
+		.slice(0, 3)
+		.map((hp): HomeMilestone => {
+			const dt = parseIsoDateUtc(hp.due);
+			const month = dt ? monthFmt.format(dt) : hp.due.slice(0, 3);
+			const day = dt ? String(dt.getUTCDate()).padStart(2, '0') : hp.due.slice(-2);
+			const diffDays = dt ? Math.round((dt.getTime() - todayUtc) / 86_400_000) : 0;
+			const statusLabel =
+				diffDays < 0
+					? `${Math.abs(diffDays)}d overdue`
+					: diffDays === 0
+						? 'Today'
+						: diffDays === 1
+							? 'Tomorrow'
+							: `In ${diffDays} days`;
+
+			const card = cardsById.get(hp.id);
+			const tone: HomeMilestone['tone'] =
+				card?.healthTone === 'bad'
+					? 'bad'
+					: card?.healthTone === 'warn'
+						? 'warn'
+						: card?.spotDecisionId
+							? 'sky'
+							: 'ok';
+			const leadLabel = hp.lead?.name ?? card?.leadName ?? 'Team';
+			const releaseTag = card?.key && !hp.name.includes(card.key) ? card.key : card?.key;
+			const title =
+				hp.blocked > 0
+					? `${hp.name} checkpoint`
+					: hp.done >= hp.total && hp.total > 0
+						? `${hp.name} release`
+						: `${hp.name} milestone`;
+
+			return {
+				id: `ms-${hp.id}`,
+				month,
+				day,
+				title,
+				releaseTag,
+				note: `${leadLabel} · ${hp.name}`,
+				statusLabel,
+				tone,
+				spotId: card?.spotDecisionId,
+				href: card?.actionHref ?? `/projects/${hp.id}/work`
+			};
+		});
 }
 
 export function deriveTaskTimeBreakdown(
@@ -1364,10 +1581,21 @@ export function deriveExecutiveBrief(
 		board: buildLens('board', 'Board', boardSections, 'Board ready')
 	};
 
+	const cosMember = snapshot.members.find(
+		(m) => !isFormer(m) && m.agent?.role === 'chief_of_staff'
+	);
+
 	return {
 		sections: lenses.today.sections,
 		copyText: lenses.today.copyText,
 		updatedLabel: lenses.today.updatedLabel,
+		chiefOfStaff: cosMember
+			? {
+					id: cosMember.id,
+					name: cosMember.name,
+					role: cosMember.agent?.title ?? 'Chief of Staff'
+				}
+			: undefined,
 		lenses
 	};
 }
@@ -1400,6 +1628,38 @@ export function answerExecutiveQuestion(
 	);
 	const projects = deriveProjectCards(snapshot, items, domain);
 	const time = deriveTaskTimeBreakdown(items, ownerId, kpis.offlineOffices, domain);
+
+	const explainMatch = query.match(/^explain the risk, impact, and recommendation for:\s*(.+)$/i);
+	if (explainMatch) {
+		const targetTitle = explainMatch[1].trim().toLowerCase();
+		const match = spotlight.find(
+			(d) =>
+				d.title.toLowerCase() === targetTitle ||
+				d.title.toLowerCase().includes(targetTitle) ||
+				targetTitle.includes(d.title.toLowerCase())
+		);
+		if (match) {
+			return {
+				query,
+				headline: `${match.title} — ${match.risk.label} · ${match.impact.label}`,
+				bullets: [
+					{
+						text: `Recommendation: ${match.recommendation}`,
+						href: match.detailHref,
+						linkLabel: 'Open details'
+					},
+					{
+						text: `Risk & impact: ${match.risk.label} (${match.risk.sub}); ${match.impact.label} (${match.impact.sub}).`
+					},
+					{
+						text: `Background: ${match.backgroundContext}`,
+						href: match.projectId ? `/projects/${match.projectId}/work` : '/inbox',
+						linkLabel: match.projectId ? `Open ${match.projectName}` : 'Open Inbox'
+					}
+				]
+			};
+		}
+	}
 
 	if (/spend|cost|budget|money|cap|dollar/.test(q)) {
 		return {

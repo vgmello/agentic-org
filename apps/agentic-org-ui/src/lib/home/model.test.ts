@@ -10,7 +10,8 @@ import {
 	deriveFinancialKpi,
 	deriveKpiMetrics,
 	deriveProjectCards,
-	deriveTaskTimeBreakdown
+	deriveTaskTimeBreakdown,
+	deriveUpcomingMilestones
 } from './model';
 
 function makeItem(overrides: Partial<WorkItemSummary>): WorkItemSummary {
@@ -324,5 +325,71 @@ describe('executive home view model', () => {
 		expect(readiness?.body).toContain(
 			'Inbox status unavailable — check Inbox directly for pending decisions.'
 		);
+	});
+
+	it('derives upcoming milestones, spotlight spot-jump IDs, and decision-scoped Org AI answers', () => {
+		const snap = sampleOrg('hq');
+		const inboxItems: InboxItem[] = [
+			{
+				id: 'in1',
+				kind: 'approval',
+				source: 'Release sign-off',
+				title: "Approve publishing Kai's sync update to v1.0",
+				who: { id: 'ada', name: 'Ada', kind: 'agent' },
+				project: { id: 'atlas', name: 'Atlas' },
+				why: 'All 412 automated checks passed.',
+				recommendation: 'Ada recommends: approve.',
+				created_at: '2026-11-21T04:45:00Z',
+				expires_at: '2026-11-21T08:45:00Z',
+				actions: ['approve', 'deny'],
+				approve_label: 'Approve release',
+				open: { path: '/work/T-1', label: 'Open T-1' },
+				state: 'open'
+			}
+		];
+		const homeProjects = [
+			{
+				id: 'atlas',
+				name: 'Atlas',
+				done: 4,
+				total: 6,
+				open: 2,
+				blocked: 0,
+				due: '2026-11-26',
+				lead: { id: 'ada', name: 'Ada' },
+				members: 3
+			},
+			{
+				id: 'beacon',
+				name: 'Beacon',
+				done: 3,
+				total: 3,
+				open: 0,
+				blocked: 0,
+				due: '2026-11-29',
+				lead: { id: 'sam', name: 'Sam' },
+				members: 2
+			}
+		];
+		const cards = deriveProjectCards(snap, [], { inboxItems, homeProjects });
+		expect(cards.find((c) => c.id === 'atlas')?.spotDecisionId).toBe('in1');
+		expect(cards.find((c) => c.id === 'beacon')?.isClear).toBe(true);
+
+		const milestones = deriveUpcomingMilestones(snap, [], Date.parse('2026-11-25T12:00:00Z'), {
+			inboxItems,
+			homeProjects
+		});
+		expect(milestones).toHaveLength(2);
+		expect(milestones[0].month).toBe('Nov');
+		expect(milestones[0].day).toBe('26');
+		expect(milestones[0].statusLabel).toBe('Tomorrow');
+		expect(milestones[0].spotId).toBe('in1');
+
+		const explained = answerExecutiveQuestion(
+			"Explain the risk, impact, and recommendation for: Approve publishing Kai's sync update to v1.0",
+			{ snapshot: snap, items: [], offices, ownerId: 'you', domain: { inboxItems } }
+		);
+		expect(explained.headline).toContain("Approve publishing Kai's sync update to v1.0");
+		expect(explained.bullets[0].text).toContain('Ada recommends: approve.');
 	});
 });

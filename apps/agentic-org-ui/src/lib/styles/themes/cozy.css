@@ -281,6 +281,12 @@ html[data-ui-theme='cozy'] {
 	--exec-scroll-hint-pill-bg: rgba(26, 21, 18, 0.86);
 	--exec-scroll-hint-ink: #faf6f0;
 	--exec-scroll-hint-ink-hover: #ffffff;
+
+	--exec-hor-item-bg: var(--cozy-well);
+	--exec-hor-item-bg-hover: rgba(255, 248, 240, 0.09);
+	--exec-hor-date-bg: rgba(16, 13, 11, 0.56);
+	--exec-hor-date-month-ink: #c6bab0;
+	--exec-hor-date-day-ink: #faf6f0;
 }
 
 /* Cozy Glass High Contrast mode (`data-cozy-contrast='high'`) */

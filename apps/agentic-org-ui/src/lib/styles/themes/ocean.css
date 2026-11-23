@@ -225,6 +225,12 @@ html[data-ui-theme='ocean'] {
 	--exec-nav-dot: var(--tone-warn);
 	--exec-nav-dot-halo: rgba(251, 191, 36, 0.18);
 	--exec-nav-dot-ring: #09111e;
+
+	--exec-hor-item-bg: rgba(8, 16, 30, 0.22);
+	--exec-hor-item-bg-hover: rgba(16, 31, 55, 0.36);
+	--exec-hor-date-bg: rgba(10, 19, 36, 0.62);
+	--exec-hor-date-month-ink: #8599b2;
+	--exec-hor-date-day-ink: #f8fafc;
 }
 
 /* Smooth 3-orb Ocean radial canvas shared by Home and all interior routes */
@@ -275,6 +281,78 @@ html[data-ui-theme='ocean']
 	:is([data-slot='dialog-content'], [data-slot='sheet-content'], [data-slot='popover-content']) {
 	-webkit-backdrop-filter: blur(28px) saturate(175%);
 	backdrop-filter: blur(28px) saturate(175%);
+}
+
+/*
+ * Ocean interior pages share the sleek navy palette (`poc/v6.html` commits 42747390 + 3b9d82ea)
+ * while Home keeps the original 3-orb frosted glass canvas above.
+ * `--surface` stays opaque (#121f35) so Chat drawers and popovers never bleed through.
+ */
+html[data-ui-theme='ocean'][data-interior-page] {
+	--ocean-rail: #0b162a;
+	--ocean-panel: #121f35;
+	--ocean-well: #14223b;
+	--ocean-selected: #1d334e;
+	--ocean-canvas: linear-gradient(156deg, #172944, #112239 59%, #091427);
+	--ocean-header: linear-gradient(105deg, #182a47, #142b43);
+	--ocean-list: linear-gradient(170deg, var(--ocean-panel), var(--ocean-rail));
+	--ocean-glass-fill: rgba(18, 31, 53, 0.65);
+	--ocean-glass-hover: rgba(29, 51, 78, 0.65);
+
+	--surface: var(--ocean-panel);
+	--surface-sunken: var(--ocean-rail);
+	--surface-chip: var(--ocean-well);
+	--surface-raised: var(--ocean-glass-fill);
+	--surface-overlay: var(--ocean-selected);
+	--line-subtle: rgba(147, 169, 199, 0.12);
+	--line: rgba(147, 169, 199, 0.18);
+	--line-strong: rgba(147, 169, 199, 0.3);
+	--field-border: #8296b0;
+	--fg-muted: #b0bfd1;
+	--fg-subtle: #9bb0c9;
+
+	--background: var(--ocean-rail);
+	--card: var(--ocean-glass-fill);
+	--popover: rgba(20, 34, 59, 0.96);
+	--border: rgba(147, 169, 199, 0.18);
+
+	--exec-bg: var(--ocean-rail);
+	--exec-sidebar-bg: rgba(11, 22, 42, 0.84);
+	--exec-surface: var(--ocean-glass-fill);
+	--exec-surface-hi: var(--ocean-glass-hover);
+	--exec-well: var(--ocean-well);
+	--exec-border: rgba(147, 169, 199, 0.18);
+	--exec-border-hi: rgba(147, 169, 199, 0.3);
+	--exec-blur: none;
+	--exec-muted: #b0bfd1;
+	--exec-dim: #9bb0c9;
+	--exec-topbar-fade: var(--ocean-header);
+	--exec-topbar-fade-blur: none;
+	--exec-cmdk-bg: rgba(20, 34, 59, 0.72);
+	--exec-cmdk-bg-hover: rgba(29, 51, 78, 0.82);
+	--exec-cmdk-blur: none;
+}
+
+html[data-ui-theme='ocean'][data-interior-page] .exec-canvas::before {
+	background: var(--ocean-canvas);
+}
+
+html[data-ui-theme='ocean'][data-interior-page] .exec-topbar::before {
+	background: var(--ocean-header);
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+	-webkit-mask-image: none;
+	mask-image: none;
+}
+
+html[data-ui-theme='ocean'][data-interior-page] .exec-nav-item.is-active {
+	background-color: var(--ocean-selected);
+}
+
+html[data-ui-theme='ocean'][data-interior-page]
+	:is(.exec-card, .exec-well, .exec-cmdk-bar, .inbox-card, .act-list) {
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
 }
 
 /* Settings preview swatch */

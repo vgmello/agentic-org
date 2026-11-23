@@ -3,21 +3,27 @@
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import Flag from '@lucide/svelte/icons/flag';
 	import XCircle from '@lucide/svelte/icons/x-circle';
 	import type { ProjectBentoCard } from '$lib/home/model';
 
 	interface Props {
 		projects: readonly ProjectBentoCard[];
 		attentionCount: number;
+		spotlightIds?: ReadonlySet<string>;
+		onSpotJump?: (decisionId: string) => void;
 	}
 
-	let { projects, attentionCount }: Props = $props();
+	let { projects, attentionCount, spotlightIds, onSpotJump }: Props = $props();
 </script>
 
 <section class="scorecard-sec flex flex-col gap-3.5" aria-labelledby="exec-projects-heading">
 	<div class="flex flex-wrap items-baseline justify-between gap-3">
 		<div class="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-			<h2 id="exec-projects-heading" class="scorecard-title">Project Delivery Scorecard</h2>
+			<h2 id="exec-projects-heading" class="scorecard-title">
+				<span class="exec-lbl-std">Projects</span>
+				<span class="exec-lbl-rep">Project Delivery Scorecard</span>
+			</h2>
 			<span class="scorecard-sub">
 				{projects.length} active{attentionCount > 0 ? ` · ${attentionCount} need attention` : ''}
 			</span>
@@ -33,6 +39,10 @@
 
 	<div class="scorecard-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
 		{#each projects.slice(0, 6) as proj (proj.id)}
+			{@const canSpotJump = Boolean(
+				proj.spotDecisionId && spotlightIds?.has(proj.spotDecisionId) && onSpotJump
+			)}
+			{@const showRelTag = Boolean(proj.key && !proj.name.includes(proj.key))}
 			<article class="proj-card flex flex-col gap-3.5">
 				<div class="flex items-center justify-between gap-2">
 					<div class="flex min-w-0 items-baseline gap-2">
@@ -42,8 +52,8 @@
 						>
 							{proj.name}
 						</a>
-						{#if proj.key}
-							<span class="key-tag font-mono text-[11px]">{proj.key}</span>
+						{#if showRelTag}
+							<span class="key-tag shrink-0 font-mono text-[11px]">{proj.key}</span>
 						{/if}
 					</div>
 					<span class={['health-pill inline-flex items-center gap-1', proj.statusPillClass]}>
@@ -60,35 +70,79 @@
 
 				<a href={resolve(proj.workHref as '/projects')} class="flex flex-col gap-1.5">
 					<div
-						class="flex items-baseline justify-between text-xs text-[var(--exec-muted)] tabular-nums"
+						class="flex items-baseline justify-between gap-2 text-xs text-[var(--exec-muted)] tabular-nums"
 					>
-						<span>
+						<span class="min-w-0 truncate">
 							{proj.doneCount} of {proj.totalCount} done{proj.dueLabel
 								? ` · Due ${proj.dueLabel}`
-								: ''}
+								: ''}{#if proj.paceLabel}
+								·
+								<span class={['pace-badge', `tone-${proj.paceTone ?? 'ok'}`]}>
+									{proj.paceLabel}
+								</span>
+							{/if}
 						</span>
-						<strong class="text-sm text-[var(--exec-ink)]">{proj.pct}%</strong>
+						<strong class="shrink-0 text-sm text-[var(--exec-ink)]">{proj.pct}%</strong>
 					</div>
 					<div class="bar-track bg-bar-track" aria-hidden="true">
 						<span class="bar-{proj.healthTone}" style:width="{proj.pct}%"></span>
 					</div>
 				</a>
 
-				<div
-					class={[
-						'blocker-box flex min-h-[56px] items-center justify-between gap-2.5 px-3 py-2 text-xs',
-						`tone-${proj.blockerTone}`
-					]}
-				>
-					<span class="min-w-0 flex-1 leading-snug">{proj.blockerText}</span>
-					<a
-						href={resolve(proj.actionHref as '/work')}
-						class="unblock-btn inline-flex min-h-9 shrink-0 items-center gap-0.5 rounded-md px-2.5 py-1 text-[11px] font-semibold"
+				{#if proj.isClear}
+					<div class="blocker-box tone-ok flex min-h-[60px] items-center gap-2 px-3 py-2 text-xs">
+						<CheckCircle2 class="size-3.5 shrink-0 text-[var(--exec-ok)]" aria-hidden="true" />
+						<span class="min-w-0 flex-1 leading-snug text-[var(--exec-muted)]">
+							{proj.clearNote}
+						</span>
+					</div>
+				{:else}
+					<div
+						class={[
+							'blocker-box flex min-h-[60px] items-center justify-between gap-2.5 px-3 py-2 text-xs',
+							`tone-${proj.blockerTone}`
+						]}
 					>
-						<span>{proj.actionLabel}</span>
-						<ChevronRight class="size-3" aria-hidden="true" />
-					</a>
-				</div>
+						<span class="flex min-w-0 flex-1 items-start gap-1.5 leading-snug">
+							{#if proj.blockerTone === 'sky'}
+								<Flag
+									class="mt-0.5 size-3.5 shrink-0 text-[var(--exec-accent-ink)]"
+									aria-hidden="true"
+								/>
+							{:else if proj.blockerTone === 'warn'}
+								<AlertTriangle
+									class="mt-0.5 size-3.5 shrink-0 text-[var(--exec-warn)]"
+									aria-hidden="true"
+								/>
+							{:else}
+								<AlertTriangle
+									class="mt-0.5 size-3.5 shrink-0 text-[var(--exec-bad)]"
+									aria-hidden="true"
+								/>
+							{/if}
+							<span>{proj.blockerText}</span>
+						</span>
+						{#if canSpotJump}
+							<button
+								type="button"
+								data-spot-jump={proj.spotDecisionId}
+								onclick={() => onSpotJump?.(proj.spotDecisionId!)}
+								class="unblock-btn inline-flex min-h-9 shrink-0 items-center gap-0.5 rounded-md px-2.5 py-1 text-[11px] font-semibold"
+							>
+								<span>{proj.actionLabel}</span>
+								<ChevronRight class="size-3" aria-hidden="true" />
+							</button>
+						{:else}
+							<a
+								href={resolve(proj.actionHref as '/work')}
+								class="unblock-btn inline-flex min-h-9 shrink-0 items-center gap-0.5 rounded-md px-2.5 py-1 text-[11px] font-semibold"
+							>
+								<span>{proj.actionLabel}</span>
+								<ChevronRight class="size-3" aria-hidden="true" />
+							</a>
+						{/if}
+					</div>
+				{/if}
 
 				<div
 					class="proj-foot mt-auto flex items-center justify-between gap-2 pt-3 text-xs text-[var(--exec-muted)]"
@@ -107,7 +161,7 @@
 					</div>
 					<a
 						href={resolve(proj.workHref as '/projects')}
-						class="inline-flex items-center gap-0.5 hover:underline"
+						class="inline-flex items-center gap-0.5 hover:text-[var(--exec-ink)] hover:underline"
 					>
 						<span>Lead {proj.leadName}</span>
 						<ChevronRight class="size-3" aria-hidden="true" />
@@ -144,6 +198,9 @@
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-proj-pad-sm);
+		transition:
+			background-color 0.16s ease,
+			box-shadow 0.16s ease;
 	}
 	.proj-card:hover {
 		background: var(--exec-panel-bg-hover);
@@ -203,6 +260,18 @@
 		font-size: 0.7rem;
 		font-weight: 600;
 		white-space: nowrap;
+	}
+	.pace-badge {
+		font-weight: 600;
+	}
+	.pace-badge.tone-ok {
+		color: var(--exec-ok);
+	}
+	.pace-badge.tone-warn {
+		color: var(--exec-warn);
+	}
+	.pace-badge.tone-bad {
+		color: var(--exec-bad);
 	}
 	.bar-track {
 		display: flex;

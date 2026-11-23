@@ -18,6 +18,7 @@
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
 	import { noteModalBackNavigation } from '$lib/platform/shell/modal-back';
+	import { provideShellAi } from '$lib/platform/shell/shell-ai';
 	import { provideShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
 	import { officesApi } from '$lib/modules/offices/api';
@@ -25,9 +26,24 @@
 
 	let { data, children } = $props();
 	const organizationId = $derived(data.connection.organization.id);
+	const isHome = $derived(page.url.pathname === '/home');
 	const chatDrafts = provideDraftStore(() => organizationId);
 	$effect.pre(() => chatDrafts.syncScope());
 	onDestroy(() => chatDrafts.dispose());
+
+	let askHandler: ((prompt: string) => void) | undefined;
+	provideShellAi({
+		ask(prompt: string) {
+			askHandler?.(prompt);
+		}
+	});
+
+	$effect(() => {
+		document.documentElement.toggleAttribute('data-interior-page', !isHome);
+		return () => {
+			document.documentElement.removeAttribute('data-interior-page');
+		};
+	});
 
 	// Route changes reset internal <main> scroll (except hash targets) and focus the destination heading (app-shell-ux §0).
 	afterNavigate((move) => {
@@ -232,9 +248,12 @@
 			inboxItems={shellData.inboxItems}
 			offices={shellData.offices}
 			ownerId={shellData.ownerId}
+			registerAsk={(fn) => {
+				askHandler = fn;
+			}}
 		/>
 		<div class="relative flex min-h-0 flex-1 flex-col">
-			{#if page.url.pathname === '/home'}
+			{#if isHome}
 				<HomeScrollHint scrollContainer={mainEl} />
 			{/if}
 			<main

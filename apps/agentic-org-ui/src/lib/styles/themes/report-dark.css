@@ -224,6 +224,10 @@ html[data-ui-theme='report-dark'] {
 	--exec-h1-em-ul-calm: var(--tone-accent-hi);
 	--exec-h1-em-ul-ok: var(--tone-ok);
 	--exec-h1-em-ul-bad: var(--tone-bad);
+
+	--exec-hor-date-bg: #161f2d;
+	--exec-hor-date-month-ink: #99a1af;
+	--exec-hor-date-day-ink: #ffffff;
 }
 
 /* Settings preview swatch */

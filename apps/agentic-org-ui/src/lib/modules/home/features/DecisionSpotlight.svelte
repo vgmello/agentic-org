@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import type { Attachment } from 'svelte/attachments';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
+	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import Ban from '@lucide/svelte/icons/ban';
 	import Check from '@lucide/svelte/icons/check';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
@@ -14,11 +15,13 @@
 	import Scale from '@lucide/svelte/icons/scale';
 	import ShieldAlert from '@lucide/svelte/icons/shield-alert';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
+	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import Zap from '@lucide/svelte/icons/zap';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { executeDecisionAction } from '$lib/home/actions';
 	import { isDenyAction, type HomeInboxState, type SpotlightDecision } from '$lib/home/model';
 	import { toAppError } from '$lib/office/api';
+	import { useShellAi } from '$lib/platform/shell/shell-ai';
 	import HomeDayOne from './HomeDayOne.svelte';
 
 	interface Props {
@@ -39,6 +42,8 @@
 		onRefresh
 	}: Props = $props();
 
+	const shellAi = useShellAi();
+
 	let spotIdx = $derived.by(() => {
 		void organizationId;
 		return 0;
@@ -57,6 +62,38 @@
 		void organizationId;
 		return {};
 	});
+	let pulsing = $state(false);
+	let pulseTimer: ReturnType<typeof setTimeout> | undefined;
+	let panelEl = $state<HTMLElement | null>(null);
+	let titleEl = $state<HTMLHeadingElement | null>(null);
+
+	onDestroy(() => {
+		clearTimeout(pulseTimer);
+	});
+
+	export function jumpToDecision(id: string): boolean {
+		const idx = spotlight.findIndex((item) => item.id === id);
+		if (idx < 0) return false;
+		spotIdx = idx;
+		decliningId = undefined;
+		declineReason = '';
+		pulsing = true;
+		clearTimeout(pulseTimer);
+		pulseTimer = setTimeout(() => {
+			pulsing = false;
+		}, 950);
+		void tick().then(() => {
+			const prefersReduced =
+				typeof window !== 'undefined' &&
+				window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+			panelEl?.scrollIntoView({
+				behavior: prefersReduced ? 'auto' : 'smooth',
+				block: 'center'
+			});
+			titleEl?.focus({ preventScroll: true });
+		});
+		return true;
+	}
 
 	const focusDenyInput: Attachment<HTMLInputElement> = (el) => {
 		el.focus();
@@ -124,6 +161,10 @@
 		openContextIds = { ...openContextIds, [id]: !openContextIds[id] };
 	}
 
+	function askAboutDecision(decision: SpotlightDecision) {
+		shellAi?.ask(`Explain the risk, impact, and recommendation for: ${decision.title}`);
+	}
+
 	async function runAction(kind: 'primary' | 'secondary') {
 		if (!currentDecision || busyId) return;
 		if (
@@ -160,9 +201,12 @@
 </script>
 
 <article
+	bind:this={panelEl}
+	id="hb-spotlight"
 	class={[
 		'spot-panel relative flex min-h-[280px] flex-col gap-4 overflow-hidden',
-		currentDecision?.urgent && 'is-urgent'
+		currentDecision?.urgent && 'is-urgent',
+		pulsing && 'is-pulse'
 	]}
 	aria-label="Decision Spotlight"
 >
@@ -232,22 +276,65 @@
 				>
 					{currentDecision.actorInitials}
 				</span>
-				<span class="font-semibold text-[var(--exec-ink)]">{currentDecision.actorName}</span>
+				{#if currentDecision.actorId}
+					<a
+						href={resolve(
+							`/members/${encodeURIComponent(currentDecision.actorId)}` as '/teams/members'
+						)}
+						class="font-semibold text-[var(--exec-ink)] hover:underline"
+					>
+						{currentDecision.actorName}
+					</a>
+				{:else}
+					<span class="font-semibold text-[var(--exec-ink)]">{currentDecision.actorName}</span>
+				{/if}
 				<span aria-hidden="true">·</span>
 				<span>{currentDecision.kindLabel}</span>
 				<span aria-hidden="true">·</span>
 				<span>{currentDecision.ageLabel}</span>
 				<span aria-hidden="true">·</span>
-				<span>{currentDecision.projectName}</span>
+				{#if currentDecision.projectId}
+					<a
+						href={resolve(
+							`/projects/${encodeURIComponent(currentDecision.projectId)}/work` as '/projects'
+						)}
+						class="hover:text-[var(--exec-ink)] hover:underline"
+					>
+						{currentDecision.projectName}
+					</a>
+				{:else}
+					<span>{currentDecision.projectName}</span>
+				{/if}
 			</div>
 
-			<h3 class="spot-title">
+			<h3 bind:this={titleEl} tabindex="-1" class="spot-title focus:outline-none">
 				{currentDecision.title}
 			</h3>
 
-			<div class="rec-callout flex items-start gap-2.5 px-3.5 py-2.5 text-sm">
-				<Info class="mt-0.5 size-4 shrink-0 text-[var(--exec-accent-ink)]" aria-hidden="true" />
-				<span>{currentDecision.recommendation}</span>
+			<div
+				class={[
+					'rec-callout flex items-start gap-2.5 px-3.5 py-2.5 text-sm',
+					`tone-${currentDecision.recTone}`
+				]}
+				data-tone={currentDecision.recTone}
+			>
+				{#if currentDecision.recTone === 'ok'}
+					<CheckCircle2 class="rec-ico mt-0.5 size-4 shrink-0" aria-hidden="true" />
+				{:else if currentDecision.recTone === 'warn'}
+					<AlertTriangle class="rec-ico mt-0.5 size-4 shrink-0" aria-hidden="true" />
+				{:else if currentDecision.recTone === 'bad'}
+					<ShieldAlert class="rec-ico mt-0.5 size-4 shrink-0" aria-hidden="true" />
+				{:else}
+					<Info class="rec-ico mt-0.5 size-4 shrink-0" aria-hidden="true" />
+				{/if}
+				<div class="min-w-0 flex-1">
+					{#if currentDecision.recRiskLabel}
+						<p class="rec-lbl mb-0.5 text-[11px] font-semibold tracking-wider uppercase">
+							Recommendation · {currentDecision.recRiskLabel}
+						</p>
+					{/if}
+					<p class="leading-relaxed">{currentDecision.recommendation}</p>
+				</div>
 			</div>
 
 			<!-- 3-Column Risk, Impact & Proof Strip -->
@@ -286,21 +373,31 @@
 				{/each}
 			</div>
 
-			<!-- Inline expandable background context disclosure -->
+			<!-- Inline expandable background context disclosure + Ask about this -->
 			<div class="flex flex-col gap-2">
-				<button
-					type="button"
-					onclick={() => toggleContext(currentDecision.id)}
-					aria-expanded={currentCtxOpen}
-					aria-controls="panel-spot-ctx-{currentDecision.id}"
-					class="ctx-toggle inline-flex w-fit items-center gap-1.5 rounded-md px-1.5 text-xs font-semibold"
-				>
-					<ChevronRight
-						class={['size-3.5 transition-transform', currentCtxOpen && 'rotate-90']}
-						aria-hidden="true"
-					/>
-					<span>{currentCtxOpen ? 'Hide background context' : 'Read background context'}</span>
-				</button>
+				<div class="spot-ctx-row flex flex-wrap items-center justify-between gap-2.5">
+					<button
+						type="button"
+						onclick={() => toggleContext(currentDecision.id)}
+						aria-expanded={currentCtxOpen}
+						aria-controls="panel-spot-ctx-{currentDecision.id}"
+						class="ctx-toggle inline-flex w-fit items-center gap-1.5 rounded-md px-1.5 text-xs font-semibold"
+					>
+						<ChevronRight
+							class={['size-3.5 transition-transform', currentCtxOpen && 'rotate-90']}
+							aria-hidden="true"
+						/>
+						<span>{currentCtxOpen ? 'Hide background context' : 'Read background context'}</span>
+					</button>
+					<button
+						type="button"
+						onclick={() => askAboutDecision(currentDecision)}
+						class="spot-ai-ask inline-flex min-h-9 items-center gap-1.5 px-2.5 text-xs font-semibold"
+					>
+						<Sparkles class="size-3.5" aria-hidden="true" />
+						<span>Ask about this</span>
+					</button>
+				</div>
 				{#if currentCtxOpen}
 					<div
 						id="panel-spot-ctx-{currentDecision.id}"
@@ -450,7 +547,20 @@
 						{nextDecision.title}
 					</span>
 				</span>
-				<ChevronRight class="size-3.5 shrink-0 text-[var(--exec-dim)]" aria-hidden="true" />
+				<span class="flex shrink-0 items-center gap-2">
+					{#if nextDecision.expiresShort}
+						<span class="next-exp inline-flex items-center gap-1">
+							<Clock class="size-3" aria-hidden="true" />
+							<span>{nextDecision.expiresShort}</span>
+						</span>
+					{:else if nextDecision.isChiefOfStaff}
+						<span class="next-ai inline-flex items-center gap-1">
+							<Sparkles class="size-3" aria-hidden="true" />
+							<span>{nextDecision.actorName}</span>
+						</span>
+					{/if}
+					<ChevronRight class="size-3.5 shrink-0 text-[var(--exec-dim)]" aria-hidden="true" />
+				</span>
 			</button>
 		{/if}
 	{:else}
@@ -466,10 +576,16 @@
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-spot-pad-sm);
+		transition: box-shadow 0.28s ease;
 	}
 	.spot-panel:hover {
 		background: var(--exec-panel-bg-hover);
 		box-shadow: var(--exec-panel-shadow-hover);
+	}
+	.spot-panel.is-pulse {
+		box-shadow:
+			inset 0 0 0 1.5px var(--tone-accent),
+			var(--exec-panel-shadow-hover);
 	}
 	@media (min-width: 640px) {
 		.spot-panel {
@@ -551,12 +667,38 @@
 		box-shadow: inset 0 0 0 1px var(--exec-border);
 	}
 	.rec-callout {
+		--rec-ink: var(--exec-accent-ink);
+		--rec-bar: var(--tone-accent);
+		--rec-bg: var(--exec-accent-soft);
+		--rec-ring: var(--exec-accent-ring);
 		border-radius: var(--exec-inset-radius);
-		background: var(--exec-accent-soft);
+		background: var(--rec-bg);
 		box-shadow:
-			inset 0 0 0 1px var(--exec-accent-ring),
-			inset 3px 0 0 var(--tone-accent);
+			inset 0 0 0 1px var(--rec-ring),
+			inset 3px 0 0 var(--rec-bar);
 		color: var(--exec-body);
+	}
+	.rec-callout.tone-ok {
+		--rec-ink: var(--exec-ok);
+		--rec-bar: var(--tone-ok);
+		--rec-bg: var(--exec-ok-bg);
+		--rec-ring: var(--exec-ok-ring);
+	}
+	.rec-callout.tone-warn {
+		--rec-ink: var(--exec-warn);
+		--rec-bar: var(--tone-warn);
+		--rec-bg: var(--exec-warn-bg);
+		--rec-ring: var(--exec-warn-ring);
+	}
+	.rec-callout.tone-bad {
+		--rec-ink: var(--exec-bad);
+		--rec-bar: var(--tone-bad);
+		--rec-bg: var(--exec-bad-bg);
+		--rec-ring: var(--exec-bad-ring);
+	}
+	.rec-callout :global(.rec-ico),
+	.rec-lbl {
+		color: var(--rec-ink);
 	}
 	.cell-sep {
 		border-top: 1px solid var(--exec-border);
@@ -599,6 +741,21 @@
 	.ctx-toggle:hover {
 		background: var(--exec-accent-soft);
 		color: var(--exec-ink);
+	}
+	.spot-ai-ask {
+		border-radius: var(--exec-sm-radius);
+		color: var(--exec-accent-ink);
+		background: var(--exec-accent-soft);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease,
+			box-shadow 0.14s ease;
+	}
+	.spot-ai-ask:hover {
+		background: var(--exec-accent);
+		color: var(--exec-on-accent);
+		box-shadow: inset 0 0 0 1px var(--exec-accent);
 	}
 	.ctx-body {
 		border-radius: var(--exec-ctrl-radius);
@@ -687,12 +844,33 @@
 	.next-bar:hover {
 		background: var(--exec-surface-hi);
 	}
+	.next-exp {
+		padding: 2px 7px;
+		border-radius: var(--exec-pill-radius);
+		background: var(--exec-warn-bg);
+		color: var(--exec-warn);
+		box-shadow: var(--exec-pill-ring-warn);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	.next-ai {
+		padding: 2px 7px;
+		border-radius: var(--exec-pill-radius);
+		background: var(--exec-accent-soft);
+		color: var(--exec-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
 	@media (max-width: 720px), (pointer: coarse) {
 		.deny-btn,
 		.outline-btn,
 		.skip-btn,
 		.deny-confirm,
 		.ctx-toggle,
+		.spot-ai-ask,
 		.next-bar,
 		.deny-input {
 			min-height: 44px;

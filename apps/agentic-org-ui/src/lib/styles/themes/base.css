@@ -281,6 +281,30 @@
 	--exec-scroll-hint-pill-bg: var(--exec-well);
 	--exec-scroll-hint-ink: var(--exec-body);
 	--exec-scroll-hint-ink-hover: var(--exec-ink);
+
+	/* Command palette / Ask Org AI lighter non-blurred overlay (poc/v6.html:364) */
+	--exec-cmdk-overlay: rgba(0, 0, 0, 0.26);
+
+	/* Release horizon / milestone strip tokens */
+	--exec-horizon-pad: 1rem 1.125rem;
+	--exec-horizon-title-ink: var(--exec-ink);
+	--exec-hor-item-bg: var(--exec-well);
+	--exec-hor-item-bg-hover: var(--exec-surface-hi);
+	--exec-hor-date-bg: var(--exec-bg);
+	--exec-hor-date-month-ink: var(--exec-dim);
+	--exec-hor-date-day-ink: var(--exec-ink);
+}
+
+/* Report-only vs standard section labels (poc/v6.html:3246-3248) */
+.exec-lbl-rep {
+	display: none;
+}
+
+/* Lighter non-blurred dialog overlay for Command Palette / Ask Org AI */
+[data-slot='dialog-overlay'].exec-cmdk-overlay {
+	background: var(--exec-cmdk-overlay);
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
 }
 
 /* Ocean blends the Home scroll cue transparently over its ambient radial canvas */

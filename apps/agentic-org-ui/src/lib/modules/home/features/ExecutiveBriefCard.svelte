@@ -6,7 +6,6 @@
 	import Check from '@lucide/svelte/icons/check';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Clipboard from '@lucide/svelte/icons/clipboard';
 	import Clock from '@lucide/svelte/icons/clock';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
@@ -31,6 +30,11 @@
 	let briefCopyTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const activeBrief = $derived(brief.lenses[briefLens]);
+	const sigHref = $derived(
+		brief.chiefOfStaff ? `/members/${encodeURIComponent(brief.chiefOfStaff.id)}` : '/activity'
+	);
+	const sigName = $derived(brief.chiefOfStaff?.name ?? 'Org AI');
+	const sigRole = $derived(brief.chiefOfStaff?.role ?? 'Chief of Staff');
 
 	onDestroy(() => {
 		clearTimeout(briefCopyTimer);
@@ -72,7 +76,7 @@
 <aside class="brief-panel flex flex-col gap-3.5" aria-label="Executive Brief">
 	<div class="flex flex-wrap items-center justify-between gap-2">
 		<h2 class="brief-title inline-flex items-center gap-2 text-[var(--exec-ink)]">
-			<Sparkles class="size-4 text-[var(--exec-accent-ink)]" aria-hidden="true" />
+			<Sparkles class="brief-title-ico size-4 text-[var(--exec-accent-ink)]" aria-hidden="true" />
 			<span>Executive Brief</span>
 		</h2>
 		<div
@@ -165,18 +169,29 @@
 			/>
 		</button>
 
-		<div class="brief-sig mt-auto flex flex-wrap items-center justify-between gap-2 pt-3">
+		<div class="brief-sig mt-auto flex flex-wrap items-center justify-between gap-2.5 pt-3">
 			<a
-				href={resolve('/activity')}
-				class="inline-flex items-center gap-1 text-xs font-medium text-[var(--exec-muted)]"
+				href={resolve(sigHref as '/activity')}
+				class="sig-who inline-flex min-w-0 items-center gap-2.5"
+				title={brief.chiefOfStaff ? `Open ${sigName}'s profile` : 'Open activity log'}
 			>
-				<span>Full activity log</span>
-				<ChevronRight class="size-3.5" aria-hidden="true" />
-			</a>
-			<div class="flex items-center gap-2">
-				<span class="text-[11px] text-[var(--exec-dim)]">
-					{activeBrief.updatedLabel}
+				<span
+					class="exec-cos-mark inline-flex size-7 shrink-0 items-center justify-center rounded-[7px]"
+					aria-hidden="true"
+				>
+					<Sparkles class="size-3.5" />
 				</span>
+				<span class="flex min-w-0 flex-col leading-tight">
+					<span class="truncate text-sm font-semibold text-[var(--exec-ink)]">{sigName}</span>
+					<span class="truncate text-xs text-[var(--exec-muted)]">{sigRole}</span>
+				</span>
+			</a>
+			<div class="flex flex-wrap items-center justify-end gap-2.5">
+				{#if briefLens !== 'board'}
+					<span class="font-mono text-[11px] text-[var(--exec-dim)]">
+						{activeBrief.updatedLabel}
+					</span>
+				{/if}
 				<button
 					type="button"
 					onclick={copyBrief}
@@ -304,6 +319,15 @@
 	}
 	.brief-sig {
 		border-top: 1px solid var(--exec-border);
+	}
+	.exec-cos-mark {
+		background: var(--exec-accent-soft);
+		color: var(--exec-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
+	.sig-who:hover .exec-cos-mark {
+		background: var(--exec-accent);
+		color: var(--exec-on-accent);
 	}
 	.brief-copy {
 		border-radius: var(--exec-sm-radius);

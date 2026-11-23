@@ -9,6 +9,7 @@
 	import ExecutiveBriefCard from '$lib/modules/home/features/ExecutiveBriefCard.svelte';
 	import { HomeLiveState } from '$lib/modules/home/features/home-live.svelte';
 	import HomeKpiStrip from '$lib/modules/home/features/HomeKpiStrip.svelte';
+	import HomeMilestones from '$lib/modules/home/features/HomeMilestones.svelte';
 	import HomeSkeleton from '$lib/modules/home/features/HomeSkeleton.svelte';
 	import ProjectScorecard from '$lib/modules/home/features/ProjectScorecard.svelte';
 	import { officesApi } from '$lib/modules/offices/api';
@@ -21,6 +22,7 @@
 		deriveKpiMetrics,
 		deriveProjectCards,
 		deriveTaskTimeBreakdown,
+		deriveUpcomingMilestones,
 		greetingForHour,
 		type HomeDomainData,
 		type HomeInboxState
@@ -39,6 +41,8 @@
 		overview: (id) => officesApi.overview(id),
 		layer: layerOffices
 	});
+
+	let spotlightRef = $state<{ jumpToDecision: (id: string) => boolean } | null>(null);
 
 	$effect(() => {
 		const id = organizationId;
@@ -128,7 +132,10 @@
 	const spotlight = $derived(
 		deriveDecisionSpotlight(workItems, snapshot, ownerId, live.nowMs, hydratedInboxItems)
 	);
+	const spotlightIds = $derived(new Set(spotlight.map((d) => d.id)));
+	const urgentSpotlightCount = $derived(spotlight.filter((d) => d.urgent).length);
 	const projectCards = $derived(deriveProjectCards(snapshot, workItems, domain));
+	const milestones = $derived(deriveUpcomingMilestones(snapshot, workItems, live.nowMs, domain));
 	const catchUp = $derived(
 		deriveCatchUpDigest(workItems, snapshot, live.nowMs, liveForOrg ? live.activityRows : undefined)
 	);
@@ -160,6 +167,10 @@
 	function refreshLive(): Promise<void> {
 		return live.load(organizationId, data.connection.organization.offices);
 	}
+
+	function handleSpotJump(decisionId: string) {
+		spotlightRef?.jumpToDecision(decisionId);
+	}
 </script>
 
 <svelte:head><title>{pageTitle('Home')}</title></svelte:head>
@@ -167,34 +178,45 @@
 <div class="home-page mx-auto flex w-full flex-col px-6 pt-3 pb-12 sm:px-8">
 	<!-- Zone 1: Executive Greeting Header -->
 	<section class="home-hero flex flex-wrap justify-between gap-4">
-		<h1 id="shell-page-title" tabindex="-1" class="home-h1 focus:outline-none">
-			{#if liveLoadError}
-				{greeting} <em class="tone-bad">Office unreachable.</em>
-			{:else if loading}
-				{greeting}
-			{:else if isDayOne}
-				Welcome to {data.connection.organization.name}. <em class="tone-calm">Ready to launch.</em>
-			{:else if spotlight.length > 0}
-				{greeting}
-				<em class={spotlight.some((s) => s.urgent) ? 'tone-warn' : 'tone-calm'}>
-					{spotlight.length}
-					{spotlight.length === 1 ? 'decision' : 'decisions'}
-				</em>
-				{spotlight.length === 1 ? 'needs' : 'need'} you.
-			{:else if usableWorkItems !== undefined && hydratedInboxLoaded}
-				{greeting} <em class="tone-ok">All clear</em> across your organization.
-			{:else}
-				{greeting}
-			{/if}
-		</h1>
-		<a href={resolve('/work')} class="exec-cta exec-cta-glass">
-			<span class="exec-cta-fill" aria-hidden="true"></span>
-			<span class="exec-cta-sheen" aria-hidden="true"></span>
-			<span class="exec-cta-inner">
-				<Plus class="exec-cta-ico size-4" aria-hidden="true" />
-				<span>New task</span>
-			</span>
-		</a>
+		<div class="home-brief flex min-w-0 flex-col gap-1">
+			<h1 id="shell-page-title" tabindex="-1" class="home-h1 focus:outline-none">
+				{#if liveLoadError}
+					{greeting} <em class="tone-bad">Office unreachable.</em>
+				{:else if loading}
+					{greeting} Preparing your briefing…
+				{:else if isDayOne}
+					{greeting} <em class="tone-calm">Welcome</em> to {data.connection.organization.name}.
+				{:else if urgentSpotlightCount > 0}
+					{greeting}
+					<em class="tone-warn">
+						{urgentSpotlightCount}
+						{urgentSpotlightCount === 1 ? 'time-sensitive decision' : 'time-sensitive decisions'}
+					</em>
+					{urgentSpotlightCount === 1 ? 'needs' : 'need'} you.
+				{:else if spotlight.length > 0}
+					{greeting}
+					<em class="tone-calm">
+						{spotlight.length}
+						{spotlight.length === 1 ? 'item' : 'items'}
+					</em>
+					waiting when you're ready.
+				{:else if usableWorkItems !== undefined && hydratedInboxLoaded}
+					{greeting} <em class="tone-ok">All clear</em> across your organization.
+				{:else}
+					{greeting}
+				{/if}
+			</h1>
+		</div>
+		{#if !liveLoadError && !isDayOne}
+			<a href={resolve('/work?new=1' as '/work')} class="exec-cta exec-cta-glass">
+				<span class="exec-cta-fill" aria-hidden="true"></span>
+				<span class="exec-cta-sheen" aria-hidden="true"></span>
+				<span class="exec-cta-inner">
+					<Plus class="exec-cta-ico size-4" aria-hidden="true" />
+					<span>New task</span>
+				</span>
+			</a>
+		{/if}
 	</section>
 
 	{#if liveLoadError}
@@ -219,6 +241,7 @@
 
 		<section class="home-stage grid grid-cols-1 xl:grid-cols-[minmax(0,1.42fr)_minmax(340px,1fr)]">
 			<DecisionSpotlight
+				bind:this={spotlightRef}
 				{spotlight}
 				{organizationId}
 				{snapshot}
@@ -230,7 +253,16 @@
 		</section>
 
 		{#if projectCards.length > 0}
-			<ProjectScorecard projects={projectCards} attentionCount={kpis.projectsAttention} />
+			<ProjectScorecard
+				projects={projectCards}
+				attentionCount={kpis.projectsAttention}
+				{spotlightIds}
+				onSpotJump={handleSpotJump}
+			/>
+		{/if}
+
+		{#if milestones.length > 0}
+			<HomeMilestones {milestones} {spotlightIds} onSpotJump={handleSpotJump} />
 		{/if}
 
 		{#if taskTime.totalOpen > 0}

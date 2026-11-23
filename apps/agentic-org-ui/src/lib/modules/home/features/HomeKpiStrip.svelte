@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import Activity from '@lucide/svelte/icons/activity';
+	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
 	import DollarSign from '@lucide/svelte/icons/dollar-sign';
 	import Users from '@lucide/svelte/icons/users';
 	import type { ExecutiveKpis, SignalTone } from '$lib/home/model';
@@ -17,21 +17,57 @@
 		if (tone === 'muted') return 'is-muted';
 		return 'is-ok';
 	}
+
+	const finPillHref = $derived(
+		kpis.financials.cappedAgent
+			? `/members/${encodeURIComponent(kpis.financials.cappedAgent.memberId)}`
+			: '/settings/costs'
+	);
+
+	const deliveryPillTone = $derived<SignalTone>(
+		kpis.projectsTotal === 0
+			? 'muted'
+			: kpis.projectsAttention === 0
+				? 'ok'
+				: kpis.offTrackProjects > 0 && kpis.atRiskProjects === 0
+					? 'bad'
+					: 'warn'
+	);
+
+	const deliveryPillLabel = $derived(
+		kpis.projectsTotal === 0
+			? 'No deliveries yet'
+			: kpis.projectsAttention === 0
+				? 'All on track'
+				: kpis.offTrackProjects > 0 && kpis.atRiskProjects === 0
+					? `${kpis.offTrackProjects} ${kpis.offTrackProjects === 1 ? 'project' : 'projects'} off track`
+					: `${kpis.projectsAttention} need attention`
+	);
+
+	const teamSubLabel = $derived(
+		kpis.totalAgents === 0
+			? 'Team capacity'
+			: `${kpis.leadsCount} ${kpis.leadsCount === 1 ? 'lead' : 'leads'} · ${kpis.specialistsCount} ${kpis.specialistsCount === 1 ? 'specialist' : 'specialists'}`
+	);
 </script>
 
 <section
 	class="kpi-strip grid grid-cols-1 lg:grid-cols-3"
-	aria-label="Executive overview: Financials, Workforce, and Work & Flow"
+	aria-label="Executive overview: Financials, Team, and Delivery"
 >
 	<!-- Pillar 1: Financials / Monthly Spend & Budget -->
-	<article class="kpi-pillar flex flex-col gap-3">
+	<article class="kpi-pillar flex flex-col gap-3" aria-labelledby="hb-pil-fin">
 		<div class="flex items-center justify-between gap-2">
-			<a href={resolve('/settings/costs')} class="pillar-name inline-flex items-center gap-1.5">
+			<a
+				id="hb-pil-fin"
+				href={resolve('/settings/costs')}
+				class="pillar-name inline-flex items-center gap-1.5"
+			>
 				<DollarSign class="size-3.5 text-[var(--exec-warn)]" aria-hidden="true" />
 				<span>Financials</span>
 			</a>
 			<a
-				href={resolve('/settings/costs')}
+				href={resolve(finPillHref as '/settings/costs')}
 				class={['status-pill', pillToneClass(kpis.financials.pillTone)]}
 			>
 				{kpis.financials.pillLabel}
@@ -55,15 +91,16 @@
 				{/if}
 			</div>
 			<div class="bar-track bg-bar-track" aria-hidden="true">
-				<span class="bar-accent" style:width="{kpis.financials.usagePct}%"></span>
+				<span class="bar-spend" style:width="{kpis.financials.usagePct}%"></span>
 			</div>
 		</a>
 		<div class="pillar-sub grid grid-cols-2 gap-3 pt-2.5">
 			<a
-				href={resolve('/settings/costs')}
+				href={resolve('/activity')}
 				class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
+				title="Average AI spend per completed task"
 			>
-				<span class="text-[11px] font-medium text-[var(--exec-dim)]">Cost / completed</span>
+				<span class="sub-lbl">Cost per task</span>
 				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
 					{kpis.financials.costPerTaskLabel}
 				</span>
@@ -71,11 +108,13 @@
 			<a
 				href={resolve('/settings/costs')}
 				class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
+				title="Remaining budget and agent capacity"
 			>
-				<span class="text-[11px] font-medium text-[var(--exec-dim)]">Agent budgets</span>
+				<span class="sub-lbl">AI capacity</span>
 				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
 					{#if kpis.financials.available}
-						{kpis.financials.budgetedAgentsCount} active
+						{kpis.aiCapacityPct}%
+						<span class="ml-1 text-[11px] font-semibold text-[var(--exec-ok)]">available</span>
 					{:else}
 						Configure
 					{/if}
@@ -84,59 +123,78 @@
 		</div>
 	</article>
 
-	<!-- Pillar 2: Workforce & Offices -->
-	<article class="kpi-pillar flex flex-col gap-3">
+	<!-- Pillar 2: Team & Offices -->
+	<article class="kpi-pillar flex flex-col gap-3" aria-labelledby="hb-pil-team">
 		<div class="flex items-center justify-between gap-2">
-			<a href={resolve('/teams/members')} class="pillar-name inline-flex items-center gap-1.5">
+			<a
+				id="hb-pil-team"
+				href={resolve('/teams/members')}
+				class="pillar-name inline-flex items-center gap-1.5"
+			>
 				<Users class="size-3.5 text-[var(--exec-accent-ink)]" aria-hidden="true" />
-				<span>Workforce &amp; Offices</span>
+				<span>Team</span>
 			</a>
 			<a
 				href={resolve('/settings/offices')}
 				class={['status-pill', pillToneClass(kpis.officePillTone)]}
 				title={kpis.offlineOffices > 0
 					? `Offline: ${kpis.offlineOfficeNames.join(', ')}`
-					: 'All offices online'}
+					: 'All connected offices are online'}
 			>
 				{kpis.officePillLabel}
 			</a>
 		</div>
-		<a href={resolve('/teams/members')} class="pillar-link -m-1 flex flex-col gap-2 rounded-lg p-1">
+		<a
+			href={resolve('/teams/members')}
+			class="pillar-link -m-1 flex flex-col gap-2 rounded-lg p-1"
+			title="Share of work running autonomously without needing your input"
+		>
 			<div class="flex items-baseline justify-between gap-2">
 				<div class="flex items-baseline gap-1.5">
 					<span class="pillar-num">{kpis.totalAgents > 0 ? `${kpis.autonomyPct}%` : '—'}</span>
 					<span class="text-xs font-medium text-[var(--exec-muted)]">autonomous</span>
 				</div>
 				<span class="text-xs font-semibold text-[var(--exec-dim)] tabular-nums">
-					{kpis.peopleCount}
-					{kpis.peopleCount === 1 ? 'person' : 'people'} · {kpis.totalAgents}
-					agents
+					{#if kpis.totalAgents > 0}
+						{100 - kpis.autonomyPct}% needed you
+					{:else}
+						No activity yet
+					{/if}
 				</span>
 			</div>
 			<div class="bar-track bg-bar-track" aria-hidden="true">
-				<span class="bar-accent" style:width="{kpis.autonomyPct}%"></span>
+				<span class="bar-accent" style:width="{kpis.totalAgents > 0 ? kpis.autonomyPct : 0}%"
+				></span>
 				{#if kpis.totalAgents > 0 && kpis.autonomyPct < 100}
 					<span class="bar-warn" style:width="{100 - kpis.autonomyPct}%"></span>
 				{/if}
 			</div>
 		</a>
-		<div class="pillar-sub grid grid-cols-[1.22fr_1fr] gap-2.5 pt-2.5">
+		<div class="pillar-sub grid grid-cols-[1.24fr_1fr] gap-2.5 pt-2.5">
 			<a
 				href={resolve('/teams/members')}
 				class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
 			>
-				<span class="truncate text-[11px] font-medium text-[var(--exec-dim)]">Agents</span>
+				<span class="sub-lbl truncate">{teamSubLabel}</span>
 				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
-					{kpis.activeAgents} active
-					{#if kpis.pausedAgents > 0}
-						<span class="ml-1 text-[11px] text-[var(--exec-warn)]">
-							· {kpis.pausedAgents} idle
+					{#if kpis.totalAgents === 0}
+						0 agents
+						<span class="ml-1 text-[11px] font-medium text-[var(--exec-muted)]">
+							· {kpis.peopleCount}
+							{kpis.peopleCount === 1 ? 'person' : 'people'}
 						</span>
-					{/if}
-					{#if kpis.unplacedAgents > 0}
-						<span class="ml-1 text-[11px] text-[var(--exec-bad)]">
-							· {kpis.unplacedAgents} off
-						</span>
+					{:else}
+						{kpis.activeAgents} active
+						{#if kpis.pausedAgents > 0}
+							<span class="ml-1 text-[11px] text-[var(--exec-warn)]">
+								· {kpis.pausedAgents} idle
+							</span>
+						{/if}
+						{#if kpis.unplacedAgents > 0}
+							<span class="ml-1 text-[11px] text-[var(--exec-bad)]">
+								· {kpis.unplacedAgents} off
+							</span>
+						{/if}
 					{/if}
 				</span>
 			</a>
@@ -147,7 +205,7 @@
 					? `${kpis.onlineOffices} online · ${kpis.offlineOffices} offline (${kpis.offlineOfficeNames.join(', ')})`
 					: `${kpis.onlineOffices} online`}
 			>
-				<span class="truncate text-[11px] font-medium text-[var(--exec-dim)]">Offices</span>
+				<span class="sub-lbl truncate">Offices</span>
 				<span class="flex items-baseline gap-1.5 truncate text-[13px] font-semibold tabular-nums">
 					<span class="text-[var(--exec-ok)]">{kpis.onlineOffices} online</span>
 					{#if kpis.offlineOffices > 0}
@@ -159,35 +217,40 @@
 		</div>
 	</article>
 
-	<!-- Pillar 3: Work & Flow / Delivery -->
-	<article class="kpi-pillar flex flex-col gap-3">
+	<!-- Pillar 3: Delivery -->
+	<article class="kpi-pillar flex flex-col gap-3" aria-labelledby="hb-pil-proj">
 		<div class="flex items-center justify-between gap-2">
-			<a href={resolve('/work')} class="pillar-name inline-flex items-center gap-1.5">
-				<Activity class="size-3.5 text-[var(--exec-ok)]" aria-hidden="true" />
-				<span>Work &amp; Flow</span>
-			</a>
 			<a
-				href={resolve('/projects')}
-				class={['status-pill', kpis.projectsAttention > 0 ? 'is-warn' : 'is-ok']}
+				id="hb-pil-proj"
+				href={resolve('/work')}
+				class="pillar-name inline-flex items-center gap-1.5"
 			>
-				{kpis.projectsAttention > 0
-					? `${kpis.projectsAttention} need attention`
-					: kpis.projectsTotal > 0
-						? 'All on track'
-						: 'No projects yet'}
+				<CheckCircle2 class="size-3.5 text-[var(--exec-ok)]" aria-hidden="true" />
+				<span>Delivery</span>
+			</a>
+			<a href={resolve('/projects')} class={['status-pill', pillToneClass(deliveryPillTone)]}>
+				{deliveryPillLabel}
 			</a>
 		</div>
-		<a href={resolve('/work')} class="pillar-link -m-1 flex flex-col gap-2 rounded-lg p-1">
+		<a
+			href={resolve('/work')}
+			class="pillar-link -m-1 flex flex-col gap-2 rounded-lg p-1"
+			title="Percentage of completed tasks approved on the first try without revisions"
+		>
 			<div class="flex items-baseline justify-between gap-2">
 				<div class="flex items-baseline gap-1.5">
 					<span class="pillar-num">
-						{kpis.doneCount > 0 ? `${kpis.firstTryPassPct}%` : `${kpis.completionPct}%`}
+						{kpis.doneCount > 0
+							? `${kpis.firstTryPassPct}%`
+							: kpis.openCount > 0
+								? `${kpis.completionPct}%`
+								: '—'}
 					</span>
 					<span class="text-xs font-medium text-[var(--exec-muted)]">
-						{kpis.doneCount > 0 ? 'clean delivery' : 'complete'}
+						{kpis.doneCount > 0 ? 'approved first try' : 'complete'}
 					</span>
 				</div>
-				<span class="text-xs font-semibold text-[var(--exec-dim)] tabular-nums">
+				<span class="text-xs font-semibold text-[var(--exec-ok)] tabular-nums">
 					{kpis.openCount} open · {kpis.doneCount} done
 				</span>
 			</div>
@@ -200,16 +263,17 @@
 		</a>
 		<div class="pillar-sub grid grid-cols-2 gap-3 pt-2.5">
 			<a href={resolve('/work')} class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1">
-				<span class="text-[11px] font-medium text-[var(--exec-dim)]">Progress</span>
+				<span class="sub-lbl">Delivered</span>
 				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
-					{kpis.completionPct}%
+					{kpis.doneCount}
+					{kpis.doneCount === 1 ? 'task' : 'tasks'}
 					<span class="ml-1 text-[11px] font-semibold text-[var(--exec-ok)]">
-						{kpis.doneCount} done
+						{kpis.completionPct}%
 					</span>
 				</span>
 			</a>
 			<a href={resolve('/inbox')} class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1">
-				<span class="text-[11px] font-medium text-[var(--exec-dim)]">Blocked</span>
+				<span class="sub-lbl">Blocked</span>
 				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
 					{kpis.blockedCount}
 					<span
@@ -239,6 +303,9 @@
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-pillar-pad-sm);
+		transition:
+			background-color 0.16s ease,
+			box-shadow 0.16s ease;
 	}
 	.kpi-pillar:hover {
 		background: var(--exec-panel-bg-hover);
@@ -312,6 +379,11 @@
 		color: var(--exec-ink);
 		font-variant-numeric: tabular-nums;
 	}
+	.sub-lbl {
+		font-size: 0.7rem;
+		font-weight: 500;
+		color: var(--exec-dim);
+	}
 	.bar-track {
 		display: flex;
 		gap: 2px;
@@ -323,6 +395,9 @@
 		display: block;
 		height: 100%;
 		border-radius: var(--exec-bar-radius);
+	}
+	.bar-spend {
+		background: var(--exec-bar-budget);
 	}
 	.bar-accent {
 		background: var(--tone-accent-bar);

@@ -15,9 +15,12 @@
 
 <section class="time-panel flex flex-col gap-3" aria-labelledby="exec-time-heading">
 	<div class="flex flex-wrap items-baseline justify-between gap-2">
-		<h2 id="exec-time-heading" class="time-title">Where task time goes</h2>
+		<h2 id="exec-time-heading" class="time-title">
+			<span class="exec-lbl-std">Where task time goes</span>
+			<span class="exec-lbl-rep">Capacity &amp; Bottleneck Analysis</span>
+		</h2>
 		<span class="time-sub tabular-nums">
-			{taskTime.totalOpen} open {taskTime.totalOpen === 1 ? 'item' : 'items'}
+			{taskTime.totalOpen} open {taskTime.totalOpen === 1 ? 'task' : 'tasks'}
 		</span>
 	</div>
 
@@ -29,54 +32,58 @@
 		{#if taskTime.workingPct > 0}
 			<a
 				href={resolve('/teams/members')}
-				class="seg-agents"
+				class="tseg seg-agents"
 				style:width="{taskTime.workingPct}%"
 				aria-label="Agents working: {taskTime.workingPct}%"
+				title="Agents working: {taskTime.workingPct}% ({taskTime.workingCount})"
 			></a>
 		{/if}
 		{#if taskTime.reviewPct > 0}
 			<a
-				href={resolve('/work')}
-				class="seg-ci"
+				href={resolve('/activity')}
+				class="tseg seg-ci"
 				style:width="{taskTime.reviewPct}%"
-				aria-label="In review: {taskTime.reviewPct}%"
+				aria-label="Automated checks & review: {taskTime.reviewPct}%"
+				title="Automated checks & review: {taskTime.reviewPct}% ({taskTime.reviewCount})"
 			></a>
 		{/if}
 		{#if taskTime.waitingYouPct > 0}
 			<a
 				href={resolve('/inbox')}
-				class="seg-human"
+				class="tseg seg-human"
 				style:width="{taskTime.waitingYouPct}%"
 				aria-label="Waiting on you: {taskTime.waitingYouPct}%"
+				title="Waiting on you: {taskTime.waitingYouPct}% ({taskTime.waitingYouCount})"
 			></a>
 		{/if}
 		{#if taskTime.queuedPct > 0}
 			<a
 				href={resolve(queuedHref)}
-				class={taskTime.queuedIsHigh ? 'seg-queued-high' : 'seg-queued'}
+				class={['tseg', taskTime.queuedIsHigh ? 'seg-queued-high' : 'seg-queued']}
 				style:width="{taskTime.queuedPct}%"
 				aria-label="Waiting for an agent: {taskTime.queuedPct}%"
+				title="Waiting for an agent: {taskTime.queuedPct}% ({taskTime.queuedCount})"
 			></a>
 		{/if}
 	</div>
 
 	<div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
-		<a href={resolve('/teams/members')} class="inline-flex items-center gap-1.5">
+		<a href={resolve('/teams/members')} class="tleg inline-flex items-center gap-1.5">
 			<span class="size-2 rounded-full bg-[var(--tone-accent)]"></span>
-			<strong class="text-[var(--exec-sky)]">{taskTime.workingPct}%</strong>
+			<strong class="text-[var(--exec-sky)] tabular-nums">{taskTime.workingPct}%</strong>
 			<span class="text-[var(--exec-muted)]">Agents working ({taskTime.workingCount})</span>
 		</a>
-		<a href={resolve('/work')} class="inline-flex items-center gap-1.5">
+		<a href={resolve('/activity')} class="tleg inline-flex items-center gap-1.5">
 			<span class="size-2 rounded-full bg-[var(--tone-ok)]"></span>
-			<strong class="text-[var(--exec-ok)]">{taskTime.reviewPct}%</strong>
+			<strong class="text-[var(--exec-ok)] tabular-nums">{taskTime.reviewPct}%</strong>
 			<span class="text-[var(--exec-muted)]">In review ({taskTime.reviewCount})</span>
 		</a>
-		<a href={resolve('/inbox')} class="inline-flex items-center gap-1.5">
+		<a href={resolve('/inbox')} class="tleg inline-flex items-center gap-1.5">
 			<span class="size-2 rounded-full bg-[var(--tone-warn)]"></span>
-			<strong class="text-[var(--exec-warn)]">{taskTime.waitingYouPct}%</strong>
+			<strong class="text-[var(--exec-warn)] tabular-nums">{taskTime.waitingYouPct}%</strong>
 			<span class="text-[var(--exec-muted)]">Waiting on you ({taskTime.waitingYouCount})</span>
 		</a>
-		<a href={resolve(queuedHref)} class="inline-flex items-center gap-1.5">
+		<a href={resolve(queuedHref)} class="tleg inline-flex items-center gap-1.5">
 			<span
 				class={[
 					'size-2 rounded-full',
@@ -84,7 +91,10 @@
 				]}
 			></span>
 			<strong
-				class={taskTime.queuedIsHigh ? 'text-[var(--exec-bad)]' : 'text-[var(--exec-purple)]'}
+				class={[
+					'tabular-nums',
+					taskTime.queuedIsHigh ? 'text-[var(--exec-bad)]' : 'text-[var(--exec-purple)]'
+				]}
 			>
 				{taskTime.queuedPct}%
 			</strong>
@@ -96,10 +106,10 @@
 
 	<div class="flex flex-wrap items-center justify-between gap-2 text-xs">
 		<p class="text-[var(--exec-muted)]">{taskTime.summary}</p>
-		<div class="flex items-center gap-3.5">
+		<div class="flex flex-wrap items-center gap-3.5">
 			<a
 				href={resolve(taskTime.primaryLink.href as '/work')}
-				class="inline-flex items-center gap-0.5 font-semibold text-[var(--exec-accent-ink)]"
+				class="inline-flex items-center gap-0.5 font-semibold text-[var(--exec-accent-ink)] hover:underline"
 			>
 				<span>{taskTime.primaryLink.label}</span>
 				<ChevronRight class="size-3.5" aria-hidden="true" />
@@ -107,7 +117,7 @@
 			{#if taskTime.secondaryLink}
 				<a
 					href={resolve(taskTime.secondaryLink.href as '/work')}
-					class="inline-flex items-center gap-0.5 font-semibold text-[var(--exec-accent-ink)]"
+					class="inline-flex items-center gap-0.5 font-semibold text-[var(--exec-accent-ink)] hover:underline"
 				>
 					<span>{taskTime.secondaryLink.label}</span>
 					<ChevronRight class="size-3.5" aria-hidden="true" />
@@ -145,8 +155,23 @@
 		height: var(--exec-time-bar-height);
 		border-radius: var(--exec-time-bar-radius);
 	}
-	.time-bar > a {
+	.tseg {
+		display: block;
+		height: 100%;
 		border-radius: var(--exec-time-bar-radius);
+		transition:
+			opacity 0.16s ease,
+			filter 0.16s ease;
+	}
+	.time-bar:hover .tseg {
+		opacity: 0.55;
+	}
+	.time-bar .tseg:hover {
+		opacity: 1;
+		filter: brightness(1.12);
+	}
+	.tleg:hover span:last-child {
+		color: var(--exec-ink);
 	}
 	.seg-agents {
 		background: var(--exec-seg-agents);
