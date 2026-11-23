@@ -14,6 +14,8 @@
   --hover: rgb(255 255 255 / .05); --sidebar: rgb(0 0 0 / .1);
   --radius-md: 6px; --radius-lg: 8px;
   --gutter: 32px;
+  --home-hint-padding: 10px;
+  --home-hint-height: calc(max(2.5rem, 1.75rem + env(safe-area-inset-bottom)) + var(--home-hint-padding));
   /* Unfilled progress bar track */
   --bar-track: rgba(186, 222, 255, .14);
   /* Semantic status & accent tokens (Ocean default) */
@@ -130,7 +132,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 /* Shell */
 .sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 50; display: flex; flex-direction: column; gap: 14px; overflow: hidden; background: rgba(9, 17, 30, .58); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); box-shadow: inset -1px 0 0 rgba(186, 222, 255, .10); padding: 0 18px; transition: width .32s cubic-bezier(.22, 1, .36, 1), padding .32s cubic-bezier(.22, 1, .36, 1), box-shadow .32s ease; }
 .content { position: relative; z-index: 1; height: 100%; overflow-y: auto; display: flex; flex-direction: column; background: transparent; }
-:is(.content, .report-scroll-hint) { padding-left: 264px; transition: padding-left .32s cubic-bezier(.22, 1, .36, 1); }
+:is(.content, .home-scroll-hint) { padding-left: 264px; transition: padding-left .32s cubic-bezier(.22, 1, .36, 1); }
 .content > main { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 .sidebar-hd { display: flex; align-items: center; gap: 6px; min-height: 56px; flex: none; padding-top: 6px; }
 .logo { display: flex; align-items: center; gap: 11px; height: 44px; flex: 1; min-width: 0; margin: 0 0 0 -6px; padding: 0 6px; border-radius: 8px; text-align: left; transition: padding .32s cubic-bezier(.22, 1, .36, 1), margin .32s cubic-bezier(.22, 1, .36, 1), gap .32s cubic-bezier(.22, 1, .36, 1), background-color .14s ease; }
@@ -1142,7 +1144,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 }
 @media (min-width: 640px) and (max-width: 959px) {
   .sidebar { width: 64px; padding: 0 8px; gap: 12px; overflow: visible; }
-  :is(.content, .report-scroll-hint) { padding-left: 64px; }
+  :is(.content, .home-scroll-hint) { padding-left: 64px; }
   .proto-banner, .proto-hotzone { left: 64px; }
   .logo { justify-content: center; margin: 8px auto 0; width: 48px; height: 48px; padding: 0; }
   .logo .name { display: none; }
@@ -1167,7 +1169,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   .sidebar { transform: translateX(-100%); transition: transform .15s; }
   body.drawer .sidebar { transform: none; }
   body.drawer .scrim { display: block; }
-  :is(.content, .report-scroll-hint) { padding-left: 0; }
+  :is(.content, .home-scroll-hint) { padding-left: 0; }
   .topbar { height: 52px; padding: 0 16px 0 60px; }
   .cmdk-shell { width: 100%; }
   .cmdk-trigger kbd { display: none; }
@@ -2368,6 +2370,23 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) .
 html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) .hb-proj-head-l > span { font-size: .9375rem; }
 .hb-proj-head .link { color: var(--tone-accent-ink); }
 .hb-proj-head .link:hover { color: var(--tone-accent-hover); }
+.content:has(+ .home-scroll-hint:not([hidden])) { height: calc(100% - var(--home-hint-height)); }
+.home-scroll-hint {
+  position: relative;
+  z-index: 1;
+  height: var(--home-hint-height);
+  padding-bottom: calc(env(safe-area-inset-bottom) + var(--home-hint-padding));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--gray-800);
+  color: var(--gray-400);
+  font-size: .8125rem;
+  font-weight: 500;
+}
+html[data-theme="ocean"] .home-scroll-hint { background: transparent; }
+html[data-theme="graphite"] .home-scroll-hint { background: var(--graphite-canvas); }
 .hb-bento { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .hb-card {
   position: relative; display: flex; flex-direction: column; gap: 14px;
@@ -2571,7 +2590,7 @@ a.hb-tleg:hover { color: var(--hb-ink); }
   .sidebar .nav-item .lbl { opacity: 1; transition: opacity .22s ease .07s; }
   .sidebar .foot .acct-txt { white-space: nowrap; transition: opacity .22s ease .07s; }
   body.nav-collapsed .sidebar { width: 68px; padding: 0 12px; gap: 14px; overflow: hidden; }
-  body.nav-collapsed :is(.content, .report-scroll-hint) { padding-left: 68px; }
+  body.nav-collapsed :is(.content, .home-scroll-hint) { padding-left: 68px; }
   body.nav-collapsed .proto-banner, body.nav-collapsed .proto-hotzone { left: 68px; }
   body.nav-collapsed .sidebar-hd { gap: 0; }
   body.nav-collapsed .logo { width: 44px; height: 44px; margin: 0; padding: 0 7px; gap: 0; flex: none; }
@@ -3331,22 +3350,6 @@ html[data-theme^="report"] .hb-proj-sec {
   gap: 20px;
 }
 html[data-theme^="report"] .hb-proj-head { align-items: baseline; }
-html[data-theme^="report"] { --report-hint-height: max(2.5rem, calc(1.75rem + env(safe-area-inset-bottom))); }
-.content:has(+ .report-scroll-hint:not([hidden])) { height: calc(100% - var(--report-hint-height)); }
-.report-scroll-hint {
-  position: relative;
-  z-index: 1;
-  height: var(--report-hint-height);
-  padding-bottom: env(safe-area-inset-bottom);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  background: var(--gray-800);
-  color: var(--gray-400);
-  font-size: .8125rem;
-  font-weight: 500;
-}
 html[data-theme^="report"] .hb-proj-head h2,
 html[data-theme^="report"] .hb-proj-title {
   font-size: 1.25rem; line-height: 1.25; font-weight: 700;
@@ -4121,6 +4124,19 @@ html[data-theme="graphite"] {
     & :is(.hb-pillars, .hb-stage, .hb-bento) { gap: 12px; }
   }
 }
+html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
+  & .hb-stage:not(.is-single) > .hb-spot {
+    padding-block: clamp(1.5rem, 2vw, 1.875rem);
+    gap: 18px;
+  }
+  & .hb-stage > .hb-catchup {
+    padding-block: 1.5rem;
+    gap: 16px;
+  }
+  @media (max-width: 1120px) {
+    & .hb-cos-memo:not(.is-expanded) .hb-cos-scroll { max-height: 235px; }
+  }
+}
 .h4-cta.hb-cta-glass { min-height: 36px; }
 .cmdk-ai-btn { min-height: 34px; }
 @media (max-width: 720px), (pointer: coarse) {
@@ -4266,7 +4282,7 @@ html[data-theme="graphite"] {
   </header>
   <main id="main" tabindex="-1"></main>
 </div>
-<p class="report-scroll-hint" id="report-scroll-hint" hidden>
+<p class="home-scroll-hint" id="home-scroll-hint" hidden>
   Scroll for more <svg class="ic ic16" aria-hidden="true"><use href="#i-chev-down"/></svg>
 </p>
 
@@ -7247,38 +7263,55 @@ function renderBanner(r0) {
   el.innerHTML = themeCtl + homeCtl;
 }
 
-let stopReportProjects;
-function mountReportProjects() {
-  stopReportProjects?.();
-  stopReportProjects = null;
-  const hint = document.getElementById("report-scroll-hint");
+let stopHomeProjectHint;
+function mountHomeProjectHint() {
+  stopHomeProjectHint?.();
+  stopHomeProjectHint = null;
+  const hint = document.getElementById("home-scroll-hint");
   hint.hidden = true;
-  if (!S.theme.startsWith("report") || S.homeState !== "filled") return;
+  if (S.homeState !== "filled") return;
 
   const projects = document.getElementById("hb-projects");
   if (!projects) return;
 
   const content = document.getElementById("content");
   const wrapper = projects.parentElement;
+  const stage = wrapper.parentElement.querySelector(".hb-stage");
+  const stretchStage = !S.theme.startsWith("report");
+  const sideBySide = window.matchMedia("(min-width: 1121px)");
   let projectsBelowFold = false;
   const updateHint = () => {
     hint.hidden = !projectsBelowFold || content.scrollTop > 0;
   };
+  const projectsTop = () =>
+    wrapper.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
   const fitProjects = () => {
-    // The full viewport stays the same when the hint reserves a strip at the bottom.
+    if (stretchStage) stage.style.minHeight = "";
     const height = document.body.clientHeight;
-    const top = wrapper.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
-    projectsBelowFold = top + projects.getBoundingClientRect().height > height;
-    const padding = projectsBelowFold ? Math.max(0, Math.ceil(height - top)) : 0;
+    const naturalTop = projectsTop();
+    projectsBelowFold = naturalTop + projects.getBoundingClientRect().height > height;
+    if (projectsBelowFold && stretchStage && sideBySide.matches) {
+      hint.hidden = false;
+      const availableSpace = content.clientHeight - naturalTop;
+      if (availableSpace > 0) {
+        stage.style.minHeight = `${stage.getBoundingClientRect().height + availableSpace}px`;
+      }
+    }
+    const padding = projectsBelowFold ? Math.max(0, Math.ceil(height - projectsTop())) : 0;
     wrapper.style.paddingBlockStart = padding ? `${padding}px` : "";
     updateHint();
   };
   fitProjects();
-  const observer = new ResizeObserver(fitProjects);
+  let resizeFrame = 0;
+  const observer = new ResizeObserver(() => {
+    cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(fitProjects);
+  });
   [document.body, projects, ...wrapper.parentElement.querySelectorAll(".hb-hero, .hb-pillars, .hb-stage")]
     .forEach((element) => observer.observe(element));
   content.addEventListener("scroll", updateHint, { passive: true });
-  stopReportProjects = () => {
+  stopHomeProjectHint = () => {
+    cancelAnimationFrame(resizeFrame);
     observer.disconnect();
     content.removeEventListener("scroll", updateHint);
   };
@@ -7332,7 +7365,7 @@ function render(focus = true) {
     document.getElementById("content").scrollTop = 0;
   }
   S.lastRoute = key; S.focusAfter = null;
-  mountReportProjects();
+  mountHomeProjectHint();
   applyShortcuts();
 }
 
