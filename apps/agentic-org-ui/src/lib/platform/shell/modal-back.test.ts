@@ -491,4 +491,55 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		env.flushRaf();
 		expect(close).not.toHaveBeenCalled();
 	});
+
+	it('handles repeated modal Back after an anchor link whose sveltekit:history index is assigned later', async () => {
+		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
+		// User clicks an anchor link; hashchange records fragment before SvelteKit stamps sveltekit:history
+		env.dispatchHashChange('http://localhost/teams#section', null, 2);
+		// SvelteKit later assigns index 11 to that fragment entry, then user navigates to /projects (12)
+		env.setEntry('http://localhost/projects', { 'sveltekit:history': 12 }, 3);
+		env.noteModalBackNavigation();
+
+		// First modal open + Back to fragment (now carrying sveltekit:history: 11)
+		const close1 = vi.fn();
+		const unregister1 = env.registerModalBack(close1);
+		const back1 = env.dispatchPopState(
+			'http://localhost/teams#section',
+			{ 'sveltekit:history': 11 },
+			3
+		);
+		expect(back1.stopped).toBe(true);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([1]);
+		const return1 = env.dispatchPopState(
+			'http://localhost/projects',
+			{ 'sveltekit:history': 12 },
+			3
+		);
+		expect(return1.stopped).toBe(true);
+		env.flushRaf();
+		expect(close1).toHaveBeenCalledTimes(1);
+		unregister1();
+
+		// Reopen modal + second Back must STILL compute delta 1 (not 3 from a duplicated fragment entry)
+		const close2 = vi.fn();
+		const unregister2 = env.registerModalBack(close2);
+		const back2 = env.dispatchPopState(
+			'http://localhost/teams#section',
+			{ 'sveltekit:history': 11 },
+			3
+		);
+		expect(back2.stopped).toBe(true);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([1, 1]);
+		const return2 = env.dispatchPopState(
+			'http://localhost/projects',
+			{ 'sveltekit:history': 12 },
+			3
+		);
+		expect(return2.stopped).toBe(true);
+		env.flushRaf();
+		expect(close2).toHaveBeenCalledTimes(1);
+		unregister2();
+	});
 });

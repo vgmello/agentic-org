@@ -45,16 +45,26 @@ function findLegacyCursor(entry: LegacyEntry): number {
 	if (entry.index !== undefined) {
 		let best = -1;
 		let bestDist = Infinity;
+		let bestUntracked = -1;
+		let bestUntrackedDist = Infinity;
 		for (let i = 0; i < legacyEntries.length; i++) {
 			const candidate = legacyEntries[i];
-			if (candidate.index !== entry.index) continue;
-			const dist = Math.abs(i - legacyCursor) + (candidate.href === entry.href ? 0 : 0.5);
-			if (dist < bestDist) {
-				best = i;
-				bestDist = dist;
+			if (candidate.index === entry.index) {
+				const dist = Math.abs(i - legacyCursor) + (candidate.href === entry.href ? 0 : 0.5);
+				if (dist < bestDist) {
+					best = i;
+					bestDist = dist;
+				}
+			} else if (candidate.index === undefined && candidate.href === entry.href) {
+				// Anchor/fragment entries recorded before SvelteKit assigns sveltekit:history.
+				const dist = Math.abs(i - legacyCursor) + (i === legacyCursor ? 0.5 : 0);
+				if (dist < bestUntrackedDist) {
+					bestUntracked = i;
+					bestUntrackedDist = dist;
+				}
 			}
 		}
-		return best;
+		return best >= 0 ? best : bestUntracked;
 	}
 
 	let bestUntracked = -1;
