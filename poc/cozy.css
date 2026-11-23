@@ -260,7 +260,7 @@ html[data-theme="cozy"] {
 
   & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-horizon, .hb-skel-card,
     .card, .bcard, .bcol, .c-entry, .sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast,
-    .agent-rail, .prof, .split .list, .chlist, .thread, .chhead, .compose) {
+    .agent-rail, .prof, .split .list, .chlist, .thread, .chhead, .compose, .assembly-view, .activity-feed, .activity-rail) {
     background: var(--cozy-panel);
     backdrop-filter: blur(20px) saturate(125%);
     -webkit-backdrop-filter: blur(20px) saturate(125%);
@@ -273,11 +273,13 @@ html[data-theme="cozy"] {
   & :is(.hb-spot-meta, .hb-spot-next, .hb-cos-memo, .hb-ai-brief, .hb-brief-lenses, .hb-dig-item,
     .hb-hor-item, .work-items, .work-group-title, .grp-h, .subnav, .ctx-body, .runlog, .k-doc,
     .cmdk-tabs, .cmdk-foot, .cmdk-ai-card, .cmdk-tab-grp, .cmdk-trigger kbd, .seg, .search,
-    .field, textarea, code, pre) {
+    .field, textarea, code, pre, .triage-queue, .triage-audit, .activity-triage) {
     background: var(--cozy-well);
     box-shadow: inset 0 0 0 1px var(--cozy-well-edge);
   }
 
+  & :is(.triage-queue, .triage-audit, .activity-triage) { box-shadow: none; }
+  & .triage-search { background: var(--cozy-well); }
   & :is(.overlay, .cmdk-backdrop, .scrim), & .work-task-dialog::backdrop { background: rgb(16 13 11 / .62); }
   & .work-status[data-tone="active"] { color: var(--tone-accent); }
   & .work-status[data-tone="review"] { color: var(--tone-warn); }
@@ -316,7 +318,7 @@ html[data-theme="cozy"] {
   }
 
   & :is(.btn, .nav-item, .nav-collapse-btn, .nav-group-all, .acct, .seg, .seg button,
-    .nav-fold-btn, .cmdk-opt, .cmdk-esc, .cmdk-ai-btn, .cmdk-ai-prev-chip, .cmdk-tab, .menu button,
+    .nav-fold-btn, .cmdk-opt, .cmdk-esc, .cmdk-ai-prev-chip, .cmdk-tab, .menu button,
     .hb-brief-lenses, .hb-brief-lenses button, .hb-arrow-btn, .hb-pill-link, .hb-dig-item, .hb-hor-item) {
     border-radius: 8px;
   }
