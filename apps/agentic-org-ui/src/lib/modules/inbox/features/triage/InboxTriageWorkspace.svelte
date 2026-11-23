@@ -116,6 +116,7 @@
 	// Keyed by `${organizationId}:${itemId}` so drafts never leak across items or organizations.
 	let denyDrafts = $state<Record<string, string>>({});
 	let replyDrafts = $state<Record<string, string>>({});
+	let commentDrafts = $state<Record<string, string>>({});
 	let nowMs = $state(Date.now());
 	let searchInputEl = $state<HTMLInputElement | null>(null);
 
@@ -221,6 +222,9 @@
 	const activeReplyText = $derived(
 		selectedItem ? (replyDrafts[draftKey(organizationId, selectedItem.id)] ?? '') : ''
 	);
+	const activeCommentDraft = $derived(
+		selectedItem ? (commentDrafts[draftKey(organizationId, selectedItem.id)] ?? '') : ''
+	);
 
 	function updateDenyDraft(itemId: string, value: string) {
 		denyDrafts = { ...denyDrafts, [draftKey(organizationId, itemId)]: value };
@@ -228,6 +232,19 @@
 
 	function updateReplyDraft(itemId: string, value: string) {
 		replyDrafts = { ...replyDrafts, [draftKey(organizationId, itemId)]: value };
+	}
+
+	function updateCommentDraft(itemId: string, value: string) {
+		commentDrafts = { ...commentDrafts, [draftKey(organizationId, itemId)]: value };
+	}
+
+	function clearCommentDraft(orgId: string, itemId: string) {
+		const key = draftKey(orgId, itemId);
+		if (key in commentDrafts) {
+			const next = { ...commentDrafts };
+			delete next[key];
+			commentDrafts = next;
+		}
 	}
 
 	function clearItemDrafts(orgId: string, itemId: string) {
@@ -744,7 +761,7 @@
 									searchInputEl?.focus();
 								}}
 								aria-label="Clear search"
-								class="triage-clear-btn inline-flex min-h-9 min-w-9 items-center justify-center max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+								class="triage-clear-btn inline-flex min-h-9 min-w-9 items-center justify-center max-[720px]:min-h-11 max-[720px]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 							>
 								<X class="size-3.5" aria-hidden="true" />
 							</button>
@@ -802,7 +819,7 @@
 										<DropdownMenu.RadioItem
 											value={tab.id}
 											closeOnSelect={true}
-											class="flex min-h-9 items-center justify-between gap-3 pr-8 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="flex min-h-9 items-center justify-between gap-3 pr-8 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											<span>{tab.label}</span>
 											<span class="triage-menu-count font-mono text-xs tabular-nums">
@@ -843,14 +860,14 @@
 										<DropdownMenu.RadioItem
 											value="all"
 											closeOnSelect={true}
-											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											All items
 										</DropdownMenu.RadioItem>
 										<DropdownMenu.RadioItem
 											value="urgent"
 											closeOnSelect={true}
-											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											Urgent only
 										</DropdownMenu.RadioItem>
@@ -864,7 +881,7 @@
 										<DropdownMenu.RadioItem
 											value=""
 											closeOnSelect={true}
-											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											All projects
 										</DropdownMenu.RadioItem>
@@ -872,7 +889,7 @@
 											<DropdownMenu.RadioItem
 												value={proj.id}
 												closeOnSelect={true}
-												class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 											>
 												{proj.name}
 											</DropdownMenu.RadioItem>
@@ -887,7 +904,7 @@
 										<DropdownMenu.RadioItem
 											value=""
 											closeOnSelect={true}
-											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											All teams
 										</DropdownMenu.RadioItem>
@@ -895,7 +912,7 @@
 											<DropdownMenu.RadioItem
 												value={team.id}
 												closeOnSelect={true}
-												class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 											>
 												{team.name}
 											</DropdownMenu.RadioItem>
@@ -906,7 +923,7 @@
 										<DropdownMenu.Group>
 											<DropdownMenu.Item
 												onSelect={clearFilterMenu}
-												class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 											>
 												Reset filters
 											</DropdownMenu.Item>
@@ -945,14 +962,14 @@
 										<DropdownMenu.RadioItem
 											value="priority"
 											closeOnSelect={true}
-											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											Priority first
 										</DropdownMenu.RadioItem>
 										<DropdownMenu.RadioItem
 											value="date"
 											closeOnSelect={true}
-											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											By date
 										</DropdownMenu.RadioItem>
@@ -961,7 +978,7 @@
 									<DropdownMenu.CheckboxItem
 										checked={showDividers}
 										onCheckedChange={(checked) => toggleRowDividers(Boolean(checked))}
-										class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 									>
 										Row dividers
 									</DropdownMenu.CheckboxItem>
@@ -1012,8 +1029,11 @@
 					{decliningId}
 					declineReason={activeDeclineReason}
 					replyText={activeReplyText}
+					commentDraft={activeCommentDraft}
 					onDeclineReasonChange={updateDenyDraft}
 					onReplyTextChange={updateReplyDraft}
+					onCommentDraftChange={updateCommentDraft}
+					onCommentDraftClear={clearCommentDraft}
 					onBackMobile={closeMobileDetail}
 					onPrimaryAction={(it) => void runPrimaryAction(it)}
 					onSecondaryAction={(it) => void runSecondaryAction(it)}

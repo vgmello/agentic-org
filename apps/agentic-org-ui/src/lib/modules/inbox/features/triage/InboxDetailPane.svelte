@@ -36,8 +36,11 @@
 		decliningId,
 		declineReason,
 		replyText,
+		commentDraft,
 		onDeclineReasonChange,
 		onReplyTextChange,
+		onCommentDraftChange,
+		onCommentDraftClear,
 		onBackMobile,
 		onPrimaryAction,
 		onSecondaryAction,
@@ -55,8 +58,11 @@
 		decliningId?: string;
 		declineReason: string;
 		replyText: string;
+		commentDraft: string;
 		onDeclineReasonChange: (itemId: string, value: string) => void;
 		onReplyTextChange: (itemId: string, value: string) => void;
+		onCommentDraftChange: (itemId: string, value: string) => void;
+		onCommentDraftClear: (orgId: string, itemId: string) => void;
 		onBackMobile: () => void;
 		onPrimaryAction: (item: TriageItem) => void;
 		onSecondaryAction: (item: TriageItem) => void;
@@ -69,21 +75,24 @@
 	let denyInputEl = $state<HTMLInputElement | null>(null);
 	let denyBtnEl = $state<HTMLButtonElement | null>(null);
 	let commentInputEl = $state<HTMLTextAreaElement | null>(null);
+	let readingEl = $state<HTMLElement | null>(null);
 	let copiedKey = $state<string | undefined>(undefined);
 	let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
-	// Hover/focus member preview card dismissal (WCAG 1.4.13)
+	// Hover/focus member preview card dismissal & collision clamping (WCAG 1.4.13)
 	let memberHovered = $state(false);
 	let memberFocused = $state(false);
+	let previewFlipAbove = $state(false);
+	let previewShiftX = $state(0);
 	let previewDismissed = $derived.by(() => {
 		void item?.id;
 		return false;
 	});
 
-	// Per-item comment drafts & persisted comments
-	let commentDrafts = $state<Record<string, string>>({});
+	// Persisted comments version counter & status announcement
 	let commentVersion = $state(0);
 	let commentStatus = $derived.by(() => {
+		void organizationId;
 		void item?.id;
 		return '';
 	});
@@ -98,10 +107,6 @@
 		}
 	}
 
-	const commentDraftKey = $derived(item ? `${organizationId}:${item.id}` : '');
-	const activeCommentDraft = $derived(
-		commentDraftKey ? (commentDrafts[commentDraftKey] ?? '') : ''
-	);
 	const comments = $derived.by<InboxCommentEntry[]>(() => {
 		void commentVersion;
 		if (!item) return [];
@@ -172,6 +177,26 @@
 		}
 	});
 
+	// Clear stale constraint validation message whenever the active item or org changes.
+	$effect(() => {
+		void organizationId;
+		void item?.id;
+		commentInputEl?.setCustomValidity('');
+	});
+
+	// Capture-phase Escape dismisses the hover/focus member preview before Bits UI / document handlers.
+	$effect(() => {
+		const onKeydownCapture = (event: KeyboardEvent) => {
+			if (event.key === 'Escape' && (memberHovered || memberFocused) && !previewDismissed) {
+				event.preventDefault();
+				event.stopPropagation();
+				previewDismissed = true;
+			}
+		};
+		window.addEventListener('keydown', onKeydownCapture, { capture: true });
+		return () => window.removeEventListener('keydown', onKeydownCapture, { capture: true });
+	});
+
 	onDestroy(() => clearTimeout(copyTimer));
 
 	function formatCommentTime(at: number): string {
@@ -236,29 +261,68 @@
 		onReply(item, replyText.trim());
 	}
 
-	function handleWindowKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape' && (memberHovered || memberFocused) && !previewDismissed) {
-			event.preventDefault();
-			previewDismissed = true;
-		}
+	function clampMemberPreview(node: HTMLElement) {
+		previewFlipAbove = false;
+		previewShiftX = 0;
+		requestAnimationFrame(() => {
+			if ((!memberHovered && !memberFocused) || previewDismissed) return;
+			const card = node.querySelector<HTMLElement>('.triage-from-card');
+			if (!card) return;
+			const cardRect = card.getBoundingClientRect();
+			if (cardRect.width === 0 || cardRect.height === 0) return;
+			const anchorRect = node.getBoundingClientRect();
+			const containerRect = readingEl?.getBoundingClientRect();
+			const pad = 8;
+			const minLeft = Math.max(pad, (containerRect?.left ?? 0) + pad);
+			const maxRight = Math.min(
+				window.innerWidth - pad,
+				(containerRect?.right ?? window.innerWidth) - pad
+			);
+			const minTop = Math.max(pad, (containerRect?.top ?? 0) + pad);
+			const maxBottom = Math.min(
+				window.innerHeight - pad,
+				(containerRect?.bottom ?? window.innerHeight) - pad
+			);
+
+			if (cardRect.bottom > maxBottom && anchorRect.top - cardRect.height - 6 >= minTop) {
+				previewFlipAbove = true;
+			}
+			let shift = 0;
+			if (cardRect.right > maxRight) {
+				shift = Math.max(minLeft - cardRect.left, maxRight - cardRect.right);
+			} else if (cardRect.left < minLeft) {
+				shift = minLeft - cardRect.left;
+			}
+			previewShiftX = Math.round(shift);
+		});
 	}
 
 	function memberPreviewTracking(node: HTMLElement) {
 		const onEnter = () => {
 			memberHovered = true;
+			clampMemberPreview(node);
 		};
 		const onLeave = () => {
 			memberHovered = false;
-			if (!memberFocused) previewDismissed = false;
+			if (!memberFocused) {
+				previewDismissed = false;
+				previewFlipAbove = false;
+				previewShiftX = 0;
+			}
 		};
 		const onFocusIn = () => {
 			memberFocused = true;
+			clampMemberPreview(node);
 		};
 		const onFocusOut = (event: FocusEvent) => {
 			const next = event.relatedTarget as Node | null;
 			if (next && node.contains(next)) return;
 			memberFocused = false;
-			if (!memberHovered) previewDismissed = false;
+			if (!memberHovered) {
+				previewDismissed = false;
+				previewFlipAbove = false;
+				previewShiftX = 0;
+			}
 		};
 		node.addEventListener('pointerenter', onEnter);
 		node.addEventListener('pointerleave', onLeave);
@@ -273,15 +337,15 @@
 	}
 
 	function updateCommentDraft(value: string) {
-		if (!commentDraftKey) return;
-		commentDrafts = { ...commentDrafts, [commentDraftKey]: value };
+		if (!item) return;
+		onCommentDraftChange(item.id, value);
 		commentInputEl?.setCustomValidity('');
 	}
 
 	function handleCommentSubmit(event: SubmitEvent) {
 		event.preventDefault();
 		if (!item) return;
-		const trimmed = activeCommentDraft.trim();
+		const trimmed = commentDraft.trim();
 		if (!trimmed) {
 			if (commentInputEl) {
 				commentInputEl.setCustomValidity('Enter a comment.');
@@ -308,19 +372,13 @@
 			commentInputEl?.focus();
 			return;
 		}
-		if (commentDraftKey in commentDrafts) {
-			const nextDrafts = { ...commentDrafts };
-			delete nextDrafts[commentDraftKey];
-			commentDrafts = nextDrafts;
-		}
+		onCommentDraftClear(organizationId, item.id);
 		commentVersion += 1;
-		commentStatus = 'Comment posted.';
+		commentStatus = `Comment posted (${nextEntries.length} total).`;
 		commentInputEl?.setCustomValidity('');
 		commentInputEl?.focus();
 	}
 </script>
-
-<svelte:window onkeydown={handleWindowKeydown} />
 
 {#snippet highlighted(text: string)}
 	{#each highlightSegments(text, searchQuery) as seg, i (`${i}-${seg.match}`)}
@@ -329,6 +387,7 @@
 {/snippet}
 
 <section
+	bind:this={readingEl}
 	class="triage-reading flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
 	aria-label="Item details"
 >
@@ -369,7 +428,12 @@
 							>
 								{item.actorName}
 							</a>
-							<span class="triage-from-card" role="tooltip">
+							<span
+								class="triage-from-card"
+								role="tooltip"
+								data-flip-above={previewFlipAbove ? '' : undefined}
+								style:--preview-shift-x="{previewShiftX}px"
+							>
 								<span class="triage-from-av" aria-hidden="true">{item.actorInitials}</span>
 								<span>
 									<strong aria-hidden="true">{item.actorName}</strong>
@@ -728,7 +792,7 @@
 						rows="2"
 						maxlength={MAX_INBOX_COMMENT_LENGTH}
 						placeholder="Leave a comment…"
-						value={activeCommentDraft}
+						value={commentDraft}
 						oninput={(e) => updateCommentDraft(e.currentTarget.value)}
 						required></textarea>
 					<button type="submit" aria-label="Send comment" title="Send comment" class="triage-send">
@@ -768,7 +832,7 @@
 							</span>
 							<p>
 								<strong>{item.actorName}</strong> opened this request
-								<span class="triage-event-time">{item.ageLabel}</span>
+								<span class="triage-event-time">{item.createdAgeLabel}</span>
 							</p>
 						</li>
 
@@ -893,6 +957,7 @@
 	.triage-from-link {
 		display: inline-flex;
 		align-items: center;
+		min-height: 36px;
 		color: var(--exec-ink);
 		font-weight: 600;
 		text-decoration: none;
@@ -903,7 +968,7 @@
 	.triage-from-card {
 		position: absolute;
 		z-index: 10;
-		inset-block-start: 100%;
+		inset-block-start: calc(100% + 4px);
 		inset-inline-start: 0;
 		display: none;
 		align-items: center;
@@ -918,6 +983,11 @@
 		color: var(--exec-body);
 		font-size: 0.75rem;
 		line-height: 1.45;
+		transform: translateX(var(--preview-shift-x, 0px));
+	}
+	.triage-from-card[data-flip-above] {
+		inset-block-start: auto;
+		inset-block-end: calc(100% + 4px);
 	}
 	.triage-from-member:not([data-preview-dismissed]):is(:hover, :focus-within) .triage-from-card {
 		display: flex;
@@ -1022,6 +1092,9 @@
 		color: var(--tone-warn-ink);
 	}
 	.triage-link {
+		display: inline-flex;
+		align-items: center;
+		min-height: 36px;
 		color: var(--link);
 		text-decoration: none;
 	}
@@ -1032,8 +1105,8 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 4px;
-		min-height: 28px;
-		padding: 0 7px;
+		min-height: 36px;
+		padding: 0 10px;
 		border: 1px solid var(--exec-border-hi);
 		border-radius: 6px;
 		background: transparent;
@@ -1344,6 +1417,7 @@
 
 	@media (max-width: 720px), (pointer: coarse) {
 		.triage-from-link,
+		.triage-link,
 		.triage-copy,
 		.triage-send {
 			min-height: 44px;

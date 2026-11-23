@@ -295,6 +295,7 @@
 	}
 	.triage-item[aria-current='true'] {
 		background-color: var(--triage-row-selected, var(--exec-accent-soft));
+		box-shadow: inset 3px 0 0 var(--tone-accent-ink);
 	}
 	.triage-person {
 		display: flex;
@@ -441,8 +442,11 @@
 
 	@media (forced-colors: active) {
 		.triage-item[aria-current='true'] {
-			outline: 1px solid Highlight;
-			outline-offset: -1px;
+			border-inline-start: 3px solid Highlight;
+		}
+		.triage-item:focus-visible {
+			outline: 2px solid CanvasText;
+			outline-offset: -2px;
 		}
 		.triage-reset-btn,
 		.triage-empty :global(.exec-cta) {

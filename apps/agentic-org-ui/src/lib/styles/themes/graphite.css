@@ -323,7 +323,8 @@ html[data-ui-theme='graphite'][data-interior-page] .exec-nav-label svg {
 	color: #85888e;
 }
 
-html[data-ui-theme='graphite'][data-interior-page] .exec-nav-item {
+html[data-ui-theme='graphite'][data-interior-page]
+	.exec-nav-item:not([aria-current='page']):not(:hover) {
 	color: var(--exec-body);
 }
 

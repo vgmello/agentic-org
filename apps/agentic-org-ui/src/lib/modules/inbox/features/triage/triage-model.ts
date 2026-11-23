@@ -113,6 +113,7 @@ export interface TriageItem {
 	openLabel?: string;
 	auditChecks: string[];
 	ageLabel: string;
+	createdAgeLabel: string;
 	timestampMs: number;
 	handled?: {
 		outcome: string;
@@ -149,6 +150,7 @@ export function parseInboxCommentsJson(raw: string | null): InboxCommentEntry[] 
 		const parsed: unknown = JSON.parse(raw);
 		if (!Array.isArray(parsed)) return [];
 		const valid: InboxCommentEntry[] = [];
+		const seenIds = new Set<string>();
 		for (let i = 0; i < parsed.length; i++) {
 			const entry = parsed[i];
 			if (!entry || typeof entry !== 'object') continue;
@@ -158,7 +160,10 @@ export function parseInboxCommentsJson(raw: string | null): InboxCommentEntry[] 
 			if (!trimmed || rec.text.length > MAX_INBOX_COMMENT_LENGTH) continue;
 			if (typeof rec.at !== 'number' || !Number.isFinite(rec.at)) continue;
 			if (!Number.isFinite(new Date(rec.at).getTime())) continue;
-			const id = typeof rec.id === 'string' && rec.id.trim() ? rec.id : `c-${rec.at}-${i}`;
+			const explicitId = typeof rec.id === 'string' ? rec.id.trim() : '';
+			const id = explicitId || `c-${rec.at}-${i}`;
+			if (seenIds.has(id)) continue;
+			seenIds.add(id);
 			valid.push({ id, text: trimmed, at: rec.at });
 		}
 		return valid.sort((a, b) => a.at - b.at);
@@ -168,9 +173,16 @@ export function parseInboxCommentsJson(raw: string | null): InboxCommentEntry[] 
 }
 
 const UNBUILT_WORK_REF_RE = /^\/work\/[^/?#]+/;
+const RETIRED_SEARCH_RE = /^\/search(?:$|[/?#])/;
+
+export function isInternalAppPath(path: string | undefined): path is string {
+	if (!path) return false;
+	const trimmed = path.trim();
+	return trimmed.startsWith('/') && !trimmed.startsWith('//') && !trimmed.startsWith('/\\');
+}
 
 export function isUnbuiltWorkRefPath(path: string | undefined): boolean {
-	return Boolean(path && UNBUILT_WORK_REF_RE.test(path));
+	return Boolean(path && UNBUILT_WORK_REF_RE.test(path.trim()));
 }
 
 export function safeWorkListHref(projectId: string | undefined): string {
@@ -181,11 +193,13 @@ export function sanitizeOpenHref(
 	rawPath: string | undefined,
 	projectId: string | undefined
 ): string | undefined {
-	if (!rawPath) return undefined;
-	if (isUnbuiltWorkRefPath(rawPath)) {
+	if (!isInternalAppPath(rawPath)) return undefined;
+	const trimmed = rawPath.trim();
+	if (RETIRED_SEARCH_RE.test(trimmed)) return undefined;
+	if (isUnbuiltWorkRefPath(trimmed)) {
 		return safeWorkListHref(projectId);
 	}
-	return rawPath;
+	return trimmed;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -329,7 +343,7 @@ export function deriveTriageItems(
 			inbox?.open?.path ?? (decision.sourceKind === 'work' ? decision.detailHref : undefined);
 		const workHref = workRef ? safeWorkListHref(resolvedProjectId) : undefined;
 		const openHref = sanitizeOpenHref(rawOpenPath, resolvedProjectId);
-		const relatedHref = rawOpenPath && !isUnbuiltWorkRefPath(rawOpenPath) ? rawOpenPath : undefined;
+		const relatedHref = openHref && !isUnbuiltWorkRefPath(rawOpenPath) ? openHref : undefined;
 		const openLabel =
 			inbox?.open?.label ??
 			(decision.sourceKind === 'work'
@@ -389,6 +403,7 @@ export function deriveTriageItems(
 			openLabel,
 			auditChecks: decision.auditChecks,
 			ageLabel: decision.ageLabel,
+			createdAgeLabel: decision.ageLabel,
 			timestampMs: parseTimestamp(createdIso, nowMs)
 		};
 	});
@@ -407,8 +422,7 @@ export function deriveTriageItems(
 			const rawOpenPath = item.open?.path;
 			const workHref = workRef ? safeWorkListHref(resolvedProjectId) : undefined;
 			const openHref = sanitizeOpenHref(rawOpenPath, resolvedProjectId);
-			const relatedHref =
-				rawOpenPath && !isUnbuiltWorkRefPath(rawOpenPath) ? rawOpenPath : undefined;
+			const relatedHref = openHref && !isUnbuiltWorkRefPath(rawOpenPath) ? openHref : undefined;
 			const handledIso = item.handled?.at ?? item.created_at;
 			const outcome = item.handled?.outcome ?? 'Resolved';
 
@@ -451,6 +465,7 @@ export function deriveTriageItems(
 				openLabel: item.open?.label,
 				auditChecks,
 				ageLabel: relativeAge(handledIso, nowMs),
+				createdAgeLabel: relativeAge(item.created_at, nowMs),
 				timestampMs: parseTimestamp(handledIso, nowMs),
 				handled: {
 					outcome,

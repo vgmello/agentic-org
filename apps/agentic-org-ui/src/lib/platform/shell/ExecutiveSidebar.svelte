@@ -522,6 +522,10 @@
 	.exec-icon-btn:hover {
 		color: var(--exec-ink);
 	}
+	.exec-icon-btn.is-pinned {
+		color: var(--exec-accent-ink);
+		background: var(--exec-accent-soft);
+	}
 	.exec-fav-unpin {
 		color: var(--tone-warn);
 	}

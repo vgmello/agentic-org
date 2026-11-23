@@ -458,9 +458,17 @@ html[data-ui-theme^='report'] .triage-workspace:hover {
 	}
 }
 
-/* Report Day selected row expiry ink (#7c4905 on #d6e2f0 = 5.38:1 >= 4.5:1 AA) */
-html[data-ui-theme='report'] .triage-item[aria-current='true'] .triage-expiry {
+/* Report Day hover & selected row expiry / handled-ok inks (>= 4.5:1 AA on #eaedf3 and #d6e2f0) */
+html[data-ui-theme='report']
+	.triage-item:is(:hover, :focus-visible, [aria-current='true'])
+	.triage-expiry {
 	color: #7c4905;
+}
+
+html[data-ui-theme='report']
+	.triage-item:is(:hover, :focus-visible, [aria-current='true'])
+	.triage-outcome.is-ok {
+	color: #0f5d2c;
 }
 
 html[data-ui-theme^='report'] .act-head {

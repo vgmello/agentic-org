@@ -404,23 +404,59 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		expect(dateGroups[1].items.map((i) => i.id)).toEqual(['in-earlier']);
 	});
 
-	it('guards openHref and workHref against unbuilt /work/<ref> paths', () => {
+	it('guards openHref, relatedHref, and workHref against external, /search, and unbuilt /work/<ref> paths', () => {
 		const urgent = allItems.find((i) => i.id === 'in-urgent');
 		expect(urgent?.actorId).toBe('ada');
 		expect(urgent?.workHref).toBe('/projects/v1/work');
 		expect(urgent?.openHref).toBe('/projects/v1/work');
 		expect(urgent?.relatedHref).toBeUndefined();
 
+		const handled = allItems.find((i) => i.id === 'in-handled');
+		expect(handled?.createdAgeLabel).toBe('2d ago');
+		expect(handled?.ageLabel).toBe('2h ago');
+
 		expect(sanitizeOpenHref('/work/T-121', 'agency-v1')).toBe('/projects/agency-v1/work');
 		expect(sanitizeOpenHref('/work/BUG-84', undefined)).toBe('/work');
 		expect(sanitizeOpenHref('/settings/offices', 'agency-v1')).toBe('/settings/offices');
 		expect(sanitizeOpenHref('/work?request=r1', 'agency-v1')).toBe('/work?request=r1');
 		expect(sanitizeOpenHref(undefined, 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('https://evil.test/phish', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('//evil.test/phish', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('/\\evil.test/phish', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('javascript:alert(1)', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('/search', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('/search?q=release', 'agency-v1')).toBeUndefined();
+
+		// Verify relatedHref on derived items rejects external and /search paths too
+		const unsafeItems: InboxItem[] = [
+			{
+				...INBOX_ITEMS[0],
+				id: 'in-ext',
+				open: { path: 'https://evil.test/x', label: 'External' }
+			},
+			{
+				...INBOX_ITEMS[0],
+				id: 'in-search',
+				open: { path: '/search?q=foo', label: 'Search' }
+			},
+			{
+				...INBOX_ITEMS[0],
+				id: 'in-office',
+				open: { path: '/settings/offices', label: 'Offices' }
+			}
+		];
+		const derivedUnsafe = deriveTriageItems([], SNAPSHOT, 'owner', unsafeItems, NOW);
+		expect(derivedUnsafe.find((i) => i.id === 'in-ext')?.relatedHref).toBeUndefined();
+		expect(derivedUnsafe.find((i) => i.id === 'in-ext')?.openHref).toBeUndefined();
+		expect(derivedUnsafe.find((i) => i.id === 'in-search')?.relatedHref).toBeUndefined();
+		expect(derivedUnsafe.find((i) => i.id === 'in-search')?.openHref).toBeUndefined();
+		expect(derivedUnsafe.find((i) => i.id === 'in-office')?.relatedHref).toBe('/settings/offices');
 	});
 
-	it('validates stored Inbox comments defensively and sorts chronologically', () => {
+	it('validates stored Inbox comments defensively, deduplicates IDs, and sorts chronologically', () => {
 		const raw = JSON.stringify([
 			{ id: 'c2', text: 'Second note', at: 2000 },
+			{ id: 'c2', text: 'Duplicate ID should be skipped', at: 2500 },
 			{ id: 'bad-blank', text: '   ', at: 1500 },
 			{ id: 'bad-long', text: 'x'.repeat(2001), at: 1600 },
 			{ id: 'bad-at', text: 'Nope', at: Number.NaN },

@@ -586,14 +586,38 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 	await primaryButtons.nth(0).click();
 	await expect(page.locator('.triage-queue-summary')).toContainText('Priority first');
 
-	// Filter inbox menu: Urgent only -> active indicator -> Reset filters
+	// Filter inbox menu: Project scope URL round-trip + Urgent only + Reset filters
 	const filterBtn = page.getByRole('button', { name: 'Filter inbox' });
 	await filterBtn.click();
-	await page.getByRole('menuitemradio', { name: 'Urgent only' }).click();
+	await page.getByRole('menuitemradio', { name: 'Office federation' }).click();
+	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
 	await expect(filterBtn).toHaveAttribute('data-active', '');
-	await filterBtn.click();
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
+	await expect(page.getByRole('button', { name: 'Filter inbox' })).toHaveAttribute(
+		'data-active',
+		''
+	);
+
+	await page.getByRole('button', { name: 'Filter inbox' }).click();
 	await page.getByRole('menuitem', { name: 'Reset filters' }).click();
-	await expect(filterBtn).not.toHaveAttribute('data-active');
+	await expect(page).not.toHaveURL(/[?&]project=/);
+	await expect(page.getByRole('button', { name: 'Filter inbox' })).not.toHaveAttribute(
+		'data-active'
+	);
+
+	await page.getByRole('button', { name: 'Filter inbox' }).click();
+	await page.getByRole('menuitemradio', { name: 'Urgent only' }).click();
+	await expect(page.getByRole('button', { name: 'Filter inbox' })).toHaveAttribute(
+		'data-active',
+		''
+	);
+	await page.getByRole('button', { name: 'Filter inbox' }).click();
+	await page.getByRole('menuitem', { name: 'Reset filters' }).click();
+	await expect(page.getByRole('button', { name: 'Filter inbox' })).not.toHaveAttribute(
+		'data-active'
+	);
 
 	// Inbox display menu: By date grouping + Row dividers checkbox persisted across reload
 	const displayBtn = page.getByRole('button', { name: 'Inbox display' });
@@ -609,7 +633,7 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 
 	// Select a specific item so ?item= persists across reload
 	await page.locator('[data-triage-row="in1"]').click();
-	await expect(page).toHaveURL(/item=in1/);
+	await expect(page).toHaveURL(/[?&]item=in1(?:&|$)/);
 
 	// Member hover/focus preview card + Escape dismissal (WCAG 1.4.13)
 	const memberLink = page.locator('.triage-from-link').first();
@@ -636,7 +660,7 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 		'Verified release notes and rollback plan.'
 	);
 
-	// Dark Command Dialog contrast in Classic & Report Night (ffe0e0ce)
+	// Dark Command Dialog contrast in Classic & Report Night (ffe0e0ce) with computed WCAG checks
 	for (const [themeLabel, themeId] of [
 		['Classic', 'classic'],
 		['Night', 'report-dark']
@@ -654,6 +678,49 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 			'background-color',
 			'rgb(52, 68, 90)'
 		);
+		const contrast = await dialog.evaluate((el) => {
+			const parseRgb = (s: string) =>
+				(s.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number) as [number, number, number];
+			const lum = (rgb: [number, number, number]) => {
+				const c = rgb.map((v) => {
+					const n = v / 255;
+					return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+				});
+				return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+			};
+			const ratio = (a: [number, number, number], b: [number, number, number]) => {
+				const l1 = lum(a);
+				const l2 = lum(b);
+				return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+			};
+			const activeTab = el.querySelector<HTMLElement>('.exec-cmdk-tab[aria-selected="true"]')!;
+			const inactiveTab = el.querySelector<HTMLElement>('.exec-cmdk-tab[aria-selected="false"]')!;
+			const tabGrp = el.querySelector<HTMLElement>('.exec-cmdk-tab-grp')!;
+			const escBtn = el.querySelector<HTMLElement>('.exec-cmdk-close')!;
+			const borderRgb = parseRgb(getComputedStyle(el).borderTopColor);
+			const pageRgb = parseRgb(
+				getComputedStyle(document.querySelector('.exec-canvas')!).backgroundColor
+			);
+			return {
+				borderVsPage: ratio(borderRgb, pageRgb),
+				activeTabText: ratio(
+					parseRgb(getComputedStyle(activeTab).color),
+					parseRgb(getComputedStyle(activeTab).backgroundColor)
+				),
+				inactiveTabText: ratio(
+					parseRgb(getComputedStyle(inactiveTab).color),
+					parseRgb(getComputedStyle(tabGrp).backgroundColor)
+				),
+				escText: ratio(
+					parseRgb(getComputedStyle(escBtn).color),
+					parseRgb(getComputedStyle(escBtn).backgroundColor)
+				)
+			};
+		});
+		expect(contrast.borderVsPage).toBeGreaterThanOrEqual(3.0);
+		expect(contrast.activeTabText).toBeGreaterThanOrEqual(4.5);
+		expect(contrast.inactiveTabText).toBeGreaterThanOrEqual(4.5);
+		expect(contrast.escText).toBeGreaterThanOrEqual(4.5);
 		await page.keyboard.press('Escape');
 		await expect(dialog).toBeHidden();
 	}
