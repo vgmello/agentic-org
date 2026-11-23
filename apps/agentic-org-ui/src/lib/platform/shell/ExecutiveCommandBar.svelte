@@ -174,7 +174,10 @@
 				label: inboxItem.title,
 				sub: `${inboxItem.source} · ${inboxItem.who.name}`,
 				keywords: `${inboxItem.id} ${inboxItem.project?.name ?? ''} ${inboxItem.why}`,
-				href: `/inbox?item=${encodeURIComponent(inboxItem.id)}`
+				href:
+					inboxItem.state === 'handled'
+						? `/inbox?tab=handled&item=${encodeURIComponent(inboxItem.id)}`
+						: `/inbox?item=${encodeURIComponent(inboxItem.id)}`
 			});
 		}
 

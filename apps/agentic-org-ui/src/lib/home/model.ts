@@ -724,7 +724,9 @@ export function deriveDecisionSpotlight(
 
 			const detailHref = isRequest
 				? `/work?request=${encodeURIComponent(item.id)}`
-				: `/work/${encodeURIComponent(item.short_id)}`;
+				: item.project_id
+					? `/projects/${encodeURIComponent(item.project_id)}/work`
+					: '/work';
 
 			const workRecTone: SpotlightDecision['recTone'] =
 				item.severity === 'critical'
@@ -869,7 +871,7 @@ export function deriveProjectCards(
 		const dueDt = homeProj?.due ? parseIsoDateUtc(homeProj.due) : null;
 		const remainingCount = Math.max(0, totalCount - doneCount);
 		const isOverdue = Boolean(
-			dueDt && dueDt.getTime() < todayUtc && (totalCount === 0 || doneCount < totalCount)
+			dueDt && dueDt.getTime() < todayUtc && totalCount > 0 && doneCount < totalCount
 		);
 
 		let health: ProjectBentoCard['health'] = 'On track';

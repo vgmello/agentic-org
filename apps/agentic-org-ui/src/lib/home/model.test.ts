@@ -602,6 +602,69 @@ describe('executive home view model', () => {
 			nowMs
 		);
 		expect(onTimeKpis.projectsAttention).toBe(0);
+
+		// A 0/0 past-due project has no incomplete tracked items (doneCount < totalCount is false)
+		const zeroDomain = {
+			homeProjects: [
+				{
+					id: 'atlas',
+					name: 'Atlas',
+					done: 0,
+					total: 0,
+					open: 0,
+					blocked: 0,
+					due: '2026-11-24',
+					lead: { id: 'ada', name: 'Ada' },
+					members: 3
+				}
+			]
+		};
+		const zeroCards = deriveProjectCards(
+			{ ...snap, projects: snap.projects.filter((p) => p.id === 'atlas') },
+			[],
+			zeroDomain,
+			nowMs
+		);
+		expect(zeroCards[0]?.paceLabel).toBeUndefined();
+		expect(zeroCards[0]?.health).toBe('On track');
+		expect(
+			deriveKpiMetrics(
+				{ ...snap, projects: snap.projects.filter((p) => p.id === 'atlas') },
+				[],
+				offices,
+				'you',
+				zeroDomain,
+				nowMs
+			).projectsAttention
+		).toBe(0);
+	});
+
+	it('routes blocked task and bug spotlight details to project work rather than unbuilt /work/<ref>', () => {
+		const snap = sampleOrg('hq');
+		const blockedTask = makeItem({
+			id: 'w-blocked-1',
+			short_id: 'T-77',
+			kind: 'task',
+			title: 'Fix release gate',
+			status: 'blocked',
+			project_id: 'atlas',
+			assignee_id: 'you'
+		});
+		const decisions = deriveDecisionSpotlight([blockedTask], snap, 'you');
+		expect(decisions[0]?.detailHref).toBe('/projects/atlas/work');
+		expect(decisions[0]?.detailHref).not.toMatch(/^\/work\/T-/);
+
+		const ans = answerExecutiveQuestion(
+			'Explain the risk, impact, and recommendation for: Fix release gate',
+			{
+				snapshot: snap,
+				items: [blockedTask],
+				offices,
+				ownerId: 'you',
+				decisionId: 'w-blocked-1'
+			}
+		);
+		expect(ans.bullets[0].href).toBe('/projects/atlas/work');
 	});
 
 	it('answers with explicit decision context even when shell snapshot is pending or stale', () => {

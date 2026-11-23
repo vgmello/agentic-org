@@ -271,7 +271,7 @@
 						href={resolve(
 							`/members/${encodeURIComponent(currentDecision.actorId)}` as '/teams/members'
 						)}
-						class="font-semibold text-[var(--exec-ink)] hover:underline"
+						class="spot-meta-link inline-flex min-h-9 items-center font-semibold text-[var(--exec-ink)] hover:underline"
 					>
 						{currentDecision.actorName}
 					</a>
@@ -288,7 +288,7 @@
 						href={resolve(
 							`/projects/${encodeURIComponent(currentDecision.projectId)}/work` as '/projects'
 						)}
-						class="hover:text-[var(--exec-ink)] hover:underline"
+						class="spot-meta-link inline-flex min-h-9 items-center hover:text-[var(--exec-ink)] hover:underline"
 					>
 						{currentDecision.projectName}
 					</a>
@@ -862,6 +862,7 @@
 		.deny-confirm,
 		.ctx-toggle,
 		.spot-ai-ask,
+		.spot-meta-link,
 		.next-bar,
 		.deny-input {
 			min-height: 44px;

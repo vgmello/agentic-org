@@ -21,13 +21,13 @@ html[data-ui-theme='report'] {
 	--tone-accent-ring: #c5d4e6;
 
 	--tone-ok: #16a34a;
-	--tone-ok-bar: #16a34a;
+	--tone-ok-bar: #15803d;
 	--tone-ok-ink: #15803d;
 	--tone-ok-bg: #ecfdf3;
 	--tone-ok-ring: #bbf7d0;
 
 	--tone-warn: #eab308;
-	--tone-warn-bar: #eab308;
+	--tone-warn-bar: #a16207;
 	--tone-warn-ink: #a16207;
 	--tone-warn-bg: #fef9c3;
 	--tone-warn-ring: #fde68a;
