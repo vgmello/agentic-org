@@ -6,7 +6,7 @@
 	import { navigating, page } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
-	import Flame from '@lucide/svelte/icons/flame';
+	import ListFilter from '@lucide/svelte/icons/list-filter';
 	import Search from '@lucide/svelte/icons/search';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import X from '@lucide/svelte/icons/x';
@@ -26,6 +26,7 @@
 		filterTriageItems,
 		flattenGroups,
 		groupTriageItems,
+		INBOX_DIVIDERS_STORAGE_KEY,
 		isOverflowTab,
 		matchesScope,
 		neighborCandidatesAfterResolve,
@@ -37,6 +38,7 @@
 		triageScopeOptions,
 		triageTabCounts,
 		type TriageItem,
+		type TriageOrder,
 		type TriageTab
 	} from './triage-model';
 
@@ -58,6 +60,24 @@
 		onRefresh: () => Promise<ShellRefreshResult>;
 	} = $props();
 
+	function safeReadDividers(): boolean {
+		if (typeof window === 'undefined') return false;
+		try {
+			return window.localStorage.getItem(INBOX_DIVIDERS_STORAGE_KEY) === '1';
+		} catch {
+			return false;
+		}
+	}
+
+	function safeWriteDividers(enabled: boolean): void {
+		if (typeof window === 'undefined') return;
+		try {
+			window.localStorage.setItem(INBOX_DIVIDERS_STORAGE_KEY, enabled ? '1' : '0');
+		} catch {
+			// Ignore private mode / quota failures cleanly.
+		}
+	}
+
 	const wide = new MediaQuery('min-width: 960px');
 
 	// Writable derived states stay synced with URL query params and org changes without $effect state writes.
@@ -72,6 +92,8 @@
 	});
 	let searchQuery = $state('');
 	let urgentOnly = $state(false);
+	let sortOrder = $state<TriageOrder>('priority');
+	let showDividers = $state(safeReadDividers());
 
 	// Monotonic operation token prevents stale in-flight actions from clearing newer busy/selection state.
 	let actionSeq = 0;
@@ -122,17 +144,35 @@
 
 	const allItems = $derived(deriveTriageItems(workItems, snapshot, ownerId, inboxItems, nowMs));
 	const totalOpenCount = $derived(openWaitingCount(allItems));
-	const scopeOpts = $derived(triageScopeOptions(allItems));
+	const scopeOpts = $derived.by(() => {
+		const fromItems = triageScopeOptions(allItems);
+		const teams: Record<string, string> = {};
+		for (const t of fromItems.teams) teams[t.id] = t.name;
+		for (const t of snapshot.teams ?? []) {
+			if (!Object.hasOwn(teams, t.id)) teams[t.id] = t.name;
+		}
+		const projects: Record<string, string> = {};
+		for (const p of fromItems.projects) projects[p.id] = p.name;
+		for (const p of snapshot.projects ?? []) {
+			if (!p.archived && !Object.hasOwn(projects, p.id)) projects[p.id] = p.name;
+		}
+		const toSorted = (record: Record<string, string>) =>
+			Object.entries(record)
+				.map(([id, name]) => ({ id, name }))
+				.sort((a, b) => a.name.localeCompare(b.name));
+		return { teams: toSorted(teams), projects: toSorted(projects) };
+	});
 	const counts = $derived(triageTabCounts(allItems, scope));
 	const filtered = $derived(
 		filterTriageItems(allItems, {
 			tab: activeTab,
 			urgentOnly,
 			scope,
-			search: searchQuery
+			search: searchQuery,
+			order: sortOrder
 		})
 	);
-	const groups = $derived(groupTriageItems(filtered, activeTab, nowMs));
+	const groups = $derived(groupTriageItems(filtered, activeTab, nowMs, sortOrder));
 	const visibleItems = $derived(flattenGroups(groups));
 
 	const effectiveSelectedId = $derived.by(() => {
@@ -144,10 +184,9 @@
 	);
 	const showingMobileDetail = $derived(!wide.current && mobileDetailOpen && Boolean(selectedItem));
 	const denyGuardVisible = $derived(Boolean(selectedItem && decliningId === selectedItem.id));
-	const scopeCount = $derived((scope.team ? 1 : 0) + (scope.project ? 1 : 0));
-	const hasActiveFilters = $derived(
-		Boolean(searchQuery.trim() || urgentOnly || scope.team || scope.project)
-	);
+	const isFiltered = $derived(Boolean(urgentOnly || scope.team || scope.project));
+	const displayActive = $derived(sortOrder === 'date' || showDividers);
+	const hasActiveFilters = $derived(Boolean(searchQuery.trim() || isFiltered));
 	const overflowActive = $derived(isOverflowTab(activeTab));
 	const overflowActiveLabel = $derived(
 		OVERFLOW_TABS.find((t) => t.id === activeTab)?.label ?? 'More'
@@ -261,7 +300,8 @@
 			tab,
 			urgentOnly,
 			scope,
-			search: searchQuery
+			search: searchQuery,
+			order: sortOrder
 		});
 		selectedId = wide.current ? nextList[0]?.id : undefined;
 		syncUrl({ tab, item: null });
@@ -297,10 +337,20 @@
 		searchQuery = value;
 	}
 
-	function toggleUrgentOnly() {
+	function setUrgentOnly(next: boolean) {
 		selectionVersion += 1;
-		urgentOnly = !urgentOnly;
+		urgentOnly = next;
 		decliningId = undefined;
+	}
+
+	function setSortOrder(next: TriageOrder) {
+		selectionVersion += 1;
+		sortOrder = next;
+	}
+
+	function toggleRowDividers(checked: boolean) {
+		showDividers = checked;
+		safeWriteDividers(checked);
 	}
 
 	function setScope(nextScope: InboxScope, preserveSelection = false) {
@@ -336,10 +386,10 @@
 		}
 	}
 
-	function filterByProject(projectId: string) {
-		const nextProject = scope.project === projectId ? undefined : projectId;
-		// Preserve the selected item on mobile when toggling its own project chip so the reading pane stays open.
-		setScope({ ...scope, project: nextProject }, true);
+	function clearFilterMenu() {
+		selectionVersion += 1;
+		urgentOnly = false;
+		setScope({});
 	}
 
 	function resetFilters() {
@@ -653,44 +703,28 @@
 		showingMobileDetail && 'triage-has-detail'
 	]}
 >
-	<div
+	<section
 		{@attach workspaceShortcuts}
+		aria-label="Inbox workspace"
+		data-inbox-dividers={showDividers ? '' : undefined}
 		class="exec-card triage-workspace flex min-h-0 w-full flex-col overflow-hidden"
 	>
-		<!-- Header & Controls -->
-		<header class="inbox-head triage-header flex flex-col gap-3 px-4 pt-4 pb-3 sm:px-5">
-			<div class="flex flex-wrap items-center justify-between gap-3">
-				<div class="flex flex-wrap items-center gap-3">
-					<h1
-						id="shell-page-title"
-						tabindex="-1"
-						class="triage-h1 text-xl font-semibold tracking-tight focus:outline-none"
-					>
-						Inbox
-					</h1>
-					<span
-						role="status"
-						class="triage-waiting-pill inline-flex items-center gap-2 px-2.5 py-1 text-xs font-medium"
-					>
-						<span
-							class={[
-								'triage-waiting-dot size-2 shrink-0 rounded-full',
-								totalOpenCount === 0 && 'is-ok'
-							]}
-							aria-hidden="true"
-						></span>
+		<!-- Header & Controls (poc/operations.css queue-header) -->
+		<header class="inbox-head triage-header queue-header">
+			<div class="queue-headline">
+				<div class="ph-t">
+					<h1 id="shell-page-title" tabindex="-1" class="triage-h1">Inbox</h1>
+					<span role="status" class="queue-count">
+						<i class={[totalOpenCount === 0 && 'is-ok']} aria-hidden="true"></i>
 						<span class="tabular-nums">
-							{totalOpenCount === 0
-								? '0 waiting on you — all caught up'
-								: `${totalOpenCount} waiting on you`}
+							{totalOpenCount === 0 ? '0 waiting on you' : `${totalOpenCount} waiting on you`}
 						</span>
 					</span>
 				</div>
 
-				<!-- Search + Urgency Toggle + Show Team/Project Filter -->
-				<div class="triage-controls flex min-w-0 flex-wrap items-center gap-2">
-					<div class="triage-search flex items-center gap-2 px-2.5">
-						<Search class="triage-search-ico size-3.5 shrink-0" aria-hidden="true" />
+				<div class="queue-search-wrap">
+					<div class="triage-search">
+						<Search class="triage-search-ico size-4 shrink-0" aria-hidden="true" />
 						<label class="sr-only" for="triage-search-input">Search inbox</label>
 						<input
 							bind:this={searchInputEl}
@@ -699,8 +733,8 @@
 							id="triage-search-input"
 							type="text"
 							autocomplete="off"
-							placeholder={shortcutsEnabled ? 'Search inbox… (/)' : 'Search inbox…'}
-							class="triage-search-input min-h-9 min-w-0 flex-1 self-stretch bg-transparent text-xs outline-none max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+							placeholder="Search inbox…"
+							class="triage-search-input"
 						/>
 						{#if searchQuery}
 							<button
@@ -714,174 +748,228 @@
 							>
 								<X class="size-3.5" aria-hidden="true" />
 							</button>
+						{:else if shortcutsEnabled}
+							<kbd class="triage-search-kbd" aria-hidden="true">/</kbd>
 						{/if}
 					</div>
-
-					<button
-						type="button"
-						aria-pressed={urgentOnly}
-						onclick={toggleUrgentOnly}
-						class={[
-							'triage-ctrl-btn inline-flex min-h-9 items-center gap-1.5 px-3 text-xs font-semibold max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11',
-							urgentOnly && 'is-active'
-						]}
-					>
-						<Flame class="size-3.5 shrink-0" aria-hidden="true" />
-						<span>{urgentOnly ? 'Urgent only' : 'All'}</span>
-					</button>
-
-					<DropdownMenu.Root>
-						<DropdownMenu.Trigger>
-							{#snippet child({ props })}
-								<button
-									{...props}
-									type="button"
-									aria-label={scopeCount > 0
-										? `Show filters, ${scopeCount} active`
-										: 'Show team or project filter'}
-									class={[
-										'triage-ctrl-btn inline-flex min-h-9 items-center gap-1.5 px-3 text-xs font-semibold max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11',
-										scopeCount > 0 && 'is-active'
-									]}
-								>
-									<SlidersHorizontal class="size-3.5 shrink-0" aria-hidden="true" />
-									<span>Show</span>
-									{#if scopeCount > 0}
-										<span
-											class="triage-count-badge px-1.5 py-0.5 font-mono text-[10px] tabular-nums"
-										>
-											{scopeCount}
-										</span>
-									{/if}
-									<ChevronDown class="size-3.5 shrink-0 opacity-75" aria-hidden="true" />
-								</button>
-							{/snippet}
-						</DropdownMenu.Trigger>
-						<DropdownMenu.Content
-							preventScroll={false}
-							align="end"
-							class="w-60 max-w-[calc(100vw-2rem)] motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
-						>
-							<DropdownMenu.Label>Team</DropdownMenu.Label>
-							<DropdownMenu.RadioGroup
-								value={scope.team ?? ''}
-								onValueChange={(val) => setScope({ ...scope, team: val || undefined })}
-							>
-								<DropdownMenu.RadioItem
-									value=""
-									class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
-								>
-									All teams
-								</DropdownMenu.RadioItem>
-								{#each scopeOpts.teams as team (team.id)}
-									<DropdownMenu.RadioItem
-										value={team.id}
-										class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									>
-										{team.name}
-									</DropdownMenu.RadioItem>
-								{/each}
-							</DropdownMenu.RadioGroup>
-							<DropdownMenu.Separator />
-							<DropdownMenu.Label>Project</DropdownMenu.Label>
-							<DropdownMenu.RadioGroup
-								value={scope.project ?? ''}
-								onValueChange={(val) => setScope({ ...scope, project: val || undefined })}
-							>
-								<DropdownMenu.RadioItem
-									value=""
-									class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
-								>
-									All projects
-								</DropdownMenu.RadioItem>
-								{#each scopeOpts.projects as proj (proj.id)}
-									<DropdownMenu.RadioItem
-										value={proj.id}
-										class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									>
-										{proj.name}
-									</DropdownMenu.RadioItem>
-								{/each}
-							</DropdownMenu.RadioGroup>
-							{#if scopeCount > 0}
-								<DropdownMenu.Separator />
-								<DropdownMenu.Group>
-									<DropdownMenu.Item
-										onSelect={() => setScope({})}
-										class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									>
-										Clear team &amp; project filters
-									</DropdownMenu.Item>
-								</DropdownMenu.Group>
-							{/if}
-						</DropdownMenu.Content>
-					</DropdownMenu.Root>
 				</div>
 			</div>
 
-			<!-- 5 Primary Category Filters + "+ More" Overflow Menu -->
-			<div class="flex flex-wrap items-center gap-1.5">
-				<div role="group" aria-label="Inbox categories" class="flex flex-wrap items-center gap-1.5">
+			<!-- 3 Primary Categories + More dropdown + Filter & Display icon menus -->
+			<div class="triage-toolbar queue-toolbar">
+				<div role="group" aria-label="Inbox categories" class="queue-tabs">
 					{#each PRIMARY_TABS as tab (tab.id)}
 						{@const isSelected = activeTab === tab.id}
 						<button
 							type="button"
 							aria-pressed={isSelected}
 							onclick={() => selectTab(tab.id)}
-							class={[
-								'triage-tab inline-flex min-h-9 items-center gap-1.5 px-3 text-xs font-semibold max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11',
-								isSelected && 'is-on'
-							]}
+							class="queue-tab"
 						>
 							<span>{tab.label}</span>
-							<span class="triage-tab-count font-mono text-[11px] tabular-nums">
-								{counts[tab.id]}
-							</span>
+							<span class="queue-tab-count">{counts[tab.id]}</span>
 						</button>
 					{/each}
-				</div>
 
-				<DropdownMenu.Root>
-					<DropdownMenu.Trigger>
-						{#snippet child({ props })}
-							<button
-								{...props}
-								type="button"
-								class={[
-									'triage-tab inline-flex min-h-9 items-center gap-1.5 px-3 text-xs font-semibold max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11',
-									overflowActive && 'is-on'
-								]}
+					<div class="triage-tab-tools">
+						<DropdownMenu.Root>
+							<DropdownMenu.Trigger>
+								{#snippet child({ props })}
+									<button
+										{...props}
+										type="button"
+										data-current-kind={overflowActive ? '' : undefined}
+										title={overflowActive ? `Viewing ${overflowActiveLabel}` : undefined}
+										class="queue-tab"
+									>
+										<span>More</span>
+										<ChevronDown class="size-3.5 shrink-0 opacity-75" aria-hidden="true" />
+									</button>
+								{/snippet}
+							</DropdownMenu.Trigger>
+							<DropdownMenu.Content
+								preventScroll={false}
+								align="start"
+								class="w-52 motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
 							>
-								<span>{overflowActive ? overflowActiveLabel : '+ More'}</span>
-								{#if overflowActive}
-									<span class="triage-tab-count font-mono text-[11px] tabular-nums">
-										{counts[activeTab]}
-									</span>
-								{/if}
-								<ChevronDown class="size-3.5 shrink-0 opacity-75" aria-hidden="true" />
-							</button>
-						{/snippet}
-					</DropdownMenu.Trigger>
-					<DropdownMenu.Content
-						preventScroll={false}
-						align="start"
-						class="w-48 motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
-					>
-						<DropdownMenu.Group>
-							{#each OVERFLOW_TABS as tab (tab.id)}
-								<DropdownMenu.Item
-									onSelect={() => selectTab(tab.id)}
-									class="flex min-h-9 items-center justify-between gap-2 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+								<DropdownMenu.RadioGroup
+									value={overflowActive ? activeTab : ''}
+									onValueChange={(val) => {
+										if (val) selectTab(val as TriageTab);
+									}}
 								>
-									<span>{tab.label}</span>
-									<span class="triage-menu-count font-mono text-xs tabular-nums">
-										{counts[tab.id]}
-									</span>
-								</DropdownMenu.Item>
-							{/each}
-						</DropdownMenu.Group>
-					</DropdownMenu.Content>
-				</DropdownMenu.Root>
+									{#each OVERFLOW_TABS as tab (tab.id)}
+										<DropdownMenu.RadioItem
+											value={tab.id}
+											closeOnSelect={true}
+											class="flex min-h-9 items-center justify-between gap-3 pr-8 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										>
+											<span>{tab.label}</span>
+											<span class="triage-menu-count font-mono text-xs tabular-nums">
+												{counts[tab.id]}
+											</span>
+										</DropdownMenu.RadioItem>
+									{/each}
+								</DropdownMenu.RadioGroup>
+							</DropdownMenu.Content>
+						</DropdownMenu.Root>
+
+						<div class="queue-controls" role="group" aria-label="Inbox view controls">
+							<DropdownMenu.Root>
+								<DropdownMenu.Trigger>
+									{#snippet child({ props })}
+										<button
+											{...props}
+											type="button"
+											aria-label="Filter inbox"
+											title="Filter inbox"
+											data-active={isFiltered ? '' : undefined}
+											class="queue-icon-btn"
+										>
+											<ListFilter class="size-4" aria-hidden="true" />
+										</button>
+									{/snippet}
+								</DropdownMenu.Trigger>
+								<DropdownMenu.Content
+									preventScroll={false}
+									align="end"
+									class="max-h-[min(60dvh,28rem)] w-60 max-w-[calc(100vw-2rem)] overflow-y-auto motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+								>
+									<DropdownMenu.Label>Urgency</DropdownMenu.Label>
+									<DropdownMenu.RadioGroup
+										value={urgentOnly ? 'urgent' : 'all'}
+										onValueChange={(val) => setUrgentOnly(val === 'urgent')}
+									>
+										<DropdownMenu.RadioItem
+											value="all"
+											closeOnSelect={true}
+											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										>
+											All items
+										</DropdownMenu.RadioItem>
+										<DropdownMenu.RadioItem
+											value="urgent"
+											closeOnSelect={true}
+											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										>
+											Urgent only
+										</DropdownMenu.RadioItem>
+									</DropdownMenu.RadioGroup>
+									<DropdownMenu.Separator />
+									<DropdownMenu.Label>Project</DropdownMenu.Label>
+									<DropdownMenu.RadioGroup
+										value={scope.project ?? ''}
+										onValueChange={(val) => setScope({ ...scope, project: val || undefined })}
+									>
+										<DropdownMenu.RadioItem
+											value=""
+											closeOnSelect={true}
+											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										>
+											All projects
+										</DropdownMenu.RadioItem>
+										{#each scopeOpts.projects as proj (proj.id)}
+											<DropdownMenu.RadioItem
+												value={proj.id}
+												closeOnSelect={true}
+												class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												{proj.name}
+											</DropdownMenu.RadioItem>
+										{/each}
+									</DropdownMenu.RadioGroup>
+									<DropdownMenu.Separator />
+									<DropdownMenu.Label>Team</DropdownMenu.Label>
+									<DropdownMenu.RadioGroup
+										value={scope.team ?? ''}
+										onValueChange={(val) => setScope({ ...scope, team: val || undefined })}
+									>
+										<DropdownMenu.RadioItem
+											value=""
+											closeOnSelect={true}
+											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										>
+											All teams
+										</DropdownMenu.RadioItem>
+										{#each scopeOpts.teams as team (team.id)}
+											<DropdownMenu.RadioItem
+												value={team.id}
+												closeOnSelect={true}
+												class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												{team.name}
+											</DropdownMenu.RadioItem>
+										{/each}
+									</DropdownMenu.RadioGroup>
+									{#if isFiltered}
+										<DropdownMenu.Separator />
+										<DropdownMenu.Group>
+											<DropdownMenu.Item
+												onSelect={clearFilterMenu}
+												class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												Reset filters
+											</DropdownMenu.Item>
+										</DropdownMenu.Group>
+									{/if}
+								</DropdownMenu.Content>
+							</DropdownMenu.Root>
+
+							<DropdownMenu.Root>
+								<DropdownMenu.Trigger>
+									{#snippet child({ props })}
+										<button
+											{...props}
+											type="button"
+											aria-label="Inbox display"
+											title="Inbox display"
+											data-active={displayActive ? '' : undefined}
+											class="queue-icon-btn"
+										>
+											<SlidersHorizontal class="size-4" aria-hidden="true" />
+										</button>
+									{/snippet}
+								</DropdownMenu.Trigger>
+								<DropdownMenu.Content
+									preventScroll={false}
+									align="end"
+									class="w-52 max-w-[calc(100vw-2rem)] motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+								>
+									<DropdownMenu.Label>Grouping</DropdownMenu.Label>
+									<DropdownMenu.RadioGroup
+										value={sortOrder}
+										onValueChange={(val) => {
+											if (val === 'priority' || val === 'date') setSortOrder(val);
+										}}
+									>
+										<DropdownMenu.RadioItem
+											value="priority"
+											closeOnSelect={true}
+											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										>
+											Priority first
+										</DropdownMenu.RadioItem>
+										<DropdownMenu.RadioItem
+											value="date"
+											closeOnSelect={true}
+											class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										>
+											By date
+										</DropdownMenu.RadioItem>
+									</DropdownMenu.RadioGroup>
+									<DropdownMenu.Separator />
+									<DropdownMenu.CheckboxItem
+										checked={showDividers}
+										onCheckedChange={(checked) => toggleRowDividers(Boolean(checked))}
+										class="min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+									>
+										Row dividers
+									</DropdownMenu.CheckboxItem>
+								</DropdownMenu.Content>
+							</DropdownMenu.Root>
+						</div>
+					</div>
+				</div>
 			</div>
 		</header>
 
@@ -906,6 +994,7 @@
 					visibleCount={visibleItems.length}
 					{totalOpenCount}
 					{activeTab}
+					{sortOrder}
 					selectedId={effectiveSelectedId}
 					{busyId}
 					{searchQuery}
@@ -914,6 +1003,7 @@
 					onResetFilters={resetFilters}
 				/>
 				<InboxDetailPane
+					{organizationId}
 					item={selectedItem}
 					{searchQuery}
 					{busyId}
@@ -925,7 +1015,6 @@
 					onDeclineReasonChange={updateDenyDraft}
 					onReplyTextChange={updateReplyDraft}
 					onBackMobile={closeMobileDetail}
-					onFilterProject={filterByProject}
 					onPrimaryAction={(it) => void runPrimaryAction(it)}
 					onSecondaryAction={(it) => void runSecondaryAction(it)}
 					onArmDeny={(id) => {
@@ -939,11 +1028,13 @@
 				/>
 			</div>
 		{/if}
-	</div>
+	</section>
 </div>
 
 <style>
 	.triage-workspace {
+		--triage-gutter: 24px;
+		--triage-control-height: 36px;
 		border-radius: var(--exec-panel-radius);
 		min-height: min(680px, calc(100dvh - 104px));
 	}
@@ -957,44 +1048,118 @@
 			height: max(600px, calc(100dvh - 104px));
 		}
 	}
-	.triage-header {
+	@media (max-width: 720px), (pointer: coarse) {
+		.triage-workspace {
+			--triage-gutter: 16px;
+			--triage-control-height: 44px;
+		}
+	}
+	.queue-header {
+		position: relative;
+		z-index: 1;
+		container: queue-header / inline-size;
 		border-bottom: 1px solid var(--exec-border);
+	}
+	.queue-headline {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: flex-start;
+		gap: 8px 16px;
+		padding: 14px var(--triage-gutter) 4px;
+	}
+	.ph-t {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px 14px;
+		min-width: 0;
 	}
 	.triage-h1 {
 		color: var(--exec-ink);
+		font-size: 1.25rem;
+		line-height: 1.3;
+		font-weight: 650;
+		letter-spacing: -0.02em;
 	}
-	.triage-waiting-pill {
-		border-radius: var(--exec-pill-radius);
-		background: var(--exec-well);
-		color: var(--exec-body);
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+	.triage-h1:focus {
+		outline: none;
 	}
-	.triage-waiting-dot {
+	.triage-h1:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 2px;
+	}
+	.queue-count {
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+		color: var(--exec-muted);
+		font-size: 0.8125rem;
+		font-weight: 500;
+	}
+	.queue-count i {
+		display: inline-block;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
 		background: var(--tone-accent);
+		flex: none;
 	}
-	.triage-waiting-dot.is-ok {
+	.queue-count i.is-ok {
 		background: var(--tone-ok);
 	}
+	.queue-search-wrap {
+		display: flex;
+		align-items: center;
+		min-width: 0;
+		max-width: 100%;
+		margin-inline: auto;
+	}
 	.triage-search {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: min(35rem, 60vw);
+		max-width: 100%;
+		min-width: 0;
+		min-height: max(2.5rem, var(--triage-control-height));
+		padding: 2px 8px 2px 10px;
+		border: 1px solid var(--exec-border-hi);
 		border-radius: var(--exec-ctrl-radius);
 		background: var(--exec-well);
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
-		width: 210px;
-		max-width: 100%;
 	}
 	.triage-search:focus-within {
+		border-color: var(--focus);
 		outline: 2px solid var(--focus);
-		outline-offset: 1px;
+		outline-offset: -1px;
 	}
 	.triage-search-ico {
 		color: var(--exec-muted);
 	}
 	.triage-search-input {
+		min-width: 0;
+		flex: 1 1 auto;
+		width: 100%;
+		min-height: var(--triage-control-height);
+		border: 0;
+		background: transparent;
 		color: var(--exec-ink);
+		font-size: 0.875rem;
+		outline: none;
 	}
 	.triage-search-input::placeholder {
 		color: var(--exec-muted);
 		opacity: 1;
+	}
+	.triage-search-kbd {
+		flex: none;
+		padding: 1px 6px;
+		border: 1px solid var(--exec-border-hi);
+		border-radius: 4px;
+		color: var(--exec-muted);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.75rem;
+		line-height: 1.3;
 	}
 	.triage-clear-btn {
 		border-radius: var(--exec-sm-radius);
@@ -1005,60 +1170,97 @@
 		color: var(--exec-ink);
 		background: var(--exec-btn-ghost-bg-hover);
 	}
-	.triage-ctrl-btn {
-		border-radius: var(--exec-ctrl-radius);
-		background: var(--exec-btn-outline-bg);
-		color: var(--exec-btn-outline-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring);
-		cursor: pointer;
-		transition: background-color 120ms ease-out;
+	.queue-toolbar {
+		padding: 4px var(--triage-gutter) 0;
 	}
-	.triage-ctrl-btn:hover {
-		background: var(--exec-btn-outline-bg-hover);
-		color: var(--exec-btn-outline-ink-hover);
-		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring-hover);
+	.queue-tabs {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 2px 4px;
 	}
-	.triage-ctrl-btn.is-active {
-		background: var(--exec-accent-soft);
-		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	.triage-tab-tools,
+	.queue-controls {
+		display: flex;
+		align-items: center;
+		gap: 4px;
 	}
-	.triage-count-badge {
-		border-radius: var(--exec-pill-radius);
-		background: var(--tone-accent-bg);
-		color: var(--exec-accent-ink);
-	}
-	.triage-tab {
-		border-radius: var(--exec-ctrl-radius);
-		color: var(--exec-muted);
+	.queue-tab {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 5px 12px;
+		min-height: var(--triage-control-height);
+		border: 1px solid transparent;
+		border-radius: var(--exec-ctrl-radius) var(--exec-ctrl-radius) 0 0;
 		background: transparent;
+		color: var(--exec-body);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		white-space: nowrap;
 		cursor: pointer;
 		transition:
 			background-color 120ms ease-out,
 			color 120ms ease-out;
 	}
-	.triage-tab:hover {
+	.queue-tab:hover {
 		background: var(--exec-btn-ghost-bg-hover);
 		color: var(--exec-ink);
 	}
-	.triage-tab.is-on {
-		background: var(--exec-accent-soft);
+	.queue-tab:is([aria-pressed='true'], [data-current-kind]) {
+		border-bottom-color: var(--tone-accent-ink);
+		box-shadow: inset 0 -1px var(--tone-accent-ink);
 		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
 	}
-	.triage-tab-count,
+	.queue-tab[aria-expanded='true'] {
+		background: var(--exec-btn-ghost-bg-hover);
+		color: var(--exec-ink);
+	}
+	.queue-tab-count,
 	.triage-menu-count {
 		color: var(--exec-muted);
+		font-variant-numeric: tabular-nums;
+		font-size: 0.75rem;
 	}
-	.triage-tab:hover .triage-tab-count {
+	.queue-tab[aria-pressed='true'] .queue-tab-count {
+		color: var(--tone-accent-ink);
+	}
+	.queue-icon-btn {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: var(--triage-control-height);
+		min-height: var(--triage-control-height);
+		border-radius: var(--exec-ctrl-radius);
+		background: transparent;
+		color: var(--exec-body);
+		cursor: pointer;
+		transition:
+			background-color 120ms ease-out,
+			color 120ms ease-out;
+	}
+	.queue-icon-btn:hover,
+	.queue-icon-btn[aria-expanded='true'] {
+		background: var(--exec-btn-ghost-bg-hover);
 		color: var(--exec-ink);
 	}
-	.triage-tab.is-on .triage-tab-count {
-		color: var(--exec-accent-ink);
+	.queue-icon-btn[data-active] {
+		color: var(--tone-accent-ink);
+	}
+	.queue-icon-btn[data-active]::after {
+		content: '';
+		position: absolute;
+		inset: 5px 5px auto auto;
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: currentColor;
 	}
 	.triage-split {
 		display: grid;
-		grid-template-columns: minmax(320px, 365px) minmax(0, 1fr);
+		grid-template-columns: clamp(19rem, 34%, 31rem) minmax(0, 1fr);
+		grid-template-rows: minmax(0, 1fr);
 		min-height: 0;
 	}
 	.triage-skeleton-col {
@@ -1068,6 +1270,67 @@
 		border-radius: var(--exec-inset-radius);
 		background: var(--exec-well);
 		box-shadow: inset 0 0 0 1px var(--exec-border);
+	}
+
+	@container queue-header (min-width: 52rem) {
+		.queue-headline {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) min(35rem, 48%) minmax(0, 1fr);
+		}
+		.queue-search-wrap {
+			grid-column: 2;
+			width: 100%;
+		}
+		.triage-search {
+			width: 100%;
+		}
+	}
+	@container queue-header (min-width: 75rem) {
+		.queue-headline,
+		.queue-toolbar {
+			--queue-search-width: clamp(24rem, 29cqi, 35rem);
+			padding-inline-end: calc(var(--triage-gutter) + var(--queue-search-width) + 16px);
+		}
+		.queue-headline {
+			display: flex;
+			min-height: calc(max(2.5rem, var(--triage-control-height)) + 16px);
+		}
+		.queue-search-wrap {
+			position: absolute;
+			inset-block-start: 50%;
+			inset-inline-end: var(--triage-gutter);
+			width: var(--queue-search-width);
+			margin-inline: 0;
+			transform: translateY(-50%);
+		}
+	}
+	@container queue-header (max-width: 51.99rem) {
+		.queue-headline {
+			gap: 6px 8px;
+		}
+		.queue-search-wrap {
+			flex: 1 1 100%;
+			width: 100%;
+			margin-inline-start: 0;
+		}
+		.triage-search {
+			width: 100%;
+		}
+	}
+	@container queue-header (max-width: 38rem) {
+		.queue-tab {
+			gap: 4px;
+			padding-inline: 8px;
+		}
+	}
+
+	@media (max-width: 720px), (pointer: coarse) {
+		.triage-search-kbd {
+			display: none;
+		}
+		.triage-search-input {
+			font-size: 1rem;
+		}
 	}
 
 	@media (max-width: 959px) {
@@ -1080,43 +1343,37 @@
 		.triage-page:not(.triage-has-detail) :global(.triage-reading) {
 			display: none;
 		}
-		.triage-has-detail :global(.triage-header),
+		.triage-has-detail :global(.triage-toolbar),
 		.triage-has-detail :global(.triage-queue) {
 			display: none;
 		}
-	}
-
-	@media (max-width: 520px) {
-		.triage-controls,
-		.triage-search {
-			width: 100%;
+		.triage-has-detail .queue-headline {
+			padding-block-end: 12px;
 		}
 	}
 
-	.triage-ctrl-btn:focus-visible,
-	.triage-tab:focus-visible,
+	.queue-tab:focus-visible,
+	.queue-icon-btn:focus-visible,
 	.triage-clear-btn:focus-visible {
 		outline: 2px solid var(--focus);
-		outline-offset: 2px;
+		outline-offset: -2px;
 	}
 
 	@media (forced-colors: active) {
-		.triage-tab,
-		.triage-ctrl-btn,
+		.queue-tab,
+		.queue-icon-btn,
 		.triage-search {
 			border: 1px solid ButtonText;
 		}
-		.triage-tab.is-on,
-		.triage-tab[aria-pressed='true'],
-		.triage-ctrl-btn.is-active,
-		.triage-ctrl-btn[aria-pressed='true'] {
+		.queue-tab:is([aria-pressed='true'], [data-current-kind]),
+		.queue-icon-btn[data-active] {
 			border: 2px solid Highlight;
 		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.triage-ctrl-btn,
-		.triage-tab {
+		.queue-tab,
+		.queue-icon-btn {
 			transition: none;
 		}
 	}

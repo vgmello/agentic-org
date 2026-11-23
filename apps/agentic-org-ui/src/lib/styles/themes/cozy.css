@@ -525,6 +525,11 @@ html[data-ui-theme='cozy'] .exec-brand-mark {
 	background: #2f6148;
 }
 
+html[data-ui-theme='cozy'] .triage-queue {
+	background: var(--cozy-well);
+	box-shadow: none;
+}
+
 /* Settings preview swatch */
 .swatch-cozy {
 	background:

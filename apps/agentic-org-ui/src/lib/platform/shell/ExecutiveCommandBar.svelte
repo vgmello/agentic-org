@@ -634,7 +634,7 @@
 				skipRestoreFocus = false;
 			}
 		}}
-		class="top-[9vh] flex max-h-[78vh] w-full max-w-[calc(100%-2rem)] translate-y-0 flex-col gap-0 overflow-hidden rounded-[18px] bg-[var(--popover)] p-0 shadow-[inset_0_0_0_1px_var(--exec-border-hi),0_24px_64px_color-mix(in_srgb,var(--shade)_38%,transparent)] ring-0 motion-reduce:animate-none motion-reduce:transition-none motion-reduce:duration-0 motion-reduce:data-closed:animate-none motion-reduce:data-open:animate-none sm:max-w-[650px]"
+		class="exec-cmdk-dialog top-[9vh] flex max-h-[78vh] w-full max-w-[calc(100%-2rem)] translate-y-0 flex-col gap-0 overflow-hidden rounded-[18px] bg-[var(--popover)] p-0 shadow-[inset_0_0_0_1px_var(--exec-border-hi),0_24px_64px_color-mix(in_srgb,var(--shade)_38%,transparent)] ring-0 motion-reduce:animate-none motion-reduce:transition-none motion-reduce:duration-0 motion-reduce:data-closed:animate-none motion-reduce:data-open:animate-none sm:max-w-[650px]"
 	>
 		<Dialog.Title class="sr-only" text="Command palette and Org AI" />
 		<Dialog.Description class="sr-only">
@@ -642,10 +642,10 @@
 		</Dialog.Description>
 
 		<div
-			class="flex items-center justify-between gap-3 border-b border-[var(--exec-border)] bg-[var(--exec-well)] px-4 py-3 text-[var(--exec-dim)]"
+			class="exec-cmdk-tabs flex items-center justify-between gap-3 border-b border-[var(--exec-border)] bg-[var(--exec-well)] px-4 py-3 text-[var(--exec-dim)]"
 		>
 			<div
-				class="inline-flex items-center gap-1 rounded-[10px] bg-[var(--exec-surface)] p-0.5 shadow-[inset_0_0_0_1px_var(--exec-border)]"
+				class="exec-cmdk-tab-grp inline-flex items-center gap-1 rounded-[10px] bg-[var(--exec-surface)] p-0.5 shadow-[inset_0_0_0_1px_var(--exec-border)]"
 				role="tablist"
 			>
 				<button
@@ -653,12 +653,7 @@
 					role="tab"
 					aria-selected={mode === 'cmd'}
 					onclick={() => (mode = 'cmd')}
-					class={[
-						'inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
-						mode === 'cmd'
-							? 'bg-[var(--exec-accent-soft)] text-[var(--exec-ink)] shadow-[inset_0_0_0_1.5px_var(--tone-accent-ink)]'
-							: 'text-[var(--exec-muted)] hover:text-[var(--exec-ink)]'
-					]}
+					class="exec-cmdk-tab inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
 				>
 					<Search class="size-3.5" aria-hidden="true" />
 					<span>Search &amp; Commands</span>
@@ -668,12 +663,7 @@
 					role="tab"
 					aria-selected={mode === 'ai'}
 					onclick={() => (mode = 'ai')}
-					class={[
-						'inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
-						mode === 'ai'
-							? 'bg-[var(--exec-accent-soft)] text-[var(--exec-ink)] shadow-[inset_0_0_0_1.5px_var(--tone-accent-ink)]'
-							: 'text-[var(--exec-muted)] hover:text-[var(--exec-ink)]'
-					]}
+					class="exec-cmdk-tab inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
 				>
 					<Sparkles class="size-3.5" aria-hidden="true" />
 					<span>Ask Org AI</span>
@@ -943,6 +933,17 @@
 	.exec-cmdk-home-opt,
 	.exec-cmdk-opt {
 		color: var(--exec-body);
+	}
+	:global(.exec-cmdk-tab) {
+		color: var(--exec-muted);
+	}
+	:global(.exec-cmdk-tab:hover) {
+		color: var(--exec-ink);
+	}
+	:global(.exec-cmdk-tab[aria-selected='true']) {
+		background: var(--exec-accent-soft);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1.5px var(--tone-accent-ink);
 	}
 	.exec-cmdk-home-opt:hover,
 	.exec-cmdk-opt:hover,

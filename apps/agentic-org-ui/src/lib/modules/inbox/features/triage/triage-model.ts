@@ -15,20 +15,30 @@ export interface TriageTabDef {
 	label: string;
 }
 
+export type TriageOrder = 'priority' | 'date';
+
 export const PRIMARY_TABS: readonly TriageTabDef[] = [
 	{ id: 'all', label: 'All' },
 	{ id: 'approvals', label: 'Approvals' },
-	{ id: 'decisions', label: 'Decisions' },
-	{ id: 'questions', label: 'Questions' },
-	{ id: 'handled', label: 'Handled' }
+	{ id: 'decisions', label: 'Decisions' }
 ];
 
 export const OVERFLOW_TABS: readonly TriageTabDef[] = [
+	{ id: 'questions', label: 'Questions' },
 	{ id: 'problems', label: 'Problems' },
-	{ id: 'work', label: 'Work' }
+	{ id: 'work', label: 'Work' },
+	{ id: 'handled', label: 'Handled' }
 ];
 
 export const ALL_TRIAGE_TABS: readonly TriageTabDef[] = [...PRIMARY_TABS, ...OVERFLOW_TABS];
+
+export function queueSummaryLabel(tab: TriageTab, order: TriageOrder = 'priority'): string {
+	if (isOverflowTab(tab)) {
+		if (tab === 'handled') return 'Handled items';
+		return OVERFLOW_TABS.find((t) => t.id === tab)?.label ?? 'All';
+	}
+	return order === 'date' ? 'By date' : 'Priority first';
+}
 
 const TAB_ALIASES: Record<string, TriageTab> = {
 	all: 'all',
@@ -78,6 +88,7 @@ export interface TriageItem {
 	title: string;
 	kindDisplay: string;
 	typeLabel: string;
+	actorId?: string;
 	actorName: string;
 	actorInitials: string;
 	actorRole: string;
@@ -89,14 +100,16 @@ export interface TriageItem {
 	hasProject: boolean;
 	why: string;
 	recommendation?: string;
-	recommendationTone: 'ok' | 'warn' | 'accent';
+	recommendationTone: 'ok' | 'warn' | 'bad' | 'neutral';
 	urgent: boolean;
 	expiresLabel?: string;
 	expiresAtIso?: string;
 	clearsLabel: string;
 	workRef?: string;
 	workRefDisplay?: string;
+	workHref?: string;
 	openHref?: string;
+	relatedHref?: string;
 	openLabel?: string;
 	auditChecks: string[];
 	ageLabel: string;
@@ -114,6 +127,65 @@ export interface TriageFilterOptions {
 	urgentOnly: boolean;
 	scope: InboxScope;
 	search: string;
+	order?: TriageOrder;
+}
+
+export interface InboxCommentEntry {
+	id: string;
+	text: string;
+	at: number;
+}
+
+export const MAX_INBOX_COMMENT_LENGTH = 2000;
+export const INBOX_DIVIDERS_STORAGE_KEY = 'agentic-org.inbox.dividers';
+
+export function inboxCommentsStorageKey(organizationId: string, itemId: string): string {
+	return `agentic-org.inbox.comments.${organizationId}.${itemId}`;
+}
+
+export function parseInboxCommentsJson(raw: string | null): InboxCommentEntry[] {
+	if (!raw) return [];
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (!Array.isArray(parsed)) return [];
+		const valid: InboxCommentEntry[] = [];
+		for (let i = 0; i < parsed.length; i++) {
+			const entry = parsed[i];
+			if (!entry || typeof entry !== 'object') continue;
+			const rec = entry as Record<string, unknown>;
+			if (typeof rec.text !== 'string') continue;
+			const trimmed = rec.text.trim();
+			if (!trimmed || rec.text.length > MAX_INBOX_COMMENT_LENGTH) continue;
+			if (typeof rec.at !== 'number' || !Number.isFinite(rec.at)) continue;
+			if (!Number.isFinite(new Date(rec.at).getTime())) continue;
+			const id = typeof rec.id === 'string' && rec.id.trim() ? rec.id : `c-${rec.at}-${i}`;
+			valid.push({ id, text: trimmed, at: rec.at });
+		}
+		return valid.sort((a, b) => a.at - b.at);
+	} catch {
+		return [];
+	}
+}
+
+const UNBUILT_WORK_REF_RE = /^\/work\/[^/?#]+/;
+
+export function isUnbuiltWorkRefPath(path: string | undefined): boolean {
+	return Boolean(path && UNBUILT_WORK_REF_RE.test(path));
+}
+
+export function safeWorkListHref(projectId: string | undefined): string {
+	return projectId ? `/projects/${encodeURIComponent(projectId)}/work` : '/work';
+}
+
+export function sanitizeOpenHref(
+	rawPath: string | undefined,
+	projectId: string | undefined
+): string | undefined {
+	if (!rawPath) return undefined;
+	if (isUnbuiltWorkRefPath(rawPath)) {
+		return safeWorkListHref(projectId);
+	}
+	return rawPath;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -167,9 +239,10 @@ function resolveMemberRole(
 	teamName: string | undefined
 ): string {
 	const title = member?.agent?.title?.trim();
-	if (title) return isAgent ? `${title} · Agent` : title;
-	if (teamName) return `${teamName} · ${isAgent ? 'Agent' : 'Person'}`;
-	return isAgent ? 'Agent' : 'Person';
+	const kindWord = isAgent ? 'Agent' : 'Person';
+	if (title) return `${title} · ${kindWord}`;
+	if (teamName) return `${teamName} · ${kindWord}`;
+	return kindWord;
 }
 
 function resolveClearsLabel(decision: SpotlightDecision): string {
@@ -189,11 +262,12 @@ function resolveClearsLabel(decision: SpotlightDecision): string {
 function resolveRecommendationTone(
 	category: TriageItem['category'],
 	urgent: boolean
-): 'ok' | 'warn' | 'accent' {
-	if (category === 'problem' || category === 'decision') return 'warn';
+): 'ok' | 'warn' | 'bad' | 'neutral' {
+	if (category === 'problem') return 'bad';
+	if (category === 'decision') return 'warn';
 	if (category === 'approval') return 'ok';
 	if (category === 'work' && urgent) return 'warn';
-	return 'accent';
+	return 'neutral';
 }
 
 function parseTimestamp(iso: string | undefined, fallbackMs: number): number {
@@ -250,9 +324,12 @@ export function deriveTriageItems(
 		const workRef = extractWorkRef(inbox?.open?.path, inbox?.open?.label, decision.title, work);
 		const matchedWork = work ?? (workRef ? workByRef.get(workRef.toUpperCase()) : undefined);
 		const workRefDisplay = matchedWork ? `${matchedWork.short_id} · ${matchedWork.title}` : workRef;
-
-		const openHref =
+		const resolvedProjectId = inbox?.project?.id ?? decision.projectId ?? matchedWork?.project_id;
+		const rawOpenPath =
 			inbox?.open?.path ?? (decision.sourceKind === 'work' ? decision.detailHref : undefined);
+		const workHref = workRef ? safeWorkListHref(resolvedProjectId) : undefined;
+		const openHref = sanitizeOpenHref(rawOpenPath, resolvedProjectId);
+		const relatedHref = rawOpenPath && !isUnbuiltWorkRefPath(rawOpenPath) ? rawOpenPath : undefined;
 		const openLabel =
 			inbox?.open?.label ??
 			(decision.sourceKind === 'work'
@@ -287,15 +364,16 @@ export function deriveTriageItems(
 				? `${KIND_WORD[inbox.kind]} · ${inbox.source}`
 				: `Work · ${decision.kindLabel}`,
 			typeLabel: inbox?.source ?? decision.kindLabel,
+			actorId,
 			actorName: decision.actorName,
 			actorInitials: decision.actorInitials,
 			actorRole: resolveMemberRole(member, isAgent, teamName),
 			isAgent,
 			teamId,
 			teamName,
-			projectId: inbox?.project?.id ?? decision.projectId,
+			projectId: resolvedProjectId,
 			projectName: inbox?.project?.name ?? decision.projectName,
-			hasProject: Boolean(inbox?.project?.id ?? decision.projectId),
+			hasProject: Boolean(resolvedProjectId),
 			why: decision.backgroundContext,
 			recommendation,
 			recommendationTone: resolveRecommendationTone(category, decision.urgent),
@@ -305,7 +383,9 @@ export function deriveTriageItems(
 			clearsLabel: resolveClearsLabel(decision),
 			workRef,
 			workRefDisplay,
+			workHref,
 			openHref,
+			relatedHref,
 			openLabel,
 			auditChecks: decision.auditChecks,
 			ageLabel: decision.ageLabel,
@@ -323,6 +403,12 @@ export function deriveTriageItems(
 			const workRefDisplay = matchedWork
 				? `${matchedWork.short_id} · ${matchedWork.title}`
 				: workRef;
+			const resolvedProjectId = item.project?.id ?? matchedWork?.project_id;
+			const rawOpenPath = item.open?.path;
+			const workHref = workRef ? safeWorkListHref(resolvedProjectId) : undefined;
+			const openHref = sanitizeOpenHref(rawOpenPath, resolvedProjectId);
+			const relatedHref =
+				rawOpenPath && !isUnbuiltWorkRefPath(rawOpenPath) ? rawOpenPath : undefined;
 			const handledIso = item.handled?.at ?? item.created_at;
 			const outcome = item.handled?.outcome ?? 'Resolved';
 
@@ -342,15 +428,16 @@ export function deriveTriageItems(
 				title: item.title,
 				kindDisplay: `${KIND_WORD[item.kind]} · ${item.source}`,
 				typeLabel: item.source,
+				actorId: item.who.id,
 				actorName: item.who.name,
 				actorInitials: initialsOf(item.who.name),
 				actorRole: resolveMemberRole(member, isAgent, item.team?.name),
 				isAgent,
 				teamId: item.team?.id,
 				teamName: item.team?.name,
-				projectId: item.project?.id,
+				projectId: resolvedProjectId,
 				projectName: item.project?.name ?? item.team?.name ?? 'Organization',
-				hasProject: Boolean(item.project?.id),
+				hasProject: Boolean(resolvedProjectId),
 				why: item.why,
 				recommendation: item.recommendation,
 				recommendationTone: 'ok',
@@ -358,7 +445,9 @@ export function deriveTriageItems(
 				clearsLabel: `Handled · ${outcome}`,
 				workRef,
 				workRefDisplay,
-				openHref: item.open?.path,
+				workHref,
+				openHref,
+				relatedHref,
 				openLabel: item.open?.label,
 				auditChecks,
 				ageLabel: relativeAge(handledIso, nowMs),
@@ -422,8 +511,12 @@ function matchesTab(item: TriageItem, tab: TriageTab): boolean {
 	}
 }
 
-export function sortTriageItems(items: readonly TriageItem[], tab: TriageTab): TriageItem[] {
-	if (tab === 'handled') {
+export function sortTriageItems(
+	items: readonly TriageItem[],
+	tab: TriageTab,
+	order: TriageOrder = 'priority'
+): TriageItem[] {
+	if (tab === 'handled' || order === 'date') {
 		return [...items].sort((a, b) => b.timestampMs - a.timestampMs);
 	}
 	return [...items].sort((a, b) => {
@@ -446,7 +539,7 @@ export function filterTriageItems(
 		if (!matchesSearch(item, options.search)) return false;
 		return true;
 	});
-	return sortTriageItems(matched, options.tab);
+	return sortTriageItems(matched, options.tab, options.order ?? 'priority');
 }
 
 export function triageTabCounts(
@@ -500,7 +593,8 @@ export function triageScopeOptions(items: readonly TriageItem[]): {
 export function groupTriageItems(
 	items: readonly TriageItem[],
 	tab: TriageTab,
-	nowMs = Date.now()
+	nowMs = Date.now(),
+	order: TriageOrder = 'priority'
 ): TriageGroup[] {
 	if (items.length === 0) return [];
 	if (tab === 'handled') {
@@ -510,7 +604,7 @@ export function groupTriageItems(
 	const today: TriageItem[] = [];
 	const earlier: TriageItem[] = [];
 	for (const item of items) {
-		if (item.urgent) urgent.push(item);
+		if (order === 'priority' && item.urgent) urgent.push(item);
 		else if (nowMs - item.timestampMs < DAY_MS) today.push(item);
 		else earlier.push(item);
 	}

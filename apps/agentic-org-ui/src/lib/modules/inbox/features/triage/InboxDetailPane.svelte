@@ -1,24 +1,33 @@
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { toast } from 'svelte-sonner';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import Ban from '@lucide/svelte/icons/ban';
-	import BellRing from '@lucide/svelte/icons/bell-ring';
 	import Check from '@lucide/svelte/icons/check';
-	import CheckCheck from '@lucide/svelte/icons/check-check';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Clock from '@lucide/svelte/icons/clock';
 	import Copy from '@lucide/svelte/icons/copy';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
-	import FolderGit2 from '@lucide/svelte/icons/folder-git-2';
+	import Inbox from '@lucide/svelte/icons/inbox';
+	import Info from '@lucide/svelte/icons/info';
 	import Send from '@lucide/svelte/icons/send';
-	import Sparkles from '@lucide/svelte/icons/sparkles';
+	import ShieldAlert from '@lucide/svelte/icons/shield-alert';
 	import { isDenyAction } from '$lib/home/model';
-	import { highlightSegments, isDeniedOutcome, splitHref, type TriageItem } from './triage-model';
+	import {
+		highlightSegments,
+		inboxCommentsStorageKey,
+		isDeniedOutcome,
+		MAX_INBOX_COMMENT_LENGTH,
+		parseInboxCommentsJson,
+		splitHref,
+		type InboxCommentEntry,
+		type TriageItem
+	} from './triage-model';
 
 	let {
+		organizationId,
 		item,
 		searchQuery,
 		busyId,
@@ -30,7 +39,6 @@
 		onDeclineReasonChange,
 		onReplyTextChange,
 		onBackMobile,
-		onFilterProject,
 		onPrimaryAction,
 		onSecondaryAction,
 		onArmDeny,
@@ -38,6 +46,7 @@
 		onChoose,
 		onReply
 	}: {
+		organizationId: string;
 		item?: TriageItem;
 		searchQuery: string;
 		busyId?: string;
@@ -49,7 +58,6 @@
 		onDeclineReasonChange: (itemId: string, value: string) => void;
 		onReplyTextChange: (itemId: string, value: string) => void;
 		onBackMobile: () => void;
-		onFilterProject: (projectId: string) => void;
 		onPrimaryAction: (item: TriageItem) => void;
 		onSecondaryAction: (item: TriageItem) => void;
 		onArmDeny: (id: string) => void;
@@ -60,13 +68,52 @@
 
 	let denyInputEl = $state<HTMLInputElement | null>(null);
 	let denyBtnEl = $state<HTMLButtonElement | null>(null);
+	let commentInputEl = $state<HTMLTextAreaElement | null>(null);
 	let copiedKey = $state<string | undefined>(undefined);
 	let copyTimer: ReturnType<typeof setTimeout> | undefined;
+
+	// Hover/focus member preview card dismissal (WCAG 1.4.13)
+	let memberHovered = $state(false);
+	let memberFocused = $state(false);
+	let previewDismissed = $derived.by(() => {
+		void item?.id;
+		return false;
+	});
+
+	// Per-item comment drafts & persisted comments
+	let commentDrafts = $state<Record<string, string>>({});
+	let commentVersion = $state(0);
+	let commentStatus = $derived.by(() => {
+		void item?.id;
+		return '';
+	});
+
+	function readStoredComments(orgId: string, itemId: string): InboxCommentEntry[] {
+		if (typeof window === 'undefined') return [];
+		try {
+			const raw = window.localStorage.getItem(inboxCommentsStorageKey(orgId, itemId));
+			return parseInboxCommentsJson(raw);
+		} catch {
+			return [];
+		}
+	}
+
+	const commentDraftKey = $derived(item ? `${organizationId}:${item.id}` : '');
+	const activeCommentDraft = $derived(
+		commentDraftKey ? (commentDrafts[commentDraftKey] ?? '') : ''
+	);
+	const comments = $derived.by<InboxCommentEntry[]>(() => {
+		void commentVersion;
+		if (!item) return [];
+		return readStoredComments(organizationId, item.id);
+	});
 
 	const isBusy = $derived(Boolean(item && busyId === item.id));
 	const controlsDisabled = $derived(isBusy || actionLocked);
 	const isDenying = $derived(Boolean(item && decliningId === item.id));
+	const workParts = $derived(item?.workHref ? splitHref(item.workHref) : undefined);
 	const openParts = $derived(item?.openHref ? splitHref(item.openHref) : undefined);
+	const relatedParts = $derived(item?.relatedHref ? splitHref(item.relatedHref) : undefined);
 	const hasChoices = $derived(
 		Boolean(
 			item?.state === 'open' &&
@@ -112,6 +159,13 @@
 	);
 	const deniedHandled = $derived(isDeniedOutcome(item?.handled?.outcome));
 
+	const RECOMMENDATION_LABELS: Record<TriageItem['recommendationTone'], string> = {
+		ok: 'Recommendation · Low risk',
+		warn: 'Recommendation · Investigate',
+		bad: 'Recommendation · Use caution',
+		neutral: 'Recommendation'
+	};
+
 	$effect(() => {
 		if (isDenying) {
 			void tick().then(() => denyInputEl?.focus());
@@ -119,6 +173,11 @@
 	});
 
 	onDestroy(() => clearTimeout(copyTimer));
+
+	function formatCommentTime(at: number): string {
+		const date = new Date(at);
+		return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+	}
 
 	async function copyWorkRef(itemId: string, ref: string) {
 		try {
@@ -176,7 +235,92 @@
 		if (!item || !replyText.trim() || controlsDisabled) return;
 		onReply(item, replyText.trim());
 	}
+
+	function handleWindowKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape' && (memberHovered || memberFocused) && !previewDismissed) {
+			event.preventDefault();
+			previewDismissed = true;
+		}
+	}
+
+	function memberPreviewTracking(node: HTMLElement) {
+		const onEnter = () => {
+			memberHovered = true;
+		};
+		const onLeave = () => {
+			memberHovered = false;
+			if (!memberFocused) previewDismissed = false;
+		};
+		const onFocusIn = () => {
+			memberFocused = true;
+		};
+		const onFocusOut = (event: FocusEvent) => {
+			const next = event.relatedTarget as Node | null;
+			if (next && node.contains(next)) return;
+			memberFocused = false;
+			if (!memberHovered) previewDismissed = false;
+		};
+		node.addEventListener('pointerenter', onEnter);
+		node.addEventListener('pointerleave', onLeave);
+		node.addEventListener('focusin', onFocusIn);
+		node.addEventListener('focusout', onFocusOut);
+		return () => {
+			node.removeEventListener('pointerenter', onEnter);
+			node.removeEventListener('pointerleave', onLeave);
+			node.removeEventListener('focusin', onFocusIn);
+			node.removeEventListener('focusout', onFocusOut);
+		};
+	}
+
+	function updateCommentDraft(value: string) {
+		if (!commentDraftKey) return;
+		commentDrafts = { ...commentDrafts, [commentDraftKey]: value };
+		commentInputEl?.setCustomValidity('');
+	}
+
+	function handleCommentSubmit(event: SubmitEvent) {
+		event.preventDefault();
+		if (!item) return;
+		const trimmed = activeCommentDraft.trim();
+		if (!trimmed) {
+			if (commentInputEl) {
+				commentInputEl.setCustomValidity('Enter a comment.');
+				commentInputEl.reportValidity();
+			}
+			return;
+		}
+		const text = trimmed.slice(0, MAX_INBOX_COMMENT_LENGTH);
+		const id =
+			typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+				? crypto.randomUUID()
+				: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+		const nextEntries: InboxCommentEntry[] = [
+			...readStoredComments(organizationId, item.id),
+			{ id, text, at: Date.now() }
+		];
+		try {
+			window.localStorage.setItem(
+				inboxCommentsStorageKey(organizationId, item.id),
+				JSON.stringify(nextEntries)
+			);
+		} catch {
+			toast.error('Could not save the comment on this device.');
+			commentInputEl?.focus();
+			return;
+		}
+		if (commentDraftKey in commentDrafts) {
+			const nextDrafts = { ...commentDrafts };
+			delete nextDrafts[commentDraftKey];
+			commentDrafts = nextDrafts;
+		}
+		commentVersion += 1;
+		commentStatus = 'Comment posted.';
+		commentInputEl?.setCustomValidity('');
+		commentInputEl?.focus();
+	}
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 {#snippet highlighted(text: string)}
 	{#each highlightSegments(text, searchQuery) as seg, i (`${i}-${seg.match}`)}
@@ -189,231 +333,190 @@
 	aria-label="Item details"
 >
 	{#if !item}
-		<div class="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
-			<span class="triage-empty-badge flex size-12 items-center justify-center">
-				<CheckCheck class="size-6" aria-hidden="true" />
+		<div class="triage-empty-detail">
+			<span class="triage-empty-badge flex size-10 items-center justify-center">
+				<Inbox class="size-5" aria-hidden="true" />
 			</span>
-			<h2 class="triage-detail-heading text-base font-semibold">Queue clear for this view</h2>
-			<p class="triage-detail-muted max-w-sm text-sm leading-relaxed">
-				Select an item from the queue on the left or switch tabs to review other approvals and
-				decisions.
-			</p>
+			<h2 class="triage-detail-heading">No item selected</h2>
+			<p class="triage-detail-muted">Your queue appears on the left.</p>
 		</div>
 	{:else}
-		<article
-			class="triage-document flex w-full max-w-[820px] flex-col gap-4 px-5 py-5 sm:px-8 sm:py-6"
-		>
+		<article class="triage-document" aria-labelledby="triage-detail-heading">
 			<!-- Mobile Back Button (< 960px) -->
 			<button
 				type="button"
 				onclick={onBackMobile}
-				class="triage-back inline-flex min-h-11 w-fit items-center gap-1.5 px-3 text-xs font-semibold"
+				class="triage-back inline-flex min-h-11 w-fit items-center gap-1.5 text-xs font-semibold"
 			>
 				<ArrowLeft class="size-4" aria-hidden="true" />
 				<span>Back to Inbox</span>
 			</button>
 
-			<!-- Sender Identity & Status Header -->
-			<header class="flex items-start gap-3.5">
-				<div class="relative shrink-0">
-					<span
-						class="triage-avatar-lg inline-flex size-10 items-center justify-center rounded-full text-sm font-bold"
-					>
-						{item.actorInitials}
-					</span>
-					{#if item.isAgent}
+			<!-- Simplified Activity-Matched Sender Intro with Hover/Focus Member Preview Card -->
+			<header class="triage-intro">
+				<p class="triage-from">
+					<span>From:</span>
+					{#if item.actorId}
 						<span
-							class="triage-agent-dot absolute -right-0.5 -bottom-0.5 size-3 rounded-full"
-							title="Agent"
-							aria-hidden="true"
-						></span>
-					{/if}
-				</div>
-
-				<div class="min-w-0 flex-1">
-					<div class="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm">
-						<span class="triage-ink font-semibold">{item.actorName}</span>
-						<span class="triage-detail-muted" aria-hidden="true">·</span>
-						<span class="triage-detail-muted">{item.actorRole}</span>
-					</div>
-					<div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-						{#if item.state === 'open'}
-							<span class="triage-status-needs inline-flex items-center gap-1 font-semibold">
-								<BellRing class="size-3.5 shrink-0" aria-hidden="true" />
-								<span>Needs you</span>
-							</span>
-						{:else}
-							<span
-								class={[
-									'triage-status-handled inline-flex items-center gap-1 font-semibold',
-									deniedHandled ? 'is-denied' : 'is-ok'
-								]}
-							>
-								<CheckCircle2 class="size-3.5 shrink-0" aria-hidden="true" />
-								<span>Handled ({item.handled?.outcome ?? 'Resolved'})</span>
-							</span>
-						{/if}
-						<span class="triage-detail-muted" aria-hidden="true">·</span>
-						<span class="triage-body">{item.typeLabel}</span>
-						<span class="triage-detail-muted" aria-hidden="true">·</span>
-						<span class="triage-detail-muted font-mono text-[11px] tabular-nums"
-							>{item.ageLabel}</span
+							{@attach memberPreviewTracking}
+							class="triage-from-member"
+							data-preview-dismissed={previewDismissed ? '' : undefined}
 						>
-					</div>
-				</div>
+							<a
+								class="triage-from-link"
+								href={resolve(`/members/${encodeURIComponent(item.actorId)}` as '/teams/members')}
+								aria-describedby="triage-from-role-{item.id}"
+							>
+								{item.actorName}
+							</a>
+							<span class="triage-from-card" role="tooltip">
+								<span class="triage-from-av" aria-hidden="true">{item.actorInitials}</span>
+								<span>
+									<strong aria-hidden="true">{item.actorName}</strong>
+									<span id="triage-from-role-{item.id}">{item.actorRole}</span>
+								</span>
+							</span>
+						</span>
+					{:else}
+						<strong class="triage-ink">{item.actorName}</strong>
+					{/if}
+					<span aria-hidden="true">·</span>
+					<span class="triage-from-time">{item.ageLabel}</span>
+				</p>
+
+				<h2 id="triage-detail-heading" tabindex="-1" class="triage-detail-title font-semibold">
+					{@render highlighted(item.title)}
+				</h2>
 			</header>
 
-			<!-- Display Detail Heading -->
-			<h2 id="triage-detail-heading" tabindex="-1" class="triage-title font-semibold">
-				{@render highlighted(item.title)}
-			</h2>
-
-			<!-- Why Narrative Block -->
-			<div class="flex flex-col gap-1.5">
-				<h3 class="triage-kicker font-mono text-[11px] font-semibold tracking-wider uppercase">
-					Why
-				</h3>
-				<p class="triage-why max-w-[60ch] text-sm leading-relaxed">
+			<!-- Description -->
+			{#if item.why}
+				<p class="triage-description">
 					{@render highlighted(item.why)}
 				</p>
-			</div>
+			{/if}
 
-			<!-- Elevated Recommendation Callout Card -->
-			{#if item.recommendation}
-				<div
-					class={[
-						'triage-callout flex max-w-[64ch] items-start gap-3 px-4 py-3.5',
-						`tone-${item.recommendationTone}`
-					]}
-				>
-					<span class="triage-callout-icon mt-0.5 inline-flex shrink-0" aria-hidden="true">
-						{#if item.recommendationTone === 'warn'}
-							<AlertTriangle class="size-4" />
-						{:else if item.recommendationTone === 'accent'}
-							<Sparkles class="size-4" />
-						{:else}
-							<CheckCircle2 class="size-4" />
-						{/if}
-					</span>
-					<div class="min-w-0">
-						<div
-							class="triage-callout-kicker font-mono text-[11px] font-semibold tracking-wider uppercase"
-						>
-							Recommendation
-						</div>
-						<p class="triage-ink mt-0.5 text-sm leading-snug font-medium">
-							{item.recommendation}
-						</p>
+			<!-- Request Details -->
+			<section class="triage-context" aria-labelledby="triage-context-title">
+				<h3 id="triage-context-title">Request details</h3>
+				<dl class="triage-fields">
+					<div>
+						<dt>Kind</dt>
+						<dd>{item.kindDisplay}</dd>
 					</div>
-				</div>
-			{/if}
 
-			<!-- Structured Metadata Table -->
-			<dl
-				class="triage-fields grid max-w-[64ch] grid-cols-[minmax(84px,112px)_minmax(0,1fr)] items-center gap-x-4 gap-y-2 py-3"
-			>
-				<dt class="triage-field-label text-xs font-medium">Kind</dt>
-				<dd class="triage-ink min-w-0 text-sm font-medium [overflow-wrap:anywhere]">
-					{item.kindDisplay}
-				</dd>
-
-				<dt class="triage-field-label text-xs font-medium">Project</dt>
-				<dd class="min-w-0">
-					{#if item.projectId}
-						<button
-							type="button"
-							onclick={() => onFilterProject(item.projectId!)}
-							class="triage-project-chip inline-flex h-auto min-h-9 min-w-9 max-w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs font-medium whitespace-normal [overflow-wrap:anywhere] max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-							title="Filter inbox by {item.projectName}"
-						>
-							<FolderGit2 class="size-3.5 shrink-0" aria-hidden="true" />
-							<span class="min-w-0 [overflow-wrap:anywhere]">{item.projectName}</span>
-						</button>
-					{:else}
-						<span class="triage-body text-sm [overflow-wrap:anywhere]">{item.projectName}</span>
-					{/if}
-				</dd>
-
-				{#if item.teamName}
-					<dt class="triage-field-label text-xs font-medium">Team</dt>
-					<dd class="triage-body min-w-0 text-sm [overflow-wrap:anywhere]">{item.teamName}</dd>
-				{/if}
-
-				{#if item.workRef}
-					{@const isCopied = copiedKey === `${item.id}:${item.workRef}`}
-					<dt class="triage-field-label text-xs font-medium">Work item</dt>
-					<dd class="flex min-w-0 flex-wrap items-center gap-2">
-						<button
-							type="button"
-							onclick={() => void copyWorkRef(item.id, item.workRef!)}
-							title="Copy {item.workRef}"
-							class={[
-								'triage-copy-pill inline-flex min-h-9 max-w-full items-center gap-1.5 px-2.5 font-mono text-xs max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11',
-								isCopied && 'is-copied'
-							]}
-						>
-							{#if isCopied}
-								<Check class="size-3.5 shrink-0" aria-hidden="true" />
-								<span>Copied {item.workRef}</span>
+					<div>
+						<dt>Project</dt>
+						<dd>
+							{#if item.projectId}
+								<a
+									class="triage-link"
+									href={resolve(
+										`/projects/${encodeURIComponent(item.projectId)}/work` as '/projects'
+									)}
+								>
+									{item.projectName}
+								</a>
 							{:else}
-								<span class="truncate">{item.workRefDisplay ?? item.workRef}</span>
-								<Copy class="size-3.5 shrink-0 opacity-75" aria-hidden="true" />
+								<span>{item.projectName}</span>
 							{/if}
-						</button>
-					</dd>
+						</dd>
+					</div>
+
+					{#if item.teamName}
+						<div>
+							<dt>Team</dt>
+							<dd>{item.teamName}</dd>
+						</div>
+					{/if}
+
+					{#if item.workRef}
+						{@const isCopied = copiedKey === `${item.id}:${item.workRef}`}
+						<div>
+							<dt>Work item</dt>
+							<dd>
+								{#if workParts}
+									<a
+										class="triage-link"
+										href="{resolve(workParts.pathname as '/work')}{workParts.suffix}"
+									>
+										{item.workRefDisplay ?? item.workRef}
+									</a>
+								{:else}
+									<span>{item.workRefDisplay ?? item.workRef}</span>
+								{/if}
+								<button
+									type="button"
+									onclick={() => void copyWorkRef(item.id, item.workRef!)}
+									aria-label="Copy {item.workRef}"
+									class={['triage-copy', isCopied && 'is-copied']}
+								>
+									{#if isCopied}
+										<Check class="size-3.5 shrink-0" aria-hidden="true" />
+										<span>Copied</span>
+									{:else}
+										<Copy class="size-3.5 shrink-0" aria-hidden="true" />
+										<span>Copy</span>
+									{/if}
+								</button>
+							</dd>
+						</div>
+					{/if}
+
+					{#if item.expiresLabel}
+						<div>
+							<dt>Expires</dt>
+							<dd class={item.state === 'open' ? 'triage-expiry' : undefined}>
+								{item.expiresLabel}
+							</dd>
+						</div>
+					{/if}
+
+					<div>
+						<dt>Clears</dt>
+						<dd>{item.clearsLabel}</dd>
+					</div>
+
+					{#if relatedParts}
+						<div>
+							<dt>Related page</dt>
+							<dd>
+								<a
+									class="triage-link"
+									href="{resolve(relatedParts.pathname as '/work')}{relatedParts.suffix}"
+								>
+									{item.openLabel ?? 'Open related page'}
+								</a>
+							</dd>
+						</div>
+					{/if}
+				</dl>
+			</section>
+
+			<!-- Decision Block: Recommendation Callout + Actions -->
+			<div class="triage-decision">
+				{#if item.recommendation}
+					<div class="recommendation" data-tone={item.recommendationTone}>
+						<span class="recommendation-ico" aria-hidden="true">
+							{#if item.recommendationTone === 'ok'}
+								<CheckCircle2 class="size-5" />
+							{:else if item.recommendationTone === 'warn'}
+								<AlertTriangle class="size-5" />
+							{:else if item.recommendationTone === 'bad'}
+								<ShieldAlert class="size-5" />
+							{:else}
+								<Info class="size-5" />
+							{/if}
+						</span>
+						<div class="min-w-0">
+							<h3 class="recommendation-label">{RECOMMENDATION_LABELS[item.recommendationTone]}</h3>
+							<p>{item.recommendation}</p>
+						</div>
+					</div>
 				{/if}
 
-				{#if item.state === 'open' && item.expiresLabel}
-					<dt class="triage-field-label text-xs font-medium">Expires</dt>
-					<dd>
-						<span
-							class="triage-expiry-pill inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold"
-						>
-							<Clock class="size-3.5 shrink-0" aria-hidden="true" />
-							<span>{item.expiresLabel}</span>
-						</span>
-					</dd>
-				{/if}
-
-				<dt class="triage-field-label text-xs font-medium">Clears</dt>
-				<dd class="triage-body min-w-0 text-sm [overflow-wrap:anywhere]">{item.clearsLabel}</dd>
-			</dl>
-
-			<!-- Collapsible Automated Checks & Audit Trail -->
-			{#if item.auditChecks.length > 0}
-				<details class="triage-audit max-w-[64ch]">
-					<summary
-						class="triage-audit-summary flex min-h-9 items-center gap-2 px-3.5 py-2 text-xs font-semibold max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
-					>
-						<span class="triage-audit-chevron inline-flex shrink-0" aria-hidden="true">
-							<ChevronRight class="size-3.5" />
-						</span>
-						<span class="triage-audit-dot size-2 shrink-0 rounded-full" aria-hidden="true"></span>
-						<span class="triage-ink">Automated checks &amp; audit trail</span>
-						<span
-							class="triage-detail-muted ml-auto font-mono text-[11px] font-normal tabular-nums"
-						>
-							{item.auditChecks.length}
-							{item.auditChecks.length === 1 ? 'check' : 'checks'}
-						</span>
-					</summary>
-					<ul class="triage-audit-list px-4 pb-3" role="list">
-						{#each item.auditChecks as chk, idx (`${idx}-${chk}`)}
-							<li class="triage-audit-row flex items-center gap-2 py-2 text-xs">
-								<span class="triage-audit-ok inline-flex shrink-0" aria-hidden="true">
-									<CheckCircle2 class="size-3.5" />
-								</span>
-								<span class="triage-body">{chk}</span>
-							</li>
-						{/each}
-					</ul>
-				</details>
-			{/if}
-
-			<!-- Tactile Action Bar -->
-			<div class="triage-action-wrap flex max-w-[64ch] flex-col gap-3 pt-4">
-				{#if item.state === 'handled' && item.handled}
-					<div class="flex flex-wrap items-center justify-between gap-3">
+				<div class="triage-actions">
+					{#if item.state === 'handled' && item.handled}
 						<div class="flex flex-wrap items-center gap-2 text-xs">
 							<span
 								class={[
@@ -431,392 +534,584 @@
 								>· {item.handled.atLabel}</span
 							>
 						</div>
-						{#if openParts}
-							<a
-								href="{resolve(openParts.pathname as '/work')}{openParts.suffix}"
-								class="triage-ghost-link inline-flex min-h-9 items-center gap-1.5 px-3 text-xs font-semibold max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-							>
-								<ExternalLink class="size-3.5 shrink-0" aria-hidden="true" />
-								<span>{item.openLabel ?? `Open ${item.workRef ?? 'item'}`}</span>
-							</a>
-						{/if}
-					</div>
-				{:else}
-					{#if hasReply}
-						<form class="flex flex-col gap-2.5" onsubmit={handleReplySubmit}>
-							<label class="sr-only" for="triage-reply-{item.id}">
-								Reply to {item.actorName}
-							</label>
-							<div class="flex flex-wrap items-center gap-2">
-								<input
-									id="triage-reply-{item.id}"
-									type="text"
-									autocomplete="off"
-									value={replyText}
-									oninput={(e) => onReplyTextChange(item.id, e.currentTarget.value)}
-									onkeydown={handleReplyInputKeydown}
-									disabled={controlsDisabled}
-									placeholder="Write your reply to {item.actorName}…"
-									class="triage-input min-h-9 min-w-[200px] flex-1 px-3 py-1.5 text-sm max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
-								/>
-								<button
-									type="submit"
-									disabled={controlsDisabled || !replyText.trim()}
-									class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-								>
-									<span class="exec-cta-fill" aria-hidden="true"></span>
-									<span class="exec-cta-inner">
-										<Send class="size-3.5" aria-hidden="true" />
-										<span>{isBusy ? 'Sending…' : 'Send reply'}</span>
-									</span>
-								</button>
-							</div>
-						</form>
-					{/if}
-
-					<div class="flex flex-wrap items-center justify-between gap-3">
-						<div class="flex flex-wrap items-center gap-2">
-							{#if hasChoices && item.inboxItem?.choices}
-								{#each item.inboxItem.choices as choice, idx (choice.id)}
-									{#if idx === 0}
-										<button
-											type="button"
-											disabled={controlsDisabled}
-											onclick={() => onChoose(item, choice.id, choice.label)}
-											class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-										>
-											<span class="exec-cta-fill" aria-hidden="true"></span>
-											<span class="exec-cta-inner">
-												<Check class="size-4" aria-hidden="true" />
-												<span>{isBusy ? 'Recording…' : choice.label}</span>
-											</span>
-										</button>
-									{:else}
-										<button
-											type="button"
-											disabled={controlsDisabled}
-											onclick={() => onChoose(item, choice.id, choice.label)}
-											class="triage-secondary-btn inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 px-3.5 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-										>
-											<span>{choice.label}</span>
-										</button>
-									{/if}
-								{/each}
-							{:else if canPrimaryAction && item.decision}
-								<button
-									type="button"
-									disabled={controlsDisabled}
-									onclick={() => onPrimaryAction(item)}
-									class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-								>
-									<span class="exec-cta-fill" aria-hidden="true"></span>
-									<span class="exec-cta-inner">
-										<Check class="size-4" aria-hidden="true" />
-										<span>{isBusy ? 'Working…' : item.decision.primaryAction.label}</span>
-									</span>
-								</button>
-							{:else if isOpenOnly && openParts}
-								<a
-									href="{resolve(openParts.pathname as '/work')}{openParts.suffix}"
-									class="exec-cta min-w-9 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-								>
-									<span class="exec-cta-fill" aria-hidden="true"></span>
-									<span class="exec-cta-inner">
-										<ExternalLink class="size-3.5" aria-hidden="true" />
-										<span>{item.openLabel ?? `Open ${item.workRef ?? 'item'}`}</span>
-									</span>
-								</a>
-							{/if}
-
-							{#if canDeny && !isDenying}
-								<button
-									bind:this={denyBtnEl}
-									type="button"
-									disabled={controlsDisabled}
-									onclick={() => onArmDeny(item.id)}
-									class="triage-deny-btn inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 px-3.5 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-								>
-									<Ban class="size-3.5 shrink-0" aria-hidden="true" />
-									<span>{item.decision?.secondaryAction?.label ?? 'Deny'}</span>
-								</button>
-							{/if}
-
-							{#if !isOpenOnly && openParts}
-								<a
-									href="{resolve(openParts.pathname as '/work')}{openParts.suffix}"
-									class="triage-ghost-link inline-flex min-h-9 min-w-9 items-center gap-1.5 px-3 text-xs font-semibold max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-								>
-									<ExternalLink class="size-3.5 shrink-0" aria-hidden="true" />
-									<span>{item.openLabel ?? `Open ${item.workRef ?? 'item'}`}</span>
-								</a>
-							{/if}
-						</div>
-
-						<!-- Desktop keyboard ergonomics hint (hidden when Single-key shortcuts are disabled) -->
-						{#if shortcutsEnabled}
-							<div class="triage-kbd-hints hidden items-center gap-2 text-[11px] lg:flex">
-								<span class="inline-flex items-center gap-1">
-									<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">J</kbd>/<kbd
-										class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">K</kbd
-									>
-									<span>navigate</span>
-								</span>
-								{#if isExplicitApprove}
-									<span class="inline-flex items-center gap-1">
-										<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">A</kbd>
-										<span>approve</span>
-									</span>
-								{/if}
-								{#if canDeny}
-									<span class="inline-flex items-center gap-1">
-										<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">D</kbd>
-										<span>deny</span>
-									</span>
-								{/if}
-							</div>
-						{/if}
-					</div>
-
-					<!-- Two-step Inline Deny Confirmation Guard (Escape works from any child control) -->
-					{#if canDeny && isDenying}
-						<div
-							{@attach denyGuardEscape}
-							class="triage-deny-guard flex flex-col gap-2.5 p-3.5"
-							role="group"
-							aria-label="Confirm deny"
-						>
-							<div class="flex flex-wrap items-center justify-between gap-2">
-								<span
-									class="triage-deny-label inline-flex items-center gap-1.5 text-xs font-semibold"
-								>
-									<Ban class="size-3.5 shrink-0" aria-hidden="true" />
-									<span>Confirm deny?</span>
-								</span>
-								<div class="flex items-center gap-2">
-									<button
-										type="button"
+					{:else}
+						{#if hasReply}
+							<form class="flex w-full flex-col gap-2.5" onsubmit={handleReplySubmit}>
+								<label class="sr-only" for="triage-reply-{item.id}">
+									Reply to {item.actorName}
+								</label>
+								<div class="flex flex-wrap items-center gap-2">
+									<input
+										id="triage-reply-{item.id}"
+										type="text"
+										autocomplete="off"
+										value={replyText}
+										oninput={(e) => onReplyTextChange(item.id, e.currentTarget.value)}
+										onkeydown={handleReplyInputKeydown}
 										disabled={controlsDisabled}
-										onclick={() => void handleCancelDeny()}
-										class="triage-keep-btn inline-flex min-h-9 min-w-9 items-center justify-center px-3 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-									>
-										Keep
-									</button>
+										placeholder="Write your reply to {item.actorName}…"
+										class="triage-input min-h-9 min-w-[200px] flex-1 px-3 py-1.5 text-sm max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+									/>
 									<button
-										type="button"
-										disabled={controlsDisabled}
-										onclick={() => onSecondaryAction(item)}
-										class="triage-deny-confirm inline-flex min-h-9 min-w-9 items-center justify-center px-3 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+										type="submit"
+										disabled={controlsDisabled || !replyText.trim()}
+										class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 									>
-										{isBusy ? 'Denying…' : 'Confirm deny'}
+										<span class="exec-cta-fill" aria-hidden="true"></span>
+										<span class="exec-cta-inner">
+											<Send class="size-3.5" aria-hidden="true" />
+											<span>{isBusy ? 'Sending…' : 'Send reply'}</span>
+										</span>
 									</button>
 								</div>
+							</form>
+						{/if}
+
+						<div class="flex w-full flex-wrap items-center justify-between gap-3">
+							<div class="flex flex-wrap items-center gap-2">
+								{#if hasChoices && item.inboxItem?.choices}
+									{#each item.inboxItem.choices as choice, idx (choice.id)}
+										{#if idx === 0}
+											<button
+												type="button"
+												disabled={controlsDisabled}
+												onclick={() => onChoose(item, choice.id, choice.label)}
+												class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+											>
+												<span class="exec-cta-fill" aria-hidden="true"></span>
+												<span class="exec-cta-inner">
+													<Check class="size-4" aria-hidden="true" />
+													<span>{isBusy ? 'Recording…' : choice.label}</span>
+												</span>
+											</button>
+										{:else}
+											<button
+												type="button"
+												disabled={controlsDisabled}
+												onclick={() => onChoose(item, choice.id, choice.label)}
+												class="triage-secondary-btn inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 px-3.5 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+											>
+												<span>{choice.label}</span>
+											</button>
+										{/if}
+									{/each}
+								{:else if canPrimaryAction && item.decision}
+									<button
+										type="button"
+										disabled={controlsDisabled}
+										onclick={() => onPrimaryAction(item)}
+										class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+									>
+										<span class="exec-cta-fill" aria-hidden="true"></span>
+										<span class="exec-cta-inner">
+											<Check class="size-4" aria-hidden="true" />
+											<span>{isBusy ? 'Working…' : item.decision.primaryAction.label}</span>
+										</span>
+									</button>
+								{:else if isOpenOnly && openParts}
+									<a
+										href="{resolve(openParts.pathname as '/work')}{openParts.suffix}"
+										class="exec-cta min-w-9 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+									>
+										<span class="exec-cta-fill" aria-hidden="true"></span>
+										<span class="exec-cta-inner">
+											<ExternalLink class="size-3.5" aria-hidden="true" />
+											<span>{item.openLabel ?? `Open ${item.workRef ?? 'item'}`}</span>
+										</span>
+									</a>
+								{/if}
+
+								{#if canDeny && !isDenying}
+									<button
+										bind:this={denyBtnEl}
+										type="button"
+										disabled={controlsDisabled}
+										onclick={() => onArmDeny(item.id)}
+										class="triage-deny-btn inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 px-3.5 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+									>
+										<Ban class="size-3.5 shrink-0" aria-hidden="true" />
+										<span>{item.decision?.secondaryAction?.label ?? 'Deny'}</span>
+									</button>
+								{/if}
 							</div>
-							<label class="sr-only" for="triage-deny-reason-{item.id}">
-								Optional reason for {item.actorName}
-							</label>
-							<input
-								bind:this={denyInputEl}
-								value={declineReason}
-								oninput={(e) => onDeclineReasonChange(item.id, e.currentTarget.value)}
-								onkeydown={handleDenyInputKeydown}
-								disabled={controlsDisabled}
-								id="triage-deny-reason-{item.id}"
-								type="text"
-								autocomplete="off"
-								placeholder="Optional reason for {item.actorName}… (Enter to confirm, Esc to cancel)"
-								class="triage-input min-h-9 w-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
-							/>
+
+							<!-- Desktop keyboard ergonomics hint -->
+							{#if shortcutsEnabled}
+								<div class="triage-kbd-hints hidden items-center gap-2 text-[11px] lg:flex">
+									<span class="inline-flex items-center gap-1">
+										<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">J</kbd>/<kbd
+											class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">K</kbd
+										>
+										<span>navigate</span>
+									</span>
+									{#if isExplicitApprove}
+										<span class="inline-flex items-center gap-1">
+											<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">A</kbd>
+											<span>approve</span>
+										</span>
+									{/if}
+									{#if canDeny}
+										<span class="inline-flex items-center gap-1">
+											<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">D</kbd>
+											<span>deny</span>
+										</span>
+									{/if}
+								</div>
+							{/if}
 						</div>
+
+						<!-- Two-step Inline Deny Confirmation Guard -->
+						{#if canDeny && isDenying}
+							<div
+								{@attach denyGuardEscape}
+								class="triage-deny-guard flex w-full flex-col gap-2.5 p-3.5"
+								role="group"
+								aria-label="Confirm deny"
+							>
+								<div class="flex flex-wrap items-center justify-between gap-2">
+									<span
+										class="triage-deny-label inline-flex items-center gap-1.5 text-xs font-semibold"
+									>
+										<Ban class="size-3.5 shrink-0" aria-hidden="true" />
+										<span>Confirm deny?</span>
+									</span>
+									<div class="flex items-center gap-2">
+										<button
+											type="button"
+											disabled={controlsDisabled}
+											onclick={() => void handleCancelDeny()}
+											class="triage-keep-btn inline-flex min-h-9 min-w-9 items-center justify-center px-3 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+										>
+											Keep
+										</button>
+										<button
+											type="button"
+											disabled={controlsDisabled}
+											onclick={() => onSecondaryAction(item)}
+											class="triage-deny-confirm inline-flex min-h-9 min-w-9 items-center justify-center px-3 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+										>
+											{isBusy ? 'Denying…' : 'Confirm deny'}
+										</button>
+									</div>
+								</div>
+								<label class="sr-only" for="triage-deny-reason-{item.id}">
+									Optional reason for {item.actorName}
+								</label>
+								<input
+									bind:this={denyInputEl}
+									value={declineReason}
+									oninput={(e) => onDeclineReasonChange(item.id, e.currentTarget.value)}
+									onkeydown={handleDenyInputKeydown}
+									disabled={controlsDisabled}
+									id="triage-deny-reason-{item.id}"
+									type="text"
+									autocomplete="off"
+									placeholder="Optional reason for {item.actorName}… (Enter to confirm, Esc to cancel)"
+									class="triage-input min-h-9 w-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+								/>
+							</div>
+						{/if}
 					{/if}
-				{/if}
+				</div>
 			</div>
+
+			<!-- Activity: Interactive Comments + Request History Timeline -->
+			<section class="triage-activity" aria-labelledby="triage-activity-title">
+				<h3 id="triage-activity-title">Activity</h3>
+
+				<form class="triage-comment-form" onsubmit={handleCommentSubmit}>
+					<label class="sr-only" for="triage-comment">Comment on this request</label>
+					<textarea
+						bind:this={commentInputEl}
+						id="triage-comment"
+						name="comment"
+						rows="2"
+						maxlength={MAX_INBOX_COMMENT_LENGTH}
+						placeholder="Leave a comment…"
+						value={activeCommentDraft}
+						oninput={(e) => updateCommentDraft(e.currentTarget.value)}
+						required></textarea>
+					<button type="submit" aria-label="Send comment" title="Send comment" class="triage-send">
+						<Send class="size-4" aria-hidden="true" />
+					</button>
+				</form>
+				<p id="triage-comment-status" class="sr-only" role="status">{commentStatus}</p>
+
+				{#if comments.length > 0}
+					<section class="triage-comments" aria-labelledby="triage-comments-title">
+						<h4 id="triage-comments-title">Comments</h4>
+						<ol class="triage-comment-list" role="list" aria-labelledby="triage-comments-title">
+							{#each comments as entry (entry.id)}
+								<li>
+									<span class="triage-comment-av" aria-hidden="true">Y</span>
+									<div>
+										<p>
+											<strong>You</strong>
+											<time class="triage-event-time" datetime={new Date(entry.at).toISOString()}>
+												{formatCommentTime(entry.at)}
+											</time>
+										</p>
+										<p class="triage-comment-text">{entry.text}</p>
+									</div>
+								</li>
+							{/each}
+						</ol>
+					</section>
+				{/if}
+
+				<div class="triage-history">
+					<h4 id="triage-history-title">Request history</h4>
+					<ol class="triage-activity-log" role="list" aria-labelledby="triage-history-title">
+						<li>
+							<span class="triage-event-marker" aria-hidden="true">
+								<Inbox class="size-4" />
+							</span>
+							<p>
+								<strong>{item.actorName}</strong> opened this request
+								<span class="triage-event-time">{item.ageLabel}</span>
+							</p>
+						</li>
+
+						{#if item.state === 'open'}
+							<li>
+								<span class="triage-event-marker" aria-hidden="true">
+									<Clock class="size-4" />
+								</span>
+								<p>
+									{item.category === 'approval' ? 'Waiting for approval' : 'Waiting for your input'}
+								</p>
+							</li>
+						{/if}
+
+						{#each item.auditChecks as chk, idx (`${idx}-${chk}`)}
+							<li>
+								<span class="triage-event-marker" aria-hidden="true">
+									<CheckCircle2 class="size-4" />
+								</span>
+								<p><span class="sr-only">Audit entry. </span>{chk}</p>
+							</li>
+						{/each}
+
+						{#if item.state === 'handled' && item.handled}
+							<li>
+								<span class="triage-event-marker" aria-hidden="true">
+									<CheckCircle2 class="size-4" />
+								</span>
+								<p>
+									{item.handled.outcome}{item.handled.by ? ` · by ${item.handled.by}` : ''}
+									<time class="triage-event-time" datetime={item.handled.atIso}>
+										{item.handled.atLabel}
+									</time>
+								</p>
+							</li>
+						{/if}
+					</ol>
+				</div>
+			</section>
 		</article>
 	{/if}
 </section>
 
 <style>
 	.triage-reading {
+		min-width: 0;
+		container: inbox-reading / inline-size;
 		overscroll-behavior-y: contain;
+	}
+	.triage-empty-detail {
+		display: grid;
+		justify-items: start;
+		align-content: start;
+		gap: 6px;
+		padding: 32px;
+		color: var(--exec-muted);
+	}
+	.triage-empty-badge {
+		border-radius: var(--exec-inset-radius);
+		background: var(--exec-accent-soft);
+		color: var(--exec-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
+	.triage-detail-heading {
+		color: var(--exec-ink);
+		font-size: 0.9375rem;
+		font-weight: 600;
+	}
+	.triage-detail-muted {
+		color: var(--exec-muted);
+		font-size: 0.875rem;
+	}
+	.triage-document {
+		max-width: 68rem;
+		width: 100%;
+		margin-inline: auto;
+		padding: clamp(28px, 4.5cqi, 56px) clamp(16px, 5cqi, 56px) 36px;
+		display: flex;
+		flex-direction: column;
+		gap: clamp(16px, 2.4cqi, 24px);
+		color: var(--exec-ink);
+		font-size: 0.9375rem;
+		line-height: 1.6;
 	}
 	.triage-back {
 		display: none;
-		border-radius: var(--exec-ctrl-radius);
-		background: var(--exec-btn-outline-bg);
-		color: var(--exec-btn-outline-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring);
+		color: var(--exec-body);
 		cursor: pointer;
 	}
 	.triage-back:hover {
-		background: var(--exec-btn-outline-bg-hover);
-		color: var(--exec-btn-outline-ink-hover);
-		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring-hover);
+		color: var(--exec-ink);
 	}
 	@media (max-width: 959px) {
+		.triage-document {
+			padding-block-start: 12px;
+		}
 		.triage-back {
 			display: inline-flex;
 		}
 	}
-	.triage-ink {
-		color: var(--exec-ink);
+	.triage-intro {
+		display: grid;
+		gap: 8px;
 	}
-	.triage-body {
+	.triage-from {
+		display: flex;
+		align-items: baseline;
+		flex-wrap: wrap;
+		gap: 3px 6px;
 		color: var(--exec-body);
+		font-size: 0.875rem;
 	}
-	.triage-detail-muted,
-	.triage-kicker,
-	.triage-field-label,
-	.triage-kbd-hints {
+	.triage-from-time {
 		color: var(--exec-muted);
+		font-size: 0.75rem;
 	}
-	.triage-detail-heading {
+	.triage-from-member {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+	}
+	.triage-from-link {
+		display: inline-flex;
+		align-items: center;
 		color: var(--exec-ink);
+		font-weight: 600;
+		text-decoration: none;
 	}
-	.triage-empty-badge {
+	.triage-from-link:is(:hover, :focus-visible) {
+		text-decoration: underline;
+	}
+	.triage-from-card {
+		position: absolute;
+		z-index: 10;
+		inset-block-start: 100%;
+		inset-inline-start: 0;
+		display: none;
+		align-items: center;
+		gap: 10px;
+		width: max-content;
+		max-width: min(18rem, 65cqi);
+		padding: 9px 12px;
+		border: 1px solid var(--exec-border-hi);
 		border-radius: var(--exec-inset-radius);
-		background: var(--exec-ok-bg);
-		color: var(--exec-ok);
-		box-shadow: inset 0 0 0 1px var(--exec-ok-ring);
+		background: var(--popover);
+		box-shadow: 0 8px 24px color-mix(in srgb, var(--shade) 24%, transparent);
+		color: var(--exec-body);
+		font-size: 0.75rem;
+		line-height: 1.45;
 	}
-	.triage-avatar-lg {
+	.triage-from-member:not([data-preview-dismissed]):is(:hover, :focus-within) .triage-from-card {
+		display: flex;
+	}
+	.triage-from-card strong {
+		display: block;
+		color: var(--exec-ink);
+		font-size: 0.875rem;
+		font-weight: 600;
+	}
+	.triage-from-av {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		flex: none;
+		border-radius: 9999px;
 		background: var(--exec-avatar-bg);
 		color: var(--exec-ink);
 		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+		font-size: 0.75rem;
+		font-weight: 700;
 	}
-	.triage-agent-dot {
-		background: var(--tone-warn);
-		box-shadow: 0 0 0 2px var(--exec-surface);
-	}
-	.triage-status-needs {
-		color: var(--exec-warn);
-	}
-	.triage-status-handled.is-ok {
-		color: var(--exec-ok);
-	}
-	.triage-status-handled.is-denied {
-		color: var(--exec-bad);
-	}
-	.triage-title {
+	.triage-detail-title {
 		color: var(--exec-ink);
-		font-size: clamp(1.25rem, 1.7vw, 1.55rem);
-		line-height: 1.28;
-		letter-spacing: -0.02em;
+		font-size: clamp(1.5rem, 3.5cqi, 1.875rem);
+		line-height: 1.22;
+		letter-spacing: -0.025em;
 		overflow-wrap: anywhere;
 	}
-	.triage-title:focus {
+	.triage-detail-title:focus {
 		outline: none;
 	}
-	.triage-title:focus-visible {
+	.triage-detail-title:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: 2px;
 	}
-	.triage-why {
+	.triage-description {
+		max-width: 75ch;
 		color: var(--exec-body);
 		overflow-wrap: anywhere;
 	}
-	.triage-callout {
-		border-radius: var(--exec-inset-radius);
+	.triage-context,
+	.triage-decision {
+		display: grid;
+		min-width: 0;
+		gap: 12px;
 	}
-	.triage-callout.tone-ok {
-		background: var(--exec-ok-bg);
-		box-shadow:
-			inset 3px 0 0 var(--tone-ok),
-			inset 0 0 0 1px var(--exec-ok-ring);
-	}
-	.triage-callout.tone-ok .triage-callout-icon,
-	.triage-callout.tone-ok .triage-callout-kicker {
-		color: var(--exec-ok);
-	}
-	.triage-callout.tone-warn {
-		background: var(--exec-warn-bg);
-		box-shadow:
-			inset 3px 0 0 var(--tone-warn),
-			inset 0 0 0 1px var(--exec-warn-ring);
-	}
-	.triage-callout.tone-warn .triage-callout-icon,
-	.triage-callout.tone-warn .triage-callout-kicker {
-		color: var(--exec-warn);
-	}
-	.triage-callout.tone-accent {
-		background: var(--exec-accent-soft);
-		box-shadow:
-			inset 3px 0 0 var(--tone-accent),
-			inset 0 0 0 1px var(--exec-accent-ring);
-	}
-	.triage-callout.tone-accent .triage-callout-icon,
-	.triage-callout.tone-accent .triage-callout-kicker {
-		color: var(--exec-accent-ink);
-	}
-	.triage-fields {
+	.triage-context {
+		padding-block: 12px 14px;
 		border-block: 1px solid var(--exec-border);
 	}
-	.triage-project-chip {
-		border-radius: var(--exec-ctrl-radius);
-		background: var(--exec-accent-soft);
-		color: var(--exec-accent-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
-		cursor: pointer;
-		transition: background-color 120ms ease-out;
-	}
-	.triage-project-chip:hover {
-		background: var(--tone-accent-bg);
+	.triage-context h3 {
 		color: var(--exec-ink);
+		font-size: 0.875rem;
+		font-weight: 600;
 	}
-	.triage-copy-pill {
-		border-radius: var(--exec-ctrl-radius);
-		background: var(--exec-well);
+	.triage-fields {
+		display: grid;
+		gap: 10px 16px;
+	}
+	.triage-fields > div {
+		display: grid;
+		min-width: 0;
+		align-content: start;
+		gap: 2px;
+	}
+	@container inbox-reading (max-width: 29.99rem) {
+		.triage-fields > div {
+			grid-template-columns: minmax(5.25rem, 24%) minmax(0, 1fr);
+			align-items: baseline;
+			gap: 8px;
+		}
+	}
+	@container inbox-reading (min-width: 30rem) {
+		.triage-fields {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+	@container inbox-reading (min-width: 47rem) {
+		.triage-fields {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+	}
+	.triage-fields dt {
+		color: var(--exec-body);
+		font-size: 0.8125rem;
+		font-weight: 600;
+	}
+	.triage-fields dd {
+		display: flex;
+		align-items: baseline;
+		flex-wrap: wrap;
+		gap: 4px 8px;
+		min-width: 0;
 		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+		font-size: 0.875rem;
+		overflow-wrap: anywhere;
+	}
+	.triage-fields dd.triage-expiry {
+		color: var(--tone-warn-ink);
+	}
+	.triage-link {
+		color: var(--link);
+		text-decoration: none;
+	}
+	.triage-link:is(:hover, :focus-visible) {
+		text-decoration: underline;
+	}
+	.triage-copy {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		min-height: 28px;
+		padding: 0 7px;
+		border: 1px solid var(--exec-border-hi);
+		border-radius: 6px;
+		background: transparent;
+		color: var(--exec-ink);
+		font-size: 0.75rem;
+		font-weight: 500;
 		cursor: pointer;
-		max-width: 100%;
-		transition:
-			background-color 120ms ease-out,
-			color 120ms ease-out,
-			box-shadow 120ms ease-out;
 	}
-	.triage-copy-pill:hover {
-		background: var(--exec-surface-hi);
+	.triage-copy:hover {
+		background: var(--exec-btn-ghost-bg-hover);
 	}
-	.triage-copy-pill.is-copied {
+	.triage-copy.is-copied {
 		background: var(--exec-ok-bg);
 		color: var(--exec-ok);
-		box-shadow: inset 0 0 0 1px var(--exec-ok-ring);
+		border-color: var(--exec-ok-ring);
 	}
-	.triage-expiry-pill {
-		border-radius: var(--exec-pill-radius);
-		background: var(--exec-warn-bg);
-		color: var(--exec-warn);
-		box-shadow: var(--exec-pill-ring-warn);
-	}
-	.triage-audit {
+	.recommendation {
+		--recommendation-ink: var(--exec-body);
+		--recommendation-ring: var(--exec-border-hi);
+		--recommendation-fill: var(--exec-well);
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 12px 14px;
+		border: 1px solid var(--recommendation-ring);
+		border-inline-start: 3px solid var(--recommendation-ink);
 		border-radius: var(--exec-inset-radius);
-		background: var(--exec-well);
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+		background: var(--recommendation-fill);
+		color: var(--exec-ink);
+		font-size: 0.875rem;
+		line-height: 1.5;
+		overflow-wrap: anywhere;
 	}
-	.triage-audit-summary {
-		cursor: pointer;
-		list-style: none;
+	.recommendation p {
+		max-width: 64ch;
 	}
-	.triage-audit-summary::-webkit-details-marker {
-		display: none;
+	.recommendation[data-tone='ok'] {
+		--recommendation-ink: var(--tone-ok-ink);
+		--recommendation-ring: var(--tone-ok-ring);
+		--recommendation-fill: var(--tone-ok-bg);
 	}
-	.triage-audit-chevron {
+	.recommendation[data-tone='warn'] {
+		--recommendation-ink: var(--tone-warn-ink);
+		--recommendation-ring: var(--tone-warn-ring);
+		--recommendation-fill: var(--tone-warn-bg);
+	}
+	.recommendation[data-tone='bad'] {
+		--recommendation-ink: var(--tone-bad-ink);
+		--recommendation-ring: var(--tone-bad-ring);
+		--recommendation-fill: var(--tone-bad-bg);
+	}
+	.recommendation-ico,
+	.recommendation-label {
+		color: var(--recommendation-ink);
+	}
+	.recommendation-ico {
+		display: inline-flex;
+		flex: none;
+		margin-top: 1px;
+	}
+	.recommendation-label {
+		margin-bottom: 3px;
+		font-size: 0.75rem;
+		font-weight: 650;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+	.triage-actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+	}
+	.triage-ink {
+		color: var(--exec-ink);
+	}
+	.triage-kbd-hints {
 		color: var(--exec-muted);
-		transition: transform 140ms ease-out;
-	}
-	.triage-audit[open] .triage-audit-chevron {
-		transform: rotate(90deg);
-	}
-	.triage-audit-dot {
-		background: var(--tone-ok);
-	}
-	.triage-audit-row {
-		border-top: 1px solid var(--exec-border);
-	}
-	.triage-audit-ok {
-		color: var(--exec-ok);
-	}
-	.triage-action-wrap {
-		border-top: 1px solid var(--exec-border);
 	}
 	.triage-secondary-btn {
 		border-radius: var(--exec-ctrl-radius);
@@ -843,15 +1138,6 @@
 		background: var(--exec-deny-bg-hover);
 		color: var(--exec-deny-ink-hover);
 		box-shadow: inset 0 0 0 1px var(--exec-deny-ring-hover);
-	}
-	.triage-ghost-link {
-		border-radius: var(--exec-ctrl-radius);
-		color: var(--exec-accent-ink);
-		transition: background-color 120ms ease-out;
-	}
-	.triage-ghost-link:hover {
-		background: var(--exec-btn-ghost-bg-hover);
-		color: var(--exec-ink);
 	}
 	.triage-deny-guard {
 		border-radius: var(--exec-inset-radius);
@@ -924,13 +1210,160 @@
 		font-weight: 600;
 	}
 
+	/* Activity: Comments + Request History Timeline */
+	.triage-activity {
+		padding-block-start: 24px;
+		border-top: 1px solid var(--exec-border);
+	}
+	.triage-activity > h3 {
+		margin-block-end: 14px;
+		color: var(--exec-ink);
+		font-size: 1.125rem;
+		font-weight: 600;
+	}
+	.triage-activity h4 {
+		margin-block-end: 8px;
+		color: var(--exec-ink);
+		font-size: 1rem;
+		font-weight: 600;
+	}
+	.triage-comments,
+	.triage-history {
+		margin-block-start: 24px;
+	}
+	.triage-comment-form {
+		display: grid;
+		justify-items: end;
+		gap: 6px;
+		padding: 10px 12px;
+		border: 1px solid var(--exec-border-hi);
+		border-radius: var(--exec-inset-radius);
+		background: var(--exec-well);
+	}
+	.triage-comment-form:has(textarea:focus-visible) {
+		border-color: var(--focus);
+		outline: 2px solid var(--focus);
+		outline-offset: -1px;
+	}
+	.triage-comment-form textarea {
+		width: 100%;
+		min-width: 0;
+		min-height: calc(2lh + 4px);
+		resize: vertical;
+		padding: 2px 0;
+		border: 0;
+		outline: none;
+		background: transparent;
+		-webkit-backdrop-filter: none;
+		backdrop-filter: none;
+		box-shadow: none;
+		color: var(--exec-ink);
+		font: inherit;
+	}
+	@supports (field-sizing: content) {
+		.triage-comment-form textarea {
+			field-sizing: content;
+			resize: none;
+		}
+	}
+	.triage-comment-form textarea::placeholder {
+		color: var(--exec-muted);
+		opacity: 1;
+	}
+	.triage-send {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		min-height: 36px;
+		border-radius: var(--exec-ctrl-radius);
+		background: var(--exec-btn-outline-bg);
+		color: var(--exec-btn-outline-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring);
+		cursor: pointer;
+		transition: background-color 120ms ease-out;
+	}
+	.triage-send:hover {
+		background: var(--exec-btn-outline-bg-hover);
+		color: var(--exec-btn-outline-ink-hover);
+	}
+	.triage-activity-log li,
+	.triage-comment-list li {
+		position: relative;
+		display: grid;
+		grid-template-columns: 24px minmax(0, 1fr);
+		align-items: start;
+		gap: 10px;
+		min-height: 42px;
+		padding-block: 8px;
+		color: var(--exec-body);
+		font-size: 0.875rem;
+		overflow-wrap: anywhere;
+	}
+	.triage-activity-log li:not(:last-child)::after {
+		content: '';
+		position: absolute;
+		inset-block: 33px 1px;
+		inset-inline-start: 11px;
+		width: 1px;
+		background: var(--exec-border-hi);
+	}
+	.triage-event-marker {
+		display: grid;
+		place-items: center;
+		width: 24px;
+		height: 24px;
+		color: var(--exec-muted);
+	}
+	.triage-comment-av {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		border-radius: 9999px;
+		background: var(--exec-avatar-bg);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+		font-size: 0.6875rem;
+		font-weight: 700;
+	}
+	.triage-activity strong {
+		color: var(--exec-ink);
+		font-weight: 600;
+	}
+	.triage-event-time {
+		margin-inline-start: 8px;
+		color: var(--exec-muted);
+		font-size: 0.75rem;
+	}
+	.triage-comment-text {
+		margin-block-start: 4px;
+		white-space: pre-wrap;
+	}
+
+	@media (max-width: 720px), (pointer: coarse) {
+		.triage-from-link,
+		.triage-copy,
+		.triage-send {
+			min-height: 44px;
+		}
+		.triage-copy,
+		.triage-send {
+			min-width: 44px;
+		}
+		.triage-send {
+			width: 44px;
+		}
+	}
+
 	.triage-back:focus-visible,
-	.triage-project-chip:focus-visible,
-	.triage-copy-pill:focus-visible,
-	.triage-audit-summary:focus-visible,
+	.triage-from-link:focus-visible,
+	.triage-link:focus-visible,
+	.triage-copy:focus-visible,
+	.triage-send:focus-visible,
 	.triage-secondary-btn:focus-visible,
 	.triage-deny-btn:focus-visible,
-	.triage-ghost-link:focus-visible,
 	.triage-keep-btn:focus-visible,
 	.triage-deny-confirm:focus-visible {
 		outline: 2px solid var(--focus);
@@ -938,32 +1371,29 @@
 	}
 
 	@media (forced-colors: active) {
-		.triage-callout,
-		.triage-audit,
+		.recommendation,
 		.triage-deny-guard,
-		.triage-project-chip,
-		.triage-copy-pill,
+		.triage-copy,
+		.triage-send,
 		.triage-back,
-		.triage-ghost-link,
 		.triage-secondary-btn,
 		.triage-deny-btn,
 		.triage-keep-btn,
 		.triage-deny-confirm,
-		.triage-action-wrap :global(.exec-cta) {
+		.triage-actions :global(.exec-cta) {
 			border: 1px solid ButtonText;
 		}
-		.triage-input {
+		.triage-input,
+		.triage-comment-form {
 			border: 1px solid CanvasText;
 		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.triage-audit-chevron,
-		.triage-project-chip,
-		.triage-copy-pill,
+		.triage-copy,
+		.triage-send,
 		.triage-secondary-btn,
-		.triage-deny-btn,
-		.triage-ghost-link {
+		.triage-deny-btn {
 			transition: none;
 		}
 	}

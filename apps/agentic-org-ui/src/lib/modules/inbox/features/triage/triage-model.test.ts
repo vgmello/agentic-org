@@ -8,10 +8,16 @@ import {
 	groupTriageItems,
 	highlightSegments,
 	isDeniedOutcome,
+	isOverflowTab,
 	neighborCandidatesAfterResolve,
 	nextSelectionAfterResolve,
 	openWaitingCount,
+	OVERFLOW_TABS,
+	parseInboxCommentsJson,
 	parseTriageTab,
+	PRIMARY_TABS,
+	queueSummaryLabel,
+	sanitizeOpenHref,
 	splitHref,
 	triageScopeOptions,
 	triageTabCounts
@@ -350,5 +356,83 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 			suffix: '?request=r1#sec[1]'
 		});
 		expect(splitHref('/work/T-121')).toEqual({ pathname: '/work/T-121', suffix: '' });
+	});
+
+	it('keeps three primary tabs, four overflow tabs, and accurate queue summary labels (cd5128ae)', () => {
+		expect(PRIMARY_TABS.map((t) => t.id)).toEqual(['all', 'approvals', 'decisions']);
+		expect(OVERFLOW_TABS.map((t) => t.id)).toEqual(['questions', 'problems', 'work', 'handled']);
+		expect(isOverflowTab('all')).toBe(false);
+		expect(isOverflowTab('approvals')).toBe(false);
+		expect(isOverflowTab('decisions')).toBe(false);
+		expect(isOverflowTab('questions')).toBe(true);
+		expect(isOverflowTab('problems')).toBe(true);
+		expect(isOverflowTab('work')).toBe(true);
+		expect(isOverflowTab('handled')).toBe(true);
+
+		expect(queueSummaryLabel('all', 'priority')).toBe('Priority first');
+		expect(queueSummaryLabel('approvals', 'date')).toBe('By date');
+		expect(queueSummaryLabel('handled', 'priority')).toBe('Handled items');
+		expect(queueSummaryLabel('questions', 'date')).toBe('Questions');
+		expect(queueSummaryLabel('problems', 'priority')).toBe('Problems');
+		expect(queueSummaryLabel('work', 'priority')).toBe('Work');
+	});
+
+	it('supports By date sorting and grouping without Urgent split', () => {
+		const byDate = filterTriageItems(allItems, {
+			tab: 'all',
+			urgentOnly: false,
+			scope: {},
+			search: '',
+			order: 'date'
+		});
+		expect(byDate.map((i) => i.id)).toEqual([
+			'in-urgent',
+			'w-req1',
+			'in-today',
+			'in-problem',
+			'in-earlier'
+		]);
+
+		const dateGroups = groupTriageItems(byDate, 'all', NOW, 'date');
+		expect(dateGroups.map((g) => g.key)).toEqual(['today', 'earlier']);
+		expect(dateGroups[0].items.map((i) => i.id)).toEqual([
+			'in-urgent',
+			'w-req1',
+			'in-today',
+			'in-problem'
+		]);
+		expect(dateGroups[1].items.map((i) => i.id)).toEqual(['in-earlier']);
+	});
+
+	it('guards openHref and workHref against unbuilt /work/<ref> paths', () => {
+		const urgent = allItems.find((i) => i.id === 'in-urgent');
+		expect(urgent?.actorId).toBe('ada');
+		expect(urgent?.workHref).toBe('/projects/v1/work');
+		expect(urgent?.openHref).toBe('/projects/v1/work');
+		expect(urgent?.relatedHref).toBeUndefined();
+
+		expect(sanitizeOpenHref('/work/T-121', 'agency-v1')).toBe('/projects/agency-v1/work');
+		expect(sanitizeOpenHref('/work/BUG-84', undefined)).toBe('/work');
+		expect(sanitizeOpenHref('/settings/offices', 'agency-v1')).toBe('/settings/offices');
+		expect(sanitizeOpenHref('/work?request=r1', 'agency-v1')).toBe('/work?request=r1');
+		expect(sanitizeOpenHref(undefined, 'agency-v1')).toBeUndefined();
+	});
+
+	it('validates stored Inbox comments defensively and sorts chronologically', () => {
+		const raw = JSON.stringify([
+			{ id: 'c2', text: 'Second note', at: 2000 },
+			{ id: 'bad-blank', text: '   ', at: 1500 },
+			{ id: 'bad-long', text: 'x'.repeat(2001), at: 1600 },
+			{ id: 'bad-at', text: 'Nope', at: Number.NaN },
+			{ id: 'c1', text: '  First note  ', at: 1000 },
+			null,
+			'not-an-object'
+		]);
+		expect(parseInboxCommentsJson(raw)).toEqual([
+			{ id: 'c1', text: 'First note', at: 1000 },
+			{ id: 'c2', text: 'Second note', at: 2000 }
+		]);
+		expect(parseInboxCommentsJson('not json')).toEqual([]);
+		expect(parseInboxCommentsJson(null)).toEqual([]);
 	});
 });

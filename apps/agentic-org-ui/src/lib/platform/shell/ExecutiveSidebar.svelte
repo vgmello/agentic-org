@@ -519,9 +519,8 @@
 			background-color 0.14s ease,
 			color 0.14s ease;
 	}
-	.exec-icon-btn.is-pinned {
-		color: var(--exec-accent-ink);
-		background: var(--exec-accent-soft);
+	.exec-icon-btn:hover {
+		color: var(--exec-ink);
 	}
 	.exec-fav-unpin {
 		color: var(--tone-warn);

@@ -548,3 +548,113 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 		await page.screenshot({ path: `${captureDir}/poc-mirror-work-sheet-report.png` });
 	}
 });
+
+test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite surfaces, member card Escape, comments persistence, and dark CmdK contrast', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await visit(page, '/inbox?theme=graphite&mock=poc');
+
+	// Graphite Inbox matte surfaces & interior sidebar text hierarchy (13abb1f1, 1f5f7149..e75d920a)
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
+	await expect(page.locator('html')).toHaveAttribute('data-interior-page');
+	await expect(page.locator('aside.exec-sidebar')).toHaveCSS('background-color', 'rgb(19, 21, 22)');
+	await expect(page.locator('.triage-queue')).toHaveCSS('background-color', 'rgb(23, 24, 25)');
+	await expect(page.locator('.exec-nav-label').first()).toHaveCSS('color', 'rgb(133, 136, 142)');
+
+	// 3 primary categories only (All, Approvals, Decisions) + More trigger keeps "More" label
+	const catGroup = page.getByRole('group', { name: 'Inbox categories' });
+	const primaryButtons = catGroup.locator(':scope > button.queue-tab');
+	await expect(primaryButtons).toHaveCount(3);
+	await expect(primaryButtons.nth(0)).toContainText('All');
+	await expect(primaryButtons.nth(1)).toContainText('Approvals');
+	await expect(primaryButtons.nth(2)).toContainText('Decisions');
+
+	const moreTrigger = catGroup.getByRole('button', { name: 'More' });
+	await moreTrigger.click();
+	await expect(page.getByRole('menuitemradio', { name: /Questions/ })).toBeVisible();
+	await expect(page.getByRole('menuitemradio', { name: /Problems/ })).toBeVisible();
+	await expect(page.getByRole('menuitemradio', { name: /Work/ })).toBeVisible();
+	await page.getByRole('menuitemradio', { name: /Handled/ }).click();
+
+	await expect(moreTrigger).toHaveText('More');
+	await expect(moreTrigger).toHaveAttribute('data-current-kind', '');
+	await expect(moreTrigger).toHaveAttribute('title', 'Viewing Handled');
+	await expect(page.locator('.triage-queue-summary')).toContainText('Handled items');
+
+	// Switch back to All
+	await primaryButtons.nth(0).click();
+	await expect(page.locator('.triage-queue-summary')).toContainText('Priority first');
+
+	// Filter inbox menu: Urgent only -> active indicator -> Reset filters
+	const filterBtn = page.getByRole('button', { name: 'Filter inbox' });
+	await filterBtn.click();
+	await page.getByRole('menuitemradio', { name: 'Urgent only' }).click();
+	await expect(filterBtn).toHaveAttribute('data-active', '');
+	await filterBtn.click();
+	await page.getByRole('menuitem', { name: 'Reset filters' }).click();
+	await expect(filterBtn).not.toHaveAttribute('data-active');
+
+	// Inbox display menu: By date grouping + Row dividers checkbox persisted across reload
+	const displayBtn = page.getByRole('button', { name: 'Inbox display' });
+	await displayBtn.click();
+	await page.getByRole('menuitemradio', { name: 'By date' }).click();
+	await expect(page.locator('.triage-queue-summary')).toContainText('By date');
+	await expect(displayBtn).toHaveAttribute('data-active', '');
+
+	await displayBtn.click();
+	await page.getByRole('menuitemcheckbox', { name: 'Row dividers' }).click();
+	await expect(page.locator('.triage-workspace')).toHaveAttribute('data-inbox-dividers', '');
+	await page.keyboard.press('Escape');
+
+	// Select a specific item so ?item= persists across reload
+	await page.locator('[data-triage-row="in1"]').click();
+	await expect(page).toHaveURL(/item=in1/);
+
+	// Member hover/focus preview card + Escape dismissal (WCAG 1.4.13)
+	const memberLink = page.locator('.triage-from-link').first();
+	const memberWrap = page.locator('.triage-from-member').first();
+	const memberCard = memberWrap.locator('.triage-from-card');
+	await memberLink.focus();
+	await expect(memberCard).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(memberWrap).toHaveAttribute('data-preview-dismissed', '');
+	await expect(memberCard).toBeHidden();
+
+	// Post an Inbox comment and verify persistence across reload alongside Row dividers
+	const commentBox = page.getByLabel('Comment on this request');
+	await commentBox.fill('Verified release notes and rollback plan.');
+	await page.getByRole('button', { name: 'Send comment' }).click();
+	await expect(page.locator('.triage-comment-list')).toContainText(
+		'Verified release notes and rollback plan.'
+	);
+
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(page.locator('.triage-workspace')).toHaveAttribute('data-inbox-dividers', '');
+	await expect(page.locator('.triage-comment-list')).toContainText(
+		'Verified release notes and rollback plan.'
+	);
+
+	// Dark Command Dialog contrast in Classic & Report Night (ffe0e0ce)
+	for (const [themeLabel, themeId] of [
+		['Classic', 'classic'],
+		['Night', 'report-dark']
+	] as const) {
+		await page
+			.getByRole('group', { name: 'Theme' })
+			.getByRole('button', { name: themeLabel, exact: true })
+			.click();
+		await expect(page.locator('html')).toHaveAttribute('data-ui-theme', themeId);
+		await page.getByRole('button', { name: 'Ask', exact: true }).click();
+		const dialog = page.locator('.exec-cmdk-dialog');
+		await expect(dialog).toBeVisible();
+		await expect(dialog).toHaveCSS('border-top-color', 'rgb(131, 147, 171)');
+		await expect(dialog.locator('.exec-cmdk-tabs')).toHaveCSS(
+			'background-color',
+			'rgb(52, 68, 90)'
+		);
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeHidden();
+	}
+});

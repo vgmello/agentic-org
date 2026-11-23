@@ -206,6 +206,52 @@ html[data-ui-theme='classic'] .exec-cta .exec-cta-sheen {
 	display: none;
 }
 
+/* Separate the workspace command dialog from the dark page behind it (poc/v6.html ffe0e0ce) */
+html[data-ui-theme='classic'] .exec-cmdk-dialog {
+	background-color: #182230;
+	border: 1px solid #8393ab;
+	box-shadow: 0 24px 60px -16px rgba(0, 0, 0, 0.58);
+}
+
+html[data-ui-theme='classic'] .exec-cmdk-tabs {
+	background: #34445a;
+	border-bottom-color: #8b9cb3;
+}
+
+html[data-ui-theme='classic'] .exec-cmdk-tab-grp {
+	background: #222e41;
+	box-shadow: inset 0 0 0 1px #56667d;
+}
+
+html[data-ui-theme='classic'] .exec-cmdk-tab {
+	color: #d9e1ec;
+}
+
+html[data-ui-theme='classic'] .exec-cmdk-tab:hover {
+	color: #ffffff;
+}
+
+html[data-ui-theme='classic'] .exec-cmdk-tab[aria-selected='true'] {
+	background: #414673;
+	color: #ffffff;
+	box-shadow: inset 0 0 0 1px #93a1d8;
+}
+
+html[data-ui-theme='classic'] .exec-cmdk-tab[aria-selected='true'] svg {
+	color: var(--tone-accent-ink);
+}
+
+html[data-ui-theme='classic'] .exec-cmdk-close {
+	background: #26354a;
+	color: #e5eaf1;
+	box-shadow: inset 0 0 0 1px #8999af;
+}
+
+html[data-ui-theme='classic'] .exec-cmdk-close:hover {
+	background: #41546d;
+	color: #ffffff;
+}
+
 /* Settings preview swatch */
 .swatch-classic {
 	background: #1e2939;
