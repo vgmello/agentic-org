@@ -35,6 +35,15 @@ function createFakeWindow(initialHref: string, initialState: unknown, initialLen
 			},
 			go(delta: number) {
 				goCalls.push(delta);
+			},
+			replaceState(nextState: unknown, _unused: string, url?: string | URL | null) {
+				state = nextState;
+				if (url != null) href = new URL(String(url), href).href;
+			},
+			pushState(nextState: unknown, _unused: string, url?: string | URL | null) {
+				state = nextState;
+				if (url != null) href = new URL(String(url), href).href;
+				length += 1;
 			}
 		},
 		addEventListener(
@@ -573,24 +582,27 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		unregister();
 	});
 
-	it('captures bubble-phase SvelteKit hashchange stamps after macrotask across both clicked and unindexed fragments', async () => {
+	it('captures bubble-phase SvelteKit hashchange replaceState stamps synchronously with zero timers', async () => {
 		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
-		const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		// Model A: click #a (SvelteKit stamps 11 in bubble phase), unindexed #b, click #a (stamps 12)
+		// Model A: click #a (SvelteKit stamps 11 via replaceState in bubble phase), unindexed #b, click #a (stamps 12)
 		env.dispatchHashChange('http://localhost/teams#a', null, 2);
-		// Simulate SvelteKit's bubble-phase listener stamping sveltekit:history after capture phase
-		env.setEntry('http://localhost/teams#a', { 'sveltekit:history': 11 }, 2);
-		await tick();
+		env.fakeWindow.history.replaceState(
+			{ 'sveltekit:history': 11 },
+			'',
+			'http://localhost/teams#a'
+		);
 
 		env.dispatchHashChange('http://localhost/teams#b', null, 3);
-		await tick();
 
 		env.dispatchHashChange('http://localhost/teams#a', null, 4);
-		env.setEntry('http://localhost/teams#a', { 'sveltekit:history': 12 }, 4);
-		await tick();
+		env.fakeWindow.history.replaceState(
+			{ 'sveltekit:history': 12 },
+			'',
+			'http://localhost/teams#a'
+		);
 
-		// Go Back to unindexed #b
+		// Immediately Back to unindexed #b (no timer flush needed!)
 		env.dispatchPopState('http://localhost/teams#b', null, 4);
 
 		// Open modal on #b and press Back to earlier #a (11): MUST intercept and restore #b
@@ -628,20 +640,20 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		unregister2();
 	});
 
-	it('does not swallow Forward when earlier #a and #b are unindexed and later #a is SvelteKit-indexed', async () => {
+	it('does not swallow Forward when earlier #a and #b are unindexed and later #a is SvelteKit-indexed synchronously', async () => {
 		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
-		const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		// Model B: unindexed #a, unindexed #b, then clicked #a (SvelteKit stamps 11 in bubble phase)
+		// Model B: unindexed #a, unindexed #b, then clicked #a (SvelteKit stamps 11 via replaceState)
 		env.dispatchHashChange('http://localhost/teams#a', null, 2);
-		await tick();
 		env.dispatchHashChange('http://localhost/teams#b', null, 3);
-		await tick();
 		env.dispatchHashChange('http://localhost/teams#a', null, 4);
-		env.setEntry('http://localhost/teams#a', { 'sveltekit:history': 11 }, 4);
-		await tick();
+		env.fakeWindow.history.replaceState(
+			{ 'sveltekit:history': 11 },
+			'',
+			'http://localhost/teams#a'
+		);
 
-		// Go Back to unindexed #b, open modal, press Forward to indexed #a (11)
+		// Immediately Back to unindexed #b, open modal, press Forward to indexed #a (11)
 		env.dispatchPopState('http://localhost/teams#b', null, 4);
 		const routerPop = vi.fn();
 		env.fakeWindow.addEventListener('popstate', routerPop);
@@ -658,6 +670,36 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		env.flushRaf();
 		expect(env.goCalls).toEqual([]);
 		expect(close).not.toHaveBeenCalled();
+		unregister();
+	});
+
+	it('does not duplicate the current anchor slot when a modal opens right after an anchor is stamped', async () => {
+		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
+		env.dispatchHashChange('http://localhost/teams#a', null, 2);
+		// Even if state were updated without replaceState wrapper, syncLegacyEntry updates in place
+		env.setEntry('http://localhost/teams#a', { 'sveltekit:history': 11 }, 2);
+
+		const close = vi.fn();
+		const unregister = env.registerModalBack(close);
+
+		// Pressing Back from #a (11) to /teams (10) must compute delta 1 (NOT 2)
+		const backEvent = env.dispatchPopState(
+			'http://localhost/teams',
+			{ 'sveltekit:history': 10 },
+			2
+		);
+		expect(backEvent.stopped).toBe(true);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([1]);
+
+		const returnEvent = env.dispatchPopState(
+			'http://localhost/teams#a',
+			{ 'sveltekit:history': 11 },
+			2
+		);
+		expect(returnEvent.stopped).toBe(true);
+		env.flushRaf();
+		expect(close).toHaveBeenCalledTimes(1);
 		unregister();
 	});
 });

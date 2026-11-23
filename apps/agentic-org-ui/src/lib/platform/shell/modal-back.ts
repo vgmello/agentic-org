@@ -148,8 +148,11 @@ function syncLegacyEntry(entry: LegacyEntry, isPopState = false) {
 	}
 
 	const current = legacyEntries[legacyCursor];
-	if (entry.index !== undefined && current.index !== undefined && entry.index === current.index) {
-		// Same SvelteKit history slot updated via replaceState.
+	if (
+		(entry.index !== undefined && current.index !== undefined && entry.index === current.index) ||
+		(current.index === undefined && entry.index !== undefined && current.href === entry.href)
+	) {
+		// Same history slot updated via replaceState (including SvelteKit stamping sveltekit:history on a fragment).
 		legacyEntries[legacyCursor] = entry;
 		legacyHistoryLength = window.history.length;
 		return;
@@ -180,6 +183,39 @@ export function installModalBack() {
 		legacyEntries = [currentLegacyEntry()];
 		legacyCursor = 0;
 		legacyHistoryLength = window.history.length;
+		// Observe pushState / replaceState synchronously so SvelteKit's post-hashchange
+		// replaceState({ 'sveltekit:history': N }) and route pushes update legacyEntries
+		// immediately with zero timer or microtask race.
+		if (typeof window.history.replaceState === 'function') {
+			const origReplaceState = window.history.replaceState;
+			try {
+				window.history.replaceState = function replaceState(...args) {
+					const result = origReplaceState.apply(this, args);
+					if (!window.navigation && legacyCursor >= 0) {
+						legacyEntries[legacyCursor] = currentLegacyEntry();
+						legacyHistoryLength = window.history.length;
+					}
+					return result;
+				};
+			} catch {
+				// Read-only history property in restricted environments; syncLegacyEntry still guards in-place updates.
+			}
+		}
+		if (typeof window.history.pushState === 'function') {
+			const origPushState = window.history.pushState;
+			try {
+				window.history.pushState = function pushState(...args) {
+					const result = origPushState.apply(this, args);
+					if (!window.navigation) {
+						legacyReturning = undefined;
+						recordLegacyPush(currentLegacyEntry());
+					}
+					return result;
+				};
+			} catch {
+				// Read-only history property; noteModalBackNavigation() keeps cursor synced.
+			}
+		}
 	}
 
 	window.addEventListener(
@@ -187,25 +223,6 @@ export function installModalBack() {
 		() => {
 			if (window.navigation || onModalPopState || legacyReturning) return;
 			syncLegacyEntry(currentLegacyEntry(), true);
-			const recordedHref = window.location.href;
-			const recordedCursor = legacyCursor;
-			// SvelteKit stamps sveltekit:history in its own bubble-phase hashchange listener
-			// (registered after installModalBack). Use a macrotask so we run strictly after the
-			// entire hashchange event dispatch completes (including between-listener microtasks).
-			setTimeout(() => {
-				if (window.navigation || legacyCursor !== recordedCursor) return;
-				const current = legacyEntries[recordedCursor];
-				const idx = sveltekitHistoryIndex(window.history.state);
-				if (
-					current &&
-					current.index === undefined &&
-					current.href === recordedHref &&
-					window.location.href === recordedHref &&
-					idx !== undefined
-				) {
-					legacyEntries[recordedCursor] = { href: recordedHref, index: idx };
-				}
-			}, 0);
 		},
 		{ capture: true }
 	);
