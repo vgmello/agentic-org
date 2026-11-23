@@ -649,7 +649,8 @@
 		background: var(--exec-cmdk-sep);
 	}
 	.exec-ai-btn {
-		height: 34px;
+		height: 36px;
+		min-height: 36px;
 		gap: 7px;
 		border-radius: var(--exec-ai-radius);
 		background: var(--exec-ai-bg);
@@ -677,7 +678,7 @@
 	.exec-ai-btn:focus-visible :global(.exec-ai-ico) {
 		color: var(--exec-ai-ico-hover);
 	}
-	@media (max-width: 639px), (pointer: coarse) {
+	@media (width < 640px), (pointer: coarse) {
 		.exec-topbar {
 			height: auto;
 			min-height: 60px;

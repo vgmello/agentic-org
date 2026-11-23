@@ -7,6 +7,7 @@ import {
 	isUiTheme,
 	normalizeUiTheme,
 	resolveInitialPreferences,
+	uiPrefs,
 	type StorageLike
 } from './ui-preferences.svelte';
 
@@ -166,5 +167,44 @@ describe('ui preferences and 6-theme selection', () => {
 		expect(root.dataset.uiTheme).toBe('graphite');
 		expect(root.classes.has('dark')).toBe(true);
 		expect(root.classes.has('light')).toBe(false);
+	});
+
+	it('hydrates defaults and URL overrides safely when window.localStorage getter throws SecurityError', () => {
+		const hadWindow = 'window' in globalThis;
+		const originalWindow = (globalThis as { window?: unknown }).window;
+		const fakeWindow = { location: { search: '' } };
+		Object.defineProperty(fakeWindow, 'localStorage', {
+			configurable: true,
+			get() {
+				throw new DOMException('blocked', 'SecurityError');
+			}
+		});
+		Object.defineProperty(globalThis, 'window', {
+			configurable: true,
+			writable: true,
+			value: fakeWindow
+		});
+		try {
+			expect(() => uiPrefs.hydrate('')).not.toThrow();
+			expect(uiPrefs.theme).toBe('ocean');
+			expect(uiPrefs.cozyHighContrast).toBe(false);
+
+			expect(() => uiPrefs.hydrate('?theme=graphite')).not.toThrow();
+			expect(uiPrefs.theme).toBe('graphite');
+			expect(() => uiPrefs.setCozyHighContrast(true)).not.toThrow();
+			expect(uiPrefs.cozyHighContrast).toBe(true);
+			uiPrefs.setCozyHighContrast(false);
+			uiPrefs.setTheme('ocean');
+		} finally {
+			if (hadWindow) {
+				Object.defineProperty(globalThis, 'window', {
+					configurable: true,
+					writable: true,
+					value: originalWindow
+				});
+			} else {
+				delete (globalThis as { window?: unknown }).window;
+			}
+		}
 	});
 });

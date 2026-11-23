@@ -110,8 +110,8 @@
 <style>
 	.insights-banner {
 		background: var(--exec-surface);
-		backdrop-filter: var(--exec-blur);
 		-webkit-backdrop-filter: var(--exec-blur);
+		backdrop-filter: var(--exec-blur);
 		box-shadow: var(--exec-shadow);
 		border-radius: 16px;
 	}

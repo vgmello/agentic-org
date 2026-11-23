@@ -55,7 +55,7 @@ html[data-ui-theme='report'] {
 	--line-subtle: #eef1f6;
 	--line: #e2e7ef;
 	--line-strong: #cbd3df;
-	--field-border: #cbd3df;
+	--field-border: #758296;
 
 	--fg: #0b101b;
 	--fg-bright: #0b101b;
@@ -123,7 +123,7 @@ html[data-ui-theme='report'] {
 	--accent-foreground: #0b101b;
 	--destructive: var(--tone-bad);
 	--border: #e2e7ef;
-	--input: #dce2ec;
+	--input: #758296;
 
 	/* Report Day surfaces & typography */
 	--exec-bg: #ffffff;

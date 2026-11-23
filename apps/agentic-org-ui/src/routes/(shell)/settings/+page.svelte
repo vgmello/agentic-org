@@ -15,6 +15,35 @@
 		toast.success(`Theme switched to ${found?.label ?? theme}.`);
 	}
 
+	function handleThemeRadioKeydown(event: KeyboardEvent, index: number) {
+		const count = UI_THEMES.length;
+		let nextIndex: number;
+		switch (event.key) {
+			case 'ArrowRight':
+			case 'ArrowDown':
+				nextIndex = (index + 1) % count;
+				break;
+			case 'ArrowLeft':
+			case 'ArrowUp':
+				nextIndex = (index - 1 + count) % count;
+				break;
+			case 'Home':
+				nextIndex = 0;
+				break;
+			case 'End':
+				nextIndex = count - 1;
+				break;
+			default:
+				return;
+		}
+		event.preventDefault();
+		const nextTheme = UI_THEMES[nextIndex];
+		if (!nextTheme) return;
+		selectTheme(nextTheme.id);
+		const group = (event.currentTarget as HTMLElement | null)?.closest('[role="radiogroup"]');
+		group?.querySelector<HTMLElement>(`[data-testid="theme-option-${nextTheme.id}"]`)?.focus();
+	}
+
 	function toggleCozyHighContrast() {
 		const next = !uiPrefs.cozyHighContrast;
 		uiPrefs.setCozyHighContrast(next);
@@ -46,14 +75,16 @@
 			role="radiogroup"
 			aria-labelledby="settings-theme-h"
 		>
-			{#each UI_THEMES as option (option.id)}
+			{#each UI_THEMES as option, index (option.id)}
 				{@const selected = uiPrefs.theme === option.id}
 				<button
 					type="button"
 					role="radio"
 					aria-checked={selected}
+					tabindex={selected ? 0 : -1}
 					data-testid="theme-option-{option.id}"
 					onclick={() => selectTheme(option.id)}
+					onkeydown={(event) => handleThemeRadioKeydown(event, index)}
 					class={[
 						'theme-card flex min-h-11 flex-col items-start gap-2.5 rounded-xl p-4 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
 						selected && 'is-selected'
@@ -204,7 +235,9 @@
 		.contrast-track {
 			border: 2px solid ButtonText;
 		}
-		.contrast-thumb {
+		.contrast-thumb,
+		.contrast-switch.is-on .contrast-thumb,
+		.contrast-switch[aria-checked='true'] .contrast-thumb {
 			background: ButtonText;
 		}
 	}

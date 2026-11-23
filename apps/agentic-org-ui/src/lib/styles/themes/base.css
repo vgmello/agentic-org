@@ -278,13 +278,15 @@
 
 	/* Home below-fold scroll cue tokens */
 	--exec-scroll-hint-bg: var(--exec-bg);
-	--exec-scroll-hint-ink: var(--exec-muted);
+	--exec-scroll-hint-pill-bg: var(--exec-well);
+	--exec-scroll-hint-ink: var(--exec-body);
 	--exec-scroll-hint-ink-hover: var(--exec-ink);
 }
 
 /* Ocean blends the Home scroll cue transparently over its ambient radial canvas */
 html[data-ui-theme='ocean'] {
 	--exec-scroll-hint-bg: transparent;
+	--exec-scroll-hint-pill-bg: rgba(9, 17, 30, 0.88);
 }
 
 /* Shared semantic status pills */

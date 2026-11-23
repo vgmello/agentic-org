@@ -171,6 +171,15 @@ export function applyUiAttributes(
 	root.classList.toggle('light', isLight);
 }
 
+function safeLocalStorage(): StorageLike | undefined {
+	if (typeof window === 'undefined') return undefined;
+	try {
+		return window.localStorage;
+	} catch {
+		return undefined;
+	}
+}
+
 class UiPreferencesStore {
 	theme = $state<UiTheme>('ocean');
 	cozyHighContrast = $state(false);
@@ -180,7 +189,7 @@ class UiPreferencesStore {
 	#hydrated = false;
 
 	hydrate(search = typeof window !== 'undefined' ? window.location.search : ''): void {
-		const storage = typeof window !== 'undefined' ? window.localStorage : undefined;
+		const storage = safeLocalStorage();
 		const resolved = resolveInitialPreferences({ search, storage });
 		this.theme = resolved.theme;
 		this.cozyHighContrast = resolved.cozyHighContrast;
@@ -259,9 +268,10 @@ class UiPreferencesStore {
 	}
 
 	#save(key: string, value: string): void {
-		if (typeof window === 'undefined') return;
+		const storage = safeLocalStorage();
+		if (!storage) return;
 		try {
-			window.localStorage.setItem(key, value);
+			storage.setItem(key, value);
 		} catch {
 			// Ignore quota / private mode failures.
 		}

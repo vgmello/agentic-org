@@ -26,7 +26,7 @@ html[data-ui-theme='graphite'] {
 	--tone-accent-hi: #b0a7ea;
 	--tone-accent-ink: #bab1f4;
 	--tone-accent-bg: rgba(156, 146, 226, 0.12);
-	--tone-accent-ring: rgba(156, 146, 226, 0.34);
+	--tone-accent-ring: rgba(156, 146, 226, 0.75);
 
 	--tone-ok: #71c598;
 	--tone-ok-bar: #71c598;
@@ -58,7 +58,7 @@ html[data-ui-theme='graphite'] {
 	--line-subtle: #23252a;
 	--line: #282a2e;
 	--line-strong: #35373d;
-	--field-border: #383b42;
+	--field-border: #737782;
 
 	--fg: #f1f1f3;
 	--fg-bright: #f1f1f3;
@@ -121,7 +121,7 @@ html[data-ui-theme='graphite'] {
 	--accent-foreground: #f1f1f3;
 	--destructive: #9f434d;
 	--border: #282a2e;
-	--input: #35373d;
+	--input: #737782;
 
 	/* Graphite matte executive surfaces & crisp radii */
 	--exec-bg: var(--graphite-canvas);
@@ -253,7 +253,8 @@ html[data-ui-theme='graphite'] {
 
 	/* Home scroll cue */
 	--exec-scroll-hint-bg: var(--graphite-canvas);
-	--exec-scroll-hint-ink: #a2a5ad;
+	--exec-scroll-hint-pill-bg: #1b1d20;
+	--exec-scroll-hint-ink: #c6c8ce;
 	--exec-scroll-hint-ink-hover: #f1f1f3;
 }
 
@@ -290,13 +291,15 @@ html[data-ui-theme='graphite'] .exec-nav-item:hover {
 html[data-ui-theme='graphite'] .exec-nav-item.is-active {
 	background: var(--graphite-active);
 	color: var(--exec-ink);
-	box-shadow: none;
+	box-shadow:
+		inset 2px 0 0 #9c92e2,
+		inset 0 0 0 1px #737782;
 }
 
 html[data-ui-theme='graphite'] .exec-theme-pill.is-on {
 	background: var(--graphite-active);
 	color: var(--exec-ink);
-	box-shadow: none;
+	box-shadow: inset 0 0 0 1.5px rgba(156, 146, 226, 0.85);
 }
 
 /* Settings preview swatch */

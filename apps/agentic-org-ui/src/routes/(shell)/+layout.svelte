@@ -28,10 +28,14 @@
 	$effect.pre(() => chatDrafts.syncScope());
 	onDestroy(() => chatDrafts.dispose());
 
-	// Route changes focus the destination heading (app-shell-ux §0), unless the page already moved focus.
+	// Route changes reset main scroll (except popstate/hash) and focus the destination heading (app-shell-ux §0).
 	afterNavigate((move) => {
+		const routeChanged = move.from?.url.pathname !== move.to?.url.pathname;
+		if (routeChanged && move.type !== 'popstate' && !move.to?.url.hash && mainEl) {
+			mainEl.scrollTop = 0;
+		}
 		if (move.type !== 'link' && move.type !== 'popstate') return;
-		if (move.from?.url.pathname === move.to?.url.pathname) return;
+		if (!routeChanged) return;
 		const focused = document.activeElement;
 		if (focused && focused !== document.body && document.contains(focused)) return;
 		void focusDestinationHeading();
@@ -227,19 +231,22 @@
 			offices={shellData.offices}
 			ownerId={shellData.ownerId}
 		/>
-		<main
-			bind:this={mainEl}
-			aria-label={areaFor(page.url.pathname) ?? 'Agentic Org'}
-			class="flex min-h-0 flex-1 flex-col overflow-y-auto"
-		>
-			{#if showPaused}<div class="shrink-0">
-					<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />
-				</div>{/if}
-			{@render children()}
-		</main>
-		{#if page.url.pathname === '/home'}
-			<HomeScrollHint scrollContainer={mainEl} />
-		{/if}
+		<div class="relative flex min-h-0 flex-1 flex-col">
+			{#if page.url.pathname === '/home'}
+				<HomeScrollHint scrollContainer={mainEl} />
+			{/if}
+			<main
+				bind:this={mainEl}
+				tabindex="-1"
+				aria-label={areaFor(page.url.pathname) ?? 'Agentic Org'}
+				class="flex min-h-0 flex-1 flex-col overflow-y-auto focus:outline-none"
+			>
+				{#if showPaused}<div class="shrink-0">
+						<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />
+					</div>{/if}
+				{@render children()}
+			</main>
+		</div>
 	</div>
 </div>
 <Toaster position="bottom-right" />

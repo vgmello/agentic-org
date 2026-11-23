@@ -309,8 +309,8 @@
 	}
 	.teams-kpi-tile {
 		background: var(--exec-panel-bg);
-		backdrop-filter: var(--exec-panel-blur);
 		-webkit-backdrop-filter: var(--exec-panel-blur);
+		backdrop-filter: var(--exec-panel-blur);
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: 1rem 1.125rem;

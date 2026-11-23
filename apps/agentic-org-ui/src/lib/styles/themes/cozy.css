@@ -41,7 +41,7 @@ html[data-ui-theme='cozy'] {
 	--tone-accent-hi: #8fd6d8;
 	--tone-accent-ink: #9edfe0;
 	--tone-accent-bg: rgba(110, 196, 199, 0.13);
-	--tone-accent-ring: rgba(110, 196, 199, 0.36);
+	--tone-accent-ring: rgba(158, 223, 224, 0.74);
 
 	--tone-ok: #2ec27e;
 	--tone-ok-bar: #2ec27e;
@@ -73,7 +73,7 @@ html[data-ui-theme='cozy'] {
 	--line-subtle: rgba(255, 245, 232, 0.1);
 	--line: rgba(255, 245, 232, 0.14);
 	--line-strong: rgba(255, 245, 232, 0.24);
-	--field-border: rgba(255, 245, 232, 0.24);
+	--field-border: rgba(255, 245, 232, 0.46);
 
 	--fg: #faf6f0;
 	--fg-bright: #faf6f0;
@@ -136,7 +136,7 @@ html[data-ui-theme='cozy'] {
 	--accent-foreground: #faf6f0;
 	--destructive: #8d3f3a;
 	--border: rgba(255, 245, 232, 0.14);
-	--input: rgba(255, 245, 232, 0.18);
+	--input: rgba(255, 245, 232, 0.46);
 
 	/* Cozy Glass executive surfaces */
 	--exec-bg: #3f342b;
@@ -224,15 +224,15 @@ html[data-ui-theme='cozy'] {
 	--exec-seg-queued: var(--tone-queued);
 	--exec-seg-queued-high: var(--tone-bad-bar);
 
-	/* Emerald frosted glass primary CTA (white >= 5.65:1 rest, >= 4.72:1 hover over peak glow) */
-	--exec-cta-bg: linear-gradient(180deg, rgba(34, 136, 90, 0.74), rgba(24, 108, 70, 0.8));
-	--exec-cta-fill: linear-gradient(180deg, rgba(38, 148, 98, 0.8), rgba(28, 118, 76, 0.86));
+	/* Emerald frosted glass primary CTA (white >= 7.08:1 rest, >= 5.53:1 composited hover over peak glow) */
+	--exec-cta-bg: linear-gradient(180deg, rgba(24, 108, 70, 0.84), rgba(18, 86, 55, 0.9));
+	--exec-cta-fill: linear-gradient(180deg, rgba(28, 122, 78, 0.9), rgba(20, 96, 62, 0.94));
 	--exec-cta-shadow:
 		0 4px 12px -2px rgba(10, 8, 6, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.22),
-		inset 0 0 0 1px rgba(74, 222, 154, 0.48);
+		inset 0 0 0 1px rgba(74, 222, 154, 0.56);
 	--exec-cta-shadow-hover:
 		0 6px 16px -2px rgba(10, 8, 6, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.28),
-		inset 0 0 0 1px rgba(74, 222, 154, 0.68);
+		inset 0 0 0 1px rgba(74, 222, 154, 0.76);
 	--exec-cta-hover-lift: none;
 	--exec-cta-glass-radius: 8px;
 	--exec-cta-glass-bg: var(--exec-cta-bg);
@@ -276,14 +276,16 @@ html[data-ui-theme='cozy'] {
 	--exec-nav-dot-halo: rgba(232, 169, 78, 0.18);
 	--exec-nav-dot-ring: #241e19;
 
-	/* Home scroll cue — transparent over Cozy ambient canvas */
+	/* Home scroll cue — transparent fade over Cozy ambient canvas with legible glass pill */
 	--exec-scroll-hint-bg: transparent;
-	--exec-scroll-hint-ink: #c6bab0;
-	--exec-scroll-hint-ink-hover: #faf6f0;
+	--exec-scroll-hint-pill-bg: rgba(26, 21, 18, 0.86);
+	--exec-scroll-hint-ink: #faf6f0;
+	--exec-scroll-hint-ink-hover: #ffffff;
 }
 
 /* Cozy Glass High Contrast mode (`data-cozy-contrast='high'`) */
 html[data-ui-theme='cozy'][data-cozy-contrast='high'] {
+	--tone-accent-ring: #9edfe0;
 	--cozy-shell: rgba(26, 21, 18, 0.95);
 	--cozy-panel-sheen: none;
 	--cozy-sidebar-sheen: none;
@@ -296,9 +298,9 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high'] {
 
 	--line: rgba(255, 248, 238, 0.28);
 	--line-strong: rgba(255, 248, 238, 0.44);
-	--field-border: rgba(255, 248, 238, 0.44);
+	--field-border: rgba(255, 248, 238, 0.56);
 	--border: rgba(255, 248, 238, 0.28);
-	--input: rgba(255, 248, 238, 0.42);
+	--input: rgba(255, 248, 238, 0.56);
 
 	--fg: #ffffff;
 	--fg-bright: #ffffff;
@@ -341,7 +343,8 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high'] {
 	--exec-cta-glass-shadow-hover: inset 0 0 0 1px #88dfae;
 
 	--exec-cos-fade: #1a1512;
-	--exec-scroll-hint-ink: #c8beb2;
+	--exec-scroll-hint-pill-bg: #1a1512;
+	--exec-scroll-hint-ink: #ffffff;
 	--exec-scroll-hint-ink-hover: #ffffff;
 }
 

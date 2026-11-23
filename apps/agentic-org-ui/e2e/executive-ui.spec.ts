@@ -61,11 +61,12 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 		.click();
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
 	await expect(page.locator('.cozy-room')).toBeHidden();
+	await expect(page.locator('.exec-cta-glass').first()).toHaveCSS(
+		'background-color',
+		'rgb(94, 82, 161)'
+	);
+	await expect(page.locator('.exec-cta-glass').first()).toHaveCSS('border-radius', '5px');
 	if (captureDir) {
-		await expect(page.locator('.exec-cta-glass').first()).toHaveCSS(
-			'background-color',
-			'rgb(94, 82, 161)'
-		);
 		await page.screenshot({ path: `${captureDir}/prod-home-graphite.png` });
 	}
 
@@ -154,24 +155,65 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 		page.getByRole('main').getByRole('button', { name: 'Activity', exact: true })
 	).toHaveAttribute('aria-pressed', 'true');
 
-	// Settings shows 6-theme Appearance selector + Cozy Glass High Contrast toggle (no legacy toggle)
+	// Settings shows 6-theme Appearance selector + WAI-ARIA radio-group keyboard + Cozy High Contrast
 	await page
 		.getByRole('navigation', { name: 'Main' })
 		.getByRole('link', { name: 'Settings' })
 		.click();
 	await expect(page).toHaveURL(/\/settings$/);
 	await expect(page.getByTestId('executive-ui-toggle')).toHaveCount(0);
-	await expect(page.getByTestId('theme-option-graphite')).toBeVisible();
-	await expect(page.getByTestId('theme-option-cozy')).toBeVisible();
+	const oceanRadio = page.getByTestId('theme-option-ocean');
+	const classicRadio = page.getByTestId('theme-option-classic');
+	const graphiteRadio = page.getByTestId('theme-option-graphite');
+	const cozyRadio = page.getByTestId('theme-option-cozy');
+	await expect(graphiteRadio).toBeVisible();
+	await expect(cozyRadio).toBeVisible();
 	await expect(page.getByTestId('theme-option-report')).toBeVisible();
 
-	await page.getByTestId('theme-option-cozy').click();
+	// WAI-ARIA radio group roving tabindex + ArrowRight / ArrowLeft keyboard switching
+	await expect(oceanRadio).toHaveAttribute('tabindex', '0');
+	await expect(classicRadio).toHaveAttribute('tabindex', '-1');
+	await oceanRadio.focus();
+	await page.keyboard.press('ArrowRight');
+	await expect(classicRadio).toBeFocused();
+	await expect(classicRadio).toHaveAttribute('tabindex', '0');
+	await expect(oceanRadio).toHaveAttribute('tabindex', '-1');
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'classic');
+	await page.keyboard.press('ArrowLeft');
+	await expect(oceanRadio).toBeFocused();
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ocean');
+
+	await cozyRadio.click();
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'cozy');
 	const cozyContrastToggle = page.getByTestId('cozy-high-contrast-toggle');
 	await expect(cozyContrastToggle).toHaveAttribute('aria-checked', 'false');
+	const beforeInk = await page
+		.locator('html')
+		.evaluate((el) => getComputedStyle(el).getPropertyValue('--exec-ink').trim());
+	const beforeSurface = await page
+		.locator('html')
+		.evaluate((el) => getComputedStyle(el).getPropertyValue('--exec-surface').trim());
+
 	await cozyContrastToggle.click();
 	await expect(cozyContrastToggle).toHaveAttribute('aria-checked', 'true');
 	await expect(page.locator('html')).toHaveAttribute('data-cozy-contrast', 'high');
+	const afterInk = await page
+		.locator('html')
+		.evaluate((el) => getComputedStyle(el).getPropertyValue('--exec-ink').trim());
+	const afterSurface = await page
+		.locator('html')
+		.evaluate((el) => getComputedStyle(el).getPropertyValue('--exec-surface').trim());
+	expect(afterInk).not.toBe(beforeInk);
+	expect(afterSurface).not.toBe(beforeSurface);
+
+	// Reload persists Cozy Glass High Contrast preference
+	await page.reload();
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'cozy');
+	await expect(page.locator('html')).toHaveAttribute('data-cozy-contrast', 'high');
+	await expect(page.getByTestId('cozy-high-contrast-toggle')).toHaveAttribute(
+		'aria-checked',
+		'true'
+	);
 
 	if (captureDir) {
 		await page
@@ -196,7 +238,7 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await expect(page.locator('html')).not.toHaveAttribute('data-cozy-contrast', 'high');
 });
 
-test('Home scroll cue: appears when below-fold content exists, scrolls smoothly, and hides on scroll', async ({
+test('Home scroll cue: keyboard-reachable before below-fold content, moves focus on activation, and resets on return to /home', async ({
 	page
 }) => {
 	await page.setViewportSize({ width: 1440, height: 700 });
@@ -213,9 +255,32 @@ test('Home scroll cue: appears when below-fold content exists, scrolls smoothly,
 		await page.screenshot({ path: `${captureDir}/poc-home-scroll-cue-graphite.png` });
 	}
 
-	await hint.click();
+	// Keyboard Tab from Ask button in command bar reaches Home scroll cue before below-fold content
+	const askButton = page.getByRole('button', { name: 'Ask', exact: true });
+	await askButton.focus();
+	await page.keyboard.press('Tab');
+	await expect(hint).toBeFocused();
+
+	// Activating via Enter scrolls scorecard into view, moves focus off body, and hides cue
+	await page.keyboard.press('Enter');
 	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBeGreaterThan(16);
 	await expect(hint).toBeHidden();
+	await expect(page.locator('#exec-projects-heading')).toBeInViewport();
+	const activeId = await page.evaluate(() => ({
+		tag: document.activeElement?.tagName,
+		id: document.activeElement?.id
+	}));
+	expect(activeId.tag).not.toBe('BODY');
+	expect(activeId.id).toBe('exec-projects-heading');
+
+	// Navigating away while scrolled down and returning to /home resets main.scrollTop to 0 and shows cue again
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
+	await expect(page).toHaveURL(/\/inbox$/);
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Home' }).click();
+	await expect(page).toHaveURL(/\/home$/);
+	await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
+	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBe(0);
+	await expect(hint).toBeVisible();
 });
 
 test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.html data', async ({

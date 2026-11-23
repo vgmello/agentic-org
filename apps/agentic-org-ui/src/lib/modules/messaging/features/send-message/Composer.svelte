@@ -314,7 +314,7 @@
 				}}
 				onclick={track}
 				onkeyup={(e) => (e.key.startsWith('Arrow') && popup ? undefined : track())}
-				class="w-full resize-none rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus"
+				class="w-full resize-none rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-field-border placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus"
 				data-testid="composer"></textarea>
 		</div>
 		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-danger" role="alert">
