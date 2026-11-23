@@ -7,16 +7,12 @@
   margin-inline-start: auto;
 }
 #page-search-tools .cmdk-shell {
-  width: clamp(12rem, 23vw, 20rem);
-  height: var(--control-height);
+  position: relative;
+  width: clamp(18rem, 25vw, 24rem);
+  height: max(2.5rem, var(--control-height));
   padding: 2px;
   flex: 1 1 auto;
   min-width: 0;
-}
-#page-search-tools .cmdk-shell:hover { transform: none; }
-#page-search-tools .cmdk-trigger { gap: 6px; padding-inline: 8px; }
-#page-search-tools .cmdk-shell.has-local-search {
-  height: max(2.5rem, var(--control-height));
   gap: 4px;
   border: 1px solid var(--line2);
   border-radius: var(--radius-md);
@@ -25,25 +21,28 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-#page-search-tools .cmdk-shell:has(.cmdk-local input:focus) { border-color: var(--gray-400); }
-#page-search-tools .has-local-search .cmdk-trigger {
+#page-search-tools .cmdk-shell:hover { transform: none; }
+#page-search-tools .cmdk-shell:has(input:focus) { border-color: var(--gray-400); }
+#page-search-tools #cmdk-trigger {
   position: relative;
   flex: 0 0 auto;
+  gap: 6px;
+  padding-inline: 8px;
   border-radius: calc(var(--radius-md) - 2px);
   color: var(--gray-300);
   font-size: .8125rem;
 }
-#page-search-tools .has-local-search .cmdk-trigger::before {
+#page-search-tools #cmdk-trigger::before {
   position: absolute;
   inset-inline-start: -3px;
   inset-block: 7px;
   border-inline-start: 1px solid var(--line2);
   content: "";
 }
-#page-search-tools .has-local-search .cmdk-trigger:hover { background: var(--hover); color: var(--white); }
-#page-search-tools .has-local-search .cmdk-trigger:focus-visible { outline-offset: -1px; }
-#page-search-tools .has-local-search .cmdk-trigger > .ic { display: none; }
-#page-search-tools .has-local-search .cmdk-trigger kbd {
+#page-search-tools #cmdk-trigger:hover { background: var(--hover); color: var(--white); }
+#page-search-tools #cmdk-trigger:focus-visible { outline-color: var(--gray-300); outline-offset: -1px; }
+#page-search-tools #cmdk-trigger > .ic { display: none; }
+#page-search-tools #cmdk-trigger kbd {
   height: auto;
   padding: 0 3px;
   background: transparent;
@@ -55,7 +54,7 @@
   min-width: 0;
   height: 100%;
 }
-.cmdk-local label {
+.cmdk-local label, #page-search-tools .cmdk-home-field {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -63,7 +62,16 @@
   padding-inline: 8px 4px;
   color: var(--gray-400);
 }
-.cmdk-local input {
+#page-search-tools .cmdk-home-field {
+  background: none;
+  outline: none;
+}
+#page-search-tools .cmdk-home-field > .ic {
+  width: 16px;
+  height: 16px;
+  color: inherit;
+}
+.cmdk-local input, #page-search-tools .cmdk-home-field input {
   min-width: 0;
   width: 100%;
   height: 100%;
@@ -75,13 +83,34 @@
 }
 .cmdk-local input::placeholder { color: var(--gray-400); }
 .cmdk-local input:focus { outline: none; }
-.cmdk-local kbd {
+.cmdk-local kbd, #page-search-tools .cmdk-home-field kbd {
   flex: none;
   padding: 0 5px;
   border: 1px solid var(--line2);
   border-radius: 4px;
   color: var(--gray-400);
   font-size: .75rem;
+}
+#page-search-tools .cmdk-home-field kbd {
+  height: auto;
+  background: transparent;
+  box-shadow: none;
+}
+#page-search-tools .cmdk-home-results {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 6px);
+  inset-inline: 0;
+  width: auto;
+  max-height: min(26rem, 50dvh);
+  background: var(--gray-800);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+#page-search-tools .cmdk-home-results .cmdk-opt-txt { display: grid; gap: 2px; }
+#page-search-tools .cmdk-home-results .cmdk-opt-lbl {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .has-page-toolbar { gap: 8px 12px; }
 .has-page-toolbar .ph-t { overflow-wrap: anywhere; }
@@ -91,15 +120,13 @@
 .unavail.has-page-toolbar h1 { margin: 0; }
 .unavail.has-page-toolbar p { flex-basis: 100%; margin-block: 12px; text-align: start; }
 @media (max-width: 720px), (pointer: coarse) {
-  #page-search-tools .cmdk-shell { height: calc(var(--control-height) + 4px); }
-  #page-search-tools .cmdk-shell.has-local-search { height: calc(var(--control-height) + 4px); }
-  #page-search-tools .cmdk-trigger { min-width: var(--control-height); justify-content: center; }
+  #page-search-tools .cmdk-shell { height: calc(var(--control-height) + 6px); }
+  #page-search-tools #cmdk-trigger { min-width: var(--control-height); justify-content: center; }
   #page-search-tools .cmdk-shell kbd { display: none; }
-  .cmdk-local input { font-size: 1rem; }
+  .cmdk-local input, #page-search-tools .cmdk-home-field input { font-size: 1rem; }
 }
 @media (max-width: 720px) {
   #page-search-tools .cmdk-shell { width: auto; }
-  #page-search-tools .cmdk-shell:not(.has-local-search) .cmdk-ph { display: none; }
 }
 
 /* Keep Workspace search aligned with the title and allow page actions to wrap. */
@@ -133,33 +160,6 @@
     grid-column: 1 / -1;
     justify-self: end;
   }
-
-  & #page-search-tools .cmdk-shell {
-    width: clamp(12rem, 20vw, 17rem);
-    height: var(--control-height);
-    border: 1px solid var(--line2);
-    border-radius: var(--radius-md);
-    background: var(--hover);
-    box-shadow: none;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-
-  & #page-search-tools .cmdk-shell:is(:hover, :focus-within) {
-    border-color: var(--gray-400);
-  }
-
-  & #cmdk-trigger {
-    border-radius: calc(var(--radius-md) - 2px);
-    color: var(--gray-300);
-  }
-
-  & #cmdk-trigger:focus-visible {
-    outline-color: var(--gray-300);
-    outline-offset: -1px;
-  }
-
-  & #cmdk-trigger > .ic { color: currentColor; }
 
   &:is(.prof, .unavail) {
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -200,16 +200,6 @@
     }
   }
 
-  @media (max-width: 720px), (pointer: coarse) {
-    & #page-search-tools .cmdk-shell {
-      height: calc(var(--control-height) + 6px);
-    }
-  }
-
-  @media (max-width: 720px) {
-    & #page-search-tools .cmdk-shell { width: auto; }
-  }
-
   @media (max-width: 639px) {
     & {
       grid-template-columns: auto minmax(0, 1fr) auto;
@@ -222,6 +212,12 @@
     }
 
     & > :is(.ph-t, h1) { grid-column: 2; }
+
+    & > #page-search-tools {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      justify-self: stretch;
+    }
 
     &.prof {
       grid-template-columns: auto auto minmax(0, 1fr) auto;

@@ -4370,9 +4370,9 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
         <input id="cmdk-home-input" type="search" placeholder="Search, run a command, or ask Tess…" autocomplete="off" aria-label="Search, run a command, or ask Tess" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cmdk-list">
         <kbd id="cmdk-home-kbd" aria-hidden="true">⌘K</kbd>
       </label>
-      <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-label="Search workspace" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog">
-        <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
-        <span class="cmdk-ph" id="cmdk-ph">Search workspace…</span>
+      <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-label="Search workspace" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog" title="Search workspace">
+        <svg class="ic ic16" aria-hidden="true"><use href="#i-terminal"/></svg>
+        <span class="cmdk-ph">Workspace</span>
         <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
       </button>
       <span class="cmdk-sep" aria-hidden="true"></span>
@@ -7842,19 +7842,15 @@ function renderNav(route) {
   const aiBtn = document.getElementById("cmdk-ai-trigger");
   const cmdkShell = document.getElementById("cmdk-shell");
   const cmdkTr = document.getElementById("cmdk-trigger");
-  const cmdkPh = document.getElementById("cmdk-ph");
   homeSearchField.classList.toggle("is-offline", homeError);
   homeSearchInput.disabled = homeError;
-  homeSearchInput.placeholder = homeError ? "HQ office offline — search & AI unavailable" : "Search, run a command, or ask Tess…";
-  const localSearch = cmdkShell.classList.contains("has-local-search");
+  homeSearchInput.placeholder = homeError ? "HQ office offline — search & AI unavailable"
+    : r0 === "home" ? "Search, run a command, or ask Tess…" : "Search…";
   if (cmdkShell) cmdkShell.classList.toggle("is-offline", homeError);
   if (cmdkTr) {
     cmdkTr.classList.toggle("is-offline", homeError);
     cmdkTr.disabled = homeError;
-    cmdkTr.title = "Search workspace";
-    cmdkTr.querySelector("use").setAttribute("href", localSearch ? "#i-terminal" : "#i-search");
   }
-  if (cmdkPh) cmdkPh.textContent = localSearch ? "Workspace" : "Search workspace…";
   if (aiBtn) {
     aiBtn.classList.toggle("is-offline", homeError);
     aiBtn.disabled = homeError;
@@ -8052,18 +8048,26 @@ function placeSearchToolbar(main, page) {
   }
   homeToolbar.hidden = Boolean(heading);
   const isHome = page === "home";
-  homeSearchField.hidden = !isHome;
+  const workspaceSearch = Boolean(heading && !search);
+  homeSearchField.hidden = !isHome && !workspaceSearch;
+  if (location.hash !== S.lastRoute) homeSearchInput.value = "";
+  homeSearchInput.setAttribute("aria-label", workspaceSearch ? "Search across the workspace" : "Search, run a command, or ask Tess");
+  const fieldShortcut = document.getElementById("cmdk-home-kbd");
+  fieldShortcut.textContent = isHome ? (isMacPlatform ? "⌘K" : "Ctrl K") : "/";
+  fieldShortcut.hidden = workspaceSearch && !S.singleKey;
+  if (workspaceSearch && S.singleKey) homeSearchInput.setAttribute("aria-keyshortcuts", "/");
+  else homeSearchInput.removeAttribute("aria-keyshortcuts");
   document.getElementById("cmdk-trigger").hidden = isHome;
   document.getElementById("cmdk-ai-trigger").hidden = !isHome;
   commandBar.querySelector(".cmdk-sep").hidden = !isHome;
-  commandBar.classList.toggle("has-local-search", Boolean(search));
   localSearchHost.hidden = !search;
   const showShortcut = Boolean(search) && S.singleKey;
   localSearchHost.innerHTML = search
     ? `<label>${ic("search", "ic16")}<span class="sr-only">${search.label}</span><input id="${search.id}" type="search" value="${esc(S[search.queryKey])}" placeholder="${search.placeholder}" autocomplete="off"${showShortcut ? ' aria-keyshortcuts="/"' : ""}>${showShortcut ? '<kbd aria-hidden="true">/</kbd>' : ""}</label>`
     : "";
 }
-const pageSearchInput = () => localSearchHost.querySelector("input");
+const pageSearchInput = () => localSearchHost.querySelector("input")
+  || (pageSearchTools.contains(homeSearchField) && !homeSearchField.hidden ? homeSearchInput : null);
 function render(focus = true) {
   if (/^#\/?members\/you(\/|$)/.test(location.hash)) {
     try { history.replaceState(null, "", "#/home"); } catch (e) { location.hash = "#/home"; return; }
@@ -8131,9 +8135,7 @@ function searchResults(q, max = 5) {
 const CMDK = { open: false, inline: false, mode: "cmd", q: "", active: 0, flat: [], aiAns: null, aiHistory: [], returnTo: null };
 const isMacPlatform = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || "");
 {
-  for (const id of ["cmdk-kbd", "cmdk-home-kbd"]) {
-    document.getElementById(id).textContent = isMacPlatform ? "⌘K" : "Ctrl K";
-  }
+  document.getElementById("cmdk-kbd").textContent = isMacPlatform ? "⌘K" : "Ctrl K";
   const skbd = document.getElementById("cmdk-switch-kbd");
   if (skbd) skbd.textContent = isMacPlatform ? "⌘/" : "Ctrl /";
 }
@@ -8201,13 +8203,13 @@ function setCmdkMode(mode) {
   const inp = document.getElementById("cmdk-input");
   if (inp) inp.focus();
 }
-function openCmdk(prefill = "", mode = "cmd", trigger = document.activeElement) {
+function openCmdk(prefill = "", mode = "cmd", trigger = document.activeElement, inline = route()[0] === "home" && mode === "cmd") {
   if (route()[0] === "home" && S.homeState === "error") {
     toast("HQ office is offline — reconnect to use search and Ask Tess.", "offline");
     return;
   }
   if (CMDK.open) closeCmdk(false);
-  CMDK.inline = route()[0] === "home" && mode === "cmd";
+  CMDK.inline = inline;
   CMDK.returnTo = CMDK.inline ? homeSearchInput : trigger;
   CMDK.open = true;
   CMDK.mode = mode === "ai" ? "ai" : "cmd";
@@ -8238,7 +8240,7 @@ function closeCmdk(restoreFocus = true) {
     homeSearchResults.hidden = true;
     homeSearchInput.setAttribute("aria-expanded", "false");
     homeSearchInput.removeAttribute("aria-activedescendant");
-    homeSearchInput.value = "";
+    if (!pageSearchTools.contains(homeSearchField)) homeSearchInput.value = "";
   }
   CMDK.inline = false;
   CMDK.q = "";
@@ -8770,7 +8772,7 @@ document.addEventListener("input", (e) => {
     refreshWorkResults();
   }
   if (e.target.name === "title" && e.target.form?.dataset.form === "work-create") e.target.setCustomValidity("");
-  if (e.target === homeSearchInput && !CMDK.inline) { openCmdk(homeSearchInput.value); return; }
+  if (e.target === homeSearchInput && !CMDK.inline) { openCmdk(homeSearchInput.value, "cmd", homeSearchInput, true); return; }
   if (e.target === homeSearchInput || e.target.id === "cmdk-input") {
     CMDK.q = e.target.value;
     CMDK.active = 0;
@@ -8809,12 +8811,14 @@ document.addEventListener("keydown", (e) => {
   if (e.isComposing || e.target.closest?.(".work-task-dialog")) return;
   if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K")) {
     e.preventDefault();
-    if (CMDK.open) closeCmdk(true); else openCmdk(pageSearchInput()?.value || "");
+    const pageInput = pageSearchInput();
+    if (CMDK.open && (!CMDK.inline || pageInput !== homeSearchInput)) closeCmdk(true);
+    else openCmdk(pageInput?.value || "");
     return;
   }
   if (!CMDK.open && e.target === homeSearchInput && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
     e.preventDefault();
-    openCmdk(homeSearchInput.value);
+    openCmdk(homeSearchInput.value, "cmd", homeSearchInput, true);
     return;
   }
   if (CMDK.open) {
