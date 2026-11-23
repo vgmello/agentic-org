@@ -77,6 +77,8 @@ function findLegacyCursor(entry: LegacyEntry): number {
 		for (let i = 0; i < legacyEntries.length; i++) {
 			if (legacyEntries[i].slot === entry.slot) return i;
 		}
+		// A newly stamped unindexed slot not yet in legacyEntries is a new push, never an earlier slot with the same href.
+		if (entry.index === undefined) return -1;
 	}
 	if (entry.index !== undefined) {
 		const currentIndex = legacyEntries[legacyCursor]?.index;

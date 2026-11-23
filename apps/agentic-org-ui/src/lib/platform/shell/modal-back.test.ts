@@ -778,4 +778,33 @@ describe('modal-back legacy (!window.navigation) path', () => {
 
 		unregister();
 	});
+
+	it('treats a newly stamped duplicate fragment slot as a new push after replacing Forward history (#one -> #two -> #three -> Back -> #one)', async () => {
+		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
+		env.dispatchHashChange('http://localhost/teams#one', null, 2);
+		env.dispatchHashChange('http://localhost/teams#two', null, 3);
+		const slotTwo = env.fakeWindow.history.state;
+		env.dispatchHashChange('http://localhost/teams#three', null, 4);
+
+		// Go Back to #two, then append #one (replacing #three; length stays 4)
+		env.dispatchPopState('http://localhost/teams#two', slotTwo, 4);
+		env.dispatchHashChange('http://localhost/teams#one', null, 4);
+		const slotOneNew = env.fakeWindow.history.state;
+
+		const close = vi.fn();
+		const unregister = env.registerModalBack(close);
+
+		// Press Back to #two: MUST intercept, compute delta 1, and close the modal
+		const backEvent = env.dispatchPopState('http://localhost/teams#two', slotTwo, 4);
+		expect(backEvent.stopped).toBe(true);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([1]);
+
+		const returnEvent = env.dispatchPopState('http://localhost/teams#one', slotOneNew, 4);
+		expect(returnEvent.stopped).toBe(true);
+		env.flushRaf();
+		expect(close).toHaveBeenCalledTimes(1);
+
+		unregister();
+	});
 });
