@@ -108,13 +108,15 @@
 			<a
 				href={resolve('/settings/costs')}
 				class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
-				title="Remaining budget and agent capacity"
+				title="Remaining share of monthly organization budget"
 			>
-				<span class="sub-lbl">AI capacity</span>
+				<span class="sub-lbl">Budget remaining</span>
 				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
-					{#if kpis.financials.available}
-						{kpis.aiCapacityPct}%
-						<span class="ml-1 text-[11px] font-semibold text-[var(--exec-ok)]">available</span>
+					{#if kpis.budgetRemainingPct !== null}
+						{kpis.budgetRemainingPct}%
+						<span class="ml-1 text-[11px] font-semibold text-[var(--exec-ok)]">left</span>
+					{:else if kpis.financials.available}
+						No cap set
 					{:else}
 						Configure
 					{/if}

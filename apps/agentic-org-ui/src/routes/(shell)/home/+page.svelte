@@ -134,7 +134,7 @@
 	);
 	const spotlightIds = $derived(new Set(spotlight.map((d) => d.id)));
 	const urgentSpotlightCount = $derived(spotlight.filter((d) => d.urgent).length);
-	const projectCards = $derived(deriveProjectCards(snapshot, workItems, domain));
+	const projectCards = $derived(deriveProjectCards(snapshot, workItems, domain, live.nowMs));
 	const milestones = $derived(deriveUpcomingMilestones(snapshot, workItems, live.nowMs, domain));
 	const catchUp = $derived(
 		deriveCatchUpDigest(workItems, snapshot, live.nowMs, liveForOrg ? live.activityRows : undefined)

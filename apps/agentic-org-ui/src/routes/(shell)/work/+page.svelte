@@ -11,6 +11,7 @@
 	import { owner } from '$lib/org/model';
 	import BugSheet from '$lib/components/BugSheet.svelte';
 	import NewRequestDialog from '$lib/components/NewRequestDialog.svelte';
+	import NewTaskDialog from '$lib/components/NewTaskDialog.svelte';
 	import RequestSheet from '$lib/components/RequestSheet.svelte';
 	import RequestsPanel from '$lib/components/RequestsPanel.svelte';
 	import TaskSheet from '$lib/components/TaskSheet.svelte';
@@ -65,7 +66,9 @@
 	let requestStart = $state<'route' | undefined>();
 	let requestOpen = $state(false);
 	let newRequestOpen = $state(false);
+	let newTaskOpen = $state(false);
 	const requestsOn = workApi.requests;
+	const defaultTaskProject = $derived((snapshot.projects ?? []).find((p) => !p.archived));
 
 	// Display preference: optional row dividers (persisted locally across sessions).
 	const DIVIDERS_KEY = 'agentic-org.work.dividers';
@@ -132,6 +135,7 @@
 			bugOpen = false;
 			requestOpen = false;
 			newRequestOpen = false;
+			newTaskOpen = false;
 			taskId = undefined;
 			bugId = undefined;
 			requestId = undefined;
@@ -145,6 +149,26 @@
 
 	onDestroy(() => {
 		destroyed = true;
+	});
+
+	// Home's "New task" CTA links to /work?new=1: open the task composer and strip the parameter so reload doesn't reopen it.
+	const wantsNewTask = $derived(page.url.searchParams.get('new') === '1');
+	$effect(() => {
+		if (!wantsNewTask) return;
+		if (defaultTaskProject) {
+			tab = 'tasks';
+			newTaskOpen = true;
+		} else {
+			toast('Create a project first to add a task.');
+		}
+		const nextUrl = new URL(page.url);
+		nextUrl.searchParams.delete('new');
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- preserving current already-resolved URL + hash
+		void goto(nextUrl, {
+			replaceState: true,
+			noScroll: true,
+			keepFocus: true
+		});
 	});
 
 	// A link to a request ("From REQ-12" on a task) opens its page here, whether this page was just opened or already open.
@@ -641,6 +665,21 @@
 	</div>
 </div>
 
+{#if defaultTaskProject}
+	<NewTaskDialog
+		bind:open={newTaskOpen}
+		projectId={defaultTaskProject.id}
+		projectName={defaultTaskProject.name}
+		{snapshot}
+		{send}
+		ondone={(created) => {
+			toast.success(
+				`Task ${created.ref} created${created.assigneeId ? ` (and given to ${nameOf(snapshot, created.assigneeId)})` : ''}.`
+			);
+			void load();
+		}}
+	/>
+{/if}
 <NewRequestDialog
 	bind:open={newRequestOpen}
 	{snapshot}

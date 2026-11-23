@@ -18,7 +18,7 @@
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
 	import { noteModalBackNavigation } from '$lib/platform/shell/modal-back';
-	import { provideShellAi } from '$lib/platform/shell/shell-ai';
+	import { provideShellAi, type ShellAiAskOptions } from '$lib/platform/shell/shell-ai';
 	import { provideShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
 	import { officesApi } from '$lib/modules/offices/api';
@@ -31,10 +31,10 @@
 	$effect.pre(() => chatDrafts.syncScope());
 	onDestroy(() => chatDrafts.dispose());
 
-	let askHandler: ((prompt: string) => void) | undefined;
+	let askHandler: ((prompt: string, opts?: ShellAiAskOptions) => void) | undefined;
 	provideShellAi({
-		ask(prompt: string) {
-			askHandler?.(prompt);
+		ask(prompt: string, opts?: ShellAiAskOptions) {
+			askHandler?.(prompt, opts);
 		}
 	});
 

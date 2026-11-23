@@ -114,7 +114,7 @@ export interface ExecutiveKpis {
 	totalAgents: number;
 	leadsCount: number;
 	specialistsCount: number;
-	aiCapacityPct: number;
+	budgetRemainingPct: number | null;
 	peopleCount: number;
 	autonomyPct: number;
 	onlineOffices: number;
@@ -779,7 +779,8 @@ export function deriveDecisionSpotlight(
 export function deriveProjectCards(
 	snapshot: OrgSnapshot,
 	items: readonly WorkItemSummary[],
-	domain?: Pick<HomeDomainData, 'projectRows' | 'homeProjects' | 'inboxItems'>
+	domain?: Pick<HomeDomainData, 'projectRows' | 'homeProjects' | 'inboxItems'>,
+	nowMs = Date.now()
 ): ProjectBentoCard[] {
 	const activeSnapshotProjects = (snapshot.projects ?? []).filter((p) => !p.archived);
 	const rowById = new Map(
@@ -946,16 +947,32 @@ export function deriveProjectCards(
 			blockerText = clearNote;
 		}
 
-		const paceLabel =
-			health === 'Off track'
+		const nowDate = new Date(nowMs);
+		const todayUtc = Date.UTC(
+			nowDate.getUTCFullYear(),
+			nowDate.getUTCMonth(),
+			nowDate.getUTCDate(),
+			12
+		);
+		const dueDt = homeProj?.due ? parseIsoDateUtc(homeProj.due) : null;
+		const isOverdue = Boolean(dueDt && dueDt.getTime() < todayUtc && pct < 100);
+
+		const paceLabel = isOverdue
+			? 'Overdue'
+			: health === 'Off track'
 				? 'Behind pace'
 				: health === 'At risk'
 					? 'At risk'
 					: pct >= 50
 						? 'On pace'
 						: undefined;
-		const paceTone: ProjectBentoCard['paceTone'] =
-			health === 'Off track' ? 'bad' : health === 'At risk' ? 'warn' : 'ok';
+		const paceTone: ProjectBentoCard['paceTone'] = isOverdue
+			? 'bad'
+			: health === 'Off track'
+				? 'bad'
+				: health === 'At risk'
+					? 'warn'
+					: 'ok';
 
 		const shown = projMembers.slice(0, 4).map((m) => initialsOf(m.name));
 		const extraMembers = Math.max(0, (homeProj?.members ?? projMembers.length) - shown.length);
@@ -1127,12 +1144,10 @@ export function deriveKpiMetrics(
 				: 0;
 
 	const financials = deriveFinancialKpi(domain?.orgCost, domain?.agentBudgets, doneCount);
-	const aiCapacityPct =
+	const budgetRemainingPct =
 		financials.available && financials.budgetMicroUsd !== null
 			? Math.max(0, Math.min(100, 100 - financials.usagePct))
-			: totalAgents > 0
-				? Math.max(0, Math.min(100, Math.round(((totalAgents - activeAgents) * 100) / totalAgents)))
-				: 100;
+			: null;
 
 	return {
 		financials,
@@ -1147,7 +1162,7 @@ export function deriveKpiMetrics(
 		totalAgents,
 		leadsCount,
 		specialistsCount,
-		aiCapacityPct,
+		budgetRemainingPct,
 		peopleCount,
 		autonomyPct,
 		onlineOffices,
@@ -1182,7 +1197,7 @@ export function deriveUpcomingMilestones(
 	if (dated.length === 0) return [];
 
 	const cardsById = new Map(
-		deriveProjectCards(snapshot, items, domain).map((card) => [card.id, card])
+		deriveProjectCards(snapshot, items, domain, nowMs).map((card) => [card.id, card])
 	);
 	const monthFmt = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' });
 	const nowDate = new Date(nowMs);
@@ -1193,22 +1208,23 @@ export function deriveUpcomingMilestones(
 		12
 	);
 
-	return [...dated]
-		.sort((a, b) => a.due.localeCompare(b.due))
-		.slice(0, 3)
-		.map((hp): HomeMilestone => {
+	return dated
+		.map((hp) => {
 			const dt = parseIsoDateUtc(hp.due);
-			const month = dt ? monthFmt.format(dt) : hp.due.slice(0, 3);
-			const day = dt ? String(dt.getUTCDate()).padStart(2, '0') : hp.due.slice(-2);
-			const diffDays = dt ? Math.round((dt.getTime() - todayUtc) / 86_400_000) : 0;
+			const diffDays = dt ? Math.round((dt.getTime() - todayUtc) / 86_400_000) : null;
+			return { hp, dt, diffDays };
+		})
+		.filter(
+			(entry): entry is { hp: HomeProject & { due: string }; dt: Date; diffDays: number } =>
+				entry.dt !== null && entry.diffDays !== null && entry.diffDays >= 0 && entry.diffDays <= 14
+		)
+		.sort((a, b) => a.diffDays - b.diffDays || a.hp.name.localeCompare(b.hp.name))
+		.slice(0, 3)
+		.map(({ hp, dt, diffDays }): HomeMilestone => {
+			const month = monthFmt.format(dt);
+			const day = String(dt.getUTCDate()).padStart(2, '0');
 			const statusLabel =
-				diffDays < 0
-					? `${Math.abs(diffDays)}d overdue`
-					: diffDays === 0
-						? 'Today'
-						: diffDays === 1
-							? 'Tomorrow'
-							: `In ${diffDays} days`;
+				diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : `In ${diffDays} days`;
 
 			const card = cardsById.get(hp.id);
 			const tone: HomeMilestone['tone'] =
@@ -1220,21 +1236,16 @@ export function deriveUpcomingMilestones(
 							? 'sky'
 							: 'ok';
 			const leadLabel = hp.lead?.name ?? card?.leadName ?? 'Team';
-			const releaseTag = card?.key && !hp.name.includes(card.key) ? card.key : card?.key;
-			const title =
-				hp.blocked > 0
-					? `${hp.name} checkpoint`
-					: hp.done >= hp.total && hp.total > 0
-						? `${hp.name} release`
-						: `${hp.name} milestone`;
+			const releaseTag = card?.key;
+			const progressNote = hp.total > 0 ? `${hp.done}/${hp.total} done` : 'Scheduled';
 
 			return {
 				id: `ms-${hp.id}`,
 				month,
 				day,
-				title,
+				title: hp.name,
 				releaseTag,
-				note: `${leadLabel} · ${hp.name}`,
+				note: `${leadLabel} · ${progressNote}`,
 				statusLabel,
 				tone,
 				spotId: card?.spotDecisionId,
@@ -1607,13 +1618,15 @@ export function answerExecutiveQuestion(
 		items,
 		offices,
 		ownerId,
-		domain
+		domain,
+		decisionId
 	}: {
 		snapshot: OrgSnapshot;
 		items: readonly WorkItemSummary[];
 		offices: readonly OfficeInfo[];
 		ownerId: string;
 		domain?: HomeDomainData;
+		decisionId?: string;
 	}
 ): OrgAiAnswer {
 	const query = rawQuery.trim();
@@ -1630,35 +1643,31 @@ export function answerExecutiveQuestion(
 	const time = deriveTaskTimeBreakdown(items, ownerId, kpis.offlineOffices, domain);
 
 	const explainMatch = query.match(/^explain the risk, impact, and recommendation for:\s*(.+)$/i);
-	if (explainMatch) {
-		const targetTitle = explainMatch[1].trim().toLowerCase();
-		const match = spotlight.find(
-			(d) =>
-				d.title.toLowerCase() === targetTitle ||
-				d.title.toLowerCase().includes(targetTitle) ||
-				targetTitle.includes(d.title.toLowerCase())
-		);
-		if (match) {
-			return {
-				query,
-				headline: `${match.title} — ${match.risk.label} · ${match.impact.label}`,
-				bullets: [
-					{
-						text: `Recommendation: ${match.recommendation}`,
-						href: match.detailHref,
-						linkLabel: 'Open details'
-					},
-					{
-						text: `Risk & impact: ${match.risk.label} (${match.risk.sub}); ${match.impact.label} (${match.impact.sub}).`
-					},
-					{
-						text: `Background: ${match.backgroundContext}`,
-						href: match.projectId ? `/projects/${match.projectId}/work` : '/inbox',
-						linkLabel: match.projectId ? `Open ${match.projectName}` : 'Open Inbox'
-					}
-				]
-			};
-		}
+	const decisionMatch = decisionId
+		? spotlight.find((d) => d.id === decisionId)
+		: explainMatch
+			? spotlight.find((d) => d.title.toLowerCase() === explainMatch[1].trim().toLowerCase())
+			: undefined;
+	if (decisionMatch) {
+		return {
+			query,
+			headline: `${decisionMatch.title} — ${decisionMatch.risk.label} · ${decisionMatch.impact.label}`,
+			bullets: [
+				{
+					text: `Recommendation: ${decisionMatch.recommendation}`,
+					href: decisionMatch.detailHref,
+					linkLabel: 'Open details'
+				},
+				{
+					text: `Risk & impact: ${decisionMatch.risk.label} (${decisionMatch.risk.sub}); ${decisionMatch.impact.label} (${decisionMatch.impact.sub}).`
+				},
+				{
+					text: `Background: ${decisionMatch.backgroundContext}`,
+					href: decisionMatch.projectId ? `/projects/${decisionMatch.projectId}/work` : '/inbox',
+					linkLabel: decisionMatch.projectId ? `Open ${decisionMatch.projectName}` : 'Open Inbox'
+				}
+			]
+		};
 	}
 
 	if (/spend|cost|budget|money|cap|dollar/.test(q)) {

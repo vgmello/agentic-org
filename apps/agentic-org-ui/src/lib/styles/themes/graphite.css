@@ -203,18 +203,18 @@ html[data-ui-theme='graphite'] {
 	--exec-seg-queued: var(--tone-queued);
 	--exec-seg-queued-high: var(--tone-bad-bar);
 
-	/* Solid flat neutral charcoal CTAs (white on #535353 = 7.69:1, hover #616161 = 6.19:1) */
+	/* Solid flat neutral charcoal CTAs (white on #535353 = 7.69:1, hover #616161 = 6.19:1; border #858891 >= 4.77:1) */
 	--exec-cta-bg: #535353;
 	--exec-cta-fill: #616161;
-	--exec-cta-shadow: none;
-	--exec-cta-shadow-hover: none;
+	--exec-cta-shadow: inset 0 0 0 1px #858891;
+	--exec-cta-shadow-hover: inset 0 0 0 1px #a8a8a8;
 	--exec-cta-hover-lift: none;
 	--exec-cta-glass-radius: 5px;
 	--exec-cta-glass-bg: #535353;
 	--exec-cta-glass-bg-hover: #616161;
 	--exec-cta-glass-blur: none;
-	--exec-cta-glass-shadow: none;
-	--exec-cta-glass-shadow-hover: none;
+	--exec-cta-glass-shadow: inset 0 0 0 1px #858891;
+	--exec-cta-glass-shadow-hover: inset 0 0 0 1px #a8a8a8;
 	--exec-cta-glass-ink: #ffffff;
 	--exec-cta-glass-ico: #ffffff;
 	--exec-btn-outline-bg: var(--graphite-canvas);

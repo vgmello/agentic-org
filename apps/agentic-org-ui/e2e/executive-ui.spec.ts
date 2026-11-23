@@ -52,14 +52,37 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	);
 	await page.setViewportSize({ width: 1440, height: 900 });
 
-	// Inline Home search combobox filters live and applies keyboard selection without leaving /home
+	// Inline Home search combobox: Cmd/Ctrl+K focuses input, live filters, Escape preserves query & blocks hidden Enter, Tab closes
 	const homeCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Org AI' });
 	await expect(homeCombo).toBeVisible();
-	await homeCombo.click();
+	await page.keyboard.press('ControlOrMeta+k');
+	await expect(homeCombo).toBeFocused();
 	await homeCombo.fill('Theme: Classic');
 	const inlineListbox = page.locator('#exec-cmdk-home-listbox');
 	await expect(inlineListbox).toBeVisible();
-	await expect(inlineListbox.getByRole('option', { name: /Theme: Classic/ })).toBeVisible();
+	await expect(homeCombo).toHaveAttribute('aria-controls', 'exec-cmdk-home-listbox');
+	await expect(inlineListbox.getByRole('option', { name: /^Theme: Classic/ })).toBeVisible();
+	await expect(
+		inlineListbox.getByRole('option', { name: /Search all for 'Theme: Classic'/ })
+	).toBeVisible();
+
+	// First Escape closes popup without clearing query; pressing Enter while closed does NOT execute hidden option
+	await homeCombo.press('Escape');
+	await expect(inlineListbox).toBeHidden();
+	await expect(homeCombo).not.toHaveAttribute('aria-controls');
+	await expect(homeCombo).toHaveValue('Theme: Classic');
+	await homeCombo.press('Enter');
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ocean');
+
+	// Re-open with ArrowDown and close cleanly with Tab
+	await homeCombo.press('ArrowDown');
+	await expect(inlineListbox).toBeVisible();
+	await homeCombo.press('Tab');
+	await expect(inlineListbox).toBeHidden();
+
+	// Re-focus, select Theme: Classic via Enter
+	await homeCombo.click();
+	await expect(inlineListbox).toBeVisible();
 	await homeCombo.press('Enter');
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'classic');
 	await expect(page).toHaveURL(/\/home$/);
@@ -69,6 +92,12 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 		.getByRole('button', { name: 'Ocean', exact: true })
 		.click();
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ocean');
+
+	// Capture Ocean Home canvas backgroundImage (3-orb radial gradients) before visiting interior pages
+	const oceanHomeCanvasBg = await page.locator('.exec-canvas').evaluate((el) => {
+		return getComputedStyle(el, '::before').backgroundImage;
+	});
+	expect(oceanHomeCanvasBg).toContain('radial-gradient');
 
 	// Verify Projects is last under Workspace and Teams is reachable in Organization
 	const navLinks = await page
@@ -167,6 +196,11 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
 	await expect(page).toHaveURL(/\/inbox$/);
 	await expect(page.locator('html')).toHaveAttribute('data-interior-page');
+	const oceanInteriorCanvasBg = await page.locator('.exec-canvas').evaluate((el) => {
+		return getComputedStyle(el, '::before').backgroundImage;
+	});
+	expect(oceanInteriorCanvasBg).not.toBe(oceanHomeCanvasBg);
+	expect(oceanInteriorCanvasBg).toContain('linear-gradient');
 	await expect(page.getByRole('heading', { level: 1, name: 'Inbox' })).toBeVisible();
 	await expect(page.getByRole('main').getByText('waiting on you')).toBeVisible();
 	if (captureDir) {
@@ -420,10 +454,22 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	await expect(page.getByText('Look & feel refresh').first()).toBeVisible();
 	await expect(page.getByText("Approve Kai's sync")).toBeVisible();
 
-	// Upcoming milestones · Next 14 days renders on /home?mock=poc
+	// Upcoming milestones · Next 14 days renders on /home?mock=poc with milestone items
 	await expect(
 		page.getByRole('heading', { name: 'Upcoming milestones · Next 14 days' })
 	).toBeVisible();
+	await expect(page.locator('.hor-item').first()).toBeVisible();
+
+	// Home inline search finds real POC work & inbox items (not truncated before filtering)
+	const pocCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Org AI' });
+	await pocCombo.click();
+	await pocCombo.fill('Custody lock');
+	await expect(
+		page.locator('#exec-cmdk-home-listbox').getByRole('option', { name: /Custody lock fix/ })
+	).toBeVisible();
+	await pocCombo.press('Escape');
+	await pocCombo.press('Escape');
+	await expect(pocCombo).toHaveValue('');
 
 	// Decision Spotlight "Ask about this" opens Org AI with that decision's answer
 	await page.getByRole('button', { name: 'Ask about this' }).click();
@@ -433,6 +479,18 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	await expect(aiDialog).toContainText('Ada recommends: approve.');
 	await aiDialog.getByRole('button', { name: 'ESC' }).click();
 	await expect(aiDialog).toBeHidden();
+
+	// Clicking "New task" on Home opens the task creation dialog on /work and strips ?new=1
+	await page.getByRole('link', { name: 'New task' }).click();
+	await expect(page).toHaveURL(/\/work$/);
+	const newTaskDialog = page.getByRole('dialog', { name: 'New task' });
+	await expect(newTaskDialog).toBeVisible();
+	await newTaskDialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(newTaskDialog).toBeHidden();
+	await page.reload();
+	await expect(page.getByRole('dialog', { name: 'New task' })).toHaveCount(0);
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Home' }).click();
+	await expect(page).toHaveURL(/\/home$/);
 
 	// Project card spot-jump jumps directly to the matching Spotlight decision
 	const spotJumpBtn = page.locator('button[data-spot-jump="in2"]').first();

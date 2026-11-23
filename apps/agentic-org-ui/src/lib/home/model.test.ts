@@ -387,9 +387,146 @@ describe('executive home view model', () => {
 
 		const explained = answerExecutiveQuestion(
 			"Explain the risk, impact, and recommendation for: Approve publishing Kai's sync update to v1.0",
-			{ snapshot: snap, items: [], offices, ownerId: 'you', domain: { inboxItems } }
+			{
+				snapshot: snap,
+				items: [],
+				offices,
+				ownerId: 'you',
+				domain: { inboxItems },
+				decisionId: 'in1'
+			}
 		);
 		expect(explained.headline).toContain("Approve publishing Kai's sync update to v1.0");
 		expect(explained.bullets[0].text).toContain('Ada recommends: approve.');
+	});
+
+	it('resolves exact decisionId even when decision titles are prefixes of each other', () => {
+		const snap = sampleOrg('hq');
+		const inboxItems: InboxItem[] = [
+			{
+				id: 'rel-v1',
+				kind: 'approval',
+				source: 'Release',
+				title: 'Approve release v1',
+				who: { id: 'ada', name: 'Ada', kind: 'agent' },
+				project: { id: 'atlas', name: 'Atlas' },
+				why: 'Base release ready.',
+				recommendation: 'Ship v1 base.',
+				created_at: '2026-11-21T04:45:00Z',
+				actions: ['approve', 'deny'],
+				state: 'open'
+			},
+			{
+				id: 'rel-v1-1',
+				kind: 'approval',
+				source: 'Release',
+				title: 'Approve release v1.1',
+				who: { id: 'sam', name: 'Sam', kind: 'person' },
+				project: { id: 'beacon', name: 'Beacon' },
+				why: 'Patch release ready.',
+				recommendation: 'Ship v1.1 patch.',
+				created_at: '2026-11-21T04:50:00Z',
+				actions: ['approve', 'deny'],
+				state: 'open'
+			}
+		];
+
+		const v11 = answerExecutiveQuestion(
+			'Explain the risk, impact, and recommendation for: Approve release v1.1',
+			{
+				snapshot: snap,
+				items: [],
+				offices,
+				ownerId: 'you',
+				domain: { inboxItems },
+				decisionId: 'rel-v1-1'
+			}
+		);
+		expect(v11.headline).toContain('Approve release v1.1');
+		expect(v11.bullets[0].text).toContain('Ship v1.1 patch.');
+
+		const v1 = answerExecutiveQuestion(
+			'Explain the risk, impact, and recommendation for: Approve release v1',
+			{
+				snapshot: snap,
+				items: [],
+				offices,
+				ownerId: 'you',
+				domain: { inboxItems },
+				decisionId: 'rel-v1'
+			}
+		);
+		expect(v1.headline).toContain('Approve release v1 —');
+		expect(v1.bullets[0].text).toContain('Ship v1 base.');
+	});
+
+	it('filters upcoming milestones strictly to 0..14 days and marks overdue incomplete projects as Overdue', () => {
+		const snap = sampleOrg('hq');
+		const nowMs = Date.parse('2026-11-25T12:00:00Z');
+		const homeProjects = [
+			{
+				id: 'atlas',
+				name: 'Atlas',
+				done: 2,
+				total: 6,
+				open: 4,
+				blocked: 0,
+				due: '2026-11-23', // -2 days (overdue)
+				lead: { id: 'ada', name: 'Ada' },
+				members: 3
+			},
+			{
+				id: 'beacon',
+				name: 'Beacon',
+				done: 1,
+				total: 4,
+				open: 3,
+				blocked: 0,
+				due: '2026-11-25', // 0 days (today)
+				lead: { id: 'sam', name: 'Sam' },
+				members: 2
+			},
+			{
+				id: 'harbor',
+				name: 'Harbor',
+				done: 1,
+				total: 2,
+				open: 1,
+				blocked: 0,
+				due: '2026-12-09', // +14 days (boundary inclusive)
+				lead: { id: 'ada', name: 'Ada' },
+				members: 2
+			},
+			{
+				id: 'far-out',
+				name: 'Far Out',
+				done: 0,
+				total: 2,
+				open: 2,
+				blocked: 0,
+				due: '2026-12-22', // +27 days (excluded)
+				lead: { id: 'sam', name: 'Sam' },
+				members: 1
+			}
+		];
+
+		const milestones = deriveUpcomingMilestones(snap, [], nowMs, { homeProjects });
+		expect(milestones.map((m) => m.title)).toEqual(['Beacon', 'Harbor']);
+		expect(milestones[0].statusLabel).toBe('Today');
+		expect(milestones[1].statusLabel).toBe('In 14 days');
+
+		const cards = deriveProjectCards(snap, [], { homeProjects }, nowMs);
+		const atlas = cards.find((c) => c.id === 'atlas');
+		expect(atlas?.paceLabel).toBe('Overdue');
+		expect(atlas?.paceTone).toBe('bad');
+
+		const kpisWithBudget = deriveKpiMetrics(snap, [], offices, 'you', {
+			orgCost: sampleOrgCost,
+			agentBudgets: sampleBudgets
+		});
+		expect(kpisWithBudget.budgetRemainingPct).toBe(21);
+
+		const kpisNoBudget = deriveKpiMetrics(snap, [], offices, 'you');
+		expect(kpisNoBudget.budgetRemainingPct).toBeNull();
 	});
 });

@@ -501,7 +501,7 @@
 			"sources": [
 				"src/lib/modules/copilot/**",
 				"src/routes/(shell)/work/**",
-				"src/lib/components/{BugSheet,NewRequestDialog,RequestSheet,RequestsPanel,ReportBugDialog,SeverityIcon,TaskSheet}.svelte"
+				"src/lib/components/{BugSheet,NewRequestDialog,NewTaskDialog,RequestSheet,RequestsPanel,ReportBugDialog,SeverityIcon,TaskSheet}.svelte"
 			]
 		},
 		"org-lifecycle": {

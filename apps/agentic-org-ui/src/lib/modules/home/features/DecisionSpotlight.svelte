@@ -162,7 +162,9 @@
 	}
 
 	function askAboutDecision(decision: SpotlightDecision) {
-		shellAi?.ask(`Explain the risk, impact, and recommendation for: ${decision.title}`);
+		shellAi?.ask(`Explain the risk, impact, and recommendation for: ${decision.title}`, {
+			decisionId: decision.id
+		});
 	}
 
 	async function runAction(kind: 'primary' | 'secondary') {
@@ -636,6 +638,19 @@
 		box-shadow: inset 0 0 0 1px var(--exec-warn-ring);
 	}
 	.queue-dot {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 24px;
+		min-height: 36px;
+		padding: 0;
+		border-radius: 999px;
+		background: transparent;
+		transition: min-width 0.2s ease;
+	}
+	.queue-dot::after {
+		content: '';
+		display: block;
 		width: 8px;
 		height: 8px;
 		border-radius: 999px;
@@ -644,14 +659,17 @@
 			width 0.2s ease,
 			background-color 0.16s ease;
 	}
-	.queue-dot.is-urgent {
+	.queue-dot.is-urgent::after {
 		background: var(--tone-warn);
 	}
 	.queue-dot.is-cur {
+		min-width: 32px;
+	}
+	.queue-dot.is-cur::after {
 		width: 22px;
 		background: var(--tone-accent);
 	}
-	.queue-dot.is-cur.is-urgent {
+	.queue-dot.is-cur.is-urgent::after {
 		background: var(--tone-warn);
 	}
 	.stepper-arrow {
@@ -875,7 +893,8 @@
 		.deny-input {
 			min-height: 44px;
 		}
-		.stepper-arrow {
+		.stepper-arrow,
+		.queue-dot {
 			min-width: 44px;
 			min-height: 44px;
 		}

@@ -15,6 +15,7 @@
 	import type { InboxItem } from '$lib/modules/inbox/types';
 	import { answerExecutiveQuestion, type OrgAiAnswer } from '$lib/home/model';
 	import { nonOwners } from '$lib/org/model';
+	import type { ShellAiAskOptions } from './shell-ai';
 	import { isEditableTarget, singleKeyShortcutsOn } from './shortcuts';
 	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
 
@@ -31,7 +32,7 @@
 		inboxItems?: readonly InboxItem[];
 		offices?: OfficeInfo[];
 		ownerId?: string;
-		registerAsk?: (fn: (prompt: string) => void) => void;
+		registerAsk?: (fn: (prompt: string, opts?: ShellAiAskOptions) => void) => void;
 	} = $props();
 
 	interface CommandEntry {
@@ -39,6 +40,7 @@
 		group: string;
 		label: string;
 		sub: string;
+		keywords?: string;
 		href?: string;
 		action?: () => void;
 	}
@@ -67,7 +69,8 @@
 	];
 
 	const entries = $derived.by<CommandEntry[]>(() => {
-		const q = query.trim().toLowerCase();
+		const trimmed = query.trim();
+		const q = trimmed.toLowerCase();
 		const list: CommandEntry[] = [
 			{
 				id: 'go-home',
@@ -148,47 +151,76 @@
 					group: 'Projects',
 					label: p.name,
 					sub: p.key ? `Project · ${p.key.toUpperCase()}` : 'Project',
+					keywords: `${p.id} ${p.key ?? ''}`,
 					href: `/projects/${p.id}/work`
 				});
 			}
-			for (const m of nonOwners(snapshot).slice(0, 12)) {
+			for (const m of nonOwners(snapshot)) {
 				list.push({
 					id: `mem-${m.id}`,
 					group: 'Team',
 					label: m.name,
-					sub: m.agent?.role ?? m.kind,
+					sub: m.agent?.title ?? m.agent?.role ?? m.kind,
+					keywords: `${m.id} ${m.agent?.role ?? ''} ${m.agent?.messaging_name ?? ''}`,
 					href: `/members/${m.id}`
 				});
 			}
 		}
 
-		for (const item of items.filter((i) => !i.deleted).slice(0, 12)) {
+		for (const inboxItem of inboxItems) {
+			list.push({
+				id: `inbox-${inboxItem.id}`,
+				group: 'Inbox',
+				label: inboxItem.title,
+				sub: `${inboxItem.source} · ${inboxItem.who.name}`,
+				keywords: `${inboxItem.id} ${inboxItem.project?.name ?? ''} ${inboxItem.why}`,
+				href: `/inbox?item=${encodeURIComponent(inboxItem.id)}`
+			});
+		}
+
+		for (const item of items.filter((i) => !i.deleted)) {
+			const dest =
+				item.kind === 'request'
+					? `/work?request=${encodeURIComponent(item.id)}`
+					: `/work/${encodeURIComponent(item.short_id)}`;
 			list.push({
 				id: `work-${item.id}`,
 				group: 'Work',
 				label: item.title,
 				sub: `${item.short_id} · ${item.status.replace('_', ' ')}`,
-				href: item.kind === 'request' ? `/work?request=${encodeURIComponent(item.id)}` : '/work'
+				keywords: `${item.short_id} ${item.kind} ${item.id}`,
+				href: dest
 			});
 		}
 
 		if (!q) return list.slice(0, 15);
-		return list
+		const matched = list
 			.filter(
 				(e) =>
 					e.label.toLowerCase().includes(q) ||
 					e.sub.toLowerCase().includes(q) ||
-					e.group.toLowerCase().includes(q)
+					e.group.toLowerCase().includes(q) ||
+					(e.keywords ? e.keywords.toLowerCase().includes(q) : false)
 			)
-			.slice(0, 12);
+			.slice(0, 11);
+
+		matched.push({
+			id: 'search-all-fallback',
+			group: 'Search',
+			label: `Search all for '${trimmed}'`,
+			sub: 'Open full organization search',
+			href: `/search?q=${encodeURIComponent(trimmed)}`
+		});
+		return matched;
 	});
 
 	const safeActiveIdx = $derived(entries.length > 0 ? Math.min(activeIdx, entries.length - 1) : 0);
 	const activeOptionId = $derived(
 		mode === 'cmd' && entries.length > 0 ? `exec-cmdk-opt-${safeActiveIdx}` : undefined
 	);
+	const inlineListboxVisible = $derived(isHome && inlineOpen && entries.length > 0);
 	const inlineActiveOptionId = $derived(
-		inlineOpen && entries.length > 0 ? `exec-cmdk-home-opt-${safeActiveIdx}` : undefined
+		inlineListboxVisible ? `exec-cmdk-home-opt-${safeActiveIdx}` : undefined
 	);
 	const currentAi = $derived(aiHistory[0]);
 	const earlierAi = $derived(aiHistory.slice(1, 5));
@@ -247,7 +279,7 @@
 		else if (entry.href) void goto(resolve(entry.href as '/'));
 	}
 
-	function submitAi(raw: string) {
+	function submitAi(raw: string, opts?: ShellAiAskOptions) {
 		const trimmed = raw.trim();
 		if (!trimmed || !snapshot) return;
 		const ans = answerExecutiveQuestion(trimmed, {
@@ -255,7 +287,8 @@
 			items,
 			offices,
 			ownerId,
-			domain: { inboxItems }
+			domain: { inboxItems },
+			decisionId: opts?.decisionId
 		});
 		aiHistory = [
 			ans,
@@ -264,13 +297,13 @@
 		query = '';
 	}
 
-	function askQuestion(prompt: string) {
+	function askQuestion(prompt: string, opts?: ShellAiAskOptions) {
 		closeInline(true);
 		skipRestoreFocus = false;
 		mode = 'ai';
 		open = true;
 		activeIdx = 0;
-		submitAi(prompt);
+		submitAi(prompt, opts);
 		void tick().then(() => inputEl?.focus());
 	}
 
@@ -286,13 +319,14 @@
 	}
 
 	function handleWindowKeydown(event: KeyboardEvent) {
+		if (event.isComposing || event.keyCode === 229) return;
 		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
 			event.preventDefault();
 			if (open) {
 				closeModal();
 			} else if (isHome) {
 				if (inlineOpen && document.activeElement === homeInputEl) {
-					closeInline(true);
+					closeInline(false);
 					homeInputEl?.blur();
 				} else {
 					openInline();
@@ -317,7 +351,6 @@
 			singleKeyShortcutsOn() &&
 			event.key === '/' &&
 			!event.repeat &&
-			!event.isComposing &&
 			!event.metaKey &&
 			!event.ctrlKey &&
 			!event.altKey &&
@@ -339,10 +372,10 @@
 	}
 
 	$effect(() => {
-		if ((!open || mode !== 'cmd') && !inlineOpen) return;
+		if ((!open || mode !== 'cmd') && !inlineListboxVisible) return;
 		if (entries.length === 0) return;
 		void query;
-		const targetId = inlineOpen
+		const targetId = inlineListboxVisible
 			? `exec-cmdk-home-opt-${safeActiveIdx}`
 			: `exec-cmdk-opt-${safeActiveIdx}`;
 		let cancelled = false;
@@ -357,11 +390,16 @@
 	});
 
 	function handleInputKeydown(event: KeyboardEvent) {
+		if (event.isComposing || event.keyCode === 229) return;
 		if (mode === 'ai' && open) {
 			if (event.key === 'Enter' && query.trim()) {
 				event.preventDefault();
 				submitAi(query);
 			}
+			return;
+		}
+		if (event.key === 'Tab' && isHome && !open && inlineOpen) {
+			inlineOpen = false;
 			return;
 		}
 		if (event.key === 'ArrowDown') {
@@ -372,12 +410,21 @@
 			event.preventDefault();
 			if (isHome && !open && !inlineOpen) inlineOpen = true;
 			activeIdx = entries.length > 0 ? (safeActiveIdx - 1 + entries.length) % entries.length : 0;
-		} else if (event.key === 'Enter' && entries[safeActiveIdx]) {
-			event.preventDefault();
-			runEntry(entries[safeActiveIdx]);
-		} else if (event.key === 'Escape' && inlineOpen) {
-			event.preventDefault();
-			closeInline(true);
+		} else if (event.key === 'Enter') {
+			const canRun = (open && mode === 'cmd') || (isHome && !open && inlineOpen);
+			if (canRun && entries[safeActiveIdx]) {
+				event.preventDefault();
+				runEntry(entries[safeActiveIdx]);
+			}
+		} else if (event.key === 'Escape' && isHome && !open) {
+			if (inlineOpen) {
+				event.preventDefault();
+				closeInline(false);
+			} else if (query.length > 0) {
+				event.preventDefault();
+				query = '';
+				activeIdx = 0;
+			}
 		}
 	}
 </script>
@@ -405,8 +452,8 @@
 					aria-label="Search, run a command, or ask Org AI"
 					role="combobox"
 					aria-autocomplete="list"
-					aria-expanded={inlineOpen}
-					aria-controls="exec-cmdk-home-listbox"
+					aria-expanded={inlineListboxVisible}
+					aria-controls={inlineListboxVisible ? 'exec-cmdk-home-listbox' : undefined}
 					aria-activedescendant={inlineActiveOptionId}
 					onfocus={() => {
 						inlineOpen = true;
@@ -492,17 +539,15 @@
 										onmouseenter={() => (activeIdx = idx)}
 										onclick={() => runEntry(entry)}
 										class={[
-											'flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-left text-sm transition-colors',
-											idx === safeActiveIdx
-												? 'bg-[var(--exec-accent-soft)] text-[var(--exec-ink)] shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]'
-												: 'text-[var(--exec-body)] hover:bg-[var(--exec-accent-soft)] hover:text-[var(--exec-ink)] hover:shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]'
+											'exec-cmdk-home-opt flex min-h-9 w-full items-center gap-3 rounded-[10px] px-3 py-2 text-left text-sm transition-colors',
+											idx === safeActiveIdx && 'is-active'
 										]}
 									>
 										{#if entry.group === 'Projects'}
 											<Folder class="size-4 shrink-0" aria-hidden="true" />
 										{:else if entry.group === 'Team'}
 											<Users class="size-4 shrink-0" aria-hidden="true" />
-										{:else if entry.group === 'Work'}
+										{:else if entry.group === 'Work' || entry.group === 'Inbox'}
 											<Inbox class="size-4 shrink-0" aria-hidden="true" />
 										{:else}
 											<Search class="size-4 shrink-0" aria-hidden="true" />
@@ -577,9 +622,9 @@
 					aria-selected={mode === 'cmd'}
 					onclick={() => (mode = 'cmd')}
 					class={[
-						'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
+						'inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
 						mode === 'cmd'
-							? 'bg-[var(--exec-accent-soft)] text-[var(--exec-ink)] shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]'
+							? 'bg-[var(--exec-accent-soft)] text-[var(--exec-ink)] shadow-[inset_0_0_0_1.5px_var(--tone-accent-ink)]'
 							: 'text-[var(--exec-muted)] hover:text-[var(--exec-ink)]'
 					]}
 				>
@@ -592,9 +637,9 @@
 					aria-selected={mode === 'ai'}
 					onclick={() => (mode = 'ai')}
 					class={[
-						'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
+						'inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
 						mode === 'ai'
-							? 'bg-[var(--exec-accent-soft)] text-[var(--exec-ink)] shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]'
+							? 'bg-[var(--exec-accent-soft)] text-[var(--exec-ink)] shadow-[inset_0_0_0_1.5px_var(--tone-accent-ink)]'
 							: 'text-[var(--exec-muted)] hover:text-[var(--exec-ink)]'
 					]}
 				>
@@ -605,7 +650,9 @@
 			<Dialog.Close class={cn(kbdClass, 'px-2 py-1 text-[11px]')}>ESC</Dialog.Close>
 		</div>
 
-		<div class="flex items-center gap-3 border-b border-[var(--exec-border)] px-4 py-3.5">
+		<div
+			class="exec-cmdk-input-row flex items-center gap-3 border-b border-[var(--exec-border)] px-4 py-3.5"
+		>
 			{#if mode === 'ai'}
 				<Sparkles class="size-5 shrink-0 text-[var(--exec-accent-ink)]" aria-hidden="true" />
 			{:else}
@@ -632,7 +679,7 @@
 					type="button"
 					disabled={!query.trim()}
 					onclick={() => submitAi(query)}
-					class="rounded-lg bg-[var(--exec-accent)] px-3.5 py-1.5 text-xs font-semibold text-[var(--exec-on-accent)] disabled:cursor-not-allowed disabled:opacity-45"
+					class="min-h-9 rounded-lg bg-[var(--exec-accent)] px-3.5 py-1.5 text-xs font-semibold text-[var(--exec-on-accent)] disabled:cursor-not-allowed disabled:opacity-45"
 				>
 					Ask
 				</button>
@@ -663,17 +710,15 @@
 									onmouseenter={() => (activeIdx = idx)}
 									onclick={() => runEntry(entry)}
 									class={[
-										'flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left text-sm transition-colors',
-										idx === safeActiveIdx
-											? 'bg-[var(--exec-accent-soft)] text-[var(--exec-ink)] shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]'
-											: 'text-[var(--exec-body)] hover:bg-[var(--exec-accent-soft)] hover:text-[var(--exec-ink)] hover:shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]'
+										'exec-cmdk-opt flex min-h-9 w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left text-sm transition-colors',
+										idx === safeActiveIdx && 'is-active'
 									]}
 								>
 									{#if entry.group === 'Projects'}
 										<Folder class="size-4 shrink-0" aria-hidden="true" />
 									{:else if entry.group === 'Team'}
 										<Users class="size-4 shrink-0" aria-hidden="true" />
-									{:else if entry.group === 'Work'}
+									{:else if entry.group === 'Work' || entry.group === 'Inbox'}
 										<Inbox class="size-4 shrink-0" aria-hidden="true" />
 									{:else}
 										<Search class="size-4 shrink-0" aria-hidden="true" />
@@ -746,7 +791,7 @@
 								<button
 									type="button"
 									onclick={() => submitAi(turn.query)}
-									class="inline-flex items-center gap-1.5 rounded-full bg-[var(--exec-well)] px-2.5 py-1 text-xs font-medium text-[var(--exec-body)] shadow-[inset_0_0_0_1px_var(--exec-border)] transition-colors hover:bg-[var(--exec-accent-soft)] hover:text-[var(--exec-ink)] hover:shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]"
+									class="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-[var(--exec-well)] px-2.5 py-1 text-xs font-medium text-[var(--exec-body)] shadow-[inset_0_0_0_1px_var(--exec-border)] transition-colors hover:bg-[var(--exec-accent-soft)] hover:text-[var(--exec-ink)] hover:shadow-[inset_0_0_0_1.5px_var(--tone-accent-ink)]"
 								>
 									<Clock class="size-3" aria-hidden="true" />
 									<span>{turn.query}</span>
@@ -767,7 +812,7 @@
 									<button
 										type="button"
 										onclick={() => submitAi(starter)}
-										class="inline-flex items-center gap-1.5 rounded-full bg-[var(--exec-well)] px-3 py-1.5 text-xs font-medium text-[var(--exec-body)] shadow-[inset_0_0_0_1px_var(--exec-border)] transition-colors hover:bg-[var(--exec-accent-soft)] hover:text-[var(--exec-ink)] hover:shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]"
+										class="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-[var(--exec-well)] px-3 py-1.5 text-xs font-medium text-[var(--exec-body)] shadow-[inset_0_0_0_1px_var(--exec-border)] transition-colors hover:bg-[var(--exec-accent-soft)] hover:text-[var(--exec-ink)] hover:shadow-[inset_0_0_0_1.5px_var(--tone-accent-ink)]"
 									>
 										<Sparkles class="size-3.5 text-[var(--exec-accent-ink)]" aria-hidden="true" />
 										<span>{starter}</span>
@@ -841,12 +886,11 @@
 	.exec-cmdk-home-field {
 		cursor: text;
 	}
-	.exec-cmdk-home-field:focus-within {
-		outline: 1px solid var(--exec-muted);
-		outline-offset: -1px;
-	}
-	.exec-cmdk-home-input:focus-visible {
-		outline: none;
+	/* Visible >= 3.0:1 focus indicator across all 6 themes (var(--focus): 5.24:1 - 12.14:1) */
+	.exec-cmdk-home-field:focus-within,
+	.exec-cmdk-input-row:focus-within {
+		outline: 2px solid var(--focus);
+		outline-offset: -2px;
 	}
 	.exec-cmdk-home-results {
 		position: absolute;
@@ -856,6 +900,18 @@
 		max-height: min(26rem, 55dvh);
 		-webkit-backdrop-filter: none;
 		backdrop-filter: none;
+	}
+	.exec-cmdk-home-opt,
+	.exec-cmdk-opt {
+		color: var(--exec-body);
+	}
+	.exec-cmdk-home-opt:hover,
+	.exec-cmdk-opt:hover,
+	.exec-cmdk-home-opt.is-active,
+	.exec-cmdk-opt.is-active {
+		background: var(--exec-accent-soft);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1.5px var(--tone-accent-ink);
 	}
 	.exec-cmdk-trigger:hover {
 		color: var(--exec-ink);
@@ -928,7 +984,9 @@
 			padding: 4px 6px;
 		}
 		.exec-cmdk-trigger,
-		.exec-ai-btn {
+		.exec-ai-btn,
+		.exec-cmdk-home-opt,
+		.exec-cmdk-opt {
 			height: auto;
 			min-height: 44px;
 		}

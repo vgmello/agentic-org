@@ -1,7 +1,11 @@
 import { createContext } from 'svelte';
 
+export interface ShellAiAskOptions {
+	decisionId?: string;
+}
+
 export interface ShellAiController {
-	ask: (prompt: string) => void;
+	ask: (prompt: string, opts?: ShellAiAskOptions) => void;
 }
 
 const [getShellAiContext, setShellAiContext] = createContext<ShellAiController>();
