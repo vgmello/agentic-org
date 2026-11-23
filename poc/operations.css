@@ -250,9 +250,6 @@
   border-bottom: 0;
 }
 .queue-headline .ph-t { align-items: center; }
-.triage-header .queue-headline .ph-t { align-items: baseline; }
-.triage-header .queue-count { display: inline-block; }
-.triage-header .queue-count i { margin-inline-end: 7px; vertical-align: middle; }
 .queue-headline #page-search-tools { margin-inline: auto; }
 .queue-headline #page-search-tools .cmdk-shell { width: min(35rem, 60vw); }
 .queue-toolbar { padding: 4px var(--gutter) 0; }
