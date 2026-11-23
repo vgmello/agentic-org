@@ -6069,7 +6069,7 @@ function inboxDetail(it) {
       </p>
       <h2 tabindex="-1" id="triage-detail-title">${esc(it.what)}</h2>
     </header>
-    ${it.why ? `<div class="triage-why"><h3>Why</h3><p>${esc(it.why)}</p></div>` : ""}
+    ${it.why ? `<p class="triage-description">${esc(it.why)}</p>` : ""}
     <section class="triage-context" aria-labelledby="triage-context-title">
       <h3 id="triage-context-title">Request details</h3>
       <dl class="triage-fields">
