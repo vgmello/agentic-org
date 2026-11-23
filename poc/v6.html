@@ -146,11 +146,16 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .nav-collapse-btn {
   width: 30px; height: 30px; border-radius: 7px; flex: none;
   display: inline-flex; align-items: center; justify-content: center;
-  color: #7C91AE; transition: background-color .14s ease, color .14s ease, opacity .2s ease, width .28s cubic-bezier(.22, 1, .36, 1);
+  color: var(--gray-400); transition: background-color .14s ease, color .14s ease, opacity .2s ease, width .28s cubic-bezier(.22, 1, .36, 1);
 }
-.nav-collapse-btn:hover { background: rgba(186, 222, 255, .08); color: #F8FAFC; }
-.nav-collapse-btn.is-pinned { color: var(--tone-accent-ink); background: var(--tone-accent-soft); }
-.nav-collapse-btn .ic { width: 18px; height: 18px; }
+.nav-collapse-btn:hover { background: var(--hover); color: var(--white); }
+.nav-collapse-btn:focus-visible { outline-color: var(--gray-300); outline-offset: -2px; }
+.nav-collapse-btn .ic { width: 17px; height: 17px; stroke-width: 1.6; }
+.nav-collapse-btn[aria-pressed="false"] .nav-collapse-arrow {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scaleX(-1);
+}
 .nav { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 16px; }
 .nav > ul.nav-scroll { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 20px; overflow-x: hidden; overflow-y: auto; margin: 0 -6px; padding: 0 6px 8px; }
 .nav > ul.nav-pinned { flex: none; padding-bottom: 4px; }
@@ -648,7 +653,7 @@ body.nokeys .search kbd { display: none; }
 .subbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px var(--gutter); border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .work-display { margin-inline-start: auto; }
 .work-display .menu button[aria-checked="false"] .ic20,
-.menu :is([data-act="work-dividers"], [data-act="work-subtasks"])[aria-checked="false"] .ic20 { visibility: hidden; }
+.menu [role="menuitemcheckbox"][aria-checked="false"] .ic20 { visibility: hidden; }
 .seg { display: inline-flex; align-items: stretch; gap: 2px; min-height: 2.25rem; padding: 3px; border-radius: var(--radius-md); background: rgba(15, 23, 42, .45); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10); }
 .seg button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border-radius: 4px; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 600; color: var(--gray-400); }
 .seg button:hover { color: #fff; }
@@ -3035,7 +3040,6 @@ html[data-theme^="report"] .badge {
 html[data-theme^="report"] .foot { border-top: 1px solid #EEF1F6; }
 html[data-theme^="report"] .foot .who { color: #0B101B; font-weight: 600; }
 html[data-theme^="report"] .foot .office { color: #64748B; }
-html[data-theme^="report"] .nav-collapse-btn.is-pinned { color: #0B101B; background: #E6EAF0; }
 html[data-theme^="report"] .foot .office-rail { color: #64748B; }
 html[data-theme^="report"] .foot a.office-link:hover .office-rail { color: #0B101B; }
 html[data-theme^="report"] .foot .office-rail .obadge { background: #F9FAFC; }
@@ -3683,7 +3687,6 @@ html[data-theme="report-dark"] .nav-group-title .ic,
 html[data-theme="report-dark"] .nav-collapse-btn,
 html[data-theme="report-dark"] .nav-fold-btn,
 html[data-theme="report-dark"] .nav-group-all { color: #99a1af; }
-html[data-theme="report-dark"] .nav-collapse-btn.is-pinned { color: var(--tone-accent-ink); background: var(--tone-accent-soft); }
 html[data-theme="report-dark"] .nav-item { color: #99a1af; }
 html[data-theme="report-dark"] .nav-item .ic { color: #99a1af; }
 html[data-theme="report-dark"] .nav-item:hover { background: rgba(255, 255, 255, .05); color: #ffffff; }
@@ -4321,8 +4324,12 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
       <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="ao-mark" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0EA5E9"/><stop offset="100%" stop-color="#0369A1"/></linearGradient></defs><rect class="ao-mark-bg" x="2" y="2" width="28" height="28" rx="8" fill="url(#ao-mark)"/><path d="M10 22 16 9l6 13M12.5 17h7" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <span class="name" title="Agentic Org">Agentic Org</span>
     </a>
-    <button class="nav-collapse-btn" id="nav-collapse-btn" type="button" data-act="nav-collapse" aria-label="Collapse sidebar" title="Collapse sidebar" aria-pressed="false">
-      <svg class="ic" aria-hidden="true"><use href="#i-sidebar"/></svg>
+    <button class="nav-collapse-btn" id="nav-collapse-btn" type="button" data-act="nav-collapse" aria-label="Pin sidebar open" title="Pin sidebar open" aria-pressed="false">
+      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3" y="5" width="18" height="14" rx="2"/>
+        <path d="M9 5v14"/>
+        <path class="nav-collapse-arrow" d="m16.5 9-3 3 3 3"/>
+      </svg>
     </button>
   </div>
   <nav class="nav" aria-label="Main" id="nav"></nav>
@@ -4697,6 +4704,10 @@ function applyTheme(remember = false) {
   }
 }
 applyTheme();
+const INBOX_DIVIDERS_STORE = "agentic-org.v6.inboxDividers";
+S.inboxDividers = false;
+try { S.inboxDividers = localStorage.getItem(INBOX_DIVIDERS_STORE) === "1"; } catch (e) {}
+document.documentElement.toggleAttribute("data-inbox-dividers", S.inboxDividers);
 const WORK_DIVIDERS_STORE = "agentic-org.v6.workDividers";
 const WORK_SUBTASKS_STORE = "agentic-org.v6.workSubtasks";
 S.workDividers = false;
@@ -4721,7 +4732,6 @@ function applyNavCollapsed() {
   document.body.classList.toggle("nav-collapsed", collapsed);
   const b = document.getElementById("nav-collapse-btn");
   if (b) {
-    b.classList.toggle("is-pinned", !!S.navPinned);
     b.setAttribute("aria-pressed", String(!!S.navPinned));
     b.setAttribute("aria-label", S.navPinned ? "Auto-hide sidebar" : "Pin sidebar open");
     b.title = S.navPinned ? "Auto-hide sidebar" : "Pin sidebar open";
@@ -4835,11 +4845,11 @@ const tabPanel = (key, panel) => `id="${panel}" role="tabpanel" aria-labelledby=
 function seg(key, opts, label) {
   return `<span class="seg-label" aria-hidden="true">${esc(label)}</span><div class="seg${key === "theme" ? " theme-options" : ""}" role="group" aria-label="${esc(label)}">${opts.map(([v, l, i]) => `<button type="button" data-act="set" data-k="${key}" data-v="${v}" aria-pressed="${S[key] === v}">${i ? ic(i, "ic16") : ""}${esc(l)}</button>`).join("")}</div>`;
 }
+function displayCheckbox(action, label, checked) {
+  return `<button role="menuitemcheckbox" tabindex="-1" aria-checked="${checked}" type="button" data-act="${action}">${ic("check", "ic20")}${label}</button>`;
+}
 function workListDisplayOptions() {
-  return `<hr>${[
-    ["work-subtasks", "Show subtasks", S.workSubtasks],
-    ["work-dividers", "Row dividers", S.workDividers],
-  ].map(([action, label, checked]) => `<button role="menuitemcheckbox" tabindex="-1" aria-checked="${checked}" type="button" data-act="${action}">${ic("check", "ic20")}${label}</button>`).join("")}`;
+  return `<hr>${displayCheckbox("work-subtasks", "Show subtasks", S.workSubtasks)}${displayCheckbox("work-dividers", "Row dividers", S.workDividers)}`;
 }
 function workDisplayMenu(layoutKey) {
   const layout = S[layoutKey];
@@ -5929,7 +5939,10 @@ function inboxViewControls() {
   ], { icon: "filter", label: "Filter inbox", active: inboxFiltered });
   const display = showMenu("inbox-display", [
     ["inboxOrder", "Grouping", [["priority", "Priority first"], ["date", "By date"]]],
-  ], { icon: "adjustments", label: "Inbox display", active: S.inboxOrder === "date" });
+  ], {
+    icon: "adjustments", label: "Inbox display", active: S.inboxOrder === "date",
+    footer: `<hr>${displayCheckbox("inbox-dividers", "Row dividers", S.inboxDividers)}`,
+  });
   return `<div class="queue-controls" role="group" aria-label="Inbox view controls">${filter}${display}</div>`;
 }
 function inboxCategories() {
@@ -6318,13 +6331,12 @@ function workViewControls(group) {
   ], { icon: "filter", label: "Filter work", active: workHasFilters() });
   const listLayout = S.workLayout === "list";
   const display = showMenu("work-display", [
-    ["workLayout", "Layout", [["list", "List"], ["board", "Board"]]],
     ...(listLayout ? [["workGroup", "Group by", WORK_GROUPS]] : []),
     ["workSort", "Sort by", WORK_SORTS],
     ["workOrder", "Direction", [["asc", "Ascending"], ["desc", "Descending"]]],
   ], {
     icon: "adjustments", label: "Work display",
-    active: !listLayout || group !== "none" || S.workSort !== "default" || S.workOrder !== "asc",
+    active: (listLayout && group !== "none") || S.workSort !== "default" || S.workOrder !== "asc",
     footer: listLayout ? workListDisplayOptions() : "",
   });
   return `<div class="queue-controls" role="group" aria-label="Work view controls">${filter}${display}</div>`;
@@ -6348,8 +6360,12 @@ function pageWork() {
       <div class="queue-tabs" role="group" aria-label="Work views">
         ${WORK_PRESETS.map(([value, label]) => `<button class="queue-tab" type="button" data-act="work-preset"
           data-v="${value}" aria-pressed="${selection.view === value}">${label}<span data-work-count="${value}">${workPresetItems(filtered, value).length}</span></button>`).join("")}
-        ${workViewControls(selection.group)}
       </div>
+      <div class="work-layout-toggle" role="group" aria-label="Work layout">
+        ${[["list", "List"], ["board", "Board"]].map(([layout, label]) => `<button class="queue-tab" type="button"
+          data-act="set" data-k="workLayout" data-v="${layout}" aria-pressed="${S.workLayout === layout}" aria-controls="work-results">${ic(layout, "ic16")}${label}</button>`).join("")}
+      </div>
+      ${workViewControls(selection.group)}
       <button class="btn primary" id="work-new-task" type="button" data-act="work-new-task">${ic("plus", "ic16")}New task</button>
     </div>
   </header><div id="work-results">${workResults(filtered, selection)}</div>`;
@@ -8596,6 +8612,13 @@ document.addEventListener("click", (e) => {
       try { localStorage.setItem(WORK_SUBTASKS_STORE, S.workSubtasks ? "1" : "0"); } catch (e) {}
       break;
     }
+    case "inbox-dividers": {
+      S.inboxDividers = !S.inboxDividers;
+      document.documentElement.toggleAttribute("data-inbox-dividers", S.inboxDividers);
+      t.setAttribute("aria-checked", String(S.inboxDividers));
+      try { localStorage.setItem(INBOX_DIVIDERS_STORE, S.inboxDividers ? "1" : "0"); } catch (e) {}
+      break;
+    }
     case "work-dividers": {
       S.workDividers = !S.workDividers;
       document.documentElement.toggleAttribute("data-work-dividers", S.workDividers);
@@ -8837,10 +8860,12 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "ArrowUp") return go(i - 1);
     if (e.key === "Home") return go(0);
     if (e.key === "End") return go(items.length - 1);
-    const applyWorkOption = e.key === "Enter" && openMenu.id === "menu-work-display" && e.target.getAttribute("role") === "menuitemcheckbox";
-    if (e.key === "Escape" || applyWorkOption) {
+    const applyDisplayOption = e.key === "Enter"
+      && (openMenu.id === "menu-work-display" || openMenu.id === "menu-inbox-display")
+      && e.target.getAttribute("role") === "menuitemcheckbox";
+    if (e.key === "Escape" || applyDisplayOption) {
       e.preventDefault();
-      if (applyWorkOption) e.target.click();
+      if (applyDisplayOption) e.target.click();
       const trigger = document.querySelector(`[aria-controls="${openMenu.id}"]`);
       closeMenus();
       trigger?.focus();
