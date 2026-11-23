@@ -44,3 +44,13 @@ Deliver composable development process packages (records, import/download, seed 
 - [ ] #2 Issued document versions under docs-history/, version diffs, code_links staleness, and task-realizes convergence pass DSS-3/4/7/8 and PPD-6..8/10 (FC-181..182).
 - [ ] #3 Built-in feature-delivery and dss processes ship and pass end-to-end real-agent verification (DSS-1..12, FC-183, FC-185).
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Backend Implementation Blueprint (L12, L13 & L14):
+1. Composable Process Packages (L12, FC-175..179, FC-184, FC-187): extend crates/org-process (model.rs, resolve.rs, skills.rs, write.rs) and crates/org-office/src/processes/ + office/processes.rs with development process package records, import/download, seed roster derivation, process-declared project tabs, role-bound skill injection in org-office-sessions/src/instructions.rs, and agent-os process create|update for project scope.
+2. Issued Document Versions & Code Links (L13, FC-181..182): build immutable issued doc snapshots under docs-history/, version diffs, code_links staleness tracking against repo commits (integrating with crates/org-git / C7), and task-realizes convergence views.
+3. Built-in Processes (L14, FC-183, FC-185): ship built-in feature-delivery and dss process packages and verify end-to-end with supervised sessions (DSS-1..12, PKG-1..18, PPD-1..10).
+4. Verification: cargo test -p org-process -p org-docs -p org-office -p org-office-sessions -p org-office-server -p agentic-org-web; python3 -B -m unittest docs/design/organization-data/test_schema.py.
+<!-- SECTION:PLAN:END -->

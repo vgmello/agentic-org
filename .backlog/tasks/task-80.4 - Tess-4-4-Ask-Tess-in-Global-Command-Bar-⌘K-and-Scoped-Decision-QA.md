@@ -4,6 +4,7 @@ title: 'Tess 4/4: Ask Tess in Global Command Bar (⌘K) and Scoped Decision Q&A'
 status: To Do
 assignee: []
 created_date: '2026-11-22T02:35:00Z'
+updated_date: '2026-11-22T14:30:00Z'
 labels:
   - backend
   - ui
@@ -36,3 +37,14 @@ Wire every global and card-level Ask AI interaction in the UI to Tess so users c
 - [ ] #3 Ask Tess conversations route to Tess (builtin_key = "chief_of_staff"), record turns and usage under Tess employee ID in normal chat/accounting streams, and show an explicit unavailable state when no runtime/provider is configured.
 - [ ] #4 Access boundaries are enforced server-side on every Ask Tess query so Tess only reads data the signed-in caller is authorized to view (never exposing other agents private notes or host-only secrets), verified by automated backend and UI tests.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Backend Implementation Blueprint (Tess 4/4 — Ask Tess API):
+1. Wire & RPC (org-proto, org-office-sessions, org-office-server, operations.json, agentic-org-web):
+   - Add chief_of_staff.ask (global or item-scoped context: task/decision/inbox item id) routing to Tess (builtin_key='chief_of_staff') through normal chat/session/accounting streams so turns & usage record under Tess's employee ID.
+   - Return explicit unavailable state when Tess has no configured/ready runtime or provider binding.
+2. Server-side access enforcement: assemble item/org context strictly through caller-authorized read paths (never leaking other agents' private task notes from private/task-notes.db, private DMs, or host/office secrets).
+3. Verification: backend authorization boundary tests (owner, PM, regular member), unavailable-runtime test, and accounting attribution test.
+<!-- SECTION:PLAN:END -->

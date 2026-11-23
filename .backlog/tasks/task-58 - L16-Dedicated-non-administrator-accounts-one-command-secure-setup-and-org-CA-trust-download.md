@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-21T00:11:00Z'
+updated_date: '2026-11-22T14:30:00Z'
 labels:
   - backend
   - rust
@@ -36,3 +37,16 @@ Execute the accounts, launcher, security, secrets, and admin-rights spikes (acco
 - [ ] #2 One-command setup installs service and per-office agent accounts with --isolation accounts default and explicit --isolation off development choice (no silent fallback).
 - [ ] #3 Organization CA is installed as trusted with a 'Trust this organization' download and fingerprint display (D26), and ISO-1..9 / ENC-4 / ASX-1..13 pass.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Backend Implementation Blueprint (L16 — Dedicated Accounts & Org CA Trust):
+1. Section 11 Spikes & Section 10 ADRs: complete accounts/launcher, security, isolation setting, secrets, and admin-rights spikes from doc-61 and record ADRs.
+2. One-command setup & isolation (crates/org-host, crates/org-platform, crates/org-platform-host, apps/agentic-org):
+   - Hidden service account + per-office agent accounts (macOS + Linux agentic-org-office@.service template + polkit rule per D14..D23).
+   - Default --isolation accounts with explicit --isolation off development choice (no silent fallback) and closed-list root helper.
+   - Disk encryption check-and-warn; single confirmation for uninstall and isolation-mode switches.
+3. Org CA trust (D26): install per-org CA as trusted, expose 'Trust this organization' CA download + SHA-256 fingerprint display in agentic-org-web, and wire agent graphical session viewing (D27).
+4. Verification: ISO-1..9, ENC-4, ASX-1..13, FC-161, FC-191; cargo test -p org-host -p org-platform -p org-platform-host -p agentic-org-web.
+<!-- SECTION:PLAN:END -->
