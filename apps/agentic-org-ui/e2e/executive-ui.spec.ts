@@ -274,19 +274,24 @@ test('Home scroll cue: keyboard-reachable before below-fold content, moves focus
 	expect(activeId.id).toBe('exec-projects-heading');
 
 	// Navigating away while scrolled down and returning via popstate (Back) OR link resets main.scrollTop to 0 and shows cue again
-	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
-	await expect(page).toHaveURL(/\/inbox/);
-	await expect(page.getByRole('heading', { level: 1, name: 'Inbox' })).toBeVisible();
-	await expect(page.getByRole('region', { name: 'Item details' })).toBeVisible();
-	// Scroll Inbox down too so popstate back to /home proves <main>.scrollTop resets cleanly
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Work' }).click();
+	await expect(page).toHaveURL(/\/work/);
+	await expect(page.getByRole('heading', { name: 'Work' })).toBeVisible();
+	// Use a shorter viewport and wait for Work content to overflow <main> so popstate Back genuinely resets a non-zero offset
+	await page.setViewportSize({ width: 1440, height: 480 });
+	await expect
+		.poll(() => page.locator('main').evaluate((el) => el.scrollHeight - el.clientHeight))
+		.toBeGreaterThan(30);
 	await page.locator('main').evaluate((el) => {
-		el.scrollTop = 120;
+		el.scrollTop = 48;
 	});
+	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBeGreaterThan(16);
 	await page.goBack();
 	await expect(page).toHaveURL(/\/home/);
 	await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
 	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBe(0);
 	await expect(hint).toBeVisible();
+	await page.setViewportSize({ width: 1440, height: 700 });
 
 	await hint.click();
 	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBeGreaterThan(16);
