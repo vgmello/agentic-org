@@ -271,7 +271,7 @@ html[data-theme="cozy"] {
   }
 
   & :is(.hb-spot-meta, .hb-spot-next, .hb-cos-memo, .hb-ai-brief, .hb-brief-lenses, .hb-dig-item,
-    .hb-hor-item, .work-items, .work-group-title, .grp-h, .subnav, .ctx-body, .runlog, .k-doc,
+    .hb-hor-item, .work-group-title, .grp-h, .subnav, .ctx-body, .runlog, .k-doc,
     .cmdk-tabs, .cmdk-foot, .cmdk-ai-card, .cmdk-tab-grp, .cmdk-trigger kbd, .seg, .search,
     .field, textarea, code, pre, .triage-queue, .triage-audit, .activity-triage) {
     background: var(--cozy-well);
@@ -283,7 +283,7 @@ html[data-theme="cozy"] {
   & .work-status[data-tone="active"] { color: var(--tone-accent); }
   & .work-status[data-tone="review"] { color: var(--tone-warn); }
 
-  & :is(.work-group-title, .grp-h, .work-items, .field) { border-radius: 8px; }
+  & :is(.work-group-title, .grp-h, .field) { border-radius: 8px; }
   & :is(.hb-spot-next, .hb-dig-item, .hb-pill-link, .hb-hor-item):hover { background: var(--hover); }
   & .hb-cos-memo { --hb-cos-fade: #382e26; }
   & .hb-cos-scroll::after { height: 36px; }
