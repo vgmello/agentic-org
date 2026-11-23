@@ -47,20 +47,20 @@ Engineers and their agents make architectural decisions themselves, inside the
 [architecture non-negotiables](.backlog/docs/doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md), and record them.
 
 ## Rules
-1. **Read [`Architecture Rules`](.backlog/docs/doc-8%20-%20Architecture-Rules.md) first.** For domain/data work, also read the authority map and owning organization-data contract before implementing a secondary design or UX criterion. Follow the [v1 project structure](.backlog/docs/design/doc-68%20-%20Design-v1-Project-Structure.md): apps compose crates, policies own their required contracts, and dependencies on `org-proto` are intentional rather than mandatory for every crate. No source cycles. Logic lives in libraries, and binaries stay thin. Planned variation (another OS, vendor, storage engine or deployment form) goes behind a consumer-owned adapter contract from the first implementation; every operating system without an implementation gets an adapter that fails closed, an unbuilt provider or engine is refused at composition, and later additions change only the adapter and composition ([rule](.backlog/docs/doc-8%20-%20Architecture-Rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
+1. **Read [`Architecture Rules`](.backlog/docs/doc-8%20-%20Architecture-Rules.md) first.** For domain/data work, read the authority map and owning organization-data contract before secondary designs or UX criteria. Follow [v1 project structure](.backlog/docs/design/doc-68%20-%20Design-v1-Project-Structure.md): apps compose crates, policies own contracts, `org-proto` deps are intentional, no source cycles, logic in libraries, thin binaries. Planned variation (OS, vendor, storage, deployment) goes behind a consumer-owned adapter from day one; unimplemented OS/provider/engine fails closed ([rule](.backlog/docs/doc-8%20-%20Architecture-Rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
 2. **Branches and integration:** follow [`Branch, Review and Integration`](.backlog/docs/processes/doc-20%20-%20Process-Branch-Review-and-Integration.md).
-   - Start feature branches from `origin/v1`. Use separate worktrees for concurrent writers; otherwise work in the dedicated current checkout.
-   - Each lead keeps one active implementation branch at a time. Preserve blocked branches/checkpoints and move to independent work rather than stopping all delivery.
-   - Review completed work locally, then merge `origin/v1` into your branch, tell the other lead sessions, `git merge --no-ff` into `v1` and push it. `v1` is the integration branch for **all v1 features** (owner, 2026-11-18; `v1-integration` is retired). Do not wait for a pull request or an outside reviewer.
-   - Never push to `main` without an explicit release instruction. Never delete unmerged work. After merging, clean up your merged worktrees and local and remote branches as `.backlog/docs/processes/doc-20 - Process-Branch-Review-and-Integration.md` §5 describes.
-3. **Checks and local review:** use the installed kit's task-routing, skill-routing and review-cycle. Keep the original author context, fix confirmed findings, validate original intent and obtain the separate fresh final local review for the exact commit. The lead merges after current checks and local acceptance pass.
-   - **Read-only tiered review, session reuse and lead judgment (owner, 2026-11-23):** Run local reviews strictly read-only — never let a reviewer edit, patch, or commit fixes (when invoking Codex directly, enforce `--sandbox read-only` on initial runs and `-c sandbox_mode="read-only"` on `codex exec resume`, never auto-fix modes). Do **not** pass `--ephemeral` when follow-up verification may be needed: save the returned `session id` so that after the lead fixes confirmed findings, the re-review **resumes that same session** (`codex exec resume <session-id>`) to keep the prompt cache and code context warm instead of re-reading everything from scratch. Escalate from `gpt-6.2-sol` (`xhigh`, resuming its session across repair turns until clean) to a **separate fresh** `gpt-6.2-sol` (`max`) session for the final review gate (resuming that `max` session if any follow-up fix is needed) until `VERDICT: APPROVE`. Every review prompt must explain the problem/scope being solved, explicitly tell the reviewer **not to change any files or spend effort applying fixes**, and ask for concise structured findings (`Severity`, `file:line`, concrete failure scenario/proof, minimal recommended direction, and verdict). After every review pass, the lead must independently inspect the cited code and contracts to judge whether each finding is a real problem or a false positive — fixing only confirmed real issues and explicitly rejecting false positives with rationale.
-   - For Rust changes, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass.
-   - For app changes, the type check, tests, build and relevant browser checks pass; capture UI evidence where applicable.
-   - For documentation/workflow-only changes, run relevant kit/catalog checks and review the changed instructions; no unrelated application test run is required.
+   - Start feature branches from `origin/v1`. Use separate worktrees for concurrent writers; otherwise work in the current checkout.
+   - Keep one active implementation branch per lead; preserve blocked checkpoints and advance independent work.
+   - Review locally, merge `origin/v1` into your branch, notify other lead sessions, `git merge --no-ff` into `v1` and push. `v1` integrates **all v1 features** (owner, 2026-11-18; `v1-integration` retired); no PR or outside reviewer required.
+   - Never push to `main` without explicit release instruction; never delete unmerged work. Clean up merged worktrees and local/remote branches per `doc-20` §5.
+3. **Checks and local review:** use kit task-routing, skill-routing, and review-cycle. Keep original author context, fix confirmed findings, validate original intent, and obtain a separate fresh final local review for the exact commit before merging.
+   - **Read-only tiered review, session reuse & lead judgment (owner, 2026-11-23):** Run local reviews strictly read-only—never let a reviewer edit, patch, or commit (Codex: `--sandbox read-only` initially and `-c sandbox_mode="read-only"` on `codex exec resume`; never auto-fix). Omit `--ephemeral` when follow-ups may be needed and resume the saved `<session-id>` (`codex exec resume <session-id>`) after fixes to keep prompt cache and code context warm. Escalate from `gpt-6.2-sol` (`xhigh`, resuming across repairs until clean) to a **separate fresh** `gpt-6.2-sol` (`max`) session for the final gate (resuming if follow-ups arise) until `VERDICT: APPROVE`. Every review prompt explains scope/problem, forbids file edits, and requests structured findings (`Severity`, `file:line`, failure proof, minimal direction, verdict). After each pass, the lead independently inspects cited code/contracts—fixing confirmed issues and explicitly rejecting false positives with rationale.
+   - Rust changes: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
+   - App changes: type check, tests, build, relevant browser checks, and UI evidence.
+   - Docs/workflow-only changes: relevant kit/catalog checks and instruction review; no unrelated app test run required.
 4. **Never write to a user's organization workspace from tests.** Use temporary directories.
-5. **Pull request descriptions are short:** sections **Why**, **What**, **Notes** and **Breaking changes** ("None" when nothing breaks), at most 2,000 characters in total; shorter is better, about two or three short paragraphs (owner, 2026-11-19).
-5. **Required tools are green before any work starts.** See [Tools for agents](#tools-for-agents).
+5. **Pull request descriptions are short:** sections **Why**, **What**, **Notes**, **Breaking changes** ("None" when none), <= 2,000 chars total (owner, 2026-11-19).
+6. **Required tools are green before any work starts.** See [Tools for agents](#tools-for-agents).
 
 ## Tools for agents
 
@@ -180,50 +180,18 @@ and this repository.
 
 ### Architecture ownership and efficient parallel work
 
-- Each lead owns its increment's plan, acceptance contract, architecture, shared
-  interfaces, dependency order and integration. A change to a contract, security
-  rule or storage rule that another increment depends on is agreed between the two
-  leads before dependent implementation.
-- At planning and meaningful checkpoints, assess ready independent slices. Use
-  parallel work when its expected benefit justifies the handoff; record the split
-  and dependencies, or why serial work is preferable, in the current plan.
-- Within one increment, allow at most two concurrent source writers, including
-  the lead, with separate worktrees, nonoverlapping files and agreed interfaces.
-  While two workers write, the lead coordinates and verifies without becoming a
-  third writer. Agree an explicit ownership handoff before changing shared files.
-- Before dispatch, specify the worktree/base, exact owned files, interfaces,
-  dependencies, acceptance checks, routed model/effort and escalation conditions.
-  Supply the selected skill packet and bounded context, preserving author sessions.
-- Every implementation and review handoff must reference the stable delivery
-  contract and [independent delivery and dependency boundaries](.backlog/docs/doc-8%20-%20Architecture-Rules.md#independent-delivery-and-dependency-boundaries).
-  State the usable outcome (or internal foundation), declared prerequisites and
-  early production-path verification. Include its focused policy,
-  [`.backlog/docs/doc-6 - Independent-Delivery-and-Dependency-Boundaries.md`](.backlog/docs/doc-6%20-%20Independent-Delivery-and-Dependency-Boundaries.md),
-  directly in the resolved skill packet. Review actual boundaries and behavior;
-  existing checks, original-author validation and fresh review gates still apply.
-- Workers return concise receipts: changed paths/source references, check results
-  and log locations, remaining issues and decisions needed. Keep detailed logs on
-  disk. The lead uses targeted follow-up reads to assess architecture, integration
-  and acceptance; avoid repeating routine worker investigations without a concrete
-  gap, failure or contradiction. Required source inspection, independent reviews,
-  author validation and complete feature checks remain mandatory.
+- Each lead owns its increment's plan, acceptance contract, architecture, shared interfaces, dependencies, and integration; agree cross-increment contract/security/storage changes before dependent work.
+- Assess independent slices at planning/checkpoints; record parallel splits or why serial is better in the plan.
+- At most two concurrent source writers per increment (including the lead), using separate worktrees, nonoverlapping files, and explicit ownership handoffs for shared files.
+- Before dispatch, specify worktree/base, owned files, interfaces, dependencies, acceptance checks, routed model/effort, escalation rules, and skill packet; preserve author sessions.
+- Every implementation/review handoff references [independent delivery and dependency boundaries](.backlog/docs/doc-8%20-%20Architecture-Rules.md#independent-delivery-and-dependency-boundaries) and includes [`.backlog/docs/doc-6 - Independent-Delivery-and-Dependency-Boundaries.md`](.backlog/docs/doc-6%20-%20Independent-Delivery-and-Dependency-Boundaries.md) in the skill packet, stating usable outcome/foundation, prerequisites, and early production-path verification.
+- Workers return concise receipts (changed paths, check results/logs, remaining issues, decisions needed) with full logs on disk. The lead inspects targeted code/contracts without repeating routine investigations; independent reviews, author validation, and full checks remain mandatory.
 
 ### Communication for the lead and delegates
 
-- The main lead answers concisely in normal prose. Include the evidence, risks
-  and decisions the user needs; expand when clarity or complexity requires it.
-- Every delegated session, including implementation, lookup, architecture and
-  final review, must read and apply `.agents/skills/caveman/SKILL.md` before its
-  first response. The skill applies only to delegate communication, never to the
-  main lead's voice. It does not change task scope, model routing or review gates.
-- The lead includes the skill reference and the delegate-only scope in every
-  dispatch, including fresh-context and nested delegates. The baseline catalog
-  includes it in implementation and review packets. If a delegate cannot read
-  files, supply the skill text with its bounded assignment instead.
-- Keep required review formats, findings, uncertainty and verification evidence
-  complete. Source changes invalidate old packets: resolve and read current
-  guidance before subsequent assignments. Concise reporting never permits
-  shallower implementation, testing or review.
+- The main lead answers concisely in normal prose with evidence, risks, and decisions needed.
+- Every delegated session (implementation, lookup, architecture, final review) reads and applies `.agents/skills/caveman/SKILL.md` before its first response (delegate-only, never the main lead's voice; never reduces scope, tests, or review depth).
+- Include the skill reference (or text if file reads are unavailable) and delegate-only scope in every dispatch. Source changes invalidate old packets—resolve current guidance before subsequent assignments.
 
 ## Tailwind Plus (licensed UI)
 The app's look uses Tailwind Plus components, which the licence allows in our open-source end product. **Allowed:** using or modifying them (including converting them to Svelte) **inside the product UI application (`apps/agentic-org-ui`)**. **Not allowed:** publishing them separately (a shared UI kit or component package, a template or starter, a Figma kit), or building a website-builder or admin-panel product from them. Never move them into `crates/` or a standalone package.
