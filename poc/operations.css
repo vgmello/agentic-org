@@ -1,9 +1,93 @@
+/* Search in interior page headers */
+#page-search-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline-start: auto;
+}
+#page-search-tools .cmdk-shell {
+  width: clamp(12rem, 23vw, 20rem);
+  height: var(--control-height);
+  padding: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+#page-search-tools .cmdk-shell.has-local-search { width: clamp(14rem, 26vw, 22rem); }
+#page-search-tools .cmdk-shell:hover { transform: none; }
+#page-search-tools .cmdk-sep { height: 18px; margin-inline: 3px; }
+#page-search-tools .cmdk-trigger { gap: 6px; padding-inline: 8px; }
+#page-search-tools .cmdk-ai-btn { height: 100%; min-height: 0; padding-inline: 9px; }
+#page-search-tools .has-local-search .cmdk-trigger { flex: 0 0 auto; font-size: .75rem; }
+#page-search-tools .has-local-search :is(.cmdk-trigger > .ic, kbd) { display: none; }
+.cmdk-local {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+}
+.cmdk-local label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 100%;
+  padding-inline: 8px 3px;
+  color: var(--gray-400);
+}
+.cmdk-local input {
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--white);
+  font: inherit;
+}
+.cmdk-local input::placeholder { color: var(--gray-400); }
+.cmdk-local:focus-within { outline: 2px solid var(--tone-accent-ink); outline-offset: -2px; border-radius: var(--radius-md); }
+.cozy-contrast-icon { display: none; }
+.has-page-toolbar { gap: 8px 12px; }
+.has-page-toolbar .ph-t { overflow-wrap: anywhere; }
+.prof.has-page-toolbar .grow { min-width: 0; }
+.chhead.has-page-toolbar .ph-t { align-items: center; }
+.unavail.has-page-toolbar { display: flex; align-items: center; flex-wrap: wrap; padding: 16px var(--gutter); }
+.unavail.has-page-toolbar h1 { margin: 0; }
+.unavail.has-page-toolbar p { flex-basis: 100%; margin-block: 12px; text-align: start; }
+@media (max-width: 959px) {
+  #page-search-tools .cozy-contrast {
+    width: var(--control-height);
+    min-height: var(--control-height);
+    padding: 0;
+  }
+  #page-search-tools .cozy-contrast > span { display: none; }
+  #page-search-tools .cozy-contrast-icon { display: block; }
+}
+@media (max-width: 720px), (pointer: coarse) {
+  #page-search-tools .cmdk-shell { height: calc(var(--control-height) + 4px); }
+  #page-search-tools .cmdk-trigger { min-width: var(--control-height); justify-content: center; }
+  #page-search-tools .cmdk-ai-btn { min-width: var(--control-height); justify-content: center; }
+  .cmdk-local input { font-size: 1rem; }
+}
+@media (max-width: 720px) {
+  #page-search-tools .cmdk-shell { width: auto; }
+  #page-search-tools :is(.cmdk-trigger kbd, .cmdk-ph) { display: none; }
+  #page-search-tools .has-local-search .cmdk-trigger > .ic { display: block; }
+  #page-search-tools .cmdk-ai-btn > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
+    overflow: hidden;
+  }
+}
+
 /* Inbox triage */
 .triage-workspace {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: min(700px, calc(100dvh - 68px));
+  min-height: min(700px, 100dvh);
 }
 .triage-header {
   position: relative;
@@ -12,6 +96,7 @@
   border-bottom: 1px solid var(--line);
 }
 .triage-headline { padding-block-end: 12px; border-bottom: 0; }
+.triage-controls .menu { inset-inline: 0 auto; }
 .triage-waiting {
   display: inline-flex;
   align-items: center;
@@ -26,28 +111,6 @@
   background: var(--tone-accent);
   flex: none;
 }
-.triage-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: var(--control-height);
-  padding: 0 12px;
-  border: 1px solid var(--line2);
-  border-radius: 8px;
-  background: var(--hover);
-  color: var(--gray-400);
-}
-.triage-search input {
-  width: min(180px, 100%);
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--white);
-  font: inherit;
-}
-.triage-search input::placeholder { color: var(--gray-400); }
-.triage-search:focus-within { outline: 2px solid var(--tone-accent); outline-offset: 1px; }
 .triage-categories {
   display: flex;
   align-items: center;
@@ -80,7 +143,13 @@
   font-size: .75rem;
 }
 .triage-menu-count { margin-inline-start: auto; }
-.triage-split { display: grid; grid-template-columns: clamp(19rem, 25vw, 22rem) minmax(0, 1fr); flex: 1 1 auto; min-height: 0; }
+.triage-split {
+  display: grid;
+  grid-template-columns: clamp(19rem, 28vw, 25rem) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .triage-queue {
   min-width: 0;
   display: flex;
@@ -202,14 +271,14 @@
 .triage-empty h2 { color: var(--white); font-size: .9375rem; }
 .triage-empty > .ic { color: var(--tone-accent-ink); }
 @media (min-width: 960px) {
-  .triage-workspace { height: max(600px, calc(100dvh - 68px)); }
+  .triage-workspace { height: max(600px, 100dvh); }
   #triage-list, .triage-reading { overflow-y: auto; overscroll-behavior-y: contain; }
-  @container inbox-reading (min-width: 800px) {
+  @container inbox-reading (min-width: 760px) {
     .triage-document {
       max-width: 1200px;
       margin-inline: auto;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) clamp(21rem, 36cqi, 27rem);
+      grid-template-columns: minmax(0, 1fr) clamp(21rem, 38cqi, 29rem);
       align-items: start;
       column-gap: 24px;
     }
@@ -223,11 +292,11 @@
 @media (max-width: 959px) {
   .triage-split { display: block; }
   .triage-queue { border-inline-end: 0; }
-  .triage-workspace:not(.triage-has-detail) .triage-reading, .triage-has-detail :is(.triage-header, .triage-queue) { display: none; }
+  .triage-workspace:not(.triage-has-detail) .triage-reading,
+  .triage-has-detail :is(.triage-controls, #triage-categories, .triage-queue) { display: none; }
   .triage-document .triage-back { display: inline-flex; align-self: start; padding-inline-start: 0; color: var(--gray-300); }
 }
 @media (max-width: 720px), (pointer: coarse) {
-  .triage-search input { font-size: 1rem; }
   .triage-copy { min-height: var(--control-height); min-width: var(--control-height); }
 }
 @container inbox-header (max-width: 760px) {
@@ -237,11 +306,8 @@
 }
 @media (max-width: 520px) {
   .triage-controls { width: 100%; }
-  .triage-search { width: 100%; }
-  .triage-search input { width: 100%; }
   .triage-tabs { gap: 4px; }
   .triage-tab { padding-inline: 7px; }
-  .triage-controls .menu { right: auto; left: 0; }
 }
 
 /* Activity command center */

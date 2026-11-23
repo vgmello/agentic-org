@@ -608,12 +608,7 @@ body.nokeys .search kbd { display: none; }
 .ph-t > .cnt { font-size: .875rem; line-height: 1.5; }
 .ph-actions { display: flex; align-items: center; min-width: 0; gap: 8px; flex-wrap: wrap; }
 .ph.work-header { padding-block: 12px; gap: 8px 16px; }
-.work-header .ph-actions { flex: 1 1 auto; min-width: 0; gap: 8px; }
-.work-header .work-search { flex: 1 1 11rem; width: auto; min-width: 0; }
 .work-header .work-status-filter { max-width: 100%; }
-@media (max-width: 639px) {
-  .work-header .work-search { flex-basis: 100%; }
-}
 .back { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-400); font-weight: 600; font-size: 0.8125rem; padding: 12px var(--gutter) 0; }
 .back:hover { color: var(--white); }
 .desc { padding: 16px var(--gutter) 0; color: var(--gray-400); max-width: 820px; }
@@ -944,15 +939,16 @@ textarea::placeholder, input.field::placeholder { color: var(--gray-400); }
 .bcard .m { display: flex; align-items: center; gap: 6px; color: var(--gray-400); font-size: 12px; flex-wrap: wrap; }
 
 /* Chat */
-.chat { display: grid; grid-template-columns: 240px 1fr; height: calc(100vh - 64px - 38px); }
+.chat { display: grid; grid-template-columns: 240px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: 100dvh; }
 .chat.withthread { grid-template-columns: 240px 1fr 340px; }
+.chat > .chhead { grid-column: 1 / -1; padding-inline: var(--gutter); }
 .chlist { border-right: 1px solid var(--line); background: rgb(0 0 0 / .1); overflow-y: auto; padding: 16px 12px; }
 .chlist h2 { font-size: 12px; font-weight: 600; color: var(--gray-400); padding: 8px 8px 4px; }
 .chlist a { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius-md); color: var(--gray-400); font-weight: 500; }
 .chlist a:hover { background: var(--hover); color: var(--white); }
 .chlist a[aria-current="page"] { background: var(--hover); color: var(--white); }
 
-.chmain { display: flex; flex-direction: column; min-width: 0; }
+.chmain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chhead { display: flex; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .msgs { flex: 1; overflow-y: auto; padding: 16px 24px; display: flex; flex-direction: column; gap: 18px; }
 .msg { display: flex; gap: 12px; }
@@ -1173,7 +1169,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   .subnav a:hover { background: none; box-shadow: inset 0 -2px 0 rgb(255 255 255 / .2); }
   .subnav a[aria-current="page"] { background: none; box-shadow: inset 0 -2px 0 var(--indigo-400); }
   .subnav a:focus-visible { outline-offset: -2px; }
-  .chat, .chat.withthread { grid-template-columns: 1fr; height: auto; }
+  .chat, .chat.withthread { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; height: auto; }
   .chlist { border-right: 0; }
 }
 @media (min-width: 640px) and (max-width: 959px) {
@@ -4311,9 +4307,10 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
     <div class="bctl" id="banner-ctl"></div>
     <button class="btn ghost sm icon" type="button" data-act="banner-close" aria-label="Dismiss prototype banner"><svg class="ic ic16" aria-hidden="true"><use href="#i-x"/></svg></button>
   </div>
-  <header class="topbar">
+  <header class="topbar" id="home-toolbar">
     <button class="btn ghost icon menu-btn" type="button" data-act="drawer" aria-label="Open navigation" aria-controls="sidebar"><svg class="ic ic20" aria-hidden="true"><use href="#i-menu"/></svg></button>
     <div class="cmdk-shell" id="cmdk-shell">
+      <div class="cmdk-local" id="cmdk-local" hidden></div>
       <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog">
         <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
         <span class="cmdk-ph" id="cmdk-ph">Search, run a command, or ask Tess…</span>
@@ -4326,7 +4323,7 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
       </button>
     </div>
     <button class="btn outline cozy-contrast" id="cozy-contrast" type="button" data-act="cozy-contrast"
-      aria-label="Cozy Glass / AA Contrast" aria-pressed="false" hidden><span aria-hidden="true">Cozy Glass</span></button>
+      aria-label="Cozy Glass / AA Contrast" aria-pressed="false" hidden><span aria-hidden="true">Cozy Glass</span><svg class="ic ic16 cozy-contrast-icon" aria-hidden="true"><use href="#i-adjustments"/></svg></button>
   </header>
   <main id="main" tabindex="-1"></main>
 </div>
@@ -5895,8 +5892,7 @@ function pageInbox(sel) {
   return `<section class="triage-workspace${sel && item ? " triage-has-detail" : ""}" aria-label="Inbox workspace">
     <header class="triage-header">
       <div class="ph triage-headline"><div class="ph-t"><h1 tabindex="-1">Inbox</h1><span class="cnt triage-waiting" role="status"><i aria-hidden="true"></i>${unhandled().length} waiting on you</span></div>
-        <div class="ph-actions triage-controls"><label class="triage-search">${ic("search", "ic16")}<span class="sr-only">Search inbox</span><input id="triage-search" type="search" placeholder="Search inbox…" value="${esc(S.inboxQuery)}" autocomplete="off"></label>
-        ${scope}<button class="btn outline sm" type="button" data-act="inbox-filter" data-k="inboxUrgent" data-v="${!S.inboxUrgent}" aria-pressed="${S.inboxUrgent}">${ic("clock", "ic16")}Urgent only</button></div>
+        <div class="ph-actions triage-controls">${scope}<button class="btn outline sm" type="button" data-act="inbox-filter" data-k="inboxUrgent" data-v="${!S.inboxUrgent}" aria-pressed="${S.inboxUrgent}">${ic("clock", "ic16")}Urgent only</button></div>
       </div><div id="triage-categories">${inboxCategories()}</div>
     </header>
     <div class="triage-split">
@@ -6088,7 +6084,6 @@ function pageWork() {
     </div>
     <div class="ph-actions">
       ${showMenu("wshow", [["workView", "Show", WORK_VIEWS]], "left")}
-      <input class="field work-search" id="work-search" type="search" aria-label="Search this work view" placeholder="Search work…" autocomplete="off" value="${esc(S.workQuery)}">
       <select class="field work-status-filter" id="work-status-filter" aria-label="Filter by status">
         <option value="all">All statuses</option>${statusOptions(ALL_STATUSES, S.workStatus)}
       </select>
@@ -6201,12 +6196,12 @@ function pageChat(id) {
   const title = ch.kind === "channel" ? "#" + ch.name : ch.name;
   const sub = ch.kind === "dm" ? [esc(M[ch.with].role), kindWord(ch.with), presInline(ch.with)].filter(Boolean).join(" · ") : esc(ch.topic || (ch.kind === "a2a" ? "Between agents" : ""));
   return `<div class="chat${threadMsg ? " withthread" : ""}">
+    <header class="chhead"><div class="ph-t">${ch.kind === "channel" ? ic("hash", "ic20") : ch.kind === "dm" ? av(ch.with, 32, "word") : ic("eye", "ic20")}<h1 id="ch-title" tabindex="-1">${esc(title)}</h1>
+      <span class="cnt">${sub}</span>${ch.proj ? plink(ch.proj) : ""}</div></header>
     <nav class="chlist" aria-label="Conversations"><h2>Channels</h2><ul>${keys.filter((k) => CH[k].kind === "channel").map(chLink).join("")}</ul>
       <h2 style="margin-top:12px">Direct messages</h2><ul>${keys.filter((k) => CH[k].kind === "dm").map(chLink).join("")}</ul>
       <h2 style="margin-top:12px">Between agents</h2><ul>${keys.filter((k) => CH[k].kind === "a2a").map(chLink).join("")}</ul></nav>
-    <section class="chmain" aria-labelledby="ch-title"><div class="chhead">${ch.kind === "channel" ? ic("hash", "ic20") : ch.kind === "dm" ? av(ch.with, 32, "word") : ic("eye", "ic20")}<h1 id="ch-title" tabindex="-1">${esc(title)}</h1>
-      <span class="muted" style="font-size:13px;display:inline-flex;align-items:center;gap:6px">${sub}</span>
-      ${ch.proj ? `<span style="margin-left:auto">${plink(ch.proj)}</span>` : ""}</div>
+    <section class="chmain" aria-labelledby="ch-title">
       ${ch.kind === "a2a" ? `<p class="readnote">${ic("eye", "ic16")}<span>Reading as the owner. To weigh in, message ${mlink(ch.pair[0])}.</span></p>` : ""}
       <div class="msgs" aria-label="Messages">${ch.msgs.map(msgHtml).join("")}</div>
       ${ch.kind === "a2a" ? `<p class="readfoot">${ic("eye", "ic16")}You can read this conversation but not reply in it.</p>` : `<form class="compose" data-form="send" data-id="${id}"><label class="sr-only" for="compose">Message ${esc(title)}</label><input class="field" id="compose" placeholder="Message ${esc(title)}" autocomplete="off"><button class="btn primary" type="submit">${ic("send", "ic20")}Send</button></form>`}</section>
@@ -7567,13 +7562,18 @@ function renderNav(route) {
   const cmdkShell = document.getElementById("cmdk-shell");
   const cmdkTr = document.getElementById("cmdk-trigger");
   const cmdkPh = document.getElementById("cmdk-ph");
+  const localSearch = cmdkShell.classList.contains("has-local-search");
   if (cmdkShell) cmdkShell.classList.toggle("is-offline", homeError);
   if (cmdkTr) {
     cmdkTr.classList.toggle("is-offline", homeError);
     cmdkTr.disabled = homeError;
-    cmdkTr.title = homeError ? "Search & commands unavailable while HQ office is offline" : "Search, run a command, or ask Tess";
+    cmdkTr.title = homeError ? "Search & commands unavailable while HQ office is offline" : localSearch ? "Search workspace" : "Search, run a command, or ask Tess";
+    if (r0 !== "home") cmdkTr.setAttribute("aria-label", "Search workspace");
+    else cmdkTr.removeAttribute("aria-label");
+    cmdkTr.querySelector("use").setAttribute("href", localSearch ? "#i-arrows-updown" : "#i-search");
   }
-  if (cmdkPh) cmdkPh.textContent = homeError ? "HQ office offline — search & AI unavailable" : "Search, run a command, or ask Tess…";
+  if (cmdkPh) cmdkPh.textContent = homeError ? "HQ office offline — search & AI unavailable"
+    : r0 === "home" ? "Search, run a command, or ask Tess…" : localSearch ? "Workspace" : "Search workspace…";
   if (aiBtn) {
     aiBtn.classList.toggle("is-offline", homeError);
     aiBtn.disabled = homeError;
@@ -7746,6 +7746,34 @@ function route() { const h = location.hash.replace(/^#\/?/, "").split("?")[0] ||
 const own = (o, k) => k != null && Object.prototype.hasOwnProperty.call(o, k);
 const TITLES = { home: "Home", inbox: "Inbox", projects: "Projects", work: "Work", chat: "Chat", activity: "Activity", teams: "Teams", members: "Member", settings: "Organization settings", preferences: "Your preferences", search: "Search" };
 const MEMBER_ALIASES = ["members", "people", "everyone"];
+const homeToolbar = document.getElementById("home-toolbar");
+const [drawerButton, commandBar, contrastToggle] = homeToolbar.children;
+const pageSearchTools = document.createElement("div");
+pageSearchTools.id = "page-search-tools";
+const localSearchHost = document.getElementById("cmdk-local");
+const PAGE_SEARCH = {
+  inbox: { id: "triage-search", queryKey: "inboxQuery", label: "Search inbox", placeholder: "Search inbox…" },
+  work: { id: "work-search", queryKey: "workQuery", label: "Search this work view", placeholder: "Search work…" }
+};
+function placeSearchToolbar(main, page) {
+  const heading = page === "home" ? null : main.querySelector("h1")?.closest(".ph, .prof, .chhead, .unavail");
+  const search = own(PAGE_SEARCH, page) ? PAGE_SEARCH[page] : null;
+  if (heading) {
+    heading.classList.add("has-page-toolbar");
+    heading.prepend(drawerButton);
+    heading.insertBefore(pageSearchTools, heading.querySelector(":scope > .ph-actions, :scope.unavail > p"));
+    pageSearchTools.append(commandBar, contrastToggle);
+  } else if (commandBar.parentElement !== homeToolbar) {
+    homeToolbar.append(drawerButton, commandBar, contrastToggle);
+  }
+  homeToolbar.hidden = Boolean(heading);
+  commandBar.classList.toggle("has-local-search", Boolean(search));
+  localSearchHost.hidden = !search;
+  localSearchHost.innerHTML = search
+    ? `<label>${ic("search", "ic16")}<span class="sr-only">${search.label}</span><input id="${search.id}" type="search" value="${esc(S[search.queryKey])}" placeholder="${search.placeholder}" autocomplete="off"></label>`
+    : "";
+}
+const pageSearchInput = () => localSearchHost.querySelector("input");
 function render(focus = true) {
   if (/^#\/?members\/you(\/|$)/.test(location.hash)) {
     try { history.replaceState(null, "", "#/home"); } catch (e) { location.hash = "#/home"; return; }
@@ -7775,9 +7803,13 @@ function render(focus = true) {
     default: html = notFound();
   }
   const main = document.getElementById("main");
+  const toolbarFocus = pageSearchTools.contains(document.activeElement) ? document.activeElement.id : "";
+  const toolbarCaret = toolbarFocus && document.activeElement.type === "search"
+    ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   main.innerHTML = html;
   const shell = document.getElementById("agent-shell");
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
+  placeSearchToolbar(main, r0);
   renderNav(r);
   renderBanner(r0);
   const titleBase = r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found");
@@ -7787,6 +7819,10 @@ function render(focus = true) {
     const keep = S.focusAfter && document.querySelector(S.focusAfter);
     const h1 = keep || (r0 === "inbox" && r1 && main.querySelector("#triage-detail-title")) || main.querySelector("h1"); if (h1) h1.focus({ preventScroll: true });
     document.getElementById("content").scrollTop = 0;
+  } else if (toolbarFocus) {
+    const control = document.getElementById(toolbarFocus);
+    control?.focus({ preventScroll: true });
+    if (toolbarCaret) control?.setSelectionRange(...toolbarCaret);
   }
   S.lastRoute = key; S.focusAfter = null;
   mountHomeProjectHint();
@@ -7869,12 +7905,12 @@ function setCmdkMode(mode) {
   const inp = document.getElementById("cmdk-input");
   if (inp) inp.focus();
 }
-function openCmdk(prefill = "", mode = "cmd") {
+function openCmdk(prefill = "", mode = "cmd", trigger = document.activeElement) {
   if (route()[0] === "home" && S.homeState === "error") {
     toast("HQ office is offline — reconnect to use search and Ask Tess.", "offline");
     return;
   }
-  CMDK.returnTo = document.activeElement;
+  CMDK.returnTo = trigger;
   CMDK.open = true;
   CMDK.mode = mode === "ai" ? "ai" : "cmd";
   CMDK.q = prefill;
@@ -8355,8 +8391,8 @@ document.addEventListener("click", (e) => {
     case "team-add-save": { const sel = document.getElementById("add-team"); const tk = sel && sel.value; sheetReturn = null; closeSheet(); if (tk && TEAMS[tk] && !P[id].teams.includes(tk)) { P[id].teams.push(tk); render(false); toast(`${TEAMS[tk].name} added to ${P[id].name}.`, "check-circle"); } { const b = document.getElementById("team-add") || document.querySelector(".tchip:last-of-type .rm"); if (b) b.focus(); } break; }
     case "search-close": closeCmdk(true); break;
     case "sgo": goSearch(v); break;
-    case "search-open": case "cmdk-open": openCmdk("", "cmd"); break;
-    case "cmdk-open-ai": openCmdk("", "ai"); break;
+    case "search-open": case "cmdk-open": openCmdk(pageSearchInput()?.value || "", "cmd", t); break;
+    case "cmdk-open-ai": openCmdk("", "ai", t); break;
     case "cmdk-close": closeCmdk(true); break;
     case "cmdk-mode": setCmdkMode(v); break;
     case "cmdk-ai-ask": askInCmdk(v); break;
@@ -8429,7 +8465,7 @@ document.addEventListener("keydown", (e) => {
   if (e.target.closest?.(".work-task-dialog")) return;
   if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K")) {
     e.preventDefault();
-    if (CMDK.open) closeCmdk(true); else openCmdk();
+    if (CMDK.open) closeCmdk(true); else openCmdk(pageSearchInput()?.value || "");
     return;
   }
   if (CMDK.open) {
@@ -8538,7 +8574,12 @@ document.addEventListener("keydown", (e) => {
   }
   if (!S.singleKey || e.isComposing || e.repeat || inTextField(e.target) || overlayOpen()) return;
   const altGr = e.ctrlKey && e.altKey && !e.metaKey;
-  if (e.key === "/" && !e.metaKey && (altGr || (!e.ctrlKey && !e.altKey))) { e.preventDefault(); openCmdk(); return; }
+  if (e.key === "/" && !e.metaKey && (altGr || (!e.ctrlKey && !e.altKey))) {
+    e.preventDefault();
+    const input = pageSearchInput();
+    if (input) input.focus(); else openCmdk();
+    return;
+  }
   if (e.key.toLowerCase() === "a" && !e.metaKey && !e.ctrlKey && !e.altKey && route()[0] === "inbox") {
     const approval = document.querySelector('.triage-document [data-act="handle"].primary');
     if (approval && IN.some((item) => item.id === approval.dataset.id && item.kind === "approval")) {
