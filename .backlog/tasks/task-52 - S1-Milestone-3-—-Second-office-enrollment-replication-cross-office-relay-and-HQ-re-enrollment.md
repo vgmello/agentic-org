@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-22T14:30:00Z'
+updated_date: '2026-11-23T03:22:00Z'
 labels:
   - backend
   - rust
@@ -14,10 +14,11 @@ labels:
   - m3
 milestone: m-0
 dependencies:
+  - TASK-39
+  - TASK-42
   - TASK-45
   - TASK-49
-  - TASK-42
-  - TASK-39
+  - TASK-87
 documentation:
   - docs/implementation-plan.md
   - docs/design/offices-hq-and-satellites.md
