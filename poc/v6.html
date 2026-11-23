@@ -596,6 +596,8 @@ body.nokeys .search kbd { display: none; }
 .ph h1 { font-size: 1rem; line-height: 1.75rem; font-weight: 600; }
 .cnt { font-size: 0.75rem; line-height: 1.5rem; color: var(--gray-400); font-weight: 400; }
 .ph-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ph.work-header { padding-block: 12px; gap: 8px 16px; }
+.work-header .ph-actions { flex: 1 1 auto; }
 .back { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-400); font-weight: 600; font-size: 0.8125rem; padding: 12px var(--gutter) 0; }
 .back:hover { color: var(--white); }
 .desc { padding: 16px var(--gutter) 0; color: var(--gray-400); max-width: 820px; }
@@ -5884,8 +5886,16 @@ function pageWork() {
   else if (view === "by-project") group = "proj";
   else group = "who";
   const emptyText = view === "needs-me" ? "Nothing needs you in Work." : view === "mine" ? "Nothing is assigned to you." : `No work items yet. Use New${ic("chev-down", "ic16")} to add one.`;
-  return hdr("Work", `${W.filter(OPEN).length} open · ${W.filter(needsMe).length} need you`) +
-    `<div class="subbar">${showMenu("wshow", [["workView", "Show", WORK_VIEWS]], "left")}${workDisplayMenu("workLayout")}</div>` +
+  return `<header class="ph work-header">
+    <div class="ph-t">
+      <h1 tabindex="-1">Work</h1>
+      <p class="cnt">${W.filter(OPEN).length} open · ${W.filter(needsMe).length} need you</p>
+    </div>
+    <div class="ph-actions">
+      ${showMenu("wshow", [["workView", "Show", WORK_VIEWS]], "left")}
+      ${workDisplayMenu("workLayout")}
+    </div>
+  </header>` +
     (S.workLayout === "board" ? (sel.length ? board(sel) : `<p class="empty-row">${emptyText}</p>`) : workList(sel, group, emptyText));
 }
 
