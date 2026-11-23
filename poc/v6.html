@@ -2733,7 +2733,7 @@ html[data-theme="ocean"]:where([data-interior-page]) {
     background-color: var(--ocean-selected);
   }
   & :is(.card, .bcard, .c-entry, .k-doc, .split .list, .bcol, .thread, .compose,
-    .assembly-view, .activity-feed, .activity-rail) {
+    .assembly-view, .activity-rail) {
     background-color: var(--ocean-glass-fill);
     background-image: var(--ocean-glass-sheen);
   }
@@ -4954,15 +4954,16 @@ function needsCard(it) {
 const ATYPE = { work: { label: "Work", icon: "clipboard" }, conversation: { label: "Conversation", icon: "chat" }, decision: { label: "Decision", icon: "flag" }, org: { label: "Org change", icon: "user-group" }, run: { label: "Run", icon: "terminal" } };
 function feed(items, opts = {}) {
   if (!items.length) return `<p class="empty-row">No activity yet.</p>`;
-  return `<ul class="feed" role="list">${items.map((a) => {
+  const tag = opts.day ? "ol" : "ul";
+  return `<${tag} class="feed${opts.day ? " activity-timeline" : ""}" role="list">${items.map((a) => {
     const t = ATYPE[a.type], open = S.openRuns[a.id];
     const inboxItem = opts.triage && a.inbox && IN.find((item) => item.id === a.inbox);
-    return `<li><div class="l1">${av(a.who, 24, opts.noDots ? false : "tip")}<span class="actor">${mlink(a.who)}<span class="kind">${ic(t.icon, "ic14")}${t.label}</span></span><time>${esc(a.time)}</time></div>
+    return `<li><div class="l1">${av(a.who, 24, opts.noDots ? false : "tip")}<span class="actor">${mlink(a.who)}<span class="kind">${ic(t.icon, "ic14")}${t.label}</span></span>${opts.day === a.time ? "" : `<time>${esc(a.time)}</time>`}</div>
       <p class="l2">${esc(a.text)}${opts.noProj ? "" : " · " + plink(a.proj)}${a.summary ? `<br><span class="muted">${esc(a.summary)}</span>` : ""}</p>
       ${a.type === "run" ? `<div class="runbtn"><button class="btn ghost sm" type="button" data-act="run" data-id="${a.id}" aria-expanded="${!!open}" aria-controls="log-${a.id}">${ic(open ? "chev-down" : "chev-right", "ic16")}${open ? "Hide run log" : "Show run log"}</button></div>
       <ol class="runlog" id="log-${a.id}" ${open ? "" : "hidden"}>${a.log.map(([tm, tx]) => `<li><time>${esc(tm)}</time><span>${esc(tx)}</span></li>`).join("")}</ol>` : ""}
       ${inboxItem ? `<div class="activity-triage" id="activity-triage-${inboxItem.id}" tabindex="-1"><a class="alink" href="#/inbox/${inboxItem.id}">${esc(inboxItem.what)}</a>${itemActionsV4(inboxItem, { hideDetails: true })}</div>` : ""}</li>`;
-  }).join("")}</ul>`;
+  }).join("")}</${tag}>`;
 }
 
 /* ---------------------------------------------------------------- work */
@@ -6655,6 +6656,31 @@ function activityNeedsFeed(items, waiting) {
     who: item.from, time: item.time, proj: item.proj, text: item.what
   });
 }
+function activityEventTime(time, now) {
+  const relative = time.match(/^(\d+)([mh])$/);
+  if (relative) {
+    return { day: "Today", age: Number(relative[1]) * (relative[2] === "h" ? 60 : 1) };
+  }
+  if (time === "Yesterday") return { day: time, age: 24 * 60 };
+  const date = new Date(`${time} ${now.getUTCFullYear()} 00:00:00 GMT`);
+  if (date > now) date.setUTCFullYear(date.getUTCFullYear() - 1);
+  return { day: time, age: Number.isNaN(date.getTime()) ? Infinity : (now - date) / 60_000 };
+}
+
+function activityTimeline(items) {
+  if (!items.length) return feed(items);
+  const now = new Date(), groups = new Map();
+  const events = items.map((event) => ({ event, ...activityEventTime(event.time, now) }))
+    .sort((left, right) => left.age - right.age);
+  for (const { day, event } of events) {
+    if (!groups.has(day)) groups.set(day, []);
+    groups.get(day).push(event);
+  }
+  return [...groups].map(([day, events]) => `<section class="activity-day">
+    <h2>${esc(day)}</h2>${feed(events, { triage: true, day })}
+  </section>`).join("");
+}
+
 function pageActivity() {
   const projects = assemblyProjects();
   const entries = projects.flatMap((project) => project.entries);
@@ -6676,7 +6702,7 @@ function pageActivity() {
       <div class="activity-main">${S.actView === "assembly" ? assemblyMatrix(projects, entries, counts) : `
         <section class="activity-feed" aria-label="Activity feed">${btnTabs("actFilter", tabs, "Filter activity", "act-feed")}
           <div class="activity-bottleneck"><span>Work by stage</span><div class="activity-stage-bar" aria-hidden="true">${ACTIVITY_STAGES.map(([stage]) => `<i data-stage="${stage}" style="flex-grow:${counts[stage]}"></i>`).join("")}</div><span>${counts.review} in review · ${counts.queue} queued</span></div>
-          <div ${tabPanel("actFilter", "act-feed")}>${feed(items, { triage: true })}</div></section>`}
+          <div ${tabPanel("actFilter", "act-feed")}>${activityTimeline(items)}</div></section>`}
       </div>${activityRail(projects, entries, counts)}
     </div>
   </section>`;
