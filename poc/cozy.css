@@ -231,6 +231,26 @@ html[data-theme="cozy"] {
   & #content:has(.work-header) { background: #463c30; }
   & body.a11y-mode #content:has(.work-header) { background: var(--cozy-shell); }
 
+  & .chat {
+    --cozy-chat-chrome: rgb(26 21 18 / .28);
+    background: rgb(26 21 18 / .18);
+  }
+  & body.a11y-mode .chat {
+    --cozy-chat-chrome: rgb(26 21 18 / .5);
+    background: var(--cozy-shell);
+  }
+  & .chat :is(.chhead, .chlist, .thread, .compose) {
+    background: var(--cozy-chat-chrome);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  & .chat .thread .chhead { background: transparent; }
+  & .chat .chlist :is(h2, a) { color: var(--gray-300); }
+  & .chat .chlist a[aria-current="page"] {
+    background: var(--tone-accent-soft);
+    color: var(--white);
+  }
+
   & .hb {
     --hb-surface: var(--cozy-panel);
     --hb-surface-hi: var(--cozy-panel);
@@ -263,7 +283,7 @@ html[data-theme="cozy"] {
 
   & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-horizon, .hb-skel-card,
     .card, .bcard, .bcol, .c-entry, .sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast,
-    .agent-rail, .prof, .split .list, .chlist, .thread, .chhead, .compose, .assembly-view, .activity-rail) {
+    .agent-rail, .prof, .split .list, .assembly-view, .activity-rail) {
     background: var(--cozy-panel);
     backdrop-filter: blur(20px) saturate(125%);
     -webkit-backdrop-filter: blur(20px) saturate(125%);

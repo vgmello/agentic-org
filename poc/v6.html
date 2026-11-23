@@ -6533,17 +6533,29 @@ function pageChat(id) {
   const threadMsg = S.thread && ch.msgs.find((m) => m.id === S.thread);
   const title = ch.kind === "channel" ? "#" + ch.name : ch.name;
   const sub = ch.kind === "dm" ? [esc(M[ch.with].role), kindWord(ch.with), presInline(ch.with)].filter(Boolean).join(" · ") : esc(ch.topic || (ch.kind === "a2a" ? "Between agents" : ""));
+  const wide = matchMedia("(min-width: 960px)").matches;
   return `<div class="chat${threadMsg ? " withthread" : ""}">
-    <header class="chhead"><div class="ph-t">${ch.kind === "channel" ? ic("hash", "ic20") : ch.kind === "dm" ? av(ch.with, 32, "word") : ic("eye", "ic20")}<h1 id="ch-title" tabindex="-1">${esc(title)}</h1>
-      <span class="cnt">${sub}</span>${ch.proj ? plink(ch.proj) : ""}</div></header>
-    <nav class="chlist" aria-label="Conversations"><h2>Channels</h2><ul>${keys.filter((k) => CH[k].kind === "channel").map(chLink).join("")}</ul>
-      <h2 style="margin-top:12px">Direct messages</h2><ul>${keys.filter((k) => CH[k].kind === "dm").map(chLink).join("")}</ul>
-      <h2 style="margin-top:12px">Between agents</h2><ul>${keys.filter((k) => CH[k].kind === "a2a").map(chLink).join("")}</ul></nav>
+    <header class="chhead"><div class="ph-t">
+      ${ch.kind === "dm" ? av(ch.with, 32) : ch.kind === "a2a" ? ic("eye", "ic20") : ""}
+      <div class="chat-heading"><h1 id="ch-title" tabindex="-1">${esc(title)}</h1>
+        <p class="chat-context"><span>${sub}</span>${ch.proj ? plink(ch.proj) : ""}</p>
+      </div>
+    </div></header>
+    <div class="chlist">
+      <button class="btn ghost sm chat-jump" id="chat-jump" type="button" data-act="chat-jump"
+        aria-haspopup="dialog" aria-controls="cmdk-dialog"${S.singleKey ? ' aria-keyshortcuts="#"' : ""}>${ic("search", "ic16")}Jump to channel${S.singleKey ? '<kbd aria-hidden="true">#</kbd>' : ""}</button>
+      <details class="chat-directory"${wide ? " open" : ""}>
+        <summary>Browse conversations</summary>
+        <nav aria-label="Conversations">
+          ${[["channel", "Channels"], ["dm", "Direct messages"], ["a2a", "Between agents"]].map(([kind, label]) => `<h2>${label}</h2><ul>${keys.filter((k) => CH[k].kind === kind).map(chLink).join("")}</ul>`).join("")}
+        </nav>
+      </details>
+    </div>
     <section class="chmain" aria-labelledby="ch-title">
       ${ch.kind === "a2a" ? `<p class="readnote">${ic("eye", "ic16")}<span>Reading as the owner. To weigh in, message ${mlink(ch.pair[0])}.</span></p>` : ""}
       <div class="msgs" aria-label="Messages">${ch.msgs.map(msgHtml).join("")}</div>
       ${ch.kind === "a2a" ? `<p class="readfoot">${ic("eye", "ic16")}You can read this conversation but not reply in it.</p>` : `<form class="compose" data-form="send" data-id="${id}"><label class="sr-only" for="compose">Message ${esc(title)}</label><input class="field" id="compose" placeholder="Message ${esc(title)}" autocomplete="off"><button class="btn primary" type="submit">${ic("send", "ic20")}Send</button></form>`}</section>
-    ${threadMsg ? `<aside class="thread" aria-label="Thread"><div class="chhead"><h2 style="font-size:15px;font-weight:600">Thread</h2><span class="muted" style="font-size:13px">#${esc(ch.name)}</span><button class="btn ghost icon" style="margin-left:auto" type="button" data-act="thread-close" aria-label="Close thread">${ic("x", "ic20")}</button></div>
+    ${threadMsg ? `<aside class="thread" aria-label="Thread"><div class="chhead"><h2 id="chat-thread-title" tabindex="-1" style="font-size:15px;font-weight:600">Thread</h2><span class="muted" style="font-size:13px">#${esc(ch.name)}</span><button class="btn ghost icon" style="margin-left:auto" type="button" data-act="thread-close" aria-label="Close thread">${ic("x", "ic20")}</button></div>
       <div class="msgs">${msgHtml(Object.assign({}, threadMsg, { thread: null }))}<hr style="border:0;border-top:1px solid var(--line2);width:100%">${threadMsg.thread.map((r) => msgHtml(Object.assign({ id: "r" }, r))).join("")}</div></aside>` : ""}
   </div>`;
 }
@@ -8215,6 +8227,18 @@ function render(focus = true) {
 }
 
 /* ---------------------------------------------------------------- search & command palette */
+function conversationResults(query, channelsOnly = false) {
+  return Object.entries(CH)
+    .filter(([, channel]) => (!channelsOnly || channel.kind === "channel") && channel.name.toLowerCase().includes(query))
+    .map(([id, channel]) => ({
+      href: `#/chat/${id}`,
+      label: channel.kind === "channel" ? "#" + channel.name : channel.name,
+      sub: channel.topic || (channel.kind === "dm" ? "Direct message" : "Between agents"),
+      icon: channel.kind === "channel" ? "hash" : "eye",
+      av: channel.with,
+    }));
+}
+
 function searchResults(q, max = 5) {
   const t = q.toLowerCase(), has = (s) => String(s || "").toLowerCase().includes(t);
   return [
@@ -8400,11 +8424,18 @@ function renderCmdk() {
   const q = (cmdOnly ? raw.slice(1) : raw).trim().toLowerCase();
   const cmds = cmdkCommands();
   const groups = [];
-  if (!q) {
+  if (raw.startsWith("#")) {
+    const channels = conversationResults(raw.slice(1).trim().toLowerCase(), true);
+    if (channels.length) groups.push(["Channels", channels]);
+  } else if (!q) {
     const byGrp = {};
     cmds.forEach((c) => { (byGrp[c.group] = byGrp[c.group] || []).push(c); });
     ["Actions", "Ask Tess", "Navigate", "Workspace"].forEach((g) => { if (byGrp[g]) groups.push([g, byGrp[g]]); });
   } else {
+    if (!cmdOnly && route()[0] === "chat") {
+      const chats = conversationResults(q);
+      if (chats.length) groups.push(["Conversations", chats]);
+    }
     const matchedCmds = cmds.filter((c) => c.label.toLowerCase().includes(q) || c.sub.toLowerCase().includes(q));
     if (matchedCmds.length) groups.push(["Commands", matchedCmds]);
     if (!cmdOnly) {
@@ -8729,8 +8760,14 @@ document.addEventListener("click", (e) => {
       else { S.favProjs.push(id); toast(`Added ${P[id].name} to favorites.`); }
       render(false);
     } break;
-    case "thread": S.thread = S.thread === id ? null : id; render(false); break;
-    case "thread-close": S.thread = null; render(false); break;
+    case "thread": {
+      S.thread = S.thread === id ? null : id;
+      render(false);
+      const target = S.thread ? document.getElementById("chat-thread-title") : document.querySelector(`.chmain [data-act="thread"][data-id="${CSS.escape(id)}"]`);
+      target?.focus();
+      break;
+    }
+    case "thread-close": document.querySelector(`.chmain [data-act="thread"][data-id="${CSS.escape(S.thread)}"]`)?.click(); break;
     case "answer": {
       if (/^Ask why/i.test(v)) { toast("Prototype: your question goes to the agent; the ask stays open."); break; }
       S.answered[id] = v;
@@ -8817,6 +8854,7 @@ document.addEventListener("click", (e) => {
     case "team-add-save": { const sel = document.getElementById("add-team"); const tk = sel && sel.value; sheetReturn = null; closeSheet(); if (tk && TEAMS[tk] && !P[id].teams.includes(tk)) { P[id].teams.push(tk); render(false); toast(`${TEAMS[tk].name} added to ${P[id].name}.`, "check-circle"); } { const b = document.getElementById("team-add") || document.querySelector(".tchip:last-of-type .rm"); if (b) b.focus(); } break; }
     case "search-close": closeCmdk(true); break;
     case "sgo": goSearch(v); break;
+    case "chat-jump": openCmdk("#", "cmd", t, false); break;
     case "search-open": case "cmdk-open": openCmdk(pageSearchInput()?.value || "", "cmd", t); break;
     case "cmdk-open-ai": openCmdk("", "ai", t); break;
     case "cmdk-close": closeCmdk(true); break;
@@ -8993,6 +9031,12 @@ document.addEventListener("keydown", (e) => {
       e.preventDefault();
       return;
     }
+    const closeThread = e.target.closest(".thread")?.querySelector('[data-act="thread-close"]');
+    if (closeThread) {
+      e.preventDefault();
+      closeThread.click();
+      return;
+    }
     const closeWork = e.target.closest(".work-reading")?.querySelector('[data-act="work-close-detail"]');
     if (closeWork) {
       e.preventDefault();
@@ -9036,8 +9080,21 @@ document.addEventListener("keydown", (e) => {
     if (next) { e.preventDefault(); next.focus(); }
     return;
   }
+  if (e.target.matches?.(".chlist nav a") && !e.altKey && !e.ctrlKey && !e.metaKey
+      && ["ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) {
+    const links = [...e.target.closest("nav").querySelectorAll("a")];
+    const index = links.indexOf(e.target);
+    const next = e.key === "Home" ? links[0] : e.key === "End" ? links.at(-1) : links[index + (e.key === "ArrowDown" ? 1 : -1)];
+    if (next) { e.preventDefault(); next.focus(); }
+    return;
+  }
   if (!S.singleKey || e.isComposing || e.repeat || inTextField(e.target) || overlayOpen()) return;
   const altGr = e.ctrlKey && e.altKey && !e.metaKey;
+  if (e.key === "#" && route()[0] === "chat" && !e.metaKey && (altGr || (!e.ctrlKey && !e.altKey))) {
+    e.preventDefault();
+    openCmdk("#", "cmd", e.target, false);
+    return;
+  }
   if (e.key === "/" && !e.metaKey && (altGr || (!e.ctrlKey && !e.altKey))) {
     e.preventDefault();
     const input = pageSearchInput();
