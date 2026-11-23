@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-22T14:37:00Z'
+updated_date: '2026-11-22T14:40:00Z'
 labels:
   - ax
   - agents
@@ -13,6 +14,7 @@ labels:
   - skills
   - docs
   - dx
+  - blog
 milestone: m-0
 dependencies:
   - TASK-44

@@ -7,13 +7,14 @@ status: Done
 assignee:
   - '@lead'
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-22T04:43:00Z'
+updated_date: '2026-11-22T14:40:00Z'
 labels:
   - backend
   - rust
   - git
   - agents
   - m1
+  - blog
 milestone: m-0
 dependencies:
   - TASK-42

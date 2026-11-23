@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-22T14:20:00Z'
-updated_date: '2026-11-22T14:30:00Z'
+updated_date: '2026-11-22T14:40:00Z'
 labels:
   - backend
   - ui
@@ -15,6 +15,7 @@ labels:
   - cli
   - ux
   - dependencies
+  - blog
 milestone: m-0
 dependencies:
   - TASK-49
