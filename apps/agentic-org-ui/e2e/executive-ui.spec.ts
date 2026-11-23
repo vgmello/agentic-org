@@ -194,26 +194,56 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 		.locator('html')
 		.evaluate((el) => getComputedStyle(el).getPropertyValue('--exec-surface').trim());
 
+	const measureContrastCardHelp = () =>
+		cozyContrastToggle.evaluate((el) => {
+			const card = el.closest('.contrast-card');
+			const help = document.getElementById('cozy-contrast-help');
+			if (!card || !help) throw new Error('Expected .contrast-card and #cozy-contrast-help');
+			const parseRgba = (s: string) => {
+				const parts = (s.match(/[\d.]+/g) ?? []).map(Number);
+				return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1] as const;
+			};
+			const composite = (
+				fg: readonly [number, number, number, number],
+				bg: readonly [number, number, number]
+			) => {
+				const a = fg[3];
+				return [
+					fg[0] * a + bg[0] * (1 - a),
+					fg[1] * a + bg[1] * (1 - a),
+					fg[2] * a + bg[2] * (1 - a)
+				] as const;
+			};
+			const lum = (rgb: readonly [number, number, number]) => {
+				const c = rgb.map((v) => {
+					const n = v / 255;
+					return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+				});
+				return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+			};
+			// Worst-case Cozy peak overhead shell backdrop (#493d32 = rgb(73, 61, 50))
+			const shellPeak = [73, 61, 50] as const;
+			const bgRgba = parseRgba(getComputedStyle(card).backgroundColor);
+			const bgRgb = composite(bgRgba, shellPeak);
+			const fgRgba = parseRgba(getComputedStyle(help).color);
+			const fgRgb = composite(fgRgba, bgRgb);
+			const l1 = lum(fgRgb);
+			const l2 = lum(bgRgb);
+			return {
+				alpha: bgRgba[3],
+				ratio: (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
+			};
+		});
+
+	const beforeCard = await measureContrastCardHelp();
+
 	await cozyContrastToggle.click();
 	await expect(cozyContrastToggle).toHaveAttribute('aria-checked', 'true');
 	await expect(page.locator('html')).toHaveAttribute('data-cozy-contrast', 'high');
-	const hcContrast = await cozyContrastToggle.evaluate((el) => {
-		const card = el.closest('.exec-card') ?? document.body;
-		const fgStr = getComputedStyle(card).color;
-		const bgStr = getComputedStyle(card).backgroundColor;
-		const parseRgb = (s: string) => (s.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
-		const lum = ([r, g, b]: number[]) => {
-			const c = [r, g, b].map((v) => {
-				const n = v / 255;
-				return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
-			});
-			return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-		};
-		const l1 = lum(parseRgb(fgStr));
-		const l2 = lum(parseRgb(bgStr));
-		return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
-	});
-	expect(hcContrast).toBeGreaterThanOrEqual(7);
+	const afterCard = await measureContrastCardHelp();
+	expect(afterCard.alpha).toBeGreaterThan(beforeCard.alpha);
+	expect(afterCard.ratio).toBeGreaterThan(beforeCard.ratio);
+	expect(afterCard.ratio).toBeGreaterThanOrEqual(8);
 	const afterInk = await page
 		.locator('html')
 		.evaluate((el) => getComputedStyle(el).getPropertyValue('--exec-ink').trim());
