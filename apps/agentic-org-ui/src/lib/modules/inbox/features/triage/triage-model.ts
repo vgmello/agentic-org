@@ -172,8 +172,9 @@ export function parseInboxCommentsJson(raw: string | null): InboxCommentEntry[] 
 	}
 }
 
-const UNBUILT_WORK_REF_RE = /^\/work\/[^/?#]+/;
+const UNBUILT_WORK_REF_RE = /^\/work\/[^/]+/;
 const RETIRED_SEARCH_RE = /^\/search(?:$|[/?#])/;
+const ROUTE_TEMPLATE_BRACKET_RE = /[[\]]/;
 
 export function isInternalAppPath(path: string | undefined): path is string {
 	if (!path) return false;
@@ -181,8 +182,25 @@ export function isInternalAppPath(path: string | undefined): path is string {
 	return trimmed.startsWith('/') && !trimmed.startsWith('//') && !trimmed.startsWith('/\\');
 }
 
+function parseNormalizedInternalUrl(
+	rawPath: string | undefined
+): { pathname: string; search: string; hash: string } | undefined {
+	if (!isInternalAppPath(rawPath)) return undefined;
+	const trimmed = rawPath.trim();
+	try {
+		const parsed = new URL(trimmed, 'https://app.invalid');
+		if (parsed.origin !== 'https://app.invalid') return undefined;
+		const normPath = parsed.pathname.replace(/\/+/g, '/');
+		if (ROUTE_TEMPLATE_BRACKET_RE.test(normPath)) return undefined;
+		return { pathname: normPath, search: parsed.search, hash: parsed.hash };
+	} catch {
+		return undefined;
+	}
+}
+
 export function isUnbuiltWorkRefPath(path: string | undefined): boolean {
-	return Boolean(path && UNBUILT_WORK_REF_RE.test(path.trim()));
+	const parsed = parseNormalizedInternalUrl(path);
+	return Boolean(parsed && UNBUILT_WORK_REF_RE.test(parsed.pathname));
 }
 
 export function safeWorkListHref(projectId: string | undefined): string {
@@ -193,13 +211,13 @@ export function sanitizeOpenHref(
 	rawPath: string | undefined,
 	projectId: string | undefined
 ): string | undefined {
-	if (!isInternalAppPath(rawPath)) return undefined;
-	const trimmed = rawPath.trim();
-	if (RETIRED_SEARCH_RE.test(trimmed)) return undefined;
-	if (isUnbuiltWorkRefPath(trimmed)) {
+	const parsed = parseNormalizedInternalUrl(rawPath);
+	if (!parsed) return undefined;
+	if (RETIRED_SEARCH_RE.test(parsed.pathname)) return undefined;
+	if (UNBUILT_WORK_REF_RE.test(parsed.pathname)) {
 		return safeWorkListHref(projectId);
 	}
-	return trimmed;
+	return `${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;

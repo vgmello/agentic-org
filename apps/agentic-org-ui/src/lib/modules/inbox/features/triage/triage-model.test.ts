@@ -416,6 +416,10 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		expect(handled?.ageLabel).toBe('2h ago');
 
 		expect(sanitizeOpenHref('/work/T-121', 'agency-v1')).toBe('/projects/agency-v1/work');
+		expect(sanitizeOpenHref('/work//T-121', 'agency-v1')).toBe('/projects/agency-v1/work');
+		expect(sanitizeOpenHref('/settings/../work/T-121', 'agency-v1')).toBe(
+			'/projects/agency-v1/work'
+		);
 		expect(sanitizeOpenHref('/work/BUG-84', undefined)).toBe('/work');
 		expect(sanitizeOpenHref('/settings/offices', 'agency-v1')).toBe('/settings/offices');
 		expect(sanitizeOpenHref('/work?request=r1', 'agency-v1')).toBe('/work?request=r1');
@@ -426,8 +430,11 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		expect(sanitizeOpenHref('javascript:alert(1)', 'agency-v1')).toBeUndefined();
 		expect(sanitizeOpenHref('/search', 'agency-v1')).toBeUndefined();
 		expect(sanitizeOpenHref('/search?q=release', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('/settings/../search', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('/settings/../search?q=foo', 'agency-v1')).toBeUndefined();
+		expect(sanitizeOpenHref('/projects/[id]/work', 'agency-v1')).toBeUndefined();
 
-		// Verify relatedHref on derived items rejects external and /search paths too
+		// Verify relatedHref on derived items rejects external, normalized /search, bracket, and /work//<ref> paths
 		const unsafeItems: InboxItem[] = [
 			{
 				...INBOX_ITEMS[0],
@@ -437,7 +444,17 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 			{
 				...INBOX_ITEMS[0],
 				id: 'in-search',
-				open: { path: '/search?q=foo', label: 'Search' }
+				open: { path: '/settings/../search?q=foo', label: 'Search' }
+			},
+			{
+				...INBOX_ITEMS[0],
+				id: 'in-template',
+				open: { path: '/projects/[id]/work', label: 'Template' }
+			},
+			{
+				...INBOX_ITEMS[0],
+				id: 'in-dup-slash-work',
+				open: { path: '/work//T-121', label: 'Work dup' }
 			},
 			{
 				...INBOX_ITEMS[0],
@@ -450,6 +467,12 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		expect(derivedUnsafe.find((i) => i.id === 'in-ext')?.openHref).toBeUndefined();
 		expect(derivedUnsafe.find((i) => i.id === 'in-search')?.relatedHref).toBeUndefined();
 		expect(derivedUnsafe.find((i) => i.id === 'in-search')?.openHref).toBeUndefined();
+		expect(derivedUnsafe.find((i) => i.id === 'in-template')?.relatedHref).toBeUndefined();
+		expect(derivedUnsafe.find((i) => i.id === 'in-template')?.openHref).toBeUndefined();
+		expect(derivedUnsafe.find((i) => i.id === 'in-dup-slash-work')?.relatedHref).toBeUndefined();
+		expect(derivedUnsafe.find((i) => i.id === 'in-dup-slash-work')?.openHref).toBe(
+			'/projects/v1/work'
+		);
 		expect(derivedUnsafe.find((i) => i.id === 'in-office')?.relatedHref).toBe('/settings/offices');
 	});
 

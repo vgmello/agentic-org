@@ -635,15 +635,44 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 	await page.locator('[data-triage-row="in1"]').click();
 	await expect(page).toHaveURL(/[?&]item=in1(?:&|$)/);
 
-	// Member hover/focus preview card + Escape dismissal (WCAG 1.4.13)
+	// Member hover/focus preview card: continuous hover bridge + Escape dismissal (WCAG 1.4.13)
 	const memberLink = page.locator('.triage-from-link').first();
 	const memberWrap = page.locator('.triage-from-member').first();
 	const memberCard = memberWrap.locator('.triage-from-card');
-	await memberLink.focus();
+	await memberLink.hover();
+	await expect(memberCard).toBeVisible();
+	const linkBox = (await memberLink.boundingBox())!;
+	const cardBox = (await memberCard.boundingBox())!;
+	// Move pointer step-by-step across the seam from trigger to card without losing hover
+	await page.mouse.move(linkBox.x + linkBox.width / 2, linkBox.y + linkBox.height - 1);
+	await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + 2);
+	await expect(memberCard).toBeVisible();
+	await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
 	await expect(memberCard).toBeVisible();
 	await page.keyboard.press('Escape');
 	await expect(memberWrap).toHaveAttribute('data-preview-dismissed', '');
 	await expect(memberCard).toBeHidden();
+	await page.mouse.move(10, 10);
+
+	// Exact 720px viewport hit targets (>= 44px inclusive width <= 720px)
+	await page.setViewportSize({ width: 720, height: 900 });
+	await expect(page.locator('.triage-copy').first()).toBeVisible();
+	expect(
+		(await page.locator('.triage-copy').first().boundingBox())?.height ?? 0
+	).toBeGreaterThanOrEqual(44);
+	expect(
+		(await page.locator('.triage-from-link').first().boundingBox())?.height ?? 0
+	).toBeGreaterThanOrEqual(44);
+	await page.getByRole('button', { name: 'Back to Inbox' }).click();
+	await page.getByRole('button', { name: 'Filter inbox' }).click();
+	const urgentMenuItem = page.getByRole('menuitemradio', { name: 'Urgent only' });
+	await expect(urgentMenuItem).toBeVisible();
+	await expect
+		.poll(async () => (await urgentMenuItem.boundingBox())?.height ?? 0)
+		.toBeGreaterThanOrEqual(44);
+	await page.keyboard.press('Escape');
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.locator('[data-triage-row="in1"]').click();
 
 	// Post an Inbox comment and verify persistence across reload alongside Row dividers
 	const commentBox = page.getByLabel('Comment on this request');

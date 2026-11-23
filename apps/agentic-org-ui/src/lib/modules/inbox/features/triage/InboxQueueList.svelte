@@ -115,7 +115,7 @@
 					<button
 						type="button"
 						onclick={onResetFilters}
-						class="triage-reset-btn mt-1.5 inline-flex min-h-9 items-center gap-1.5 px-3.5 text-xs font-semibold max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						class="triage-reset-btn mt-1.5 inline-flex min-h-9 items-center gap-1.5 px-3.5 text-xs font-semibold [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					>
 						<RotateCcw class="size-3.5" aria-hidden="true" />
 						<span>Reset filters</span>
@@ -131,7 +131,7 @@
 					</p>
 					<a
 						href={resolve('/home')}
-						class="exec-cta mt-2 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						class="exec-cta mt-2 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					>
 						<span class="exec-cta-fill" aria-hidden="true"></span>
 						<span class="exec-cta-inner"><span>Back to Home</span></span>
@@ -159,7 +159,7 @@
 									aria-current={selected ? 'true' : undefined}
 									onclick={() => onSelect(item.id)}
 									class={[
-										'triage-item w-full text-left max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11',
+										'triage-item w-full text-left [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
 										selected && 'is-selected',
 										(isBusy || item.state === 'handled') && 'is-muted'
 									]}

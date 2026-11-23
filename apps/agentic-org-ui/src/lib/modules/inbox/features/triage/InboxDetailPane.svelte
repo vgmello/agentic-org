@@ -84,6 +84,9 @@
 	let memberFocused = $state(false);
 	let previewFlipAbove = $state(false);
 	let previewShiftX = $state(0);
+	let previewShiftY = $state(0);
+	let previewMaxHeight = $state<number | undefined>(undefined);
+	let memberNodeEl = $state<HTMLElement | null>(null);
 	let previewDismissed = $derived.by(() => {
 		void item?.id;
 		return false;
@@ -264,6 +267,8 @@
 	function clampMemberPreview(node: HTMLElement) {
 		previewFlipAbove = false;
 		previewShiftX = 0;
+		previewShiftY = 0;
+		previewMaxHeight = undefined;
 		requestAnimationFrame(() => {
 			if ((!memberHovered && !memberFocused) || previewDismissed) return;
 			const card = node.querySelector<HTMLElement>('.triage-from-card');
@@ -283,32 +288,67 @@
 				window.innerHeight - pad,
 				(containerRect?.bottom ?? window.innerHeight) - pad
 			);
+			const availableHeight = Math.max(48, Math.floor(maxBottom - minTop));
+			previewMaxHeight = availableHeight;
+			const cardH = Math.min(cardRect.height, availableHeight);
 
-			if (cardRect.bottom > maxBottom && anchorRect.top - cardRect.height - 6 >= minTop) {
-				previewFlipAbove = true;
+			const spaceBelow = maxBottom - (anchorRect.bottom + 4);
+			const spaceAbove = anchorRect.top - 4 - minTop;
+			const flip = spaceBelow < cardH && spaceAbove > spaceBelow;
+			previewFlipAbove = flip;
+
+			const naturalTop = flip ? anchorRect.top - 4 - cardH : anchorRect.bottom + 4;
+			let shiftY = 0;
+			if (naturalTop + cardH > maxBottom) {
+				shiftY = maxBottom - (naturalTop + cardH);
 			}
-			let shift = 0;
+			if (naturalTop + shiftY < minTop) {
+				shiftY = minTop - naturalTop;
+			}
+			previewShiftY = Math.round(shiftY);
+
+			let shiftX = 0;
 			if (cardRect.right > maxRight) {
-				shift = Math.max(minLeft - cardRect.left, maxRight - cardRect.right);
+				shiftX = Math.max(minLeft - cardRect.left, maxRight - cardRect.right);
 			} else if (cardRect.left < minLeft) {
-				shift = minLeft - cardRect.left;
+				shiftX = minLeft - cardRect.left;
 			}
-			previewShiftX = Math.round(shift);
+			previewShiftX = Math.round(shiftX);
 		});
 	}
 
+	// Re-clamp open preview card on scroll or viewport resize so it never clips.
+	$effect(() => {
+		if ((!memberHovered && !memberFocused) || previewDismissed || !memberNodeEl) return;
+		const node = memberNodeEl;
+		const reading = readingEl;
+		const onViewportChange = () => clampMemberPreview(node);
+		window.addEventListener('resize', onViewportChange);
+		window.addEventListener('scroll', onViewportChange, { capture: true, passive: true });
+		reading?.addEventListener('scroll', onViewportChange, { passive: true });
+		return () => {
+			window.removeEventListener('resize', onViewportChange);
+			window.removeEventListener('scroll', onViewportChange, { capture: true });
+			reading?.removeEventListener('scroll', onViewportChange);
+		};
+	});
+
 	function memberPreviewTracking(node: HTMLElement) {
+		memberNodeEl = node;
+		const resetPreview = () => {
+			previewDismissed = false;
+			previewFlipAbove = false;
+			previewShiftX = 0;
+			previewShiftY = 0;
+			previewMaxHeight = undefined;
+		};
 		const onEnter = () => {
 			memberHovered = true;
 			clampMemberPreview(node);
 		};
 		const onLeave = () => {
 			memberHovered = false;
-			if (!memberFocused) {
-				previewDismissed = false;
-				previewFlipAbove = false;
-				previewShiftX = 0;
-			}
+			if (!memberFocused) resetPreview();
 		};
 		const onFocusIn = () => {
 			memberFocused = true;
@@ -318,17 +358,14 @@
 			const next = event.relatedTarget as Node | null;
 			if (next && node.contains(next)) return;
 			memberFocused = false;
-			if (!memberHovered) {
-				previewDismissed = false;
-				previewFlipAbove = false;
-				previewShiftX = 0;
-			}
+			if (!memberHovered) resetPreview();
 		};
 		node.addEventListener('pointerenter', onEnter);
 		node.addEventListener('pointerleave', onLeave);
 		node.addEventListener('focusin', onFocusIn);
 		node.addEventListener('focusout', onFocusOut);
 		return () => {
+			if (memberNodeEl === node) memberNodeEl = null;
 			node.removeEventListener('pointerenter', onEnter);
 			node.removeEventListener('pointerleave', onLeave);
 			node.removeEventListener('focusin', onFocusIn);
@@ -433,6 +470,8 @@
 								role="tooltip"
 								data-flip-above={previewFlipAbove ? '' : undefined}
 								style:--preview-shift-x="{previewShiftX}px"
+								style:--preview-shift-y="{previewShiftY}px"
+								style:--preview-max-h={previewMaxHeight ? `${previewMaxHeight}px` : undefined}
 							>
 								<span class="triage-from-av" aria-hidden="true">{item.actorInitials}</span>
 								<span>
@@ -614,12 +653,12 @@
 										onkeydown={handleReplyInputKeydown}
 										disabled={controlsDisabled}
 										placeholder="Write your reply to {item.actorName}…"
-										class="triage-input min-h-9 min-w-[200px] flex-1 px-3 py-1.5 text-sm max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										class="triage-input min-h-9 min-w-[200px] flex-1 px-3 py-1.5 text-sm [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 									/>
 									<button
 										type="submit"
 										disabled={controlsDisabled || !replyText.trim()}
-										class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+										class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 									>
 										<span class="exec-cta-fill" aria-hidden="true"></span>
 										<span class="exec-cta-inner">
@@ -640,7 +679,7 @@
 												type="button"
 												disabled={controlsDisabled}
 												onclick={() => onChoose(item, choice.id, choice.label)}
-												class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+												class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 											>
 												<span class="exec-cta-fill" aria-hidden="true"></span>
 												<span class="exec-cta-inner">
@@ -653,7 +692,7 @@
 												type="button"
 												disabled={controlsDisabled}
 												onclick={() => onChoose(item, choice.id, choice.label)}
-												class="triage-secondary-btn inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 px-3.5 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+												class="triage-secondary-btn inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 px-3.5 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 											>
 												<span>{choice.label}</span>
 											</button>
@@ -664,7 +703,7 @@
 										type="button"
 										disabled={controlsDisabled}
 										onclick={() => onPrimaryAction(item)}
-										class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+										class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 									>
 										<span class="exec-cta-fill" aria-hidden="true"></span>
 										<span class="exec-cta-inner">
@@ -675,7 +714,7 @@
 								{:else if isOpenOnly && openParts}
 									<a
 										href="{resolve(openParts.pathname as '/work')}{openParts.suffix}"
-										class="exec-cta min-w-9 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+										class="exec-cta min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 									>
 										<span class="exec-cta-fill" aria-hidden="true"></span>
 										<span class="exec-cta-inner">
@@ -691,7 +730,7 @@
 										type="button"
 										disabled={controlsDisabled}
 										onclick={() => onArmDeny(item.id)}
-										class="triage-deny-btn inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 px-3.5 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+										class="triage-deny-btn inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 px-3.5 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 									>
 										<Ban class="size-3.5 shrink-0" aria-hidden="true" />
 										<span>{item.decision?.secondaryAction?.label ?? 'Deny'}</span>
@@ -744,7 +783,7 @@
 											type="button"
 											disabled={controlsDisabled}
 											onclick={() => void handleCancelDeny()}
-											class="triage-keep-btn inline-flex min-h-9 min-w-9 items-center justify-center px-3 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+											class="triage-keep-btn inline-flex min-h-9 min-w-9 items-center justify-center px-3 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 										>
 											Keep
 										</button>
@@ -752,7 +791,7 @@
 											type="button"
 											disabled={controlsDisabled}
 											onclick={() => onSecondaryAction(item)}
-											class="triage-deny-confirm inline-flex min-h-9 min-w-9 items-center justify-center px-3 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+											class="triage-deny-confirm inline-flex min-h-9 min-w-9 items-center justify-center px-3 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 										>
 											{isBusy ? 'Denying…' : 'Confirm deny'}
 										</button>
@@ -771,7 +810,7 @@
 									type="text"
 									autocomplete="off"
 									placeholder="Optional reason for {item.actorName}… (Enter to confirm, Esc to cancel)"
-									class="triage-input min-h-9 w-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+									class="triage-input min-h-9 w-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 								/>
 							</div>
 						{/if}
@@ -968,13 +1007,16 @@
 	.triage-from-card {
 		position: absolute;
 		z-index: 10;
-		inset-block-start: calc(100% + 4px);
+		inset-block-start: 100%;
 		inset-inline-start: 0;
+		margin-block-start: 4px;
 		display: none;
 		align-items: center;
 		gap: 10px;
 		width: max-content;
 		max-width: min(18rem, 65cqi);
+		max-height: var(--preview-max-h, 16rem);
+		overflow-y: auto;
 		padding: 9px 12px;
 		border: 1px solid var(--exec-border-hi);
 		border-radius: var(--exec-inset-radius);
@@ -983,11 +1025,23 @@
 		color: var(--exec-body);
 		font-size: 0.75rem;
 		line-height: 1.45;
-		transform: translateX(var(--preview-shift-x, 0px));
+		transform: translate(var(--preview-shift-x, 0px), var(--preview-shift-y, 0px));
+	}
+	/* Invisible hover bridge covers the 4px seam so pointer travel to the card never drops :hover (WCAG 1.4.13) */
+	.triage-from-card::before {
+		content: '';
+		position: absolute;
+		inset: -8px 0 auto 0;
+		height: 8px;
 	}
 	.triage-from-card[data-flip-above] {
 		inset-block-start: auto;
-		inset-block-end: calc(100% + 4px);
+		inset-block-end: 100%;
+		margin-block-start: 0;
+		margin-block-end: 4px;
+	}
+	.triage-from-card[data-flip-above]::before {
+		inset: auto 0 -8px 0;
 	}
 	.triage-from-member:not([data-preview-dismissed]):is(:hover, :focus-within) .triage-from-card {
 		display: flex;

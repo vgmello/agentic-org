@@ -1,3 +1,41 @@
+<script module lang="ts">
+	const COMMENT_DRAFTS_SESSION_KEY = 'agentic-org.inbox.commentDrafts';
+	let memoryCommentDrafts: Record<string, string> = {};
+
+	function readPersistedCommentDrafts(): Record<string, string> {
+		if (typeof window === 'undefined') return { ...memoryCommentDrafts };
+		try {
+			const raw = window.sessionStorage.getItem(COMMENT_DRAFTS_SESSION_KEY);
+			if (!raw) return { ...memoryCommentDrafts };
+			const parsed: unknown = JSON.parse(raw);
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+				return { ...memoryCommentDrafts };
+			}
+			const clean: Record<string, string> = { ...memoryCommentDrafts };
+			for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+				if (typeof v === 'string') clean[k] = v;
+			}
+			memoryCommentDrafts = clean;
+			return clean;
+		} catch {
+			return { ...memoryCommentDrafts };
+		}
+	}
+
+	function writePersistedCommentDrafts(next: Record<string, string>): void {
+		memoryCommentDrafts = { ...next };
+		if (typeof window === 'undefined') return;
+		try {
+			window.sessionStorage.setItem(
+				COMMENT_DRAFTS_SESSION_KEY,
+				JSON.stringify(memoryCommentDrafts)
+			);
+		} catch {
+			// Fall back to in-memory module cache when sessionStorage is unavailable.
+		}
+	}
+</script>
+
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
@@ -116,7 +154,7 @@
 	// Keyed by `${organizationId}:${itemId}` so drafts never leak across items or organizations.
 	let denyDrafts = $state<Record<string, string>>({});
 	let replyDrafts = $state<Record<string, string>>({});
-	let commentDrafts = $state<Record<string, string>>({});
+	let commentDrafts = $state<Record<string, string>>(readPersistedCommentDrafts());
 	let nowMs = $state(Date.now());
 	let searchInputEl = $state<HTMLInputElement | null>(null);
 
@@ -235,7 +273,9 @@
 	}
 
 	function updateCommentDraft(itemId: string, value: string) {
-		commentDrafts = { ...commentDrafts, [draftKey(organizationId, itemId)]: value };
+		const next = { ...commentDrafts, [draftKey(organizationId, itemId)]: value };
+		commentDrafts = next;
+		writePersistedCommentDrafts(next);
 	}
 
 	function clearCommentDraft(orgId: string, itemId: string) {
@@ -244,6 +284,7 @@
 			const next = { ...commentDrafts };
 			delete next[key];
 			commentDrafts = next;
+			writePersistedCommentDrafts(next);
 		}
 	}
 
@@ -761,7 +802,7 @@
 									searchInputEl?.focus();
 								}}
 								aria-label="Clear search"
-								class="triage-clear-btn inline-flex min-h-9 min-w-9 items-center justify-center max-[720px]:min-h-11 max-[720px]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+								class="triage-clear-btn inline-flex min-h-9 min-w-9 items-center justify-center [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 							>
 								<X class="size-3.5" aria-hidden="true" />
 							</button>
@@ -819,7 +860,7 @@
 										<DropdownMenu.RadioItem
 											value={tab.id}
 											closeOnSelect={true}
-											class="flex min-h-9 items-center justify-between gap-3 pr-8 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="flex min-h-9 items-center justify-between gap-3 pr-8 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											<span>{tab.label}</span>
 											<span class="triage-menu-count font-mono text-xs tabular-nums">
@@ -860,14 +901,14 @@
 										<DropdownMenu.RadioItem
 											value="all"
 											closeOnSelect={true}
-											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											All items
 										</DropdownMenu.RadioItem>
 										<DropdownMenu.RadioItem
 											value="urgent"
 											closeOnSelect={true}
-											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											Urgent only
 										</DropdownMenu.RadioItem>
@@ -881,7 +922,7 @@
 										<DropdownMenu.RadioItem
 											value=""
 											closeOnSelect={true}
-											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											All projects
 										</DropdownMenu.RadioItem>
@@ -889,7 +930,7 @@
 											<DropdownMenu.RadioItem
 												value={proj.id}
 												closeOnSelect={true}
-												class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 											>
 												{proj.name}
 											</DropdownMenu.RadioItem>
@@ -904,7 +945,7 @@
 										<DropdownMenu.RadioItem
 											value=""
 											closeOnSelect={true}
-											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											All teams
 										</DropdownMenu.RadioItem>
@@ -912,7 +953,7 @@
 											<DropdownMenu.RadioItem
 												value={team.id}
 												closeOnSelect={true}
-												class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 											>
 												{team.name}
 											</DropdownMenu.RadioItem>
@@ -923,7 +964,7 @@
 										<DropdownMenu.Group>
 											<DropdownMenu.Item
 												onSelect={clearFilterMenu}
-												class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 											>
 												Reset filters
 											</DropdownMenu.Item>
@@ -962,14 +1003,14 @@
 										<DropdownMenu.RadioItem
 											value="priority"
 											closeOnSelect={true}
-											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											Priority first
 										</DropdownMenu.RadioItem>
 										<DropdownMenu.RadioItem
 											value="date"
 											closeOnSelect={true}
-											class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
 											By date
 										</DropdownMenu.RadioItem>
@@ -978,7 +1019,7 @@
 									<DropdownMenu.CheckboxItem
 										checked={showDividers}
 										onCheckedChange={(checked) => toggleRowDividers(Boolean(checked))}
-										class="min-h-9 max-[720px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 									>
 										Row dividers
 									</DropdownMenu.CheckboxItem>
