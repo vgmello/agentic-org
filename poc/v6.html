@@ -3935,7 +3935,7 @@ html[data-theme="report-dark"] .split .list { background: #1b2533; }
 
 /* Graphite: matte surfaces, compact lists and restrained color. */
 html[data-theme="graphite"] {
-  --graphite-canvas: #121213;
+  --graphite-canvas: #161718;
   --graphite-rail: var(--graphite-canvas);
   --graphite-panel: #1b1d20;
   --graphite-raised: #202226;
@@ -4008,10 +4008,11 @@ html[data-theme="graphite"] {
   & :is(.h4-cta-fill, .h4-cta-sheen) { display: none; }
   & .ao-mark-bg { fill: var(--tone-accent-solid); }
   & .sidebar {
-    background: #09090A;
+    background: #141516;
     box-shadow: inset -1px 0 var(--line);
     backdrop-filter: none;
   }
+  & .work-row:is(:hover, :focus-within) { background: #27292B; }
   & :is(.nav-label, .nav-group-title) {
     color: var(--gray-300);
     font-size: .8125rem;
@@ -4067,6 +4068,7 @@ html[data-theme="graphite"] {
   & :is(.cmdk-dialog, .menu, .toast, .sres) { border-radius: var(--radius-lg); }
   & :is(.overlay, .cmdk-backdrop) { background: rgb(0 0 0 / .58); backdrop-filter: none; }
   & :is(.card, .bcard, .c-entry, .k-doc, .grp-h, .chhead) { background: var(--graphite-panel); }
+  & :is(.work-group-title, .grp-h) { background: #1E2021; }
   & :is(.rows > li.linked, .ibx):hover { background: var(--hover); }
   & .ibx[aria-current="true"] { background: var(--graphite-active); box-shadow: inset 2px 0 var(--tone-accent); }
   & .t-outline { box-shadow: inset 0 0 0 1px var(--line2); }
