@@ -572,10 +572,12 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 
 	const moreTrigger = catGroup.getByRole('button', { name: 'More' });
 	await moreTrigger.click();
-	await expect(page.getByRole('menuitemradio', { name: /Questions/ })).toBeVisible();
-	await expect(page.getByRole('menuitemradio', { name: /Problems/ })).toBeVisible();
-	await expect(page.getByRole('menuitemradio', { name: /Work/ })).toBeVisible();
-	await page.getByRole('menuitemradio', { name: /Handled/ }).click();
+	await expect(page.getByRole('menuitemradio', { name: /^Questions\s+\d+$/ })).toBeVisible();
+	await expect(page.getByRole('menuitemradio', { name: /^Problems\s+\d+$/ })).toBeVisible();
+	await expect(page.getByRole('menuitemradio', { name: /^Work\s+\d+$/ })).toBeVisible();
+	const handledMenuItem = page.getByRole('menuitemradio', { name: /^Handled\s+[1-9]\d*$/ });
+	await expect(handledMenuItem).toBeVisible();
+	await handledMenuItem.click();
 
 	await expect(moreTrigger).toHaveText('More');
 	await expect(moreTrigger).toHaveAttribute('data-current-kind', '');
@@ -678,10 +680,41 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.locator('[data-triage-row="in1"]').click();
 
-	// Post an Inbox comment and verify persistence across reload alongside Row dividers
+	// Comment validity reset, per-item unsent draft preservation, live status announcement, and reload persistence
 	const commentBox = page.getByLabel('Comment on this request');
+	const sendCommentBtn = page.getByRole('button', { name: 'Send comment' });
+	const otherRow = page.locator('[data-triage-row]:not([data-triage-row="in1"])').first();
+
+	// Save a valid unsent draft on another item first
+	await otherRow.click();
+	await commentBox.fill('Unsent draft for second item');
+
+	// Trigger whitespace custom validity on in1, then switch back to otherRow and verify validity cleared
+	await page.locator('[data-triage-row="in1"]').click();
+	await commentBox.fill('   ');
+	await sendCommentBtn.click();
+	expect(await commentBox.evaluate((el: HTMLTextAreaElement) => el.validationMessage)).toContain(
+		'Enter a comment'
+	);
+
+	await otherRow.click();
+	await expect(commentBox).toHaveValue('Unsent draft for second item');
+	await expect
+		.poll(() =>
+			commentBox.evaluate((el: HTMLTextAreaElement) => ({
+				customError: el.validity.customError,
+				validationMessage: el.validationMessage
+			}))
+		)
+		.toEqual({ customError: false, validationMessage: '' });
+
+	// Switch back to in1: whitespace draft preserved, then post a real comment & verify live status
+	await page.locator('[data-triage-row="in1"]').click();
+	await expect(commentBox).toHaveValue('   ');
+
 	await commentBox.fill('Verified release notes and rollback plan.');
-	await page.getByRole('button', { name: 'Send comment' }).click();
+	await sendCommentBtn.click();
+	await expect(page.locator('#triage-comment-status')).toHaveText('Comment posted (1 total).');
 	await expect(page.locator('.triage-comment-list')).toContainText(
 		'Verified release notes and rollback plan.'
 	);

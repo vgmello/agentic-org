@@ -407,6 +407,7 @@ export function deriveTriageItems(
 				: undefined);
 
 		const createdIso = inbox?.created_at ?? work?.updated_at;
+		const openedIso = inbox?.created_at ?? work?.created_at ?? work?.updated_at;
 		const recommendation = inbox
 			? inbox.recommendation
 			: decision.recommendation !== decision.backgroundContext
@@ -457,7 +458,7 @@ export function deriveTriageItems(
 			openLabel,
 			auditChecks: decision.auditChecks,
 			ageLabel: decision.ageLabel,
-			createdAgeLabel: decision.ageLabel,
+			createdAgeLabel: openedIso ? relativeAge(openedIso, nowMs) : decision.ageLabel,
 			timestampMs: parseTimestamp(createdIso, nowMs)
 		};
 	});

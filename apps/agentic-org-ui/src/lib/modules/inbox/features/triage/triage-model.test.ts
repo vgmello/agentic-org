@@ -235,6 +235,19 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		expect(handled?.state).toBe('handled');
 		expect(handled?.handled?.outcome).toBe('Approved');
 		expect(handled?.handled?.by).toBe('you');
+
+		// Work-backed items derive createdAgeLabel from created_at rather than updated_at
+		const agedWork = {
+			...WORK_ITEMS[1],
+			id: 'w-aged-req',
+			short_id: 'R-99',
+			title: 'Aged scoped request',
+			created_at: new Date(NOW - 3 * 24 * 3_600_000).toISOString(),
+			updated_at: new Date(NOW - 10 * 60_000).toISOString()
+		};
+		const derivedAged = deriveTriageItems([agedWork], SNAPSHOT, 'owner', [], NOW);
+		expect(derivedAged[0]?.createdAgeLabel).toBe('3d ago');
+		expect(derivedAged[0]?.ageLabel).toBe('10m ago');
 	});
 
 	it('computes accurate tab counts under scope filters', () => {

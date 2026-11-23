@@ -1000,6 +1000,7 @@
 	.triage-from-link {
 		display: inline-flex;
 		align-items: center;
+		min-width: 36px;
 		min-height: 36px;
 		color: var(--exec-ink);
 		font-weight: 600;
@@ -1008,21 +1009,22 @@
 	.triage-from-link:is(:hover, :focus-visible) {
 		text-decoration: underline;
 	}
-	/* Outer popover sits flush against trigger with 4px padding bridge (never clipped by card scroll) */
+	/* Outer popover stays attached to trigger; clamping shifts grow its padding bridge so hover never breaks */
 	.triage-from-popover {
 		position: absolute;
 		z-index: 10;
 		inset-block-start: 100%;
 		inset-inline-start: 0;
 		display: none;
-		padding-block-start: 4px;
-		transform: translate(var(--preview-shift-x, 0px), var(--preview-shift-y, 0px));
+		padding-block-start: calc(4px + max(0px, var(--preview-shift-y, 0px)));
+		transform: translate(var(--preview-shift-x, 0px), min(0px, var(--preview-shift-y, 0px)));
 	}
 	.triage-from-popover[data-flip-above] {
 		inset-block-start: auto;
 		inset-block-end: 100%;
 		padding-block-start: 0;
-		padding-block-end: 4px;
+		padding-block-end: calc(4px + max(0px, calc(-1 * var(--preview-shift-y, 0px))));
+		transform: translate(var(--preview-shift-x, 0px), max(0px, var(--preview-shift-y, 0px)));
 	}
 	.triage-from-member:not([data-preview-dismissed]):is(:hover, :focus-within) .triage-from-popover {
 		display: block;
@@ -1146,6 +1148,7 @@
 	.triage-link {
 		display: inline-flex;
 		align-items: center;
+		min-width: 36px;
 		min-height: 36px;
 		color: var(--link);
 		text-decoration: none;
@@ -1472,11 +1475,8 @@
 		.triage-link,
 		.triage-copy,
 		.triage-send {
-			min-height: 44px;
-		}
-		.triage-copy,
-		.triage-send {
 			min-width: 44px;
+			min-height: 44px;
 		}
 		.triage-send {
 			width: 44px;

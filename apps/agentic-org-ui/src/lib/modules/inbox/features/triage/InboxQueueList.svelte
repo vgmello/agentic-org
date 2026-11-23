@@ -442,11 +442,11 @@
 
 	@media (forced-colors: active) {
 		.triage-item[aria-current='true'] {
-			border-inline-start: 3px solid Highlight;
+			border-inline-start: 4px solid Highlight;
 		}
 		.triage-item:focus-visible {
 			outline: 2px solid CanvasText;
-			outline-offset: -2px;
+			outline-offset: 1px;
 		}
 		.triage-reset-btn,
 		.triage-empty :global(.exec-cta) {
