@@ -80,23 +80,9 @@ function findLegacyCursor(entry: LegacyEntry): number {
 				}
 				if (!monotonic) continue;
 				const dist = Math.abs(i - legacyCursor) + (i === legacyCursor ? 0.5 : 0);
-				if (dist < bestUntrackedDist) {
+				if (dist < bestUntrackedDist || (dist === bestUntrackedDist && i > legacyCursor)) {
 					bestUntracked = i;
 					bestUntrackedDist = dist;
-				} else if (dist === bestUntrackedDist && bestUntracked < legacyCursor && i > legacyCursor) {
-					// Equidistant untracked duplicate hrefs (e.g. #a -> unindexed #b -> #a):
-					// if entry.index is the immediate next SvelteKit index after the entry preceding
-					// bestUntracked, it belongs to the earlier slot (Back); otherwise prefer Forward.
-					let prevIdx: number | undefined;
-					for (let j = bestUntracked - 1; j >= 0; j--) {
-						if (legacyEntries[j].index !== undefined) {
-							prevIdx = legacyEntries[j].index;
-							break;
-						}
-					}
-					if (prevIdx === undefined || entry.index > prevIdx + 1) {
-						bestUntracked = i;
-					}
 				}
 			}
 		}
@@ -203,7 +189,10 @@ export function installModalBack() {
 			syncLegacyEntry(currentLegacyEntry(), true);
 			const recordedHref = window.location.href;
 			const recordedCursor = legacyCursor;
-			queueMicrotask(() => {
+			// SvelteKit stamps sveltekit:history in its own bubble-phase hashchange listener
+			// (registered after installModalBack). Use a macrotask so we run strictly after the
+			// entire hashchange event dispatch completes (including between-listener microtasks).
+			setTimeout(() => {
 				if (window.navigation || legacyCursor !== recordedCursor) return;
 				const current = legacyEntries[recordedCursor];
 				const idx = sveltekitHistoryIndex(window.history.state);
@@ -216,7 +205,7 @@ export function installModalBack() {
 				) {
 					legacyEntries[recordedCursor] = { href: recordedHref, index: idx };
 				}
-			});
+			}, 0);
 		},
 		{ capture: true }
 	);

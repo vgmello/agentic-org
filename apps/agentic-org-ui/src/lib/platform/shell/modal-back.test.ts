@@ -573,12 +573,22 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		unregister();
 	});
 
-	it('distinguishes Back (index prev+1) from Forward (index > prev+1) across an unindexed middle fragment (#a -> unindexed #b -> #a)', async () => {
+	it('captures bubble-phase SvelteKit hashchange stamps after macrotask across both clicked and unindexed fragments', async () => {
 		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
-		// Click #a (later assigned 11), type #b in address bar (null), click #a (later assigned 12)
+		const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+		// Model A: click #a (SvelteKit stamps 11 in bubble phase), unindexed #b, click #a (stamps 12)
 		env.dispatchHashChange('http://localhost/teams#a', null, 2);
+		// Simulate SvelteKit's bubble-phase listener stamping sveltekit:history after capture phase
+		env.setEntry('http://localhost/teams#a', { 'sveltekit:history': 11 }, 2);
+		await tick();
+
 		env.dispatchHashChange('http://localhost/teams#b', null, 3);
+		await tick();
+
 		env.dispatchHashChange('http://localhost/teams#a', null, 4);
+		env.setEntry('http://localhost/teams#a', { 'sveltekit:history': 12 }, 4);
+		await tick();
 
 		// Go Back to unindexed #b
 		env.dispatchPopState('http://localhost/teams#b', null, 4);
@@ -616,5 +626,38 @@ describe('modal-back legacy (!window.navigation) path', () => {
 		expect(env.goCalls).toEqual([1]);
 		expect(close2).not.toHaveBeenCalled();
 		unregister2();
+	});
+
+	it('does not swallow Forward when earlier #a and #b are unindexed and later #a is SvelteKit-indexed', async () => {
+		const env = await setup('http://localhost/teams', { 'sveltekit:history': 10 }, 1);
+		const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+		// Model B: unindexed #a, unindexed #b, then clicked #a (SvelteKit stamps 11 in bubble phase)
+		env.dispatchHashChange('http://localhost/teams#a', null, 2);
+		await tick();
+		env.dispatchHashChange('http://localhost/teams#b', null, 3);
+		await tick();
+		env.dispatchHashChange('http://localhost/teams#a', null, 4);
+		env.setEntry('http://localhost/teams#a', { 'sveltekit:history': 11 }, 4);
+		await tick();
+
+		// Go Back to unindexed #b, open modal, press Forward to indexed #a (11)
+		env.dispatchPopState('http://localhost/teams#b', null, 4);
+		const routerPop = vi.fn();
+		env.fakeWindow.addEventListener('popstate', routerPop);
+		const close = vi.fn();
+		const unregister = env.registerModalBack(close);
+
+		const forwardEvent = env.dispatchPopState(
+			'http://localhost/teams#a',
+			{ 'sveltekit:history': 11 },
+			4
+		);
+		expect(forwardEvent.stopped).toBe(false);
+		expect(routerPop).toHaveBeenCalledTimes(1);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([]);
+		expect(close).not.toHaveBeenCalled();
+		unregister();
 	});
 });
