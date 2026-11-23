@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-23T03:40:00Z'
+updated_date: '2026-11-23T03:41:00Z'
 labels:
   - backend
   - ui
@@ -57,4 +58,5 @@ Makes reviews a first-class, GitHub-free, methodology-agnostic product primitive
 - [ ] #3 Reviewers submit anchored findings (general, file_line, doc_section, checklist_item) with append-only replies and round-pinned verdicts (approve, changes_requested, comment, incomplete; atomic batch findings in review verdict), enforcing independence (reviewer != author when independent=true), ADR-0026 open-slug kinds and advisory guidance_refs/criteria (zero hardcoded methodology engine), and single-agent routing (explicit, claimable pool, or deterministic --auto-assign).
 - [ ] #4 ADR-0028 wakes (ReviewRequested, ReviewVerdict, deduplicated ReviewReply, respecting 12/hr agent limit, person exemption, and advisory >=5-round escalation), warm resumable reviewer session affinity on follow-up rounds (plus --fresh independent override), ReviewInboxSource (OpenTarget::Review) with live SSE, 9-verb agent-os review CLI within CATALOGUE_LIMIT = 4096, and Browser Review Workbench (/reviews, /reviews/[ref], Inbox, Task widget) work end-to-end.
 - [ ] #5 Updates schema.sql, test_schema.py, Organization-Data-19 (or doc-77/79 + doc-72/73/74/80), doc-28, doc-35, doc-52, doc-3, and records a new ADR documenting Universal Reviews, single-writer routing, started_by_kind mapping, and ADR-0026 compliance.
+- [ ] #6 Supports two-stage token-efficient review convergence: iterative repair rounds (Round 2..N) resume the warm reviewer session with the inter-round diff (instructing the reviewer to verify fixes and inspect any previously unexamined or regressed areas without rubber-stamping), followed by an explicit fresh-context (--fresh) clean-session final validation review on the exact pinned commit once findings clear.
 <!-- AC:END -->
