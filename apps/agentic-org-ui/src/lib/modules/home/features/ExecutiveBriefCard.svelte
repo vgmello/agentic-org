@@ -71,7 +71,7 @@
 
 <aside class="brief-panel flex flex-col gap-3.5" aria-label="Executive Brief">
 	<div class="flex flex-wrap items-center justify-between gap-2">
-		<h2 class="inline-flex items-center gap-2 text-sm font-semibold text-[var(--exec-ink)]">
+		<h2 class="brief-title inline-flex items-center gap-2 text-[var(--exec-ink)]">
 			<Sparkles class="size-4 text-[var(--exec-accent-ink)]" aria-hidden="true" />
 			<span>Executive Brief</span>
 		</h2>
@@ -202,8 +202,8 @@
 <style>
 	.brief-panel {
 		background: var(--exec-panel-bg);
-		backdrop-filter: var(--exec-panel-blur);
 		-webkit-backdrop-filter: var(--exec-panel-blur);
+		backdrop-filter: var(--exec-panel-blur);
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-brief-pad-sm);
@@ -222,6 +222,12 @@
 			min-height: 100%;
 			overflow: hidden;
 		}
+	}
+	.brief-title {
+		font-size: var(--exec-brief-title-size);
+		line-height: 1.25;
+		font-weight: var(--exec-brief-title-weight);
+		letter-spacing: var(--exec-brief-title-tracking);
 	}
 	.brief-lenses {
 		border-radius: var(--exec-lenses-radius);

@@ -103,7 +103,7 @@
 					A
 				</span>
 				{#if !collapsed}
-					<span class="truncate text-sm font-semibold" style="color: var(--exec-ink);">
+					<span class="exec-logo-name truncate">
 						{connection.organization.name}
 					</span>
 				{/if}
@@ -424,7 +424,7 @@
 				href={resolve('/settings/offices')}
 				onclick={(e) => onNavigate?.(e, '/settings/offices')}
 				class={[
-					'exec-foot-link flex items-center rounded-lg text-[11px]',
+					'exec-foot-link flex items-center rounded-lg text-xs leading-5',
 					collapsed ? 'size-11 justify-center p-0' : 'mt-1 gap-2 px-2 py-1'
 				]}
 				title="{connection.office.host} · {connection.office.name} · {officeOnline
@@ -454,10 +454,18 @@
 
 <style>
 	.exec-sidebar {
-		background: var(--exec-sidebar-bg);
-		backdrop-filter: var(--exec-blur);
-		-webkit-backdrop-filter: var(--exec-blur);
+		background-color: var(--exec-sidebar-bg);
+		background-image: var(--exec-sidebar-sheen);
+		-webkit-backdrop-filter: var(--exec-sidebar-blur);
+		backdrop-filter: var(--exec-sidebar-blur);
 		box-shadow: inset -1px 0 0 var(--exec-border);
+	}
+	.exec-logo-name {
+		font-size: 0.9375rem;
+		line-height: 1.5rem;
+		font-weight: var(--exec-logo-weight);
+		letter-spacing: var(--exec-logo-tracking);
+		color: var(--exec-ink);
 	}
 	.exec-brand-mark {
 		background: var(--exec-cta-bg);
@@ -485,10 +493,10 @@
 		background: var(--tone-warn-bg);
 	}
 	.exec-nav-label {
-		font-size: 0.6875rem;
+		font-size: var(--exec-nav-label-size);
 		line-height: 1.125rem;
 		font-weight: 650;
-		letter-spacing: 0.07em;
+		letter-spacing: var(--exec-nav-label-tracking);
 		text-transform: uppercase;
 		color: var(--exec-dim);
 	}
@@ -500,6 +508,7 @@
 		padding: 7px 10px;
 		border-radius: 8px;
 		font-size: 0.875rem;
+		line-height: 1.35rem;
 		font-weight: 500;
 		color: var(--exec-muted);
 		white-space: nowrap;

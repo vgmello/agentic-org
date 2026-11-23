@@ -233,9 +233,7 @@
 				<span>{currentDecision.projectName}</span>
 			</div>
 
-			<h3
-				class="text-lg leading-snug font-semibold tracking-tight text-[var(--exec-ink)] sm:text-xl"
-			>
+			<h3 class="spot-title">
 				{currentDecision.title}
 			</h3>
 
@@ -455,8 +453,8 @@
 <style>
 	.spot-panel {
 		background: var(--exec-panel-bg);
-		backdrop-filter: var(--exec-panel-blur);
 		-webkit-backdrop-filter: var(--exec-panel-blur);
+		backdrop-filter: var(--exec-panel-blur);
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-spot-pad-sm);
@@ -490,6 +488,14 @@
 	}
 	.section-head {
 		display: var(--exec-section-head-display);
+	}
+	.spot-title {
+		font-size: var(--exec-spot-title-size);
+		line-height: 1.3;
+		font-weight: var(--exec-spot-title-weight);
+		letter-spacing: -0.02em;
+		color: var(--exec-ink);
+		max-width: 48ch;
 	}
 	.spot-badge {
 		padding: 4px 11px;
@@ -608,12 +614,18 @@
 	}
 	.outline-btn {
 		border-radius: var(--exec-ctrl-radius);
-		background: var(--exec-well);
-		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+		background: var(--exec-btn-outline-bg);
+		color: var(--exec-btn-outline-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring);
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease,
+			box-shadow 0.14s ease;
 	}
 	.outline-btn:hover {
-		background: var(--exec-surface-hi);
+		background: var(--exec-btn-outline-bg-hover);
+		color: var(--exec-btn-outline-ink-hover);
+		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring-hover);
 	}
 	.deny-btn {
 		border-radius: var(--exec-ctrl-radius);
@@ -652,13 +664,17 @@
 			color 0.14s ease;
 	}
 	.skip-btn:hover {
-		background: var(--exec-accent-soft);
+		background: var(--exec-btn-ghost-bg-hover);
 		color: var(--exec-ink);
 	}
 	.deny-input {
 		background: var(--exec-surface);
 		color: var(--exec-ink);
 		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+	}
+	.deny-input::placeholder {
+		color: var(--exec-muted);
+		opacity: 1;
 	}
 	.next-bar:hover {
 		background: var(--exec-surface-hi);

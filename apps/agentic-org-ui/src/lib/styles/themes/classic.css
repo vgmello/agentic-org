@@ -51,7 +51,7 @@ html[data-ui-theme='classic'] {
 	--fg-subtle: #99a1af;
 
 	--primary: var(--tone-accent);
-	--primary-hover: var(--tone-accent-hi);
+	--primary-hover: #4f46e5;
 	--ring: var(--tone-accent-hi);
 	--brand: var(--tone-accent-hi);
 	--focus: var(--tone-accent-hi);
@@ -96,9 +96,12 @@ html[data-ui-theme='classic'] {
 	/* Classic flat surfaces */
 	--exec-bg: #1e2939;
 	--exec-sidebar-bg: #161f2d;
+	--exec-sidebar-blur: none;
+	--exec-sidebar-sheen: none;
 	--exec-surface: #243144;
 	--exec-surface-hi: #29384d;
 	--exec-well: #1a2433;
+	--exec-panel-sheen: none;
 	--exec-border: rgba(255, 255, 255, 0.1);
 	--exec-border-hi: rgba(255, 255, 255, 0.18);
 	--exec-blur: none;
@@ -108,6 +111,40 @@ html[data-ui-theme='classic'] {
 	--exec-body: #d1d5dc;
 	--exec-muted: #99a1af;
 	--exec-dim: #99a1af;
+	--exec-pillar-name-ink: #99a1af;
+
+	/* Classic top bar & command pill */
+	--exec-topbar-height: 68px;
+	--exec-topbar-bg: #1e2939;
+	--exec-topbar-border: 1px solid rgba(255, 255, 255, 0.06);
+	--exec-topbar-fade: none;
+	--exec-topbar-fade-blur: none;
+	--exec-cmdk-radius: 14px;
+	--exec-cmdk-bg: #16202e;
+	--exec-cmdk-bg-hover: #16202e;
+	--exec-cmdk-blur: none;
+	--exec-cmdk-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+	--exec-cmdk-shadow-hover: inset 0 0 0 1px var(--tone-accent-hi);
+	--exec-cmdk-hover-lift: none;
+	--exec-cmdk-trigger-radius: 10px;
+	--exec-cmdk-trigger-ink: #99a1af;
+	--exec-cmdk-trigger-hover-bg: transparent;
+	--exec-cmdk-icon: #99a1af;
+	--exec-cmdk-icon-hover: var(--tone-accent-ink);
+	--exec-cmdk-kbd-radius: 6px;
+	--exec-cmdk-kbd-bg: #101828;
+	--exec-cmdk-kbd-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+	--exec-cmdk-kbd-ink: #d1d5dc;
+	--exec-cmdk-sep: rgba(255, 255, 255, 0.11);
+	--exec-ai-radius: 9px;
+	--exec-ai-bg: var(--tone-accent-bg);
+	--exec-ai-bg-hover: var(--tone-accent);
+	--exec-ai-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	--exec-ai-shadow-hover: inset 0 0 0 1px var(--tone-accent-hi);
+	--exec-ai-ink: #e0e7ff;
+	--exec-ai-ink-hover: #ffffff;
+	--exec-ai-ico: var(--tone-accent-ink);
+	--exec-ai-ico-hover: #ffffff;
 
 	/* Solid flat bars bound to unified --tone-*-bar ramp */
 	--exec-bar-budget: var(--tone-accent-bar);
@@ -122,9 +159,25 @@ html[data-ui-theme='classic'] {
 	--exec-seg-queued-high: var(--tone-bad-bar);
 
 	--exec-cta-bg: #615fff;
-	--exec-cta-fill: #7c86ff;
+	--exec-cta-fill: #4f46e5;
+	--exec-cta-shadow: none;
+	--exec-cta-shadow-hover: none;
+	--exec-cta-hover-lift: none;
+	--exec-cta-glass-radius: 9px;
 	--exec-cta-glass-bg: rgba(97, 95, 255, 0.14);
+	--exec-cta-glass-bg-hover: #4f46e5;
+	--exec-cta-glass-blur: none;
+	--exec-cta-glass-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	--exec-cta-glass-shadow-hover: inset 0 0 0 1px var(--tone-accent-hi);
 	--exec-cta-glass-ink: #e0e7ff;
+	--exec-cta-glass-ico: var(--tone-accent-ink);
+	--exec-btn-outline-bg: #1e2939;
+	--exec-btn-outline-bg-hover: var(--tone-accent);
+	--exec-btn-outline-ink: #d1d5dc;
+	--exec-btn-outline-ink-hover: #ffffff;
+	--exec-btn-outline-ring: rgba(255, 255, 255, 0.16);
+	--exec-btn-outline-ring-hover: var(--tone-accent-hi);
+	--exec-btn-ghost-bg-hover: rgba(255, 255, 255, 0.05);
 	--exec-avatar-bg: #1e2939;
 	--exec-avatar-ring: #243144;
 
@@ -143,8 +196,8 @@ html[data-ui-theme='classic'] .exec-canvas::before {
 }
 
 html[data-ui-theme='classic'] .exec-well {
-	backdrop-filter: none;
 	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
 	box-shadow: inset 0 0 0 1px var(--exec-border);
 }
 

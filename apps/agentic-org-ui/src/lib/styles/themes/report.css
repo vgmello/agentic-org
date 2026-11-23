@@ -62,7 +62,7 @@ html[data-ui-theme='report'] {
 	--fg-body: #2c3646;
 	--fg-secondary: #334155;
 	--fg-muted: #526074;
-	--fg-subtle: #6b788c;
+	--fg-subtle: #576478;
 	--on-emphasis: #ffffff;
 	--on-warning: #0b101b;
 	--on-warning-strong: #0b101b;
@@ -128,9 +128,14 @@ html[data-ui-theme='report'] {
 	/* Report Day surfaces & typography */
 	--exec-bg: #ffffff;
 	--exec-sidebar-bg: #f9fafc;
+	--exec-sidebar-blur: none;
+	--exec-sidebar-sheen: none;
+	--exec-logo-weight: 700;
+	--exec-logo-tracking: -0.025em;
 	--exec-surface: #ffffff;
 	--exec-surface-hi: #f8fafc;
 	--exec-well: #f7f8fa;
+	--exec-panel-sheen: none;
 	--exec-border: #eef1f6;
 	--exec-border-hi: #dce2ec;
 	--exec-blur: none;
@@ -139,8 +144,37 @@ html[data-ui-theme='report'] {
 	--exec-ink: #0b101b;
 	--exec-body: #2c3646;
 	--exec-muted: #526074;
-	--exec-dim: #6b788c;
+	--exec-dim: #576478;
+	--exec-pillar-name-ink: #475569;
 	--exec-on-accent: #ffffff;
+
+	/* Report Day top bar & command pill */
+	--exec-topbar-bg: #ffffff;
+	--exec-topbar-border: 1px solid #f1f4f8;
+	--exec-topbar-fade: none;
+	--exec-topbar-fade-blur: none;
+	--exec-cmdk-bg: #f5f7fa;
+	--exec-cmdk-bg-hover: #f1f4f8;
+	--exec-cmdk-blur: none;
+	--exec-cmdk-shadow: inset 0 0 0 1px #e8ecf2;
+	--exec-cmdk-shadow-hover: inset 0 0 0 1px #cbd5e1;
+	--exec-cmdk-hover-lift: none;
+	--exec-cmdk-trigger-ink: var(--exec-muted);
+	--exec-cmdk-trigger-hover-bg: transparent;
+	--exec-cmdk-icon: var(--exec-muted);
+	--exec-cmdk-icon-hover: #0b101b;
+	--exec-cmdk-kbd-bg: #ffffff;
+	--exec-cmdk-kbd-shadow: inset 0 0 0 1px #e2e7ef;
+	--exec-cmdk-kbd-ink: #475569;
+	--exec-cmdk-sep: #e2e7ef;
+	--exec-ai-bg: #0b101b;
+	--exec-ai-bg-hover: var(--tone-accent);
+	--exec-ai-shadow: none;
+	--exec-ai-shadow-hover: none;
+	--exec-ai-ink: #ffffff;
+	--exec-ai-ink-hover: #ffffff;
+	--exec-ai-ico: #93c5fd;
+	--exec-ai-ico-hover: #ffffff;
 
 	/* Flat 2D bars bound to unified --tone-*-bar ramp */
 	--exec-bar-budget: linear-gradient(90deg, #1d4e89 0%, #3b82c4 52%, #eab308 100%);
@@ -157,8 +191,24 @@ html[data-ui-theme='report'] {
 	/* Authoritative monochrome CTAs & steel-blue hover (consistent with --primary across all pages) */
 	--exec-cta-bg: #0b101b;
 	--exec-cta-fill: #1d4e89;
+	--exec-cta-shadow: none;
+	--exec-cta-shadow-hover: none;
+	--exec-cta-hover-lift: none;
+	--exec-cta-glass-radius: 4px;
 	--exec-cta-glass-bg: #0b101b;
+	--exec-cta-glass-bg-hover: #1d4e89;
+	--exec-cta-glass-blur: none;
+	--exec-cta-glass-shadow: none;
+	--exec-cta-glass-shadow-hover: none;
 	--exec-cta-glass-ink: #ffffff;
+	--exec-cta-glass-ico: #ffffff;
+	--exec-btn-outline-bg: #ffffff;
+	--exec-btn-outline-bg-hover: #eef2f7;
+	--exec-btn-outline-ink: #0b101b;
+	--exec-btn-outline-ink-hover: #0b101b;
+	--exec-btn-outline-ring: #b8c4d4;
+	--exec-btn-outline-ring-hover: #94a3b8;
+	--exec-btn-ghost-bg-hover: #f4f6f9;
 	--exec-avatar-bg: #f1f4f8;
 	--exec-avatar-ring: #ffffff;
 
@@ -209,6 +259,14 @@ html[data-ui-theme='report'] {
 
 /* ── Shared Modern 2D Executive Report Layout Tokens (Day & Night) ── */
 html[data-ui-theme^='report'] {
+	--exec-nav-label-size: 0.65rem;
+	--exec-nav-label-tracking: 0.11em;
+	--exec-topbar-height: 56px;
+	--exec-cmdk-radius: 6px;
+	--exec-cmdk-trigger-radius: 4px;
+	--exec-cmdk-kbd-radius: 3px;
+	--exec-ai-radius: 4px;
+
 	--exec-page-max-w: none;
 	--exec-page-gap: 0px;
 	--exec-hero-align: flex-end;
@@ -219,6 +277,20 @@ html[data-ui-theme^='report'] {
 	--exec-h1-em-decoration: underline;
 
 	--exec-section-head-display: flex;
+	--exec-section-title-size: 1.25rem;
+	--exec-section-title-weight: 700;
+	--exec-section-title-tracking: -0.028em;
+	--exec-section-sub-size: 0.8125rem;
+	--exec-capacity-title-size: 1.25rem;
+	--exec-capacity-title-leading: 1.25;
+	--exec-capacity-title-weight: 700;
+	--exec-capacity-title-tracking: -0.028em;
+	--exec-capacity-sub-size: 0.75rem;
+	--exec-spot-title-size: 1.125rem;
+	--exec-spot-title-weight: 650;
+	--exec-brief-title-size: 1.25rem;
+	--exec-brief-title-weight: 700;
+	--exec-brief-title-tracking: -0.028em;
 	--exec-section-gap: 0px;
 	--exec-stage-gap: 0px;
 	--exec-section-border: 1px solid var(--report-rule);
@@ -285,8 +357,8 @@ html[data-ui-theme^='report'] .exec-canvas::after {
 }
 
 html[data-ui-theme^='report'] .exec-well {
-	backdrop-filter: none;
 	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
 	border-radius: 4px;
 	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
 }
@@ -313,16 +385,6 @@ html[data-ui-theme='report'] .t-amber,
 html[data-ui-theme='report'] .t-red {
 	border-radius: 3px;
 	box-shadow: none;
-}
-
-html[data-ui-theme^='report'] .exec-cmdk-bar {
-	border-radius: 6px;
-	box-shadow: inset 0 0 0 1px var(--report-rule);
-}
-
-html[data-ui-theme^='report'] .exec-cmdk-trigger,
-html[data-ui-theme^='report'] .exec-ai-btn {
-	border-radius: 4px;
 }
 
 /* Domain views 2D flat editorial polish under Report Day & Report Night */

@@ -234,8 +234,8 @@
 	}
 	.kpi-pillar {
 		background: var(--exec-panel-bg);
-		backdrop-filter: var(--exec-panel-blur);
 		-webkit-backdrop-filter: var(--exec-panel-blur);
+		backdrop-filter: var(--exec-panel-blur);
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-pillar-pad-sm);
@@ -264,10 +264,15 @@
 	}
 	.pillar-name {
 		font-size: 0.7rem;
+		line-height: 1rem;
 		font-weight: 650;
 		letter-spacing: 0.11em;
 		text-transform: uppercase;
-		color: var(--exec-muted);
+		color: var(--exec-pillar-name-ink);
+		transition: color 0.14s ease;
+	}
+	.pillar-name:hover {
+		color: var(--exec-ink);
 	}
 	.status-pill {
 		padding: 2px 8px;

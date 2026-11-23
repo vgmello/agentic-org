@@ -15,10 +15,8 @@
 
 <section class="time-panel flex flex-col gap-3" aria-labelledby="exec-time-heading">
 	<div class="flex flex-wrap items-baseline justify-between gap-2">
-		<h2 id="exec-time-heading" class="text-[15px] font-semibold text-[var(--exec-ink)]">
-			Where task time goes
-		</h2>
-		<span class="text-xs text-[var(--exec-dim)] tabular-nums">
+		<h2 id="exec-time-heading" class="time-title">Where task time goes</h2>
+		<span class="time-sub tabular-nums">
 			{taskTime.totalOpen} open {taskTime.totalOpen === 1 ? 'item' : 'items'}
 		</span>
 	</div>
@@ -122,8 +120,8 @@
 <style>
 	.time-panel {
 		background: var(--exec-panel-bg);
-		backdrop-filter: var(--exec-panel-blur);
 		-webkit-backdrop-filter: var(--exec-panel-blur);
+		backdrop-filter: var(--exec-panel-blur);
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-time-pad);
@@ -131,6 +129,17 @@
 	.time-panel:hover {
 		background: var(--exec-panel-bg-hover);
 		box-shadow: var(--exec-panel-shadow-hover);
+	}
+	.time-title {
+		font-size: var(--exec-capacity-title-size);
+		line-height: var(--exec-capacity-title-leading, 1.3);
+		font-weight: var(--exec-capacity-title-weight);
+		letter-spacing: var(--exec-capacity-title-tracking);
+		color: var(--exec-ink);
+	}
+	.time-sub {
+		font-size: var(--exec-capacity-sub-size);
+		color: var(--exec-dim);
 	}
 	.time-bar {
 		height: var(--exec-time-bar-height);

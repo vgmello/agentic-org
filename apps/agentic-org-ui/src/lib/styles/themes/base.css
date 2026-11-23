@@ -48,9 +48,16 @@
 	/* Executive shell surface & typography tokens */
 	--exec-bg: #1e2939;
 	--exec-sidebar-bg: #161f2d;
+	--exec-sidebar-blur: none;
+	--exec-sidebar-sheen: none;
+	--exec-logo-weight: 600;
+	--exec-logo-tracking: 0em;
+	--exec-nav-label-size: 0.6875rem;
+	--exec-nav-label-tracking: 0.07em;
 	--exec-surface: #243144;
 	--exec-surface-hi: #29384d;
 	--exec-well: #1a2433;
+	--exec-panel-sheen: none;
 	--exec-border: rgba(255, 255, 255, 0.1);
 	--exec-border-hi: rgba(255, 255, 255, 0.18);
 	--exec-blur: none;
@@ -60,7 +67,41 @@
 	--exec-body: #d1d5dc;
 	--exec-muted: #99a1af;
 	--exec-dim: #99a1af;
+	--exec-pillar-name-ink: var(--exec-muted);
 	--exec-on-accent: #ffffff;
+
+	/* Top bar & floating command pill tokens */
+	--exec-topbar-height: 68px;
+	--exec-topbar-bg: #1e2939;
+	--exec-topbar-border: 1px solid rgba(255, 255, 255, 0.06);
+	--exec-topbar-fade: none;
+	--exec-topbar-fade-blur: none;
+	--exec-cmdk-radius: 14px;
+	--exec-cmdk-bg: #16202e;
+	--exec-cmdk-bg-hover: #16202e;
+	--exec-cmdk-blur: none;
+	--exec-cmdk-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+	--exec-cmdk-shadow-hover: inset 0 0 0 1px var(--tone-accent-hi);
+	--exec-cmdk-hover-lift: none;
+	--exec-cmdk-trigger-radius: 10px;
+	--exec-cmdk-trigger-ink: var(--exec-muted);
+	--exec-cmdk-trigger-hover-bg: transparent;
+	--exec-cmdk-icon: var(--exec-muted);
+	--exec-cmdk-icon-hover: var(--tone-accent-ink);
+	--exec-cmdk-kbd-radius: 6px;
+	--exec-cmdk-kbd-bg: #101828;
+	--exec-cmdk-kbd-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+	--exec-cmdk-kbd-ink: #d1d5dc;
+	--exec-cmdk-sep: rgba(255, 255, 255, 0.11);
+	--exec-ai-radius: 9px;
+	--exec-ai-bg: var(--tone-accent-bg);
+	--exec-ai-bg-hover: var(--tone-accent);
+	--exec-ai-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	--exec-ai-shadow-hover: inset 0 0 0 1px var(--tone-accent-hi);
+	--exec-ai-ink: #e0e7ff;
+	--exec-ai-ink-hover: #ffffff;
+	--exec-ai-ico: var(--tone-accent-ink);
+	--exec-ai-ico-hover: #ffffff;
 
 	/* Aliased executive tone tokens (bound to shared --tone-* & --bar-track) */
 	--exec-accent: var(--tone-accent);
@@ -97,9 +138,25 @@
 
 	/* Interactive CTA, Deny guard, Executive Brief & Rail Dot tokens */
 	--exec-cta-bg: #615fff;
-	--exec-cta-fill: #7c86ff;
+	--exec-cta-fill: #4f46e5;
+	--exec-cta-shadow: none;
+	--exec-cta-shadow-hover: none;
+	--exec-cta-hover-lift: none;
+	--exec-cta-glass-radius: 9px;
 	--exec-cta-glass-bg: rgba(97, 95, 255, 0.14);
+	--exec-cta-glass-bg-hover: #4f46e5;
+	--exec-cta-glass-blur: none;
+	--exec-cta-glass-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	--exec-cta-glass-shadow-hover: inset 0 0 0 1px var(--exec-accent-hi);
 	--exec-cta-glass-ink: #e0e7ff;
+	--exec-cta-glass-ico: var(--exec-accent-ink);
+	--exec-btn-outline-bg: var(--exec-well);
+	--exec-btn-outline-bg-hover: var(--exec-surface-hi);
+	--exec-btn-outline-ink: var(--exec-ink);
+	--exec-btn-outline-ink-hover: var(--exec-ink);
+	--exec-btn-outline-ring: var(--exec-border-hi);
+	--exec-btn-outline-ring-hover: var(--exec-border-hi);
+	--exec-btn-ghost-bg-hover: var(--exec-accent-soft);
 	--exec-avatar-bg: #1e2939;
 	--exec-avatar-ring: #243144;
 
@@ -143,6 +200,20 @@
 	--exec-h1-em-ul-bad: transparent;
 
 	--exec-section-head-display: none;
+	--exec-section-title-size: 1.25rem;
+	--exec-section-title-weight: 600;
+	--exec-section-title-tracking: -0.01em;
+	--exec-section-sub-size: 0.9375rem;
+	--exec-capacity-title-size: 0.96875rem;
+	--exec-capacity-title-leading: 1.3;
+	--exec-capacity-title-weight: 600;
+	--exec-capacity-title-tracking: -0.01em;
+	--exec-capacity-sub-size: 0.78125rem;
+	--exec-spot-title-size: clamp(1.125rem, 1.6vw, 1.375rem);
+	--exec-spot-title-weight: 600;
+	--exec-brief-title-size: 0.96875rem;
+	--exec-brief-title-weight: 600;
+	--exec-brief-title-tracking: -0.01em;
 	--exec-section-gap: 1rem;
 	--exec-stage-gap: 1.25rem;
 	--exec-section-border: 0px solid transparent;
@@ -233,22 +304,23 @@
 
 /* Executive shared surface & tactile CTA primitives */
 .exec-card {
-	background: var(--exec-surface);
-	backdrop-filter: var(--exec-blur);
+	background-color: var(--exec-surface);
+	background-image: var(--exec-panel-sheen);
 	-webkit-backdrop-filter: var(--exec-blur);
+	backdrop-filter: var(--exec-blur);
 	box-shadow: var(--exec-shadow);
 	border-radius: 16px;
 }
 
 .exec-card:hover {
-	background: var(--exec-surface-hi);
+	background-color: var(--exec-surface-hi);
 	box-shadow: var(--exec-shadow-hi);
 }
 
 .exec-well {
 	background: var(--exec-well);
-	backdrop-filter: blur(8px) saturate(145%);
 	-webkit-backdrop-filter: blur(8px) saturate(145%);
+	backdrop-filter: blur(8px) saturate(145%);
 	box-shadow:
 		inset 0 1px 0 rgba(255, 255, 255, 0.14),
 		inset 0 0 0 1px var(--exec-border);
@@ -262,6 +334,7 @@
 	justify-content: center;
 	gap: 6px;
 	overflow: hidden;
+	isolation: isolate;
 	border-radius: 9px;
 	padding: 0 14px;
 	min-height: 36px;
@@ -269,19 +342,34 @@
 	font-weight: 600;
 	color: var(--exec-on-accent);
 	background: var(--exec-cta-bg);
+	box-shadow: var(--exec-cta-shadow);
 	cursor: pointer;
 	transition:
-		transform 0.16s ease,
-		box-shadow 0.16s ease;
+		transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+		box-shadow 0.2s ease,
+		color 0.16s ease,
+		background-color 0.16s ease;
+}
+
+.exec-cta:hover,
+.exec-cta:focus-visible {
+	transform: var(--exec-cta-hover-lift);
+	box-shadow: var(--exec-cta-shadow-hover);
+}
+
+.exec-cta:active {
+	transform: translateY(0) scale(0.98);
+	transition-duration: 0.08s;
 }
 
 .exec-cta .exec-cta-fill {
 	position: absolute;
 	inset: 0;
+	z-index: 0;
 	background: var(--exec-cta-fill);
 	transform: scaleX(0);
 	transform-origin: left center;
-	transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+	transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 	pointer-events: none;
 }
 
@@ -291,10 +379,11 @@
 	bottom: -20%;
 	left: 0;
 	width: 42%;
+	z-index: 1;
 	background: linear-gradient(
 		90deg,
 		transparent 0%,
-		rgba(255, 255, 255, 0.26) 50%,
+		rgba(255, 255, 255, 0.04) 50%,
 		transparent 100%
 	);
 	transform: translateX(-160%) skewX(-22deg);
@@ -317,23 +406,60 @@
 
 .exec-cta:hover .exec-cta-sheen {
 	transform: translateX(340%) skewX(-22deg);
-	transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.05s;
+	transition: transform 0.62s cubic-bezier(0.22, 1, 0.36, 1) 0.06s;
 }
 
 .exec-cta-glass {
+	min-height: 36px;
+	padding: 0 15px;
+	border-radius: var(--exec-cta-glass-radius);
 	background: var(--exec-cta-glass-bg);
+	-webkit-backdrop-filter: var(--exec-cta-glass-blur);
+	backdrop-filter: var(--exec-cta-glass-blur);
 	color: var(--exec-cta-glass-ink);
-	box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	box-shadow: var(--exec-cta-glass-shadow);
+}
+
+.exec-cta-glass .exec-cta-ico {
+	color: var(--exec-cta-glass-ico);
+	transition: color 0.16s ease;
 }
 
 .exec-cta-glass:hover,
 .exec-cta-glass:focus-visible {
+	background: var(--exec-cta-glass-bg-hover);
+	color: var(--exec-on-accent);
+	box-shadow: var(--exec-cta-glass-shadow-hover);
+}
+
+.exec-cta-glass:hover .exec-cta-ico,
+.exec-cta-glass:focus-visible .exec-cta-ico {
 	color: var(--exec-on-accent);
 }
 
 @media (max-width: 720px), (pointer: coarse) {
 	.exec-cta {
 		min-height: 44px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.exec-cta,
+	.exec-cta .exec-cta-fill,
+	.exec-cta .exec-cta-sheen,
+	.exec-cmdk-bar {
+		transition: none !important;
+	}
+	.exec-cta:hover,
+	.exec-cta:focus-visible,
+	.exec-cta:active,
+	.exec-cmdk-bar:hover {
+		transform: none !important;
+	}
+	[data-slot='dialog-content'],
+	[data-slot='dialog-overlay'] {
+		animation: none !important;
+		transition: none !important;
 	}
 }
 

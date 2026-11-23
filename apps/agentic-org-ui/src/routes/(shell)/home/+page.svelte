@@ -123,7 +123,7 @@
 			<span class="exec-cta-fill" aria-hidden="true"></span>
 			<span class="exec-cta-sheen" aria-hidden="true"></span>
 			<span class="exec-cta-inner">
-				<Plus class="size-4" aria-hidden="true" />
+				<Plus class="exec-cta-ico size-4" aria-hidden="true" />
 				<span>New task</span>
 			</span>
 		</a>

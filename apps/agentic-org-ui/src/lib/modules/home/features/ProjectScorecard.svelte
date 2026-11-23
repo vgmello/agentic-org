@@ -15,12 +15,10 @@
 </script>
 
 <section class="scorecard-sec flex flex-col gap-3.5" aria-labelledby="exec-projects-heading">
-	<div class="flex items-baseline justify-between gap-3">
-		<div class="flex items-baseline gap-2.5">
-			<h2 id="exec-projects-heading" class="text-[15px] font-semibold text-[var(--exec-ink)]">
-				Project Delivery Scorecard
-			</h2>
-			<span class="text-xs text-[var(--exec-muted)]">
+	<div class="flex flex-wrap items-baseline justify-between gap-3">
+		<div class="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+			<h2 id="exec-projects-heading" class="scorecard-title">Project Delivery Scorecard</h2>
+			<span class="scorecard-sub">
 				{projects.length} active{attentionCount > 0 ? ` · ${attentionCount} need attention` : ''}
 			</span>
 		</div>
@@ -125,13 +123,24 @@
 		padding: var(--exec-section-pad-y);
 		border-bottom: var(--exec-section-border);
 	}
+	.scorecard-title {
+		font-size: var(--exec-section-title-size);
+		line-height: 1.25;
+		font-weight: var(--exec-section-title-weight);
+		letter-spacing: var(--exec-section-title-tracking);
+		color: var(--exec-ink);
+	}
+	.scorecard-sub {
+		font-size: var(--exec-section-sub-size);
+		color: var(--exec-muted);
+	}
 	.scorecard-grid {
 		gap: var(--exec-section-gap);
 	}
 	.proj-card {
 		background: var(--exec-panel-bg);
-		backdrop-filter: var(--exec-panel-blur);
 		-webkit-backdrop-filter: var(--exec-panel-blur);
+		backdrop-filter: var(--exec-panel-blur);
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-proj-pad-sm);
@@ -237,9 +246,18 @@
 		box-shadow: inset 0 0 0 1px var(--exec-ok-ring);
 	}
 	.unblock-btn {
-		background: var(--exec-surface);
-		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+		background: var(--exec-btn-outline-bg);
+		color: var(--exec-btn-outline-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring);
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease,
+			box-shadow 0.14s ease;
+	}
+	.unblock-btn:hover {
+		background: var(--exec-btn-outline-bg-hover);
+		color: var(--exec-btn-outline-ink-hover);
+		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring-hover);
 	}
 	@media (max-width: 720px), (pointer: coarse) {
 		.unblock-btn {

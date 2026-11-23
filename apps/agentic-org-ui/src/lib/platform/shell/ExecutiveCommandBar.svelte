@@ -170,6 +170,9 @@
 	});
 
 	const safeActiveIdx = $derived(entries.length > 0 ? Math.min(activeIdx, entries.length - 1) : 0);
+	const activeOptionId = $derived(
+		mode === 'cmd' && entries.length > 0 ? `exec-cmdk-opt-${safeActiveIdx}` : undefined
+	);
 	const currentAi = $derived(aiHistory[0]);
 	const earlierAi = $derived(aiHistory.slice(1, 5));
 	const askedSet = $derived(new Set(aiHistory.map((h) => h.query.toLowerCase())));
@@ -247,6 +250,21 @@
 		}
 	}
 
+	$effect(() => {
+		if (!open || mode !== 'cmd' || entries.length === 0) return;
+		void query;
+		const targetId = `exec-cmdk-opt-${safeActiveIdx}`;
+		let cancelled = false;
+		void tick().then(() => {
+			if (!cancelled) {
+				document.getElementById(targetId)?.scrollIntoView({ block: 'nearest' });
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
+
 	function handleInputKeydown(event: KeyboardEvent) {
 		if (mode === 'ai') {
 			if (event.key === 'Enter' && query.trim()) {
@@ -270,30 +288,26 @@
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-<header
-	class="sticky top-0 z-30 flex h-[68px] shrink-0 items-center justify-center border-b border-[var(--exec-border)] bg-[color-mix(in_srgb,var(--exec-bg)_88%,transparent)] px-6 backdrop-blur-md"
->
-	<div
-		class="exec-cmdk-bar flex h-[46px] w-full max-w-[640px] items-center rounded-[14px] bg-[var(--exec-surface)] p-1.5 shadow-[var(--exec-shadow)] [backdrop-filter:var(--exec-blur)] [-webkit-backdrop-filter:var(--exec-blur)]"
-	>
+<header class="exec-topbar sticky top-0 z-30 flex shrink-0 items-center justify-center px-6">
+	<div class="exec-cmdk-bar flex w-full max-w-[640px] items-center">
 		<button
 			type="button"
 			onclick={() => openModal('cmd')}
 			aria-haspopup="dialog"
 			aria-expanded={open}
-			class="exec-cmdk-trigger flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-[10px] px-3 text-left text-sm text-[var(--exec-muted)] transition-colors hover:text-[var(--exec-ink)]"
+			class="exec-cmdk-trigger flex min-w-0 flex-1 items-center text-left"
 		>
-			<Search class="size-[17px] shrink-0" aria-hidden="true" />
+			<Search class="exec-cmdk-ico size-[18px] shrink-0" aria-hidden="true" />
 			<span class="min-w-0 flex-1 truncate">Search, run a command, or ask Org AI…</span>
-			<kbd class={[kbdClass, 'hidden sm:inline-flex']}>⌘K</kbd>
+			<kbd class="exec-cmdk-kbd hidden sm:inline-flex">⌘K</kbd>
 		</button>
-		<span class="mx-1.5 h-5 w-px shrink-0 bg-[var(--exec-border)]" aria-hidden="true"></span>
+		<span class="exec-cmdk-sep mx-1.5 h-[22px] w-px shrink-0" aria-hidden="true"></span>
 		<button
 			type="button"
 			onclick={() => openModal('ai')}
-			class="exec-ai-btn inline-flex h-[34px] shrink-0 items-center gap-1.5 rounded-[9px] bg-[var(--exec-accent-soft)] px-3.5 text-xs font-semibold text-[var(--exec-accent-ink)] shadow-[inset_0_0_0_1px_var(--exec-accent-ring)] transition-colors hover:bg-[var(--exec-accent)] hover:text-[var(--exec-on-accent)]"
+			class="exec-ai-btn inline-flex shrink-0 items-center px-3.5"
 		>
-			<Sparkles class="size-3.5 shrink-0" aria-hidden="true" />
+			<Sparkles class="exec-ai-ico size-[15px] shrink-0" aria-hidden="true" />
 			<span>Ask</span>
 		</button>
 	</div>
@@ -317,7 +331,7 @@
 				skipRestoreFocus = false;
 			}
 		}}
-		class="top-[9vh] flex max-h-[78vh] w-full max-w-[calc(100%-2rem)] translate-y-0 flex-col gap-0 overflow-hidden rounded-[18px] bg-[var(--popover)] p-0 shadow-[inset_0_0_0_1px_var(--exec-border-hi),0_24px_64px_color-mix(in_srgb,var(--shade)_38%,transparent)] ring-0 sm:max-w-[650px]"
+		class="top-[9vh] flex max-h-[78vh] w-full max-w-[calc(100%-2rem)] translate-y-0 flex-col gap-0 overflow-hidden rounded-[18px] bg-[var(--popover)] p-0 shadow-[inset_0_0_0_1px_var(--exec-border-hi),0_24px_64px_color-mix(in_srgb,var(--shade)_38%,transparent)] ring-0 motion-reduce:animate-none motion-reduce:transition-none motion-reduce:duration-0 motion-reduce:data-closed:animate-none motion-reduce:data-open:animate-none sm:max-w-[650px]"
 	>
 		<Dialog.Title class="sr-only" text="Command palette and Org AI" />
 		<Dialog.Description class="sr-only">
@@ -376,11 +390,16 @@
 				bind:value={query}
 				oninput={() => (activeIdx = 0)}
 				onkeydown={handleInputKeydown}
-				type="search"
+				type={mode === 'cmd' ? 'text' : 'search'}
+				role={mode === 'cmd' ? 'combobox' : undefined}
+				aria-autocomplete={mode === 'cmd' ? 'list' : undefined}
+				aria-expanded={mode === 'cmd' ? entries.length > 0 : undefined}
+				aria-controls={mode === 'cmd' && entries.length > 0 ? 'exec-cmdk-listbox' : undefined}
+				aria-activedescendant={activeOptionId}
 				placeholder={mode === 'ai'
 					? 'Ask Org AI — what needs you, project risks, or office status…'
 					: 'Search projects, work, team, or jump anywhere…'}
-				class="min-w-0 flex-1 bg-transparent text-[15px] text-[var(--exec-ink)] outline-none"
+				class="exec-cmdk-input min-w-0 flex-1 bg-transparent text-[15px] text-[var(--exec-ink)] outline-none"
 			/>
 			{#if mode === 'ai'}
 				<button
@@ -401,12 +420,19 @@
 						No matches for “{query}”. Switch to Ask Org AI for a live summary.
 					</p>
 				{:else}
-					<ul class="flex flex-col gap-0.5" role="listbox" aria-label="Search results">
+					<ul
+						id="exec-cmdk-listbox"
+						class="flex flex-col gap-0.5"
+						role="listbox"
+						aria-label="Search results"
+					>
 						{#each entries as entry, idx (entry.id)}
 							<li>
 								<button
 									type="button"
+									id="exec-cmdk-opt-{idx}"
 									role="option"
+									tabindex={-1}
 									aria-selected={idx === safeActiveIdx}
 									onmouseenter={() => (activeIdx = idx)}
 									onclick={() => runEntry(entry)}
@@ -538,3 +564,119 @@
 		</div>
 	</Dialog.Content>
 </Dialog.Root>
+
+<style>
+	.exec-topbar {
+		height: var(--exec-topbar-height);
+		background: var(--exec-topbar-bg);
+		border-bottom: var(--exec-topbar-border);
+	}
+	.exec-cmdk-bar {
+		height: 46px;
+		padding: 5px 6px;
+		border-radius: var(--exec-cmdk-radius);
+		background-color: var(--exec-cmdk-bg);
+		-webkit-backdrop-filter: var(--exec-cmdk-blur);
+		backdrop-filter: var(--exec-cmdk-blur);
+		box-shadow: var(--exec-cmdk-shadow);
+		transition:
+			background-color 0.18s ease,
+			box-shadow 0.18s ease,
+			transform 0.18s ease;
+	}
+	.exec-cmdk-input::placeholder {
+		color: var(--exec-muted);
+		opacity: 1;
+	}
+	.exec-cmdk-bar:hover {
+		background-color: var(--exec-cmdk-bg-hover);
+		box-shadow: var(--exec-cmdk-shadow-hover);
+		transform: var(--exec-cmdk-hover-lift);
+	}
+	.exec-cmdk-trigger {
+		height: 100%;
+		gap: 11px;
+		padding: 0 10px 0 12px;
+		border-radius: var(--exec-cmdk-trigger-radius);
+		color: var(--exec-cmdk-trigger-ink);
+		font-size: 0.875rem;
+		font-weight: 450;
+		letter-spacing: -0.005em;
+		transition:
+			color 0.14s ease,
+			background-color 0.14s ease;
+	}
+	.exec-cmdk-trigger:hover {
+		color: var(--exec-ink);
+		background: var(--exec-cmdk-trigger-hover-bg);
+	}
+	.exec-cmdk-trigger :global(.exec-cmdk-ico) {
+		color: var(--exec-cmdk-icon);
+		transition: color 0.14s ease;
+	}
+	.exec-cmdk-trigger:hover :global(.exec-cmdk-ico) {
+		color: var(--exec-cmdk-icon-hover);
+	}
+	.exec-cmdk-kbd {
+		align-items: center;
+		justify-content: center;
+		height: 24px;
+		padding: 0 8px;
+		border-radius: var(--exec-cmdk-kbd-radius);
+		background: var(--exec-cmdk-kbd-bg);
+		box-shadow: var(--exec-cmdk-kbd-shadow);
+		color: var(--exec-cmdk-kbd-ink);
+		font-family: inherit;
+		font-size: 0.72rem;
+		font-weight: 600;
+		flex: none;
+	}
+	.exec-cmdk-sep {
+		background: var(--exec-cmdk-sep);
+	}
+	.exec-ai-btn {
+		height: 34px;
+		gap: 7px;
+		border-radius: var(--exec-ai-radius);
+		background: var(--exec-ai-bg);
+		box-shadow: var(--exec-ai-shadow);
+		color: var(--exec-ai-ink);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		letter-spacing: -0.005em;
+		transition:
+			background 0.15s ease,
+			box-shadow 0.15s ease,
+			color 0.15s ease;
+	}
+	.exec-ai-btn :global(.exec-ai-ico) {
+		color: var(--exec-ai-ico);
+		transition: color 0.15s ease;
+	}
+	.exec-ai-btn:hover,
+	.exec-ai-btn:focus-visible {
+		background: var(--exec-ai-bg-hover);
+		box-shadow: var(--exec-ai-shadow-hover);
+		color: var(--exec-ai-ink-hover);
+	}
+	.exec-ai-btn:hover :global(.exec-ai-ico),
+	.exec-ai-btn:focus-visible :global(.exec-ai-ico) {
+		color: var(--exec-ai-ico-hover);
+	}
+	@media (max-width: 639px), (pointer: coarse) {
+		.exec-topbar {
+			height: auto;
+			min-height: 60px;
+			padding-block: 8px;
+		}
+		.exec-cmdk-bar {
+			height: auto;
+			min-height: 54px;
+		}
+		.exec-cmdk-trigger,
+		.exec-ai-btn {
+			height: auto;
+			min-height: 44px;
+		}
+	}
+</style>
