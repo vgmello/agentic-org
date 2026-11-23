@@ -182,6 +182,8 @@ export function isInternalAppPath(path: string | undefined): path is string {
 	return trimmed.startsWith('/') && !trimmed.startsWith('//') && !trimmed.startsWith('/\\');
 }
 
+const ROUTE_GROUP_SEGMENT_RE = /(?:^|\/)\([^/]+\)(?:\/|$)/;
+
 function parseNormalizedInternalUrl(
 	rawPath: string | undefined
 ): { pathname: string; search: string; hash: string } | undefined {
@@ -190,8 +192,17 @@ function parseNormalizedInternalUrl(
 	try {
 		const parsed = new URL(trimmed, 'https://app.invalid');
 		if (parsed.origin !== 'https://app.invalid') return undefined;
-		const normPath = parsed.pathname.replace(/\/+/g, '/');
-		if (ROUTE_TEMPLATE_BRACKET_RE.test(normPath) || /(?:^|\/)\([^/]+\)(?:\/|$)/.test(normPath)) {
+		const decoded = decodeURIComponent(parsed.pathname);
+		if (decoded.includes('\\')) return undefined;
+		const canonical = new URL(decoded, 'https://app.invalid');
+		if (canonical.origin !== 'https://app.invalid') return undefined;
+		const normPath = canonical.pathname.replace(/\/+/g, '/');
+		if (
+			ROUTE_TEMPLATE_BRACKET_RE.test(parsed.pathname) ||
+			ROUTE_TEMPLATE_BRACKET_RE.test(normPath) ||
+			ROUTE_GROUP_SEGMENT_RE.test(parsed.pathname) ||
+			ROUTE_GROUP_SEGMENT_RE.test(normPath)
+		) {
 			return undefined;
 		}
 		return { pathname: normPath, search: parsed.search, hash: parsed.hash };
