@@ -647,7 +647,8 @@ body.nokeys .search kbd { display: none; }
 .tcount { border-radius: 99px; background: var(--hover); padding: 1px 8px; font-size: 0.75rem; line-height: 1.125rem; font-weight: 500; color: var(--gray-300); }
 .subbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px var(--gutter); border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .work-display { margin-inline-start: auto; }
-.work-display .menu button[aria-checked="false"] .ic20 { visibility: hidden; }
+.work-display .menu button[aria-checked="false"] .ic20,
+.menu :is([data-act="work-dividers"], [data-act="work-subtasks"])[aria-checked="false"] .ic20 { visibility: hidden; }
 .seg { display: inline-flex; align-items: stretch; gap: 2px; min-height: 2.25rem; padding: 3px; border-radius: var(--radius-md); background: rgba(15, 23, 42, .45); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10); }
 .seg button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border-radius: 4px; font-size: 0.8125rem; line-height: 1.25rem; font-weight: 600; color: var(--gray-400); }
 .seg button:hover { color: #fff; }
@@ -737,6 +738,7 @@ body.nokeys .search kbd { display: none; }
 .work-row:is(:hover, :focus-within) { background: var(--hover); }
 html[data-work-dividers] .work-row { box-shadow: inset 0 -1px var(--line); }
 html[data-work-dividers] .work-row:is(:hover, :focus-within) { box-shadow: inset 0 -1px var(--line2); }
+html[data-hide-work-subtasks] .work-subtasks { display: none; }
 .work-summary {
   flex: 1 1 auto; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline;
   gap: 8px; min-width: 0; color: var(--white);
@@ -4692,9 +4694,13 @@ function applyTheme(remember = false) {
 }
 applyTheme();
 const WORK_DIVIDERS_STORE = "agentic-org.v6.workDividers";
+const WORK_SUBTASKS_STORE = "agentic-org.v6.workSubtasks";
 S.workDividers = false;
+S.workSubtasks = true;
 try { S.workDividers = localStorage.getItem(WORK_DIVIDERS_STORE) === "1"; } catch (e) {}
+try { S.workSubtasks = localStorage.getItem(WORK_SUBTASKS_STORE) !== "0"; } catch (e) {}
 document.documentElement.toggleAttribute("data-work-dividers", S.workDividers);
+document.documentElement.toggleAttribute("data-hide-work-subtasks", !S.workSubtasks);
 const NAV_PIN_STORE = "agentic-org.v5.navPinned";
 S.navPinned = false;
 S.navHover = false;
@@ -4825,6 +4831,12 @@ const tabPanel = (key, panel) => `id="${panel}" role="tabpanel" aria-labelledby=
 function seg(key, opts, label) {
   return `<span class="seg-label" aria-hidden="true">${esc(label)}</span><div class="seg${key === "theme" ? " theme-options" : ""}" role="group" aria-label="${esc(label)}">${opts.map(([v, l, i]) => `<button type="button" data-act="set" data-k="${key}" data-v="${v}" aria-pressed="${S[key] === v}">${i ? ic(i, "ic16") : ""}${esc(l)}</button>`).join("")}</div>`;
 }
+function workListDisplayOptions() {
+  return `<hr>${[
+    ["work-subtasks", "Show subtasks", S.workSubtasks],
+    ["work-dividers", "Row dividers", S.workDividers],
+  ].map(([action, label, checked]) => `<button role="menuitemcheckbox" tabindex="-1" aria-checked="${checked}" type="button" data-act="${action}">${ic("check", "ic20")}${label}</button>`).join("")}`;
+}
 function workDisplayMenu(layoutKey) {
   const layout = S[layoutKey];
   return `<div class="menu-wrap work-display">
@@ -4837,11 +4849,11 @@ function workDisplayMenu(layoutKey) {
           `<button role="menuitemradio" tabindex="-1" aria-checked="${layout === value}" type="button" data-act="set" data-k="${layoutKey}" data-v="${value}">${ic("check", "ic20")}${label}</button>`
         ).join("")}
       </div>
-      ${layout === "list" ? `<hr><button role="menuitemcheckbox" tabindex="-1" aria-checked="${S.workDividers}" type="button" data-act="work-dividers">${ic("check", "ic20")}Row dividers</button>` : ""}
+      ${layout === "list" ? workListDisplayOptions() : ""}
     </div>
   </div>`;
 }
-function showMenu(id, groups, { align = "", icon, label, active } = {}) {
+function showMenu(id, groups, { align = "", icon, label, active, footer = "" } = {}) {
   const cur = groups.map(([k, , opts]) => { const o = opts.find((x) => String(x[0]) === String(S[k])); return o && o[0] !== "all" ? o[1] : null; }).filter(Boolean);
   const triggerAttrs = icon
     ? `class="btn ghost icon" aria-label="${esc(label)}" title="${esc(label)}"${active ? " data-active" : ""}`
@@ -4849,7 +4861,7 @@ function showMenu(id, groups, { align = "", icon, label, active } = {}) {
   const triggerContent = icon ? ic(icon, "ic20")
     : `Show <span class="cur">${esc(cur.length ? cur.join(", ") : "all")}</span>${ic("chev-down", "ic16 muted")}`;
   return `<div class="menu-wrap"><button ${triggerAttrs} type="button" data-act="menu" data-id="${id}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${id}">${triggerContent}</button>
-    <div class="menu ${align}" id="menu-${id}" role="menu"${label ? ` aria-label="${esc(label)}"` : ""} hidden>${groups.map(([k, title, opts], gi) => `${gi ? "<hr>" : ""}<p class="menu-h" id="mh-${id}-${gi}">${esc(title)}</p><div role="group" aria-labelledby="mh-${id}-${gi}">${opts.map(([v, l, n]) => { const on = String(S[k]) === String(v); return `<button role="menuitemradio" aria-checked="${on}" type="button" data-act="set" data-k="${k}" data-v="${v}">${on ? ic("check", "ic20") : '<span class="spacer20" aria-hidden="true"></span>'}<span style="flex:1">${esc(l)}</span>${n != null ? `<span class="muted tnum">${n}</span>` : ""}</button>`; }).join("")}</div>`).join("")}</div></div>`;
+    <div class="menu ${align}" id="menu-${id}" role="menu"${label ? ` aria-label="${esc(label)}"` : ""} hidden>${groups.map(([k, title, opts], gi) => `${gi ? "<hr>" : ""}<p class="menu-h" id="mh-${id}-${gi}">${esc(title)}</p><div role="group" aria-labelledby="mh-${id}-${gi}">${opts.map(([v, l, n]) => { const on = String(S[k]) === String(v); return `<button role="menuitemradio" aria-checked="${on}" type="button" data-act="set" data-k="${k}" data-v="${v}">${on ? ic("check", "ic20") : '<span class="spacer20" aria-hidden="true"></span>'}<span style="flex:1">${esc(l)}</span>${n != null ? `<span class="muted tnum">${n}</span>` : ""}</button>`; }).join("")}</div>`).join("")}${footer}</div></div>`;
 }
 const empty = (icon, title, text, cls = "", action = "") => `<div class="empty ${cls}">${ic(icon, "ic48")}<h3>${esc(title)}</h3><p>${esc(text)}</p>${action ? `<div style="margin-top:24px">${action}</div>` : ""}</div>`;
 const skel = (n, label, avatar = true) => `<div class="skel" aria-busy="true"><span class="sr-only">${esc(label)}</span>${Array.from({ length: n }, (_, i) => `<div class="skel-row" aria-hidden="true">${avatar ? '<span class="skel-c"></span>' : ""}<span style="flex:1;display:flex;flex-direction:column;gap:8px"><span class="skel-b" style="width:${60 - i * 8}%"></span><span class="skel-b" style="width:${35 + i * 5}%;height:10px"></span></span></div>`).join("")}</div>`;
@@ -4990,12 +5002,16 @@ function workSubtasks(parent) {
   ).join("")}</ul>`;
 }
 
+function workTeam(w) {
+  const memberships = M[w.who]?.teams ?? [];
+  return memberships.find((id) => P[w.proj].teams.includes(id)) ?? memberships[0];
+}
+
 function workRow(w, isSubtask = false) {
   const sev = ["Critical", "Major"].includes(w.pri)
     ? `<span class="pin ${w.pri === "Critical" ? "c-red" : "c-gray"}">${ic(w.pri === "Critical" ? "warn" : "exclaim", "ic14")}${esc(w.pri)}</span>`
     : esc(w.pri);
-  const memberships = M[w.who]?.teams ?? [];
-  const team = memberships.find((id) => P[w.proj].teams.includes(id)) ?? memberships[0];
+  const team = workTeam(w);
   const task = w.kind === "task";
   const eta = w.etaHours != null ? `${w.etaHours}h` : (task && OPEN(w) ? "TBD" : "");
   return `<li class="${isSubtask ? "work-subtask" : "work-item"}"><div class="work-row" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}>
@@ -5910,14 +5926,14 @@ function inboxViewControls() {
   const display = showMenu("inbox-display", [
     ["inboxOrder", "Grouping", [["priority", "Priority first"], ["date", "By date"]]],
   ], { icon: "adjustments", label: "Inbox display", active: S.inboxOrder === "date" });
-  return `<div class="triage-controls" role="group" aria-label="Inbox view controls">${filter}${display}</div>`;
+  return `<div class="queue-controls" role="group" aria-label="Inbox view controls">${filter}${display}</div>`;
 }
 function inboxCategories() {
   const moreActive = INBOX_MORE.includes(S.inboxKind);
-  return `<div class="triage-tabs" role="group" aria-label="Inbox queue controls">${INBOX_TABS.map((key) => `
-    <button class="triage-tab" type="button" data-act="inbox-category" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}
+  return `<div class="queue-tabs" role="group" aria-label="Inbox queue controls">${INBOX_TABS.map((key) => `
+    <button class="queue-tab" type="button" data-act="inbox-category" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}
     <div class="triage-tab-tools">
-      <div class="menu-wrap"><button class="triage-tab" type="button" data-act="menu" data-id="inbox-kinds"
+      <div class="menu-wrap"><button class="queue-tab" type="button" data-act="menu" data-id="inbox-kinds"
         aria-haspopup="menu" aria-expanded="false" aria-controls="menu-inbox-kinds"${moreActive ? ' data-current-kind' : ""}>${moreActive ? inboxTabLabel(S.inboxKind) : "More"}${moreActive ? `<span>${inboxItems().length}</span>` : ""}${ic("chev-down", "ic14")}</button>
         <div class="menu" id="menu-inbox-kinds" role="menu" aria-label="More inbox categories" hidden>${INBOX_MORE.map((key) => `
           <button type="button" role="menuitemradio" aria-checked="${S.inboxKind === key}" data-act="inbox-category" data-v="${key}">${inboxTabLabel(key)}<span class="triage-menu-count">${inboxItems(key).length}</span></button>`).join("")}</div></div>
@@ -6187,42 +6203,115 @@ function memberRows(ids, opts = {}) {
   }).join("")}</ul>`;
 }
 
-const WORK_VIEWS = [["needs-me", "Needs me"], ["mine", "Mine"], ["by-project", "By project"], ["by-assignee", "By assignee"], ["by-status", "By status"]];
-const WORK_GROUPS = { "by-project": "proj", "by-assignee": "who", "by-status": "status" };
+const WORK_PRESETS = [["all", "All"], ["needs-me", "Needs me"], ["mine", "Mine"]];
+const WORK_GROUPS = [["none", "No grouping"], ["project", "Project"], ["status", "Status"], ["assignee", "Assignee"]];
+const WORK_GROUP_FIELDS = { project: "proj", status: "status", assignee: "who" };
+const WORK_SORTS = [["default", "Original order"], ["title", "Title"], ["priority", "Priority"], ["eta", "ETA"]];
+const WORK_PRIORITIES = { Low: 1, Minor: 1, Medium: 2, Major: 2, High: 3, Critical: 4 };
 const TASK_PRIORITIES = ["Low", "Medium", "High"];
 const WORK_TASK_STORE = "agentic-org.v6.task.";
-S.workQuery = "";
-S.workStatus = "all";
+Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all", workSort: "default", workOrder: "asc" });
 
-function workView() {
-  const v = qs().get("view");
-  if (WORK_VIEWS.some(([k]) => k === v)) return v;
-  return W.some(needsMe) ? "needs-me" : "mine";
+function workSelection() {
+  const params = qs();
+  const view = params.get("view");
+  const group = params.get("group") ?? view?.match(/^by-(.+)$/)?.[1];
+  return {
+    view: WORK_PRESETS.some(([value]) => value === view) ? view : "all",
+    group: WORK_GROUPS.some(([value]) => value === group) ? group : "none",
+  };
 }
 
-function workResults(view) {
-  const query = S.workQuery.trim().toLowerCase();
-  const status = S.workStatus;
-  let items = W;
-  if (view === "needs-me") items = items.filter(needsMe);
-  if (view === "mine") items = items.filter((w) => w.who === "you");
-  if (status !== "all") items = items.filter((w) => w.status === status);
-  if (query) items = items.filter((w) => [
-    w.id, w.title, P[w.proj].name, M[w.who]?.name,
-    ...((w.subtasks ?? []).flatMap((task) => [task.id, task.title])),
-  ].some((value) => value?.toLowerCase().includes(query)));
+function workHref(view, group) {
+  const params = new URLSearchParams();
+  if (view !== "all") params.set("view", view);
+  if (group !== "none") params.set("group", group);
+  return params.size ? "#/work?" + params : "#/work";
+}
 
+function selectWorkView(view, group, focusSelector) {
+  closeMenus();
+  const href = workHref(view, group);
+  if (href === location.hash) {
+    document.querySelector(focusSelector)?.focus();
+    return;
+  }
+  S.focusAfter = focusSelector;
+  location.hash = href;
+}
+
+function workPresetItems(items, view) {
+  if (view === "needs-me") return items.filter(needsMe);
+  if (view === "mine") return items.filter((w) => w.who === "you");
+  return items;
+}
+
+function workHasFilters() {
+  return S.workStatus !== "all" || S.workProject !== "all" || S.workTeam !== "all";
+}
+
+function workFilteredItems() {
+  const query = S.workQuery.trim().toLowerCase();
+  const { workStatus: status, workProject: project, workTeam: team } = S;
+  return W.filter((w) => {
+    if (status !== "all" && w.status !== status) return false;
+    if (project !== "all" && w.proj !== project) return false;
+    if (team !== "all" && (workTeam(w) ?? "none") !== team) return false;
+    return !query || [w.id, w.title, P[w.proj].name, M[w.who]?.name,
+      ...(w.subtasks ?? []).flatMap((task) => [task.id, task.title]),
+    ].some((value) => value?.toLowerCase().includes(query));
+  });
+}
+
+function sortWorkItems(items) {
+  const descending = S.workOrder === "desc";
+  const read = { title: (w) => w.title, priority: (w) => WORK_PRIORITIES[w.pri], eta: (w) => w.etaHours }[S.workSort];
+  if (!read) return descending ? [...items].reverse() : items;
+  return [...items].sort((left, right) => {
+    const a = read(left), b = read(right);
+    if (a == null || b == null) return Number(a == null) - Number(b == null);
+    const order = typeof a === "string" ? a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }) : a - b;
+    return descending ? -order : order;
+  });
+}
+
+function workResults(filtered, { view, group }) {
+  const items = sortWorkItems(workPresetItems(filtered, view));
   if (!items.length) {
-    const text = query || status !== "all" ? "No work matches these filters."
+    const text = S.workQuery.trim() || workHasFilters() ? "No work matches these filters."
       : view === "needs-me" ? "Nothing needs you in Work."
       : view === "mine" ? "Nothing is assigned to you." : "No work items yet.";
     return `<p class="empty-row">${text}</p>`;
   }
-  return S.workLayout === "board" ? board(items) : workList(items, WORK_GROUPS[view]);
+  return S.workLayout === "board" ? board(items) : workList(items, WORK_GROUP_FIELDS[group]);
 }
 
 function refreshWorkResults() {
-  document.getElementById("work-results").innerHTML = workResults(workView());
+  const filtered = workFilteredItems();
+  document.getElementById("work-results").innerHTML = workResults(filtered, workSelection());
+  for (const counter of document.querySelectorAll("[data-work-count]")) {
+    counter.textContent = workPresetItems(filtered, counter.dataset.workCount).length;
+  }
+}
+
+function workViewControls(group) {
+  const filter = showMenu("work-filter", [
+    ["workStatus", "Status", [["all", "All statuses"], ...ALL_STATUSES.map((status) => [status, status])]],
+    ["workProject", "Project", [["all", "All projects"], ...Object.entries(P).map(([id, project]) => [id, project.name])]],
+    ["workTeam", "Team", [["all", "All teams"], ...Object.entries(TEAMS).map(([id, team]) => [id, team.name]), ["none", "No team"]]],
+  ], { icon: "filter", label: "Filter work", active: workHasFilters() });
+  const listLayout = S.workLayout === "list";
+  const display = showMenu("work-display", [
+    ["workLayout", "Layout", [["list", "List"], ["board", "Board"]]],
+    ...(listLayout ? [["workGroup", "Group by", WORK_GROUPS]] : []),
+    ["workSort", "Sort by", WORK_SORTS],
+    ["workOrder", "Direction", [["asc", "Ascending"], ["desc", "Descending"]]],
+  ], {
+    icon: "adjustments", label: "Work display",
+    active: !listLayout || group !== "none" || S.workSort !== "default" || S.workOrder !== "asc",
+    footer: listLayout ? workListDisplayOptions() : "",
+  });
+  return `<div class="queue-controls" role="group" aria-label="Work view controls">${filter}${display}</div>`;
 }
 
 function statusOptions(statuses, selected) {
@@ -6230,8 +6319,8 @@ function statusOptions(statuses, selected) {
 }
 
 function pageWork() {
-  const view = workView();
-  S.workView = view;
+  const selection = workSelection(), filtered = workFilteredItems();
+  S.workGroup = selection.group;
   return `<header class="work-header queue-header">
     <div class="ph queue-headline">
       <div class="ph-t">
@@ -6239,15 +6328,15 @@ function pageWork() {
         <p class="cnt queue-count"><i aria-hidden="true"></i>${W.filter(OPEN).length} open · ${W.filter(needsMe).length} need you</p>
       </div>
     </div>
-    <div class="work-toolbar queue-toolbar" role="group" aria-label="Work view controls">
-      ${showMenu("wshow", [["workView", "Show", WORK_VIEWS]], { align: "left" })}
-      <select class="field work-status-filter" id="work-status-filter" aria-label="Filter by status">
-        <option value="all">All statuses</option>${statusOptions(ALL_STATUSES, S.workStatus)}
-      </select>
-      ${workDisplayMenu("workLayout")}
+    <div class="work-toolbar queue-toolbar">
+      <div class="queue-tabs" role="group" aria-label="Work views">
+        ${WORK_PRESETS.map(([value, label]) => `<button class="queue-tab" type="button" data-act="work-preset"
+          data-v="${value}" aria-pressed="${selection.view === value}">${label}<span data-work-count="${value}">${workPresetItems(filtered, value).length}</span></button>`).join("")}
+        ${workViewControls(selection.group)}
+      </div>
       <button class="btn primary" id="work-new-task" type="button" data-act="work-new-task">${ic("plus", "ic16")}New task</button>
     </div>
-  </header><div id="work-results">${workResults(view)}</div>`;
+  </header><div id="work-results">${workResults(filtered, selection)}</div>`;
 }
 
 function openWorkTask(trigger) {
@@ -6257,7 +6346,7 @@ function openWorkTask(trigger) {
     <h2 id="work-task-title">New task</h2>
     <form class="work-task-form" data-form="work-create">
       <label>Title<input class="field" name="title" required maxlength="160" autofocus></label>
-      <label>Project<select class="field" name="project">${projects.map(([id, project]) => `<option value="${esc(id)}">${esc(project.name)}</option>`).join("")}</select></label>
+      <label>Project<select class="field" name="project">${projects.map(([id, project]) => `<option value="${esc(id)}"${id === S.workProject ? " selected" : ""}>${esc(project.name)}</option>`).join("")}</select></label>
       <div class="work-task-fields">
         <label>Assignee<select class="field" name="assignee">
           ${memberIds().map((id) => `<option value="${esc(id)}"${id === "you" ? " selected" : ""}>${esc(M[id].name)}</option>`).join("")}
@@ -6319,18 +6408,17 @@ function createWorkTask(form) {
   try { localStorage.setItem(WORK_TASK_STORE + id, JSON.stringify(task)); } catch (e) { saved = false; }
   W.unshift(task);
   form.closest("dialog").close();
-  S.workQuery = "";
-  S.workStatus = "all";
+  Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all" });
 
   const reveal = () => {
     document.getElementById("work-new-task")?.focus({ preventScroll: true });
     document.querySelector(`#work-results [data-work-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
     toast(saved ? `Created ${id}` : `Created ${id} for this session`);
   };
-  const view = workView();
-  if (view === "needs-me" || (view === "mine" && task.who !== "you")) {
+  const { view, group } = workSelection();
+  if (!workPresetItems([task], view).length) {
     window.addEventListener("hashchange", reveal, { once: true });
-    location.hash = "#/work?view=by-project";
+    location.hash = workHref("all", group);
   } else {
     render(false);
     reveal();
@@ -8427,10 +8515,13 @@ document.addEventListener("click", (e) => {
       S.inboxKind = v;
       resetInboxSelection();
       render(false);
-      const button = document.querySelector(`.triage-tabs [data-v="${v}"]`) || document.querySelector('[aria-controls="menu-inbox-kinds"]');
+      const button = document.querySelector(`.queue-tabs [data-v="${v}"]`) || document.querySelector('[aria-controls="menu-inbox-kinds"]');
       button?.focus();
       break;
     }
+    case "work-preset":
+      selectWorkView(v, workSelection().group, `[data-act="work-preset"][data-v="${v}"]`);
+      break;
     case "inbox-copy": {
       if (!navigator.clipboard) { toast("Clipboard access is unavailable."); break; }
       navigator.clipboard.writeText(v).then(() => toast(`Copied ${v}.`, "check-circle"), () => toast("Clipboard access is unavailable."));
@@ -8446,10 +8537,9 @@ document.addEventListener("click", (e) => {
     }
     case "set": {
       const menu = t.closest(".menu"), menuId = menu && menu.id;
-      if (t.dataset.k === "workView") {
-        closeMenus(); const sel = '[aria-controls="menu-wshow"]';
-        if (location.hash === "#/work?view=" + v) { const tr = document.querySelector(sel); if (tr) tr.focus(); break; }
-        S.focusAfter = sel; location.hash = "#/work?view=" + v; break;
+      if (t.dataset.k === "workGroup") {
+        selectWorkView(workSelection().view, v, '[aria-controls="menu-work-display"]');
+        break;
       }
       let val = v; if (val === "true") val = true; else if (val === "false") val = false;
       const scope = t.dataset.k === "theme" ? t.closest("#main, #banner-ctl") : document;
@@ -8480,6 +8570,13 @@ document.addEventListener("click", (e) => {
     case "hb-ask-chip": S.askQ = ""; S.askAns = answerOrgQuestion(v); render(false); { const r = document.getElementById("hb-ai-reply"); if (r) r.scrollIntoView({ block: "nearest" }); } break;
     case "hb-ask-clear": S.askAns = null; S.askQ = ""; render(false); { const i = document.getElementById("hb-ask-input"); if (i) i.focus(); } break;
     case "nav-collapse": toggleNavPinned(); break;
+    case "work-subtasks": {
+      S.workSubtasks = !S.workSubtasks;
+      document.documentElement.toggleAttribute("data-hide-work-subtasks", !S.workSubtasks);
+      t.setAttribute("aria-checked", String(S.workSubtasks));
+      try { localStorage.setItem(WORK_SUBTASKS_STORE, S.workSubtasks ? "1" : "0"); } catch (e) {}
+      break;
+    }
     case "work-dividers": {
       S.workDividers = !S.workDividers;
       document.documentElement.toggleAttribute("data-work-dividers", S.workDividers);
@@ -8644,11 +8741,7 @@ document.addEventListener("change", (e) => {
     S.actProject = e.target.value;
     render(false);
     document.getElementById("activity-project")?.focus();
-    return;
   }
-  if (e.target.id !== "work-status-filter") return;
-  S.workStatus = e.target.value;
-  refreshWorkResults();
 });
 document.addEventListener("mousedown", (e) => {
   // Keep focus in the active field or menu until the pointer selection is dispatched.
@@ -8725,10 +8818,10 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "ArrowUp") return go(i - 1);
     if (e.key === "Home") return go(0);
     if (e.key === "End") return go(items.length - 1);
-    const applyDividers = e.key === "Enter" && e.target.dataset.act === "work-dividers";
-    if (e.key === "Escape" || applyDividers) {
+    const applyWorkOption = e.key === "Enter" && openMenu.id === "menu-work-display" && e.target.getAttribute("role") === "menuitemcheckbox";
+    if (e.key === "Escape" || applyWorkOption) {
       e.preventDefault();
-      if (applyDividers) e.target.click();
+      if (applyWorkOption) e.target.click();
       const trigger = document.querySelector(`[aria-controls="${openMenu.id}"]`);
       closeMenus();
       trigger?.focus();
@@ -8736,7 +8829,7 @@ document.addEventListener("keydown", (e) => {
     }
     if (e.key === "Tab") {
       closeMenus();
-      if (openMenu.closest(".work-display, .triage-controls")) document.querySelector(`[aria-controls="${openMenu.id}"]`)?.focus();
+      if (openMenu.closest(".work-display, .queue-controls")) document.querySelector(`[aria-controls="${openMenu.id}"]`)?.focus();
     }
   }
   if (e.key === "Escape" && e.target.tagName === "TEXTAREA" && /^r-/.test(e.target.id || "")) {
