@@ -23,9 +23,9 @@ The product is named **Agentic Org**. For data relationships, fields, identities
 canonical files and selected execution/control contracts, start with
 [`organization-data README`](.backlog/docs/organization-data/doc-72%20-%20Organization-Data-—-README.md)
 and the [documentation authority map](.backlog/docs/design/doc-62%20-%20Design-Documentation-Authority-Map.md).
-The other designs in `.backlog/docs/design/`, ADRs in `.backlog/decisions/` and UX specs in
+The other designs in `.backlog/docs/design/`, ADRs in `.backlog/decisions/` and UX/AX specs in
 `.backlog/docs/specs/` explain those contracts in their own contexts; where one differs from
-the data contract, the data contract wins. A requirement document says what is to be
+the data contract, the data contract wins. Use `principal-designer` for browser UX and `principal-ax-designer` for `agent-os` AX (`doc-96` outranks persona). A requirement document says what is to be
 built. It does not establish that a command or service exists: what exists is in the
 checklist row's evidence and in the executable status document named below.
 

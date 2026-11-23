@@ -3,7 +3,7 @@ id: doc-2
 title: Start Here
 type: readme
 created_date: '2026-11-21T00:14:00Z'
-updated_date: '2026-11-21T00:14:00Z'
+updated_date: '2026-11-23T03:54:00Z'
 tags:
   - onboarding
   - guide
@@ -44,6 +44,7 @@ They explain; they do not decide. The documents below decide.
 | What to build next, and in what order | [Implementation plan](doc-5%20-%20v1-Implementation-Plan.md) | Milestones and increments, each with its outcome, its requirements and its finish line |
 | Every capability and how far it has got | [Feature checklist](doc-3%20-%20Feature-Checklist.md) | One row per capability: status, evidence, and a link to its requirement |
 | What a person sees and does | UX specs in [`.backlog/docs/specs/`](specs) | Screens, flows and numbered acceptance criteria such as `TSK-4` or `CHAT-12` |
+| What an agent sees and does (AX) | [Agent Experience (AX) Spec](specs/doc-96%20-%20Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md), [agent instructions](design/doc-27%20-%20Design-Agent-Instructions-Assembly.md) and [agent command line](design/doc-28%20-%20Design-agent-os-Command-Line.md) | Discovery tiers, token budgets, Day-1 onboarding, `agent-os` CLI ergonomics, phase-gated skills, conflict recovery and numbered acceptance criteria `AX-1`–`AX-24`, `CLI-1`–`CLI-15` and `INSTR-1`–`INSTR-23` |
 | What is stored: records, fields, files, tables | Data contract in [`.backlog/docs/organization-data/`](organization-data/doc-72%20-%20Organization-Data-—-README.md) | Eighteen documents, one combined draft schema and a test suite that checks them against each other |
 | How a part is built | Designs in [`.backlog/docs/design/`](design) | Processes, protocols, storage, sessions, Git, the web API |
 | How the instance is to run under dedicated accounts, how agents are isolated and sandboxed, where secrets live, and how extensions (containers, Xcode) plug in | [Accounts, sandbox and extensions](design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md) (proposed, owner direction 2026-11-20) | The owner's decisions of 2026-11-20, requirements `ASX-1` to `ASX-20`, the spikes that come first, and where each item is tracked |
