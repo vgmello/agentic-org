@@ -100,7 +100,8 @@
 				(e) => {
 					if (seq !== archivedSeq || orgId !== organization.id) return;
 					// Never mark an unverified initial read as ready; keep picker gated and offer Retry.
-					if (archivedForOrg !== orgId) archivedError = toAppError(e).message;
+					if (archivedForOrg !== orgId)
+						archivedError = toAppError(e).message.trim() || "Couldn't load active teams.";
 				}
 			)
 			.finally(() => {

@@ -1,18 +1,35 @@
 type BackEntry = { source: string; destination: string };
+type LegacyEntry = { href: string; index: number | undefined };
+type LegacyReturn = {
+	href: string;
+	index: number | undefined;
+	targetCursor: number;
+	dispatched: boolean;
+	close: () => void;
+};
 
 const HISTORY_INDEX = 'sveltekit:history';
 
 let installed = false;
 let onModalPopState: ((event: PopStateEvent) => void) | undefined;
 let returningTo: { key: string; arrive: () => void } | undefined;
-let legacyReturning: { href: string; index: number | undefined; close: () => void } | undefined;
+let legacyReturning: LegacyReturn | undefined;
+let legacyEntries: LegacyEntry[] = [];
+let legacyCursor = -1;
 let legacyHistoryLength = 0;
-let legacyAppendedFragment: string | undefined;
 
 function sveltekitHistoryIndex(state: unknown): number | undefined {
 	if (typeof state !== 'object' || state === null) return undefined;
 	const index = (state as Record<string, unknown>)[HISTORY_INDEX];
 	return typeof index === 'number' ? index : undefined;
+}
+
+function currentLegacyEntry(state: unknown = window.history.state): LegacyEntry {
+	return { href: window.location.href, index: sveltekitHistoryIndex(state) };
+}
+
+function sameEntry(a: LegacyEntry | undefined, b: LegacyEntry): boolean {
+	return Boolean(a) && a!.href === b.href && a!.index === b.index;
 }
 
 function samePathAndSearch(a: string, b: string): boolean {
@@ -25,14 +42,101 @@ function samePathAndSearch(a: string, b: string): boolean {
 	}
 }
 
+function findLegacyCursor(entry: LegacyEntry): number {
+	if (entry.index !== undefined) {
+		let best = -1;
+		let bestDist = Infinity;
+		for (let i = 0; i < legacyEntries.length; i++) {
+			const candidate = legacyEntries[i];
+			if (candidate.index !== entry.index) continue;
+			const dist = Math.abs(i - legacyCursor) + (candidate.href === entry.href ? 0 : 0.5);
+			if (dist < bestDist) {
+				best = i;
+				bestDist = dist;
+			}
+		}
+		return best;
+	}
+
+	let bestUntracked = -1;
+	let bestUntrackedDist = Infinity;
+	let bestAny = -1;
+	let bestAnyDist = Infinity;
+	for (let i = 0; i < legacyEntries.length; i++) {
+		const candidate = legacyEntries[i];
+		if (candidate.href !== entry.href) continue;
+		const dist = Math.abs(i - legacyCursor) + (i === legacyCursor ? 0.5 : 0);
+		if (candidate.index === undefined && dist < bestUntrackedDist) {
+			bestUntracked = i;
+			bestUntrackedDist = dist;
+		}
+		if (dist < bestAnyDist) {
+			bestAny = i;
+			bestAnyDist = dist;
+		}
+	}
+	return bestUntracked >= 0 ? bestUntracked : bestAny;
+}
+
+function recordLegacyPush(entry: LegacyEntry) {
+	if (legacyCursor >= 0 && sameEntry(legacyEntries[legacyCursor], entry)) {
+		legacyHistoryLength = window.history.length;
+		return;
+	}
+	legacyEntries = legacyEntries.slice(0, legacyCursor + 1);
+	legacyEntries.push(entry);
+	legacyCursor = legacyEntries.length - 1;
+	legacyHistoryLength = window.history.length;
+}
+
+function syncLegacyEntry(entry: LegacyEntry, isPopState = false) {
+	if (legacyCursor < 0) {
+		recordLegacyPush(entry);
+		return;
+	}
+	if (sameEntry(legacyEntries[legacyCursor], entry)) {
+		legacyHistoryLength = window.history.length;
+		return;
+	}
+
+	const grew = window.history.length > legacyHistoryLength;
+	if (isPopState && grew && entry.index === undefined) {
+		recordLegacyPush(entry);
+		return;
+	}
+
+	const existing = findLegacyCursor(entry);
+	if (existing >= 0) {
+		legacyCursor = existing;
+		legacyEntries[existing] = entry;
+		legacyHistoryLength = window.history.length;
+		return;
+	}
+
+	const current = legacyEntries[legacyCursor];
+	if (
+		!isPopState &&
+		!grew &&
+		entry.index !== undefined &&
+		current.index !== undefined &&
+		entry.index === current.index
+	) {
+		// Same SvelteKit history slot updated via replaceState.
+		legacyEntries[legacyCursor] = entry;
+		legacyHistoryLength = window.history.length;
+		return;
+	}
+
+	recordLegacyPush(entry);
+}
+
 /**
- * Keep legacy (no Navigation API) history length tracking in sync across client navigations
- * so Back from a freshly appended native fragment can be distinguished from Forward.
+ * Keep legacy (no Navigation API) history cursor in sync across client navigations
+ * so Back and Forward across mixed route and fragment entries compute exact deltas.
  */
 export function noteModalBackNavigation() {
 	if (typeof window === 'undefined' || window.navigation) return;
-	legacyHistoryLength = window.history.length;
-	legacyAppendedFragment = undefined;
+	syncLegacyEntry(currentLegacyEntry(), false);
 }
 
 /**
@@ -42,7 +146,20 @@ export function noteModalBackNavigation() {
 export function installModalBack() {
 	if (installed) return;
 	installed = true;
-	legacyHistoryLength = window.history.length;
+	if (!window.navigation) {
+		legacyEntries = [currentLegacyEntry()];
+		legacyCursor = 0;
+		legacyHistoryLength = window.history.length;
+	}
+
+	window.addEventListener(
+		'hashchange',
+		() => {
+			if (window.navigation || onModalPopState || legacyReturning) return;
+			syncLegacyEntry(currentLegacyEntry(), true);
+		},
+		{ capture: true }
+	);
 
 	window.addEventListener(
 		'popstate',
@@ -54,18 +171,24 @@ export function installModalBack() {
 			}
 			if (legacyReturning && !window.navigation) {
 				const pending = legacyReturning;
-				const nextIndex = sveltekitHistoryIndex(event.state);
+				const entry = currentLegacyEntry(event.state);
 				const matchesReturn =
-					window.location.href === pending.href &&
-					(pending.index === undefined || nextIndex === pending.index);
+					entry.href === pending.href &&
+					(pending.index === undefined || entry.index === pending.index);
 				legacyReturning = undefined;
 				if (matchesReturn) {
 					event.stopImmediatePropagation();
+					legacyCursor = pending.targetCursor;
+					if (legacyCursor >= 0 && legacyCursor < legacyEntries.length) {
+						legacyEntries[legacyCursor] = entry;
+					}
+					legacyHistoryLength = window.history.length;
 					requestAnimationFrame(() => pending.close());
 					return;
 				}
-				// An unrelated popstate (e.g. a second Back over a native fragment) aborted the return;
-				// do not swallow it as the return.
+				// A second popstate arrived before or instead of the expected return: cancel any
+				// undispatched return and update cursor cleanly without swallowing this event.
+				syncLegacyEntry(entry, true);
 				return;
 			}
 			if (onModalPopState) {
@@ -73,12 +196,7 @@ export function installModalBack() {
 				return;
 			}
 			if (!window.navigation) {
-				const length = window.history.length;
-				legacyAppendedFragment =
-					event.state === null && length > legacyHistoryLength && window.location.hash
-						? window.location.href
-						: undefined;
-				legacyHistoryLength = length;
+				syncLegacyEntry(currentLegacyEntry(event.state), true);
 			}
 		},
 		{ capture: true }
@@ -88,48 +206,91 @@ export function installModalBack() {
 export function registerModalBack(close: () => void) {
 	const navigation = window.navigation;
 	if (!navigation) {
-		const savedUrl = window.location.href;
-		const savedHash = window.location.hash;
-		const savedState = window.history.state;
-		const savedIndex = sveltekitHistoryIndex(savedState);
-		const savedWasAppendedFragment = legacyAppendedFragment === savedUrl;
-		if (!savedWasAppendedFragment && legacyAppendedFragment !== undefined) {
-			legacyAppendedFragment = undefined;
-		}
-		legacyHistoryLength = window.history.length;
+		let savedState = window.history.state;
+		syncLegacyEntry(currentLegacyEntry(savedState), false);
 
 		function handleLegacyPopState(event: PopStateEvent) {
 			if (legacyReturning) return;
-			const nextIndex = sveltekitHistoryIndex(event.state);
-			const nextUrl = window.location.href;
-			const sameRoute = samePathAndSearch(savedUrl, nextUrl);
+			const entry = currentLegacyEntry(event.state);
+			const grew = window.history.length > legacyHistoryLength;
 
+			// A newly appended fragment while the modal is open moves forward, not back.
+			if (grew && entry.index === undefined && window.location.hash) {
+				recordLegacyPush(entry);
+				savedState = event.state;
+				return;
+			}
+
+			const currentCursor = legacyCursor;
+			const currentEntry = legacyEntries[currentCursor] ?? entry;
+			const nextCursor = findLegacyCursor(entry);
 			let delta = 0;
-			if (typeof savedIndex === 'number' && typeof nextIndex === 'number') {
-				if (nextIndex < savedIndex) delta = savedIndex - nextIndex;
-			} else if (savedWasAppendedFragment && sameRoute && !window.location.hash) {
-				delta = 1;
-			} else if (
-				typeof savedIndex === 'number' &&
-				nextIndex === undefined &&
-				(!sameRoute || (Boolean(savedHash) && !window.location.hash))
-			) {
-				delta = 1;
-			} else if (savedIndex === undefined && savedState !== null && typeof nextIndex === 'number') {
-				delta = 1;
+
+			if (nextCursor >= 0) {
+				if (nextCursor < currentCursor) {
+					delta = currentCursor - nextCursor;
+				} else {
+					// Forward (or same entry): advance cursor, keep modal open.
+					legacyCursor = nextCursor;
+					legacyEntries[nextCursor] = entry;
+					legacyHistoryLength = window.history.length;
+					savedState = event.state;
+					return;
+				}
+			} else {
+				const sameRoute = samePathAndSearch(currentEntry.href, entry.href);
+				const currentHash = (() => {
+					try {
+						return new URL(currentEntry.href).hash;
+					} catch {
+						return '';
+					}
+				})();
+				if (typeof currentEntry.index === 'number' && typeof entry.index === 'number') {
+					if (entry.index < currentEntry.index) {
+						delta = currentEntry.index - entry.index;
+					} else {
+						recordLegacyPush(entry);
+						savedState = event.state;
+						return;
+					}
+				} else if (
+					typeof currentEntry.index === 'number' &&
+					entry.index === undefined &&
+					(!sameRoute || (Boolean(currentHash) && !window.location.hash))
+				) {
+					delta = 1;
+				} else if (
+					currentEntry.index === undefined &&
+					savedState !== null &&
+					typeof entry.index === 'number'
+				) {
+					delta = 1;
+				} else {
+					recordLegacyPush(entry);
+					savedState = event.state;
+					return;
+				}
 			}
 
 			if (delta <= 0) return;
 
 			event.stopImmediatePropagation();
-			legacyReturning = {
-				href: savedUrl,
-				index: savedIndex,
+			const pending: LegacyReturn = {
+				href: currentEntry.href,
+				index: currentEntry.index,
+				targetCursor: currentCursor,
+				dispatched: false,
 				close: () => {
 					if (onModalPopState === handleLegacyPopState) close();
 				}
 			};
-			window.history.go(delta);
+			legacyReturning = pending;
+			requestAnimationFrame(() => {
+				if (legacyReturning !== pending) return;
+				pending.dispatched = true;
+				window.history.go(delta);
+			});
 		}
 
 		onModalPopState = handleLegacyPopState;
