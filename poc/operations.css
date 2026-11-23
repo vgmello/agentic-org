@@ -132,16 +132,41 @@
   color: var(--gray-400);
 }
 .triage-headline #page-search-tools .cmdk-ai-btn {
+  justify-content: center;
+  gap: 8px;
   padding-inline: 12px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--tone-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--tone-accent-ink) 72%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--tone-accent-soft), var(--tone-accent) 5%);
   box-shadow: none;
   backdrop-filter: none;
   color: var(--white);
+  transition: background-color .15s ease, border-color .15s ease;
 }
-.triage-headline #page-search-tools .cmdk-ai-btn .ic { color: var(--tone-accent-ink); }
-.triage-headline #page-search-tools .cmdk-ai-btn:hover { background: color-mix(in srgb, var(--tone-accent-soft), var(--tone-accent) 8%); }
+:where([data-theme="cozy"]) .triage-headline #page-search-tools .cmdk-ai-btn { border-radius: 999px; }
+.triage-headline #page-search-tools .cmdk-ai-btn .ic {
+  width: 1rem;
+  height: 1rem;
+  color: var(--tone-accent-ink);
+}
+.triage-headline #page-search-tools .cmdk-ai-btn:not(.is-offline, :disabled):hover {
+  background: color-mix(in srgb, var(--tone-accent-soft), var(--tone-accent) 13%);
+  border-color: var(--tone-accent-ink);
+}
+.triage-headline #page-search-tools .cmdk-ai-btn:not(.is-offline, :disabled):active {
+  background: color-mix(in srgb, var(--tone-accent-soft), var(--tone-accent) 23%);
+  border-color: var(--tone-accent-ink);
+}
+.triage-headline #page-search-tools .cmdk-ai-btn:is(.is-offline, :disabled) {
+  background: var(--hover);
+  border-color: var(--line2);
+  color: var(--gray-400);
+  cursor: not-allowed;
+}
+.triage-headline #page-search-tools .cmdk-ai-btn:is(.is-offline, :disabled) .ic { color: var(--tone-bad-icon); }
+@media (prefers-reduced-motion: reduce) {
+  .triage-headline #page-search-tools .cmdk-ai-btn { transition: none; }
+}
 .triage-headline #page-search-tools :is(.cmdk-trigger, .cmdk-ai-btn):focus-visible {
   outline: 2px solid var(--tone-accent-ink);
   outline-offset: 1px;
