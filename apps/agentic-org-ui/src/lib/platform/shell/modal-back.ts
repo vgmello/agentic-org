@@ -4,7 +4,7 @@ type LegacyReturn = {
 	href: string;
 	index: number | undefined;
 	targetCursor: number;
-	dispatched: boolean;
+	owner: (event: PopStateEvent) => void;
 	close: () => void;
 };
 
@@ -99,34 +99,32 @@ function syncLegacyEntry(entry: LegacyEntry, isPopState = false) {
 		return;
 	}
 
-	const grew = window.history.length > legacyHistoryLength;
-	if (isPopState && grew && entry.index === undefined) {
+	if (isPopState) {
+		const grew = window.history.length > legacyHistoryLength;
+		if (grew && entry.index === undefined) {
+			recordLegacyPush(entry);
+			return;
+		}
+		const existing = findLegacyCursor(entry);
+		if (existing >= 0) {
+			legacyCursor = existing;
+			legacyEntries[existing] = entry;
+			legacyHistoryLength = window.history.length;
+			return;
+		}
 		recordLegacyPush(entry);
 		return;
 	}
 
-	const existing = findLegacyCursor(entry);
-	if (existing >= 0) {
-		legacyCursor = existing;
-		legacyEntries[existing] = entry;
-		legacyHistoryLength = window.history.length;
-		return;
-	}
-
 	const current = legacyEntries[legacyCursor];
-	if (
-		!isPopState &&
-		!grew &&
-		entry.index !== undefined &&
-		current.index !== undefined &&
-		entry.index === current.index
-	) {
+	if (entry.index !== undefined && current.index !== undefined && entry.index === current.index) {
 		// Same SvelteKit history slot updated via replaceState.
 		legacyEntries[legacyCursor] = entry;
 		legacyHistoryLength = window.history.length;
 		return;
 	}
 
+	// New push navigation: truncate any stale forward entries past legacyCursor.
 	recordLegacyPush(entry);
 }
 
@@ -136,6 +134,7 @@ function syncLegacyEntry(entry: LegacyEntry, isPopState = false) {
  */
 export function noteModalBackNavigation() {
 	if (typeof window === 'undefined' || window.navigation) return;
+	legacyReturning = undefined;
 	syncLegacyEntry(currentLegacyEntry(), false);
 }
 
@@ -280,7 +279,7 @@ export function registerModalBack(close: () => void) {
 				href: currentEntry.href,
 				index: currentEntry.index,
 				targetCursor: currentCursor,
-				dispatched: false,
+				owner: handleLegacyPopState,
 				close: () => {
 					if (onModalPopState === handleLegacyPopState) close();
 				}
@@ -288,13 +287,13 @@ export function registerModalBack(close: () => void) {
 			legacyReturning = pending;
 			requestAnimationFrame(() => {
 				if (legacyReturning !== pending) return;
-				pending.dispatched = true;
 				window.history.go(delta);
 			});
 		}
 
 		onModalPopState = handleLegacyPopState;
 		return () => {
+			if (legacyReturning?.owner === handleLegacyPopState) legacyReturning = undefined;
 			if (onModalPopState === handleLegacyPopState) onModalPopState = undefined;
 			legacyHistoryLength = window.history.length;
 		};

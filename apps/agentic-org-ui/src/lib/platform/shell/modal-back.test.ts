@@ -377,4 +377,78 @@ describe('modal-back legacy (!window.navigation) path', () => {
 
 		unregister();
 	});
+
+	it('truncates stale forward fragment entries when a new push reuses sveltekit:history index', async () => {
+		const env = await setup('http://localhost/teams', { 'sveltekit:history': 0 }, 1);
+		// Build mixed history: /teams (0) -> /teams#title (null) -> /activity (1)
+		env.dispatchPopState('http://localhost/teams#title', null, 2);
+		env.setEntry('http://localhost/activity', { 'sveltekit:history': 1 }, 3);
+		env.noteModalBackNavigation();
+
+		// Back 2 steps to /teams (0); SvelteKit afterNavigate calls noteModalBackNavigation()
+		env.dispatchPopState('http://localhost/teams', { 'sveltekit:history': 0 }, 3);
+		env.noteModalBackNavigation();
+
+		// Navigate forward to a NEW route /projects reusing sveltekit:history index 1
+		env.setEntry('http://localhost/projects', { 'sveltekit:history': 1 }, 2);
+		env.noteModalBackNavigation();
+
+		const close = vi.fn();
+		const unregister = env.registerModalBack(close);
+
+		// Back from /projects (1) -> /teams (0) must compute delta 1 (not stale delta 2!)
+		const backEvent = env.dispatchPopState('http://localhost/teams', { 'sveltekit:history': 0 }, 2);
+		expect(backEvent.stopped).toBe(true);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([1]);
+
+		const returnEvent = env.dispatchPopState(
+			'http://localhost/projects',
+			{ 'sveltekit:history': 1 },
+			2
+		);
+		expect(returnEvent.stopped).toBe(true);
+		env.flushRaf();
+		expect(close).toHaveBeenCalledTimes(1);
+
+		unregister();
+	});
+
+	it('cancels queued rAF return on route navigation or modal teardown so a new modal intercepts Back cleanly', async () => {
+		const env = await setup('http://localhost/teams', { 'sveltekit:history': 0 }, 1);
+		env.setEntry('http://localhost/projects', { 'sveltekit:history': 1 }, 2);
+		env.noteModalBackNavigation();
+
+		const close1 = vi.fn();
+		const unregister1 = env.registerModalBack(close1);
+
+		// Back queues rAF return for modal 1
+		const back1 = env.dispatchPopState('http://localhost/teams', { 'sveltekit:history': 0 }, 2);
+		expect(back1.stopped).toBe(true);
+
+		// Before rAF fires, modal 1 tears down and a new route push occurs
+		unregister1();
+		env.setEntry('http://localhost/work', { 'sveltekit:history': 1 }, 2);
+		env.noteModalBackNavigation();
+
+		// Flushing queued rAF must NOT call history.go or close modal 1
+		env.flushRaf();
+		expect(env.goCalls).toEqual([]);
+		expect(close1).not.toHaveBeenCalled();
+
+		// Opening a new modal on /work intercepts Back cleanly
+		const close2 = vi.fn();
+		const unregister2 = env.registerModalBack(close2);
+		const back2 = env.dispatchPopState('http://localhost/teams', { 'sveltekit:history': 0 }, 2);
+		expect(back2.stopped).toBe(true);
+		env.flushRaf();
+		expect(env.goCalls).toEqual([1]);
+
+		const return2 = env.dispatchPopState('http://localhost/work', { 'sveltekit:history': 1 }, 2);
+		expect(return2.stopped).toBe(true);
+		env.flushRaf();
+		expect(close2).toHaveBeenCalledTimes(1);
+
+		unregister2();
+	});
 });
