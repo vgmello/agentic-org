@@ -438,19 +438,33 @@ test("PROJ-1: a project manager sees the investment of the projects they lead, a
 	await expect(page.getByTestId('project-figures')).not.toContainText('Investment');
 });
 
-test('PROJ-2: New project opens from the New menu, Home and a team with no projects', async ({
+// Executive Home (HomeDayOne.svelte) links Day-One onboarding to Open Work and Manage Members while delegating
+// project creation to /projects (reached from Home via Command Bar `Go to Projects` or ProjectScorecard's `All projects`).
+test('PROJ-2: New project opens from Home via Command bar / All projects, empty Projects and a team with no projects', async ({
 	page
 }) => {
 	await open(page, '/home');
-	await page.getByRole('button', { name: 'New', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Project', exact: true }).click();
+	await page.keyboard.press('ControlOrMeta+k');
+	const cmdk = page.getByRole('dialog', { name: 'Command palette and Org AI' });
+	await expect(cmdk).toBeVisible();
+	await cmdk.getByRole('combobox').fill('Go to Projects');
+	await cmdk.getByRole('option', { name: /Go to Projects/ }).click();
+	await expect(page).toHaveURL(/\/projects$/);
+	await page.getByRole('button', { name: 'New project' }).click();
 	const sheet = page.getByRole('dialog', { name: 'New project' });
 	await expect(sheet).toBeVisible();
-	await expect(page).toHaveURL(/\/projects$/);
 	await sheet.getByRole('button', { name: 'Cancel' }).click();
 
-	await visit(page, '/home?mock=noprojects');
-	await page.getByTestId('create-project').click();
+	await visit(page, '/home');
+	await page.getByRole('link', { name: 'All projects' }).click();
+	await expect(page).toHaveURL(/\/projects$/);
+	await page.getByRole('button', { name: 'New project' }).click();
+	await expect(sheet).toBeVisible();
+	await sheet.getByRole('button', { name: 'Cancel' }).click();
+
+	await visit(page, '/projects?mock=empty');
+	await expect(page.getByRole('heading', { name: 'No projects yet' })).toBeVisible();
+	await page.getByRole('button', { name: 'New project' }).click();
 	await expect(sheet).toBeVisible();
 	await expect(sheet.getByRole('radio', { name: /New team/ })).toBeChecked();
 

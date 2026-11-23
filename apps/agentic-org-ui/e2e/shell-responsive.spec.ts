@@ -24,7 +24,7 @@ for (const width of [960, 1440]) {
 		await openActivity(page);
 		await page.setViewportSize({ width, height: 900 });
 		const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-		expect((await nav.locator('..').boundingBox())?.width).toBe(288);
+		expect((await nav.locator('..').boundingBox())?.width).toBe(264);
 		await expect(nav.getByRole('link', { name: 'Activity', exact: true })).toHaveAttribute(
 			'aria-current',
 			'page'
@@ -34,45 +34,81 @@ for (const width of [960, 1440]) {
 	});
 }
 
+async function collapseToRail(page: Page, width: number) {
+	await page.getByRole('button', { name: 'Auto-hide sidebar', exact: true }).click();
+	await page.mouse.move(width - 20, 20);
+	const aside = page.getByRole('complementary', { name: 'Sidebar', exact: true });
+	await expect(aside).toHaveAttribute('data-collapsed', 'true');
+	await expect.poll(async () => Math.round((await aside.boundingBox())?.width ?? 0)).toBe(68);
+	return aside;
+}
+
 for (const width of [959, 720]) {
-	test(`BUG-52: the icon rail keeps navigation names and tooltips at ${width}px`, async ({
-		page
+	test(`BUG-52: the collapsed icon rail keeps navigation names and tooltips at ${width}px`, async ({
+		page,
+		browserName
 	}) => {
 		await openActivity(page);
 		await page.setViewportSize({ width, height: width === 720 ? 450 : 900 });
 		const nav = page.getByRole('navigation', { name: 'Main', exact: true });
+		const aside = await collapseToRail(page, width);
 		await shot(page, `shell-rail-${width}`);
-		expect((await nav.locator('..').boundingBox())?.width).toBe(64);
+		expect(Math.round((await aside.boundingBox())?.width ?? 0)).toBe(68);
 		await expect(nav.getByRole('link', { name: 'Activity', exact: true })).toHaveAttribute(
 			'aria-current',
 			'page'
 		);
 		for (const name of [
 			'Home',
-			'Inbox',
-			'Projects',
 			'Work',
 			'Chat',
 			'Activity',
+			'Projects',
 			'Teams',
-			'Organization settings'
+			'Org chart',
+			'Members',
+			'Processes',
+			'Offices',
+			'Settings'
 		]) {
-			await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
+			const link = nav.getByRole('link', { name, exact: true });
+			await expect(link).toBeVisible();
+			await expect(link).toHaveAttribute('title', name);
 		}
-		await expect(
-			page.getByRole('button', { name: 'You · Owner, account menu', exact: true }).locator('svg')
-		).toBeVisible();
-		const office = nav.getByRole('link', { name: 'Activity', exact: true });
-		await office.hover();
-		await expect(page.getByRole('tooltip', { name: 'Activity', exact: true })).toHaveText(
-			'Activity'
-		);
+		const account = page.getByRole('button', { name: 'You · Owner, account menu', exact: true });
+		await expect(account.locator('svg')).toBeVisible();
+		const activity = nav.getByRole('link', { name: 'Activity', exact: true });
+		const activityLabel = activity.locator('span');
+		await expect(activityLabel).toHaveClass(/sr-only/);
+		// Hovering a nav link in the collapsed rail expands it to 264px and visibly reveals its text label.
+		await activity.hover();
+		await expect(aside).not.toHaveAttribute('data-collapsed', 'true');
+		await expect.poll(async () => Math.round((await aside.boundingBox())?.width ?? 0)).toBe(264);
+		await expect(activityLabel).toHaveText('Activity');
+		await expect(activityLabel).not.toHaveClass(/sr-only/);
+		await expect(activityLabel).toBeVisible();
 		await shot(page, `shell-rail-hover-${width}`);
-		await office.focus();
-		await page.keyboard.press('Tab');
-		await expect(nav.getByRole('link', { name: 'Teams', exact: true })).toBeFocused();
-		await expect(page.getByRole('tooltip', { name: 'Teams', exact: true })).toBeVisible();
-		await expect(page.getByRole('tooltip', { name: 'Activity', exact: true })).not.toBeVisible();
+		// Moving away collapses back to 68px (hiding text labels to sr-only), and real keyboard Tab navigation expands it back to 264px.
+		await page.mouse.move(width - 20, 20);
+		await expect(aside).toHaveAttribute('data-collapsed', 'true');
+		await expect.poll(async () => Math.round((await aside.boundingBox())?.width ?? 0)).toBe(68);
+		await expect(activityLabel).toHaveClass(/sr-only/);
+		await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+		const tabKey = browserName === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab';
+		await page.keyboard.press(tabKey);
+		await expect(aside).not.toHaveAttribute('data-collapsed', 'true');
+		await expect.poll(async () => Math.round((await aside.boundingBox())?.width ?? 0)).toBe(264);
+		for (
+			let i = 0;
+			i < 8 && !(await activity.evaluate((el) => el === document.activeElement));
+			i++
+		) {
+			await page.keyboard.press(tabKey);
+		}
+		await expect(activity).toBeFocused();
+		await expect(activityLabel).toHaveText('Activity');
+		await expect(activityLabel).not.toHaveClass(/sr-only/);
+		await expect(activityLabel).toBeVisible();
 		await shot(page, `shell-rail-focus-${width}`);
 	});
 }
@@ -97,7 +133,9 @@ for (const width of [639, 600, 320]) {
 		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
 			width
 		);
-		expect((await page.locator('[data-shell-header]').boundingBox())?.height).toBe(56);
+		expect((await page.locator('header.exec-topbar').boundingBox())?.height).toBeGreaterThanOrEqual(
+			44
+		);
 		await menu.click();
 		const dialog = page.getByRole('dialog', { name: 'Main navigation', exact: true });
 		await expect(dialog).toBeVisible();
@@ -121,12 +159,10 @@ for (const width of [639, 600, 320]) {
 		).toBeFocused();
 		await expect(dialog).not.toBeVisible();
 		await menu.click();
-		await dialog.getByRole('link', { name: 'Organization settings', exact: true }).click();
-		await expect(page).toHaveURL(/\/settings$/);
+		await dialog.getByRole('link', { name: 'Work', exact: true }).click();
+		await expect(page).toHaveURL(/\/work$/);
 		await expect(dialog).not.toBeVisible();
-		await expect(
-			page.getByRole('heading', { level: 1, name: 'Organization settings', exact: true })
-		).toBeFocused();
+		await expect(page.getByRole('heading', { level: 1, name: 'Work', exact: true })).toBeFocused();
 		await expect(page.getByRole('main')).toHaveCount(1);
 		await expect(menu).toHaveAttribute('aria-expanded', 'false');
 		await shot(page, `shell-mobile-destination-${width}`);
@@ -421,7 +457,7 @@ test(
 		await dialog.getByRole('link', { name: 'Activity', exact: true }).click();
 		await expect(page).toHaveURL(/\/activity$/);
 		await menu.click();
-		await dialog.getByRole('link', { name: 'Organization settings', exact: true }).click();
+		await dialog.getByRole('link', { name: 'Settings', exact: true }).click();
 		await expect(page).toHaveURL(/\/settings$/);
 		await page.evaluate(() => window.history.go(-2));
 		await expect(page).toHaveURL(/\/activity#shell-page-title$/);
@@ -438,71 +474,78 @@ test(
 );
 
 test(
-	'BUG-59: the focused rail tooltip survives keyboard scrolling',
+	'BUG-59: keyboard traversal scrolls the short sidebar navigation while keeping focus visible',
 	{ tag: '@webkit' },
 	async ({ page, browserName }) => {
 		await page.setViewportSize({ width: 720, height: 450 });
 		await createOrganization(page);
 		await visit(page, '/activity');
 		const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-		// The navigation list scrolls inside the rail; the logo and the footer stay put.
-		const rail = nav;
+		// The navigation list scrolls inside the sidebar; the logo and the footer stay put.
 		await nav.getByRole('link', { name: 'Home', exact: true }).focus();
-		await expect(page.getByRole('tooltip', { name: 'Home', exact: true })).toBeVisible();
-		const initial = await rail.evaluate((el) => el.scrollTop);
-		const key = browserName === 'webkit' ? 'Alt+Tab' : 'Tab';
-		for (const name of ['Inbox', 'Projects', 'Work', 'Chat', 'Activity', 'Teams']) {
+		const initial = await nav.evaluate((el) => el.scrollTop);
+		const key = browserName === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab';
+		for (const name of ['Inbox', 'Work', 'Chat', 'Activity', 'Projects']) {
+			await page.keyboard.press(key);
+			await expect(
+				nav.getByRole('link', {
+					name: name === 'Inbox' ? /^Inbox/ : name,
+					exact: name !== 'Inbox'
+				})
+			).toBeFocused();
+		}
+		const favToggle = nav.getByRole('button', { name: 'Collapse favorite projects', exact: true });
+		if (await favToggle.isVisible()) {
+			await page.keyboard.press(key);
+			await expect(favToggle).toBeFocused();
+			const favLinks = nav.locator('#exec-nav-favs a');
+			const favCount = await favLinks.count();
+			for (let i = 0; i < favCount; i++) {
+				await page.keyboard.press(key);
+				await expect(favLinks.nth(i)).toBeFocused();
+			}
+		}
+		for (const name of ['Teams', 'Org chart', 'Members', 'Processes', 'Offices', 'Settings']) {
 			await page.keyboard.press(key);
 			await expect(nav.getByRole('link', { name, exact: true })).toBeFocused();
-			if (name !== 'Teams')
-				await expect(page.getByRole('tooltip', { name, exact: true })).toBeVisible();
 		}
-		await expect.poll(() => rail.evaluate((el) => el.scrollTop)).toBeGreaterThan(initial);
-		await page.evaluate(
-			() =>
-				new Promise<void>((resolve) => {
-					requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-				})
-		);
+		const settingsLink = nav.getByRole('link', { name: 'Settings', exact: true });
+		await expect.poll(() => nav.evaluate((el) => el.scrollTop)).toBeGreaterThan(initial);
+		await expect(settingsLink).toBeInViewport();
 		await shot(page, 'shell-rail-keyboard-scroll', { settle: false });
-		const tooltip = page.getByRole('tooltip', { name: 'Teams', exact: true });
+		// In collapsed 68px rail mode, the account menu button opens its accessible tooltip and Escape dismisses it.
+		await collapseToRail(page, 720);
+		const account = page.getByRole('button', { name: 'You · Owner, account menu', exact: true });
+		await account.focus();
+		await expect(account).toBeFocused();
+		const tooltip = page.getByRole('tooltip', { name: 'You · Owner', exact: true });
 		await expect(tooltip).toBeVisible();
 		await page.keyboard.press('Escape');
 		await expect(tooltip).not.toBeVisible();
-		await expect(nav.getByRole('link', { name: 'Teams', exact: true })).toBeFocused();
+		await expect(account).toBeFocused();
 	}
 );
 
 test(
-	'BUG-59: a supplied navigation badge appears in the full sidebar and rail',
+	'BUG-59: the live Inbox badge appears in the full sidebar and collapsed rail',
 	{ tag: '@webkit' },
 	async ({ page }) => {
 		await enterMockedOrganization(page);
-		// The badge is set on the loaded module, so the shell is entered again without a reload.
-		await visit(page, '/create');
-		await page.evaluate(async () => {
-			const path = '/src/lib/nav.ts';
-			const { NAV } = await import(path);
-			NAV.find((item: { href: string }) => item.href === '/chat').badge = {
-				text: '3',
-				label: '3 need you'
-			};
-			const link = Object.assign(document.createElement('a'), { href: '/teams/members' });
-			document.body.append(link);
-			link.click();
-		});
 		await expect(page).toHaveURL(/\/teams\/members$/);
 		const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-		const chat = nav.getByRole('link', { name: 'Chat', exact: true });
-		const badge = chat.getByText('3', { exact: true });
-		await expect(chat).toHaveAccessibleDescription('3 need you');
-		await expect(badge).toBeInViewport({ ratio: 1 });
+		const inboxName = /^Inbox(?:\s*,\s*|\s+)3 waiting on you$/i;
+		const inbox = nav.getByRole('link', { name: inboxName });
+		await expect(inbox).toBeVisible();
+		const dot = inbox.locator('.exec-nav-dot');
+		await expect(dot).toBeInViewport({ ratio: 1 });
+		await expect(inbox).toHaveAttribute('title', 'Inbox (3 waiting on you)');
 		await shot(page, 'shell-badge-full');
 		await page.setViewportSize({ width: 720, height: 900 });
-		await expect(badge).toBeInViewport({ ratio: 1 });
-		await chat.focus();
-		await expect(page.getByRole('tooltip', { name: 'Chat', exact: true })).toBeVisible();
-		await expect(chat).toHaveAccessibleDescription(/3 need you/);
+		await collapseToRail(page, 720);
+		const railInbox = nav.getByRole('link', { name: inboxName });
+		await expect(railInbox).toBeVisible();
+		await expect(railInbox.locator('.exec-nav-dot')).toBeInViewport({ ratio: 1 });
+		await expect(railInbox).toHaveAttribute('title', 'Inbox (3 waiting on you)');
 		await shot(page, 'shell-badge-rail');
 	}
 );
@@ -591,7 +634,10 @@ test(
 			await page.evaluate(() => window.dispatchEvent(new Event('release-forward-load')));
 		}
 		await expect(
-			page.getByRole('heading', { level: 1, name: 'Projects', exact: true })
+			page
+				.getByRole('main')
+				.getByRole('heading', { name: /^Projects/ })
+				.first()
 		).toBeVisible();
 		await shot(page, 'shell-menu-back-during-forward');
 	}

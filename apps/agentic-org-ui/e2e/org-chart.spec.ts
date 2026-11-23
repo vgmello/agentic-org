@@ -294,11 +294,18 @@ test('TEAM-6: Move home team from a node changes the home team it shows and keep
 
 test('our-org §7: no Add agent anywhere; Hire an agent opens the Hire flow', async ({ page }) => {
 	await openChart(page);
-	await expect(page.getByText(/Add (an )?agent/)).toHaveCount(0);
-	await page.getByRole('button', { name: 'New' }).click();
-	await expect(page.getByRole('menuitem', { name: /Add (an )?agent/ })).toHaveCount(0);
+	await expect(page.getByText(/Add (an )?agent/i)).toHaveCount(0);
+	await page.keyboard.press('ControlOrMeta+k');
+	const cmdk = page.getByRole('dialog', { name: 'Command palette and Org AI' });
+	await expect(cmdk).toBeVisible();
+	await cmdk.getByRole('combobox').fill('agent');
+	await expect.poll(() => cmdk.getByRole('option').count()).toBeGreaterThan(0);
+	await expect(cmdk.getByRole('option', { name: /add\s+(an\s+)?agent/i })).toHaveCount(0);
 	await page.keyboard.press('Escape');
-	await page.getByRole('link', { name: 'Hire an agent' }).click();
+	await expect(cmdk).toBeHidden();
+	const hire = page.getByRole('link', { name: 'Hire an agent', exact: true });
+	await expect(hire).toBeVisible();
+	await hire.click();
 	await expect(page).toHaveURL(/\/teams\/hire$/);
 });
 

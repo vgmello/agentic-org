@@ -15,18 +15,18 @@ const rows = (page: Page) => page.getByTestId('office-row');
 
 /**
  * Offices sits in the Organization settings frame: from 960 px its 14rem column of section links is beside the
- * desktop sidebar (18rem), so the content column starts at 32rem.
+ * fixed 264px ExecutiveSidebar, so the content column starts at 264 + 14rem.
  */
-const settingsChrome = (rootFont: number) => 32 * rootFont;
+const settingsChrome = (rootFont: number) => 264 + 14 * rootFont;
 /**
- * SET-200: the shared settings frame (src/routes/(shell)/settings/+layout.svelte) switches to its side column at a
- * 960 px media query whatever the text size, so at 960–1279 px with 200% text or more it leaves the content column
- * almost nothing (76 px at 1100 px and 32 px root; 0 px at 960 px). The requirement stands (app-shell-ux §2, §6a);
- * these cases are marked fixme (they time out waiting for a row that has no width) until the frame's
- * breakpoint scales with the text.
+ * SET-200: the shared settings frame (src/routes/(shell)/settings/+layout.svelte) sits beside the fixed 264px
+ * ExecutiveSidebar and switches to its 14rem side column at `min-[960px]:@min-[20rem]` (content column =
+ * viewport - 264px - 14rem). At large root fonts (32px–40px) near the 960px–1100px boundary, the 264px sidebar
+ * plus 14rem side column can leave narrow content width; those cases stay tracked under SET-200 until the
+ * settings frame breakpoint scales with text size.
  */
 const SET_200 =
-	'SET-200: the settings frame leaves no content width at this viewport and text size; remove once the frame is fixed.';
+	'SET-200: the settings frame beside the 264px sidebar leaves constrained content width at large text; remove once the frame scales cleanly.';
 
 test(
 	'OFC-1: the list shows HQ first with its status, where it runs, and how many agents',
@@ -451,7 +451,9 @@ test('OFC-11 / BUG-24: an unsupported release gives local repair steps for the s
 	await expect(row.locator('code')).toHaveCSS('word-break', 'break-all');
 	await expect(row.locator('code')).toHaveCSS('font-family', /monospace/);
 	const opener = row.getByRole('button');
-	expect((await opener.boundingBox())?.width).toBeGreaterThanOrEqual(200);
+	await expect
+		.poll(async () => (await opener.boundingBox())?.width ?? 0)
+		.toBeGreaterThanOrEqual(200);
 	await shot(page, 'office-incompatible-row-320');
 	await opener.click();
 	const sheet = page.getByRole('dialog');
@@ -677,7 +679,10 @@ test(
 	async ({ page, browserName }) => {
 		await openOffices(page);
 		const opener = rows(page).first().getByRole('button');
-		await page.getByRole('link', { name: 'Offices', exact: true }).focus();
+		await page
+			.getByRole('navigation', { name: 'Main', exact: true })
+			.getByRole('link', { name: 'Offices', exact: true })
+			.focus();
 		// WebKit doesn't focus a button on pointer activation. Exercise the same path in Chromium.
 		if (browserName === 'webkit') await opener.click();
 		else await opener.dispatchEvent('click');
@@ -1583,7 +1588,7 @@ for (const rootFont of [16, 32, 40])
 			{ tag: '@webkit' },
 			async ({ page }) => {
 				const column = 21 * rootFont + offset;
-				// The desktop sidebar and the settings column are 32rem at these viewport widths; mobile has neither.
+				// The fixed 264px ExecutiveSidebar plus 14rem settings column take `settingsChrome(rootFont)` at desktop widths; mobile has neither.
 				const sidebar = rootFont === 16 ? 0 : settingsChrome(rootFont);
 				await page.setViewportSize({ width: sidebar + column, height: 1100 });
 				await openOffices(page);

@@ -3,6 +3,7 @@ import { visit } from './ready';
 import { shot } from './shot';
 import { enterMockedOrganization } from './mock-organization';
 import { signInAsAdmin } from './web-session';
+import { resolveThemeColor, resolveThemePixel } from './theme-token';
 
 export async function setupFocus(page: Page, width: number, scale: number, root = 16) {
 	await page.setViewportSize({ width, height: 1100 });
@@ -24,15 +25,8 @@ export async function setupFocus(page: Page, width: number, scale: number, root 
 	return page.getByRole('region', { name: 'Focus contracts', exact: true });
 }
 
-export async function token(page: Page, name = '--color-indigo-400') {
-	return page.evaluate((name) => {
-		const node = document.createElement('span');
-		node.style.color = `var(${name})`;
-		document.body.append(node);
-		const color = getComputedStyle(node).color;
-		node.remove();
-		return color;
-	}, name);
+export async function token(page: Page, name = '--focus') {
+	return resolveThemeColor(page, name);
 }
 export async function outline(control: Locator, offset = 2, color?: string) {
 	await expect(control).toBeFocused();
@@ -166,7 +160,7 @@ export async function buttons(page: Page, width: number, scale: number, root = 1
 		.not.toBe('0 0 #0000');
 	const override = fixture.getByRole('button', { name: 'Override', exact: true });
 	await keyboardFocus(page, override);
-	await outline(override, 2, await token(page, '--color-emerald-400'));
+	await outline(override, 2, await token(page, '--positive'));
 	await expect(fixture.getByRole('button', { name: 'Disabled', exact: true })).toBeDisabled();
 	const disabledLink = fixture.getByRole('link', { name: 'Disabled link', exact: true });
 	await expect(disabledLink).toHaveAttribute('aria-disabled', 'true');
@@ -263,21 +257,11 @@ export async function pixel(control: Locator, property: string) {
 	}, property);
 }
 export async function colorPixel(page: Page, color: string) {
-	return page.evaluate((color) => {
-		const node = document.createElement('span');
-		node.style.color = color;
-		document.body.append(node);
-		const canvas = document.createElement('canvas');
-		canvas.width = canvas.height = 1;
-		const context = canvas.getContext('2d')!;
-		context.fillStyle = getComputedStyle(node).color;
-		context.fillRect(0, 0, 1, 1);
-		node.remove();
-		return [...context.getImageData(0, 0, 1, 1).data];
-	}, color);
+	return resolveThemePixel(page, color);
 }
 export async function hoverTint(control: Locator) {
-	await expect.poll(() => pixel(control, 'background-color')).toEqual([255, 255, 255, 13]); // 5% white, independent of engine CSS colour serialization.
+	const expected = await colorPixel(control.page(), 'var(--surface-raised)');
+	await expect.poll(() => pixel(control, 'background-color')).toEqual(expected); // Theme surface-raised hover tint, independent of engine CSS colour serialization.
 }
 
 export async function consumerFocus(page: Page, width: number, scale: number, root = 16) {

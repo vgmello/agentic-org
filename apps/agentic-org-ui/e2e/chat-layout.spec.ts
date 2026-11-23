@@ -67,7 +67,7 @@ async function noSidewaysScroll(page: Page, checkNav = true) {
 
 for (const [width, pixels, inline] of [
 	[1440, 32, true],
-	[1279, 32, false],
+	[1031, 32, false],
 	[1024, 32, false],
 	[1440, 20, true]
 ] as const) {
