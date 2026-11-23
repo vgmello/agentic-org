@@ -395,6 +395,21 @@
   .triage-tab { gap: 4px; padding-inline: 8px; }
 }
 
+/* Ocean Inbox palette */
+html[data-theme="ocean"] #content:has(> #main > .triage-workspace) {
+  background: linear-gradient(156deg, #172944, #112239 59%, #091427);
+  & .triage-workspace {
+    --line: rgb(147 169 199 / .15);
+    --line2: rgb(147 169 199 / .27);
+  }
+  & .triage-header { background: linear-gradient(105deg, #182a47, #142b43); }
+  & .triage-headline { background-image: none; }
+  & .triage-queue { background: linear-gradient(170deg, #121f35, #0b162a); }
+  & .triage-queue-summary { background-color: #14223b; }
+  & .triage-group h2 { background-color: rgb(0 0 0 / .14); }
+  & .triage-item[aria-current="true"] { background-color: #1d334e; }
+}
+
 /* Activity command center */
 .activity-scope, .activity-scope select { max-width: 100%; }
 .activity-switch { min-height: var(--control-height); }
