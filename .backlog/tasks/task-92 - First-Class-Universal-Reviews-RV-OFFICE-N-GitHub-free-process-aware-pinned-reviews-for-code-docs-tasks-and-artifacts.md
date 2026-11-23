@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-23T03:40:00Z'
-updated_date: '2026-11-23T03:41:00Z'
+updated_date: '2026-11-23T04:07:00Z'
 labels:
   - backend
   - ui
@@ -60,3 +60,9 @@ Makes reviews a first-class, GitHub-free, methodology-agnostic product primitive
 - [ ] #5 Updates schema.sql, test_schema.py, Organization-Data-19 (or doc-77/79 + doc-72/73/74/80), doc-28, doc-35, doc-52, doc-3, and records a new ADR documenting Universal Reviews, single-writer routing, started_by_kind mapping, and ADR-0026 compliance.
 - [ ] #6 Supports two-stage token-efficient review convergence: iterative repair rounds (Round 2..N) resume the warm reviewer session with the inter-round diff (instructing the reviewer to verify fixes and inspect any previously unexamined or regressed areas without rubber-stamping), followed by an explicit fresh-context (--fresh) clean-session final validation review on the exact pinned commit once findings clear.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Milestone triage (2026-11-23): TASK-92.1 (Core + CLI + warm/fresh session affinity) and TASK-92.2 (Human Inbox + BFF + Browser Review Workbench) remain in v1 (m-0); TASK-92.3 (issued-doc reviews, cross-office bundles, Tess & Unified Search integration) moved to v2 (m-1) alongside TASK-80 and TASK-91.
+<!-- SECTION:NOTES:END -->
