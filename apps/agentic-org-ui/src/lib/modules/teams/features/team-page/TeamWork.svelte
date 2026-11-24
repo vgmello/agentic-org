@@ -69,6 +69,12 @@
 		return 'neutral';
 	}
 
+	function readingKindLabel(kind: WorkRow['kind']): 'Task' | 'Bug' | 'Request' {
+		if (kind === 'bug') return 'Bug';
+		if (kind === 'request') return 'Request';
+		return 'Task';
+	}
+
 	function readingPriority(priority: WorkRow['priority']): {
 		level: 1 | 2 | 3;
 		label: string;
@@ -210,7 +216,7 @@
 		<WorkReadingPanel
 			itemId={activeOpenRow.ref}
 			refLabel={activeOpenRow.ref}
-			kindLabel="Task"
+			kindLabel={readingKindLabel(activeOpenRow.kind)}
 			ariaLabel="{activeOpenRow.ref} · {activeOpenRow.title}"
 			fullPageHref={taskHref(activeOpenRow.ref)}
 			statusTone={readingStatusTone(activeOpenRow.state)}

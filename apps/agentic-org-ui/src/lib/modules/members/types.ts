@@ -227,6 +227,7 @@ export type WorkState = 'todo' | 'in_progress' | 'in_review' | 'blocked' | 'done
 
 export interface WorkRow {
 	ref: string;
+	kind?: 'task' | 'bug' | 'request';
 	title: string;
 	project?: string;
 	assigneeId?: string;

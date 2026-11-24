@@ -75,12 +75,18 @@
 		if (sidebar && ro) ro.observe(sidebar);
 		// Make every background sibling tree up to document.body inert while this modal reading dialog is open
 		// so focus and pointer cannot escape to shell chrome, team/project tabs, or list rows behind the dialog,
-		// while preserving portaled toasts and nested Bits UI menus/dialogs mounted on document.body.
+		// while preserving nested Bits UI portals/dialogs and Sonner's stable polite live-region container
+		// (even when 0 toasts are currently mounted) so later save/close toasts remain announced to screen readers.
 		const inertTargets: HTMLElement[] = [];
+		const isSonnerLiveRegion = (el: HTMLElement) =>
+			el.tagName === 'SECTION' &&
+			el.getAttribute('aria-live') === 'polite' &&
+			el.getAttribute('aria-relevant') === 'additions text';
 		const shouldSkipSibling = (el: HTMLElement) =>
 			el.classList.contains('work-panel-backdrop') ||
 			el.hasAttribute('data-bits-portal') ||
 			el.hasAttribute('data-sonner-toaster') ||
+			isSonnerLiveRegion(el) ||
 			Boolean(el.querySelector('[data-sonner-toaster]')) ||
 			el.getAttribute('role') === 'dialog' ||
 			el.getAttribute('role') === 'alertdialog';
@@ -100,8 +106,34 @@
 		}
 		const prevInert = inertTargets.map((el) => el.inert);
 		for (const el of inertTargets) el.inert = true;
+		// Keep Sonner's Alt+T hotkey and external focusin from pulling focus outside the modal into the
+		// exempt toast live region while still permitting nested dialogs/menus/portals above this panel.
+		const blockToastFocusHotkey = (event: KeyboardEvent) => {
+			if (event.altKey && !event.ctrlKey && !event.metaKey && event.code === 'KeyT') {
+				event.preventDefault();
+				event.stopImmediatePropagation();
+			}
+		};
+		const guardModalFocus = (event: FocusEvent) => {
+			const target = event.target;
+			if (!(target instanceof Node) || !panelEl || panelEl.contains(target)) return;
+			if (
+				target instanceof Element &&
+				target.closest(
+					'[role="dialog"]:not(.work-reading), [role="alertdialog"], [role="menu"], [data-bits-portal]'
+				)
+			) {
+				return;
+			}
+			const fallback = focusableInside(panelEl)[0] ?? backBtnEl ?? panelEl;
+			fallback?.focus({ preventScroll: true });
+		};
+		window.addEventListener('keydown', blockToastFocusHotkey, true);
+		document.addEventListener('focusin', guardModalFocus, true);
 		return () => {
 			window.removeEventListener('resize', measure);
+			window.removeEventListener('keydown', blockToastFocusHotkey, true);
+			document.removeEventListener('focusin', guardModalFocus, true);
 			ro?.disconnect();
 			inertTargets.forEach((el, i) => {
 				el.inert = prevInert[i];

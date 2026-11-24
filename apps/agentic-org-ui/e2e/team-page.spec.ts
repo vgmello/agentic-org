@@ -388,9 +388,10 @@ test('TEAM-OVERVIEW: opens on Overview with reconciled KPIs, real project progre
 	await expect(overview.locator('[data-kpi="blocked"]')).toContainText('1');
 	await expect(overview.locator('[data-kpi="blocked"]')).toContainText('Of 6 open items');
 	await expect(overview.getByTestId('team-completions-unavailable')).toBeVisible();
-	// Active project Beacon renders real progress bar and health pill + alphabetical contributors + unassigned reconciliation
+	// Active project Beacon renders real progress bar across all work types (tasks + bugs + requests) + contributors
 	await expect(overview).toContainText('Beacon');
 	await expect(overview.getByRole('progressbar', { name: 'Beacon progress' })).toBeVisible();
+	await expect(overview).toContainText('1 of 7 tasks done');
 	const contributorNames = await overview
 		.locator('table tbody th')
 		.evaluateAll((cells) => cells.map((c) => c.textContent?.trim()));
@@ -431,24 +432,44 @@ test('TEAM-OVERVIEW: opens on Overview with reconciled KPIs, real project progre
 		false
 	);
 
-	// Ordinary row click opens matching detail from shared workitems store; closing it via the nested Close modal
-	// confirms nested portals remain interactive above inert background and updates both the row and Work badge.
+	// Ordinary row click opens matching detail from shared workitems store with its canonical kind label ("Bug");
+	// Sonner's live region stays un-inert for save/close announcements while Alt+T cannot move focus out of the modal.
 	await page.locator('[data-ref="T-A45"] a').click();
 	await expect(panel).toBeVisible();
 	await expect(panel).toContainText('T-A45');
+	await expect(panel.locator('.work-kind')).toHaveText('Bug');
 	await expect(panel).toContainText('Card number field drops the last digit');
+	expect(
+		await page
+			.locator('section[aria-live="polite"][aria-relevant="additions text"]')
+			.evaluate((el) => Boolean(el.closest('[inert]')))
+	).toBe(false);
 	await panel.getByLabel('Status').selectOption('done');
 	const closeDialog = page.getByRole('dialog', { name: 'Close T-A45' });
 	await expect(closeDialog).toBeVisible();
 	await closeDialog.getByRole('button', { name: 'Close item' }).click();
 	await expect(closeDialog).toBeHidden();
 	await expect(panel.getByRole('button', { name: 'Reopen…' })).toBeVisible();
+	await expect(page.getByText('Closed T-A45.')).toBeVisible();
+	await panel.getByRole('button', { name: 'Reopen…' }).focus();
+	await page.keyboard.press('Alt+KeyT');
+	expect(await panel.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 	await page.keyboard.press('Escape');
 	await expect(panel).toHaveCount(0);
 	await expect(page.locator('[data-ref="T-A45"]')).toContainText('Done');
 	await expect(
 		page.getByRole('navigation', { name: 'Web views' }).getByRole('link', { name: /^Work\s+5$/ })
 	).toBeVisible();
+	// Returning to Overview confirms Beacon progress reconciled with the closed bug (2 of 7 tasks done).
+	await page
+		.getByRole('navigation', { name: 'Web views' })
+		.getByRole('link', { name: 'Overview', exact: true })
+		.click();
+	await expect(page.getByTestId('team-overview')).toContainText('2 of 7 tasks done');
+	await page
+		.getByRole('navigation', { name: 'Web views' })
+		.getByRole('link', { name: /^Work\s+5$/ })
+		.click();
 
 	// Scoped search renders in the shared top header beside Workspace: `/` focuses, typing filters, Escape preserves query.
 	const headerSearchHost = page.getByTestId('header-scoped-search');

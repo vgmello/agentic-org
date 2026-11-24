@@ -742,6 +742,7 @@ export function teamWorkRowsFromStore(organizationId: string, teamId: string): W
 		if (!state) continue;
 		rows.push({
 			ref: d.ref,
+			kind: d.type,
 			title: d.title,
 			project: d.project?.name,
 			assigneeId: d.assignee?.id,
@@ -765,17 +766,15 @@ export function projectCountsFromStore(
 	for (const { detail: d } of store.values()) {
 		if (d.project?.id !== projectId) continue;
 		if (d.status !== 'done' && d.status !== 'cancelled') openWork += 1;
-		if (d.type === 'bug') {
-			if (d.status !== 'done' && d.status !== 'cancelled') {
-				const sev = d.severity ?? 'unset';
-				bugs[sev] += 1;
-			}
-		} else {
-			if (d.status === 'todo') tasks.todo += 1;
-			else if (d.status === 'in_progress' || d.status === 'in_review') tasks.inProgress += 1;
-			else if (d.status === 'blocked') tasks.blocked += 1;
-			else if (d.status === 'done') tasks.done += 1;
-			else if (d.status === 'cancelled') tasks.cancelled += 1;
+		// TaskCounts covers every work type by status; open bugs are also tallied by severity.
+		if (d.status === 'todo') tasks.todo += 1;
+		else if (d.status === 'in_progress' || d.status === 'in_review') tasks.inProgress += 1;
+		else if (d.status === 'blocked') tasks.blocked += 1;
+		else if (d.status === 'done') tasks.done += 1;
+		else if (d.status === 'cancelled') tasks.cancelled += 1;
+		if (d.type === 'bug' && d.status !== 'done' && d.status !== 'cancelled') {
+			const sev = d.severity ?? 'unset';
+			bugs[sev] += 1;
 		}
 	}
 	return { openWork, tasks, bugs };
