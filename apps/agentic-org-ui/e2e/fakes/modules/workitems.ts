@@ -360,7 +360,7 @@ function pocCostByRef(): Map<string, TaskCostAmounts> {
 	const memberRef = (id: string | undefined): EmployeeRef | null => {
 		if (!id) return null;
 		const m = members.find((x) => x.id === id);
-		if (!m) return null;
+		if (!m || m.kind !== 'agent') return null;
 		return { id: m.id, name: m.name, kind: m.kind };
 	};
 	const fallbackAgent: EmployeeRef = memberRef('ada') ?? {
