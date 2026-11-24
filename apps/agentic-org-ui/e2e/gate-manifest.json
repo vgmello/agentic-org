@@ -645,6 +645,11 @@
 			"from": "e2e/processes{,-bugs}.spec.ts",
 			"to": "src/routes/(shell)/settings/+page.svelte",
 			"why": "The route scanner reads only the first path segment, so /settings/processes/** (owned by processes) is seen as the General settings page; the processes specs never open General itself."
+		},
+		{
+			"from": "e2e/executive-ui.spec.ts",
+			"to": "src/routes/(shell)/work/+page.svelte",
+			"why": "The executive UI parity spec opens /work to verify Work's unified queue header, theme surfaces, and responsive hit targets alongside the shell; projects-work and requests-copilot own and test Work's domain flows."
 		}
 	],
 	"rules": {

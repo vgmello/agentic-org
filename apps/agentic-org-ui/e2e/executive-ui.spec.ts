@@ -791,3 +791,134 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 		await expect(dialog).toBeHidden();
 	}
 });
+
+test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filter/Display menus, List/Board toggle, Graphite matte canvas, and 720px hit targets', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await visit(page, '/work?theme=graphite&mock=poc');
+
+	// Graphite matte Work canvas (#18191a) + unified .work-header.queue-header geometry
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
+	await expect(page.locator('html')).toHaveAttribute('data-interior-page');
+	await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(24, 25, 26)');
+	await expect(page.locator('aside.exec-sidebar')).toHaveCSS('background-color', 'rgb(19, 21, 22)');
+	await expect(page.locator('header.work-header.queue-header')).toBeVisible();
+	await expect(page.locator('.work-header .queue-headline')).toBeVisible();
+	await expect(page.locator('.work-toolbar.queue-toolbar')).toBeVisible();
+	await expect(page.locator('#shell-page-title')).toHaveText('Work');
+
+	// Switch to All tasks so we have multiple projects & statuses to filter/group/board
+	await page.locator('[data-filter="all"]').click();
+	const workRows = page.getByTestId('work-row');
+	const initialCount = await workRows.count();
+	expect(initialCount).toBeGreaterThan(2);
+
+	// `/` shortcut focuses Work search input; live search filters rows; Escape clears then blurs
+	await page.locator('#shell-page-title').focus();
+	await page.keyboard.press('/');
+	const searchInput = page.getByLabel('Search work');
+	await expect(searchInput).toBeFocused();
+	await searchInput.fill('Custody');
+	await expect(workRows).toHaveCount(1);
+	await expect(workRows.first()).toContainText('Custody lock fix');
+
+	const clearBtn = page.getByRole('button', { name: 'Clear search' });
+	await expect(clearBtn).toBeVisible();
+	await clearBtn.click();
+	await expect(searchInput).toHaveValue('');
+	await expect(workRows).toHaveCount(initialCount);
+
+	await searchInput.fill('Custody');
+	await expect(workRows).toHaveCount(1);
+	await searchInput.press('Escape');
+	await expect(searchInput).toHaveValue('');
+	await expect(searchInput).toBeFocused();
+	await searchInput.press('Escape');
+	await expect(searchInput).not.toBeFocused();
+
+	// Filter work menu: Project scope URL persistence across reload & Reset filters
+	const filterBtn = page.getByRole('button', { name: 'Filter work' });
+	await filterBtn.click();
+	await page.getByRole('menuitemradio', { name: 'Office federation' }).click();
+	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
+	await expect(filterBtn).toHaveAttribute('data-active', '');
+	const filteredCount = await workRows.count();
+	expect(filteredCount).toBeGreaterThan(0);
+	expect(filteredCount).toBeLessThan(initialCount);
+
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
+	await expect(page.getByRole('button', { name: 'Filter work' })).toHaveAttribute(
+		'data-active',
+		''
+	);
+
+	await page.getByRole('button', { name: 'Filter work' }).click();
+	await page.getByRole('menuitem', { name: 'Reset filters' }).click();
+	await expect(page).not.toHaveURL(/[?&]project=/);
+	await expect(page.getByRole('button', { name: 'Filter work' })).not.toHaveAttribute(
+		'data-active'
+	);
+
+	// Work display menu: By project grouping & Row dividers persisted across reload
+	await page.locator('[data-filter="all"]').click();
+	const displayBtn = page.getByRole('button', { name: 'Work display' });
+	await displayBtn.click();
+	await page.getByRole('menuitemradio', { name: 'By project' }).click();
+	await expect(displayBtn).toHaveAttribute('data-active', '');
+	await expect(page.locator('.work-group-title').first()).toBeVisible();
+
+	await displayBtn.click();
+	await page.getByRole('menuitemcheckbox', { name: 'Row dividers' }).click();
+	await expect(page.locator('.work-workspace')).toHaveAttribute('data-work-dividers', '');
+	await page.keyboard.press('Escape');
+
+	// Reload verifies Row dividers persistence
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(page.locator('.work-workspace')).toHaveAttribute('data-work-dividers', '');
+
+	// List / Board layout toggle renders clean status columns & clickable cards opening TaskSheet
+	await page.locator('[data-filter="all"]').click();
+	const layoutGroup = page.getByRole('group', { name: 'Work layout' });
+	const listBtn = layoutGroup.getByRole('button', { name: 'List' });
+	const boardBtn = layoutGroup.getByRole('button', { name: 'Board' });
+	await expect(listBtn).toHaveAttribute('aria-pressed', 'true');
+	await boardBtn.click();
+	await expect(boardBtn).toHaveAttribute('aria-pressed', 'true');
+	const board = page.getByTestId('work-board');
+	await expect(board).toBeVisible();
+	await expect(board.locator('.work-bcol')).toHaveCount(4);
+	await board.getByRole('button', { name: 'Custody lock fix' }).click();
+	await expect(page.getByRole('dialog')).toContainText('Custody lock fix');
+	await page.keyboard.press('Escape');
+	await expect(page.getByRole('dialog')).toBeHidden();
+	await listBtn.click();
+	await expect(listBtn).toHaveAttribute('aria-pressed', 'true');
+	await expect(page.getByTestId('work-list')).toBeVisible();
+
+	// Exact 720px viewport hit targets (>= 44px inclusive width <= 720px)
+	await page.setViewportSize({ width: 720, height: 900 });
+	await page.getByLabel('Search work').fill('Custody');
+	for (const locator of [
+		page.getByRole('tab', { name: /^Tasks/ }),
+		listBtn,
+		boardBtn,
+		page.getByRole('button', { name: 'Filter work' }),
+		page.getByRole('button', { name: 'Work display' }),
+		page.getByRole('button', { name: 'New task' }),
+		page.getByRole('button', { name: 'Clear search' })
+	]) {
+		await expect(locator).toBeVisible();
+		expect((await locator.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+	}
+	await page.getByRole('button', { name: 'Filter work' }).click();
+	const projMenuItem = page.getByRole('menuitemradio', { name: 'All projects' });
+	await expect(projMenuItem).toBeVisible();
+	await expect
+		.poll(async () => (await projMenuItem.boundingBox())?.height ?? 0)
+		.toBeGreaterThanOrEqual(44);
+	await page.keyboard.press('Escape');
+});

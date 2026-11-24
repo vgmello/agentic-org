@@ -5,6 +5,7 @@
 	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { Input } from '$lib/components/ui/input';
 	import { nameOf } from '$lib/work/people';
+	import { matchesWorkSearch } from '$lib/work/work-toolbar';
 	import {
 		ageWord,
 		filterActive,
@@ -27,6 +28,8 @@
 		me,
 		now,
 		organizationId,
+		externalQuery = '',
+		hideNewButton = false,
 		onopen,
 		onnew
 	}: {
@@ -37,6 +40,10 @@
 		/** The owner's id: "Raised by me". */
 		me: string;
 		now: string;
+		/** Optional live query from the Work header search bar. */
+		externalQuery?: string;
+		/** Hide the inline New request button when the Work toolbar owns the primary CTA. */
+		hideNewButton?: boolean;
 		/** Open a request's page; `start` begins one of its steps at once (the Route button of a request not routed). */
 		onopen: (id: string, start?: 'route') => void;
 		onnew: () => void;
@@ -113,29 +120,43 @@
 			project: projectsHere.has(filter.project) ? filter.project : ''
 		};
 	});
-	const shown = $derived(filterRequests(requests, live));
+	const projectName = (id: string | undefined) =>
+		id ? ((snapshot.projects ?? []).find((p) => p.id === id)?.name ?? '') : '';
+	const hasExternalQuery = $derived(externalQuery.trim().length > 0);
+	const shown = $derived(
+		filterRequests(requests, live).filter((r) =>
+			matchesWorkSearch(r, externalQuery, {
+				refText: requestRef(r),
+				projectName: projectName(r.project_id),
+				assigneeName: nameOf(snapshot, r.assignee_id)
+			})
+		)
+	);
 	const groups = $derived(groupRequests(shown));
 	const total = $derived(requests.length);
 	const matching = $derived(shown.length);
 	const selectClass =
 		'h-11 max-w-full min-w-0 rounded-md bg-surface px-2 py-1.5 text-sm/6 sm:h-9 text-fg outline-1 -outline-offset-1 outline-field-border focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus';
-	const projectName = (id: string | undefined) =>
-		id ? ((snapshot.projects ?? []).find((p) => p.id === id)?.name ?? '') : '';
 </script>
 
 <div class="space-y-4" data-testid="requests-queue">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<p class="text-sm/6 text-fg-secondary">
-			Ideas and needs that aren't tasks yet. Someone scopes each one, then you approve it.
-		</p>
-		<button
-			type="button"
-			class="req-cta inline-flex min-h-9 items-center justify-center rounded-lg px-3.5 text-sm/5 font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
-			onclick={onnew}
-			data-testid="new-request"
-		>
-			New request
-		</button>
+		<div class="min-w-0">
+			<p class="text-xs/5 font-medium text-fg-muted">Requests across every project.</p>
+			<p class="text-sm/6 text-fg-secondary">
+				Ideas and needs that aren't tasks yet. Someone scopes each one, then you approve it.
+			</p>
+		</div>
+		{#if !hideNewButton}
+			<button
+				type="button"
+				class="req-cta inline-flex min-h-9 items-center justify-center rounded-lg px-3.5 text-sm/5 font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11"
+				onclick={onnew}
+				data-testid="new-request"
+			>
+				New request
+			</button>
+		{/if}
 	</div>
 
 	{#if total > 0}
@@ -200,7 +221,7 @@
 			No requests yet. Capture one when something comes to mind: write what you need and choose who
 			scopes it.
 		</p>
-	{:else if matching === 0 && live.state === 'open' && !narrowed(live)}
+	{:else if matching === 0 && live.state === 'open' && !narrowed(live) && !hasExternalQuery}
 		<p
 			class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-secondary"
 			data-testid="nothing-open"
@@ -227,7 +248,7 @@
 			{@const list = groups[group.id]}
 			{#if list.length > 0}
 				<details
-					open={!group.collapsed || narrowed(live) || live.state === group.id}
+					open={!group.collapsed || narrowed(live) || hasExternalQuery || live.state === group.id}
 					class="group rounded-xl bg-surface-raised outline-1 -outline-offset-1 outline-line"
 					data-testid="request-group"
 					data-group={group.id}

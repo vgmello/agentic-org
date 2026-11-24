@@ -229,9 +229,11 @@ html[data-ui-theme='report-dark'] {
 	--exec-hor-date-month-ink: #99a1af;
 	--exec-hor-date-day-ink: #ffffff;
 
-	/* Report Night Inbox row hover & selected tints (poc/operations.css 4622ad46) */
+	/* Report Night Inbox & Work row hover & selected tints (poc/operations.css 4622ad46) */
 	--triage-row-hover: #242f3f;
 	--triage-row-selected: #2a3351;
+	--work-row-hover: #242f3f;
+	--work-row-selected: #2a3351;
 }
 
 /* Separate the workspace command dialog from the dark page behind it (poc/v6.html ffe0e0ce) */

@@ -256,9 +256,11 @@ html[data-ui-theme='report'] {
 	--exec-pill-ring-bad: none;
 	--exec-pill-ring-muted: none;
 
-	/* Report Day Inbox row hover & selected tints (poc/operations.css 4622ad46) */
+	/* Report Day Inbox & Work row hover & selected tints (poc/operations.css 4622ad46) */
 	--triage-row-hover: #eaedf3;
 	--triage-row-selected: #d6e2f0;
+	--work-row-hover: #eaedf3;
+	--work-row-selected: #d6e2f0;
 }
 
 /* ── Shared Modern 2D Executive Report Layout Tokens (Day & Night) ── */
@@ -442,8 +444,55 @@ html[data-ui-theme^='report'] .act-page {
 	max-width: none;
 }
 
-html[data-ui-theme^='report'] .triage-page {
+html[data-ui-theme^='report'] .triage-page,
+html[data-ui-theme^='report'] .work-page {
 	padding: 0;
+}
+
+html[data-ui-theme^='report'] .work-header {
+	border-bottom: 1.5px solid var(--report-masthead-rule);
+}
+
+html[data-ui-theme^='report'] .work-group-title {
+	border-radius: var(--exec-ctrl-radius);
+	box-shadow: inset 0 0 0 1px var(--report-rule);
+}
+
+html[data-ui-theme^='report'] .work-bcol {
+	background: var(--exec-well);
+	border-radius: var(--exec-ctrl-radius);
+	box-shadow: inset 0 0 0 1px var(--report-rule);
+}
+
+html[data-ui-theme^='report'] .work-bcard {
+	background: var(--exec-surface);
+	border-radius: var(--exec-ctrl-radius);
+	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+}
+
+html[data-ui-theme='report'] .work-row:is(:hover, :focus-within, [aria-current='true']) .work-ref,
+html[data-ui-theme='report']
+	.work-row:is(:hover, :focus-within, [aria-current='true'])
+	.work-criteria,
+html[data-ui-theme='report']
+	.work-row:is(:hover, :focus-within, [aria-current='true'])
+	.work-owner {
+	color: #334155;
+}
+
+html[data-ui-theme='report']
+	.work-row:is(:hover, :focus-within, [aria-current='true'])
+	.work-status[data-tone='active'] {
+	color: #7c4905;
+}
+
+html[data-ui-theme='report']
+	.work-row:is(:hover, :focus-within, [aria-current='true'])
+	.work-status[data-tone='done'],
+html[data-ui-theme='report']
+	.work-row:is(:hover, :focus-within, [aria-current='true'])
+	.work-criteria.is-complete {
+	color: #0f5d2c;
 }
 
 html[data-ui-theme^='report'] .triage-workspace,

@@ -328,25 +328,58 @@ html[data-ui-theme='graphite'][data-interior-page]
 	color: var(--exec-body);
 }
 
-/* Graphite Work and Inbox share a matte reading canvas (poc/operations.css 1f5f7149..e75d920a) */
+/* Graphite Work and Inbox share a matte reading canvas (poc/operations.css 1f5f7149..e75d920a, 215be52a) */
 html[data-ui-theme='graphite'] main:has(.triage-workspace, .work-header) {
 	background: #18191a;
 }
 
-html[data-ui-theme='graphite']:has(.triage-workspace) {
+html[data-ui-theme='graphite']:has(.triage-workspace, .work-header) {
 	--graphite-inbox-line: #262728;
 	--triage-row-hover: #202226;
 	--triage-row-selected: #2a2d32;
+	--work-row-hover: #202226;
+	--work-row-selected: #2a2d32;
 }
 
-html[data-ui-theme='graphite']:has(.triage-workspace) .exec-sidebar {
+html[data-ui-theme='graphite']:has(.triage-workspace, .work-header) .exec-sidebar {
 	background-color: #131516;
 	box-shadow: inset -1px 0 var(--graphite-inbox-line);
 }
 
-html[data-ui-theme='graphite']:has(.triage-workspace) .exec-topbar {
+html[data-ui-theme='graphite']:has(.triage-workspace, .work-header) .exec-topbar {
 	background: #18191a;
 	border-bottom-color: var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-page {
+	padding: 0;
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-header {
+	border-bottom-color: var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-group-title {
+	background: #1b1d20;
+	box-shadow: inset 0 0 0 1px var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-bcol {
+	background: #141516;
+	box-shadow: inset 0 0 0 1px var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-bcard {
+	background: #1b1d20;
+	box-shadow: inset 0 0 0 1px #282a2e;
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-bcard:is(:hover, :focus-within) {
+	background: #202226;
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-bcard[aria-current='true'] {
+	background: #2a2d32;
 }
 
 html[data-ui-theme='graphite']:has(.triage-workspace) .triage-page {

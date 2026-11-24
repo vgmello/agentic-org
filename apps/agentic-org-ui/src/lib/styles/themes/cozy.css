@@ -530,6 +530,37 @@ html[data-ui-theme='cozy'] .triage-queue {
 	box-shadow: none;
 }
 
+/* Cozy Glass Work surfaces (poc/cozy.css 4622ad46): --cozy-well group headers, no double-boxed .work-items */
+html[data-ui-theme='cozy'] .work-items {
+	background: transparent;
+	box-shadow: none;
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+}
+
+html[data-ui-theme='cozy'] .work-group-title {
+	background: var(--cozy-well);
+	border-radius: 8px;
+	box-shadow: inset 0 0 0 1px var(--cozy-well-edge);
+}
+
+html[data-ui-theme='cozy'] .work-bcol {
+	background: var(--cozy-well);
+	border-radius: 8px;
+	box-shadow: inset 0 0 0 1px var(--cozy-well-edge);
+}
+
+html[data-ui-theme='cozy'] .work-bcard {
+	background: var(--exec-surface);
+	background-image: var(--cozy-panel-sheen);
+	box-shadow: var(--cozy-panel-shadow);
+}
+
+html[data-ui-theme='cozy'] .work-bcard:is(:hover, :focus-within) {
+	background: var(--exec-surface-hi);
+	box-shadow: var(--cozy-panel-shadow-hi);
+}
+
 /* Settings preview swatch */
 .swatch-cozy {
 	background:
