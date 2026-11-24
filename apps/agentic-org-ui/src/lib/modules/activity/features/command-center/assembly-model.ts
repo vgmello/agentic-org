@@ -3,6 +3,7 @@ import { matchesQuery } from '$lib/modules/activity/filter';
 import type { ActivityKind, ActivityQuery, ActivityRow } from '$lib/modules/activity/types';
 import { KIND_WORD } from '$lib/modules/activity/types';
 import type { InboxItem } from '$lib/modules/inbox/types';
+import { dayKey, dayLabel } from '$lib/modules/preferences';
 import { agentsOf, byName, isFormer, memberById, nonOwners, owner } from '$lib/org/model';
 import type { Area, OrgSnapshot, ProjectSummary, WorkItemSummary } from '$lib/proto';
 
@@ -104,6 +105,7 @@ export interface StreamEntry {
 	needsYou: boolean;
 	inboxHref?: string;
 	inboxLabel?: string;
+	inboxTitle?: string;
 	run?: {
 		id: string;
 		state: 'running' | 'succeeded' | 'failed';
@@ -661,6 +663,7 @@ export function deriveStreamEntries(
 					needsYou,
 					inboxHref: matchedInbox ? inboxItemHref(matchedInbox.id) : undefined,
 					inboxLabel: matchedInbox ? 'Review in Inbox' : undefined,
+					inboxTitle: matchedInbox?.title,
 					run: row.run
 						? {
 								id: row.run.id,
@@ -710,9 +713,56 @@ export function deriveStreamEntries(
 				href: workItemHref(item),
 				needsYou,
 				inboxHref: linkedInbox ? inboxItemHref(linkedInbox.id) : undefined,
-				inboxLabel: linkedInbox ? 'Review in Inbox' : undefined
+				inboxLabel: linkedInbox ? 'Review in Inbox' : undefined,
+				inboxTitle: linkedInbox?.title
 			};
 		});
+}
+
+export interface StreamDayGroup {
+	key: string;
+	label: string;
+	entries: StreamEntry[];
+}
+
+/**
+ * Groups stream entries chronologically by calendar day (`Today`, `Yesterday`, or formatted date)
+ * in `zone`, sorting newest-first within and across day sections (`poc` commit `580b6715`).
+ * Entries with unparseable timestamps are placed last under `Earlier`.
+ */
+export function groupStreamEntriesByDay(
+	entries: readonly StreamEntry[],
+	nowMs: number,
+	zone = 'UTC'
+): StreamDayGroup[] {
+	if (entries.length === 0) return [];
+	const now = new Date(nowMs);
+	const ordered = entries
+		.map((entry, index) => {
+			const ms = Date.parse(entry.at);
+			return { entry, index, ms: Number.isNaN(ms) ? -Infinity : ms };
+		})
+		.sort((a, b) => {
+			if (a.ms !== b.ms) return b.ms - a.ms;
+			return a.index - b.index;
+		});
+
+	const groups: StreamDayGroup[] = [];
+	const byKey = new Map<string, StreamDayGroup>();
+	for (const { entry, ms } of ordered) {
+		const isValid = Number.isFinite(ms);
+		const date = isValid ? new Date(ms) : undefined;
+		const key = date ? dayKey(date, zone) : 'earlier';
+		let group = byKey.get(key);
+		if (!group) {
+			const label = date ? dayLabel(date, now, zone) : 'Earlier';
+			group = { key, label, entries: [] };
+			byKey.set(key, group);
+			groups.push(group);
+		}
+		group.entries.push(entry);
+	}
+	return groups;
 }
 
 export function filterStreamEntries(

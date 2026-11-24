@@ -22,7 +22,7 @@
 	const dataUnavailable = $derived(loading || Boolean(unavailableReason));
 </script>
 
-<aside class="ops-rail" aria-label="Operational context">
+<aside class="ops-rail activity-rail" aria-label="Operational context">
 	<!-- 1. Release Gates -->
 	<section class="ops-section" aria-labelledby="ops-gates-heading">
 		<div class="ops-section-head">
@@ -40,7 +40,7 @@
 					<li>
 						<a
 							href={resolve(gate.href as '/inbox')}
-							class="ops-gate-link min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+							class="ops-gate-link min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 						>
 							<span class="ops-gate-label">
 								{#if gate.tone === 'ok'}
@@ -82,7 +82,7 @@
 							<li>
 								<a
 									href={resolve(approval.href as '/inbox')}
-									class="ops-approval-link min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+									class="ops-approval-link min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 								>
 									{approval.title}
 								</a>
@@ -560,7 +560,7 @@
 		white-space: nowrap;
 	}
 
-	@media (min-width: 640px) and (max-width: 1023px) {
+	@media (min-width: 640px) and (max-width: 1249px) {
 		.ops-rail {
 			display: grid;
 			grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -572,6 +572,13 @@
 		}
 		.ops-section + .ops-section {
 			border-top: 0;
+		}
+	}
+
+	@media (min-width: 960px) and (max-width: 1249px) {
+		.ops-rail {
+			grid-template-columns: repeat(4, minmax(0, 1fr));
+			gap: 14px;
 		}
 	}
 

@@ -76,9 +76,14 @@
 	const compose = $derived(composerState(chatState, ctx, conversation, officeRunning));
 	const title = $derived(titleOf(conversation, ctx, ctx.owner));
 	let closeButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
+	let headingEl = $state<HTMLHeadingElement | null>(null);
 	export function focusClose() {
 		closeButton?.focus({ preventScroll: true });
 		closeButton?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	}
+	export function focusHeading() {
+		headingEl?.focus({ preventScroll: true });
+		headingEl?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	}
 </script>
 
@@ -91,7 +96,12 @@
 	data-testid="thread-panel"
 >
 	<div class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-fg">
+		<h2
+			id="chat-thread-title"
+			bind:this={headingEl}
+			tabindex="-1"
+			class="min-w-0 rounded-sm text-sm/6 font-semibold break-words text-fg focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+		>
 			Thread <span class="font-normal text-fg-muted">in {title}</span>
 		</h2>
 		<Button

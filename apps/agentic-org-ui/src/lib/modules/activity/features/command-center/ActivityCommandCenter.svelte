@@ -10,6 +10,7 @@
 	import type { ActivityQuery, ActivityRow } from '$lib/modules/activity/types';
 	import { inboxApi } from '$lib/modules/inbox/api';
 	import type { InboxItem } from '$lib/modules/inbox/types';
+	import { accountZone } from '$lib/modules/preferences';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import type { OrgSnapshot } from '$lib/proto';
 	import ActivityOpsRail from './ActivityOpsRail.svelte';
@@ -233,6 +234,7 @@
 
 	$effect(() => {
 		const id = organizationId;
+		void accountZone.ensure(id);
 		fetchInbox(id, true);
 		return () => {
 			inboxLoadSeq += 1;
@@ -766,7 +768,7 @@
 					aria-label="Project scope"
 					value={effectiveProjectScope}
 					onchange={(event) => (projectScope = event.currentTarget.value)}
-					class="cmd-select min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+					class="cmd-select min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 				>
 					<option value="all">
 						All projects ({model.activeProjects.length} active)
@@ -788,7 +790,7 @@
 					aria-pressed={viewMode === 'assembly'}
 					onclick={() => (viewMode = 'assembly')}
 					class={[
-						'cmd-toggle-btn min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11',
+						'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
 						viewMode === 'assembly' && 'is-on'
 					]}
 				>
@@ -800,7 +802,7 @@
 					aria-pressed={viewMode === 'feed'}
 					onclick={() => (viewMode = 'feed')}
 					class={[
-						'cmd-toggle-btn min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11',
+						'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
 						viewMode === 'feed' && 'is-on'
 					]}
 				>
@@ -817,7 +819,7 @@
 						disabled={isHeaderRetrying}
 						aria-busy={isHeaderRetrying}
 						onclick={handleHeaderRetry}
-						class="cmd-needs-pill is-warn min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						class="cmd-needs-pill is-warn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					>
 						<AlertTriangle class="size-3.5" aria-hidden="true" />
 						<span>
@@ -832,21 +834,21 @@
 					</button>
 				{:else if !shellReady || inboxPhase === 'loading'}
 					<span
-						class="cmd-needs-pill is-neutral min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						class="cmd-needs-pill is-neutral min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					>
 						<span>Loading status…</span>
 					</span>
 				{:else if model.needsYouCount > 0}
 					<a
 						href={resolve('/inbox')}
-						class="cmd-needs-pill is-warn min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						class="cmd-needs-pill is-warn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					>
 						<span class="cmd-needs-dot" aria-hidden="true"></span>
 						<span class="tabular-nums">{model.needsYouCount} need you</span>
 					</a>
 				{:else}
 					<span
-						class="cmd-needs-pill is-ok min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						class="cmd-needs-pill is-ok min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					>
 						<CheckCircle2 class="size-3.5" aria-hidden="true" />
 						<span>All caught up</span>
@@ -875,7 +877,7 @@
 				disabled={isReconnecting}
 				aria-busy={isReconnecting}
 				onclick={reconnectLiveUpdates}
-				class="cmd-live-reconnect min-h-9 min-w-9 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+				class="cmd-live-reconnect min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 			>
 				{#if isReconnecting}
 					Reconnecting…
@@ -889,7 +891,7 @@
 	{/if}
 
 	<!-- Responsive 2-Column Main + Operational Rail -->
-	<div class="cmd-layout">
+	<div class="cmd-layout activity-layout">
 		<div class="cmd-main">
 			{#if viewMode === 'assembly'}
 				<AssemblyLineMatrix
@@ -1178,7 +1180,7 @@
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
 		align-items: start;
-		gap: 16px;
+		gap: 20px;
 		min-width: 0;
 		max-width: 100%;
 	}
@@ -1188,15 +1190,10 @@
 		max-width: 100%;
 	}
 
-	@media (min-width: 1024px) {
-		.cmd-layout {
-			grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
-		}
-	}
-
-	@media (min-width: 1280px) {
-		.cmd-layout {
-			grid-template-columns: minmax(0, 1fr) minmax(240px, 276px);
+	@media (min-width: 1250px) {
+		.cmd-layout,
+		.activity-layout:has(:global(.activity-feed)) {
+			grid-template-columns: minmax(0, 1fr) minmax(246px, 280px);
 		}
 	}
 

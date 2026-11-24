@@ -17,6 +17,11 @@
 		type Sidebar
 	} from '$lib/modules/messaging/model';
 	import Avatar from '$lib/modules/messaging/components/Avatar.svelte';
+	import {
+		isTextEntryTarget,
+		nextSidebarIndex,
+		sidebarNavAction
+	} from '$lib/modules/messaging/sidebar-nav';
 
 	/** The left column (CHAT-1): Needs you, Mentions, Threads, channels, direct messages, and what is read as the owner. */
 	let {
@@ -106,6 +111,24 @@
 		if (group instanceof HTMLDetailsElement) group.open = true;
 		item?.focus();
 	}
+
+	function handleNavKeydown(event: KeyboardEvent) {
+		if (isTextEntryTarget(event.target)) return;
+		const direction = sidebarNavAction(event);
+		if (!direction || !nav) return;
+		const target = event.target;
+		if (!(target instanceof HTMLElement)) return;
+		const currentButton = target.closest<HTMLButtonElement>('button[data-chat-nav-item]');
+		if (!currentButton || !nav.contains(currentButton)) return;
+		const items = [...nav.querySelectorAll<HTMLButtonElement>('button[data-chat-nav-item]')].filter(
+			(button) => !button.disabled && !button.closest('details:not([open])')
+		);
+		const currentIndex = items.indexOf(currentButton);
+		const nextIndex = nextSidebarIndex(currentIndex, items.length, direction);
+		if (nextIndex < 0) return;
+		event.preventDefault();
+		items[nextIndex]?.focus();
+	}
 </script>
 
 {#snippet row(r: ConversationRow)}
@@ -118,6 +141,7 @@
 			aria-label={r.other && r.presence
 				? `${r.title}, ${PRESENCE_WORD[r.presence]}${r.mentions ? `, ${r.mentions} mentions` : r.unread ? `, ${r.unread} unread` : ''}`
 				: undefined}
+			data-chat-nav-item
 			data-testid="conversation-link"
 			data-conversation={r.conversation.id}
 			onclick={() => onselect({ type: 'conversation', id: r.conversation.id })}
@@ -164,8 +188,10 @@
 {/snippet}
 
 {#snippet navigation()}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<nav
 		bind:this={nav}
+		onkeydown={handleNavKeydown}
 		class="chat-rail flex h-full w-full min-w-0 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-line p-[min(.75rem,12px)]"
 		aria-label="Chat"
 	>
@@ -175,6 +201,7 @@
 					type="button"
 					class={[item, here({ type: 'needs' }) ? 'chat-nav-on font-medium text-fg' : off]}
 					aria-current={here({ type: 'needs' }) ? 'true' : undefined}
+					data-chat-nav-item
 					data-testid="needs-you-link"
 					onclick={() => onselect({ type: 'needs' })}
 				>
@@ -198,6 +225,7 @@
 					type="button"
 					class={[item, here({ type: 'mentions' }) ? 'chat-nav-on font-medium text-fg' : off]}
 					aria-current={here({ type: 'mentions' }) ? 'true' : undefined}
+					data-chat-nav-item
 					data-testid="mentions-link"
 					onclick={() => onselect({ type: 'mentions' })}
 				>
@@ -222,6 +250,7 @@
 					type="button"
 					class={[item, here({ type: 'threads' }) ? 'chat-nav-on font-medium text-fg' : off]}
 					aria-current={here({ type: 'threads' }) ? 'true' : undefined}
+					data-chat-nav-item
 					data-testid="threads-link"
 					onclick={() => onselect({ type: 'threads' })}
 				>

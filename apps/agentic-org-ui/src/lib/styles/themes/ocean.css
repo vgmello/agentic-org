@@ -269,7 +269,6 @@ html[data-ui-theme='ocean']
 		.exec-sidebar,
 		.exec-cmdk-bar,
 		.inbox-card,
-		.act-list,
 		[data-slot='dialog-content'],
 		[data-slot='sheet-content'],
 		[data-slot='popover-content']
@@ -350,7 +349,7 @@ html[data-ui-theme='ocean'][data-interior-page] .exec-nav-item.is-active {
 }
 
 html[data-ui-theme='ocean'][data-interior-page]
-	:is(.exec-card, .exec-well, .exec-cmdk-bar, .inbox-card, .act-list) {
+	:is(.exec-card, .exec-well, .exec-cmdk-bar, .inbox-card) {
 	-webkit-backdrop-filter: none;
 	backdrop-filter: none;
 }

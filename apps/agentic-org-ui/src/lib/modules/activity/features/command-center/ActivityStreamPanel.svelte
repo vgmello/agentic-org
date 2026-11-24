@@ -12,8 +12,10 @@
 	import Play from '@lucide/svelte/icons/play';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import { relativeAge } from '$lib/home/model';
+	import { accountZone, eventTime } from '$lib/modules/preferences';
 	import {
 		filterStreamEntries,
+		groupStreamEntriesByDay,
 		type BottleneckSummary,
 		type FeedPhase,
 		type StreamEntry,
@@ -79,6 +81,14 @@
 	const filteredEntries = $derived(
 		isDecisionTab ? [...decisionEntries] : filterStreamEntries(entries, activeFilter)
 	);
+	const nowDate = $derived(new Date(nowMs));
+	const dayGroups = $derived(groupStreamEntriesByDay(filteredEntries, nowMs, accountZone.zone));
+
+	function entryTimestamp(at: string) {
+		const ms = Date.parse(at);
+		if (Number.isNaN(ms)) return { text: relativeAge(at, nowMs), full: at, iso: undefined };
+		return eventTime(new Date(ms), nowDate, accountZone.zone, true);
+	}
 	const showEmptyInboxShortcut = $derived(
 		activePhase === 'ready' &&
 			activeFilter === 'needs_you' &&
@@ -132,7 +142,7 @@
 	}
 </script>
 
-<section class="stream-panel act-list" aria-label="Chronological activity stream">
+<section class="stream-panel activity-feed" aria-label="Chronological activity stream">
 	<!-- WAI-ARIA Tabs Pattern with roving tabindex and Arrow/Home/End navigation -->
 	<div class="stream-tabs-wrap">
 		<div class="stream-tabs" role="tablist" aria-label="Filter activity stream">
@@ -147,7 +157,7 @@
 					onclick={() => (activeFilter = tab.id)}
 					onkeydown={(event) => handleTabKeydown(event, index)}
 					class={[
-						'stream-tab min-h-9 min-w-9 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
+						'stream-tab min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
 						activeFilter === tab.id && 'is-active'
 					]}
 				>
@@ -234,7 +244,7 @@
 					<button
 						type="button"
 						onclick={handleRetryClick}
-						class="stream-retry-btn min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						class="stream-retry-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					>
 						<RefreshCw class="size-3.5" aria-hidden="true" />
 						<span>Retry</span>
@@ -255,7 +265,7 @@
 					</p>
 					<a
 						href={resolve('/inbox')}
-						class="stream-inbox-action min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						class="stream-inbox-action min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					>
 						<Inbox class="size-3.5" aria-hidden="true" />
 						<span>Open Inbox</span>
@@ -267,7 +277,7 @@
 					</p>
 					<a
 						href={resolve('/work')}
-						class="stream-inbox-action min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						class="stream-inbox-action min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					>
 						<span>Open Work</span>
 					</a>
@@ -292,138 +302,151 @@
 				{/if}
 			</div>
 		{:else}
-			<ul class="stream-list">
-				{#each filteredEntries as entry (entry.id)}
-					{@const hasLog = Boolean(entry.run?.log && entry.run.log.length > 0)}
-					{@const isExpanded = expandedRuns.has(entry.id)}
-					<li class="stream-row">
-						<div class="stream-row-avatar" data-tone={entry.tone} aria-hidden="true">
-							<span>{entry.actorInitials}</span>
-						</div>
+			{#each dayGroups as group (group.key)}
+				<section class="activity-day" aria-labelledby={`activity-day-${group.key}`}>
+					<h2 id={`activity-day-${group.key}`}>{group.label}</h2>
+					<ol class="activity-timeline" role="list">
+						{#each group.entries as entry (entry.id)}
+							{@const hasLog = Boolean(entry.run?.log && entry.run.log.length > 0)}
+							{@const isExpanded = expandedRuns.has(entry.id)}
+							{@const when = entryTimestamp(entry.at)}
+							<li class="stream-row">
+								<div class="stream-row-avatar" data-tone={entry.tone} aria-hidden="true">
+									<span>{entry.actorInitials}</span>
+								</div>
 
-						<div class="stream-row-content">
-							<div class="stream-row-head">
-								<span class="stream-actor">{entry.actorName}</span>
-								<span class="stream-kind">
-									{#if entry.tone === 'ok'}
-										<CheckCircle2
-											class="size-3.5"
-											style="color: var(--exec-ok);"
-											aria-hidden="true"
-										/>
-									{:else if entry.tone === 'bad'}
-										<AlertTriangle
-											class="size-3.5"
-											style="color: var(--exec-bad);"
-											aria-hidden="true"
-										/>
-									{:else if entry.tone === 'warn'}
-										<AlertTriangle
-											class="size-3.5"
-											style="color: var(--exec-warn);"
-											aria-hidden="true"
-										/>
-									{:else if entry.kind === 'conversation'}
-										<MessageSquare
-											class="size-3.5"
-											style="color: var(--exec-sky);"
-											aria-hidden="true"
-										/>
-									{:else if entry.kind === 'run'}
-										<Play
-											class="size-3.5"
-											style="color: var(--tone-accent-ink);"
-											aria-hidden="true"
-										/>
-									{:else}
-										<Clock
-											class="size-3.5"
-											style="color: var(--fg-secondary);"
-											aria-hidden="true"
-										/>
-									{/if}
-									<span>{entry.kindLabel}</span>
-								</span>
-								{#if entry.needsYou}
-									<span class="stream-needs-pill">Needs you</span>
-								{/if}
-								{#each entry.projects as proj (proj)}
-									<span class="stream-project-pill">{proj}</span>
-								{/each}
-							</div>
-
-							<div class="stream-row-text">
-								<a
-									href={resolve(entry.href as '/work')}
-									class="stream-row-link min-h-9 min-w-9 max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-								>
-									{entry.text}
-								</a>
-							</div>
-
-							{#if entry.preview}
-								<p class="stream-row-preview">{entry.preview}</p>
-							{/if}
-
-							{#if entry.run}
-								<p class="stream-run-meta">
-									<span>{entry.run.trigger}</span>
-									{#if entry.run.outcome}
-										<span aria-hidden="true">·</span>
-										<span class={entry.run.state === 'failed' ? 'is-bad' : 'is-ok'}>
-											{entry.run.outcome}
+								<div class="stream-row-content">
+									<div class="stream-row-head">
+										<span class="stream-actor">{entry.actorName}</span>
+										<span class="stream-kind">
+											{#if entry.tone === 'ok'}
+												<CheckCircle2
+													class="size-3.5"
+													style="color: var(--exec-ok);"
+													aria-hidden="true"
+												/>
+											{:else if entry.tone === 'bad'}
+												<AlertTriangle
+													class="size-3.5"
+													style="color: var(--exec-bad);"
+													aria-hidden="true"
+												/>
+											{:else if entry.tone === 'warn'}
+												<AlertTriangle
+													class="size-3.5"
+													style="color: var(--exec-warn);"
+													aria-hidden="true"
+												/>
+											{:else if entry.kind === 'conversation'}
+												<MessageSquare
+													class="size-3.5"
+													style="color: var(--exec-sky);"
+													aria-hidden="true"
+												/>
+											{:else if entry.kind === 'run'}
+												<Play
+													class="size-3.5"
+													style="color: var(--tone-accent-ink);"
+													aria-hidden="true"
+												/>
+											{:else}
+												<Clock
+													class="size-3.5"
+													style="color: var(--fg-secondary);"
+													aria-hidden="true"
+												/>
+											{/if}
+											<span>{entry.kindLabel}</span>
 										</span>
-									{/if}
-								</p>
-							{/if}
+										{#if entry.needsYou}
+											<span class="stream-needs-pill">Needs you</span>
+										{/if}
+										{#each entry.projects as proj (proj)}
+											<span class="stream-project-pill">{proj}</span>
+										{/each}
+									</div>
 
-							{#if entry.inboxHref || hasLog}
-								<div class="stream-row-actions">
-									{#if entry.inboxHref}
+									<div class="stream-row-text">
 										<a
-											href={resolve(entry.inboxHref as '/inbox')}
-											class="stream-inbox-action min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											href={resolve(entry.href as '/work')}
+											class="stream-row-link min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 										>
-											<Inbox class="size-3.5" aria-hidden="true" />
-											<span>{entry.inboxLabel ?? 'Review in Inbox'}</span>
+											{entry.text}
 										</a>
+									</div>
+
+									{#if entry.preview}
+										<p class="stream-row-preview">{entry.preview}</p>
+									{/if}
+
+									{#if entry.run}
+										<p class="stream-run-meta">
+											<span>{entry.run.trigger}</span>
+											{#if entry.run.outcome}
+												<span aria-hidden="true">·</span>
+												<span class={entry.run.state === 'failed' ? 'is-bad' : 'is-ok'}>
+													{entry.run.outcome}
+												</span>
+											{/if}
+										</p>
+									{/if}
+
+									{#if entry.inboxHref}
+										<div class="activity-triage">
+											{#if entry.inboxTitle}
+												<span class="activity-triage-title">{entry.inboxTitle}</span>
+											{/if}
+											<a
+												href={resolve(entry.inboxHref as '/inbox')}
+												class="stream-inbox-action min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												<Inbox class="size-3.5" aria-hidden="true" />
+												<span>{entry.inboxLabel ?? 'Review in Inbox'}</span>
+											</a>
+										</div>
 									{/if}
 
 									{#if hasLog}
-										<button
-											type="button"
-											aria-expanded={isExpanded}
-											aria-controls={`run-log-${entry.id}`}
-											onclick={() => toggleRunLog(entry.id)}
-											class="stream-log-btn min-h-9 max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										<div class="stream-row-actions">
+											<button
+												type="button"
+												aria-expanded={isExpanded}
+												aria-controls={`run-log-${entry.id}`}
+												onclick={() => toggleRunLog(entry.id)}
+												class="stream-log-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												{#if isExpanded}
+													<ChevronDown class="size-3.5" aria-hidden="true" />
+													<span>Hide run log</span>
+												{:else}
+													<ChevronRight class="size-3.5" aria-hidden="true" />
+													<span>Show run log</span>
+												{/if}
+											</button>
+										</div>
+									{/if}
+
+									{#if hasLog && entry.run?.log}
+										<ol
+											id={`run-log-${entry.id}`}
+											class="stream-run-log runlog"
+											hidden={!isExpanded}
 										>
-											{#if isExpanded}
-												<ChevronDown class="size-3.5" aria-hidden="true" />
-												<span>Hide run log</span>
-											{:else}
-												<ChevronRight class="size-3.5" aria-hidden="true" />
-												<span>Show run log</span>
-											{/if}
-										</button>
+											{#each entry.run.log as line, idx (`${entry.id}-log-${idx}`)}
+												<li>{line}</li>
+											{/each}
+										</ol>
 									{/if}
 								</div>
-							{/if}
 
-							{#if hasLog && entry.run?.log}
-								<ol id={`run-log-${entry.id}`} class="stream-run-log" hidden={!isExpanded}>
-									{#each entry.run.log as line, idx (`${entry.id}-log-${idx}`)}
-										<li>{line}</li>
-									{/each}
-								</ol>
-							{/if}
-						</div>
-
-						<div class="stream-row-time tabular-nums">
-							{relativeAge(entry.at, nowMs)}
-						</div>
-					</li>
-				{/each}
-			</ul>
+								<time datetime={when.iso} title={when.full} class="stream-row-time tabular-nums">
+									{when.text}
+								</time>
+							</li>
+						{/each}
+					</ol>
+				</section>
+			{/each}
 		{/if}
 	</div>
 </section>
@@ -432,26 +455,24 @@
 	.stream-panel {
 		min-width: 0;
 		max-width: 100%;
-		overflow: hidden;
-		border: 1px solid var(--line);
-		border-radius: var(--exec-inset-radius, 12px);
-		background-color: var(--exec-surface);
-		background-image: var(--exec-panel-sheen);
-		-webkit-backdrop-filter: var(--exec-blur);
-		backdrop-filter: var(--exec-blur);
+		border: 0;
+		border-radius: 0;
+		background: transparent;
+		-webkit-backdrop-filter: none;
+		backdrop-filter: none;
 	}
 
 	.stream-tabs-wrap {
 		overflow-x: auto;
 		border-bottom: 1px solid var(--line);
-		background: var(--exec-well);
+		background: transparent;
 	}
 
 	.stream-tabs {
 		display: flex;
 		align-items: center;
-		gap: 4px;
-		padding: 4px 12px 0;
+		gap: 12px;
+		padding: 0 2px;
 	}
 
 	.stream-tab {
@@ -505,7 +526,7 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 8px 16px;
-		padding: 10px 16px;
+		padding: 10px 4px;
 		border-bottom: 1px solid var(--line);
 		font-size: 0.75rem;
 	}
@@ -606,21 +627,44 @@
 		outline-offset: 2px;
 	}
 
-	.stream-list {
+	.activity-day h2 {
+		margin: 0;
+		padding: 14px 8px 2px;
+		color: var(--fg-secondary);
+		font-size: 0.8125rem;
+		font-weight: 600;
+	}
+
+	.activity-day + .activity-day {
+		margin-block-start: 8px;
+	}
+
+	.activity-timeline {
+		--activity-entry-padding: 14px;
+		--timeline-gutter: 8px;
 		margin: 0;
 		padding: 0;
 		list-style: none;
 	}
 
-	.stream-row {
+	.activity-timeline > li.stream-row {
+		position: relative;
 		display: flex;
 		align-items: flex-start;
 		gap: 12px;
-		padding: 14px 16px;
+		padding: var(--activity-entry-padding) var(--timeline-gutter);
+		border-radius: var(--exec-sm-radius, 6px);
+		border-bottom: 0;
 	}
 
-	.stream-row + .stream-row {
-		border-top: 1px solid var(--line-subtle);
+	.activity-timeline > li.stream-row:not(:last-child)::before {
+		content: '';
+		position: absolute;
+		inset-block: calc(var(--activity-entry-padding) + 34px)
+			calc(2px - var(--activity-entry-padding));
+		inset-inline-start: calc(var(--timeline-gutter) + 13.5px);
+		border-inline-start: 1px solid var(--line-strong);
+		pointer-events: none;
 	}
 
 	.stream-row:hover {
@@ -770,6 +814,31 @@
 		font-weight: 550;
 	}
 
+	.activity-triage {
+		display: grid;
+		justify-items: start;
+		gap: 6px;
+		width: min(100%, 560px);
+		margin-top: 8px;
+		padding: 8px 10px;
+		border: 1px solid var(--line-strong);
+		border-radius: var(--exec-ctrl-radius, 8px);
+		background: var(--surface-raised);
+	}
+
+	.activity-triage:focus-within {
+		outline: 2px solid var(--focus);
+		outline-offset: 1px;
+	}
+
+	.activity-triage-title {
+		color: var(--exec-body);
+		font-size: 0.8125rem;
+		font-weight: 550;
+		line-height: 1.4;
+		overflow-wrap: anywhere;
+	}
+
 	.stream-row-actions {
 		display: flex;
 		flex-wrap: wrap;
@@ -846,13 +915,14 @@
 		font-size: 0.75rem;
 		white-space: nowrap;
 		flex-shrink: 0;
-		padding-top: 4px;
+		padding-block-start: 2px;
 	}
 
 	@media (forced-colors: active) {
 		.stream-tab.is-active {
 			border: 2px solid Highlight;
 		}
+		.activity-triage,
 		.stream-inbox-action,
 		.stream-log-btn,
 		.stream-retry-btn {

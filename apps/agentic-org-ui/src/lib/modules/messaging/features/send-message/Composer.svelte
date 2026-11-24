@@ -226,7 +226,7 @@
 	const rows = $derived(Math.min(8, Math.max(2, text.split('\n').length)));
 </script>
 
-<div class="border-t border-line bg-surface-sunken/30 px-4 py-3">
+<div class="chat-compose border-t border-line bg-surface-sunken/30 px-4 py-3">
 	{#if note}<p
 			class="mb-2 text-sm/6 {canWrite ? 'text-info-text-strong' : 'text-fg-secondary'}"
 			data-testid="composer-note"

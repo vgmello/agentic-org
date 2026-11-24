@@ -90,7 +90,7 @@
 	let membersOpener: HTMLElement | undefined;
 	let compactPanels = $state(false);
 	let conversationEl = $state<HTMLElement | undefined>();
-	let panel = $state<{ focusClose: () => void } | undefined>();
+	let panel = $state<{ focusClose: () => void; focusHeading?: () => void } | undefined>();
 	let query = $state('');
 	let readMarker = $state<string | undefined>();
 	let showMuted = $state(false);
@@ -798,9 +798,17 @@
 		rowActivity.release(threadOpener, 'thread');
 		threadOpener = opener;
 		rowActivity.hold(m.id, opener, 'thread');
-		threadRoot = m.thread_root_id ?? m.id;
+		const nextRoot = m.thread_root_id ?? m.id;
+		threadRoot = nextRoot;
 		showMembers = false;
 		writePlace();
+		if (!compactPanels) {
+			void tick().then(() => {
+				if (!compactPanels && threadRoot === nextRoot) {
+					panel?.focusHeading?.();
+				}
+			});
+		}
 	}
 	const openMessage = (m: ChatMessage) => {
 		openLocation({ conversation: m.conversation_id, message: m.id });
@@ -887,7 +895,7 @@
 				field instanceof HTMLTextAreaElement ||
 				(field instanceof HTMLInputElement &&
 					/^(text|search|email|url|tel|password|number)$/.test(field.type));
-			if (event.isComposing || (textField && field.value !== '')) return;
+			if (event.isComposing || event.keyCode === 229 || (textField && field.value !== '')) return;
 			event.preventDefault();
 			if (panelKind === 'thread') closeThread();
 			else closeMembers();
@@ -971,7 +979,7 @@
 			aria-label="Conversation"
 		>
 			<div
-				class="chat-conv-head flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3 [@media(width<=640px)]:px-[8px]"
+				class="chat-conv-head flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3 [@media(width<640px)]:px-[8px]"
 			>
 				<div class="min-w-0 max-w-full">
 					<div class="flex min-w-0 flex-wrap items-center gap-2">
@@ -1012,7 +1020,7 @@
 							{subtitle}{#if conversation.archived}{' · Archived'}{/if}
 						</p>{/if}
 				</div>
-				<div class="flex max-w-full flex-wrap items-center gap-2 [@media(width<=640px)]:w-full">
+				<div class="flex max-w-full flex-wrap items-center gap-2 [@media(width<640px)]:w-full">
 					<Badge variant="secondary" data-testid="sample-data-note">Sample data</Badge>
 					{#if conversation && !searching}
 						<Button
@@ -1025,7 +1033,7 @@
 							><Users aria-hidden="true" /> Members</Button
 						>
 					{/if}
-					<div class="relative min-w-0 max-w-full [@media(width<=640px)]:w-full">
+					<div class="relative min-w-0 max-w-full [@media(width<640px)]:w-full">
 						<Search
 							class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-fg-muted"
 							aria-hidden="true"
@@ -1037,7 +1045,7 @@
 							value={query}
 							oninput={(event) => changeQuery(event.currentTarget.value)}
 							placeholder="Search · from:@ada in:#atlas has:ask"
-							class="w-56 max-w-full rounded-md bg-surface-raised py-1.5 pr-3 pl-8 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus [@media(width<=640px)]:w-full"
+							class="w-56 max-w-full rounded-md bg-surface-raised py-1.5 pr-3 pl-8 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus [@media(width<640px)]:w-full"
 							data-testid="chat-search"
 						/>
 					</div>
@@ -1063,7 +1071,7 @@
 			<div
 				bind:this={listEl}
 				data-focus-scope
-				class="min-h-16 flex-1 overflow-y-auto px-3 py-3 [@media(width<=640px)]:px-[8px]"
+				class="min-h-16 flex-1 overflow-y-auto px-3 py-3 [@media(width<640px)]:px-[8px]"
 				data-testid="message-list"
 				tabindex="-1"
 				role="region"
