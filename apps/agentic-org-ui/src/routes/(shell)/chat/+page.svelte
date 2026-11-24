@@ -88,6 +88,7 @@
 	}
 	let showMembers = $state(false);
 	let membersOpener: HTMLElement | undefined;
+	let threadOriginView: ChatView | undefined;
 	let compactPanels = $state(false);
 	let conversationEl = $state<HTMLElement | undefined>();
 	let panel = $state<{ focusClose: () => void; focusHeading?: () => void } | undefined>();
@@ -448,6 +449,7 @@
 		view = next;
 		threadRoot = undefined;
 		threadOpener = undefined;
+		threadOriginView = undefined;
 		rowActivity.clear();
 		showMembers = false;
 		membersOpener = undefined;
@@ -513,10 +515,42 @@
 			if (pendingPlace === next) pendingPlace = undefined;
 		});
 	}
+	function findLiveThreadOpener(rootId: string | undefined): HTMLElement | null {
+		if (!rootId || !listEl) return null;
+		return (
+			listEl.querySelector<HTMLElement>(`[data-thread-opener="${CSS.escape(rootId)}"]`) ??
+			listEl.querySelector<HTMLElement>(
+				`[data-id="${CSS.escape(rootId)}"] [data-testid="replies-link"]`
+			)
+		);
+	}
 	function closeThread(restore = true) {
 		const closedRoot = threadRoot;
 		const wasOpen = !!closedRoot;
 		const opener = threadOpener;
+		const originView = threadOriginView;
+		threadOriginView = undefined;
+		// If opened from Threads and the root message is hidden/muted in the conversation,
+		// return directly to the Threads list in one navigation and focus that exact thread button.
+		if (
+			wasOpen &&
+			restore &&
+			closedRoot &&
+			originView?.type === 'threads' &&
+			!opener?.isConnected &&
+			!findLiveThreadOpener(closedRoot)
+		) {
+			select({ type: 'threads' });
+			void tick().then(() => {
+				if (threadRoot || view.type !== 'threads') return;
+				const target =
+					document.querySelector<HTMLElement>(
+						`[data-testid="threads-list"] [data-thread-opener="${CSS.escape(closedRoot)}"]`
+					) ?? listEl;
+				focusVisible(target);
+			});
+			return;
+		}
 		rowActivity.returning(opener, 'thread');
 		threadRoot = undefined;
 		highlight = undefined;
@@ -527,18 +561,10 @@
 					rowActivity.focused(opener);
 					return;
 				}
-				const liveThreadOpener =
-					closedRoot && listEl
-						? (listEl.querySelector<HTMLElement>(
-								`[data-thread-opener="${CSS.escape(closedRoot)}"]`
-							) ??
-							listEl.querySelector<HTMLElement>(
-								`[data-id="${CSS.escape(closedRoot)}"] [data-testid="replies-link"]`
-							))
-						: null;
-				const target = opener?.isConnected ? opener : (liveThreadOpener ?? listEl);
+				const target = opener?.isConnected ? opener : (findLiveThreadOpener(closedRoot) ?? listEl);
 				focusVisible(target);
-				rowActivity.focused(target ?? opener);
+				// Always release the original opener held in RowActivity (never a replacement node).
+				rowActivity.focused(opener);
 				threadOpener = undefined;
 			});
 		else {
@@ -802,9 +828,11 @@
 		await load();
 	}
 	function openThread(m: ChatMessage, opener: HTMLElement) {
+		const fromThreads = view.type === 'threads';
 		if (chatState && (searching || view.type !== 'conversation' || view.id !== m.conversation_id)) {
 			select({ type: 'conversation', id: m.conversation_id }, false);
 		}
+		threadOriginView = fromThreads ? { type: 'threads' } : undefined;
 		rowActivity.release(threadOpener, 'thread');
 		threadOpener = opener;
 		rowActivity.hold(m.id, opener, 'thread');
@@ -1159,6 +1187,7 @@
 							<li>
 								<button
 									type="button"
+									data-thread-opener={t.root.id}
 									class="w-full rounded-lg border border-line bg-tint/[0.03] p-3 text-left hover:bg-surface-raised"
 									onclick={(event) => openThread(t.root, event.currentTarget)}
 								>
