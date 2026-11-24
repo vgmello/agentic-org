@@ -1,12 +1,12 @@
 ---
 id: TASK-85.2
 title: >-
-  AX 2/3: Complete agent Day-1 onboarding, fix standing instructions assembly,
-  and ship phase-gated agent-os skills
+  AX 2/4: Agent Day-1 onboarding, prefix-cached instructions, wake fencing,
+  baseline skills & flag-level drift guard
 status: To Do
 assignee: []
 created_date: '2026-11-22T14:37:00Z'
-updated_date: '2026-11-23T04:54:00Z'
+updated_date: '2026-11-24T03:17:00Z'
 labels:
   - ax
   - backend

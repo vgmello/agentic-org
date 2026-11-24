@@ -1,12 +1,12 @@
 ---
 id: TASK-85.3
 title: >-
-  AX 3/3: agent-os CLI AX upgrades (catalogue scaling, help examples, query
-  filters, envelope fixes) and multi-runtime AX evals
+  AX 3/4: agent-os CLI AX upgrades (4 KiB catalogue grouping, help examples,
+  session attach, pagination, msg ask flags, unchecked startup)
 status: To Do
 assignee: []
 created_date: '2026-11-22T14:37:00Z'
-updated_date: '2026-11-23T04:54:00Z'
+updated_date: '2026-11-24T03:17:00Z'
 labels:
   - ax
   - backend
@@ -19,8 +19,6 @@ dependencies:
   - TASK-85.1
   - TASK-85.2
   - TASK-83
-  - TASK-94
-  - TASK-95
 documentation:
   - .backlog/docs/design/doc-28 - Design-agent-os-Command-Line.md
   - .backlog/docs/specs/doc-59 - REQ-08-agent-os-CLI-and-Kernel-Primitives.md
@@ -33,7 +31,7 @@ documentation:
     .backlog/docs/specs/doc-96 -
     Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md
 parent_task_id: TASK-85
-priority: medium
+priority: high
 type: feature
 ordinal: 91000
 ---
@@ -46,8 +44,7 @@ Audit of crates/org-command, crates/org-agent-cli, and crates/org-office-session
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Solves launch-catalogue scaling within CATALOGUE_LIMIT = 4096 across help.rs, testkit::check_catalogue (testkit.rs:706-725), and instructions.rs:92-102 (deleting the 5,256 B duplicate renderer so standing instructions call table.catalogue()); renders Command.example in --help; switches table::table() to CommandTable::unchecked (keeping CommandTable::new in tests); fixes all session attach P0 framing/safety bugs (reject non-JSON format, --stdin, and unknown top-level keys before dispatch; use AttachSources; reject unknown CLI flags; exit 1 with hint on bind error; conform error_envelope() to envelope_schema(); surface attach in session help); reconciles msg ask meta.status vs data.status and restores stripped recipient_presence & woke_agents on msg send/ask; uses derive_uuid_v7 on msg_dispatch/dispatch/hiring_dispatch and adds ErrorCode::Timeout to retry_with.idempotency-key (org-command/src/lib.rs:134); fails closed on --durable in msg_dispatch/non-durable git ops and reports Ack::Durable truthfully on always-durable commands; surfaces structured --json fields in help::flags_hint, propagates ApiError.retry_after_ms/field/rule (+ RateLimited hint) in office.rs:218-229, and fixes task_dispatch.rs:203 decode error to Unavailable.
+- [ ] #1 Solves launch-catalogue scaling within CATALOGUE_LIMIT = 4096 across help.rs, testkit::check_catalogue (testkit.rs:706-725), and instructions.rs:92-102 (deleting the 5,256 B duplicate renderer so standing instructions call table.catalogue()), unblocking TASK-90, TASK-92.1, TASK-98.4, and TASK-99; renders Command.example in --help; switches table::table() to CommandTable::unchecked (keeping CommandTable::new in tests); fixes all session attach P0 framing/safety bugs (reject non-JSON format, --stdin, and unknown top-level keys before dispatch; use AttachSources; reject unknown CLI flags; exit 1 with hint on bind error; conform error_envelope() to envelope_schema(); surface attach in session help); reconciles msg ask meta.status vs data.status and restores stripped recipient_presence & woke_agents on msg send/ask; uses derive_uuid_v7 on msg_dispatch/dispatch/hiring_dispatch and adds ErrorCode::Timeout to retry_with.idempotency-key (org-command/src/lib.rs:134); fails closed on --durable in msg_dispatch/non-durable git ops and reports Ack::Durable truthfully on always-durable commands; surfaces structured --json fields in help::flags_hint, propagates ApiError.retry_after_ms/field/rule (+ RateLimited hint) in office.rs:218-229, and fixes task_dispatch.rs:203 decode error to Unavailable.
 - [ ] #2 Enforces --limit (<= 200) and --cursor / next_cursor pagination across all 8 currently unbounded Kind::List commands (directory list/who, channel list, task history, task labels, task-note list, process list, skill list, task list), removes --max-results 500 on task list, and adds task list total, --count, --exclude-status, --unassigned, and --modified-file filters; ensures pre-normalized aliases (who, task note) behave consistently across --help, --schema, and session attach; replaces broken boolean flags on member set-hiring (--allow/--revoke + fix illegal hint at hiring_dispatch.rs:334) and process create|update (--non-overridable) without changing doc-28 §2.1 value-free boolean parsing; rejects conflicting flag combos on msg reply/msg list with InvalidRequest and adds doc-28 §3.3 single-question scalar flags (--prompt, --question-type, --option, --default-value) to msg ask.
-- [ ] #3 Adds an automated live multi-runtime AX evaluation suite (gated on TASK-94 and TASK-95) covering doc-27 INSTR scenarios and cold-start agent onboarding, CLI usage error rate, retry-to-recovery rate, and token-budget benchmarks across claude, codex, and agy adapters, reviewed by Principal AX Designer.
-- [ ] #4 Updates doc-28 (§2.3 presence, §2.5 grouped catalogue, §2.7 Timeout retry_with, task list filters, ask status/scalar flags, budget/task-note/worktree alignment), doc-27 §1 catalogue wording, doc-59 (REQ-08 if needed), doc-96, and doc-3 (FC-168, FC-171 evidence).
+- [ ] #3 Updates doc-28 (§2.3 presence, §2.5 grouped catalogue, §2.7 Timeout retry_with, task list filters, ask status/scalar flags, budget/task-note/worktree alignment), doc-27 §1 catalogue wording, doc-59 (REQ-08 if needed), doc-96, and doc-3 (FC-168 evidence); cargo test and org_command::testkit contract checks pass. (Final holistic skill copy pass and live multi-runtime AX evals are split cleanly into TASK-85.4 once the full v1 CLI surface lands.)
 <!-- AC:END -->
