@@ -120,37 +120,57 @@ try {
     }
     if (route === "activity") {
       await page.getByRole("heading", { name: "Portfolio Assembly" }).waitFor();
-      const gates = page.getByRole("button", { name: "Release gates" });
-      const panel = page.getByRole("complementary", { name: "Release operations" });
+      const tools = page.getByRole("group", { name: "Activity sidebar tools" });
+      const gates = tools.getByRole("button", { name: "Release gates" });
+      const simulation = tools.getByRole("button", { name: "Simulation" });
+      const panel = page.locator("#activity-panel");
       const activity = page.locator(".activity-main");
-      const assembly = page.locator(".assembly-view");
-      const assertAssemblyWidth = async () => {
-        const contentBounds = (await activity.boundingBox())!;
-        const assemblyBounds = (await assembly.boundingBox())!;
-        assert.ok(Math.abs(assemblyBounds.x - contentBounds.x) <= 1, "Assembly starts at the activity edge");
-        assert.ok(Math.abs(assemblyBounds.width - contentBounds.width) <= 1, "Assembly fills the available width");
-        assert.ok(assemblyBounds.y + assemblyBounds.height >= contentBounds.y + contentBounds.height - 1, "Assembly fills the available height");
+      const assertAssemblyBounds = async () => {
+        const [left, width, top, bottom] = await activity.evaluate((element) => {
+          const content = element.getBoundingClientRect();
+          const assembly = element.querySelector(".assembly-view")!.getBoundingClientRect();
+          return [assembly.left - content.left, assembly.width - content.width, assembly.top - content.top, assembly.bottom - content.bottom];
+        });
+        assert.ok(Math.abs(left) <= 1, "Assembly starts at the activity edge");
+        assert.ok(Math.abs(width) <= 1, "Assembly fills the available width");
+        assert.ok(Math.abs(top) <= 1, "Assembly starts at the top of the activity pane");
+        assert.ok(bottom >= -1, "Assembly fills the available height");
       };
-      const fullWidth = (await activity.boundingBox())!.width;
-      await assertAssemblyWidth();
-      const playback = (await page.locator(".assembly-playback").boundingBox())!;
-      assert.ok(Math.abs((await assembly.boundingBox())!.y - playback.y - playback.height) <= 1, "Assembly starts immediately below playback");
-      await gates.press("Enter");
-      await panel.waitFor();
-      assert.equal(await gates.getAttribute("aria-expanded"), "true");
+      await assertAssemblyBounds();
+      await panel.getByRole("heading", { name: "Release gates" }).waitFor();
+      assert.equal(await gates.getAttribute("aria-expanded"), "true", "Release gates opens by default");
+      assert.equal(await page.locator(".activity-header").getByRole("button", { name: "Release gates" }).count(), 0);
       const bounds = (await panel.boundingBox())!;
       const header = (await page.locator(".activity-header").boundingBox())!;
       const body = (await page.locator(".activity-body").boundingBox())!;
+      const toolbar = (await tools.boundingBox())!;
       assert.ok(Math.abs(bounds.y - header.y - header.height) <= 1, "Panel starts below the Activity header");
-      assert.ok(Math.abs(bounds.x + bounds.width - body.x - body.width) <= 1, "Panel docks to the right edge");
+      assert.ok(Math.abs(bounds.x + bounds.width - toolbar.x) <= 1, "Panel docks beside the right icon rail");
+      assert.ok(Math.abs(toolbar.x + toolbar.width - body.x - body.width) <= 1, "Icons stay at the right edge");
       assert.ok(Math.abs(bounds.height - body.height) <= 1, "Panel fits the available height");
-      assert.ok((await activity.boundingBox())!.width < fullWidth, "Activity stays visible next to the panel");
       assert.notEqual(await panel.evaluate((element) => getComputedStyle(element).boxShadow), "none");
-      await assertAssemblyWidth();
+      await simulation.hover();
+      await simulation.locator(".activity-tool-tip").waitFor();
+      await simulation.press("Enter");
+      await panel.getByRole("heading", { name: "Simulation", exact: true }).waitFor();
+      await panel.getByRole("button", { name: "Reset simulation" }).click();
+      await panel.getByRole("button", { name: "8×" }).click();
+      await panel.getByRole("button", { name: "Add sample task" }).click();
+      await panel.getByText("joined the queue").waitFor();
+      await panel.getByRole("button", { name: "Play simulation" }).click();
+      await gates.click();
+      await panel.getByRole("link", { name: "Release sign-off" }).waitFor();
+      await page.waitForFunction(() => document.querySelector('[data-assembly-work="T-S1"]:not([data-stage="queue"])'));
+      await simulation.press("Enter");
+      await panel.getByText("started agent work", { exact: false }).first().waitFor();
+      await panel.getByRole("button", { name: "Reset simulation" }).click();
       await page.keyboard.press("Escape");
       await panel.waitFor({ state: "hidden" });
-      assert.equal((await activity.boundingBox())!.width, fullWidth);
-      assert.ok(await gates.evaluate((button) => button === document.activeElement), "Focus returns to Release gates");
+      assert.ok((await activity.boundingBox())!.width > body.width - toolbar.width - 1, "Closing the panel frees its width");
+      assert.ok(await simulation.evaluate((button) => button === document.activeElement), "Focus returns to the selected icon");
+      await assertAssemblyBounds();
+      await gates.click();
+      await panel.getByRole("heading", { name: "Release gates" }).waitFor();
     }
 
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
