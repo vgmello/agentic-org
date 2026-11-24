@@ -81,4 +81,24 @@ describe('groupStreamEntriesByDay', () => {
 			['Earlier', ['bad-date']]
 		]);
 	});
+
+	it('labels Yesterday accurately across spring-forward DST boundaries', () => {
+		// 2026-03-08 is a 23-hour spring-forward day in America/New_York; 24h before 2026-03-09T00:30-04:00 lands on Mar 7.
+		const dstNow = Date.parse('2026-03-09T00:30:00-04:00');
+		const groups = groupStreamEntriesByDay(
+			[
+				makeEntry('mar-9', '2026-03-09T00:10:00-04:00'),
+				makeEntry('mar-8', '2026-03-08T14:00:00-04:00'),
+				makeEntry('mar-7', '2026-03-07T23:45:00-05:00')
+			],
+			dstNow,
+			'America/New_York'
+		);
+
+		expect(groups.map((g) => [g.key, g.label, g.entries.map((e) => e.id)])).toEqual([
+			['2026-03-09', 'Today', ['mar-9']],
+			['2026-03-08', 'Yesterday', ['mar-8']],
+			['2026-03-07', 'Sat 7 Mar', ['mar-7']]
+		]);
+	});
 });

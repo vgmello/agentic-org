@@ -514,21 +514,31 @@
 		});
 	}
 	function closeThread(restore = true) {
-		const wasOpen = !!threadRoot;
+		const closedRoot = threadRoot;
+		const wasOpen = !!closedRoot;
 		const opener = threadOpener;
 		rowActivity.returning(opener, 'thread');
 		threadRoot = undefined;
 		highlight = undefined;
 		writePlace();
-		const target = threadOpener?.isConnected ? threadOpener : listEl;
 		if (wasOpen && restore)
 			void tick().then(() => {
 				if (threadRoot || threadOpener !== opener) {
 					rowActivity.focused(opener);
 					return;
 				}
+				const liveThreadOpener =
+					closedRoot && listEl
+						? (listEl.querySelector<HTMLElement>(
+								`[data-thread-opener="${CSS.escape(closedRoot)}"]`
+							) ??
+							listEl.querySelector<HTMLElement>(
+								`[data-id="${CSS.escape(closedRoot)}"] [data-testid="replies-link"]`
+							))
+						: null;
+				const target = opener?.isConnected ? opener : (liveThreadOpener ?? listEl);
 				focusVisible(target);
-				rowActivity.focused(opener);
+				rowActivity.focused(target ?? opener);
 				threadOpener = undefined;
 			});
 		else {

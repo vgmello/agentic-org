@@ -100,7 +100,7 @@
 			id="chat-thread-title"
 			bind:this={headingEl}
 			tabindex="-1"
-			class="min-w-0 rounded-sm text-sm/6 font-semibold break-words text-fg focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+			class="min-w-0 rounded-sm text-sm/6 font-semibold break-words text-fg focus:outline-2 focus:outline-solid focus:outline-offset-2 focus:outline-focus focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-focus"
 		>
 			Thread <span class="font-normal text-fg-muted">in {title}</span>
 		</h2>

@@ -7,6 +7,7 @@ const key = (
 		altKey: boolean;
 		ctrlKey: boolean;
 		metaKey: boolean;
+		shiftKey: boolean;
 		isComposing: boolean;
 		keyCode: number;
 	}> = {}
@@ -15,6 +16,7 @@ const key = (
 	altKey: false,
 	ctrlKey: false,
 	metaKey: false,
+	shiftKey: false,
 	isComposing: false,
 	keyCode: 0,
 	...overrides
@@ -26,16 +28,20 @@ describe('sidebarNavAction', () => {
 		expect(sidebarNavAction(key('ArrowUp'))).toBe('up');
 		expect(sidebarNavAction(key('Home'))).toBe('home');
 		expect(sidebarNavAction(key('End'))).toBe('end');
-		expect(sidebarNavAction(key('Enter'))).toBeUndefined();
-		expect(sidebarNavAction(key('Tab'))).toBeUndefined();
+		expect(sidebarNavAction(key('Enter'))).toBeNull();
+		expect(sidebarNavAction(key('Tab'))).toBeNull();
 	});
 
-	it('ignores modified shortcuts and IME composition events', () => {
-		expect(sidebarNavAction(key('ArrowDown', { altKey: true }))).toBeUndefined();
-		expect(sidebarNavAction(key('ArrowDown', { ctrlKey: true }))).toBeUndefined();
-		expect(sidebarNavAction(key('ArrowDown', { metaKey: true }))).toBeUndefined();
-		expect(sidebarNavAction(key('ArrowDown', { isComposing: true }))).toBeUndefined();
-		expect(sidebarNavAction(key('ArrowDown', { keyCode: 229 }))).toBeUndefined();
+	it('ignores modified shortcuts (including Shift) and IME composition events', () => {
+		expect(sidebarNavAction(key('ArrowDown', { altKey: true }))).toBeNull();
+		expect(sidebarNavAction(key('ArrowDown', { ctrlKey: true }))).toBeNull();
+		expect(sidebarNavAction(key('ArrowDown', { metaKey: true }))).toBeNull();
+		expect(sidebarNavAction(key('ArrowDown', { shiftKey: true }))).toBeNull();
+		expect(sidebarNavAction(key('Home', { shiftKey: true }))).toBeNull();
+		expect(sidebarNavAction(key('End', { shiftKey: true }))).toBeNull();
+		expect(sidebarNavAction(key('ArrowUp', { shiftKey: true }))).toBeNull();
+		expect(sidebarNavAction(key('ArrowDown', { isComposing: true }))).toBeNull();
+		expect(sidebarNavAction(key('ArrowDown', { keyCode: 229 }))).toBeNull();
 	});
 });
 

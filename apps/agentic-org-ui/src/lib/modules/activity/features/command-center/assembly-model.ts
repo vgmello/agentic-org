@@ -3,7 +3,7 @@ import { matchesQuery } from '$lib/modules/activity/filter';
 import type { ActivityKind, ActivityQuery, ActivityRow } from '$lib/modules/activity/types';
 import { KIND_WORD } from '$lib/modules/activity/types';
 import type { InboxItem } from '$lib/modules/inbox/types';
-import { dayKey, dayLabel } from '$lib/modules/preferences';
+import { dayKey, formatDate } from '$lib/modules/preferences';
 import { agentsOf, byName, isFormer, memberById, nonOwners, owner } from '$lib/org/model';
 import type { Area, OrgSnapshot, ProjectSummary, WorkItemSummary } from '$lib/proto';
 
@@ -725,6 +725,27 @@ export interface StreamDayGroup {
 	entries: StreamEntry[];
 }
 
+const weekdayFormats = new Map<string, Intl.DateTimeFormat>();
+
+function weekdayShort(date: Date, zone: string): string {
+	let fmt = weekdayFormats.get(zone);
+	if (!fmt) {
+		fmt = new Intl.DateTimeFormat('en-GB', { timeZone: zone, weekday: 'short' });
+		weekdayFormats.set(zone, fmt);
+	}
+	return fmt.format(date);
+}
+
+/** Exact calendar-day subtraction (`YYYY-MM-DD`) so 23h/25h DST transitions never skip Yesterday. */
+function previousCalendarDayKey(isoDayKey: string): string {
+	const [year, month, day] = isoDayKey.split('-').map(Number);
+	const prev = new Date(Date.UTC(year, month - 1, day - 1));
+	const y = String(prev.getUTCFullYear()).padStart(4, '0');
+	const m = String(prev.getUTCMonth() + 1).padStart(2, '0');
+	const d = String(prev.getUTCDate()).padStart(2, '0');
+	return `${y}-${m}-${d}`;
+}
+
 /**
  * Groups stream entries chronologically by calendar day (`Today`, `Yesterday`, or formatted date)
  * in `zone`, sorting newest-first within and across day sections (`poc` commit `580b6715`).
@@ -737,6 +758,8 @@ export function groupStreamEntriesByDay(
 ): StreamDayGroup[] {
 	if (entries.length === 0) return [];
 	const now = new Date(nowMs);
+	const todayKey = dayKey(now, zone);
+	const yesterdayKey = previousCalendarDayKey(todayKey);
 	const ordered = entries
 		.map((entry, index) => {
 			const ms = Date.parse(entry.at);
@@ -755,7 +778,13 @@ export function groupStreamEntriesByDay(
 		const key = date ? dayKey(date, zone) : 'earlier';
 		let group = byKey.get(key);
 		if (!group) {
-			const label = date ? dayLabel(date, now, zone) : 'Earlier';
+			const label = !date
+				? 'Earlier'
+				: key === todayKey
+					? 'Today'
+					: key === yesterdayKey
+						? 'Yesterday'
+						: `${weekdayShort(date, zone)} ${formatDate(date, zone, now)}`;
 			group = { key, label, entries: [] };
 			byKey.set(key, group);
 			groups.push(group);

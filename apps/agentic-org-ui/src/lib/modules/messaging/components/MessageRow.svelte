@@ -241,6 +241,7 @@
 						class="mt-1 text-xs/5 font-semibold text-brand-text hover:text-brand-text-strong"
 						aria-live="off"
 						onclick={(event) => onthread?.(message, event.currentTarget)}
+						data-thread-opener={message.id}
 						data-testid="replies-link"
 						>{replies.length}
 						{replies.length === 1 ? 'reply' : 'replies'}{#if folded}{' · ' + folded}{/if}</button

@@ -5,17 +5,18 @@ export interface SidebarNavKeyLike {
 	altKey: boolean;
 	ctrlKey: boolean;
 	metaKey: boolean;
+	shiftKey?: boolean;
 	isComposing?: boolean;
 	keyCode?: number;
 }
 
 /**
  * Maps ArrowUp/ArrowDown/Home/End inside the Chat conversation directory (`poc` commit `c64b187a`).
- * Ignores modified chords and active IME composition (`isComposing || keyCode === 229`).
+ * Ignores modified chords (including Shift) and active IME composition (`isComposing || keyCode === 229`).
  */
-export function sidebarNavAction(event: SidebarNavKeyLike): SidebarNavDirection | undefined {
-	if (event.isComposing || event.keyCode === 229) return undefined;
-	if (event.altKey || event.ctrlKey || event.metaKey) return undefined;
+export function sidebarNavAction(event: SidebarNavKeyLike): SidebarNavDirection | null {
+	if (event.isComposing || event.keyCode === 229) return null;
+	if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return null;
 	switch (event.key) {
 		case 'ArrowDown':
 			return 'down';
@@ -26,7 +27,7 @@ export function sidebarNavAction(event: SidebarNavKeyLike): SidebarNavDirection 
 		case 'End':
 			return 'end';
 		default:
-			return undefined;
+			return null;
 	}
 }
 
