@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-22T14:30:00Z'
+updated_date: '2026-11-23T02:53:00Z'
 labels:
   - backend
   - rust
@@ -36,6 +36,7 @@ Complete signed release bundle staging/installation, update activation, uninstal
 - [ ] #1 Signed offline release staging, verified install, update activation, and clean uninstall clearing host-registry.created pass (FC-022, FC-154).
 - [ ] #2 agentic-org logs, doctor, and support commands emit redacted diagnostics (FC-023), and protected restore/rebind paths pass (FC-147, FC-148).
 - [ ] #3 Live Search/New backend, device preferences, and copilot text.improve/bug.from_sentence runtime wiring pass verification.
+- [ ] #4 agentic-org doctor also validates organization-state integrity (broken task/doc/decision cross-links, display-key clashes, invalid front matter from direct Git edits, and SQLite projection parity) alongside host/office/credential diagnostics.
 <!-- AC:END -->
 
 ## Implementation Plan

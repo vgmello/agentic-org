@@ -6,14 +6,14 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-22T02:35:00Z'
-updated_date: '2026-11-22T14:30:00Z'
+updated_date: '2026-11-23T04:07:00Z'
 labels:
   - backend
   - rust
   - agents
   - built-in
   - tess
-milestone: m-0
+milestone: m-1
 dependencies:
   - TASK-42
   - TASK-45

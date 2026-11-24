@@ -3,7 +3,7 @@ id: doc-4
 title: Feature Areas
 type: guide
 created_date: '2026-11-21T00:14:00Z'
-updated_date: '2026-11-21T09:16:00Z'
+updated_date: '2026-11-23T03:54:00Z'
 tags:
   - features
   - areas
@@ -135,13 +135,13 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Execution, providers and supervision** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#execution-providers-and-supervision)
 
-**Scope:** Native process primitives and runtime adapters, the agent command line's contract, explicit Run, execution/model configuration, connections/pools/permits, turns/attempts/placement, health monitoring, workspace isolation, the optional extensions that give agents capabilities such as containers and Xcode (FC-192 to FC-194, proposed) and deferred scheduling/delegation.
+**Scope:** Native process primitives and runtime adapters, Agent Experience (AX) standards and the agent command line's contract (`agent-os`, standing instructions, Day-1 onboarding, conflict recovery and multi-runtime AX evals), explicit Run, execution/model configuration, connections/pools/permits, turns/attempts/placement, health monitoring, workspace isolation, the optional extensions that give agents capabilities such as containers and Xcode (FC-192 to FC-194, proposed) and deferred scheduling/delegation.
 
 **Boundary:** Owns running work safely. Employee identity belongs to AREA-03, budget semantics to AREA-07, human session inspection/takeover to AREA-13, and durable recovery evidence to AREA-12. Starting an agent on an ask or an assignment is selected (ADR-0028); schedules, always-on agents and delegate engines remain Deferred.
 
-**Verification focus:** Check each Claude/Codex/Agy adapter for real launch, streaming, cancellation and sandbox enforcement; check observed progress/health/waits; validate credential and other-task denies in the selected workspace topology. Generic process primitives do not prove full adapters.
+**Verification focus:** Check each Claude/Codex/Agy adapter for real launch, streaming, cancellation and sandbox enforcement; check observed progress/health/waits; validate credential and other-task denies in the selected workspace topology; verify AX budgets, grammar/envelope contracts, standing instructions prefix caching, and multi-runtime AX evals (`AX-1`–`AX-24`, `CLI-1`–`CLI-15`, `INSTR-1`–`INSTR-23`) across Claude, Codex and Agy. Generic process primitives do not prove full adapters.
 
-**Requirements:** [Run-mode UX](specs/doc-50%20-%20Spec-Agent-Run-Modes-and-Availability-UX.md), [Supervision UX](specs/doc-53%20-%20Spec-Employee-Supervision-and-Approvals-UX.md), [Session design](design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md), [Execution contract](organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md), [Providers/pools](organization-data/doc-89%20-%20Organization-Data-14-—-Model-Providers-and-Connection-Pools.md); proposed: [accounts, sandbox and extensions](design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md).
+**Requirements:** [Agent Experience (AX) Spec](specs/doc-96%20-%20Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md), [Agent command line](design/doc-28%20-%20Design-agent-os-Command-Line.md), [Agent instructions](design/doc-27%20-%20Design-Agent-Instructions-Assembly.md), [REQ-08](specs/doc-59%20-%20REQ-08-agent-os-CLI-and-Kernel-Primitives.md), [Run-mode UX](specs/doc-50%20-%20Spec-Agent-Run-Modes-and-Availability-UX.md), [Supervision UX](specs/doc-53%20-%20Spec-Employee-Supervision-and-Approvals-UX.md), [Session design](design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md), [Execution contract](organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md), [Providers/pools](organization-data/doc-89%20-%20Organization-Data-14-—-Model-Providers-and-Connection-Pools.md); proposed: [accounts, sandbox and extensions](design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md).
 
 ## AREA-09
 
@@ -153,7 +153,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Check actual role record/assignment persistence and organization/team/project process or standard document storage. Existing content and editor UI do not establish runtime composition, inheritance, agent injection or retrospective execution.
 
-**Requirements:** [Roles UX](specs/doc-47%20-%20Spec-Agent-Roles-Directory-UX.md), [Process UX](specs/doc-54%20-%20Spec-Organization-Processes-and-Standards-UX.md), [Process design](design/doc-34%20-%20Design-Organization-Processes-and-Standards.md), [Development process design](design/doc-32%20-%20Design-Development-Processes-Process-Packages.md), [Desired state design](design/doc-31%20-%20Design-Desired-State-Specifications-DSS.md), [REQ-06](specs/doc-57%20-%20REQ-06-Desired-State-Specification-DSS-and-Factory-Reconciliation.md), [REQ-07](specs/doc-58%20-%20REQ-07-Composable-Process-Packages-and-Team-Blueprints.md), [Retrospective UX](specs/doc-60%20-%20Spec-Retrospectives-and-Routines-UX-—-Not-in-v1.md).
+**Requirements:** [Agent Experience (AX) Spec](specs/doc-96%20-%20Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md) (built-in `agent-os` product skills), [Roles UX](specs/doc-47%20-%20Spec-Agent-Roles-Directory-UX.md), [Process UX](specs/doc-54%20-%20Spec-Organization-Processes-and-Standards-UX.md), [Process design](design/doc-34%20-%20Design-Organization-Processes-and-Standards.md), [Development process design](design/doc-32%20-%20Design-Development-Processes-Process-Packages.md), [Desired state design](design/doc-31%20-%20Design-Desired-State-Specifications-DSS.md), [REQ-06](specs/doc-57%20-%20REQ-06-Desired-State-Specification-DSS-and-Factory-Reconciliation.md), [REQ-07](specs/doc-58%20-%20REQ-07-Composable-Process-Packages-and-Team-Blueprints.md), [Retrospective UX](specs/doc-60%20-%20Spec-Retrospectives-and-Routines-UX-—-Not-in-v1.md).
 
 ## AREA-10
 

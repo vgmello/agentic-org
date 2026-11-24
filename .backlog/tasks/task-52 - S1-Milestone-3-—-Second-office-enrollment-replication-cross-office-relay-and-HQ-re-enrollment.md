@@ -14,10 +14,11 @@ labels:
   - m3
 milestone: m-0
 dependencies:
+  - TASK-39
+  - TASK-42
   - TASK-45
   - TASK-49
-  - TASK-42
-  - TASK-39
+  - TASK-87
 documentation:
   - docs/implementation-plan.md
   - docs/design/offices-hq-and-satellites.md

@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex lead01a1dd82 (F3c); Claude session_015ExbMo (docs 2026-11-17); Claude session_015ExbMnxeFeac1c16wAFWyh (UI manifest 2026-11-18); full earlier IDs at 34ca1855",
-  "rationale": "Merge of origin/v1 into v1-ui on 2026-11-19 changed AGENTS.md on both sides; this catalog hash is refreshed to the merged file only. No reassessment of the merged text is recorded yet: a project-capabilities reassessment is pending for the lead. Earlier rationales (origin/v1 docs 2026-11-17; v1-ui UI manifest 2026-11-18) are preserved in Git at origin/v1:.agent-kit/skill-catalog.json and HEAD:.agent-kit/skill-catalog.json.",
+  "reviewed_by": "TASK-85.1 AX discipline adoption (2026-11-23); prior sessions at 34ca1855 and origin/v1",
+  "rationale": "Updated skill catalog for TASK-85.1 (Agent Experience discipline): added the agent-experience skill (.agent-kit/project-skills/principal-ax-designer/SKILL.md) and authoritative AX Spec doc-96 evidence, migrated stale docs/ evidence and guidance paths to .backlog/docs/ and .backlog/decisions/, kept >24 KiB data-contract documents (doc-72, doc-75) in project_evidence while keeping doc-62 and project skill briefs in phase references, and refreshed verified SHA-256 hashes for current workspace manifests, CI workflow, and AGENTS.md.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -27,6 +27,10 @@
     {
       "path": ".agent-kit/project-skills/kit-maintenance/SKILL.md",
       "sha256": "9034015870774e754825535ebd29dfc6093968278ac3fbbdad139d4a30e6139f"
+    },
+    {
+      "path": ".agent-kit/project-skills/principal-ax-designer/SKILL.md",
+      "sha256": "973889f483c0ffda1e30f49eb258e341e3bb942c11859ba509de4540a160e8bb"
     },
     {
       "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
@@ -69,28 +73,92 @@
       "sha256": "96e025333e54533a31d37f70c7094da8df8b89c3c622a70d7edbf6332b84da47"
     },
     {
+      "path": ".backlog/decisions/decision-10 - ADR-0010-Legacy-task-adoption-LEGACY-ADOPT-1.md",
+      "sha256": "ce161bb8c7c1d32576facaedd33fbf9a4f29be8d3f705eca69d7ee12812ae60d"
+    },
+    {
+      "path": ".backlog/decisions/decision-11 - ADR-0011-Protected-recovery-delivery-REC-DEL-1.md",
+      "sha256": "37deea93036b34e9a5046da5c9a818a5daa6ccfea01384f40b410227b4242004"
+    },
+    {
+      "path": ".backlog/decisions/decision-2 - ADR-0002-Storage-SQLite-with-one-batching-writer-per-database.md",
+      "sha256": "ed9b962dac889e5dee24ff72496c942f31df1a462cafa5c0bd2c99e9462ddfe9"
+    },
+    {
+      "path": ".backlog/decisions/decision-5 - ADR-0005-Standalone-server-HQ-web-application-and-named-instances.md",
+      "sha256": "b0da50c40db2ce0fc9808b9c4a4b7c2c37bbf9d75d66e49de346f8341a065b8a"
+    },
+    {
+      "path": ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md",
+      "sha256": "9819df6ed3763955d551a4e6efd1f7b04fd3308068b227fbb0bf17965b86a612"
+    },
+    {
+      "path": ".backlog/decisions/decision-8 - ADR-0008-macOS-confinement-of-the-web-process-GW-SBX-MAC-1.md",
+      "sha256": "831043943a0dd27d8adb569c03ccc1adac91f09574191fa6ef272755dd72e256"
+    },
+    {
+      "path": ".backlog/decisions/decision-9 - ADR-0009-Authenticated-complete-release-bundles.md",
+      "sha256": "04c375e1020127c5f76774663afd5afbb1ce247c240f891aa1c41d2fac90d43c"
+    },
+    {
+      "path": ".backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md",
+      "sha256": "9850eeeaf88a37737282e3725374a370a889b55e5b0e511023e645473f02ce97"
+    },
+    {
+      "path": ".backlog/docs/design/doc-68 - Design-v1-Project-Structure.md",
+      "sha256": "8f566572f377e970fa5baeac8a9f4c363bd29136745cbc5213737c59ec4f05bb"
+    },
+    {
+      "path": ".backlog/docs/doc-6 - Independent-Delivery-and-Dependency-Boundaries.md",
+      "sha256": "143fb2eda54dbe8f7c08e0ebe89cf56c0f8381acf26c2e3c9d3e8638d87950e1"
+    },
+    {
+      "path": ".backlog/docs/doc-8 - Architecture-Rules.md",
+      "sha256": "f71447c232961fb1c19422f149d2f45bc876160bc4ecb1cf24dfe2172d9ab636"
+    },
+    {
+      "path": ".backlog/docs/organization-data/doc-72 - Organization-Data-\u2014-README.md",
+      "sha256": "6d398c384f5dff3b7c7117fa85e722b6b19144280cb41cd4f34f1234ae74abca"
+    },
+    {
+      "path": ".backlog/docs/organization-data/doc-75 - Organization-Data-01-\u2014-Organization-Structure.md",
+      "sha256": "0fb14cc01484220e8ffbd7fc5b51aac512851101683fa072242a6b37c6d7c36b"
+    },
+    {
+      "path": ".backlog/docs/organization-data/doc-91 - Organization-Data-16-\u2014-Recovery-and-Office-Continuity.md",
+      "sha256": "1cab1de8a8f9ec7b0a0c59167c56c2914c6db4f740070dcfb2286277c764024f"
+    },
+    {
+      "path": ".backlog/docs/processes/doc-20 - Process-Branch-Review-and-Integration.md",
+      "sha256": "eb57835a29aa9d63a3a4fd33a56920679508813cbf07389644f004be23b031b5"
+    },
+    {
+      "path": ".backlog/docs/specs/doc-96 - Spec-Agent-Experience-AX-\u2014-agent-os-Onboarding-and-Skills.md",
+      "sha256": "aaf3792a047dc5ff7bf8121f1af4626a32f48b7825e70fd77bb7e16d3a0b4ca8"
+    },
+    {
       "path": ".codex/config.toml",
       "sha256": "df51918b40eec9c98b07a642eb6dc9e983126710a6ed3793ec0b08076068ebdb"
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "5bf4698d44d5ab40ee0a93e15a65a968db70763dac3ca8d19d73dcfa4a1170b9"
+      "sha256": "2cad75ff254d545fa9c507402c9fc11377e0bae2edf2f29b4eabd449e42c9d5a"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "9efc935ff609dc7c8d3407b5778ef2afc64ed3835c7afe8dc91aa05f1addc136"
+      "sha256": "193d0022c55ee65f70ec4c47b86c256949d6af9b4e21886350c350ee2ea9f4ed"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "a2fec1b5a9e2b60712fc22bf25cf95c45b60f3d5d3cd39909d50396fd4659300"
+      "sha256": "0ad9cb41e78f73c6f07b019d8aecc8885d815315378f1c18f68b401d4375c43e"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "36f85448956fdfa043582f6176b11400ebafc8f3d2ba95dad16e00431b344f20"
+      "sha256": "9546c6172da2f4c213fbe6ba7a318a3e4eb60c1727206f4c5d4402a616badcc6"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
-      "sha256": "c8ed6d020e51837564bc06e31c7947f48e76757c989651814591b64937cdc1ed"
+      "sha256": "95329229af0aa5b914386bb72b7f3a39ac4c521713b2ed81c9a2e961ccf1b0ab"
     },
     {
       "path": "apps/agentic-org-ui/AGENTS.md",
@@ -102,11 +170,11 @@
     },
     {
       "path": "apps/agentic-org-ui/package.json",
-      "sha256": "d12adc9634b1abc5234eda191e924a53e69e3134c9ed534a95d1a2449b815aa1"
+      "sha256": "5e96653467593d91eda3e7571a441faebf0ad0a20c18741103f4b8e445349d9c"
     },
     {
       "path": "apps/agentic-org-web/Cargo.toml",
-      "sha256": "85f2e117614a29a575165c575fda70c34e5422d7e6ad2fadac6f56507d1af7a0"
+      "sha256": "2ead6f474867288bd4d0fa70bd23142544ac8776e4925cd4e92cc9975970f4d2"
     },
     {
       "path": "crates/org-client/Cargo.toml",
@@ -118,7 +186,7 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "061891a42710c09cc4ad53a3bc5d8dda3ee772f0405b14b6d857a1b462ddf0a3"
+      "sha256": "10307d5cd68ccd63c8a2bb900bdc60a2b148428e10f38db35ab2372a4e6371c9"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",
@@ -126,11 +194,11 @@
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "ec4da6f3181b139b23a9a426c3a6d365e2e4bab0fd5051898145250a5aaf7b90"
+      "sha256": "51d4803ae0fadde5806ca56194729c17c614feeaab2bca684113b1f920025d2c"
     },
     {
       "path": "crates/org-pki/Cargo.toml",
-      "sha256": "8cde431444a1a5226133b622c417b6f663332f00995e51a9b6977adcd22dc777"
+      "sha256": "f4fbb648725108b3dd384e5f555a516c9e1925ecbdce87d3e103643544942d70"
     },
     {
       "path": "crates/org-release/Cargo.toml",
@@ -139,66 +207,6 @@
     {
       "path": "crates/org-socket/Cargo.toml",
       "sha256": "0635ffe4bc3e4fa4787249bb719ee437f7d7042d18e1e71cceb6c884e14a9297"
-    },
-    {
-      "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "0e88c3c9ddb2f83fde694c10733392cfcd1d863df7dc754fc83b64f5c7c391a2"
-    },
-    {
-      "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "dfb7c758a7df84027fa34454c8268296e6cd7d847610d415a3b78c8e349a2511"
-    },
-    {
-      "path": "docs/adr/0007-hq-creation-escrow.md",
-      "sha256": "6d4f62b3c6e3852be280eca8bdf861b34902308072eb4e09cb140b6c28081d2e"
-    },
-    {
-      "path": "docs/adr/0008-gateway-macos-sandbox.md",
-      "sha256": "1d8c8d5106fdbc033b652533023a70953377e034fd23443bcf7c143b61bfc130"
-    },
-    {
-      "path": "docs/adr/0009-complete-release-verification.md",
-      "sha256": "dcff88ed9584629b9bef05933c2014a900286b0bffbdf00a3b9150c2ed8d66e8"
-    },
-    {
-      "path": "docs/adr/0010-legacy-task-adoption.md",
-      "sha256": "36bf64dc9542702aa6ea6621122c3fa40186693f9b72159b52369e01055307fc"
-    },
-    {
-      "path": "docs/adr/0011-protected-recovery-delivery.md",
-      "sha256": "f71bfc1c52530058f8e86a3db8dd8e1209bb583eecdd4b26114e27823a9e7560"
-    },
-    {
-      "path": "docs/architecture-rules.md",
-      "sha256": "34620907fec0477ce16bb20bd1f3722ed33f97497145f7ce17a77ea20288ee6d"
-    },
-    {
-      "path": "docs/design/documentation-authority.md",
-      "sha256": "932125458dcb653db992316d154c2653187597aa7d49622b9c0c4254892b940c"
-    },
-    {
-      "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "a58d5f7081499692e4d4feec31b99670f1f85ff4939b1c5f9a31fd745f3b2b39"
-    },
-    {
-      "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "50bc1ede7000f1d7b543a527ea176db70289d6e8caf67b1e659d5d9983b595fa"
-    },
-    {
-      "path": "docs/design/organization-data/README.md",
-      "sha256": "d78cffe89ab3a466d3443b0a8408524282102a458137bfb09408c47dcbffd3cf"
-    },
-    {
-      "path": "docs/design/project-structure.md",
-      "sha256": "8b8cdcec54228b541c82dc2a47dd54ba9d052de16bbd5ca43db325b425556305"
-    },
-    {
-      "path": "docs/independent-delivery.md",
-      "sha256": "5775049de3b761e08c41100c816f71156918ef6ded100d60f86590083de0bd67"
-    },
-    {
-      "path": "docs/processes/branch-and-merge.md",
-      "sha256": "25034864d676a785b38accc80e8f5e5343e3a4c373221fbf9870230bf8510f52"
     },
     {
       "path": "rust-toolchain.toml",
@@ -221,13 +229,13 @@
       "risks": [],
       "implementation": [
         "AGENTS.md",
-        "docs/independent-delivery.md",
-        "docs/processes/branch-and-merge.md"
+        ".backlog/docs/doc-6 - Independent-Delivery-and-Dependency-Boundaries.md",
+        ".backlog/docs/processes/doc-20 - Process-Branch-Review-and-Integration.md"
       ],
       "review": [
         "AGENTS.md",
-        "docs/independent-delivery.md",
-        "docs/processes/branch-and-merge.md"
+        ".backlog/docs/doc-6 - Independent-Delivery-and-Dependency-Boundaries.md",
+        ".backlog/docs/processes/doc-20 - Process-Branch-Review-and-Integration.md"
       ],
       "critical": false
     },
@@ -262,6 +270,28 @@
       ],
       "review": [
         ".agent-kit/project-skills/rust-workspace/SKILL.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "agent-experience",
+      "description": "Principal AX Designer discipline for agent-os CLI, standing instructions, Day-1 onboarding, skills, conflict recovery, and multi-runtime AX evals",
+      "paths": [
+        "crates/org-command",
+        "crates/org-agent-cli",
+        "crates/org-office-sessions/src/instructions.rs",
+        "crates/org-process/src/skills.rs",
+        "apps/agent-os",
+        ".agent-kit/project-skills/principal-ax-designer",
+        ".claude/agents/principal-ax-designer.md",
+        ".codex/agents/principal-ax-designer.toml"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agent-kit/project-skills/principal-ax-designer/SKILL.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/principal-ax-designer/SKILL.md"
       ],
       "critical": false
     },
@@ -339,17 +369,15 @@
       "id": "selected-data-model",
       "description": "Read owning selected model separately from application implementation",
       "paths": [
-        "docs/design/organization-data"
+        ".backlog/docs/organization-data"
       ],
       "risks": [],
       "implementation": [
-        "docs/design/documentation-authority.md",
-        "docs/design/organization-data/README.md",
+        ".backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md",
         ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "review": [
-        "docs/design/documentation-authority.md",
-        "docs/design/organization-data/README.md",
+        ".backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md",
         ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "critical": true
@@ -380,7 +408,8 @@
         ".agent-kit",
         ".codex",
         ".agents/skills",
-        "AGENTS.md"
+        "AGENTS.md",
+        ".claude/agents"
       ],
       "risks": [],
       "implementation": [
@@ -423,11 +452,11 @@
       "risks": [],
       "implementation": [
         ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        "docs/adr/0009-complete-release-verification.md"
+        ".backlog/decisions/decision-9 - ADR-0009-Authenticated-complete-release-bundles.md"
       ],
       "review": [
         ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        "docs/adr/0009-complete-release-verification.md"
+        ".backlog/decisions/decision-9 - ADR-0009-Authenticated-complete-release-bundles.md"
       ],
       "critical": true
     },
@@ -437,14 +466,14 @@
       "paths": [
         "crates/org-office/src/selected_tasks/adoption.rs",
         "crates/org-office/src/selected_tasks/adoption",
-        "docs/adr/0010-legacy-task-adoption.md"
+        ".backlog/decisions/decision-10 - ADR-0010-Legacy-task-adoption-LEGACY-ADOPT-1.md"
       ],
       "risks": [],
       "implementation": [
-        "docs/adr/0010-legacy-task-adoption.md"
+        ".backlog/decisions/decision-10 - ADR-0010-Legacy-task-adoption-LEGACY-ADOPT-1.md"
       ],
       "review": [
-        "docs/adr/0010-legacy-task-adoption.md"
+        ".backlog/decisions/decision-10 - ADR-0010-Legacy-task-adoption-LEGACY-ADOPT-1.md"
       ],
       "critical": true
     },
@@ -457,18 +486,18 @@
         "crates/org-office-launch",
         "apps/agentic-org-office/src/transfer",
         "apps/agentic-org",
-        "docs/adr/0011-protected-recovery-delivery.md"
+        ".backlog/decisions/decision-11 - ADR-0011-Protected-recovery-delivery-REC-DEL-1.md"
       ],
       "risks": [],
       "implementation": [
         ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        "docs/adr/0007-hq-creation-escrow.md",
-        "docs/adr/0011-protected-recovery-delivery.md"
+        ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md",
+        ".backlog/decisions/decision-11 - ADR-0011-Protected-recovery-delivery-REC-DEL-1.md"
       ],
       "review": [
         ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        "docs/adr/0007-hq-creation-escrow.md",
-        "docs/adr/0011-protected-recovery-delivery.md"
+        ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md",
+        ".backlog/decisions/decision-11 - ADR-0011-Protected-recovery-delivery-REC-DEL-1.md"
       ],
       "critical": true
     },
@@ -477,16 +506,16 @@
       "description": "REC-ESC-1 fixed CA/code/envelope profiles, pre-KDF parser bounds and application-owned secret lifetime",
       "paths": [
         "crates/org-pki",
-        "docs/adr/0007-hq-creation-escrow.md"
+        ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md"
       ],
       "risks": [],
       "implementation": [
         ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        "docs/adr/0007-hq-creation-escrow.md"
+        ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md"
       ],
       "review": [
         ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        "docs/adr/0007-hq-creation-escrow.md"
+        ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md"
       ],
       "critical": true
     },
@@ -511,15 +540,13 @@
       "risks": [],
       "implementation": [
         ".agent-kit/tasks/v1-creation-admission-interface.md",
-        "docs/design/documentation-authority.md",
-        "docs/design/organization-data/01-organization-structure.md",
+        ".backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md",
         ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
         ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json"
       ],
       "review": [
         ".agent-kit/tasks/v1-creation-admission-interface.md",
-        "docs/design/documentation-authority.md",
-        "docs/design/organization-data/01-organization-structure.md",
+        ".backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md",
         ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
         ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json"
       ],
