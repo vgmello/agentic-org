@@ -601,7 +601,7 @@ test('Phase 7 (5da47e1d + 53728c05): Project Release strip, More menu, Project A
 	// Release readiness strip on Overview + More menu
 	const releaseStrip = page.getByTestId('project-release-strip');
 	await expect(releaseStrip).toBeVisible();
-	await expect(page.getByTestId('project-release-readiness')).toContainText(/Readiness \d+%/);
+	await expect(page.getByTestId('project-release-readiness')).toContainText(/readiness \d+%/i);
 	await expect(releaseStrip).toHaveCSS('background-color', 'rgb(30, 41, 57)');
 
 	await page.getByTestId('project-more-menu').click();
@@ -609,16 +609,18 @@ test('Phase 7 (5da47e1d + 53728c05): Project Release strip, More menu, Project A
 	await expect(page.getByRole('menuitem', { name: 'Releases' })).toBeVisible();
 	await page.keyboard.press('Escape');
 
-	// Project Activity: Assembly line default, toolbar switcher, Release gates dock + Line events
+	// Project Activity: Assembly line default, toolbar switcher with accessible panel links, Release gates dock + Line events
 	await tabs(page).filter({ hasText: 'Activity' }).click();
 	await expect(page).toHaveURL(/\/projects\/beacon\/activity$/);
 	await expect(releaseStrip).toBeVisible();
 	const projControls = page.getByTestId('project-activity-controls');
 	await expect(projControls).toBeVisible();
-	await expect(projControls.getByRole('tab', { name: 'Assembly line' })).toHaveAttribute(
-		'aria-selected',
-		'true'
-	);
+	const assemblyTab = projControls.getByRole('tab', { name: 'Assembly line' });
+	const feedTab = projControls.getByRole('tab', { name: 'Activity feed' });
+	await expect(assemblyTab).toHaveAttribute('aria-selected', 'true');
+	await expect(assemblyTab).toHaveAttribute('aria-controls', 'project-view-panel-assembly');
+	await expect(feedTab).toHaveAttribute('aria-controls', 'project-view-panel-feed');
+	await expect(page.locator('#project-view-panel-assembly')).toBeVisible();
 	await expect(page.getByTestId('assembly-avg-cycle')).toBeVisible();
 	await expect(page.getByTestId('project-line-events')).toContainText(
 		'assigned T-A40 Split the checkout service to Web · Sam Okafor'

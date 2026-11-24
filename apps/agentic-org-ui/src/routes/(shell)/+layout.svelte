@@ -356,20 +356,24 @@
 {/if}
 
 <style>
-	.exec-shell-main main > :global(:not(.chat-frame, .activity-workspace, .project-frame-activity)) {
+	.exec-shell-main main > :global(:not(.chat-frame)) {
 		flex-shrink: 0;
 	}
-	.exec-shell-main :global(.chat-frame),
-	.exec-shell-main :global(.activity-workspace),
-	.exec-shell-main :global(.project-frame-activity) {
+	.exec-shell-main :global(.chat-frame) {
 		flex: 1 1 0%;
 		min-height: 0;
 		height: auto;
 	}
-	@media (height <= 420px) {
-		.exec-shell-main :global(.chat-frame),
+	@media (min-height: 640px) {
 		.exec-shell-main :global(.activity-workspace),
 		.exec-shell-main :global(.project-frame-activity) {
+			flex: 1 1 0%;
+			min-height: 0;
+			height: auto;
+		}
+	}
+	@media (height <= 320px) {
+		.exec-shell-main :global(.chat-frame) {
 			min-height: 28rem;
 		}
 	}

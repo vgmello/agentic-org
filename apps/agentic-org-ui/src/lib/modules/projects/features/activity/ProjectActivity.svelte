@@ -10,7 +10,7 @@
 	import { Resource } from '$lib/components/resource.svelte';
 	import { ActivityCommandCenter } from '$lib/modules/activity';
 	import { releasesApi } from '$lib/modules/releases/api';
-	import type { ReleaseRow } from '$lib/modules/releases/types';
+	import type { ReleaseDetail, ReleaseRow } from '$lib/modules/releases/types';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { projectsApi } from '../../api';
@@ -34,6 +34,12 @@
 		);
 	});
 
+	const releaseDetailRead = new Resource<ReleaseDetail | undefined>(() => {
+		const rel = activeRelease;
+		if (!rel) return Promise.resolve(undefined);
+		return releasesApi.get(frame.organizationId, frame.projectId, rel.id).catch(() => undefined);
+	});
+
 	const releaseLabel = $derived.by(() => {
 		if (!activeRelease) return frame.project.name;
 		const label = activeRelease.versionLabel?.trim();
@@ -41,6 +47,11 @@
 			? `Release ${label} · ${activeRelease.title}`
 			: `R-${activeRelease.number} · ${activeRelease.title}`;
 	});
+
+	const scopedTeamIds = $derived([
+		frame.project.ownerTeam.id,
+		...frame.project.contributors.map((t) => t.id)
+	]);
 
 	const fallbackSnapshot = $derived<OrgSnapshot>({
 		position: { epoch: 0, seq: 0 },
@@ -66,7 +77,9 @@
 	organizationName={frame.project.name}
 	snapshot={effectiveSnapshot}
 	lockedProjectId={frame.projectId}
+	{scopedTeamIds}
 	{releaseLabel}
+	releaseMilestones={releaseDetailRead.data?.milestones ?? []}
 	extraProjectActivity={activityRead.data ?? []}
 	onRegisterToolbar={frame.setToolbarControls}
 />

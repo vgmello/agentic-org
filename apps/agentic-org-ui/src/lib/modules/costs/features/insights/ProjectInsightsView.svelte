@@ -75,23 +75,38 @@
 	const scopedData = $derived(insightsRes.data);
 	const data = $derived(scopedData?.allowed ? scopedData.value : undefined);
 
-	const cycleSummary = $derived.by(() => {
+	const cycleSummary = $derived.by<{ label: string; value: string; note?: string }>(() => {
 		const rows = data?.speed ?? [];
-		const taskRow = rows.find(
-			(r) => r.kind === 'task' && r.sampleCount >= 5 && r.medianCycleSeconds !== null
-		);
-		if (taskRow) return formatMedianDuration(taskRow.medianCycleSeconds, taskRow.sampleCount);
+		const multiKind = rows.length > 1;
 		const eligible = rows
 			.filter((r) => r.sampleCount >= 5 && r.medianCycleSeconds !== null)
 			.toSorted((a, b) => b.sampleCount - a.sampleCount);
-		if (eligible[0]) {
-			return formatMedianDuration(eligible[0].medianCycleSeconds, eligible[0].sampleCount);
+		const chosenRow =
+			rows.find((r) => r.kind === 'task' && r.sampleCount >= 5 && r.medianCycleSeconds !== null) ??
+			eligible[0];
+		if (chosenRow) {
+			const formatted = formatMedianDuration(chosenRow.medianCycleSeconds, chosenRow.sampleCount);
+			return {
+				label: multiKind
+					? `Median cycle time (${chosenRow.label.toLowerCase()})`
+					: 'Median cycle time',
+				value: formatted.value,
+				note: formatted.note
+			};
 		}
 		if (rows.some((r) => r.sampleCount >= 5)) {
-			return { value: '—', note: 'Cycle time not recorded yet' };
+			return { label: 'Median cycle time', value: '—', note: 'Cycle time not recorded yet' };
 		}
-		const maxKindSample = rows.reduce((max, r) => Math.max(max, r.sampleCount), 0);
-		return formatMedianDuration(null, maxKindSample);
+		const maxRow = rows.toSorted((a, b) => b.sampleCount - a.sampleCount)[0];
+		const formatted = formatMedianDuration(null, maxRow?.sampleCount ?? 0);
+		return {
+			label:
+				multiKind && maxRow && maxRow.sampleCount > 0
+					? `Median cycle time (${maxRow.label.toLowerCase()})`
+					: 'Median cycle time',
+			value: formatted.value,
+			note: formatted.note
+		};
 	});
 
 	const tokenMixRows = $derived.by(() => {
@@ -438,7 +453,7 @@
 							: undefined}
 					/>
 					<StatTile
-						label="Median cycle time"
+						label={cycleSummary.label}
 						value={cycleSummary.value}
 						detail={cycleSummary.note}
 					/>
@@ -548,61 +563,65 @@
 				{/if}
 
 				<ProjectBreakdowns breakdowns={data.breakdowns} total={totals} onopen={openRowRecords} />
+			{/if}
 
-				{#if data.speed.length > 0}
-					<section
-						aria-labelledby="speed-heading"
-						class="border-t border-line-subtle py-6 {gutters}"
-						data-testid="speed-summary"
-					>
-						<h3 id="speed-heading" class="text-base/7 font-semibold text-fg">Speed (medians)</h3>
-						<p class="mt-1 text-sm/6 text-fg-muted">
-							Medians prevent one stuck item from distorting the summary. Working time is {WORKING_TIME_NOT_TRACKED}.
-						</p>
-						<div class="mt-4 overflow-x-auto rounded-lg border border-line-subtle">
-							<table class="w-full text-left text-sm/6">
-								<caption class="sr-only">Median speed by work item kind</caption>
-								<thead>
-									<tr class="border-b border-line text-xs/5 font-semibold text-fg-muted">
-										<th scope="col" class="px-4 py-2.5">Kind</th>
-										<th scope="col" class="px-4 py-2.5 text-right">Median lead time</th>
-										<th scope="col" class="px-4 py-2.5 text-right">Median cycle time</th>
-										<th scope="col" class="px-4 py-2.5 text-right">Working time</th>
-										<th scope="col" class="px-4 py-2.5 text-right">Median waiting on you</th>
+			{#if data.speed.length > 0}
+				<section
+					aria-labelledby="speed-heading"
+					class="border-t border-line-subtle py-6 {gutters}"
+					data-testid="speed-summary"
+				>
+					<h3 id="speed-heading" class="text-base/7 font-semibold text-fg">Speed (medians)</h3>
+					<p class="mt-1 text-sm/6 text-fg-muted">
+						Medians prevent one stuck item from distorting the summary. Working time is {WORKING_TIME_NOT_TRACKED}.
+						{#if totals.records === 0}
+							· {cycleSummary.label}: {cycleSummary.value}{#if cycleSummary.note}
+								({cycleSummary.note}){/if}
+						{/if}
+					</p>
+					<div class="mt-4 overflow-x-auto rounded-lg border border-line-subtle">
+						<table class="w-full text-left text-sm/6">
+							<caption class="sr-only">Median speed by work item kind</caption>
+							<thead>
+								<tr class="border-b border-line text-xs/5 font-semibold text-fg-muted">
+									<th scope="col" class="px-4 py-2.5">Kind</th>
+									<th scope="col" class="px-4 py-2.5 text-right">Median lead time</th>
+									<th scope="col" class="px-4 py-2.5 text-right">Median cycle time</th>
+									<th scope="col" class="px-4 py-2.5 text-right">Working time</th>
+									<th scope="col" class="px-4 py-2.5 text-right">Median waiting on you</th>
+								</tr>
+							</thead>
+							<tbody class="divide-y divide-line-subtle">
+								{#each data.speed as s (s.kind)}
+									{@const lead = formatMedianDuration(s.medianLeadSeconds, s.sampleCount)}
+									{@const cycle = formatMedianDuration(s.medianCycleSeconds, s.sampleCount)}
+									{@const wait = formatMedianDuration(s.medianWaitingSeconds, s.sampleCount)}
+									<tr>
+										<th scope="row" class="px-4 py-2.5 font-medium text-fg">
+											{s.label}
+											<span class="ml-1.5 text-xs/5 font-normal text-fg-muted">
+												({s.sampleCount}
+												{s.sampleCount === 1 ? 'item' : 'items'})
+											</span>
+										</th>
+										<td class="px-4 py-2.5 text-right text-fg-secondary tabular-nums"
+											>{lead.value}</td
+										>
+										<td class="px-4 py-2.5 text-right text-fg-secondary tabular-nums"
+											>{cycle.value}</td
+										>
+										<td class="px-4 py-2.5 text-right text-fg-muted">
+											— ({WORKING_TIME_NOT_TRACKED})
+										</td>
+										<td class="px-4 py-2.5 text-right text-fg-secondary tabular-nums"
+											>{wait.value}</td
+										>
 									</tr>
-								</thead>
-								<tbody class="divide-y divide-line-subtle">
-									{#each data.speed as s (s.kind)}
-										{@const lead = formatMedianDuration(s.medianLeadSeconds, s.sampleCount)}
-										{@const cycle = formatMedianDuration(s.medianCycleSeconds, s.sampleCount)}
-										{@const wait = formatMedianDuration(s.medianWaitingSeconds, s.sampleCount)}
-										<tr>
-											<th scope="row" class="px-4 py-2.5 font-medium text-fg">
-												{s.label}
-												<span class="ml-1.5 text-xs/5 font-normal text-fg-muted">
-													({s.sampleCount}
-													{s.sampleCount === 1 ? 'item' : 'items'})
-												</span>
-											</th>
-											<td class="px-4 py-2.5 text-right text-fg-secondary tabular-nums"
-												>{lead.value}</td
-											>
-											<td class="px-4 py-2.5 text-right text-fg-secondary tabular-nums"
-												>{cycle.value}</td
-											>
-											<td class="px-4 py-2.5 text-right text-fg-muted">
-												— ({WORKING_TIME_NOT_TRACKED})
-											</td>
-											<td class="px-4 py-2.5 text-right text-fg-secondary tabular-nums"
-												>{wait.value}</td
-											>
-										</tr>
-									{/each}
-								</tbody>
-							</table>
-						</div>
-					</section>
-				{/if}
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				</section>
 			{/if}
 
 			{#if data.releaseCaps.length > 0}
@@ -681,10 +700,10 @@
 					<div class="flex flex-wrap items-baseline justify-between gap-2">
 						<div>
 							<h3 id="release-delivery-heading" class="text-base/7 font-semibold text-fg">
-								Current release delivery
+								Current project delivery
 							</h3>
 							<p class="mt-1 text-sm/6 text-fg-muted">
-								Live pipeline stages, track readiness, and release gates for {projectName}.
+								Live pipeline stages and track readiness across {projectName}.
 							</p>
 						</div>
 						<a
@@ -754,11 +773,11 @@
 							{/if}
 						</div>
 
-						<!-- Feature / track readiness -->
+						<!-- Track readiness (areas or work-kind tracks from live project work) -->
 						<div class="rounded-lg border border-line-subtle bg-surface-raised/30 p-4">
-							<h4 class="text-sm/6 font-semibold text-fg">Feature readiness</h4>
+							<h4 class="text-sm/6 font-semibold text-fg">Track readiness</h4>
 							{#if readinessTracks.length === 0}
-								<p class="mt-2 text-xs/5 text-fg-muted">No feature tracks recorded yet.</p>
+								<p class="mt-2 text-xs/5 text-fg-muted">No project tracks recorded yet.</p>
 							{:else if displayMode === 'chart'}
 								<ul role="list" class="mt-3 grid gap-2.5">
 									{#each readinessTracks as track (track.id)}

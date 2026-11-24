@@ -19,6 +19,7 @@
 	import type { InboxItem } from '$lib/modules/inbox/types';
 	import type { ActivityEntry } from '$lib/modules/members';
 	import { accountZone } from '$lib/modules/preferences';
+	import type { ReleaseMilestone } from '$lib/modules/releases/types';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import type { OrgSnapshot } from '$lib/proto';
@@ -42,7 +43,9 @@
 		organizationName,
 		snapshot,
 		lockedProjectId = undefined,
+		scopedTeamIds = undefined,
 		releaseLabel = undefined,
+		releaseMilestones = [],
 		extraProjectActivity = [],
 		onRegisterToolbar = undefined
 	}: {
@@ -50,7 +53,9 @@
 		organizationName: string;
 		snapshot: OrgSnapshot;
 		lockedProjectId?: string;
+		scopedTeamIds?: readonly string[];
 		releaseLabel?: string;
+		releaseMilestones?: readonly ReleaseMilestone[];
 		extraProjectActivity?: readonly ActivityEntry[];
 		onRegisterToolbar?: (controls: Snippet | undefined) => void;
 	} = $props();
@@ -163,6 +168,17 @@
 		onRegisterToolbar(projectToolbarControls);
 		return () => {
 			onRegisterToolbar(undefined);
+		};
+	});
+
+	// Keep waiting-on-people elapsed times and relative timestamps current while the dock is visible.
+	$effect(() => {
+		if (!panelOpen || typeof window === 'undefined') return;
+		const timer = window.setInterval(() => {
+			nowMs = Date.now();
+		}, 30_000);
+		return () => {
+			window.clearInterval(timer);
 		};
 	});
 
@@ -724,6 +740,7 @@
 			inboxItems,
 			activityRows: activityRows ?? [],
 			projectScope: effectiveProjectScope,
+			scopedTeamIds,
 			ownerId: shellData.ownerId,
 			feedPhase,
 			feedMore,
@@ -1029,6 +1046,8 @@
 				<button
 					type="button"
 					role="tab"
+					id="project-view-tab-assembly"
+					aria-controls="project-view-panel-assembly"
 					data-project-view="assembly"
 					aria-selected={viewMode === 'assembly'}
 					tabindex={viewMode === 'assembly' ? 0 : -1}
@@ -1042,6 +1061,8 @@
 				<button
 					type="button"
 					role="tab"
+					id="project-view-tab-feed"
+					aria-controls="project-view-panel-feed"
 					data-project-view="feed"
 					aria-selected={viewMode === 'feed'}
 					tabindex={viewMode === 'feed' ? 0 : -1}
@@ -1304,7 +1325,23 @@
 	<!-- Collapsible Release Gates Dock + Slim Tool Rail (poc/operations.css 53728c05) -->
 	<Tooltip.Provider delayDuration={150} ignoreNonKeyboardFocus>
 		<div class="activity-body" data-panel-open={panelOpen ? '' : undefined}>
-			<div class="activity-main" data-view={viewMode}>
+			<div
+				class="activity-main"
+				data-view={viewMode}
+				id={isProjectMode ? `project-view-panel-${viewMode}` : undefined}
+				role={isProjectMode ? 'tabpanel' : undefined}
+				aria-labelledby={isProjectMode ? `project-view-tab-${viewMode}` : undefined}
+			>
+				{#if isProjectMode}
+					<div
+						id={viewMode === 'assembly' ? 'project-view-panel-feed' : 'project-view-panel-assembly'}
+						role="tabpanel"
+						aria-labelledby={viewMode === 'assembly'
+							? 'project-view-tab-feed'
+							: 'project-view-tab-assembly'}
+						hidden
+					></div>
+				{/if}
 				{#if viewMode === 'assembly'}
 					<AssemblyLineMatrix
 						{model}
@@ -1396,9 +1433,11 @@
 						unavailableReason={workUnavailableReason}
 						embedded
 						projectScope={isProjectMode}
+						{inboxPhase}
 						zone={accountZone.zone}
 						{nowMs}
 						{extraLineEvents}
+						{releaseMilestones}
 					/>
 				</div>
 

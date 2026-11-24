@@ -1317,8 +1317,15 @@ describe('assembly-model', () => {
 		expect(entryChatT8?.needsYou).toBe(true);
 	});
 
-	it('derives project telemetry (avgCycleHours, waitingOnPeopleHours, stationAgents, humanWaitingItems, lineEvents) and supports explicit archived project scope', () => {
+	it('derives project telemetry honestly, scopes stations to project teams, filters chat out of project throughput, and scopes stale/archived projects strictly', () => {
 		const snapshot = makeSnapshot();
+		snapshot.members = snapshot.members.map((m) =>
+			m.id === 'kai'
+				? { ...m, home_team_id: 'team-a' }
+				: m.id === 'ada'
+					? { ...m, home_team_id: 'team-b' }
+					: m
+		);
 		const workItems: WorkItemSummary[] = [
 			makeItem({
 				id: 'w-done-1',
@@ -1328,17 +1335,7 @@ describe('assembly-model', () => {
 				project_id: 'proj-a',
 				area_id: 'area-api',
 				created_at: new Date(NOW - 10 * 3_600_000).toISOString(),
-				updated_at: new Date(NOW - 4 * 3_600_000).toISOString() // 6h cycle
-			}),
-			makeItem({
-				id: 'w-done-2',
-				short_id: 'T-11',
-				kind: 'task',
-				status: 'done',
-				project_id: 'proj-a',
-				area_id: 'area-api',
-				created_at: new Date(NOW - 16 * 3_600_000).toISOString(),
-				updated_at: new Date(NOW - 4 * 3_600_000).toISOString() // 12h cycle -> avg 9.0h
+				updated_at: new Date(NOW - 4 * 3_600_000).toISOString()
 			}),
 			makeItem({
 				id: 'w-wait',
@@ -1348,7 +1345,7 @@ describe('assembly-model', () => {
 				project_id: 'proj-a',
 				area_id: 'area-ui',
 				created_at: new Date(NOW - 5 * 3_600_000).toISOString(),
-				updated_at: new Date(NOW - 2 * 3_600_000).toISOString() // 2h waiting on people
+				updated_at: new Date(NOW - 2 * 3_600_000).toISOString()
 			}),
 			makeItem({
 				id: 'w-old',
@@ -1376,31 +1373,46 @@ describe('assembly-model', () => {
 			],
 			activityRows: [
 				{
-					id: 'ev-1',
+					id: 'ev-work',
 					at: new Date(NOW - 120_000).toISOString(),
 					actor: { id: 'kai', name: 'Kai Sato', kind: 'agent' },
 					kind: 'work',
 					action: 'task-done',
-					text: 'finished T-11',
+					text: 'finished T-10',
+					teamIds: [],
+					projectIds: ['proj-a'],
+					memberIds: ['kai']
+				},
+				{
+					id: 'ev-chat',
+					at: new Date(NOW - 60_000).toISOString(),
+					actor: { id: 'kai', name: 'Kai Sato', kind: 'agent' },
+					kind: 'conversation',
+					action: 'message',
+					text: 'posted in #alpha',
 					teamIds: [],
 					projectIds: ['proj-a'],
 					memberIds: ['kai']
 				}
 			],
 			projectScope: 'proj-a',
+			scopedTeamIds: ['team-a'],
 			nowMs: NOW
 		});
 
-		expect(model.avgCycleHours).toBeCloseTo(9, 1);
-		expect(formatTelemetryHours(model.avgCycleHours)).toBe('9.0 h');
-		expect(formatTelemetryHours(null)).toBe('—');
+		// WorkItemSummary lacks lifecycle start/completion timestamps -> avgCycleHours stays honest null ("—")
+		expect(model.avgCycleHours).toBeNull();
+		expect(formatTelemetryHours(model.avgCycleHours)).toBe('—');
+		expect(formatTelemetryHours(2.5)).toBe('2.5 h');
 		expect(model.waitingOnPeopleHours).toBeCloseTo(2, 1);
-		expect(model.stationAgents.length).toBeGreaterThan(0);
+		// Stations roster is scoped to team-a (Kai), excluding unrelated team-b agent (Ada)
+		expect(model.stationAgents.map((a) => a.id)).toEqual(['kai']);
 		expect(model.humanWaitingItems.map((i) => i.id)).toContain('w-wait');
-		expect(model.lineEvents).toHaveLength(1);
-		expect(model.lineEvents[0].text).toContain('finished T-11');
+		expect(model.lineEvents).toHaveLength(2);
+		// Project 7d throughput counts only work events (1), ignoring conversation messages
+		expect(model.throughput7d.reduce((sum, d) => sum + d.count, 0)).toBe(1);
 
-		// Explicit archived project scope still resolves that archived project
+		// Explicit archived project scope resolves its own items and decisions without dropping them
 		const archivedModel = deriveActivityCommandCenter({
 			snapshot,
 			organizationName: 'Acme Corp',
@@ -1413,6 +1425,44 @@ describe('assembly-model', () => {
 		expect(archivedModel.selectedProject?.id).toBe('proj-old');
 		expect(archivedModel.scopeTitle).toBe('Archived Legacy');
 		expect(archivedModel.totalItems).toBe(1);
-		expect(archivedModel.avgCycleHours).toBeCloseTo(5, 1);
+
+		const archivedDecisions = deriveDecisionStreamEntries({
+			snapshot,
+			decisionRows: [
+				{
+					id: 'dec-old',
+					at: new Date(NOW - 60_000).toISOString(),
+					actor: { id: 'kai', name: 'Kai Sato', kind: 'agent' },
+					kind: 'decision',
+					action: 'decision',
+					text: 'archived project decision',
+					teamIds: [],
+					projectIds: ['proj-old'],
+					memberIds: ['kai']
+				}
+			],
+			workItems,
+			inboxItems: [],
+			projectScope: 'proj-old',
+			decisionPhase: 'ready',
+			workPhase: 'ready',
+			inboxPhase: 'ready'
+		});
+		expect(archivedDecisions.map((e) => e.id)).toEqual(['dec-old']);
+
+		// Stale snapshot missing an explicit projectScope MUST NOT fall through to portfolio work or milestones
+		const staleMissing = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'New Project',
+			workItems,
+			inboxItems: [],
+			activityRows: [],
+			projectScope: 'proj-not-in-snapshot-yet',
+			nowMs: NOW
+		});
+		expect(staleMissing.totalItems).toBe(0);
+		expect(staleMissing.milestones).toHaveLength(1);
+		expect(staleMissing.milestones[0].id).toBe('proj-not-in-snapshot-yet');
+		expect(staleMissing.scopeTitle).toBe('New Project');
 	});
 });

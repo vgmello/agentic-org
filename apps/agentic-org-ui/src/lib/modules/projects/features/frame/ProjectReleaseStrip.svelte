@@ -13,7 +13,7 @@
 	import { Resource } from '$lib/components/resource.svelte';
 	import { isItemDone } from '$lib/home/model';
 	import { releasesApi } from '$lib/modules/releases/api';
-	import type { ReleaseRow } from '$lib/modules/releases/types';
+	import type { ReleaseDetail, ReleaseRow } from '$lib/modules/releases/types';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { countedTasks, projectHref } from '../../present';
 	import type { TaskCounts } from '../../types';
@@ -49,6 +49,14 @@
 		);
 	});
 
+	const releaseDetailRead = new Resource<ReleaseDetail | undefined>(() => {
+		const rel = activeRelease;
+		if (!rel) return Promise.resolve(undefined);
+		return releasesApi.get(organizationId, projectId, rel.id).catch(() => undefined);
+	});
+
+	const releaseDetail = $derived(releaseDetailRead.data);
+
 	const releaseName = $derived.by(() => {
 		if (!activeRelease) return 'Current delivery';
 		const label = activeRelease.versionLabel?.trim();
@@ -62,6 +70,33 @@
 	);
 
 	const readiness = $derived.by(() => {
+		// Prefer release-scoped task/milestone counts when the active release detail is available.
+		if (releaseDetail) {
+			const relTasks = releaseDetail.tasks.filter((t) => t.status !== 'cancelled');
+			if (relTasks.length > 0) {
+				const merged = relTasks.filter((t) => t.status === 'done' || t.status === 'closed').length;
+				const total = relTasks.length;
+				const pct =
+					merged <= 0
+						? 0
+						: merged >= total
+							? 100
+							: Math.min(99, Math.round((merged * 100) / total));
+				return { merged, total, pct, scopeLabel: 'Release readiness' };
+			}
+			const msDone = releaseDetail.milestones.reduce((sum, m) => sum + m.tasksDone, 0);
+			const msOpen = releaseDetail.milestones.reduce((sum, m) => sum + m.tasksOpen, 0);
+			const msTotal = msDone + msOpen;
+			if (msTotal > 0) {
+				const pct =
+					msDone <= 0
+						? 0
+						: msDone >= msTotal
+							? 100
+							: Math.min(99, Math.round((msDone * 100) / msTotal));
+				return { merged: msDone, total: msTotal, pct, scopeLabel: 'Release readiness' };
+			}
+		}
 		if (shellReady && shellData && !shellData.workError) {
 			const items = shellData.workItems.filter(
 				(item) =>
@@ -79,7 +114,7 @@
 						: merged >= total
 							? 100
 							: Math.min(99, Math.round((merged * 100) / total));
-				return { merged, total, pct };
+				return { merged, total, pct, scopeLabel: 'Project readiness' };
 			}
 		}
 		const total = countedTasks(fallbackTasks);
@@ -90,7 +125,7 @@
 				: merged >= total
 					? 100
 					: Math.min(99, Math.round((merged * 100) / total));
-		return { merged, total, pct };
+		return { merged, total, pct, scopeLabel: 'Project readiness' };
 	});
 
 	interface GatePill {
@@ -157,7 +192,7 @@
 		<div class="assembly-release-readiness">
 			<p class="assembly-release-label" data-testid="project-release-readiness">
 				{#if readiness.total > 0}
-					Readiness {readiness.pct}% · {readiness.merged}/{readiness.total} merged
+					{readiness.scopeLabel} {readiness.pct}% · {readiness.merged}/{readiness.total} merged
 				{:else}
 					No delivery items recorded yet
 				{/if}
@@ -169,7 +204,7 @@
 				]}
 				value={readiness.merged}
 				max={Math.max(1, readiness.total)}
-				aria-label="Release readiness: {readiness.pct}%"
+				aria-label="{readiness.scopeLabel}: {readiness.pct}%"
 			></progress>
 		</div>
 	</div>

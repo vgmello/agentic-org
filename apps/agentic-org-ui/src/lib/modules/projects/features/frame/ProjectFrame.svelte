@@ -373,17 +373,21 @@
 		flex-direction: column;
 		min-width: 0;
 	}
-	.project-frame-activity {
-		min-height: 0;
-		overflow: hidden;
-	}
 	.project-tab-activity {
 		display: flex;
-		flex: 1 1 0%;
 		flex-direction: column;
 		min-width: 0;
-		min-height: 0;
-		overflow: hidden;
+	}
+	@media (min-height: 640px) {
+		.project-frame-activity {
+			min-height: 0;
+			overflow: hidden;
+		}
+		.project-tab-activity {
+			flex: 1 1 0%;
+			min-height: 0;
+			overflow: hidden;
+		}
 	}
 	.section-header {
 		flex: none;

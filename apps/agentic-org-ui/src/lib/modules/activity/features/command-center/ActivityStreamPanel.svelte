@@ -217,23 +217,27 @@
 		</div>
 	{/if}
 
-	<!-- Inactive hidden tabpanels ensure every tab's aria-controls resolves to a live DOM element -->
-	{#each tabs as tab (tab.id)}
-		{#if tab.id !== activeFilter}
-			<div
-				id={`activity-panel-${tab.id}`}
-				role="tabpanel"
-				aria-labelledby={`activity-tab-${tab.id}`}
-				hidden
-			></div>
-		{/if}
-	{/each}
+	<!-- Inactive hidden tabpanels ensure every tab's aria-controls resolves to a live DOM element in portfolio tablist mode -->
+	{#if !projectScope}
+		{#each tabs as tab (tab.id)}
+			{#if tab.id !== activeFilter}
+				<div
+					id={`activity-panel-${tab.id}`}
+					role="tabpanel"
+					aria-labelledby={`activity-tab-${tab.id}`}
+					hidden
+				></div>
+			{/if}
+		{/each}
+	{/if}
 
-	<!-- Active Tab Panel (tabindex="0" keeps leading non-focusable panel text keyboard-reachable) -->
+	<!-- Active Stream Panel (tabindex="0" keeps leading non-focusable panel text keyboard-reachable) -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 	<div
-		id={`activity-panel-${activeFilter}`}
-		role="tabpanel"
-		aria-labelledby={`activity-tab-${activeFilter}`}
+		id={projectScope ? 'project-activity-stream-body' : `activity-panel-${activeFilter}`}
+		role={projectScope ? 'region' : 'tabpanel'}
+		aria-labelledby={projectScope ? undefined : `activity-tab-${activeFilter}`}
+		aria-label={projectScope ? 'Project activity feed' : undefined}
 		tabindex="0"
 		class="stream-body"
 	>

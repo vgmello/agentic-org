@@ -3,9 +3,12 @@
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
 	import { eventTime } from '$lib/modules/preferences';
+	import type { ReleaseMilestone } from '$lib/modules/releases/types';
 	import {
+		computeCompletionPct,
 		formatTelemetryHours,
 		type ActivityCommandCenterModel,
+		type FeedPhase,
 		type LineEventEntry
 	} from './assembly-model';
 
@@ -15,18 +18,22 @@
 		unavailableReason = undefined,
 		embedded = false,
 		projectScope = false,
+		inboxPhase = 'ready',
 		zone = 'UTC',
 		nowMs = Date.now(),
-		extraLineEvents = []
+		extraLineEvents = [],
+		releaseMilestones = []
 	}: {
 		model: ActivityCommandCenterModel;
 		loading?: boolean;
 		unavailableReason?: string;
 		embedded?: boolean;
 		projectScope?: boolean;
+		inboxPhase?: FeedPhase;
 		zone?: string;
 		nowMs?: number;
 		extraLineEvents?: readonly LineEventEntry[];
+		releaseMilestones?: readonly ReleaseMilestone[];
 	} = $props();
 
 	const agentsCapacity = $derived(
@@ -111,44 +118,72 @@
 		{/if}
 	</section>
 
-	<!-- 2. Milestones -->
-	{#if !dataUnavailable && model.milestones.length > 0}
+	<!-- 2. Milestones (real release milestones when served, else honest Project delivery progress) -->
+	{#if !dataUnavailable && (releaseMilestones.length > 0 || model.milestones.length > 0)}
 		<section class="ops-section" aria-labelledby="proj-ops-milestones-heading">
 			<div class="ops-section-head">
-				<h3 id="proj-ops-milestones-heading">Milestones</h3>
+				<h3 id="proj-ops-milestones-heading">
+					{releaseMilestones.length > 0 ? 'Milestones' : 'Project progress'}
+				</h3>
 				<span class="ops-section-meta tabular-nums">{model.readinessPct}%</span>
 			</div>
-			{#each model.milestones as milestone (milestone.id)}
-				<div class="project-milestone-block">
-					<div class="project-milestone-name">{milestone.name}</div>
-					<div class="project-milestone-progress">
-						<progress
-							class={['project-progress-bar', milestone.isComplete && 'is-complete']}
-							value={milestone.doneCount}
-							max={Math.max(1, milestone.totalCount)}
-							aria-label="{milestone.name} progress: {milestone.pct}%"
-						></progress>
-						<span class="ops-note tabular-nums">{milestone.summary}</span>
+			{#if releaseMilestones.length > 0}
+				{#each releaseMilestones as ms (ms.id)}
+					{@const msTotal = ms.tasksDone + ms.tasksOpen}
+					{@const msPct = computeCompletionPct(ms.tasksDone, msTotal)}
+					<div class="project-milestone-block">
+						<div class="project-milestone-name">M-{ms.number} · {ms.title}</div>
+						<div class="project-milestone-progress">
+							<progress
+								class={[
+									'project-progress-bar',
+									msTotal > 0 && ms.tasksDone >= msTotal && 'is-complete'
+								]}
+								value={ms.tasksDone}
+								max={Math.max(1, msTotal)}
+								aria-label="{ms.title} progress: {msPct}%"
+							></progress>
+							<span class="ops-note tabular-nums">
+								{msPct}% · {ms.tasksDone}/{msTotal} tasks
+							</span>
+						</div>
 					</div>
-				</div>
-			{/each}
+				{/each}
+			{:else}
+				{#each model.milestones as milestone (milestone.id)}
+					<div class="project-milestone-block">
+						<div class="project-milestone-name">{milestone.name}</div>
+						<div class="project-milestone-progress">
+							<progress
+								class={['project-progress-bar', milestone.isComplete && 'is-complete']}
+								value={milestone.doneCount}
+								max={Math.max(1, milestone.totalCount)}
+								aria-label="{milestone.name} progress: {milestone.pct}%"
+							></progress>
+							<span class="ops-note tabular-nums">{milestone.summary}</span>
+						</div>
+					</div>
+				{/each}
+			{/if}
 		</section>
 	{/if}
 
-	<!-- 3. Needs a human -->
+	<!-- 3. Needs a human (honest loading/unavailable states during Inbox outage) -->
 	<section class="ops-section" aria-labelledby="proj-ops-human-heading">
 		<div class="ops-section-head">
 			<h3 id="proj-ops-human-heading">
 				Needs a human
-				<span class="project-head-count"
-					>{dataUnavailable ? '—' : model.humanWaitingItems.length}</span
-				>
+				<span class="project-head-count">
+					{dataUnavailable || inboxPhase !== 'ready' ? '—' : model.humanWaitingItems.length}
+				</span>
 			</h3>
 		</div>
-		{#if loading}
+		{#if loading || inboxPhase === 'loading'}
 			<p class="ops-note">Checking waiting items…</p>
 		{:else if unavailableReason}
 			<p class="ops-note is-warn">Work data unavailable.</p>
+		{:else if inboxPhase === 'error'}
+			<p class="ops-note is-warn">Inbox unavailable — waiting reviews cannot be verified.</p>
 		{:else if model.humanWaitingItems.length === 0}
 			<p class="ops-note">Nothing waiting on a human right now.</p>
 		{:else}
@@ -254,7 +289,11 @@
 			</div>
 			<div>
 				<dt>Waiting on people now</dt>
-				<dd>{dataUnavailable ? '—' : formatTelemetryHours(model.waitingOnPeopleHours)}</dd>
+				<dd>
+					{dataUnavailable || inboxPhase !== 'ready'
+						? '—'
+						: formatTelemetryHours(model.waitingOnPeopleHours)}
+				</dd>
 			</div>
 		</dl>
 	</section>

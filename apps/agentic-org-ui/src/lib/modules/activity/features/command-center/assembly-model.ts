@@ -188,6 +188,8 @@ export interface CommandCenterInput {
 	inboxItems: readonly InboxItem[];
 	activityRows: readonly ActivityRow[];
 	projectScope: string;
+	/** Optional accountable + contributing team IDs for project-scoped Stations roster. */
+	scopedTeamIds?: readonly string[];
 	ownerId?: string;
 	feedPhase?: FeedPhase;
 	feedMore?: number;
@@ -949,15 +951,13 @@ export function deriveDecisionStreamEntries(input: {
 	if (decisionPhase !== 'ready') return [];
 
 	const resolvedOwnerId = input.ownerId ?? owner(snapshot)?.id ?? 'owner';
-	const activeProjects = (snapshot.projects ?? []).filter((p) => !p.archived);
 	const archivedProjectIds = new Set(
 		(snapshot.projects ?? []).filter((p) => p.archived).map((p) => p.id)
 	);
-	const selectedProject =
-		projectScope === 'all' ? undefined : activeProjects.find((p) => p.id === projectScope);
+	const scopedProjectId = projectScope !== 'all' ? projectScope : undefined;
 
-	const scopedDecisionRows = selectedProject
-		? decisionRows.filter((row) => row.projectIds.includes(selectedProject.id))
+	const scopedDecisionRows = scopedProjectId
+		? decisionRows.filter((row) => row.projectIds.includes(scopedProjectId))
 		: decisionRows.filter(
 				(row) => !belongsOnlyToArchivedProjects(row.projectIds, archivedProjectIds)
 			);
@@ -972,8 +972,8 @@ export function deriveDecisionStreamEntries(input: {
 
 	const pipelineWork = workItems.filter((i) => !isExcludedTerminalItem(i));
 	const allOpenInbox = inboxPhase === 'ready' ? inboxItems.filter((i) => i.state === 'open') : [];
-	const scopedOpenInbox = selectedProject
-		? allOpenInbox.filter((i) => resolveInboxProjectId(i, workByRef) === selectedProject.id)
+	const scopedOpenInbox = scopedProjectId
+		? allOpenInbox.filter((i) => resolveInboxProjectId(i, workByRef) === scopedProjectId)
 		: allOpenInbox.filter((i) => {
 				const pid = resolveInboxProjectId(i, workByRef);
 				return !pid || !archivedProjectIds.has(pid);
@@ -983,8 +983,8 @@ export function deriveDecisionStreamEntries(input: {
 	const actionableWorkRefs = new Set<string>();
 	for (const item of pipelineWork) {
 		if (!isActionableWorkItem(item, resolvedOwnerId)) continue;
-		if (selectedProject && item.project_id !== selectedProject.id) continue;
-		if (!selectedProject && item.project_id && archivedProjectIds.has(item.project_id)) continue;
+		if (scopedProjectId && item.project_id !== scopedProjectId) continue;
+		if (!scopedProjectId && item.project_id && archivedProjectIds.has(item.project_id)) continue;
 		actionableWorkRefs.add(item.short_id.toUpperCase());
 		actionableWorkRefs.add(item.id.toUpperCase());
 	}
@@ -1019,10 +1019,13 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	);
 	const activeProjectIds = new Set(activeProjects.map((p) => p.id));
 
-	const selectedProject =
-		input.projectScope === 'all'
-			? undefined
-			: (snapshot.projects ?? []).find((p) => p.id === input.projectScope);
+	const scopedProjectId = input.projectScope !== 'all' ? input.projectScope : undefined;
+	const selectedProject = scopedProjectId
+		? (snapshot.projects ?? []).find((p) => p.id === scopedProjectId)
+		: undefined;
+	const displayScopedProject: ProjectSummary | undefined = scopedProjectId
+		? (selectedProject ?? { id: scopedProjectId, name: organizationName })
+		: undefined;
 
 	const nonDeletedWork = workItems.filter((i) => !i.deleted);
 	const workByRef = new Map<string, WorkItemSummary>();
@@ -1032,13 +1035,13 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	}
 
 	const pipelineWork = workItems.filter((i) => !isExcludedTerminalItem(i));
-	const scopedWork = selectedProject
-		? pipelineWork.filter((i) => i.project_id === selectedProject.id)
+	const scopedWork = scopedProjectId
+		? pipelineWork.filter((i) => i.project_id === scopedProjectId)
 		: pipelineWork.filter((i) => !i.project_id || !archivedProjectIds.has(i.project_id));
 
 	const allOpenInbox = inboxPhase === 'ready' ? inboxItems.filter((i) => i.state === 'open') : [];
-	const scopedOpenInbox = selectedProject
-		? allOpenInbox.filter((i) => resolveInboxProjectId(i, workByRef) === selectedProject.id)
+	const scopedOpenInbox = scopedProjectId
+		? allOpenInbox.filter((i) => resolveInboxProjectId(i, workByRef) === scopedProjectId)
 		: allOpenInbox.filter((i) => {
 				const pid = resolveInboxProjectId(i, workByRef);
 				return !pid || !archivedProjectIds.has(pid);
@@ -1047,8 +1050,8 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const inboxByRef = buildInboxLookup(scopedOpenInbox);
 
 	// Scoped activity rows: exclude archived-only project rows on All projects, retain org-wide rows.
-	const scopedActivityRows = selectedProject
-		? activityRows.filter((row) => row.projectIds.includes(selectedProject.id))
+	const scopedActivityRows = scopedProjectId
+		? activityRows.filter((row) => row.projectIds.includes(scopedProjectId))
 		: activityRows.filter(
 				(row) => !belongsOnlyToArchivedProjects(row.projectIds, archivedProjectIds)
 			);
@@ -1056,7 +1059,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const areas = snapshot.areas ?? [];
 	const milestones: AssemblyMilestone[] = [];
 
-	const projectsToRender = selectedProject ? [selectedProject] : activeProjects;
+	const projectsToRender = displayScopedProject ? [displayScopedProject] : activeProjects;
 	for (const project of projectsToRender) {
 		const projItems = scopedWork.filter((i) => i.project_id === project.id);
 		const lanes = buildLanesForProject(
@@ -1086,7 +1089,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 		});
 	}
 
-	if (!selectedProject) {
+	if (!scopedProjectId) {
 		const unassignedItems = scopedWork.filter(
 			(i) => !i.project_id || !activeProjectIds.has(i.project_id)
 		);
@@ -1163,19 +1166,15 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const unlinkedOpenInboxCount = scopedOpenInbox.filter((i) => !linkedInboxIds.has(i.id)).length;
 	const needsYouCount = stageCounts.review + unlinkedOpenInboxCount;
 
-	// Real delivery telemetry for project-scoped Assembly & dock (zero simulated values).
-	const completedDurationsHours: number[] = [];
+	// Real delivery telemetry for project-scoped Assembly & dock (zero fabricated or misattributed values).
+	// WorkItemSummary lacks immutable lifecycle start/completion timestamps (updated_at changes on later edits),
+	// so avgCycleHours stays null (displayed as "—") until lifecycle transition history is served.
+	const avgCycleHours: number | null = null;
 	let waitingOnPeopleHours = 0;
 	const humanWaitingItems: { id: string; title: string; href: string }[] = [];
 	for (const item of scopedWork) {
 		const stage = classifyAssemblyStage(item, inboxByRef, resolvedOwnerId);
-		if (stage === 'merged') {
-			const createdMs = Date.parse(item.created_at);
-			const updatedMs = Date.parse(item.updated_at);
-			if (!Number.isNaN(createdMs) && !Number.isNaN(updatedMs) && updatedMs > createdMs) {
-				completedDurationsHours.push((updatedMs - createdMs) / HOUR_MS);
-			}
-		} else if (stage === 'review') {
+		if (stage === 'review') {
 			const linked =
 				inboxByRef.get(item.short_id.toUpperCase()) ?? inboxByRef.get(item.id.toUpperCase());
 			const sinceIso = linked?.created_at ?? item.updated_at;
@@ -1190,14 +1189,29 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 			});
 		}
 	}
-	const avgCycleHours =
-		completedDurationsHours.length > 0
-			? completedDurationsHours.reduce((sum, h) => sum + h, 0) / completedDurationsHours.length
-			: null;
 
-	// Agents roster for KPI & rail
+	// Agents roster for KPI & rail — project scope restricts station slots to project teams + assigned agents.
 	const nonFormerAgents = agentsOf(nonOwners(snapshot)).filter((m) => !isFormer(m));
-	const activeAgents = nonFormerAgents.filter((m) => m.agent?.status === 'active');
+	const allActiveAgents = nonFormerAgents.filter((m) => m.agent?.status === 'active');
+	const projectTeamSet = new Set<string>(input.scopedTeamIds ?? []);
+	if (scopedProjectId && projectTeamSet.size === 0) {
+		for (const pt of snapshot.project_teams ?? []) {
+			if (pt.project_id === scopedProjectId) projectTeamSet.add(pt.team_id);
+		}
+	}
+	const scopedAssigneeIds = new Set<string>();
+	for (const item of scopedWork) {
+		if (item.assignee_id) scopedAssigneeIds.add(item.assignee_id);
+	}
+	const activeAgents =
+		scopedProjectId && (projectTeamSet.size > 0 || scopedAssigneeIds.size > 0)
+			? allActiveAgents.filter(
+					(a) =>
+						(a.home_team_id && projectTeamSet.has(a.home_team_id)) ||
+						scopedAssigneeIds.has(a.id) ||
+						busyAssigneeIds.has(a.id)
+				)
+			: allActiveAgents;
 	const activeAgentsCount = activeAgents.length;
 	const busyAgentsCount = activeAgents.filter((a) => busyAssigneeIds.has(a.id)).length;
 	const stationAgents: StationAgentSlot[] = activeAgents.map((a) => ({
@@ -1289,16 +1303,20 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	);
 	const streamNeedsYouCount = streamEntries.filter((e) => e.needsYou).length;
 
-	// Honest 7-day throughput derivation (source-specific labels and unavailable messaging)
+	// Honest 7-day throughput derivation (source-specific labels and unavailable messaging).
+	// In project scope, count work-delivery events only so chat/org messages never inflate delivery throughput.
+	const throughputRows = scopedProjectId
+		? scopedActivityRows.filter((r) => r.kind === 'work')
+		: scopedActivityRows;
 	let throughputSource: ThroughputSource;
 	let throughputTimestamps: string[] = [];
 	if (feedPhase === 'loading') {
 		throughputSource = 'loading';
 	} else if (feedPhase === 'error') {
 		throughputSource = 'unavailable';
-	} else if (scopedActivityRows.length > 0) {
+	} else if (throughputRows.length > 0) {
 		throughputSource = feedMore > 0 ? 'events_capped' : 'events';
-		throughputTimestamps = scopedActivityRows.map((r) => r.at);
+		throughputTimestamps = throughputRows.map((r) => r.at);
 	} else if (workPhase === 'ready') {
 		throughputSource = 'work_updates';
 		throughputTimestamps = scopedWork.map((i) => i.updated_at);
@@ -1311,8 +1329,11 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const throughput7d = computeThroughput7d(throughputTimestamps, nowMs);
 	const total7dCount = throughput7d.reduce((sum, d) => sum + d.count, 0);
 
-	let throughputMeta = `${total7dCount} ${total7dCount === 1 ? 'event' : 'events'}`;
-	let throughputAriaLabel = '7-day activity events';
+	const eventNoun = scopedProjectId ? 'work event' : 'event';
+	let throughputMeta = `${total7dCount} ${total7dCount === 1 ? eventNoun : `${eventNoun}s`}`;
+	let throughputAriaLabel = scopedProjectId
+		? '7-day work delivery events'
+		: '7-day activity events';
 	let throughputUnavailableMessage: string | undefined;
 
 	if (throughputSource === 'loading') {
@@ -1415,12 +1436,12 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const ciColumnSubLabel = `${stageCounts.ci} ready for checks`;
 	const ciStationLabel = ciColumnSubLabel;
 
-	const scopeEyebrow = selectedProject
-		? `${selectedProject.key ? `${selectedProject.key.toUpperCase()} · ` : ''}PRODUCTION LINE`
+	const scopeEyebrow = displayScopedProject
+		? `${displayScopedProject.key ? `${displayScopedProject.key.toUpperCase()} · ` : ''}PRODUCTION LINE`
 		: 'LIVE PIPELINE';
-	const scopeTitle = selectedProject ? selectedProject.name : 'All projects';
-	const scopeSubtitle = selectedProject
-		? `${selectedProject.name} · ${openItems} open, ${mergedItems} done`
+	const scopeTitle = displayScopedProject ? displayScopedProject.name : 'All projects';
+	const scopeSubtitle = displayScopedProject
+		? `${displayScopedProject.name} · ${openItems} open, ${mergedItems} done`
 		: `Assembly line and live stream across ${activeProjects.length} active ${activeProjects.length === 1 ? 'project' : 'projects'} in ${organizationName}`;
 
 	let liveStatusText = 'Ready for work';
