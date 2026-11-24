@@ -28,8 +28,9 @@
 			<div class="min-w-0 basis-64 flex-1">
 				<p id={labelId} class="text-sm/6 font-medium text-fg">Single-key shortcuts</p>
 				<p id={helpId} class="mt-1 text-sm/6 text-fg-muted">
-					N opens New and / moves to Search when you are not typing in a field. Turn this off if
-					single keys get in the way of your screen reader or voice control.
+					N opens New, / moves to Search, S jumps to Sidebar navigation, and M jumps to Inbox
+					categories when you are not typing in a field. Turn this off if single keys get in the way
+					of your screen reader or voice control.
 				</p>
 			</div>
 			<button

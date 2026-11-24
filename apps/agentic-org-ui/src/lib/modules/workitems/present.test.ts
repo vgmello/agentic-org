@@ -3,6 +3,7 @@ import {
 	activityKindLabel,
 	assignmentText,
 	boardColumns,
+	boardColumnsForMode,
 	byPriorityThenAge,
 	bySeverityThenPriority,
 	formatDuration,
@@ -131,6 +132,33 @@ describe('workitems present helpers', () => {
 		const groups = groupRows(rows, 'assigned_team', bySeverityThenPriority);
 		expect(groups.map((g) => g.label)).toEqual(['Web', 'Unassigned team']);
 		expect(severityCounts(rows)).toBe('1 critical · 1 not set');
+
+		// Status grouping puts Blocked first (Prototype Release 3c4e3541).
+		const byStatus = groupRows(
+			[
+				makeRow({ ref: 'T-1', status: 'todo' }),
+				makeRow({ ref: 'T-2', status: 'blocked' }),
+				makeRow({ ref: 'T-3', status: 'done' }),
+				makeRow({ ref: 'T-4', status: 'in_progress' })
+			],
+			'status'
+		);
+		expect(byStatus.map((g) => g.key)).toEqual(['blocked', 'todo', 'in_progress', 'done']);
+
+		// Board mode supports default 4 stages and expanded 6 statuses.
+		const now = new Date('2026-11-20T12:00:00Z');
+		const mixed = [
+			makeRow({ ref: 'T-1', status: 'todo' }),
+			makeRow({ ref: 'T-2', status: 'in_progress', awaitingVerification: true }),
+			makeRow({ ref: 'T-3', status: 'cancelled' })
+		];
+		expect(boardColumnsForMode(mixed, 'stages', { allDone: true, now })).toHaveLength(4);
+		const six = boardColumnsForMode(mixed, 'statuses', { allDone: true, now });
+		expect(six).toHaveLength(6);
+		expect(six.find((c) => c.column === 'awaiting_verification')?.rows.map((r) => r.ref)).toEqual([
+			'T-2'
+		]);
+		expect(six.find((c) => c.column === 'cancelled')?.rows.map((r) => r.ref)).toEqual(['T-3']);
 	});
 
 	it('formats shared durations per TIME-4 and splits lead time into waiting, blocked and the rest', () => {

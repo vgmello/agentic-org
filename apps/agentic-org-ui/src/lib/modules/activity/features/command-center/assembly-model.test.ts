@@ -950,6 +950,8 @@ describe('assembly-model', () => {
 
 		expect(model.activeProjects.map((p) => p.id)).toEqual(['proj-a', 'proj-b']);
 		expect(model.milestones.map((m) => m.name)).toEqual(['Alpha Core', 'Beta Release']);
+		expect(model.milestones[0].summary).toBe('50% · 1/2 tasks · 1/2 tracks');
+		expect(model.milestones[1].summary).toBe('0% · 0/2 tasks · 0/2 tracks');
 		expect(model.milestones[0].lanes.map((l) => l.name)).toEqual(['API', 'Interface']);
 		expect(model.milestones[0].lanes[1].stages.agents[0]?.agentFirstName).toBe('Kai');
 		expect(model.milestones[1].lanes.map((l) => l.name)).toEqual(['Tasks', 'Bugs']);

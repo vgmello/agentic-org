@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { Tooltip } from 'bits-ui';
 	import { toast } from 'svelte-sonner';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
@@ -837,10 +838,32 @@
 						placeholder="Leave a comment…"
 						value={commentDraft}
 						oninput={(e) => updateCommentDraft(e.currentTarget.value)}
+						onkeydown={(e) => {
+							if (!e.isComposing && e.keyCode !== 229 && e.key === 'Escape') {
+								e.preventDefault();
+								document.getElementById('shell-page-title')?.focus({ preventScroll: true });
+							}
+						}}
 						required></textarea>
-					<button type="submit" aria-label="Send comment" title="Send comment" class="triage-send">
-						<Send class="size-4" aria-hidden="true" />
-					</button>
+					<Tooltip.Provider delayDuration={150}>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button {...props} type="submit" aria-label="Send comment" class="triage-send">
+										<Send class="size-4" aria-hidden="true" />
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									side="top"
+									sideOffset={6}
+									class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+									>Send comment</Tooltip.Content
+								>
+							</Tooltip.Portal>
+						</Tooltip.Root>
+					</Tooltip.Provider>
 				</form>
 				<p id="triage-comment-status" class="sr-only" role="status">{commentStatus}</p>
 

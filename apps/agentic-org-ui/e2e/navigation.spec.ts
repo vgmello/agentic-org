@@ -8,7 +8,7 @@ const SECTIONS = [
 	['Home', '/home', 1, null],
 	['Inbox', '/inbox', 1, 'Inbox'],
 	['Work', '/work', 1, 'Work'],
-	['Chat', '/chat', 2, 'Needs you'],
+	['Chat', '/chat', 2, 'Channels'],
 	['Activity', '/activity', 1, 'Activity'],
 	['Projects', '/projects', 2, 'Projects'],
 	['Teams', '/teams', 2, 'Teams'],

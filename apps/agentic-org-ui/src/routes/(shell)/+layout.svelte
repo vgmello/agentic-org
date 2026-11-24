@@ -18,6 +18,7 @@
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
 	import { noteModalBackNavigation } from '$lib/platform/shell/modal-back';
+	import { NavKeyController } from '$lib/platform/shell/nav-keys.svelte';
 	import { provideShellAi, type ShellAiAskOptions } from '$lib/platform/shell/shell-ai';
 	import { provideShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
@@ -47,6 +48,7 @@
 
 	// Route changes reset internal <main> scroll (except hash targets) and focus the destination heading (app-shell-ux §0).
 	afterNavigate((move) => {
+		navKeys.cancel(false);
 		noteModalBackNavigation();
 		const routeChanged = move.from?.url?.pathname !== move.to?.url?.pathname;
 		if (routeChanged && !move.to?.url?.hash && mainEl) {
@@ -62,14 +64,34 @@
 
 	let desktopNavigation = $state<HTMLDivElement | null>(null);
 	let mainEl = $state<HTMLElement | null>(null);
+	let mobileMenuOpen = $state(false);
 	let sidebarHovered = $state(false);
 	let sidebarFocused = $state(false);
 	let sidebarMenuOpen = $state(false);
 	let sidebarHoverTimer: ReturnType<typeof setTimeout> | undefined;
 	let sidebarFocusTimer: ReturnType<typeof setTimeout> | undefined;
+	const navKeys = new NavKeyController({
+		onSidebarOpen() {
+			if (typeof window !== 'undefined' && window.innerWidth < 640) {
+				mobileMenuOpen = true;
+			} else if (uiPrefs.navCollapsed) {
+				clearTimeout(sidebarFocusTimer);
+				sidebarFocused = true;
+			}
+		},
+		onSidebarCancel() {
+			if (typeof window !== 'undefined' && window.innerWidth < 640 && mobileMenuOpen) {
+				mobileMenuOpen = false;
+			}
+		}
+	});
 	const sidebarPinned = $derived(!uiPrefs.navCollapsed);
 	const sidebarCollapsed = $derived(
-		uiPrefs.navCollapsed && !sidebarHovered && !sidebarFocused && !sidebarMenuOpen
+		uiPrefs.navCollapsed &&
+			!sidebarHovered &&
+			!sidebarFocused &&
+			!sidebarMenuOpen &&
+			navKeys.mode !== 'sidebar'
 	);
 
 	function handleSidebarMenuOpenChange(open: boolean) {
@@ -223,7 +245,7 @@
 </script>
 
 <!-- The app fills the window edge to edge. -->
-<div class="exec-canvas fixed inset-0 overflow-hidden">
+<div class="exec-canvas fixed inset-0 overflow-hidden" {@attach navKeys.attach}>
 	<div class="cozy-room" aria-hidden="true">
 		<div class="cozy-alcove"></div>
 		<div class="cozy-credenza"></div>
@@ -261,6 +283,7 @@
 	>
 		<div data-shell-header class="flex shrink-0 items-center gap-2 px-4 min-[640px]:hidden">
 			<MobileNavigation
+				bind:open={mobileMenuOpen}
 				connection={data.connection}
 				needsYouCount={shellData.needsYouCount}
 				projects={shellData.snapshot?.projects ?? []}
@@ -298,6 +321,16 @@
 	</div>
 </div>
 <Toaster position="bottom-right" />
+{#if navKeys.hint}
+	<div
+		role="status"
+		aria-live="polite"
+		data-testid="nav-key-hint"
+		class="pointer-events-none fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md bg-surface-overlay px-3 py-1.5 text-xs/5 font-medium text-fg shadow-lg ring-1 ring-line"
+	>
+		{navKeys.hint}
+	</div>
+{/if}
 
 <style>
 	.exec-shell-main main > :global(:not(.chat-frame)) {

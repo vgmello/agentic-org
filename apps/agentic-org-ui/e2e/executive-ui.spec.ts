@@ -1011,3 +1011,105 @@ test('Phase 4B + 5B: Activity & Projects toolbars, CmdK # channel jump, Ask -> S
 	await expect(page).toHaveURL(/\/chat\?c=c-release-v1$/);
 	await expect(page.getByTestId('conversation-title')).toHaveText('#release-v1');
 });
+
+test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work sliding panel + 6-status board + 2-level grouping, Activity collapsible Release gates dock, Classic crisp radii, and icon tooltips', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await visit(page, '/home?theme=classic&mock=poc');
+
+	// Classic theme crisp 5px/7px radii parity (3c4e3541)
+	const classicRadii = await page.evaluate(() => {
+		const s = getComputedStyle(document.documentElement);
+		return {
+			panel: s.getPropertyValue('--exec-panel-radius').trim(),
+			ctrl: s.getPropertyValue('--exec-ctrl-radius').trim()
+		};
+	});
+	expect(classicRadii.panel).toBe('7px');
+	expect(classicRadii.ctrl).toBe('5px');
+
+	// S -> I single-key sidebar navigation navigates to /inbox
+	await page.locator('main').click({ position: { x: 12, y: 12 } });
+	await page.keyboard.press('s');
+	await expect(page.getByTestId('nav-key-hint')).toContainText('Sidebar');
+	await page.keyboard.press('i');
+	await expect(page).toHaveURL(/\/inbox$/);
+
+	// M -> A single-key Inbox category navigation switches to Approvals; M -> H opens overflow Handled
+	await page.locator('main').click({ position: { x: 12, y: 12 } });
+	await page.keyboard.press('m');
+	await expect(page.getByTestId('nav-key-hint')).toContainText('Inbox categories');
+	await page.keyboard.press('a');
+	await expect(
+		page
+			.getByRole('group', { name: 'Inbox categories' })
+			.getByRole('button', { name: /^Approvals/ })
+	).toHaveAttribute('aria-pressed', 'true');
+
+	await page.keyboard.press('m');
+	await page.keyboard.press('h');
+	await expect(page.locator('.triage-queue-summary')).toContainText('Handled items');
+
+	// Hovering icon-only Inbox filter button reveals a visible tooltip
+	const filterBtn = page.getByRole('button', { name: 'Filter inbox' });
+	await filterBtn.hover();
+	await expect(page.locator('[data-tooltip-content]', { hasText: 'Filter inbox' })).toBeVisible();
+	await page.keyboard.press('Escape');
+
+	// Work: 4 stages default, opt-in 6 statuses toggle, 2-level grouping, and right-hand sliding panel with expand/restore & backdrop close
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Work' }).click();
+	await expect(page).toHaveURL(/\/work$/);
+	await page.getByRole('tab', { name: /^Tasks/ }).click();
+	await page.getByTestId('saved-filters').locator('[data-filter="all"]').click();
+	await expect(page.getByTestId('board-column')).toHaveCount(4);
+
+	const boardModeToggle = page.getByTestId('board-mode-toggle');
+	await boardModeToggle.getByRole('button', { name: '6 statuses' }).click();
+	await expect(page.getByTestId('board-column')).toHaveCount(6);
+	await boardModeToggle.getByRole('button', { name: '4 stages' }).click();
+	await expect(page.getByTestId('board-column')).toHaveCount(4);
+
+	// Switch to List and verify 2-level grouping (Status -> Assignee) puts Blocked first
+	await page.getByRole('group', { name: 'Layout' }).getByRole('button', { name: 'List' }).click();
+	await page.getByTestId('group-by-select').selectOption('status');
+	await page.getByTestId('subgroup-by-select').selectOption('assignee');
+	await expect(page.getByTestId('work-subgroup-heading').first()).toBeVisible();
+
+	// Open Work item -> right-hand sliding panel mounts over the list, expand toggles data-expanded, backdrop closes
+	const firstWorkLink = page.locator('[data-ref] a').first();
+	await firstWorkLink.click();
+	const readingPanel = page.getByTestId('work-reading-panel');
+	await expect(readingPanel).toBeVisible();
+	const expandBtn = readingPanel.getByRole('button', { name: 'Expand panel to full width' });
+	await expandBtn.hover();
+	await expect(page.locator('[data-tooltip-content]', { hasText: 'Expand panel' })).toBeVisible();
+	await expandBtn.click();
+	await expect(readingPanel).toHaveAttribute('data-expanded', '');
+	await readingPanel.getByRole('button', { name: 'Restore panel width' }).click();
+	await expect(readingPanel).not.toHaveAttribute('data-expanded');
+	await page.locator('.work-panel-backdrop').click({ position: { x: 320, y: 200 } });
+	await expect(readingPanel).toBeHidden();
+
+	// Activity: full-space Assembly Line with Readiness progress bar & collapsible Release gates dock + icon tooltip
+	await page
+		.getByRole('navigation', { name: 'Main' })
+		.getByRole('link', { name: 'Activity' })
+		.click();
+	await expect(page).toHaveURL(/\/activity$/);
+	await expect(page.locator('.assembly-metrics .assembly-progress-bar')).toBeVisible();
+
+	const gatesToggle = page.getByTestId('activity-gates-toggle');
+	await expect(gatesToggle).toHaveAttribute('aria-expanded', 'true');
+	await expect(page.locator('#activity-release-panel')).toBeVisible();
+	await gatesToggle.hover();
+	await expect(
+		page.locator('[data-tooltip-content]', { hasText: 'Hide release gates' })
+	).toBeVisible();
+	await gatesToggle.click();
+	await expect(gatesToggle).toHaveAttribute('aria-expanded', 'false');
+	await expect(page.locator('#activity-release-panel')).toBeHidden();
+	await gatesToggle.click();
+	await expect(gatesToggle).toHaveAttribute('aria-expanded', 'true');
+	await expect(page.locator('#activity-release-panel')).toBeVisible();
+});

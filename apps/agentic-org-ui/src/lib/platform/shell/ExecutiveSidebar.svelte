@@ -24,6 +24,7 @@
 	import type { Connection, ProjectSummary } from '$lib/proto';
 	import OrganizationSwitcher from './OrganizationSwitcher.svelte';
 	import ShellAccountMenu from './ShellAccountMenu.svelte';
+	import { singleKeyShortcutsOn } from './shortcuts';
 	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
 
 	let {
@@ -56,6 +57,7 @@
 
 	let orgMenuOpen = $state(false);
 	let accountMenuOpen = $state(false);
+	const shortcutsEnabled = $derived(singleKeyShortcutsOn());
 
 	function notifyMenuOpen() {
 		onMenuOpenChange?.(orgMenuOpen || accountMenuOpen);
@@ -203,7 +205,9 @@
 		</div>
 
 		<nav
+			id="exec-sidebar-nav"
 			aria-label="Main"
+			aria-keyshortcuts={shortcutsEnabled ? 'S' : undefined}
 			class={[
 				'flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto py-3',
 				collapsed ? 'items-center gap-3 px-2' : 'gap-3.5 px-3'
