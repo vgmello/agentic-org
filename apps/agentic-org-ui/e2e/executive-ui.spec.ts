@@ -555,11 +555,15 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await visit(page, '/inbox?theme=graphite&mock=poc');
 
-	// Graphite Inbox matte surfaces & interior sidebar text hierarchy (13abb1f1, 1f5f7149..e75d920a)
+	// Graphite Inbox matte surfaces, top-lit sidebar lighting & queue sheen (13abb1f1..2c58edcd)
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
 	await expect(page.locator('html')).toHaveAttribute('data-interior-page');
 	await expect(page.locator('aside.exec-sidebar')).toHaveCSS('background-color', 'rgb(19, 21, 22)');
-	await expect(page.locator('.triage-queue')).toHaveCSS('background-color', 'rgb(23, 24, 25)');
+	const sidebarLightBg = await page
+		.locator('aside.exec-sidebar')
+		.evaluate((el) => getComputedStyle(el, '::before').backgroundImage);
+	expect(sidebarLightBg).toContain('radial-gradient');
+	await expect(page.locator('.triage-queue')).toHaveCSS('background-color', 'rgb(27, 28, 29)');
 	await expect(page.locator('.exec-nav-label').first()).toHaveCSS('color', 'rgb(133, 136, 142)');
 
 	// 3 primary categories only (All, Approvals, Decisions) + More trigger keeps "More" label
