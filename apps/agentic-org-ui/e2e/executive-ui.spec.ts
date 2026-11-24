@@ -837,11 +837,14 @@ test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filte
 	await searchInput.press('Escape');
 	await expect(searchInput).not.toBeFocused();
 
-	// Filter work menu: Project scope URL persistence across reload & Reset filters
+	// Filter work menu: rapid Project + Assignee scope selection preserves both params across reload & Reset filters
 	const filterBtn = page.getByRole('button', { name: 'Filter work' });
 	await filterBtn.click();
 	await page.getByRole('menuitemradio', { name: 'Office federation' }).click();
+	await filterBtn.click();
+	await page.getByRole('menuitemradio', { name: 'Sage' }).click();
 	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
+	await expect(page).toHaveURL(/[?&]assignee=sage(?:&|$)/);
 	await expect(filterBtn).toHaveAttribute('data-active', '');
 	const filteredCount = await workRows.count();
 	expect(filteredCount).toBeGreaterThan(0);
@@ -850,6 +853,7 @@ test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filte
 	await page.reload();
 	await page.locator('html[data-hydrated="true"]').waitFor();
 	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
+	await expect(page).toHaveURL(/[?&]assignee=sage(?:&|$)/);
 	await expect(page.getByRole('button', { name: 'Filter work' })).toHaveAttribute(
 		'data-active',
 		''
@@ -858,17 +862,21 @@ test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filte
 	await page.getByRole('button', { name: 'Filter work' }).click();
 	await page.getByRole('menuitem', { name: 'Reset filters' }).click();
 	await expect(page).not.toHaveURL(/[?&]project=/);
+	await expect(page).not.toHaveURL(/[?&]assignee=/);
 	await expect(page.getByRole('button', { name: 'Filter work' })).not.toHaveAttribute(
 		'data-active'
 	);
 
-	// Work display menu: By project grouping & Row dividers persisted across reload
+	// Work display menu: By project grouping switches headings from statuses to projects & Row dividers persists across reload
 	await page.locator('[data-filter="all"]').click();
 	const displayBtn = page.getByRole('button', { name: 'Work display' });
 	await displayBtn.click();
 	await page.getByRole('menuitemradio', { name: 'By project' }).click();
 	await expect(displayBtn).toHaveAttribute('data-active', '');
-	await expect(page.locator('.work-group-title').first()).toBeVisible();
+	const groupHeadings = page.locator('.work-group-title');
+	await expect(groupHeadings.filter({ hasText: 'Agentic Org v1.0' })).toBeVisible();
+	await expect(groupHeadings.filter({ hasText: 'Blocked' })).toHaveCount(0);
+	await expect(groupHeadings.filter({ hasText: 'In progress' })).toHaveCount(0);
 
 	await displayBtn.click();
 	await page.getByRole('menuitemcheckbox', { name: 'Row dividers' }).click();
@@ -879,6 +887,16 @@ test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filte
 	await page.reload();
 	await page.locator('html[data-hydrated="true"]').waitFor();
 	await expect(page.locator('.work-workspace')).toHaveAttribute('data-work-dividers', '');
+
+	// Requests tab: Work header search query is cleared by RequestsPanel "Clear filters"
+	await page.getByRole('tab', { name: /^Requests/ }).click();
+	await expect(page.getByTestId('requests-queue')).toBeVisible();
+	await page.getByLabel('Search work').fill('zzznorequestmatch');
+	const noRequestMatch = page.getByTestId('no-request-match');
+	await expect(noRequestMatch).toBeVisible();
+	await noRequestMatch.getByRole('button', { name: 'Clear filters' }).click();
+	await expect(page.getByLabel('Search work')).toHaveValue('');
+	await page.getByRole('tab', { name: /^Tasks/ }).click();
 
 	// List / Board layout toggle renders clean status columns & clickable cards opening TaskSheet
 	await page.locator('[data-filter="all"]').click();

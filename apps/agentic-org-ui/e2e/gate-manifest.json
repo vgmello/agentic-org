@@ -543,6 +543,15 @@
 				"src/lib/modules/messaging/features/run-command/CommandDialog.svelte"
 			],
 			"why": "Every migrated DialogTitle consumer also runs exact heading/accessible name/selection, closing text and word geometry regressions in the title category. Existing owning categories, shared FULL and unknown fail-closed mappings remain in effect. Route visits live in the helper; the literal route scanner cannot inventory them."
+		},
+		{
+			"category": "shell-look",
+			"files": [
+				"src/routes/(shell)/work/+page.svelte",
+				"src/lib/work/work-toolbar.ts",
+				"src/lib/components/RequestsPanel.svelte"
+			],
+			"why": "Work header, toolbar, search, board, and RequestsPanel changes also run shell-look's executive-ui.spec.ts parity suite alongside Work's owning categories."
 		}
 	],
 	"allowedCoupling": [

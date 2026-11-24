@@ -470,28 +470,21 @@ html[data-ui-theme^='report'] .work-bcard {
 	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
 }
 
-html[data-ui-theme='report'] .work-row:is(:hover, :focus-within, [aria-current='true']) .work-ref,
 html[data-ui-theme='report']
-	.work-row:is(:hover, :focus-within, [aria-current='true'])
-	.work-criteria,
-html[data-ui-theme='report']
-	.work-row:is(:hover, :focus-within, [aria-current='true'])
-	.work-owner {
+	:is(.work-row, .work-bcard):is(:hover, :focus-within, [aria-current='true'])
+	:is(.work-ref, .work-criteria, .work-owner) {
 	color: #334155;
 }
 
 html[data-ui-theme='report']
-	.work-row:is(:hover, :focus-within, [aria-current='true'])
+	:is(.work-row, .work-bcard):is(:hover, :focus-within, [aria-current='true'])
 	.work-status[data-tone='active'] {
 	color: #7c4905;
 }
 
 html[data-ui-theme='report']
-	.work-row:is(:hover, :focus-within, [aria-current='true'])
-	.work-status[data-tone='done'],
-html[data-ui-theme='report']
-	.work-row:is(:hover, :focus-within, [aria-current='true'])
-	.work-criteria.is-complete {
+	:is(.work-row, .work-bcard):is(:hover, :focus-within, [aria-current='true'])
+	:is(.work-status[data-tone='done'], .work-criteria.is-complete) {
 	color: #0f5d2c;
 }
 

@@ -234,6 +234,7 @@ html[data-ui-theme='report-dark'] {
 	--triage-row-selected: #2a3351;
 	--work-row-hover: #242f3f;
 	--work-row-selected: #2a3351;
+	--work-selected-bar: #a5b4fc;
 }
 
 /* Separate the workspace command dialog from the dark page behind it (poc/v6.html ffe0e0ce) */

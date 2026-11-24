@@ -123,17 +123,28 @@ describe('work toolbar helpers', () => {
 	});
 
 	it('matches search queries across title, ref, short_id, project name, and assignee name', () => {
+		const distinctItem = makeItem({
+			id: 't-distinct',
+			kind: 'task',
+			status: 'in_progress',
+			project_id: 'atlas',
+			number: 121,
+			short_id: 'SHORT-99',
+			title: 'Custody lock fix',
+			assignee_id: 'owner'
+		});
 		const ctx = {
-			refText: 'ATL-1',
+			refText: 'v1.0-T-121',
 			projectName: 'Atlas',
 			assigneeName: 'Alex Kim'
 		};
-		expect(matchesWorkSearch(sample[1], '', ctx)).toBe(true);
-		expect(matchesWorkSearch(sample[1], 'custody', ctx)).toBe(true);
-		expect(matchesWorkSearch(sample[1], 'atl-1', ctx)).toBe(true);
-		expect(matchesWorkSearch(sample[1], 'ATLAS', ctx)).toBe(true);
-		expect(matchesWorkSearch(sample[1], 'alex', ctx)).toBe(true);
-		expect(matchesWorkSearch(sample[1], 'nonexistent', ctx)).toBe(false);
+		expect(matchesWorkSearch(distinctItem, '', ctx)).toBe(true);
+		expect(matchesWorkSearch(distinctItem, 'custody', ctx)).toBe(true);
+		expect(matchesWorkSearch(distinctItem, 'v1.0-t-121', ctx)).toBe(true);
+		expect(matchesWorkSearch(distinctItem, 'short-99', ctx)).toBe(true);
+		expect(matchesWorkSearch(distinctItem, 'ATLAS', ctx)).toBe(true);
+		expect(matchesWorkSearch(distinctItem, 'alex', ctx)).toBe(true);
+		expect(matchesWorkSearch(distinctItem, 'nonexistent', ctx)).toBe(false);
 	});
 
 	it('filters by saved filter, project, assignee, unassigned, and search query in deterministic project order', () => {

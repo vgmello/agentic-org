@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, tick, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { navigating, page } from '$app/state';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
 	import Columns3 from '@lucide/svelte/icons/columns-3';
@@ -224,12 +225,16 @@
 	});
 
 	// Composes overlapping URL scope updates cleanly while preserving other query/hash parameters.
+	const workPathname = resolve('/work');
+	const isLeavingWork = () =>
+		page.url.pathname !== workPathname ||
+		Boolean(navigating.to && navigating.to.url.pathname !== workPathname);
 	let pendingUrl: URL | undefined;
 	let pendingBaseHref = '';
 	let navSeq = 0;
 
 	function syncScopeUrl(next: { project?: string | null; assignee?: string | null }) {
-		if (destroyed || navigating.to) return;
+		if (destroyed || isLeavingWork()) return;
 		const liveHref = page.url.href;
 		const hasPending = Boolean(pendingUrl && liveHref === pendingBaseHref);
 		const url = hasPending && pendingUrl ? new URL(pendingUrl) : new URL(page.url);
@@ -841,6 +846,7 @@
 						{now}
 						{organizationId}
 						externalQuery={searchQuery}
+						onClearExternalQuery={() => (searchQuery = '')}
 						hideNewButton={true}
 						onopen={(id, start) => ((requestId = id), (requestStart = start), (requestOpen = true))}
 						onnew={() => (newRequestOpen = true)}
@@ -1717,7 +1723,7 @@
 	}
 	.work-row[aria-current='true'] {
 		background: var(--work-row-selected, var(--tone-accent-bg));
-		box-shadow: inset 3px 0 0 var(--tone-accent);
+		box-shadow: inset 3px 0 0 var(--work-selected-bar, var(--tone-accent-ink));
 	}
 	.work-items[data-work-dividers] .work-row {
 		border-radius: 0;
@@ -1728,7 +1734,7 @@
 	}
 	.work-items[data-work-dividers] .work-row[aria-current='true'] {
 		box-shadow:
-			inset 3px 0 0 var(--tone-accent),
+			inset 3px 0 0 var(--work-selected-bar, var(--tone-accent-ink)),
 			inset 0 -1px var(--line);
 	}
 	.work-summary {
@@ -2026,7 +2032,7 @@
 	.work-bcard[aria-current='true'] {
 		background: var(--work-row-selected, var(--tone-accent-bg));
 		box-shadow:
-			inset 3px 0 0 var(--tone-accent),
+			inset 3px 0 0 var(--work-selected-bar, var(--tone-accent-ink)),
 			inset 0 0 0 1px var(--tone-accent-ring);
 	}
 	.work-bcard-title {

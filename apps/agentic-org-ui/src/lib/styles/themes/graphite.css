@@ -380,6 +380,9 @@ html[data-ui-theme='graphite']:has(.work-header) .work-bcard:is(:hover, :focus-w
 
 html[data-ui-theme='graphite']:has(.work-header) .work-bcard[aria-current='true'] {
 	background: #2a2d32;
+	box-shadow:
+		inset 3px 0 0 var(--tone-accent-ink),
+		inset 0 0 0 1px var(--exec-border-hi);
 }
 
 html[data-ui-theme='graphite']:has(.triage-workspace) .triage-page {

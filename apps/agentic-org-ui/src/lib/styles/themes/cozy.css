@@ -553,6 +553,8 @@ html[data-ui-theme='cozy'] .work-bcol {
 html[data-ui-theme='cozy'] .work-bcard {
 	background: var(--exec-surface);
 	background-image: var(--cozy-panel-sheen);
+	-webkit-backdrop-filter: blur(12px);
+	backdrop-filter: blur(12px);
 	box-shadow: var(--cozy-panel-shadow);
 }
 
