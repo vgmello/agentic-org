@@ -5145,7 +5145,7 @@ const scopedWorkQueries = new Map();
 
 function scopedWorkType([page, id, tab]) {
   if (page === "projects" && own(P, id) && tab === "work") return "project";
-  if (page === "teams" && own(TEAMS, id) && (!tab || tab === "work")) return "team";
+  if (page === "teams" && own(TEAMS, id) && tab === "work") return "team";
   if (page === "members" && own(M, id)) {
     if (M[id].kind === "agent" && (tab === "tasks" || tab === "work")) return "agent";
     if (M[id].kind === "person" && tab === "work") return "person";
@@ -5153,11 +5153,13 @@ function scopedWorkType([page, id, tab]) {
   return null;
 }
 
+const teamWork = (id) => W.filter(({ who }) => TEAMS[id].members.includes(who));
+
 function scopedWorkView(currentRoute, type) {
   const [, id] = currentRoute;
   const key = type + ":" + id;
   const items = type === "project" ? W.filter((w) => w.proj === id)
-    : type === "team" ? W.filter((w) => TEAMS[id].members.includes(w.who))
+    : type === "team" ? teamWork(id)
     : W.filter((w) => w.who === id);
   return { type, key, items };
 }
@@ -6827,26 +6829,32 @@ const INSIGHT_USAGE = {
   ],
 };
 // Completion samples are separate from usage events. A task can incur multiple charges.
+// Each completion has one owning team and one contributor.
 const INSIGHT_COMPLETIONS = {
   "agency-v1": [
-    [0, "Task", 24, 14, 3, 2], [1, "Bug", 13, 9, 2, 0], [2, "Task", 62, 39, 8, 9],
-    [5, "Bug", 26, 18, 5, 3], [7, "Task", 46, 32, 7, 4], [8, "Bug", 18, 12, 1, 2],
-    [11, "Task", 41, 24, 6, 4], [13, "Bug", 33, 18, 5, 3], [15, "Bug", 17, 11, 3, 0],
-    [18, "Task", 58, 40, 8, 7], [22, "Task", 36, 22, 5, 3], [23, "Bug", 15, 11, 2, 1],
-    [28, "Task", 38, 25, 4, 4], [31, "Bug", 29, 17, 2, 4], [35, "Task", 57, 29, 3, 7],
-    [39, "Bug", 14, 8, 1, 1], [43, "Task", 70, 41, 7, 10], [58, "Task", 33, 22, 2, 3],
+    [0, "Task", 24, 14, 3, 2, "platform", "kai"], [1, "Bug", 13, 9, 2, 0, "app", "jules"], [2, "Task", 62, 39, 8, 9, "leadership", "ada"],
+    [5, "Bug", 26, 18, 5, 3, "quality", "noor"], [7, "Task", 46, 32, 7, 4, "leadership", "maya"], [8, "Bug", 18, 12, 1, 2, "app", "avery"],
+    [11, "Task", 41, 24, 6, 4, "platform", "rowan"], [13, "Bug", 33, 18, 5, 3, "quality", "tomas"], [15, "Bug", 17, 11, 3, 0, "app", "jules"],
+    [18, "Task", 58, 40, 8, 7, "leadership", "ada"], [22, "Task", 36, 22, 5, 3, "quality", "tomas"], [23, "Bug", 15, 11, 2, 1, "leadership", "maya"],
+    [28, "Task", 38, 25, 4, 4, "platform", "sage"], [31, "Bug", 29, 17, 2, 4, "app", "avery"], [35, "Task", 57, 29, 3, 7, "quality", "tomas"],
+    [39, "Bug", 14, 8, 1, 1, "app", "jules"], [43, "Task", 70, 41, 7, 10, "platform", "quinn"], [58, "Task", 33, 22, 2, 3, "leadership", "ada"],
   ],
   "office-federation": [
-    [3, "Task", 51, 37, 8, 12], [5, "Task", 72, 57, 11, 14], [9, "Bug", 26, 21, 2, 6],
-    [12, "Task", 43, 30, 5, 7], [16, "Task", 62, 44, 13, 9], [20, "Task", 46, 31, 11, 3],
-    [28, "Task", 54, 32, 6, 14], [34, "Bug", 18, 10, 2, 3], [42, "Task", 69, 50, 8, 11],
+    [3, "Task", 51, 37, 8, 12, "platform", "rowan"], [5, "Task", 72, 57, 11, 14, "platform", "sage"], [9, "Bug", 26, 21, 2, 6, "platform", "quinn"],
+    [12, "Task", 43, 30, 5, 7, "platform", "kai"], [16, "Task", 62, 44, 13, 9, "platform", "rowan"], [20, "Task", 46, 31, 11, 3, "platform", "sage"],
+    [28, "Task", 54, 32, 6, 14, "platform", "quinn"], [34, "Bug", 18, 10, 2, 3, "platform", "kai"], [42, "Task", 69, 50, 8, 11, "platform", "rowan"],
   ],
   "look-feel": [
-    [1, "Bug", 12, 7, 0, 2], [4, "Task", 34, 26, 4, 1], [5, "Bug", 8, 4, 1, 1],
-    [8, "Bug", 19, 14, 3, 3], [11, "Task", 30, 21, 1, 3], [16, "Bug", 10, 7, 2, 1],
-    [20, "Bug", 23, 16, 3, 2], [32, "Task", 41, 33, 4, 4], [36, "Bug", 17, 15, 2, 2],
+    [1, "Bug", 12, 7, 0, 2, "product", "eden"], [4, "Task", 34, 26, 4, 1, "product", "emery"], [5, "Bug", 8, 4, 1, 1, "app", "jules"],
+    [8, "Bug", 19, 14, 3, 3, "product", "eden"], [11, "Task", 30, 21, 1, 3, "product", "emery"], [16, "Bug", 10, 7, 2, 1, "app", "avery"],
+    [20, "Bug", 23, 16, 3, 2, "product", "eden"], [32, "Task", 41, 33, 4, 4, "product", "emery"], [36, "Bug", 17, 15, 2, 2, "app", "jules"],
   ],
 };
+function insightCompletions(id) {
+  return (INSIGHT_COMPLETIONS[id] || []).map(([age, kind, lead, cycle, wait, blocked, team, member]) => ({
+    day: INSIGHT_TODAY - age * INSIGHT_DAY, kind, lead, cycle, wait, blocked, team, member,
+  }));
+}
 const insightDateText = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 const insightDollars = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" });
 const insightCompact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
@@ -6933,9 +6941,9 @@ function insightChart(key, title, note, series, rows, options = {}) {
   </section>`;
 }
 
-function insightBuckets(start, end) {
+function insightBuckets(start, end, bucketDays) {
   const days = (end - start) / INSIGHT_DAY + 1;
-  const width = Math.ceil(days / 6) * INSIGHT_DAY;
+  const width = (bucketDays ?? Math.ceil(days / 6)) * INSIGHT_DAY;
   return Array.from({ length: Math.ceil(days * INSIGHT_DAY / width) }, (_, index) => {
     const first = start + width * index, last = Math.min(end, first + width - INSIGHT_DAY);
     return { first, last, label: first === last ? insightDayLabel(first) : `${insightDayLabel(first)}–${insightDayLabel(last)}` };
@@ -6979,9 +6987,7 @@ function projectInsights(id) {
     attribution: cancelled ? "Cancelled work" : item ? "Task-linked" : "Not on a task",
     tokens: tokens.map((value) => value * 1000), release: project.release || "No release", milestone: project.milestoneTitle || "No milestone",
   }));
-  const completions = (INSIGHT_COMPLETIONS[id] || []).map(([age, kind, lead, cycle, wait, blocked]) => ({
-    day: INSIGHT_TODAY - age * INSIGHT_DAY, kind, lead, cycle, wait, blocked,
-  }));
+  const completions = insightCompletions(id);
   const { period, start, end } = insightPeriod(usage, completions, params);
   const priorStart = start - (end - start + INSIGHT_DAY);
   const previous = (items) => items.filter((item) => insightInRange(item, priorStart, start - INSIGHT_DAY));
@@ -8193,6 +8199,9 @@ function ownerCard() {
   const reports = memberIds().filter((k) => M[k].mgr === "you");
   return `<div class="ocard">${av("you", 40)}<span><span class="nm">You</span> <span class="muted">· Owner</span><span class="rl">Runs Agentic Org · ${plural(reports.length, "member reports", "members report")} to you: ${reports.map((k) => esc(M[k].name)).join(", ")}</span></span></div>`;
 }
+const teamProjects = (id) => Object.keys(P).filter((project) => P[project].teams.includes(id));
+const teamActivity = (id) => acts().filter(({ who }) => TEAMS[id].members.includes(who));
+
 function pageTeams() {
   const all = memberIds(), ppl = all.filter(isPerson).length;
   const create = `<button class="btn primary" type="button" data-act="proto" data-v="New team">${ic("plus", "ic16")}New team</button>`;
@@ -8200,7 +8209,7 @@ function pageTeams() {
   `<div class="owner-wrap">${ownerCard()}</div>
   <ul class="rows" role="list" aria-label="Teams">${Object.entries(TEAMS).map(([k, t]) => {
     const people = t.members.filter(isPerson).length, agents = t.members.length - people;
-    const projs = Object.keys(P).filter((p) => !P[p].archived && P[p].teams.includes(k));
+    const projs = teamProjects(k).filter((p) => !P[p].archived);
     return `<li class="linked"><span class="chip-i" style="margin-left:0;width:32px;height:32px;font-size:12px" aria-hidden="true">${esc(t.name[0])}</span>
       <div class="grow"><p class="rt"><a class="stretch" href="#/teams/${k}">${esc(t.name)}</a><span class="sec">Lead ${esc(M[t.lead].name)}</span></p>
       <p class="rowline">${esc(t.purpose)}</p>
@@ -8208,31 +8217,99 @@ function pageTeams() {
       <span class="hide-sm">${avStack(t.members, 4)}</span>${ic("chev-right", "ic20 chev")}</li>`;
   }).join("")}</ul>`;
 }
-const MEMBER_CAP = 6;
-function pageTeam(id, tab) {
-  const t = TEAMS[id]; if (!t) return notFound();
+function teamOverview(id, items) {
+  const team = TEAMS[id];
+  const base = "#/teams/" + id;
+  const end = INSIGHT_TODAY;
+  const start = end - 27 * INSIGHT_DAY;
+  const done = Object.keys(INSIGHT_COMPLETIONS).flatMap(insightCompletions)
+    .filter((item) => item.team === id && insightInRange(item, start, end));
+  const open = items.filter(OPEN);
+  const timing = (field) => {
+    const hours = insightMedian(done.map((item) => item[field]));
+    return hours === null ? "—" : formatTelemetryHours(hours);
+  };
+  const enoughSamples = done.length >= 5;
+  const stats = [
+    ["Completed", done.length, "Tasks and bugs in the last 28 days"],
+    ["Median cycle time", timing("cycle"), enoughSamples ? "From start to completion" : "At least 5 completions needed"],
+    ["Median approval wait", timing("wait"), enoughSamples ? "Time waiting on you per completed item" : "At least 5 completions needed"],
+    ["Blocked now", open.filter(({ status }) => status === "Blocked").length, "Of " + plural(open.length, "open item", "open items")],
+  ];
+  const types = ["Task", "Bug"];
+  const weekly = insightBuckets(start, end, 7).map(({ first, last, label }) => {
+    const completed = done.filter((item) => insightInRange(item, first, last));
+    return { label, values: types.map((kind) => completed.filter((item) => item.kind === kind).length) };
+  });
+  const statuses = workGroups(open, "status").map(({ label, rows }) => ({ label, values: [rows.length] }));
+  const contributions = team.members.map((member) => ({
+    member,
+    completed: done.filter((item) => item.member === member).length,
+    open: open.filter(({ who }) => who === member).length,
+    blocked: open.filter(({ who, status }) => who === member && status === "Blocked").length,
+  })).filter((row) => row.completed || row.open)
+    .sort((a, b) => M[a.member].name.localeCompare(M[b.member].name));
+  const projects = teamProjects(id).filter((project) => !P[project].archived);
+  const now = new Date();
+  const recent = teamActivity(id).map((event) => ({ event, age: activityEventTime(event.time, now).age }))
+    .sort((a, b) => a.age - b.age).slice(0, 3).map(({ event }) => event);
+  return `<section class="team-overview" aria-label="Team overview">
+    <div class="team-overview-intro"><p>${esc(team.purpose)} <span>Lead ${mlink(team.lead, "insight-link")}</span></p>
+      <small>Demo data · ${insightDayLabel(start)}–${insightDayLabel(end)}</small></div>
+    <dl class="insight-kpis">${stats.map(([label, value, context]) => `<div><dt>${label}</dt><dd>${esc(value)}</dd><dd class="insight-kpi-note">${esc(context)}</dd></div>`).join("")}</dl>
+    <div class="insights-grid">
+      ${insightChart("team-throughput", "Weekly completions", "Tasks and bugs completed each week", types, weekly, { columns: true })}
+      ${insightChart("team-workload", "Open work by status", "Current assignments for this team", ["Items"], statuses, {
+        control: `<a class="insight-link" href="${base}/work">View work</a>`, empty: "No open work assigned.",
+      })}
+    </div>
+    <div class="insights-grid">
+      <section class="insight-card" aria-labelledby="team-projects-title">
+        <header class="insight-card-head"><div><h3 id="team-projects-title">Active projects</h3><p>Progress across each project</p></div><a class="insight-link" href="${base}/projects">All projects</a></header>
+        ${projects.length ? `<ul class="team-overview-projects" role="list">${projects.map((project) => `<li>
+          <div>${plink(project)}${projPill(project)}</div>
+          ${progress(project)}
+        </li>`).join("")}</ul>` : '<p class="insight-empty">No active projects for this team.</p>'}
+      </section>
+      <section class="insight-card" aria-labelledby="team-contributions-title">
+        <header class="insight-card-head"><div><h3 id="team-contributions-title">Contributions</h3><p>Completions in the last 28 days and current assignments</p></div></header>
+        ${contributions.length ? `<div class="insight-table-scroll"><table aria-labelledby="team-contributions-title">
+          <thead><tr><th scope="col">Contributor</th><th scope="col">Completed</th><th scope="col">Open</th><th scope="col">Blocked</th></tr></thead>
+          <tbody>${contributions.map(({ member, completed, open, blocked }) => `<tr><th scope="row">${mlink(member, "insight-link")}</th><td>${completed}</td><td>${open}</td><td>${blocked}</td></tr>`).join("")}</tbody>
+        </table></div>` : '<p class="insight-empty">No completions or current assignments.</p>'}
+      </section>
+    </div>
+    <section class="insight-card" aria-labelledby="team-recent-title">
+      <header class="insight-card-head"><h3 id="team-recent-title">Recent activity</h3><a class="insight-link" href="${base}/activity">View activity</a></header>
+      ${recent.length ? `<ul class="team-overview-events" role="list">${recent.map(({ who, text, proj, time }) =>
+        `<li><span>${mlink(who, "insight-link")} ${esc(text)} · ${plink(proj)}</span><time>${esc(time)}</time></li>`).join("")}</ul>`
+        : '<p class="insight-empty">No recent team activity.</p>'}
+    </section>
+  </section>`;
+}
+
+function pageTeam(id, tab = "overview") {
+  const t = TEAMS[id];
   const people = t.members.filter(isPerson).length;
   const count = `${plural(t.members.length, "member", "members")} · ${plural(people, "person", "people")} · ${plural(t.members.length - people, "agent", "agents")}`;
   const actions = hireMenu(id) + moreMenu("tmore", "More actions for " + t.name, menuItem("proto", "Edit team " + t.name, "pencil", "Edit team") + menuItem("proto", "Move team " + t.name + " (choose its parent team)", "user-group", "Move team…") + menuItem("proto", "Change manager of " + t.name, "user", "Change manager…"));
-  const description = `<p class="desc">${esc(t.purpose)} Lead: ${mlink(t.lead, "link")} (${kindWord(t.lead)}).</p>`;
-  tab = tab || "work";
-  const ws = W.filter((w) => t.members.includes(w.who));
+  const ws = teamWork(id);
   const tabs = linkTabs("#/teams/" + id, [
-    ["", "Work", ws.filter(OPEN).length], ["projects", "Projects"], ["activity", "Activity"],
-    ["conversations", "Conversations"], ["members", "Members", t.members.length],
-  ], tab === "work" ? "" : tab, "Team sections");
+    ["", "Overview"], ["members", "Members", t.members.length], ["work", "Work", ws.filter(OPEN).length],
+    ["projects", "Projects"], ["activity", "Activity"], ["conversations", "Conversations"],
+  ], tab === "overview" ? "" : tab, "Team sections");
   const controls = tab === "work" ? scopedWorkControls() : "";
   const header = back("#/teams", "Teams") + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, controls, actions)}</div>`;
-  if (tab === "members") return header + description + `<section aria-labelledby="h-mem" style="margin-top:16px"><div class="sec-h" style="padding:0 var(--gutter);margin-bottom:8px"><h2 id="h-mem">All members <span class="cnt">${t.members.length}</span></h2></div>${memberRows(t.members, { noTeam: true })}</section>`;
-  let body;
-  if (tab === "work") body = scopedWorkWorkspace();
-  else if (tab === "projects") body = `<ul class="rows" role="list">${Object.keys(P).filter((p) => P[p].teams.includes(id)).map((p) => `<li class="linked"><div class="grow"><p class="rt"><a class="stretch" href="#/projects/${p}">${esc(P[p].name)}</a>${leadOf(p) ? `<span class="sec">${esc(leadTxt(p))}</span>` : ""}</p><div style="max-width:320px;margin-top:8px">${progress(p)}</div></div>${projPill(p)}</li>`).join("")}</ul>`;
-  else if (tab === "activity") body = activityTimeline(acts().filter((a) => t.members.includes(a.who)));
-  else body = `<div class="section">${conversationPreview(t.channel)}</div>`;
-  const shown = t.members.slice(0, MEMBER_CAP);
-  return header + description + body +
-    `<section aria-labelledby="h-mem" style="margin-top:16px"><div class="sec-h" style="padding:0 var(--gutter);margin-bottom:8px"><h2 id="h-mem">Members <span class="cnt">${t.members.length}</span></h2></div>${memberRows(shown, { noTeam: true })}
-    ${t.members.length > MEMBER_CAP ? `<p class="more-row"><a class="link" href="#/teams/${id}/members">All ${t.members.length} members${ic("chev-right", "ic16")}</a></p>` : ""}</section>`;
+  if (tab === "overview") return header + teamOverview(id, ws);
+  if (tab === "members") return header + `<section aria-labelledby="h-mem"><h2 class="team-roster-title" id="h-mem">All members</h2>${memberRows(t.members, { noTeam: true })}</section>`;
+  if (tab === "work") return header + scopedWorkWorkspace();
+  if (tab === "projects") {
+    const projects = teamProjects(id);
+    return header + (projects.length ? `<ul class="rows" role="list" aria-label="Team projects">${projects.map((p) => `<li class="linked"><div class="grow"><p class="rt"><a class="stretch" href="#/projects/${p}">${esc(P[p].name)}</a>${leadOf(p) ? `<span class="sec">${esc(leadTxt(p))}</span>` : ""}</p><div style="max-width:320px;margin-top:8px">${progress(p)}</div></div>${projPill(p)}</li>`).join("")}</ul>` : '<p class="empty-row">No projects for this team.</p>');
+  }
+  if (tab === "activity") return header + activityTimeline(teamActivity(id));
+  if (tab === "conversations") return header + `<div class="section">${conversationPreview(t.channel)}</div>`;
+  return notFound();
 }
 function pageMembersDir() {
   const all = memberIds(), ppl = all.filter(isPerson).length;
@@ -9688,8 +9765,14 @@ function render(focus = true) {
     const target = `#/members/${aid}/sessions`;
     try { history.replaceState(null, "", target); } catch (e) { location.hash = target; return; }
   }
+  let r = route();
+  if (r[0] === "teams" && own(TEAMS, r[1]) && !r[2] && qs().has("item")) {
+    const target = `#/teams/${encodeURIComponent(r[1])}/work?${qs()}`;
+    try { history.replaceState(null, "", target); } catch (e) { location.hash = target; return; }
+    r = route();
+  }
   stopAgentOrb();
-  const r = route(), [r0, r1, r2] = r;
+  const [r0, r1, r2] = r;
   const projectId = projectActivityId(r);
   const activityScope = r0 === "activity" ? "portfolio" : projectId;
   const sameActivity = activityScope && document.querySelector(".activity-workspace")?.dataset.activityScope === activityScope;
