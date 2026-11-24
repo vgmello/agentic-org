@@ -7437,7 +7437,7 @@ function syncAssemblySimulationTimer() {
 }
 
 function assemblyLayout({ projects, entries, counts } = assemblySnapshot(true)) {
-  return `<div class="activity-layout" id="assembly-layout">
+  return `<div class="assembly-layout" id="assembly-layout">
     ${assemblyMatrix(projects, entries, counts)}
   </div>`;
 }
