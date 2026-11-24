@@ -6,18 +6,16 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-23T03:22:00Z'
-updated_date: '2026-11-23T04:07:00Z'
+updated_date: '2026-11-24T17:07:00Z'
 labels:
   - backend
   - ui
   - cli
   - search
   - ax
-milestone: m-1
+milestone: m-0
 dependencies:
-  - TASK-88
-  - TASK-89
-  - TASK-90
+  - TASK-85.3
 documentation:
   - .backlog/docs/specs/doc-39 - Spec-App-Shell-and-Navigation-UX.md
   - .backlog/docs/specs/doc-40 - Spec-Chat-Channels-and-Structured-Asks-UX.md
@@ -38,7 +36,13 @@ documentation:
   - >-
     .backlog/docs/research/doc-95 -
     Research-Backlog.md-vs-Agentic-Org-Gap-Analysis.md
-priority: medium
+  - >-
+    .backlog/docs/specs/doc-96 -
+    Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md
+  - >-
+    .backlog/docs/organization-data/doc-86 -
+    Organization-Data-18-—-Development-Processes-and-Project-Documentation.md
+priority: high
 type: feature
 ordinal: 97000
 ---
@@ -46,13 +50,19 @@ ordinal: 97000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Delivers deterministic, offline-first cross-entity full-text search across Tasks, Projects, Members/Teams, Conversations/Messages, and (as TASK-55 lands) Knowledge Docs/Decisions/Features via a consumer-owned SearchRead port (ADR-0018). Uses adapter-private SQLite FTS5 outside schema.sql (preserving PostgreSQL tsvector parity and automatic zero-migration projection rebuilds) with strict physical database isolation (office.db vs protected/messaging.db; private/task-notes.db and accounting/budgets permanently excluded) and pre-ranking authorization filters. Designed so optional v2 hybrid/semantic search can plug into SearchRead via org_store::ChangeStream with zero CLI, API, or UI contract changes.
+Delivers deterministic, offline-first cross-entity full-text search (Tier A) in v1 across Tasks (key, title, body, labels, files, details, checklists, public comments), Org Processes/Standards, Projects, Members/Teams/Roles, Conversations/Messages, permitted Private Task Notes, and (as TASK-55 lands) Project Docs/Decisions/Features via a consumer-owned SearchRead port (ADR-0018). Uses bundled SQLite FTS5 (porter unicode61 + BM25 field weights + bounded snippets) strictly outside schema.sql with 3-way physical DB isolation (office.db, protected/messaging.db, and disposable runtime/<office-id>/private/task-notes-search.db — never altering durable private/task-notes.db and excluding accounting/budgets) plus pre-ranking authorization filters. Unblocks agent multi-query expansion via session attach (<5 ms total) and live browser search (FC-006/FC-077), while TASK-110 plugs opt-in v2 hybrid vector embeddings + RRF behind the exact same SearchRead contract.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Defines consumer-owned SearchRead port in org-office with adapter-private SQLite FTS5 (unicode61 + safe Rust query sanitizer, exact ref/key/slug/path boost, deterministic tie-breakers, bounded excerpts, verified by CI FTS5 unit tests) strictly inside store/sqlite/ (zero VIRTUAL TABLE in schema.sql or messaging-schema.sql; engine_boundary.rs green) plus a pure-Rust MemoryEngine parity adapter passing a shared ENG-3 conformance suite and surviving full runtime/ delete+rebuild offline.
-- [ ] #2 Enforces physical DB isolation and pre-ranking security: shared entities live in office.db FTS5, messaging FTS5 lives exclusively inside protected/messaging.db with SQL-level conversation membership/history/owner filtering BEFORE BM25 scoring, COUNT, and LIMIT (negative tests prove non-members get zero hits and zero count leaks); private/task-notes.db (ADR-0031) and protected/{accounting,budgets}.db (COST-9) never enter shared search; paused/offboarded callers receive not_authorized.
-- [ ] #3 Exposes search.query (and count mode / search count within the 4 KiB CLI catalogue cap) on office RPC (operations.json policy: serve) and agent-os search (--query, repeatable --type, --modified-file, --status, --project, --team, --assignee, --label, --include-archived, --count, --limit, --cursor, --fields, --format) with truthful SearchCoverage metadata (scope, indexed_entities, unavailable_entities, indexed_at, truncated_bodies) and single-digit ms read latency over session attach.
-- [ ] #4 Wires GET /api/v1/organizations/{org}/search in agentic-org-web (strict query validation) and replaces work: [] / unavailableCall stubs in apps/agentic-org-ui (ShellTopbar/ShellSearch FC-006 and SearchPage.svelte WHY-4) with live search; updates doc-28, doc-71, doc-74, doc-3 (FC-006/FC-062/FC-077), doc-27, and adds an ADR documenting v1 FTS5 + v2 pluggable SearchRead hybrid path.
+- [ ] #1 Defines consumer-owned SearchRead port in org-office with adapter-private SQLite FTS5 (porter unicode61 with tokenchars '-_./@', safe Rust query sanitizer, field-weighted BM25 boost 10x key/ref > 6x title/path > 4x labels/headings > 2x body > 1x comments/checklists, bounded <=240-char excerpts, deterministic tie-breakers) strictly inside store/sqlite/ (zero VIRTUAL TABLE in schema.sql/messaging-schema.sql/private-notes-schema.sql; dump.rs skips shadow tables; engine_boundary.rs green) plus pure-Rust MemoryEngine parity adapter passing ENG-3 conformance and full runtime/ delete+rebuild offline.
+- [ ] #2 Enforces strict 3-way physical DB isolation and pre-ranking security: (1) shared entities in office.db FTS5 (with project-scoped visibility filter for agents on documents once TASK-55 registers them per doc-86); (2) chat messages exclusively in protected/messaging.db FTS5 filtered to caller.visible_conversation_ids BEFORE scoring/COUNT/LIMIT; (3) private task notes exclusively in disposable 0700/0600 runtime/<office-id>/private/task-notes-search.db on HQ (Person sees all non-deleted notes; Agent sees author_id == caller ONLY; satellites omit HQ-only private notes gracefully); protected/{accounting,budgets}.db (COST-9) never enter search; inactive/unbound callers fail closed with not_authorized.
+- [ ] #3 Exposes search.query on office RPC (operations.json policy: serve) and agent-os search query (--q, repeatable --types, --project, --channel, --status, --modified-file, --assignee, --label, --count, --limit, --cursor, --fields, --format) within TASK-85.3 4 KiB catalogue headroom returning compact ranked hits + truthful SearchCoverage metadata in <5 ms p95 over session attach; upgrades agent-os task list --query to use the FTS5 index (replacing the 4N+1 literal substring scan); updates tasks-create & batch-and-attach skills (doc-96) to teach agents multi-query expansion.
+- [ ] #4 Wires GET /api/v1/organizations/{org}/search in agentic-org-web (strict query validation) and replaces work: [] / unavailableCall stubs in apps/agentic-org-ui (ShellTopbar/ShellSearch FC-006 and SearchPage.svelte WHY-4) with live search; updates doc-28, doc-71, doc-74, doc-96, doc-3 (FC-006/FC-062/FC-077), and records an ADR covering v1 FTS5 + v2 pluggable SearchRead hybrid path.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-24 Agent Decision Capture alignment (TASK-111): Index kind, title, why, alternatives, and private_note_tags inside the disposable 0700/0600 HQ-only runtime/<office-id>/private/task-notes-search.db (weighting title 6x > tags 4x > why/alternatives/body 2x), expose --types private_decision alongside shared --types decision with strict pre-ranking author_id == caller filter for agents (and people-only --author filter), keeping WHY-4 shared knowledge search 100% free of private rows.
+<!-- SECTION:NOTES:END -->

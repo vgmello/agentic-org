@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-22T14:37:00Z'
-updated_date: '2026-11-24T03:17:00Z'
+updated_date: '2026-11-24T17:07:00Z'
 labels:
   - ax
   - backend
@@ -49,3 +49,9 @@ Standing instructions in crates/org-office-sessions/src/instructions.rs currentl
 - [ ] #3 Automated tests dry-parse every agent-os command and CLI flag cited in standing instructions and built-in skills against the live CommandTable via org_command::parse (catching non-existent flags and missing required options like --if-match), verify byte budgets, and exercise Day-1 orientation, wake fencing, and skill read flows.
 - [ ] #4 Updates doc-27 (reconciling §4 sub-agent cross-turn lifetime with ADR-0025 decision 6, fixing stale channel summarize --about at L228, and aligning §6 skill keys with crates/org-process/src/skills.rs), doc-96, and doc-3 (FC-171 evidence).
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-24 Agent Decision Capture AX alignment (TASK-111): Reserve ~140 net bytes in Tier 1 standing instructions (replacing the old note bullet inside the 10 KiB cap) for the 2-sentence visibility & anti-spam rule (note = private you+people, task comment = task-shared, doc = project-shared Git; record non-obvious choices, not routine steps), and align tasks-execute/tasks-finalize skill slots for the 4-Signal Decision Bar when TASK-111 lands.
+<!-- SECTION:NOTES:END -->

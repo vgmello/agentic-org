@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-24T03:17:00Z'
+updated_date: '2026-11-24T17:07:00Z'
 labels:
   - ax
   - backend
@@ -49,3 +50,9 @@ Postponed final v1 AX acceptance gate executed once the complete v1 agent-os CLI
 - [ ] #2 Ships an automated live multi-runtime AX evaluation suite across claude, codex, and agy adapters verifying doc-27 INSTR-1..23 and doc-96 AX-20..AX-24 quality gates: cold-start orientation (<= 2 orientation calls), CLI usage error rate (<= 5%), self-healing retry-to-recovery (>= 90%), and AX-23 token-overhead benchmarks (including --since-read channel catch-up and --fields/ConflictDetail savings).
 - [ ] #3 Updates doc-96 §8 (calibrating quantitative AX-20..AX-22 thresholds from real claude/codex/agy receipts including cost-effective models per doc-27 §8), doc-28, and doc-3 (FC-168, FC-171 final evidence).
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-24 Agent Decision Capture AX eval gate (TASK-111/TASK-112): Include agent-os note (--kind decision, promote) and docs-and-decisions skill in the final v1 AX polish pass and add 5 empirical multi-runtime record-judged scenarios across claude/codex/agy (including cost-effective models): DEC-AX-1 (Anti-Spam: 0 decisions on mechanical task), DEC-AX-2 (Meaningful Fork: 1-2 decisions with exit 0, non-empty why/alternatives, 0 spurious Git ADRs), DEC-AX-3 (Turn-40 Compact Recall: <=1 call, <1 KiB stdout across 15 verbose scratch notes), DEC-AX-4 (Promotion & ADR-0031 Firewall: 0 private_note_id in Git, Agent B sees ADR only), DEC-AX-5 (Non-Task Standalone Decision without creating an unsolicited task).
+<!-- SECTION:NOTES:END -->

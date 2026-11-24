@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-23T02:53:00Z'
+updated_date: '2026-11-24T16:55:00Z'
 labels:
   - backend
   - rust
@@ -27,6 +27,8 @@ documentation:
   - docs/design/desired-state-specifications.md
   - docs/specs/req-06-desired-state-spec-authoring-and-reconciliation.md
   - docs/specs/req-07-composable-process-packages-and-team-blueprints.md
+  - .backlog/docs/specs/doc-39 - Spec-App-Shell-and-Navigation-UX.md
+  - .backlog/docs/specs/doc-52 - Spec-Knowledge-Decisions-and-Tech-Debt-UX.md
 priority: medium
 type: feature
 ordinal: 56000
@@ -55,3 +57,9 @@ Backend Implementation Blueprint (L12, L13 & L14):
 3. Built-in Processes (L14, FC-183, FC-185): ship built-in feature-delivery and dss process packages and verify end-to-end with supervised sessions (DSS-1..12, PKG-1..18, PPD-1..10).
 4. Verification: cargo test -p org-process -p org-docs -p org-office -p org-office-sessions -p org-office-server -p agentic-org-web; python3 -B -m unittest docs/design/organization-data/test_schema.py.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Principal Designer audit (2026-11-24): (1) Ship lightweight 'kanban' (Kanban Flow: Board tab with lanes:none, runbooks/ + decisions/ + reports/, 1 seed lead, versioned:false) as a 3rd built-in development process package alongside dss and feature-delivery (proving ADR-0026 PKG-1 zero-hardcoded-methodology end-to-end); (2) Flip SERVED.processTabs=true in projects/present.ts:58, implement /projects/[id]/t/[tab] generic views, and display the active Development Process link chip in ProjectFrame.svelte; (3) Render derived Seed Roster (Open / Hire drafted / Filled + Hire/Assign actions, PKG-6) on ProjectOverview.svelte; (4) Default versioned:true DocumentPage reader to latest Issued version with unissued-working-diff strip (DSS-3) and show derived convergence progress (DSS-7) on DocsTab & DocumentPage; (5) Upgrade ProcessSelect.svelte with a 'Browse & compare packages…' Inspector/Chooser comparing seed roles, tabs, sections, skills, ADR-0026 notice, and cost-visibility Apply preview.
+<!-- SECTION:NOTES:END -->
