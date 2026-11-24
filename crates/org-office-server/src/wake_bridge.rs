@@ -77,7 +77,7 @@ pub(crate) fn on_chat_send_committed(
     let mut woke = Vec::new();
     for (recip_id, state) in &committed.recipients {
         let target_id = recip_id.as_str();
-        if target_id == sender_id {
+        if target_id == sender_id || state.owner_office_id.as_str() != office.info().office_id {
             continue;
         }
         let kind = wake_kind_for_send(committed, target_id, state.delivered_because);

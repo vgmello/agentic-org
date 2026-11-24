@@ -3,7 +3,7 @@ id: doc-96
 title: 'Spec: Agent Experience (AX) — agent-os, Onboarding, and Skills'
 type: specification
 created_date: '2026-11-23T03:48:00Z'
-updated_date: '2026-11-23T03:53:00Z'
+updated_date: '2026-11-24T11:34:00Z'
 tags:
   - spec
   - ax
@@ -137,7 +137,8 @@ Built-in product skills (`crates/org-process/src/skills.rs`) keep the base promp
 - Non-dry-run writes automatically receive a UUIDv7 `--idempotency-key` from `KeySource` when omitted and report it in `meta.operation_id` on both success and failure (`CLI-5`). Repeating the same key with different input fails with `operation_reused`. `--dry-run` + `--idempotency-key` fails with `invalid_request` (`CLI-4`).
 - `meta.ack` reports `committed` vs `durable` truthfully (`ADR-0014`).
 - **Fail-closed `ADR-0031` ordering (`TASK-90`):** office authorization (`require_active_employee` and scope/team checks) MUST run before entity lookup and before constructing `ConflictDetail`. Unauthorized callers receive `not_authorized` with zero existence oracle and zero conflict metadata. Private task notes MUST NEVER appear in `events_since`, task history, or conflict summaries.
-- **Zero silent drops:** duplicate keys in `--json`/YAML and conflicting flag + `--json` values fail with `invalid_request`; `shape::conform` rejects missing required fields or wrong types with `unavailable`, `meta.operation_id`, and an explicit write-uncertainty warning (`crates/org-command/src/lib.rs`).
+- **Fail-closed `--dry-run` (`TASK-95`):** every `Kind::Write` command MUST either forward `dry_run: true` to a server-side rollback check or refuse with `ErrorCode::Unsupported` before invoking any office RPC (`msg`, `channel`, `status`, `task`, `checklist`, `task-note`, `repo`, `worktree`, `hr`, `process`), never performing a live mutation while stamping `meta.dry_run: true`.
+- **Zero silent drops:** duplicate keys in `--json`/YAML and conflicting flag + `--json` values fail with `invalid_request`; `shape::conform` preserves all declared output fields (including `process inspect --why` `chain`/`winner` and `--offset` chunking fields `total_bytes`/`next_offset`/`parent`, `TASK-95`) and rejects missing required fields or wrong types with `unavailable`, `meta.operation_id`, and an explicit write-uncertainty warning (`crates/org-command/src/lib.rs`).
 
 ## 6. Runtime and model portability
 
@@ -146,7 +147,7 @@ Built-in product skills (`crates/org-process/src/skills.rs`) keep the base promp
   - **Codex** (`crates/org-agent-runtime-codex`, `codex app-server --stdio`)
   - **Antigravity** (`crates/org-agent-runtime-agy`, `agy --input-format stream-json --output-format stream-json`)
 - **Zero MCP product primitives (`CLI-12`):** launch MCP config is empty; no product capability is exposed as an MCP tool.
-- **Zero vendor-specific prompt assumptions:** built-in instructions and product skills never reference Claude slash commands, `.claude/` files, or single-vendor features. Transport quirks (such as Codex `shell_environment_policy` filtering `*TOKEN*`, Claude `--system-prompt-snapshot`, or Agy U+2028/U+2029 line splitting) are isolated inside `crates/org-agent-runtime-*`.
+- **Zero vendor-specific prompt assumptions:** built-in instructions and product skills never reference Claude slash commands, `.claude/` files, or single-vendor features. Transport quirks (such as Codex `shell_environment_policy` preserving baseline POSIX `PATH`/`HOME`/`TMPDIR`/`LANG`/`TERM` alongside `ctx.office_env_names` while filtering ambient secrets, Claude `--system-prompt-snapshot`, or Agy U+2028/U+2029 line splitting) and runtime-neutral `ToolCapability::{Read, Search, Edit, Shell, Subagent}` translations (`cap:*` presets, safe word-bounded `CommandPrefix("agent-os")` with shell-metacharacter fail-closed rejection in `ReadOnly`/`WorkspaceEdits`, and normalized sub-agent lifecycle events, `TASK-94`) are isolated inside `crates/org-agent-runtime*` and `crates/org-office-sessions`.
 - **Cross-OS determinism (`CLI-11`):** launch catalogue, `--help`, and `--schema` outputs are byte-identical on macOS and Linux.
 - **Model portability (`doc-27` §8):** behavioral evals must pass not only on flagship models, but also on the cost-effective models organizations run in production.
 

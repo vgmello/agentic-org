@@ -6,6 +6,8 @@
 pub enum OfficeRole {
     /// The first office, which holds the organization's authoritative data.
     Hq,
+    /// A secondary office enrolled with HQ via Org-CA mTLS (`TASK-52` / `S1`).
+    Satellite,
 }
 
 /// What the host tells a new office server to create (never on a command line).

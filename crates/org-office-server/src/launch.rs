@@ -24,8 +24,20 @@ pub(super) struct OfficeIdentity {
     pub instance_id: String,
 }
 
+pub(super) struct Join {
+    pub office_id: String,
+    pub office_name: String,
+    pub instance: String,
+    pub operation_id: String,
+    pub re_enroll: bool,
+    pub key: Key,
+    pub auth: LaunchAuth,
+    pub invitation: org_office_launch::InvitationSecret,
+}
+
 pub(super) enum Launch {
     Create(Create),
+    Join(Join),
     /// `key` is `None` when the host has no office secrets key for the office: the office still
     /// opens and serves its data, and only what the key unwraps (the CA) is unavailable.
     Start {
@@ -84,6 +96,25 @@ impl Launch {
                     instance_id: s.instance_id,
                 },
             },
+            Request::Launch {
+                line: HostFirstLine::Join(j),
+                handoff:
+                    Handoff::Join {
+                        office_secrets_key,
+                        grant_key,
+                        invitation,
+                        ..
+                    },
+            } => Self::Join(Join {
+                office_id: j.office.office_id,
+                office_name: j.office_name,
+                instance: j.office.instance_id,
+                operation_id: j.invitation_id,
+                re_enroll: j.re_enroll,
+                key: Key::from_office_secrets_key(office_secrets_key),
+                auth: grant_key.into(),
+                invitation,
+            }),
             Request::Launch {
                 line: HostFirstLine::Discard(d),
                 handoff: Handoff::Discard { .. },

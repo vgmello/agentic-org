@@ -25,7 +25,11 @@
 use org_proto::Call;
 use serde::Serialize;
 
-use crate::ops::{OfficeRestart, OfficeRestartParams, TlsPairFingerprint, TlsSet, TlsSetParams};
+use crate::ops::{
+    OfficeJoin, OfficeJoinParams, OfficeReEnroll, OfficeReEnrollParams, OfficeRemovePending,
+    OfficeRemovePendingParams, OfficeRestart, OfficeRestartParams, TlsPairFingerprint, TlsSet,
+    TlsSetParams,
+};
 
 /// A journaled op's params. Each implementation destructures its params exhaustively, so adding
 /// a param fails to compile until it is fingerprinted or explicitly excluded.
@@ -111,5 +115,92 @@ impl Journaled for TlsSetParams {
             )
         })?;
         serde_json::to_string(&fingerprint)
+    }
+}
+
+fn sha256_hex(input: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(input);
+    let mut out = String::with_capacity(64);
+    for b in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
+}
+
+impl Journaled for OfficeJoinParams {
+    const METHOD: &'static str = OfficeJoin::METHOD;
+
+    fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+
+    fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
+        #[derive(Serialize)]
+        struct Fields {
+            invitation_sha256: String,
+            consent: bool,
+        }
+        let OfficeJoinParams {
+            session: _,
+            operation_id: _,
+            invitation,
+            consent,
+        } = self;
+        serde_json::to_string(&Fields {
+            invitation_sha256: sha256_hex(invitation.expose().as_bytes()),
+            consent: *consent,
+        })
+    }
+}
+
+impl Journaled for OfficeRemovePendingParams {
+    const METHOD: &'static str = OfficeRemovePending::METHOD;
+
+    fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+
+    fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
+        #[derive(Serialize)]
+        struct Fields<'a> {
+            office_id: &'a str,
+        }
+        let OfficeRemovePendingParams {
+            session: _,
+            operation_id: _,
+            office_id,
+        } = self;
+        serde_json::to_string(&Fields { office_id })
+    }
+}
+
+impl Journaled for OfficeReEnrollParams {
+    const METHOD: &'static str = OfficeReEnroll::METHOD;
+
+    fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+
+    fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
+        #[derive(Serialize)]
+        struct Fields<'a> {
+            office_id: &'a str,
+            invitation_sha256: String,
+            consent: bool,
+        }
+        let OfficeReEnrollParams {
+            session: _,
+            operation_id: _,
+            office_id,
+            invitation,
+            consent,
+        } = self;
+        serde_json::to_string(&Fields {
+            office_id,
+            invitation_sha256: sha256_hex(invitation.expose().as_bytes()),
+            consent: *consent,
+        })
     }
 }

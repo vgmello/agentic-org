@@ -12,6 +12,10 @@ test-support = []
 
 [dependencies]
 org-pki = { path = "../org-pki" }
+org-sync = { path = "../org-sync" }
+org-sync-proto = { path = "../org-sync-proto" }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
+base64.workspace = true
 zeroize = "=1.9.1"
 org-socket = { path = "../org-socket" }
 org-proto = { path = "../org-proto" }

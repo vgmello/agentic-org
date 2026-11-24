@@ -21,7 +21,7 @@ use crate::{
     error::StoreError,
     files::Files,
     flusher,
-    journal::{AnchorFacts, Entry, Journal, JournalError, Recovered},
+    journal::{AnchorFacts, Entry, Journal, JournalError, JournalPoint, Recovered},
     rebuild::{materialize, rebuild_with, Projectors},
     sequences::{FeedPosition, Sequences},
     writer::{self, UnitOfWork},
@@ -182,9 +182,21 @@ pub(crate) struct Flow {
     /// The same for entries flushed and not yet materialized.
     pub(crate) unmaterialized: VecDeque<(u64, u64)>,
     pub(crate) unmaterialized_bytes: u64,
+    /// Persistent consumer watermarks (`ARCH-03`, `TASK-52`): journal segments are never
+    /// released past the minimum registered consumer watermark.
+    pub(crate) consumer_watermarks: std::collections::BTreeMap<String, u64>,
 }
 
 impl Flow {
+    /// Maximum ordinal the flusher may release from journal segments: bounded by both
+    /// `materialized` and the slowest registered consumer watermark (`ARCH-03`).
+    pub(crate) fn release_cap(&self, materialized: u64) -> u64 {
+        self.consumer_watermarks
+            .values()
+            .copied()
+            .min()
+            .map_or(materialized, |min_wm| materialized.min(min_wm))
+    }
     /// The journal is flushed through `ordinal`. Nobody is answered yet: a durable reply
     /// also needs the host's confirmation.
     pub(crate) fn flushed_through(&mut self, ordinal: u64) {
@@ -241,6 +253,8 @@ pub(crate) struct Core<E: Engine> {
     pub(crate) limits: Limits,
     pub(crate) flush_interval: Duration,
     pub(crate) changes: Changes,
+    pub(crate) release_gate: Mutex<()>,
+    pub(crate) materialization_lock: Mutex<()>,
     flow: Mutex<Flow>,
     pub(crate) wake: Condvar,
 }
@@ -338,142 +352,16 @@ impl<E: Engine> Store<E> {
     /// replayed from its cursor or rebuilt when it is missing, ahead of the journal or
     /// not on its chain. The head is confirmed to the host before anything is accepted.
     pub fn open(parts: StoreParts<E>) -> Result<Store<E>, StoreError> {
-        let StoreParts {
-            durable,
-            identity,
-            custody,
-            engine,
-            projectors,
-            excluded_prefixes,
-            clock,
-            flush_interval,
-            opening,
-            limits,
-            disk,
-            hooks,
-        } = parts;
-        if limits.change_ring == 0 {
-            // A ring that keeps nothing would drop every subscriber at its first change.
-            return Err(StoreError::Invalid(
-                "the change ring must keep at least one entry".into(),
-            ));
-        }
-        let files = Files::new(&durable, Arc::clone(&disk))?;
-        let (journal, recovered) = match opening {
-            Opening::Create(facts) => {
-                let confirmed = custody
-                    .checkpoint(&identity)
-                    .map_err(|e| StoreError::Custody(e.0))?;
-                let journal = Journal::create_on(disk, &durable, &identity, &facts)?;
-                let recovered = Recovered {
-                    confirmed,
-                    entries: Vec::new(),
-                    truncated: None,
-                };
-                (journal, recovered)
-            }
-            Opening::Existing => Journal::open_on(disk, &durable, &identity, custody.as_ref())?,
-        };
-        journal.set_segment_bytes(limits.segment_bytes);
-        let projectors =
-            Projectors::new_with_exclusions(projectors, &identity.office_id, excluded_prefixes);
-        if let Some(through) = materialize(&files, &journal)? {
-            journal.set_materialized(through)?;
-        }
-
-        let head = journal.head();
-        let base = journal.base();
-        let cursor = engine.snapshot()?.cursor()?;
-        let on_chain = cursor.as_ref().is_some_and(|cursor| {
-            let held = if cursor.ordinal == base.ordinal {
-                Some(base.sha256)
-            } else {
-                let entry = recovered
-                    .entries
-                    .iter()
-                    .find(|e| e.ordinal() == cursor.ordinal);
-                entry.map(|e| e.sha256)
-            };
-            cursor.ordinal <= head.ordinal && held == Some(cursor.sha256)
-        });
-        if !on_chain {
-            rebuild_with(
-                &files,
-                &journal,
-                engine.as_ref(),
-                &projectors,
-                hooks.as_ref(),
-            )?;
-        }
-        let core = Core {
-            engine,
-            projectors,
-            files,
-            journal,
-            custody,
-            clock,
-            hooks,
-            limits,
-            flush_interval,
-            changes: Changes::new(head.feed, limits.change_ring),
-            flow: Mutex::new(Flow {
-                fatal: None,
-                dead: false,
-                closing: false,
-                writer_done: false,
-                sync_wanted: false,
-                holding_back: false,
-                queued: 0,
-                flushed: head.ordinal,
-                materialized: head.ordinal,
-                confirmed: recovered.confirmed.clone(),
-                waiters: Vec::new(),
-                unflushed: VecDeque::new(),
-                unflushed_bytes: 0,
-                unmaterialized: VecDeque::new(),
-                unmaterialized_bytes: 0,
-            }),
-            wake: Condvar::new(),
-        };
-        if let Some(cursor) = cursor.filter(|cursor| on_chain && cursor.ordinal < head.ordinal) {
-            let after = recovered
-                .entries
-                .iter()
-                .filter(|e| e.ordinal() > cursor.ordinal);
-            let after: Vec<_> = after.cloned().collect();
-            core.replay(&after, &head.cursor())?;
-        }
-        let flushed = head.head();
-        if recovered.confirmed.as_ref() != Some(&flushed) {
-            core.custody
-                .confirm(
-                    core.journal.identity(),
-                    recovered.confirmed.as_ref(),
-                    &flushed,
-                )
-                .map_err(|e| StoreError::Custody(e.0))?;
-            core.flow().confirmed = Some(flushed);
-        }
-
-        let core = Arc::new(core);
+        let (core, sequences) = open_store_core(parts)?;
         let (jobs, queue) = mpsc::channel();
-        let sequences = Sequences {
-            high_waters: head.high_waters,
-            feed: head.feed,
-        };
-        let spawn = |name: &str, body: Box<dyn FnOnce() + Send>| {
-            let thread = std::thread::Builder::new().name(name.to_owned());
-            thread
-                .spawn(body)
-                .map_err(|e| StoreError::Internal(format!("cannot start the {name} thread: {e}")))
-        };
-        let for_writer = Arc::clone(&core);
-        let writer = spawn(
-            "store-writer",
-            Box::new(move || writer::run(for_writer, queue, sequences)),
-        )?;
-        let for_flusher = Arc::clone(&core);
-        let flusher = match spawn("store-flusher", Box::new(move || flusher::run(for_flusher))) {
+        let writer = spawn_store_thread("store-writer", {
+            let core = Arc::clone(&core);
+            move || writer::run(core, queue, sequences)
+        })?;
+        let flusher = match spawn_store_thread("store-flusher", {
+            let core = Arc::clone(&core);
+            move || flusher::run(core)
+        }) {
             Ok(flusher) => flusher,
             Err(error) => {
                 core.die();
@@ -565,6 +453,114 @@ impl<E: Engine> Store<E> {
         Ok((f(&snapshot)?, feed))
     }
 
+    /// Registers a durable journal consumer (such as multi-office replication, `ARCH-03` /
+    /// `TASK-52`) so the flusher will never release journal segments past its watermark. Returns
+    /// the consumer's current persisted watermark (reconstructing unreleased retained entries
+    /// from disk segments when needed, or starting at the consistent materialized boundary so a
+    /// consumer can never skip an evicted entry).
+    pub fn register_consumer(&self, consumer_id: &str) -> Result<u64, StoreError> {
+        validate_consumer_id(consumer_id)?;
+        let _gate = self
+            .core
+            .release_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        {
+            let flow = self.core.flow();
+            if let Some(&existing) = flow.consumer_watermarks.get(consumer_id) {
+                return Ok(existing);
+            }
+        }
+        self.core.journal.reconstruct_retained_from_segments()?;
+        let mut flow = self.core.flow();
+        if let Some(&existing) = flow.consumer_watermarks.get(consumer_id) {
+            return Ok(existing);
+        }
+        let base = self.core.journal.base().ordinal;
+        let initial = if self.core.journal.after_contiguous(base).is_ok() {
+            base
+        } else {
+            flow.materialized.max(base)
+        };
+        persist_consumer_watermark(self.core.journal.dir(), consumer_id, initial)?;
+        flow.consumer_watermarks
+            .insert(consumer_id.to_owned(), initial);
+        Ok(initial)
+    }
+
+    /// Advances a registered consumer's durable watermark monotonically and releases any
+    /// retained segments now covered by all consumers (`ARCH-03`), serialized through `release_gate`.
+    pub fn advance_consumer(&self, consumer_id: &str, ordinal: u64) -> Result<(), StoreError> {
+        validate_consumer_id(consumer_id)?;
+        let _gate = self
+            .core
+            .release_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let release_target = {
+            let mut flow = self.core.flow();
+            let current = flow
+                .consumer_watermarks
+                .get(consumer_id)
+                .copied()
+                .ok_or_else(|| {
+                    StoreError::Invalid(format!("unknown journal consumer `{consumer_id}`"))
+                })?;
+            let next = current.max(ordinal);
+            if next > current {
+                persist_consumer_watermark(self.core.journal.dir(), consumer_id, next)?;
+                flow.consumer_watermarks
+                    .insert(consumer_id.to_owned(), next);
+            }
+            flow.release_cap(flow.materialized)
+        };
+        if release_target > 0 {
+            self.core.journal.evict_retained_through(release_target);
+            self.core.journal.release_through(release_target)?;
+        }
+        Ok(())
+    }
+
+    /// Returns the persisted watermark for `consumer_id`, if registered.
+    pub fn consumer_watermark(&self, consumer_id: &str) -> Option<u64> {
+        self.core
+            .flow()
+            .consumer_watermarks
+            .get(consumer_id)
+            .copied()
+    }
+
+    /// Reads all retained journal entries strictly after `ordinal` (used by replication outbox
+    /// consumers, `ARCH-03` / `TASK-52`).
+    pub fn entries_after(&self, ordinal: u64) -> Vec<Arc<Entry>> {
+        self.core.journal.after(ordinal)
+    }
+
+    /// Reads retained journal entries strictly after `ordinal`, verifying strict contiguity
+    /// (`ordinal + 1` onward) so consumers reject gaps rather than skipping entries (`TASK-52` M-15).
+    pub fn entries_after_contiguous(&self, ordinal: u64) -> Result<Vec<Arc<Entry>>, StoreError> {
+        self.core
+            .journal
+            .after_contiguous(ordinal)
+            .map_err(StoreError::Journal)
+    }
+
+    /// Syncs the store and runs `f(materialized_ordinal)` while holding `materialization_lock` so
+    /// no files under `durable/state/` are mutated while capturing a consistent snapshot (`TASK-52` H-11).
+    pub fn with_consistent_materialized<R>(
+        &self,
+        f: impl FnOnce(u64) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError> {
+        self.sync()?;
+        let _mat = self
+            .core
+            .materialization_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mat = self.core.flow().materialized;
+        f(mat)
+    }
+
     /// Follows the changes committed after `after`.
     pub fn subscribe(&self, after: FeedPosition) -> Result<ChangeStream, Resync> {
         self.core.changes.subscribe(after)
@@ -628,6 +624,286 @@ impl<E: Engine> Store<E> {
             let _ = thread.join();
         }
     }
+}
+
+fn spawn_store_thread(
+    name: &str,
+    body: impl FnOnce() + Send + 'static,
+) -> Result<JoinHandle<()>, StoreError> {
+    std::thread::Builder::new()
+        .name(name.to_owned())
+        .spawn(body)
+        .map_err(|e| StoreError::Internal(format!("cannot start the {name} thread: {e}")))
+}
+
+fn open_store_core<E: Engine>(
+    parts: StoreParts<E>,
+) -> Result<(Arc<Core<E>>, Sequences), StoreError> {
+    let StoreParts {
+        durable,
+        identity,
+        custody,
+        engine,
+        projectors,
+        excluded_prefixes,
+        clock,
+        flush_interval,
+        opening,
+        limits,
+        disk,
+        hooks,
+    } = parts;
+    if limits.change_ring == 0 {
+        return Err(StoreError::Invalid(
+            "the change ring must keep at least one entry".into(),
+        ));
+    }
+    let files = Files::new(&durable, Arc::clone(&disk))?;
+    let consumer_watermarks = match &opening {
+        Opening::Create(_) => std::collections::BTreeMap::new(),
+        Opening::Existing => {
+            load_consumer_watermarks(&crate::journal::journal_dir(&durable, &identity))?
+        }
+    };
+    let min_consumer_wm = consumer_watermarks.values().copied().min();
+    let (journal, recovered) = open_or_create_journal(
+        opening,
+        disk,
+        &durable,
+        &identity,
+        &custody,
+        min_consumer_wm,
+    )?;
+    journal.set_segment_bytes(limits.segment_bytes);
+    let projectors =
+        Projectors::new_with_exclusions(projectors, &identity.office_id, excluded_prefixes);
+    materialize_with_consumer_cap(&files, &journal, &consumer_watermarks)?;
+
+    let head = journal.head();
+    let base = journal.base();
+    let cursor = engine.snapshot()?.cursor()?;
+    let on_chain = cursor_on_chain(cursor.as_ref(), &base, &head, &recovered);
+    if !on_chain {
+        rebuild_with(
+            &files,
+            &journal,
+            engine.as_ref(),
+            &projectors,
+            hooks.as_ref(),
+        )?;
+    }
+    let core = Core {
+        engine,
+        projectors,
+        files,
+        journal,
+        custody,
+        clock,
+        hooks,
+        limits,
+        flush_interval,
+        changes: Changes::new(head.feed, limits.change_ring),
+        release_gate: Mutex::new(()),
+        materialization_lock: Mutex::new(()),
+        flow: Mutex::new(Flow {
+            fatal: None,
+            dead: false,
+            closing: false,
+            writer_done: false,
+            sync_wanted: false,
+            holding_back: false,
+            queued: 0,
+            flushed: head.ordinal,
+            materialized: head.ordinal,
+            confirmed: recovered.confirmed.clone(),
+            waiters: Vec::new(),
+            unflushed: VecDeque::new(),
+            unflushed_bytes: 0,
+            unmaterialized: VecDeque::new(),
+            unmaterialized_bytes: 0,
+            consumer_watermarks,
+        }),
+        wake: Condvar::new(),
+    };
+    replay_and_confirm(&core, cursor, on_chain, &head, &recovered)?;
+    let sequences = Sequences {
+        high_waters: head.high_waters,
+        feed: head.feed,
+    };
+    Ok((Arc::new(core), sequences))
+}
+
+fn open_or_create_journal(
+    opening: Opening,
+    disk: Arc<dyn Disk>,
+    durable: &std::path::Path,
+    identity: &OfficeIdentity,
+    custody: &Arc<dyn WriterAuthority>,
+    min_consumer_watermark: Option<u64>,
+) -> Result<(Journal, Recovered), StoreError> {
+    match opening {
+        Opening::Create(facts) => {
+            let confirmed = custody
+                .checkpoint(identity)
+                .map_err(|e| StoreError::Custody(e.0))?;
+            let journal = Journal::create_on(disk, durable, identity, &facts)?;
+            let recovered = Recovered {
+                confirmed,
+                entries: Vec::new(),
+                truncated: None,
+            };
+            Ok((journal, recovered))
+        }
+        Opening::Existing => Ok(Journal::open_on(
+            disk,
+            durable,
+            identity,
+            custody.as_ref(),
+            min_consumer_watermark,
+        )?),
+    }
+}
+
+fn materialize_with_consumer_cap(
+    files: &Files,
+    journal: &Journal,
+    consumer_watermarks: &std::collections::BTreeMap<String, u64>,
+) -> Result<(), StoreError> {
+    if let Some(through) = materialize(files, journal)? {
+        let release_cap = consumer_watermarks
+            .values()
+            .copied()
+            .min()
+            .map_or(through, |min| through.min(min));
+        journal.set_materialized_with_release_cap(through, release_cap)?;
+    }
+    Ok(())
+}
+
+fn cursor_on_chain(
+    cursor: Option<&Cursor>,
+    base: &JournalPoint,
+    head: &JournalPoint,
+    recovered: &Recovered,
+) -> bool {
+    cursor.is_some_and(|cursor| {
+        let held = if cursor.ordinal == base.ordinal {
+            Some(base.sha256)
+        } else {
+            recovered
+                .entries
+                .iter()
+                .find(|e| e.ordinal() == cursor.ordinal)
+                .map(|e| e.sha256)
+        };
+        cursor.ordinal <= head.ordinal && held == Some(cursor.sha256)
+    })
+}
+
+fn replay_and_confirm<E: Engine>(
+    core: &Core<E>,
+    cursor: Option<Cursor>,
+    on_chain: bool,
+    head: &JournalPoint,
+    recovered: &Recovered,
+) -> Result<(), StoreError> {
+    if let Some(cursor) = cursor.filter(|cursor| on_chain && cursor.ordinal < head.ordinal) {
+        let after: Vec<_> = recovered
+            .entries
+            .iter()
+            .filter(|e| e.ordinal() > cursor.ordinal)
+            .cloned()
+            .collect();
+        core.replay(&after, &head.cursor())?;
+    }
+    let flushed = head.head();
+    if recovered.confirmed.as_ref() != Some(&flushed) {
+        core.custody
+            .confirm(
+                core.journal.identity(),
+                recovered.confirmed.as_ref(),
+                &flushed,
+            )
+            .map_err(|e| StoreError::Custody(e.0))?;
+        core.flow().confirmed = Some(flushed);
+    }
+    Ok(())
+}
+
+fn validate_consumer_id(consumer_id: &str) -> Result<(), StoreError> {
+    if consumer_id.is_empty()
+        || consumer_id.len() > 64
+        || !consumer_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err(StoreError::Invalid(format!(
+            "invalid journal consumer id `{consumer_id}`"
+        )));
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ConsumerWatermarkFile {
+    v: u32,
+    consumer_id: String,
+    ordinal: u64,
+}
+
+fn load_consumer_watermarks(
+    journal_dir: &std::path::Path,
+) -> Result<std::collections::BTreeMap<String, u64>, StoreError> {
+    let dir = journal_dir.join("consumers");
+    let mut out = std::collections::BTreeMap::new();
+    if !dir.is_dir() {
+        return Ok(out);
+    }
+    for entry in std::fs::read_dir(&dir)
+        .map_err(|e| StoreError::Internal(format!("read consumers dir: {e}")))?
+    {
+        let entry =
+            entry.map_err(|e| StoreError::Internal(format!("read consumers entry: {e}")))?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let bytes = std::fs::read(&path)
+            .map_err(|e| StoreError::Internal(format!("read consumer watermark: {e}")))?;
+        let parsed: ConsumerWatermarkFile = serde_json::from_slice(&bytes)
+            .map_err(|e| StoreError::Internal(format!("parse consumer watermark: {e}")))?;
+        validate_consumer_id(&parsed.consumer_id)?;
+        out.insert(parsed.consumer_id, parsed.ordinal);
+    }
+    Ok(out)
+}
+
+fn persist_consumer_watermark(
+    journal_dir: &std::path::Path,
+    consumer_id: &str,
+    ordinal: u64,
+) -> Result<(), StoreError> {
+    let dir = journal_dir.join("consumers");
+    match org_platform::fs::create_owner_only_dir(&dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => {
+            return Err(StoreError::Internal(format!("create consumers dir: {e}")));
+        }
+    }
+    // Always sync the parent journal directory before publishing a consumer watermark so a retry
+    // after a crash or failed fsync following `mkdir` never skips parent durability (`TASK-52` #15 / P3-#14).
+    std::fs::File::open(journal_dir)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| StoreError::Internal(format!("sync journal dir: {e}")))?;
+    let bytes = serde_json::to_vec_pretty(&ConsumerWatermarkFile {
+        v: 1,
+        consumer_id: consumer_id.to_owned(),
+        ordinal,
+    })
+    .map_err(|e| StoreError::Internal(format!("encode consumer watermark: {e}")))?;
+    crate::files::publish_one(&dir, &format!("{consumer_id}.json"), &bytes, false)
+        .map_err(StoreError::Files)
 }
 
 fn status<E: Engine>(flow: &Flow, engine: &E) -> Status {

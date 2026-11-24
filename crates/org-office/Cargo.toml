@@ -15,9 +15,13 @@ name = "store_latency"
 required-features = ["testkit"]
 
 [dependencies]
+base64.workspace = true
 org-docs = { path = "../org-docs" }
+org-pki = { path = "../org-pki" }
 org-process = { path = "../org-process" }
 org-store = { path = "../org-store" }
+org-sync = { path = "../org-sync" }
+org-sync-proto = { path = "../org-sync-proto" }
 org-proto = { path = "../org-proto" }
 # Only `writer::marker`: the host's custody marker in an office folder.
 org-office-launch = { path = "../org-office-launch" }

@@ -60,6 +60,16 @@ fn first(path: &Path, op: FirstLine) -> HostFirstLine {
         }),
         FirstLine::Start => HostFirstLine::Start(office),
         FirstLine::Discard => HostFirstLine::Discard(office),
+        FirstLine::Join => HostFirstLine::Join(org_office_launch::JoinLine {
+            office,
+            org_id: ORG.into(),
+            org_name: "Acme".into(),
+            office_name: "Satellite".into(),
+            hq_office_id: "019a9999-0000-7000-8000-000000000099".into(),
+            hq_addresses: vec!["127.0.0.1:9443".into()],
+            invitation_id: "019a9999-0000-7000-8000-000000000098".into(),
+            re_enroll: false,
+        }),
     }
 }
 
@@ -77,6 +87,12 @@ fn handoff(op: FirstLine) -> Handoff {
             fds: vec![HandoffFd::Transfer],
         },
         FirstLine::Discard => Handoff::Discard { fds: vec![] },
+        FirstLine::Join => Handoff::Join {
+            office_secrets_key: OfficeSecretsKey::from_bytes([0xb3; 32]),
+            grant_key: GrantKey::from_bytes([7; 32]),
+            invitation: org_office_launch::InvitationSecret::new("agorg-inv1.test".into()).unwrap(),
+            fds: vec![HandoffFd::Transfer],
+        },
     }
 }
 

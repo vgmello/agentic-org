@@ -217,6 +217,87 @@ pub trait PrivateNotesStore: Send + Sync {
     fn mark_task_deleted(&self, org_id: &str, task_id: &str) -> Result<(), OfficeError>;
 }
 
+/// Fail-closed private-notes adapter for satellite offices (`doc-79`, `TASK-52` / `ARCH-02`).
+/// Satellites never open or create `<durable>/private/task-notes.db`; private task notes live
+/// exclusively at HQ.
+#[derive(Debug, Default)]
+pub struct SatelliteRefusedPrivateNotesStore;
+
+impl SatelliteRefusedPrivateNotesStore {
+    fn refused() -> ApiError {
+        ApiError::new(
+            ErrorCode::NotAuthorized,
+            "private task notes are stored only at HQ and are unavailable on a satellite office",
+        )
+    }
+}
+
+impl PrivateNotesStore for SatelliteRefusedPrivateNotesStore {
+    fn create_note(
+        &self,
+        _cmd: CreateNoteCmd<'_>,
+    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
+        Ok(Err(Self::refused()))
+    }
+
+    fn edit_note(
+        &self,
+        _cmd: EditNoteCmd<'_>,
+    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
+        Ok(Err(Self::refused()))
+    }
+
+    fn delete_note(
+        &self,
+        _cmd: DeleteNoteCmd<'_>,
+    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
+        Ok(Err(Self::refused()))
+    }
+
+    fn get_note(
+        &self,
+        _org_id: &str,
+        _caller_id: &str,
+        _caller_is_person: bool,
+        _note_id: &str,
+    ) -> Result<Option<PrivateNoteRecord>, OfficeError> {
+        Ok(None)
+    }
+
+    fn list_notes(
+        &self,
+        _org_id: &str,
+        _caller_id: &str,
+        _caller_is_person: bool,
+        _task_id: &str,
+        _author_filter: Option<&str>,
+    ) -> Result<Vec<PrivateNoteRecord>, OfficeError> {
+        Ok(Vec::new())
+    }
+
+    fn begin_publish(
+        &self,
+        _cmd: BeginPublishCmd<'_>,
+    ) -> Result<Result<PublishAttempt, ApiError>, OfficeError> {
+        Ok(Err(Self::refused()))
+    }
+
+    fn finish_publish(
+        &self,
+        _org_id: &str,
+        _author_id: &str,
+        _operation_id: &str,
+        _error_code: Option<&str>,
+        _now: &str,
+    ) -> Result<(), OfficeError> {
+        Ok(())
+    }
+
+    fn mark_task_deleted(&self, _org_id: &str, _task_id: &str) -> Result<(), OfficeError> {
+        Ok(())
+    }
+}
+
 /// Validates and trims a private note body (`PN-01`).
 pub fn validate_note_body(raw: &str) -> Result<String, ApiError> {
     let trimmed = raw.trim();

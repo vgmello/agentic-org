@@ -8,6 +8,7 @@ mod cli_approvals;
 pub(crate) mod listener;
 mod local_access;
 mod multi_person;
+mod office_join;
 mod office_ops;
 pub(crate) mod organizations;
 use authentication::Authentication;
@@ -702,9 +703,7 @@ impl Service {
     }
     fn authenticate(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::ops::{
-            AccountVerify, CliApprovalCreate, CliApprovalPoll, FdsReceived, OfficeList,
-            OfficeOpenChannel, OfficeRestart, SessionEnd, SessionGrant, SessionInspect,
-            SessionRenew,
+            AccountVerify, CliApprovalCreate, CliApprovalPoll, FdsReceived, OfficeOpenChannel,
         };
         if request.is::<FdsReceived>() {
             acknowledge_descriptors(request, connection);
@@ -727,47 +726,9 @@ impl Service {
             self.poll_cli_approval(authentication, request, connection);
         } else if request.is::<OfficeOpenChannel>() {
             self.open_authenticated_channel(authentication, request, connection);
-        } else if request.is::<OfficeList>() {
-            office_ops::list_session_offices(self, authentication, request, connection);
-        } else if request.is::<OfficeRestart>() {
-            office_ops::restart_session_office(self, authentication, request, connection);
-        } else if request.is::<SessionGrant>() {
-            let result = request
-                .params::<SessionGrant>()
-                .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid grant request"))
-                .and_then(|p| {
-                    authentication.grant(connection, &p.session, &p.office_id, &p.channel_id)
-                });
-            match result {
-                Ok(result) => secret_response(connection, request.id, &result),
-                Err(error) => connection.send_response(Response::error(request.id, error)),
-            }
-        } else if request.is::<SessionInspect>() {
-            connection.send_response(answer::<SessionInspect>(request, |params| {
-                let mut result = authentication.inspect(connection, &params.session)?;
-                let offices = self.offices.offices();
-                for link in &mut result.orgs {
-                    link.office_ids = offices
-                        .iter()
-                        .filter(|o| o.organization_id == link.org_id)
-                        .map(|o| o.id.clone())
-                        .collect();
-                }
-                Ok(result)
-            }));
-        } else if request.is::<SessionRenew>() {
-            connection.send_response(answer::<SessionRenew>(request, |params| {
-                authentication.authorize(connection, &params.session)?;
-                Ok(org_proto::Empty {})
-            }));
-        } else {
-            connection.send_response(answer::<SessionEnd>(request, |params| {
-                // Dropping the bound session sends revocation to each worker;
-                // a failed transfer closes that worker's authenticated channel.
-                connection.clear_recovery_permission();
-                authentication.end(connection, &params.session)?;
-                Ok(org_proto::Empty {})
-            }));
+        } else if !office_ops::dispatch_session_office_op(self, authentication, request, connection)
+        {
+            dispatch_session_lifecycle(self, authentication, request, connection);
         }
         true
     }
@@ -1002,10 +963,58 @@ fn web_reports_serving(request: &Request, connection: &Arc<Connection>) {
     }
 }
 
+fn dispatch_session_lifecycle(
+    service: &Service,
+    authentication: &Authentication,
+    request: &Request,
+    connection: &Arc<Connection>,
+) {
+    use org_host_control::ops::{SessionEnd, SessionGrant, SessionInspect, SessionRenew};
+    if request.is::<SessionGrant>() {
+        let result = request
+            .params::<SessionGrant>()
+            .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid grant request"))
+            .and_then(|p| {
+                authentication.grant(connection, &p.session, &p.office_id, &p.channel_id)
+            });
+        match result {
+            Ok(result) => secret_response(connection, request.id, &result),
+            Err(error) => connection.send_response(Response::error(request.id, error)),
+        }
+    } else if request.is::<SessionInspect>() {
+        connection.send_response(answer::<SessionInspect>(request, |params| {
+            let mut result = authentication.inspect(connection, &params.session)?;
+            let offices = service.offices.offices();
+            for link in &mut result.orgs {
+                link.office_ids = offices
+                    .iter()
+                    .filter(|o| o.organization_id == link.org_id)
+                    .map(|o| o.id.clone())
+                    .collect();
+            }
+            Ok(result)
+        }));
+    } else if request.is::<SessionRenew>() {
+        connection.send_response(answer::<SessionRenew>(request, |params| {
+            authentication.authorize(connection, &params.session)?;
+            Ok(org_proto::Empty {})
+        }));
+    } else {
+        connection.send_response(answer::<SessionEnd>(request, |params| {
+            // Dropping the bound session sends revocation to each worker;
+            // a failed transfer closes that worker's authenticated channel.
+            connection.clear_recovery_permission();
+            authentication.end(connection, &params.session)?;
+            Ok(org_proto::Empty {})
+        }));
+    }
+}
+
 fn session_auth_method(request: &Request) -> bool {
     use org_host_control::ops::{
-        AccountVerify, CliApprovalCreate, CliApprovalPoll, OfficeList, OfficeOpenChannel,
-        OfficeRestart, SessionEnd, SessionGrant, SessionInspect, SessionRenew,
+        AccountVerify, CliApprovalCreate, CliApprovalPoll, OfficeJoin, OfficeList,
+        OfficeOpenChannel, OfficeReEnroll, OfficeRemovePending, OfficeRestart, SessionEnd,
+        SessionGrant, SessionInspect, SessionRenew,
     };
     request.is::<AccountVerify>()
         || request.is::<CliApprovalCreate>()
@@ -1015,6 +1024,9 @@ fn session_auth_method(request: &Request) -> bool {
         || request.is::<OfficeOpenChannel>()
         || request.is::<OfficeList>()
         || request.is::<OfficeRestart>()
+        || request.is::<OfficeJoin>()
+        || request.is::<OfficeRemovePending>()
+        || request.is::<OfficeReEnroll>()
         || request.is::<SessionGrant>()
         || request.is::<SessionInspect>()
 }

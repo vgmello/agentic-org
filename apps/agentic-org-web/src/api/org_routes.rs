@@ -97,7 +97,8 @@ fn try_route_organization_subroutes(
     post: bool,
     query: bool,
 ) -> Option<Result<Route, ApiReply>> {
-    super::provider_routes::try_route(api, request, org, tail, get, post, query)
+    super::office_routes::try_route(api, request, org, tail, get, post, query)
+        .or_else(|| super::provider_routes::try_route(api, request, org, tail, get, post, query))
         .or_else(|| super::hiring_routes::try_route(api, request, org, tail, get, post, query))
         .or_else(|| super::session_routes::try_route(api, request, org, tail, get, post, query))
         .or_else(|| super::git_routes::try_route(api, request, org, tail, get, post, query))

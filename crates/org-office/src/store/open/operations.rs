@@ -598,3 +598,39 @@ impl ReadOp for OfficesCount {
         Ok(read.offices()?.len())
     }
 }
+
+/// Lists all canonical office IDs registered in this organization's `org-store` (`TASK-52` H-13).
+pub struct OfficeIdsList;
+
+impl ReadOp for OfficeIdsList {
+    type Out = Vec<String>;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<Vec<String>, StoreError> {
+        Ok(read
+            .offices()?
+            .into_iter()
+            .map(|o| o.id.as_str().to_owned())
+            .collect())
+    }
+}
+
+/// Registers (or idempotently refreshes) an enrolled satellite office at HQ (`TASK-52`).
+pub type RegisterSatelliteOfficeOp =
+    StructureOp<crate::organization::features::offices::RegisterSatelliteOffice>;
+
+/// Applies an HQ-authoritative batch of `state/` files onto a satellite office's store (`TASK-52`).
+pub struct ApplyReplicatedFilesOp {
+    pub operation_id: Id,
+    pub actor: Actor,
+    pub command: crate::organization::features::offices::ApplyReplicatedFiles,
+}
+
+impl StoreOp for ApplyReplicatedFilesOp {
+    type Out = Result<Reply, StoreError>;
+
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let op = self.command.operation(self.operation_id, self.actor);
+        let cmd = self.command;
+        store.submit(Some(op), true, move |uow| cmd.decide(uow))
+    }
+}

@@ -1,9 +1,10 @@
-//! REC-ESC-1 creation escrow. Maintained primitives, fixed versioned budgets.
-//! No certificate encoding, enrollment, trust promotion or host key access.
-//! [`wrap`] protects an office's private keys under its office secrets key (ADR-0016).
+//! Organization CA escrow, X.509 certificates, pinned mTLS, satellite invitations, and
+//! per-office private-key wrapping (`ADR-0016`, `doc-67`, `TASK-52`).
 #![forbid(unsafe_code)]
+pub mod cert;
 mod code;
 mod envelope;
+pub mod invitation;
 pub mod wrap;
 pub use code::Code;
 pub use envelope::{Envelope, MAX_PACKAGE_BYTES};
@@ -11,7 +12,7 @@ use ring::{
     rand::SystemRandom,
     signature::{self, EcdsaKeyPair, KeyPair},
 };
-use zeroize::Zeroizing;
+pub use zeroize::Zeroizing;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {

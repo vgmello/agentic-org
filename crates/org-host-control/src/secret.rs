@@ -65,3 +65,9 @@ secret_text!(
     /// in `link.register`. The host keeps only its digest.
     LinkToken
 );
+
+secret_text!(
+    /// A satellite office invitation token (`agorg-inv1.<payload>`) carrying the one-time
+    /// enrollment private key (`doc-67`, `TASK-52`). Redacted in `Debug`, zeroed on drop.
+    InvitationTokenSecret
+);

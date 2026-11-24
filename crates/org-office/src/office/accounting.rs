@@ -40,7 +40,7 @@ impl Office {
         SUBSCRIPTION_ATTEMPT_SEQ.fetch_add(1, Ordering::SeqCst)
     }
     /// Mints a valid canonical lowercase RFC 9562 UUIDv7 using monotonic ms + counter + office hash.
-    pub(crate) fn next_uuid_v7(&self) -> String {
+    pub fn next_uuid_v7(&self) -> String {
         mint_uuid_v7(self)
     }
 

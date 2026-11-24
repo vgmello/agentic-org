@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use org_office_launch::{ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG};
+use org_office_launch::{ServerEvent, CREATE_FLAG, DISCARD_FLAG, JOIN_FLAG, OFFICE_FLAG};
 use org_platform_host::admission::{Admission, Child, ChildEnv, SpawnRefused, Started};
 use org_proto::location::{self, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::OfficeSecretsKey;
@@ -54,8 +54,17 @@ pub(crate) enum Signal {
 /// The environment a server gets, besides `ORG_OFFICE_HOME`: only these of the host's own, so
 /// nothing else in the login session reaches it (the development key folder included: servers
 /// never touch a key store, they get their key in the launch handoff). A worker needs only
-/// the user's identity and home; `TMPDIR` is the user's temporary folder.
-const PASSED_ENV: [&str; 6] = ["HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG"];
+/// the user's identity, home, `TMPDIR`, and optional HQ federation listener endpoints (`TASK-52` H-2).
+const PASSED_ENV: [&str; 8] = [
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "PATH",
+    "TMPDIR",
+    "LANG",
+    "AGENTIC_ORG_FEDERATION_BIND",
+    "AGENTIC_ORG_FEDERATION_ADVERTISE",
+];
 
 /// A server's whole environment: the [`PASSED_ENV`] names the host has (read through `host_var`),
 /// then `ORG_OFFICE_HOME` and, if set, `ORG_OFFICE_RUNTIME_DIR`. Nothing else of the host's.
@@ -226,11 +235,48 @@ impl From<SpawnError> for io::Error {
 pub(crate) enum Mode<'a> {
     /// Create the HQ office: its handoff carries the new office's secrets key and recovery code.
     Create(&'a CreateLine),
+    /// Join or re-enroll a satellite office: its handoff carries the office's secrets key and
+    /// the one-time invitation token (`TASK-52` H-1).
+    Join(&'a JoinLine),
     /// Serve the office with this id: its handoff carries its secrets key from the key store,
     /// or `null` when the store has none for it (the start proceeds).
     Office(&'a str, Option<&'a OfficeSecretsKey>),
     /// Remove an unfinished office, then exit. The discard handoff never carries a key.
     Discard(&'a str),
+}
+
+/// A satellite join or D25 re-enrollment launch: non-secret join metadata plus the office's
+/// secrets key and one-time invitation token delivered over the verified rendezvous (`TASK-52` H-1).
+pub(crate) struct JoinLine(Box<SatelliteJoinLaunch>);
+struct SatelliteJoinLaunch {
+    first: org_office_launch::JoinLine,
+    office_secrets_key: OfficeSecretsKey,
+    invitation_token: org_host_control::InvitationTokenSecret,
+}
+
+impl JoinLine {
+    pub(crate) fn satellite(
+        first: org_office_launch::JoinLine,
+        office_secrets_key: OfficeSecretsKey,
+        invitation_token: org_host_control::InvitationTokenSecret,
+    ) -> Self {
+        Self(Box::new(SatelliteJoinLaunch {
+            first,
+            office_secrets_key,
+            invitation_token,
+        }))
+    }
+
+    pub(crate) fn office_id(&self) -> &str {
+        &self.0.first.office.office_id
+    }
+
+    fn handoff_secrets(&self) -> super::channels::HandoffSecrets<'_> {
+        super::channels::HandoffSecrets::Join {
+            office_secrets_key: &self.0.office_secrets_key,
+            invitation_token: self.0.invitation_token.expose(),
+        }
+    }
 }
 
 /// The HQ create: the launch first line (no secret: the office, organization, names, role and HQ
@@ -382,6 +428,7 @@ impl Spawner {
                 line.office_id(),
                 Some((line.org_id(), line.owner_member_id())),
             )?,
+            Mode::Join(line) => self.custody(line.office_id(), None)?,
             Mode::Discard(_) => {}
         }
         self.check.may_spawn().map_err(|why| {
@@ -399,6 +446,7 @@ impl Spawner {
         let rendezvous = self.broker.bind()?;
         let args: Vec<&OsStr> = match mode {
             Mode::Create(_) => vec![OsStr::new(CREATE_FLAG)],
+            Mode::Join(_) => vec![OsStr::new(JOIN_FLAG)],
             Mode::Office(id, ..) => vec![OsStr::new(OFFICE_FLAG), OsStr::new(id)],
             Mode::Discard(id) => vec![OsStr::new(DISCARD_FLAG), OsStr::new(id)],
         };
@@ -531,6 +579,35 @@ impl Spawner {
                     &org_office_launch::HostFirstLine::Create(first),
                 )
                 .map_err(|_| io::Error::other("HQ create line refused"))?;
+                running.channel = Some(broker.accept(
+                    context,
+                    line.office_id(),
+                    admission,
+                    &mut running.process,
+                    line.handoff_secrets(),
+                    running.generation,
+                    launch_signals,
+                )?);
+            }
+            Mode::Join(line) => {
+                let context = rendezvous;
+                let mut first = line.0.first.clone();
+                if first.office.instance_id != broker.instance {
+                    return Err(io::Error::other("satellite join scope mismatch").into());
+                }
+                first.office.rendezvous = context
+                    .path()
+                    .to_str()
+                    .ok_or_else(|| io::Error::other("invalid rendezvous"))?
+                    .into();
+                org_office_launch::write_first_line(
+                    running
+                        .stdin
+                        .as_mut()
+                        .ok_or_else(|| io::Error::other("missing stdin"))?,
+                    &org_office_launch::HostFirstLine::Join(first),
+                )
+                .map_err(|_| io::Error::other("satellite join line refused"))?;
                 running.channel = Some(broker.accept(
                     context,
                     line.office_id(),

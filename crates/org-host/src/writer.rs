@@ -293,7 +293,12 @@ impl Writers {
     fn verify(&self, record: &Record, office: &str) -> io::Result<()> {
         self.root.verify()?;
         let a = &record.admission;
-        let (durable, runtime) = self.data_roots(&a.identity.organization_id)?;
+        let is_satellite = a.owner_member == a.identity.office_id && !a.owner_account.is_empty();
+        let (durable, runtime) = if is_satellite {
+            satellite_data_roots(&self.root.path, &a.identity.organization_id, office)?
+        } else {
+            self.data_roots(&a.identity.organization_id)?
+        };
         if record.schema_version != SCHEMA_VERSION
             || !org_proto::is_uuid_v7(&record.operation_id)
             || !a.check()
@@ -313,6 +318,9 @@ impl Writers {
             .ok_or_else(refused)?;
         if device.expose() != a.identity.machine_id.as_bytes() {
             return Err(refused());
+        }
+        if is_satellite {
+            return Ok(());
         }
         self.db
             .verify_selected_owner(
@@ -488,6 +496,7 @@ impl Writers {
         self.install_marker(binding.office_id)?;
         Ok(admission)
     }
+
     /// Updates an office's persisted writer admission owner after organization ownership handover
     /// (`TASK-38` / `doc-78`), verifying the new owner against `HostDb::org_owners` before saving.
     pub(crate) fn update_owner(
@@ -639,6 +648,113 @@ pub(crate) struct TestCustody {
     pub(crate) member: String,
     /// While set, every read of the custody store fails with a transient I/O error.
     pub(crate) unreadable: Arc<AtomicBool>,
+}
+
+/// Office-isolated data roots for a satellite office on this instance so same-instance HQ and
+/// satellite offices never share a mutable `durable/` or `runtime/` directory (`TASK-52` #2).
+fn satellite_data_roots(
+    root: &Path,
+    organization: &str,
+    office_id: &str,
+) -> io::Result<(PathBuf, PathBuf)> {
+    if !org_proto::is_uuid_v7(organization) || !org_proto::is_uuid_v7(office_id) {
+        return Err(refused());
+    }
+    let base = root.join(organization).join("offices").join(office_id);
+    Ok((base.join("durable"), base.join("runtime")))
+}
+
+/// Reserves (or reuses existing) writer custody for a joining/re-enrolling satellite office
+/// (`TASK-52` H-1), creating private office-isolated data roots if needed and installing the marker.
+pub(crate) fn reserve_satellite(
+    writers: &Writers,
+    operation: &str,
+    organization_id: &str,
+    office_id: &str,
+    actor_account: &str,
+) -> io::Result<Admission> {
+    use std::os::unix::fs::DirBuilderExt;
+    let _gate = lock(&writers.gate);
+    writers.root.verify()?;
+    let (durable, runtime) = satellite_data_roots(&writers.root.path, organization_id, office_id)?;
+    if !org_proto::is_uuid_v7(operation)
+        || !org_proto::is_uuid_v7(office_id)
+        || actor_account.is_empty()
+    {
+        return Err(refused());
+    }
+    if let Some(record) = writers.load(office_id)? {
+        writers.verify(&record, office_id)?;
+        if record.admission.identity.organization_id != organization_id {
+            return Err(refused());
+        }
+        writers.install_marker(office_id)?;
+        return Ok(record.admission);
+    }
+    let marker = writers.marker(office_id)?;
+    for path in [marker.parent().ok_or_else(refused)?, &durable, &runtime] {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)?;
+    }
+    let machine_id = ensure_writer_device_id(&*writers.custody)?;
+    let owner_account = if org_proto::is_uuid_v7(actor_account)
+        || org_proto::ulid_time_ms(actor_account).is_some()
+    {
+        actor_account.to_owned()
+    } else {
+        office_id.to_owned()
+    };
+    let admission = Admission {
+        version: wire::VERSION,
+        identity: Identity {
+            instance_id: writers.instance.clone(),
+            organization_id: organization_id.into(),
+            office_id: office_id.into(),
+            journal_incarnation: crate::ids::uuid_v7()?,
+            writer_epoch: 1,
+            machine_id,
+        },
+        durable_root: durable.to_str().ok_or_else(refused)?.into(),
+        runtime_root: runtime.to_str().ok_or_else(refused)?.into(),
+        owner_account,
+        owner_member: office_id.into(),
+    };
+    let record = Record {
+        schema_version: SCHEMA_VERSION,
+        operation_id: operation.into(),
+        root: writers.root.clone(),
+        admission: admission.clone(),
+        head: None,
+    };
+    writers.verify(&record, office_id)?;
+    writers.save(office_id, &record)?;
+    writers.install_marker(office_id)?;
+    Ok(admission)
+}
+
+fn ensure_writer_device_id(custody: &dyn HostSecrets) -> io::Result<String> {
+    let device_name = Name::parse("writer-device").map_err(private)?;
+    if custody.load(&device_name).map_err(private)?.is_none() {
+        let random = crate::secrets::generate_office_secrets_key()?;
+        let value: String = random
+            .expose_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        custody
+            .put(
+                &device_name,
+                &Value::new(value.into_bytes()).map_err(private)?,
+            )
+            .map_err(private)?;
+    }
+    let device = custody
+        .load(&device_name)
+        .map_err(private)?
+        .ok_or_else(refused)?;
+    String::from_utf8(device.expose().to_vec()).map_err(private)
 }
 
 /// A custody store whose reads time out while `fail` is set.

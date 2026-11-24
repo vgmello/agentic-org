@@ -500,6 +500,7 @@ fn verify_single_chain_engine(engine: EngineChoice) {
                 employee_id: None,
                 r#for: None,
                 offset: Some(0),
+                revision: None,
             },
         )
         .unwrap()
@@ -635,6 +636,7 @@ fn move_team_relocates_structure_documents_and_survives_rebuild() {
                 employee_id: None,
                 r#for: None,
                 offset: None,
+                revision: None,
             },
         )
         .unwrap()

@@ -674,14 +674,16 @@ where
     }
 
     let mut conv_changed = false;
-    for eid in &active_members {
-        if !conv.memberships.iter().any(|m| m.employee_id == *eid) {
-            conv.memberships.push(ConversationMembership {
-                employee_id: eid.clone(),
-                joined_at: now_utc.clone(),
-                left_at: None,
-            });
-            conv_changed = true;
+    if conv.auto_scope.is_none() {
+        for eid in &active_members {
+            if !conv.memberships.iter().any(|m| m.employee_id == *eid) {
+                conv.memberships.push(ConversationMembership {
+                    employee_id: eid.clone(),
+                    joined_at: now_utc.clone(),
+                    left_at: None,
+                });
+                conv_changed = true;
+            }
         }
     }
 
@@ -816,11 +818,26 @@ fn commit_ask_record(
 
     let mut change = Change::new(Ack::Committed);
     let conv_path = records::conversation_path(&conv.id);
+    const MAX_CHANNEL_RECORD_BYTES: usize = 360 * 1024;
     if !conv_persisted {
-        change = change.create(conv_path, records::encode_json(conv));
+        let encoded = records::encode_json(conv);
+        if encoded.len() > MAX_CHANNEL_RECORD_BYTES {
+            return Err(refusal(
+                ErrorCode::TooLarge,
+                "channel record exceeds replication size limit",
+            ));
+        }
+        change = change.create(conv_path, encoded);
     } else if conv.auto_scope.is_some() && conv_changed {
         conv.revision = conv.revision.saturating_add(1);
-        change = change.put(conv_path, records::encode_json(conv));
+        let encoded = records::encode_json(conv);
+        if encoded.len() > MAX_CHANNEL_RECORD_BYTES {
+            return Err(refusal(
+                ErrorCode::TooLarge,
+                "channel record exceeds replication size limit",
+            ));
+        }
+        change = change.put(conv_path, encoded);
     }
     change = change.create(
         records::message_path(&conv.id, &record.id),
@@ -969,7 +986,7 @@ fn validate_one_answer(q: &AskQuestion, ans: &QuestionAnswer) -> Result<Question
     }
 }
 
-fn validate_answer_set(
+pub(crate) fn validate_answer_set(
     card: &AskCard,
     submitted: Vec<QuestionAnswer>,
 ) -> Result<Vec<QuestionAnswer>, Refusal> {
@@ -1014,7 +1031,7 @@ fn validate_answer_set(
     Ok(ordered)
 }
 
-fn render_answer_summary(card: &AskCard, answers: &[QuestionAnswer]) -> String {
+pub(crate) fn render_answer_summary(card: &AskCard, answers: &[QuestionAnswer]) -> String {
     let mut lines = Vec::with_capacity(answers.len());
     for ans in answers {
         let q = card.questions.iter().find(|q| q.id == ans.question_id);
@@ -1144,7 +1161,7 @@ where
     )
 }
 
-fn mark_ask_recipients_done(
+pub(crate) fn mark_ask_recipients_done(
     read: &impl MessagingRead,
     here: &OfficeIdentity,
     ask: &MessageRecord,
@@ -1204,9 +1221,9 @@ where
         conversation_id: ask.conversation_id.clone(),
         employee_id: responder.id.clone(),
         message_id: ask.id.clone(),
-        accepted_by: None,
-        accepted_at: None,
-        reason: None,
+        accepted_by: Some(responder.id.clone()),
+        accepted_at: Some(now_utc.to_owned()),
+        reason: (ask.origin_office_id == here.office_id).then(|| "origin-close".to_owned()),
         answer: Some(serde_json::to_value(&envelope).expect("envelope serializes")),
     };
     let ans_path = records::participant_answer_path(&ask.conversation_id, &responder.id, &ask.id);
@@ -1358,6 +1375,30 @@ fn append_answer_reply_message(
     Ok((change, hdr))
 }
 
+fn authorize_withdraw_office(
+    view: &impl MessagingRead,
+    here: &OfficeIdentity,
+    owner: &Id,
+    caller: &Id,
+    ask: &MessageRecord,
+    removed_offices: &BTreeSet<String>,
+) -> Result<bool, Refusal> {
+    let is_origin = ask.origin_office_id == here.office_id;
+    let is_hq = view
+        .office(&here.office_id)
+        .map_err(|_| refusal(ErrorCode::StorageError, "failed to read office"))?
+        .is_some_and(|o| o.role == crate::organization::records::OfficeRole::Hq);
+    if !is_origin && !(caller == owner && is_hq) {
+        return Err(refusal(
+            ErrorCode::NotAuthorized,
+            "only the ask's origin office or the organization owner at HQ may withdraw this ask",
+        ));
+    }
+    let hq_finalizes_removed =
+        caller == owner && is_hq && removed_offices.contains(ask.origin_office_id.as_str());
+    Ok(is_origin || hq_finalizes_removed)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn decide_msg_withdraw<E>(
     uow: &UnitOfWork<'_, E>,
@@ -1367,6 +1408,7 @@ pub fn decide_msg_withdraw<E>(
     params: &MsgWithdrawParams,
     org_seq: u64,
     now_utc: &str,
+    removed_offices: &BTreeSet<String>,
 ) -> Result<(Change, WithdrawCommitted), Refusal>
 where
     E: Engine,
@@ -1411,15 +1453,22 @@ where
             "only the asker or organization owner may withdraw this ask",
         ));
     }
+    let authoritative_close =
+        authorize_withdraw_office(uow.view(), here, owner, caller, &ask, removed_offices)?;
+    let mut existing_revision: u64 = 0;
     if let Some(existing) = uow
         .view()
         .answer_for_message(&ask.id)
         .map_err(|_| refusal(ErrorCode::StorageError, "failed to read existing answer"))?
     {
         let (a, w) = decode_ask_answer_file(&existing);
-        if a.is_some() || w.is_some() {
+        let promotable_provisional = authoritative_close
+            && w.is_some()
+            && existing.reason.as_deref() != Some("origin-close");
+        if (a.is_some() || w.is_some()) && !promotable_provisional {
             return Err(refusal(ErrorCode::Conflict, "ask is already closed"));
         }
+        existing_revision = existing.revision;
     }
     let withdrawal = AskWithdrawalRecord {
         by: caller.as_str().to_owned(),
@@ -1434,14 +1483,14 @@ where
     let envelope = AskOutcomeEnvelope::Withdrawal(withdrawal.clone());
     let file = ParticipantAnswerFile {
         schema_version: SCHEMA_VERSION,
-        revision: 1,
+        revision: existing_revision.saturating_add(1),
         organization_id: here.organization_id.clone(),
         conversation_id: ask.conversation_id.clone(),
         employee_id: caller.clone(),
         message_id: ask.id.clone(),
         accepted_by: None,
         accepted_at: None,
-        reason: withdrawal.reason.clone(),
+        reason: authoritative_close.then(|| "origin-close".to_owned()),
         answer: Some(serde_json::to_value(&envelope).expect("envelope serializes")),
     };
     let path = records::participant_answer_path(&ask.conversation_id, caller, &ask.id);

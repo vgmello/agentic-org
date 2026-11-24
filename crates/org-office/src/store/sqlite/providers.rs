@@ -141,13 +141,25 @@ impl SqliteProviderPoolStore {
         runtime_root: &Path,
         office_id: &str,
         org_id: &str,
+        is_hq: bool,
     ) -> Result<Self, OfficeError> {
         let bindings_dir = durable_root
             .join("local")
             .join("offices")
             .join(office_id)
             .join("connections");
-        let authority_dir = durable_root.join("authority").join("agent-execution");
+        // Only HQ owns `<durable>/authority/agent-execution/`; satellites persist local offline
+        // permits and replicated cooldown caches strictly under their own office-local subtree
+        // (`TASK-52` / `ARCH-02`).
+        let authority_dir = if is_hq {
+            durable_root.join("authority").join("agent-execution")
+        } else {
+            durable_root
+                .join("local")
+                .join("offices")
+                .join(office_id)
+                .join("local-execution")
+        };
         let protected_dir = runtime_root.join(office_id).join("protected");
         private_dir_synced(durable_root, &bindings_dir).map_err(OfficeError::storage)?;
         private_dir_synced(durable_root, &authority_dir).map_err(OfficeError::storage)?;

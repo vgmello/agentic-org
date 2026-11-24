@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use org_agent_runtime::{
     ApprovalId, ApprovalRequest, Control, Decision, Escalation, ExitInfo, Frame, LineFramer,
-    PermissionPolicy, Rule, RuleScope, RuleTool, SessionEvent,
+    PermissionPolicy, Rule, RuleScope, RuleTool, SessionEvent, ToolName,
 };
 use org_office::organization_family::records::PermissionPreset;
 use org_proto::sessions::{PendingApprovalView, SessionState, SessionView};
@@ -21,7 +21,7 @@ use org_supervise::StopMode;
 use crate::binding::RunBindingRegistry;
 use crate::credentials::{format_rfc3339_ms, now_ms, redact_secrets, rfc3339_now};
 use crate::instructions::{compose_turn_objective, TurnTrigger, SAME_USER_ISOLATION_NOTICE};
-use crate::preset::{decide_escalation, EscalationDisposition};
+use crate::preset::{decide_escalation_with_tools, EscalationDisposition};
 use crate::recovery::{SessionStore, StallWatchdog};
 use crate::subagents::{BackgroundKind, BackgroundRegistry};
 
@@ -110,6 +110,7 @@ pub(crate) struct SessionRuntimeState {
     pub pending_approvals: Vec<PendingApprovalView>,
     pub policy: PermissionPolicy,
     pub preset: PermissionPreset,
+    pub allowed_tools: Option<Vec<ToolName>>,
     pub suspended_on_asks: Vec<String>,
     pub waiting_for_member_id: Option<String>,
     pub waiting_for_name: Option<String>,
@@ -696,13 +697,27 @@ fn apply_outputs(
             org_agent_runtime::Output::Event(mut event) => {
                 let tokens = ctx.bindings.active_tokens();
                 let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+                // Evaluate approval requests against the ORIGINAL unredacted structured input
+                // (`TASK-94`) so secret redaction can never mask shell metacharacters or denied
+                // paths before policy checks; redact the event copy used for history and display.
+                let unredacted_approval = match &event {
+                    SessionEvent::ApprovalRequested(req) => Some(req.clone()),
+                    _ => None,
+                };
                 event.redact(&mut |s| {
                     *s = redact_secrets(s, &refs);
                 });
                 if let Ok(json_val) = serde_json::to_value(&event) {
                     let _ = ctx.store.append_history(&ctx.employee_id, &json_val, &refs);
                 }
-                if let Some(ctrl) = handle_event(&event, ctx, loop_state) {
+                let ctrl = if let Some(raw_req) = unredacted_approval {
+                    let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+                    state.watchdog.record_activity(Instant::now());
+                    handle_approval_request(&mut state, &raw_req, &refs)
+                } else {
+                    handle_event(&event, ctx, loop_state)
+                };
+                if let Some(ctrl) = ctrl {
                     follow_up.push(ctrl);
                 }
             }
@@ -788,8 +803,11 @@ fn handle_tool_or_approval_event(
 ) -> Option<Control> {
     match event {
         SessionEvent::ToolStarted {
-            tool_use_id, name, ..
-        } if name == "Task" || name == "Agent" => {
+            tool_use_id,
+            name,
+            capability: Some(org_agent_runtime::ToolCapability::Subagent),
+            ..
+        } => {
             state.backgrounds.register(
                 tool_use_id.clone(),
                 BackgroundKind::Subagent,
@@ -810,7 +828,7 @@ fn handle_tool_or_approval_event(
             );
         }
         SessionEvent::Usage(usage) => state.backgrounds.record_usage(usage),
-        SessionEvent::ApprovalRequested(req) => return handle_approval_request(state, req),
+        SessionEvent::ApprovalRequested(req) => return handle_approval_request(state, req, &[]),
         SessionEvent::ApprovalCancelled { id } => {
             state
                 .pending_approvals
@@ -915,8 +933,14 @@ fn persist_turn_update(
 fn handle_approval_request(
     state: &mut SessionRuntimeState,
     req: &ApprovalRequest,
+    active_tokens: &[&str],
 ) -> Option<Control> {
-    match decide_escalation(req, &state.policy, state.preset) {
+    match decide_escalation_with_tools(
+        req,
+        &state.policy,
+        state.preset,
+        state.allowed_tools.as_deref(),
+    ) {
         EscalationDisposition::AllowByPolicy => Some(Control::Answer {
             request_id: req.id.clone(),
             decision: Decision::AllowOnce,
@@ -924,7 +948,7 @@ fn handle_approval_request(
         EscalationDisposition::AutoDeny { reason } => Some(Control::Answer {
             request_id: req.id.clone(),
             decision: Decision::Deny {
-                message: Some(reason),
+                message: Some(redact_secrets(&reason, active_tokens)),
                 stop_turn: false,
             },
         }),
@@ -932,9 +956,9 @@ fn handle_approval_request(
             state.state = SessionState::WaitingApproval;
             state.pending_approvals.push(PendingApprovalView {
                 approval_id: req.id.as_str().to_owned(),
-                tool: req.tool.clone(),
-                escalation: escalation_label(req.escalation).to_owned(),
-                reason: Some(warning),
+                tool: redact_secrets(&req.tool, active_tokens),
+                escalation: escalation_label(req.effective_escalation()).to_owned(),
+                reason: Some(redact_secrets(&warning, active_tokens)),
                 requested_at: format_rfc3339_ms(now_ms()),
             });
             None
@@ -957,16 +981,23 @@ fn apply_approval_resolution(
     allow_always_tool: Option<&str>,
 ) {
     let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
+    let matched_escalation = guard
+        .pending_approvals
+        .iter()
+        .find(|p| p.approval_id == approval_id)
+        .map(|p| p.escalation.clone());
     guard
         .pending_approvals
         .retain(|p| p.approval_id != approval_id);
     if let Some(tool_name) = allow_always_tool {
-        if let Ok(tool) = RuleTool::try_from(tool_name) {
-            guard.policy.allow.push(Rule {
-                tool,
-                scope: RuleScope::Any,
-            });
-            guard.policy.version = guard.policy.version.saturating_add(1);
+        if matched_escalation.as_deref() == Some("none") {
+            if let Ok(tool) = RuleTool::try_from(tool_name) {
+                guard.policy.allow.push(Rule {
+                    tool,
+                    scope: RuleScope::Any,
+                });
+                guard.policy.version = guard.policy.version.saturating_add(1);
+            }
         }
     }
     if guard.pending_approvals.is_empty() && guard.state == SessionState::WaitingApproval {

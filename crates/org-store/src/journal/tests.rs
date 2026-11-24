@@ -36,6 +36,7 @@ impl Fixture {
             &self.root,
             &self.identity,
             &self.custody,
+            None,
         )
     }
 
@@ -219,7 +220,7 @@ fn a_journal_that_is_not_this_writers_or_not_whole_refuses_to_open() {
     epoch.writer_epoch = 2;
     let custody = FakeCustody::new();
     assert_eq!(
-        Journal::open_on(f.faults.disk(), &f.root, &epoch, &custody).err(),
+        Journal::open_on(f.faults.disk(), &f.root, &epoch, &custody, None).err(),
         Some(JournalError::IdentityMismatch)
     );
 

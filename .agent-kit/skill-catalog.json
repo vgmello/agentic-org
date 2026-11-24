@@ -117,15 +117,15 @@
       "sha256": "f71447c232961fb1c19422f149d2f45bc876160bc4ecb1cf24dfe2172d9ab636"
     },
     {
-      "path": ".backlog/docs/organization-data/doc-72 - Organization-Data-\u2014-README.md",
+      "path": ".backlog/docs/organization-data/doc-72 - Organization-Data-—-README.md",
       "sha256": "6d398c384f5dff3b7c7117fa85e722b6b19144280cb41cd4f34f1234ae74abca"
     },
     {
-      "path": ".backlog/docs/organization-data/doc-75 - Organization-Data-01-\u2014-Organization-Structure.md",
+      "path": ".backlog/docs/organization-data/doc-75 - Organization-Data-01-—-Organization-Structure.md",
       "sha256": "0fb14cc01484220e8ffbd7fc5b51aac512851101683fa072242a6b37c6d7c36b"
     },
     {
-      "path": ".backlog/docs/organization-data/doc-91 - Organization-Data-16-\u2014-Recovery-and-Office-Continuity.md",
+      "path": ".backlog/docs/organization-data/doc-91 - Organization-Data-16-—-Recovery-and-Office-Continuity.md",
       "sha256": "1cab1de8a8f9ec7b0a0c59167c56c2914c6db4f740070dcfb2286277c764024f"
     },
     {
@@ -133,8 +133,8 @@
       "sha256": "eb57835a29aa9d63a3a4fd33a56920679508813cbf07389644f004be23b031b5"
     },
     {
-      "path": ".backlog/docs/specs/doc-96 - Spec-Agent-Experience-AX-\u2014-agent-os-Onboarding-and-Skills.md",
-      "sha256": "aaf3792a047dc5ff7bf8121f1af4626a32f48b7825e70fd77bb7e16d3a0b4ca8"
+      "path": ".backlog/docs/specs/doc-96 - Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md",
+      "sha256": "8eb64bad19320b8ed7ec8ff7a13fc19eb1d95194e9f44d8cf76c2d99eec0d1bb"
     },
     {
       "path": ".codex/config.toml",
@@ -150,7 +150,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "d85cbd029810465a1c586e079fe075293d74a8dcc7b22fb7d85af15afad559b9"
+      "sha256": "0ad9cb41e78f73c6f07b019d8aecc8885d815315378f1c18f68b401d4375c43e"
     },
     {
       "path": "Cargo.toml",
@@ -186,7 +186,7 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "0a90fbc94247d390fc297056d6d5f7a3423ccd8907c6757c57a0b497029a159d"
+      "sha256": "10307d5cd68ccd63c8a2bb900bdc60a2b148428e10f38db35ab2372a4e6371c9"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",
@@ -194,11 +194,11 @@
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "de65a49d71fd8d91f5088bed2c3ea9d856e8e5faf884c8e9d5805078b884fe01"
+      "sha256": "51d4803ae0fadde5806ca56194729c17c614feeaab2bca684113b1f920025d2c"
     },
     {
       "path": "crates/org-pki/Cargo.toml",
-      "sha256": "8cde431444a1a5226133b622c417b6f663332f00995e51a9b6977adcd22dc777"
+      "sha256": "f4fbb648725108b3dd384e5f555a516c9e1925ecbdce87d3e103643544942d70"
     },
     {
       "path": "crates/org-release/Cargo.toml",

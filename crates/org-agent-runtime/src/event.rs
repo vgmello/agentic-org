@@ -7,7 +7,7 @@ use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{RateLimit, SessionId, Usage};
+use crate::{RateLimit, SessionId, ToolCapability, Usage};
 
 /// What a session reports. Serialized as `{"type": ..., "data": ...}` (`data` left out for
 /// [`SessionEvent::Thinking`]); an unknown `type` decodes as [`SessionEvent::Unknown`].
@@ -81,6 +81,9 @@ pub enum SessionEvent {
         tool_use_id: String,
         /// The tool.
         name: String,
+        /// Runtime-neutral capability class of the tool, when classified by the adapter.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capability: Option<ToolCapability>,
         /// The tool's input, as structured JSON.
         input: Value,
     },
@@ -228,6 +231,8 @@ enum KnownSessionEvent {
     ToolStarted {
         tool_use_id: String,
         name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capability: Option<ToolCapability>,
         input: Value,
     },
     ToolFinished {
@@ -327,6 +332,7 @@ impl SessionEvent {
             SessionEvent::ToolStarted {
                 tool_use_id: _,
                 name,
+                capability: _,
                 input,
             } => {
                 f(name);
@@ -500,6 +506,9 @@ pub struct ApprovalRequest {
     pub escalation: Escalation,
     /// The tool.
     pub tool: String,
+    /// Runtime-neutral capability class of the tool, when classified by the adapter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability: Option<ToolCapability>,
     /// The tool's name for people, where the runtime gives one.
     pub display_name: Option<String>,
     /// The tool's input, as structured JSON: what will actually run if allowed.
@@ -527,6 +536,7 @@ impl ApprovalRequest {
             kind,
             escalation,
             tool: tool.into(),
+            capability: None,
             display_name: None,
             input,
             justification_untrusted: None,
@@ -536,10 +546,14 @@ impl ApprovalRequest {
     }
 
     /// The escalation the office acts on: the adapter's, raised to what the request's kind
-    /// implies, so a wrong `None` fails closed. A [`ApprovalKind::Permissions`] request is
-    /// at least a [`Escalation::PermissionChange`], and an [`ApprovalKind::Unknown`] one at
-    /// least [`Escalation::Unknown`]; [`Escalation::SandboxBypass`] always stays.
+    /// or capability implies, so a wrong `None` fails closed. A [`ApprovalKind::Permissions`]
+    /// request is at least a [`Escalation::PermissionChange`], an [`ApprovalKind::Unknown`]
+    /// or [`ToolCapability::Unknown`] one is at least [`Escalation::Unknown`], and
+    /// [`Escalation::SandboxBypass`] always stays.
     pub fn effective_escalation(&self) -> Escalation {
+        if self.escalation == Escalation::None && self.capability == Some(ToolCapability::Unknown) {
+            return Escalation::Unknown;
+        }
         match (self.escalation, self.kind) {
             (Escalation::None, ApprovalKind::Permissions) => Escalation::PermissionChange,
             (Escalation::None, ApprovalKind::Unknown) => Escalation::Unknown,
@@ -553,6 +567,7 @@ impl ApprovalRequest {
             kind: _,
             escalation: _,
             tool,
+            capability: _,
             display_name,
             input,
             justification_untrusted,
@@ -774,6 +789,7 @@ pub(crate) mod tests {
             SessionEvent::ToolStarted {
                 tool_use_id: "id:tool_use".into(),
                 name: "s:tool".into(),
+                capability: Some(ToolCapability::Shell),
                 input: json!({
                     "s:key": ["s:nested", {"s:deep": "s:deeper"}, 1, true, null],
                     "type": "s:typed",
@@ -788,6 +804,7 @@ pub(crate) mod tests {
                 kind: ApprovalKind::Command,
                 escalation: Escalation::SandboxBypass,
                 tool: "s:tool".into(),
+                capability: Some(ToolCapability::Shell),
                 display_name: Some("s:display".into()),
                 input: json!({"command": "s:command", "s:k": {"s:k2": ["s:v"]}}),
                 justification_untrusted: Some("s:why".into()),
@@ -928,6 +945,7 @@ pub(crate) mod tests {
                     kind: ApprovalKind::FileChange,
                     escalation: Escalation::None,
                     tool: "Edit".into(),
+                    capability: None,
                     display_name: None,
                     input: json!({}),
                     justification_untrusted: None,
@@ -1008,6 +1026,8 @@ pub(crate) mod tests {
         assert_eq!(k, ApprovalKind::Unknown);
         let e: Escalation = serde_json::from_str(r#""root""#).unwrap();
         assert_eq!(e, Escalation::Unknown);
+        let c: ToolCapability = serde_json::from_str(r#""network""#).unwrap();
+        assert_eq!(c, ToolCapability::Unknown);
         let o: TurnOutcome = serde_json::from_value(json!({"type": "paused", "why": "x"})).unwrap();
         assert_eq!(o, TurnOutcome::Unknown);
         let o: TurnOutcome =
@@ -1062,6 +1082,7 @@ pub(crate) mod tests {
         let mut event = SessionEvent::ToolStarted {
             tool_use_id: "toolu_1".into(),
             name: "Bash".into(),
+            capability: Some(ToolCapability::Shell),
             input: json!({
                 "command": "echo TOKEN=abc",
                 "env": {"TOKEN=abc": ["x", {"y": "TOKEN=abc"}]},
@@ -1125,6 +1146,10 @@ mod approval_tests {
             E::PermissionChange
         );
         assert_eq!(request(K::Other, E::Unknown), E::Unknown);
+        let mut unknown_cap =
+            ApprovalRequest::new(ApprovalId::new("2"), K::Command, E::None, "Bash", json!({}));
+        unknown_cap.capability = Some(ToolCapability::Unknown);
+        assert_eq!(unknown_cap.effective_escalation(), E::Unknown);
     }
 
     #[test]

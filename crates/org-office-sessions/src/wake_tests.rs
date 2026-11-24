@@ -77,6 +77,7 @@ impl Session for WakeScriptedSession {
                 vec![Output::Event(SessionEvent::ToolStarted {
                     tool_use_id: id,
                     name: "Agent".into(),
+                    capability: Some(org_agent_runtime::ToolCapability::Subagent),
                     input: serde_json::json!({ "task": "helper" }),
                 })]
             }
@@ -759,6 +760,7 @@ fn c8_hourly_limit_person_exemption_and_post_restart_pending_wakes() {
             held_since_ms: Some(now_ms().saturating_sub(2200)),
             retry_after_ms: Some(now_ms().saturating_sub(10)),
             updated_at: crate::credentials::rfc3339_now(),
+            seen_item_ids: Vec::new(),
         })
         .unwrap();
     assert_eq!(
@@ -987,6 +989,7 @@ fn pass1_concurrent_live8_deadlock_process_due_wakes_and_redaction() {
             held_since_ms: Some(now_ms().saturating_sub(50)),
             retry_after_ms: None,
             updated_at: crate::credentials::rfc3339_now(),
+            seen_item_ids: Vec::new(),
         })
         .unwrap();
     assert_eq!(mgr.process_due_wakes_for(&fx.agent_b), WakeOutcome::Started);

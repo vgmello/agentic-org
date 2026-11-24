@@ -26,6 +26,7 @@ mod processes;
 mod projects;
 pub(crate) mod providers;
 mod receipts;
+pub(crate) mod replication;
 mod schema;
 #[cfg(test)]
 mod spike;

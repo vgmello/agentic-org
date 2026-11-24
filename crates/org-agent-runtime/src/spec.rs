@@ -331,11 +331,106 @@ pub struct PermissionPolicy {
     pub deny: Vec<Rule>,
 }
 
+/// Canonical prefix for runtime-neutral tool capability tokens carried inside [`ToolName`]
+/// and [`RuleTool`] values (e.g. `cap:read`, `cap:shell`).
+pub const CAPABILITY_PREFIX: &str = "cap:";
+
+/// Runtime-neutral tool capability classes translated by each runtime adapter.
+///
+/// The office builds preset allowlists and policy rules using canonical `cap:<name>` tokens
+/// (`cap:read`, `cap:search`, `cap:edit`, `cap:shell`, `cap:subagent`) instead of hardcoding
+/// one runtime's concrete tool names (`Read`, `Bash`, `run_command`, `apply_patch`). Each
+/// adapter translates those tokens into its own concrete tool names when planning a session
+/// and classifies incoming tool events and approval requests back into `ToolCapability`.
+///
+/// Unknown capability values on incoming runtime events decode as [`ToolCapability::Unknown`],
+/// which fails closed during policy evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ToolCapability {
+    /// Read files or inspect file contents without modifying them.
+    Read,
+    /// Search, list, or glob workspace files and contents without modifying them.
+    Search,
+    /// Create, edit, patch, or delete files inside writable roots.
+    Edit,
+    /// Run shell commands inside the runtime sandbox.
+    Shell,
+    /// Spawn or invoke a delegated sub-agent.
+    Subagent,
+    /// A capability class not known to this build. Fails closed in policy evaluation.
+    #[serde(other)]
+    Unknown,
+}
+
+impl ToolCapability {
+    /// Wire/display name of this capability class (`"read"`, `"search"`, `"edit"`, `"shell"`,
+    /// `"subagent"`, or `"unknown"`).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Search => "search",
+            Self::Edit => "edit",
+            Self::Shell => "shell",
+            Self::Subagent => "subagent",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Canonical `cap:<name>` token string used in [`ToolName`] and [`RuleTool`] fields.
+    pub const fn as_rule_token(self) -> &'static str {
+        match self {
+            Self::Read => "cap:read",
+            Self::Search => "cap:search",
+            Self::Edit => "cap:edit",
+            Self::Shell => "cap:shell",
+            Self::Subagent => "cap:subagent",
+            Self::Unknown => "cap:unknown",
+        }
+    }
+
+    /// Returns `true` if `raw` uses the reserved `cap:` capability-token namespace.
+    ///
+    /// Adapters use this to distinguish an unknown future capability token (which must fail
+    /// closed on denies and tool allowlists) from a concrete runtime tool name.
+    pub fn is_capability_token(raw: &str) -> bool {
+        raw.starts_with(CAPABILITY_PREFIX)
+    }
+
+    /// Parses a known canonical `cap:<name>` token into its [`ToolCapability`].
+    ///
+    /// Returns `None` for concrete tool names, `"*"`, `"cap:unknown"`, and unrecognized
+    /// `cap:*` tokens so callers fail closed on unknown capabilities.
+    pub fn parse_rule_token(raw: &str) -> Option<Self> {
+        match raw {
+            "cap:read" => Some(Self::Read),
+            "cap:search" => Some(Self::Search),
+            "cap:edit" => Some(Self::Edit),
+            "cap:shell" => Some(Self::Shell),
+            "cap:subagent" => Some(Self::Subagent),
+            _ => None,
+        }
+    }
+
+    /// Converts this capability into a validated [`RuleTool`] token (`cap:<name>`).
+    pub fn to_rule_tool(self) -> RuleTool {
+        RuleTool::try_from(self.as_rule_token()).expect("static capability rule token is valid")
+    }
+
+    /// Converts this capability into a validated [`ToolName`] token (`cap:<name>`).
+    pub fn to_tool_name(self) -> ToolName {
+        ToolName::try_from(self.as_rule_token()).expect("static capability tool token is valid")
+    }
+}
+
 /// One permission rule: a tool plus what it applies to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
-    /// The tool, in the runtime's naming (e.g. `Bash`, `Edit`), or `*` for any tool.
+    /// A runtime-neutral capability token (`cap:read`, `cap:search`, `cap:edit`, `cap:shell`,
+    /// `cap:subagent`), a concrete runtime tool name (e.g. `Bash`, `Edit`, `mcp__office__...`),
+    /// or `*` for any tool.
     pub tool: RuleTool,
     /// What the rule covers.
     pub scope: RuleScope,
@@ -1010,5 +1105,55 @@ mod tests {
         let server = value["mcp_servers"]["office"].clone();
         value["mcp_servers"]["my server"] = server;
         assert!(serde_json::from_value::<SessionSpec>(value).is_err());
+    }
+
+    #[test]
+    fn tool_capability_tokens_and_serde_round_trip() {
+        for (cap, wire, token) in [
+            (ToolCapability::Read, "read", "cap:read"),
+            (ToolCapability::Search, "search", "cap:search"),
+            (ToolCapability::Edit, "edit", "cap:edit"),
+            (ToolCapability::Shell, "shell", "cap:shell"),
+            (ToolCapability::Subagent, "subagent", "cap:subagent"),
+        ] {
+            assert_eq!(cap.as_str(), wire);
+            assert_eq!(cap.as_rule_token(), token);
+            assert!(ToolCapability::is_capability_token(token));
+            assert_eq!(ToolCapability::parse_rule_token(token), Some(cap));
+            assert_eq!(cap.to_rule_tool().as_str(), token);
+            assert_eq!(cap.to_tool_name().as_str(), token);
+            let encoded = serde_json::to_string(&cap).unwrap();
+            assert_eq!(encoded, format!("\"{wire}\""));
+            assert_eq!(
+                serde_json::from_str::<ToolCapability>(&encoded).unwrap(),
+                cap
+            );
+        }
+        assert!(ToolCapability::is_capability_token("cap:unknown"));
+        assert!(ToolCapability::is_capability_token("cap:network"));
+        assert_eq!(ToolCapability::parse_rule_token("cap:unknown"), None);
+        assert_eq!(ToolCapability::parse_rule_token("cap:network"), None);
+        assert!(!ToolCapability::is_capability_token("Bash"));
+        assert_eq!(ToolCapability::parse_rule_token("Bash"), None);
+        assert_eq!(
+            serde_json::from_str::<ToolCapability>("\"network\"").unwrap(),
+            ToolCapability::Unknown
+        );
+
+        // Capability tokens fit existing RuleTool/ToolName grammar and round-trip inside SessionSpec.
+        let mut spec = sample_spec();
+        spec.policy.allow = vec![Rule {
+            tool: ToolCapability::Shell.to_rule_tool(),
+            scope: RuleScope::CommandPrefix(CommandPrefix::try_from("agent-os").unwrap()),
+        }];
+        spec.tools = Some(vec![
+            ToolCapability::Read.to_tool_name(),
+            ToolCapability::Search.to_tool_name(),
+            ToolCapability::Shell.to_tool_name(),
+        ]);
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: SessionSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, spec);
+        assert_eq!(back.spec_hash(), spec.spec_hash());
     }
 }

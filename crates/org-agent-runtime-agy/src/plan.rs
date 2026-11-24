@@ -3,7 +3,7 @@ use serde_json::{json, Map, Value};
 use org_agent_runtime::{
     Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan, PermissionMode, PlanError,
     PlannedFile, RelPath, Rule, RuleScope, SessionKind, SessionSpec, SignalTarget, SpecPath, Stdio,
-    StopPlan, StopSignal, StopStep,
+    StopPlan, StopSignal, StopStep, ToolCapability, ToolName,
 };
 
 const SETTINGS_FILE: &str = "agy-settings.json";
@@ -41,17 +41,70 @@ pub(crate) fn validate_session_kind(kind: &SessionKind) -> Result<(), PlanError>
     }
 }
 
+const CAP_READ_TOOLS: &[&str] = &["read_file", "view_file"];
+const CAP_SEARCH_TOOLS: &[&str] = &["list_dir", "find_by_name", "grep_search"];
+const CAP_EDIT_TOOLS: &[&str] = &[
+    "edit_file",
+    "write_file",
+    "replace_file_content",
+    "multi_replace_file_content",
+    "delete_file",
+];
+const CAP_SHELL_TOOLS: &[&str] = &["run_command"];
+const CAP_SUBAGENT_TOOLS: &[&str] = &["invoke_subagent"];
+
+fn capability_tools(cap: ToolCapability) -> Option<&'static [&'static str]> {
+    match cap {
+        ToolCapability::Read => Some(CAP_READ_TOOLS),
+        ToolCapability::Search => Some(CAP_SEARCH_TOOLS),
+        ToolCapability::Edit => Some(CAP_EDIT_TOOLS),
+        ToolCapability::Shell => Some(CAP_SHELL_TOOLS),
+        ToolCapability::Subagent => Some(CAP_SUBAGENT_TOOLS),
+        _ => None,
+    }
+}
+
+/// Expands a `SessionSpec::tools` allowlist by translating runtime-neutral `cap:*` capability
+/// tokens into Antigravity's concrete tool names while passing concrete tool names through.
+/// Fails closed on any unrecognized `cap:*` token.
+pub(crate) fn expand_tool_allowlist(tools: &[ToolName]) -> Result<Vec<String>, PlanError> {
+    let mut expanded = Vec::new();
+    for tool in tools {
+        let raw = tool.as_str();
+        if ToolCapability::is_capability_token(raw) {
+            let cap = ToolCapability::parse_rule_token(raw)
+                .ok_or(PlanError::Unsupported("tool capability"))?;
+            let concrete =
+                capability_tools(cap).ok_or(PlanError::Unsupported("tool capability"))?;
+            for &name in concrete {
+                if !expanded.iter().any(|existing| existing == name) {
+                    expanded.push(name.to_owned());
+                }
+            }
+        } else if !expanded.iter().any(|existing| existing == raw) {
+            expanded.push(raw.to_owned());
+        }
+    }
+    Ok(expanded)
+}
+
 pub(crate) fn build_headless_plan(
     spec: &SessionSpec,
     ctx: &LaunchContext,
     caps: &Capabilities,
-) -> Result<(LaunchPlan, ExpectedMode), PlanError> {
+) -> Result<(LaunchPlan, ExpectedMode, Option<Vec<String>>), PlanError> {
     validate_session_kind(&spec.kind)?;
     validate_paths(spec, ctx)?;
     let effective_mode = spec.effective_permission_mode(caps);
     let expected_mode = map_permission_mode(effective_mode)?;
+    let expanded_tools = spec
+        .tools
+        .as_deref()
+        .map(expand_tool_allowlist)
+        .transpose()?;
 
-    let settings_bytes = build_settings_json(spec, ctx, caps, &expected_mode)?;
+    let settings_bytes =
+        build_settings_json(spec, ctx, caps, &expected_mode, expanded_tools.as_deref())?;
     let settings_path = format!("{}/{SETTINGS_FILE}", ctx.runtime_dir.as_str());
 
     let mut args = vec![
@@ -103,7 +156,7 @@ pub(crate) fn build_headless_plan(
         secret_env_names: secret_env_names(),
         auth_env_names: auth_env_names(),
     };
-    Ok((plan, expected_mode))
+    Ok((plan, expected_mode, expanded_tools))
 }
 
 pub(crate) fn build_take_over_plan(
@@ -127,7 +180,13 @@ pub(crate) fn build_take_over_plan(
     };
     let effective_mode = spec.effective_permission_mode(caps);
     let expected_mode = map_permission_mode(effective_mode)?;
-    let settings_bytes = build_settings_json(spec, ctx, caps, &expected_mode)?;
+    let expanded_tools = spec
+        .tools
+        .as_deref()
+        .map(expand_tool_allowlist)
+        .transpose()?;
+    let settings_bytes =
+        build_settings_json(spec, ctx, caps, &expected_mode, expanded_tools.as_deref())?;
     let settings_path = format!("{}/{SETTINGS_FILE}", ctx.runtime_dir.as_str());
 
     let mut args = vec![
@@ -234,6 +293,7 @@ fn build_settings_json(
     ctx: &LaunchContext,
     caps: &Capabilities,
     expected_mode: &ExpectedMode,
+    expanded_tools: Option<&[String]>,
 ) -> Result<Vec<u8>, PlanError> {
     let mut root = Map::new();
     root.insert("disableRemoteControl".to_owned(), Value::Bool(true));
@@ -245,15 +305,10 @@ fn build_settings_json(
     root.insert("sandbox".to_owned(), build_sandbox_value(spec, ctx));
     root.insert("mcpServers".to_owned(), build_mcp_value(spec));
     root.insert("agent".to_owned(), build_agent_value(spec, ctx));
-    if let Some(tools) = &spec.tools {
+    if let Some(tools) = expanded_tools {
         root.insert(
             "allowedTools".to_owned(),
-            Value::Array(
-                tools
-                    .iter()
-                    .map(|t| Value::String(t.as_str().to_owned()))
-                    .collect(),
-            ),
+            Value::Array(tools.iter().map(|t| Value::String(t.clone())).collect()),
         );
     }
     Ok(serde_json::to_vec(&Value::Object(root)).expect("settings JSON serializes"))
@@ -268,30 +323,37 @@ fn build_permissions_value(
     let mut deny_rules = Vec::new();
     for rule in &spec.policy.deny {
         let formatted = format_rule(rule).ok_or(PlanError::Unsupported("deny rule scope"))?;
-        deny_rules.push(formatted);
+        deny_rules.extend(formatted);
     }
     for path in &spec.sandbox.deny_read {
-        deny_rules.push(json!({ "tool": "read_file", "path": path.as_str() }));
+        for &tool in CAP_READ_TOOLS {
+            deny_rules.push(json!({ "tool": tool, "path": path.as_str() }));
+        }
     }
     for path in &spec.sandbox.deny_write {
-        deny_rules.push(json!({ "tool": "write_file", "path": path.as_str() }));
-        deny_rules.push(json!({ "tool": "edit_file", "path": path.as_str() }));
+        for &tool in CAP_EDIT_TOOLS {
+            deny_rules.push(json!({ "tool": tool, "path": path.as_str() }));
+        }
     }
     for dir in &spec.read_only_dirs {
-        deny_rules.push(json!({ "tool": "write_file", "path": format!("{}/**", dir.as_str()) }));
-        deny_rules.push(json!({ "tool": "edit_file", "path": format!("{}/**", dir.as_str()) }));
+        let glob = format!("{}/**", dir.as_str());
+        for &tool in CAP_EDIT_TOOLS {
+            deny_rules.push(json!({ "tool": tool, "path": glob }));
+        }
     }
     if let Some(cfg_dir) = &ctx.config_dir {
         let trimmed = cfg_dir.as_str().trim_end_matches('/');
-        deny_rules.push(json!({ "tool": "write_file", "path": format!("{trimmed}/**") }));
-        deny_rules.push(json!({ "tool": "edit_file", "path": format!("{trimmed}/**") }));
+        let glob = format!("{trimmed}/**");
+        for &tool in CAP_EDIT_TOOLS {
+            deny_rules.push(json!({ "tool": tool, "path": glob }));
+        }
     }
 
     let mut allow_rules = Vec::new();
     if spec.keeps_allow_rules(caps) {
         for rule in &spec.policy.allow {
             if let Some(formatted) = format_rule(rule) {
-                allow_rules.push(formatted);
+                allow_rules.extend(formatted);
             }
         }
     }
@@ -396,16 +458,48 @@ fn build_agent_value(spec: &SessionSpec, ctx: &LaunchContext) -> Value {
     Value::Object(obj)
 }
 
-fn format_rule(rule: &Rule) -> Option<Value> {
+fn format_rule(rule: &Rule) -> Option<Vec<Value>> {
     let tool = rule.tool.as_str();
+    if ToolCapability::is_capability_token(tool) {
+        let cap = ToolCapability::parse_rule_token(tool)?;
+        return format_capability_rule(cap, &rule.scope);
+    }
     match &rule.scope {
         RuleScope::Any if tool == "*" => None,
-        RuleScope::Any => Some(json!({ "tool": tool })),
-        RuleScope::Path(p) => Some(json!({ "tool": tool, "path": p.as_str() })),
-        RuleScope::CommandPrefix(prefix) => {
-            Some(json!({ "tool": tool, "commandPrefix": prefix.as_str() }))
+        RuleScope::Any => Some(vec![json!({ "tool": tool })]),
+        RuleScope::Path(p) => Some(vec![json!({ "tool": tool, "path": p.as_str() })]),
+        RuleScope::CommandPrefix(prefix) => Some(vec![
+            json!({ "tool": tool, "commandPrefix": prefix.as_str() }),
+        ]),
+        RuleScope::McpServer(server) => {
+            Some(vec![json!({ "tool": tool, "mcpServer": server.as_str() })])
         }
-        RuleScope::McpServer(server) => Some(json!({ "tool": tool, "mcpServer": server.as_str() })),
+        _ => None,
+    }
+}
+
+fn format_capability_rule(cap: ToolCapability, scope: &RuleScope) -> Option<Vec<Value>> {
+    match scope {
+        RuleScope::Any => capability_tools(cap)
+            .map(|tools| tools.iter().map(|&tool| json!({ "tool": tool })).collect()),
+        RuleScope::Path(p) => match cap {
+            ToolCapability::Read | ToolCapability::Search | ToolCapability::Edit => {
+                capability_tools(cap).map(|tools| {
+                    tools
+                        .iter()
+                        .map(|&tool| json!({ "tool": tool, "path": p.as_str() }))
+                        .collect()
+                })
+            }
+            _ => None,
+        },
+        RuleScope::CommandPrefix(prefix) if cap == ToolCapability::Shell => Some(
+            CAP_SHELL_TOOLS
+                .iter()
+                .map(|&tool| json!({ "tool": tool, "commandPrefix": prefix.as_str() }))
+                .collect(),
+        ),
+        RuleScope::CommandPrefix(_) | RuleScope::McpServer(_) => None,
         _ => None,
     }
 }

@@ -100,6 +100,20 @@ impl TaskService {
                 ApiError::new(ErrorCode::NotBound, "connection is not bound"),
             ));
         };
+        // Refuse data RPCs on a satellite awaiting a complete HQ snapshot (`TASK-52` P9-#3).
+        if self
+            .office
+            .sync_status()
+            .is_ok_and(|s| s.initial_snapshot_required)
+        {
+            return Some(Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::Conflict,
+                    "satellite office is awaiting a complete HQ snapshot",
+                ),
+            ));
+        }
         self.dispatch_core(member, request)
             .or_else(|| self.dispatch_collab(member, request))
             .or_else(|| self.dispatch_checklist(member, request))

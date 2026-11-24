@@ -132,6 +132,7 @@ impl Control {
                 if !matches!(
                     (&line, &handoff),
                     (HostFirstLine::Create(_), Handoff::Create { .. })
+                        | (HostFirstLine::Join(_), Handoff::Join { .. })
                         | (HostFirstLine::Start(_), Handoff::Start { .. })
                         | (HostFirstLine::Discard(_), Handoff::Discard { .. })
                 ) {
