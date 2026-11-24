@@ -843,8 +843,7 @@ test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filte
 	await page.getByRole('menuitemradio', { name: 'Office federation' }).click();
 	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
 	const projectOnlyCount = await workRows.count();
-	expect(projectOnlyCount).toBeGreaterThan(1);
-	expect(projectOnlyCount).toBeLessThan(initialCount);
+	expect(projectOnlyCount).toBe(3);
 
 	await filterBtn.click();
 	await page.getByRole('menuitemradio', { name: 'Sage' }).click();
@@ -852,12 +851,16 @@ test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filte
 	await expect(page).toHaveURL(/[?&]assignee=sage(?:&|$)/);
 	await expect(filterBtn).toHaveAttribute('data-active', '');
 	await expect(workRows).toHaveCount(1);
+	await expect(workRows.first()).toContainText('Custody lock fix');
 
 	await page.reload();
 	await page.locator('html[data-hydrated="true"]').waitFor();
 	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
 	await expect(page).toHaveURL(/[?&]assignee=sage(?:&|$)/);
+	// Switch to All after reload (Blocked preset alone only has 1 Office federation task) to prove assignee=sage still narrows 3 -> 1
+	await page.locator('[data-filter="all"]').click();
 	await expect(workRows).toHaveCount(1);
+	await expect(workRows.first()).toContainText('Custody lock fix');
 	await expect(page.getByRole('button', { name: 'Filter work' })).toHaveAttribute(
 		'data-active',
 		''
