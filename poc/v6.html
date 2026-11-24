@@ -136,7 +136,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 /* Shell */
 .sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 50; display: flex; flex-direction: column; gap: 14px; overflow: hidden; background: rgba(9, 17, 30, .58); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); box-shadow: inset -1px 0 0 rgba(186, 222, 255, .10); padding: 0 18px; transition: width .32s cubic-bezier(.22, 1, .36, 1), padding .32s cubic-bezier(.22, 1, .36, 1), box-shadow .32s ease; }
 .content { position: relative; z-index: 1; height: 100%; overflow-y: auto; display: flex; flex-direction: column; background: transparent; }
-:is(.content, .home-scroll-hint) { padding-left: 264px; transition: padding-left .32s cubic-bezier(.22, 1, .36, 1); }
+:is(.content, .home-scroll-hint) { --content-start: 264px; padding-left: var(--content-start); transition: padding-left .32s cubic-bezier(.22, 1, .36, 1); }
 .content > main { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 .sidebar-hd { display: flex; align-items: center; gap: 6px; min-height: 56px; flex: none; padding-top: 6px; }
 .logo { display: flex; align-items: center; gap: 11px; height: 44px; flex: 1; min-width: 0; margin: 0 0 0 -6px; padding: 0 6px; border-radius: 8px; text-align: left; transition: padding .32s cubic-bezier(.22, 1, .36, 1), margin .32s cubic-bezier(.22, 1, .36, 1), gap .32s cubic-bezier(.22, 1, .36, 1), background-color .14s ease; }
@@ -1204,7 +1204,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 }
 @media (min-width: 640px) and (max-width: 959px) {
   .sidebar { width: 64px; padding: 0 8px; gap: 12px; overflow: visible; }
-  :is(.content, .home-scroll-hint) { padding-left: 64px; }
+  :is(.content, .home-scroll-hint) { --content-start: 64px; }
   .proto-banner, .proto-hotzone { left: 64px; }
   .logo { justify-content: center; margin: 8px auto 0; width: 48px; height: 48px; padding: 0; }
   .logo .name { display: none; }
@@ -1229,7 +1229,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   .sidebar { transform: translateX(-100%); transition: transform .15s; }
   body.drawer .sidebar { transform: none; }
   body.drawer .scrim { display: block; }
-  :is(.content, .home-scroll-hint) { padding-left: 0; }
+  :is(.content, .home-scroll-hint) { --content-start: 0px; }
   .topbar { height: 52px; padding: 0 16px 0 60px; }
   .cmdk-shell { width: 100%; }
   .cmdk-trigger kbd { display: none; }
@@ -2653,7 +2653,7 @@ a.hb-tleg:hover { color: var(--hb-ink); }
   .sidebar .nav-item .lbl { opacity: 1; transition: opacity .22s ease .07s; }
   .sidebar .foot .acct-txt { white-space: nowrap; transition: opacity .22s ease .07s; }
   body.nav-collapsed .sidebar { width: 68px; padding: 0 12px; gap: 14px; overflow: hidden; }
-  body.nav-collapsed :is(.content, .home-scroll-hint) { padding-left: 68px; }
+  body.nav-collapsed :is(.content, .home-scroll-hint) { --content-start: 68px; }
   body.nav-collapsed .proto-banner, body.nav-collapsed .proto-hotzone { left: 68px; }
   body.nav-collapsed .sidebar-hd { gap: 0; }
   body.nav-collapsed .logo { width: 44px; height: 44px; margin: 0; padding: 0 7px; gap: 0; flex: none; }
@@ -4278,6 +4278,8 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14" /> <path d="M12 5v14" /></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18" /> <path d="m6 6 12 12" /></symbol>
   <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+  <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M14 4h6v6m0-6-6 6M10 20H4v-6m0 6 6-6" /></symbol>
+  <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M20 10h-6V4m0 6 6-6M4 14h6v6m0-6-6 6" /></symbol>
   <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></symbol>
   <symbol id="i-chev-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
   <symbol id="i-chev-updown" viewBox="0 0 24 24"><path d="m7 15 5 5 5-5" /> <path d="m7 9 5-5 5 5" /></symbol>
@@ -5029,7 +5031,7 @@ function applyShortcuts() {
   if (nb) { if (on) { nb.setAttribute("aria-keyshortcuts", "N"); nb.title = "New · N"; } else { nb.removeAttribute("aria-keyshortcuts"); nb.title = "New"; } }
 }
 const inTextField = (el) => !!el && (["input", "textarea", "select"].includes((el.tagName || "").toLowerCase()) || !!el.isContentEditable);
-const overlayOpen = () => !!(document.querySelector(".sheet, .work-task-dialog[open]") || document.querySelector(".menu:not([hidden])") || document.body.classList.contains("drawer"));
+const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu:not([hidden])") || document.body.classList.contains("drawer"));
 const qs = () => new URLSearchParams((location.hash.split("?")[1]) || "");
 
 /* ---------------------------------------------------------------- helpers */
@@ -5292,7 +5294,7 @@ function workEta(w) {
 }
 
 function workTitle(w, className) {
-  return `<a class="work-item-link ${className}" data-item="${esc(w.id)}" href="${esc(workItemHref(w.id))}">${esc(w.title)}</a>`;
+  return `<a class="work-item-link ${className}" data-item="${esc(w.id)}" href="${esc(workItemHref(w.id))}" aria-haspopup="dialog">${esc(w.title)}</a>`;
 }
 
 function workChild(parent, subtask) {
@@ -5404,22 +5406,24 @@ function findWorkItem(ref, items = W) {
 
 function workWorkspace(results, items = W) {
   const { item, parent } = findWorkItem(qs().get("item"), items);
-  return item ? workDetail(item, parent) : `<div id="work-results">${results}</div>`;
+  return `<div id="work-results">${results}</div>${item ? workDetail(item, parent) : ""}`;
 }
 
 function workDetail(w, parent) {
   const team = workTeam(w), eta = workEta(w);
   const priority = workPriorityRank(w.pri) ? esc(w.pri) : "";
-  return `<section class="triage-reading work-reading" aria-labelledby="work-detail-title"${team ? ` data-team="${esc(team)}"` : ""}>
-    <article class="triage-document">
-      <div class="work-detail-bar">
-        <button class="btn ghost sm work-back" type="button" data-act="work-close-detail">${ic("chev-left", "ic16")}Back to work</button>
+  return `<dialog class="side-panel work-panel" id="work-panel" aria-labelledby="work-detail-title" data-item="${esc(w.id)}">
+    <section class="triage-reading work-reading"${team ? ` data-team="${esc(team)}"` : ""}>
+      <div class="side-panel-header work-detail-bar">
         <p class="work-detail-id">${workPriority(w.pri)}${esc(w.id)}${workStatus(w.status, showsNeedsYou(w))}<span class="work-kind">${{ task: "Task", bug: "Bug", request: "Request" }[w.kind]}</span></p>
         <div class="work-detail-actions">
           <button class="btn ghost icon sm" type="button" data-act="work-comment-focus" aria-label="Leave a comment" title="Leave a comment">${ic("chat", "ic16")}</button>
           <button class="btn ghost icon sm" type="button" data-act="work-copy-link" data-id="${esc(w.id)}" aria-label="Copy task link" title="Copy task link">${ic("copy", "ic16")}</button>
+          <button class="btn ghost icon sm work-panel-expand" type="button" data-act="work-expand-detail" aria-label="Expand task to full page" title="Expand task to full page">${ic("maximize", "ic16")}</button>
+          <button class="btn ghost icon sm" type="button" data-act="work-close-detail" aria-label="Close task" title="Close task">${ic("x", "ic16")}</button>
         </div>
       </div>
+    <article class="triage-document">
       <header class="triage-intro">
         ${parent ? `<a class="work-parent alink" href="${esc(workItemHref(parent.id))}">${esc(parent.id)} · ${esc(parent.title)}</a>` : ""}
         <h2 tabindex="-1" id="work-detail-title">${esc(w.title)}</h2>
@@ -5453,7 +5457,28 @@ function workDetail(w, parent) {
       ${workRelatedInbox(w)}
       ${workDiscussion(w)}
     </article>
-  </section>`;
+    </section>
+    <div class="toasts" aria-live="polite" role="status"></div>
+  </dialog>`;
+}
+
+function showSidePanel(panel, animate = true) {
+  panel.classList.toggle("is-opening", animate);
+  panel.showModal();
+  panel.querySelector("[tabindex='-1']")?.focus({ preventScroll: true });
+}
+
+function closeWorkPanel() {
+  location.hash = workItemHref();
+}
+
+function setWorkPanelExpanded(panel, expanded) {
+  panel.toggleAttribute("data-expanded", expanded);
+  const button = panel.querySelector(".work-panel-expand");
+  const label = expanded ? "Restore task panel" : "Expand task to full page";
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  button.innerHTML = ic(expanded ? "minimize" : "maximize", "ic16");
 }
 
 function workRelatedInbox(w) {
@@ -7142,7 +7167,7 @@ function advanceAssemblySimulation() {
   if (events.length) {
     events.sort((a, b) => b.hour - a.hour);
     sim.events = [...events, ...sim.events];
-    refreshAssemblySimulation();
+    refreshAssemblySimulation(true);
   }
   if (!active) sim.playing = false;
   updateAssemblyPlayback();
@@ -7221,7 +7246,7 @@ function activityThroughput(projects) {
   const days = ["3 days ago", "2 days ago", "Yesterday", "Today"];
   const totals = days.map((_, day) => projects.reduce((total, { id }) => total + (DELIVERY_HISTORY[id]?.[day] || 0), 0));
   const peak = Math.max(1, ...totals);
-  return `<section><h2>Throughput</h2><p class="activity-rail-note">Tasks merged over the last four days</p><ul class="activity-throughput">${totals.map((count, index) => `
+  return `<section><h3>Throughput</h3><p class="activity-rail-note">Tasks merged over the last four days</p><ul class="activity-throughput">${totals.map((count, index) => `
     <li><span>${count}</span><i style="height:${Math.max(2, count * 36 / peak)}px" aria-hidden="true"></i><span class="sr-only">${days[index]}</span></li>`).join("")}</ul></section>`;
 }
 function assemblyLineEvents() {
@@ -7237,28 +7262,47 @@ function assemblyThroughput() {
 function assemblyEventLog() {
   const events = assemblyLineEvents().slice(0, 30);
   return `<section class="assembly-events" aria-labelledby="assembly-events-title">
-    <h2 id="assembly-events-title">Line events</h2>
+    <h3 id="assembly-events-title">Line events</h3>
     ${events.length ? `<ol class="assembly-event-log" tabindex="0" aria-labelledby="assembly-events-title">${events.map(({ hour, work, stage, action }) => `
       <li data-stage="${stage}"><span><strong>${esc(work.id)}</strong> ${action}</span><time datetime="PT${hour}H">${formatAssemblyHours(hour)}</time></li>`).join("")}</ol>`
       : '<p class="activity-rail-note">Events appear as tasks move through the line.</p>'}
   </section>`;
 }
 
-function activityRail(projects, entries, counts, simulated = false) {
+function releaseOperations(projects, entries, counts, simulated) {
   const gates = IN.filter((item) => own(RELEASE_GATES, item.id) && projects.some(({ id }) => id === item.proj));
   const agents = [...new Set(entries.filter((entry) => ["agents", "ci", "review"].includes(entry.stage) && entry.work.who)
     .map((entry) => entry.work.who))].filter((id) => M[id].kind === "agent");
   const throughput = simulated ? assemblyThroughput() : null;
-  return `<aside class="activity-rail" aria-label="Release operations">
-    <section><h2>Release gates</h2><ul>${gates.map((item) => `<li><a href="#/inbox/${item.id}">${esc(RELEASE_GATES[item.id])}</a><span class="${item.handled ? "muted" : "assembly-review-text"}">${item.handled ? esc(item.outcome) : "Pending"}</span></li>`).join("") || "<li>No gates in this scope</li>"}</ul></section>
+  return `<div class="activity-rail">
+    <section><h3>Release gates</h3><ul>${gates.map((item) => `<li><a href="#/inbox/${item.id}">${esc(RELEASE_GATES[item.id])}</a><span class="${item.handled ? "muted" : "assembly-review-text"}">${item.handled ? esc(item.outcome) : "Pending"}</span></li>`).join("") || "<li>No gates in this scope</li>"}</ul></section>
     ${simulated ? assemblyEventLog() : ""}
-    <section><h2>Stations</h2><dl>${ACTIVITY_STAGES.map(([stage, label]) => `<div><dt>${label}</dt><dd>${counts[stage]}</dd></div>`).join("")}</dl></section>
-    ${throughput ? `<section><h2>Simulation throughput</h2><dl><div><dt>Merged this run</dt><dd>${throughput.merged}</dd></div><div><dt>Tasks per hour</dt><dd id="assembly-rate">${throughput.rate}</dd></div></dl></section>` : activityThroughput(projects)}
-    <section><h2>Active agents</h2><ul class="activity-agents">${agents.map((agent) => {
+    <section><h3>Stations</h3><dl>${ACTIVITY_STAGES.map(([stage, label]) => `<div><dt>${label}</dt><dd>${counts[stage]}</dd></div>`).join("")}</dl></section>
+    ${throughput ? `<section><h3>Simulation throughput</h3><dl><div><dt>Merged this run</dt><dd>${throughput.merged}</dd></div><div><dt>Tasks per hour</dt><dd id="assembly-rate">${throughput.rate}</dd></div></dl></section>` : activityThroughput(projects)}
+    <section><h3>Active agents</h3><ul class="activity-agents">${agents.map((agent) => {
       const entry = entries.find(({ work, stage }) => work.who === agent && ["agents", "ci", "review"].includes(stage));
       return `<li><div>${av(agent, 24)}${mlink(agent)}</div><span class="muted">${entry.work.id} · ${ACTIVITY_STAGES.find(([stage]) => stage === entry.stage)[1]}</span></li>`;
     }).join("") || "<li>No agents at these stations</li>"}</ul></section>
-  </aside>`;
+  </div>`;
+}
+
+function refreshReleasePanel(snapshot) {
+  const body = document.getElementById("release-panel-body");
+  const panel = body.closest("dialog");
+  const simulated = S.actView === "assembly";
+  const { projects, entries, counts } = snapshot ?? assemblySnapshot(simulated);
+  const scroll = panel.scrollTop;
+  const log = body.querySelector(".assembly-event-log");
+  const logScroll = log?.scrollTop ?? 0;
+  const active = document.activeElement;
+  const href = body.contains(active) && active.getAttribute("href");
+  body.innerHTML = releaseOperations(projects, entries, counts, simulated);
+  const nextLog = body.querySelector(".assembly-event-log");
+  if (nextLog) nextLog.scrollTop = logScroll;
+  const focus = href ? body.querySelector(`a[href="${CSS.escape(href)}"]`) : active === log ? nextLog : null;
+  if (body.contains(focus)) focus.focus({ preventScroll: true });
+  else if (!active.isConnected) panel.querySelector(".side-panel-header button").focus({ preventScroll: true });
+  panel.scrollTop = scroll;
 }
 function activityNeedsFeed(items, waiting) {
   return waiting.map((item) => items.find((entry) => entry.inbox === item.id) || {
@@ -7322,7 +7366,8 @@ function updateAssemblyPlayback() {
     state.textContent = "Simulation · " + (sim.playing ? "Running" : "Paused");
     document.getElementById("assembly-play").innerHTML = assemblyPlayLabel();
   }
-  document.getElementById("assembly-rate").textContent = assemblyThroughput().rate;
+  const rate = document.getElementById("assembly-rate");
+  if (rate && rate.closest("dialog").open) rate.textContent = assemblyThroughput().rate;
   syncAssemblySimulationTimer();
 }
 
@@ -7336,18 +7381,30 @@ function syncAssemblySimulationTimer() {
   }
 }
 
-function assemblyLayout() {
-  const { projects, entries, counts } = assemblySnapshot(true);
-  return `<div class="activity-layout" id="assembly-layout"><div class="activity-main">
+function assemblyLayout({ projects, entries, counts } = assemblySnapshot(true)) {
+  return `<div class="activity-layout" id="assembly-layout">
     ${assemblyMatrix(projects, entries, counts)}
-  </div>${activityRail(projects, entries, counts, true)}</div>`;
+  </div>`;
 }
 
-function refreshAssemblySimulation() {
+function animateAssemblyCards(layout, previousPositions) {
+  for (const card of layout.querySelectorAll("[data-assembly-work]")) {
+    const previous = previousPositions.get(card.dataset.assemblyWork);
+    if (!previous) continue;
+    const current = card.getBoundingClientRect();
+    const x = previous.left - current.left, y = previous.top - current.top;
+    if (Math.abs(x) + Math.abs(y) < 1) continue;
+    card.animate([
+      { transform: `translate(${x}px, ${y}px)`, zIndex: 1 },
+      { transform: "translate(0, 0)", zIndex: 1 }
+    ], { duration: 230, easing: "cubic-bezier(.2, .7, .25, 1)" });
+  }
+}
+
+function refreshAssemblySimulation(animate = false) {
   const layout = document.getElementById("assembly-layout");
   if (!layout) return;
   const tableScroll = layout.querySelector(".assembly-table-wrap").scrollLeft;
-  const logScroll = layout.querySelector(".assembly-event-log")?.scrollTop ?? 0;
   const content = document.getElementById("content");
   const pageScroll = content.scrollTop;
   const active = document.activeElement;
@@ -7355,16 +7412,19 @@ function refreshAssemblySimulation() {
   const workId = active?.dataset.assemblyWork;
   const href = active?.getAttribute("href");
   const focusSelector = workId ? `[data-assembly-work="${CSS.escape(workId)}"]`
-    : href ? `a[href="${CSS.escape(href)}"]`
-    : active?.matches(".assembly-event-log") ? ".assembly-event-log" : ".assembly-table-wrap";
-  layout.outerHTML = assemblyLayout();
+    : href ? `a[href="${CSS.escape(href)}"]` : ".assembly-table-wrap";
+  const positions = animate && matchMedia("(prefers-reduced-motion: no-preference)").matches
+    ? new Map([...layout.querySelectorAll("[data-assembly-work]")].map((card) => [card.dataset.assemblyWork, card.getBoundingClientRect()]))
+    : null;
+  const snapshot = assemblySnapshot(true);
+  layout.outerHTML = assemblyLayout(snapshot);
   const next = document.getElementById("assembly-layout");
   const table = next.querySelector(".assembly-table-wrap");
   table.scrollLeft = tableScroll;
-  const log = next.querySelector(".assembly-event-log");
-  if (log) log.scrollTop = logScroll;
   if (focus) (next.querySelector(focusSelector) || table).focus({ preventScroll: true });
+  if (document.getElementById("release-panel")?.open) refreshReleasePanel(snapshot);
   content.scrollTop = pageScroll;
+  if (positions) animateAssemblyCards(next, positions);
 }
 
 function addAssemblySample() {
@@ -7397,21 +7457,27 @@ function pageActivity() {
       ${hdr("Activity", `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`)}
       <div class="section-toolbar activity-toolbar">
         ${switcher}${projectFilter}
+        <button class="btn outline activity-release-trigger" type="button" data-act="activity-release-open" aria-haspopup="dialog" aria-controls="release-panel">${ic("flag", "ic16")}Release gates</button>
         ${isFeed ? btnTabs("actFilter", tabs, "Filter activity", "act-feed") : ""}
       </div>
     </div>
     ${isFeed ? activityFeedLayout(items) : assemblyPlayback() + assemblyLayout()}
+    <dialog class="side-panel release-panel" id="release-panel" aria-labelledby="release-panel-title">
+      <header class="side-panel-header">
+        <h2 id="release-panel-title" tabindex="-1">Release operations</h2>
+        <button class="btn ghost icon" type="button" data-act="activity-release-close" aria-label="Close release operations" title="Close release operations">${ic("x", "ic16")}</button>
+      </header>
+      <div id="release-panel-body"></div>
+    </dialog>
   </section>`;
 }
 
 function activityFeedLayout(items) {
-  const { projects, entries, counts } = assemblySnapshot(false);
+  const { counts } = assemblySnapshot(false);
   return `<div class="activity-layout">
-      <div class="activity-main">
         <section class="activity-feed" aria-label="Activity feed">
           <div class="activity-bottleneck"><span>Work by stage</span><div class="activity-stage-bar" aria-hidden="true">${ACTIVITY_STAGES.map(([stage]) => `<i data-stage="${stage}" style="flex-grow:${counts[stage]}"></i>`).join("")}</div><span>${counts.review} in review · ${counts.queue} queued</span></div>
           <div ${tabPanel("actFilter", "act-feed")}>${activityTimeline(items)}</div></section>
-      </div>${activityRail(projects, entries, counts)}
     </div>`;
 }
 
@@ -8917,10 +8983,17 @@ function render(focus = true) {
     default: html = notFound();
   }
   const main = document.getElementById("main");
+  const content = document.getElementById("content");
+  const key = location.hash;
+  const priorPanel = main.querySelector("#work-panel");
+  const pageScroll = content.scrollTop;
+  const workBoardScroll = main.querySelector("#work-results .board")?.scrollLeft;
   const toolbarFocus = pageSearchTools.contains(document.activeElement) ? document.activeElement.id : "";
   const toolbarCaret = toolbarFocus && document.activeElement.type === "search"
     ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   main.innerHTML = html;
+  const workPanel = main.querySelector("#work-panel");
+  const sameWorkPage = (priorPanel || workPanel) && S.lastRoute?.split("?")[0] === key.split("?")[0];
   const shell = document.getElementById("agent-shell");
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
   placeSearchToolbar(main, r0);
@@ -8935,21 +9008,25 @@ function render(focus = true) {
   renderBanner(r0);
   const titleBase = r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found");
   document.title = titleBase + " · Agentic Org";
-  const key = location.hash;
-  if (focus && key !== S.lastRoute) {
-    if (S.lastRoute) main.querySelector(".work-reading")?.classList.add("is-opening");
+  if (sameWorkPage) {
+    content.scrollTop = pageScroll;
+    const board = main.querySelector("#work-results .board");
+    if (board && workBoardScroll !== undefined) board.scrollLeft = workBoardScroll;
+  }
+  if (workPanel) {
+    if (sameWorkPage && priorPanel?.hasAttribute("data-expanded")) setWorkPanelExpanded(workPanel, true);
+    showSidePanel(workPanel, !priorPanel);
+  } else if (focus && key !== S.lastRoute) {
     const requestedFocus = S.focusAfter ? document.querySelector(S.focusAfter) : null;
-    const keep = requestedFocus?.getClientRects().length ? requestedFocus : null;
+    const workLink = sameWorkPage && priorPanel
+      ? main.querySelector(`#work-results .work-item-link[data-item="${CSS.escape(priorPanel.dataset.item)}"]`)
+      : null;
+    const keep = [requestedFocus, workLink].find((control) => control?.getClientRects().length);
     const focusTarget = keep || (r0 === "inbox" && r1 && main.querySelector("#triage-detail-title"))
-      || main.querySelector("#work-detail-title") || main.querySelector("h1");
-    const content = document.getElementById("content");
-    content.scrollTop = 0;
+      || main.querySelector("h1");
+    if (!sameWorkPage) content.scrollTop = 0;
     focusTarget?.focus({ preventScroll: true });
-    const reading = focusTarget?.closest(".work-reading");
-    if (reading && focusTarget.getBoundingClientRect().bottom > content.getBoundingClientRect().bottom) {
-      reading.scrollIntoView({ block: "start" });
-    }
-    if (keep?.matches(".work-item-link")) keep.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (keep?.matches(".work-item-link") && !sameWorkPage) keep.scrollIntoView({ block: "nearest", inline: "nearest" });
   } else if (toolbarFocus) {
     const control = document.getElementById(toolbarFocus);
     control?.focus({ preventScroll: true });
@@ -9236,7 +9313,8 @@ function toast(text, icon = "info", undoFn = null) {
     b.addEventListener("click", () => { t.remove(); undoFn(); });
     t.appendChild(b);
   }
-  const box = document.getElementById("toasts"); box.appendChild(t);
+  const box = document.querySelector(".work-panel[open] .toasts") || document.getElementById("toasts");
+  box.appendChild(t);
   setTimeout(() => t.remove(), undoFn ? 5500 : 3200);
 }
 function handle(id, outcome, assignee = null) {
@@ -9301,7 +9379,20 @@ function reopenInboxItem(item) {
 function closeMenus(except) {
   document.querySelectorAll(".menu").forEach((m) => { if (m.id !== except) { m.hidden = true; const b = document.querySelector(`[aria-controls="${m.id}"]`); if (b) b.setAttribute("aria-expanded", "false"); } });
 }
+document.addEventListener("cancel", (e) => {
+  if (e.target.id !== "work-panel") return;
+  e.preventDefault();
+  closeWorkPanel();
+}, true);
 document.addEventListener("click", (e) => {
+  if (e.target.matches("dialog.side-panel")) {
+    const { top, right, bottom, left } = e.target.getBoundingClientRect();
+    if (e.clientX < left || e.clientX > right || e.clientY < top || e.clientY > bottom) {
+      if (e.target.id === "work-panel") closeWorkPanel();
+      else e.target.close();
+      return;
+    }
+  }
   const spotJump = e.target.closest('[data-act="spot-jump"]');
   if (spotJump && route()[0] === "home") {
     const sid = spotJump.dataset.id;
@@ -9418,6 +9509,13 @@ document.addEventListener("click", (e) => {
     case "assembly-add-sample":
       addAssemblySample();
       break;
+    case "activity-release-open":
+      refreshReleasePanel();
+      showSidePanel(document.getElementById("release-panel"));
+      break;
+    case "activity-release-close":
+      t.closest("dialog").close();
+      break;
     case "activity-review": {
       S.actView = "feed";
       S.actFilter = "needs";
@@ -9480,9 +9578,13 @@ document.addEventListener("click", (e) => {
       applyCozyContrast();
       t.setAttribute("aria-checked", String(S.cozyContrast));
       break;
+    case "work-expand-detail": {
+      const panel = t.closest("dialog");
+      setWorkPanelExpanded(panel, !panel.hasAttribute("data-expanded"));
+      break;
+    }
     case "work-close-detail":
-      S.focusAfter = `#work-results .work-item-link[data-item="${CSS.escape(canonicalWorkRef(qs().get("item")))}"]`;
-      location.hash = workItemHref();
+      closeWorkPanel();
       break;
     case "work-new-task": openWorkTask(t); break;
     case "work-cancel-task": t.closest("dialog").close(); break;
@@ -9756,6 +9858,7 @@ document.addEventListener("keydown", (e) => {
     e.target.form.requestSubmit();
     return;
   }
+  if (e.target.closest?.(".side-panel")) return;
   if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K")) {
     e.preventDefault();
     const pageInput = pageSearchInput();
@@ -9848,12 +9951,6 @@ document.addEventListener("keydown", (e) => {
     if (closeThread) {
       e.preventDefault();
       closeThread.click();
-      return;
-    }
-    const closeWork = e.target.closest(".work-reading")?.querySelector('[data-act="work-close-detail"]');
-    if (closeWork) {
-      e.preventDefault();
-      closeWork.click();
       return;
     }
     if (S.confirmDeny) {
