@@ -5141,8 +5141,8 @@ function scopedWorkControls() {
   }) : "";
   return workLayoutToggle("scopedWorkLayout") + display;
 }
-function scopedWorkResults(items) {
-  return workWorkspace(S.scopedWorkLayout === "list" ? workList(items) : board(items), items);
+function scopedWorkResults(items, listOptions) {
+  return workWorkspace(S.scopedWorkLayout === "list" ? workList(items, listOptions) : board(items), items);
 }
 function scopedWork(items) {
   return `<div class="subbar scoped-work-tools"><div class="queue-controls" role="group" aria-label="Work view controls">${scopedWorkControls()}</div></div>
@@ -6736,7 +6736,7 @@ function projectBody(id, tab) {
       <section class="section"><div class="sec-h"><h2>${ic("bell", "ic20 c-amber")}Needs you for this project</h2></div>${needs.length ? `<div class="cards">${needs.map(needsCard).join("")}</div>` : `<p class="muted" style="padding-bottom:24px">Nothing needs you on this project.</p>`}</section>
     </div><aside class="compact"><div class="sec-h"><h2 style="font-size:14px;font-weight:600">Recent activity</h2></div>${feed(acts().filter((a) => a.proj === id).slice(0, 5), { noProj: true })}</aside></div>`;
   }
-  if (tab === "work") return scopedWorkResults(ws);
+  if (tab === "work") return scopedWorkResults(ws, { groupBy: WORK_GROUP_FIELDS[WORK_DEFAULT_GROUP] });
   if (tab === "team") return projectTeams(id) + memberRows(projMembers(id), { emptyText: "No members yet." });
   if (tab === "activity") return pageActivity(id);
   if (tab === "insights") return projectInsights(id);
