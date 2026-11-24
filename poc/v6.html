@@ -4916,7 +4916,7 @@ const PAST_SESSIONS = [
 
 /* ---------------------------------------------------------------- state */
 const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
-  scopedWorkLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
+  scopedWorkLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", actReleaseOpen: false, openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
   taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false, confirmDeny: null, briefCopied: false };
 const ORG_NAME_STORE = "agentic-org.v6.organizationName";
 let orgName = "Agentic Org";
@@ -7288,7 +7288,7 @@ function releaseOperations(projects, entries, counts, simulated) {
 
 function refreshReleasePanel(snapshot) {
   const body = document.getElementById("release-panel-body");
-  const panel = body.closest("dialog");
+  const panel = body.closest(".release-panel");
   const simulated = S.actView === "assembly";
   const { projects, entries, counts } = snapshot ?? assemblySnapshot(simulated);
   const scroll = panel.scrollTop;
@@ -7303,6 +7303,21 @@ function refreshReleasePanel(snapshot) {
   if (body.contains(focus)) focus.focus({ preventScroll: true });
   else if (!active.isConnected) panel.querySelector(".side-panel-header button").focus({ preventScroll: true });
   panel.scrollTop = scroll;
+}
+
+function setReleasePanelOpen(open) {
+  const panel = document.getElementById("release-panel");
+  const trigger = document.querySelector(".activity-release-trigger");
+  S.actReleaseOpen = open;
+  panel.parentElement.toggleAttribute("data-release-open", open);
+  panel.inert = !open;
+  trigger.setAttribute("aria-expanded", String(open));
+  if (open) {
+    refreshReleasePanel();
+    document.getElementById("release-panel-title").focus({ preventScroll: true });
+  } else {
+    trigger.focus({ preventScroll: true });
+  }
 }
 function activityNeedsFeed(items, waiting) {
   return waiting.map((item) => items.find((entry) => entry.inbox === item.id) || {
@@ -7367,7 +7382,7 @@ function updateAssemblyPlayback() {
     document.getElementById("assembly-play").innerHTML = assemblyPlayLabel();
   }
   const rate = document.getElementById("assembly-rate");
-  if (rate && rate.closest("dialog").open) rate.textContent = assemblyThroughput().rate;
+  if (rate && S.actReleaseOpen) rate.textContent = assemblyThroughput().rate;
   syncAssemblySimulationTimer();
 }
 
@@ -7405,7 +7420,7 @@ function refreshAssemblySimulation(animate = false) {
   const layout = document.getElementById("assembly-layout");
   if (!layout) return;
   const tableScroll = layout.querySelector(".assembly-table-wrap").scrollLeft;
-  const content = document.getElementById("content");
+  const content = layout.closest(".activity-main");
   const pageScroll = content.scrollTop;
   const active = document.activeElement;
   const focus = layout.contains(active);
@@ -7422,7 +7437,7 @@ function refreshAssemblySimulation(animate = false) {
   const table = next.querySelector(".assembly-table-wrap");
   table.scrollLeft = tableScroll;
   if (focus) (next.querySelector(focusSelector) || table).focus({ preventScroll: true });
-  if (document.getElementById("release-panel")?.open) refreshReleasePanel(snapshot);
+  if (S.actReleaseOpen) refreshReleasePanel(snapshot);
   content.scrollTop = pageScroll;
   if (positions) animateAssemblyCards(next, positions);
 }
@@ -7457,18 +7472,22 @@ function pageActivity() {
       ${hdr("Activity", `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`)}
       <div class="section-toolbar activity-toolbar">
         ${switcher}${projectFilter}
-        <button class="btn outline activity-release-trigger" type="button" data-act="activity-release-open" aria-haspopup="dialog" aria-controls="release-panel">${ic("flag", "ic16")}Release gates</button>
+        <button class="btn outline activity-release-trigger" type="button" data-act="activity-release-toggle" aria-expanded="${S.actReleaseOpen}" aria-controls="release-panel">${ic("flag", "ic16")}Release gates</button>
         ${isFeed ? btnTabs("actFilter", tabs, "Filter activity", "act-feed") : ""}
       </div>
     </div>
-    ${isFeed ? activityFeedLayout(items) : assemblyPlayback() + assemblyLayout()}
-    <dialog class="side-panel release-panel" id="release-panel" aria-labelledby="release-panel-title">
-      <header class="side-panel-header">
-        <h2 id="release-panel-title" tabindex="-1">Release operations</h2>
-        <button class="btn ghost icon" type="button" data-act="activity-release-close" aria-label="Close release operations" title="Close release operations">${ic("x", "ic16")}</button>
-      </header>
-      <div id="release-panel-body"></div>
-    </dialog>
+    <div class="activity-body"${S.actReleaseOpen ? " data-release-open" : ""}>
+      <div class="activity-main" data-view="${S.actView}">
+        ${isFeed ? activityFeedLayout(items) : assemblyPlayback() + assemblyLayout()}
+      </div>
+      <aside class="release-panel" id="release-panel" aria-labelledby="release-panel-title"${S.actReleaseOpen ? "" : " inert"}>
+        <header class="side-panel-header">
+          <h2 id="release-panel-title" tabindex="-1">Release operations</h2>
+          <button class="btn ghost icon" type="button" data-act="activity-release-close" aria-label="Collapse release operations" title="Collapse release operations">${ic("chev-right", "ic16")}</button>
+        </header>
+        <div id="release-panel-body"></div>
+      </aside>
+    </div>
   </section>`;
 }
 
@@ -8986,6 +9005,8 @@ function render(focus = true) {
   const content = document.getElementById("content");
   const key = location.hash;
   const priorPanel = main.querySelector("#work-panel");
+  const priorActivity = main.querySelector(".activity-main");
+  const releaseScroll = document.getElementById("release-panel")?.scrollTop ?? 0;
   const pageScroll = content.scrollTop;
   const workBoardScroll = main.querySelector("#work-results .board")?.scrollLeft;
   const toolbarFocus = pageSearchTools.contains(document.activeElement) ? document.activeElement.id : "";
@@ -9006,6 +9027,12 @@ function render(focus = true) {
   }
   renderNav(r);
   renderBanner(r0);
+  const activity = main.querySelector(".activity-main");
+  if (activity && priorActivity?.dataset.view === activity.dataset.view) activity.scrollTop = priorActivity.scrollTop;
+  if (activity && S.actReleaseOpen) {
+    refreshReleasePanel();
+    document.getElementById("release-panel").scrollTop = releaseScroll;
+  }
   const titleBase = r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found");
   document.title = titleBase + " · Agentic Org";
   if (sameWorkPage) {
@@ -9385,11 +9412,10 @@ document.addEventListener("cancel", (e) => {
   closeWorkPanel();
 }, true);
 document.addEventListener("click", (e) => {
-  if (e.target.matches("dialog.side-panel")) {
+  if (e.target.matches("dialog.work-panel")) {
     const { top, right, bottom, left } = e.target.getBoundingClientRect();
     if (e.clientX < left || e.clientX > right || e.clientY < top || e.clientY > bottom) {
-      if (e.target.id === "work-panel") closeWorkPanel();
-      else e.target.close();
+      closeWorkPanel();
       return;
     }
   }
@@ -9509,12 +9535,11 @@ document.addEventListener("click", (e) => {
     case "assembly-add-sample":
       addAssemblySample();
       break;
-    case "activity-release-open":
-      refreshReleasePanel();
-      showSidePanel(document.getElementById("release-panel"));
+    case "activity-release-toggle":
+      setReleasePanelOpen(!S.actReleaseOpen);
       break;
     case "activity-release-close":
-      t.closest("dialog").close();
+      setReleasePanelOpen(false);
       break;
     case "activity-review": {
       S.actView = "feed";
@@ -9941,6 +9966,11 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "Escape") {
+    if (S.actReleaseOpen && e.target.closest("#release-panel, .activity-release-trigger")) {
+      e.preventDefault();
+      setReleasePanelOpen(false);
+      return;
+    }
     const sender = document.querySelector(".triage-from-member:is(:hover, :focus-within):not([data-preview-dismissed])");
     if (sender) {
       sender.dataset.previewDismissed = "";

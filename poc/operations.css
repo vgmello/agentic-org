@@ -665,9 +665,11 @@ html[data-theme^="report"] .triage-queue {
   .queue-tab { gap: 4px; padding-inline: 8px; }
 }
 
+:is(.side-panel, .release-panel) {
+  --side-panel-surface: var(--gray-900);
+}
 /* Work uses the Inbox reading layout in a right-side panel. */
 .side-panel {
-  --side-panel-surface: var(--gray-900);
   position: fixed;
   inset: 0 0 0 auto;
   margin: 0;
@@ -710,11 +712,10 @@ html[data-theme^="report"] .triage-queue {
 @media (min-width: 960px) and (max-width: calc(46rem + 264px)) {
   body:not(.nav-collapsed) .work-panel .work-panel-expand.btn { display: none; }
 }
-.release-panel { --side-panel-width: 27rem; }
-html[data-theme="graphite"] .side-panel { --side-panel-surface: #18191a; }
-html[data-theme="report"] .side-panel { --side-panel-surface: var(--gray-800); }
-html[data-theme="cozy"] .side-panel { --side-panel-surface: #352b22; }
-html[data-theme="cozy"] body.a11y-mode .side-panel { --side-panel-surface: #1a1512; }
+html[data-theme="graphite"] :is(.side-panel, .release-panel) { --side-panel-surface: #18191a; }
+html[data-theme="report"] :is(.side-panel, .release-panel) { --side-panel-surface: var(--gray-800); }
+html[data-theme="cozy"] :is(.side-panel, .release-panel) { --side-panel-surface: #352b22; }
+html[data-theme="cozy"] body.a11y-mode :is(.side-panel, .release-panel) { --side-panel-surface: #1a1512; }
 @media (prefers-reduced-motion: no-preference) {
   .work-panel { transition: width 260ms cubic-bezier(.2, .7, .25, 1); }
   .side-panel.is-opening[open] { animation: side-panel-enter 260ms cubic-bezier(.2, .7, .25, 1); }
@@ -893,12 +894,49 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 }
 
 /* Activity command center */
+.activity-workspace {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  container: activity / inline-size;
+}
 .activity-toolbar { gap: 6px 12px; padding-block: 8px; }
 .activity-toolbar > .tabs { gap: 16px; }
 .activity-release-trigger { margin-inline-start: auto; }
+.activity-release-trigger[aria-expanded="true"] { background: var(--line2); }
 .activity-scope, .activity-scope select { max-width: 100%; }
 .activity-scope select { min-height: var(--control-height); }
 .activity-switch { min-height: var(--control-height); }
+.activity-body {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) 0px;
+  grid-template-rows: minmax(0, 1fr);
+}
+.activity-body[data-release-open] { grid-template-columns: minmax(0, 1fr) clamp(18rem, 32%, 26rem); }
+.activity-main, .release-panel {
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.release-panel {
+  visibility: hidden;
+  overflow-x: hidden;
+  background: var(--side-panel-surface);
+  border-inline-start: 1px solid var(--line2);
+}
+.activity-body[data-release-open] .release-panel { visibility: visible; }
+@container activity (max-width: 42.5rem) {
+  .activity-body[data-release-open] { grid-template-columns: minmax(0, 1fr) 100%; }
+  .activity-body[data-release-open] .activity-main { visibility: hidden; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .activity-body { transition: grid-template-columns 220ms cubic-bezier(.2, .7, .25, 1); }
+  .release-panel { transition: visibility 0s 220ms; }
+  .activity-body[data-release-open] .release-panel { transition-delay: 0s; }
+}
 .assembly-playback,
 .assembly-controls,
 .assembly-clock {
