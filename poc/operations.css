@@ -1268,7 +1268,7 @@ html[data-theme="graphite"]:has(.triage-workspace) {
   padding: 12px;
   border: 1px solid var(--line2);
   border-radius: var(--radius-md);
-  background: var(--hover);
+  background: var(--detail-panel-surface, var(--hover));
 }
 .project-telemetry-header {
   display: flex;
