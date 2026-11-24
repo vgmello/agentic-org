@@ -837,23 +837,27 @@ test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filte
 	await searchInput.press('Escape');
 	await expect(searchInput).not.toBeFocused();
 
-	// Filter work menu: rapid Project + Assignee scope selection preserves both params across reload & Reset filters
+	// Filter work menu: Project + Assignee scope selection narrows count strictly & preserves both params across reload
 	const filterBtn = page.getByRole('button', { name: 'Filter work' });
 	await filterBtn.click();
 	await page.getByRole('menuitemradio', { name: 'Office federation' }).click();
+	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
+	const projectOnlyCount = await workRows.count();
+	expect(projectOnlyCount).toBeGreaterThan(1);
+	expect(projectOnlyCount).toBeLessThan(initialCount);
+
 	await filterBtn.click();
 	await page.getByRole('menuitemradio', { name: 'Sage' }).click();
 	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
 	await expect(page).toHaveURL(/[?&]assignee=sage(?:&|$)/);
 	await expect(filterBtn).toHaveAttribute('data-active', '');
-	const filteredCount = await workRows.count();
-	expect(filteredCount).toBeGreaterThan(0);
-	expect(filteredCount).toBeLessThan(initialCount);
+	await expect(workRows).toHaveCount(1);
 
 	await page.reload();
 	await page.locator('html[data-hydrated="true"]').waitFor();
 	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
 	await expect(page).toHaveURL(/[?&]assignee=sage(?:&|$)/);
+	await expect(workRows).toHaveCount(1);
 	await expect(page.getByRole('button', { name: 'Filter work' })).toHaveAttribute(
 		'data-active',
 		''

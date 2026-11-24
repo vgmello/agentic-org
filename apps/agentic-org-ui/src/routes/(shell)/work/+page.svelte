@@ -362,7 +362,7 @@
 	}
 
 	function handleSearchKeydown(event: KeyboardEvent) {
-		if (event.key !== 'Escape') return;
+		if (event.isComposing || event.keyCode === 229 || event.key !== 'Escape') return;
 		event.preventDefault();
 		if (searchQuery) {
 			searchQuery = '';
@@ -2124,16 +2124,16 @@
 		}
 		.work-row[aria-current='true'],
 		.work-bcard[aria-current='true'] {
-			border-inline-start: 3px solid Highlight;
+			border-inline-start: 4px solid Highlight;
 		}
 		.work-title:focus-visible::after,
 		.work-bcard-title:focus-visible::after {
-			outline: 2px solid Highlight;
-			outline-offset: 1px;
+			outline: 2px solid CanvasText;
+			outline-offset: -3px;
 		}
 		.work-row:is(:hover, :focus-within) {
 			outline: 1px solid Highlight;
-			outline-offset: 1px;
+			outline-offset: 2px;
 		}
 		.work-priority-mark span,
 		.work-status[data-attention]::after {

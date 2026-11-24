@@ -274,7 +274,7 @@
 								<span class="w-16 shrink-0 text-fg-muted">{requestRef(r)}</span>
 								<button
 									type="button"
-									class="min-h-9 min-w-0 flex-1 text-left font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [overflow-wrap:break-word] [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11"
+									class="min-h-9 min-w-9 flex-1 text-left font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [overflow-wrap:break-word] [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11"
 									onclick={() => onopen(r.id)}>{r.title}</button
 								>
 								<span class="text-fg-secondary" data-testid="request-words-state"
