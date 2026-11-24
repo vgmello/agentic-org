@@ -1201,6 +1201,19 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 .activity-rail li span { text-align: end; }
 .activity-rail a:hover { color: var(--tone-accent-ink); }
 .activity-rail-note { color: var(--gray-400); font-size: .75rem; }
+.project-release-rail dl > div { padding-block: 7px; }
+.project-release-rail dl > div + div { border-block-start: 1px solid var(--line); }
+.project-release-rail dd { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: 4px 10px; }
+.project-release-rail dd > span:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.project-station-slots { display: flex; flex-wrap: wrap; justify-content: end; gap: 4px; }
+.project-station-slots i { width: 8px; height: 8px; border: 1px solid var(--gray-500); border-radius: 50%; }
+.project-station-slots i[data-busy] { border-color: var(--tone-accent-ink); background: var(--tone-accent-ink); }
+.project-milestone-name { margin-block: 8px 6px; color: var(--tone-accent-ink); font-size: .8125rem; font-weight: 600; }
+.project-release-rail .assembly-progress { white-space: normal; }
+.project-release-rail .assembly-progress-bar { width: 100%; }
+.project-release-rail h3 > span { margin-inline-start: 4px; color: var(--gray-400); font-variant-numeric: tabular-nums; }
+.project-release-rail li .tone-ok { color: var(--tone-ok-ink); }
+.project-release-rail li .tone-bad { color: var(--tone-bad-ink); }
 .activity-throughput { display: flex; justify-content: space-around; gap: 8px; margin-top: 6px; }
 .activity-throughput li { flex: 1; flex-direction: column; align-items: center; justify-content: end; gap: 2px; }
 .activity-throughput i { width: 100%; max-width: 32px; border-radius: 3px 3px 0 0; background: var(--tone-accent); }

@@ -204,6 +204,54 @@ try {
       await panel.getByRole("heading", { name: "Release gates" }).waitFor();
     }
 
+    if (route === "projects/office-federation/activity") {
+      const assembly = page.getByRole("tab", { name: "Assembly line" });
+      const feed = page.getByRole("tab", { name: "Activity feed" });
+      const readiness = page.getByRole("progressbar", { name: "Project readiness" });
+      const panel = page.getByRole("complementary", { name: "Release gates" });
+      const tools = page.getByRole("group", { name: "Activity sidebar tools" });
+      const simulation = tools.getByRole("button", { name: "Simulation" });
+      const gates = tools.getByRole("button", { name: "Release gates" });
+      await readiness.waitFor();
+      assert.equal(await assembly.getAttribute("aria-selected"), "true");
+      assert.equal(await readiness.getAttribute("max"), "4");
+      assert.equal(await page.locator(".assembly-milestone").count(), 1);
+      assert.equal(await page.locator('[data-assembly-work="T-A121"]').count(), 0);
+      assert.equal(await gates.getAttribute("aria-expanded"), "true");
+      const milestones = panel.getByRole("region", { name: "Milestones" });
+      assert.match((await milestones.textContent())!, /Office sync test.*\d+\/4 tasks · \d+\/2 features/s);
+      const gateStatus = panel.getByRole("region", { name: "Gate status" });
+      assert.deepEqual(await gateStatus.getByRole("link").allTextContents(), ["File access ruling"]);
+      assert.equal(await panel.getByRole("region", { name: /^Needs a human/ }).getByRole("link", { name: "Custody lock fix" }).getAttribute("href"), "#/inbox/in2");
+
+      await simulation.press("Enter");
+      const playback = page.getByRole("complementary", { name: "Simulation" });
+      await playback.getByRole("button", { name: "Reset simulation" }).click();
+      await playback.getByRole("button", { name: "8×" }).click();
+      await playback.getByRole("button", { name: "Add sample task" }).click();
+      await playback.getByText("joined the queue").waitFor();
+      assert.equal(await readiness.getAttribute("max"), "5");
+      await playback.getByRole("button", { name: "Play simulation" }).click();
+      await page.waitForFunction(() => document.querySelector('[data-assembly-work="T-S1"]:not([data-stage="queue"])'));
+      assert.doesNotMatch((await playback.locator(".assembly-event-log").textContent())!, /T-A130|T-A84/);
+      await playback.getByRole("button", { name: "Reset simulation" }).click();
+      await page.keyboard.press("Escape");
+      assert.ok(await simulation.evaluate((button) => button === document.activeElement));
+      await gates.click();
+
+      await page.getByRole("button", { name: "Review T-A118" }).click();
+      assert.equal(await feed.getAttribute("aria-selected"), "true");
+      const decision = page.locator("#activity-triage-in2");
+      assert.ok(await decision.evaluate((element) => element === document.activeElement));
+      assert.equal(await page.locator("#activity-triage-in1").count(), 0);
+      await page.getByRole("button", { name: "Filter activity" }).press("Enter");
+      const filterMenu = page.getByRole("menu", { name: "Filter activity" });
+      assert.equal(await filterMenu.getByRole("group", { name: "Project", exact: true }).count(), 0);
+      await filterMenu.getByRole("menuitemradio", { name: "Decisions", exact: true }).press("Enter");
+      await feed.press("ArrowLeft");
+      await readiness.waitFor();
+    }
+
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     const screenshot = resolve(import.meta.dir, "../.playwright", `poc-${route.replace(/[^a-z0-9]+/gi, "-")}-${theme}.png`);
     await page.screenshot({ path: screenshot });
