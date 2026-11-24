@@ -7142,6 +7142,7 @@ const ACTIVITY_PANELS = {
   simulation: { label: "Simulation", icon: "clock" },
 };
 const ASSEMBLY_SPEEDS = [1, 3, 8];
+const ASSEMBLY_DAY_HOURS = 24;
 const ASSEMBLY_MOVES = {
   queue: ["agents", "started agent work"],
   agents: ["ci", "entered CI"],
@@ -7149,8 +7150,9 @@ const ASSEMBLY_MOVES = {
   review: ["merged", "passed review and merged"],
 };
 const assemblySimulation = {
-  hours: 0, speed: 1, playing: true, timer: null, progress: new Map(), samples: [], events: [],
+  hours: 0, run: 0, speed: 1, playing: true, timer: null, progress: new Map(), samples: [], events: [],
 };
+const assemblyDay = (hours) => Math.floor(hours / ASSEMBLY_DAY_HOURS);
 const assemblyHours = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 const formatAssemblyHours = (hours) => assemblyHours.format(hours) + " h";
 
@@ -7199,6 +7201,7 @@ function advanceAssemblySimulation() {
   const previous = sim.hours;
   sim.hours += sim.speed / 4;
   const events = [];
+  const at = Date.now();
   let active = false;
   for (const work of assemblyWork(true)) {
     if (P[work.proj].archived) continue;
@@ -7209,13 +7212,14 @@ function advanceAssemblySimulation() {
     }
     let progress = sim.progress.get(work.id);
     if (!progress || progress.initial !== initial) {
-      progress = { initial, stage: initial, due: previous + assemblyStageDuration(work, initial) };
+      progress = { initial, stage: initial, started: previous, entered: previous, due: previous + assemblyStageDuration(work, initial) };
       sim.progress.set(work.id, progress);
     }
     while (progress.stage !== "merged" && progress.due <= sim.hours) {
       const [stage, action] = ASSEMBLY_MOVES[progress.stage];
-      events.push({ hour: progress.due, work, stage, action });
+      events.push({ hour: progress.due, at, started: progress.started, work, stage, action });
       progress.stage = stage;
+      progress.entered = progress.due;
       progress.due += assemblyStageDuration(work, stage);
     }
     active ||= progress.stage !== "merged";
@@ -7223,7 +7227,9 @@ function advanceAssemblySimulation() {
   if (events.length) {
     events.sort((a, b) => b.hour - a.hour);
     sim.events = [...events, ...sim.events];
-    refreshAssemblySimulation(true);
+  }
+  if (events.length || projectActivityId() && assemblyDay(previous) !== assemblyDay(sim.hours)) {
+    refreshAssemblySimulation(Boolean(events.length));
   }
   if (!active) sim.playing = false;
   updateAssemblyPlayback();
@@ -7280,9 +7286,10 @@ function assemblyChip(entry) {
 function releaseGates(projectIds) {
   return IN.filter((item) => own(RELEASE_GATES, item.id) && projectIds.includes(item.proj));
 }
+const releaseGateBlocked = (outcome) => /^(denied|declined|dismissed|changes requested)\b/i.test(outcome);
 function releaseGateState(item) {
   if (!item.handled) return "pending";
-  return /^(denied|declined|dismissed|changes requested)\b/i.test(item.outcome) ? "blocked" : "cleared";
+  return releaseGateBlocked(item.outcome) ? "blocked" : "cleared";
 }
 function assemblyReleaseSummary(id, release, entries, merged) {
   const gates = releaseGates([id]);
@@ -7366,6 +7373,79 @@ function assemblyEventLog() {
   </section>`;
 }
 
+const telemetryHours = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const formatTelemetryHours = (hours) => telemetryHours.format(hours) + " h";
+
+function projectThroughput(id, events, waiting, gates) {
+  const history = DELIVERY_HISTORY[id] || [];
+  const sim = assemblySimulation;
+  const day = assemblyDay(sim.hours);
+  const first = Math.max(Math.min(0, 1 - history.length), day - 7);
+  const merges = events.filter(({ stage }) => stage === "merged");
+  const signOffs = gates.filter((item) => item.sub === "Release sign-off" && item.outcome === "Approved")
+    .map((item) => currentAssemblyHour(item.activity?.at(-1)));
+  const mergeTimes = merges.map(({ hour }) => hour).concat(signOffs);
+  const days = Array.from({ length: day - first + 1 }, (_, index) => {
+    const offset = first + index;
+    const label = offset < 0 ? `${Math.abs(offset)}d ago` : `D${offset + 1}`;
+    const count = (history[history.length - 1 + offset] ?? 0) + mergeTimes.filter((hour) => assemblyDay(hour) === offset).length;
+    return { label, count };
+  });
+  const peak = Math.max(4, ...days.map(({ count }) => count));
+  const cycle = merges.length ? merges.reduce((sum, { hour, started }) => sum + hour - started, 0) / merges.length : null;
+  const now = new Date();
+  const waitingSince = waiting.filter(({ review }) => !review?.handled).map(({ work, review }) => {
+    const age = review && activityEventTime(review.time, now).age;
+    if (Number.isFinite(age)) {
+      const reopened = review.activity?.findLast(({ icon }) => icon === "refresh");
+      return reopened ? currentAssemblyHour(reopened) : -age / 60;
+    }
+    return assemblySimulation.progress.get(work.id)?.entered ?? 0;
+  });
+  const waitOffset = waitingSince.reduce((sum, hour) => sum - hour, 0);
+  const wait = Math.max(0, sim.hours * waitingSince.length + waitOffset);
+  return `<section class="project-telemetry" aria-labelledby="project-throughput-title">
+    <div class="project-telemetry-header"><h3 id="project-throughput-title">Throughput</h3><p class="activity-rail-note">Tasks merged per day</p></div>
+    <ul class="project-throughput" role="list" aria-label="Daily merge counts">${days.map(({ label, count }) => `<li>
+      <div class="project-throughput-plot" aria-hidden="true"><div style="height:${count * 100 / peak}%">${count ? `<span>${count}</span>` : ""}</div></div>
+      <span>${label}</span><span class="sr-only"> · ${plural(count, "task", "tasks")} merged</span>
+    </li>`).join("")}</ul>
+    <dl class="project-throughput-metrics">
+      <div><dt title="Time from the first simulated stage to merge">Avg. cycle time</dt><dd>${cycle === null ? "—" : formatTelemetryHours(cycle)}</dd></div>
+      <div><dt title="Total time across tasks currently waiting for review">Waiting on people now</dt><dd id="project-human-wait" data-count="${waitingSince.length}" data-offset="${waitOffset}">${formatTelemetryHours(wait)}</dd></div>
+    </dl>
+  </section>`;
+}
+
+function currentAssemblyHour(event) {
+  return event?.assemblyRun === assemblySimulation.run ? event.assemblyHour : 0;
+}
+
+function projectLineLog(gates, events) {
+  const now = new Date();
+  const requests = gates.flatMap((item) => {
+    const label = RELEASE_GATES[item.id];
+    const age = activityEventTime(item.time, now).age;
+    return [{ at: now.getTime() - age * 60_000, time: item.time, tone: "warn", text: `${label} requested` },
+      ...(item.activity || []).filter(({ at }) => Number.isFinite(at)).map(({ at, icon, text }) => ({
+        at, time: new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+        tone: icon === "refresh" ? "warn" : releaseGateBlocked(text) ? "bad" : "ok",
+        text: `${label} · ${text}`,
+      }))];
+  });
+  const moves = events.map(({ hour, at, work, action, stage }) => {
+    const minutes = Math.floor(hour * 60) % (ASSEMBLY_DAY_HOURS * 60);
+    const clock = [Math.floor(minutes / 60), minutes % 60].map((value) => String(value).padStart(2, "0")).join(":");
+    return { at, time: `D${assemblyDay(hour) + 1} · ${clock}`, tone: stage === "merged" ? "ok" : stage === "review" ? "warn" : "", text: `${work.id} ${action}` };
+  });
+  const log = [...moves, ...requests].sort((left, right) => right.at - left.at).slice(0, 30);
+  return `<section class="project-telemetry" aria-labelledby="project-line-events-title"><h3 id="project-line-events-title">Line events</h3>
+    ${log.length ? `<ol class="assembly-event-log project-line-log" role="list" tabindex="0" aria-label="Line events">${log.map(({ time, tone, text }) => `
+      <li data-tone="${tone}"><span class="project-line-time">${esc(time)}</span><span>${esc(text)}</span></li>`).join("")}</ol>`
+      : '<p class="activity-rail-note">Events appear as tasks and gates move through the line.</p>'}
+  </section>`;
+}
+
 function releaseOperations({ projects, entries, counts }) {
   const projectId = projectActivityId();
   const gates = releaseGates(projects.map(({ id }) => id));
@@ -7374,7 +7454,7 @@ function releaseOperations({ projects, entries, counts }) {
       : !projectId ? "muted" : releaseGateState(item) === "blocked" ? "tone-bad" : "tone-ok";
     return `<li><a href="#/inbox/${item.id}">${esc(RELEASE_GATES[item.id])}</a><span class="${tone}">${item.handled ? esc(item.outcome) : "Pending"}</span></li>`;
   }).join("") || "<li>No gates in this scope</li>"}</ul>`;
-  if (projectId) return projectReleaseOperations(projects[0], counts, gateList);
+  if (projectId) return projectReleaseOperations(projects[0], counts, gates, gateList);
   const agents = [...new Set(entries.filter((entry) => ["agents", "ci", "review"].includes(entry.stage) && entry.work.who)
     .map((entry) => entry.work.who))].filter((id) => M[id].kind === "agent");
   return `<div class="activity-rail">
@@ -7388,7 +7468,7 @@ function releaseOperations({ projects, entries, counts }) {
   </div>`;
 }
 
-function projectReleaseOperations({ id, project, features, entries }, counts, gateList) {
+function projectReleaseOperations({ id, project, features, entries }, counts, gates, gateList) {
   const agents = projMembers(id).filter((member) => M[member]?.kind === "agent" && !M[member].offboarded);
   const busy = new Set(entries.filter(({ stage }) => stage === "agents").map(({ work }) => work.who));
   const agentCount = agents.filter((member) => busy.has(member)).length;
@@ -7400,6 +7480,7 @@ function projectReleaseOperations({ id, project, features, entries }, counts, ga
     merged: `${counts.merged} of ${entries.length}`,
   };
   const waiting = entries.filter(({ stage }) => stage === "review");
+  const events = assemblyLineEvents();
   return `<div class="activity-rail project-release-rail">
     <section aria-labelledby="project-stations-title"><h3 id="project-stations-title">Stations</h3>
       <dl>${ACTIVITY_STAGES.map(([stage, label]) => `<div><dt>${label}</dt><dd>
@@ -7415,6 +7496,8 @@ function projectReleaseOperations({ id, project, features, entries }, counts, ga
         : '<p class="activity-rail-note">Nothing is waiting on people.</p>'}
     </section>
     <section aria-labelledby="project-gate-status-title"><h3 id="project-gate-status-title">Gate status</h3>${gateList}</section>
+    ${projectThroughput(id, events, waiting, gates)}
+    ${projectLineLog(gates, events)}
   </div>`;
 }
 
@@ -7435,9 +7518,10 @@ function refreshActivityPanel(snapshot) {
   const logScroll = log?.scrollTop ?? 0;
   const active = document.activeElement;
   const href = body.contains(active) && active.getAttribute("href");
+  const showSimulation = Boolean(projectActivityId()) || S.actView === "assembly";
   body.innerHTML = S.actPanel === "simulation"
     ? simulationDetails()
-    : releaseOperations(snapshot ?? assemblySnapshot(S[activityViewKey(projectActivityId())] === "assembly"));
+    : releaseOperations(snapshot ?? assemblySnapshot(showSimulation));
   const nextLog = body.querySelector(".assembly-event-log");
   if (nextLog) nextLog.scrollTop = logScroll;
   const focus = href ? body.querySelector(`a[href="${CSS.escape(href)}"]`) : active === log ? nextLog : null;
@@ -7532,6 +7616,8 @@ function updateAssemblyPlayback() {
   }
   const rate = document.getElementById("assembly-rate");
   if (rate) rate.textContent = assemblyThroughput().rate;
+  const wait = document.getElementById("project-human-wait");
+  if (wait) wait.textContent = formatTelemetryHours(Math.max(0, sim.hours * Number(wait.dataset.count) + Number(wait.dataset.offset)));
   syncAssemblySimulationTimer();
 }
 
@@ -7568,7 +7654,7 @@ function animateAssemblyCards(layout, previousPositions) {
 function refreshAssemblySimulation(animate = false) {
   const layout = document.getElementById("assembly-layout");
   if (!layout) {
-    if (S.actPanel === "simulation") refreshActivityPanel();
+    if (S.actPanel === "simulation" || projectActivityId()) refreshActivityPanel();
     return;
   }
   const tableScroll = layout.querySelector(".assembly-table-wrap").scrollLeft;
@@ -7602,7 +7688,7 @@ function addAssemblySample() {
   const work = { id: "T-S" + (sim.samples.length + 1), title: "Verify release readiness",
     sample: true, kind: "task", status: "To do", proj, who, etaHours: 2 };
   sim.samples.push(work);
-  sim.events.unshift({ hour: sim.hours, work, stage: "queue", action: "joined the queue" });
+  sim.events.unshift({ hour: sim.hours, at: Date.now(), work, stage: "queue", action: "joined the queue" });
   refreshAssemblySimulation();
   toast(`${work.id} added to the simulation.`, "check-circle");
 }
@@ -9649,7 +9735,10 @@ function handle(id, outcome, assignee = null) {
   const index = visible.indexOf(it);
   const next = index < 0 ? null : visible[index + 1] || visible[index - 1];
   it.handled = true; it.handledNow = true; it.justHandled = true; it.outcome = outcome; S.replying = null;
-  (it.activity ||= []).push({ icon: /Denied|Declined|Dismissed/.test(outcome) ? "deny" : "check-circle", text: outcome, at: Date.now() });
+  (it.activity ||= []).push({
+    icon: /Denied|Declined|Dismissed/.test(outcome) ? "deny" : "check-circle", text: outcome, at: Date.now(),
+    assemblyRun: assemblySimulation.run, assemblyHour: assemblySimulation.hours,
+  });
   const assignedTo = assignee || it.assignTo?.[outcome];
   if (w && assignedTo) w.who = assignedTo;
   if (w && blockedOnOwner(w) && !/Denied|Declined|Dismissed/.test(outcome)) { delete w.waitsOn; w.status = "In progress"; }
@@ -9684,7 +9773,10 @@ function handle(id, outcome, assignee = null) {
   if (tgt) { if (!tgt.hasAttribute("tabindex")) tgt.setAttribute("tabindex", "-1"); tgt.focus(); }
 }
 function reopenInboxItem(item) {
-  (item.activity ||= [{ icon: "check-circle", text: item.outcome }]).push({ icon: "refresh", text: "Returned to your queue", at: Date.now() });
+  (item.activity ||= [{ icon: "check-circle", text: item.outcome }]).push({
+    icon: "refresh", text: "Returned to your queue", at: Date.now(),
+    assemblyRun: assemblySimulation.run, assemblyHour: assemblySimulation.hours,
+  });
   item.handled = false;
   item.handledNow = false;
   item.justHandled = false;
@@ -9823,6 +9915,7 @@ document.addEventListener("click", (e) => {
       break;
     case "assembly-restart":
       Object.assign(assemblySimulation, { hours: 0, playing: false, samples: [], events: [] });
+      assemblySimulation.run += 1;
       assemblySimulation.progress.clear();
       refreshAssemblySimulation();
       updateAssemblyPlayback();
