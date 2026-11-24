@@ -49,6 +49,29 @@ describe('release & milestone progress helpers (organization-data 02)', () => {
 		expect(isReleaseTaskFinished('Blocked')).toBe(false);
 	});
 
+	it('prefers authoritative backend release_progress when supplied', () => {
+		const detail = makeReleaseDetail({
+			progress: { finished: 4, total: 5, isDone: false },
+			tasks: [{ id: 't1', ref: 'T-A38', type: 'task', title: 'Subset', status: 'Done' }]
+		});
+		expect(computeReleaseDetailReadiness(detail)).toEqual({
+			finished: 4,
+			total: 5,
+			pct: 80,
+			scopeLabel: 'Release readiness'
+		});
+
+		const notDoneBecauseEmptyMilestone = makeReleaseDetail({
+			progress: { finished: 2, total: 2, isDone: false }
+		});
+		expect(computeReleaseDetailReadiness(notDoneBecauseEmptyMilestone)).toEqual({
+			finished: 2,
+			total: 2,
+			pct: 99,
+			scopeLabel: 'Release readiness'
+		});
+	});
+
 	it('computes 100% readiness for a release whose explicit tasks have status "Done"', () => {
 		const detail = makeReleaseDetail({
 			tasks: [
@@ -64,8 +87,8 @@ describe('release & milestone progress helpers (organization-data 02)', () => {
 		});
 	});
 
-	it('unions milestone aggregates with explicit un-milestoned tasks without double-counting milestone tasks', () => {
-		// Mirrors Beacon R-2: M-1 has 1 done + 2 open; explicit tasks list those 2 open M-1 tasks.
+	it('deduplicates strictly by stable milestoneId so cross-release M-1 manifest tasks are never dropped', () => {
+		// Beacon R-2: M-1 (ms-b2-1) has 1 done + 2 open; explicit tasks belong to ms-b2-1.
 		const beaconR2 = makeReleaseDetail({
 			milestones: [
 				{
@@ -85,6 +108,7 @@ describe('release & milestone progress helpers (organization-data 02)', () => {
 					type: 'task',
 					title: 'Split checkout',
 					status: 'In progress',
+					milestoneId: 'ms-b2-1',
 					milestoneRef: 'M-1'
 				},
 				{
@@ -93,6 +117,7 @@ describe('release & milestone progress helpers (organization-data 02)', () => {
 					type: 'task',
 					title: 'Saved cards',
 					status: 'To do',
+					milestoneId: 'ms-b2-1',
 					milestoneRef: 'M-1'
 				}
 			]
@@ -104,25 +129,59 @@ describe('release & milestone progress helpers (organization-data 02)', () => {
 			scopeLabel: 'Release readiness'
 		});
 
-		// Adding an un-milestoned explicit finished task adds 1 to both finished and total (2/4 = 50%).
-		const withExtraManifestTask = makeReleaseDetail({
-			milestones: beaconR2.milestones,
-			tasks: [
-				...beaconR2.tasks,
+		// Cross-release manifest task: R-2 has M-1 (ms-r2-1, 1 done) AND explicitly includes an open
+		// task belonging to R-1's M-1 (ms-r1-1). Must NOT be skipped -> 1/2 = 50%.
+		const crossReleaseM1 = makeReleaseDetail({
+			milestones: [
 				{
-					id: 't42',
-					ref: 'T-A42',
+					id: 'ms-r2-1',
+					number: 1,
+					title: 'R-2 Milestone 1',
+					status: 'completed',
+					tasksDone: 1,
+					tasksOpen: 0,
+					tasksCancelled: 0
+				}
+			],
+			tasks: [
+				{
+					id: 't-from-r1',
+					ref: 'T-A99',
 					type: 'task',
-					title: 'Release notes review',
-					status: 'Done'
+					title: 'Carry-over open task from R-1 M-1',
+					status: 'In progress',
+					milestoneId: 'ms-r1-1',
+					milestoneRef: 'M-1'
 				}
 			]
 		});
-		expect(computeReleaseDetailReadiness(withExtraManifestTask)).toEqual({
-			finished: 2,
-			total: 4,
+		expect(computeReleaseDetailReadiness(crossReleaseM1)).toEqual({
+			finished: 1,
+			total: 2,
 			pct: 50,
 			scopeLabel: 'Release readiness'
+		});
+
+		// Ambiguous payload (milestoneRef present without milestoneId while milestones exist):
+		// falls back honestly to 'Milestone readiness' instead of guessing or silently dropping.
+		const ambiguousRef = makeReleaseDetail({
+			milestones: crossReleaseM1.milestones,
+			tasks: [
+				{
+					id: 't-ambig',
+					ref: 'T-A98',
+					type: 'task',
+					title: 'Task with only release-scoped ref',
+					status: 'In progress',
+					milestoneRef: 'M-1'
+				}
+			]
+		});
+		expect(computeReleaseDetailReadiness(ambiguousRef)).toEqual({
+			finished: 1,
+			total: 1,
+			pct: 100,
+			scopeLabel: 'Milestone readiness'
 		});
 	});
 

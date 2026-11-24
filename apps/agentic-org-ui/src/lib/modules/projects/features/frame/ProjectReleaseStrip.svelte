@@ -201,8 +201,8 @@
 					'assembly-progress-bar',
 					readiness.total > 0 && readiness.pct >= 100 && 'is-complete'
 				]}
-				value={readiness.finished}
-				max={Math.max(1, readiness.total)}
+				value={readiness.pct}
+				max={100}
 				aria-label="{readiness.scopeLabel}: {readiness.pct}%"
 			></progress>
 		</div>
