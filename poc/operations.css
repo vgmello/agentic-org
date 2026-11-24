@@ -735,7 +735,14 @@ html[data-theme^="report"] .triage-queue {
 }
 
 :is(.side-panel, .activity-panel, .activity-tools) {
-  --side-panel-surface: var(--gray-900);
+  --side-panel-surface: var(--detail-panel-surface, var(--gray-900));
+}
+html:is([data-theme="classic"], [data-theme="report-dark"]) {
+  --detail-panel-surface: var(--gray-800);
+}
+html:is([data-theme="classic"], [data-theme="report-dark"])[data-interior-page]
+  :is(#triage-reading, .thread, .agent-rail, .sheet, .assembly-view, .assembly-release) {
+  background: var(--detail-panel-surface);
 }
 /* Work uses the Inbox reading layout in a right-side panel. */
 .side-panel {
