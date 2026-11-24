@@ -1438,6 +1438,37 @@ describe('assembly-model', () => {
 		expect(unlinkedOwnerReview.waitingOnPeopleHours).toBeNull();
 		expect(unlinkedOwnerReview.lineEvents).toEqual([]);
 
+		// Linked Inbox item whose created_at was inferred from read time MUST leave waitingOnPeopleHours unavailable (null)
+		const inferredInboxReview = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'Acme Corp',
+			workItems: [
+				makeItem({
+					id: 'w-inferred-review',
+					short_id: 'T-56',
+					kind: 'task',
+					status: 'blocked',
+					project_id: 'proj-a',
+					assignee_id: 'you'
+				})
+			],
+			inboxItems: [
+				makeInbox({
+					id: 'in-inferred',
+					title: 'Approve T-56',
+					project: { id: 'proj-a', name: 'Alpha Core' },
+					created_at: new Date(NOW).toISOString(),
+					created_at_inferred: true
+				})
+			],
+			activityRows: [],
+			projectScope: 'proj-a',
+			ownerId: 'you',
+			nowMs: NOW
+		});
+		expect(inferredInboxReview.humanWaitingItems).toHaveLength(1);
+		expect(inferredInboxReview.waitingOnPeopleHours).toBeNull();
+
 		// Explicit archived project scope resolves its own items and decisions without dropping them
 		const archivedModel = deriveActivityCommandCenter({
 			snapshot,

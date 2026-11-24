@@ -1178,8 +1178,12 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 		if (stage === 'review') {
 			const linked =
 				inboxByRef.get(item.short_id.toUpperCase()) ?? inboxByRef.get(item.id.toUpperCase());
-			// Only use immutable Inbox review-entry created_at; never fall back to mutable item.updated_at.
-			const sinceMs = linked?.created_at ? Date.parse(linked.created_at) : Number.NaN;
+			// Only use recorded immutable Inbox review-entry created_at; never fall back to mutable
+			// item.updated_at or adapter-inferred read times.
+			const sinceMs =
+				linked && !linked.created_at_inferred && linked.created_at
+					? Date.parse(linked.created_at)
+					: Number.NaN;
 			if (!Number.isNaN(sinceMs) && nowMs >= sinceMs) {
 				waitingSumHours += (nowMs - sinceMs) / HOUR_MS;
 			} else {

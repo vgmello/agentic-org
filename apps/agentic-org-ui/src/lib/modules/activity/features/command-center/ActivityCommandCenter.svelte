@@ -216,6 +216,7 @@
 		const el = panelScrollEl;
 		void panelOpen;
 		void viewMode;
+		void releaseMilestones.length;
 		void model.milestones.length;
 		void model.lineEvents.length;
 		void extraProjectActivity.length;
@@ -227,13 +228,28 @@
 		check();
 		el.addEventListener('scroll', check, { passive: true });
 		const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : undefined;
-		ro?.observe(el);
-		if (el.firstElementChild) ro?.observe(el.firstElementChild);
+		const observeChildren = () => {
+			if (!ro) return;
+			ro.observe(el);
+			for (const child of el.children) {
+				ro.observe(child);
+			}
+		};
+		observeChildren();
+		const mo =
+			typeof MutationObserver !== 'undefined'
+				? new MutationObserver(() => {
+						observeChildren();
+						check();
+					})
+				: undefined;
+		mo?.observe(el, { childList: true, subtree: true });
 		const raf = requestAnimationFrame(check);
 		return () => {
 			cancelAnimationFrame(raf);
 			el.removeEventListener('scroll', check);
 			ro?.disconnect();
+			mo?.disconnect();
 		};
 	});
 

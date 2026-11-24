@@ -13,6 +13,7 @@
 	import { Resource } from '$lib/components/resource.svelte';
 	import { isItemDone } from '$lib/home/model';
 	import { releasesApi } from '$lib/modules/releases/api';
+	import { computeReleaseDetailReadiness } from '$lib/modules/releases/progress';
 	import type { ReleaseDetail, ReleaseRow } from '$lib/modules/releases/types';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { countedTasks, projectHref } from '../../present';
@@ -92,30 +93,8 @@
 	const readiness = $derived.by(() => {
 		// Prefer release-scoped task/milestone counts when the active release detail is available.
 		if (releaseDetail) {
-			const relTasks = releaseDetail.tasks.filter((t) => t.status !== 'cancelled');
-			if (relTasks.length > 0) {
-				const merged = relTasks.filter((t) => t.status === 'done' || t.status === 'closed').length;
-				const total = relTasks.length;
-				const pct =
-					merged <= 0
-						? 0
-						: merged >= total
-							? 100
-							: Math.min(99, Math.round((merged * 100) / total));
-				return { merged, total, pct, scopeLabel: 'Release readiness' };
-			}
-			const msDone = releaseDetail.milestones.reduce((sum, m) => sum + m.tasksDone, 0);
-			const msOpen = releaseDetail.milestones.reduce((sum, m) => sum + m.tasksOpen, 0);
-			const msTotal = msDone + msOpen;
-			if (msTotal > 0) {
-				const pct =
-					msDone <= 0
-						? 0
-						: msDone >= msTotal
-							? 100
-							: Math.min(99, Math.round((msDone * 100) / msTotal));
-				return { merged: msDone, total: msTotal, pct, scopeLabel: 'Release readiness' };
-			}
+			const releaseReadiness = computeReleaseDetailReadiness(releaseDetail);
+			if (releaseReadiness) return releaseReadiness;
 		}
 		if (shellReady && shellData && !shellData.workError) {
 			const items = shellData.workItems.filter(

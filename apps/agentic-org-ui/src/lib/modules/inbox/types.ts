@@ -32,6 +32,8 @@ export interface InboxItem {
 	why: string;
 	recommendation?: string;
 	created_at: string;
+	/** True when the backing gateway omitted a recorded timestamp and the adapter filled in the read time. */
+	created_at_inferred?: boolean;
 	/** When it lapses, when the source says so. */
 	expires_at?: string;
 	actions: InboxAction[];

@@ -5,7 +5,10 @@
 	import { eventTime } from '$lib/modules/preferences';
 	import type { ReleaseMilestone } from '$lib/modules/releases/types';
 	import {
-		computeCompletionPct,
+		computeReleaseMilestonesAggregatePct,
+		computeReleaseMilestoneStats
+	} from '$lib/modules/releases/progress';
+	import {
 		formatTelemetryHours,
 		type ActivityCommandCenterModel,
 		type FeedPhase,
@@ -57,11 +60,7 @@
 		return combined.slice(0, 30);
 	});
 
-	const releaseMilestonesPct = $derived.by(() => {
-		const done = releaseMilestones.reduce((sum, m) => sum + m.tasksDone, 0);
-		const open = releaseMilestones.reduce((sum, m) => sum + m.tasksOpen, 0);
-		return computeCompletionPct(done, done + open);
-	});
+	const releaseMilestonesPct = $derived(computeReleaseMilestonesAggregatePct(releaseMilestones));
 
 	function formatLineTime(iso: string): { text: string; full: string; iso?: string } {
 		const ms = Date.parse(iso);
@@ -137,22 +136,21 @@
 			</div>
 			{#if releaseMilestones.length > 0}
 				{#each releaseMilestones as ms (ms.id)}
-					{@const msTotal = ms.tasksDone + ms.tasksOpen}
-					{@const msPct = computeCompletionPct(ms.tasksDone, msTotal)}
+					{@const msStats = computeReleaseMilestoneStats(ms)}
 					<div class="project-milestone-block">
 						<div class="project-milestone-name">M-{ms.number} · {ms.title}</div>
 						<div class="project-milestone-progress">
 							<progress
 								class={[
 									'project-progress-bar',
-									msTotal > 0 && ms.tasksDone >= msTotal && 'is-complete'
+									msStats.total > 0 && msStats.finished >= msStats.total && 'is-complete'
 								]}
-								value={ms.tasksDone}
-								max={Math.max(1, msTotal)}
-								aria-label="{ms.title} progress: {msPct}%"
+								value={msStats.finished}
+								max={Math.max(1, msStats.total)}
+								aria-label="{ms.title} progress: {msStats.pct}%"
 							></progress>
 							<span class="ops-note tabular-nums">
-								{msPct}% · {ms.tasksDone}/{msTotal} tasks
+								{msStats.pct}% · {msStats.finished}/{msStats.total} tasks
 							</span>
 						</div>
 					</div>
