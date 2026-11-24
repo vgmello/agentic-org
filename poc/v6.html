@@ -1870,6 +1870,7 @@ select.field option { background: #0E1629; color: #F8FAFC; }
   transition: background-color .16s ease, box-shadow .16s ease;
 }
 .hb-pillar:hover { background: var(--hb-surface-hi); box-shadow: var(--hb-shadow-hi); }
+html:is([data-theme="classic"], [data-theme="graphite"]) .hb-pillar { border-radius: 7px; }
 .hb-pillar-hd {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
 }
@@ -4183,7 +4184,7 @@ html[data-theme="graphite"] {
     --hb-dim: var(--gray-400);
     gap: 20px;
   }
-  & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-skel-card, .hb-ai-brief) { border-radius: var(--radius-lg); }
+  & :is(.hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-skel-card, .hb-ai-brief) { border-radius: var(--radius-lg); }
   & .hb-card:hover { transform: none; }
   & .hb-spot.is-pulse { box-shadow: inset 0 0 0 1px var(--tone-accent); }
   & .hb-catchup { background: var(--hb-surface); }
