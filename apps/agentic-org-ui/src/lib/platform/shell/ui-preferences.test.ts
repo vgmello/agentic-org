@@ -40,12 +40,25 @@ function fakeRoot(): {
 }
 
 describe('ui preferences and 6-theme selection', () => {
-	it('defaults to ocean theme with shortcuts enabled and cozy high contrast off', () => {
+	it('defaults to ocean theme with shortcuts enabled, assembly dividers off, and cozy high contrast off', () => {
 		const resolved = resolveInitialPreferences();
 		expect(resolved.theme).toBe('ocean');
 		expect(resolved.cozyHighContrast).toBe(false);
 		expect(resolved.navCollapsed).toBe(false);
 		expect(resolved.singleKeyShortcuts).toBe(true);
+		expect(resolved.assemblyDividers).toBe(false);
+	});
+
+	it('reads persisted assemblyDividers flag from storage', () => {
+		const enabled = resolveInitialPreferences({
+			storage: memoryStorage({ [STORAGE_KEYS.assemblyDividers]: '1' })
+		});
+		expect(enabled.assemblyDividers).toBe(true);
+
+		const disabled = resolveInitialPreferences({
+			storage: memoryStorage({ [STORAGE_KEYS.assemblyDividers]: '0' })
+		});
+		expect(disabled.assemblyDividers).toBe(false);
 	});
 
 	it('reads saved theme from storage across all 6 v6 themes', () => {
@@ -163,10 +176,14 @@ describe('ui preferences and 6-theme selection', () => {
 		expect(root.classes.has('light')).toBe(true);
 		expect(root.classes.has('dark')).toBe(false);
 
-		applyUiAttributes(root as unknown as HTMLElement, 'graphite', false);
+		applyUiAttributes(root as unknown as HTMLElement, 'graphite', false, true);
 		expect(root.dataset.uiTheme).toBe('graphite');
+		expect(root.dataset.assemblyDividers).toBe('');
 		expect(root.classes.has('dark')).toBe(true);
 		expect(root.classes.has('light')).toBe(false);
+
+		applyUiAttributes(root as unknown as HTMLElement, 'graphite', false, false);
+		expect('assemblyDividers' in root.dataset).toBe(false);
 	});
 
 	it('hydrates defaults and URL overrides safely when window.localStorage getter throws SecurityError', () => {

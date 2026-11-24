@@ -10,7 +10,9 @@ import {
 	deriveActivityCommandCenter,
 	deriveDecisionStreamEntries,
 	extractInboxWorkRefs,
+	extractWorkRefsFromText,
 	filterStreamEntries,
+	formatTelemetryHours,
 	mergeLiveActivityRows
 } from './assembly-model';
 
@@ -1314,5 +1316,278 @@ describe('assembly-model', () => {
 		expect(entryT9?.needsYou).toBe(false);
 		expect(entryChatT8?.inboxHref).toBe('/inbox?item=in-t8');
 		expect(entryChatT8?.needsYou).toBe(true);
+	});
+
+	it('derives project telemetry honestly, scopes stations to project teams, filters chat out of project throughput, and scopes stale/archived projects strictly', () => {
+		const snapshot = makeSnapshot();
+		snapshot.members = snapshot.members.map((m) =>
+			m.id === 'kai'
+				? { ...m, home_team_id: 'team-a' }
+				: m.id === 'ada'
+					? { ...m, home_team_id: 'team-b' }
+					: m
+		);
+		const workItems: WorkItemSummary[] = [
+			makeItem({
+				id: 'w-done-1',
+				short_id: 'T-10',
+				kind: 'task',
+				status: 'done',
+				project_id: 'proj-a',
+				area_id: 'area-api',
+				created_at: new Date(NOW - 10 * 3_600_000).toISOString(),
+				updated_at: new Date(NOW - 4 * 3_600_000).toISOString()
+			}),
+			makeItem({
+				id: 'w-wait',
+				short_id: 'T-12',
+				kind: 'task',
+				status: 'blocked',
+				project_id: 'proj-a',
+				area_id: 'area-ui',
+				created_at: new Date(NOW - 5 * 3_600_000).toISOString(),
+				updated_at: new Date(NOW - 2 * 3_600_000).toISOString()
+			}),
+			makeItem({
+				id: 'w-old',
+				short_id: 'T-99',
+				kind: 'task',
+				status: 'done',
+				project_id: 'proj-old',
+				created_at: new Date(NOW - 8 * 3_600_000).toISOString(),
+				updated_at: new Date(NOW - 3 * 3_600_000).toISOString()
+			})
+		];
+
+		const model = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'Acme Corp',
+			workItems,
+			inboxItems: [
+				makeInbox({
+					id: 'in-wait',
+					title: 'Unblock T-12',
+					project: { id: 'proj-a', name: 'Alpha Core' },
+					open: { path: '/work/T-12', label: 'Open T-12' },
+					created_at: new Date(NOW - 2 * 3_600_000).toISOString()
+				})
+			],
+			activityRows: [
+				{
+					id: 'ev-work',
+					at: new Date(NOW - 120_000).toISOString(),
+					actor: { id: 'kai', name: 'Kai Sato', kind: 'agent' },
+					kind: 'work',
+					action: 'task-done',
+					text: 'finished T-10',
+					teamIds: [],
+					projectIds: ['proj-a'],
+					memberIds: ['kai']
+				},
+				{
+					id: 'ev-chat',
+					at: new Date(NOW - 60_000).toISOString(),
+					actor: { id: 'kai', name: 'Kai Sato', kind: 'agent' },
+					kind: 'conversation',
+					action: 'message',
+					text: 'posted in #alpha',
+					teamIds: [],
+					projectIds: ['proj-a'],
+					memberIds: ['kai']
+				}
+			],
+			projectScope: 'proj-a',
+			scopedTeamIds: ['team-a'],
+			nowMs: NOW
+		});
+
+		// WorkItemSummary lacks lifecycle start/completion timestamps and recorded human-waiting spans,
+		// so avgCycleHours and non-empty waitingOnPeopleHours stay honest null ("—").
+		expect(model.avgCycleHours).toBeNull();
+		expect(formatTelemetryHours(model.avgCycleHours)).toBe('—');
+		expect(formatTelemetryHours(2.5)).toBe('2.5 h');
+		expect(model.waitingOnPeopleHours).toBeNull();
+		// Stations roster is scoped to team-a (Kai), excluding unrelated team-b agent (Ada)
+		expect(model.stationAgents.map((a) => a.id)).toEqual(['kai']);
+		expect(model.humanWaitingItems.map((i) => i.id)).toContain('w-wait');
+		expect(model.lineEvents).toHaveLength(2);
+		// Project 7d throughput counts only work events (1), ignoring conversation messages
+		expect(model.throughput7d.reduce((sum, d) => sum + d.count, 0)).toBe(1);
+
+		// A problem notice (e.g. dismiss-only run crash) mentioning or linking to queued office-prefixed
+		// tasks MUST NOT classify them as awaiting human review, badge their live-feed rows Needs you,
+		// put their assigned agent into Needs input, expose them in openInboxWorkRefs, or fabricate wait hours.
+		const problemMentionModel = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'Acme Corp',
+			workItems: [
+				makeItem({
+					id: 'w-q1',
+					short_id: 'T-A40',
+					kind: 'task',
+					status: 'todo',
+					project_id: 'proj-a',
+					assignee_id: 'kai'
+				}),
+				makeItem({
+					id: 'w-q2',
+					short_id: 'T-A41',
+					kind: 'task',
+					status: 'todo',
+					project_id: 'proj-a'
+				})
+			],
+			inboxItems: [
+				makeInbox({
+					id: 'in-crash',
+					kind: 'problem',
+					title: 'Run crashed mentioning T-A40 and T-A41',
+					open: { path: '/work/T-A40', label: 'Open T-A40' },
+					actions: ['dismiss'],
+					project: { id: 'proj-a', name: 'Alpha Core' },
+					created_at: new Date(NOW - 2 * 3_600_000).toISOString()
+				})
+			],
+			activityRows: [
+				{
+					id: 'act-ta40',
+					at: new Date(NOW - 10 * 60_000).toISOString(),
+					actor: { id: 'kai', name: 'Kai Sato', kind: 'agent' },
+					kind: 'work',
+					action: 'task-done',
+					text: 'completed T-A40',
+					href: { path: '/work/T-A40', label: 'T-A40' },
+					teamIds: ['team-a'],
+					projectIds: ['proj-a'],
+					memberIds: ['kai']
+				}
+			],
+			projectScope: 'proj-a',
+			nowMs: NOW
+		});
+		expect(problemMentionModel.stageCounts.review).toBe(0);
+		expect(problemMentionModel.stageCounts.queue).toBe(2);
+		expect(problemMentionModel.humanWaitingItems).toEqual([]);
+		expect(problemMentionModel.waitingOnPeopleHours).toBe(0);
+		expect(problemMentionModel.openInboxWorkRefs.has('T-A40')).toBe(false);
+		expect(problemMentionModel.openInboxWorkRefs.has('T-A41')).toBe(false);
+		expect(problemMentionModel.streamEntries[0]?.needsYou).toBe(false);
+		expect(problemMentionModel.railAgents.find((a) => a.id === 'kai')?.status).toBe('idle');
+
+		// Office-prefixed references (e.g. T-A40) are extracted from prose for open approval matching
+		expect(extractWorkRefsFromText('assigned T-A40 Split the checkout service and T-B37')).toEqual([
+			'T-A40',
+			'T-B37'
+		]);
+
+		// Review-stage item without a linked Inbox review-entry timestamp returns null wait (never mutable updated_at)
+		// and empty activityRows produces empty lineEvents (never misattributed work-snapshot fallback)
+		const unlinkedOwnerReview = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'Acme Corp',
+			workItems: [
+				makeItem({
+					id: 'w-owner-blocked',
+					short_id: 'T-55',
+					kind: 'task',
+					status: 'blocked',
+					project_id: 'proj-a',
+					assignee_id: 'you',
+					updated_at: new Date(NOW - 30_000).toISOString()
+				})
+			],
+			inboxItems: [],
+			activityRows: [],
+			projectScope: 'proj-a',
+			ownerId: 'you',
+			nowMs: NOW
+		});
+		expect(unlinkedOwnerReview.humanWaitingItems).toHaveLength(1);
+		expect(unlinkedOwnerReview.waitingOnPeopleHours).toBeNull();
+		expect(unlinkedOwnerReview.lineEvents).toEqual([]);
+
+		// Linked Inbox item whose created_at was inferred from read time MUST leave waitingOnPeopleHours unavailable (null)
+		const inferredInboxReview = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'Acme Corp',
+			workItems: [
+				makeItem({
+					id: 'w-inferred-review',
+					short_id: 'T-56',
+					kind: 'task',
+					status: 'blocked',
+					project_id: 'proj-a',
+					assignee_id: 'you'
+				})
+			],
+			inboxItems: [
+				makeInbox({
+					id: 'in-inferred',
+					title: 'Approve T-56',
+					project: { id: 'proj-a', name: 'Alpha Core' },
+					created_at: new Date(NOW).toISOString(),
+					created_at_inferred: true
+				})
+			],
+			activityRows: [],
+			projectScope: 'proj-a',
+			ownerId: 'you',
+			nowMs: NOW
+		});
+		expect(inferredInboxReview.humanWaitingItems).toHaveLength(1);
+		expect(inferredInboxReview.waitingOnPeopleHours).toBeNull();
+
+		// Explicit archived project scope resolves its own items and decisions without dropping them
+		const archivedModel = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'Acme Corp',
+			workItems,
+			inboxItems: [],
+			activityRows: [],
+			projectScope: 'proj-old',
+			nowMs: NOW
+		});
+		expect(archivedModel.selectedProject?.id).toBe('proj-old');
+		expect(archivedModel.scopeTitle).toBe('Archived Legacy');
+		expect(archivedModel.totalItems).toBe(1);
+
+		const archivedDecisions = deriveDecisionStreamEntries({
+			snapshot,
+			decisionRows: [
+				{
+					id: 'dec-old',
+					at: new Date(NOW - 60_000).toISOString(),
+					actor: { id: 'kai', name: 'Kai Sato', kind: 'agent' },
+					kind: 'decision',
+					action: 'decision',
+					text: 'archived project decision',
+					teamIds: [],
+					projectIds: ['proj-old'],
+					memberIds: ['kai']
+				}
+			],
+			workItems,
+			inboxItems: [],
+			projectScope: 'proj-old',
+			decisionPhase: 'ready',
+			workPhase: 'ready',
+			inboxPhase: 'ready'
+		});
+		expect(archivedDecisions.map((e) => e.id)).toEqual(['dec-old']);
+
+		// Stale snapshot missing an explicit projectScope MUST NOT fall through to portfolio work or milestones
+		const staleMissing = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'New Project',
+			workItems,
+			inboxItems: [],
+			activityRows: [],
+			projectScope: 'proj-not-in-snapshot-yet',
+			nowMs: NOW
+		});
+		expect(staleMissing.totalItems).toBe(0);
+		expect(staleMissing.milestones).toHaveLength(1);
+		expect(staleMissing.milestones[0].id).toBe('proj-not-in-snapshot-yet');
+		expect(staleMissing.scopeTitle).toBe('New Project');
 	});
 });

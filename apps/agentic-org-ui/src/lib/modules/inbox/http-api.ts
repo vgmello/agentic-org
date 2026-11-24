@@ -242,6 +242,7 @@ function mapWireInboxItem(
 		dismissable: r.dismissable === true,
 		state
 	});
+	const recordedCreatedAt = msToIso(r.created_at_ms);
 	return {
 		rawSource,
 		item: {
@@ -254,7 +255,8 @@ function mapWireInboxItem(
 			...optField('project', mapRef(r.project)),
 			why: asStr(r.context) ?? summary,
 			...optField('recommendation', asStr(r.recommendation) || undefined),
-			created_at: msToIso(r.created_at_ms) ?? fallbackIso,
+			created_at: recordedCreatedAt ?? fallbackIso,
+			...(recordedCreatedAt ? {} : { created_at_inferred: true }),
 			...optField('expires_at', msToIso(r.expires_at_ms)),
 			actions,
 			...optField('choices', choices),
@@ -293,6 +295,9 @@ function mapSnoozedChatInboxItem(
 		conversationId && (!existing?.open || !/[?&]c=/.test(existing.open.path))
 			? { path: chatPath, label: existing?.open?.label ?? 'Open in Chat' }
 			: (existing?.open ?? { path: chatPath, label: 'Open in Chat' });
+	const recordedCreatedAt =
+		asStr(r.created_at) ??
+		(existing && !existing.created_at_inferred ? existing.created_at : undefined);
 	return {
 		rawSource: rawKind === 'request' ? 'ask' : 'mailbox',
 		item: {
@@ -305,7 +310,8 @@ function mapSnoozedChatInboxItem(
 			...optField('project', existing?.project),
 			why: reason ?? existing?.why ?? subject ?? 'Snoozed chat message waiting to return.',
 			...optField('recommendation', existing?.recommendation),
-			created_at: asStr(r.created_at) ?? existing?.created_at ?? fallbackIso,
+			created_at: recordedCreatedAt ?? fallbackIso,
+			...(recordedCreatedAt ? {} : { created_at_inferred: true }),
 			...optField('expires_at', expiresAt),
 			actions: existing?.actions.length ? existing.actions : ['reply', 'dismiss'],
 			open,

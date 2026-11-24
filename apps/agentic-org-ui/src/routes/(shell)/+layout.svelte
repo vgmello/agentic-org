@@ -364,6 +364,14 @@
 		min-height: 0;
 		height: auto;
 	}
+	@media (min-height: 640px) {
+		.exec-shell-main :global(.activity-workspace),
+		.exec-shell-main :global(.project-frame-activity) {
+			flex: 1 1 0%;
+			min-height: 0;
+			height: auto;
+		}
+	}
 	@media (height <= 320px) {
 		.exec-shell-main :global(.chat-frame) {
 			min-height: 28rem;

@@ -122,6 +122,19 @@ export interface StreamEntry {
 	};
 }
 
+export interface StationAgentSlot {
+	id: string;
+	name: string;
+	busy: boolean;
+}
+
+export interface LineEventEntry {
+	id: string;
+	at: string;
+	tone: 'ok' | 'warn' | 'bad' | '';
+	text: string;
+}
+
 export interface ActivityCommandCenterModel {
 	activeProjects: ProjectSummary[];
 	selectedProject?: ProjectSummary;
@@ -142,6 +155,20 @@ export interface ActivityCommandCenterModel {
 	needsYouCount: number;
 	openInboxCount: number;
 	actionableWorkCount: number;
+	/** Average hours from `created_at` to `updated_at` across completed/merged items; null when none. */
+	avgCycleHours: number | null;
+	/** Cumulative elapsed hours waiting on human review; 0 when no items wait, null until recorded waiting spans are served. */
+	waitingOnPeopleHours: number | null;
+	/** Uppercase work refs/IDs currently actionable by the owner in this scope. */
+	actionableWorkRefs: ReadonlySet<string>;
+	/** Uppercase work refs/IDs currently referenced by open Inbox items in this scope. */
+	openInboxWorkRefs: ReadonlySet<string>;
+	/** Active non-former agents for the project station slot dots. */
+	stationAgents: StationAgentSlot[];
+	/** Items currently waiting in human review for the project dock "Needs a human" section. */
+	humanWaitingItems: { id: string; title: string; href: string }[];
+	/** Chronological line event log (newest first, max 30) for the project dock. */
+	lineEvents: LineEventEntry[];
 	milestones: AssemblyMilestone[];
 	bottleneck: BottleneckSummary;
 	releaseGates: ReleaseGateRow[];
@@ -165,6 +192,8 @@ export interface CommandCenterInput {
 	inboxItems: readonly InboxItem[];
 	activityRows: readonly ActivityRow[];
 	projectScope: string;
+	/** Optional accountable + contributing team IDs for project-scoped Stations roster. */
+	scopedTeamIds?: readonly string[];
 	ownerId?: string;
 	feedPhase?: FeedPhase;
 	feedMore?: number;
@@ -175,6 +204,16 @@ export interface CommandCenterInput {
 
 const DAY_MS = 86_400_000;
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+const TELEMETRY_HOURS = new Intl.NumberFormat('en-US', {
+	minimumFractionDigits: 1,
+	maximumFractionDigits: 1
+});
+
+/** Formats a telemetry duration in hours (e.g. `14.5 h`), or `—` when null/unavailable. */
+export function formatTelemetryHours(hours: number | null | undefined): string {
+	if (hours === null || hours === undefined || !Number.isFinite(hours) || hours < 0) return '—';
+	return `${TELEMETRY_HOURS.format(hours)} h`;
+}
 
 export function computeCompletionPct(done: number, total: number): number {
 	if (total <= 0 || done <= 0) return 0;
@@ -194,7 +233,8 @@ export function inboxItemHref(inboxId: string): string {
 
 export function extractWorkRefsFromText(text: string | undefined): string[] {
 	if (!text) return [];
-	const matches = text.match(/\b[A-Z]+-\d+\b/g);
+	// Match both plain (`T-14`, `BUG-44`) and office-prefixed (`T-A40`, `T-B37`, `BUG-A12`) references.
+	const matches = text.match(/\b[A-Z]+-[A-Z]{0,3}\d+\b/g);
 	return matches ? matches.map((m) => m.toUpperCase()) : [];
 }
 
@@ -254,9 +294,15 @@ function belongsOnlyToArchivedProjects(
 	return projectIds.length > 0 && projectIds.every((pid) => archivedProjectIds.has(pid));
 }
 
-function buildInboxLookup(openInbox: readonly InboxItem[]): Map<string, InboxItem> {
+/**
+ * Lookup of open Inbox items that represent a genuine human review/decision/question gate
+ * on a work item (never pulling queued tasks into review from runtime `problem`/crash notices,
+ * even when those notices link to `/work/<ref>` or mention task refs in prose).
+ */
+function buildReviewInboxLookup(openInbox: readonly InboxItem[]): Map<string, InboxItem> {
 	const map = new Map<string, InboxItem>();
 	for (const inbox of openInbox) {
+		if (inbox.kind === 'problem') continue;
 		for (const ref of extractInboxWorkRefs(inbox)) {
 			if (!map.has(ref)) map.set(ref, inbox);
 		}
@@ -591,15 +637,15 @@ export function computeThroughput7d(timestamps: readonly string[], nowMs: number
 
 function matchInboxForRow(
 	row: ActivityRow,
-	inboxByRef: ReadonlyMap<string, InboxItem>,
+	reviewInboxByRef: ReadonlyMap<string, InboxItem>,
 	openInbox: readonly InboxItem[]
 ): InboxItem | undefined {
 	const pathRef = extractWorkRefFromPath(row.href?.path);
 	if (pathRef) {
-		const found = inboxByRef.get(pathRef);
+		const found = reviewInboxByRef.get(pathRef);
 		if (found) return found;
 		if (row.href?.path) {
-			return openInbox.find((i) => i.open?.path === row.href?.path);
+			return openInbox.find((i) => i.kind !== 'problem' && i.open?.path === row.href?.path);
 		}
 		return undefined;
 	}
@@ -608,7 +654,7 @@ function matchInboxForRow(
 		if (exact) return exact;
 	}
 	for (const ref of extractWorkRefsFromText(row.text)) {
-		const found = inboxByRef.get(ref);
+		const found = reviewInboxByRef.get(ref);
 		if (found) return found;
 	}
 	return undefined;
@@ -915,15 +961,13 @@ export function deriveDecisionStreamEntries(input: {
 	if (decisionPhase !== 'ready') return [];
 
 	const resolvedOwnerId = input.ownerId ?? owner(snapshot)?.id ?? 'owner';
-	const activeProjects = (snapshot.projects ?? []).filter((p) => !p.archived);
 	const archivedProjectIds = new Set(
 		(snapshot.projects ?? []).filter((p) => p.archived).map((p) => p.id)
 	);
-	const selectedProject =
-		projectScope === 'all' ? undefined : activeProjects.find((p) => p.id === projectScope);
+	const scopedProjectId = projectScope !== 'all' ? projectScope : undefined;
 
-	const scopedDecisionRows = selectedProject
-		? decisionRows.filter((row) => row.projectIds.includes(selectedProject.id))
+	const scopedDecisionRows = scopedProjectId
+		? decisionRows.filter((row) => row.projectIds.includes(scopedProjectId))
 		: decisionRows.filter(
 				(row) => !belongsOnlyToArchivedProjects(row.projectIds, archivedProjectIds)
 			);
@@ -938,19 +982,19 @@ export function deriveDecisionStreamEntries(input: {
 
 	const pipelineWork = workItems.filter((i) => !isExcludedTerminalItem(i));
 	const allOpenInbox = inboxPhase === 'ready' ? inboxItems.filter((i) => i.state === 'open') : [];
-	const scopedOpenInbox = selectedProject
-		? allOpenInbox.filter((i) => resolveInboxProjectId(i, workByRef) === selectedProject.id)
+	const scopedOpenInbox = scopedProjectId
+		? allOpenInbox.filter((i) => resolveInboxProjectId(i, workByRef) === scopedProjectId)
 		: allOpenInbox.filter((i) => {
 				const pid = resolveInboxProjectId(i, workByRef);
 				return !pid || !archivedProjectIds.has(pid);
 			});
-	const inboxByRef = buildInboxLookup(scopedOpenInbox);
+	const reviewInboxByRef = buildReviewInboxLookup(scopedOpenInbox);
 
 	const actionableWorkRefs = new Set<string>();
 	for (const item of pipelineWork) {
 		if (!isActionableWorkItem(item, resolvedOwnerId)) continue;
-		if (selectedProject && item.project_id !== selectedProject.id) continue;
-		if (!selectedProject && item.project_id && archivedProjectIds.has(item.project_id)) continue;
+		if (scopedProjectId && item.project_id !== scopedProjectId) continue;
+		if (!scopedProjectId && item.project_id && archivedProjectIds.has(item.project_id)) continue;
 		actionableWorkRefs.add(item.short_id.toUpperCase());
 		actionableWorkRefs.add(item.id.toUpperCase());
 	}
@@ -960,7 +1004,7 @@ export function deriveDecisionStreamEntries(input: {
 		scopedDecisionRows,
 		[],
 		scopedOpenInbox,
-		inboxByRef,
+		reviewInboxByRef,
 		actionableWorkRefs,
 		resolvedOwnerId,
 		decisionPhase,
@@ -985,10 +1029,13 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	);
 	const activeProjectIds = new Set(activeProjects.map((p) => p.id));
 
-	const selectedProject =
-		input.projectScope === 'all'
-			? undefined
-			: activeProjects.find((p) => p.id === input.projectScope);
+	const scopedProjectId = input.projectScope !== 'all' ? input.projectScope : undefined;
+	const selectedProject = scopedProjectId
+		? (snapshot.projects ?? []).find((p) => p.id === scopedProjectId)
+		: undefined;
+	const displayScopedProject: ProjectSummary | undefined = scopedProjectId
+		? (selectedProject ?? { id: scopedProjectId, name: organizationName })
+		: undefined;
 
 	const nonDeletedWork = workItems.filter((i) => !i.deleted);
 	const workByRef = new Map<string, WorkItemSummary>();
@@ -998,23 +1045,24 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	}
 
 	const pipelineWork = workItems.filter((i) => !isExcludedTerminalItem(i));
-	const scopedWork = selectedProject
-		? pipelineWork.filter((i) => i.project_id === selectedProject.id)
+	const scopedWork = scopedProjectId
+		? pipelineWork.filter((i) => i.project_id === scopedProjectId)
 		: pipelineWork.filter((i) => !i.project_id || !archivedProjectIds.has(i.project_id));
 
 	const allOpenInbox = inboxPhase === 'ready' ? inboxItems.filter((i) => i.state === 'open') : [];
-	const scopedOpenInbox = selectedProject
-		? allOpenInbox.filter((i) => resolveInboxProjectId(i, workByRef) === selectedProject.id)
+	const scopedOpenInbox = scopedProjectId
+		? allOpenInbox.filter((i) => resolveInboxProjectId(i, workByRef) === scopedProjectId)
 		: allOpenInbox.filter((i) => {
 				const pid = resolveInboxProjectId(i, workByRef);
 				return !pid || !archivedProjectIds.has(pid);
 			});
 
-	const inboxByRef = buildInboxLookup(scopedOpenInbox);
+	const reviewInboxByRef = buildReviewInboxLookup(scopedOpenInbox);
+	const openInboxWorkRefs = new Set<string>(reviewInboxByRef.keys());
 
 	// Scoped activity rows: exclude archived-only project rows on All projects, retain org-wide rows.
-	const scopedActivityRows = selectedProject
-		? activityRows.filter((row) => row.projectIds.includes(selectedProject.id))
+	const scopedActivityRows = scopedProjectId
+		? activityRows.filter((row) => row.projectIds.includes(scopedProjectId))
 		: activityRows.filter(
 				(row) => !belongsOnlyToArchivedProjects(row.projectIds, archivedProjectIds)
 			);
@@ -1022,7 +1070,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const areas = snapshot.areas ?? [];
 	const milestones: AssemblyMilestone[] = [];
 
-	const projectsToRender = selectedProject ? [selectedProject] : activeProjects;
+	const projectsToRender = displayScopedProject ? [displayScopedProject] : activeProjects;
 	for (const project of projectsToRender) {
 		const projItems = scopedWork.filter((i) => i.project_id === project.id);
 		const lanes = buildLanesForProject(
@@ -1030,7 +1078,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 			projItems,
 			areas,
 			snapshot,
-			inboxByRef,
+			reviewInboxByRef,
 			resolvedOwnerId
 		);
 		const doneCount = lanes.reduce((sum, l) => sum + l.doneCount, 0);
@@ -1052,7 +1100,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 		});
 	}
 
-	if (!selectedProject) {
+	if (!scopedProjectId) {
 		const unassignedItems = scopedWork.filter(
 			(i) => !i.project_id || !activeProjectIds.has(i.project_id)
 		);
@@ -1062,7 +1110,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 				unassignedItems,
 				[],
 				snapshot,
-				inboxByRef,
+				reviewInboxByRef,
 				resolvedOwnerId
 			);
 			const doneCount = lanes.reduce((sum, l) => sum + l.doneCount, 0);
@@ -1097,7 +1145,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	let actionableWorkCount = 0;
 
 	for (const item of scopedWork) {
-		const stage = classifyAssemblyStage(item, inboxByRef, resolvedOwnerId);
+		const stage = classifyAssemblyStage(item, reviewInboxByRef, resolvedOwnerId);
 		if (!stage) continue;
 		stageCounts[stage] += 1;
 		if (isActionableWorkItem(item, resolvedOwnerId)) {
@@ -1107,7 +1155,8 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 		}
 		if (stage === 'review') {
 			const linked =
-				inboxByRef.get(item.short_id.toUpperCase()) ?? inboxByRef.get(item.id.toUpperCase());
+				reviewInboxByRef.get(item.short_id.toUpperCase()) ??
+				reviewInboxByRef.get(item.id.toUpperCase());
 			if (linked) linkedInboxIds.add(linked.id);
 		}
 		if ((stage === 'agents' || stage === 'ci') && item.assignee_id) {
@@ -1129,11 +1178,56 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const unlinkedOpenInboxCount = scopedOpenInbox.filter((i) => !linkedInboxIds.has(i.id)).length;
 	const needsYouCount = stageCounts.review + unlinkedOpenInboxCount;
 
-	// Agents roster for KPI & rail
+	// Real delivery telemetry for project-scoped Assembly & dock (zero fabricated or misattributed values).
+	// WorkItemSummary lacks immutable lifecycle start/completion timestamps and recorded human-review
+	// waiting spans, so avgCycleHours stays null and waitingOnPeopleHours is 0 only when zero items wait
+	// (otherwise null / "—") until lifecycle transition history is served.
+	const avgCycleHours: number | null = null;
+	const humanWaitingItems: { id: string; title: string; href: string }[] = [];
+	for (const item of scopedWork) {
+		const stage = classifyAssemblyStage(item, reviewInboxByRef, resolvedOwnerId);
+		if (stage === 'review') {
+			const linked =
+				reviewInboxByRef.get(item.short_id.toUpperCase()) ??
+				reviewInboxByRef.get(item.id.toUpperCase());
+			humanWaitingItems.push({
+				id: item.id,
+				title: `${item.short_id} · ${item.title}`,
+				href: linked ? inboxItemHref(linked.id) : workItemHref(item)
+			});
+		}
+	}
+	const waitingOnPeopleHours: number | null = humanWaitingItems.length === 0 ? 0 : null;
+
+	// Agents roster for KPI & rail — project scope restricts station slots to project teams + assigned agents.
 	const nonFormerAgents = agentsOf(nonOwners(snapshot)).filter((m) => !isFormer(m));
-	const activeAgents = nonFormerAgents.filter((m) => m.agent?.status === 'active');
+	const allActiveAgents = nonFormerAgents.filter((m) => m.agent?.status === 'active');
+	const projectTeamSet = new Set<string>(input.scopedTeamIds ?? []);
+	if (scopedProjectId && projectTeamSet.size === 0) {
+		for (const pt of snapshot.project_teams ?? []) {
+			if (pt.project_id === scopedProjectId) projectTeamSet.add(pt.team_id);
+		}
+	}
+	const scopedAssigneeIds = new Set<string>();
+	for (const item of scopedWork) {
+		if (item.assignee_id) scopedAssigneeIds.add(item.assignee_id);
+	}
+	const activeAgents =
+		scopedProjectId && (projectTeamSet.size > 0 || scopedAssigneeIds.size > 0)
+			? allActiveAgents.filter(
+					(a) =>
+						(a.home_team_id && projectTeamSet.has(a.home_team_id)) ||
+						scopedAssigneeIds.has(a.id) ||
+						busyAssigneeIds.has(a.id)
+				)
+			: allActiveAgents;
 	const activeAgentsCount = activeAgents.length;
 	const busyAgentsCount = activeAgents.filter((a) => busyAssigneeIds.has(a.id)).length;
+	const stationAgents: StationAgentSlot[] = activeAgents.map((a) => ({
+		id: a.id,
+		name: a.name,
+		busy: busyAssigneeIds.has(a.id)
+	}));
 
 	const workByAssignee = new Map<string, WorkItemSummary[]>();
 	for (const item of scopedWork) {
@@ -1153,13 +1247,13 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 
 	const allRailAgents: RailAgentRow[] = nonFormerAgents.map((member) => {
 		const assigned = [...(workByAssignee.get(member.id) ?? [])].sort((a, b) => {
-			const sa = classifyAssemblyStage(a, inboxByRef, resolvedOwnerId) ?? 'merged';
-			const sb = classifyAssemblyStage(b, inboxByRef, resolvedOwnerId) ?? 'merged';
+			const sa = classifyAssemblyStage(a, reviewInboxByRef, resolvedOwnerId) ?? 'merged';
+			const sb = classifyAssemblyStage(b, reviewInboxByRef, resolvedOwnerId) ?? 'merged';
 			return stagePriority[sa] - stagePriority[sb] || compareItems(a, b);
 		});
 		const leadItem = assigned[0];
 		const leadStage = leadItem
-			? classifyAssemblyStage(leadItem, inboxByRef, resolvedOwnerId)
+			? classifyAssemblyStage(leadItem, reviewInboxByRef, resolvedOwnerId)
 			: null;
 
 		let status: RailAgentRow['status'] = 'idle';
@@ -1210,7 +1304,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 		scopedActivityRows,
 		scopedWork,
 		scopedOpenInbox,
-		inboxByRef,
+		reviewInboxByRef,
 		actionableWorkRefs,
 		resolvedOwnerId,
 		feedPhase,
@@ -1218,16 +1312,20 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	);
 	const streamNeedsYouCount = streamEntries.filter((e) => e.needsYou).length;
 
-	// Honest 7-day throughput derivation (source-specific labels and unavailable messaging)
+	// Honest 7-day throughput derivation (source-specific labels and unavailable messaging).
+	// In project scope, count work-delivery events only so chat/org messages never inflate delivery throughput.
+	const throughputRows = scopedProjectId
+		? scopedActivityRows.filter((r) => r.kind === 'work')
+		: scopedActivityRows;
 	let throughputSource: ThroughputSource;
 	let throughputTimestamps: string[] = [];
 	if (feedPhase === 'loading') {
 		throughputSource = 'loading';
 	} else if (feedPhase === 'error') {
 		throughputSource = 'unavailable';
-	} else if (scopedActivityRows.length > 0) {
+	} else if (throughputRows.length > 0) {
 		throughputSource = feedMore > 0 ? 'events_capped' : 'events';
-		throughputTimestamps = scopedActivityRows.map((r) => r.at);
+		throughputTimestamps = throughputRows.map((r) => r.at);
 	} else if (workPhase === 'ready') {
 		throughputSource = 'work_updates';
 		throughputTimestamps = scopedWork.map((i) => i.updated_at);
@@ -1240,8 +1338,11 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const throughput7d = computeThroughput7d(throughputTimestamps, nowMs);
 	const total7dCount = throughput7d.reduce((sum, d) => sum + d.count, 0);
 
-	let throughputMeta = `${total7dCount} ${total7dCount === 1 ? 'event' : 'events'}`;
-	let throughputAriaLabel = '7-day activity events';
+	const eventNoun = scopedProjectId ? 'work event' : 'event';
+	let throughputMeta = `${total7dCount} ${total7dCount === 1 ? eventNoun : `${eventNoun}s`}`;
+	let throughputAriaLabel = scopedProjectId
+		? '7-day work delivery events'
+		: '7-day activity events';
 	let throughputUnavailableMessage: string | undefined;
 
 	if (throughputSource === 'loading') {
@@ -1344,12 +1445,12 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const ciColumnSubLabel = `${stageCounts.ci} ready for checks`;
 	const ciStationLabel = ciColumnSubLabel;
 
-	const scopeEyebrow = selectedProject
-		? `${selectedProject.key ? `${selectedProject.key.toUpperCase()} · ` : ''}PRODUCTION LINE`
+	const scopeEyebrow = displayScopedProject
+		? `${displayScopedProject.key ? `${displayScopedProject.key.toUpperCase()} · ` : ''}PRODUCTION LINE`
 		: 'LIVE PIPELINE';
-	const scopeTitle = selectedProject ? selectedProject.name : 'All projects';
-	const scopeSubtitle = selectedProject
-		? `${selectedProject.name} · ${openItems} open, ${mergedItems} done`
+	const scopeTitle = displayScopedProject ? displayScopedProject.name : 'All projects';
+	const scopeSubtitle = displayScopedProject
+		? `${displayScopedProject.name} · ${openItems} open, ${mergedItems} done`
 		: `Assembly line and live stream across ${activeProjects.length} active ${activeProjects.length === 1 ? 'project' : 'projects'} in ${organizationName}`;
 
 	let liveStatusText = 'Ready for work';
@@ -1372,6 +1473,18 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 					? `${needsYouCount} ${needsYouCount === 1 ? 'item' : 'items'} waiting on human review`
 					: 'No human review bottlenecks right now';
 
+	// Build chronological line events strictly from recorded activity rows (never synthetic work-snapshot fallbacks).
+	const lineEvents: LineEventEntry[] =
+		feedPhase === 'ready' && scopedActivityRows.length > 0
+			? streamEntries.slice(0, 30).map((entry) => ({
+					id: entry.id,
+					at: entry.at,
+					tone:
+						entry.tone === 'ok' || entry.tone === 'warn' || entry.tone === 'bad' ? entry.tone : '',
+					text: `${entry.actorName} ${entry.text}`.trim()
+				}))
+			: [];
+
 	return {
 		activeProjects,
 		selectedProject,
@@ -1392,6 +1505,13 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 		needsYouCount,
 		openInboxCount: scopedOpenInbox.length,
 		actionableWorkCount,
+		avgCycleHours,
+		waitingOnPeopleHours,
+		actionableWorkRefs,
+		openInboxWorkRefs,
+		stationAgents,
+		humanWaitingItems,
+		lineEvents,
 		milestones,
 		bottleneck,
 		releaseGates,

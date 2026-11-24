@@ -262,7 +262,9 @@ html[data-ui-theme='graphite'] {
 	--exec-hor-date-bg: var(--graphite-panel);
 	--exec-hor-date-month-ink: #a2a5ad;
 	--exec-hor-date-day-ink: #f1f1f3;
+	--detail-panel-surface: #18191a;
 	--side-panel-surface: #18191a;
+	--assembly-surface: transparent;
 }
 
 html[data-ui-theme='graphite'] .exec-canvas::before,
@@ -399,6 +401,10 @@ html[data-ui-theme='graphite']:has(.work-header) .work-bcard[aria-current='true'
 		inset 0 0 0 1px var(--exec-border-hi);
 }
 
+html[data-ui-theme='graphite'] main:has(.activity-main[data-view='assembly']) {
+	background: #18191a;
+}
+
 html[data-ui-theme='graphite']:has(.work-header) .work-reading {
 	background: #18191a;
 	border-inline-start-color: var(--graphite-inbox-line);
@@ -409,6 +415,10 @@ html[data-ui-theme='graphite']:has(.work-header) .work-reading .work-kind {
 }
 
 @media (min-width: 960px) {
+	html[data-ui-theme='graphite'] main:has(.activity-main[data-view='assembly']) {
+		background: #18191a;
+	}
+
 	html[data-ui-theme='graphite']:has(.work-header) .work-reading {
 		box-shadow: inset 9px 0 12px -10px rgb(0 0 0 / 0.7);
 	}

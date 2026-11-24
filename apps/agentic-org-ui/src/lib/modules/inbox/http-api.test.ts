@@ -509,4 +509,40 @@ describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
 		await truncApi.list(ORG);
 		expect(truncApi.snoozedError?.(ORG)).toContain('first 2,000 snoozed items');
 	});
+
+	it('marks created_at_inferred when gateway omits created_at_ms and preserves recorded timestamps', async () => {
+		const api = createHttpInboxApi({
+			now: () => '2026-11-24T12:00:00Z',
+			http: {
+				read: vi.fn().mockResolvedValue(
+					ok({
+						as_of: { epoch: 1, seq: 99 },
+						items: [
+							{
+								ref: 'off-1:msg:recorded',
+								kind: 'approval',
+								summary: 'Recorded approval',
+								created_at_ms: Date.parse('2026-11-24T02:00:00Z'),
+								state: 'open'
+							},
+							{
+								ref: 'off-1:msg:inferred',
+								kind: 'approval',
+								summary: 'Inferred approval',
+								state: 'open'
+							}
+						]
+					})
+				),
+				submit: vi.fn().mockResolvedValue({ status: 404 })
+			}
+		});
+
+		const items = await api.list(ORG);
+		expect(items).toHaveLength(2);
+		expect(items[0].created_at).toBe('2026-11-24T02:00:00.000Z');
+		expect(items[0].created_at_inferred).toBeUndefined();
+		expect(items[1].created_at).toBe('2026-11-24T12:00:00Z');
+		expect(items[1].created_at_inferred).toBe(true);
+	});
 });

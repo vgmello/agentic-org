@@ -236,6 +236,12 @@ html[data-ui-theme='report-dark'] {
 	--work-row-hover: #242f3f;
 	--work-row-selected: #2a3351;
 	--work-selected-bar: #a5b4fc;
+
+	/* Report Night workspace surfaces (Prototype Release 53728c05) */
+	--detail-panel-surface: #1e2939;
+	--side-panel-surface: #1e2939;
+	--assembly-surface: #1e2939;
+	--workspace-secondary-surface: #1b2533;
 }
 
 html[data-ui-theme='report-dark'] .work-reading {
@@ -247,15 +253,17 @@ html[data-ui-theme='report-dark'] .work-reading .work-kind {
 	border-inline-start-color: rgba(255, 255, 255, 0.16);
 }
 
-/* Dark interior header tokens & section header surface (poc/v6.html 47d62a5b, poc/operations.css 19c88bd5) */
+/* Dark interior header tokens & workspace panel surfaces (Prototype Release 53728c05) */
 html[data-ui-theme='report-dark'][data-interior-page] {
 	--workspace-header: #2d3b50;
 	--workspace-header-divider: #7b8ca4;
 	--workspace-mode-selected: #363e60;
 }
 
-html[data-ui-theme='report-dark'] :is(.section-header, .project-header) {
-	background-color: #1b2533;
+html[data-ui-theme='report-dark'][data-interior-page]
+	:is(.triage-reading, .work-reading, .assembly-release, .project-telemetry) {
+	background-color: var(--detail-panel-surface);
+	background-image: none;
 }
 
 /* Separate the workspace command dialog from the dark page behind it (poc/v6.html ffe0e0ce) */

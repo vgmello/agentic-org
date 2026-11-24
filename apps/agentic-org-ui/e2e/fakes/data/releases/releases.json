@@ -54,6 +54,7 @@
 							"type": "task",
 							"title": "Receipt layout for small phones",
 							"status": "Done",
+							"milestoneId": "ms-b1-1",
 							"milestoneRef": "M-1"
 						},
 						{
@@ -62,6 +63,7 @@
 							"type": "task",
 							"title": "Idempotency key storage schema",
 							"status": "Done",
+							"milestoneId": "ms-b1-1",
 							"milestoneRef": "M-1"
 						}
 					],
@@ -185,6 +187,7 @@
 							"type": "task",
 							"title": "Split the checkout service",
 							"status": "In progress",
+							"milestoneId": "ms-b2-1",
 							"milestoneRef": "M-1"
 						},
 						{
@@ -193,6 +196,7 @@
 							"type": "task",
 							"title": "Saved cards behind a flag",
 							"status": "To do",
+							"milestoneId": "ms-b2-1",
 							"milestoneRef": "M-1"
 						}
 					],

@@ -63,7 +63,8 @@ export const STORAGE_KEYS = {
 	cozyHighContrast: 'agentic-org.ui.cozyHighContrast',
 	navCollapsed: 'agentic-org.ui.navCollapsed',
 	favorites: 'agentic-org.ui.favoriteProjects',
-	singleKey: 'agentic-org.ui.singleKey'
+	singleKey: 'agentic-org.ui.singleKey',
+	assemblyDividers: 'agentic-org.ui.assemblyDividers'
 } as const;
 
 const VALID_THEMES = new Set<UiTheme>(UI_THEMES.map((t) => t.id));
@@ -96,6 +97,7 @@ export interface UiPrefBootstrap {
 	navCollapsed: boolean;
 	favoriteProjects: string[];
 	singleKeyShortcuts: boolean;
+	assemblyDividers: boolean;
 }
 
 /**
@@ -118,12 +120,14 @@ export function resolveInitialPreferences({
 	let storedCollapsed: string | null = null;
 	let storedFavs: string | null = null;
 	let storedSingleKey: string | null = null;
+	let storedAssemblyDividers: string | null = null;
 	try {
 		storedThemeRaw = storage?.getItem(STORAGE_KEYS.theme) ?? null;
 		storedCozyContrast = storage?.getItem(STORAGE_KEYS.cozyHighContrast) ?? null;
 		storedCollapsed = storage?.getItem(STORAGE_KEYS.navCollapsed) ?? null;
 		storedFavs = storage?.getItem(STORAGE_KEYS.favorites) ?? null;
 		storedSingleKey = storage?.getItem(STORAGE_KEYS.singleKey) ?? null;
+		storedAssemblyDividers = storage?.getItem(STORAGE_KEYS.assemblyDividers) ?? null;
 	} catch {
 		// Private browsing or blocked storage: fall back safely to defaults.
 	}
@@ -148,7 +152,8 @@ export function resolveInitialPreferences({
 		cozyHighContrast: storedCozyContrast === '1',
 		navCollapsed: storedCollapsed === '1',
 		favoriteProjects,
-		singleKeyShortcuts: storedSingleKey !== '0'
+		singleKeyShortcuts: storedSingleKey !== '0',
+		assemblyDividers: storedAssemblyDividers === '1'
 	};
 }
 
@@ -156,7 +161,8 @@ export function resolveInitialPreferences({
 export function applyUiAttributes(
 	root: HTMLElement | undefined,
 	theme: UiTheme,
-	cozyHighContrast = false
+	cozyHighContrast = false,
+	assemblyDividers = false
 ): void {
 	if (!root) return;
 	root.dataset.uiMode = 'executive';
@@ -165,6 +171,11 @@ export function applyUiAttributes(
 		root.dataset.cozyContrast = 'high';
 	} else {
 		delete root.dataset.cozyContrast;
+	}
+	if (assemblyDividers) {
+		root.dataset.assemblyDividers = '';
+	} else {
+		delete root.dataset.assemblyDividers;
 	}
 	const isLight = isLightTheme(theme);
 	root.classList.toggle('dark', !isLight);
@@ -186,6 +197,7 @@ class UiPreferencesStore {
 	navCollapsed = $state(false);
 	favoriteProjects = $state<string[]>([]);
 	singleKeyShortcuts = $state(true);
+	assemblyDividers = $state(false);
 	#hydrated = false;
 
 	hydrate(search = typeof window !== 'undefined' ? window.location.search : ''): void {
@@ -196,6 +208,7 @@ class UiPreferencesStore {
 		this.navCollapsed = resolved.navCollapsed;
 		this.favoriteProjects = resolved.favoriteProjects;
 		this.singleKeyShortcuts = resolved.singleKeyShortcuts;
+		this.assemblyDividers = resolved.assemblyDividers;
 		this.#hydrated = true;
 
 		// Persist explicit URL overrides and auto-migrate persisted 'light' -> 'report'.
@@ -249,6 +262,16 @@ class UiPreferencesStore {
 		this.#save(STORAGE_KEYS.singleKey, enabled ? '1' : '0');
 	}
 
+	setAssemblyDividers(enabled: boolean): void {
+		this.assemblyDividers = enabled;
+		this.#save(STORAGE_KEYS.assemblyDividers, enabled ? '1' : '0');
+		this.syncDom();
+	}
+
+	toggleAssemblyDividers(): void {
+		this.setAssemblyDividers(!this.assemblyDividers);
+	}
+
 	isFavorite(projectId: string): boolean {
 		return this.favoriteProjects.includes(projectId);
 	}
@@ -264,7 +287,12 @@ class UiPreferencesStore {
 
 	syncDom(): void {
 		if (typeof document === 'undefined') return;
-		applyUiAttributes(document.documentElement, this.theme, this.cozyHighContrast);
+		applyUiAttributes(
+			document.documentElement,
+			this.theme,
+			this.cozyHighContrast,
+			this.assemblyDividers
+		);
 	}
 
 	#save(key: string, value: string): void {
