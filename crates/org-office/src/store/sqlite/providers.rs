@@ -3,8 +3,7 @@
 //! (`TASK-54`, `doc-88` §3/§6, `doc-89`, `TASK-2` non-blocking in-memory permit heartbeats).
 
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -17,13 +16,24 @@ use org_proto::{ApiError, ErrorCode};
 use rusqlite::{params, Connection};
 
 use crate::error::OfficeError;
+use crate::private_fs::{
+    absolute, private_dir, private_dir_synced, tighten_dir, write_private_atomic,
+};
 use crate::providers::{
     ConnectionQuotaState, OfficeConnectionBinding, OfficeConnectionModel, OfficeConnectionState,
     PermitAcquireOutcome, PermitAcquireRequest, PermitSnapshot, ProviderPoolStore,
     TurnPermitRecord, PERMIT_LEASE_MS,
 };
 
-static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
+use super::companion::open_and_reconcile_companion_db;
+
+const PROVIDERS_ADAPTER_FORMAT: u32 = 1;
+const PROVIDERS_PRAGMAS: &str = "
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = FULL;
+PRAGMA foreign_keys = ON;
+PRAGMA busy_timeout = 5000;
+";
 
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS coordinator_meta (
@@ -139,19 +149,9 @@ impl SqliteProviderPoolStore {
             .join("connections");
         let authority_dir = durable_root.join("authority").join("agent-execution");
         let protected_dir = runtime_root.join(office_id).join("protected");
-        ensure_dir_0700(&bindings_dir)?;
-        ensure_dir_0700(&authority_dir)?;
+        private_dir_synced(durable_root, &bindings_dir).map_err(OfficeError::storage)?;
+        private_dir_synced(durable_root, &authority_dir).map_err(OfficeError::storage)?;
         ensure_dir_0700(&protected_dir)?;
-
-        let db_path = protected_dir.join("providers.db");
-        ensure_file_0600(&db_path)?;
-        let mut conn = Connection::open(&db_path).map_err(OfficeError::storage)?;
-        conn.pragma_update(None, "journal_mode", "WAL")
-            .map_err(OfficeError::storage)?;
-        conn.pragma_update(None, "synchronous", "NORMAL")
-            .map_err(OfficeError::storage)?;
-        conn.execute_batch(SCHEMA_SQL)
-            .map_err(OfficeError::storage)?;
 
         // Coordinator startup (`doc-88` §6): increment generation and move prior `active` permits
         // to `release_pending` durably before admitting any new permit.
@@ -185,12 +185,22 @@ impl SqliteProviderPoolStore {
                 .unwrap_or_default();
         let bindings = load_all_durable_bindings(&bindings_dir, org_id, office_id)?;
 
-        reconcile_db(
-            &mut conn,
-            coordinator_generation,
-            &bindings,
-            &cooldowns,
-            &permits,
+        let db_path = absolute(protected_dir.join("providers.db")).map_err(OfficeError::storage)?;
+        let conn = open_and_reconcile_companion_db(
+            &db_path,
+            "providers",
+            PROVIDERS_ADAPTER_FORMAT,
+            SCHEMA_SQL,
+            PROVIDERS_PRAGMAS,
+            |conn| {
+                reconcile_db(
+                    conn,
+                    coordinator_generation,
+                    &bindings,
+                    &cooldowns,
+                    &permits,
+                )
+            },
         )?;
 
         Ok(Self {
@@ -283,7 +293,7 @@ impl ProviderPoolStore for SqliteProviderPoolStore {
         let mut conn = self.lock_db();
         let path = self.binding_path(&binding.connection_id);
         if let Some(parent) = path.parent() {
-            ensure_dir_0700(parent)?;
+            private_dir_synced(&self.bindings_dir, parent).map_err(OfficeError::storage)?;
         }
         write_json_atomic(&path, binding)?;
         let tx = conn.transaction().map_err(OfficeError::storage)?;
@@ -982,81 +992,11 @@ fn read_json_optional<T: serde::de::DeserializeOwned>(
 }
 
 fn write_json_atomic<T: serde::Serialize>(path: &Path, val: &T) -> Result<(), OfficeError> {
-    let parent = path.parent().ok_or_else(|| {
-        OfficeError::storage(std::io::Error::other("durable path missing parent"))
-    })?;
     let bytes = serde_json::to_vec_pretty(val).map_err(OfficeError::storage)?;
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = parent.join(format!(".providers.{}.{seq}.tmp", std::process::id()));
-    let mut f = open_0600_create(&tmp)?;
-    f.write_all(&bytes).map_err(OfficeError::storage)?;
-    f.sync_all().map_err(OfficeError::storage)?;
-    drop(f);
-    fs::rename(&tmp, path).map_err(OfficeError::storage)?;
-    sync_parent_dir(parent)?;
-    Ok(())
+    write_private_atomic(path, &bytes).map_err(OfficeError::storage)
 }
 
 fn ensure_dir_0700(dir: &Path) -> Result<(), OfficeError> {
-    fs::create_dir_all(dir).map_err(OfficeError::storage)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
-            .map_err(OfficeError::storage)?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        Err(OfficeError::storage(
-            "protected provider store requires Unix 0700 directory permissions",
-        ))
-    }
-}
-
-fn ensure_file_0600(path: &Path) -> Result<(), OfficeError> {
-    if !path.exists() {
-        let _ = open_0600_create(path)?;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-            .map_err(OfficeError::storage)?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        Err(OfficeError::storage(
-            "protected provider store requires Unix 0600 file permissions",
-        ))
-    }
-}
-
-fn open_0600_create(path: &Path) -> Result<fs::File, OfficeError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(OfficeError::storage)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Err(OfficeError::storage(
-            "protected provider store requires Unix 0600 file permissions",
-        ))
-    }
-}
-
-fn sync_parent_dir(parent: &Path) -> Result<(), OfficeError> {
-    if let Ok(dir) = fs::File::open(parent) {
-        let _ = dir.sync_all();
-    }
-    Ok(())
+    private_dir(dir).map_err(OfficeError::storage)?;
+    tighten_dir(dir).map_err(OfficeError::storage)
 }

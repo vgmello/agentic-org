@@ -119,6 +119,40 @@ fn builtin_instructions_stay_under_10kib_and_all_named_commands_exist_in_live_ta
     assert!(hr_obj.contains("requester confirmation"));
 }
 
+#[test]
+fn denied_office_globs_cover_durable_private_notes_and_protected_companion_trees() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    );
+    let globs: Vec<String> = mgr
+        .denied_office_globs()
+        .into_iter()
+        .map(|g| g.as_str().to_owned())
+        .collect();
+    let durable = office
+        .durable_root()
+        .canonicalize()
+        .unwrap_or_else(|_| office.durable_root().to_path_buf());
+    let office_local = durable.join("local/offices").join(&office.info().office_id);
+    for expected in [
+        durable.join("private"),
+        durable.join("messaging"),
+        durable.join("budgets"),
+        durable.join("accounting"),
+        durable.join("recovery"),
+        office_local.join("security"),
+        office_local.join("subscription-usage"),
+    ] {
+        let needle = format!("{}/**", expected.display());
+        assert!(
+            globs.contains(&needle),
+            "denied_office_globs missing `{needle}`; got {globs:?}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ENROLL-7: Presets, default-on sandbox, escalation & bypass refusal
 // ---------------------------------------------------------------------------

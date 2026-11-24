@@ -77,18 +77,15 @@ use crate::{
     },
 };
 
-/// Opens the isolated per-author private task notes store (`TASK-50`, `L8`, `ADR-0016`)
-/// at `<runtime-root>/<office-id>/private/task-notes.db` for SQLite or in-memory for tests.
+/// Opens the isolated HQ-authoritative per-author private task notes store (`TASK-50`, `L8`,
+/// `ADR-0016`, `doc-79`, `TASK-97` ARCH-01) at `<durable-root>/private/task-notes.db` for SQLite
+/// or in-memory for tests.
 pub(crate) fn open_private_notes(
     engine: EngineChoice,
-    runtime_root: &Path,
-    office_id: &str,
+    durable_root: &Path,
 ) -> Result<Arc<dyn PrivateNotesStore>, OfficeError> {
     match engine {
-        EngineChoice::Sqlite => Ok(Arc::new(SqlitePrivateNotesStore::open(
-            runtime_root,
-            office_id,
-        )?)),
+        EngineChoice::Sqlite => Ok(Arc::new(SqlitePrivateNotesStore::open(durable_root)?)),
         #[cfg(any(test, feature = "testkit"))]
         EngineChoice::Memory => Ok(Arc::new(
             crate::private_notes::memory::MemoryPrivateNotesStore::new(),
@@ -356,6 +353,7 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
         projectors,
         Arc::clone(&config.clock),
     );
+    parts.excluded_prefixes = companion_store_exclusions(&here.office_id);
     parts.flush_interval = config.flush_interval;
     parts.opening = config.opening.clone();
     #[cfg(any(test, feature = "testkit"))]
@@ -509,43 +507,76 @@ impl OfficeStore {
     }
 }
 
-fn apply_imported_to_engine(
-    engine: &SqliteEngine,
+fn companion_store_exclusions(office_id: &Id) -> Vec<org_store::DurablePath> {
+    [
+        "authority/agent-execution".to_owned(),
+        "accounting".to_owned(),
+        "budgets".to_owned(),
+        format!("local/offices/{office_id}/connections"),
+        format!("local/offices/{office_id}/auth"),
+        format!("local/offices/{office_id}/subscription-usage"),
+        format!("local/offices/{office_id}/agents"),
+        format!("local/offices/{office_id}/sessions"),
+        format!("local/offices/{office_id}/enroll-tmp"),
+    ]
+    .into_iter()
+    .map(|p| org_store::DurablePath::parse(&p).expect("valid companion store prefix"))
+    .collect()
+}
+
+fn structure_doc_id_from_path(path: &org_store::DurablePath) -> Option<Id> {
+    use crate::processes::records::StructureDocPath;
+    match crate::processes::records::parse_path(path)? {
+        StructureDocPath::Organization(_, id)
+        | StructureDocPath::Team(_, _, id)
+        | StructureDocPath::Project(_, _, id) => Some(id),
+    }
+}
+
+fn apply_imported_to_engine<E: OfficeEngine>(
+    engine: &E,
     organization_id: &Id,
     files: &std::collections::BTreeMap<org_store::DurablePath, Vec<u8>>,
 ) -> Result<(), crate::organization::import::ImportError> {
     use crate::organization::import::ImportError;
-    use org_store::{CorePort, Engine, ProjectionError, Sha256};
+    use org_store::{CorePort, ProjectionError, Sha256};
 
-    let org_proj = OrganizationFiles::new(organization_id.clone());
-    let proj_proj = ProjectFiles::new(organization_id.clone());
+    // Mount every shared `state/` family projector (`OrganizationFiles`, `ProjectFiles`,
+    // `TaskFiles`, `ProcessFiles`). Non-Git families (`MessagingFiles`, `OfficeLocalFiles`)
+    // stay intentionally excluded so private/local files smuggled into Git fail closed (`TASK-97`).
+    let projectors: Vec<Box<dyn Projector<E>>> = vec![
+        Box::new(OrganizationFiles::new(organization_id.clone())),
+        Box::new(ProjectFiles::new(organization_id.clone())),
+        Box::new(TaskFiles::new()),
+        Box::new(ProcessFiles::new()),
+    ];
     engine
         .replace(&mut |tx| {
+            let mut seen_structure_docs: std::collections::BTreeMap<Id, org_store::DurablePath> =
+                std::collections::BTreeMap::new();
             for (path, bytes) in files {
-                let owned_org =
-                    <OrganizationFiles as Projector<SqliteEngine>>::owns(&org_proj, path);
-                let owned_proj = <ProjectFiles as Projector<SqliteEngine>>::owns(&proj_proj, path);
-                match (owned_org, owned_proj) {
-                    (true, false) => <OrganizationFiles as Projector<SqliteEngine>>::apply(
-                        &org_proj,
-                        tx,
-                        path,
-                        Some(bytes),
-                    )?,
-                    (false, true) => <ProjectFiles as Projector<SqliteEngine>>::apply(
-                        &proj_proj,
-                        tx,
-                        path,
-                        Some(bytes),
-                    )?,
-                    (false, false) => {
+                if let Some(doc_id) = structure_doc_id_from_path(path) {
+                    if let Some(prev) = seen_structure_docs.insert(doc_id.clone(), path.clone()) {
+                        return Err(ProjectionError::new(
+                            path,
+                            format!(
+                                "duplicate structure document id `{doc_id}` already defined at `{prev}`"
+                            ),
+                        )
+                        .into());
+                    }
+                }
+                let mut owners = projectors.iter().filter(|p| p.owns(path));
+                match (owners.next(), owners.next()) {
+                    (Some(owner), None) => owner.apply(tx, path, Some(bytes))?,
+                    (None, _) => {
                         return Err(ProjectionError::new(
                             path,
                             "unrecognized file in organization state",
                         )
                         .into());
                     }
-                    (true, true) => {
+                    (Some(_), Some(_)) => {
                         return Err(ProjectionError::new(
                             path,
                             "ambiguous file owner in organization state",
@@ -555,8 +586,9 @@ fn apply_imported_to_engine(
                 }
                 tx.set_source(path, Some(Sha256::of(bytes)))?;
             }
-            <OrganizationFiles as Projector<SqliteEngine>>::validate(&org_proj, tx)?;
-            <ProjectFiles as Projector<SqliteEngine>>::validate(&proj_proj, tx)?;
+            for projector in &projectors {
+                projector.validate(tx)?;
+            }
             Ok(org_store::Cursor {
                 ordinal: 0,
                 sha256: Sha256::of(b"import-validation"),
@@ -576,10 +608,10 @@ fn apply_imported_to_engine(
         })
 }
 
-/// Validates a complete map of imported `state/` files against the production `OrganizationFiles`
-/// and `ProjectFiles` projectors and SQLite constraints using a disposable private projection
-/// database (`TASK-39` / R1). Any invalid or unrecognized file fails closed with its exact path
-/// and reason.
+/// Validates a complete map of imported `state/` files against all shared-state production
+/// projectors (`OrganizationFiles`, `ProjectFiles`, `TaskFiles`, `ProcessFiles`) and SQLite
+/// constraints using a disposable private projection database (`TASK-39` / R1, `TASK-97`).
+/// Any invalid or unrecognized file fails closed with its exact path and reason.
 pub(crate) fn validate_imported_files(
     organization_id: &Id,
     files: &std::collections::BTreeMap<org_store::DurablePath, Vec<u8>>,

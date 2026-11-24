@@ -320,18 +320,49 @@ impl SessionManager {
         let _ = self.store.clear_suspended_state(employee_id);
     }
 
-    /// Scans all session folders and retries any held resumes or due pending wakes (`ASK-6`, `LIVE-3`, `LIVE-4`).
+    /// Scans all session folders, flushes any deferred session usage, and retries any held resumes
+    /// or due pending wakes (`ASK-6`, `LIVE-3`, `LIVE-4`).
     pub fn process_due_wakes(&self) {
         let Ok(ids) = self.store.list_employee_ids() else {
             return;
         };
         for emp_id in ids {
+            let _ = flush_pending_usage(&self.office, &self.store, &emp_id);
             let _ = self.process_due_wakes_for(&emp_id);
         }
     }
 
+    /// Flushes all deferred/overflow session usage across every known employee into office
+    /// accounting (called on clean office shutdown after all live pumps have stopped). Returns
+    /// the number of usage records still unpersisted after the flush attempt.
+    pub fn flush_all_pending_usage(&self) -> usize {
+        let Ok(ids) = self.store.list_employee_ids() else {
+            return 0;
+        };
+        let mut remaining = 0usize;
+        for emp_id in ids {
+            let _ = flush_pending_usage(&self.office, &self.store, &emp_id);
+            let overflow = self.store.pending_usage_overflow_count(&emp_id);
+            let pending = self
+                .store
+                .read_pending_usage(&emp_id)
+                .map(|v| v.len())
+                .unwrap_or(0);
+            if overflow > 0 || pending > 0 {
+                remaining = remaining.saturating_add(overflow).saturating_add(pending);
+                eprintln!(
+                    "org-office-sessions: warning: {emp_id} still has {pending} pending and {overflow} overflow usage record(s) after shutdown flush"
+                );
+            }
+        }
+        remaining
+    }
+
     /// Retries any held required-ask resume, mutual-deadlock breaker, or pending wake queue for `employee_id`.
     pub fn process_due_wakes_for(&self, employee_id: &str) -> WakeOutcome {
+        if crate::manager::is_admissions_closed(self) {
+            return WakeOutcome::Ignored;
+        }
         let Some(employee) = self.load_agent_employee(employee_id) else {
             return WakeOutcome::Ignored;
         };
@@ -463,17 +494,17 @@ impl SessionManager {
             window_ms: self.config.wake_window.as_millis() as u64,
         };
         let on_turn_ended: TurnEndedHook = Arc::new(move |emp_id: &str| {
+            let _ = flush_pending_usage(&drain_ctx.office, &drain_ctx.store, emp_id);
             let _ = drain_ctx.office.mark_budget_holds_stopped(emp_id);
             drain_pending_wakes_into_live_pump(emp_id, &drain_ctx);
         });
 
         let usage_office = Arc::clone(&self.office);
+        let usage_store = self.store.clone();
         let usage_seq = Arc::new(std::sync::atomic::AtomicU64::new(1));
-        let usage_baselines: Arc<Mutex<std::collections::HashMap<String, CumulativeBaseline>>> =
-            Arc::new(Mutex::new(std::collections::HashMap::new()));
         let on_usage: crate::pump::UsageHook = Arc::new(move |emp_id, run_id, usage| {
             let seq = usage_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            record_session_usage(&usage_office, &usage_baselines, emp_id, run_id, seq, usage);
+            record_session_usage(&usage_office, &usage_store, emp_id, run_id, seq, usage);
         });
 
         let (on_permit_acquire, on_permit_renew, on_permit_release, on_permit_release_pending) =
@@ -487,9 +518,9 @@ impl SessionManager {
         let failover_weak = self.weak_self();
         let on_failover: FailoverHook = Arc::new(move |req| {
             if let Some(mgr) = failover_weak.as_ref().and_then(|w| w.upgrade()) {
-                let _ = std::thread::Builder::new()
-                    .name("org-pool-failover".into())
-                    .spawn(move || mgr.failover_relaunch(req));
+                crate::manager::spawn_bg_worker(&mgr, "org-pool-failover", move |m| {
+                    m.failover_relaunch(req)
+                });
             }
         });
 
@@ -1216,9 +1247,7 @@ fn build_permit_hooks(
     let on_permit_release: PermitReleaseHook = Arc::new(move |permit_id| {
         let _ = release_office.release_turn_permit(permit_id);
         if let Some(m) = release_weak.as_ref().and_then(|w| w.upgrade()) {
-            let _ = std::thread::Builder::new()
-                .name("org-permit-wake".into())
-                .spawn(move || m.process_due_wakes());
+            crate::manager::spawn_bg_worker(&m, "org-permit-wake", |m| m.process_due_wakes());
         }
     });
 
@@ -1342,6 +1371,13 @@ fn acquire_live_handle_permit(
 }
 
 fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) {
+    if !ctx
+        .store
+        .pending_wakes_path(employee_id)
+        .is_ok_and(|p| p.exists())
+    {
+        return;
+    }
     let Some(_dispatch_guard) = DispatchWakeGuard::try_acquire(&ctx.dispatching_wakes, employee_id)
     else {
         return;
@@ -1441,110 +1477,109 @@ fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) 
     }
 }
 
-#[derive(Default)]
-struct CumulativeBaseline {
-    input: u64,
-    output: u64,
-    cache_read: u64,
-    cache_write: u64,
-    reasoning: u64,
-    cost_micro_usd: u64,
-}
-
 fn record_session_usage(
     office: &Office,
-    baselines: &Mutex<std::collections::HashMap<String, CumulativeBaseline>>,
+    store: &SessionStore,
     emp_id: &str,
     run_id: &str,
     seq: u64,
     usage: &org_agent_runtime::Usage,
 ) {
-    use org_agent_runtime::{CostBasis, UsageScope};
-    use org_proto::costs::{
-        AttributionBasis, CostUsageRecordParams, UsageActorKind, UsageScopeKind,
-    };
-    let mut map = baselines.lock().unwrap_or_else(|p| p.into_inner());
-    let base = map.entry(run_id.to_owned()).or_default();
-    let (in_tok, out_tok, cr_tok, cw_tok, reas_tok) = match usage.token_scope {
-        UsageScope::Cumulative => {
-            let d = (
-                usage.input.saturating_sub(base.input),
-                usage.output.saturating_sub(base.output),
-                usage.cache_read.saturating_sub(base.cache_read),
-                usage.cache_write.saturating_sub(base.cache_write),
-                usage.reasoning.saturating_sub(base.reasoning),
-            );
-            base.input = base.input.max(usage.input);
-            base.output = base.output.max(usage.output);
-            base.cache_read = base.cache_read.max(usage.cache_read);
-            base.cache_write = base.cache_write.max(usage.cache_write);
-            base.reasoning = base.reasoning.max(usage.reasoning);
-            d
-        }
-        _ => (
-            usage.input,
-            usage.output,
-            usage.cache_read,
-            usage.cache_write,
-            usage.reasoning,
-        ),
-    };
-    let raw_cost = match usage.cost_basis {
-        CostBasis::ListPriceEstimate => usage
-            .cost_usd
-            .filter(|v| v.is_finite() && *v >= 0.0)
-            .map(|v| (v * 1_000_000.0).round() as u64),
-        _ => None,
-    };
-    let runtime_cost_micro_usd = match (raw_cost, usage.cost_scope) {
-        (Some(total), UsageScope::Cumulative) => {
-            let delta = total.saturating_sub(base.cost_micro_usd);
-            base.cost_micro_usd = base.cost_micro_usd.max(total);
-            Some(delta)
-        }
-        (Some(delta), _) => Some(delta),
-        (None, _) => None,
-    };
-    drop(map);
-    let meta = serde_json::json!({
-        "token_scope": format!("{:?}", usage.token_scope),
-        "cost_scope": format!("{:?}", usage.cost_scope),
-        "cost_basis": format!("{:?}", usage.cost_basis),
-    })
-    .to_string();
-    let params = CostUsageRecordParams {
-        id: None,
-        producer_id: format!("session-{emp_id}"),
-        source_event_id: format!("{run_id}:{seq}"),
-        run_id: Some(run_id.to_owned()),
-        actor_kind: UsageActorKind::Agent,
-        employee_id: Some(emp_id.to_owned()),
-        runtime: "agent_session".into(),
-        provider: None,
-        model: usage.model.clone(),
+    let entry = crate::recovery::DeferredUsageEntry {
+        run_id: run_id.to_owned(),
+        seq,
         occurred_at: rfc3339_now(),
-        source_metadata_json: Some(meta),
-        input_tokens: Some(in_tok),
-        output_tokens: Some(out_tok),
-        cache_read_tokens: Some(cr_tok),
-        cache_write_tokens: Some(cw_tok),
-        reasoning_tokens: Some(reas_tok),
-        token_issue: None,
-        runtime_cost_micro_usd,
-        is_subscription: false,
-        // `doc-87` / `doc-51` COST-3: unattributed session usage is NEVER defaulted to home team.
-        scope_kind: UsageScopeKind::Organization,
-        task_id: None,
-        project_id: None,
-        team_id: None,
-        feature_id: None,
-        milestone_id: None,
-        release_id: None,
-        task_type_snapshot: None,
-        work_type: None,
-        attribution_basis: AttributionBasis::Unattributed,
+        usage: usage.clone(),
     };
-    let _ = office.record_office_usage(params);
+    if let Err(err) = store.stage_usage_observation(emp_id, entry) {
+        eprintln!(
+            "org-office-sessions: warning: failed to durably stage usage {run_id}:{seq} for {emp_id}: {err} (buffered in memory for retry)"
+        );
+        return;
+    }
+    let _ = flush_pending_usage(office, store, emp_id);
+}
+
+fn is_permanent_usage_rejection(code: org_proto::ErrorCode) -> bool {
+    matches!(
+        code,
+        org_proto::ErrorCode::InvalidRequest | org_proto::ErrorCode::NotAuthorized
+    )
+}
+
+fn record_permanent_usage_rejection(
+    store: &SessionStore,
+    emp_id: &str,
+    params: &org_proto::costs::CostUsageRecordParams,
+    err: &org_proto::ApiError,
+) -> bool {
+    let rejected = crate::recovery::RejectedUsageEntry {
+        params: params.clone(),
+        error_code: format!("{:?}", err.code),
+        error_message: err.message.clone(),
+        rejected_at: rfc3339_now(),
+    };
+    if let Err(io_err) = store.append_rejected_usage(emp_id, &rejected) {
+        eprintln!(
+            "org-office-sessions: warning: failed to persist rejected usage dead-letter {}:{} for {emp_id}: {io_err}",
+            params.producer_id, params.source_event_id
+        );
+        return false;
+    }
+    eprintln!(
+        "org-office-sessions: warning: usage {}:{} for {emp_id} permanently rejected ({:?}: {}); dead-lettered",
+        params.producer_id, params.source_event_id, err.code, err.message
+    );
+    true
+}
+
+/// Drains any durably staged usage events for `emp_id` into office accounting (`TASK-97`).
+/// First flushes any in-memory overflow into `usage-capture.v1.json` in strict FIFO order, then
+/// submits pending records idempotently by `(producer_id, source_event_id)`. Transient failures
+/// keep remaining events pending for later retry; permanent validation errors are durably
+/// dead-lettered into `rejected-usage.v1.json` before dequeuing.
+pub(crate) fn flush_pending_usage(office: &Office, store: &SessionStore, emp_id: &str) -> usize {
+    if store.pending_usage_overflow_count(emp_id) == 0
+        && !store.usage_capture_path(emp_id).is_ok_and(|p| p.exists())
+    {
+        return 0;
+    }
+    if let Err(err) = store.flush_overflow_usage(emp_id) {
+        eprintln!(
+            "org-office-sessions: warning: failed to flush usage overflow for {emp_id}: {err}"
+        );
+    }
+    let Ok(pending) = store.read_pending_usage(emp_id) else {
+        return 0;
+    };
+    if pending.is_empty() {
+        return 0;
+    }
+    let mut acked: Vec<(String, String)> = Vec::new();
+    let mut flushed = 0usize;
+    for params in pending {
+        let key = (params.producer_id.clone(), params.source_event_id.clone());
+        match office.record_office_usage(params.clone()) {
+            Ok(Ok(_)) => {
+                acked.push(key);
+                flushed += 1;
+            }
+            Ok(Err(api_err)) if is_permanent_usage_rejection(api_err.code) => {
+                if record_permanent_usage_rejection(store, emp_id, &params, &api_err) {
+                    acked.push(key);
+                } else {
+                    break;
+                }
+            }
+            Ok(Err(_)) | Err(_) => {
+                break;
+            }
+        }
+    }
+    if !acked.is_empty() {
+        let _ = store.remove_pending_usage_by_keys(emp_id, &acked);
+    }
+    flushed
 }
 
 /// Spawns a lightweight background wake-retry thread that sleeps in short 50ms slices so

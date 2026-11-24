@@ -1,10 +1,11 @@
 //! Consumer-owned port and domain contract for isolated per-author private task notes
 //! (`TASK-50`, `L8`, `ADR-0031`, `doc-79` PN-01..06).
 //!
-//! Private task notes NEVER enter `durable/`, `office.db`, shared task events, Git, search,
-//! feeds, inbox, summaries, or other agents' turn inputs. The storage adapter (`SqlitePrivateNotesStore`
-//! in `src/store/sqlite/private_notes.rs`, or [`memory::MemoryPrivateNotesStore`] in tests) owns
-//! the isolated database at `<runtime-root>/<office-id>/private/task-notes.db`.
+//! Private task notes NEVER enter `durable/state/`, `durable/journal/`, `office.db`, shared
+//! task events, Git, search, feeds, inbox, summaries, or other agents' turn inputs. The storage
+//! adapter (`SqlitePrivateNotesStore` in `src/store/sqlite/private_notes.rs`, or
+//! [`memory::MemoryPrivateNotesStore`] in tests) owns the isolated HQ-authoritative database at
+//! `<durable-root>/private/task-notes.db` (`doc-79` §Private Task Notes).
 
 pub mod memory;
 

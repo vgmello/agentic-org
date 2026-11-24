@@ -16,6 +16,7 @@
 
 pub(crate) mod accounting;
 pub(crate) mod budgets;
+mod companion;
 #[cfg(any(test, feature = "testkit"))]
 mod dump;
 mod messaging;
@@ -42,7 +43,10 @@ pub(crate) const ANOTHER_BUILDS_DDL: &str =
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex, MutexGuard, RwLock,
+    },
     time::Duration,
 };
 
@@ -267,6 +271,14 @@ pub(crate) struct SqliteEngine {
     organization: Option<Id>,
     writer: Home,
     readers: Arc<Readers>,
+    /// Leaf gate held in shared mode across a snapshot's paired `BEGIN` statements and in
+    /// exclusive mode across `SqliteTx::finish`'s paired `COMMIT` statements so no snapshot
+    /// ever observes `office.db` and `protected/messaging.db` at different cursors (`TASK-97`).
+    commit_gate: Arc<RwLock<()>>,
+    /// Set to `true` under `commit_gate.write()` if `office.db` COMMIT fails after
+    /// `protected/messaging.db` already committed, refusing all subsequent reads and writes
+    /// until the engine is reopened and rebuilt (`TASK-97` / Finding #2).
+    diverged: Arc<AtomicBool>,
     /// The connections [`SqliteEngine::checkpoint`] uses: its own, so a checkpoint never
     /// waits for, or holds, the writer's (plan revision 2, F12).
     checkpointer: Mutex<Option<(Connection, Connection)>>,
@@ -281,9 +293,13 @@ pub(crate) struct SqliteTx {
     msg_db: Option<Connection>,
     organization: Option<Id>,
     home: Home,
+    commit_gate: Arc<RwLock<()>>,
+    diverged: Arc<AtomicBool>,
     /// The open savepoint, if the last mark has not been undone to.
     mark: Option<u64>,
     marks: u64,
+    #[cfg(test)]
+    fail_office_commit: bool,
 }
 
 /// One read transaction on paired pooled connections.
@@ -343,6 +359,8 @@ impl SqliteEngine {
             organization: None,
             writer: Arc::new(Mutex::new(Some((writer, msg_writer)))),
             readers: Arc::default(),
+            commit_gate: Arc::new(RwLock::new(())),
+            diverged: Arc::new(AtomicBool::new(false)),
             checkpointer: Mutex::new(None),
             checkpoint_health: Mutex::new(CheckpointHealth::default()),
         })
@@ -458,8 +476,12 @@ impl SqliteEngine {
                 msg_db: Some(msg_db),
                 organization: self.organization.clone(),
                 home,
+                commit_gate: Arc::clone(&self.commit_gate),
+                diverged: Arc::clone(&self.diverged),
                 mark: None,
                 marks: 0,
+                #[cfg(test)]
+                fail_office_commit: false,
             }),
             Err(error) => {
                 let error = refused("beginning a transaction", error);
@@ -537,7 +559,7 @@ impl SqliteEngine {
         }
         let swap_one = |src: &Path, dst: &Path| -> std::io::Result<()> {
             let sync_folder = || match dst.parent() {
-                Some(folder) => fs::File::open(folder)?.sync_all(),
+                Some(folder) => crate::private_fs::sync_dir(folder),
                 None => Ok(()),
             };
             remove_if_present(&beside(dst, "-wal"))?;
@@ -563,6 +585,11 @@ impl Engine for SqliteEngine {
     type Snapshot = SqliteSnapshot;
 
     fn begin(&self) -> Result<SqliteTx, EngineError> {
+        if self.diverged.load(Ordering::Acquire) {
+            return Err(EngineError::new(
+                "projection diverged after partial commit; reopen required",
+            ));
+        }
         let Some((db, msg_db)) = lock(&self.writer).take() else {
             return Err(EngineError::new("a transaction is already open"));
         };
@@ -576,6 +603,11 @@ impl Engine for SqliteEngine {
     }
 
     fn snapshot(&self) -> Result<SqliteSnapshot, EngineError> {
+        if self.diverged.load(Ordering::Acquire) {
+            return Err(EngineError::new(
+                "projection diverged after partial commit; reopen required",
+            ));
+        }
         let pooled = {
             let mut pool = lock(&self.readers.pool);
             pool.open += 1;
@@ -595,15 +627,25 @@ impl Engine for SqliteEngine {
                 messaging::open_messaging_reader(&self.msg_path)?,
             ),
         };
-        // The first read fixes what each transaction sees.
-        db.execute_batch("BEGIN; SELECT id FROM store_schema;")
-            .map_err(|error| refused("beginning a read", error))?;
-        msg_db
-            .execute_batch("BEGIN; SELECT id FROM messaging_schema;")
-            .map_err(|error| {
-                let _ = db.execute_batch("ROLLBACK");
-                refused("beginning a messaging read", error)
-            })?;
+        // Hold the leaf commit gate in shared mode ONLY across the two `BEGIN` statements
+        // so both connections fix their read view at the exact same dual-DB commit cursor,
+        // and refuse any read once a partial commit has marked the engine diverged (`TASK-97`).
+        {
+            let _gate = self.commit_gate.read().unwrap_or_else(|p| p.into_inner());
+            if self.diverged.load(Ordering::Acquire) {
+                return Err(EngineError::new(
+                    "projection diverged after partial commit; reopen required",
+                ));
+            }
+            db.execute_batch("BEGIN; SELECT id FROM store_schema;")
+                .map_err(|error| refused("beginning a read", error))?;
+            msg_db
+                .execute_batch("BEGIN; SELECT id FROM messaging_schema;")
+                .map_err(|error| {
+                    let _ = db.execute_batch("ROLLBACK");
+                    refused("beginning a messaging read", error)
+                })?;
+        }
         snapshot.db = Some(db);
         snapshot.msg_db = Some(msg_db);
         Ok(snapshot)
@@ -705,7 +747,9 @@ impl SqliteTx {
     }
 
     /// Writes the cursor and commits both `protected/messaging.db` and `office.db`, giving
-    /// both connections back. On failure both roll back.
+    /// both connections back. If `office.db` fails after `protected/messaging.db` has already
+    /// committed, the diverged pair is NOT returned to `self.home` (poisoning further writes
+    /// until reopened/rebuilt) and `EngineError::ended` is returned (`TASK-97` / `ARCH-04`).
     fn finish(mut self, cursor: &Cursor) -> Result<(Connection, Connection), EngineError> {
         let db = self.db();
         let msg_db = self.msg_db();
@@ -716,11 +760,36 @@ impl SqliteTx {
         messaging::put_messaging_cursor(msg_db, cursor)?;
         check_references(db)?;
         check_references(msg_db)?;
+        let _gate = self.commit_gate.write().unwrap_or_else(|p| p.into_inner());
         msg_db
             .execute_batch("COMMIT")
             .map_err(|error| refused("committing messaging.db", error))?;
-        db.execute_batch("COMMIT")
-            .map_err(|error| refused("committing", error))?;
+        #[cfg(test)]
+        let office_commit_result: rusqlite::Result<()> = if self.fail_office_commit {
+            Err(rusqlite::Error::SqliteFailure(
+                ffi::Error::new(ffi::SQLITE_IOERR),
+                Some("injected office.db commit failure".into()),
+            ))
+        } else {
+            db.execute_batch("COMMIT")
+        };
+        #[cfg(not(test))]
+        let office_commit_result = db.execute_batch("COMMIT");
+        if let Err(error) = office_commit_result {
+            // `msg_db` is now ahead of `db`: mark the live engine diverged BEFORE releasing
+            // `commit_gate` so no subsequent snapshot can observe the split state, then roll
+            // back `db` and drop both connections WITHOUT returning them to `self.home`.
+            self.diverged.store(true, Ordering::Release);
+            if let Some(db) = self.db.take() {
+                if !db.is_autocommit() {
+                    let _ = db.execute_batch("ROLLBACK");
+                }
+            }
+            let _ = self.msg_db.take();
+            return Err(EngineError::ended(format!(
+                "committing office.db after messaging.db committed (projection diverged): {error}"
+            )));
+        }
         Ok((
             self.db.take().expect("present until the transaction ends"),
             self.msg_db

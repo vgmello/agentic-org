@@ -3,7 +3,7 @@ id: doc-72
 title: Organization Data — README
 type: readme
 created_date: '2026-11-21T01:30:00Z'
-updated_date: '2026-11-21T01:30:00Z'
+updated_date: '2026-11-23T06:02:00Z'
 tags:
   - organization-data
   - contract
@@ -42,7 +42,7 @@ This set owns the **data relationships, fields and canonical sources**. Where th
 Each numbered document owns its relationships, field sources, examples and table DDL. The contract defines four SQL artifacts so sensitive operational projections stay isolated from shared plaintext `office.db` ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)):
 
 - [schema.sql](../../../docs/design/organization-data/schema.sql) — shared office projection (`runtime/<office-id>/office.db`): **76 tables and 12 views** plus indexes/triggers (including model profiles/execution and task assignment/history).
-- [private-notes-schema.sql](../../../docs/design/organization-data/private-notes-schema.sql) — separate durable private-notes database (`runtime/<office-id>/private/task-notes.db`, document 05): **4 tables**.
+- [private-notes-schema.sql](../../../docs/design/organization-data/private-notes-schema.sql) — separate HQ-authoritative durable private-notes database (`durable/private/task-notes.db`, document 05): **4 tables**.
 - [messaging-schema.sql](../../../docs/design/organization-data/messaging-schema.sql) — separate access-controlled messaging database (`runtime/<office-id>/protected/messaging.db`, document 15): **8 messaging tables + 5 identity mirror tables**.
 - [budgets-schema.sql](../../../docs/design/organization-data/budgets-schema.sql) — separate access-controlled budgets database (`runtime/<office-id>/protected/budgets.db`, document 17): **6 budget tables + 4 identity mirror tables**.
 
@@ -96,7 +96,6 @@ The organization repository must be remote. Its tracked content is mirrored as o
 │   └── checkpoints/                 # Local-only/unpushed code recovery bundles and edits
 └── runtime/<office-id>/             # Caches. Rebuildable; read document 16 before deleting.
     ├── office.db                    # Shared projection + explicitly transient state (schema.sql)
-    ├── private/task-notes.db        # Isolated 0700/0600 private task-notes projection (05)
     ├── protected/messaging.db       # Isolated 0700/0600 messaging/DM projection (15)
     ├── protected/budgets.db         # Isolated 0700/0600 budget-control projection (17)
     ├── repositories/                # One bare clone per repository used by this office

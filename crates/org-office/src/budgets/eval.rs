@@ -72,6 +72,9 @@ pub fn evaluate_budget(
     coverage: &UsageCoverageSummary,
     now_ms: u64,
     now_utc: &str,
+    continues: &mut dyn FnMut(
+        &crate::accounting::VerifiedStreamWatermark,
+    ) -> Result<bool, ApiError>,
     next_id: &mut dyn FnMut() -> String,
 ) -> Result<EvalOutcome, ApiError> {
     let mut out = EvalOutcome::default();
@@ -102,32 +105,133 @@ pub fn evaluate_budget(
         .ok_or_else(|| ApiError::new(ErrorCode::StorageError, "budget missing open period"))?;
 
     let stats = compute_period_usage(agg, &agg.periods[period_idx], &policy, effective);
+    let prev_ref = agg.periods[period_idx].ledger_checkpoint_ref.as_deref();
+    let regressed = checkpoint_ref_regressed(prev_ref, continues)?;
+    let effective_incomplete = coverage
+        .incomplete_streams
+        .saturating_add(u64::from(regressed));
+    let effective_status =
+        if effective_incomplete > 0 && stats.status == CompletenessStatus::Complete {
+            CompletenessStatus::Partial
+        } else {
+            stats.status
+        };
+    let next_checkpoint_ref =
+        merge_checkpoint_refs(prev_ref, coverage.checkpoint_ref.as_deref(), continues)?;
     let p = &mut agg.periods[period_idx];
     if p.used_amount != stats.used
-        || p.usage_status != stats.status
+        || p.usage_status != effective_status
         || p.policy_revision != policy.revision
         || p.includes_estimates != stats.includes_estimates
         || p.includes_api_equivalent != stats.includes_api_equivalent
         || p.unpriced_records != stats.unpriced
         || p.incomplete_records != stats.incomplete
-        || p.ledger_checkpoint_ref != coverage.checkpoint_ref
+        || p.ledger_checkpoint_ref != next_checkpoint_ref
         || p.evaluated_at.is_none()
     {
         p.used_amount = stats.used;
-        p.usage_status = stats.status;
+        p.usage_status = effective_status;
         p.includes_estimates = stats.includes_estimates;
         p.includes_api_equivalent = stats.includes_api_equivalent;
         p.unpriced_records = stats.unpriced;
         p.incomplete_records = stats.incomplete;
         p.policy_revision = policy.revision;
         p.evaluated_at = Some(now_utc.to_owned());
-        p.ledger_checkpoint_ref = coverage.checkpoint_ref.clone();
+        p.ledger_checkpoint_ref = next_checkpoint_ref;
         out.changed = true;
     }
 
     let period_snap = agg.periods[period_idx].clone();
-    apply_thresholds_and_holds(agg, &policy, &period_snap, now_utc, next_id, &mut out);
+    apply_thresholds_and_holds(
+        agg,
+        &policy,
+        &period_snap,
+        effective_incomplete,
+        now_utc,
+        next_id,
+        &mut out,
+    );
     Ok(out)
+}
+
+/// Returns `true` if any previously verified stream watermark in `prev` (structured JSON array of
+/// `VerifiedStreamWatermark`) is malformed, missing, regressed, or replaced/forked according to
+/// `continues` (`TASK-97` / Final Gate Pass 7 #2, Pass 8 #1/#3).
+pub fn checkpoint_ref_regressed(
+    prev: Option<&str>,
+    continues: &mut dyn FnMut(
+        &crate::accounting::VerifiedStreamWatermark,
+    ) -> Result<bool, ApiError>,
+) -> Result<bool, ApiError> {
+    let Some(prev_watermarks) = parse_verified_watermarks(prev) else {
+        return Ok(true);
+    };
+    for wm in &prev_watermarks {
+        if wm.high_water_sequence > 0 && !continues(wm)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Monotonically merges previously saved verified watermarks with newly verified watermarks in
+/// `current`, never overwriting a prior watermark whose chain did not continue and never saving
+/// unverified checkpoints (`TASK-97` / Final Gate Pass 8 #1/#3).
+fn merge_checkpoint_refs(
+    prev: Option<&str>,
+    current: Option<&str>,
+    continues: &mut dyn FnMut(
+        &crate::accounting::VerifiedStreamWatermark,
+    ) -> Result<bool, ApiError>,
+) -> Result<Option<String>, ApiError> {
+    let Some(prev_list) = parse_verified_watermarks(prev) else {
+        return Ok(prev.map(str::to_owned));
+    };
+    let mut merged: std::collections::BTreeMap<
+        (String, String),
+        crate::accounting::VerifiedStreamWatermark,
+    > = std::collections::BTreeMap::new();
+    for wm in prev_list {
+        merged.insert((wm.origin_office_id.clone(), wm.producer_id.clone()), wm);
+    }
+    if let Some(cur_list) = parse_verified_watermarks(current) {
+        for cur in cur_list {
+            let key = (cur.origin_office_id.clone(), cur.producer_id.clone());
+            match merged.get(&key) {
+                Some(existing) => {
+                    if cur.high_water_sequence >= existing.high_water_sequence
+                        && (existing.high_water_sequence == 0 || continues(existing)?)
+                    {
+                        merged.insert(key, cur);
+                    }
+                }
+                None => {
+                    merged.insert(key, cur);
+                }
+            }
+        }
+    }
+    if merged.is_empty() {
+        Ok(None)
+    } else {
+        let vec: Vec<crate::accounting::VerifiedStreamWatermark> = merged.into_values().collect();
+        serde_json::to_string(&vec)
+            .map(Some)
+            .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to encode checkpoint_ref"))
+    }
+}
+
+fn parse_verified_watermarks(
+    raw: Option<&str>,
+) -> Option<Vec<crate::accounting::VerifiedStreamWatermark>> {
+    let Some(raw) = raw else {
+        return Some(Vec::new());
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Some(Vec::new());
+    }
+    serde_json::from_str(trimmed).ok()
 }
 
 struct PeriodSpec<'a> {
@@ -317,13 +421,17 @@ fn accumulate_record_usage(
     if record_is_api_equivalent(rec) {
         stats.includes_api_equivalent = true;
     }
+    const MAX_SQLITE_I64: u64 = i64::MAX as u64;
     match unit {
         BudgetUnit::MicroUsd => {
             if rec.cost_status != CompletenessStatus::Complete {
                 stats.incomplete += 1;
             }
             if let Some(cost) = rec.cost_micro_usd {
-                stats.used = stats.used.saturating_add(cost);
+                // Saturate at `i64::MAX` so accumulated spend always stays representable in
+                // SQLite `INTEGER` columns while still triggering every valid budget cap
+                // (`TASK-97` / Final Gate Finding #4).
+                stats.used = stats.used.saturating_add(cost).min(MAX_SQLITE_I64);
                 return true;
             }
             false
@@ -333,7 +441,7 @@ fn accumulate_record_usage(
                 stats.incomplete += 1;
             }
             if let Some(toks) = record_known_tokens(rec) {
-                stats.used = stats.used.saturating_add(toks);
+                stats.used = stats.used.saturating_add(toks).min(MAX_SQLITE_I64);
                 return true;
             }
             false
@@ -376,6 +484,7 @@ fn apply_thresholds_and_holds(
     agg: &mut BudgetAggregate,
     policy: &BudgetPolicyVersion,
     period: &BudgetPeriodRecord,
+    incomplete_streams: u64,
     now_utc: &str,
     next_id: &mut dyn FnMut() -> String,
     out: &mut EvalOutcome,
@@ -397,7 +506,10 @@ fn apply_thresholds_and_holds(
     } else {
         base_limit
     };
-    if period.used_amount < effective_limit {
+    // `doc-92`: an incomplete accounting archive cannot prove capacity remains, so never
+    // release an existing hold solely because observed totals fell below the limit when
+    // stream coverage has gaps (`TASK-97` / Final Gate Finding #1).
+    if period.used_amount < effective_limit && incomplete_streams == 0 {
         release_satisfied_holds(agg, &period.id, "policy_satisfied", now_utc, out);
     }
     // 80% base threshold: one deduplicated neutral notice to last policy changer (never Inbox item).
@@ -682,20 +794,40 @@ fn ensure_notice(
     out.changed = true;
 }
 
+/// Inputs for validating and applying a one-time +20% extension (`doc-92`).
+pub struct ExtendOnceRequest<'a> {
+    pub operation_id: &'a str,
+    pub actor_id: &'a str,
+    pub req_hash: &'a str,
+    pub reason: Option<String>,
+    pub incomplete_streams: u64,
+    pub now_utc: &'a str,
+}
+
 /// Validates and applies the one-time +20% extension (`L + floor(L/5)`) (`doc-92`).
 pub fn apply_extend_once(
     agg: &mut BudgetAggregate,
-    operation_id: &str,
-    actor_id: &str,
-    req_hash: &str,
-    reason: Option<String>,
-    now_utc: &str,
+    req: ExtendOnceRequest<'_>,
     next_id: &mut dyn FnMut() -> String,
 ) -> Result<(), ApiError> {
+    let ExtendOnceRequest {
+        operation_id,
+        actor_id,
+        req_hash,
+        reason,
+        incomplete_streams,
+        now_utc,
+    } = req;
     if agg.budget.scope_kind == BudgetScopeKind::Release {
         return Err(ApiError::new(
             ErrorCode::InvalidRequest,
             "release warning caps do not use one-time extensions",
+        ));
+    }
+    if incomplete_streams > 0 {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "cannot grant one-time extension while accounting stream coverage is incomplete",
         ));
     }
     let policy = agg

@@ -1,17 +1,20 @@
 //! Isolated SQLite adapter for per-author private task notes (`TASK-50`, `L8`, `ADR-0016`,
-//! `ADR-0031`, `doc-79` PN-01..06).
+//! `ADR-0031`, `doc-79` PN-01..06, `TASK-97` ARCH-01).
 //!
-//! Opens `<runtime-root>/<office-id>/private/task-notes.db` using `private-notes-schema.sql`
-//! verbatim, completely outside `durable/`, `office.db`, and Git.
+//! Opens HQ-authoritative `<durable-root>/private/task-notes.db` using `private-notes-schema.sql`
+//! verbatim, completely outside `durable/state/`, `durable/journal/`, `office.db`, and Git.
+//! It is NOT a disposable runtime cache (`doc-79` §Private Task Notes).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use org_proto::{ApiError, ErrorCode};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::error::OfficeError;
-use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
+use crate::private_fs::{
+    absolute, full_sync, private_dir_synced, private_file, sync_dir, tighten_sqlite_sidecars,
+};
 use crate::private_notes::{
     non_author_mutation_error, parse_receipt_error_code, BeginPublishCmd, CreateNoteCmd,
     DeleteNoteCmd, EditNoteCmd, PrivateNoteRecord, PrivateNotesStore, PublishAttempt,
@@ -23,27 +26,31 @@ const PRIVATE_NOTES_DDL: &str =
 
 /// SQLite-backed isolated private notes database behind a single serialized writer lock (`ADR-0002`).
 pub struct SqlitePrivateNotesStore {
+    db_path: PathBuf,
     conn: Mutex<Connection>,
 }
 
 impl SqlitePrivateNotesStore {
-    /// Opens (or initializes) `<runtime-root>/<office-id>/private/task-notes.db` with owner-only
-    /// directory and file permissions (`ADR-0016`, `PN-04`).
-    pub fn open(runtime_root: &Path, office_id: &str) -> Result<Self, OfficeError> {
-        let office_dir = runtime_root.join(office_id);
-        private_dir(&office_dir).map_err(OfficeError::storage)?;
-        let private_folder = office_dir.join("private");
-        private_dir(&private_folder).map_err(OfficeError::storage)?;
-        tighten_dir(&private_folder).map_err(OfficeError::storage)?;
+    /// Opens (or initializes) HQ-authoritative `<durable-root>/private/task-notes.db` with
+    /// owner-only directory and file permissions (`doc-79`, `ADR-0016`, `PN-04`).
+    pub fn open(durable_root: &Path) -> Result<Self, OfficeError> {
+        let private_folder = durable_root.join("private");
+        private_dir_synced(durable_root, &private_folder).map_err(OfficeError::storage)?;
 
         let db_path =
             absolute(private_folder.join("task-notes.db")).map_err(OfficeError::storage)?;
         // Pre-create with 0o600 before SQLite opens it (no 0o644 creation window).
         drop(private_file(&db_path).map_err(OfficeError::storage)?);
         let conn = Connection::open(&db_path).map_err(OfficeError::storage)?;
+        // `fullfsync` + `checkpoint_fullfsync` request `F_FULLFSYNC` inside SQLite, and
+        // `flush_authoritative_db` additionally invokes `org_platform::fs::full_sync` directly
+        // on the WAL/DB file after every commit so macOS VFS fallback can never silently
+        // acknowledge a commit without a verified device flush (`TASK-97` / Pass 2 Finding #6).
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = FULL;
+             PRAGMA fullfsync = ON;
+             PRAGMA checkpoint_fullfsync = ON;
              PRAGMA foreign_keys = ON;
              PRAGMA recursive_triggers = ON;
              PRAGMA busy_timeout = 5000;",
@@ -51,9 +58,12 @@ impl SqlitePrivateNotesStore {
         .map_err(OfficeError::storage)?;
 
         ensure_schema_initialized(&conn)?;
-        tighten_db_and_sidecars(&db_path)?;
+        sync_dir(&private_folder).map_err(OfficeError::storage)?;
+        tighten_sqlite_sidecars(&db_path).map_err(OfficeError::storage)?;
+        flush_authoritative_db(&db_path)?;
 
         Ok(Self {
+            db_path,
             conn: Mutex::new(conn),
         })
     }
@@ -100,31 +110,20 @@ fn ensure_schema_initialized(conn: &Connection) -> Result<(), OfficeError> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn tighten_file(path: &Path) -> Result<(), OfficeError> {
-    use std::os::unix::fs::PermissionsExt;
-    if path.exists() {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(OfficeError::storage)?;
+/// Explicitly runs `org_platform::fs::full_sync` (`F_FULLFSYNC` on macOS, never downgraded)
+/// on the WAL file (when present) and main DB file so an acknowledged private-note mutation
+/// never relies on SQLite's VFS fallback to plain `fsync` (`TASK-97` / Pass 2 Finding #6).
+fn flush_authoritative_db(db_path: &Path) -> Result<(), OfficeError> {
+    let mut wal = db_path.as_os_str().to_os_string();
+    wal.push("-wal");
+    let wal_path = PathBuf::from(wal);
+    match std::fs::File::open(&wal_path) {
+        Ok(f) => full_sync(&f).map_err(OfficeError::storage)?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(OfficeError::storage(err)),
     }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn tighten_file(_path: &Path) -> Result<(), OfficeError> {
-    Err(OfficeError::Invalid(
-        "private task notes owner-only file permissions are unsupported on this OS",
-    ))
-}
-
-fn tighten_db_and_sidecars(db_path: &Path) -> Result<(), OfficeError> {
-    tighten_file(db_path)?;
-    for suffix in ["-wal", "-shm"] {
-        let mut s = db_path.as_os_str().to_os_string();
-        s.push(suffix);
-        tighten_file(Path::new(&s))?;
-    }
-    Ok(())
+    let db_file = std::fs::File::open(db_path).map_err(OfficeError::storage)?;
+    full_sync(&db_file).map_err(OfficeError::storage)
 }
 
 fn note_row(row: &Row<'_>) -> rusqlite::Result<PrivateNoteRecord> {
@@ -320,11 +319,10 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
             }
             let current = load_note(&tx, cmd.org_id, &existing.note_id)?
                 .ok_or_else(|| OfficeError::Invalid("replayed private note missing"))?;
-            return Ok(Ok(reconstruct_accepted_note(
-                &current,
-                &existing,
-                Some(cmd.body_markdown),
-            )));
+            let replayed = reconstruct_accepted_note(&current, &existing, Some(cmd.body_markdown));
+            drop(tx);
+            flush_authoritative_db(&self.db_path)?;
+            return Ok(Ok(replayed));
         }
         if load_note(&tx, cmd.org_id, cmd.note_id)?.is_some() {
             return Ok(Err(ApiError::new(
@@ -377,6 +375,7 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         let record = load_note(&tx, cmd.org_id, cmd.note_id)?
             .ok_or_else(|| OfficeError::Invalid("inserted private note missing"))?;
         tx.commit().map_err(OfficeError::storage)?;
+        flush_authoritative_db(&self.db_path)?;
         Ok(Ok(record))
     }
 
@@ -395,11 +394,10 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
             }
             let current = load_note(&tx, cmd.org_id, &existing.note_id)?
                 .ok_or_else(|| OfficeError::Invalid("replayed private note missing"))?;
-            return Ok(Ok(reconstruct_accepted_note(
-                &current,
-                &existing,
-                Some(cmd.body_markdown),
-            )));
+            let replayed = reconstruct_accepted_note(&current, &existing, Some(cmd.body_markdown));
+            drop(tx);
+            flush_authoritative_db(&self.db_path)?;
+            return Ok(Ok(replayed));
         }
 
         let existing = match validate_author_mutation(
@@ -456,6 +454,7 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         let record = load_note(&tx, cmd.org_id, cmd.note_id)?
             .ok_or_else(|| OfficeError::Invalid("updated private note missing"))?;
         tx.commit().map_err(OfficeError::storage)?;
+        flush_authoritative_db(&self.db_path)?;
         Ok(Ok(record))
     }
 
@@ -474,7 +473,10 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
             }
             let current = load_note(&tx, cmd.org_id, &existing.note_id)?
                 .ok_or_else(|| OfficeError::Invalid("replayed private note missing"))?;
-            return Ok(Ok(reconstruct_accepted_note(&current, &existing, None)));
+            let replayed = reconstruct_accepted_note(&current, &existing, None);
+            drop(tx);
+            flush_authoritative_db(&self.db_path)?;
+            return Ok(Ok(replayed));
         }
 
         let existing = match validate_author_mutation(
@@ -525,6 +527,7 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         let record = load_note(&tx, cmd.org_id, cmd.note_id)?
             .ok_or_else(|| OfficeError::Invalid("deleted private note tombstone missing"))?;
         tx.commit().map_err(OfficeError::storage)?;
+        flush_authoritative_db(&self.db_path)?;
         Ok(Ok(record))
     }
 
@@ -636,6 +639,8 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
             let shared_comment_id = existing.shared_comment_id.unwrap_or_default();
             let note = load_note(&tx, cmd.org_id, &existing.note_id)?
                 .ok_or_else(|| OfficeError::Invalid("replayed publish note missing"))?;
+            drop(tx);
+            flush_authoritative_db(&self.db_path)?;
             return match existing.state.as_str() {
                 "completed" => Ok(Ok(PublishAttempt::AlreadyCompleted {
                     note,
@@ -701,6 +706,7 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         )
         .map_err(OfficeError::storage)?;
         tx.commit().map_err(OfficeError::storage)?;
+        flush_authoritative_db(&self.db_path)?;
 
         Ok(Ok(PublishAttempt::Pending {
             note,
@@ -724,6 +730,8 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
             return Ok(());
         };
         if existing.state != "pending" {
+            drop(tx);
+            flush_authoritative_db(&self.db_path)?;
             return Ok(());
         }
         let finished_at = monotonic_ts(now, &existing.created_at);
@@ -747,6 +755,7 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         )
         .map_err(OfficeError::storage)?;
         tx.commit().map_err(OfficeError::storage)?;
+        flush_authoritative_db(&self.db_path)?;
         Ok(())
     }
 
@@ -759,6 +768,7 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
             params![org_id, task_id],
         )
         .map_err(OfficeError::storage)?;
+        flush_authoritative_db(&self.db_path)?;
         Ok(())
     }
 }

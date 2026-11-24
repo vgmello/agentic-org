@@ -460,14 +460,20 @@ fn assert_pn03_pn05_pn06_and_taskauth5_7(f: &PrivateNoteFixture, note_id: &str, 
     );
 }
 
-fn dir_contains_bytes(root: &Path, needle: &[u8]) -> bool {
+fn dir_contains_bytes_excluding(root: &Path, skip_dir: &Path, needle: &[u8]) -> bool {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
+        if dir == skip_dir {
+            continue;
+        }
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
+            if path == skip_dir {
+                continue;
+            }
             if path.is_dir() {
                 stack.push(path);
             } else if let Ok(bytes) = std::fs::read(&path) {
@@ -507,13 +513,19 @@ fn pn_01_through_06_and_taskauth_4_through_7_on_memory_and_sqlite() {
         assert_extended_security_and_replay_boundaries(&f, engine);
         assert_pending_publish_lock_and_paused_agent_refusal(&f);
 
-        // PN-04: Zero bytes of the unpublished private note anywhere under durable/!
+        // PN-04 + ARCH-01: Zero bytes of the unpublished private note anywhere under durable/
+        // outside the HQ-authoritative `durable/private/` directory (`doc-79` §Private Task Notes).
+        let private_dir = f.roots.durable.join("private");
         assert!(
-            !dir_contains_bytes(&f.roots.durable, unpublished_secret.as_bytes()),
-            "private note text leaked into durable/!"
+            !dir_contains_bytes_excluding(
+                &f.roots.durable,
+                &private_dir,
+                unpublished_secret.as_bytes()
+            ),
+            "private note text leaked into shared durable/ outside durable/private/!"
         );
 
-        // PN-04 SQLite restart + task closure + office.db deletion/rebuild survival!
+        // PN-04 SQLite restart + task closure + ENTIRE runtime/<office-id> wipe survival!
         if engine == EngineChoice::Sqlite {
             let cur = f.office.task_inspect(&f.task_key).unwrap().unwrap().task;
             f.office
@@ -536,15 +548,35 @@ fn pn_01_through_06_and_taskauth_4_through_7_on_memory_and_sqlite() {
             let instance_id = f.custody.identity.instance_id.as_str().to_owned();
             f.office.close().expect("close office");
 
-            // Delete shared office.db projection while preserving private/task-notes.db.
-            let office_db = f.roots.runtime.join(&office_id).join("office.db");
-            let _ = std::fs::remove_file(&office_db);
-            assert!(f
+            // Seed real session history + an oversized (>16 MiB) companion file under excluded
+            // durable subtrees to prove full runtime wipe rebuild prunes them before descent
+            // and file reads (`TASK-97` / Finding #3).
+            let session_dir = f
                 .roots
-                .runtime
+                .durable
+                .join("local/offices")
                 .join(&office_id)
-                .join("private/task-notes.db")
-                .is_file());
+                .join("sessions")
+                .join(&f.agent_a);
+            std::fs::create_dir_all(&session_dir).expect("create session dir");
+            std::fs::write(session_dir.join("history.jsonl"), b"{\"turn\":1}\n")
+                .expect("write session history");
+            let oversized_dir = f.roots.durable.join("accounting/usage/oversized-test");
+            std::fs::create_dir_all(&oversized_dir).expect("create oversized dir");
+            std::fs::write(oversized_dir.join("big.bin"), vec![b'x'; 17 * 1024 * 1024])
+                .expect("write >16 MiB companion file");
+
+            // Delete the ENTIRE disposable runtime/<office-id> cache: HQ durable/private/task-notes.db survives!
+            let runtime_office_dir = f.roots.runtime.join(&office_id);
+            std::fs::remove_dir_all(&runtime_office_dir).expect("remove runtime office dir");
+            assert!(
+                f.roots.durable.join("private/task-notes.db").is_file(),
+                "task-notes.db must live under HQ durable/private/task-notes.db"
+            );
+            assert!(
+                !runtime_office_dir.join("private/task-notes.db").exists(),
+                "task-notes.db must NOT live under disposable runtime/"
+            );
 
             let reopened = Office::open_with(
                 f.folder.clone(),
@@ -773,15 +805,10 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
     assert_eq!(replay_edit.revision, 2);
     assert_eq!(replay_edit.body_markdown, "Human-only supervisory note v2");
 
-    // (f) On SQLite Unix, private directory is 0o700 and task-notes.db is 0o600.
-    #[cfg(unix)]
+    // (f) On SQLite Unix, durable/private directory is 0o700 and task-notes.db is 0o600.
     if engine == EngineChoice::Sqlite {
         use std::os::unix::fs::PermissionsExt;
-        let private_dir = f
-            .roots
-            .runtime
-            .join(&f.office.info().office_id)
-            .join("private");
+        let private_dir = f.roots.durable.join("private");
         let db_file = private_dir.join("task-notes.db");
         assert_eq!(
             std::fs::metadata(&private_dir)

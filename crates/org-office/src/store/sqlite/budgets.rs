@@ -5,9 +5,9 @@
 //! Durable source files live under `<durable>/budgets/<budget-id>/` (never in shared org Git),
 //! enabling full delete-and-rebuild of `protected/budgets.db`.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use org_proto::budgets::{
@@ -21,24 +21,47 @@ use serde::Serialize;
 
 use crate::budgets::{
     BudgetAggregate, BudgetEventRecord, BudgetHoldRecord, BudgetNoticeRecord, BudgetPeriodRecord,
-    BudgetPolicyVersion, BudgetRecord, BudgetStore,
+    BudgetPolicyVersion, BudgetRecord, BudgetStore, PendingStopIntent,
 };
 use crate::error::OfficeError;
-use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
+use crate::private_fs::{
+    absolute, full_sync, private_dir, private_dir_synced, sync_dir, tighten_dir,
+    write_private_atomic,
+};
+
+use super::companion::open_and_reconcile_companion_db;
 
 /// Verbatim DDL from `docs/design/organization-data/budgets-schema.sql` (`doc-92`, `TASK-10`).
 const BUDGETS_DDL: &str =
     include_str!("../../../../../docs/design/organization-data/budgets-schema.sql");
+/// Adapter-owned crash-recovery table for in-flight `budget.stop` intents (`TASK-97`).
+const BUDGETS_ADAPTER_DDL: &str = "
+CREATE TABLE IF NOT EXISTS budget_stop_intents (
+  organization_id TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  intent_json TEXT NOT NULL,
+  PRIMARY KEY (organization_id, budget_id)
+) STRICT;
+";
+const BUDGETS_ADAPTER_FORMAT: u32 = 2;
+const BUDGETS_PRAGMAS: &str = "
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = FULL;
+PRAGMA foreign_keys = ON;
+PRAGMA recursive_triggers = ON;
+PRAGMA busy_timeout = 5000;
+";
 
 /// Isolated durable + SQLite [`BudgetStore`].
 pub struct SqliteBudgetStore {
     durable_root: PathBuf,
+    needs_reconcile: AtomicBool,
     conn: Mutex<Connection>,
 }
 
 impl SqliteBudgetStore {
     /// Opens `<runtime_root>/<office_id>/protected/budgets.db`, rebuilding automatically from
-    /// `<durable_root>/budgets/` if the projection is missing or empty.
+    /// `<durable_root>/budgets/` if the projection is missing, empty, corrupt, or schema-mismatched.
     pub fn open(
         durable_root: &Path,
         runtime_root: &Path,
@@ -46,7 +69,7 @@ impl SqliteBudgetStore {
         org_id: &str,
     ) -> Result<Self, OfficeError> {
         let durable_budgets = durable_root.join("budgets");
-        private_dir(&durable_budgets).map_err(OfficeError::storage)?;
+        private_dir_synced(durable_root, &durable_budgets).map_err(OfficeError::storage)?;
         let office_dir = runtime_root.join(office_id);
         private_dir(&office_dir).map_err(OfficeError::storage)?;
         let protected = office_dir.join("protected");
@@ -54,25 +77,21 @@ impl SqliteBudgetStore {
         tighten_dir(&protected).map_err(OfficeError::storage)?;
 
         let db_path = absolute(protected.join("budgets.db")).map_err(OfficeError::storage)?;
-        drop(private_file(&db_path).map_err(OfficeError::storage)?);
-        let conn = Connection::open(&db_path).map_err(OfficeError::storage)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = FULL;
-             PRAGMA foreign_keys = ON;
-             PRAGMA recursive_triggers = ON;
-             PRAGMA busy_timeout = 5000;",
-        )
-        .map_err(OfficeError::storage)?;
-        ensure_schema_initialized(&conn)?;
-        tighten_db_and_sidecars(&db_path)?;
+        let full_ddl = format!("{BUDGETS_DDL}\n{BUDGETS_ADAPTER_DDL}");
+        let conn = open_and_reconcile_companion_db(
+            &db_path,
+            "budgets",
+            BUDGETS_ADAPTER_FORMAT,
+            &full_ddl,
+            BUDGETS_PRAGMAS,
+            |conn| reconcile_durable_conn(conn, &durable_budgets, org_id),
+        )?;
 
-        let store = Self {
+        Ok(Self {
             durable_root: durable_budgets,
+            needs_reconcile: AtomicBool::new(false),
             conn: Mutex::new(conn),
-        };
-        store.reconcile_durable(org_id)?;
-        Ok(store)
+        })
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, OfficeError> {
@@ -81,69 +100,37 @@ impl SqliteBudgetStore {
             .map_err(|_| OfficeError::Invalid("budgets sqlite connection poisoned"))
     }
 
-    /// Reconciles durable budget aggregates on startup (both full rebuild and crash recovery),
-    /// pre-scanning all agent IDs so agent PMs are always mirrored as `kind='agent'` (`Pass 1 High #8`).
-    fn reconcile_durable(&self, org_id: &str) -> Result<(), OfficeError> {
-        let mut conn = self.lock()?;
-        let aggregates = load_all_durable(&self.durable_root, org_id)?;
-        if aggregates.is_empty() {
-            return Ok(());
+    fn ensure_reconciled(&self, conn: &mut Connection, org_id: &str) -> Result<(), OfficeError> {
+        if self.needs_reconcile.load(Ordering::Acquire) {
+            reconcile_durable_conn(conn, &self.durable_root, org_id)?;
+            self.needs_reconcile.store(false, Ordering::Release);
         }
-        let known_agents: std::collections::BTreeSet<String> = aggregates
-            .iter()
-            .filter_map(|a| a.budget.agent_id.clone())
-            .collect();
-        let tx = conn.transaction().map_err(OfficeError::storage)?;
-        for agg in &aggregates {
-            let inferred_emps = infer_employee_mirrors(agg, &known_agents);
-            project_aggregate(&tx, agg, &inferred_emps)?;
-        }
-        tx.commit().map_err(OfficeError::storage)?;
         Ok(())
     }
 
     fn write_durable(&self, agg: &BudgetAggregate) -> Result<(), OfficeError> {
         let dir = self.durable_root.join(&agg.budget.id);
-        private_dir(&dir).map_err(OfficeError::storage)?;
-        write_json_atomic(&dir.join("budget.json"), &agg.budget)?;
-        let versions_dir = dir.join("versions");
-        private_dir(&versions_dir).map_err(OfficeError::storage)?;
-        for v in &agg.versions {
-            let p = versions_dir.join(format!("{}.json", v.revision));
-            if !p.exists() {
-                write_json_atomic(&p, v)?;
+        private_dir_synced(&self.durable_root, &dir).map_err(OfficeError::storage)?;
+        let agg_path = dir.join("aggregate.v1.json");
+        if agg_path.is_file() {
+            // Historical committed versions are immutable: fail closed if an update tries to
+            // alter any already-committed policy revision (`TASK-97` / Pass 2 Finding #2).
+            let prev: BudgetAggregate =
+                serde_json::from_slice(&fs::read(&agg_path).map_err(OfficeError::storage)?)
+                    .map_err(OfficeError::storage)?;
+            for old_ver in &prev.versions {
+                let matched = agg.versions.iter().find(|v| v.revision == old_ver.revision);
+                if matched != Some(old_ver) {
+                    return Err(OfficeError::Invalid(
+                        "conflicting immutable budget policy version",
+                    ));
+                }
             }
         }
-        let periods_dir = dir.join("periods");
-        private_dir(&periods_dir).map_err(OfficeError::storage)?;
-        for p in &agg.periods {
-            write_json_atomic(&periods_dir.join(format!("{}.json", p.id)), p)?;
-        }
-        let events_dir = dir.join("events");
-        private_dir(&events_dir).map_err(OfficeError::storage)?;
-        for e in &agg.events {
-            let p = events_dir.join(format!("{}.json", e.id));
-            if !p.exists() {
-                write_json_atomic(&p, e)?;
-            }
-        }
-        let notices_dir = dir.join("notices");
-        private_dir(&notices_dir).map_err(OfficeError::storage)?;
-        for n in &agg.notices {
-            write_json_atomic(&notices_dir.join(format!("{}.json", n.id)), n)?;
-        }
-        let holds_dir = dir.join("holds");
-        private_dir(&holds_dir).map_err(OfficeError::storage)?;
-        for h in &agg.holds {
-            let name = format!(
-                "{}-{}-{}.json",
-                h.period_id,
-                h.policy_revision,
-                h.stage.as_str()
-            );
-            write_json_atomic(&holds_dir.join(name), h)?;
-        }
-        Ok(())
+        // Single atomic rename + `F_FULLFSYNC` publishes budget, versions, periods, events,
+        // notices, and holds together with zero torn-child window (`TASK-97` / Pass 2 Finding #2).
+        write_json_atomic(&agg_path, agg)?;
+        sync_dir(&self.durable_root).map_err(OfficeError::storage)
     }
 }
 
@@ -154,10 +141,38 @@ impl BudgetStore for SqliteBudgetStore {
         employee_kinds: &[(String, &'static str)],
     ) -> Result<Result<(), ApiError>, OfficeError> {
         let mut conn = self.lock()?;
-        self.write_durable(agg)?;
+        self.ensure_reconciled(&mut conn, &agg.budget.organization_id)?;
+        // Validate integer bounds, target uniqueness, and monotonic revision under the writer
+        // lock BEFORE writing anything so an invalid aggregate can never poison durable storage
+        // (`TASK-97` / Pass 4 #2 & Final Gate #1).
+        if let Some(err) = validate_aggregate_sqlite_bounds(agg) {
+            return Ok(Err(err));
+        }
+        if let Some(conflict) = check_target_and_revision_under_lock(&conn, agg)? {
+            return Ok(Err(conflict));
+        }
+        // Stage and verify all SQLite CHECK, UNIQUE, trigger, and deferred FK constraints inside
+        // an uncommitted transaction BEFORE publishing `aggregate.v1.json` so a rejected
+        // aggregate can never brick future office reopens (`TASK-97` / Final Gate #1).
         let tx = conn.transaction().map_err(OfficeError::storage)?;
         project_aggregate(&tx, agg, employee_kinds)?;
-        tx.commit().map_err(OfficeError::storage)?;
+        let fk_violation: Option<String> = tx
+            .query_row("PRAGMA foreign_key_check", [], |r| r.get(0))
+            .optional()
+            .map_err(OfficeError::storage)?;
+        if let Some(table) = fk_violation {
+            return Err(OfficeError::storage(std::io::Error::other(format!(
+                "budget projection foreign_key_check failed on table `{table}`"
+            ))));
+        }
+        if let Err(err) = self.write_durable(agg) {
+            self.needs_reconcile.store(true, Ordering::Release);
+            return Err(err);
+        }
+        if let Err(err) = tx.commit().map_err(OfficeError::storage) {
+            self.needs_reconcile.store(true, Ordering::Release);
+            return Err(err);
+        }
         Ok(Ok(()))
     }
 
@@ -166,7 +181,8 @@ impl BudgetStore for SqliteBudgetStore {
         org_id: &str,
         budget_id: &str,
     ) -> Result<Option<BudgetAggregate>, OfficeError> {
-        let conn = self.lock()?;
+        let mut conn = self.lock()?;
+        self.ensure_reconciled(&mut conn, org_id)?;
         load_aggregate_from_db(&conn, org_id, budget_id)
     }
 
@@ -179,7 +195,8 @@ impl BudgetStore for SqliteBudgetStore {
         release_id: Option<&str>,
         period_kind: BudgetPeriodKind,
     ) -> Result<Option<BudgetAggregate>, OfficeError> {
-        let conn = self.lock()?;
+        let mut conn = self.lock()?;
+        self.ensure_reconciled(&mut conn, org_id)?;
         let found: Option<String> = match scope_kind {
             BudgetScopeKind::Task => conn
                 .query_row(
@@ -214,7 +231,8 @@ impl BudgetStore for SqliteBudgetStore {
     }
 
     fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, OfficeError> {
-        let conn = self.lock()?;
+        let mut conn = self.lock()?;
+        self.ensure_reconciled(&mut conn, org_id)?;
         let mut stmt = conn
             .prepare(
                 "SELECT id FROM budgets WHERE organization_id=?1 ORDER BY created_at ASC, id ASC",
@@ -235,28 +253,6 @@ impl BudgetStore for SqliteBudgetStore {
     }
 }
 
-fn ensure_schema_initialized(conn: &Connection) -> Result<(), OfficeError> {
-    let tables: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='budgets'",
-            [],
-            |r| r.get(0),
-        )
-        .map_err(OfficeError::storage)?;
-    if tables > 0 {
-        return Ok(());
-    }
-    conn.execute_batch("BEGIN IMMEDIATE;")
-        .map_err(OfficeError::storage)?;
-    if let Err(err) = conn.execute_batch(BUDGETS_DDL) {
-        let _ = conn.execute_batch("ROLLBACK;");
-        return Err(OfficeError::storage(err));
-    }
-    conn.execute_batch("COMMIT;")
-        .map_err(OfficeError::storage)?;
-    Ok(())
-}
-
 fn project_aggregate(
     tx: &rusqlite::Transaction<'_>,
     agg: &BudgetAggregate,
@@ -268,7 +264,8 @@ fn project_aggregate(
     upsert_periods(tx, agg)?;
     upsert_events(tx, agg)?;
     upsert_notices(tx, agg)?;
-    upsert_holds(tx, agg)
+    upsert_holds(tx, agg)?;
+    upsert_pending_stop(tx, agg)
 }
 
 fn upsert_mirrors(
@@ -521,6 +518,50 @@ fn upsert_holds(tx: &rusqlite::Transaction<'_>, agg: &BudgetAggregate) -> Result
     Ok(())
 }
 
+fn upsert_pending_stop(
+    tx: &rusqlite::Transaction<'_>,
+    agg: &BudgetAggregate,
+) -> Result<(), OfficeError> {
+    if let Some(intent) = &agg.pending_stop {
+        let json = serde_json::to_string(intent).map_err(OfficeError::storage)?;
+        tx.execute(
+            "INSERT INTO budget_stop_intents(organization_id, budget_id, intent_json) \
+             VALUES (?1, ?2, ?3) \
+             ON CONFLICT(organization_id, budget_id) DO UPDATE SET intent_json = excluded.intent_json",
+            params![&agg.budget.organization_id, &agg.budget.id, &json],
+        )
+        .map_err(OfficeError::storage)?;
+    } else {
+        tx.execute(
+            "DELETE FROM budget_stop_intents WHERE organization_id=?1 AND budget_id=?2",
+            params![&agg.budget.organization_id, &agg.budget.id],
+        )
+        .map_err(OfficeError::storage)?;
+    }
+    Ok(())
+}
+
+fn load_pending_stop(
+    conn: &Connection,
+    org_id: &str,
+    budget_id: &str,
+) -> Result<Option<PendingStopIntent>, OfficeError> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT intent_json FROM budget_stop_intents WHERE organization_id=?1 AND budget_id=?2",
+            params![org_id, budget_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(OfficeError::storage)?;
+    match raw {
+        Some(json) => serde_json::from_str(&json)
+            .map(Some)
+            .map_err(OfficeError::storage),
+        None => Ok(None),
+    }
+}
+
 fn load_aggregate_from_db(
     conn: &Connection,
     org_id: &str,
@@ -559,6 +600,7 @@ fn load_aggregate_from_db(
     let events = load_events(conn, org_id, budget_id)?;
     let notices = load_notices(conn, org_id, budget_id)?;
     let holds = load_holds(conn, org_id, budget_id)?;
+    let pending_stop = load_pending_stop(conn, org_id, budget_id)?;
     Ok(Some(BudgetAggregate {
         budget,
         versions,
@@ -566,6 +608,7 @@ fn load_aggregate_from_db(
         events,
         notices,
         holds,
+        pending_stop,
     }))
 }
 
@@ -739,6 +782,174 @@ fn load_holds(
     rows.collect::<Result<_, _>>().map_err(OfficeError::storage)
 }
 
+fn reconcile_durable_conn(
+    conn: &mut Connection,
+    durable_root: &Path,
+    org_id: &str,
+) -> Result<(), OfficeError> {
+    let aggregates = load_all_durable(durable_root, org_id)?;
+    if aggregates.is_empty() {
+        return Ok(());
+    }
+    let known_agents: std::collections::BTreeSet<String> = aggregates
+        .iter()
+        .filter_map(|a| a.budget.agent_id.clone())
+        .collect();
+    let tx = conn.transaction().map_err(OfficeError::storage)?;
+    for agg in &aggregates {
+        let inferred_emps = infer_employee_mirrors(agg, &known_agents);
+        project_aggregate(&tx, agg, &inferred_emps)?;
+    }
+    tx.commit().map_err(OfficeError::storage)?;
+    Ok(())
+}
+
+fn invalid_sqlite_bound(field: &str) -> ApiError {
+    ApiError::new(
+        org_proto::ErrorCode::InvalidRequest,
+        format!("budget field `{field}` exceeds signed 64-bit SQLite integer range"),
+    )
+}
+
+fn validate_versions_and_periods_bounds(agg: &BudgetAggregate) -> Option<ApiError> {
+    for v in &agg.versions {
+        if i64::try_from(v.revision).is_err() {
+            return Some(invalid_sqlite_bound("versions.revision"));
+        }
+        if v.limit_amount
+            .is_some_and(|lim| lim == 0 || i64::try_from(lim).is_err())
+        {
+            return Some(invalid_sqlite_bound("limit_amount"));
+        }
+    }
+    let bad_period = agg.periods.iter().any(|p| {
+        i64::try_from(p.policy_revision).is_err()
+            || i64::try_from(p.used_amount).is_err()
+            || i64::try_from(p.unpriced_records).is_err()
+            || i64::try_from(p.incomplete_records).is_err()
+    });
+    bad_period.then(|| invalid_sqlite_bound("periods"))
+}
+
+fn validate_aggregate_sqlite_bounds(agg: &BudgetAggregate) -> Option<ApiError> {
+    if i64::try_from(agg.budget.current_revision).is_err() {
+        return Some(invalid_sqlite_bound("current_revision"));
+    }
+    if let Some(err) = validate_versions_and_periods_bounds(agg) {
+        return Some(err);
+    }
+    if agg
+        .events
+        .iter()
+        .any(|e| i64::try_from(e.policy_revision).is_err())
+    {
+        return Some(invalid_sqlite_bound("events.policy_revision"));
+    }
+    if agg
+        .notices
+        .iter()
+        .any(|n| i64::try_from(n.policy_revision).is_err())
+    {
+        return Some(invalid_sqlite_bound("notices.policy_revision"));
+    }
+    if agg
+        .holds
+        .iter()
+        .any(|h| i64::try_from(h.policy_revision).is_err())
+    {
+        return Some(invalid_sqlite_bound("holds.policy_revision"));
+    }
+    None
+}
+
+fn check_target_and_revision_under_lock(
+    conn: &Connection,
+    agg: &BudgetAggregate,
+) -> Result<Option<ApiError>, OfficeError> {
+    let budget = &agg.budget;
+    let existing_target_id: Option<String> = match budget.scope_kind {
+        BudgetScopeKind::Task => conn
+            .query_row(
+                "SELECT id FROM budgets WHERE organization_id=?1 AND scope_kind='task' AND task_id=?2",
+                params![&budget.organization_id, &budget.task_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(OfficeError::storage)?,
+        BudgetScopeKind::Agent => conn
+            .query_row(
+                "SELECT id FROM budgets WHERE organization_id=?1 AND scope_kind='agent' AND agent_id=?2 AND period_kind=?3",
+                params![&budget.organization_id, &budget.agent_id, budget.period_kind.as_str()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(OfficeError::storage)?,
+        BudgetScopeKind::Release => conn
+            .query_row(
+                "SELECT id FROM budgets WHERE organization_id=?1 AND scope_kind='release' AND release_id=?2",
+                params![&budget.organization_id, &budget.release_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(OfficeError::storage)?,
+        _ => None,
+    };
+    if let Some(other_id) = existing_target_id {
+        if other_id != budget.id {
+            return Ok(Some(ApiError::new(
+                org_proto::ErrorCode::Conflict,
+                "a budget already exists for this target",
+            )));
+        }
+    }
+    let Some(existing) = load_aggregate_from_db(conn, &budget.organization_id, &budget.id)? else {
+        return Ok(None);
+    };
+    if budget.current_revision < existing.budget.current_revision {
+        return Ok(Some(ApiError::new(
+            org_proto::ErrorCode::Conflict,
+            "stale budget policy revision",
+        )));
+    }
+    // Every already-committed policy version, event receipt, and notice must remain preserved
+    // in the new aggregate so a concurrent save at the same policy revision can never erase an
+    // acknowledged operation (`TASK-97` / Pass 5 Finding #1).
+    let versions_preserved = existing
+        .versions
+        .iter()
+        .all(|old_v| agg.versions.iter().find(|v| v.revision == old_v.revision) == Some(old_v));
+    let events_preserved = existing
+        .events
+        .iter()
+        .all(|old_e| agg.events.iter().any(|e| e.id == old_e.id));
+    let notices_preserved = existing
+        .notices
+        .iter()
+        .all(|old_n| agg.notices.iter().any(|n| n.id == old_n.id));
+    // A `Released` hold may legitimately re-trigger to `StopPending` if new spend crosses the
+    // same policy revision again, so only block direct `Held -> StopPending` regression.
+    let holds_valid = existing.holds.iter().all(|old_h| {
+        agg.holds
+            .iter()
+            .find(|h| {
+                h.period_id == old_h.period_id
+                    && h.policy_revision == old_h.policy_revision
+                    && h.stage == old_h.stage
+            })
+            .is_some_and(|new_h| {
+                !(old_h.state == BudgetHoldState::Held
+                    && new_h.state == BudgetHoldState::StopPending)
+            })
+    });
+    if !versions_preserved || !events_preserved || !notices_preserved || !holds_valid {
+        return Ok(Some(ApiError::new(
+            org_proto::ErrorCode::Conflict,
+            "stale budget aggregate: concurrent modification detected",
+        )));
+    }
+    Ok(None)
+}
+
 fn load_all_durable(root: &Path, org_id: &str) -> Result<Vec<BudgetAggregate>, OfficeError> {
     if !root.is_dir() {
         return Ok(Vec::new());
@@ -746,57 +957,36 @@ fn load_all_durable(root: &Path, org_id: &str) -> Result<Vec<BudgetAggregate>, O
     let mut out = Vec::new();
     for entry in fs::read_dir(root).map_err(OfficeError::storage)? {
         let dir = entry.map_err(OfficeError::storage)?.path();
-        let budget_path = dir.join("budget.json");
-        if !budget_path.is_file() {
+        let agg_path = dir.join("aggregate.v1.json");
+        if !agg_path.is_file() {
             continue;
         }
-        let budget: BudgetRecord =
-            serde_json::from_slice(&fs::read(&budget_path).map_err(OfficeError::storage)?)
+        // Durably flush each recovered aggregate file and its ancestor chain before
+        // projecting its receipts so an interrupted rename/dir-sync can never be
+        // acknowledged without a completed flush (`TASK-97` / Pass 4 Finding #1).
+        let f = fs::File::open(&agg_path).map_err(OfficeError::storage)?;
+        full_sync(&f).map_err(OfficeError::storage)?;
+        private_dir_synced(root, &dir).map_err(OfficeError::storage)?;
+        let mut agg: BudgetAggregate =
+            serde_json::from_slice(&fs::read(&agg_path).map_err(OfficeError::storage)?)
                 .map_err(OfficeError::storage)?;
-        if budget.organization_id != org_id {
+        if agg.budget.organization_id != org_id {
             continue;
         }
-        let mut versions: Vec<BudgetPolicyVersion> = read_json_dir(&dir.join("versions"))?;
-        versions.sort_by_key(|v| v.revision);
-        let mut periods: Vec<BudgetPeriodRecord> = read_json_dir(&dir.join("periods"))?;
-        periods.sort_by(|a, b| a.period_key.cmp(&b.period_key));
-        let mut events: Vec<BudgetEventRecord> = read_json_dir(&dir.join("events"))?;
-        events.sort_by(|a, b| {
+        agg.versions.sort_by_key(|v| v.revision);
+        agg.periods.sort_by(|a, b| a.period_key.cmp(&b.period_key));
+        agg.events.sort_by(|a, b| {
             a.occurred_at
                 .cmp(&b.occurred_at)
                 .then_with(|| a.id.cmp(&b.id))
         });
-        let mut notices: Vec<BudgetNoticeRecord> = read_json_dir(&dir.join("notices"))?;
-        notices.sort_by(|a, b| {
+        agg.notices.sort_by(|a, b| {
             a.created_at
                 .cmp(&b.created_at)
                 .then_with(|| a.id.cmp(&b.id))
         });
-        let mut holds: Vec<BudgetHoldRecord> = read_json_dir(&dir.join("holds"))?;
-        holds.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-        out.push(BudgetAggregate {
-            budget,
-            versions,
-            periods,
-            events,
-            notices,
-            holds,
-        });
-    }
-    Ok(out)
-}
-
-fn read_json_dir<T: serde::de::DeserializeOwned>(dir: &Path) -> Result<Vec<T>, OfficeError> {
-    if !dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    for entry in fs::read_dir(dir).map_err(OfficeError::storage)? {
-        let path = entry.map_err(OfficeError::storage)?.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            let bytes = fs::read(&path).map_err(OfficeError::storage)?;
-            out.push(serde_json::from_slice(&bytes).map_err(OfficeError::storage)?);
-        }
+        agg.holds.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        out.push(agg);
     }
     Ok(out)
 }
@@ -826,59 +1016,9 @@ fn infer_employee_mirrors(
         .collect()
 }
 
-static BUDGET_TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
 fn write_json_atomic<T: Serialize>(path: &Path, val: &T) -> Result<(), OfficeError> {
     let bytes = serde_json::to_vec_pretty(val).map_err(OfficeError::storage)?;
-    let seq = BUDGET_TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = path.with_extension(format!("tmp.{}.{seq}", std::process::id()));
-    {
-        let mut opts = OpenOptions::new();
-        opts.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        let mut f = opts.open(&tmp).map_err(OfficeError::storage)?;
-        f.write_all(&bytes).map_err(OfficeError::storage)?;
-        f.sync_all().map_err(OfficeError::storage)?;
-    }
-    tighten_file(&tmp)?;
-    fs::rename(&tmp, path).map_err(OfficeError::storage)?;
-    if let Some(parent) = path.parent() {
-        if let Ok(dir) = fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
-    }
-    tighten_file(path)
-}
-
-#[cfg(unix)]
-fn tighten_file(path: &Path) -> Result<(), OfficeError> {
-    use std::os::unix::fs::PermissionsExt;
-    if path.exists() {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-            .map_err(OfficeError::storage)?;
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn tighten_file(_path: &Path) -> Result<(), OfficeError> {
-    Err(OfficeError::Invalid(
-        "protected budgets owner-only file permissions are unsupported on this OS",
-    ))
-}
-
-fn tighten_db_and_sidecars(db_path: &Path) -> Result<(), OfficeError> {
-    tighten_file(db_path)?;
-    for suffix in ["-wal", "-shm"] {
-        let mut s = db_path.as_os_str().to_owned();
-        s.push(suffix);
-        tighten_file(Path::new(&s))?;
-    }
-    Ok(())
+    write_private_atomic(path, &bytes).map_err(OfficeError::storage)
 }
 
 fn parse_scope(s: &str) -> BudgetScopeKind {

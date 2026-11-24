@@ -17,18 +17,40 @@ pub(crate) struct Projectors<E: Engine> {
     families: Vec<Arc<dyn Projector<E>>>,
     /// The prefixes a rebuild walks. A file outside them would never be projected again.
     prefixes: Vec<DurablePath>,
+    /// Prefixes owned by independent companion stores outside `office.db`: pruned before
+    /// directory descent and file reads on rebuild, and rejected on journal writes (`TASK-97`).
+    excluded: Vec<DurablePath>,
 }
 
 impl<E: Engine> Projectors<E> {
     pub(crate) fn new(families: Vec<Arc<dyn Projector<E>>>, office: &Id) -> Self {
+        Self::new_with_exclusions(families, office, Vec::new())
+    }
+
+    pub(crate) fn new_with_exclusions(
+        families: Vec<Arc<dyn Projector<E>>>,
+        office: &Id,
+        excluded: Vec<DurablePath>,
+    ) -> Self {
         Self {
             families,
             prefixes: projected(office.as_str()),
+            excluded,
         }
     }
 
     /// Whether exactly one projector owns `path`.
     pub(crate) fn owned(&self, path: &DurablePath) -> Result<(), ProjectionError> {
+        if self
+            .excluded
+            .iter()
+            .any(|ex| path == ex || path.is_under(ex))
+        {
+            return Err(ProjectionError::new(
+                path,
+                "owned by an excluded companion store",
+            ));
+        }
         if !self.prefixes.iter().any(|prefix| path.is_under(prefix)) {
             return Err(ProjectionError::new(
                 path,
@@ -159,7 +181,7 @@ pub(crate) fn rebuild_with<E: Engine>(
         report.files = 0;
         report.skipped.clear();
         for prefix in prefixes {
-            for path in files.walk(prefix)? {
+            for path in files.walk_excluding(prefix, &projectors.excluded)? {
                 let Some(bytes) = files.read(&path)? else {
                     return Err(ProjectionError::new(
                         &path,

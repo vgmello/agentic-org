@@ -8,7 +8,7 @@ use org_proto::{ApiError, ErrorCode};
 
 use super::{
     same_price_semantics, AccountingStore, StoredSubscriptionUsageSnapshot, UsageCoverageSummary,
-    UsageStreamCheckpoint,
+    UsageStreamCheckpoint, VerifiedStreamWatermark,
 };
 use crate::error::OfficeError;
 
@@ -19,6 +19,7 @@ struct State {
     source_keys: BTreeMap<(String, String, String, String), String>,
     superseded: BTreeSet<(String, String)>,
     checkpoints: BTreeMap<(String, String, String), UsageStreamCheckpoint>,
+    chain_by_seq: BTreeMap<(String, String, String, u64), String>,
     subscription_usage: BTreeMap<(String, String), StoredSubscriptionUsageSnapshot>,
 }
 
@@ -182,12 +183,22 @@ impl AccountingStore for MemoryAccountingStore {
             record.origin_office_id.clone(),
             record.producer_id.clone(),
         );
-        let next_seq = s
-            .checkpoints
-            .get(&cp_key)
+        let prev_cp = s.checkpoints.get(&cp_key);
+        let next_seq = prev_cp
             .map_or(0, |cp| cp.high_water_sequence)
             .saturating_add(1);
+        let prev_chain = prev_cp.and_then(|cp| cp.chain_sha256.as_deref());
         record.source_sequence = next_seq;
+        let next_chain = super::chain_usage_stream_head(prev_chain, &record);
+        s.chain_by_seq.insert(
+            (
+                org_id.to_owned(),
+                record.origin_office_id.clone(),
+                record.producer_id.clone(),
+                next_seq,
+            ),
+            next_chain.clone(),
+        );
         s.checkpoints.insert(
             cp_key,
             UsageStreamCheckpoint {
@@ -196,6 +207,7 @@ impl AccountingStore for MemoryAccountingStore {
                 producer_id: record.producer_id.clone(),
                 high_water_sequence: next_seq,
                 head_sha256: Some(record.payload_sha256.clone()),
+                chain_sha256: Some(next_chain),
                 state: "open".into(),
                 checkpointed_at: record.recorded_at.clone(),
             },
@@ -255,7 +267,7 @@ impl AccountingStore for MemoryAccountingStore {
     fn coverage_summary(&self, org_id: &str) -> Result<UsageCoverageSummary, OfficeError> {
         let s = self.lock()?;
         let mut as_of: Option<String> = None;
-        let mut refs: Vec<String> = Vec::new();
+        let mut watermarks: Vec<VerifiedStreamWatermark> = Vec::new();
         for ((o, office, prod), cp) in &s.checkpoints {
             if o != org_id {
                 continue;
@@ -266,14 +278,59 @@ impl AccountingStore for MemoryAccountingStore {
             {
                 as_of = Some(cp.checkpointed_at.clone());
             }
-            refs.push(format!("{office}/{prod}:{}", cp.high_water_sequence));
+            watermarks.push(VerifiedStreamWatermark {
+                origin_office_id: office.clone(),
+                producer_id: prod.clone(),
+                high_water_sequence: cp.high_water_sequence,
+                chain_sha256: cp.chain_sha256.clone(),
+            });
         }
-        let checkpoint_ref = (!refs.is_empty()).then(|| refs.join(","));
+        let checkpoint_ref = (!watermarks.is_empty())
+            .then(|| serde_json::to_string(&watermarks))
+            .transpose()
+            .map_err(OfficeError::storage)?;
         Ok(UsageCoverageSummary {
             incomplete_streams: 0,
             coverage_as_of: as_of,
             checkpoint_ref,
         })
+    }
+
+    fn stream_continues_watermark(
+        &self,
+        org_id: &str,
+        prior: &VerifiedStreamWatermark,
+    ) -> Result<bool, OfficeError> {
+        if prior.high_water_sequence == 0 {
+            return Ok(true);
+        }
+        let s = self.lock()?;
+        let Some(cp) = s.checkpoints.get(&(
+            org_id.to_owned(),
+            prior.origin_office_id.clone(),
+            prior.producer_id.clone(),
+        )) else {
+            return Ok(false);
+        };
+        if cp.high_water_sequence < prior.high_water_sequence {
+            return Ok(false);
+        }
+        let Some(expected_chain) = prior.chain_sha256.as_deref() else {
+            return Ok(true);
+        };
+        let actual = if cp.high_water_sequence == prior.high_water_sequence {
+            cp.chain_sha256.as_deref()
+        } else {
+            s.chain_by_seq
+                .get(&(
+                    org_id.to_owned(),
+                    prior.origin_office_id.clone(),
+                    prior.producer_id.clone(),
+                    prior.high_water_sequence,
+                ))
+                .map(String::as_str)
+        };
+        Ok(actual == Some(expected_chain))
     }
 
     fn save_subscription_usage(

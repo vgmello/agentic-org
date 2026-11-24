@@ -372,6 +372,19 @@ impl Files {
     /// unfinished publication are skipped; anything that is not a file or a directory is
     /// an error.
     pub fn walk(&self, prefix: &DurablePath) -> Result<Vec<DurablePath>, FilesError> {
+        self.walk_excluding(prefix, &[])
+    }
+
+    /// Like [`Self::walk`], but skips any path matching or under `excluded` BEFORE descending
+    /// into directories or reading files (`TASK-97`).
+    pub fn walk_excluding(
+        &self,
+        prefix: &DurablePath,
+        excluded: &[DurablePath],
+    ) -> Result<Vec<DurablePath>, FilesError> {
+        if is_excluded(prefix, excluded) {
+            return Ok(Vec::new());
+        }
         let start = self.root.join(prefix.as_str());
         let parent = start.parent().unwrap_or(&self.root);
         let mut found = Vec::new();
@@ -382,7 +395,7 @@ impl Files {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(found),
             Err(e) => return Err(FilesError::io(&start, "open", &e)),
             Ok(meta) if meta.is_file() => found.push(prefix.clone()),
-            Ok(meta) if meta.is_dir() => self.walk_into(&start, prefix, &mut found)?,
+            Ok(meta) if meta.is_dir() => self.walk_into(&start, prefix, excluded, &mut found)?,
             Ok(_) => return Err(not_a_record(&start)),
         }
         found.sort();
@@ -393,6 +406,7 @@ impl Files {
         &self,
         directory: &Path,
         prefix: &DurablePath,
+        excluded: &[DurablePath],
         found: &mut Vec<DurablePath>,
     ) -> Result<(), FilesError> {
         let entries = fs::read_dir(directory).map_err(|e| FilesError::io(directory, "list", &e))?;
@@ -410,8 +424,11 @@ impl Files {
                 continue;
             }
             let path = prefix.join(name).map_err(|_| not_a_record(&full))?;
+            if is_excluded(&path, excluded) {
+                continue;
+            }
             if kind.is_dir() {
-                self.walk_into(&full, &path, found)?;
+                self.walk_into(&full, &path, excluded, found)?;
             } else if kind.is_file() {
                 found.push(path);
             } else {
@@ -420,6 +437,10 @@ impl Files {
         }
         Ok(())
     }
+}
+
+fn is_excluded(path: &DurablePath, excluded: &[DurablePath]) -> bool {
+    excluded.iter().any(|ex| path == ex || path.is_under(ex))
 }
 
 fn not_a_record(path: &Path) -> FilesError {

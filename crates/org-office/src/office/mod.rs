@@ -158,12 +158,16 @@ pub struct Office {
     clock_high_ms: AtomicU64,
     /// In-memory runtime presence and self-reported status lines (`status.set`, `who`).
     runtime: crate::messaging::runtime::OfficeRuntime,
-    /// Isolated per-author private task notes store (`runtime/<office-id>/private/task-notes.db`).
+    /// Isolated HQ-authoritative per-author private task notes store (`durable/private/task-notes.db`).
     private_notes: Arc<dyn crate::private_notes::PrivateNotesStore>,
     /// Isolated `L2` usage & cost accounting store (`protected/accounting.db`).
     accounting: Arc<dyn crate::accounting::AccountingStore>,
     /// Isolated `L3` budget policies, periods, notices, and holds (`protected/budgets.db`).
     budgets: Arc<dyn crate::budgets::BudgetStore>,
+    /// Serializes read-modify-write budget operations across mutations, usage reevaluations,
+    /// and turn-completion hold transitions so concurrent calls cannot clobber hold state or
+    /// race task cancellation against budget clears (`TASK-97` / Pass 6).
+    budget_op_lock: std::sync::Mutex<()>,
     /// Isolated `L4` provider bindings, discovery observations, permits, and cooldowns (`protected/providers.db`).
     providers: Arc<dyn crate::providers::ProviderPoolStore>,
     // The store closes before the lock is released: fields drop in order.
@@ -239,11 +243,7 @@ pub(crate) fn open_companion_stores(
     info: &OfficeInfo,
 ) -> Result<CompanionStores, OfficeError> {
     Ok(CompanionStores {
-        private_notes: crate::store::open::open_private_notes(
-            engine,
-            &roots.runtime,
-            &info.office_id,
-        )?,
+        private_notes: crate::store::open::open_private_notes(engine, &roots.durable)?,
         accounting: crate::store::open::open_accounting(
             engine,
             &roots.durable,
@@ -346,6 +346,11 @@ impl Office {
     }
 
     #[cfg(test)]
+    pub(crate) fn sync_store(&self) -> Result<(), OfficeError> {
+        self.store.sync().map_err(storage)
+    }
+
+    #[cfg(test)]
     pub(crate) fn open_with(
         folder: impl Into<PathBuf>,
         key: Option<Key>,
@@ -403,6 +408,7 @@ impl Office {
             private_notes: companions.private_notes,
             accounting: companions.accounting,
             budgets: companions.budgets,
+            budget_op_lock: std::sync::Mutex::new(()),
             providers: companions.providers,
             store,
             _lock: lock,

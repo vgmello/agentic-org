@@ -479,8 +479,7 @@ fn remove_file_durably(path: &Path) -> Result<(), EnrollmentVaultError> {
 fn sync_dir(dir: &Path) -> Result<(), EnrollmentVaultError> {
     let handle = fs::File::open(dir)
         .map_err(|_| EnrollmentVaultError::Io("could not open credential directory".into()))?;
-    handle
-        .sync_all()
+    org_platform::fs::full_sync(&handle)
         .map_err(|_| EnrollmentVaultError::Io("could not sync credential directory".into()))?;
     Ok(())
 }
@@ -1057,7 +1056,7 @@ fn write_private_atomic(
         .mode(0o600)
         .open(&tmp)
         .map_err(|_| EnrollmentVaultError::Io("could not create credential temp file".into()))?;
-    if file.write_all(bytes).is_err() || file.sync_all().is_err() {
+    if file.write_all(bytes).is_err() || org_platform::fs::full_sync(&file).is_err() {
         let _ = fs::remove_file(&tmp);
         return Err(EnrollmentVaultError::Io(
             "could not write credential temp file".into(),

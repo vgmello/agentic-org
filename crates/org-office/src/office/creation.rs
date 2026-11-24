@@ -321,6 +321,7 @@ impl Office {
             private_notes: companions.private_notes,
             accounting: companions.accounting,
             budgets: companions.budgets,
+            budget_op_lock: std::sync::Mutex::new(()),
             providers: companions.providers,
             store,
             _lock: lock,

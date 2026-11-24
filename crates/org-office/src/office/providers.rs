@@ -1240,10 +1240,12 @@ fn op_acquire_turn_permit(
     authority: PermitAuthority,
     is_failover_switch: bool,
 ) -> Result<Result<PermitAcquireOutcome, ApiError>, OfficeError> {
-    // `doc-88` §6 step 3: check unreleased budget holds BEFORE granting first permit of a new
-    // turn/resume, NEVER on §7 replacement switch permits for an already-running turn.
+    // `doc-88` §6 step 3: serialize the final budget hold check with first-permit acquisition
+    // under `budget_op_lock` so a concurrent budget hold cannot slip in between check and grant,
+    // while preserving the §7 exemption for replacement switch permits on an already-running turn.
+    let _budget_guard = (!is_failover_switch).then(|| office.lock_budget_ops());
     if !is_failover_switch {
-        let holds = office.active_budget_holds(Some(employee_id), task_id)?;
+        let holds = super::budgets::op_active_holds(office, Some(employee_id), task_id)?;
         if let Some(first) = holds.first() {
             return Ok(Err(ApiError::new(
                 ErrorCode::Conflict,

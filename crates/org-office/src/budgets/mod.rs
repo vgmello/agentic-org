@@ -124,6 +124,22 @@ pub struct BudgetHoldRecord {
     pub release_reason: Option<String>,
 }
 
+/// Crash-recovery intent persisted before cancelling a task for `budget.stop` (`TASK-97`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingStopIntent {
+    pub operation_id: String,
+    pub actor_id: String,
+    pub task_id: String,
+    pub task_command_id: String,
+    /// Hex SHA-256 of the exact `tasks.transition` operation fingerprint submitted for
+    /// `task_command_id`, preventing false matches on clock-rollback command ID reuse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_command_fingerprint: Option<String>,
+    pub request_hash: String,
+    pub reason: Option<String>,
+    pub created_at: String,
+}
+
 /// Complete durable bundle for one budget identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BudgetAggregate {
@@ -133,6 +149,10 @@ pub struct BudgetAggregate {
     pub events: Vec<BudgetEventRecord>,
     pub notices: Vec<BudgetNoticeRecord>,
     pub holds: Vec<BudgetHoldRecord>,
+    /// In-flight task cancellation intent persisted before `task_transition` and cleared once
+    /// the task transition outcome is finalized into `budget_events` (`TASK-97`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_stop: Option<PendingStopIntent>,
 }
 
 impl BudgetAggregate {
