@@ -2922,7 +2922,7 @@ html[data-theme="classic"] .h4-cta.hb-cta-glass:focus-visible {
 html[data-theme="classic"] .menu { background: #182230; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14); }
 html[data-theme="classic"] .sheet { background: #182230; box-shadow: inset 1px 0 0 rgba(255, 255, 255, .12); }
 html[data-theme="classic"] .toast { background: #182230; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14); }
-html[data-theme="classic"] .agent-rail, html[data-theme="classic"] .chlist, html[data-theme="classic"] .prof, html[data-theme="classic"] .subnav, html[data-theme="classic"] .split .list { background: #1b2533; backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-theme="classic"] .agent-rail, html[data-theme="classic"] .chlist, html[data-theme="classic"] .prof, html[data-theme="classic"] .subnav, html[data-theme="classic"] .split .list { background: var(--workspace-secondary-surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
 
 /* ── Theme 3: Modern 2D Executive Report (Day & Night shared + Day palette) ─ */
 html[data-theme^="report"] {
@@ -4016,7 +4016,7 @@ html[data-theme="report-dark"] .agent-rail,
 html[data-theme="report-dark"] .chlist,
 html[data-theme="report-dark"] .prof,
 html[data-theme="report-dark"] .subnav,
-html[data-theme="report-dark"] .split .list { background: #1b2533; }
+html[data-theme="report-dark"] .split .list { background: var(--workspace-secondary-surface); }
 
 /* Graphite: matte surfaces, compact lists and restrained color. */
 html[data-theme="graphite"] {
@@ -4979,6 +4979,10 @@ S.workSubtasks = true;
 try { S.workDividers = localStorage.getItem(WORK_DIVIDERS_STORE) === "1"; } catch (e) {}
 try { S.workSubtasks = localStorage.getItem(WORK_SUBTASKS_STORE) !== "0"; } catch (e) {}
 document.documentElement.toggleAttribute("data-work-dividers", S.workDividers);
+const ASSEMBLY_DIVIDERS_STORE = "agentic-org.v6.assemblyDividers";
+S.assemblyDividers = false;
+try { S.assemblyDividers = localStorage.getItem(ASSEMBLY_DIVIDERS_STORE) === "1"; } catch (e) {}
+document.documentElement.toggleAttribute("data-assembly-dividers", S.assemblyDividers);
 document.documentElement.toggleAttribute("data-hide-work-subtasks", !S.workSubtasks);
 const NAV_PIN_STORE = "agentic-org.v5.navPinned";
 S.navPinned = false;
@@ -5197,8 +5201,8 @@ function hireMenu(team) {
   return `<div class="menu-wrap"><button class="btn outline" type="button" data-act="menu" data-id="add" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-add">${ic("user-plus", "ic20")}Hire or add${ic("chev-down", "ic16")}</button>
     <div class="menu" id="menu-add" role="menu" hidden><button role="menuitem" type="button" data-act="proto" data-v="Hire an agent${t ? " for " + esc(t) : ""}">${ic("user-plus", "ic20")}Hire an agent</button><button role="menuitem" type="button" data-act="proto" data-v="Add a person${t ? " to " + esc(t) : ""}">${ic("user-plus", "ic20")}Add a person</button></div></div>`;
 }
-function moreMenu(id, label, items) {
-  return `<div class="menu-wrap"><button class="btn outline icon" type="button" data-act="menu" data-id="${id}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${id}" aria-label="${esc(label)}" title="More actions">${ic("ellipsis", "ic20")}</button><div class="menu" id="menu-${id}" role="menu" hidden>${items}</div></div>`;
+function moreMenu(id, label, items, variant = "outline") {
+  return `<div class="menu-wrap"><button class="btn ${variant} icon" type="button" data-act="menu" data-id="${id}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${id}" aria-label="${esc(label)}" title="More actions">${ic("ellipsis", "ic20")}</button><div class="menu" id="menu-${id}" role="menu" hidden>${items}</div></div>`;
 }
 const menuItem = (act, v, icon, label, extra = "") => `<button role="menuitem" type="button" data-act="${act}" data-v="${esc(v)}"${extra}>${ic(icon, "ic20")}${esc(label)}</button>`;
 
@@ -6715,7 +6719,7 @@ function pageProject(id, tab) {
     ["conversations", "Conversations"],
     ["team", "Team", projMembers(id).length],
   ];
-  const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"));
+  const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"), "ghost");
   const workControls = tab === "work" ? `<div class="queue-controls project-work-controls" role="group" aria-label="Work view controls">${scopedWorkControls()}</div>` : "";
   return back("#/projects", "Projects") + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id), projHeadProgress(id))}
@@ -7863,11 +7867,23 @@ function simulationDetails() {
   </div>`;
 }
 
+function updateActivityPanelScroll() {
+  const more = document.getElementById("activity-panel-more");
+  if (!more) return;
+  const scroll = document.getElementById("activity-panel-scroll");
+  const remaining = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop;
+  const show = S.actPanel === "release" && scroll.clientHeight > 0 && remaining > 1;
+  if (!show && document.activeElement === more) scroll.focus({ preventScroll: true });
+  more.hidden = !show;
+}
+const activityPanelResize = new ResizeObserver(updateActivityPanelScroll);
+
 function refreshActivityPanel(snapshot) {
   const panel = document.getElementById("activity-panel");
   if (!panel || !S.actPanel) return;
   const body = panel.querySelector(".activity-panel-body");
-  const scroll = panel.scrollTop;
+  const scroller = document.getElementById("activity-panel-scroll");
+  const scroll = scroller.scrollTop;
   const log = body.querySelector(".assembly-event-log");
   const logScroll = log?.scrollTop ?? 0;
   const active = document.activeElement;
@@ -7881,7 +7897,8 @@ function refreshActivityPanel(snapshot) {
   const focus = href ? body.querySelector(`a[href="${CSS.escape(href)}"]`) : active === log ? nextLog : null;
   if (body.contains(focus)) focus.focus({ preventScroll: true });
   else if (!active.isConnected) panel.querySelector(".side-panel-header button").focus({ preventScroll: true });
-  panel.scrollTop = scroll;
+  scroller.scrollTop = scroll;
+  updateActivityPanelScroll();
 }
 
 function setActivityPanel(next) {
@@ -7899,11 +7916,12 @@ function setActivityPanel(next) {
     title.textContent = ACTIVITY_PANELS[next].label;
     panel.querySelector(".activity-panel-controls").innerHTML = next === "simulation" ? assemblyPlayback() : "";
     refreshActivityPanel();
-    panel.scrollTop = 0;
+    document.getElementById("activity-panel-scroll").scrollTop = 0;
     title.focus({ preventScroll: true });
   } else {
     document.querySelector(`.activity-tool[data-v="${previous}"]`)?.focus({ preventScroll: true });
   }
+  updateActivityPanelScroll();
 }
 function activityNeedsFeed(items, waiting) {
   return waiting.map((item) => items.find((entry) => entry.inbox === item.id) || {
@@ -8090,6 +8108,10 @@ function pageActivity(projectId = null) {
   const viewKey = activityViewKey(projectId), view = S[viewKey];
   const isFeed = view === "feed";
   const showFilter = !projectId || isFeed;
+  const display = isFeed ? "" : showMenu("assembly-display", [], {
+    icon: "adjustments", label: "Assembly line display", focusTooltip: true, active: S.assemblyDividers,
+    footer: displayCheckbox("assembly-dividers", "Row dividers", S.assemblyDividers),
+  });
   const panels = projectId && P[projectId].archived ? [["release", ACTIVITY_PANELS.release]] : Object.entries(ACTIVITY_PANELS);
   const count = `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`;
   return `<section class="activity-workspace" data-activity-scope="${esc(projectId || "portfolio")}" aria-label="${projectId ? "Project activity" : "Activity command center"}">
@@ -8099,7 +8121,9 @@ function pageActivity(projectId = null) {
       </div></div>`}
       <div class="activity-toolbar queue-toolbar">
         ${activityViewTabs(viewKey)}
-        ${showFilter ? `<div class="queue-controls" role="group" aria-label="Activity view controls">${activityFilterMenu(isFeed, waiting.length, projectId)}</div>` : ""}
+        <div class="queue-controls" role="group" aria-label="Activity view controls">
+          ${showFilter ? activityFilterMenu(isFeed, waiting.length, projectId) : ""}${display}
+        </div>
       </div>
     </header>
     <div class="activity-body"${S.actPanel ? " data-panel-open" : ""}>
@@ -8110,12 +8134,15 @@ function pageActivity(projectId = null) {
         ${panels.map(([id, { label, icon }]) => `<button class="btn ghost icon icon-with-tooltip activity-tool" type="button" data-act="activity-panel" data-v="${id}" aria-label="${label}" aria-expanded="${S.actPanel === id}" aria-controls="activity-panel">${iconWithTooltip(label, icon, "ic20")}</button>`).join("")}
       </div>
       <aside class="activity-panel" id="activity-panel" aria-labelledby="activity-panel-title"${S.actPanel ? "" : " inert"}>
-        <header class="side-panel-header">
-          <h2 id="activity-panel-title" tabindex="-1">${ACTIVITY_PANELS[S.actPanel]?.label || ""}</h2>
-          <button class="btn ghost icon icon-with-tooltip" type="button" data-act="activity-panel-close" aria-label="Collapse Activity sidebar">${iconWithTooltip("Collapse Activity sidebar", "chev-right")}</button>
-        </header>
-        <div class="activity-panel-controls">${S.actPanel === "simulation" ? assemblyPlayback() : ""}</div>
-        <div class="activity-panel-body"></div>
+        <div class="activity-panel-scroll" id="activity-panel-scroll" role="region" aria-label="Activity sidebar contents" tabindex="0">
+          <header class="side-panel-header">
+            <h2 id="activity-panel-title" tabindex="-1">${ACTIVITY_PANELS[S.actPanel]?.label || ""}</h2>
+            <button class="btn ghost icon icon-with-tooltip" type="button" data-act="activity-panel-close" aria-label="Collapse Activity sidebar">${iconWithTooltip("Collapse Activity sidebar", "chev-right")}</button>
+          </header>
+          <div class="activity-panel-controls">${S.actPanel === "simulation" ? assemblyPlayback() : ""}</div>
+          <div class="activity-panel-body"></div>
+        </div>
+        ${projectId ? `<button class="activity-panel-more" id="activity-panel-more" type="button" data-act="activity-panel-more" aria-controls="activity-panel-scroll" hidden>Scroll for more${ic("chev-down", "ic16")}</button>` : ""}
       </aside>
     </div>
   </section>`;
@@ -9647,7 +9674,7 @@ function render(focus = true) {
   const key = location.hash;
   const priorPanel = main.querySelector("#work-panel");
   const priorActivity = main.querySelector(".activity-main");
-  const panelScroll = document.getElementById("activity-panel")?.scrollTop ?? 0;
+  const panelScroll = document.getElementById("activity-panel-scroll")?.scrollTop ?? 0;
   const pageScroll = content.scrollTop;
   const priorBoard = main.querySelector("#work-results .board");
   const workBoardScroll = priorBoard && { left: priorBoard.scrollLeft, top: priorBoard.scrollTop };
@@ -9671,9 +9698,16 @@ function render(focus = true) {
   renderBanner(r0);
   const activity = main.querySelector(".activity-main");
   if (sameActivity && activity && priorActivity?.dataset.view === activity.dataset.view) activity.scrollTop = priorActivity.scrollTop;
+  activityPanelResize.disconnect();
   if (activity && S.actPanel) {
     refreshActivityPanel();
-    if (sameActivity) document.getElementById("activity-panel").scrollTop = panelScroll;
+    if (sameActivity) document.getElementById("activity-panel-scroll").scrollTop = panelScroll;
+  }
+  if (projectId) {
+    const scroll = document.getElementById("activity-panel-scroll");
+    scroll.addEventListener("scroll", updateActivityPanelScroll, { passive: true });
+    activityPanelResize.observe(scroll);
+    activityPanelResize.observe(scroll.querySelector(".activity-panel-body"));
   }
   const titleBase = r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found");
   document.title = titleBase + " · Agentic Org";
@@ -10301,6 +10335,20 @@ document.addEventListener("click", (e) => {
     case "activity-panel-close":
       setActivityPanel(null);
       break;
+    case "activity-panel-more": {
+      const scroll = document.getElementById("activity-panel-scroll");
+      const headerHeight = scroll.querySelector(".side-panel-header").offsetHeight;
+      scroll.scrollBy(0, Math.max(t.offsetHeight, scroll.clientHeight - headerHeight - t.offsetHeight));
+      break;
+    }
+    case "assembly-dividers": {
+      S.assemblyDividers = !S.assemblyDividers;
+      document.documentElement.toggleAttribute("data-assembly-dividers", S.assemblyDividers);
+      t.setAttribute("aria-checked", String(S.assemblyDividers));
+      document.querySelector('[aria-controls="menu-assembly-display"]').toggleAttribute("data-active", S.assemblyDividers);
+      try { localStorage.setItem(ASSEMBLY_DIVIDERS_STORE, S.assemblyDividers ? "1" : "0"); } catch (e) {}
+      break;
+    }
     case "activity-review": {
       const projectId = projectActivityId();
       S[activityViewKey(projectId)] = "feed";
@@ -10729,7 +10777,7 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "Home") return go(0);
     if (e.key === "End") return go(items.length - 1);
     const applyDisplayOption = e.key === "Enter"
-      && (openMenu.id === "menu-work-display" || openMenu.id === "menu-inbox-display")
+      && openMenu.matches("#menu-work-display, #menu-inbox-display, #menu-assembly-display")
       && e.target.getAttribute("role") === "menuitemcheckbox";
     if (e.key === "Escape" || applyDisplayOption) {
       e.preventDefault();

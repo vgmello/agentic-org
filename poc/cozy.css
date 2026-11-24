@@ -30,6 +30,7 @@ html[data-theme="cozy"] {
   --radius-md: 8px;
   --radius-lg: 8px;
   --bar-track: rgb(255 245 232 / .16);
+  --assembly-surface: transparent;
   --tone-accent: #6ec4c7;
   --tone-accent-bar: var(--tone-accent);
   --tone-accent-ink: #9edfe0;
@@ -228,8 +229,8 @@ html[data-theme="cozy"] {
   & .proto-hotzone:hover::after { background: var(--gray-400); }
   & .home-scroll-hint { background: transparent; }
 
-  & #content:has(.work-header) { background: #463c30; }
-  & body.a11y-mode #content:has(.work-header) { background: var(--cozy-shell); }
+  & #content:has(.work-header, .activity-main[data-view="assembly"]) { background: #463c30; }
+  & body.a11y-mode #content:has(.work-header, .activity-main[data-view="assembly"]) { background: var(--cozy-shell); }
 
   & .chat {
     --cozy-chat-chrome: rgb(26 21 18 / .28);
@@ -292,8 +293,6 @@ html[data-theme="cozy"] {
     box-shadow: var(--cozy-panel-shadow);
     color: var(--white);
   }
-
-  & .assembly-view { background: var(--cozy-panel); }
 
   & :is(.hb-spot-meta, .hb-spot-next, .hb-cos-memo, .hb-ai-brief, .hb-brief-lenses, .hb-dig-item,
     .hb-hor-item, .work-group-title, .grp-h, .subnav, .ctx-body, .runlog, .k-doc,
