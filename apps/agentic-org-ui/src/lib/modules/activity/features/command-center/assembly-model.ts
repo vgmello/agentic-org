@@ -233,7 +233,8 @@ export function inboxItemHref(inboxId: string): string {
 
 export function extractWorkRefsFromText(text: string | undefined): string[] {
 	if (!text) return [];
-	const matches = text.match(/\b[A-Z]+-\d+\b/g);
+	// Match both plain (`T-14`, `BUG-44`) and office-prefixed (`T-A40`, `T-B37`, `BUG-A12`) references.
+	const matches = text.match(/\b[A-Z]+-[A-Z]{0,3}\d+\b/g);
 	return matches ? matches.map((m) => m.toUpperCase()) : [];
 }
 
@@ -291,16 +292,6 @@ function belongsOnlyToArchivedProjects(
 	archivedProjectIds: ReadonlySet<string>
 ): boolean {
 	return projectIds.length > 0 && projectIds.every((pid) => archivedProjectIds.has(pid));
-}
-
-function buildInboxLookup(openInbox: readonly InboxItem[]): Map<string, InboxItem> {
-	const map = new Map<string, InboxItem>();
-	for (const inbox of openInbox) {
-		for (const ref of extractInboxWorkRefs(inbox)) {
-			if (!map.has(ref)) map.set(ref, inbox);
-		}
-	}
-	return map;
 }
 
 /**
@@ -646,15 +637,15 @@ export function computeThroughput7d(timestamps: readonly string[], nowMs: number
 
 function matchInboxForRow(
 	row: ActivityRow,
-	inboxByRef: ReadonlyMap<string, InboxItem>,
+	reviewInboxByRef: ReadonlyMap<string, InboxItem>,
 	openInbox: readonly InboxItem[]
 ): InboxItem | undefined {
 	const pathRef = extractWorkRefFromPath(row.href?.path);
 	if (pathRef) {
-		const found = inboxByRef.get(pathRef);
+		const found = reviewInboxByRef.get(pathRef);
 		if (found) return found;
 		if (row.href?.path) {
-			return openInbox.find((i) => i.open?.path === row.href?.path);
+			return openInbox.find((i) => i.kind !== 'problem' && i.open?.path === row.href?.path);
 		}
 		return undefined;
 	}
@@ -663,7 +654,7 @@ function matchInboxForRow(
 		if (exact) return exact;
 	}
 	for (const ref of extractWorkRefsFromText(row.text)) {
-		const found = inboxByRef.get(ref);
+		const found = reviewInboxByRef.get(ref);
 		if (found) return found;
 	}
 	return undefined;
@@ -997,7 +988,7 @@ export function deriveDecisionStreamEntries(input: {
 				const pid = resolveInboxProjectId(i, workByRef);
 				return !pid || !archivedProjectIds.has(pid);
 			});
-	const inboxByRef = buildInboxLookup(scopedOpenInbox);
+	const reviewInboxByRef = buildReviewInboxLookup(scopedOpenInbox);
 
 	const actionableWorkRefs = new Set<string>();
 	for (const item of pipelineWork) {
@@ -1013,7 +1004,7 @@ export function deriveDecisionStreamEntries(input: {
 		scopedDecisionRows,
 		[],
 		scopedOpenInbox,
-		inboxByRef,
+		reviewInboxByRef,
 		actionableWorkRefs,
 		resolvedOwnerId,
 		decisionPhase,
@@ -1066,7 +1057,6 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 				return !pid || !archivedProjectIds.has(pid);
 			});
 
-	const inboxByRef = buildInboxLookup(scopedOpenInbox);
 	const reviewInboxByRef = buildReviewInboxLookup(scopedOpenInbox);
 	const openInboxWorkRefs = new Set<string>(reviewInboxByRef.keys());
 
@@ -1257,13 +1247,13 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 
 	const allRailAgents: RailAgentRow[] = nonFormerAgents.map((member) => {
 		const assigned = [...(workByAssignee.get(member.id) ?? [])].sort((a, b) => {
-			const sa = classifyAssemblyStage(a, inboxByRef, resolvedOwnerId) ?? 'merged';
-			const sb = classifyAssemblyStage(b, inboxByRef, resolvedOwnerId) ?? 'merged';
+			const sa = classifyAssemblyStage(a, reviewInboxByRef, resolvedOwnerId) ?? 'merged';
+			const sb = classifyAssemblyStage(b, reviewInboxByRef, resolvedOwnerId) ?? 'merged';
 			return stagePriority[sa] - stagePriority[sb] || compareItems(a, b);
 		});
 		const leadItem = assigned[0];
 		const leadStage = leadItem
-			? classifyAssemblyStage(leadItem, inboxByRef, resolvedOwnerId)
+			? classifyAssemblyStage(leadItem, reviewInboxByRef, resolvedOwnerId)
 			: null;
 
 		let status: RailAgentRow['status'] = 'idle';
@@ -1314,7 +1304,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 		scopedActivityRows,
 		scopedWork,
 		scopedOpenInbox,
-		inboxByRef,
+		reviewInboxByRef,
 		actionableWorkRefs,
 		resolvedOwnerId,
 		feedPhase,

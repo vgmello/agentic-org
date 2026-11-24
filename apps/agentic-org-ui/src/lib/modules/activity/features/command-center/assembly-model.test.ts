@@ -10,6 +10,7 @@ import {
 	deriveActivityCommandCenter,
 	deriveDecisionStreamEntries,
 	extractInboxWorkRefs,
+	extractWorkRefsFromText,
 	filterStreamEntries,
 	formatTelemetryHours,
 	mergeLiveActivityRows
@@ -1413,22 +1414,24 @@ describe('assembly-model', () => {
 		// Project 7d throughput counts only work events (1), ignoring conversation messages
 		expect(model.throughput7d.reduce((sum, d) => sum + d.count, 0)).toBe(1);
 
-		// A problem notice (e.g. dismiss-only run crash) mentioning or linking to queued tasks MUST NOT
-		// classify them as awaiting human review, expose them in openInboxWorkRefs, or fabricate wait hours.
+		// A problem notice (e.g. dismiss-only run crash) mentioning or linking to queued office-prefixed
+		// tasks MUST NOT classify them as awaiting human review, badge their live-feed rows Needs you,
+		// put their assigned agent into Needs input, expose them in openInboxWorkRefs, or fabricate wait hours.
 		const problemMentionModel = deriveActivityCommandCenter({
 			snapshot,
 			organizationName: 'Acme Corp',
 			workItems: [
 				makeItem({
 					id: 'w-q1',
-					short_id: 'T-70',
+					short_id: 'T-A40',
 					kind: 'task',
 					status: 'todo',
-					project_id: 'proj-a'
+					project_id: 'proj-a',
+					assignee_id: 'kai'
 				}),
 				makeItem({
 					id: 'w-q2',
-					short_id: 'T-71',
+					short_id: 'T-A41',
 					kind: 'task',
 					status: 'todo',
 					project_id: 'proj-a'
@@ -1438,14 +1441,27 @@ describe('assembly-model', () => {
 				makeInbox({
 					id: 'in-crash',
 					kind: 'problem',
-					title: 'Run crashed mentioning T-70 and T-71',
-					open: { path: '/work/T-70', label: 'Open T-70' },
+					title: 'Run crashed mentioning T-A40 and T-A41',
+					open: { path: '/work/T-A40', label: 'Open T-A40' },
 					actions: ['dismiss'],
 					project: { id: 'proj-a', name: 'Alpha Core' },
 					created_at: new Date(NOW - 2 * 3_600_000).toISOString()
 				})
 			],
-			activityRows: [],
+			activityRows: [
+				{
+					id: 'act-ta40',
+					at: new Date(NOW - 10 * 60_000).toISOString(),
+					actor: { id: 'kai', name: 'Kai Sato', kind: 'agent' },
+					kind: 'work',
+					action: 'task-done',
+					text: 'completed T-A40',
+					href: { path: '/work/T-A40', label: 'T-A40' },
+					teamIds: ['team-a'],
+					projectIds: ['proj-a'],
+					memberIds: ['kai']
+				}
+			],
 			projectScope: 'proj-a',
 			nowMs: NOW
 		});
@@ -1453,8 +1469,16 @@ describe('assembly-model', () => {
 		expect(problemMentionModel.stageCounts.queue).toBe(2);
 		expect(problemMentionModel.humanWaitingItems).toEqual([]);
 		expect(problemMentionModel.waitingOnPeopleHours).toBe(0);
-		expect(problemMentionModel.openInboxWorkRefs.has('T-70')).toBe(false);
-		expect(problemMentionModel.openInboxWorkRefs.has('T-71')).toBe(false);
+		expect(problemMentionModel.openInboxWorkRefs.has('T-A40')).toBe(false);
+		expect(problemMentionModel.openInboxWorkRefs.has('T-A41')).toBe(false);
+		expect(problemMentionModel.streamEntries[0]?.needsYou).toBe(false);
+		expect(problemMentionModel.railAgents.find((a) => a.id === 'kai')?.status).toBe('idle');
+
+		// Office-prefixed references (e.g. T-A40) are extracted from prose for open approval matching
+		expect(extractWorkRefsFromText('assigned T-A40 Split the checkout service and T-B37')).toEqual([
+			'T-A40',
+			'T-B37'
+		]);
 
 		// Review-stage item without a linked Inbox review-entry timestamp returns null wait (never mutable updated_at)
 		// and empty activityRows produces empty lineEvents (never misattributed work-snapshot fallback)
