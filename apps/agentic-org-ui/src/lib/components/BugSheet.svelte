@@ -66,6 +66,7 @@
 	let tAssignee = $state('');
 
 	let loadSeq = 0;
+	let saveSeq = 0;
 	let destroyed = false;
 
 	onDestroy(() => {
@@ -95,6 +96,8 @@
 			untrack(() => {
 				item = undefined;
 				error = undefined;
+				busy = false;
+				saveSeq += 1;
 				step = undefined;
 				note = anyway = original = '';
 				askAnyway = false;
@@ -108,6 +111,11 @@
 					tAssignee = '';
 				});
 			});
+		} else {
+			untrack(() => {
+				busy = false;
+				saveSeq += 1;
+			});
 		}
 	});
 
@@ -115,24 +123,33 @@
 		if (busy || !bugId) return false;
 		const forOrg = organizationId;
 		const forBug = bugId;
+		const seq = ++saveSeq;
 		busy = true;
 		error = undefined;
 		try {
 			await send(draft);
-			if (destroyed || forOrg !== organizationId || forBug !== bugId) return false;
+			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forBug !== bugId) {
+				if (forOrg === organizationId) onchanged(message);
+				return false;
+			}
 			await load();
-			if (destroyed || forOrg !== organizationId || forBug !== bugId) return false;
+			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forBug !== bugId) {
+				if (forOrg === organizationId) onchanged(message);
+				return false;
+			}
 			onchanged(message);
 			return true;
 		} catch (e) {
-			if (destroyed || forOrg !== organizationId || forBug !== bugId) return false;
+			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forBug !== bugId)
+				return false;
 			const err = toAppError(e);
 			error = err.message;
 			if (err.source === 'api' && err.code === 'checklist_incomplete') askAnyway = true;
 			if (err.source === 'api' && err.code === 'conflict') await load();
 			return false;
 		} finally {
-			if (!destroyed && forOrg === organizationId && forBug === bugId) busy = false;
+			if (!destroyed && seq === saveSeq && forOrg === organizationId && forBug === bugId)
+				busy = false;
 		}
 	}
 

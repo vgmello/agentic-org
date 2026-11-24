@@ -129,6 +129,11 @@
 						begin(start);
 				});
 			});
+		} else {
+			untrack(() => {
+				busy = false;
+				sheet += 1;
+			});
 		}
 	});
 
@@ -141,13 +146,17 @@
 		const mine = sheet;
 		try {
 			for (const one of Array.isArray(draft) ? draft : [draft]) await send(one);
-			if (destroyed || mine !== sheet || forOrg !== organizationId || forRequest !== requestId)
+			if (destroyed || mine !== sheet || forOrg !== organizationId || forRequest !== requestId) {
+				if (forOrg === organizationId) onchanged(message);
 				return false;
+			}
 			// The sheet may have been closed and opened again, even for the same request, while this was sent: what it shows
 			// is read again either way (a load for another request is dropped), but busy and errors are only this sheet's.
 			await load();
-			if (destroyed || mine !== sheet || forOrg !== organizationId || forRequest !== requestId)
+			if (destroyed || mine !== sheet || forOrg !== organizationId || forRequest !== requestId) {
+				if (forOrg === organizationId) onchanged(message);
 				return false;
+			}
 			onchanged(message);
 			return true;
 		} catch (e) {

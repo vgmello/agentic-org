@@ -656,6 +656,11 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 	});
 	await expect(memberCard).toBeVisible();
 	await page.keyboard.press('Escape');
+	await expect(memberCard).toBeHidden();
+	// Re-hover trigger and press Escape while still on the trigger: preview stays dismissed until pointer leaves
+	await memberLink.hover();
+	await expect(memberCard).toBeVisible();
+	await page.keyboard.press('Escape');
 	await expect(memberWrap).toHaveAttribute('data-preview-dismissed', '');
 	await expect(memberCard).toBeHidden();
 	await page.mouse.move(10, 10);
@@ -995,6 +1000,7 @@ test('Phase 4B: Work inline split reading panel, focus restore, mobile Back to W
 	await secondTaskBtn.click();
 	await expect(readingPanel.locator('#work-detail-title')).toHaveText('CSP gates in the UI suite');
 	await expect(readingPanel.locator('#task-title')).toHaveValue('CSP gates in the UI suite');
+	await expect(readingPanel.locator('#task-title')).toBeEnabled();
 	await expect(readingPanel.locator('#task-description')).not.toHaveValue(/Custody lock fix/);
 	await custodyBtn.click();
 	await expect(readingPanel.locator('#work-detail-title')).toHaveText('Custody lock fix');
@@ -1025,14 +1031,14 @@ test('Phase 4B: Work inline split reading panel, focus restore, mobile Back to W
 	await page.keyboard.press('ControlOrMeta+k');
 	const cmdDialog = page.getByRole('dialog', { name: 'Command palette and Org AI' });
 	await expect(cmdDialog).toBeVisible();
-	await cmdDialog.getByRole('combobox').fill('#');
-	await expect(cmdDialog.getByRole('option', { name: /#general.*Channels/ })).toBeVisible();
-	await cmdDialog.getByRole('combobox').fill('#gen');
-	await expect(cmdDialog.getByRole('option', { name: /#general.*Channels/ })).toBeVisible();
+	await cmdDialog.getByRole('combobox').fill('#office');
+	await expect(
+		cmdDialog.getByRole('option', { name: /#office-federation.*Channels/ })
+	).toBeVisible();
 	await page.keyboard.press('Enter');
 	await expect(cmdDialog).toBeHidden();
-	await expect(page).toHaveURL(/\/chat\?c=c-general$/);
-	await expect(page.getByTestId('conversation-title')).toHaveText('#general');
+	await expect(page).toHaveURL(/\/chat\?c=c-project-office-federation$/);
+	await expect(page.getByTestId('conversation-title')).toHaveText('#office-federation');
 
 	// Single-key `#` shortcut on /chat opens CmdK directly in `#` channel jump mode
 	await page.locator('main').click({ position: { x: 12, y: 12 } });
@@ -1051,4 +1057,47 @@ test('Phase 4B: Work inline split reading panel, focus restore, mobile Back to W
 			.evaluate((el) => getComputedStyle(el, '::before').content);
 		expect(mastheadBefore === 'none' || mastheadBefore === 'normal').toBe(true);
 	}
+});
+
+test('Phase 4B: saving inline Task A while switching to Task B keeps B enabled, refreshes Work queue, and Ask -> Search # loads real Chat channels', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await enterMockedOrganization(page);
+	await visit(page, '/work?mock=default');
+	const createTask = async (title: string) => {
+		await page.getByRole('button', { name: 'New task' }).click();
+		const dialog = page.getByRole('dialog', { name: 'New task' });
+		await dialog.getByLabel('Title').fill(title);
+		await dialog.getByRole('button', { name: 'Create task' }).click();
+		await expect(dialog).toBeHidden();
+	};
+	await createTask('Alpha task');
+	await createTask('Beta task');
+
+	// Open Alpha, edit its title, and immediately click Beta so Alpha's blur-save runs across the switch
+	await page.getByRole('button', { name: 'Alpha task' }).click();
+	const readingPanel = page.locator('.work-reading');
+	await expect(readingPanel.locator('#task-title')).toHaveValue('Alpha task');
+	await readingPanel.locator('#task-title').fill('Alpha task — saved');
+	await page.getByRole('button', { name: 'Beta task' }).click();
+
+	// Beta stays clean and interactive, while Alpha's persisted title refreshes in the Work queue
+	await expect(readingPanel.locator('#work-detail-title')).toHaveText('Beta task');
+	await expect(readingPanel.locator('#task-title')).toHaveValue('Beta task');
+	await expect(readingPanel.locator('#task-title')).toBeEnabled();
+	await expect(page.getByRole('button', { name: 'Alpha task — saved' })).toBeVisible();
+
+	// Ask -> Search & Commands tab switch loads real Chat conversations on first single-event `#release-v1` query
+	// (#release-v1 exists only in the real Chat conversation snapshot, not the snapshot-derived fallback)
+	await page.getByRole('button', { name: 'Ask', exact: true }).click();
+	const cmdDialog = page.getByRole('dialog', { name: 'Command palette and Org AI' });
+	await expect(cmdDialog).toBeVisible();
+	await cmdDialog.getByRole('tab', { name: 'Search & Commands' }).click();
+	await cmdDialog.getByRole('combobox').fill('#release-v1');
+	await expect(cmdDialog.getByRole('option', { name: /#release-v1.*Channels/ })).toBeVisible();
+	await page.keyboard.press('Enter');
+	await expect(cmdDialog).toBeHidden();
+	await expect(page).toHaveURL(/\/chat\?c=c-release-v1$/);
+	await expect(page.getByTestId('conversation-title')).toHaveText('#release-v1');
 });

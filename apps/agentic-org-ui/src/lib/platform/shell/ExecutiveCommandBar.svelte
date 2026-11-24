@@ -502,6 +502,7 @@
 			event.preventDefault();
 			if (open) {
 				mode = mode === 'cmd' ? 'ai' : 'cmd';
+				if (mode === 'cmd') void loadChatConversations(organizationId);
 				void tick().then(() => inputEl?.focus());
 			} else {
 				openModal('ai');
@@ -649,10 +650,13 @@
 						activeIdx = 0;
 						void loadChatConversations(organizationId);
 					}}
-					oninput={() => {
+					oninput={(event) => {
 						inlineOpen = true;
 						activeIdx = 0;
-						if (isChannelQuery && chatConversationsOrgId !== organizationId) {
+						if (
+							event.currentTarget.value.trimStart().startsWith('#') &&
+							chatConversationsOrgId !== organizationId
+						) {
 							void loadChatConversations(organizationId);
 						}
 					}}
@@ -820,7 +824,10 @@
 					type="button"
 					role="tab"
 					aria-selected={mode === 'cmd'}
-					onclick={() => (mode = 'cmd')}
+					onclick={() => {
+						mode = 'cmd';
+						void loadChatConversations(organizationId);
+					}}
 					class="exec-cmdk-tab inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
 				>
 					<Search class="size-3.5" aria-hidden="true" />
@@ -858,9 +865,12 @@
 			<input
 				bind:this={inputEl}
 				bind:value={query}
-				oninput={() => {
+				oninput={(event) => {
 					activeIdx = 0;
-					if (isChannelQuery && chatConversationsOrgId !== organizationId) {
+					if (
+						event.currentTarget.value.trimStart().startsWith('#') &&
+						chatConversationsOrgId !== organizationId
+					) {
 						void loadChatConversations(organizationId);
 					}
 				}}

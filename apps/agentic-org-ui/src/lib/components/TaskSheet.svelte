@@ -74,6 +74,7 @@
 	let statusSelect = $state<HTMLSelectElement | undefined>();
 
 	let loadSeq = 0;
+	let saveSeq = 0;
 	let destroyed = false;
 
 	onDestroy(() => {
@@ -130,6 +131,8 @@
 				fixed = [];
 				fromRequest = undefined;
 				error = undefined;
+				busy = false;
+				saveSeq += 1;
 				newStep = blockedReason = anywayReason = '';
 				newRequired = false;
 				pending = start?.pending;
@@ -139,6 +142,11 @@
 				assignPending = undefined;
 				void load(true);
 			});
+		} else {
+			untrack(() => {
+				busy = false;
+				saveSeq += 1;
+			});
 		}
 	});
 
@@ -147,25 +155,34 @@
 		if (busy || !taskId) return false;
 		const forOrg = organizationId;
 		const forTask = taskId;
+		const seq = ++saveSeq;
 		busy = true;
 		error = undefined;
 		try {
 			await send(draft);
-			if (destroyed || forOrg !== organizationId || forTask !== taskId) return false;
+			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forTask !== taskId) {
+				if (forOrg === organizationId) onchanged(announce);
+				return false;
+			}
 			// What was typed in the other fields stays: only a stale change (below) takes the latest.
 			await load(false);
-			if (destroyed || forOrg !== organizationId || forTask !== taskId) return false;
+			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forTask !== taskId) {
+				if (forOrg === organizationId) onchanged(announce);
+				return false;
+			}
 			onchanged(announce);
 			return true;
 		} catch (e) {
-			if (destroyed || forOrg !== organizationId || forTask !== taskId) return false;
+			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forTask !== taskId)
+				return false;
 			const err = toAppError(e);
 			error = err.message;
 			if (err.source === 'api' && err.code === 'conflict') await load(true);
 			if (err.source === 'api' && err.code === 'checklist_incomplete') pending = 'done_anyway';
 			return false;
 		} finally {
-			if (!destroyed && forOrg === organizationId && forTask === taskId) busy = false;
+			if (!destroyed && seq === saveSeq && forOrg === organizationId && forTask === taskId)
+				busy = false;
 		}
 	}
 
