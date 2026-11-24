@@ -2,11 +2,14 @@ import type { OrgSnapshot } from '$lib/proto';
 import { inboxApi } from '$lib/modules/inbox/api';
 import { newId } from '$lib/modules/organization/commands';
 import { sender, workApi } from '$lib/modules/work';
+import { workItemsApi } from '$lib/modules/workitems/api';
+import type { DraftTask, Priority, Severity } from '$lib/modules/workitems/types';
+import { areaCapability } from '$lib/platform/shell/capabilities';
 import type { SpotlightDecision } from './model';
 
 /**
  * Execute a real decision action from Executive Home Spotlight or Inbox
- * through the owning canonical domain channel (`inboxApi` or `workApi`).
+ * through the owning canonical domain channel (`inboxApi`, `workItemsApi`, or `workApi`).
  */
 export async function executeDecisionAction(
 	organizationId: string,
@@ -57,6 +60,78 @@ export async function executeDecisionAction(
 
 	const item = decision.item;
 	if (!item) return { message: '', navigateTo: decision.detailHref };
+
+	if (areaCapability('/work').available) {
+		if (action === 'secondary') {
+			if (decision.secondaryAction?.kind === 'decline_request') {
+				await workItemsApi.decline(organizationId, item.id, {
+					reason: declineReason.trim() || 'Declined from executive review',
+					expectedRevision: item.version
+				});
+				return { message: `Declined “${item.title}”.` };
+			}
+			return { message: '', navigateTo: decision.detailHref };
+		}
+
+		switch (decision.primaryAction.kind) {
+			case 'approve_request': {
+				const detail = await workItemsApi.task(organizationId, item.short_id);
+				const drafts: DraftTask[] =
+					detail.request?.outcome && detail.request.outcome.draftTasks.length > 0
+						? detail.request.outcome.draftTasks
+						: [
+								{
+									draftId: newId(),
+									title: item.title,
+									team: detail.assignedTeam ?? detail.team,
+									...(detail.assignee ? { assignee: detail.assignee } : {}),
+									priority: detail.priority
+								}
+							];
+				await workItemsApi.approve(organizationId, item.id, {
+					drafts,
+					operationId: newId(),
+					expectedRevision: detail.revision
+				});
+				return { message: `Approved “${item.title}”.` };
+			}
+			case 'verify_bug': {
+				await workItemsApi.verify(organizationId, item.id, {
+					result: 'fixed',
+					note: '',
+					expectedRevision: item.version
+				});
+				return { message: `Verified and closed “${item.title}”.` };
+			}
+			case 'unblock_task': {
+				await workItemsApi.setStatus(organizationId, item.id, {
+					status: 'in_progress',
+					expectedRevision: item.version
+				});
+				return { message: `Resumed “${item.title}”.` };
+			}
+			case 'triage_bug': {
+				const detail = await workItemsApi.task(organizationId, item.short_id);
+				const severity: Severity =
+					detail.severity ??
+					(item.severity && item.severity !== 'unknown' ? (item.severity as Severity) : 'minor');
+				const priority: Priority =
+					detail.priority ??
+					(item.priority && item.priority !== 'unknown' ? (item.priority as Priority) : 'normal');
+				await workItemsApi.triage(organizationId, item.id, {
+					assignedTeamId: detail.assignedTeam?.id ?? detail.team.id,
+					assigneeId: detail.assignee?.id ?? null,
+					severity,
+					priority,
+					expectedRevision: detail.revision
+				});
+				return { message: `Triaged “${item.title}”.` };
+			}
+			default:
+				return { message: '', navigateTo: decision.detailHref };
+		}
+	}
+
 	const send = sender(organizationId);
 
 	if (action === 'secondary') {

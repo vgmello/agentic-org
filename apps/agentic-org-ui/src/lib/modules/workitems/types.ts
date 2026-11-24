@@ -104,6 +104,8 @@ export interface TaskRow {
 	budgetHold?: 'stop_pending' | 'held';
 	/** A bug marked as fixed, waiting for its verification (BUG-14). */
 	awaitingVerification?: boolean;
+	/** A request closed by merging into another request. */
+	merged?: boolean;
 }
 
 /** Who is looking: "my" filters derive from the admitted employee, never from an owner flag (WORK-2). */

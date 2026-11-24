@@ -14,11 +14,12 @@ function summaryStatus(row: TaskRow): ItemStatus {
 	if (row.type === 'bug') {
 		if (row.status === 'done' || row.status === 'cancelled') return 'closed';
 		if (row.awaitingVerification) return 'fixed';
+		if (row.needsMe?.source === 'critical') return 'new';
 		return row.status;
 	}
 	if (row.type === 'request') {
 		if (row.status === 'done') return 'approved';
-		if (row.status === 'cancelled') return 'declined';
+		if (row.status === 'cancelled') return row.merged ? 'merged' : 'declined';
 		if (row.needsMe?.source === 'approval') return 'scoped';
 		return row.status;
 	}

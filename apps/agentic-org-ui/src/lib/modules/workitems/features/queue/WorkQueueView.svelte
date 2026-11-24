@@ -284,12 +284,42 @@
 		}
 	}
 
-	// Sync Show view with `?view=` on `/work`.
+	// Sync Show view and bookmarked `?project=` / `?assignee=` filters with URL on `/work`.
 	const urlView = $derived(page.url.searchParams.get('view'));
+	const urlProject = $derived(isOrgScope ? (page.url.searchParams.get('project') ?? '') : '');
+	const urlAssignee = $derived(isOrgScope ? (page.url.searchParams.get('assignee') ?? '') : '');
+	let lastSyncedUrlKey = '';
+	$effect(() => {
+		if (!isOrgScope) return;
+		const key = `${urlProject}|${urlAssignee}`;
+		if (key === lastSyncedUrlKey) return;
+		lastSyncedUrlKey = key;
+		if (filters.projectId !== urlProject || filters.assigneeId !== urlAssignee) {
+			filters = { ...filters, projectId: urlProject, assigneeId: urlAssignee };
+		}
+	});
+
+	function syncFilterUrl(projectIdVal: string, assigneeIdVal: string) {
+		if (!isOrgScope) return;
+		lastSyncedUrlKey = `${projectIdVal}|${assigneeIdVal}`;
+		const nextUrl = new URL(page.url);
+		if (projectIdVal) nextUrl.searchParams.set('project', projectIdVal);
+		else nextUrl.searchParams.delete('project');
+		if (assigneeIdVal) nextUrl.searchParams.set('assignee', assigneeIdVal);
+		else nextUrl.searchParams.delete('assignee');
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- preserving current already-resolved URL + hash
+		void goto(nextUrl, {
+			replaceState: true,
+			noScroll: true,
+			keepFocus: true
+		});
+	}
+
 	const activeShow = $derived.by<ShowView>(() => {
 		if (!isOrgScope) return 'mine';
 		if (isShowView(urlView)) return urlView;
 		if (showOverride) return showOverride;
+		if (urlProject || urlAssignee) return 'mine';
 		return queueRead.data ? defaultShowView(queueRead.data) : 'mine';
 	});
 
@@ -349,6 +379,9 @@
 	function clearFilters() {
 		filters = defaultFilters();
 		savedExplicit = false;
+		if (isOrgScope && (urlProject || urlAssignee)) {
+			syncFilterUrl('', '');
+		}
 	}
 
 	function showAllSaved() {
@@ -738,7 +771,12 @@
 								{#if isOrgScope}
 									<select
 										aria-label="Filter by project"
-										bind:value={filters.projectId}
+										value={filters.projectId}
+										onchange={(e) => {
+											const val = (e.currentTarget as HTMLSelectElement).value;
+											filters = { ...filters, projectId: val };
+											syncFilterUrl(val, filters.assigneeId);
+										}}
 										class="w-auto {selectClass}"
 									>
 										<option value="">All projects</option>
@@ -774,7 +812,12 @@
 
 								<select
 									aria-label="Filter by assignee"
-									bind:value={filters.assigneeId}
+									value={filters.assigneeId}
+									onchange={(e) => {
+										const val = (e.currentTarget as HTMLSelectElement).value;
+										filters = { ...filters, assigneeId: val };
+										syncFilterUrl(filters.projectId, val);
+									}}
 									class="w-auto {selectClass}"
 								>
 									<option value="">Assignee</option>

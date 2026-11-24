@@ -39,7 +39,6 @@ import type {
 	UsageTotals
 } from '../../../src/lib/modules/costs/types';
 import { mockMode, POC_ORG_ID } from '../mock-mode';
-import { pocAgentBudgets, pocOrganizationCost, pocProjectInvestments } from '../poc-dataset';
 import usage from '../data/costs/usage.json' with { type: 'json' };
 import priceData from '../data/costs/prices.json' with { type: 'json' };
 import budgetData from '../data/costs/budgets.json' with { type: 'json' };
@@ -88,116 +87,235 @@ const superseded = new Set(all.map((r) => r.supersedesId).filter(Boolean));
 /** The effective ledger: records nothing has replaced. */
 const effective = all.filter((r) => !superseded.has(r.id));
 
+const pocRecord = (
+	id: string,
+	hoursAgo: number,
+	memberId: string,
+	runtime: string,
+	provider: string,
+	model: string,
+	projectId: string,
+	teamId: string,
+	taskRef: string,
+	taskTitle: string,
+	workType: 'build' | 'run',
+	costMicroUsd: number
+): StoredRecord => ({
+	id,
+	occurredAt: new Date(NOW.getTime() - hoursAgo * 3600_000).toISOString(),
+	consumer: { kind: 'agent', memberId },
+	runtime,
+	provider,
+	model,
+	attribution: { basis: 'current_task', taskRef, taskTitle, projectId, teamId },
+	workType,
+	tokens: [
+		Math.round((costMicroUsd / 1_000_000) * 6000),
+		Math.round((costMicroUsd / 1_000_000) * 1800),
+		Math.round((costMicroUsd / 1_000_000) * 3200),
+		0,
+		0
+	],
+	tokenStatus: 'complete',
+	costMicroUsd,
+	costBasis: 'runtime_estimate',
+	costStatus: 'complete'
+});
+
+// Sums to $142.00 this month across Agentic Org's 5 active agents (Jules $40, Ada $32, Rowan $28, Kai $24, Eden $18),
+// 3 projects (agency-v1 $64, office-federation $45, look-feel $33), and 2 work types (build $112, run $30).
 const pocUsageRecords: StoredRecord[] = [
-	{
-		id: 'poc-u-1',
-		occurredAt: new Date(NOW.getTime() - 2 * 3600_000).toISOString(),
-		consumer: { kind: 'agent', memberId: 'sage' },
-		runtime: 'codex',
-		provider: 'openai',
-		model: 'gpt-6.1-sol',
-		attribution: {
-			basis: 'task',
-			taskRef: 'T-118',
-			taskTitle: 'Custody lock fix',
-			projectId: 'office-federation',
-			teamId: 'platform'
-		},
-		workType: 'build',
-		tokens: [120_000, 34_000, 80_000, 0, 234_000],
-		tokenStatus: 'known',
-		costMicroUsd: 26_400_000,
-		costBasis: 'provider_reported',
-		costStatus: 'known'
-	},
-	{
-		id: 'poc-u-2',
-		occurredAt: new Date(NOW.getTime() - 5 * 3600_000).toISOString(),
-		consumer: { kind: 'agent', memberId: 'kai' },
-		runtime: 'codex',
-		provider: 'openai',
-		model: 'gpt-6.1-sol',
-		attribution: {
-			basis: 'task',
-			taskRef: 'T-121',
-			taskTitle: 'Split codec 2a.3.2b',
-			projectId: 'agency-v1',
-			teamId: 'platform'
-		},
-		workType: 'build',
-		tokens: [210_000, 62_000, 140_000, 0, 412_000],
-		tokenStatus: 'known',
-		costMicroUsd: 48_200_000,
-		costBasis: 'provider_reported',
-		costStatus: 'known'
-	},
-	{
-		id: 'poc-u-3',
-		occurredAt: new Date(NOW.getTime() - 18 * 3600_000).toISOString(),
-		consumer: { kind: 'agent', memberId: 'jules' },
-		runtime: 'codex',
-		provider: 'openai',
-		model: 'gpt-6.1-sol',
-		attribution: {
-			basis: 'task',
-			taskRef: 'T-124',
-			taskTitle: 'CSP gates in the UI suite',
-			projectId: 'agency-v1',
-			teamId: 'app'
-		},
-		workType: 'build',
-		tokens: [165_000, 45_000, 90_000, 0, 300_000],
-		tokenStatus: 'known',
-		costMicroUsd: 34_800_000,
-		costBasis: 'provider_reported',
-		costStatus: 'known'
-	},
-	{
-		id: 'poc-u-4',
-		occurredAt: new Date(NOW.getTime() - 28 * 3600_000).toISOString(),
-		consumer: { kind: 'agent', memberId: 'eden' },
-		runtime: 'claude_code',
-		provider: 'anthropic',
-		model: 'claude-sonnet-4-5',
-		attribution: {
-			basis: 'task',
-			taskRef: 'T-130',
-			taskTitle: 'Presence vocabulary across screens',
-			projectId: 'look-feel',
-			teamId: 'product'
-		},
-		workType: 'build',
-		tokens: [98_000, 29_000, 60_000, 0, 187_000],
-		tokenStatus: 'known',
-		costMicroUsd: 19_600_000,
-		costBasis: 'provider_reported',
-		costStatus: 'known'
-	},
-	{
-		id: 'poc-u-5',
-		occurredAt: new Date(NOW.getTime() - 40 * 3600_000).toISOString(),
-		consumer: { kind: 'agent', memberId: 'rowan' },
-		runtime: 'codex',
-		provider: 'openai',
-		model: 'gpt-6.1-sol',
-		attribution: {
-			basis: 'task',
-			taskRef: 'T-138',
-			taskTitle: 'Enrollment certificates for new offices',
-			projectId: 'office-federation',
-			teamId: 'platform'
-		},
-		workType: 'build',
-		tokens: [74_000, 21_000, 45_000, 0, 140_000],
-		tokenStatus: 'known',
-		costMicroUsd: 13_000_000,
-		costBasis: 'provider_reported',
-		costStatus: 'known'
-	}
+	pocRecord(
+		'poc-u-1',
+		2,
+		'jules',
+		'codex',
+		'openai',
+		'gpt-6.1-sol',
+		'agency-v1',
+		'app',
+		'T-124',
+		'CSP gates in the UI suite',
+		'build',
+		18_000_000
+	),
+	pocRecord(
+		'poc-u-2',
+		6,
+		'jules',
+		'codex',
+		'openai',
+		'gpt-6.1-sol',
+		'agency-v1',
+		'app',
+		'T-127',
+		'Gateway CSP headers check',
+		'build',
+		14_000_000
+	),
+	pocRecord(
+		'poc-u-3',
+		14,
+		'jules',
+		'codex',
+		'openai',
+		'gpt-6.1-sol',
+		'look-feel',
+		'app',
+		'T-131',
+		'Smoke run across themes',
+		'run',
+		8_000_000
+	),
+	pocRecord(
+		'poc-u-4',
+		4,
+		'ada',
+		'claude_code',
+		'anthropic',
+		'claude-sonnet-4-5',
+		'agency-v1',
+		'platform',
+		'T-120',
+		'Release sign-off audit',
+		'build',
+		14_000_000
+	),
+	pocRecord(
+		'poc-u-5',
+		16,
+		'ada',
+		'claude_code',
+		'anthropic',
+		'claude-sonnet-4-5',
+		'office-federation',
+		'platform',
+		'T-118',
+		'Custody lock fix',
+		'build',
+		10_000_000
+	),
+	pocRecord(
+		'poc-u-6',
+		26,
+		'ada',
+		'claude_code',
+		'anthropic',
+		'claude-sonnet-4-5',
+		'office-federation',
+		'platform',
+		'T-119',
+		'Federation health checks',
+		'run',
+		8_000_000
+	),
+	pocRecord(
+		'poc-u-7',
+		10,
+		'rowan',
+		'codex',
+		'openai',
+		'gpt-6.1-sol',
+		'office-federation',
+		'platform',
+		'T-138',
+		'Enrollment certificates for new offices',
+		'build',
+		18_000_000
+	),
+	pocRecord(
+		'poc-u-8',
+		30,
+		'rowan',
+		'codex',
+		'openai',
+		'gpt-6.1-sol',
+		'agency-v1',
+		'platform',
+		'T-122',
+		'Nightly soak run',
+		'run',
+		10_000_000
+	),
+	pocRecord(
+		'poc-u-9',
+		8,
+		'kai',
+		'codex',
+		'openai',
+		'gpt-6.1-sol',
+		'look-feel',
+		'product',
+		'T-130',
+		'Presence vocabulary across screens',
+		'build',
+		16_000_000
+	),
+	pocRecord(
+		'poc-u-10',
+		22,
+		'kai',
+		'codex',
+		'openai',
+		'gpt-6.1-sol',
+		'agency-v1',
+		'platform',
+		'T-121',
+		'Split codec 2a.3.2b',
+		'build',
+		8_000_000
+	),
+	pocRecord(
+		'poc-u-11',
+		12,
+		'eden',
+		'claude_code',
+		'anthropic',
+		'claude-sonnet-4-5',
+		'look-feel',
+		'product',
+		'T-132',
+		'Typography scale audit',
+		'build',
+		9_000_000
+	),
+	pocRecord(
+		'poc-u-12',
+		20,
+		'eden',
+		'claude_code',
+		'anthropic',
+		'claude-sonnet-4-5',
+		'office-federation',
+		'platform',
+		'T-135',
+		'Office onboarding copy',
+		'build',
+		5_000_000
+	),
+	pocRecord(
+		'poc-u-13',
+		36,
+		'eden',
+		'claude_code',
+		'anthropic',
+		'claude-sonnet-4-5',
+		'office-federation',
+		'platform',
+		'T-136',
+		'Verification sweep',
+		'run',
+		4_000_000
+	)
 ];
 
 function ledgerFor(organizationId: string): StoredRecord[] {
 	return organizationId === POC_ORG_ID ? pocUsageRecords : effective;
+}
+
+function coverageGapsFor(organizationId: string) {
+	if (on('empty') || organizationId === POC_ORG_ID) return [];
+	return usage.gaps;
 }
 
 /** The scheduled rate always starts on the first of next month, so it stays scheduled whatever the date. */
@@ -210,10 +328,25 @@ let prices: StoredPrice[] = (structuredClone(priceData) as StoredPrice[]).map((p
 );
 const operations = new Map<string, PriceVersion>();
 let unknownOnce = false;
-const mutableBudgets: Record<string, { daily?: StoredBudget; monthly?: StoredBudget }> =
-	structuredClone(
-		budgetData.budgets as Record<string, { daily?: StoredBudget; monthly?: StoredBudget }>
-	);
+type OrgBudgetMap = Record<string, { daily?: StoredBudget; monthly?: StoredBudget }>;
+const budgetsByOrg = new Map<string, OrgBudgetMap>();
+function budgetsFor(organizationId: string): OrgBudgetMap {
+	let map = budgetsByOrg.get(organizationId);
+	if (!map) {
+		map =
+			organizationId === POC_ORG_ID
+				? {
+						ada: { monthly: { unit: 'usd', limit: 40_000_000, warned: true } },
+						eden: { monthly: { unit: 'usd', limit: 30_000_000 } },
+						jules: { monthly: { unit: 'usd', limit: 40_000_000, warned: true, hold: 'held' } },
+						kai: { monthly: { unit: 'usd', limit: 35_000_000 } },
+						rowan: { monthly: { unit: 'usd', limit: 35_000_000, warned: true } }
+					}
+				: structuredClone(budgetData.budgets as OrgBudgetMap);
+		budgetsByOrg.set(organizationId, map);
+	}
+	return map;
+}
 const budgetOperations = new Map<string, { applied: true; message: string }>();
 let budgetUnknownOnce = false;
 let budgetActionUnknownOnce = false;
@@ -644,7 +777,6 @@ export const costsApi: CostsApi = {
 		await read();
 		if (on('viewer'))
 			throw fail('not_authorized', "Only the owner and a project's manager see its cost.");
-		if (organizationId === POC_ORG_ID) return structuredClone(pocProjectInvestments(request));
 		const { snapshot } = await orgApi.view(organizationId);
 		// A project's manager is the lead of its accountable team (the first team listed on it) or of a team above it.
 		const above = (teamId: string | undefined): string[] => {
@@ -658,7 +790,7 @@ export const costsApi: CostsApi = {
 			(p) => !managed || above(owner(p.id)).includes('web')
 		);
 		const month = resolvePeriod({ kind: 'this_month', timeZone: request.timeZone }).period;
-		const records = on('empty') ? [] : effective;
+		const records = on('empty') ? [] : ledgerFor(organizationId);
 		return structuredClone({
 			scope: managed ? ('managed' as const) : ('organization' as const),
 			thisMonth: month,
@@ -670,19 +802,19 @@ export const costsApi: CostsApi = {
 					thisMonth: totalsOf(mine.filter((r) => within(r, month)))
 				};
 			}),
-			coverage: { checkpointAt: usage.checkpointAt, gaps: on('empty') ? [] : usage.gaps }
+			coverage: { checkpointAt: usage.checkpointAt, gaps: coverageGapsFor(organizationId) }
 		});
 	},
 
 	async organizationCost(organizationId, request) {
 		await read();
 		ownerOnly();
-		if (organizationId === POC_ORG_ID) return structuredClone(pocOrganizationCost(request));
 		const { period, previous } = resolvePeriod(request);
 		const n = await names(organizationId);
-		const records = on('empty') ? [] : effective.filter((r) => within(r, period));
+		const ledger = on('empty') ? [] : ledgerFor(organizationId);
+		const records = ledger.filter((r) => within(r, period));
 		const totalsPrevious = previous
-			? totalsOf(on('empty') ? [] : effective.filter((r) => within(r, previous)))
+			? totalsOf(ledger.filter((r) => within(r, previous)))
 			: undefined;
 		const onTask = records.filter((r) => r.attribution.projectId);
 		const notOnTask = records.filter((r) => !r.attribution.projectId);
@@ -750,7 +882,7 @@ export const costsApi: CostsApi = {
 			byWorkType,
 			coverage: {
 				checkpointAt: usage.checkpointAt,
-				gaps: period.toNow && !on('empty') ? usage.gaps : []
+				gaps: period.toNow ? coverageGapsFor(organizationId) : []
 			}
 		});
 	},
@@ -777,13 +909,13 @@ export const costsApi: CostsApi = {
 	async agentBudgets(organizationId) {
 		await read();
 		ownerOnly();
-		if (organizationId === POC_ORG_ID) return structuredClone(pocAgentBudgets());
 		const n = await names(organizationId);
 		const zone = on('no-zone') ? null : budgetData.zone.name;
-		const stored = mutableBudgets;
+		const stored = budgetsFor(organizationId);
+		const ledger = ledgerFor(organizationId);
 		const agents: AgentBudget[] = n.agents
 			.map((m) => {
-				const mine = effective.filter(
+				const mine = ledger.filter(
 					(r) => r.consumer.kind === 'agent' && r.consumer.memberId === m.id
 				);
 				const unmeasured = mine.some((r) => r.runtime === 'antigravity');
@@ -872,7 +1004,7 @@ export const costsApi: CostsApi = {
 			speed,
 			coverage: {
 				checkpointAt: usage.checkpointAt,
-				gaps: period.toNow && !on('empty') ? usage.gaps : []
+				gaps: period.toNow ? coverageGapsFor(organizationId) : []
 			},
 			viewer: { scope: managed ? ('managed' as const) : ('organization' as const), canExport: true }
 		} satisfies ProjectInsights);
@@ -995,7 +1127,7 @@ export const costsApi: CostsApi = {
 			...(notOnTask && notOnTask.records > 0 ? { notOnTask } : {}),
 			coverage: {
 				checkpointAt: usage.checkpointAt,
-				gaps: period.toNow && !on('empty') ? usage.gaps : []
+				gaps: period.toNow ? coverageGapsFor(organizationId) : []
 			},
 			viewer: { scope: managed ? ('managed' as const) : ('organization' as const), canExport: true }
 		} satisfies OrganizationInsights);
@@ -1029,7 +1161,7 @@ export const costsApi: CostsApi = {
 			records: list,
 			coverage: {
 				checkpointAt: usage.checkpointAt,
-				gaps: period.toNow && !on('empty') ? usage.gaps : []
+				gaps: period.toNow ? coverageGapsFor(organizationId) : []
 			}
 		});
 	},
@@ -1138,7 +1270,7 @@ export const costsApi: CostsApi = {
 						(r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId
 					);
 			const unmeasured = fullAgentRecords.some((r) => r.runtime === 'antigravity');
-			const b = mutableBudgets[memberId];
+			const b = budgetsFor(organizationId)[memberId];
 			if (bZone && b && !on('empty')) {
 				const { day, month } = budgetWindows(bZone);
 				budgets = {
@@ -1178,7 +1310,7 @@ export const costsApi: CostsApi = {
 			...(budgets ? { budgets } : {}),
 			coverage: {
 				checkpointAt: usage.checkpointAt,
-				gaps: on('empty') ? [] : usage.gaps
+				gaps: coverageGapsFor(organizationId)
 			}
 		} satisfies MemberCostOverview);
 	},
@@ -1225,7 +1357,8 @@ export const costsApi: CostsApi = {
 		const zone = on('no-zone') ? null : budgetData.zone.name;
 		if (!zone)
 			throw fail('invalid_request', "Agent budgets can't run without a known budget time zone.");
-		const entry = (mutableBudgets[memberId] ??= {});
+		const orgBudgets = budgetsFor(organizationId);
+		const entry = (orgBudgets[memberId] ??= {});
 		const mine = ledgerFor(organizationId).filter(
 			(r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId
 		);
@@ -1257,7 +1390,7 @@ export const costsApi: CostsApi = {
 			throw fail('storage_error', "HQ couldn't record the budget change. Nothing changed.");
 		const replay = budgetOperations.get(action.operationId);
 		if (replay) return { message: replay.message };
-		const entry = mutableBudgets[memberId];
+		const entry = budgetsFor(organizationId)[memberId];
 		const current = entry?.[action.periodKind];
 		if (!current) throw fail('not_found', 'No budget is set for this period.');
 		let message = 'Budget updated.';

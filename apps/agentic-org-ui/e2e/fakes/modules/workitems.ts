@@ -610,7 +610,8 @@ function toRow(t: TaskDetail): TaskRow {
 		needsMe: t.needsMe ? { ...t.needsMe } : null,
 		budget: t.budget,
 		budgetHold: t.budgetHold,
-		awaitingVerification: t.awaitingVerification
+		awaitingVerification: t.awaitingVerification,
+		...(t.request?.mergedInto ? { merged: true } : {})
 	};
 }
 
