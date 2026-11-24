@@ -48,12 +48,25 @@ impl Office {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    fn require_hq_for_budget_write(&self) -> Result<(), ApiError> {
+        if self.info.role != crate::model::OfficeRole::Hq {
+            return Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "budget policies are HQ-authoritative; modify budgets on HQ",
+            ));
+        }
+        Ok(())
+    }
+
     /// `budget.set`: sets, raises, or lowers a task, agent (day/month), or release budget.
     pub fn budget_set(
         &self,
         actor: &str,
         params: BudgetSetParams,
     ) -> Result<Result<BudgetMutationResult, ApiError>, OfficeError> {
+        if let Err(err) = self.require_hq_for_budget_write() {
+            return Ok(Err(err));
+        }
         let _guard = self.lock_budget_ops();
         op_budget_set(self, actor, params)
     }
@@ -64,6 +77,9 @@ impl Office {
         actor: &str,
         params: BudgetClearParams,
     ) -> Result<Result<BudgetMutationResult, ApiError>, OfficeError> {
+        if let Err(err) = self.require_hq_for_budget_write() {
+            return Ok(Err(err));
+        }
         let _guard = self.lock_budget_ops();
         op_budget_clear(self, actor, params)
     }
@@ -74,6 +90,9 @@ impl Office {
         actor: &str,
         params: BudgetExtendOnceParams,
     ) -> Result<Result<BudgetMutationResult, ApiError>, OfficeError> {
+        if let Err(err) = self.require_hq_for_budget_write() {
+            return Ok(Err(err));
+        }
         let _guard = self.lock_budget_ops();
         op_budget_extend_once(self, actor, params)
     }
@@ -84,6 +103,9 @@ impl Office {
         actor: &str,
         params: BudgetStopParams,
     ) -> Result<Result<BudgetMutationResult, ApiError>, OfficeError> {
+        if let Err(err) = self.require_hq_for_budget_write() {
+            return Ok(Err(err));
+        }
         let _guard = self.lock_budget_ops();
         op_budget_stop(self, actor, params)
     }
@@ -94,6 +116,9 @@ impl Office {
         actor: &str,
         params: BudgetKeepPausedParams,
     ) -> Result<Result<BudgetMutationResult, ApiError>, OfficeError> {
+        if let Err(err) = self.require_hq_for_budget_write() {
+            return Ok(Err(err));
+        }
         let _guard = self.lock_budget_ops();
         op_budget_keep_paused(self, actor, params)
     }

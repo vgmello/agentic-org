@@ -3,7 +3,7 @@ id: doc-34
 title: 'Design: Organization Processes and Standards'
 type: specification
 created_date: '2026-11-21T00:19:00Z'
-updated_date: '2026-11-21T00:19:00Z'
+updated_date: '2026-11-24T11:05:00Z'
 tags:
   - design
   - processes
@@ -324,7 +324,7 @@ section 5:
 | --- | --- | --- | --- |
 | `process.effective` | `employee_id?`, `for?` | `{ set, computed_at, stale_since? }` | `not_found`, `not_authorized`, `unavailable` |
 | `process.why` | `key`, `employee_id?`, `for?` | `{ key, chain: Vec<Layer>, winner? }` | as above |
-| `process.show` | `key`, `employee_id?`, `for?`; or `document_id`, `revision?`; `offset?` | `{ path, commit, blob, revision, content (≤ 512 KiB), total_bytes, next_offset? }` | as above |
+| `process.show` | `key`, `employee_id?`, `for?`; or `document_id`, `revision?` (`revision` requires `document_id`); `offset?` (UTF-8 char boundary, `<= total_bytes`) | `{ document (metadata-only), blob, content (≤ 512 KiB and frame-bounded), total_bytes, next_offset?, parent? (metadata-only) }` | as above plus `invalid_request`, `conflict` (stale `revision`) |
 | `process.view` | `scope: organization \| team { team_id } \| project { project_id }` | `{ rows, indexed_commit, stale_since? }` (PROC-9, PROC-10) | as above |
 | `process.write` | `document_id?`, `kind`, `scope`, front matter and body, `expected_revision?` | `{ document_id, revision }` | `invalid_request` (`sealed`), `already_exists`, `conflict`, `not_authorized` |
 

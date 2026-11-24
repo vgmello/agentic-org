@@ -715,9 +715,10 @@ fn corrupt_companion_databases_rebuild_cleanly_and_torn_jsonl_tail_is_tolerated(
     .unwrap();
     drop(bud);
 
-    let prov =
-        super::providers::SqliteProviderPoolStore::open(&durable, &runtime, office_id, org_id)
-            .unwrap();
+    let prov = super::providers::SqliteProviderPoolStore::open(
+        &durable, &runtime, office_id, org_id, true,
+    )
+    .unwrap();
     prov.save_binding_and_invalidate(&OfficeConnectionBinding {
         organization_id: org_id.into(),
         office_id: office_id.into(),
@@ -833,9 +834,10 @@ fn corrupt_companion_databases_rebuild_cleanly_and_torn_jsonl_tail_is_tolerated(
     assert_eq!(rebuilt_bud[0].versions[1].limit_amount, Some(9_999_999));
     drop(bud3);
 
-    let prov2 =
-        super::providers::SqliteProviderPoolStore::open(&durable, &runtime, office_id, org_id)
-            .unwrap();
+    let prov2 = super::providers::SqliteProviderPoolStore::open(
+        &durable, &runtime, office_id, org_id, true,
+    )
+    .unwrap();
     assert!(prov2
         .get_binding(org_id, office_id, "01900000-0000-7000-8000-000000000401")
         .unwrap()

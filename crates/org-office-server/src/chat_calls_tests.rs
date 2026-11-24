@@ -88,6 +88,7 @@ impl LiveOfficeFixture {
             channel_watcher,
             live,
             &wake,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
         let mut shared =
             serve::Shared::new(&info, &socket, ports, crate::test_support::grant_key());
@@ -1377,4 +1378,356 @@ fn task81_snooze_unsnooze_resurface_access_and_live_hints() {
     drop(sub_stream);
     drop(reader);
     let _ = sub_thread.join();
+}
+
+fn seed_process_doc(
+    fx: &LiveOfficeFixture,
+    seed: u16,
+    update: Option<(String, u64)>,
+    scope: org_proto::processes::ProcessScopeWire,
+    key: &str,
+    title: &str,
+    body: String,
+) -> String {
+    let (document_id, expected_revision) = match update {
+        Some((id, rev)) => (Some(id), Some(rev)),
+        None => (None, None),
+    };
+    let params = org_proto::processes::ProcessWriteParams {
+        command_id: uuidv7(seed),
+        document_id,
+        kind: org_proto::processes::DocumentKindWire::Process,
+        scope,
+        key: Some(key.into()),
+        title: title.into(),
+        status: org_proto::processes::DocumentStatusWire::Current,
+        owner_employee_id: Some(fx.owner_id.clone()),
+        overridable: true,
+        body_markdown: body,
+        expected_revision,
+    };
+    let req = Request::new::<org_proto::processes::ProcessWrite>(u64::from(seed), &params).unwrap();
+    let resp = fx.shared.answer_for_test(&req, &fx.owner_id, true);
+    let Outcome::Result(val) = resp.outcome else {
+        panic!("process.write failed: {resp:?}");
+    };
+    val["document_id"].as_str().unwrap().to_owned()
+}
+
+fn assert_process_inspect_continuation_guards(
+    fx: &LiveOfficeFixture,
+    hr_binding: &Binding,
+    root_team_id: &str,
+    team_doc_id: &str,
+    stale_rev: u64,
+    next_offset: u64,
+) {
+    use org_proto::processes::ProcessScopeWire;
+
+    // Updating the document invalidates stale pinned continuation reads with `conflict`.
+    seed_process_doc(
+        fx,
+        603,
+        Some((team_doc_id.to_owned(), stale_rev)),
+        ProcessScopeWire::Team {
+            team_id: root_team_id.to_owned(),
+        },
+        "big-proc",
+        "Root Team Big Process v2",
+        "éx updated body".into(),
+    );
+    let stale_out = org_agent_cli::execute(
+        &[
+            "process".into(),
+            "inspect".into(),
+            "--id".into(),
+            team_doc_id.to_owned(),
+            "--revision".into(),
+            stale_rev.to_string(),
+            "--offset".into(),
+            next_offset.to_string(),
+        ],
+        hr_binding.clone(),
+    );
+    assert_eq!(stale_out.exit_code, 1, "{}", stale_out.stdout);
+    let stale_env: Value = serde_json::from_str(&stale_out.stdout).unwrap();
+    assert_eq!(stale_env["error"]["code"], "conflict");
+    let hint = stale_env["error"]["hint"].as_str().unwrap();
+    assert!(
+        hint.contains("offset 0") && !hint.contains("--if-match"),
+        "unexpected conflict hint: {hint}"
+    );
+
+    // Pinning --revision with --key instead of --id fails closed to prevent cross-document swaps.
+    let key_pin = org_agent_cli::execute(
+        &[
+            "process".into(),
+            "inspect".into(),
+            "--key".into(),
+            "big-proc".into(),
+            "--revision".into(),
+            stale_rev.to_string(),
+            "--offset".into(),
+            next_offset.to_string(),
+        ],
+        hr_binding.clone(),
+    );
+    assert_eq!(key_pin.exit_code, 1, "{}", key_pin.stdout);
+    let key_pin_env: Value = serde_json::from_str(&key_pin.stdout).unwrap();
+    assert_eq!(key_pin_env["error"]["code"], "invalid_request");
+
+    // Non-UTF-8-boundary offset inside multi-byte `é` fails closed with `invalid_request`.
+    let mid_char = org_agent_cli::execute(
+        &[
+            "process".into(),
+            "inspect".into(),
+            "--id".into(),
+            team_doc_id.to_owned(),
+            "--offset".into(),
+            "1".into(),
+        ],
+        hr_binding.clone(),
+    );
+    assert_eq!(mid_char.exit_code, 1, "{}", mid_char.stdout);
+    let mid_env: Value = serde_json::from_str(&mid_char.stdout).unwrap();
+    assert_eq!(mid_env["error"]["code"], "invalid_request");
+}
+
+fn assert_large_why_and_metadata_only_rpcs(
+    fx: &LiveOfficeFixture,
+    hr_binding: &Binding,
+    root_team_id: &str,
+) {
+    // Run `--why` while BOTH the 500 KiB parent and 512 KiB escaped winner are live
+    // (would exceed the 1 MiB socket frame if `body_markdown` were not stripped).
+    let why_out = org_agent_cli::execute(
+        &[
+            "process".into(),
+            "inspect".into(),
+            "--key".into(),
+            "big-proc".into(),
+            "--why".into(),
+        ],
+        hr_binding.clone(),
+    );
+    assert_eq!(why_out.exit_code, 0, "{}", why_out.stdout);
+    let why_env: Value = serde_json::from_str(&why_out.stdout).unwrap();
+    let chain = why_env["data"]["chain"].as_array().unwrap();
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[0]["document"]["level"], "organization");
+    assert_eq!(chain[1]["document"]["team_id"], root_team_id);
+    assert!(chain[1]["document"]["scope_name"].as_str().is_some());
+    assert_eq!(why_env["data"]["winner"]["team_id"], root_team_id);
+
+    // Direct RPC check: `process.why` and `process.show` return metadata-only documents.
+    let raw_why = fx
+        .office
+        .process_why(
+            &fx.hr_id,
+            org_proto::processes::ProcessWhyParams {
+                key: "big-proc".into(),
+                employee_id: None,
+                r#for: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert!(raw_why
+        .chain
+        .iter()
+        .all(|l| l.document.body_markdown.is_empty()));
+    assert!(raw_why.winner.unwrap().body_markdown.is_empty());
+    let raw_show = fx
+        .office
+        .process_show(
+            &fx.hr_id,
+            org_proto::processes::ProcessShowParams {
+                key: Some("big-proc".into()),
+                document_id: None,
+                employee_id: None,
+                r#for: None,
+                offset: Some(0),
+                revision: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert!(raw_show.document.body_markdown.is_empty());
+    assert!(raw_show.parent.unwrap().body_markdown.is_empty());
+}
+
+#[test]
+fn task95_process_inspect_paginates_large_escaped_doc_and_preserves_why_over_real_socket() {
+    use org_proto::processes::ProcessScopeWire;
+
+    let fx = LiveOfficeFixture::start();
+    let root_team_id = fx.office.org_snapshot().unwrap().teams[0].id.clone();
+
+    // 512 KiB of JSON-escapable quotes/newlines (> 1 MiB if JSON-escaped in one frame!)
+    // plus a large parent doc; must paginate cleanly over the real 1 MiB framed socket.
+    let parent_body = "p".repeat(500 * 1024);
+    let big_body = "\"\n".repeat(256 * 1024);
+    assert_eq!(big_body.len(), 512 * 1024);
+
+    seed_process_doc(
+        &fx,
+        601,
+        None,
+        ProcessScopeWire::Organization,
+        "big-proc",
+        "Org Big Process",
+        parent_body,
+    );
+    let team_doc_id = seed_process_doc(
+        &fx,
+        602,
+        None,
+        ProcessScopeWire::Team {
+            team_id: root_team_id.clone(),
+        },
+        "big-proc",
+        "Root Team Big Process",
+        big_body.clone(),
+    );
+
+    let hr_binding = fx.issue_binding_for(&fx.hr_id);
+    let mut assembled = String::new();
+    let mut offset: Option<u64> = None;
+    let mut pinned: Option<(String, u64)> = None;
+    let mut first_next_offset = 0u64;
+    let mut pages = 0usize;
+    loop {
+        let mut args = vec!["process".into(), "inspect".into()];
+        if let (Some((id, rev)), Some(off)) = (&pinned, offset) {
+            args.extend([
+                "--id".into(),
+                id.clone(),
+                "--revision".into(),
+                rev.to_string(),
+                "--offset".into(),
+                off.to_string(),
+            ]);
+        } else {
+            args.extend(["--key".into(), "big-proc".into()]);
+        }
+        let out = org_agent_cli::execute(&args, hr_binding.clone());
+        assert_eq!(out.exit_code, 0, "page {pages} failed: {}", out.stdout);
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["data"]["total_bytes"], big_body.len());
+        assert_eq!(env["data"]["parent"]["level"], "organization");
+        assert_eq!(env["data"]["document"]["team_id"], root_team_id);
+        if pages == 0 {
+            let id = env["data"]["document"]["id"].as_str().unwrap().to_owned();
+            let rev = env["data"]["document"]["revision"].as_u64().unwrap();
+            first_next_offset = env["data"]["next_offset"].as_u64().unwrap();
+            pinned = Some((id, rev));
+        }
+        assembled.push_str(env["data"]["content"].as_str().unwrap());
+        pages += 1;
+        offset = env["data"]["next_offset"].as_u64();
+        if offset.is_none() {
+            break;
+        }
+        assert!(pages <= 4, "unexpected excessive pagination: {pages}");
+    }
+    assert!(
+        pages >= 2,
+        "expected escaped 512 KiB doc to span >= 2 frames"
+    );
+    assert_eq!(assembled, big_body);
+
+    assert_large_why_and_metadata_only_rpcs(&fx, &hr_binding, &root_team_id);
+
+    let (_, pinned_rev) = pinned.unwrap();
+    assert_process_inspect_continuation_guards(
+        &fx,
+        &hr_binding,
+        &root_team_id,
+        &team_doc_id,
+        pinned_rev,
+        first_next_offset,
+    );
+}
+
+#[test]
+fn task95_real_office_dry_run_forwarded_and_refused_writes_leave_store_unchanged() {
+    struct OwnerServerTransport<'a> {
+        fx: &'a LiveOfficeFixture,
+        next_id: u64,
+    }
+    impl org_agent_cli::dispatch::OfficeTransport for OwnerServerTransport<'_> {
+        fn call_method(
+            &mut self,
+            method: &str,
+            params: Value,
+        ) -> Result<Value, org_agent_cli::dispatch::Refusal> {
+            self.next_id += 1;
+            let req = Request {
+                id: self.next_id,
+                method: method.to_owned(),
+                params,
+                principal: None,
+            };
+            match self
+                .fx
+                .shared
+                .answer_for_test(&req, &self.fx.owner_id, true)
+                .outcome
+            {
+                Outcome::Result(v) => Ok(v),
+                Outcome::Error(err) => Err(org_agent_cli::dispatch::Refusal::new(
+                    err.code,
+                    err.message,
+                    "Check office error.",
+                )),
+            }
+        }
+    }
+
+    let fx = LiveOfficeFixture::start();
+    let before = fx.office.org_snapshot().unwrap();
+    let mut office = org_agent_cli::dispatch::TransportOffice(OwnerServerTransport {
+        fx: &fx,
+        next_id: 700,
+    });
+
+    for args in [
+        vec!["team", "create", "--name", "DryTeam", "--dry-run"],
+        vec!["person", "add", "--name", "DryPerson", "--dry-run"],
+        vec!["project", "create", "--name", "DryProj", "--dry-run"],
+    ] {
+        let owned: Vec<String> = args.into_iter().map(str::to_owned).collect();
+        let out = org_agent_cli::execute_with_office("agent-os", &owned, &mut office);
+        assert_eq!(out.exit_code, 0, "{owned:?} failed: {}", out.stdout);
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["ok"], Value::Bool(true));
+        assert_eq!(env["meta"]["dry_run"], Value::Bool(true));
+        assert_eq!(env["data"]["status"], "checked");
+    }
+
+    // Refused msg write over real socket produces zero inbox items.
+    let hr_binding = fx.issue_binding_for(&fx.hr_id);
+    let msg_out = org_agent_cli::execute(
+        &[
+            "msg".into(),
+            "send".into(),
+            "--to".into(),
+            "owner".into(),
+            "--body".into(),
+            "must not send".into(),
+            "--dry-run".into(),
+        ],
+        hr_binding,
+    );
+    assert_eq!(msg_out.exit_code, 1, "{}", msg_out.stdout);
+    let msg_env: Value = serde_json::from_str(&msg_out.stdout).unwrap();
+    assert_eq!(msg_env["error"]["code"], "unsupported");
+    assert_eq!(msg_env["meta"]["dry_run"], Value::Bool(true));
+
+    let after = fx.office.org_snapshot().unwrap();
+    assert_eq!(before.position, after.position);
+    assert_eq!(before.teams.len(), after.teams.len());
+    assert_eq!(before.members.len(), after.members.len());
+    assert_eq!(before.projects.len(), after.projects.len());
+    assert_eq!(open_owner_inbox_count(&fx), 0);
 }

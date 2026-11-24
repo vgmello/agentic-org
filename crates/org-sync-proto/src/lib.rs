@@ -4,12 +4,17 @@
 
 mod authority;
 mod digest;
+pub mod frame;
 mod values;
 mod work_ack;
 mod work_digest;
 
 pub use authority::authority_record_preimage_v1;
 pub use digest::event_digest_v1;
+pub use frame::{
+    decode_sync_frame, encode_sync_frame, read_sync_frame, write_sync_frame, EnrollTerminalStatus,
+    FrameCodecError, FrameReader, SyncFrame, WireOfficeRole, SYNC_WIRE_VERSION,
+};
 pub use values::{
     Codec, Digest, Epoch, InvalidValue, OfficeId, OrgId, OriginIncarnation, Position, SourceSeq,
 };

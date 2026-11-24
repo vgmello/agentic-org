@@ -16,8 +16,14 @@ macro_rules! identity {
         impl $name {
             pub fn new(value: impl Into<String>) -> Result<Self, InvalidValue> {
                 let value = value.into();
-                if !(1..=64).contains(&value.len())
-                    || !value.bytes().all(|b| b.is_ascii_alphanumeric())
+                let bytes = value.as_bytes();
+                let valid_edges = bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+                    && bytes.last().is_some_and(u8::is_ascii_alphanumeric);
+                if !(1..=64).contains(&bytes.len())
+                    || !valid_edges
+                    || !bytes
+                        .iter()
+                        .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
                 {
                     return Err(InvalidValue);
                 }
@@ -80,6 +86,35 @@ impl Digest {
     }
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+    pub fn to_hex(&self) -> String {
+        let mut out = String::with_capacity(64);
+        for b in self.0 {
+            use std::fmt::Write as _;
+            let _ = write!(&mut out, "{b:02x}");
+        }
+        out
+    }
+    pub fn parse_hex(hex: &str) -> Result<Self, InvalidValue> {
+        if hex.len() != 64 {
+            return Err(InvalidValue);
+        }
+        let mut out = [0u8; 32];
+        for (i, &[hi_b, lo_b]) in hex.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+            let hi = hex_nibble(hi_b).ok_or(InvalidValue)?;
+            let lo = hex_nibble(lo_b).ok_or(InvalidValue)?;
+            out[i] = (hi << 4) | lo;
+        }
+        Ok(Self(out))
+    }
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
 }
 

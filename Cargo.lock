@@ -869,6 +869,7 @@ dependencies = [
  "org-command",
  "org-host-control",
  "org-office-launch",
+ "org-pki",
  "org-platform",
  "org-platform-host",
  "org-proto",
@@ -914,12 +915,16 @@ dependencies = [
 name = "org-office"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "org-docs",
  "org-office-launch",
+ "org-pki",
  "org-platform",
  "org-process",
  "org-proto",
  "org-store",
+ "org-sync",
+ "org-sync-proto",
  "proc-macro2",
  "rusqlite",
  "serde",
@@ -942,6 +947,7 @@ dependencies = [
 name = "org-office-server"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "hmac",
  "libc",
  "org-agent-cli",
@@ -959,8 +965,10 @@ dependencies = [
  "org-socket",
  "org-store",
  "org-sync",
+ "org-sync-proto",
  "org-work",
  "proc-macro2",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",
@@ -998,7 +1006,15 @@ name = "org-pki"
 version = "0.0.0"
 dependencies = [
  "argon2",
+ "base64",
+ "rcgen",
  "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "time",
+ "x509-parser",
  "zeroize",
 ]
 
@@ -1096,6 +1112,8 @@ dependencies = [
 name = "org-sync-proto"
 version = "0.0.0"
 dependencies = [
+ "base64",
+ "serde",
  "serde_json",
  "sha2",
 ]

@@ -142,10 +142,88 @@ enum CandidateOutcome {
     },
 }
 
+/// Parameters for requesting a shared `HqPool` turn permit from HQ (`TASK-52` M-21).
+#[derive(Clone, Debug)]
+pub struct HqPermitAcquireSpec {
+    pub connection_id: String,
+    pub employee_id: String,
+    pub task_id: Option<String>,
+    pub model_id: String,
+    pub is_failover_switch: bool,
+}
+
+/// Consumer-owned adapter connecting a satellite's session router to HQ's shared `HqPool`
+/// permit coordinator (`TASK-52` M-21, `doc-8` adapter rule).
+pub trait HqPermitCoordinator: Send + Sync {
+    fn acquire_permit(&self, req: HqPermitAcquireSpec) -> Result<PermitAcquireOutcome, String>;
+    fn renew_permit(&self, permit_id: &str, coordinator_generation: u64) -> Result<bool, String>;
+    fn release_permit(&self, permit_id: &str) -> Result<(), String>;
+    fn report_cooldown(
+        &self,
+        connection_id: &str,
+        resets_at: Option<&str>,
+        reason: Option<&str>,
+    ) -> Result<(), String>;
+}
+
+/// Renews a turn permit on the local office or, on a satellite holding an HQ-issued `HqPool`
+/// permit, routes heartbeat renewal to HQ's coordinator (`TASK-52` #12).
+pub(crate) fn renew_turn_permit_any(
+    office: &Office,
+    hq_permits: Option<&dyn HqPermitCoordinator>,
+    permit_id: &str,
+    generation: u64,
+) -> bool {
+    if office
+        .renew_turn_permit(permit_id, generation)
+        .is_ok_and(|r| r.is_ok())
+    {
+        return true;
+    }
+    if office.info().role == org_office::OfficeRole::Satellite {
+        if let Some(coord) = hq_permits {
+            return coord.renew_permit(permit_id, generation).unwrap_or(false);
+        }
+    }
+    false
+}
+
+/// Releases a turn permit on the local office and, when on a satellite with an HQ coordinator,
+/// forwards the release to HQ so shared `HqPool` slots are freed promptly (`TASK-52` M-21).
+pub(crate) fn release_turn_permit_any(
+    office: &Office,
+    hq_permits: Option<&dyn HqPermitCoordinator>,
+    permit_id: &str,
+) {
+    let _ = office.release_turn_permit(permit_id);
+    if office.info().role == org_office::OfficeRole::Satellite {
+        if let Some(coord) = hq_permits {
+            let _ = coord.release_permit(permit_id);
+        }
+    }
+}
+
+/// Reports a provider cooldown locally and, when on a satellite with an HQ coordinator, forwards
+/// it to HQ so all offices share the cooldown state (`TASK-52` M-21).
+pub(crate) fn report_cooldown_any(
+    office: &Office,
+    hq_permits: Option<&dyn HqPermitCoordinator>,
+    connection_id: &str,
+    resets_at: Option<&str>,
+    reason: Option<&str>,
+) {
+    if office.info().role == org_office::OfficeRole::Satellite {
+        if let Some(coord) = hq_permits {
+            let _ = coord.report_cooldown(connection_id, resets_at, reason);
+        }
+    }
+}
+
 struct RouteWalkCtx<'a> {
     office: &'a Office,
     vault: &'a CredentialVault,
     runtimes: &'a RuntimeRegistry,
+    hq_permits: Option<&'a dyn HqPermitCoordinator>,
     employee_id: &'a str,
     task_id: Option<&'a str>,
     model_id: &'a str,
@@ -158,7 +236,13 @@ struct RouteWalkCtx<'a> {
 
 fn permit_authority_for(office: &Office, conn: &ProviderConnection) -> PermitAuthority {
     let multi_office = office.is_multi_office().unwrap_or(false);
-    if multi_office && conn.auth_mode == ProviderAuthMode::SubscriptionCli {
+    // Only shared org-wide subscription pools (explicit `subscription_identity`) require HQ
+    // pool coordination across offices; independent per-office bindings stay `OfficeLocal` so
+    // satellites keep working offline without over-granting shared capacity (`TASK-52`).
+    if multi_office
+        && conn.auth_mode == ProviderAuthMode::SubscriptionCli
+        && conn.subscription_identity.is_some()
+    {
         PermitAuthority::HqPool
     } else {
         PermitAuthority::OfficeLocal
@@ -201,17 +285,46 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
             }
         };
     let authority = permit_authority_for(ctx.office, &conn);
-    let permit_outcome = ctx
-        .office
-        .acquire_turn_permit(
-            cid,
-            ctx.employee_id,
-            ctx.task_id,
-            ctx.model_id,
-            authority,
-            ctx.is_failover_switch,
-        )
-        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not acquire turn permit"))??;
+    // On a satellite, shared `HqPool` capacity MUST be granted by HQ's coordinator; if HQ is
+    // unavailable or unconfigured, fail closed on shared bindings while `OfficeLocal` proceeds.
+    let permit_outcome = if ctx.office.info().role == org_office::OfficeRole::Satellite
+        && authority == PermitAuthority::HqPool
+    {
+        let Some(coord) = ctx.hq_permits else {
+            return Ok(CandidateOutcome::Skipped {
+                reason: format!("{cid}:HQ_POOL_UNAVAILABLE"),
+                cooldown_until: None,
+            });
+        };
+        match coord.acquire_permit(HqPermitAcquireSpec {
+            connection_id: cid.to_owned(),
+            employee_id: ctx.employee_id.to_owned(),
+            task_id: ctx.task_id.map(str::to_owned),
+            model_id: ctx.model_id.to_owned(),
+            is_failover_switch: ctx.is_failover_switch,
+        }) {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                return Ok(CandidateOutcome::Skipped {
+                    reason: format!("{cid}:HQ_POOL_UNAVAILABLE"),
+                    cooldown_until: None,
+                });
+            }
+        }
+    } else {
+        ctx.office
+            .acquire_turn_permit(
+                cid,
+                ctx.employee_id,
+                ctx.task_id,
+                ctx.model_id,
+                authority,
+                ctx.is_failover_switch,
+            )
+            .map_err(|_| {
+                ApiError::new(ErrorCode::StorageError, "could not acquire turn permit")
+            })??
+    };
     let permit = match permit_outcome {
         PermitAcquireOutcome::Granted(p) => p,
         PermitAcquireOutcome::CoolingDown { cooldown_until } => {
@@ -241,22 +354,38 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
     ) {
         Ok(route) => Ok(CandidateOutcome::Admitted(route)),
         Err(err) => {
-            let _ = ctx.office.release_turn_permit(&permit.id);
+            release_turn_permit_any(ctx.office, ctx.hq_permits, &permit.id);
             Err(err)
         }
     }
 }
 
+/// Input parameters for [`select_and_admit_route`].
+pub(crate) struct AdmitRouteRequest<'a> {
+    pub office: &'a Office,
+    pub vault: &'a CredentialVault,
+    pub runtimes: &'a RuntimeRegistry,
+    pub hq_permits: Option<&'a dyn HqPermitCoordinator>,
+    pub employee_id: &'a str,
+    pub task_id: Option<&'a str>,
+    pub is_failover_switch: bool,
+    pub excluded_connections: &'a HashSet<String>,
+}
+
 /// Deterministic ordered pool selection & permit admission (`doc-88` §6 steps 1-3).
 pub(crate) fn select_and_admit_route(
-    office: &Office,
-    vault: &CredentialVault,
-    runtimes: &RuntimeRegistry,
-    employee_id: &str,
-    task_id: Option<&str>,
-    is_failover_switch: bool,
-    excluded_connections: &HashSet<String>,
+    req: AdmitRouteRequest<'_>,
 ) -> Result<AdmittedRoute, ApiError> {
+    let AdmitRouteRequest {
+        office,
+        vault,
+        runtimes,
+        hq_permits,
+        employee_id,
+        task_id,
+        is_failover_switch,
+        excluded_connections,
+    } = req;
     let exec = office
         .load_agent_execution(employee_id)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not load execution config"))?;
@@ -315,6 +444,7 @@ pub(crate) fn select_and_admit_route(
         office,
         vault,
         runtimes,
+        hq_permits,
         employee_id,
         task_id,
         model_id: &cfg.model_id,
@@ -507,6 +637,7 @@ fn compute_route_digest(
 /// and acquires a fresh turn permit on `connection_id` (`doc-88` §6 steps 3–4, `AE-04`, `AE-11`).
 pub(crate) fn acquire_warm_permit_for_office(
     office: &Office,
+    hq_permits: Option<&dyn HqPermitCoordinator>,
     connection_id: &str,
     employee_id: &str,
     task_id: Option<&str>,
@@ -564,14 +695,41 @@ pub(crate) fn acquire_warm_permit_for_office(
         }
     }
     let authority = permit_authority_for(office, &conn);
-    match office.acquire_turn_permit(
-        connection_id,
-        employee_id,
-        task_id,
-        &cfg.model_id,
-        authority,
-        false,
-    ) {
+    let permit_res = if office.info().role == org_office::OfficeRole::Satellite
+        && authority == PermitAuthority::HqPool
+    {
+        let Some(coord) = hq_permits else {
+            return WarmPermitOutcome::Unavailable {
+                multi_connection,
+                reason: format!("{connection_id}:HQ_POOL_UNAVAILABLE"),
+            };
+        };
+        match coord.acquire_permit(HqPermitAcquireSpec {
+            connection_id: connection_id.to_owned(),
+            employee_id: employee_id.to_owned(),
+            task_id: task_id.map(str::to_owned),
+            model_id: cfg.model_id.clone(),
+            is_failover_switch: false,
+        }) {
+            Ok(outcome) => Ok(Ok(outcome)),
+            Err(_) => {
+                return WarmPermitOutcome::Unavailable {
+                    multi_connection,
+                    reason: format!("{connection_id}:HQ_POOL_UNAVAILABLE"),
+                };
+            }
+        }
+    } else {
+        office.acquire_turn_permit(
+            connection_id,
+            employee_id,
+            task_id,
+            &cfg.model_id,
+            authority,
+            false,
+        )
+    };
+    match permit_res {
         Ok(Ok(PermitAcquireOutcome::Granted(p))) => {
             WarmPermitOutcome::Granted((p.id, p.coordinator_generation))
         }

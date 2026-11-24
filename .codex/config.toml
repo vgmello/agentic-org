@@ -1,6 +1,8 @@
 # Interactive Codex defaults. The review runner supplies phase-specific overrides.
 model = "gpt-6.2-sol"
 model_reasoning_effort = "high"
+# gpt-6.2-sol has a 475k context window; compact at ~82% instead of 250k (52.6%) to avoid premature cache churn.
+model_auto_compact_token_limit = 390000
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 

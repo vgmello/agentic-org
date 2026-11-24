@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-22T14:40:00Z'
+updated_date: '2026-11-23T02:53:00Z'
 labels:
   - backend
   - rust
@@ -43,6 +43,7 @@ Deliver composable development process packages (records, import/download, seed 
 - [ ] #1 Development process records, import/download, seed roster derivation, process-declared project tabs, and skill injection pass PKG-1..18 and PPD-1..3 (FC-175..179, FC-184, FC-187).
 - [ ] #2 Issued document versions under docs-history/, version diffs, code_links staleness, and task-realizes convergence pass DSS-3/4/7/8 and PPD-6..8/10 (FC-181..182).
 - [ ] #3 Built-in feature-delivery and dss processes ship and pass end-to-end real-agent verification (DSS-1..12, FC-183, FC-185).
+- [ ] #4 agent-os doc validate catches broken cross-references, scope/kind mismatches, display-key clashes, and malformed front matter from direct Git edits across project docs, decisions, and process packages (DEC-7, TPL-3).
 <!-- AC:END -->
 
 ## Implementation Plan

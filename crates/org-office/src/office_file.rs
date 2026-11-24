@@ -78,6 +78,7 @@ pub(crate) fn encode(info: &OfficeInfo) -> Result<Vec<u8>, OfficeError> {
         office_name: info.office_name.clone(),
         role: match info.role {
             OfficeRole::Hq => "hq".to_owned(),
+            OfficeRole::Satellite => "satellite".to_owned(),
         },
         org_id: info.org_id.clone(),
         org_name: info.org_name.clone(),
@@ -98,6 +99,7 @@ fn decode(bytes: &[u8]) -> Result<OfficeInfo, OfficeError> {
     }
     let role = match raw.role.as_str() {
         "hq" => OfficeRole::Hq,
+        "satellite" => OfficeRole::Satellite,
         _ => {
             return Err(OfficeError::Invalid(
                 "office.json has a role this build does not know",

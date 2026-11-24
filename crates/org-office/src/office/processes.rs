@@ -400,16 +400,55 @@ fn kind_matches(filter: Option<DocumentKindWire>, kind: DocumentKind) -> bool {
     }
 }
 
-fn slice_utf8_chunk(text: &str, offset: usize) -> (String, Option<usize>) {
-    let total = text.len();
-    if offset >= total {
-        return (String::new(), None);
+fn metadata_only(mut doc: ProcessDocumentWire) -> ProcessDocumentWire {
+    doc.body_markdown.clear();
+    doc
+}
+
+fn json_char_encoded_len(ch: char) -> usize {
+    match ch {
+        '"' | '\\' | '\x08' | '\x0c' | '\n' | '\r' | '\t' => 2,
+        c if (c as u32) < 0x20 => 6,
+        c => c.len_utf8(),
     }
-    let start = text.floor_char_boundary(offset);
-    let max_end = (start + SHOW_CHUNK_MAX_BYTES).min(total);
-    let end = text.floor_char_boundary(max_end);
+}
+
+fn slice_utf8_chunk(
+    text: &str,
+    offset: usize,
+    max_json_str_bytes: usize,
+) -> Result<(String, Option<usize>), ApiError> {
+    let total = text.len();
+    if offset > total {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            format!("offset {offset} exceeds document body length ({total} bytes)"),
+        ));
+    }
+    if offset == total {
+        return Ok((String::new(), None));
+    }
+    if !text.is_char_boundary(offset) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            format!("offset {offset} does not fall on a UTF-8 character boundary"),
+        ));
+    }
+    let start = offset;
+    let raw_cap = (start + SHOW_CHUNK_MAX_BYTES).min(total);
+    let mut end = start;
+    let mut json_len = 2usize; // opening and closing JSON quotes
+    for ch in text[start..].chars() {
+        let ch_raw = ch.len_utf8();
+        let ch_json = json_char_encoded_len(ch);
+        if end > start && (end + ch_raw > raw_cap || json_len + ch_json > max_json_str_bytes) {
+            break;
+        }
+        end += ch_raw;
+        json_len += ch_json;
+    }
     let next = (end < total).then_some(end);
-    (text[start..end].to_owned(), next)
+    Ok((text[start..end].to_owned(), next))
 }
 
 impl Office {
@@ -560,13 +599,18 @@ impl Office {
         let chain = entry
             .layers
             .iter()
-            .filter_map(|l| layer_to_wire(l, &wire_by_id))
+            .filter_map(|l| {
+                let mut wire_layer = layer_to_wire(l, &wire_by_id)?;
+                wire_layer.document = metadata_only(wire_layer.document);
+                Some(wire_layer)
+            })
             .collect();
         let winner = entry
             .winner
             .as_ref()
             .and_then(|w| wire_by_id.get(&w.doc.id))
-            .cloned();
+            .cloned()
+            .map(metadata_only);
         Ok(Ok(ProcessWhyResult {
             key: params.key,
             chain,
@@ -674,6 +718,12 @@ impl Office {
                 "provide either `key` or `document_id`",
             )));
         }
+        if params.revision.is_some() && params.document_id.is_none() {
+            return Ok(Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "`revision` requires `document_id` so continuation reads stay pinned to one document",
+            )));
+        }
         let task_ref = match &params.r#for {
             Some(ProcessForWire::Task { task_id }) => Some(task_id.clone()),
             _ => None,
@@ -699,19 +749,52 @@ impl Office {
             Ok(v) => v,
             Err(e) => return Ok(Err(e)),
         };
+        if let Some(expected_rev) = params.revision {
+            if doc_rec.meta.revision != expected_rev {
+                return Ok(Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    format!(
+                        "document `{}` changed from revision {expected_rev} to {}; restart reading from offset 0",
+                        doc_rec.id.as_str(),
+                        doc_rec.meta.revision
+                    ),
+                )));
+            }
+        }
 
         let encoded = encode_structure_document(doc_rec);
         let blob = Sha256::of(&encoded).to_hex();
         let total_bytes = doc_rec.body_markdown.len();
-        let (content, next_offset) =
-            slice_utf8_chunk(&doc_rec.body_markdown, params.offset.unwrap_or(0));
-        Ok(Ok(ProcessShowResult {
+        let wire = metadata_only(wire);
+        let parent = parent.map(metadata_only);
+        let probe = ProcessShowResult {
             document: wire,
             blob,
-            content,
+            content: String::new(),
             total_bytes,
-            next_offset,
+            next_offset: Some(total_bytes),
             parent,
+        };
+        let overhead = serde_json::to_vec(&probe)
+            .map(|v| v.len())
+            .unwrap_or(16 * 1024);
+        // Reserve 4 KiB for JSON-RPC Response framing (`id`, `result`, newline) and safety margin.
+        let max_json_str_bytes = org_proto::MAX_FRAME_BYTES
+            .saturating_sub(overhead)
+            .saturating_sub(4096)
+            .max(64);
+        let (content, next_offset) = match slice_utf8_chunk(
+            &doc_rec.body_markdown,
+            params.offset.unwrap_or(0),
+            max_json_str_bytes,
+        ) {
+            Ok(pair) => pair,
+            Err(e) => return Ok(Err(e)),
+        };
+        Ok(Ok(ProcessShowResult {
+            content,
+            next_offset,
+            ..probe
         }))
     }
 

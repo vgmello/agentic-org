@@ -239,6 +239,10 @@ fn distinct_launch_identities_are_preserved_on_every_operation() {
                 assert_eq!(c.instance, OTHER_INSTANCE);
                 assert_eq!(c.owner_member_id, OTHER_OWNER);
             }
+            Launch::Join(j) => {
+                assert_eq!(j.office_id, OTHER_OFFICE);
+                assert_eq!(j.instance, OTHER_INSTANCE);
+            }
             Launch::Start { office, .. } | Launch::Discard { office, .. } => {
                 assert_eq!(
                     office,

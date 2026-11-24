@@ -417,6 +417,10 @@ def review_model(state):
     return state.get("review_model", LEGACY_REVIEW_MODEL)
 
 
+def _compact_limit_args(model):
+    return ["-c", "model_auto_compact_token_limit=390000"] if model.startswith("gpt-6.2-sol") else []
+
+
 def invoke(repo, directory, phase, prompt, effort, timeout, model, session=None, executable="codex", review_box=None):
     schema = FIX_SCHEMA if phase == "fix" else REVIEW_SCHEMA
     write(directory / f"{phase}-schema.json", schema)
@@ -471,7 +475,8 @@ def invoke(repo, directory, phase, prompt, effort, timeout, model, session=None,
             result_path = directory / f"{phase}.json"
             args = [executable, "exec", *before] + (["resume"] if session else [])
             args += ["-m", model, "-c", f'model_reasoning_effort="{effort}"',
-                     "-c", "agents.enabled=false", "-c", "features.hooks=false",
+                     *_compact_limit_args(model),
+                     "-c", "agents.enabled=false", "-c", "features.multi_agent_v2=false", "-c", "features.hooks=false",
                      # The user config defines hindsight; without it (clone turns) the override would be an invalid entry.
                      *([] if clone is not None else ["-c", "mcp_servers.hindsight.enabled=false"]),
                      "-c", 'approval_policy="never"', *sandbox,
@@ -489,7 +494,8 @@ def invoke(repo, directory, phase, prompt, effort, timeout, model, session=None,
                 process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=events,
                                            stderr=errors, text=True, start_new_session=True,
                                            env={**os.environ, "AGENT_KIT_MEMORY_ACCESS": "review",
-                                                "HINDSIGHT_DISABLED": "true", **env})
+                                                "HINDSIGHT_DISABLED": "true",
+                                                "HINDSIGHT_DISABLE_HOOKS": "1", **env})
                 try:
                     process.communicate(prompt, timeout=timeout)
                 except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
@@ -781,9 +787,10 @@ def record_final(directory, state, result):
         raise ValueError("Final result requires head, session_id, model, effort and review")
     model = result["model"]
     model_ok = isinstance(model, str) and (model == state["final_model"] if state["mode"] == "codex-only" else model.startswith("claude-opus-"))
-    allowed = ("high", "xhigh") if state["mode"] == "codex-only" else ("medium", "high")
-    if (result["head"] != state["head"] or not model_ok or result["effort"] not in allowed or
-            (state["final_effort"] == allowed[-1] and result["effort"] != allowed[-1])):
+    allowed = ("high", "xhigh", "max") if state["mode"] == "codex-only" else ("medium", "high")
+    effort_ok = (result["effort"] in allowed and state["final_effort"] in allowed and
+                 allowed.index(result["effort"]) >= allowed.index(state["final_effort"]))
+    if result["head"] != state["head"] or not model_ok or not effort_ok:
         raise ValueError("Final review has the wrong revision, profile model or effort")
     sessions = {state["origin_session"], *(r["session_id"] for r in state["rounds"])}
     if not isinstance(result["session_id"], str) or not result["session_id"].strip() or result["session_id"] in sessions:

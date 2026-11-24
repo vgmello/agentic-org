@@ -53,6 +53,7 @@ pub mod private_notes;
 pub mod processes;
 pub mod projects;
 pub mod providers;
+pub mod replication;
 pub mod rules;
 mod store;
 pub mod tasks;
@@ -79,4 +80,18 @@ pub use key::Key;
 pub use model::{NewOffice, OfficeInfo, OfficeRole};
 #[cfg(any(test, feature = "testkit"))]
 pub use office::TestOffice;
-pub use office::{Custody, DataRoots, Office, LOCK_WAIT};
+pub use office::{
+    ack_message_relay_and_enqueue_receipt_checked, admit_relay_item_if_active,
+    classify_replicated_snapshot_path, export_authoritative_state_snapshot_pages,
+    is_immutable_state_path, is_peer_revoked, is_stale_snapshot_task_entry,
+    promote_pending_removed_origin_withdrawals, publish_message_journal_relay_for_dest_checked,
+    register_peer_session_stop, resolve_employee_office, run_if_peer_active,
+    strip_org_core_employee_refs_typed, task_id_for_work_path, ApprovedSatelliteCert,
+    CreateInvitationParams, CreateInvitationResult, Custody, DataRoots, ExportedSnapshotPages,
+    HqTlsIdentity, InvitationPollStatus, InvitationStatus, InvitationSummaryView,
+    JoinRequestAccepted, JoinRequestParams, Office, OfficePermitSpec, OrgDeltaPayload,
+    PeerSessionGuard, PendingMessageJournalEntry, RelayAdmission, RelayedAskAnswer,
+    RelayedAskWithdrawal, RelayedMessageOutcome, SatelliteFederationConfig, SatelliteProvisionSpec,
+    SatelliteReEnrollSpec, SatelliteRemovalResult, SatelliteTlsIdentity, SnapshotExportProgress,
+    SnapshotPathClass, LOCK_WAIT,
+};

@@ -6,12 +6,15 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-21T22:21:00Z'
+updated_date: '2026-11-23T03:22:00Z'
 labels:
   - v2
   - work
   - templates
 milestone: m-1
-dependencies: []
+dependencies:
+  - TASK-87
+  - TASK-88
 priority: low
 type: feature
 ordinal: 78000
@@ -36,3 +39,9 @@ Phase 2 (deferred to v2) — Organization-level task templates:
 - [ ] #2 Task Markdown parser/writer preserves and validates structured begin/end comment markers for template sections and checklists.
 - [ ] #3 UI identifies and renders template-defined sections and checklists on task creation and detail views, and agent instructions/CLI honor template sections.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Note (2026-11-23): v1 task storage reconciliation (TASK-87) and unified checklist_steps.section (TASK-88: acceptance/dod/work in sibling checklist.yaml) lay the foundation for TASK-78; v2 template checklist sections project onto checklist_steps.section = <name> rather than embedding checklists inside task.md.
+<!-- SECTION:NOTES:END -->

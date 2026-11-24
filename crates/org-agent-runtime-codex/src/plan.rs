@@ -1,10 +1,17 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use org_agent_runtime::{
     Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan, PermissionMode, PlanError,
     PlannedFile, RelPath, RuleScope, SessionId, SessionKind, SessionSpec, SignalTarget, SpecPath,
-    Stdio, StopPlan, StopSignal, StopStep,
+    Stdio, StopPlan, StopSignal, StopStep, ToolCapability,
 };
 
 const INSTRUCTIONS_FILE: &str = "codex-instructions.md";
+
+/// Office-curated baseline POSIX environment variables preserved in Codex tool shells
+/// alongside `ctx.office_env_names` so standard CLI tools (`agent-os`, `git`, `cargo`)
+/// resolve on `PATH` without exposing ambient secrets (`TASK-94`, `doc-29` §6).
+const BASELINE_SHELL_ENV_NAMES: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "TERM"];
 
 /// In-band `thread/start` or `thread/resume` parameters carried into [`crate::session::CodexSession`].
 #[derive(Debug, Clone)]
@@ -13,19 +20,98 @@ pub(crate) struct CodexThreadConfig {
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<String>,
     pub(crate) sandbox_mode: &'static str,
-    pub(crate) approval_policy: &'static str,
+    pub(crate) uses_office_profile: bool,
     pub(crate) writable_roots: Vec<String>,
     pub(crate) instructions: String,
     pub(crate) resume_thread_id: Option<SessionId>,
 }
 
-fn map_codex_modes(mode: PermissionMode) -> Result<(&'static str, &'static str), PlanError> {
+const GRANULAR_APPROVAL_POLICY_TOML: &str =
+    "approval_policy={granular={sandbox_approval=false,rules=true,mcp_elicitations=false,request_permissions=false,skill_approval=false}}";
+
+fn map_codex_sandbox_mode(mode: PermissionMode) -> Result<&'static str, PlanError> {
     match mode {
-        PermissionMode::Ask => Ok(("workspace-write", "untrusted")),
-        PermissionMode::AcceptEdits => Ok(("workspace-write", "on-request")),
-        PermissionMode::Plan => Ok(("read-only", "untrusted")),
+        PermissionMode::Ask => Ok("workspace-write"),
+        PermissionMode::AcceptEdits => Ok("workspace-write"),
+        PermissionMode::Plan => Ok("read-only"),
         _ => Err(PlanError::Unsupported("permission mode")),
     }
+}
+
+fn has_unenforced_legacy_denies(spec: &SessionSpec) -> bool {
+    !spec.sandbox.enabled
+        && (!spec.policy.deny.is_empty()
+            || !spec.sandbox.deny_write.is_empty()
+            || !spec.sandbox.deny_read.is_empty()
+            || !spec.read_only_dirs.is_empty())
+}
+
+fn allows_unscoped_shell(spec: &SessionSpec) -> bool {
+    !has_unenforced_legacy_denies(spec)
+        && spec.policy.allow.iter().any(|rule| {
+            matches!(rule.scope, RuleScope::Any)
+                && matches!(rule.tool.as_str(), "*" | "shell" | "cap:shell")
+        })
+}
+
+fn disables_shell_tool(spec: &SessionSpec) -> bool {
+    let disallowed_by_tools = spec.tools.as_ref().is_some_and(|tools| {
+        !tools.iter().any(|t| {
+            let s = t.as_str();
+            s == ToolCapability::Shell.as_rule_token() || s == "shell"
+        })
+    });
+    let denied_by_policy = spec.policy.deny.iter().any(|rule| {
+        matches!(rule.scope, RuleScope::Any | RuleScope::CommandPrefix(_))
+            && matches!(rule.tool.as_str(), "*" | "shell" | "cap:shell")
+    });
+    // Codex 0.169.0–0.171.0 removed `approval_policy="untrusted"` and its Starlark execpolicy
+    // has no catch-all wildcard prompt rule, so ordinary sandboxed shell commands execute
+    // without asking the office. Fail closed (`features.shell_tool=false`) unless the spec
+    // explicitly grants unscoped shell (`RuleScope::Any`) with no shell prefix denies and no
+    // unenforced legacy denies (`sandbox.enabled == false`).
+    let lacks_unscoped_shell_allow = !allows_unscoped_shell(spec);
+    disallowed_by_tools || denied_by_policy || lacks_unscoped_shell_allow
+}
+
+fn allows_unscoped_edit(spec: &SessionSpec) -> bool {
+    !has_unenforced_legacy_denies(spec)
+        && matches!(spec.permission_mode, PermissionMode::AcceptEdits)
+        && spec.policy.allow.iter().any(|rule| {
+            matches!(rule.scope, RuleScope::Any)
+                && matches!(rule.tool.as_str(), "*" | "apply_patch" | "cap:edit")
+        })
+}
+
+fn disables_edit_tool(spec: &SessionSpec) -> bool {
+    let disallowed_by_tools = spec.tools.as_ref().is_some_and(|tools| {
+        !tools.iter().any(|t| {
+            let s = t.as_str();
+            s == ToolCapability::Edit.as_rule_token() || s == "apply_patch"
+        })
+    });
+    let denied_by_policy = spec.policy.deny.iter().any(|rule| {
+        matches!(rule.scope, RuleScope::Any)
+            && matches!(rule.tool.as_str(), "*" | "apply_patch" | "cap:edit")
+    });
+    // Under Codex's granular approval policy (`sandbox_approval=false, rules=true`),
+    // Codex auto-approves `apply_patch` inside any writable root without prompting the
+    // office. Fail closed to read-only (`SafeAsk`, `ReadOnly`, or any spec without
+    // unscoped `AcceptEdits` edit approval) so no native patch can execute unapproved.
+    let lacks_unscoped_edit_allow = !allows_unscoped_edit(spec);
+    disallowed_by_tools || denied_by_policy || lacks_unscoped_edit_allow
+}
+
+fn effective_codex_sandbox_mode(
+    spec: &SessionSpec,
+    caps: &Capabilities,
+) -> Result<&'static str, PlanError> {
+    let effective_mode = spec.effective_permission_mode(caps);
+    let mut sandbox_mode = map_codex_sandbox_mode(effective_mode)?;
+    if disables_edit_tool(spec) {
+        sandbox_mode = "read-only";
+    }
+    Ok(sandbox_mode)
 }
 
 fn validate_session_kind(kind: &SessionKind) -> Result<(), PlanError> {
@@ -43,9 +129,14 @@ pub(crate) fn build_headless_plan(
     validate_session_kind(&spec.kind)?;
     validate_paths(spec, ctx)?;
     validate_deny_rules(spec)?;
-    let effective_mode = spec.effective_permission_mode(caps);
-    let (sandbox_mode, approval_policy) = map_codex_modes(effective_mode)?;
-    let writable_roots = compute_writable_roots(spec, ctx);
+    validate_tool_allowlist(spec)?;
+    let sandbox_mode = effective_codex_sandbox_mode(spec, caps)?;
+    let uses_office_profile = spec.sandbox.enabled;
+    let writable_roots = if sandbox_mode == "read-only" {
+        Vec::new()
+    } else {
+        compute_writable_roots(spec, ctx)
+    };
 
     let mut args = vec![
         "app-server".to_owned(),
@@ -53,11 +144,13 @@ pub(crate) fn build_headless_plan(
         "-c".to_owned(),
         "analytics.enabled=false".to_owned(),
         "-c".to_owned(),
-        format!("sandbox_mode=\"{sandbox_mode}\""),
-        "-c".to_owned(),
-        format!("approval_policy=\"{approval_policy}\""),
+        GRANULAR_APPROVAL_POLICY_TOML.to_owned(),
     ];
-    append_config_overrides(&mut args, spec, ctx, &writable_roots);
+    if !uses_office_profile {
+        args.push("-c".to_owned());
+        args.push(format!("sandbox_mode=\"{sandbox_mode}\""));
+    }
+    append_config_overrides(&mut args, spec, ctx, sandbox_mode, &writable_roots)?;
 
     let mut files = Vec::new();
     let combined_instructions = combine_instructions(spec);
@@ -75,7 +168,7 @@ pub(crate) fn build_headless_plan(
         model: spec.model.as_ref().map(|m| m.as_str().to_owned()),
         effort: spec.effort.as_ref().map(|e| e.as_str().to_owned()),
         sandbox_mode,
-        approval_policy,
+        uses_office_profile,
         writable_roots,
         instructions: combined_instructions,
         resume_thread_id: ctx.resume.clone(),
@@ -122,24 +215,31 @@ pub(crate) fn build_take_over_plan(
     }
     validate_paths(spec, ctx)?;
     validate_deny_rules(spec)?;
+    validate_tool_allowlist(spec)?;
     let Some(resume_id) = ctx.resume.clone() else {
         return Err(PlanError::InvalidSpec(
             "take-over requires LaunchContext::resume to be set".to_owned(),
         ));
     };
-    let effective_mode = spec.effective_permission_mode(caps);
-    let (sandbox_mode, approval_policy) = map_codex_modes(effective_mode)?;
-    let writable_roots = compute_writable_roots(spec, ctx);
+    let sandbox_mode = effective_codex_sandbox_mode(spec, caps)?;
+    let uses_office_profile = spec.sandbox.enabled;
+    let writable_roots = if sandbox_mode == "read-only" {
+        Vec::new()
+    } else {
+        compute_writable_roots(spec, ctx)
+    };
 
     let mut args = vec![
         "resume".to_owned(),
         resume_id.as_str().to_owned(),
         "-c".to_owned(),
-        format!("sandbox_mode=\"{sandbox_mode}\""),
-        "-c".to_owned(),
-        format!("approval_policy=\"{approval_policy}\""),
+        GRANULAR_APPROVAL_POLICY_TOML.to_owned(),
     ];
-    append_config_overrides(&mut args, spec, ctx, &writable_roots);
+    if !uses_office_profile {
+        args.push("-c".to_owned());
+        args.push(format!("sandbox_mode=\"{sandbox_mode}\""));
+    }
+    append_config_overrides(&mut args, spec, ctx, sandbox_mode, &writable_roots)?;
 
     Ok(LaunchPlan {
         program: ctx.runtime_path.clone(),
@@ -192,12 +292,32 @@ fn validate_paths(spec: &SessionSpec, ctx: &LaunchContext) -> Result<(), PlanErr
 
 fn validate_deny_rules(spec: &SessionSpec) -> Result<(), PlanError> {
     for rule in &spec.policy.deny {
+        let raw = rule.tool.as_str();
+        if ToolCapability::is_capability_token(raw)
+            && ToolCapability::parse_rule_token(raw).is_none()
+        {
+            return Err(PlanError::Unsupported("tool capability"));
+        }
         match &rule.scope {
             RuleScope::Any
             | RuleScope::Path(_)
             | RuleScope::CommandPrefix(_)
             | RuleScope::McpServer(_) => {}
             _ => return Err(PlanError::Unsupported("deny rule scope")),
+        }
+    }
+    Ok(())
+}
+
+fn validate_tool_allowlist(spec: &SessionSpec) -> Result<(), PlanError> {
+    if let Some(tools) = &spec.tools {
+        for tool in tools {
+            let raw = tool.as_str();
+            if ToolCapability::is_capability_token(raw)
+                && ToolCapability::parse_rule_token(raw).is_none()
+            {
+                return Err(PlanError::Unsupported("tool capability"));
+            }
         }
     }
     Ok(())
@@ -221,12 +341,369 @@ fn compute_writable_roots(spec: &SessionSpec, ctx: &LaunchContext) -> Vec<String
     writable
 }
 
+fn path_pattern_base(pattern: &str) -> Option<String> {
+    let trimmed = pattern.trim();
+    if !trimmed.starts_with('/') {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for seg in trimmed.split('/').filter(|s| !s.is_empty()) {
+        if seg.contains('*') {
+            break;
+        }
+        if seg.contains(['?', '[', ']']) {
+            return None;
+        }
+        parts.push(seg);
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!("/{}", parts.join("/")))
+}
+
+fn validate_codex_literal_fs_path(path: &str) -> Result<(), PlanError> {
+    if path.contains(['*', '?', '[', ']']) {
+        return Err(PlanError::Unsupported(
+            "glob metacharacter in literal Codex filesystem path",
+        ));
+    }
+    Ok(())
+}
+
+fn canonicalize_os_alias(path: &str, is_macos: bool) -> std::borrow::Cow<'_, str> {
+    if !is_macos {
+        return std::borrow::Cow::Borrowed(path);
+    }
+    for (alias_prefix, private_prefix) in [
+        ("/var", "/private/var"),
+        ("/tmp", "/private/tmp"),
+        ("/etc", "/private/etc"),
+    ] {
+        if path == alias_prefix {
+            return std::borrow::Cow::Borrowed(private_prefix);
+        }
+        if let Some(rest) = path.strip_prefix(alias_prefix) {
+            if rest.starts_with('/') {
+                return std::borrow::Cow::Owned(format!("{private_prefix}{rest}"));
+            }
+        }
+    }
+    std::borrow::Cow::Borrowed(path)
+}
+
+fn path_is_same_or_under_literal(path: &str, base: &str) -> bool {
+    let p = path.trim_end_matches('/');
+    let b = base.trim_end_matches('/');
+    if b.is_empty() {
+        return true;
+    }
+    p == b || p.starts_with(&format!("{b}/"))
+}
+
+fn path_is_same_or_under_for_os(path: &str, base: &str, is_macos: bool) -> bool {
+    let p = canonicalize_os_alias(path.trim_end_matches('/'), is_macos);
+    let b = canonicalize_os_alias(base.trim_end_matches('/'), is_macos);
+    if b.is_empty() {
+        return true;
+    }
+    p.as_ref() == b.as_ref() || p.starts_with(&format!("{b}/"))
+}
+
+fn path_is_same_or_under(path: &str, base: &str) -> bool {
+    path_is_same_or_under_for_os(path, base, cfg!(target_os = "macos"))
+}
+
+fn paths_overlap_via_alias_only_for_os(path: &str, base: &str, is_macos: bool) -> bool {
+    if !is_macos {
+        return false;
+    }
+    let same_or_under = path_is_same_or_under_for_os(path, base, true)
+        || path_is_same_or_under_for_os(base, path, true);
+    let literal =
+        path_is_same_or_under_literal(path, base) || path_is_same_or_under_literal(base, path);
+    same_or_under && !literal
+}
+
+fn paths_overlap_via_alias_only(path: &str, base: &str) -> bool {
+    paths_overlap_via_alias_only_for_os(path, base, cfg!(target_os = "macos"))
+}
+
+fn access_rank(level: &str) -> u8 {
+    match level {
+        "none" => 3,
+        "read" => 2,
+        "write" => 1,
+        _ => 0,
+    }
+}
+
+fn insert_narrow_fs(map: &mut BTreeMap<String, &'static str>, key: String, level: &'static str) {
+    match map.get(&key).copied() {
+        Some(existing) if access_rank(existing) >= access_rank(level) => {}
+        _ => {
+            map.insert(key, level);
+        }
+    }
+}
+
+fn validate_profile_literal_paths(
+    spec: &SessionSpec,
+    ctx: &LaunchContext,
+    writable_roots: &[String],
+) -> Result<(), PlanError> {
+    // Reject literal paths containing Codex glob metacharacters (`*`, `?`, `[`, `]`) before
+    // emitting `permissions.office.filesystem` so a literal directory named `**` can never be
+    // misinterpreted as a parent-widening glob by Codex.
+    validate_codex_literal_fs_path(spec.workspace.as_str())?;
+    validate_codex_literal_fs_path(ctx.tmpdir.as_str())?;
+    for root in &spec.sandbox.writable_roots {
+        validate_codex_literal_fs_path(root.as_str())?;
+    }
+    for root in writable_roots {
+        validate_codex_literal_fs_path(root.as_str())?;
+    }
+    for dir in &spec.read_only_dirs {
+        validate_codex_literal_fs_path(dir.as_str())?;
+    }
+    if let Some(cfg_dir) = &ctx.config_dir {
+        validate_codex_literal_fs_path(cfg_dir.as_str())?;
+    }
+    Ok(())
+}
+
+fn collect_profile_deny_entries(
+    spec: &SessionSpec,
+) -> Result<Vec<(String, &'static str)>, PlanError> {
+    let mut deny_entries: Vec<(String, &'static str)> = Vec::new();
+    for pat in &spec.sandbox.deny_write {
+        let base = path_pattern_base(pat.as_str())
+            .ok_or(PlanError::Unsupported("leading-wildcard path deny pattern"))?;
+        deny_entries.push((base, "read"));
+    }
+    for pat in &spec.sandbox.deny_read {
+        let base = path_pattern_base(pat.as_str())
+            .ok_or(PlanError::Unsupported("leading-wildcard path deny pattern"))?;
+        deny_entries.push((base, "none"));
+    }
+    for rule in &spec.policy.deny {
+        if let RuleScope::Path(pat) = &rule.scope {
+            let base = path_pattern_base(pat.as_str())
+                .ok_or(PlanError::Unsupported("leading-wildcard path deny pattern"))?;
+            let level = match rule.tool.as_str() {
+                "cap:edit" | "apply_patch" => "read",
+                _ => "none",
+            };
+            deny_entries.push((base, level));
+        }
+    }
+    Ok(deny_entries)
+}
+
+fn collect_config_dir_entries(ctx: &LaunchContext) -> Vec<(String, &'static str)> {
+    ctx.config_dir
+        .as_ref()
+        .map(|cfg_dir| {
+            let trimmed = cfg_dir.as_str().trim_end_matches('/');
+            vec![
+                (trimmed.to_owned(), "read"),
+                (format!("{trimmed}/auth.json"), "none"),
+            ]
+        })
+        .unwrap_or_default()
+}
+
+fn check_profile_write_conflicts(
+    spec: &SessionSpec,
+    ctx: &LaunchContext,
+    sandbox_mode: &str,
+    writable_roots: &[String],
+    all_write_denies: &[(String, &'static str)],
+) -> Result<(), PlanError> {
+    if all_write_denies
+        .iter()
+        .any(|(deny_base, _)| path_is_same_or_under(ctx.tmpdir.as_str(), deny_base))
+    {
+        return Err(PlanError::InvalidSpec(
+            "tmpdir conflicts with a read-only or deny rule".to_owned(),
+        ));
+    }
+
+    let mut candidate_writes: Vec<&str> = vec![ctx.tmpdir.as_str()];
+    if sandbox_mode != "read-only" {
+        candidate_writes.push(spec.workspace.as_str());
+        for root in writable_roots {
+            candidate_writes.push(root.as_str());
+        }
+    }
+    let has_alias_overlap = candidate_writes.iter().any(|write_path| {
+        all_write_denies
+            .iter()
+            .any(|(deny_base, _)| paths_overlap_via_alias_only(write_path, deny_base))
+    });
+    if has_alias_overlap {
+        return Err(PlanError::InvalidSpec(
+            "ambiguous macOS symlink-alias overlap between writable path and deny or read-only rule"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn has_ancestor_none_deny(path: &str, deny_entries: &[(String, &'static str)]) -> bool {
+    deny_entries.iter().any(|(deny_base, deny_level)| {
+        *deny_level == "none" && path_is_same_or_under(path, deny_base)
+    })
+}
+
+fn insert_filtered_entries(
+    fs_entries: &mut BTreeMap<String, &'static str>,
+    entries: &[(String, &'static str)],
+    deny_entries: &[(String, &'static str)],
+) {
+    for (base, level) in entries {
+        if *level == "read" && has_ancestor_none_deny(base, deny_entries) {
+            continue;
+        }
+        insert_narrow_fs(fs_entries, base.clone(), level);
+    }
+}
+
+fn build_profile_fs_entries(
+    spec: &SessionSpec,
+    ctx: &LaunchContext,
+    sandbox_mode: &str,
+    writable_roots: &[String],
+    deny_entries: &[(String, &'static str)],
+    config_dir_entries: &[(String, &'static str)],
+    read_only_entries: &[(String, &'static str)],
+) -> BTreeMap<String, &'static str> {
+    let mut fs_entries: BTreeMap<String, &'static str> = BTreeMap::new();
+    fs_entries.insert("/".to_owned(), "read");
+    if sandbox_mode == "read-only" {
+        // When Edit is excluded or unapproved (`ReadOnly`, `SafeAsk`), emit ZERO `"write"`
+        // entries anywhere in `permissions.office.filesystem` (including `TMPDIR`) so Codex
+        // compiles the profile to `SandboxPolicy::ReadOnly` and blocks all native `apply_patch`
+        // writes everywhere.
+        fs_entries.insert(spec.workspace.as_str().to_owned(), "read");
+        fs_entries.insert(ctx.tmpdir.as_str().to_owned(), "read");
+    } else {
+        fs_entries.insert(spec.workspace.as_str().to_owned(), "write");
+        fs_entries.insert(ctx.tmpdir.as_str().to_owned(), "write");
+        for root in writable_roots {
+            fs_entries.insert(root.clone(), "write");
+        }
+    }
+    for (dir, level) in read_only_entries {
+        insert_narrow_fs(&mut fs_entries, dir.clone(), level);
+    }
+
+    // Never emit a `"write"` grant equal to or nested under any explicit deny or `read_only_dirs`
+    // base, and never emit a `"read"` grant from `read_only_dirs` nested under a `"none"` deny.
+    fs_entries.retain(|path, level| {
+        if *level == "write" {
+            return !deny_entries
+                .iter()
+                .chain(config_dir_entries.iter())
+                .chain(read_only_entries.iter())
+                .any(|(deny_base, _)| path_is_same_or_under(path, deny_base));
+        }
+        if *level == "read" && path != "/" {
+            return !has_ancestor_none_deny(path, deny_entries);
+        }
+        true
+    });
+
+    insert_filtered_entries(&mut fs_entries, deny_entries, deny_entries);
+    insert_filtered_entries(&mut fs_entries, config_dir_entries, deny_entries);
+    fs_entries
+}
+
+fn append_permissions_profile_overrides(
+    args: &mut Vec<String>,
+    spec: &SessionSpec,
+    ctx: &LaunchContext,
+    sandbox_mode: &str,
+    writable_roots: &[String],
+) -> Result<(), PlanError> {
+    if !spec.sandbox.enabled {
+        return Ok(());
+    }
+    validate_profile_literal_paths(spec, ctx, writable_roots)?;
+    // Emit the named `permissions.office` profile (`doc-29` §6) with `"/"="read"` base plus
+    // literal workspace, writable roots, `TMPDIR`, fixed read/write denies, and office-socket-only
+    // network isolation.
+    let deny_entries = collect_profile_deny_entries(spec)?;
+    let config_dir_entries = collect_config_dir_entries(ctx);
+    let read_only_entries: Vec<(String, &'static str)> = spec
+        .read_only_dirs
+        .iter()
+        .map(|d| (d.as_str().to_owned(), "read"))
+        .collect();
+    let all_write_denies: Vec<(String, &'static str)> = deny_entries
+        .iter()
+        .chain(config_dir_entries.iter())
+        .chain(read_only_entries.iter())
+        .cloned()
+        .collect();
+    check_profile_write_conflicts(spec, ctx, sandbox_mode, writable_roots, &all_write_denies)?;
+
+    let fs_entries = build_profile_fs_entries(
+        spec,
+        ctx,
+        sandbox_mode,
+        writable_roots,
+        &deny_entries,
+        &config_dir_entries,
+        &read_only_entries,
+    );
+
+    let fs_pairs: Vec<String> = fs_entries
+        .iter()
+        .map(|(k, v)| {
+            format!(
+                "{}={}",
+                serde_json::to_string(k).expect("fs key encodes"),
+                serde_json::to_string(v).expect("fs level encodes")
+            )
+        })
+        .collect();
+    let sock_pairs: Vec<String> = spec
+        .sandbox
+        .allowed_unix_sockets
+        .iter()
+        .map(|s| {
+            format!(
+                "{}=\"allow\"",
+                serde_json::to_string(s.as_str()).expect("socket path encodes")
+            )
+        })
+        .collect();
+
+    args.push("-c".to_owned());
+    args.push("features.network_proxy=true".to_owned());
+    args.push("-c".to_owned());
+    args.push("default_permissions=\"office\"".to_owned());
+    args.push("-c".to_owned());
+    args.push(format!(
+        "permissions.office.filesystem={{{}}}",
+        fs_pairs.join(",")
+    ));
+    args.push("-c".to_owned());
+    args.push(format!(
+        "permissions.office.network={{enabled=true,unix_sockets={{{}}}}}",
+        sock_pairs.join(",")
+    ));
+    Ok(())
+}
+
 fn append_config_overrides(
     args: &mut Vec<String>,
     spec: &SessionSpec,
     ctx: &LaunchContext,
+    sandbox_mode: &str,
     writable_roots: &[String],
-) {
+) -> Result<(), PlanError> {
     if let Some(model) = &spec.model {
         args.push("-c".to_owned());
         args.push(format!("model=\"{}\"", model.as_str()));
@@ -235,25 +712,26 @@ fn append_config_overrides(
         args.push("-c".to_owned());
         args.push(format!("model_reasoning_effort=\"{}\"", effort.as_str()));
     }
-    if spec.sandbox.enabled && !writable_roots.is_empty() {
-        let quoted: Vec<String> = writable_roots
-            .iter()
-            .map(|p| serde_json::to_string(p).expect("path string encodes"))
-            .collect();
+    if disables_shell_tool(spec) {
         args.push("-c".to_owned());
-        args.push(format!(
-            "sandbox_workspace_write.writable_roots=[{}]",
-            quoted.join(",")
-        ));
+        args.push("features.shell_tool=false".to_owned());
     }
-    // Pin Codex's shell environment policy so *TOKEN* variables such as
-    // AGENT_OS_SESSION_TOKEN are forwarded to tool shells (`doc-29` §6).
+    append_permissions_profile_overrides(args, spec, ctx, sandbox_mode, writable_roots)?;
+    // Pin Codex's shell environment policy so office-curated baseline POSIX variables
+    // (PATH, HOME, TMPDIR, LANG, TERM) and *TOKEN* office variables such as
+    // AGENT_OS_SESSION_TOKEN are forwarded to tool shells while ambient secrets stay excluded
+    // (`TASK-94`, `doc-29` §6).
     args.push("-c".to_owned());
     args.push("shell_environment_policy.ignore_default_excludes=true".to_owned());
-    let mut env_names: Vec<&str> = Vec::new();
+    let excluded: BTreeSet<String> = secret_env_names()
+        .into_iter()
+        .chain(auth_env_names())
+        .map(|n| n.as_str().to_owned())
+        .collect();
+    let mut env_names: Vec<&str> = BASELINE_SHELL_ENV_NAMES.to_vec();
     for name in &ctx.office_env_names {
         let s = name.as_str();
-        if !env_names.contains(&s) {
+        if !excluded.contains(s) && !env_names.contains(&s) {
             env_names.push(s);
         }
     }
@@ -279,6 +757,7 @@ fn append_config_overrides(
         args.push("-c".to_owned());
         args.push(format!("mcp_servers.{key}.args={arr}"));
     }
+    Ok(())
 }
 
 fn combine_instructions(spec: &SessionSpec) -> String {
@@ -326,4 +805,51 @@ fn secret_env_names() -> Vec<EnvName> {
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static secret env"))
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_keeps_var_and_private_var_disjoint_while_macos_detects_alias_overlap() {
+        // On Linux, `/var/lib/agent/work` and `/private/var/lib/agent` are distinct directories.
+        assert!(!path_is_same_or_under_for_os(
+            "/var/lib/agent/work",
+            "/private/var/lib/agent",
+            false
+        ));
+        assert!(!paths_overlap_via_alias_only_for_os(
+            "/var/lib/agent/work",
+            "/private/var/lib/agent",
+            false
+        ));
+        assert!(!path_is_same_or_under_for_os(
+            "/var/nested",
+            "/private",
+            false
+        ));
+
+        // On macOS, `/var` aliases `/private/var`, so both containment and alias overlap fire.
+        assert!(path_is_same_or_under_for_os(
+            "/var/lib/agent/work",
+            "/private/var/lib/agent",
+            true
+        ));
+        assert!(paths_overlap_via_alias_only_for_os(
+            "/var/lib/agent/work",
+            "/private/var/lib/agent",
+            true
+        ));
+        assert!(path_is_same_or_under_for_os(
+            "/var/nested",
+            "/private",
+            true
+        ));
+        assert!(path_is_same_or_under_for_os(
+            "/private/var/tmp/run-1",
+            "/private",
+            true
+        ));
+    }
 }

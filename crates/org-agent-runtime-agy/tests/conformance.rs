@@ -557,3 +557,261 @@ fn resume_usage_baseline_handles_baselined_multiturn_and_unbaselined_first_turn(
         Output::Event(SessionEvent::Usage(u)) if u.input == 25 && u.output == 15
     )));
 }
+
+#[test]
+fn capability_translation_allows_readonly_init_and_classifies_approvals_and_subagents() {
+    use org_agent_runtime::ToolCapability;
+
+    let runtime = AgyRuntime::new();
+    let mut spec = sample_spec();
+    spec.permission_mode = PermissionMode::Plan;
+    spec.policy.allow = vec![
+        Rule {
+            tool: ToolCapability::Read.to_rule_tool(),
+            scope: RuleScope::Any,
+        },
+        Rule {
+            tool: ToolCapability::Search.to_rule_tool(),
+            scope: RuleScope::Any,
+        },
+        Rule {
+            tool: ToolCapability::Shell.to_rule_tool(),
+            scope: RuleScope::CommandPrefix(CommandPrefix::try_from("agent-os").unwrap()),
+        },
+    ];
+    spec.policy.deny.clear();
+    spec.sandbox.deny_write.clear();
+    spec.sandbox.deny_read.clear();
+    spec.tools = Some(vec![
+        ToolCapability::Read.to_tool_name(),
+        ToolCapability::Search.to_tool_name(),
+        ToolCapability::Shell.to_tool_name(),
+    ]);
+
+    let (plan, mut session) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let settings_file = plan
+        .files
+        .iter()
+        .find(|f| f.rel_path.as_str() == "agy-settings.json")
+        .unwrap();
+    let settings: serde_json::Value = serde_json::from_slice(&settings_file.contents).unwrap();
+    let allowed_tools: Vec<&str> = settings["allowedTools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    for expected in [
+        "read_file",
+        "view_file",
+        "list_dir",
+        "find_by_name",
+        "grep_search",
+        "run_command",
+    ] {
+        assert!(
+            allowed_tools.contains(&expected),
+            "missing expanded Agy tool `{expected}` in {allowed_tools:?}"
+        );
+    }
+    assert!(!allowed_tools.iter().any(|t| t.starts_with("cap:")));
+    assert!(!allowed_tools.contains(&"edit_file"));
+
+    // system/init with concrete Agy read/search/shell tools must NOT fast-stop in ReadOnly.
+    let now = Instant::now();
+    let _ = session.start(now);
+    let ready = session.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["ac-dev-ada"],"mode":"plan"}}}"#,
+        now,
+    );
+    assert!(ready
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::Ready { .. }))));
+    let init_ok = session.on_line(
+        br#"{"type":"system","subtype":"init","conversation_id":"agy-ro-1","mode":"plan","tools":["read_file","view_file","list_dir","find_by_name","grep_search","run_command"]}"#,
+        now,
+    );
+    assert!(
+        !init_ok.iter().any(|o| matches!(o, Output::CloseStdin)),
+        "ReadOnly init with concrete Agy tools must not fast-stop: {init_ok:?}"
+    );
+
+    // Incoming approval and subagent tool_use events carry normalized ToolCapability.
+    let apr = session.on_line(
+        br#"{"type":"control_request","request_id":"ro-cmd","request":{"subtype":"can_use_tool","tool_name":"run_command","input":{"CommandLine":"agent-os inbox --json"}}}"#,
+        now,
+    );
+    let req = apr
+        .iter()
+        .find_map(|o| match o {
+            Output::Event(SessionEvent::ApprovalRequested(r)) => Some(r),
+            _ => None,
+        })
+        .expect("run_command approval");
+    assert_eq!(req.capability, Some(ToolCapability::Shell));
+
+    let sub = session.on_line(
+        br#"{"type":"assistant","message":{"id":"m-sub","content":[{"type":"tool_use","id":"sub-1","name":"invoke_subagent","input":{"prompt":"check"}}]}}"#,
+        now,
+    );
+    assert!(sub.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::ToolStarted {
+            tool_use_id,
+            capability: Some(ToolCapability::Subagent),
+            ..
+        }) if tool_use_id == "sub-1"
+    )));
+
+    // Exposing edit_file in ReadOnly still fast-stops.
+    let init_bad = session.on_line(
+        br#"{"type":"system","subtype":"init","conversation_id":"agy-ro-1","mode":"plan","tools":["read_file","edit_file"]}"#,
+        now,
+    );
+    assert!(init_bad.iter().any(|o| matches!(o, Output::CloseStdin)));
+
+    // Unknown cap:* token fails closed in tools and deny rules.
+    let mut bad_tools = sample_spec();
+    bad_tools.tools = Some(vec![ToolName::try_from("cap:network").unwrap()]);
+    assert!(matches!(
+        runtime.plan_session(&bad_tools, &sample_ctx()),
+        Err(PlanError::Unsupported(_))
+    ));
+    let mut bad_deny = sample_spec();
+    bad_deny.policy.deny.push(Rule {
+        tool: RuleTool::try_from("cap:network").unwrap(),
+        scope: RuleScope::Any,
+    });
+    assert!(matches!(
+        runtime.plan_session(&bad_deny, &sample_ctx()),
+        Err(PlanError::Unsupported(_))
+    ));
+
+    // WorkspaceEdits & AutonomousSandboxed preset translation matrix (when keeps_allow_rules=true).
+    let mut we_spec = sample_spec();
+    we_spec.permission_mode = PermissionMode::AcceptEdits;
+    we_spec.policy.deny.clear();
+    we_spec.sandbox.deny_write.clear();
+    we_spec.sandbox.deny_read.clear();
+    we_spec.tools = None;
+    we_spec.policy.allow = vec![
+        Rule {
+            tool: ToolCapability::Read.to_rule_tool(),
+            scope: RuleScope::Any,
+        },
+        Rule {
+            tool: ToolCapability::Search.to_rule_tool(),
+            scope: RuleScope::Any,
+        },
+        Rule {
+            tool: ToolCapability::Edit.to_rule_tool(),
+            scope: RuleScope::Any,
+        },
+        Rule {
+            tool: ToolCapability::Shell.to_rule_tool(),
+            scope: RuleScope::CommandPrefix(CommandPrefix::try_from("agent-os").unwrap()),
+        },
+    ];
+    let (we_plan, mut we_session) = runtime.plan_session(&we_spec, &sample_ctx()).unwrap();
+    let we_settings: serde_json::Value = serde_json::from_slice(
+        &we_plan
+            .files
+            .iter()
+            .find(|f| f.rel_path.as_str() == "agy-settings.json")
+            .unwrap()
+            .contents,
+    )
+    .unwrap();
+    assert_eq!(
+        we_settings["permissions"]["mode"],
+        serde_json::json!("accept-edits")
+    );
+    let we_allow = we_settings["permissions"]["allow"].as_array().unwrap();
+    assert!(we_allow.contains(&serde_json::json!({ "tool": "edit_file" })));
+    assert!(we_allow.contains(&serde_json::json!({ "tool": "replace_file_content" })));
+    assert!(we_allow
+        .contains(&serde_json::json!({ "tool": "run_command", "commandPrefix": "agent-os" })));
+    let _ = we_session.start(now);
+    let we_ready = we_session.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["ac-dev-ada"],"mode":"accept-edits"}}}"#,
+        now,
+    );
+    assert!(we_ready
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::Ready { .. }))));
+    let we_init = we_session.on_line(
+        br#"{"type":"system","subtype":"init","conversation_id":"agy-we-1","mode":"accept-edits","tools":["read_file","edit_file","run_command"]}"#,
+        now,
+    );
+    assert!(!we_init.iter().any(|o| matches!(o, Output::CloseStdin)));
+    let we_apr = we_session.on_line(
+        br#"{"type":"control_request","request_id":"we-edit","request":{"subtype":"can_use_tool","tool_name":"edit_file","input":{"path":"/work/t-1/lib.rs"}}}"#,
+        now,
+    );
+    assert!(we_apr.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::ApprovalRequested(r))
+            if r.capability == Some(ToolCapability::Edit) && r.escalation == Escalation::None
+    )));
+
+    let mut auto_spec = we_spec.clone();
+    auto_spec.policy.allow.pop();
+    auto_spec.policy.allow.push(Rule {
+        tool: ToolCapability::Shell.to_rule_tool(),
+        scope: RuleScope::Any,
+    });
+    let (auto_plan, mut auto_session) = runtime.plan_session(&auto_spec, &sample_ctx()).unwrap();
+    let auto_settings: serde_json::Value = serde_json::from_slice(
+        &auto_plan
+            .files
+            .iter()
+            .find(|f| f.rel_path.as_str() == "agy-settings.json")
+            .unwrap()
+            .contents,
+    )
+    .unwrap();
+    let auto_allow = auto_settings["permissions"]["allow"].as_array().unwrap();
+    assert!(auto_allow.contains(&serde_json::json!({ "tool": "run_command" })));
+    let _ = auto_session.start(now);
+    let auto_ready = auto_session.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["ac-dev-ada"],"mode":"accept-edits"}}}"#,
+        now,
+    );
+    assert!(auto_ready
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::Ready { .. }))));
+    let auto_init = auto_session.on_line(
+        br#"{"type":"system","subtype":"init","conversation_id":"agy-auto-1","mode":"accept-edits","tools":["read_file","edit_file","run_command"]}"#,
+        now,
+    );
+    assert!(!auto_init.iter().any(|o| matches!(o, Output::CloseStdin)));
+    let auto_apr = auto_session.on_line(
+        br#"{"type":"control_request","request_id":"auto-cmd","request":{"subtype":"can_use_tool","tool_name":"run_command","input":{"CommandLine":"cargo test"}}}"#,
+        now,
+    );
+    assert!(auto_apr.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::ApprovalRequested(r))
+            if r.capability == Some(ToolCapability::Shell) && r.escalation == Escalation::None
+    )));
+
+    // Conflicting sandbox-bypass aliases must NOT mask `unsandboxed: true`.
+    let (_, mut bypass_session) = runtime.plan_session(&sample_spec(), &sample_ctx()).unwrap();
+    let _ = bypass_session.start(now);
+    let _ = bypass_session.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["ac-dev-ada"],"mode":"ask"}}}"#,
+        now,
+    );
+    let masked_bypass = bypass_session.on_line(
+        br#"{"type":"control_request","request_id":"sb-mask","request":{"subtype":"can_use_tool","tool_name":"run_command","input":{"CommandLine":"agent-os inbox","dangerouslyDisableSandbox":false,"unsandboxed":true}}}"#,
+        now,
+    );
+    let masked_req = masked_bypass
+        .iter()
+        .find_map(|o| match o {
+            Output::Event(SessionEvent::ApprovalRequested(r)) => Some(r),
+            _ => None,
+        })
+        .expect("masked bypass approval");
+    assert_eq!(masked_req.escalation, Escalation::SandboxBypass);
+}

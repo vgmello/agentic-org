@@ -134,61 +134,51 @@ impl SessionManager {
         answered_by_person: bool,
         asked_by_subagent: bool,
     ) -> WakeOutcome {
+        self.on_ask_answered_durable(
+            asker_id,
+            ask_id,
+            question_summary,
+            answer_summary,
+            (answered_by_id, answered_by_name, answered_by_person),
+            asked_by_subagent,
+        )
+        .unwrap_or(WakeOutcome::Ignored)
+    }
+
+    /// Durable variant of `on_ask_answered` that propagates suspended-state and pending-wake
+    /// persistence failures so cross-office federation only commits `delivered: true` after
+    /// resume intent is durably recorded (`TASK-52` P7-#4).
+    pub fn on_ask_answered_durable(
+        &self,
+        asker_id: &str,
+        ask_id: &str,
+        question_summary: &str,
+        answer_summary: &str,
+        responder: (&str, &str, bool),
+        asked_by_subagent: bool,
+    ) -> Result<WakeOutcome, String> {
+        let (answered_by_id, answered_by_name, answered_by_person) = responder;
         let suspended_resume = {
             let _lock = self
                 .lifecycle_lock
                 .lock()
                 .unwrap_or_else(|p| p.into_inner());
             remove_open_required_ask(&self.open_required_asks, asker_id, ask_id);
-            self.store
-                .read_suspended_state(asker_id)
-                .ok()
-                .flatten()
-                .and_then(|mut susp| {
-                    let pos = susp.asks.iter().position(|a| a.ask_id == ask_id)?;
-                    let ask_entry = susp.asks.remove(pos);
-                    let answer = PendingAskAnswer {
-                        ask_id: ask_id.to_owned(),
-                        question_summary: if ask_entry.question_summary.is_empty() {
-                            question_summary.to_owned()
-                        } else {
-                            ask_entry.question_summary
-                        },
-                        answer_summary: answer_summary.to_owned(),
-                        answered_by: answered_by_name.to_owned(),
-                        answered_at: rfc3339_now(),
-                        asked_by_subagent: ask_entry.asked_by_subagent || asked_by_subagent,
-                    };
-                    if !susp
-                        .pending_resume_answers
-                        .iter()
-                        .any(|a| a.ask_id == answer.ask_id)
-                    {
-                        susp.pending_resume_answers.push(answer);
-                    }
-                    susp.updated_at = rfc3339_now();
-                    let tokens = self.bindings.active_tokens();
-                    let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
-                    let _ = self.store.write_suspended_state_redacted(&susp, &refs);
-                    Some(susp)
-                })
+            record_suspended_ask_answer_locked(
+                &self.store,
+                &self.bindings,
+                asker_id,
+                ask_id,
+                question_summary,
+                answer_summary,
+                (answered_by_name, asked_by_subagent),
+            )?
         };
-        if suspended_resume.is_some() {
-            for _ in 0..10 {
-                let outcome = self.try_resume_suspended(asker_id);
-                if outcome
-                    != (WakeOutcome::Queued {
-                        reason: WakeHoldReason::Busy,
-                    })
-                {
-                    return outcome;
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            return self.try_resume_suspended(asker_id);
+        if suspended_resume {
+            return Ok(self.resume_suspended_with_retry(asker_id));
         }
         if self.has_live_active_turn(asker_id) {
-            return WakeOutcome::Ignored;
+            return Ok(WakeOutcome::Ignored);
         }
         let item = PendingWakeItem {
             item_id: format!("answer:{ask_id}"),
@@ -201,39 +191,80 @@ impl SessionManager {
             summary: format!("Question: {question_summary}\nAnswer: {answer_summary}"),
             enqueued_at_ms: now_ms(),
         };
-        self.enqueue_wake(asker_id, item)
+        self.enqueue_wake_durable(asker_id, item)
+    }
+
+    fn resume_suspended_with_retry(&self, asker_id: &str) -> WakeOutcome {
+        for _ in 0..10 {
+            let outcome = self.try_resume_suspended(asker_id);
+            if outcome
+                != (WakeOutcome::Queued {
+                    reason: WakeHoldReason::Busy,
+                })
+            {
+                return outcome;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        self.try_resume_suspended(asker_id)
     }
 
     /// Removes a withdrawn ask from suspended state and queued pending wakes (`ADR-0030` d3).
     pub fn on_ask_withdrawn(&self, asker_id: &str, ask_id: &str) {
+        let _ = self.on_ask_withdrawn_durable(asker_id, ask_id);
+    }
+
+    /// Durably clears a withdrawn ask from suspended state and queued pending wakes, propagating
+    /// storage errors so cross-office withdrawal delivery only acknowledges after cleanup is
+    /// persisted (`TASK-52` P13-#4).
+    pub fn on_ask_withdrawn_durable(&self, asker_id: &str, ask_id: &str) -> Result<(), String> {
         let _lock = self
             .lifecycle_lock
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         remove_open_required_ask(&self.open_required_asks, asker_id, ask_id);
-        if let Ok(Some(mut susp)) = self.store.read_suspended_state(asker_id) {
+        let maybe_susp = self
+            .store
+            .read_suspended_state(asker_id)
+            .map_err(|e| format!("failed reading suspended state: {e}"))?;
+        if let Some(mut susp) = maybe_susp {
             susp.asks.retain(|a| a.ask_id != ask_id);
             if susp.asks.is_empty() && susp.pending_resume_answers.is_empty() {
-                let _ = self.store.clear_suspended_state(asker_id);
+                self.store
+                    .clear_suspended_state(asker_id)
+                    .map_err(|e| format!("failed clearing suspended state: {e}"))?;
             } else {
                 susp.updated_at = rfc3339_now();
                 let tokens = self.bindings.active_tokens();
                 let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
-                let _ = self.store.write_suspended_state_redacted(&susp, &refs);
+                self.store
+                    .write_suspended_state_redacted(&susp, &refs)
+                    .map_err(|e| format!("failed writing suspended state: {e}"))?;
             }
         }
-        self.prune_pending_wake_source_locked(ask_id);
+        self.prune_pending_wake_source_durable_locked(ask_id)
     }
 
     /// Enqueues or immediately dispatches an autonomous wake item for `target_employee_id`
     /// (`WAKE-1..7`, `AVAIL-1..6`, `LIVE-1..8`).
     pub fn enqueue_wake(&self, target_employee_id: &str, item: PendingWakeItem) -> WakeOutcome {
+        self.enqueue_wake_durable(target_employee_id, item)
+            .unwrap_or(WakeOutcome::Ignored)
+    }
+
+    /// Persists a wake item durably before dispatching, returning `Err` if durable persistence
+    /// fails so cross-office wake relays never acknowledge an unpersisted wake (`TASK-52` #14).
+    pub fn enqueue_wake_durable(
+        &self,
+        target_employee_id: &str,
+        item: PendingWakeItem,
+    ) -> Result<WakeOutcome, String> {
         let Some(employee) = self.load_agent_employee(target_employee_id) else {
-            return WakeOutcome::Ignored;
+            return Ok(WakeOutcome::Ignored);
         };
         if employee.status == EmployeeStatus::Inactive {
             self.on_agent_offboarded(target_employee_id);
-            return WakeOutcome::Ignored;
+            return Ok(WakeOutcome::Ignored);
         }
         {
             let _lock = self
@@ -243,15 +274,16 @@ impl SessionManager {
             let mut queue = self
                 .store
                 .read_pending_wakes(target_employee_id)
-                .ok()
-                .flatten()
+                .map_err(|e| format!("read pending wakes failed: {e}"))?
                 .unwrap_or_else(|| PendingWakeQueueRecord::empty(target_employee_id));
             queue.push_dedup(item);
             let tokens = self.bindings.active_tokens();
             let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
-            let _ = self.store.write_pending_wakes_redacted(&queue, &refs);
+            self.store
+                .write_pending_wakes_redacted(&queue, &refs)
+                .map_err(|e| format!("write pending wakes failed: {e}"))?;
         }
-        self.process_due_wakes_for(target_employee_id)
+        Ok(self.process_due_wakes_for(target_employee_id))
     }
 
     /// Wakes an idle agent on task assignment from either a person or another agent (`AVAIL-2`).
@@ -490,6 +522,7 @@ impl SessionManager {
             dispatching_wakes: Arc::clone(&self.dispatching_wakes),
             bindings: self.bindings.clone(),
             office: Arc::clone(&self.office),
+            hq_permits: self.config.hq_permits.clone(),
             hourly_limit: self.config.hourly_wake_limit,
             window_ms: self.config.wake_window.as_millis() as u64,
         };
@@ -511,8 +544,16 @@ impl SessionManager {
             build_permit_hooks(self, employee_id, route_digest);
 
         let rl_office = Arc::clone(&self.office);
+        let rl_hq_permits = self.config.hq_permits.clone();
         let on_rate_limit: RateLimitHook = Arc::new(move |conn_id, resets_at| {
             let _ = rl_office.record_connection_cooldown_internal(conn_id, None, resets_at, None);
+            crate::router::report_cooldown_any(
+                &rl_office,
+                rl_hq_permits.as_deref(),
+                conn_id,
+                resets_at,
+                Some("rate_limited"),
+            );
         });
 
         let failover_weak = self.weak_self();
@@ -539,11 +580,28 @@ impl SessionManager {
     }
 
     fn load_agent_employee(&self, employee_id: &str) -> Option<Employee> {
-        self.office
+        if self
+            .office
+            .sync_status()
+            .is_ok_and(|s| s.initial_snapshot_required)
+        {
+            return None;
+        }
+        let emp = self
+            .office
             .load_employee(employee_id)
             .ok()
             .flatten()
-            .filter(|e| e.kind == EmployeeKind::Agent)
+            .filter(|e| e.kind == EmployeeKind::Agent)?;
+        // Enforce placement at session admission so a sending office can never start a session
+        // for an agent placed on a different office (`TASK-52` P6-#1).
+        if self.office.is_multi_office().unwrap_or(false)
+            && org_office::resolve_employee_office(&self.office, employee_id)
+                .is_ok_and(|oid| oid != self.office.info().office_id)
+        {
+            return None;
+        }
+        Some(emp)
     }
 
     fn has_live_active_turn(&self, employee_id: &str) -> bool {
@@ -670,7 +728,9 @@ impl SessionManager {
                 return WakeOutcome::Ignored;
             };
             if queue.items.is_empty() {
-                let _ = self.store.clear_pending_wakes(emp_id);
+                if queue.seen_item_ids.is_empty() {
+                    let _ = self.store.clear_pending_wakes(emp_id);
+                }
                 return WakeOutcome::Ignored;
             }
             let matching: Vec<PendingWakeItem> = queue
@@ -795,7 +855,9 @@ impl SessionManager {
                 return WakeOutcome::Ignored;
             };
             if queue.items.is_empty() {
-                let _ = self.store.clear_pending_wakes(emp_id);
+                if queue.seen_item_ids.is_empty() {
+                    let _ = self.store.clear_pending_wakes(emp_id);
+                }
                 return WakeOutcome::Ignored;
             }
             let task_ref = queue
@@ -1022,9 +1084,16 @@ impl SessionManager {
             return;
         };
         queue.items.retain(|i| !claimed.contains(&i.item_id));
-        if queue.items.is_empty() {
+        if queue.items.is_empty() && queue.seen_item_ids.is_empty() {
             let _ = self.store.clear_pending_wakes(emp_id);
         } else {
+            if queue.items.is_empty() {
+                // Retain `seen_item_ids` across drain so replay after receipt commit failure
+                // never starts a duplicate turn (`TASK-52` P7-#12).
+                queue.hold_reason = None;
+                queue.held_since_ms = None;
+                queue.retry_after_ms = None;
+            }
             queue.updated_at = rfc3339_now();
             self.write_wakes_redacted(&queue);
         }
@@ -1083,25 +1152,92 @@ impl SessionManager {
         );
     }
 
-    fn prune_pending_wake_source_locked(&self, source_id: &str) {
-        let Ok(ids) = self.store.list_employee_ids() else {
-            return;
-        };
+    fn prune_pending_wake_source_durable_locked(&self, source_id: &str) -> Result<(), String> {
+        let ids = self
+            .store
+            .list_employee_ids()
+            .map_err(|e| format!("failed listing wake employees: {e}"))?;
+        let tokens = self.bindings.active_tokens();
+        let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
         for emp_id in ids {
-            if let Ok(Some(mut queue)) = self.store.read_pending_wakes(&emp_id) {
-                let before = queue.items.len();
-                queue.items.retain(|i| i.source_id != source_id);
-                if queue.items.len() != before {
-                    if queue.items.is_empty() {
-                        let _ = self.store.clear_pending_wakes(&emp_id);
-                    } else {
-                        queue.updated_at = rfc3339_now();
-                        self.write_wakes_redacted(&queue);
-                    }
-                }
+            let Some(mut queue) = self
+                .store
+                .read_pending_wakes(&emp_id)
+                .map_err(|e| format!("failed reading pending wakes: {e}"))?
+            else {
+                continue;
+            };
+            let before = queue.items.len();
+            queue.items.retain(|i| i.source_id != source_id);
+            if queue.items.len() == before {
+                continue;
             }
+            if queue.items.is_empty() && queue.seen_item_ids.is_empty() {
+                self.store
+                    .clear_pending_wakes(&emp_id)
+                    .map_err(|e| format!("failed clearing pending wakes: {e}"))?;
+                continue;
+            }
+            if queue.items.is_empty() {
+                queue.hold_reason = None;
+                queue.held_since_ms = None;
+                queue.retry_after_ms = None;
+            }
+            queue.updated_at = rfc3339_now();
+            self.store
+                .write_pending_wakes_redacted(&queue, &refs)
+                .map_err(|e| format!("failed writing pending wakes: {e}"))?;
         }
+        Ok(())
     }
+}
+
+fn record_suspended_ask_answer_locked(
+    store: &SessionStore,
+    bindings: &RunBindingRegistry,
+    asker_id: &str,
+    ask_id: &str,
+    question_summary: &str,
+    answer_summary: &str,
+    responder: (&str, bool),
+) -> Result<bool, String> {
+    let (answered_by_name, asked_by_subagent) = responder;
+    let Some(mut susp) = store
+        .read_suspended_state(asker_id)
+        .map_err(|e| format!("failed reading suspended state: {e}"))?
+    else {
+        return Ok(false);
+    };
+    let Some(pos) = susp.asks.iter().position(|a| a.ask_id == ask_id) else {
+        return Ok(false);
+    };
+    let ask_entry = susp.asks.remove(pos);
+    let answer = PendingAskAnswer {
+        ask_id: ask_id.to_owned(),
+        question_summary: if ask_entry.question_summary.is_empty() {
+            question_summary.to_owned()
+        } else {
+            ask_entry.question_summary
+        },
+        answer_summary: answer_summary.to_owned(),
+        answered_by: answered_by_name.to_owned(),
+        answered_at: rfc3339_now(),
+        asked_by_subagent: ask_entry.asked_by_subagent || asked_by_subagent,
+    };
+    if !susp
+        .pending_resume_answers
+        .iter()
+        .any(|a| a.ask_id == answer.ask_id)
+    {
+        susp.pending_resume_answers.push(answer);
+    }
+    susp.updated_at = rfc3339_now();
+    let tokens = bindings.active_tokens();
+    let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    store
+        .write_suspended_state_redacted(&susp, &refs)
+        .map_err(|e| format!("failed persisting suspended ask answer: {e}"))?;
+    Ok(true)
 }
 
 struct TurnEndDrainCtx {
@@ -1112,6 +1248,7 @@ struct TurnEndDrainCtx {
     dispatching_wakes: Arc<Mutex<HashSet<String>>>,
     bindings: RunBindingRegistry,
     office: Arc<Office>,
+    hq_permits: Option<Arc<dyn crate::router::HqPermitCoordinator>>,
     hourly_limit: usize,
     window_ms: u64,
 }
@@ -1214,11 +1351,13 @@ fn build_permit_hooks(
     PermitReleasePendingHook,
 ) {
     let acq_office = Arc::clone(&mgr.office);
+    let acq_hq_permits = mgr.config.hq_permits.clone();
     let acq_emp = employee_id.to_owned();
     let on_permit_acquire: PermitAcquireHook = Arc::new(move |conn_id, task_id| {
         let digest = (!route_digest.is_empty()).then_some(route_digest.as_str());
         match crate::router::acquire_warm_permit_for_office(
             &acq_office,
+            acq_hq_permits.as_deref(),
             conn_id,
             &acq_emp,
             task_id,
@@ -1236,16 +1375,25 @@ fn build_permit_hooks(
     });
 
     let renew_office = Arc::clone(&mgr.office);
+    let renew_hq_permits = mgr.config.hq_permits.clone();
     let on_permit_renew: PermitRenewHook = Arc::new(move |permit_id, generation| {
-        renew_office
-            .renew_turn_permit(permit_id, generation)
-            .is_ok_and(|r| r.is_ok())
+        crate::router::renew_turn_permit_any(
+            &renew_office,
+            renew_hq_permits.as_deref(),
+            permit_id,
+            generation,
+        )
     });
 
     let release_office = Arc::clone(&mgr.office);
+    let release_hq_permits = mgr.config.hq_permits.clone();
     let release_weak = mgr.weak_self();
     let on_permit_release: PermitReleaseHook = Arc::new(move |permit_id| {
-        let _ = release_office.release_turn_permit(permit_id);
+        crate::router::release_turn_permit_any(
+            &release_office,
+            release_hq_permits.as_deref(),
+            permit_id,
+        );
         if let Some(m) = release_weak.as_ref().and_then(|w| w.upgrade()) {
             crate::manager::spawn_bg_worker(&m, "org-permit-wake", |m| m.process_due_wakes());
         }
@@ -1286,6 +1434,7 @@ fn try_send_wake_on_live_handle(
     };
     let acquired_pid = match acquire_live_handle_permit(
         &ctx.office,
+        ctx.hq_permits.as_deref(),
         conn_id.as_deref(),
         (!route_digest.is_empty()).then_some(route_digest.as_str()),
         &active_permit,
@@ -1309,7 +1458,7 @@ fn try_send_wake_on_live_handle(
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .take();
-        let _ = ctx.office.release_turn_permit(&pid);
+        crate::router::release_turn_permit_any(&ctx.office, ctx.hq_permits.as_deref(), &pid);
     }
     Ok(false)
 }
@@ -1321,6 +1470,7 @@ enum LivePermitError {
 
 fn acquire_live_handle_permit(
     office: &Office,
+    hq_permits: Option<&dyn crate::router::HqPermitCoordinator>,
     conn_id: Option<&str>,
     route_digest: Option<&str>,
     active_permit: &Arc<Mutex<Option<(String, u64)>>>,
@@ -1339,6 +1489,7 @@ fn acquire_live_handle_permit(
     }
     match crate::router::acquire_warm_permit_for_office(
         office,
+        hq_permits,
         cid,
         employee_id,
         task_id,
@@ -1352,7 +1503,7 @@ fn acquire_live_handle_permit(
                 return Ok(Some(pid));
             }
             drop(slot);
-            let _ = office.release_turn_permit(&pid);
+            crate::router::release_turn_permit_any(office, hq_permits, &pid);
             Ok(None)
         }
         crate::router::WarmPermitOutcome::StaleWarm => Err(LivePermitError::Stale),
@@ -1387,7 +1538,9 @@ fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) 
         return;
     };
     if queue.items.is_empty() {
-        let _ = ctx.store.clear_pending_wakes(employee_id);
+        if queue.seen_item_ids.is_empty() {
+            let _ = ctx.store.clear_pending_wakes(employee_id);
+        }
         return;
     }
     if ctx
@@ -1473,8 +1626,28 @@ fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) 
             }),
             &refs,
         );
-        let _ = ctx.store.clear_pending_wakes(employee_id);
+        clear_or_retain_seen_wakes(&ctx.store, employee_id, &mut queue, &refs);
     }
+}
+
+fn clear_or_retain_seen_wakes(
+    store: &SessionStore,
+    employee_id: &str,
+    queue: &mut PendingWakeQueueRecord,
+    redaction_tokens: &[&str],
+) {
+    if queue.seen_item_ids.is_empty() {
+        let _ = store.clear_pending_wakes(employee_id);
+        return;
+    }
+    // Preserve `seen_item_ids` when draining wakes into a live session so a lost `RelayAck`
+    // retry never starts a duplicate turn (`TASK-52` P8-#10).
+    queue.items.clear();
+    queue.hold_reason = None;
+    queue.held_since_ms = None;
+    queue.retry_after_ms = None;
+    queue.updated_at = rfc3339_now();
+    let _ = store.write_pending_wakes_redacted(queue, redaction_tokens);
 }
 
 fn record_session_usage(

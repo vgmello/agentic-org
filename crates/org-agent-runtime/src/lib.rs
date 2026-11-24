@@ -187,7 +187,7 @@ pub use runtime::{AgentRuntime, PlanError};
 pub use session::{Control, ControlError, Decision, Output, Session};
 pub use spec::{
     AgentIdentity, LaunchContext, McpServer, PermissionMode, PermissionPolicy, Rule, RuleScope,
-    SandboxSpec, SessionKind, SessionSpec,
+    SandboxSpec, SessionKind, SessionSpec, ToolCapability, CAPABILITY_PREFIX,
 };
 pub use token::{
     AgentName, CommandPrefix, EnvName, InvalidValue, McpServerName, PlainId, RuleTool, RuntimeId,

@@ -20,6 +20,7 @@ const WRITE_ERRORS: &[ErrorCode] = &[
     ErrorCode::Conflict,
     ErrorCode::AlreadyExists,
     ErrorCode::TooLarge,
+    ErrorCode::Unsupported,
     ErrorCode::Unavailable,
 ];
 

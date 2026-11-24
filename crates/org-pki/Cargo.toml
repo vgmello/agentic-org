@@ -10,3 +10,11 @@ publish.workspace = true
 ring = "=0.17.14"
 argon2.workspace = true
 zeroize = { version = "=1.9.1", features = ["alloc"] }
+rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "ring", "pem"] }
+x509-parser = { version = "=0.18.1", default-features = false }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
+time = { version = "=0.3.55", default-features = false, features = ["std"] }
+sha2.workspace = true
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true

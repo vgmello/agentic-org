@@ -186,6 +186,8 @@ pub struct OfficePorts {
     pub costs: Option<CostsFn>,
     /// L4 provider pools, office bindings, discovery, readiness, and quota dispatcher (`TASK-54`).
     pub providers: Option<ProvidersFn>,
+    /// Multi-office invitation, revocation, and replication status dispatcher (`TASK-52`).
+    pub federation: Option<ProvidersFn>,
     /// Who a `msg.bind` names.
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
@@ -438,6 +440,7 @@ impl Shared {
                         name: info.office_name.clone(),
                         role: match info.role {
                             org_office::OfficeRole::Hq => OfficeRole::Hq,
+                            org_office::OfficeRole::Satellite => OfficeRole::Satellite,
                         },
                         host: "This Mac".to_owned(),
                         endpoint: Some(socket.display().to_string()),
@@ -855,6 +858,84 @@ pub(crate) fn serve_grant_bound_stream_for_test(
     );
 }
 
+fn snapshot_unavailable_response(shared: &Shared, id: u64) -> Option<Response> {
+    if matches!((shared.ports.snapshot)(), Err(SnapshotFailure::Unavailable)) {
+        Some(Response::error(
+            id,
+            ApiError::new(
+                ErrorCode::Unavailable,
+                "organization snapshot is not available yet",
+            ),
+        ))
+    } else {
+        None
+    }
+}
+
+fn handle_msg_wait_request<'scope, 'env>(
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    request: &Request,
+    binding: &Binding,
+    shared: &'env Shared,
+    out: &'env Mutex<UnixStream>,
+    control: &'env Control,
+) -> bool {
+    let held = &control.held;
+    if let Some(unavailable) = snapshot_unavailable_response(shared, request.id) {
+        return send(out, request.id, &unavailable, shared.timing);
+    }
+    let Some(mailbox) = &shared.ports.mailbox else {
+        return send(
+            out,
+            request.id,
+            &msg_calls::unsupported(request.id),
+            shared.timing,
+        );
+    };
+    let wait = match msg_calls::begin_wait(request, binding.member()) {
+        Ok(wait) => wait,
+        Err(refusal) => return send(out, request.id, &refusal, shared.timing),
+    };
+    let (cancel, cancellation) = cancellation_pair();
+    let Some(number) = held.start(cancel) else {
+        let busy = Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::Unavailable,
+                "too many calls are held on this connection",
+            ),
+        );
+        return send(out, request.id, &busy, shared.timing);
+    };
+    // The watcher sets `revoked` before it cancels, so a wait that began
+    // after its cancel still finds the flag and ends at once.
+    if control.revoked.load(Ordering::SeqCst) {
+        held.cancel_all();
+    }
+    let timing = shared.timing;
+    let id = request.id;
+    let started = std::thread::Builder::new()
+        .name("org-office-wait".into())
+        .spawn_scoped(scope, move || {
+            let _place = Place(held, number);
+            // A panic in the mailbox answers this call alone.
+            let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                msg_calls::finish_wait(id, mailbox, wait, &cancellation)
+            }))
+            .unwrap_or_else(|_| internal(id));
+            send(out, id, &answer, timing);
+        });
+    if started.is_err() {
+        held.finish(number);
+        let busy = Response::error(
+            request.id,
+            ApiError::new(ErrorCode::Unavailable, "the office is busy"),
+        );
+        return send(out, request.id, &busy, timing);
+    }
+    true
+}
+
 fn serve_connection_as(
     stream: UnixStream,
     shared: &Shared,
@@ -954,74 +1035,19 @@ fn serve_connection_as(
                 held.cancel_all();
             }
             if request.is::<MsgWait>() {
-                let Some(mailbox) = &shared.ports.mailbox else {
-                    if !send(
-                        &out,
-                        request.id,
-                        &msg_calls::unsupported(request.id),
-                        shared.timing,
-                    ) {
-                        break;
-                    }
-                    continue;
-                };
-                match msg_calls::begin_wait(&request, binding.member()) {
-                    Ok(wait) => {
-                        let (cancel, cancellation) = cancellation_pair();
-                        let Some(number) = held.start(cancel) else {
-                            let busy = Response::error(
-                                request.id,
-                                ApiError::new(
-                                    ErrorCode::Unavailable,
-                                    "too many calls are held on this connection",
-                                ),
-                            );
-                            if !send(&out, request.id, &busy, shared.timing) {
-                                break;
-                            }
-                            continue;
-                        };
-                        // The watcher sets `revoked` before it cancels, so a wait that began
-                        // after its cancel still finds the flag and ends at once.
-                        if control.revoked.load(Ordering::SeqCst) {
-                            held.cancel_all();
-                        }
-                        let (out, held, timing) = (&out, &held, shared.timing);
-                        let id = request.id;
-                        let started = std::thread::Builder::new()
-                            .name("org-office-wait".into())
-                            .spawn_scoped(scope, move || {
-                                let _place = Place(held, number);
-                                // A panic in the mailbox answers this call alone.
-                                let answer =
-                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                        msg_calls::finish_wait(id, mailbox, wait, &cancellation)
-                                    }))
-                                    .unwrap_or_else(|_| internal(id));
-                                send(out, id, &answer, timing);
-                            });
-                        if started.is_err() {
-                            held.finish(number);
-                            let busy = Response::error(
-                                request.id,
-                                ApiError::new(ErrorCode::Unavailable, "the office is busy"),
-                            );
-                            if !send(out, request.id, &busy, timing) {
-                                break;
-                            }
-                        }
-                        continue;
-                    }
-                    Err(refusal) => {
-                        if !send(&out, request.id, &refusal, shared.timing) {
-                            break;
-                        }
-                        continue;
-                    }
+                if !handle_msg_wait_request(scope, &request, &binding, shared, &out, &control) {
+                    break;
                 }
+                continue;
             }
             let feed = shared.ports.feed.as_deref();
-            let response = if request.is::<org_proto::Subscribe>() && feed.is_none() {
+            let response = if let Some(unavailable) = request
+                .is::<org_proto::Subscribe>()
+                .then(|| snapshot_unavailable_response(shared, request.id))
+                .flatten()
+            {
+                unavailable
+            } else if request.is::<org_proto::Subscribe>() && feed.is_none() {
                 Response::error(
                     request.id,
                     ApiError::new(
@@ -1516,6 +1542,31 @@ fn project_or_hiring(request: &Request, shared: &Shared, binding: &Binding) -> O
         .or_else(|| processes_rpc(request, shared, binding))
         .or_else(|| costs_rpc(request, shared, binding))
         .or_else(|| providers_rpc(request, shared, binding))
+        .or_else(|| federation_rpc(request, shared, binding))
+}
+
+fn federation_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::federation_calls::is_federation_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(federation) = &shared.ports.federation {
+        if let Some(response) = federation(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
 }
 
 fn providers_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
@@ -1717,6 +1768,15 @@ fn answer_message(request: &Request, shared: &Shared, binding: &Binding) -> Opti
                 }
             }
         }
+    }
+    if matches!((shared.ports.snapshot)(), Err(SnapshotFailure::Unavailable)) {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::Unavailable,
+                "organization snapshot is not available yet",
+            ),
+        ));
     }
     let is_owner = binding.via_grant()
         && match live_owner(shared, binding) {
@@ -2969,6 +3029,7 @@ mod tests {
             processes: None,
             costs: None,
             providers: None,
+            federation: None,
             directory,
         }
     }
@@ -3438,6 +3499,7 @@ mod tests {
                 processes: None,
                 costs: None,
                 providers: None,
+                federation: None,
                 directory,
             },
             launch_key(),
@@ -3921,6 +3983,7 @@ mod tests {
                     processes: None,
                     costs: None,
                     providers: None,
+                    federation: None,
                     directory,
                 },
                 launch_key(),
@@ -4429,6 +4492,7 @@ mod tests {
                 processes: None,
                 costs: None,
                 providers: None,
+                federation: None,
                 directory,
             },
             launch_key(),

@@ -74,7 +74,9 @@ pub use status::{
 /// with `org-office-launch`'s create handoff.
 pub use org_proto::RecoveryCode;
 pub use org_proto::{ApiRange, Call, Empty, Hello, HelloParams, HelloResult};
-pub use secret::{LinkToken, OneTimeLinkUrl, Password, SessionHandle, TlsPrivateKey};
+pub use secret::{
+    InvitationTokenSecret, LinkToken, OneTimeLinkUrl, Password, SessionHandle, TlsPrivateKey,
+};
 
 /// This contract's version. Separate from `org_proto::API_VERSION`.
 pub const API_VERSION: u32 = 1;

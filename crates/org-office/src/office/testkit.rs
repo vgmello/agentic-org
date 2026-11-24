@@ -148,4 +148,55 @@ impl Office {
         office._test_root = Some(dir);
         office
     }
+
+    /// Like [`Self::for_test`], but provisions a real P-256 Org CA signing key wrapped under the
+    /// office secrets key (matching production `hq_creation::prepare`) for mTLS/federation tests.
+    pub fn for_test_with_real_ca(spec: TestOffice) -> Office {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let root = dir.path().canonicalize().expect("a real path");
+        let (folder, roots) = places(&root);
+        let (new, binding) = request();
+        let custody = custody(Arc::new(FakeCustody::new()));
+        let key = Key::from_bytes([7; 32]);
+        let key_for_wrap = key.clone();
+        let org_id = new.org_id.clone();
+        let office_id = new.office_id.clone();
+        let mut opts = options(spec.engine);
+        opts.clock = Arc::new(org_store::SystemClock);
+        let mut office = Office::provision_with(
+            folder,
+            &new,
+            Some(key),
+            &binding,
+            roots,
+            custody,
+            move |prior| {
+                if let Some(p) = prior {
+                    return Ok(p);
+                }
+                let ca = org_pki::SigningKey::generate().expect("generate CA key");
+                let pub_key = ca.public_key();
+                let pkg = crate::office_local::testkit::package(
+                    &org_store::Id::parse(&org_id).unwrap(),
+                    &pub_key,
+                    CA_SEED,
+                );
+                let wrapped = org_pki::wrap::wrap(
+                    key_for_wrap.expose_bytes(),
+                    &org_pki::wrap::WrapBinding {
+                        organization_id: &org_id,
+                        office_id: &office_id,
+                        purpose: org_pki::wrap::WrapPurpose::OrganizationCa,
+                    },
+                    ca.local_der(),
+                )
+                .expect("wrap CA key");
+                LocalRecord::new(org_id, OPERATION.into(), pub_key, pkg, wrapped)
+            },
+            opts,
+        )
+        .expect("a real-CA test office");
+        office._test_root = Some(dir);
+        office
+    }
 }

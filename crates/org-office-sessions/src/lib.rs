@@ -40,14 +40,15 @@ pub use instructions::{
 pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{SessionManager, SessionManagerConfig};
 pub use preset::{
-    build_grants_summary, build_session_policy, decide_escalation, EscalationDisposition,
-    PresetConfig, PresetError,
+    build_grants_summary, build_session_policy, decide_escalation, decide_escalation_with_tools,
+    EscalationDisposition, PresetConfig, PresetError,
 };
 pub use recovery::{
     ActiveTurnRecord, PendingStartRecord, ProcessExitOracle, RecoveryAction, RecoveryReport,
     SessionStore, StallWatchdog, DEFAULT_STALL_TIMEOUT, MAX_CONSECUTIVE_STALLS,
     MAX_RESUME_ATTEMPTS,
 };
+pub use router::{HqPermitAcquireSpec, HqPermitCoordinator};
 pub use runtime_registry::{RuntimeRegistry, RuntimeRegistryError};
 pub use subagents::{
     build_general_subagent_definition, subset_tools, BackgroundKind, BackgroundRegistry,

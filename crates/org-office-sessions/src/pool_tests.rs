@@ -82,6 +82,7 @@ impl Session for PoolScriptedSession {
             Some("tool_start") => vec![Output::Event(SessionEvent::ToolStarted {
                 tool_use_id: "tool-1".into(),
                 name: "Bash".into(),
+                capability: Some(org_agent_runtime::ToolCapability::Shell),
                 input: serde_json::json!({ "command": "echo hi" }),
             })],
             Some("rate_limit_fail") => vec![

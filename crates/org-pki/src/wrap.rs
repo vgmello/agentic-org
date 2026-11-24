@@ -76,16 +76,19 @@ pub struct ProviderCredentialBinding<'a> {
     pub connection_id: &'a str,
 }
 
-/// The role of the wrapped private key. TLS identity and invitation keys are
-/// added with satellite enrollment.
+/// The role of the wrapped private key (ADR-0016 decision 3, `doc-67`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WrapPurpose {
     OrganizationCa,
+    OfficeTlsKey,
+    InvitationKey,
 }
 impl WrapPurpose {
     fn label(self) -> &'static [u8] {
         match self {
             Self::OrganizationCa => b"organization-ca",
+            Self::OfficeTlsKey => b"office-tls-key",
+            Self::InvitationKey => b"invitation-key",
         }
     }
 }
