@@ -3774,12 +3774,20 @@ html:is([data-theme="classic"], [data-theme="report-dark"]) {
     border: 1px solid #8393ab;
     box-shadow: 0 24px 60px -16px rgba(0, 0, 0, .58);
   }
-  & .cmdk-tabs { background: #34445a; border-bottom-color: #8b9cb3; }
+  &[data-interior-page] {
+    --workspace-header: #2d3b50;
+    --workspace-header-divider: #7b8ca4;
+    --workspace-mode-selected: #363e60;
+  }
+  & .cmdk-tabs {
+    background: var(--workspace-header, #34445a);
+    border-bottom-color: var(--workspace-header-divider, #8b9cb3);
+  }
   & .cmdk-tab-grp { background: #222e41; box-shadow: inset 0 0 0 1px #56667d; }
   & .cmdk-tab { color: #d9e1ec; }
   & .cmdk-tab:hover { color: #ffffff; }
   & .cmdk-tab[aria-selected="true"] {
-    background: #414673;
+    background: var(--workspace-mode-selected, #414673);
     color: #ffffff;
     box-shadow: inset 0 0 0 1px #93a1d8;
   }
@@ -5117,13 +5125,18 @@ function workLayoutToggle(key) {
       data-act="set" data-k="${key}" data-v="${layout}" aria-pressed="${S[key] === layout}" aria-controls="work-results">${ic(layout, "ic16")}${label}</button>`).join("")}
   </div>`;
 }
-function scopedWork(items) {
-  const list = S.scopedWorkLayout === "list";
-  const display = list ? `<div class="queue-controls">${showMenu("work-display", [], {
+function scopedWorkControls() {
+  const display = S.scopedWorkLayout === "list" ? showMenu("work-display", [], {
     icon: "adjustments", label: "Work display", footer: workListDisplayOptions(),
-  })}</div>` : "";
-  return `<div class="subbar scoped-work-tools">${workLayoutToggle("scopedWorkLayout")}${display}</div>
-    ${workWorkspace(list ? workList(items) : board(items), items)}`;
+  }) : "";
+  return workLayoutToggle("scopedWorkLayout") + display;
+}
+function scopedWorkResults(items) {
+  return workWorkspace(S.scopedWorkLayout === "list" ? workList(items) : board(items), items);
+}
+function scopedWork(items) {
+  return `<div class="subbar scoped-work-tools"><div class="queue-controls" role="group" aria-label="Work view controls">${scopedWorkControls()}</div></div>
+    ${scopedWorkResults(items)}`;
 }
 function showMenu(id, groups, { align = "", icon, label, active, footer = "" } = {}) {
   const cur = groups.map(([k, , opts]) => { const o = opts.find((x) => String(x[0]) === String(S[k])); return o && o[0] !== "all" ? o[1] : null; }).filter(Boolean);
@@ -6602,7 +6615,12 @@ const narrow = () => !!(window.matchMedia && window.matchMedia("(max-width: 959p
 function pageProjects() {
   const ids = Object.keys(P).filter((p) => S.showArchived || !P[p].archived);
   const active = Object.keys(P).filter((p) => !P[p].archived).length;
-  return hdr("Projects", `${active} active · ${Object.keys(P).length - active} archived`, showMenu("pshow", [["showArchived", "Show", [[false, "Active", active], [true, "All, with archived", Object.keys(P).length]]]])) +
+  const filter = showMenu("pshow", [["showArchived", "Show", [[false, "Active", active], [true, "All, with archived", Object.keys(P).length]]]],
+    { icon: "filter", label: "Filter projects", active: S.showArchived });
+  return `<div class="project-header">
+    ${hdr("Projects", `${active} active · ${Object.keys(P).length - active} archived`)}
+    <div class="project-toolbar project-directory-tools"><div class="queue-controls">${filter}</div></div>
+  </div>` +
   `<ul class="rows" role="list">${ids.map((p) => {
     const pr = P[p], ws = W.filter((w) => w.proj === p), openN = ws.filter(OPEN).length;
     return `<li class="linked"><span class="chip-i" style="margin-left:0;width:32px;height:32px;font-size:12px" aria-hidden="true">${esc(pr.name[0])}</span>
@@ -6619,7 +6637,14 @@ function pageProject(id, tab) {
   const ws = W.filter((w) => w.proj === id);
   const tabs = [["", "Overview"], ["work", "Work", ws.filter(OPEN).length], ["team", "Team", projMembers(id).length], ["activity", "Activity"], ["conversations", "Conversations"]];
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"));
-  return back("#/projects", "Projects") + hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", more, projPill(id), projHeadProgress(id)) + linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab) + projectBody(id, tab);
+  const workControls = tab === "work" ? `<div class="queue-controls project-work-controls" role="group" aria-label="Work view controls">${scopedWorkControls()}</div>` : "";
+  return back("#/projects", "Projects") + `<div class="project-header">
+    ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id), projHeadProgress(id))}
+    <div class="project-toolbar">
+      ${linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab)}
+      <div class="queue-controls" role="group" aria-label="Project controls">${workControls}${more}</div>
+    </div>
+  </div>` + projectBody(id, tab);
 }
 function projectBody(id, tab) {
   const pr = P[id], ws = W.filter((w) => w.proj === id);
@@ -6632,7 +6657,7 @@ function projectBody(id, tab) {
       <section class="section"><div class="sec-h"><h2>${ic("bell", "ic20 c-amber")}Needs you for this project</h2></div>${needs.length ? `<div class="cards">${needs.map(needsCard).join("")}</div>` : `<p class="muted" style="padding-bottom:24px">Nothing needs you on this project.</p>`}</section>
     </div><aside class="compact"><div class="sec-h"><h2 style="font-size:14px;font-weight:600">Recent activity</h2></div>${feed(acts().filter((a) => a.proj === id).slice(0, 5), { noProj: true })}</aside></div>`;
   }
-  if (tab === "work") return scopedWork(ws);
+  if (tab === "work") return scopedWorkResults(ws);
   if (tab === "team") return projectTeams(id) + memberRows(projMembers(id), { emptyText: "No members yet." });
   if (tab === "activity") return activityTimeline(acts().filter((a) => a.proj === id), { noProj: true });
   if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
@@ -8704,8 +8729,8 @@ function render(focus = true) {
     const selectedWork = main.querySelector('#work-results .work-item-link[aria-current="true"]');
     const reading = focusTarget?.closest(".work-reading");
     if (r0 !== "work" && reading) {
-      const toolbar = main.querySelector(".scoped-work-tools");
-      const target = toolbar?.getClientRects().length ? toolbar : reading;
+      const toolbar = main.querySelector(".scoped-work-tools, .project-toolbar");
+      const target = !narrow() && toolbar ? toolbar : reading;
       target.scrollIntoView({ block: "start" });
     }
     (selectedWork || (keep?.matches(".work-item-link") ? keep : null))?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -9442,7 +9467,7 @@ document.addEventListener("change", (e) => {
 });
 document.addEventListener("mousedown", (e) => {
   // Keep focus in the active field or menu until the pointer selection is dispatched.
-  if (e.target.closest?.(".cmdk-home-results .cmdk-opt, .work-header .menu button, .triage-header .menu button")) e.preventDefault();
+  if (e.target.closest?.(".cmdk-home-results .cmdk-opt, :is(.work-header, .triage-header, .project-toolbar, .scoped-work-tools) .menu button")) e.preventDefault();
 });
 function resetInboxSenderPreview(e) {
   const sender = e.target.closest?.(".triage-from-member[data-preview-dismissed]");
