@@ -34,6 +34,9 @@ import type {
 	ReleaseCapRow,
 	ResolvedPeriod,
 	SpeedKindRow,
+	SubscriptionModelUsage,
+	SubscriptionUsageOverview,
+	SubscriptionUsageSnapshot,
 	TrendBucket,
 	UsageRecord,
 	UsageTotals
@@ -1202,8 +1205,295 @@ export const costsApi: CostsApi = {
 		return budgetOperations.has(operationId)
 			? { state: 'applied' }
 			: { state: 'not_applied', reason: 'HQ has no record of this budget change.' };
+	},
+
+	async subscriptionUsage(organizationId) {
+		await read();
+		ownerOnly();
+		if (on('empty')) {
+			return structuredClone({
+				snapshots: [],
+				totalsByModel: [],
+				partialTotals: false,
+				excludedSnapshotCount: 0,
+				isApiEquivalentEstimate: false
+			} satisfies SubscriptionUsageOverview);
+		}
+		const snaps = subscriptionSnapshotsFor(organizationId);
+		return structuredClone(buildSubscriptionOverview(snaps));
+	},
+
+	async collectSubscriptionUsage(organizationId, options) {
+		await read();
+		ownerOnly();
+		const snaps = subscriptionSnapshotsFor(organizationId);
+		const nowIso = new Date(NOW.getTime() + 5 * 60_000).toISOString();
+		const targetIds = options?.connectionId
+			? new Set([options.connectionId])
+			: new Set(snaps.map((s) => s.connectionId));
+		if (on('collect-fails') || on('collect-unsupported')) {
+			// Mirror production HTTP 200 in-band provider failure (`status: 'unavailable'` or `'unsupported'`).
+			const unsupported = on('collect-unsupported');
+			for (const snap of snaps) {
+				if (!targetIds.has(snap.connectionId)) continue;
+				snap.status = unsupported ? 'unsupported' : 'unavailable';
+				snap.stale = true;
+				snap.collectedAt = nowIso;
+				snap.issueCode = unsupported ? 'PROVIDER_UNSUPPORTED' : 'PROVIDER_UNAVAILABLE';
+				snap.message = unsupported
+					? 'This provider connection does not expose a subscription usage endpoint.'
+					: 'Provider usage endpoint could not be reached. Try refreshing again shortly.';
+			}
+			return structuredClone({
+				snapshots: snaps.filter((s) => targetIds.has(s.connectionId)),
+				collectedAt: nowIso
+			});
+		}
+		for (const snap of snaps) {
+			if (!targetIds.has(snap.connectionId)) continue;
+			if (snap.status === 'auth_required' && !snap.hasUsageCredential) {
+				snap.collectedAt = nowIso;
+				continue;
+			}
+			snap.status = 'ok';
+			snap.stale = false;
+			snap.authSource = snap.hasUsageCredential
+				? 'dedicated_usage_credential'
+				: 'enrolled_subscription_credential';
+			snap.collectedAt = nowIso;
+			snap.lastOkCollectedAt = nowIso;
+			snap.freshUntil = new Date(Date.parse(nowIso) + 15 * 60_000).toISOString();
+			delete snap.issueCode;
+			delete snap.message;
+			if (snap.models.length === 0) {
+				snap.models = snap.providerType === 'codex' ? defaultCodexModels() : defaultClaudeModels();
+			} else {
+				for (const m of snap.models) {
+					if (m.daily.requests !== null && m.daily.requests !== undefined) {
+						m.daily.requests += 2;
+					}
+					if (m.total.requests !== null && m.total.requests !== undefined) {
+						m.total.requests += 2;
+					}
+				}
+			}
+		}
+		return structuredClone({
+			snapshots: snaps.filter((s) => targetIds.has(s.connectionId)),
+			collectedAt: nowIso
+		});
+	},
+
+	async setSubscriptionUsageCredential(organizationId, draft) {
+		await read();
+		ownerOnly();
+		if (!draft.secret.trim()) {
+			throw fail('invalid_request', 'A usage credential secret is required.');
+		}
+		const snaps = subscriptionSnapshotsFor(organizationId);
+		const snap = snaps.find((s) => s.connectionId === draft.connectionId);
+		if (!snap) throw fail('not_found', 'Subscription connection not found.');
+		const nowIso = new Date().toISOString();
+		snap.hasUsageCredential = true;
+		if (draft.accountHint) snap.accountHint = draft.accountHint;
+		// Mirror crates/org-office/src/accounting/subscription_usage.rs:229-259:
+		// preserve last collection's authSource until collection runs; move auth_required -> never_collected.
+		if (snap.status === 'auth_required' || snap.models.length === 0) {
+			snap.status = 'never_collected';
+			snap.stale = true;
+			snap.issueCode = 'NOT_COLLECTED_YET';
+			snap.message = 'Run usage collection to fetch subscription usage from provider.';
+		}
+		return structuredClone({
+			connectionId: snap.connectionId,
+			officeId: snap.officeId,
+			configured: true,
+			configuredAt: nowIso,
+			...(draft.expiresAt ? { expiresAt: draft.expiresAt } : {}),
+			...(snap.accountHint ? { accountHint: snap.accountHint } : {})
+		});
+	},
+
+	async revokeSubscriptionUsageCredential(organizationId, connectionId) {
+		await read();
+		ownerOnly();
+		const snaps = subscriptionSnapshotsFor(organizationId);
+		const snap = snaps.find((s) => s.connectionId === connectionId);
+		if (!snap) throw fail('not_found', 'Subscription connection not found.');
+		snap.hasUsageCredential = false;
+		if (!snap.hasEnrolledCredential || on('auth-required') || snap.providerType === 'codex') {
+			snap.authSource = 'none';
+			snap.status = 'auth_required';
+			snap.models = [];
+			snap.message =
+				'Usage credential revoked. Save a new private credential to resume collection.';
+		} else {
+			snap.authSource = 'enrolled_subscription_credential';
+		}
+		return structuredClone({
+			connectionId: snap.connectionId,
+			officeId: snap.officeId,
+			configured: false
+		});
 	}
 };
+
+// ---- Subscription Model Usage Fixtures (TASK-79) ------------------------------------------------------------------
+
+function defaultClaudeModels(): SubscriptionModelUsage[] {
+	return [
+		{
+			model: 'claude-opus-4-1',
+			total: { utilizationBps: null, requests: 342, totalTokens: 18_400_000 },
+			daily: { windowSeconds: 86_400, utilizationBps: 4200, requests: 48, totalTokens: 2_650_000 },
+			weekly: {
+				windowSeconds: 604_800,
+				utilizationBps: 6150,
+				requests: 214,
+				totalTokens: 11_900_000
+			},
+			shortTerm: {
+				windowSeconds: 18_000,
+				utilizationBps: 3850,
+				requests: null,
+				totalTokens: null
+			}
+		},
+		{
+			model: 'claude-sonnet-4-5',
+			total: { utilizationBps: null, requests: 910, totalTokens: 42_100_000 },
+			daily: { windowSeconds: 86_400, utilizationBps: 2800, requests: 126, totalTokens: 5_800_000 },
+			weekly: {
+				windowSeconds: 604_800,
+				utilizationBps: 4400,
+				requests: 580,
+				totalTokens: 27_400_000
+			},
+			shortTerm: {
+				windowSeconds: 18_000,
+				utilizationBps: 1900,
+				requests: 31,
+				totalTokens: 1_250_000
+			}
+		}
+	];
+}
+
+function defaultCodexModels(): SubscriptionModelUsage[] {
+	return [
+		{
+			model: 'gpt-5-codex',
+			total: { utilizationBps: null, requests: 518, totalTokens: 29_300_000 },
+			daily: { windowSeconds: 86_400, utilizationBps: 5100, requests: 74, totalTokens: 4_120_000 },
+			weekly: {
+				windowSeconds: 604_800,
+				utilizationBps: 5500,
+				requests: 332,
+				totalTokens: 19_200_000
+			},
+			shortTerm: {
+				windowSeconds: 18_000,
+				utilizationBps: 2400,
+				requests: 19,
+				totalTokens: null
+			}
+		}
+	];
+}
+
+const subscriptionsByOrg = new Map<
+	string,
+	{ modeKey: string; snapshots: SubscriptionUsageSnapshot[] }
+>();
+
+function subscriptionSnapshotsFor(organizationId: string): SubscriptionUsageSnapshot[] {
+	const modeKey = `${on('auth-required') ? 'auth' : ''}|${on('stale') ? 'stale' : ''}`;
+	const existing = subscriptionsByOrg.get(organizationId);
+	if (existing && existing.modeKey === modeKey) return existing.snapshots;
+
+	const authReq = on('auth-required');
+	const isStale = on('stale');
+	const snapshots: SubscriptionUsageSnapshot[] = [
+		{
+			connectionId: 'sub-claude-pro',
+			connectionKey: 'claude-team-max',
+			connectionName: 'Claude Team Max',
+			providerType: 'claude',
+			subscriptionIdentity: 'org_claude_lumen',
+			officeId: 'office-hq',
+			status: 'ok',
+			authSource: 'enrolled_subscription_credential',
+			hasUsageCredential: false,
+			hasEnrolledCredential: true,
+			accountHint: 'eng@lumen.dev',
+			collectedAt: isStale ? '2026-11-19T12:15:00.000Z' : '2026-11-19T14:52:00.000Z',
+			lastOkCollectedAt: isStale ? '2026-11-19T12:15:00.000Z' : '2026-11-19T14:52:00.000Z',
+			freshUntil: isStale ? '2026-11-19T12:30:00.000Z' : '2026-11-19T15:07:00.000Z',
+			stale: isStale,
+			...(isStale
+				? { message: 'Snapshot is older than the freshness window. Select Refresh to update.' }
+				: {}),
+			isApiEquivalentEstimate: false,
+			models: defaultClaudeModels()
+		},
+		{
+			connectionId: 'sub-codex-team',
+			connectionKey: 'codex-pro-workspace',
+			connectionName: 'Codex Pro Workspace',
+			providerType: 'codex',
+			subscriptionIdentity: 'org_codex_lumen',
+			officeId: 'office-hq',
+			status: authReq ? 'auth_required' : 'ok',
+			authSource: authReq ? 'none' : 'dedicated_usage_credential',
+			hasUsageCredential: !authReq,
+			hasEnrolledCredential: true,
+			accountHint: 'platform@lumen.dev',
+			collectedAt: '2026-11-19T14:50:00.000Z',
+			...(authReq ? {} : { lastOkCollectedAt: '2026-11-19T14:50:00.000Z' }),
+			freshUntil: '2026-11-19T15:05:00.000Z',
+			stale: false,
+			...(authReq
+				? {
+						issueCode: 'auth_required',
+						message:
+							'Provider rejected the usage credential. Save a new private usage credential to resume collection.'
+					}
+				: {}),
+			isApiEquivalentEstimate: false,
+			models: authReq ? [] : defaultCodexModels()
+		}
+	];
+	subscriptionsByOrg.set(organizationId, { modeKey, snapshots });
+	return snapshots;
+}
+
+function buildSubscriptionOverview(
+	snapshots: SubscriptionUsageSnapshot[]
+): SubscriptionUsageOverview {
+	const excluded = snapshots.filter((s) => s.status !== 'ok' || s.stale);
+	const included = snapshots.filter((s) => s.status === 'ok' && !s.stale);
+	const byModel = new Map<string, SubscriptionModelUsage>();
+	for (const snap of included) {
+		for (const m of snap.models) {
+			if (!byModel.has(m.model)) {
+				byModel.set(m.model, structuredClone(m));
+			}
+		}
+	}
+	const latest = snapshots
+		.map((s) => s.collectedAt)
+		.filter((v): v is string => Boolean(v))
+		.toSorted()
+		.at(-1);
+	return {
+		snapshots,
+		totalsByModel: [...byModel.values()].toSorted((a, b) => a.model.localeCompare(b.model)),
+		...(latest ? { collectedAsOf: latest } : {}),
+		partialTotals: excluded.length > 0,
+		excludedSnapshotCount: excluded.length,
+		isApiEquivalentEstimate: false
+	};
+}
 
 // ---- Step 7 Insights & Member Cost Helpers ------------------------------------------------------------------------
 

@@ -8,7 +8,7 @@ import {
 import { KIND_WORD, type InboxItem, type InboxScope } from '../../types';
 
 export type TriageTab =
-	'all' | 'approvals' | 'decisions' | 'questions' | 'handled' | 'problems' | 'work';
+	'all' | 'approvals' | 'decisions' | 'questions' | 'snoozed' | 'handled' | 'problems' | 'work';
 
 export interface TriageTabDef {
 	id: TriageTab;
@@ -27,6 +27,7 @@ export const OVERFLOW_TABS: readonly TriageTabDef[] = [
 	{ id: 'questions', label: 'Questions' },
 	{ id: 'problems', label: 'Problems' },
 	{ id: 'work', label: 'Work' },
+	{ id: 'snoozed', label: 'Snoozed' },
 	{ id: 'handled', label: 'Handled' }
 ];
 
@@ -35,6 +36,7 @@ export const ALL_TRIAGE_TABS: readonly TriageTabDef[] = [...PRIMARY_TABS, ...OVE
 export function queueSummaryLabel(tab: TriageTab, order: TriageOrder = 'priority'): string {
 	if (isOverflowTab(tab)) {
 		if (tab === 'handled') return 'Handled items';
+		if (tab === 'snoozed') return 'Snoozed items';
 		return OVERFLOW_TABS.find((t) => t.id === tab)?.label ?? 'All';
 	}
 	return order === 'date' ? 'By date' : 'Priority first';
@@ -48,6 +50,8 @@ const TAB_ALIASES: Record<string, TriageTab> = {
 	decisions: 'decisions',
 	question: 'questions',
 	questions: 'questions',
+	snooze: 'snoozed',
+	snoozed: 'snoozed',
 	handled: 'handled',
 	problem: 'problems',
 	problems: 'problems',
@@ -64,7 +68,7 @@ export function isOverflowTab(tab: TriageTab): boolean {
 	return OVERFLOW_TABS.some((t) => t.id === tab);
 }
 
-export type TriageGroupKey = 'urgent' | 'today' | 'earlier' | 'handled';
+export type TriageGroupKey = 'urgent' | 'today' | 'earlier' | 'snoozed' | 'handled';
 
 export interface TriageGroup {
 	key: TriageGroupKey;
@@ -79,7 +83,7 @@ export interface HighlightSegment {
 
 export interface TriageItem {
 	id: string;
-	state: 'open' | 'handled';
+	state: 'open' | 'snoozed' | 'handled';
 	sourceKind: 'inbox' | 'work';
 	category: 'approval' | 'decision' | 'question' | 'problem' | 'work';
 	decision?: SpotlightDecision;
@@ -115,6 +119,10 @@ export interface TriageItem {
 	ageLabel: string;
 	createdAgeLabel: string;
 	timestampMs: number;
+	snoozed?: {
+		untilIso?: string;
+		note?: string;
+	};
 	handled?: {
 		outcome: string;
 		by?: string;
@@ -531,7 +539,71 @@ export function deriveTriageItems(
 			};
 		});
 
-	return [...openTriage, ...handledTriage];
+	const snoozedTriage: TriageItem[] = inboxItems
+		.filter((item) => item.state === 'snoozed')
+		.map((item): TriageItem => {
+			const member = memberMap.get(item.who.id);
+			const isAgent = item.who.kind === 'agent';
+			const workRef = extractWorkRef(item.open?.path, item.open?.label, item.title);
+			const matchedWork = workRef ? workByRef.get(workRef.toUpperCase()) : undefined;
+			const workRefDisplay = matchedWork
+				? `${matchedWork.short_id} · ${matchedWork.title}`
+				: workRef;
+			const resolvedProjectId = item.project?.id ?? matchedWork?.project_id;
+			const rawOpenPath = item.open?.path;
+			const workHref = workRef ? safeWorkListHref(resolvedProjectId) : undefined;
+			const openHref = sanitizeOpenHref(rawOpenPath, resolvedProjectId);
+			const relatedHref = openHref && !isUnbuiltWorkRefPath(rawOpenPath) ? openHref : undefined;
+
+			const auditChecks: string[] = [];
+			if (item.source) auditChecks.push(`Source: ${item.source}`);
+			if (item.project?.name) auditChecks.push(`Project: ${item.project.name}`);
+			if (item.team?.name) auditChecks.push(`Team: ${item.team.name}`);
+
+			return {
+				id: item.id,
+				state: 'snoozed',
+				sourceKind: 'inbox',
+				category: item.kind,
+				inboxItem: item,
+				workItem: matchedWork,
+				title: item.title,
+				kindDisplay: `${KIND_WORD[item.kind]} · ${item.source}`,
+				typeLabel: item.source,
+				actorId: item.who.id,
+				actorName: item.who.name,
+				actorInitials: initialsOf(item.who.name),
+				actorRole: resolveMemberRole(member, isAgent, item.team?.name),
+				isAgent,
+				teamId: item.team?.id,
+				teamName: item.team?.name,
+				projectId: resolvedProjectId,
+				projectName: item.project?.name ?? item.team?.name ?? 'Organization',
+				hasProject: Boolean(resolvedProjectId),
+				why: item.why,
+				recommendation: item.recommendation,
+				recommendationTone: resolveRecommendationTone(item.kind, false),
+				urgent: false,
+				expiresAtIso: item.expires_at,
+				clearsLabel: 'Returns to Inbox when due, or un-snooze early',
+				workRef,
+				workRefDisplay,
+				workHref,
+				openHref,
+				relatedHref,
+				openLabel: item.open?.label,
+				auditChecks,
+				ageLabel: relativeAge(item.created_at, nowMs),
+				createdAgeLabel: relativeAge(item.created_at, nowMs),
+				timestampMs: parseTimestamp(item.snoozed_until ?? item.created_at, nowMs),
+				snoozed: {
+					untilIso: item.snoozed_until,
+					note: item.snooze_note
+				}
+			};
+		});
+
+	return [...openTriage, ...snoozedTriage, ...handledTriage];
 }
 
 export function matchesScope(item: TriageItem, scope: InboxScope): boolean {
@@ -555,6 +627,7 @@ export function matchesSearch(item: TriageItem, query: string): boolean {
 		item.workRefDisplay ?? '',
 		item.why,
 		item.recommendation ?? '',
+		item.snoozed?.note ?? '',
 		item.handled?.outcome ?? ''
 	]
 		.join(' ')
@@ -564,6 +637,7 @@ export function matchesSearch(item: TriageItem, query: string): boolean {
 
 function matchesTab(item: TriageItem, tab: TriageTab): boolean {
 	if (tab === 'handled') return item.state === 'handled';
+	if (tab === 'snoozed') return item.state === 'snoozed';
 	if (item.state !== 'open') return false;
 	switch (tab) {
 		case 'all':
@@ -586,6 +660,18 @@ export function sortTriageItems(
 	tab: TriageTab,
 	order: TriageOrder = 'priority'
 ): TriageItem[] {
+	if (tab === 'snoozed') {
+		return [...items].sort((a, b) => {
+			const aUntil = a.snoozed?.untilIso
+				? Date.parse(a.snoozed.untilIso)
+				: Number.POSITIVE_INFINITY;
+			const bUntil = b.snoozed?.untilIso
+				? Date.parse(b.snoozed.untilIso)
+				: Number.POSITIVE_INFINITY;
+			if (aUntil !== bUntil) return aUntil - bUntil;
+			return b.timestampMs - a.timestampMs;
+		});
+	}
 	if (tab === 'handled' || order === 'date') {
 		return [...items].sort((a, b) => b.timestampMs - a.timestampMs);
 	}
@@ -604,7 +690,13 @@ export function filterTriageItems(
 ): TriageItem[] {
 	const matched = items.filter((item) => {
 		if (!matchesTab(item, options.tab)) return false;
-		if (options.tab !== 'handled' && options.urgentOnly && !item.urgent) return false;
+		if (
+			options.tab !== 'handled' &&
+			options.tab !== 'snoozed' &&
+			options.urgentOnly &&
+			!item.urgent
+		)
+			return false;
 		if (!matchesScope(item, options.scope)) return false;
 		if (!matchesSearch(item, options.search)) return false;
 		return true;
@@ -621,6 +713,7 @@ export function triageTabCounts(
 		approvals: 0,
 		decisions: 0,
 		questions: 0,
+		snoozed: 0,
 		handled: 0,
 		problems: 0,
 		work: 0
@@ -629,6 +722,10 @@ export function triageTabCounts(
 		if (!matchesScope(item, scope)) continue;
 		if (item.state === 'handled') {
 			counts.handled += 1;
+			continue;
+		}
+		if (item.state === 'snoozed') {
+			counts.snoozed += 1;
 			continue;
 		}
 		counts.all += 1;
@@ -669,6 +766,9 @@ export function groupTriageItems(
 	if (items.length === 0) return [];
 	if (tab === 'handled') {
 		return [{ key: 'handled', label: 'Handled', items: [...items] }];
+	}
+	if (tab === 'snoozed') {
+		return [{ key: 'snoozed', label: 'Snoozed', items: [...items] }];
 	}
 	const urgent: TriageItem[] = [];
 	const today: TriageItem[] = [];

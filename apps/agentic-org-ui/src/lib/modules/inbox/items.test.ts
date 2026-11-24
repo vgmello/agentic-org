@@ -56,6 +56,7 @@ describe('inbox lists', () => {
 			questions: 1,
 			decisions: 1,
 			problems: 0,
+			snoozed: 0,
 			handled: 2
 		});
 	});

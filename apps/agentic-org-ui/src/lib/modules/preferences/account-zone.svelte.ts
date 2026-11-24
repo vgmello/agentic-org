@@ -1,10 +1,11 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { preferencesApi } from './api';
 import { detectZone, effectiveZone, type ZoneStatus } from './time';
 
 /**
  * The viewing account's time zone, shared by every screen that shows times (Home, Inbox, Activity, Preferences).
- * Until the saved zone has loaded, or when it cannot be read, times show in the detected zone, or in UTC marked
- * unsaved when the browser gives no valid zone (app-shell-ux "Account time display").
+ * Uses the explicitly saved zone, falling back to the authenticated session account's `time_zone` when
+ * preferencesApi is unavailable, then the browser's detected zone, else UTC marked unsaved.
  */
 class AccountZone {
 	saved = $state<string | null | undefined>(undefined);
@@ -14,7 +15,11 @@ class AccountZone {
 	#loadSeq = 0;
 
 	get effective(): { zone: string; status: ZoneStatus } {
-		return effectiveZone(this.saved, this.detected);
+		const sessionZone =
+			appSession.state.kind === 'signed-in'
+				? appSession.state.session.account.time_zone
+				: undefined;
+		return effectiveZone(this.saved ?? sessionZone, this.detected);
 	}
 	get zone(): string {
 		return this.effective.zone;

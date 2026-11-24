@@ -11,6 +11,7 @@
 	import { afterNavigate, goto, invalidate } from '$app/navigation';
 	import { selectDesktopSection } from '$lib/platform/shell/desktop-navigation';
 	import { navigating, page } from '$app/state';
+	import { inboxApi } from '$lib/modules/inbox/api';
 	import { orgApi } from '$lib/modules/organization/api';
 	import { noteChanged } from '$lib/modules/organization/live';
 	import { liveState } from '$lib/modules/organization/live-state.svelte';
@@ -237,6 +238,25 @@
 		if (cannotListen) listen();
 		void orgApi.retryFeed(organizationId).catch(() => undefined);
 	}
+	$effect(() => {
+		const id = organizationId;
+		let cancelled = false;
+		let stopInbox: (() => void) | undefined;
+		void inboxApi
+			.subscribe(id, () => {
+				if (!cancelled && !leaving) void shellData.refresh();
+			})
+			.then((unsub) => {
+				if (cancelled || leaving) unsub();
+				else stopInbox = unsub;
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+			stopInbox?.();
+		};
+	});
+
 	onMount(() => {
 		listen();
 		return () => {

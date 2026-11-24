@@ -413,21 +413,28 @@ function inboxPrimaryLabel(item: InboxItem): string {
 	return item.open?.label ?? 'Open in Inbox';
 }
 
-function formatExpiryBadge(iso: string, nowMs: number): string {
-	const diffMin = Math.round((Date.parse(iso) - nowMs) / 60_000);
-	if (Number.isNaN(diffMin)) return 'Time-sensitive';
-	if (diffMin <= 0) return 'Expired';
-	if (diffMin < 60) return `Expires in ${diffMin}m`;
+function isAskReplyCutoffSource(source: string | undefined): boolean {
+	return source === 'Chat ask' || source === 'Chat approval';
+}
+
+function formatExpiryBadge(iso: string, nowMs: number, source?: string): string {
+	const diffMs = Date.parse(iso) - nowMs;
+	if (Number.isNaN(diffMs)) return 'Time-sensitive';
+	const replyCutoff = isAskReplyCutoffSource(source);
+	if (diffMs <= 0) return replyCutoff ? 'Past reply cutoff' : 'Expired';
+	const diffMin = Math.max(1, Math.ceil(diffMs / 60_000));
+	if (diffMin < 60) return replyCutoff ? `Reply cutoff in ${diffMin}m` : `Expires in ${diffMin}m`;
 	const diffH = Math.round(diffMin / 60);
-	if (diffH < 24) return `Expires in ${diffH}h`;
-	return 'Expires tomorrow';
+	if (diffH < 24) return replyCutoff ? `Reply cutoff in ${diffH}h` : `Expires in ${diffH}h`;
+	return replyCutoff ? 'Reply cutoff tomorrow' : 'Expires tomorrow';
 }
 
 function inboxToSpotlight(item: InboxItem, nowMs: number): SpotlightDecision {
 	const urgent = Boolean(item.expires_at) || item.kind === 'problem';
-	const badgeText = item.expires_at
-		? formatExpiryBadge(item.expires_at, nowMs)
-		: item.source || 'Decision';
+	const deadlineLabel = item.expires_at
+		? formatExpiryBadge(item.expires_at, nowMs, item.source)
+		: undefined;
+	const badgeText = deadlineLabel ?? (item.source || 'Decision');
 
 	const hasApprove = item.actions.includes('approve');
 	const hasDeny = item.actions.includes('deny');
@@ -492,7 +499,7 @@ function inboxToSpotlight(item: InboxItem, nowMs: number): SpotlightDecision {
 	if (item.project?.name) auditChecks.push(`Project: ${item.project.name}`);
 	if (item.team?.name) auditChecks.push(`Team: ${item.team.name}`);
 	if (item.open?.label) auditChecks.push(item.open.label);
-	if (item.expires_at) auditChecks.push(formatExpiryBadge(item.expires_at, nowMs));
+	if (deadlineLabel) auditChecks.push(deadlineLabel);
 
 	const recTone: SpotlightDecision['recTone'] =
 		item.kind === 'problem'
@@ -523,7 +530,7 @@ function inboxToSpotlight(item: InboxItem, nowMs: number): SpotlightDecision {
 		kindLabel: item.source,
 		urgent,
 		badgeText,
-		expiresShort: item.expires_at ? formatExpiryBadge(item.expires_at, nowMs) : undefined,
+		expiresShort: deadlineLabel,
 		actorId: item.who.id,
 		actorName: item.who.name,
 		actorInitials: initialsOf(item.who.name),
