@@ -138,7 +138,7 @@
     },
     {
       "path": ".codex/config.toml",
-      "sha256": "df51918b40eec9c98b07a642eb6dc9e983126710a6ed3793ec0b08076068ebdb"
+      "sha256": "44ea359a905970c2f36831b93397413f94d5e623f6b37038358e9c9b32366098"
     },
     {
       "path": ".github/workflows/ci.yml",
@@ -146,7 +146,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "eef6a08afa3e0a7de46d04b6f305bf9ea44fb37060b872db008c1bb66fc27be6"
+      "sha256": "2da6d78e656d21aaccefb897c72916429ee8d92824c5a47d0e11b109ab7a1074"
     },
     {
       "path": "Cargo.lock",
