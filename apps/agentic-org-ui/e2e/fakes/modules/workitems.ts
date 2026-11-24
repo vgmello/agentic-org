@@ -618,20 +618,25 @@ function toLink(t: TaskDetail): TaskLink {
 	return { id: t.id, ref: t.ref, type: t.type, title: t.title, status: t.status };
 }
 
+function actorFor(organizationId: string): EmployeeRef {
+	return viewerInfo(organizationId).employee ?? VIEWER_EMPLOYEE;
+}
+
 function pushEvent(entry: StoredTask, kind: string, text: string, note?: string) {
 	const at = nowIso();
+	const orgId = entryOrg.get(entry);
+	const actor = orgId ? actorFor(orgId) : VIEWER_EMPLOYEE;
 	entry.detail.activity.push({
 		id: newId(),
 		at,
-		actor: VIEWER_EMPLOYEE,
+		actor,
 		kind,
 		text,
 		...(note ? { note } : {})
 	});
 	entry.detail.updatedAt = at;
-	entry.detail.latestUpdate = { at, by: VIEWER_EMPLOYEE };
+	entry.detail.latestUpdate = { at, by: actor };
 	entry.detail.revision += 1;
-	const orgId = entryOrg.get(entry);
 	if (orgId) saveStore(orgId, storeFor(orgId));
 }
 
@@ -835,6 +840,7 @@ export const workItemsApi: WorkItemsApi = {
 			fixes.push(toLink(bugEntry.detail));
 		}
 
+		const actor = actorFor(organizationId);
 		const detail: TaskDetail = {
 			id,
 			ref,
@@ -849,7 +855,7 @@ export const workItemsApi: WorkItemsApi = {
 			team: { id: team.id, name: team.name },
 			assignedTeam: assignedTeam ? { id: assignedTeam.id, name: assignedTeam.name } : null,
 			assignee: assignee ? { id: assignee.id, name: assignee.name, kind: assignee.kind } : null,
-			reporter: VIEWER_EMPLOYEE,
+			reporter: actor,
 			createdAt: at,
 			updatedAt: at,
 			statusAt: at,
@@ -868,14 +874,14 @@ export const workItemsApi: WorkItemsApi = {
 			feature: null,
 			milestone: null,
 			resolution: null,
-			latestUpdate: { at, by: VIEWER_EMPLOYEE },
+			latestUpdate: { at, by: actor },
 			steps: [],
 			comments: [],
 			activity: [
 				{
 					id: newId(),
 					at,
-					actor: VIEWER_EMPLOYEE,
+					actor,
 					kind: 'created',
 					text: `created ${draft.type === 'bug' ? 'Bug' : draft.type === 'request' ? 'Request' : 'Task'} ${ref}`
 				}
@@ -908,11 +914,11 @@ export const workItemsApi: WorkItemsApi = {
 									severity: draft.severity,
 									priority: draft.priority,
 									at,
-									by: VIEWER_EMPLOYEE
+									by: actor
 								}
 							},
 							severityConfirmed: false,
-							suggestedVerifier: VIEWER_EMPLOYEE,
+							suggestedVerifier: actor,
 							suggestedTriager: null,
 							fixed: null,
 							verifications: [],
@@ -992,7 +998,7 @@ export const workItemsApi: WorkItemsApi = {
 		entry.detail.comments.push({
 			id: newId(),
 			kind: 'comment',
-			author: VIEWER_EMPLOYEE,
+			author: actorFor(organizationId),
 			at: nowIso(),
 			body: change.text
 		});
@@ -1145,7 +1151,7 @@ export const workItemsApi: WorkItemsApi = {
 		if (!step) throw fail('not_found', 'Checklist step not found.');
 		if (change.done !== undefined) {
 			step.done = change.done;
-			step.checked = change.done ? { at: nowIso(), by: VIEWER_EMPLOYEE } : undefined;
+			step.checked = change.done ? { at: nowIso(), by: actorFor(organizationId) } : undefined;
 			pushEvent(entry, 'step', `${change.done ? 'checked' : 'unchecked'} "${step.text}"`);
 		}
 		if (change.required !== undefined) {
@@ -1186,7 +1192,7 @@ export const workItemsApi: WorkItemsApi = {
 		entry.detail.comments.push({
 			id: newId(),
 			kind: 'comment',
-			author: VIEWER_EMPLOYEE,
+			author: actorFor(organizationId),
 			at: nowIso(),
 			body
 		});
@@ -1221,7 +1227,7 @@ export const workItemsApi: WorkItemsApi = {
 		const at = nowIso();
 		const created: PrivateNote = {
 			id: newId(),
-			author: VIEWER_EMPLOYEE,
+			author: actorFor(organizationId),
 			body: change.body,
 			createdAt: at,
 			updatedAt: at,
@@ -1305,7 +1311,7 @@ export const workItemsApi: WorkItemsApi = {
 		entry.detail.comments.push({
 			id: newId(),
 			kind: 'comment',
-			author: VIEWER_EMPLOYEE,
+			author: actorFor(organizationId),
 			at: nowIso(),
 			body: note.body
 		});
@@ -1330,7 +1336,7 @@ export const workItemsApi: WorkItemsApi = {
 			how,
 			note: change.note || null,
 			at: nowIso(),
-			by: VIEWER_EMPLOYEE
+			by: actorFor(organizationId)
 		};
 		entry.detail.can.verify = true;
 		pushEvent(entry, 'fixed', `marked ${entry.detail.ref} as fixed`, change.note || undefined);
@@ -1346,7 +1352,7 @@ export const workItemsApi: WorkItemsApi = {
 			result: change.result,
 			note: change.note || null,
 			at,
-			by: VIEWER_EMPLOYEE
+			by: actorFor(organizationId)
 		});
 		if (change.result === 'still_happens') {
 			entry.detail.bug.fixed = null;
@@ -1452,7 +1458,7 @@ export const workItemsApi: WorkItemsApi = {
 			created.push(toLink(made.detail));
 		}
 		req.created = created;
-		req.approved = { at: nowIso(), by: VIEWER_EMPLOYEE };
+		req.approved = { at: nowIso(), by: actorFor(organizationId) };
 		entry.detail.status = 'done';
 		entry.detail.resolution = 'completed';
 		entry.detail.needsMe = null;
@@ -1471,7 +1477,7 @@ export const workItemsApi: WorkItemsApi = {
 		if (!entry.detail.request) throw fail('invalid_request', 'Not a request.');
 		entry.detail.request.changesAsked = {
 			at: nowIso(),
-			by: VIEWER_EMPLOYEE,
+			by: actorFor(organizationId),
 			comment: change.comment
 		};
 		entry.detail.needsMe = null;

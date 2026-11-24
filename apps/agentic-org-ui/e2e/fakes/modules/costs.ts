@@ -88,6 +88,118 @@ const superseded = new Set(all.map((r) => r.supersedesId).filter(Boolean));
 /** The effective ledger: records nothing has replaced. */
 const effective = all.filter((r) => !superseded.has(r.id));
 
+const pocUsageRecords: StoredRecord[] = [
+	{
+		id: 'poc-u-1',
+		occurredAt: new Date(NOW.getTime() - 2 * 3600_000).toISOString(),
+		consumer: { kind: 'agent', memberId: 'sage' },
+		runtime: 'codex',
+		provider: 'openai',
+		model: 'gpt-6.1-sol',
+		attribution: {
+			basis: 'task',
+			taskRef: 'T-118',
+			taskTitle: 'Custody lock fix',
+			projectId: 'office-federation',
+			teamId: 'platform'
+		},
+		workType: 'build',
+		tokens: [120_000, 34_000, 80_000, 0, 234_000],
+		tokenStatus: 'known',
+		costMicroUsd: 26_400_000,
+		costBasis: 'provider_reported',
+		costStatus: 'known'
+	},
+	{
+		id: 'poc-u-2',
+		occurredAt: new Date(NOW.getTime() - 5 * 3600_000).toISOString(),
+		consumer: { kind: 'agent', memberId: 'kai' },
+		runtime: 'codex',
+		provider: 'openai',
+		model: 'gpt-6.1-sol',
+		attribution: {
+			basis: 'task',
+			taskRef: 'T-121',
+			taskTitle: 'Split codec 2a.3.2b',
+			projectId: 'agency-v1',
+			teamId: 'platform'
+		},
+		workType: 'build',
+		tokens: [210_000, 62_000, 140_000, 0, 412_000],
+		tokenStatus: 'known',
+		costMicroUsd: 48_200_000,
+		costBasis: 'provider_reported',
+		costStatus: 'known'
+	},
+	{
+		id: 'poc-u-3',
+		occurredAt: new Date(NOW.getTime() - 18 * 3600_000).toISOString(),
+		consumer: { kind: 'agent', memberId: 'jules' },
+		runtime: 'codex',
+		provider: 'openai',
+		model: 'gpt-6.1-sol',
+		attribution: {
+			basis: 'task',
+			taskRef: 'T-124',
+			taskTitle: 'CSP gates in the UI suite',
+			projectId: 'agency-v1',
+			teamId: 'app'
+		},
+		workType: 'build',
+		tokens: [165_000, 45_000, 90_000, 0, 300_000],
+		tokenStatus: 'known',
+		costMicroUsd: 34_800_000,
+		costBasis: 'provider_reported',
+		costStatus: 'known'
+	},
+	{
+		id: 'poc-u-4',
+		occurredAt: new Date(NOW.getTime() - 28 * 3600_000).toISOString(),
+		consumer: { kind: 'agent', memberId: 'eden' },
+		runtime: 'claude_code',
+		provider: 'anthropic',
+		model: 'claude-sonnet-4-5',
+		attribution: {
+			basis: 'task',
+			taskRef: 'T-130',
+			taskTitle: 'Presence vocabulary across screens',
+			projectId: 'look-feel',
+			teamId: 'product'
+		},
+		workType: 'build',
+		tokens: [98_000, 29_000, 60_000, 0, 187_000],
+		tokenStatus: 'known',
+		costMicroUsd: 19_600_000,
+		costBasis: 'provider_reported',
+		costStatus: 'known'
+	},
+	{
+		id: 'poc-u-5',
+		occurredAt: new Date(NOW.getTime() - 40 * 3600_000).toISOString(),
+		consumer: { kind: 'agent', memberId: 'rowan' },
+		runtime: 'codex',
+		provider: 'openai',
+		model: 'gpt-6.1-sol',
+		attribution: {
+			basis: 'task',
+			taskRef: 'T-138',
+			taskTitle: 'Enrollment certificates for new offices',
+			projectId: 'office-federation',
+			teamId: 'platform'
+		},
+		workType: 'build',
+		tokens: [74_000, 21_000, 45_000, 0, 140_000],
+		tokenStatus: 'known',
+		costMicroUsd: 13_000_000,
+		costBasis: 'provider_reported',
+		costStatus: 'known'
+	}
+];
+
+function ledgerFor(organizationId: string): StoredRecord[] {
+	return organizationId === POC_ORG_ID ? pocUsageRecords : effective;
+}
+
 /** The scheduled rate always starts on the first of next month, so it stays scheduled whatever the date. */
 function nextMonthStart(): string {
 	const now = new Date();
@@ -650,7 +762,7 @@ export const costsApi: CostsApi = {
 			throw fail('internal', "HQ didn't answer. Check that the office is running, then try again.");
 		const { period } = resolvePeriod(request);
 		const n = await names(organizationId);
-		const list = (on('empty') ? [] : effective)
+		const list = (on('empty') ? [] : ledgerFor(organizationId))
 			.filter((r) => within(r, period) && matches(r, key))
 			.toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt));
 		const offset = Number(cursor ?? 0);
@@ -707,7 +819,7 @@ export const costsApi: CostsApi = {
 		const n = await names(organizationId);
 		const allMine = on('empty')
 			? []
-			: effective.filter((r) => r.attribution.projectId === projectId);
+			: ledgerFor(organizationId).filter((r) => r.attribution.projectId === projectId);
 		const records = allMine.filter((r) => within(r, period));
 		const prevTotals = previous ? totalsOf(allMine.filter((r) => within(r, previous))) : undefined;
 		const meta = projectMeta[projectId];
@@ -777,7 +889,7 @@ export const costsApi: CostsApi = {
 			throw fail('not_authorized', "Only the owner and this project's manager see its costs.");
 		const { period } = resolvePeriod(request);
 		const n = await names(organizationId);
-		const list = (on('empty') ? [] : effective)
+		const list = (on('empty') ? [] : ledgerFor(organizationId))
 			.filter(
 				(r) =>
 					r.attribution.projectId === projectId && within(r, period) && matchesProjectKey(r, key)
@@ -806,7 +918,7 @@ export const costsApi: CostsApi = {
 		const thisMonth = resolvePeriod({ kind: 'this_month', timeZone: request.timeZone }).period;
 		const lastMonth = resolvePeriod({ kind: 'last_month', timeZone: request.timeZone }).period;
 		const n = await names(organizationId);
-		const visibleAll = (on('empty') ? [] : effective).filter((r) =>
+		const visibleAll = (on('empty') ? [] : ledgerFor(organizationId)).filter((r) =>
 			managed ? !!(r.attribution.projectId && allowedIds.has(r.attribution.projectId)) : true
 		);
 		const periodRecords = visibleAll.filter((r) => within(r, period));
@@ -903,7 +1015,7 @@ export const costsApi: CostsApi = {
 			);
 		const { period } = resolvePeriod(request);
 		const n = await names(organizationId);
-		const list = (on('empty') ? [] : effective)
+		const list = (on('empty') ? [] : ledgerFor(organizationId))
 			.filter((r) => {
 				if (!within(r, period)) return false;
 				if (scope.kind === 'project') return r.attribution.projectId === scope.projectId;
@@ -934,7 +1046,7 @@ export const costsApi: CostsApi = {
 		const allowedIds = managedProjectIds(snapshot);
 		const n = await names(organizationId);
 		const zone = request.timeZone;
-		const allAgent = (on('empty') ? [] : effective).filter((r) => {
+		const allAgent = (on('empty') ? [] : ledgerFor(organizationId)).filter((r) => {
 			if (r.consumer.kind !== 'agent' || r.consumer.memberId !== memberId) return false;
 			if (managed) return !!(r.attribution.projectId && allowedIds.has(r.attribution.projectId));
 			return true;
@@ -1022,7 +1134,9 @@ export const costsApi: CostsApi = {
 			const bZone = on('no-zone') ? null : budgetData.zone.name;
 			const fullAgentRecords = on('empty')
 				? []
-				: effective.filter((r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId);
+				: ledgerFor(organizationId).filter(
+						(r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId
+					);
 			const unmeasured = fullAgentRecords.some((r) => r.runtime === 'antigravity');
 			const b = mutableBudgets[memberId];
 			if (bZone && b && !on('empty')) {
@@ -1082,7 +1196,7 @@ export const costsApi: CostsApi = {
 		const managed = on('manager');
 		const allowedIds = managedProjectIds(snapshot);
 		const n = await names(organizationId);
-		const list = (on('empty') ? [] : effective)
+		const list = (on('empty') ? [] : ledgerFor(organizationId))
 			.filter((r) => {
 				if (r.consumer.kind !== 'agent' || r.consumer.memberId !== memberId) return false;
 				if (managed && (!r.attribution.projectId || !allowedIds.has(r.attribution.projectId)))
@@ -1099,7 +1213,7 @@ export const costsApi: CostsApi = {
 		});
 	},
 
-	async setAgentBudget(_organizationId, memberId, draft) {
+	async setAgentBudget(organizationId, memberId, draft) {
 		await new Promise((r) => setTimeout(r, on('slow') ? 2000 : 250));
 		if (on('unavailable')) await unavailableCall();
 		if (on('viewer') || on('manager'))
@@ -1112,7 +1226,7 @@ export const costsApi: CostsApi = {
 		if (!zone)
 			throw fail('invalid_request', "Agent budgets can't run without a known budget time zone.");
 		const entry = (mutableBudgets[memberId] ??= {});
-		const mine = effective.filter(
+		const mine = ledgerFor(organizationId).filter(
 			(r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId
 		);
 		const unmeasured = mine.some((r) => r.runtime === 'antigravity');
@@ -1134,7 +1248,7 @@ export const costsApi: CostsApi = {
 		return structuredClone(budgetState(nextStored, mine, window, unmeasured));
 	},
 
-	async agentBudgetAction(_organizationId, memberId, action) {
+	async agentBudgetAction(organizationId, memberId, action) {
 		await new Promise((r) => setTimeout(r, on('slow') ? 2000 : 250));
 		if (on('unavailable')) await unavailableCall();
 		if (on('viewer') || on('manager'))
@@ -1154,7 +1268,7 @@ export const costsApi: CostsApi = {
 			if (current.extended)
 				throw fail('invalid_request', 'This budget already used its one 20% extension.');
 			const zone = budgetData.zone.name;
-			const mine = effective.filter(
+			const mine = ledgerFor(organizationId).filter(
 				(r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId
 			);
 			const { day, month } = budgetWindows(zone);

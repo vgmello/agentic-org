@@ -12,11 +12,14 @@ import { areaCapability } from './capabilities';
 
 function summaryStatus(row: TaskRow): ItemStatus {
 	if (row.type === 'bug') {
-		return row.status === 'done' || row.status === 'cancelled' ? 'closed' : row.status;
+		if (row.status === 'done' || row.status === 'cancelled') return 'closed';
+		if (row.awaitingVerification) return 'fixed';
+		return row.status;
 	}
 	if (row.type === 'request') {
 		if (row.status === 'done') return 'approved';
 		if (row.status === 'cancelled') return 'declined';
+		if (row.needsMe?.source === 'approval') return 'scoped';
 		return row.status;
 	}
 	return row.status === 'cancelled' ? 'closed' : row.status;
@@ -31,6 +34,7 @@ function rowToSummary(row: TaskRow): WorkItemSummary {
 		number: numMatch ? Number(numMatch[0]) : 0,
 		title: row.title,
 		status: summaryStatus(row),
+		...(row.type === 'task' && row.status === 'cancelled' ? { resolution: 'cancelled' } : {}),
 		priority: row.priority,
 		severity: row.severity ?? undefined,
 		project_id: row.project?.id,

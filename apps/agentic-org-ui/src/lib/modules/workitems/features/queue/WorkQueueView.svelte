@@ -163,11 +163,15 @@
 				return;
 			}
 			if (closedRef) {
-				const link = document.querySelector<HTMLElement>(`[data-ref="${CSS.escape(closedRef)}"] a`);
-				if (link?.isConnected) {
-					link.focus({ preventScroll: true });
-					link.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-					return;
+				const links = document.querySelectorAll<HTMLElement>(
+					`[data-ref="${CSS.escape(closedRef)}"] a`
+				);
+				for (const link of links) {
+					if (link.isConnected && link.offsetParent !== null) {
+						link.focus({ preventScroll: true });
+						link.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+						return;
+					}
 				}
 			}
 			document.getElementById('shell-page-title')?.focus({ preventScroll: true });
@@ -242,9 +246,14 @@
 				if (!shortcutsEnabled || event.repeat) return;
 				event.preventDefault();
 				closeInlineDetail(false);
-				void tick().then(() => {
+				const focusSearch = async () => {
+					if (isOrgScope && activeShow === 'needs_me' && queueRead.data) {
+						await setShow('mine');
+					}
+					await tick();
 					(document.getElementById(`${uid}-search`) as HTMLInputElement | null)?.focus();
-				});
+				};
+				void focusSearch();
 				return;
 			}
 			const searchEl = document.getElementById(`${uid}-search`) as HTMLInputElement | null;

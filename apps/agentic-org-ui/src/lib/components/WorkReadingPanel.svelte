@@ -42,6 +42,7 @@
 	} = $props();
 
 	let panelEl = $state<HTMLElement | null>(null);
+	let backBtnEl = $state<HTMLButtonElement | null>(null);
 	let isOpening = $state(true);
 	let copiedForId = $state<string | null>(null);
 	const copied = $derived(copiedForId === itemId);
@@ -60,9 +61,9 @@
 			const scroller = panelEl.closest<HTMLElement>('main');
 			if (scroller) scroller.scrollTop = 0;
 			if (!panelEl.contains(document.activeElement)) {
-				const titleEl = panelEl.querySelector<HTMLElement>('#work-detail-title');
-				titleEl?.focus({ preventScroll: true });
-				titleEl?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+				const target = panelEl.querySelector<HTMLElement>('#work-detail-title') ?? backBtnEl;
+				target?.focus({ preventScroll: true });
+				target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 			}
 		});
 		return () => {
@@ -101,7 +102,7 @@
 >
 	<article class="work-document">
 		<div class="work-detail-bar">
-			<button type="button" class="work-back-btn" onclick={onclose}>
+			<button bind:this={backBtnEl} type="button" class="work-back-btn" onclick={onclose}>
 				<ArrowLeft class="size-4 shrink-0" aria-hidden="true" />
 				<span>Back to Work</span>
 			</button>

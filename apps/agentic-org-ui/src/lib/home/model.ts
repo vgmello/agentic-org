@@ -280,7 +280,10 @@ function formatDueShort(isoDate: string): string {
 
 export function isItemOpen(item: WorkItemSummary): boolean {
 	if (item.deleted) return false;
-	if (item.kind === 'task') return item.status !== 'done';
+	if (item.kind === 'task') {
+		if (item.resolution === 'cancelled' || (item.status as string) === 'cancelled') return false;
+		return item.status !== 'done';
+	}
 	if (item.kind === 'bug') return item.status !== 'closed';
 	if (item.kind === 'request') {
 		return !['approved', 'declined', 'merged'].includes(item.status);
