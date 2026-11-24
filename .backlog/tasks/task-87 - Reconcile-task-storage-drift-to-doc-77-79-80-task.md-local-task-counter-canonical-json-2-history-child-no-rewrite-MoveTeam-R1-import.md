@@ -2,10 +2,11 @@
 id: TASK-87
 title: >-
   Reconcile task storage drift to doc-77/79/80 (task.md, local task-counter,
-  canonical-json/2 history, child no-rewrite, MoveTeam, R1 import)
+  canonical-json/2 history, child no-rewrite, MoveTeam)
 status: To Do
 assignee: []
 created_date: '2026-11-23T03:22:00Z'
+updated_date: '2026-11-24T01:57:00Z'
 labels:
   - backend
   - rust
@@ -62,3 +63,9 @@ Inside durable/state/ (the Git-replicated org tree), every other domain (organiz
 - [ ] #5 MoveTeam atomically relocates descendant teams/<chain>/work/tasks/<id>/ directories in the same journal entry, DurablePath::MAX_BYTES is raised (e.g. 1024) with headroom checks covering MAX_TEAM_DEPTH=16 task comment paths, and R1 Git import wires TaskFiles and ProcessFiles alongside OrganizationFiles and ProjectFiles.
 - [ ] #6 Dual-engine (Memory + SQLite) tests, delete+rebuild parity after child-only ops (verifying revision preservation), test_schema.py, engine_boundary, cargo fmt/clippy/test pass, and doc-37, doc-77, doc-79 (L374 revision rule & checklist.yaml schema), doc-84, doc-15, doc-3 (FC-039..056, FC-142), and ADR-0006/ADR-0021 review notes are updated.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Update (2026-11-24): R1 Git import wiring (TaskFiles/ProcessFiles in apply_imported_to_engine, ARCH-06 Part B) was already shipped on v1 in TASK-97 (9ec28e8b) — do not duplicate it here. Preserve #[serde(default)] attachments[] front matter cleanly for TASK-98.4.
+<!-- SECTION:NOTES:END -->

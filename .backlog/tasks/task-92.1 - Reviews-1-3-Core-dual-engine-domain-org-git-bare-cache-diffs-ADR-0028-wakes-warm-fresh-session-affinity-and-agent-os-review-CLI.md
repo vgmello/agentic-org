@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-23T03:40:00Z'
-updated_date: '2026-11-23T04:54:00Z'
+updated_date: '2026-11-24T01:57:00Z'
 labels:
   - backend
   - rust
@@ -61,3 +61,9 @@ Implements the backend domain, dual-engine SQLite/Memory storage, hardened org-g
 - [ ] #5 Updates doc-28, doc-29, doc-35, doc-72/73/74/80, doc-96, doc-3, test_schema.py, and adds a new ADR; cargo fmt/clippy/test, engine_boundary, and org_command contract checks pass.
 - [ ] #6 Review session orchestration supports two-stage convergence: warm session resume on Round 2..N resubmissions (passing inter-round diff plus fix-verification and regression/unexamined-area checks) and explicit --fresh empty-session final validation pass once iterative findings are resolved, recording session_mode (warm | fresh) on each review round; exposes explicit resume_runtime_session_id and fresh parameters on SessionManager (MemberSessionStartParams) and guards warm-resume eligibility on (same_workspace && same_spec_hash) so Claude Code (resume_ignores_cwd: true, resume_applies_instructions: false in crates/org-agent-runtime-claude/src/lib.rs:55-56) automatically falls back to a fresh session with explicit notice whenever workspace path or instructions changed.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Image attachments coordination (2026-11-24): Reuse TASK-98.1 polymorphic attachments table (target_kind = review_finding | review_finding_reply) and TASK-98.4 --attach / --attachment-id CLI flags on review finding and review reply.
+<!-- SECTION:NOTES:END -->

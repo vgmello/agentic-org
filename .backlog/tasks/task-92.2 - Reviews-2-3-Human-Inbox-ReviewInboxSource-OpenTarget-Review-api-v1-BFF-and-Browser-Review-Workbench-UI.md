@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-23T03:40:00Z'
+updated_date: '2026-11-24T01:57:00Z'
 labels:
   - backend
   - ui
@@ -36,3 +37,9 @@ Surfaces first-class Universal Reviews to people via the live Inbox, authenticat
 - [ ] #2 Exposes authenticated /api/v1/organizations/{org}/reviews* routes in apps/agentic-org-web through OfficeBridge with closed operations.json allowlisting and doc-71 updates.
 - [ ] #3 Ships capability-enabled Svelte 5 / shadcn-svelte UI in apps/agentic-org-ui/src/lib/modules/reviews/ (/reviews queue, /reviews/[ref] workbench with file tree, unified/split code diff viewer, Markdown/artifact viewer, inline line/section-anchored finding threads, round selector + R1->R2 comparison, stale-pin warning banner, atomic Submit Verdict bar, Inbox review cards, and Task Detail Reviews widget) passing check, lint, test, build, and Playwright E2E across wide and 320 px viewports.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Image attachments coordination (2026-11-24): Compose TASK-98.5 reusable AttachmentComposer, AttachmentGallery, and ImageLightbox primitives into Browser Review Workbench finding creation, finding cards, and review replies.
+<!-- SECTION:NOTES:END -->
