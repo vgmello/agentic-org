@@ -217,7 +217,8 @@ try {
       const gates = tools.getByRole("button", { name: "Release gates" });
       await readiness.waitFor();
       assert.equal(await assembly.getAttribute("aria-selected"), "true");
-      assert.equal(await page.locator(".project-header + #project-release-summary + .activity-workspace").count(), 1);
+      const orderedRelease = page.locator(".project-header + .activity-workspace > .activity-header + #project-release-summary");
+      await orderedRelease.waitFor();
       assert.equal(await release.count(), 1, "The release summary moved out of the Assembly line table");
       assert.equal(await readiness.getAttribute("max"), "4");
       assert.equal(await releaseReadiness.getAttribute("max"), "4");
@@ -263,7 +264,7 @@ try {
 
       await page.getByRole("button", { name: "Review T-A118" }).click();
       assert.equal(await feed.getAttribute("aria-selected"), "true");
-      await release.waitFor();
+      await orderedRelease.waitFor();
       const decision = page.locator("#activity-triage-in2");
       assert.ok(await decision.evaluate((element) => element === document.activeElement));
       assert.equal(await page.locator("#activity-triage-in1").count(), 0);
