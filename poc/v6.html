@@ -5282,9 +5282,7 @@ function workEta(w) {
 }
 
 function workTitle(w, className) {
-  const href = workItemHref(w.id);
-  const selected = canonicalWorkRef(qs().get("item")) === w.id;
-  return `<a class="work-item-link ${className}" data-item="${esc(w.id)}" href="${esc(href)}"${selected ? ' aria-current="true"' : ""}>${esc(w.title)}</a>`;
+  return `<a class="work-item-link ${className}" data-item="${esc(w.id)}" href="${esc(workItemHref(w.id))}">${esc(w.title)}</a>`;
 }
 
 function workChild(parent, subtask) {
@@ -5388,10 +5386,7 @@ function findWorkItem(ref, items = W) {
 
 function workWorkspace(results, items = W) {
   const { item, parent } = findWorkItem(qs().get("item"), items);
-  return `<div class="work-workspace${item ? " has-work-detail" : ""}">
-    <div id="work-results">${results}</div>
-    ${item ? workDetail(item, parent) : ""}
-  </div>`;
+  return item ? workDetail(item, parent) : `<div id="work-results">${results}</div>`;
 }
 
 function workDetail(w, parent) {
@@ -5399,11 +5394,11 @@ function workDetail(w, parent) {
   return `<section class="triage-reading work-reading" aria-labelledby="work-detail-title">
     <article class="triage-document">
       <div class="work-detail-bar">
+        <button class="btn ghost sm work-back" type="button" data-act="work-close-detail">${ic("chev-left", "ic16")}Back to work</button>
         <p class="work-detail-id">${workStatus(w.status, showsNeedsYou(w))}${esc(w.id)}<span class="work-kind">${{ task: "Task", bug: "Bug", request: "Request" }[w.kind]}</span></p>
         <div class="work-detail-actions">
           <button class="btn ghost icon sm" type="button" data-act="work-comment-focus" aria-label="Leave a comment" title="Leave a comment">${ic("chat", "ic16")}</button>
           <button class="btn ghost icon sm" type="button" data-act="work-copy-link" data-id="${esc(w.id)}" aria-label="Copy task link" title="Copy task link">${ic("copy", "ic16")}</button>
-          <button class="btn ghost icon sm" type="button" data-act="work-close-detail" aria-label="Close work details" title="Close work details">${ic("x", "ic16")}</button>
         </div>
       </div>
       <header class="triage-intro">
@@ -6617,9 +6612,9 @@ function pageProjects() {
   const active = Object.keys(P).filter((p) => !P[p].archived).length;
   const filter = showMenu("pshow", [["showArchived", "Show", [[false, "Active", active], [true, "All, with archived", Object.keys(P).length]]]],
     { icon: "filter", label: "Filter projects", active: S.showArchived });
-  return `<div class="project-header">
+  return `<div class="section-header project-header">
     ${hdr("Projects", `${active} active · ${Object.keys(P).length - active} archived`)}
-    <div class="project-toolbar project-directory-tools"><div class="queue-controls">${filter}</div></div>
+    <div class="section-toolbar project-toolbar project-directory-tools"><div class="queue-controls">${filter}</div></div>
   </div>` +
   `<ul class="rows" role="list">${ids.map((p) => {
     const pr = P[p], ws = W.filter((w) => w.proj === p), openN = ws.filter(OPEN).length;
@@ -6638,9 +6633,9 @@ function pageProject(id, tab) {
   const tabs = [["", "Overview"], ["work", "Work", ws.filter(OPEN).length], ["team", "Team", projMembers(id).length], ["activity", "Activity"], ["conversations", "Conversations"]];
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"));
   const workControls = tab === "work" ? `<div class="queue-controls project-work-controls" role="group" aria-label="Work view controls">${scopedWorkControls()}</div>` : "";
-  return back("#/projects", "Projects") + `<div class="project-header">
+  return back("#/projects", "Projects") + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id), projHeadProgress(id))}
-    <div class="project-toolbar">
+    <div class="section-toolbar project-toolbar">
       ${linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab)}
       <div class="queue-controls" role="group" aria-label="Project controls">${workControls}${more}</div>
     </div>
@@ -7189,13 +7184,20 @@ function pageActivity() {
   const projectOptions = [["all", "All projects"], ...Object.entries(P).filter(([, project]) => !project.archived).map(([id, project]) => [id, project.name + " · " + project.release])];
   const projectFilter = `<label class="activity-scope"><span class="sr-only">Activity project</span><select class="field" id="activity-project">${projectOptions.map(([id, label]) => `<option value="${id}"${S.actProject === id ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></label>`;
   const switcher = `<div class="seg activity-switch" role="group" aria-label="Activity view">${[["assembly", "Assembly line", "board"], ["feed", "Activity feed", "signal"]].map(([id, label, icon]) => `<button type="button" data-act="set" data-k="actView" data-v="${id}" aria-pressed="${S.actView === id}">${ic(icon, "ic16")}${label}</button>`).join("")}</div>`;
+  const isFeed = S.actView === "feed";
   return `<section class="activity-workspace" aria-label="Activity command center">
-    <header class="ph"><div class="ph-t"><h1 tabindex="-1">Activity</h1><span class="cnt">${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}</span></div><div class="ph-actions activity-header-controls">${projectFilter}${switcher}</div></header>
+    <div class="section-header activity-header">
+      ${hdr("Activity", `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`)}
+      <div class="section-toolbar activity-toolbar">
+        ${switcher}${projectFilter}
+        ${isFeed ? btnTabs("actFilter", tabs, "Filter activity", "act-feed") : ""}
+      </div>
+    </div>
     <div class="activity-layout">
-      <div class="activity-main">${S.actView === "assembly" ? assemblyMatrix(projects, entries, counts) : `
-        <section class="activity-feed" aria-label="Activity feed">${btnTabs("actFilter", tabs, "Filter activity", "act-feed")}
+      <div class="activity-main">${isFeed ? `
+        <section class="activity-feed" aria-label="Activity feed">
           <div class="activity-bottleneck"><span>Work by stage</span><div class="activity-stage-bar" aria-hidden="true">${ACTIVITY_STAGES.map(([stage]) => `<i data-stage="${stage}" style="flex-grow:${counts[stage]}"></i>`).join("")}</div><span>${counts.review} in review · ${counts.queue} queued</span></div>
-          <div ${tabPanel("actFilter", "act-feed")}>${activityTimeline(items)}</div></section>`}
+          <div ${tabPanel("actFilter", "act-feed")}>${activityTimeline(items)}</div></section>` : assemblyMatrix(projects, entries, counts)}
       </div>${activityRail(projects, entries, counts)}
     </div>
   </section>`;
@@ -8721,19 +8723,18 @@ function render(focus = true) {
   document.title = titleBase + " · Agentic Org";
   const key = location.hash;
   if (focus && key !== S.lastRoute) {
-    const keep = S.focusAfter && document.querySelector(S.focusAfter);
+    const requestedFocus = S.focusAfter ? document.querySelector(S.focusAfter) : null;
+    const keep = requestedFocus?.getClientRects().length ? requestedFocus : null;
     const focusTarget = keep || (r0 === "inbox" && r1 && main.querySelector("#triage-detail-title"))
       || main.querySelector("#work-detail-title") || main.querySelector("h1");
-    document.getElementById("content").scrollTop = 0;
+    const content = document.getElementById("content");
+    content.scrollTop = 0;
     focusTarget?.focus({ preventScroll: true });
-    const selectedWork = main.querySelector('#work-results .work-item-link[aria-current="true"]');
     const reading = focusTarget?.closest(".work-reading");
-    if (r0 !== "work" && reading) {
-      const toolbar = main.querySelector(".scoped-work-tools, .project-toolbar");
-      const target = !narrow() && toolbar ? toolbar : reading;
-      target.scrollIntoView({ block: "start" });
+    if (reading && focusTarget.getBoundingClientRect().bottom > content.getBoundingClientRect().bottom) {
+      reading.scrollIntoView({ block: "start" });
     }
-    (selectedWork || (keep?.matches(".work-item-link") ? keep : null))?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (keep?.matches(".work-item-link")) keep.scrollIntoView({ block: "nearest", inline: "nearest" });
   } else if (toolbarFocus) {
     const control = document.getElementById(toolbarFocus);
     control?.focus({ preventScroll: true });
@@ -9438,7 +9439,10 @@ document.addEventListener("input", (e) => {
   }
   if (e.target.id === "work-search") {
     S.workQuery = e.target.value;
-    refreshWorkResults();
+    if (document.querySelector(".work-reading")) {
+      history.replaceState(null, "", workItemHref());
+      render(false);
+    } else refreshWorkResults();
   }
   if (e.target.id === "o-name") e.target.setCustomValidity("");
   if (e.target.name === "title" && e.target.form?.dataset.form === "work-create") e.target.setCustomValidity("");
