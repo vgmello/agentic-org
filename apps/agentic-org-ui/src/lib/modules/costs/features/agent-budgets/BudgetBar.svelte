@@ -26,6 +26,13 @@
 	const state = $derived(budgetState(budget));
 	const percent = $derived(budgetPercent(budget));
 	const label = $derived(budgetPeriodLabel(kind, zone));
+	const fillTone = $derived<'bad' | 'warn' | 'accent'>(
+		budget.spent >= budget.limit || state?.tone === 'owner'
+			? 'bad'
+			: percent >= 80
+				? 'warn'
+				: 'accent'
+	);
 	const id = $props.id();
 </script>
 
@@ -36,16 +43,19 @@
 		</p>
 		{#if state}
 			<span
-				class="inline-flex max-w-full items-center gap-x-1.5 rounded-md px-2 py-0.5 text-xs/5 font-medium ring-1 ring-inset {state.tone ===
-				'owner'
-					? 'bg-warning/10 text-warning-text-strong ring-warning/30'
-					: 'bg-surface-raised text-fg-secondary ring-line'}"
+				class={[
+					'inline-flex max-w-full items-center gap-x-1.5 rounded-full px-2 py-0.5 text-xs/5 font-medium',
+					state.tone === 'owner'
+						? 't-amber'
+						: 'bg-surface-raised text-fg-secondary ring-1 ring-line ring-inset'
+				]}
 				data-testid="budget-state"
 				><span
 					aria-hidden="true"
-					class="size-1.5 shrink-0 rounded-full {state.tone === 'owner'
-						? 'bg-warning'
-						: 'bg-quiet'}"
+					class={[
+						'size-1.5 shrink-0 rounded-full',
+						state.tone === 'owner' ? 'budget-dot-warn' : 'bg-quiet'
+					]}
 				></span>{state.word}</span
 			>
 		{/if}
@@ -57,18 +67,19 @@
 		aria-valuemax={100}
 		aria-valuenow={Math.min(percent, 100)}
 		aria-valuetext={budgetAmountText(budget)}
-		class="relative mt-2 h-2 overflow-hidden rounded-full bg-surface-overlay"
+		class="relative mt-2 h-2 overflow-hidden rounded-full bg-bar-track"
 	>
 		<span
-			class="absolute inset-y-0 left-0 rounded-full {state?.tone === 'owner'
-				? 'bg-warning'
-				: 'bg-brand'}"
+			class={['budget-fill absolute inset-y-0 left-0 rounded-full', `budget-fill-${fillTone}`]}
 			style:width="{Math.min(percent, 100)}%"
 		></span>
 		<!-- The 80% mark: the notice threshold. -->
-		<span aria-hidden="true" class="absolute inset-y-0 left-4/5 w-px bg-fg-muted"></span>
+		<span aria-hidden="true" class="absolute inset-y-0 left-4/5 w-px bg-fg-muted/70"></span>
 	</div>
-	<p class="mt-1.5 text-xs/5 text-fg-secondary tabular-nums" data-testid="budget-amount">
+	<p
+		class="mt-1.5 text-xs/5 font-medium text-fg-secondary tabular-nums"
+		data-testid="budget-amount"
+	>
 		{budgetAmountText(budget)}
 	</p>
 	{#if budget.unmeasured}
@@ -91,3 +102,18 @@
 		{budgetBoundsText(budget, zone)}
 	</p>
 </div>
+
+<style>
+	.budget-fill-accent {
+		background: var(--tone-accent-bar);
+	}
+	.budget-fill-warn {
+		background: var(--tone-warn-bar);
+	}
+	.budget-fill-bad {
+		background: var(--tone-bad-bar);
+	}
+	.budget-dot-warn {
+		background: var(--tone-warn-ink);
+	}
+</style>

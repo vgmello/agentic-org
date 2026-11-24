@@ -64,16 +64,25 @@ export const SERVED: ServedTabs = {
 };
 
 /**
- * The tab bar (development-processes §4): Overview and Work; the development process's tabs in order; Features and
- * Releases when the project holds them (or has no process) and the process gave no tab for them; then Docs, Team,
- * Activity, Conversations, Insights; Settings last. Nothing about tabs is stored on the project.
+ * The tab bar (Prototype Release 53728c05 + development-processes §4):
+ * Overview, Activity, Work, Insights, Conversations, Team first; then any development process tabs,
+ * Features and Releases when held (or no process) and not provided by the process, Docs, and Settings last.
+ * Nothing about tabs is stored on the project.
  */
 export function projectTabs(
 	project: Pick<ProjectDetail, 'developmentProcess' | 'processTabs' | 'features' | 'releases'>,
 	served: ServedTabs = SERVED
 ): ProjectTab[] {
-	const tabs: ProjectTab[] = [{ id: 'overview', label: 'Overview', path: '' }];
+	const tabs: ProjectTab[] = [
+		{ id: 'overview', label: 'Overview', path: '' },
+		{ id: 'activity', label: 'Activity', path: 'activity' }
+	];
 	if (served.work) tabs.push({ id: 'work', label: 'Work', path: 'work' });
+	if (served.insights) tabs.push({ id: 'insights', label: 'Insights', path: 'insights' });
+	tabs.push(
+		{ id: 'conversations', label: 'Conversations', path: 'conversations' },
+		{ id: 'team', label: 'Team', path: 'team' }
+	);
 	const given = new Set(project.processTabs.map((t) => t.view));
 	if (served.processTabs)
 		for (const t of project.processTabs)
@@ -89,12 +98,6 @@ export function projectTabs(
 	if (served.releases && needsReleases)
 		tabs.push({ id: 'releases', label: 'Releases', path: 'releases' });
 	if (served.docs) tabs.push({ id: 'docs', label: 'Docs', path: 'docs' });
-	tabs.push(
-		{ id: 'team', label: 'Team', path: 'team' },
-		{ id: 'activity', label: 'Activity', path: 'activity' },
-		{ id: 'conversations', label: 'Conversations', path: 'conversations' }
-	);
-	if (served.insights) tabs.push({ id: 'insights', label: 'Insights', path: 'insights' });
 	if (served.settings) tabs.push({ id: 'settings', label: 'Settings', path: 'settings' });
 	return tabs;
 }
@@ -138,6 +141,83 @@ export function doneText(t: TaskCounts): string {
 	const total = countedTasks(t);
 	if (total === 0) return 'No tasks yet';
 	return `${count.format(t.done)} of ${plural(total, 'task')} done`;
+}
+
+/** Delivery progress percentage (0–100) from delivered tasks over counted tasks. */
+export function progressPercent(t: TaskCounts): number {
+	const total = countedTasks(t);
+	if (total === 0) return 0;
+	return Math.min(100, Math.max(0, Math.round((t.done / total) * 100)));
+}
+
+export type ProjectBarTone = 'ok' | 'warn' | 'bad' | 'accent' | 'archived';
+
+/** Semantic progress-bar tone matching Executive Home scorecard cues. */
+export function projectBarTone(
+	tasks: TaskCounts,
+	bugs: BugCounts,
+	archived = false
+): ProjectBarTone {
+	if (archived) return 'archived';
+	if (bugs.critical > 0) return 'bad';
+	if (tasks.blocked > 0 || bugs.major > 0) return 'warn';
+	const total = countedTasks(tasks);
+	if (total > 0 && tasks.done >= total) return 'ok';
+	return 'accent';
+}
+
+/** Short executive health label paired with `projectBarTone`. */
+export function projectHealthLabel(tone: ProjectBarTone): string {
+	if (tone === 'bad') return 'At risk';
+	if (tone === 'warn') return 'Needs attention';
+	if (tone === 'ok') return 'On track';
+	if (tone === 'archived') return 'Archived';
+	return 'Active';
+}
+
+export interface ProjectsPortfolioSummary {
+	active: number;
+	archived: number;
+	openTasks: number;
+	blockedTasks: number;
+	openBugs: number;
+	criticalBugs: number;
+	attentionProjects: number;
+}
+
+/** Aggregate portfolio counts across projects for the Projects KPI strip. */
+export function projectsPortfolioSummary(
+	rows: readonly Pick<ProjectRow, 'archived' | 'tasks' | 'bugs'>[]
+): ProjectsPortfolioSummary {
+	let active = 0;
+	let archived = 0;
+	let openTaskCount = 0;
+	let blockedTasks = 0;
+	let openBugCount = 0;
+	let criticalBugs = 0;
+	let attentionProjects = 0;
+	for (const r of rows) {
+		if (r.archived) {
+			archived++;
+			continue;
+		}
+		active++;
+		openTaskCount += openTasks(r.tasks);
+		blockedTasks += r.tasks.blocked;
+		openBugCount += openBugs(r.bugs);
+		criticalBugs += r.bugs.critical;
+		const tone = projectBarTone(r.tasks, r.bugs, false);
+		if (tone === 'bad' || tone === 'warn') attentionProjects++;
+	}
+	return {
+		active,
+		archived,
+		openTasks: openTaskCount,
+		blockedTasks,
+		openBugs: openBugCount,
+		criticalBugs,
+		attentionProjects
+	};
 }
 
 const SEVERITIES: [keyof BugCounts, string][] = [

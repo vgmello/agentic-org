@@ -2,6 +2,7 @@ import { expect, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 import { enterMockedOrganization } from './mock-organization';
+import { resolveThemeColor } from './theme-token';
 
 async function create(page: Page, width: number, scale = 1) {
 	await page.setViewportSize({ width, height: 900 });
@@ -32,9 +33,20 @@ export async function navigation(page: Page) {
 	await expect(nav).toBeVisible();
 	return nav;
 }
+export async function tokenColor(page: Page, name: string) {
+	return resolveThemeColor(page, name);
+}
 export async function inheritsColour(icon: Locator, control: Locator) {
 	await expect(icon).toHaveCount(1);
-	await expect(icon).toHaveCSS('color', await control.evaluate((e) => getComputedStyle(e).color));
+	await expect
+		.poll(async () => {
+			const [iconColour, controlColour] = await Promise.all([
+				icon.evaluate((e) => getComputedStyle(e).color),
+				control.evaluate((e) => getComputedStyle(e).color)
+			]);
+			return iconColour === controlColour;
+		})
+		.toBe(true);
 }
 export function buttonTabKey(page: Page) {
 	return page.context().browser()?.browserType().name() === 'webkit' &&
@@ -49,6 +61,7 @@ export async function keyboardFocus(page: Page, control: Locator) {
 }
 export async function focusOutline(control: Locator) {
 	await expect(control).toBeFocused();
+	const expectedColour = await resolveThemeColor(control.page(), '--focus');
 	await expect
 		.poll(() =>
 			control.evaluate((e) => {
@@ -58,27 +71,11 @@ export async function focusOutline(control: Locator) {
 					width: parseFloat(style.outlineWidth),
 					offset: parseFloat(style.outlineOffset),
 					style: style.outlineStyle,
-					colour: style.outlineColor,
-					expected: getComputedStyle(document.documentElement)
-						.getPropertyValue('--color-indigo-400')
-						.trim()
+					colour: style.outlineColor
 				};
 			})
 		)
-		.toMatchObject({ visible: true, width: 2, offset: 2, style: 'solid' });
-	// Resolve the actual design token through CSS rather than comparing an OKLCH string to RGB.
-	await expect
-		.poll(() =>
-			control.evaluate((e) => {
-				const probe = document.createElement('span');
-				probe.style.color = 'var(--color-indigo-400)';
-				e.append(probe);
-				const matches = getComputedStyle(e).outlineColor === getComputedStyle(probe).color;
-				probe.remove();
-				return matches;
-			})
-		)
-		.toBe(true);
+		.toMatchObject({ visible: true, width: 2, offset: 2, style: 'solid', colour: expectedColour });
 }
 export async function sidebarGeometry(nav: Locator) {
 	const navPadding = await nav.evaluate((e) => ({

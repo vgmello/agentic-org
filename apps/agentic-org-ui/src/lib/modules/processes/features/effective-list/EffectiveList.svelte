@@ -57,7 +57,7 @@
 			{@const doc = row.document}
 			{@const problem = problemText(row)}
 			<li
-				class="relative flex flex-wrap items-start gap-x-4 gap-y-2 px-4 py-4 transition-colors duration-150 hover:bg-tint/[0.02] motion-reduce:transition-none @min-[44rem]:flex-nowrap min-[640px]:px-6 min-[1024px]:px-8"
+				class="relative flex flex-wrap items-start gap-x-4 gap-y-2 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8 @min-[44rem]:flex-nowrap"
 				data-testid="process-row"
 				data-key={rowKey(row)}
 				data-row={row.id}

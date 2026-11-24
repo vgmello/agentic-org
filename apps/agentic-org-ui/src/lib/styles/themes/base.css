@@ -1,0 +1,613 @@
+/*
+ * Agentic Org — Executive Theme System (Shared Base & Structural Primitives)
+ *
+ * Shared contract only:
+ *   - :root fallback tokens (including shared --bar-track & --tone-* semantic tone ramps)
+ *   - Structural primitives (.exec-canvas, .exec-card, .exec-well, .exec-cta, .exec-cta-glass)
+ *   - Status pills (.t-green, .t-amber, .t-red) bound to --tone-* tokens
+ *   - Shared light-scheme readability bridge (`html.light .exec-legacy-compat`)
+ *
+ * Individual themes live in sibling files (ocean.css, classic.css, report.css, report-dark.css)
+ * and only scope their rules to `html[data-ui-theme='<id>']` (or `^='report'`) and `.swatch-<id>`.
+ *
+ * Strictly CSP-safe: zero data: URIs, zero external URLs.
+ */
+
+:root {
+	/* Shared intra-theme semantic tone ramps (overridden per theme so all widgets stay in sync) */
+	--bar-track: rgba(148, 163, 184, 0.2);
+
+	--tone-accent: #615fff;
+	--tone-accent-bar: #615fff;
+	--tone-accent-hi: #7c86ff;
+	--tone-accent-ink: #a3b3ff;
+	--tone-accent-bg: rgba(97, 95, 255, 0.14);
+	--tone-accent-ring: rgba(124, 134, 255, 0.32);
+
+	--tone-ok: #34d399;
+	--tone-ok-bar: #34d399;
+	--tone-ok-ink: #6ee7b7;
+	--tone-ok-bg: rgba(52, 211, 153, 0.12);
+	--tone-ok-ring: rgba(52, 211, 153, 0.26);
+
+	--tone-warn: #fbbf24;
+	--tone-warn-bar: #fbbf24;
+	--tone-warn-ink: #fbbf24;
+	--tone-warn-bg: rgba(251, 191, 36, 0.12);
+	--tone-warn-ring: rgba(251, 191, 36, 0.32);
+
+	--tone-bad: #fb7185;
+	--tone-bad-bar: #fb7185;
+	--tone-bad-ink: #fda4af;
+	--tone-bad-bg: rgba(251, 113, 133, 0.12);
+	--tone-bad-ring: rgba(251, 113, 133, 0.28);
+
+	--tone-queued: #a78bfa;
+	--tone-queued-ink: #c4b5fd;
+
+	/* Executive shell surface & typography tokens */
+	--exec-bg: #1e2939;
+	--exec-sidebar-bg: #161f2d;
+	--exec-sidebar-blur: none;
+	--exec-sidebar-sheen: none;
+	--exec-logo-weight: 600;
+	--exec-logo-tracking: 0em;
+	--exec-nav-label-size: 0.6875rem;
+	--exec-nav-label-tracking: 0.07em;
+	--exec-surface: #243144;
+	--exec-surface-hi: #29384d;
+	--exec-well: #1a2433;
+	--exec-panel-sheen: none;
+	--exec-border: rgba(255, 255, 255, 0.1);
+	--exec-border-hi: rgba(255, 255, 255, 0.18);
+	--exec-blur: none;
+	--exec-shadow: inset 0 0 0 1px var(--exec-border);
+	--exec-shadow-hi: inset 0 0 0 1px var(--exec-border-hi);
+	--side-panel-scrim: rgb(0 0 0 / 0.24);
+	--side-panel-shadow: -12px 0 28px -16px rgb(0 0 0 / 0.38);
+	--activity-panel-shadow: -6px 0 12px -6px rgb(0 0 0 / 0.24);
+	--tooltip-shadow: 0 4px 12px rgb(0 0 0 / 0.22);
+	--exec-ink: #ffffff;
+	--exec-body: #d1d5dc;
+	--exec-muted: #99a1af;
+	--exec-dim: #99a1af;
+	--exec-pillar-name-ink: var(--exec-muted);
+	--exec-on-accent: #ffffff;
+
+	/* Top bar & floating command pill tokens */
+	--exec-topbar-height: 68px;
+	--exec-topbar-bg: #1e2939;
+	--exec-topbar-border: 1px solid rgba(255, 255, 255, 0.06);
+	--exec-topbar-fade: none;
+	--exec-topbar-fade-blur: none;
+	--exec-cmdk-radius: 14px;
+	--exec-cmdk-bg: #16202e;
+	--exec-cmdk-bg-hover: #16202e;
+	--exec-cmdk-blur: none;
+	--exec-cmdk-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+	--exec-cmdk-shadow-hover: inset 0 0 0 1px var(--tone-accent-hi);
+	--exec-cmdk-hover-lift: none;
+	--exec-cmdk-trigger-radius: 10px;
+	--exec-cmdk-trigger-ink: var(--exec-muted);
+	--exec-cmdk-trigger-hover-bg: transparent;
+	--exec-cmdk-icon: var(--exec-muted);
+	--exec-cmdk-icon-hover: var(--tone-accent-ink);
+	--exec-cmdk-kbd-radius: 6px;
+	--exec-cmdk-kbd-bg: #101828;
+	--exec-cmdk-kbd-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+	--exec-cmdk-kbd-ink: #d1d5dc;
+	--exec-cmdk-sep: rgba(255, 255, 255, 0.11);
+	--exec-ai-radius: 9px;
+	--exec-ai-bg: var(--tone-accent-bg);
+	--exec-ai-bg-hover: var(--tone-accent);
+	--exec-ai-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	--exec-ai-shadow-hover: inset 0 0 0 1px var(--tone-accent-hi);
+	--exec-ai-ink: #e0e7ff;
+	--exec-ai-ink-hover: #ffffff;
+	--exec-ai-ico: var(--tone-accent-ink);
+	--exec-ai-ico-hover: #ffffff;
+
+	/* Aliased executive tone tokens (bound to shared --tone-* & --bar-track) */
+	--exec-accent: var(--tone-accent);
+	--exec-accent-hi: var(--tone-accent-hi);
+	--exec-accent-ink: var(--tone-accent-ink);
+	--exec-accent-soft: var(--tone-accent-bg);
+	--exec-accent-ring: var(--tone-accent-ring);
+	--exec-ok: var(--tone-ok-ink);
+	--exec-ok-bg: var(--tone-ok-bg);
+	--exec-ok-ring: var(--tone-ok-ring);
+	--exec-warn: var(--tone-warn-ink);
+	--exec-warn-bg: var(--tone-warn-bg);
+	--exec-warn-ring: var(--tone-warn-ring);
+	--exec-bad: var(--tone-bad-ink);
+	--exec-bad-bg: var(--tone-bad-bg);
+	--exec-bad-ring: var(--tone-bad-ring);
+	--exec-sky: var(--tone-accent-ink);
+	--exec-sky-bg: var(--tone-accent-bg);
+	--exec-sky-ring: var(--tone-accent-ring);
+	--exec-purple: var(--tone-queued-ink);
+	--exec-bar-track: var(--bar-track);
+
+	/* Progress bars & task-time chart fills (all bound to --tone-*-bar) */
+	--exec-bar-budget: var(--tone-accent-bar);
+	--exec-bar-sky: var(--tone-accent-bar);
+	--exec-bar-ok: var(--tone-ok-bar);
+	--exec-bar-warn: var(--tone-warn-bar);
+	--exec-bar-bad: var(--tone-bad-bar);
+	--exec-seg-agents: var(--tone-accent-bar);
+	--exec-seg-ci: var(--tone-ok-bar);
+	--exec-seg-human: var(--tone-warn-bar);
+	--exec-seg-queued: var(--tone-queued);
+	--exec-seg-queued-high: var(--tone-bad-bar);
+
+	/* Interactive CTA, Deny guard, Executive Brief & Rail Dot tokens */
+	--exec-cta-bg: #615fff;
+	--exec-cta-fill: #4f46e5;
+	--exec-cta-shadow: none;
+	--exec-cta-shadow-hover: none;
+	--exec-cta-hover-lift: none;
+	--exec-cta-glass-radius: 9px;
+	--exec-cta-glass-bg: rgba(97, 95, 255, 0.14);
+	--exec-cta-glass-bg-hover: #4f46e5;
+	--exec-cta-glass-blur: none;
+	--exec-cta-glass-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	--exec-cta-glass-shadow-hover: inset 0 0 0 1px var(--exec-accent-hi);
+	--exec-cta-glass-ink: #e0e7ff;
+	--exec-cta-glass-ico: var(--exec-accent-ink);
+	--exec-btn-outline-bg: var(--exec-well);
+	--exec-btn-outline-bg-hover: var(--exec-surface-hi);
+	--exec-btn-outline-ink: var(--exec-ink);
+	--exec-btn-outline-ink-hover: var(--exec-ink);
+	--exec-btn-outline-ring: var(--exec-border-hi);
+	--exec-btn-outline-ring-hover: var(--exec-border-hi);
+	--exec-btn-ghost-bg-hover: var(--exec-accent-soft);
+	--exec-avatar-bg: #1e2939;
+	--exec-avatar-ring: #243144;
+
+	--exec-deny-bg: transparent;
+	--exec-deny-bg-hover: rgba(251, 113, 133, 0.14);
+	--exec-deny-ink: var(--tone-bad-ink);
+	--exec-deny-ink-hover: #ffe4e6;
+	--exec-deny-ring: var(--tone-bad-ring);
+	--exec-deny-ring-hover: rgba(251, 113, 133, 0.52);
+	--exec-deny-guard-bg: var(--tone-bad-bg);
+	--exec-deny-guard-ring: var(--tone-bad-ring);
+	--exec-deny-confirm-bg: #dc2626;
+	--exec-deny-confirm-hover: #b91c1c;
+	--exec-deny-confirm-ink: #ffffff;
+
+	--exec-cos-bg: #16202e;
+	--exec-cos-fade: #16202e;
+	--exec-cos-border: rgba(255, 255, 255, 0.09);
+	--exec-cos-rule: var(--tone-accent-hi);
+
+	--exec-nav-dot: var(--tone-warn);
+	--exec-nav-dot-halo: rgba(251, 191, 36, 0.18);
+	--exec-nav-dot-ring: #161f2d;
+
+	/* Executive layout & density tokens (carded defaults for Ocean & Classic; overridden by Report) */
+	--exec-page-max-w: none;
+	--exec-page-gap: 1.5rem;
+	--exec-hero-align: center;
+	--exec-hero-pad-b: 0px;
+	--exec-hero-border: 0px solid transparent;
+	--exec-h1-weight: 600;
+	--exec-h1-tracking: -0.03em;
+	--exec-h1-em-decoration: none;
+	--exec-h1-em-warn: var(--exec-warn);
+	--exec-h1-em-calm: var(--exec-accent-ink);
+	--exec-h1-em-ok: var(--exec-ok);
+	--exec-h1-em-bad: var(--exec-bad);
+	--exec-h1-em-ul-warn: transparent;
+	--exec-h1-em-ul-calm: transparent;
+	--exec-h1-em-ul-ok: transparent;
+	--exec-h1-em-ul-bad: transparent;
+
+	--exec-section-head-display: none;
+	--exec-section-title-size: 1.25rem;
+	--exec-section-title-weight: 600;
+	--exec-section-title-tracking: -0.01em;
+	--exec-section-sub-size: 0.9375rem;
+	--exec-capacity-title-size: 0.96875rem;
+	--exec-capacity-title-leading: 1.3;
+	--exec-capacity-title-weight: 600;
+	--exec-capacity-title-tracking: -0.01em;
+	--exec-capacity-sub-size: 0.78125rem;
+	--exec-spot-title-size: clamp(1.125rem, 1.6vw, 1.375rem);
+	--exec-spot-title-weight: 600;
+	--exec-brief-title-size: 0.96875rem;
+	--exec-brief-title-weight: 600;
+	--exec-brief-title-tracking: -0.01em;
+	--exec-section-gap: 1rem;
+	--exec-stage-gap: 1.25rem;
+	--exec-section-border: 0px solid transparent;
+	--exec-kpi-pad-y: 0px;
+	--exec-section-pad-y: 0px;
+	--exec-time-pad: 1.25rem;
+	--exec-col-divider: 0px solid transparent;
+
+	--exec-panel-bg: var(--exec-surface);
+	--exec-panel-bg-hover: var(--exec-surface-hi);
+	--exec-panel-blur: var(--exec-blur);
+	--exec-panel-shadow: var(--exec-shadow);
+	--exec-panel-shadow-hover: var(--exec-shadow-hi);
+	--exec-panel-radius: 16px;
+
+	--exec-pillar-pad: 1.125rem;
+	--exec-pillar-pad-sm: 1.125rem;
+	--exec-pillar-edge-pad: 1.125rem;
+	--exec-kpi-num-size: 1.625rem;
+	--exec-kpi-num-lh: 1.1;
+	--exec-kpi-num-weight: 650;
+	--exec-kpi-num-tracking: -0.03em;
+
+	--exec-bar-height: 5px;
+	--exec-bar-radius: 999px;
+	--exec-time-bar-height: 10px;
+	--exec-time-bar-radius: 999px;
+
+	--exec-pill-radius: 999px;
+	--exec-pill-ring-ok: inset 0 0 0 1px var(--exec-ok-ring);
+	--exec-pill-ring-warn: inset 0 0 0 1px var(--exec-warn-ring);
+	--exec-pill-ring-bad: inset 0 0 0 1px var(--exec-bad-ring);
+	--exec-pill-ring-muted: inset 0 0 0 1px var(--exec-border);
+
+	--exec-spot-accent-display: block;
+	--exec-spot-pad-sm: 1.25rem;
+	--exec-spot-pad-md: 1.5rem;
+	--exec-spot-pad-xl: 1.5rem;
+	--exec-brief-pad: 1.25rem;
+	--exec-brief-pad-sm: 1.25rem;
+	--exec-memo-bg: var(--exec-cos-bg);
+	--exec-memo-shadow: inset 3px 0 0 var(--exec-cos-rule), inset 0 0 0 1px var(--exec-cos-border);
+	--exec-memo-radius: 12px;
+	--exec-memo-pad: 1rem;
+	--exec-memo-gap: 0.875rem;
+	--exec-memo-item-py: 0px;
+	--exec-memo-first-pt: 0px;
+
+	--exec-lenses-radius: 8px;
+	--exec-lenses-shadow: inset 0 0 0 1px var(--exec-border);
+	--exec-sm-radius: 6px;
+	--exec-ctrl-radius: 8px;
+	--exec-inset-radius: 12px;
+
+	--exec-proj-pad: 1.25rem;
+	--exec-proj-pad-sm: 1.25rem;
+	--exec-proj-edge-pad: 1.25rem;
+	--exec-proj-row-pt: 1.25rem;
+	--exec-proj-row-mt: 0px;
+	--exec-proj-row-pt-md: 1.25rem;
+	--exec-proj-row-mt-md: 0px;
+
+	/* Home below-fold scroll cue tokens */
+	--exec-scroll-hint-bg: var(--exec-bg);
+	--exec-scroll-hint-pill-bg: var(--exec-well);
+	--exec-scroll-hint-ink: var(--exec-body);
+	--exec-scroll-hint-ink-hover: var(--exec-ink);
+
+	/* Command palette / Ask Org AI lighter non-blurred overlay (poc/v6.html:364) */
+	--exec-cmdk-overlay: rgba(0, 0, 0, 0.26);
+
+	/* Release horizon / milestone strip tokens */
+	--exec-horizon-pad: 1rem 1.125rem;
+	--exec-horizon-title-ink: var(--exec-ink);
+	--exec-hor-item-bg: var(--exec-well);
+	--exec-hor-item-bg-hover: var(--exec-surface-hi);
+	--exec-hor-date-bg: var(--exec-bg);
+	--exec-hor-date-month-ink: var(--exec-dim);
+	--exec-hor-date-day-ink: var(--exec-ink);
+
+	/* Sliding side-panel, Assembly, and workspace surface tokens (Prototype Releases 3c4e3541 + 53728c05) */
+	--detail-panel-surface: var(--surface-sunken, var(--exec-bg));
+	--side-panel-surface: var(--detail-panel-surface);
+	--workspace-secondary-surface: var(--exec-well, var(--surface-sunken));
+	--assembly-surface: var(--exec-surface);
+}
+
+/* Report-only vs standard section labels (poc/v6.html:3246-3248) */
+.exec-lbl-rep {
+	display: none;
+}
+
+/* Lighter non-blurred dialog overlay for Command Palette / Ask Org AI */
+[data-slot='dialog-overlay'].exec-cmdk-overlay {
+	background: var(--exec-cmdk-overlay);
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+}
+
+/* Ocean blends the Home scroll cue transparently over its ambient radial canvas */
+html[data-ui-theme='ocean'] {
+	--exec-scroll-hint-bg: transparent;
+	--exec-scroll-hint-pill-bg: rgba(9, 17, 30, 0.88);
+}
+
+/* Shared semantic status pills */
+.t-green {
+	background: var(--tone-ok-bg);
+	color: var(--tone-ok-ink);
+	box-shadow: inset 0 0 0 1px var(--tone-ok-ring);
+}
+
+.t-amber {
+	background: var(--tone-warn-bg);
+	color: var(--tone-warn-ink);
+	box-shadow: inset 0 0 0 1px var(--tone-warn-ring);
+}
+
+.t-red {
+	background: var(--tone-bad-bg);
+	color: var(--tone-bad-ink);
+	box-shadow: inset 0 0 0 1px var(--tone-bad-ring);
+}
+
+/* Canvas base when Executive UI is active */
+.exec-canvas {
+	background-color: var(--exec-bg);
+	color: var(--exec-ink);
+}
+
+/* Wash the top of the sidebar with light; recessed edge shade is Graphite-only (Prototype Release 3c4e3541) */
+@media (min-width: 640px) and (forced-colors: none) {
+	html[data-ui-theme] {
+		--sidebar-top-light: rgb(198 220 248 / 0.085);
+		--page-header-light: rgb(198 220 248 / 0.045);
+	}
+
+	html[data-ui-theme]:not([data-ui-theme='cozy']) aside.exec-sidebar::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		pointer-events: none;
+		background:
+			var(--sidebar-edge-shade, none),
+			radial-gradient(
+				ellipse 110% 330px at 0 -95px,
+				var(--sidebar-top-light),
+				color-mix(in srgb, var(--sidebar-top-light) 45%, transparent) 30%,
+				transparent
+			);
+	}
+
+	html[data-interior-page][data-ui-theme]:not([data-ui-theme='cozy'])
+		:is(.queue-header, .section-header, .activity-header, .project-header) {
+		background-image:
+			linear-gradient(to right, var(--page-header-light), transparent 28rem),
+			var(--page-header-base-image, none);
+	}
+
+	html[data-interior-page][data-ui-theme] .project-header > .ph {
+		background: none;
+	}
+}
+
+/* Match Inbox dropdown menus to Work menus: opaque popover surface without backdrop-blur (Prototype Release 53728c05) */
+[data-slot='dropdown-menu-content'].triage-menu-surface,
+.triage-toolbar [data-slot='dropdown-menu-content'] {
+	background-color: var(--popover);
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+}
+
+/* Executive shared surface & tactile CTA primitives */
+.exec-card {
+	background-color: var(--exec-surface);
+	background-image: var(--exec-panel-sheen);
+	-webkit-backdrop-filter: var(--exec-blur);
+	backdrop-filter: var(--exec-blur);
+	box-shadow: var(--exec-shadow);
+	border-radius: 16px;
+}
+
+.exec-card:hover {
+	background-color: var(--exec-surface-hi);
+	box-shadow: var(--exec-shadow-hi);
+}
+
+.exec-well {
+	background: var(--exec-well);
+	-webkit-backdrop-filter: blur(8px) saturate(145%);
+	backdrop-filter: blur(8px) saturate(145%);
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.14),
+		inset 0 0 0 1px var(--exec-border);
+	border-radius: 11px;
+}
+
+.exec-cta {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	overflow: hidden;
+	isolation: isolate;
+	border-radius: 9px;
+	padding: 0 14px;
+	min-height: 36px;
+	font-size: 0.8125rem;
+	font-weight: 600;
+	color: var(--exec-on-accent);
+	background: var(--exec-cta-bg);
+	box-shadow: var(--exec-cta-shadow);
+	cursor: pointer;
+	transition:
+		transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+		box-shadow 0.2s ease,
+		color 0.16s ease,
+		background-color 0.16s ease;
+}
+
+.exec-cta:hover,
+.exec-cta:focus-visible {
+	transform: var(--exec-cta-hover-lift);
+	box-shadow: var(--exec-cta-shadow-hover);
+}
+
+.exec-cta:active {
+	transform: translateY(0) scale(0.98);
+	transition-duration: 0.08s;
+}
+
+.exec-cta .exec-cta-fill {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	background: var(--exec-cta-fill);
+	transform: scaleX(0);
+	transform-origin: left center;
+	transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+	pointer-events: none;
+}
+
+.exec-cta .exec-cta-sheen {
+	position: absolute;
+	top: -20%;
+	bottom: -20%;
+	left: 0;
+	width: 42%;
+	z-index: 1;
+	background: linear-gradient(
+		90deg,
+		transparent 0%,
+		rgba(255, 255, 255, 0.04) 50%,
+		transparent 100%
+	);
+	transform: translateX(-160%) skewX(-22deg);
+	transition: transform 0s;
+	pointer-events: none;
+}
+
+.exec-cta .exec-cta-inner {
+	position: relative;
+	z-index: 2;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.exec-cta:hover .exec-cta-fill,
+.exec-cta:focus-visible .exec-cta-fill {
+	transform: scaleX(1);
+}
+
+.exec-cta:hover .exec-cta-sheen {
+	transform: translateX(340%) skewX(-22deg);
+	transition: transform 0.62s cubic-bezier(0.22, 1, 0.36, 1) 0.06s;
+}
+
+.exec-cta-glass {
+	min-height: 36px;
+	padding: 0 15px;
+	border-radius: var(--exec-cta-glass-radius);
+	background: var(--exec-cta-glass-bg);
+	-webkit-backdrop-filter: var(--exec-cta-glass-blur);
+	backdrop-filter: var(--exec-cta-glass-blur);
+	color: var(--exec-cta-glass-ink);
+	box-shadow: var(--exec-cta-glass-shadow);
+}
+
+.exec-cta-glass .exec-cta-ico {
+	color: var(--exec-cta-glass-ico);
+	transition: color 0.16s ease;
+}
+
+.exec-cta-glass:hover,
+.exec-cta-glass:focus-visible {
+	background: var(--exec-cta-glass-bg-hover);
+	color: var(--exec-on-accent);
+	box-shadow: var(--exec-cta-glass-shadow-hover);
+}
+
+.exec-cta-glass:hover .exec-cta-ico,
+.exec-cta-glass:focus-visible .exec-cta-ico {
+	color: var(--exec-on-accent);
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+	.exec-cta {
+		min-height: 44px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.exec-cta,
+	.exec-cta .exec-cta-fill,
+	.exec-cta .exec-cta-sheen,
+	.exec-cmdk-bar {
+		transition: none !important;
+	}
+	.exec-cta:hover,
+	.exec-cta:focus-visible,
+	.exec-cta:active,
+	.exec-cmdk-bar:hover {
+		transform: none !important;
+	}
+	[data-slot='dialog-content'],
+	[data-slot='dialog-overlay'] {
+		animation: none !important;
+		transition: none !important;
+	}
+}
+
+/*
+ * Light-scheme readability bridge for existing Tailwind Plus screens (/projects, /work,
+ * /offices, /org-chart, /agents, /chat, /processes) whenever ANY light theme (Report) is active.
+ */
+html.light {
+	background: var(--exec-bg);
+}
+
+html.light .exec-legacy-compat .text-white {
+	color: #0b101b;
+}
+
+html.light .exec-legacy-compat .text-gray-300 {
+	color: #2c3646;
+}
+
+html.light .exec-legacy-compat .text-gray-400 {
+	color: #475569;
+}
+
+html.light .exec-legacy-compat .text-gray-500 {
+	color: #64748b;
+}
+
+html.light .exec-legacy-compat .bg-gray-800 {
+	background-color: #ffffff;
+}
+
+html.light .exec-legacy-compat .bg-gray-900,
+html.light .exec-legacy-compat .bg-gray-950 {
+	background-color: #f9fafc;
+}
+
+html.light .exec-legacy-compat .bg-white\/5 {
+	background-color: rgba(11, 16, 27, 0.04);
+}
+
+html.light .exec-legacy-compat .bg-white\/10 {
+	background-color: rgba(11, 16, 27, 0.07);
+}
+
+html.light .exec-legacy-compat .border-white\/5,
+html.light .exec-legacy-compat .border-white\/10,
+html.light .exec-legacy-compat .divide-white\/5 > :not(:first-child) {
+	border-color: #e2e7ef;
+}
+
+html.light .exec-legacy-compat .ring-white\/5,
+html.light .exec-legacy-compat .ring-white\/10 {
+	--tw-ring-color: #dce2ec;
+}
+
+/* Preserve white text on intentional solid primary buttons inside any light theme */
+html.light .exec-legacy-compat button.bg-indigo-500,
+html.light .exec-legacy-compat button.bg-primary,
+html.light .exec-legacy-compat a.bg-indigo-500,
+html.light .exec-legacy-compat .exec-cta:not(.exec-cta-glass) {
+	color: #ffffff;
+}

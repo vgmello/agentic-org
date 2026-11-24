@@ -37,7 +37,8 @@ for (const width of [1440, 960, 320]) {
 					.poll(() =>
 						opener.evaluate((element) => {
 							const box = element.getBoundingClientRect();
-							const header = document.querySelector('[data-shell-header]')!.getBoundingClientRect();
+							const header = (document.querySelector('header.exec-topbar') ??
+								document.querySelector('[data-shell-header]'))!.getBoundingClientRect();
 							return (
 								box.top >= header.bottom &&
 								box.bottom <= innerHeight &&

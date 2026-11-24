@@ -69,7 +69,7 @@
 	const linkClass =
 		'rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
 	const pre =
-		'mt-2 overflow-x-auto rounded-md bg-shade/20 p-3 font-mono text-xs/5 whitespace-pre-wrap text-fg-secondary ring-1 ring-line ring-inset [overflow-wrap:anywhere]';
+		'mt-2 overflow-x-auto rounded-md bg-surface-sunken p-3 font-mono text-xs/5 whitespace-pre-wrap text-fg-secondary ring-1 ring-line ring-inset [overflow-wrap:anywhere]';
 	const toggle =
 		'inline-flex min-h-9 cursor-pointer items-center gap-x-2 text-sm/6 text-fg-secondary max-[639px]:min-h-11';
 	const checkbox =

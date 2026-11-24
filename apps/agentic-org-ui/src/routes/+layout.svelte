@@ -3,12 +3,14 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { areaCapability } from '$lib/platform/shell/capabilities';
+	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import Unavailable from '$lib/platform/shell/Unavailable.svelte';
 	import SessionInterruptions from '$lib/platform/auth/SessionInterruptions.svelte';
 
 	let { children } = $props();
 	const capability = $derived(areaCapability(page.url.pathname));
 	onMount(() => {
+		uiPrefs.hydrate();
 		document.documentElement.dataset.hydrated = 'true';
 	});
 </script>

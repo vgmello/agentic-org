@@ -250,6 +250,7 @@
 	const valueLink = `${linkClass} inline-flex items-center max-[639px]:min-h-11`;
 	const backClass =
 		'inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11';
+	const actionBtn = `min-h-9 ${mobileButton} [@media(pointer:coarse)]:min-h-11`;
 </script>
 
 <svelte:head><title>{title}</title></svelte:head>
@@ -271,125 +272,131 @@
 >
 	{#snippet children(lookup)}
 		{#if !lookup.found}
-			<PageHeader
-				id="agent-heading"
-				title="Agent not found"
-				back={{ href: AGENT_SETUP_URL, label: 'Agent setup' }}
-				description="{lookup.message} It may have been offboarded, or the link may be incomplete."
-			/>
+			<div class="agent-detail-masthead">
+				<PageHeader
+					id="agent-heading"
+					title="Agent not found"
+					back={{ href: AGENT_SETUP_URL, label: 'Agent setup' }}
+					description="{lookup.message} It may have been offboarded, or the link may be incomplete."
+				/>
+			</div>
 		{:else}
 			{@const d = lookup.detail}
 			{@const hh = h!}
-			<PageHeader
-				id="agent-heading"
-				title={d.name}
-				back={{ href: AGENT_SETUP_URL, label: 'Agent setup' }}
-			>
-				{#snippet description()}
-					<!-- Below 640 px each fact takes its own line, so no separator is left at a line's start. -->
-					<p
-						class="flex flex-col gap-y-1 [overflow-wrap:anywhere] min-[640px]:flex-row min-[640px]:flex-wrap min-[640px]:items-baseline min-[640px]:gap-x-2"
-					>
-						<span>Agent{d.builtIn ? ', built in' : ''}</span>
-						{#if d.role ?? d.roleText}<span aria-hidden="true" class="hidden min-[640px]:inline"
-								>·</span
-							><span>{d.role ?? d.roleText}</span>{/if}
-						<span aria-hidden="true" class="hidden min-[640px]:inline">·</span><span
-							class="font-mono">@{d.handle}</span
+			<div class="agent-detail-masthead">
+				<PageHeader
+					id="agent-heading"
+					title={d.name}
+					back={{ href: AGENT_SETUP_URL, label: 'Agent setup' }}
+				>
+					{#snippet description()}
+						<!-- Below 640 px each fact takes its own line, so no separator is left at a line's start. -->
+						<p
+							class="flex flex-col gap-y-1 [overflow-wrap:anywhere] min-[640px]:flex-row min-[640px]:flex-wrap min-[640px]:items-baseline min-[640px]:gap-x-2"
 						>
-					</p>
-				{/snippet}
-				{#snippet actions()}
-					<Button
-						href={resolve(profileHref(d.memberId) as '/')}
-						variant="outline"
-						class={mobileButton}>View profile</Button
-					>
-					{#if canChange && record}
-						<DropdownMenu>
-							<DropdownMenuTrigger>
-								{#snippet child({ props })}
-									<Button {...props} bind:ref={moreButton} variant="outline" class={mobileButton}
-										>More<span class="sr-only"> actions for {d.name}</span></Button
-									>
-								{/snippet}
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end">
-								{#if d.status === 'paused'}
-									<DropdownMenuItem class="max-[639px]:min-h-11" onSelect={(e) => resume(e)}
-										>Resume</DropdownMenuItem
-									>
-								{:else}
-									<DropdownMenuItem class="max-[639px]:min-h-11" onSelect={() => open('pause')}
-										>Pause…</DropdownMenuItem
-									>
-								{/if}
-								{#if !d.builtIn}
-									<DropdownMenuSeparator />
-									<DropdownMenuItem
-										variant="destructive"
-										class="max-[639px]:min-h-11"
-										onSelect={() => open('offboard')}>Offboard…</DropdownMenuItem
-									>
-								{/if}
-							</DropdownMenuContent>
-						</DropdownMenu>
-					{/if}
-				{/snippet}
-			</PageHeader>
+							<span>Agent{d.builtIn ? ', built in' : ''}</span>
+							{#if d.role ?? d.roleText}<span aria-hidden="true" class="hidden min-[640px]:inline"
+									>·</span
+								><span>{d.role ?? d.roleText}</span>{/if}
+							<span aria-hidden="true" class="hidden min-[640px]:inline">·</span><span
+								class="font-mono">@{d.handle}</span
+							>
+						</p>
+					{/snippet}
+					{#snippet actions()}
+						<Button
+							href={resolve(profileHref(d.memberId) as '/')}
+							variant="outline"
+							class={actionBtn}>View profile</Button
+						>
+						{#if canChange && record}
+							<DropdownMenu>
+								<DropdownMenuTrigger>
+									{#snippet child({ props })}
+										<Button {...props} bind:ref={moreButton} variant="outline" class={actionBtn}
+											>More<span class="sr-only"> actions for {d.name}</span></Button
+										>
+									{/snippet}
+								</DropdownMenuTrigger>
+								<DropdownMenuContent align="end">
+									{#if d.status === 'paused'}
+										<DropdownMenuItem class="max-[639px]:min-h-11" onSelect={(e) => resume(e)}
+											>Resume</DropdownMenuItem
+										>
+									{:else}
+										<DropdownMenuItem class="max-[639px]:min-h-11" onSelect={() => open('pause')}
+											>Pause…</DropdownMenuItem
+										>
+									{/if}
+									{#if !d.builtIn}
+										<DropdownMenuSeparator />
+										<DropdownMenuItem
+											variant="destructive"
+											class="max-[639px]:min-h-11"
+											onSelect={() => open('offboard')}>Offboard…</DropdownMenuItem
+										>
+									{/if}
+								</DropdownMenuContent>
+							</DropdownMenu>
+						{/if}
+					{/snippet}
+				</PageHeader>
+			</div>
 
 			<Section
 				level={3}
 				title="Health"
 				description="From its configuration and the office's last check. Health isn't presence, and it doesn't allow a run."
 			>
-				<div class="px-4 text-sm/6 min-[640px]:px-6 min-[1024px]:px-8" data-testid="health">
-					<p class="flex flex-wrap items-center gap-x-3 gap-y-2">
-						<HealthBadge health={hh} aria-hidden="true" />
-						<span class="sr-only">{healthText(hh)}</span>
-						{#if d.readiness.known}
-							<span class="text-xs/5 text-fg-muted"
-								>Office checked {ageText(d.readiness.checkedAt, now)}</span
-							>
+				<div class="px-4 min-[640px]:px-6 min-[1024px]:px-8" data-testid="health">
+					<div class={['agent-health-card exec-card p-4 text-sm/6 sm:p-5', `is-${hh.kind}`]}>
+						<p class="flex flex-wrap items-center gap-x-3 gap-y-2">
+							<HealthBadge health={hh} aria-hidden="true" />
+							<span class="sr-only">{healthText(hh)}</span>
+							{#if d.readiness.known}
+								<span class="text-xs/5 text-fg-muted"
+									>Office checked {ageText(d.readiness.checkedAt, now)}</span
+								>
+							{/if}
+						</p>
+						{#if hh.kind === 'needs_setup'}
+							<ul role="list" class="mt-3 flex max-w-3xl flex-col gap-3">
+								{#each hh.reasons as reason (reason.code)}
+									<li class="[overflow-wrap:anywhere]">
+										<p class="font-medium text-fg">{reason.text}</p>
+										{#if reason.fix}<p class="text-fg-muted">
+												{#each codeParts(reason.fix) as part, i (i)}{#if part.code}<code
+															class="rounded-sm bg-surface-sunken px-1.5 py-0.5 font-mono text-fg-body ring-1 ring-line-subtle ring-inset"
+															>{part.text}</code
+														>{:else}{part.text}{/if}{/each}
+											</p>{/if}
+									</li>
+								{/each}
+							</ul>
+						{:else if hh.kind === 'paused'}
+							<p class="mt-3 max-w-3xl text-fg-secondary">
+								Paused: {d.name} starts nothing until it's resumed. It keeps its home team and its assignments.
+							</p>
+						{:else if hh.kind === 'unknown'}
+							<p class="mt-3 max-w-3xl text-fg-secondary [overflow-wrap:anywhere]">{hh.why}</p>
+							<p class="max-w-3xl text-fg-muted">
+								Nothing here is known to stop it; it isn't shown as ready until the office says so.
+							</p>
+						{:else}
+							<p class="mt-3 max-w-3xl text-fg-secondary">
+								{d.name} can start when it's called. The office checks again before each turn.
+							</p>
 						{/if}
-					</p>
-					{#if hh.kind === 'needs_setup'}
-						<ul role="list" class="mt-3 max-w-3xl space-y-3">
-							{#each hh.reasons as reason (reason.code)}
-								<li class="[overflow-wrap:anywhere]">
-									<p class="font-medium text-fg">{reason.text}</p>
-									{#if reason.fix}<p class="text-fg-muted">
-											{#each codeParts(reason.fix) as part, i (i)}{#if part.code}<code
-														class="rounded-sm bg-surface-raised px-1 font-mono text-fg-body"
-														>{part.text}</code
-													>{:else}{part.text}{/if}{/each}
-										</p>{/if}
-								</li>
-							{/each}
-						</ul>
-					{:else if hh.kind === 'paused'}
-						<p class="mt-3 max-w-3xl text-fg-secondary">
-							Paused: {d.name} starts nothing until it's resumed. It keeps its home team and its assignments.
-						</p>
-					{:else if hh.kind === 'unknown'}
-						<p class="mt-3 max-w-3xl text-fg-secondary [overflow-wrap:anywhere]">{hh.why}</p>
-						<p class="max-w-3xl text-fg-muted">
-							Nothing here is known to stop it; it isn't shown as ready until the office says so.
-						</p>
-					{:else}
-						<p class="mt-3 max-w-3xl text-fg-secondary">
-							{d.name} can start when it's called. The office checks again before each turn.
-						</p>
-					{/if}
-					{#if d.stopPending}
-						<p class="mt-3 max-w-3xl text-fg-secondary" data-testid="stop-pending">
-							Stop pending: HQ accepted the pause; the office hasn't confirmed the process stopped
-							yet.
-						</p>
-					{/if}
-					{#if d.holds.length}
-						<p class="mt-3 text-fg-muted">Holds: {d.holds.join(' · ')}</p>
-					{/if}
+						{#if d.stopPending}
+							<p class="mt-3 max-w-3xl text-fg-secondary" data-testid="stop-pending">
+								Stop pending: HQ accepted the pause; the office hasn't confirmed the process stopped
+								yet.
+							</p>
+						{/if}
+						{#if d.holds.length}
+							<p class="mt-3 text-fg-muted">Holds: {d.holds.join(' · ')}</p>
+						{/if}
+					</div>
 				</div>
 			</Section>
 
@@ -404,7 +411,7 @@
 				{#snippet actions()}
 					{#if canChange}
 						<Button
-							class="min-w-20 {mobileButton}"
+							class="min-w-20 {actionBtn}"
 							onclick={(e: MouseEvent) => open('execution', e.currentTarget as HTMLElement)}
 							>{d.execution ? 'Edit' : 'Set up execution'}</Button
 						>
@@ -443,7 +450,7 @@
 
 			{#snippet connections()}
 				{#if d.execution && d.execution.connections.length}
-					<ol role="list" class="space-y-2">
+					<ol role="list" class="flex flex-col gap-2">
 						{#each d.execution.connections as c, i (c.id)}
 							<li class="[overflow-wrap:anywhere]">
 								<span class="text-fg-secondary">{i + 1}. {c.name}</span>
@@ -515,7 +522,7 @@
 					{#if canChange}
 						<Button
 							variant="outline"
-							class={mobileButton}
+							class={actionBtn}
 							onclick={(e: MouseEvent) => open('role', e.currentTarget as HTMLElement)}
 							>Change role…</Button
 						>
@@ -592,7 +599,7 @@
 				onCloseAutoFocus={restore}
 			>
 				{#snippet body()}
-					<ul role="list" class="list-disc space-y-1 pl-5">
+					<ul role="list" class="flex list-disc flex-col gap-1 pl-5">
 						{#each shown.lines as line, i (i)}<li>{line}</li>{/each}
 					</ul>
 				{/snippet}
@@ -600,3 +607,26 @@
 		{/if}
 	{/snippet}
 </Loaded>
+
+<style>
+	.agent-detail-masthead :global(h2) {
+		font-size: 1.25rem;
+		line-height: 1.75rem;
+		letter-spacing: -0.02em;
+	}
+	:global(html[data-ui-theme^='report']) .agent-detail-masthead :global(header) {
+		border-bottom: 1.5px solid var(--report-masthead-rule);
+	}
+	.agent-health-card {
+		border-left: 3px solid var(--exec-border-hi);
+	}
+	.agent-health-card.is-ready {
+		border-left-color: var(--tone-ok);
+	}
+	.agent-health-card.is-needs_setup {
+		border-left-color: var(--tone-warn);
+	}
+	.agent-health-card.is-unknown {
+		border-left-color: var(--tone-accent);
+	}
+</style>

@@ -32,14 +32,24 @@ export interface InboxItem {
 	why: string;
 	recommendation?: string;
 	created_at: string;
+	/** True when the backing gateway omitted a recorded timestamp and the adapter filled in the read time. */
+	created_at_inferred?: boolean;
 	/** When it lapses, when the source says so. */
 	expires_at?: string;
 	actions: InboxAction[];
+	/** Optional domain-supplied primary approval button label; defaults to "Approve" when omitted. */
+	approve_label?: string;
 	/** The options of a decision. */
 	choices?: { id: string; label: string }[];
 	/** Where the item's subject lives, for Open. */
 	open?: { path: string; label: string };
-	state: 'open' | 'handled';
+	/** Whether the item's backing source supports snooze/un-snooze (`TASK-81`); defaults to true when omitted. */
+	snoozeable?: boolean;
+	state: 'open' | 'snoozed' | 'handled';
+	/** RFC 3339 timestamp when a snoozed item returns to the open inbox (`TASK-81`). */
+	snoozed_until?: string;
+	/** Optional snooze note recorded when deferring the item (`TASK-81`). */
+	snooze_note?: string;
 	handled?: { outcome: string; at: string; by?: string };
 }
 
@@ -51,7 +61,8 @@ export type InboxRequest =
 	| { type: 'choose'; choice: string }
 	| { type: 'dismiss' };
 
-export type InboxTab = 'all' | 'approvals' | 'questions' | 'decisions' | 'problems' | 'handled';
+export type InboxTab =
+	'all' | 'approvals' | 'questions' | 'decisions' | 'problems' | 'snoozed' | 'handled';
 
 export const TABS: { id: InboxTab; label: string }[] = [
 	{ id: 'all', label: 'All' },
@@ -59,6 +70,7 @@ export const TABS: { id: InboxTab; label: string }[] = [
 	{ id: 'questions', label: 'Questions' },
 	{ id: 'decisions', label: 'Decisions' },
 	{ id: 'problems', label: 'Problems' },
+	{ id: 'snoozed', label: 'Snoozed' },
 	{ id: 'handled', label: 'Handled' }
 ];
 

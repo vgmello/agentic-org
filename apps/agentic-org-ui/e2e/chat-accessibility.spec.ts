@@ -159,10 +159,10 @@ for (const panel of ['thread', 'members'] as const) {
 }
 
 for (const [width, inline] of [
-	[1055, false],
-	[1056, true]
+	[1031, false],
+	[1032, true]
 ] as const) {
-	test(`CHAT-1 BUG-49: the conversation list is ${inline ? 'inline' : 'modal'} at content width ${width - 288}`, async ({
+	test(`CHAT-1 BUG-49: the conversation list is ${inline ? 'inline' : 'modal'} at content width ${width - 264}`, async ({
 		page
 	}) => {
 		await page.setViewportSize({ width, height: 720 });
@@ -175,7 +175,7 @@ for (const [width, inline] of [
 			await expect(toggle).toBeVisible();
 			await expect(side(page)).toBeHidden();
 		}
-		await shot(page, `chat-sidebar-content-${width - 288}`);
+		await shot(page, `chat-sidebar-content-${width - 264}`);
 	});
 }
 

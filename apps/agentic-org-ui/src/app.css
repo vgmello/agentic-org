@@ -2,6 +2,7 @@
 @import 'tw-animate-css';
 @import 'shadcn-svelte/tailwind.css';
 @import '@fontsource-variable/inter';
+@import './lib/styles/themes/index.css';
 
 /* The app is dark only: <html class="dark"> is set in app.html. Tailwind Plus markup uses its
    `dark:` classes as written. */
@@ -30,6 +31,8 @@
 	--surface-raised: color-mix(in oklab, var(--tint) 5%, transparent);
 	/* chips, secondary buttons, stronger hover */
 	--surface-overlay: color-mix(in oklab, var(--tint) 10%, transparent);
+	/* unfilled progress and meter bar tracks (overridden per theme) */
+	--bar-track: rgba(148, 163, 184, 0.2);
 
 	/* Lines */
 	/* row and header dividers */
@@ -110,7 +113,7 @@
 	--accent-foreground: var(--fg);
 	--destructive: var(--danger);
 	--border: color-mix(in srgb, var(--tint) 10%, transparent);
-	--input: color-mix(in srgb, var(--tint) 10%, transparent);
+	--input: var(--field-border);
 	--radius: 0.5rem;
 	--sidebar: color-mix(in srgb, var(--shade) 10%, transparent);
 	--sidebar-foreground: var(--fg);
@@ -138,6 +141,7 @@ html {
 	--color-shade: var(--shade);
 	--color-surface-raised: var(--surface-raised);
 	--color-surface-overlay: var(--surface-overlay);
+	--color-bar-track: var(--bar-track);
 	--color-line-subtle: var(--line-subtle);
 	--color-line: var(--line);
 	--color-line-strong: var(--line-strong);
@@ -225,6 +229,8 @@ html {
 	}
 	body {
 		@apply bg-background text-foreground;
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
 	}
 	html {
 		@apply font-sans;

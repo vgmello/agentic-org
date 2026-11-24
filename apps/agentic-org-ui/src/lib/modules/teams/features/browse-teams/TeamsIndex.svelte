@@ -31,6 +31,19 @@
 	const active = $derived((teams.data ?? []).filter((t) => t.status === 'active'));
 	const archived = $derived((teams.data ?? []).filter((t) => t.status === 'archived'));
 	const rows = $derived(indentTeams(active));
+	const summary = $derived.by(() => {
+		let people = 0;
+		let agents = 0;
+		let topLevel = 0;
+		const seenProjects: Record<string, true> = {};
+		for (const row of rows) {
+			if (row.depth === 0) topLevel++;
+			people += row.team.people;
+			agents += row.team.agents;
+			for (const p of row.team.projects) seenProjects[p.id] = true;
+		}
+		return { people, agents, topLevel, projects: Object.keys(seenProjects).length };
+	});
 	const session = $derived(sessionFor(orgApi, organizationId));
 	let dialogs = $state<ReturnType<typeof TeamDialogs>>();
 	let justAdded = $state<string | undefined>();
@@ -68,26 +81,29 @@
 	const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 	const GRID =
 		'min-[1024px]:grid-cols-[minmax(0,1fr)_11rem_4.5rem_4.5rem_minmax(0,16rem)_2.25rem] min-[1024px]:items-center min-[1024px]:gap-x-4';
+	const actionBtn = 'min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11';
 </script>
 
-<PageHeader
-	title="Teams"
-	count={active.length || undefined}
-	countLabel="teams"
-	description="Who works in which team. Each team can sit under another; a team's lead manages everything under it."
->
-	{#snippet actions()}
-		<Button href={resolve(HIRE_REQUESTS_URL as '/')} variant="outline" class="max-[639px]:h-11"
-			>Hire requests</Button
-		>
-		<Button href={resolve(hireUrl() as '/')} variant="outline" class="max-[639px]:h-11"
-			>Hire an agent</Button
-		>
-		<Button class="max-[639px]:h-11" onclick={() => dialogs?.openNew()}>
-			<MiniIcon name="plus" class="-ml-0.5 size-5" /> New team
-		</Button>
-	{/snippet}
-</PageHeader>
+<div class="teams-masthead">
+	<PageHeader
+		title="Teams"
+		count={active.length || undefined}
+		countLabel="teams"
+		description="Who works in which team. Each team can sit under another; a team's lead manages everything under it."
+	>
+		{#snippet actions()}
+			<Button href={resolve(HIRE_REQUESTS_URL as '/')} variant="outline" class={actionBtn}
+				>Hire requests</Button
+			>
+			<Button href={resolve(hireUrl() as '/')} variant="outline" class={actionBtn}
+				>Hire an agent</Button
+			>
+			<Button class={actionBtn} onclick={() => dialogs?.openNew()}>
+				<MiniIcon name="plus" class="-ml-0.5 size-5" /> New team
+			</Button>
+		{/snippet}
+	</PageHeader>
+</div>
 
 <Loaded
 	resource={teams}
@@ -97,122 +113,174 @@
 	emptyTitle="No teams yet"
 	emptyDescription="Every organization starts with its top-level team. If none shows here, HQ hasn't sent the organization's teams yet."
 >
-	<!-- At 1024 px and wider the facts line up in columns, so teams can be compared down the page. -->
-	<div
-		aria-hidden="true"
-		class="hidden border-b border-line px-8 py-3 text-xs/5 font-semibold text-fg-muted min-[1024px]:grid {GRID}"
-	>
-		<span>Team</span><span>Lead</span><span class="text-right">People</span><span class="text-right"
-			>Agents</span
-		><span>Projects</span><span></span>
-	</div>
-	<ul role="list" class="divide-y divide-line-subtle" aria-label="Teams, as a tree">
-		{#each rows as { team, depth, children } (team.id)}
-			<li
-				class="relative flex flex-wrap items-start gap-x-3 px-4 py-4 transition-colors duration-150 min-[640px]:px-6 min-[1024px]:grid min-[1024px]:px-8 {GRID} {justAdded ===
-				team.id
-					? 'bg-primary/10'
-					: ''}"
-				data-team={team.id}
-				style:--indent={depth > 0 ? `${Math.min(depth, 6) * 1.5 + 0.75}rem` : '0rem'}
+	<div class="flex flex-col gap-5 px-4 py-5 min-[640px]:px-6 min-[1024px]:px-8">
+		{#if active.length > 0}
+			<section
+				aria-label="Teams summary"
+				class="teams-kpi-strip grid grid-cols-1 gap-3 min-[640px]:grid-cols-2 min-[1024px]:grid-cols-4"
 			>
-				<div class="flex min-w-0 flex-1 basis-48 items-baseline gap-x-3">
-					{#if depth > 0}<span
-							aria-hidden="true"
-							class="flex shrink-0 justify-end self-center"
-							style:width="{Math.min(depth, 6) * 1.5}rem"
-							><span class="h-px w-3 bg-tint/20"></span></span
-						>{/if}
-					<p class="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm/6">
-						<a
-							href={resolve(`/teams/${team.id}` as '/')}
-							data-team-link={team.id}
-							class="rounded-sm font-semibold text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
-							><span class="absolute inset-0" aria-hidden="true"></span>{team.name}<span
-								class="sr-only"
-								>, level {depth + 1}{children
-									? `, ${plural(children, 'team', 'teams')} under it`
-									: ''}</span
-							></a
-						>
-						{#if team.ref}<span class="font-mono text-xs/5 text-fg-muted">{team.ref}</span>{/if}
+				<div class="teams-kpi-tile flex flex-col gap-1">
+					<span class="teams-kpi-label">Active teams</span>
+					<p class="teams-kpi-num">{active.length}</p>
+					<p class="text-xs/5 text-fg-muted tabular-nums">
+						{summary.topLevel} top-level{archived.length > 0
+							? ` · ${archived.length} archived`
+							: ''}
 					</p>
 				</div>
-				<div
-					class="relative shrink-0 min-[1024px]:col-start-6 min-[1024px]:row-start-1 min-[1024px]:-my-1.5"
-				>
-					<TeamMenu {team} onaction={(action, t) => dialogs?.open(action, t)} />
+				<div class="teams-kpi-tile flex flex-col gap-1">
+					<span class="teams-kpi-label inline-flex items-center gap-1.5">
+						<span class="t-dot dot-ok" aria-hidden="true"></span>People
+					</span>
+					<p class="teams-kpi-num">{summary.people}</p>
+					<p class="text-xs/5 text-fg-muted">Home-team members</p>
 				</div>
-				<p
-					class="-mt-2 flex w-full flex-wrap gap-x-2 pl-(--indent) text-xs/5 text-fg-muted min-[1024px]:contents min-[1024px]:text-sm/6"
-				>
-					<!-- The spaces must be mustaches: Svelte trims an element's leading whitespace. -->
-					<!-- eslint-disable svelte/no-useless-mustaches -->
-					<span class="min-[1024px]:text-fg-secondary [overflow-wrap:anywhere]"
-						>{team.lead ? team.lead.name : 'No lead'}<span class="sr-only">{' '}leads it</span><span
-							class="min-[1024px]:hidden">{' '}leads</span
-						></span
+				<div class="teams-kpi-tile flex flex-col gap-1">
+					<span class="teams-kpi-label inline-flex items-center gap-1.5">
+						<span class="t-dot dot-accent" aria-hidden="true"></span>Agents
+					</span>
+					<p class="teams-kpi-num">{summary.agents}</p>
+					<p class="text-xs/5 text-fg-muted">Assigned across teams</p>
+				</div>
+				<div class="teams-kpi-tile flex flex-col gap-1">
+					<span class="teams-kpi-label">Projects</span>
+					<p class="teams-kpi-num">{summary.projects}</p>
+					<p class="text-xs/5 text-fg-muted">Owned or contributed</p>
+				</div>
+			</section>
+		{/if}
+
+		<!-- At 1024 px and wider the facts line up in columns, so teams can be compared down the page. -->
+		<div class="exec-card overflow-hidden">
+			<div
+				aria-hidden="true"
+				class="hidden border-b border-line px-6 py-3 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase min-[1024px]:grid {GRID}"
+			>
+				<span>Team</span><span>Lead</span><span class="text-right">People</span><span
+					class="text-right">Agents</span
+				><span>Projects</span><span></span>
+			</div>
+			<ul role="list" class="divide-y divide-line-subtle" aria-label="Teams, as a tree">
+				{#each rows as { team, depth, children } (team.id)}
+					<li
+						class="relative flex flex-wrap items-start gap-x-3 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:grid {GRID} {justAdded ===
+						team.id
+							? 'bg-primary/10'
+							: ''}"
+						data-team={team.id}
+						style:--depth={Math.min(depth, 6)}
+						style:--tree-step={depth > 0 ? 'min(calc(var(--depth) * 1.5rem), 24%)' : '0rem'}
+						style:--indent={depth > 0 ? 'min(calc(var(--depth) * 1.5rem + 0.75rem), 28%)' : '0rem'}
 					>
-					<span aria-hidden="true" class="min-[1024px]:hidden">·</span>
-					<span class="tabular-nums min-[1024px]:text-right min-[1024px]:text-fg-secondary"
-						>{team.people}<span class="min-[1024px]:sr-only"
-							>{' '}{team.people === 1 ? 'person' : 'people'}</span
-						></span
-					>
-					<span aria-hidden="true" class="min-[1024px]:hidden">·</span>
-					<span class="tabular-nums min-[1024px]:text-right min-[1024px]:text-fg-secondary"
-						>{team.agents}<span class="min-[1024px]:sr-only"
-							>{' '}{team.agents === 1 ? 'agent' : 'agents'}</span
-						></span
-					>
-					<!-- eslint-enable svelte/no-useless-mustaches -->
-				</p>
-				{#if team.projects.length > 0}
-					<ul
-						role="list"
-						class="relative mt-2 flex w-full flex-wrap gap-2 pl-(--indent) min-[1024px]:mt-0 min-[1024px]:pl-0 min-[1024px]:w-auto"
-						aria-label="Projects of {team.name}"
-					>
-						{#each team.projects as p (p.id)}
-							<li>
+						<div class="flex min-w-0 flex-1 basis-48 items-baseline gap-x-3">
+							{#if depth > 0}<span
+									aria-hidden="true"
+									class="flex shrink-0 justify-end self-center"
+									style:width="var(--tree-step)"><span class="h-px w-3 bg-line-strong"></span></span
+								>{/if}
+							<p class="flex min-w-0 flex-wrap items-center gap-x-2 text-sm/6">
 								<a
-									href={resolve(`/projects/${p.id}` as '/')}
-									class="relative inline-flex min-h-6 items-center gap-x-1.5 rounded-md bg-surface-raised px-2 text-xs/5 text-fg-secondary ring-1 ring-line ring-inset hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
-									>{p.name}<span class="text-fg-muted"
-										>· {p.role === 'owner' ? 'Owner' : 'Contributor'}</span
+									href={resolve(`/teams/${team.id}` as '/')}
+									data-team-link={team.id}
+									class="rounded-sm font-semibold text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
+									><span class="absolute inset-0" aria-hidden="true"></span>{team.name}<span
+										class="sr-only"
+										>, level {depth + 1}{children
+											? `, ${plural(children, 'team', 'teams')} under it`
+											: ''}</span
 									></a
 								>
-							</li>
-						{/each}
-					</ul>
-				{:else}
-					<span class="hidden text-sm/6 text-fg-muted min-[1024px]:block">None</span>
-				{/if}
-			</li>
-		{/each}
-	</ul>
-	{#if archived.length > 0}
-		<details class="border-t border-line-subtle px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
-			<summary
-				class="cursor-pointer rounded-sm text-sm/6 font-semibold text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-			>
-				Archived teams <span class="font-normal text-fg-muted">{archived.length}</span>
-			</summary>
-			<ul role="list" class="mt-2 space-y-2">
-				{#each archived as team (team.id)}
-					<li class="flex flex-wrap items-center gap-x-2 text-sm/6 text-fg-secondary">
-						<a
-							href={resolve(`/teams/${team.id}` as '/')}
-							class="rounded-sm hover:text-fg focus-visible:outline-2 focus-visible:outline-focus"
-							>{team.name}</a
+								{#if team.ref}<span
+										class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[11px]/4 text-fg-muted ring-1 ring-line ring-inset"
+										>{team.ref}</span
+									>{/if}
+							</p>
+						</div>
+						<div
+							class="relative shrink-0 min-[1024px]:col-start-6 min-[1024px]:row-start-1 min-[1024px]:-my-1.5"
 						>
-						{#if team.ref}<span class="font-mono text-xs/5 text-fg-muted">{team.ref}</span>{/if}
-						<StatusPill label="Archived" />
+							<TeamMenu {team} onaction={(action, t) => dialogs?.open(action, t)} />
+						</div>
+						<p
+							class="-mt-2 flex w-full flex-wrap gap-x-2 pl-(--indent) text-xs/5 text-fg-muted min-[1024px]:contents min-[1024px]:text-sm/6"
+						>
+							<!-- The spaces must be mustaches: Svelte trims an element's leading whitespace. -->
+							<!-- eslint-disable svelte/no-useless-mustaches -->
+							<span class="min-[1024px]:text-fg-secondary [overflow-wrap:anywhere]"
+								>{team.lead ? team.lead.name : 'No lead'}<span class="sr-only">{' '}leads it</span
+								><span class="min-[1024px]:hidden">{' '}leads</span></span
+							>
+							<span aria-hidden="true" class="min-[1024px]:hidden">·</span>
+							<span class="tabular-nums min-[1024px]:text-right min-[1024px]:text-fg-secondary"
+								>{team.people}<span class="min-[1024px]:sr-only"
+									>{' '}{team.people === 1 ? 'person' : 'people'}</span
+								></span
+							>
+							<span aria-hidden="true" class="min-[1024px]:hidden">·</span>
+							<span class="tabular-nums min-[1024px]:text-right min-[1024px]:text-fg-secondary"
+								>{team.agents}<span class="min-[1024px]:sr-only"
+									>{' '}{team.agents === 1 ? 'agent' : 'agents'}</span
+								></span
+							>
+							<!-- eslint-enable svelte/no-useless-mustaches -->
+						</p>
+						{#if team.projects.length > 0}
+							<ul
+								role="list"
+								class="relative mt-2 flex w-full flex-wrap gap-2 pl-(--indent) min-[1024px]:mt-0 min-[1024px]:w-auto min-[1024px]:pl-0"
+								aria-label="Projects of {team.name}"
+							>
+								{#each team.projects as p (p.id)}
+									<li class="max-w-full min-w-0">
+										<a
+											href={resolve(`/projects/${p.id}` as '/')}
+											class={[
+												'relative inline-flex min-h-6 max-w-full min-w-0 flex-wrap items-center gap-x-1.5 rounded-xl px-2.5 py-0.5 text-xs/5 font-medium whitespace-normal [overflow-wrap:anywhere] hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11',
+												p.role === 'owner'
+													? 'team-proj-owner'
+													: 'bg-surface-raised text-fg-secondary ring-1 ring-line ring-inset'
+											]}
+											>{p.name}<span
+												class="min-w-0 shrink whitespace-normal [overflow-wrap:anywhere] opacity-80"
+												>· {p.role === 'owner' ? 'Owner' : 'Contributor'}</span
+											></a
+										>
+									</li>
+								{/each}
+							</ul>
+						{:else}
+							<span class="hidden text-sm/6 text-fg-muted min-[1024px]:block">None</span>
+						{/if}
 					</li>
 				{/each}
 			</ul>
-		</details>
-	{/if}
+		</div>
+
+		{#if archived.length > 0}
+			<details class="exec-card overflow-hidden px-4 py-3.5 min-[640px]:px-6">
+				<summary
+					class="cursor-pointer rounded-sm text-sm/6 font-semibold text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+				>
+					Archived teams <span class="font-normal text-fg-muted tabular-nums"
+						>{archived.length}</span
+					>
+				</summary>
+				<ul role="list" class="mt-3 flex flex-col gap-2">
+					{#each archived as team (team.id)}
+						<li class="flex flex-wrap items-center gap-x-2 text-sm/6 text-fg-secondary">
+							<a
+								href={resolve(`/teams/${team.id}` as '/')}
+								class="rounded-sm hover:text-fg focus-visible:outline-2 focus-visible:outline-focus"
+								>{team.name}</a
+							>
+							{#if team.ref}<span class="font-mono text-xs/5 text-fg-muted">{team.ref}</span>{/if}
+							<StatusPill label="Archived" />
+						</li>
+					{/each}
+				</ul>
+			</details>
+		{/if}
+	</div>
 </Loaded>
 
 <TeamDialogs
@@ -229,3 +297,80 @@
 		);
 	}}
 />
+
+<style>
+	.teams-masthead :global(h2) {
+		font-size: 1.25rem;
+		line-height: 1.75rem;
+		letter-spacing: -0.02em;
+	}
+	:global(html[data-ui-theme^='report']) .teams-masthead :global(header) {
+		border-bottom: 1.5px solid var(--report-masthead-rule);
+	}
+	.teams-kpi-tile {
+		background: var(--exec-panel-bg);
+		-webkit-backdrop-filter: var(--exec-panel-blur);
+		backdrop-filter: var(--exec-panel-blur);
+		box-shadow: var(--exec-panel-shadow);
+		border-radius: var(--exec-panel-radius);
+		padding: 1rem 1.125rem;
+		min-width: 0;
+	}
+	.teams-kpi-label {
+		font-size: 0.7rem;
+		font-weight: 650;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--exec-muted);
+	}
+	.teams-kpi-num {
+		font-size: 1.5rem;
+		line-height: 1.15;
+		font-weight: 700;
+		letter-spacing: -0.03em;
+		color: var(--exec-ink);
+		font-variant-numeric: tabular-nums;
+	}
+	.t-dot {
+		width: 0.4375rem;
+		height: 0.4375rem;
+		border-radius: 999px;
+		flex: none;
+	}
+	.dot-ok {
+		background: var(--tone-ok);
+	}
+	.dot-accent {
+		background: var(--tone-accent);
+	}
+	.team-proj-owner {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+	:global(html[data-ui-theme^='report']) .teams-kpi-strip {
+		gap: 0;
+		border-bottom: 1px solid var(--report-rule);
+		padding-bottom: 0.75rem;
+	}
+	:global(html[data-ui-theme^='report']) .teams-kpi-tile {
+		padding: 0.625rem 0;
+	}
+	:global(html[data-ui-theme^='report']) .teams-kpi-tile + .teams-kpi-tile {
+		border-top: 1px solid var(--report-rule-subtle);
+	}
+	@media (min-width: 1024px) {
+		:global(html[data-ui-theme^='report']) .teams-kpi-tile {
+			padding: 0.5rem 1.25rem;
+			border-top: 0;
+			border-left: 1px solid var(--report-rule-subtle);
+		}
+		:global(html[data-ui-theme^='report']) .teams-kpi-tile:first-child {
+			border-left: 0;
+			padding-left: 0;
+		}
+		:global(html[data-ui-theme^='report']) .teams-kpi-tile + .teams-kpi-tile {
+			border-top: 0;
+		}
+	}
+</style>

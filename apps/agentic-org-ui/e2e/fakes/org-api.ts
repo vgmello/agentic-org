@@ -3,10 +3,12 @@ export type { MockStorage } from '../../src/lib/modules/organization/mock';
 export { createMockOrg } from '../../src/lib/modules/organization/mock';
 import { createMockOrg } from '../../src/lib/modules/organization/mock';
 import { officeApi } from '$lib/modules/offices/office-api';
+import { POC_HQ_OFFICE_ID, POC_ORG_ID } from './mock-mode';
+import { pocOrgSnapshot } from './poc-dataset';
 
 let failedOnce = false;
 const scenario = () => new URLSearchParams(location.search).get('org');
-export const orgApi = createMockOrg(
+const base = createMockOrg(
 	async (organizationId) => {
 		const connection = (await officeApi.connections()).find(
 			(c) => c.organization.id === organizationId
@@ -22,3 +24,12 @@ export const orgApi = createMockOrg(
 		delayMs: () => (scenario() === 'slow' ? 2500 : 0)
 	}
 );
+export const orgApi: typeof base = {
+	...base,
+	async view(organizationId) {
+		if (organizationId === POC_ORG_ID) {
+			return { snapshot: structuredClone(pocOrgSnapshot(POC_HQ_OFFICE_ID)), sample: true };
+		}
+		return base.view(organizationId);
+	}
+};

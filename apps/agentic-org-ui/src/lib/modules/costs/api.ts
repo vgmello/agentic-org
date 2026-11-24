@@ -1,4 +1,6 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { createHttpSubscriptionUsageApi } from './subscription-http-api';
 import type {
 	AgentBudgetAction,
 	AgentBudgetDraft,
@@ -18,6 +20,10 @@ import type {
 	ProjectBreakdownKey,
 	ProjectInsights,
 	ProjectInvestment,
+	SubscriptionCollectResult,
+	SubscriptionCredentialDraft,
+	SubscriptionUsageCredential,
+	SubscriptionUsageOverview,
 	UsageExportResult,
 	UsageRecordPage
 } from './types';
@@ -113,10 +119,39 @@ export interface CostsApi {
 		organizationId: string,
 		operationId: string
 	): Promise<AgentBudgetOperationOutcome>;
+	/** Owner-scoped provider-reported subscription model usage snapshots (TASK-79). */
+	subscriptionUsage(organizationId: string): Promise<SubscriptionUsageOverview>;
+	/** Trigger authenticated collection for one or all active provider subscriptions (TASK-79). */
+	collectSubscriptionUsage(
+		organizationId: string,
+		options?: { connectionId?: string; timeZone?: string }
+	): Promise<SubscriptionCollectResult>;
+	/** Store a wrapped private usage-API credential outside org Git (TASK-79). */
+	setSubscriptionUsageCredential(
+		organizationId: string,
+		draft: SubscriptionCredentialDraft
+	): Promise<SubscriptionUsageCredential>;
+	/** Revoke a private usage-API credential from office storage (TASK-79). */
+	revokeSubscriptionUsageCredential(
+		organizationId: string,
+		connectionId: string
+	): Promise<SubscriptionUsageCredential>;
 }
 
-// The web API does not serve costs yet: every call refuses, and the page says so.
-// Under `bun run dev:mock`, e2e/fakes/modules/costs.ts stands in for this file.
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewaySubscriptionUsageApi = createHttpSubscriptionUsageApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	}
+});
+
+// Ledger/price/budget HTTP adapters are not wired yet; subscription usage (TASK-79) is wired to the
+// authenticated gateway and fails closed when signed out. Under `bun run dev:mock`,
+// `e2e/fakes/modules/costs.ts` stands in for this file.
 export const costsApi: CostsApi = {
 	prices: unavailableCall,
 	addPrice: unavailableCall,
@@ -133,5 +168,21 @@ export const costsApi: CostsApi = {
 	memberRecords: unavailableCall,
 	setAgentBudget: unavailableCall,
 	agentBudgetAction: unavailableCall,
-	agentBudgetOperation: unavailableCall
+	agentBudgetOperation: unavailableCall,
+	subscriptionUsage: (organizationId) =>
+		signedInSession()
+			? gatewaySubscriptionUsageApi.subscriptionUsage(organizationId)
+			: unavailableCall(),
+	collectSubscriptionUsage: (organizationId, options) =>
+		signedInSession()
+			? gatewaySubscriptionUsageApi.collectSubscriptionUsage(organizationId, options)
+			: unavailableCall(),
+	setSubscriptionUsageCredential: (organizationId, draft) =>
+		signedInSession()
+			? gatewaySubscriptionUsageApi.setSubscriptionUsageCredential(organizationId, draft)
+			: unavailableCall(),
+	revokeSubscriptionUsageCredential: (organizationId, connectionId) =>
+		signedInSession()
+			? gatewaySubscriptionUsageApi.revokeSubscriptionUsageCredential(organizationId, connectionId)
+			: unavailableCall()
 };

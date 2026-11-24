@@ -529,3 +529,109 @@ export interface UsageExportResult {
 	records: UsageRecord[];
 	coverage: Coverage;
 }
+
+// ---- Subscription Model Usage (TASK-79: provider-reported total, daily, weekly & short-term usage) ---------------
+
+/** Collection health status for one provider subscription connection (`TASK-79`). */
+export type SubscriptionUsageStatus =
+	'ok' | 'auth_required' | 'unavailable' | 'unsupported' | 'never_collected' | 'unknown';
+
+/** Which private office-local credential authenticated a subscription usage collection (`TASK-79`). */
+export type SubscriptionUsageAuthSource =
+	'none' | 'dedicated_usage_credential' | 'enrolled_subscription_credential' | 'unknown';
+
+/**
+ * Provider-reported usage metrics for one window (`total`, `daily`, `weekly`, or optional `shortTerm`).
+ * Every counter is nullable: `null` means unknown/not reported by the provider, never fabricated as zero.
+ */
+export interface SubscriptionUsageWindow {
+	startsAt?: string;
+	endsAt?: string;
+	resetsAt?: string;
+	/** Provider-reported window duration in seconds (e.g. `18000` for 5h, `86400` for 24h, `604800` for 7d). */
+	windowSeconds?: number;
+	/** Utilization percentage in basis points (`0..=10000`, i.e. `0.00%..=100.00%`). */
+	utilizationBps?: number | null;
+	requests?: number | null;
+	inputTokens?: number | null;
+	outputTokens?: number | null;
+	cacheReadTokens?: number | null;
+	cacheWriteTokens?: number | null;
+	totalTokens?: number | null;
+}
+
+/** Total, daily, weekly, and optional short-term rolling provider-side usage for one model (`TASK-79`). */
+export interface SubscriptionModelUsage {
+	model: string;
+	total: SubscriptionUsageWindow;
+	daily: SubscriptionUsageWindow;
+	weekly: SubscriptionUsageWindow;
+	/** Optional sub-daily rolling window (e.g. 5h quota) kept distinct from 24h daily. */
+	shortTerm?: SubscriptionUsageWindow;
+}
+
+/** Persisted and live-enriched subscription usage snapshot for one provider connection (`TASK-79`). */
+export interface SubscriptionUsageSnapshot {
+	connectionId: string;
+	connectionKey: string;
+	connectionName: string;
+	providerType: string;
+	subscriptionIdentity?: string;
+	officeId: string;
+	status: SubscriptionUsageStatus;
+	authSource: SubscriptionUsageAuthSource;
+	hasUsageCredential: boolean;
+	hasEnrolledCredential: boolean;
+	accountHint?: string;
+	/** RFC 3339 timestamp of the most recent collection attempt. */
+	collectedAt?: string;
+	/** RFC 3339 timestamp when `models` were last successfully collected (`ok`). */
+	lastOkCollectedAt?: string;
+	freshUntil?: string;
+	stale: boolean;
+	issueCode?: string;
+	message?: string;
+	/** Always `false`: distinguishes provider subscription usage from API-equivalent USD cost estimates. */
+	isApiEquivalentEstimate: false;
+	models: SubscriptionModelUsage[];
+}
+
+/** Owner-scoped list of persisted subscription model usage snapshots and deduplicated totals (`TASK-79`). */
+export interface SubscriptionUsageOverview {
+	snapshots: SubscriptionUsageSnapshot[];
+	totalsByModel: SubscriptionModelUsage[];
+	collectedAsOf?: string;
+	nextCursor?: string;
+	nextTotalsCursor?: string;
+	/** True when any subscription was excluded (stale/non-ok/duplicate) or had missing counters. */
+	partialTotals: boolean;
+	excludedSnapshotCount: number;
+	/** Always `false`: distinguishes provider subscription usage from API-equivalent USD cost estimates. */
+	isApiEquivalentEstimate: false;
+}
+
+/** Non-secret metadata for a connection's dedicated usage-collection credential (`TASK-79`). */
+export interface SubscriptionUsageCredential {
+	connectionId: string;
+	officeId: string;
+	configured: boolean;
+	configuredAt?: string;
+	expiresAt?: string;
+	accountHint?: string;
+}
+
+/** Request to store a private usage-API credential outside org Git (`TASK-79`). */
+export interface SubscriptionCredentialDraft {
+	connectionId: string;
+	secret: string;
+	expiresAt?: string;
+	accountHint?: string;
+	expectedOrigin?: string;
+}
+
+/** Result of triggering authenticated provider usage collection (`TASK-79`). */
+export interface SubscriptionCollectResult {
+	snapshots: SubscriptionUsageSnapshot[];
+	collectedAt: string;
+	deferredConnectionIds?: string[];
+}

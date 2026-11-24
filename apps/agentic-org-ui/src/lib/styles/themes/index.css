@@ -1,0 +1,16 @@
+/*
+ * Agentic Org — Theme Registry Entrypoint
+ *
+ * To add a new theme:
+ *   1. Create `themes/<id>.css` scoped to `html[data-ui-theme='<id>']` and `.swatch-<id>`.
+ *   2. Add `@import './<id>.css';` below.
+ *   3. Register its metadata in `src/lib/platform/shell/ui-preferences.svelte.ts` (`UI_THEMES`).
+ */
+
+@import './base.css';
+@import './ocean.css';
+@import './classic.css';
+@import './graphite.css';
+@import './cozy.css';
+@import './report.css';
+@import './report-dark.css';

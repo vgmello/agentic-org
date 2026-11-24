@@ -72,7 +72,7 @@
 	title="Time zone"
 	description="Times in lists, headers and logs show in this zone, in 24-hour form. It changes only how times are shown, never when something happened."
 >
-	<div class="space-y-6 px-4 min-[640px]:px-6 min-[1024px]:px-8">
+	<div class="flex flex-col gap-6 px-4 min-[640px]:px-6 min-[1024px]:px-8">
 		<div data-testid="zone-status">
 			{#if accountZone.status === 'unsaved-utc'}
 				<Callout>
@@ -88,9 +88,12 @@
 					Showing times in
 					<strong class="font-semibold text-fg [overflow-wrap:anywhere]"
 						>{current.id.replaceAll('_', ' ')}</strong
-					>{#if current.id !== 'UTC'}, {current.offset}{/if}. It is
-					<time datetime={now.toISOString()} title={formatFull(now, accountZone.zone)}
-						>{formatClock(now, accountZone.zone)}</time
+					>{#if current.id !== 'UTC'}, <span class="tabular-nums">{current.offset}</span>{/if}. It
+					is
+					<time
+						datetime={now.toISOString()}
+						title={formatFull(now, accountZone.zone)}
+						class="tabular-nums">{formatClock(now, accountZone.zone)}</time
 					>
 					there now.
 					{#if accountZone.status === 'saved'}Saved for your account.{:else}Detected from this
@@ -107,7 +110,7 @@
 				autocomplete="off"
 				bind:value={query}
 				aria-describedby="zone-query-help"
-				class="mt-2 max-[639px]:h-11 border-0 bg-surface-raised px-3 py-1.5 text-base text-fg shadow-none outline-1 outline-solid -outline-offset-1 outline-field-border sm:text-sm/6 md:text-sm/6 dark:bg-surface-raised placeholder:text-fg-muted focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
+				class="mt-2 border-0 bg-surface-raised px-3 py-1.5 text-base text-fg shadow-none outline-1 outline-solid -outline-offset-1 outline-field-border placeholder:text-fg-muted focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus max-[639px]:h-11 sm:text-sm/6 md:text-sm/6"
 			/>
 			<p id="zone-query-help" class="mt-2 text-xs/5 text-fg-muted">
 				A city, a region or an offset, for example Kolkata, Europe or +05:30
@@ -129,13 +132,13 @@
 				<ul
 					role="list"
 					tabindex="-1"
-					class="mt-3 max-h-80 divide-y divide-line-subtle overflow-y-auto border-y border-line"
+					class="mt-3 max-h-80 divide-y divide-line-subtle overflow-y-auto rounded-lg border border-line bg-surface-sunken/40"
 					data-testid="zone-list"
 				>
 					{#each listed as option (option.id)}
 						<li>
 							<label
-								class="flex min-h-11 cursor-pointer items-center gap-x-3 px-2 py-2 hover:bg-surface-raised has-checked:bg-primary/10 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-focus"
+								class="flex min-h-11 cursor-pointer items-center gap-x-3 px-3 py-2 transition-colors hover:bg-surface-raised has-checked:bg-brand/10 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-focus"
 							>
 								<input
 									type="radio"
@@ -150,7 +153,7 @@
 									{#if option.region}<span class="text-xs/5 text-fg-muted">{option.region}</span
 										>{/if}
 								</span>
-								<span class="shrink-0 text-right text-xs/5 text-fg-muted">
+								<span class="shrink-0 text-right text-xs/5 text-fg-muted tabular-nums">
 									<span class="block">{option.offset}</span>
 									<span class="block"><span class="sr-only">Local time </span>{option.local}</span>
 								</span>

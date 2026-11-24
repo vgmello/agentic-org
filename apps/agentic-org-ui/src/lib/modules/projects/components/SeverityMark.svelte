@@ -28,20 +28,28 @@
 </script>
 
 <span
-	class="inline-flex items-center gap-x-1 whitespace-nowrap {severity === 'critical'
-		? 'text-danger-text'
-		: ''}"
+	class={[
+		'inline-flex items-center gap-x-1 rounded-full px-1.5 py-0.5 text-xs/4 font-medium whitespace-nowrap',
+		severity === 'critical'
+			? 't-red'
+			: severity === 'major'
+				? 't-amber'
+				: 'bg-surface-raised text-fg-secondary ring-1 ring-line ring-inset'
+	]}
 	data-severity={severity}
 >
 	{#if severity === 'unset'}
-		<HeroIcon variant="micro" name="question-mark-circle" class="size-4 text-fg-muted" />
+		<HeroIcon variant="micro" name="question-mark-circle" class="size-3.5 text-fg-muted" />
 	{:else}
 		<svg
 			viewBox="0 0 20 20"
 			fill="currentColor"
 			aria-hidden="true"
 			focusable="false"
-			class="size-4 shrink-0 {severity === 'critical' ? '' : 'text-fg-muted'}"
+			class={[
+				'size-3.5 shrink-0',
+				severity !== 'critical' && severity !== 'major' && 'text-fg-muted'
+			]}
 		>
 			<path fill-rule="evenodd" clip-rule="evenodd" d={PATHS[severity]} />
 		</svg>

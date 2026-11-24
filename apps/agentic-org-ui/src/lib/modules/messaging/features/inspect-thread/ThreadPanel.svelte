@@ -83,9 +83,14 @@
 	const compose = $derived(composerState(chatState, ctx, conversation, officeRunning, cannotRun));
 	const title = $derived(titleOf(conversation, ctx, ctx.owner));
 	let closeButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
+	let headingEl = $state<HTMLHeadingElement | null>(null);
 	export function focusClose() {
 		closeButton?.focus({ preventScroll: true });
 		closeButton?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	}
+	export function focusHeading() {
+		headingEl?.focus({ preventScroll: true });
+		headingEl?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	}
 </script>
 
@@ -98,7 +103,12 @@
 	data-testid="thread-panel"
 >
 	<div class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-fg">
+		<h2
+			id="chat-thread-title"
+			bind:this={headingEl}
+			tabindex="-1"
+			class="min-w-0 rounded-sm text-sm/6 font-semibold break-words text-fg focus:outline-2 focus:outline-solid focus:outline-offset-2 focus:outline-focus focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-focus"
+		>
 			Thread <span class="font-normal text-fg-muted">in {title}</span>
 		</h2>
 		<Button
@@ -112,12 +122,12 @@
 		>
 	</div>
 	<div
-		class="min-h-16 flex-1 space-y-1 overflow-y-auto px-2 py-3 max-[640px]:px-[8px]"
+		class="flex min-h-16 flex-1 flex-col gap-1 overflow-y-auto px-2 py-3 [@media(width<=640px)]:px-[8px]"
 		data-focus-scope
 	>
 		{#key threadId}
 			<div
-				class="space-y-1"
+				class="flex flex-col gap-1"
 				role="log"
 				aria-label="Thread messages"
 				aria-live="polite"
@@ -143,9 +153,13 @@
 					{onhandback}
 					{onwithdraw}
 				/>
-				<p class="px-2 pt-2 text-xs/5 text-fg-muted" aria-live="off" data-testid="thread-count">
-					{replies.length}
-					{replies.length === 1 ? 'reply' : 'replies'}
+				<p
+					class="flex items-center gap-2 px-2 pt-2 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase"
+					aria-live="off"
+					data-testid="thread-count"
+				>
+					<span>{replies.length} {replies.length === 1 ? 'reply' : 'replies'}</span>
+					<span class="h-px flex-1 bg-line" aria-hidden="true"></span>
 				</p>
 				{#each replies as r (r.id)}
 					<MessageRow

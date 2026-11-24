@@ -21,7 +21,7 @@
 <div role="status" aria-busy="true">
 	<span class="sr-only">{slow ? 'Still loading profile' : 'Loading profile'}</span>
 	<div aria-hidden="true">
-		<div class="border-b border-line-subtle bg-shade/10 py-6 {gutters}">
+		<div class="profile-masthead border-b border-line py-6 {gutters}">
 			<span class="{quiet} mb-3 h-4 w-20"></span>
 			<div class="flex flex-col gap-3 min-[640px]:flex-row min-[640px]:gap-x-4">
 				<span
@@ -57,3 +57,9 @@
 		{/each}
 	</div>
 </div>
+
+<style>
+	.profile-masthead {
+		background: var(--exec-well);
+	}
+</style>

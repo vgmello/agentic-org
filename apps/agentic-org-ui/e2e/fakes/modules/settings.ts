@@ -12,7 +12,9 @@ import { signInOf } from './members';
 
 const query = () => new URLSearchParams(location.search);
 const wait = () =>
-	new Promise((r) => setTimeout(r, query().get('settings') === 'slow' ? 2500 : 250));
+	query().get('settings') === 'slow'
+		? new Promise<void>((r) => setTimeout(r, 2500))
+		: Promise.resolve();
 async function gate() {
 	await wait();
 	if (query().get('settings') === 'fails')

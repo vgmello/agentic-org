@@ -1,0 +1,322 @@
+/*
+ * Theme: report-dark — Modern 2D Executive Report · Night
+ * Inherits the open boxless 2D layout from `html[data-ui-theme^='report']` in `report.css`,
+ * paired with Classic's exact #1e2939 / #161f2d / #615fff / #FBBF24 / rgba(148, 163, 184, 0.2) palette.
+ * Strictly scoped to `html[data-ui-theme='report-dark']` and `.swatch-report-dark`.
+ * Binds both executive tokens and app-wide look tokens to Report Night's single semantic ramp.
+ */
+
+html[data-ui-theme='report-dark'] {
+	color-scheme: dark;
+
+	/* Intra-theme unified semantic tokens (exact Classic palette) */
+	--bar-track: rgba(148, 163, 184, 0.2);
+
+	--tone-accent: #615fff;
+	--tone-accent-bar: #615fff;
+	--tone-accent-hi: #7c86ff;
+	--tone-accent-ink: #a3b3ff;
+	--tone-accent-bg: rgba(97, 95, 255, 0.14);
+	--tone-accent-ring: rgba(124, 134, 255, 0.32);
+
+	--tone-ok: #34d399;
+	--tone-ok-bar: #34d399;
+	--tone-ok-ink: #6ee7b7;
+	--tone-ok-bg: rgba(52, 211, 153, 0.12);
+	--tone-ok-ring: rgba(52, 211, 153, 0.26);
+
+	--tone-warn: #fbbf24;
+	--tone-warn-bar: #fbbf24;
+	--tone-warn-ink: #fbbf24;
+	--tone-warn-bg: rgba(251, 191, 36, 0.12);
+	--tone-warn-ring: rgba(251, 191, 36, 0.32);
+
+	--tone-bad: #fb7185;
+	--tone-bad-bar: #fb7185;
+	--tone-bad-ink: #fda4af;
+	--tone-bad-bg: rgba(251, 113, 133, 0.12);
+	--tone-bad-ring: rgba(251, 113, 133, 0.28);
+
+	--tone-queued: #a78bfa;
+	--tone-queued-ink: #c4b5fd;
+
+	/* App-wide look tokens (Work, Projects, Teams, Offices, Chat, Costs, Settings, Pills) */
+	--surface: #1e2939;
+	--surface-sunken: #161f2d;
+	--surface-chip: #243144;
+	--field-border: #7e889b;
+	--fg: #ffffff;
+	--fg-bright: #ffffff;
+	--fg-body: #d1d5dc;
+	--fg-secondary: #d1d5dc;
+	--fg-muted: #99a1af;
+	--fg-subtle: #99a1af;
+
+	--primary: var(--tone-accent);
+	--primary-hover: #4f46e5;
+	--ring: var(--tone-accent-hi);
+	--brand: var(--tone-accent-hi);
+	--focus: var(--tone-accent-hi);
+	--link: var(--tone-accent-ink);
+	--brand-text: var(--tone-accent-ink);
+	--brand-text-strong: #c7d2fe;
+	--brand-text-stronger: #e0e7ff;
+
+	--info: var(--tone-accent);
+	--info-emphasis: var(--tone-accent);
+	--info-text: var(--tone-accent-ink);
+	--info-text-strong: #c7d2fe;
+	--info-text-stronger: #e0e7ff;
+
+	--success: var(--tone-ok);
+	--success-emphasis: var(--tone-ok);
+	--success-text: var(--tone-ok-ink);
+	--positive: var(--tone-ok);
+	--positive-emphasis: var(--tone-ok);
+	--positive-text: var(--tone-ok-ink);
+	--positive-text-strong: var(--tone-ok-ink);
+
+	--warning: var(--tone-warn);
+	--warning-emphasis: var(--tone-warn);
+	--warning-deep: var(--tone-warn);
+	--warning-text: var(--tone-warn-ink);
+	--warning-text-strong: var(--tone-warn-ink);
+	--warning-text-stronger: var(--tone-warn-ink);
+
+	--danger: var(--tone-bad);
+	--danger-emphasis: var(--tone-bad);
+	--danger-text: var(--tone-bad-ink);
+	--danger-text-strong: var(--tone-bad-ink);
+	--danger-text-stronger: var(--tone-bad-ink);
+
+	/* shadcn-svelte semantic bindings */
+	--background: #1e2939;
+	--foreground: #ffffff;
+	--card: #1e2939;
+	--card-foreground: #ffffff;
+	--popover: #182230;
+	--popover-foreground: #ffffff;
+	--primary-foreground: #ffffff;
+	--border: rgba(255, 255, 255, 0.1);
+	--input: #7e889b;
+
+	/* Report Night surfaces (exact Classic palette) */
+	--exec-bg: #1e2939;
+	--exec-sidebar-bg: #161f2d;
+	--exec-sidebar-blur: none;
+	--exec-sidebar-sheen: none;
+	--exec-logo-weight: 700;
+	--exec-logo-tracking: -0.025em;
+	--exec-surface: #1e2939;
+	--exec-surface-hi: #243144;
+	--exec-well: #1a2433;
+	--exec-panel-sheen: none;
+	--exec-border: rgba(255, 255, 255, 0.1);
+	--exec-border-hi: rgba(255, 255, 255, 0.18);
+	--exec-blur: none;
+	--exec-shadow: none;
+	--exec-shadow-hi: none;
+	--exec-ink: #ffffff;
+	--exec-body: #d1d5dc;
+	--exec-muted: #99a1af;
+	--exec-dim: #99a1af;
+	--exec-pillar-name-ink: #99a1af;
+	--exec-on-accent: #ffffff;
+
+	/* Report Night top bar & command pill (exact Classic chrome) */
+	--exec-topbar-bg: #1e2939;
+	--exec-topbar-border: 1px solid rgba(255, 255, 255, 0.06);
+	--exec-topbar-fade: none;
+	--exec-topbar-fade-blur: none;
+	--exec-cmdk-bg: #16202e;
+	--exec-cmdk-bg-hover: #16202e;
+	--exec-cmdk-blur: none;
+	--exec-cmdk-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+	--exec-cmdk-shadow-hover: inset 0 0 0 1px var(--tone-accent-hi);
+	--exec-cmdk-hover-lift: none;
+	--exec-cmdk-trigger-ink: #99a1af;
+	--exec-cmdk-trigger-hover-bg: transparent;
+	--exec-cmdk-icon: #99a1af;
+	--exec-cmdk-icon-hover: var(--tone-accent-ink);
+	--exec-cmdk-kbd-bg: #101828;
+	--exec-cmdk-kbd-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+	--exec-cmdk-kbd-ink: #d1d5dc;
+	--exec-cmdk-sep: rgba(255, 255, 255, 0.11);
+	--exec-ai-bg: var(--tone-accent-bg);
+	--exec-ai-bg-hover: var(--tone-accent);
+	--exec-ai-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	--exec-ai-shadow-hover: inset 0 0 0 1px var(--tone-accent-hi);
+	--exec-ai-ink: #e0e7ff;
+	--exec-ai-ink-hover: #ffffff;
+	--exec-ai-ico: var(--tone-accent-ink);
+	--exec-ai-ico-hover: #ffffff;
+
+	/* Flat 2D bars bound to unified --tone-*-bar ramp */
+	--exec-bar-budget: var(--tone-accent-bar);
+	--exec-bar-sky: var(--tone-accent-bar);
+	--exec-bar-ok: var(--tone-ok-bar);
+	--exec-bar-warn: var(--tone-warn-bar);
+	--exec-bar-bad: var(--tone-bad-bar);
+	--exec-seg-agents: var(--tone-accent-bar);
+	--exec-seg-ci: var(--tone-ok-bar);
+	--exec-seg-human: var(--tone-warn-bar);
+	--exec-seg-queued: var(--tone-queued);
+	--exec-seg-queued-high: var(--tone-bad-bar);
+
+	--exec-cta-bg: #615fff;
+	--exec-cta-fill: #4f46e5;
+	--exec-cta-shadow: none;
+	--exec-cta-shadow-hover: none;
+	--exec-cta-hover-lift: none;
+	--exec-cta-glass-radius: 4px;
+	--exec-cta-glass-bg: #615fff;
+	--exec-cta-glass-bg-hover: #4f46e5;
+	--exec-cta-glass-blur: none;
+	--exec-cta-glass-shadow: none;
+	--exec-cta-glass-shadow-hover: none;
+	--exec-cta-glass-ink: #ffffff;
+	--exec-cta-glass-ico: #ffffff;
+	--exec-btn-outline-bg: #1e2939;
+	--exec-btn-outline-bg-hover: var(--tone-accent);
+	--exec-btn-outline-ink: #d1d5dc;
+	--exec-btn-outline-ink-hover: #ffffff;
+	--exec-btn-outline-ring: rgba(255, 255, 255, 0.16);
+	--exec-btn-outline-ring-hover: var(--tone-accent-hi);
+	--exec-btn-ghost-bg-hover: rgba(255, 255, 255, 0.05);
+	--exec-avatar-bg: #1e2939;
+	--exec-avatar-ring: #1e2939;
+
+	/* Deny guard */
+	--exec-deny-bg: transparent;
+	--exec-deny-bg-hover: rgba(251, 113, 133, 0.14);
+	--exec-deny-ink: var(--tone-bad-ink);
+	--exec-deny-ink-hover: #ffe4e6;
+	--exec-deny-ring: var(--tone-bad-ring);
+	--exec-deny-ring-hover: rgba(251, 113, 133, 0.52);
+	--exec-deny-guard-bg: var(--tone-bad-bg);
+	--exec-deny-guard-ring: var(--tone-bad-ring);
+	--exec-deny-confirm-bg: #dc2626;
+	--exec-deny-confirm-hover: #b91c1c;
+	--exec-deny-confirm-ink: #ffffff;
+
+	/* Executive Brief memo (borderless editorial column on Report Night) */
+	--exec-cos-bg: transparent;
+	--exec-cos-fade: #1e2939;
+	--exec-cos-border: transparent;
+	--exec-cos-rule: transparent;
+
+	/* Unread rail dot */
+	--exec-nav-dot: var(--tone-warn);
+	--exec-nav-dot-halo: rgba(251, 191, 36, 0.16);
+	--exec-nav-dot-ring: #161f2d;
+
+	/* Report Night structural rules */
+	--report-rule: rgba(255, 255, 255, 0.09);
+	--report-rule-subtle: rgba(255, 255, 255, 0.08);
+	--report-masthead-rule: rgba(255, 255, 255, 0.16);
+	--report-accent-bar: #7c86ff;
+
+	/* Report Night masthead emphasis */
+	--exec-h1-em-warn: var(--tone-warn-ink);
+	--exec-h1-em-calm: var(--tone-accent-ink);
+	--exec-h1-em-ok: var(--tone-ok-ink);
+	--exec-h1-em-bad: var(--tone-bad-ink);
+	--exec-h1-em-ul-warn: var(--tone-warn);
+	--exec-h1-em-ul-calm: var(--tone-accent-hi);
+	--exec-h1-em-ul-ok: var(--tone-ok);
+	--exec-h1-em-ul-bad: var(--tone-bad);
+
+	--exec-hor-date-bg: #161f2d;
+	--exec-hor-date-month-ink: #99a1af;
+	--exec-hor-date-day-ink: #ffffff;
+
+	/* Report Night Inbox & Work row hover & selected tints (poc/operations.css 4622ad46) */
+	--triage-row-hover: #242f3f;
+	--triage-row-selected: #2a3351;
+	--work-row-hover: #242f3f;
+	--work-row-selected: #2a3351;
+	--work-selected-bar: #a5b4fc;
+
+	/* Report Night workspace surfaces (Prototype Release 53728c05) */
+	--detail-panel-surface: #1e2939;
+	--side-panel-surface: #1e2939;
+	--assembly-surface: #1e2939;
+	--workspace-secondary-surface: #1b2533;
+}
+
+html[data-ui-theme='report-dark'] .work-reading {
+	background: #1e2939;
+	border-inline-start-color: var(--report-rule);
+}
+
+html[data-ui-theme='report-dark'] .work-reading .work-kind {
+	border-inline-start-color: rgba(255, 255, 255, 0.16);
+}
+
+/* Dark interior header tokens & workspace panel surfaces (Prototype Release 53728c05) */
+html[data-ui-theme='report-dark'][data-interior-page] {
+	--workspace-header: #2d3b50;
+	--workspace-header-divider: #7b8ca4;
+	--workspace-mode-selected: #363e60;
+}
+
+html[data-ui-theme='report-dark'][data-interior-page]
+	:is(.triage-reading, .work-reading, .assembly-release, .project-telemetry) {
+	background-color: var(--detail-panel-surface);
+	background-image: none;
+}
+
+/* Separate the workspace command dialog from the dark page behind it (poc/v6.html ffe0e0ce) */
+html[data-ui-theme='report-dark'] .exec-cmdk-dialog {
+	background-color: #182230;
+	border: 1px solid #8393ab;
+	box-shadow: 0 24px 60px -16px rgba(0, 0, 0, 0.58);
+}
+
+html[data-ui-theme='report-dark'] .exec-cmdk-tabs {
+	background: #34445a;
+	border-bottom-color: #8b9cb3;
+}
+
+html[data-ui-theme='report-dark'] .exec-cmdk-tab-grp {
+	background: #222e41;
+	box-shadow: inset 0 0 0 1px #56667d;
+}
+
+html[data-ui-theme='report-dark'] .exec-cmdk-tab {
+	color: #d9e1ec;
+}
+
+html[data-ui-theme='report-dark'] .exec-cmdk-tab:hover {
+	color: #ffffff;
+}
+
+html[data-ui-theme='report-dark'] .exec-cmdk-tab[aria-selected='true'] {
+	background: #414673;
+	color: #ffffff;
+	box-shadow: inset 0 0 0 1px #93a1d8;
+}
+
+html[data-ui-theme='report-dark'] .exec-cmdk-tab[aria-selected='true'] svg {
+	color: var(--tone-accent-ink);
+}
+
+html[data-ui-theme='report-dark'] .exec-cmdk-close {
+	background: #26354a;
+	color: #e5eaf1;
+	box-shadow: inset 0 0 0 1px #8999af;
+}
+
+html[data-ui-theme='report-dark'] .exec-cmdk-close:hover {
+	background: #41546d;
+	color: #ffffff;
+}
+
+/* Settings preview swatch */
+.swatch-report-dark {
+	background: linear-gradient(90deg, #161f2d 0%, #161f2d 28%, #1e2939 28%, #1e2939 100%);
+}
+
+.swatch-report-dark .swatch-bar {
+	background: linear-gradient(90deg, #615fff 0%, #fbbf24 55%, #34d399 100%);
+}

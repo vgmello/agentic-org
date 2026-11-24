@@ -220,7 +220,7 @@
 					>
 						{#each d.employees as employee (employee.id)}
 							<li
-								class="relative flex items-center gap-x-4 px-4 py-4 hover:bg-tint/[0.02] min-[640px]:px-6 min-[1024px]:px-8"
+								class="relative flex items-center gap-x-4 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8"
 							>
 								<Avatar name={employee.name} />
 								<div class="min-w-0 flex-1">
@@ -256,7 +256,7 @@
 							<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6">
 								<span class="font-semibold text-fg">rev {rev.revision}</span>
 								{#if i === 0}<span
-										class="inline-flex items-center rounded-full bg-quiet/10 px-2 py-1 text-xs/4 font-medium text-fg-secondary ring-1 ring-quiet/20 ring-inset"
+										class="inline-flex items-center rounded-full bg-brand/10 px-2 py-0.5 text-xs/4 font-medium text-brand-text ring-1 ring-brand/25 ring-inset"
 										>Current</span
 									>{/if}
 							</p>

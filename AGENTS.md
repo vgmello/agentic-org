@@ -1,5 +1,12 @@
 # AGENTS.md: how agents work in this repository
 
+## Prototype work
+
+Before working under `poc/`, read and follow [the prototype instructions](poc/AGENTS.md).
+They cover prototype verification, publishing, and owner-approved Svelte handoffs.
+Compare approved snapshots for each release summary and checkpoint any release in
+progress before context compaction.
+
 ## Current working mode
 
 Two engineers build v1, each with their own agents. An engineer's lead agent takes an

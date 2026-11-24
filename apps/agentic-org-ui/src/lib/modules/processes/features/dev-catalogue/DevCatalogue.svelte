@@ -148,7 +148,7 @@
 			<ul role="list" class="divide-y divide-line-subtle" aria-labelledby="dev-heading">
 				{#each data.processes as p (p.id)}
 					<li
-						class="relative px-4 py-5 transition-colors duration-150 hover:bg-tint/[0.02] motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8"
+						class="relative px-4 py-5 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8"
 						data-testid="dev-row"
 						data-key={p.key}
 					>

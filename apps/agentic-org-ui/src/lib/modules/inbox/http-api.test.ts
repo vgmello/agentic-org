@@ -8,9 +8,12 @@ const INBOX_PATH = `/api/v1/organizations/${ORG}/inbox`;
 const ANSWER_PATH = `/api/v1/organizations/${ORG}/chat/answer`;
 const REPLY_PATH = `/api/v1/organizations/${ORG}/chat/reply`;
 const DONE_PATH = `/api/v1/organizations/${ORG}/chat/done`;
+const DEFER_PATH = `/api/v1/organizations/${ORG}/chat/defer`;
+const UNSNOOZE_PATH = `/api/v1/organizations/${ORG}/chat/unsnooze`;
+const CHAT_INBOX_PATH = `/api/v1/organizations/${ORG}/chat/inbox`;
 
 function ok(result: unknown): GatewayReply {
-	return { status: 200, body: { ok: true, result } };
+	return { status: 200, body: { result } };
 }
 
 describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
@@ -241,9 +244,305 @@ describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
 			source: 'api',
 			code: 'unavailable'
 		});
+		await expect(inboxApi.defer(ORG, 'off-1:msg:m1', '2026-11-24T09:00:00Z')).rejects.toMatchObject(
+			{
+				source: 'api',
+				code: 'unavailable'
+			}
+		);
+		await expect(inboxApi.unsnooze(ORG, 'off-1:msg:m1')).rejects.toMatchObject({
+			source: 'api',
+			code: 'unavailable'
+		});
 		await expect(inboxApi.subscribe(ORG, () => undefined)).rejects.toMatchObject({
 			source: 'api',
 			code: 'unavailable'
 		});
+	});
+
+	it('merges paginated snoozed chat items on real { result } envelope, marks non-msg unsnoozeable, surfaces snoozed errors, and routes defer/unsnooze (TASK-81)', async () => {
+		const submit = vi.fn().mockImplementation(async (path: string, body?: { cursor?: number }) => {
+			if (path === CHAT_INBOX_PATH) {
+				if (body?.cursor === 11) {
+					return ok({
+						items: [
+							{
+								id: 'snz-2',
+								conversation_id: 'conv-2',
+								thread_id: 'snz-2',
+								from_member_id: 'm-kai',
+								from_display_name: 'Kai',
+								kind: 'msg',
+								priority: 'normal',
+								urgent: false,
+								subject: 'Second page snoozed item',
+								created_at: '2026-11-21T08:05:00.000Z',
+								state: 'snoozed',
+								triage_gen: 1,
+								snoozed_until: '2026-11-26T09:00:00.000Z',
+								delivered_because: 'direct',
+								local_seq: 12
+							}
+						]
+					});
+				}
+				return ok({
+					items: [
+						{
+							id: 'snz-1',
+							conversation_id: 'conv-1',
+							thread_id: 'snz-1',
+							from_member_id: 'm-ada',
+							from_display_name: 'Ada',
+							kind: 'msg',
+							priority: 'normal',
+							urgent: false,
+							subject: 'Follow up on gateway TLS rotation',
+							created_at: '2026-11-21T08:00:00.000Z',
+							state: 'snoozed',
+							triage_gen: 2,
+							snoozed_until: '2026-11-24T09:00:00.000Z',
+							snooze_note: 'After Monday standup',
+							delivered_because: 'direct',
+							local_seq: 11
+						}
+					],
+					next_cursor: 11
+				});
+			}
+			if (path === DEFER_PATH) {
+				return ok({
+					id: 'm-open',
+					triage_gen: 1,
+					snoozed_until: '2026-11-25T14:00:00.000Z',
+					snooze_note: 'Check after release'
+				});
+			}
+			if (path === UNSNOOZE_PATH) {
+				return ok({
+					id: 'snz-1',
+					state: 'unread',
+					triage_gen: 3
+				});
+			}
+			return ok({ ok: true });
+		});
+		const http: GatewayHttpTransport = {
+			read: vi.fn().mockResolvedValue(
+				ok({
+					as_of: { epoch: 1, seq: 12 },
+					degraded: [],
+					items: [
+						{
+							ref: 'off-1:msg:m-open',
+							source: 'mailbox',
+							kind: 'question',
+							member: { id: 'm-noor', name: 'Noor Haddad', kind: 'agent' },
+							summary: 'Confirm migration checklist',
+							created_at_ms: Date.parse('2026-11-21T10:00:00Z'),
+							state: 'open',
+							clears: 'replied',
+							dismissable: true,
+							actions: []
+						},
+						{
+							ref: 'off-1:budget:b-1',
+							source: 'budget',
+							kind: 'problem',
+							member: { id: 'm-kai', name: 'Kai', kind: 'agent' },
+							summary: 'Daily budget reached',
+							created_at_ms: Date.parse('2026-11-21T10:05:00Z'),
+							state: 'open',
+							clears: 'resolved',
+							dismissable: false,
+							actions: []
+						}
+					]
+				})
+			),
+			submit
+		};
+
+		const api = createHttpInboxApi({ http, now: () => '2026-11-21T12:00:00Z' });
+		const items = await api.list(ORG);
+		expect(submit).toHaveBeenCalledWith(CHAT_INBOX_PATH, { state: 'snoozed', limit: 100 });
+		expect(submit).toHaveBeenCalledWith(CHAT_INBOX_PATH, {
+			state: 'snoozed',
+			limit: 100,
+			cursor: 11
+		});
+		expect(items).toHaveLength(4);
+		expect(items[0].snoozeable).toBe(true);
+		expect(items[1].snoozeable).toBe(false);
+		expect(items[2]).toMatchObject({
+			id: 'chat:msg:snz-1',
+			title: 'Follow up on gateway TLS rotation',
+			state: 'snoozed',
+			snoozeable: true,
+			snoozed_until: '2026-11-24T09:00:00.000Z',
+			snooze_note: 'After Monday standup',
+			open: { path: '/chat?c=conv-1&m=snz-1', label: 'Open in Chat' }
+		});
+		expect(items[3]).toMatchObject({
+			id: 'chat:msg:snz-2',
+			state: 'snoozed'
+		});
+		expect(api.snoozedError?.(ORG)).toBeUndefined();
+
+		// Transient snoozed-list error keeps active items usable and reports retryable snoozedError.
+		submit.mockResolvedValueOnce({
+			status: 503,
+			body: { error: { code: 'unavailable', message: 'Office temporarily busy' } }
+		});
+		const activeOnly = await api.list(ORG);
+		expect(activeOnly).toHaveLength(2);
+		expect(api.snoozedError?.(ORG)).toBe('Office temporarily busy');
+
+		const deferred = await api.defer(
+			ORG,
+			'off-1:msg:m-open',
+			'2026-11-25T14:00:00.000Z',
+			'Check after release'
+		);
+		expect(submit).toHaveBeenCalledWith(DEFER_PATH, {
+			id: 'm-open',
+			until: { type: 'until', at: '2026-11-25T14:00:00.000Z' },
+			note: 'Check after release'
+		});
+		expect(deferred).toMatchObject({
+			id: 'off-1:msg:m-open',
+			state: 'snoozed',
+			snoozed_until: '2026-11-25T14:00:00.000Z',
+			snooze_note: 'Check after release'
+		});
+
+		// Refresh after deferring a previously cached item upgrades its `/chat?m=...` link with `conversation_id`.
+		vi.mocked(http.read).mockResolvedValueOnce(
+			ok({ as_of: { epoch: 1, seq: 13 }, degraded: [], items: [] })
+		);
+		submit.mockResolvedValueOnce(
+			ok({
+				items: [
+					{
+						id: 'm-open',
+						conversation_id: 'conv-open',
+						thread_id: 'm-open',
+						from_member_id: 'm-noor',
+						from_display_name: 'Noor Haddad',
+						kind: 'msg',
+						priority: 'normal',
+						urgent: false,
+						subject: 'Confirm migration checklist',
+						created_at: '2026-11-21T10:00:00.000Z',
+						state: 'snoozed',
+						triage_gen: 2,
+						snoozed_until: '2026-11-25T14:00:00.000Z',
+						snooze_note: 'Check after release',
+						delivered_because: 'direct',
+						local_seq: 13
+					}
+				]
+			})
+		);
+		const afterSnoozeRefresh = await api.list(ORG);
+		expect(afterSnoozeRefresh).toHaveLength(1);
+		expect(afterSnoozeRefresh[0]).toMatchObject({
+			id: 'off-1:msg:m-open',
+			state: 'snoozed',
+			open: { path: '/chat?c=conv-open&m=m-open', label: 'Open in Chat' }
+		});
+
+		const restored = await api.unsnooze(ORG, 'chat:msg:snz-1');
+		expect(submit).toHaveBeenCalledWith(UNSNOOZE_PATH, { id: 'snz-1' });
+		expect(restored.state).toBe('open');
+		expect(restored.snoozed_until).toBeUndefined();
+		expect(restored.snooze_note).toBeUndefined();
+
+		await expect(api.defer(ORG, 'off-1:run:r9', '2026-11-25T14:00:00.000Z')).rejects.toMatchObject({
+			source: 'api',
+			code: 'unsupported'
+		});
+		await expect(api.unsnooze(ORG, 'off-1:run:r9')).rejects.toMatchObject({
+			source: 'api',
+			code: 'unsupported'
+		});
+	});
+
+	it('prevents stale overlapping refreshes from overwriting newer snoozed state and flags max-page truncation', async () => {
+		let releaseSlowSnooze!: (reply: GatewayReply) => void;
+		const slowSnooze = new Promise<GatewayReply>((resolve) => {
+			releaseSlowSnooze = resolve;
+		});
+		let callCount = 0;
+		const submit = vi.fn().mockImplementation(async () => {
+			callCount += 1;
+			if (callCount === 1) return slowSnooze;
+			return ok({ items: [] });
+		});
+		const read = vi.fn().mockResolvedValue(ok({ as_of: { epoch: 1, seq: 1 }, items: [] }));
+		const api = createHttpInboxApi({ http: { read, submit } });
+
+		const older = api.list(ORG);
+		const newer = api.list(ORG);
+		await newer;
+		expect(api.snoozedError?.(ORG)).toBeUndefined();
+
+		// Older request now fails with 503 — must NOT clobber newer clean state.
+		releaseSlowSnooze({
+			status: 503,
+			body: { error: { code: 'unavailable', message: 'Stale older failure' } }
+		});
+		await older;
+		expect(api.snoozedError?.(ORG)).toBeUndefined();
+
+		// 20 full pages with remaining next_cursor surfaces explicit truncation notice.
+		let page = 0;
+		const truncApi = createHttpInboxApi({
+			http: {
+				read: vi.fn().mockResolvedValue(ok({ as_of: { epoch: 1, seq: 2 }, items: [] })),
+				submit: vi.fn().mockImplementation(async () => {
+					page += 1;
+					return ok({ items: [], next_cursor: page * 100 });
+				})
+			}
+		});
+		await truncApi.list(ORG);
+		expect(truncApi.snoozedError?.(ORG)).toContain('first 2,000 snoozed items');
+	});
+
+	it('marks created_at_inferred when gateway omits created_at_ms and preserves recorded timestamps', async () => {
+		const api = createHttpInboxApi({
+			now: () => '2026-11-24T12:00:00Z',
+			http: {
+				read: vi.fn().mockResolvedValue(
+					ok({
+						as_of: { epoch: 1, seq: 99 },
+						items: [
+							{
+								ref: 'off-1:msg:recorded',
+								kind: 'approval',
+								summary: 'Recorded approval',
+								created_at_ms: Date.parse('2026-11-24T02:00:00Z'),
+								state: 'open'
+							},
+							{
+								ref: 'off-1:msg:inferred',
+								kind: 'approval',
+								summary: 'Inferred approval',
+								state: 'open'
+							}
+						]
+					})
+				),
+				submit: vi.fn().mockResolvedValue({ status: 404 })
+			}
+		});
+
+		const items = await api.list(ORG);
+		expect(items).toHaveLength(2);
+		expect(items[0].created_at).toBe('2026-11-24T02:00:00.000Z');
+		expect(items[0].created_at_inferred).toBeUndefined();
+		expect(items[1].created_at).toBe('2026-11-24T12:00:00Z');
+		expect(items[1].created_at_inferred).toBe(true);
 	});
 });

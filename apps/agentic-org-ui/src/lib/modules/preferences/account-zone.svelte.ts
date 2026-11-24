@@ -1,19 +1,25 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { preferencesApi } from './api';
 import { detectZone, effectiveZone, type ZoneStatus } from './time';
 
 /**
  * The viewing account's time zone, shared by every screen that shows times (Home, Inbox, Activity, Preferences).
- * Until the saved zone has loaded, or when it cannot be read, times show in the detected zone, or in UTC marked
- * unsaved when the browser gives no valid zone (app-shell-ux "Account time display").
+ * Uses the explicitly saved zone, falling back to the authenticated session account's `time_zone` when
+ * preferencesApi is unavailable, then the browser's detected zone, else UTC marked unsaved.
  */
 class AccountZone {
 	saved = $state<string | null | undefined>(undefined);
 	detected = detectZone();
 	loaded = $state(false);
 	#organization: string | undefined;
+	#loadSeq = 0;
 
 	get effective(): { zone: string; status: ZoneStatus } {
-		return effectiveZone(this.saved, this.detected);
+		const sessionZone =
+			appSession.state.kind === 'signed-in'
+				? appSession.state.session.account.time_zone
+				: undefined;
+		return effectiveZone(this.saved ?? sessionZone, this.detected);
 	}
 	get zone(): string {
 		return this.effective.zone;
@@ -26,10 +32,14 @@ class AccountZone {
 	async ensure(organizationId: string): Promise<void> {
 		if (this.#organization === organizationId) return;
 		this.#organization = organizationId;
+		const seq = ++this.#loadSeq;
 		this.loaded = false;
 		try {
-			this.saved = (await preferencesApi.timeZone(organizationId)).saved;
+			const res = await preferencesApi.timeZone(organizationId);
+			if (seq !== this.#loadSeq || this.#organization !== organizationId) return;
+			this.saved = res.saved;
 		} catch {
+			if (seq !== this.#loadSeq || this.#organization !== organizationId) return;
 			this.saved = null;
 		}
 		this.loaded = true;
@@ -38,7 +48,11 @@ class AccountZone {
 	/** Saves a zone; resolves when it is kept, rejects with the reason when it is not. */
 	async save(organizationId: string, zone: string): Promise<void> {
 		await preferencesApi.saveTimeZone(organizationId, zone);
-		this.saved = zone;
+		if (this.#organization === organizationId) {
+			this.#loadSeq += 1;
+			this.saved = zone;
+			this.loaded = true;
+		}
 	}
 }
 

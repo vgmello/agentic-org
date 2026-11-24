@@ -7,6 +7,10 @@ import {
 	featuresText,
 	keepWords,
 	openText,
+	progressPercent,
+	projectBarTone,
+	projectHealthLabel,
+	projectsPortfolioSummary,
 	projectTabs,
 	slugFrom,
 	slugProblem,
@@ -29,7 +33,7 @@ const noFeatures = { planned: 0, inProgress: 0, live: 0 };
 const labels = (tabs: { label: string }[]) => tabs.map((t) => t.label);
 
 describe('projectTabs (PKG-15)', () => {
-	it('with no development process, Features and Releases sit between Work and Docs', () => {
+	it('with no development process, core tabs lead and Features/Releases/Docs/Settings follow', () => {
 		expect(
 			labels(
 				projectTabs(
@@ -39,19 +43,19 @@ describe('projectTabs (PKG-15)', () => {
 			)
 		).toEqual([
 			'Overview',
+			'Activity',
 			'Work',
+			'Insights',
+			'Conversations',
+			'Team',
 			'Features',
 			'Releases',
 			'Docs',
-			'Team',
-			'Activity',
-			'Conversations',
-			'Insights',
 			'Settings'
 		]);
 	});
 
-	it("puts the process's tabs in order and adds Features only when held and not given", () => {
+	it("puts the process's tabs after core navigation and adds Features only when held and not given", () => {
 		const tabs = projectTabs(
 			{
 				developmentProcess: { id: 'p', name: 'DSS' },
@@ -66,15 +70,15 @@ describe('projectTabs (PKG-15)', () => {
 		);
 		expect(labels(tabs)).toEqual([
 			'Overview',
+			'Activity',
 			'Work',
+			'Insights',
+			'Conversations',
+			'Team',
 			'Product',
 			'Releases',
 			'Features',
 			'Docs',
-			'Team',
-			'Activity',
-			'Conversations',
-			'Insights',
 			'Settings'
 		]);
 	});
@@ -88,14 +92,14 @@ describe('projectTabs (PKG-15)', () => {
 		});
 		expect(labels(tabs)).toEqual([
 			'Overview',
+			'Activity',
 			'Work',
+			'Insights',
+			'Conversations',
+			'Team',
 			'Features',
 			'Releases',
 			'Docs',
-			'Team',
-			'Activity',
-			'Conversations',
-			'Insights',
 			'Settings'
 		]);
 	});
@@ -156,6 +160,47 @@ describe('counts', () => {
 				{ name: 'Zed', archived: false }
 			]).map((p) => p.name)
 		).toEqual(['beacon', 'Zed', 'Atlas']);
+	});
+	it('computes delivery progress percentage and semantic bar tone', () => {
+		const noBugs = { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 };
+		expect(progressPercent(t)).toBe(44);
+		expect(progressPercent({ todo: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 3 })).toBe(0);
+		expect(progressPercent({ todo: 0, inProgress: 0, blocked: 0, done: 6, cancelled: 0 })).toBe(
+			100
+		);
+		expect(projectBarTone(t, noBugs, true)).toBe('archived');
+		expect(projectBarTone(t, { ...noBugs, critical: 1 }, false)).toBe('bad');
+		expect(projectBarTone(t, noBugs, false)).toBe('warn');
+		expect(
+			projectBarTone({ todo: 0, inProgress: 0, blocked: 0, done: 6, cancelled: 0 }, noBugs, false)
+		).toBe('ok');
+		expect(
+			projectBarTone({ todo: 2, inProgress: 1, blocked: 0, done: 3, cancelled: 0 }, noBugs, false)
+		).toBe('accent');
+		expect(projectHealthLabel('bad')).toBe('At risk');
+		expect(projectHealthLabel('warn')).toBe('Needs attention');
+		expect(projectHealthLabel('ok')).toBe('On track');
+		expect(projectHealthLabel('accent')).toBe('Active');
+		expect(projectHealthLabel('archived')).toBe('Archived');
+		expect(
+			projectsPortfolioSummary([
+				{ archived: false, tasks: t, bugs: { ...noBugs, critical: 1 } },
+				{
+					archived: false,
+					tasks: { todo: 1, inProgress: 0, blocked: 0, done: 2, cancelled: 0 },
+					bugs: noBugs
+				},
+				{ archived: true, tasks: t, bugs: { ...noBugs, critical: 2 } }
+			])
+		).toEqual({
+			active: 2,
+			archived: 1,
+			openTasks: 6,
+			blockedTasks: 1,
+			openBugs: 1,
+			criticalBugs: 1,
+			attentionProjects: 1
+		});
 	});
 	it('sorts project activity newest first with invalid timestamps last', () => {
 		const input = [

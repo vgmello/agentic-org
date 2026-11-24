@@ -175,7 +175,7 @@
 					/>
 				{:else}
 					<dl
-						class="mt-3 grid grid-cols-1 gap-px border-y border-line-subtle bg-surface-raised min-[640px]:grid-cols-3"
+						class="mt-3 grid grid-cols-1 gap-px border-y border-line bg-line tabular-nums min-[640px]:grid-cols-3"
 						data-testid="cost-totals"
 					>
 						<StatTile

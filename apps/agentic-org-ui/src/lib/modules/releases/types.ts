@@ -37,6 +37,8 @@ export interface ReleaseTaskItem {
 	type: 'task' | 'bug' | 'request';
 	title: string;
 	status: string;
+	/** Stable ID of the milestone this task belongs to (disambiguates release-scoped `M-<n>` refs). */
+	milestoneId?: string;
 	milestoneRef?: string;
 	archived?: boolean;
 }
@@ -105,6 +107,12 @@ export interface ReleaseDetail extends ReleaseRow {
 	createdAt: string;
 	createdBy: ReleaseEmployeeRef;
 	updatedBy: ReleaseEmployeeRef;
+	/** Authoritative `release_progress` aggregate when supplied by the backend (organization-data 02). */
+	progress?: {
+		finished: number;
+		total: number;
+		isDone: boolean;
+	};
 	milestones: ReleaseMilestone[];
 	features: ReleaseFeatureItem[];
 	tasks: ReleaseTaskItem[];

@@ -7,7 +7,6 @@
 	import DividedRow from '$lib/components/DividedRow.svelte';
 	import WordPill from '../status/WordPill.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { tone } from '$lib/components/pills';
 	import { agoText } from '../../time';
 	import type { OutboxItem } from '../../types';
 
@@ -30,7 +29,7 @@
 	} = $props();
 </script>
 
-<section aria-labelledby="outbox-title" class="space-y-3" data-testid="outbox">
+<section aria-labelledby="outbox-title" class="flex flex-col gap-3" data-testid="outbox">
 	<h3 id="outbox-title" class="text-xs/6 font-semibold text-fg-muted">
 		Waiting on offices · {items.length}
 	</h3>
@@ -47,7 +46,7 @@
 						{item.description}
 						<WordPill
 							label={item.state === 'blocked' ? 'Blocked' : 'Pending'}
-							class={item.state === 'blocked' ? tone.owner : ''}
+							class={item.state === 'blocked' ? 't-amber' : ''}
 						/>
 					</p>
 					<p class="mt-1 text-xs/5 text-fg-muted [overflow-wrap:anywhere]">

@@ -1,104 +1,49 @@
 <script lang="ts">
-	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
-	import { tick, type ComponentProps } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
+	import { tick } from 'svelte';
 	import { innerWidth } from 'svelte/reactivity/window';
+	import { mergeProps, Tooltip } from 'bits-ui';
 	import MenuIcon from '@lucide/svelte/icons/menu';
-	import type { Connection } from '$lib/proto';
-	import type { ShellNavigation } from '$lib/modules/shell/types';
-	import Sidebar from '$lib/components/Sidebar.svelte';
+	import type { Connection, ProjectSummary } from '$lib/proto';
+	import ExecutiveSidebar from './ExecutiveSidebar.svelte';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import { registerModalBack } from './modal-back';
 	import { focusDestinationHeading } from './focus-destination';
 
 	let {
+		open = $bindable(false),
 		connection,
-		navigation,
-		officeStatus,
+		needsYouCount = 0,
+		projects = [],
 		onWiden
 	}: {
+		open?: boolean;
 		connection: Connection;
-		navigation?: ShellNavigation;
-		officeStatus?: ComponentProps<typeof Sidebar>['officeStatus'];
+		needsYouCount?: number;
+		projects?: ProjectSummary[];
 		onWiden: () => void;
 	} = $props();
 	const menuId = $props.id();
-	let open = $state(false);
 	let content = $state<HTMLDivElement | null>(null);
 	let trigger = $state<HTMLButtonElement | null>(null);
 	let closingForNavigation = false;
-	let legacyReturnUrl: string | undefined;
-	let legacyHistoryLength = 0;
-	let legacyAppendedFragment: string | undefined;
-	let openedOnUntrackedLegacyEntry = false;
 
 	// A viewport change must release the modal before the desktop navigation takes over.
 	$effect(() => {
 		if ((innerWidth.current ?? 0) >= 640 && open) open = false;
 	});
 
-	$effect(() => {
+	$effect.pre(() => {
 		if (open)
 			return registerModalBack(() => {
 				open = false;
 			});
 	});
 
-	afterNavigate(() => {
-		if (window.navigation) return;
-		legacyHistoryLength = window.history.length;
-		legacyAppendedFragment = undefined;
-	});
-
-	beforeNavigate((navigation) => {
-		if (
-			window.navigation ||
-			!open ||
-			navigation.type !== 'popstate' ||
-			(navigation.delta ?? 0) >= 0 ||
-			openedOnUntrackedLegacyEntry
-		)
-			return;
-		legacyReturnUrl = navigation.from?.url.href;
-		navigation.cancel();
-		open = false;
-	});
-
-	function handleFragmentChange({ oldURL, newURL }: HashChangeEvent) {
-		if (!open || legacyAppendedFragment !== oldURL || newURL.includes('#')) return;
-		const from = new URL(oldURL);
-		const to = new URL(newURL);
-		if (from.pathname !== to.pathname || from.search !== to.search) return;
-
-		// Older browsers can safely reverse Back from an observed append to its base URL.
-		// Arbitrary native fragment histories need the Navigation API's traversal direction.
-		legacyReturnUrl = oldURL;
-		window.history.forward();
-		open = false;
-	}
-
-	function handlePopState(event: PopStateEvent) {
-		if (window.navigation) return;
-		if (legacyReturnUrl) {
-			const url = legacyReturnUrl;
-			legacyReturnUrl = undefined;
-			requestAnimationFrame(() => {
-				if (!open && trigger?.isConnected && window.location.href === url) focusNavigationControl();
-			});
-		} else if (!open) {
-			const length = window.history.length;
-			legacyAppendedFragment =
-				event.state === null && length > legacyHistoryLength && window.location.hash
-					? window.location.href
-					: undefined;
-			legacyHistoryLength = length;
-		}
-	}
-
 	function menuOpenChanged(value: boolean) {
 		if (!value) return;
 		closingForNavigation = false;
-		legacyReturnUrl = undefined;
-		openedOnUntrackedLegacyEntry = !window.navigation && window.history.state === null;
 	}
 
 	function closeForNavigation() {
@@ -135,36 +80,53 @@
 		const from = window.location.href;
 		closeForNavigation();
 		try {
-			if (new URL(href, from).href !== from) await goto(href);
+			if (new URL(href, from).href !== from) await goto(resolve(href as '/'));
 			await focusDestinationHeading();
 		} catch {
-			// SvelteKit owns route errors. Restore the trigger only if this page stayed put.
 			if (window.location.href === from && trigger?.isConnected && !open) focusNavigationControl();
 		}
 	}
 </script>
 
-<svelte:window onhashchange={handleFragmentChange} onpopstate={handlePopState} />
-
-<Sheet.Root bind:open onOpenChange={menuOpenChanged}>
-	<Sheet.Trigger
-		bind:ref={trigger}
-		aria-controls={menuId}
-		class="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-md text-fg hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus min-[640px]:hidden"
-	>
-		<MenuIcon class="size-6" aria-hidden="true" strokeWidth={1.5} /><span class="sr-only">Menu</span
+<Tooltip.Provider delayDuration={150}>
+	<Sheet.Root bind:open onOpenChange={menuOpenChanged}>
+		<Tooltip.Root disabled={open}>
+			<Tooltip.Trigger>
+				{#snippet child({ props: tipProps })}
+					<Sheet.Trigger bind:ref={trigger} aria-controls={menuId}>
+						{#snippet child({ props: sheetProps })}
+							<button
+								{...mergeProps(tipProps, sheetProps)}
+								type="button"
+								aria-label="Menu"
+								class="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-md text-fg hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus min-[640px]:hidden"
+							>
+								<MenuIcon class="size-6" aria-hidden="true" strokeWidth={1.5} />
+							</button>
+						{/snippet}
+					</Sheet.Trigger>
+				{/snippet}
+			</Tooltip.Trigger>
+			<Tooltip.Portal>
+				<Tooltip.Content
+					side="bottom"
+					sideOffset={6}
+					class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+					>Menu</Tooltip.Content
+				>
+			</Tooltip.Portal>
+		</Tooltip.Root>
+		<Sheet.Content
+			id={menuId}
+			bind:ref={content}
+			side="left"
+			onOpenAutoFocus={focusCurrent}
+			onCloseAutoFocus={restoreFocus}
+			class="gap-0 border-0 bg-surface p-0 data-[side=left]:w-72 data-[side=left]:max-w-[calc(100vw-56px)] [&_[data-slot=sheet-close]]:size-11"
 		>
-	</Sheet.Trigger>
-	<Sheet.Content
-		id={menuId}
-		bind:ref={content}
-		side="left"
-		onOpenAutoFocus={focusCurrent}
-		onCloseAutoFocus={restoreFocus}
-		class="gap-0 border-0 bg-surface p-0 data-[side=left]:w-72 data-[side=left]:max-w-[calc(100vw-56px)] [&_[data-slot=sheet-close]]:size-11"
-	>
-		<Sheet.Title class="sr-only">Main navigation</Sheet.Title>
-		<Sheet.Description class="sr-only">Choose an area of the organization.</Sheet.Description>
-		<Sidebar {connection} {navigation} {officeStatus} presentation="drawer" onNavigate={select} />
-	</Sheet.Content>
-</Sheet.Root>
+			<Sheet.Title class="sr-only">Main navigation</Sheet.Title>
+			<Sheet.Description class="sr-only">Choose an area of the organization.</Sheet.Description>
+			<ExecutiveSidebar {connection} {needsYouCount} {projects} onNavigate={select} />
+		</Sheet.Content>
+	</Sheet.Root>
+</Tooltip.Provider>

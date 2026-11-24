@@ -1,0 +1,21 @@
+{
+  "title": "Icon-only UI controls require a tooltip",
+  "kind": "decision",
+  "summary": "Every icon-only button, link, or interactive control in apps/agentic-org-ui without a visible text label (e.g., comment, copy, expand, close, filter, display, sidebar toggle) MUST have both an accessible name (aria-label) and a visible tooltip on hover and keyboard focus (WCAG 1.4.13).",
+  "rationale": "Owner requirement (2026-11-24): unlabeled icon-only action bars are ambiguous without hover/focus tooltips. Recorded in apps/agentic-org-ui/AGENTS.md (which ui-maintenance/SKILL.md requires every UI agent to read first) so every UI builder and reviewer enforces it.",
+  "sources": [
+    {
+      "path": "apps/agentic-org-ui/AGENTS.md",
+      "sha256": "9c9a6e9fc1ce69df8ced43afadc5b7457dc57eb7fb00c187f1aae117f480cafa"
+    }
+  ],
+  "version": 1,
+  "id": "f8615580206a4c60808da822ded9d2e2",
+  "status": "ACCEPTED",
+  "root": "/Users/vgmello/projects/agentic-org-poc-ui",
+  "created_at": "2026-11-24T05:17:04.918711+00:00",
+  "head": "faf435623b5c55b0e0fcc6f238ff211116ce098d",
+  "reviewed_by": "e7c967f9-f420-4c26-959c-8a76074ba57f",
+  "review_rationale": "Owner requirement (2026-11-24): all icon-only UI controls without visible text labels require accessible hover/focus tooltips.",
+  "reviewed_at": "2026-11-24T05:17:05.525648+00:00"
+}

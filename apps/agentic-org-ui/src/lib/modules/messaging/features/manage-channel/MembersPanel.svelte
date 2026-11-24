@@ -1,5 +1,6 @@
 <script lang="ts">
 	import X from '@lucide/svelte/icons/x';
+	import { Tooltip } from 'bits-ui';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import {
@@ -76,21 +77,40 @@
 				>· {members.length} {members.length === 1 ? 'member' : 'members'}</span
 			>
 		</h2>
-		<Button
-			type="button"
-			variant="ghost"
-			size="icon-sm"
-			class="scroll-mt-16"
-			aria-label="Close members"
-			bind:ref={closeButton}
-			onclick={onclose}><X aria-hidden="true" /></Button
-		>
+		<Tooltip.Provider delayDuration={150}>
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<Button
+							{...props}
+							type="button"
+							variant="ghost"
+							size="icon-sm"
+							class="size-9 scroll-mt-16 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
+							aria-label="Close members"
+							bind:ref={closeButton}
+							onclick={onclose}><X aria-hidden="true" /></Button
+						>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Portal>
+					<Tooltip.Content
+						side="bottom"
+						sideOffset={6}
+						class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+						>Close members</Tooltip.Content
+					>
+				</Tooltip.Portal>
+			</Tooltip.Root>
+		</Tooltip.Provider>
 	</div>
-	<div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
-		{#if follows}<p class="rounded-md bg-surface-raised px-3 py-2 text-sm/6 text-fg-secondary">
+	<div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-3">
+		{#if follows}<p
+				class="rounded-md bg-surface-raised px-3 py-2 text-sm/6 text-fg-secondary ring-1 ring-line ring-inset"
+			>
 				This channel follows {follows}: its members and name change with it.
 			</p>{/if}
-		<ul class="space-y-3">
+		<ul class="flex flex-col gap-3">
 			{#each members as m (m.id)}
 				{@const status = memberPresence(chatState, m)}
 				<li
@@ -125,6 +145,7 @@
 							type="button"
 							variant="ghost"
 							size="xs"
+							class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 							disabled={!officeRunning}
 							aria-label="Remove {m.name} from the channel"
 							onclick={() => onremove(m.id)}>Remove</Button
@@ -139,6 +160,7 @@
 					type="button"
 					size="sm"
 					variant="outline"
+					class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					disabled={!officeRunning}
 					onclick={onaddpeople}>Add people…</Button
 				>
@@ -146,6 +168,7 @@
 					type="button"
 					size="sm"
 					variant="outline"
+					class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					disabled={!officeRunning}
 					onclick={onrename}>Rename…</Button
 				>
@@ -153,6 +176,7 @@
 					type="button"
 					size="sm"
 					variant="outline"
+					class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					disabled={!officeRunning}
 					onclick={onarchive}>Archive</Button
 				>

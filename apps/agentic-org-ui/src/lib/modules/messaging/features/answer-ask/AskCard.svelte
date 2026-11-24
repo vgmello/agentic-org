@@ -182,9 +182,10 @@
 {:else}
 	<div
 		data-ask-id={message.id}
-		class="rounded-lg border {closed
-			? 'border-line bg-tint/[0.03]'
-			: 'border-warning/40 bg-warning/5'} p-4 max-[640px]:px-[8px] max-[640px]:py-3"
+		class={[
+			'rounded-lg p-4 max-[640px]:px-[8px] max-[640px]:py-3',
+			closed ? 'border border-line bg-surface-raised' : 'chat-ask-open'
+		]}
 		data-testid="ask-card"
 		data-answered={closed ? 'true' : 'false'}
 	>
@@ -369,6 +370,7 @@
 				<Button
 					type="submit"
 					size="sm"
+					class="h-auto min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					disabled={busy || !officeRunning || (mode !== 'withdraw' && text.trim() === '')}
 					>{submitLabel}</Button
 				>
@@ -377,3 +379,10 @@
 		{#if error}<p class="mt-2 text-sm/6 text-danger" role="alert">{error}</p>{/if}
 	</div>
 {/if}
+
+<style>
+	.chat-ask-open {
+		background: var(--tone-warn-bg);
+		box-shadow: inset 0 0 0 1px var(--tone-warn-ring);
+	}
+</style>

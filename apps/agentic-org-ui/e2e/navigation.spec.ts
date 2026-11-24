@@ -3,22 +3,26 @@ import { visit } from './ready';
 import { shot } from './shot';
 import { enterMockedOrganization } from './mock-organization';
 
-// The main navigation in app-shell-ux §0's order. Inbox shows because the mocked office serves its count.
+// The ExecutiveSidebar main navigation in group order (Focus, Workspace, Organization).
 const SECTIONS = [
-	['Home', '/home'],
-	['Inbox', '/inbox'],
-	['Projects', '/projects'],
-	['Work', '/work'],
-	['Chat', '/chat'],
-	['Activity', '/activity'],
-	['Teams', '/teams'],
-	['Organization settings', '/settings']
+	['Home', '/home', 1, null],
+	['Inbox', '/inbox', 1, 'Inbox'],
+	['Work', '/work', 1, 'Work'],
+	['Chat', '/chat', 2, 'Channels'],
+	['Activity', '/activity', 1, 'Activity'],
+	['Projects', '/projects', 2, 'Projects'],
+	['Teams', '/teams', 2, 'Teams'],
+	['Org chart', '/teams/org-chart', 2, 'Org chart'],
+	['Members', '/teams/members', 2, 'Members'],
+	['Processes', '/settings/processes', 2, 'Processes'],
+	['Offices', '/settings/offices', 2, 'Offices'],
+	['Settings', '/settings', 2, 'General']
 ] as const;
-const JOURNEY_SECTIONS = ['Chat', 'Teams', 'Projects', 'Work', 'Organization settings'];
-const slug = (path: string) => path.slice(1);
-/** The destinations themselves, not the Projects and Teams places listed under them. */
+const JOURNEY_SECTIONS = ['Chat', 'Teams', 'Projects', 'Work', 'Settings'];
+const slug = (path: string) => path.slice(1).replaceAll('/', '-');
+/** The primary destinations in ExecutiveSidebar, excluding pinned Favorite projects. */
 const destinations = (page: Page) =>
-	page.getByRole('navigation', { name: 'Main' }).locator(':scope > ul > li > a');
+	page.getByRole('navigation', { name: 'Main' }).locator('ul:not(#exec-nav-favs) > li > a');
 
 test.beforeEach(async ({ page }) => {
 	await enterMockedOrganization(page);
@@ -27,21 +31,35 @@ test.beforeEach(async ({ page }) => {
 
 test('the sidebar lists every section, with its icon', { tag: '@journey' }, async ({ page }) => {
 	await expect(destinations(page)).toHaveCount(SECTIONS.length);
-	for (const [index, [name]] of SECTIONS.entries())
-		await expect(destinations(page).nth(index)).toHaveAccessibleName(name);
+	for (const [index, [name]] of SECTIONS.entries()) {
+		const expected = name === 'Inbox' ? /^Inbox/ : name;
+		await expect(destinations(page).nth(index)).toHaveAccessibleName(expected);
+	}
 	await expect(destinations(page).locator('svg')).toHaveCount(SECTIONS.length);
 });
 
-for (const [name, path] of SECTIONS) {
+for (const [name, path, level, heading] of SECTIONS) {
 	test(
 		`${name} opens its page and is marked current`,
 		{ tag: JOURNEY_SECTIONS.includes(name) ? '@journey' : [] },
 		async ({ page }) => {
-			const link = destinations(page).and(page.getByRole('link', { name, exact: true }));
+			const link = destinations(page).and(
+				page.getByRole('link', {
+					name: name === 'Inbox' ? /^Inbox/ : name,
+					exact: name !== 'Inbox'
+				})
+			);
 			await link.click();
 			await expect(page).toHaveURL(new RegExp(`${path}$`));
 			await expect(link).toHaveAttribute('aria-current', 'page');
-			await expect(page.getByRole('heading', { level: 1, name, exact: true })).toBeVisible();
+			const main = page.getByRole('main');
+			if (heading === null) {
+				await expect(main.getByRole('heading', { level })).toBeVisible();
+			} else {
+				await expect(
+					main.getByRole('heading', { level, name: new RegExp(`^${heading}`) }).first()
+				).toBeVisible();
+			}
 			await shot(page, `nav-${slug(path)}`);
 		}
 	);

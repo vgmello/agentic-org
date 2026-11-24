@@ -64,13 +64,13 @@
 			}}
 			oninput={() => (unchanged = false)}
 		>
-			<fieldset disabled={locked || busy} class="space-y-6">
+			<fieldset disabled={locked || busy} class="flex flex-col gap-6">
 				{@render children()}
 			</fieldset>
 			{#if save.refusal && !save.refusal.field}
-				<div role="alert" class="mt-6 rounded-md border border-line p-3 text-sm/6">
-					<p class="font-semibold text-danger-text">Not saved</p>
-					<p class="mt-1 text-fg-secondary [overflow-wrap:anywhere]">{save.refusal.message}</p>
+				<div role="alert" class="t-red mt-6 rounded-md p-3 text-sm/6">
+					<p class="font-semibold">Not saved</p>
+					<p class="mt-1 [overflow-wrap:anywhere]">{save.refusal.message}</p>
 				</div>
 			{/if}
 			{#if !locked}
@@ -80,10 +80,14 @@
 						variant="outline"
 						disabled={busy}
 						aria-busy={busy}
-						class="min-w-24 {mobileButton}">{busy ? busyLabel : saveLabel}</Button
+						class="min-h-9 min-w-24 {mobileButton} [@media(pointer:coarse)]:min-h-11"
+						>{busy ? busyLabel : saveLabel}</Button
 					>
 					<p class="text-xs/5 text-fg-muted" role="status">
-						{#if save.saved && !dirty}Saved{:else if unchanged}Nothing has changed yet{/if}
+						{#if save.saved && !dirty}<span
+								class="t-green inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-medium"
+								>Saved</span
+							>{:else if unchanged}Nothing has changed yet{/if}
 					</p>
 				</div>
 			{/if}

@@ -1,5 +1,10 @@
 @AGENTS.md
 
+## Prototype work
+
+Before working under `poc/`, read and follow [the prototype instructions](poc/AGENTS.md)
+for verification, publishing, and owner-approved Svelte handoffs.
+
 <!-- BACKLOG.MD GUIDELINES START -->
 <!-- backlog.md-instructions-version: 1.55.3 -->
 <CRITICAL_INSTRUCTION>

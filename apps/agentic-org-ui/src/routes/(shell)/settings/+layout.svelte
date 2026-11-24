@@ -33,19 +33,25 @@
 		/>
 		<nav
 			aria-label="Organization settings"
-			class="hidden w-56 shrink-0 border-r border-line-subtle px-4 py-6 min-[960px]:@min-[28rem]:block"
+			class="hidden w-56 shrink-0 border-r border-line px-3.5 py-5 min-[960px]:@min-[28rem]:block"
 		>
-			<ul role="list" class="space-y-1">
+			<p
+				aria-hidden="true"
+				class="px-3 pb-2 text-[11px]/4 font-semibold tracking-wider text-fg-subtle uppercase"
+			>
+				Organization
+			</p>
+			<ul role="list" class="flex flex-col gap-1">
 				{#each sections as section (section.href)}
 					{@const current = isCurrent(section)}
 					<li>
 						<a
 							href={resolve(section.href as '/')}
 							aria-current={current ? 'page' : undefined}
-							class="flex min-h-9 items-center rounded-md border-l-2 px-3 py-1.5 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {current
-								? 'border-brand bg-surface-raised text-fg'
-								: 'border-transparent text-fg-muted hover:bg-surface-raised hover:text-fg'}"
-							>{section.label}</a
+							class={[
+								'settings-nav-item flex min-h-9 items-center rounded-lg px-3 py-1.5 text-sm/6 font-semibold transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus',
+								current ? 'is-current' : 'text-fg-muted hover:bg-surface-raised hover:text-fg'
+							]}>{section.label}</a
 						>
 					</li>
 				{/each}
@@ -54,3 +60,13 @@
 		<div class="min-w-0 flex-1">{@render children()}</div>
 	</div>
 </div>
+
+<style>
+	.settings-nav-item.is-current {
+		background: var(--exec-accent-soft);
+		color: var(--exec-ink);
+		box-shadow:
+			inset 2.5px 0 0 var(--tone-accent),
+			inset 0 0 0 1px var(--exec-accent-ring);
+	}
+</style>

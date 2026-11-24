@@ -41,13 +41,13 @@ for (const width of [320, 640, 720, 960, 1280]) {
 				await page.evaluate((scale) => {
 					document.documentElement.style.fontSize = `${scale * 100}%`;
 				}, textScale);
-				await (await sectionLink(page, width, 'Teams')).press('Enter');
-				await expect(page).toHaveURL(/\/teams$/);
+				await (await sectionLink(page, width, 'Work')).press('Enter');
+				await expect(page).toHaveURL(/\/work$/);
 				const heading = page.locator('#shell-page-title');
-				await expect(heading).toHaveText('Teams');
+				await expect(heading).toHaveText('Work');
 				await expect(heading).toBeFocused();
 				await shot(page, `bug74-heading-landing-${width}-text${textScale * 100}`, {
-					context: page.locator('[data-shell-header]')
+					context: heading
 				});
 			}
 		);
@@ -81,8 +81,8 @@ for (const width of [720, 1280]) {
 		async ({ page }) => {
 			await page.setViewportSize({ width, height: 900 });
 			await openActivity(page);
-			await (await sectionLink(page, width, 'Teams')).click();
-			await expect(page).toHaveURL(/\/teams$/);
+			await (await sectionLink(page, width, 'Work')).click();
+			await expect(page).toHaveURL(/\/work$/);
 			await expect(page.locator('#shell-page-title')).toBeFocused();
 			await shot(page, `bug74-pointer-${width}`);
 		}
@@ -101,14 +101,18 @@ test(
 		await expect(composer).toBeVisible();
 		const threadUrl = page.url();
 		await composer.fill('Keep this desktop thread draft');
-		await (await sectionLink(page, 1280, 'Teams')).press('Enter');
-		await expect(page.locator('#shell-page-title')).toHaveText('Teams');
+		await (await sectionLink(page, 1280, 'Work')).press('Enter');
+		await expect(page.locator('#shell-page-title')).toHaveText('Work');
 		await expect(page.locator('#shell-page-title')).toBeFocused();
 		await page.goBack();
 		await expect(page).toHaveURL(threadUrl);
 		await expect(composer).toHaveValue('Keep this desktop thread draft');
-		// app-shell-ux §0: a route change, Back included, focuses the destination heading; the draft is kept.
-		await expect(page.locator('#shell-page-title')).toBeFocused();
+		await expect(
+			page.getByRole('heading', { level: 2, name: '#release-v1', exact: true })
+		).toBeVisible();
+		const chatTitle = page.getByRole('heading', { level: 1, name: 'Chat', exact: true });
+		await expect(chatTitle).toHaveAttribute('id', 'shell-page-title');
+		await expect(chatTitle).toBeFocused();
 		await shot(page, 'bug74-desktop-chat-back-thread-draft');
 	}
 );

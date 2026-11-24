@@ -12,24 +12,30 @@ test(
 		await enterMockedOrganization(page);
 		await expect(page).toHaveURL(/\/teams\/members$/);
 		const sections = [
-			['Home', 'home'],
-			['Inbox', 'inbox'],
-			['Projects', 'projects'],
-			['Work', 'work'],
-			['Chat', 'chat'],
-			['Activity', 'activity'],
-			['Teams', 'teams'],
-			['Organization settings', 'settings']
-		];
-		for (const [name, path] of sections) {
+			['Home', 'home', 1, null],
+			['Inbox', 'inbox', 1, 'Inbox'],
+			['Projects', 'projects', 2, 'Projects'],
+			['Work', 'work', 1, 'Work'],
+			['Chat', 'chat', 2, 'Needs you'],
+			['Activity', 'activity', 1, 'Activity'],
+			['Teams', 'teams', 2, 'Teams'],
+			['Settings', 'settings', 2, 'General']
+		] as const;
+		for (const [name, path, level, heading] of sections) {
 			await page
 				.getByRole('navigation', { name: 'Main', exact: true })
-				.getByRole('link', { name, exact: true })
+				.getByRole('link', { name: name === 'Inbox' ? /^Inbox/ : name, exact: name !== 'Inbox' })
 				.click();
 			await expect(page).toHaveURL(new RegExp(`/${path}$`));
 			const main = page.getByRole('main');
 			await expect(main).toHaveCount(1);
-			await expect(main.getByRole('heading', { level: 1, name, exact: true })).toBeVisible();
+			if (heading === null) {
+				await expect(main.getByRole('heading', { level })).toBeVisible();
+			} else {
+				await expect(
+					main.getByRole('heading', { level, name: new RegExp(`^${heading}`) }).first()
+				).toBeVisible();
+			}
 			await expect(main.getByRole('main')).toHaveCount(0);
 			await shot(page, `shell-main-${path}`);
 		}

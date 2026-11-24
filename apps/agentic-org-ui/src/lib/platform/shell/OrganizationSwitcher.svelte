@@ -5,6 +5,7 @@
 	import ChevronsUpDown from '@lucide/svelte/icons/chevrons-up-down';
 	import Plus from '@lucide/svelte/icons/plus';
 	import { toast } from 'svelte-sonner';
+	import { Tooltip, mergeProps } from 'bits-ui';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { officeApi } from '$lib/modules/offices/office-api';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
@@ -16,7 +17,13 @@
 	 * `officeApi.peekOrganizations()` (backed by `GET /api/v1/organizations` in production),
 	 * switches the active organization cleanly, and links to `/welcome` (All organizations).
 	 */
-	let { connection }: { connection: Connection } = $props();
+	let {
+		connection,
+		onOpenChange
+	}: {
+		connection: Connection;
+		onOpenChange?: (open: boolean) => void;
+	} = $props();
 
 	type OrgItem = { id: string; name: string; unavailable?: boolean };
 
@@ -101,22 +108,37 @@
 <DropdownMenu.Root
 	bind:open
 	onOpenChange={(next) => {
+		onOpenChange?.(next);
 		if (next) void loadOrganizations();
 	}}
 >
-	<DropdownMenu.Trigger>
-		{#snippet child({ props })}
-			<button
-				{...props}
-				type="button"
-				aria-label="Switch organization"
-				data-testid="org-switcher"
-				class="flex size-9 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg {focusRing}"
+	<Tooltip.Root disabled={open}>
+		<DropdownMenu.Trigger>
+			{#snippet child({ props: menuProps })}
+				<Tooltip.Trigger>
+					{#snippet child({ props: tipProps })}
+						<button
+							{...mergeProps(menuProps, tipProps)}
+							type="button"
+							aria-label="Switch organization"
+							data-testid="org-switcher"
+							class="flex size-9 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11 {focusRing}"
+						>
+							<ChevronsUpDown class="size-4" aria-hidden="true" />
+						</button>
+					{/snippet}
+				</Tooltip.Trigger>
+			{/snippet}
+		</DropdownMenu.Trigger>
+		<Tooltip.Portal>
+			<Tooltip.Content
+				side="bottom"
+				sideOffset={6}
+				class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+				>Switch organization</Tooltip.Content
 			>
-				<ChevronsUpDown class="size-4" aria-hidden="true" />
-			</button>
-		{/snippet}
-	</DropdownMenu.Trigger>
+		</Tooltip.Portal>
+	</Tooltip.Root>
 	<DropdownMenu.Content side="bottom" align="start" class="w-64 bg-surface ring-line">
 		<DropdownMenu.Group>
 			<DropdownMenu.Label class="text-xs font-medium text-fg-muted"

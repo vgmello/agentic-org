@@ -25,7 +25,7 @@
 </script>
 
 <div role="alert" class="px-4 min-[640px]:px-6 min-[1024px]:px-8">
-	<div class="max-w-xl rounded-md border border-line bg-tint/[0.03] p-4">
+	<div class="max-w-xl rounded-md border border-line bg-surface-raised p-4">
 		<svelte:element this={`h${level}`} class="text-sm/6 font-semibold text-danger-text"
 			>{title}. Try again.</svelte:element
 		>

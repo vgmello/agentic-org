@@ -24,7 +24,8 @@ import type {
 	TeamRef
 } from '../../../src/lib/modules/projects/types';
 import { OUTCOME_UNKNOWN } from '../../../src/lib/modules/projects/outcome';
-import { mockMode } from '../mock-mode';
+import { mockMode, POC_ORG_ID } from '../mock-mode';
+import { pocProjectRows } from '../poc-dataset';
 import { rows as memberRows, teamRef } from './members';
 import data from '../data/projects/projects.json' with { type: 'json' };
 import devData from '../data/processes/development-processes.json' with { type: 'json' };
@@ -67,14 +68,14 @@ const fail = (code: string, message: string, extra: Record<string, unknown> = {}
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
 
 async function read() {
-	await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 200));
+	if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 	if (on('unavailable')) await unavailableCall();
 	if (on('fails'))
 		throw fail('internal', "HQ didn't answer. Check that the office is running, then try again.");
 }
 
 async function write(name?: string) {
-	await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 400));
+	if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 	if (on('unavailable')) await unavailableCall();
 	if (on('stale'))
 		throw fail('storage_error', "HQ can't be reached, so nothing was saved. Try again.");
@@ -252,6 +253,13 @@ async function setTeams(
 export const projectsApi: ProjectsApi = {
 	async list(organizationId) {
 		await read();
+		if (organizationId === POC_ORG_ID) {
+			return {
+				projects: on('empty') ? [] : structuredClone(pocProjectRows()),
+				viewer: { canCreate: !on('viewer') },
+				...stale()
+			};
+		}
 		const s = await repaired(organizationId);
 		const projects = on('empty')
 			? []

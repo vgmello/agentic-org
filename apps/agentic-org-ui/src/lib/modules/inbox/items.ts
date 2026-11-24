@@ -14,6 +14,12 @@ export function sortOpen(items: InboxItem[]): InboxItem[] {
 export const sortHandled = (items: InboxItem[]): InboxItem[] =>
 	[...items].sort((a, b) => (b.handled?.at ?? '').localeCompare(a.handled?.at ?? ''));
 
+/** Snoozed items, soonest returning first. */
+export const sortSnoozed = (items: InboxItem[]): InboxItem[] =>
+	[...items].sort((a, b) =>
+		(a.snoozed_until ?? '\uffff').localeCompare(b.snoozed_until ?? '\uffff')
+	);
+
 export const openItems = (items: InboxItem[]) => sortOpen(items.filter((i) => i.state === 'open'));
 
 /** The count shown on Home's "Open Inbox (N)" and in the navigation badge: every open item. */
@@ -36,11 +42,12 @@ export function inScope(item: InboxItem, scope: InboxScope): boolean {
 export function tabItems(items: InboxItem[], tab: InboxTab, scope: InboxScope = {}): InboxItem[] {
 	const scoped = items.filter((i) => inScope(i, scope));
 	if (tab === 'handled') return sortHandled(scoped.filter((i) => i.state === 'handled'));
+	if (tab === 'snoozed') return sortSnoozed(scoped.filter((i) => i.state === 'snoozed'));
 	const open = scoped.filter((i) => i.state === 'open');
 	return sortOpen(tab === 'all' ? open : open.filter((i) => i.kind === TAB_KIND[tab]));
 }
 
-/** The number beside each tab: open items per kind, and handled items. */
+/** The number beside each tab: open items per kind, snoozed, and handled items. */
 export function tabCounts(items: InboxItem[], scope: InboxScope = {}): Record<InboxTab, number> {
 	const counts: Record<InboxTab, number> = {
 		all: 0,
@@ -48,6 +55,7 @@ export function tabCounts(items: InboxItem[], scope: InboxScope = {}): Record<In
 		questions: 0,
 		decisions: 0,
 		problems: 0,
+		snoozed: 0,
 		handled: 0
 	};
 	for (const tab of Object.keys(counts) as InboxTab[])

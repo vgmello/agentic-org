@@ -1,6 +1,5 @@
 <script lang="ts">
-	import PageHeader from '$lib/components/PageHeader.svelte';
-	import { ActivityFeed } from '$lib/modules/activity';
+	import ActivityCommandCenter from '$lib/modules/activity/features/command-center/ActivityCommandCenter.svelte';
 	import { pageTitle } from '$lib/nav';
 
 	let { data } = $props();
@@ -8,8 +7,8 @@
 
 <svelte:head><title>{pageTitle('Activity')}</title></svelte:head>
 
-<PageHeader
-	title="Activity"
-	description="What your teams and agents are doing, newest first. Decisions show under the Decisions kind."
+<ActivityCommandCenter
+	organizationId={data.connection.organization.id}
+	organizationName={data.connection.organization.name}
+	snapshot={data.snapshot}
 />
-<ActivityFeed organizationId={data.connection.organization.id} syncUrl />

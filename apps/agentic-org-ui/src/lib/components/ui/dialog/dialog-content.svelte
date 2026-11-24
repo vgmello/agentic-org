@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Dialog as DialogPrimitive } from 'bits-ui';
+	import { Dialog as DialogPrimitive, Tooltip, mergeProps } from 'bits-ui';
 	import XIcon from '@lucide/svelte/icons/x';
 	import { returnFocus } from '$lib/components/focus';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -12,6 +12,7 @@
 	let {
 		ref = $bindable(null),
 		class: className,
+		overlayClass,
 		portalProps,
 		children,
 		showCloseButton = true,
@@ -20,6 +21,7 @@
 		onCloseAutoFocus,
 		...restProps
 	}: WithoutChildrenOrChild<DialogPrimitive.ContentProps> & {
+		overlayClass?: string;
 		portalProps?: WithoutChildrenOrChild<ComponentProps<typeof DialogPortal>>;
 		children: Snippet;
 		showCloseButton?: boolean;
@@ -38,7 +40,7 @@
 </script>
 
 <DialogPortal {...portalProps}>
-	<DialogOverlay />
+	<DialogOverlay class={overlayClass} />
 	<DialogPrimitive.Content
 		bind:ref
 		data-slot="dialog-content"
@@ -51,14 +53,36 @@
 	>
 		{@render children?.()}
 		{#if showCloseButton}
-			<DialogPrimitive.Close data-slot="dialog-close">
-				{#snippet child({ props })}
-					<Button variant="ghost" class="absolute top-4 right-4" size="icon-sm" {...props}>
-						<XIcon />
-						<span class="sr-only">Close</span>
-					</Button>
-				{/snippet}
-			</DialogPrimitive.Close>
+			<Tooltip.Provider delayDuration={150} ignoreNonKeyboardFocus>
+				<Tooltip.Root ignoreNonKeyboardFocus>
+					<DialogPrimitive.Close data-slot="dialog-close">
+						{#snippet child({ props: closeProps })}
+							<Tooltip.Trigger>
+								{#snippet child({ props: tipProps })}
+									<Button
+										variant="ghost"
+										class="absolute top-3 right-3 size-9 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
+										size="icon-sm"
+										aria-label="Close"
+										{...mergeProps(closeProps, tipProps)}
+									>
+										<XIcon aria-hidden="true" />
+									</Button>
+								{/snippet}
+							</Tooltip.Trigger>
+						{/snippet}
+					</DialogPrimitive.Close>
+					<Tooltip.Portal>
+						<Tooltip.Content
+							side="bottom"
+							sideOffset={6}
+							escapeKeydownBehavior="defer-otherwise-close"
+							class="z-[60] rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+							>Close</Tooltip.Content
+						>
+					</Tooltip.Portal>
+				</Tooltip.Root>
+			</Tooltip.Provider>
 		{/if}
 	</DialogPrimitive.Content>
 </DialogPortal>

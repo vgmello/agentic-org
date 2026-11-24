@@ -12,7 +12,8 @@
   accepts it. Back with the sheet open closes it only (app-shell-ux §6).
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
+	import { beforeNavigate } from '$app/navigation';
 	import {
 		errorClass,
 		helpClass,
@@ -103,22 +104,44 @@
 	const newTeamName = $derived(name.trim() || 'named after the project');
 	const waitingForTeams = $derived(!teams);
 
+	function closeFromBack() {
+		if (locked) return;
+		open = false;
+	}
+
+	// Never let rapid Back or navigation unmount the sheet while creation/check is locked,
+	// preserving the operation ID needed to resolve unknown outcomes (work-items-ux §12).
+	beforeNavigate((navigation) => {
+		if (open && locked) navigation.cancel();
+	});
+
 	// Back with the sheet open closes it only, and focus returns to its opener (app-shell-ux §6).
-	$effect(() => {
-		if (open) return registerModalBack(() => (open = false));
+	$effect.pre(() => {
+		if (open) return registerModalBack(closeFromBack, { locked: () => locked });
+	});
+
+	let teamsSeq = 0;
+	let destroyed = false;
+
+	onDestroy(() => {
+		destroyed = true;
 	});
 
 	function loadTeams() {
+		const seq = ++teamsSeq;
+		const org = organizationId;
 		teamsError = undefined;
 		teamsLoading = true;
-		projectsApi.teamChoices(organizationId).then(
+		projectsApi.teamChoices(org).then(
 			(rows) => {
+				if (destroyed || seq !== teamsSeq || org !== organizationId) return;
 				teams = rows;
 				teamsLoading = false;
 				// The default place for a new team is the organization's top-level team (§7.9).
 				if (!parentId) parentId = rows.find((t) => t.organizationTeam)?.id ?? NO_PARENT;
 			},
 			(e) => {
+				if (destroyed || seq !== teamsSeq || org !== organizationId) return;
 				teamsError = toAppError(e).message;
 				teamsLoading = false;
 			}
@@ -131,7 +154,7 @@
 	 */
 	export function start(presetTeamId?: string) {
 		open = true;
-		if (unresolved) return;
+		if (busy || unresolved) return;
 		name = '';
 		slug = '';
 		slugEdited = false;
@@ -198,9 +221,11 @@
 						: { kind: 'existing', teamId },
 				developmentProcessId: processId || null
 			});
+			if (destroyed) return;
 			busy = undefined;
 			await finish(answer, created);
 		} catch (e) {
+			if (destroyed) return;
 			busy = undefined;
 			const failure = toAppError(e);
 			const field = (failure as { field?: ProjectField }).field;
@@ -208,7 +233,7 @@
 			else if (field) {
 				refusal = { field, message: failure.message };
 				await tick();
-				form.querySelector<HTMLElement>(fieldSelector(field))?.focus();
+				if (!destroyed) form.querySelector<HTMLElement>(fieldSelector(field))?.focus();
 			} else outcome = { kind: 'failed', message: failure.message };
 		}
 	}
@@ -219,12 +244,14 @@
 		const created = name.trim();
 		try {
 			const result = await projectsApi.createOperation(organizationId, operationId);
+			if (destroyed) return;
 			busy = undefined;
 			if (result.state === 'applied') await finish(result, created);
 			else if (result.state === 'not_applied')
 				outcome = { kind: 'not_applied', reason: result.reason };
 			else outcome = { kind: 'pending' };
 		} catch (e) {
+			if (destroyed) return;
 			busy = undefined;
 			outcome = { kind: 'unknown', checkError: toAppError(e).message };
 		}
@@ -386,7 +413,7 @@
 						<Button
 							type="button"
 							variant="outline"
-							class="mt-3 min-w-20 {mobileButton}"
+							class="mt-3 min-h-9 min-w-20 {mobileButton} [@media(pointer:coarse)]:min-h-11"
 							disabled={teamsLoading}
 							aria-busy={teamsLoading}
 							onclick={loadTeams}>{teamsLoading ? 'Retrying…' : 'Retry'}</Button
@@ -443,13 +470,13 @@
 						type="button"
 						variant="outline"
 						disabled={!!busy}
-						class={mobileButton}
+						class="min-h-9 {mobileButton} [@media(pointer:coarse)]:min-h-11"
 						onclick={() => (open = false)}>Cancel</Button
 					>
 					{#if unresolved}
 						<Button
 							type="button"
-							class="min-w-32 {mobileButton}"
+							class="min-h-9 min-w-32 {mobileButton} [@media(pointer:coarse)]:min-h-11"
 							aria-busy={busy === 'checking'}
 							disabled={busy === 'checking'}
 							onclick={checkStatus}>{busy === 'checking' ? 'Checking…' : 'Check status'}</Button
@@ -460,7 +487,7 @@
 							disabled={!!busy || waitingForTeams}
 							aria-busy={busy === 'creating'}
 							aria-describedby={waitingForTeams ? 'new-project-waiting' : undefined}
-							class="min-w-32 {mobileButton}"
+							class="min-h-9 min-w-32 {mobileButton} [@media(pointer:coarse)]:min-h-11"
 							>{busy === 'creating' ? 'Creating…' : 'Create project'}</Button
 						>
 					{/if}

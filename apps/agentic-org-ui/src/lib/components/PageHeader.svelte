@@ -17,7 +17,7 @@
 	let {
 		title,
 		level = 2,
-		id,
+		id = 'shell-page-title',
 		count,
 		countLabel,
 		description,
@@ -55,7 +55,8 @@
 			<svelte:element
 				this={level === 1 ? 'h1' : 'h2'}
 				{id}
-				class="flex flex-wrap items-baseline gap-x-2 text-base/7 font-semibold text-fg [overflow-wrap:anywhere]"
+				tabindex="-1"
+				class="flex flex-wrap items-baseline gap-x-2 text-base/7 font-semibold text-fg [overflow-wrap:anywhere] focus:outline-none"
 			>
 				{title}
 				{#if count !== undefined}

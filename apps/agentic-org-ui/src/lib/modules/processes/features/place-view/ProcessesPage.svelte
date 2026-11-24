@@ -324,7 +324,9 @@
 		<SkeletonRows label={kind === 'standard' ? 'standards' : 'processes'} rows={4} />
 	{:else}
 		{#if view.developmentProcess || view.agent}
-			<div class="space-y-1 px-4 pt-4 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">
+			<div
+				class="flex flex-col gap-1 px-4 pt-4 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8"
+			>
 				{#if view.agent}
 					<p data-testid="agent-work">
 						{view.agent.work
@@ -415,7 +417,7 @@
 					<ul role="list" class="divide-y divide-line-subtle">
 						{#each inactive as doc (doc.id)}
 							<li
-								class="relative flex flex-wrap items-start gap-x-4 gap-y-1 px-4 py-4 hover:bg-tint/[0.02] min-[640px]:px-6 min-[1024px]:px-8"
+								class="relative flex flex-wrap items-start gap-x-4 gap-y-1 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8"
 								data-testid="inactive-row"
 								data-document={doc.id}
 							>
