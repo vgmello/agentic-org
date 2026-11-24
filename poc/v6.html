@@ -6707,7 +6707,14 @@ function pageProject(id, tab) {
   const pr = P[id]; if (!pr) return notFound();
   tab = tab || "overview";
   const ws = W.filter((w) => w.proj === id);
-  const tabs = [["", "Overview"], ["work", "Work", ws.filter(OPEN).length], ["team", "Team", projMembers(id).length], ["activity", "Activity"], ["insights", "Insights"], ["conversations", "Conversations"]];
+  const tabs = [
+    ["", "Overview"],
+    ["activity", "Activity"],
+    ["work", "Work", ws.filter(OPEN).length],
+    ["insights", "Insights"],
+    ["conversations", "Conversations"],
+    ["team", "Team", projMembers(id).length],
+  ];
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"));
   const workControls = tab === "work" ? `<div class="queue-controls project-work-controls" role="group" aria-label="Work view controls">${scopedWorkControls()}</div>` : "";
   return back("#/projects", "Projects") + `<div class="section-header project-header">
