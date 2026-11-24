@@ -208,6 +208,8 @@ try {
       const assembly = page.getByRole("tab", { name: "Assembly line" });
       const feed = page.getByRole("tab", { name: "Activity feed" });
       const readiness = page.getByRole("progressbar", { name: "Project readiness" });
+      const release = page.getByRole("region", { name: "Release summary" });
+      const releaseReadiness = release.getByRole("progressbar", { name: "Release readiness" });
       const panel = page.getByRole("complementary", { name: "Release gates" });
       const tools = page.getByRole("group", { name: "Activity sidebar tools" });
       const simulation = tools.getByRole("button", { name: "Simulation" });
@@ -215,6 +217,9 @@ try {
       await readiness.waitFor();
       assert.equal(await assembly.getAttribute("aria-selected"), "true");
       assert.equal(await readiness.getAttribute("max"), "4");
+      assert.equal(await releaseReadiness.getAttribute("max"), "4");
+      assert.equal(await releaseReadiness.getAttribute("value"), await readiness.getAttribute("value"));
+      assert.deepEqual(await release.getByRole("link").allTextContents().then((links) => links.map((label) => label.trim())), ["File access ruling · Pending"]);
       assert.equal(await page.locator(".assembly-milestone").count(), 1);
       assert.equal(await page.locator('[data-assembly-work="T-A121"]').count(), 0);
       assert.equal(await gates.getAttribute("aria-expanded"), "true");
@@ -231,6 +236,7 @@ try {
       await playback.getByRole("button", { name: "Add sample task" }).click();
       await playback.getByText("joined the queue").waitFor();
       assert.equal(await readiness.getAttribute("max"), "5");
+      assert.equal(await releaseReadiness.getAttribute("max"), "5");
       await playback.getByRole("button", { name: "Play simulation" }).click();
       await page.waitForFunction(() => document.querySelector('[data-assembly-work="T-S1"]:not([data-stage="queue"])'));
       assert.doesNotMatch((await playback.locator(".assembly-event-log").textContent())!, /T-A130|T-A84/);

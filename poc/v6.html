@@ -7277,6 +7277,33 @@ function assemblyChip(entry) {
   if (work.sample) return `<span ${chip}>${esc(label)}</span>`;
   return `<a ${chip} href="#/projects/${work.proj}/work?item=${encodeURIComponent(work.id)}">${esc(label)}</a>`;
 }
+function releaseGates(projectIds) {
+  return IN.filter((item) => own(RELEASE_GATES, item.id) && projectIds.includes(item.proj));
+}
+function releaseGateState(item) {
+  if (!item.handled) return "pending";
+  return /^(denied|declined|dismissed|changes requested)\b/i.test(item.outcome) ? "blocked" : "cleared";
+}
+function assemblyReleaseSummary(id, release, entries, merged) {
+  const gates = releaseGates([id]);
+  const gateStates = { pending: ["clock", "Pending"], blocked: ["deny", "Blocked"], cleared: ["check", "Cleared"] };
+  return `<section class="assembly-release" aria-label="Release summary">
+    <div class="assembly-release-overview">
+      <div><p class="assembly-release-label">Release</p><p class="assembly-release-name">${esc(release)}</p></div>
+      <div class="assembly-release-readiness">
+        <p class="assembly-release-label">Readiness ${assemblyPct(entries)}% · ${merged}/${entries.length} tasks merged</p>
+        ${assemblyProgressBar(merged, entries.length, "Release readiness")}
+      </div>
+    </div>
+    ${gates.length ? `<ul class="assembly-release-gates" aria-label="Release gates">${gates.map((item) => {
+      const state = releaseGateState(item);
+      const [icon, status] = gateStates[state];
+      return `<li><a href="#/inbox/${item.id}" data-gate-state="${state}" title="${status}">
+        ${ic(icon, "ic14")}${esc(RELEASE_GATES[item.id])}<span class="sr-only"> · ${status}</span>
+      </a></li>`;
+    }).join("")}</ul>` : ""}
+  </section>`;
+}
 function assemblyMatrix(projects, entries, counts) {
   const project = projects.length === 1 ? projects[0].project : null;
   const projectId = projectActivityId();
@@ -7306,8 +7333,9 @@ function assemblyMatrix(projects, entries, counts) {
         </tr>`).join("")}${features.length ? "" : '<tr><td colspan="7" class="assembly-dash">No tasks on this assembly line.</td></tr>'}
       </tbody>`).join("")}</table>
     </div>
+    ${projectId && project?.release ? assemblyReleaseSummary(projectId, project.release, entries, counts.merged) : ""}
     <div class="assembly-legend" aria-label="Delivery stages">${ACTIVITY_STAGES.map(([stage, label]) => `<span data-stage="${stage}"><i aria-hidden="true"></i>${label}</span>`).join("")}
-      ${assemblyProgress(entries, "Release readiness")}</div>
+      ${projectId ? "" : assemblyProgress(entries, "Release readiness")}</div>
   </section>`;
 }
 function activityThroughput(projects) {
@@ -7340,10 +7368,10 @@ function assemblyEventLog() {
 
 function releaseOperations({ projects, entries, counts }) {
   const projectId = projectActivityId();
-  const gates = IN.filter((item) => own(RELEASE_GATES, item.id) && projects.some(({ id }) => id === item.proj));
+  const gates = releaseGates(projects.map(({ id }) => id));
   const gateList = `<ul>${gates.map((item) => {
     const tone = !item.handled ? "assembly-review-text"
-      : !projectId ? "muted" : /denied|changes requested/i.test(item.outcome) ? "tone-bad" : "tone-ok";
+      : !projectId ? "muted" : releaseGateState(item) === "blocked" ? "tone-bad" : "tone-ok";
     return `<li><a href="#/inbox/${item.id}">${esc(RELEASE_GATES[item.id])}</a><span class="${tone}">${item.handled ? esc(item.outcome) : "Pending"}</span></li>`;
   }).join("") || "<li>No gates in this scope</li>"}</ul>`;
   if (projectId) return projectReleaseOperations(projects[0], counts, gateList);
