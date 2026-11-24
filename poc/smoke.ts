@@ -268,6 +268,65 @@ try {
       await readiness.waitFor();
     }
 
+    if (route === "projects/agency-v1/insights") {
+      const insights = page.getByRole("region", { name: "Insights", exact: true });
+      const breakdown = insights.getByRole("region", { name: "Spending breakdown" });
+      const period = insights.getByRole("combobox", { name: "Period" });
+      const view = insights.getByRole("combobox", { name: "View" });
+      const groups = insights.getByRole("combobox", { name: "Group spend by" });
+      const usageHeading = insights.getByRole("heading", { name: /^Usage records/ });
+      const usageRows = insights.getByRole("table", { name: "Usage records", exact: true }).locator("tbody tr");
+      const periodCost = insights.locator(".insight-kpis > div").filter({ hasText: "Period cost" }).locator("dd").first();
+
+      assert.equal(await page.getByRole("link", { name: "Insights", exact: true }).getAttribute("aria-current"), "page");
+      assert.equal(await period.inputValue(), "month");
+      const monthCost = await periodCost.textContent();
+      await period.selectOption("last");
+      assert.notEqual(await periodCost.textContent(), monthCost);
+      assert.equal(await period.evaluate((input) => document.activeElement === input), true);
+      await period.selectOption("custom");
+      await insights.getByLabel("From", { exact: true }).fill("2026-11-23");
+      await insights.getByLabel("To", { exact: true }).fill("2026-11-22");
+      await insights.getByRole("button", { name: "Apply dates" }).click();
+      assert.ok(await insights.getByLabel("To", { exact: true }).evaluate((input: HTMLInputElement) => input.validity.customError));
+      await insights.getByLabel("To", { exact: true }).fill("2026-11-23");
+      await insights.getByRole("button", { name: "Apply dates" }).click();
+      assert.equal(await usageRows.count(), 1);
+      assert.match((await usageRows.first().textContent())!, /T-A88/);
+      await period.selectOption("month");
+      assert.equal(await periodCost.textContent(), monthCost);
+
+      await view.selectOption("table");
+      await breakdown.getByRole("table", { name: "Spending breakdown" }).waitFor();
+      await insights.getByRole("combobox", { name: "Group investment by" }).selectOption("milestone");
+      await insights.getByRole("table", { name: "R&D investment" }).getByRole("rowheader", { name: "Agentic Org v1.0" }).waitFor();
+      await groups.selectOption("attribution");
+      await breakdown.getByRole("link", { name: "Cancelled work" }).click();
+      assert.equal(await usageHeading.textContent(), "Usage records · Cancelled work");
+      assert.equal(await usageHeading.evaluate((heading) => heading === document.activeElement), true);
+      assert.equal(await usageRows.count(), 1);
+      assert.match((await usageRows.first().textContent())!, /T-A999 \(cancelled\)/);
+      await insights.getByRole("button", { name: "Show all records" }).click();
+      assert.equal(await usageHeading.textContent(), "Usage records");
+      assert.ok(await usageRows.count() > 1);
+      const download = page.waitForEvent("download");
+      await insights.getByRole("link", { name: "Export CSV" }).click();
+      const csv = await download;
+      assert.equal(csv.suggestedFilename(), "agency-v1-usage.csv");
+      const csvText = await Bun.file((await csv.path())!).text();
+      assert.match(csvText, /"cache_read_tokens"/);
+      assert.match(csvText, /"Cancelled work"/);
+      assert.doesNotMatch(csvText, /office-federation/);
+      await insights.getByRole("link", { name: /Highest task spend/ }).click();
+      await page.locator("#work-panel").waitFor();
+      await page.goBack();
+      await view.selectOption("chart");
+      await page.getByRole("link", { name: "Activity", exact: true }).last().click();
+      await page.getByRole("tab", { name: "Assembly line" }).waitFor();
+      await page.getByRole("link", { name: "Insights", exact: true }).click();
+      await insights.getByRole("heading", { name: "Spend over time" }).waitFor();
+    }
+
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     const screenshot = resolve(import.meta.dir, "../.playwright", `poc-${route.replace(/[^a-z0-9]+/gi, "-")}-${theme}.png`);
     await page.screenshot({ path: screenshot });
