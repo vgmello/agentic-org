@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use org_agent_runtime::{
     encode_line, ApprovalId, ApprovalKind, ApprovalRequest, Escalation, LimitKind, LimitStatus,
-    NoticeKind, Output, RateLimit, SessionEvent, TurnOutcome, Window,
+    NoticeKind, Output, RateLimit, SessionEvent, ToolCapability, TurnOutcome, Window,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -61,6 +61,21 @@ pub(crate) fn extract_agent_names(val: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn classify_tool_capability(tool: &str) -> Option<ToolCapability> {
+    match tool.to_ascii_lowercase().as_str() {
+        "read_file" | "view_file" => Some(ToolCapability::Read),
+        "list_dir" | "find_by_name" | "grep_search" => Some(ToolCapability::Search),
+        "write_file"
+        | "edit_file"
+        | "delete_file"
+        | "replace_file_content"
+        | "multi_replace_file_content" => Some(ToolCapability::Edit),
+        "run_command" => Some(ToolCapability::Shell),
+        "invoke_subagent" | "spawn_subagent" | "subagent" => Some(ToolCapability::Subagent),
+        _ => None,
+    }
+}
+
 pub(crate) fn classify_tool_kind(tool: &str) -> ApprovalKind {
     match tool.to_ascii_lowercase().as_str() {
         "run_command" | "bash" | "shell" => ApprovalKind::Command,
@@ -77,18 +92,25 @@ pub(crate) fn classify_tool_kind(tool: &str) -> ApprovalKind {
         | "exit_plan_mode"
         | "enter_plan_mode" => ApprovalKind::Permissions,
         "read_file" | "view_file" | "list_dir" | "find_by_name" | "grep_search" | "glob"
-        | "grep" | "read" | "webfetch" | "websearch" => ApprovalKind::Other,
+        | "grep" | "read" | "webfetch" | "websearch" | "invoke_subagent" | "spawn_subagent"
+        | "subagent" => ApprovalKind::Other,
         other if other.starts_with("mcp_") => ApprovalKind::Other,
         _ => ApprovalKind::Unknown,
     }
 }
 
+fn is_bypass_flag_triggered(val: Option<&Value>) -> bool {
+    match val {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        // Fail closed on malformed/non-boolean bypass fields.
+        Some(_) => true,
+    }
+}
+
 pub(crate) fn classify_escalation(tool: &str, kind: ApprovalKind, input: &Value) -> Escalation {
-    if input
-        .get("dangerouslyDisableSandbox")
-        .or_else(|| input.get("unsandboxed"))
-        .and_then(Value::as_bool)
-        == Some(true)
+    if is_bypass_flag_triggered(input.get("dangerouslyDisableSandbox"))
+        || is_bypass_flag_triggered(input.get("unsandboxed"))
     {
         return Escalation::SandboxBypass;
     }
@@ -114,6 +136,7 @@ pub(crate) fn build_approval_request(
     let escalation = classify_escalation(tool, kind, &input);
     let id = ApprovalId::new(request_id);
     let mut approval = ApprovalRequest::new(id, kind, escalation, tool, input.clone());
+    approval.capability = classify_tool_capability(tool);
     approval.display_name = req
         .get("display_name")
         .and_then(Value::as_str)
@@ -262,17 +285,20 @@ pub(crate) fn parse_assistant_blocks(
                 }
             }
             Some("tool_use") => {
+                let name = block
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_owned();
+                let capability = classify_tool_capability(&name);
                 out.push(Output::Event(SessionEvent::ToolStarted {
                     tool_use_id: block
                         .get("id")
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_owned(),
-                    name: block
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown")
-                        .to_owned(),
+                    name,
+                    capability,
                     input: block.get("input").cloned().unwrap_or(Value::Null),
                 }));
             }

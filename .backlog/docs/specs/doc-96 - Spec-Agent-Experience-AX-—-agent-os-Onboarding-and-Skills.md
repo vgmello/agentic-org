@@ -3,7 +3,7 @@ id: doc-96
 title: 'Spec: Agent Experience (AX) — agent-os, Onboarding, and Skills'
 type: specification
 created_date: '2026-11-23T03:48:00Z'
-updated_date: '2026-11-24T10:00:00Z'
+updated_date: '2026-11-24T11:34:00Z'
 tags:
   - spec
   - ax
@@ -147,7 +147,7 @@ Built-in product skills (`crates/org-process/src/skills.rs`) keep the base promp
   - **Codex** (`crates/org-agent-runtime-codex`, `codex app-server --stdio`)
   - **Antigravity** (`crates/org-agent-runtime-agy`, `agy --input-format stream-json --output-format stream-json`)
 - **Zero MCP product primitives (`CLI-12`):** launch MCP config is empty; no product capability is exposed as an MCP tool.
-- **Zero vendor-specific prompt assumptions:** built-in instructions and product skills never reference Claude slash commands, `.claude/` files, or single-vendor features. Transport quirks (such as Codex `shell_environment_policy` filtering `*TOKEN*`, Claude `--system-prompt-snapshot`, or Agy U+2028/U+2029 line splitting) are isolated inside `crates/org-agent-runtime-*`.
+- **Zero vendor-specific prompt assumptions:** built-in instructions and product skills never reference Claude slash commands, `.claude/` files, or single-vendor features. Transport quirks (such as Codex `shell_environment_policy` preserving baseline POSIX `PATH`/`HOME`/`TMPDIR`/`LANG`/`TERM` alongside `ctx.office_env_names` while filtering ambient secrets, Claude `--system-prompt-snapshot`, or Agy U+2028/U+2029 line splitting) and runtime-neutral `ToolCapability::{Read, Search, Edit, Shell, Subagent}` translations (`cap:*` presets, safe word-bounded `CommandPrefix("agent-os")` with shell-metacharacter fail-closed rejection in `ReadOnly`/`WorkspaceEdits`, and normalized sub-agent lifecycle events, `TASK-94`) are isolated inside `crates/org-agent-runtime*` and `crates/org-office-sessions`.
 - **Cross-OS determinism (`CLI-11`):** launch catalogue, `--help`, and `--schema` outputs are byte-identical on macOS and Linux.
 - **Model portability (`doc-27` §8):** behavioral evals must pass not only on flagship models, but also on the cost-effective models organizations run in production.
 

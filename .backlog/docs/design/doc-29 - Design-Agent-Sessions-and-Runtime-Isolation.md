@@ -3,7 +3,7 @@ id: doc-29
 title: 'Design: Agent Sessions and Runtime Isolation'
 type: specification
 created_date: '2026-11-21T00:18:00Z'
-updated_date: '2026-11-21T00:18:00Z'
+updated_date: '2026-11-24T14:35:00Z'
 tags:
   - design
   - agents
@@ -166,7 +166,10 @@ The decisions this design applies:
      Runtimes must pass this environment to their tools: Codex's
      `shell_environment_policy` drops names matching `*TOKEN*` by default, so the office
      pins `shell_environment_policy.ignore_default_excludes=true` and `include_only` to
-     the names above.
+     the office-curated baseline POSIX variables (`PATH`, `HOME`, `TMPDIR`, `LANG`, `TERM`)
+     plus `LaunchContext::office_env_names` (excluding runtime secret/auth env names), so
+     tool shells resolve `agent-os` on `PATH` with `AGENT_OS_SESSION_TOKEN` present while
+     ambient secrets remain excluded (`TASK-94`).
    - **`TMPDIR`** is `<user temp>/ao/<instance>/<office>/<employee>/<session>/`, each
      component a short random handle allocated exclusively (never derived from a client
      ID), each level `0700`, owned by the service user, not a symlink. `<user temp>` is
@@ -203,15 +206,57 @@ The decisions this design applies:
        entries.
      - Each sandbox allows exactly the office socket in `AGENT_OS_SOCKET` (Claude
        `allowUnixSockets`, Codex `network.unix_sockets`) and refuses every other socket.
-     - **Codex's profile is required and fails closed.** One `-c` value holds the whole
-       `permissions.<name>` table, plus `-c features.network_proxy=true`. It extends
-       `:workspace`, adds the writable roots and the fixed read and write denies, turns
-       network on with no domain allowed, and allows the office socket. The legacy
-       `sandboxPolicy` has no read deny, so Codex is not office-run until the profile
-       holds every fixed deny in live turns.
-   - **Claude's tools are an explicit allowlist:** `Read`, `Edit`, `Write`, `Glob`,
-     `Grep`, `Bash` (sandboxed), the tool that starts a sub-agent, and the tools of the
-     connectors the office granted this agent, nothing else. A sub-agent is part of
+     - **Codex's profile is required and fails closed.** The adapter sets
+       `-c features.network_proxy=true`, `-c default_permissions="office"`,
+       `-c permissions.office.filesystem={...}` (base `"/"="read"`; for `ReadOnly`,
+       `SafeAsk`, and any spec without unscoped `AcceptEdits` edit approval, zero
+       `"write"` entries including `workspace="read"` and `TMPDIR="read"` so Codex
+       compiles the profile to `SandboxPolicy::ReadOnly` and blocks native
+       `apply_patch` writes; for `WorkspaceEdits`/`AutonomousSandboxed`, literal
+       workspace, `TMPDIR`, and writable roots `"write"` with nested write grants under
+       any deny or `read_only_dirs` stripped; `read_only_dirs` and `deny_write`
+       `"read"`, `config_dir` `"read"` unless covered by a `"none"` ancestor deny with
+       `auth.json="none"`, and `deny_read` / policy `Path` denies `"none"`/`"read"`,
+       failing closed on leading-wildcard path denies and glob metacharacters in
+       literal paths), and
+       `-c permissions.office.network={enabled=true,unix_sockets={...}}` with no
+       allowed domains. It pins `permissions: "office"`, `approvalsReviewer: "user"`,
+       and granular `approvalPolicy` (`sandbox_approval=false, rules=true,
+       mcp_elicitations=false, request_permissions=false, skill_approval=false`, with
+       `initialize.capabilities.experimentalApi=true`) on `thread/start`,
+       `thread/resume`, and `turn/start`, omitting legacy `sandbox`/`sandboxPolicy`
+       overrides so `activePermissionProfile.id == "office"` is verified before `Ready`.
+       It rejects ambiguous macOS root-symlink alias overlaps (`/var` vs
+       `/private/var`, `/tmp` vs `/private/tmp`, `/etc` vs `/private/etc`) and strips
+       writable grants beneath `read_only_dirs` or any deny (rejecting overlapping
+       `TMPDIR`). Because Codex `0.169.0`–`0.171.0` removed CLI
+       `approval_policy="untrusted"`, omits `sandboxPermissions` provenance on RPC
+       `untrusted` approvals (allowing Seatbelt escapes if auto-approved), has no
+       catch-all wildcard Starlark execpolicy prompt rule, marks programmatic
+       `hooks.json` as `untrusted` (`--dangerously-bypass-hook-trust` is banned),
+       forbids MCP-wrapping `agent-os` (`CLI-12`), and cannot execute `dynamicTools`
+       inside a sans-I/O adapter, the adapter fails closed with
+       `-c features.shell_tool=false` whenever shell is not granted unscoped
+       `RuleScope::Any` (including `ReadOnly`, `WorkspaceEdits`, and `SafeAsk`) or has
+       shell `CommandPrefix` denies; `AutonomousSandboxed` runs shell inside
+       `permissions.office` with `granular.sandbox_approval=false`. Codex
+       `enforces_deny_rules` and `enforces_tool_allowlist` remain `false` until live
+       tool-call enforcement is verified.
+   - **Runtime-neutral tool capabilities & per-adapter allowlists (`TASK-94`):** the
+     office expresses permission presets (`ReadOnly`, `WorkspaceEdits`,
+     `AutonomousSandboxed`) using runtime-neutral `ToolCapability` tokens (`cap:read`,
+     `cap:search`, `cap:edit`, `cap:shell`, `cap:subagent`) in `org-agent-runtime`.
+     Each adapter translates those tokens into its own concrete tools (Claude:
+     `Read`, `Glob`, `Grep`, `Edit`/`Write`/`MultiEdit` keeping `NotebookEdit`
+     disallowed unless explicitly listed, `Bash`, `Task`/`Agent`; Agy: `read_file`,
+     `view_file`, `list_dir`, `find_by_name`, `grep_search`, `edit_file`/`write_file`/
+     `replace_file_content`/`multi_replace_file_content`/`delete_file`, `run_command`,
+     `invoke_subagent`; Codex: `shell`, `apply_patch`, `collabAgentToolCall`), fails
+     closed on unknown `cap:*` tokens, and stamps normalized `ToolCapability` onto
+     `ApprovalRequest` and `SessionEvent::ToolStarted` events. `ReadOnly` and
+     `WorkspaceEdits` include a safe `CommandPrefix("agent-os")` allow rule enforced
+     with strict word-boundary checks and fail-closed rejection of shell chaining or
+     redirection metacharacters. A sub-agent is part of
      the turn and has the parent's sandbox, tools and policy, never more
      ([ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md)). No product command is an MCP tool, and milestones one
      and two grant no connector, so the MCP configuration is empty

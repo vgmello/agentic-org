@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 use org_agent_runtime::{
     encode_line, Activity, ApprovalId, ApprovalKind, ApprovalRequest, Control, ControlError,
     CostBasis, Decision, Escalation, ExitInfo, LimitKind, LimitStatus, NoticeKind, Output,
-    RateLimit, Session, SessionEvent, SessionId, StartFailure, TurnOutcome, Usage, UsageScope,
-    Window,
+    RateLimit, Session, SessionEvent, SessionId, StartFailure, ToolCapability, TurnOutcome, Usage,
+    UsageScope, Window,
 };
 
 use crate::plan::ExpectedMode;
@@ -392,6 +392,7 @@ impl ClaudeSession {
         let id = ApprovalId::new(request_id);
 
         let mut approval = ApprovalRequest::new(id.clone(), kind, escalation, tool_name, input);
+        approval.capability = classify_tool_capability(tool_name);
         approval.display_name = req
             .get("display_name")
             .and_then(Value::as_str)
@@ -707,9 +708,11 @@ impl ClaudeSession {
                             .unwrap_or("unknown")
                             .to_owned();
                         let input = block.get("input").cloned().unwrap_or(Value::Null);
+                        let capability = classify_tool_capability(&name);
                         out.push(Output::Event(SessionEvent::ToolStarted {
                             tool_use_id,
                             name,
+                            capability,
                             input,
                         }));
                     }
@@ -1252,6 +1255,19 @@ fn permission_mode_matches(expected: &ExpectedMode, reported: &str) -> bool {
         return false;
     }
     reported == expected.reported_name || reported == expected.cli_flag
+}
+
+fn classify_tool_capability(tool_name: &str) -> Option<ToolCapability> {
+    match tool_name {
+        "Read" => Some(ToolCapability::Read),
+        "Glob" | "Grep" | "LS" => Some(ToolCapability::Search),
+        // `NotebookEdit` stays excluded from `ToolCapability::Edit` so it remains in
+        // `RISKY_BUILTIN_TOOLS` and never auto-allows via `cap:edit`.
+        "Edit" | "Write" | "MultiEdit" => Some(ToolCapability::Edit),
+        "Bash" => Some(ToolCapability::Shell),
+        "Task" | "Agent" => Some(ToolCapability::Subagent),
+        _ => None,
+    }
 }
 
 fn classify_approval_kind(tool_name: &str) -> ApprovalKind {

@@ -83,11 +83,8 @@ impl AgentRuntime for ClaudeRuntime {
         ctx: &LaunchContext,
     ) -> Result<(LaunchPlan, Box<dyn Session>), PlanError> {
         let caps = self.capabilities();
-        let (plan, expected_mode) = build_headless_plan(spec, ctx, &caps)?;
-        let allowed_tools = spec
-            .tools
-            .as_ref()
-            .map(|tools| tools.iter().map(|t| t.as_str().to_owned()).collect());
+        let (plan, expected_mode, expanded_tools) = build_headless_plan(spec, ctx, &caps)?;
+        let allowed_tools = expanded_tools.map(|tools| tools.into_iter().collect());
         let allowed_mcp_servers = spec
             .mcp_servers
             .keys()

@@ -40,8 +40,8 @@ pub use instructions::{
 pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{SessionManager, SessionManagerConfig};
 pub use preset::{
-    build_grants_summary, build_session_policy, decide_escalation, EscalationDisposition,
-    PresetConfig, PresetError,
+    build_grants_summary, build_session_policy, decide_escalation, decide_escalation_with_tools,
+    EscalationDisposition, PresetConfig, PresetError,
 };
 pub use recovery::{
     ActiveTurnRecord, PendingStartRecord, ProcessExitOracle, RecoveryAction, RecoveryReport,

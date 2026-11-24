@@ -832,8 +832,13 @@ impl SessionManager {
             .find(|p| p.approval_id == approval_id)
             .cloned()
             .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "approval request not found"))?;
-        let allow_always_tool = (decision_str == "allow_always"
-            && pending.escalation != "sandbox_bypass")
+        if decision_str == "allow_always" && pending.escalation != "none" {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "allow_always is forbidden for escalated approval requests; use allow_once or deny",
+            ));
+        }
+        let allow_always_tool = (decision_str == "allow_always" && pending.escalation == "none")
             .then_some(pending.tool);
         let view = guard.to_view();
         drop(guard);
@@ -2104,6 +2109,7 @@ fn build_initial_runtime_state(
         pending_approvals: Vec::new(),
         policy: prepared.preset_cfg.policy.clone(),
         preset: prepared.preset_cfg.preset,
+        allowed_tools: prepared.preset_cfg.allowed_tools.clone(),
         suspended_on_asks: Vec::new(),
         waiting_for_member_id: None,
         waiting_for_name: None,

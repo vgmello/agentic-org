@@ -77,6 +77,7 @@ impl Session for WakeScriptedSession {
                 vec![Output::Event(SessionEvent::ToolStarted {
                     tool_use_id: id,
                     name: "Agent".into(),
+                    capability: Some(org_agent_runtime::ToolCapability::Subagent),
                     input: serde_json::json!({ "task": "helper" }),
                 })]
             }
