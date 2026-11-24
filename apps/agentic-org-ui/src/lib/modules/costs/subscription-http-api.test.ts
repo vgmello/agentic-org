@@ -265,5 +265,30 @@ describe('createHttpSubscriptionUsageApi (real cost_routes.rs wire envelope)', (
 		expect(overview.snapshots.map((s) => s.connectionId)).toEqual(['c1', 'c2', 'c3']);
 		expect(overview.totalsByModel.map((m) => m.model)).toEqual(['m1', 'm2']);
 		expect(overview.partialTotals).toBe(false);
+		expect(overview.nextCursor).toBeUndefined();
+		expect(overview.nextTotalsCursor).toBeUndefined();
+
+		// At the 20-page cap, preserve the exact office partialTotals flag and expose nextCursor distinctly.
+		let snapPage = 0;
+		const cappedApi = createHttpSubscriptionUsageApi({
+			http: {
+				read: vi.fn().mockImplementation(async () => {
+					snapPage += 1;
+					return ok({
+						snapshots: [],
+						totals_by_model: [],
+						next_cursor: `s-${snapPage + 1}`,
+						partial_totals: false,
+						excluded_snapshot_count: 0,
+						is_api_equivalent_estimate: false
+					});
+				}),
+				submit: vi.fn()
+			}
+		});
+		const capped = await cappedApi.subscriptionUsage(ORG);
+		expect(capped.partialTotals).toBe(false);
+		expect(capped.nextCursor).toBe('s-21');
+		expect(capped.nextTotalsCursor).toBeUndefined();
 	});
 });

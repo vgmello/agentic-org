@@ -553,6 +553,17 @@ test('TASK-79: subscription model usage renders provider windows, em-dash unknow
 	).toHaveText('Unavailable');
 	await expect(page.getByText('Subscription model usage updated.')).toHaveCount(0);
 
+	// ?mock=collect-unsupported returns HTTP 200 in-band unsupported status: shows Not supported and does not claim success.
+	await visit(page, '/settings/costs?mock=collect-unsupported');
+	await subSection.getByRole('button', { name: 'Refresh usage' }).click();
+	await expect(
+		page.getByText(/does not expose a subscription usage endpoint/).first()
+	).toBeVisible();
+	await expect(
+		subSection.locator('[data-subscription="sub-claude-pro"]').getByTestId('subscription-status')
+	).toHaveText('Not supported');
+	await expect(page.getByText('Subscription model usage updated.')).toHaveCount(0);
+
 	// ?mock=stale flags stale snapshot and refreshes back to Current.
 	await visit(page, '/settings/costs?mock=stale');
 	const staleClaude = subSection.locator('[data-subscription="sub-claude-pro"]');

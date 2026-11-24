@@ -95,17 +95,21 @@
 		}
 		fieldError = undefined;
 		submitting = true;
+		let shouldFocusTime = false;
 		try {
 			const res = await onsubmit(target, parsed.iso, noteValue.trim() || undefined);
 			if (res.ok) {
 				open = false;
 			} else {
 				fieldError = { field: 'time', message: res.error };
-				await tick();
-				timeInputEl?.focus();
+				shouldFocusTime = true;
 			}
 		} finally {
 			submitting = false;
+		}
+		if (shouldFocusTime) {
+			await tick();
+			timeInputEl?.focus();
 		}
 	}
 

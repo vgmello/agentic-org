@@ -189,14 +189,32 @@
 							<h4 class="text-xs/5 font-semibold tracking-wide text-fg-muted uppercase">
 								Combined across active subscriptions
 							</h4>
+							{#if data.nextTotalsCursor}
+								<p
+									class="rounded-md bg-surface-raised px-3 py-2 text-xs/5 text-fg-secondary ring-1 ring-line-subtle"
+									data-testid="subscription-totals-truncated"
+								>
+									Showing the first {data.totalsByModel.length} models; additional model totals exist
+									on the server.
+								</p>
+							{/if}
 							{@render modelRows(data.totalsByModel, totalsHaveShortTerm)}
 						</div>
 					{/if}
 
 					<div class="space-y-3" data-testid="subscription-snapshots">
 						<h4 class="text-xs/5 font-semibold tracking-wide text-fg-muted uppercase">
-							Subscriptions ({data.snapshots.length})
+							Subscriptions ({data.snapshots.length}{#if data.nextCursor}+{/if})
 						</h4>
+						{#if data.nextCursor}
+							<p
+								class="rounded-md bg-surface-raised px-3 py-2 text-xs/5 text-fg-secondary ring-1 ring-line-subtle"
+								data-testid="subscription-snapshots-truncated"
+							>
+								Showing the first {data.snapshots.length} subscriptions; additional subscriptions exist
+								on the server.
+							</p>
+						{/if}
 						<ul role="list" class="space-y-3">
 							{#each data.snapshots as snap (snap.connectionId)}
 								{@const status = subscriptionStatusDisplay(snap.status, snap.stale)}

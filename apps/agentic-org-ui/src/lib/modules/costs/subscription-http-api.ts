@@ -276,14 +276,13 @@ export function createHttpSubscriptionUsageApi({
 				if (snapshotsDone && totalsDone) break;
 			}
 
-			const hasMore = !snapshotsDone || !totalsDone;
 			return {
 				snapshots,
 				totalsByModel,
 				...(collectedAsOf ? { collectedAsOf } : {}),
 				...(!snapshotsDone && cursor ? { nextCursor: cursor } : {}),
 				...(!totalsDone && totalsCursor ? { nextTotalsCursor: totalsCursor } : {}),
-				partialTotals: partialTotals || hasMore,
+				partialTotals,
 				excludedSnapshotCount,
 				isApiEquivalentEstimate: false
 			};

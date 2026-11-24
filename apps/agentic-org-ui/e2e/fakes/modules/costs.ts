@@ -1231,16 +1231,18 @@ export const costsApi: CostsApi = {
 		const targetIds = options?.connectionId
 			? new Set([options.connectionId])
 			: new Set(snaps.map((s) => s.connectionId));
-		if (on('collect-fails')) {
-			// Mirror production HTTP 200 in-band provider failure (`status: 'unavailable'`).
+		if (on('collect-fails') || on('collect-unsupported')) {
+			// Mirror production HTTP 200 in-band provider failure (`status: 'unavailable'` or `'unsupported'`).
+			const unsupported = on('collect-unsupported');
 			for (const snap of snaps) {
 				if (!targetIds.has(snap.connectionId)) continue;
-				snap.status = 'unavailable';
+				snap.status = unsupported ? 'unsupported' : 'unavailable';
 				snap.stale = true;
 				snap.collectedAt = nowIso;
-				snap.issueCode = 'PROVIDER_UNAVAILABLE';
-				snap.message =
-					'Provider usage endpoint could not be reached. Try refreshing again shortly.';
+				snap.issueCode = unsupported ? 'PROVIDER_UNSUPPORTED' : 'PROVIDER_UNAVAILABLE';
+				snap.message = unsupported
+					? 'This provider connection does not expose a subscription usage endpoint.'
+					: 'Provider usage endpoint could not be reached. Try refreshing again shortly.';
 			}
 			return structuredClone({
 				snapshots: snaps.filter((s) => targetIds.has(s.connectionId)),
