@@ -38,7 +38,7 @@
         transparent);
   }
 
-  html[data-interior-page]:not([data-theme="cozy"]) #main :is(.queue-header, .project-header, .has-page-toolbar:not(.queue-headline, :where(.project-header) > .ph)) {
+  html[data-interior-page]:not([data-theme="cozy"]) #main :is(.queue-header, .section-header, .has-page-toolbar:not(.queue-headline, :where(.section-header) > *)) {
     background-image:
       linear-gradient(to right, var(--page-header-light), transparent 28rem),
       var(--page-header-base-image, none);
@@ -384,6 +384,13 @@
   border-block-end: 0;
   background: none;
 }
+#main .section-header > .prof {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
 html[data-theme="ocean"] .section-header { background-image: var(--ocean-header); }
 .section-toolbar { position: relative; }
 .section-toolbar .tabs {
@@ -391,8 +398,7 @@ html[data-theme="ocean"] .section-header { background-image: var(--ocean-header)
   min-inline-size: 0;
   padding-inline: 0;
   border: 0;
-  scrollbar-width: thin;
-  scrollbar-color: var(--gray-500) transparent;
+  scrollbar-width: none;
 }
 .section-toolbar .tcount { padding: 0; background: none; }
 .section-toolbar > .queue-controls, :is(.project-work-controls, .project-activity-controls) {
@@ -401,7 +407,7 @@ html[data-theme="ocean"] .section-header { background-image: var(--ocean-header)
 }
 .section-actions { margin-inline-start: auto; }
 @container (max-width: 40rem) {
-  .section-toolbar .primary-tab-row { flex-basis: 100%; }
+  .section-header:not(.org-directory-header) .section-toolbar .primary-tab-row { flex-basis: 100%; }
   .section-toolbar .queue-tab, .section-toolbar .tab { padding-inline: 8px; }
   .section-toolbar .project-activity-controls .queue-tab .ic { display: none; }
   .section-toolbar .menu-wrap { position: static; }
