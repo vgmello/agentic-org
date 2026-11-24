@@ -325,10 +325,10 @@
 		for (const item of items.filter((i) => !i.deleted)) {
 			const dest =
 				item.kind === 'request'
-					? `/work?request=${encodeURIComponent(item.id)}`
+					? `/work/${encodeURIComponent(item.short_id)}`
 					: item.project_id
 						? `/projects/${encodeURIComponent(item.project_id)}/work`
-						: '/work';
+						: `/work/${encodeURIComponent(item.short_id)}`;
 			list.push({
 				id: `work-${item.id}`,
 				group: 'Work',

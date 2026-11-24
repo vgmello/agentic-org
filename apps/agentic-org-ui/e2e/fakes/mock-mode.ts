@@ -118,8 +118,8 @@ export function pocOrganization(): Organization {
  * When `?mock=poc` is opened on a fresh browser tab, auto-seed a remembered connection for `Agentic Org` so visiting
  * `/home?theme=report&mock=poc` works immediately without opening `/welcome` or DevTools first.
  */
-export function ensurePocConnection(): Connection | undefined {
-	if (!isPocDataset()) return undefined;
+export function ensurePocConnection(force = false): Connection | undefined {
+	if (!force && !isPocDataset()) return undefined;
 	const org = pocOrganization();
 	const connection: Connection = { office: pocHqOffice(), organization: org };
 	try {

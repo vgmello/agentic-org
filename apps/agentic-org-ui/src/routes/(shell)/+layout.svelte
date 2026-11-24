@@ -75,13 +75,14 @@
 		clearTimeout(sidebarLeaveTimer);
 		sidebarMenuOpen = open;
 		if (!open) {
-			// Keep rail expanded if focus returns to the trigger inside the sidebar (e.g. Escape).
-			queueMicrotask(() => {
+			// Recompute focus containment after Bits UI focus restoration or outside click settles.
+			const syncFocus = () => {
+				if (sidebarMenuOpen) return;
 				const active = document.activeElement;
-				if (active instanceof Node && desktopNavigation?.contains(active)) {
-					sidebarFocused = true;
-				}
-			});
+				sidebarFocused = Boolean(active instanceof Node && desktopNavigation?.contains(active));
+			};
+			queueMicrotask(syncFocus);
+			requestAnimationFrame(syncFocus);
 		}
 	}
 

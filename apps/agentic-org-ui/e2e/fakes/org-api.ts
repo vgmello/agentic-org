@@ -3,7 +3,7 @@ export type { MockStorage } from '../../src/lib/modules/organization/mock';
 export { createMockOrg } from '../../src/lib/modules/organization/mock';
 import { createMockOrg } from '../../src/lib/modules/organization/mock';
 import { officeApi } from '$lib/modules/offices/office-api';
-import { isPocDataset, POC_HQ_OFFICE_ID } from './mock-mode';
+import { POC_HQ_OFFICE_ID, POC_ORG_ID } from './mock-mode';
 import { pocOrgSnapshot } from './poc-dataset';
 
 let failedOnce = false;
@@ -27,7 +27,7 @@ const base = createMockOrg(
 export const orgApi: typeof base = {
 	...base,
 	async view(organizationId) {
-		if (isPocDataset()) {
+		if (organizationId === POC_ORG_ID) {
 			return { snapshot: structuredClone(pocOrgSnapshot(POC_HQ_OFFICE_ID)), sample: true };
 		}
 		return base.view(organizationId);

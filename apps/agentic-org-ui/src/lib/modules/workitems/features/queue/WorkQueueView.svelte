@@ -5,10 +5,12 @@
   Uses Resource + Loaded (handling loading, unavailable, unsupported, error, ready).
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
+	import { toast } from 'svelte-sonner';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
@@ -16,6 +18,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { gutters, inputClass, mobileButton, selectClass } from '$lib/components/classes';
+	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
 	import { workItemsApi } from '../../api';
 	import {
@@ -46,7 +49,9 @@
 		STATUSES,
 		STATUS_WORD,
 		isOpen,
+		normalizeRef,
 		severityWord,
+		taskHref,
 		type GroupBy
 	} from '../../present';
 	import type { TaskType, WorkQueue, WorkScope } from '../../types';
@@ -94,6 +99,17 @@
 	let captureOpen = $state(false);
 	let captureType = $state<TaskType>('task');
 	const shortcutsEnabled = $derived(singleKeyShortcutsOn());
+	let shellData: ReturnType<typeof useShellData> | undefined;
+	try {
+		shellData = useShellData();
+	} catch {
+		shellData = undefined;
+	}
+
+	function reloadQueue() {
+		queueRead.reload();
+		void shellData?.refresh();
+	}
 
 	// Home's "New task" CTA links to /work?new=1: open the task composer and strip the parameter so reload doesn't reopen it.
 	const wantsNewTask = $derived(isOrgScope && page.url.searchParams.get('new') === '1');
@@ -102,6 +118,29 @@
 		openCapture('task');
 		const nextUrl = new URL(page.url);
 		nextUrl.searchParams.delete('new');
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- preserving current already-resolved URL + hash
+		void goto(nextUrl, {
+			replaceState: true,
+			noScroll: true,
+			keepFocus: true
+		});
+	});
+
+	// Legacy /work?request=<id> links (Command search, Activity, Home) resolve directly to /work/[ref].
+	const wantedRequest = $derived(isOrgScope ? page.url.searchParams.get('request') : null);
+	$effect(() => {
+		if (!wantedRequest || !queueRead.data) return;
+		const norm = normalizeRef(wantedRequest);
+		const match = queueRead.data.rows.find(
+			(r) => r.id === wantedRequest || normalizeRef(r.ref) === norm
+		);
+		if (match) {
+			void goto(resolve(taskHref(match.ref) as '/'), { replaceState: true });
+			return;
+		}
+		toast('That request is no longer here.');
+		const nextUrl = new URL(page.url);
+		nextUrl.searchParams.delete('request');
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- preserving current already-resolved URL + hash
 		void goto(nextUrl, {
 			replaceState: true,
@@ -121,11 +160,18 @@
 			if (document.querySelector(modalOverlaySelector)) return;
 			if (isEditableTarget(event.target)) return;
 			const searchEl = document.getElementById(`${uid}-search`) as HTMLInputElement | null;
-			if (!searchEl) return;
+			if (!searchEl && !(isOrgScope && activeShow === 'needs_me' && queueRead.data)) return;
 			event.stopPropagation();
 			if (!shortcutsEnabled || event.repeat) return;
 			event.preventDefault();
-			searchEl.focus();
+			if (searchEl) {
+				searchEl.focus();
+				return;
+			}
+			setShow('mine');
+			void tick().then(() => {
+				(document.getElementById(`${uid}-search`) as HTMLInputElement | null)?.focus();
+			});
 		};
 		window.addEventListener('keydown', listener, { capture: true });
 		return () => window.removeEventListener('keydown', listener, { capture: true });
@@ -790,7 +836,7 @@
 								rows={displayRows}
 								showProject={isOrgScope}
 								stale={isStale}
-								onchanged={() => queueRead.reload()}
+								onchanged={reloadQueue}
 							/>
 						{:else}
 							<WorkList
@@ -815,7 +861,7 @@
 		{organizationId}
 		initialType={captureType}
 		{projectId}
-		oncreated={() => queueRead.reload()}
-		onadded={() => queueRead.reload()}
+		oncreated={reloadQueue}
+		onadded={reloadQueue}
 	/>
 </div>

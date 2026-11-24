@@ -31,7 +31,7 @@ import type {
 	Viewer,
 	WhyLink
 } from '../../../src/lib/modules/workitems/types';
-import { isPocDataset, mockMode, POC_ORG_ID } from '../mock-mode';
+import { mockMode, POC_ORG_ID } from '../mock-mode';
 import { pocOrgSnapshot, pocWorkItems } from '../poc-dataset';
 import seedData from '../data/workitems/tasks.json' with { type: 'json' };
 import projectsData from '../data/projects/projects.json' with { type: 'json' };
@@ -299,7 +299,46 @@ function buildSeedStore(): Map<string, StoredTask> {
 	return map;
 }
 
-const usePoc = (organizationId: string) => isPocDataset() || organizationId === POC_ORG_ID;
+const usePoc = (organizationId: string) => organizationId === POC_ORG_ID;
+const STORAGE_PREFIX = 'agentic-org.mock.workitems.v1.';
+const canPersist = () => {
+	const mode = mockMode().trim();
+	return mode === '' || mode === 'poc' || mode === 'default';
+};
+const entryOrg = new WeakMap<StoredTask, string>();
+
+function tagEntries(organizationId: string, map: Map<string, StoredTask>) {
+	for (const entry of map.values()) entryOrg.set(entry, organizationId);
+}
+
+function loadPersistedStore(organizationId: string): Map<string, StoredTask> | undefined {
+	if (!canPersist() || typeof sessionStorage === 'undefined') return undefined;
+	try {
+		const raw = sessionStorage.getItem(`${STORAGE_PREFIX}${organizationId}`);
+		if (!raw) return undefined;
+		const parsed = JSON.parse(raw) as { nextSeq?: number; entries: [string, StoredTask][] };
+		if (typeof parsed.nextSeq === 'number' && parsed.nextSeq > nextSeq) {
+			nextSeq = parsed.nextSeq;
+		}
+		const map = new Map<string, StoredTask>(parsed.entries);
+		tagEntries(organizationId, map);
+		return map;
+	} catch {
+		return undefined;
+	}
+}
+
+function saveStore(organizationId: string, store: Map<string, StoredTask>) {
+	if (!canPersist() || typeof sessionStorage === 'undefined') return;
+	try {
+		sessionStorage.setItem(
+			`${STORAGE_PREFIX}${organizationId}`,
+			JSON.stringify({ nextSeq, entries: [...store.entries()] })
+		);
+	} catch {
+		// ignore quota/private-mode storage errors
+	}
+}
 
 function buildPocStore(): Map<string, StoredTask> {
 	const map = new Map<string, StoredTask>();
@@ -528,10 +567,11 @@ function buildPocStore(): Map<string, StoredTask> {
 
 function storeFor(organizationId: string): Map<string, StoredTask> {
 	const poc = usePoc(organizationId);
-	const key = `${organizationId}:${poc ? 'poc' : 'default'}`;
+	const key = `${organizationId}:${poc ? 'poc' : 'default'}:${canPersist() ? 'p' : 'm'}`;
 	let s = stores.get(key);
 	if (!s) {
-		s = poc ? buildPocStore() : buildSeedStore();
+		s = loadPersistedStore(organizationId) ?? (poc ? buildPocStore() : buildSeedStore());
+		tagEntries(organizationId, s);
 		stores.set(key, s);
 	}
 	return s;
@@ -583,6 +623,8 @@ function pushEvent(entry: StoredTask, kind: string, text: string, note?: string)
 	entry.detail.updatedAt = at;
 	entry.detail.latestUpdate = { at, by: VIEWER_EMPLOYEE };
 	entry.detail.revision += 1;
+	const orgId = entryOrg.get(entry);
+	if (orgId) saveStore(orgId, storeFor(orgId));
 }
 
 async function readGate() {
@@ -906,7 +948,9 @@ export const workItemsApi: WorkItemsApi = {
 			},
 			privateNotes: []
 		};
+		entryOrg.set(entry, organizationId);
 		store.set(id, entry);
+		saveStore(organizationId, store);
 
 		// Derive inverse fixed_by on the bug if this is a fix task.
 		if (draft.fixesTaskId && store.has(draft.fixesTaskId)) {

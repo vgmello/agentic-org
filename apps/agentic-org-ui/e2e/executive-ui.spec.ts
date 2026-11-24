@@ -820,6 +820,15 @@ test('Phase 3 Work parity: unified WorkQueueView header, live search & / shortcu
 	await expect(page.locator('header.work-header.queue-header')).toBeVisible();
 	await expect(page.locator('#shell-page-title')).toContainText('Work');
 
+	// `/` from initial Needs me view switches to Work search and focuses Search work
+	await expect(page.getByTestId('needs-me-list')).toBeVisible();
+	await page.locator('#shell-page-title').focus();
+	await page.keyboard.press('/');
+	const searchInput = page.getByLabel('Search work');
+	await expect(searchInput).toBeFocused();
+	await searchInput.press('Escape');
+	await expect(searchInput).not.toBeFocused();
+
 	// Switch to Tasks tab and List layout so we can test search, filters, priority bars, and Board/List switching
 	await page
 		.getByRole('tablist', { name: 'Work', exact: true })
@@ -854,7 +863,6 @@ test('Phase 3 Work parity: unified WorkQueueView header, live search & / shortcu
 	// `/` shortcut focuses Work search input; live search filters rows; Escape clears then blurs
 	await page.locator('#shell-page-title').focus();
 	await page.keyboard.press('/');
-	const searchInput = page.getByLabel('Search work');
 	await expect(searchInput).toBeFocused();
 	await searchInput.fill('Custody');
 	await expect(workRows).toHaveCount(1);
@@ -898,10 +906,22 @@ test('Phase 3 Work parity: unified WorkQueueView header, live search & / shortcu
 	await expect(page.getByRole('menu')).toBeHidden();
 	await expect(switcherBtn).toBeVisible();
 
+	// Legacy /work?request=<id> links resolve directly to /work/[ref]
+	await visit(page, '/work?request=w-r11');
+	await expect(page).toHaveURL(/\/work\/R-11$/);
+	await expect(
+		page.getByRole('heading', { name: /Invite flow for a second office/ })
+	).toBeVisible();
+	await visit(page, '/work');
+
 	// Switching away from POC organization persists instead of reverting to Agentic Org
-	await switcherBtn.click();
+	const sidebarAfter = page.locator('aside.exec-sidebar');
+	await sidebarAfter.getByRole('link', { name: 'Agentic Org home' }).focus();
+	await page.keyboard.press('Tab');
+	await expect(sidebarAfter).not.toHaveAttribute('data-collapsed', 'true');
+	await sidebarAfter.getByRole('button', { name: 'Switch organization' }).click();
 	await page.getByRole('menuitem', { name: /Lumen Labs/ }).click();
-	await expect(sidebar.getByRole('link', { name: 'Lumen Labs home' })).toBeVisible();
+	await expect(sidebarAfter.getByRole('link', { name: 'Lumen Labs home' })).toBeVisible();
 	await page.reload();
 	await page.locator('html[data-hydrated="true"]').waitFor();
 	await expect(

@@ -22,8 +22,8 @@ export const officeApi: typeof base = {
 	async openOrganization(organizationId: string) {
 		if (organizationId !== POC_ORG_ID) {
 			clearPocDataset();
-		} else if (isPocDataset()) {
-			ensurePocConnection();
+		} else {
+			ensurePocConnection(true);
 		}
 		return base.openOrganization(organizationId);
 	}

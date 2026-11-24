@@ -6,6 +6,51 @@ import { orgApi } from '$lib/modules/organization/api';
 import { owner } from '$lib/modules/organization/model';
 import { workApi } from '$lib/modules/work';
 import { needsYou } from '$lib/modules/work/saved';
+import { workItemsApi } from '$lib/modules/workitems/api';
+import type { TaskRow } from '$lib/modules/workitems/types';
+
+function rowToSummary(row: TaskRow): WorkItemSummary {
+	const numMatch = /\d+$/.exec(row.ref);
+	return {
+		id: row.id,
+		short_id: row.ref,
+		kind: row.type,
+		number: numMatch ? Number(numMatch[0]) : 0,
+		title: row.title,
+		status: row.status === 'cancelled' ? 'closed' : row.status,
+		priority: row.priority,
+		severity: row.severity ?? undefined,
+		project_id: row.project?.id,
+		assignee_id: row.assignee?.id,
+		created_by: row.reporter.id,
+		created_at: row.createdAt,
+		updated_at: row.updatedAt,
+		blocked_reason: row.blockedReason ?? undefined,
+		severity_confirmed: row.type === 'bug',
+		fixes: [],
+		fixed_by: [],
+		checklist: {
+			total: row.checklist.total,
+			done: row.checklist.done,
+			required_left: row.checklist.requiredLeft
+		},
+		done_anyway: false,
+		owner_office_id: '',
+		generation: 1,
+		reopen_count: row.reopenCount,
+		version: row.revision,
+		deleted: false
+	};
+}
+
+async function loadShellWorkItems(organizationId: string): Promise<WorkItemSummary[]> {
+	try {
+		const queue = await workItemsApi.queue(organizationId, { kind: 'organization' });
+		return queue.rows.map(rowToSummary);
+	} catch {
+		return (await workApi.snapshot(organizationId)).items;
+	}
+}
 
 export interface ShellRefreshResult {
 	inboxUpdated: boolean;
@@ -75,7 +120,7 @@ export class ShellData {
 		const baseOffices = untrack(() => this.#options.getBaseOffices());
 		const promise: Promise<ShellRefreshResult> = Promise.allSettled([
 			orgApi.view(id),
-			workApi.snapshot(id),
+			loadShellWorkItems(id),
 			inboxApi.list(id),
 			this.#options.loadOffices(id, baseOffices)
 		]).then(async ([orgRes, workRes, inboxRes, officesRes]): Promise<ShellRefreshResult> => {
@@ -91,7 +136,7 @@ export class ShellData {
 			if (orgRes.status === 'fulfilled') this.snapshot = orgRes.value.snapshot;
 			const workUpdated = workRes.status === 'fulfilled';
 			if (workUpdated) {
-				this.workItems = workRes.value.items;
+				this.workItems = workRes.value;
 				this.workError = undefined;
 			} else {
 				this.workError = workRes.reason;

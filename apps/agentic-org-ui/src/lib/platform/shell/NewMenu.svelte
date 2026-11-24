@@ -17,6 +17,7 @@
 	import { hireUrl } from '$lib/modules/employees';
 	import { newProjectUrl } from '$lib/modules/projects';
 	import { CaptureDialog, taskHref } from '$lib/modules/workitems';
+	import { areaCapability } from './capabilities';
 	import { focusDestinationHeading } from './focus-destination';
 	import { NewMessageDialog } from '$lib/modules/messaging';
 	import { chatMembers } from '$lib/modules/messaging/model';
@@ -30,6 +31,7 @@
 		$props();
 
 	const organizationId = $derived(connection.organization.id);
+	const workAvailable = $derived(areaCapability('/work').available);
 	let menuOpen = $state(false);
 	let trigger = $state<HTMLButtonElement | null>(null);
 	let snapshot = $state.raw<OrgSnapshot | undefined>();
@@ -93,7 +95,7 @@
 								aria-label="New"
 								aria-busy={loading}
 								aria-keyshortcuts={shortcutHint ? 'N Shift+N' : undefined}
-								class="inline-flex shrink-0 items-center justify-center gap-x-1.5 rounded-md text-sm/6 font-semibold text-fg outline-1 -outline-offset-1 outline-field-border hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:size-11 min-[640px]:h-9 min-[640px]:px-3"
+								class="inline-flex shrink-0 items-center justify-center gap-x-1.5 rounded-md text-sm/6 font-semibold text-fg outline-1 -outline-offset-1 outline-field-border hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:size-11 min-[640px]:h-9 min-[640px]:px-3 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11"
 							>
 								<MiniIcon name="plus" class="size-5 text-fg-muted" />
 								<span class="max-[639px]:sr-only" aria-hidden="true">New</span>
@@ -123,12 +125,14 @@
 			<DropdownMenu.Item class={itemClass} onSelect={() => goto(resolve(newProjectUrl() as '/'))}
 				>Project</DropdownMenu.Item
 			>
-			<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'work_item')}
-				>Work item</DropdownMenu.Item
-			>
-			<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'request')}
-				>Request</DropdownMenu.Item
-			>
+			{#if workAvailable}
+				<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'work_item')}
+					>Work item</DropdownMenu.Item
+				>
+				<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'request')}
+					>Request</DropdownMenu.Item
+				>
+			{/if}
 			<DropdownMenu.Item class={itemClass} onSelect={() => startOrgFlow('message')}
 				>Message</DropdownMenu.Item
 			>
@@ -146,20 +150,22 @@
 	</DropdownMenu.Root>
 </Tooltip.Provider>
 
-<CaptureDialog
-	bind:open={
-		() => flow === 'work_item' || flow === 'request',
-		(open) => {
-			if (!open) flow = undefined;
+{#if workAvailable}
+	<CaptureDialog
+		bind:open={
+			() => flow === 'work_item' || flow === 'request',
+			(open) => {
+				if (!open) flow = undefined;
+			}
 		}
-	}
-	{organizationId}
-	initialType={flow === 'request' ? 'request' : 'task'}
-	allowTypeSwitch={flow === 'work_item'}
-	oncreated={(created) => {
-		void goto(resolve(taskHref(created.ref) as '/'));
-	}}
-/>
+		{organizationId}
+		initialType={flow === 'request' ? 'request' : 'task'}
+		allowTypeSwitch={flow === 'work_item'}
+		oncreated={(created) => {
+			void goto(resolve(taskHref(created.ref) as '/'));
+		}}
+	/>
+{/if}
 
 {#if snapshot}
 	<NewMessageDialog

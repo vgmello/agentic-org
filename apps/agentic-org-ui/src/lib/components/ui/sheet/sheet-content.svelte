@@ -65,6 +65,7 @@
 						<Tooltip.Content
 							side="bottom"
 							sideOffset={6}
+							escapeKeydownBehavior="defer-otherwise-close"
 							class="z-[60] rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
 							>Close</Tooltip.Content
 						>
