@@ -1,39 +1,39 @@
-/* Where the interior frame meets the sidebar, light the corner and shade the recessed edge. */
+/* Wash the top of the sidebar with light and shade the recessed edge. */
 @media (min-width: 640px) and (forced-colors: none) {
   html[data-interior-page] {
     --sidebar-edge-shadow: rgb(6 12 24 / .34);
-    --sidebar-corner-light: rgb(198 220 248 / .085);
+    --sidebar-top-light: rgb(198 220 248 / .085);
     --page-header-light: rgb(198 220 248 / .045);
   }
 
   html[data-theme="graphite"][data-interior-page] {
     --sidebar-edge-shadow: rgb(0 0 0 / .37);
-    --sidebar-corner-light: rgb(255 255 255 / .075);
+    --sidebar-top-light: rgb(255 255 255 / .075);
     --page-header-light: rgb(255 255 255 / .035);
 
     & #sidebar::before { box-shadow: inset -1px 0 #38393A; }
   }
 
   html[data-theme="ocean"][data-interior-page] {
-    --sidebar-corner-light: rgb(164 220 255 / .11);
+    --sidebar-top-light: rgb(164 220 255 / .11);
     --page-header-light: rgb(164 220 255 / .055);
     --page-header-base-image: var(--ocean-header);
   }
 
   html[data-theme="report"][data-interior-page] {
     --sidebar-edge-shadow: rgb(46 65 88 / .16);
-    --sidebar-corner-light: rgb(255 255 255 / .96);
+    --sidebar-top-light: rgb(255 255 255 / .96);
     --page-header-light: rgb(136 159 188 / .065);
   }
 
   html[data-theme="cozy"][data-interior-page] {
     --sidebar-edge-shadow: rgb(20 12 6 / .40);
-    --sidebar-corner-light: rgb(255 224 189 / .10);
+    --sidebar-top-light: rgb(255 224 189 / .10);
     --page-header-light: rgb(255 224 189 / .055);
 
     & body:not(.a11y-mode) .prof { --page-header-base-image: var(--cozy-panel); }
     & body.a11y-mode {
-      --sidebar-corner-light: rgb(255 224 189 / .055);
+      --sidebar-top-light: rgb(255 224 189 / .055);
       --page-header-light: rgb(255 224 189 / .025);
     }
   }
@@ -46,7 +46,10 @@
     pointer-events: none;
     background:
       linear-gradient(to left, var(--sidebar-edge-shadow), transparent 7px),
-      radial-gradient(ellipse 210px 260px at top right, var(--sidebar-corner-light), transparent);
+      radial-gradient(ellipse 110% 330px at 0 -95px,
+        var(--sidebar-top-light),
+        color-mix(in srgb, var(--sidebar-top-light) 45%, transparent) 30%,
+        transparent);
   }
 
   html[data-interior-page] #main :is(.queue-header, .has-page-toolbar:not(.queue-headline)) {
