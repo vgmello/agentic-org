@@ -655,47 +655,7 @@ impl Journal {
             .checkpoint(identity)
             .map_err(|e| JournalError::Custody(e.0))?;
         let dir = journal_dir(durable, identity);
-        let anchor_bytes = read_small(&dir.join("anchor.json"))?
-            .ok_or(JournalError::MissingPredecessor { ordinal: 0 })?;
-        let anchor: Anchor = serde_json::from_slice(&anchor_bytes)
-            .map_err(|e| JournalError::UnknownFormat(format!("anchor: {e}")))?;
-        if anchor.format != FORMAT {
-            return Err(JournalError::UnknownFormat(anchor.format));
-        }
-        if anchor.identity != *identity {
-            return Err(JournalError::IdentityMismatch);
-        }
-        let mut base = JournalPoint {
-            ordinal: 0,
-            sha256: Sha256::of(&anchor_bytes),
-            high_waters: anchor.high_waters,
-            feed: anchor.feed,
-        };
-        if let Some(bytes) = read_small(&dir.join("checkpoint.json"))? {
-            let checkpoint: Checkpoint = serde_json::from_slice(&bytes)
-                .map_err(|e| JournalError::UnknownFormat(format!("checkpoint: {e}")))?;
-            if checkpoint.format != FORMAT {
-                return Err(JournalError::UnknownFormat(checkpoint.format));
-            }
-            base = JournalPoint {
-                ordinal: checkpoint.ordinal,
-                sha256: checkpoint.sha256,
-                high_waters: checkpoint.high_waters,
-                feed: checkpoint.feed,
-            };
-        }
-        if base.ordinal > MAX_POSITION || base.feed.0 > MAX_POSITION || !base.high_waters.valid() {
-            return Err(JournalError::Corrupt {
-                ordinal: base.ordinal,
-                reason: "the anchor or checkpoint holds a position past the limit".into(),
-            });
-        }
-        let mut materialized = base.ordinal;
-        if let Some(bytes) = read_small(&dir.join("materialized.json"))? {
-            let mark: Materialized = serde_json::from_slice(&bytes)
-                .map_err(|e| JournalError::UnknownFormat(format!("materialized mark: {e}")))?;
-            materialized = materialized.max(mark.ordinal);
-        }
+        let (base, materialized) = read_recovery_base(&dir, identity)?;
 
         // Segments, by first ordinal. One wholly at or below the checkpoint was released
         // and only its unlink was lost.
@@ -1283,6 +1243,54 @@ fn build_retained_queue(
         }
     }
     Ok(retained)
+}
+
+fn read_recovery_base(
+    dir: &Path,
+    identity: &OfficeIdentity,
+) -> Result<(JournalPoint, u64), JournalError> {
+    let anchor_bytes = read_small(&dir.join("anchor.json"))?
+        .ok_or(JournalError::MissingPredecessor { ordinal: 0 })?;
+    let anchor: Anchor = serde_json::from_slice(&anchor_bytes)
+        .map_err(|e| JournalError::UnknownFormat(format!("anchor: {e}")))?;
+    if anchor.format != FORMAT {
+        return Err(JournalError::UnknownFormat(anchor.format));
+    }
+    if anchor.identity != *identity {
+        return Err(JournalError::IdentityMismatch);
+    }
+    let mut base = JournalPoint {
+        ordinal: 0,
+        sha256: Sha256::of(&anchor_bytes),
+        high_waters: anchor.high_waters,
+        feed: anchor.feed,
+    };
+    if let Some(bytes) = read_small(&dir.join("checkpoint.json"))? {
+        let checkpoint: Checkpoint = serde_json::from_slice(&bytes)
+            .map_err(|e| JournalError::UnknownFormat(format!("checkpoint: {e}")))?;
+        if checkpoint.format != FORMAT {
+            return Err(JournalError::UnknownFormat(checkpoint.format));
+        }
+        base = JournalPoint {
+            ordinal: checkpoint.ordinal,
+            sha256: checkpoint.sha256,
+            high_waters: checkpoint.high_waters,
+            feed: checkpoint.feed,
+        };
+    }
+    if base.ordinal > MAX_POSITION || base.feed.0 > MAX_POSITION || !base.high_waters.valid() {
+        return Err(JournalError::Corrupt {
+            ordinal: base.ordinal,
+            reason: "the anchor or checkpoint holds a position past the limit".into(),
+        });
+    }
+    let mut materialized = base.ordinal;
+    if let Some(bytes) = read_small(&dir.join("materialized.json"))? {
+        let mark: Materialized = serde_json::from_slice(&bytes)
+            .map_err(|e| JournalError::UnknownFormat(format!("materialized mark: {e}")))?;
+        materialized = materialized.max(mark.ordinal);
+    }
+    Ok((base, materialized))
 }
 
 /// A change opening makes to the drive, held back until the opening is known to pass.

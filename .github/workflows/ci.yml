@@ -34,6 +34,7 @@ jobs:
 
       # The runner's rustup installs the channel and components pinned in rust-toolchain.toml.
       - name: Install Rust
+        id: rust-toolchain
         run: |
           rustup toolchain install --no-self-update
           rustc --version
@@ -63,22 +64,42 @@ jobs:
       # Linux with musl is such a target, and its test binaries run on this runner. Consumers
       # whose system code lives behind org-platform build there too (crates that compile C cannot
       # be built for musl on this runner).
-      - name: Refusing adapters (a target without an adapter)
-        if: runner.os == 'Linux'
-        run: |
-          rustup target add x86_64-unknown-linux-musl
-          cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
-          cargo clippy --locked -p org-supervise -p org-socket --lib --target x86_64-unknown-linux-musl -- -D warnings
-          cargo test --locked -p org-platform -p org-platform-host --all-features --target x86_64-unknown-linux-musl
+      - name: Install musl target
+        id: rust-musl
+        if: ${{ runner.os == 'Linux' && !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Clippy refusing adapters
+        if: ${{ !cancelled() && steps.rust-musl.outcome == 'success' }}
+        run: cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
+
+      - name: Clippy musl consumers
+        if: ${{ !cancelled() && steps.rust-musl.outcome == 'success' }}
+        run: cargo clippy --locked -p org-supervise -p org-socket --lib --target x86_64-unknown-linux-musl -- -D warnings
+
+      - name: Test refusing adapters
+        if: ${{ !cancelled() && steps.rust-musl.outcome == 'success' }}
+        run: cargo test --locked -p org-platform -p org-platform-host --all-features --target x86_64-unknown-linux-musl
+
+      # Report each native lint result even if an earlier check found debt.
+      - name: Clippy production function length
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: cargo clippy --locked --workspace --lib --bins -- -D clippy::too_many_lines
 
       - name: cargo clippy
-        run: |
-          cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo clippy --locked -p org-office --features testkit --example store_latency -- -D warnings
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: cargo clippy --locked --workspace --all-targets --keep-going -- -D warnings
 
-      # Run separately so safety documentation warnings honor reasoned source exceptions.
-      - name: Clippy unsafe documentation (advisory)
-        run: cargo clippy --locked --workspace --all-targets --message-format=short -- -W clippy::undocumented_unsafe_blocks
+      - name: Clippy release production code
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: >-
+          cargo clippy --locked --workspace --release --lib --bins --keep-going --
+          -D clippy::too_many_lines -D clippy::undocumented_unsafe_blocks
+          -D clippy::allow_attributes_without_reason
+
+      - name: Clippy store latency example
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: cargo clippy --locked -p org-office --features testkit --example store_latency -- -D warnings
 
       # agentic-org-web's dependency-closure test reads the locked graph for every platform with
       # `cargo metadata --offline`. A build downloads only this platform's packages, so the rest

@@ -10,7 +10,10 @@ From the repository root:
 
 ```sh
 cargo fmt --check
-CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --all-targets --message-format=short -- -D warnings
+CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --lib --bins --message-format=short -- -D clippy::too_many_lines
+CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --all-targets --keep-going --message-format=short -- -D warnings
+CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --release --lib --bins --keep-going --message-format=short -- \
+  -D clippy::too_many_lines -D clippy::undocumented_unsafe_blocks -D clippy::allow_attributes_without_reason
 CARGO_BUILD_JOBS=2 cargo test --locked --workspace
 cargo deny --locked check
 gitleaks git --redact
@@ -74,18 +77,17 @@ to make these findings errors. Use assertions in tests and explicit error paths
 for unsupported production behavior. New Rust workspace members must set
 `[lints]` with `workspace = true` in their manifests.
 
-The CI matrix reports missing unsafe documentation in a separate advisory Clippy
-step. Run the same check locally with the pinned toolchain.
+The production Clippy command checks the 200-line limit for library and binary
+functions. Test-only code can keep longer scenarios and fixtures. Keep functions
+focused and extract coherent steps as their responsibilities grow. The release
+Clippy command also checks length, safety documentation and suppression reasons
+in code that builds with debug assertions disabled.
 
-```sh
-CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --all-targets --message-format=short -- -W clippy::undocumented_unsafe_blocks
-```
-
-Review whether safe code can replace the unsafe operation. When unsafe is
-necessary, add a `// SAFETY:` comment explaining why the operation's
-preconditions hold. Use a narrowly scoped
-`#[expect(clippy::undocumented_unsafe_blocks, reason = "...")]` only when a
-reviewer agrees the diagnostic does not apply. The
+The all-targets gate requires safety documentation and a reason on lint
+suppressions. Use safe code where practical. When unsafe is necessary, add a
+`// SAFETY:` comment that explains why the operation's preconditions hold.
+Use a narrowly scoped `#[expect(lint_name, reason = "...")]` for reviewed
+exceptions. Remove the expectation when the lint no longer applies. The
 [unsafe documentation pilot inventory](docs/unsafe-documentation-pilot.md)
 records the starting findings for cleanup.
 

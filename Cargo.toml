@@ -80,8 +80,10 @@ publish = false
 repository = "https://github.com/vgmello/agentic-org"
 
 [workspace.lints.clippy]
+allow_attributes_without_reason = "warn"
 dbg_macro = "warn"
 todo = "warn"
+undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 
 [workspace.dependencies]

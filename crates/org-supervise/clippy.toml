@@ -10,3 +10,5 @@ disallowed-methods = [
   { path = "std::process::Command::status", reason = "use the explicit fd/environment spawn path" },
   { path = "libc::wait", reason = "never reap arbitrary children" },
 ]
+
+too-many-lines-threshold = 200

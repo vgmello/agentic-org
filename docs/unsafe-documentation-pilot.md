@@ -3,14 +3,21 @@
 The expanded Rust quality pilot reported 90 distinct `undocumented_unsafe_blocks`
 findings at commit `33c7e5c76ccf2ccff449fe3b3e66d2ff933441d6` across macOS and Linux ARM64. The table
 deduplicates sites reported by multiple targets or platforms. Its links point to
-that snapshot. Use the current advisory Clippy output to locate findings after
-source changes and to account for platform and feature differences.
+that snapshot. To collect current findings during cleanup, run Clippy on each
+supported platform in warning mode so findings in a dependency do not interrupt
+analysis of dependent workspace crates.
+
+```sh
+cargo clippy --locked --workspace --all-targets --message-format=short
+```
+
+The required CI check promotes these warnings to errors.
 
 Each finding asks for review of the safety documentation. Review the unsafe
 operation and its preconditions, then explain the invariant in a `// SAFETY:`
 comment or record a narrowly scoped, reasoned exception for a diagnostic that does
 not apply. See the [development guide](../DEVELOPMENT.md#lint-and-formatting)
-for the advisory command.
+for the workspace Clippy command.
 
 | Source | Reported on | Diagnostic |
 | --- | --- | --- |

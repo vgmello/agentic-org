@@ -2,7 +2,7 @@
   "version": 1,
   "status": "ready",
   "reviewed_by": "TASK-85.1 AX discipline adoption (2026-11-23); prior sessions at 34ca1855 and origin/v1; Rust quality rollout Codex session 01a20e2b-e672-7a20-86e9-59e253279195",
-  "rationale": "Updated skill catalog for TASK-85.1 (Agent Experience discipline): added the agent-experience skill (.agent-kit/project-skills/principal-ax-designer/SKILL.md) and authoritative AX Spec doc-96 evidence, migrated stale docs/ evidence and guidance paths to .backlog/docs/ and .backlog/decisions/, kept >24 KiB data-contract documents (doc-72, doc-75) in project_evidence while keeping doc-62 and project skill briefs in phase references, and refreshed verified SHA-256 hashes for current workspace manifests, CI workflow, and AGENTS.md. Reassessed manifest and CI evidence for the Rust quality rollout. The workspace inherits three Clippy checks and the existing matrix reports unsafe documentation in a separate advisory step. The toolchain, dependency graph, required checks, and role coverage still apply.",
+  "rationale": "Updated skill catalog for TASK-85.1 (Agent Experience discipline): added the agent-experience skill (.agent-kit/project-skills/principal-ax-designer/SKILL.md) and authoritative AX Spec doc-96 evidence, migrated stale docs/ evidence and guidance paths to .backlog/docs/ and .backlog/decisions/, kept >24 KiB data-contract documents (doc-72, doc-75) in project_evidence while keeping doc-62 and project skill briefs in phase references, and refreshed verified SHA-256 hashes for current workspace manifests, CI workflow, and AGENTS.md. Reassessed manifest and CI evidence for the Rust quality rollout. The workspace inherits five targeted Clippy checks, including safety documentation and suppression reasons. The existing matrix checks production function length in dev and release. The pinned toolchain, dependency graph and role coverage still apply.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -34,7 +34,7 @@
     },
     {
       "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
-      "sha256": "28f7f045c1d802def5fb97bf0b915aa81cfc1dae6e170a6e4fa4cd0e5a384bf3"
+      "sha256": "d78564081ce6c7e616838fa5e1a719f55e7083a0e6b7e082c47a9232b149a023"
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
@@ -142,11 +142,11 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "599b500b0d5fcfe480564cba6999bfad76caef658b36d9fb947680c042f3be78"
+      "sha256": "40f43602b25632a0aa3007352bc7e1b2cc13a93a778b22e66cfde9842d9827a4"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "193d0022c55ee65f70ec4c47b86c256949d6af9b4e21886350c350ee2ea9f4ed"
+      "sha256": "eef6a08afa3e0a7de46d04b6f305bf9ea44fb37060b872db008c1bb66fc27be6"
     },
     {
       "path": "Cargo.lock",
@@ -154,7 +154,7 @@
     },
     {
       "path": "Cargo.toml",
-      "sha256": "1e95b2714ab17dc2f44c44b08f7b0255d4ff9416d3dcc35b04e13598bfd7a2fd"
+      "sha256": "ef0319f9c082ab8cab9b0a836d888804bc0504081239bbd6ca6c8a6d6cce00c1"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
