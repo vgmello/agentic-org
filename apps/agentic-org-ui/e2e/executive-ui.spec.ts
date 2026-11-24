@@ -1093,6 +1093,7 @@ test('Phase 4B: saving inline Task A while switching to Task B keeps B enabled, 
 	await readingPanel.locator('#task-title').fill('Beta task — escape saved');
 	await page.keyboard.press('Escape');
 	await expect(readingPanel).toBeVisible();
+	await expect(readingPanel.locator('#work-detail-title')).toBeFocused();
 	await expect(page.getByRole('button', { name: 'Beta task — escape saved' })).toBeVisible();
 	await page.keyboard.press('Escape');
 	await expect(readingPanel).toBeHidden();

@@ -180,7 +180,7 @@
 				return false;
 			}
 			error = err.message;
-			if (err.source === 'api' && err.code === 'conflict') await load(true);
+			if (err.source === 'api' && err.code === 'conflict') await load(false);
 			if (err.source === 'api' && err.code === 'checklist_incomplete') pending = 'done_anyway';
 			return false;
 		} finally {

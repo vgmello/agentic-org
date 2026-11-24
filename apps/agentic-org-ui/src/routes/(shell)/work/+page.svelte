@@ -397,6 +397,7 @@
 		const listener = (event: KeyboardEvent) => {
 			if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
 			if (event.key === 'Escape' && hasDetail) {
+				if (event.repeat) return;
 				if (event.target === searchInputEl) return;
 				if (
 					event.target instanceof HTMLSelectElement ||
@@ -406,15 +407,20 @@
 					return;
 				}
 				if (document.querySelector(modalOverlaySelector)) return;
-				// If a text field inside the inline reading panel has focus, blur it first so any
-				// blur-saved edit flushes with the panel still open to show errors/conflicts; the next Escape closes.
+				// If a text field inside the inline reading panel has focus, blur it first and move focus to the
+				// panel heading so blur-saved edits flush with the panel open (and focus never drops to body);
+				// the next deliberate Escape closes the reading panel.
 				if (
 					(event.target instanceof HTMLInputElement ||
 						event.target instanceof HTMLTextAreaElement) &&
 					Boolean(event.target.closest('.work-reading'))
 				) {
 					event.preventDefault();
+					const panelTitle = event.target
+						.closest('.work-reading')
+						?.querySelector<HTMLElement>('#work-detail-title');
 					event.target.blur();
+					panelTitle?.focus({ preventScroll: true });
 					return;
 				}
 				event.preventDefault();
