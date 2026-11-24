@@ -27,6 +27,21 @@ try {
     assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
 
     if (route === "work") {
+      const display = page.getByRole("button", { name: "Work display" });
+      const group = page.getByRole("group", { name: "Group by", exact: true });
+      const subgroup = page.getByRole("group", { name: "Subgroup by", exact: true });
+      const groups = page.locator("#work-results .work-group");
+      await display.press("Enter");
+      await group.getByRole("menuitemradio", { name: "Project" }).press("Enter");
+      await groups.first().waitFor();
+      assert.ok(page.url().endsWith("#/work?group=project"));
+      await display.press("Enter");
+      assert.equal(await subgroup.getByRole("menuitemradio", { name: "Project" }).count(), 0);
+      await subgroup.getByRole("menuitemradio", { name: "Status" }).press("Enter");
+      await groups.first().locator(".work-subgroup > .work-list").first().waitFor();
+      assert.ok(await groups.count() > 1);
+      assert.ok(page.url().endsWith("#/work?group=project&subgroup=status"));
+
       const task = page.locator("#work-results .work-item-link").first();
       await task.press("Enter");
       const panel = page.getByRole("dialog");
@@ -35,6 +50,10 @@ try {
       await page.keyboard.press("Escape");
       await panel.waitFor({ state: "detached" });
       assert.ok(await task.evaluate((link) => link === document.activeElement), "Focus returns to the task");
+      assert.ok(page.url().endsWith("#/work?group=project&subgroup=status"), "Task details preserve both groups");
+      await display.press("Enter");
+      await group.getByRole("menuitemradio", { name: "No grouping" }).press("Enter");
+      await groups.first().waitFor({ state: "detached" });
     }
     if (route === "activity") {
       await page.getByRole("heading", { name: "Portfolio Assembly" }).waitFor();

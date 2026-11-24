@@ -727,12 +727,16 @@ body.nokeys .search kbd { display: none; }
 .work-items { container-type: inline-size; margin: 8px var(--gutter) 24px; min-width: 0; }
 .compact .work-items { margin-inline: 0; }
 .work-group + .work-group { margin-top: 8px; }
-.work-group-title {
+.work-subgroups { margin-inline-start: 8px; }
+.work-subgroup + .work-subgroup { margin-block-start: 4px; }
+:is(.work-group-title, .work-subgroup-title) {
   display: flex; align-items: center; gap: 8px;
-  padding: 6px 12px; border-radius: var(--radius-md); background: var(--hover);
+  padding: 6px 12px;
   font-size: .8125rem; font-weight: 600; line-height: 1.5; color: var(--white);
 }
-.work-group-title .cnt { color: var(--gray-400); }
+.work-group-title { border-radius: var(--radius-md); background: var(--hover); }
+.work-subgroup-title { color: var(--gray-300); }
+:is(.work-group-title, .work-subgroup-title) .cnt { color: var(--gray-400); }
 .work-row {
   display: flex; align-items: center; gap: 8px 16px; min-width: 0;
   min-height: 2.625rem; padding: 6px 12px;
@@ -5198,7 +5202,7 @@ const menuItem = (act, v, icon, label, extra = "") => `<button role="menuitem" t
 /* ---------------------------------------------------------------- inbox items */
 function sourceOf(it) {
   if (it.src) return it.src;
-  return it.task ? { href: workHref("all", "none", it.task), label: "Open " + it.task } : { href: `#/chat/${P[it.proj].channel}`, label: "Open #" + CH[P[it.proj].channel].name };
+  return it.task ? { href: workHref({ item: it.task }), label: "Open " + it.task } : { href: `#/chat/${P[it.proj].channel}`, label: "Open #" + CH[P[it.proj].channel].name };
 }
 function itemActions(it, where) {
   if (it.handled) return `<p class="handled" id="handled-${esc(it.id)}">${esc(it.outcome)}</p>`;
@@ -5336,20 +5340,29 @@ function workRow(w, isSubtask = false) {
     </div></div>${workSubtasks(w)}</li>`;
 }
 const showsNeedsYou = (w) => needsMe(w) && w.status !== "Scoped";
-function workList(items, groupBy, emptyText = "No work here yet.") {
-  if (!items.length) return `<p class="empty-row">${emptyText}</p>`;
+function workGroups(items, field) {
+  const groups = new Map();
+  for (const item of items) {
+    const key = item[field] ?? "none";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  const keys = field === "status" ? ALL_STATUSES.filter((status) => groups.has(status)) : [...groups.keys()];
+  return keys.map((key) => {
+    const label = field === "status" ? key : field === "proj" ? P[key].name
+      : M[key] ? M[key].name + " · " + kindWord(key) : "Unassigned";
+    return { label, rows: groups.get(key) };
+  });
+}
+function workList(items, { groupBy, subgroupBy, emptyText = "No work here yet." } = {}) {
+  if (!items.length) return `<p class="empty-row">${esc(emptyText)}</p>`;
   const list = (rows) => `<ul class="work-list" role="list">${rows.map((w) => workRow(w)).join("")}</ul>`;
   if (!groupBy) return `<div class="work-items">${list(items)}</div>`;
-  const groups = new Map();
-  for (const w of items) {
-    const key = w[groupBy] ?? "none";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(w);
-  }
-  const entries = groupBy === "status" ? ALL_STATUSES.filter((status) => groups.has(status)).map((status) => [status, groups.get(status)]) : [...groups];
-  const sections = entries.map(([k, ws]) => {
-    const title = groupBy === "status" ? esc(k) : groupBy === "proj" ? esc(P[k].name) : (M[k] ? esc(M[k].name) + " · " + kindWord(k) : "Unassigned");
-    return `<div class="work-group"><h3 class="work-group-title">${title}<span class="cnt">${ws.length}</span></h3>${list(ws)}</div>`;
+  const sections = workGroups(items, groupBy).map(({ label, rows }) => {
+    const body = subgroupBy ? `<div class="work-subgroups">${workGroups(rows, subgroupBy).map((subgroup) => `
+      <div class="work-subgroup"><h3 class="work-subgroup-title">${esc(subgroup.label)}<span class="cnt">${subgroup.rows.length}</span></h3>
+        ${list(subgroup.rows)}</div>`).join("")}</div>` : list(rows);
+    return `<div class="work-group"><h2 class="work-group-title">${esc(label)}<span class="cnt">${rows.length}</span></h2>${body}</div>`;
   });
   return `<div class="work-items">${sections.join("")}</div>`;
 }
@@ -6616,7 +6629,7 @@ function inboxDetail(it) {
       <dl class="triage-fields">
         <div><dt>Kind</dt><dd>${esc(k.label)} · ${esc(it.sub)}</dd></div>
         <div><dt>Project</dt><dd>${plink(it.proj)}</dd></div>
-        ${it.task ? `<div><dt>Work item</dt><dd><a class="alink" href="${esc(workHref("all", "none", it.task))}">${esc(it.task)}${work ? " · " + esc(work.title) : ""}</a>${inboxCopy("Copy", it.task, it.task)}</dd></div>` : ""}
+        ${it.task ? `<div><dt>Work item</dt><dd><a class="alink" href="${esc(workHref({ item: it.task }))}">${esc(it.task)}${work ? " · " + esc(work.title) : ""}</a>${inboxCopy("Copy", it.task, it.task)}</dd></div>` : ""}
         ${it.expires ? `<div><dt>Expires</dt><dd${it.handled ? "" : ' class="triage-expiry"'}>${esc(it.expires)}</dd></div>` : ""}
         <div><dt>Clears</dt><dd>${esc(it.clears || k.clears)}</dd></div>
         ${channel ? `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd></div>` : ""}
@@ -6741,7 +6754,7 @@ function memberRows(ids, opts = {}) {
 }
 
 const WORK_PRESETS = [["all", "All"], ["needs-me", "Needs me"], ["mine", "Mine"]];
-const WORK_GROUPS = [["none", "No grouping"], ["project", "Project"], ["status", "Status"], ["assignee", "Assignee"]];
+const WORK_GROUPS = [["project", "Project"], ["status", "Status"], ["assignee", "Assignee"]];
 const WORK_GROUP_FIELDS = { project: "proj", status: "status", assignee: "who" };
 const WORK_SORTS = [["default", "Original order"], ["title", "Title"], ["priority", "Priority"], ["eta", "ETA"]];
 const TASK_PRIORITIES = ["Low", "Medium", "High"];
@@ -6751,24 +6764,28 @@ Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTea
 function workSelection() {
   const params = qs();
   const view = params.get("view");
-  const group = params.get("group") ?? view?.match(/^by-(.+)$/)?.[1];
+  const primary = params.get("group") ?? view?.match(/^by-(.+)$/)?.[1];
+  const subgroup = params.get("subgroup");
+  const group = own(WORK_GROUP_FIELDS, primary) ? primary : "none";
   return {
     view: WORK_PRESETS.some(([value]) => value === view) ? view : "all",
-    group: WORK_GROUPS.some(([value]) => value === group) ? group : "none",
+    group,
+    subgroup: group !== "none" && subgroup !== group && own(WORK_GROUP_FIELDS, subgroup) ? subgroup : "none",
   };
 }
 
-function workHref(view, group, item) {
+function workHref({ view = "all", group = "none", subgroup = "none", item }) {
   const params = new URLSearchParams();
   if (view !== "all") params.set("view", view);
   if (group !== "none") params.set("group", group);
+  if (group !== "none" && subgroup !== "none" && subgroup !== group) params.set("subgroup", subgroup);
   if (item) params.set("item", item);
   return params.size ? "#/work?" + params : "#/work";
 }
 
-function selectWorkView(view, group, focusSelector) {
+function selectWorkView(selection, focusSelector) {
   closeMenus();
-  const href = workHref(view, group);
+  const href = workHref(selection);
   if (href === location.hash) {
     document.querySelector(focusSelector)?.focus();
     return;
@@ -6812,7 +6829,7 @@ function sortWorkItems(items) {
   });
 }
 
-function workResults(filtered, { view, group }) {
+function workResults(filtered, { view, group, subgroup }) {
   const items = sortWorkItems(workPresetItems(filtered, view));
   if (!items.length) {
     const text = S.workQuery.trim() || workHasFilters() ? "No work matches these filters."
@@ -6820,7 +6837,9 @@ function workResults(filtered, { view, group }) {
       : view === "mine" ? "Nothing is assigned to you." : "No work items yet.";
     return `<p class="empty-row">${text}</p>`;
   }
-  return S.workLayout === "board" ? board(items) : workList(items, WORK_GROUP_FIELDS[group]);
+  return S.workLayout === "board" ? board(items) : workList(items, {
+    groupBy: WORK_GROUP_FIELDS[group], subgroupBy: WORK_GROUP_FIELDS[subgroup],
+  });
 }
 
 function refreshWorkResults() {
@@ -6839,7 +6858,10 @@ function workViewControls(group) {
   ], { icon: "filter", label: "Filter work", active: workHasFilters() });
   const listLayout = S.workLayout === "list";
   const display = showMenu("work-display", [
-    ...(listLayout ? [["workGroup", "Group by", WORK_GROUPS]] : []),
+    ...(listLayout ? [["workGroup", "Group by", [["none", "No grouping"], ...WORK_GROUPS]]] : []),
+    ...(listLayout && group !== "none"
+      ? [["workSubgroup", "Subgroup by", [["none", "No subgroup"], ...WORK_GROUPS.filter(([value]) => value !== group)]]]
+      : []),
     ["workSort", "Sort by", WORK_SORTS],
     ["workOrder", "Direction", [["asc", "Ascending"], ["desc", "Descending"]]],
   ], {
@@ -6857,6 +6879,7 @@ function statusOptions(statuses, selected) {
 function pageWork() {
   const selection = workSelection(), filtered = workFilteredItems();
   S.workGroup = selection.group;
+  S.workSubgroup = selection.subgroup;
   return `<header class="work-header queue-header">
     <div class="ph queue-headline">
       <div class="ph-t">
@@ -6998,8 +7021,9 @@ async function createWorkTask(form) {
     W.unshift(task);
     dialog.close();
     Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all" });
-    const { view, group } = workSelection();
-    location.hash = workHref(workPresetItems([task], view).length ? view : "all", group, task.id);
+    const selection = workSelection();
+    const view = workPresetItems([task], selection.view).length ? selection.view : "all";
+    location.hash = workHref({ ...selection, view, item: task.id });
     toast(saved ? `Created ${task.id}` : `Created ${task.id} for this session`);
   };
   try {
@@ -7648,7 +7672,7 @@ function pageMember(id, tab) {
       const f = S.taskFilter || "all";
       const list = f === "open" ? myW.filter(OPEN) : f === "done" ? myW.filter((w) => !OPEN(w)) : myW;
       leftBody = `<div class="subbar">${seg("taskFilter", [["all", "All", myW.length], ["open", "Open", myW.filter(OPEN).length], ["done", "Done", myW.filter((w) => !OPEN(w)).length]], "Show")}<span style="flex:1"></span><button class="btn outline" type="button" data-act="proto" data-v="Assign a task to ${esc(m.name)}">${ic("plus", "ic16")}Assign task</button></div>
-        ${workList(list, null, "No tasks match this filter.")}`;
+        ${workList(list, { emptyText: "No tasks match this filter." })}`;
     } else if (tab === "sessions") {
       leftBody = `<div id="agent-sessions-root" data-agent="${id}"></div>`;
     } else if (tab === "journal") {
@@ -9085,7 +9109,7 @@ function searchResults(q, max = 5) {
   const has = (s) => String(s || "").toLowerCase().includes(t);
   return [
     ["Projects", Object.keys(P).filter((p) => has(P[p].name) || has(P[p].goal)).slice(0, max).map((p) => ({ href: "#/projects/" + p, label: P[p].name, sub: P[p].archived ? "Archived" : [P[p].health, leadTxt(p)].filter(Boolean).join(" · "), icon: "folder" }))],
-    ["Work", workItems().filter((w) => w.id === workRef || has(w.id) || has(w.title)).slice(0, max).map((w) => ({ href: workHref("all", "none", w.id), label: w.id + " " + w.title, sub: P[w.proj].name + " · " + w.status, icon: "clipboard" }))],
+    ["Work", workItems().filter((w) => w.id === workRef || has(w.id) || has(w.title)).slice(0, max).map((w) => ({ href: workHref({ item: w.id }), label: w.id + " " + w.title, sub: P[w.proj].name + " · " + w.status, icon: "clipboard" }))],
     ["Members", memberIds().filter((k) => has(M[k].name) || has(M[k].role)).slice(0, max).map((k) => ({ href: "#/members/" + k, label: M[k].name, sub: M[k].role + " · " + kindWord(k), av: k }))]
   ].filter((g) => g[1].length);
 }
@@ -9559,7 +9583,7 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "work-preset":
-      selectWorkView(v, workSelection().group, `[data-act="work-preset"][data-v="${v}"]`);
+      selectWorkView({ ...workSelection(), view: v }, `[data-act="work-preset"][data-v="${v}"]`);
       break;
     case "work-copy-link":
     case "inbox-copy": {
@@ -9584,8 +9608,11 @@ document.addEventListener("click", (e) => {
     }
     case "set": {
       const menu = t.closest(".menu"), menuId = menu && menu.id;
-      if (t.dataset.k === "workGroup") {
-        selectWorkView(workSelection().view, v, '[aria-controls="menu-work-display"]');
+      if (t.dataset.k === "workGroup" || t.dataset.k === "workSubgroup") {
+        const selection = workSelection();
+        if (t.dataset.k === "workGroup") selection.group = v;
+        else selection.subgroup = v;
+        selectWorkView(selection, '[aria-controls="menu-work-display"]');
         break;
       }
       let val = v; if (val === "true") val = true; else if (val === "false") val = false;
