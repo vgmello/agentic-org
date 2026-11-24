@@ -365,11 +365,60 @@ fn first_lines_check_their_rules_both_ways() {
             "{wire}"
         );
     }
-    let unknown = b"{\"v\":1,\"op\":\"join\"}\n".to_vec();
+    let unknown = b"{\"v\":1,\"op\":\"teleport\"}\n".to_vec();
     assert!(matches!(
         read_first_line(&mut Cursor::new(unknown), FirstLine::Create),
         Err(LaunchError::Invalid(_))
     ));
+}
+
+#[test]
+fn satellite_join_first_line_handoff_and_events_round_trip() {
+    let line = HostFirstLine::Join(JoinLine {
+        office: OfficeLine {
+            instance_id: INSTANCE.into(),
+            office_id: OFFICE.into(),
+            rendezvous: RENDEZVOUS.into(),
+        },
+        invitation_id: "0195a000-0000-7000-8000-000000000099".into(),
+        org_id: ORG.into(),
+        org_name: "Acme".into(),
+        office_name: "Build Mac".into(),
+        hq_office_id: "0195a000-0000-7000-8000-000000000088".into(),
+        hq_addresses: vec!["127.0.0.1:9443".into()],
+        re_enroll: false,
+    });
+    let mut wire = Vec::new();
+    write_first_line(&mut wire, &line).unwrap();
+    let decoded = read_first_line(&mut Cursor::new(&wire), FirstLine::Join)
+        .unwrap()
+        .unwrap();
+    assert_eq!(decoded, line);
+    assert!(read_first_line(&mut Cursor::new(&wire), FirstLine::Create).is_err());
+
+    let inv = InvitationSecret::new("agorg-inv1.secret-token".into()).unwrap();
+    assert!(format!("{inv:?}").contains("redacted"));
+    let encoded_handoff = encode_join_handoff(
+        &OfficeSecretsKey::from_bytes([1u8; 32]),
+        &GrantKey::from_bytes([2u8; 32]),
+        &inv,
+    )
+    .unwrap();
+    let decoded_handoff = decode_handoff(encoded_handoff.strip_suffix(b"\n").unwrap()).unwrap();
+    assert!(matches!(decoded_handoff, Handoff::Join { .. }));
+
+    let pending = ServerEvent::JoinPending {
+        request_id: "req-1".into(),
+        check_code: "ABCD-EFGH".into(),
+    };
+    let mut ev_buf = Vec::new();
+    write_server_event(&mut ev_buf, &pending).unwrap();
+    assert_eq!(
+        read_server_event(&mut Cursor::new(&ev_buf))
+            .unwrap()
+            .unwrap(),
+        RendezvousEvent::Server(pending)
+    );
 }
 
 #[test]

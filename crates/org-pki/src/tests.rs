@@ -181,3 +181,220 @@ fn rec_esc_1_exact_public_vector() {
         key.public_key()
     );
 }
+
+#[test]
+fn org_ca_hq_and_satellite_csr_certs_enforce_role_and_revocation_and_mtls_exporter() {
+    use crate::cert::{
+        build_hq_tls_server_config, build_org_ca_cert, build_satellite_tls_client_config,
+        export_enrollment_binding, issue_office_cert, issue_satellite_cert_from_pubkey,
+        sign_satellite_key_pop, verify_office_cert, CertError, IssueOfficeCertParams,
+        IssueSatelliteCertParams, OfficeCertRole, DEFAULT_OFFICE_CERT_VALIDITY_DAYS,
+    };
+    use crate::invitation::{
+        compute_check_code, normalize_check_code, sign_exporter_proof, verify_exporter_proof,
+        InvitationToken, NewInvitationParams,
+    };
+    use crate::wrap::{unwrap, wrap, WrapBinding, WrapPurpose};
+    use std::collections::BTreeSet;
+    use std::io::{Read, Write};
+
+    let now = 1_772_971_200i64;
+    let org_id = "0195a000-0000-7000-8000-000000000001";
+    let hq_id = "0195a000-0000-7000-8000-000000000002";
+    let sat_id = "0195a000-0000-7000-8000-000000000003";
+
+    let ca_key = SigningKey::generate().unwrap();
+    let ca_cert = build_org_ca_cert(&ca_key, org_id, now).unwrap();
+    let hq_key = SigningKey::generate().unwrap();
+    let hq_cert = issue_office_cert(
+        &ca_key,
+        &ca_cert.cert_der,
+        &IssueOfficeCertParams {
+            org_id,
+            office_id: hq_id,
+            role: OfficeCertRole::Hq { epoch: 1 },
+            subject_key_der_pkcs8: hq_key.local_der(),
+            san_hosts: &["127.0.0.1".into(), "localhost".into()],
+            now_unix: now,
+            validity_days: DEFAULT_OFFICE_CERT_VALIDITY_DAYS,
+        },
+    )
+    .unwrap();
+
+    // Satellite generates its own key & proof-of-possession; private key never leaves satellite.
+    let inv_id = "0195a000-0000-7000-8000-000000000099";
+    let sat_key = SigningKey::generate().unwrap();
+    let pop_sig = sign_satellite_key_pop(&sat_key, org_id, sat_id, inv_id).unwrap();
+    let sat_cert = issue_satellite_cert_from_pubkey(
+        &ca_key,
+        &ca_cert.cert_der,
+        &IssueSatelliteCertParams {
+            org_id,
+            office_id: sat_id,
+            invitation_id: inv_id,
+            subject_pub_key_uncompressed: &sat_key.public_key(),
+            pop_signature_der: &pop_sig,
+            now_unix: now,
+            validity_days: DEFAULT_OFFICE_CERT_VALIDITY_DAYS,
+        },
+    )
+    .unwrap();
+
+    let empty_revoked = BTreeSet::new();
+    let verified_hq = verify_office_cert(
+        &ca_cert.cert_der,
+        &hq_cert.cert_der,
+        org_id,
+        Some(OfficeCertRole::Hq { epoch: 1 }),
+        &empty_revoked,
+        now,
+    )
+    .unwrap();
+    assert_eq!(verified_hq.office_id, hq_id);
+
+    let verified_sat = verify_office_cert(
+        &ca_cert.cert_der,
+        &sat_cert.cert_der,
+        org_id,
+        Some(OfficeCertRole::Satellite),
+        &empty_revoked,
+        now,
+    )
+    .unwrap();
+    assert_eq!(verified_sat.office_id, sat_id);
+
+    // Satellite cert must NEVER verify as HQ.
+    assert!(matches!(
+        verify_office_cert(
+            &ca_cert.cert_der,
+            &sat_cert.cert_der,
+            org_id,
+            Some(OfficeCertRole::Hq { epoch: 1 }),
+            &empty_revoked,
+            now,
+        ),
+        Err(CertError::RoleViolation(_))
+    ));
+
+    // Revoked serial must be rejected.
+    let mut revoked = BTreeSet::new();
+    revoked.insert(sat_cert.serial_hex.clone());
+    assert_eq!(
+        verify_office_cert(
+            &ca_cert.cert_der,
+            &sat_cert.cert_der,
+            org_id,
+            Some(OfficeCertRole::Satellite),
+            &revoked,
+            now,
+        ),
+        Err(CertError::Revoked)
+    );
+
+    // Invitation token round-trip + Crockford check code + TLS exporter proof.
+    let inv_key = SigningKey::generate().unwrap();
+    let token = InvitationToken::new(
+        NewInvitationParams {
+            invitation_id: inv_id.into(),
+            org_id: org_id.into(),
+            org_name: "Acme".into(),
+            office_id: sat_id.into(),
+            office_name: "Build Mac".into(),
+            hq_office_id: hq_id.into(),
+            hq_addresses: vec!["127.0.0.1:9443".into()],
+            ca_cert_der: ca_cert.cert_der.clone(),
+            expires_at_ms: 1_900_000_000_000,
+        },
+        &inv_key,
+    )
+    .unwrap();
+    let encoded = token.encode().unwrap();
+    let decoded = InvitationToken::decode(&encoded).unwrap();
+    assert_eq!(decoded.office_id, sat_id);
+    assert_eq!(decoded.ca_fingerprint_hex, ca_cert.fingerprint_hex());
+
+    let code = compute_check_code(inv_id, &sat_key.public_key());
+    assert_eq!(code.len(), 9);
+    assert_eq!(
+        normalize_check_code(&code.to_lowercase()),
+        Some(code.clone())
+    );
+
+    // Wrap/unwrap OfficeTlsKey and InvitationKey under distinct purposes.
+    let office_secret = [7u8; 32];
+    let tls_binding = WrapBinding {
+        organization_id: org_id,
+        office_id: sat_id,
+        purpose: WrapPurpose::OfficeTlsKey,
+    };
+    let inv_binding = WrapBinding {
+        organization_id: org_id,
+        office_id: sat_id,
+        purpose: WrapPurpose::InvitationKey,
+    };
+    let wrapped_tls = wrap(&office_secret, &tls_binding, sat_key.local_der()).unwrap();
+    assert_eq!(
+        &*unwrap(&office_secret, &tls_binding, &wrapped_tls).unwrap(),
+        sat_key.local_der()
+    );
+    assert!(unwrap(&office_secret, &inv_binding, &wrapped_tls).is_err());
+
+    // Live rustls mTLS handshake + exporter keying material match across server and client.
+    let srv_cfg = build_hq_tls_server_config(
+        &ca_cert.cert_der,
+        &hq_cert.cert_der,
+        hq_key.local_der(),
+        true,
+    )
+    .unwrap();
+    let cli_cfg = build_satellite_tls_client_config(
+        &ca_cert.cert_der,
+        Some((&sat_cert.cert_der, sat_key.local_der())),
+    )
+    .unwrap();
+    let mut srv = rustls::ServerConnection::new(srv_cfg).unwrap();
+    let mut cli = rustls::ClientConnection::new(cli_cfg, "localhost".try_into().unwrap()).unwrap();
+    let mut c2s = Vec::new();
+    let mut s2c = Vec::new();
+    for _ in 0..16 {
+        if !cli.is_handshaking() && !srv.is_handshaking() {
+            break;
+        }
+        c2s.clear();
+        cli.write_tls(&mut c2s).unwrap();
+        if !c2s.is_empty() {
+            srv.read_tls(&mut &c2s[..]).unwrap();
+            srv.process_new_packets().unwrap();
+        }
+        s2c.clear();
+        srv.write_tls(&mut s2c).unwrap();
+        if !s2c.is_empty() {
+            cli.read_tls(&mut &s2c[..]).unwrap();
+            cli.process_new_packets().unwrap();
+        }
+    }
+    assert!(!cli.is_handshaking() && !srv.is_handshaking());
+    let srv_exp = export_enrollment_binding(&srv).unwrap();
+    let cli_exp = export_enrollment_binding(&cli).unwrap();
+    assert_eq!(srv_exp, cli_exp);
+    let proof =
+        sign_exporter_proof(&inv_key, &cli_exp, inv_id, sat_id, &sat_key.public_key()).unwrap();
+    verify_exporter_proof(
+        &inv_key.public_key(),
+        &srv_exp,
+        inv_id,
+        sat_id,
+        &sat_key.public_key(),
+        &proof,
+    )
+    .unwrap();
+    // Exchange one encrypted byte to ensure full-duplex transport works.
+    cli.writer().write_all(b"ping").unwrap();
+    c2s.clear();
+    cli.write_tls(&mut c2s).unwrap();
+    srv.read_tls(&mut &c2s[..]).unwrap();
+    srv.process_new_packets().unwrap();
+    let mut got = [0u8; 4];
+    srv.reader().read_exact(&mut got).unwrap();
+    assert_eq!(&got, b"ping");
+}

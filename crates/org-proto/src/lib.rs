@@ -94,6 +94,7 @@ pub mod budgets;
 pub mod chat;
 pub mod costs;
 pub mod directory;
+pub mod federation;
 pub mod frame;
 pub mod git;
 pub mod hiring;

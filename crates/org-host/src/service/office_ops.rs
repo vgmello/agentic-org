@@ -3,22 +3,44 @@
 
 use org_host_control::{
     browser::BrowserOfficeRestart,
-    ops::{OfficeList, OfficeRestart},
+    ops::{OfficeJoin, OfficeList, OfficeReEnroll, OfficeRemovePending, OfficeRestart},
     HostOpResult,
 };
 use org_proto::{ApiError, Empty, ErrorCode, ListOfficesResult, OfficeInfo, Request, Response};
 
 use super::{
-    browser_now_ms, finish_ended_browser_sessions, listener::Connection, ok, Authentication,
-    Service,
+    browser_now_ms, finish_ended_browser_sessions, listener::Connection, office_join, ok,
+    Authentication, Service,
 };
+
+pub(super) fn dispatch_session_office_op(
+    service: &Service,
+    authentication: &Authentication,
+    request: &Request,
+    connection: &std::sync::Arc<Connection>,
+) -> bool {
+    if request.is::<OfficeList>() {
+        list_session_offices(service, authentication, request, connection);
+    } else if request.is::<OfficeRestart>() {
+        restart_session_office(service, authentication, request, connection);
+    } else if request.is::<OfficeJoin>() {
+        office_join::join_session_office(service, authentication, request, connection);
+    } else if request.is::<OfficeRemovePending>() {
+        office_join::remove_pending_session_office(service, authentication, request, connection);
+    } else if request.is::<OfficeReEnroll>() {
+        office_join::re_enroll_session_office(service, authentication, request, connection);
+    } else {
+        return false;
+    }
+    true
+}
 use crate::hostdb::{
     accounts::Account,
     journal::{Attempt, Effect, Lookup, Stored, Write},
     Error as DbError, HostDb,
 };
 
-fn journal_error(error: DbError) -> ApiError {
+pub(super) fn journal_error(error: DbError) -> ApiError {
     match error {
         DbError::OperationReused => ApiError::new(
             ErrorCode::OperationReused,
@@ -165,7 +187,7 @@ pub(super) fn restart_browser_office(
 
 /// Authenticate a native `host.sock` session before full parameter decoding so retired
 /// session-less `office.list` / `office.restart` calls always fail closed with `NotAuthorized`.
-fn authorize_session_first(
+pub(super) fn authorize_session_first(
     authentication: &Authentication,
     request: &Request,
     connection: &Connection,

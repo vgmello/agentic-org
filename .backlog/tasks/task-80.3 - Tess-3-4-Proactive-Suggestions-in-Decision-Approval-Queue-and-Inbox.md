@@ -4,14 +4,14 @@ title: 'Tess 3/4: Proactive Suggestions in Decision & Approval Queue and Inbox'
 status: To Do
 assignee: []
 created_date: '2026-11-22T02:35:00Z'
-updated_date: '2026-11-22T14:30:00Z'
+updated_date: '2026-11-23T04:07:00Z'
 labels:
   - backend
   - ui
   - inbox
   - home
   - tess
-milestone: m-0
+milestone: m-1
 dependencies:
   - TASK-80.1
 documentation:

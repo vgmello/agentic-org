@@ -289,6 +289,16 @@ pub(super) fn first_line(op: FirstLine, rendezvous: &Path) -> HostFirstLine {
         FirstLine::Create => create_line(rendezvous),
         FirstLine::Start => HostFirstLine::Start(office),
         FirstLine::Discard => HostFirstLine::Discard(office),
+        FirstLine::Join => HostFirstLine::Join(org_office_launch::JoinLine {
+            office,
+            org_id: ORG.into(),
+            org_name: "Acme".into(),
+            office_name: "Satellite".into(),
+            hq_office_id: "01900000-0000-7000-8000-000000000099".into(),
+            hq_addresses: vec!["127.0.0.1:9443".into()],
+            invitation_id: "01900000-0000-7000-8000-000000000098".into(),
+            re_enroll: false,
+        }),
     }
 }
 
@@ -344,6 +354,7 @@ fn handshake_as(
         FirstLine::Create => vec!["--create"],
         FirstLine::Start => vec!["--office", OFFICE],
         FirstLine::Discard => vec!["--discard", OFFICE],
+        FirstLine::Join => vec!["--join"],
     };
     let mut run = world.spawn(&args);
     org_office_launch::write_first_line(run.stdin.as_mut().unwrap(), &first).unwrap();
@@ -369,6 +380,12 @@ fn handshake_as(
             assert!(key.is_none(), "a discard handoff carries no secret");
             Handoff::Discard { fds: vec![] }
         }
+        FirstLine::Join => Handoff::Join {
+            office_secrets_key: key.unwrap(),
+            grant_key: GrantKey::from_bytes([7; 32]),
+            invitation: org_office_launch::InvitationSecret::new("agorg-inv1.test".into()).unwrap(),
+            fds: vec![HandoffFd::Transfer],
+        },
     };
     let mut bytes = org_office_launch::encode_handoff(&header).unwrap();
     stream.write_all(&bytes).unwrap();

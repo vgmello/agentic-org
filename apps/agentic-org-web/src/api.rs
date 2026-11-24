@@ -14,6 +14,7 @@ mod cost_routes;
 mod git_routes;
 mod hiring_routes;
 mod instance_routes;
+mod office_routes;
 mod open_routes;
 mod org_routes;
 mod process_routes;
@@ -177,6 +178,7 @@ pub enum Route {
     Process(process_routes::ProcessRoute),
     Cost(cost_routes::CostRoute),
     Provider(provider_routes::ProviderRoute),
+    OfficeFederation(office_routes::OfficeFederationRoute),
 }
 
 pub enum Call {
@@ -217,6 +219,7 @@ pub enum Call {
     Process(process_routes::ProcessCall),
     Cost(cost_routes::CostCall),
     Provider(provider_routes::ProviderCall),
+    OfficeFederation(office_routes::OfficeFederationCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -1022,6 +1025,7 @@ impl ApiBackend for SessionApi {
             Route::Process(route) => return process_routes::prepare(route, bytes),
             Route::Cost(route) => return cost_routes::prepare(route, bytes),
             Route::Provider(route) => return provider_routes::prepare(route, bytes),
+            Route::OfficeFederation(route) => return office_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -1151,6 +1155,12 @@ impl ApiBackend for SessionApi {
                 }),
                 streaming: false,
             },
+            Call::OfficeFederation(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(office_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
         }
     }
@@ -1174,6 +1184,9 @@ impl ApiBackend for SessionApi {
             Call::Process(_) => unreachable!("Call::Process is dispatched asynchronously"),
             Call::Cost(_) => unreachable!("Call::Cost is dispatched asynchronously"),
             Call::Provider(_) => unreachable!("Call::Provider is dispatched asynchronously"),
+            Call::OfficeFederation(_) => {
+                unreachable!("Call::OfficeFederation is dispatched asynchronously")
+            }
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))

@@ -209,7 +209,14 @@ macro_rules! memory_messaging_read {
                 read(self.table(), |t| {
                     t.answers
                         .iter()
-                        .find(|((mid, _), _)| mid == message_id)
+                        .filter(|((mid, _), _)| mid == message_id)
+                        .min_by_key(|(_, ans)| {
+                            (
+                                ans.reason.as_deref() != Some("origin-close"),
+                                ans.accepted_at.as_deref().unwrap_or(""),
+                                ans.employee_id.as_str(),
+                            )
+                        })
                         .map(|(_, ans)| ans.clone())
                 })
             }

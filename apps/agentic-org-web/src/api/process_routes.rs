@@ -192,6 +192,7 @@ fn parse_show_query(query: Option<&str>, id_or_key: &str) -> Result<ProcessShowP
     let mut project_id: Option<String> = None;
     let mut task_id: Option<String> = None;
     let mut offset: Option<usize> = None;
+    let mut expected_revision: Option<u64> = None;
     for (k, v) in pairs {
         match k.as_str() {
             "employee_id" => employee_id = Some(v),
@@ -199,6 +200,7 @@ fn parse_show_query(query: Option<&str>, id_or_key: &str) -> Result<ProcessShowP
             "project_id" => project_id = Some(v),
             "task_id" => task_id = Some(v),
             "offset" => offset = Some(v.parse::<usize>().map_err(|_| invalid())?),
+            "revision" => expected_revision = Some(v.parse::<u64>().map_err(|_| invalid())?),
             _ => return Err(invalid()),
         }
     }
@@ -208,12 +210,16 @@ fn parse_show_query(query: Option<&str>, id_or_key: &str) -> Result<ProcessShowP
     } else {
         (Some(id_or_key.to_owned()), None)
     };
+    if expected_revision.is_some() && document_id.is_none() {
+        return Err(invalid());
+    }
     Ok(ProcessShowParams {
         key,
         document_id,
         employee_id,
         r#for: target_for,
         offset,
+        revision: expected_revision,
     })
 }
 

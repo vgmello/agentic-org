@@ -361,6 +361,7 @@ pub struct MsgWithdrawOp {
     pub params: MsgWithdrawParams,
     pub org_seq: u64,
     pub now_utc: String,
+    pub removed_offices: std::collections::BTreeSet<String>,
 }
 
 impl StoreOp for MsgWithdrawOp {
@@ -377,6 +378,7 @@ impl StoreOp for MsgWithdrawOp {
                 &self.params,
                 self.org_seq,
                 &self.now_utc,
+                &self.removed_offices,
             )?;
             *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(res);
             Ok(change)

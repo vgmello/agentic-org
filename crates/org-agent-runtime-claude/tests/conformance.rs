@@ -1672,3 +1672,251 @@ fn l7_a_send_keeps_waiting_on_approval_while_background_approvals_are_pending() 
         .unwrap();
     assert!(answer.contains(&Output::Event(SessionEvent::Status(Activity::Busy))));
 }
+
+#[test]
+fn capability_translation_covers_presets_rules_init_and_approvals() {
+    use org_agent_runtime::ToolCapability;
+
+    let runtime = ClaudeRuntime::new();
+
+    // ReadOnly preset with cap:read, cap:search, cap:shell + CommandPrefix("agent-os").
+    let mut ro_spec = sample_spec();
+    ro_spec.permission_mode = PermissionMode::Plan;
+    ro_spec.policy.deny.clear();
+    ro_spec.sandbox.deny_write.clear();
+    ro_spec.sandbox.deny_read.clear();
+    ro_spec.policy.allow = vec![
+        Rule {
+            tool: ToolCapability::Read.to_rule_tool(),
+            scope: RuleScope::Any,
+        },
+        Rule {
+            tool: ToolCapability::Search.to_rule_tool(),
+            scope: RuleScope::Any,
+        },
+        Rule {
+            tool: ToolCapability::Shell.to_rule_tool(),
+            scope: RuleScope::CommandPrefix(CommandPrefix::try_from("agent-os").unwrap()),
+        },
+    ];
+    ro_spec.tools = Some(vec![
+        ToolCapability::Read.to_tool_name(),
+        ToolCapability::Search.to_tool_name(),
+        ToolCapability::Shell.to_tool_name(),
+    ]);
+
+    let (plan, mut session) = runtime.plan_session(&ro_spec, &sample_ctx()).unwrap();
+    let tools_pos = plan.args.iter().position(|a| a == "--tools").unwrap();
+    assert_eq!(plan.args[tools_pos + 1], "Read,Glob,Grep,Bash");
+    let dis_pos = plan
+        .args
+        .iter()
+        .position(|a| a == "--disallowedTools")
+        .unwrap();
+    assert!(plan.args[dis_pos + 1].contains("NotebookEdit"));
+
+    // Agents file carries expanded concrete tools, never raw cap:* tokens.
+    let agents_file = plan
+        .files
+        .iter()
+        .find(|f| f.rel_path.as_str() == "claude-agents.json")
+        .unwrap();
+    let agents_json: serde_json::Value = serde_json::from_slice(&agents_file.contents).unwrap();
+    assert_eq!(
+        agents_json["ac-dev-ada"]["tools"],
+        serde_json::json!(["Read", "Glob", "Grep", "Bash"])
+    );
+
+    // Settings file expands cap:read/search/shell allow rules when keeps_allow_rules is true.
+    let mut allow_check_spec = ro_spec.clone();
+    allow_check_spec.tools = None;
+    let (allow_plan, _) = runtime
+        .plan_session(&allow_check_spec, &sample_ctx())
+        .unwrap();
+    let settings_file = allow_plan
+        .files
+        .iter()
+        .find(|f| f.rel_path.as_str() == "claude-settings.json")
+        .unwrap();
+    let settings: serde_json::Value = serde_json::from_slice(&settings_file.contents).unwrap();
+    let allow_rules: Vec<&str> = settings["permissions"]["allow"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert_eq!(
+        allow_rules,
+        vec!["Read", "Glob", "Grep", "Bash(agent-os *)"]
+    );
+
+    // WorkspaceEdits `cap:edit` expands to Edit/Write/MultiEdit (keeping NotebookEdit disallowed),
+    // and its session accepts Edit/Write/Bash on init and classifies Edit approvals as Edit.
+    let mut we_spec = allow_check_spec.clone();
+    we_spec.permission_mode = PermissionMode::AcceptEdits;
+    we_spec.policy.allow.push(Rule {
+        tool: ToolCapability::Edit.to_rule_tool(),
+        scope: RuleScope::Any,
+    });
+    we_spec.tools = Some(vec![ToolCapability::Edit.to_tool_name()]);
+    let (we_plan, mut we_session) = runtime.plan_session(&we_spec, &sample_ctx()).unwrap();
+    let we_tools_pos = we_plan.args.iter().position(|a| a == "--tools").unwrap();
+    assert_eq!(we_plan.args[we_tools_pos + 1], "Edit,Write,MultiEdit");
+    let we_dis_pos = we_plan
+        .args
+        .iter()
+        .position(|a| a == "--disallowedTools")
+        .unwrap();
+    assert!(we_plan.args[we_dis_pos + 1].contains("NotebookEdit"));
+
+    let now_matrix = Instant::now();
+    let _ = we_session.start(now_matrix);
+    let we_ready = we_session.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["ac-dev-ada"],"current_permission_mode":"default","pid":43}}}"#,
+        now_matrix,
+    );
+    assert!(we_ready
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::Ready { .. }))));
+    let we_init = we_session.on_line(
+        br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001","permissionMode":"default","tools":["Edit","Write","MultiEdit"]}"#,
+        now_matrix,
+    );
+    assert!(!we_init.iter().any(|o| matches!(o, Output::CloseStdin)));
+    let we_apr = we_session.on_line(
+        br#"{"type":"control_request","request_id":"we-1","request":{"subtype":"can_use_tool","tool_name":"Edit","input":{"file_path":"/work/t-1/a.rs"}}}"#,
+        now_matrix,
+    );
+    assert!(we_apr.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::ApprovalRequested(r))
+            if r.capability == Some(ToolCapability::Edit) && r.escalation == Escalation::None
+    )));
+
+    // AutonomousSandboxed `cap:shell` Any expands to bare `Bash` alongside Read/Search/Edit,
+    // and its session initializes and classifies Bash + Edit approvals.
+    let mut auto_spec = allow_check_spec.clone();
+    auto_spec.permission_mode = PermissionMode::AcceptEdits;
+    auto_spec.policy.allow = vec![
+        Rule {
+            tool: ToolCapability::Read.to_rule_tool(),
+            scope: RuleScope::Any,
+        },
+        Rule {
+            tool: ToolCapability::Search.to_rule_tool(),
+            scope: RuleScope::Any,
+        },
+        Rule {
+            tool: ToolCapability::Edit.to_rule_tool(),
+            scope: RuleScope::Any,
+        },
+        Rule {
+            tool: ToolCapability::Shell.to_rule_tool(),
+            scope: RuleScope::Any,
+        },
+    ];
+    let (auto_plan, mut auto_session) = runtime.plan_session(&auto_spec, &sample_ctx()).unwrap();
+    let auto_settings_file = auto_plan
+        .files
+        .iter()
+        .find(|f| f.rel_path.as_str() == "claude-settings.json")
+        .unwrap();
+    let auto_settings: serde_json::Value =
+        serde_json::from_slice(&auto_settings_file.contents).unwrap();
+    let auto_allow: Vec<&str> = auto_settings["permissions"]["allow"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert_eq!(
+        auto_allow,
+        vec!["Read", "Glob", "Grep", "Edit", "Write", "MultiEdit", "Bash"]
+    );
+    let _ = auto_session.start(now_matrix);
+    let auto_ready = auto_session.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["ac-dev-ada"],"current_permission_mode":"acceptEdits","pid":44}}}"#,
+        now_matrix,
+    );
+    assert!(auto_ready
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::Ready { .. }))));
+    let auto_init = auto_session.on_line(
+        br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001","permissionMode":"acceptEdits","tools":["Read","Glob","Grep","Edit","Write","Bash"]}"#,
+        now_matrix,
+    );
+    assert!(!auto_init.iter().any(|o| matches!(o, Output::CloseStdin)));
+    let auto_apr = auto_session.on_line(
+        br#"{"type":"control_request","request_id":"auto-1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"cargo test"}}}"#,
+        now_matrix,
+    );
+    assert!(auto_apr.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::ApprovalRequested(r))
+            if r.capability == Some(ToolCapability::Shell) && r.escalation == Escalation::None
+    )));
+
+    // ReadOnly system/init accepts Read/Glob/Grep/Bash and rejects Edit.
+    let now = Instant::now();
+    let _ = session.start(now);
+    let _ = session.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["ac-dev-ada"],"current_permission_mode":"plan","pid":42}}}"#,
+        now,
+    );
+    let ok_init = session.on_line(
+        br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001","permissionMode":"plan","tools":["Read","Glob","Grep","Bash"]}"#,
+        now,
+    );
+    assert!(!ok_init.iter().any(|o| matches!(o, Output::CloseStdin)));
+
+    // Approvals and ToolStarted events carry normalized ToolCapability.
+    let bash_apr = session.on_line(
+        br#"{"type":"control_request","request_id":"req-1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"agent-os inbox"}}}"#,
+        now,
+    );
+    let req = bash_apr
+        .iter()
+        .find_map(|o| match o {
+            Output::Event(SessionEvent::ApprovalRequested(r)) => Some(r),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(req.capability, Some(ToolCapability::Shell));
+
+    let sub_ev = session.on_line(
+        br#"{"type":"assistant","message":{"id":"m-sub","content":[{"type":"tool_use","id":"tu-sub","name":"Agent","input":{"prompt":"inspect"}}]}}"#,
+        now,
+    );
+    assert!(sub_ev.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::ToolStarted {
+            tool_use_id,
+            capability: Some(ToolCapability::Subagent),
+            ..
+        }) if tool_use_id == "tu-sub"
+    )));
+
+    // Exposing Edit in ReadOnly fast-stops.
+    let bad_init = session.on_line(
+        br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001","permissionMode":"plan","tools":["Read","Edit"]}"#,
+        now,
+    );
+    assert!(bad_init.iter().any(|o| matches!(o, Output::CloseStdin)));
+
+    // Unknown cap:* token fails closed in tools and deny rules.
+    let mut bad_tools = sample_spec();
+    bad_tools.tools = Some(vec![ToolName::try_from("cap:network").unwrap()]);
+    assert!(matches!(
+        runtime.plan_session(&bad_tools, &sample_ctx()),
+        Err(PlanError::Unsupported(_))
+    ));
+    let mut bad_deny = sample_spec();
+    bad_deny.policy.deny.push(Rule {
+        tool: RuleTool::try_from("cap:network").unwrap(),
+        scope: RuleScope::Any,
+    });
+    assert!(matches!(
+        runtime.plan_session(&bad_deny, &sample_ctx()),
+        Err(PlanError::Unsupported(_))
+    ));
+}

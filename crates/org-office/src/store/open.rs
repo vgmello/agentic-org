@@ -46,19 +46,23 @@ pub use messaging_ops::{
     OrgChangesAfterRead, PeekUnreadRead,
 };
 pub use operations::{
-    AddPersonOp, AddProjectTeamOp, AgentExecutionById, ArchiveTeamOp, CheckHrMessageAccess,
-    CheckOp, CreateOrganizationOp, CreateProjectOp, CreateTeamOp, DeactivatePersonOp,
-    DirectoryGeneration, DirectorySnapshot, EmployeeById, HireInspectById, HiresList,
-    ImportOrganizationOp, ModelProfileById, ModelProfilesList, MovePersonOp, MoveTeamOp,
-    OfficeStanding, OfficesCount, ProjectCheckOp, ProjectInspectByRef, ProjectsList,
-    ProviderConnectionById, ProviderConnectionsList, ReceiptById, RemoveProjectTeamOp, RoleById,
-    RoleInspectByRef, RolesList, Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp,
-    WatchingModelRead,
+    AddPersonOp, AddProjectTeamOp, AgentExecutionById, ApplyReplicatedFilesOp, ArchiveTeamOp,
+    CheckHrMessageAccess, CheckOp, CreateOrganizationOp, CreateProjectOp, CreateTeamOp,
+    DeactivatePersonOp, DirectoryGeneration, DirectorySnapshot, EmployeeById, HireInspectById,
+    HiresList, ImportOrganizationOp, ModelProfileById, ModelProfilesList, MovePersonOp, MoveTeamOp,
+    OfficeIdsList, OfficeStanding, OfficesCount, ProjectCheckOp, ProjectInspectByRef, ProjectsList,
+    ProviderConnectionById, ProviderConnectionsList, ReceiptById, RegisterSatelliteOfficeOp,
+    RemoveProjectTeamOp, RoleById, RoleInspectByRef, RolesList, Standing, StructureOp, TopTeamId,
+    UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
 };
 
 use super::sqlite::{
-    accounting::SqliteAccountingStore, budgets::SqliteBudgetStore,
-    private_notes::SqlitePrivateNotesStore, providers::SqliteProviderPoolStore, SqliteEngine,
+    accounting::SqliteAccountingStore,
+    budgets::SqliteBudgetStore,
+    private_notes::SqlitePrivateNotesStore,
+    providers::SqliteProviderPoolStore,
+    replication::{OpenReplicationParams, SqliteReplicationStore},
+    SqliteEngine,
 };
 use crate::{
     accounting::AccountingStore,
@@ -67,10 +71,11 @@ use crate::{
     messaging::projector::MessagingFiles,
     office_local::{clean_stop, projector::OfficeLocalFiles, records::CleanStop},
     organization::projector::OrganizationFiles,
-    private_notes::PrivateNotesStore,
+    private_notes::{PrivateNotesStore, SatelliteRefusedPrivateNotesStore},
     processes::projector::ProcessFiles,
     projects::projector::ProjectFiles,
     providers::ProviderPoolStore,
+    replication::ReplicationStore,
     tasks::{
         ports::{TasksEngine, TasksRead},
         projector::TaskFiles,
@@ -78,12 +83,16 @@ use crate::{
 };
 
 /// Opens the isolated HQ-authoritative per-author private task notes store (`TASK-50`, `L8`,
-/// `ADR-0016`, `doc-79`, `TASK-97` ARCH-01) at `<durable-root>/private/task-notes.db` for SQLite
-/// or in-memory for tests.
+/// `ADR-0016`, `doc-79`, `TASK-97` ARCH-01, `TASK-52` ARCH-02). On satellites (`is_hq == false`),
+/// returns a fail-closed stub without creating `<durable-root>/private/task-notes.db`.
 pub(crate) fn open_private_notes(
     engine: EngineChoice,
     durable_root: &Path,
+    is_hq: bool,
 ) -> Result<Arc<dyn PrivateNotesStore>, OfficeError> {
+    if !is_hq {
+        return Ok(Arc::new(SatelliteRefusedPrivateNotesStore));
+    }
     match engine {
         EngineChoice::Sqlite => Ok(Arc::new(SqlitePrivateNotesStore::open(durable_root)?)),
         #[cfg(any(test, feature = "testkit"))]
@@ -118,33 +127,49 @@ pub(crate) fn open_accounting(
 
 /// Opens the isolated `L3` budgets & holds store (`TASK-53`, `doc-92`, `ADR-0016`)
 /// backed by `<durable-root>/budgets/` and `<runtime-root>/<office-id>/protected/budgets.db`.
+/// On satellites (`is_hq == false`), wraps the store in `SatelliteReadOnlyBudgetStore` (`TASK-52` M-20).
 pub(crate) fn open_budgets(
     engine: EngineChoice,
     durable_root: &Path,
     runtime_root: &Path,
     office_id: &str,
     org_id: &str,
+    is_hq: bool,
 ) -> Result<Arc<dyn BudgetStore>, OfficeError> {
     match engine {
-        EngineChoice::Sqlite => Ok(Arc::new(SqliteBudgetStore::open(
-            durable_root,
-            runtime_root,
-            office_id,
-            org_id,
-        )?)),
+        EngineChoice::Sqlite => {
+            let store = SqliteBudgetStore::open(durable_root, runtime_root, office_id, org_id)?;
+            if is_hq {
+                Ok(Arc::new(store))
+            } else {
+                Ok(Arc::new(crate::budgets::SatelliteReadOnlyBudgetStore::new(
+                    store,
+                )))
+            }
+        }
         #[cfg(any(test, feature = "testkit"))]
-        EngineChoice::Memory => Ok(Arc::new(crate::budgets::memory::MemoryBudgetStore::new())),
+        EngineChoice::Memory => {
+            let store = crate::budgets::memory::MemoryBudgetStore::new();
+            if is_hq {
+                Ok(Arc::new(store))
+            } else {
+                Ok(Arc::new(crate::budgets::SatelliteReadOnlyBudgetStore::new(
+                    store,
+                )))
+            }
+        }
     }
 }
 
 /// Opens the isolated `L4` provider bindings, discovery cache, and dual-authority quota permit
-/// store (`TASK-54`, `doc-88`, `doc-89`, `TASK-2` non-blocking in-memory lease heartbeats).
+/// store (`TASK-54`, `doc-88`, `doc-89`, `TASK-2`, `TASK-52` ARCH-02).
 pub(crate) fn open_providers(
     engine: EngineChoice,
     durable_root: &Path,
     runtime_root: &Path,
     office_id: &str,
     org_id: &str,
+    is_hq: bool,
 ) -> Result<Arc<dyn ProviderPoolStore>, OfficeError> {
     match engine {
         EngineChoice::Sqlite => Ok(Arc::new(SqliteProviderPoolStore::open(
@@ -152,10 +177,67 @@ pub(crate) fn open_providers(
             runtime_root,
             office_id,
             org_id,
+            is_hq,
         )?)),
         #[cfg(any(test, feature = "testkit"))]
         EngineChoice::Memory => Ok(Arc::new(
             crate::providers::memory::MemoryProviderPoolStore::new(),
+        )),
+    }
+}
+
+pub(crate) struct ReplicationOpenSpec<'a> {
+    pub engine: EngineChoice,
+    pub durable_root: &'a Path,
+    pub runtime_root: &'a Path,
+    pub org_id: &'a str,
+    pub local_office: &'a str,
+    pub hq_office: &'a str,
+    pub ca_digest: org_sync_proto::Digest,
+    pub epoch: u64,
+    pub incarnation: &'a str,
+    pub initial_snapshot_required: bool,
+}
+
+/// Opens the engine-independent replication store (`TASK-52`, `FC-145`, `ADR-0018` `ENG-3`).
+pub(crate) fn open_replication(
+    spec: ReplicationOpenSpec<'_>,
+) -> Result<Arc<dyn ReplicationStore>, OfficeError> {
+    let org_id =
+        org_sync_proto::OrgId::new(spec.org_id).map_err(|_| OfficeError::Invalid("org_id"))?;
+    let local_office = org_sync_proto::OfficeId::new(spec.local_office)
+        .map_err(|_| OfficeError::Invalid("local_office"))?;
+    let hq_office = org_sync_proto::OfficeId::new(spec.hq_office)
+        .map_err(|_| OfficeError::Invalid("hq_office"))?;
+    let epoch =
+        org_sync_proto::Epoch::new(spec.epoch.max(1)).map_err(|_| OfficeError::Invalid("epoch"))?;
+    let incarnation = org_sync_proto::OriginIncarnation::new(spec.incarnation)
+        .map_err(|_| OfficeError::Invalid("incarnation"))?;
+    match spec.engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqliteReplicationStore::open(
+            OpenReplicationParams {
+                durable_root: spec.durable_root,
+                runtime_root: spec.runtime_root,
+                org_id,
+                local_office,
+                hq_office,
+                ca: spec.ca_digest,
+                epoch,
+                incarnation,
+                initial_snapshot_required: spec.initial_snapshot_required,
+            },
+        )?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(
+            crate::replication::memory::MemoryReplicationStore::new(
+                org_id,
+                local_office,
+                hq_office,
+                spec.ca_digest,
+                epoch,
+                incarnation,
+                spec.initial_snapshot_required,
+            ),
         )),
     }
 }
@@ -474,6 +556,44 @@ impl OfficeStore {
         on_store!(self, opened => opened.store.sync())
     }
 
+    /// Registers a durable journal consumer watermark (`ARCH-03` / `TASK-52`) so segment
+    /// compaction never discards entries this consumer has not yet acknowledged.
+    pub fn register_consumer(&self, consumer_id: &str) -> Result<u64, StoreError> {
+        on_store!(self, opened => opened.store.register_consumer(consumer_id))
+    }
+
+    /// Advances a durable journal consumer watermark (`ARCH-03` / `TASK-52`).
+    pub fn advance_consumer(&self, consumer_id: &str, ordinal: u64) -> Result<(), StoreError> {
+        on_store!(self, opened => opened.store.advance_consumer(consumer_id, ordinal))
+    }
+
+    /// Returns the persisted watermark of `consumer_id`, if registered.
+    pub fn consumer_watermark(&self, consumer_id: &str) -> Option<u64> {
+        on_store!(self, opened => opened.store.consumer_watermark(consumer_id))
+    }
+
+    /// Reads all retained journal entries strictly after `ordinal` (`ARCH-03` / `TASK-52`).
+    pub fn entries_after(&self, ordinal: u64) -> Vec<Arc<org_store::Entry>> {
+        on_store!(self, opened => opened.store.entries_after(ordinal))
+    }
+
+    /// Reads retained journal entries strictly after `ordinal`, rejecting any gap (`TASK-52` M-15).
+    pub fn entries_after_contiguous(
+        &self,
+        ordinal: u64,
+    ) -> Result<Vec<Arc<org_store::Entry>>, StoreError> {
+        on_store!(self, opened => opened.store.entries_after_contiguous(ordinal))
+    }
+
+    /// Syncs and runs `f(materialized_ordinal)` while holding the store's materialization lock so
+    /// files under `durable/state/` cannot change during snapshot capture (`TASK-52` H-11).
+    pub fn with_consistent_materialized<R>(
+        &self,
+        f: impl FnOnce(u64) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError> {
+        on_store!(self, opened => opened.store.with_consistent_materialized(f))
+    }
+
     /// The orderly stop. The SQLite projection's log is then folded into its file, and the
     /// clean-stop marker is written last. A store that is dropped instead does no such
     /// work and loses nothing by it, and the next opening is told the stop was not clean.
@@ -518,6 +638,10 @@ fn companion_store_exclusions(office_id: &Id) -> Vec<org_store::DurablePath> {
         format!("local/offices/{office_id}/agents"),
         format!("local/offices/{office_id}/sessions"),
         format!("local/offices/{office_id}/enroll-tmp"),
+        format!("local/offices/{office_id}/replication"),
+        format!("local/offices/{office_id}/local-execution"),
+        format!("local/offices/{office_id}/invitations"),
+        format!("local/offices/{office_id}/tls"),
     ]
     .into_iter()
     .map(|p| org_store::DurablePath::parse(&p).expect("valid companion store prefix"))

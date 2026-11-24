@@ -120,6 +120,10 @@ fn cycle<E: Engine>(core: &Core<E>) -> Result<(), StoreError> {
     if core.flow().dead {
         return Ok(());
     }
+    let _mat_guard = core
+        .materialization_lock
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let through = materialize(&core.files, &core.journal).map_err(|e| match e {
         StoreError::Files(FilesError::Foreign { path }) => stopped_at(
             path.to_string(),
@@ -135,14 +139,20 @@ fn cycle<E: Engine>(core: &Core<E>) -> Result<(), StoreError> {
         core.die();
         return Ok(());
     }
-    core.journal.set_materialized(through)?;
+    // Serialize materialization cap + segment release with consumer registration/advancement
+    // (`ARCH-03`) so concurrent `register_consumer` / `advance_consumer` never races with release.
+    let _release_gate = core.release_gate.lock().unwrap_or_else(|e| e.into_inner());
+    let release_cap = core.flow().release_cap(through);
+    core.journal
+        .set_materialized_with_release_cap(through, release_cap)?;
     // The engine's upkeep, on this thread: the writer never waits for it.
     core.engine.after_round();
-    {
+    let release_through = {
         let mut flow = core.flow();
         flow.materialized_through(through);
         core.wake.notify_all();
-    }
-    core.journal.release_through(through)?;
+        flow.release_cap(through)
+    };
+    core.journal.release_through(release_through)?;
     Ok(())
 }

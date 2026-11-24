@@ -3,7 +3,7 @@ id: doc-62
 title: 'Design: Documentation Authority Map'
 type: guide
 created_date: '2026-11-21T00:48:00Z'
-updated_date: '2026-11-21T00:48:00Z'
+updated_date: '2026-11-23T03:54:00Z'
 tags:
   - design
   - governance
@@ -17,7 +17,7 @@ tags:
 Which document answers which question, and which one wins when two disagree. The
 [data contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md) owns records, fields, identities and
 storage. Decision records in [`.backlog/decisions/`](../../decisions) own the decisions they state.
-Designs and UX specs apply those contracts in their own context. Where a design or
+Designs and UX/AX specs apply those contracts in their own context. Where a design or
 spec shows a different field or rule from the data contract, the data contract
 wins. When this map does not settle a disagreement, take the reading that fits the
 [architecture non-negotiables](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md) best, then fix
@@ -45,6 +45,7 @@ in the "What the code does today" section of each design.
 | What starts an agent's turn | [Run modes](../specs/doc-50%20-%20Spec-Agent-Run-Modes-and-Availability-UX.md): a person's Run, the answer to a required ask (ADR-0020), being addressed by another agent or answered ([ADR-0023](../../decisions/decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md)), a person's direct message or mention or a task assignment ([ADR-0028](../../decisions/decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md)), a reactive completion wake from the agent's own active background task or sub-agent ([ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md) decision 6), or a recovery |
 | What reaches an agent's inbox; mentions; the channel watcher | [ADR-0024](../../decisions/decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md) |
 | Sub-agents inside an agent's turn | [ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md) |
+| Agent Experience (AX) standards, discovery tiers, token budgets, Day-1 onboarding, skills and AX quality gates | [Agent Experience (AX) Spec](../specs/doc-96%20-%20Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md) (`AX-1`–`AX-24`), with [agent instructions](doc-27%20-%20Design-Agent-Instructions-Assembly.md), [agent command line](doc-28%20-%20Design-agent-os-Command-Line.md) and [REQ-08](../specs/doc-59%20-%20REQ-08-agent-os-CLI-and-Kernel-Primitives.md). Outranks the `principal-ax-designer` persona; yields to data contracts and ADRs |
 | What every agent is told about how to work in the product | [Agent instructions](doc-27%20-%20Design-Agent-Instructions-Assembly.md). It follows the contracts it names and never overrides one |
 | The agents' command line: grammar, answer format, errors and the list of commands | [Agent command line](doc-28%20-%20Design-agent-os-Command-Line.md), from [REQ-08](../specs/doc-59%20-%20REQ-08-agent-os-CLI-and-Kernel-Primitives.md). What a command means stays with the contract its row names |
 | Durable sources versus rebuildable caches | [Storage contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md#shared-storage-contract), [recovery](../organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md) |
@@ -68,6 +69,7 @@ in the "What the code does today" section of each design.
 | Concern | Detailed guides | Owning data documents |
 | --- | --- | --- |
 | Navigation, shared interaction rules, the owner's inbox | [Shell](../specs/doc-39%20-%20Spec-App-Shell-and-Navigation-UX.md), [Home and Inbox](../specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md) | Identity and access contracts |
+| Agent Experience (AX): `agent-os` CLI, Day-1 onboarding, skills, conflict recovery and evals | [Agent Experience (AX) Spec](../specs/doc-96%20-%20Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md), [agent instructions](doc-27%20-%20Design-Agent-Instructions-Assembly.md), [agent command line](doc-28%20-%20Design-agent-os-Command-Line.md), [REQ-08](../specs/doc-59%20-%20REQ-08-agent-os-CLI-and-Kernel-Primitives.md) | 04, 11, 15, 18 |
 | Organization creation, home teams, leads, project accountability | [Creation](doc-30%20-%20Design-Create-Organization.md), [teams](doc-38%20-%20Design-Teams-People-and-Org-Chart.md), [offices and teams UX](../specs/doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md), [hiring and profiles](../specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md), [roles](../specs/doc-47%20-%20Spec-Agent-Roles-Directory-UX.md) | 01, 02, 04, 06, 08 |
 | Typed tasks, assignment, reporter, history, private notes | [Task design](doc-37%20-%20Design-Tasks-Projects-and-Documents.md), [task UX](../specs/doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md), [request UX](../specs/doc-42%20-%20Spec-Feature-Requests-and-Intake-UX.md) | 03, 05, 06, 08, 12 |
 | Repositories, features, knowledge, releases | [Git design](doc-35%20-%20Design-Projects-Git-and-GitHub.md), [features](../specs/doc-43%20-%20Spec-Features-Milestones-and-Releases-UX.md), [knowledge](../specs/doc-52%20-%20Spec-Knowledge-Decisions-and-Tech-Debt-UX.md), [status reports](../specs/doc-46%20-%20Spec-Project-Status-Overview-UX-—-Not-in-v1.md) | 02, 03, 07, 08, 09, 18 |

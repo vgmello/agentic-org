@@ -1,7 +1,8 @@
 //! Shared `org-command` dispatch over any [`OfficeTransport`] (bound agent socket or
 //! grant-bound person host channel), implementing B2.4/B3 rows and CLI-4/5/6.
 
-use org_command::{Ack, Answer, KeySource, Office, Refusal, Request};
+pub use org_command::Refusal;
+use org_command::{Ack, Answer, KeySource, Office, Request};
 use org_proto::directory::{DirectoryCard, WhoResult};
 use org_proto::org::{CommandAccepted, CommandStatus, MemberKind, OrgSnapshot, Team};
 use org_proto::projects::{ProjectListResult, ProjectRecord};

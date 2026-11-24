@@ -1167,6 +1167,7 @@ fn b7_structured_asks_all_question_types_defaults_required_withdraw_and_rebuild(
                 },
                 org_seq: 2,
                 now_utc: now.clone(),
+                removed_offices: std::collections::BTreeSet::new(),
             })
             .unwrap()
             .unwrap();

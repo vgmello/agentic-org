@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use org_agent_runtime::{
     encode_line, ApprovalId, ApprovalKind, ApprovalRequest, Escalation, LimitStatus, Output,
-    RateLimit, SessionEvent, Window,
+    RateLimit, SessionEvent, ToolCapability, Window,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -93,37 +93,62 @@ pub(crate) fn encode_approval_result(rpc_id: &Value, result_val: Value) -> Outpu
     Output::Write(line)
 }
 
-pub(crate) fn classify_codex_escalation(p: &Value) -> Escalation {
-    if p.get("withEscalatedPermissions")
-        .or_else(|| p.get("unsandboxed"))
-        .and_then(Value::as_bool)
-        == Some(true)
-    {
-        return Escalation::SandboxBypass;
+fn is_bypass_flag_triggered(val: Option<&Value>) -> bool {
+    match val {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        Some(_) => true,
     }
-    if p.get("sandboxPermissions")
-        .or_else(|| p.get("sandbox_permissions"))
-        .and_then(Value::as_str)
-        .is_some_and(|s| s.eq_ignore_ascii_case("require_escalated"))
-    {
-        return Escalation::SandboxBypass;
-    }
-    if p.get("sandbox")
+}
+
+fn has_sandbox_bypass_flag(p: &Value) -> bool {
+    is_bypass_flag_triggered(p.get("withEscalatedPermissions"))
+        || is_bypass_flag_triggered(p.get("unsandboxed"))
+        || ["sandboxPermissions", "sandbox_permissions"]
+            .into_iter()
+            .any(|key| {
+                p.get(key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| s.eq_ignore_ascii_case("require_escalated"))
+            })
+}
+
+fn has_sandbox_bypass_policy(p: &Value) -> bool {
+    let danger_sandbox = p
+        .get("sandbox")
         .and_then(Value::as_str)
         .is_some_and(is_danger_full_access)
-    {
-        return Escalation::SandboxBypass;
-    }
-    if p.pointer("/sandboxPolicy/type")
-        .or_else(|| p.pointer("/sandbox_policy/type"))
-        .and_then(Value::as_str)
-        .is_some_and(is_danger_full_access)
-    {
-        return Escalation::SandboxBypass;
-    }
-    if has_non_empty_field(p.get("additionalPermissions"))
+        || ["/sandboxPolicy/type", "/sandbox_policy/type"]
+            .into_iter()
+            .any(|ptr| {
+                p.pointer(ptr)
+                    .and_then(Value::as_str)
+                    .is_some_and(is_danger_full_access)
+            });
+    danger_sandbox
+        || has_non_empty_field(p.get("networkApprovalContext"))
+        || has_non_empty_field(p.get("proposedNetworkPolicyAmendments"))
+}
+
+fn is_codex_permission_change(p: &Value) -> bool {
+    // Note: Codex 0.171.0 attaches optional `proposedExecpolicyAmendment` to ordinary command
+    // approvals to offer an `acceptWithExecpolicyAmendment` UI button; `CodexSession` only ever
+    // responds with plain `{"decision":"accept"}`, so that advisory field is not a permission
+    // change. `additionalPermissions`, `grantRoot`, and `kind: "humanCommand"` ARE escalations.
+    has_non_empty_field(p.get("additionalPermissions"))
         || has_non_empty_field(p.get("additional_permissions"))
-    {
+        || has_non_empty_field(p.get("grantRoot"))
+        || has_non_empty_field(p.get("grant_root"))
+        || p.get("kind")
+            .and_then(Value::as_str)
+            .is_some_and(|k| k.eq_ignore_ascii_case("humanCommand"))
+}
+
+pub(crate) fn classify_codex_escalation(p: &Value) -> Escalation {
+    if has_sandbox_bypass_flag(p) || has_sandbox_bypass_policy(p) {
+        return Escalation::SandboxBypass;
+    }
+    if is_codex_permission_change(p) {
         return Escalation::PermissionChange;
     }
     Escalation::None
@@ -144,16 +169,45 @@ fn has_non_empty_field(val: Option<&Value>) -> bool {
     }
 }
 
+fn classify_codex_approval_capability(kind: ApprovalKind, tool: &str) -> Option<ToolCapability> {
+    match kind {
+        ApprovalKind::Command => Some(ToolCapability::Shell),
+        ApprovalKind::FileChange => Some(ToolCapability::Edit),
+        _ => match tool {
+            "shell" => Some(ToolCapability::Shell),
+            "apply_patch" => Some(ToolCapability::Edit),
+            _ => None,
+        },
+    }
+}
+
 pub(crate) fn build_codex_approval(
     id_str: String,
     kind: ApprovalKind,
     tool: &'static str,
     forced_escalation: Option<Escalation>,
     p: &Value,
+    correlated_changes: Option<&Value>,
 ) -> ApprovalRequest {
     let escalation = forced_escalation.unwrap_or_else(|| classify_codex_escalation(p));
     let approval_id = ApprovalId::new(id_str);
-    let mut req = ApprovalRequest::new(approval_id, kind, escalation, tool, p.clone());
+    let mut input = p.clone();
+    if kind == ApprovalKind::FileChange {
+        if let Some(obj) = input.as_object_mut() {
+            // Normalize legacy `applyPatchApproval` (`fileChanges` map) onto `changes` before
+            // policy evaluation so fixed path denies see every legacy patch target path.
+            if let Some(fc) = p.get("fileChanges").filter(|v| !v.is_null()) {
+                obj.entry("changes".to_owned())
+                    .or_insert_with(|| fc.clone());
+            }
+            if let Some(changes) = correlated_changes {
+                obj.entry("changes".to_owned())
+                    .or_insert_with(|| changes.clone());
+            }
+        }
+    }
+    let mut req = ApprovalRequest::new(approval_id, kind, escalation, tool, input);
+    req.capability = classify_codex_approval_capability(kind, tool);
     req.justification_untrusted = p
         .get("reason")
         .and_then(Value::as_str)
@@ -164,6 +218,7 @@ pub(crate) fn build_codex_approval(
         .or_else(|| p.get("path"))
         .or_else(|| p.get("filePath"))
         .or_else(|| p.get("grantRoot"))
+        .or_else(|| p.get("grant_root"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
     req.tool_use_id = p
@@ -174,7 +229,97 @@ pub(crate) fn build_codex_approval(
     req
 }
 
-pub(crate) fn handle_item_started(p: &Value) -> Vec<Output> {
+fn is_terminal_collab_status(status: &str) -> bool {
+    matches!(
+        status,
+        "completed" | "errored" | "shutdown" | "interrupted" | "notFound"
+    )
+}
+
+fn extract_receiver_thread_ids(item: &Value) -> Vec<String> {
+    item.get("receiverThreadIds")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn emit_terminal_collab_agents(
+    item: &Value,
+    active_subagents: &mut std::collections::BTreeSet<String>,
+    out: &mut Vec<Output>,
+) {
+    let Some(states) = item.get("agentsStates").and_then(Value::as_object) else {
+        return;
+    };
+    for (child_id, state_val) in states {
+        let Some(status) = state_val.get("status").and_then(Value::as_str) else {
+            continue;
+        };
+        if is_terminal_collab_status(status) && active_subagents.remove(child_id) {
+            out.push(Output::Event(SessionEvent::ToolFinished {
+                tool_use_id: child_id.clone(),
+                is_error: status != "completed",
+            }));
+        }
+    }
+}
+
+fn handle_subagent_activity(
+    item: &Value,
+    active_subagents: &mut std::collections::BTreeSet<String>,
+) -> Vec<Output> {
+    let Some(child_id) = item
+        .get("agentThreadId")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    else {
+        return Vec::new();
+    };
+    let kind = item.get("kind").and_then(Value::as_str).unwrap_or("");
+    let name = item
+        .get("agentPath")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("subagent")
+        .to_owned();
+    match kind {
+        "started" => {
+            if active_subagents.insert(child_id.to_owned()) {
+                vec![Output::Event(SessionEvent::ToolStarted {
+                    tool_use_id: child_id.to_owned(),
+                    name,
+                    capability: Some(ToolCapability::Subagent),
+                    input: item.clone(),
+                })]
+            } else {
+                Vec::new()
+            }
+        }
+        "completed" | "interrupted" => {
+            if active_subagents.remove(child_id) {
+                vec![Output::Event(SessionEvent::ToolFinished {
+                    tool_use_id: child_id.to_owned(),
+                    is_error: kind != "completed",
+                })]
+            } else {
+                Vec::new()
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn handle_item_started(
+    p: &Value,
+    pending_file_changes: &mut std::collections::BTreeMap<String, Value>,
+    active_subagents: &mut std::collections::BTreeSet<String>,
+) -> Vec<Output> {
     let Some(item) = p.get("item") else {
         return Vec::new();
     };
@@ -187,13 +332,21 @@ pub(crate) fn handle_item_started(p: &Value) -> Vec<Output> {
         Some("commandExecution") => vec![Output::Event(SessionEvent::ToolStarted {
             tool_use_id: id,
             name: "shell".to_owned(),
+            capability: Some(ToolCapability::Shell),
             input: json!({ "command": item.get("command").cloned().unwrap_or(Value::Null) }),
         })],
-        Some("fileChange") => vec![Output::Event(SessionEvent::ToolStarted {
-            tool_use_id: id,
-            name: "apply_patch".to_owned(),
-            input: item.get("changes").cloned().unwrap_or(Value::Null),
-        })],
+        Some("fileChange") => {
+            let changes = item.get("changes").cloned().unwrap_or(Value::Null);
+            if !id.is_empty() && !changes.is_null() {
+                pending_file_changes.insert(id.clone(), changes.clone());
+            }
+            vec![Output::Event(SessionEvent::ToolStarted {
+                tool_use_id: id,
+                name: "apply_patch".to_owned(),
+                capability: Some(ToolCapability::Edit),
+                input: changes,
+            })]
+        }
         Some("mcpToolCall") => vec![Output::Event(SessionEvent::ToolStarted {
             tool_use_id: id,
             name: item
@@ -201,13 +354,45 @@ pub(crate) fn handle_item_started(p: &Value) -> Vec<Output> {
                 .and_then(Value::as_str)
                 .unwrap_or("mcp")
                 .to_owned(),
+            capability: None,
             input: item.get("arguments").cloned().unwrap_or(Value::Null),
         })],
+        Some("collabAgentToolCall") => {
+            let tool_name = item
+                .get("tool")
+                .and_then(Value::as_str)
+                .unwrap_or("collabAgentToolCall");
+            if tool_name == "spawnAgent" {
+                let mut out = Vec::new();
+                for child_id in extract_receiver_thread_ids(item) {
+                    if active_subagents.insert(child_id.clone()) {
+                        out.push(Output::Event(SessionEvent::ToolStarted {
+                            tool_use_id: child_id,
+                            name: tool_name.to_owned(),
+                            capability: Some(ToolCapability::Subagent),
+                            input: item.clone(),
+                        }));
+                    }
+                }
+                return out;
+            }
+            vec![Output::Event(SessionEvent::ToolStarted {
+                tool_use_id: id,
+                name: tool_name.to_owned(),
+                capability: None,
+                input: item.clone(),
+            })]
+        }
+        Some("subAgentActivity") => handle_subagent_activity(item, active_subagents),
         _ => Vec::new(),
     }
 }
 
-pub(crate) fn handle_item_completed(p: &Value) -> Vec<Output> {
+pub(crate) fn handle_item_completed(
+    p: &Value,
+    pending_file_changes: &mut std::collections::BTreeMap<String, Value>,
+    active_subagents: &mut std::collections::BTreeSet<String>,
+) -> Vec<Output> {
     let Some(item) = p.get("item") else {
         return Vec::new();
     };
@@ -229,6 +414,9 @@ pub(crate) fn handle_item_completed(p: &Value) -> Vec<Output> {
             })
             .unwrap_or_default(),
         Some("commandExecution" | "fileChange" | "mcpToolCall") => {
+            if item.get("type").and_then(Value::as_str) == Some("fileChange") && !id.is_empty() {
+                pending_file_changes.remove(&id);
+            }
             let is_error = item
                 .get("status")
                 .and_then(Value::as_str)
@@ -242,6 +430,44 @@ pub(crate) fn handle_item_completed(p: &Value) -> Vec<Output> {
                 is_error,
             })]
         }
+        Some("collabAgentToolCall") => {
+            let tool_name = item
+                .get("tool")
+                .and_then(Value::as_str)
+                .unwrap_or("collabAgentToolCall");
+            let call_failed = item
+                .get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|s| matches!(s, "failed" | "interrupted" | "declined"));
+            let mut out = Vec::new();
+            if tool_name == "spawnAgent" {
+                let children = extract_receiver_thread_ids(item);
+                for child_id in &children {
+                    if active_subagents.insert(child_id.clone()) {
+                        out.push(Output::Event(SessionEvent::ToolStarted {
+                            tool_use_id: child_id.clone(),
+                            name: tool_name.to_owned(),
+                            capability: Some(ToolCapability::Subagent),
+                            input: item.clone(),
+                        }));
+                    }
+                    if call_failed && active_subagents.remove(child_id) {
+                        out.push(Output::Event(SessionEvent::ToolFinished {
+                            tool_use_id: child_id.clone(),
+                            is_error: true,
+                        }));
+                    }
+                }
+            } else {
+                out.push(Output::Event(SessionEvent::ToolFinished {
+                    tool_use_id: id,
+                    is_error: call_failed,
+                }));
+            }
+            emit_terminal_collab_agents(item, active_subagents, &mut out);
+            out
+        }
+        Some("subAgentActivity") => handle_subagent_activity(item, active_subagents),
         _ => Vec::new(),
     }
 }

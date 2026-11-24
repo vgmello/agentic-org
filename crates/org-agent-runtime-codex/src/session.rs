@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -43,6 +43,8 @@ pub(crate) struct CodexSession {
     active_turn_id: Option<String>,
     runtime_version: Option<String>,
     pending_approvals: BTreeMap<ApprovalId, Value>,
+    pending_file_changes: BTreeMap<String, Value>,
+    active_subagents: BTreeSet<String>,
     turn_tokens: Option<CodexTokens>,
     last_total_tokens: Option<CodexTokens>,
 }
@@ -62,6 +64,8 @@ impl CodexSession {
             active_turn_id: None,
             runtime_version: None,
             pending_approvals: BTreeMap::new(),
+            pending_file_changes: BTreeMap::new(),
+            active_subagents: BTreeSet::new(),
             turn_tokens: None,
             last_total_tokens: None,
         }
@@ -204,14 +208,33 @@ fn handle_init_response(s: &mut CodexSession, val: &Value, now: Instant) -> Vec<
     vec![Output::Write(initialized_notif), Output::Write(thread_line)]
 }
 
+fn granular_approval_policy_json() -> Value {
+    json!({
+        "granular": {
+            "sandbox_approval": false,
+            "rules": true,
+            "mcp_elicitations": false,
+            "request_permissions": false,
+            "skill_approval": false
+        }
+    })
+}
+
 fn encode_thread_open(cfg: &CodexThreadConfig, req_id: u64) -> org_agent_runtime::Line {
     let mut params = json!({
         "cwd": cfg.cwd,
-        "approvalPolicy": cfg.approval_policy,
+        "approvalPolicy": granular_approval_policy_json(),
         "approvalsReviewer": "user",
-        "sandbox": cfg.sandbox_mode,
-        "writableRoots": cfg.writable_roots,
     });
+    // Select the named `permissions.office` profile on start/resume when sandbox is enabled so
+    // Codex never restores a persisted profile (e.g. `:read-only`) over `office`, and never
+    // combine it with legacy `sandbox`/`writableRoots` which override the profile (`doc-29` §5).
+    if cfg.uses_office_profile {
+        params["permissions"] = Value::String("office".to_owned());
+    } else {
+        params["sandbox"] = Value::String(cfg.sandbox_mode.to_owned());
+        params["writableRoots"] = json!(cfg.writable_roots);
+    }
     if let Some(model) = &cfg.model {
         params["model"] = Value::String(model.clone());
     }
@@ -236,29 +259,76 @@ fn encode_thread_open(cfg: &CodexThreadConfig, req_id: u64) -> org_agent_runtime
     .expect("thread open encodes")
 }
 
+fn approval_policy_matches_office_granular(policy: Option<&Value>) -> bool {
+    let Some(granular) = policy
+        .and_then(|v| v.get("granular"))
+        .and_then(Value::as_object)
+    else {
+        return false;
+    };
+    granular.get("sandbox_approval").and_then(Value::as_bool) == Some(false)
+        && granular.get("rules").and_then(Value::as_bool) == Some(true)
+        && granular.get("mcp_elicitations").and_then(Value::as_bool) == Some(false)
+        && granular.get("request_permissions").and_then(Value::as_bool) == Some(false)
+        && matches!(
+            granular.get("skill_approval"),
+            None | Some(Value::Bool(false))
+        )
+}
+
+fn format_reported_policy(policy: Option<&Value>) -> String {
+    match policy {
+        Some(Value::String(s)) => s.clone(),
+        Some(v) => v.to_string(),
+        None => String::new(),
+    }
+}
+
 fn validate_thread_modes(cfg: &CodexThreadConfig, val: &Value) -> Result<String, StartFailure> {
-    let reported_sb = extract_sandbox_mode(val).unwrap_or("");
-    if reported_sb.is_empty() || !sandbox_mode_matches(cfg.sandbox_mode, reported_sb) {
-        return Err(StartFailure::ModeMismatch {
-            requested: cfg.sandbox_mode.to_owned(),
-            reported: reported_sb.to_owned(),
-        });
+    if let Some(reported_sb) = extract_sandbox_mode(val) {
+        let lower = reported_sb.to_ascii_lowercase();
+        if lower == "danger-full-access" || lower == "dangerfullaccess" {
+            return Err(StartFailure::ModeMismatch {
+                requested: if cfg.uses_office_profile {
+                    "office".to_owned()
+                } else {
+                    cfg.sandbox_mode.to_owned()
+                },
+                reported: reported_sb.to_owned(),
+            });
+        }
+    }
+    if cfg.uses_office_profile {
+        let profile_id = val
+            .pointer("/result/activePermissionProfile/id")
+            .or_else(|| val.pointer("/result/thread/activePermissionProfile/id"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if profile_id != "office" {
+            return Err(StartFailure::ModeMismatch {
+                requested: "office".to_owned(),
+                reported: profile_id.to_owned(),
+            });
+        }
+    } else {
+        let reported_sb = extract_sandbox_mode(val).unwrap_or("");
+        if reported_sb.is_empty() || !sandbox_mode_matches(cfg.sandbox_mode, reported_sb) {
+            return Err(StartFailure::ModeMismatch {
+                requested: cfg.sandbox_mode.to_owned(),
+                reported: reported_sb.to_owned(),
+            });
+        }
     }
     let reported_policy = val
-        .pointer("/result/thread/approvalPolicy")
-        .or_else(|| val.pointer("/result/approvalPolicy"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if reported_policy.is_empty()
-        || reported_policy.eq_ignore_ascii_case("never")
-        || !reported_policy.eq_ignore_ascii_case(cfg.approval_policy)
-    {
+        .pointer("/result/approvalPolicy")
+        .or_else(|| val.pointer("/result/thread/approvalPolicy"));
+    if !approval_policy_matches_office_granular(reported_policy) {
         return Err(StartFailure::ModeMismatch {
-            requested: cfg.approval_policy.to_owned(),
-            reported: reported_policy.to_owned(),
+            requested: "granular(sandbox_approval=false,rules=true)".to_owned(),
+            reported: format_reported_policy(reported_policy),
         });
     }
-    Ok(reported_policy.to_owned())
+    Ok("granular:rules".to_owned())
 }
 
 fn handle_thread_response(s: &mut CodexSession, val: &Value) -> Vec<Output> {
@@ -359,7 +429,15 @@ fn handle_server_request(
         )];
     }
     let id_str = rpc_id_key(&rpc_id);
-    let req = build_codex_approval(id_str, kind, tool, forced_escalation, p);
+    let correlated_changes = if kind == ApprovalKind::FileChange {
+        p.get("itemId")
+            .or_else(|| p.get("callId"))
+            .and_then(Value::as_str)
+            .and_then(|item_id| s.pending_file_changes.get(item_id))
+    } else {
+        None
+    };
+    let req = build_codex_approval(id_str, kind, tool, forced_escalation, p, correlated_changes);
     s.pending_approvals.insert(req.id.clone(), rpc_id);
     vec![
         Output::Event(SessionEvent::Status(Activity::WaitingOnApproval)),
@@ -383,8 +461,12 @@ fn handle_notification(s: &mut CodexSession, method: &str, params: Option<&Value
         "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
             vec![Output::Event(SessionEvent::Thinking)]
         }
-        "item/started" => handle_item_started(p),
-        "item/completed" => handle_item_completed(p),
+        "item/started" => {
+            handle_item_started(p, &mut s.pending_file_changes, &mut s.active_subagents)
+        }
+        "item/completed" => {
+            handle_item_completed(p, &mut s.pending_file_changes, &mut s.active_subagents)
+        }
         "thread/tokenUsage/updated" => {
             record_token_usage(s, p);
             Vec::new()
@@ -496,6 +578,7 @@ fn handle_turn_completed(s: &mut CodexSession, p: &Value) -> Vec<Output> {
     };
     s.active_turn_id = None;
     s.turn_start_req_id = None;
+    s.pending_file_changes.clear();
     if s.turn_open {
         s.turn_open = false;
         out.push(Output::Event(SessionEvent::TurnEnded { outcome, errors }));
@@ -552,15 +635,20 @@ fn handle_send(
                 .as_str()
                 .to_owned();
             let req_id = s.alloc_id();
+            let mut params = json!({
+                "threadId": tid,
+                "approvalPolicy": granular_approval_policy_json(),
+                "approvalsReviewer": "user",
+                "input": [{ "type": "text", "text": text }]
+            });
+            if s.cfg.uses_office_profile {
+                params["permissions"] = Value::String("office".to_owned());
+            }
             let line = encode_line(&json!({
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "method": "turn/start",
-                "params": {
-                    "threadId": tid,
-                    "approvalPolicy": s.cfg.approval_policy,
-                    "input": [{ "type": "text", "text": text }]
-                }
+                "params": params
             }))
             .expect("turn/start encodes");
             s.phase = Phase::Busy;
@@ -661,6 +749,9 @@ impl Session for CodexSession {
                 "clientInfo": {
                     "name": "agentic-org",
                     "version": env!("CARGO_PKG_VERSION")
+                },
+                "capabilities": {
+                    "experimentalApi": true
                 }
             }
         }))

@@ -3,7 +3,7 @@ use serde_json::{json, Map, Value};
 use org_agent_runtime::{
     Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan, PermissionMode, PlanError,
     PlannedFile, RelPath, Rule, RuleScope, SessionId, SessionKind, SessionSpec, SignalTarget,
-    SpecPath, Stdio, StopPlan, StopSignal, StopStep,
+    SpecPath, Stdio, StopPlan, StopSignal, StopStep, ToolCapability, ToolName,
 };
 
 const SETTINGS_FILE: &str = "claude-settings.json";
@@ -55,19 +55,72 @@ pub(crate) fn map_permission_mode(mode: PermissionMode) -> Result<ExpectedMode, 
     }
 }
 
+/// Concrete Claude Code tools for each runtime-neutral [`ToolCapability`].
+/// `CAP_EDIT_ALLOW` excludes `NotebookEdit` so it remains in `--disallowedTools` unless
+/// explicitly listed; `CAP_EDIT_DENY` includes it so deny rules never narrow.
+const CAP_READ_TOOLS: &[&str] = &["Read"];
+const CAP_SEARCH_TOOLS: &[&str] = &["Glob", "Grep"];
+const CAP_EDIT_ALLOW_TOOLS: &[&str] = &["Edit", "Write", "MultiEdit"];
+const CAP_EDIT_DENY_TOOLS: &[&str] = &["Edit", "Write", "MultiEdit", "NotebookEdit"];
+const CAP_SHELL_TOOLS: &[&str] = &["Bash"];
+const CAP_SUBAGENT_TOOLS: &[&str] = &["Task", "Agent"];
+
+fn capability_tools(cap: ToolCapability, kind: RuleKind) -> Option<&'static [&'static str]> {
+    match cap {
+        ToolCapability::Read => Some(CAP_READ_TOOLS),
+        ToolCapability::Search => Some(CAP_SEARCH_TOOLS),
+        ToolCapability::Edit => Some(match kind {
+            RuleKind::Deny => CAP_EDIT_DENY_TOOLS,
+            RuleKind::Allow => CAP_EDIT_ALLOW_TOOLS,
+        }),
+        ToolCapability::Shell => Some(CAP_SHELL_TOOLS),
+        ToolCapability::Subagent => Some(CAP_SUBAGENT_TOOLS),
+        _ => None,
+    }
+}
+
+/// Expands a `SessionSpec::tools` allowlist by translating runtime-neutral `cap:*` capability
+/// tokens into Claude Code's concrete tool names while passing concrete tool names through.
+/// Fails closed on any unrecognized `cap:*` token.
+pub(crate) fn expand_tool_allowlist(tools: &[ToolName]) -> Result<Vec<String>, PlanError> {
+    let mut expanded = Vec::new();
+    for tool in tools {
+        let raw = tool.as_str();
+        if ToolCapability::is_capability_token(raw) {
+            let cap = ToolCapability::parse_rule_token(raw)
+                .ok_or(PlanError::Unsupported("tool capability"))?;
+            let concrete = capability_tools(cap, RuleKind::Allow)
+                .ok_or(PlanError::Unsupported("tool capability"))?;
+            for &name in concrete {
+                if !expanded.iter().any(|existing| existing == name) {
+                    expanded.push(name.to_owned());
+                }
+            }
+        } else if !expanded.iter().any(|existing| existing == raw) {
+            expanded.push(raw.to_owned());
+        }
+    }
+    Ok(expanded)
+}
+
 pub(crate) fn build_headless_plan(
     spec: &SessionSpec,
     ctx: &LaunchContext,
     caps: &Capabilities,
-) -> Result<(LaunchPlan, ExpectedMode), PlanError> {
+) -> Result<(LaunchPlan, ExpectedMode, Option<Vec<String>>), PlanError> {
     validate_paths(spec, ctx)?;
     let (session_id, is_resume) = resolve_session_id(ctx)?;
     let effective_mode = spec.effective_permission_mode(caps);
     let expected_mode = map_permission_mode(effective_mode)?;
+    let expanded_tools = spec
+        .tools
+        .as_deref()
+        .map(expand_tool_allowlist)
+        .transpose()?;
 
     let settings_bytes = build_settings_json(spec, ctx, caps)?;
     let mcp_bytes = build_mcp_json(spec);
-    let agents_bytes = build_agents_json(spec).into_bytes();
+    let agents_bytes = build_agents_json(spec, expanded_tools.as_deref()).into_bytes();
 
     let settings_path = format!("{}/{SETTINGS_FILE}", ctx.runtime_dir.as_str());
     let mcp_path = format!("{}/{MCP_FILE}", ctx.runtime_dir.as_str());
@@ -114,7 +167,7 @@ pub(crate) fn build_headless_plan(
         args.push(format!("--session-id={}", session_id.as_str()));
     }
 
-    append_common_options(&mut args, spec);
+    append_common_options(&mut args, spec, expanded_tools.as_deref());
 
     let mut files = vec![
         PlannedFile {
@@ -170,7 +223,7 @@ pub(crate) fn build_headless_plan(
         auth_env_names: auth_env_names(),
     };
 
-    Ok((plan, expected_mode))
+    Ok((plan, expected_mode, expanded_tools))
 }
 
 pub(crate) fn build_take_over_plan(
@@ -193,10 +246,15 @@ pub(crate) fn build_take_over_plan(
     };
     let effective_mode = spec.effective_permission_mode(caps);
     let expected_mode = map_permission_mode(effective_mode)?;
+    let expanded_tools = spec
+        .tools
+        .as_deref()
+        .map(expand_tool_allowlist)
+        .transpose()?;
 
     let settings_bytes = build_settings_json(spec, ctx, caps)?;
     let mcp_bytes = build_mcp_json(spec);
-    let agents_json = build_agents_json(spec);
+    let agents_json = build_agents_json(spec, expanded_tools.as_deref());
 
     let settings_path = format!("{}/{SETTINGS_FILE}", ctx.runtime_dir.as_str());
     let mcp_path = format!("{}/{MCP_FILE}", ctx.runtime_dir.as_str());
@@ -226,7 +284,7 @@ pub(crate) fn build_take_over_plan(
         args.push(instructions_path);
     }
 
-    append_common_options(&mut args, spec);
+    append_common_options(&mut args, spec, expanded_tools.as_deref());
 
     let mut files = vec![
         PlannedFile {
@@ -314,7 +372,11 @@ fn resolve_session_id(ctx: &LaunchContext) -> Result<(SessionId, bool), PlanErro
     }
 }
 
-fn append_common_options(args: &mut Vec<String>, spec: &SessionSpec) {
+fn append_common_options(
+    args: &mut Vec<String>,
+    spec: &SessionSpec,
+    expanded_tools: Option<&[String]>,
+) {
     if let Some(model) = &spec.model {
         args.push("--model".to_owned());
         args.push(model.as_str().to_owned());
@@ -323,17 +385,12 @@ fn append_common_options(args: &mut Vec<String>, spec: &SessionSpec) {
         args.push("--effort".to_owned());
         args.push(effort.as_str().to_owned());
     }
-    if let Some(tools) = &spec.tools {
+    if let Some(tools) = expanded_tools {
         args.push("--tools".to_owned());
         if tools.is_empty() {
             args.push(String::new());
         } else {
-            let joined = tools
-                .iter()
-                .map(|t| t.as_str())
-                .collect::<Vec<_>>()
-                .join(",");
-            args.push(joined);
+            args.push(tools.join(","));
         }
     }
     // Always disallow known risky built-in tools (web access, cron/triggers, worktrees,
@@ -343,10 +400,7 @@ fn append_common_options(args: &mut Vec<String>, spec: &SessionSpec) {
         .iter()
         .copied()
         .filter(|risky| {
-            !spec
-                .tools
-                .as_ref()
-                .is_some_and(|tools| tools.iter().any(|allowed| allowed.as_str() == *risky))
+            !expanded_tools.is_some_and(|tools| tools.iter().any(|allowed| allowed == *risky))
         })
         .collect();
     if !disallowed.is_empty() {
@@ -539,6 +593,10 @@ const SHELL_TOOL: &str = "Bash";
 /// server's (`mcp__<server>__<tool>`) have no exact Claude form and give `None`.
 fn format_rule(rule: &Rule, kind: RuleKind) -> Option<Vec<String>> {
     let tool = rule.tool.as_str();
+    if ToolCapability::is_capability_token(tool) {
+        let cap = ToolCapability::parse_rule_token(tool)?;
+        return format_capability_rule(cap, &rule.scope, kind);
+    }
     let any_tool = tool == "*";
     match &rule.scope {
         RuleScope::Any if any_tool => None,
@@ -574,6 +632,35 @@ fn format_rule(rule: &Rule, kind: RuleKind) -> Option<Vec<String>> {
                 .filter(|name| !name.is_empty() && !name.contains("__"))
                 .map(|name| vec![format!("{server_tools}{name}")])
         }
+        _ => None,
+    }
+}
+
+fn format_capability_rule(
+    cap: ToolCapability,
+    scope: &RuleScope,
+    kind: RuleKind,
+) -> Option<Vec<String>> {
+    match scope {
+        RuleScope::Any => {
+            capability_tools(cap, kind).map(|tools| tools.iter().map(|&t| t.to_owned()).collect())
+        }
+        RuleScope::Path(pattern) => {
+            let path = claude_rule_path(pattern.as_str());
+            let tools: &[&str] = match cap {
+                ToolCapability::Read => CAP_READ_TOOLS,
+                ToolCapability::Edit => match kind {
+                    RuleKind::Deny => CAP_EDIT_DENY_TOOLS,
+                    RuleKind::Allow => CAP_EDIT_ALLOW_TOOLS,
+                },
+                _ => return None,
+            };
+            Some(tools.iter().map(|t| format!("{t}({path})")).collect())
+        }
+        RuleScope::CommandPrefix(prefix) if cap == ToolCapability::Shell => {
+            command_prefix_rules(prefix.as_str(), kind)
+        }
+        RuleScope::CommandPrefix(_) | RuleScope::McpServer(_) => None,
         _ => None,
     }
 }
@@ -624,7 +711,7 @@ fn build_mcp_json(spec: &SessionSpec) -> Vec<u8> {
         .expect("MCP JSON serialization cannot fail")
 }
 
-fn build_agents_json(spec: &SessionSpec) -> String {
+fn build_agents_json(spec: &SessionSpec, expanded_tools: Option<&[String]>) -> String {
     let mut def = Map::new();
     def.insert(
         "description".to_owned(),
@@ -634,15 +721,10 @@ fn build_agents_json(spec: &SessionSpec) -> String {
         "prompt".to_owned(),
         Value::String(spec.agent.prompt.clone()),
     );
-    if let Some(tools) = &spec.tools {
+    if let Some(tools) = expanded_tools {
         def.insert(
             "tools".to_owned(),
-            Value::Array(
-                tools
-                    .iter()
-                    .map(|t| Value::String(t.as_str().to_owned()))
-                    .collect(),
-            ),
+            Value::Array(tools.iter().map(|t| Value::String(t.clone())).collect()),
         );
     }
 

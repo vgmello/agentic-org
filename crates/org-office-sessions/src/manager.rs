@@ -73,6 +73,7 @@ pub struct SessionManagerConfig {
     pub runtimes: RuntimeRegistry,
     pub enrollment_driver: Arc<dyn EnrollmentDriver>,
     pub subscription_usage_collector: Arc<dyn SubscriptionUsageCollector>,
+    pub hq_permits: Option<Arc<dyn crate::router::HqPermitCoordinator>>,
 }
 
 impl SessionManagerConfig {
@@ -88,6 +89,7 @@ impl SessionManagerConfig {
             runtimes: RuntimeRegistry::production(),
             enrollment_driver: Arc::new(CliEnrollmentDriver),
             subscription_usage_collector: Arc::new(ProviderSubscriptionUsageCollector::production()),
+            hq_permits: None,
         }
     }
 }
@@ -137,12 +139,21 @@ impl Drop for StartSlotGuard<'_> {
 
 struct PermitGuard<'a> {
     office: &'a Office,
+    hq_permits: Option<&'a dyn crate::router::HqPermitCoordinator>,
     permit: Option<(String, u64)>,
 }
 
 impl<'a> PermitGuard<'a> {
-    fn new(office: &'a Office, permit: Option<(String, u64)>) -> Self {
-        Self { office, permit }
+    fn new(
+        office: &'a Office,
+        hq_permits: Option<&'a dyn crate::router::HqPermitCoordinator>,
+        permit: Option<(String, u64)>,
+    ) -> Self {
+        Self {
+            office,
+            hq_permits,
+            permit,
+        }
     }
 
     fn take(&mut self) -> Option<(String, u64)> {
@@ -153,7 +164,7 @@ impl<'a> PermitGuard<'a> {
 impl Drop for PermitGuard<'_> {
     fn drop(&mut self) {
         if let Some((pid, _)) = self.permit.take() {
-            let _ = self.office.release_turn_permit(&pid);
+            crate::router::release_turn_permit_any(self.office, self.hq_permits, &pid);
         }
     }
 }
@@ -467,7 +478,11 @@ impl SessionManager {
                 .unwrap_or_else(|p| p.into_inner())
                 .take()
             {
-                let _ = self.office.release_turn_permit(&pid);
+                crate::router::release_turn_permit_any(
+                    &self.office,
+                    self.config.hq_permits.as_deref(),
+                    &pid,
+                );
                 if !is_admissions_closed(self) {
                     self.process_due_wakes();
                 }
@@ -817,8 +832,13 @@ impl SessionManager {
             .find(|p| p.approval_id == approval_id)
             .cloned()
             .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "approval request not found"))?;
-        let allow_always_tool = (decision_str == "allow_always"
-            && pending.escalation != "sandbox_bypass")
+        if decision_str == "allow_always" && pending.escalation != "none" {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "allow_always is forbidden for escalated approval requests; use allow_once or deny",
+            ));
+        }
+        let allow_always_tool = (decision_str == "allow_always" && pending.escalation == "none")
             .then_some(pending.tool);
         let view = guard.to_view();
         drop(guard);
@@ -1193,12 +1213,42 @@ impl SessionManager {
     }
 
     fn require_active_agent(&self, employee_id: &str) -> Result<Employee, ApiError> {
+        if self
+            .office
+            .sync_status()
+            .is_ok_and(|s| s.initial_snapshot_required)
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "satellite office is awaiting a complete HQ snapshot before running agents",
+            ));
+        }
         let emp = self.require_agent(employee_id)?;
         if emp.status != EmployeeStatus::Active {
             return Err(ApiError::new(
                 ErrorCode::Conflict,
                 "only active agents can start a session",
             ));
+        }
+        // Enforce local office placement at the shared admission boundary for both manual
+        // `start_session` and autonomous wakes (`TASK-52` P7-#6).
+        if self.office.is_multi_office().unwrap_or(false) {
+            let owner_office = org_office::resolve_employee_office(&self.office, employee_id)
+                .map_err(|_| {
+                    ApiError::new(
+                        ErrorCode::StorageError,
+                        "could not resolve agent home office",
+                    )
+                })?;
+            if owner_office != self.office.info().office_id {
+                return Err(ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    format!(
+                        "agent is placed on office `{owner_office}` and cannot run on `{}`",
+                        self.office.info().office_id
+                    ),
+                ));
+            }
         }
         Ok(emp)
     }
@@ -1358,16 +1408,21 @@ impl SessionManager {
         let workspace_real = resolve_workspace(&home, params.workspace.as_deref())?;
         let workspace_spec = canonical_or_spec(&workspace_real)?;
 
-        let admitted = crate::router::select_and_admit_route(
+        let admitted = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
+            office: &self.office,
+            vault: self.enrollment.vault(),
+            runtimes: &self.config.runtimes,
+            hq_permits: self.config.hq_permits.as_deref(),
+            employee_id: &emp_id,
+            task_id: opts.task_ref,
+            is_failover_switch: opts.is_failover_switch,
+            excluded_connections: &opts.excluded_connections,
+        })?;
+        let mut permit_guard = PermitGuard::new(
             &self.office,
-            self.enrollment.vault(),
-            &self.config.runtimes,
-            &emp_id,
-            opts.task_ref,
-            opts.is_failover_switch,
-            &opts.excluded_connections,
-        )?;
-        let mut permit_guard = PermitGuard::new(&self.office, admitted.permit);
+            self.config.hq_permits.as_deref(),
+            admitted.permit,
+        );
         let binary = self
             .config
             .runtimes
@@ -1492,7 +1547,8 @@ impl SessionManager {
             plan,
             session,
         } = planned;
-        let mut permit_guard = PermitGuard::new(&self.office, permit);
+        let mut permit_guard =
+            PermitGuard::new(&self.office, self.config.hq_permits.as_deref(), permit);
         let binding = self
             .bindings
             .issue(&emp_id, &run_id, &session_id, 0)
@@ -2053,6 +2109,7 @@ fn build_initial_runtime_state(
         pending_approvals: Vec::new(),
         policy: prepared.preset_cfg.policy.clone(),
         preset: prepared.preset_cfg.preset,
+        allowed_tools: prepared.preset_cfg.allowed_tools.clone(),
         suspended_on_asks: Vec::new(),
         waiting_for_member_id: None,
         waiting_for_name: None,
@@ -2084,7 +2141,11 @@ fn spawn_pump_thread(
                 .unwrap_or_else(|p| p.into_inner())
                 .take()
             {
-                let _ = mgr.office.release_turn_permit(&pid);
+                crate::router::release_turn_permit_any(
+                    &mgr.office,
+                    mgr.config.hq_permits.as_deref(),
+                    &pid,
+                );
             }
             Err(ApiError::new(
                 ErrorCode::Unavailable,
@@ -2116,7 +2177,11 @@ fn abort_pre_pump_shutdown(
         .take()
     {
         if cleanup_verified {
-            let _ = mgr.office.release_turn_permit(&pid);
+            crate::router::release_turn_permit_any(
+                &mgr.office,
+                mgr.config.hq_permits.as_deref(),
+                &pid,
+            );
         } else {
             let _ = mgr.office.mark_turn_permit_release_pending(&pid);
         }
@@ -2250,7 +2315,7 @@ fn dispatch_warm_handle_turn(
                 return Ok((None, old));
             }
         };
-    let mut pguard = PermitGuard::new(&mgr.office, Some(granted));
+    let mut pguard = PermitGuard::new(&mgr.office, mgr.config.hq_permits.as_deref(), Some(granted));
     {
         let mut slot = turn.active_permit.lock().unwrap_or_else(|p| p.into_inner());
         if slot.is_none() {
@@ -2271,7 +2336,7 @@ fn dispatch_warm_handle_turn(
         .unwrap_or_else(|p| p.into_inner())
         .take()
     {
-        let _ = mgr.office.release_turn_permit(&pid);
+        crate::router::release_turn_permit_any(&mgr.office, mgr.config.hq_permits.as_deref(), &pid);
     }
     let old = mgr
         .registry
@@ -2292,6 +2357,7 @@ fn acquire_or_reroute_warm_permit(
 ) -> Result<Result<(String, u64), Option<LiveSessionHandle>>, ApiError> {
     match crate::router::acquire_warm_permit_for_office(
         &mgr.office,
+        mgr.config.hq_permits.as_deref(),
         cid,
         emp_id,
         task_ref,
@@ -2335,6 +2401,13 @@ fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
                 None,
                 req.rate_limit_resets_at.as_deref(),
                 None,
+            );
+            crate::router::report_cooldown_any(
+                &mgr.office,
+                mgr.config.hq_permits.as_deref(),
+                &req.failed_connection_id,
+                req.rate_limit_resets_at.as_deref(),
+                Some(req.reason),
             );
         }
         "auth_expired" => {

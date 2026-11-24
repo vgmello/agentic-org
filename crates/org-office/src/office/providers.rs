@@ -181,6 +181,39 @@ impl Office {
         )
     }
 
+    /// Renews an HQ-issued `HqPool` permit only when it belongs to `office_id` and matches
+    /// `coordinator_generation` (`TASK-52` #12).
+    pub fn renew_turn_permit_for_office(
+        &self,
+        office_id: &str,
+        permit_id: &str,
+        coordinator_generation: u64,
+    ) -> Result<Result<u64, ApiError>, OfficeError> {
+        if self.info.role != crate::OfficeRole::Hq {
+            return Ok(Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "only HQ renews cross-office HqPool turn permits",
+            )));
+        }
+        let now_ms = self.monotonic_now_ms();
+        let snap = self
+            .providers
+            .quota_snapshot(&self.info.org_id, None, now_ms)?;
+        let owned = snap.permits.iter().any(|p| {
+            p.id == permit_id
+                && p.office_id == office_id
+                && p.coordinator_generation == coordinator_generation
+                && p.state == org_proto::providers::TurnPermitState::Active
+        });
+        if !owned {
+            return Ok(Err(ApiError::new(
+                ErrorCode::NotFound,
+                "permit not found for authenticated office and generation",
+            )));
+        }
+        self.renew_turn_permit(permit_id, coordinator_generation)
+    }
+
     pub fn mark_turn_permit_release_pending(&self, permit_id: &str) -> Result<bool, OfficeError> {
         self.providers.mark_permit_release_pending(permit_id)
     }
@@ -269,6 +302,15 @@ impl Office {
             .map_err(OfficeError::storage)?
             .0
             > 1)
+    }
+
+    /// Returns all canonical office IDs registered in this organization (`TASK-52` H-13).
+    pub fn enrolled_office_ids(&self) -> Result<Vec<String>, OfficeError> {
+        Ok(self
+            .store
+            .read(crate::store::open::OfficeIdsList)
+            .map_err(OfficeError::storage)?
+            .0)
     }
 }
 
@@ -1231,6 +1273,112 @@ fn record_cooldown_inner(
     Ok(state)
 }
 
+/// Parameters for HQ acquiring a turn permit on behalf of an authenticated office (`TASK-52`).
+pub struct OfficePermitSpec<'a> {
+    pub target_office_id: &'a str,
+    pub connection_id: &'a str,
+    pub employee_id: &'a str,
+    pub task_id: Option<&'a str>,
+    pub model_id: &'a str,
+    pub authority: PermitAuthority,
+    pub is_failover_switch: bool,
+}
+
+impl Office {
+    pub fn acquire_turn_permit_for_office(
+        &self,
+        mut spec: OfficePermitSpec<'_>,
+    ) -> Result<Result<PermitAcquireOutcome, ApiError>, OfficeError> {
+        if !org_proto::is_uuid_v7(spec.target_office_id) {
+            return Ok(Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "invalid target office id",
+            )));
+        }
+        // Failover switch exemption is ONLY honored when HQ already holds an active permit for
+        // `(target_office_id, employee_id)`; an untrusted peer cannot bypass budget holds by
+        // setting `is_failover_switch = true` on a cold turn (`TASK-52` review F6).
+        spec.is_failover_switch = if spec.is_failover_switch {
+            let snap =
+                self.providers
+                    .quota_snapshot(&self.info.org_id, None, self.monotonic_now_ms())?;
+            snap.permits.iter().any(|p| {
+                p.office_id == spec.target_office_id
+                    && p.employee_id == spec.employee_id
+                    && p.state == TurnPermitState::Active
+            })
+        } else {
+            false
+        };
+        op_acquire_turn_permit_for(self, spec)
+    }
+
+    pub fn release_turn_permit_for_office(
+        &self,
+        target_office_id: &str,
+        permit_id: &str,
+    ) -> Result<bool, OfficeError> {
+        let snap =
+            self.providers
+                .quota_snapshot(&self.info.org_id, None, self.monotonic_now_ms())?;
+        let owned = snap.permits.iter().any(|p| {
+            p.id == permit_id
+                && p.office_id == target_office_id
+                && p.state != TurnPermitState::Released
+        });
+        if !owned {
+            return Ok(false);
+        }
+        self.providers.release_permit(permit_id)?;
+        Ok(true)
+    }
+
+    pub fn record_satellite_cooldown(
+        &self,
+        satellite_office_id: &str,
+        connection_id: &str,
+        cooldown_until: Option<&str>,
+    ) -> Result<Result<ConnectionQuotaState, ApiError>, OfficeError> {
+        if !org_proto::is_uuid_v7(satellite_office_id) {
+            return Ok(Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "invalid satellite office id",
+            )));
+        }
+        if self.load_provider_connection(connection_id)?.is_none() {
+            return Ok(Err(ApiError::new(
+                ErrorCode::NotFound,
+                "provider connection not found",
+            )));
+        }
+        if let Some(until) = cooldown_until {
+            if org_proto::parse_rfc3339_ms(until).is_none() {
+                return Ok(Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "cooldown_until must be valid RFC 3339",
+                )));
+            }
+        }
+        let now_ms = self.monotonic_now_ms();
+        let until_ms = cooldown_until
+            .and_then(org_proto::parse_rfc3339_ms)
+            .unwrap_or_else(|| now_ms.saturating_add(DEFAULT_COOLDOWN_SECS.saturating_mul(1000)));
+        let state = ConnectionQuotaState {
+            organization_id: self.info.org_id.clone(),
+            connection_id: connection_id.to_owned(),
+            scope_key: quota_scope_key(None),
+            model_id: None,
+            status: ConnectionQuotaStatus::Cooldown,
+            cooldown_until: Some(format_rfc3339_ms(until_ms)),
+            observed_at: format_rfc3339_ms(now_ms),
+            observed_by_office_id: satellite_office_id.to_owned(),
+            coordinator_generation: self.providers.coordinator_generation()?,
+        };
+        self.providers.record_cooldown(&state)?;
+        Ok(Ok(state))
+    }
+}
+
 fn op_acquire_turn_permit(
     office: &Office,
     connection_id: &str,
@@ -1240,6 +1388,33 @@ fn op_acquire_turn_permit(
     authority: PermitAuthority,
     is_failover_switch: bool,
 ) -> Result<Result<PermitAcquireOutcome, ApiError>, OfficeError> {
+    op_acquire_turn_permit_for(
+        office,
+        OfficePermitSpec {
+            target_office_id: &office.info.office_id,
+            connection_id,
+            employee_id,
+            task_id,
+            model_id,
+            authority,
+            is_failover_switch,
+        },
+    )
+}
+
+fn op_acquire_turn_permit_for(
+    office: &Office,
+    spec: OfficePermitSpec<'_>,
+) -> Result<Result<PermitAcquireOutcome, ApiError>, OfficeError> {
+    let OfficePermitSpec {
+        target_office_id,
+        connection_id,
+        employee_id,
+        task_id,
+        model_id,
+        authority,
+        is_failover_switch,
+    } = spec;
     // `doc-88` §6 step 3: serialize the final budget hold check with first-permit acquisition
     // under `budget_op_lock` so a concurrent budget hold cannot slip in between check and grant,
     // while preserving the §7 exemption for replacement switch permits on an already-running turn.
@@ -1270,7 +1445,7 @@ fn op_acquire_turn_permit(
         organization_id: office.info.org_id.clone(),
         permit_id: office.next_uuid_v7(),
         connection_id: connection_id.to_owned(),
-        office_id: office.info.office_id.clone(),
+        office_id: target_office_id.to_owned(),
         employee_id: employee_id.to_owned(),
         placement_generation: 1,
         model_id: model_id.to_owned(),

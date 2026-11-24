@@ -9,10 +9,11 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 use org_host_control::ops::{
-    AccountVerify, AccountVerifyParams, OfficeList, OfficeListParams, OfficeRestart,
-    OfficeRestartParams, SessionEnd, SessionParams,
+    AccountVerify, AccountVerifyParams, OfficeJoin, OfficeJoinParams, OfficeList, OfficeListParams,
+    OfficeReEnroll, OfficeReEnrollParams, OfficeRemovePending, OfficeRemovePendingParams,
+    OfficeRestart, OfficeRestartParams, SessionEnd, SessionParams,
 };
-use org_host_control::{HostOpResult, Password, SessionHandle};
+use org_host_control::{HostOpResult, InvitationTokenSecret, Password, SessionHandle};
 use org_proto::{ErrorCode, OfficeInfo};
 
 use super::{connect_verified, not_running, registered, say};
@@ -23,7 +24,13 @@ Subcommands:\n  \
 list --login <login> [--org <org_id>] [--name <instance>] [--json]\n      \
 List offices visible to the signed-in account with their live readiness status\n  \
 restart <office_id> --login <login> [--name <instance>] [--json]\n      \
-Restart an offline or unavailable office (requires administrator or organization owner)\n\n\
+Restart an offline or unavailable office (requires administrator or organization owner)\n  \
+join (--invitation-file <path> | --invitation-stdin) --login <login> --yes [--name <instance>] [--json]\n      \
+Join this host as a satellite office using an HQ-issued invitation token\n  \
+remove-pending <office_id> --login <login> [--name <instance>] [--json]\n      \
+Cancel and remove a pending satellite join before approval completes\n  \
+re-enroll <office_id> (--invitation-file <path> | --invitation-stdin) --login <login> --yes [--name <instance>] [--json]\n      \
+Re-enroll an existing satellite onto a replacement HQ after R1 import (D25)\n\n\
 Asks for the account password at the terminal. On systems that cannot identify the host's \
 program (Linux, containers), terminal password sign-in is refused until browser-approved \
 CLI sign-in is available.";
@@ -82,6 +89,244 @@ pub fn office_restart(
         &mut crate::human::password,
         out,
     )
+}
+
+/// `agentic-org office join` for registered instance `name`.
+pub fn office_join(
+    name: Option<&str>,
+    login: Option<&str>,
+    invitation: String,
+    consent: bool,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<(), String> {
+    let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
+    let target = Target {
+        socket: &socket,
+        instance_id: &id,
+        name,
+    };
+    let secret = InvitationTokenSecret::new(invitation)
+        .map_err(|_| "invitation token cannot be empty".to_owned())?;
+    let operation_id = crate::ids::uuid_v7().map_err(|_| "no operation ID could be generated")?;
+    let (mut wire, session) = match login {
+        Some(user) => {
+            let (w, s) = connect_and_sign_in(&target, user, &mut crate::human::password)?;
+            (w, Some(s))
+        }
+        None => (connect_only(&target)?, None),
+    };
+    let handle = || {
+        session
+            .as_ref()
+            .map(|s| SessionHandle::new(s.expose().into()).expect("a live handle"))
+    };
+    let answer = wire.call_answer::<OfficeJoin>(
+        &OfficeJoinParams {
+            session: handle(),
+            operation_id: operation_id.clone(),
+            invitation: secret,
+            consent,
+        },
+        None,
+    );
+    if let Some(s) = handle() {
+        let _ = wire.call::<SessionEnd>(&SessionParams { session: s }, None);
+    }
+    match answer? {
+        Ok(HostOpResult::Completed { result }) => {
+            if json {
+                let encoded = serde_json::to_string_pretty(&result)
+                    .map_err(|_| "could not encode office join response".to_owned())?;
+                say(out, encoded)
+            } else if let Some(code) = &result.check_code {
+                say(
+                    out,
+                    format!(
+                        "Satellite office {} ({}) join pending for organization {} ({}).\nCheck code: {code}",
+                        result.office_id, result.office_name, result.org_name, result.org_id
+                    ),
+                )
+            } else {
+                say(
+                    out,
+                    format!(
+                        "Satellite office {} ({}) joined organization {} ({}).",
+                        result.office_id, result.office_name, result.org_name, result.org_id
+                    ),
+                )
+            }
+        }
+        Ok(HostOpResult::Rejected { refusal }) => {
+            Err(format!("the host refused the join: {}", refusal.message))
+        }
+        Ok(_) => Err("the service's answer is not one this command knows".into()),
+        Err(ErrorCode::AlreadyExists) => Err("this office is already enrolled on this host".into()),
+        Err(ErrorCode::Expired) => Err("the invitation token has expired".into()),
+        Err(ErrorCode::NotAuthorized) => {
+            Err("only the instance administrator may join an office".into())
+        }
+        Err(code) => Err(format!("the service refused office join ({code:?})")),
+    }
+}
+
+/// `agentic-org office remove-pending <office_id>` for registered instance `name`.
+pub fn office_remove_pending(
+    name: Option<&str>,
+    login: Option<&str>,
+    office_id: &str,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<(), String> {
+    let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
+    let target = Target {
+        socket: &socket,
+        instance_id: &id,
+        name,
+    };
+    let operation_id = crate::ids::uuid_v7().map_err(|_| "no operation ID could be generated")?;
+    let (mut wire, session) = match login {
+        Some(user) => {
+            let (w, s) = connect_and_sign_in(&target, user, &mut crate::human::password)?;
+            (w, Some(s))
+        }
+        None => (connect_only(&target)?, None),
+    };
+    let handle = || {
+        session
+            .as_ref()
+            .map(|s| SessionHandle::new(s.expose().into()).expect("a live handle"))
+    };
+    let answer = wire.call_answer::<OfficeRemovePending>(
+        &OfficeRemovePendingParams {
+            session: handle(),
+            operation_id: operation_id.clone(),
+            office_id: office_id.to_owned(),
+        },
+        None,
+    );
+    if let Some(s) = handle() {
+        let _ = wire.call::<SessionEnd>(&SessionParams { session: s }, None);
+    }
+    match answer? {
+        Ok(HostOpResult::Completed { .. }) => {
+            if json {
+                say(
+                    out,
+                    serde_json::to_string(&serde_json::json!({
+                        "operation_id": operation_id,
+                        "office_id": office_id,
+                        "outcome": "completed",
+                    }))
+                    .map_err(|_| "could not encode response".to_owned())?,
+                )
+            } else {
+                say(out, format!("Removed pending join for office {office_id}."))
+            }
+        }
+        Ok(HostOpResult::Rejected { refusal }) => Err(format!(
+            "the host refused removing pending join: {}",
+            refusal.message
+        )),
+        Ok(_) => Err("the service's answer is not one this command knows".into()),
+        Err(ErrorCode::NotFound) => Err(format!("no pending join found for office {office_id}")),
+        Err(ErrorCode::Conflict) => Err("office join already completed".into()),
+        Err(code) => Err(format!("the service refused remove-pending ({code:?})")),
+    }
+}
+
+/// `agentic-org office re-enroll <office_id>` (D25) for registered instance `name`.
+pub fn office_re_enroll(
+    name: Option<&str>,
+    login: Option<&str>,
+    office_id: &str,
+    invitation: String,
+    consent: bool,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<(), String> {
+    let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
+    let target = Target {
+        socket: &socket,
+        instance_id: &id,
+        name,
+    };
+    let secret = InvitationTokenSecret::new(invitation)
+        .map_err(|_| "invitation token cannot be empty".to_owned())?;
+    let operation_id = crate::ids::uuid_v7().map_err(|_| "no operation ID could be generated")?;
+    let (mut wire, session) = match login {
+        Some(l) => {
+            let (w, s) = connect_and_sign_in(&target, l, &mut crate::human::password)?;
+            (w, Some(s))
+        }
+        None => (connect_only(&target)?, None),
+    };
+    let handle = || {
+        session
+            .as_ref()
+            .map(|s| SessionHandle::new(s.expose().into()).expect("a live handle"))
+    };
+    let answer = wire.call_answer::<OfficeReEnroll>(
+        &OfficeReEnrollParams {
+            session: handle(),
+            operation_id: operation_id.clone(),
+            office_id: office_id.to_owned(),
+            invitation: secret,
+            consent,
+        },
+        None,
+    );
+    if let Some(s) = handle() {
+        let _ = wire.call::<SessionEnd>(&SessionParams { session: s }, None);
+    }
+    match answer? {
+        Ok(HostOpResult::Completed { result }) => {
+            if json {
+                let encoded = serde_json::to_string_pretty(&result)
+                    .map_err(|_| "could not encode re-enroll response".to_owned())?;
+                say(out, encoded)
+            } else if let Some(code) = &result.check_code {
+                say(
+                    out,
+                    format!(
+                        "Satellite office {} re-enrollment pending for replacement HQ {}.\nCheck code: {code}",
+                        result.office_id, result.hq_office_id
+                    ),
+                )
+            } else {
+                say(
+                    out,
+                    format!(
+                        "Satellite office {} re-enrolled onto replacement HQ {}.",
+                        result.office_id, result.hq_office_id
+                    ),
+                )
+            }
+        }
+        Ok(HostOpResult::Rejected { refusal }) => Err(format!(
+            "the host refused re-enrollment: {}",
+            refusal.message
+        )),
+        Ok(_) => Err("the service's answer is not one this command knows".into()),
+        Err(ErrorCode::NotFound) => Err(format!("satellite office {office_id} not found")),
+        Err(ErrorCode::Expired) => Err("the re-enrollment invitation token has expired".into()),
+        Err(code) => Err(format!("the service refused re-enroll ({code:?})")),
+    }
+}
+
+fn connect_only(target: &Target<'_>) -> Result<crate::human::Wire, String> {
+    let refused = std::cell::RefCell::new(None);
+    connect_verified(target.socket, target.instance_id, |stream: &UnixStream| {
+        crate::human::verify_host(stream)
+            .and_then(|host| host.may_receive_secrets())
+            .inspect_err(|why| *refused.borrow_mut() = Some(why.clone()))
+    })
+    .map_err(|why| {
+        refused
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| not_running(target.name, why))
+    })
 }
 
 pub(super) fn connect_and_sign_in(

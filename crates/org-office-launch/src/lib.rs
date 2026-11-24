@@ -142,6 +142,8 @@ pub const SELECTED_OFFICE_FILE_VERSION: u32 = 2;
 
 /// The command-line flag that creates a new office from the create message on stdin.
 pub const CREATE_FLAG: &str = "--create";
+/// The command-line flag that joins this machine as a satellite office using a join message on stdin.
+pub const JOIN_FLAG: &str = "--join";
 /// The command-line flag, followed by the office id, that serves an existing office.
 pub const OFFICE_FLAG: &str = "--office";
 /// The command-line flag, followed by the office id, that removes an unfinished office.
@@ -505,6 +507,15 @@ pub enum ServerEvent {
     /// `--create` only: the databases and `office.json` are durable. Comes before
     /// [`ServerEvent::Ready`].
     Created { office: OfficeFile },
+    /// `--join` or pending satellite `--office`: the satellite has persisted its pending
+    /// enrollment state and received its Crockford check code from HQ (`doc-67`).
+    JoinPending {
+        request_id: String,
+        check_code: String,
+    },
+    /// `--join` or pending satellite `--office`: owner approval and initial sync completed and
+    /// `office.json` is active (`doc-67`).
+    Joined { office: OfficeFile },
     /// The socket is bound and accepting: `hello` answers. `socket` is for logs and as a
     /// cross-check: the host reaches the office at the path it computes itself
     /// ([`org_proto::location::office_socket_path`]).
@@ -646,6 +657,8 @@ impl LaunchError {
 pub enum FirstLine {
     /// [`CREATE_FLAG`]: a [`HostFirstLine::Create`].
     Create,
+    /// [`JOIN_FLAG`]: a [`HostFirstLine::Join`].
+    Join,
     /// [`OFFICE_FLAG`]: a [`HostFirstLine::Start`].
     Start,
     /// [`DISCARD_FLAG`]: a [`HostFirstLine::Discard`].
@@ -722,13 +735,14 @@ mod contract;
 pub mod recovery;
 pub use contract::{
     decode_handoff, decode_transfer_record, encode_create_handoff, encode_discard_handoff,
-    encode_handoff, encode_start_handoff, encode_transfer_record, read_first_line,
-    read_server_event, write_first_line, write_rendezvous_event, write_server_event, ChannelKind,
-    CreateLine, Handoff, HandoffFd, HostFirstLine, HqCreationV1, ImportSourceV1,
-    InspectImportPerson, InspectImportPreview, InspectImportRequest, InspectImportResponse,
-    OfficeLine, ReadyForSecrets, RecoveryCode, RefusalReason, RendezvousEvent, TransferRecord,
-    CHANNEL_PROFILE, FD_MARKER, LAUNCH_VERSION, LOCAL_ONLY_NOT_RESTORED, MAX_CHANNELS,
-    MAX_WEB_CHANNELS, TRANSFER_HEADER_MAX_BYTES, TRANSFER_SOCKET_BUFFER_BYTES,
+    encode_handoff, encode_join_handoff, encode_start_handoff, encode_transfer_record,
+    read_first_line, read_server_event, write_first_line, write_rendezvous_event,
+    write_server_event, ChannelKind, CreateLine, Handoff, HandoffFd, HostFirstLine, HqCreationV1,
+    ImportSourceV1, InspectImportPerson, InspectImportPreview, InspectImportRequest,
+    InspectImportResponse, InvitationSecret, JoinLine, OfficeLine, ReadyForSecrets, RecoveryCode,
+    RefusalReason, RendezvousEvent, TransferRecord, CHANNEL_PROFILE, FD_MARKER, LAUNCH_VERSION,
+    LOCAL_ONLY_NOT_RESTORED, MAX_CHANNELS, MAX_WEB_CHANNELS, TRANSFER_HEADER_MAX_BYTES,
+    TRANSFER_SOCKET_BUFFER_BYTES,
 };
 pub mod writer;
 

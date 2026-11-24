@@ -4,10 +4,10 @@ use org_agent_runtime::{
 };
 
 pub(crate) const TESTED_VERSION_MIN: &str = "0.169.0";
-pub(crate) const TESTED_VERSION_MAX: &str = "0.169.0";
+pub(crate) const TESTED_VERSION_MAX: &str = "0.171.0";
 
 const MIN_SEMVER: (u64, u64, u64) = (0, 169, 0);
-const MAX_SEMVER: (u64, u64, u64) = (0, 169, 0);
+const MAX_SEMVER: (u64, u64, u64) = (0, 171, 0);
 
 pub(crate) fn plan_probe(probe: Probe, ctx: &ProbeContext) -> Option<ProbeRun> {
     if ctx.config_dir.as_ref().is_some_and(SpecPath::is_root)

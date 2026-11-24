@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-22T14:37:00Z'
-updated_date: '2026-11-22T14:40:00Z'
+updated_date: '2026-11-23T03:36:00Z'
 labels:
   - ax
   - agents
@@ -47,4 +47,5 @@ Agents are first-class citizens in Agentic Org: UX (owned by Principal Designer)
 - [ ] #3 Product-side agent-os skill list|read (crates/org-process/src/skills.rs) ships a complete, verified, phase-gated skill library covering Day-1 agent onboarding and every agent-os domain (tasks create/execute/finalize, messaging/asks, channels, code/worktrees, hiring/directory, processes/standards, budgets, errors/recovery, batch/session-attach) with zero stale commands or flags.
 - [ ] #4 agent-os CLI AX gaps are resolved (scalable launch catalogue within 4 KiB, --help examples rendered, attach.rs error envelope conforms to envelope_schema, actionable retry_with hints, task list total/--count/--exclude-status/--unassigned/--modified-file filters, ask status alignment) and verified by automated tests plus multi-runtime AX evals across claude, codex, and agy.
 - [ ] #5 All affected docs, specs, and contracts (doc-27, doc-28, doc-59, doc-62, doc-2, doc-3 FC-168/FC-171, doc-4, AGENTS.md, and .agent-kit/ catalog/evidence) are updated and pass kit/validation checks.
+- [ ] #6 Token Efficiency at High Quality is codified as a first-class AX and process primitive: static-to-volatile prompt-cache-friendly ordering, lazy-loaded skills, surgical CLI reads/patches, context-isolated resumable delegation (cheap/fast models for bounded scouting, flagship models for architecture/verification), and measurable token-efficiency metrics (tokens per completed task, cache-read ratio, CLI retry overhead) tracked alongside quality without weakening verification gates.
 <!-- AC:END -->

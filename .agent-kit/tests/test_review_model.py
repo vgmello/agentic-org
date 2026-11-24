@@ -77,6 +77,18 @@ class FinalModelTests(unittest.TestCase):
             kit_codex.record_final(Path(directory).resolve(), state, self.result('gpt-6.1-sol'))
             self.assertEqual(state['phase'], 'ACCEPTED')
 
+    def test_codex_only_final_accepts_higher_effort_including_max_and_refuses_downgrade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = {**self.state(), 'final_model': 'gpt-6.2-sol', 'final_effort': 'xhigh'}
+            result = {**self.result('gpt-6.2-sol'), 'effort': 'max'}
+            kit_codex.record_final(Path(directory).resolve(), state, result)
+            self.assertEqual(state['phase'], 'ACCEPTED')
+        with tempfile.TemporaryDirectory() as directory:
+            state = {**self.state(), 'final_model': 'gpt-6.2-sol', 'final_effort': 'xhigh'}
+            result = {**self.result('gpt-6.2-sol'), 'effort': 'high'}
+            with self.assertRaisesRegex(ValueError, 'effort'):
+                kit_codex.record_final(Path(directory).resolve(), state, result)
+
     def test_codex_only_final_refuses_any_other_model(self):
         for model in ('gpt-6.2-sol', 'claude-opus-5-5'):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as directory:

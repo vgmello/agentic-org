@@ -21,7 +21,10 @@ use crate::listen::{
     Hsts, InvalidListenConfig, ListenFailure, ListenMode, ListenOrigin, Uncovered,
 };
 use crate::pem::{self, InvalidPem};
-use crate::{HostOpResult, OneTimeLinkUrl, Password, RecoveryCode, SessionHandle, TlsPrivateKey};
+use crate::{
+    HostOpResult, InvitationTokenSecret, OneTimeLinkUrl, Password, RecoveryCode, SessionHandle,
+    TlsPrivateKey,
+};
 
 /// `account.verify` (open): sign in. Argon2id on a bounded pool; an unknown login hashes against
 /// a dummy, and every failure is the same `not_authorized`. Lockout is per login and per socket;
@@ -231,6 +234,90 @@ impl Call for OfficeRestart {
     const METHOD: &'static str = "office.restart";
     type Params = OfficeRestartParams;
     type Result = HostOpResult<Empty>;
+}
+
+/// Lifecycle state returned by `office.join` / `office.re_enroll` (`TASK-52`, `doc-67`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OfficeJoinState {
+    JoinPending,
+    Joined,
+}
+
+/// Result of `office.join` or `office.re_enroll` (`TASK-52`, `doc-67`, D25).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeJoinResult {
+    pub office_id: String,
+    pub org_id: String,
+    pub org_name: String,
+    pub office_name: String,
+    pub hq_office_id: String,
+    pub state: OfficeJoinState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_code: Option<String>,
+}
+
+/// `office.join` (host.sock, admin/owner session; journaled): enrolls this host as a satellite
+/// office using a secret one-time invitation token (`doc-67`, `TASK-52`).
+pub struct OfficeJoin;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeJoinParams {
+    /// Required when the host has an administrator account; omitted on a fresh satellite-only
+    /// instance where the verified local peer joins with explicit consent (`TASK-52` H-3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionHandle>,
+    pub operation_id: String,
+    pub invitation: InvitationTokenSecret,
+    /// Explicit destination consent (maps to interactive prompt or `--yes`).
+    pub consent: bool,
+}
+
+impl Call for OfficeJoin {
+    const METHOD: &'static str = "office.join";
+    type Params = OfficeJoinParams;
+    type Result = HostOpResult<OfficeJoinResult>;
+}
+
+/// `office.remove_pending` (host.sock, admin/owner session; journaled): cancels and cleans up
+/// a pending satellite join before enrollment completes (`doc-67`, `TASK-52`).
+pub struct OfficeRemovePending;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeRemovePendingParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionHandle>,
+    pub operation_id: String,
+    pub office_id: String,
+}
+
+impl Call for OfficeRemovePending {
+    const METHOD: &'static str = "office.remove_pending";
+    type Params = OfficeRemovePendingParams;
+    type Result = HostOpResult<Empty>;
+}
+
+/// `office.re_enroll` (host.sock, admin session; journaled): one-command re-enrollment of
+/// an existing satellite onto a replacement HQ after R1 Git import (D25, `TASK-52`).
+pub struct OfficeReEnroll;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeReEnrollParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionHandle>,
+    pub operation_id: String,
+    pub office_id: String,
+    pub invitation: InvitationTokenSecret,
+    pub consent: bool,
+}
+
+impl Call for OfficeReEnroll {
+    const METHOD: &'static str = "office.re_enroll";
+    type Params = OfficeReEnrollParams;
+    type Result = HostOpResult<OfficeJoinResult>;
 }
 
 /// `office.open_channel` (a live session linked to the office's organization, on both sockets):

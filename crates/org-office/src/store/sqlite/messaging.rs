@@ -276,6 +276,29 @@ fn ensure_office(db: &Connection, org_id: &str, office_id: &str) -> Result<(), E
     )
 }
 
+fn ensure_auto_conversation_membership(
+    db: &Connection,
+    org_id: &str,
+    conversation_id: &str,
+    employee_id: &str,
+    joined_at: &str,
+) -> Result<(), EngineError> {
+    run(
+        db,
+        "INSERT OR IGNORE INTO conversation_memberships \
+           (organization_id, conversation_id, employee_id, joined_at, left_at) \
+         SELECT organization_id, id, ?3, ?4, NULL \
+         FROM conversations \
+         WHERE organization_id = ?1 AND id = ?2 AND auto_scope IS NOT NULL",
+        vec![
+            text(org_id),
+            text(conversation_id),
+            text(employee_id),
+            text(joined_at),
+        ],
+    )
+}
+
 // ---- Row decoders ----
 
 trait MsgView {
@@ -336,19 +359,21 @@ fn attach_conversation_children(
     scope: &str,
     mut conv: ConversationRecord,
 ) -> Result<ConversationRecord, EngineError> {
-    conv.memberships = all(
-        db,
-        "SELECT employee_id, joined_at, left_at FROM conversation_memberships \
-         WHERE organization_id = ?1 AND conversation_id = ?2 ORDER BY employee_id",
-        vec![text(scope), text(conv.id.as_str())],
-        |row| {
-            Ok(ConversationMembership {
-                employee_id: id(row, 0)?,
-                joined_at: row.get(1)?,
-                left_at: row.get(2)?,
-            })
-        },
-    )?;
+    if conv.auto_scope.is_none() {
+        conv.memberships = all(
+            db,
+            "SELECT employee_id, joined_at, left_at FROM conversation_memberships \
+             WHERE organization_id = ?1 AND conversation_id = ?2 ORDER BY employee_id",
+            vec![text(scope), text(conv.id.as_str())],
+            |row| {
+                Ok(ConversationMembership {
+                    employee_id: id(row, 0)?,
+                    joined_at: row.get(1)?,
+                    left_at: row.get(2)?,
+                })
+            },
+        )?;
+    }
     conv.pins = all(
         db,
         "SELECT message_id, pinned_by, pinned_at FROM messaging_pins \
@@ -704,7 +729,9 @@ macro_rules! sqlite_messaging_read {
                     db,
                     "SELECT organization_id, conversation_id, message_id, employee_id, revision, \
                      accepted_by, accepted_at, reason, answer_json \
-                     FROM messaging_answers WHERE organization_id = ?1 AND message_id = ?2 LIMIT 1",
+                     FROM messaging_answers WHERE organization_id = ?1 AND message_id = ?2 \
+                     ORDER BY CASE WHEN reason = 'origin-close' THEN 0 ELSE 1 END, \
+                     COALESCE(accepted_at, '') ASC, employee_id ASC LIMIT 1",
                     vec![text(scope), text(message_id)],
                     |row| {
                         let ans_raw: Option<String> = row.get(8)?;
@@ -892,27 +919,50 @@ impl MessagingWrite for SqliteTx {
             2,
             values,
         )?;
-        run(
-            db,
-            "DELETE FROM conversation_memberships \
-             WHERE organization_id = ?1 AND conversation_id = ?2",
-            vec![text(scope), text(record.id.as_str())],
-        )?;
-        for m in &record.memberships {
-            ensure_employee(db, scope, m.employee_id.as_str())?;
-            put(
+        if record.auto_scope.is_some() && record.memberships.is_empty() {
+            run(
                 db,
-                "conversation_memberships",
-                "organization_id, conversation_id, employee_id, joined_at, left_at",
-                3,
-                vec![
-                    text(scope),
-                    text(record.id.as_str()),
-                    text(m.employee_id.as_str()),
-                    text(&m.joined_at),
-                    m.left_at.as_deref().map_or(Value::Null, text),
-                ],
+                "DELETE FROM conversation_memberships \
+                 WHERE organization_id = ?1 AND conversation_id = ?2 \
+                   AND employee_id NOT IN ( \
+                     SELECT employee_id FROM message_recipient_states \
+                     WHERE organization_id = ?1 AND conversation_id = ?2 \
+                   )",
+                vec![text(scope), text(record.id.as_str())],
             )?;
+            run(
+                db,
+                "INSERT OR IGNORE INTO conversation_memberships \
+                   (organization_id, conversation_id, employee_id, joined_at, left_at) \
+                 SELECT organization_id, conversation_id, employee_id, MIN(updated_at), NULL \
+                 FROM message_recipient_states \
+                 WHERE organization_id = ?1 AND conversation_id = ?2 \
+                 GROUP BY organization_id, conversation_id, employee_id",
+                vec![text(scope), text(record.id.as_str())],
+            )?;
+        } else {
+            run(
+                db,
+                "DELETE FROM conversation_memberships \
+                 WHERE organization_id = ?1 AND conversation_id = ?2",
+                vec![text(scope), text(record.id.as_str())],
+            )?;
+            for m in &record.memberships {
+                ensure_employee(db, scope, m.employee_id.as_str())?;
+                put(
+                    db,
+                    "conversation_memberships",
+                    "organization_id, conversation_id, employee_id, joined_at, left_at",
+                    3,
+                    vec![
+                        text(scope),
+                        text(record.id.as_str()),
+                        text(m.employee_id.as_str()),
+                        text(&m.joined_at),
+                        m.left_at.as_deref().map_or(Value::Null, text),
+                    ],
+                )?;
+            }
         }
         run(
             db,
@@ -1038,6 +1088,13 @@ impl MessagingWrite for SqliteTx {
         let (db, scope) = self.msg_view()?;
         ensure_employee(db, scope, record.employee_id.as_str())?;
         ensure_office(db, scope, record.owner_office_id.as_str())?;
+        ensure_auto_conversation_membership(
+            db,
+            scope,
+            record.conversation_id.as_str(),
+            record.employee_id.as_str(),
+            &record.updated_at,
+        )?;
         let related_json =
             serde_json::to_string(&record.related_message_ids).unwrap_or_else(|_| "[]".into());
         let values = vec![

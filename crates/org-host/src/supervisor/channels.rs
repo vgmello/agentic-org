@@ -77,6 +77,11 @@ pub(super) enum HandoffSecrets<'a> {
         office_secrets_key: &'a OfficeSecretsKey,
         recovery: &'a org_proto::RecoveryCode,
     },
+    /// A satellite join / D25 re-enrollment: office secrets key and one-time invitation token.
+    Join {
+        office_secrets_key: &'a OfficeSecretsKey,
+        invitation_token: &'a str,
+    },
 }
 pub(super) struct Rendezvous {
     listener: UnixListener,
@@ -412,6 +417,14 @@ impl Broker {
             } => org_office_launch::encode_create_handoff(office_secrets_key, &key, recovery),
             HandoffSecrets::Start(office_secrets_key) => {
                 org_office_launch::encode_start_handoff(office_secrets_key, &key)
+            }
+            HandoffSecrets::Join {
+                office_secrets_key,
+                invitation_token,
+            } => {
+                let secret = org_office_launch::InvitationSecret::new(invitation_token.to_owned())
+                    .map_err(launch)?;
+                org_office_launch::encode_join_handoff(office_secrets_key, &key, &secret)
             }
         }
         .map_err(launch)?;
