@@ -52,8 +52,12 @@
 		void tick().then(() => {
 			if (cancelled || !panelEl) return;
 			panelEl.scrollTop = 0;
+			const scroller = panelEl.closest<HTMLElement>('main');
+			if (scroller) scroller.scrollTop = 0;
 			if (!panelEl.contains(document.activeElement)) {
-				panelEl.querySelector<HTMLElement>('#work-detail-title')?.focus({ preventScroll: true });
+				const titleEl = panelEl.querySelector<HTMLElement>('#work-detail-title');
+				titleEl?.focus({ preventScroll: true });
+				titleEl?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 			}
 		});
 		return () => {

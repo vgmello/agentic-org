@@ -406,12 +406,13 @@
 					return;
 				}
 				if (document.querySelector(modalOverlaySelector)) return;
-				// If a text field inside the inline reading panel has focus, blur it first and move focus to the
-				// panel heading so blur-saved edits flush with the panel open (and focus never drops to body);
-				// the next deliberate Escape closes the reading panel.
+				// If a blur-saved TaskSheet field inside the inline reading panel has focus, blur it first and move
+				// focus to the panel heading so edits flush with the panel open (and focus never drops to body);
+				// the next deliberate Escape closes the reading panel. Explicit-submit fields (e.g. Request/Bug steps)
+				// close the reading panel immediately on Escape.
 				if (
-					(event.target instanceof HTMLInputElement ||
-						event.target instanceof HTMLTextAreaElement) &&
+					event.target instanceof HTMLElement &&
+					event.target.matches('#task-title, #task-description, #task-dod') &&
 					Boolean(event.target.closest('.work-reading'))
 				) {
 					event.preventDefault();
@@ -420,6 +421,7 @@
 						?.querySelector<HTMLElement>('#work-detail-title');
 					event.target.blur();
 					panelTitle?.focus({ preventScroll: true });
+					panelTitle?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 					return;
 				}
 				event.preventDefault();
@@ -450,7 +452,35 @@
 		return 'bg-surface-raised text-fg-secondary ring-1 ring-line ring-inset';
 	}
 
+	let savedQueueScrollTop = 0;
+	let taskSheetRef = $state<{ waitForPendingSave: () => Promise<boolean> } | undefined>();
+
+	function captureQueueScroll() {
+		const scroller = document.querySelector<HTMLElement>('main');
+		savedQueueScrollTop = scroller ? scroller.scrollTop : window.scrollY;
+	}
+
+	function revealAndFocus(
+		target: HTMLElement | null | undefined,
+		block: 'nearest' | 'center' = 'nearest'
+	) {
+		if (!target?.isConnected) return false;
+		target.focus({ preventScroll: true });
+		target.scrollIntoView({ block, inline: 'nearest' });
+		return true;
+	}
+
+	async function maybeCloseDetailForSearch() {
+		const sheet = taskSheetRef;
+		if (taskOpen && sheet) {
+			const canClose = await sheet.waitForPendingSave();
+			if (!canClose || !taskOpen || taskSheetRef !== sheet) return;
+		}
+		if (hasDetail) closeDetail(false);
+	}
+
 	function openItem(item: WorkItemSummary) {
+		captureQueueScroll();
 		lastTriggerEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		requestOpen = false;
 		if (item.kind === 'bug') {
@@ -465,6 +495,7 @@
 	}
 
 	function openRequest(id: string, start?: 'route') {
+		captureQueueScroll();
 		lastTriggerEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		taskOpen = false;
 		bugOpen = false;
@@ -474,8 +505,12 @@
 	}
 
 	function focusWorkFallback(closedId?: string, trigger?: HTMLElement | null) {
+		const scroller = document.querySelector<HTMLElement>('main');
+		if (scroller && savedQueueScrollTop > 0) {
+			scroller.scrollTop = savedQueueScrollTop;
+		}
 		if (trigger?.isConnected && trigger.offsetParent !== null) {
-			trigger.focus({ preventScroll: true });
+			revealAndFocus(trigger, 'center');
 			return;
 		}
 		if (closedId) {
@@ -483,21 +518,21 @@
 				`#work-panel [data-item="${CSS.escape(closedId)}"] button`
 			);
 			if (rowBtn?.isConnected && rowBtn.offsetParent !== null) {
-				rowBtn.focus({ preventScroll: true });
+				revealAndFocus(rowBtn, 'center');
 				return;
 			}
 		}
 		const firstRowBtn = document.querySelector<HTMLElement>('#work-results button:not([disabled])');
 		if (firstRowBtn?.isConnected && firstRowBtn.offsetParent !== null) {
-			firstRowBtn.focus({ preventScroll: true });
+			revealAndFocus(firstRowBtn, 'nearest');
 			return;
 		}
 		const activeTabEl = document.getElementById(`work-tab-${tab}`);
 		if (activeTabEl?.isConnected) {
-			activeTabEl.focus({ preventScroll: true });
+			revealAndFocus(activeTabEl, 'nearest');
 			return;
 		}
-		searchInputEl?.focus({ preventScroll: true });
+		revealAndFocus(searchInputEl, 'nearest');
 	}
 
 	function closeDetail(restoreFocus = true) {
@@ -669,7 +704,7 @@
 							value={searchQuery}
 							oninput={(e) => {
 								searchQuery = e.currentTarget.value;
-								if (hasDetail) closeDetail(false);
+								if (hasDetail) void maybeCloseDetailForSearch();
 							}}
 							onkeydown={handleSearchKeydown}
 							id="work-search"
@@ -1159,7 +1194,8 @@
 																			pillToneClass(sevTone)
 																		]}>{sevWord}</span
 																	>
-																{:else if prioWord}
+																{/if}
+																{#if prioWord && (item.kind !== 'bug' || !sevWord || item.priority === 'urgent')}
 																	<span
 																		class={[
 																			'work-prio-pill inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4',
@@ -1315,7 +1351,8 @@
 																		pillToneClass(sevTone)
 																	]}>{sevWord}</span
 																>
-															{:else if prioWord}
+															{/if}
+															{#if prioWord && (item.kind !== 'bug' || !sevWord || item.priority === 'urgent')}
 																<span
 																	class={[
 																		'work-prio-pill inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4',
@@ -1396,6 +1433,7 @@
 						{:else if taskOpen}
 							{#key taskId}
 								<TaskSheet
+									bind:this={taskSheetRef}
 									bind:open={taskOpen}
 									inline={true}
 									{organizationId}
@@ -2373,6 +2411,9 @@
 		.work-status[data-attention]::after {
 			forced-color-adjust: none;
 			background: CanvasText;
+		}
+		.work-priority-mark[data-tone='strong'] span {
+			background: Highlight;
 		}
 		.work-priority-mark[data-level='0'] span {
 			background: transparent;

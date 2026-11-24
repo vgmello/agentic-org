@@ -558,12 +558,23 @@
 	}
 	.project-filter-btn[aria-pressed='true'] {
 		background: var(--tone-accent-bg);
-		border-color: var(--tone-accent-ring);
+		border-color: var(--tone-accent-ink);
+		box-shadow: inset 0 -2px 0 var(--tone-accent-ink);
 		color: var(--exec-ink);
 	}
 	.project-filter-btn:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: 2px;
+	}
+	@media (forced-colors: active) {
+		.project-filter-btn {
+			border: 1px solid ButtonText;
+		}
+		.project-filter-btn[aria-pressed='true'] {
+			border: 2px solid Highlight;
+			box-shadow: none;
+			color: Highlight;
+		}
 	}
 	.project-filter-cnt {
 		color: var(--exec-muted);

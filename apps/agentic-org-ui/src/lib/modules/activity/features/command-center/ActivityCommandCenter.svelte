@@ -785,6 +785,38 @@
 </script>
 
 <div class="act-page cmd-page">
+	{#if showLiveBanner}
+		<div class="cmd-live-banner" role="status" tabindex="-1">
+			<span class="cmd-live-text">
+				<AlertTriangle class="size-3.5 shrink-0" aria-hidden="true" />
+				<span>
+					{#if isReconnecting}
+						Reconnecting live updates…
+					{:else if inboxSubFailed || activitySubFailed}
+						Live updates paused
+					{:else}
+						Live catch-up failed — snapshots may be stale
+					{/if}
+				</span>
+			</span>
+			<button
+				type="button"
+				disabled={isReconnecting}
+				aria-busy={isReconnecting}
+				onclick={reconnectLiveUpdates}
+				class="cmd-live-reconnect min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+			>
+				{#if isReconnecting}
+					Reconnecting…
+				{:else if inboxSubFailed || activitySubFailed}
+					Reconnect
+				{:else}
+					Retry
+				{/if}
+			</button>
+		</div>
+	{/if}
+
 	<!-- Command Center Section Header & Aligned Toolbar (poc/operations.css 19c88bd5) -->
 	<div class="section-header activity-header">
 		<header class="ph cmd-header">
@@ -923,38 +955,6 @@
 	</div>
 
 	<div class="cmd-body">
-		{#if showLiveBanner}
-			<div class="cmd-live-banner" role="status" tabindex="-1">
-				<span class="cmd-live-text">
-					<AlertTriangle class="size-3.5 shrink-0" aria-hidden="true" />
-					<span>
-						{#if isReconnecting}
-							Reconnecting live updates…
-						{:else if inboxSubFailed || activitySubFailed}
-							Live updates paused
-						{:else}
-							Live catch-up failed — snapshots may be stale
-						{/if}
-					</span>
-				</span>
-				<button
-					type="button"
-					disabled={isReconnecting}
-					aria-busy={isReconnecting}
-					onclick={reconnectLiveUpdates}
-					class="cmd-live-reconnect min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-				>
-					{#if isReconnecting}
-						Reconnecting…
-					{:else if inboxSubFailed || activitySubFailed}
-						Reconnect
-					{:else}
-						Retry
-					{/if}
-				</button>
-			</div>
-		{/if}
-
 		<!-- Responsive 2-Column Main + Operational Rail -->
 		<div class="cmd-layout activity-layout">
 			<div class="cmd-main">

@@ -76,7 +76,26 @@
 
 	let loadSeq = 0;
 	let saveSeq = 0;
+	let pendingSave: Promise<boolean> | undefined;
 	let destroyed = false;
+
+	/** Wait for any in-flight save and confirm no inline error or unsaved draft blocks closing. */
+	export async function waitForPendingSave(): Promise<boolean> {
+		if (pendingSave) {
+			const ok = await pendingSave;
+			if (!ok) return false;
+		}
+		if (error) return false;
+		if (
+			item &&
+			(title.trim() !== item.summary.title ||
+				description !== (item.description ?? '') ||
+				definitionOfDone !== (item.definition_of_done ?? ''))
+		) {
+			return false;
+		}
+		return true;
+	}
 
 	onDestroy(() => {
 		destroyed = true;
@@ -159,40 +178,48 @@
 	});
 
 	/** Send one change; on success reload the task and the board, on a stale one say so and reload. */
-	async function change(draft: WorkDraft, announce?: string) {
+	async function change(draft: WorkDraft, announce?: string): Promise<boolean> {
 		if (busy || !taskId) return false;
 		const forOrg = organizationId;
 		const forTask = taskId;
 		const seq = ++saveSeq;
 		busy = true;
 		error = undefined;
+		const run = (async () => {
+			try {
+				await send(draft);
+				if (destroyed || seq !== saveSeq || forOrg !== organizationId || forTask !== taskId) {
+					if (forOrg === organizationId) onchanged(announce);
+					return false;
+				}
+				// What was typed in the other fields stays: only a stale change (below) takes the latest.
+				await load(false);
+				if (destroyed || seq !== saveSeq || forOrg !== organizationId || forTask !== taskId) {
+					if (forOrg === organizationId) onchanged(announce);
+					return false;
+				}
+				onchanged(announce);
+				return true;
+			} catch (e) {
+				const err = toAppError(e);
+				if (destroyed || seq !== saveSeq || forOrg !== organizationId || forTask !== taskId) {
+					if (forOrg === organizationId) toast.error(err.message);
+					return false;
+				}
+				error = err.message;
+				if (err.source === 'api' && err.code === 'conflict') await load(false);
+				if (err.source === 'api' && err.code === 'checklist_incomplete') pending = 'done_anyway';
+				return false;
+			} finally {
+				if (!destroyed && seq === saveSeq && forOrg === organizationId && forTask === taskId)
+					busy = false;
+			}
+		})();
+		pendingSave = run;
 		try {
-			await send(draft);
-			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forTask !== taskId) {
-				if (forOrg === organizationId) onchanged(announce);
-				return false;
-			}
-			// What was typed in the other fields stays: only a stale change (below) takes the latest.
-			await load(false);
-			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forTask !== taskId) {
-				if (forOrg === organizationId) onchanged(announce);
-				return false;
-			}
-			onchanged(announce);
-			return true;
-		} catch (e) {
-			const err = toAppError(e);
-			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forTask !== taskId) {
-				if (forOrg === organizationId) toast.error(err.message);
-				return false;
-			}
-			error = err.message;
-			if (err.source === 'api' && err.code === 'conflict') await load(false);
-			if (err.source === 'api' && err.code === 'checklist_incomplete') pending = 'done_anyway';
-			return false;
+			return await run;
 		} finally {
-			if (!destroyed && seq === saveSeq && forOrg === organizationId && forTask === taskId)
-				busy = false;
+			if (pendingSave === run) pendingSave = undefined;
 		}
 	}
 
