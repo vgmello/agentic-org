@@ -1,12 +1,12 @@
 /* Wash the top of the sidebar with light and shade the recessed edge. */
 @media (min-width: 640px) and (forced-colors: none) {
-  html[data-interior-page] {
+  html[data-theme] {
     --sidebar-edge-shadow: rgb(6 12 24 / .34);
     --sidebar-top-light: rgb(198 220 248 / .085);
     --page-header-light: rgb(198 220 248 / .045);
   }
 
-  html[data-theme="graphite"][data-interior-page] {
+  html[data-theme="graphite"] {
     --sidebar-edge-shadow: rgb(0 0 0 / .37);
     --sidebar-top-light: rgb(255 255 255 / .075);
     --page-header-light: rgb(255 255 255 / .035);
@@ -14,19 +14,19 @@
     & #sidebar::before { box-shadow: inset -1px 0 #38393A; }
   }
 
-  html[data-theme="ocean"][data-interior-page] {
+  html[data-theme="ocean"] {
     --sidebar-top-light: rgb(164 220 255 / .11);
     --page-header-light: rgb(164 220 255 / .055);
     --page-header-base-image: var(--ocean-header);
   }
 
-  html[data-theme="report"][data-interior-page] {
+  html[data-theme="report"] {
     --sidebar-edge-shadow: rgb(46 65 88 / .16);
     --sidebar-top-light: rgb(255 255 255 / .96);
     --page-header-light: rgb(136 159 188 / .065);
   }
 
-  html[data-theme="cozy"][data-interior-page] {
+  html[data-theme="cozy"] {
     --sidebar-edge-shadow: rgb(20 12 6 / .40);
     --sidebar-top-light: rgb(255 224 189 / .10);
     --page-header-light: rgb(255 224 189 / .055);
@@ -38,7 +38,7 @@
     }
   }
 
-  html[data-interior-page] #sidebar::before {
+  html #sidebar::before {
     content: "";
     position: absolute;
     inset: 0;
