@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex lead01a1dd82 (F3c); Claude session_015ExbMo (docs 2026-11-17); Claude session_015ExbMnxeFeac1c16wAFWyh (UI manifest 2026-11-18); full earlier IDs at 34ca1855",
-  "rationale": "Merge of origin/v1 into v1-ui on 2026-11-19 changed AGENTS.md on both sides; this catalog hash is refreshed to the merged file only. No reassessment of the merged text is recorded yet: a project-capabilities reassessment is pending for the lead. Earlier rationales (origin/v1 docs 2026-11-17; v1-ui UI manifest 2026-11-18) are preserved in Git at origin/v1:.agent-kit/skill-catalog.json and HEAD:.agent-kit/skill-catalog.json.",
+  "reviewed_by": "Codex 01a20e0e-04c1-79d0-9d14-ac1fa3adf7a9 (prototype guidance). Prior capability reviews are in 53728c05.",
+  "rationale": "Merge of origin/v1 into v1-ui on 2026-11-19 changed AGENTS.md on both sides; this catalog hash is refreshed to the merged file only. No reassessment of the merged text is recorded yet: a project-capabilities reassessment is pending for the lead. Earlier rationales (origin/v1 docs 2026-11-17; v1-ui UI manifest 2026-11-18) are preserved in Git at origin/v1:.agent-kit/skill-catalog.json and HEAD:.agent-kit/skill-catalog.json. The 2026-11-24 change adds prototype-only entry points to the existing release workflow. The reviewed diff preserves production roles, capabilities, and verification requirements.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -78,7 +78,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "9efc935ff609dc7c8d3407b5778ef2afc64ed3835c7afe8dc91aa05f1addc136"
+      "sha256": "13cd9883ce4e9da5eb3bac9e9173a1a15a1ca6e959903276d7d977b70a620d67"
     },
     {
       "path": "Cargo.lock",
