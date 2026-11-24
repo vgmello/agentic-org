@@ -8725,6 +8725,7 @@ function render(focus = true) {
   document.title = titleBase + " · Agentic Org";
   const key = location.hash;
   if (focus && key !== S.lastRoute) {
+    if (S.lastRoute) main.querySelector(".work-reading")?.classList.add("is-opening");
     const requestedFocus = S.focusAfter ? document.querySelector(S.focusAfter) : null;
     const keep = requestedFocus?.getClientRects().length ? requestedFocus : null;
     const focusTarget = keep || (r0 === "inbox" && r1 && main.querySelector("#triage-detail-title"))
