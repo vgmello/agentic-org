@@ -217,7 +217,11 @@ try {
       const gates = tools.getByRole("button", { name: "Release gates" });
       await readiness.waitFor();
       assert.equal(await assembly.getAttribute("aria-selected"), "true");
-      const orderedRelease = page.locator(".project-header + .activity-workspace > .activity-header + #project-release-summary");
+      const viewControls = page.locator(".project-toolbar .project-activity-controls");
+      const viewSettings = viewControls.getByRole("group", { name: "Activity view settings" });
+      await viewControls.getByRole("tab", { name: "Assembly line", selected: true }).waitFor();
+      await viewSettings.getByRole("button", { name: "Assembly line display" }).waitFor();
+      const orderedRelease = page.locator(".project-header + .activity-workspace > #project-release-summary:first-child");
       await orderedRelease.waitFor();
       assert.equal(await release.count(), 1, "The release summary moved out of the Assembly line table");
       assert.equal(await readiness.getAttribute("max"), "4");
@@ -268,7 +272,7 @@ try {
       const decision = page.locator("#activity-triage-in2");
       assert.ok(await decision.evaluate((element) => element === document.activeElement));
       assert.equal(await page.locator("#activity-triage-in1").count(), 0);
-      await page.getByRole("button", { name: "Filter activity" }).press("Enter");
+      await viewSettings.getByRole("button", { name: "Filter activity" }).press("Enter");
       const filterMenu = page.getByRole("menu", { name: "Filter activity" });
       assert.equal(await filterMenu.getByRole("group", { name: "Project", exact: true }).count(), 0);
       await filterMenu.getByRole("menuitemradio", { name: "Decisions", exact: true }).press("Enter");
