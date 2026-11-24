@@ -175,6 +175,10 @@
 			title: 'Nothing is blocked on you',
 			description: 'Failed runs and work that is stuck on you show up here.'
 		},
+		snoozed: {
+			title: 'Nothing snoozed',
+			description: 'Items you snooze until later appear here with their return time.'
+		},
 		handled: {
 			title: 'Nothing handled yet',
 			description: 'Items you or someone else resolved move here.'

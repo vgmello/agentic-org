@@ -41,7 +41,11 @@ export interface InboxItem {
 	choices?: { id: string; label: string }[];
 	/** Where the item's subject lives, for Open. */
 	open?: { path: string; label: string };
-	state: 'open' | 'handled';
+	state: 'open' | 'snoozed' | 'handled';
+	/** RFC 3339 timestamp when a snoozed item returns to the open inbox (`TASK-81`). */
+	snoozed_until?: string;
+	/** Optional snooze note recorded when deferring the item (`TASK-81`). */
+	snooze_note?: string;
 	handled?: { outcome: string; at: string; by?: string };
 }
 
@@ -53,7 +57,8 @@ export type InboxRequest =
 	| { type: 'choose'; choice: string }
 	| { type: 'dismiss' };
 
-export type InboxTab = 'all' | 'approvals' | 'questions' | 'decisions' | 'problems' | 'handled';
+export type InboxTab =
+	'all' | 'approvals' | 'questions' | 'decisions' | 'problems' | 'snoozed' | 'handled';
 
 export const TABS: { id: InboxTab; label: string }[] = [
 	{ id: 'all', label: 'All' },
@@ -61,6 +66,7 @@ export const TABS: { id: InboxTab; label: string }[] = [
 	{ id: 'questions', label: 'Questions' },
 	{ id: 'decisions', label: 'Decisions' },
 	{ id: 'problems', label: 'Problems' },
+	{ id: 'snoozed', label: 'Snoozed' },
 	{ id: 'handled', label: 'Handled' }
 ];
 

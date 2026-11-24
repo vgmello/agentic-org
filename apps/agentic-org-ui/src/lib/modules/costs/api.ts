@@ -18,6 +18,10 @@ import type {
 	ProjectBreakdownKey,
 	ProjectInsights,
 	ProjectInvestment,
+	SubscriptionCollectResult,
+	SubscriptionCredentialDraft,
+	SubscriptionUsageCredential,
+	SubscriptionUsageOverview,
 	UsageExportResult,
 	UsageRecordPage
 } from './types';
@@ -113,6 +117,23 @@ export interface CostsApi {
 		organizationId: string,
 		operationId: string
 	): Promise<AgentBudgetOperationOutcome>;
+	/** Owner-scoped provider-reported subscription model usage snapshots (TASK-79). */
+	subscriptionUsage(organizationId: string): Promise<SubscriptionUsageOverview>;
+	/** Trigger authenticated collection for one or all active provider subscriptions (TASK-79). */
+	collectSubscriptionUsage(
+		organizationId: string,
+		options?: { connectionId?: string; timeZone?: string }
+	): Promise<SubscriptionCollectResult>;
+	/** Store a wrapped private usage-API credential outside org Git (TASK-79). */
+	setSubscriptionUsageCredential(
+		organizationId: string,
+		draft: SubscriptionCredentialDraft
+	): Promise<SubscriptionUsageCredential>;
+	/** Revoke a private usage-API credential from office storage (TASK-79). */
+	revokeSubscriptionUsageCredential(
+		organizationId: string,
+		connectionId: string
+	): Promise<SubscriptionUsageCredential>;
 }
 
 // The web API does not serve costs yet: every call refuses, and the page says so.
@@ -133,5 +154,9 @@ export const costsApi: CostsApi = {
 	memberRecords: unavailableCall,
 	setAgentBudget: unavailableCall,
 	agentBudgetAction: unavailableCall,
-	agentBudgetOperation: unavailableCall
+	agentBudgetOperation: unavailableCall,
+	subscriptionUsage: unavailableCall,
+	collectSubscriptionUsage: unavailableCall,
+	setSubscriptionUsageCredential: unavailableCall,
+	revokeSubscriptionUsageCredential: unavailableCall
 };

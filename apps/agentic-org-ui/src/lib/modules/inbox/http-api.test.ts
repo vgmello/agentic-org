@@ -8,6 +8,9 @@ const INBOX_PATH = `/api/v1/organizations/${ORG}/inbox`;
 const ANSWER_PATH = `/api/v1/organizations/${ORG}/chat/answer`;
 const REPLY_PATH = `/api/v1/organizations/${ORG}/chat/reply`;
 const DONE_PATH = `/api/v1/organizations/${ORG}/chat/done`;
+const DEFER_PATH = `/api/v1/organizations/${ORG}/chat/defer`;
+const UNSNOOZE_PATH = `/api/v1/organizations/${ORG}/chat/unsnooze`;
+const CHAT_INBOX_PATH = `/api/v1/organizations/${ORG}/chat/inbox`;
 
 function ok(result: unknown): GatewayReply {
 	return { status: 200, body: { ok: true, result } };
@@ -241,9 +244,132 @@ describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
 			source: 'api',
 			code: 'unavailable'
 		});
+		await expect(inboxApi.defer(ORG, 'off-1:msg:m1', '2026-11-24T09:00:00Z')).rejects.toMatchObject(
+			{
+				source: 'api',
+				code: 'unavailable'
+			}
+		);
+		await expect(inboxApi.unsnooze(ORG, 'off-1:msg:m1')).rejects.toMatchObject({
+			source: 'api',
+			code: 'unavailable'
+		});
 		await expect(inboxApi.subscribe(ORG, () => undefined)).rejects.toMatchObject({
 			source: 'api',
 			code: 'unavailable'
+		});
+	});
+
+	it('merges snoozed chat items on list and routes defer/unsnooze to /chat/defer and /chat/unsnooze (TASK-81)', async () => {
+		const submit = vi.fn().mockImplementation(async (path: string) => {
+			if (path === CHAT_INBOX_PATH) {
+				return ok({
+					items: [
+						{
+							id: 'snz-1',
+							conversation_id: 'conv-1',
+							thread_id: 'snz-1',
+							from_member_id: 'm-ada',
+							from_display_name: 'Ada',
+							kind: 'msg',
+							priority: 'normal',
+							urgent: false,
+							subject: 'Follow up on gateway TLS rotation',
+							created_at: '2026-11-21T08:00:00.000Z',
+							state: 'snoozed',
+							triage_gen: 2,
+							snoozed_until: '2026-11-24T09:00:00.000Z',
+							snooze_note: 'After Monday standup',
+							delivered_because: 'direct',
+							local_seq: 11
+						}
+					]
+				});
+			}
+			if (path === DEFER_PATH) {
+				return ok({
+					id: 'm-open',
+					triage_gen: 1,
+					snoozed_until: '2026-11-25T14:00:00.000Z',
+					snooze_note: 'Check after release'
+				});
+			}
+			if (path === UNSNOOZE_PATH) {
+				return ok({
+					id: 'snz-1',
+					state: 'unread',
+					triage_gen: 3
+				});
+			}
+			return ok({ ok: true });
+		});
+		const http: GatewayHttpTransport = {
+			read: vi.fn().mockResolvedValue(
+				ok({
+					as_of: { epoch: 1, seq: 12 },
+					degraded: [],
+					items: [
+						{
+							ref: 'off-1:msg:m-open',
+							source: 'mailbox',
+							kind: 'question',
+							member: { id: 'm-noor', name: 'Noor Haddad', kind: 'agent' },
+							summary: 'Confirm migration checklist',
+							created_at_ms: Date.parse('2026-11-21T10:00:00Z'),
+							state: 'open',
+							clears: 'replied',
+							dismissable: true,
+							actions: []
+						}
+					]
+				})
+			),
+			submit
+		};
+
+		const api = createHttpInboxApi({ http, now: () => '2026-11-21T12:00:00Z' });
+		const items = await api.list(ORG);
+		expect(submit).toHaveBeenCalledWith(CHAT_INBOX_PATH, { state: 'snoozed', limit: 100 });
+		expect(items).toHaveLength(2);
+		expect(items[1]).toMatchObject({
+			id: 'chat:msg:snz-1',
+			title: 'Follow up on gateway TLS rotation',
+			state: 'snoozed',
+			snoozed_until: '2026-11-24T09:00:00.000Z',
+			snooze_note: 'After Monday standup'
+		});
+
+		const deferred = await api.defer(
+			ORG,
+			'off-1:msg:m-open',
+			'2026-11-25T14:00:00.000Z',
+			'Check after release'
+		);
+		expect(submit).toHaveBeenCalledWith(DEFER_PATH, {
+			id: 'm-open',
+			until: { type: 'until', at: '2026-11-25T14:00:00.000Z' },
+			note: 'Check after release'
+		});
+		expect(deferred).toMatchObject({
+			id: 'off-1:msg:m-open',
+			state: 'snoozed',
+			snoozed_until: '2026-11-25T14:00:00.000Z',
+			snooze_note: 'Check after release'
+		});
+
+		const restored = await api.unsnooze(ORG, 'chat:msg:snz-1');
+		expect(submit).toHaveBeenCalledWith(UNSNOOZE_PATH, { id: 'snz-1' });
+		expect(restored.state).toBe('open');
+		expect(restored.snoozed_until).toBeUndefined();
+		expect(restored.snooze_note).toBeUndefined();
+
+		await expect(api.defer(ORG, 'off-1:run:r9', '2026-11-25T14:00:00.000Z')).rejects.toMatchObject({
+			source: 'api',
+			code: 'unsupported'
+		});
+		await expect(api.unsnooze(ORG, 'off-1:run:r9')).rejects.toMatchObject({
+			source: 'api',
+			code: 'unsupported'
 		});
 	});
 });

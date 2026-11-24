@@ -12,6 +12,18 @@ export interface InboxApi {
 	 * Rejects with the source's own reason when it refuses; the item then stays open.
 	 */
 	act(organizationId: string, itemId: string, request: InboxRequest): Promise<InboxItem>;
+	/**
+	 * Defers (snoozes) an inbox item until an RFC 3339 future timestamp (`TASK-81`).
+	 * Resolves with the updated snoozed item; rejects when the item cannot be snoozed or the timestamp is invalid.
+	 */
+	defer(
+		organizationId: string,
+		itemId: string,
+		untilIso: string,
+		note?: string
+	): Promise<InboxItem>;
+	/** Releases a snoozed inbox item back to the open queue early (`TASK-81`). */
+	unsnooze(organizationId: string, itemId: string): Promise<InboxItem>;
 	/** Told when the durable result of any source changes (cleared here, in another client or in the CLI). Resolves to the function that stops listening. */
 	subscribe(organizationId: string, onChange: () => void): Promise<() => void>;
 }
@@ -59,6 +71,12 @@ export const inboxApi: InboxApi = Object.freeze<InboxApi>({
 		signedInSession() ? gatewayInboxApi.list(organizationId) : unavailableCall(),
 	act: (organizationId, itemId, request) =>
 		signedInSession() ? gatewayInboxApi.act(organizationId, itemId, request) : unavailableCall(),
+	defer: (organizationId, itemId, untilIso, note) =>
+		signedInSession()
+			? gatewayInboxApi.defer(organizationId, itemId, untilIso, note)
+			: unavailableCall(),
+	unsnooze: (organizationId, itemId) =>
+		signedInSession() ? gatewayInboxApi.unsnooze(organizationId, itemId) : unavailableCall(),
 	subscribe: (organizationId, onChange) =>
 		signedInSession() ? gatewayInboxApi.subscribe(organizationId, onChange) : unavailableCall()
 });

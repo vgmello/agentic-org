@@ -476,3 +476,79 @@ test('P2: while a new period loads, the old figures are marked as loading, not r
 	await expect(tile(page, 'Cost')).toContainText('≈ $278.66', { timeout: 15_000 });
 	await expect(cost(page).getByTestId('period-loading')).toHaveCount(0);
 });
+
+test('TASK-79: subscription model usage renders provider windows, em-dash unknowns, refresh, credentials, auth-required, stale, empty, and viewer hiding', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/costs');
+
+	const subSection = page.getByTestId('subscription-usage');
+	await expect(
+		subSection.getByRole('heading', { level: 3, name: 'Subscription usage' })
+	).toBeVisible();
+	await expect(subSection.getByTestId('subscription-usage-notice')).toContainText(
+		'Provider-reported subscription usage, not API-equivalent USD cost estimates.'
+	);
+
+	// Combined totals and per-connection rows render total/daily/weekly/short-term (5h) and em-dash for null counters.
+	const claudeCard = subSection.locator('[data-subscription="sub-claude-pro"]');
+	await expect(claudeCard).toContainText('Claude Team Max');
+	await expect(claudeCard.getByTestId('subscription-status')).toHaveText('Current');
+	const opusRow = claudeCard.locator('[data-subscription-model="claude-opus-4-1"]');
+	await expect(opusRow.locator('[data-window="daily"]')).toContainText('42%');
+	await expect(opusRow.locator('[data-window="weekly"]')).toContainText('61.5%');
+	await expect(opusRow.locator('[data-window="short-term"]')).toContainText('Short-term (5h)');
+	await expect(opusRow.locator('[data-window="short-term"]')).toContainText('38.5%');
+	await expect(opusRow.locator('[data-window="short-term"]')).toContainText('— req · — tok');
+	await expect(opusRow.locator('[data-window="total"]')).toContainText('—');
+
+	// Manual refresh updates collection counts.
+	await subSection.getByRole('button', { name: 'Refresh usage' }).click();
+	await expect(page.getByText('Subscription model usage updated.')).toBeVisible();
+	await expect(opusRow.locator('[data-window="daily"]')).toContainText('50 req');
+
+	// Credential dialog validates empty secret, saves, and revokes cleanly.
+	const codexCard = subSection.locator('[data-subscription="sub-codex-team"]');
+	const manageBtn = codexCard.getByRole('button', { name: 'Manage credential' });
+	await manageBtn.click();
+	const dialog = page.getByRole('dialog');
+	await expect(dialog.getByRole('heading', { name: 'Manage usage credential' })).toBeVisible();
+	await dialog.getByRole('button', { name: 'Save credential' }).click();
+	await expect(dialog.getByLabel('Usage API credential')).toBeFocused();
+	await expect(dialog.getByLabel('Usage API credential')).toHaveAttribute('aria-invalid', 'true');
+	await dialog.getByRole('button', { name: 'Revoke credential' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(codexCard.getByTestId('subscription-status')).toHaveText('Sign-in needed');
+
+	// ?mock=auth-required shows Sign-in needed and partial totals; setting a credential recovers the connection.
+	await visit(page, '/settings/costs?mock=auth-required');
+	await expect(subSection.getByTestId('subscription-partial-totals')).toContainText(
+		'Totals are partial'
+	);
+	const authCodex = subSection.locator('[data-subscription="sub-codex-team"]');
+	await expect(authCodex.getByTestId('subscription-status')).toHaveText('Sign-in needed');
+	await authCodex.getByRole('button', { name: 'Set credential' }).click();
+	const authDialog = page.getByRole('dialog');
+	await authDialog.getByLabel('Usage API credential').fill('sk-usage-demo-token');
+	await authDialog.getByLabel('Account hint (optional)').fill('billing@lumen.dev');
+	await authDialog.getByRole('button', { name: 'Save credential' }).click();
+	await expect(authDialog).toBeHidden();
+	await expect(authCodex.getByTestId('subscription-status')).toHaveText('Current');
+	await expect(authCodex).toContainText('billing@lumen.dev');
+	await expect(authCodex.locator('[data-subscription-model="gpt-5-codex"]')).toBeVisible();
+
+	// ?mock=stale flags stale snapshot and refreshes back to Current.
+	await visit(page, '/settings/costs?mock=stale');
+	const staleClaude = subSection.locator('[data-subscription="sub-claude-pro"]');
+	await expect(staleClaude.getByTestId('subscription-status')).toHaveText('Stale');
+	await staleClaude.getByRole('button', { name: 'Refresh' }).click();
+	await expect(staleClaude.getByTestId('subscription-status')).toHaveText('Current');
+
+	// ?mock=empty shows honest empty state; ?mock=viewer hides owner-only subscription usage completely.
+	await visit(page, '/settings/costs?mock=empty');
+	await expect(subSection.getByTestId('subscription-usage-empty')).toBeVisible();
+
+	await visit(page, '/settings/costs?mock=viewer');
+	await expect(page.getByTestId('subscription-usage')).toHaveCount(0);
+});

@@ -56,6 +56,7 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { executeDecisionAction } from '$lib/home/actions';
 	import { isDenyAction } from '$lib/home/model';
+	import { accountZone } from '$lib/modules/preferences';
 	import { toAppError } from '$lib/proto';
 	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
 	import type { ShellRefreshResult } from '$lib/platform/shell/shell-data.svelte';
@@ -64,6 +65,8 @@
 	import type { InboxItem, InboxScope } from '../../types';
 	import InboxDetailPane from './InboxDetailPane.svelte';
 	import InboxQueueList from './InboxQueueList.svelte';
+	import InboxSnoozeDialog from './InboxSnoozeDialog.svelte';
+	import { formatSnoozeReturn } from './snooze-presets';
 	import {
 		deriveTriageItems,
 		filterTriageItems,
@@ -164,6 +167,12 @@
 	let commentDrafts = $state<Record<string, string>>(readPersistedCommentDrafts());
 	let nowMs = $state(Date.now());
 	let searchInputEl = $state<HTMLInputElement | null>(null);
+	let snoozeDialog = $state<ReturnType<typeof InboxSnoozeDialog>>();
+	let snoozeOpener: HTMLElement | null = null;
+
+	$effect(() => {
+		void accountZone.ensure(organizationId);
+	});
 
 	// Composes overlapping syncUrl() updates while an earlier goto() is still settling.
 	let pendingUrl: URL | undefined;
@@ -690,6 +699,87 @@
 		}
 	}
 
+	async function runDeferAction(
+		item: TriageItem,
+		untilIso: string,
+		note?: string
+	): Promise<boolean> {
+		if (actionLocked || !item.inboxItem) return false;
+		const token = ++actionSeq;
+		const targetOrg = organizationId;
+		const startSelVersion = selectionVersion;
+		const startHref = pendingUrl?.href ?? page.url.href;
+		const candidateIds = neighborCandidatesAfterResolve(visibleItems, item.id);
+		const wasSnoozed = item.state === 'snoozed';
+		activeAction = { token, orgId: targetOrg, itemId: item.id };
+		try {
+			await inboxApi.defer(targetOrg, item.inboxItem.id, untilIso, note);
+			const shortLabel = formatSnoozeReturn(untilIso, new Date(), accountZone.zone).short;
+			if (wasSnoozed) {
+				toast.success(`Snooze updated to ${shortLabel}.`);
+				if (isCurrentAction(token, targetOrg)) {
+					await onRefresh();
+					nowMs = Date.now();
+				}
+			} else {
+				await completeAndAdvance(
+					token,
+					targetOrg,
+					item.id,
+					item.sourceKind,
+					startSelVersion,
+					startHref,
+					candidateIds,
+					`Snoozed until ${shortLabel}.`
+				);
+			}
+			return true;
+		} catch (e) {
+			toast.error(toAppError(e).message);
+			return false;
+		} finally {
+			if (activeAction?.token === token) activeAction = undefined;
+		}
+	}
+
+	async function runUnsnoozeAction(item: TriageItem) {
+		if (actionLocked || !item.inboxItem) return;
+		const token = ++actionSeq;
+		const targetOrg = organizationId;
+		const startSelVersion = selectionVersion;
+		const startHref = pendingUrl?.href ?? page.url.href;
+		const candidateIds = neighborCandidatesAfterResolve(visibleItems, item.id);
+		activeAction = { token, orgId: targetOrg, itemId: item.id };
+		try {
+			await inboxApi.unsnooze(targetOrg, item.inboxItem.id);
+			await completeAndAdvance(
+				token,
+				targetOrg,
+				item.id,
+				item.sourceKind,
+				startSelVersion,
+				startHref,
+				candidateIds,
+				`Returned “${item.title}” to Inbox.`
+			);
+		} catch (e) {
+			toast.error(toAppError(e).message);
+		} finally {
+			if (activeAction?.token === token) activeAction = undefined;
+		}
+	}
+
+	function openCustomSnoozeDialog(item: TriageItem, from: HTMLElement | null) {
+		snoozeOpener = from;
+		snoozeDialog?.start(item);
+	}
+
+	function restoreSnoozeFocus(event: Event) {
+		event.preventDefault();
+		if (snoozeOpener?.isConnected) snoozeOpener.focus();
+		else document.getElementById('triage-detail-heading')?.focus();
+	}
+
 	function navigateRelative(delta: number) {
 		if (visibleItems.length === 0) return;
 		const currentIdx = visibleItems.findIndex((i) => i.id === effectiveSelectedId);
@@ -1153,6 +1243,8 @@
 					{busyId}
 					{searchQuery}
 					{hasActiveFilters}
+					zone={accountZone.zone}
+					{nowMs}
 					onSelect={selectItem}
 					onResetFilters={resetFilters}
 				/>
@@ -1167,6 +1259,8 @@
 					declineReason={activeDeclineReason}
 					replyText={activeReplyText}
 					commentDraft={activeCommentDraft}
+					zone={accountZone.zone}
+					{nowMs}
 					onDeclineReasonChange={updateDenyDraft}
 					onReplyTextChange={updateReplyDraft}
 					onCommentDraftChange={updateCommentDraft}
@@ -1182,11 +1276,22 @@
 					}}
 					onChoose={(it, choiceId, label) => void runChooseAction(it, choiceId, label)}
 					onReply={(it, text) => void runReplyAction(it, text)}
+					onDefer={(it, untilIso, note) => void runDeferAction(it, untilIso, note)}
+					onOpenCustomSnooze={openCustomSnoozeDialog}
+					onUnsnooze={(it) => void runUnsnoozeAction(it)}
 				/>
 			</div>
 		{/if}
 	</section>
 </div>
+
+<InboxSnoozeDialog
+	bind:this={snoozeDialog}
+	zone={accountZone.zone}
+	busy={actionLocked}
+	onsubmit={runDeferAction}
+	onCloseAutoFocus={restoreSnoozeFocus}
+/>
 
 <style>
 	.triage-workspace {

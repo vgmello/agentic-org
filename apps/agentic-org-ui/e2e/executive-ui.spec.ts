@@ -1190,3 +1190,78 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 		.click();
 	await expect(page).toHaveURL(/\/activity$/);
 });
+
+test('TASK-81: Inbox snooze presets, custom validation & expiry warning, Snoozed view, re-snooze, and one-click Un-snooze', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await visit(page, '/inbox?theme=graphite&mock=poc');
+
+	const waitingBadge = page.locator('.queue-count');
+	const initialText = (await waitingBadge.textContent()) ?? '';
+	const initialMatch = /(\d+)\s+waiting on you/.exec(initialText);
+	expect(initialMatch).not.toBeNull();
+	const initialOpen = Number(initialMatch![1]);
+
+	const detailHeading = page.locator('#triage-detail-heading');
+	const firstTitle = ((await detailHeading.textContent()) ?? '').trim();
+	expect(firstTitle.length).toBeGreaterThan(0);
+
+	// Open Snooze menu and inspect presets + custom dialog validation & expiry warning.
+	await page.getByTestId('inbox-snooze-trigger').click();
+	await expect(page.getByRole('menuitem', { name: /Later today/ })).toBeVisible();
+	await expect(page.getByRole('menuitem', { name: /Tomorrow/ })).toBeVisible();
+	await expect(page.getByRole('menuitem', { name: /Next week/ })).toBeVisible();
+	await page.getByRole('menuitem', { name: /Custom date/ }).click();
+
+	const dialog = page.getByRole('dialog');
+	await expect(dialog.getByRole('heading', { name: 'Snooze until…' })).toBeVisible();
+
+	// Reject past timestamp cleanly.
+	await dialog.getByLabel('Return date').fill('2020-01-01');
+	await dialog.getByLabel('Return time').fill('09:00');
+	await dialog.getByRole('button', { name: 'Snooze' }).click();
+	await expect(dialog.getByLabel('Return time')).toHaveAttribute('aria-invalid', 'true');
+	await expect(dialog).toContainText('Return time must be in the future.');
+
+	// Future date past item expiry displays expiry warning and submits with note.
+	await dialog.getByLabel('Return date').fill('2030-05-10');
+	await dialog.getByLabel('Return time').fill('10:00');
+	await expect(dialog.getByTestId('snooze-expiry-warning')).toBeVisible();
+	await dialog.getByLabel('Snooze note (optional)').fill('Wait for post-deploy verification');
+	await dialog.getByRole('button', { name: 'Snooze' }).click();
+	await expect(dialog).toBeHidden();
+
+	// Open count drops by 1 and item leaves open queue.
+	await expect(waitingBadge).toContainText(`${initialOpen - 1} waiting on you`);
+
+	// Switch to More -> Snoozed and verify return time, note, re-snooze, and one-click Un-snooze.
+	const moreTrigger = page
+		.getByRole('group', { name: 'Inbox categories' })
+		.getByRole('button', { name: 'More' });
+	await moreTrigger.click();
+	const snoozedMenuItem = page.getByRole('menuitemradio', { name: /^Snoozed\s+1$/ });
+	await expect(snoozedMenuItem).toBeVisible();
+	await snoozedMenuItem.click();
+
+	await expect(page.locator('.triage-queue-summary')).toContainText('Snoozed items');
+	await expect(detailHeading).toHaveText(firstTitle);
+	await expect(page.getByTestId('detail-snoozed-until')).toContainText('10 May 2030, 10:00');
+	await expect(page.getByTestId('detail-snooze-note')).toHaveText(
+		'Wait for post-deploy verification'
+	);
+
+	// Re-snooze via preset updates return time in place.
+	await page.getByRole('button', { name: 'Re-snooze' }).click();
+	await page.getByRole('menuitem', { name: /Tomorrow/ }).click();
+	await expect(page.getByTestId('snoozed-badge')).toContainText('Tomorrow, 09:00');
+
+	// One-click Un-snooze returns the item to the open Inbox queue.
+	await page.getByRole('button', { name: 'Un-snooze' }).click();
+	await expect(waitingBadge).toContainText(`${initialOpen} waiting on you`);
+	await page
+		.getByRole('group', { name: 'Inbox categories' })
+		.getByRole('button', { name: /^All/ })
+		.click();
+	await expect(page.locator('[data-triage-row]', { hasText: firstTitle })).toBeVisible();
+});

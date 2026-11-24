@@ -169,7 +169,7 @@ function mapActions(params: {
 	hasChoiceIds: boolean;
 	hasBareOptions: boolean;
 	dismissable: boolean;
-	state: 'open' | 'handled';
+	state: 'open' | 'snoozed' | 'handled';
 }): InboxAction[] {
 	const { raw, source, kind, hasChoiceIds, hasBareOptions, dismissable, state } = params;
 	if (state === 'handled') return [];
@@ -207,7 +207,11 @@ function sourceLabel(source: string | undefined, kind: InboxKind): string {
 	return source;
 }
 
-function mapHandled(r: Rec, state: 'open' | 'handled', fallbackIso: string): InboxItem['handled'] {
+function mapHandled(
+	r: Rec,
+	state: 'open' | 'snoozed' | 'handled',
+	fallbackIso: string
+): InboxItem['handled'] {
 	if (state !== 'handled') return undefined;
 	return {
 		outcome: asStr(r.outcome) ?? 'Handled',
@@ -225,7 +229,8 @@ function mapWireInboxItem(
 	if (!r || !reference || !summary) return undefined;
 	const rawKind = asStr(r.kind) ?? 'question';
 	const kind: InboxKind = KINDS.has(rawKind) ? (rawKind as InboxKind) : 'question';
-	const state: 'open' | 'handled' = r.state === 'handled' ? 'handled' : 'open';
+	const state: 'open' | 'snoozed' | 'handled' =
+		r.state === 'handled' ? 'handled' : r.state === 'snoozed' ? 'snoozed' : 'open';
 	const rawSource = asStr(r.source);
 	const choices = mapChoices(r.options);
 	const actions = mapActions({
@@ -255,7 +260,43 @@ function mapWireInboxItem(
 			...optField('choices', choices),
 			...optField('open', extractOpenFromActions(r.actions, reference)),
 			state,
+			...optField('snoozed_until', asStr(r.snoozed_until)),
+			...optField('snooze_note', asStr(r.snooze_note) || undefined),
 			...optField('handled', mapHandled(r, state, fallbackIso))
+		}
+	};
+}
+
+function mapSnoozedChatInboxItem(
+	raw: unknown,
+	fallbackIso: string
+): { item: InboxItem; rawSource?: string } | undefined {
+	const r = asRec(raw);
+	const id = asStr(r?.id);
+	if (!r || !id || r.state !== 'snoozed') return undefined;
+	const rawKind = asStr(r.kind) ?? 'msg';
+	const kind: InboxKind = rawKind === 'request' ? 'question' : 'question';
+	const fromId = asStr(r.from_member_id) ?? 'unknown';
+	const fromName = asStr(r.from_display_name) ?? fromId;
+	const subject = asStr(r.subject)?.trim();
+	const reason = asStr(r.reason)?.trim();
+	const title = subject || reason || `Snoozed message from ${fromName}`;
+	const reference = `chat:msg:${id}`;
+	return {
+		rawSource: rawKind === 'request' ? 'ask' : 'mailbox',
+		item: {
+			id: reference,
+			kind,
+			source: rawKind === 'request' ? 'Chat ask' : 'Chat message',
+			title,
+			who: { id: fromId, name: fromName, kind: 'agent' },
+			why: reason ?? subject ?? 'Snoozed chat message waiting to return.',
+			created_at: asStr(r.created_at) ?? fallbackIso,
+			actions: ['reply', 'dismiss'],
+			open: { path: `/chat?m=${encodeURIComponent(id)}`, label: 'Open in Chat' },
+			state: 'snoozed',
+			...optField('snoozed_until', asStr(r.snoozed_until)),
+			...optField('snooze_note', asStr(r.snooze_note) || undefined)
 		}
 	};
 }
@@ -356,6 +397,33 @@ export function createHttpInboxApi({
 			const mapped = rawItems
 				.map((entry) => mapWireInboxItem(entry, asOf))
 				.filter((x): x is { item: InboxItem; rawSource?: string } => x !== undefined);
+
+			// Also fetch snoozed chat inbox items (`TASK-81`) without failing primary inbox load when unsupported.
+			const seenMsgIds = new Set(
+				mapped.map((m) => extractMessageId(m.item.id)).filter((id): id is string => Boolean(id))
+			);
+			try {
+				const snoozedReply = await http.submit(
+					`/api/v1/organizations/${encodeURIComponent(organizationId)}/chat/inbox`,
+					{ state: 'snoozed', limit: 100 }
+				);
+				if (snoozedReply && snoozedReply.status === 200) {
+					const snoozedBody = asRec(snoozedReply.body);
+					const snoozedResult = snoozedBody?.ok === true ? asRec(snoozedBody.result) : undefined;
+					const snoozedRaw = Array.isArray(snoozedResult?.items) ? snoozedResult.items : [];
+					for (const entry of snoozedRaw) {
+						const mappedSnoozed = mapSnoozedChatInboxItem(entry, asOf);
+						if (!mappedSnoozed) continue;
+						const msgId = extractMessageId(mappedSnoozed.item.id);
+						if (msgId && seenMsgIds.has(msgId)) continue;
+						if (msgId) seenMsgIds.add(msgId);
+						mapped.push(mappedSnoozed);
+					}
+				}
+			} catch {
+				// Degrade gracefully when the secondary snoozed chat listing is not available on this server.
+			}
+
 			cachedItems.set(organizationId, new Map(mapped.map((m) => [m.item.id, m])));
 			return mapped.map((m) => m.item);
 		},
@@ -413,6 +481,110 @@ export function createHttpInboxApi({
 			cachedItems.get(organizationId)?.set(itemId, { item: updated, rawSource: cached?.rawSource });
 			notify(organizationId);
 			return updated;
+		},
+
+		async defer(
+			organizationId: string,
+			itemId: string,
+			untilIso: string,
+			note?: string
+		): Promise<InboxItem> {
+			const msgId = extractMessageId(itemId);
+			if (!msgId) {
+				throw {
+					source: 'api',
+					code: 'unsupported',
+					message: 'This inbox item cannot be snoozed from the browser yet.'
+				} satisfies AppError;
+			}
+			const base = `/api/v1/organizations/${encodeURIComponent(organizationId)}`;
+			const trimmedNote = note?.trim();
+			let reply: GatewayReply;
+			try {
+				reply = await http.submit(`${base}/chat/defer`, {
+					id: msgId,
+					until: { type: 'until', at: untilIso },
+					...(trimmedNote ? { note: trimmedNote } : {})
+				});
+			} catch {
+				throw {
+					source: 'api',
+					code: 'unavailable',
+					message: 'The Inbox snooze action could not be reached.'
+				} satisfies AppError;
+			}
+			const result = unwrapInboxReply(reply, 'Could not snooze this inbox item.');
+			const cached = cachedItems.get(organizationId)?.get(itemId);
+			const snoozedUntil = asStr(result.snoozed_until) ?? untilIso;
+			const snoozeNote = asStr(result.snooze_note) ?? (trimmedNote || undefined);
+			const updated: InboxItem = cached
+				? {
+						...cached.item,
+						state: 'snoozed',
+						snoozed_until: snoozedUntil,
+						...(snoozeNote ? { snooze_note: snoozeNote } : { snooze_note: undefined })
+					}
+				: {
+						id: itemId,
+						kind: 'question',
+						source: 'Chat message',
+						title: itemId,
+						who: { id: 'unknown', name: 'Unknown', kind: 'agent' },
+						why: '',
+						created_at: now(),
+						actions: ['reply', 'dismiss'],
+						state: 'snoozed',
+						snoozed_until: snoozedUntil,
+						...(snoozeNote ? { snooze_note: snoozeNote } : {})
+					};
+			cachedItems.get(organizationId)?.set(itemId, { item: updated, rawSource: cached?.rawSource });
+			notify(organizationId);
+			return updated;
+		},
+
+		async unsnooze(organizationId: string, itemId: string): Promise<InboxItem> {
+			const msgId = extractMessageId(itemId);
+			if (!msgId) {
+				throw {
+					source: 'api',
+					code: 'unsupported',
+					message: 'This inbox item cannot be unsnoozed from the browser yet.'
+				} satisfies AppError;
+			}
+			const base = `/api/v1/organizations/${encodeURIComponent(organizationId)}`;
+			let reply: GatewayReply;
+			try {
+				reply = await http.submit(`${base}/chat/unsnooze`, { id: msgId });
+			} catch {
+				throw {
+					source: 'api',
+					code: 'unavailable',
+					message: 'The Inbox un-snooze action could not be reached.'
+				} satisfies AppError;
+			}
+			unwrapInboxReply(reply, 'Could not un-snooze this inbox item.');
+			const cached = cachedItems.get(organizationId)?.get(itemId);
+			const baseItem: InboxItem = cached
+				? { ...cached.item }
+				: {
+						id: itemId,
+						kind: 'question',
+						source: 'Chat message',
+						title: itemId,
+						who: { id: 'unknown', name: 'Unknown', kind: 'agent' },
+						why: '',
+						created_at: now(),
+						actions: ['reply', 'dismiss'],
+						state: 'open'
+					};
+			delete baseItem.snoozed_until;
+			delete baseItem.snooze_note;
+			baseItem.state = 'open';
+			cachedItems
+				.get(organizationId)
+				?.set(itemId, { item: baseItem, rawSource: cached?.rawSource });
+			notify(organizationId);
+			return baseItem;
 		},
 
 		async subscribe(organizationId: string, onChange: () => void): Promise<() => void> {

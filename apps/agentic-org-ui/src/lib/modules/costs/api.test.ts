@@ -43,7 +43,14 @@ describe('the costs API in production', () => {
 				action: 'clear',
 				operationId: 'op-2'
 			}),
-			costsApi.agentBudgetOperation('org', 'op-1')
+			costsApi.agentBudgetOperation('org', 'op-1'),
+			costsApi.subscriptionUsage('org'),
+			costsApi.collectSubscriptionUsage('org', { timeZone: 'UTC' }),
+			costsApi.setSubscriptionUsageCredential('org', {
+				connectionId: 'conn-1',
+				secret: 'sk-test'
+			}),
+			costsApi.revokeSubscriptionUsageCredential('org', 'conn-1')
 		]) {
 			await expect(call).rejects.toMatchObject({ source: 'api', code: 'unavailable' });
 		}

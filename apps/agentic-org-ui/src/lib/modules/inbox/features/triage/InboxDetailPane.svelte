@@ -8,14 +8,18 @@
 	import Ban from '@lucide/svelte/icons/ban';
 	import Check from '@lucide/svelte/icons/check';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Clock from '@lucide/svelte/icons/clock';
 	import Copy from '@lucide/svelte/icons/copy';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import Inbox from '@lucide/svelte/icons/inbox';
 	import Info from '@lucide/svelte/icons/info';
+	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
 	import Send from '@lucide/svelte/icons/send';
 	import ShieldAlert from '@lucide/svelte/icons/shield-alert';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { isDenyAction } from '$lib/home/model';
+	import { computeSnoozePresets, formatSnoozeReturn, snoozeExceedsExpiry } from './snooze-presets';
 	import {
 		highlightSegments,
 		inboxCommentsStorageKey,
@@ -38,6 +42,8 @@
 		declineReason,
 		replyText,
 		commentDraft,
+		zone = 'UTC',
+		nowMs = Date.now(),
 		onDeclineReasonChange,
 		onReplyTextChange,
 		onCommentDraftChange,
@@ -48,7 +54,10 @@
 		onArmDeny,
 		onCancelDeny,
 		onChoose,
-		onReply
+		onReply,
+		onDefer,
+		onOpenCustomSnooze,
+		onUnsnooze
 	}: {
 		organizationId: string;
 		item?: TriageItem;
@@ -60,6 +69,8 @@
 		declineReason: string;
 		replyText: string;
 		commentDraft: string;
+		zone?: string;
+		nowMs?: number;
 		onDeclineReasonChange: (itemId: string, value: string) => void;
 		onReplyTextChange: (itemId: string, value: string) => void;
 		onCommentDraftChange: (itemId: string, value: string) => void;
@@ -71,10 +82,14 @@
 		onCancelDeny: () => void;
 		onChoose: (item: TriageItem, choiceId: string, choiceLabel: string) => void;
 		onReply: (item: TriageItem, text: string) => void;
+		onDefer: (item: TriageItem, untilIso: string, note?: string) => void;
+		onOpenCustomSnooze: (item: TriageItem, from: HTMLElement | null) => void;
+		onUnsnooze: (item: TriageItem) => void;
 	} = $props();
 
 	let denyInputEl = $state<HTMLInputElement | null>(null);
 	let denyBtnEl = $state<HTMLButtonElement | null>(null);
+	let snoozeBtnEl = $state<HTMLButtonElement | null>(null);
 	let commentInputEl = $state<HTMLTextAreaElement | null>(null);
 	let readingEl = $state<HTMLElement | null>(null);
 	let copiedKey = $state<string | undefined>(undefined);
@@ -165,6 +180,15 @@
 			(item.decision?.primaryAction.kind === 'approve_inbox' ||
 				item.decision?.primaryAction.kind === 'approve_request')
 		)
+	);
+	const canSnooze = $derived(
+		Boolean(item && item.sourceKind === 'inbox' && item.inboxItem && item.state !== 'handled')
+	);
+	const snoozePresets = $derived(computeSnoozePresets(new Date(nowMs), zone));
+	const snoozeReturn = $derived(
+		item?.state === 'snoozed' && item.snoozed?.untilIso
+			? formatSnoozeReturn(item.snoozed.untilIso, new Date(nowMs), zone)
+			: undefined
 	);
 	const deniedHandled = $derived(isDeniedOutcome(item?.handled?.outcome));
 
@@ -580,6 +604,21 @@
 						</div>
 					{/if}
 
+					{#if item.state === 'snoozed'}
+						<div>
+							<dt>Snoozed until</dt>
+							<dd data-testid="detail-snoozed-until">
+								{snoozeReturn?.full ?? 'Scheduled'}
+							</dd>
+						</div>
+						{#if item.snoozed?.note}
+							<div>
+								<dt>Snooze note</dt>
+								<dd data-testid="detail-snooze-note">{item.snoozed.note}</dd>
+							</div>
+						{/if}
+					{/if}
+
 					<div>
 						<dt>Clears</dt>
 						<dd>{item.clearsLabel}</dd>
@@ -641,6 +680,86 @@
 							<span class="triage-detail-muted font-mono tabular-nums"
 								>· {item.handled.atLabel}</span
 							>
+						</div>
+					{:else if item.state === 'snoozed'}
+						<div class="flex w-full flex-col gap-3">
+							<div class="flex flex-wrap items-center gap-2 text-xs">
+								<span
+									data-testid="snoozed-badge"
+									class="triage-snoozed-badge inline-flex items-center gap-1.5 px-2.5 py-1 font-semibold"
+								>
+									<Clock class="size-3.5 shrink-0" aria-hidden="true" />
+									<span>
+										{snoozeReturn ? `Snoozed until ${snoozeReturn.short}` : 'Snoozed'}
+									</span>
+								</span>
+								{#if snoozeReturn}
+									<span class="triage-detail-muted font-mono text-xs tabular-nums">
+										({snoozeReturn.full})
+									</span>
+								{/if}
+							</div>
+							{#if item.snoozed?.note}
+								<p class="triage-detail-muted text-xs">Note: {item.snoozed.note}</p>
+							{/if}
+							<div class="flex flex-wrap items-center gap-2">
+								<button
+									type="button"
+									disabled={controlsDisabled}
+									onclick={() => onUnsnooze(item)}
+									class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+								>
+									<span class="exec-cta-fill" aria-hidden="true"></span>
+									<span class="exec-cta-inner">
+										<RotateCcw class="size-3.5" aria-hidden="true" />
+										<span>{isBusy ? 'Un-snoozing…' : 'Un-snooze'}</span>
+									</span>
+								</button>
+
+								<DropdownMenu.Root>
+									<DropdownMenu.Trigger>
+										{#snippet child({ props })}
+											<button
+												{...props}
+												bind:this={snoozeBtnEl}
+												type="button"
+												disabled={controlsDisabled}
+												class="triage-secondary-btn inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 px-3.5 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+											>
+												<Clock class="size-3.5 shrink-0" aria-hidden="true" />
+												<span>Re-snooze</span>
+												<ChevronDown class="size-3.5 shrink-0 opacity-75" aria-hidden="true" />
+											</button>
+										{/snippet}
+									</DropdownMenu.Trigger>
+									<DropdownMenu.Content
+										preventScroll={false}
+										align="start"
+										class="w-64 max-w-[calc(100vw-2rem)] motion-reduce:animate-none! motion-reduce:transition-none!"
+									>
+										<DropdownMenu.Label>Return to inbox</DropdownMenu.Label>
+										{#each snoozePresets as preset (preset.id)}
+											{@const afterExpiry = snoozeExceedsExpiry(preset.iso, item.expiresAtIso)}
+											<DropdownMenu.Item
+												onSelect={() => onDefer(item, preset.iso, item.snoozed?.note)}
+												class="flex min-h-9 items-center justify-between gap-3 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												<span>{preset.label}</span>
+												<span class="text-xs text-fg-muted tabular-nums">
+													{preset.detail}{afterExpiry ? ' · after expiry' : ''}
+												</span>
+											</DropdownMenu.Item>
+										{/each}
+										<DropdownMenu.Separator />
+										<DropdownMenu.Item
+											onSelect={() => onOpenCustomSnooze(item, snoozeBtnEl)}
+											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										>
+											Custom date &amp; time…
+										</DropdownMenu.Item>
+									</DropdownMenu.Content>
+								</DropdownMenu.Root>
+							</div>
 						</div>
 					{:else}
 						{#if hasReply}
@@ -740,6 +859,53 @@
 										<Ban class="size-3.5 shrink-0" aria-hidden="true" />
 										<span>{item.decision?.secondaryAction?.label ?? 'Deny'}</span>
 									</button>
+								{/if}
+
+								{#if canSnooze && !isDenying}
+									<DropdownMenu.Root>
+										<DropdownMenu.Trigger>
+											{#snippet child({ props })}
+												<button
+													{...props}
+													bind:this={snoozeBtnEl}
+													type="button"
+													disabled={controlsDisabled}
+													data-testid="inbox-snooze-trigger"
+													class="triage-secondary-btn inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 px-3.5 text-xs font-semibold disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+												>
+													<Clock class="size-3.5 shrink-0" aria-hidden="true" />
+													<span>Snooze</span>
+													<ChevronDown class="size-3.5 shrink-0 opacity-75" aria-hidden="true" />
+												</button>
+											{/snippet}
+										</DropdownMenu.Trigger>
+										<DropdownMenu.Content
+											preventScroll={false}
+											align="start"
+											class="w-64 max-w-[calc(100vw-2rem)] motion-reduce:animate-none! motion-reduce:transition-none!"
+										>
+											<DropdownMenu.Label>Snooze until</DropdownMenu.Label>
+											{#each snoozePresets as preset (preset.id)}
+												{@const afterExpiry = snoozeExceedsExpiry(preset.iso, item.expiresAtIso)}
+												<DropdownMenu.Item
+													onSelect={() => onDefer(item, preset.iso)}
+													class="flex min-h-9 items-center justify-between gap-3 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												>
+													<span>{preset.label}</span>
+													<span class="text-xs text-fg-muted tabular-nums">
+														{preset.detail}{afterExpiry ? ' · after expiry' : ''}
+													</span>
+												</DropdownMenu.Item>
+											{/each}
+											<DropdownMenu.Separator />
+											<DropdownMenu.Item
+												onSelect={() => onOpenCustomSnooze(item, snoozeBtnEl)}
+												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												Custom date &amp; time…
+											</DropdownMenu.Item>
+										</DropdownMenu.Content>
+									</DropdownMenu.Root>
 								{/if}
 							</div>
 
@@ -911,6 +1077,17 @@
 									{item.category === 'approval' ? 'Waiting for approval' : 'Waiting for your input'}
 								</p>
 							</li>
+						{:else if item.state === 'snoozed'}
+							<li>
+								<span class="triage-event-marker" aria-hidden="true">
+									<Clock class="size-4" />
+								</span>
+								<p>
+									Snoozed until {snoozeReturn?.full ?? 'later'}{item.snoozed?.note
+										? ` · ${item.snoozed.note}`
+										: ''}
+								</p>
+							</li>
 						{/if}
 
 						{#each item.auditChecks as chk, idx (`${idx}-${chk}`)}
@@ -958,6 +1135,12 @@
 	}
 	.triage-empty-badge {
 		border-radius: var(--exec-inset-radius);
+		background: var(--exec-accent-soft);
+		color: var(--exec-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
+	.triage-snoozed-badge {
+		border-radius: var(--exec-ctrl-radius);
 		background: var(--exec-accent-soft);
 		color: var(--exec-accent-ink);
 		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);

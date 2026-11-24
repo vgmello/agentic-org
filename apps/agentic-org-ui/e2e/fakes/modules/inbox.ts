@@ -58,7 +58,11 @@ async function load(organizationId: string): Promise<InboxItem[]> {
 				kind: r.kind as InboxItem['kind'],
 				source: r.source,
 				title: r.title,
-				who: { id: r.who, name: member?.name ?? r.who, kind: member?.kind ?? 'agent' },
+				who: {
+					id: r.who,
+					name: member?.name ?? r.who,
+					kind: member?.kind === 'person' ? 'person' : 'agent'
+				},
 				...(r.team ? { team: { id: r.team, name: teams.get(r.team) ?? r.team } } : {}),
 				...(r.project
 					? { project: { id: r.project, name: projects.get(r.project) ?? r.project } }
@@ -128,6 +132,38 @@ export const inboxApi: InboxApi = {
 			actions: [],
 			handled: { outcome, by: 'you', at: new Date().toISOString() }
 		});
+		delete item.snoozed_until;
+		delete item.snooze_note;
+		notify(organizationId);
+		return structuredClone(item);
+	},
+	async defer(organizationId, itemId, untilIso, note) {
+		const all = await load(organizationId);
+		await mockLatency();
+		const item = all.find((i) => i.id === itemId);
+		if (!item) throw new Error('This item is gone.');
+		if (item.state === 'handled') throw new Error('Handled items cannot be snoozed.');
+		const untilMs = Date.parse(untilIso);
+		if (Number.isNaN(untilMs) || untilMs <= Date.now()) {
+			throw new Error('Return time must be in the future.');
+		}
+		item.state = 'snoozed';
+		item.snoozed_until = new Date(untilMs).toISOString();
+		const trimmed = note?.trim();
+		if (trimmed) item.snooze_note = trimmed;
+		else delete item.snooze_note;
+		notify(organizationId);
+		return structuredClone(item);
+	},
+	async unsnooze(organizationId, itemId) {
+		const all = await load(organizationId);
+		await mockLatency();
+		const item = all.find((i) => i.id === itemId);
+		if (!item) throw new Error('This item is gone.');
+		if (item.state !== 'snoozed') throw new Error('This item is not snoozed.');
+		item.state = 'open';
+		delete item.snoozed_until;
+		delete item.snooze_note;
 		notify(organizationId);
 		return structuredClone(item);
 	},

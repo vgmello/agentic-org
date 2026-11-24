@@ -15,13 +15,21 @@
 	import { costsApi } from '../../api';
 	import { formatDay } from '../../dates';
 	import { scoped } from '../../scoped';
-	import type { PeriodRequest, PriceVersion, RecordsTarget } from '../../types';
+	import type {
+		PeriodRequest,
+		PriceVersion,
+		RecordsTarget,
+		SubscriptionUsageSnapshot
+	} from '../../types';
 	import CostsError from '../states/CostsError.svelte';
 	import AgentBudgets from '../agent-budgets/AgentBudgets.svelte';
 	import OrganizationCost from '../organization-cost/OrganizationCost.svelte';
 	import AddRateDialog from '../prices/AddRateDialog.svelte';
 	import PricesSection from '../prices/PricesSection.svelte';
+	import SubscriptionCredentialDialog from '../subscription-usage/SubscriptionCredentialDialog.svelte';
+	import SubscriptionUsageSection from '../subscription-usage/SubscriptionUsageSection.svelte';
 	import UsageRecordsSheet from '../usage-records/UsageRecordsSheet.svelte';
+	import { toAppError } from '$lib/proto';
 
 	let {
 		organizationId,
@@ -41,21 +49,31 @@
 	const period = $derived<PeriodRequest>({ ...chosen, timeZone: zone });
 	const cost = new Resource(() => scoped(() => costsApi.organizationCost(organizationId, period)));
 	const budgets = new Resource(() => scoped(() => costsApi.agentBudgets(organizationId)));
+	const subscriptionUsage = new Resource(() =>
+		scoped(() => costsApi.subscriptionUsage(organizationId))
+	);
 	const prices = new Resource(() => costsApi.prices(organizationId));
 
 	const unavailable = $derived(
 		cost.state === 'unavailable' &&
 			budgets.state === 'unavailable' &&
+			subscriptionUsage.state === 'unavailable' &&
 			prices.state === 'unavailable'
 	);
-	/** HQ couldn't be reached for any part: one failure with one Try again, not three. */
+	/** HQ couldn't be reached for any part: one failure with one Try again, not four. */
 	const allFailed = $derived(
-		cost.state === 'error' && budgets.state === 'error' && prices.state === 'error'
+		cost.state === 'error' &&
+			budgets.state === 'error' &&
+			subscriptionUsage.state === 'error' &&
+			prices.state === 'error'
 	);
-	const retryingAll = $derived(cost.reloading || budgets.reloading || prices.reloading);
+	const retryingAll = $derived(
+		cost.reloading || budgets.reloading || subscriptionUsage.reloading || prices.reloading
+	);
 	function retryAll() {
 		void cost.reload();
 		void budgets.reload();
+		void subscriptionUsage.reload();
 		void prices.reload();
 	}
 	/** A rate's save was not confirmed: the prices part says so until Check status settles it (§5). */
@@ -73,9 +91,17 @@
 			? !!(cost.data && cost.data.allowed)
 			: !(budgets.data && !budgets.data.allowed)
 	);
+	/** Subscription model usage is owner-scoped like budgets: never shown to non-owner viewers. */
+	const subscriptionAllowed = $derived(
+		subscriptionUsage.state === 'loading'
+			? !!(cost.data && cost.data.allowed)
+			: !(subscriptionUsage.data && !subscriptionUsage.data.allowed)
+	);
 
 	let sheet = $state<ReturnType<typeof UsageRecordsSheet>>();
 	let dialog = $state<ReturnType<typeof AddRateDialog>>();
+	let credentialDialog = $state<ReturnType<typeof SubscriptionCredentialDialog>>();
+	let collectingConnectionId = $state<string | undefined>(undefined);
 	let opener: HTMLElement | null = null;
 
 	// After a client navigation the shell focuses the area's h1 on the next tick; this page's heading takes focus after
@@ -109,6 +135,39 @@
 	function addRate(from: HTMLElement, prefill?: PriceVersion) {
 		opener = from;
 		dialog?.start(prefill);
+	}
+
+	async function collectSubscriptionUsage(connectionId?: string) {
+		if (collectingConnectionId) return;
+		collectingConnectionId = connectionId ?? '*';
+		try {
+			const res = await costsApi.collectSubscriptionUsage(organizationId, {
+				...(connectionId ? { connectionId } : {}),
+				timeZone: zone
+			});
+			await subscriptionUsage.reload();
+			if (res.deferredConnectionIds && res.deferredConnectionIds.length > 0) {
+				toast.info(
+					`Updated subscription usage (${res.deferredConnectionIds.length} deferred; refresh again for remaining connections).`
+				);
+			} else {
+				toast.success('Subscription model usage updated.');
+			}
+		} catch (e) {
+			toast.error(toAppError(e).message);
+		} finally {
+			collectingConnectionId = undefined;
+		}
+	}
+
+	function manageSubscriptionCredential(snapshot: SubscriptionUsageSnapshot, from: HTMLElement) {
+		opener = from;
+		credentialDialog?.start(snapshot);
+	}
+
+	async function subscriptionCredentialUpdated(message: string) {
+		toast.success(message);
+		await subscriptionUsage.reload();
 	}
 
 	async function added(price: PriceVersion) {
@@ -165,10 +224,26 @@
 			<AgentBudgets resource={budgets} {memberHref} />
 		{/if}
 
+		{#if subscriptionAllowed}
+			<SubscriptionUsageSection
+				resource={subscriptionUsage}
+				{zone}
+				{collectingConnectionId}
+				oncollect={(connId) => void collectSubscriptionUsage(connId)}
+				onmanagecredential={manageSubscriptionCredential}
+			/>
+		{/if}
+
 		<PricesSection resource={prices} {zone} {unconfirmed} onadd={addRate} />
 	{/if}
 
 	<UsageRecordsSheet bind:this={sheet} {organizationId} {zone} onCloseAutoFocus={restoreFocus} />
+	<SubscriptionCredentialDialog
+		bind:this={credentialDialog}
+		{organizationId}
+		onupdated={(msg) => void subscriptionCredentialUpdated(msg)}
+		onCloseAutoFocus={restoreFocus}
+	/>
 	<AddRateDialog
 		bind:this={dialog}
 		{organizationId}

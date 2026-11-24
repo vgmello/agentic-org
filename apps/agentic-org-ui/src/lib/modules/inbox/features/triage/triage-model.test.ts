@@ -255,6 +255,7 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 			approvals: 1,
 			decisions: 1,
 			questions: 1,
+			snoozed: 0,
 			handled: 1,
 			problems: 1,
 			work: 1
@@ -264,6 +265,7 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 			approvals: 0,
 			decisions: 1,
 			questions: 0,
+			snoozed: 0,
 			handled: 1,
 			problems: 1,
 			work: 0
@@ -370,23 +372,80 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		expect(splitHref('/work/T-121')).toEqual({ pathname: '/work/T-121', suffix: '' });
 	});
 
-	it('keeps three primary tabs, four overflow tabs, and accurate queue summary labels (cd5128ae)', () => {
+	it('keeps three primary tabs, five overflow tabs including Snoozed, and accurate queue summary labels', () => {
 		expect(PRIMARY_TABS.map((t) => t.id)).toEqual(['all', 'approvals', 'decisions']);
-		expect(OVERFLOW_TABS.map((t) => t.id)).toEqual(['questions', 'problems', 'work', 'handled']);
+		expect(OVERFLOW_TABS.map((t) => t.id)).toEqual([
+			'questions',
+			'problems',
+			'work',
+			'snoozed',
+			'handled'
+		]);
 		expect(isOverflowTab('all')).toBe(false);
 		expect(isOverflowTab('approvals')).toBe(false);
 		expect(isOverflowTab('decisions')).toBe(false);
 		expect(isOverflowTab('questions')).toBe(true);
 		expect(isOverflowTab('problems')).toBe(true);
 		expect(isOverflowTab('work')).toBe(true);
+		expect(isOverflowTab('snoozed')).toBe(true);
 		expect(isOverflowTab('handled')).toBe(true);
 
+		expect(parseTriageTab('snooze')).toBe('snoozed');
+		expect(parseTriageTab('Snoozed')).toBe('snoozed');
 		expect(queueSummaryLabel('all', 'priority')).toBe('Priority first');
 		expect(queueSummaryLabel('approvals', 'date')).toBe('By date');
+		expect(queueSummaryLabel('snoozed', 'priority')).toBe('Snoozed items');
 		expect(queueSummaryLabel('handled', 'priority')).toBe('Handled items');
 		expect(queueSummaryLabel('questions', 'date')).toBe('Questions');
 		expect(queueSummaryLabel('problems', 'priority')).toBe('Problems');
 		expect(queueSummaryLabel('work', 'priority')).toBe('Work');
+	});
+
+	it('isolates snoozed items from open waiting count and sorts Snoozed tab soonest-returning first (TASK-81)', () => {
+		const withSnoozed: InboxItem[] = [
+			...INBOX_ITEMS,
+			{
+				...INBOX_ITEMS[2],
+				id: 'in-snoozed-later',
+				title: 'Revisit retention policy',
+				state: 'snoozed',
+				snoozed_until: minsAhead(48 * 60),
+				snooze_note: 'Wait for legal review'
+			},
+			{
+				...INBOX_ITEMS[2],
+				id: 'in-snoozed-sooner',
+				title: 'Check benchmark output',
+				state: 'snoozed',
+				snoozed_until: minsAhead(90),
+				snooze_note: 'After CI finishes'
+			}
+		];
+		const derived = deriveTriageItems(WORK_ITEMS, SNAPSHOT, 'owner', withSnoozed, NOW);
+		// Open count unchanged (still 5); snoozed counted separately.
+		expect(openWaitingCount(derived)).toBe(5);
+		expect(triageTabCounts(derived).snoozed).toBe(2);
+		expect(triageTabCounts(derived).all).toBe(5);
+
+		const snoozedFiltered = filterTriageItems(derived, {
+			tab: 'snoozed',
+			urgentOnly: true,
+			scope: {},
+			search: ''
+		});
+		expect(snoozedFiltered.map((i) => i.id)).toEqual(['in-snoozed-sooner', 'in-snoozed-later']);
+		expect(groupTriageItems(snoozedFiltered, 'snoozed', NOW).map((g) => g.key)).toEqual([
+			'snoozed'
+		]);
+
+		// Searching snooze note matches inside Snoozed tab.
+		const noteSearch = filterTriageItems(derived, {
+			tab: 'snoozed',
+			urgentOnly: false,
+			scope: {},
+			search: 'legal review'
+		});
+		expect(noteSearch.map((i) => i.id)).toEqual(['in-snoozed-later']);
 	});
 
 	it('supports By date sorting and grouping without Urgent split', () => {

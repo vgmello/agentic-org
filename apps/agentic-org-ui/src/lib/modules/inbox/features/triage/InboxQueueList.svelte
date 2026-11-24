@@ -9,6 +9,7 @@
 	import HelpCircle from '@lucide/svelte/icons/help-circle';
 	import Inbox from '@lucide/svelte/icons/inbox';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import { formatSnoozeReturn } from './snooze-presets';
 	import {
 		highlightSegments,
 		isDeniedOutcome,
@@ -29,6 +30,8 @@
 		busyId,
 		searchQuery,
 		hasActiveFilters,
+		zone = 'UTC',
+		nowMs = Date.now(),
 		onSelect,
 		onResetFilters
 	}: {
@@ -41,6 +44,8 @@
 		busyId?: string;
 		searchQuery: string;
 		hasActiveFilters: boolean;
+		zone?: string;
+		nowMs?: number;
 		onSelect: (id: string) => void;
 		onResetFilters: () => void;
 	} = $props();
@@ -50,14 +55,16 @@
 		visibleCount === 1 ? '1 item in view' : `${visibleCount} items in view`
 	);
 
-	function rowStateOf(item: TriageItem): 'handled' | 'urgent' | 'pending' {
+	function rowStateOf(item: TriageItem): 'handled' | 'snoozed' | 'urgent' | 'pending' {
 		if (item.state === 'handled') return 'handled';
+		if (item.state === 'snoozed') return 'snoozed';
 		return item.urgent ? 'urgent' : 'pending';
 	}
 
 	function rowStateLabelOf(item: TriageItem): string {
 		const state = rowStateOf(item);
 		if (state === 'handled') return 'Handled';
+		if (state === 'snoozed') return 'Snoozed';
 		if (state === 'urgent') return 'Urgent';
 		return item.typeLabel;
 	}
@@ -106,6 +113,8 @@
 					<p class="triage-empty-copy">
 						{#if searchQuery.trim()}
 							Nothing matched “{searchQuery.trim()}”. Try another search or reset filters.
+						{:else if activeTab === 'snoozed'}
+							Snoozed inbox items will appear here with their return time.
 						{:else if activeTab === 'handled'}
 							Resolved approvals, decisions, and replies will appear here.
 						{:else}
@@ -161,7 +170,7 @@
 									class={[
 										'triage-item w-full text-left [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
 										selected && 'is-selected',
-										(isBusy || item.state === 'handled') && 'is-muted'
+										(isBusy || item.state === 'handled' || item.state === 'snoozed') && 'is-muted'
 									]}
 								>
 									<span class="triage-person">
@@ -181,6 +190,8 @@
 											<span class="triage-state-icon" data-state={rowState}>
 												{#if rowState === 'handled'}
 													<CheckCircle2 class="size-3.5 shrink-0" aria-hidden="true" />
+												{:else if rowState === 'snoozed'}
+													<Clock class="size-3.5 shrink-0" aria-hidden="true" />
 												{:else if rowState === 'urgent'}
 													<Bell class="size-3.5 shrink-0" aria-hidden="true" />
 												{:else}
@@ -201,6 +212,15 @@
 										{#if item.state === 'handled' && item.handled}
 											<span class={['triage-outcome', denied ? 'is-denied' : 'is-ok']}>
 												{item.handled.outcome}
+											</span>
+										{:else if item.state === 'snoozed'}
+											<span class="triage-snooze-meta">
+												<Clock class="size-3.5 shrink-0" aria-hidden="true" />
+												<span>
+													{item.snoozed?.untilIso
+														? `Until ${formatSnoozeReturn(item.snoozed.untilIso, new Date(nowMs), zone).short}`
+														: 'Snoozed'}
+												</span>
 											</span>
 										{:else if item.expiresLabel}
 											<span class="triage-expiry">
@@ -378,6 +398,12 @@
 		align-items: center;
 		gap: 4px;
 		color: var(--tone-warn-ink);
+	}
+	.triage-snooze-meta {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		color: var(--tone-accent-ink);
 	}
 	.triage-outcome.is-ok {
 		color: var(--tone-ok-ink);
