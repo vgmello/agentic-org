@@ -1188,6 +1188,47 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 }
 .assembly-chip:hover { border-color: var(--stage-color); }
 .assembly-dash { color: var(--gray-400); }
+.assembly-table-wrap:has(+ .assembly-release) { flex: 0 0 auto; }
+.assembly-release {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 22px;
+  padding: 16px var(--gutter);
+  border-block-end: 1px solid var(--line);
+  background: var(--gray-900);
+}
+.assembly-release-overview {
+  display: flex;
+  flex: 1 1 230px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+  min-width: 0;
+}
+.assembly-release-label, .assembly-release-name {
+  font-family: var(--cozy-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+}
+.assembly-release-label { color: var(--gray-400); font-size: .75rem; }
+.assembly-release-name { color: var(--white); font-size: .9375rem; font-weight: 650; }
+.assembly-release-readiness { display: grid; flex: 1 1 150px; gap: 5px; min-width: 0; }
+.assembly-release-readiness .assembly-progress-bar { width: 100%; height: 6px; }
+.assembly-release-gates { display: flex; flex-wrap: wrap; gap: 6px; margin-inline-start: auto; }
+.assembly-release-gates a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  border-radius: 999px;
+  color: var(--tone-warn-ink);
+  font-size: .75rem;
+}
+.assembly-release-gates a[data-gate-state="cleared"] { color: var(--tone-ok-ink); }
+.assembly-release-gates a[data-gate-state="blocked"] { color: var(--tone-bad-ink); }
+.assembly-release-gates a:hover { background: var(--hover); border-color: currentColor; }
 .assembly-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px var(--gutter); }
 .assembly-legend > span { display: inline-flex; align-items: center; gap: 5px; color: var(--gray-400); font-size: .75rem; }
 .assembly-legend i, .activity-stage-bar i { background: var(--stage-color); }
@@ -1270,5 +1311,6 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 .activity-triage:focus { outline: 2px solid var(--tone-accent); outline-offset: 1px; }
 .activity-timeline .runlog, .activity-triage { max-width: calc(100% - 32px); }
 @media (max-width: 620px) {
-  .assembly-summary, .assembly-legend { padding: 10px; }
+  .assembly-summary, .assembly-legend, .assembly-release { padding: 10px; }
+  .assembly-release-gates { margin-inline-start: 0; }
 }
