@@ -228,6 +228,10 @@ try {
       const gateStatus = panel.getByRole("region", { name: "Gate status" });
       assert.deepEqual(await gateStatus.getByRole("link").allTextContents(), ["File access ruling"]);
       assert.equal(await panel.getByRole("region", { name: /^Needs a human/ }).getByRole("link", { name: "Custody lock fix" }).getAttribute("href"), "#/inbox/in2");
+      const throughput = panel.getByRole("region", { name: "Throughput" });
+      const lineEvents = panel.getByRole("region", { name: "Line events" });
+      assert.equal(await throughput.getByRole("listitem").count(), 4);
+      await lineEvents.getByText("File access ruling requested").waitFor();
 
       await simulation.press("Enter");
       const playback = page.getByRole("complementary", { name: "Simulation" });
@@ -240,6 +244,12 @@ try {
       await playback.getByRole("button", { name: "Play simulation" }).click();
       await page.waitForFunction(() => document.querySelector('[data-assembly-work="T-S1"]:not([data-stage="queue"])'));
       assert.doesNotMatch((await playback.locator(".assembly-event-log").textContent())!, /T-A130|T-A84/);
+      await gates.click();
+      await lineEvents.getByText("T-S1 passed review and merged").waitFor();
+      assert.doesNotMatch((await lineEvents.textContent())!, /T-A130|T-A84/);
+      assert.match((await throughput.locator(".project-throughput-metrics dd").first().textContent())!, /\d h$/);
+      assert.match((await throughput.getByRole("listitem").last().textContent())!, /[2-9] tasks merged/);
+      await simulation.press("Enter");
       await playback.getByRole("button", { name: "Reset simulation" }).click();
       await page.keyboard.press("Escape");
       assert.ok(await simulation.evaluate((button) => button === document.activeElement));
