@@ -1512,7 +1512,7 @@ html[data-theme="report"] .assembly-release {
 .activity-triage:focus { outline: 2px solid var(--tone-accent); outline-offset: 1px; }
 .activity-timeline .runlog, .activity-triage { max-width: calc(100% - 32px); }
 
-.project-insights {
+:is(.project-insights, .team-overview) {
   container: project-insights / inline-size;
   display: grid;
   gap: 14px;
@@ -1593,7 +1593,7 @@ html[data-theme="report"] .assembly-release {
   background: var(--insight-series-color, var(--tone-accent));
   forced-color-adjust: none;
 }
-.project-insights [data-series="1"] { --insight-series-color: var(--tone-ok-ink); }
+:is(.project-insights, .team-overview) [data-series="1"] { --insight-series-color: var(--tone-ok-ink); }
 .project-insights [data-series="2"] { --insight-series-color: var(--tone-warn-ink); }
 .project-insights [aria-labelledby="insight-readiness-title"] [data-series="0"] { --insight-series-color: var(--tone-ok-ink); }
 .project-insights [aria-labelledby="insight-readiness-title"] [data-series="1"] { --insight-series-color: var(--gray-400); }
@@ -1633,6 +1633,33 @@ html[data-theme="report"] .assembly-release {
 .insight-gates [data-gate-state="blocked"] { color: var(--tone-bad-ink); }
 .insight-gates [data-gate-state="cleared"] { color: var(--tone-ok-ink); }
 .insight-trend { display: none; }
+
+.team-overview-intro,
+.team-overview-projects li > div:first-child,
+.team-overview-events li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.team-overview-intro p { color: var(--gray-300); }
+.team-overview-intro p span { margin-inline-start: .35em; white-space: nowrap; }
+.team-overview-intro small,
+.team-overview-events time { color: var(--gray-400); font-size: .8125rem; }
+.team-overview .insights-grid { align-items: stretch; }
+.team-overview .insight-card-head > .insight-link { font-size: .8125rem; }
+.team-overview .insight-point { grid-template-columns: minmax(0, 1fr) minmax(1.25rem, max-content); }
+.team-overview .insight-table-scroll :is(th, td) { overflow-wrap: anywhere; }
+.team-overview .insight-table-scroll th:first-child { text-align: start; }
+.team-overview .insight-table-scroll tbody th { font-weight: 500; }
+.team-overview-projects li + li,
+.team-overview-events li + li { border-block-start: 1px solid var(--line); }
+.team-overview-projects li,
+.team-overview-events li { padding-block: 9px; font-size: .875rem; }
+.team-overview-projects .prog-line { margin-block-start: 6px; }
+.team-overview-events li > span { flex: 1; min-width: min(100%, 15rem); }
+.team-roster-title { padding: 16px var(--gutter) 0; font-size: 1rem; font-weight: 650; }
 
 @container project-insights (min-width: 1040px) {
   .insight-trend-card .insight-plot { display: none; }
