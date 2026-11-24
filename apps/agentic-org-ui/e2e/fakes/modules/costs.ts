@@ -62,7 +62,7 @@ const all = usage.records as StoredRecord[];
 const superseded = new Set(all.map((r) => r.supersedesId).filter(Boolean));
 /** The effective ledger: records nothing has replaced. */
 const effective = all.filter((r) => !superseded.has(r.id));
-const pocLedger: StoredRecord[] = pocUsageRecords(NOW.getTime());
+const pocLedger: StoredRecord[] = pocUsageRecords();
 
 function ledgerFor(organizationId: string): StoredRecord[] {
 	return organizationId === POC_ORG_ID ? pocLedger : effective;

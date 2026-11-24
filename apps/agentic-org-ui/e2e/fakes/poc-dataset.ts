@@ -21,6 +21,9 @@ import type { OfficesOverview } from '../../src/lib/modules/offices/types';
 import type { ProjectRow } from '../../src/lib/modules/projects/types';
 import type { TeamRow } from '../../src/lib/modules/teams/types';
 import { POC_BUILD_OFFICE_ID, POC_HQ_OFFICE_ID, pocBuildOffice } from './mock-mode';
+import usage from './data/costs/usage.json' with { type: 'json' };
+
+export const POC_USAGE_NOW_MS = Date.parse(usage.now);
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -1522,7 +1525,7 @@ export type PocStoredUsageRecord = {
 // 3 projects (agency-v1 $64, office-federation $45, look-feel $33), and 2 work types (build $112, run $30).
 // Shared by both `e2e/fakes/modules/costs.ts` and `e2e/fakes/modules/workitems.ts` so org/member cost links
 // and task detail cost cards always show the exact same records and totals.
-export function pocUsageRecords(nowMs = Date.now()): PocStoredUsageRecord[] {
+export function pocUsageRecords(nowMs = POC_USAGE_NOW_MS): PocStoredUsageRecord[] {
 	const rec = (
 		id: string,
 		hoursAgo: number,

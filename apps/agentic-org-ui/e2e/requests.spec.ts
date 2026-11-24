@@ -94,13 +94,19 @@ test(
 		await approveDialog.getByRole('button', { name: 'Approve and create (1)' }).click();
 		await expect(approveDialog).toBeHidden();
 
-		await expect(page.getByTestId('created-tasks')).toContainText(
-			'Build adjacent table availability query (v1)'
-		);
+		const createdList = page.getByTestId('created-tasks');
+		await expect(createdList.getByRole('listitem')).toHaveCount(1);
+		await expect(createdList).toContainText('Build adjacent table availability query (v1)');
+		await expect(createdList).not.toContainText('Add accessible table picker to booking flow');
 		await expect(page.getByRole('button', { name: 'Approve and create…' })).toHaveCount(0);
 		await shot(page, 'request-approved');
 
-		// Needs me no longer lists T-A43, and the created task appears under Tasks.
+		// Follow the created task link and verify it links back to the originating request T-A43.
+		await createdList.getByRole('link').first().click();
+		await expect(page).toHaveURL(/\/work\/T-A\d+$/);
+		await expect(page.getByRole('link', { name: /T-A43/ })).toBeVisible();
+
+		// Needs me no longer lists T-A43.
 		await visit(page, '/work');
 		await expect(page.getByTestId('needs-me-list')).not.toContainText('T-A43');
 	}
