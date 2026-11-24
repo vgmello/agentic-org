@@ -289,6 +289,10 @@ function mapSnoozedChatInboxItem(
 	const chatPath = conversationId
 		? `/chat?c=${encodeURIComponent(conversationId)}&m=${encodeURIComponent(id)}`
 		: `/chat?m=${encodeURIComponent(id)}`;
+	const open =
+		conversationId && (!existing?.open || !/[?&]c=/.test(existing.open.path))
+			? { path: chatPath, label: existing?.open?.label ?? 'Open in Chat' }
+			: (existing?.open ?? { path: chatPath, label: 'Open in Chat' });
 	return {
 		rawSource: rawKind === 'request' ? 'ask' : 'mailbox',
 		item: {
@@ -304,7 +308,7 @@ function mapSnoozedChatInboxItem(
 			created_at: asStr(r.created_at) ?? existing?.created_at ?? fallbackIso,
 			...optField('expires_at', expiresAt),
 			actions: existing?.actions.length ? existing.actions : ['reply', 'dismiss'],
-			open: existing?.open ?? { path: chatPath, label: 'Open in Chat' },
+			open,
 			snoozeable: true,
 			state: 'snoozed',
 			...optField('snoozed_until', asStr(r.snoozed_until)),

@@ -416,6 +416,42 @@ describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
 			snooze_note: 'Check after release'
 		});
 
+		// Refresh after deferring a previously cached item upgrades its `/chat?m=...` link with `conversation_id`.
+		vi.mocked(http.read).mockResolvedValueOnce(
+			ok({ as_of: { epoch: 1, seq: 13 }, degraded: [], items: [] })
+		);
+		submit.mockResolvedValueOnce(
+			ok({
+				items: [
+					{
+						id: 'm-open',
+						conversation_id: 'conv-open',
+						thread_id: 'm-open',
+						from_member_id: 'm-noor',
+						from_display_name: 'Noor Haddad',
+						kind: 'msg',
+						priority: 'normal',
+						urgent: false,
+						subject: 'Confirm migration checklist',
+						created_at: '2026-11-21T10:00:00.000Z',
+						state: 'snoozed',
+						triage_gen: 2,
+						snoozed_until: '2026-11-25T14:00:00.000Z',
+						snooze_note: 'Check after release',
+						delivered_because: 'direct',
+						local_seq: 13
+					}
+				]
+			})
+		);
+		const afterSnoozeRefresh = await api.list(ORG);
+		expect(afterSnoozeRefresh).toHaveLength(1);
+		expect(afterSnoozeRefresh[0]).toMatchObject({
+			id: 'off-1:msg:m-open',
+			state: 'snoozed',
+			open: { path: '/chat?c=conv-open&m=m-open', label: 'Open in Chat' }
+		});
+
 		const restored = await api.unsnooze(ORG, 'chat:msg:snz-1');
 		expect(submit).toHaveBeenCalledWith(UNSNOOZE_PATH, { id: 'snz-1' });
 		expect(restored.state).toBe('open');

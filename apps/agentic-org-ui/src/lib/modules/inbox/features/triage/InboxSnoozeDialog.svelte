@@ -81,6 +81,9 @@
 		const d = new Date(target.expiresAtIso);
 		return Number.isNaN(d.getTime()) ? undefined : formatFull(d, zone);
 	});
+	const isAskReplyCutoff = $derived(
+		target?.inboxItem?.source === 'Chat ask' || target?.inboxItem?.source === 'Chat approval'
+	);
 
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
@@ -175,15 +178,13 @@
 						</div>
 					</div>
 
-					{#if livePreview}
+					{#if livePreview && !fieldError}
 						<p class={helpClass} data-testid="snooze-preview">
-							Returns to your open inbox on <strong class="font-medium text-fg"
-								>{livePreview.full}</strong
-							>.
+							Proposed return time: <strong class="font-medium text-fg">{livePreview.full}</strong>.
 						</p>
 					{/if}
 
-					{#if livePreview?.exceedsExpiry}
+					{#if livePreview?.exceedsExpiry && !fieldError}
 						<div
 							role="status"
 							data-testid="snooze-expiry-warning"
@@ -191,10 +192,16 @@
 						>
 							<AlertTriangle class="mt-0.5 size-4 shrink-0 text-fg" aria-hidden="true" />
 							<p class="[overflow-wrap:anywhere]">
-								This return time is at or after the shown deadline{expiryFull
-									? ` (${expiryFull})`
-									: ''}. The item may time out before it returns, and the office rejects return
-								times past a message's expiry.
+								{#if isAskReplyCutoff}
+									This return time is at or after the reply cutoff{expiryFull
+										? ` (${expiryFull})`
+										: ''}. The ask may time out before it returns, and the office rejects return
+									times past a message's expiry.
+								{:else}
+									This return time is at or after the message expiry{expiryFull
+										? ` (${expiryFull})`
+										: ''}. Choose an earlier time so the office accepts the snooze.
+								{/if}
 							</p>
 						</div>
 					{/if}

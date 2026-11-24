@@ -14,7 +14,6 @@
 	const organizationId = $derived(data.connection.organization.id);
 	const viewerIsOwner = $derived.by(() => {
 		if (appSession.state.kind !== 'signed-in') return undefined;
-		if (appSession.state.session.admin) return true;
 		const ownerId = shellData.snapshot ? owner(shellData.snapshot)?.id : undefined;
 		if (!ownerId) return undefined;
 		const link = appSession.state.session.organizations.find((o) => o.org_id === organizationId);

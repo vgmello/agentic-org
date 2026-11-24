@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	computeSnoozePresets,
 	defaultCustomSnoozeInputs,
+	formatSnoozeError,
 	formatSnoozeReturn,
 	parseCustomSnoozeDateTime,
 	snoozeExceedsExpiry
@@ -103,5 +104,15 @@ describe('Inbox snooze presets and custom date/time validation (TASK-81)', () =>
 		const dstEve = new Date('2027-03-14T04:30:00.000Z');
 		const dstNext = formatSnoozeReturn('2027-03-14T13:00:00.000Z', dstEve, 'America/New_York');
 		expect(dstNext.short).toBe('Tomorrow, 09:00');
+	});
+
+	it('translates raw office snoozed_until/expires_at refusal messages into clear UI copy', () => {
+		expect(
+			formatSnoozeError('snoozed_until must be earlier than the ask expires_at deadline')
+		).toBe("Return time must be earlier than the item's expiry deadline.");
+		expect(formatSnoozeError('snoozed_until must be in the future')).toBe(
+			'Return time must be in the future.'
+		);
+		expect(formatSnoozeError('Office unavailable')).toBe('Office unavailable');
 	});
 });

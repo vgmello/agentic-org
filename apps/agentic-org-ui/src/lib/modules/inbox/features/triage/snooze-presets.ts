@@ -296,3 +296,17 @@ export function snoozeExceedsExpiry(
 	if (Number.isNaN(untilMs) || Number.isNaN(expiresMs)) return false;
 	return untilMs >= expiresMs;
 }
+
+/** Translates raw office snooze validation messages (e.g. `snoozed_until` / `expires_at`) into UI prose. */
+export function formatSnoozeError(message: string): string {
+	const trimmed = message.trim();
+	if (/snoozed_until|expires_at/i.test(trimmed)) {
+		if (/earlier|before|deadline|expir/i.test(trimmed)) {
+			return "Return time must be earlier than the item's expiry deadline.";
+		}
+		if (/future|past/i.test(trimmed)) {
+			return 'Return time must be in the future.';
+		}
+	}
+	return trimmed || 'Could not snooze this item.';
+}

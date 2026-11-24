@@ -66,7 +66,7 @@
 	import InboxDetailPane from './InboxDetailPane.svelte';
 	import InboxQueueList from './InboxQueueList.svelte';
 	import InboxSnoozeDialog from './InboxSnoozeDialog.svelte';
-	import { formatSnoozeReturn } from './snooze-presets';
+	import { formatSnoozeError, formatSnoozeReturn } from './snooze-presets';
 	import {
 		deriveTriageItems,
 		filterTriageItems,
@@ -747,7 +747,7 @@
 			}
 			return { ok: true };
 		} catch (e) {
-			const msg = toAppError(e).message;
+			const msg = formatSnoozeError(toAppError(e).message);
 			toast.error(msg);
 			return { ok: false, error: msg };
 		} finally {

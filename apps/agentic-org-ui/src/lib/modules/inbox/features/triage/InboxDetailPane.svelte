@@ -199,6 +199,9 @@
 			? formatSnoozeReturn(item.snoozed.untilIso, new Date(nowMs), zone)
 			: undefined
 	);
+	const isAskReplyCutoff = $derived(
+		item?.inboxItem?.source === 'Chat ask' || item?.inboxItem?.source === 'Chat approval'
+	);
 	const deniedHandled = $derived(isDeniedOutcome(item?.handled?.outcome));
 
 	const RECOMMENDATION_LABELS: Record<TriageItem['recommendationTone'], string> = {
@@ -606,7 +609,7 @@
 
 					{#if item.expiresLabel}
 						<div>
-							<dt>Expires</dt>
+							<dt>{isAskReplyCutoff ? 'Reply cutoff' : 'Expires'}</dt>
 							<dd class={item.state === 'open' ? 'triage-expiry' : undefined}>
 								{item.expiresLabel}
 							</dd>
@@ -763,7 +766,11 @@
 											>
 												<span>{preset.label}</span>
 												<span class="text-xs text-fg-muted tabular-nums">
-													{preset.detail}{afterExpiry ? ' · after deadline' : ''}
+													{preset.detail}{afterExpiry
+														? isAskReplyCutoff
+															? ' · after reply cutoff'
+															: ' · after expiry'
+														: ''}
 												</span>
 											</DropdownMenu.Item>
 										{/each}
@@ -914,7 +921,11 @@
 												>
 													<span>{preset.label}</span>
 													<span class="text-xs text-fg-muted tabular-nums">
-														{preset.detail}{afterExpiry ? ' · after deadline' : ''}
+														{preset.detail}{afterExpiry
+															? isAskReplyCutoff
+																? ' · after reply cutoff'
+																: ' · after expiry'
+															: ''}
 													</span>
 												</DropdownMenu.Item>
 											{/each}

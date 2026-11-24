@@ -1235,6 +1235,7 @@ test('TASK-81: Inbox snooze presets, custom validation & expiry warning, Snoozed
 	await dialog.getByRole('button', { name: 'Snooze' }).click();
 	await expect(dialog.getByLabel('Return time')).toHaveAttribute('aria-invalid', 'true');
 	await expect(dialog.getByLabel('Return time')).toBeFocused();
+	await expect(dialog.getByTestId('snooze-preview')).toBeHidden();
 	await expect(dialog).toContainText(
 		"Return time must be earlier than the item's expiry deadline."
 	);
