@@ -205,7 +205,7 @@
 		</div>
 
 		<nav
-			id="exec-sidebar-nav"
+			data-exec-sidebar-nav=""
 			aria-label="Main"
 			aria-keyshortcuts={shortcutsEnabled ? 'S' : undefined}
 			class={[

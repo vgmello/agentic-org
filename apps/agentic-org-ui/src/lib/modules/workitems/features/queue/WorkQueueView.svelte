@@ -463,39 +463,41 @@
 
 <div class="work-page flex min-w-0 flex-col" {@attach workSearchShortcut}>
 	{#if isOrgScope}
-		<PageHeader
-			title="Work"
-			level={1}
-			class="work-header queue-header"
-			count={queueRead.data?.rows.length}
-			countLabel="items"
-			description="Tasks, bugs and requests across projects and teams."
-		>
-			{#snippet actions()}
-				{#if queueRead.data}
-					<Button
-						type="button"
-						variant="outline"
-						class="{mobileButton} [@media(width<=720px)]:min-h-11"
-						disabled={!!queueRead.data.stale}
-						onclick={() => openCapture('request')}>New request</Button
-					>
-					<Button
-						type="button"
-						variant="outline"
-						class="{mobileButton} [@media(width<=720px)]:min-h-11"
-						disabled={!!queueRead.data.stale}
-						onclick={() => openCapture('bug')}>Report bug</Button
-					>
-					<Button
-						type="button"
-						class="{mobileButton} [@media(width<=720px)]:min-h-11"
-						disabled={!!queueRead.data.stale}
-						onclick={() => openCapture('task')}>New task</Button
-					>
-				{/if}
-			{/snippet}
-		</PageHeader>
+		<div inert={activeOpenRow ? true : undefined}>
+			<PageHeader
+				title="Work"
+				level={1}
+				class="work-header queue-header"
+				count={queueRead.data?.rows.length}
+				countLabel="items"
+				description="Tasks, bugs and requests across projects and teams."
+			>
+				{#snippet actions()}
+					{#if queueRead.data}
+						<Button
+							type="button"
+							variant="outline"
+							class="{mobileButton} [@media(width<=720px)]:min-h-11"
+							disabled={!!queueRead.data.stale}
+							onclick={() => openCapture('request')}>New request</Button
+						>
+						<Button
+							type="button"
+							variant="outline"
+							class="{mobileButton} [@media(width<=720px)]:min-h-11"
+							disabled={!!queueRead.data.stale}
+							onclick={() => openCapture('bug')}>Report bug</Button
+						>
+						<Button
+							type="button"
+							class="{mobileButton} [@media(width<=720px)]:min-h-11"
+							disabled={!!queueRead.data.stale}
+							onclick={() => openCapture('task')}>New task</Button
+						>
+					{/if}
+				{/snippet}
+			</PageHeader>
+		</div>
 	{/if}
 
 	<Loaded
@@ -562,7 +564,13 @@
 						] as GroupBy[])
 			).filter((g) => g === 'none' || g !== primaryGroup)}
 			{@const effectiveSubgroup =
-				primaryGroup === 'none' || subgroupBy === primaryGroup ? ('none' as GroupBy) : subgroupBy}
+				primaryGroup === 'none' || !subgroupCandidates.includes(subgroupBy)
+					? ('none' as GroupBy)
+					: subgroupBy}
+			{@const boardRows =
+				activeTab === 'task' && layout === 'board' && boardMode === 'statuses'
+					? filterRows(baseRows, q.viewer, 'all', filters)
+					: displayRows}
 
 			{#if q.stale}
 				<StaleBanner
@@ -572,7 +580,10 @@
 				/>
 			{/if}
 
-			<div class="flex min-w-0 flex-col gap-5 {gutters} py-6">
+			<div
+				class="flex min-w-0 flex-col gap-5 {gutters} py-6"
+				inert={isOrgScope && activeOpenRow ? true : undefined}
+			>
 				<!-- Top controls: Type tabs + Project actions / Show menu / Board-List toggle -->
 				<div class="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-2">
 					<div role="tablist" aria-label="Work" class="flex flex-wrap gap-x-1">
@@ -1066,7 +1077,7 @@
 									{/snippet}
 								</EmptyState>
 							{/if}
-						{:else if displayRows.length === 0}
+						{:else if (activeTab === 'task' && layout === 'board' ? boardRows.length : displayRows.length) === 0}
 							{@const noOpenBugs =
 								activeTab === 'bug' &&
 								filters.status === 'open' &&
@@ -1111,7 +1122,7 @@
 						{:else if activeTab === 'task' && layout === 'board'}
 							<WorkBoard
 								{organizationId}
-								rows={displayRows}
+								rows={boardRows}
 								{boardMode}
 								showProject={isOrgScope}
 								stale={isStale}

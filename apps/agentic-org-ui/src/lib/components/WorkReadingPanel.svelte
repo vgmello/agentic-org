@@ -47,13 +47,75 @@
 	let backBtnEl = $state<HTMLButtonElement | null>(null);
 	let isOpening = $state(true);
 	let expanded = $state(false);
+	let availableWidth = $state(1200);
 	let copiedForId = $state<string | null>(null);
 	const copied = $derived(copiedForId === itemId);
+	const PANEL_DEFAULT_PX = 736; // 46rem at 16px root
+	const canExpand = $derived(availableWidth > PANEL_DEFAULT_PX + 16);
 	let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
 	onDestroy(() => {
 		clearTimeout(copyTimer);
 	});
+
+	$effect(() => {
+		if (typeof window === 'undefined') return;
+		const measure = () => {
+			const sidebar = document.querySelector<HTMLElement>('aside.exec-sidebar');
+			const sidebarWidth =
+				sidebar && sidebar.offsetParent !== null ? sidebar.getBoundingClientRect().width : 0;
+			availableWidth = Math.max(320, Math.round(window.innerWidth - sidebarWidth));
+		};
+		measure();
+		window.addEventListener('resize', measure);
+		const sidebar = document.querySelector<HTMLElement>('aside.exec-sidebar');
+		const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : undefined;
+		if (sidebar && ro) ro.observe(sidebar);
+		return () => {
+			window.removeEventListener('resize', measure);
+			ro?.disconnect();
+		};
+	});
+
+	$effect(() => {
+		if (!canExpand && expanded) {
+			expanded = false;
+		}
+	});
+
+	function focusableInside(container: HTMLElement): HTMLElement[] {
+		const selector =
+			'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+		return [...container.querySelectorAll<HTMLElement>(selector)].filter(
+			(el) => el.offsetParent !== null && !el.closest('[inert]')
+		);
+	}
+
+	function handlePanelKeydown(event: KeyboardEvent) {
+		if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey || !panelEl) return;
+		// Yield when a nested modal dialog/menu is open above the panel.
+		if (
+			document.querySelector(
+				'[role="dialog"]:not(.work-reading), [role="alertdialog"], [role="menu"]'
+			)
+		) {
+			return;
+		}
+		const items = focusableInside(panelEl);
+		if (items.length === 0) return;
+		const first = items[0];
+		const last = items[items.length - 1];
+		const active = document.activeElement;
+		if (event.shiftKey) {
+			if (active === first || !panelEl.contains(active)) {
+				event.preventDefault();
+				last.focus();
+			}
+		} else if (active === last || !panelEl.contains(active)) {
+			event.preventDefault();
+			first.focus();
+		}
+	}
 
 	$effect(() => {
 		void itemId;
@@ -97,10 +159,12 @@
 	bind:this={panelEl}
 	class={['work-reading side-panel work-panel', isOpening && 'is-opening']}
 	role="dialog"
-	aria-modal="false"
+	aria-modal="true"
 	aria-label={ariaLabel}
 	data-testid="work-reading-panel"
-	data-expanded={expanded ? '' : undefined}
+	data-expanded={expanded && canExpand ? '' : undefined}
+	style:--work-page-width={`${availableWidth}px`}
+	onkeydown={handlePanelKeydown}
 	onanimationend={(event) => {
 		if (event.target === event.currentTarget) isOpening = false;
 	}}
@@ -206,35 +270,37 @@
 						>
 					</Tooltip.Portal>
 				</Tooltip.Root>
-				<Tooltip.Root ignoreNonKeyboardFocus>
-					<Tooltip.Trigger>
-						{#snippet child({ props })}
-							<button
-								{...props}
-								type="button"
-								class="work-detail-btn work-panel-expand"
-								aria-label={expanded ? 'Restore panel width' : 'Expand panel to full width'}
-								aria-pressed={expanded}
-								onclick={() => (expanded = !expanded)}
+				{#if canExpand}
+					<Tooltip.Root ignoreNonKeyboardFocus>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									type="button"
+									class="work-detail-btn work-panel-expand"
+									aria-label={expanded ? 'Restore panel width' : 'Expand panel to full width'}
+									aria-pressed={expanded}
+									onclick={() => (expanded = !expanded)}
+								>
+									{#if expanded}
+										<Minimize2 class="size-4" aria-hidden="true" />
+									{:else}
+										<Maximize2 class="size-4" aria-hidden="true" />
+									{/if}
+								</button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Portal>
+							<Tooltip.Content
+								side="bottom"
+								sideOffset={6}
+								escapeKeydownBehavior="defer-otherwise-close"
+								class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+								>{expanded ? 'Restore panel width' : 'Expand panel'}</Tooltip.Content
 							>
-								{#if expanded}
-									<Minimize2 class="size-4" aria-hidden="true" />
-								{:else}
-									<Maximize2 class="size-4" aria-hidden="true" />
-								{/if}
-							</button>
-						{/snippet}
-					</Tooltip.Trigger>
-					<Tooltip.Portal>
-						<Tooltip.Content
-							side="bottom"
-							sideOffset={6}
-							escapeKeydownBehavior="defer-otherwise-close"
-							class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-							>{expanded ? 'Restore panel width' : 'Expand panel'}</Tooltip.Content
-						>
-					</Tooltip.Portal>
-				</Tooltip.Root>
+						</Tooltip.Portal>
+					</Tooltip.Root>
+				{/if}
 				<Tooltip.Root ignoreNonKeyboardFocus>
 					<Tooltip.Trigger>
 						{#snippet child({ props })}

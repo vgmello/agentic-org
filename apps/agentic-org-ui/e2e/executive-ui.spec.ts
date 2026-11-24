@@ -1076,11 +1076,13 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await page.getByTestId('subgroup-by-select').selectOption('assignee');
 	await expect(page.getByTestId('work-subgroup-heading').first()).toBeVisible();
 
-	// Open Work item -> right-hand sliding panel mounts over the list, expand toggles data-expanded, backdrop closes
+	// Open Work item -> right-hand sliding panel mounts over inert queue, expands/restores, traps Shift+Tab, backdrop closes
 	const firstWorkLink = page.locator('[data-ref] a').first();
 	await firstWorkLink.click();
 	const readingPanel = page.getByTestId('work-reading-panel');
 	await expect(readingPanel).toBeVisible();
+	await expect(readingPanel.locator('#work-detail-title')).toBeVisible();
+
 	const expandBtn = readingPanel.getByRole('button', { name: 'Expand panel to full width' });
 	await expandBtn.hover();
 	await expect(page.locator('[data-tooltip-content]', { hasText: 'Expand panel' })).toBeVisible();
@@ -1088,10 +1090,22 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await expect(readingPanel).toHaveAttribute('data-expanded', '');
 	await readingPanel.getByRole('button', { name: 'Restore panel width' }).click();
 	await expect(readingPanel).not.toHaveAttribute('data-expanded');
+
+	await readingPanel.getByRole('button', { name: 'Back to Work' }).focus();
+	await page.keyboard.press('Shift+Tab');
+	const focusInsidePanel = await readingPanel.evaluate((el) => el.contains(document.activeElement));
+	expect(focusInsidePanel).toBe(true);
+
 	await page.locator('.work-panel-backdrop').click({ position: { x: 320, y: 200 } });
 	await expect(readingPanel).toBeHidden();
 
-	// Activity: full-space Assembly Line with Readiness progress bar & collapsible Release gates dock + icon tooltip
+	// Subgroup state resets cleanly when switching from Bugs (Severity) to Requests
+	await page.getByRole('tab', { name: /^Bugs/ }).click();
+	await page.getByTestId('subgroup-by-select').selectOption('severity');
+	await page.getByRole('tab', { name: /^Requests/ }).click();
+	await expect(page.getByTestId('subgroup-by-select')).toHaveValue('none');
+
+	// Activity: full-space Assembly Line with Readiness progress bar & collapsible Release gates dock + tooltip-first Escape
 	await page
 		.getByRole('navigation', { name: 'Main' })
 		.getByRole('link', { name: 'Activity' })
@@ -1102,14 +1116,50 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	const gatesToggle = page.getByTestId('activity-gates-toggle');
 	await expect(gatesToggle).toHaveAttribute('aria-expanded', 'true');
 	await expect(page.locator('#activity-release-panel')).toBeVisible();
+	await gatesToggle.focus();
 	await gatesToggle.hover();
 	await expect(
 		page.locator('[data-tooltip-content]', { hasText: 'Hide release gates' })
 	).toBeVisible();
-	await gatesToggle.click();
+	// First Escape dismisses the open tooltip without collapsing the dock; second Escape collapses the dock.
+	await page.keyboard.press('Escape');
+	await expect(
+		page.locator('[data-tooltip-content]', { hasText: 'Hide release gates' })
+	).toBeHidden();
+	await expect(page.locator('#activity-release-panel')).toBeVisible();
+	await page.keyboard.press('Escape');
 	await expect(gatesToggle).toHaveAttribute('aria-expanded', 'false');
 	await expect(page.locator('#activity-release-panel')).toBeHidden();
 	await gatesToggle.click();
 	await expect(gatesToggle).toHaveAttribute('aria-expanded', 'true');
 	await expect(page.locator('#activity-release-panel')).toBeVisible();
+
+	// 6-status board on default mock dataset populates Awaiting verification with fixed bug T-A42
+	await enterMockedOrganization(page);
+	await visit(page, '/work?mock=default');
+	await page.getByRole('tab', { name: /^Tasks/ }).click();
+	await page.getByTestId('saved-filters').locator('[data-filter="all"]').click();
+	await page.getByTestId('board-mode-toggle').getByRole('button', { name: '6 statuses' }).click();
+	const awaitingCol = page
+		.getByTestId('board-column')
+		.filter({ has: page.getByRole('heading', { name: /Awaiting verification/ }) });
+	await expect(awaitingCol).toBeVisible();
+	await expect(awaitingCol.locator('[data-ref="T-A42"]')).toBeVisible();
+
+	// Mobile (<640px): S -> I opens mobile sidebar drawer & navigates to /inbox; M from mobile Inbox detail returns to categories
+	await page.setViewportSize({ width: 390, height: 844 });
+	await visit(page, '/home?theme=graphite&mock=poc');
+	await page.locator('main').click({ position: { x: 12, y: 12 } });
+	await page.keyboard.press('s');
+	await expect(page.getByTestId('nav-key-hint')).toContainText('Sidebar');
+	await page.keyboard.press('i');
+	await expect(page).toHaveURL(/\/inbox$/);
+	await page.locator('[data-triage-row]').first().click();
+	const mobileDetail = page.getByRole('region', { name: 'Item details' });
+	await expect(mobileDetail).toBeVisible();
+	await expect(page.locator('#triage-categories')).toBeHidden();
+	await mobileDetail.click({ position: { x: 16, y: 16 } });
+	await page.keyboard.press('m');
+	await expect(page.getByTestId('nav-key-hint')).toContainText('Inbox categories');
+	await expect(page.locator('#triage-categories')).toBeVisible();
 });

@@ -43,21 +43,36 @@ export class NavKeyController {
 	#selectedCandidate: NavKeyCandidate | null = null;
 	#selectedIndex = -1;
 	#commitTimer: ReturnType<typeof setTimeout> | undefined;
+	#openingFrame: number | undefined;
+	#openingSidebar = false;
+	#openingInbox = false;
+	#pendingLetter: string | null = null;
 	#callbacks: NavKeyCallbacks;
 
 	constructor(callbacks: NavKeyCallbacks = {}) {
 		this.#callbacks = callbacks;
 	}
 
-	cancel(restoreFocus = false) {
+	#clearSelection() {
 		clearTimeout(this.#commitTimer);
 		this.#commitTimer = undefined;
+		this.#selectedCandidate = null;
+	}
+
+	cancel(restoreFocus = false) {
+		this.#clearSelection();
+		if (this.#openingFrame !== undefined && typeof cancelAnimationFrame !== 'undefined') {
+			cancelAnimationFrame(this.#openingFrame);
+			this.#openingFrame = undefined;
+		}
+		this.#openingSidebar = false;
+		this.#openingInbox = false;
+		this.#pendingLetter = null;
 		const prevMode = this.mode;
 		const prevFocus = this.#previousFocus;
 		this.mode = null;
 		this.hint = '';
 		this.#previousFocus = null;
-		this.#selectedCandidate = null;
 		this.#selectedIndex = -1;
 		if (prevMode === 'sidebar') this.#callbacks.onSidebarCancel?.();
 		if (restoreFocus) {
@@ -69,8 +84,13 @@ export class NavKeyController {
 		}
 	}
 
+	#findVisibleSidebarNav(): HTMLElement | null {
+		const navs = [...document.querySelectorAll<HTMLElement>('[data-exec-sidebar-nav]')];
+		return navs.find((el) => el.offsetParent !== null) ?? null;
+	}
+
 	#collectSidebarCandidates(): NavKeyCandidate[] {
-		const nav = document.getElementById('exec-sidebar-nav');
+		const nav = this.#findVisibleSidebarNav();
 		if (!nav) return [];
 		const links = [...nav.querySelectorAll<HTMLAnchorElement>('a[href]')].filter(
 			(el) => el.offsetParent !== null
@@ -117,52 +137,136 @@ export class NavKeyController {
 	}
 
 	#activate(candidate: NavKeyCandidate) {
-		this.cancel(false);
+		const prevMode = this.mode;
+		this.#clearSelection();
+		if (this.#openingFrame !== undefined && typeof cancelAnimationFrame !== 'undefined') {
+			cancelAnimationFrame(this.#openingFrame);
+			this.#openingFrame = undefined;
+		}
+		this.#openingSidebar = false;
+		this.#openingInbox = false;
+		this.#pendingLetter = null;
+		this.mode = null;
+		this.hint = '';
+		this.#previousFocus = null;
+		this.#selectedIndex = -1;
+		// Trigger navigation / action while the element is still mounted, then close any transient sheet.
 		if (candidate.onActivate) {
 			candidate.onActivate();
-			return;
+		} else {
+			candidate.element.click();
 		}
-		candidate.element.click();
+		if (prevMode === 'sidebar') this.#callbacks.onSidebarCancel?.();
+	}
+
+	#selectByLetter(letter: string): boolean {
+		const candidates =
+			this.mode === 'sidebar' ? this.#collectSidebarCandidates() : this.#collectInboxCandidates();
+		const nextIdx = matchNavCandidate(candidates, letter, this.#selectedIndex);
+		if (nextIdx < 0) return false;
+		const chosen = candidates[nextIdx];
+		this.#selectedIndex = nextIdx;
+		this.#selectedCandidate = chosen;
+		chosen.element.focus({ preventScroll: true });
+		const prefix = this.mode === 'sidebar' ? 'Sidebar' : 'Inbox categories';
+		this.hint = `${prefix} · ${chosen.label} · Enter to open · Esc to cancel`;
+		clearTimeout(this.#commitTimer);
+		this.#commitTimer = setTimeout(() => {
+			if (this.#selectedCandidate === chosen) {
+				this.#activate(chosen);
+			}
+		}, 650);
+		return true;
 	}
 
 	enterSidebar() {
 		this.#previousFocus =
 			document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		this.mode = 'sidebar';
-		this.#selectedCandidate = null;
+		this.#clearSelection();
 		this.#selectedIndex = -1;
+		this.#pendingLetter = null;
+		this.#openingSidebar = true;
 		this.hint = "Sidebar · Type an item's first letter · Esc to cancel";
 		this.#callbacks.onSidebarOpen?.();
-		queueMicrotask(() => {
+
+		const focusVisibleSidebar = (attemptsLeft: number) => {
 			if (this.mode !== 'sidebar') return;
 			const candidates = this.#collectSidebarCandidates();
+			if (
+				candidates.length === 0 &&
+				attemptsLeft > 0 &&
+				typeof requestAnimationFrame !== 'undefined'
+			) {
+				this.#openingFrame = requestAnimationFrame(() => focusVisibleSidebar(attemptsLeft - 1));
+				return;
+			}
+			this.#openingFrame = undefined;
+			this.#openingSidebar = false;
 			const activeIdx = candidates.findIndex(
 				(c) => c.element.getAttribute('aria-current') === 'page'
 			);
 			this.#selectedIndex = activeIdx;
+			if (this.#pendingLetter) {
+				const queued = this.#pendingLetter;
+				this.#pendingLetter = null;
+				if (this.#selectByLetter(queued)) return;
+			}
 			const current =
 				(activeIdx >= 0 ? candidates[activeIdx].element : null) ?? candidates[0]?.element;
 			current?.focus({ preventScroll: true });
-		});
+		};
+		queueMicrotask(() => focusVisibleSidebar(10));
 	}
 
 	enterInboxCategories(): boolean {
 		const group = document.getElementById('triage-categories');
-		if (!group || group.offsetParent === null) return false;
+		if (!group) return false;
 		this.#previousFocus =
 			document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		this.mode = 'inbox';
-		this.#selectedCandidate = null;
-		const candidates = this.#collectInboxCandidates();
-		const activeIdx = candidates.findIndex(
-			(c) => !c.onActivate && c.element.getAttribute('aria-pressed') === 'true'
-		);
-		this.#selectedIndex = activeIdx;
+		this.#clearSelection();
+		this.#selectedIndex = -1;
+		this.#pendingLetter = null;
 		this.hint = 'Inbox categories · Type a letter · Esc to cancel';
-		const current =
-			(activeIdx >= 0 ? candidates[activeIdx].element : null) ??
-			group.querySelector<HTMLElement>('button[data-triage-tab]');
-		current?.focus({ preventScroll: true });
+
+		const focusCategories = (attemptsLeft: number) => {
+			if (this.mode !== 'inbox') return;
+			const currentGroup = document.getElementById('triage-categories');
+			if (!currentGroup || currentGroup.offsetParent === null) {
+				if (attemptsLeft > 0 && typeof requestAnimationFrame !== 'undefined') {
+					this.#openingFrame = requestAnimationFrame(() => focusCategories(attemptsLeft - 1));
+					return;
+				}
+				this.#openingInbox = false;
+				this.cancel(false);
+				return;
+			}
+			this.#openingFrame = undefined;
+			this.#openingInbox = false;
+			const candidates = this.#collectInboxCandidates();
+			const activeIdx = candidates.findIndex(
+				(c) => !c.onActivate && c.element.getAttribute('aria-pressed') === 'true'
+			);
+			this.#selectedIndex = activeIdx;
+			if (this.#pendingLetter) {
+				const queued = this.#pendingLetter;
+				this.#pendingLetter = null;
+				if (this.#selectByLetter(queued)) return;
+			}
+			const current =
+				(activeIdx >= 0 ? candidates[activeIdx].element : null) ??
+				currentGroup.querySelector<HTMLElement>('button[data-triage-tab]');
+			current?.focus({ preventScroll: true });
+		};
+
+		if (group.offsetParent === null) {
+			this.#openingInbox = true;
+			group.dispatchEvent(new CustomEvent('inbox:show-categories', { bubbles: true }));
+			queueMicrotask(() => focusCategories(10));
+			return true;
+		}
+		focusCategories(0);
 		return true;
 	}
 
@@ -180,6 +284,16 @@ export class NavKeyController {
 				this.cancel(true);
 				return;
 			}
+			if (
+				event.key === 'Tab' ||
+				event.key === 'ArrowDown' ||
+				event.key === 'ArrowUp' ||
+				event.key === 'ArrowLeft' ||
+				event.key === 'ArrowRight'
+			) {
+				this.#clearSelection();
+				return;
+			}
 			if (event.key === 'Enter' && this.#selectedCandidate) {
 				event.preventDefault();
 				event.stopPropagation();
@@ -193,26 +307,15 @@ export class NavKeyController {
 				event.key.length === 1 &&
 				/[a-z]/i.test(event.key)
 			) {
-				const candidates =
-					this.mode === 'sidebar'
-						? this.#collectSidebarCandidates()
-						: this.#collectInboxCandidates();
-				const nextIdx = matchNavCandidate(candidates, event.key, this.#selectedIndex);
-				if (nextIdx >= 0) {
+				if (this.#openingSidebar || this.#openingInbox) {
 					event.preventDefault();
 					event.stopPropagation();
-					const chosen = candidates[nextIdx];
-					this.#selectedIndex = nextIdx;
-					this.#selectedCandidate = chosen;
-					chosen.element.focus({ preventScroll: true });
-					const prefix = this.mode === 'sidebar' ? 'Sidebar' : 'Inbox categories';
-					this.hint = `${prefix} · ${chosen.label} · Enter to open · Esc to cancel`;
-					clearTimeout(this.#commitTimer);
-					this.#commitTimer = setTimeout(() => {
-						if (this.#selectedCandidate === chosen) {
-							this.#activate(chosen);
-						}
-					}, 650);
+					this.#pendingLetter = event.key;
+					return;
+				}
+				if (this.#selectByLetter(event.key)) {
+					event.preventDefault();
+					event.stopPropagation();
 				}
 				return;
 			}
@@ -242,16 +345,30 @@ export class NavKeyController {
 		if (!this.mode) return;
 		const target = event.target;
 		if (!(target instanceof Node)) return;
+		if (this.#selectedCandidate && target !== this.#selectedCandidate.element) {
+			this.#clearSelection();
+		}
 		if (this.mode === 'sidebar') {
-			const nav = document.getElementById('exec-sidebar-nav');
-			if (nav && !nav.contains(target)) {
-				this.cancel(false);
+			if (this.#openingSidebar) return;
+			const nav = this.#findVisibleSidebarNav();
+			const container = nav?.closest('aside, [role="dialog"]') ?? nav;
+			if (container && container.contains(target)) {
+				const candidates = this.#collectSidebarCandidates();
+				const focusedIdx = candidates.findIndex((c) => c.element === target);
+				if (focusedIdx >= 0) this.#selectedIndex = focusedIdx;
+				return;
 			}
+			this.cancel(false);
 		} else if (this.mode === 'inbox') {
+			if (this.#openingInbox) return;
 			const group = document.getElementById('triage-categories');
-			if (group && !group.contains(target)) {
-				this.cancel(false);
+			if (group && group.contains(target)) {
+				const candidates = this.#collectInboxCandidates();
+				const focusedIdx = candidates.findIndex((c) => !c.onActivate && c.element === target);
+				if (focusedIdx >= 0) this.#selectedIndex = focusedIdx;
+				return;
 			}
+			this.cancel(false);
 		}
 	};
 

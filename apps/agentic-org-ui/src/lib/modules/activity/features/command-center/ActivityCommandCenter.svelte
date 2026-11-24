@@ -788,15 +788,39 @@
 		tablist?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
 	}
 
-	function handlePanelKeydown(event: KeyboardEvent) {
-		if (event.defaultPrevented || event.isComposing || event.key !== 'Escape' || !panelOpen) return;
-		event.preventDefault();
-		panelOpen = false;
-		toolsBtnEl?.focus();
+	function attachReleasePanelEscape() {
+		// Bubble-phase window listener runs after Bits UI's document-level EscapeLayer so open tooltips
+		// consume the first Escape and a second Escape collapses the Release gates dock.
+		const onEscapeKey = (event: KeyboardEvent) => {
+			if (
+				event.defaultPrevented ||
+				event.isComposing ||
+				event.keyCode === 229 ||
+				event.key !== 'Escape' ||
+				event.repeat ||
+				!panelOpen
+			) {
+				return;
+			}
+			const target = event.target;
+			if (
+				!(target instanceof Element) ||
+				!target.closest('#activity-release-panel, .activity-tools')
+			) {
+				return;
+			}
+			event.preventDefault();
+			panelOpen = false;
+			toolsBtnEl?.focus();
+		};
+		window.addEventListener('keydown', onEscapeKey);
+		return () => {
+			window.removeEventListener('keydown', onEscapeKey);
+		};
 	}
 </script>
 
-<div class="act-page cmd-page activity-workspace">
+<div class="act-page cmd-page activity-workspace" {@attach attachReleasePanelEscape}>
 	{#if showLiveBanner}
 		<div class="cmd-live-banner" role="status" tabindex="-1">
 			<span class="cmd-live-text">
@@ -1005,13 +1029,11 @@
 				{/if}
 			</div>
 
-			<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 			<aside
 				id="activity-release-panel"
 				class="activity-panel"
 				aria-label="Release gates and operational context"
 				inert={!panelOpen ? true : undefined}
-				onkeydown={handlePanelKeydown}
 			>
 				<div class="side-panel-header">
 					<h2>Release gates</h2>
@@ -1053,8 +1075,7 @@
 				/>
 			</aside>
 
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div class="activity-tools" onkeydown={handlePanelKeydown}>
+			<div class="activity-tools">
 				<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus>
 					<Tooltip.Trigger>
 						{#snippet child({ props })}

@@ -767,11 +767,20 @@
 			const tabId = (event as CustomEvent<{ tabId?: string }>).detail?.tabId;
 			if (tabId) selectTab(parseTriageTab(tabId));
 		};
+		const onShowCategories = () => {
+			if (showingMobileDetail) {
+				selectionVersion += 1;
+				mobileDetailOpen = false;
+				syncUrl({ item: null });
+			}
+		};
 		node.addEventListener('keydown', listener);
 		node.addEventListener('inbox:select-tab', onNavTabSelect);
+		node.addEventListener('inbox:show-categories', onShowCategories);
 		return () => {
 			node.removeEventListener('keydown', listener);
 			node.removeEventListener('inbox:select-tab', onNavTabSelect);
+			node.removeEventListener('inbox:show-categories', onShowCategories);
 		};
 	}
 
