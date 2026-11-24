@@ -65,9 +65,11 @@ export function computeReleaseDetailReadiness(detail: ReleaseDetail): {
 	pct: number;
 	scopeLabel: 'Release readiness' | 'Milestone readiness';
 } | null {
-	if (detail.progress && detail.progress.total > 0) {
-		const { finished, total, isDone } = detail.progress;
-		const pct = isDone === false && finished >= total ? 99 : completionPct(finished, total);
+	if (detail.progress) {
+		const total = Math.max(0, detail.progress.total);
+		const finished = Math.max(0, Math.min(total, detail.progress.finished));
+		const { isDone } = detail.progress;
+		const pct = total <= 0 ? 0 : !isDone && finished >= total ? 99 : completionPct(finished, total);
 		return {
 			finished,
 			total,

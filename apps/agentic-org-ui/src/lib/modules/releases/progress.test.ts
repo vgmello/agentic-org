@@ -70,6 +70,18 @@ describe('release & milestone progress helpers (organization-data 02)', () => {
 			pct: 99,
 			scopeLabel: 'Release readiness'
 		});
+
+		// Authoritative zero counts (e.g. only deleted tasks in manifest) MUST be honored, never falling through.
+		const authoritativeZero = makeReleaseDetail({
+			progress: { finished: 0, total: 0, isDone: false },
+			tasks: [{ id: 't-del', ref: 'T-A99', type: 'task', title: 'Deleted task', status: 'Done' }]
+		});
+		expect(computeReleaseDetailReadiness(authoritativeZero)).toEqual({
+			finished: 0,
+			total: 0,
+			pct: 0,
+			scopeLabel: 'Release readiness'
+		});
 	});
 
 	it('computes 100% readiness for a release whose explicit tasks have status "Done"', () => {

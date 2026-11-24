@@ -111,7 +111,7 @@ export interface ReleaseDetail extends ReleaseRow {
 	progress?: {
 		finished: number;
 		total: number;
-		isDone?: boolean;
+		isDone: boolean;
 	};
 	milestones: ReleaseMilestone[];
 	features: ReleaseFeatureItem[];
