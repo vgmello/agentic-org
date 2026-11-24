@@ -55,3 +55,6 @@ proc-macro2 = "=1.0.107"
 
 [build-dependencies]
 org-release = { path = "../org-release" }
+
+[lints]
+workspace = true

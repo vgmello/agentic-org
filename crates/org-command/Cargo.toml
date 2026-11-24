@@ -20,3 +20,6 @@ serde_json.workspace = true
 
 [dev-dependencies]
 org-command = { path = ".", features = ["testkit"] }
+
+[lints]
+workspace = true

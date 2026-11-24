@@ -16,3 +16,6 @@ org-agent-runtime = { path = "../org-agent-runtime" }
 # test helpers (subreaper, stopped state, argv[0]).
 org-platform = { path = "../org-platform", features = ["test-support"] }
 tempfile.workspace = true
+
+[lints]
+workspace = true

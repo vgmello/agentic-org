@@ -32,3 +32,6 @@ cc = "=1.11.1"
 # The compiled worker the admission adapter's tests start (`cargo test` builds it).
 [[example]]
 name = "admission_fixture"
+
+[lints]
+workspace = true

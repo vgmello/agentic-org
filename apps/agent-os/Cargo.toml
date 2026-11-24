@@ -17,3 +17,6 @@ org-agent-cli = { path = "../../crates/org-agent-cli" }
 org-proto = { path = "../../crates/org-proto" }
 serde_json.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

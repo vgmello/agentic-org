@@ -17,3 +17,6 @@ serde.workspace = true
 serde_json.workspace = true
 # The params hash of the change-id table (§2.3). Already in the lockfile.
 sha2.workspace = true
+
+[lints]
+workspace = true

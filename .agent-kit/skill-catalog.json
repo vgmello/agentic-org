@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "TASK-85.1 AX discipline adoption (2026-11-23); prior sessions at 34ca1855 and origin/v1",
-  "rationale": "Updated skill catalog for TASK-85.1 (Agent Experience discipline): added the agent-experience skill (.agent-kit/project-skills/principal-ax-designer/SKILL.md) and authoritative AX Spec doc-96 evidence, migrated stale docs/ evidence and guidance paths to .backlog/docs/ and .backlog/decisions/, kept >24 KiB data-contract documents (doc-72, doc-75) in project_evidence while keeping doc-62 and project skill briefs in phase references, and refreshed verified SHA-256 hashes for current workspace manifests, CI workflow, and AGENTS.md.",
+  "reviewed_by": "TASK-85.1 AX discipline adoption (2026-11-23); prior sessions at 34ca1855 and origin/v1; Rust quality rollout Codex session 01a20e2b-e672-7a20-86e9-59e253279195",
+  "rationale": "Updated skill catalog for TASK-85.1 (Agent Experience discipline): added the agent-experience skill (.agent-kit/project-skills/principal-ax-designer/SKILL.md) and authoritative AX Spec doc-96 evidence, migrated stale docs/ evidence and guidance paths to .backlog/docs/ and .backlog/decisions/, kept >24 KiB data-contract documents (doc-72, doc-75) in project_evidence while keeping doc-62 and project skill briefs in phase references, and refreshed verified SHA-256 hashes for current workspace manifests, CI workflow, and AGENTS.md. Reassessed manifest and CI evidence for the Rust quality rollout. The workspace inherits three Clippy checks and the existing matrix reports unsafe documentation in a separate advisory step. The toolchain, dependency graph, required checks, and role coverage still apply.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -142,7 +142,7 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "2cad75ff254d545fa9c507402c9fc11377e0bae2edf2f29b4eabd449e42c9d5a"
+      "sha256": "599b500b0d5fcfe480564cba6999bfad76caef658b36d9fb947680c042f3be78"
     },
     {
       "path": "AGENTS.md",
@@ -154,11 +154,11 @@
     },
     {
       "path": "Cargo.toml",
-      "sha256": "9546c6172da2f4c213fbe6ba7a318a3e4eb60c1727206f4c5d4402a616badcc6"
+      "sha256": "1e95b2714ab17dc2f44c44b08f7b0255d4ff9416d3dcc35b04e13598bfd7a2fd"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
-      "sha256": "95329229af0aa5b914386bb72b7f3a39ac4c521713b2ed81c9a2e961ccf1b0ab"
+      "sha256": "92d79b42defad40728fd2ac2454fdfd7da77bf4f41350d979fa555fb8883c70a"
     },
     {
       "path": "apps/agentic-org-ui/AGENTS.md",
@@ -174,39 +174,39 @@
     },
     {
       "path": "apps/agentic-org-web/Cargo.toml",
-      "sha256": "2ead6f474867288bd4d0fa70bd23142544ac8776e4925cd4e92cc9975970f4d2"
+      "sha256": "236807d184b990b343030baae00b616d6c8c758efd43abca158e386c61c4bb71"
     },
     {
       "path": "crates/org-client/Cargo.toml",
-      "sha256": "5ddc9717ca0440e21eaf85e68d8e1ab85e4658dc099b2bf27d30045c96e74949"
+      "sha256": "679acfca9dc521e43a6b95749cf6ebe72377211ac990b5daae9b6cf3c5dd68a8"
     },
     {
       "path": "crates/org-host-control/Cargo.toml",
-      "sha256": "37431b1daf626be9c1438a100fbfe49ec56b3eeb6aec40c978860a1a82b56fee"
+      "sha256": "c8388c6e87843f59c7948af07089143d71bb231b5bf3bcfcddc944ce85f8c779"
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "10307d5cd68ccd63c8a2bb900bdc60a2b148428e10f38db35ab2372a4e6371c9"
+      "sha256": "50d886f116c751d7f1a633708b80e816f6e1e5215bfea0c253c67001fb68ae7c"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",
-      "sha256": "cc38c67f9cd514683ee8d06e578822cdf1cee41e2c82ca137be34a6a65e66e5c"
+      "sha256": "d52183f688e4d3089cf558320d38372b4387c48be50bd8963863d1fbe7f12f94"
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "51d4803ae0fadde5806ca56194729c17c614feeaab2bca684113b1f920025d2c"
+      "sha256": "64898c6fe76be6a344ceb64d7f48506c21c5a3d8ad2c4892518fc5df12899dde"
     },
     {
       "path": "crates/org-pki/Cargo.toml",
-      "sha256": "f4fbb648725108b3dd384e5f555a516c9e1925ecbdce87d3e103643544942d70"
+      "sha256": "69ea93a6bab1057f954797f1c5497b995cd28b9a19663dc558a54969e6030757"
     },
     {
       "path": "crates/org-release/Cargo.toml",
-      "sha256": "266a2a3378a8d2b4b60f87f9ff5493cd62ffbb823de8afe7f136e4b3a8bb781a"
+      "sha256": "6837040ef9f4431459915781b513971b69f09d720935c6fefa1ed2b2fc70c484"
     },
     {
       "path": "crates/org-socket/Cargo.toml",
-      "sha256": "0635ffe4bc3e4fa4787249bb719ee437f7d7042d18e1e71cceb6c884e14a9297"
+      "sha256": "5a73be63d84d0f790cc7a42816fc421d61117651e96d540cb32f19f9eeb64f9a"
     },
     {
       "path": "rust-toolchain.toml",

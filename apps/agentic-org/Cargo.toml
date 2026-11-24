@@ -55,3 +55,6 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 syn = { version = "=2.0.119", features = ["full", "visit"] }
+
+[lints]
+workspace = true

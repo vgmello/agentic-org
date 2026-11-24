@@ -10,7 +10,7 @@ From the repository root:
 
 ```sh
 cargo fmt --check
-CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --all-targets -- -D warnings
+CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --all-targets --message-format=short -- -D warnings
 CARGO_BUILD_JOBS=2 cargo test --locked --workspace
 cargo deny --locked check
 gitleaks git --redact
@@ -67,6 +67,27 @@ report. The scoped minimatch override patches GHSA-g3hv-75wg-m249 without replac
 older minimatch 3 API used by other tools.
 
 ## Lint and formatting
+
+Clippy warns on `dbg!()`, `todo!()`, and `unimplemented!()` in the targets it
+checks, including test targets. The local and CI Clippy gates use `-D warnings`
+to make these findings errors. Use assertions in tests and explicit error paths
+for unsupported production behavior. New Rust workspace members must set
+`[lints]` with `workspace = true` in their manifests.
+
+The CI matrix reports missing unsafe documentation in a separate advisory Clippy
+step. Run the same check locally with the pinned toolchain.
+
+```sh
+CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --all-targets --message-format=short -- -W clippy::undocumented_unsafe_blocks
+```
+
+Review whether safe code can replace the unsafe operation. When unsafe is
+necessary, add a `// SAFETY:` comment explaining why the operation's
+preconditions hold. Use a narrowly scoped
+`#[expect(clippy::undocumented_unsafe_blocks, reason = "...")]` only when a
+reviewer agrees the diagnostic does not apply. The
+[unsafe documentation pilot inventory](docs/unsafe-documentation-pilot.md)
+records the starting findings for cleanup.
 
 ESLint runs the recommended JavaScript, TypeScript and Svelte rules. Its
 `eslint-suppressions.json` records existing per-file/rule debt. Additional findings

@@ -16,3 +16,6 @@ sha2.workspace = true
 [dev-dependencies]
 org-command = { path = "../org-command", features = ["testkit"] }
 tempfile.workspace = true
+
+[lints]
+workspace = true

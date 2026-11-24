@@ -76,6 +76,10 @@ jobs:
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo clippy --locked -p org-office --features testkit --example store_latency -- -D warnings
 
+      # Run separately so safety documentation warnings honor reasoned source exceptions.
+      - name: Clippy unsafe documentation (advisory)
+        run: cargo clippy --locked --workspace --all-targets --message-format=short -- -W clippy::undocumented_unsafe_blocks
+
       # agentic-org-web's dependency-closure test reads the locked graph for every platform with
       # `cargo metadata --offline`. A build downloads only this platform's packages, so the rest
       # are fetched here; without this step the test fails on a runner with a cold cache.

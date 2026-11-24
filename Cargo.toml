@@ -79,6 +79,11 @@ license = "MIT"
 publish = false
 repository = "https://github.com/vgmello/agentic-org"
 
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+
 [workspace.dependencies]
 argon2 = { version = "=0.5.3", default-features = false, features = ["password-hash", "alloc", "zeroize"] }
 # Pin exact versions here; crates opt in with `x.workspace = true`.

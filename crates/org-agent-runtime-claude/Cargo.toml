@@ -16,3 +16,6 @@ org-agent-runtime = { path = "../org-agent-runtime", features = ["testkit"] }
 org-platform = { path = "../org-platform" }
 org-supervise = { path = "../org-supervise" }
 tempfile.workspace = true
+
+[lints]
+workspace = true

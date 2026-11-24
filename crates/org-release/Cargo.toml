@@ -13,3 +13,6 @@ serde_json.workspace = true
 sha2.workspace = true
 caseless = "=0.2.2"
 unicode-normalization = "=0.1.26"
+
+[lints]
+workspace = true

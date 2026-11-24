@@ -27,3 +27,6 @@ zeroize = "=1.9.1"
 [dev-dependencies]
 org-office = { path = "../org-office", features = ["testkit"] }
 tempfile.workspace = true
+
+[lints]
+workspace = true
