@@ -6727,7 +6727,7 @@ function pageProject(id, tab) {
       ${linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab)}
       <div class="queue-controls" role="group" aria-label="Project controls">${workControls}${more}</div>
     </div>
-  </div>` + (tab === "overview" || tab === "activity" ? projectReleaseSummary(id) : "") + projectBody(id, tab);
+  </div>` + (tab === "overview" ? projectReleaseSummary(id) : "") + projectBody(id, tab);
 }
 function projectBody(id, tab) {
   const pr = P[id], ws = W.filter((w) => w.proj === id);
@@ -8126,6 +8126,7 @@ function pageActivity(projectId = null) {
         </div>
       </div>
     </header>
+    ${projectId ? projectReleaseSummary(projectId) : ""}
     <div class="activity-body"${S.actPanel ? " data-panel-open" : ""}>
       <div class="activity-main" id="activity-view" role="tabpanel" aria-labelledby="activity-tab-${view}" tabindex="0" data-view="${view}">
         ${isFeed ? activityFeedLayout(items, Boolean(projectId)) : assemblyLayout()}
