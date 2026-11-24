@@ -587,6 +587,11 @@
 			"why": "The top-bar New menu opens the existing creation flows (request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."
 		},
 		{
+			"from": "src/lib/platform/shell/ExecutiveCommandBar.svelte",
+			"to": "src/lib/modules/messaging/{index,legacy-api}.ts",
+			"why": "CmdK # channel jump lazily reads live Chat conversation records via messaging/legacy-api (mirroring NewMenu) and types from messaging/index without statically bundling chat mocks; the chat and shell-look specs cover it."
+		},
+		{
 			"from": "e2e/*.spec.ts",
 			"to": "src/routes/(onboarding)/*/+page.svelte",
 			"why": "Every spec creates its organization through /create or /welcome as set-up; the org-lifecycle category and the create/open journeys cover those pages."

@@ -387,6 +387,13 @@
 			if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
 			if (event.key === 'Escape' && hasDetail) {
 				if (event.target === searchInputEl) return;
+				if (
+					event.target instanceof HTMLSelectElement ||
+					(event.target instanceof Element &&
+						Boolean(event.target.closest('select, [role="listbox"], [role="combobox"]')))
+				) {
+					return;
+				}
 				if (document.querySelector(modalOverlaySelector)) return;
 				event.preventDefault();
 				closeDetail(true);
@@ -917,6 +924,7 @@
 							externalQuery={searchQuery}
 							onClearExternalQuery={() => (searchQuery = '')}
 							hideNewButton={true}
+							selectedId={requestOpen ? requestId : undefined}
 							onopen={openRequest}
 							onnew={() => (newRequestOpen = true)}
 						/>{/key}
@@ -1253,41 +1261,47 @@
 					onclose={() => closeDetail(true)}
 				>
 					{#if requestOpen}
-						<RequestSheet
-							bind:open={requestOpen}
-							inline={true}
-							{organizationId}
-							{requestId}
-							start={requestStart}
-							{snapshot}
-							{me}
-							items={items ?? []}
-							{send}
-							onchanged={(message) => (message && toast.success(message), void load())}
-						/>
+						{#key requestId}
+							<RequestSheet
+								bind:open={requestOpen}
+								inline={true}
+								{organizationId}
+								{requestId}
+								start={requestStart}
+								{snapshot}
+								{me}
+								items={items ?? []}
+								{send}
+								onchanged={(message) => (message && toast.success(message), void load())}
+							/>
+						{/key}
 					{:else if bugOpen}
-						<BugSheet
-							bind:open={bugOpen}
-							inline={true}
-							{organizationId}
-							{bugId}
-							{snapshot}
-							areas={areasOf(bugProject)}
-							bugs={bugsOf(bugProject)}
-							items={items ?? []}
-							{send}
-							onchanged={() => void load()}
-						/>
+						{#key bugId}
+							<BugSheet
+								bind:open={bugOpen}
+								inline={true}
+								{organizationId}
+								{bugId}
+								{snapshot}
+								areas={areasOf(bugProject)}
+								bugs={bugsOf(bugProject)}
+								items={items ?? []}
+								{send}
+								onchanged={() => void load()}
+							/>
+						{/key}
 					{:else if taskOpen}
-						<TaskSheet
-							bind:open={taskOpen}
-							inline={true}
-							{organizationId}
-							{taskId}
-							{snapshot}
-							{send}
-							onchanged={() => void load()}
-						/>
+						{#key taskId}
+							<TaskSheet
+								bind:open={taskOpen}
+								inline={true}
+								{organizationId}
+								{taskId}
+								{snapshot}
+								{send}
+								onchanged={() => void load()}
+							/>
+						{/key}
 					{/if}
 				</WorkReadingPanel>
 			{/if}
@@ -1682,7 +1696,7 @@
 			min-height: 0;
 		}
 		.work-workspace.has-work-detail :global(.work-reading) {
-			border-inline-start: 1px solid var(--exec-border);
+			border-inline-start: 1px solid var(--work-reading-border, var(--exec-border));
 			overflow-x: hidden;
 			min-height: 0;
 		}

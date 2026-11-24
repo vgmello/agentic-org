@@ -31,6 +31,7 @@
 		externalQuery = '',
 		onClearExternalQuery,
 		hideNewButton = false,
+		selectedId,
 		onopen,
 		onnew
 	}: {
@@ -47,6 +48,8 @@
 		onClearExternalQuery?: () => void;
 		/** Hide the inline New request button when the Work toolbar owns the primary CTA. */
 		hideNewButton?: boolean;
+		/** Currently open request id in Work's inline reading panel. */
+		selectedId?: string;
 		/** Open a request's page; `start` begins one of its steps at once (the Route button of a request not routed). */
 		onopen: (id: string, start?: 'route') => void;
 		onnew: () => void;
@@ -274,6 +277,7 @@
 								<span class="w-16 shrink-0 text-fg-muted">{requestRef(r)}</span>
 								<button
 									type="button"
+									aria-current={r.id === selectedId ? 'true' : undefined}
 									class="min-h-9 min-w-9 flex-1 text-left font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [overflow-wrap:break-word] [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11"
 									onclick={() => onopen(r.id)}>{r.title}</button
 								>

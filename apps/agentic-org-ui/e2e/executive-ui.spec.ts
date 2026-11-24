@@ -970,6 +970,7 @@ test('Phase 4B: Work inline split reading panel, focus restore, mobile Back to W
 	await expect(readingPanel).toContainText('Custody lock fix');
 	await expect(readingPanel).toContainText('Implementation and unit checks complete');
 	await expect(readingPanel).toHaveCSS('background-color', 'rgb(24, 25, 26)');
+	await expect(readingPanel).toHaveCSS('border-inline-start-color', 'rgb(38, 39, 40)');
 
 	// Verify side-by-side layout on desktop (list column to the left of reading panel)
 	const listBox = (await page.locator('#work-results').boundingBox())!;
@@ -983,7 +984,24 @@ test('Phase 4B: Work inline split reading panel, focus restore, mobile Back to W
 	await expect(copyRefBtn).toBeVisible();
 	expect((await copyRefBtn.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(36);
 
+	// Escape while native <select> has focus does NOT dismiss the reading panel
+	const statusSelect = readingPanel.locator('#task-status');
+	await statusSelect.focus();
+	await page.keyboard.press('Escape');
+	await expect(readingPanel).toBeVisible();
+
+	// Switching Task A -> Task B cleanly shows B's title & description with zero leaked A values
+	const secondTaskBtn = page.getByRole('button', { name: 'CSP gates in the UI suite' });
+	await secondTaskBtn.click();
+	await expect(readingPanel.locator('#work-detail-title')).toHaveText('CSP gates in the UI suite');
+	await expect(readingPanel.locator('#task-title')).toHaveValue('CSP gates in the UI suite');
+	await expect(readingPanel.locator('#task-description')).not.toHaveValue(/Custody lock fix/);
+	await custodyBtn.click();
+	await expect(readingPanel.locator('#work-detail-title')).toHaveText('Custody lock fix');
+	await expect(readingPanel.locator('#task-title')).toHaveValue('Custody lock fix');
+
 	// Escape closes inline reading panel and restores focus to triggering row button
+	await readingPanel.locator('#work-detail-title').focus();
 	await page.keyboard.press('Escape');
 	await expect(readingPanel).toBeHidden();
 	await expect(workspace).not.toHaveClass(/has-work-detail/);
@@ -1002,7 +1020,7 @@ test('Phase 4B: Work inline split reading panel, focus restore, mobile Back to W
 	await expect(page.locator('#work-results')).toBeVisible();
 	await expect(custodyBtn).toBeFocused();
 
-	// CmdK `#` channel jump mode surfaces Channels group cleanly and navigates to Chat channel
+	// CmdK `#` channel jump mode surfaces live Channels group cleanly and navigates to matching Chat conversation
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.keyboard.press('ControlOrMeta+k');
 	const cmdDialog = page.getByRole('dialog', { name: 'Command palette and Org AI' });
@@ -1014,6 +1032,7 @@ test('Phase 4B: Work inline split reading panel, focus restore, mobile Back to W
 	await page.keyboard.press('Enter');
 	await expect(cmdDialog).toBeHidden();
 	await expect(page).toHaveURL(/\/chat\?c=c-general$/);
+	await expect(page.getByTestId('conversation-title')).toHaveText('#general');
 
 	// Single-key `#` shortcut on /chat opens CmdK directly in `#` channel jump mode
 	await page.locator('main').click({ position: { x: 12, y: 12 } });
@@ -1024,10 +1043,12 @@ test('Phase 4B: Work inline split reading panel, focus restore, mobile Back to W
 	await page.keyboard.press('Escape');
 	await expect(cmdDialog).toBeHidden();
 
-	// Report Day & Night masthead simplification: no obsolete EXECUTIVE OPERATIONS BRIEFING ::before banner
-	await visit(page, '/home?theme=report&mock=poc');
-	const reportBefore = await page
-		.locator('.home-brief')
-		.evaluate((el) => getComputedStyle(el, '::before').content);
-	expect(reportBefore === 'none' || reportBefore === 'normal').toBe(true);
+	// Report Day & Report Night masthead simplification: no obsolete EXECUTIVE OPERATIONS BRIEFING ::before banner
+	for (const theme of ['report', 'report-dark'] as const) {
+		await visit(page, `/home?theme=${theme}&mock=poc`);
+		const mastheadBefore = await page
+			.locator('.home-brief')
+			.evaluate((el) => getComputedStyle(el, '::before').content);
+		expect(mastheadBefore === 'none' || mastheadBefore === 'normal').toBe(true);
+	}
 });

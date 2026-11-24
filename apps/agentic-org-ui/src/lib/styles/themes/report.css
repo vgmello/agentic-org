@@ -362,6 +362,7 @@ html[data-ui-theme^='report'] {
 	--exec-hor-date-bg: var(--exec-ink);
 	--exec-hor-date-month-ink: var(--exec-surface);
 	--exec-hor-date-day-ink: var(--exec-surface);
+	--work-reading-border: var(--report-rule);
 }
 
 html[data-ui-theme='report'] {

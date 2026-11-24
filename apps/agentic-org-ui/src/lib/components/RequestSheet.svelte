@@ -133,26 +133,34 @@
 	});
 
 	async function act(draft: WorkDraft | WorkDraft[], message?: string): Promise<boolean> {
-		if (busy) return false;
+		if (busy || !requestId) return false;
+		const forOrg = organizationId;
+		const forRequest = requestId;
 		busy = true;
 		error = undefined;
 		const mine = sheet;
 		try {
 			for (const one of Array.isArray(draft) ? draft : [draft]) await send(one);
+			if (destroyed || mine !== sheet || forOrg !== organizationId || forRequest !== requestId)
+				return false;
 			// The sheet may have been closed and opened again, even for the same request, while this was sent: what it shows
 			// is read again either way (a load for another request is dropped), but busy and errors are only this sheet's.
 			await load();
+			if (destroyed || mine !== sheet || forOrg !== organizationId || forRequest !== requestId)
+				return false;
 			onchanged(message);
-			return mine === sheet;
+			return true;
 		} catch (e) {
 			const err = toAppError(e);
 			// A failure of a call made for a request the sheet has left says nothing about the one it shows now.
-			if (mine !== sheet) return false;
+			if (destroyed || mine !== sheet || forOrg !== organizationId || forRequest !== requestId)
+				return false;
 			error = err.message;
 			if (err.source === 'api' && err.code === 'conflict') await load();
 			return false;
 		} finally {
-			if (mine === sheet) busy = false;
+			if (!destroyed && mine === sheet && forOrg === organizationId && forRequest === requestId)
+				busy = false;
 		}
 	}
 
@@ -195,7 +203,7 @@
 		item?.merged_into ? items.find((i) => i.id === item?.merged_into) : undefined
 	);
 	const field =
-		'w-full rounded-md bg-surface-raised px-2.5 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus';
+		'w-full rounded-md bg-surface-raised px-2.5 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-field-border focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus';
 
 	function pillToneClass(tone: WorkTone): string {
 		if (tone === 'ok') return 't-green';

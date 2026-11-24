@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import { afterNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -14,9 +14,11 @@
 	import { cn } from '$lib/utils';
 	import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/modules/inbox/types';
+	import type { Conversation } from '$lib/modules/messaging';
 	import { answerExecutiveQuestion, type OrgAiAnswer } from '$lib/home/model';
 	import { nonOwners } from '$lib/org/model';
 	import type { ShellAiAskOptions } from './shell-ai';
+	import { useShellData } from './shell-data.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from './shortcuts';
 	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
 
@@ -49,17 +51,76 @@
 	const kbdClass =
 		'inline-flex h-[22px] items-center justify-center rounded-md bg-[var(--exec-well)] px-[7px] text-[0.7rem] font-semibold text-[var(--exec-muted)] shadow-[inset_0_0_0_1px_var(--exec-border)]';
 
+	const shellData = useShellData();
+	const organizationId = $derived(shellData.organizationId);
 	const isHome = $derived(page.url.pathname === '/home');
 	const isChat = $derived(page.url.pathname === '/chat' || page.url.pathname.startsWith('/chat/'));
 
+	let chatConversations = $state.raw<Conversation[] | undefined>(undefined);
+	let chatConversationsOrgId = $state<string | undefined>(undefined);
+	let chatLoadSeq = 0;
+	let destroyed = false;
+
+	onDestroy(() => {
+		destroyed = true;
+	});
+
+	async function loadChatConversations(targetOrgId = organizationId) {
+		if (!targetOrgId) return;
+		const seq = ++chatLoadSeq;
+		try {
+			const { chatApi } = await import('$lib/modules/messaging/legacy-api');
+			const snap = await chatApi.snapshot(targetOrgId);
+			if (destroyed || seq !== chatLoadSeq || targetOrgId !== organizationId) return;
+			chatConversations = snap.state.conversations;
+			chatConversationsOrgId = targetOrgId;
+		} catch {
+			// Unserved or offline chat falls back to snapshot-derived channel suggestions.
+		}
+	}
+
+	/** Matches messaging/engine.ts `slug()` (NFKD + diacritic stripping) for fallback before conversations load. */
 	function channelSlug(value: string): string {
 		return value
+			.normalize('NFKD')
+			.replace(/[\u0300-\u036f]/g, '')
 			.toLowerCase()
 			.replace(/[^a-z0-9]+/g, '-')
 			.replace(/^-+|-+$/g, '');
 	}
 
+	function channelSubtitle(c: Conversation): string {
+		if (c.auto?.type === 'general') return 'Organization channel';
+		if (c.auto?.type === 'project') {
+			const projectId = c.auto.project_id;
+			const name = (snapshot?.projects ?? []).find((p) => p.id === projectId)?.name;
+			return name ? `Project channel · ${name}` : 'Project channel';
+		}
+		if (c.auto?.type === 'team') {
+			const teamId = c.auto.team_id;
+			const name = (snapshot?.teams ?? []).find((t) => t.id === teamId)?.name;
+			return name ? `Team channel · ${name}` : 'Team channel';
+		}
+		return 'Channel';
+	}
+
 	const channelEntries = $derived.by<CommandEntry[]>(() => {
+		if (chatConversations && chatConversationsOrgId === organizationId) {
+			return chatConversations
+				.filter((c) => c.kind === 'channel' && !c.archived && Boolean(c.name))
+				.map((c) => {
+					const name = c.name!;
+					const sub = channelSubtitle(c);
+					return {
+						id: `chan-${c.id}`,
+						group: 'Channels',
+						label: `#${name}`,
+						sub,
+						keywords: `${c.id} ${name} ${sub}`,
+						href: `/chat?c=${encodeURIComponent(c.id)}`
+					};
+				});
+		}
 		const channels: CommandEntry[] = [
 			{
 				id: 'chan-c-general',
@@ -334,6 +395,7 @@
 		mode = 'cmd';
 		inlineOpen = true;
 		activeIdx = 0;
+		void loadChatConversations(organizationId);
 		void tick().then(() => homeInputEl?.focus());
 	}
 
@@ -343,6 +405,7 @@
 		mode = nextMode;
 		open = true;
 		activeIdx = 0;
+		if (nextMode === 'cmd') void loadChatConversations(organizationId);
 	}
 
 	function openModalWithQuery(nextMode: 'cmd' | 'ai', nextQuery: string) {
@@ -352,6 +415,7 @@
 		mode = nextMode;
 		open = true;
 		activeIdx = 0;
+		if (nextMode === 'cmd') void loadChatConversations(organizationId);
 		void tick().then(() => {
 			if (!inputEl) return;
 			inputEl.focus();
@@ -444,19 +508,17 @@
 			}
 			return;
 		}
+		const overlaySelector =
+			'[role="menu"], [role="dialog"]:not(.work-reading), [role="alertdialog"], [role="listbox"], aside[aria-label="Thread"], aside[aria-label="Members"], [data-chat-panel], [data-slot="sheet-content"]';
 		const overlayOpen =
-			Boolean(
-				document.querySelector(
-					'[role="menu"], [role="dialog"]:not(.work-reading), [role="alertdialog"], [role="listbox"]'
-				)
-			) ||
+			Boolean(document.querySelector(overlaySelector)) ||
 			(event.target instanceof HTMLElement &&
 				Boolean(
 					event.target.closest(
-						'[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"]'
+						'[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"], aside[aria-label], [data-chat-panel], [data-slot="sheet-content"]'
 					)
 				));
-		const altGr = event.ctrlKey && event.altKey && !event.metaKey;
+		const altGr = Boolean(event.getModifierState?.('AltGraph'));
 		if (
 			!open &&
 			isChat &&
@@ -585,10 +647,14 @@
 					onfocus={() => {
 						inlineOpen = true;
 						activeIdx = 0;
+						void loadChatConversations(organizationId);
 					}}
 					oninput={() => {
 						inlineOpen = true;
 						activeIdx = 0;
+						if (isChannelQuery && chatConversationsOrgId !== organizationId) {
+							void loadChatConversations(organizationId);
+						}
 					}}
 					onkeydown={handleInputKeydown}
 					class="exec-cmdk-home-input min-w-0 flex-1 bg-transparent text-sm text-[var(--exec-ink)] outline-none"
@@ -792,7 +858,12 @@
 			<input
 				bind:this={inputEl}
 				bind:value={query}
-				oninput={() => (activeIdx = 0)}
+				oninput={() => {
+					activeIdx = 0;
+					if (isChannelQuery && chatConversationsOrgId !== organizationId) {
+						void loadChatConversations(organizationId);
+					}
+				}}
 				onkeydown={handleInputKeydown}
 				type={mode === 'cmd' ? 'text' : 'search'}
 				role={mode === 'cmd' ? 'combobox' : undefined}

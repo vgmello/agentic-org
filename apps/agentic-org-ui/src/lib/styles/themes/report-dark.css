@@ -98,6 +98,7 @@ html[data-ui-theme='report-dark'] {
 	--popover-foreground: #ffffff;
 	--primary-foreground: #ffffff;
 	--border: rgba(255, 255, 255, 0.1);
+	--input: #7e889b;
 
 	/* Report Night surfaces (exact Classic palette) */
 	--exec-bg: #1e2939;

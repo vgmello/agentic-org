@@ -69,7 +69,8 @@
 	}
 </script>
 
-<div
+<!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+<aside
 	bind:this={panelEl}
 	class="work-reading"
 	role="dialog"
@@ -140,7 +141,7 @@
 			{@render children()}
 		</div>
 	</article>
-</div>
+</aside>
 
 <style>
 	.work-reading {
@@ -248,6 +249,19 @@
 	.work-detail-body {
 		min-width: 0;
 		max-width: 100%;
+	}
+	/* WCAG 1.4.11 >= 3:1 non-text boundaries for inline editor inputs, selects, and textareas */
+	.work-reading :global(input:not([type='checkbox']):not([type='radio'])),
+	.work-reading :global(select),
+	.work-reading :global(textarea) {
+		border-color: var(--field-border);
+		outline-color: var(--field-border);
+	}
+	.work-reading :global(input:not([type='checkbox']):not([type='radio']):focus-visible),
+	.work-reading :global(select:focus-visible),
+	.work-reading :global(textarea:focus-visible) {
+		border-color: var(--focus);
+		outline-color: var(--focus);
 	}
 	.work-reading-status {
 		position: relative;

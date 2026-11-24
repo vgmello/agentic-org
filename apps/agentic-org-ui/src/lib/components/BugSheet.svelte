@@ -112,22 +112,27 @@
 	});
 
 	async function act(draft: WorkDraft, message?: string): Promise<boolean> {
-		if (busy) return false;
+		if (busy || !bugId) return false;
+		const forOrg = organizationId;
+		const forBug = bugId;
 		busy = true;
 		error = undefined;
 		try {
 			await send(draft);
+			if (destroyed || forOrg !== organizationId || forBug !== bugId) return false;
 			await load();
+			if (destroyed || forOrg !== organizationId || forBug !== bugId) return false;
 			onchanged(message);
 			return true;
 		} catch (e) {
+			if (destroyed || forOrg !== organizationId || forBug !== bugId) return false;
 			const err = toAppError(e);
 			error = err.message;
 			if (err.source === 'api' && err.code === 'checklist_incomplete') askAnyway = true;
 			if (err.source === 'api' && err.code === 'conflict') await load();
 			return false;
 		} finally {
-			busy = false;
+			if (!destroyed && forOrg === organizationId && forBug === bugId) busy = false;
 		}
 	}
 
@@ -174,7 +179,7 @@
 	// TRI-1: who looks at it first (no area leads yet: the project's owner of record, the owner).
 	const triager = $derived(nameOf(snapshot, snapshot.members.find((m) => m.owner)?.id));
 	const field =
-		'w-full rounded-md bg-surface-raised px-2.5 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus';
+		'w-full rounded-md bg-surface-raised px-2.5 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-field-border focus-visible:outline-2 focus-visible:outline-focus';
 	const actionBtn = 'h-auto min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11';
 	const close = () => ((step = undefined), (note = ''), (anyway = ''), (askAnyway = false));
 

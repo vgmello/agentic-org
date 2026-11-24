@@ -144,23 +144,28 @@
 
 	/** Send one change; on success reload the task and the board, on a stale one say so and reload. */
 	async function change(draft: WorkDraft, announce?: string) {
-		if (busy) return false;
+		if (busy || !taskId) return false;
+		const forOrg = organizationId;
+		const forTask = taskId;
 		busy = true;
 		error = undefined;
 		try {
 			await send(draft);
+			if (destroyed || forOrg !== organizationId || forTask !== taskId) return false;
 			// What was typed in the other fields stays: only a stale change (below) takes the latest.
 			await load(false);
+			if (destroyed || forOrg !== organizationId || forTask !== taskId) return false;
 			onchanged(announce);
 			return true;
 		} catch (e) {
+			if (destroyed || forOrg !== organizationId || forTask !== taskId) return false;
 			const err = toAppError(e);
 			error = err.message;
 			if (err.source === 'api' && err.code === 'conflict') await load(true);
 			if (err.source === 'api' && err.code === 'checklist_incomplete') pending = 'done_anyway';
 			return false;
 		} finally {
-			busy = false;
+			if (!destroyed && forOrg === organizationId && forTask === taskId) busy = false;
 		}
 	}
 
@@ -235,7 +240,9 @@
 	}
 	/** Save a text field when it is left, if it changed, and say so (one save model: no Save buttons). */
 	async function saveField(what: 'Title' | 'Description' | 'Definition of done') {
-		if (!s || !item || busy) return;
+		if (!s || !item || busy || !taskId) return;
+		const forOrg = organizationId;
+		const forTask = taskId;
 		const base = { item_id: s.id, expected_version: version } as const;
 		let draft: WorkDraft | undefined;
 		if (what === 'Title' && title.trim() !== s.title)
@@ -258,7 +265,9 @@
 			};
 		if (!draft) return;
 		saved = '';
-		if (await change(draft)) saved = `${what} saved.`;
+		if (await change(draft)) {
+			if (!destroyed && forOrg === organizationId && forTask === taskId) saved = `${what} saved.`;
+		}
 	}
 	function requestAssign(id: string) {
 		if (!s) return;
@@ -289,7 +298,7 @@
 		if (select && s) select.value = s.assignee_id ?? '';
 	}
 	const field =
-		'w-full rounded-md bg-surface-raised px-2.5 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus';
+		'w-full rounded-md bg-surface-raised px-2.5 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-field-border focus-visible:outline-2 focus-visible:outline-focus';
 	const actionBtn = 'h-auto min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11';
 
 	function pillToneClass(tone: WorkTone): string {

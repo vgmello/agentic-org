@@ -335,6 +335,7 @@ html[data-ui-theme='graphite'] main:has(.triage-workspace, .work-header) {
 
 html[data-ui-theme='graphite']:has(.triage-workspace, .work-header) {
 	--graphite-inbox-line: #262728;
+	--work-reading-border: #262728;
 	--triage-row-hover: #202226;
 	--triage-row-selected: #2a2d32;
 	--work-row-hover: #202226;
