@@ -184,7 +184,6 @@
     overflow-wrap: anywhere;
   }
   & > .ph-t { align-items: center; }
-  & .ph-prog .prog-line { min-width: min(200px, 100%); }
 
   & > .back {
     grid-column: 1;
