@@ -693,6 +693,13 @@ html[data-theme^="report"] .triage-queue {
 }
 .work-detail-attention { color: var(--tone-warn-ink); }
 .work-reading { overflow: visible; }
+@media (prefers-reduced-motion: no-preference) {
+  .work-reading.is-opening { animation: work-reveal 280ms cubic-bezier(.25, .7, .25, 1); }
+  @keyframes work-reveal {
+    from { clip-path: inset(0 100% 0 0); }
+    to { clip-path: inset(0); }
+  }
+}
 .work-reading .triage-document {
   max-width: none;
   margin-inline: 0;
