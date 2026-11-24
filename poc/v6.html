@@ -750,7 +750,7 @@ html[data-hide-work-subtasks] .work-subtasks { display: none; }
 .work-ident { min-width: 4.65rem; }
 .work-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 8px; min-width: 0; }
 .work-ref { min-width: 3.65rem; color: var(--gray-400); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.work-title { font-weight: 600; overflow-wrap: anywhere; }
+.work-title { color: var(--white); font-size: .9375rem; font-weight: 550; overflow-wrap: anywhere; }
 .work-eta {
   display: inline-block; max-width: calc(100% - 8px); margin-inline-start: 8px; color: var(--gray-400);
   font-size: .75rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
@@ -8645,6 +8645,8 @@ function placeSearchToolbar(main, page) {
   const heading = page === "home" ? null : main.querySelector("h1")?.closest(".ph, .prof, .chhead");
   const search = own(PAGE_SEARCH, page) ? PAGE_SEARCH[page] : null;
   if (heading) {
+    const backLink = main.firstElementChild;
+    if (backLink?.matches("a.back")) heading.prepend(backLink);
     heading.classList.add("has-page-toolbar");
     heading.prepend(drawerButton);
     heading.append(pageSearchTools);
