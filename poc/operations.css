@@ -853,8 +853,35 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 .activity-scope, .activity-scope select { max-width: 100%; }
 .activity-scope select { min-height: var(--control-height); }
 .activity-switch { min-height: var(--control-height); }
+.assembly-playback,
+.assembly-controls,
+.assembly-clock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.assembly-playback {
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 8px var(--gutter);
+  border-block-end: 1px solid var(--line);
+}
+.assembly-clock { gap: 6px 16px; color: var(--gray-300); font-size: .8125rem; }
+.assembly-clock strong { color: var(--white); font-variant-numeric: tabular-nums; }
+.assembly-play-state { display: inline-flex; align-items: center; gap: 7px; }
+.assembly-play-state::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gray-400);
+}
+.assembly-play-state[data-playing="true"]::before { background: var(--tone-ok-ink); }
+.assembly-controls :is(.btn, .seg) { min-height: var(--control-height); }
+.assembly-controls .seg button { min-height: calc(var(--control-height) - 8px); }
 @media (max-width: 720px), (pointer: coarse) {
-  .activity-switch button { min-height: var(--control-height); }
+  :is(.activity-switch, .assembly-controls .seg) button { min-height: var(--control-height); }
 }
 .activity-layout {
   display: grid;
@@ -900,6 +927,7 @@ html[data-theme="graphite"]:has(.triage-workspace) {
   width: 100%;
   min-width: 760px;
   border-collapse: collapse;
+  table-layout: fixed;
   text-align: start;
   font-size: .8125rem;
   line-height: 1.45;
@@ -908,6 +936,8 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 .assembly-table tr > :is(th, td) + :is(th, td) { border-inline-start: 1px solid var(--line); }
 .assembly-table th:first-child { min-width: 136px; padding-inline-start: 14px; }
 .assembly-table th:last-child { min-width: 104px; }
+.assembly-table thead th:first-child { width: 22%; }
+.assembly-table thead th:last-child { width: 13%; }
 .assembly-table thead th { background: var(--hover); }
 .assembly-table tbody tr:not(.assembly-milestone):hover { background: var(--hover); }
 .assembly-table small { display: block; color: var(--gray-400); font-size: .75rem; font-weight: 400; }
@@ -945,12 +975,14 @@ html[data-theme="graphite"]:has(.triage-workspace) {
   gap: 4px;
   padding: 3px 6px;
   min-height: 26px;
+  max-width: 100%;
   border: 1px solid var(--line2);
   border-radius: 6px;
   background: var(--stage-soft);
   color: var(--stage-color);
   font-family: var(--cozy-mono, ui-monospace, monospace);
   font-size: .75rem;
+  overflow-wrap: anywhere;
 }
 .assembly-chip:hover { border-color: var(--stage-color); }
 .assembly-dash { color: var(--gray-400); }
@@ -971,6 +1003,26 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 .activity-throughput i { width: 100%; max-width: 32px; border-radius: 3px 3px 0 0; background: var(--tone-accent); }
 .activity-agents li { align-items: center; }
 .activity-agents li > div { display: flex; align-items: center; gap: 6px; }
+.assembly-event-log {
+  max-height: 16rem;
+  overflow-y: auto;
+  padding-inline-end: 4px;
+  scrollbar-gutter: stable;
+}
+.activity-rail .assembly-event-log li { position: relative; padding-block: 5px; padding-inline-start: 11px; }
+.assembly-event-log li::before {
+  content: "";
+  position: absolute;
+  inset: 10px auto auto 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--gray-400);
+}
+.assembly-event-log li[data-stage="merged"]::before { background: var(--tone-ok-ink); }
+.assembly-event-log li[data-stage="review"]::before { background: var(--tone-warn-ink); }
+.assembly-event-log li > span { text-align: start; }
+.assembly-event-log time { color: var(--gray-400); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .activity-day h2 {
   padding: 12px var(--gutter) 0;
   color: var(--gray-400);
@@ -1006,6 +1058,7 @@ html[data-theme="graphite"]:has(.triage-workspace) {
   .activity-layout:has(.activity-feed) .activity-rail { margin: 0 var(--gutter); }
   .activity-rail { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
   .activity-rail section + section { border: 0; }
+  .assembly-events { grid-column: 1 / -1; order: 1; }
 }
 @media (max-width: 620px) {
   .assembly-summary, .assembly-legend { padding: 10px; }

@@ -7068,6 +7068,18 @@ const DELIVERY_HISTORY = {
   "agency-v1": [2, 4, 3, 2], "office-federation": [0, 2, 2, 1], "look-feel": [1, 2, 1, 1]
 };
 const RELEASE_GATES = { in1: "Release sign-off", in5: "Security review", in2: "File access ruling", in17: "Design sign-off" };
+const ASSEMBLY_SPEEDS = [1, 3, 8];
+const ASSEMBLY_MOVES = {
+  queue: ["agents", "started agent work"],
+  agents: ["ci", "entered CI"],
+  ci: ["review", "passed CI and entered review"],
+  review: ["merged", "passed review and merged"],
+};
+const assemblySimulation = {
+  hours: 0, speed: 1, playing: true, timer: null, progress: new Map(), samples: [], events: [],
+};
+const assemblyHours = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+const formatAssemblyHours = (hours) => assemblyHours.format(hours) + " h";
 
 function assemblyReview(work) {
   return IN.find((item) => !item.handled && item.task === work.id && item.proj === work.proj
@@ -7079,11 +7091,71 @@ function assemblyStage(work, review) {
   if (work.status === "In progress" && work.pipeline === "ci") return "ci";
   return work.who && work.status === "In progress" ? "agents" : "queue";
 }
-function assemblyProjects() {
+function assemblySource(work) {
+  const signOff = IN.find((item) => item.task === work.id && item.proj === work.proj && item.sub === "Release sign-off");
+  if (signOff?.handled) {
+    return signOff.outcome === "Approved" ? { stage: "merged" } : { stage: "review", review: signOff };
+  }
+  const review = assemblyReview(work);
+  return { stage: assemblyStage(work, review), review };
+}
+function assemblyWork(simulated) {
+  const work = W.filter((item) => item.kind !== "request" && !P[item.proj].archived);
+  return simulated ? [...work, ...assemblySimulation.samples] : work;
+}
+
+function assemblyCanAdvance(work, review, stage) {
+  return stage !== "merged" && !review && work.status !== "Blocked";
+}
+
+function assemblyStageDuration(work, stage) {
+  if (stage === "queue") return 1 + (hash(work.id) % 8) / 4;
+  if (stage === "agents") return Math.max(1, work.etaHours ?? 3);
+  return stage === "ci" ? 1 : 0.75;
+}
+
+function advanceAssemblySimulation() {
+  const sim = assemblySimulation;
+  const previous = sim.hours;
+  sim.hours += sim.speed / 4;
+  const events = [];
+  let active = false;
+  for (const work of assemblyWork(true)) {
+    const { stage: initial, review } = assemblySource(work);
+    if (!assemblyCanAdvance(work, review, initial)) {
+      sim.progress.delete(work.id);
+      continue;
+    }
+    let progress = sim.progress.get(work.id);
+    if (!progress || progress.initial !== initial) {
+      progress = { initial, stage: initial, due: previous + assemblyStageDuration(work, initial) };
+      sim.progress.set(work.id, progress);
+    }
+    while (progress.stage !== "merged" && progress.due <= sim.hours) {
+      const [stage, action] = ASSEMBLY_MOVES[progress.stage];
+      events.push({ hour: progress.due, work, stage, action });
+      progress.stage = stage;
+      progress.due += assemblyStageDuration(work, stage);
+    }
+    active ||= progress.stage !== "merged";
+  }
+  if (events.length) {
+    events.sort((a, b) => b.hour - a.hour);
+    sim.events = [...events, ...sim.events];
+    refreshAssemblySimulation();
+  }
+  if (!active) sim.playing = false;
+  updateAssemblyPlayback();
+}
+
+function assemblyProjects(simulated) {
+  const workItems = assemblyWork(simulated);
   return Object.entries(P).filter(([id, project]) => !project.archived && (S.actProject === "all" || S.actProject === id)).map(([id, project]) => {
-    const entries = W.filter((work) => work.proj === id && work.kind !== "request").map((work) => {
-      const review = assemblyReview(work);
-      return { work, review, stage: assemblyStage(work, review) };
+    const entries = workItems.filter((work) => work.proj === id).map((work) => {
+      const { stage: initial, review } = assemblySource(work);
+      const progress = simulated ? assemblySimulation.progress.get(work.id) : null;
+      const stage = progress?.initial === initial && assemblyCanAdvance(work, review, initial) ? progress.stage : initial;
+      return { work, review, stage };
     });
     const groups = ASSEMBLY_FEATURES[id] || [];
     const used = new Set(groups.flatMap(([, ids]) => ids));
@@ -7094,6 +7166,13 @@ function assemblyProjects() {
     return { id, project, entries, features };
   });
 }
+function assemblySnapshot(simulated) {
+  const projects = assemblyProjects(simulated);
+  const entries = projects.flatMap((project) => project.entries);
+  const counts = Object.fromEntries(ACTIVITY_STAGES.map(([stage]) =>
+    [stage, entries.filter((entry) => entry.stage === stage).length]));
+  return { projects, entries, counts };
+}
 const assemblyMerged = (entries) => entries.filter((entry) => entry.stage === "merged").length;
 const assemblyPct = (entries) => entries.length ? Math.round(100 * assemblyMerged(entries) / entries.length) : 0;
 function assemblyProgress(entries, label) {
@@ -7103,9 +7182,11 @@ function assemblyProgress(entries, label) {
 function assemblyChip(entry) {
   const { work, review, stage } = entry;
   const label = stage === "agents" && work.who ? work.id + " · " + M[work.who].name : work.id;
-  const title = esc(work.id + " · " + work.title);
-  if (stage === "review" && review) return `<button class="assembly-chip" data-stage="${stage}" type="button" data-act="activity-review" data-id="${review.id}" title="${title}" aria-label="Review ${esc(work.id)}">${ic("flag", "ic14")}${esc(label)}</button>`;
-  return `<a class="assembly-chip" data-stage="${stage}" href="#/projects/${work.proj}/work" title="${title}">${esc(label)}</a>`;
+  const title = esc(work.id + " · " + work.title + (review?.handled ? " · " + review.outcome : ""));
+  const chip = `class="assembly-chip" data-stage="${stage}" data-assembly-work="${esc(work.id)}" title="${title}"`;
+  if (stage === "review" && review && !review.handled) return `<button ${chip} type="button" data-act="activity-review" data-id="${review.id}" aria-label="Review ${esc(work.id)}">${ic("flag", "ic14")}${esc(label)}</button>`;
+  if (work.sample) return `<span ${chip}>${esc(label)}</span>`;
+  return `<a ${chip} href="#/projects/${work.proj}/work">${esc(label)}</a>`;
 }
 function assemblyMatrix(projects, entries, counts) {
   const project = projects.length === 1 ? projects[0].project : null;
@@ -7116,7 +7197,7 @@ function assemblyMatrix(projects, entries, counts) {
       <div><p class="assembly-eyebrow">${project ? esc(project.release) : "All projects"}</p><h2>${project ? esc(project.name) : "Portfolio Assembly"}</h2></div>
       <dl class="assembly-metrics"><div><dt>Readiness</dt><dd>${assemblyPct(entries)}%</dd></div>
       <div><dt>Merged</dt><dd>${counts.merged} / ${entries.length}</dd></div>
-      <div><dt>Agents busy</dt><dd>${new Set(entries.filter((entry) => entry.stage === "agents").map(({ work }) => work.who)).size}</dd></div>
+      <div><dt>Agents busy</dt><dd>${new Set(entries.filter(({ stage, work }) => stage === "agents" && M[work.who]?.kind === "agent").map(({ work }) => work.who)).size}</dd></div>
       <div><dt>Needs review</dt><dd class="assembly-review-text">${counts.review}</dd></div></dl>
     </div>
     <div class="assembly-table-wrap" tabindex="0" role="region" aria-label="Delivery stages, scroll horizontally on smaller screens">
@@ -7143,14 +7224,36 @@ function activityThroughput(projects) {
   return `<section><h2>Throughput</h2><p class="activity-rail-note">Tasks merged over the last four days</p><ul class="activity-throughput">${totals.map((count, index) => `
     <li><span>${count}</span><i style="height:${Math.max(2, count * 36 / peak)}px" aria-hidden="true"></i><span class="sr-only">${days[index]}</span></li>`).join("")}</ul></section>`;
 }
-function activityRail(projects, entries, counts) {
+function assemblyLineEvents() {
+  return assemblySimulation.events.filter(({ work }) => S.actProject === "all" || work.proj === S.actProject);
+}
+
+function assemblyThroughput() {
+  const merged = assemblyLineEvents().filter(({ stage }) => stage === "merged").length;
+  const rate = assemblySimulation.hours ? merged / assemblySimulation.hours : 0;
+  return { merged, rate: assemblyHours.format(rate) };
+}
+
+function assemblyEventLog() {
+  const events = assemblyLineEvents().slice(0, 30);
+  return `<section class="assembly-events" aria-labelledby="assembly-events-title">
+    <h2 id="assembly-events-title">Line events</h2>
+    ${events.length ? `<ol class="assembly-event-log" tabindex="0" aria-labelledby="assembly-events-title">${events.map(({ hour, work, stage, action }) => `
+      <li data-stage="${stage}"><span><strong>${esc(work.id)}</strong> ${action}</span><time datetime="PT${hour}H">${formatAssemblyHours(hour)}</time></li>`).join("")}</ol>`
+      : '<p class="activity-rail-note">Events appear as tasks move through the line.</p>'}
+  </section>`;
+}
+
+function activityRail(projects, entries, counts, simulated = false) {
   const gates = IN.filter((item) => own(RELEASE_GATES, item.id) && projects.some(({ id }) => id === item.proj));
   const agents = [...new Set(entries.filter((entry) => ["agents", "ci", "review"].includes(entry.stage) && entry.work.who)
     .map((entry) => entry.work.who))].filter((id) => M[id].kind === "agent");
+  const throughput = simulated ? assemblyThroughput() : null;
   return `<aside class="activity-rail" aria-label="Release operations">
     <section><h2>Release gates</h2><ul>${gates.map((item) => `<li><a href="#/inbox/${item.id}">${esc(RELEASE_GATES[item.id])}</a><span class="${item.handled ? "muted" : "assembly-review-text"}">${item.handled ? esc(item.outcome) : "Pending"}</span></li>`).join("") || "<li>No gates in this scope</li>"}</ul></section>
+    ${simulated ? assemblyEventLog() : ""}
     <section><h2>Stations</h2><dl>${ACTIVITY_STAGES.map(([stage, label]) => `<div><dt>${label}</dt><dd>${counts[stage]}</dd></div>`).join("")}</dl></section>
-    ${activityThroughput(projects)}
+    ${throughput ? `<section><h2>Simulation throughput</h2><dl><div><dt>Merged this run</dt><dd>${throughput.merged}</dd></div><div><dt>Tasks per hour</dt><dd id="assembly-rate">${throughput.rate}</dd></div></dl></section>` : activityThroughput(projects)}
     <section><h2>Active agents</h2><ul class="activity-agents">${agents.map((agent) => {
       const entry = entries.find(({ work, stage }) => work.who === agent && ["agents", "ci", "review"].includes(stage));
       return `<li><div>${av(agent, 24)}${mlink(agent)}</div><span class="muted">${entry.work.id} · ${ACTIVITY_STAGES.find(([stage]) => stage === entry.stage)[1]}</span></li>`;
@@ -7188,10 +7291,95 @@ function activityTimeline(items, options = {}) {
   </section>`).join("");
 }
 
+function assemblyPlayLabel() {
+  return assemblySimulation.playing ? ic("pause", "ic16") + "Pause" : ic("play", "ic16") + "Play";
+}
+
+function assemblyPlayback() {
+  const { playing, hours, speed } = assemblySimulation;
+  return `<div class="assembly-playback" id="assembly-playback" role="group" aria-label="Assembly simulation">
+    <div class="assembly-clock">
+      <span class="assembly-play-state" id="assembly-play-state" data-playing="${playing}" role="status">Simulation · ${playing ? "Running" : "Paused"}</span>
+      <span>Elapsed <strong id="assembly-clock">${formatAssemblyHours(hours)}</strong></span>
+    </div>
+    <div class="assembly-controls">
+      <button class="btn outline" id="assembly-play" type="button" data-act="assembly-play">${assemblyPlayLabel()}</button>
+      <div class="seg" role="group" aria-label="Simulation speed">${ASSEMBLY_SPEEDS.map((rate) => `<button type="button" data-act="assembly-speed" data-v="${rate}" aria-pressed="${rate === speed}">${rate}×</button>`).join("")}</div>
+      <button class="btn ghost" type="button" data-act="assembly-restart">${ic("refresh", "ic16")}Reset</button>
+      <button class="btn ghost" type="button" data-act="assembly-add-sample">${ic("plus", "ic16")}Add sample task</button>
+    </div>
+  </div>`;
+}
+
+function updateAssemblyPlayback() {
+  const sim = assemblySimulation;
+  const clock = document.getElementById("assembly-clock");
+  if (!clock) return;
+  clock.textContent = formatAssemblyHours(sim.hours);
+  const state = document.getElementById("assembly-play-state");
+  if (state.dataset.playing !== String(sim.playing)) {
+    state.dataset.playing = String(sim.playing);
+    state.textContent = "Simulation · " + (sim.playing ? "Running" : "Paused");
+    document.getElementById("assembly-play").innerHTML = assemblyPlayLabel();
+  }
+  document.getElementById("assembly-rate").textContent = assemblyThroughput().rate;
+  syncAssemblySimulationTimer();
+}
+
+function syncAssemblySimulationTimer() {
+  const sim = assemblySimulation;
+  const running = sim.playing && !document.hidden && route()[0] === "activity" && S.actView === "assembly";
+  if (running && sim.timer === null) sim.timer = setInterval(advanceAssemblySimulation, 250);
+  if (!running && sim.timer !== null) {
+    clearInterval(sim.timer);
+    sim.timer = null;
+  }
+}
+
+function assemblyLayout() {
+  const { projects, entries, counts } = assemblySnapshot(true);
+  return `<div class="activity-layout" id="assembly-layout"><div class="activity-main">
+    ${assemblyMatrix(projects, entries, counts)}
+  </div>${activityRail(projects, entries, counts, true)}</div>`;
+}
+
+function refreshAssemblySimulation() {
+  const layout = document.getElementById("assembly-layout");
+  if (!layout) return;
+  const tableScroll = layout.querySelector(".assembly-table-wrap").scrollLeft;
+  const logScroll = layout.querySelector(".assembly-event-log")?.scrollTop ?? 0;
+  const content = document.getElementById("content");
+  const pageScroll = content.scrollTop;
+  const active = document.activeElement;
+  const focus = layout.contains(active);
+  const workId = active?.dataset.assemblyWork;
+  const href = active?.getAttribute("href");
+  const focusSelector = workId ? `[data-assembly-work="${CSS.escape(workId)}"]`
+    : href ? `a[href="${CSS.escape(href)}"]`
+    : active?.matches(".assembly-event-log") ? ".assembly-event-log" : ".assembly-table-wrap";
+  layout.outerHTML = assemblyLayout();
+  const next = document.getElementById("assembly-layout");
+  const table = next.querySelector(".assembly-table-wrap");
+  table.scrollLeft = tableScroll;
+  const log = next.querySelector(".assembly-event-log");
+  if (log) log.scrollTop = logScroll;
+  if (focus) (next.querySelector(focusSelector) || table).focus({ preventScroll: true });
+  content.scrollTop = pageScroll;
+}
+
+function addAssemblySample() {
+  const sim = assemblySimulation;
+  const proj = S.actProject === "all" ? "agency-v1" : S.actProject;
+  const who = projMembers(proj).find((id) => M[id]?.kind === "agent");
+  const work = { id: "T-S" + (sim.samples.length + 1), title: "Verify release readiness",
+    sample: true, kind: "task", status: "To do", proj, who, etaHours: 2 };
+  sim.samples.push(work);
+  sim.events.unshift({ hour: sim.hours, work, stage: "queue", action: "joined the queue" });
+  refreshAssemblySimulation();
+  toast(`${work.id} added to the simulation.`, "check-circle");
+}
+
 function pageActivity() {
-  const projects = assemblyProjects();
-  const entries = projects.flatMap((project) => project.entries);
-  const counts = Object.fromEntries(ACTIVITY_STAGES.map(([stage]) => [stage, entries.filter((entry) => entry.stage === stage).length]));
   const inScope = (record) => S.actProject === "all" || record.proj === S.actProject;
   const all = acts().filter(inScope).map((event) => ({ ...event, inbox: ACTIVITY_TRIAGE[event.id] }));
   const waiting = unhandled().filter(inScope);
@@ -7212,14 +7400,19 @@ function pageActivity() {
         ${isFeed ? btnTabs("actFilter", tabs, "Filter activity", "act-feed") : ""}
       </div>
     </div>
-    <div class="activity-layout">
-      <div class="activity-main">${isFeed ? `
+    ${isFeed ? activityFeedLayout(items) : assemblyPlayback() + assemblyLayout()}
+  </section>`;
+}
+
+function activityFeedLayout(items) {
+  const { projects, entries, counts } = assemblySnapshot(false);
+  return `<div class="activity-layout">
+      <div class="activity-main">
         <section class="activity-feed" aria-label="Activity feed">
           <div class="activity-bottleneck"><span>Work by stage</span><div class="activity-stage-bar" aria-hidden="true">${ACTIVITY_STAGES.map(([stage]) => `<i data-stage="${stage}" style="flex-grow:${counts[stage]}"></i>`).join("")}</div><span>${counts.review} in review · ${counts.queue} queued</span></div>
-          <div ${tabPanel("actFilter", "act-feed")}>${activityTimeline(items)}</div></section>` : assemblyMatrix(projects, entries, counts)}
+          <div ${tabPanel("actFilter", "act-feed")}>${activityTimeline(items)}</div></section>
       </div>${activityRail(projects, entries, counts)}
-    </div>
-  </section>`;
+    </div>`;
 }
 
 
@@ -8767,6 +8960,7 @@ function render(focus = true) {
   fitTextarea(document.getElementById("work-comment"));
   fitTextarea(document.getElementById("compose"));
   applyShortcuts();
+  syncAssemblySimulationTimer();
 }
 
 /* ---------------------------------------------------------------- search & command palette */
@@ -9205,6 +9399,25 @@ document.addEventListener("click", (e) => {
       }
       const outcome = S.replyMode === "changes" ? "Changes requested" : "Answered"; S.replyMode = null; handle(id, outcome); break;
     }
+    case "assembly-play":
+      assemblySimulation.playing = !assemblySimulation.playing;
+      updateAssemblyPlayback();
+      break;
+    case "assembly-speed":
+      assemblySimulation.speed = Number(v);
+      for (const option of t.parentElement.querySelectorAll("button")) {
+        option.setAttribute("aria-pressed", String(option === t));
+      }
+      break;
+    case "assembly-restart":
+      Object.assign(assemblySimulation, { hours: 0, playing: false, samples: [], events: [] });
+      assemblySimulation.progress.clear();
+      refreshAssemblySimulation();
+      updateAssemblyPlayback();
+      break;
+    case "assembly-add-sample":
+      addAssemblySample();
+      break;
     case "activity-review": {
       S.actView = "feed";
       S.actFilter = "needs";
@@ -9715,6 +9928,7 @@ document.addEventListener("keydown", (e) => {
 if (window.matchMedia) { const mq = window.matchMedia("(max-width: 959px)"); const onMq = () => render(false); if (mq.addEventListener) mq.addEventListener("change", onMq); else if (mq.addListener) mq.addListener(onMq);
   const mqp = window.matchMedia("(max-width: 639px)"); if (mqp.addEventListener) mqp.addEventListener("change", applyShortcuts); else if (mqp.addListener) mqp.addListener(applyShortcuts); }
 window.addEventListener("hashchange", () => { closeCmdk(false); document.querySelector(".work-task-dialog[open]")?.close(); document.body.classList.remove("drawer"); S.thread = null; S.replying = null; S.replyMode = null; S.confirmDeny = null; IN.forEach((i) => { if (i.handled) i.handledNow = false; }); render(true); });
+document.addEventListener("visibilitychange", syncAssemblySimulationTimer);
 
 /* ---------------------------------------------------------------- dialogs */
 let sheetReturn = null;
