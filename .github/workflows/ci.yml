@@ -90,12 +90,15 @@ jobs:
         if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
         run: cargo clippy --locked --workspace --all-targets --keep-going -- -D warnings
 
-      - name: Clippy release production code
+      - name: Clippy release production function length
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: cargo clippy --locked --workspace --release --lib --bins -- -D clippy::too_many_lines
+
+      - name: Clippy release safety documentation and suppression reasons
         if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
         run: >-
           cargo clippy --locked --workspace --release --lib --bins --keep-going --
-          -D clippy::too_many_lines -D clippy::undocumented_unsafe_blocks
-          -D clippy::allow_attributes_without_reason
+          -D clippy::undocumented_unsafe_blocks -D clippy::allow_attributes_without_reason
 
       - name: Clippy store latency example
         if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
@@ -105,14 +108,18 @@ jobs:
       # `cargo metadata --offline`. A build downloads only this platform's packages, so the rest
       # are fetched here; without this step the test fails on a runner with a cold cache.
       - name: cargo fetch (every platform's locked packages)
+        id: rust-fetch
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
         run: cargo fetch --locked
 
       # --no-fail-fast: a failing test binary must not hide the result of every crate after it.
       - name: cargo test
+        if: ${{ !cancelled() && steps.rust-fetch.outcome == 'success' }}
         run: cargo test --locked --workspace --no-fail-fast
 
       # ADR-0014 / TASK-33 (B1c): office store latency measurement and regression guard on macOS & Linux.
       - name: Office store latency benchmark & regression check (B1c)
+        if: ${{ !cancelled() && steps.rust-fetch.outcome == 'success' }}
         run: |
           cargo run --locked --release -p org-office --features testkit --example store_latency -- \
             --iterations 200 --durable-iterations 20 --check-regression \

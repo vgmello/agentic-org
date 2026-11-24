@@ -12,8 +12,9 @@ From the repository root:
 cargo fmt --check
 CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --lib --bins --message-format=short -- -D clippy::too_many_lines
 CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --all-targets --keep-going --message-format=short -- -D warnings
+CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --release --lib --bins --message-format=short -- -D clippy::too_many_lines
 CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --release --lib --bins --keep-going --message-format=short -- \
-  -D clippy::too_many_lines -D clippy::undocumented_unsafe_blocks -D clippy::allow_attributes_without_reason
+  -D clippy::undocumented_unsafe_blocks -D clippy::allow_attributes_without_reason
 CARGO_BUILD_JOBS=2 cargo test --locked --workspace
 cargo deny --locked check
 gitleaks git --redact
@@ -80,8 +81,9 @@ for unsupported production behavior. New Rust workspace members must set
 The production Clippy command checks the 200-line limit for library and binary
 functions. Test-only code can keep longer scenarios and fixtures. Keep functions
 focused and extract coherent steps as their responsibilities grow. The release
-Clippy command also checks length, safety documentation and suppression reasons
-in code that builds with debug assertions disabled.
+Clippy commands check code that builds with debug assertions disabled. They check
+length separately so missing safety documentation or reasons does not hide
+production function length findings.
 
 The all-targets gate requires safety documentation and a reason on lint
 suppressions. Use safe code where practical. When unsafe is necessary, add a
