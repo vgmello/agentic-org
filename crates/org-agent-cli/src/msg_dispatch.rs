@@ -27,6 +27,20 @@ pub fn try_execute<T: OfficeTransport + ?Sized>(
     }
 }
 
+fn reject_dry_run(request: &Request) -> Result<(), Refusal> {
+    if request.dry_run {
+        return Err(Refusal::new(
+            ErrorCode::Unsupported,
+            format!(
+                "`--dry-run` is not supported on `{} {}` yet.",
+                request.command.resource, request.command.verb
+            ),
+            "Re-run without `--dry-run` to apply this change.",
+        ));
+    }
+    Ok(())
+}
+
 fn try_msg<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
@@ -91,6 +105,7 @@ fn write_msg_send<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
     let to = require_str(request, "to")?;
     let body = require_str(request, "body")?;
     let id = message_id_for(request)?;
@@ -167,6 +182,7 @@ fn write_msg_ask<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
     let to = require_str(request, "to")?;
     let Some(questions) = request.input.get("questions") else {
         return Err(Refusal::new(
@@ -237,6 +253,7 @@ fn write_msg_withdraw<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
     let ask_id = require_str(request, "id")?;
     let mut params = Map::new();
     params.insert("ask_id".into(), Value::String(ask_id.to_owned()));
@@ -311,6 +328,7 @@ fn write_msg_reply<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
     let to_id = require_str(request, "id")?;
     if let Some(answer_raw) = opt_str(request, "answer") {
         return write_msg_answer(transport, request, to_id, answer_raw);
@@ -340,6 +358,7 @@ fn write_msg_accept<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
     let id = require_str(request, "id")?;
     let mut params = Map::new();
     params.insert("id".into(), Value::String(id.to_owned()));
@@ -520,6 +539,7 @@ fn write_msg_done<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
     let id = require_str(request, "id")?;
     let mut params = Map::new();
     params.insert("id".into(), Value::String(id.to_owned()));
@@ -541,6 +561,7 @@ fn write_msg_defer<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
     let id = require_str(request, "id")?;
     let until = match (opt_str(request, "until"), opt_bool(request, "after_task")) {
         (Some(_), Some(true)) => {
@@ -594,6 +615,7 @@ fn write_msg_unsnooze<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
     let id = require_str(request, "id")?;
     let wire = org_proto::msg::MsgUnsnoozeParams { id: id.to_owned() };
     let params = serde_json::to_value(&wire).map_err(|_| decode_err("msg.unsnooze"))?;
@@ -730,6 +752,7 @@ fn write_channel_membership<T: OfficeTransport + ?Sized>(
     request: &Request,
     join: bool,
 ) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
     let channel = require_str(request, "channel")?;
     let method = if join {
         "chat.channel_join"
@@ -783,6 +806,7 @@ fn write_status<T: OfficeTransport + ?Sized>(
     request: &Request,
     clear: bool,
 ) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
     let mut params = Map::new();
     if clear {
         params.insert("text".into(), Value::Null);
@@ -1136,5 +1160,101 @@ mod tests {
             &mut defer_t,
         );
         assert_ne!(defer_both.exit_code, 0, "{}", defer_both.stdout);
+    }
+
+    #[test]
+    fn all_twelve_msg_channel_status_writes_fail_closed_on_dry_run_with_zero_rpcs() {
+        let ask_json = json!({
+            "to": "owner",
+            "questions": [{ "id": "q1", "question_type": "yes_no", "prompt": "Proceed?" }]
+        })
+        .to_string();
+        let answer_json = json!([{ "question_id": "q1", "option_ids": ["yes"] }]).to_string();
+        let cases: Vec<Vec<&str>> = vec![
+            vec!["msg", "send", "--to", "owner", "--body", "hi", "--dry-run"],
+            vec!["msg", "ask", "--json", &ask_json, "--dry-run"],
+            vec![
+                "msg",
+                "withdraw",
+                "--id",
+                "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa",
+                "--dry-run",
+            ],
+            vec![
+                "msg",
+                "reply",
+                "--id",
+                "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa",
+                "--body",
+                "reply",
+                "--dry-run",
+            ],
+            vec![
+                "msg",
+                "reply",
+                "--id",
+                "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa",
+                "--answer",
+                &answer_json,
+                "--dry-run",
+            ],
+            vec![
+                "msg",
+                "accept",
+                "--id",
+                "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa",
+                "--dry-run",
+            ],
+            vec![
+                "msg",
+                "done",
+                "--id",
+                "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa",
+                "--dry-run",
+            ],
+            vec![
+                "msg",
+                "defer",
+                "--id",
+                "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa",
+                "--after-task",
+                "--dry-run",
+            ],
+            vec![
+                "msg",
+                "unsnooze",
+                "--id",
+                "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071aa",
+                "--dry-run",
+            ],
+            vec!["channel", "join", "--channel", "#ops", "--dry-run"],
+            vec!["channel", "leave", "--channel", "#ops", "--dry-run"],
+            vec!["status", "set", "--text", "working", "--dry-run"],
+            vec!["status", "clear", "--dry-run"],
+        ];
+
+        for case in cases {
+            let mut t = TransportOffice(RecordingTransport {
+                last_method: None,
+                last_timeout: None,
+                response: json!({}),
+            });
+            let owned: Vec<String> = case.iter().map(|s| (*s).to_owned()).collect();
+            let out = crate::execute_with_office("agent-os", &owned, &mut t);
+            assert_eq!(out.exit_code, 1, "case {case:?} stdout={}", out.stdout);
+            assert!(
+                t.0.last_method.is_none(),
+                "case {case:?} invoked RPC {:?} despite --dry-run!",
+                t.0.last_method
+            );
+            let parsed: Value = serde_json::from_str(&out.stdout).unwrap();
+            assert_eq!(parsed["ok"], Value::Bool(false), "case {case:?}");
+            assert_eq!(parsed["error"]["code"], "unsupported", "case {case:?}");
+            assert_eq!(
+                parsed["meta"]["dry_run"],
+                Value::Bool(true),
+                "case {case:?}"
+            );
+        }
     }
 }

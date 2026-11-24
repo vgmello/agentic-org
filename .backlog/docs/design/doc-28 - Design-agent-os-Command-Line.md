@@ -3,7 +3,7 @@ id: doc-28
 title: 'Design: agent-os Command Line'
 type: specification
 created_date: '2026-11-21T00:18:00Z'
-updated_date: '2026-11-21T00:18:00Z'
+updated_date: '2026-11-24T10:53:00Z'
 tags:
   - design
   - cli
@@ -283,6 +283,7 @@ the new store (B2). There is no second copy of any rule. Three things follow:
 - **The answer has the shape of the real one, without what only a real change mints:**
   no new ID, no reference, no revision.
 - **A dry run takes no `--idempotency-key`.** The two together are `invalid_request`.
+- **Fail-closed when unimplemented:** write rows whose office RPC does not yet implement server-side dry-run validation (including `msg`, `channel`, `status`, `task`, `checklist`, `task-note`, `repo`, `worktree`, `hr`/`role`/`agent`, and `process` writes) MUST refuse `--dry-run` with `unsupported` before invoking any office RPC, never executing a live mutation (`TASK-95`).
 
 This is the requirement's `grant check`. It is not a second command.
 
@@ -562,7 +563,7 @@ The rules:
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
 | `process list` | The processes and standards that apply to the caller's current work, or to a named task, with where each comes from and which must be followed. `--kind process` or `--kind standard` keeps one kind | [Processes design](doc-34%20-%20Design-Organization-Processes-and-Standards.md) (`process.effective`), PROC-8 | C5 |
-| `process inspect` | One document's full text by key, process or standard; with `--why`, the chain from organization to team to project and which level won | The same (`process.show`, `process.why`) | C5 |
+| `process inspect` | One document's full text by `--key` or `--id` (`content`, `total_bytes`, `next_offset`, `parent`, paginated via `--id <document.id> --revision <document.revision> --offset <next_offset>` whenever `next_offset` is present); with `--why` (`--key` only), the resolution `chain` and `winner` from organization to team to project | The same (`process.show`, `process.why`) | C5 (`TASK-95`) |
 | `skill list`, `skill read` | `skill read --name <key>`: the product's built-in guidance on its own commands, and the skills of the caller's project's development process for the caller's role; each names its source | Processes design, decision 4; [development processes](doc-32%20-%20Design-Development-Processes-Process-Packages.md#6-how-skills-reach-an-agent) | C5; L12 for a development process's skills |
 | `process create`, `process update` | Add an organization process or standard at the scope of a project of the caller's own team, or change one of that project's. Never at team or organization scope, never non-overridable, never a key inherited from above | [Processes design](doc-34%20-%20Design-Organization-Processes-and-Standards.md#5-changing-processes), decision 8 (PROC-36) | L12 |
 | `dev-process inspect` | The development process of the caller's project: its summary, stages and tabs, and the caller's role in it. Reading only: a person creates, edits and imports one in the browser | [Development processes](doc-32%20-%20Design-Development-Processes-Process-Packages.md) | L12 |
