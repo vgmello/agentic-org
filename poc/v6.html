@@ -4915,7 +4915,8 @@ const PAST_SESSIONS = [
 
 /* ---------------------------------------------------------------- state */
 const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
-  scopedWorkLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", actPanel: null, openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
+  scopedWorkLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", actPanel: null,
+  projectActView: "assembly", projectActFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
   taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false, confirmDeny: null, briefCopied: false };
 const ORG_NAME_STORE = "agentic-org.v6.organizationName";
 let orgName = "Agentic Org";
@@ -6730,7 +6731,7 @@ function projectBody(id, tab) {
   }
   if (tab === "work") return scopedWorkResults(ws);
   if (tab === "team") return projectTeams(id) + memberRows(projMembers(id), { emptyText: "No members yet." });
-  if (tab === "activity") return activityTimeline(acts().filter((a) => a.proj === id), { noProj: true });
+  if (tab === "activity") return pageActivity(id);
   if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
   return notFound();
 }
@@ -7153,6 +7154,13 @@ const assemblySimulation = {
 const assemblyHours = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 const formatAssemblyHours = (hours) => assemblyHours.format(hours) + " h";
 
+function projectActivityId([page, project, tab] = route()) {
+  return page === "projects" && tab === "activity" && own(P, project) ? project : null;
+}
+const activityProject = () => projectActivityId() || S.actProject;
+const activityViewKey = (project) => project ? "projectActView" : "actView";
+const activityFilterKey = (project) => project ? "projectActFilter" : "actFilter";
+
 function assemblyReview(work) {
   return IN.find((item) => !item.handled && item.task === work.id && item.proj === work.proj
     && (item.kind === "approval" || item.kind === "decision" || blockedOnOwner(work)));
@@ -7172,7 +7180,7 @@ function assemblySource(work) {
   return { stage: assemblyStage(work, review), review };
 }
 function assemblyWork(simulated) {
-  const work = W.filter((item) => item.kind !== "request" && !P[item.proj].archived);
+  const work = W.filter((item) => item.kind !== "request");
   return simulated ? [...work, ...assemblySimulation.samples] : work;
 }
 
@@ -7193,6 +7201,7 @@ function advanceAssemblySimulation() {
   const events = [];
   let active = false;
   for (const work of assemblyWork(true)) {
+    if (P[work.proj].archived) continue;
     const { stage: initial, review } = assemblySource(work);
     if (!assemblyCanAdvance(work, review, initial)) {
       sim.progress.delete(work.id);
@@ -7221,8 +7230,9 @@ function advanceAssemblySimulation() {
 }
 
 function assemblyProjects(simulated) {
+  const scope = activityProject();
   const workItems = assemblyWork(simulated);
-  return Object.entries(P).filter(([id, project]) => !project.archived && (S.actProject === "all" || S.actProject === id)).map(([id, project]) => {
+  return Object.entries(P).filter(([id, project]) => scope === "all" ? !project.archived : scope === id).map(([id, project]) => {
     const entries = workItems.filter((work) => work.proj === id).map((work) => {
       const { stage: initial, review } = assemblySource(work);
       const progress = simulated ? assemblySimulation.progress.get(work.id) : null;
@@ -7265,16 +7275,20 @@ function assemblyChip(entry) {
   const chip = `class="assembly-chip" data-stage="${stage}" data-assembly-work="${esc(work.id)}" title="${title}"`;
   if (stage === "review" && review && !review.handled) return `<button ${chip} type="button" data-act="activity-review" data-id="${review.id}" aria-label="Review ${esc(work.id)}">${ic("flag", "ic14")}${esc(label)}</button>`;
   if (work.sample) return `<span ${chip}>${esc(label)}</span>`;
-  return `<a ${chip} href="#/projects/${work.proj}/work">${esc(label)}</a>`;
+  return `<a ${chip} href="#/projects/${work.proj}/work?item=${encodeURIComponent(work.id)}">${esc(label)}</a>`;
 }
 function assemblyMatrix(projects, entries, counts) {
   const project = projects.length === 1 ? projects[0].project : null;
-  const headings = [["Milestone › Feature", plural(projects.length, "project", "projects")],
+  const projectId = projectActivityId();
+  const scopeLabel = project ? project.release : "All projects";
+  const title = projectId ? "Assembly line" : project?.name || "Portfolio Assembly";
+  const featureCount = projects[0]?.features.length ?? 0;
+  const headings = [["Milestone › Feature", projectId ? plural(featureCount, "feature", "features") : plural(projects.length, "project", "projects")],
     ...ACTIVITY_STAGES.map(([stage, label]) => [label, String(counts[stage])]), ["Into release", "Tasks merged"]];
   return `<section class="assembly-view" aria-label="Assembly line">
     <div class="assembly-summary">
-      <div><p class="assembly-eyebrow">${project ? esc(project.release) : "All projects"}</p><h2>${project ? esc(project.name) : "Portfolio Assembly"}</h2></div>
-      <dl class="assembly-metrics"><div><dt>Readiness</dt><dd>${assemblyPct(entries)}%${assemblyProgressBar(counts.merged, entries.length, "Portfolio readiness")}</dd></div>
+      <div>${scopeLabel ? `<p class="assembly-eyebrow">${esc(scopeLabel)}</p>` : ""}<h2>${esc(title)}</h2></div>
+      <dl class="assembly-metrics"><div><dt>Readiness</dt><dd>${assemblyPct(entries)}%${assemblyProgressBar(counts.merged, entries.length, projectId ? "Project readiness" : "Portfolio readiness")}</dd></div>
       <div><dt>Merged</dt><dd>${counts.merged} / ${entries.length}</dd></div>
       <div><dt>Agents busy</dt><dd>${new Set(entries.filter(({ stage, work }) => stage === "agents" && M[work.who]?.kind === "agent").map(({ work }) => work.who)).size}</dd></div>
       <div><dt>Needs review</dt><dd class="assembly-review-text">${counts.review}</dd></div></dl>
@@ -7289,7 +7303,7 @@ function assemblyMatrix(projects, entries, counts) {
             const cells = feature.entries.filter((entry) => entry.stage === stage);
             return cells.length ? `<td><div class="assembly-cell">${cells.map(assemblyChip).join("")}</div></td>` : '<td class="assembly-dash">—</td>';
           }).join("")}<td>${assemblyProgress(feature.entries, feature.label + " progress")}</td>
-        </tr>`).join("")}
+        </tr>`).join("")}${features.length ? "" : '<tr><td colspan="7" class="assembly-dash">No tasks on this assembly line.</td></tr>'}
       </tbody>`).join("")}</table>
     </div>
     <div class="assembly-legend" aria-label="Delivery stages">${ACTIVITY_STAGES.map(([stage, label]) => `<span data-stage="${stage}"><i aria-hidden="true"></i>${label}</span>`).join("")}
@@ -7304,7 +7318,8 @@ function activityThroughput(projects) {
     <li><span>${count}</span><i style="height:${Math.max(2, count * 36 / peak)}px" aria-hidden="true"></i><span class="sr-only">${days[index]}</span></li>`).join("")}</ul></section>`;
 }
 function assemblyLineEvents() {
-  return assemblySimulation.events.filter(({ work }) => S.actProject === "all" || work.proj === S.actProject);
+  const scope = activityProject();
+  return assemblySimulation.events.filter(({ work }) => scope === "all" || work.proj === scope);
 }
 
 function assemblyThroughput() {
@@ -7324,17 +7339,54 @@ function assemblyEventLog() {
 }
 
 function releaseOperations({ projects, entries, counts }) {
+  const projectId = projectActivityId();
   const gates = IN.filter((item) => own(RELEASE_GATES, item.id) && projects.some(({ id }) => id === item.proj));
+  const gateList = `<ul>${gates.map((item) => {
+    const tone = !item.handled ? "assembly-review-text"
+      : !projectId ? "muted" : /denied|changes requested/i.test(item.outcome) ? "tone-bad" : "tone-ok";
+    return `<li><a href="#/inbox/${item.id}">${esc(RELEASE_GATES[item.id])}</a><span class="${tone}">${item.handled ? esc(item.outcome) : "Pending"}</span></li>`;
+  }).join("") || "<li>No gates in this scope</li>"}</ul>`;
+  if (projectId) return projectReleaseOperations(projects[0], counts, gateList);
   const agents = [...new Set(entries.filter((entry) => ["agents", "ci", "review"].includes(entry.stage) && entry.work.who)
     .map((entry) => entry.work.who))].filter((id) => M[id].kind === "agent");
   return `<div class="activity-rail">
-    <section aria-label="Gate status"><ul>${gates.map((item) => `<li><a href="#/inbox/${item.id}">${esc(RELEASE_GATES[item.id])}</a><span class="${item.handled ? "muted" : "assembly-review-text"}">${item.handled ? esc(item.outcome) : "Pending"}</span></li>`).join("") || "<li>No gates in this scope</li>"}</ul></section>
+    <section aria-label="Gate status">${gateList}</section>
     <section><h3>Stations</h3><dl>${ACTIVITY_STAGES.map(([stage, label]) => `<div><dt>${label}</dt><dd>${counts[stage]}</dd></div>`).join("")}</dl></section>
     ${activityThroughput(projects)}
     <section><h3>Active agents</h3><ul class="activity-agents">${agents.map((agent) => {
       const entry = entries.find(({ work, stage }) => work.who === agent && ["agents", "ci", "review"].includes(stage));
       return `<li><div>${av(agent, 24)}${mlink(agent)}</div><span class="muted">${entry.work.id} · ${ACTIVITY_STAGES.find(([stage]) => stage === entry.stage)[1]}</span></li>`;
     }).join("") || "<li>No agents at these stations</li>"}</ul></section>
+  </div>`;
+}
+
+function projectReleaseOperations({ id, project, features, entries }, counts, gateList) {
+  const agents = projMembers(id).filter((member) => M[member]?.kind === "agent" && !M[member].offboarded);
+  const busy = new Set(entries.filter(({ stage }) => stage === "agents").map(({ work }) => work.who));
+  const agentCount = agents.filter((member) => busy.has(member)).length;
+  const stationCounts = {
+    queue: `${counts.queue} waiting`,
+    agents: `${agentCount} / ${agents.length} busy`,
+    ci: `${counts.ci} checking`,
+    review: `${counts.review} waiting`,
+    merged: `${counts.merged} of ${entries.length}`,
+  };
+  const waiting = entries.filter(({ stage }) => stage === "review");
+  return `<div class="activity-rail project-release-rail">
+    <section aria-labelledby="project-stations-title"><h3 id="project-stations-title">Stations</h3>
+      <dl>${ACTIVITY_STAGES.map(([stage, label]) => `<div><dt>${label}</dt><dd>
+        ${stage === "agents" ? `<span class="project-station-slots" aria-hidden="true">${agents.map((member) => `<i${busy.has(member) ? " data-busy" : ""}></i>`).join("")}</span>` : ""}
+        <span>${stationCounts[stage]}</span>
+      </dd></div>`).join("")}</dl>
+    </section>
+    <section aria-labelledby="project-milestones-title"><h3 id="project-milestones-title">Milestones</h3>
+      ${project.milestoneTitle ? `<p class="project-milestone-name">${esc(project.milestoneTitle)}</p>${assemblyProgress(entries, project.milestoneTitle + " progress", features)}` : '<p class="activity-rail-note">No release milestone.</p>'}
+    </section>
+    <section aria-labelledby="project-human-title"><h3 id="project-human-title">Needs a human <span>${waiting.length}</span></h3>
+      ${waiting.length ? `<ul>${waiting.map(({ work, review }) => `<li><a href="${review && !review.handled ? "#/inbox/" + review.id : "#/projects/" + id + "/work?item=" + encodeURIComponent(work.id)}">${esc(work.title)}</a></li>`).join("")}</ul>`
+        : '<p class="activity-rail-note">Nothing is waiting on people.</p>'}
+    </section>
+    <section aria-labelledby="project-gate-status-title"><h3 id="project-gate-status-title">Gate status</h3>${gateList}</section>
   </div>`;
 }
 
@@ -7357,7 +7409,7 @@ function refreshActivityPanel(snapshot) {
   const href = body.contains(active) && active.getAttribute("href");
   body.innerHTML = S.actPanel === "simulation"
     ? simulationDetails()
-    : releaseOperations(snapshot ?? assemblySnapshot(S.actView === "assembly"));
+    : releaseOperations(snapshot ?? assemblySnapshot(S[activityViewKey(projectActivityId())] === "assembly"));
   const nextLog = body.querySelector(".assembly-event-log");
   if (nextLog) nextLog.scrollTop = logScroll;
   const focus = href ? body.querySelector(`a[href="${CSS.escape(href)}"]`) : active === log ? nextLog : null;
@@ -7457,7 +7509,7 @@ function updateAssemblyPlayback() {
 
 function syncAssemblySimulationTimer() {
   const sim = assemblySimulation;
-  const running = sim.playing && !document.hidden && route()[0] === "activity";
+  const running = sim.playing && !document.hidden && document.querySelector(".activity-workspace");
   if (running && sim.timer === null) sim.timer = setInterval(advanceAssemblySimulation, 250);
   if (!running && sim.timer !== null) {
     clearInterval(sim.timer);
@@ -7516,7 +7568,8 @@ function refreshAssemblySimulation(animate = false) {
 
 function addAssemblySample() {
   const sim = assemblySimulation;
-  const proj = S.actProject === "all" ? "agency-v1" : S.actProject;
+  const scope = activityProject();
+  const proj = scope === "all" ? "agency-v1" : scope;
   const who = projMembers(proj).find((id) => M[id]?.kind === "agent");
   const work = { id: "T-S" + (sim.samples.length + 1), title: "Verify release readiness",
     sample: true, kind: "task", status: "To do", proj, who, etaHours: 2 };
@@ -7526,54 +7579,59 @@ function addAssemblySample() {
   toast(`${work.id} added to the simulation.`, "check-circle");
 }
 
-function activityViewTabs() {
+function activityViewTabs(viewKey) {
   const views = [["assembly", "Assembly line", "board"], ["feed", "Activity feed", "signal"]];
   return `<div class="queue-tabs" role="tablist" aria-label="Activity view">${views.map(([id, label, icon]) => {
-    const selected = S.actView === id;
-    return `<button class="queue-tab" type="button" role="tab" id="activity-tab-${id}" data-act="set" data-k="actView" data-v="${id}"
+    const selected = S[viewKey] === id;
+    return `<button class="queue-tab" type="button" role="tab" id="activity-tab-${id}" data-act="set" data-k="${viewKey}" data-v="${id}"
       aria-selected="${selected}" tabindex="${selected ? 0 : -1}" aria-controls="activity-view">${ic(icon, "ic16")}${label}</button>`;
   }).join("")}</div>`;
 }
 
-function activityFilterMenu(isFeed, waitingCount) {
+function activityFilterMenu(isFeed, waitingCount, projectId) {
   const projects = [["all", "All projects"], ...Object.entries(P)
     .filter(([, project]) => !project.archived).map(([id, project]) => [id, project.name + " · " + project.release])];
   const types = [["all", "All events"], ["needs", "Needs you", waitingCount], ["work", "Work"], ["conversation", "Conversations"],
     ["decision", "Decisions"], ["run", "Runs"], ["org", "Org changes"]];
-  const groups = [["actProject", "Project", projects]];
-  if (isFeed) groups.push(["actFilter", "Event type", types]);
+  const groups = projectId ? [] : [["actProject", "Project", projects]];
+  const filterKey = activityFilterKey(projectId);
+  if (isFeed) groups.push([filterKey, "Event type", types]);
   return showMenu("activity-filter", groups, {
     icon: "filter", label: "Filter activity", focusTooltip: true,
-    active: S.actProject !== "all" || (isFeed && S.actFilter !== "all"),
+    active: (!projectId && S.actProject !== "all") || (isFeed && S[filterKey] !== "all"),
   });
 }
 
-function pageActivity() {
-  const inScope = (record) => S.actProject === "all" || record.proj === S.actProject;
+function pageActivity(projectId = null) {
+  const scope = activityProject();
+  const inScope = (record) => scope === "all" || record.proj === scope;
   const all = acts().filter(inScope).map((event) => ({ ...event, inbox: ACTIVITY_TRIAGE[event.id] }));
   const waiting = unhandled().filter(inScope);
-  const filter = S.actFilter;
+  const filter = S[activityFilterKey(projectId)];
   const items = filter === "needs"
     ? activityNeedsFeed(all, waiting)
     : all.filter((event) => filter === "all" || event.type === filter);
-  const isFeed = S.actView === "feed";
+  const viewKey = activityViewKey(projectId), view = S[viewKey];
+  const isFeed = view === "feed";
+  const showFilter = !projectId || isFeed;
+  const panels = projectId && P[projectId].archived ? [["release", ACTIVITY_PANELS.release]] : Object.entries(ACTIVITY_PANELS);
   const count = `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`;
-  return `<section class="activity-workspace" aria-label="Activity command center">
+  return `<section class="activity-workspace" data-activity-scope="${esc(projectId || "portfolio")}" aria-label="${projectId ? "Project activity" : "Activity command center"}">
     <header class="activity-header queue-header">
-      <div class="ph queue-headline"><div class="ph-t">
+      ${projectId ? "" : `<div class="ph queue-headline"><div class="ph-t">
         <h1 tabindex="-1">Activity</h1><p class="cnt queue-count" role="status"><i aria-hidden="true"></i>${count}</p>
-      </div></div>
+      </div></div>`}
       <div class="activity-toolbar queue-toolbar">
-        ${activityViewTabs()}
-        <div class="queue-controls" role="group" aria-label="Activity view controls">${activityFilterMenu(isFeed, waiting.length)}</div>
+        ${activityViewTabs(viewKey)}
+        ${showFilter ? `<div class="queue-controls" role="group" aria-label="Activity view controls">${activityFilterMenu(isFeed, waiting.length, projectId)}</div>` : ""}
       </div>
     </header>
     <div class="activity-body"${S.actPanel ? " data-panel-open" : ""}>
-      <div class="activity-main" id="activity-view" role="tabpanel" aria-labelledby="activity-tab-${S.actView}" tabindex="0" data-view="${S.actView}">
-        ${isFeed ? activityFeedLayout(items) : assemblyLayout()}
+      <div class="activity-main" id="activity-view" role="tabpanel" aria-labelledby="activity-tab-${view}" tabindex="0" data-view="${view}">
+        ${isFeed ? activityFeedLayout(items, Boolean(projectId)) : assemblyLayout()}
       </div>
       <div class="activity-tools" role="group" aria-label="Activity sidebar tools">
-        ${Object.entries(ACTIVITY_PANELS).map(([id, { label, icon }]) => `<button class="btn ghost icon icon-with-tooltip activity-tool" type="button" data-act="activity-panel" data-v="${id}" aria-label="${label}" aria-expanded="${S.actPanel === id}" aria-controls="activity-panel">${iconWithTooltip(label, icon, "ic20")}</button>`).join("")}
+        ${panels.map(([id, { label, icon }]) => `<button class="btn ghost icon icon-with-tooltip activity-tool" type="button" data-act="activity-panel" data-v="${id}" aria-label="${label}" aria-expanded="${S.actPanel === id}" aria-controls="activity-panel">${iconWithTooltip(label, icon, "ic20")}</button>`).join("")}
       </div>
       <aside class="activity-panel" id="activity-panel" aria-labelledby="activity-panel-title"${S.actPanel ? "" : " inert"}>
         <header class="side-panel-header">
@@ -7587,12 +7645,12 @@ function pageActivity() {
   </section>`;
 }
 
-function activityFeedLayout(items) {
+function activityFeedLayout(items, noProj) {
   const { counts } = assemblySnapshot(false);
   return `<div class="activity-layout">
         <section class="activity-feed" aria-label="Activity feed">
           <div class="activity-bottleneck"><span>Work by stage</span><div class="activity-stage-bar" aria-hidden="true">${ACTIVITY_STAGES.map(([stage]) => `<i data-stage="${stage}" style="flex-grow:${counts[stage]}"></i>`).join("")}</div><span>${counts.review} in review · ${counts.queue} queued</span></div>
-          ${activityTimeline(items)}</section>
+          ${activityTimeline(items, { noProj })}</section>
     </div>`;
 }
 
@@ -9082,6 +9140,16 @@ function render(focus = true) {
   }
   stopAgentOrb();
   const r = route(), [r0, r1, r2] = r;
+  const projectId = projectActivityId(r);
+  const activityScope = r0 === "activity" ? "portfolio" : projectId;
+  const sameActivity = activityScope && document.querySelector(".activity-workspace")?.dataset.activityScope === activityScope;
+  if (activityScope && !sameActivity) {
+    S.actPanel = "release";
+    if (projectId) {
+      S.projectActView = "assembly";
+      S.projectActFilter = "all";
+    }
+  }
   document.documentElement.toggleAttribute("data-interior-page", r0 !== "home");
   let html;
   switch (r0) {
@@ -9090,10 +9158,7 @@ function render(focus = true) {
     case "projects": html = !r1 ? pageProjects() : own(P, r1) ? pageProject(r1, r2) : notFound(); break;
     case "work": html = pageWork(); break;
     case "chat": html = pageChat(own(CH, r1) ? r1 : null); break;
-    case "activity":
-      if (!document.querySelector(".activity-workspace")) S.actPanel = "release";
-      html = pageActivity();
-      break;
+    case "activity": html = pageActivity(); break;
     case "teams": html = MEMBER_ALIASES.includes(r1) ? pageMembersDir() : r1 === "org-chart" ? pageOrgChart() : !r1 ? pageTeams() : own(TEAMS, r1) ? pageTeam(r1, r2) : notFound(); break;
     case "members": html = own(M, r1) ? pageMember(r1, r2) : notFound(); break;
     case "settings": html = !r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, own(M, r2) ? r2 : null) : notFound(); break;
@@ -9129,10 +9194,10 @@ function render(focus = true) {
   renderNav(r);
   renderBanner(r0);
   const activity = main.querySelector(".activity-main");
-  if (activity && priorActivity?.dataset.view === activity.dataset.view) activity.scrollTop = priorActivity.scrollTop;
+  if (sameActivity && activity && priorActivity?.dataset.view === activity.dataset.view) activity.scrollTop = priorActivity.scrollTop;
   if (activity && S.actPanel) {
     refreshActivityPanel();
-    document.getElementById("activity-panel").scrollTop = panelScroll;
+    if (sameActivity) document.getElementById("activity-panel").scrollTop = panelScroll;
   }
   const titleBase = r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found");
   document.title = titleBase + " · Agentic Org";
@@ -9744,8 +9809,9 @@ document.addEventListener("click", (e) => {
       setActivityPanel(null);
       break;
     case "activity-review": {
-      S.actView = "feed";
-      S.actFilter = "needs";
+      const projectId = projectActivityId();
+      S[activityViewKey(projectId)] = "feed";
+      S[activityFilterKey(projectId)] = "needs";
       render(false);
       const panel = document.getElementById("activity-triage-" + id);
       panel?.focus();
