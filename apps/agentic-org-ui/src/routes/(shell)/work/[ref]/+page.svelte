@@ -1,5 +1,12 @@
 <script lang="ts">
-	import NotBuilt from '$lib/components/NotBuilt.svelte';
+	import { page } from '$app/state';
+	import { WorkDetailPage } from '$lib/modules/workitems';
+
+	let { data } = $props();
+	const organizationId = $derived(data.connection.organization.id);
+	const refParam = $derived(page.params.ref ?? '');
 </script>
 
-<NotBuilt title="The work item page" place="Work item" area="Work" />
+{#key `${organizationId}:${refParam}`}
+	<WorkDetailPage {organizationId} {refParam} />
+{/key}

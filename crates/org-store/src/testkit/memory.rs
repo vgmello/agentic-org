@@ -268,6 +268,18 @@ impl CoreRead for MemorySnapshot {
     fn receipt(&self, id: &Id) -> Result<Option<Receipt>, EngineError> {
         Ok(self.0.receipts.get(id).cloned())
     }
+
+    fn list_receipts_by_prefix(&self, prefix: &str) -> Result<Vec<Receipt>, EngineError> {
+        let mut out: Vec<Receipt> = self
+            .0
+            .receipts
+            .values()
+            .filter(|r| r.kind.starts_with(prefix))
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| a.ordinal.cmp(&b.ordinal).then_with(|| a.id.cmp(&b.id)));
+        Ok(out)
+    }
 }
 
 impl CoreRead for MemoryTx {
@@ -289,6 +301,19 @@ impl CoreRead for MemoryTx {
     fn receipt(&self, id: &Id) -> Result<Option<Receipt>, EngineError> {
         self.alive()?;
         Ok(self.state.receipts.get(id).cloned())
+    }
+
+    fn list_receipts_by_prefix(&self, prefix: &str) -> Result<Vec<Receipt>, EngineError> {
+        self.alive()?;
+        let mut out: Vec<Receipt> = self
+            .state
+            .receipts
+            .values()
+            .filter(|r| r.kind.starts_with(prefix))
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| a.ordinal.cmp(&b.ordinal).then_with(|| a.id.cmp(&b.id)));
+        Ok(out)
     }
 }
 

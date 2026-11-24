@@ -1,9 +1,9 @@
 import { unavailableCall } from '$lib/platform/unavailable-api';
-import type { SearchResults } from '$lib/modules/shell';
+import type { SearchPageResults } from './types';
 
-/** The results page behind "See all results": every match per group, not the top-bar's first five. */
+/** The results page behind "See all results" and "Why is…" knowledge search (WHY-4). */
 export interface SearchPageApi {
-	results(organizationId: string, query: string): Promise<SearchResults>;
+	results(organizationId: string, query: string): Promise<SearchPageResults>;
 }
 
 // Not served by the web API yet. Under `bun run dev:mock`, e2e/fakes/modules/search.ts stands in for this file.

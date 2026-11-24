@@ -1,4 +1,7 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { orgApi } from '$lib/modules/organization/api';
+import { createHttpHomeApi } from './http-api';
 import type { HomeProject, MonthSummary, WorkingNow } from './types';
 
 /**
@@ -12,10 +15,22 @@ export interface HomeApi {
 	month(organizationId: string): Promise<MonthSummary | null>;
 }
 
-// The web API does not serve these yet: every call refuses and Home's sections say so. Under
-// `bun run dev:mock`, e2e/fakes/modules/home.ts stands in for this file.
-export const homeApi: HomeApi = {
-	projects: unavailableCall,
-	workingNow: unavailableCall,
-	month: unavailableCall
-};
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayHomeApi = createHttpHomeApi({ orgApi });
+
+/**
+ * Production Home API backed by live organization snapshots (`orgApi.view`).
+ * Fails closed when no signed-in gateway session exists.
+ * Under `bun run dev:mock`, `e2e/fakes/modules/home.ts` stands in for this file.
+ */
+export const homeApi: HomeApi = Object.freeze<HomeApi>({
+	projects: (organizationId) =>
+		signedInSession() ? gatewayHomeApi.projects(organizationId) : unavailableCall(),
+	workingNow: (organizationId) =>
+		signedInSession() ? gatewayHomeApi.workingNow(organizationId) : unavailableCall(),
+	month: (organizationId) =>
+		signedInSession() ? gatewayHomeApi.month(organizationId) : unavailableCall()
+});

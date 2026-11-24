@@ -195,8 +195,8 @@ impl ServerCheck {
     /// system: what identifies an image here is the platform admission's own fact
     /// ([`org_platform_host::admission::image_identity`]), as for [`Self::for_build`]. A
     /// team id that isn't well formed is an error, never a weaker check.
-    pub(crate) fn gateway_for_build(debug: bool, team_id: Option<&str>) -> Result<Self, String> {
-        Self::gateway_for_system(
+    pub(crate) fn web_for_build(debug: bool, team_id: Option<&str>) -> Result<Self, String> {
+        Self::web_for_system(
             debug,
             team_id,
             org_platform_host::admission::image_identity().ok(),
@@ -216,7 +216,7 @@ impl ServerCheck {
     ///   which the host pins), with or without a team id. Without a selected release
     ///   nothing names the image and the platform refuses it
     ///   ([`ImageRefusal::Unpinned`]).
-    pub(crate) fn gateway_for_system(
+    pub(crate) fn web_for_system(
         debug: bool,
         team_id: Option<&str>,
         identity: Option<ImageIdentity>,
@@ -646,24 +646,24 @@ mod tests {
         let bytes = Some(ImageIdentity::VerifiedBytes);
         for identity in [signed, bytes, None] {
             assert_eq!(
-                ServerCheck::gateway_for_system(true, None, identity),
+                ServerCheck::web_for_system(true, None, identity),
                 Ok(ServerCheck::Skip)
             );
-            assert!(ServerCheck::gateway_for_system(false, Some("bad"), identity).is_err());
+            assert!(ServerCheck::web_for_system(false, Some("bad"), identity).is_err());
         }
         for identity in [signed, None] {
             assert!(matches!(
-                ServerCheck::gateway_for_system(false, Some(TEAM), identity),
+                ServerCheck::web_for_system(false, Some(TEAM), identity),
                 Ok(ServerCheck::Gateway(_))
             ));
             assert!(matches!(
-                ServerCheck::gateway_for_system(false, None, identity),
+                ServerCheck::web_for_system(false, None, identity),
                 Ok(ServerCheck::WebRefused(_))
             ));
         }
         for team in [None, Some(TEAM)] {
             assert_eq!(
-                ServerCheck::gateway_for_system(false, team, bytes),
+                ServerCheck::web_for_system(false, team, bytes),
                 Ok(ServerCheck::Published)
             );
         }
@@ -674,8 +674,8 @@ mod tests {
             (false, Some("bad")),
         ] {
             assert_eq!(
-                ServerCheck::gateway_for_build(debug, team),
-                ServerCheck::gateway_for_system(debug, team, Some(identity()))
+                ServerCheck::web_for_build(debug, team),
+                ServerCheck::web_for_system(debug, team, Some(identity()))
             );
         }
     }
@@ -684,7 +684,7 @@ mod tests {
     /// the one the platform's fact names.
     #[test]
     fn release_web_without_a_team_is_refused_or_checked_by_its_pin_alone() {
-        let check = ServerCheck::gateway_for_build(false, None).unwrap();
+        let check = ServerCheck::web_for_build(false, None).unwrap();
         match identity() {
             // No signature can be checked without a team: no web process, and the log
             // says so in the web process's words.
@@ -721,7 +721,7 @@ mod tests {
                 assert!(!pinned.development);
             }
         }
-        assert!(ServerCheck::gateway_for_build(true, None)
+        assert!(ServerCheck::web_for_build(true, None)
             .unwrap()
             .may_spawn()
             .is_ok());
@@ -733,21 +733,21 @@ mod tests {
     fn gateway_requires_its_distinct_identity_and_never_a_missing_team() {
         let signed = Some(ImageIdentity::CodeSignature);
         let ServerCheck::Gateway(requirement) =
-            ServerCheck::gateway_for_system(false, Some(TEAM), signed).unwrap()
+            ServerCheck::web_for_system(false, Some(TEAM), signed).unwrap()
         else {
             panic!("release gateway policy")
         };
         assert!(requirement.contains(WEB_SIGNING_ID));
         assert!(!requirement.contains(OFFICE_SIGNING_ID));
-        let no_team = ServerCheck::gateway_for_system(false, None, signed).unwrap();
+        let no_team = ServerCheck::web_for_system(false, None, signed).unwrap();
         assert!(matches!(no_team, ServerCheck::WebRefused(_)));
         assert!(no_team.may_spawn().is_err());
         assert!(no_team.describe().contains("web process"));
         assert!(no_team.describe().contains("no app team id"));
-        assert!(ServerCheck::gateway_for_system(false, Some("bad"), signed).is_err());
-        assert!(ServerCheck::gateway_for_build(false, Some("bad")).is_err());
+        assert!(ServerCheck::web_for_system(false, Some("bad"), signed).is_err());
+        assert!(ServerCheck::web_for_build(false, Some("bad")).is_err());
         assert_eq!(
-            ServerCheck::gateway_for_system(true, None, signed).unwrap(),
+            ServerCheck::web_for_system(true, None, signed).unwrap(),
             ServerCheck::Skip
         );
         // A missing team names no image, so no admission exists to ask anything of.
@@ -846,7 +846,7 @@ mod tests {
     fn the_web_is_admitted_only_without_a_keychain_entitlement() {
         // The rule of a system that checks a code signature, as the pure decision.
         let ServerCheck::Gateway(requirement) =
-            ServerCheck::gateway_for_system(false, Some(TEAM), Some(ImageIdentity::CodeSignature))
+            ServerCheck::web_for_system(false, Some(TEAM), Some(ImageIdentity::CodeSignature))
                 .unwrap()
         else {
             panic!("release gateway policy")

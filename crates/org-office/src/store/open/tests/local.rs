@@ -67,8 +67,9 @@ fn runtime_folder(place: &Place) -> PathBuf {
     place.runtime().join(identity().office_id.as_str())
 }
 
-/// STORE-6 for the CA records: the escrow package and the CA key record are written in
-/// the creation's one entry, with their exact bytes, beside the golden state files.
+/// STORE-6 + TASK-10 (H-06) for the CA records: Entry 1 commits only the public state
+/// files and escrow package (never the wrapped CA key), while `write_ca_key` writes
+/// `ca-key.v1.json` atomically to local security storage outside `durable/recovery/`.
 #[test]
 fn creation_writes_both_ca_records_in_its_one_entry_with_their_exact_bytes() {
     for engine in ENGINES {
@@ -77,7 +78,7 @@ fn creation_writes_both_ca_records_in_its_one_entry_with_their_exact_bytes() {
         let created = create_organization(&store, 1).unwrap();
         assert_eq!(created.outcome, Outcome::Completed, "{engine:?}");
         store.sync().unwrap();
-        // One entry holds everything the creation wrote.
+        // One entry holds everything the creation wrote to state/.
         assert_eq!(store.status().flushed, 1, "{engine:?}");
 
         let material = ca_material(&identity().organization_id, CA);
@@ -87,6 +88,15 @@ fn creation_writes_both_ca_records_in_its_one_entry_with_their_exact_bytes() {
             .map(|(path, bytes)| (format!("state/{path}"), bytes))
             .collect();
         assert_eq!(state, creation_state(&material.package), "{engine:?}");
+        // Entry 1 never writes ca-key.v1.json into local/ or durable/recovery/.
+        assert!(
+            tree(&local_folder(&place)).is_empty(),
+            "{engine:?}: Entry 1 must not write ca-key.v1.json via journal"
+        );
+        // Local security storage write (done by `Office::provision_with` outside the journal).
+        let record = material.record(&identity(), &id(1));
+        crate::office_local::write_ca_key(&place.durable(), &identity().office_id, &record)
+            .unwrap();
         let local = tree(&local_folder(&place));
         let key = String::from_utf8(local["security/ca-key.v1.json"].clone()).unwrap();
         assert_eq!(key, golden_ca_key(&material.package), "{engine:?}");
@@ -169,8 +179,9 @@ fn ca_material_that_breaks_a_rule_is_refused_and_records_nothing() {
     }
 }
 
-/// M6: the wrapped CA key is in the journal and its own record only. No published file
-/// and no projection holds it in either form.
+/// M6 + TASK-10 (H-06): the wrapped CA key is ONLY in its own local security record.
+/// No published state file, no projection, and no acceptance journal segment under
+/// `durable/recovery/` holds it in either raw or hex form.
 #[test]
 fn the_wrapped_ca_key_is_in_no_state_file_and_no_projection() {
     for engine in ENGINES {
@@ -179,7 +190,11 @@ fn the_wrapped_ca_key_is_in_no_state_file_and_no_projection() {
         create_organization(&store, 1).unwrap();
         create_team(&store, 2, 0x21).unwrap();
         store.sync().unwrap();
-        let wrapped = ca_material(&identity().organization_id, CA).wrapped_ca_key;
+        let material = ca_material(&identity().organization_id, CA);
+        let record = material.record(&identity(), &id(1));
+        crate::office_local::write_ca_key(&place.durable(), &identity().office_id, &record)
+            .unwrap();
+        let wrapped = material.wrapped_ca_key;
         let hex: String = wrapped.iter().map(|b| format!("{b:02x}")).collect();
         let holds = |bytes: &[u8]| {
             let raw = bytes
@@ -192,6 +207,9 @@ fn the_wrapped_ca_key_is_in_no_state_file_and_no_projection() {
         store.close().unwrap();
         for (path, bytes) in tree(&place.durable().join("state")) {
             assert!(!holds(&bytes), "{engine:?}: state/{path}");
+        }
+        for (path, bytes) in tree(&place.durable().join("recovery")) {
+            assert!(!holds(&bytes), "{engine:?}: recovery/{path}");
         }
         for (path, bytes) in tree(&place.runtime()) {
             assert!(!holds(&bytes), "{engine:?}: runtime/{path}");
@@ -241,6 +259,10 @@ fn an_unowned_file_in_the_offices_local_folder_fails_the_rebuild_and_is_named() 
         let store = place.create(engine);
         create_organization(&store, 1).unwrap();
         store.close().unwrap();
+        let material = ca_material(&identity().organization_id, CA);
+        let record = material.record(&identity(), &id(1));
+        crate::office_local::write_ca_key(&place.durable(), &identity().office_id, &record)
+            .unwrap();
         let stray = local_folder(&place).join("security/ca-key.v2.json");
         std::fs::write(&stray, b"{}\n").unwrap();
         if engine == EngineChoice::Sqlite {
@@ -402,7 +424,7 @@ fn a_fatal_store_reports_its_fault_and_its_close_leaves_no_marker() {
 }
 
 /// `org.snapshot` on the golden creation: generation 1, the creator as the owner, and the
-/// HR lead an agent with no profile and no office, so nobody is asked to place it.
+/// HR lead an active agent placed on the HQ office with its profile populated.
 #[test]
 fn the_snapshot_of_the_golden_creation() {
     for engine in ENGINES {
@@ -439,21 +461,17 @@ fn the_snapshot_of_the_golden_creation() {
         let hr = member(HR);
         assert_eq!((hr.kind, hr.name.as_str()), (MemberKind::Agent, "HR"));
         assert!(!hr.owner);
-        assert_eq!((hr.agent.clone(), hr.office_id.clone()), (None, None));
+        assert_eq!(hr.office_id.as_deref(), Some(id(0xa3).as_str()));
+        let hr_agent = hr.agent.as_ref().expect("agent profile populated");
+        assert_eq!(hr_agent.messaging_name, "hr");
+        assert_eq!(hr_agent.status, org_proto::org::AgentStatus::Active);
         assert_eq!(hr.reports_to_member_id, None);
 
-        // One membership each, of the home team.
-        let mut memberships: Vec<_> = snapshot
-            .memberships
-            .iter()
-            .map(|m| (m.member_id.clone(), m.team_id.clone(), m.id.clone()))
-            .collect();
-        memberships.sort();
+        // Each employee belongs to the top team as its home team.
         let home = id(TOP_TEAM).to_string();
-        let expected = |n: u64| (id(n).to_string(), home.clone(), id(n).to_string());
-        assert_eq!(memberships, vec![expected(CREATOR), expected(HR)]);
+        assert_eq!(creator.home_team_id.as_deref(), Some(home.as_str()));
+        assert_eq!(hr.home_team_id.as_deref(), Some(home.as_str()));
         assert!(snapshot.projects.is_empty() && snapshot.project_teams.is_empty());
-        assert!(snapshot.areas.is_empty());
 
         // Another owner is told apart by the ID alone.
         let (other, _) = store.read(DirectorySnapshot { owner: id(HR) }).unwrap();
@@ -466,10 +484,9 @@ fn the_snapshot_of_the_golden_creation() {
 
 // ---- team.create through the native protocol's mapping ----
 
-/// A canonical ULID numbered `n`: its six dropped bits are zero, so each `n` is one
-/// store operation.
+/// A canonical lowercase UUIDv7 command ID numbered `n`.
 fn command_id(n: u64) -> String {
-    format!("01ARZ3NDEK{n:014}00")
+    id(0x1000 + n).to_string()
 }
 
 fn params(command: u64, team: u64, parent: Option<u64>) -> TeamCreateParams {
@@ -598,20 +615,20 @@ fn team_create_answers_committed_and_a_retry_gets_the_same_answer() {
         // The same command again: the same answer, and nothing new.
         assert_eq!(wire_create(&store, &creator, &request), Ok(committed));
         assert_eq!(store.read(DirectoryGeneration).unwrap().0, 2, "{engine:?}");
-        // Another payload with that command ID: invalid_request only.
+        // Another payload with that command ID: operation_reused only.
         let mut other = params(1, 0x22, Some(TOP_TEAM));
         assert_eq!(
             code(wire_create(&store, &creator, &other)),
-            ErrorCode::InvalidRequest
+            ErrorCode::OperationReused
         );
         other = params(1, 0x21, Some(TOP_TEAM));
         other.name = "Renamed".into();
         assert_eq!(
             code(wire_create(&store, &creator, &other)),
-            ErrorCode::InvalidRequest
+            ErrorCode::OperationReused
         );
-        // The receipt is the mapped UUIDv7, and the snapshot shows the team.
-        let mapped = crate::organization::operation_id::from_wire_ulid(&command_id(1)).unwrap();
+        // The receipt uses the native UUIDv7 command ID directly, and the snapshot shows the team.
+        let mapped = command_id(1);
         store.sync().unwrap();
         let receipts = tree(&place.durable().join("recovery/commands"));
         let names: Vec<&String> = receipts.keys().collect();
@@ -644,10 +661,6 @@ fn team_create_refusals_carry_the_protocols_codes() {
         let creator = id(CREATOR).to_string();
         let ask = |member: &str, request: TeamCreateParams| wire_create(&store, member, &request);
 
-        // A top-level team arrives with B2; it is never read as "under the top team".
-        let top = ask(&creator, params(1, 0x21, None)).expect_err("refused");
-        assert_eq!(top.code, ErrorCode::InvalidRequest);
-        assert!(top.message.contains("B2"), "{top:?}");
         assert_eq!(
             code(ask(&creator, params(2, 0x21, Some(0x99)))),
             ErrorCode::NotFound
@@ -674,6 +687,11 @@ fn team_create_refusals_carry_the_protocols_codes() {
         // None of these recorded anything or took a generation.
         assert_eq!(store.read(DirectoryGeneration).unwrap().0, 1, "{engine:?}");
         assert_eq!(directory(&store).teams.len(), 1);
+
+        // A top-level team commits cleanly with no parent.
+        let top = ask(&creator, params(1, 0x20, None)).expect("top-level team");
+        assert_eq!(top.status, org_proto::org::CommandStatus::Committed);
+        assert_eq!(directory(&store).teams.len(), 2);
 
         // An archived parent is the wrong state: a recorded rejection, invalid_request
         // (the wire contract's code for it), and the same on a retry.

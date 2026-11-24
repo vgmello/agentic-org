@@ -13,5 +13,3 @@
 # (docs/design/linux-host.md, section 1). When a file loses predicates, lower its
 # count, or delete its line at zero, in the same change; the check fails until you do.
 # The list is empty when Track X is complete (increment X6).
-apps/agentic-org-office/src/startup/tests.rs 8
-apps/agentic-org-office/tests/launch/activation/transfer.rs 3

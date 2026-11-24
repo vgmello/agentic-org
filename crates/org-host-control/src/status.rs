@@ -28,7 +28,7 @@ pub enum InstanceMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
-pub enum GatewayState {
+pub enum WebState {
     NotConfigured,
     Starting,
     Running,
@@ -37,8 +37,8 @@ pub enum GatewayState {
     Unknown,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GatewayStatus {
-    pub state: GatewayState,
+pub struct WebStatus {
+    pub state: WebState,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfficeCounts {
@@ -61,7 +61,7 @@ pub enum Administrator {
 pub struct InstanceStatusResult {
     pub instance_id: String,
     pub mode: InstanceMode,
-    pub gateway: GatewayStatus,
+    pub gateway: WebStatus,
     pub offices: OfficeCounts,
     pub administrator: Administrator,
 }

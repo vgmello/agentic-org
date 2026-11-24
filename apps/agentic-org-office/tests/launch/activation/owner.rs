@@ -3,8 +3,8 @@
 //! transfer socket and signs a grant for the owner with the test grant key. Agents bind on the
 //! office socket by handle, with no token.
 use super::*;
-use agentic_org_office::test_support::{signed_grant, ChannelCaller};
 use org_office_launch::{ChannelKind, TransferRecord};
+use org_office_server::test_support::{signed_grant, ChannelCaller};
 use org_proto::{ApiError, Call};
 
 /// A worker started by the host on the office the worker created.
@@ -181,8 +181,8 @@ fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_resta
     let mut first = live(&world);
     let client = Client::connect(socket(&world)).unwrap();
     assert!(client.hello().unwrap().supports("inbox.list"));
-    // Hints travel only on `subscribe`, which this office does not serve yet (B6).
-    assert!(!client.hello().unwrap().supports("inbox.changed"));
+    // B6 wires `subscribe` and live `inbox.changed` hints on HQ offices.
+    assert!(client.hello().unwrap().supports("inbox.changed"));
     let params = InboxListParams {
         state: InboxState::Open,
         kinds: None,
@@ -270,10 +270,10 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
     assert_eq!(team(&mut owner, &command, "Platform").unwrap(), accepted);
     assert_eq!(
         team(&mut owner, &command, "Other").unwrap_err().code,
-        org_proto::ErrorCode::InvalidRequest,
+        org_proto::ErrorCode::OperationReused,
         "the same id with other params"
     );
-    // A top-level team arrives with B2: never reinterpreted.
+    // Top-level teams commit with `owner_team_id: None`.
     let top_level = owner
         .call::<org_proto::org::TeamCreate>(&org_proto::org::TeamCreateParams {
             command_id: command_id(3),
@@ -281,22 +281,22 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
             name: "Elsewhere".into(),
             owner_team_id: None,
         })
-        .unwrap_err();
-    assert_eq!(top_level.code, org_proto::ErrorCode::InvalidRequest);
-    // Operation lookup is `unsupported` until B2 maps the store's receipts. What is refused
-    // before the lookup is unchanged.
+        .unwrap();
+    assert_eq!(top_level.status, org_proto::org::CommandStatus::Committed);
+    // Operation lookup is backed by the store's receipts: returns committed/rejected for the
+    // acting owner and refuses another actor or anonymous caller with `not_found`.
     let get = |id: &str| org_proto::OperationGetParams {
         kind: org_proto::OperationKind::Org,
         id: id.into(),
     };
-    let unsupported = |caller: &mut Caller, id: &str| {
-        caller
-            .call::<org_proto::OperationGet>(&get(id))
-            .unwrap_err()
-            .code
-            == org_proto::ErrorCode::Unsupported
-    };
-    assert!(unsupported(&mut owner, &command));
+    assert_eq!(
+        owner
+            .call::<org_proto::OperationGet>(&get(&command))
+            .unwrap(),
+        org_proto::OperationOutcome::Committed {
+            result: serde_json::to_value(accepted).unwrap(),
+        }
+    );
     let reader = Client::connect(socket(&world)).unwrap();
     let lookup = |client: &Client, id: &str| client.call::<org_proto::OperationGet>(&get(id));
     assert_eq!(
@@ -308,17 +308,30 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
         org_proto::ErrorCode::InvalidRequest
     );
     let refusal_id = command_id(2);
-    team(&mut owner, &refusal_id, " ").unwrap_err();
+    let refusal = team(&mut owner, &refusal_id, " ").unwrap_err();
+    assert_eq!(
+        owner
+            .call::<org_proto::OperationGet>(&get(&refusal_id))
+            .unwrap(),
+        org_proto::OperationOutcome::Rejected { refusal }
+    );
     let after = snapshot(&mut owner);
     assert_eq!(platform(&after).unwrap().name, "Platform");
-    assert_eq!(after.teams.len(), 2);
+    assert_eq!(after.teams.len(), 3);
     drop((client, reader, owner));
     first.stop();
 
-    // After a restart the team is there, and the old command id still gets its answer.
+    // After a restart the team is there, and both the old command id and operation.get answer.
     let mut again = live(&world);
     let mut owner = again.caller(Some(&owner_id));
-    assert!(unsupported(&mut owner, &command));
+    assert_eq!(
+        owner
+            .call::<org_proto::OperationGet>(&get(&command))
+            .unwrap(),
+        org_proto::OperationOutcome::Committed {
+            result: serde_json::to_value(accepted).unwrap(),
+        }
+    );
     assert_eq!(snapshot(&mut owner), after);
     assert_eq!(team(&mut owner, &command, "Platform").unwrap(), accepted);
     assert_eq!(snapshot(&mut owner), after);
@@ -514,32 +527,35 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
         expected_version: 1,
     };
 
-    // `subscribe` on the office socket.
+    // `subscribe` on the office socket is served by B6 and refuses unbound callers.
     let subscribe = org_proto::SubscribeParams {
         from_position: None,
         from_work_position: None,
     };
-    let unsupported = |error: org_client::ClientError| api_code(error) == ErrorCode::Unsupported;
     let unbound = Client::connect(socket(&world)).unwrap();
-    assert!(unsupported(
-        unbound
-            .call::<org_proto::Subscribe>(&subscribe)
-            .unwrap_err()
-    ));
+    assert_eq!(
+        api_code(
+            unbound
+                .call::<org_proto::Subscribe>(&subscribe)
+                .unwrap_err()
+        ),
+        ErrorCode::NotAuthorized
+    );
 
-    // The owner, through its grant on a host channel.
+    // The owner, through its grant on a host channel: messaging is now served by B6.
     let owner_unsupported = |error: ApiError| error.code == ErrorCode::Unsupported;
-    assert!(owner_unsupported(
-        owner.call::<MsgSend>(&message(11, "owner")).unwrap_err()
-    ));
-    assert!(owner_unsupported(
-        owner.call::<MsgInbox>(&inbox).unwrap_err()
-    ));
-    assert!(owner_unsupported(
-        owner
-            .call::<MsgRead>(&MsgReadParams { id: None })
-            .unwrap_err()
-    ));
+    let sent = owner.call::<MsgSend>(&message(11, "owner")).unwrap();
+    let listed = owner.call::<MsgInbox>(&inbox).unwrap();
+    assert!(listed.headers.iter().any(|h| h.id == sent.id));
+    let read = owner
+        .call::<MsgRead>(&MsgReadParams {
+            id: Some(sent.id.clone()),
+        })
+        .unwrap();
+    assert_eq!(
+        read.message.as_ref().map(|m| m.header.id.as_str()),
+        Some(sent.id.as_str())
+    );
     // A person never waits on the office: refused at once, not held for 30 s.
     let started = std::time::Instant::now();
     owner.call::<MsgWait>(&wait).unwrap_err();
@@ -550,25 +566,61 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
     assert!(owner_unsupported(
         owner.call::<WorkDelete>(&delete).unwrap_err()
     ));
-    assert!(owner_unsupported(
+    // operation.get is served for org receipts (unknown ID -> not_found).
+    assert_eq!(
         owner
             .call::<OperationGet>(&OperationGetParams {
                 kind: OperationKind::Org,
-                id: command_id(1),
+                id: command_id(99),
             })
             .unwrap_err()
-    ));
-    // Another organization command (B2).
+            .code,
+        ErrorCode::NotFound
+    );
+    // Project commands are wired on org-store (B3): unknown project_id -> not_found.
+    assert_eq!(
+        owner
+            .call::<org_proto::org::ProjectAddTeam>(&org_proto::org::ProjectAddTeamParams {
+                command_id: command_id(7),
+                project_team_id: command_id(12),
+                project_id: command_id(13),
+                team_id: TEAM.into(),
+            })
+            .unwrap_err()
+            .code,
+        ErrorCode::NotFound
+    );
+    // An unbuilt organization command (direct agent add is replaced by HR hire in C2).
+    let add_agent: org_proto::org::MemberAddAgentParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": command_id(14),
+            "member_id": command_id(15),
+            "name": "Bot",
+            "office_id": "0190a5d2-7c3e-7000-8000-000000000002",
+            "profile": {
+                "role": "engineer",
+                "title": "Engineer",
+                "runtime": "codex",
+                "messaging_name": "bot",
+                "status": "active"
+            }
+        }))
+        .unwrap();
     assert!(owner_unsupported(
         owner
-            .call::<TeamRename>(&TeamRenameParams {
-                command_id: command_id(7),
-                team_id: TEAM.into(),
-                name: "Renamed".into(),
-                expected_version: 1,
-            })
+            .call::<org_proto::org::MemberAddAgent>(&add_agent)
             .unwrap_err()
     ));
+    // A wired organization command commits through the real worker.
+    let renamed = owner
+        .call::<TeamRename>(&TeamRenameParams {
+            command_id: command_id(8),
+            team_id: TEAM.into(),
+            name: "Renamed".into(),
+            expected_version: 1,
+        })
+        .unwrap();
+    assert_eq!(renamed.status, org_proto::org::CommandStatus::Committed);
 
     // The directory read still answers: no status line, everyone offline.
     let who = owner

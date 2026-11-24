@@ -119,3 +119,60 @@ fn out_of_bounds_inputs_are_refused_before_any_crypto() {
         Err(WrapError::Invalid)
     );
 }
+
+#[test]
+fn task_11_ca_and_provider_credentials_use_distinct_wrapping_keys_and_domains() {
+    let ca_key = derive_wrapping_key(&KEY, KeyClass::OfficePrivateKey).unwrap();
+    let provider_key = derive_wrapping_key(&KEY, KeyClass::ProviderCredential).unwrap();
+
+    // Derived keys are deterministic, distinct from each other, and distinct from the master key.
+    assert_eq!(
+        *ca_key,
+        *derive_wrapping_key(&KEY, KeyClass::OfficePrivateKey).unwrap()
+    );
+    assert_eq!(
+        *provider_key,
+        *derive_wrapping_key(&KEY, KeyClass::ProviderCredential).unwrap()
+    );
+    assert_ne!(*ca_key, *provider_key);
+    assert_ne!(*ca_key, KEY);
+    assert_ne!(*provider_key, KEY);
+
+    let conn_binding = ProviderCredentialBinding {
+        organization_id: ORG,
+        office_id: OFFICE,
+        connection_id: "01J000000000000000000CONN1",
+    };
+    let token = b"sk-ant-oat01-example-oauth-token";
+    let wrapped = wrap_provider_credential(&provider_key, &conn_binding, token).unwrap();
+    assert!(!wrapped.windows(token.len()).any(|w| w == token));
+    assert_eq!(
+        *unwrap_provider_credential(&provider_key, &conn_binding, &wrapped).unwrap(),
+        token
+    );
+
+    // Cross-key and cross-domain unwrapping fails closed.
+    assert_eq!(
+        unwrap_provider_credential(&ca_key, &conn_binding, &wrapped),
+        Err(WrapError::Rejected)
+    );
+    assert_eq!(
+        unwrap_provider_credential(&KEY, &conn_binding, &wrapped),
+        Err(WrapError::Rejected)
+    );
+    assert_eq!(
+        unwrap(&provider_key, &binding(ORG, OFFICE), &wrapped),
+        Err(WrapError::Rejected)
+    );
+    assert_eq!(
+        unwrap_provider_credential(
+            &provider_key,
+            &ProviderCredentialBinding {
+                connection_id: "01J000000000000000000CONN2",
+                ..conn_binding
+            },
+            &wrapped
+        ),
+        Err(WrapError::Rejected)
+    );
+}

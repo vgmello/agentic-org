@@ -1,8 +1,8 @@
 <script lang="ts">
 	// The Organization settings frame (app-shell-ux §0.1): underline tabs below 960 px, a left column of
 	// links from 960 px. Each section is its own route; a builder replaces only that section's page.
-	// The column also needs the frame to be 20 rem wide (the 14 rem column and room for the section), so at large text
-	// in a narrow main column the section is not pushed out (§6a).
+	// The column also needs the frame to be 28 rem wide (the 14 rem column plus at least 14 rem for the section), so
+	// at enlarged text (200%+) the section keeps adequate room instead of being squeezed beside two sidebars (SHELL-30).
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import TabsNav, { type Tab } from '$lib/components/TabsNav.svelte';
@@ -15,6 +15,7 @@
 		{ label: 'Roles', href: '/settings/roles', match: 'prefix' },
 		{ label: 'Processes', href: '/settings/processes', match: 'prefix' },
 		{ label: 'Members and access', href: '/settings/access', match: 'prefix' },
+		{ label: 'Security & Access', href: '/settings/security', match: 'prefix' },
 		{ label: 'Costs', href: '/settings/costs', match: 'prefix' },
 		{ label: 'Updates', href: '/settings/updates', match: 'prefix' }
 	];
@@ -24,15 +25,15 @@
 </script>
 
 <div class="@container">
-	<div class="min-[960px]:@min-[20rem]:flex">
+	<div class="min-[960px]:@min-[28rem]:flex">
 		<TabsNav
 			label="Organization settings"
 			tabs={sections}
-			class="min-[960px]:@min-[20rem]:hidden"
+			class="min-[960px]:@min-[28rem]:hidden"
 		/>
 		<nav
 			aria-label="Organization settings"
-			class="hidden w-56 shrink-0 border-r border-line px-3.5 py-5 min-[960px]:@min-[20rem]:block"
+			class="hidden w-56 shrink-0 border-r border-line px-3.5 py-5 min-[960px]:@min-[28rem]:block"
 		>
 			<p
 				aria-hidden="true"

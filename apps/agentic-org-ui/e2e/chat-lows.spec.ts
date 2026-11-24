@@ -88,7 +88,7 @@ test('CHAT-34 CHAT-35 BUG-63: stopped office disables channel and DM management'
 		)
 	];
 	await page.evaluate(async () => {
-		const path = '/src/lib/modules/messaging/legacy-api.ts';
+		const path = '/e2e/fakes/modules/messaging.ts';
 		const { chatApi } = await import(path);
 		const command = chatApi.command.bind(chatApi);
 		document.documentElement.dataset.chatManagementWrites = '0';
@@ -117,7 +117,7 @@ for (const kind of ['channel', 'DM'] as const) {
 		await mainNav(page).getByRole('link', { name: 'Teams', exact: true }).click();
 		await expect(page).toHaveURL(/\/teams$/);
 		await page.evaluate(async () => {
-			const path = '/src/lib/modules/messaging/legacy-api.ts';
+			const path = '/e2e/fakes/modules/messaging.ts';
 			const { chatApi } = await import(path);
 			const snapshot = chatApi.snapshot.bind(chatApi);
 			const subscribe = chatApi.subscribe.bind(chatApi);
@@ -391,7 +391,7 @@ for (const action of ['Reply', 'Reject'] as const) {
 		await mainNav(page).getByRole('link', { name: 'Teams', exact: true }).click();
 		await expect(page).toHaveURL(/\/teams$/);
 		await page.evaluate(async () => {
-			const path = '/src/lib/modules/messaging/legacy-api.ts';
+			const path = '/e2e/fakes/modules/messaging.ts';
 			const { chatApi } = await import(path);
 			const subscribe = chatApi.subscribe.bind(chatApi);
 			const snapshot = chatApi.snapshot.bind(chatApi);

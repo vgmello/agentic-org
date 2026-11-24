@@ -22,6 +22,7 @@
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import Workflow from '@lucide/svelte/icons/workflow';
 	import type { Connection, ProjectSummary } from '$lib/proto';
+	import OrganizationSwitcher from './OrganizationSwitcher.svelte';
 	import ShellAccountMenu from './ShellAccountMenu.svelte';
 	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
 
@@ -33,6 +34,7 @@
 		pinned = true,
 		onNavigate,
 		onToggleCollapse,
+		onMenuOpenChange,
 		onPointerEnter,
 		onPointerLeave,
 		onFocusIn,
@@ -45,11 +47,19 @@
 		pinned?: boolean;
 		onNavigate?: (event: MouseEvent, href: string) => void;
 		onToggleCollapse?: () => void;
+		onMenuOpenChange?: (open: boolean) => void;
 		onPointerEnter?: () => void;
 		onPointerLeave?: () => void;
 		onFocusIn?: (event: FocusEvent) => void;
 		onFocusOut?: (event: FocusEvent) => void;
 	} = $props();
+
+	let orgMenuOpen = $state(false);
+	let accountMenuOpen = $state(false);
+
+	function notifyMenuOpen() {
+		onMenuOpenChange?.(orgMenuOpen || accountMenuOpen);
+	}
 
 	const pathname = $derived(page.url.pathname);
 	const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
@@ -116,39 +126,79 @@
 				collapsed ? 'justify-center px-2' : 'justify-between gap-2 px-3'
 			]}
 		>
-			<a
-				href={resolve('/home')}
-				onclick={(event) => onNavigate?.(event, '/home')}
-				class={[
-					'exec-logo flex min-w-0 items-center rounded-lg py-1.5',
-					collapsed ? 'size-11 justify-center px-0' : 'flex-1 gap-2.5 px-2'
-				]}
-				title={connection.organization.name}
-			>
-				<span
-					class="exec-brand-mark flex size-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-on-emphasis"
-					aria-hidden="true"
-				>
-					A
-				</span>
-				<span class={collapsed ? 'sr-only' : 'exec-logo-name truncate'}>
-					{connection.organization.name}
-				</span>
-			</a>
-			{#if onToggleCollapse && !collapsed}
-				<button
-					type="button"
-					onclick={onToggleCollapse}
-					aria-label={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
-					aria-pressed={pinned}
-					title={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
-					class={[
-						'exec-icon-btn flex size-7 shrink-0 items-center justify-center rounded-md',
-						pinned && 'is-pinned'
-					]}
-				>
-					<PanelLeft class="size-4" aria-hidden="true" />
-				</button>
+			<Tooltip.Root disabled={!collapsed}>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<a
+							{...props}
+							href={resolve('/home')}
+							onclick={(event) => onNavigate?.(event, '/home')}
+							aria-label="{connection.organization.name} home"
+							class={[
+								'exec-logo flex min-w-0 items-center rounded-lg py-1.5',
+								collapsed ? 'size-11 justify-center px-0' : 'flex-1 gap-2.5 px-2'
+							]}
+						>
+							<span
+								class="exec-brand-mark flex size-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-on-emphasis"
+								aria-hidden="true"
+							>
+								A
+							</span>
+							<span class={collapsed ? 'sr-only' : 'exec-logo-name truncate'}>
+								{connection.organization.name}
+							</span>
+						</a>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Portal>
+					<Tooltip.Content
+						side="right"
+						sideOffset={6}
+						class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+						>{connection.organization.name}</Tooltip.Content
+					>
+				</Tooltip.Portal>
+			</Tooltip.Root>
+			{#if !collapsed}
+				<div class="flex shrink-0 items-center gap-0.5">
+					<OrganizationSwitcher
+						{connection}
+						onOpenChange={(next) => {
+							orgMenuOpen = next;
+							notifyMenuOpen();
+						}}
+					/>
+					{#if onToggleCollapse}
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button
+										{...props}
+										type="button"
+										onclick={onToggleCollapse}
+										aria-label={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
+										aria-pressed={pinned}
+										class={[
+											'exec-icon-btn flex size-9 shrink-0 items-center justify-center rounded-md [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11',
+											pinned && 'is-pinned'
+										]}
+									>
+										<PanelLeft class="size-4" aria-hidden="true" />
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									side="bottom"
+									sideOffset={6}
+									class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+									>{pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}</Tooltip.Content
+								>
+							</Tooltip.Portal>
+						</Tooltip.Root>
+					{/if}
+				</div>
 			{/if}
 		</div>
 
@@ -165,32 +215,71 @@
 				{/if}
 				<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
 					<li>
-						<a
-							href={resolve('/home')}
-							onclick={(e) => onNavigate?.(e, '/home')}
-							aria-current={isActive('/home') ? 'page' : undefined}
-							title="Home"
-							class={['exec-nav-item', collapsed && 'is-rail', isActive('/home') && 'is-active']}
-						>
-							<House class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Home</span>
-						</a>
+						<Tooltip.Root disabled={!collapsed}>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<a
+										{...props}
+										href={resolve('/home')}
+										onclick={(e) => onNavigate?.(e, '/home')}
+										aria-current={isActive('/home') ? 'page' : undefined}
+										class={[
+											'exec-nav-item',
+											collapsed && 'is-rail',
+											isActive('/home') && 'is-active'
+										]}
+									>
+										<House class="size-[18px] shrink-0" aria-hidden="true" />
+										<span class={collapsed ? 'sr-only' : 'truncate'}>Home</span>
+									</a>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									side="right"
+									sideOffset={6}
+									class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+									>Home</Tooltip.Content
+								>
+							</Tooltip.Portal>
+						</Tooltip.Root>
 					</li>
 					<li>
-						<a
-							href={resolve('/inbox')}
-							onclick={(e) => onNavigate?.(e, '/inbox')}
-							aria-current={isActive('/inbox') ? 'page' : undefined}
-							title={needsYouCount > 0 ? `Inbox (${needsYouCount} waiting on you)` : 'Inbox'}
-							class={['exec-nav-item', collapsed && 'is-rail', isActive('/inbox') && 'is-active']}
-						>
-							<Inbox class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Inbox</span>
-							{#if needsYouCount > 0}
-								<span class={['exec-nav-dot', collapsed && 'is-rail']} aria-hidden="true"></span>
-								<span class="sr-only">, {needsYouCount} waiting on you</span>
-							{/if}
-						</a>
+						<Tooltip.Root disabled={!collapsed}>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<a
+										{...props}
+										href={resolve('/inbox')}
+										onclick={(e) => onNavigate?.(e, '/inbox')}
+										aria-current={isActive('/inbox') ? 'page' : undefined}
+										class={[
+											'exec-nav-item',
+											collapsed && 'is-rail',
+											isActive('/inbox') && 'is-active'
+										]}
+									>
+										<Inbox class="size-[18px] shrink-0" aria-hidden="true" />
+										<span class={collapsed ? 'sr-only' : 'truncate'}>Inbox</span>
+										{#if needsYouCount > 0}
+											<span class={['exec-nav-dot', collapsed && 'is-rail']} aria-hidden="true"
+											></span>
+											<span class="sr-only">, {needsYouCount} waiting on you</span>
+										{/if}
+									</a>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									side="right"
+									sideOffset={6}
+									class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+									>{needsYouCount > 0
+										? `Inbox (${needsYouCount} waiting on you)`
+										: 'Inbox'}</Tooltip.Content
+								>
+							</Tooltip.Portal>
+						</Tooltip.Root>
 					</li>
 				</ul>
 			</div>
@@ -200,62 +289,39 @@
 					<div class="exec-nav-label px-2.5 pb-1.5">Workspace</div>
 				{/if}
 				<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
-					<li>
-						<a
-							href={resolve('/work')}
-							onclick={(e) => onNavigate?.(e, '/work')}
-							aria-current={isActive('/work') ? 'page' : undefined}
-							title="Work"
-							class={['exec-nav-item', collapsed && 'is-rail', isActive('/work') && 'is-active']}
-						>
-							<ClipboardList class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Work</span>
-						</a>
-					</li>
-					<li>
-						<a
-							href={resolve('/chat')}
-							onclick={(e) => onNavigate?.(e, '/chat')}
-							aria-current={isActive('/chat') ? 'page' : undefined}
-							title="Chat"
-							class={['exec-nav-item', collapsed && 'is-rail', isActive('/chat') && 'is-active']}
-						>
-							<MessageSquare class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Chat</span>
-						</a>
-					</li>
-					<li>
-						<a
-							href={resolve('/activity')}
-							onclick={(e) => onNavigate?.(e, '/activity')}
-							aria-current={isActive('/activity') ? 'page' : undefined}
-							title="Activity"
-							class={[
-								'exec-nav-item',
-								collapsed && 'is-rail',
-								isActive('/activity') && 'is-active'
-							]}
-						>
-							<Activity class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Activity</span>
-						</a>
-					</li>
-					<li>
-						<a
-							href={resolve('/projects')}
-							onclick={(e) => onNavigate?.(e, '/projects')}
-							aria-current={isActive('/projects') ? 'page' : undefined}
-							title="Projects"
-							class={[
-								'exec-nav-item',
-								collapsed && 'is-rail',
-								isActive('/projects') && 'is-active'
-							]}
-						>
-							<Folder class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Projects</span>
-						</a>
-					</li>
+					{#each [{ href: '/work', label: 'Work', Icon: ClipboardList }, { href: '/chat', label: 'Chat', Icon: MessageSquare }, { href: '/activity', label: 'Activity', Icon: Activity }, { href: '/projects', label: 'Projects', Icon: Folder }] as const as item (item.href)}
+						{@const NavIcon = item.Icon}
+						<li>
+							<Tooltip.Root disabled={!collapsed}>
+								<Tooltip.Trigger>
+									{#snippet child({ props })}
+										<a
+											{...props}
+											href={resolve(item.href)}
+											onclick={(e) => onNavigate?.(e, item.href)}
+											aria-current={isActive(item.href) ? 'page' : undefined}
+											class={[
+												'exec-nav-item',
+												collapsed && 'is-rail',
+												isActive(item.href) && 'is-active'
+											]}
+										>
+											<NavIcon class="size-[18px] shrink-0" aria-hidden="true" />
+											<span class={collapsed ? 'sr-only' : 'truncate'}>{item.label}</span>
+										</a>
+									{/snippet}
+								</Tooltip.Trigger>
+								<Tooltip.Portal>
+									<Tooltip.Content
+										side="right"
+										sideOffset={6}
+										class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+										>{item.label}</Tooltip.Content
+									>
+								</Tooltip.Portal>
+							</Tooltip.Root>
+						</li>
+					{/each}
 				</ul>
 			</div>
 
@@ -266,19 +332,41 @@
 							<Star class="size-3" aria-hidden="true" />
 							<span>Favorite projects</span>
 						</div>
-						<button
-							type="button"
-							onclick={() => (favoritesOpen = !favoritesOpen)}
-							aria-expanded={favoritesOpen}
-							aria-controls="exec-nav-favs"
-							aria-label={favoritesOpen ? 'Collapse favorite projects' : 'Expand favorite projects'}
-							class="exec-icon-btn flex size-6 items-center justify-center rounded-md"
-						>
-							<ChevronRight
-								class={['size-3.5 transition-transform duration-150', favoritesOpen && 'rotate-90']}
-								aria-hidden="true"
-							/>
-						</button>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button
+										{...props}
+										type="button"
+										onclick={() => (favoritesOpen = !favoritesOpen)}
+										aria-expanded={favoritesOpen}
+										aria-controls="exec-nav-favs"
+										aria-label={favoritesOpen
+											? 'Collapse favorite projects'
+											: 'Expand favorite projects'}
+										class="exec-icon-btn flex size-9 items-center justify-center rounded-md [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
+									>
+										<ChevronRight
+											class={[
+												'size-3.5 transition-transform duration-150',
+												favoritesOpen && 'rotate-90'
+											]}
+											aria-hidden="true"
+										/>
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									side="right"
+									sideOffset={6}
+									class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+									>{favoritesOpen
+										? 'Collapse favorite projects'
+										: 'Expand favorite projects'}</Tooltip.Content
+								>
+							</Tooltip.Portal>
+						</Tooltip.Root>
 					</div>
 					{#if favoritesOpen}
 						<ul id="exec-nav-favs" class="flex flex-col gap-0.5">
@@ -298,15 +386,29 @@
 										<span class="truncate">{proj.name}</span>
 									</a>
 									{#if uiPrefs.isFavorite(proj.id)}
-										<button
-											type="button"
-											onclick={() => uiPrefs.toggleFavorite(proj.id)}
-											aria-label="Remove {proj.name} from favorites"
-											title="Unpin from favorites"
-											class="exec-fav-unpin flex size-6 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-										>
-											<Star class="size-3.5 fill-current" aria-hidden="true" />
-										</button>
+										<Tooltip.Root>
+											<Tooltip.Trigger>
+												{#snippet child({ props })}
+													<button
+														{...props}
+														type="button"
+														onclick={() => uiPrefs.toggleFavorite(proj.id)}
+														aria-label="Remove {proj.name} from favorites"
+														class="exec-fav-unpin flex size-9 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
+													>
+														<Star class="size-3.5 fill-current" aria-hidden="true" />
+													</button>
+												{/snippet}
+											</Tooltip.Trigger>
+											<Tooltip.Portal>
+												<Tooltip.Content
+													side="right"
+													sideOffset={6}
+													class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+													>Unpin from favorites</Tooltip.Content
+												>
+											</Tooltip.Portal>
+										</Tooltip.Root>
 									{/if}
 								</li>
 							{/each}
@@ -320,98 +422,35 @@
 					<div class="exec-nav-label px-2.5 pb-1.5">Organization</div>
 				{/if}
 				<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
-					<li>
-						<a
-							href={resolve('/teams')}
-							onclick={(e) => onNavigate?.(e, '/teams')}
-							aria-current={isTeamsActive ? 'page' : undefined}
-							title="Teams"
-							class={['exec-nav-item', collapsed && 'is-rail', isTeamsActive && 'is-active']}
-						>
-							<Users class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Teams</span>
-						</a>
-					</li>
-					<li>
-						<a
-							href={resolve('/teams/org-chart')}
-							onclick={(e) => onNavigate?.(e, '/teams/org-chart')}
-							aria-current={isActive('/teams/org-chart') ? 'page' : undefined}
-							title="Org chart"
-							class={[
-								'exec-nav-item',
-								collapsed && 'is-rail',
-								isActive('/teams/org-chart') && 'is-active'
-							]}
-						>
-							<Network class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Org chart</span>
-						</a>
-					</li>
-					<li>
-						<a
-							href={resolve('/teams/members')}
-							onclick={(e) => onNavigate?.(e, '/teams/members')}
-							aria-current={isActive('/teams/members') ? 'page' : undefined}
-							title="Members"
-							class={[
-								'exec-nav-item',
-								collapsed && 'is-rail',
-								isActive('/teams/members') && 'is-active'
-							]}
-						>
-							<Bot class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Members</span>
-						</a>
-					</li>
-					<li>
-						<a
-							href={resolve('/settings/processes')}
-							onclick={(e) => onNavigate?.(e, '/settings/processes')}
-							aria-current={isActive('/settings/processes') ? 'page' : undefined}
-							title="Processes"
-							class={[
-								'exec-nav-item',
-								collapsed && 'is-rail',
-								isActive('/settings/processes') && 'is-active'
-							]}
-						>
-							<Workflow class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Processes</span>
-						</a>
-					</li>
-					<li>
-						<a
-							href={resolve('/settings/offices')}
-							onclick={(e) => onNavigate?.(e, '/settings/offices')}
-							aria-current={isActive('/settings/offices') ? 'page' : undefined}
-							title="Offices"
-							class={[
-								'exec-nav-item',
-								collapsed && 'is-rail',
-								isActive('/settings/offices') && 'is-active'
-							]}
-						>
-							<Building2 class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Offices</span>
-						</a>
-					</li>
-					<li>
-						<a
-							href={resolve('/settings')}
-							onclick={(e) => onNavigate?.(e, '/settings')}
-							aria-current={pathname === '/settings' ? 'page' : undefined}
-							title="Settings"
-							class={[
-								'exec-nav-item',
-								collapsed && 'is-rail',
-								pathname === '/settings' && 'is-active'
-							]}
-						>
-							<Settings class="size-[18px] shrink-0" aria-hidden="true" />
-							<span class={collapsed ? 'sr-only' : 'truncate'}>Settings</span>
-						</a>
-					</li>
+					{#each [{ href: '/teams', label: 'Teams', Icon: Users, active: isTeamsActive }, { href: '/teams/org-chart', label: 'Org chart', Icon: Network, active: isActive('/teams/org-chart') }, { href: '/teams/members', label: 'Members', Icon: Bot, active: isActive('/teams/members') }, { href: '/settings/processes', label: 'Processes', Icon: Workflow, active: isActive('/settings/processes') }, { href: '/settings/offices', label: 'Offices', Icon: Building2, active: isActive('/settings/offices') }, { href: '/settings', label: 'Settings', Icon: Settings, active: pathname === '/settings' }] as const as item (item.href)}
+						{@const OrgIcon = item.Icon}
+						<li>
+							<Tooltip.Root disabled={!collapsed}>
+								<Tooltip.Trigger>
+									{#snippet child({ props })}
+										<a
+											{...props}
+											href={resolve(item.href)}
+											onclick={(e) => onNavigate?.(e, item.href)}
+											aria-current={item.active ? 'page' : undefined}
+											class={['exec-nav-item', collapsed && 'is-rail', item.active && 'is-active']}
+										>
+											<OrgIcon class="size-[18px] shrink-0" aria-hidden="true" />
+											<span class={collapsed ? 'sr-only' : 'truncate'}>{item.label}</span>
+										</a>
+									{/snippet}
+								</Tooltip.Trigger>
+								<Tooltip.Portal>
+									<Tooltip.Content
+										side="right"
+										sideOffset={6}
+										class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+										>{item.label}</Tooltip.Content
+									>
+								</Tooltip.Portal>
+							</Tooltip.Root>
+						</li>
+					{/each}
 				</ul>
 			</div>
 		</nav>
@@ -444,48 +483,71 @@
 					{/each}
 				</div>
 			{/if}
-			<ShellAccountMenu {connection} compact={collapsed} />
-			<a
-				href={resolve('/settings/offices')}
-				onclick={(e) => onNavigate?.(e, '/settings/offices')}
-				aria-label={officeStatusLabel}
-				class={[
-					'exec-foot-link flex items-center rounded-lg text-xs leading-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11',
-					collapsed ? 'size-11 justify-center p-0' : 'mt-1 gap-2 px-2 py-1'
-				]}
-				title="{connection.office.host} · {officeStatusLabel}"
-			>
-				{#if officeStatus.icon === 'online'}
-					<CheckCircle2
-						class="size-3.5 shrink-0"
-						style="color: var(--exec-ok);"
-						aria-hidden="true"
-					/>
-				{:else if officeStatus.icon === 'offline'}
-					<WifiOff
-						class="size-3.5 shrink-0"
-						style="color: {officeStatus.tone === 'bad' ? 'var(--exec-bad)' : 'var(--exec-muted)'};"
-						aria-hidden="true"
-					/>
-				{:else if officeStatus.icon === 'warn'}
-					<CircleAlert
-						class="size-3.5 shrink-0"
-						style="color: var(--exec-warn);"
-						aria-hidden="true"
-					/>
-				{:else}
-					<CircleHelp
-						class="size-3.5 shrink-0"
-						style="color: var(--exec-muted);"
-						aria-hidden="true"
-					/>
-				{/if}
-				{#if !collapsed}
-					<span class="min-w-0 [overflow-wrap:anywhere]" style="color: var(--exec-muted);">
-						{officeStatusLabel}
-					</span>
-				{/if}
-			</a>
+			<ShellAccountMenu
+				{connection}
+				compact={collapsed}
+				onOpenChange={(next) => {
+					accountMenuOpen = next;
+					notifyMenuOpen();
+				}}
+			/>
+			<Tooltip.Root disabled={!collapsed}>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<a
+							{...props}
+							href={resolve('/settings/offices')}
+							onclick={(e) => onNavigate?.(e, '/settings/offices')}
+							aria-label={officeStatusLabel}
+							class={[
+								'exec-foot-link flex items-center rounded-lg text-xs leading-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid max-sm:min-h-11 [@media(pointer:coarse)]:min-h-11',
+								collapsed ? 'size-11 justify-center p-0' : 'mt-1 gap-2 px-2 py-1'
+							]}
+						>
+							{#if officeStatus.icon === 'online'}
+								<CheckCircle2
+									class="size-3.5 shrink-0"
+									style="color: var(--exec-ok);"
+									aria-hidden="true"
+								/>
+							{:else if officeStatus.icon === 'offline'}
+								<WifiOff
+									class="size-3.5 shrink-0"
+									style="color: {officeStatus.tone === 'bad'
+										? 'var(--exec-bad)'
+										: 'var(--exec-muted)'};"
+									aria-hidden="true"
+								/>
+							{:else if officeStatus.icon === 'warn'}
+								<CircleAlert
+									class="size-3.5 shrink-0"
+									style="color: var(--exec-warn);"
+									aria-hidden="true"
+								/>
+							{:else}
+								<CircleHelp
+									class="size-3.5 shrink-0"
+									style="color: var(--exec-muted);"
+									aria-hidden="true"
+								/>
+							{/if}
+							{#if !collapsed}
+								<span class="min-w-0 [overflow-wrap:anywhere]" style="color: var(--exec-muted);">
+									{officeStatusLabel}
+								</span>
+							{/if}
+						</a>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Portal>
+					<Tooltip.Content
+						side="right"
+						sideOffset={6}
+						class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+						>{officeStatusLabel}</Tooltip.Content
+					>
+				</Tooltip.Portal>
+			</Tooltip.Root>
 		</div>
 	</aside>
 </Tooltip.Provider>

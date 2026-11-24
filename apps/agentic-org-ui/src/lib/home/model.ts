@@ -13,8 +13,8 @@ import {
 	nonOwners,
 	peopleOf,
 	teamsOfProject
-} from '$lib/org/model';
-import { needsYou } from '$lib/work/saved';
+} from '$lib/modules/organization/model';
+import { needsYou } from '$lib/modules/work/saved';
 
 export type SignalTone = 'ok' | 'warn' | 'bad' | 'sky' | 'muted';
 export type BriefLens = 'today' | 'week' | 'board';
@@ -280,7 +280,10 @@ function formatDueShort(isoDate: string): string {
 
 export function isItemOpen(item: WorkItemSummary): boolean {
 	if (item.deleted) return false;
-	if (item.kind === 'task') return item.status !== 'done';
+	if (item.kind === 'task') {
+		if (item.resolution === 'cancelled' || (item.status as string) === 'cancelled') return false;
+		return item.status !== 'done';
+	}
 	if (item.kind === 'bug') return item.status !== 'closed';
 	if (item.kind === 'request') {
 		return !['approved', 'declined', 'merged'].includes(item.status);
@@ -637,7 +640,7 @@ export function deriveDecisionSpotlight(
 			const recommendation = isRequest
 				? `${actorName} scoped this request. Approving turns it into active work for the team.`
 				: isFixedBug
-					? `${actorName} marked this fix complete. Verify and close if it meets expectations.`
+					? `${actorName} marked this fix complete. Verify whether it resolves the bug; close it separately on the bug page.`
 					: isNewBug
 						? `New ${item.severity ?? 'reported'} bug waiting for triage and owner confirmation.`
 						: item.blocked_reason
@@ -710,7 +713,7 @@ export function deriveDecisionSpotlight(
 			const backgroundContext = isRequest
 				? `${item.short_id} in ${projectName} is scoped and ready for approval. Approving converts the scoped outcome into executable work items assigned to the team; denying returns it with your note.`
 				: isFixedBug
-					? `${item.short_id} (${item.severity ?? 'reported'} severity) in ${projectName} was marked fixed by ${actorName}. Verifying closes the bug and clears it from the delivery queue.`
+					? `${item.short_id} (${item.severity ?? 'reported'} severity) in ${projectName} was marked fixed by ${actorName}. Verifying records your check and clears pending verification; close the bug on its page once confirmed.`
 					: isNewBug
 						? `${item.short_id} was reported in ${projectName}${item.severity ? ` with ${item.severity} severity` : ''}. Triaging routes it to the responsible area and sets priority for an agent or owner.`
 						: `${item.short_id} in ${projectName} is currently blocked${item.blocked_reason ? ` (${item.blocked_reason})` : ''}. Resuming moves it back to in-progress so ${actorName} can continue.`;
@@ -858,10 +861,9 @@ export function deriveProjectCards(
 			teamIds.add(row.ownerTeam.id);
 			for (const c of row.contributors) teamIds.add(c.id);
 		}
-		const memberIds = new Set(
-			snapshot.memberships.filter((m) => teamIds.has(m.team_id)).map((m) => m.member_id)
+		const projMembers = allMembers.filter(
+			(m) => Boolean(m.home_team_id) && teamIds.has(m.home_team_id!)
 		);
-		const projMembers = allMembers.filter((m) => memberIds.has(m.id));
 		const lead = homeProj?.lead ?? teams.map((t) => leadOf(snapshot, t)).find(Boolean);
 
 		const nowDate = new Date(nowMs);

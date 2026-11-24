@@ -591,3 +591,34 @@ fn the_descriptor_fact_is_what_a_scan_holds() {
         assert_eq!(held, 0, "{stdout}");
     }
 }
+
+#[test]
+fn is_descendant_of_walks_live_parent_chain_and_refuses_unrelated_or_invalid_pids() {
+    let self_pid = std::process::id() as libc::pid_t;
+    assert!(super::is_descendant_of(self_pid, self_pid).unwrap());
+    assert!(!super::is_descendant_of(0, self_pid).unwrap());
+    assert!(!super::is_descendant_of(self_pid, 0).unwrap());
+    assert!(!super::is_descendant_of(-1, self_pid).unwrap());
+    // PID 1 (init/launchd) is never a descendant; macOS may refuse inspection with EPERM (fail closed).
+    assert!(!super::is_descendant_of(1, self_pid).unwrap_or(false));
+    if let Ok(Some(my_parent)) = super::parent_pid(self_pid) {
+        if my_parent > 1 && my_parent != self_pid {
+            assert!(!super::is_descendant_of(my_parent, self_pid).unwrap_or(false));
+        }
+    }
+
+    let mut child = std::process::Command::new("/bin/sh")
+        .args(["-c", "sleep 5"])
+        .spawn()
+        .expect("spawn child shell");
+    let child_pid = child.id() as libc::pid_t;
+    let is_desc = super::is_descendant_of(child_pid, self_pid).unwrap();
+    let ppid = super::parent_pid(child_pid).unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        is_desc,
+        "child {child_pid} must be descendant of {self_pid}"
+    );
+    assert_eq!(ppid, Some(self_pid));
+}

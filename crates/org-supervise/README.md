@@ -17,7 +17,7 @@ fail the launch; there is no fallback to a weaker descriptor or identity policy.
 
 ## Boundary with the selected execution model
 
-[Organization-data execution](../../docs/design/organization-data/11-model-profiles-and-agent-execution.md)
+[Organization-data execution](../../.backlog/docs/organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md)
 selects the office worker's internal supervisor/router/session runner as this
 library's caller. That integration owns employee identity versus execution config,
 ordered connection pools, private local bindings, HQ permits, logical turns and
@@ -26,7 +26,7 @@ scheduler, memory helper or native delegate engine. The APIs below are the
 implemented process contract.
 
 Persist this library's ownership/cleanup evidence outside disposable projections,
-as [recovery](../../docs/design/organization-data/16-recovery-and-office-continuity.md)
+as [recovery](../../.backlog/docs/organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md)
 requires. Cleanup generation/mark is not HQ employee placement_generation. The
 caller must bind the resulting evidence to the correct durable process/placement,
 keep unknown cleanup and expired permits occupied, and require verified old cleanup

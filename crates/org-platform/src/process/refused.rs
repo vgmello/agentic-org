@@ -32,6 +32,10 @@ pub(super) fn harden_self() -> io::Result<()> {
     refused()
 }
 
+pub(super) fn parent_pid(_pid: libc::pid_t) -> io::Result<Option<libc::pid_t>> {
+    refused()
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn hardened() -> io::Result<bool> {
     refused()
@@ -231,6 +235,7 @@ mod tests {
     #[test]
     fn hardening_refuses_and_reports_nothing() {
         assert_refused(super::harden_self());
+        assert_refused(super::parent_pid(1));
         assert_refused(super::hardened());
         assert_refused(super::open_paths());
     }

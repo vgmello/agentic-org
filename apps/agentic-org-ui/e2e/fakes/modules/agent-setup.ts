@@ -7,9 +7,9 @@
 //   slow · fails (reads fail) · empty (no agents) · unavailable · not-found (every agent read answers not found)
 //   viewer (read only) · conflict (someone else saves first, once per save) · save-fails (writes fail)
 //   disabled (Noor's execution.md has enabled: false)
-import { addAgent } from '$lib/org/actions';
-import { orgApi } from '$lib/org/api';
-import { sessionFor } from '$lib/org/session';
+import { addAgent } from '$lib/modules/organization/actions';
+import { orgApi } from '$lib/modules/organization/api';
+import { sessionFor } from '$lib/modules/organization/session';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { Member } from '$lib/proto';
 import type { AgentSetupApi } from '../../../src/lib/modules/agent-setup/api';

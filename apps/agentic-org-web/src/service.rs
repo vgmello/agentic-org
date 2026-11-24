@@ -4,18 +4,16 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::io;
 use std::net::TcpListener;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use http_body_util::Full;
 use hyper::body::{Body, Bytes, Incoming};
 use hyper::header::{HeaderName, HeaderValue, ALLOW};
 use hyper::http::request::Parts;
 use hyper::{Method, Request, Response, StatusCode};
 use org_host_control::listen::ListenOrigin;
-use org_proto::gateway::{
-    GatewayError, GatewayErrorCode, MutationOutcome, OperationId, ReadResponse,
-};
+use org_proto::web::{MutationOutcome, OperationId, ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
 
 use crate::assets::BuildFiles;
@@ -25,12 +23,31 @@ use crate::body::{
 };
 use crate::ingress::{ApiRefusal, RequestAdmission};
 use crate::path::RequestPath;
+use crate::sse::WebBody;
 use crate::static_ui::response;
 use crate::transport::{try_run_http, HttpLimits, ListenMode};
 use crate::{Hsts, StaticUi};
 
 #[cfg(test)]
 mod admission_tests;
+
+/// Either a fixed JSON API reply or an async streaming HTTP response (SSE).
+pub enum WebReply {
+    Json(ApiReply),
+    Stream(Response<WebBody>),
+}
+
+/// Optional async dispatch result: `Async` runs directly on Tokio (bypassing the
+/// bounded host `BlockingPool`), while `Sync` hands the call back to `BlockingPool`.
+pub enum AsyncDispatch<C> {
+    Async {
+        future: Pin<Box<dyn Future<Output = WebReply> + Send>>,
+        /// Streaming responses (SSE) manage their own lifetime via heartbeats and
+        /// session-ended events rather than `backend_timeout`.
+        streaming: bool,
+    },
+    Sync(C),
+}
 
 /// Routing and preparation perform no native I/O. Routing must authorize before
 /// returning a business route. Every body arrives in a zeroizing buffer
@@ -45,6 +62,11 @@ pub trait ApiBackend: Send + Sync + 'static {
         route: Self::Route,
         body: BusinessBody,
     ) -> Result<PreparedCall<Self::Call>, ApiReply>;
+    /// Optional async execution path for multiplexed office RPCs and SSE streams
+    /// that run directly on Tokio without occupying the host `BlockingPool`.
+    fn dispatch_async(self: Arc<Self>, call: Self::Call) -> AsyncDispatch<Self::Call> {
+        AsyncDispatch::Sync(call)
+    }
     /// Runs on a dedicated worker and must use finite native deadlines.
     fn execute(&self, call: Self::Call) -> ApiReply;
 }
@@ -71,15 +93,25 @@ impl ApiReply {
         self
     }
 
-    pub fn error(status: StatusCode, code: GatewayErrorCode, message: &'static str) -> Self {
-        let error = ReadResponse::<Value>::Error(GatewayError::new(code, message));
+    pub fn error(status: StatusCode, code: WebErrorCode, message: &'static str) -> Self {
+        let error = ReadResponse::<Value>::Error(WebError::new(code, message));
         Self::json(
             status,
             serde_json::to_value(error).expect("gateway error serializes"),
         )
     }
 
-    fn into_http(self, head: bool) -> Response<Full<Bytes>> {
+    #[cfg(test)]
+    pub(crate) fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    #[cfg(test)]
+    pub(crate) fn body_bytes(&self) -> &[u8] {
+        &self.body
+    }
+
+    fn into_http(self, head: bool) -> Response<WebBody> {
         let mut response = response(
             self.status,
             self.body,
@@ -90,25 +122,25 @@ impl ApiReply {
         for (name, value) in self.headers {
             response.headers_mut().append(name, value);
         }
-        response
+        response.map(WebBody::from)
     }
 
     fn refusal(refusal: ApiRefusal) -> Self {
         match refusal {
             ApiRefusal::Options => Self::error(
                 StatusCode::METHOD_NOT_ALLOWED,
-                GatewayErrorCode::InvalidRequest,
+                WebErrorCode::InvalidRequest,
                 "Method not allowed.",
             )
             .with_header(ALLOW, HeaderValue::from_static("GET, HEAD, POST")),
             ApiRefusal::CrossSite | ApiRefusal::Origin => Self::error(
                 StatusCode::FORBIDDEN,
-                GatewayErrorCode::NotAuthorized,
+                WebErrorCode::NotAuthorized,
                 "Request origin is not authorized.",
             ),
             ApiRefusal::MediaType => Self::error(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                GatewayErrorCode::InvalidRequest,
+                WebErrorCode::InvalidRequest,
                 "Content-Type must be application/json.",
             ),
         }
@@ -147,11 +179,11 @@ impl<T> PreparedCall<T> {
 
 impl CallKind {
     fn unavailable(&self) -> ApiReply {
-        let error = GatewayError::new(GatewayErrorCode::Unavailable, "Service unavailable.");
+        let error = WebError::new(WebErrorCode::Unavailable, "Service unavailable.");
         match self {
             Self::Read => ApiReply::error(
                 StatusCode::SERVICE_UNAVAILABLE,
-                GatewayErrorCode::Unavailable,
+                WebErrorCode::Unavailable,
                 "Service unavailable.",
             ),
             Self::Mutation(id) => ApiReply::json(
@@ -169,7 +201,7 @@ impl CallKind {
         match self {
             Self::Read => ApiReply::error(
                 StatusCode::SERVICE_UNAVAILABLE,
-                GatewayErrorCode::Timeout,
+                WebErrorCode::Timeout,
                 "Backend did not answer in time.",
             ),
             Self::Mutation(id) => ApiReply::json(
@@ -233,7 +265,7 @@ impl ApiLimits {
     }
 }
 
-pub struct GatewayConfig {
+pub struct WebConfig {
     pub mode: ListenMode,
     pub origin: ListenOrigin,
     pub hsts: Hsts,
@@ -241,7 +273,7 @@ pub struct GatewayConfig {
     pub api: ApiLimits,
 }
 
-pub(crate) struct Gateway<B> {
+pub(crate) struct WebService<B> {
     ui: StaticUi,
     admission: RequestAdmission,
     backend: Arc<B>,
@@ -249,7 +281,7 @@ pub(crate) struct Gateway<B> {
     limits: ApiLimits,
 }
 
-impl<B: ApiBackend> Gateway<B> {
+impl<B: ApiBackend> WebService<B> {
     pub(crate) fn new(
         ui: StaticUi,
         backend: B,
@@ -266,7 +298,7 @@ impl<B: ApiBackend> Gateway<B> {
         })
     }
 
-    pub(crate) async fn respond<T>(&self, request: Request<T>) -> Response<Full<Bytes>>
+    pub(crate) async fn respond<T>(&self, request: Request<T>) -> Response<WebBody>
     where
         T: Body<Data = Bytes>,
         T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -277,14 +309,14 @@ impl<B: ApiBackend> Gateway<B> {
         let mut response = if !self.admission.accepts_target_and_host(&parts) {
             ApiReply::error(
                 StatusCode::BAD_REQUEST,
-                GatewayErrorCode::InvalidRequest,
+                WebErrorCode::InvalidRequest,
                 "Invalid request authority or target.",
             )
             .into_http(head)
         } else if unsupported_version {
             ApiReply::error(
                 StatusCode::BAD_REQUEST,
-                GatewayErrorCode::InvalidRequest,
+                WebErrorCode::InvalidRequest,
                 "HTTP/1.1 is required.",
             )
             .into_http(head)
@@ -292,23 +324,27 @@ impl<B: ApiBackend> Gateway<B> {
             match RequestPath::parse(parts.uri.path()) {
                 Err(_) => ApiReply::error(
                     StatusCode::BAD_REQUEST,
-                    GatewayErrorCode::InvalidRequest,
+                    WebErrorCode::InvalidRequest,
                     "Invalid request path.",
                 )
                 .into_http(head),
                 Ok(path) if path.is_api() => match self.admission.check_api(&parts) {
                     Err(refusal) => ApiReply::refusal(refusal).into_http(head),
                     Ok(()) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
-                        self.api_response(&parts, path, body).await.into_http(head)
+                        match self.api_response(&parts, path, body).await {
+                            WebReply::Json(reply) => reply.into_http(head),
+                            WebReply::Stream(stream) => stream,
+                        }
                     }
-                    Ok(()) => ApiReply::error(
-                        StatusCode::NOT_FOUND,
-                        GatewayErrorCode::NotFound,
-                        "Not found.",
-                    )
-                    .into_http(head),
+                    Ok(()) => {
+                        ApiReply::error(StatusCode::NOT_FOUND, WebErrorCode::NotFound, "Not found.")
+                            .into_http(head)
+                    }
                 },
-                Ok(path) => self.ui.serve_static(&parts.method, &parts.headers, &path),
+                Ok(path) => self
+                    .ui
+                    .serve_static(&parts.method, &parts.headers, &path)
+                    .map(WebBody::from),
             }
         };
         self.ui.finish_response(&parts.headers, &mut response);
@@ -332,63 +368,78 @@ impl<B: ApiBackend> Gateway<B> {
         response
     }
 
-    async fn api_response<T>(&self, parts: &Parts, path: RequestPath, body: T) -> ApiReply
+    async fn api_response<T>(&self, parts: &Parts, path: RequestPath, body: T) -> WebReply
     where
         T: Body<Data = Bytes>,
         T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
         let route = match self.backend.route(parts, &path) {
             Ok(route) => route,
-            Err(reply) => return reply,
+            Err(reply) => return WebReply::Json(reply),
         };
         let body = match read_business_body(body, self.limits.body_bytes, self.limits.body_timeout)
             .await
         {
             Ok(body) => body,
             Err(error) => {
-                return match error {
+                return WebReply::Json(match error {
                     BodyError::TooLarge => ApiReply::error(
                         StatusCode::PAYLOAD_TOO_LARGE,
-                        GatewayErrorCode::TooLarge,
+                        WebErrorCode::TooLarge,
                         "Request body is too large.",
                     ),
                     BodyError::TimedOut => ApiReply::error(
                         StatusCode::SERVICE_UNAVAILABLE,
-                        GatewayErrorCode::Timeout,
+                        WebErrorCode::Timeout,
                         "Request body timed out.",
                     ),
                     BodyError::Malformed => ApiReply::error(
                         StatusCode::BAD_REQUEST,
-                        GatewayErrorCode::InvalidRequest,
+                        WebErrorCode::InvalidRequest,
                         "Invalid request body.",
                     ),
                     BodyError::InvalidLimits => ApiReply::error(
                         StatusCode::SERVICE_UNAVAILABLE,
-                        GatewayErrorCode::Unavailable,
+                        WebErrorCode::Unavailable,
                         "Service unavailable.",
                     ),
-                }
+                });
             }
         };
         let bytes = body.as_bytes().len();
         let prepared = match self.backend.prepare(route, body) {
             Ok(prepared) => prepared,
-            Err(reply) => return reply,
+            Err(reply) => return WebReply::Json(reply),
         };
         let backend = Arc::clone(&self.backend);
-        let call = prepared.call;
+        let call = match backend.dispatch_async(prepared.call) {
+            AsyncDispatch::Async { future, streaming } => {
+                return if streaming {
+                    future.await
+                } else {
+                    match tokio::time::timeout(self.limits.backend_timeout, future).await {
+                        Ok(reply) => reply,
+                        Err(_) => WebReply::Json(prepared.kind.unknown()),
+                    }
+                };
+            }
+            AsyncDispatch::Sync(call) => call,
+        };
+        let backend = Arc::clone(&self.backend);
         let ticket = match self
             .workers
             .submit(bytes.max(prepared.input_bytes), move || {
                 backend.execute(call)
             }) {
             Ok(ticket) => ticket,
-            Err(_) => return prepared.kind.unavailable(),
+            Err(_) => return WebReply::Json(prepared.kind.unavailable()),
         };
-        match tokio::time::timeout(self.limits.backend_timeout, ticket.wait()).await {
-            Ok(Ok(reply)) => reply,
-            _ => prepared.kind.unknown(),
-        }
+        WebReply::Json(
+            match tokio::time::timeout(self.limits.backend_timeout, ticket.wait()).await {
+                Ok(Ok(reply)) => reply,
+                _ => prepared.kind.unknown(),
+            },
+        )
     }
 }
 
@@ -400,7 +451,7 @@ impl ApiBackend for UnavailableApi {
     fn route(&self, _: &Parts, _: &RequestPath) -> Result<Self::Route, ApiReply> {
         Err(ApiReply::error(
             StatusCode::SERVICE_UNAVAILABLE,
-            GatewayErrorCode::Unavailable,
+            WebErrorCode::Unavailable,
             "Service unavailable.",
         ))
     }
@@ -418,9 +469,9 @@ impl ApiBackend for UnavailableApi {
 
 /// Production callers supply the verified host listener. Backend and workers are
 /// constructed only inside the runtime, after transport validates that listener.
-pub fn run_gateway<B, S>(
+pub fn run_web<B, S>(
     listener: TcpListener,
-    config: GatewayConfig,
+    config: WebConfig,
     files: BuildFiles,
     initialize: impl FnOnce() -> io::Result<(B, S)>,
 ) -> io::Result<()>
@@ -431,12 +482,12 @@ where
     run_web_reporting(listener, config, files, initialize, || Ok(()))
 }
 
-/// [`run_gateway`], calling `serving` once after the runtime, listener
+/// [`run_web`], calling `serving` once after the runtime, listener
 /// registration, backend and web process service are initialized and before the
 /// first accept. Its error stops the web process before it serves any request.
 pub fn run_web_reporting<B, S>(
     listener: TcpListener,
-    config: GatewayConfig,
+    config: WebConfig,
     files: BuildFiles,
     initialize: impl FnOnce() -> io::Result<(B, S)>,
     serving: impl FnOnce() -> io::Result<()>,
@@ -455,7 +506,7 @@ where
             let (backend, shutdown) = initialize()?;
             let admission = RequestAdmission::new(config.origin.clone());
             let ui = StaticUi::new(files, config.origin, config.hsts);
-            let service = Arc::new(Gateway::new(ui, backend, config.api, admission)?);
+            let service = Arc::new(WebService::new(ui, backend, config.api, admission)?);
             serving()?;
             let handler = move |request: Request<Incoming>| {
                 let service = Arc::clone(&service);

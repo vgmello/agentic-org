@@ -667,6 +667,54 @@ fn copy_and_delete_os_failures_are_never_missing_or_success() {
 }
 
 #[test]
+fn interaction_not_allowed_is_translated_to_typed_variant() {
+    let (s, fake, n) = fixture();
+    s.replace(&n, b"private value").unwrap();
+    fake.0
+        .lock()
+        .unwrap()
+        .faults
+        .push_back((Op::Copy, INTERACTION_NOT_ALLOWED));
+    assert_eq!(
+        s.load(&n).err(),
+        Some(CredentialError::InteractionNotAllowed)
+    );
+    fake.0
+        .lock()
+        .unwrap()
+        .faults
+        .push_back((Op::Copy, INTERACTION_NOT_ALLOWED));
+    assert_eq!(
+        s.list(&|_| true),
+        Err(CredentialError::InteractionNotAllowed)
+    );
+    fake.0
+        .lock()
+        .unwrap()
+        .faults
+        .push_back((Op::Delete, INTERACTION_NOT_ALLOWED));
+    assert_eq!(s.delete(&n), Err(CredentialError::InteractionNotAllowed));
+    fake.0
+        .lock()
+        .unwrap()
+        .faults
+        .push_back((Op::Add, INTERACTION_NOT_ALLOWED));
+    assert_eq!(
+        s.add(&name("other"), b"x"),
+        Err(CredentialError::InteractionNotAllowed)
+    );
+    fake.0
+        .lock()
+        .unwrap()
+        .faults
+        .push_back((Op::Update, INTERACTION_NOT_ALLOWED));
+    assert_eq!(
+        s.replace(&n, b"updated"),
+        Err(CredentialError::InteractionNotAllowed)
+    );
+}
+
+#[test]
 fn os_status_bridge_preserves_every_non_success_status() {
     assert_eq!(status(SUCCESS), Ok(()));
     for code in [MISSING, DUPLICATE, -50, 1] {

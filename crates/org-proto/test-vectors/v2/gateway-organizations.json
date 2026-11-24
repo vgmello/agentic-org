@@ -6,7 +6,7 @@
       "name": "a remote repository over https",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -36,7 +36,7 @@
       "name": "a remote repository over ssh",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -66,7 +66,7 @@
       "name": "a local repository is refused",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -91,7 +91,7 @@
       "name": "a path key is refused, whatever the kind",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -118,7 +118,7 @@
       "name": "a file URL is not a remote",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -144,7 +144,7 @@
       "name": "a remote without a URL",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -169,7 +169,7 @@
       "name": "a credential reference is not supported yet",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -198,7 +198,7 @@
       "name": "a null credential reference is still a credential reference",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -225,7 +225,7 @@
       "name": "a slug that is not kebab-case",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -251,7 +251,7 @@
       "name": "a name with surrounding space",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -277,7 +277,7 @@
       "name": "a state branch that is not a branch name",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -300,10 +300,10 @@
       }
     },
     {
-      "name": "an operation id that is not a ULID",
+      "name": "an operation id that is not a UUIDv7",
       "category": "create_request",
       "wire": {
-        "operation_id": "0193a5c0-0000-7000-8000-000000000007",
+        "operation_id": "01M72N8MG00000000000000007",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -329,7 +329,7 @@
       "name": "a team field does not exist",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -354,7 +354,7 @@
       "name": "a missing state branch has no default",
       "category": "create_request",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "instance",
           "instance_id": "0193a5c0-0000-7000-8000-000000000009"
@@ -510,7 +510,7 @@
         ],
         "creating": [
           {
-            "operation_id": "01M72N8MG00000000000000006",
+            "operation_id": "01a1c554-5200-7000-8000-000000000006",
             "name": "Other",
             "slug": "other"
           }
@@ -540,7 +540,7 @@
           ],
           "creating": [
             {
-              "operation_id": "01M72N8MG00000000000000006",
+              "operation_id": "01a1c554-5200-7000-8000-000000000006",
               "name": "Other",
               "slug": "other"
             }

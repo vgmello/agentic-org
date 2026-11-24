@@ -15,6 +15,10 @@ CREATE TABLE private_note_tasks (
   PRIMARY KEY (organization_id, task_id)
 ) STRICT;
 
+CREATE TRIGGER private_note_tasks_no_undelete BEFORE UPDATE ON private_note_tasks
+WHEN OLD.is_deleted = 1 AND NEW.is_deleted = 0
+BEGIN SELECT RAISE(ABORT, 'deleted private note task mirror cannot be undeleted'); END;
+
 CREATE TABLE private_task_notes (
   organization_id TEXT NOT NULL,
   id TEXT NOT NULL,
@@ -38,9 +42,17 @@ CREATE INDEX private_notes_by_author_task
   ON private_task_notes(organization_id, author_id, task_id, updated_at)
   WHERE deleted_at IS NULL;
 
+CREATE INDEX private_notes_by_task
+  ON private_task_notes(organization_id, task_id, updated_at)
+  WHERE deleted_at IS NULL;
+
 CREATE TRIGGER private_notes_no_replace BEFORE INSERT ON private_task_notes
 WHEN EXISTS (SELECT 1 FROM private_task_notes n WHERE n.organization_id=NEW.organization_id AND n.id=NEW.id)
 BEGIN SELECT RAISE(ABORT, 'private note identity already exists'); END;
+
+CREATE TRIGGER private_notes_initial_state BEFORE INSERT ON private_task_notes
+WHEN NEW.revision <> 1 OR NEW.deleted_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'new private note must start active at revision 1'); END;
 
 CREATE TRIGGER private_notes_update_contract BEFORE UPDATE ON private_task_notes
 WHEN NEW.organization_id IS NOT OLD.organization_id OR NEW.id IS NOT OLD.id
@@ -77,10 +89,25 @@ CREATE TABLE private_note_command_receipts (
 CREATE UNIQUE INDEX one_pending_private_publication
   ON private_note_command_receipts(organization_id,note_id) WHERE state='pending';
 
+CREATE UNIQUE INDEX private_receipt_shared_comment
+  ON private_note_command_receipts(organization_id, shared_comment_id)
+  WHERE shared_comment_id IS NOT NULL;
+
+CREATE INDEX private_receipts_by_note
+  ON private_note_command_receipts(organization_id, note_id);
+
+CREATE TRIGGER private_receipts_no_replace BEFORE INSERT ON private_note_command_receipts
+WHEN EXISTS (SELECT 1 FROM private_note_command_receipts r WHERE r.organization_id=NEW.organization_id
+  AND r.author_id=NEW.author_id AND r.operation_id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT, 'private command receipt already exists'); END;
+
 CREATE TRIGGER private_receipt_matches_author BEFORE INSERT ON private_note_command_receipts
 WHEN NOT EXISTS (SELECT 1 FROM private_task_notes n WHERE n.organization_id=NEW.organization_id
   AND n.id=NEW.note_id AND n.author_id=NEW.author_id
-  AND n.revision=NEW.result_revision AND (NEW.command<>'publish' OR n.deleted_at IS NULL))
+  AND n.revision=NEW.result_revision
+  AND (NEW.command<>'create' OR NEW.result_revision=1)
+  AND (NEW.command<>'delete' OR n.deleted_at IS NOT NULL)
+  AND (NEW.command<>'publish' OR n.deleted_at IS NULL))
 BEGIN SELECT RAISE(ABORT, 'private receipt must match note author and accepted revision'); END;
 
 CREATE TRIGGER private_receipts_no_delete BEFORE DELETE ON private_note_command_receipts

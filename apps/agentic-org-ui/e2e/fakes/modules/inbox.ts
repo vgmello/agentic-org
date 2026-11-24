@@ -2,10 +2,10 @@
 // from now; people, teams and projects come from the org mock so IDs match the other pages. Actions change the
 // list in memory. `?mock=more` adds four more open items, `?mock=empty` empties the Inbox, `?mock=error` fails
 // the load and `?mock=live` resolves one item "in another client" a few seconds in.
-import { orgApi } from '$lib/org/api';
+import { orgApi } from '$lib/modules/organization/api';
 import type { InboxApi } from '../../../src/lib/modules/inbox/api';
 import type { InboxItem } from '../../../src/lib/modules/inbox/types';
-import { isPocDataset, mockLatency, mockMode } from '../mock-mode';
+import { mockLatency, mockMode, POC_ORG_ID } from '../mock-mode';
 import { pocInboxItems } from '../poc-dataset';
 import data from '../data/inbox/items.json' with { type: 'json' };
 
@@ -22,67 +22,77 @@ type Raw = (typeof data.open)[number] & {
 	choices?: { id: string; label: string }[];
 };
 
-let items: InboxItem[] | undefined;
-let loadedDataset: 'poc' | 'default' | undefined;
+const itemsByOrg = new Map<string, InboxItem[]>();
+const pendingByOrg = new Map<string, Promise<InboxItem[]>>();
 const failed = new Set<string>();
 const refusals = new Map<string, string>();
-const listeners = new Set<() => void>();
-let liveTimer: ReturnType<typeof setTimeout> | undefined;
+const listenersByOrg = new Map<string, Set<() => void>>();
+const liveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 async function load(organizationId: string): Promise<InboxItem[]> {
-	const currentDataset = isPocDataset() ? 'poc' : 'default';
-	if (items && loadedDataset === currentDataset) return items;
-	loadedDataset = currentDataset;
-	if (currentDataset === 'poc') {
-		items = pocInboxItems();
-		return items;
-	}
-	const { snapshot } = await orgApi.view(organizationId);
-	const people = new Map(snapshot.members.map((m) => [m.id, m]));
-	const teams = new Map(snapshot.teams.map((t) => [t.id, t.name]));
-	const projects = new Map((snapshot.projects ?? []).map((p) => [p.id, p.name]));
-	const base = Date.now();
-	const raw = [
-		...data.open,
-		...(mockMode().includes('more') ? data.more : []),
-		...data.handled
-	] as Raw[];
-	items = raw.map((r) => {
-		const member = people.get(r.who);
-		if (r.fail_first) refusals.set(r.id, r.fail_first);
-		return {
-			id: r.id,
-			kind: r.kind as InboxItem['kind'],
-			source: r.source,
-			title: r.title,
-			who: { id: r.who, name: member?.name ?? r.who, kind: member?.kind ?? 'agent' },
-			...(r.team ? { team: { id: r.team, name: teams.get(r.team) ?? r.team } } : {}),
-			...(r.project
-				? { project: { id: r.project, name: projects.get(r.project) ?? r.project } }
-				: {}),
-			why: r.why,
-			...(r.recommendation ? { recommendation: r.recommendation } : {}),
-			created_at: new Date(base - r.ago * MINUTE).toISOString(),
-			...(r.exp_in ? { expires_at: new Date(base + r.exp_in * MINUTE).toISOString() } : {}),
-			actions: r.actions as InboxItem['actions'],
-			...(r.choices ? { choices: r.choices } : {}),
-			...(r.open ? { open: r.open } : {}),
-			state: r.state as InboxItem['state'],
-			...(r.handled
-				? {
-						handled: {
-							outcome: r.handled.outcome,
-							...(r.handled.by ? { by: r.handled.by } : {}),
-							at: new Date(base - r.handled.ago * MINUTE).toISOString()
+	const cached = itemsByOrg.get(organizationId);
+	if (cached) return cached;
+	const inflight = pendingByOrg.get(organizationId);
+	if (inflight) return inflight;
+	const promise = (async (): Promise<InboxItem[]> => {
+		if (organizationId === POC_ORG_ID) {
+			const next = pocInboxItems();
+			itemsByOrg.set(organizationId, next);
+			return next;
+		}
+		const { snapshot } = await orgApi.view(organizationId);
+		const people = new Map(snapshot.members.map((m) => [m.id, m]));
+		const teams = new Map(snapshot.teams.map((t) => [t.id, t.name]));
+		const projects = new Map((snapshot.projects ?? []).map((p) => [p.id, p.name]));
+		const base = Date.now();
+		const raw = [
+			...data.open,
+			...(mockMode().includes('more') ? data.more : []),
+			...data.handled
+		] as Raw[];
+		const next: InboxItem[] = raw.map((r) => {
+			const member = people.get(r.who);
+			if (r.fail_first) refusals.set(r.id, r.fail_first);
+			return {
+				id: r.id,
+				kind: r.kind as InboxItem['kind'],
+				source: r.source,
+				title: r.title,
+				who: { id: r.who, name: member?.name ?? r.who, kind: member?.kind ?? 'agent' },
+				...(r.team ? { team: { id: r.team, name: teams.get(r.team) ?? r.team } } : {}),
+				...(r.project
+					? { project: { id: r.project, name: projects.get(r.project) ?? r.project } }
+					: {}),
+				why: r.why,
+				...(r.recommendation ? { recommendation: r.recommendation } : {}),
+				created_at: new Date(base - r.ago * MINUTE).toISOString(),
+				...(r.exp_in ? { expires_at: new Date(base + r.exp_in * MINUTE).toISOString() } : {}),
+				actions: r.actions as InboxItem['actions'],
+				...(r.choices ? { choices: r.choices } : {}),
+				...(r.open ? { open: r.open } : {}),
+				state: r.state as InboxItem['state'],
+				...(r.handled
+					? {
+							handled: {
+								outcome: r.handled.outcome,
+								...(r.handled.by ? { by: r.handled.by } : {}),
+								at: new Date(base - r.handled.ago * MINUTE).toISOString()
+							}
 						}
-					}
-				: {})
-		};
+					: {})
+			};
+		});
+		itemsByOrg.set(organizationId, next);
+		return next;
+	})().finally(() => {
+		pendingByOrg.delete(organizationId);
 	});
-	return items;
+	pendingByOrg.set(organizationId, promise);
+	return promise;
 }
 
-const notify = () => listeners.forEach((listener) => listener());
+const notify = (organizationId: string) =>
+	listenersByOrg.get(organizationId)?.forEach((listener) => listener());
 
 export const inboxApi: InboxApi = {
 	async list(organizationId) {
@@ -118,27 +128,39 @@ export const inboxApi: InboxApi = {
 			actions: [],
 			handled: { outcome, by: 'you', at: new Date().toISOString() }
 		});
-		notify();
+		notify(organizationId);
 		return structuredClone(item);
 	},
 	async subscribe(organizationId, onChange) {
 		await load(organizationId);
-		listeners.add(onChange);
-		if (mockMode().includes('live') && !liveTimer)
-			liveTimer = setTimeout(() => {
-				const target = items?.find((i) => i.id === 'inbox-2' && i.state === 'open');
-				if (!target) return;
-				Object.assign(target, {
-					state: 'handled',
-					actions: [],
-					handled: {
-						outcome: 'Answered in the command line',
-						by: 'you',
-						at: new Date().toISOString()
-					}
-				});
-				notify();
-			}, 8000);
-		return () => void listeners.delete(onChange);
+		let set = listenersByOrg.get(organizationId);
+		if (!set) {
+			set = new Set();
+			listenersByOrg.set(organizationId, set);
+		}
+		set.add(onChange);
+		if (mockMode().includes('live') && !liveTimers.has(organizationId)) {
+			liveTimers.set(
+				organizationId,
+				setTimeout(() => {
+					const orgItems = itemsByOrg.get(organizationId);
+					const target = orgItems?.find((i) => i.id === 'inbox-2' && i.state === 'open');
+					if (!target) return;
+					Object.assign(target, {
+						state: 'handled',
+						actions: [],
+						handled: {
+							outcome: 'Answered in the command line',
+							by: 'you',
+							at: new Date().toISOString()
+						}
+					});
+					notify(organizationId);
+				}, 8000)
+			);
+		}
+		return () => {
+			set?.delete(onChange);
+		};
 	}
 };

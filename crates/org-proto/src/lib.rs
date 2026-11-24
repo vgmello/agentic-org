@@ -88,15 +88,29 @@
 
 mod identity;
 pub mod selected_bootstrap;
-pub use identity::is_uuid_v7;
+pub use identity::{is_uuid_v7, uuid_v7_time_ms};
+pub mod ask;
+pub mod budgets;
+pub mod chat;
+pub mod costs;
 pub mod directory;
 pub mod frame;
-pub mod gateway;
+pub mod git;
+pub mod hiring;
 pub mod inbox;
 pub mod location;
 pub mod msg;
 pub mod org;
+pub mod private_notes;
+pub mod processes;
+pub mod projects;
+pub mod providers;
 pub mod retired;
+pub mod rfc3339;
+pub mod sessions;
+pub mod tasks;
+pub mod tz;
+pub mod web;
 pub mod work;
 
 mod calls;
@@ -124,8 +138,8 @@ pub use operation::{OperationGet, OperationGetParams, OperationKind, OperationOu
 pub use org::{
     has_reserved_branch_prefix, is_shaped_like_an_address, is_valid_id, is_valid_member_id,
     AgentProfile, AgentProfileInput, AgentRuntime, AgentStatus, Area, CommandAccepted,
-    CommandStatus, GithubRepo, Member, MemberKind, Membership, OrgChange, OrgChanged,
-    OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position, Project,
+    CommandStatus, GithubRepo, Member, MemberKind, OrgChange, OrgChanged, OrgChangedData,
+    OrgRejected, OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position, Project,
     ProjectCreateTeam, ProjectRepo, ProjectSummary, ProjectTeam, RepoHost, RepoSpec, RunMode,
     Schedule, Team, AGENT_HOME_MAX_BYTES, AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS,
     AGENT_TIME_ZONE_MAX_CHARS, AREA_NAME_MAX_CHARS, ID_MAX_CHARS, MEMBER_ID_CHARS, OFFICE_HANDLE,
@@ -138,6 +152,7 @@ pub use principal::{
 };
 pub use recovery::RecoveryCode;
 pub use retired::Retired;
+pub use rfc3339::{canonicalize_rfc3339_utc, format_rfc3339_ms, parse_rfc3339_ms};
 pub use token::zero as zero_bytes;
 pub use token::{
     GrantKey, GrantMac, OfficeSecretsKey, GRANT_KEY_BYTES, GRANT_MAC_BYTES,

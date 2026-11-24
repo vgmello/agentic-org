@@ -18,7 +18,7 @@ gitleaks git --redact
 
 CI runs the same workspace Clippy and tests on macOS and Linux, with no package
 excluded (`.github/workflows/ci.yml`). On Linux the host starts office workers since
-increment X2 of the [implementation plan](docs/implementation-plan.md), keeps a
+increment X2 of the [implementation plan](.backlog/docs/doc-5%20-%20v1-Implementation-Plan.md), keeps a
 release build's secrets in a checked directory since X3 and confines the web process
 since X4; the systemd service and the container follow in X5. `agentic-org serve` and
 `setup` refuse to run as root, so run the tests as an ordinary user. A development

@@ -7,7 +7,7 @@
       "name": "same account and params",
       "first": {
         "wire": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "scope": {
             "kind": "organization",
             "instance_id": "01M72N8MG00000000000000001",
@@ -23,7 +23,7 @@
       },
       "second": {
         "wire": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "scope": {
             "kind": "organization",
             "instance_id": "01M72N8MG00000000000000001",
@@ -38,7 +38,7 @@
         "session_generation": 1
       },
       "response": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "completed",
         "result": {
           "position": {
@@ -59,7 +59,7 @@
       "name": "new sign-in same account and params",
       "first": {
         "wire": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "scope": {
             "kind": "organization",
             "instance_id": "01M72N8MG00000000000000001",
@@ -75,7 +75,7 @@
       },
       "second": {
         "wire": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "scope": {
             "kind": "organization",
             "instance_id": "01M72N8MG00000000000000001",
@@ -90,7 +90,7 @@
         "session_generation": 2
       },
       "response": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "completed",
         "result": {
           "position": {
@@ -111,7 +111,7 @@
       "name": "different params",
       "first": {
         "wire": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "scope": {
             "kind": "organization",
             "instance_id": "01M72N8MG00000000000000001",
@@ -127,7 +127,7 @@
       },
       "second": {
         "wire": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "scope": {
             "kind": "organization",
             "instance_id": "01M72N8MG00000000000000001",
@@ -142,7 +142,7 @@
         "session_generation": 1
       },
       "response": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "operation_reused",
@@ -161,7 +161,7 @@
       "name": "different authorized account",
       "first": {
         "wire": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "scope": {
             "kind": "organization",
             "instance_id": "01M72N8MG00000000000000001",
@@ -177,7 +177,7 @@
       },
       "second": {
         "wire": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "scope": {
             "kind": "organization",
             "instance_id": "01M72N8MG00000000000000001",
@@ -192,7 +192,7 @@
         "session_generation": 1
       },
       "response": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "operation_reused",

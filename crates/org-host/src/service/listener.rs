@@ -777,7 +777,7 @@ impl Connection {
             org_office_launch::ChannelKind::Local
         }
     }
-    pub(crate) fn gateway_listen(&self) -> Option<&org_host_control::listen::ListenConfig> {
+    pub(crate) fn web_listen(&self) -> Option<&org_host_control::listen::ListenConfig> {
         self.gateway.as_ref().map(|g| &g.listen)
     }
     /// Records a successful `tls.fetch` answer on the web process connection.
@@ -1135,7 +1135,7 @@ mod tests {
             connection.channel_kind(),
             org_office_launch::ChannelKind::Web
         );
-        assert!(connection.gateway_listen().is_some());
+        assert!(connection.web_listen().is_some());
         let closed = Arc::clone(&connection.closed);
         let writer = std::thread::spawn(move || write_loop(&host, queue, &closed));
         let (channel, mut worker) = UnixStream::pair().unwrap();
@@ -1504,7 +1504,7 @@ mod tests {
             web.connection.channel_kind(),
             org_office_launch::ChannelKind::Web
         );
-        assert!(web.connection.gateway_listen().is_some());
+        assert!(web.connection.web_listen().is_some());
         assert!(web.live());
 
         // Every connection the host.sock listener accepts is built by `Connection::new`,

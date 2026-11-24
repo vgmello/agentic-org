@@ -1,9 +1,15 @@
 <script lang="ts">
 	import X from '@lucide/svelte/icons/x';
+	import { Tooltip } from 'bits-ui';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
-	import { muteOf, PRESENCE_WORD, titleOf } from '$lib/modules/messaging/model';
-	import type { ChatState, Conversation, MuteMode, Presence } from '$lib/modules/messaging/types';
+	import {
+		muteOf,
+		presenceOf as memberPresence,
+		PRESENCE_WORD,
+		titleOf
+	} from '$lib/modules/messaging/model';
+	import type { ChatState, Conversation, MuteMode } from '$lib/modules/messaging/types';
 	import Avatar from '$lib/modules/messaging/components/Avatar.svelte';
 
 	/** Who is in a conversation and how the owner hears from them (CHAT-11); channels people made can be edited here (CHAT-2). */
@@ -49,8 +55,6 @@
 		{ id: 'digest', label: 'Daily digest' },
 		{ id: 'muted', label: 'Muted' }
 	];
-	const presenceOf = (id: string, kind: 'agent' | 'person'): Presence =>
-		chatState.presence[id] ?? (kind === 'agent' ? 'offline' : 'online');
 	let closeButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
 	export function focusClose() {
 		closeButton?.focus({ preventScroll: true });
@@ -73,15 +77,32 @@
 				>· {members.length} {members.length === 1 ? 'member' : 'members'}</span
 			>
 		</h2>
-		<Button
-			type="button"
-			variant="ghost"
-			size="icon-sm"
-			class="scroll-mt-16"
-			aria-label="Close members"
-			bind:ref={closeButton}
-			onclick={onclose}><X aria-hidden="true" /></Button
-		>
+		<Tooltip.Provider delayDuration={150}>
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<Button
+							{...props}
+							type="button"
+							variant="ghost"
+							size="icon-sm"
+							class="size-9 scroll-mt-16 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
+							aria-label="Close members"
+							bind:ref={closeButton}
+							onclick={onclose}><X aria-hidden="true" /></Button
+						>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Portal>
+					<Tooltip.Content
+						side="bottom"
+						sideOffset={6}
+						class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+						>Close members</Tooltip.Content
+					>
+				</Tooltip.Portal>
+			</Tooltip.Root>
+		</Tooltip.Provider>
 	</div>
 	<div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-3">
 		{#if follows}<p
@@ -91,19 +112,19 @@
 			</p>{/if}
 		<ul class="flex flex-col gap-3">
 			{#each members as m (m.id)}
+				{@const status = memberPresence(chatState, m)}
 				<li
 					class="flex items-center gap-x-3 max-[640px]:flex-wrap max-[640px]:gap-y-2"
 					data-testid="member-row"
 				>
-					<Avatar name={m.name} kind={m.kind} presence={presenceOf(m.id, m.kind)} />
+					<Avatar name={m.name} kind={m.kind} presence={status} />
 					<div class="min-w-0 flex-1 max-[640px]:basis-[200px]">
 						<p class="truncate text-sm/6 font-semibold text-fg">
-							{m.name}{#if m.owner}{' '}<span class="font-normal text-fg-muted">(you)</span>{/if}
+							{m.name}{#if m.owner}<span class="ml-1 font-normal text-fg-muted">(you)</span>{/if}
 						</p>
 						<p class="text-xs/5 break-words text-fg-muted">
-							{m.kind === 'agent' ? 'Agent' : m.owner ? 'Owner' : 'Person'} · {PRESENCE_WORD[
-								presenceOf(m.id, m.kind)
-							]} · @{m.handle}
+							{m.kind === 'agent' ? 'Agent' : m.owner ? 'Owner' : 'Person'}{#if status}{' · ' +
+									PRESENCE_WORD[status]}{/if} · @{m.handle}
 						</p>
 					</div>
 					{#if m.kind === 'agent' && conversation.kind !== 'dm'}

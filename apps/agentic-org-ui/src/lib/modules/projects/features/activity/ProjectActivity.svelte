@@ -9,6 +9,7 @@
 	import { Resource } from '$lib/components/resource.svelte';
 	import { ActivityRows } from '$lib/modules/members';
 	import { projectsApi } from '../../api';
+	import { sortActivityNewestFirst } from '../../present';
 	import { projectFrame } from '../frame/context';
 
 	const frame = projectFrame();
@@ -30,7 +31,7 @@
 					.name} shows here as it happens, newest first: tasks created, assigned and finished, bugs reported, the brief changed."
 			/>
 		{:else}
-			<ActivityRows {rows} />
+			<ActivityRows rows={sortActivityNewestFirst(rows)} />
 		{/if}
 	{/snippet}
 </Loaded>

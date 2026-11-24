@@ -46,8 +46,11 @@ time = { version = "=0.3.55", default-features = false, features = ["std"] }
 org-platform = { path = "../org-platform", features = ["test-support"] }
 # The scripted image check and the children a test names itself (`testing::admission`).
 org-platform-host = { path = "../org-platform-host", features = ["test-support"] }
+org-agent-cli = { path = "../org-agent-cli" }
+org-command = { path = "../org-command" }
 tempfile.workspace = true
 syn = { version = "=2.0.119", features = ["full", "visit"] }
+proc-macro2 = "=1.0.107"
 
 [build-dependencies]
 org-release = { path = "../org-release" }

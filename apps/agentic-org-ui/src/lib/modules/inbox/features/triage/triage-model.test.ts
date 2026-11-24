@@ -50,7 +50,6 @@ const SNAPSHOT: OrgSnapshot = {
 		},
 		{ id: 'maya', name: 'Maya Chen', kind: 'person', version: 1 }
 	],
-	memberships: [],
 	projects: [
 		{ id: 'v1', name: 'Agentic Org v1.0', key: 'v1.0', version: 1 },
 		{ id: 'fed', name: 'Office federation', key: 'v0.9', version: 1 }

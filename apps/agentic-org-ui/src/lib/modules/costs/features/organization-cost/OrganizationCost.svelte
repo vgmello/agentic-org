@@ -94,7 +94,7 @@
 				What agent work cost in a period, by project, consumer and work type.
 			</p>
 		</div>
-		{#if !scopedCost || scopedCost.allowed}
+		{#if resource.state !== 'unsupported' && (!scopedCost || scopedCost.allowed)}
 			<PeriodMenu {period} busy={resource.reloading} onchange={onperiodchange} />
 		{/if}
 	</div>
@@ -123,6 +123,14 @@
 			<p class="text-sm/6 text-fg-muted {gutters}">
 				This server doesn't serve the organization's cost yet. Nothing is shown rather than a guess.
 			</p>
+		{:else if resource.state === 'unsupported'}
+			<div class={gutters} data-testid="resource-unsupported">
+				<h4 class="text-sm/6 font-semibold text-fg">Not available in this version</h4>
+				<p class="mt-1 max-w-xl text-sm/6 text-fg-muted [overflow-wrap:anywhere]">
+					{resource.message ||
+						"This version of the office doesn't support the organization's cost."}
+				</p>
+			</div>
 		{:else if resource.state === 'error'}
 			<CostsError
 				title="Couldn't load costs"

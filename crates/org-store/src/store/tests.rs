@@ -1303,3 +1303,90 @@ fn an_entry_appended_during_a_flush_is_flushed_by_the_next_one_and_closing_retur
     }
     assert_eq!(cursor(&office.reopen()).ordinal, 3);
 }
+
+#[test]
+fn dry_run_check_validates_and_undoes_without_journal_files_receipts_or_sequences() {
+    let office = Office::new();
+    let store = office.create();
+    let probe = office.probe.clone();
+
+    // 1. Valid dry-run returns Completed + reply bytes, but writes nothing.
+    let path = probe.path("dry");
+    let reply = store
+        .check({
+            let path = path.clone();
+            move |uow| {
+                let seq = uow.next(Stream::Organization)?;
+                assert_eq!(seq, 1);
+                Ok(Change::new(Ack::Durable)
+                    .create(path.clone(), b"dry-body".to_vec())
+                    .reply(b"dry-ok".to_vec()))
+            }
+        })
+        .unwrap();
+    assert_eq!(reply.outcome, Outcome::Completed);
+    assert_eq!(reply.bytes.as_ref(), b"dry-ok");
+    store.sync().unwrap();
+    assert_eq!(store.status().flushed, 0);
+    assert_eq!(office.hash(&store, "dry"), None);
+    assert!(office.file("dry").is_none());
+
+    // 2. Rejected dry-run returns Outcome::Rejected and writes nothing.
+    let rejected = store
+        .check(|uow| {
+            let _ = uow.next(Stream::Organization)?;
+            Err(Refusal::Rejected(b"rule-refused".to_vec().into()))
+        })
+        .unwrap();
+    assert_eq!(rejected.outcome, Outcome::Rejected);
+    assert_eq!(rejected.bytes.as_ref(), b"rule-refused");
+    assert_eq!(store.status().flushed, 0);
+
+    // 3. Invalid projector path is caught by apply_entry and rolled back cleanly.
+    let bad_path =
+        DurablePath::parse("state/unowned/0190a5d2-7c3e-7000-8000-000000000001.json").unwrap();
+    let invalid = store
+        .check(move |_| Ok(Change::new(Ack::Committed).create(bad_path.clone(), b"{}".to_vec())));
+    assert!(
+        matches!(invalid, Err(StoreError::Projection(_))),
+        "{invalid:?}"
+    );
+
+    // 4. Subsequent real write still allocates sequence 1 (proving dry-run restored sequences)
+    //    and a dry-run after it sees the committed state without altering it.
+    let real_reply = store
+        .submit(None, false, {
+            let path = path.clone();
+            move |uow| {
+                let seq = uow.next(Stream::Organization)?;
+                assert_eq!(seq, 1, "dry-run must not advance stream sequences");
+                Ok(Change::new(Ack::Committed)
+                    .create(path.clone(), b"real".to_vec())
+                    .reply(b"real-ok".to_vec()))
+            }
+        })
+        .unwrap();
+    assert_eq!(real_reply.outcome, Outcome::Completed);
+    store.sync().unwrap();
+    assert_eq!(store.status().flushed, 1);
+
+    // Dry-run sees the real file in the projection and refuses duplicate create / sees source.
+    let seen = store
+        .check({
+            let path = path.clone();
+            move |uow| {
+                let existing = uow.source(&path)?.unwrap();
+                assert_eq!(existing.as_ref(), b"real");
+                Ok(Change::new(Ack::Committed)
+                    .put(path.clone(), b"overwritten-only-in-dry-run".to_vec())
+                    .reply(b"saw-real".to_vec()))
+            }
+        })
+        .unwrap();
+    assert_eq!(seen.bytes.as_ref(), b"saw-real");
+    store.sync().unwrap();
+    assert_eq!(store.status().flushed, 1);
+    assert_eq!(office.file("dry").unwrap(), b"real");
+    Arc::try_unwrap(store).ok().unwrap().close().unwrap();
+    assert_eq!(cursor(&office.reopen()).ordinal, 1);
+}

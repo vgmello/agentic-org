@@ -1,10 +1,11 @@
 // One read for a screen part, with the states every place shows (app-shell-ux §6a): loading (a skeleton),
-// unavailable (the production adapter does not serve it yet: never sample data), error (what failed, with Retry)
-// and ready. It loads when created; a later `reload` keeps the shown data until the new answer arrives.
-import { toAppError } from '$lib/office/api';
+// unavailable (the production adapter does not serve it yet: never sample data), unsupported (the office answered
+// `unsupported`: not available in this version, no Retry), error (what failed, with Retry) and ready. It loads when
+// created; a later `reload` keeps the shown data until the new answer arrives.
+import { toAppError } from '$lib/proto';
 import { UNAVAILABLE_MESSAGE } from '$lib/platform/unavailable-api';
 
-export type ResourceState = 'loading' | 'ready' | 'error' | 'unavailable';
+export type ResourceState = 'loading' | 'ready' | 'error' | 'unavailable' | 'unsupported';
 
 export class Resource<T> {
 	state = $state<ResourceState>('loading');
@@ -37,7 +38,9 @@ export class Resource<T> {
 				failure.code === 'unavailable' &&
 				failure.message === UNAVAILABLE_MESSAGE
 					? 'unavailable'
-					: 'error';
+					: failure.source === 'api' && failure.code === 'unsupported'
+						? 'unsupported'
+						: 'error';
 			// An old answer is never shown beside a failure it no longer matches.
 			this.data = undefined;
 		} finally {

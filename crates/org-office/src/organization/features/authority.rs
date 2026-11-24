@@ -1,0 +1,199 @@
+//! ADR-0029 and document-04 authorization and team-capacity checks shared across C2 hiring,
+//! `may_hire`, `max_members`, and agent lifecycle features.
+
+use org_store::{
+    Actor, Engine, Id, OfficeIdentity, Refusal, StoreError, Stream, Timestamp, UnitOfWork,
+};
+
+use super::{
+    invalid,
+    shared::{named, reject},
+    RejectCode, NOT_AUTHORIZED,
+};
+use crate::organization::{
+    ports::OrganizationRead,
+    records::{By, Employee, EmployeeKind, EmployeeStatus, OfficeRole, Organization, Team},
+};
+
+/// Exact ADR-0029 decision 3 refusal text for callers who may not hire.
+pub const HIRE_DENIED: &str = "You don't have access to hire. Ask your team lead.";
+
+/// Admitted context for any active employee (person or agent) at HQ.
+pub(crate) struct AdmittedActor {
+    pub generation: u64,
+    pub now: Timestamp,
+    pub organization: Organization,
+    pub actor: Employee,
+    pub by: By,
+}
+
+/// Admits an operation at HQ from any active employee (person or agent) on record.
+/// Individual features then enforce their exact ADR-0029 / document-04 authority rules.
+pub(crate) fn admit_active_employee<E: Engine>(
+    uow: &mut UnitOfWork<'_, E>,
+    here: &OfficeIdentity,
+    by: &Actor,
+) -> Result<AdmittedActor, Refusal>
+where
+    E::Tx: OrganizationRead,
+{
+    let generation = uow.next(Stream::Organization)?;
+    let now = uow.now();
+    let view = uow.view();
+    let Some(organization) = view.organization()? else {
+        return invalid("there is no organization yet");
+    };
+    let office = view.office(&here.office_id)?;
+    if !office.is_some_and(|office| office.role == OfficeRole::Hq) {
+        return invalid("only HQ changes the organization's structure");
+    }
+    let Actor::Employee(actor_id) = by else {
+        return invalid(NOT_AUTHORIZED);
+    };
+    let Some(actor) = view.employee(actor_id)? else {
+        return invalid(NOT_AUTHORIZED);
+    };
+    if actor.status != EmployeeStatus::Active {
+        return invalid(NOT_AUTHORIZED);
+    }
+    Ok(AdmittedActor {
+        generation,
+        now,
+        organization,
+        by: By::Employee(actor.id.clone()),
+        actor,
+    })
+}
+
+/// Whether `actor` is the organization's active person owner.
+pub(crate) fn is_owner(owner: &Id, actor: &Employee) -> bool {
+    actor.id == *owner
+        && actor.kind == EmployeeKind::Person
+        && actor.status == EmployeeStatus::Active
+}
+
+/// Whether `actor` may hire into `team_id` (ADR-0029 decision 2):
+/// - the organization owner into any team, OR
+/// - an active employee (person or agent) with `may_hire == true` who leads `team_id` or an
+///   ancestor team above `team_id`.
+pub fn may_hire_into(
+    view: &impl OrganizationRead,
+    owner: &Id,
+    actor: &Employee,
+    team_id: &Id,
+) -> Result<bool, StoreError> {
+    if is_owner(owner, actor) {
+        return Ok(true);
+    }
+    if actor.status != EmployeeStatus::Active || !actor.may_hire {
+        return Ok(false);
+    }
+    let Some(chain) = view.team_chain(team_id)? else {
+        return Ok(false);
+    };
+    for ancestor_id in chain {
+        if let Some(team) = view.team(&ancestor_id)? {
+            if team.is_active() && team.lead_employee_id.as_ref() == Some(&actor.id) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Whether `actor` may hire into at least one active team in the organization (used to gate
+/// direct messages and mentions to the built-in HR lead per ADR-0029 decision 3).
+pub fn may_hire_anywhere(
+    view: &impl OrganizationRead,
+    owner: &Id,
+    actor: &Employee,
+) -> Result<bool, StoreError> {
+    if is_owner(owner, actor) {
+        return Ok(true);
+    }
+    if actor.status != EmployeeStatus::Active || !actor.may_hire {
+        return Ok(false);
+    }
+    let teams = view.teams()?;
+    Ok(teams
+        .iter()
+        .any(|t| t.is_active() && t.lead_employee_id.as_ref() == Some(&actor.id)))
+}
+
+/// Whether `actor` is an active **person** who leads an ancestor team of `team_id` (including
+/// `team_id` itself when `include_same_team` is true). Agents ALWAYS return `false`.
+pub fn is_person_ancestor_lead(
+    view: &impl OrganizationRead,
+    actor: &Employee,
+    team_id: &Id,
+    include_same_team: bool,
+) -> Result<bool, StoreError> {
+    if actor.kind != EmployeeKind::Person || actor.status != EmployeeStatus::Active {
+        return Ok(false);
+    }
+    let Some(mut chain) = view.team_chain(team_id)? else {
+        return Ok(false);
+    };
+    if !include_same_team {
+        chain.pop();
+    }
+    for ancestor_id in chain {
+        if let Some(team) = view.team(&ancestor_id)? {
+            if team.is_active() && team.lead_employee_id.as_ref() == Some(&actor.id) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Whether `actor` is the owner or an active person above `target` in the team hierarchy
+/// (either leading a strict ancestor team of `target.home_team_id`, or leading
+/// `target.home_team_id` when `target` is not that team's lead).
+pub fn is_person_above_employee(
+    view: &impl OrganizationRead,
+    owner: &Id,
+    actor: &Employee,
+    target: &Employee,
+) -> Result<bool, StoreError> {
+    if is_owner(owner, actor) {
+        return Ok(true);
+    }
+    if actor.kind != EmployeeKind::Person || actor.status != EmployeeStatus::Active {
+        return Ok(false);
+    }
+    let target_is_own_lead = view
+        .team(&target.home_team_id)?
+        .is_some_and(|t| t.lead_employee_id.as_ref() == Some(&target.id));
+    is_person_ancestor_lead(view, actor, &target.home_team_id, !target_is_own_lead)
+}
+
+/// Active member count of `team_id` (every non-inactive employee, people and agents).
+pub fn team_active_member_count(
+    view: &impl OrganizationRead,
+    team_id: &Id,
+) -> Result<u64, StoreError> {
+    let count = view
+        .employees()?
+        .iter()
+        .filter(|e| e.home_team_id == *team_id && e.status != EmployeeStatus::Inactive)
+        .count();
+    Ok(count as u64)
+}
+
+/// Enforces `team.max_members` (ADR-0029 decision 8 / HIRE-6), naming the limit in the refusal.
+pub(crate) fn check_team_capacity(
+    view: &impl OrganizationRead,
+    team: &Team,
+) -> Result<(), Refusal> {
+    let count = team_active_member_count(view, &team.id)?;
+    if count >= team.max_members {
+        let msg = format!(
+            "{} is full ({count} of {} members; max_members limit reached)",
+            named(team),
+            team.max_members
+        );
+        return reject(RejectCode::InvalidRequest, msg);
+    }
+    Ok(())
+}

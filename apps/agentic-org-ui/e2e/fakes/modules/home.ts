@@ -1,9 +1,9 @@
 // Mock for src/lib/modules/home/api.ts under `bun run dev:mock`. Projects and members come from the org mock;
 // the counts, who is working and the month line are JSON. Look at states with `?mock=noprojects`, `nopresence`,
 // `nobody`, `nomonth` or `error` (the projects section fails).
-import { orgApi } from '$lib/org/api';
+import { orgApi } from '$lib/modules/organization/api';
 import type { HomeApi } from '../../../src/lib/modules/home/api';
-import { isPocDataset, mockLatency, mockMode } from '../mock-mode';
+import { mockLatency, mockMode, POC_ORG_ID } from '../mock-mode';
 import { pocHomeProjects } from '../poc-dataset';
 import summary from '../data/home/summary.json' with { type: 'json' };
 
@@ -17,7 +17,7 @@ export const homeApi: HomeApi = {
 		const mode = mockMode();
 		if (mode.includes('error')) throw new Error('The office did not answer in time.');
 		if (mode.includes('noprojects')) return [];
-		if (isPocDataset()) return structuredClone(pocHomeProjects());
+		if (organizationId === POC_ORG_ID) return structuredClone(pocHomeProjects());
 		return (snapshot.projects ?? [])
 			.filter((p) => !p.archived)
 			.map((p) => {
@@ -25,9 +25,9 @@ export const homeApi: HomeApi = {
 					.filter((l) => l.project_id === p.id)
 					.map((l) => l.team_id);
 				const members = new Set(
-					(snapshot.memberships ?? [])
-						.filter((m) => teams.includes(m.team_id))
-						.map((m) => m.member_id)
+					snapshot.members
+						.filter((m) => !m.owner && m.home_team_id && teams.includes(m.home_team_id))
+						.map((m) => m.id)
 				);
 				const counts: Counts = (summary.projects as Record<string, Counts>)[p.id] ?? {
 					done: 0,

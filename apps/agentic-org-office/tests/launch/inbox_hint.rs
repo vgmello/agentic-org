@@ -1,10 +1,9 @@
 use super::*;
 
-/// The HQ the worker created registers the inbox (`inbox.list`) from its projection's HQ
-/// standing; hints travel only on `subscribe`, which this office does not serve yet (B6).
-/// Satellites arrive with replication (S1).
+/// The HQ the worker created registers the inbox (`inbox.list`) and live `inbox.changed` hints
+/// from its projection's HQ standing (`B6`). Satellites arrive with replication (S1).
 #[test]
-fn inbox_registration_follows_the_hq_standing_and_no_hints_are_served() {
+fn inbox_registration_follows_the_hq_standing_and_advertises_hints() {
     let _processes = process_isolation();
     let world = World::new();
     let mut run = started(&world);
@@ -18,7 +17,7 @@ fn inbox_registration_follows_the_hq_standing_and_no_hints_are_served() {
     let reply: org_proto::Response = frame::read_message(&mut reader).unwrap().unwrap();
     let hello = reply.into_result::<org_proto::Hello>().unwrap();
     assert!(hello.supports("inbox.list"));
-    assert!(!hello.supports("inbox.changed"));
+    assert!(hello.supports("inbox.changed"));
     drop(reader);
     assert!(run.host_goes_away().success());
 }

@@ -46,7 +46,7 @@
       "name": "grant or scope refusal never applied",
       "origin": "grant_or_scope",
       "submit": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "not_found",
@@ -72,7 +72,7 @@
       "name": "rule refusal is stored and replays",
       "origin": "rule",
       "submit": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "not_found",
@@ -82,7 +82,7 @@
       "stored_at_hq": true,
       "lookup": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "not_found",

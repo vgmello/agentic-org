@@ -4,7 +4,11 @@
 //! for an `https` listener, the administrator's `tls.set` (`crate::web_tls`).
 
 pub(crate) mod authentication;
+mod cli_approvals;
 pub(crate) mod listener;
+mod local_access;
+mod multi_person;
+mod office_ops;
 pub(crate) mod organizations;
 use authentication::Authentication;
 mod request;
@@ -12,8 +16,8 @@ mod request;
 use std::sync::Arc;
 
 use org_host_control::{
-    Administrator, GatewayState, GatewayStatus, Hello, HelloResult, InstanceMode, InstanceStatus,
-    InstanceStatusResult, OfficeCounts,
+    Administrator, Hello, HelloResult, InstanceMode, InstanceStatus, InstanceStatusResult,
+    OfficeCounts, WebState, WebStatus,
 };
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
@@ -27,18 +31,29 @@ pub(crate) struct Service {
     broadcast: Arc<Broadcast>,
     instance_id: Option<String>,
     pub(crate) authentication: Option<Arc<Authentication>>,
-    gateway: Arc<std::sync::Mutex<GatewayState>>,
-    provisioning: Option<Arc<crate::provisioning::Provisioning>>,
+    gateway: Arc<std::sync::Mutex<WebState>>,
+    pub(super) provisioning: Option<Arc<crate::provisioning::Provisioning>>,
     recovery: Option<Arc<crate::recovery::Recovery>>,
     /// The `https` listener's pair: `tls.fetch`, `tls.set` and `instance.view`'s `tls`.
     /// `None` for a plain HTTP listener.
-    web_tls: Option<Arc<crate::web_tls::WebTls>>,
+    pub(super) web_tls: Option<Arc<crate::web_tls::WebTls>>,
+    pub(super) instance: Option<Arc<crate::instance::registry::Instance>>,
+    tls_renewal_retries: std::sync::atomic::AtomicUsize,
     /// Installed once by the registered start after composition; until then the admin calls
     /// answer `unavailable`.
     admin: std::sync::OnceLock<Arc<crate::admin::Admin>>,
+    /// The registered instance's browser origin (`http://...` or `https://...`) used when
+    /// minting browser-approved CLI sign-in URLs (`cli.approval.create`).
+    browser_origin: Option<String>,
     /// The registered instance's name, installed once by the registered start; until then
     /// `instance.view` answers `unavailable`.
     instance_name: std::sync::OnceLock<String>,
+    /// Serializes journaled `office.restart` / `browser.office_restart` lookup -> restart ->
+    /// journal write so concurrent retries cannot race into false `Conflict` or duplicate restarts.
+    pub(super) office_restarting: std::sync::Mutex<()>,
+    /// Serializes HTTP->HTTPS upgrade writes across `HostDb::web_tls` and `instance.json`.
+    pub(super) tls_upgrading: std::sync::Mutex<()>,
+    cli_approvals: cli_approvals::CliApprovals,
     /// Browser ops this service accepted on a web connection; real-process tests prove
     /// that an ingress refusal reaches no host op.
     #[cfg(test)]
@@ -63,13 +78,19 @@ impl Service {
             provisioning: None,
             recovery: None,
             web_tls: None,
+            instance: None,
+            tls_renewal_retries: std::sync::atomic::AtomicUsize::new(0),
             admin: std::sync::OnceLock::new(),
+            browser_origin: None,
             instance_name: std::sync::OnceLock::new(),
+            office_restarting: std::sync::Mutex::new(()),
+            tls_upgrading: std::sync::Mutex::new(()),
+            cli_approvals: cli_approvals::CliApprovals::new(),
             #[cfg(test)]
             browser_ops: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             organization_ops: std::sync::atomic::AtomicUsize::new(0),
-            gateway: Arc::new(std::sync::Mutex::new(GatewayState::NotConfigured)),
+            gateway: Arc::new(std::sync::Mutex::new(WebState::NotConfigured)),
         }
     }
     pub(crate) fn with_authentication(
@@ -97,6 +118,17 @@ impl Service {
         self.web_tls = web_tls;
         self
     }
+    pub(crate) fn with_instance(
+        mut self,
+        instance: Option<Arc<crate::instance::registry::Instance>>,
+    ) -> Self {
+        self.instance = instance;
+        self
+    }
+    pub(crate) fn with_browser_origin(mut self, origin: Option<String>) -> Self {
+        self.browser_origin = origin;
+        self
+    }
     #[cfg(test)]
     pub(crate) fn instance_id_for_test(&self) -> Option<&str> {
         self.instance_id.as_deref()
@@ -109,11 +141,39 @@ impl Service {
     /// `tls.renew` to the web process: its pair was replaced or renewed, and it fetches it
     /// again. Only the admitted web connection subscribes to these events.
     pub(crate) fn announce_tls_renewal(&self) {
+        self.tls_renewal_retries
+            .store(0, std::sync::atomic::Ordering::SeqCst);
         if let Some(provisioning) = &self.provisioning {
             provisioning
                 .web()
                 .publish_named(org_host_control::event::TLS_RENEW, serde_json::json!({}));
         }
+    }
+    /// Bounded retry when the web process reports a transient `tls.fetch` failure after
+    /// `tls.renew` (X7 P3 / TASK-62): re-announces `tls.renew` up to 3 times after a short delay.
+    pub(crate) fn schedule_tls_renewal_retry(self: &Arc<Self>) {
+        const MAX_RETRIES: usize = 3;
+        let attempt = self
+            .tls_renewal_retries
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if attempt >= MAX_RETRIES {
+            return;
+        }
+        let weak = Arc::downgrade(self);
+        let delay = std::time::Duration::from_secs(2 * (attempt as u64 + 1));
+        let _ = std::thread::Builder::new()
+            .name("org-tls-renew-retry".into())
+            .spawn(move || {
+                std::thread::sleep(delay);
+                if let Some(service) = weak.upgrade() {
+                    if let Some(provisioning) = &service.provisioning {
+                        provisioning.web().publish_named(
+                            org_host_control::event::TLS_RENEW,
+                            serde_json::json!({}),
+                        );
+                    }
+                }
+            });
     }
     /// The registered host's administrator link calls. Installed at most once.
     #[cfg(test)]
@@ -147,15 +207,21 @@ impl Service {
         let name = self.instance_name.get().cloned().ok_or_else(|| {
             ApiError::new(ErrorCode::Unavailable, "the instance view is unavailable")
         })?;
+        let auth_enabled = self.web_tls.is_some()
+            || self
+                .authentication
+                .as_ref()
+                .and_then(|a| a.auth_enabled().ok())
+                .unwrap_or(true);
         Ok(org_host_control::browser::InstanceViewResult {
             name,
             status: InstanceMode::Service,
             web_status: *crate::sync::lock(&self.gateway),
             administrator: self.administrator()?,
+            auth_enabled,
             tls: self.web_tls.as_ref().map(|tls| {
-                crate::web_tls::now().map_or(org_proto::gateway::TlsStatus::Missing, |now| {
-                    tls.status(now)
-                })
+                crate::web_tls::now()
+                    .map_or(org_proto::web::TlsStatus::Missing, |now| tls.status(now))
             }),
         })
     }
@@ -172,8 +238,7 @@ impl Service {
         if !request.is::<TlsSet>() {
             return false;
         }
-        let (None, Some(authentication)) = (connection.gateway_listen(), &self.authentication)
-        else {
+        let (None, Some(authentication)) = (connection.web_listen(), &self.authentication) else {
             connection.send_response(not_authorized(request.id));
             return true;
         };
@@ -220,7 +285,7 @@ impl Service {
             connection.send_response(params_dont_fit(request.id));
             return;
         }
-        let Some(snapshot) = connection.gateway_listen() else {
+        let Some(snapshot) = connection.web_listen() else {
             connection.send_response(Response::error(
                 request.id,
                 ApiError::new(
@@ -377,7 +442,7 @@ impl Service {
         }
         true
     }
-    pub(crate) fn with_gateway_state(mut self, state: Arc<std::sync::Mutex<GatewayState>>) -> Self {
+    pub(crate) fn with_web_state(mut self, state: Arc<std::sync::Mutex<WebState>>) -> Self {
         self.gateway = state;
         self
     }
@@ -411,20 +476,15 @@ impl Service {
     pub(crate) fn recovery_for_test(&self) -> Arc<crate::recovery::Recovery> {
         Arc::clone(self.recovery.as_ref().expect("selected test host"))
     }
-    /// Browser-session ops (A3 B4), only on the admitted web process's control
+    /// Browser-session ops (A3 B4, B2 Q8), only on the admitted web process's control
     /// connection. Each `session.ended` push is written before the reply on the
     /// connection's one ordered writer, after the record's delete.
     fn browser_op(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::browser::{
-            BrowserSessionEnd, InstanceView, LinkRegister, SessionEnded, SessionSignIn,
-            SessionValidate, SESSION_ENDED,
+            BrowserAuthEnable, BrowserCliApprovalDecide, BrowserLocalSession, BrowserOfficeRestart,
+            BrowserOpenChannel, BrowserSessionGrant, BrowserTlsEnable, InstanceView,
         };
-        let browser = request.is::<LinkRegister>()
-            || request.is::<SessionSignIn>()
-            || request.is::<SessionValidate>()
-            || request.is::<BrowserSessionEnd>()
-            || request.is::<InstanceView>();
-        if !browser || connection.gateway_listen().is_none() {
+        if !is_browser_op(request) || connection.web_listen().is_none() {
             return false;
         }
         #[cfg(test)]
@@ -445,56 +505,206 @@ impl Service {
             connection.send_response(not_authorized(request.id));
             return true;
         };
-        let invalid =
-            |_| ApiError::new(ErrorCode::InvalidRequest, "invalid browser session request");
-        let mut ended = Vec::new();
-        let now = authentication::wall_ms().and_then(|ms| {
-            i64::try_from(ms)
-                .map_err(|_| ApiError::new(ErrorCode::Unavailable, "clock unavailable"))
-        });
-        let reply = if request.is::<LinkRegister>() {
-            now.and_then(|now| {
-                let p = request.params::<LinkRegister>().map_err(invalid)?;
-                authentication.register(&p, now, &mut ended)
-            })
-            .map(|r| ok::<LinkRegister>(request.id, &r))
-        } else if request.is::<SessionSignIn>() {
-            now.and_then(|now| {
-                let p = request.params::<SessionSignIn>().map_err(invalid)?;
-                authentication.sign_in_browser(&p, now, &mut ended)
-            })
-            .map(|r| ok::<SessionSignIn>(request.id, &r))
-        } else if request.is::<SessionValidate>() {
-            now.and_then(|now| {
-                let p = request.params::<SessionValidate>().map_err(invalid)?;
-                authentication.validate_browser(&p, now, &mut ended)
-            })
-            .map(|r| ok::<SessionValidate>(request.id, &r))
+        if request.is::<BrowserOpenChannel>() {
+            self.open_browser_channel(authentication, request, connection);
+        } else if request.is::<BrowserSessionGrant>() {
+            self.grant_browser_channel(authentication, request, connection);
+        } else if request.is::<BrowserOfficeRestart>() {
+            office_ops::restart_browser_office(self, authentication, request, connection);
+        } else if request.is::<BrowserCliApprovalDecide>() {
+            self.decide_cli_approval(authentication, request, connection);
+        } else if request.is::<BrowserLocalSession>() {
+            local_access::handle_local_session(authentication, request, connection);
+        } else if request.is::<BrowserAuthEnable>() {
+            local_access::handle_auth_enable(self, authentication, request, connection);
+        } else if request.is::<BrowserTlsEnable>() {
+            local_access::handle_tls_enable(self, authentication, request, connection);
+        } else if multi_person::dispatch(self, authentication, request, connection) {
+            return true;
         } else {
-            request
-                .params::<BrowserSessionEnd>()
-                .map_err(invalid)
-                .and_then(|p| authentication.end_browser(&p.session_id))
-                .map(|e| {
-                    ended.extend(e);
-                    ok::<BrowserSessionEnd>(request.id, &org_proto::Empty {})
-                })
-        };
-        for session in ended {
-            let event = SessionEnded {
-                session_id: session.id,
-            };
-            if let Ok(data) = serde_json::to_value(&event) {
-                connection.send_event(SESSION_ENDED, data);
-            }
+            browser_session_op(self, authentication, request, connection);
         }
-        connection.send_response(reply.unwrap_or_else(|e| Response::error(request.id, e)));
         true
+    }
+    fn open_browser_channel(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::browser::BrowserOpenChannel;
+        let mut ended = Vec::new();
+        let result = browser_now_ms().and_then(|now| {
+            let p = request
+                .params::<BrowserOpenChannel>()
+                .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid channel request"))?;
+            let account =
+                authentication.browser_auth_account(connection, &p.auth, now, &mut ended)?;
+            let office = self
+                .offices
+                .offices()
+                .into_iter()
+                .find(|o| o.id == p.office_id)
+                .filter(|o| {
+                    account
+                        .links()
+                        .iter()
+                        .any(|l| l.org_id() == o.organization_id)
+                })
+                .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "office not found"))?;
+            let endpoint = self.offices.endpoint(&p.office_id).ok_or_else(|| {
+                ApiError::new(ErrorCode::Unavailable, "office channel unavailable")
+            })?;
+            authentication
+                .open_browser_channel(
+                    connection,
+                    &p,
+                    endpoint,
+                    &office.organization_id,
+                    now,
+                    &mut ended,
+                )
+                .map(|(id, socket, witness)| (id, socket, witness, p.office_id))
+        });
+        finish_ended_browser_sessions(authentication, connection, ended);
+        match result {
+            Ok((id, socket, witness, office)) => {
+                deliver_channel(connection, request.id, id, socket, &office, witness);
+            }
+            Err(error) => connection.send_response(Response::error(request.id, error)),
+        }
+    }
+    fn grant_browser_channel(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::browser::BrowserSessionGrant;
+        let mut ended = Vec::new();
+        let result = browser_now_ms().and_then(|now| {
+            let p = request
+                .params::<BrowserSessionGrant>()
+                .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid grant request"))?;
+            authentication.grant_browser(connection, &p, now, &mut ended)
+        });
+        finish_ended_browser_sessions(authentication, connection, ended);
+        match result {
+            Ok(result) => secret_response(connection, request.id, &result),
+            Err(error) => connection.send_response(Response::error(request.id, error)),
+        }
+    }
+    fn decide_cli_approval(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::browser::{BrowserCliApprovalDecide, BrowserCliApprovalDecideResult};
+        let mut ended = Vec::new();
+        let result = browser_now_ms().and_then(|now| {
+            let Some(instance_id) = self.instance_id.as_deref() else {
+                return Err(ApiError::new(
+                    ErrorCode::Unavailable,
+                    "host instance is not registered",
+                ));
+            };
+            let p = request.params::<BrowserCliApprovalDecide>().map_err(|_| {
+                ApiError::new(ErrorCode::InvalidRequest, "invalid cli approval decision")
+            })?;
+            let account =
+                authentication.browser_auth_account(connection, &p.auth, now, &mut ended)?;
+            let account_id = crate::accounts::identity::AccountId::parse(account.account_id())
+                .map_err(|_| ApiError::new(ErrorCode::Unavailable, "invalid account id"))?;
+            let status =
+                self.cli_approvals
+                    .decide(instance_id, &p.link, account_id, p.approve, now)?;
+            Ok(BrowserCliApprovalDecideResult { status })
+        });
+        finish_ended_browser_sessions(authentication, connection, ended);
+        match result {
+            Ok(res) => connection.send_response(ok::<BrowserCliApprovalDecide>(request.id, &res)),
+            Err(err) => connection.send_response(Response::error(request.id, err)),
+        }
+    }
+    fn create_cli_approval(&self, request: &Request, connection: &Arc<Connection>) {
+        use org_host_control::ops::CliApprovalCreate;
+        if connection.web_listen().is_some() {
+            connection.send_response(not_authorized(request.id));
+            return;
+        }
+        let result = browser_now_ms().and_then(|now| {
+            request.params::<CliApprovalCreate>().map_err(|_| {
+                ApiError::new(ErrorCode::InvalidRequest, "invalid cli approval request")
+            })?;
+            let Some(instance_id) = self.instance_id.as_deref() else {
+                return Err(ApiError::new(
+                    ErrorCode::Unavailable,
+                    "host instance is not registered",
+                ));
+            };
+            let origin = self
+                .admin
+                .get()
+                .map(|a| a.origin())
+                .or(self.browser_origin.as_deref())
+                .ok_or_else(|| ApiError::new(ErrorCode::Unavailable, "web origin unavailable"))?;
+            self.cli_approvals
+                .create(instance_id, origin, connection, now)
+        });
+        match result {
+            Ok(created) => secret_response(connection, request.id, &created),
+            Err(err) => connection.send_response(Response::error(request.id, err)),
+        }
+    }
+    fn poll_cli_approval(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::ops::{CliApprovalPoll, CliApprovalPollResult};
+        if connection.web_listen().is_some() {
+            connection.send_response(not_authorized(request.id));
+            return;
+        }
+        let result = browser_now_ms().and_then(|now| {
+            let p = request.params::<CliApprovalPoll>().map_err(|_| {
+                ApiError::new(ErrorCode::InvalidRequest, "invalid cli approval poll")
+            })?;
+            match self.cli_approvals.poll(connection, &p.approval_id, now)? {
+                cli_approvals::PollOutcome::Pending => Ok(CliApprovalPollResult::Pending),
+                cli_approvals::PollOutcome::Declined => Ok(CliApprovalPollResult::Declined),
+                cli_approvals::PollOutcome::Expired => Ok(CliApprovalPollResult::Expired),
+                cli_approvals::PollOutcome::Approved(account_id) => {
+                    let mut issued = authentication.issue_for_account(connection, &account_id)?;
+                    let offices = self.offices.offices();
+                    for link in &mut issued.orgs {
+                        link.office_ids = offices
+                            .iter()
+                            .filter(|o| o.organization_id == link.org_id)
+                            .map(|o| o.id.clone())
+                            .collect();
+                    }
+                    Ok(CliApprovalPollResult::Approved {
+                        session: issued.session,
+                        account: issued.account,
+                        admin: issued.admin,
+                        orgs: issued.orgs,
+                    })
+                }
+            }
+        });
+        match result {
+            Ok(res) => secret_response(connection, request.id, &res),
+            Err(err) => connection.send_response(Response::error(request.id, err)),
+        }
     }
     fn authenticate(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::ops::{
-            AccountVerify, FdsReceived, OfficeOpenChannel, SessionEnd, SessionGrant,
-            SessionInspect, SessionRenew,
+            AccountVerify, CliApprovalCreate, CliApprovalPoll, FdsReceived, OfficeList,
+            OfficeOpenChannel, OfficeRestart, SessionEnd, SessionGrant, SessionInspect,
+            SessionRenew,
         };
         if request.is::<FdsReceived>() {
             acknowledge_descriptors(request, connection);
@@ -511,8 +721,16 @@ impl Service {
         };
         if request.is::<AccountVerify>() {
             self.sign_in(authentication, request, connection);
+        } else if request.is::<CliApprovalCreate>() {
+            self.create_cli_approval(request, connection);
+        } else if request.is::<CliApprovalPoll>() {
+            self.poll_cli_approval(authentication, request, connection);
         } else if request.is::<OfficeOpenChannel>() {
             self.open_authenticated_channel(authentication, request, connection);
+        } else if request.is::<OfficeList>() {
+            office_ops::list_session_offices(self, authentication, request, connection);
+        } else if request.is::<OfficeRestart>() {
+            office_ops::restart_session_office(self, authentication, request, connection);
         } else if request.is::<SessionGrant>() {
             let result = request
                 .params::<SessionGrant>()
@@ -623,6 +841,107 @@ impl Service {
     }
 }
 
+fn is_browser_op(request: &Request) -> bool {
+    use org_host_control::browser::{
+        BrowserAuthEnable, BrowserCliApprovalDecide, BrowserLocalSession, BrowserOfficeRestart,
+        BrowserOpenChannel, BrowserSessionEnd, BrowserSessionGrant, BrowserTlsEnable, InstanceView,
+        LinkRegister, SessionSignIn, SessionValidate,
+    };
+    const METHODS: &[&str] = &[
+        LinkRegister::METHOD,
+        SessionSignIn::METHOD,
+        SessionValidate::METHOD,
+        BrowserSessionEnd::METHOD,
+        InstanceView::METHOD,
+        BrowserOpenChannel::METHOD,
+        BrowserSessionGrant::METHOD,
+        BrowserOfficeRestart::METHOD,
+        BrowserCliApprovalDecide::METHOD,
+        BrowserLocalSession::METHOD,
+        BrowserAuthEnable::METHOD,
+        BrowserTlsEnable::METHOD,
+    ];
+    METHODS.contains(&request.method.as_str()) || multi_person::is_multi_person_op(request)
+}
+
+fn browser_session_op(
+    service: &Service,
+    authentication: &Authentication,
+    request: &Request,
+    connection: &Connection,
+) {
+    use org_host_control::browser::{
+        AuthModeChanged, BrowserSessionEnd, LinkRegister, SessionSignIn, SessionValidate,
+    };
+    let invalid = |_| ApiError::new(ErrorCode::InvalidRequest, "invalid browser session request");
+    let mut ended = Vec::new();
+    let now = browser_now_ms();
+    let was_authless =
+        request.is::<LinkRegister>() && authentication.auth_enabled().is_ok_and(|e| !e);
+    let reply = if request.is::<LinkRegister>() {
+        now.and_then(|now| {
+            let p = request.params::<LinkRegister>().map_err(invalid)?;
+            authentication.register(&p, now, &mut ended)
+        })
+        .map(|r| ok::<LinkRegister>(request.id, &r))
+    } else if request.is::<SessionSignIn>() {
+        now.and_then(|now| {
+            let p = request.params::<SessionSignIn>().map_err(invalid)?;
+            authentication.sign_in_browser(&p, now, &mut ended)
+        })
+        .map(|r| ok::<SessionSignIn>(request.id, &r))
+    } else if request.is::<SessionValidate>() {
+        now.and_then(|now| {
+            let p = request.params::<SessionValidate>().map_err(invalid)?;
+            authentication.validate_browser(&p, now, &mut ended)
+        })
+        .map(|r| ok::<SessionValidate>(request.id, &r))
+    } else {
+        request
+            .params::<BrowserSessionEnd>()
+            .map_err(invalid)
+            .and_then(|p| authentication.end_browser(&p.session_id))
+            .map(|e| {
+                ended.extend(e);
+                ok::<BrowserSessionEnd>(request.id, &org_proto::Empty {})
+            })
+    };
+    finish_ended_browser_sessions(authentication, connection, ended);
+    if reply.is_ok() && was_authless && authentication.auth_enabled().is_ok_and(|e| e) {
+        if let Some(provisioning) = &service.provisioning {
+            if let Ok(data) = serde_json::to_value(AuthModeChanged { auth_enabled: true }) {
+                provisioning
+                    .web()
+                    .publish_named(org_host_control::event::AUTH_MODE_CHANGED, data);
+            }
+        }
+    }
+    connection.send_response(reply.unwrap_or_else(|e| Response::error(request.id, e)));
+}
+
+fn browser_now_ms() -> Result<i64, ApiError> {
+    authentication::wall_ms().and_then(|ms| {
+        i64::try_from(ms).map_err(|_| ApiError::new(ErrorCode::Unavailable, "clock unavailable"))
+    })
+}
+
+fn finish_ended_browser_sessions(
+    authentication: &Authentication,
+    connection: &Connection,
+    ended: Vec<crate::sessions::Ended>,
+) {
+    use org_host_control::browser::{SessionEnded, SESSION_ENDED};
+    authentication.revoke_browser_sessions(&ended);
+    for session in ended {
+        let event = SessionEnded {
+            session_id: session.id,
+        };
+        if let Ok(data) = serde_json::to_value(&event) {
+            connection.send_event(SESSION_ENDED, data);
+        }
+    }
+}
+
 /// Deliver an already authorized channel. A definite local reservation refusal
 /// answers this request; uncertain transport still terminates the connection.
 fn deliver_channel(
@@ -656,7 +975,7 @@ fn web_reports_serving(request: &Request, connection: &Arc<Connection>) {
     use crate::service::listener::ServingReport;
     use org_host_control::ops::WebServing;
     let refused = |code, message| Response::error(request.id, ApiError::new(code, message));
-    if connection.gateway_listen().is_none() {
+    if connection.web_listen().is_none() {
         connection.send_response(refused(
             ErrorCode::NotAuthorized,
             "private gateway connection required",
@@ -685,12 +1004,17 @@ fn web_reports_serving(request: &Request, connection: &Arc<Connection>) {
 
 fn session_auth_method(request: &Request) -> bool {
     use org_host_control::ops::{
-        AccountVerify, OfficeOpenChannel, SessionEnd, SessionGrant, SessionInspect, SessionRenew,
+        AccountVerify, CliApprovalCreate, CliApprovalPoll, OfficeList, OfficeOpenChannel,
+        OfficeRestart, SessionEnd, SessionGrant, SessionInspect, SessionRenew,
     };
     request.is::<AccountVerify>()
+        || request.is::<CliApprovalCreate>()
+        || request.is::<CliApprovalPoll>()
         || request.is::<SessionRenew>()
         || request.is::<SessionEnd>()
         || request.is::<OfficeOpenChannel>()
+        || request.is::<OfficeList>()
+        || request.is::<OfficeRestart>()
         || request.is::<SessionGrant>()
         || request.is::<SessionInspect>()
 }
@@ -711,6 +1035,7 @@ fn acknowledge_descriptors(request: &Request, connection: &Arc<Connection>) {
 impl Handler for Service {
     fn disconnected(&self, connection: &Arc<Connection>) {
         connection.clear_recovery_permission();
+        self.cli_approvals.disconnect(connection);
         if let Some(authentication) = &self.authentication {
             authentication.disconnect(connection);
         }
@@ -760,15 +1085,15 @@ impl Handler for Service {
         if self.recover(&request, connection, received) {
             return;
         }
-        if let Some(reply) = organizations::dispatch(
+        if let Some(reply) = organizations::dispatch_with_listen(
             &request,
-            connection.gateway_listen().is_some(),
+            connection.web_listen().map(|c| c.scheme()),
             self.authentication.as_deref(),
             self.provisioning.as_ref(),
             &mut |name, data| connection.send_event(name, data),
         ) {
             #[cfg(test)]
-            if connection.gateway_listen().is_some() {
+            if connection.web_listen().is_some() {
                 self.organization_ops
                     .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             }
@@ -809,7 +1134,7 @@ impl Handler for Service {
                 // The hello answer is queued under the same lock that adds the connection,
                 // so no event is written ahead of it.
                 if let (true, Some(provisioning)) = (
-                    connection.gateway_listen().is_some(),
+                    connection.web_listen().is_some(),
                     self.provisioning.as_ref(),
                 ) {
                     let subscriber: Arc<dyn crate::broadcast::Subscriber> = connection.clone();
@@ -831,7 +1156,7 @@ impl Handler for Service {
                         Ok(InstanceStatusResult {
                             instance_id: instance_id.to_owned(),
                             mode: InstanceMode::Service,
-                            gateway: GatewayStatus {
+                            gateway: WebStatus {
                                 state: *crate::sync::lock(&self.gateway),
                             },
                             offices: OfficeCounts {
@@ -974,8 +1299,8 @@ pub(crate) fn web_start_eligible(authenticated: bool, registered: bool) -> bool 
 }
 
 /// The readiness rule: all three conditions, never persisted state alone.
-pub(crate) fn web_serving(authenticated: bool, registered: bool, state: GatewayState) -> bool {
-    web_start_eligible(authenticated, registered) && state == GatewayState::Running
+pub(crate) fn web_serving(authenticated: bool, registered: bool, state: WebState) -> bool {
+    web_start_eligible(authenticated, registered) && state == WebState::Running
 }
 
 #[cfg(test)]
@@ -1022,17 +1347,17 @@ pub(crate) mod tests {
     #[test]
     fn web_ready_needs_authentication_registration_and_a_serving_web() {
         use super::web_serving;
-        assert!(web_serving(true, true, GatewayState::Running));
+        assert!(web_serving(true, true, WebState::Running));
         for state in [
-            GatewayState::NotConfigured,
-            GatewayState::Starting,
-            GatewayState::Failed,
-            GatewayState::Unknown,
+            WebState::NotConfigured,
+            WebState::Starting,
+            WebState::Failed,
+            WebState::Unknown,
         ] {
             assert!(!web_serving(true, true, state), "{state:?}");
         }
-        assert!(!web_serving(false, true, GatewayState::Running));
-        assert!(!web_serving(true, false, GatewayState::Running));
+        assert!(!web_serving(false, true, WebState::Running));
+        assert!(!web_serving(true, false, WebState::Running));
     }
 
     use super::*;
@@ -1154,7 +1479,7 @@ pub(crate) mod tests {
     }
 
     /// [`web_peer_on`] over a service the caller prepared.
-    fn web_peer_for(
+    pub(crate) fn web_peer_for(
         mut service: Service,
         listen: &str,
     ) -> (
@@ -1174,7 +1499,7 @@ pub(crate) mod tests {
         (web, std::io::BufReader::new(peer), offices)
     }
 
-    fn exchange<C: Call>(
+    pub(crate) fn exchange<C: Call>(
         peer: &mut std::io::BufReader<std::os::unix::net::UnixStream>,
         id: u64,
         params: &C::Params,
@@ -1517,7 +1842,7 @@ pub(crate) mod tests {
     #[test]
     fn instance_view_is_served_only_on_the_web_connection_after_the_name_is_installed() {
         use org_host_control::browser::{InstanceView, InstanceViewResult};
-        use org_host_control::{Administrator, GatewayState, InstanceMode};
+        use org_host_control::{Administrator, InstanceMode, WebState};
         let home = tempfile::tempdir().unwrap();
         let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
         let authentication = Arc::new(authentication);
@@ -1559,8 +1884,9 @@ pub(crate) mod tests {
             InstanceViewResult {
                 name: "studio".into(),
                 status: InstanceMode::Service,
-                web_status: GatewayState::NotConfigured,
+                web_status: WebState::NotConfigured,
                 administrator: Administrator::Present,
+                auth_enabled: true,
                 tls: None,
             }
         );
@@ -1576,6 +1902,25 @@ pub(crate) mod tests {
         assert!(matches!(
             response.outcome,
             org_proto::Outcome::Error(ref e) if e.code == ErrorCode::InvalidRequest
+        ));
+        // Host-only CLI approval creation and polling are refused on a web connection.
+        assert!(refused(
+            exchange::<org_host_control::ops::CliApprovalCreate>(
+                &mut peer,
+                5,
+                &org_host_control::ops::CliApprovalCreateParams {},
+            ),
+            ErrorCode::NotAuthorized
+        ));
+        assert!(refused(
+            exchange::<org_host_control::ops::CliApprovalPoll>(
+                &mut peer,
+                6,
+                &org_host_control::ops::CliApprovalPollParams {
+                    approval_id: "0193a5c0-0000-7000-8000-000000000001".into(),
+                },
+            ),
+            ErrorCode::NotAuthorized
         ));
         drop(web);
 
@@ -1659,6 +2004,29 @@ pub(crate) mod tests {
             response.outcome,
             org_proto::Outcome::Error(ref e) if e.code == ErrorCode::NotAuthorized
         ));
+        org_proto::frame::write_message(
+            peer.get_mut(),
+            &serde_json::json!({
+                "id": 11,
+                "method": org_host_control::browser::BrowserCliApprovalDecide::METHOD,
+                "params": {
+                    "auth": {
+                        "cookie_digest": digest,
+                        "proof_digest": digest,
+                        "origin": {"scheme": "https", "host": "org.example", "port": 443}
+                    },
+                    "link": "A".repeat(43),
+                    "approve": true
+                }
+            }),
+        )
+        .unwrap();
+        let response: org_proto::Response =
+            org_proto::frame::read_message(&mut peer).unwrap().unwrap();
+        assert!(matches!(
+            response.outcome,
+            org_proto::Outcome::Error(ref e) if e.code == ErrorCode::NotAuthorized
+        ));
         drop(local);
         offices.shutdown();
         // Nothing was stored: no session for the served digests, and the login
@@ -1708,7 +2076,7 @@ pub(crate) mod tests {
             crate::web_tls::tests::pair_for(&["127.0.0.1"], now - 60, now + 30 * 86_400);
         let params = |session: SessionHandle| TlsSetParams {
             session,
-            operation_id: crate::ids::generate().unwrap(),
+            operation_id: crate::ids::uuid_v7().unwrap(),
             cert: cert.clone(),
             key: TlsPrivateKey::new(key.clone()).unwrap(),
         };
@@ -1973,5 +2341,175 @@ pub(crate) mod tests {
             );
         }
         service.offices.shutdown();
+    }
+
+    #[test]
+    fn local_access_and_tls_enable_refused_off_web_and_on_https() {
+        use org_host_control::browser::{
+            BrowserAuthEnable, BrowserAuthEnableParams, BrowserLocalSession,
+            BrowserLocalSessionParams, BrowserOrigin, BrowserTlsEnable, BrowserTlsEnableParams,
+            Digest32, TlsEnableMode,
+        };
+        use org_host_control::organization::BrowserAuth;
+        use org_host_control::Password;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (_auth_root, authentication) =
+            crate::service::authentication::tests::fixture_without_accounts();
+        let auth = Arc::new(authentication);
+        let (db, _) = auth.provisioning_storage();
+        assert!(db.init_local_authless_if_empty(1000).unwrap().is_some());
+        assert!(!db.auth_enabled().unwrap());
+
+        let origin = BrowserOrigin {
+            scheme: "http".into(),
+            host: "127.0.0.1".into(),
+            port: 48123,
+        };
+
+        // 1. Off the web connection (ordinary host.sock peer): all three browser ops are refused.
+        let mut local_svc = service(dir.path()).with_authentication(Some(Arc::clone(&auth)));
+        local_svc.instance_id = Some(crate::ids::uuid_v7().unwrap());
+        let local_offices = local_svc.offices.clone();
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let local = listener::LocalConnection::start(host, Arc::new(local_svc)).unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut local_peer = std::io::BufReader::new(peer);
+        exchange::<Hello>(&mut local_peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<BrowserLocalSession>(
+                &mut local_peer,
+                2,
+                &BrowserLocalSessionParams {
+                    origin: origin.clone(),
+                },
+            ),
+            ErrorCode::NotAuthorized
+        ));
+        assert!(refused(
+            exchange::<BrowserAuthEnable>(
+                &mut local_peer,
+                3,
+                &BrowserAuthEnableParams {
+                    login: "Owner".into(),
+                    password: Password::new("long-valid-password-123".into()).unwrap(),
+                    client_address: "127.0.0.1".parse().unwrap(),
+                    cookie_digest: Digest32([0x11; 32]),
+                    proof_digest: Digest32([0x22; 32]),
+                    origin: origin.clone(),
+                },
+            ),
+            ErrorCode::NotAuthorized
+        ));
+        assert!(refused(
+            exchange::<BrowserTlsEnable>(
+                &mut local_peer,
+                4,
+                &BrowserTlsEnableParams {
+                    auth: BrowserAuth::local_authless(origin.clone()),
+                    mode: TlsEnableMode::SelfSigned,
+                    hsts: None,
+                },
+            ),
+            ErrorCode::NotAuthorized
+        ));
+        drop(local);
+        local_offices.shutdown();
+
+        // 2. On an HTTPS web connection: local_authless session is refused (fail closed).
+        let https_svc = service(dir.path()).with_authentication(Some(Arc::clone(&auth)));
+        let (https_web, mut https_peer, offices) = web_peer_for(
+            https_svc,
+            r#"{"address":"127.0.0.1","port":48123,"scheme":"https","origin":"https://127.0.0.1:48123","hsts":"off"}"#,
+        );
+        exchange::<Hello>(&mut https_peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<BrowserLocalSession>(
+                &mut https_peer,
+                2,
+                &BrowserLocalSessionParams {
+                    origin: BrowserOrigin {
+                        scheme: "https".into(),
+                        host: "127.0.0.1".into(),
+                        port: 48123,
+                    },
+                },
+            ),
+            ErrorCode::NotAuthorized
+        ));
+        drop(https_web);
+        offices.shutdown();
+
+        // 3. On a plain HTTP web connection: local_session succeeds, auth_enable upgrades & disables authless.
+        let http_svc = service(dir.path()).with_authentication(Some(Arc::clone(&auth)));
+        let (http_web, mut http_peer, offices2) = web_peer_for(
+            http_svc,
+            r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#,
+        );
+        exchange::<Hello>(&mut http_peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        let local_sess = exchange::<BrowserLocalSession>(
+            &mut http_peer,
+            2,
+            &BrowserLocalSessionParams {
+                origin: origin.clone(),
+            },
+        )
+        .unwrap()
+        .into_result::<BrowserLocalSession>()
+        .unwrap();
+        assert!(local_sess.admin);
+        org_proto::frame::write_message(
+            http_peer.get_mut(),
+            &Request::new::<BrowserAuthEnable>(
+                3,
+                &BrowserAuthEnableParams {
+                    login: "Owner".into(),
+                    password: Password::new("long-valid-password-123".into()).unwrap(),
+                    client_address: "127.0.0.1".parse().unwrap(),
+                    cookie_digest: Digest32([0x33; 32]),
+                    proof_digest: Digest32([0x44; 32]),
+                    origin: origin.clone(),
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let ended_event: serde_json::Value = org_proto::frame::read_message(&mut http_peer)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            ended_event["event"],
+            org_host_control::browser::SESSION_ENDED
+        );
+        assert_eq!(
+            ended_event["data"]["session_id"],
+            "01000000000000000000000000"
+        );
+        let enabled: org_proto::Response = org_proto::frame::read_message(&mut http_peer)
+            .unwrap()
+            .unwrap();
+        let enabled = enabled.into_result::<BrowserAuthEnable>().unwrap();
+        assert_eq!(enabled.account.login, "Owner");
+        assert!(db.auth_enabled().unwrap());
+        assert!(refused(
+            exchange::<BrowserLocalSession>(
+                &mut http_peer,
+                4,
+                &BrowserLocalSessionParams { origin },
+            ),
+            ErrorCode::NotAuthorized
+        ));
+        drop(http_web);
+        offices2.shutdown();
     }
 }

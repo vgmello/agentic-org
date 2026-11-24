@@ -90,7 +90,28 @@ fn the_file_is_plain_sqlite_that_any_connection_reads_without_a_key() {
             |row| row.get(0),
         )
         .unwrap();
-    assert!(tables > 90, "{tables}");
+    assert!(tables >= 80, "{tables}");
+    // TASK-10 (H-05): sensitive messaging and budget tables are isolated out of shared office.db.
+    for isolated in [
+        "conversations",
+        "messages",
+        "message_recipient_states",
+        "budgets",
+        "budget_policy_versions",
+        "budget_holds",
+    ] {
+        let count: i64 = plain
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+                [isolated],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "isolated table {isolated} must not be in office.db"
+        );
+    }
     let stored: String = plain
         .query_row("SELECT digest FROM store_schema", [], |row| row.get(0))
         .unwrap();
@@ -308,13 +329,17 @@ fn a_replacement_with_a_dangling_reference_is_refused_by_row_and_the_projection_
         Some(cursor(9))
     );
     assert_eq!(sources(&engine), 0);
-    // One database file and its log's two: nothing of the build or the old log is left.
+    // One database file, its WAL pair, and the isolated `protected/` folder for `messaging.db`:
+    // nothing of the build staging or old log is left.
     let mut names: Vec<_> = fs::read_dir(dir.path())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
     names.sort();
-    assert_eq!(names, ["office.db", "office.db-shm", "office.db-wal"]);
+    assert_eq!(
+        names,
+        ["office.db", "office.db-shm", "office.db-wal", "protected"]
+    );
     commit(&engine, 10);
     drop(engine);
     let engine = SqliteEngine::open(&dir.path().canonicalize().unwrap().join("office.db"));
@@ -406,7 +431,6 @@ fn another_adapter_format_is_another_schema_and_the_projection_is_made_anew() {
     assert_eq!(sources(&engine), 0);
 }
 
-#[cfg(unix)]
 #[test]
 fn a_projection_that_cannot_be_opened_is_an_error_and_is_not_deleted() {
     use std::os::unix::fs::PermissionsExt;
@@ -436,4 +460,743 @@ fn a_projection_that_cannot_be_opened_is_an_error_and_is_not_deleted() {
         Some(cursor(1))
     );
     assert_eq!(sources(&engine), 1);
+}
+
+#[test]
+fn persistent_checkpoint_failures_surface_upkeep_error_and_clear_on_recovery() {
+    let (path, _dir) = place();
+    let engine = SqliteEngine::open(&path).unwrap();
+    commit(&engine, 1);
+    engine.after_round();
+    assert_eq!(engine.checkpoint_failures(), 0);
+    assert!(engine.upkeep_error().is_none());
+
+    // Hold a real SQLite read snapshot while committing new WAL frames across 3 flusher rounds:
+    // `PRAGMA wal_checkpoint(PASSIVE)` genuinely reports `busy=1, checkpointed < log`.
+    let held_reader = engine.snapshot().unwrap();
+    commit(&engine, 2);
+    engine.after_round();
+    assert_eq!(engine.checkpoint_failures(), 1);
+    assert!(engine.upkeep_error().is_none());
+
+    commit(&engine, 3);
+    engine.after_round();
+    assert_eq!(engine.checkpoint_failures(), 2);
+    assert!(engine.upkeep_error().is_none());
+
+    commit(&engine, 4);
+    engine.after_round();
+    assert_eq!(engine.checkpoint_failures(), 3);
+    let warning = engine
+        .upkeep_error()
+        .expect("3 consecutive blocked WAL checkpoints must surface upkeep_error");
+    assert!(warning.message.contains("3 consecutive"));
+    assert!(warning.message.contains("WAL checkpoint incomplete"));
+
+    // Dropping the long reader lets the next real checkpoint fold the WAL and clear upkeep_error.
+    drop(held_reader);
+    engine.after_round();
+    assert_eq!(engine.checkpoint_failures(), 0);
+    assert!(engine.upkeep_error().is_none());
+}
+
+#[test]
+fn concurrent_snapshots_never_see_diverged_office_and_messaging_cursors() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    let (path, _dir) = place();
+    let engine = Arc::new(SqliteEngine::open(&path).unwrap());
+    commit(&engine, 1);
+
+    let done = Arc::new(AtomicBool::new(false));
+    let reader_engine = Arc::clone(&engine);
+    let reader_done = Arc::clone(&done);
+    let reader = std::thread::spawn(move || {
+        let mut checks = 0usize;
+        while !reader_done.load(Ordering::Relaxed) || checks < 20 {
+            let snap = reader_engine.snapshot().unwrap();
+            let office_cur = snap.cursor().unwrap();
+            let msg_cur = super::messaging::read_messaging_cursor(snap.msg_db()).unwrap();
+            assert_eq!(
+                office_cur, msg_cur,
+                "snapshot observed diverged cursors between office.db and protected/messaging.db"
+            );
+            checks += 1;
+        }
+    });
+
+    for ordinal in 2..=40 {
+        commit(&engine, ordinal);
+    }
+    done.store(true, Ordering::Relaxed);
+    reader.join().unwrap();
+}
+
+#[test]
+fn partial_commit_failure_poisons_engine_and_reopen_resets_diverged_cursors() {
+    let (path, _dir) = place();
+    let engine = SqliteEngine::open(&path).unwrap();
+    commit(&engine, 1);
+
+    // Inject an office.db COMMIT failure AFTER protected/messaging.db commits:
+    // commit() MUST return EngineError::ended and MUST NOT return the diverged pair to `writer`.
+    let mut tx = engine.begin().unwrap();
+    tx.fail_office_commit = true;
+    let err = engine.commit(tx, &cursor(2)).unwrap_err();
+    assert!(
+        err.transaction_ended,
+        "partial commit failure must mark transaction ended: {err}"
+    );
+    assert!(
+        err.message.contains("diverged"),
+        "error should explain divergence: {err}"
+    );
+    assert!(
+        engine.begin().is_err(),
+        "engine must refuse further transactions after partial dual-DB commit divergence"
+    );
+    assert!(
+        engine.snapshot().is_err(),
+        "engine must refuse new read snapshots after partial dual-DB commit divergence"
+    );
+    drop(engine);
+
+    // Reopening detects the diverged cursors and clears both so `org-store` rebuilds atomically.
+    let reopened = SqliteEngine::open(&path).unwrap();
+    let snap = reopened.snapshot().unwrap();
+    assert_eq!(snap.cursor().unwrap(), None);
+    assert_eq!(
+        super::messaging::read_messaging_cursor(snap.msg_db()).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn corrupt_companion_databases_rebuild_cleanly_and_torn_jsonl_tail_is_tolerated() {
+    use crate::accounting::AccountingStore;
+    use crate::budgets::{BudgetAggregate, BudgetPolicyVersion, BudgetRecord, BudgetStore};
+    use crate::providers::{OfficeConnectionBinding, ProviderPoolStore};
+    use org_proto::budgets::{
+        BudgetPeriodKind, BudgetPolicyState, BudgetScopeKind, BudgetTimeZoneSource, BudgetUnit,
+    };
+    use org_proto::costs::{
+        AttributionBasis, CompletenessStatus, ModelPriceView, UsageActorKind, UsageCostBasis,
+        UsageRecordView, UsageScopeKind,
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let durable = tmp.path().join("durable");
+    let runtime = tmp.path().join("runtime");
+    fs::create_dir_all(&durable).unwrap();
+    fs::create_dir_all(&runtime).unwrap();
+    let org_id = "01900000-0000-7000-8000-0000000000a2";
+    let office_id = "01900000-0000-7000-8000-0000000000b2";
+
+    // 1. Seed accounting (price + usage), budget, and provider binding.
+    let acc = super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+        .unwrap();
+    acc.set_price(
+        org_id,
+        ModelPriceView {
+            id: "01900000-0000-7000-8000-000000000101".into(),
+            provider: "openai".into(),
+            model: "gpt-5".into(),
+            effective_from: "2026-01-01T00:00:00Z".into(),
+            currency: "USD".into(),
+            input_micro_usd_per_million: Some(1_000_000),
+            output_micro_usd_per_million: Some(2_000_000),
+            cache_read_micro_usd_per_million: Some(500_000),
+            cache_write_micro_usd_per_million: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            created_by_kind: "employee".into(),
+            created_by_id: Some("01900000-0000-7000-8000-000000000001".into()),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    let mut rec = UsageRecordView {
+        id: "01900000-0000-7000-8000-000000000201".into(),
+        origin_office_id: office_id.into(),
+        producer_id: "prod-1".into(),
+        source_event_id: "evt-1".into(),
+        source_sequence: 1,
+        execution_office_id: Some(office_id.into()),
+        run_id: None,
+        actor_kind: UsageActorKind::Agent,
+        employee_id: Some("01900000-0000-7000-8000-0000000000aa".into()),
+        runtime: "codex".into(),
+        provider: Some("openai".into()),
+        model: Some("gpt-5".into()),
+        occurred_at: "2026-01-02T00:00:00Z".into(),
+        recorded_at: "2026-01-02T00:00:00Z".into(),
+        recorded_by_kind: "system".into(),
+        recorded_by_id: None,
+        normalization_version: 1,
+        source_metadata_json: "{}".into(),
+        payload_sha256: String::new(),
+        input_tokens: Some(100),
+        output_tokens: Some(50),
+        cache_read_tokens: Some(0),
+        cache_write_tokens: Some(0),
+        reasoning_tokens: Some(0),
+        token_status: CompletenessStatus::Complete,
+        token_issue: None,
+        price_id: Some("01900000-0000-7000-8000-000000000101".into()),
+        cost_micro_usd: Some(200),
+        cost_basis: UsageCostBasis::TokenEstimate,
+        cost_status: CompletenessStatus::Complete,
+        cost_issue: None,
+        scope_kind: UsageScopeKind::Organization,
+        task_id: None,
+        project_id: None,
+        team_id: None,
+        feature_id: None,
+        milestone_id: None,
+        release_id: None,
+        task_type_snapshot: None,
+        work_type: None,
+        attribution_basis: AttributionBasis::Unattributed,
+        supersedes_id: None,
+        correction_kind: None,
+        correction_reason: None,
+    };
+    rec.payload_sha256 = crate::accounting::compute_usage_payload_sha256(org_id, &rec);
+    acc.append_usage(org_id, rec.clone()).unwrap().unwrap();
+    drop(acc);
+
+    let bud =
+        super::budgets::SqliteBudgetStore::open(&durable, &runtime, office_id, org_id).unwrap();
+    let agg = BudgetAggregate {
+        budget: BudgetRecord {
+            organization_id: org_id.into(),
+            id: "01900000-0000-7000-8000-000000000301".into(),
+            current_revision: 1,
+            scope_kind: BudgetScopeKind::Agent,
+            task_id: None,
+            agent_id: Some("01900000-0000-7000-8000-0000000000aa".into()),
+            release_id: None,
+            period_kind: BudgetPeriodKind::Day,
+            time_zone: "UTC".into(),
+            time_zone_source: BudgetTimeZoneSource::Hq,
+            time_zone_subject_ref: None,
+            created_at: "2026-01-02T00:00:00Z".into(),
+        },
+        versions: vec![BudgetPolicyVersion {
+            organization_id: org_id.into(),
+            budget_id: "01900000-0000-7000-8000-000000000301".into(),
+            revision: 1,
+            state: BudgetPolicyState::Active,
+            unit: BudgetUnit::MicroUsd,
+            limit_amount: Some(1_000_000),
+            time_zone: "UTC".into(),
+            time_zone_source: BudgetTimeZoneSource::Hq,
+            time_zone_subject_ref: None,
+            changed_by_id: "01900000-0000-7000-8000-000000000001".into(),
+            changed_at: "2026-01-02T00:00:00Z".into(),
+            reason: None,
+        }],
+        periods: vec![],
+        events: vec![],
+        notices: vec![],
+        holds: vec![],
+        pending_stop: None,
+    };
+    bud.save_aggregate(
+        &agg,
+        &[
+            ("01900000-0000-7000-8000-000000000001".into(), "person"),
+            ("01900000-0000-7000-8000-0000000000aa".into(), "agent"),
+        ],
+    )
+    .unwrap()
+    .unwrap();
+    drop(bud);
+
+    let prov =
+        super::providers::SqliteProviderPoolStore::open(&durable, &runtime, office_id, org_id)
+            .unwrap();
+    prov.save_binding_and_invalidate(&OfficeConnectionBinding {
+        organization_id: org_id.into(),
+        office_id: office_id.into(),
+        connection_id: "01900000-0000-7000-8000-000000000401".into(),
+        revision: 1,
+        auth_context_ref: "local:test".into(),
+        runtime_binary_path: None,
+        account_identity_ref: None,
+        updated_at: "2026-01-02T00:00:00Z".into(),
+        last_operation_id: None,
+        last_operation_hash: None,
+    })
+    .unwrap();
+    drop(prov);
+
+    // 2. Corrupt ALL three protected companion SQLite DBs with garbage bytes AND append a
+    //    crash-torn trailing fragment (no trailing newline) to the usage JSONL file!
+    let protected = runtime.join(office_id).join("protected");
+    for name in ["accounting.db", "budgets.db", "providers.db"] {
+        fs::write(
+            protected.join(name),
+            b"NOT A SQLITE DATABASE CORRUPT GARBAGE",
+        )
+        .unwrap();
+    }
+    let jsonl_path = durable
+        .join("accounting/usage")
+        .join(office_id)
+        .join("prod-1/2026-01-02.jsonl");
+    {
+        use std::io::Write;
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&jsonl_path)
+            .unwrap();
+        f.write_all(b"{\"id\":\"truncated-crash-tail").unwrap();
+    }
+
+    // 3. Reopen all three: each deletes & rebuilds cleanly from durable files, AND repairs
+    //    the torn JSONL tail on disk so a subsequent same-day append + reopen succeeds (`Finding #4`)!
+    let acc2 =
+        super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+            .unwrap();
+    assert_eq!(acc2.effective_records(org_id).unwrap().len(), 1);
+    assert_eq!(
+        acc2.list_prices(org_id, &Default::default()).unwrap().len(),
+        1
+    );
+    let mut rec2 = rec.clone();
+    rec2.id = "01900000-0000-7000-8000-000000000202".into();
+    rec2.source_event_id = "evt-2".into();
+    rec2.payload_sha256 = crate::accounting::compute_usage_payload_sha256(org_id, &rec2);
+    acc2.append_usage(org_id, rec2).unwrap().unwrap();
+    drop(acc2);
+    let acc3 =
+        super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+            .unwrap();
+    assert_eq!(
+        acc3.effective_records(org_id).unwrap().len(),
+        2,
+        "repaired torn tail must allow subsequent same-day append and reopen cleanly"
+    );
+    drop(acc3);
+
+    // 3b. Verify atomic budget aggregate updates + immutable historical version conflict refusal
+    //     + full rebuild after corrupting `protected/budgets.db` (`Pass 2 Finding #2`).
+    let bud2 =
+        super::budgets::SqliteBudgetStore::open(&durable, &runtime, office_id, org_id).unwrap();
+    let loaded_bud = bud2.list_all(org_id).unwrap();
+    assert_eq!(loaded_bud.len(), 1);
+    assert_eq!(loaded_bud[0].versions.len(), 1);
+    // Attempting to mutate historical committed rev 1 MUST fail closed with Conflict!
+    let mut tampered = agg.clone();
+    tampered.versions[0].limit_amount = Some(5);
+    assert!(
+        matches!(
+            bud2.save_aggregate(
+                &tampered,
+                &[
+                    ("01900000-0000-7000-8000-000000000001".into(), "person"),
+                    ("01900000-0000-7000-8000-0000000000aa".into(), "agent"),
+                ],
+            ),
+            Ok(Err(ref e)) if e.code == org_proto::ErrorCode::Conflict
+        ),
+        "mutating an already-committed budget policy revision must fail closed with Conflict"
+    );
+    let mut real_v2 = agg.versions[0].clone();
+    real_v2.revision = 2;
+    real_v2.limit_amount = Some(9_999_999);
+    let mut agg_v2 = agg.clone();
+    agg_v2.budget.current_revision = 2;
+    agg_v2.versions.push(real_v2);
+    bud2.save_aggregate(
+        &agg_v2,
+        &[
+            ("01900000-0000-7000-8000-000000000001".into(), "person"),
+            ("01900000-0000-7000-8000-0000000000aa".into(), "agent"),
+        ],
+    )
+    .unwrap()
+    .unwrap();
+    drop(bud2);
+    fs::write(
+        protected.join("budgets.db"),
+        b"CORRUPT AGAIN TO VERIFY REBUILD",
+    )
+    .unwrap();
+    let bud3 =
+        super::budgets::SqliteBudgetStore::open(&durable, &runtime, office_id, org_id).unwrap();
+    let rebuilt_bud = bud3.list_all(org_id).unwrap();
+    assert_eq!(rebuilt_bud[0].versions.len(), 2);
+    assert_eq!(rebuilt_bud[0].versions[1].limit_amount, Some(9_999_999));
+    drop(bud3);
+
+    let prov2 =
+        super::providers::SqliteProviderPoolStore::open(&durable, &runtime, office_id, org_id)
+            .unwrap();
+    assert!(prov2
+        .get_binding(org_id, office_id, "01900000-0000-7000-8000-000000000401")
+        .unwrap()
+        .is_some());
+    drop(prov2);
+
+    // 4. Conflicting duplicate usage record ID in JSONL MUST fail closed (`Pass 2 Finding #8`).
+    let mut conflicting = rec.clone();
+    conflicting.payload_sha256 = "different-sha".into();
+    conflicting.source_sequence = 99;
+    let saved_jsonl = fs::read(&jsonl_path).unwrap();
+    {
+        use std::io::Write;
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&jsonl_path)
+            .unwrap();
+        let mut line = serde_json::to_vec(&conflicting).unwrap();
+        line.push(b'\n');
+        f.write_all(&line).unwrap();
+    }
+    assert!(
+        super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+            .is_err(),
+        "conflicting duplicate usage record id in durable JSONL must fail closed"
+    );
+    fs::write(&jsonl_path, saved_jsonl).unwrap();
+
+    // 5. Mid-file corruption (newline-terminated corrupt line) MUST still fail closed!
+    {
+        use std::io::Write;
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&jsonl_path)
+            .unwrap();
+        f.write_all(b"{\"id\":\"corrupt-midfile\n").unwrap();
+    }
+    assert!(
+        super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+            .is_err(),
+        "newline-terminated corrupt JSONL line must fail closed"
+    );
+}
+
+#[test]
+fn staged_orphan_corrections_and_chain_tamper_prevent_collision_replay_and_overcount() {
+    use crate::accounting::{compute_usage_payload_sha256, AccountingStore, UsageStreamCheckpoint};
+    use org_proto::costs::{
+        AttributionBasis, CompletenessStatus, UsageActorKind, UsageCostBasis, UsageRecordView,
+        UsageScopeKind,
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let durable = tmp.path().join("durable");
+    let runtime = tmp.path().join("runtime");
+    fs::create_dir_all(&durable).unwrap();
+    fs::create_dir_all(&runtime).unwrap();
+    let office_id = "01900000-0000-7000-8000-000000000010";
+    let org_id = "01900000-0000-7000-8000-000000000001";
+
+    let acc = super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+        .unwrap();
+    let make_rec = |id: &str, evt: &str, supersedes: Option<&str>, runtime_name: &str| {
+        let mut r = UsageRecordView {
+            id: id.into(),
+            origin_office_id: office_id.into(),
+            producer_id: "prod-1".into(),
+            source_event_id: evt.into(),
+            source_sequence: 0,
+            execution_office_id: Some(office_id.into()),
+            run_id: None,
+            actor_kind: UsageActorKind::Agent,
+            employee_id: Some("01900000-0000-7000-8000-0000000000aa".into()),
+            runtime: runtime_name.into(),
+            provider: Some("anthropic".into()),
+            model: Some("claude".into()),
+            occurred_at: "2026-01-02T00:00:00Z".into(),
+            recorded_at: "2026-01-02T00:00:01Z".into(),
+            recorded_by_kind: "system".into(),
+            recorded_by_id: None,
+            normalization_version: 1,
+            source_metadata_json: "{}".into(),
+            payload_sha256: String::new(),
+            input_tokens: Some(10),
+            output_tokens: Some(5),
+            cache_read_tokens: Some(0),
+            cache_write_tokens: Some(0),
+            reasoning_tokens: None,
+            token_status: CompletenessStatus::Complete,
+            token_issue: None,
+            price_id: None,
+            cost_micro_usd: Some(100),
+            cost_basis: UsageCostBasis::RuntimeEstimate,
+            cost_status: CompletenessStatus::Complete,
+            cost_issue: None,
+            scope_kind: UsageScopeKind::Organization,
+            task_id: None,
+            project_id: None,
+            team_id: None,
+            feature_id: None,
+            milestone_id: None,
+            release_id: None,
+            task_type_snapshot: None,
+            work_type: None,
+            attribution_basis: AttributionBasis::Unattributed,
+            supersedes_id: supersedes.map(str::to_owned),
+            correction_kind: None,
+            correction_reason: supersedes.map(|_| "adjust".into()),
+        };
+        r.payload_sha256 = compute_usage_payload_sha256(org_id, &r);
+        r
+    };
+
+    // 1. Append rec1 and verify `runtime` affects `payload_sha256`, `head_sha256 == rec1.payload_sha256`,
+    //    and `chain_sha256` is populated in the durable checkpoint file.
+    let rec1 = make_rec(
+        "01900000-0000-7000-8000-000000000301",
+        "evt-1",
+        None,
+        "codex",
+    );
+    let rec1_diff_runtime = make_rec(
+        "01900000-0000-7000-8000-000000000301",
+        "evt-1",
+        None,
+        "claude",
+    );
+    assert_ne!(
+        rec1.payload_sha256, rec1_diff_runtime.payload_sha256,
+        "runtime must be covered by canonical payload_sha256"
+    );
+    let (saved1, _) = acc.append_usage(org_id, rec1.clone()).unwrap().unwrap();
+    assert_eq!(saved1.source_sequence, 1);
+    let cp_path = durable
+        .join("accounting/checkpoints")
+        .join(office_id)
+        .join("prod-1.json");
+    let cp_on_disk: UsageStreamCheckpoint =
+        serde_json::from_slice(&fs::read(&cp_path).unwrap()).unwrap();
+    assert_eq!(
+        cp_on_disk.head_sha256.as_deref(),
+        Some(saved1.payload_sha256.as_str()),
+        "head_sha256 must match last event payload_sha256 per schema.sql:1129"
+    );
+    assert!(
+        cp_on_disk.chain_sha256.is_some(),
+        "chain_sha256 must be recorded separately from head_sha256"
+    );
+    drop(acc);
+
+    // 2. Inject TWO orphan corrections (seq 2 and seq 3 on the same checkpointed stream) whose
+    //    parents are missing. Reopen must:
+    //    - stage both without failing startup
+    //    - count distinct incomplete streams as 1 (not 3!)
+    //    - refuse appending a new record onto that stream (Conflict, never reusing seq 2)
+    //    - refuse replaying a staged orphan (Conflict, never `replayed: true`)
+    let jsonl_path = durable
+        .join("accounting/usage")
+        .join(office_id)
+        .join("prod-1/2026-01-02.jsonl");
+    let saved_jsonl = fs::read(&jsonl_path).unwrap();
+    let mut orphan2 = make_rec(
+        "01900000-0000-7000-8000-000000000302",
+        "evt-orphan-2",
+        Some("01900000-0000-7000-8000-000000000998"),
+        "codex",
+    );
+    orphan2.source_sequence = 2;
+    let mut orphan3 = make_rec(
+        "01900000-0000-7000-8000-000000000303",
+        "evt-orphan-3",
+        Some("01900000-0000-7000-8000-000000000999"),
+        "codex",
+    );
+    orphan3.source_sequence = 3;
+    {
+        use std::io::Write;
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&jsonl_path)
+            .unwrap();
+        for o in [&orphan2, &orphan3] {
+            let mut line = serde_json::to_vec(o).unwrap();
+            line.push(b'\n');
+            f.write_all(&line).unwrap();
+        }
+    }
+    let acc_orphan =
+        super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+            .unwrap();
+    let cov = acc_orphan.coverage_summary(org_id).unwrap();
+    assert_eq!(
+        cov.incomplete_streams, 1,
+        "two staged corrections on one stream must count as 1 distinct incomplete stream"
+    );
+    let fresh = make_rec(
+        "01900000-0000-7000-8000-000000000304",
+        "evt-4",
+        None,
+        "codex",
+    );
+    assert!(
+        matches!(
+            acc_orphan.append_usage(org_id, fresh),
+            Ok(Err(ref e)) if e.code == org_proto::ErrorCode::Conflict
+        ),
+        "append must refuse to advance or reuse sequence on a stream with staged records"
+    );
+    assert!(
+        matches!(
+            acc_orphan.append_usage(org_id, orphan2.clone()),
+            Ok(Err(ref e)) if e.code == org_proto::ErrorCode::Conflict
+        ),
+        "replaying a staged record must fail closed with Conflict"
+    );
+    drop(acc_orphan);
+
+    // 3. Restore clean JSONL and tamper ONLY rec1's UUIDv7 (same payload_sha256, broken chain_sha256).
+    //    Reopen must quarantine rec1 out of `effective_records`, report `incomplete_streams == 1`,
+    //    and refuse to acknowledge a retry as `replayed: true`.
+    let mut tampered1 = saved1.clone();
+    tampered1.id = "01900000-0000-7000-8000-000000000399".into();
+    assert_eq!(tampered1.payload_sha256, saved1.payload_sha256);
+    let mut tampered_bytes = serde_json::to_vec(&tampered1).unwrap();
+    tampered_bytes.push(b'\n');
+    fs::write(&jsonl_path, &tampered_bytes).unwrap();
+    let acc_tampered =
+        super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+            .unwrap();
+    assert!(
+        acc_tampered.effective_records(org_id).unwrap().is_empty(),
+        "chain-mismatched record must be quarantined out of effective_records"
+    );
+    assert_eq!(
+        acc_tampered
+            .coverage_summary(org_id)
+            .unwrap()
+            .incomplete_streams,
+        1
+    );
+    assert!(
+        matches!(
+            acc_tampered.append_usage(org_id, rec1.clone()),
+            Ok(Err(ref e)) if e.code == org_proto::ErrorCode::Conflict
+        ),
+        "retry against a chain-tampered stream must return Conflict, never replayed: true"
+    );
+    drop(acc_tampered);
+    fs::write(&jsonl_path, &saved_jsonl).unwrap();
+
+    // 4. Unanchored restore (checkpoint file deleted) MUST NOT fabricate a checkpoint (`Pass 6 #1`).
+    let saved_cp = fs::read(&cp_path).unwrap();
+    fs::remove_file(&cp_path).unwrap();
+    let acc_unanchored =
+        super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+            .unwrap();
+    assert!(
+        !cp_path.is_file(),
+        "rebuild must never fabricate a checkpoint for an unanchored restore"
+    );
+    assert!(acc_unanchored.effective_records(org_id).unwrap().is_empty());
+    assert_eq!(
+        acc_unanchored
+            .coverage_summary(org_id)
+            .unwrap()
+            .incomplete_streams,
+        1
+    );
+    drop(acc_unanchored);
+    fs::write(&cp_path, &saved_cp).unwrap();
+
+    // 5. Verified stream with valid correction #1 + orphan correction #2 (`Pass 6 #2`):
+    //    valid correction #1 MUST remain projected while ONLY orphan #2 is staged.
+    let acc_corr =
+        super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+            .unwrap();
+    let mut corr1 = make_rec(
+        "01900000-0000-7000-8000-000000000311",
+        "evt-corr-1",
+        Some(&saved1.id),
+        "codex",
+    );
+    corr1.producer_id = "prod-corr".into();
+    corr1.cost_micro_usd = Some(55);
+    corr1.payload_sha256 = compute_usage_payload_sha256(org_id, &corr1);
+    let (saved_corr1, _) = acc_corr.append_usage(org_id, corr1).unwrap().unwrap();
+    assert_eq!(saved_corr1.source_sequence, 1);
+    drop(acc_corr);
+    let corr_jsonl = durable
+        .join("accounting/usage")
+        .join(office_id)
+        .join("prod-corr/2026-01-02.jsonl");
+    let mut orphan_on_corr = make_rec(
+        "01900000-0000-7000-8000-000000000312",
+        "evt-corr-orphan-2",
+        Some("01900000-0000-7000-8000-000000000997"),
+        "codex",
+    );
+    orphan_on_corr.producer_id = "prod-corr".into();
+    orphan_on_corr.source_sequence = 2;
+    orphan_on_corr.payload_sha256 = compute_usage_payload_sha256(org_id, &orphan_on_corr);
+    {
+        use std::io::Write;
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&corr_jsonl)
+            .unwrap();
+        let mut line = serde_json::to_vec(&orphan_on_corr).unwrap();
+        line.push(b'\n');
+        f.write_all(&line).unwrap();
+    }
+    let acc_mixed =
+        super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+            .unwrap();
+    let eff = acc_mixed.effective_records(org_id).unwrap();
+    assert_eq!(
+        eff.len(),
+        1,
+        "valid correction #1 must supersede rec1 and stay projected even when orphan #2 is staged"
+    );
+    assert_eq!(eff[0].id, saved_corr1.id);
+    assert_eq!(eff[0].cost_micro_usd, Some(55));
+    assert_eq!(
+        acc_mixed
+            .coverage_summary(org_id)
+            .unwrap()
+            .incomplete_streams,
+        1
+    );
+    drop(acc_mixed);
+
+    // 5b. Also test Pass 6 #2 when the durable checkpoint ALREADY covers both corr1 and orphan #2
+    //     (hw = 2, chain over [corr1, orphan2]): valid corr1 must STILL stay projected!
+    let corr_cp_path = durable
+        .join("accounting/checkpoints")
+        .join(office_id)
+        .join("prod-corr.json");
+    let mut corr_cp: UsageStreamCheckpoint =
+        serde_json::from_slice(&fs::read(&corr_cp_path).unwrap()).unwrap();
+    corr_cp.high_water_sequence = 2;
+    corr_cp.head_sha256 = Some(orphan_on_corr.payload_sha256.clone());
+    corr_cp.chain_sha256 = Some(crate::accounting::chain_usage_stream_head(
+        corr_cp.chain_sha256.as_deref(),
+        &orphan_on_corr,
+    ));
+    fs::write(&corr_cp_path, serde_json::to_vec_pretty(&corr_cp).unwrap()).unwrap();
+    let acc_mixed_hw2 =
+        super::accounting::SqliteAccountingStore::open(&durable, &runtime, office_id, org_id)
+            .unwrap();
+    let eff2 = acc_mixed_hw2.effective_records(org_id).unwrap();
+    assert_eq!(
+        eff2.len(),
+        1,
+        "with checkpoint hw=2 covering [corr1, orphan2], valid corr1 must stay projected while only orphan2 is staged"
+    );
+    assert_eq!(eff2[0].id, saved_corr1.id);
+    assert_eq!(
+        acc_mixed_hw2
+            .coverage_summary(org_id)
+            .unwrap()
+            .incomplete_streams,
+        1
+    );
 }

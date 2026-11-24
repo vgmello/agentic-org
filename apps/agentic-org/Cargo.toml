@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-test-support = ["org-host/test-support", "dep:org-platform", "org-platform/test-support", "dep:org-office-launch", "dep:org-socket", "dep:serde", "dep:serde_json"]
+test-support = ["org-host/test-support", "dep:org-platform", "org-platform/test-support", "dep:org-office-launch", "dep:org-socket", "dep:serde"]
 
 [[bin]]
 name = "agentic-org"
@@ -33,7 +33,9 @@ harness = false
 org-office-launch = { path = "../../crates/org-office-launch", optional = true }
 org-socket = { path = "../../crates/org-socket", optional = true }
 serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+serde_json.workspace = true
+org-agent-cli = { path = "../../crates/org-agent-cli" }
+org-command = { path = "../../crates/org-command" }
 org-host = { path = "../../crates/org-host" }
 org-platform = { path = "../../crates/org-platform", optional = true }
 org-proto = { path = "../../crates/org-proto" }

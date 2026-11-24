@@ -10,9 +10,38 @@ from pathlib import Path
 import re
 import sqlite3
 import unittest
+from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parent
+DOCS_ROOT = ROOT.parents[2] / ".backlog" / "docs" / "organization-data"
+NUMBERED_DOC_RE = re.compile(r"Organization-Data-(\d{2})-")
+
+
+def numbered_org_data_docs():
+    matched = []
+    for path in DOCS_ROOT.glob("doc-*Organization-Data-[0-9][0-9]-*.md"):
+        match = NUMBERED_DOC_RE.search(path.name)
+        if match:
+            matched.append((int(match.group(1)), path))
+    matched.sort(key=lambda item: item[0])
+    if len(matched) != 18:
+        raise AssertionError(f"Expected 18 numbered organization-data docs in {DOCS_ROOT}, found {len(matched)}")
+    return matched
+
+
+def org_data_doc(number):
+    for doc_number, path in numbered_org_data_docs():
+        if doc_number == number:
+            return path
+    raise AssertionError(f"Missing organization-data doc {number:02d} in {DOCS_ROOT}")
+
+
+def schema_coverage_doc():
+    matches = sorted(DOCS_ROOT.glob("doc-74*.md"))
+    if len(matches) != 1:
+        raise AssertionError(f"Expected 1 doc-74 schema coverage doc in {DOCS_ROOT}, found {len(matches)}")
+    return matches[0]
 
 
 def canonical(value):
@@ -37,11 +66,31 @@ def insert(connection, table, **fields):
     )
 
 
-def database():
+def database(schema_file="schema.sql"):
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
-    connection.executescript((ROOT / "schema.sql").read_text())
+    connection.executescript((ROOT / schema_file).read_text())
     return connection
+
+
+def seed_messaging_mirrors(connection, organization="org"):
+    insert(connection, "messaging_organizations", id=organization)
+    for team in ("payments", "platform", "consulting"):
+        insert(connection, "messaging_teams", organization_id=organization, id=team)
+    insert(connection, "messaging_projects", organization_id=organization, id="project")
+    for employee in ("reporter", "ana"):
+        insert(connection, "messaging_employees", organization_id=organization, id=employee)
+    for office in ("numbering-a", "numbering-b", "hq"):
+        insert(connection, "messaging_offices", organization_id=organization, id=office)
+    connection.commit()
+
+
+def seed_budget_mirrors(connection, organization="org"):
+    insert(connection, "budget_organizations", id=organization)
+    insert(connection, "budget_tasks", organization_id=organization, kind="task", id="task", is_deleted=0)
+    insert(connection, "budget_employees", organization_id=organization, id="reporter", kind="person")
+    insert(connection, "budget_employees", organization_id=organization, id="ana", kind="agent")
+    connection.commit()
 
 
 def seed_provider_connection(connection, identity="subscription-1", connection_id="connection-1",
@@ -132,13 +181,6 @@ class DraftSchemaTests(unittest.TestCase):
         seed_task(self.db)
 
     def test_consolidated_tables_and_views_match_structural_documents(self):
-        sections = []
-        for path in sorted(ROOT.glob("[0-9][0-9]-*.md")):
-            sections.extend(re.findall(r"```sql\n(.*?)\n```", path.read_text(), re.S))
-        documented = sqlite3.connect(":memory:")
-        self.addCleanup(documented.close)
-        documented.executescript("\n".join(sections))
-
         def definitions(connection):
             return {
                 (kind, name): re.sub(r"\s+", "", sql).lower()
@@ -147,7 +189,36 @@ class DraftSchemaTests(unittest.TestCase):
                 )
             }
 
+        shared_sections = []
+        isolated_docs = {
+            15: "messaging-schema.sql",
+            17: "budgets-schema.sql",
+        }
+        seen_isolated = set()
+        for doc_number, path in numbered_org_data_docs():
+            sql_blocks = re.findall(r"```sql\n(.*?)\n```", path.read_text(), re.S)
+            if doc_number in isolated_docs:
+                seen_isolated.add(doc_number)
+                doc_conn = sqlite3.connect(":memory:")
+                self.addCleanup(doc_conn.close)
+                doc_conn.executescript("\n".join(sql_blocks))
+                schema_conn = database(isolated_docs[doc_number])
+                self.addCleanup(schema_conn.close)
+                with self.subTest(document=path.name, schema=isolated_docs[doc_number]):
+                    self.assertEqual(definitions(doc_conn), definitions(schema_conn))
+            else:
+                shared_sections.extend(sql_blocks)
+        self.assertEqual(seen_isolated, set(isolated_docs))
+
+        documented = sqlite3.connect(":memory:")
+        self.addCleanup(documented.close)
+        documented.executescript("\n".join(shared_sections))
         self.assertEqual(definitions(documented), definitions(self.db))
+
+        # TASK-10 (H-05): sensitive messaging and budget tables are absent from shared schema.sql.
+        shared_names = {name for (_, name) in definitions(self.db)}
+        for forbidden in ("conversations", "messages", "message_recipient_states", "budgets", "budget_policy_versions", "budget_holds"):
+            self.assertNotIn(forbidden, shared_names)
 
     def test_integrated_execution_schema_and_all_views_resolve(self):
         views = self.db.execute("SELECT name FROM sqlite_schema WHERE type='view'").fetchall()
@@ -156,14 +227,24 @@ class DraftSchemaTests(unittest.TestCase):
         self.assertEqual(self.db.execute("PRAGMA foreign_key_check").fetchall(), [])
 
     def test_diagram_columns_match_their_owning_database(self):
-        private = sqlite3.connect(":memory:")
+        private = database("private-notes-schema.sql")
         self.addCleanup(private.close)
-        private.executescript((ROOT / "private-notes-schema.sql").read_text())
-        for path in ROOT.glob("[0-9][0-9]-*.md"):
+        messaging = database("messaging-schema.sql")
+        self.addCleanup(messaging.close)
+        budgets = database("budgets-schema.sql")
+        self.addCleanup(budgets.close)
+        for doc_number, path in numbered_org_data_docs():
             for diagram in re.findall(r"```mermaid\n(.*?)\n```", path.read_text(), re.S):
                 for table, body in re.findall(r"^    (\w+) \{\n(.*?)^    \}", diagram, re.M | re.S):
                     columns = re.findall(r"^        \w+ (\w+)", body, re.M)
-                    owner = private if table.startswith("private_") else self.db
+                    if table.startswith("private_"):
+                        owner = private
+                    elif doc_number == 15:
+                        owner = messaging
+                    elif doc_number == 17:
+                        owner = budgets
+                    else:
+                        owner = self.db
                     actual = [row[1] for row in owner.execute(f"PRAGMA table_xinfo({table})")]
                     with self.subTest(document=path.name, table=table):
                         self.assertEqual(columns, actual)
@@ -389,12 +470,11 @@ class DraftSchemaTests(unittest.TestCase):
                       source_metadata_json='{"future_field":{"n":-0.000000000000123456789E+009}}',
                       resource_profile="selected-task-resources/1",
                       event_bytes=b'{"original":"retained source bytes"}')
-        for missing in ("resource_profile", "event_bytes"):
-            invalid = dict(record)
-            invalid.pop(missing)
-            with self.subTest(missing=missing), self.assertRaises(sqlite3.IntegrityError):
-                insert(self.db, "task_events", **invalid)
-            self.db.rollback()
+        invalid = dict(record)
+        invalid.pop("resource_profile")
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "task_events", **invalid)
+        self.db.rollback()
         insert(self.db, "task_events", **record)
         self.db.commit()
         saved = dict(self.db.execute("SELECT * FROM task_events").fetchone())
@@ -478,7 +558,7 @@ class DraftSchemaTests(unittest.TestCase):
 
     def test_every_task_event_carries_its_profile_and_bytes(self):
         record = event(1, {"type": "future_event"})
-        for missing, value in (("schema_version", 1), ("resource_profile", None), ("event_bytes", None)):
+        for missing, value in (("schema_version", 1), ("resource_profile", None)):
             fields = dict(record)
             fields["change_json"] = canonical(fields.pop("change"))
             fields["source_metadata_json"] = canonical(fields.pop("source_metadata"))
@@ -487,6 +567,14 @@ class DraftSchemaTests(unittest.TestCase):
             with self.subTest(field=missing), self.assertRaises(sqlite3.IntegrityError):
                 insert(self.db, "task_events", **fields)
             self.db.rollback()
+        # event_bytes may be omitted in SQLite projection when canonical bytes live on disk (M-09).
+        fields = dict(record)
+        fields["change_json"] = canonical(fields.pop("change"))
+        fields["source_metadata_json"] = canonical(fields.pop("source_metadata"))
+        fields.update(resource_profile="selected-task-resources/1", event_bytes=None)
+        insert(self.db, "task_events", **fields)
+        self.db.commit()
+        self.assertIsNone(self.db.execute("SELECT event_bytes FROM task_events WHERE revision=1").fetchone()[0])
 
     def test_a_task_event_retry_is_refused_before_its_key_is_checked(self):
         project_event(self.db, event(1, {"type": "created"}))
@@ -650,12 +738,26 @@ class DraftSchemaTests(unittest.TestCase):
                        "UPDATE process_cleanup_records SET execution_process_id='process' WHERE id='other'")
 
     def test_relative_document_links_exist(self):
-        for path in ROOT.glob("*.md"):
-            for target in re.findall(r"\]\(([^)]+)\)", path.read_text()):
-                target = target.split("#", 1)[0]
-                if target and not re.match(r"[a-z]+://", target):
-                    with self.subTest(document=path.name, target=target):
-                        self.assertTrue((path.parent / target).exists())
+        docs = sorted(DOCS_ROOT.glob("*.md"))
+        self.assertGreaterEqual(len(docs), 21)
+        for path in docs:
+            in_fence = False
+            for line in path.read_text().splitlines():
+                if line.lstrip().startswith(("```", "~~~")):
+                    in_fence = not in_fence
+                    continue
+                if in_fence:
+                    continue
+                for target in re.findall(r"\]\(([^)]+)\)", line):
+                    target = target.strip()
+                    if target.startswith("<") and ">" in target:
+                        target = target[1:target.index(">")]
+                    else:
+                        target = target.split(' "', 1)[0].strip()
+                    target = unquote(target.split("#", 1)[0])
+                    if target and not re.match(r"[a-z]+://", target) and not target.startswith("mailto:"):
+                        with self.subTest(document=path.name, target=target):
+                            self.assertTrue((path.parent / target).exists())
 
 
 class IntegrityAuditTests(unittest.TestCase):
@@ -689,7 +791,7 @@ class IntegrityAuditTests(unittest.TestCase):
         self.db.commit()
 
     def test_execution_definitions_are_in_the_consolidated_schema(self):
-        documented = "\n\n".join(re.findall(r"```sql\n(.*?)\n```", (ROOT / "11-model-profiles-and-agent-execution.md").read_text(), re.S))
+        documented = "\n\n".join(re.findall(r"```sql\n(.*?)\n```", org_data_doc(11).read_text(), re.S))
         normalize = lambda value: re.sub(r"\s+", "", value).lower()
         self.assertIn(normalize(documented), normalize((ROOT / "schema.sql").read_text()))
 
@@ -729,11 +831,14 @@ class IntegrityAuditTests(unittest.TestCase):
         self.db.rollback()
 
     def test_coverage_lists_every_table_and_view(self):
-        private = sqlite3.connect(":memory:")
+        private = database("private-notes-schema.sql")
         self.addCleanup(private.close)
-        private.executescript((ROOT / "private-notes-schema.sql").read_text())
-        coverage = (ROOT / "SCHEMA-COVERAGE.md").read_text()
-        for db in (self.db, private):
+        messaging = database("messaging-schema.sql")
+        self.addCleanup(messaging.close)
+        budgets = database("budgets-schema.sql")
+        self.addCleanup(budgets.close)
+        coverage = schema_coverage_doc().read_text()
+        for db in (self.db, private, messaging, budgets):
             for (name,) in db.execute("SELECT name FROM sqlite_schema WHERE type IN ('table','view')"):
                 self.assertIn(f"`{name}`", coverage)
 
@@ -950,14 +1055,19 @@ class ActorAndAddresseeTests(unittest.TestCase):
 
     def test_no_actor_column_accepts_owner(self):
         found = []
-        for table, sql in self.db.execute("SELECT name, sql FROM sqlite_schema WHERE type='table'"):
-            for column, values in ACTOR_COLUMN.findall(sql):
-                found.append((table, column))
-                with self.subTest(table=table, column=column):
-                    self.assertNotIn("'owner'", values)
+        budgets_db = database("budgets-schema.sql")
+        self.addCleanup(budgets_db.close)
+        messaging_db = database("messaging-schema.sql")
+        self.addCleanup(messaging_db.close)
+        for conn in (self.db, budgets_db, messaging_db):
+            for table, sql in conn.execute("SELECT name, sql FROM sqlite_schema WHERE type='table'"):
+                for column, values in ACTOR_COLUMN.findall(sql):
+                    found.append((table, column))
+                    with self.subTest(table=table, column=column):
+                        self.assertNotIn("'owner'", values)
         self.assertGreaterEqual(len(found), 30)
         self.assertNotIn("changed_by_kind",
-                         [row[1] for row in self.db.execute("PRAGMA table_xinfo(budget_policy_versions)")])
+                         [row[1] for row in budgets_db.execute("PRAGMA table_xinfo(budget_policy_versions)")])
         self.assertNotIn("author_kind", [row[1] for row in self.db.execute("PRAGMA table_xinfo(comments)")])
 
     def test_an_owner_actor_is_refused(self):
@@ -1036,47 +1146,51 @@ class GapPreservationTests(unittest.TestCase):
         seed_organization(self.db)
         seed_task(self.db)
         insert(self.db, "offices", organization_id="org", id="hq", slug="hq", schema_version=1, revision=1, name="HQ", role="hq")
-        for conversation in ("dm", "other"):
-            insert(self.db, "conversations", organization_id="org", id=conversation, kind="dm", created_at="2026-11-15T12:00:00Z")
-            for employee in ("ana", "reporter"):
-                insert(self.db, "conversation_memberships", organization_id="org", conversation_id=conversation,
-                       employee_id=employee, joined_at="2026-11-15T12:00:00Z")
         self.db.commit()
+        self.msg_db = database("messaging-schema.sql")
+        self.addCleanup(self.msg_db.close)
+        seed_messaging_mirrors(self.msg_db)
+        for conversation in ("dm", "other"):
+            insert(self.msg_db, "conversations", organization_id="org", id=conversation, kind="dm", created_at="2026-11-15T12:00:00Z")
+            for employee in ("ana", "reporter"):
+                insert(self.msg_db, "conversation_memberships", organization_id="org", conversation_id=conversation,
+                       employee_id=employee, joined_at="2026-11-15T12:00:00Z")
+        self.msg_db.commit()
 
     def message(self, identity="message", conversation="dm", sequence=1, **overrides):
         fields=dict(organization_id="org", id=identity, conversation_id=conversation, sender_kind="employee",
                     sender_employee_id="ana", sender_display_name="Ana", kind="request", body_markdown="Review?",
                     created_at="2026-11-15T12:00:00Z", origin_office_id="hq", origin_incarnation="incarnation",
                     origin_sequence=sequence, org_epoch=1, org_sequence=1, content_sha256="a"*64)
-        insert(self.db,"messages",**(fields | overrides))
+        insert(self.msg_db,"messages",**(fields | overrides))
 
     def test_reply_cannot_cross_conversation_and_origin_cannot_duplicate(self):
-        self.message(); self.db.commit()
+        self.message(); self.msg_db.commit()
         self.message("cross", "other", 2, reply_to_message_id="message")
-        with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
-        self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError): self.msg_db.commit()
+        self.msg_db.rollback()
         with self.assertRaises(sqlite3.IntegrityError): self.message("duplicate")
-        self.db.rollback()
+        self.msg_db.rollback()
         self.message("reply", sequence=2, reply_to_message_id="message")
-        self.db.commit()
+        self.msg_db.commit()
 
     def test_read_markers_are_conversation_scoped_and_mutes_are_independent(self):
-        self.message(); self.db.commit()
-        insert(self.db,"conversation_read_markers", organization_id="org",conversation_id="other",viewer_employee_id="reporter",last_read_message_id="message")
-        with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
-        self.db.rollback()
-        insert(self.db,"conversation_read_markers", organization_id="org",conversation_id="dm",viewer_employee_id="reporter",last_read_message_id="message")
-        insert(self.db,"conversation_preferences", organization_id="org",conversation_id="dm",viewer_employee_id="reporter",muted_employee_id="ana",mute_mode="digest")
-        self.db.commit()
+        self.message(); self.msg_db.commit()
+        insert(self.msg_db,"conversation_read_markers", organization_id="org",conversation_id="other",viewer_employee_id="reporter",last_read_message_id="message")
+        with self.assertRaises(sqlite3.IntegrityError): self.msg_db.commit()
+        self.msg_db.rollback()
+        insert(self.msg_db,"conversation_read_markers", organization_id="org",conversation_id="dm",viewer_employee_id="reporter",last_read_message_id="message")
+        insert(self.msg_db,"conversation_preferences", organization_id="org",conversation_id="dm",viewer_employee_id="reporter",muted_employee_id="ana",mute_mode="digest")
+        self.msg_db.commit()
 
     def test_recipient_requires_membership_in_the_message_conversation(self):
-        self.message(); self.db.commit()
-        self.db.execute("DELETE FROM conversation_memberships WHERE conversation_id='dm' AND employee_id='reporter'")
-        self.db.commit()
-        insert(self.db,"message_recipient_states",organization_id="org",message_id="message",conversation_id="dm",employee_id="reporter",
+        self.message(); self.msg_db.commit()
+        self.msg_db.execute("DELETE FROM conversation_memberships WHERE conversation_id='dm' AND employee_id='reporter'")
+        self.msg_db.commit()
+        insert(self.msg_db,"message_recipient_states",organization_id="org",message_id="message",conversation_id="dm",employee_id="reporter",
                state="snoozed",updated_at="2026-11-15T12:00:00Z",owner_office_id="hq",origin_incarnation="i",origin_sequence=1,org_epoch=1,org_sequence=1)
-        with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
-        self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError): self.msg_db.commit()
+        self.msg_db.rollback()
 
     def test_employee_status_is_one_enum_and_only_agents_pause(self):
         with self.assertRaises(sqlite3.IntegrityError):
@@ -1229,6 +1343,21 @@ class GapPreservationTests(unittest.TestCase):
         self.db.commit()
         row = self.db.execute("SELECT task_count, is_done FROM release_progress WHERE release_id='empty'").fetchone()
         self.assertEqual(tuple(row), (0, 0))
+        # a release with milestones AND an explicit release_tasks entry counts both (deduplicated)
+        insert(self.db, "releases", **common, id="mixed", project_id="project", title="Mixed")
+        insert(self.db, "milestones", **common, id="m-mixed", project_id="project", release_id="mixed", title="MM")
+        seed_task(self.db, task="mixed-ms")
+        seed_task(self.db, task="mixed-rt")
+        self.db.execute("UPDATE tasks SET milestone_id='m-mixed', status='done' WHERE id='mixed-ms'")
+        insert(self.db, "release_tasks", organization_id="org", release_id="mixed", project_id="project", task_id="mixed-ms")
+        insert(self.db, "release_tasks", organization_id="org", release_id="mixed", project_id="project", task_id="mixed-rt")
+        self.db.commit()
+        row = self.db.execute("SELECT task_count, done_task_count, is_done FROM release_progress WHERE release_id='mixed'").fetchone()
+        self.assertEqual(tuple(row), (2, 1, 0))
+        self.db.execute("UPDATE tasks SET status='done' WHERE id='mixed-rt'")
+        self.db.commit()
+        row = self.db.execute("SELECT task_count, done_task_count, is_done FROM release_progress WHERE release_id='mixed'").fetchone()
+        self.assertEqual(tuple(row), (2, 2, 1))
 
     def test_task_details_preserve_structured_payload_and_reject_bad_json(self):
         insert(self.db,"task_details",organization_id="org",task_id="task",what_happened="Duplicate",expected="One",steps="Retry",environment="staging",
@@ -1288,12 +1417,15 @@ class GapPreservationTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             insert(self.db, "office_origin_streams", **stream, stream_kind="chat")
         self.db.rollback()
-        for table, message in (("mutation_receipts", "receipt command already registered"),
-                               ("office_origin_streams", "origin identity already registered"),
-                               ("office_recovery_checkpoints", "checkpoint identity already registered")):
-            for verb in ("INSERT", "INSERT OR REPLACE"):
-                with self.subTest(table=table, verb=verb):
-                    assert_refused(self, self.db, message, f"{verb} INTO {table} SELECT * FROM {table}")
+        for table, delete_msg in (
+            ("mutation_receipts", "receipt retention requires reviewed expiry/archive procedure"),
+            ("office_origin_streams", "origin watermark must be retained"),
+            ("office_recovery_checkpoints", "authority checkpoint must be retained"),
+        ):
+            with self.subTest(table=table, verb="INSERT"):
+                assert_refused(self, self.db, "UNIQUE constraint failed", f"INSERT INTO {table} SELECT * FROM {table}")
+            with self.subTest(table=table, verb="INSERT OR REPLACE"):
+                assert_refused(self, self.db, delete_msg, f"INSERT OR REPLACE INTO {table} SELECT * FROM {table}")
         assert_refused(self, self.db, "origin watermark must be retained", "DELETE FROM office_origin_streams")
         assert_refused(self, self.db, "authority checkpoint must be retained", "DELETE FROM office_recovery_checkpoints")
         # A checkpoint only moves forward and never forks at the same position.
@@ -1306,17 +1438,17 @@ class GapPreservationTests(unittest.TestCase):
 
     def test_one_automatic_channel_per_organization_team_and_project(self):
         def channel(identity, scope, **target):
-            insert(self.db, "conversations", organization_id="org", id=identity, kind="channel", auto_scope=scope,
+            insert(self.msg_db, "conversations", organization_id="org", id=identity, kind="channel", auto_scope=scope,
                    created_at="2026-11-15T12:00:00Z", **target)
         channel("everyone", "organization")
         channel("payments", "team", team_id="payments")
         channel("platform", "team", team_id="platform")
         channel("project", "project", project_id="project")
-        self.db.commit()
+        self.msg_db.commit()
         for identity, scope, target in (("everyone-2", "organization", {}), ("payments-2", "team", {"team_id": "payments"}),
                                         ("project-2", "project", {"project_id": "project"})):
             with self.subTest(scope=scope):
-                assert_refused(self, self.db, "UNIQUE constraint failed: conversations",
+                assert_refused(self, self.msg_db, "UNIQUE constraint failed: conversations",
                                lambda: channel(identity, scope, **target))
 
     def test_an_organization_has_one_hq(self):
@@ -1400,10 +1532,13 @@ class GapPreservationTests(unittest.TestCase):
 
 class BudgetSchemaTests(unittest.TestCase):
     def setUp(self):
-        self.db=database()
+        self.db = database("budgets-schema.sql")
         self.addCleanup(self.db.close)
-        seed_organization(self.db)
-        seed_task(self.db)
+        seed_budget_mirrors(self.db)
+
+    def seed_budget_task(self, task="second"):
+        insert(self.db, "budget_tasks", organization_id="org", kind="task", id=task, is_deleted=0)
+        self.db.commit()
 
     def budget(self, identity="budget", scope="task", period="lifetime", commit=True, **overrides):
         target={"task":"task_id", "agent":"agent_id", "release":"release_id"}[scope]
@@ -1424,12 +1559,12 @@ class BudgetSchemaTests(unittest.TestCase):
                created_at="2026-11-15T00:00:00Z",updated_at="2026-11-15T00:00:00Z")
 
     def release(self):
-        insert(self.db,"releases",organization_id="org",id="release",schema_version=1,revision=1,project_id="project",title="Release")
+        insert(self.db,"budget_releases",organization_id="org",id="release")
         self.db.commit()
 
     def test_one_budget_per_task_and_per_release(self):
         self.release()
-        seed_task(self.db, task="second")
+        self.seed_budget_task("second")
         self.budget()
         self.budget("second", task_id="second")
         self.budget("cap", scope="release")
@@ -1437,10 +1572,10 @@ class BudgetSchemaTests(unittest.TestCase):
         assert_refused(self, self.db, "UNIQUE constraint failed: budgets", lambda: self.budget("cap-again", scope="release"))
 
     def test_a_budget_keeps_its_scope_and_never_lowers_its_revision(self):
-        seed_task(self.db, task="second")
+        self.seed_budget_task("second")
         self.budget()
         message = "budget scope or revision changed unsafely"
-        for change in ("task_id='second'", "time_zone='Europe/Paris'", "time_zone_source='owner_account',time_zone_subject_ref='owner'"):
+        for change in ("task_id='second'", "time_zone='Europe/Paris'", "time_zone_source='owner_person',time_zone_subject_ref='reporter'"):
             with self.subTest(change=change):
                 assert_refused(self, self.db, message, f"UPDATE budgets SET {change}")
         insert(self.db,"budget_policy_versions",organization_id="org",budget_id="budget",revision=2,state="active",unit="tokens",limit_amount=200,
@@ -1448,6 +1583,55 @@ class BudgetSchemaTests(unittest.TestCase):
         self.db.execute("UPDATE budgets SET current_revision=2")
         self.db.commit()
         assert_refused(self, self.db, message, "UPDATE budgets SET current_revision=1")
+
+    def test_owner_timezone_change_advances_policy_revision_and_preserves_prior_periods(self):
+        self.budget("daily", "agent", "day")
+        insert(self.db, "budget_periods", organization_id="org", budget_id="daily", id="p-utc",
+               policy_revision=1, period_key="2026-11-15", starts_at="2026-11-15T00:00:00Z",
+               ends_at="2026-11-16T00:00:00Z", state="closed")
+        self.db.commit()
+        # Changing timezone with a new immutable policy revision succeeds while keeping p-utc intact.
+        insert(self.db, "budget_policy_versions", organization_id="org", budget_id="daily", revision=2,
+               state="active", unit="tokens", limit_amount=100, time_zone="America/New_York",
+               time_zone_source="owner_person", time_zone_subject_ref="reporter",
+               changed_by_id="reporter", changed_at="2026-11-16T00:00:00Z", reason="Owner moved timezone")
+        self.db.execute(
+            "UPDATE budgets SET current_revision=2, time_zone='America/New_York', "
+            "time_zone_source='owner_person', time_zone_subject_ref='reporter' WHERE id='daily'"
+        )
+        insert(self.db, "budget_periods", organization_id="org", budget_id="daily", id="p-ny",
+               policy_revision=2, period_key="2026-11-16", starts_at="2026-11-16T05:00:00Z",
+               ends_at="2026-11-17T05:00:00Z", state="open")
+        self.db.commit()
+        row = self.db.execute(
+            "SELECT current_revision, time_zone, time_zone_source FROM budgets WHERE id='daily'"
+        ).fetchone()
+        self.assertEqual(tuple(row), (2, "America/New_York", "owner_person"))
+        prior = self.db.execute(
+            "SELECT starts_at, ends_at FROM budget_periods WHERE id='p-utc'"
+        ).fetchone()
+        self.assertEqual(tuple(prior), ("2026-11-15T00:00:00Z", "2026-11-16T00:00:00Z"))
+        # Host account IDs (outside org employees) are rejected by FK (L-02).
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "budget_policy_versions", organization_id="org", budget_id="daily", revision=3,
+                   state="active", unit="tokens", limit_amount=100, time_zone="Europe/London",
+                   time_zone_source="owner_person", time_zone_subject_ref="host-account-outside-org",
+                   changed_by_id="reporter", changed_at="2026-11-17T00:00:00Z")
+            self.db.commit()
+        self.db.rollback()
+        # org_epoch = 0 on messages is rejected (L-02) in isolated messaging-schema.sql.
+        msg_db = database("messaging-schema.sql")
+        self.addCleanup(msg_db.close)
+        seed_messaging_mirrors(msg_db)
+        insert(msg_db, "conversations", organization_id="org", id="c-epoch", kind="dm", created_at="2026-11-15T00:00:00Z")
+        msg_db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(msg_db, "messages", organization_id="org", id="m-epoch-0", conversation_id="c-epoch",
+                   sender_kind="employee", sender_employee_id="reporter", sender_office_id="numbering-a",
+                   sender_display_name="Reporter", kind="message", priority="normal", body_markdown="hi",
+                   created_at="2026-11-15T00:00:00Z", origin_office_id="numbering-a", origin_incarnation="i",
+                   origin_sequence=1, org_epoch=0, org_sequence=1, content_sha256="a"*64)
+        msg_db.rollback()
 
     def test_budget_history_is_never_deleted_and_events_never_change(self):
         self.budget();self.period()
@@ -1477,15 +1661,14 @@ class BudgetSchemaTests(unittest.TestCase):
 
     def test_an_agent_budget_keeps_its_employee_an_agent(self):
         self.budget("daily","agent","day")
-        assert_refused(self, self.db, "budgeted employee must remain an agent", "UPDATE employees SET kind='person' WHERE id='ana'")
-        employee = dict(organization_id="org", id="newcomer", handle="newcomer", schema_version=1, revision=1,
-                        name="Newcomer", home_team_id="payments")
-        # A budget may be written before its employee in one transaction; the employee must be an agent.
+        assert_refused(self, self.db, "budgeted employee must remain an agent", "UPDATE budget_employees SET kind='person' WHERE id='ana'")
+        employee = dict(organization_id="org", id="newcomer")
+        # A budget may be written before its employee mirror in one transaction; the employee must be an agent.
         self.budget("early","agent","day",commit=False,agent_id="newcomer")
         assert_refused(self, self.db, "budgeted employee must be an agent",
-                       lambda: insert(self.db, "employees", **employee, kind="person"))
+                       lambda: insert(self.db, "budget_employees", **employee, kind="person"))
         self.budget("early","agent","day",commit=False,agent_id="newcomer")
-        insert(self.db, "employees", **employee, kind="agent")
+        insert(self.db, "budget_employees", **employee, kind="agent")
         self.db.commit()
 
     def test_an_early_warning_is_only_for_the_base_limit(self):
@@ -1546,8 +1729,7 @@ class BudgetSchemaTests(unittest.TestCase):
         self.db.rollback()
 
     def test_release_cap_cannot_acquire_a_stop_hold(self):
-        insert(self.db,"releases",organization_id="org",id="release",schema_version=1,revision=1,project_id="project",title="Release",version_label="1.0")
-        self.db.commit()
+        self.release()
         self.budget(scope="release");self.period()
         with self.assertRaises(sqlite3.IntegrityError):
             insert(self.db,"budget_holds",organization_id="org",budget_id="budget",period_id="period",policy_revision=1,stage="base",state="held",
@@ -1576,12 +1758,21 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
                       project_id="project", kind="product-dss", title="User authentication",
                       path=f"product/{document}.md")
         values.update(fields)
+        self.db.execute(
+            "INSERT OR IGNORE INTO record_refs(organization_id, kind, id, is_deleted) VALUES (?, 'document', ?, 0)",
+            (values["organization_id"], values["id"]),
+        )
         insert(self.db, "documents", **values)
 
-    def issue(self, document="spec", version=1, revision=1):
+    def issue(self, document="spec", version=1, revision=1, project_id="project", register_ref=True):
+        if register_ref:
+            self.db.execute(
+                "INSERT OR IGNORE INTO record_refs(organization_id, kind, id, is_deleted) VALUES ('org', 'document', ?, 0)",
+                (document,),
+            )
         insert(self.db, "document_versions", organization_id="org", document_id=document,
-               version=version, revision=revision, title="User authentication", body_sha256=self.SHA,
-               body_markdown="## Purpose", issued_at="2026-11-18T09:00:00Z",
+               project_id=project_id, version=version, revision=revision, title="User authentication",
+               body_sha256=self.SHA, body_markdown="## Purpose", issued_at="2026-11-18T09:00:00Z",
                issued_by_kind="employee", issued_by_id="reporter")
 
     def refused(self, statement):
@@ -1658,6 +1849,43 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
             self.assertIn(f"'{preset}'", cfg_sql)
         self.assertNotIn("unrestricted", cfg_sql)
         self.assertNotIn("bypass", cfg_sql)
+
+    def test_satellite_attempt_rebuild_succeeds_without_hq_permit_rows_and_in_deferred_order(self):
+        # Insert execution rows in reverse dependency order inside one transaction, with zero rows
+        # in HQ-only connection_turn_permits, exercising both hq_pool and office_local permits.
+        sha = "a" * 64
+        insert(self.db, "agent_execution_attempts", organization_id="org", id="att-2", turn_id="turn-1",
+               attempt_no=2, employee_id="ana", office_id="numbering-b", placement_generation=1,
+               connection_id="conn-local", permit_authority="office_local", permit_id="local-permit-1",
+               runtime_driver="claude", driver_version="1.0", requested_model_id="m1", resolved_model_id="m1",
+               connection_revision=1, binding_revision=1, state="succeeded", effect_state="none",
+               predecessor_attempt_id="att-1")
+        insert(self.db, "agent_execution_attempts", organization_id="org", id="att-1", turn_id="turn-1",
+               attempt_no=1, employee_id="ana", office_id="numbering-b", placement_generation=1,
+               connection_id="conn-pool", permit_authority="hq_pool", permit_id="hq-permit-absent-on-satellite",
+               runtime_driver="claude", driver_version="1.0", requested_model_id="m1", resolved_model_id="m1",
+               connection_revision=1, binding_revision=1, state="failed", effect_state="none")
+        insert(self.db, "agent_execution_turns", organization_id="org", id="turn-1", employee_id="ana",
+               office_id="numbering-b", placement_generation=1, revision=1, workspace_key="ws",
+               input_ref="turns/turn-1/input.json", input_sha256=sha, agent_config_revision=1,
+               model_profile_id="prof-1", profile_revision=1, model_id="m1", pool_snapshot_json="[]",
+               status="succeeded", created_at="2026-11-21T00:00:00Z")
+        insert(self.db, "agent_execution_configs", organization_id="org", employee_id="ana",
+               schema_version=1, revision=1, model_profile_id="prof-1", model_id="m1",
+               system_prompt_markdown="Work carefully.")
+        insert(self.db, "model_profiles", organization_id="org", id="prof-1", schema_version=1, revision=1,
+               key="prof-1", name="Prof 1")
+        seed_provider_connection(self.db, identity="sub-pool", connection_id="conn-pool")
+        seed_provider_connection(self.db, identity="sub-local", connection_id="conn-local")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM connection_turn_permits").fetchone()[0], 0)
+        self.assertEqual(self.db.execute("PRAGMA foreign_key_check").fetchall(), [])
+        self.refused(lambda: insert(
+            self.db, "agent_execution_attempts", organization_id="org", id="att-bad", turn_id="turn-1",
+            attempt_no=3, employee_id="ana", office_id="numbering-b", placement_generation=1,
+            connection_id="conn-local", permit_authority="invalid_authority", permit_id="p",
+            runtime_driver="claude", driver_version="1.0", requested_model_id="m1", resolved_model_id="m1",
+            connection_revision=1, binding_revision=1, state="selected", effect_state="none"))
 
     def test_a_process_declares_its_tabs_from_the_generic_views(self):
         self.package()
@@ -1899,6 +2127,379 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
                           media_type="image/png", bytes=10, sha256=self.SHA, title="Diagram")
             values.update(fields)
             self.refused(lambda: insert(self.db, "documentation_media", **values))
+
+    def test_hot_path_indexes_and_non_quadratic_views(self):
+        def plan_lines(conn, sql, params=()):
+            return [row[3] for row in conn.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()]
+
+        # Hot-path shared indexes (TASK-6 / H-13, H-10).
+        indexed_queries = [
+            (self.db, "tasks_by_feature",
+             "SELECT id FROM tasks WHERE organization_id=? AND feature_id=?", ("org", "f1")),
+            (self.db, "task_document_versions_by_document",
+             "SELECT task_id FROM task_document_versions WHERE organization_id=? AND document_id=? AND version=?",
+             ("org", "doc", 1)),
+            (self.db, "document_code_links_by_document",
+             "SELECT id FROM document_code_links WHERE organization_id=? AND document_id=?", ("org", "doc")),
+            (self.db, "document_version_sources_by_source",
+             "SELECT document_id FROM document_version_sources WHERE organization_id=? AND source_document_id=? AND source_version=?",
+             ("org", "src", 1)),
+            (self.db, "hire_requests_by_team_state",
+             "SELECT id FROM hire_requests WHERE organization_id=? AND home_team_id=? AND state=?",
+             ("org", "payments", "hiring")),
+            (self.db, "usage_by_release_time",
+             "SELECT id FROM usage_records WHERE organization_id=? AND release_id=? ORDER BY occurred_at",
+             ("org", "rel")),
+        ]
+        msg_db = database("messaging-schema.sql")
+        self.addCleanup(msg_db.close)
+        bud_db = database("budgets-schema.sql")
+        self.addCleanup(bud_db.close)
+        indexed_queries.extend([
+            (msg_db, "messages_by_thread",
+             "SELECT id FROM messages WHERE organization_id=? AND thread_root_id=? ORDER BY created_at",
+             ("org", "root")),
+            (bud_db, "active_budget_holds",
+             "SELECT budget_id FROM budget_holds WHERE organization_id=? AND budget_id=? AND state <> 'released'",
+             ("org", "b1")),
+        ])
+        for conn, expected_index, sql, params in indexed_queries:
+            with self.subTest(index=expected_index):
+                joined = "\n".join(plan_lines(conn, sql, params))
+                self.assertIn(expected_index, joined)
+
+        # ADR-0031 person read on private_task_notes uses private_notes_by_task.
+        private = sqlite3.connect(":memory:")
+        self.addCleanup(private.close)
+        private.executescript((ROOT / "private-notes-schema.sql").read_text())
+        private_plan = "\n".join(plan_lines(
+            private,
+            "SELECT id, author_id, body_markdown FROM private_task_notes "
+            "WHERE organization_id=? AND task_id=? AND deleted_at IS NULL ORDER BY updated_at",
+            ("org", "task"),
+        ))
+        self.assertIn("private_notes_by_task", private_plan)
+
+        # usage_*_totals views must materialize org_incomplete_streams once (never correlated per group).
+        for view in ("usage_task_totals", "usage_agent_totals", "usage_project_totals"):
+            with self.subTest(view=view):
+                lines = plan_lines(self.db, f"SELECT * FROM {view} WHERE organization_id=?", ("org",))
+                joined = "\n".join(lines)
+                self.assertIn("MATERIALIZE org_incomplete_streams", joined)
+                self.assertEqual(sum(1 for l in lines if "CO-ROUTINE usage_stream_coverage" in l), 1, joined)
+                # Ensure usage_stream_coverage is NOT evaluated inside a correlated subquery.
+                idx_cov = next(i for i, l in enumerate(lines) if "MATERIALIZE org_incomplete_streams" in l)
+                self.assertNotIn("CORRELATED", lines[idx_cov - 1] if idx_cov > 0 else "")
+
+        # release_progress must evaluate milestone_progress at most once (no 3x co-routine scan).
+        release_plan = plan_lines(self.db, "SELECT * FROM release_progress WHERE organization_id=?", ("org",))
+        milestone_evals = sum(1 for line in release_plan if "CO-ROUTINE milestone_progress" in line)
+        self.assertLessEqual(milestone_evals, 1, "\n".join(release_plan))
+
+    def test_task_7_integrity_holes_closed(self):
+        # H-08: budgeted task can be tombstoned cleanly while budget remains intact in isolated budgets.db via budget_tasks mirror.
+        seed_task(self.db, task="budgeted-task")
+        bud_db = database("budgets-schema.sql")
+        self.addCleanup(bud_db.close)
+        seed_budget_mirrors(bud_db)
+        insert(bud_db, "budget_tasks", organization_id="org", kind="task", id="budgeted-task", is_deleted=0)
+        insert(bud_db, "budgets", organization_id="org", id="b-task", current_revision=1,
+               scope_kind="task", task_id="budgeted-task", period_kind="lifetime",
+               time_zone="UTC", time_zone_source="hq", created_at="2026-11-21T00:00:00Z")
+        insert(bud_db, "budget_policy_versions", organization_id="org", budget_id="b-task",
+               revision=1, state="active", unit="tokens", limit_amount=1000,
+               changed_by_id="reporter", changed_at="2026-11-21T00:00:00Z")
+        bud_db.commit()
+        bud_db.execute("UPDATE budget_tasks SET is_deleted=1 WHERE id='budgeted-task'")
+        bud_db.commit()
+        assert_refused(self, bud_db, "deleted budget task mirror cannot be undeleted",
+                       "UPDATE budget_tasks SET is_deleted=0 WHERE id='budgeted-task'")
+        insert(self.db, "tombstones", organization_id="org", kind="task", id="budgeted-task",
+               schema_version=1, revision=1, project_id="project", office_code="A", number=99,
+               terminal_state="done")
+        self.db.execute("UPDATE record_refs SET is_deleted=1 WHERE kind='task' AND id='budgeted-task'")
+        self.db.execute("DELETE FROM tasks WHERE id='budgeted-task'")
+        self.db.commit()
+        self.assertEqual(bud_db.execute("SELECT task_id FROM budgets WHERE id='b-task'").fetchone()[0], "budgeted-task")
+        self.assertEqual(self.db.execute("SELECT office_code FROM tombstones WHERE id='budgeted-task'").fetchone()[0], "A")
+
+        # H-11: cross-project affects_feature_id refused on deferred insert, task_details.task_id update,
+        # and feature.project_id update.
+        insert(self.db, "projects", organization_id="org", id="p2", schema_version=1, revision=1,
+               slug="p2", name="P2", owner_team_id="payments")
+        insert(self.db, "features", organization_id="org", id="f1", schema_version=1, revision=1,
+               project_id="project", local_slug="f1", title="F1", status="planned")
+        insert(self.db, "features", organization_id="org", id="f2", schema_version=1, revision=1,
+               project_id="p2", local_slug="f2", title="F2", status="planned")
+        seed_task(self.db, task="t-p1")
+        seed_task(self.db, task="t-p2", project="p2")
+        # Deferred insert: task_details inserted before task of wrong project must fail on task insert.
+        insert(self.db, "task_details", organization_id="org", task_id="deferred-wrong", affects_feature_id="f1")
+        assert_refused(self, self.db, "affected feature belongs to another project", lambda: (
+            insert(self.db, "record_refs", organization_id="org", kind="task", id="deferred-wrong", is_deleted=0),
+            insert(self.db, "tasks", organization_id="org", id="deferred-wrong", office_code="A", number=103,
+                   schema_version=1, revision=1, team_id="payments", project_id="p2", title="Wrong", status="todo"),
+        ))
+        # Updating task_details.task_id to a task in another project must fail.
+        insert(self.db, "task_details", organization_id="org", task_id="t-p1", affects_feature_id="f1")
+        self.db.commit()
+        assert_refused(self, self.db, "affected feature belongs to another project",
+                       "UPDATE task_details SET task_id='t-p2' WHERE task_id='t-p1'")
+        # Updating features.project_id while referenced by a project-1 task must fail.
+        assert_refused(self, self.db, "affected feature belongs to another project",
+                       "UPDATE features SET project_id='p2' WHERE id='f1'")
+
+        # H-12: document_versions record_refs FK, same-project superkey, no-replace (even with recursive_triggers=OFF),
+        # and document_version_sources immutability & same-project guard.
+        self.refused(lambda: self.issue("unregistered-doc", register_ref=False))
+        self.document("doc-p1", project_id="project", path="product/doc-p1.md")
+        self.document("doc-p2", project_id="p2", path="product/doc-p2.md")
+        self.issue("doc-p1", project_id="project")
+        self.issue("doc-p2", project_id="p2")
+        self.db.commit()
+        # Cross-project version source is refused.
+        assert_refused(self, self.db, "document version sources must belong to the same project", lambda: insert(
+            self.db, "document_version_sources", organization_id="org",
+            document_id="doc-p1", version=1, source_document_id="doc-p2", source_version=1))
+        # Cross-project task_document_versions is refused.
+        assert_refused(self, self.db, "realizing task and document version must belong to the same project", lambda: insert(
+            self.db, "task_document_versions", organization_id="org",
+            task_id="t-p2", document_id="doc-p1", version=1))
+        # Same-project source works and is immutable (no UPDATE / DELETE).
+        self.document("doc-p1-b", project_id="project", path="product/doc-p1-b.md")
+        self.issue("doc-p1-b", project_id="project")
+        insert(self.db, "document_version_sources", organization_id="org",
+               document_id="doc-p1-b", version=1, source_document_id="doc-p1", source_version=1)
+        self.db.commit()
+        assert_refused(self, self.db, "document version sources are never changed",
+                       "UPDATE document_version_sources SET source_version=1")
+        assert_refused(self, self.db, "document version sources are never removed",
+                       "DELETE FROM document_version_sources")
+        # BEFORE INSERT no-replace blocks INSERT OR REPLACE on document_versions even if recursive_triggers=OFF.
+        self.db.execute("PRAGMA recursive_triggers = OFF")
+        try:
+            assert_refused(self, self.db, "an issued document version is never replaced",
+                           "INSERT OR REPLACE INTO document_versions SELECT * FROM document_versions WHERE document_id='doc-p1'")
+        finally:
+            self.db.execute("PRAGMA recursive_triggers = ON")
+
+        # H-14: kind CHECKs on record_refs/tombstones/links, release_tasks same-project,
+        # and blocking new operational children on tombstoned tasks.
+        for bad_kind in ("", "bug"):
+            with self.subTest(bad_kind=bad_kind):
+                self.refused(lambda: insert(self.db, "record_refs", organization_id="org", kind=bad_kind, id="x", is_deleted=0))
+                self.refused(lambda: insert(self.db, "tombstones", organization_id="org", kind=bad_kind, id="x",
+                                            schema_version=1, revision=1, terminal_state="done"))
+        self.refused(lambda: insert(self.db, "links", organization_id="org", source_kind="task", source_id="t-p1",
+                                    id="l-bad", kind="relates_to", target_kind="bogus", target_id="t-p2"))
+        # release_tasks same-project check.
+        insert(self.db, "releases", organization_id="org", id="rel-p1", schema_version=1, revision=1,
+               project_id="project", title="Rel P1")
+        self.db.commit()
+        assert_refused(self, self.db, "release task belongs to another project", lambda: insert(
+            self.db, "release_tasks", organization_id="org", release_id="rel-p1", project_id="project", task_id="t-p2"))
+        # New operational children on a tombstoned task (budgeted-task, is_deleted=1) are rejected.
+        assert_refused(self, self.db, "cannot attach operational record to a deleted task", lambda: insert(
+            self.db, "comments", organization_id="org", target_kind="task", target_id="budgeted-task",
+            id="c1", position=0, author_id="reporter", created_at="2026-11-21T00:00:00Z", body_markdown="Late"))
+        assert_refused(self, self.db, "cannot attach operational record to a deleted task", lambda: insert(
+            self.db, "checklist_steps", organization_id="org", target_kind="task", target_id="budgeted-task",
+            id="s1", position=0, text="Late", required=0, done=0))
+        assert_refused(self, self.db, "cannot attach operational record to a deleted task", lambda: insert(
+            self.db, "watchers", organization_id="org", target_kind="task", target_id="budgeted-task",
+            id="w1", watcher_kind="owner"))
+        assert_refused(self, self.db, "cannot attach operational record to a deleted task", lambda: insert(
+            self.db, "owner_questions", organization_id="org", target_kind="task", target_id="budgeted-task",
+            id="q1", question_comment_id="c1", asked_by_id="reporter", state="open", created_at="2026-11-21T00:00:00Z"))
+        assert_refused(self, self.db, "cannot attach operational record to a deleted task", lambda: insert(
+            self.db, "waiting_spans", organization_id="org", target_kind="task", target_id="budgeted-task",
+            id="ws1", reason="waiting", waiting_on_kind="owner", started_at="2026-11-21T00:00:00Z"))
+
+    def test_task_8_secondary_constraints_and_redundancies(self):
+        # M-07: 2-cycles refused in features.replaced_by_feature_id & deployments.rollback_of_id.
+        insert(self.db, "features", organization_id="org", id="fa", schema_version=1, revision=1,
+               project_id="project", local_slug="fa", title="FA", status="retired")
+        insert(self.db, "features", organization_id="org", id="fb", schema_version=1, revision=1,
+               project_id="project", local_slug="fb", title="FB", status="live", owner_employee_id="reporter")
+        self.db.execute("UPDATE features SET replaced_by_feature_id='fb' WHERE id='fa'")
+        self.db.commit()
+        assert_refused(self, self.db, "feature replacement cycle is not allowed",
+                       "UPDATE features SET replaced_by_feature_id='fa' WHERE id='fb'")
+
+        insert(self.db, "releases", organization_id="org", id="r-dep", schema_version=1, revision=1,
+               project_id="project", title="R")
+        insert(self.db, "deployments", organization_id="org", id="d1", schema_version=1, revision=1,
+               project_id="project", release_id="r-dep", environment="prod", target="primary",
+               operation="deploy", status="succeeded", started_at="2026-11-21T00:00:00Z", finished_at="2026-11-21T00:01:00Z")
+        insert(self.db, "deployments", organization_id="org", id="d2", schema_version=1, revision=1,
+               project_id="project", release_id="r-dep", environment="prod", target="primary",
+               operation="rollback", rollback_of_id="d1", status="succeeded", started_at="2026-11-21T00:02:00Z", finished_at="2026-11-21T00:03:00Z")
+        self.db.commit()
+        assert_refused(self, self.db, "deployment rollback cycle is not allowed",
+                       "UPDATE deployments SET operation='rollback', rollback_of_id='d2' WHERE id='d1'")
+
+        # M-07: one_project_brief, documents_key_unique, structure_documents_key_unique.
+        insert(self.db, "documents", organization_id="org", id="b1", schema_version=1, revision=1,
+               project_id="project", kind="brief", key="proj-brief", title="Brief 1")
+        self.db.commit()
+        assert_refused(self, self.db, "UNIQUE constraint failed", lambda: insert(
+            self.db, "documents", organization_id="org", id="b2", schema_version=1, revision=1,
+            project_id="project", kind="brief", title="Brief 2"))
+        assert_refused(self, self.db, "UNIQUE constraint failed", lambda: insert(
+            self.db, "documents", organization_id="org", id="d-dup-key", schema_version=1, revision=1,
+            project_id="project", kind="design", key="proj-brief", path="product/dup.md", title="Dup"))
+        insert(self.db, "structure_documents", organization_id="org", id="sd1", key="coding-std",
+               schema_version=1, revision=1, kind="standard", title="Std 1")
+        self.db.commit()
+        assert_refused(self, self.db, "UNIQUE constraint failed", lambda: insert(
+            self.db, "structure_documents", organization_id="org", id="sd2", key="coding-std",
+            schema_version=1, revision=1, kind="standard", title="Std 2"))
+        # Same key at a lower scope (team or project) is allowed to override (doc-34 §3.1/§5).
+        insert(self.db, "structure_documents", organization_id="org", id="sd3", key="coding-std",
+               schema_version=1, revision=1, kind="standard", title="Team Std 1", team_id="payments")
+        insert(self.db, "structure_documents", organization_id="org", id="sd4", key="coding-std",
+               schema_version=1, revision=1, kind="standard", title="Project Std 1", project_id="project")
+        self.db.commit()
+        # Duplicate key within the same team scope is refused.
+        assert_refused(self, self.db, "UNIQUE constraint failed", lambda: insert(
+            self.db, "structure_documents", organization_id="org", id="sd5", key="coding-std",
+            schema_version=1, revision=1, kind="standard", title="Team Std Dup", team_id="payments"))
+
+        # M-07: hire_requests agent-only employee & terminal immutability.
+        assert_refused(self, self.db, "hire request employee must be an agent", lambda: insert(
+            self.db, "hire_requests", organization_id="org", id="hr-person", schema_version=1, revision=1,
+            state="hired", requested_by_employee_id="reporter", home_team_id="payments",
+            confirmed_at="2026-11-21T00:00:00Z", employee_id="reporter",
+            created_at="2026-11-21T00:00:00Z", updated_at="2026-11-21T00:00:00Z"))
+        self.hire("hr-term", state="withdrawn", closed_reason="cancelled")
+        self.db.commit()
+        assert_refused(self, self.db, "terminal hire request is immutable",
+                       "UPDATE hire_requests SET state='drafting' WHERE id='hr-term'")
+
+        # M-07: office_codes immutability/no-delete & counters monotonicity.
+        assert_refused(self, self.db, "office codes must be retained", "DELETE FROM office_codes WHERE code='A'")
+        insert(self.db, "office_task_counters", organization_id="org", office_code="A", last_number=5, reserved_through=10)
+        self.db.commit()
+        assert_refused(self, self.db, "office task counter cannot decrease",
+                       "UPDATE office_task_counters SET last_number=4 WHERE office_code='A'")
+
+        # M-07: checklist_steps unchecked-with-checker & waiting_spans inverted timestamps rejected.
+        seed_task(self.db, task="t-m07")
+        self.refused(lambda: insert(self.db, "checklist_steps", organization_id="org", target_kind="task",
+                                    target_id="t-m07", id="bad-step", position=0, text="x", required=0, done=0,
+                                    checked_by_employee_id="reporter", checked_at="2026-11-21T00:00:00Z"))
+        self.refused(lambda: insert(self.db, "waiting_spans", organization_id="org", target_kind="task",
+                                    target_id="t-m07", id="bad-wait", reason="x", waiting_on_kind="owner",
+                                    started_at="2026-11-21T01:00:00Z", ended_at="2026-11-21T00:00:00Z"))
+
+        # M-08: private-notes-schema.sql guards.
+        private = sqlite3.connect(":memory:")
+        self.addCleanup(private.close)
+        private.executescript((ROOT / "private-notes-schema.sql").read_text())
+        insert(private, "private_note_authors", organization_id="org", author_id="ana")
+        insert(private, "private_note_tasks", organization_id="org", task_id="task")
+        private.commit()
+        assert_refused(self, private, "new private note must start active at revision 1", lambda: insert(
+            private, "private_task_notes", organization_id="org", id="n-bad-rev", schema_version=1, revision=2,
+            task_id="task", author_id="ana", body_markdown="bad",
+            created_at="2026-11-21T00:00:00Z", updated_at="2026-11-21T00:00:00Z"))
+        assert_refused(self, private, "new private note must start active at revision 1", lambda: insert(
+            private, "private_task_notes", organization_id="org", id="n-bad-del", schema_version=1, revision=1,
+            task_id="task", author_id="ana", body_markdown=None,
+            created_at="2026-11-21T00:00:00Z", updated_at="2026-11-21T00:00:00Z", deleted_at="2026-11-21T00:00:00Z"))
+        insert(private, "private_task_notes", organization_id="org", id="n1", schema_version=1, revision=1,
+               task_id="task", author_id="ana", body_markdown="good",
+               created_at="2026-11-21T00:00:00Z", updated_at="2026-11-21T00:00:00Z")
+        insert(private, "private_note_command_receipts", organization_id="org", author_id="ana",
+               operation_id="op1", request_sha256="a"*64, command="publish", note_id="n1",
+               result_revision=1, state="completed", shared_comment_id="c-pub-1",
+               created_at="2026-11-21T00:00:00Z", finished_at="2026-11-21T00:00:01Z")
+        private.commit()
+        # Duplicate shared_comment_id refused.
+        assert_refused(self, private, "UNIQUE constraint failed", lambda: insert(
+            private, "private_note_command_receipts", organization_id="org", author_id="ana",
+            operation_id="op2", request_sha256="b"*64, command="publish", note_id="n1",
+            result_revision=1, state="completed", shared_comment_id="c-pub-1",
+            created_at="2026-11-21T00:00:02Z", finished_at="2026-11-21T00:00:03Z"))
+        # Monotonic is_deleted: 1 -> 0 refused.
+        private.execute("UPDATE private_note_tasks SET is_deleted=1 WHERE task_id='task'")
+        private.commit()
+        assert_refused(self, private, "deleted private note task mirror cannot be undeleted",
+                       "UPDATE private_note_tasks SET is_deleted=0 WHERE task_id='task'")
+
+        # M-09: task_details omits branch & decline_reason; task_workspaces allows two agents on same task+repo.
+        td_cols = [r[1] for r in self.db.execute("PRAGMA table_xinfo(task_details)")]
+        self.assertNotIn("branch", td_cols)
+        self.assertNotIn("decline_reason", td_cols)
+        insert(self.db, "task_repositories", organization_id="org", task_id="t-m07", repository_id="org-repository", branch="feat/m09")
+        insert(self.db, "task_workspaces", organization_id="org", office_id="numbering-a", employee_id="ana",
+               task_id="t-m07", repository_id="org-repository", worktree_path="/tmp/wt-ana")
+        insert(self.db, "task_workspaces", organization_id="org", office_id="numbering-a", employee_id="reporter",
+               task_id="t-m07", repository_id="org-repository", worktree_path="/tmp/wt-reporter")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM task_workspaces WHERE task_id='t-m07'").fetchone()[0], 2)
+
+        # L-03: aligned slug/handle/kind/sha CHECKs and dev-process position uniqueness.
+        self.refused(lambda: insert(self.db, "employees", organization_id="org", id="e-here", handle="here",
+                                    schema_version=1, revision=1, kind="person", name="Here", home_team_id="payments"))
+        self.refused(lambda: insert(self.db, "documents", organization_id="org", id="d-dash", schema_version=1,
+                                    revision=1, project_id="project", kind="-bad", path="product/bad.md", title="Bad"))
+        self.refused(lambda: insert(self.db, "release_repository_commits", organization_id="org",
+                                    release_id="r-dep", project_id="project", repository_id="org-repository", commit_sha=""))
+        self.package("pos-test")
+        insert(self.db, "development_process_roles", organization_id="org", process_id="pos-test", key="r1", position=0, name="R1")
+        self.db.commit()
+        self.refused(lambda: insert(self.db, "development_process_roles", organization_id="org", process_id="pos-test", key="r2", position=0, name="R2"))
+
+    def test_eng4_contracts_state_guarantees_without_sqlite_statements(self):
+        """ADR-0018 ENG-4: Documents 06 and 11 and numbering/journal ADRs state guarantees without SQLite statements."""
+        decisions_root = ROOT.parents[2] / ".backlog" / "decisions"
+        targets = [org_data_doc(6), org_data_doc(11)]
+        for prefix in ("decision-6 ", "decision-19 ", "decision-21 "):
+            matches = sorted(decisions_root.glob(f"{prefix}*.md"))
+            self.assertEqual(len(matches), 1, f"expected 1 ADR matching {prefix}")
+            targets.append(matches[0])
+        for path in targets:
+            text = path.read_text(encoding="utf-8")
+            prose = re.sub(r"```sql\n.*?\n```", "", text, flags=re.S)
+            with self.subTest(document=path.name):
+                self.assertNotRegex(prose, r"\bBEGIN\s+IMMEDIATE\b",
+                                    f"{path.name} prose must not prescribe SQLite BEGIN IMMEDIATE (ENG-4)")
+                self.assertNotRegex(prose, r"\bPRAGMA\s+\w+",
+                                    f"{path.name} prose must not prescribe SQLite PRAGMA statements (ENG-4)")
+        # ADR-0014 Decision 8 defines the engine-neutral acknowledgement class contract.
+        adr14 = sorted(decisions_root.glob("decision-14 *.md"))
+        self.assertEqual(len(adr14), 1)
+        adr14_text = adr14[0].read_text(encoding="utf-8")
+        self.assertNotRegex(adr14_text, r"\bBEGIN\s+IMMEDIATE\b")
+        self.assertNotRegex(adr14_text, r"\bPRAGMA\s+\w+")
+
+    def test_eng5_schema_coverage_lists_all_triggers_and_generated_columns(self):
+        """ADR-0018 ENG-5: Schema coverage (doc-74) lists every trigger and generated column via live SQLite catalog."""
+        coverage = schema_coverage_doc().read_text(encoding="utf-8")
+        for sql_file in sorted(ROOT.glob("*.sql")):
+            conn = database(sql_file.name)
+            self.addCleanup(conn.close)
+            triggers = [
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_schema WHERE type = 'trigger' ORDER BY name")
+            ]
+            for trg in triggers:
+                with self.subTest(schema=sql_file.name, trigger=trg):
+                    self.assertIn(f"`{trg}`", coverage,
+                                  f"ENG-5: trigger `{trg}` from {sql_file.name} missing in doc-74 schema coverage")
+            tables = [
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")
+            ]
+            for tbl in tables:
+                for col in conn.execute(f'PRAGMA table_xinfo("{tbl}")'):
+                    # hidden=2 (VIRTUAL generated) or hidden=3 (STORED generated)
+                    if col[6] in (2, 3):
+                        col_ref = f"`{tbl}.{col[1]}`"
+                        with self.subTest(schema=sql_file.name, generated=col_ref):
+                            self.assertIn(col_ref, coverage,
+                                          f"ENG-5: generated column {col_ref} from {sql_file.name} missing in doc-74 schema coverage")
 
 
 if __name__ == "__main__":

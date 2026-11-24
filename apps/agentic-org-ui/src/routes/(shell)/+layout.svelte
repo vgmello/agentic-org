@@ -11,9 +11,9 @@
 	import { afterNavigate, goto, invalidate } from '$app/navigation';
 	import { selectDesktopSection } from '$lib/platform/shell/desktop-navigation';
 	import { navigating, page } from '$app/state';
-	import { orgApi } from '$lib/org/api';
-	import { noteChanged } from '$lib/org/live';
-	import { liveState } from '$lib/org/live-state.svelte';
+	import { orgApi } from '$lib/modules/organization/api';
+	import { noteChanged } from '$lib/modules/organization/live';
+	import { liveState } from '$lib/modules/organization/live-state.svelte';
 	import { areaFor } from '$lib/nav';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
@@ -64,44 +64,69 @@
 	let mainEl = $state<HTMLElement | null>(null);
 	let sidebarHovered = $state(false);
 	let sidebarFocused = $state(false);
-	let sidebarLeaveTimer: ReturnType<typeof setTimeout> | undefined;
+	let sidebarMenuOpen = $state(false);
+	let sidebarHoverTimer: ReturnType<typeof setTimeout> | undefined;
+	let sidebarFocusTimer: ReturnType<typeof setTimeout> | undefined;
 	const sidebarPinned = $derived(!uiPrefs.navCollapsed);
-	const sidebarCollapsed = $derived(uiPrefs.navCollapsed && !sidebarHovered && !sidebarFocused);
+	const sidebarCollapsed = $derived(
+		uiPrefs.navCollapsed && !sidebarHovered && !sidebarFocused && !sidebarMenuOpen
+	);
+
+	function handleSidebarMenuOpenChange(open: boolean) {
+		clearTimeout(sidebarFocusTimer);
+		sidebarMenuOpen = open;
+		if (!open) {
+			// Recompute focus containment after Bits UI focus restoration or outside click settles
+			// without cancelling any pending pointer-leave collapse timer.
+			const syncFocus = () => {
+				if (sidebarMenuOpen) return;
+				const active = document.activeElement;
+				sidebarFocused = Boolean(active instanceof Node && desktopNavigation?.contains(active));
+			};
+			queueMicrotask(syncFocus);
+			requestAnimationFrame(syncFocus);
+		}
+	}
 
 	function handleSidebarEnter() {
-		clearTimeout(sidebarLeaveTimer);
+		clearTimeout(sidebarHoverTimer);
 		sidebarHovered = true;
 	}
 	function handleSidebarLeave() {
-		clearTimeout(sidebarLeaveTimer);
-		sidebarLeaveTimer = setTimeout(() => {
+		clearTimeout(sidebarHoverTimer);
+		sidebarHoverTimer = setTimeout(() => {
 			sidebarHovered = false;
 		}, 240);
 	}
 	function handleSidebarFocusIn(event: FocusEvent) {
 		const target = event.target;
 		if (target instanceof HTMLElement && target.matches(':focus-visible')) {
-			clearTimeout(sidebarLeaveTimer);
+			clearTimeout(sidebarFocusTimer);
 			sidebarFocused = true;
 		}
 	}
 	function handleSidebarFocusOut(event: FocusEvent) {
+		if (sidebarMenuOpen) return;
 		const next = event.relatedTarget;
 		if (next instanceof Node && desktopNavigation?.contains(next)) return;
-		clearTimeout(sidebarLeaveTimer);
-		sidebarLeaveTimer = setTimeout(() => {
-			sidebarFocused = false;
+		clearTimeout(sidebarFocusTimer);
+		sidebarFocusTimer = setTimeout(() => {
+			if (!sidebarMenuOpen) sidebarFocused = false;
 		}, 160);
 	}
 	function toggleSidebarPin() {
-		clearTimeout(sidebarLeaveTimer);
+		clearTimeout(sidebarHoverTimer);
+		clearTimeout(sidebarFocusTimer);
 		uiPrefs.toggleNavCollapsed();
 		if (uiPrefs.navCollapsed) {
 			sidebarHovered = false;
 			sidebarFocused = false;
 		}
 	}
-	onDestroy(() => clearTimeout(sidebarLeaveTimer));
+	onDestroy(() => {
+		clearTimeout(sidebarHoverTimer);
+		clearTimeout(sidebarFocusTimer);
+	});
 
 	const shellData = provideShellData({
 		getOrganizationId: () => organizationId,
@@ -220,6 +245,7 @@
 			collapsed={sidebarCollapsed}
 			pinned={sidebarPinned}
 			onToggleCollapse={toggleSidebarPin}
+			onMenuOpenChange={handleSidebarMenuOpenChange}
 			onPointerEnter={handleSidebarEnter}
 			onPointerLeave={handleSidebarLeave}
 			onFocusIn={handleSidebarFocusIn}
@@ -243,6 +269,7 @@
 			<span class="text-sm font-semibold">{areaFor(page.url.pathname) ?? 'Agentic Org'}</span>
 		</div>
 		<ExecutiveCommandBar
+			connection={data.connection}
 			snapshot={shellData.snapshot}
 			items={shellData.workItems}
 			inboxItems={shellData.inboxItems}

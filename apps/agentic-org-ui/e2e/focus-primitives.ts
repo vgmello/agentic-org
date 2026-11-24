@@ -237,6 +237,7 @@ export async function menu(page: Page, width: number, scale: number, root = 16) 
 	await trigger.click();
 	await page.mouse.click(0, 0);
 	await expect(page.getByRole('menu')).toHaveCount(0);
+	await expect(trigger).toBeFocused();
 	await keyboardFocus(page, trigger);
 	await trigger.press('ArrowDown');
 	await normal.press('End');

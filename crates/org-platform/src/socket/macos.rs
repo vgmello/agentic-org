@@ -26,11 +26,37 @@ pub(super) const DATAGRAM_PEER_FULL: i32 = libc::ENOBUFS;
 /// and also to find nothing to read.
 pub(super) const DATAGRAM_PEER_CLOSE_MAY_RESET: bool = true;
 
+/// Closing a Unix stream peer with unread buffered bytes yields EOF on macOS.
+pub(super) const STREAM_PEER_CLOSE_WITH_UNREAD_RESETS: bool = false;
+
 pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
     let (mut uid, mut gid) = (0, 0);
     // SAFETY: both out-pointers are live and writable for the getpeereid call.
     let rc = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
     super::checked_uid(rc, uid, 0, 0)
+}
+
+pub(super) fn peer_pid(fd: RawFd) -> io::Result<libc::pid_t> {
+    let mut pid: libc::pid_t = 0;
+    let expected = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    let mut length = expected;
+    // SAFETY: pid is live and writable for length bytes.
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&mut pid as *mut libc::pid_t).cast(),
+            &mut length,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if length != expected || pid <= 0 {
+        return Err(invalid("unexpected peer pid response"));
+    }
+    Ok(pid)
 }
 
 /// The caller's fence, held from before `recvmsg` through every `FD_CLOEXEC` update:

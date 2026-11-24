@@ -1,0 +1,1447 @@
+{
+	"whyChoices": [
+		{
+			"id": "doc-adr-19",
+			"key": "ADR-0019",
+			"title": "Task numbers are minted by the creating office",
+			"kind": "decision",
+			"status": "current"
+		},
+		{
+			"id": "doc-adr-31",
+			"key": "ADR-0031",
+			"title": "Any employee changes tasks; private notes stay private",
+			"kind": "decision",
+			"status": "current"
+		},
+		{
+			"id": "doc-des-checkout",
+			"key": "DES-04",
+			"title": "Two-tap mobile checkout flow",
+			"kind": "design",
+			"status": "current"
+		},
+		{
+			"id": "doc-spec-budgets",
+			"key": "SPEC-17",
+			"title": "Budgets and execution controls",
+			"kind": "spec",
+			"status": "current"
+		}
+	],
+	"tasks": [
+		{
+			"id": "0193c000-0000-7000-8000-000000000040",
+			"ref": "T-A40",
+			"type": "task",
+			"title": "Split the checkout service",
+			"description": "Separate payment authorization from basket persistence so retries stay idempotent across tabs and devices.",
+			"status": "in_progress",
+			"priority": "high",
+			"severity": null,
+			"effort": 5,
+			"project": { "id": "beacon", "name": "Beacon", "number": 8 },
+			"team": { "id": "web", "name": "Web" },
+			"assignedTeam": { "id": "web", "name": "Web" },
+			"assignee": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+			"reporter": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+			"createdAgoHours": 52,
+			"updatedAgoHours": 1,
+			"statusAgoHours": 30,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": null,
+			"budget": "ok",
+			"feature": { "id": "feat-checkout", "ref": "F-6", "title": "Two-tap mobile checkout" },
+			"milestone": { "id": "ms-v1", "name": "Milestone 1" },
+			"resolution": null,
+			"latestUpdateBy": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+			"steps": [
+				{
+					"id": "step-40-1",
+					"text": "Extract idempotency key store behind consumer trait",
+					"required": true,
+					"done": true,
+					"checked": {
+						"agoHours": 12,
+						"by": { "id": "sam", "name": "Sam Okafor", "kind": "agent" }
+					},
+					"revision": 2
+				},
+				{
+					"id": "step-40-2",
+					"text": "Verify retry replay under duplicate submit",
+					"required": true,
+					"done": false,
+					"revision": 1
+				},
+				{
+					"id": "step-40-3",
+					"text": "Update checkout service runbook",
+					"required": false,
+					"done": false,
+					"revision": 1
+				}
+			],
+			"comments": [
+				{
+					"id": "c-40-1",
+					"kind": "note",
+					"author": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"agoHours": 24,
+					"body": "Keep the public checkout API shape stable while splitting the internal service."
+				},
+				{
+					"id": "c-40-2",
+					"kind": "comment",
+					"author": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"agoHours": 4,
+					"body": "Idempotency store extracted; running replay verification tests next."
+				}
+			],
+			"activity": [
+				{
+					"id": "ev-40-1",
+					"agoHours": 52,
+					"actor": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"kind": "created",
+					"text": "created Task T-A40"
+				},
+				{
+					"id": "ev-40-2",
+					"agoHours": 30,
+					"actor": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"kind": "assigned",
+					"text": "assigned T-A40 to Web · Sam Okafor"
+				},
+				{
+					"id": "ev-40-3",
+					"agoHours": 12,
+					"actor": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"kind": "step",
+					"text": "checked \"Extract idempotency key store behind consumer trait\""
+				},
+				{
+					"id": "ev-40-4",
+					"agoHours": 2,
+					"actor": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"kind": "future_sync_marker_v9",
+					"text": "opaque future payload"
+				}
+			],
+			"output": [
+				{
+					"id": "out-40-1",
+					"kind": "branch",
+					"label": "web-app · sam/split-checkout"
+				},
+				{
+					"id": "out-40-2",
+					"kind": "document",
+					"label": "DES-04 Two-tap mobile checkout flow",
+					"unresolved": "Docs reader is not built yet"
+				}
+			],
+			"completion": null,
+			"fixes": [
+				{
+					"id": "0193c000-0000-7000-8000-000000000042",
+					"ref": "T-A42",
+					"type": "bug",
+					"title": "Pay button wraps under the total at 320 px",
+					"status": "in_progress"
+				}
+			],
+			"relatesTo": [],
+			"repositories": [
+				{
+					"repository": "web-app",
+					"branch": "sam/split-checkout",
+					"worktree": "/srv/agentic-org/lumen/worktrees/sam/T-A40",
+					"integratedCommit": "9f3b21a"
+				}
+			],
+			"why": [
+				{
+					"id": "doc-des-checkout",
+					"key": "DES-04",
+					"title": "Two-tap mobile checkout flow",
+					"kind": "design",
+					"status": "current"
+				}
+			],
+			"time": {
+				"startedAgoHours": 30,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 100800,
+				"cycleSeconds": 79200,
+				"waitingOnYouSeconds": 10800,
+				"blockedSeconds": 0,
+				"typical": {
+					"label": "Typical for a task in Web",
+					"cost": "≈ $3–6",
+					"time": "1–2 d"
+				}
+			},
+			"cost": {
+				"knownCostMicroUsd": 6400000,
+				"knownTokens": 1900000,
+				"records": 8,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": true,
+				"byAgent": [
+					{
+						"agent": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+						"tokens": 1500000,
+						"costMicroUsd": 5100000,
+						"agoHours": 1
+					},
+					{
+						"agent": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+						"tokens": 400000,
+						"costMicroUsd": 1300000,
+						"agoHours": 6
+					}
+				],
+				"budget": {
+					"unit": "usd",
+					"limit": 10000000,
+					"spent": 6400000,
+					"complete": true,
+					"extended": false,
+					"policyRevision": 1
+				}
+			},
+			"privateNotes": [
+				{
+					"id": "pn-40-1",
+					"author": { "id": "you", "name": "Alex Kim", "kind": "person" },
+					"body": "Double-check Stripe webhook retries before releasing Beacon 0.2.",
+					"createdAgoHours": 5,
+					"updatedAgoHours": 5,
+					"revision": 1,
+					"mine": true
+				},
+				{
+					"id": "pn-40-2",
+					"author": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"body": "Customer pilot starts Monday; prioritize mobile Safari testing.",
+					"createdAgoHours": 18,
+					"updatedAgoHours": 18,
+					"revision": 1,
+					"mine": false
+				},
+				{
+					"id": "pn-40-3",
+					"author": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"body": "Implementation plan:\n1. Extract idempotency key store behind a consumer trait.\n2. Keep payment authorization and basket persistence in separate transactions.\n3. Replay duplicate submits with the same operation ID.",
+					"createdAgoHours": 14,
+					"updatedAgoHours": 14,
+					"revision": 1,
+					"mine": false
+				},
+				{
+					"id": "pn-40-4",
+					"author": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"body": "Test notes: duplicate submit replay passed on 20 concurrent requests; verifying timeout recovery when authorization succeeds after basket write.",
+					"createdAgoHours": 3,
+					"updatedAgoHours": 2,
+					"revision": 2,
+					"mine": false
+				},
+				{
+					"id": "pn-40-5",
+					"author": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"body": "Layout check reasoning: checkout split keeps the footer DOM untouched, so the 320 px pay-button fix on T-A42 remains compatible.",
+					"createdAgoHours": 6,
+					"updatedAgoHours": 6,
+					"revision": 1,
+					"mine": false
+				}
+			]
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000044",
+			"ref": "T-A44",
+			"type": "task",
+			"title": "Decide the retry policy for payments",
+			"description": "Agree on maximum retry attempts and backoff schedule when the payment gateway returns 503.",
+			"status": "blocked",
+			"priority": "urgent",
+			"severity": null,
+			"effort": 2,
+			"project": { "id": "beacon", "name": "Beacon", "number": 8 },
+			"team": { "id": "web", "name": "Web" },
+			"assignedTeam": { "id": "web", "name": "Web" },
+			"assignee": { "id": "mira", "name": "Mira Castillo", "kind": "agent" },
+			"reporter": { "id": "you", "name": "Alex Kim", "kind": "person" },
+			"createdAgoHours": 40,
+			"updatedAgoHours": 2,
+			"statusAgoHours": 8,
+			"blockedReason": "Waiting on owner decision between 3 or 5 retries",
+			"reopenCount": 0,
+			"needsMe": {
+				"source": "owner_block",
+				"text": "Mira is waiting on your choice of retry limit",
+				"inboxItemId": "inbox-3"
+			},
+			"budget": null,
+			"feature": { "id": "feat-checkout", "ref": "F-6", "title": "Two-tap mobile checkout" },
+			"milestone": null,
+			"resolution": null,
+			"latestUpdateBy": { "id": "mira", "name": "Mira Castillo", "kind": "agent" },
+			"steps": [],
+			"comments": [
+				{
+					"id": "c-44-1",
+					"kind": "question",
+					"author": { "id": "mira", "name": "Mira Castillo", "kind": "agent" },
+					"agoHours": 8,
+					"body": "Should we cap gateway retries at 3 attempts (fast fail) or 5 attempts?"
+				}
+			],
+			"activity": [
+				{
+					"id": "ev-44-1",
+					"agoHours": 40,
+					"actor": { "id": "you", "name": "Alex Kim", "kind": "person" },
+					"kind": "created",
+					"text": "created Task T-A44"
+				},
+				{
+					"id": "ev-44-2",
+					"agoHours": 8,
+					"actor": { "id": "mira", "name": "Mira Castillo", "kind": "agent" },
+					"kind": "status",
+					"text": "marked T-A44 as Blocked",
+					"note": "Waiting on owner decision between 3 or 5 retries"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [],
+			"why": [],
+			"time": {
+				"startedAgoHours": 36,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 144000,
+				"cycleSeconds": 129600,
+				"waitingOnYouSeconds": 28800,
+				"blockedSeconds": 28800
+			},
+			"cost": {
+				"knownCostMicroUsd": null,
+				"knownTokens": null,
+				"records": 0,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": false,
+				"byAgent": [],
+				"budget": null
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000031",
+			"ref": "T-A31",
+			"type": "task",
+			"title": "Retry deploys on 503",
+			"description": "Add bounded exponential backoff when staging deploy endpoints return 503 during rolling updates.",
+			"status": "blocked",
+			"priority": "high",
+			"severity": null,
+			"effort": 3,
+			"project": { "id": "atlas", "name": "Atlas", "number": 3 },
+			"team": { "id": "platform", "name": "Platform" },
+			"assignedTeam": { "id": "platform", "name": "Platform" },
+			"assignee": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+			"reporter": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+			"createdAgoHours": 72,
+			"updatedAgoHours": 1,
+			"statusAgoHours": 2,
+			"blockedReason": "Budget reached",
+			"reopenCount": 0,
+			"needsMe": {
+				"source": "budget",
+				"text": "Budget reached ($10 of $10) — execution held",
+				"inboxItemId": "inbox-1"
+			},
+			"budget": "reached",
+			"budgetHold": "held",
+			"feature": null,
+			"milestone": null,
+			"resolution": null,
+			"latestUpdateBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+			"steps": [
+				{
+					"id": "step-31-1",
+					"text": "Add jittered backoff for 503 responses",
+					"required": true,
+					"done": true,
+					"checked": {
+						"agoHours": 10,
+						"by": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" }
+					},
+					"revision": 2
+				}
+			],
+			"comments": [],
+			"activity": [
+				{
+					"id": "ev-31-1",
+					"agoHours": 72,
+					"actor": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"kind": "created",
+					"text": "created Task T-A31"
+				},
+				{
+					"id": "ev-31-2",
+					"agoHours": 2,
+					"actor": null,
+					"kind": "budget",
+					"text": "placed budget hold (Budget reached at $10.00)"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [
+				{
+					"repository": "infra",
+					"branch": "kai/retry-503"
+				}
+			],
+			"why": [],
+			"time": {
+				"startedAgoHours": 48,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 259200,
+				"cycleSeconds": 172800,
+				"waitingOnYouSeconds": 7200,
+				"blockedSeconds": 7200
+			},
+			"cost": {
+				"knownCostMicroUsd": 10200000,
+				"knownTokens": 3100000,
+				"records": 14,
+				"unpricedRecords": 1,
+				"incompleteReason": "Antigravity doesn't report usage",
+				"includesApiEquivalent": true,
+				"byAgent": [
+					{
+						"agent": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+						"tokens": 3100000,
+						"costMicroUsd": 10200000,
+						"agoHours": 2
+					}
+				],
+				"budget": {
+					"unit": "usd",
+					"limit": 10000000,
+					"spent": 10200000,
+					"complete": false,
+					"incompleteReason": "Antigravity doesn't report usage",
+					"hold": "held",
+					"extended": false,
+					"baseLimit": 10000000,
+					"policyRevision": 2
+				}
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000037",
+			"ref": "T-A37",
+			"type": "task",
+			"title": "Make the deploy script give up after 5 tries",
+			"description": "Stop infinite retry loops when staging DNS does not resolve.",
+			"status": "todo",
+			"priority": "normal",
+			"severity": null,
+			"effort": 2,
+			"project": { "id": "atlas", "name": "Atlas", "number": 3 },
+			"team": { "id": "platform", "name": "Platform" },
+			"assignedTeam": { "id": "platform", "name": "Platform" },
+			"assignee": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+			"reporter": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+			"createdAgoHours": 36,
+			"updatedAgoHours": 5,
+			"statusAgoHours": 36,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": null,
+			"budget": "warned",
+			"feature": null,
+			"milestone": null,
+			"resolution": null,
+			"latestUpdateBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+			"steps": [],
+			"comments": [],
+			"activity": [
+				{
+					"id": "ev-37-1",
+					"agoHours": 36,
+					"actor": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"kind": "created",
+					"text": "created Task T-A37"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [],
+			"time": {
+				"startedAgoHours": null,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 129600,
+				"cycleSeconds": null,
+				"waitingOnYouSeconds": 0,
+				"blockedSeconds": 0
+			},
+			"cost": {
+				"knownCostMicroUsd": 4200000,
+				"knownTokens": 1200000,
+				"records": 5,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": true,
+				"byAgent": [
+					{
+						"agent": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+						"tokens": 1200000,
+						"costMicroUsd": 4200000,
+						"agoHours": 5
+					}
+				],
+				"budget": {
+					"unit": "usd",
+					"limit": 5000000,
+					"spent": 4200000,
+					"complete": true,
+					"extended": false,
+					"policyRevision": 1
+				}
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000038",
+			"ref": "T-A38",
+			"type": "task",
+			"title": "Receipt layout for small phones",
+			"description": "Ensure payment receipts stay readable at 320 px and 200% text.",
+			"status": "done",
+			"priority": "normal",
+			"severity": null,
+			"effort": 3,
+			"project": { "id": "beacon", "name": "Beacon", "number": 8 },
+			"team": { "id": "web", "name": "Web" },
+			"assignedTeam": { "id": "design", "name": "Design" },
+			"assignee": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+			"reporter": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+			"createdAgoHours": 96,
+			"updatedAgoHours": 48,
+			"statusAgoHours": 48,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": null,
+			"budget": null,
+			"feature": { "id": "feat-checkout", "ref": "F-6", "title": "Two-tap mobile checkout" },
+			"milestone": null,
+			"resolution": "completed",
+			"latestUpdateBy": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+			"steps": [],
+			"comments": [],
+			"activity": [
+				{
+					"id": "ev-38-1",
+					"agoHours": 96,
+					"actor": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"kind": "created",
+					"text": "created Task T-A38"
+				},
+				{
+					"id": "ev-38-2",
+					"agoHours": 48,
+					"actor": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+					"kind": "closed",
+					"text": "closed T-A38 as Done"
+				}
+			],
+			"output": [],
+			"completion": {
+				"agoHours": 48,
+				"by": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+				"text": "Verified receipt layout at 320 px and 200% text with zero horizontal scroll."
+			},
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [],
+			"time": {
+				"startedAgoHours": 80,
+				"startUnavailable": false,
+				"open": false,
+				"leadSeconds": 172800,
+				"cycleSeconds": 115200,
+				"waitingOnYouSeconds": 0,
+				"blockedSeconds": 0
+			},
+			"cost": {
+				"knownCostMicroUsd": 2100000,
+				"knownTokens": 620000,
+				"records": 3,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": true,
+				"byAgent": [],
+				"budget": null
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000029",
+			"ref": "T-A29",
+			"type": "task",
+			"title": "Tag every deploy with its commits",
+			"description": "Record commit SHAs on every production deploy event.",
+			"status": "done",
+			"priority": "low",
+			"severity": null,
+			"effort": 1,
+			"project": { "id": "atlas", "name": "Atlas", "number": 3 },
+			"team": { "id": "platform", "name": "Platform" },
+			"assignedTeam": { "id": "platform", "name": "Platform" },
+			"assignee": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+			"reporter": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+			"createdAgoHours": 360,
+			"updatedAgoHours": 240,
+			"statusAgoHours": 240,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": null,
+			"budget": null,
+			"feature": null,
+			"milestone": null,
+			"resolution": "completed",
+			"latestUpdateBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+			"steps": [],
+			"comments": [],
+			"activity": [
+				{
+					"id": "ev-29-1",
+					"agoHours": 240,
+					"actor": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"kind": "closed",
+					"text": "closed T-A29 as Done"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [],
+			"time": {
+				"startedAgoHours": null,
+				"startUnavailable": true,
+				"open": false,
+				"leadSeconds": 432000,
+				"cycleSeconds": null,
+				"waitingOnYouSeconds": 0,
+				"blockedSeconds": 0
+			},
+			"cost": {
+				"knownCostMicroUsd": null,
+				"knownTokens": null,
+				"records": 0,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": false,
+				"byAgent": [],
+				"budget": null
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000050",
+			"ref": "T-A50",
+			"type": "task",
+			"title": "First-week checklist for new agents",
+			"description": "Projectless team task for People operations.",
+			"status": "todo",
+			"priority": "normal",
+			"severity": null,
+			"effort": null,
+			"project": null,
+			"team": { "id": "people", "name": "People" },
+			"assignedTeam": { "id": "people", "name": "People" },
+			"assignee": { "id": "hana", "name": "Hana Weiss", "kind": "person" },
+			"reporter": { "id": "hana", "name": "Hana Weiss", "kind": "person" },
+			"createdAgoHours": 18,
+			"updatedAgoHours": 18,
+			"statusAgoHours": 18,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": null,
+			"budget": null,
+			"feature": null,
+			"milestone": null,
+			"resolution": null,
+			"latestUpdateBy": { "id": "hana", "name": "Hana Weiss", "kind": "person" },
+			"steps": [],
+			"comments": [],
+			"activity": [
+				{
+					"id": "ev-50-1",
+					"agoHours": 18,
+					"actor": { "id": "hana", "name": "Hana Weiss", "kind": "person" },
+					"kind": "created",
+					"text": "created Task T-A50"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [],
+			"time": {
+				"startedAgoHours": null,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 64800,
+				"cycleSeconds": null,
+				"waitingOnYouSeconds": 0,
+				"blockedSeconds": 0
+			},
+			"cost": {
+				"knownCostMicroUsd": null,
+				"knownTokens": null,
+				"records": 0,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": false,
+				"byAgent": [],
+				"budget": null
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000042",
+			"ref": "T-A42",
+			"type": "bug",
+			"title": "Pay button wraps under the total at 320 px",
+			"description": "At 320 px viewport with 200% text, the Pay button wraps beneath the order total and gets clipped.",
+			"status": "in_progress",
+			"priority": "high",
+			"severity": "major",
+			"effort": 2,
+			"project": { "id": "beacon", "name": "Beacon", "number": 8 },
+			"team": { "id": "web", "name": "Web" },
+			"assignedTeam": { "id": "web", "name": "Web" },
+			"assignee": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+			"reporter": { "id": "you", "name": "Alex Kim", "kind": "person" },
+			"createdAgoHours": 48,
+			"updatedAgoHours": 1,
+			"statusAgoHours": 20,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": {
+				"source": "verify",
+				"text": "Noor marked T-A42 as fixed — waiting for your verification",
+				"inboxItemId": "inbox-2"
+			},
+			"budget": null,
+			"awaitingVerification": true,
+			"feature": { "id": "feat-checkout", "ref": "F-6", "title": "Two-tap mobile checkout" },
+			"milestone": null,
+			"resolution": null,
+			"latestUpdateBy": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+			"steps": [
+				{
+					"id": "step-42-1",
+					"text": "Verify checkout footer at 320 px with 200% text",
+					"required": true,
+					"done": true,
+					"checked": {
+						"agoHours": 1,
+						"by": { "id": "noor", "name": "Noor Haddad", "kind": "agent" }
+					},
+					"revision": 2
+				}
+			],
+			"comments": [
+				{
+					"id": "c-42-1",
+					"kind": "comment",
+					"author": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"agoHours": 1,
+					"body": "Switched checkout footer to flex-wrap with min-w-0; ready for verification."
+				}
+			],
+			"activity": [
+				{
+					"id": "ev-42-1",
+					"agoHours": 48,
+					"actor": { "id": "you", "name": "Alex Kim", "kind": "person" },
+					"kind": "created",
+					"text": "reported Bug T-A42"
+				},
+				{
+					"id": "ev-42-2",
+					"agoHours": 1,
+					"actor": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"kind": "fixed",
+					"text": "marked T-A42 as fixed (via Task T-A40)"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [
+				{
+					"repository": "web-app",
+					"branch": "noor/fix-pay-button",
+					"integratedCommit": "d4e5f61"
+				}
+			],
+			"why": [],
+			"time": {
+				"startedAgoHours": 20,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 172800,
+				"cycleSeconds": 72000,
+				"waitingOnYouSeconds": 3600,
+				"blockedSeconds": 0
+			},
+			"bug": {
+				"report": {
+					"whatHappened": "At 320 px viewport with 200% text, the Pay button wraps beneath the order total and clips.",
+					"expected": "Pay button stays full-width and visible below the total without clipping.",
+					"steps": "1. Open Beacon checkout at 320 px.\n2. Set text size to 200%.\n3. Scroll to the checkout footer.",
+					"environment": "WebKit 18 · web-app main@7a8b9c0",
+					"reported": {
+						"severity": "minor",
+						"priority": "normal",
+						"agoHours": 48,
+						"by": { "id": "you", "name": "Alex Kim", "kind": "person" }
+					}
+				},
+				"severityConfirmed": true,
+				"suggestedVerifier": { "id": "you", "name": "Alex Kim", "kind": "person" },
+				"suggestedTriager": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+				"fixed": {
+					"how": {
+						"kind": "task",
+						"task": {
+							"id": "0193c000-0000-7000-8000-000000000040",
+							"ref": "T-A40",
+							"type": "task",
+							"title": "Split the checkout service",
+							"status": "in_progress"
+						}
+					},
+					"note": "Fixed button wrapping in checkout footer.",
+					"agoHours": 1,
+					"by": { "id": "noor", "name": "Noor Haddad", "kind": "agent" }
+				},
+				"verifications": [],
+				"closedReason": null,
+				"duplicateOf": null,
+				"fixTasks": [
+					{
+						"id": "0193c000-0000-7000-8000-000000000040",
+						"ref": "T-A40",
+						"type": "task",
+						"title": "Split the checkout service",
+						"status": "in_progress"
+					}
+				]
+			},
+			"cost": {
+				"knownCostMicroUsd": 1800000,
+				"knownTokens": 540000,
+				"records": 2,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": true,
+				"byAgent": [
+					{
+						"agent": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+						"tokens": 540000,
+						"costMicroUsd": 1800000,
+						"agoHours": 1
+					}
+				],
+				"budget": null
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000045",
+			"ref": "T-A45",
+			"type": "bug",
+			"title": "Card number field drops the last digit",
+			"description": "Pasting a 16-digit card number with spaces truncates the final digit.",
+			"status": "todo",
+			"priority": "urgent",
+			"severity": "critical",
+			"effort": null,
+			"project": { "id": "beacon", "name": "Beacon", "number": 8 },
+			"team": { "id": "web", "name": "Web" },
+			"assignedTeam": null,
+			"assignee": null,
+			"reporter": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+			"createdAgoHours": 7,
+			"updatedAgoHours": 7,
+			"statusAgoHours": 7,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": {
+				"source": "critical",
+				"text": "Critical bug is unassigned — stays in Needs you until assigned or closed",
+				"inboxItemId": "inbox-5"
+			},
+			"budget": null,
+			"feature": null,
+			"milestone": null,
+			"resolution": null,
+			"latestUpdateBy": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+			"steps": [],
+			"comments": [],
+			"activity": [
+				{
+					"id": "ev-45-1",
+					"agoHours": 7,
+					"actor": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"kind": "created",
+					"text": "reported Bug T-A45"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [],
+			"why": [],
+			"time": {
+				"startedAgoHours": null,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 25200,
+				"cycleSeconds": null,
+				"waitingOnYouSeconds": 25200,
+				"blockedSeconds": 0
+			},
+			"bug": {
+				"report": {
+					"whatHappened": "Pasting a formatted 16-digit card number drops the last digit before validation.",
+					"expected": "Whitespace is stripped before applying the 16-digit limit.",
+					"steps": "Paste '4242 4242 4242 4242' into the card input.",
+					"environment": "Chromium 131 · web-app main",
+					"reported": {
+						"severity": "critical",
+						"priority": "urgent",
+						"agoHours": 7,
+						"by": { "id": "avery", "name": "Avery Stone", "kind": "person" }
+					}
+				},
+				"severityConfirmed": false,
+				"suggestedVerifier": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+				"suggestedTriager": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+				"fixed": null,
+				"verifications": [],
+				"closedReason": null,
+				"duplicateOf": null,
+				"fixTasks": []
+			},
+			"cost": {
+				"knownCostMicroUsd": null,
+				"knownTokens": null,
+				"records": 0,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": false,
+				"byAgent": [],
+				"budget": null
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000046",
+			"ref": "T-A46",
+			"type": "bug",
+			"title": "Receipt print margin slightly uneven",
+			"description": "Left margin on printed receipts is wider than the right margin.",
+			"status": "todo",
+			"priority": "low",
+			"severity": null,
+			"effort": null,
+			"project": { "id": "beacon", "name": "Beacon", "number": 8 },
+			"team": { "id": "web", "name": "Web" },
+			"assignedTeam": { "id": "web", "name": "Web" },
+			"assignee": null,
+			"reporter": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+			"createdAgoHours": 14,
+			"updatedAgoHours": 14,
+			"statusAgoHours": 14,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": null,
+			"budget": null,
+			"feature": null,
+			"milestone": null,
+			"resolution": null,
+			"latestUpdateBy": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+			"steps": [],
+			"comments": [],
+			"activity": [
+				{
+					"id": "ev-46-1",
+					"agoHours": 14,
+					"actor": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+					"kind": "created",
+					"text": "reported Bug T-A46"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [],
+			"why": [],
+			"time": {
+				"startedAgoHours": null,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 50400,
+				"cycleSeconds": null,
+				"waitingOnYouSeconds": 0,
+				"blockedSeconds": 0
+			},
+			"bug": {
+				"report": {
+					"whatHappened": "Printed receipt has uneven margins on A4.",
+					"expected": "Equal left and right print margins.",
+					"steps": null,
+					"environment": null,
+					"reported": {
+						"severity": null,
+						"priority": "low",
+						"agoHours": 14,
+						"by": { "id": "juno", "name": "Juno Park", "kind": "agent" }
+					}
+				},
+				"severityConfirmed": false,
+				"suggestedVerifier": null,
+				"suggestedTriager": null,
+				"fixed": null,
+				"verifications": [],
+				"closedReason": null,
+				"duplicateOf": null,
+				"fixTasks": []
+			},
+			"cost": {
+				"knownCostMicroUsd": null,
+				"knownTokens": null,
+				"records": 0,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": false,
+				"byAgent": [],
+				"budget": null
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000033",
+			"ref": "T-A33",
+			"type": "bug",
+			"title": "Rollback leaves the old pods running",
+			"description": "When an Atlas deploy rolls back, terminated pods linger until manual drain.",
+			"status": "todo",
+			"priority": "high",
+			"severity": "major",
+			"effort": 3,
+			"project": { "id": "atlas", "name": "Atlas", "number": 3 },
+			"team": { "id": "platform", "name": "Platform" },
+			"assignedTeam": { "id": "platform", "name": "Platform" },
+			"assignee": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+			"reporter": { "id": "former-emp", "name": "Devon Brooks", "kind": "person", "former": true },
+			"createdAgoHours": 20,
+			"updatedAgoHours": 20,
+			"statusAgoHours": 20,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": null,
+			"budget": null,
+			"feature": null,
+			"milestone": null,
+			"resolution": null,
+			"latestUpdateBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+			"steps": [],
+			"comments": [],
+			"activity": [
+				{
+					"id": "ev-33-1",
+					"agoHours": 20,
+					"actor": { "id": "former-emp", "name": "Devon Brooks", "kind": "person", "former": true },
+					"kind": "created",
+					"text": "reported Bug T-A33"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [],
+			"why": [],
+			"time": {
+				"startedAgoHours": null,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 72000,
+				"cycleSeconds": null,
+				"waitingOnYouSeconds": 0,
+				"blockedSeconds": 0
+			},
+			"bug": {
+				"report": {
+					"whatHappened": "Old pods remain Running after rollback finishes.",
+					"expected": "Rollback drains and removes superseded pods.",
+					"steps": "Trigger a deploy rollback on staging.",
+					"environment": "infra main",
+					"reported": {
+						"severity": "major",
+						"priority": "high",
+						"agoHours": 20,
+						"by": { "id": "former-emp", "name": "Devon Brooks", "kind": "person", "former": true }
+					}
+				},
+				"severityConfirmed": true,
+				"suggestedVerifier": null,
+				"suggestedTriager": null,
+				"fixed": null,
+				"verifications": [],
+				"closedReason": null,
+				"duplicateOf": null,
+				"fixTasks": []
+			},
+			"cost": {
+				"knownCostMicroUsd": null,
+				"knownTokens": null,
+				"records": 0,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": false,
+				"byAgent": [],
+				"budget": null
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000043",
+			"ref": "T-A43",
+			"type": "request",
+			"title": "Let guests choose adjacent tables when booking",
+			"description": "Allow larger groups to select adjacent tables during checkout.",
+			"status": "in_progress",
+			"priority": "normal",
+			"severity": null,
+			"effort": null,
+			"project": { "id": "beacon", "name": "Beacon", "number": 8 },
+			"team": { "id": "web", "name": "Web" },
+			"assignedTeam": { "id": "design", "name": "Design" },
+			"assignee": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+			"reporter": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+			"createdAgoHours": 30,
+			"updatedAgoHours": 3,
+			"statusAgoHours": 12,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": {
+				"source": "approval",
+				"text": "Juno recorded a scoping outcome ready for your approval"
+			},
+			"budget": null,
+			"feature": null,
+			"milestone": null,
+			"resolution": null,
+			"latestUpdateBy": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+			"steps": [],
+			"comments": [
+				{
+					"id": "c-43-1",
+					"kind": "comment",
+					"author": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+					"agoHours": 3,
+					"body": "Scoped the booking floor-plan picker into two tasks and a design doc."
+				}
+			],
+			"activity": [
+				{
+					"id": "ev-43-1",
+					"agoHours": 30,
+					"actor": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"kind": "created",
+					"text": "created Request T-A43"
+				},
+				{
+					"id": "ev-43-2",
+					"agoHours": 3,
+					"actor": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+					"kind": "scoped",
+					"text": "recorded scoping outcome with 2 draft tasks"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [],
+			"why": [],
+			"time": {
+				"startedAgoHours": 12,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 108000,
+				"cycleSeconds": 43200,
+				"waitingOnYouSeconds": 10800,
+				"blockedSeconds": 0
+			},
+			"request": {
+				"text": "Let guests choose adjacent tables when booking for groups of 6 or more, showing real availability.",
+				"routeReason": "Product designer: a new user-facing flow",
+				"routingSource": "rule",
+				"outcome": {
+					"feature": {
+						"type": "new",
+						"featureId": "feat-adjacent-tables",
+						"ref": "F-11",
+						"title": "Adjacent table selection"
+					},
+					"docs": [
+						{
+							"projectId": "beacon",
+							"docKey": "DES-11",
+							"title": "Floor-plan table pairing rules"
+						}
+					],
+					"draftTasks": [
+						{
+							"draftId": "draft-1",
+							"title": "Build adjacent table availability query",
+							"team": { "id": "web", "name": "Web" },
+							"assignee": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+							"priority": "high"
+						},
+						{
+							"draftId": "draft-2",
+							"title": "Add accessible table picker to booking flow",
+							"team": { "id": "web", "name": "Web" },
+							"assignee": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+							"priority": "normal"
+						}
+					],
+					"estimate": {
+						"effort": "5 points (2–3 days)",
+						"costUsdCentsMin": 800,
+						"costUsdCentsMax": 1500
+					},
+					"recorded": {
+						"agoHours": 3,
+						"by": { "id": "juno", "name": "Juno Park", "kind": "agent" }
+					}
+				},
+				"declineReason": null,
+				"mergedInto": null,
+				"created": []
+			},
+			"cost": {
+				"knownCostMicroUsd": 950000,
+				"knownTokens": 280000,
+				"records": 2,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": true,
+				"byAgent": [
+					{
+						"agent": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+						"tokens": 280000,
+						"costMicroUsd": 950000,
+						"agoHours": 3
+					}
+				],
+				"budget": null
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000117",
+			"ref": "T-B17",
+			"type": "request",
+			"title": "Review onboarding handbook",
+			"description": "Projectless team-only request queued for People.",
+			"status": "todo",
+			"priority": "normal",
+			"severity": null,
+			"effort": null,
+			"project": null,
+			"team": { "id": "people", "name": "People" },
+			"assignedTeam": { "id": "people", "name": "People" },
+			"assignee": null,
+			"reporter": { "id": "you", "name": "Alex Kim", "kind": "person" },
+			"createdAgoHours": 10,
+			"updatedAgoHours": 10,
+			"statusAgoHours": 10,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": null,
+			"budget": null,
+			"feature": null,
+			"milestone": null,
+			"resolution": null,
+			"latestUpdateBy": { "id": "you", "name": "Alex Kim", "kind": "person" },
+			"steps": [],
+			"comments": [],
+			"activity": [
+				{
+					"id": "ev-b17-1",
+					"agoHours": 10,
+					"actor": { "id": "you", "name": "Alex Kim", "kind": "person" },
+					"kind": "created",
+					"text": "created Request T-B17"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [],
+			"why": [],
+			"time": {
+				"startedAgoHours": null,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 36000,
+				"cycleSeconds": null,
+				"waitingOnYouSeconds": 0,
+				"blockedSeconds": 0
+			},
+			"request": {
+				"text": "Update the onboarding handbook to reflect the new office setup steps and agent supervision model.",
+				"routeReason": "Queued for People team",
+				"routingSource": "person",
+				"outcome": null,
+				"declineReason": null,
+				"mergedInto": null,
+				"created": []
+			},
+			"cost": {
+				"knownCostMicroUsd": null,
+				"knownTokens": null,
+				"records": 0,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": false,
+				"byAgent": [],
+				"budget": null
+			},
+			"privateNotes": []
+		},
+		{
+			"id": "0193c000-0000-7000-8000-000000000049",
+			"ref": "T-A49",
+			"type": "request",
+			"title": "Export audit log as NDJSON",
+			"description": "Request scoped by the viewer to verify scoper self-approval refusal (RQS-12).",
+			"status": "in_progress",
+			"priority": "normal",
+			"severity": null,
+			"effort": null,
+			"project": { "id": "atlas", "name": "Atlas", "number": 3 },
+			"team": { "id": "platform", "name": "Platform" },
+			"assignedTeam": { "id": "platform", "name": "Platform" },
+			"assignee": { "id": "you", "name": "Alex Kim", "kind": "person" },
+			"reporter": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+			"createdAgoHours": 15,
+			"updatedAgoHours": 2,
+			"statusAgoHours": 6,
+			"blockedReason": null,
+			"reopenCount": 0,
+			"needsMe": null,
+			"budget": null,
+			"feature": null,
+			"milestone": null,
+			"resolution": null,
+			"latestUpdateBy": { "id": "you", "name": "Alex Kim", "kind": "person" },
+			"steps": [],
+			"comments": [],
+			"activity": [
+				{
+					"id": "ev-49-1",
+					"agoHours": 15,
+					"actor": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"kind": "created",
+					"text": "created Request T-A49"
+				},
+				{
+					"id": "ev-49-2",
+					"agoHours": 2,
+					"actor": { "id": "you", "name": "Alex Kim", "kind": "person" },
+					"kind": "scoped",
+					"text": "recorded scoping outcome with 1 draft task"
+				}
+			],
+			"output": [],
+			"completion": null,
+			"fixes": [],
+			"relatesTo": [],
+			"repositories": [],
+			"why": [],
+			"time": {
+				"startedAgoHours": 6,
+				"startUnavailable": false,
+				"open": true,
+				"leadSeconds": 54000,
+				"cycleSeconds": 21600,
+				"waitingOnYouSeconds": 0,
+				"blockedSeconds": 0
+			},
+			"request": {
+				"text": "Provide a streaming NDJSON export for security audit logs.",
+				"routeReason": null,
+				"routingSource": "person",
+				"outcome": {
+					"docs": [],
+					"draftTasks": [
+						{
+							"draftId": "draft-49-1",
+							"title": "Add NDJSON audit log serializer",
+							"team": { "id": "platform", "name": "Platform" }
+						}
+					],
+					"estimate": {
+						"effort": "2 points",
+						"costUsdCentsMin": null,
+						"costUsdCentsMax": null
+					},
+					"recorded": {
+						"agoHours": 2,
+						"by": { "id": "you", "name": "Alex Kim", "kind": "person" }
+					}
+				},
+				"declineReason": null,
+				"mergedInto": null,
+				"created": []
+			},
+			"cost": {
+				"knownCostMicroUsd": null,
+				"knownTokens": null,
+				"records": 0,
+				"unpricedRecords": 0,
+				"includesApiEquivalent": false,
+				"byAgent": [],
+				"budget": null
+			},
+			"privateNotes": []
+		}
+	]
+}

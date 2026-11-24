@@ -2,18 +2,19 @@
 use crate::{
     api::SessionApi,
     host::{EventSink, HostControl},
-    service::{self, ApiLimits, GatewayConfig},
+    service::{self, ApiLimits, WebConfig},
     session::SessionCache,
+    sse::EventHub,
     tls::TlsCertificates,
     transport::{HttpLimits, ListenMode},
     Hsts,
 };
 use org_host_control::{
-    gateway::{
-        GatewayFd, GatewayFirstLine, GatewayHandoff, GatewayReadyForSecrets, LandlockEnforcement,
-        LandlockStatus, GATEWAY_HANDOFF_FDS,
-    },
     ops::{TlsFetchResult, HOST_SOCK_MARKER},
+    web::{
+        LandlockEnforcement, LandlockStatus, WebFd, WebFirstLine, WebHandoff, WebReadyForSecrets,
+        WEB_HANDOFF_FDS,
+    },
 };
 use org_platform::confinement::{self, Enforcement};
 use org_socket::rights::{self, ReceiveError, StreamReceiver};
@@ -25,7 +26,10 @@ use std::{
         unix::net::{UnixDatagram, UnixStream},
     },
     path::Path,
-    sync::{mpsc, Arc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex, OnceLock,
+    },
     time::{Duration, Instant},
 };
 use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
@@ -148,7 +152,7 @@ fn fatal() -> ! {
     std::process::exit(1)
 }
 
-fn first_line(reader: &mut impl BufRead) -> io::Result<GatewayFirstLine> {
+fn first_line(reader: &mut impl BufRead) -> io::Result<WebFirstLine> {
     let mut bytes = Vec::new();
     reader
         .by_ref()
@@ -192,26 +196,26 @@ fn byte(
     }
 }
 /// Decodes the descriptors exactly as the host sends them: the marker byte
-/// carries [`GATEWAY_HANDOFF_FDS`] in order, [Transfer, Listener], and nothing
+/// carries [`WEB_HANDOFF_FDS`] in order, [Transfer, Listener], and nothing
 /// else. Each descriptor's socket type is checked before any ACK is sent.
 fn descriptors(marker: u8, fds: Vec<OwnedFd>) -> io::Result<(UnixDatagram, TcpListener)> {
-    if marker != HOST_SOCK_MARKER || fds.len() != GATEWAY_HANDOFF_FDS.len() {
+    if marker != HOST_SOCK_MARKER || fds.len() != WEB_HANDOFF_FDS.len() {
         return Err(failure());
     }
     let mut transfer = None;
     let mut listener = None;
-    for (kind, fd) in GATEWAY_HANDOFF_FDS.into_iter().zip(fds) {
+    for (kind, fd) in WEB_HANDOFF_FDS.into_iter().zip(fds) {
         match kind {
-            GatewayFd::Transfer => transfer = Some(rights::unix_datagram(fd)?),
-            GatewayFd::Listener => listener = Some(rights::tcp_listener(fd)?),
+            WebFd::Transfer => transfer = Some(rights::unix_datagram(fd)?),
+            WebFd::Listener => listener = Some(rights::tcp_listener(fd)?),
         }
     }
     Ok((transfer.ok_or_else(failure)?, listener.ok_or_else(failure)?))
 }
 /// The ready line for what confinement reported. A Landlock ABI is reported only by an
 /// adapter that restricted this process under it in full; seccomp has no wire field.
-fn ready(enforcement: Enforcement) -> GatewayReadyForSecrets {
-    GatewayReadyForSecrets {
+fn ready(enforcement: Enforcement) -> WebReadyForSecrets {
+    WebReadyForSecrets {
         landlock: enforcement.landlock_abi.map(|abi| LandlockStatus {
             abi,
             enforcement: LandlockEnforcement::FullyEnforced,
@@ -239,8 +243,8 @@ fn handoff(
         }
         header.push(value);
     }
-    let _: GatewayHandoff = serde_json::from_slice(&header).map_err(|_| failure())?;
-    let (marker, fds) = byte(&mut receiver, GATEWAY_HANDOFF_FDS.len(), until, &fence)?;
+    let _: WebHandoff = serde_json::from_slice(&header).map_err(|_| failure())?;
+    let (marker, fds) = byte(&mut receiver, WEB_HANDOFF_FDS.len(), until, &fence)?;
     let (transfer, listener) = descriptors(marker, fds)?;
     // Type checks precede ACK, and sole receiver has consumed exactly through
     // the marker. Its duplicate is dropped before the actor becomes the reader.
@@ -275,17 +279,32 @@ fn watch_stdin(mut input: impl Read + Send + 'static, host: Arc<HostControl>) ->
         .map(drop)
 }
 
-/// Applies the host's `session.ended` and `account.changed` pushes to the cache on the
-/// reader thread.
+/// Applies the host's `session.ended`, `account.changed`, and `auth.mode_changed`
+/// pushes on the reader thread.
 /// No session request precedes serving, so the generation is set before any
 /// event can name a cached session; an event before then has nothing to drop.
+#[cfg(test)]
 pub(crate) fn session_events(
     cache: Arc<SessionCache>,
     generation: Arc<OnceLock<u64>>,
 ) -> EventSink {
-    use org_host_control::browser::{SessionEnded, SESSION_ENDED};
+    session_events_with_access(cache, generation, Arc::new(AtomicBool::new(true)))
+}
+
+pub(crate) fn session_events_with_access(
+    cache: Arc<SessionCache>,
+    generation: Arc<OnceLock<u64>>,
+    auth_enabled: Arc<AtomicBool>,
+) -> EventSink {
+    use org_host_control::browser::{AuthModeChanged, SessionEnded, SESSION_ENDED};
     use org_host_control::organization::AccountChangedData;
     Arc::new(move |name: &str, data: &serde_json::Value| {
+        if name == org_host_control::event::AUTH_MODE_CHANGED {
+            if let Ok(changed) = serde_json::from_value::<AuthModeChanged>(data.clone()) {
+                auth_enabled.store(changed.auth_enabled, Ordering::Release);
+            }
+            return;
+        }
         // An organization was linked: the account's cached sessions predate it.
         if name == org_host_control::event::ACCOUNT_CHANGED {
             if let (Some(generation), Ok(changed)) = (
@@ -478,21 +497,37 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     // The cache exists before the connection so the reader can apply every
     // `session.ended` event, in arrival order, from the first frame on.
     let cache = Arc::new(SessionCache::default());
+    let hub = EventHub::default();
     let generation = Arc::new(OnceLock::new());
+    let auth_enabled = Arc::new(AtomicBool::new(true));
     let (renewed, renewals) = mpsc::channel();
+    let events_hub = hub.clone();
+    let session_sink = session_events_with_access(
+        Arc::clone(&cache),
+        Arc::clone(&generation),
+        Arc::clone(&auth_enabled),
+    );
+    let combined_sink: EventSink = Arc::new(move |name: &str, data: &serde_json::Value| {
+        session_sink(name, data);
+        events_hub.observe_host_event(name, data);
+    });
     let host = HostControl::from_handoff(
         control,
         transfer,
         line.instance_id,
         Arc::new(|| fatal()),
-        with_renewals(
-            session_events(Arc::clone(&cache), Arc::clone(&generation)),
-            renewed,
-        ),
+        with_renewals(combined_sink, renewed),
     )?;
     let _ = generation.set(host.generation());
     let fetched = host.fetch_listener().map_err(|_| failure())?;
     let scheme = fetched.listen().ok_or_else(failure)?.0;
+    if scheme != org_host_control::listen::ListenMode::Https {
+        if let Ok(view) =
+            host.request::<org_host_control::browser::InstanceView>(&Default::default())
+        {
+            auth_enabled.store(view.auth_enabled, Ordering::Release);
+        }
+    }
     let (mode, origin, hsts) = match fetched {
         TlsFetchResult::HttpLoopback { origin, hsts } => (ListenMode::HttpLoopback, origin, hsts),
         TlsFetchResult::HttpPublished { origin, hsts } => (ListenMode::HttpPublished, origin, hsts),
@@ -524,7 +559,7 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         org_host_control::listen::Hsts::Clear => Hsts::Clear,
     };
     let browser_origin = origin.clone();
-    let config = GatewayConfig {
+    let config = WebConfig {
         mode,
         origin,
         hsts,
@@ -541,7 +576,14 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         config,
         files,
         move || {
-            let backend = SessionApi::new(Arc::clone(&host), cache, &browser_origin, scheme);
+            let backend = SessionApi::with_access(
+                Arc::clone(&host),
+                cache,
+                &browser_origin,
+                scheme,
+                hub,
+                auth_enabled,
+            );
             Ok((backend, host_lost(host)))
         },
         serving,

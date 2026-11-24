@@ -1,11 +1,77 @@
 import { createContext, untrack } from 'svelte';
-import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
+import type { ItemStatus, OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import { inboxApi } from '$lib/modules/inbox/api';
 import type { InboxItem } from '$lib/modules/inbox/types';
-import { orgApi } from '$lib/org/api';
-import { owner } from '$lib/org/model';
-import { workApi } from '$lib/work';
-import { needsYou } from '$lib/work/saved';
+import { orgApi } from '$lib/modules/organization/api';
+import { owner } from '$lib/modules/organization/model';
+import { workApi } from '$lib/modules/work';
+import { needsYou } from '$lib/modules/work/saved';
+import { workItemsApi } from '$lib/modules/workitems/api';
+import type { TaskRow } from '$lib/modules/workitems/types';
+import { areaCapability } from './capabilities';
+
+function summaryStatus(row: TaskRow): ItemStatus {
+	if (row.type === 'bug') {
+		if (row.status === 'done' || row.status === 'cancelled') return 'closed';
+		if (row.awaitingVerification) return 'fixed';
+		if (row.needsMe?.source === 'critical') return 'new';
+		return row.status;
+	}
+	if (row.type === 'request') {
+		if (row.status === 'done') return 'approved';
+		if (row.status === 'cancelled') return row.merged ? 'merged' : 'declined';
+		if (row.needsMe?.source === 'approval') return 'scoped';
+		return row.status;
+	}
+	return row.status === 'cancelled' ? 'closed' : row.status;
+}
+
+function rowToSummary(row: TaskRow): WorkItemSummary {
+	const numMatch = /\d+$/.exec(row.ref);
+	return {
+		id: row.id,
+		short_id: row.ref,
+		kind: row.type,
+		number: numMatch ? Number(numMatch[0]) : 0,
+		title: row.title,
+		status: summaryStatus(row),
+		...(row.type === 'task' && row.status === 'cancelled' ? { resolution: 'cancelled' } : {}),
+		priority: row.priority,
+		severity: row.severity ?? undefined,
+		project_id: row.project?.id,
+		assignee_id: row.assignee?.id,
+		created_by: row.reporter.id,
+		created_at: row.createdAt,
+		updated_at: row.updatedAt,
+		blocked_reason: row.blockedReason ?? undefined,
+		severity_confirmed: row.type === 'bug',
+		fixes: [],
+		fixed_by: [],
+		checklist: {
+			total: row.checklist.total,
+			done: row.checklist.done,
+			required_left: row.checklist.requiredLeft
+		},
+		done_anyway: false,
+		owner_office_id: '',
+		generation: 1,
+		reopen_count: row.reopenCount,
+		version: row.revision,
+		deleted: false
+	};
+}
+
+export async function loadShellWorkItems(organizationId: string): Promise<WorkItemSummary[]> {
+	if (areaCapability('/work').available) {
+		try {
+			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' });
+			return queue.rows.map(rowToSummary);
+		} catch {
+			// Fall back to legacy workApi when workItemsApi is unavailable.
+		}
+	}
+	return (await workApi.snapshot(organizationId)).items;
+}
 
 export interface ShellRefreshResult {
 	inboxUpdated: boolean;
@@ -75,7 +141,7 @@ export class ShellData {
 		const baseOffices = untrack(() => this.#options.getBaseOffices());
 		const promise: Promise<ShellRefreshResult> = Promise.allSettled([
 			orgApi.view(id),
-			workApi.snapshot(id),
+			loadShellWorkItems(id),
 			inboxApi.list(id),
 			this.#options.loadOffices(id, baseOffices)
 		]).then(async ([orgRes, workRes, inboxRes, officesRes]): Promise<ShellRefreshResult> => {
@@ -91,7 +157,7 @@ export class ShellData {
 			if (orgRes.status === 'fulfilled') this.snapshot = orgRes.value.snapshot;
 			const workUpdated = workRes.status === 'fulfilled';
 			if (workUpdated) {
-				this.workItems = workRes.value.items;
+				this.workItems = workRes.value;
 				this.workError = undefined;
 			} else {
 				this.workError = workRes.reason;

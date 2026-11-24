@@ -82,6 +82,21 @@ test('UPD-1 to UPD-5: the instance, its update check, every office and how to up
 		'Version 0.3.0 is available, downloaded and verified. Found 1 hour ago. Nothing changes until you upgrade.'
 	);
 
+	// Attention-first order: This instance, then Offices (with any "Needs update" note at the top), then How to update.
+	await expect(page.locator('main section h3')).toHaveText([
+		'This instance',
+		'Offices',
+		'How to update'
+	]);
+	const noteBeforeList = await page.evaluate(() => {
+		const note = document.querySelector('[data-testid="hold-back-note"]');
+		const list = document.querySelector('[data-testid="office-versions"]');
+		return (
+			!!note && !!list && !!(note.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING)
+		);
+	});
+	expect(noteBeforeList).toBe(true);
+
 	await expect(page.getByTestId('upgrade-command')).toHaveText(
 		'agentic-org upgrade --name default'
 	);

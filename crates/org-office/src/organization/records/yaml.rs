@@ -85,6 +85,13 @@ pub fn encode(fields: &Fields) -> Vec<u8> {
     out.into_bytes()
 }
 
+/// Canonical deterministic compact JSON with keys sorted in byte order.
+pub fn canonical_json(value: &Value) -> String {
+    let mut out = String::new();
+    write_value(&mut out, value);
+    out
+}
+
 pub fn encode_document(fields: &Fields, body: &str) -> Vec<u8> {
     let mut out = b"---\n".to_vec();
     out.extend(encode(fields));
@@ -182,6 +189,34 @@ impl Reader {
             )),
         });
         readers.collect()
+    }
+
+    /// A list of strings.
+    pub fn strings(&mut self, key: &str) -> Result<Vec<String>, RecordError> {
+        let Value::Array(items) = self.take(key)? else {
+            return Err(self.error(key, "not a list"));
+        };
+        items
+            .into_iter()
+            .enumerate()
+            .map(|(i, item)| match item {
+                Value::String(text) => Ok(text),
+                _ => Err(RecordError::new(
+                    format!("{}[{i}]", self.path(key)),
+                    "not a string",
+                )),
+            })
+            .collect()
+    }
+
+    /// A JSON object mapping (used for structured nested payloads like `proposal`).
+    pub fn object(&mut self, key: &str) -> Result<Value, RecordError> {
+        let value = self.take(key)?;
+        if value.is_object() {
+            Ok(value)
+        } else {
+            Err(self.error(key, "not a mapping"))
+        }
     }
 
     /// Whether the file has `key` and nothing took it yet: for a field a file may omit.

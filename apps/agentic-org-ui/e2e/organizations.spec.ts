@@ -529,7 +529,7 @@ test('a create still in progress is shown as being created and resumes its looku
 }) => {
 	await signInAsAdmin(page, [LUMEN]);
 	const server = await backend(page);
-	const operation_id = '01M72N8MG00000000000000006';
+	const operation_id = '01a1c554-5200-7000-8000-000000000006';
 	await server.set('creating', [{ operation_id, name: 'Side Project', slug: 'side-project' }]);
 	await server.script('lookupScript', ['accepted']);
 	await visit(page, '/welcome');
@@ -550,7 +550,7 @@ test("a create whose lookups get no answer keeps its row, says Can't reach HQ, a
 }) => {
 	await signInAsAdmin(page, [LUMEN]);
 	const server = await backend(page);
-	const operation_id = '01M72N8MG00000000000000006';
+	const operation_id = '01a1c554-5200-7000-8000-000000000006';
 	await server.set('creating', [{ operation_id, name: 'Side Project', slug: 'side-project' }]);
 	await server.script('lookupScript', ['unavailable', 'unavailable', 'unavailable', 'completed']);
 	await visit(page, '/welcome');

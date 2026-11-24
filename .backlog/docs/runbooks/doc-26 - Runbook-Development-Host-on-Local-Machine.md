@@ -1,0 +1,98 @@
+---
+id: doc-26
+title: 'Runbook: Development Host on Local Machine'
+type: guide
+created_date: '2026-11-21T00:17:00Z'
+updated_date: '2026-11-21T00:17:00Z'
+tags:
+  - runbooks
+  - local-dev
+  - hq
+---
+# Runbook: a development host on this machine
+
+> [!NOTE] Review note (2026-11-21)
+> **Partially stale (last checked 2026-11-18):** The "What works and what does not" table still claims `agentic-org-web` refuses to open a listener and that registration/sign-in/create-organization are not possible yet. On current `v1`, A3 B4–B6 and A4 landed real-instance registration, sign-in, and organization creation (tested via `bun run test:e2e:real-instance`), though the browser-to-office channel (`B2.3a` / `TASK-5`) is not yet built. Disposable-home setup and foreground debug host steps remain accurate.
+
+What can be built and run from this checkout today, and how to do it without touching
+a real installation. Checked against the source on 2026-11-18; recheck against the
+commit you work on. [Executable migration](../design/doc-63%20-%20Design-Executables-and-Entry-Points.md) is the
+reference for what each executable does now.
+
+## What works and what does not
+
+| Step | Today |
+| --- | --- |
+| Build the four executables | macOS: CI builds the whole workspace there. Linux: all four build, and CI runs the whole workspace's tests there too. Since X2 the host starts office workers on GNU/Linux as well (`crates/org-platform-host/src/admission/linux.rs`: the worker runs from a sealed copy of the bytes the host hashed); a system with no admission adapter starts none. |
+| `--help` and `--version` of each executable | Work. |
+| `agentic-org serve` (debug build) against a disposable home | macOS: starts the host in the foreground (from the source; not run for this runbook). With no registered instance its socket refuses every call, `hello` included ("run setup"). `serve --name N` runs an instance that setup registered; its socket answers, among others, `hello`, `instance.status`, `admin.link.initial` and `admin.reset`, and the account/session, recovery and provisioning calls (FC-014, FC-016), which need an existing account and session — none exists before browser registration (A3). |
+| `agentic-org setup` | macOS: creates the instance, registers and starts a launchd user agent under your account, and prints a one-time registration link (increment A2); `agentic-org admin reset` and `agentic-org service start\|stop\|status` go with it. This is a real installation in your account. For a disposable run, a debug build with the `test-support` feature takes `ORG_DEV_ACCOUNT_BASE` (an absolute private folder used instead of `~/Library`) and `ORG_DEV_SERVICE_DIR` (runs the service as a child process instead of launchd), as `apps/agentic-org/setup-tests/setup.rs` does. The registration page itself is increment A3. Other systems refuse setup. |
+| `agentic-org-web` | Refuses to open a listener. Increment A3 makes it work. |
+| Create an organization, sign in, open the browser application against a server | Not possible yet (increments A3 and A4). |
+| The host starting an office worker | macOS and, since X2, GNU/Linux (`crates/org-platform-host/src/admission/`). |
+| The browser application on its own | `bun run dev` in `apps/agentic-org-ui`; areas without a server adapter show as unavailable. |
+
+## 1. A disposable home
+
+Use an empty, owner-private directory, never a real office home. In a terminal at the
+repository root:
+
+```sh
+export HQ_REPO="$(pwd -P)"
+export HQ_DEV="$(mktemp -d /tmp/ao-hq.XXXXXX)"
+chmod 700 "$HQ_DEV"
+mkdir -m 700 "$HQ_DEV/home" "$HQ_DEV/keys"
+export ORG_OFFICE_HOME="$HQ_DEV/home"
+export ORG_OFFICE_DEV_KEY_DIR="$HQ_DEV/keys"
+```
+
+A debug host refuses to start without `ORG_OFFICE_DEV_KEY_DIR`, an absolute folder
+outside the office home where it keeps the offices' secrets keys as plain files instead
+of in the Keychain. The office databases are not encrypted (ADR-0016); a secrets key
+only wraps the office's private keys. Keep socket paths short: macOS limits a socket
+path to 103 bytes.
+
+## 2. Build
+
+```sh
+cargo build --locked -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
+./target/debug/agentic-org --help
+./target/debug/agentic-org serve --help
+./target/debug/agentic-org-office --help
+./target/debug/agentic-org-web --help
+./target/debug/agent-os --help
+```
+
+There is no separate host executable: host code is the library `crates/org-host`,
+composed by `agentic-org serve`.
+
+## 3. Start the host
+
+```sh
+./target/debug/agentic-org serve \
+  --home "$ORG_OFFICE_HOME" \
+  --server-bin "$HQ_REPO/target/debug/agentic-org-office"
+```
+
+It stays in the foreground until Ctrl-C or SIGTERM. `--home`, `--server-bin` and
+`--app-team-id` are accepted by debug builds only; a release build refuses them. A
+fresh home has no registered instance, so every call to the host socket other than
+`hello` is refused. Do not edit registry, database or marker files by hand to get
+further: setup (A2) is what registers an instance.
+
+## 4. Logs
+
+The host logs to stderr. Each office worker it starts logs to
+`<home>/logs/<handle>.log`, owner-only, rotated at 10 MiB (`crates/org-host/src/logs.rs`).
+Never paste key bytes, passwords, session proofs or recovery codes into a log or a report.
+
+## 5. Stop and clean up
+
+Send Ctrl-C to the foreground host, or SIGTERM to its process, and wait for it to exit.
+Then remove exactly the directory created in step 1:
+
+```sh
+rm -rf "$HQ_DEV"
+```
+
+Never run that against a real office home.

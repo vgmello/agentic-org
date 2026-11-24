@@ -2,7 +2,7 @@
 //! and has no host control capability, listener, session or TLS material.
 mod files;
 use crate::assets::{BuildError, BuildFiles};
-use org_host_control::gateway::WebRelease;
+use org_host_control::web::WebRelease;
 use org_platform::image::{ReleaseArchitecture, ReleasePlatform};
 use org_release::{Architecture, Platform, TrustedKeys, TrustedPolicy, VerifiedManifest};
 use std::path::Path;

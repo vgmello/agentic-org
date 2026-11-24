@@ -12,17 +12,19 @@
 	import Users from '@lucide/svelte/icons/users';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { cn } from '$lib/utils';
-	import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
+	import type { Connection, OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/modules/inbox/types';
 	import type { Conversation } from '$lib/modules/messaging';
 	import { answerExecutiveQuestion, type OrgAiAnswer } from '$lib/home/model';
-	import { nonOwners } from '$lib/org/model';
+	import { nonOwners } from '$lib/modules/organization/model';
+	import NewMenu from './NewMenu.svelte';
 	import type { ShellAiAskOptions } from './shell-ai';
 	import { useShellData } from './shell-data.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from './shortcuts';
 	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
 
 	let {
+		connection,
 		snapshot,
 		items = [],
 		inboxItems = [],
@@ -30,6 +32,7 @@
 		ownerId = 'owner',
 		registerAsk
 	}: {
+		connection?: Connection;
 		snapshot?: OrgSnapshot;
 		items?: WorkItemSummary[];
 		inboxItems?: readonly InboxItem[];
@@ -37,6 +40,8 @@
 		ownerId?: string;
 		registerAsk?: (fn: (prompt: string, opts?: ShellAiAskOptions) => void) => void;
 	} = $props();
+
+	let newMenu = $state<ReturnType<typeof NewMenu> | undefined>();
 
 	interface CommandEntry {
 		id: string;
@@ -69,7 +74,7 @@
 		if (!targetOrgId) return;
 		const seq = ++chatLoadSeq;
 		try {
-			const { chatApi } = await import('$lib/modules/messaging/legacy-api');
+			const { chatApi } = await import('$lib/modules/messaging/api');
 			const snap = await chatApi.snapshot(targetOrgId);
 			if (destroyed || seq !== chatLoadSeq || targetOrgId !== organizationId) return;
 			// Lock onto the currently highlighted entry ID before swapping results (for both `#` and
@@ -320,10 +325,10 @@
 		for (const item of items.filter((i) => !i.deleted)) {
 			const dest =
 				item.kind === 'request'
-					? `/work?request=${encodeURIComponent(item.id)}`
+					? `/work/${encodeURIComponent(item.short_id)}`
 					: item.project_id
 						? `/projects/${encodeURIComponent(item.project_id)}/work`
-						: '/work';
+						: `/work/${encodeURIComponent(item.short_id)}`;
 			list.push({
 				id: `work-${item.id}`,
 				group: 'Work',
@@ -562,6 +567,23 @@
 		}
 		if (
 			!open &&
+			!inlineOpen &&
+			connection &&
+			singleKeyShortcutsOn() &&
+			(event.key === 'n' || event.key === 'N') &&
+			!event.repeat &&
+			!event.metaKey &&
+			!event.ctrlKey &&
+			!event.altKey &&
+			!isEditableTarget(event.target) &&
+			!overlayOpen
+		) {
+			event.preventDefault();
+			newMenu?.openMenu();
+			return;
+		}
+		if (
+			!open &&
 			singleKeyShortcutsOn() &&
 			event.key === '/' &&
 			!event.repeat &&
@@ -657,7 +679,7 @@
 <svelte:window onkeydown={handleWindowKeydown} onpointerdown={handleWindowPointerDown} />
 
 <header
-	class="exec-topbar relative z-30 flex shrink-0 items-center justify-center overflow-visible px-6"
+	class="exec-topbar relative z-30 flex shrink-0 items-center justify-center gap-3 overflow-visible px-4 sm:px-6"
 >
 	<div
 		bind:this={homeShellEl}
@@ -817,6 +839,11 @@
 			</div>
 		{/if}
 	</div>
+	{#if connection}
+		<div class="shrink-0">
+			<NewMenu bind:this={newMenu} {connection} shortcutHint={singleKeyShortcutsOn()} />
+		</div>
+	{/if}
 </header>
 
 <Dialog.Root

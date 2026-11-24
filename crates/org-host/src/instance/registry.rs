@@ -281,6 +281,36 @@ impl Instance {
         Ok(())
     }
 
+    /// Opt-in HTTPS upgrade (ADR-0033 / TASK-62): switches the instance's browser listener from
+    /// plain HTTP (`http_loopback` / `http_published`) to `https` (or updates `hsts` on `https`)
+    /// while keeping the exact reserved `(address, port, origin host, origin port)`.
+    pub(crate) fn upgrade_browser_to_https(
+        &self,
+        listen: &org_host_control::listen::ListenConfig,
+    ) -> Result<(), Error> {
+        use org_host_control::listen::ListenMode;
+        if listen.scheme() != ListenMode::Https {
+            return Err(Error::Conflict("TLS upgrade requires https scheme"));
+        }
+        let (mut config, previous) = self.config()?;
+        let Some(current) = &config.browser else {
+            return Err(Error::Conflict("no browser listener is reserved"));
+        };
+        if current.address() != listen.address()
+            || current.port() != listen.port()
+            || current.origin().host() != listen.origin().host()
+            || current.origin().port() != listen.origin().port()
+        {
+            return Err(Error::Conflict(
+                "HTTPS upgrade must preserve the reserved listen address, port, and host",
+            ));
+        }
+        config.browser = Some(listen.clone());
+        self.root
+            .publish(CONFIG, &encode(&config)?, Some(&previous))?;
+        Ok(())
+    }
+
     /// Reserved browser listener, if setup configured one.
     pub(crate) fn browser(&self) -> Result<Option<org_host_control::listen::ListenConfig>, Error> {
         self.config().map(|(config, _)| config.browser)
@@ -603,6 +633,24 @@ impl Registry {
         name: Option<&str>,
         path: &Path,
     ) -> Result<(String, PathBuf), Error> {
+        let (id, temp, _) = self.locate_with_browser(name, path)?;
+        Ok((id, temp))
+    }
+
+    /// Like [`locate`](Self::locate), also returning the active saved browser listener
+    /// from `instance.json` (which reflects any opt-in HTTPS upgrade or HSTS change).
+    pub(crate) fn locate_with_browser(
+        &self,
+        name: Option<&str>,
+        path: &Path,
+    ) -> Result<
+        (
+            String,
+            PathBuf,
+            Option<org_host_control::listen::ListenConfig>,
+        ),
+        Error,
+    > {
         let name = Name::parse(name)?;
         let path = absolute(path)?;
         let lock = self.lock()?;
@@ -618,13 +666,18 @@ impl Registry {
         let bytes = root.read(CONFIG, MAX_BYTES)?.ok_or(Error::Unsafe(
             "registered instance configuration is missing",
         ))?;
-        decode::<Config>(&bytes)?.validate(&entry.binding)?;
+        let config = decode::<Config>(&bytes)?;
+        config.validate(&entry.binding)?;
         self.user_temp
             .child("ao", false)?
             .child(&entry.binding.temp_handle, false)?
             .verify()?;
         self.directory.verify_file(LOCK, &lock)?;
-        Ok((entry.binding.id.clone(), entry.binding.temp_folder.clone()))
+        Ok((
+            entry.binding.id.clone(),
+            entry.binding.temp_folder.clone(),
+            config.browser,
+        ))
     }
 
     /// The browser ports registered instances saved, with each instance's name. An entry

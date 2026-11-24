@@ -8,8 +8,8 @@
 //   slow · fails (reads fail) · empty (no projects) · unavailable · viewer (no create or edit rights)
 //   stale (HQ unreachable: the last copy, changes refused) · conflict (the first save meets a newer revision)
 //   save-fails (writes fail) · create-unknown (the first New project is applied, but its answer is lost)
-import { orgApi } from '$lib/org/api';
-import { newId } from '$lib/org/commands';
+import { orgApi } from '$lib/modules/organization/api';
+import { newId } from '$lib/modules/organization/commands';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgSnapshot } from '$lib/proto';
 import type { ProjectsApi } from '../../../src/lib/modules/projects/api';
@@ -24,7 +24,7 @@ import type {
 	TeamRef
 } from '../../../src/lib/modules/projects/types';
 import { OUTCOME_UNKNOWN } from '../../../src/lib/modules/projects/outcome';
-import { isPocDataset, mockMode } from '../mock-mode';
+import { mockMode, POC_ORG_ID } from '../mock-mode';
 import { pocProjectRows } from '../poc-dataset';
 import { rows as memberRows, teamRef } from './members';
 import data from '../data/projects/projects.json' with { type: 'json' };
@@ -253,7 +253,7 @@ async function setTeams(
 export const projectsApi: ProjectsApi = {
 	async list(organizationId) {
 		await read();
-		if (isPocDataset()) {
+		if (organizationId === POC_ORG_ID) {
 			return {
 				projects: on('empty') ? [] : structuredClone(pocProjectRows()),
 				viewer: { canCreate: !on('viewer') },
@@ -319,13 +319,14 @@ export const projectsApi: ProjectsApi = {
 	async activity(organizationId, projectId) {
 		await read();
 		const { e } = await projectRow(organizationId, projectId);
-		return e.activity.map((a) => ({
+		const rows = e.activity.map((a) => ({
 			id: a.id,
 			at: ago(a.agoMin),
 			actor: a.actor,
 			kind: a.kind,
 			text: a.text
 		}));
+		return on('oldest-first') ? rows.toReversed() : rows;
 	},
 
 	async conversations(organizationId, projectId) {

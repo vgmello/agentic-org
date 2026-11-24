@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { OfficeInfo, WorkItemSummary } from '$lib/proto';
 import type { AgentBudgets, OrganizationCost } from '$lib/modules/costs/types';
 import type { InboxItem } from '$lib/modules/inbox/types';
-import { sampleOrg } from '$lib/org/sample';
+import { sampleOrg } from '$lib/modules/organization/sample';
 import {
 	answerExecutiveQuestion,
 	deriveDecisionSpotlight,

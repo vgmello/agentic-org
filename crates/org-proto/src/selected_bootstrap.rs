@@ -178,6 +178,17 @@ fn valid_slug(s: &str) -> bool {
         && s.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
+/// Whether `s` is an admitted HTTPS or SSH Git remote URL without credentials, queries,
+/// fragments, or leading-hyphen SSH options.
+pub fn valid_remote_url(s: &str) -> bool {
+    remote(s)
+}
+
+/// Whether `s` is an admitted Git state branch name.
+pub fn valid_state_branch(s: &str) -> bool {
+    branch(s)
+}
+
 fn remote(s: &str) -> bool {
     if s.len() > 2048
         || s.chars().any(|c| c.is_whitespace() || c.is_control())
@@ -213,6 +224,7 @@ fn ssh_host(authority: &str) -> Option<&str> {
     match authority.split_once('@') {
         Some((user, host))
             if !user.is_empty()
+                && !user.starts_with('-')
                 && user
                     .bytes()
                     .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c)) =>
@@ -231,6 +243,7 @@ fn remote_host(authority: &str) -> bool {
     !host.is_empty()
         && !host.starts_with('.')
         && !host.ends_with('.')
+        && !host.starts_with('-')
         && host
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))

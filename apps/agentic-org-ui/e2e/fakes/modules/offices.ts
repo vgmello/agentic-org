@@ -18,7 +18,7 @@ import type {
 	SatelliteDetails
 } from '../../../src/lib/modules/offices/types';
 import { unavailableCall } from '$lib/platform/unavailable-api';
-import { isPocDataset } from '../mock-mode';
+import { POC_ORG_ID } from '../mock-mode';
 import { pocOfficesOverview } from '../poc-dataset';
 import full from '../data/offices/seed.json' with { type: 'json' };
 
@@ -197,7 +197,7 @@ function progressOf(s: NonNullable<typeof state>, op: Op): AddProgress {
 
 export const officesApi: OfficesApi = {
 	async overview(organizationId) {
-		if (isPocDataset()) {
+		if (organizationId === POC_ORG_ID) {
 			await wait();
 			return structuredClone(pocOfficesOverview());
 		}

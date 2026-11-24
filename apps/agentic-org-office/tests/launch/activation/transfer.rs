@@ -73,7 +73,9 @@ fn send_until(
         if error.kind() == ErrorKind::Interrupted {
             continue;
         }
-        if cfg!(target_os = "macos") && error.raw_os_error() == Some(libc::ENOBUFS) {
+        if error.kind() != ErrorKind::WouldBlock
+            && error.raw_os_error() == Some(org_platform::socket::DATAGRAM_PEER_FULL)
+        {
             if let Some(retry) = retry {
                 let _ = retry.send(());
             }
@@ -487,10 +489,10 @@ fn fill_sender(socket: &UnixDatagram) -> usize {
         match socket.send(&[b'x'; 866]) {
             Ok(866) => {}
             Err(error) => {
-                #[cfg(target_os = "macos")]
-                assert_eq!(error.raw_os_error(), Some(libc::ENOBUFS));
-                #[cfg(target_os = "linux")]
-                assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+                assert_eq!(
+                    error.raw_os_error(),
+                    Some(org_platform::socket::DATAGRAM_PEER_FULL)
+                );
                 return queued;
             }
             other => panic!("buffer fill: {other:?}"),

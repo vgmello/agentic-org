@@ -8,7 +8,7 @@
 //! migrated (nothing has shipped).
 use crate::{
     host_secrets::{HostSecrets, Name, Value},
-    hostdb::HostDb,
+    hostdb::HostStore,
     sync::lock,
 };
 use org_office_launch::writer::{
@@ -86,10 +86,12 @@ pub(crate) struct Binding<'a> {
 }
 pub(crate) struct Writers {
     custody: Arc<dyn HostSecrets>,
-    db: Arc<HostDb>,
+    db: Arc<dyn HostStore>,
     root: Root,
     instance: String,
     active: Mutex<BTreeSet<String>>,
+    #[cfg(test)]
+    streams: Mutex<std::collections::HashMap<String, UnixStream>>,
     gate: Mutex<()>,
 }
 impl std::fmt::Debug for Writers {
@@ -106,6 +108,8 @@ struct Lease {
 impl Drop for Lease {
     fn drop(&mut self) {
         lock(&self.writers.active).remove(&self.office);
+        #[cfg(test)]
+        lock(&self.writers.streams).remove(&self.office);
     }
 }
 fn refused() -> io::Error {
@@ -138,34 +142,25 @@ fn transient(kind: io::ErrorKind) -> bool {
         K::Interrupted | K::WouldBlock | K::TimedOut | K::ResourceBusy | K::OutOfMemory
     )
 }
-/// errSecInteractionNotAllowed: the keychain is locked or user interaction is not allowed
-/// now. The only keychain status that passes on its own; every other one (a missing
-/// entitlement, a decode failure, a bad parameter, no or an invalid keychain, keychain
-/// services unavailable) is lasting.
-const KEYCHAIN_INTERACTION_NOT_ALLOWED: i32 = -25308;
-/// A custody store error: a transient I/O failure, a locked keychain or an item in use is
-/// [`Unreadable`]; anything else (corrupt, unsafe, linked, missing, unsupported, any other
-/// keychain status) is a refusal.
+/// A custody store error: a transient I/O failure, a locked credential store
+/// (`InteractionNotAllowed`) or an item in use is [`Unreadable`]; anything else (corrupt,
+/// unsafe, linked, missing, unsupported, any other OS status) is a refusal.
 fn store(error: crate::host_secrets::Error) -> io::Error {
     use crate::host_secrets::Error as E;
     match error {
         E::Io(kind) if transient(kind) => unreadable(),
-        E::Os(KEYCHAIN_INTERACTION_NOT_ALLOWED) | E::InUse => unreadable(),
+        E::InteractionNotAllowed | E::InUse => unreadable(),
         _ => refused(),
     }
 }
-/// A host registry error: a busy or locked database, an OS I/O failure, no memory or a
-/// transient I/O failure is [`Unreadable`]; anything else (a corrupt or tampered registry,
-/// another schema, a binding it does not hold) is a refusal. `SystemIoFailure` is retried
-/// deliberately: it may pass, and the supervisor's give-up rule bounds one that lasts.
+/// A host registry error: a transient storage fault (busy/locked, transient I/O, out of
+/// memory) or a transient filesystem I/O failure is [`Unreadable`]; anything else (a
+/// corrupt or tampered registry, another schema, a binding it does not hold) is a refusal.
 fn registry(error: crate::hostdb::Error) -> io::Error {
     use crate::hostdb::Error as E;
-    use rusqlite::ErrorCode as C;
     match error {
         E::Io(kind) if transient(kind) => unreadable(),
-        E::Sql(C::DatabaseBusy | C::DatabaseLocked | C::SystemIoFailure | C::OutOfMemory) => {
-            unreadable()
-        }
+        E::Store(fault) if fault.is_transient() => unreadable(),
         _ => refused(),
     }
 }
@@ -257,7 +252,7 @@ fn empty_reservation_root(path: &Path) -> io::Result<()> {
 impl Writers {
     pub(crate) fn open(
         custody: Arc<dyn HostSecrets>,
-        db: Arc<HostDb>,
+        db: Arc<dyn HostStore>,
         instance: &str,
         root: &Path,
     ) -> io::Result<Arc<Self>> {
@@ -268,6 +263,8 @@ impl Writers {
             root: Root::read(root)?,
             instance: instance.into(),
             active: Mutex::default(),
+            #[cfg(test)]
+            streams: Mutex::default(),
             gate: Mutex::new(()),
         }))
     }
@@ -298,7 +295,7 @@ impl Writers {
         let a = &record.admission;
         let (durable, runtime) = self.data_roots(&a.identity.organization_id)?;
         if record.schema_version != SCHEMA_VERSION
-            || org_proto::ulid_time_ms(&record.operation_id).is_none()
+            || !org_proto::is_uuid_v7(&record.operation_id)
             || !a.check()
             || record.root != self.root
             || a.identity.instance_id != self.instance
@@ -407,8 +404,7 @@ impl Writers {
         let _gate = lock(&self.gate);
         self.root.verify()?;
         let (durable, runtime) = self.data_roots(binding.organization_id)?;
-        if org_proto::ulid_time_ms(operation).is_none() || !org_proto::is_uuid_v7(binding.office_id)
-        {
+        if !org_proto::is_uuid_v7(operation) || !org_proto::is_uuid_v7(binding.office_id) {
             return Err(refused());
         }
         if let Some(record) = self.load(binding.office_id)? {
@@ -492,6 +488,29 @@ impl Writers {
         self.install_marker(binding.office_id)?;
         Ok(admission)
     }
+    /// Updates an office's persisted writer admission owner after organization ownership handover
+    /// (`TASK-38` / `doc-78`), verifying the new owner against `HostDb::org_owners` before saving.
+    pub(crate) fn update_owner(
+        &self,
+        office: &str,
+        org_id: &str,
+        owner_account: &str,
+        owner_member: &str,
+    ) -> io::Result<()> {
+        let _gate = lock(&self.gate);
+        let Some(mut record) = self.load(office)? else {
+            return Err(refused());
+        };
+        if record.admission.identity.organization_id != org_id {
+            return Err(refused());
+        }
+        record.admission.owner_account = owner_account.to_owned();
+        record.admission.owner_member = owner_member.to_owned();
+        self.verify(&record, office)?;
+        self.save(office, &record)?;
+        Ok(())
+    }
+
     /// Whether `office` may start or be created: it has a valid record of this schema and
     /// its reservation marker. Every office needs both; the host never creates them here.
     /// Returns what the office's writer is bound to.
@@ -521,6 +540,10 @@ impl Writers {
         if !lock(&self.active).insert(office.into()) {
             return Err(refused());
         }
+        #[cfg(test)]
+        if let Ok(cloned) = stream.try_clone() {
+            lock(&self.streams).insert(office.into(), cloned);
+        }
         let lease = Lease {
             writers: Arc::clone(self),
             office: office.into(),
@@ -533,6 +556,15 @@ impl Writers {
                 let _ = lease.run(stream);
             })?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn close_channel_for_test(&self, office: &str) -> bool {
+        let Some(stream) = lock(&self.streams).remove(office) else {
+            return false;
+        };
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+        true
     }
 }
 impl Lease {
@@ -601,6 +633,8 @@ mod tests;
 #[cfg(test)]
 pub(crate) struct TestCustody {
     pub(crate) writers: Arc<Writers>,
+    pub(crate) db: Arc<crate::hostdb::HostDb>,
+    pub(crate) account: String,
     pub(crate) organization: String,
     pub(crate) member: String,
     /// While set, every read of the custody store fails with a transient I/O error.
@@ -661,7 +695,7 @@ impl TestCustody {
             instance_id: instance.into(),
             clock_high_ms: 1,
         };
-        let db = Arc::new(HostDb::create(&home, &*custody, &init).unwrap());
+        let db = Arc::new(crate::hostdb::HostDb::create(&home, &*custody, &init).unwrap());
         let account = crate::ids::generate().unwrap();
         let password =
             org_host_control::Password::new("synthetic custody password".into()).unwrap();
@@ -681,12 +715,18 @@ impl TestCustody {
         let member = crate::ids::uuid_v7().unwrap();
         db.establish_organization_owner(&admin, &organization, &member)
             .unwrap();
-        let writers = Writers::open(custody, db, instance, &root.canonicalize().unwrap()).unwrap();
+        let writers = Writers::open(
+            custody,
+            Arc::clone(&db) as Arc<dyn crate::hostdb::HostStore>,
+            instance,
+            &root.canonicalize().unwrap(),
+        )
+        .unwrap();
         for office in offices {
             fs::create_dir_all(home.join("offices").join(office)).unwrap();
             writers
                 .reserve(
-                    &crate::ids::generate().unwrap(),
+                    &crate::ids::uuid_v7().unwrap(),
                     &Binding {
                         organization_id: &organization,
                         office_id: office,
@@ -698,6 +738,8 @@ impl TestCustody {
         }
         Self {
             writers,
+            db,
+            account,
             organization,
             member,
             unreadable,

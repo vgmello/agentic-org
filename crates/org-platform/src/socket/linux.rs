@@ -31,6 +31,9 @@ pub(super) const DATAGRAM_PEER_FULL: i32 = libc::EAGAIN;
 /// A receive after the datagram peer closed only finds nothing to read.
 pub(super) const DATAGRAM_PEER_CLOSE_MAY_RESET: bool = false;
 
+/// Closing a Unix stream peer with unread buffered bytes resets the connection on Linux.
+pub(super) const STREAM_PEER_CLOSE_WITH_UNREAD_RESETS: bool = true;
+
 pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
     // SAFETY: every bit pattern is valid for ucred's integer fields.
     let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
@@ -47,6 +50,33 @@ pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
         )
     };
     super::checked_uid(rc, cred.uid, length, expected)
+}
+
+pub(super) fn peer_pid(fd: RawFd) -> io::Result<libc::pid_t> {
+    // SAFETY: every bit pattern is valid for ucred's integer fields.
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let expected = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let mut length = expected;
+    // SAFETY: cred is writable for length bytes; length points to its live size value.
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast(),
+            &mut length,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if length != expected || cred.pid <= 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unexpected peer pid response",
+        ));
+    }
+    Ok(cred.pid)
 }
 
 /// Nothing is held: `MSG_CMSG_CLOEXEC` sets close-on-exec atomically with the

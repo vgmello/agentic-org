@@ -5,7 +5,7 @@
 //! The file keeps its name so the host's catalog still knows an unfinished create by it;
 //! its content is version 3, with the organization's data roots and the host's custody
 //! reservation. It records the request as it was received: `operation` is the launch
-//! binding's ULID, not the store operation it maps to.
+//! binding's canonical lowercase UUIDv7 operation ID.
 
 use std::path::{Path, PathBuf};
 
@@ -31,7 +31,7 @@ pub(crate) struct Intent {
     pub journal_incarnation: String,
     pub writer_epoch: u64,
     pub machine_id: String,
-    /// The launch binding's operation: a ULID.
+    /// The launch binding's operation: a canonical lowercase UUIDv7.
     pub operation: String,
     /// The owner member: the creator's person record.
     pub owner: String,

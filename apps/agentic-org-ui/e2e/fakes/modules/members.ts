@@ -7,12 +7,12 @@
 // `?mock=refuse|viewer` (refused: not the owner or the administrator), `?mock=gone` (the first action on Leo Brandt
 // finds he has left the organization) and `?mock=deactivated` (Hana Weiss is deactivated: no access, no actions).
 import { invalidate } from '$app/navigation';
-import { orgApi } from '$lib/org/api';
-import { newId } from '$lib/org/commands';
-import { officeApi } from '$lib/office/api';
+import { orgApi } from '$lib/modules/organization/api';
+import { newId } from '$lib/modules/organization/commands';
+import { officeApi } from '$lib/modules/offices/office-api';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { Member, OrgSnapshot } from '$lib/proto';
-import { isPocDataset, mockLatency, mockMode } from '../mock-mode';
+import { mockLatency, mockMode, POC_ORG_ID } from '../mock-mode';
 import { pocMemberRows } from '../poc-dataset';
 import type { MembersApi } from '../../../src/lib/modules/members/api';
 import { busyText } from '../../../src/lib/modules/members/present';
@@ -177,32 +177,30 @@ function recordHome(organizationId: string, memberId: string, entry: HomeEntry) 
 	localStorage.setItem(HOME_KEY, JSON.stringify(all));
 }
 
-/** The moved-to home team, while the membership the move created is still in this snapshot. */
+/** The moved-to home team, while the member still belongs to it in this snapshot. */
 function movedHome(s: OrgSnapshot, memberId: string): string | undefined {
+	const m = s.members.find((x) => x.id === memberId);
+	if (!m?.home_team_id) return undefined;
 	for (const byMember of Object.values(readHomes())) {
 		const e = byMember?.[memberId];
-		if (
-			e &&
-			s.memberships.some(
-				(m) => m.id === e.membershipId && m.member_id === memberId && m.team_id === e.teamId
-			)
-		)
-			return e.teamId;
+		if (e && m.home_team_id === e.teamId) return e.teamId;
 	}
 	return undefined;
 }
 
 /**
- * One home team (the employee's `home_team_id`): a Move home team made here, else the sample's recorded value, else
- * the first membership (the org snapshot still allows several memberships and has no home-team field).
+ * One home team (the employee's `home_team_id`): a Move home team made here, else the member's `home_team_id`, else
+ * the sample's recorded value.
  */
 export function homeTeamId(s: OrgSnapshot, memberId: string): string | undefined {
 	const exists = (id: string | undefined) => !!id && s.teams.some((t) => t.id === id);
 	const moved = movedHome(s, memberId);
 	if (moved) return moved;
+	const direct = s.members.find((m) => m.id === memberId)?.home_team_id;
+	if (exists(direct)) return direct;
 	const recorded = extras[memberId]?.homeTeamId;
 	if (exists(recorded)) return recorded;
-	return s.memberships.find((m) => m.member_id === memberId && exists(m.team_id))?.team_id;
+	return undefined;
 }
 
 /**
@@ -277,7 +275,7 @@ function presenceOf(m: Member): MemberRow['presence'] {
 }
 
 export async function rows(organizationId: string): Promise<MemberRow[]> {
-	if (isPocDataset()) return structuredClone(pocMemberRows());
+	if (organizationId === POC_ORG_ID) return structuredClone(pocMemberRows());
 	const s = await snapshotFor(organizationId);
 	const offices = await officesFor(organizationId);
 	const ownerId = ownerIdOf(s);
@@ -535,7 +533,10 @@ async function profileOf(organizationId: string, memberId: string): Promise<Memb
 	const offices = await officesFor(organizationId);
 	const viewer = viewerId();
 	const ownerId = ownerIdOf(s);
-	const isOwner = viewer === ownerId;
+	const modeFlags = (scenario() ?? '').split(',');
+	const isOwner =
+		viewer === ownerId && !modeFlags.includes('viewer') && !modeFlags.includes('manager');
+	const costVisible = isOwner || modeFlags.includes('manager');
 	const leads = s.teams.filter((t) => t.lead_member_id === memberId).map((t) => teamRef(s, t.id)!);
 	// Only the owner, or a person above this employee, changes Allow hiring; nobody changes their own (§7.1).
 	const above = (() => {
@@ -591,7 +592,7 @@ async function profileOf(organizationId: string, memberId: string): Promise<Memb
 			m.kind === 'person' && !row.canSignIn && state.access.get(memberId)?.invitedUntil
 				? { expiresAt: state.access.get(memberId)!.invitedUntil! }
 				: undefined,
-		viewer: { isSelf: self, isOwnerOrAdmin: isOwner, costVisible: isOwner }
+		viewer: { isSelf: self, isOwnerOrAdmin: isOwner, costVisible }
 	} satisfies MemberProfile;
 }
 
@@ -706,30 +707,19 @@ export const membersApi: MembersApi = {
 		const to = s.teams.find((t) => t.id === toTeamId);
 		if (!to) throw fail('not_found', "That team isn't in this organization any more.");
 		const from = homeTeamId(s, memberId);
-		if (from === toTeamId) throw fail('conflict', `${to.name} is already ${m.name}'s home team.`);
-		const memberOf = (teamId: string | undefined) =>
-			s.memberships.find((x) => x.member_id === memberId && x.team_id === teamId);
-		if (memberOf(toTeamId))
-			throw fail('conflict', `${m.name} is already in ${to.name}. Choose another team.`);
-		// The org snapshot's membership changes too (moved, or added for someone recorded without one), so the org
-		// chart and team pages agree, and the stored home team points at that membership.
-		const old = memberOf(from);
+		if (from === toTeamId || m.home_team_id === toTeamId)
+			throw fail('conflict', `${to.name} is already ${m.name}'s home team.`);
+		// Move the member's home team in one command so the org chart and team pages agree.
 		const membershipId = newId();
-		if (old)
-			await orgApi.command(organizationId, {
-				method: 'member.move',
-				params: {
-					membership_id: old.id,
-					expected_version: old.version,
-					new_membership_id: membershipId,
-					to_team_id: toTeamId
-				}
-			});
-		else
-			await orgApi.command(organizationId, {
-				method: 'team.add_member',
-				params: { membership_id: membershipId, team_id: toTeamId, member_id: memberId }
-			});
+		await orgApi.command(organizationId, {
+			method: 'member.move',
+			params: {
+				membership_id: m.id,
+				expected_version: m.version,
+				new_membership_id: membershipId,
+				to_team_id: toTeamId
+			}
+		});
 		recordHome(organizationId, memberId, { teamId: toTeamId, membershipId });
 	},
 	async assignableTasks(organizationId) {

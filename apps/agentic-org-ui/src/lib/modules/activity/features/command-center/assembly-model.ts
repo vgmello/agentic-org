@@ -4,7 +4,14 @@ import type { ActivityKind, ActivityQuery, ActivityRow } from '$lib/modules/acti
 import { KIND_WORD } from '$lib/modules/activity/types';
 import type { InboxItem } from '$lib/modules/inbox/types';
 import { dayKey, formatDate } from '$lib/modules/preferences';
-import { agentsOf, byName, isFormer, memberById, nonOwners, owner } from '$lib/org/model';
+import {
+	agentsOf,
+	byName,
+	isFormer,
+	memberById,
+	nonOwners,
+	owner
+} from '$lib/modules/organization/model';
 import type { Area, OrgSnapshot, ProjectSummary, WorkItemSummary } from '$lib/proto';
 
 export type AssemblyStage = 'queue' | 'agents' | 'ci' | 'review' | 'merged';

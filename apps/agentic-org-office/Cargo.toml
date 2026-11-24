@@ -1,6 +1,6 @@
 [package]
 name = "agentic-org-office"
-description = "The office server: the daemon that holds an organization's office and serves org-proto."
+description = "Thin composition root binary for the Agentic Org office server daemon."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,35 +14,21 @@ path = "src/main.rs"
 name = "launch"
 path = "tests/launch.rs"
 
-[features]
-# Test helpers shared with the binary suite: the test grant signer and a host-channel caller.
-test-support = []
-
 [dependencies]
-org-pki = { path = "../../crates/org-pki" }
-zeroize = "=1.9.1"
-org-socket = { path = "../../crates/org-socket" }
-org-proto = { path = "../../crates/org-proto" }
-org-office = { path = "../../crates/org-office" }
-# The writer custody contract the office's store calls, implemented over the host channel.
-org-store = { path = "../../crates/org-store" }
-org-work = { path = "../../crates/org-work" }
-org-mailbox = { path = "../../crates/org-mailbox" }
-org-office-launch = { path = "../../crates/org-office-launch" }
-# The default office home and the socket path limit of the build target.
-org-platform = { path = "../../crates/org-platform" }
+org-office-server = { path = "../../crates/org-office-server" }
 libc.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-hmac.workspace = true
-sha2.workspace = true
 
 [dev-dependencies]
-agentic-org-office = { path = ".", features = ["test-support"] }
-org-sync = { path = "../../crates/org-sync" }
-org-office = { path = "../../crates/org-office", features = ["testkit"] }
-org-mailbox = { path = "../../crates/org-mailbox", features = ["testkit"] }
+org-office-server = { path = "../../crates/org-office-server", features = ["test-support"] }
 org-client = { path = "../../crates/org-client", features = ["testkit"] }
+org-office = { path = "../../crates/org-office", features = ["testkit"] }
+org-office-launch = { path = "../../crates/org-office-launch" }
+org-platform = { path = "../../crates/org-platform" }
+org-proto = { path = "../../crates/org-proto" }
+org-socket = { path = "../../crates/org-socket" }
+org-store = { path = "../../crates/org-store" }
+hmac.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
-syn = { version = "=2.0.119", features = ["full", "visit"] }
-proc-macro2 = "=1.0.107"

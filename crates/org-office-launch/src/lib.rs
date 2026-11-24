@@ -146,6 +146,9 @@ pub const CREATE_FLAG: &str = "--create";
 pub const OFFICE_FLAG: &str = "--office";
 /// The command-line flag, followed by the office id, that removes an unfinished office.
 pub const DISCARD_FLAG: &str = "--discard";
+/// The command-line flag that clones and validates an existing organization Git state branch
+/// read-only (`TASK-39` / R1), printing one JSON response line and exiting.
+pub const INSPECT_IMPORT_FLAG: &str = "--inspect-import";
 
 /// The folder under the office home that holds one folder per office.
 pub const OFFICES_DIR_NAME: &str = "offices";
@@ -721,10 +724,11 @@ pub use contract::{
     decode_handoff, decode_transfer_record, encode_create_handoff, encode_discard_handoff,
     encode_handoff, encode_start_handoff, encode_transfer_record, read_first_line,
     read_server_event, write_first_line, write_rendezvous_event, write_server_event, ChannelKind,
-    CreateLine, Handoff, HandoffFd, HostFirstLine, HqCreationV1, OfficeLine, ReadyForSecrets,
-    RecoveryCode, RefusalReason, RendezvousEvent, TransferRecord, CHANNEL_PROFILE, FD_MARKER,
-    LAUNCH_VERSION, MAX_CHANNELS, MAX_WEB_CHANNELS, TRANSFER_HEADER_MAX_BYTES,
-    TRANSFER_SOCKET_BUFFER_BYTES,
+    CreateLine, Handoff, HandoffFd, HostFirstLine, HqCreationV1, ImportSourceV1,
+    InspectImportPerson, InspectImportPreview, InspectImportRequest, InspectImportResponse,
+    OfficeLine, ReadyForSecrets, RecoveryCode, RefusalReason, RendezvousEvent, TransferRecord,
+    CHANNEL_PROFILE, FD_MARKER, LAUNCH_VERSION, LOCAL_ONLY_NOT_RESTORED, MAX_CHANNELS,
+    MAX_WEB_CHANNELS, TRANSFER_HEADER_MAX_BYTES, TRANSFER_SOCKET_BUFFER_BYTES,
 };
 pub mod writer;
 

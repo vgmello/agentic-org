@@ -44,7 +44,7 @@ use org_host_control::admin::{
 };
 use org_host_control::listen::ListenConfig;
 use org_host_control::{
-    Administrator, GatewayState, InstanceStatus, InstanceStatusParams, InstanceStatusResult,
+    Administrator, InstanceStatus, InstanceStatusParams, InstanceStatusResult, WebState,
 };
 use org_platform::disk::{DiskEncryption, EncryptionState, Wording};
 use org_platform::service::{Lingering, ServiceError, ServiceManager, ServiceStatus, Unit};
@@ -55,10 +55,22 @@ use crate::instance::registry::Registry;
 use crate::instance::setup::{Configured, Input, Journal, Paths, Record, Service};
 use crate::release::ReleasePin;
 
+pub mod cli_context;
 #[cfg(all(feature = "test-support", debug_assertions))]
 pub mod fixture;
+pub(crate) mod office_command;
 #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub mod seed;
+pub use office_command::{office_list, office_restart, HELP as OFFICE_HELP};
+pub(crate) mod project_command;
+pub use project_command::{
+    project_create, project_inspect, project_list, ProjectCreateInput, HELP as PROJECT_HELP,
+};
+pub mod sign_in_command;
+pub use sign_in_command::{
+    context_clear, context_show, context_use, open_for_command, sign_in_only,
+    ApprovedOfficeChannel, CONTEXT_HELP, SIGN_IN_HELP,
+};
 pub(crate) mod tls_command;
 pub use tls_command::{admin_tls_set, HELP as ADMIN_TLS_SET_HELP};
 #[cfg(test)]
@@ -1792,9 +1804,24 @@ pub(crate) fn this_instances_link<'a>(
     url: &'a str,
     origin: &org_host_control::listen::ListenOrigin,
 ) -> Result<&'a str, String> {
+    this_instances_link_at(url, origin, "/register#")
+}
+
+pub(crate) fn this_instances_reset_link<'a>(
+    url: &'a str,
+    origin: &org_host_control::listen::ListenOrigin,
+) -> Result<&'a str, String> {
+    this_instances_link_at(url, origin, "/set-password#")
+}
+
+fn this_instances_link_at<'a>(
+    url: &'a str,
+    origin: &org_host_control::listen::ListenOrigin,
+    path_prefix: &str,
+) -> Result<&'a str, String> {
     let token = url
         .strip_prefix(origin.as_str().trim_end_matches('/'))
-        .and_then(|rest| rest.strip_prefix("/register#"));
+        .and_then(|rest| rest.strip_prefix(path_prefix));
     match token {
         Some(token) if crate::links::Token::parse(token).is_some() => Ok(url),
         _ => Err(NOT_THIS_INSTANCES_LINK.into()),
@@ -1814,6 +1841,31 @@ fn show_link(
             say(
                 out,
                 "Open this link in a browser to create the administrator account.",
+            )?;
+            say(
+                out,
+                format!(
+                    "It works once and expires in 24 hours (at {}):",
+                    local_time(expires_at_ms)
+                ),
+            )?;
+            say(out, format!("  {url}"))?;
+            say(
+                out,
+                format!("If it expires or is lost, run: {}", reset_hint(name)),
+            )
+        }
+        AdminLinkResult::ResetPassword {
+            login,
+            url,
+            expires_at_ms,
+        } => {
+            let url = this_instances_reset_link(url.expose(), origin)?;
+            let safe_login = crate::host_log::untrusted(&login);
+            say(out, "")?;
+            say(
+                out,
+                format!("Open this link in a browser to set a new password for {safe_login}."),
             )?;
             say(
                 out,
@@ -1922,9 +1974,9 @@ fn wait_ready(
             Ok(status) if status.instance_id != instance_id => {
                 return Err("the service answering is not this instance".into())
             }
-            Ok(status) if status.gateway.state == GatewayState::Running => return Ok(status),
+            Ok(status) if status.gateway.state == WebState::Running => return Ok(status),
             Ok(status) => {
-                let held = (status.gateway.state == GatewayState::Failed)
+                let held = (status.gateway.state == WebState::Failed)
                     .then(&failed)
                     .flatten();
                 match (held, held_since) {
@@ -1946,8 +1998,8 @@ fn wait_ready(
                      (it is {}; the service's log says why); setup can be run again and \
                      continues where it stopped",
                     match state {
-                        GatewayState::Failed => "failing",
-                        GatewayState::Starting => "still starting",
+                        WebState::Failed => "failing",
+                        WebState::Starting => "still starting",
                         _ => "not configured",
                     }
                 ),
@@ -1968,19 +2020,41 @@ const HELD_FOR: Duration = Duration::from_secs(1);
 
 /// Finds the registered instance `name`: its ID and `host.sock`.
 fn registered(paths: &Paths, name: Option<&str>) -> Result<(Record, String, PathBuf), String> {
+    let (record, id, socket, _) = registered_with_origin(paths, name)?;
+    Ok((record, id, socket))
+}
+
+/// Like [`registered`], also resolving the active browser origin from `instance.json` when
+/// present (reflecting opt-in HTTPS upgrades), falling back to the setup record's origin.
+pub(crate) fn registered_with_origin(
+    paths: &Paths,
+    name: Option<&str>,
+) -> Result<
+    (
+        Record,
+        String,
+        PathBuf,
+        org_host_control::listen::ListenOrigin,
+    ),
+    String,
+> {
     let record =
         Journal::snapshot(&paths.base, name).map_err(|e| fail("reading the setup record", e))?;
     let registry = Registry::open(&paths.locator, &paths.user_temp)
         .map_err(|e| fail("opening the instance locator", e))?;
     // A service that is just starting holds the locator's lock for a moment (it reserves
     // its instance again): the registry waits for it rather than failing.
-    let (id, temp) = registry
-        .locate(name, &record.input.root)
+    let (id, temp, browser) = registry
+        .locate_with_browser(name, &record.input.root)
         .map_err(|e| fail("locating the instance", e))?;
     if record.instance_id.as_deref() != Some(id.as_str()) {
         return Err("the instance is not the one setup recorded; run agentic-org setup".into());
     }
-    Ok((record, id, temp.join("host.sock")))
+    let origin = browser
+        .filter(|active| crate::registered::browser_matches_setup(active, &record.input.listen))
+        .map(|active| active.origin().clone())
+        .unwrap_or_else(|| record.input.listen.origin().clone());
+    Ok((record, id, temp.join("host.sock"), origin))
 }
 
 /// What `admin reset` answers when its output is not a terminal (spec §4a.4).
@@ -2000,18 +2074,83 @@ fn running_with_administrator(shown: &str, origin: &str) -> String {
 /// user ([`as_account`]), so nothing in the instance's folders is made or changed by root,
 /// and then connects as root, which is what the service admits for this one call. Any other
 /// user acts only for itself.
+/// What `admin reset` answers on macOS when run over SSH (SIGN-30 / SIGN-34, spec §4a.2).
+pub(crate) const MACOS_SSH_RESET_REFUSED: &str =
+    "Resetting the administrator's password needs you at this Mac, to confirm it's you with Touch ID or the login password, and that can't be done over SSH. Run this command at the Mac itself or through Screen Sharing.";
+
+/// Pure SIGN-34 check: on macOS (not named-by-user-alone), SSH environment variables
+/// refuse `admin reset` before anything else (even before the terminal check or host call).
+pub(crate) fn ssh_reset_refusal(
+    named_by_user: bool,
+    ssh_env_present: bool,
+) -> Option<&'static str> {
+    if !named_by_user && ssh_env_present {
+        Some(MACOS_SSH_RESET_REFUSED)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod admin_reset_sign34_tests {
+    use super::*;
+    use org_host_control::listen::ListenOrigin;
+    use org_host_control::OneTimeLinkUrl;
+
+    #[test]
+    fn sign34_refuses_macos_ssh_before_terminal_and_allows_linux_ssh() {
+        let refused = ssh_reset_refusal(false, true).expect("macOS SSH must refuse");
+        assert_eq!(refused, MACOS_SSH_RESET_REFUSED);
+        assert!(refused.contains("needs you at this Mac"));
+        assert!(refused.contains("Screen Sharing"));
+        assert_eq!(ssh_reset_refusal(false, false), None);
+        assert_eq!(ssh_reset_refusal(true, true), None);
+    }
+
+    #[test]
+    fn show_link_formats_admin_reset_password_link() {
+        let origin = ListenOrigin::parse("http://127.0.0.1:7420").unwrap();
+        let token = "A".repeat(43);
+        let url =
+            OneTimeLinkUrl::new(format!("http://127.0.0.1:7420/set-password#{token}")).unwrap();
+        let mut out = Vec::new();
+        show_link(
+            &mut out,
+            AdminLinkResult::ResetPassword {
+                login: "Sage".into(),
+                url,
+                expires_at_ms: 1_800_000_000_000,
+            },
+            None,
+            &origin,
+        )
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("set a new password for Sage"), "{text}");
+        assert!(text.contains("/set-password#"), "{text}");
+    }
+}
+
+fn env_is_ssh() -> bool {
+    ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"]
+        .iter()
+        .any(|var| std::env::var_os(var).is_some_and(|v| !v.is_empty()))
+}
+
 pub fn admin_reset(
     name: Option<&str>,
     user: Option<&str>,
     terminal: bool,
     out: &mut dyn Write,
 ) -> Result<(), String> {
+    let named_by_user = crate::human::host_is_named_by_user_alone();
+    // SIGN-34: SSH refusal on macOS is shown before anything else.
+    if let Some(refusal) = ssh_reset_refusal(named_by_user, env_is_ssh()) {
+        return Err(refusal.into());
+    }
     if !terminal {
-        // Spec §4a.4 copy. SIGN-34's SSH refusal ("shown before anything else") needs
-        // SSH-session detection, which is not built yet; it goes before this check.
         return Err(NOT_A_TERMINAL.into());
     }
-    let named_by_user = crate::human::host_is_named_by_user_alone();
     let acting_for = service_account(
         crate::home::euid(),
         named_by_user,
@@ -2028,9 +2167,10 @@ pub fn admin_reset(
     match acting_for {
         Some(account) => reset_for(account, name, || crate::human::paths(name), out),
         None => {
-            let (record, id, socket) = registered(&crate::human::paths(name)?, name)?;
+            let (_record, id, socket, origin) =
+                registered_with_origin(&crate::human::paths(name)?, name)?;
             let wire = connect(&socket, &id).map_err(|why| not_running(name, why))?;
-            reset_over(wire, record.input.listen.origin(), name, out)
+            reset_over(wire, &origin, name, out)
         }
     }
 }
@@ -2055,7 +2195,8 @@ fn reset_for(
     out: &mut dyn Write,
 ) -> Result<(), String> {
     let reset = || {
-        let (record, id, socket) = as_account(account, || registered(&paths()?, name))?;
+        let (_record, id, socket, origin) =
+            as_account(account, || registered_with_origin(&paths()?, name))?;
         // The first line names the user whose instance this is, so that a reset never
         // lands on another user's instance unnoticed (SIGN-33).
         say(
@@ -2073,7 +2214,7 @@ fn reset_for(
             ask_reset(wire)
         })
         .map_err(|why| not_running(name, why))?;
-        answer_reset(result, record.input.listen.origin(), name, out)
+        answer_reset(result, &origin, name, out)
     };
     reset().map_err(|why| crate::host_log::untrusted(&why))
 }
@@ -2148,11 +2289,12 @@ fn answer_reset(
     show_link(out, result, name, origin)
 }
 
-/// What `admin reset` refuses with when the instance has an administrator.
+/// What `admin reset` refuses with when an administrator was registered concurrently during the
+/// initial-registration-link confirmation dialog.
 pub(crate) fn administrator_present(name: Option<&str>, origin: &str) -> String {
     format!(
-        "instance {} has an administrator, so no registration link is issued: sign in at \
-         {origin}. Resetting a forgotten administrator password is not available yet",
+        "instance {} already has an administrator, so no registration link is issued: sign in at \
+         {origin}, or run `agentic-org admin reset` again to issue a password-reset link",
         name.unwrap_or("default")
     )
 }

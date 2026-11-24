@@ -839,7 +839,7 @@ fn actual_host_negative_ack_keeps_endpoint_and_existing_rpc_live_and_writer_inde
         instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182".into(),
         office_id: "office".into(),
         organization_id: "org".into(),
-        operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+        operation_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f607120".into(),
     };
     let count = fixture.transferred.load(Ordering::SeqCst);
     assert!(fixture.endpoint.recovery_public(&request).is_err());

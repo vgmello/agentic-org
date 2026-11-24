@@ -123,11 +123,7 @@ impl StaticUi {
         response
     }
 
-    pub(crate) fn finish_response(
-        &self,
-        request: &HeaderMap,
-        response: &mut Response<Full<Bytes>>,
-    ) {
+    pub(crate) fn finish_response<B>(&self, request: &HeaderMap, response: &mut Response<B>) {
         let headers = response.headers_mut();
         if !headers.contains_key("content-security-policy") {
             headers.insert("content-security-policy", csp::non_html_policy());

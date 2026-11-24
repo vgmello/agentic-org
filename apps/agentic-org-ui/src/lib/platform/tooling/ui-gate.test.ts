@@ -1343,9 +1343,9 @@ describe('selector', () => {
 	it('several areas run each category once', () => {
 		const chosen = plan(
 			[
-				ui('src/lib/offices/model.ts'),
+				ui('src/lib/modules/offices/model.ts'),
 				ui('src/lib/modules/processes/rules.ts'),
-				ui('src/lib/offices/probe.ts')
+				ui('src/lib/modules/offices/probe.ts')
 			],
 			manifest
 		);
@@ -1354,7 +1354,10 @@ describe('selector', () => {
 
 	it('runs the specs of every selected area, and a spec two areas list only once', () => {
 		const two = steps(
-			plan([ui('src/lib/offices/model.ts'), ui('src/lib/modules/processes/rules.ts')], manifest),
+			plan(
+				[ui('src/lib/modules/offices/model.ts'), ui('src/lib/modules/processes/rules.ts')],
+				manifest
+			),
 			manifest,
 			specs
 		);
@@ -1451,7 +1454,7 @@ describe('selector', () => {
 	it('docs, unit-test and non-UI changes run the journeys only', () => {
 		for (const files of [
 			['docs/design/x.md', ui('README.md')],
-			[ui('src/lib/org/model.test.ts')],
+			[ui('src/lib/modules/organization/model.test.ts')],
 			['apps/agent-os/src/main.rs']
 		]) {
 			expect(plan(files, manifest)).toMatchObject({ all: false, categories: [], gateway: false });
@@ -1501,13 +1504,16 @@ describe('selector', () => {
 	});
 
 	it('selects whole category spec files, anchored so bugs.spec.ts does not pull chat-bugs.spec.ts', () => {
-		const step = steps(plan([ui('src/lib/org/projects.ts')], manifest), manifest, specs).find((s) =>
-			s.name.startsWith('ordinary: projects-work')
-		)!;
+		const step = steps(
+			plan([ui('src/lib/modules/organization/projects.ts')], manifest),
+			manifest,
+			specs
+		).find((s) => s.name.startsWith('ordinary: projects-work'))!;
 		expect(step.cmd).toContain('e2e/bugs\\.spec\\.ts$');
 		expect(step.cmd.filter((word) => word.startsWith('e2e/')).sort()).toEqual(
 			[
 				'e2e/projects\\.spec\\.ts$',
+				'e2e/docs-features-releases\\.spec\\.ts$',
 				'e2e/work\\.spec\\.ts$',
 				'e2e/tasks\\.spec\\.ts$',
 				'e2e/dialog-block-title\\.spec\\.ts$',
@@ -1535,9 +1541,12 @@ describe('selector', () => {
 	});
 
 	it('maps the project components to projects-work and refuses an unknown e2e helper', () => {
-		expect(plan([ui('src/lib/components/ProjectTeams.svelte')], manifest).categories).toEqual([
-			'projects-work'
-		]);
+		expect(
+			plan(
+				[ui('src/lib/modules/organization/features/project-teams/ProjectTeams.svelte')],
+				manifest
+			).categories
+		).toEqual(['projects-work']);
 		expect(classify(ui('e2e/projects-new-helper.ts'), manifest)).toEqual([
 			expect.objectContaining({ kind: 'unknown' })
 		]);
@@ -1570,8 +1579,13 @@ describe('selector', () => {
 		expect(plan([ui('e2e/new.test.ts')], manifest).all).toBe(true);
 		expect(plan(['.github/workflows/ci.yml'], manifest).all).toBe(true);
 		expect(
-			plan([ui('src/lib/org/model.test.ts'), ui('src/lib/modules/messaging/x.spec.ts')], manifest)
-				.all
+			plan(
+				[
+					ui('src/lib/modules/organization/model.test.ts'),
+					ui('src/lib/modules/messaging/x.spec.ts')
+				],
+				manifest
+			).all
 		).toBe(false);
 	});
 	it('sends every outside path that is not on the no-impact list to the full suite', () => {

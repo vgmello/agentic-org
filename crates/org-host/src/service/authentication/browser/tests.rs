@@ -8,6 +8,7 @@ use org_host_control::{LinkToken, Password};
 use super::super::tests::fixture;
 use super::*;
 use crate::accounts::store::ADDRESS_DELAY_CAP_MS;
+use crate::links::OneTimeLinks;
 
 const PASSWORD: &str = "synthetic test password";
 

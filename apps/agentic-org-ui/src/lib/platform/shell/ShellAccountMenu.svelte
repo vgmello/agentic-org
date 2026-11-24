@@ -16,10 +16,21 @@
 	import type { Connection } from '$lib/proto';
 	import AboutDialog from './AboutDialog.svelte';
 
-	let { connection, compact = false }: { connection: Connection; compact?: boolean } = $props();
+	let {
+		connection,
+		compact = false,
+		onOpenChange
+	}: {
+		connection: Connection;
+		compact?: boolean;
+		onOpenChange?: (open: boolean) => void;
+	} = $props();
 
 	let aboutOpen = $state(false);
-	const canSignOut = $derived(appSession.state.kind === 'signed-in');
+	const canSignOut = $derived(appSession.state.kind === 'signed-in' && appSession.authEnabled);
+	const isLocalAuthless = $derived(
+		appSession.state.kind === 'signed-in' && !appSession.authEnabled
+	);
 
 	async function signOut() {
 		await signOutFlow.request();
@@ -30,7 +41,7 @@
 		'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus';
 </script>
 
-<DropdownMenu.Root>
+<DropdownMenu.Root onOpenChange={(next) => onOpenChange?.(next)}>
 	<Tooltip.Root disabled={!compact}>
 		<Tooltip.Trigger>
 			{#snippet child({ props: tooltipProps })}
@@ -112,6 +123,13 @@
 				class="min-h-9 max-[639px]:min-h-11"
 				disabled={signOutFlow.signingOut}
 				onSelect={signOut}>{signOutFlow.signingOut ? 'Signing out…' : 'Sign out'}</DropdownMenu.Item
+			>
+		{:else if isLocalAuthless}
+			<DropdownMenu.Separator class="bg-surface-overlay" />
+			<DropdownMenu.Item
+				class="min-h-9 max-[639px]:min-h-11"
+				onSelect={() => goto(resolve('/settings/security'))}
+				>Local mode · Authentication off</DropdownMenu.Item
 			>
 		{/if}
 	</DropdownMenu.Content>

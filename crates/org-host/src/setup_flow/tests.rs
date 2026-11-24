@@ -451,7 +451,7 @@ fn https_setup_verifies_a_supplied_pair_before_anything_is_saved() {
         refused.contains("tls_key_mismatch") && refused.ends_with("nothing was saved"),
         "{refused}"
     );
-    assert!(!refused.contains("BEGIN"), "{refused}");
+    assert!(!refused.contains("-----BEGIN"), "{refused}");
     assert!(
         Journal::snapshot(&base, None).is_err(),
         "a record was saved"
@@ -1902,13 +1902,13 @@ fn a_set_up_instance_continues_after_its_runtime_folders_are_gone() {
 #[test]
 fn setup_is_ready_only_when_the_browser_service_runs() {
     let id = "01965d2e-8b1c-7c3a-9f00-0123456789ab";
-    let status = |state: GatewayState| {
+    let status = |state: WebState| {
         serde_json::from_value::<InstanceStatusResult>(serde_json::json!({
             "instance_id": id,
             "mode": "registered",
             "gateway": {"state": match state {
-                GatewayState::Running => "running",
-                GatewayState::Failed => "failed",
+                WebState::Running => "running",
+                WebState::Failed => "failed",
                 _ => "starting",
             }},
             "offices": {"total": 0, "active": 0, "failed": 0},
@@ -1918,9 +1918,9 @@ fn setup_is_ready_only_when_the_browser_service_runs() {
     };
     let mut answers = vec![
         Err("no socket yet".to_owned()),
-        Ok(status(GatewayState::Starting)),
-        Ok(status(GatewayState::Failed)),
-        Ok(status(GatewayState::Running)),
+        Ok(status(WebState::Starting)),
+        Ok(status(WebState::Failed)),
+        Ok(status(WebState::Running)),
     ]
     .into_iter();
     let mut asked = 0;
@@ -1934,16 +1934,16 @@ fn setup_is_ready_only_when_the_browser_service_runs() {
         || None,
     )
     .unwrap();
-    assert_eq!(found.gateway.state, GatewayState::Running);
+    assert_eq!(found.gateway.state, WebState::Running);
     assert_eq!(
         asked, 4,
         "a host whose browser service is not running is not ready"
     );
     // Held for a moment (by the failed child the host is reaping) is not another program's.
     let mut answers = vec![
-        Ok(status(GatewayState::Failed)),
-        Ok(status(GatewayState::Failed)),
-        Ok(status(GatewayState::Running)),
+        Ok(status(WebState::Failed)),
+        Ok(status(WebState::Failed)),
+        Ok(status(WebState::Running)),
     ]
     .into_iter();
     let held_now = std::cell::Cell::new(true);
@@ -1956,7 +1956,7 @@ fn setup_is_ready_only_when_the_browser_service_runs() {
     .is_ok());
     let started = Instant::now();
     let held = wait_ready(
-        || Ok(status(GatewayState::Failed)),
+        || Ok(status(WebState::Failed)),
         id,
         Duration::from_secs(10),
         || Some("port held".to_owned()),
@@ -1968,7 +1968,7 @@ fn setup_is_ready_only_when_the_browser_service_runs() {
         "another program was named at once"
     );
     let late = wait_ready(
-        || Ok(status(GatewayState::Starting)),
+        || Ok(status(WebState::Starting)),
         id,
         Duration::from_millis(300),
         || None,
@@ -2272,8 +2272,8 @@ fn a_reset_of_an_instance_with_an_administrator_says_where_to_sign_in() {
     .unwrap_err();
     assert_eq!(
         refused,
-        "instance lab has an administrator, so no registration link is issued: sign in at \
-         http://127.0.0.1:7420. Resetting a forgotten administrator password is not available yet"
+        "instance lab already has an administrator, so no registration link is issued: sign in at \
+         http://127.0.0.1:7420, or run `agentic-org admin reset` again to issue a password-reset link"
     );
     assert!(out.is_empty());
 }

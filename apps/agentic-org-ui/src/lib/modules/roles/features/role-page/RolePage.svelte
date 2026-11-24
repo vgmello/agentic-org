@@ -108,7 +108,7 @@
 		><time datetime={t.iso} title={t.full}>{t.text}</time>{/if}
 {/snippet}
 
-{#if resource.state === 'error' || resource.state === 'unavailable' || resource.state === 'loading'}
+{#if resource.state !== 'ready'}
 	<!-- The one named back link stays while the role itself can't be shown. -->
 	{@render backLink()}
 {/if}

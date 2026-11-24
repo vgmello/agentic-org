@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Logo from '$lib/components/Logo.svelte';
+	import { Toaster } from '$lib/components/ui/sonner';
 
 	let { children } = $props();
 </script>
@@ -15,3 +16,4 @@
 		{@render children()}
 	</main>
 </div>
+<Toaster position="bottom-right" />

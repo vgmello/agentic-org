@@ -30,9 +30,11 @@ impl HostSecrets for Memory {
         Ok(self.0.lock().unwrap().keys().cloned().collect())
     }
 }
+const SAMPLE_RECOVERY: &str = "recovery.0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0";
+
 fn conformance(store: &dyn HostSecrets) {
     let registry = Name::parse("registry").unwrap();
-    let recovery = Name::parse("recovery.Abc123").unwrap();
+    let recovery = Name::parse(SAMPLE_RECOVERY).unwrap();
     assert!(store.load(&registry).unwrap().is_none());
     store.delete(&registry).unwrap();
     assert!(store.list().unwrap().is_empty());
@@ -72,8 +74,7 @@ fn names_accept_only_the_versioned_custody_forms() {
         "writer-device".to_owned(),
         format!("writer.{}", "a".repeat(64)),
         format!("tls.{}", "0123456789abcdef".repeat(4)),
-        format!("recovery.{}", "Z".repeat(64)),
-        "recovery.a".into(),
+        SAMPLE_RECOVERY.to_owned(),
     ] {
         assert_eq!(Name::parse(&valid).unwrap().as_str(), valid);
     }
@@ -85,6 +86,10 @@ fn names_accept_only_the_versioned_custody_forms() {
         "tls.",
         "recovery.",
         "recovery...",
+        "recovery.a",
+        "recovery.Abc123",
+        "recovery.0190A5D2-7C3E-7A01-8B2C-3D4E5F6071E0",
+        "recovery.01M72N8MG00000000000000006",
         "recovery.a/b",
         "recovery.a_b",
         "recovery.é",
@@ -109,7 +114,7 @@ fn tls_and_device_identity_are_add_only() {
         .unwrap()
         .is_add_only());
     assert!(!Name::parse("registry").unwrap().is_add_only());
-    assert!(!Name::parse("recovery.Abc123").unwrap().is_add_only());
+    assert!(!Name::parse(SAMPLE_RECOVERY).unwrap().is_add_only());
 }
 #[test]
 fn values_are_bounded_redacted_and_wiped() {
@@ -594,64 +599,24 @@ mod development {
     }
 
     #[test]
-    fn case_aliases_fail_closed_in_both_orders() {
-        for (first, alias) in [("recovery.A", "recovery.a"), ("recovery.a", "recovery.A")] {
-            let f = Fixture::new();
-            let store = f.open(A).unwrap();
-            let first = Name::parse(first).unwrap();
-            let alias = Name::parse(alias).unwrap();
-            store
-                .put(&first, &Value::new(b"keep".to_vec()).unwrap())
-                .unwrap();
-            assert_eq!(
-                store.put(&alias, &Value::new(b"wrong".to_vec()).unwrap()),
-                Err(Error::CaseAlias)
-            );
-            assert_eq!(store.load(&alias).unwrap_err(), Error::CaseAlias);
-            assert_eq!(store.delete(&alias), Err(Error::CaseAlias));
-            assert_eq!(store.load(&first).unwrap().unwrap().expose(), b"keep");
-            assert_eq!(store.list().unwrap(), vec![first]);
-            // Where the filesystem keeps names apart that differ only by case (a default
-            // macOS volume does not), an alias written from outside is found and refused.
-            write(&f.base.join("case-probe"), b"");
-            if !f.base.join("CASE-PROBE").exists() {
-                write(&f.dir(A).join(alias.as_str()), b"external alias");
-                assert_eq!(store.list(), Err(Error::CaseAlias));
-            }
-        }
-    }
-
-    #[test]
-    fn concurrent_case_alias_publications_have_one_winner() {
-        for _ in 0..8 {
-            let f = Fixture::new();
-            let store = std::sync::Arc::new(f.open(A).unwrap());
-            let barrier = std::sync::Barrier::new(2);
-            let results = std::thread::scope(|scope| {
-                let a = scope.spawn(|| {
-                    barrier.wait();
-                    store.put(
-                        &Name::parse("recovery.A").unwrap(),
-                        &Value::new(vec![1]).unwrap(),
-                    )
-                });
-                let b = scope.spawn(|| {
-                    barrier.wait();
-                    store.put(
-                        &Name::parse("recovery.a").unwrap(),
-                        &Value::new(vec![2]).unwrap(),
-                    )
-                });
-                (a.join().unwrap(), b.join().unwrap())
-            });
-            assert!(matches!(
-                results,
-                (Ok(()), Err(Error::CaseAlias)) | (Err(Error::CaseAlias), Ok(()))
-            ));
-            let name = store.list().unwrap().pop().unwrap();
-            let expected = if name.as_str() == "recovery.A" { 1 } else { 2 };
-            assert_eq!(store.load(&name).unwrap().unwrap().expose(), &[expected]);
-            assert_eq!(store.list().unwrap(), vec![name]);
+    fn uppercase_aliases_are_rejected_and_external_case_aliases_fail_closed() {
+        let lower = SAMPLE_RECOVERY;
+        let upper = SAMPLE_RECOVERY.replace("0190a5d2", "0190A5D2");
+        assert_eq!(Name::parse(&upper), Err(Error::InvalidName));
+        let f = Fixture::new();
+        let store = f.open(A).unwrap();
+        let first = Name::parse(lower).unwrap();
+        store
+            .put(&first, &Value::new(b"keep".to_vec()).unwrap())
+            .unwrap();
+        assert_eq!(store.load(&first).unwrap().unwrap().expose(), b"keep");
+        assert_eq!(store.list().unwrap(), vec![first]);
+        // Where the filesystem keeps names apart that differ only by case (a default
+        // macOS volume does not), an alias written from outside is found and refused.
+        write(&f.base.join("case-probe"), b"");
+        if !f.base.join("CASE-PROBE").exists() {
+            write(&f.dir(A).join(&upper), b"external alias");
+            assert_eq!(store.list(), Err(Error::CaseAlias));
         }
     }
 
@@ -1215,7 +1180,8 @@ fn the_platforms_kinds_keep_this_views_names() {
         ),
         (Kind::InUse, Error::InUse),
         (Kind::CaseAlias, Error::CaseAlias),
-        (Kind::Os(-25308), Error::Os(-25308)),
+        (Kind::InteractionNotAllowed, Error::InteractionNotAllowed),
+        (Kind::Os(-50), Error::Os(-50)),
         (
             Kind::Io(std::io::ErrorKind::NotFound),
             Error::Io(std::io::ErrorKind::NotFound),

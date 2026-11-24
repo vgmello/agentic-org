@@ -80,7 +80,7 @@ fn held_child(dir: &Path) -> org_platform_host::admission::Started {
 #[test]
 fn refused_web_start_never_becomes_ready() {
     let dir = tempfile::tempdir().unwrap();
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let started = Supervisor::start(
         Configuration {
             // Never run: its first step would end it.
@@ -88,10 +88,11 @@ fn refused_web_start_never_becomes_ready() {
             instance: "instance".into(),
             runtime: dir.path().to_owned(),
             listen: loopback_on(free_port()),
-            check: ServerCheck::gateway_for_build(false, None).unwrap(),
+            check: ServerCheck::web_for_build(false, None).unwrap(),
             critical_paths: vec![],
             release: None,
             tls: None,
+            on_renewal_kept: None,
         },
         None,
         Arc::new(NoOps),
@@ -116,13 +117,13 @@ fn refused_web_start_never_becomes_ready() {
         ImageIdentity::VerifiedBytes => {
             let supervisor = started.expect("the check may spawn; the image is refused");
             wait_for("the first refused start", || {
-                *lock(&state) == GatewayState::Failed
+                *lock(&state) == WebState::Failed
             });
             Some(supervisor)
         }
     };
     let observed = *lock(&state);
-    assert_ne!(observed, GatewayState::Running);
+    assert_ne!(observed, WebState::Running);
     assert!(!crate::service::web_serving(true, true, observed));
 }
 
@@ -134,10 +135,11 @@ fn an_admission_refusal_inside_start_keeps_its_cause() {
         instance: "instance".into(),
         runtime: dir.path().to_owned(),
         listen: loopback_on(free_port()),
-        check: ServerCheck::gateway_for_build(false, None).unwrap(),
+        check: ServerCheck::web_for_build(false, None).unwrap(),
         critical_paths: vec![],
         release: None,
         tls: None,
+        on_renewal_kept: None,
     };
     let Err(error) = start(&config, Arc::new(NoOps)) else {
         panic!("a release build without a team or a selected release never spawns")
@@ -205,7 +207,7 @@ impl Drop for Fake {
 #[test]
 fn running_is_published_only_after_the_web_reports_serving() {
     let stopping = Arc::new(AtomicBool::new(false));
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let live = Arc::new(AtomicBool::new(true));
     let reported = Arc::new(AtomicBool::new(false));
     let supervisor = {
@@ -232,13 +234,13 @@ fn running_is_published_only_after_the_web_reports_serving() {
             )
         })
     };
-    wait_for("starting", || *lock(&state) == GatewayState::Starting);
+    wait_for("starting", || *lock(&state) == WebState::Starting);
     thread::sleep(Duration::from_millis(200));
     // Started and admitted, but HTTP initialization is not reported yet.
-    assert_eq!(*lock(&state), GatewayState::Starting);
+    assert_eq!(*lock(&state), WebState::Starting);
     assert!(!crate::service::web_serving(true, true, *lock(&state)));
     reported.store(true, Ordering::SeqCst);
-    wait_for("running", || *lock(&state) == GatewayState::Running);
+    wait_for("running", || *lock(&state) == WebState::Running);
     assert!(crate::service::web_serving(true, true, *lock(&state)));
     stopping.store(true, Ordering::SeqCst);
     supervisor.thread().unpark();
@@ -248,7 +250,7 @@ fn running_is_published_only_after_the_web_reports_serving() {
 #[test]
 fn a_web_that_never_reports_serving_fails_after_the_deadline_and_is_stopped() {
     let stopping = Arc::new(AtomicBool::new(false));
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let live = Arc::new(AtomicBool::new(true));
     let dropped = Arc::new(AtomicBool::new(false));
     let observed = Arc::new(Mutex::new(Vec::new()));
@@ -283,23 +285,23 @@ fn a_web_that_never_reports_serving_fails_after_the_deadline_and_is_stopped() {
     wait_for("failed", || {
         let now = *lock(&state);
         lock(&observed).push(now);
-        now == GatewayState::Failed
+        now == WebState::Failed
     });
     assert!(started.elapsed() >= Duration::from_millis(250));
-    assert!(!lock(&observed).contains(&GatewayState::Running));
+    assert!(!lock(&observed).contains(&WebState::Running));
     assert!(!crate::service::web_serving(true, true, *lock(&state)));
     // The unreported child is dropped: control closed, then killed and reaped.
     wait_for("child stopped", || dropped.load(Ordering::SeqCst));
     stopping.store(true, Ordering::SeqCst);
     supervisor.thread().unpark();
     supervisor.join().unwrap();
-    assert_eq!(*lock(&state), GatewayState::Failed);
+    assert_eq!(*lock(&state), WebState::Failed);
 }
 
 #[test]
 fn readiness_turns_false_when_the_web_exits_or_its_control_reaches_eof() {
     let stopping = Arc::new(AtomicBool::new(false));
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let live = Arc::new(AtomicBool::new(true));
     let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let supervisor = {
@@ -323,16 +325,16 @@ fn readiness_turns_false_when_the_web_exits_or_its_control_reaches_eof() {
             )
         })
     };
-    wait_for("running", || *lock(&state) == GatewayState::Running);
+    wait_for("running", || *lock(&state) == WebState::Running);
     assert!(crate::service::web_serving(true, true, *lock(&state)));
     live.store(false, Ordering::SeqCst); // child exit or control EOF
-    wait_for("failed", || *lock(&state) == GatewayState::Failed);
+    wait_for("failed", || *lock(&state) == WebState::Failed);
     assert!(!crate::service::web_serving(true, true, *lock(&state)));
     stopping.store(true, Ordering::SeqCst);
     supervisor.thread().unpark();
     supervisor.join().unwrap();
     assert_eq!(starts.load(Ordering::SeqCst), 1);
-    assert_eq!(*lock(&state), GatewayState::Failed);
+    assert_eq!(*lock(&state), WebState::Failed);
 }
 
 /// HQ leaving Active or authentication going away while the web process runs stops it
@@ -341,7 +343,7 @@ fn readiness_turns_false_when_the_web_exits_or_its_control_reaches_eof() {
 #[test]
 fn a_running_web_stops_when_eligibility_ends_and_restarts_once_eligible() {
     let stopping = Arc::new(AtomicBool::new(false));
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let eligible = Arc::new(AtomicBool::new(true));
     let live = Arc::new(AtomicBool::new(true));
     let dropped = Arc::new(AtomicBool::new(false));
@@ -378,10 +380,10 @@ fn a_running_web_stops_when_eligibility_ends_and_restarts_once_eligible() {
             )
         })
     };
-    wait_for("running", || *lock(&state) == GatewayState::Running);
+    wait_for("running", || *lock(&state) == WebState::Running);
     eligible.store(false, Ordering::SeqCst);
     wait_for("child stopped", || dropped.load(Ordering::SeqCst));
-    wait_for("not serving", || *lock(&state) == GatewayState::Starting);
+    wait_for("not serving", || *lock(&state) == WebState::Starting);
     assert!(!crate::service::web_serving(true, true, *lock(&state)));
     thread::sleep(Duration::from_millis(150));
     assert_eq!(
@@ -389,9 +391,9 @@ fn a_running_web_stops_when_eligibility_ends_and_restarts_once_eligible() {
         1,
         "restarted while ineligible"
     );
-    assert_eq!(*lock(&state), GatewayState::Starting);
+    assert_eq!(*lock(&state), WebState::Starting);
     eligible.store(true, Ordering::SeqCst);
-    wait_for("running again", || *lock(&state) == GatewayState::Running);
+    wait_for("running again", || *lock(&state) == WebState::Running);
     assert_eq!(starts.load(Ordering::SeqCst), 2);
     stopping.store(true, Ordering::SeqCst);
     supervisor.thread().unpark();
@@ -412,7 +414,7 @@ fn a_running_web_stops_when_eligibility_ends_and_restarts_once_eligible() {
 #[test]
 fn an_ineligible_host_never_starts_the_web() {
     let stopping = Arc::new(AtomicBool::new(false));
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let supervisor = {
         let (stopping, state) = (Arc::clone(&stopping), Arc::clone(&state));
         thread::spawn(move || {
@@ -426,9 +428,9 @@ fn an_ineligible_host_never_starts_the_web() {
             )
         })
     };
-    wait_for("starting", || *lock(&state) == GatewayState::Starting);
+    wait_for("starting", || *lock(&state) == WebState::Starting);
     thread::sleep(Duration::from_millis(120));
-    assert_eq!(*lock(&state), GatewayState::Starting);
+    assert_eq!(*lock(&state), WebState::Starting);
     stopping.store(true, Ordering::SeqCst);
     supervisor.thread().unpark();
     supervisor.join().unwrap();
@@ -483,14 +485,14 @@ fn handoff_sends_exactly_the_transfer_end_then_the_listener() {
         }
         header.push(byte);
     }
-    let named: GatewayHandoff = serde_json::from_slice(&header).unwrap();
-    assert_eq!(named, GatewayHandoff);
+    let named: WebHandoff = serde_json::from_slice(&header).unwrap();
+    assert_eq!(named, WebHandoff);
     let header: serde_json::Value = serde_json::from_slice(&header).unwrap();
     assert_eq!(header["fds"], serde_json::json!(["transfer", "listener"]));
 
     // Exactly two descriptors ride the marker; any other count is refused.
     let (marker, fds) = receiver
-        .receive_byte(GATEWAY_HANDOFF_FDS.len(), &SPAWN_LOCK)
+        .receive_byte(WEB_HANDOFF_FDS.len(), &SPAWN_LOCK)
         .unwrap();
     assert_eq!(marker, org_host_control::ops::HOST_SOCK_MARKER);
     let [first, second]: [OwnedFd; 2] = fds.try_into().unwrap();
@@ -532,7 +534,7 @@ impl Serving for Brief {
 #[test]
 fn only_consecutive_failed_starts_count_and_a_stable_run_resets_them() {
     let stopping = Arc::new(AtomicBool::new(false));
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let timing = Timing {
         serving: SERVING_DEADLINE,
@@ -570,13 +572,13 @@ fn only_consecutive_failed_starts_count_and_a_stable_run_resets_them() {
     stopping.store(true, Ordering::SeqCst);
     supervisor.thread().unpark();
     supervisor.join().unwrap();
-    assert_eq!(*lock(&state), GatewayState::Failed);
+    assert_eq!(*lock(&state), WebState::Failed);
 }
 
 #[test]
 fn a_stable_run_resets_failures_accumulated_before_it() {
     let stopping = AtomicBool::new(false);
-    let state = Mutex::new(GatewayState::NotConfigured);
+    let state = Mutex::new(WebState::NotConfigured);
     let starts = std::sync::atomic::AtomicUsize::new(0);
     let timing = Timing {
         serving: SERVING_DEADLINE,
@@ -597,14 +599,14 @@ fn a_stable_run_resets_failures_accumulated_before_it() {
         }
     });
     assert_eq!(starts.load(Ordering::SeqCst), 2 * MAX_STARTS);
-    assert_eq!(*lock(&state), GatewayState::Failed);
+    assert_eq!(*lock(&state), WebState::Failed);
 }
 
 #[test]
 fn a_stable_run_ended_by_ineligibility_also_resets_failures() {
     const STOPPED: &str = "authenticated browser stopped because the host is no longer eligible; it starts again once eligible";
     let stopping = AtomicBool::new(false);
-    let state = Mutex::new(GatewayState::NotConfigured);
+    let state = Mutex::new(WebState::NotConfigured);
     let starts = std::sync::atomic::AtomicUsize::new(0);
     let eligible = AtomicBool::new(true);
     let (lines, record) = recording();
@@ -626,11 +628,11 @@ fn a_stable_run_ended_by_ineligibility_also_resets_failures() {
                     thread::sleep(Duration::from_millis(5));
                 }
             };
-            wait("the stable run", &|| *lock(&state) == GatewayState::Running);
+            wait("the stable run", &|| *lock(&state) == WebState::Running);
             thread::sleep(Duration::from_millis(300)); // past `stable`
             eligible.store(false, Ordering::SeqCst);
             wait("the eligibility stop", &|| {
-                *lock(&state) == GatewayState::Starting
+                *lock(&state) == WebState::Starting
             });
             eligible.store(true, Ordering::SeqCst);
         });
@@ -654,7 +656,7 @@ fn a_stable_run_ended_by_ineligibility_also_resets_failures() {
         );
     });
     assert_eq!(starts.load(Ordering::SeqCst), 2 * MAX_STARTS);
-    assert_eq!(*lock(&state), GatewayState::Failed);
+    assert_eq!(*lock(&state), WebState::Failed);
     let lines = lock(&lines);
     assert_eq!(
         lines.iter().filter(|l| l.as_str() == STOPPED).count(),
@@ -672,7 +674,7 @@ fn a_stable_run_ended_by_ineligibility_also_resets_failures() {
 #[test]
 fn consecutive_failed_starts_stop_at_the_limit_without_a_final_backoff() {
     let stopping = AtomicBool::new(false);
-    let state = Mutex::new(GatewayState::NotConfigured);
+    let state = Mutex::new(WebState::NotConfigured);
     let starts = std::sync::atomic::AtomicUsize::new(0);
     let last = Mutex::new(Instant::now());
     let timing = Timing {
@@ -689,7 +691,7 @@ fn consecutive_failed_starts_stop_at_the_limit_without_a_final_backoff() {
         })
     });
     assert_eq!(starts.load(Ordering::SeqCst), MAX_STARTS);
-    assert_eq!(*lock(&state), GatewayState::Failed);
+    assert_eq!(*lock(&state), WebState::Failed);
     // The final backoff would be 40 ms << 4 = 640 ms; none follows the last start.
     let tail = lock(&last).elapsed();
     assert!(
@@ -781,6 +783,7 @@ fn scripted_config(
         critical_paths: vec![],
         release: None,
         tls: None,
+        on_renewal_kept: None,
     };
     (dir, config)
 }
@@ -1002,7 +1005,7 @@ fn a_running_request_never_keeps_the_web_process_alive() {
             description: "nothing: a test's own child".to_owned(),
             landlock_missing: false,
         },
-        captured: Stderr::capture(spawned.stderr, "stderr-held-request-test").unwrap(),
+        captured: Stderr::capture(spawned.stderr, "stderr-held-request-test", None).unwrap(),
     };
     let hello = org_proto::Request::new::<org_host_control::Hello>(1, &Default::default());
     org_proto::frame::write_message(&mut peer, &hello.unwrap()).unwrap();
@@ -1032,7 +1035,7 @@ fn recording() -> (Arc<Mutex<Vec<String>>>, impl Fn(&str) + Send + 'static) {
 #[test]
 fn the_exit_of_a_running_web_is_logged_with_its_reason_and_restart() {
     let stopping = Arc::new(AtomicBool::new(false));
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let live = Arc::new(AtomicBool::new(true));
     let (lines, log) = recording();
     let supervisor = {
@@ -1056,7 +1059,7 @@ fn the_exit_of_a_running_web_is_logged_with_its_reason_and_restart() {
             )
         })
     };
-    wait_for("running", || *lock(&state) == GatewayState::Running);
+    wait_for("running", || *lock(&state) == WebState::Running);
     live.store(false, Ordering::SeqCst);
     wait_for("restart logged", || lock(&lines).len() >= 2);
     stopping.store(true, Ordering::SeqCst);
@@ -1076,7 +1079,7 @@ fn the_exit_of_a_running_web_is_logged_with_its_reason_and_restart() {
 #[test]
 fn every_failed_start_is_logged_escaped_with_its_restart_until_the_limit() {
     let stopping = AtomicBool::new(false);
-    let state = Mutex::new(GatewayState::NotConfigured);
+    let state = Mutex::new(WebState::NotConfigured);
     let (lines, log) = recording();
     let timing = Timing {
         serving: Duration::from_millis(50),
@@ -1201,7 +1204,7 @@ fn free_port() -> u16 {
 #[test]
 fn the_supervisor_refuses_an_https_listener_without_a_stored_pair() {
     let dir = tempfile::tempdir().unwrap();
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let https = serde_json::from_str(
         r#"{"address":"127.0.0.1","port":48124,"scheme":"https","origin":"https://127.0.0.1:48124","hsts":"off"}"#,
     )
@@ -1213,10 +1216,11 @@ fn the_supervisor_refuses_an_https_listener_without_a_stored_pair() {
             instance: "instance".into(),
             runtime: dir.path().to_owned(),
             listen: https,
-            check: ServerCheck::gateway_for_build(true, None).unwrap(),
+            check: ServerCheck::web_for_build(true, None).unwrap(),
             critical_paths: vec![],
             release: None,
             tls: None,
+            on_renewal_kept: None,
         },
         None,
         Arc::new(NoOps),
@@ -1234,7 +1238,7 @@ fn the_supervisor_refuses_an_https_listener_without_a_stored_pair() {
             "the web process requires a verified TLS pair for its https listener: tls_missing"
         );
     }
-    assert_eq!(*lock(&state), GatewayState::NotConfigured);
+    assert_eq!(*lock(&state), WebState::NotConfigured);
 }
 
 /// The `https` gate (X-02 §2, pre-spawn): a stored pair that names the origin passes; none
@@ -1279,7 +1283,7 @@ fn an_https_web_start_waits_while_its_pair_cannot_be_served() {
 #[test]
 fn the_supervisor_admits_a_published_plain_http_listener() {
     let dir = tempfile::tempdir().unwrap();
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let published: ListenConfig = serde_json::from_str(
         r#"{"address":"0.0.0.0","port":48125,"scheme":"http_published","origin":"http://127.0.0.1:48125","hsts":"off"}"#,
     )
@@ -1316,17 +1320,18 @@ fn startable(dir: &Path) -> Configuration {
         instance: "instance".into(),
         runtime: dir.to_owned(),
         listen: loopback_on(free_port()),
-        check: ServerCheck::gateway_for_build(true, None).unwrap(),
+        check: ServerCheck::web_for_build(true, None).unwrap(),
         critical_paths: vec![],
         release: None,
         tls: None,
+        on_renewal_kept: None,
     }
 }
 
 #[test]
 fn the_supervisor_starts_only_where_the_web_process_can_be_confined() {
     let dir = tempfile::tempdir().unwrap();
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let started = Supervisor::start(
         startable(dir.path()),
         None,
@@ -1349,7 +1354,7 @@ fn the_supervisor_starts_only_where_the_web_process_can_be_confined() {
                      here: {reason}"
                 )
             );
-            assert_eq!(*lock(&state), GatewayState::NotConfigured);
+            assert_eq!(*lock(&state), WebState::NotConfigured);
             assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
         }
     }
@@ -1417,7 +1422,7 @@ fn lnx_3_a_host_under_a_profile_starts_nothing_only_where_the_filter_is_refused(
         // The host under the profile. It is never eligible, so a supervisor that
         // does start waits and binds nothing.
         let dir = tempfile::tempdir().unwrap();
-        let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+        let state = Arc::new(Mutex::new(WebState::NotConfigured));
         let started = Supervisor::start(
             startable(dir.path()),
             None,
@@ -1436,7 +1441,7 @@ fn lnx_3_a_host_under_a_profile_starts_nothing_only_where_the_filter_is_refused(
                 println!("\nstarted");
             }
             Err(error) => {
-                assert_eq!(*lock(&state), GatewayState::NotConfigured);
+                assert_eq!(*lock(&state), WebState::NotConfigured);
                 println!("\nrefused: {error}");
             }
         }
@@ -1606,7 +1611,7 @@ fn a_stop_ends_a_start_that_waits_for_the_web_process_at_once() {
         let instance = format!("stalled-start-{}-{n}", std::process::id());
         config.instance = instance.clone();
         let stop = Arc::new(AtomicBool::new(false));
-        let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+        let state = Arc::new(Mutex::new(WebState::NotConfigured));
         let (lines, log) = recording();
         let thread = {
             let (stop, state) = (Arc::clone(&stop), Arc::clone(&state));
@@ -1631,7 +1636,7 @@ fn a_stop_ends_a_start_that_waits_for_the_web_process_at_once() {
         assert!(supervisor.join_by(asked + START_WAIT), "{steps}");
         let took = asked.elapsed();
         assert!(took < Duration::from_secs(1), "{steps}: {took:?}");
-        assert_eq!(*lock(&state), GatewayState::Failed);
+        assert_eq!(*lock(&state), WebState::Failed);
         assert!(lock(&lines).is_empty(), "{:?}", lock(&lines));
         // Its standard error ended: the child is gone.
         assert_eq!(captured_stderr(&instance).unwrap(), b"waiting\n");
@@ -1780,7 +1785,7 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
                 description: "nothing: a test's own child".to_owned(),
                 landlock_missing: false,
             },
-            captured: Stderr::capture(spawned.stderr, "stderr-unit-test").unwrap(),
+            captured: Stderr::capture(spawned.stderr, "stderr-unit-test", None).unwrap(),
         };
         (running, io::BufReader::new(peer))
     };
@@ -1822,8 +1827,8 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     offices.shutdown();
 }
 
-fn binding() -> org_host_control::gateway::WebRelease {
-    org_host_control::gateway::WebRelease {
+fn binding() -> org_host_control::web::WebRelease {
+    org_host_control::web::WebRelease {
         release_id: "release".into(),
         manifest_sha256: "ab".repeat(32),
         sequence: 7,
@@ -1842,7 +1847,7 @@ fn pin(cdhash: [u8; 20]) -> crate::server_check::Pin {
 fn a_release_build_web_admission_pins_the_selected_image_and_binds_its_release() {
     const TEAM: &str = "AB12CD34EF";
     let hash = pin([7u8; 20]);
-    let web = ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap();
+    let web = ServerCheck::web_for_build(false, Some(TEAM)).unwrap();
     match image_identity() {
         ImageIdentity::CodeSignature => assert!(matches!(web, ServerCheck::Gateway(_))),
         // The team names nothing where the bytes are checked.
@@ -1937,6 +1942,7 @@ fn unchecked(dir: &Path, program: PathBuf) -> Configuration {
         critical_paths: vec![],
         release: None,
         tls: None,
+        on_renewal_kept: None,
     }
 }
 
@@ -2167,7 +2173,7 @@ fn a_child_that_exec_ed_after_connecting_is_refused_at_the_ready_line_or_as_unco
 #[test]
 fn runs_that_end_before_they_are_stable_count_as_failed_starts() {
     let stopping = Arc::new(AtomicBool::new(false));
-    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let state = Arc::new(Mutex::new(WebState::NotConfigured));
     let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let timing = Timing {
         serving: SERVING_DEADLINE,
@@ -2204,7 +2210,7 @@ fn runs_that_end_before_they_are_stable_count_as_failed_starts() {
         starts.load(Ordering::SeqCst)
     );
     assert_eq!(starts.load(Ordering::SeqCst), MAX_STARTS);
-    assert_eq!(*lock(&state), GatewayState::Failed);
+    assert_eq!(*lock(&state), WebState::Failed);
 }
 
 #[test]
@@ -2252,13 +2258,18 @@ fn a_refusal_line_is_found_only_whole_printable_and_bounded() {
 fn only_the_start_of_a_childs_standard_error_is_kept() {
     let reason = "kept";
     let early = format!("{REFUSAL_PREFIX}{reason}\n{}", "x".repeat(100_000));
-    let captured =
-        Stderr::capture(io::Cursor::new(early.into_bytes()), "stderr-unit-test").unwrap();
+    let captured = Stderr::capture(
+        io::Cursor::new(early.into_bytes()),
+        "stderr-unit-test",
+        None,
+    )
+    .unwrap();
     assert!(matches!(captured.ending(WAIT), Ending::Refused(found) if found == reason));
     assert_eq!(lock(&captured.kept).0.len(), STDERR_KEPT);
     // A refusal line after the kept bytes is not seen, and nothing whole was kept.
     let late = format!("{}\n{REFUSAL_PREFIX}{reason}\n", "x".repeat(STDERR_KEPT));
-    let captured = Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test").unwrap();
+    let captured =
+        Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test", None).unwrap();
     assert!(matches!(captured.ending(WAIT), Ending::Silent));
     assert!(lock(&captured.kept).1, "read to its end");
 }
@@ -2272,6 +2283,7 @@ fn a_child_that_ended_otherwise_is_reported_with_its_last_whole_line() {
         let captured = Stderr::capture(
             io::Cursor::new(text.as_bytes().to_vec()),
             "stderr-unit-test",
+            None,
         )
         .unwrap();
         match captured.ending(WAIT) {
@@ -2363,15 +2375,18 @@ fn the_reason_for_a_missing_landlock_layer_is_read_from_a_running_childs_standar
     let ended = Stderr::capture(
         io::Cursor::new(b"something else\n".to_vec()),
         "stderr-unit-test",
+        None,
     )
     .unwrap();
     let full = Stderr::capture(
         io::Cursor::new(vec![b'x'; 10 * STDERR_KEPT]),
         "stderr-unit-test",
+        None,
     )
     .unwrap();
     let late = format!("{}\n{line}\n", "x".repeat(STDERR_KEPT));
-    let late = Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test").unwrap();
+    let late =
+        Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test", None).unwrap();
     let asked = Instant::now();
     for captured in [ended, full, late] {
         assert_eq!(captured.landlock_not_applied(WAIT), None);
@@ -2418,7 +2433,7 @@ fn stepping(steps: &str) -> (Child, Arc<Stderr>, (fs::File, tempfile::TempDir)) 
         .unwrap()
         .spawn(&[OsStr::new("--serve")], &web_env(), &SPAWN_LOCK)
         .unwrap();
-    let captured = Stderr::capture(spawned.stderr, "stderr-unit-test").unwrap();
+    let captured = Stderr::capture(spawned.stderr, "stderr-unit-test", None).unwrap();
     (spawned.child, captured, (spawned.stdin, dir))
 }
 
@@ -2594,10 +2609,11 @@ fn real_web() -> RealWeb {
             instance,
             runtime: root.join("runtime"),
             listen: loopback_on(free_port()),
-            check: ServerCheck::gateway_for_build(true, None).unwrap(),
+            check: ServerCheck::web_for_build(true, None).unwrap(),
             critical_paths: vec![root.join("critical")],
             release: None,
             tls: None,
+            on_renewal_kept: None,
         },
         handler,
         offices,
@@ -2713,7 +2729,7 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
     // The supervisor's own start of it: logged once, with the same words, and it
     // serves.
     let stopping = AtomicBool::new(false);
-    let state = Mutex::new(GatewayState::NotConfigured);
+    let state = Mutex::new(WebState::NotConfigured);
     let (lines, log) = recording();
     let image = Image::new(&web.config.check, &web.config.program);
     thread::scope(|scope| {
@@ -2737,7 +2753,7 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
             )
         });
         wait_for("the supervised web process serves", || {
-            *lock(&state) == GatewayState::Running
+            *lock(&state) == WebState::Running
         });
         let mut browser = std::net::TcpStream::connect(address).unwrap();
         browser.set_read_timeout(Some(WAIT)).unwrap();
@@ -2834,7 +2850,7 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
         println!("\nrefused: {error}");
         // The supervisor: each failed start is logged with that cause, up to the
         // limit, and the web service ends as failed.
-        let state = Mutex::new(GatewayState::NotConfigured);
+        let state = Mutex::new(WebState::NotConfigured);
         let (lines, log) = recording();
         let timing = Timing {
             serving: Duration::from_secs(5),
@@ -2859,7 +2875,7 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
                 )
             },
         );
-        assert_eq!(*lock(&state), GatewayState::Failed);
+        assert_eq!(*lock(&state), WebState::Failed);
         for line in lock(&lines).iter() {
             println!("log: {line}");
         }
@@ -2915,4 +2931,27 @@ fn a_kept_renewal_line_is_found_across_reads_and_only_for_known_reasons() {
     let many = format!("{RENEWAL_KEPT_PREFIX}fetch_failed\n").repeat(40);
     assert_eq!(kept.read(many.as_bytes()).len(), RENEWAL_KEPT_LOGGED - 2);
     assert!(renewal_kept_text("fetch_failed").contains("fetch_failed"));
+}
+
+#[test]
+fn stderr_capture_triggers_retry_only_for_transient_renewal_failures() {
+    use std::sync::{Arc, Mutex};
+    let seen = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+    let cb_seen = Arc::clone(&seen);
+    let input = format!(
+        "{RENEWAL_KEPT_PREFIX}fetch_failed\n\
+         {RENEWAL_KEPT_PREFIX}unusable_pair\n\
+         {RENEWAL_KEPT_PREFIX}unavailable\n\
+         {RENEWAL_KEPT_PREFIX}replace_failed\n"
+    );
+    let captured = Stderr::capture(
+        std::io::Cursor::new(input.into_bytes()),
+        "retry-test-instance",
+        Some(Arc::new(move |reason| {
+            cb_seen.lock().unwrap().push(reason);
+        })),
+    )
+    .unwrap();
+    let _ = captured.ending(Duration::from_secs(5));
+    assert_eq!(*seen.lock().unwrap(), vec!["fetch_failed", "unavailable"]);
 }

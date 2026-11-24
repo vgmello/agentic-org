@@ -10,9 +10,12 @@
 //! a folder. The organization family (`organization_family`) holds the organization's
 //! rules; `rules` reads the native protocol's organization commands.
 
+pub mod accounting;
+pub mod budgets;
+pub mod git;
 pub mod hq_creation;
 mod organization;
-pub use organization::directory;
+pub use organization::{directory, import};
 /// The organization family on the office store (`docs/design/office-store.md`): its
 /// operations, its records and codec, its two ports and its projector. With the `testkit`
 /// feature: its memory port and `organization_conformance_tests!`.
@@ -31,12 +34,13 @@ pub mod organization_family {
     pub use crate::organization::records;
     #[cfg(any(test, feature = "testkit"))]
     pub use crate::organization::testkit;
-    /// The native protocol's side: wire command IDs as store operation IDs, `org.snapshot`
-    /// from the records, and `team.create` onto the family and back.
-    pub use crate::organization::{operation_id, snapshot, wire};
+    /// The native protocol's side: `org.snapshot` from the records and organization commands
+    /// mapped onto the family and back.
+    pub use crate::organization::{snapshot, wire};
 }
 mod error;
 mod key;
+pub mod messaging;
 mod model;
 mod office;
 mod office_file;
@@ -45,21 +49,30 @@ mod office_file;
 /// feature: a CA fixture.
 pub mod office_local;
 mod private_fs;
+pub mod private_notes;
+pub mod processes;
+pub mod projects;
+pub mod providers;
 pub mod rules;
 mod store;
+pub mod tasks;
+pub use store::open::messaging_ops::{
+    LocalTransitionInput, MailboxCommitInput, MailboxCommitOut, MailboxStored, NotifyCandidateOut,
+    OwnerInboxEntry, PeekUnreadOut,
+};
 #[cfg(any(test, feature = "testkit"))]
 pub use store::open::Testing;
 /// Opening an office's store on the engine its configuration names, and the operations
 /// run on it whichever engine that is.
 pub use store::open::{
     open_store, AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
-    DirectoryGeneration, DirectorySnapshot, EngineChoice, MovePersonOp, MoveTeamOp, OfficeEngine,
-    OfficeStanding, OfficeStore, Opened, ReadOp, Standing, StoreConfig, StoreOp, StructureOp,
-    UpdatePersonOp, UpdateTeamOp,
+    DirectoryGeneration, DirectorySnapshot, EngineChoice, ImportOrganizationOp, MovePersonOp,
+    MoveTeamOp, OfficeEngine, OfficeStanding, OfficeStore, ReadOp, Standing, StoreConfig, StoreOp,
+    StructureOp, TaskGitContext, UpdatePersonOp, UpdateTeamOp,
 };
-/// The SQLite engine of the office store: the projection as one plain database file.
-pub use store::sqlite::{SqliteEngine, SqliteSnapshot, SqliteTx};
 mod time;
+pub use time::format_rfc3339_ms;
+pub use time::parse_rfc3339_ms;
 
 pub use error::{NameError, OfficeError};
 pub use key::Key;

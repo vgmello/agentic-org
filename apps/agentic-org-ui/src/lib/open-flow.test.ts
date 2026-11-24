@@ -1,14 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { createMockOffice, type Scenario } from './office/mock';
-import type { OfficeApi } from './office/api';
-import { formatDate, loadOrganizations, localOffice, openOrganization, openable } from './open-flow';
+import { createMockOffice, type Scenario } from './modules/offices/mock';
+import type { OfficeApi } from './modules/offices/office-api';
+import {
+	formatDate,
+	loadOrganizations,
+	localOffice,
+	openOrganization,
+	openable
+} from './open-flow';
 import type { OfficeInfo, Organization } from './proto';
 
 const memory = () => {
 	const m = new Map<string, string>();
-	return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) };
+	return {
+		getItem: (k: string) => m.get(k) ?? null,
+		setItem: (k: string, v: string) => void m.set(k, v)
+	};
 };
-const mock = (scenario: Scenario = 'healthy') => createMockOffice({ delayMs: 0, scenario, storage: memory() });
+const mock = (scenario: Scenario = 'healthy') =>
+	createMockOffice({ delayMs: 0, scenario, storage: memory() });
 
 const office = (over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id: 'o1',
@@ -19,7 +29,12 @@ const office = (over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	status: 'active',
 	...over
 });
-const org = (offices: OfficeInfo[]): Organization => ({ id: 'org', name: 'Acme', created_at: '2026-09-14T09:30:00.000Z', offices });
+const org = (offices: OfficeInfo[]): Organization => ({
+	id: 'org',
+	name: 'Acme',
+	created_at: '2026-09-14T09:30:00.000Z',
+	offices
+});
 
 describe('loadOrganizations', () => {
 	it('starts the office and lists what this Mac already has', async () => {
@@ -46,7 +61,8 @@ describe('loadOrganizations', () => {
 	it('reports a failure while listing as a failed listing, not a throw', async () => {
 		const api: OfficeApi = {
 			...mock(),
-			listOrganizations: async () => Promise.reject({ source: 'api', code: 'storage_error', message: 'disk' })
+			listOrganizations: async () =>
+				Promise.reject({ source: 'api', code: 'storage_error', message: 'disk' })
 		};
 		const listing = await loadOrganizations(api);
 		expect(listing.kind === 'failed' && listing.error.code).toBe('storage_error');
@@ -55,7 +71,11 @@ describe('loadOrganizations', () => {
 
 describe('an unreadable list of remembered connections', () => {
 	it('still shows the organizations, just without the open-now mark', async () => {
-		const api: OfficeApi = { ...mock(), connections: async () => Promise.reject({ source: 'app', code: 'connections_unreadable', message: 'x' }) };
+		const api: OfficeApi = {
+			...mock(),
+			connections: async () =>
+				Promise.reject({ source: 'app', code: 'connections_unreadable', message: 'x' })
+		};
 		const listing = await loadOrganizations(api);
 		expect(listing.kind).toBe('ready');
 		expect(listing.kind === 'ready' && listing.current).toBeUndefined();
@@ -97,7 +117,10 @@ describe('openOrganization', () => {
 		await openOrganization(api, 'sample-northwind');
 		await openOrganization(api, 'sample-globex');
 		await openOrganization(api, 'sample-northwind');
-		expect((await api.connections()).map((c) => c.organization.id)).toEqual(['sample-globex', 'sample-northwind']);
+		expect((await api.connections()).map((c) => c.organization.id)).toEqual([
+			'sample-globex',
+			'sample-northwind'
+		]);
 	});
 
 	it('refuses an organization the Mac no longer has, and a closed office', async () => {

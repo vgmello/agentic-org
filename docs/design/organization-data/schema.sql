@@ -4,7 +4,11 @@ PRAGMA recursive_triggers = ON;
 
 CREATE TABLE organizations (
   id TEXT PRIMARY KEY,
-  slug TEXT NOT NULL UNIQUE CHECK (length(slug) > 0),
+  slug TEXT NOT NULL UNIQUE CHECK (
+    length(slug) BETWEEN 1 AND 64 AND slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(slug, '--') = 0),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   name TEXT NOT NULL,
@@ -50,7 +54,11 @@ UNIQUE (organization_id, key),
 CREATE TABLE roles (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  key TEXT,
+  key TEXT CHECK (key IS NULL OR (
+    length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'
+    AND substr(key, -1, 1) GLOB '[a-z0-9]'
+    AND instr(key, '--') = 0)),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 name TEXT NOT NULL,
@@ -103,7 +111,11 @@ UNIQUE (organization_id, number),
 CREATE TABLE offices (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  slug TEXT NOT NULL CHECK (length(slug) > 0),
+  slug TEXT NOT NULL CHECK (
+    length(slug) BETWEEN 1 AND 64 AND slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(slug, '--') = 0),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 name TEXT NOT NULL,
@@ -268,7 +280,7 @@ CREATE TABLE release_repository_commits (
   release_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
-  commit_sha TEXT NOT NULL,
+  commit_sha TEXT NOT NULL CHECK (length(commit_sha) > 0),
   PRIMARY KEY (organization_id, release_id, repository_id),
   FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED,
@@ -315,7 +327,7 @@ CREATE TABLE documents (
   release_id TEXT,
   deployment_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
-  kind TEXT NOT NULL CHECK (length(kind) BETWEEN 1 AND 64 AND kind NOT GLOB '*[^a-z0-9-]*'),
+  kind TEXT NOT NULL CHECK (length(kind) BETWEEN 1 AND 64 AND kind NOT GLOB '*[^a-z0-9-]*' AND substr(kind, 1, 1) GLOB '[a-z0-9]'),
   owner_employee_id TEXT,
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
@@ -354,7 +366,7 @@ CREATE TABLE documents (
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, id, version) REFERENCES document_versions(organization_id, document_id, version)
+  FOREIGN KEY (organization_id, id, version, project_id) REFERENCES document_versions(organization_id, document_id, version, project_id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
@@ -431,6 +443,7 @@ CREATE TABLE tasks (
   severity TEXT,
   resolution TEXT,
   blocked_reason TEXT,
+  rank_order INTEGER CHECK (rank_order >= 0),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
@@ -466,9 +479,42 @@ CREATE TABLE task_repositories (
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
+CREATE TABLE task_labels (
+  organization_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  label TEXT NOT NULL CHECK (
+    length(label) BETWEEN 1 AND 64
+    AND label NOT GLOB '*[^a-z0-9._:/-]*'
+    AND substr(label, 1, 1) GLOB '[a-z0-9]'
+    AND substr(label, -1, 1) GLOB '[a-z0-9]'
+  ),
+  PRIMARY KEY (organization_id, task_id, label),
+  FOREIGN KEY (organization_id, task_id) REFERENCES tasks(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE task_files (
+  organization_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('reference', 'modified')),
+  path TEXT NOT NULL CHECK (
+    length(path) BETWEEN 1 AND 1024
+    AND substr(path, 1, 1) <> '/'
+    AND instr(path, '..') = 0
+    AND instr(path, char(0)) = 0
+  ),
+  PRIMARY KEY (organization_id, task_id, role, path),
+  FOREIGN KEY (organization_id, task_id) REFERENCES tasks(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
 CREATE TABLE record_refs (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
-  kind TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN (
+    'organization', 'office', 'team', 'project', 'feature', 'release',
+    'milestone', 'deployment', 'task', 'document', 'development_process',
+    'media', 'employee', 'repository', 'role'
+  )),
   id TEXT NOT NULL,
   is_deleted INTEGER NOT NULL CHECK (is_deleted IN (0, 1)),
   PRIMARY KEY (organization_id, kind, id)
@@ -487,6 +533,7 @@ CREATE TABLE checklist_steps (
   checked_by_employee_id TEXT,
   checked_at TEXT,
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision>=1),
+  CHECK (done = 1 OR (checked_by_employee_id IS NULL AND checked_at IS NULL)),
   FOREIGN KEY (organization_id,target_kind,linked_task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,checked_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   PRIMARY KEY (organization_id, target_kind, target_id, id),
@@ -518,7 +565,10 @@ CREATE TABLE links (
   source_id TEXT NOT NULL,
   id TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('depends_on', 'relates_to', 'fixes')),
-  target_kind TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN (
+    'project', 'feature', 'release', 'milestone', 'deployment',
+    'task', 'document', 'development_process', 'media'
+  )),
   target_id TEXT NOT NULL,
   PRIMARY KEY (organization_id, source_kind, source_id, id),
   UNIQUE (organization_id, source_kind, source_id, kind, target_kind, target_id),
@@ -532,13 +582,17 @@ CREATE TABLE links (
 
 CREATE TABLE tombstones (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
-  kind TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN (
+    'project', 'feature', 'release', 'milestone', 'deployment',
+    'task', 'document', 'development_process', 'media'
+  )),
   id TEXT NOT NULL,
   key TEXT,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   team_id TEXT,
   project_id TEXT,
+  office_code TEXT CHECK (office_code IS NULL OR (length(office_code) BETWEEN 1 AND 8 AND office_code NOT GLOB '*[^A-Z]*')),
   number INTEGER CHECK (number > 0),
   type TEXT,
   feature_id TEXT,
@@ -553,7 +607,13 @@ CREATE TABLE tombstones (
 CREATE TABLE employees (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  handle TEXT NOT NULL CHECK (length(handle) > 0),
+  handle TEXT NOT NULL CHECK (
+    length(handle) BETWEEN 1 AND 64
+    AND handle NOT GLOB '*[^a-z0-9._-]*'
+    AND substr(handle, 1, 1) GLOB '[a-z0-9]'
+    AND substr(handle, -1, 1) <> '.'
+    AND instr(handle, '..') = 0
+    AND handle <> 'here'),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
@@ -612,7 +672,7 @@ CREATE TABLE task_workspaces (
   task_id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
   worktree_path TEXT NOT NULL,
-  PRIMARY KEY (organization_id, task_id, repository_id),
+  PRIMARY KEY (organization_id, task_id, repository_id, employee_id),
   FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id),
   FOREIGN KEY (organization_id, office_id) REFERENCES offices(organization_id, id),
   FOREIGN KEY (organization_id, task_id, repository_id) REFERENCES task_repositories(organization_id, task_id, repository_id)
@@ -676,6 +736,7 @@ CREATE TABLE owner_questions (
   PRIMARY KEY (organization_id, target_kind, target_id, id),
   CHECK ((state = 'answered' AND answer_comment_id IS NOT NULL AND answered_at IS NOT NULL) OR
     (state <> 'answered' AND answer_comment_id IS NULL AND answered_at IS NULL)),
+  CHECK (answered_at IS NULL OR answered_at >= created_at),
   FOREIGN KEY (organization_id, target_kind, target_id, question_comment_id) REFERENCES comments(organization_id, target_kind, target_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, target_kind, target_id, answer_comment_id) REFERENCES comments(organization_id, target_kind, target_id, id)
@@ -697,6 +758,7 @@ CREATE TABLE waiting_spans (
   ended_at TEXT,
   PRIMARY KEY (organization_id, target_kind, target_id, id),
   CHECK ((waiting_on_kind = 'employee' AND waiting_on_id IS NOT NULL) OR (waiting_on_kind = 'owner' AND waiting_on_id IS NULL)),
+  CHECK (ended_at IS NULL OR ended_at >= started_at),
   FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, waiting_on_id) REFERENCES employees(organization_id, id)
@@ -853,7 +915,11 @@ CREATE TABLE feature_flags (
   revision INTEGER NOT NULL CHECK (revision >= 1),
   project_id TEXT NOT NULL,
   feature_id TEXT,
-  key TEXT NOT NULL CHECK (length(key) > 0),
+  key TEXT NOT NULL CHECK (
+    length(key) > 0 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'
+    AND substr(key, -1, 1) GLOB '[a-z0-9]'
+    AND instr(key, '--') = 0),
   owner_employee_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'retired')),
   value_type TEXT NOT NULL CHECK (value_type IN ('boolean', 'string', 'number', 'json')),
@@ -1080,49 +1146,100 @@ WHERE NOT EXISTS (SELECT 1 FROM usage_records replacement
   WHERE replacement.organization_id = u.organization_id AND replacement.supersedes_id = u.id);
 
 CREATE VIEW usage_task_totals AS
-SELECT organization_id, task_id, COUNT(*) AS usage_count,
-       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
-       SUM(reasoning_tokens) AS reasoning_tokens,
-       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
-         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
-       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
-       SUM(cost_micro_usd) AS known_cost_micro_usd,
-       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
-       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
-       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
-FROM effective_usage_records e WHERE task_id IS NOT NULL
-GROUP BY organization_id, task_id;
+WITH org_incomplete_streams AS (
+  SELECT organization_id, COUNT(*) AS ledger_incomplete_streams
+  FROM usage_stream_coverage
+  WHERE coverage_complete = 0
+  GROUP BY organization_id
+),
+task_totals AS (
+  SELECT organization_id, task_id, COUNT(*) AS usage_count,
+         SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+         SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+         SUM(reasoning_tokens) AS reasoning_tokens,
+         SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+           ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+         SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+         SUM(cost_micro_usd) AS known_cost_micro_usd,
+         SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+         SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records
+  FROM effective_usage_records
+  WHERE task_id IS NOT NULL
+  GROUP BY organization_id, task_id
+)
+SELECT t.organization_id, t.task_id, t.usage_count,
+       t.input_tokens, t.output_tokens,
+       t.cache_read_tokens, t.cache_write_tokens,
+       t.reasoning_tokens, t.known_tokens,
+       t.token_incomplete_records, t.known_cost_micro_usd,
+       t.cost_incomplete_records, t.unpriced_records,
+       COALESCE(s.ledger_incomplete_streams, 0) AS ledger_incomplete_streams
+FROM task_totals t
+LEFT JOIN org_incomplete_streams s ON s.organization_id = t.organization_id;
 
 CREATE VIEW usage_agent_totals AS
-SELECT organization_id, employee_id, COUNT(*) AS usage_count,
-       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
-       SUM(reasoning_tokens) AS reasoning_tokens,
-       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
-         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
-       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
-       SUM(cost_micro_usd) AS known_cost_micro_usd,
-       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
-       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
-       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
-FROM effective_usage_records e WHERE employee_id IS NOT NULL
-GROUP BY organization_id, employee_id;
+WITH org_incomplete_streams AS (
+  SELECT organization_id, COUNT(*) AS ledger_incomplete_streams
+  FROM usage_stream_coverage
+  WHERE coverage_complete = 0
+  GROUP BY organization_id
+),
+agent_totals AS (
+  SELECT organization_id, employee_id, COUNT(*) AS usage_count,
+         SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+         SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+         SUM(reasoning_tokens) AS reasoning_tokens,
+         SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+           ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+         SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+         SUM(cost_micro_usd) AS known_cost_micro_usd,
+         SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+         SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records
+  FROM effective_usage_records
+  WHERE employee_id IS NOT NULL
+  GROUP BY organization_id, employee_id
+)
+SELECT a.organization_id, a.employee_id, a.usage_count,
+       a.input_tokens, a.output_tokens,
+       a.cache_read_tokens, a.cache_write_tokens,
+       a.reasoning_tokens, a.known_tokens,
+       a.token_incomplete_records, a.known_cost_micro_usd,
+       a.cost_incomplete_records, a.unpriced_records,
+       COALESCE(s.ledger_incomplete_streams, 0) AS ledger_incomplete_streams
+FROM agent_totals a
+LEFT JOIN org_incomplete_streams s ON s.organization_id = a.organization_id;
 
 CREATE VIEW usage_project_totals AS
-SELECT organization_id, project_id, COUNT(*) AS usage_count,
-       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
-       SUM(reasoning_tokens) AS reasoning_tokens,
-       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
-         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
-       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
-       SUM(cost_micro_usd) AS known_cost_micro_usd,
-       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
-       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
-       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
-FROM effective_usage_records e WHERE project_id IS NOT NULL
-GROUP BY organization_id, project_id;
+WITH org_incomplete_streams AS (
+  SELECT organization_id, COUNT(*) AS ledger_incomplete_streams
+  FROM usage_stream_coverage
+  WHERE coverage_complete = 0
+  GROUP BY organization_id
+),
+project_totals AS (
+  SELECT organization_id, project_id, COUNT(*) AS usage_count,
+         SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+         SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+         SUM(reasoning_tokens) AS reasoning_tokens,
+         SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+           ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+         SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+         SUM(cost_micro_usd) AS known_cost_micro_usd,
+         SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+         SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records
+  FROM effective_usage_records
+  WHERE project_id IS NOT NULL
+  GROUP BY organization_id, project_id
+)
+SELECT p.organization_id, p.project_id, p.usage_count,
+       p.input_tokens, p.output_tokens,
+       p.cache_read_tokens, p.cache_write_tokens,
+       p.reasoning_tokens, p.known_tokens,
+       p.token_incomplete_records, p.known_cost_micro_usd,
+       p.cost_incomplete_records, p.unpriced_records,
+       COALESCE(s.ledger_incomplete_streams, 0) AS ledger_incomplete_streams
+FROM project_totals p
+LEFT JOIN org_incomplete_streams s ON s.organization_id = p.organization_id;
 
 CREATE TABLE task_events (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
@@ -1142,7 +1259,7 @@ CREATE TABLE task_events (
     json_valid(source_metadata_json) AND json_type(source_metadata_json) = 'object'),
   payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
   resource_profile TEXT NOT NULL CHECK (resource_profile = 'selected-task-resources/1'),
-  event_bytes BLOB NOT NULL,
+  event_bytes BLOB,
   PRIMARY KEY (organization_id, task_id, revision),
   CHECK ((actor_kind = 'employee' AND actor_id IS NOT NULL) OR (actor_kind <> 'employee' AND actor_id IS NULL)),
   CHECK (json_extract(change_json, '$.type') <> 'assignment_changed' OR (
@@ -1529,8 +1646,8 @@ organization_id TEXT NOT NULL,
   priority INTEGER NOT NULL CHECK (priority BETWEEN 1 AND 64),
   PRIMARY KEY (organization_id,model_profile_id,connection_id),
   UNIQUE (organization_id,model_profile_id,priority),
-  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_execution_configs (
@@ -1551,8 +1668,26 @@ model_profile_id TEXT NOT NULL,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','system','unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id,employee_id),
-FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
+FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id,created_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,updated_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE watching_model_settings (
+  organization_id TEXT NOT NULL PRIMARY KEY REFERENCES organizations(id),
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  model_profile_id TEXT,
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','system','unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','system','unknown')),
+  updated_by_id TEXT,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
   FOREIGN KEY (organization_id,created_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
@@ -1569,8 +1704,8 @@ organization_id TEXT NOT NULL,
   account_identity_ref TEXT,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (organization_id,office_id,connection_id),
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE office_connection_state (
@@ -1585,7 +1720,7 @@ organization_id TEXT NOT NULL,
   issue_code TEXT,
   PRIMARY KEY (organization_id,office_id,connection_id),
   CHECK (status<>'ready' OR (driver_version IS NOT NULL AND observed_at IS NOT NULL AND valid_until IS NOT NULL)),
-  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE office_connection_models (
@@ -1599,7 +1734,7 @@ organization_id TEXT NOT NULL,
   observed_at TEXT NOT NULL,
   valid_until TEXT NOT NULL,
   PRIMARY KEY (organization_id,office_id,connection_id,model_id),
-  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE connection_quota_state (
@@ -1615,8 +1750,8 @@ organization_id TEXT NOT NULL,
   PRIMARY KEY (organization_id,connection_id,scope_key),
   CHECK ((model_id IS NULL AND scope_key='connection') OR (model_id IS NOT NULL AND scope_key='model:'||model_id)),
   CHECK (status<>'cooldown' OR cooldown_until IS NOT NULL),
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,observed_by_office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,observed_by_office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE connection_turn_permits (
@@ -1633,9 +1768,9 @@ organization_id TEXT NOT NULL,
   coordinator_generation INTEGER NOT NULL CHECK (coordinator_generation>=1),
   PRIMARY KEY (organization_id,id),
   UNIQUE (organization_id,id,connection_id,employee_id,office_id,placement_generation,model_id),
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_execution_turns (
@@ -1665,11 +1800,11 @@ organization_id TEXT NOT NULL,
   CHECK (started_by_kind NOT IN ('recovery','background_wake') OR started_by_employee_id IS NULL),
   PRIMARY KEY (organization_id,id),
   UNIQUE (organization_id,id,employee_id,office_id,placement_generation),
-  FOREIGN KEY (organization_id,started_by_employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,started_by_employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_process_instances (
@@ -1700,9 +1835,9 @@ organization_id TEXT NOT NULL,
   CHECK ((pid IS NULL AND pgid IS NULL AND process_start_identity IS NULL AND boot_id IS NULL)
     OR (pid IS NOT NULL AND pgid IS NOT NULL AND pid>0 AND pgid>0 AND process_start_identity IS NOT NULL AND boot_id IS NOT NULL)),
   CHECK (state NOT IN ('idle','busy') OR (pid IS NOT NULL AND process_start_identity IS NOT NULL AND boot_id IS NOT NULL)),
-  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_execution_attempts (
@@ -1714,7 +1849,8 @@ organization_id TEXT NOT NULL,
   office_id TEXT NOT NULL,
   placement_generation INTEGER NOT NULL CHECK (placement_generation>=1),
   connection_id TEXT NOT NULL,
-  permit_id TEXT NOT NULL,
+  permit_authority TEXT NOT NULL DEFAULT 'hq_pool' CHECK (permit_authority IN ('hq_pool','office_local')),
+  permit_id TEXT NOT NULL CHECK (length(permit_id)>0),
   process_instance_id TEXT,
   runtime_driver TEXT NOT NULL,
   driver_version TEXT NOT NULL,
@@ -1733,26 +1869,10 @@ organization_id TEXT NOT NULL,
   UNIQUE (organization_id,turn_id,attempt_no),
   UNIQUE (organization_id,id,turn_id),
   CHECK (predecessor_attempt_id IS NULL OR predecessor_attempt_id<>id),
-  FOREIGN KEY (organization_id,turn_id,employee_id,office_id,placement_generation) REFERENCES agent_execution_turns(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,process_instance_id,employee_id,office_id,placement_generation) REFERENCES agent_process_instances(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,permit_id,connection_id,employee_id,office_id,placement_generation,requested_model_id) REFERENCES connection_turn_permits(organization_id,id,connection_id,employee_id,office_id,placement_generation,model_id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,predecessor_attempt_id,turn_id) REFERENCES agent_execution_attempts(organization_id,id,turn_id) ON DELETE RESTRICT
-) STRICT;
-
-CREATE TABLE supervisor_command_receipts (
-organization_id TEXT NOT NULL,
-  office_id TEXT NOT NULL,
-  operation_id TEXT NOT NULL,
-  command TEXT NOT NULL CHECK (command IN ('RunTurn','ResumeTurn','CancelTurn','StopAgent','BindConnection','RefreshConnection')),
-  employee_id TEXT,
-  payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256)=64),
-  outcome TEXT NOT NULL CHECK (outcome IN ('accepted','rejected')),
-  response_json TEXT NOT NULL CHECK (json_valid(response_json) AND json_type(response_json)='object'),
-  recorded_at TEXT NOT NULL,
-  PRIMARY KEY (organization_id,office_id,operation_id),
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,turn_id,employee_id,office_id,placement_generation) REFERENCES agent_execution_turns(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,process_instance_id,employee_id,office_id,placement_generation) REFERENCES agent_process_instances(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,predecessor_attempt_id,turn_id) REFERENCES agent_execution_attempts(organization_id,id,turn_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TRIGGER placement_generation_must_advance BEFORE UPDATE ON agent_placements
@@ -1788,7 +1908,6 @@ CREATE TABLE task_details (
   organization_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
   definition_of_done TEXT,
-  branch TEXT,
   shortcut_json TEXT CHECK (shortcut_json IS NULL OR (json_valid(shortcut_json) AND json_type(shortcut_json)='object')),
   done_anyway_json TEXT CHECK (done_anyway_json IS NULL OR (json_valid(done_anyway_json) AND json_type(done_anyway_json)='object')),
   what_happened TEXT,
@@ -1808,7 +1927,6 @@ CREATE TABLE task_details (
   request_outcome_json TEXT CHECK (request_outcome_json IS NULL OR (json_valid(request_outcome_json) AND json_type(request_outcome_json)='object')),
   merged_into_task_id TEXT,
   related_task_kind TEXT NOT NULL DEFAULT 'task' CHECK (related_task_kind='task'),
-  decline_reason TEXT,
   suggested_triager_id TEXT,
   suggested_verifier_id TEXT,
   PRIMARY KEY (organization_id,task_id),
@@ -1823,149 +1941,9 @@ CREATE TABLE task_details (
   FOREIGN KEY (organization_id,suggested_verifier_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE conversations (
-  organization_id TEXT NOT NULL REFERENCES organizations(id),
-  id TEXT NOT NULL,
-  schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version=1),
-  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision>=1),
-  kind TEXT NOT NULL CHECK (kind IN ('dm','group_dm','channel')),
-  name TEXT,
-  auto_scope TEXT CHECK (auto_scope IN ('organization','team','project')),
-  team_id TEXT,
-  project_id TEXT,
-  archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (organization_id,id),
-  CHECK (auto_scope IS NULL OR (kind='channel' AND
-    ((auto_scope='organization' AND team_id IS NULL AND project_id IS NULL)
-    OR (auto_scope='team' AND team_id IS NOT NULL AND project_id IS NULL)
-    OR (auto_scope='project' AND project_id IS NOT NULL AND team_id IS NULL)))),
-  FOREIGN KEY (organization_id,team_id) REFERENCES teams(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,project_id) REFERENCES projects(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE UNIQUE INDEX conversation_auto_org ON conversations(organization_id) WHERE auto_scope='organization';
-CREATE UNIQUE INDEX conversation_auto_team ON conversations(organization_id,team_id) WHERE auto_scope='team';
-CREATE UNIQUE INDEX conversation_auto_project ON conversations(organization_id,project_id) WHERE auto_scope='project';
-CREATE TABLE conversation_memberships (
-  organization_id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  employee_id TEXT NOT NULL,
-  joined_at TEXT NOT NULL,
-  left_at TEXT,
-  PRIMARY KEY (organization_id,conversation_id,employee_id),
-  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE messages (
-  organization_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  sender_kind TEXT NOT NULL CHECK (sender_kind IN ('employee','office')),
-  sender_employee_id TEXT,
-  sender_office_id TEXT,
-  sender_display_name TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('normal','high','urgent')),
-  subject TEXT,
-  body_markdown TEXT NOT NULL,
-  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata_json) AND json_type(metadata_json)='object'),
-  thread_root_id TEXT,
-  reply_to_message_id TEXT,
-  also_in_channel INTEGER NOT NULL DEFAULT 0 CHECK (also_in_channel IN (0,1)),
-  created_at TEXT NOT NULL,
-  expires_at TEXT,
-  ttl_ms INTEGER CHECK (ttl_ms>=0),
-  origin_office_id TEXT NOT NULL,
-  origin_incarnation TEXT NOT NULL,
-  origin_sequence INTEGER NOT NULL CHECK (origin_sequence>0),
-  org_epoch INTEGER NOT NULL CHECK (org_epoch>=0),
-  org_sequence INTEGER NOT NULL CHECK (org_sequence>=0),
-  content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
-  PRIMARY KEY (organization_id,id),
-  UNIQUE (organization_id,id,conversation_id),
-  UNIQUE (organization_id,origin_office_id,origin_incarnation,origin_sequence),
-  CHECK ((sender_kind='employee' AND sender_employee_id IS NOT NULL AND sender_office_id IS NULL)
-    OR (sender_kind='office' AND sender_employee_id IS NULL AND sender_office_id IS NOT NULL)),
-  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,sender_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,sender_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,origin_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,thread_root_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,reply_to_message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE INDEX message_conversation_time ON messages(organization_id,conversation_id,created_at,id);
-CREATE TABLE message_recipient_states (
-  organization_id TEXT NOT NULL,
-  message_id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  employee_id TEXT NOT NULL,
-  recipient_display_name TEXT,
-  state TEXT NOT NULL CHECK (state IN ('unread','snoozed','read','done','expired','dead_letter')),
-  triage_generation INTEGER NOT NULL DEFAULT 0 CHECK (triage_generation>=0),
-  snoozed_until TEXT,
-  snooze_after_task INTEGER NOT NULL DEFAULT 0 CHECK (snooze_after_task IN (0,1)),
-  snooze_note TEXT,
-  triaged_at TEXT,
-  read_at TEXT,
-  updated_at TEXT NOT NULL,
-  reason TEXT,
-  delivered_because TEXT NOT NULL DEFAULT 'addressed' CHECK (delivered_because IN ('addressed','mention','thread_reply','answer_candidate')),
-  related_message_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(related_message_ids_json) AND json_type(related_message_ids_json)='array'),
-  expired_waiting_person INTEGER NOT NULL DEFAULT 0 CHECK (expired_waiting_person IN (0,1)),
-  owner_office_id TEXT NOT NULL,
-  origin_incarnation TEXT NOT NULL,
-  origin_sequence INTEGER NOT NULL CHECK (origin_sequence>0),
-  org_epoch INTEGER NOT NULL CHECK (org_epoch>=0),
-  org_sequence INTEGER NOT NULL CHECK (org_sequence>=0),
-  PRIMARY KEY (organization_id,message_id,employee_id),
-  FOREIGN KEY (organization_id,message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,conversation_id,employee_id) REFERENCES conversation_memberships(organization_id,conversation_id,employee_id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,owner_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE INDEX message_recipient_inbox ON message_recipient_states(organization_id,employee_id,state,snoozed_until);
-CREATE TABLE conversation_preferences (
-  organization_id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  viewer_employee_id TEXT NOT NULL,
-  muted_employee_id TEXT NOT NULL,
-  mute_mode TEXT NOT NULL DEFAULT 'none' CHECK (mute_mode IN ('none','muted','digest')),
-  PRIMARY KEY (organization_id,conversation_id,viewer_employee_id,muted_employee_id),
-  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,viewer_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,muted_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE conversation_read_markers (
-  organization_id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  viewer_employee_id TEXT NOT NULL,
-  read_at TEXT,
-  last_read_message_id TEXT,
-  PRIMARY KEY (organization_id,conversation_id,viewer_employee_id),
-  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,viewer_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,last_read_message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE message_attachments (
-  organization_id TEXT NOT NULL,
-  message_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  content_ref TEXT NOT NULL,
-  media_type TEXT NOT NULL,
-  byte_count INTEGER NOT NULL CHECK (byte_count>=0),
-  content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
-  PRIMARY KEY (organization_id,message_id,id),
-  FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE message_reactions (
-  organization_id TEXT NOT NULL,
-  message_id TEXT NOT NULL,
-  employee_id TEXT NOT NULL,
-  reaction TEXT NOT NULL CHECK (reaction IN ('seen','looking')),
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (organization_id,message_id,employee_id,reaction),
-  FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
+-- Protected messaging tables (conversations, messages, recipient states, preferences,
+-- read markers, attachments, reactions) live exclusively in messaging-schema.sql
+-- (runtime/<office-id>/protected/messaging.db), never in shared office.db (TASK-10 / H-05).
 
 CREATE TABLE mutation_receipts (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
@@ -2060,25 +2038,16 @@ WHEN NEW.organization_id<>OLD.organization_id OR NEW.command_id<>OLD.command_id 
  OR NEW.actor_kind<>OLD.actor_kind OR NEW.actor_id IS NOT OLD.actor_id OR NEW.command_kind<>OLD.command_kind OR NEW.request_sha256<>OLD.request_sha256
  OR (OLD.state IN ('completed','rejected','abandoned') AND (NEW.state<>OLD.state OR NEW.result_ref IS NOT OLD.result_ref))
 BEGIN SELECT RAISE(ABORT,'receipt identity or terminal outcome changed'); END;
-CREATE TRIGGER receipt_no_replace BEFORE INSERT ON mutation_receipts
-WHEN EXISTS (SELECT 1 FROM mutation_receipts WHERE organization_id=NEW.organization_id AND command_id=NEW.command_id)
-BEGIN SELECT RAISE(ABORT,'receipt command already registered'); END;
 CREATE TRIGGER origin_stream_no_regression BEFORE UPDATE ON office_origin_streams
 WHEN NEW.organization_id<>OLD.organization_id OR NEW.office_id<>OLD.office_id OR NEW.stream_kind<>OLD.stream_kind OR NEW.incarnation<>OLD.incarnation
  OR NEW.high_water_sequence<OLD.high_water_sequence OR (NEW.high_water_sequence=OLD.high_water_sequence AND NEW.head_sha256 IS NOT OLD.head_sha256)
  OR (OLD.state='sealed' AND (NEW.state<>OLD.state OR NEW.high_water_sequence<>OLD.high_water_sequence))
 BEGIN SELECT RAISE(ABORT,'origin stream regressed or forked'); END;
-CREATE TRIGGER origin_stream_no_replace BEFORE INSERT ON office_origin_streams
-WHEN EXISTS (SELECT 1 FROM office_origin_streams WHERE organization_id=NEW.organization_id AND office_id=NEW.office_id AND stream_kind=NEW.stream_kind AND incarnation=NEW.incarnation)
-BEGIN SELECT RAISE(ABORT,'origin identity already registered'); END;
 CREATE TRIGGER checkpoint_no_regression BEFORE UPDATE ON office_recovery_checkpoints
 WHEN NEW.organization_id<>OLD.organization_id OR NEW.office_id<>OLD.office_id OR NEW.highest_seen_epoch<OLD.highest_seen_epoch
  OR NEW.authority_epoch<OLD.authority_epoch OR (NEW.authority_epoch=OLD.authority_epoch AND NEW.applied_sequence<OLD.applied_sequence)
  OR (NEW.authority_epoch=OLD.authority_epoch AND NEW.applied_sequence=OLD.applied_sequence AND NEW.digest_sha256<>OLD.digest_sha256)
 BEGIN SELECT RAISE(ABORT,'recovery checkpoint regressed or forked'); END;
-CREATE TRIGGER checkpoint_no_replace BEFORE INSERT ON office_recovery_checkpoints
-WHEN EXISTS (SELECT 1 FROM office_recovery_checkpoints WHERE organization_id=NEW.organization_id AND office_id=NEW.office_id)
-BEGIN SELECT RAISE(ABORT,'checkpoint identity already registered'); END;
 CREATE TRIGGER receipt_no_delete BEFORE DELETE ON mutation_receipts
 BEGIN SELECT RAISE(ABORT,'receipt retention requires reviewed expiry/archive procedure'); END;
 CREATE TRIGGER origin_stream_no_delete BEFORE DELETE ON office_origin_streams
@@ -2086,170 +2055,9 @@ BEGIN SELECT RAISE(ABORT,'origin watermark must be retained'); END;
 CREATE TRIGGER checkpoint_no_delete BEFORE DELETE ON office_recovery_checkpoints
 BEGIN SELECT RAISE(ABORT,'authority checkpoint must be retained'); END;
 
-CREATE TABLE budgets (
-  organization_id TEXT NOT NULL REFERENCES organizations(id),
-  id TEXT NOT NULL,
-  schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version=1),
-  current_revision INTEGER NOT NULL CHECK (current_revision>0),
-  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('task','agent','release')),
-  task_id TEXT,
-  agent_id TEXT,
-  release_id TEXT,
-  period_kind TEXT NOT NULL CHECK (period_kind IN ('lifetime','day','month')),
-  time_zone TEXT NOT NULL,
-  time_zone_source TEXT NOT NULL CHECK (time_zone_source IN ('owner_account','hq')),
-  time_zone_subject_ref TEXT,
-  created_at TEXT NOT NULL,
-  CHECK ((time_zone_source='owner_account')=(time_zone_subject_ref IS NOT NULL)),
-  PRIMARY KEY (organization_id,id),
-  CHECK ((scope_kind='task' AND task_id IS NOT NULL AND agent_id IS NULL AND release_id IS NULL AND period_kind='lifetime')
-    OR (scope_kind='agent' AND task_id IS NULL AND agent_id IS NOT NULL AND release_id IS NULL AND period_kind IN ('day','month'))
-    OR (scope_kind='release' AND task_id IS NULL AND agent_id IS NULL AND release_id IS NOT NULL AND period_kind='lifetime')),
-  FOREIGN KEY (organization_id,task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,agent_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,release_id) REFERENCES releases(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,id,current_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE UNIQUE INDEX budget_task_identity ON budgets(organization_id,task_id) WHERE scope_kind='task';
-CREATE UNIQUE INDEX budget_agent_identity ON budgets(organization_id,agent_id,period_kind) WHERE scope_kind='agent';
-CREATE UNIQUE INDEX budget_release_identity ON budgets(organization_id,release_id) WHERE scope_kind='release';
-CREATE TABLE budget_policy_versions (
-  organization_id TEXT NOT NULL,
-  budget_id TEXT NOT NULL,
-  revision INTEGER NOT NULL CHECK (revision>0),
-  state TEXT NOT NULL CHECK (state IN ('active','cleared')),
-  unit TEXT NOT NULL CHECK (unit IN ('micro_usd','tokens')),
-  limit_amount INTEGER CHECK (limit_amount>0),
-  changed_by_id TEXT NOT NULL,
-  changed_at TEXT NOT NULL,
-  reason TEXT,
-  PRIMARY KEY (organization_id,budget_id,revision),
-  CHECK ((state='active' AND limit_amount IS NOT NULL) OR (state='cleared' AND limit_amount IS NULL)),
-  FOREIGN KEY (organization_id,budget_id) REFERENCES budgets(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,changed_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE budget_periods (
-  organization_id TEXT NOT NULL,
-  budget_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  policy_revision INTEGER NOT NULL,
-  period_key TEXT NOT NULL,
-  starts_at TEXT,
-  ends_at TEXT,
-  used_amount INTEGER NOT NULL DEFAULT 0 CHECK (used_amount>=0),
-  usage_status TEXT NOT NULL DEFAULT 'unavailable' CHECK (usage_status IN ('complete','partial','unavailable')),
-  includes_estimates INTEGER NOT NULL DEFAULT 0 CHECK (includes_estimates IN (0,1)),
-  includes_api_equivalent INTEGER NOT NULL DEFAULT 0 CHECK (includes_api_equivalent IN (0,1)),
-  unpriced_records INTEGER NOT NULL DEFAULT 0 CHECK (unpriced_records>=0),
-  incomplete_records INTEGER NOT NULL DEFAULT 0 CHECK (incomplete_records>=0),
-  extension_used INTEGER NOT NULL DEFAULT 0 CHECK (extension_used IN (0,1)),
-  kept_paused INTEGER NOT NULL DEFAULT 0 CHECK (kept_paused IN (0,1)),
-  state TEXT NOT NULL CHECK (state IN ('open','closed')),
-  evaluated_at TEXT,
-  ledger_checkpoint_ref TEXT,
-  PRIMARY KEY (organization_id,id),
-  UNIQUE (organization_id,budget_id,id),
-  UNIQUE (organization_id,budget_id,period_key),
-  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE budget_events (
-  organization_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  budget_id TEXT NOT NULL,
-  period_id TEXT NOT NULL,
-  operation_id TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('evaluated','warning','reached','extended','policy_changed','cleared','stop_requested','hold_released','period_reset')),
-  policy_revision INTEGER NOT NULL,
-  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee','system')),
-  actor_id TEXT,
-  occurred_at TEXT NOT NULL,
-  payload_json TEXT NOT NULL CHECK (json_valid(payload_json) AND json_type(payload_json)='object'),
-  PRIMARY KEY (organization_id,id),
-  UNIQUE (organization_id,budget_id,operation_id),
-  CHECK ((actor_kind='employee')=(actor_id IS NOT NULL)),
-  FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,actor_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE budget_notices (
-  organization_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  budget_id TEXT NOT NULL,
-  period_id TEXT NOT NULL,
-  policy_revision INTEGER NOT NULL,
-  stage TEXT NOT NULL CHECK (stage IN ('base','extended')),
-  threshold INTEGER NOT NULL CHECK (threshold IN (80,100)),
-  recipient_kind TEXT NOT NULL CHECK (recipient_kind IN ('employee','owner')),
-  recipient_id TEXT,
-  kind TEXT NOT NULL CHECK (kind IN ('neutral','budget_reached')),
-  delivery_state TEXT NOT NULL CHECK (delivery_state IN ('pending','delivered','resolved')),
-  created_at TEXT NOT NULL,
-  resolved_at TEXT,
-  PRIMARY KEY (organization_id,id),
-  UNIQUE (organization_id,budget_id,period_id,policy_revision,stage,threshold),
-  CHECK ((recipient_kind='employee')=(recipient_id IS NOT NULL)),
-  CHECK (threshold=100 OR kind='neutral'),
-  CHECK (threshold=100 OR stage='base'),
-  FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,recipient_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE budget_holds (
-  organization_id TEXT NOT NULL,
-  budget_id TEXT NOT NULL,
-  period_id TEXT NOT NULL,
-  policy_revision INTEGER NOT NULL,
-  stage TEXT NOT NULL CHECK (stage IN ('base','extended')),
-  state TEXT NOT NULL CHECK (state IN ('stop_pending','held','released')),
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  release_reason TEXT,
-  PRIMARY KEY (organization_id,budget_id,period_id,policy_revision,stage),
-  FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TRIGGER budget_target_immutable BEFORE UPDATE ON budgets
-WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.scope_kind<>OLD.scope_kind OR NEW.task_id IS NOT OLD.task_id
- OR NEW.agent_id IS NOT OLD.agent_id OR NEW.release_id IS NOT OLD.release_id OR NEW.period_kind<>OLD.period_kind OR NEW.time_zone<>OLD.time_zone OR NEW.time_zone_source<>OLD.time_zone_source OR NEW.time_zone_subject_ref IS NOT OLD.time_zone_subject_ref
- OR NEW.current_revision<OLD.current_revision
-BEGIN SELECT RAISE(ABORT,'budget scope or revision changed unsafely'); END;
-CREATE TRIGGER budget_agent_insert BEFORE INSERT ON budgets
-WHEN NEW.agent_id IS NOT NULL AND EXISTS (SELECT 1 FROM employees WHERE organization_id=NEW.organization_id AND id=NEW.agent_id AND kind<>'agent')
-BEGIN SELECT RAISE(ABORT,'agent budget requires an agent'); END;
-CREATE TRIGGER employee_budget_kind_update BEFORE UPDATE OF kind ON employees
-WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND agent_id=NEW.id)
-BEGIN SELECT RAISE(ABORT,'budgeted employee must remain an agent'); END;
-CREATE TRIGGER employee_budget_kind_insert BEFORE INSERT ON employees
-WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND agent_id=NEW.id)
-BEGIN SELECT RAISE(ABORT,'budgeted employee must be an agent'); END;
-CREATE TRIGGER budgets_no_delete BEFORE DELETE ON budgets
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-CREATE TRIGGER budget_policy_versions_no_update BEFORE UPDATE ON budget_policy_versions
-BEGIN SELECT RAISE(ABORT,'budget history is immutable'); END;
-CREATE TRIGGER budget_policy_versions_no_delete BEFORE DELETE ON budget_policy_versions
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-CREATE TRIGGER budget_periods_no_delete BEFORE DELETE ON budget_periods
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-CREATE TRIGGER budget_events_no_update BEFORE UPDATE ON budget_events
-BEGIN SELECT RAISE(ABORT,'budget history is immutable'); END;
-CREATE TRIGGER budget_events_no_delete BEFORE DELETE ON budget_events
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-CREATE TRIGGER budget_notices_no_delete BEFORE DELETE ON budget_notices
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-CREATE TRIGGER budget_holds_no_delete BEFORE DELETE ON budget_holds
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-
-CREATE TRIGGER budget_period_identity_update BEFORE UPDATE ON budget_periods
-WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.budget_id<>OLD.budget_id OR NEW.period_key<>OLD.period_key
- OR NEW.starts_at IS NOT OLD.starts_at OR NEW.ends_at IS NOT OLD.ends_at
- OR NEW.policy_revision<OLD.policy_revision OR (NEW.policy_revision=OLD.policy_revision AND NEW.extension_used<OLD.extension_used)
-BEGIN SELECT RAISE(ABORT,'budget period identity/extension regressed'); END;
-CREATE TRIGGER budget_release_no_hold BEFORE INSERT ON budget_holds
-WHEN EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND id=NEW.budget_id AND scope_kind='release')
-BEGIN SELECT RAISE(ABORT,'release caps do not stop work'); END;
-CREATE TRIGGER budget_release_no_hold_update BEFORE UPDATE ON budget_holds
-WHEN EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND id=NEW.budget_id AND scope_kind='release')
-BEGIN SELECT RAISE(ABORT,'release caps do not stop work'); END;
+-- Protected budget tables (budgets, policy versions, periods, events, notices, holds)
+-- live exclusively in budgets-schema.sql (runtime/<office-id>/protected/budgets.db),
+-- never in shared office.db (TASK-10 / H-05).
 
 CREATE VIEW milestone_progress AS
 SELECT m.organization_id, m.id AS milestone_id, m.release_id,
@@ -2261,36 +2069,33 @@ LEFT JOIN tasks t ON t.organization_id = m.organization_id AND t.milestone_id = 
 GROUP BY m.organization_id, m.id;
 
 CREATE VIEW release_progress AS
+WITH release_member_tasks AS (
+  SELECT tr.organization_id, tr.release_id,
+    COUNT(t.id) AS task_count,
+    COALESCE(SUM(t.status IN ('done', 'cancelled')), 0) AS done_task_count
+  FROM task_releases tr
+  JOIN tasks t ON t.organization_id = tr.organization_id AND t.id = tr.task_id
+  GROUP BY tr.organization_id, tr.release_id
+),
+release_milestones AS (
+  SELECT organization_id, release_id,
+    COUNT(*) AS milestone_count,
+    MIN(is_done) AS all_milestones_done
+  FROM milestone_progress
+  GROUP BY organization_id, release_id
+)
 SELECT r.organization_id, r.id AS release_id,
-  (SELECT COUNT(*) FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id) AS milestone_count,
-  CASE
-    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
-      THEN (SELECT COALESCE(SUM(p.task_count), 0) FROM milestone_progress p
-            WHERE p.organization_id = r.organization_id AND p.release_id = r.id)
-    ELSE (SELECT COUNT(*) FROM release_tasks rt
-            JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-          WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
-  END AS task_count,
-  CASE
-    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
-      THEN (SELECT COALESCE(SUM(p.done_task_count), 0) FROM milestone_progress p
-            WHERE p.organization_id = r.organization_id AND p.release_id = r.id)
-    ELSE (SELECT COUNT(*) FROM release_tasks rt
-            JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-          WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status IN ('done', 'cancelled'))
-  END AS done_task_count,
-  CASE
-    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
-      THEN NOT EXISTS (SELECT 1 FROM milestone_progress p
-                       WHERE p.organization_id = r.organization_id AND p.release_id = r.id AND NOT p.is_done)
-    ELSE EXISTS (SELECT 1 FROM release_tasks rt
-                 JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-                 WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
-      AND NOT EXISTS (SELECT 1 FROM release_tasks rt
-                      JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-                      WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status NOT IN ('done', 'cancelled'))
-  END AS is_done
-FROM releases r;
+  COALESCE(rm.milestone_count, 0) AS milestone_count,
+  COALESCE(rt.task_count, 0) AS task_count,
+  COALESCE(rt.done_task_count, 0) AS done_task_count,
+  (
+    COALESCE(rt.task_count, 0) > 0
+    AND COALESCE(rt.task_count, 0) = COALESCE(rt.done_task_count, 0)
+    AND COALESCE(rm.all_milestones_done, 1) = 1
+  ) AS is_done
+FROM releases r
+LEFT JOIN release_milestones rm ON rm.organization_id = r.organization_id AND rm.release_id = r.id
+LEFT JOIN release_member_tasks rt ON rt.organization_id = r.organization_id AND rt.release_id = r.id;
 
 -- Document 18: development processes and project documentation
 CREATE TABLE development_processes (
@@ -2339,6 +2144,7 @@ CREATE TABLE development_process_roles (
   hats_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(hats_json) AND json_type(hats_json) = 'array'),
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, process_id, key),
+  UNIQUE (organization_id, process_id, position),
   FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -2354,6 +2160,7 @@ CREATE TABLE development_process_skills (
   description TEXT NOT NULL CHECK (length(description) > 0),
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, process_id, key),
+  UNIQUE (organization_id, process_id, position),
   FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -2397,6 +2204,7 @@ CREATE TABLE development_process_folders (
   summary TEXT NOT NULL DEFAULT '',
   kinds_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(kinds_json) AND json_type(kinds_json) = 'array'),
   PRIMARY KEY (organization_id, process_id, path),
+  UNIQUE (organization_id, process_id, position),
   FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -2469,6 +2277,8 @@ CREATE TABLE documentation_media (
 CREATE TABLE document_versions (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   document_id TEXT NOT NULL,
+  document_kind TEXT NOT NULL DEFAULT 'document' CHECK (document_kind = 'document'),
+  project_id TEXT NOT NULL,
   version INTEGER NOT NULL CHECK (version >= 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   title TEXT NOT NULL,
@@ -2479,9 +2289,22 @@ CREATE TABLE document_versions (
   issued_by_kind TEXT NOT NULL CHECK (issued_by_kind IN ('employee', 'system')),
   issued_by_id TEXT,
   PRIMARY KEY (organization_id, document_id, version),
+  UNIQUE (organization_id, document_id, version, project_id),
   CHECK ((issued_by_kind = 'employee' AND issued_by_id IS NOT NULL) OR (issued_by_kind <> 'employee' AND issued_by_id IS NULL)),
+  FOREIGN KEY (organization_id, document_kind, document_id) REFERENCES record_refs(organization_id, kind, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, issued_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE TRIGGER document_versions_no_replace
+BEFORE INSERT ON document_versions
+WHEN EXISTS (
+  SELECT 1 FROM document_versions v
+  WHERE v.organization_id = NEW.organization_id AND v.document_id = NEW.document_id AND v.version = NEW.version
+)
+BEGIN
+  SELECT RAISE(ABORT, 'an issued document version is never replaced');
+END;
 
 CREATE TRIGGER document_versions_are_written_once
 BEFORE UPDATE ON document_versions
@@ -2508,6 +2331,18 @@ CREATE TABLE document_version_sources (
   FOREIGN KEY (organization_id, source_document_id, source_version) REFERENCES document_versions(organization_id, document_id, version)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE TRIGGER document_version_sources_are_written_once
+BEFORE UPDATE ON document_version_sources
+BEGIN
+  SELECT RAISE(ABORT, 'document version sources are never changed');
+END;
+
+CREATE TRIGGER document_version_sources_are_kept
+BEFORE DELETE ON document_version_sources
+BEGIN
+  SELECT RAISE(ABORT, 'document version sources are never removed');
+END;
 
 CREATE TABLE document_code_links (
   organization_id TEXT NOT NULL,
@@ -2560,17 +2395,29 @@ LEFT JOIN task_document_versions r
 LEFT JOIN tasks t ON t.organization_id = r.organization_id AND t.id = r.task_id
 GROUP BY v.organization_id, v.document_id, v.version;
 
--- Review of 2026-11-18: rules the documents state that no constraint held.
+-- Review of 2026-11-18 and TASK-7 integrity triggers (H-08, H-11, H-12, H-14).
 CREATE TRIGGER task_affects_feature_same_project_insert BEFORE INSERT ON task_details
 WHEN NEW.affects_feature_id IS NOT NULL
 BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
  SELECT 1 FROM tasks t JOIN features f ON f.organization_id=t.organization_id AND f.id=NEW.affects_feature_id
  WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT f.project_id); END;
-CREATE TRIGGER task_affects_feature_same_project_update BEFORE UPDATE OF affects_feature_id ON task_details
+CREATE TRIGGER task_affects_feature_same_project_update BEFORE UPDATE OF organization_id,task_id,affects_feature_id ON task_details
 WHEN NEW.affects_feature_id IS NOT NULL
 BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
  SELECT 1 FROM tasks t JOIN features f ON f.organization_id=t.organization_id AND f.id=NEW.affects_feature_id
  WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT f.project_id); END;
+CREATE TRIGGER task_insert_keeps_affected_feature AFTER INSERT ON tasks
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM task_details d JOIN features f ON f.organization_id=d.organization_id AND f.id=d.affects_feature_id
+ WHERE d.organization_id=NEW.organization_id AND d.task_id=NEW.id AND NEW.project_id IS NOT f.project_id); END;
+CREATE TRIGGER feature_insert_keeps_affected_task AFTER INSERT ON features
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM task_details d JOIN tasks t ON t.organization_id=d.organization_id AND t.id=d.task_id
+ WHERE d.organization_id=NEW.organization_id AND d.affects_feature_id=NEW.id AND t.project_id IS NOT NEW.project_id); END;
+CREATE TRIGGER feature_project_keeps_affected_task BEFORE UPDATE OF project_id ON features
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM task_details d JOIN tasks t ON t.organization_id=d.organization_id AND t.id=d.task_id
+ WHERE d.organization_id=NEW.organization_id AND d.affects_feature_id=NEW.id AND t.project_id IS NOT NEW.project_id); END;
 CREATE TRIGGER cleanup_record_same_office_insert BEFORE INSERT ON process_cleanup_records
 WHEN NEW.execution_process_id IS NOT NULL
 BEGIN SELECT RAISE(ABORT,'cleanup record and its process are in different offices') WHERE EXISTS (
@@ -2589,3 +2436,210 @@ CREATE TRIGGER task_project_keeps_affected_feature BEFORE UPDATE OF project_id O
 BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
  SELECT 1 FROM task_details d JOIN features f ON f.organization_id=d.organization_id AND f.id=d.affects_feature_id
  WHERE d.organization_id=NEW.organization_id AND d.task_id=NEW.id AND NEW.project_id IS NOT f.project_id); END;
+
+-- H-12: same-project enforcement on document_versions, document_version_sources, and task_document_versions.
+CREATE TRIGGER document_versions_match_document_project BEFORE INSERT ON document_versions
+BEGIN SELECT RAISE(ABORT,'document version project must match document project') WHERE EXISTS (
+ SELECT 1 FROM documents d WHERE d.organization_id=NEW.organization_id AND d.id=NEW.document_id AND d.project_id<>NEW.project_id); END;
+CREATE TRIGGER document_project_keeps_versions BEFORE UPDATE OF project_id ON documents
+BEGIN SELECT RAISE(ABORT,'document with issued versions cannot move projects') WHERE EXISTS (
+ SELECT 1 FROM document_versions v WHERE v.organization_id=NEW.organization_id AND v.document_id=NEW.id AND v.project_id<>NEW.project_id); END;
+CREATE TRIGGER document_version_sources_same_project BEFORE INSERT ON document_version_sources
+BEGIN SELECT RAISE(ABORT,'document version sources must belong to the same project') WHERE EXISTS (
+ SELECT 1 FROM document_versions v
+ JOIN document_versions s ON s.organization_id=NEW.organization_id AND s.document_id=NEW.source_document_id AND s.version=NEW.source_version
+ WHERE v.organization_id=NEW.organization_id AND v.document_id=NEW.document_id AND v.version=NEW.version
+   AND v.project_id<>s.project_id); END;
+CREATE TRIGGER task_document_versions_same_project_insert BEFORE INSERT ON task_document_versions
+BEGIN SELECT RAISE(ABORT,'realizing task and document version must belong to the same project') WHERE EXISTS (
+ SELECT 1 FROM tasks t
+ JOIN document_versions v ON v.organization_id=NEW.organization_id AND v.document_id=NEW.document_id AND v.version=NEW.version
+ WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT v.project_id); END;
+CREATE TRIGGER task_document_versions_same_project_update BEFORE UPDATE OF organization_id,task_id,document_id,version ON task_document_versions
+BEGIN SELECT RAISE(ABORT,'realizing task and document version must belong to the same project') WHERE EXISTS (
+ SELECT 1 FROM tasks t
+ JOIN document_versions v ON v.organization_id=NEW.organization_id AND v.document_id=NEW.document_id AND v.version=NEW.version
+ WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT v.project_id); END;
+CREATE TRIGGER task_insert_keeps_document_versions AFTER INSERT ON tasks
+BEGIN SELECT RAISE(ABORT,'realizing task and document version must belong to the same project') WHERE EXISTS (
+ SELECT 1 FROM task_document_versions r
+ JOIN document_versions v ON v.organization_id=r.organization_id AND v.document_id=r.document_id AND v.version=r.version
+ WHERE r.organization_id=NEW.organization_id AND r.task_id=NEW.id AND NEW.project_id IS NOT v.project_id); END;
+CREATE TRIGGER task_project_keeps_document_versions BEFORE UPDATE OF project_id ON tasks
+BEGIN SELECT RAISE(ABORT,'realizing task and document version must belong to the same project') WHERE EXISTS (
+ SELECT 1 FROM task_document_versions r
+ JOIN document_versions v ON v.organization_id=r.organization_id AND v.document_id=r.document_id AND v.version=r.version
+ WHERE r.organization_id=NEW.organization_id AND r.task_id=NEW.id AND NEW.project_id IS NOT v.project_id); END;
+
+-- H-14: release_tasks same-project enforcement and rejecting operational children on deleted tasks.
+CREATE TRIGGER release_tasks_same_project_insert BEFORE INSERT ON release_tasks
+BEGIN SELECT RAISE(ABORT,'release task belongs to another project') WHERE
+ EXISTS (SELECT 1 FROM tasks t WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT NEW.project_id)
+ OR EXISTS (SELECT 1 FROM tombstones tb WHERE tb.organization_id=NEW.organization_id AND tb.kind='task' AND tb.id=NEW.task_id AND tb.project_id IS NOT NEW.project_id); END;
+CREATE TRIGGER release_tasks_same_project_update BEFORE UPDATE OF organization_id,project_id,task_id ON release_tasks
+BEGIN SELECT RAISE(ABORT,'release task belongs to another project') WHERE
+ EXISTS (SELECT 1 FROM tasks t WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT NEW.project_id)
+ OR EXISTS (SELECT 1 FROM tombstones tb WHERE tb.organization_id=NEW.organization_id AND tb.kind='task' AND tb.id=NEW.task_id AND tb.project_id IS NOT NEW.project_id); END;
+CREATE TRIGGER task_insert_keeps_release_tasks AFTER INSERT ON tasks
+BEGIN SELECT RAISE(ABORT,'release task belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM release_tasks rt WHERE rt.organization_id=NEW.organization_id AND rt.task_id=NEW.id AND NEW.project_id IS NOT rt.project_id); END;
+CREATE TRIGGER task_project_keeps_release_tasks BEFORE UPDATE OF project_id ON tasks
+BEGIN SELECT RAISE(ABORT,'release task belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM release_tasks rt WHERE rt.organization_id=NEW.organization_id AND rt.task_id=NEW.id AND NEW.project_id IS NOT rt.project_id); END;
+
+CREATE TRIGGER comments_reject_deleted_task BEFORE INSERT ON comments
+BEGIN SELECT RAISE(ABORT,'cannot attach operational record to a deleted task') WHERE EXISTS (
+ SELECT 1 FROM record_refs r WHERE r.organization_id=NEW.organization_id AND r.kind=NEW.target_kind AND r.id=NEW.target_id AND r.is_deleted=1); END;
+CREATE TRIGGER checklist_steps_reject_deleted_task BEFORE INSERT ON checklist_steps
+BEGIN SELECT RAISE(ABORT,'cannot attach operational record to a deleted task') WHERE EXISTS (
+ SELECT 1 FROM record_refs r WHERE r.organization_id=NEW.organization_id AND r.kind=NEW.target_kind AND r.id=NEW.target_id AND r.is_deleted=1); END;
+CREATE TRIGGER watchers_reject_deleted_task BEFORE INSERT ON watchers
+BEGIN SELECT RAISE(ABORT,'cannot attach operational record to a deleted task') WHERE EXISTS (
+ SELECT 1 FROM record_refs r WHERE r.organization_id=NEW.organization_id AND r.kind=NEW.target_kind AND r.id=NEW.target_id AND r.is_deleted=1); END;
+CREATE TRIGGER owner_questions_reject_deleted_task BEFORE INSERT ON owner_questions
+BEGIN SELECT RAISE(ABORT,'cannot attach operational record to a deleted task') WHERE EXISTS (
+ SELECT 1 FROM record_refs r WHERE r.organization_id=NEW.organization_id AND r.kind=NEW.target_kind AND r.id=NEW.target_id AND r.is_deleted=1); END;
+CREATE TRIGGER waiting_spans_reject_deleted_task BEFORE INSERT ON waiting_spans
+BEGIN SELECT RAISE(ABORT,'cannot attach operational record to a deleted task') WHERE EXISTS (
+ SELECT 1 FROM record_refs r WHERE r.organization_id=NEW.organization_id AND r.kind=NEW.target_kind AND r.id=NEW.target_id AND r.is_deleted=1); END;
+
+-- Targeted hot-path composite indexes and high-fanout FK indexes (TASK-6: H-10, H-13; TASK-77).
+CREATE INDEX tasks_by_feature ON tasks(organization_id, feature_id);
+CREATE INDEX tasks_by_order ON tasks(organization_id, rank_order, number);
+CREATE INDEX task_labels_by_label ON task_labels(organization_id, label, task_id);
+CREATE INDEX task_files_by_role_path ON task_files(organization_id, role, path, task_id);
+CREATE INDEX task_document_versions_by_document ON task_document_versions(organization_id, document_id, version, task_id);
+CREATE INDEX document_code_links_by_document ON document_code_links(organization_id, document_id);
+CREATE INDEX document_version_sources_by_source ON document_version_sources(organization_id, source_document_id, source_version, document_id, version);
+CREATE INDEX hire_requests_by_team_state ON hire_requests(organization_id, home_team_id, state);
+CREATE INDEX usage_by_release_time ON usage_records(organization_id, release_id, occurred_at);
+
+-- High-fanout foreign-key indexes targeting employees, tasks, and documents.
+CREATE INDEX employees_by_reports_to ON employees(organization_id, reports_to_employee_id);
+CREATE INDEX teams_by_lead ON teams(organization_id, lead_employee_id);
+CREATE INDEX agent_placements_by_office ON agent_placements(organization_id, office_id);
+CREATE INDEX comments_by_author ON comments(organization_id, author_id);
+CREATE INDEX task_events_by_actor ON task_events(organization_id, actor_id);
+CREATE INDEX hire_requests_by_requester ON hire_requests(organization_id, requested_by_employee_id);
+CREATE INDEX agent_execution_turns_by_employee_time ON agent_execution_turns(organization_id, employee_id, created_at);
+CREATE INDEX task_workspaces_by_task ON task_workspaces(organization_id, task_id);
+CREATE INDEX task_repositories_by_repo ON task_repositories(organization_id, repository_id);
+CREATE INDEX checklist_steps_by_linked_task ON checklist_steps(organization_id, linked_task_id);
+CREATE INDEX agent_execution_turns_by_task ON agent_execution_turns(organization_id, task_id);
+CREATE INDEX task_details_by_affects_feature ON task_details(organization_id, affects_feature_id);
+CREATE INDEX documents_by_project_path ON documents(organization_id, project_id, path);
+
+-- TASK-8 (M-07): uniqueness, cycle guards, terminal immutability, and counter monotonicity.
+CREATE UNIQUE INDEX one_project_brief ON documents(organization_id, project_id) WHERE kind = 'brief';
+CREATE UNIQUE INDEX documents_key_unique ON documents(organization_id, project_id, key) WHERE key IS NOT NULL;
+CREATE UNIQUE INDEX structure_documents_key_unique ON structure_documents(organization_id, COALESCE(team_id, ''), COALESCE(project_id, ''), key) WHERE key IS NOT NULL;
+
+CREATE TRIGGER feature_replacement_no_cycle_insert AFTER INSERT ON features
+WHEN NEW.replaced_by_feature_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'feature replacement cycle is not allowed') WHERE EXISTS (
+    WITH RECURSIVE chain(id) AS (
+      SELECT NEW.replaced_by_feature_id
+      UNION ALL
+      SELECT f.replaced_by_feature_id FROM features f
+      JOIN chain c ON f.organization_id = NEW.organization_id AND f.id = c.id
+      WHERE f.replaced_by_feature_id IS NOT NULL AND f.id <> NEW.id
+    )
+    SELECT 1 FROM chain WHERE id = NEW.id
+  );
+END;
+
+CREATE TRIGGER feature_replacement_no_cycle_update AFTER UPDATE OF replaced_by_feature_id ON features
+WHEN NEW.replaced_by_feature_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'feature replacement cycle is not allowed') WHERE EXISTS (
+    WITH RECURSIVE chain(id) AS (
+      SELECT NEW.replaced_by_feature_id
+      UNION ALL
+      SELECT f.replaced_by_feature_id FROM features f
+      JOIN chain c ON f.organization_id = NEW.organization_id AND f.id = c.id
+      WHERE f.replaced_by_feature_id IS NOT NULL AND f.id <> NEW.id
+    )
+    SELECT 1 FROM chain WHERE id = NEW.id
+  );
+END;
+
+CREATE TRIGGER deployment_rollback_no_cycle_insert AFTER INSERT ON deployments
+WHEN NEW.rollback_of_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'deployment rollback cycle is not allowed') WHERE EXISTS (
+    WITH RECURSIVE chain(id) AS (
+      SELECT NEW.rollback_of_id
+      UNION ALL
+      SELECT d.rollback_of_id FROM deployments d
+      JOIN chain c ON d.organization_id = NEW.organization_id AND d.id = c.id
+      WHERE d.rollback_of_id IS NOT NULL AND d.id <> NEW.id
+    )
+    SELECT 1 FROM chain WHERE id = NEW.id
+  );
+END;
+
+CREATE TRIGGER deployment_rollback_no_cycle_update AFTER UPDATE OF rollback_of_id ON deployments
+WHEN NEW.rollback_of_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'deployment rollback cycle is not allowed') WHERE EXISTS (
+    WITH RECURSIVE chain(id) AS (
+      SELECT NEW.rollback_of_id
+      UNION ALL
+      SELECT d.rollback_of_id FROM deployments d
+      JOIN chain c ON d.organization_id = NEW.organization_id AND d.id = c.id
+      WHERE d.rollback_of_id IS NOT NULL AND d.id <> NEW.id
+    )
+    SELECT 1 FROM chain WHERE id = NEW.id
+  );
+END;
+
+CREATE TRIGGER hire_request_employee_is_agent_insert BEFORE INSERT ON hire_requests
+WHEN NEW.employee_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'hire request employee must be an agent') WHERE EXISTS (
+    SELECT 1 FROM employees e WHERE e.organization_id = NEW.organization_id AND e.id = NEW.employee_id AND e.kind <> 'agent'
+  );
+END;
+
+CREATE TRIGGER hire_request_employee_is_agent_update BEFORE UPDATE OF employee_id ON hire_requests
+WHEN NEW.employee_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'hire request employee must be an agent') WHERE EXISTS (
+    SELECT 1 FROM employees e WHERE e.organization_id = NEW.organization_id AND e.id = NEW.employee_id AND e.kind <> 'agent'
+  );
+END;
+
+CREATE TRIGGER hire_request_terminal_immutable BEFORE UPDATE ON hire_requests
+WHEN OLD.state IN ('hired', 'withdrawn', 'failed')
+BEGIN
+  SELECT RAISE(ABORT, 'terminal hire request is immutable');
+END;
+
+CREATE TRIGGER office_codes_immutable BEFORE UPDATE ON office_codes
+WHEN NEW.organization_id <> OLD.organization_id OR NEW.code <> OLD.code
+  OR NEW.office_id <> OLD.office_id OR NEW.issued_at <> OLD.issued_at
+  OR (OLD.retired_at IS NOT NULL AND NEW.retired_at IS NOT OLD.retired_at)
+BEGIN
+  SELECT RAISE(ABORT, 'office code identity and retirement are immutable');
+END;
+
+CREATE TRIGGER office_codes_no_delete BEFORE DELETE ON office_codes
+BEGIN
+  SELECT RAISE(ABORT, 'office codes must be retained');
+END;
+
+CREATE TRIGGER reference_counters_monotonic BEFORE UPDATE ON reference_counters
+WHEN NEW.organization_id <> OLD.organization_id OR NEW.scope_kind <> OLD.scope_kind
+  OR NEW.scope_id <> OLD.scope_id OR NEW.entity_kind <> OLD.entity_kind
+  OR NEW.last_number < OLD.last_number
+BEGIN
+  SELECT RAISE(ABORT, 'reference counter cannot decrease');
+END;
+
+CREATE TRIGGER office_task_counters_monotonic BEFORE UPDATE ON office_task_counters
+WHEN NEW.organization_id <> OLD.organization_id OR NEW.office_code <> OLD.office_code
+  OR NEW.last_number < OLD.last_number OR NEW.reserved_through < OLD.reserved_through
+BEGIN
+  SELECT RAISE(ABORT, 'office task counter cannot decrease');
+END;

@@ -23,9 +23,9 @@
 		SheetHeader,
 		SheetTitle
 	} from '$lib/components/ui/sheet';
-	import { toAppError } from '$lib/office/api';
-	import { byName, withoutFormer } from '$lib/org/model';
-	import { teamOptions } from '$lib/org/team-edit';
+	import { toAppError } from '$lib/proto';
+	import { byName, withoutFormer } from '$lib/modules/organization/model';
+	import { teamOptions } from '$lib/modules/organization/team-edit';
 	import type { Connection, OrgSnapshot } from '$lib/proto';
 	import { teamsApi } from '../../api';
 	import { handleProblem, nameProblem, suggestHandle } from '../../person';

@@ -4,7 +4,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::gateway::SecretText;
+use crate::web::SecretText;
 
 /// An organization's recovery code (X-02 §6.4): staged by the host, sent to the office server in
 /// launch create handoff (`org-office-launch`) and shown once by `recovery.release`

@@ -10,6 +10,8 @@ const routes = [
 	'/sign-in',
 	'/register',
 	'/create',
+	'/home',
+	'/inbox',
 	'/agents',
 	'/org-chart',
 	'/projects',
@@ -24,10 +26,22 @@ const routes = [
 ];
 type Capture = (message: Violation | { kind: 'barrier' }) => Promise<void>;
 type CaptureWindow = Window & { captureCsp: Capture; unexpectedInlineRan?: boolean };
-// A3/A4.5 enable the session and organization-creation pages. With no session (the harness serves no API),
-// the instance URL, /welcome, /sign-in and /create show sign-in (SIGN-1, SIGN-7) and /register without a link
-// explains it; every other area is unavailable.
-const signInPages = new Set(['/', '/welcome', '/sign-in', '/create']);
+// Live routes enabled in `capabilities.ts` (A3/A4.5/U1/B7) redirect to `/sign-in` when unauthenticated
+// (SIGN-1, SIGN-7) and `/register` without a link explains it; every unbuilt route renders `area-unavailable`.
+const signInPages = new Set([
+	'/',
+	'/welcome',
+	'/sign-in',
+	'/create',
+	'/home',
+	'/inbox',
+	'/agents',
+	'/org-chart',
+	'/projects',
+	'/projects/a-project',
+	'/chat',
+	'/offices'
+]);
 
 // One context spans fresh documents and another page, so capture cannot reset at each navigation.
 test('B1-05 Part A: the real gateway CSP permits every built route and captures blocked scripts', async ({
@@ -118,7 +132,7 @@ test('B1-05 Part A: the real gateway CSP permits every built route and captures 
 			visited.add(path);
 		});
 	await barrier(page);
-	expect(visited.size).toBe(16);
+	expect(visited.size).toBe(18);
 	expect(violations).toEqual([]);
 	await page.screenshot({ path: info.outputPath('gateway-csp-final-route.png'), fullPage: true });
 });

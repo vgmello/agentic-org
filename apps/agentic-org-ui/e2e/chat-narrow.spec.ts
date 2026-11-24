@@ -81,7 +81,7 @@ for (const [width, height, inline] of [
 			await expect(listToggle(page)).toHaveCount(0);
 		} else {
 			const toggle = listToggle(page);
-			await expect(toggle).toHaveAccessibleName('Conversations, 2 need you');
+			await expect(toggle).toHaveAccessibleName('Conversations, 3 need you');
 			await toggle.press('Enter');
 			const dialog = page.getByRole('dialog', { name: 'Conversations', exact: true });
 			await expect(dialog).toBeVisible();

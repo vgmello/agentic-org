@@ -1,5 +1,6 @@
 //! Kernel peer credentials for Unix sockets; no protocol or caller identity policy.
-use org_platform::socket::peer_uid;
+use org_platform::socket::{peer_pid as platform_peer_pid, peer_uid};
+use std::io;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 
@@ -12,6 +13,11 @@ pub fn effective_uid() -> u32 {
 /// Whether the kernel identifies the peer as `expected_uid`. Query failures refuse the peer.
 pub fn peer_allowed(stream: &UnixStream, expected_uid: u32) -> bool {
     peer_allowed_fd(stream.as_raw_fd(), expected_uid)
+}
+
+/// The kernel-reported PID of the peer on a connected Unix stream socket.
+pub fn peer_pid(stream: &UnixStream) -> io::Result<libc::pid_t> {
+    platform_peer_pid(stream.as_raw_fd())
 }
 
 fn peer_allowed_fd(fd: RawFd, expected_uid: u32) -> bool {

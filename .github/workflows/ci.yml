@@ -53,26 +53,28 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 docs/design/organization-data/test_schema.py
 
-      # ADR-0017 LNX-5: no platform predicate outside crates/org-platform, beyond the shrinking
-      # list in .github/platform-conditionals.allow. `cargo test` below runs it again with the rest.
+      # ADR-0017 LNX-5: zero platform predicates outside crates/org-platform and crates/org-platform-host
+      # (.github/platform-conditionals.allow is empty). `cargo test` below runs it again with the rest.
       - name: Platform conditionals (LNX-5)
         run: cargo test --locked -p org-platform --test platform_conditionals
 
       # A Unix target that is neither macOS nor GNU/Linux gets the refusing adapters of org-platform
       # and org-platform-host.
       # Linux with musl is such a target, and its test binaries run on this runner. Consumers
-      # whose system code has moved into org-platform must build there too; the list grows as
-      # Track X moves the rest (crates that compile C cannot be built for musl on this runner).
+      # whose system code lives behind org-platform build there too (crates that compile C cannot
+      # be built for musl on this runner).
       - name: Refusing adapters (a target without an adapter)
         if: runner.os == 'Linux'
         run: |
           rustup target add x86_64-unknown-linux-musl
           cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
-          cargo clippy --locked -p org-supervise -p org-spool -p org-socket --lib --target x86_64-unknown-linux-musl -- -D warnings
+          cargo clippy --locked -p org-supervise -p org-socket --lib --target x86_64-unknown-linux-musl -- -D warnings
           cargo test --locked -p org-platform -p org-platform-host --all-features --target x86_64-unknown-linux-musl
 
       - name: cargo clippy
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: |
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo clippy --locked -p org-office --features testkit --example store_latency -- -D warnings
 
       # agentic-org-web's dependency-closure test reads the locked graph for every platform with
       # `cargo metadata --offline`. A build downloads only this platform's packages, so the rest
@@ -83,6 +85,13 @@ jobs:
       # --no-fail-fast: a failing test binary must not hide the result of every crate after it.
       - name: cargo test
         run: cargo test --locked --workspace --no-fail-fast
+
+      # ADR-0014 / TASK-33 (B1c): office store latency measurement and regression guard on macOS & Linux.
+      - name: Office store latency benchmark & regression check (B1c)
+        run: |
+          cargo run --locked --release -p org-office --features testkit --example store_latency -- \
+            --iterations 200 --durable-iterations 20 --check-regression \
+            --markdown "$GITHUB_STEP_SUMMARY"
 
   # ADR-0017 LNX-5: a change never adds a file to .github/platform-conditionals.allow or raises a
   # count in it. A branch is compared with where it left v1, the integration branch; a push to v1

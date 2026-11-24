@@ -1,4 +1,7 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { orgApi } from '$lib/modules/organization/api';
+import { createHttpProjectsApi } from './http-api';
 import type {
 	ActivityEntry,
 	CreateOutcome,
@@ -82,22 +85,47 @@ export interface ProjectsApi {
 	): Promise<void>;
 }
 
-// The web API does not serve projects yet: every call refuses, and the pages say so.
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayProjectsApi = createHttpProjectsApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	orgApi,
+	instanceId: () => signedInSession()?.instance_id,
+	newId: () => appSession.newOperationId()
+});
+
+// Production projects API backed by `/api/v1/organizations/{org}/projects`.
 // Under `bun run dev:mock`, e2e/fakes/modules/projects.ts stands in for this file.
-export const projectsApi: ProjectsApi = {
-	list: unavailableCall,
-	project: unavailableCall,
-	team: unavailableCall,
-	activity: unavailableCall,
-	conversations: unavailableCall,
-	teamChoices: unavailableCall,
-	repositoryChoices: unavailableCall,
-	create: unavailableCall,
-	createOperation: unavailableCall,
+export const projectsApi: ProjectsApi = Object.freeze<ProjectsApi>({
+	list: (orgId) => (signedInSession() ? gatewayProjectsApi.list(orgId) : unavailableCall()),
+	project: (orgId, id) =>
+		signedInSession() ? gatewayProjectsApi.project(orgId, id) : unavailableCall(),
+	team: (orgId, id) => (signedInSession() ? gatewayProjectsApi.team(orgId, id) : unavailableCall()),
+	activity: (orgId, id) =>
+		signedInSession() ? gatewayProjectsApi.activity(orgId, id) : unavailableCall(),
+	conversations: (orgId, id) =>
+		signedInSession() ? gatewayProjectsApi.conversations(orgId, id) : unavailableCall(),
+	teamChoices: (orgId) =>
+		signedInSession() ? gatewayProjectsApi.teamChoices(orgId) : unavailableCall(),
+	repositoryChoices: (orgId) =>
+		signedInSession() ? gatewayProjectsApi.repositoryChoices(orgId) : unavailableCall(),
+	create: (orgId, draft) =>
+		signedInSession() ? gatewayProjectsApi.create(orgId, draft) : unavailableCall(),
+	createOperation: (orgId, opId) =>
+		signedInSession() ? gatewayProjectsApi.createOperation(orgId, opId) : unavailableCall(),
 	rename: unavailableCall,
-	ownerChangePreview: unavailableCall,
-	setTeams: unavailableCall,
+	ownerChangePreview: (orgId, id, teamId) =>
+		signedInSession()
+			? gatewayProjectsApi.ownerChangePreview(orgId, id, teamId)
+			: unavailableCall(),
+	setTeams: (orgId, id, change) =>
+		signedInSession() ? gatewayProjectsApi.setTeams(orgId, id, change) : unavailableCall(),
 	setRepositories: unavailableCall,
 	processPreview: unavailableCall,
 	setProcess: unavailableCall
-};
+});

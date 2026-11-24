@@ -51,6 +51,24 @@ pub(super) fn harden_self() -> io::Result<()> {
     Ok(())
 }
 
+pub(super) fn parent_pid(pid: libc::pid_t) -> io::Result<Option<libc::pid_t>> {
+    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let tail = stat
+        .rsplit_once(')')
+        .ok_or_else(|| invalid("invalid process stat"))?
+        .1;
+    let ppid = tail
+        .split_whitespace()
+        .nth(1)
+        .and_then(|field| field.parse::<libc::pid_t>().ok())
+        .ok_or_else(|| invalid("invalid parent pid in process stat"))?;
+    Ok(Some(ppid))
+}
+
 /// Whether this process is dumpable (`PR_GET_DUMPABLE`): 0 is not; any other value is.
 fn dumpable() -> io::Result<bool> {
     // SAFETY: `PR_GET_DUMPABLE` takes no further argument and changes nothing.

@@ -4,36 +4,8 @@
       "count": 1
     }
   },
-  "e2e/offices.spec.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "src/lib/components/HeroIcon.svelte": {
     "svelte/require-each-key": {
-      "count": 1
-    }
-  },
-  "src/lib/components/NewRequestDialog.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/lib/components/NewTaskDialog.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/lib/components/ReportBugDialog.svelte": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/lib/components/TaskSheet.svelte": {
-    "@typescript-eslint/no-unused-expressions": {
       "count": 1
     }
   },
@@ -57,11 +29,6 @@
       "count": 1
     }
   },
-  "src/lib/modules/messaging/features/manage-channel/MembersPanel.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
   "src/lib/modules/messaging/features/open-dm/ChatSidebar.svelte": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
@@ -77,11 +44,6 @@
       "count": 1
     }
   },
-  "src/lib/modules/messaging/features/send-message/Composer.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
   "src/lib/modules/messaging/markdown.ts": {
     "no-irregular-whitespace": {
       "count": 2
@@ -92,12 +54,12 @@
       "count": 12
     }
   },
-  "src/lib/office/mock.ts": {
+  "src/lib/modules/offices/mock.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 2
     }
   },
-  "src/lib/org/reducer.ts": {
+  "src/lib/modules/organization/reducer.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     },
@@ -105,9 +67,47 @@
       "count": 1
     }
   },
-  "src/lib/org/reporting.ts": {
+  "src/lib/modules/organization/reporting.ts": {
     "@typescript-eslint/no-unused-expressions": {
       "count": 2
+    }
+  },
+  "src/lib/modules/work/engine.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 2
+    }
+  },
+  "src/lib/modules/work/features/bugs/ReportBugDialog.svelte": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/work/features/requests/NewRequestDialog.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/work/features/tasks/NewTaskDialog.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/work/features/tasks/TaskSheet.svelte": {
+    "@typescript-eslint/no-unused-expressions": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/work/requests-view.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/work/support.ts": {
+    "no-control-regex": {
+      "count": 1
     }
   },
   "src/lib/platform/auth/session-controller.test.ts": {
@@ -151,32 +151,6 @@
   "src/lib/platform/tooling/ui-gate.test.ts": {
     "no-useless-escape": {
       "count": 2
-    }
-  },
-  "src/lib/work/engine.ts": {
-    "@typescript-eslint/no-unused-expressions": {
-      "count": 19
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
-    }
-  },
-  "src/lib/work/requests-view.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
-  "src/lib/work/support.ts": {
-    "no-control-regex": {
-      "count": 1
-    }
-  },
-  "src/routes/(shell)/chat/+page.svelte": {
-    "no-undef": {
-      "count": 2
-    },
-    "svelte/no-useless-mustaches": {
-      "count": 1
     }
   },
   "src/routes/+error.svelte": {

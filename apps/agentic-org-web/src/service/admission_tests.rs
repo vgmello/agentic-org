@@ -35,7 +35,7 @@ impl ApiBackend for ProofBackend {
         self.0.fetch_add(1, Ordering::SeqCst);
         Err(ApiReply::error(
             StatusCode::FORBIDDEN,
-            GatewayErrorCode::NotAuthorized,
+            WebErrorCode::NotAuthorized,
             "Route proof required.",
         ))
     }
@@ -53,12 +53,12 @@ impl ApiBackend for ProofBackend {
     }
 }
 
-fn service() -> (Gateway<ProofBackend>, Arc<AtomicUsize>) {
+fn service() -> (WebService<ProofBackend>, Arc<AtomicUsize>) {
     let origin = ListenOrigin::parse(ORIGIN_TEXT).unwrap();
     let files =
         BuildFiles::from_files([("index.html".into(), b"<script>0</script>".to_vec())]).unwrap();
     let routed = Arc::new(AtomicUsize::new(0));
-    let gateway = Gateway::new(
+    let gateway = WebService::new(
         StaticUi::new(files, origin.clone(), Hsts::Off),
         ProofBackend(Arc::clone(&routed)),
         ApiLimits::default(),
@@ -79,12 +79,7 @@ fn request(method: Method, target: &str, hosts: &[&str], origins: &[&str]) -> Re
     builder.body(UnreadBody).unwrap()
 }
 
-async fn error(
-    response: Response<Full<Bytes>>,
-    status: StatusCode,
-    code: &str,
-    head: bool,
-) -> Value {
+async fn error(response: Response<WebBody>, status: StatusCode, code: &str, head: bool) -> Value {
     assert_eq!(response.status(), status);
     for (name, value) in [
         ("content-type", "application/json; charset=utf-8"),

@@ -3,8 +3,8 @@
 //! directory and snapshot read from it.
 pub mod directory;
 pub mod features;
-mod names;
-pub mod operation_id;
+pub mod import;
+pub(crate) mod names;
 pub mod ports;
 pub mod projector;
 pub mod records;

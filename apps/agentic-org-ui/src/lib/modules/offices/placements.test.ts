@@ -5,7 +5,6 @@ import { withPlacements } from './placements';
 const snapshot = {
 	position: {},
 	teams: [],
-	memberships: [],
 	members: [
 		{ id: 'a', kind: 'agent', name: 'A', office_id: 'hq', version: 1 },
 		{ id: 'b', kind: 'agent', name: 'B', office_id: 'hq', version: 1 }

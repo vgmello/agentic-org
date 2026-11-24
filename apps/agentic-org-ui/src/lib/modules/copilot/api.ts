@@ -1,5 +1,5 @@
 import type { AppError } from '$lib/proto';
-import { mockCopilot } from './mock';
+import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { ContextItem, CopilotFeature, DraftResponse, FeatureId, FeatureShapes } from './types';
 
 /**
@@ -22,12 +22,13 @@ export interface CopilotApi {
 	): Promise<DraftResponse<FeatureShapes[F]['draft']>>;
 }
 
-/**
- * TEMPORARY: until the office answers `copilot.*` (the Rust shell then calls it through `org-client`),
- * the browser and the app both use this TypeScript mock. `?copilot=off` in the URL turns the
- * copilot off, as on a Mac with no runtime set up.
- */
-export const copilotApi: CopilotApi = mockCopilot;
+// The web API does not serve copilot yet: every call refuses, and `copilotFeatures` hides smart buttons.
+// Under `bun run dev:mock`, `e2e/fakes/modules/copilot.ts` stands in for this file.
+export const copilotApi: CopilotApi = Object.freeze({
+	sample: false,
+	features: unavailableCall,
+	draft: unavailableCall
+});
 
 const cache = new WeakMap<CopilotApi, Promise<CopilotFeature[]>>();
 
@@ -60,13 +61,22 @@ export const offers = (features: CopilotFeature[] | undefined, id: FeatureId): b
 export function describeCopilotFailure(error: AppError): { title: string; hint: string } {
 	switch (error.code) {
 		case 'copilot_unavailable':
-			return { title: "The copilot isn't available", hint: 'No agent runtime is set up on this Mac. You can still write it yourself.' };
+			return {
+				title: "The copilot isn't available",
+				hint: 'No agent runtime is set up on this Mac. You can still write it yourself.'
+			};
 		case 'copilot_failed':
-			return { title: "The copilot couldn't draft this", hint: "Its answer wasn't usable. Try again, or write it yourself." };
+			return {
+				title: "The copilot couldn't draft this",
+				hint: "Its answer wasn't usable. Try again, or write it yourself."
+			};
 		case 'timeout':
 			return { title: 'The copilot took too long', hint: 'Try again, or write it yourself.' };
 		case 'copilot_busy':
-			return { title: 'Still working on your last request', hint: 'Wait for it to finish, then try again.' };
+			return {
+				title: 'Still working on your last request',
+				hint: 'Wait for it to finish, then try again.'
+			};
 		case 'invalid_request':
 			return { title: "The copilot can't draft this", hint: error.message };
 		case 'too_large':

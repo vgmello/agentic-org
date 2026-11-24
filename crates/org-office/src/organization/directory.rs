@@ -11,7 +11,7 @@ use org_proto::directory::{
 };
 use org_proto::msg::MAX_HANDLE_BYTES;
 use org_proto::org::{
-    AgentStatus, Member, MemberKind, OrgSnapshot, RunMode, Team, OFFICE_HANDLE, OWNER_HANDLE,
+    AgentStatus, Member, MemberKind, OrgSnapshot, Team, OFFICE_HANDLE, OWNER_HANDLE,
 };
 use org_proto::{ApiError, ErrorCode};
 
@@ -59,11 +59,14 @@ pub struct ThisOffice<'a> {
     pub name: &'a str,
 }
 
-/// The handle a member is addressed by: `owner` for the owner, an agent's `messaging_name`, a
-/// person's `name`. `None` for an agent record without its profile.
+/// The handle a member is addressed by: `owner` for the owner, an agent's `messaging_name`
+/// or `handle`, or a person's `handle`/`name`. `None` for an agent record without either.
 pub fn handle_of(member: &Member) -> Option<String> {
     if member.owner {
         return Some(OWNER_HANDLE.to_owned());
+    }
+    if let Some(handle) = &member.handle {
+        return Some(handle.clone());
     }
     match (&member.kind, &member.agent) {
         (MemberKind::Agent, Some(agent)) => Some(agent.messaging_name.clone()),
@@ -72,11 +75,14 @@ pub fn handle_of(member: &Member) -> Option<String> {
     }
 }
 
-/// The comparison key of a handle: the lower-cased `messaging_name` of an agent, the name key of
+/// The comparison key of a handle: the lower-cased handle/messaging_name, or name key of
 /// a person.
 fn handle_key(member: &Member) -> Option<String> {
     if member.owner {
         return None; // the owner's display name is not a handle; only `owner` names it
+    }
+    if let Some(handle) = &member.handle {
+        return Some(handle.to_lowercase());
     }
     match (&member.kind, &member.agent) {
         (MemberKind::Agent, Some(agent)) => Some(agent.messaging_name.to_lowercase()),
@@ -205,12 +211,7 @@ pub fn who(
             None => true,
         })
         .filter(|m| {
-            wanted_team.is_none_or(|team| {
-                snapshot
-                    .memberships
-                    .iter()
-                    .any(|ms| ms.member_id == m.id && ms.team_id == team.id)
-            })
+            wanted_team.is_none_or(|team| m.home_team_id.as_deref() == Some(team.id.as_str()))
         })
         .map(|m| (name_key(&m.name), m))
         .collect();
@@ -267,33 +268,42 @@ fn card(
         .agent
         .as_ref()
         .filter(|_| member.kind == MemberKind::Agent);
-    // What the member reports, else offline. An agent the office runs on call or on a schedule
-    // that is not running is `asleep`: derived, never reported, so a reported `offline` for it
-    // reads as asleep too.
-    let presence = match live.as_ref().map(|r| r.presence) {
-        Some(reported) if reported != MemberPresence::Offline => reported,
-        _ => match agent.and_then(|a| a.run_mode) {
-            Some(RunMode::OnCall | RunMode::Scheduled) => MemberPresence::Asleep,
+    // ADR-0028 decision 5 (AVAIL-4): an agent that is not working is always Available,
+    // whether or not its process is running; paused agents show Paused; no Asleep/Offline
+    // state is shown for an agent. People remain Online or Offline.
+    let presence = if let Some(a) = agent {
+        if a.status == AgentStatus::Paused {
+            MemberPresence::Paused
+        } else {
+            match live.as_ref().map(|r| r.presence) {
+                Some(
+                    reported @ (MemberPresence::Busy
+                    | MemberPresence::NeedsYou
+                    | MemberPresence::WaitingForAnswer
+                    | MemberPresence::UnableToRun
+                    | MemberPresence::WithYou),
+                ) => reported,
+                _ => MemberPresence::Available,
+            }
+        }
+    } else {
+        match live.as_ref().map(|r| r.presence) {
+            Some(reported) if reported != MemberPresence::Offline => reported,
             _ => MemberPresence::Offline,
-        },
+        }
     };
-    let mut teams: Vec<(String, CardTeam)> = snapshot
-        .memberships
-        .iter()
-        .filter(|ms| ms.member_id == member.id)
-        .filter_map(|ms| {
-            let team = snapshot.teams.iter().find(|t| t.id == ms.team_id)?;
-            Some((
-                name_key(&team.name),
-                CardTeam {
-                    id: team.id.clone(),
-                    name: team.name.clone(),
-                    title_in_team: ms.title_in_team.clone(),
-                },
-            ))
+    let teams: Vec<CardTeam> = member
+        .home_team_id
+        .as_deref()
+        .and_then(|home_team_id| snapshot.teams.iter().find(|t| t.id == home_team_id))
+        .map(|team| {
+            vec![CardTeam {
+                id: team.id.clone(),
+                name: team.name.clone(),
+                title_in_team: member.title_in_team.clone(),
+            }]
         })
-        .collect();
-    teams.sort_by(|a, b| (&a.0, &a.1.id).cmp(&(&b.0, &b.1.id)));
+        .unwrap_or_default();
     DirectoryCard {
         id: member.id.clone(),
         name: member.name.clone(),
@@ -303,7 +313,7 @@ fn card(
         agent_status: (member.kind == MemberKind::Agent)
             .then(|| agent.map_or(AgentStatus::Unknown, |a| a.status)),
         role_title: agent.map(|a| a.title.clone()),
-        teams: teams.into_iter().map(|(_, team)| team).collect(),
+        teams,
         reports_to: member
             .reports_to_member_id
             .as_deref()
@@ -338,9 +348,10 @@ fn card(
 
 #[cfg(test)]
 mod tests {
-    use org_proto::org::{AgentProfile, AgentRuntime, Membership, Position};
+    use org_proto::org::{AgentProfile, AgentRuntime, Position};
 
     use super::*;
+    use org_proto::org::RunMode;
 
     const NOW: &str = "2026-11-08T12:00:00.000Z";
     const OFFICE: ThisOffice<'static> = ThisOffice {
@@ -357,6 +368,9 @@ mod tests {
             id: id(n),
             kind: MemberKind::Person,
             name: name.into(),
+            handle: None,
+            home_team_id: None,
+            title_in_team: None,
             contact: None,
             owner: false,
             office_id: None,
@@ -405,21 +419,15 @@ mod tests {
         }
     }
 
-    fn joined(ms: &str, tid: &str, member: &str, title: Option<&str>) -> Membership {
-        Membership {
-            id: ms.into(),
-            team_id: tid.into(),
-            member_id: id(member),
-            title_in_team: title.map(Into::into),
-            version: 1,
-        }
-    }
-
     /// An owner, a person (Ana), two agents (Pixel active, Gone offboarded), two teams.
     fn org() -> OrgSnapshot {
         let mut pixel = agent("PIXEL", "Pixel the designer", "pixel", AgentStatus::Active);
+        pixel.home_team_id = Some("t-design".into());
+        pixel.title_in_team = Some("Lead designer".into());
         pixel.reports_to_member_id = Some(id("ANA"));
         let mut ana = person("ANA", "Ana");
+        ana.home_team_id = Some("t-eng".into());
+        ana.title_in_team = Some("Manager".into());
         ana.reports_to_member_id = None;
         OrgSnapshot {
             position: Position { epoch: 1, seq: 9 },
@@ -434,14 +442,8 @@ mod tests {
                 pixel,
                 agent("GONE", "Gone", "gone", AgentStatus::Offboarded),
             ],
-            memberships: vec![
-                joined("m1", "t-design", "PIXEL", Some("Lead designer")),
-                joined("m2", "t-eng", "PIXEL", None),
-                joined("m3", "t-eng", "ANA", Some("Manager")),
-            ],
             projects: vec![],
             project_teams: vec![],
-            areas: vec![],
         }
     }
 
@@ -472,16 +474,13 @@ mod tests {
         assert_eq!(pixel.agent_status, Some(AgentStatus::Active));
         assert_eq!(pixel.role_title.as_deref(), Some("Senior Engineer"));
         assert!(!pixel.owner);
-        // Teams by name, with the title in each.
+        // Home team with its title.
         let teams: Vec<_> = pixel
             .teams
             .iter()
             .map(|t| (t.name.as_str(), t.title_in_team.as_deref()))
             .collect();
-        assert_eq!(
-            teams,
-            [("Design", Some("Lead designer")), ("Engineering", None)]
-        );
+        assert_eq!(teams, [("Design", Some("Lead designer"))]);
         assert_eq!(
             pixel.reports_to.as_ref().unwrap().handle.as_deref(),
             Some("Ana")
@@ -494,7 +493,7 @@ mod tests {
                 name: "HQ".into()
             })
         );
-        assert_eq!(pixel.presence, MemberPresence::Offline);
+        assert_eq!(pixel.presence, MemberPresence::Available);
     }
 
     #[test]
@@ -580,8 +579,8 @@ mod tests {
             })
         };
         // By id, and by name ignoring case.
-        assert_eq!(team("t-eng"), Ok(vec![id("ANA"), id("PIXEL")]));
-        assert_eq!(team("engineering"), Ok(vec![id("ANA"), id("PIXEL")]));
+        assert_eq!(team("t-eng"), Ok(vec![id("ANA")]));
+        assert_eq!(team("engineering"), Ok(vec![id("ANA")]));
         assert_eq!(team("t-design"), Ok(vec![id("PIXEL")]));
         // "Design" names two teams (one under Engineering): ambiguous, the id works.
         assert_eq!(team("Design"), Err(ErrorCode::InvalidRequest));
@@ -730,7 +729,7 @@ mod tests {
     }
 
     #[test]
-    fn an_office_run_agent_with_no_live_run_is_asleep_and_the_rest_are_offline() {
+    fn active_agents_without_a_live_run_are_available_and_paused_agents_are_paused() {
         let mut snapshot = org();
         let presence_with = |snapshot: &mut OrgSnapshot, mode: Option<RunMode>| {
             snapshot
@@ -748,26 +747,33 @@ mod tests {
             let presence = |n: &str| cards.iter().find(|c| c.id == id(n)).unwrap().presence;
             (presence("PIXEL"), presence("ANA"), presence("OWNER"))
         };
-        // On call or scheduled, with no live run: asleep (derived, never reported).
-        for mode in [RunMode::OnCall, RunMode::Scheduled] {
+        // ADR-0028 (AVAIL-4): active agents with no live run show Available regardless of run_mode.
+        for mode in [
+            Some(RunMode::OnCall),
+            Some(RunMode::Scheduled),
+            Some(RunMode::AlwaysOn),
+            None,
+        ] {
             assert_eq!(
-                presence_with(&mut snapshot, Some(mode)),
+                presence_with(&mut snapshot, mode),
                 (
-                    MemberPresence::Asleep,
+                    MemberPresence::Available,
                     MemberPresence::Offline,
                     MemberPresence::Offline
                 ),
                 "{mode:?}"
             );
         }
-        // Always-on and hand-run agents are offline, not asleep.
-        for mode in [Some(RunMode::AlwaysOn), None] {
-            assert_eq!(
-                presence_with(&mut snapshot, mode).0,
-                MemberPresence::Offline,
-                "{mode:?}"
-            );
-        }
+        snapshot
+            .members
+            .iter_mut()
+            .find(|m| m.id == id("PIXEL"))
+            .unwrap()
+            .agent
+            .as_mut()
+            .unwrap()
+            .status = AgentStatus::Paused;
+        assert_eq!(presence_with(&mut snapshot, None).0, MemberPresence::Paused);
     }
 
     #[test]
@@ -824,15 +830,14 @@ mod tests {
     }
 
     #[test]
-    fn a_cards_teams_are_ordered_by_name_whatever_order_the_memberships_are_in() {
-        let mut snapshot = org();
-        snapshot.memberships.reverse();
+    fn a_cards_home_team_carries_its_name_and_title() {
+        let snapshot = org();
         let cards = who(&snapshot, OFFICE, NOW, &NothingLive, &WhoParams::default())
             .unwrap()
             .members;
         let pixel = cards.iter().find(|c| c.id == id("PIXEL")).unwrap();
         let names: Vec<_> = pixel.teams.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, ["Design", "Engineering"]);
+        assert_eq!(names, ["Design"]);
     }
 
     #[test]
@@ -941,16 +946,19 @@ mod tests {
     }
 
     #[test]
-    fn a_membership_of_a_team_that_is_gone_is_left_off_the_card() {
+    fn a_home_team_that_is_gone_is_left_off_the_card() {
         let mut snapshot = org();
         snapshot
-            .memberships
-            .push(joined("m9", "t-gone", "ANA", None));
+            .members
+            .iter_mut()
+            .find(|m| m.id == id("ANA"))
+            .unwrap()
+            .home_team_id = Some("t-gone".into());
         let cards = who(&snapshot, OFFICE, NOW, &NothingLive, &WhoParams::default())
             .unwrap()
             .members;
         let ana = cards.iter().find(|c| c.id == id("ANA")).unwrap();
-        assert_eq!(ana.teams.len(), 1);
+        assert!(ana.teams.is_empty());
     }
 
     #[test]
@@ -985,15 +993,15 @@ mod tests {
             .as_mut()
             .unwrap()
             .run_mode = Some(RunMode::OnCall);
-        // The run just ended: the runtime remembers when it was last seen, and says offline.
+        // The run just ended: the runtime remembers when it was last seen, and active agents stay Available.
         let live = Live(vec![(id("PIXEL"), runtime(MemberPresence::Offline, None))]);
         let cards = who(&snapshot, OFFICE, NOW, &live, &WhoParams::default())
             .unwrap()
             .members;
         let pixel = cards.iter().find(|c| c.id == id("PIXEL")).unwrap();
-        assert_eq!(pixel.presence, MemberPresence::Asleep);
+        assert_eq!(pixel.presence, MemberPresence::Available);
         assert!(pixel.last_seen_at.is_some());
-        // A live run is not asleep, and a hand-run agent that went offline is offline.
+        // A live run reports Busy, and an agent without a run_mode is also Available when idle.
         let busy = Live(vec![(id("PIXEL"), runtime(MemberPresence::Busy, None))]);
         let cards = who(&snapshot, OFFICE, NOW, &busy, &WhoParams::default())
             .unwrap()
@@ -1016,7 +1024,7 @@ mod tests {
             .members;
         assert_eq!(
             cards.iter().find(|c| c.id == id("PIXEL")).unwrap().presence,
-            MemberPresence::Offline
+            MemberPresence::Available
         );
     }
 

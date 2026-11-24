@@ -51,14 +51,6 @@ impl Host {
         // credential directory in its record.
         config
             .admit_runtime_with(record.credentials.is_some() && keeps_secrets_in_a_directory())?;
-        // The record was validated as it was read: a listener that is plain HTTP on a
-        // published port with a service mode other than foreground (a record edited by
-        // hand) never comes this far. Said once per start, before anything is bound.
-        if record.input.listen.scheme() == org_host_control::listen::ListenMode::HttpPublished {
-            host_log::log(&crate::setup_flow::published_http_notice(
-                &record.input.listen,
-            ));
-        }
         let id = record.instance_id.clone().ok_or_else(|| {
             refused(
                 "reading the setup record",
@@ -101,16 +93,20 @@ impl Host {
                 "the reserved instance is not the one setup recorded",
             ));
         }
-        if instance
+        let browser = instance
             .browser()
             .map_err(|e| refused("reading the instance listener", e))?
-            .as_ref()
-            != Some(&record.input.listen)
-        {
-            return Err(refused(
-                "reading the instance listener",
-                "the instance listener is missing or differs from setup",
-            ));
+            .filter(|active| browser_matches_setup(active, &record.input.listen))
+            .ok_or_else(|| {
+                refused(
+                    "reading the instance listener",
+                    "the instance listener is missing or differs from setup",
+                )
+            })?;
+        // Said once per start, before anything is bound, using the active listener (omitted
+        // once an http_published instance has opted in to HTTPS).
+        if browser.scheme() == org_host_control::listen::ListenMode::HttpPublished {
+            host_log::log(&crate::setup_flow::published_http_notice(&browser));
         }
         let policy = startup_app_policy(&config, true)?;
         let layout_paths = instance
@@ -222,7 +218,7 @@ impl Host {
         let admin = Admin::new(
             db,
             &record.setup_operation,
-            record.input.listen.origin().clone(),
+            browser.origin().clone(),
             policy,
             Arc::new(NativePresence),
         );
@@ -235,6 +231,24 @@ impl Host {
         debug_assert!(named, "the instance name is installed once");
         Ok(host)
     }
+}
+
+/// Whether an instance's saved browser listener matches its frozen setup record: either
+/// identical, or an opt-in HTTPS upgrade / HSTS update (`ADR-0033`) preserving the exact
+/// reserved listen address, port, origin host, and origin port. Downgrades from `https`
+/// to plain HTTP and any address/port/host changes are refused.
+pub(crate) fn browser_matches_setup(
+    active: &org_host_control::listen::ListenConfig,
+    setup: &org_host_control::listen::ListenConfig,
+) -> bool {
+    if active == setup {
+        return true;
+    }
+    active.scheme() == org_host_control::listen::ListenMode::Https
+        && active.address() == setup.address()
+        && active.port() == setup.port()
+        && active.origin().host() == setup.origin().host()
+        && active.origin().port() == setup.origin().port()
 }
 
 /// The message a foreground start refuses with when its record names no secrets volume on a

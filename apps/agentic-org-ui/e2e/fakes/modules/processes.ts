@@ -7,7 +7,7 @@
 //   slow · fails (reads fail) · empty (no documents) · unavailable · stale (organization repository unreachable: the
 //   last copy) · viewer (no edit rights) · conflict (someone saves first, once) · save-fails (writes fail)
 //   refuse-status, refuse-scope (writes refused on the lifecycle, or on a field the editor has no place for)
-import { orgApi } from '$lib/org/api';
+import { orgApi } from '$lib/modules/organization/api';
 import type { OrgSnapshot } from '$lib/proto';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { ProcessesApi } from '../../../src/lib/modules/processes/api';

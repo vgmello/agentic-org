@@ -28,7 +28,7 @@
 		type HomeInboxState
 	} from '$lib/home/model';
 	import { pageTitle } from '$lib/nav';
-	import { owner } from '$lib/org/model';
+	import { owner } from '$lib/modules/organization/model';
 
 	let { data } = $props();
 	const organizationId = $derived(data.connection.organization.id);

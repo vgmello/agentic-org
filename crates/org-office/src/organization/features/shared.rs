@@ -12,7 +12,7 @@ use crate::organization::{
 };
 
 /// A rule refused the change: recorded with its operation, so a retry gets this answer.
-pub(super) fn reject<T>(code: RejectCode, message: impl Into<String>) -> Result<T, Refusal> {
+pub(crate) fn reject<T>(code: RejectCode, message: impl Into<String>) -> Result<T, Refusal> {
     let rejection = OrgRejection {
         code,
         message: message.into(),
@@ -21,7 +21,7 @@ pub(super) fn reject<T>(code: RejectCode, message: impl Into<String>) -> Result<
 }
 
 /// What an admitted change knows before it reads its records.
-pub(super) struct Admitted {
+pub(crate) struct Admitted {
     /// The directory generation the change becomes.
     pub generation: u64,
     pub now: Timestamp,
@@ -34,7 +34,7 @@ pub(super) struct Admitted {
 /// change what"): `by` must be the employee `owner`, an active person on record. The
 /// caller's grant authority has already checked the connection; this is the
 /// organization's own check. Anything else is refused unrecorded.
-pub(super) fn admit<E: Engine>(
+pub(crate) fn admit<E: Engine>(
     uow: &mut UnitOfWork<'_, E>,
     here: &OfficeIdentity,
     owner: &Id,
@@ -72,7 +72,7 @@ where
 }
 
 /// `meta` after one more change by `by` at `now`.
-pub(super) fn touched(meta: &Meta, by: &By, now: Timestamp) -> Meta {
+pub(crate) fn touched(meta: &Meta, by: &By, now: Timestamp) -> Meta {
     Meta {
         revision: meta.revision + 1,
         updated_at: Some(records::time_text(now)),
@@ -82,7 +82,7 @@ pub(super) fn touched(meta: &Meta, by: &By, now: Timestamp) -> Meta {
 }
 
 /// A stale `expected_revision`: told after every other rule but `already_exists`.
-pub(super) fn check_revision(current: u64, expected: u64) -> Result<(), Refusal> {
+pub(crate) fn check_revision(current: u64, expected: u64) -> Result<(), Refusal> {
     if current == expected {
         return Ok(());
     }
@@ -93,8 +93,8 @@ pub(super) fn check_revision(current: u64, expected: u64) -> Result<(), Refusal>
 }
 
 /// Whether `id` names any record of the organization, whatever its kind.
-pub(super) fn id_in_use(
-    view: &impl OrganizationRead,
+pub(crate) fn id_in_use(
+    view: &impl crate::projects::ports::ProjectsRead,
     organization: &Organization,
     id: &Id,
 ) -> Result<bool, StoreError> {
@@ -103,12 +103,16 @@ pub(super) fn id_in_use(
         || view.office(id)?.is_some()
         || view.employee(id)?.is_some()
         || view.role(id)?.is_some()
+        || view.hire_request(id)?.is_some()
+        || view.provider_connection(id)?.is_some()
+        || view.model_profile(id)?.is_some()
+        || view.project(id)?.is_some()
         || view.repositories()?.iter().any(|r| r.id == *id))
 }
 
 /// Whether another active team under `parent` (none: the top level) has `name`, ignoring
 /// case. Archived teams keep their names without blocking them.
-pub(super) fn sibling_named(
+pub(crate) fn sibling_named(
     view: &impl OrganizationRead,
     parent: Option<&Id>,
     name: &str,
@@ -129,7 +133,7 @@ pub(super) const TOO_DEEP: &str = "the team tree would be too deep";
 /// The file of the team at the end of `chain`, or the rule's refusal when the tree is too
 /// deep for the limit or for a path. A team is only where an employee's profile also fits
 /// (its path is the longer), so every team can take a person or an agent.
-pub(super) fn team_file(chain: &[Id]) -> Result<DurablePath, Refusal> {
+pub(crate) fn team_file(chain: &[Id]) -> Result<DurablePath, Refusal> {
     let Some(last) = chain.last() else {
         return invalid("a team path names a team");
     };
@@ -162,10 +166,11 @@ pub(super) struct Moved {
 }
 
 /// Every file below the team at the end of `old` once that team's chain is `new`: each
-/// descendant team's file and every profile homed in the team or below it, unchanged but
-/// for the path. The team's own file is the caller's, since its record changes.
+/// descendant team's file, every profile homed in the team or below it, and every team
+/// process/standard document in the moved subtree, unchanged but for the path.
+/// The team's own file is the caller's, since its record changes.
 pub(super) fn relocate(
-    view: &impl OrganizationRead,
+    view: &impl crate::projects::ports::ProjectsRead,
     old: &[Id],
     new: &[Id],
 ) -> Result<Vec<Moved>, Refusal> {
@@ -197,6 +202,51 @@ pub(super) fn relocate(
             from: profile(from)?,
             to: profile_file(to, employee.kind, &employee.id)?,
             bytes: records::encode_employee(&employee),
+        });
+        if employee.kind == EmployeeKind::Agent {
+            if let Some(exec) = view.agent_execution(&employee.id)? {
+                moved.push(Moved {
+                    from: records::agent_execution_path(from, &employee.id)?,
+                    to: records::agent_execution_path(to, &employee.id)
+                        .or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))?,
+                    bytes: records::encode_agent_execution(&exec),
+                });
+            }
+        }
+    }
+    for req in view.hire_requests()? {
+        let Some((from, to)) = chains.get(&req.home_team_id) else {
+            continue;
+        };
+        moved.push(Moved {
+            from: records::hire_request_path(from, &req.id)?,
+            to: records::hire_request_path(to, &req.id)
+                .or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))?,
+            bytes: records::encode_hire_request(&req),
+        });
+    }
+    for doc in view.structure_documents()? {
+        let Some(ref tid) = doc.team_id else {
+            continue;
+        };
+        let Some((from, to)) = chains.get(tid) else {
+            continue;
+        };
+        moved.push(Moved {
+            from: crate::processes::records::structure_document_path(
+                doc.kind,
+                &doc.id,
+                Some(from),
+                None,
+            )?,
+            to: crate::processes::records::structure_document_path(
+                doc.kind,
+                &doc.id,
+                Some(to),
+                None,
+            )
+            .or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))?,
+            bytes: crate::processes::records::encode_structure_document(&doc),
         });
     }
     Ok(moved)

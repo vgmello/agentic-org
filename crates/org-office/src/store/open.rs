@@ -12,7 +12,11 @@
 //! - Adding a family: one bound on [`OfficeEngine`] and one projector in `open_on`.
 //! - Adding an engine: one arm of [`EngineChoice`] and of [`OfficeStore`].
 
+pub(crate) mod git_ops;
+pub(crate) mod messaging_ops;
 mod operations;
+pub(crate) mod process_ops;
+pub(crate) mod task_ops;
 #[cfg(test)]
 mod tests;
 
@@ -27,20 +31,134 @@ use org_store::{
     Status, Store, StoreError, StoreParts, WriterAuthority,
 };
 
+pub use git_ops::{
+    AttachProjectRepositoryOp, RecordTaskRepoBranchOp, RegisterRepositoryOp, RepositoriesList,
+    RepositoryResolve, TaskGitContext, TaskGitContextRead,
+};
+pub use messaging_ops::{
+    ChannelCreateOp, ChannelMembershipOp, ChannelMessagesForCallerRead, ChannelMessagesRawRead,
+    ChatAnswerOp, ChatInboxRead, ChatMarkReadOp, ChatMessagesRead, ChatMuteOp, ChatReactOp,
+    ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, ConversationByIdRead,
+    DeliverAnswerCandidatesOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
+    InspectAskStatusRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead, ListConversationsRead,
+    ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxDeferOp, MailboxUnsnoozeOp,
+    MailboxUpdateStateOp, MsgAcceptOp, MsgAskOp, MsgWithdrawOp, OpenOwnerInboxRead,
+    OrgChangesAfterRead, PeekUnreadRead,
+};
 pub use operations::{
-    AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
-    DirectoryGeneration, DirectorySnapshot, MovePersonOp, MoveTeamOp, OfficeStanding, Standing,
-    StructureOp, UpdatePersonOp, UpdateTeamOp,
+    AddPersonOp, AddProjectTeamOp, AgentExecutionById, ArchiveTeamOp, CheckHrMessageAccess,
+    CheckOp, CreateOrganizationOp, CreateProjectOp, CreateTeamOp, DeactivatePersonOp,
+    DirectoryGeneration, DirectorySnapshot, EmployeeById, HireInspectById, HiresList,
+    ImportOrganizationOp, ModelProfileById, ModelProfilesList, MovePersonOp, MoveTeamOp,
+    OfficeStanding, OfficesCount, ProjectCheckOp, ProjectInspectByRef, ProjectsList,
+    ProviderConnectionById, ProviderConnectionsList, ReceiptById, RemoveProjectTeamOp, RoleById,
+    RoleInspectByRef, RolesList, Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp,
+    WatchingModelRead,
 };
 
-use super::sqlite::SqliteEngine;
+use super::sqlite::{
+    accounting::SqliteAccountingStore, budgets::SqliteBudgetStore,
+    private_notes::SqlitePrivateNotesStore, providers::SqliteProviderPoolStore, SqliteEngine,
+};
 use crate::{
+    accounting::AccountingStore,
+    budgets::BudgetStore,
+    error::OfficeError,
+    messaging::projector::MessagingFiles,
     office_local::{clean_stop, projector::OfficeLocalFiles, records::CleanStop},
-    organization::{
-        ports::{OrganizationEngine, OrganizationRead},
-        projector::OrganizationFiles,
+    organization::projector::OrganizationFiles,
+    private_notes::PrivateNotesStore,
+    processes::projector::ProcessFiles,
+    projects::projector::ProjectFiles,
+    providers::ProviderPoolStore,
+    tasks::{
+        ports::{TasksEngine, TasksRead},
+        projector::TaskFiles,
     },
 };
+
+/// Opens the isolated HQ-authoritative per-author private task notes store (`TASK-50`, `L8`,
+/// `ADR-0016`, `doc-79`, `TASK-97` ARCH-01) at `<durable-root>/private/task-notes.db` for SQLite
+/// or in-memory for tests.
+pub(crate) fn open_private_notes(
+    engine: EngineChoice,
+    durable_root: &Path,
+) -> Result<Arc<dyn PrivateNotesStore>, OfficeError> {
+    match engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqlitePrivateNotesStore::open(durable_root)?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(
+            crate::private_notes::memory::MemoryPrivateNotesStore::new(),
+        )),
+    }
+}
+
+/// Opens the isolated `L2` usage & cost accounting store (`TASK-53`, `doc-87`, `ADR-0016`)
+/// backed by `<durable-root>/accounting/` and `<runtime-root>/<office-id>/protected/accounting.db`.
+pub(crate) fn open_accounting(
+    engine: EngineChoice,
+    durable_root: &Path,
+    runtime_root: &Path,
+    office_id: &str,
+    org_id: &str,
+) -> Result<Arc<dyn AccountingStore>, OfficeError> {
+    match engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqliteAccountingStore::open(
+            durable_root,
+            runtime_root,
+            office_id,
+            org_id,
+        )?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(
+            crate::accounting::memory::MemoryAccountingStore::new(),
+        )),
+    }
+}
+
+/// Opens the isolated `L3` budgets & holds store (`TASK-53`, `doc-92`, `ADR-0016`)
+/// backed by `<durable-root>/budgets/` and `<runtime-root>/<office-id>/protected/budgets.db`.
+pub(crate) fn open_budgets(
+    engine: EngineChoice,
+    durable_root: &Path,
+    runtime_root: &Path,
+    office_id: &str,
+    org_id: &str,
+) -> Result<Arc<dyn BudgetStore>, OfficeError> {
+    match engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqliteBudgetStore::open(
+            durable_root,
+            runtime_root,
+            office_id,
+            org_id,
+        )?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(crate::budgets::memory::MemoryBudgetStore::new())),
+    }
+}
+
+/// Opens the isolated `L4` provider bindings, discovery cache, and dual-authority quota permit
+/// store (`TASK-54`, `doc-88`, `doc-89`, `TASK-2` non-blocking in-memory lease heartbeats).
+pub(crate) fn open_providers(
+    engine: EngineChoice,
+    durable_root: &Path,
+    runtime_root: &Path,
+    office_id: &str,
+    org_id: &str,
+) -> Result<Arc<dyn ProviderPoolStore>, OfficeError> {
+    match engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqliteProviderPoolStore::open(
+            durable_root,
+            runtime_root,
+            office_id,
+            org_id,
+        )?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(
+            crate::providers::memory::MemoryProviderPoolStore::new(),
+        )),
+    }
+}
 
 /// The file of an office's projection, under `<runtime-root>/<office-id>/`.
 const PROJECTION_FILE: &str = "office.db";
@@ -132,9 +250,9 @@ impl StoreConfig {
 }
 
 /// An engine every family of the office runs on. It grows by one bound per family.
-pub trait OfficeEngine: OrganizationEngine {}
+pub trait OfficeEngine: TasksEngine {}
 
-impl<E: OrganizationEngine> OfficeEngine for E {}
+impl<E: TasksEngine> OfficeEngine for E {}
 
 /// One operation on the store, whichever engine holds the projection.
 pub trait StoreOp {
@@ -145,11 +263,11 @@ pub trait StoreOp {
 /// One read of a consistent snapshot, whichever engine holds the projection.
 pub trait ReadOp {
     type Out;
-    fn read<S: OrganizationRead>(self, snapshot: &S) -> Result<Self::Out, StoreError>;
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError>;
 }
 
 /// A store and the engine under it.
-pub struct Opened<E: OfficeEngine> {
+struct Opened<E: OfficeEngine> {
     store: Store<E>,
     engine: Arc<E>,
     /// Where an orderly stop leaves its marker, and for which journal.
@@ -160,20 +278,22 @@ pub struct Opened<E: OfficeEngine> {
     stopped_cleanly: bool,
 }
 
-/// An office's open store.
-pub enum OfficeStore {
+enum OfficeStoreInner {
     Sqlite(Opened<SqliteEngine>),
     #[cfg(any(test, feature = "testkit"))]
     Memory(Opened<org_store::testkit::MemoryEngine>),
 }
 
+/// An office's open store. Engine variants stay private so callers cannot bypass [`open_store`].
+pub struct OfficeStore(OfficeStoreInner);
+
 /// The same expression on whichever arm is open.
 macro_rules! on_store {
     ($office:expr, $opened:ident => $body:expr) => {
-        match $office {
-            OfficeStore::Sqlite($opened) => $body,
+        match &$office.0 {
+            OfficeStoreInner::Sqlite($opened) => $body,
             #[cfg(any(test, feature = "testkit"))]
-            OfficeStore::Memory($opened) => $body,
+            OfficeStoreInner::Memory($opened) => $body,
         }
     };
 }
@@ -182,7 +302,8 @@ macro_rules! on_store {
 fn sqlite_engine(config: &StoreConfig) -> Result<SqliteEngine, StoreError> {
     let path = config.projection_path();
     let folder = path.parent().expect("the projection is in a folder");
-    let made = std::fs::create_dir_all(folder).and_then(|()| owner_only(folder));
+    let made =
+        std::fs::create_dir_all(folder).and_then(|()| org_platform::fs::set_owner_only_dir(folder));
     made.map_err(|error| EngineError::new(format!("making the runtime folder: {error}")))?;
     #[cfg(test)]
     if let Some(ddl) = config.testing.extra_ddl {
@@ -191,17 +312,6 @@ fn sqlite_engine(config: &StoreConfig) -> Result<SqliteEngine, StoreError> {
     }
     let engine = SqliteEngine::open(&path)?;
     Ok(engine.for_organization(&config.identity.organization_id))
-}
-
-#[cfg(unix)]
-fn owner_only(folder: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700))
-}
-
-#[cfg(not(unix))]
-fn owner_only(_folder: &std::path::Path) -> std::io::Result<()> {
-    Ok(())
 }
 
 /// The memory projection: always empty when opened, so the store rebuilds it.
@@ -216,9 +326,20 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let here = &config.identity;
     let organization = here.organization_id.clone();
     let files: Arc<dyn Projector<E>> = Arc::new(OrganizationFiles::new(organization.clone()));
+    let projects: Arc<dyn Projector<E>> = Arc::new(ProjectFiles::new(organization.clone()));
+    let messaging: Arc<dyn Projector<E>> = Arc::new(MessagingFiles::new(organization.clone()));
+    let tasks: Arc<dyn Projector<E>> = Arc::new(TaskFiles::new());
+    let processes: Arc<dyn Projector<E>> = Arc::new(ProcessFiles::new());
     let local = OfficeLocalFiles::new(organization, here.office_id.clone());
     #[cfg_attr(not(any(test, feature = "testkit")), allow(unused_mut))]
-    let mut projectors: Vec<Arc<dyn Projector<E>>> = vec![files, Arc::new(local)];
+    let mut projectors: Vec<Arc<dyn Projector<E>>> = vec![
+        files,
+        projects,
+        messaging,
+        tasks,
+        processes,
+        Arc::new(local),
+    ];
     #[cfg(any(test, feature = "testkit"))]
     if let Some(probe) = &config.testing.probe {
         projectors.push(probe.projector());
@@ -232,6 +353,7 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
         projectors,
         Arc::clone(&config.clock),
     );
+    parts.excluded_prefixes = companion_store_exclusions(&here.office_id);
     parts.flush_interval = config.flush_interval;
     parts.opening = config.opening.clone();
     #[cfg(any(test, feature = "testkit"))]
@@ -307,12 +429,15 @@ impl Marker {
 /// clean-stop marker is consumed: [`OfficeStore::stopped_cleanly`] reports it.
 pub fn open_store(config: &StoreConfig) -> Result<OfficeStore, StoreError> {
     match config.engine {
-        EngineChoice::Sqlite => Ok(OfficeStore::Sqlite(open_on(
+        EngineChoice::Sqlite => Ok(OfficeStore(OfficeStoreInner::Sqlite(open_on(
             config,
             sqlite_engine(config)?,
-        )?)),
+        )?))),
         #[cfg(any(test, feature = "testkit"))]
-        EngineChoice::Memory => Ok(OfficeStore::Memory(open_on(config, memory_engine())?)),
+        EngineChoice::Memory => Ok(OfficeStore(OfficeStoreInner::Memory(open_on(
+            config,
+            memory_engine(),
+        )?))),
     }
 }
 
@@ -353,14 +478,14 @@ impl OfficeStore {
     /// clean-stop marker is written last. A store that is dropped instead does no such
     /// work and loses nothing by it, and the next opening is told the stop was not clean.
     pub fn close(self) -> Result<(), StoreError> {
-        let marker = match self {
-            OfficeStore::Sqlite(opened) => {
+        let marker = match self.0 {
+            OfficeStoreInner::Sqlite(opened) => {
                 let (engine, marker) = opened.close_store()?;
                 engine.checkpoint()?;
                 marker
             }
             #[cfg(any(test, feature = "testkit"))]
-            OfficeStore::Memory(opened) => opened.close_store()?.1,
+            OfficeStoreInner::Memory(opened) => opened.close_store()?.1,
         };
         marker.write()
     }
@@ -368,9 +493,9 @@ impl OfficeStore {
     /// The digest of the DDL the SQLite projection is made from.
     #[cfg(test)]
     pub(crate) fn schema_digest(&self) -> Option<String> {
-        match self {
-            OfficeStore::Sqlite(opened) => Some(opened.engine.schema_digest()),
-            OfficeStore::Memory(_) => None,
+        match &self.0 {
+            OfficeStoreInner::Sqlite(opened) => Some(opened.engine.schema_digest()),
+            OfficeStoreInner::Memory(_) => None,
         }
     }
 
@@ -380,4 +505,226 @@ impl OfficeStore {
         use org_store::testkit::Dump;
         on_store!(self, opened => opened.engine.dump())
     }
+}
+
+fn companion_store_exclusions(office_id: &Id) -> Vec<org_store::DurablePath> {
+    [
+        "authority/agent-execution".to_owned(),
+        "accounting".to_owned(),
+        "budgets".to_owned(),
+        format!("local/offices/{office_id}/connections"),
+        format!("local/offices/{office_id}/auth"),
+        format!("local/offices/{office_id}/subscription-usage"),
+        format!("local/offices/{office_id}/agents"),
+        format!("local/offices/{office_id}/sessions"),
+        format!("local/offices/{office_id}/enroll-tmp"),
+    ]
+    .into_iter()
+    .map(|p| org_store::DurablePath::parse(&p).expect("valid companion store prefix"))
+    .collect()
+}
+
+fn structure_doc_id_from_path(path: &org_store::DurablePath) -> Option<Id> {
+    use crate::processes::records::StructureDocPath;
+    match crate::processes::records::parse_path(path)? {
+        StructureDocPath::Organization(_, id)
+        | StructureDocPath::Team(_, _, id)
+        | StructureDocPath::Project(_, _, id) => Some(id),
+    }
+}
+
+fn apply_imported_to_engine<E: OfficeEngine>(
+    engine: &E,
+    organization_id: &Id,
+    files: &std::collections::BTreeMap<org_store::DurablePath, Vec<u8>>,
+) -> Result<(), crate::organization::import::ImportError> {
+    use crate::organization::import::ImportError;
+    use org_store::{CorePort, ProjectionError, Sha256};
+
+    // Mount every shared `state/` family projector (`OrganizationFiles`, `ProjectFiles`,
+    // `TaskFiles`, `ProcessFiles`). Non-Git families (`MessagingFiles`, `OfficeLocalFiles`)
+    // stay intentionally excluded so private/local files smuggled into Git fail closed (`TASK-97`).
+    let projectors: Vec<Box<dyn Projector<E>>> = vec![
+        Box::new(OrganizationFiles::new(organization_id.clone())),
+        Box::new(ProjectFiles::new(organization_id.clone())),
+        Box::new(TaskFiles::new()),
+        Box::new(ProcessFiles::new()),
+    ];
+    engine
+        .replace(&mut |tx| {
+            let mut seen_structure_docs: std::collections::BTreeMap<Id, org_store::DurablePath> =
+                std::collections::BTreeMap::new();
+            for (path, bytes) in files {
+                if let Some(doc_id) = structure_doc_id_from_path(path) {
+                    if let Some(prev) = seen_structure_docs.insert(doc_id.clone(), path.clone()) {
+                        return Err(ProjectionError::new(
+                            path,
+                            format!(
+                                "duplicate structure document id `{doc_id}` already defined at `{prev}`"
+                            ),
+                        )
+                        .into());
+                    }
+                }
+                let mut owners = projectors.iter().filter(|p| p.owns(path));
+                match (owners.next(), owners.next()) {
+                    (Some(owner), None) => owner.apply(tx, path, Some(bytes))?,
+                    (None, _) => {
+                        return Err(ProjectionError::new(
+                            path,
+                            "unrecognized file in organization state",
+                        )
+                        .into());
+                    }
+                    (Some(_), Some(_)) => {
+                        return Err(ProjectionError::new(
+                            path,
+                            "ambiguous file owner in organization state",
+                        )
+                        .into());
+                    }
+                }
+                tx.set_source(path, Some(Sha256::of(bytes)))?;
+            }
+            for projector in &projectors {
+                projector.validate(tx)?;
+            }
+            Ok(org_store::Cursor {
+                ordinal: 0,
+                sha256: Sha256::of(b"import-validation"),
+                feed: org_store::FeedPosition(0),
+                high_waters: org_store::HighWaters::default(),
+            })
+        })
+        .map_err(|err| match err {
+            StoreError::Projection(p) => ImportError::InvalidFile {
+                path: p
+                    .path
+                    .map(|dp| dp.as_str().to_owned())
+                    .unwrap_or_else(|| "state/organization.yaml".into()),
+                reason: p.reason,
+            },
+            other => ImportError::Storage(other.to_string()),
+        })
+}
+
+/// Validates a complete map of imported `state/` files against all shared-state production
+/// projectors (`OrganizationFiles`, `ProjectFiles`, `TaskFiles`, `ProcessFiles`) and SQLite
+/// constraints using a disposable private projection database (`TASK-39` / R1, `TASK-97`).
+/// Any invalid or unrecognized file fails closed with its exact path and reason.
+pub(crate) fn validate_imported_files(
+    organization_id: &Id,
+    files: &std::collections::BTreeMap<org_store::DurablePath, Vec<u8>>,
+) -> Result<crate::organization::import::ValidatedImport, crate::organization::import::ImportError>
+{
+    use crate::organization::import::{
+        ImportError, ImportedPerson, PrivateTempDir, ValidatedImport,
+    };
+    use crate::organization::ports::OrganizationRead;
+    use crate::organization::records::{EmployeeKind, EmployeeStatus, OfficeRole, TeamStatus};
+    use crate::projects::ports::ProjectsRead;
+    use org_store::Engine;
+
+    let dir = PrivateTempDir::create("org-validate")?;
+    let engine = SqliteEngine::open(&dir.path().join("validate.db"))
+        .map_err(|e| ImportError::Storage(e.to_string()))?
+        .for_organization(organization_id);
+    apply_imported_to_engine(&engine, organization_id, files)?;
+
+    let snap = engine
+        .snapshot()
+        .map_err(|e| ImportError::Storage(e.to_string()))?;
+    let org = snap
+        .organization()
+        .map_err(|e| ImportError::Storage(e.to_string()))?
+        .ok_or_else(|| ImportError::InvalidFile {
+            path: "state/organization.yaml".into(),
+            reason: "the organization record is missing".into(),
+        })?;
+    let repositories = snap
+        .repositories()
+        .map_err(|e| ImportError::Storage(e.to_string()))?;
+    let canonical_remote_url = repositories
+        .iter()
+        .find(|r| r.id == org.organization_repository_id)
+        .and_then(|r| r.remote_url.clone());
+    let offices = snap
+        .offices()
+        .map_err(|e| ImportError::Storage(e.to_string()))?;
+    let hq = offices
+        .iter()
+        .find(|o| o.role == OfficeRole::Hq)
+        .ok_or_else(|| ImportError::InvalidFile {
+            path: "state/organization.yaml".into(),
+            reason: "no HQ office record found".into(),
+        })?;
+    let teams = snap
+        .teams()
+        .map_err(|e| ImportError::Storage(e.to_string()))?;
+    let root_team = teams.iter().find(|t| t.parent_team_id.is_none());
+    let root_team_id = root_team.map(|t| t.id.clone());
+    let has_active_root_team = root_team.is_some_and(|t| t.status == TeamStatus::Active);
+    let employees = snap
+        .employees()
+        .map_err(|e| ImportError::Storage(e.to_string()))?;
+    let roles = snap
+        .roles()
+        .map_err(|e| ImportError::Storage(e.to_string()))?;
+    let projects = snap
+        .projects()
+        .map_err(|e| ImportError::Storage(e.to_string()))?;
+    let mut reserved_handles: Vec<String> = employees.iter().map(|e| e.handle.clone()).collect();
+    reserved_handles.sort();
+    reserved_handles.dedup();
+    let mut reserved_entity_ids = std::collections::BTreeSet::new();
+    reserved_entity_ids.insert(org.id.as_str().to_owned());
+    for r in &repositories {
+        reserved_entity_ids.insert(r.id.as_str().to_owned());
+    }
+    for o in &offices {
+        reserved_entity_ids.insert(o.id.as_str().to_owned());
+    }
+    for t in &teams {
+        reserved_entity_ids.insert(t.id.as_str().to_owned());
+    }
+    for e in &employees {
+        reserved_entity_ids.insert(e.id.as_str().to_owned());
+    }
+    for r in &roles {
+        reserved_entity_ids.insert(r.id.as_str().to_owned());
+    }
+    for p in &projects {
+        reserved_entity_ids.insert(p.id.as_str().to_owned());
+    }
+    let mut people: Vec<ImportedPerson> = employees
+        .iter()
+        .filter(|e| e.kind == EmployeeKind::Person && e.status == EmployeeStatus::Active)
+        .map(|e| ImportedPerson {
+            id: e.id.as_str().to_owned(),
+            name: e.name.clone(),
+            handle: e.handle.clone(),
+            home_team_id: e.home_team_id.as_str().to_owned(),
+        })
+        .collect();
+    people.sort_by(|a, b| a.name.cmp(&b.name).then(a.handle.cmp(&b.handle)));
+    let agents_count = employees
+        .iter()
+        .filter(|e| e.kind == EmployeeKind::Agent)
+        .count();
+    Ok(ValidatedImport {
+        organization_id: org.id,
+        name: org.name,
+        slug: org.slug,
+        canonical_remote_url,
+        hq_office_id: hq.id.clone(),
+        hq_office_name: hq.name.clone(),
+        root_team_id,
+        has_active_root_team,
+        teams_count: teams.len(),
+        projects_count: projects.len(),
+        agents_count,
+        people,
+        reserved_handles,
+        reserved_entity_ids: reserved_entity_ids.into_iter().collect(),
+    })
 }

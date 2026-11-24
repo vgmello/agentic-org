@@ -21,8 +21,8 @@
 	import { hireUrl } from '$lib/modules/employees';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { pageTitle } from '$lib/nav';
-	import { orgApi } from '$lib/org/api';
-	import { sessionFor } from '$lib/org/session';
+	import { orgApi } from '$lib/modules/organization/api';
+	import { sessionFor } from '$lib/modules/organization/session';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
 	import type { Connection, OrgSnapshot } from '$lib/proto';
 	import { teamsApi } from '../../api';

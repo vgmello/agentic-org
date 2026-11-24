@@ -145,3 +145,43 @@ f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-base
 
 # A fixed test UUID used as an office key name in the Linux credential store tests; no credential
 2741ac5fef4f45c64ea5866db3c3ac04716e3a80:crates/org-platform-host/src/credentials/linux/release/tests.rs:generic-api-key:331
+
+# Historical comment prose in this ignore file; no credential
+1492054710989999eea4903f3db3d23f796e52d5:.gitleaksignore:generic-api-key:143
+
+# Historical prose in web-api-v1.md; no credential
+56f582458cd4c84e12422873df0d60a3b9632fb6:docs/design/web-api-v1.md:generic-api-key:17
+
+# Historical prose listing Linux filesystems in docs/FEATURES.md; no credential
+1afbd8d52216ce8a78496ccb966df4d09aeab31c:docs/FEATURES.md:generic-api-key:92
+4418ab558ead2f8eb2022be3d792795519a33361:docs/FEATURES.md:generic-api-key:92
+904260aff6f04c6cc7a64544c3db8a54e1bccdd5:docs/FEATURES.md:generic-api-key:92
+1441de0675d9862d5801d69f088d1a2b90225060:docs/FEATURES.md:generic-api-key:92
+d2f60b0672da4923c3628cb69ffe51900b856b9a:docs/FEATURES.md:generic-api-key:92
+a4396f3aa2b63c94dec84aa59f2b3747b92f6368:docs/FEATURES.md:generic-api-key:92
+055b51564a536e3c448d6b02eeeee0d9afe5f9da:docs/FEATURES.md:generic-api-key:92
+8c775167591b4dcab9a3050d40860b68d78599a5:docs/FEATURES.md:generic-api-key:92
+69d8115d8cb26bc0801a035b7bbb5468fd78b71f:docs/FEATURES.md:generic-api-key:92
+3bcec8359875f6be27e57e5c3cc485cf349f7718:docs/FEATURES.md:generic-api-key:92
+a02b04a43a93d3c77c970819de752779e165ba86:docs/FEATURES.md:generic-api-key:92
+56f582458cd4c84e12422873df0d60a3b9632fb6:docs/FEATURES.md:generic-api-key:92
+38fcec0e20d3ee5136e17b269e94c169ecd279bf:docs/FEATURES.md:generic-api-key:92
+2d9fce544482940e0de818fc25f7eee771c3ab3c:docs/FEATURES.md:generic-api-key:92
+771e6436ff6b9ff39f2c7b849ec40bd2b10b444a:docs/FEATURES.md:generic-api-key:92
+002dc0e0ee219b1a1ee934ed7f918c4517db427f:docs/FEATURES.md:generic-api-key:92
+4758afaa0b6c6a6f857474021ca539ea344cb28b:docs/FEATURES.md:generic-api-key:92
+
+# Test assertion checking PEM header prefix in web_tls unit test; no credential
+1441de0675d9862d5801d69f088d1a2b90225060:crates/org-host/src/web_tls/tests.rs:private-key:201
+
+# Schema file SHA-256 digests in Codex runtime discovery evidence; no credentials
+61acdfb7389c0727baa65be664042c60ec65d71c:.agent-kit/logs/v1-codex-runtime/discovery-evidence.json:generic-api-key:25
+61acdfb7389c0727baa65be664042c60ec65d71c:.agent-kit/logs/v1-codex-runtime/discovery-evidence.json:generic-api-key:161
+61acdfb7389c0727baa65be664042c60ec65d71c:.agent-kit/logs/v1-codex-runtime/discovery-evidence.json:generic-api-key:163
+61acdfb7389c0727baa65be664042c60ec65d71c:.agent-kit/logs/v1-codex-runtime/discovery-evidence.json:generic-api-key:164
+61acdfb7389c0727baa65be664042c60ec65d71c:.agent-kit/logs/v1-codex-runtime/discovery-evidence.json:generic-api-key:171
+61acdfb7389c0727baa65be664042c60ec65d71c:.agent-kit/logs/v1-codex-runtime/discovery-evidence.json:generic-api-key:201
+61acdfb7389c0727baa65be664042c60ec65d71c:.agent-kit/logs/v1-codex-runtime/discovery-evidence.json:generic-api-key:202
+61acdfb7389c0727baa65be664042c60ec65d71c:.agent-kit/logs/v1-codex-runtime/discovery-evidence.json:generic-api-key:225
+61acdfb7389c0727baa65be664042c60ec65d71c:.agent-kit/logs/v1-codex-runtime/discovery-evidence.json:generic-api-key:226
+61acdfb7389c0727baa65be664042c60ec65d71c:.agent-kit/logs/v1-codex-runtime/discovery-evidence.json:generic-api-key:228

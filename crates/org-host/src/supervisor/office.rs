@@ -57,6 +57,8 @@ pub(crate) struct OfficeRunner {
 enum Ending {
     /// The host is shutting down; the server was stopped.
     Stopped,
+    /// Deliberate reload (e.g. after ownership handover): restart immediately without crash backoff.
+    Reload,
     /// It ended for `reason`. `fatal`: a restart can't fix it, so none is attempted on its own.
     /// `uptime`: how long it ran after `ready` (`None` if it never was).
     Ended {
@@ -110,6 +112,7 @@ impl OfficeRunner {
             };
             let wake = match ending {
                 Ending::Stopped => return,
+                Ending::Reload => Wake::Restart,
                 Ending::Ended {
                     reason,
                     fatal: true,
@@ -154,7 +157,7 @@ impl OfficeRunner {
         while let Ok(signal) = self.signals.try_recv() {
             match signal {
                 Signal::Stop { .. } => return Taken::Stop,
-                Signal::Restart => taken = Taken::Restart,
+                Signal::Restart | Signal::Reload => taken = Taken::Restart,
                 // A late line from a server that already exited.
                 _ => {}
             }
@@ -309,6 +312,15 @@ impl OfficeRunner {
                 }
                 // It's already running: nothing to restart.
                 Signal::Restart => {}
+                Signal::Reload => {
+                    child.stop(Instant::now() + self.timings.shutdown_grace);
+                    return Ending::Reload;
+                }
+                #[cfg(test)]
+                Signal::KillForTest => {
+                    child.kill();
+                    return after_exit(failure, ready_at);
+                }
                 Signal::Event { generation, .. } | Signal::Closed { generation }
                     if generation != child.generation => {}
                 Signal::Event { event, .. } => match event {
@@ -393,7 +405,7 @@ impl OfficeRunner {
                 .recv_timeout(until.saturating_duration_since(Instant::now()))
             {
                 Ok(Signal::Stop { .. }) | Err(RecvTimeoutError::Disconnected) => return Wake::Stop,
-                Ok(Signal::Restart) => return Wake::Restart,
+                Ok(Signal::Restart | Signal::Reload) => return Wake::Restart,
                 Ok(_) => {} // a late line from the server that just exited
                 Err(RecvTimeoutError::Timeout) => return Wake::Due,
             }
@@ -405,7 +417,7 @@ impl OfficeRunner {
         loop {
             match self.signals.recv() {
                 Ok(Signal::Stop { .. }) | Err(_) => return Wake::Stop,
-                Ok(Signal::Restart) => return Wake::Restart,
+                Ok(Signal::Restart | Signal::Reload) => return Wake::Restart,
                 Ok(_) => {}
             }
         }

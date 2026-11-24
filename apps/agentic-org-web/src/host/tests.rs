@@ -267,7 +267,7 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
             }))
             .unwrap(),
             until: Instant::now(),
-            answer,
+            answer: Answer::Sync(answer),
             id: 99,
             hook: None,
             claimed: Arc::clone(&claimed),

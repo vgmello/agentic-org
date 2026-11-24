@@ -1,0 +1,1115 @@
+//! Dispatch for unified `task` and `checklist` commands over [`OfficeTransport`]
+//! (`TASK-49` AC #3 `CLI-15` + `TASK-77` B4b).
+
+use org_command::{Ack, Answer, Refusal, Request, Status};
+use org_proto::private_notes::{
+    TaskNotePublishResult, TaskNoteRemovedResult, TaskNoteResult, TasksNotesAdd,
+    TasksNotesAddParams, TasksNotesGet, TasksNotesGetParams, TasksNotesList, TasksNotesListParams,
+    TasksNotesListResult, TasksNotesPublish, TasksNotesPublishParams, TasksNotesRemove,
+    TasksNotesRemoveParams, TasksNotesUpdate, TasksNotesUpdateParams,
+};
+use org_proto::tasks::{
+    LabelMatchMode, PatchField, TaskDependenciesResult, TaskInspectResult, TaskPriority,
+    TaskSortMode, TaskStatus, TaskView, TasksAddDependency, TasksAddDependencyParams, TasksAssign,
+    TasksAssignParams, TasksChecklistAdd, TasksChecklistAddParams, TasksChecklistCheck,
+    TasksChecklistCheckParams, TasksChecklistEdit, TasksChecklistEditParams, TasksChecklistMove,
+    TasksChecklistMoveParams, TasksChecklistRemove, TasksChecklistRemoveParams,
+    TasksChecklistResult, TasksComment, TasksCommentParams, TasksCommentResult, TasksCreate,
+    TasksCreateParams, TasksDependencies, TasksDependenciesParams, TasksHistory,
+    TasksHistoryParams, TasksHistoryResult, TasksInspect, TasksInspectParams, TasksLabels,
+    TasksLabelsParams, TasksLabelsResult, TasksList, TasksListParams, TasksListResult,
+    TasksMutationResult, TasksRemoveDependency, TasksRemoveDependencyParams, TasksTransition,
+    TasksTransitionParams, TasksUnwatch, TasksUnwatchParams, TasksUpdate, TasksUpdateParams,
+    TasksWatch, TasksWatchParams, WorkType,
+};
+use org_proto::{Call, ErrorCode};
+use serde_json::{json, Map, Value};
+
+use crate::dispatch::OfficeTransport;
+use crate::keys::try_new_uuid_v7;
+
+pub fn try_execute<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Option<Result<Answer, Refusal>> {
+    match request.command.resource {
+        "task" => try_task(transport, request),
+        "checklist" => try_checklist(transport, request),
+        "task-note" => try_task_note(transport, request),
+        _ => None,
+    }
+}
+
+fn try_task<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Option<Result<Answer, Refusal>> {
+    match request.command.verb {
+        "create" => Some(write_task_create(transport, request)),
+        "list" => Some(read_task_list(transport, request)),
+        "inspect" => Some(read_task_inspect(transport, request)),
+        "update" => Some(write_task_update(transport, request)),
+        "transition" => Some(write_task_transition(transport, request)),
+        "assign" => Some(write_task_assign(transport, request)),
+        "comment" => Some(write_task_comment(transport, request)),
+        "watch" => Some(write_task_watch(transport, request, true)),
+        "unwatch" => Some(write_task_watch(transport, request, false)),
+        "history" => Some(read_task_history(transport, request)),
+        "deps" => Some(read_task_deps(transport, request)),
+        "dep-add" => Some(write_task_dep(transport, request, true)),
+        "dep-remove" => Some(write_task_dep(transport, request, false)),
+        "labels" => Some(read_task_labels(transport, request)),
+        _ => None,
+    }
+}
+
+fn try_checklist<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Option<Result<Answer, Refusal>> {
+    match request.command.verb {
+        "add" => Some(write_checklist_add(transport, request)),
+        "check" => Some(write_checklist_check(transport, request)),
+        "edit" => Some(write_checklist_edit(transport, request)),
+        "remove" => Some(write_checklist_remove(transport, request)),
+        "move" => Some(write_checklist_move(transport, request)),
+        _ => None,
+    }
+}
+
+fn try_task_note<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Option<Result<Answer, Refusal>> {
+    match request.command.verb {
+        "add" => Some(write_note_add(transport, request)),
+        "list" => Some(read_note_list(transport, request)),
+        "get" => Some(read_note_get(transport, request)),
+        "update" => Some(write_note_update(transport, request)),
+        "remove" => Some(write_note_remove(transport, request)),
+        "publish" => Some(write_note_publish(transport, request)),
+        _ => None,
+    }
+}
+
+fn cmd_id(request: &Request) -> Result<String, Refusal> {
+    if request.dry_run {
+        return Err(Refusal::new(
+            ErrorCode::Unsupported,
+            "`--dry-run` is not supported on task or checklist write commands",
+            "Re-run without `--dry-run`.",
+        ));
+    }
+    if let Some(key) = request.idempotency_key.as_deref() {
+        if org_proto::is_uuid_v7(key) {
+            return Ok(key.to_owned());
+        }
+        return Ok(crate::dispatch::derive_uuid_v7("task-command", key));
+    }
+    fresh_id()
+}
+
+fn entity_id(request: &Request, domain: &str) -> Result<String, Refusal> {
+    if let Some(key) = request.idempotency_key.as_deref() {
+        return Ok(crate::dispatch::derive_uuid_v7(domain, key));
+    }
+    fresh_id()
+}
+
+fn fresh_id() -> Result<String, Refusal> {
+    try_new_uuid_v7().ok_or_else(|| {
+        Refusal::new(
+            ErrorCode::StorageError,
+            "could not mint a UUIDv7 identifier",
+            "Retry the command.",
+        )
+    })
+}
+
+fn write_answer(request: &Request, data: Value, revision: Option<u64>) -> Answer {
+    Answer {
+        data,
+        status: Status::Completed,
+        operation_id: request.idempotency_key.clone(),
+        ack: Some(Ack::Committed),
+        revision,
+        next_cursor: None,
+    }
+}
+
+fn list_answer(items: Vec<Value>) -> Answer {
+    Answer::completed(Value::Array(items))
+}
+
+fn req_str<'a>(input: &'a Map<String, Value>, key: &str) -> Result<&'a str, Refusal> {
+    input.get(key).and_then(Value::as_str).ok_or_else(|| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("`{key}` is required"),
+            format!("Provide `{key}`."),
+        )
+    })
+}
+
+fn opt_str(input: &Map<String, Value>, key: &str) -> Option<String> {
+    input.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
+fn opt_u64(input: &Map<String, Value>, key: &str) -> Result<Option<u64>, Refusal> {
+    let Some(val) = input.get(key) else {
+        return Ok(None);
+    };
+    let Some(n) = val.as_i64() else {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("`{key}` must be a nonnegative integer"),
+            format!("Pass a nonnegative integer for `{key}`."),
+        ));
+    };
+    u64::try_from(n).map(Some).map_err(|_| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("`{key}` must be a nonnegative integer"),
+            format!("Pass a nonnegative integer for `{key}`."),
+        )
+    })
+}
+
+fn opt_bool(input: &Map<String, Value>, key: &str) -> bool {
+    input.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn opt_str_list(input: &Map<String, Value>, key: &str) -> Option<Vec<String>> {
+    input.get(key).and_then(Value::as_array).map(|arr| {
+        arr.iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
+fn require_revision(request: &Request) -> Result<u64, Refusal> {
+    request.if_match.ok_or_else(|| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            "`--if-match` revision is required",
+            "Pass `--if-match <revision>` from `task inspect`.",
+        )
+    })
+}
+
+fn decode_err(e: serde_json::Error) -> Refusal {
+    Refusal::new(
+        ErrorCode::StorageError,
+        format!("office returned malformed task payload: {e}"),
+        "Retry or inspect office logs.",
+    )
+}
+
+fn task_to_row(t: &TaskView) -> Value {
+    let mut m = Map::new();
+    m.insert("id".into(), json!(t.id));
+    m.insert("key".into(), json!(t.key));
+    m.insert("type".into(), json!(t.task_type));
+    m.insert("title".into(), json!(t.title));
+    m.insert("status".into(), json!(t.status));
+    m.insert("priority".into(), json!(t.priority));
+    m.insert("team_id".into(), json!(t.team_id));
+    if let Some(ref v) = t.assigned_team_id {
+        m.insert("assigned_team_id".into(), json!(v));
+    }
+    if let Some(ref v) = t.assignee_id {
+        m.insert("assignee_id".into(), json!(v));
+    }
+    if let Some(ref v) = t.project_id {
+        m.insert("project_id".into(), json!(v));
+    }
+    if let Some(v) = t.rank_order {
+        m.insert("rank_order".into(), json!(v));
+    }
+    m.insert("labels".into(), json!(t.labels));
+    m.insert("reference_files".into(), json!(t.reference_files));
+    m.insert("modified_files".into(), json!(t.modified_files));
+    m.insert("depends_on".into(), json!(t.depends_on));
+    m.insert("dependents".into(), json!(t.dependents));
+    m.insert("revision".into(), json!(t.revision));
+    m.insert("checklist_total".into(), json!(t.checklist_total));
+    m.insert("checklist_done".into(), json!(t.checklist_done));
+    m.insert("comment_count".into(), json!(t.comment_count));
+    m.insert("watcher_count".into(), json!(t.watcher_count));
+    Value::Object(m)
+}
+
+fn write_task_create<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let i = &request.input;
+    let priority = opt_str(i, "priority")
+        .map(|s| {
+            TaskPriority::parse(&s).ok_or_else(|| {
+                Refusal::new(
+                    ErrorCode::InvalidRequest,
+                    format!("invalid priority `{s}`"),
+                    "Use urgent, high, normal, or low.",
+                )
+            })
+        })
+        .transpose()?;
+    let work_type = opt_str(i, "work_type")
+        .map(|s| {
+            WorkType::parse(&s).ok_or_else(|| {
+                Refusal::new(
+                    ErrorCode::InvalidRequest,
+                    format!("invalid work_type `{s}`"),
+                    "Use build or run.",
+                )
+            })
+        })
+        .transpose()?;
+    let params = TasksCreateParams {
+        command_id: cmd_id(request)?,
+        task_id: entity_id(request, "task-create")?,
+        team_id: opt_str(i, "team_id"),
+        project_id: opt_str(i, "project_id"),
+        assigned_team_id: opt_str(i, "assigned_team_id"),
+        assignee_id: opt_str(i, "assignee_id"),
+        task_type: opt_str(i, "type"),
+        work_type,
+        title: req_str(i, "title")?.to_owned(),
+        body_markdown: opt_str(i, "body").unwrap_or_default(),
+        priority,
+        effort: opt_u64(i, "effort")?,
+        severity: opt_str(i, "severity"),
+        rank_order: opt_u64(i, "order")?,
+        labels: opt_str_list(i, "labels").unwrap_or_default(),
+        reference_files: opt_str_list(i, "reference_files").unwrap_or_default(),
+        modified_files: opt_str_list(i, "modified_files").unwrap_or_default(),
+        depends_on: opt_str_list(i, "depends_on").unwrap_or_default(),
+        details: None,
+    };
+    let raw = transport.call_method(TasksCreate::METHOD, json!(params))?;
+    let res: TasksMutationResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        task_to_row(&res.task),
+        Some(res.task.revision),
+    ))
+}
+
+fn read_task_list<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let i = &request.input;
+    let status = opt_str(i, "status")
+        .map(|s| {
+            TaskStatus::parse(&s).ok_or_else(|| {
+                Refusal::new(
+                    ErrorCode::InvalidRequest,
+                    format!("invalid status `{s}`"),
+                    "Use todo, in_progress, blocked, cancelled, or done.",
+                )
+            })
+        })
+        .transpose()?;
+    let label_match = match opt_str(i, "label_match").as_deref() {
+        None | Some("all") => LabelMatchMode::All,
+        Some("any") => LabelMatchMode::Any,
+        Some(other) => {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                format!("invalid label_match `{other}`"),
+                "Use `all` or `any`.",
+            ))
+        }
+    };
+    let sort = match opt_str(i, "sort").as_deref() {
+        None | Some("order") => TaskSortMode::Order,
+        Some("number") => TaskSortMode::Number,
+        Some("updated_desc") => TaskSortMode::UpdatedDesc,
+        Some(other) => {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                format!("invalid sort `{other}`"),
+                "Use `order`, `number`, or `updated_desc`.",
+            ))
+        }
+    };
+    let limit = opt_u64(i, "max_results")?
+        .or(request.limit.map(u64::from))
+        .map(|v| v.min(500) as u32);
+    let params = TasksListParams {
+        task_type: opt_str(i, "type"),
+        status,
+        team_id: opt_str(i, "team_id"),
+        assigned_team_id: opt_str(i, "assigned_team_id"),
+        assignee_id: opt_str(i, "assignee_id"),
+        project_id: opt_str(i, "project_id"),
+        labels: opt_str_list(i, "labels").unwrap_or_default(),
+        label_match,
+        depends_on: opt_str(i, "depends_on"),
+        dependent_of: opt_str(i, "dependent_of"),
+        query: opt_str(i, "query"),
+        sort,
+        limit,
+    };
+    let raw = transport.call_method(TasksList::METHOD, json!(params))?;
+    let res: TasksListResult = serde_json::from_value(raw).map_err(decode_err)?;
+    let items: Vec<Value> = res.tasks.iter().map(task_to_row).collect();
+    Ok(list_answer(items))
+}
+
+fn read_task_inspect<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksInspectParams {
+        task: req_str(&request.input, "task")?.to_owned(),
+    };
+    let raw = transport.call_method(TasksInspect::METHOD, json!(params))?;
+    let res: TaskInspectResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(Answer::completed(json!({
+        "task": task_to_row(&res.task),
+        "body_markdown": res.task.body_markdown,
+        "checklist": res.checklist,
+        "comments": res.comments,
+        "depends_on_tasks": res.depends_on_tasks,
+        "dependent_tasks": res.dependent_tasks,
+        "history": res.history,
+    })))
+}
+
+fn write_task_update<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let i = &request.input;
+    let priority = opt_str(i, "priority")
+        .map(|s| {
+            TaskPriority::parse(&s).ok_or_else(|| {
+                Refusal::new(
+                    ErrorCode::InvalidRequest,
+                    format!("invalid priority `{s}`"),
+                    "Use urgent, high, normal, or low.",
+                )
+            })
+        })
+        .transpose()?;
+    let rank_order = if opt_bool(i, "clear_order") {
+        PatchField::Set(None)
+    } else if let Some(n) = opt_u64(i, "order")? {
+        PatchField::Set(Some(n))
+    } else {
+        PatchField::Unchanged
+    };
+    let effort = match opt_u64(i, "effort")? {
+        Some(n) => PatchField::Set(Some(n)),
+        None => PatchField::Unchanged,
+    };
+    let severity = match opt_str(i, "severity") {
+        Some(s) => PatchField::Set(Some(s)),
+        None => PatchField::Unchanged,
+    };
+    let params = TasksUpdateParams {
+        command_id: cmd_id(request)?,
+        task: req_str(i, "task")?.to_owned(),
+        expected_revision: require_revision(request)?,
+        title: opt_str(i, "title"),
+        body_markdown: opt_str(i, "body"),
+        task_type: opt_str(i, "type"),
+        work_type: PatchField::Unchanged,
+        priority,
+        effort,
+        severity,
+        rank_order,
+        labels: opt_str_list(i, "labels"),
+        add_labels: opt_str_list(i, "add_labels").unwrap_or_default(),
+        remove_labels: opt_str_list(i, "remove_labels").unwrap_or_default(),
+        reference_files: opt_str_list(i, "reference_files"),
+        add_reference_files: opt_str_list(i, "add_reference_files").unwrap_or_default(),
+        remove_reference_files: opt_str_list(i, "remove_reference_files").unwrap_or_default(),
+        modified_files: opt_str_list(i, "modified_files"),
+        add_modified_files: opt_str_list(i, "add_modified_files").unwrap_or_default(),
+        remove_modified_files: opt_str_list(i, "remove_modified_files").unwrap_or_default(),
+        details: None,
+    };
+    let raw = transport.call_method(TasksUpdate::METHOD, json!(params))?;
+    let res: TasksMutationResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        task_to_row(&res.task),
+        Some(res.task.revision),
+    ))
+}
+
+fn write_task_transition<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let i = &request.input;
+    let status_str = req_str(i, "status")?;
+    let status = TaskStatus::parse(status_str).ok_or_else(|| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("invalid status `{status_str}`"),
+            "Use todo, in_progress, blocked, cancelled, or done.",
+        )
+    })?;
+    let params = TasksTransitionParams {
+        command_id: cmd_id(request)?,
+        task: req_str(i, "task")?.to_owned(),
+        expected_revision: require_revision(request)?,
+        status,
+        blocked_reason: opt_str(i, "blocked_reason"),
+        resolution: opt_str(i, "resolution"),
+        note: opt_str(i, "note"),
+    };
+    let raw = transport.call_method(TasksTransition::METHOD, json!(params))?;
+    let res: TasksMutationResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        task_to_row(&res.task),
+        Some(res.task.revision),
+    ))
+}
+
+fn write_task_assign<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let i = &request.input;
+    let assigned_team_id = if opt_bool(i, "clear_assigned_team") {
+        PatchField::Set(None)
+    } else if let Some(tid) = opt_str(i, "assigned_team_id") {
+        PatchField::Set(Some(tid))
+    } else {
+        PatchField::Unchanged
+    };
+    let assignee_id = if opt_bool(i, "clear_assignee") {
+        PatchField::Set(None)
+    } else if let Some(eid) = opt_str(i, "assignee_id") {
+        PatchField::Set(Some(eid))
+    } else {
+        PatchField::Unchanged
+    };
+    let params = TasksAssignParams {
+        command_id: cmd_id(request)?,
+        task: req_str(i, "task")?.to_owned(),
+        expected_revision: require_revision(request)?,
+        assigned_team_id,
+        assignee_id,
+    };
+    let raw = transport.call_method(TasksAssign::METHOD, json!(params))?;
+    let res: TasksMutationResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        task_to_row(&res.task),
+        Some(res.task.revision),
+    ))
+}
+
+fn write_task_comment<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksCommentParams {
+        command_id: cmd_id(request)?,
+        task: req_str(&request.input, "task")?.to_owned(),
+        comment_id: entity_id(request, "task-comment")?,
+        body_markdown: req_str(&request.input, "body")?.to_owned(),
+    };
+    let raw = transport.call_method(TasksComment::METHOD, json!(params))?;
+    let res: TasksCommentResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        json!({
+            "task_id": res.task.id,
+            "key": res.task.key,
+            "revision": res.task.revision,
+            "comment": res.comment,
+        }),
+        Some(res.task.revision),
+    ))
+}
+
+fn write_task_watch<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+    watch: bool,
+) -> Result<Answer, Refusal> {
+    let raw = if watch {
+        let params = TasksWatchParams {
+            command_id: cmd_id(request)?,
+            task: req_str(&request.input, "task")?.to_owned(),
+        };
+        transport.call_method(TasksWatch::METHOD, json!(params))?
+    } else {
+        let params = TasksUnwatchParams {
+            command_id: cmd_id(request)?,
+            task: req_str(&request.input, "task")?.to_owned(),
+        };
+        transport.call_method(TasksUnwatch::METHOD, json!(params))?
+    };
+    let res: TasksMutationResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        task_to_row(&res.task),
+        Some(res.task.revision),
+    ))
+}
+
+fn read_task_history<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksHistoryParams {
+        task: req_str(&request.input, "task")?.to_owned(),
+    };
+    let raw = transport.call_method(TasksHistory::METHOD, json!(params))?;
+    let res: TasksHistoryResult = serde_json::from_value(raw).map_err(decode_err)?;
+    let items: Vec<Value> = res.events.into_iter().map(|e| json!(e)).collect();
+    Ok(list_answer(items))
+}
+
+fn read_task_deps<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksDependenciesParams {
+        task: req_str(&request.input, "task")?.to_owned(),
+    };
+    let raw = transport.call_method(TasksDependencies::METHOD, json!(params))?;
+    let res: TaskDependenciesResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(Answer::completed(json!(res)))
+}
+
+fn write_task_dep<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+    add: bool,
+) -> Result<Answer, Refusal> {
+    let raw = if add {
+        let params = TasksAddDependencyParams {
+            command_id: cmd_id(request)?,
+            task: req_str(&request.input, "task")?.to_owned(),
+            depends_on_task: req_str(&request.input, "depends_on")?.to_owned(),
+        };
+        transport.call_method(TasksAddDependency::METHOD, json!(params))?
+    } else {
+        let params = TasksRemoveDependencyParams {
+            command_id: cmd_id(request)?,
+            task: req_str(&request.input, "task")?.to_owned(),
+            depends_on_task: req_str(&request.input, "depends_on")?.to_owned(),
+        };
+        transport.call_method(TasksRemoveDependency::METHOD, json!(params))?
+    };
+    let res: TasksMutationResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        task_to_row(&res.task),
+        Some(res.task.revision),
+    ))
+}
+
+fn read_task_labels<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksLabelsParams {
+        query: opt_str(&request.input, "query"),
+    };
+    let raw = transport.call_method(TasksLabels::METHOD, json!(params))?;
+    let res: TasksLabelsResult = serde_json::from_value(raw).map_err(decode_err)?;
+    let items: Vec<Value> = res.labels.into_iter().map(|l| json!(l)).collect();
+    Ok(list_answer(items))
+}
+
+fn checklist_answer(request: &Request, raw: Value) -> Result<Answer, Refusal> {
+    let res: TasksChecklistResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        json!({
+            "task_id": res.task.id,
+            "key": res.task.key,
+            "revision": res.task.revision,
+            "checklist": res.checklist,
+        }),
+        Some(res.task.revision),
+    ))
+}
+
+fn write_checklist_add<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksChecklistAddParams {
+        command_id: cmd_id(request)?,
+        task: req_str(&request.input, "task")?.to_owned(),
+        step_id: entity_id(request, "checklist-step")?,
+        text: req_str(&request.input, "text")?.to_owned(),
+        required: opt_bool(&request.input, "required"),
+    };
+    checklist_answer(
+        request,
+        transport.call_method(TasksChecklistAdd::METHOD, json!(params))?,
+    )
+}
+
+fn write_checklist_check<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let done_flag = request.input.get("done").and_then(Value::as_bool);
+    let undone = opt_bool(&request.input, "undone");
+    if undone && done_flag == Some(true) {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            "cannot pass both `--done` and `--undone`",
+            "Use `--done` (default) to check or `--undone` to uncheck.",
+        ));
+    }
+    let done = if undone {
+        false
+    } else {
+        done_flag.unwrap_or(true)
+    };
+    let params = TasksChecklistCheckParams {
+        command_id: cmd_id(request)?,
+        task: req_str(&request.input, "task")?.to_owned(),
+        step_id: req_str(&request.input, "step_id")?.to_owned(),
+        done,
+    };
+    checklist_answer(
+        request,
+        transport.call_method(TasksChecklistCheck::METHOD, json!(params))?,
+    )
+}
+
+fn write_checklist_edit<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksChecklistEditParams {
+        command_id: cmd_id(request)?,
+        task: req_str(&request.input, "task")?.to_owned(),
+        step_id: req_str(&request.input, "step_id")?.to_owned(),
+        text: opt_str(&request.input, "text"),
+        required: request.input.get("required").and_then(Value::as_bool),
+    };
+    checklist_answer(
+        request,
+        transport.call_method(TasksChecklistEdit::METHOD, json!(params))?,
+    )
+}
+
+fn write_checklist_remove<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksChecklistRemoveParams {
+        command_id: cmd_id(request)?,
+        task: req_str(&request.input, "task")?.to_owned(),
+        step_id: req_str(&request.input, "step_id")?.to_owned(),
+    };
+    checklist_answer(
+        request,
+        transport.call_method(TasksChecklistRemove::METHOD, json!(params))?,
+    )
+}
+
+fn write_checklist_move<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let position = opt_u64(&request.input, "position")?.ok_or_else(|| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            "`position` is required",
+            "Provide a zero-based position.",
+        )
+    })?;
+    let params = TasksChecklistMoveParams {
+        command_id: cmd_id(request)?,
+        task: req_str(&request.input, "task")?.to_owned(),
+        step_id: req_str(&request.input, "step_id")?.to_owned(),
+        position,
+    };
+    checklist_answer(
+        request,
+        transport.call_method(TasksChecklistMove::METHOD, json!(params))?,
+    )
+}
+
+fn write_note_add<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesAddParams {
+        command_id: cmd_id(request)?,
+        task: req_str(&request.input, "task")?.to_owned(),
+        note_id: entity_id(request, "task-note-add")?,
+        body_markdown: req_str(&request.input, "text")?.to_owned(),
+    };
+    let raw = transport.call_method(TasksNotesAdd::METHOD, json!(params))?;
+    let res: TaskNoteResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        json!(res.note),
+        Some(res.note.revision),
+    ))
+}
+
+fn read_note_list<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesListParams {
+        task: req_str(&request.input, "task")?.to_owned(),
+        author_id: opt_str(&request.input, "author_id"),
+    };
+    let raw = transport.call_method(TasksNotesList::METHOD, json!(params))?;
+    let res: TasksNotesListResult = serde_json::from_value(raw).map_err(decode_err)?;
+    let items: Vec<Value> = res.notes.into_iter().map(|n| json!(n)).collect();
+    Ok(list_answer(items))
+}
+
+fn read_note_get<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesGetParams {
+        note_id: req_str(&request.input, "id")?.to_owned(),
+    };
+    let raw = transport.call_method(TasksNotesGet::METHOD, json!(params))?;
+    let res: TaskNoteResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(Answer::completed(json!(res.note)))
+}
+
+fn write_note_update<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesUpdateParams {
+        command_id: cmd_id(request)?,
+        note_id: req_str(&request.input, "id")?.to_owned(),
+        expected_revision: require_revision(request)?,
+        body_markdown: req_str(&request.input, "text")?.to_owned(),
+    };
+    let raw = transport.call_method(TasksNotesUpdate::METHOD, json!(params))?;
+    let res: TaskNoteResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        json!(res.note),
+        Some(res.note.revision),
+    ))
+}
+
+fn write_note_remove<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesRemoveParams {
+        command_id: cmd_id(request)?,
+        note_id: req_str(&request.input, "id")?.to_owned(),
+        expected_revision: require_revision(request)?,
+    };
+    let raw = transport.call_method(TasksNotesRemove::METHOD, json!(params))?;
+    let res: TaskNoteRemovedResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(request, json!(res), Some(res.revision)))
+}
+
+fn write_note_publish<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let params = TasksNotesPublishParams {
+        command_id: cmd_id(request)?,
+        note_id: req_str(&request.input, "id")?.to_owned(),
+        expected_revision: require_revision(request)?,
+        comment_id: entity_id(request, "task-note-publish-comment")?,
+    };
+    let raw = transport.call_method(TasksNotesPublish::METHOD, json!(params))?;
+    let res: TaskNotePublishResult = serde_json::from_value(raw).map_err(decode_err)?;
+    Ok(write_answer(
+        request,
+        json!({
+            "note": res.note,
+            "comment": res.comment,
+            "task_id": res.task.id,
+            "key": res.task.key,
+        }),
+        Some(res.task.revision),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dispatch::TransportOffice;
+
+    struct EchoTransport {
+        seen: Vec<(String, Value)>,
+    }
+
+    impl OfficeTransport for EchoTransport {
+        fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
+            self.seen.push((method.to_owned(), params));
+            match method {
+                "tasks.create"
+                | "tasks.update"
+                | "tasks.transition"
+                | "tasks.assign"
+                | "tasks.watch"
+                | "tasks.unwatch"
+                | "tasks.add_dependency"
+                | "tasks.remove_dependency" => Ok(json!({
+                    "task": {
+                        "id": "0193a5c0-0000-7000-8000-000000000100",
+                        "office_code": "A",
+                        "number": 1,
+                        "key": "T-A1",
+                        "revision": 2,
+                        "team_id": "0193a5c0-0000-7000-8000-000000000010",
+                        "type": "task",
+                        "title": "Test",
+                        "status": "in_progress",
+                        "body_markdown": "",
+                        "priority": "high",
+                        "rank_order": 1,
+                        "labels": ["backend", "security"],
+                        "reference_files": ["docs/a.md"],
+                        "modified_files": ["src/a.rs"],
+                        "depends_on": [],
+                        "dependents": [],
+                        "created_by_kind": "employee",
+                        "updated_by_kind": "employee",
+                        "checklist_total": 0,
+                        "checklist_done": 0,
+                        "comment_count": 0,
+                        "watcher_count": 0
+                    }
+                })),
+                "tasks.list" => Ok(json!({ "tasks": [], "total": 0 })),
+                "tasks.labels" => {
+                    Ok(json!({ "labels": [{ "label": "security", "task_count": 2 }] }))
+                }
+                "tasks.notes.add" | "tasks.notes.get" | "tasks.notes.update" => Ok(json!({
+                    "note": {
+                        "id": "0193a5c0-0000-7000-8000-000000000400",
+                        "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                        "author_id": "0193a5c0-0000-7000-8000-000000000001",
+                        "revision": 1,
+                        "body_markdown": "Private note",
+                        "created_at": "2026-11-22T00:00:00.000Z",
+                        "updated_at": "2026-11-22T00:00:00.000Z",
+                        "editable": true
+                    }
+                })),
+                "tasks.notes.list" => Ok(json!({
+                    "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                    "notes": []
+                })),
+                "tasks.notes.remove" => Ok(json!({
+                    "note_id": "0193a5c0-0000-7000-8000-000000000400",
+                    "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                    "revision": 2,
+                    "deleted_at": "2026-11-22T00:01:00.000Z"
+                })),
+                "tasks.checklist.add" | "tasks.checklist.check" => Ok(json!({
+                    "task": {
+                        "id": "0193a5c0-0000-7000-8000-000000000100",
+                        "office_code": "A",
+                        "number": 1,
+                        "key": "T-A1",
+                        "revision": 3,
+                        "team_id": "0193a5c0-0000-7000-8000-000000000010",
+                        "type": "task",
+                        "title": "Test",
+                        "status": "todo",
+                        "body_markdown": "",
+                        "priority": "normal",
+                        "labels": [],
+                        "reference_files": [],
+                        "modified_files": [],
+                        "depends_on": [],
+                        "dependents": [],
+                        "created_by_kind": "employee",
+                        "updated_by_kind": "employee",
+                        "checklist_total": 1,
+                        "checklist_done": 0,
+                        "comment_count": 0,
+                        "watcher_count": 0
+                    },
+                    "checklist": [{
+                        "id": "0193a5c0-0000-7000-8000-000000000200",
+                        "position": 0,
+                        "text": "Step 1",
+                        "required": true,
+                        "done": false,
+                        "revision": 1
+                    }]
+                })),
+                _ => Ok(json!({})),
+            }
+        }
+    }
+
+    #[test]
+    fn cli_15_task_and_checklist_commands_dispatch_with_task_77_fields() {
+        let mut office = TransportOffice(EchoTransport { seen: Vec::new() });
+        let args: Vec<String> = [
+            "task",
+            "create",
+            "--title",
+            "Auth",
+            "--team-id",
+            "0193a5c0-0000-7000-8000-000000000010",
+            "--order",
+            "1",
+            "--labels",
+            "backend",
+            "--labels",
+            "security",
+            "--reference-files",
+            "docs/a.md",
+            "--modified-files",
+            "src/a.rs",
+            "--depends-on",
+            "T-A0",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let out = crate::execute_with_office("agent-os", &args, &mut office);
+        assert_eq!(out.exit_code, 0, "stdout: {}", out.stdout);
+        assert_eq!(office.0.seen[0].0, "tasks.create");
+        assert_eq!(office.0.seen[0].1["rank_order"], 1);
+        assert_eq!(office.0.seen[0].1["labels"], json!(["backend", "security"]));
+        assert_eq!(office.0.seen[0].1["reference_files"], json!(["docs/a.md"]));
+        assert_eq!(office.0.seen[0].1["modified_files"], json!(["src/a.rs"]));
+        assert_eq!(office.0.seen[0].1["depends_on"], json!(["T-A0"]));
+
+        let list_args: Vec<String> = [
+            "task",
+            "list",
+            "--labels",
+            "backend",
+            "--labels",
+            "security",
+            "--label-match",
+            "all",
+            "--sort",
+            "order",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let out2 = crate::execute_with_office("agent-os", &list_args, &mut office);
+        assert_eq!(out2.exit_code, 0, "stdout: {}", out2.stdout);
+        assert_eq!(office.0.seen[1].0, "tasks.list");
+
+        let chk_args: Vec<String> = [
+            "checklist",
+            "add",
+            "--task",
+            "T-A1",
+            "--text",
+            "Step 1",
+            "--required",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let out3 = crate::execute_with_office("agent-os", &chk_args, &mut office);
+        assert_eq!(out3.exit_code, 0, "stdout: {}", out3.stdout);
+        assert_eq!(office.0.seen[2].0, "tasks.checklist.add");
+
+        // Idempotency retry derives deterministic command_id and task_id even for non-UUID keys.
+        let retry_args: Vec<String> = [
+            "task",
+            "create",
+            "--idempotency-key",
+            "retry-key-42",
+            "--title",
+            "Retryable",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let r1 = crate::execute_with_office("agent-os", &retry_args, &mut office);
+        let r2 = crate::execute_with_office("agent-os", &retry_args, &mut office);
+        assert_eq!(r1.exit_code, 0);
+        assert_eq!(r2.exit_code, 0);
+        assert_eq!(
+            office.0.seen[3].1["command_id"],
+            office.0.seen[4].1["command_id"]
+        );
+        assert_eq!(office.0.seen[3].1["task_id"], office.0.seen[4].1["task_id"]);
+        assert!(org_proto::is_uuid_v7(
+            office.0.seen[3].1["command_id"].as_str().unwrap()
+        ));
+
+        // --dry-run must refuse before contacting transport.
+        let before = office.0.seen.len();
+        let dry_args: Vec<String> = ["task", "create", "--dry-run", "--title", "Should not run"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let dry_out = crate::execute_with_office("agent-os", &dry_args, &mut office);
+        assert_ne!(dry_out.exit_code, 0);
+        assert_eq!(office.0.seen.len(), before);
+
+        // checklist check --undone sends done=false.
+        let uncheck_args: Vec<String> = [
+            "checklist",
+            "check",
+            "--task",
+            "T-A1",
+            "--step-id",
+            "0193a5c0-0000-7000-8000-000000000999",
+            "--undone",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let uncheck_out = crate::execute_with_office("agent-os", &uncheck_args, &mut office);
+        assert_eq!(uncheck_out.exit_code, 0, "stdout: {}", uncheck_out.stdout);
+        assert_eq!(office.0.seen.last().unwrap().1["done"], json!(false));
+
+        // `task note add|list|update|remove` alias rewrites to `task-note` (TASK-50 AC #3).
+        let note_add: Vec<String> = [
+            "task",
+            "note",
+            "add",
+            "--idempotency-key",
+            "note-key-1",
+            "--task",
+            "T-A1",
+            "--text",
+            "My private plan",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let n1 = crate::execute_with_office("agent-os", &note_add, &mut office);
+        let n2 = crate::execute_with_office("agent-os", &note_add, &mut office);
+        assert_eq!(n1.exit_code, 0, "stdout: {}", n1.stdout);
+        assert_eq!(n2.exit_code, 0, "stdout: {}", n2.stdout);
+        let len = office.0.seen.len();
+        assert_eq!(office.0.seen[len - 2].0, "tasks.notes.add");
+        assert_eq!(
+            office.0.seen[len - 2].1["note_id"],
+            office.0.seen[len - 1].1["note_id"]
+        );
+
+        let note_list: Vec<String> = ["task", "note", "list", "--task", "T-A1"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            crate::execute_with_office("agent-os", &note_list, &mut office).exit_code,
+            0
+        );
+    }
+}

@@ -8,51 +8,78 @@
 //! session in memory for the connection generation that validated it. The
 //! browser's address comes from the accepted socket ([`PeerAddress`]), never a
 //! header. Nothing else forwards to the host or a local socket.
+mod account_routes;
+mod chat_routes;
+mod cost_routes;
+mod git_routes;
+mod hiring_routes;
+mod instance_routes;
+mod open_routes;
+mod org_routes;
+mod process_routes;
+mod provider_routes;
+mod session_routes;
+mod task_routes;
+
+pub use instance_routes::{CallerAuth, TlsEnableInput};
+
 use crate::{
     body::BusinessBody,
     host::{Failure, HostControl},
+    office::OfficeBridge,
     path::RequestPath,
-    service::{ApiBackend, ApiReply, PreparedCall},
+    service::{ApiBackend, ApiReply, AsyncDispatch, PreparedCall, WebReply},
     session::{rfc3339_millis, BrowserPair, CookieName, PresentedPair, SessionCache},
+    sse::{self, EventHub},
     transport::PeerAddress,
 };
 use hyper::{header::SET_COOKIE, http::request::Parts, Method, StatusCode};
 use org_host_control::{
     browser::{
-        BrowserOrigin, BrowserSession, BrowserSessionEnd, BrowserSessionEndParams, InstanceView,
-        InstanceViewResult, LinkRegister, LinkRegisterParams, SessionSignIn, SessionSignInParams,
-        SessionValidate, SessionValidateParams,
+        BrowserLocalSession, BrowserLocalSessionParams, BrowserOrigin, BrowserSession,
+        BrowserSessionEnd, BrowserSessionEndParams, InstanceView, InstanceViewResult, LinkRegister,
+        LinkRegisterParams, SessionSignIn, SessionSignInParams, SessionValidate,
+        SessionValidateParams,
     },
     listen::ListenOrigin,
+    ops::RecoveryState as HostRecoveryState,
     organization::{self as host_org, BrowserAuth},
-    GatewayState, HostOpResult, LinkToken, Password,
+    HostOpResult, LinkToken, Password, WebState,
 };
-use org_proto::gateway::{
+use org_proto::selected_bootstrap::PlanV1;
+use org_proto::web::{
     self as gateway,
+    org_mutations::{OrgMutation, OrgOperation},
     organizations::{
         self, CreatingOrganization, SelectedCreateRequest, SelectedOrganizationList,
         SelectedOrganizationView,
     },
-    AccountView, CreateState, GatewayError, GatewayErrorCode, GatewayStatus, ListenScheme,
-    LookupQuery, Milliseconds, MutationOutcome, OfficeView, OperationId, OperationKind,
-    OperationLookup, OrganizationLink, ReadResponse, Scope, SessionEstablished, SessionProof,
-    SessionView, Version,
+    AccountView, CreateState, ListenScheme, LookupQuery, Milliseconds, MutationOutcome, OfficeView,
+    OperationId, OperationKind, OperationLookup, OrganizationLink, ReadResponse, RecoveryState,
+    Scope, SessionEstablished, SessionProof, SessionView, StreamRequest, Version, WebError,
+    WebErrorCode, WebStatus,
 };
-use org_proto::selected_bootstrap::PlanV1;
 use serde::Deserialize;
 use std::{
+    collections::BTreeSet,
     net::IpAddr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
 /// The session routes over the web process's admitted host connection.
 pub struct SessionApi {
     host: Arc<HostControl>,
+    offices: OfficeBridge,
+    hub: EventHub,
     cache: Arc<SessionCache>,
     cookie: CookieName,
     origin: BrowserOrigin,
     listen_scheme: ListenScheme,
+    auth_enabled: Arc<AtomicBool>,
 }
 
 impl SessionApi {
@@ -65,8 +92,37 @@ impl SessionApi {
         origin: &ListenOrigin,
         mode: org_host_control::listen::ListenMode,
     ) -> Self {
+        Self::with_hub(host, cache, origin, mode, EventHub::default())
+    }
+
+    pub fn with_hub(
+        host: Arc<HostControl>,
+        cache: Arc<SessionCache>,
+        origin: &ListenOrigin,
+        mode: org_host_control::listen::ListenMode,
+        hub: EventHub,
+    ) -> Self {
+        Self::with_access(
+            host,
+            cache,
+            origin,
+            mode,
+            hub,
+            Arc::new(AtomicBool::new(true)),
+        )
+    }
+
+    pub fn with_access(
+        host: Arc<HostControl>,
+        cache: Arc<SessionCache>,
+        origin: &ListenOrigin,
+        mode: org_host_control::listen::ListenMode,
+        hub: EventHub,
+        auth_enabled: Arc<AtomicBool>,
+    ) -> Self {
         use org_host_control::listen::ListenMode;
         let scheme = origin.scheme().as_str();
+        let offices = OfficeBridge::new(Arc::clone(&host), hub.clone());
         Self {
             listen_scheme: match mode {
                 ListenMode::Https => ListenScheme::Https,
@@ -80,33 +136,87 @@ impl SessionApi {
                 port: origin.port(),
             },
             host,
+            offices,
+            hub,
             cache,
+            auth_enabled,
         }
     }
 }
 
 pub enum Route {
     Version,
+    Access,
     SignIn(IpAddr),
     Register(IpAddr),
-    Session(PresentedPair),
+    EnableAuth(IpAddr, Option<PresentedPair>),
+    EnableTls(CallerAuth),
+    Session(CallerAuth),
     SignOut(PresentedPair),
-    Instance(PresentedPair),
-    Organizations(PresentedPair),
-    CreateOrganization(PresentedPair),
-    Operation(PresentedPair, OperationId),
+    Instance(CallerAuth),
+    Organizations(CallerAuth),
+    CreateOrganization(CallerAuth),
+    OrgSnapshot(CallerAuth, String),
+    OrgProjects(CallerAuth, String, bool),
+    OrgProjectInspect(CallerAuth, String, String),
+    OrgProjectCreate(CallerAuth, String),
+    OrgOffices(CallerAuth, String),
+    OfficeRestart(CallerAuth, String, String),
+    OrgMutation(CallerAuth, String, OrgOperation),
+    OrgOperation(CallerAuth, String, OperationId),
+    EventsStream(CallerAuth),
+    CliApprovalDecide(CallerAuth),
+    Operation(CallerAuth, OperationId),
+    Account(account_routes::AccountRoute),
+    OpenOrg(open_routes::OpenRoute),
+    Hiring(hiring_routes::HiringRoute),
+    Sessions(session_routes::SessionRoute),
+    Chat(chat_routes::ChatRoute),
+    Tasks(task_routes::TaskRoute),
+    Git(git_routes::GitRoute),
+    Process(process_routes::ProcessRoute),
+    Cost(cost_routes::CostRoute),
+    Provider(provider_routes::ProviderRoute),
 }
 
 pub enum Call {
     Version,
+    Access,
     SignIn(IpAddr, Credentials),
     Register(IpAddr, LinkToken, Credentials),
-    Session(PresentedPair),
+    EnableAuth(IpAddr, Option<PresentedPair>, Credentials),
+    EnableTls(CallerAuth, TlsEnableInput),
+    Session(CallerAuth),
     SignOut(PresentedPair),
-    Instance(PresentedPair),
-    Organizations(PresentedPair),
-    CreateOrganization(PresentedPair, OperationId, PlanV1),
-    Operation(PresentedPair, OperationId),
+    Instance(CallerAuth),
+    Organizations(CallerAuth),
+    CreateOrganization(CallerAuth, OperationId, PlanV1),
+    OrgSnapshot(CallerAuth, String),
+    OrgProjects(CallerAuth, String, bool),
+    OrgProjectInspect(CallerAuth, String, String),
+    OrgProjectCreate(
+        CallerAuth,
+        String,
+        OperationId,
+        org_proto::projects::ProjectCreateWebParams,
+    ),
+    OrgOffices(CallerAuth, String),
+    OfficeRestart(CallerAuth, String, String, OperationId),
+    OrgMutation(CallerAuth, String, OrgMutation),
+    OrgOperation(CallerAuth, String, OperationId),
+    EventsStream(CallerAuth, StreamRequest),
+    CliApprovalDecide(CallerAuth, LinkToken, bool),
+    Operation(CallerAuth, OperationId),
+    Account(account_routes::AccountCall),
+    OpenOrg(open_routes::OpenCall),
+    Hiring(hiring_routes::HiringCall),
+    Sessions(session_routes::SessionCall),
+    Chat(chat_routes::ChatCall),
+    Tasks(task_routes::TaskCall),
+    Git(git_routes::GitCall),
+    Process(process_routes::ProcessCall),
+    Cost(cost_routes::CostCall),
+    Provider(provider_routes::ProviderCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -135,33 +245,37 @@ struct RegisterBody {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CliApprovalDecideBody {
+    #[serde(deserialize_with = "crate::secret_json::link")]
+    link: LinkToken,
+    approve: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EmptyBody {}
 
-fn invalid() -> ApiReply {
+pub(super) fn invalid() -> ApiReply {
     ApiReply::error(
         StatusCode::BAD_REQUEST,
-        GatewayErrorCode::InvalidRequest,
+        WebErrorCode::InvalidRequest,
         "Invalid request.",
     )
 }
 fn not_found() -> ApiReply {
-    ApiReply::error(
-        StatusCode::NOT_FOUND,
-        GatewayErrorCode::NotFound,
-        "Not found.",
-    )
+    ApiReply::error(StatusCode::NOT_FOUND, WebErrorCode::NotFound, "Not found.")
 }
 fn signed_out() -> ApiReply {
     ApiReply::error(
         StatusCode::UNAUTHORIZED,
-        GatewayErrorCode::NotAuthorized,
+        WebErrorCode::NotAuthorized,
         "Sign in to continue.",
     )
 }
 fn unavailable() -> ApiReply {
     ApiReply::error(
         StatusCode::SERVICE_UNAVAILABLE,
-        GatewayErrorCode::Unavailable,
+        WebErrorCode::Unavailable,
         "Service unavailable.",
     )
 }
@@ -183,20 +297,27 @@ fn failure(failure: Failure) -> ApiReply {
         Failure::Denied => signed_out(),
         Failure::NotFound => not_found(),
         Failure::Refused(error) => {
-            let host = GatewayError::from(*error);
+            let host = WebError::from(*error);
             let (status, mut error) = match (host.code, host.field, host.rule) {
-                (GatewayErrorCode::InvalidRequest, Some(field), Some(rule)) => {
-                    let mut error = GatewayError::new(
-                        GatewayErrorCode::InvalidRequest,
+                (WebErrorCode::InvalidRequest, Some(field), Some(rule)) => {
+                    let mut error = WebError::new(
+                        WebErrorCode::InvalidRequest,
                         "This doesn't meet the sign-in rules.",
                     );
                     (error.field, error.rule) = (Some(field), Some(rule));
                     (StatusCode::BAD_REQUEST, error)
                 }
-                (GatewayErrorCode::RateLimited, _, _) if host.retry_after_ms.is_some() => (
+                (WebErrorCode::Conflict, _, _) => (
+                    StatusCode::CONFLICT,
+                    WebError::new(
+                        WebErrorCode::Conflict,
+                        "This action conflicts with the current account state.",
+                    ),
+                ),
+                (WebErrorCode::RateLimited, _, _) if host.retry_after_ms.is_some() => (
                     StatusCode::TOO_MANY_REQUESTS,
-                    GatewayError::new(
-                        GatewayErrorCode::RateLimited,
+                    WebError::new(
+                        WebErrorCode::RateLimited,
                         "Too many attempts. Try again later.",
                     ),
                 ),
@@ -216,7 +337,7 @@ fn failure(failure: Failure) -> ApiReply {
 }
 
 /// A refusal decided here, before any host call: the body or the path broke a rule.
-fn bad_input(error: GatewayError) -> ApiReply {
+fn bad_input(error: WebError) -> ApiReply {
     ApiReply::json(
         StatusCode::BAD_REQUEST,
         serde_json::to_value(ReadResponse::<()>::Error(error)).expect("gateway error serializes"),
@@ -225,8 +346,8 @@ fn bad_input(error: GatewayError) -> ApiReply {
 
 /// The browser's wording for a host refusal of a create: the code, `field` and `rule`
 /// are the host's, the message is this process's own.
-fn organization_error(host: GatewayError) -> GatewayError {
-    use GatewayErrorCode::*;
+fn organization_error(host: WebError) -> WebError {
+    use WebErrorCode::*;
     let message = match host.code {
         InvalidRequest => "This doesn't meet the organization rules.",
         AlreadyExists => "An organization with that name or slug already exists.",
@@ -234,12 +355,21 @@ fn organization_error(host: GatewayError) -> GatewayError {
         ClockSkew => "This device's clock differs too much from the server's.",
         NotAuthorized => "Only the instance administrator can create an organization.",
         _ => {
-            return GatewayError::new(Unavailable, "Service unavailable.");
+            return WebError::new(Unavailable, "Service unavailable.");
         }
     };
-    let mut error = GatewayError::new(host.code, message);
+    let mut error = WebError::new(host.code, message);
     (error.field, error.rule) = (host.field, host.rule);
     error
+}
+
+fn recovery_state(state: HostRecoveryState) -> Result<RecoveryState, Failure> {
+    match state {
+        HostRecoveryState::Pending => Ok(RecoveryState::Pending),
+        HostRecoveryState::Delivered => Ok(RecoveryState::Delivered),
+        HostRecoveryState::Acknowledged => Ok(RecoveryState::Acknowledged),
+        _ => Err(Failure::Unavailable),
+    }
 }
 
 /// The public organization view of the host's: no private endpoint, no recovery code.
@@ -253,9 +383,7 @@ fn organization_view(
         created_at: host.created_at,
         employee_id: host.employee_id,
         offices: host.offices.into_iter().map(OfficeView::from).collect(),
-        recovery: serde_json::to_value(host.recovery)
-            .and_then(serde_json::from_value)
-            .map_err(|_| Failure::Unavailable)?,
+        recovery: recovery_state(host.recovery)?,
     })
 }
 
@@ -276,30 +404,34 @@ fn create_outcome(
             operation_id,
             result: organization_view(result)?,
         },
-        Ok(HostOpResult::Rejected { refusal }) => rejected(GatewayError::from(refusal)),
+        Ok(HostOpResult::Rejected { refusal }) => rejected(WebError::from(refusal)),
         Ok(_) => MutationOutcome::Unknown { operation_id },
         Err(Failure::Refused(error)) => {
-            let error = GatewayError::from(*error);
+            let error = WebError::from(*error);
             // Only a refusal this route names is final. Anything else (a rate limit, a
             // code from a newer host) leaves the outcome unknown: the same id asks again.
             if !matches!(
                 error.code,
-                GatewayErrorCode::InvalidRequest
-                    | GatewayErrorCode::AlreadyExists
-                    | GatewayErrorCode::OperationReused
-                    | GatewayErrorCode::ClockSkew
+                WebErrorCode::InvalidRequest
+                    | WebErrorCode::AlreadyExists
+                    | WebErrorCode::OperationReused
+                    | WebErrorCode::ClockSkew
             ) {
                 return Err(Failure::Unavailable);
             }
             rejected(error)
         }
-        Err(Failure::Denied) => rejected(GatewayError::new(GatewayErrorCode::NotAuthorized, "")),
+        Err(Failure::Denied) => rejected(WebError::new(WebErrorCode::NotAuthorized, "")),
         Err(other) => return Err(other),
     })
 }
 
-/// A mutation outcome with its HTTP class (202, 200, the refusal's class, 504 unknown).
-fn mutation(outcome: MutationOutcome<SelectedOrganizationView>) -> ApiReply {
+/// A mutation outcome with its HTTP class (202 when `accepted_allowed`, 200, the
+/// refusal's authenticated class — 403 for `not_authorized`, never 401 — or 504 unknown).
+fn mutation<T: serde::Serialize>(outcome: MutationOutcome<T>, accepted_allowed: bool) -> ApiReply {
+    if !accepted_allowed && matches!(outcome, MutationOutcome::Accepted { .. }) {
+        return unavailable();
+    }
     let status = outcome
         .http_status(true)
         .and_then(|status| StatusCode::from_u16(status).ok())
@@ -331,10 +463,11 @@ fn instance_view(
         name: host.name,
         server_version: env!("CARGO_PKG_VERSION").to_owned(),
         web_status: match host.web_status {
-            GatewayState::Running => GatewayStatus::Ok,
-            _ => GatewayStatus::Degraded,
+            WebState::Running => WebStatus::Ok,
+            _ => WebStatus::Degraded,
         },
         listen_scheme,
+        auth_enabled: host.auth_enabled,
         tls: host.tls,
         server_time_ms: Milliseconds::new(now_ms()).map_err(|_| Failure::Unavailable)?,
     })
@@ -347,6 +480,8 @@ fn view(instance_id: &str, session: BrowserSession) -> Result<SessionView, Failu
         account: AccountView {
             id: session.account.id,
             login: session.account.login,
+            time_zone: session.account.time_zone,
+            last_org_id: session.account.last_org_id,
         },
         admin: session.admin,
         organizations: session
@@ -374,17 +509,29 @@ impl SessionApi {
             .ok_or_else(unavailable)
     }
 
-    fn auth(&self, pair: &PresentedPair) -> BrowserAuth {
-        BrowserAuth {
-            cookie_digest: pair.cookie_digest,
-            proof_digest: pair.proof_digest,
-            origin: self.origin.clone(),
+    pub(super) fn is_auth_enabled(&self) -> bool {
+        self.auth_enabled.load(Ordering::Acquire)
+    }
+
+    pub(super) fn set_auth_enabled(&self, enabled: bool) {
+        self.auth_enabled.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn auth(&self, caller: &CallerAuth) -> BrowserAuth {
+        match caller {
+            CallerAuth::Pair(pair) => BrowserAuth {
+                cookie_digest: pair.cookie_digest,
+                proof_digest: pair.proof_digest,
+                origin: self.origin.clone(),
+                local_authless: false,
+            },
+            CallerAuth::LocalAuthless => BrowserAuth::local_authless(self.origin.clone()),
         }
     }
 
     /// The lookup's query names this instance and nothing else (web-api-v1 §5): checked
     /// before any host call. Ids need no escaping, so an escape is refused.
-    fn host_lookup_scope(&self, query: Option<&str>) -> Result<(), ApiReply> {
+    fn lookup_query(query: Option<&str>) -> Result<LookupQuery, ApiReply> {
         let query = query
             .filter(|q| !q.contains(['%', '+']))
             .ok_or_else(invalid)?;
@@ -393,14 +540,46 @@ impl SessionApi {
             .map(|pair| pair.split_once('='))
             .collect::<Option<Vec<_>>>()
             .ok_or_else(invalid)?;
-        LookupQuery::from_fields(fields)
-            .and_then(|query| query.scope(OperationKind::Host, self.host.instance()))
+        LookupQuery::from_fields(fields).map_err(|_| invalid())
+    }
+
+    fn host_lookup_scope(&self, query: Option<&str>) -> Result<(), ApiReply> {
+        Self::lookup_query(query)?
+            .scope(OperationKind::Host, self.host.instance())
             .map(drop)
             .map_err(|_| invalid())
     }
 
-    /// A protected route needs exactly one cookie of this instance's name and one
-    /// proof header; anything else is 401 before any host call.
+    /// `GET /api/v1/operations/org/{id}` requires `instance_id` (matching this host) and
+    /// `org_id`, with no `office_id` or unknown/repeated fields (web-api-v1 §5).
+    fn org_lookup_scope(&self, query: Option<&str>) -> Result<String, ApiReply> {
+        match Self::lookup_query(query)?
+            .scope(OperationKind::Org, self.host.instance())
+            .map_err(|_| invalid())?
+        {
+            Scope::Organization { org_id, .. } => {
+                if !org_office_launch::is_storage_id(&org_id) {
+                    return Err(invalid());
+                }
+                Ok(org_id)
+            }
+            _ => Err(invalid()),
+        }
+    }
+
+    /// A protected route needs a cookie+proof pair when authentication is enabled,
+    /// or falls back to local-authless mode when this instance has auth disabled.
+    pub(super) fn caller_auth(&self, request: &Parts) -> Result<CallerAuth, ApiReply> {
+        if let Some(pair) = PresentedPair::read(&self.cookie, &request.headers) {
+            return Ok(CallerAuth::Pair(pair));
+        }
+        if !self.is_auth_enabled() {
+            return Ok(CallerAuth::LocalAuthless);
+        }
+        Err(signed_out())
+    }
+
+    /// Routes that strictly require an explicit cookie+proof pair (e.g., sign-out).
     fn pair(&self, request: &Parts) -> Result<PresentedPair, ApiReply> {
         PresentedPair::read(&self.cookie, &request.headers).ok_or_else(signed_out)
     }
@@ -408,7 +587,7 @@ impl SessionApi {
     /// Inserts a successful reply into the cache on the host reader thread, under
     /// this connection's generation, before any later host frame is applied: a
     /// `session.ended` that follows the reply removes the entry it made.
-    fn caching(
+    pub(super) fn caching(
         &self,
         pair: &PresentedPair,
     ) -> impl FnOnce(&Result<BrowserSession, Failure>) + Send + 'static {
@@ -425,26 +604,41 @@ impl SessionApi {
         }
     }
 
-    /// The live session for a presented pair: the cache for this connection's
-    /// generation, else one `session.validate`.
-    fn validate(&self, pair: PresentedPair) -> Result<BrowserSession, Failure> {
-        let generation = self.host.generation();
-        if let Some(session) = self.cache.lookup(
-            &pair.cookie_digest,
-            &pair.proof_digest,
-            generation,
-            now_ms(),
-        ) {
-            return Ok(session);
+    /// The live session for a caller: cached or `session.validate` for a pair,
+    /// or `browser.local_session` in local-authless mode.
+    pub(super) fn validate(&self, caller: CallerAuth) -> Result<BrowserSession, Failure> {
+        match caller {
+            CallerAuth::Pair(pair) => {
+                let generation = self.host.generation();
+                if let Some(session) = self.cache.lookup(
+                    &pair.cookie_digest,
+                    &pair.proof_digest,
+                    generation,
+                    now_ms(),
+                ) {
+                    return Ok(session);
+                }
+                self.host.request_then::<SessionValidate>(
+                    &SessionValidateParams {
+                        cookie_digest: pair.cookie_digest,
+                        proof_digest: pair.proof_digest,
+                        origin: self.origin.clone(),
+                    },
+                    self.caching(&pair),
+                )
+            }
+            CallerAuth::LocalAuthless => {
+                let reply = self
+                    .host
+                    .request::<BrowserLocalSession>(&BrowserLocalSessionParams {
+                        origin: self.origin.clone(),
+                    });
+                if matches!(reply, Err(Failure::Denied)) {
+                    self.set_auth_enabled(true);
+                }
+                reply
+            }
         }
-        self.host.request_then::<SessionValidate>(
-            &SessionValidateParams {
-                cookie_digest: pair.cookie_digest,
-                proof_digest: pair.proof_digest,
-                origin: self.origin.clone(),
-            },
-            self.caching(&pair),
-        )
     }
 
     /// Sign-in and registration: mint a fresh pair, let the host create the
@@ -478,6 +672,141 @@ impl SessionApi {
     fn clear(&self, reply: ApiReply) -> ApiReply {
         reply.with_header(SET_COOKIE, self.cookie.clear())
     }
+
+    /// Async validation for non-blocking office RPCs and SSE streams.
+    pub(super) async fn validate_async(
+        &self,
+        caller: CallerAuth,
+    ) -> Result<BrowserSession, Failure> {
+        match caller {
+            CallerAuth::Pair(pair) => {
+                let generation = self.host.generation();
+                if let Some(session) = self.cache.lookup(
+                    &pair.cookie_digest,
+                    &pair.proof_digest,
+                    generation,
+                    now_ms(),
+                ) {
+                    return Ok(session);
+                }
+                self.revalidate_session_async(caller).await
+            }
+            CallerAuth::LocalAuthless => self.revalidate_session_async(caller).await,
+        }
+    }
+
+    /// Re-validates directly with the host, bypassing the in-memory session cache.
+    pub(super) async fn revalidate_session_async(
+        &self,
+        caller: CallerAuth,
+    ) -> Result<BrowserSession, Failure> {
+        match caller {
+            CallerAuth::Pair(pair) => {
+                self.host
+                    .request_then_async::<SessionValidate>(
+                        &SessionValidateParams {
+                            cookie_digest: pair.cookie_digest,
+                            proof_digest: pair.proof_digest,
+                            origin: self.origin.clone(),
+                        },
+                        Some(Box::new(self.caching(&pair))),
+                    )
+                    .await
+            }
+            CallerAuth::LocalAuthless => {
+                let reply = self
+                    .host
+                    .request_async::<BrowserLocalSession>(&BrowserLocalSessionParams {
+                        origin: self.origin.clone(),
+                    })
+                    .await;
+                if matches!(reply, Err(Failure::Denied)) {
+                    self.set_auth_enabled(true);
+                }
+                reply
+            }
+        }
+    }
+
+    async fn execute_events_stream(&self, caller: CallerAuth, request: StreamRequest) -> WebReply {
+        let session = match self.validate_async(caller).await {
+            Ok(session) => session,
+            Err(error) => return WebReply::Json(failure(error)),
+        };
+        let list = match self
+            .host
+            .request_async::<host_org::List>(&host_org::ListParams {
+                auth: self.auth(&caller),
+            })
+            .await
+        {
+            Ok(list) => list,
+            Err(error) => return WebReply::Json(failure(error)),
+        };
+        let hq_by_org: std::collections::BTreeMap<String, String> = list
+            .organizations
+            .iter()
+            .filter_map(|org| {
+                let office_id = org
+                    .offices
+                    .iter()
+                    .find(|o| o.role == org_proto::OfficeRole::Hq)
+                    .or_else(|| org.offices.first())
+                    .map(|o| o.id.clone())?;
+                Some((org.id.clone(), office_id))
+            })
+            .collect();
+        let linked: BTreeSet<String> = list.organizations.into_iter().map(|o| o.id).collect();
+        if !sse::authorize_subscriptions(&request, self.host.instance(), &linked) {
+            return WebReply::Json(ApiReply::error(
+                StatusCode::FORBIDDEN,
+                WebErrorCode::NotAuthorized,
+                "Subscription scope is not authorized.",
+            ));
+        }
+        let targets = collect_poll_targets(&request, &hq_by_org, self.auth(&caller));
+        WebReply::Stream(sse::open_stream_with_offices(
+            &self.hub,
+            self.host.instance().to_owned(),
+            session.session_id,
+            request,
+            Some(self.offices.clone()),
+            targets,
+        ))
+    }
+}
+
+fn collect_poll_targets(
+    request: &StreamRequest,
+    hq_by_org: &std::collections::BTreeMap<String, String>,
+    auth: BrowserAuth,
+) -> Vec<sse::OfficePollTarget> {
+    let mut by_org: std::collections::BTreeMap<String, Option<u64>> =
+        std::collections::BTreeMap::new();
+    for sub in &request.subscriptions {
+        if let Scope::Organization { org_id, .. } = &sub.scope {
+            let parsed = sub
+                .cursor
+                .as_ref()
+                .and_then(|c| sse::parse_org_cursor_seq(c, org_id));
+            let entry = by_org.entry(org_id.clone()).or_insert(None);
+            if entry.is_none() && parsed.is_some() {
+                *entry = parsed;
+            }
+        }
+    }
+    by_org
+        .into_iter()
+        .filter_map(|(org_id, initial_org_seq)| {
+            let office_id = hq_by_org.get(&org_id)?.clone();
+            Some(sse::OfficePollTarget {
+                org_id,
+                office_id,
+                auth: auth.clone(),
+                initial_org_seq,
+            })
+        })
+        .collect()
 }
 
 impl ApiBackend for SessionApi {
@@ -491,33 +820,94 @@ impl ApiBackend for SessionApi {
         let segments: Vec<&str> = path.segments().iter().map(String::as_str).collect();
         Ok(match segments.as_slice() {
             ["api", "v1", "version"] if get => Route::Version,
+            ["api", "v1", "access"] if get => Route::Access,
             ["api", "v1", "session", "sign-in"] if post => Route::SignIn(Self::peer(request)?),
             ["api", "v1", "links", "register"] if post => Route::Register(Self::peer(request)?),
-            ["api", "v1", "session"] if get => Route::Session(self.pair(request)?),
+            ["api", "v1", "links", "inspect"] if post => {
+                Route::Account(account_routes::AccountRoute::LinkInspect)
+            }
+            ["api", "v1", "links", "register", "sign-in"] if post => Route::Account(
+                account_routes::AccountRoute::LinkRegisterAttach(Self::peer(request)?),
+            ),
+            ["api", "v1", "links", "set-password"] if post => Route::Account(
+                account_routes::AccountRoute::LinkSetPassword(Self::peer(request)?),
+            ),
+            ["api", "v1", "account", "password"] if post => Route::Account(
+                account_routes::AccountRoute::ChangePassword(self.caller_auth(request)?),
+            ),
+            ["api", "v1", "account", "preferences"] if post => Route::Account(
+                account_routes::AccountRoute::PreferencesSet(self.caller_auth(request)?),
+            ),
+            ["api", "v1", "instance", "admin", "handover"] if post => Route::Account(
+                account_routes::AccountRoute::AdminHandover(self.caller_auth(request)?),
+            ),
+            ["api", "v1", "instance", "auth", "enable"] if post => {
+                let pair = if self.is_auth_enabled() {
+                    Some(self.pair(request)?)
+                } else {
+                    None
+                };
+                Route::EnableAuth(Self::peer(request)?, pair)
+            }
+            ["api", "v1", "instance", "tls"] if post => {
+                Route::EnableTls(self.caller_auth(request)?)
+            }
+            ["api", "v1", "session"] if get => Route::Session(self.caller_auth(request)?),
             ["api", "v1", "session", "sign-out"] if post => {
                 Route::SignOut(self.pair(request).map_err(|r| self.clear(r))?)
             }
-            ["api", "v1", "organizations"] if get => Route::Organizations(self.pair(request)?),
+            ["api", "v1", "organizations"] if get => {
+                Route::Organizations(self.caller_auth(request)?)
+            }
             ["api", "v1", "organizations"] if post => {
-                Route::CreateOrganization(self.pair(request)?)
+                Route::CreateOrganization(self.caller_auth(request)?)
+            }
+            ["api", "v1", "organizations", org, tail @ ..] => {
+                return org_routes::route_organization(self, request, org, tail, get, post, query);
+            }
+            ["api", "v1", "events", "stream"] if post => {
+                Route::EventsStream(self.caller_auth(request)?)
+            }
+            ["api", "v1", "cli-approvals", "decide"] if post => {
+                Route::CliApprovalDecide(self.caller_auth(request)?)
             }
             ["api", "v1", "operations", "host", id]
                 if matches!(request.method, Method::GET | Method::HEAD) =>
             {
-                let pair = self.pair(request)?;
+                let caller = self.caller_auth(request)?;
                 let id = organizations::host_operation_id(id).map_err(bad_input)?;
                 self.host_lookup_scope(request.uri.query())?;
-                Route::Operation(pair, id)
+                Route::Operation(caller, id)
             }
-            ["api", "v1", "instance"] if get => Route::Instance(self.pair(request)?),
+            ["api", "v1", "operations", "org", id]
+                if matches!(request.method, Method::GET | Method::HEAD) =>
+            {
+                let caller = self.caller_auth(request)?;
+                let id = organizations::host_operation_id(id).map_err(bad_input)?;
+                let org_id = self.org_lookup_scope(request.uri.query())?;
+                Route::OrgOperation(caller, org_id, id)
+            }
+            ["api", "v1", "instance"] if get => Route::Instance(self.caller_auth(request)?),
             ["api", "v1", "version"]
+            | ["api", "v1", "access"]
             | ["api", "v1", "instance"]
+            | ["api", "v1", "instance", "auth", "enable"]
+            | ["api", "v1", "instance", "tls"]
             | ["api", "v1", "session", "sign-in"]
             | ["api", "v1", "links", "register"]
+            | ["api", "v1", "links", "inspect"]
+            | ["api", "v1", "links", "register", "sign-in"]
+            | ["api", "v1", "links", "set-password"]
+            | ["api", "v1", "account", "password"]
+            | ["api", "v1", "account", "preferences"]
+            | ["api", "v1", "instance", "admin", "handover"]
             | ["api", "v1", "session"]
             | ["api", "v1", "session", "sign-out"]
             | ["api", "v1", "organizations"]
-            | ["api", "v1", "operations", "host", _] => return Err(invalid()),
+            | ["api", "v1", "events", "stream"]
+            | ["api", "v1", "cli-approvals", "decide"]
+            | ["api", "v1", "operations", "host", _]
+            | ["api", "v1", "operations", "org", _] => return Err(invalid()),
             _ => return Err(not_found()),
         })
     }
@@ -526,8 +916,56 @@ impl ApiBackend for SessionApi {
         let empty = || bytes.is_empty().then_some(()).ok_or_else(invalid);
         let call = match route {
             Route::Version => empty().map(|()| Call::Version)?,
+            Route::Access => empty().map(|()| Call::Access)?,
+            Route::EnableAuth(peer, pair) => {
+                return instance_routes::prepare_auth_enable(peer, pair, bytes);
+            }
+            Route::EnableTls(caller) => return instance_routes::prepare_tls_enable(caller, bytes),
             Route::Session(pair) => empty().map(|()| Call::Session(pair))?,
             Route::Organizations(pair) => empty().map(|()| Call::Organizations(pair))?,
+            Route::OrgSnapshot(pair, org) => empty().map(|()| Call::OrgSnapshot(pair, org))?,
+            Route::OrgProjects(pair, org, include_archived) => {
+                empty().map(|()| Call::OrgProjects(pair, org, include_archived))?
+            }
+            Route::OrgProjectInspect(pair, org, project) => {
+                empty().map(|()| Call::OrgProjectInspect(pair, org, project))?
+            }
+            Route::OrgProjectCreate(pair, org) => {
+                return org_routes::prepare_project_create(self, pair, org, bytes);
+            }
+            Route::OrgOffices(pair, org) => empty().map(|()| Call::OrgOffices(pair, org))?,
+            Route::OfficeRestart(pair, org, office) => {
+                return org_routes::prepare_office_restart(self, pair, org, office, bytes);
+            }
+            Route::OrgMutation(pair, org, op) => {
+                let scope = Scope::Organization {
+                    instance_id: self.host.instance().to_owned(),
+                    org_id: org.clone(),
+                };
+                let command = op.decode(bytes, &scope).map_err(bad_input)?;
+                let id = command.operation_id().clone();
+                return Ok(PreparedCall::mutation(
+                    Call::OrgMutation(pair, org, command),
+                    id,
+                    bytes.len(),
+                ));
+            }
+            Route::OrgOperation(pair, org, id) => {
+                empty().map(|()| Call::OrgOperation(pair, org, id))?
+            }
+            Route::EventsStream(pair) => {
+                let request: StreamRequest =
+                    gateway::decode_request(bytes).map_err(|_| invalid())?;
+                if request.subscriptions.is_empty() || request.subscriptions.len() > 32 {
+                    return Err(invalid());
+                }
+                Call::EventsStream(pair, request)
+            }
+            Route::CliApprovalDecide(pair) => {
+                let CliApprovalDecideBody { link, approve } =
+                    serde_json::from_slice(bytes).map_err(|_| invalid())?;
+                Call::CliApprovalDecide(pair, link, approve)
+            }
             Route::Instance(pair) => empty().map(|()| Call::Instance(pair))?,
             Route::Operation(pair, id) => empty().map(|()| Call::Operation(pair, id))?,
             Route::CreateOrganization(pair) => {
@@ -574,12 +1012,168 @@ impl ApiBackend for SessionApi {
                 } = serde_json::from_slice(bytes).map_err(|_| invalid())?;
                 Call::Register(address, link, Credentials { login, password })
             }
+            Route::Account(route) => return account_routes::prepare(route, bytes),
+            Route::OpenOrg(route) => return open_routes::prepare(route, bytes),
+            Route::Hiring(route) => return hiring_routes::prepare(route, bytes),
+            Route::Sessions(route) => return session_routes::prepare(route, bytes),
+            Route::Chat(route) => return chat_routes::prepare(route, bytes),
+            Route::Tasks(route) => return task_routes::prepare(route, bytes),
+            Route::Git(route) => return git_routes::prepare(route, bytes),
+            Route::Process(route) => return process_routes::prepare(route, bytes),
+            Route::Cost(route) => return cost_routes::prepare(route, bytes),
+            Route::Provider(route) => return provider_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
+    }
+    fn dispatch_async(self: Arc<Self>, call: Call) -> AsyncDispatch<Call> {
+        match call {
+            Call::OrgSnapshot(pair, org_id) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(org_routes::execute_org_snapshot(&self, pair, &org_id).await)
+                }),
+                streaming: false,
+            },
+            Call::OrgProjects(pair, org_id, include_archived) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_projects_list(&self, pair, &org_id, include_archived)
+                            .await,
+                    )
+                }),
+                streaming: false,
+            },
+            Call::OrgProjectInspect(pair, org_id, project_ref) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_project_inspect(&self, pair, &org_id, &project_ref)
+                            .await,
+                    )
+                }),
+                streaming: false,
+            },
+            Call::OrgProjectCreate(pair, org_id, op_id, params) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_project_create(&self, pair, &org_id, op_id, params)
+                            .await,
+                    )
+                }),
+                streaming: false,
+            },
+            Call::OrgOffices(pair, org_id) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(org_routes::execute_org_offices(&self, pair, &org_id).await)
+                }),
+                streaming: false,
+            },
+            Call::OfficeRestart(pair, org_id, office_id, op_id) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_office_restart(&self, pair, &org_id, &office_id, op_id)
+                            .await,
+                    )
+                }),
+                streaming: false,
+            },
+            Call::OrgMutation(pair, org_id, command) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_org_mutation(&self, pair, &org_id, command).await,
+                    )
+                }),
+                streaming: false,
+            },
+            Call::OrgOperation(pair, org_id, op_id) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_org_operation(&self, pair, &org_id, op_id).await,
+                    )
+                }),
+                streaming: false,
+            },
+            Call::EventsStream(pair, request) => AsyncDispatch::Async {
+                future: Box::pin(async move { self.execute_events_stream(pair, request).await }),
+                streaming: true,
+            },
+            Call::CliApprovalDecide(pair, link, approve) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_cli_approval_decide(&self, pair, link, approve).await,
+                    )
+                }),
+                streaming: false,
+            },
+            Call::Hiring(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(hiring_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
+            Call::Sessions(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(session_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
+            Call::Chat(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(chat_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
+            Call::Tasks(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(task_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
+            Call::Git(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(git_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
+            Call::Process(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(process_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
+            Call::Cost(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(cost_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
+            Call::Provider(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(provider_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
+            other => AsyncDispatch::Sync(other),
+        }
     }
     fn execute(&self, call: Call) -> ApiReply {
         match call {
             Call::Version => result(Version::default()),
+            Call::Access => instance_routes::execute_access(self),
+            Call::EnableAuth(client_address, pair, credentials) => {
+                instance_routes::execute_auth_enable(self, client_address, pair, credentials)
+            }
+            Call::EnableTls(caller, input) => {
+                instance_routes::execute_tls_enable(self, caller, input)
+            }
+            Call::Account(call) => account_routes::execute(self, call),
+            Call::OpenOrg(call) => open_routes::execute(self, call),
+            Call::Hiring(_) => unreachable!("Call::Hiring is dispatched asynchronously"),
+            Call::Sessions(_) => unreachable!("Call::Sessions is dispatched asynchronously"),
+            Call::Chat(_) => unreachable!("Call::Chat is dispatched asynchronously"),
+            Call::Tasks(_) => unreachable!("Call::Tasks is dispatched asynchronously"),
+            Call::Git(_) => unreachable!("Call::Git is dispatched asynchronously"),
+            Call::Process(_) => unreachable!("Call::Process is dispatched asynchronously"),
+            Call::Cost(_) => unreachable!("Call::Cost is dispatched asynchronously"),
+            Call::Provider(_) => unreachable!("Call::Provider is dispatched asynchronously"),
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))
@@ -632,21 +1226,18 @@ impl ApiBackend for SessionApi {
                 }
             }
             Call::CreateOrganization(pair, id, plan) => {
-                let session = match self.validate(pair) {
-                    Ok(session) => session,
-                    Err(e) => return failure(e),
-                };
-                // The host decides again; this spares it a call it would refuse.
-                let reply = if session.admin {
-                    self.host
-                        .request::<host_org::Create>(&host_org::CreateParams {
-                            auth: self.auth(&pair),
-                            operation_id: id.as_str().to_owned(),
-                            plan,
-                        })
-                } else {
-                    Err(Failure::Denied)
-                };
+                if let Err(e) = self.validate(pair) {
+                    return failure(e);
+                }
+                // Let the host decide administrator authority authoritatively (L-05: no
+                // duplicated BFF admin short-circuit).
+                let reply = self
+                    .host
+                    .request::<host_org::Create>(&host_org::CreateParams {
+                        auth: self.auth(&pair),
+                        operation_id: id.as_str().to_owned(),
+                        plan,
+                    });
                 // The host answers `expired` only for an id it has never seen (one it
                 // knows answers its stored state at any age), so no create has this id:
                 // a plain error, never an outcome of the operation.
@@ -655,7 +1246,7 @@ impl ApiBackend for SessionApi {
                 {
                     return ApiReply::error(
                         StatusCode::GONE,
-                        GatewayErrorCode::Expired,
+                        WebErrorCode::Expired,
                         "This request expired. Start again.",
                     );
                 }
@@ -664,7 +1255,20 @@ impl ApiBackend for SessionApi {
                 mutation(
                     create_outcome(&id, reply)
                         .unwrap_or(MutationOutcome::Unknown { operation_id: id }),
+                    true,
                 )
+            }
+            Call::OrgSnapshot(_, _)
+            | Call::OrgProjects(_, _, _)
+            | Call::OrgProjectInspect(_, _, _)
+            | Call::OrgProjectCreate(_, _, _, _)
+            | Call::OrgOffices(_, _)
+            | Call::OfficeRestart(_, _, _, _)
+            | Call::OrgMutation(_, _, _)
+            | Call::OrgOperation(_, _, _)
+            | Call::EventsStream(_, _)
+            | Call::CliApprovalDecide(_, _, _) => {
+                unreachable!("office RPCs and SSE streams dispatch asynchronously")
             }
             Call::Operation(pair, id) => {
                 let reply = self.validate(pair).and_then(|_| {
@@ -687,7 +1291,7 @@ impl ApiBackend for SessionApi {
                         return if error.code == org_proto::ErrorCode::Expired {
                             ApiReply::error(
                                 StatusCode::GONE,
-                                GatewayErrorCode::Expired,
+                                WebErrorCode::Expired,
                                 "This operation is too old to look up.",
                             )
                         } else {
@@ -714,7 +1318,7 @@ impl ApiBackend for SessionApi {
             Call::SignOut(pair) => {
                 // The host deletes the record and pushes `session.ended` before this
                 // reply; the event sink drops the cache entry on the reader thread.
-                let ended = self.validate(pair).and_then(|session| {
+                let ended = self.validate(CallerAuth::Pair(pair)).and_then(|session| {
                     self.host
                         .request::<BrowserSessionEnd>(&BrowserSessionEndParams {
                             session_id: session.session_id,
@@ -740,9 +1344,10 @@ impl ApiBackend for SessionApi {
                     )
                 })
             }
-            Call::Register(client_address, link, Credentials { login, password }) => self
-                .establish(|pair| {
-                    self.host.request_then::<LinkRegister>(
+            Call::Register(client_address, link, Credentials { login, password }) => {
+                let auth_flag = Arc::clone(&self.auth_enabled);
+                self.establish(|pair| {
+                    let reply = self.host.request_then::<LinkRegister>(
                         &LinkRegisterParams {
                             link,
                             login,
@@ -753,8 +1358,13 @@ impl ApiBackend for SessionApi {
                             origin: self.origin.clone(),
                         },
                         self.caching(pair),
-                    )
-                }),
+                    );
+                    if matches!(&reply, Ok(session) if session.admin) {
+                        auth_flag.store(true, Ordering::Release);
+                    }
+                    reply
+                })
+            }
         }
     }
 }

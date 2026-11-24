@@ -29,6 +29,9 @@ use crate::{
     store::open::Testing,
 };
 
+#[path = "hiring_tests.rs"]
+mod hiring_tests;
+
 const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
 const CREATOR: &str = "01900000-0000-7000-8000-000000000012";
 const HR: &str = "01900000-0000-7000-8000-000000000013";
@@ -159,12 +162,12 @@ fn names(folder: &Path) -> Vec<String> {
 }
 
 fn creation_id() -> Id {
-    operation_id::from_wire_ulid(OPERATION).unwrap()
+    Id::parse(OPERATION).unwrap()
 }
 
 fn team_create(n: u64, team: &str, parent: &str) -> OrgCommand {
     OrgCommand::TeamCreate(TeamCreateParams {
-        command_id: format!("01HZY8M6V2Q3D4E5F{n:07}00"),
+        command_id: format!("018bce27-f800-7000-8000-{n:012x}"),
         team_id: team.into(),
         name: format!("Team {n}"),
         owner_team_id: Some(parent.into()),
@@ -501,7 +504,7 @@ fn the_intent_binds_the_request_the_roots_and_the_identity() {
         .close()
         .unwrap();
     let (new, mut binding) = testkit::request();
-    binding.operation_id = "01HZY8M6V2Q3D4E5F6G7H8J9K0".into();
+    binding.operation_id = "019a0000-0000-7000-8000-000000009999".into();
     let other = Office::provision_with(
         site.folder.clone(),
         &new,
@@ -590,8 +593,9 @@ fn fatal_reports_a_flush_error() {
     }
 }
 
-/// ENC-5 in process: neither the projection nor any file under `state/` or `runtime/`
-/// holds the wrapped CA key, raw or in hex.
+/// ENC-5 + TASK-10 (H-06) in process: neither the projection nor any file under `state/`,
+/// `runtime/`, or `durable/recovery/` (acceptance journal segments & receipts) holds the
+/// wrapped CA key, raw or in hex.
 #[test]
 fn the_projection_holds_no_form_of_the_ca_key() {
     for engine in ENGINES {
@@ -608,32 +612,205 @@ fn the_projection_holds_no_form_of_the_ca_key() {
         assert!(!holds(office.dump().join("\n").as_bytes()), "{engine:?}");
         office.close().unwrap();
         let runtime = tree(&site.roots.runtime);
-        for (path, bytes) in runtime.into_iter().chain(tree(&site.durable("state"))) {
+        for (path, bytes) in runtime
+            .into_iter()
+            .chain(tree(&site.durable("state")))
+            .chain(tree(&site.durable("recovery")))
+        {
             assert!(!holds(&bytes), "{engine:?}: {path}");
         }
     }
 }
 
-/// `team.create` from the creator answers; every other organization command is
-/// `unsupported`; `who` and the snapshot read the projection.
+/// All implemented organization-family commands commit through `organization::records`;
+/// unbuilt HR/project commands return `unsupported`; `who` and `org_snapshot` omit archived
+/// teams and deactivated people.
 #[test]
-fn the_office_answers_team_create_and_refuses_the_rest_as_unsupported() {
+fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_domains() {
+    use org_proto::org::{
+        MemberAddPersonParams, MemberMoveParams, MemberRemoveParams, MemberSetReportsToParams,
+        MemberUpdatePersonParams, TeamDeleteParams, TeamMoveParams, TeamSetLeadParams,
+        TeamSetTitleParams,
+    };
+    const PERSON_A: &str = "019a0000-0000-7000-8000-0000000000a1";
+    let cmd = |n: u32| format!("018bce27-f800-7000-8000-{n:012x}");
     let office = Office::for_test(TestOffice::default());
-    let created = office.submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM));
-    let created = created.unwrap().unwrap();
+    // 1. Create two teams under TOP_TEAM.
+    let created = office
+        .submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM))
+        .unwrap()
+        .unwrap();
     assert_eq!(created.position.map(|p| p.seq), Some(2));
+    office
+        .submit_org(CREATOR, team_create(2, TEAM_B, TOP_TEAM))
+        .unwrap()
+        .unwrap();
+    // Non-owner is still refused.
     let refused = office
-        .submit_org(HR, team_create(2, TEAM_B, TOP_TEAM))
+        .submit_org(
+            HR,
+            team_create(3, "019a0000-0000-7000-8000-0000000000c3", TOP_TEAM),
+        )
         .unwrap();
     assert_eq!(refused.unwrap_err().code, ErrorCode::NotAuthorized);
-    let rename = OrgCommand::TeamRename(TeamRenameParams {
-        command_id: "01HZY8M6V2Q3D4E5F000000300".into(),
-        team_id: TEAM_A.into(),
-        expected_version: 1,
-        name: "Renamed".into(),
-    });
-    let refused = office.submit_org(CREATOR, rename).unwrap();
-    assert_eq!(refused.unwrap_err().code, ErrorCode::Unsupported);
+    // 2. Rename TEAM_A.
+    let renamed = office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamRename(TeamRenameParams {
+                command_id: cmd(300),
+                team_id: TEAM_A.into(),
+                expected_version: 1,
+                name: "Platform".into(),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(renamed.position.map(|p| p.seq), Some(4));
+    // 3. Add a person directly into TEAM_A, update their profile/title/manager, appoint as lead.
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::MemberAddPerson(MemberAddPersonParams {
+                command_id: cmd(301),
+                member_id: PERSON_A.into(),
+                name: "Ada Lovelace".into(),
+                contact: Some("ada@example.test".into()),
+                handle: Some("ada".into()),
+                home_team_id: Some(TEAM_A.into()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+                command_id: cmd(302),
+                member_id: PERSON_A.into(),
+                expected_version: 1,
+                name: Some("Ada Byron".into()),
+                contact: None,
+                clear_contact: true,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamSetTitle(TeamSetTitleParams {
+                command_id: cmd(303),
+                membership_id: PERSON_A.into(),
+                expected_version: 2,
+                title_in_team: Some("Principal Engineer".into()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
+                command_id: cmd(304),
+                member_id: PERSON_A.into(),
+                expected_version: 3,
+                reports_to_member_id: Some(CREATOR.into()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamSetLead(TeamSetLeadParams {
+                command_id: cmd(305),
+                team_id: TEAM_A.into(),
+                expected_version: 2,
+                lead_member_id: Some(PERSON_A.into()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    // Clear lead before moving person to TEAM_B, then deactivate person and archive empty TEAM_A.
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamSetLead(TeamSetLeadParams {
+                command_id: cmd(306),
+                team_id: TEAM_A.into(),
+                expected_version: 3,
+                lead_member_id: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::MemberMove(MemberMoveParams {
+                command_id: cmd(307),
+                membership_id: PERSON_A.into(),
+                expected_version: 4,
+                new_membership_id: PERSON_A.into(),
+                to_team_id: TEAM_B.into(),
+                title_in_team: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    // Before deactivation, PERSON_A is active in TEAM_B and visible in snapshot & directory.
+    let mid = office.org_snapshot().unwrap();
+    assert!(mid
+        .members
+        .iter()
+        .any(|m| m.id == PERSON_A && m.home_team_id.as_deref() == Some(TEAM_B)));
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamMove(TeamMoveParams {
+                command_id: cmd(308),
+                team_id: TEAM_A.into(),
+                expected_version: 4,
+                owner_team_id: Some(TEAM_B.into()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamDelete(TeamDeleteParams {
+                command_id: cmd(309),
+                team_id: TEAM_A.into(),
+                expected_version: 5,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::MemberRemove(MemberRemoveParams {
+                command_id: cmd(310),
+                member_id: PERSON_A.into(),
+                expected_version: 5,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    // Unbuilt HR agent domain still answers Unsupported.
+    let unbuilt = office
+        .submit_org(
+            CREATOR,
+            OrgCommand::MemberOffboard(org_proto::org::MemberOffboardParams {
+                command_id: cmd(311),
+                member_id: "019a0000-0000-7000-8000-0000000000d2".into(),
+                expected_version: 1,
+            }),
+        )
+        .unwrap();
+    assert_eq!(unbuilt.unwrap_err().code, ErrorCode::Unsupported);
 
     let snapshot = office.org_snapshot().unwrap();
     let owners: Vec<&str> = snapshot
@@ -643,8 +820,12 @@ fn the_office_answers_team_create_and_refuses_the_rest_as_unsupported() {
         .map(|m| m.id.as_str())
         .collect();
     assert_eq!(owners, [CREATOR]);
+    // Archived TEAM_A and deactivated PERSON_A are excluded from snapshot and directory.
+    assert!(!snapshot.teams.iter().any(|t| t.id == TEAM_A));
+    assert!(!snapshot.members.iter().any(|m| m.id == PERSON_A));
     let who = office.who(&WhoParams::default()).unwrap().unwrap();
-    assert_eq!(who.members.len(), 2);
+    assert!(who.members.iter().any(|c| c.id == CREATOR));
+    assert!(!who.members.iter().any(|c| c.id == PERSON_A));
     office.close().unwrap();
 }
 
@@ -860,10 +1041,9 @@ fn a_second_opening_waits_for_the_lock_and_gives_up() {
     site.open(EngineChoice::Memory).unwrap().close().unwrap();
 }
 
-/// The creation's operation on disk is the UUIDv7 the request's ULID maps to, and a
-/// record that names the ULID itself is refused.
+/// The creation's operation on disk is the native UUIDv7, and a legacy ULID record is refused.
 #[test]
-fn the_creation_operation_on_disk_is_the_mapped_uuidv7() {
+fn the_creation_operation_on_disk_is_the_native_uuidv7() {
     let site = Site::new();
     let office = site.provision(EngineChoice::Memory).unwrap();
     let record = office.hq_creation_record().unwrap().unwrap();
@@ -871,7 +1051,7 @@ fn the_creation_operation_on_disk_is_the_mapped_uuidv7() {
     assert!(org_proto::is_uuid_v7(&record.operation_id));
     let ulid = LocalRecord::new(
         identity().organization_id.to_string(),
-        OPERATION.into(),
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
         record.public_key,
         record.package.clone(),
         record.wrapped_ca_key().to_vec(),
@@ -1207,8 +1387,8 @@ fn a_loose_office_folder_is_tightened_by_creation() {
     assert_eq!(mode & 0o777, 0o700);
 }
 
-/// The office keeps the creation's command ID as the host sent it, at creation and after
-/// a reopening: the records hold only the store operation it maps to.
+/// The office keeps the creation's native UUIDv7 command ID at creation and after reopening,
+/// matching the on-disk record without lossy conversion.
 #[test]
 fn the_office_keeps_the_creations_command_id_as_sent() {
     let site = Site::new();
@@ -1217,9 +1397,298 @@ fn the_office_keeps_the_creations_command_id_as_sent() {
     office.close().unwrap();
     let office = site.open(EngineChoice::Memory).unwrap();
     assert_eq!(office.creation_command_id(), OPERATION);
-    assert_ne!(
+    assert_eq!(
         office.hq_creation_record().unwrap().unwrap().operation_id,
         OPERATION
     );
+    office.close().unwrap();
+}
+
+#[test]
+fn dry_run_command_id_window_and_operation_lookup_enforce_b2_rules() {
+    use org_proto::OperationOutcome;
+
+    let uuid_at = |ms: u64, seq: u64| -> String {
+        let hi = (ms >> 16) as u32;
+        let mid = (ms & 0xffff) as u16;
+        format!("{hi:08x}-{mid:04x}-7000-8000-{seq:012x}")
+    };
+
+    for engine in ENGINES {
+        let site = Site::new();
+        let office = site.provision(engine).unwrap();
+        let now = crate::organization::testkit::CREATION_AT.0;
+        let before = office.org_snapshot().unwrap();
+
+        // 1. Dry-run succeeds with Checked + position: None, leaving snapshot and store untouched.
+        let dry_ok = office
+            .check_org(
+                CREATOR,
+                OrgCommand::TeamCreate(TeamCreateParams {
+                    command_id: String::new(),
+                    team_id: TEAM_A.into(),
+                    name: "Dry Team".into(),
+                    owner_team_id: Some(TOP_TEAM.into()),
+                }),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(dry_ok.status, CommandStatus::Checked);
+        assert_eq!(dry_ok.position, None);
+        assert_eq!(office.org_snapshot().unwrap(), before);
+
+        // Dry-run refuses a non-empty command_id and reports domain refusals without writing.
+        let dry_with_id = office
+            .check_org(
+                CREATOR,
+                OrgCommand::TeamCreate(TeamCreateParams {
+                    command_id: uuid_at(now, 1),
+                    team_id: TEAM_A.into(),
+                    name: "Dry Team".into(),
+                    owner_team_id: Some(TOP_TEAM.into()),
+                }),
+            )
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(dry_with_id.code, ErrorCode::InvalidRequest);
+
+        let dry_bad_name = office
+            .check_org(
+                CREATOR,
+                OrgCommand::TeamCreate(TeamCreateParams {
+                    command_id: String::new(),
+                    team_id: TEAM_A.into(),
+                    name: "   ".into(),
+                    owner_team_id: Some(TOP_TEAM.into()),
+                }),
+            )
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(dry_bad_name.code, ErrorCode::InvalidName);
+        assert_eq!(office.org_snapshot().unwrap(), before);
+
+        // 2. Unknown command_id outside the [-29d, +5m] window is refused unrecorded.
+        let expired_id = uuid_at(now - wire::MAX_COMMAND_AGE_MS - 1, 2);
+        let expired = office
+            .submit_org(
+                CREATOR,
+                OrgCommand::TeamCreate(TeamCreateParams {
+                    command_id: expired_id.clone(),
+                    team_id: TEAM_A.into(),
+                    name: "Too Old".into(),
+                    owner_team_id: Some(TOP_TEAM.into()),
+                }),
+            )
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(expired.code, ErrorCode::Expired);
+        assert_eq!(
+            office
+                .operation(CREATOR, &expired_id)
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+
+        let skewed_id = uuid_at(now + wire::MAX_COMMAND_SKEW_MS + 1, 3);
+        let skewed = office
+            .submit_org(
+                CREATOR,
+                OrgCommand::TeamCreate(TeamCreateParams {
+                    command_id: skewed_id.clone(),
+                    team_id: TEAM_A.into(),
+                    name: "Too Far Ahead".into(),
+                    owner_team_id: Some(TOP_TEAM.into()),
+                }),
+            )
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(skewed.code, ErrorCode::ClockSkew);
+        assert_eq!(
+            office
+                .operation(CREATOR, &skewed_id)
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+
+        // Boundary IDs at exact -29d and +5m are accepted.
+        let committed_id = uuid_at(now - wire::MAX_COMMAND_AGE_MS, 4);
+        let committed = office
+            .submit_org(
+                CREATOR,
+                OrgCommand::TeamCreate(TeamCreateParams {
+                    command_id: committed_id.clone(),
+                    team_id: TEAM_A.into(),
+                    name: "Platform".into(),
+                    owner_team_id: Some(TOP_TEAM.into()),
+                }),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(committed.status, CommandStatus::Committed);
+
+        // 3. operation.get returns Committed and Rejected receipts for the acting actor,
+        //    and refuses another actor or unknown ID as not_found.
+        let looked = office.operation(CREATOR, &committed_id).unwrap().unwrap();
+        assert_eq!(
+            looked,
+            OperationOutcome::Committed {
+                result: serde_json::to_value(committed).unwrap(),
+            }
+        );
+        assert_eq!(
+            office
+                .operation(HR, &committed_id)
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+        assert_eq!(
+            office
+                .operation(CREATOR, OPERATION)
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+
+        let rejected_id = uuid_at(now + wire::MAX_COMMAND_SKEW_MS, 5);
+        let refusal = office
+            .submit_org(
+                CREATOR,
+                OrgCommand::TeamCreate(TeamCreateParams {
+                    command_id: rejected_id.clone(),
+                    team_id: TEAM_B.into(),
+                    name: "   ".into(),
+                    owner_team_id: Some(TOP_TEAM.into()),
+                }),
+            )
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(refusal.code, ErrorCode::InvalidName);
+        assert_eq!(
+            office.operation(CREATOR, &rejected_id).unwrap().unwrap(),
+            OperationOutcome::Rejected { refusal }
+        );
+        assert_eq!(
+            office
+                .operation(HR, &rejected_id)
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+        // Non-owner gets NotAuthorized before receipt/window checks (no existence oracle).
+        assert_eq!(
+            office
+                .submit_org(
+                    HR,
+                    OrgCommand::TeamCreate(TeamCreateParams {
+                        command_id: committed_id.clone(),
+                        team_id: TEAM_B.into(),
+                        name: "Different Params".into(),
+                        owner_team_id: Some(TOP_TEAM.into()),
+                    }),
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotAuthorized
+        );
+        assert_eq!(
+            office
+                .submit_org(
+                    HR,
+                    OrgCommand::TeamCreate(TeamCreateParams {
+                        command_id: expired_id.clone(),
+                        team_id: TEAM_B.into(),
+                        name: "Non-owner Expired".into(),
+                        owner_team_id: Some(TOP_TEAM.into()),
+                    }),
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotAuthorized
+        );
+        office.close().unwrap();
+    }
+
+    // 4. Advancing clock >29d allows replay of stored receipts while refusing unknown old IDs;
+    //    stepping wall clock backward cannot reopen the expired window (monotonic high-water).
+    struct SteppingClock(Arc<std::sync::atomic::AtomicU64>);
+    impl org_store::Clock for SteppingClock {
+        fn now(&self) -> org_store::Timestamp {
+            org_store::Timestamp(self.0.load(std::sync::atomic::Ordering::Relaxed))
+        }
+    }
+    let now = crate::organization::testkit::CREATION_AT.0;
+    let clock_ms = Arc::new(std::sync::atomic::AtomicU64::new(now));
+    let site = Site::new();
+    let mut opts = site.options(EngineChoice::Memory);
+    opts.clock = Arc::new(SteppingClock(Arc::clone(&clock_ms)));
+    let (new, binding) = testkit::request();
+    let office = Office::provision_with(
+        site.folder.clone(),
+        &new,
+        Some(Key::from_bytes([7; 32])),
+        &binding,
+        site.roots.clone(),
+        testkit::custody(Arc::clone(&site.custody)),
+        |prior| prior.map_or_else(|| testkit::record(testkit::CA_SEED), Ok),
+        opts,
+    )
+    .unwrap();
+    let replay_id = uuid_at(now, 10);
+    let create_cmd = || {
+        OrgCommand::TeamCreate(TeamCreateParams {
+            command_id: replay_id.clone(),
+            team_id: TEAM_A.into(),
+            name: "Platform".into(),
+            owner_team_id: Some(TOP_TEAM.into()),
+        })
+    };
+    let first = office.submit_org(CREATOR, create_cmd()).unwrap().unwrap();
+
+    // Advance >29 days: stored receipt still replays, unknown ID at `now` is refused `expired`.
+    clock_ms.store(
+        now + wire::MAX_COMMAND_AGE_MS + 60_000,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let replayed = office.submit_org(CREATOR, create_cmd()).unwrap().unwrap();
+    assert_eq!(replayed, first);
+    let unknown_old = office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamCreate(TeamCreateParams {
+                command_id: uuid_at(now, 11),
+                team_id: TEAM_B.into(),
+                name: "Stale".into(),
+                owner_team_id: Some(TOP_TEAM.into()),
+            }),
+        )
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(unknown_old.code, ErrorCode::Expired);
+
+    // Step clock backward to `now`: monotonic high-water still rejects a new unknown ID at `now`.
+    clock_ms.store(now, std::sync::atomic::Ordering::Relaxed);
+    let after_rollback = office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamCreate(TeamCreateParams {
+                command_id: uuid_at(now, 12),
+                team_id: TEAM_B.into(),
+                name: "Rollback".into(),
+                owner_team_id: Some(TOP_TEAM.into()),
+            }),
+        )
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(after_rollback.code, ErrorCode::Expired);
     office.close().unwrap();
 }

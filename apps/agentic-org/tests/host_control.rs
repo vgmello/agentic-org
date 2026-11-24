@@ -145,7 +145,7 @@ fn an_unregistered_host_refuses_hello_status_and_create_without_effects() {
 #[test]
 fn a_registered_hello_and_strict_status_share_the_immutable_instance_id() {
     use org_host_control::{
-        GatewayState, Hello, HelloParams, InstanceMode, InstanceStatus, InstanceStatusParams,
+        Hello, HelloParams, InstanceMode, InstanceStatus, InstanceStatusParams, WebState,
     };
     let home = TestHome::registered();
     let host = home.start(home.config()).unwrap();
@@ -158,7 +158,7 @@ fn a_registered_hello_and_strict_status_share_the_immutable_instance_id() {
         .unwrap();
     assert_eq!(result.instance_id, home.instance_id());
     assert_eq!(result.mode, InstanceMode::Service);
-    assert_eq!(result.gateway.state, GatewayState::NotConfigured);
+    assert_eq!(result.gateway.state, WebState::NotConfigured);
     assert_eq!(
         (
             result.offices.total,

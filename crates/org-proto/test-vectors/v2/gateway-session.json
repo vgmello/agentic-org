@@ -228,7 +228,7 @@
     "browser_time_ms": 1794311995000,
     "server_time_ms": 1794312000000,
     "expected_offset_ms": 5000,
-    "operation_id": "01M72N8MG00000000000000006"
+    "operation_id": "01a1c554-5200-7000-8000-000000000006"
   },
   "proof_header": "X-Org-Session-Proof",
   "clock_cases": [
@@ -237,8 +237,8 @@
       "browser_time_ms": 1794312600000,
       "server_time_ms": 1794312000000,
       "expected_offset_ms": -600000,
-      "corrected_operation_id": "01M72N8MG00000000000000000",
-      "raw_local_operation_id": "01M72NTYE00000000000000000",
+      "corrected_operation_id": "01a1c554-5200-7000-8000-000000000000",
+      "raw_local_operation_id": "01a1c55d-79c0-7000-8000-000000000000",
       "raw_local_refusal": {
         "code": "clock_skew",
         "message": "Clock correction required."
@@ -252,8 +252,8 @@
       "browser_time_ms": 1791720000000,
       "server_time_ms": 1794312000000,
       "expected_offset_ms": 2592000000,
-      "corrected_operation_id": "01M72N8MG00000000000000000",
-      "raw_local_operation_id": "01M4NDB2G00000000000000000",
+      "corrected_operation_id": "01a1c554-5200-7000-8000-000000000000",
+      "raw_local_operation_id": "01a12ad5-8a00-7000-8000-000000000000",
       "raw_local_refusal": {
         "code": "expired",
         "message": "Clock correction required."

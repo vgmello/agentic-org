@@ -1,412 +1,354 @@
-//! The "Your processes" section of an agent's instructions (processes.md §3.4, PROC-7, PROC-12):
-//! the set, the processes changed since the agent last read them, and the moment prompts, within
-//! a 24 KiB cap. Pure: the office says what the agent has read and gives the texts.
+//! Agent launch instruction rendering for resolved processes and standards (`doc-34` §3.2,
+//! Decision 4, `PROC-7`, `FC-111`).
+//!
+//! - Every **non-overridable** document (`overridable == false`) is included **IN FULL** in a
+//!   clearly marked must-follow section. No size cap may drop or truncate one: if the mandatory
+//!   set alone exceeds the instruction budget, launch is refused with [`RenderError::MandatoryBudgetExceeded`].
+//! - **Overridable** documents are capped at `min(24 KiB, remaining_budget)`: summaries first,
+//!   then full text of unread/changed whole UTF-8 documents, with omitted entries named via
+//!   `agent-os process inspect --key <key>`.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
-use crate::file::{Moments, Status};
-use crate::place::{Place, ProcessKey};
-use crate::resolve::{place_name, Conflict, EffectiveSet, TurnedOff, Winner};
-use org_docs::is_invisible_or_break;
+use crate::model::{strip_control_and_invisible, summarize_body};
+use crate::resolve::{EffectiveSet, Winner};
 
-type Names = BTreeMap<Place, String>;
+/// Hard ceiling for overridable process/standard guidance (`doc-34` §3.2: 24 KiB).
+pub const OVERRIDABLE_CAP_BYTES: usize = 24 * 1024;
 
-/// The cap on the whole section, in bytes of UTF-8, headings and prompts included (§3.4).
-const CAP: usize = 24 * 1024;
+/// Default total instruction budget reserved for process/standard delivery when callers do not
+/// specify a tighter runtime cap (128 KiB).
+pub const DEFAULT_TOTAL_BUDGET_BYTES: usize = 128 * 1024;
 
-/// A guidance moment (decisions-and-tech-debt-ux.md §6.2).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Moment {
-    /// Starting a task.
-    StartingTask,
-    /// Waking up.
-    WakingUp,
-    /// Finishing a task.
-    FinishingTask,
-}
-
-impl Moment {
-    /// Its name in the app.
-    pub fn title(self) -> &'static str {
-        match self {
-            Moment::StartingTask => "Starting a task",
-            Moment::WakingUp => "Waking up",
-            Moment::FinishingTask => "Finishing a task",
-        }
-    }
-
-    fn prompt(self, moments: &Moments) -> Option<&String> {
-        match self {
-            Moment::StartingTask => moments.starting_task.as_ref(),
-            Moment::WakingUp => moments.waking_up.as_ref(),
-            Moment::FinishingTask => moments.finishing_task.as_ref(),
-        }
-    }
-}
-
-/// A winning file as the office read it: its git blob and its full text.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileText {
-    /// The blob id.
-    pub blob: String,
-    /// The whole file.
-    pub text: String,
-}
-
-/// What the office knows for one delivery (a start, a wake or `task start`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Inputs controlling instruction rendering for one launch or wake.
+#[derive(Clone, Debug)]
 pub struct RenderInput {
-    /// Per key, the blobs the agent has read. For a fresh context (processes.md §3.5) the
-    /// caller passes it empty, so every applying text is offered again.
-    pub read: BTreeMap<ProcessKey, BTreeSet<String>>,
-    /// Per key, the winning file's blob and full text. The caller guarantees they are the
-    /// winning file's: render can't check it, since a [`crate::Winner`] carries no blob.
-    pub texts: BTreeMap<ProcessKey, FileText>,
-    /// The moments On for this delivery, each with its guidance text; a moment that is Off is
-    /// absent.
-    pub moments: BTreeMap<Moment, String>,
-    /// The names the app shows for places, for place labels and conflict lines, as
-    /// [`crate::Inputs::names`].
-    pub names: BTreeMap<Place, String>,
+    /// Map of `entry_id` (key or doc ID) -> set of `blob_sha256` already delivered in this live
+    /// context. Empty for every fresh main session or delegate (`doc-34` §3.2).
+    pub read_blobs: BTreeMap<String, BTreeSet<String>>,
+    /// Cap for the overridable guidance section (clamped to [`OVERRIDABLE_CAP_BYTES`]).
+    pub overridable_cap_bytes: usize,
+    /// Total byte budget available for processes + standards (mandatory + overridable combined).
+    pub total_budget_bytes: usize,
 }
 
-/// The rendered section and what it delivered. Built only by [`render`], so `delivered` names
-/// exactly the full texts in `text`:
-///
-/// ```compile_fail,E0451
-/// use org_process::Rendered;
-/// let made = Rendered { text: String::new(), delivered: vec![] };
-/// ```
+impl Default for RenderInput {
+    fn default() -> Self {
+        Self {
+            read_blobs: BTreeMap::new(),
+            overridable_cap_bytes: OVERRIDABLE_CAP_BYTES,
+            total_budget_bytes: DEFAULT_TOTAL_BUDGET_BYTES,
+        }
+    }
+}
+
+/// Failure returned when mandatory non-overridable documents alone exceed the instruction budget.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RenderError {
+    /// Non-overridable documents cannot be truncated or dropped; refuse launch and name them.
+    MandatoryBudgetExceeded {
+        /// Total UTF-8 bytes required by the mandatory section.
+        required_bytes: usize,
+        /// Available budget in bytes.
+        budget_bytes: usize,
+        /// Titles of the mandatory documents causing the overflow.
+        document_titles: Vec<String>,
+    },
+}
+
+impl fmt::Display for RenderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RenderError::MandatoryBudgetExceeded {
+                required_bytes,
+                budget_bytes,
+                document_titles,
+            } => write!(
+                f,
+                "non-overridable processes/standards exceed instruction budget ({required_bytes} > {budget_bytes} bytes); shorten: {}",
+                document_titles.join(", ")
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RenderError {}
+
+/// Rendered Markdown section ready to inject into standing agent instructions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rendered {
-    text: String,
-    delivered: Vec<(ProcessKey, String)>,
+    /// Full Markdown section (empty when no processes or standards apply).
+    pub text: String,
+    /// `(entry_id, blob_sha256)` pairs whose full bodies were included verbatim in `text`.
+    pub delivered_blobs: Vec<(String, String)>,
+    /// Number of non-overridable documents rendered in full.
+    pub mandatory_count: usize,
+    /// Number of overridable documents in the effective set.
+    pub overridable_count: usize,
+    /// Number of overridable documents whose full bodies were omitted due to the cap.
+    pub omitted_overridable_count: usize,
 }
 
-impl Rendered {
-    /// The section; empty when it has nothing to say.
-    pub fn text(&self) -> &str {
-        &self.text
-    }
-
-    /// The keys and blobs whose full text is in [`Rendered::text`], in the text's order: what
-    /// counts as read once the runtime accepts the start or wake. A text named instead, or left
-    /// out, is never here.
-    pub fn delivered(&self) -> &[(ProcessKey, String)] {
-        &self.delivered
-    }
-}
-
-/// The "Your processes" section for `set`, at most 24 KiB of UTF-8 (prompts included). In order,
-/// each part getting the room the parts before it leave, less the room kept for each later part
-/// that has something (changed processes: the changed heading and its count line; On moments:
-/// their count line), so a later part is never dropped without a word:
-///
-/// 1. The set: one line per applying (`active`) winner, with its name, place ("org", a team's
-///    or project's name from `input.names`, else its team id or project key, or "private"),
-///    version and summary, by level (organization, team, project, agent), then key; then each
-///    turned-off key and each conflict, in the set's order: the longest run, from the first,
-///    that fits with "and N more: run `agent-os process list`" after it (none when all fit).
-///    One long early line that doesn't fit leaves out every later one, though they would fit.
-/// 2. "Changed since you last read": in the same order, each applying winner whose blob in
-///    `input.texts` isn't among `input.read`'s blobs for its key, or that has no text there.
-///    The longest run of them, from the first, that fits in full (trailing whitespace trimmed,
-///    in a backtick fence, fence included in the size) with all the rest named after it ("Run `agent-os process show <key>`"); one with no
-///    text is always named. If not even every name fits, the longest run of names that fits
-///    with "and N more changed: run `agent-os process list`" after it.
-/// 3. Each On moment, in [`Moment`] order: its guidance text (trailing whitespace trimmed, in a
-///    backtick fence, as in part 2), then each applying winner's prompt for it (unfenced: one
-///    validated line), in the same order. These are reminders, not
-///    rules (processes-ux.md decision 9), so they come last. A moment is whole or left out:
-///    the longest run that fits with "and N more moments: process context limit reached
-///    (`agent-os process list`)" after it.
-///
-/// Only whole entries are emitted, never a cut one; an entry or count line that doesn't fit is
-/// left out, so the cap holds whatever the input (with a cap too small for the kept room, the
-/// kept lines may not fit either). A place name or path that could break a line or hide text
-/// is quoted (`{:?}`). With nothing to show, the text is empty.
-pub fn render(set: &EffectiveSet, input: &RenderInput) -> Rendered {
-    render_within(set, input, CAP)
-}
-
-/// [`render`] with the cap `cap`.
-fn render_within(set: &EffectiveSet, input: &RenderInput, cap: usize) -> Rendered {
-    let mut winners: Vec<&Winner> = set
-        .entries
-        .iter()
-        .filter_map(|entry| entry.winner.as_ref())
-        .filter(|w| w.file.status == Status::Active)
-        .collect();
-    winners.sort_by(|a, b| {
-        (a.file.place.level(), &a.file.key).cmp(&(b.file.place.level(), &b.file.key))
-    });
-    let mut out = Out {
-        cap,
-        ..Out::default()
-    };
-    let changes = changes(&winners, input);
-    let blocks = moments(&winners, input);
-    // Each later part keeps room to say it has something: the changed heading and count line,
-    // and the moments' count line, whatever the parts before it fill (unless the cap can't hold
-    // the earlier count lines too: see `Out::push`).
-    let keep = |n: usize, len: usize| if n > 0 { len } else { 0 };
-    let for_moments = keep(blocks.len(), more_moments(blocks.len()).len());
-    let n = changes.1.len();
-    let for_changed = keep(n, CHANGED.len() + more_changed(n).len());
-    out.section("# Your processes\n\n", |out| {
-        let lines = summaries(set, &winners, &input.names);
-        out.reserved = for_changed + for_moments;
-        out.fill(&lines, |n| {
-            format!("and {n} more: run `agent-os process list`\n")
-        });
-        out.reserved = for_moments;
-        out.section(CHANGED, |out| changed(out, &changes));
-        out.reserved = 0;
-        out.fill(&blocks, more_moments);
-    });
-    Rendered {
-        text: out.text,
-        delivered: out.delivered,
-    }
-}
-
-const CHANGED: &str = "\n## Changed since you last read\n";
-
-fn more_changed(n: usize) -> String {
-    format!("\nand {n} more changed: run `agent-os process list`\n")
-}
-
-fn more_moments(n: usize) -> String {
-    format!("\nand {n} more moments: process context limit reached (`agent-os process list`)\n")
-}
-
-/// The text so far, which never passes `cap`, the full texts in it, and the bytes kept for
-/// the parts still to come.
-#[derive(Default)]
-struct Out {
-    text: String,
-    cap: usize,
-    reserved: usize,
-    delivered: Vec<(ProcessKey, String)>,
-}
-
-impl Out {
-    /// The room for choosing what to show: what the cap leaves, less the room kept.
-    fn room(&self) -> usize {
-        self.cap.saturating_sub(self.text.len() + self.reserved)
-    }
-
-    /// Appends `s` if it fits whole within the cap; says whether it did. It may use the room
-    /// kept for later parts: a count line or heading that only fits there goes in, so an earlier
-    /// part's word wins over a later one's when the cap can't hold both.
-    fn push(&mut self, s: &str) -> bool {
-        let fits = s.len() <= self.cap - self.text.len();
-        if fits {
-            self.text.push_str(s);
-        }
-        fits
-    }
-
-    /// `heading`, then what `body` appends; neither if `body` appends nothing.
-    fn section(&mut self, heading: &str, body: impl FnOnce(&mut Out)) {
-        let mark = self.text.len();
-        if !self.push(heading) {
-            return;
-        }
-        let after = self.text.len();
-        body(self);
-        if self.text.len() == after {
-            self.text.truncate(mark);
-        }
-    }
-
-    /// The longest run of `items` from the first that fits in [`Out::room`] together with `more`
-    /// of the number left out (nothing when none is), then that count line if it fits the cap.
-    fn fill(&mut self, items: &[String], more: impl Fn(usize) -> String) {
-        let n = items.len();
-        let size = |k: usize| {
-            let tail = if k < n { more(n - k).len() } else { 0 };
-            items[..k].iter().map(String::len).sum::<usize>() + tail
-        };
-        let k = longest_fit(n, self.room(), size).unwrap_or(0);
-        for item in &items[..k] {
-            let pushed = self.push(item);
-            debug_assert!(pushed, "chosen to fit");
-        }
-        if k < n {
-            self.push(&more(n - k));
-        }
-    }
-}
-
-/// The largest `k` in `0..=n` whose `size` fits in `room`, if any.
-fn longest_fit(n: usize, room: usize, size: impl Fn(usize) -> usize) -> Option<usize> {
-    (0..=n).rev().find(|&k| size(k) <= room)
-}
-
-/// `s` as it is, or quoted (`{:?}`) if it has a control character (a line break included) or
-/// one that breaks a line or hides text, so a name or path from outside can't start a line of
-/// its own or hide text in the section.
-fn quoted(s: &str) -> String {
-    match s.contains(|c: char| c.is_control() || is_invisible_or_break(c)) {
-        true => format!("{s:?}"),
-        false => s.to_owned(),
-    }
-}
-
-/// `text` (trailing whitespace trimmed) in a backtick fence longer than any run of backticks
-/// in it, and at least 3, so no line of it can close the fence or pass for a heading.
-fn fenced(text: &str) -> String {
-    let text = text.trim_end();
-    let run = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
-    let fence = "`".repeat(run.max(2) + 1);
-    format!("{fence}\n{text}\n{fence}\n")
-}
-
-/// Part 1's lines.
-fn summaries(set: &EffectiveSet, winners: &[&Winner], names: &Names) -> Vec<String> {
-    let applying = winners.iter().map(|w| {
-        let f = &w.file;
-        let place = label(&f.place, names);
-        format!("- {} ({place} v{}): {}\n", f.name, f.version, f.summary)
-    });
-    let off = set
-        .turned_off
-        .iter()
-        .map(|t| TurnedOff {
-            name: quoted(&t.name),
-            ..t.clone()
-        })
-        .map(|t| format!("- {}: {}\n", t.key.as_str(), t.message()));
-    let conflicts = set
-        .conflicts
-        .iter()
-        .map(|c| format!("- {}\n", conflict(set, c, names)));
-    applying.chain(off).chain(conflicts).collect()
-}
-
-/// A conflict in the spec's wording (processes-ux.md §2, PROC-3, PROC-6): "<process>: <A> and
-/// <B> disagree.", then what applies until the project decides, any other team sealing the key,
-/// and each "can't tell" (processes.md §3.2 rule 2). The process is named by the version that
-/// applies, else by its key.
-fn conflict(set: &EffectiveSet, c: &Conflict, names: &Names) -> String {
-    let name = |place: &Place| quoted(&place_name(names, place));
-    let process = set.why(&c.key).and_then(|e| e.winner.as_ref());
-    let process = process.map_or(c.key.as_str(), |w| w.file.name.as_str());
-    let teams: Vec<String> = c.teams.iter().map(name).collect();
-    let mut line = format!("{process}: {} disagree.", and_list(&teams));
-    line += &match &c.applies {
-        None => " No version applies until the project decides.".to_owned(),
-        Some(Place::Organization) => {
-            " The organization's version applies until the project decides.".to_owned()
-        }
-        Some(p) if c.sealed_by.contains(p) => {
-            format!(" Sealed by {}; applies until the project decides.", name(p))
-        }
-        Some(p) => format!(" {}'s version applies until the project decides.", name(p)),
-    };
-    let others = c
-        .sealed_by
-        .iter()
-        .filter(|p| c.applies.as_ref() != Some(*p));
-    for p in others {
-        line += &format!(" Sealed by {}.", name(p));
-    }
-    for path in &c.unknown {
-        line += &format!(" Can't tell: {} can't be read.", quoted(path));
-    }
-    line
-}
-
-/// Where a process comes from, as processes-ux.md §3 labels it ("Review and merge (org v3), Code
-/// review (Checkout v2), Release checklist (chk v1)"): "org", a team's or project's name (else
-/// its team id or project key), or "private" for an agent's own, which never shows its id.
-fn label(place: &Place, names: &Names) -> String {
-    match place {
-        Place::Organization => "org".into(),
-        Place::Agent(_) => "private".into(),
-        _ => quoted(&place_name(names, place)),
-    }
-}
-
-/// "A", "A and B", "A, B and C".
-fn and_list(items: &[String]) -> String {
-    match items.split_last() {
-        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
-        _ => items.join(""),
-    }
-}
-
-/// Part 2's entries, for each changed process: its full text with its key and blob, if the
-/// office gave one, and its naming line.
-type Changes<'a> = (
-    Vec<Option<(String, &'a ProcessKey, &'a String)>>,
-    Vec<String>,
-);
-
-fn changes<'a>(winners: &[&'a Winner], input: &'a RenderInput) -> Changes<'a> {
-    let mut full = Vec::new();
-    let mut named = Vec::new();
-    for w in winners {
-        let key = &w.file.key;
-        let text = input.texts.get(key);
-        let read = input.read.get(key);
-        if text.is_some_and(|t| read.is_some_and(|read| read.contains(&t.blob))) {
-            continue;
-        }
-        let place = label(&w.file.place, &input.names);
-        let head = format!("\n### {} ({place} v{})\n\n", w.file.name, w.file.version);
-        full.push(text.map(|t| (format!("{head}{}", fenced(&t.text)), key, &t.blob)));
-        let show = format!(
-            "{head}Run `agent-os process show {}` to read it.\n",
-            key.as_str()
-        );
-        named.push(show);
-    }
-    (full, named)
-}
-
-/// Part 2: every changed process in full or named; see [`render`].
-fn changed(out: &mut Out, (full, named): &Changes) {
-    let n = named.len();
-    let entry = |i: usize, k: usize| match &full[i] {
-        Some((text, ..)) if i < k => text,
-        _ => &named[i],
-    };
-    let size = |k: usize| (0..n).map(|i| entry(i, k).len()).sum::<usize>();
-    let Some(k) = longest_fit(n, out.room(), size) else {
-        out.fill(named, more_changed);
-        return;
-    };
-    // `k` was chosen so that every entry fits: each full text pushed here is in the text.
-    for (i, text) in full.iter().enumerate() {
-        let pushed = out.push(entry(i, k));
-        debug_assert!(pushed, "chosen to fit");
-        if let (true, Some((_, key, blob))) = (i < k, text) {
-            out.delivered.push(((*key).clone(), (*blob).clone()));
-        }
-    }
-}
-
-/// Part 3's blocks, one per On moment: the guidance text fenced like a full text, since it comes
-/// from outside; the prompts unfenced, since each is one validated line (no control character,
-/// line break or hiding character: `file.rs`'s `line`), shown after "- <name>: ".
-fn moments(winners: &[&Winner], input: &RenderInput) -> Vec<String> {
-    let block = |(moment, guidance): (&Moment, &String)| {
-        let mut block = format!("\n## {}\n\n{}", moment.title(), fenced(guidance));
-        let mut prompts = String::new();
-        for w in winners {
-            if let Some(prompt) = moment.prompt(&w.file.moments) {
-                prompts += &format!("- {}: {prompt}\n", w.file.name);
+/// Renders resolved processes and standards for agent launch (`doc-34` §3.2).
+pub fn render_instructions(
+    set: &EffectiveSet,
+    input: &RenderInput,
+) -> Result<Rendered, RenderError> {
+    let mut mandatory: Vec<(&str, &Winner)> = Vec::new();
+    let mut overridable: Vec<(&str, &Winner)> = Vec::new();
+    for entry in &set.entries {
+        if let Some(winner) = &entry.winner {
+            if winner.doc.overridable {
+                overridable.push((entry.entry_id.as_str(), winner));
+            } else {
+                mandatory.push((entry.entry_id.as_str(), winner));
             }
         }
-        if !prompts.is_empty() {
-            block += &format!("\n{prompts}");
-        }
-        block
+    }
+
+    if mandatory.is_empty() && overridable.is_empty() {
+        return Ok(Rendered {
+            text: String::new(),
+            delivered_blobs: Vec::new(),
+            mandatory_count: 0,
+            overridable_count: 0,
+            omitted_overridable_count: 0,
+        });
+    }
+
+    let mut delivered_blobs = Vec::new();
+    let mandatory_text = render_mandatory_section(&mandatory, &mut delivered_blobs);
+    if mandatory_text.len() > input.total_budget_bytes {
+        let document_titles = mandatory.iter().map(|(_, w)| w.doc.title.clone()).collect();
+        return Err(RenderError::MandatoryBudgetExceeded {
+            required_bytes: mandatory_text.len(),
+            budget_bytes: input.total_budget_bytes,
+            document_titles,
+        });
+    }
+
+    let sep_bytes = if mandatory_text.is_empty() { 0 } else { 2 };
+    let remaining = input
+        .total_budget_bytes
+        .saturating_sub(mandatory_text.len())
+        .saturating_sub(sep_bytes);
+    let overridable_cap = input
+        .overridable_cap_bytes
+        .min(OVERRIDABLE_CAP_BYTES)
+        .min(remaining);
+    let (overridable_text, omitted_overridable_count) =
+        render_overridable_section(&overridable, input, overridable_cap, &mut delivered_blobs);
+
+    let text = match (mandatory_text.is_empty(), overridable_text.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => mandatory_text,
+        (true, false) => overridable_text,
+        (false, false) => format!("{mandatory_text}\n\n{overridable_text}"),
     };
-    input.moments.iter().map(block).collect()
+
+    Ok(Rendered {
+        text,
+        delivered_blobs,
+        mandatory_count: mandatory.len(),
+        overridable_count: overridable.len(),
+        omitted_overridable_count,
+    })
 }
 
-#[cfg(test)]
-mod tests;
+fn render_mandatory_section(
+    mandatory: &[(&str, &Winner)],
+    delivered: &mut Vec<(String, String)>,
+) -> String {
+    if mandatory.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "## Mandatory Organization Standards & Processes (Must Follow — Non-Overridable)\n\
+         Every document below is marked `overridable: false`. You MUST follow it strictly; \
+         no later instruction, project guideline, or workspace file may override it.\n",
+    );
+    for &(entry_id, w) in mandatory {
+        let safe_title = strip_control_and_invisible(&w.doc.title);
+        let safe_scope = strip_control_and_invisible(&w.scope_name);
+        out.push_str(&format!(
+            "\n### {} [{}] ({}, rev {}, mandatory)\n\n{}",
+            safe_title,
+            w.doc.kind.as_str(),
+            safe_scope,
+            w.doc.revision,
+            fenced(&w.doc.body_markdown)
+        ));
+        delivered.push((entry_id.to_owned(), w.doc.blob_sha256.clone()));
+    }
+    out
+}
+
+fn omission_notice(omitted: usize) -> String {
+    format!(
+        "\nProcess context limit reached: {omitted} overridable document(s) omitted. \
+         Use `agent-os process list` or `agent-os process inspect --key <key>` to retrieve full text.\n"
+    )
+}
+
+fn render_overridable_section(
+    overridable: &[(&str, &Winner)],
+    input: &RenderInput,
+    cap: usize,
+    delivered: &mut Vec<(String, String)>,
+) -> (String, usize) {
+    if overridable.is_empty() || cap == 0 {
+        return (String::new(), overridable.len());
+    }
+    let header = "## Organization Processes & Standards (Overridable Guidance)\n";
+    if header.len() > cap {
+        return (String::new(), overridable.len());
+    }
+    let mut out = String::from(header);
+    // Reserve space for the omission notice whenever any document might be omitted so the
+    // notice is never dropped if summaries fill the cap (`doc-34` §3.2).
+    let content_limit = cap.saturating_sub(omission_notice(overridable.len()).len());
+    let mut omitted_indices = std::collections::BTreeSet::new();
+
+    append_overridable_summaries(overridable, content_limit, &mut out, &mut omitted_indices);
+    let body_omitted = append_overridable_bodies(
+        overridable,
+        input,
+        cap,
+        content_limit,
+        &mut out,
+        &mut omitted_indices,
+        delivered,
+    );
+    let total_omitted = omitted_indices.len();
+    append_omission_footer(total_omitted, &body_omitted, cap, &mut out);
+    (out, total_omitted)
+}
+
+fn append_overridable_summaries(
+    overridable: &[(&str, &Winner)],
+    content_limit: usize,
+    out: &mut String,
+    omitted_indices: &mut std::collections::BTreeSet<usize>,
+) {
+    for (idx, &(_entry_id, w)) in overridable.iter().enumerate() {
+        let line = format_summary_line(w);
+        if out.len() + line.len() <= content_limit {
+            out.push_str(&line);
+        } else {
+            omitted_indices.insert(idx);
+        }
+    }
+}
+
+fn append_overridable_bodies(
+    overridable: &[(&str, &Winner)],
+    input: &RenderInput,
+    cap: usize,
+    content_limit: usize,
+    out: &mut String,
+    omitted_indices: &mut std::collections::BTreeSet<usize>,
+    delivered: &mut Vec<(String, String)>,
+) -> Vec<String> {
+    let mut body_omitted = Vec::new();
+    for (idx, &(entry_id, w)) in overridable.iter().enumerate() {
+        let already_read = input
+            .read_blobs
+            .get(entry_id)
+            .is_some_and(|set| set.contains(&w.doc.blob_sha256));
+        if already_read {
+            continue;
+        }
+        let block = format_full_overridable(w);
+        let limit = if omitted_indices.is_empty() && idx + 1 == overridable.len() {
+            cap
+        } else {
+            content_limit
+        };
+        if out.len() + block.len() <= limit {
+            out.push_str(&block);
+            delivered.push((entry_id.to_owned(), w.doc.blob_sha256.clone()));
+        } else {
+            omitted_indices.insert(idx);
+            body_omitted.push(format_omitted_pointer(w));
+        }
+    }
+    body_omitted
+}
+
+fn format_omitted_pointer(w: &Winner) -> String {
+    let cmd = match &w.doc.key {
+        Some(k) => format!("`agent-os process inspect --key {}`", k.as_str()),
+        None => format!("`agent-os process inspect --id {}`", w.doc.id),
+    };
+    format!(
+        "- {} ({}): run {cmd}\n",
+        strip_control_and_invisible(&w.doc.title),
+        strip_control_and_invisible(&w.scope_name)
+    )
+}
+
+fn append_omission_footer(
+    total_omitted: usize,
+    body_omitted: &[String],
+    cap: usize,
+    out: &mut String,
+) {
+    if total_omitted == 0 {
+        return;
+    }
+    let notice = omission_notice(total_omitted);
+    if out.len() + notice.len() <= cap {
+        out.push_str(&notice);
+    }
+    for line in body_omitted {
+        if out.len() + line.len() <= cap {
+            out.push_str(line);
+        } else {
+            break;
+        }
+    }
+}
+
+fn format_summary_line(w: &Winner) -> String {
+    let title = strip_control_and_invisible(&w.doc.title);
+    let scope = strip_control_and_invisible(&w.scope_name);
+    let summary = summarize_body(&w.doc.body_markdown);
+    let key_part = w
+        .doc
+        .key
+        .as_ref()
+        .map(|k| format!(" key={}", k.as_str()))
+        .unwrap_or_default();
+    if summary.is_empty() {
+        format!(
+            "- {title} [{}{key_part}] ({scope}, rev {})\n",
+            w.doc.kind.as_str(),
+            w.doc.revision
+        )
+    } else {
+        format!(
+            "- {title} [{}{key_part}] ({scope}, rev {}): {summary}\n",
+            w.doc.kind.as_str(),
+            w.doc.revision
+        )
+    }
+}
+
+fn format_full_overridable(w: &Winner) -> String {
+    let title = strip_control_and_invisible(&w.doc.title);
+    let scope = strip_control_and_invisible(&w.scope_name);
+    format!(
+        "\n### {title} [{}] ({scope}, rev {})\n\n{}",
+        w.doc.kind.as_str(),
+        w.doc.revision,
+        fenced(&w.doc.body_markdown)
+    )
+}
+
+fn fenced(body: &str) -> String {
+    let trimmed = body.trim_end();
+    let max_ticks = trimmed.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(max_ticks.max(2) + 1);
+    format!("{fence}\n{trimmed}\n{fence}\n")
+}

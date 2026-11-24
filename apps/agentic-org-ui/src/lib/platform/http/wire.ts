@@ -116,17 +116,15 @@ const jsonObject: Reader<JsonObject> = (value) => {
 	return json(value) as JsonObject;
 };
 export const readJsonObject = checked(jsonObject);
+const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const operationId: Reader<string> = (value) => {
 	const id = text(value);
-	return /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(id) ? id : invalid();
+	return UUID_V7.test(id) ? id : invalid();
 };
 export const readOperationId = checked(operationId);
 export function operationTimeMs(value: unknown): number {
 	const id = readOperationId(value);
-	return [...id.slice(0, 10)].reduce(
-		(time, digit) => time * 32 + '0123456789ABCDEFGHJKMNPQRSTVWXYZ'.indexOf(digit),
-		0
-	);
+	return Number.parseInt(id.slice(0, 8) + id.slice(9, 13), 16);
 }
 export const readVersion = checked(object({ api_version: u32, contract_revision: u32 }));
 export type Version = ReturnType<typeof readVersion>;
@@ -469,13 +467,69 @@ export const readCancelResult = checked((value) => {
 });
 export const cancelStatus = (result: ReturnType<typeof readCancelResult>): number | undefined =>
 	['abandoned', 'linked'].includes(result.state) ? 200 : undefined;
+const listenScheme = word(['https', 'http_loopback', 'http_published'] as const);
+export type ListenScheme = ReturnType<typeof listenScheme>;
+export const readAccess = checked(
+	object({
+		auth_enabled: bool,
+		listen_scheme: listenScheme
+	})
+);
+export type AccessView = ReturnType<typeof readAccess>;
+
+export type HstsMode = 'off' | 'on' | 'clear';
+const strictHsts: Reader<HstsMode> = (value) => {
+	const name = text(value);
+	return name === 'off' || name === 'on' || name === 'clear' ? name : invalid();
+};
+export type TlsEnableRequest =
+	| { mode: 'self_signed'; hsts?: HstsMode }
+	| { mode: 'supplied'; cert: string; key: string; hsts?: HstsMode };
+export const readTlsEnableRequest: Reader<TlsEnableRequest> = checked((value) => {
+	const input = fields(value);
+	const keys = Object.keys(input);
+	const mode = text(field(input, 'mode'));
+	const hsts = optional(strictHsts)(field(input, 'hsts'));
+	if (mode === 'self_signed') {
+		if (keys.some((key) => key !== 'mode' && key !== 'hsts')) return invalid();
+		return hsts === undefined ? { mode } : { mode, hsts };
+	}
+	if (mode === 'supplied') {
+		if (keys.some((key) => !['mode', 'cert', 'key', 'hsts'].includes(key))) return invalid();
+		const cert = nonempty(field(input, 'cert'));
+		const key = nonempty(field(input, 'key'));
+		return hsts === undefined ? { mode, cert, key } : { mode, cert, key, hsts };
+	}
+	return invalid();
+});
+export const readTlsEnableResult = checked(
+	object({
+		scheme: listenScheme,
+		origin: nonempty,
+		fingerprint: nonempty,
+		source: word(['made', 'supplied'] as const),
+		restart_required: bool
+	})
+);
+export type TlsEnableResult = ReturnType<typeof readTlsEnableResult>;
+
+export const readCliApprovalDecide = checked(object({ link: nonempty, approve: bool }));
+export type CliApprovalDecide = ReturnType<typeof readCliApprovalDecide>;
+export const readCliApprovalDecision = checked(
+	object({
+		status: word(['approved', 'declined'] as const)
+	})
+);
+export type CliApprovalDecision = ReturnType<typeof readCliApprovalDecision>;
+
 export const readInstance = checked(
 	object({
 		instance_id: text,
 		name: text,
 		server_version: text,
 		web_status: word(['ok', 'degraded'] as const),
-		listen_scheme: word(['https', 'http_loopback', 'http_published'] as const),
+		listen_scheme: listenScheme,
+		auth_enabled: optional(bool),
 		tls: optional(word(['ok', 'missing', 'expiring'] as const)),
 		server_time_ms: readSafeInteger
 	})
@@ -617,19 +671,15 @@ const memberReader = object({
 	id: text,
 	kind: word(['agent', 'person'] as const),
 	name: text,
+	handle: optional(text),
+	home_team_id: optional(text),
+	title_in_team: optional(text),
 	contact: optional(text),
 	owner: omittedFalse,
 	office_id: optional(text),
 	agent: optional(agentReader),
 	reports_to_member_id: optional(text),
 	created_at: optional(text),
-	version: readSafeInteger
-});
-const membershipReader = object({
-	id: text,
-	team_id: text,
-	member_id: text,
-	title_in_team: optional(text),
 	version: readSafeInteger
 });
 const projectTeamReader = object({
@@ -661,26 +711,13 @@ const projectReader = object({
 	created_at: optional(text),
 	version: defaulted(readSafeInteger, () => 0)
 });
-const areaReader = object({
-	id: text,
-	project_id: text,
-	name: text,
-	team_id: optional(text),
-	lead_member_id: optional(text),
-	general: omittedFalse,
-	deleted: omittedFalse,
-	replaced_by: optional(text),
-	version: readSafeInteger
-});
 export const readOrgSnapshot = checked(
 	object({
 		position: readPosition,
 		teams: array(teamReader),
 		members: array(memberReader),
-		memberships: array(membershipReader),
 		projects: defaulted(array(projectReader), () => []),
-		project_teams: defaulted(array(projectTeamReader), () => []),
-		areas: defaulted(array(areaReader), () => [])
+		project_teams: defaulted(array(projectTeamReader), () => [])
 	})
 );
 const cursor = nonempty;

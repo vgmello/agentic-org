@@ -42,12 +42,15 @@ pub(crate) struct Authentication {
     dummy: Verifier,
     hashing: AtomicUsize,
     sessions: Mutex<BTreeMap<[u8; 32], Session>>,
+    web_channels: Mutex<BTreeMap<String, WebChannel>>,
+    touch_batcher: touch_batch::TouchBatcher,
 }
 
 /// Monotonic expiry also runs when no client makes another request. Removing a
 /// session drops its issued channel grants through the actual transfer service.
 pub(crate) struct Lifecycle {
     stop: Arc<std::sync::atomic::AtomicBool>,
+    authentication: Weak<Authentication>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl Lifecycle {
@@ -55,6 +58,7 @@ impl Lifecycle {
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let weak = Arc::downgrade(authentication);
+        let for_drop = Arc::downgrade(authentication);
         let thread = std::thread::Builder::new()
             .name("org-session-lifecycle".into())
             .spawn(move || {
@@ -69,6 +73,7 @@ impl Lifecycle {
             })?;
         Ok(Self {
             stop,
+            authentication: for_drop,
             thread: Some(thread),
         })
     }
@@ -79,10 +84,14 @@ impl Lifecycle {
     /// is left to end on its own: a stopping host does not wait for it past its bound.
     pub(crate) fn join_by(mut self, until: std::time::Instant) -> bool {
         self.stop.store(true, Ordering::SeqCst);
-        self.thread.take().is_none_or(|thread| {
+        let joined = self.thread.take().is_none_or(|thread| {
             thread.thread().unpark();
             crate::sync::join_by(thread, until)
-        })
+        });
+        if let Some(auth) = self.authentication.upgrade() {
+            auth.flush_touches(true);
+        }
+        joined
     }
 }
 impl Drop for Lifecycle {
@@ -91,6 +100,9 @@ impl Drop for Lifecycle {
         if let Some(thread) = self.thread.take() {
             thread.thread().unpark();
             let _ = thread.join();
+        }
+        if let Some(auth) = self.authentication.upgrade() {
+            auth.flush_touches(true);
         }
     }
 }
@@ -108,6 +120,22 @@ struct Channel {
     endpoint: Weak<crate::supervisor::channels::Endpoint>,
     organization: String,
     _slot: crate::supervisor::channels::ChannelSlot,
+}
+struct WebChannel {
+    endpoint: Weak<crate::supervisor::channels::Endpoint>,
+    organization: String,
+    connection: Weak<AtomicBool>,
+    _slot: crate::supervisor::channels::ChannelSlot,
+}
+impl WebChannel {
+    fn live(&self) -> bool {
+        self._slot.is_live()
+            && self.endpoint.upgrade().is_some_and(|e| e.is_live())
+            && self
+                .connection
+                .upgrade()
+                .is_some_and(|closed| !closed.load(Ordering::SeqCst))
+    }
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -277,6 +305,37 @@ impl Authentication {
                 .collect::<Vec<_>>()
         };
         drop(removed); // Revoke outside the map lock, even on idle/failed callers.
+        if let Ok(mut channels) = self.web_channels.lock() {
+            channels.retain(|_, channel| channel.live());
+        }
+        self.flush_touches(false);
+    }
+    pub(crate) fn flush_touches(&self, force: bool) {
+        if let Ok(ms) = wall_ms().and_then(|v| i64::try_from(v).map_err(|_| unavailable())) {
+            self.touch_batcher.flush(&self.db, ms, force);
+        }
+    }
+    pub(crate) fn revoke_browser_sessions(&self, ended: &[crate::sessions::Ended]) {
+        if ended.is_empty() {
+            return;
+        }
+        let endpoints: Vec<Arc<crate::supervisor::channels::Endpoint>> = {
+            let Ok(mut channels) = self.web_channels.lock() else {
+                return;
+            };
+            channels.retain(|_, channel| channel.live());
+            let mut seen = std::collections::BTreeSet::new();
+            channels
+                .values()
+                .filter_map(|channel| channel.endpoint.upgrade())
+                .filter(|endpoint| seen.insert(endpoint.office.clone()))
+                .collect()
+        };
+        for endpoint in endpoints {
+            for session in ended {
+                let _ = endpoint.revoke(&session.id);
+            }
+        }
     }
     pub(crate) fn writers(
         &self,
@@ -285,7 +344,7 @@ impl Authentication {
     ) -> std::io::Result<Arc<crate::writer::Writers>> {
         crate::writer::Writers::open(
             Arc::clone(&self._custody),
-            Arc::clone(&self.db),
+            Arc::clone(&self.db) as Arc<dyn crate::hostdb::HostStore>,
             instance,
             root,
         )
@@ -308,6 +367,9 @@ impl Authentication {
         // Session Drop revokes issued worker grants; never hold the session map
         // while waiting on a bounded transfer or closing a failed worker.
         drop(removed);
+        if let Ok(mut channels) = self.web_channels.lock() {
+            channels.retain(|_, c| !c.connection.ptr_eq(&alive) && c.live());
+        }
     }
     pub(crate) fn open(
         home: &std::path::Path,
@@ -341,6 +403,8 @@ impl Authentication {
             dummy,
             hashing: AtomicUsize::new(0),
             sessions: Mutex::new(BTreeMap::new()),
+            web_channels: Mutex::new(BTreeMap::new()),
+            touch_batcher: touch_batch::TouchBatcher::new(),
         })
     }
     pub(crate) fn verify(
@@ -421,6 +485,23 @@ impl Authentication {
             return Err(denied());
         }
         let account = current.ok_or_else(denied)?;
+        self.issue(connection, account)
+    }
+    /// Issues a connection-bound native session (`SES-8`) for an account that approved a
+    /// terminal sign-in link in the browser (`FC-173` / `SIGN-40`), without a password.
+    pub(crate) fn issue_for_account(
+        &self,
+        connection: &Connection,
+        account_id: &AccountId,
+    ) -> Result<AccountVerifyResult, ApiError> {
+        let account = self
+            .db
+            .account_authority(account_id)
+            .map_err(storage)?
+            .ok_or_else(denied)?;
+        if account.revoked_at_ms().is_some() {
+            return Err(denied());
+        }
         self.issue(connection, account)
     }
     fn issue(
@@ -604,7 +685,6 @@ impl Authentication {
         office: &str,
         channel: &str,
     ) -> Result<org_host_control::ops::SessionGrantResult, ApiError> {
-        use hmac::{Hmac, Mac};
         if !connection.channel_received(channel) {
             return Err(denied());
         }
@@ -627,38 +707,68 @@ impl Authentication {
         let remaining = ABSOLUTE
             .checked_sub(Instant::now().duration_since(session.created))
             .ok_or_else(denied)?;
-        let ttl = u64::try_from(remaining.min(Duration::from_secs(300)).as_millis())
-            .map_err(|_| unavailable())?;
-        if ttl == 0 {
-            return Err(denied());
-        }
-        let exp = wall_ms()?.checked_add(ttl).ok_or_else(unavailable)?;
-        let claims = org_proto::GrantClaims {
-            account: account.account_id().into(),
-            member: link.member_id().into(),
-            org_id: bound.organization.clone(),
-            office_id: office.into(),
-            channel_id: channel.into(),
-            session_id: session.id.clone(),
-            exp,
-        };
-        let mut mac = Hmac::<Sha256>::new_from_slice(endpoint.key.expose_bytes())
-            .map_err(|_| unavailable())?;
-        mac.update(&org_proto::grant_mac_input(&claims).ok_or_else(unavailable)?);
-        let mut bytes = mac.finalize().into_bytes();
-        let mut tag: [u8; 32] = bytes[..].try_into().map_err(|_| unavailable())?;
-        let signature = org_proto::GrantMac::from_bytes(tag);
-        crate::secrets::zero(&mut tag);
-        bytes.fill(0);
-        Ok(org_host_control::ops::SessionGrantResult {
-            grant: org_proto::Grant {
-                claims,
-                mac: signature,
+        sign_grant(
+            &endpoint,
+            GrantInput {
+                account: account.account_id(),
+                member: link.member_id(),
+                org_id: &bound.organization,
+                office_id: office,
+                channel_id: channel,
+                session_id: &session.id,
+                ttl: remaining.min(Duration::from_secs(300)),
             },
-        })
+        )
     }
 }
 
+pub(super) struct GrantInput<'a> {
+    pub(super) account: &'a str,
+    pub(super) member: &'a str,
+    pub(super) org_id: &'a str,
+    pub(super) office_id: &'a str,
+    pub(super) channel_id: &'a str,
+    pub(super) session_id: &'a str,
+    pub(super) ttl: Duration,
+}
+
+pub(super) fn sign_grant(
+    endpoint: &crate::supervisor::channels::Endpoint,
+    input: GrantInput<'_>,
+) -> Result<org_host_control::ops::SessionGrantResult, ApiError> {
+    use hmac::{Hmac, Mac};
+    let ttl_ms = u64::try_from(input.ttl.as_millis()).map_err(|_| unavailable())?;
+    if ttl_ms == 0 {
+        return Err(denied());
+    }
+    let exp = wall_ms()?.checked_add(ttl_ms).ok_or_else(unavailable)?;
+    let claims = org_proto::GrantClaims {
+        account: input.account.into(),
+        member: input.member.into(),
+        org_id: input.org_id.into(),
+        office_id: input.office_id.into(),
+        channel_id: input.channel_id.into(),
+        session_id: input.session_id.into(),
+        exp,
+    };
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(endpoint.key.expose_bytes()).map_err(|_| unavailable())?;
+    mac.update(&org_proto::grant_mac_input(&claims).ok_or_else(unavailable)?);
+    let mut bytes = mac.finalize().into_bytes();
+    let mut tag: [u8; 32] = bytes[..].try_into().map_err(|_| unavailable())?;
+    let signature = org_proto::GrantMac::from_bytes(tag);
+    crate::secrets::zero(&mut tag);
+    bytes.fill(0);
+    Ok(org_host_control::ops::SessionGrantResult {
+        grant: org_proto::Grant {
+            claims,
+            mac: signature,
+        },
+    })
+}
+
 mod browser;
+mod multi_person;
 #[cfg(test)]
 pub(crate) mod tests;
+mod touch_batch;

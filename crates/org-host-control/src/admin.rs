@@ -39,7 +39,7 @@ impl Call for AdminReset {
     type Result = AdminLinkResult;
 }
 
-/// The outcome of a link call. Not `Clone`: `Issued` carries the secret.
+/// The outcome of a link call. Not `Clone`: `Issued` / `ResetPassword` carry the secret.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AdminLinkResult {
@@ -48,9 +48,16 @@ pub enum AdminLinkResult {
         url: OneTimeLinkUrl,
         expires_at_ms: i64,
     },
+    /// A new set-password link for the existing administrator (`admin.reset` when an
+    /// administrator exists; SIGN-32 / spec §4a.2). Show once; expires at `expires_at_ms`.
+    ResetPassword {
+        login: String,
+        url: OneTimeLinkUrl,
+        expires_at_ms: i64,
+    },
     /// A link was already issued; no secret is returned again.
     AlreadyIssued,
-    /// An administrator exists; no registration link is issued.
+    /// An administrator exists; no initial registration link is issued.
     AdministratorPresent,
 }
 

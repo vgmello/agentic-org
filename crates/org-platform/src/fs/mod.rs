@@ -2,8 +2,8 @@
 //!
 //! Linux host design section 4, `fs`. The consumers are `org-host` (the instance
 //! registry, the release store, the host database, the writer marker, the recovery
-//! package export), `org-office` (durable publication), `org-client` (the agent spool)
-//! and `org-spool` (safe reads). Each keeps its policy: what is flushed and when, which
+//! package export), `org-office` (durable publication), and `org-client` (the agent spool).
+//! Each keeps its policy: what is flushed and when, which
 //! names are renamed, what a refusal means to a person. This module only asks the
 //! system, and takes plain data (a descriptor, C strings, a path to name in a refusal).
 //!
@@ -183,4 +183,17 @@ pub fn check_instance_root(dir: &File, path: &Path, root: bool) -> Result<(), Fi
 /// `ramfs` and `hugetlbfs`. macOS has no such check and accepts every directory.
 pub fn require_disk(dir: &File, path: &Path) -> Result<(), FilesystemRefusal> {
     native::require_disk(dir, path)
+}
+
+/// Restrict an existing directory at `path` so only its owner can read, write, or enter it
+/// (mode `0700` on macOS and GNU/Linux). Every unsupported target fails closed with the
+/// `fs` refusal rather than silently leaving directory permissions unhardened.
+pub fn set_owner_only_dir(path: &Path) -> io::Result<()> {
+    native::set_owner_only_dir(path)
+}
+
+/// Atomically create a new directory at `path` accessible only to its owner (mode `0700` on
+/// macOS and GNU/Linux, with no `0755` window). Every unsupported target fails closed.
+pub fn create_owner_only_dir(path: &Path) -> io::Result<()> {
+    native::create_owner_only_dir(path)
 }

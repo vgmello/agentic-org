@@ -11,6 +11,7 @@ import type {
 	OrganizationCost,
 	PeriodRequest,
 	ProjectInvestment,
+	UsageRecord,
 	UsageTotals
 } from '../../src/lib/modules/costs/types';
 import type { HomeProject } from '../../src/lib/modules/home/types';
@@ -20,6 +21,9 @@ import type { OfficesOverview } from '../../src/lib/modules/offices/types';
 import type { ProjectRow } from '../../src/lib/modules/projects/types';
 import type { TeamRow } from '../../src/lib/modules/teams/types';
 import { POC_BUILD_OFFICE_ID, POC_HQ_OFFICE_ID, pocBuildOffice } from './mock-mode';
+import usage from './data/costs/usage.json' with { type: 'json' };
+
+export const POC_USAGE_NOW_MS = Date.parse(usage.now);
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -71,6 +75,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'tess',
 				name: 'Tess',
 				kind: 'agent',
+				home_team_id: 'leadership',
 				reports_to_member_id: 'you',
 				office_id: hqOfficeId,
 				agent: {
@@ -87,6 +92,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'maya',
 				name: 'Maya Chen',
 				kind: 'person',
+				home_team_id: 'leadership',
 				reports_to_member_id: 'you',
 				version: 1
 			},
@@ -94,6 +100,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'ada',
 				name: 'Ada',
 				kind: 'agent',
+				home_team_id: 'leadership',
 				reports_to_member_id: 'you',
 				office_id: hqOfficeId,
 				agent: {
@@ -110,6 +117,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'rowan',
 				name: 'Rowan',
 				kind: 'agent',
+				home_team_id: 'platform',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -126,6 +134,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'eden',
 				name: 'Eden Lin',
 				kind: 'agent',
+				home_team_id: 'product',
 				reports_to_member_id: 'you',
 				office_id: hqOfficeId,
 				agent: {
@@ -142,6 +151,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'emery',
 				name: 'Emery Park',
 				kind: 'agent',
+				home_team_id: 'product',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -158,6 +168,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'tomas',
 				name: 'Tomas',
 				kind: 'agent',
+				home_team_id: 'quality',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -174,6 +185,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'kai',
 				name: 'Kai',
 				kind: 'agent',
+				home_team_id: 'platform',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -190,6 +202,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'sage',
 				name: 'Sage',
 				kind: 'agent',
+				home_team_id: 'platform',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -206,6 +219,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'quinn',
 				name: 'Quinn',
 				kind: 'agent',
+				home_team_id: 'platform',
 				reports_to_member_id: 'ada',
 				office_id: POC_BUILD_OFFICE_ID,
 				agent: {
@@ -222,6 +236,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'jules',
 				name: 'Jules',
 				kind: 'agent',
+				home_team_id: 'app',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -238,6 +253,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'avery',
 				name: 'Avery',
 				kind: 'agent',
+				home_team_id: 'app',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -254,6 +270,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'noor',
 				name: 'Noor Haddad',
 				kind: 'agent',
+				home_team_id: 'quality',
 				reports_to_member_id: 'tomas',
 				agent: {
 					status: 'active',
@@ -265,21 +282,6 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				},
 				version: 1
 			}
-		],
-		memberships: [
-			{ id: 'ms-tess', team_id: 'leadership', member_id: 'tess', version: 1 },
-			{ id: 'ms-maya', team_id: 'leadership', member_id: 'maya', version: 1 },
-			{ id: 'ms-ada', team_id: 'leadership', member_id: 'ada', version: 1 },
-			{ id: 'ms-eden', team_id: 'product', member_id: 'eden', version: 1 },
-			{ id: 'ms-emery', team_id: 'product', member_id: 'emery', version: 1 },
-			{ id: 'ms-rowan', team_id: 'platform', member_id: 'rowan', version: 1 },
-			{ id: 'ms-kai', team_id: 'platform', member_id: 'kai', version: 1 },
-			{ id: 'ms-sage', team_id: 'platform', member_id: 'sage', version: 1 },
-			{ id: 'ms-quinn', team_id: 'platform', member_id: 'quinn', version: 1 },
-			{ id: 'ms-jules', team_id: 'app', member_id: 'jules', version: 1 },
-			{ id: 'ms-avery', team_id: 'app', member_id: 'avery', version: 1 },
-			{ id: 'ms-tomas', team_id: 'quality', member_id: 'tomas', version: 1 },
-			{ id: 'ms-noor', team_id: 'quality', member_id: 'noor', version: 1 }
 		],
 		projects: [
 			{ id: 'office-federation', name: 'Office federation', key: 'v0.9', version: 1 },
@@ -1489,6 +1491,259 @@ export function pocWorkActivity(idOrRef: string): WorkEvent[] {
 			org_position: { epoch: 1, seq: 1 },
 			change: { type: 'created' }
 		}
+	];
+}
+
+export type PocStoredUsageRecord = {
+	id: string;
+	occurredAt: string;
+	consumer: { kind: 'agent'; memberId: string } | { kind: 'one_off'; label: string };
+	runtime: string;
+	provider: string;
+	model: string;
+	attribution: {
+		basis: UsageRecord['attribution']['basis'];
+		taskRef?: string;
+		taskTitle?: string;
+		projectId?: string;
+		teamId?: string;
+	};
+	workType: 'build' | 'run' | null;
+	tokens: [number, number, number, number, number] | null;
+	tokenStatus: UsageRecord['tokenStatus'];
+	costMicroUsd: number | null;
+	costBasis: UsageRecord['costBasis'];
+	costStatus: UsageRecord['costStatus'];
+	priceId?: string | null;
+	apiEquivalent?: boolean;
+	issue?: string;
+	supersedesId?: string;
+	correction?: { reason: string; byName: string; at: string };
+};
+
+// Sums to $142.00 this month across Agentic Org's 5 active agents (Jules $40, Ada $32, Rowan $28, Kai $24, Eden $18),
+// 3 projects (agency-v1 $64, office-federation $45, look-feel $33), and 2 work types (build $112, run $30).
+// Shared by both `e2e/fakes/modules/costs.ts` and `e2e/fakes/modules/workitems.ts` so org/member cost links
+// and task detail cost cards always show the exact same records and totals.
+export function pocUsageRecords(nowMs = POC_USAGE_NOW_MS): PocStoredUsageRecord[] {
+	const rec = (
+		id: string,
+		hoursAgo: number,
+		memberId: string,
+		runtime: string,
+		provider: string,
+		model: string,
+		projectId: string,
+		teamId: string,
+		taskRef: string,
+		taskTitle: string,
+		workType: 'build' | 'run',
+		costMicroUsd: number
+	): PocStoredUsageRecord => ({
+		id,
+		occurredAt: new Date(nowMs - hoursAgo * 3600_000).toISOString(),
+		consumer: { kind: 'agent', memberId },
+		runtime,
+		provider,
+		model,
+		attribution: { basis: 'current_task', taskRef, taskTitle, projectId, teamId },
+		workType,
+		tokens: [
+			Math.round((costMicroUsd / 1_000_000) * 6000),
+			Math.round((costMicroUsd / 1_000_000) * 1800),
+			Math.round((costMicroUsd / 1_000_000) * 3200),
+			0,
+			0
+		],
+		tokenStatus: 'complete',
+		costMicroUsd,
+		costBasis: 'runtime_estimate',
+		costStatus: 'complete'
+	});
+
+	return [
+		rec(
+			'poc-u-1',
+			2,
+			'jules',
+			'codex',
+			'openai',
+			'gpt-6.1-sol',
+			'agency-v1',
+			'app',
+			'T-124',
+			'CSP gates in the UI suite',
+			'build',
+			18_000_000
+		),
+		rec(
+			'poc-u-2',
+			6,
+			'jules',
+			'codex',
+			'openai',
+			'gpt-6.1-sol',
+			'agency-v1',
+			'app',
+			'BUG-86',
+			'Chat scrolls to top after sending',
+			'build',
+			14_000_000
+		),
+		rec(
+			'poc-u-3',
+			14,
+			'jules',
+			'codex',
+			'openai',
+			'gpt-6.1-sol',
+			'look-feel',
+			'app',
+			'BUG-84',
+			'Search placeholder fails contrast',
+			'run',
+			8_000_000
+		),
+		rec(
+			'poc-u-4',
+			4,
+			'ada',
+			'claude_code',
+			'anthropic',
+			'claude-sonnet-4-5',
+			'agency-v1',
+			'leadership',
+			'T-112',
+			'Re-sequence BUG-70 nav slices for IA v2',
+			'build',
+			14_000_000
+		),
+		rec(
+			'poc-u-5',
+			16,
+			'ada',
+			'claude_code',
+			'anthropic',
+			'claude-sonnet-4-5',
+			'office-federation',
+			'platform',
+			'T-118',
+			'Custody lock fix',
+			'build',
+			10_000_000
+		),
+		rec(
+			'poc-u-6',
+			26,
+			'ada',
+			'claude_code',
+			'anthropic',
+			'claude-sonnet-4-5',
+			'office-federation',
+			'platform',
+			'BUG-81',
+			'Satellite stays Offline after the Mac wakes',
+			'run',
+			8_000_000
+		),
+		rec(
+			'poc-u-7',
+			10,
+			'rowan',
+			'codex',
+			'openai',
+			'gpt-6.1-sol',
+			'office-federation',
+			'platform',
+			'T-138',
+			'Enrollment certificates for new offices',
+			'build',
+			18_000_000
+		),
+		rec(
+			'poc-u-8',
+			30,
+			'rowan',
+			'codex',
+			'openai',
+			'gpt-6.1-sol',
+			'agency-v1',
+			'platform',
+			'BUG-88',
+			'Inbox loses replies when the office restarts',
+			'run',
+			10_000_000
+		),
+		rec(
+			'poc-u-9',
+			8,
+			'kai',
+			'codex',
+			'openai',
+			'gpt-6.1-sol',
+			'look-feel',
+			'product',
+			'T-131',
+			'Information architecture v2 prototype',
+			'build',
+			16_000_000
+		),
+		rec(
+			'poc-u-10',
+			22,
+			'kai',
+			'codex',
+			'openai',
+			'gpt-6.1-sol',
+			'agency-v1',
+			'platform',
+			'T-121',
+			'Split codec 2a.3.2b',
+			'build',
+			8_000_000
+		),
+		rec(
+			'poc-u-11',
+			12,
+			'eden',
+			'claude_code',
+			'anthropic',
+			'claude-sonnet-4-5',
+			'look-feel',
+			'product',
+			'T-130',
+			'Presence vocabulary across screens',
+			'build',
+			9_000_000
+		),
+		rec(
+			'poc-u-12',
+			20,
+			'eden',
+			'claude_code',
+			'anthropic',
+			'claude-sonnet-4-5',
+			'office-federation',
+			'platform',
+			'T-135',
+			'HQ to satellite snapshot sync',
+			'build',
+			5_000_000
+		),
+		rec(
+			'poc-u-13',
+			36,
+			'eden',
+			'claude_code',
+			'anthropic',
+			'claude-sonnet-4-5',
+			'office-federation',
+			'platform',
+			'R-11',
+			'Invite flow for a second office',
+			'run',
+			4_000_000
+		)
 	];
 }
 

@@ -221,6 +221,19 @@
 		<Button onclick={() => goto(resolve('/'))}>Open {created.name}</Button>
 	</div>
 {:else}
+	{#if !appSession.authEnabled}
+		<div
+			data-testid="local-mode-bar"
+			class="mb-6 flex flex-wrap items-center justify-between gap-2 rounded-md bg-surface-raised px-4 py-2.5 text-sm/6 outline-1 -outline-offset-1 outline-line"
+		>
+			<span class="text-fg-secondary">Local mode · Authentication off</span>
+			<a
+				href={resolve('/security')}
+				class="font-semibold text-fg underline hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+				>Security &amp; Access</a
+			>
+		</div>
+	{/if}
 	<h1 class="text-3xl/9 font-semibold tracking-tight text-fg">Create organization</h1>
 
 	<form class="mt-8 space-y-6" onsubmit={submit} novalidate>

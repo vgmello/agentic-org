@@ -115,7 +115,7 @@ pub(crate) struct NewAccount {
 }
 impl NewAccount {
     pub(crate) fn new(username: Username, verifier: Verifier) -> Result<Self, StoreError> {
-        let id = crate::ids::generate().map_err(|_| StoreError::Unavailable)?;
+        let id = crate::ids::uuid_v7().map_err(|_| StoreError::Unavailable)?;
         Ok(Self {
             account_id: AccountId::parse(&id).map_err(|_| StoreError::Unavailable)?,
             username,

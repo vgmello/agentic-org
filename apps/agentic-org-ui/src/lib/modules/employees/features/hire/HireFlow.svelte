@@ -8,6 +8,7 @@
   the step's heading.
 -->
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -20,10 +21,10 @@
 	import { gutters, mobileButton } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { employeesApi } from '../../api';
 	import { HIRE_REQUESTS_URL, REFUSED, cleanProposal, hireUrlWith } from '../../hire';
-	import type { HireRequest } from '../../types';
+	import type { HireAccess, HireRequest } from '../../types';
 	import { HireFlowState } from './flow.svelte';
 	import DescribeStep from './DescribeStep.svelte';
 	import HiringProgress from './HiringProgress.svelte';
@@ -36,7 +37,9 @@
 		organizationId,
 		organizationName,
 		teamId,
-		requestId
+		requestId,
+		accessResource,
+		resumeResource
 	}: {
 		organizationId: string;
 		organizationName: string;
@@ -44,6 +47,10 @@
 		teamId?: string;
 		/** A request to pick up again. Read once, when the flow opens. */
 		requestId?: string;
+		/** Optional pre-created access resource (primarily for tests). */
+		accessResource?: Resource<HireAccess>;
+		/** Optional pre-created resume resource (primarily for tests). */
+		resumeResource?: Resource<HireRequest | undefined>;
 	} = $props();
 
 	const flow = new HireFlowState();
@@ -53,16 +60,22 @@
 	/** Started over: a request that couldn't be opened no longer stands in the way. */
 	let fresh = $state(false);
 
-	const access = new Resource(() => employeesApi.hireAccess(organizationId));
+	const ownedAccess = untrack(() => accessResource)
+		? undefined
+		: new Resource(() => employeesApi.hireAccess(organizationId));
+	const access = $derived(accessResource ?? ownedAccess!);
 	const choices = new Resource(() => employeesApi.hireChoices(organizationId));
-	const resume = new Resource(async () => {
-		const id = initialRequest();
-		if (!id) return undefined;
-		const r = await employeesApi.hireRequest(organizationId, id);
-		chosenTeam = r.homeTeam.id;
-		flow.open(r);
-		return r;
-	});
+	const ownedResume = untrack(() => resumeResource)
+		? undefined
+		: new Resource(async () => {
+				const id = initialRequest();
+				if (!id) return undefined;
+				const r = await employeesApi.hireRequest(organizationId, id);
+				chosenTeam = r.homeTeam.id;
+				flow.open(r);
+				return r;
+			});
+	const resume = $derived(resumeResource ?? ownedResume!);
 
 	const teams = $derived(access.data?.teams ?? []);
 	const launching = $derived(teams.find((t) => t.id === teamId));
@@ -234,6 +247,16 @@
 			</EmptyState>
 		{:else if resume.state === 'loading' && !fresh}
 			<SkeletonRows label="the hire request" rows={3} />
+		{:else if resume.state === 'unsupported' && !fresh}
+			<div class="px-4 py-12 min-[640px]:px-6 min-[1024px]:px-8" data-testid="resource-unsupported">
+				<h3 class="text-sm/6 font-semibold text-fg">Not available in this version</h3>
+				<p class="mt-1 max-w-xl text-sm/6 text-fg-muted [overflow-wrap:anywhere]">
+					{resume.message || "This version of the office doesn't support resuming hire requests."}
+				</p>
+			</div>
+			<div class={gutters}>
+				<Button variant="outline" class={mobileButton} onclick={startOver}>Start a new hire</Button>
+			</div>
 		{:else if (resume.state === 'error' || resume.state === 'unavailable') && !fresh}
 			<ErrorState
 				level={3}
