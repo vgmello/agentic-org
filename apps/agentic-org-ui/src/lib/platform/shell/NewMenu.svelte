@@ -10,6 +10,7 @@
 	import { goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
+	import { Tooltip, mergeProps } from 'bits-ui';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
 	import AddPersonSheet from '$lib/modules/organization/features/add-person/AddPersonSheet.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -79,55 +80,71 @@
 	const itemClass = 'min-h-9 max-[639px]:min-h-11';
 </script>
 
-<DropdownMenu.Root bind:open={menuOpen}>
-	<DropdownMenu.Trigger bind:ref={trigger}>
-		{#snippet child({ props })}
-			<button
-				{...props}
-				type="button"
-				aria-label="New"
-				aria-busy={loading}
-				aria-keyshortcuts={shortcutHint ? 'N Shift+N' : undefined}
-				class="inline-flex shrink-0 items-center justify-center gap-x-1.5 rounded-md text-sm/6 font-semibold text-fg outline-1 -outline-offset-1 outline-field-border hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:size-11 min-[640px]:h-9 min-[640px]:px-3"
+<Tooltip.Provider delayDuration={150}>
+	<DropdownMenu.Root bind:open={menuOpen}>
+		<Tooltip.Root disabled={menuOpen}>
+			<DropdownMenu.Trigger bind:ref={trigger}>
+				{#snippet child({ props: menuProps })}
+					<Tooltip.Trigger>
+						{#snippet child({ props: tipProps })}
+							<button
+								{...mergeProps(menuProps, tipProps)}
+								type="button"
+								aria-label="New"
+								aria-busy={loading}
+								aria-keyshortcuts={shortcutHint ? 'N Shift+N' : undefined}
+								class="inline-flex shrink-0 items-center justify-center gap-x-1.5 rounded-md text-sm/6 font-semibold text-fg outline-1 -outline-offset-1 outline-field-border hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:size-11 min-[640px]:h-9 min-[640px]:px-3"
+							>
+								<MiniIcon name="plus" class="size-5 text-fg-muted" />
+								<span class="max-[639px]:sr-only" aria-hidden="true">New</span>
+								{#if shortcutHint}
+									<kbd
+										aria-hidden="true"
+										class="rounded border border-line px-1.5 font-sans text-xs/5 font-normal text-fg-muted max-[1023px]:hidden"
+										>N</kbd
+									>
+								{/if}
+							</button>
+						{/snippet}
+					</Tooltip.Trigger>
+				{/snippet}
+			</DropdownMenu.Trigger>
+			<Tooltip.Portal>
+				<Tooltip.Content
+					side="bottom"
+					sideOffset={6}
+					class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line min-[640px]:hidden"
+					>New</Tooltip.Content
+				>
+			</Tooltip.Portal>
+		</Tooltip.Root>
+		<DropdownMenu.Content align="end" class="w-56 bg-surface ring-line">
+			<!-- The Projects page opens New project; the sheet takes focus, and returns it to that page's heading. -->
+			<DropdownMenu.Item class={itemClass} onSelect={() => goto(resolve(newProjectUrl() as '/'))}
+				>Project</DropdownMenu.Item
 			>
-				<MiniIcon name="plus" class="size-5 text-fg-muted" />
-				<span class="max-[639px]:sr-only" aria-hidden="true">New</span>
-				{#if shortcutHint}
-					<kbd
-						aria-hidden="true"
-						class="rounded border border-line px-1.5 font-sans text-xs/5 font-normal text-fg-muted max-[1023px]:hidden"
-						>N</kbd
-					>
-				{/if}
-			</button>
-		{/snippet}
-	</DropdownMenu.Trigger>
-	<DropdownMenu.Content align="end" class="w-56 bg-surface ring-line">
-		<!-- The Projects page opens New project; the sheet takes focus, and returns it to that page's heading. -->
-		<DropdownMenu.Item class={itemClass} onSelect={() => goto(resolve(newProjectUrl() as '/'))}
-			>Project</DropdownMenu.Item
-		>
-		<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'work_item')}
-			>Work item</DropdownMenu.Item
-		>
-		<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'request')}
-			>Request</DropdownMenu.Item
-		>
-		<DropdownMenu.Item class={itemClass} onSelect={() => startOrgFlow('message')}
-			>Message</DropdownMenu.Item
-		>
-		<DropdownMenu.Separator class="bg-surface-overlay" />
-		<!-- Hire is a page of its own (our-org-in-the-app §7): opening it moves focus to its heading. -->
-		<DropdownMenu.Item
-			class={itemClass}
-			onSelect={() => goto(resolve(hireUrl() as '/')).then(focusDestinationHeading)}
-			>Hire an agent</DropdownMenu.Item
-		>
-		<DropdownMenu.Item class={itemClass} onSelect={() => startOrgFlow('person')}
-			>Add a person</DropdownMenu.Item
-		>
-	</DropdownMenu.Content>
-</DropdownMenu.Root>
+			<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'work_item')}
+				>Work item</DropdownMenu.Item
+			>
+			<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'request')}
+				>Request</DropdownMenu.Item
+			>
+			<DropdownMenu.Item class={itemClass} onSelect={() => startOrgFlow('message')}
+				>Message</DropdownMenu.Item
+			>
+			<DropdownMenu.Separator class="bg-surface-overlay" />
+			<!-- Hire is a page of its own (our-org-in-the-app §7): opening it moves focus to its heading. -->
+			<DropdownMenu.Item
+				class={itemClass}
+				onSelect={() => goto(resolve(hireUrl() as '/')).then(focusDestinationHeading)}
+				>Hire an agent</DropdownMenu.Item
+			>
+			<DropdownMenu.Item class={itemClass} onSelect={() => startOrgFlow('person')}
+				>Add a person</DropdownMenu.Item
+			>
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
+</Tooltip.Provider>
 
 <CaptureDialog
 	bind:open={

@@ -449,10 +449,13 @@ test('PROJ-2: New project opens from Home via Command bar / All projects, empty 
 }) => {
 	await open(page, '/home');
 	await page.keyboard.press('ControlOrMeta+k');
-	const cmdk = page.getByRole('dialog', { name: 'Command palette and Org AI' });
-	await expect(cmdk).toBeVisible();
-	await cmdk.getByRole('combobox').fill('Go to Projects');
-	await cmdk.getByRole('option', { name: /Go to Projects/ }).click();
+	const cmdkCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Org AI' });
+	await expect(cmdkCombo).toBeFocused();
+	await cmdkCombo.fill('Go to Projects');
+	await page
+		.locator('#exec-cmdk-home-listbox')
+		.getByRole('option', { name: /^Go to Projects/ })
+		.click();
 	await expect(page).toHaveURL(/\/projects$/);
 	await page.getByRole('button', { name: 'New project' }).click();
 	const sheet = page.getByRole('dialog', { name: 'New project' });

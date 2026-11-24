@@ -64,9 +64,26 @@
 	let mainEl = $state<HTMLElement | null>(null);
 	let sidebarHovered = $state(false);
 	let sidebarFocused = $state(false);
+	let sidebarMenuOpen = $state(false);
 	let sidebarLeaveTimer: ReturnType<typeof setTimeout> | undefined;
 	const sidebarPinned = $derived(!uiPrefs.navCollapsed);
-	const sidebarCollapsed = $derived(uiPrefs.navCollapsed && !sidebarHovered && !sidebarFocused);
+	const sidebarCollapsed = $derived(
+		uiPrefs.navCollapsed && !sidebarHovered && !sidebarFocused && !sidebarMenuOpen
+	);
+
+	function handleSidebarMenuOpenChange(open: boolean) {
+		clearTimeout(sidebarLeaveTimer);
+		sidebarMenuOpen = open;
+		if (!open) {
+			// Keep rail expanded if focus returns to the trigger inside the sidebar (e.g. Escape).
+			queueMicrotask(() => {
+				const active = document.activeElement;
+				if (active instanceof Node && desktopNavigation?.contains(active)) {
+					sidebarFocused = true;
+				}
+			});
+		}
+	}
 
 	function handleSidebarEnter() {
 		clearTimeout(sidebarLeaveTimer);
@@ -86,11 +103,12 @@
 		}
 	}
 	function handleSidebarFocusOut(event: FocusEvent) {
+		if (sidebarMenuOpen) return;
 		const next = event.relatedTarget;
 		if (next instanceof Node && desktopNavigation?.contains(next)) return;
 		clearTimeout(sidebarLeaveTimer);
 		sidebarLeaveTimer = setTimeout(() => {
-			sidebarFocused = false;
+			if (!sidebarMenuOpen) sidebarFocused = false;
 		}, 160);
 	}
 	function toggleSidebarPin() {
@@ -220,6 +238,7 @@
 			collapsed={sidebarCollapsed}
 			pinned={sidebarPinned}
 			onToggleCollapse={toggleSidebarPin}
+			onMenuOpenChange={handleSidebarMenuOpenChange}
 			onPointerEnter={handleSidebarEnter}
 			onPointerLeave={handleSidebarLeave}
 			onFocusIn={handleSidebarFocusIn}
@@ -243,6 +262,7 @@
 			<span class="text-sm font-semibold">{areaFor(page.url.pathname) ?? 'Agentic Org'}</span>
 		</div>
 		<ExecutiveCommandBar
+			connection={data.connection}
 			snapshot={shellData.snapshot}
 			items={shellData.workItems}
 			inboxItems={shellData.inboxItems}

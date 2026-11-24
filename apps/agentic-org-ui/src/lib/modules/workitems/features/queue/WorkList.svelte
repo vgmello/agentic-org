@@ -20,10 +20,17 @@
 		taskHref,
 		type GroupBy
 	} from '../../present';
-	import type { TaskRow, TaskType } from '../../types';
+	import type { Priority, TaskRow, TaskType } from '../../types';
 	import WorkIcon from '../../components/WorkIcon.svelte';
 	import StatusBadge from '../../components/StatusBadge.svelte';
 	import BudgetChip from '../../components/BudgetChip.svelte';
+
+	function prioritySignal(priority: Priority): { level: 1 | 2 | 3; strong?: boolean } {
+		if (priority === 'urgent') return { level: 3, strong: true };
+		if (priority === 'high') return { level: 3 };
+		if (priority === 'normal') return { level: 2 };
+		return { level: 1 };
+	}
 
 	let {
 		rows,
@@ -94,6 +101,7 @@
 					</thead>
 					<tbody class="divide-y divide-line-subtle text-fg-body">
 						{#each group.rows as row (row.id)}
+							{@const priSig = prioritySignal(row.priority)}
 							<tr data-testid="work-row" data-ref={row.ref} class="hover:bg-surface-overlay/50">
 								<td class="px-3 py-2.5 whitespace-nowrap">
 									<span class="inline-flex items-center gap-1.5 text-xs/5 text-fg-muted">
@@ -148,15 +156,24 @@
 									</td>
 								{/if}
 								<td class="px-3 py-2.5 whitespace-nowrap text-xs/5">
-									{#if row.priority !== 'normal'}
-										<span class="inline-flex items-center gap-1 text-fg-secondary">
-											<WorkIcon name={row.priority} class="size-3.5 text-fg-muted" />
-											<span>{PRIORITY_WORD[row.priority]}</span>
+									<span class="inline-flex items-center gap-1.5 text-fg-secondary">
+										<span
+											class="work-priority-mark"
+											data-priority-level={priSig.level}
+											data-tone={priSig.strong ? 'strong' : undefined}
+											aria-hidden="true"
+										>
+											<i class="is-on"></i>
+											<i class={priSig.level >= 2 ? 'is-on' : undefined}></i>
+											<i class={priSig.level >= 3 ? 'is-on' : undefined}></i>
 										</span>
-									{:else}
-										<span class="sr-only">Priority normal</span>
-										<span aria-hidden="true" class="text-fg-subtle">—</span>
-									{/if}
+										{#if row.priority !== 'normal'}
+											<span>{PRIORITY_WORD[row.priority]}</span>
+										{:else}
+											<span class="sr-only">Priority normal</span>
+											<span aria-hidden="true" class="text-fg-subtle">Normal</span>
+										{/if}
+									</span>
 								</td>
 								<td class="px-3 py-2.5 whitespace-nowrap">
 									<StatusBadge status={row.status} needsMe={row.needsMe} />
@@ -192,6 +209,7 @@
 				class="divide-y divide-line-subtle rounded-xl bg-surface-raised outline-1 -outline-offset-1 outline-line min-[640px]:hidden"
 			>
 				{#each group.rows as row (row.id)}
+					{@const priSig = prioritySignal(row.priority)}
 					<li
 						class="relative flex flex-col gap-1.5 px-4 py-3.5"
 						data-testid="work-row-mobile"
@@ -199,6 +217,16 @@
 					>
 						<div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs/5 text-fg-muted">
 							<span class="inline-flex items-center gap-1">
+								<span
+									class="work-priority-mark"
+									data-priority-level={priSig.level}
+									data-tone={priSig.strong ? 'strong' : undefined}
+									aria-hidden="true"
+								>
+									<i class="is-on"></i>
+									<i class={priSig.level >= 2 ? 'is-on' : undefined}></i>
+									<i class={priSig.level >= 3 ? 'is-on' : undefined}></i>
+								</span>
 								<WorkIcon name={row.type} class="size-3.5" />
 								<span>{TYPE_WORD[row.type]}</span>
 								<span class="font-mono text-fg-secondary">{row.ref}</span>
@@ -250,3 +278,39 @@
 		</section>
 	{/each}
 </div>
+
+<style>
+	.work-priority-mark {
+		display: inline-flex;
+		flex: none;
+		align-items: flex-end;
+		justify-content: center;
+		gap: 2px;
+		width: 1rem;
+		height: 1rem;
+		padding-bottom: 3px;
+		color: var(--exec-muted, var(--fg-muted));
+	}
+	.work-priority-mark[data-tone='strong'] {
+		color: var(--exec-ink, var(--fg));
+	}
+	.work-priority-mark i {
+		display: block;
+		width: 2.5px;
+		border-radius: 1px;
+		background: currentColor;
+		opacity: 0.24;
+	}
+	.work-priority-mark i:nth-child(1) {
+		height: 4px;
+	}
+	.work-priority-mark i:nth-child(2) {
+		height: 7px;
+	}
+	.work-priority-mark i:nth-child(3) {
+		height: 10px;
+	}
+	.work-priority-mark i.is-on {
+		opacity: 1;
+	}
+</style>

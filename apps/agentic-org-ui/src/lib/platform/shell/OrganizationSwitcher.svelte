@@ -17,7 +17,13 @@
 	 * `officeApi.peekOrganizations()` (backed by `GET /api/v1/organizations` in production),
 	 * switches the active organization cleanly, and links to `/welcome` (All organizations).
 	 */
-	let { connection }: { connection: Connection } = $props();
+	let {
+		connection,
+		onOpenChange
+	}: {
+		connection: Connection;
+		onOpenChange?: (open: boolean) => void;
+	} = $props();
 
 	type OrgItem = { id: string; name: string; unavailable?: boolean };
 
@@ -102,6 +108,7 @@
 <DropdownMenu.Root
 	bind:open
 	onOpenChange={(next) => {
+		onOpenChange?.(next);
 		if (next) void loadOrganizations();
 	}}
 >
@@ -115,7 +122,7 @@
 							type="button"
 							aria-label="Switch organization"
 							data-testid="org-switcher"
-							class="flex size-9 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg {focusRing}"
+							class="flex size-9 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11 {focusRing}"
 						>
 							<ChevronsUpDown class="size-4" aria-hidden="true" />
 						</button>

@@ -395,9 +395,9 @@ test('Home scroll cue: keyboard-reachable before below-fold content, moves focus
 		await page.screenshot({ path: `${captureDir}/poc-home-scroll-cue-graphite.png` });
 	}
 
-	// Keyboard Tab from Ask button in command bar reaches Home scroll cue before below-fold content
-	const askButton = page.getByRole('button', { name: 'Ask', exact: true });
-	await askButton.focus();
+	// Keyboard Tab from the last control in command bar (New button) reaches Home scroll cue before below-fold content
+	const newButton = page.getByRole('button', { name: 'New', exact: true });
+	await newButton.focus();
 	await page.keyboard.press('Tab');
 	await expect(hint).toBeFocused();
 
@@ -537,12 +537,16 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 		await page.screenshot({ path: `${captureDir}/poc-mirror-activity-assembly-report.png` });
 	}
 
-	// Opening a POC work item exercises workApi.get() & workApi.activity() without error
+	// Opening a POC work item navigates cleanly to /work/T-118 on the unified workItemsApi store
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Work' }).click();
 	await expect(page).toHaveURL(/\/work$/);
-	await page.getByRole('button', { name: 'Custody lock fix' }).click();
-	await expect(page.getByRole('dialog')).toContainText('Custody lock fix');
-	await expect(page.getByRole('dialog')).toContainText('Implementation and unit checks complete');
+	await page
+		.getByRole('link', { name: /Custody lock fix/ })
+		.first()
+		.click();
+	await expect(page).toHaveURL(/\/work\/T-118$/);
+	await expect(page.getByRole('heading', { name: /Custody lock fix/ })).toBeVisible();
+	await expect(page.getByText('Implementation and unit checks complete').first()).toBeVisible();
 
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/poc-mirror-work-sheet-report.png` });
@@ -801,10 +805,11 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 	}
 });
 
-test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filter/Display menus, List/Board toggle, Graphite matte canvas, and 720px hit targets', async ({
+test('Phase 3 Work parity: unified WorkQueueView header, live search & / shortcut, Board/List toggle, Graphite matte canvas, priority bars, auto-hide switcher & POC org switch, and 720px hit targets', async ({
 	page
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
+	await enterMockedOrganization(page, 'Lumen Labs');
 	await visit(page, '/work?theme=graphite&mock=poc');
 
 	// Graphite matte Work canvas (#18191a) + unified .work-header.queue-header geometry
@@ -813,15 +818,38 @@ test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filte
 	await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(24, 25, 26)');
 	await expect(page.locator('aside.exec-sidebar')).toHaveCSS('background-color', 'rgb(19, 21, 22)');
 	await expect(page.locator('header.work-header.queue-header')).toBeVisible();
-	await expect(page.locator('.work-header .queue-headline')).toBeVisible();
-	await expect(page.locator('.work-toolbar.queue-toolbar')).toBeVisible();
-	await expect(page.locator('#shell-page-title')).toHaveText('Work');
+	await expect(page.locator('#shell-page-title')).toContainText('Work');
 
-	// Switch to All tasks so we have multiple projects & statuses to filter/group/board
-	await page.locator('[data-filter="all"]').click();
+	// Switch to Tasks tab and List layout so we can test search, filters, priority bars, and Board/List switching
+	await page
+		.getByRole('tablist', { name: 'Work', exact: true })
+		.getByRole('tab', { name: /^Tasks/ })
+		.click();
+	await page.getByTestId('saved-filters').locator('[data-filter="all"]').click();
+
+	// Board view renders 4 columns and priority signal bars on every card
+	const layoutGroup = page.getByRole('group', { name: 'Layout' });
+	const boardBtn = layoutGroup.getByRole('button', { name: 'Board' });
+	const listBtn = layoutGroup.getByRole('button', { name: 'List' });
+	await expect(boardBtn).toHaveAttribute('aria-pressed', 'true');
+	const board = page.getByTestId('work-board');
+	await expect(board).toBeVisible();
+	await expect(board.getByTestId('board-column')).toHaveCount(4);
+	const boardCardCount = await board.getByTestId('work-card').count();
+	expect(boardCardCount).toBeGreaterThan(2);
+	await expect(
+		board.locator('[data-testid="work-card"] .work-priority-mark[data-priority-level]')
+	).toHaveCount(boardCardCount);
+
+	// Switch to List view: priority signal bars appear on every desktop row
+	await listBtn.click();
+	await expect(listBtn).toHaveAttribute('aria-pressed', 'true');
 	const workRows = page.getByTestId('work-row');
 	const initialCount = await workRows.count();
 	expect(initialCount).toBeGreaterThan(2);
+	await expect(
+		page.locator('[data-testid="work-row"] .work-priority-mark[data-priority-level]')
+	).toHaveCount(initialCount);
 
 	// `/` shortcut focuses Work search input; live search filters rows; Escape clears then blurs
 	await page.locator('#shell-page-title').focus();
@@ -831,268 +859,63 @@ test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filte
 	await searchInput.fill('Custody');
 	await expect(workRows).toHaveCount(1);
 	await expect(workRows.first()).toContainText('Custody lock fix');
-
-	const clearBtn = page.getByRole('button', { name: 'Clear search' });
-	await expect(clearBtn).toBeVisible();
-	await clearBtn.click();
-	await expect(searchInput).toHaveValue('');
-	await expect(workRows).toHaveCount(initialCount);
-
-	await searchInput.fill('Custody');
-	await expect(workRows).toHaveCount(1);
 	await searchInput.press('Escape');
 	await expect(searchInput).toHaveValue('');
 	await expect(searchInput).toBeFocused();
 	await searchInput.press('Escape');
 	await expect(searchInput).not.toBeFocused();
-
-	// Filter work menu: Project + Assignee scope selection narrows count strictly & preserves both params across reload
-	const filterBtn = page.getByRole('button', { name: 'Filter work' });
-	await filterBtn.click();
-	await page.getByRole('menuitemradio', { name: 'Office federation' }).click();
-	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
-	const projectOnlyCount = await workRows.count();
-	expect(projectOnlyCount).toBe(3);
-
-	await filterBtn.click();
-	await page.getByRole('menuitemradio', { name: 'Sage' }).click();
-	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
-	await expect(page).toHaveURL(/[?&]assignee=sage(?:&|$)/);
-	await expect(filterBtn).toHaveAttribute('data-active', '');
-	await expect(workRows).toHaveCount(1);
-	await expect(workRows.first()).toContainText('Custody lock fix');
-
-	await page.reload();
-	await page.locator('html[data-hydrated="true"]').waitFor();
-	await expect(page).toHaveURL(/[?&]project=office-federation(?:&|$)/);
-	await expect(page).toHaveURL(/[?&]assignee=sage(?:&|$)/);
-	// Switch to All after reload (Blocked preset alone only has 1 Office federation task) to prove assignee=sage still narrows 3 -> 1
-	await page.locator('[data-filter="all"]').click();
-	await expect(workRows).toHaveCount(1);
-	await expect(workRows.first()).toContainText('Custody lock fix');
-	await expect(page.getByRole('button', { name: 'Filter work' })).toHaveAttribute(
-		'data-active',
-		''
-	);
-
-	await page.getByRole('button', { name: 'Filter work' }).click();
-	await page.getByRole('menuitem', { name: 'Reset filters' }).click();
-	await expect(page).not.toHaveURL(/[?&]project=/);
-	await expect(page).not.toHaveURL(/[?&]assignee=/);
-	await expect(page.getByRole('button', { name: 'Filter work' })).not.toHaveAttribute(
-		'data-active'
-	);
-
-	// Work display menu: By project grouping switches headings from statuses to projects & Row dividers persists across reload
-	await page.locator('[data-filter="all"]').click();
-	const displayBtn = page.getByRole('button', { name: 'Work display' });
-	await displayBtn.click();
-	await page.getByRole('menuitemradio', { name: 'By project' }).click();
-	await expect(displayBtn).toHaveAttribute('data-active', '');
-	const groupHeadings = page.locator('.work-group-title');
-	await expect(groupHeadings.filter({ hasText: 'Agentic Org v1.0' })).toBeVisible();
-	await expect(groupHeadings.filter({ hasText: 'Blocked' })).toHaveCount(0);
-	await expect(groupHeadings.filter({ hasText: 'In progress' })).toHaveCount(0);
-
-	await displayBtn.click();
-	await page.getByRole('menuitemcheckbox', { name: 'Row dividers' }).click();
-	await expect(page.locator('.work-workspace')).toHaveAttribute('data-work-dividers', '');
-	await page.keyboard.press('Escape');
-
-	// Reload verifies Row dividers persistence
-	await page.reload();
-	await page.locator('html[data-hydrated="true"]').waitFor();
-	await expect(page.locator('.work-workspace')).toHaveAttribute('data-work-dividers', '');
-
-	// Requests tab: Work header search query is cleared by RequestsPanel "Clear filters"
-	await page.getByRole('tab', { name: /^Requests/ }).click();
-	await expect(page.getByTestId('requests-queue')).toBeVisible();
-	await page.getByLabel('Search work').fill('zzznorequestmatch');
-	const noRequestMatch = page.getByTestId('no-request-match');
-	await expect(noRequestMatch).toBeVisible();
-	await noRequestMatch.getByRole('button', { name: 'Clear filters' }).click();
-	await expect(page.getByLabel('Search work')).toHaveValue('');
-	await page.getByRole('tab', { name: /^Tasks/ }).click();
-
-	// List / Board layout toggle renders clean status columns & clickable cards opening TaskSheet
-	await page.locator('[data-filter="all"]').click();
-	const layoutGroup = page.getByRole('group', { name: 'Work layout' });
-	const listBtn = layoutGroup.getByRole('button', { name: 'List' });
-	const boardBtn = layoutGroup.getByRole('button', { name: 'Board' });
-	await expect(listBtn).toHaveAttribute('aria-pressed', 'true');
-	await boardBtn.click();
-	await expect(boardBtn).toHaveAttribute('aria-pressed', 'true');
-	const board = page.getByTestId('work-board');
-	await expect(board).toBeVisible();
-	await expect(board.locator('.work-bcol')).toHaveCount(4);
-	await board.getByRole('button', { name: 'Custody lock fix' }).click();
-	await expect(page.getByRole('dialog')).toContainText('Custody lock fix');
-	await page.keyboard.press('Escape');
-	await expect(page.getByRole('dialog')).toBeHidden();
-	await listBtn.click();
-	await expect(listBtn).toHaveAttribute('aria-pressed', 'true');
-	await expect(page.getByTestId('work-list')).toBeVisible();
+	await expect(workRows).toHaveCount(initialCount);
 
 	// Exact 720px viewport hit targets (>= 44px inclusive width <= 720px)
 	await page.setViewportSize({ width: 720, height: 900 });
-	await page.getByLabel('Search work').fill('Custody');
 	for (const locator of [
-		page.getByRole('tab', { name: /^Tasks/ }),
+		page.getByRole('tablist', { name: 'Work', exact: true }).getByRole('tab', { name: /^Tasks/ }),
 		listBtn,
 		boardBtn,
-		page.getByRole('button', { name: 'Filter work' }),
-		page.getByRole('button', { name: 'Work display' }),
-		page.getByRole('button', { name: 'New task' }),
-		page.getByRole('button', { name: 'Clear search' })
+		page.getByRole('button', { name: 'New task' })
 	]) {
 		await expect(locator).toBeVisible();
 		expect((await locator.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
 	}
-	await page.getByRole('button', { name: 'Filter work' }).click();
-	const projMenuItem = page.getByRole('menuitemradio', { name: 'All projects' });
-	await expect(projMenuItem).toBeVisible();
-	await expect
-		.poll(async () => (await projMenuItem.boundingBox())?.height ?? 0)
-		.toBeGreaterThanOrEqual(44);
+
+	// Auto-hide sidebar: opening OrganizationSwitcher by keyboard keeps sidebar expanded & trigger mounted
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.getByRole('button', { name: 'Auto-hide sidebar' }).click();
+	await page.mouse.move(900, 300);
+	const sidebar = page.locator('aside.exec-sidebar');
+	await expect(sidebar).toHaveAttribute('data-collapsed', 'true');
+	// Keyboard Tab inside sidebar rail sets :focus-visible, expands rail, and keeps OrganizationSwitcher open on Enter
+	await sidebar.getByRole('link', { name: 'Agentic Org home' }).focus();
+	await page.keyboard.press('Tab');
+	await expect(sidebar).not.toHaveAttribute('data-collapsed', 'true');
+	const switcherBtn = sidebar.getByRole('button', { name: 'Switch organization' });
+	await expect(switcherBtn).toBeVisible();
+	await switcherBtn.focus();
+	await page.keyboard.press('Enter');
+	await expect(page.getByRole('menu')).toBeVisible();
+	await expect(sidebar).not.toHaveAttribute('data-collapsed', 'true');
 	await page.keyboard.press('Escape');
+	await expect(page.getByRole('menu')).toBeHidden();
+	await expect(switcherBtn).toBeVisible();
+
+	// Switching away from POC organization persists instead of reverting to Agentic Org
+	await switcherBtn.click();
+	await page.getByRole('menuitem', { name: /Lumen Labs/ }).click();
+	await expect(sidebar.getByRole('link', { name: 'Lumen Labs home' })).toBeVisible();
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(
+		page.locator('aside.exec-sidebar').getByRole('link', { name: 'Lumen Labs home' })
+	).toBeVisible();
 });
 
-test('Phase 4B + 5B: Work priority bars on every ticket, full-width reading panel with search dismiss, Activity & Projects toolbars, CmdK # channel jump, and Report masthead simplification', async ({
+test('Phase 4B + 5B: Activity & Projects toolbars, CmdK # channel jump, Ask -> Search # real Chat channels, and Report masthead simplification', async ({
 	page
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
-	await visit(page, '/work?theme=graphite&mock=poc');
-
-	// Priority signal bars appear on EVERY Work row (Tasks list, Bugs list, AND Board cards), including normal/low/no-priority rows
-	await page.locator('[data-filter="all"]').click();
-	const taskRows = page.getByTestId('work-row');
-	const taskRowCount = await taskRows.count();
-	expect(taskRowCount).toBeGreaterThan(2);
-	await expect(
-		page.locator('[data-testid="work-row"] .work-priority-mark[data-priority-level]')
-	).toHaveCount(taskRowCount);
-	// Normal-priority rows render level 2 bars (never omitted)
-	await expect(
-		page.locator('[data-testid="work-row"] .work-priority-mark[data-priority-level="2"]').first()
-	).toBeVisible();
-
-	// Board view cards also render priority signal bars on every card
-	const layoutGroup = page.getByRole('group', { name: 'Work layout' });
-	await layoutGroup.getByRole('button', { name: 'Board' }).click();
-	const boardCards = page.getByTestId('work-card');
-	const boardCardCount = await boardCards.count();
-	expect(boardCardCount).toBe(taskRowCount);
-	await expect(
-		page.locator('[data-testid="work-card"] .work-priority-mark[data-priority-level]')
-	).toHaveCount(boardCardCount);
-	await layoutGroup.getByRole('button', { name: 'List' }).click();
-
-	// Bugs tab renders no-priority hollow bars (data-priority-level="0") on bugs without priority
-	await page.getByRole('tab', { name: /^Bugs/ }).click();
-	await page.locator('[data-filter="all"]').click();
-	const bugRows = page.getByTestId('work-row');
-	const bugRowCount = await bugRows.count();
-	expect(bugRowCount).toBeGreaterThan(0);
-	await expect(
-		page.locator('[data-testid="work-row"] .work-priority-mark[data-priority-level]')
-	).toHaveCount(bugRowCount);
-	await expect(
-		page.locator('[data-testid="work-row"] .work-priority-mark[data-priority-level="0"]').first()
-	).toBeVisible();
-	await page.getByRole('tab', { name: /^Tasks/ }).click();
-	await page.locator('[data-filter="all"]').click();
-
-	// Opening a task expands .work-reading full-width, hides .work-toolbar & #work-results, and shows Back to Work (>= 36px desktop)
-	const custodyBtn = page.getByRole('button', { name: 'Custody lock fix' });
-	await custodyBtn.click();
-
-	const workspace = page.locator('.work-workspace');
-	const readingPanel = page.getByTestId('work-reading-panel');
-	await expect(workspace).toHaveClass(/has-work-detail/);
-	await expect(readingPanel).toBeVisible();
-	await expect(readingPanel).toHaveAttribute('role', 'dialog');
-	await expect(readingPanel).toHaveAttribute('aria-modal', 'false');
-	await expect(page.locator('.work-toolbar')).toBeHidden();
-	await expect(page.locator('#work-results')).toBeHidden();
-	await expect(readingPanel).toContainText('Custody lock fix');
-	await expect(readingPanel).toContainText('Implementation and unit checks complete');
-	await expect(readingPanel).toHaveCSS('background-color', 'rgb(24, 25, 26)');
-
-	// Verify full-width expansion on desktop (matches workspace width, no cramped split column)
-	const workspaceBox = (await workspace.boundingBox())!;
-	const panelBox = (await readingPanel.boundingBox())!;
-	expect(panelBox.width).toBeGreaterThanOrEqual(workspaceBox.width - 2);
-
-	// Back to Work button is visible at desktop (>= 36px) and Copy ref button meets >= 36px hit target
-	const backBtn = readingPanel.getByRole('button', { name: 'Back to Work' });
-	await expect(backBtn).toBeVisible();
-	expect((await backBtn.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(36);
-	const copyRefBtn = readingPanel.getByRole('button', { name: /^Copy / });
-	await expect(copyRefBtn).toBeVisible();
-	expect((await copyRefBtn.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(36);
-
-	// Escape while native <select> has focus does NOT dismiss the reading panel
-	const statusSelect = readingPanel.locator('#task-status');
-	await statusSelect.focus();
-	await page.keyboard.press('Escape');
-	await expect(readingPanel).toBeVisible();
-
-	// Returning via Back to Work and opening Task B shows B's title & description with zero leaked A values
-	await backBtn.click();
-	await expect(readingPanel).toBeHidden();
-	await expect(page.locator('.work-toolbar')).toBeVisible();
-	await expect(page.locator('#work-results')).toBeVisible();
-	await expect(custodyBtn).toBeFocused();
-
-	const secondTaskBtn = page.getByRole('button', { name: 'CSP gates in the UI suite' });
-	await secondTaskBtn.click();
-	await expect(readingPanel.locator('#work-detail-title')).toHaveText('CSP gates in the UI suite');
-	await expect(readingPanel.locator('#task-title')).toHaveValue('CSP gates in the UI suite');
-	await expect(readingPanel.locator('#task-title')).toBeEnabled();
-	await expect(readingPanel.locator('#task-description')).not.toHaveValue(/Custody lock fix/);
-
-	// Typing into #work-search while .work-reading is open closes .work-reading and immediately shows filtered search matches
-	const workSearch = page.locator('#work-search');
-	await workSearch.fill('Custody');
-	await expect(readingPanel).toBeHidden();
-	await expect(workspace).not.toHaveClass(/has-work-detail/);
-	await expect(page.locator('.work-toolbar')).toBeVisible();
-	await expect(page.locator('#work-results')).toBeVisible();
-	await expect(workSearch).toBeFocused();
-	await expect(page.getByTestId('work-row')).toHaveCount(1);
-	await expect(page.getByTestId('work-row').first()).toContainText('Custody lock fix');
-	await page.getByRole('button', { name: 'Clear search' }).click();
-	await expect(workSearch).toHaveValue('');
-
-	// Escape closes inline reading panel and restores focus to triggering row button
-	await custodyBtn.click();
-	await expect(readingPanel).toBeVisible();
-	await readingPanel.locator('#work-detail-title').focus();
-	await page.keyboard.press('Escape');
-	await expect(readingPanel).toBeHidden();
-	await expect(workspace).not.toHaveClass(/has-work-detail/);
-	await expect(custodyBtn).toBeFocused();
-
-	// Below 960px (720px): Back to Work button >= 44px and hides toolbar & results while open
-	await page.setViewportSize({ width: 720, height: 900 });
-	await custodyBtn.click();
-	await expect(readingPanel).toBeVisible();
-	await expect(page.locator('.work-toolbar')).toBeHidden();
-	await expect(page.locator('#work-results')).toBeHidden();
-	await expect(backBtn).toBeVisible();
-	expect((await backBtn.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
-	await backBtn.click();
-	await expect(readingPanel).toBeHidden();
-	await expect(page.locator('#work-results')).toBeVisible();
-	await expect(custodyBtn).toBeFocused();
+	await visit(page, '/activity?theme=graphite&mock=poc');
 
 	// Activity .activity-header + .activity-toolbar render cleanly (with feed filter tabs in toolbar when Activity view is active)
-	await page.setViewportSize({ width: 1440, height: 900 });
-	await page
-		.getByRole('navigation', { name: 'Main' })
-		.getByRole('link', { name: 'Activity' })
-		.click();
-	await expect(page).toHaveURL(/\/activity$/);
 	await expect(page.locator('.section-header.activity-header')).toBeVisible();
 	await expect(page.locator('.section-toolbar.activity-toolbar')).toBeVisible();
 	await page.getByRole('main').getByRole('button', { name: 'Activity', exact: true }).click();
@@ -1143,63 +966,11 @@ test('Phase 4B + 5B: Work priority bars on every ticket, full-width reading pane
 			.evaluate((el) => getComputedStyle(el, '::before').content);
 		expect(mastheadBefore === 'none' || mastheadBefore === 'normal').toBe(true);
 	}
-});
-
-test('Phase 4B: saving inline Task A while switching to Task B keeps B enabled, refreshes Work queue, and Ask -> Search # loads real Chat channels', async ({
-	page
-}) => {
-	await page.setViewportSize({ width: 1440, height: 900 });
-	await enterMockedOrganization(page);
-	await visit(page, '/work?mock=default');
-	const createTask = async (title: string) => {
-		await page.getByRole('button', { name: 'New task' }).click();
-		const dialog = page.getByRole('dialog', { name: 'New task' });
-		await dialog.getByLabel('Title').fill(title);
-		await dialog.getByRole('button', { name: 'Create task' }).click();
-		await expect(dialog).toBeHidden();
-	};
-	await createTask('Alpha task');
-	await createTask('Beta task');
-
-	// Open Alpha, edit its title, close via Back to Work (flushing blur-save), and immediately open Beta
-	await page.getByRole('button', { name: 'Alpha task' }).click();
-	const readingPanel = page.locator('.work-reading');
-	await expect(readingPanel.locator('#task-title')).toHaveValue('Alpha task');
-	await readingPanel.locator('#task-title').fill('Alpha task — saved');
-	await readingPanel.getByRole('button', { name: 'Back to Work' }).click();
-	await expect(readingPanel).toBeHidden();
-	await expect(page.getByRole('button', { name: 'Alpha task — saved' })).toBeVisible();
-	await page.getByRole('button', { name: 'Beta task' }).click();
-
-	// Beta stays clean and interactive with zero leaked Alpha values
-	await expect(readingPanel.locator('#work-detail-title')).toHaveText('Beta task');
-	await expect(readingPanel.locator('#task-title')).toHaveValue('Beta task');
-	await expect(readingPanel.locator('#task-title')).toBeEnabled();
-
-	// Editing Beta's title and pressing Escape blurs & saves while keeping the reading panel open
-	// so errors/conflicts stay visible; pressing Escape again closes the reading panel
-	await readingPanel.locator('#task-title').fill('Beta task — escape saved');
-	await page.keyboard.press('Escape');
-	await expect(readingPanel).toBeVisible();
-	await expect(readingPanel.locator('#work-detail-title')).toBeFocused();
-	await page.keyboard.press('Escape');
-	await expect(readingPanel).toBeHidden();
-	await expect(page.getByRole('button', { name: 'Beta task — escape saved' })).toBeVisible();
-
-	// Deleting a task inside the inline reading panel never drops focus to document.body even after the row disappears
-	await page.getByRole('button', { name: 'Beta task — escape saved' }).click();
-	await readingPanel.getByRole('button', { name: 'Delete' }).click();
-	await readingPanel.getByRole('button', { name: 'Delete task' }).click();
-	await expect(readingPanel).toBeHidden();
-	await expect(page.getByRole('button', { name: 'Beta task — escape saved' })).toBeHidden();
-	await expect
-		.poll(() => page.evaluate(() => document.activeElement?.tagName ?? 'BODY'))
-		.not.toBe('BODY');
 
 	// Ask -> Search & Commands tab switch loads real Chat conversations on first single-event `#release-v1` query
-	// (#release-v1 exists only in the real Chat conversation snapshot, not the snapshot-derived fallback)
+	await enterMockedOrganization(page);
+	await visit(page, '/work?mock=default');
 	await page.getByRole('button', { name: 'Ask', exact: true }).click();
-	const cmdDialog = page.getByRole('dialog', { name: 'Command palette and Org AI' });
 	await expect(cmdDialog).toBeVisible();
 	await cmdDialog.getByRole('tab', { name: 'Search & Commands' }).click();
 	await cmdDialog.getByRole('combobox').fill('#release-v1');

@@ -10,6 +10,8 @@ const routes = [
 	'/sign-in',
 	'/register',
 	'/create',
+	'/home',
+	'/inbox',
 	'/agents',
 	'/org-chart',
 	'/projects',
@@ -31,6 +33,8 @@ const signInPages = new Set([
 	'/welcome',
 	'/sign-in',
 	'/create',
+	'/home',
+	'/inbox',
 	'/agents',
 	'/org-chart',
 	'/projects',
@@ -128,7 +132,7 @@ test('B1-05 Part A: the real gateway CSP permits every built route and captures 
 			visited.add(path);
 		});
 	await barrier(page);
-	expect(visited.size).toBe(16);
+	expect(visited.size).toBe(18);
 	expect(violations).toEqual([]);
 	await page.screenshot({ path: info.outputPath('gateway-csp-final-route.png'), fullPage: true });
 });

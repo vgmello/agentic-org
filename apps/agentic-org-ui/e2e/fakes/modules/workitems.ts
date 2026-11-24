@@ -31,7 +31,8 @@ import type {
 	Viewer,
 	WhyLink
 } from '../../../src/lib/modules/workitems/types';
-import { mockMode } from '../mock-mode';
+import { isPocDataset, mockMode, POC_ORG_ID } from '../mock-mode';
+import { pocOrgSnapshot, pocWorkItems } from '../poc-dataset';
 import seedData from '../data/workitems/tasks.json' with { type: 'json' };
 import projectsData from '../data/projects/projects.json' with { type: 'json' };
 
@@ -298,11 +299,240 @@ function buildSeedStore(): Map<string, StoredTask> {
 	return map;
 }
 
+const usePoc = (organizationId: string) => isPocDataset() || organizationId === POC_ORG_ID;
+
+function buildPocStore(): Map<string, StoredTask> {
+	const map = new Map<string, StoredTask>();
+	const snap = pocOrgSnapshot();
+	const projects = snap.projects ?? [];
+	const teams = snap.teams ?? [];
+	const members = snap.members ?? [];
+	const projectTeams = snap.project_teams ?? [];
+
+	const memberRef = (id: string | undefined): EmployeeRef | null => {
+		if (!id) return null;
+		const m = members.find((x) => x.id === id);
+		if (!m) return null;
+		return { id: m.id, name: m.name, kind: m.kind };
+	};
+	const fallbackReporter: EmployeeRef = memberRef('ada') ?? {
+		id: 'ada',
+		name: 'Ada',
+		kind: 'agent'
+	};
+	const fallbackTeam = teams[0]
+		? { id: teams[0].id, name: teams[0].name }
+		: { id: 'platform', name: 'Platform (Rust)' };
+
+	const pocNeedsMe: Record<string, TaskRow['needsMe']> = {
+		'w-t118': {
+			source: 'owner_block',
+			text: 'File-access choice waiting 25m · Build box office offline',
+			inboxItemId: 'in2'
+		},
+		'w-t124': {
+			source: 'owner_block',
+			text: 'Waiting for local test access permission',
+			inboxItemId: 'in3'
+		},
+		'w-t121': {
+			source: 'approval',
+			text: "Approve publishing Kai's sync update to v1.0",
+			inboxItemId: 'in1'
+		}
+	};
+
+	const mapStatus = (s: string): TaskDetail['status'] => {
+		if (s === 'in_progress' || s === 'scoping') return 'in_progress';
+		if (s === 'blocked') return 'blocked';
+		if (s === 'done' || s === 'closed' || s === 'approved') return 'done';
+		if (s === 'cancelled') return 'cancelled';
+		return 'todo';
+	};
+
+	for (const w of pocWorkItems()) {
+		const pIdx = projects.findIndex((p) => p.id === w.project_id);
+		const proj = pIdx >= 0 ? projects[pIdx] : undefined;
+		const ptLink = proj ? projectTeams.find((l) => l.project_id === proj.id) : undefined;
+		const ownerTeamRaw = ptLink ? teams.find((t) => t.id === ptLink.team_id) : undefined;
+		const ownerTeam = ownerTeamRaw
+			? { id: ownerTeamRaw.id, name: ownerTeamRaw.name }
+			: fallbackTeam;
+		const assigneeMember = w.assignee_id ? members.find((m) => m.id === w.assignee_id) : undefined;
+		const assignedTeamRaw = assigneeMember?.home_team_id
+			? teams.find((t) => t.id === assigneeMember.home_team_id)
+			: undefined;
+		const assignedTeam = assignedTeamRaw
+			? { id: assignedTeamRaw.id, name: assignedTeamRaw.name }
+			: ownerTeam;
+		const assignee = memberRef(w.assignee_id);
+		const reporter = memberRef(w.created_by) ?? fallbackReporter;
+		const status = mapStatus(w.status);
+		const isClosed = status === 'done' || status === 'cancelled';
+		const description =
+			w.id === 'w-t118'
+				? 'Implementation and unit checks complete; awaiting file-access ruling between timed access and fixed lock.'
+				: w.blocked_reason
+					? `${w.title} — ${w.blocked_reason}`
+					: `${w.title} (${w.short_id}).`;
+
+		const steps: ChecklistStep[] = [
+			{
+				id: `${w.id}-s1`,
+				text: 'Implementation and unit checks complete',
+				required: true,
+				done: true,
+				revision: 1,
+				checked: { at: agoHours(2), by: assignee ?? reporter }
+			},
+			{
+				id: `${w.id}-s2`,
+				text: 'Review sign-off recorded',
+				required: true,
+				done: isClosed,
+				revision: 1,
+				...(isClosed ? { checked: { at: agoHours(1), by: reporter } } : {})
+			}
+		];
+
+		const detail: TaskDetail = {
+			id: w.id,
+			ref: w.short_id,
+			type: w.kind,
+			title: w.title,
+			description,
+			status,
+			priority: w.priority ?? 'normal',
+			severity: w.kind === 'bug' ? (w.severity ?? null) : null,
+			effort: null,
+			project: proj ? { id: proj.id, name: proj.name, number: pIdx + 1 } : null,
+			team: ownerTeam,
+			assignedTeam,
+			assignee,
+			reporter,
+			createdAt: w.created_at,
+			updatedAt: w.updated_at,
+			statusAt: w.updated_at,
+			checklist: checklistCount(steps),
+			blockedReason: status === 'blocked' ? (w.blocked_reason ?? 'Blocked') : null,
+			reopenCount: w.reopen_count ?? 0,
+			needsMe: pocNeedsMe[w.id] ?? null,
+			budget: null,
+			awaitingVerification: false,
+			revision: 1,
+			feature: null,
+			milestone: null,
+			resolution: isClosed ? (w.kind === 'bug' ? 'fixed' : 'completed') : null,
+			latestUpdate: { at: w.updated_at, by: assignee ?? reporter },
+			steps,
+			comments: [],
+			activity: [
+				{
+					id: `${w.id}-ev1`,
+					at: w.created_at,
+					actor: reporter,
+					kind: 'created',
+					text: `created ${w.kind === 'bug' ? 'Bug' : w.kind === 'request' ? 'Request' : 'Task'} ${w.short_id}`
+				}
+			],
+			output: [],
+			completion: isClosed
+				? { at: w.updated_at, by: assignee ?? reporter, text: 'Completed and verified.' }
+				: null,
+			fixes: [],
+			relatesTo: [],
+			repositories: [],
+			why: [],
+			time: {
+				createdAt: w.created_at,
+				startedAt: status === 'todo' ? null : agoHours(3),
+				startUnavailable: false,
+				open: !isClosed,
+				leadSeconds: 10800,
+				cycleSeconds: status === 'todo' ? null : 7200,
+				waitingOnYouSeconds: pocNeedsMe[w.id] ? 1500 : 0,
+				blockedSeconds: status === 'blocked' ? 1500 : 0
+			},
+			...(w.kind === 'bug'
+				? {
+						bug: {
+							report: {
+								whatHappened: description,
+								expected: 'Works reliably without regressions.',
+								steps: null,
+								environment: 'HQ macOS office',
+								reported: {
+									severity: w.severity ?? null,
+									priority: w.priority ?? 'normal',
+									at: w.created_at,
+									by: reporter
+								}
+							},
+							severityConfirmed: Boolean(w.severity_confirmed),
+							suggestedVerifier: reporter,
+							suggestedTriager: null,
+							fixed: isClosed
+								? {
+										how: { kind: 'note' },
+										note: 'Resolved and verified.',
+										at: w.updated_at,
+										by: assignee ?? reporter
+									}
+								: null,
+							verifications: [],
+							closedReason: null,
+							duplicateOf: null,
+							fixTasks: []
+						}
+					}
+				: {}),
+			...(w.kind === 'request'
+				? {
+						request: {
+							text: description,
+							routeReason: null,
+							routingSource: 'person',
+							outcome: null,
+							declineReason: null,
+							mergedInto: null,
+							created: []
+						}
+					}
+				: {}),
+			can: {
+				edit: true,
+				triage: w.kind === 'bug',
+				verify: false,
+				approve: w.kind === 'request'
+			}
+		};
+
+		const entry: StoredTask = {
+			detail,
+			cost: {
+				knownCostMicroUsd: null,
+				knownTokens: null,
+				records: 0,
+				unpricedRecords: 0,
+				includesApiEquivalent: false,
+				byAgent: [],
+				budget: null
+			},
+			privateNotes: []
+		};
+		syncDerived(entry);
+		map.set(detail.id, entry);
+	}
+	return map;
+}
+
 function storeFor(organizationId: string): Map<string, StoredTask> {
-	let s = stores.get(organizationId);
+	const poc = usePoc(organizationId);
+	const key = `${organizationId}:${poc ? 'poc' : 'default'}`;
+	let s = stores.get(key);
 	if (!s) {
-		s = buildSeedStore();
-		stores.set(organizationId, s);
+		s = poc ? buildPocStore() : buildSeedStore();
+		stores.set(key, s);
 	}
 	return s;
 }
@@ -376,8 +606,15 @@ function staleCopy() {
 	return on('stale') ? { stale: { copiedAt: agoHours(1) } } : {};
 }
 
-function viewerInfo(): Viewer {
+function viewerInfo(organizationId: string): Viewer {
 	if (on('no-employee')) return { employee: null, teamIds: [], owner: true };
+	if (usePoc(organizationId)) {
+		return {
+			employee: { id: 'you', name: 'You', kind: 'person' },
+			teamIds: ['leadership', 'platform', 'app', 'product', 'quality'],
+			owner: !on('viewer') && !on('agent-pm')
+		};
+	}
 	return {
 		employee: VIEWER_EMPLOYEE,
 		teamIds: ['eng', 'web'],
@@ -442,7 +679,12 @@ async function loadChoices(organizationId: string): Promise<Choices> {
 			archived: Boolean(p.archived)
 		};
 	});
-	return { teams, employees, projects, organizationName: 'Lumen Labs' };
+	return {
+		teams,
+		employees,
+		projects,
+		organizationName: usePoc(organizationId) ? 'Agentic Org' : 'Lumen Labs'
+	};
 }
 
 export const workItemsApi: WorkItemsApi = {
@@ -451,7 +693,7 @@ export const workItemsApi: WorkItemsApi = {
 		if (on('empty')) {
 			return {
 				rows: [],
-				viewer: viewerInfo(),
+				viewer: viewerInfo(organizationId),
 				needsMeSources: on('no-needs-me')
 					? []
 					: ['owner_block', 'verify', 'critical', 'budget', 'approval'],
@@ -467,7 +709,7 @@ export const workItemsApi: WorkItemsApi = {
 			scope.kind === 'project' ? all.filter((r) => r.project?.id === scope.projectId) : all;
 		return {
 			rows,
-			viewer: viewerInfo(),
+			viewer: viewerInfo(organizationId),
 			needsMeSources: on('no-needs-me')
 				? []
 				: ['owner_block', 'review', 'handoff', 'ask', 'budget', 'verify', 'critical', 'approval'],
