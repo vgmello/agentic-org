@@ -4,15 +4,16 @@ Tracks the exact `poc/` commit watermarks applied to the production SvelteKit UI
 
 ## How each sync pass works
 
-1. Fetch all remote refs: `git fetch --all --prune` (checking both `poc/ui-themes` and `origin/poc/ui-themes-prototype`).
-2. Inspect new prototype commits since the area's watermark:
+1. Fetch the prototype branch with `git fetch origin poc/ui-themes-prototype`. Find owner-approved release markers in branch history:
    ```sh
-   git log --oneline <last_synced_sha>..HEAD -- poc/
-   git log --oneline <last_synced_sha>..origin/poc/ui-themes-prototype -- poc/
-   git diff <last_synced_sha>..HEAD -- poc/
+   git log --reverse --format='%H%x09%s' origin/poc/ui-themes-prototype |
+     awk -F '\t' '$2 ~ /^Prototype Release: /'
    ```
-3. Port all changes into `apps/agentic-org-ui/` (never editing `poc/`), verify WCAG AA contrast, unit tests, E2E checks (`--workers=1`), and side-by-side POC vs Svelte screenshots.
-4. Complete Codex `gpt-6.2-sol` review + fresh empty-context final sign-off, commit, push, and advance the watermark table below.
+   A release marker can be an empty commit, so search without a path filter.
+   Process only markers that have yet to be applied. If there are none, wait for the next approval.
+2. Read the marker body with `git show -s --format=%B <release_sha>`. Use its approved behavior and pages to select changes, comparing the relevant watermark to the marker with `git diff <last_synced_sha> <release_sha> -- poc/`. If the marker covers a subset, port only the approved scope. Prototype changes after the marker wait for their own approval.
+3. Port the approved behavior into `apps/agentic-org-ui/` using existing Svelte components and real product data. Keep prototype fixtures in `poc/`. Verify WCAG AA contrast, unit tests, E2E checks (`--workers=1`), and side-by-side POC vs Svelte screenshots.
+4. Complete Codex `gpt-6.2-sol` review and a fresh final sign-off for the Svelte changes, then commit and push. Record the release marker SHA, applied prototype range, and resulting Svelte commit in the history below. Advance the watermarks for the areas actually ported. The existing entries are historical.
 
 ## Current Watermarks by Area
 
