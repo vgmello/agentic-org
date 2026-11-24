@@ -327,7 +327,7 @@ html[data-theme="cozy"] {
     background: var(--cozy-secondary);
     box-shadow: inset 0 0 0 1px var(--line);
   }
-  & :is(.cnt, .meta, .work-ref, .work-eta, .hb-spot-cell-sub, .hb-spot-next-lbl, .hb-cos-k, .hb-cos-sig-role,
+  & :is(.cnt, .meta, .work-eta, .hb-spot-cell-sub, .hb-spot-next-lbl, .hb-cos-k, .hb-cos-sig-role,
     .hb-cos-ts, .hb-cos-sig-meta, .hb-spot-next-ai, .hb-pillar-name, .hb-pillar-pill, .hb-sub-lbl,
     .hb-sub-meta, .hb-eyebrow, .hb-card-k, .hb-pace, .hb-hor-note, .hb-rel-tag, .hb-unblock-btn,
     .hb-brief-lenses button, .mono, code, .av24,
@@ -338,6 +338,7 @@ html[data-theme="cozy"] {
   & :is(.mono, .work-ref, .work-eta, code, pre, .runlog, .h4-task-chip, .hb-cos-k, .hb-cos-ts, .cmdk-trigger kbd, .cmdk-opt-tag) {
     font-family: var(--cozy-mono);
   }
+  & .work-ref { color: var(--gray-300); font-size: .875rem; font-weight: 500; }
 
   & :is(.btn, .nav-item, .nav-collapse-btn, .nav-group-all, .acct, .seg, .seg button,
     .nav-fold-btn, .cmdk-opt, .cmdk-esc, .cmdk-ai-prev-chip, .cmdk-tab, .menu button,
