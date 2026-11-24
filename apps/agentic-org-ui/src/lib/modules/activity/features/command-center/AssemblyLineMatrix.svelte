@@ -15,7 +15,6 @@
 		unavailableReason = undefined,
 		inboxPhase = 'ready',
 		projectScope = false,
-		releaseLabel = undefined,
 		hasActivityEntries = false,
 		onRetry = undefined
 	}: {
@@ -24,7 +23,6 @@
 		unavailableReason?: string;
 		inboxPhase?: FeedPhase;
 		projectScope?: boolean;
-		releaseLabel?: string;
 		hasActivityEntries?: boolean;
 		onRetry?: () => void;
 	} = $props();
@@ -76,9 +74,7 @@
 	const totalTracks = $derived(
 		model.milestones.reduce((sum, milestone) => sum + milestone.lanes.length, 0)
 	);
-	const summaryEyebrow = $derived(
-		projectScope ? (releaseLabel ?? model.scopeEyebrow) : model.scopeEyebrow
-	);
+	const summaryEyebrow = $derived(model.scopeEyebrow);
 	const summaryTitle = $derived(projectScope ? 'Assembly line' : model.scopeTitle);
 	const avgCycleLabel = $derived(formatTelemetryHours(model.avgCycleHours));
 
@@ -125,7 +121,7 @@
 					max={Math.max(1, model.totalItems)}
 					aria-label={dataUnavailable
 						? 'Readiness unavailable'
-						: `${projectScope ? 'Release' : 'Portfolio'} readiness: ${model.readinessPct}%`}
+						: `${projectScope ? 'Project' : 'Portfolio'} readiness: ${model.readinessPct}%`}
 				></progress>
 			</div>
 			<div>

@@ -49,13 +49,33 @@
 		);
 	});
 
-	const releaseDetailRead = new Resource<ReleaseDetail | undefined>(() => {
-		const rel = activeRelease;
-		if (!rel) return Promise.resolve(undefined);
-		return releasesApi.get(organizationId, projectId, rel.id).catch(() => undefined);
-	});
+	let releaseDetail = $state.raw<ReleaseDetail | undefined>(undefined);
+	let releaseDetailSeq = 0;
 
-	const releaseDetail = $derived(releaseDetailRead.data);
+	$effect(() => {
+		const orgId = organizationId;
+		const projId = projectId;
+		const relId = activeRelease?.id;
+		const seq = ++releaseDetailSeq;
+		if (!relId) {
+			releaseDetail = undefined;
+			return;
+		}
+		let cancelled = false;
+		void releasesApi
+			.get(orgId, projId, relId)
+			.then((detail) => {
+				if (cancelled || seq !== releaseDetailSeq) return;
+				releaseDetail = detail;
+			})
+			.catch(() => {
+				if (cancelled || seq !== releaseDetailSeq) return;
+				releaseDetail = undefined;
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	const releaseName = $derived.by(() => {
 		if (!activeRelease) return 'Current delivery';

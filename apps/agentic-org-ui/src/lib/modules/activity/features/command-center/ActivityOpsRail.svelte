@@ -57,6 +57,12 @@
 		return combined.slice(0, 30);
 	});
 
+	const releaseMilestonesPct = $derived.by(() => {
+		const done = releaseMilestones.reduce((sum, m) => sum + m.tasksDone, 0);
+		const open = releaseMilestones.reduce((sum, m) => sum + m.tasksOpen, 0);
+		return computeCompletionPct(done, done + open);
+	});
+
 	function formatLineTime(iso: string): { text: string; full: string; iso?: string } {
 		const ms = Date.parse(iso);
 		if (Number.isNaN(ms)) return { text: '—', full: iso, iso: undefined };
@@ -125,7 +131,9 @@
 				<h3 id="proj-ops-milestones-heading">
 					{releaseMilestones.length > 0 ? 'Milestones' : 'Project progress'}
 				</h3>
-				<span class="ops-section-meta tabular-nums">{model.readinessPct}%</span>
+				<span class="ops-section-meta tabular-nums">
+					{releaseMilestones.length > 0 ? releaseMilestonesPct : model.readinessPct}%
+				</span>
 			</div>
 			{#if releaseMilestones.length > 0}
 				{#each releaseMilestones as ms (ms.id)}
@@ -253,10 +261,10 @@
 		{/if}
 	</section>
 
-	<!-- 5. Telemetry Card: Throughput (7d) + Avg. cycle time + Waiting on people now -->
+	<!-- 5. Telemetry Card: Work activity (7d) + Avg. cycle time + Waiting on people now -->
 	<section class="project-telemetry" aria-labelledby="proj-ops-throughput-heading">
 		<div class="project-telemetry-header">
-			<h3 id="proj-ops-throughput-heading">Throughput (7d)</h3>
+			<h3 id="proj-ops-throughput-heading">Work activity (7d)</h3>
 			<span class="ops-section-meta tabular-nums">{model.throughputMeta}</span>
 		</div>
 		{#if model.throughputSource === 'unavailable'}

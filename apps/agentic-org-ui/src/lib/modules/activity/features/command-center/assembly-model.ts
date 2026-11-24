@@ -157,8 +157,8 @@ export interface ActivityCommandCenterModel {
 	actionableWorkCount: number;
 	/** Average hours from `created_at` to `updated_at` across completed/merged items; null when none. */
 	avgCycleHours: number | null;
-	/** Cumulative elapsed hours across items currently waiting in human review. */
-	waitingOnPeopleHours: number;
+	/** Cumulative elapsed hours across review-stage items with recorded Inbox review timestamps; null when any review item lacks a review-entry timestamp. */
+	waitingOnPeopleHours: number | null;
 	/** Active non-former agents for the project station slot dots. */
 	stationAgents: StationAgentSlot[];
 	/** Items currently waiting in human review for the project dock "Needs a human" section. */
@@ -1170,17 +1170,20 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	// WorkItemSummary lacks immutable lifecycle start/completion timestamps (updated_at changes on later edits),
 	// so avgCycleHours stays null (displayed as "—") until lifecycle transition history is served.
 	const avgCycleHours: number | null = null;
-	let waitingOnPeopleHours = 0;
+	let waitingSumHours = 0;
+	let waitingTimestampComplete = true;
 	const humanWaitingItems: { id: string; title: string; href: string }[] = [];
 	for (const item of scopedWork) {
 		const stage = classifyAssemblyStage(item, inboxByRef, resolvedOwnerId);
 		if (stage === 'review') {
 			const linked =
 				inboxByRef.get(item.short_id.toUpperCase()) ?? inboxByRef.get(item.id.toUpperCase());
-			const sinceIso = linked?.created_at ?? item.updated_at;
-			const sinceMs = Date.parse(sinceIso);
-			if (!Number.isNaN(sinceMs) && nowMs > sinceMs) {
-				waitingOnPeopleHours += (nowMs - sinceMs) / HOUR_MS;
+			// Only use immutable Inbox review-entry created_at; never fall back to mutable item.updated_at.
+			const sinceMs = linked?.created_at ? Date.parse(linked.created_at) : Number.NaN;
+			if (!Number.isNaN(sinceMs) && nowMs >= sinceMs) {
+				waitingSumHours += (nowMs - sinceMs) / HOUR_MS;
+			} else {
+				waitingTimestampComplete = false;
 			}
 			humanWaitingItems.push({
 				id: item.id,
@@ -1189,6 +1192,8 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 			});
 		}
 	}
+	const waitingOnPeopleHours: number | null =
+		humanWaitingItems.length === 0 ? 0 : waitingTimestampComplete ? waitingSumHours : null;
 
 	// Agents roster for KPI & rail — project scope restricts station slots to project teams + assigned agents.
 	const nonFormerAgents = agentsOf(nonOwners(snapshot)).filter((m) => !isFormer(m));
@@ -1464,12 +1469,17 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 					? `${needsYouCount} ${needsYouCount === 1 ? 'item' : 'items'} waiting on human review`
 					: 'No human review bottlenecks right now';
 
-	const lineEvents: LineEventEntry[] = streamEntries.slice(0, 30).map((entry) => ({
-		id: entry.id,
-		at: entry.at,
-		tone: entry.tone === 'ok' || entry.tone === 'warn' || entry.tone === 'bad' ? entry.tone : '',
-		text: `${entry.actorName} ${entry.text}`.trim()
-	}));
+	// Build chronological line events strictly from recorded activity rows (never synthetic work-snapshot fallbacks).
+	const lineEvents: LineEventEntry[] =
+		feedPhase === 'ready' && scopedActivityRows.length > 0
+			? streamEntries.slice(0, 30).map((entry) => ({
+					id: entry.id,
+					at: entry.at,
+					tone:
+						entry.tone === 'ok' || entry.tone === 'warn' || entry.tone === 'bad' ? entry.tone : '',
+					text: `${entry.actorName} ${entry.text}`.trim()
+				}))
+			: [];
 
 	return {
 		activeProjects,

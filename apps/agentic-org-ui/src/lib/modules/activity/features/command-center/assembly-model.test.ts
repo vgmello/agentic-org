@@ -1412,6 +1412,32 @@ describe('assembly-model', () => {
 		// Project 7d throughput counts only work events (1), ignoring conversation messages
 		expect(model.throughput7d.reduce((sum, d) => sum + d.count, 0)).toBe(1);
 
+		// Review-stage item without a linked Inbox review-entry timestamp returns null wait (never mutable updated_at)
+		// and empty activityRows produces empty lineEvents (never misattributed work-snapshot fallback)
+		const unlinkedOwnerReview = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'Acme Corp',
+			workItems: [
+				makeItem({
+					id: 'w-owner-blocked',
+					short_id: 'T-55',
+					kind: 'task',
+					status: 'blocked',
+					project_id: 'proj-a',
+					assignee_id: 'you',
+					updated_at: new Date(NOW - 30_000).toISOString()
+				})
+			],
+			inboxItems: [],
+			activityRows: [],
+			projectScope: 'proj-a',
+			ownerId: 'you',
+			nowMs: NOW
+		});
+		expect(unlinkedOwnerReview.humanWaitingItems).toHaveLength(1);
+		expect(unlinkedOwnerReview.waitingOnPeopleHours).toBeNull();
+		expect(unlinkedOwnerReview.lineEvents).toEqual([]);
+
 		// Explicit archived project scope resolves its own items and decisions without dropping them
 		const archivedModel = deriveActivityCommandCenter({
 			snapshot,

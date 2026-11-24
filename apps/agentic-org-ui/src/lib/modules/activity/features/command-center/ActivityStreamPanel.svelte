@@ -115,10 +115,8 @@
 	}
 
 	function handleRetryClick(event: MouseEvent) {
-		const panel = (event.currentTarget as HTMLElement | null)?.closest<HTMLElement>(
-			'[role="tabpanel"]'
-		);
-		// Move focus synchronously to the persistent active tabpanel before the Retry button unmounts.
+		const panel = (event.currentTarget as HTMLElement | null)?.closest<HTMLElement>('.stream-body');
+		// Move focus synchronously to the persistent focusable stream container before the Retry button unmounts.
 		panel?.focus();
 		if (isDecisionTab) onRetryDecisions?.();
 		else onRetry?.();

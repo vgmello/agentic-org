@@ -44,7 +44,6 @@
 		snapshot,
 		lockedProjectId = undefined,
 		scopedTeamIds = undefined,
-		releaseLabel = undefined,
 		releaseMilestones = [],
 		extraProjectActivity = [],
 		onRegisterToolbar = undefined
@@ -54,7 +53,6 @@
 		snapshot: OrgSnapshot;
 		lockedProjectId?: string;
 		scopedTeamIds?: readonly string[];
-		releaseLabel?: string;
 		releaseMilestones?: readonly ReleaseMilestone[];
 		extraProjectActivity?: readonly ActivityEntry[];
 		onRegisterToolbar?: (controls: Snippet | undefined) => void;
@@ -139,7 +137,13 @@
 		if (stillVisible) return;
 		const active = document.activeElement;
 		if (active instanceof HTMLElement && active.closest('.cmd-live-banner')) {
-			active.closest('.cmd-page')?.querySelector<HTMLElement>('.cmd-status-slot')?.focus();
+			const fallbackTarget =
+				active
+					.closest('.cmd-page')
+					?.querySelector<HTMLElement>(
+						'.cmd-status-slot, .assembly-view, .stream-body, .activity-panel-scroll'
+					) ?? document.getElementById('project-view-tab-assembly');
+			fallbackTarget?.focus();
 		}
 	}
 
@@ -1349,7 +1353,6 @@
 						unavailableReason={workUnavailableReason}
 						{inboxPhase}
 						projectScope={isProjectMode}
-						{releaseLabel}
 						hasActivityEntries={extraLineEvents.length > 0 || model.lineEvents.length > 0}
 						onRetry={retryShellAndInbox}
 					/>

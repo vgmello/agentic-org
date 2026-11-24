@@ -34,18 +34,32 @@
 		);
 	});
 
-	const releaseDetailRead = new Resource<ReleaseDetail | undefined>(() => {
-		const rel = activeRelease;
-		if (!rel) return Promise.resolve(undefined);
-		return releasesApi.get(frame.organizationId, frame.projectId, rel.id).catch(() => undefined);
-	});
+	let releaseDetail = $state.raw<ReleaseDetail | undefined>(undefined);
+	let releaseDetailSeq = 0;
 
-	const releaseLabel = $derived.by(() => {
-		if (!activeRelease) return frame.project.name;
-		const label = activeRelease.versionLabel?.trim();
-		return label
-			? `Release ${label} · ${activeRelease.title}`
-			: `R-${activeRelease.number} · ${activeRelease.title}`;
+	$effect(() => {
+		const orgId = frame.organizationId;
+		const projId = frame.projectId;
+		const relId = activeRelease?.id;
+		const seq = ++releaseDetailSeq;
+		if (!relId) {
+			releaseDetail = undefined;
+			return;
+		}
+		let cancelled = false;
+		void releasesApi
+			.get(orgId, projId, relId)
+			.then((detail) => {
+				if (cancelled || seq !== releaseDetailSeq) return;
+				releaseDetail = detail;
+			})
+			.catch(() => {
+				if (cancelled || seq !== releaseDetailSeq) return;
+				releaseDetail = undefined;
+			});
+		return () => {
+			cancelled = true;
+		};
 	});
 
 	const scopedTeamIds = $derived([
@@ -78,8 +92,7 @@
 	snapshot={effectiveSnapshot}
 	lockedProjectId={frame.projectId}
 	{scopedTeamIds}
-	{releaseLabel}
-	releaseMilestones={releaseDetailRead.data?.milestones ?? []}
+	releaseMilestones={releaseDetail?.milestones ?? []}
 	extraProjectActivity={activityRead.data ?? []}
 	onRegisterToolbar={frame.setToolbarControls}
 />
