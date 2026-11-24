@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -360,6 +361,162 @@ class SolReviewWrapperTests(unittest.TestCase):
             os.mkfifo(fifo_path, 0o600)
             with self.assertRaisesRegex(ValueError, "non-regular"):
                 kit_sol_review.emit_last_message(repo, fifo_path)
+
+    def test_verdict_and_citation_analysis_ignores_fences_urls_and_symlink_escapes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            (repo / "src").mkdir(parents=True)
+            (repo / "src" / "lib.rs").write_text("fn main() {}\n", encoding="utf-8")
+            (repo / "deploy" / "container").mkdir(parents=True)
+            (repo / "deploy" / "container" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+            (repo / ".gitignore").write_text("target/\n", encoding="utf-8")
+            (repo / "doc 1.md").write_text("# Doc\n", encoding="utf-8")
+            (repo / "src" / "bin.dat").write_bytes(b"\x7fELF\x00\x01\x02\n")
+            outside = Path(tmp) / "outside.rs"
+            outside.write_text("secret\n", encoding="utf-8")
+            os.symlink(outside, repo / "src" / "escape.rs")
+
+            huge_line = "9" * 5000
+            text = (
+                "````markdown\n"
+                "```\n"
+                "VERDICT: APPROVE\n"
+                "src/lib.rs:1\n"
+                "````\n"
+                "> ```\n"
+                "> VERDICT: APPROVE\n"
+                "> ```\n"
+                "> VERDICT: APPROVE\n"
+                f"See https://example.com:8080/foo.rs:12 and ../outside.rs:1 and src/escape.rs:1 and src/missing.rs:5 and src/bin.dat:1 and src/lib.rs:999999 and src/lib.rs:{huge_line}.\n"
+                f"Real bug at [lib.rs:1]({repo / 'src' / 'lib.rs'}:1), deploy/container/Dockerfile:1, .gitignore:1, and [doc](<{repo / 'doc 1.md'}:1>) and src/lib.rs:0.\n"
+                "\nVERDICT: REQUEST_CHANGES\n"
+            )
+            analysis = kit_sol_review.analyze_review_message(repo, text)
+            self.assertEqual(analysis["verdict"], "REQUEST_CHANGES")
+            self.assertEqual(
+                analysis["verified_citations"],
+                ["src/lib.rs:1", "doc 1.md:1", "deploy/container/Dockerfile:1", ".gitignore:1"],
+            )
+            self.assertEqual(analysis["verified_citations_count"], 4)
+
+            # Standalone markdown-formatted VERDICT: APPROVED normalizes to APPROVE; fenced/quoted/list-fenced examples do not
+            self.assertEqual(kit_sol_review.extract_verdict("Looks good.\n\n**VERDICT:** `APPROVED`\n"), "APPROVE")
+            self.assertIsNone(kit_sol_review.extract_verdict("````\n```\nVERDICT: APPROVE\n````\n> VERDICT: APPROVE\n"))
+            self.assertIsNone(kit_sol_review.extract_verdict("- ```\n  VERDICT: APPROVE\n  ```\n"))
+            self.assertIsNone(kit_sol_review.extract_verdict("- outer\n  - inner\n    ```\n    VERDICT: APPROVE\n    ```\n"))
+            # 4-space closer inside top-level fence must NOT close it; 4-space opener + 2-space closer in a list MUST close cleanly
+            self.assertIsNone(kit_sol_review.extract_verdict("```\n    ```\nVERDICT: APPROVE\n```\n"))
+            self.assertEqual(
+                kit_sol_review.extract_verdict("- item\n    ```\n    VERDICT: REQUEST_CHANGES\n  ```\nVERDICT: APPROVE\n"),
+                "APPROVE",
+            )
+            # Quoted fence inside a list item (`- > ``` `) must hide both embedded verdicts and embedded citations
+            quoted_list_fence = "- > ```\n  > AGENTS.md:1\n  > src/lib.rs:1\n  > VERDICT: APPROVE\n  > ```\n"
+            quoted_analysis = kit_sol_review.analyze_review_message(repo, quoted_list_fence)
+            self.assertIsNone(quoted_analysis["verdict"])
+            self.assertEqual(quoted_analysis["verified_citations_count"], 0)
+
+            # Bounded citation scan does not read past needed line and stops at MAX_CITATION_SCAN_BYTES
+            big_text = repo / "src" / "big.txt"
+            big_text.write_text(("x" * 1000 + "\n") * 3000, encoding="utf-8")
+            self.assertEqual(kit_sol_review.is_verified_repo_file(repo, "src/big.txt", line_num=1), "src/big.txt")
+            self.assertIsNone(kit_sol_review.is_verified_repo_file(repo, "src/big.txt", line_num=2900))
+
+            # parse_events_jsonl counts command_execution, web_search, non-Hindsight mcp_tool_call, and web.search extension
+            ev = Path(tmp) / "events.jsonl"
+            ev.write_text(
+                "\n".join(
+                    json.dumps(x)
+                    for x in [
+                        {"type": "thread.started", "thread_id": "01a20dec-7cf7-7dd2-b7b5-0ba962e7b140"},
+                        {"type": "item.completed", "item": {"type": "command_execution"}},
+                        {"type": "item.completed", "item": {"type": "web_search"}},
+                        {"type": "item.completed", "item": {"type": "extension", "kind": "web.search"}},
+                        {"type": "item.completed", "item": {"type": "mcp_tool_call", "server": "rust_analyzer"}},
+                        {"type": "item.completed", "item": {"type": "mcp_tool_call", "server": "hindsight"}},
+                        {"type": "turn.completed", "usage": {"input_tokens": 10, "cached_input_tokens": 5, "output_tokens": 2, "reasoning_output_tokens": 1}},
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            ids, totals, completed, failed, insp = kit_sol_review.parse_events_jsonl(ev)
+            self.assertEqual((len(ids), completed, failed, insp), (1, 1, False, 4))
+            self.assertEqual(totals["input_tokens"], 10)
+
+    def test_outcome_subcommand_and_diff_loc_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            git = lambda *args: subprocess.check_output(["git", "-C", str(repo), *args], text=True, stderr=subprocess.DEVNULL)
+            git("init")
+            git("config", "user.email", "test@example.com")
+            git("config", "user.name", "Test")
+            (repo / "app.py").write_text("line1\nline2\n", encoding="utf-8")
+            git("add", "app.py")
+            git("commit", "-m", "init")
+            head_sha = git("rev-parse", "HEAD").strip()
+
+            # Explicit --base counts non-test diff + untracked; omitting --base leaves diff_non_test_loc=None even with dirty edits
+            (repo / "new_mod.py").write_text("a\nb\nc\n", encoding="utf-8")
+            (repo / "test_new_mod.py").write_text("x\ny\nz\nw\n", encoding="utf-8")
+            self.assertEqual(kit_sol_review.detect_diff_non_test_loc(repo, base="HEAD"), 3)
+            parser = kit_sol_review.build_parser()
+            no_base_args = parser.parse_args(["start", "--effort", "max", "--scope", "docs", "-"])
+            self.assertIsNone(kit_sol_review.prepare_review_plan("start", no_base_args, repo)["diff_non_test_loc"])
+            with self.assertRaisesRegex(ValueError, "Unknown git commit ref"):
+                kit_sol_review.detect_diff_non_test_loc(repo, base="--bad-ref")
+
+            # Seed manifest and record outcome via CLI
+            sid = "01a20dec-7cf7-7dd2-b7b5-0ba962e7b140"
+            prior_sid = "01a20dec-7cf7-7dd2-b7b5-0ba962e7b141"
+            kit_sol_review.save_manifest(repo, sid, {"session_id": sid, "effort": "max", "passes": []})
+
+            buf = io.StringIO()
+            with patch.object(sys, "stdout", buf):
+                rc = kit_sol_review.main(
+                    [
+                        "outcome",
+                        sid,
+                        "--confirmed",
+                        "4",
+                        "--false-positives",
+                        "1",
+                        "--regressions",
+                        "0",
+                        "--prior-session",
+                        prior_sid,
+                        "--escaped",
+                        "3",
+                        "--commit",
+                        "HEAD",
+                        "--notes",
+                        "solid final gate",
+                        "--repo",
+                        str(repo),
+                        "--codex-home",
+                        str(Path(tmp) / "empty"),
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            saved = kit_sol_review.load_manifest(repo, sid)
+            self.assertEqual(saved["outcome"]["confirmed_findings"], 4)
+            self.assertEqual(saved["outcome"]["false_positives"], 1)
+            self.assertEqual(saved["outcome"]["precision_pct"], 80.0)
+            self.assertEqual(saved["outcome"]["prior_session_id"], prior_sid)
+            self.assertEqual(saved["outcome"]["escaped_from_prior"], 3)
+            self.assertEqual(saved["outcome"]["reviewed_commit"], head_sha)
+
+            # Reject negative counts, self-link, missing --escaped with --prior-session, --escaped > --confirmed, missing manifest
+            for bad_argv in (
+                ["outcome", sid, "--confirmed", "-1", "--false-positives", "0", "--repo", str(repo)],
+                ["outcome", sid, "--confirmed", "1", "--false-positives", "0", "--prior-session", sid, "--escaped", "0", "--repo", str(repo)],
+                ["outcome", sid, "--confirmed", "1", "--false-positives", "0", "--prior-session", prior_sid, "--repo", str(repo)],
+                ["outcome", sid, "--confirmed", "1", "--false-positives", "0", "--escaped", "1", "--repo", str(repo)],
+                ["outcome", sid, "--confirmed", "1", "--false-positives", "0", "--prior-session", prior_sid, "--escaped", "2", "--repo", str(repo)],
+                ["outcome", prior_sid, "--confirmed", "1", "--false-positives", "0", "--repo", str(repo)],
+            ):
+                self.assertEqual(kit_sol_review.main(bad_argv), 2)
 
 
 if __name__ == "__main__":

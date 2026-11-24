@@ -154,11 +154,11 @@
       },
       ".agent-kit/runtime/kit_sol_review.py": {
         "upstream_sha256": null,
-        "local_sha256": "85950a4438234effffcc88ddea7f44f29c84d23aafbe2c70d9c11d91460187cf"
+        "local_sha256": "e46c286ef87962254d964889b48debdcaca0da0de2dc9ff212335de192b6d8bd"
       },
       ".agent-kit/runtime/kit_efficiency_watchdog.py": {
         "upstream_sha256": null,
-        "local_sha256": "f2c750c868f2540ff27775aad64b6684071fb58c91789e267eb2374e44a003f1"
+        "local_sha256": "3d7bce1ca736949cfc059ff898c6257ef543e804fab6e76e133ebd43b9216c43"
       }
     }
   }
