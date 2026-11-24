@@ -671,7 +671,7 @@ html[data-theme="graphite"] #content:has(.triage-workspace, .work-header) { back
   html[data-theme="graphite"][data-interior-page] #sidebar {
     /* The raised frame casts its shadow back onto the sidebar. */
     background-image:
-      linear-gradient(to left, rgb(0 0 0 / .37), transparent 10px),
+      linear-gradient(to left, rgb(0 0 0 / .37), transparent 7px),
       radial-gradient(ellipse 210px 260px at top right, rgb(255 255 255 / .075), transparent);
     box-shadow: inset -1px 0 #38393A;
   }
