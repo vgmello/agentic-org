@@ -88,6 +88,7 @@ impl LiveOfficeFixture {
             channel_watcher,
             live,
             &wake,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
         let mut shared =
             serve::Shared::new(&info, &socket, ports, crate::test_support::grant_key());

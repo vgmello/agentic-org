@@ -303,7 +303,18 @@ impl Office {
             spoil();
         }
         let bytes = office_file::encode(&info)?;
-        let companions = super::open_companion_stores(options.engine, &roots, &info)?;
+        let ca_digest =
+            super::satellite::read_ca_digest_for_open(&roots.durable, &info, &info.office_id);
+        let companions = super::open_companion_stores(super::CompanionOpenSpec {
+            engine: options.engine,
+            roots: &roots,
+            info: &info,
+            identity: &here,
+            hq_office_id: &info.office_id,
+            ca_digest,
+            epoch: 1,
+            initial_snapshot_required: false,
+        })?;
         let clock_high_ms = std::sync::atomic::AtomicU64::new(options.clock.now().0);
         let office = Office {
             folder,
@@ -322,7 +333,14 @@ impl Office {
             accounting: companions.accounting,
             budgets: companions.budgets,
             budget_op_lock: std::sync::Mutex::new(()),
+            federation_io_lock: std::sync::Mutex::new(()),
+            revocation_lock: std::sync::Mutex::new(()),
+            snapshot_export_lock: std::sync::Mutex::new(()),
+            promoted_removed_offices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            peer_activity_fences: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            peer_session_stops: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             providers: companions.providers,
+            replication: companions.replication,
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]

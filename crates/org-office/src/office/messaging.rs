@@ -135,6 +135,12 @@ impl Office {
         caller: &str,
         params: ChatChannelCreateParams,
     ) -> Result<Result<ChatChannelCreateResult, ApiError>, OfficeError> {
+        if self.info.role == crate::model::OfficeRole::Satellite {
+            return Ok(Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "channels are managed by HQ",
+            )));
+        }
         let Ok(caller_id) = parse_member_id(caller) else {
             return Ok(Err(ApiError::new(ErrorCode::NotBound, "invalid caller")));
         };
@@ -156,6 +162,12 @@ impl Office {
         params: ChatChannelMembershipParams,
         join: bool,
     ) -> Result<Result<ChatChannelMembershipResult, ApiError>, OfficeError> {
+        if self.info.role == crate::model::OfficeRole::Satellite {
+            return Ok(Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "channels are managed by HQ",
+            )));
+        }
         let Ok(caller_id) = parse_member_id(caller) else {
             return Ok(Err(ApiError::new(ErrorCode::NotBound, "invalid caller")));
         };
@@ -400,6 +412,14 @@ impl Office {
         };
         let org_seq = self.org_snapshot()?.position.seq;
         let now_utc = time::format_rfc3339_ms(self.monotonic_now_ms());
+        // Serialize revocation snapshot and withdrawal commit under `federation_io_lock` so a
+        // concurrent `remove_satellite_office` cannot split provisional vs authoritative close
+        // decisions (`TASK-52` P17-#2).
+        let _guard = self
+            .federation_io_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let removed_offices = super::invitations::removed_satellite_offices_locked(self)?;
         self.store
             .run(MsgWithdrawOp {
                 here: self.identity.clone(),
@@ -408,6 +428,7 @@ impl Office {
                 params,
                 org_seq,
                 now_utc,
+                removed_offices,
             })
             .map_err(storage)
     }

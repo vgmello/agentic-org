@@ -21,6 +21,8 @@ mod chat_calls;
 mod cost_calls;
 mod directory;
 pub mod fdswap;
+pub mod federation;
+mod federation_calls;
 mod follow;
 mod git_calls;
 mod grant;
@@ -36,6 +38,7 @@ mod provider_calls;
 mod revocations;
 mod serve;
 mod signals;
+mod snapshot_transfer;
 mod startup;
 mod task_calls;
 #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
@@ -59,7 +62,7 @@ use org_office::OfficeError;
 use org_office_launch::{
     office_dir, FailCode, FirstLine, InspectImportPerson, InspectImportPreview,
     InspectImportRequest, InspectImportResponse, LaunchError, OfficeFile, ServerEvent, CREATE_FLAG,
-    DISCARD_FLAG, INSPECT_IMPORT_FLAG, OFFICE_FLAG,
+    DISCARD_FLAG, INSPECT_IMPORT_FLAG, JOIN_FLAG, OFFICE_FLAG,
 };
 use org_proto::location::{
     check_socket_path, office_home_from, office_socket_in, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV,
@@ -83,6 +86,7 @@ pub fn install_panic_hook() {
 #[derive(Debug, PartialEq, Eq)]
 enum Mode {
     Create,
+    Join,
     Serve(String),
     Discard(String),
     InspectImport,
@@ -91,11 +95,12 @@ enum Mode {
 fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
     match args {
         [flag] if flag == CREATE_FLAG => Ok(Mode::Create),
+        [flag] if flag == JOIN_FLAG => Ok(Mode::Join),
         [flag, id] if flag == OFFICE_FLAG => Ok(Mode::Serve(id.clone())),
         [flag, id] if flag == DISCARD_FLAG => Ok(Mode::Discard(id.clone())),
         [flag] if flag == INSPECT_IMPORT_FLAG => Ok(Mode::InspectImport),
         _ => Err(
-            "usage: agentic-org-office --create | --office <id> | --discard <id> | --inspect-import",
+            "usage: agentic-org-office --create | --join | --office <id> | --discard <id> | --inspect-import",
         ),
     }
 }
@@ -126,6 +131,7 @@ pub fn run(args: &[String], control: ControlPipe) -> i32 {
     match mode {
         Mode::Discard(id) => discard(control, &home, &id),
         Mode::Create => create_and_serve(control, &home, &runtime),
+        Mode::Join => join_and_serve(control, &home, &runtime),
         Mode::Serve(id) => open_and_serve(control, &home, &runtime, &id),
         Mode::InspectImport => unreachable!(),
     }
@@ -389,6 +395,232 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
     )
 }
 
+fn join_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
+    let (message, from_host) = match first_line(&mut control, FirstLine::Join, None) {
+        Ok(first) => first,
+        Err(code) => return code,
+    };
+    let Launch::Join(join) = message else {
+        return fail(&mut control, FailCode::InvalidRequest, "not a join message");
+    };
+    let Some((folder, token)) = validate_join_launch(&mut control, home, runtime, &join) else {
+        return 1;
+    };
+    let mut transfer = control.transfer();
+    let admitted = match admit(&mut control, &mut transfer, &join.office_id, &join.instance) {
+        Ok(admitted) => admitted,
+        Err(code) => return code,
+    };
+    let Some(office) = run_join_enrollment_and_sync(&mut control, &folder, &join, &token, admitted)
+    else {
+        return 1;
+    };
+    serve_office(
+        control,
+        transfer,
+        from_host,
+        runtime,
+        office,
+        join.auth,
+        join.instance,
+    )
+}
+
+fn validate_join_launch(
+    control: &mut Control,
+    home: &Path,
+    runtime: &Path,
+    join: &launch::Join,
+) -> Option<(std::path::PathBuf, org_pki::invitation::InvitationToken)> {
+    let Some(folder) = office_dir(home, &join.office_id) else {
+        let _ = fail(control, FailCode::InvalidRequest, "not a plain office id");
+        return None;
+    };
+    if let Err(message) = socket_path(runtime, &join.office_id) {
+        let _ = fail(control, FailCode::InvalidRequest, message);
+        return None;
+    }
+    let Ok(token) = org_pki::invitation::InvitationToken::decode(join.invitation.expose()) else {
+        let _ = fail(
+            control,
+            FailCode::InvalidRequest,
+            "invalid satellite invitation token",
+        );
+        return None;
+    };
+    if token.office_id != join.office_id {
+        let _ = fail(
+            control,
+            FailCode::InvalidRequest,
+            "invitation office_id does not match join request",
+        );
+        return None;
+    }
+    Some((folder, token))
+}
+
+fn run_join_enrollment_and_sync(
+    control: &mut Control,
+    folder: &Path,
+    join: &launch::Join,
+    token: &org_pki::invitation::InvitationToken,
+    admitted: crate::transfer::Admitted,
+) -> Option<Office> {
+    let (req_id, local_key) =
+        match load_or_create_pending_joining_key(folder, &token.org_id, &join.office_id, &join.key)
+        {
+            Ok(pair) => pair,
+            Err(msg) => {
+                let _ = fail(control, FailCode::StorageError, &msg);
+                return None;
+            }
+        };
+    let enrolled = match federation::enroll_satellite_with_hq(token, &local_key, |check_code| {
+        emit(
+            control,
+            &ServerEvent::JoinPending {
+                request_id: req_id.clone(),
+                check_code: check_code.to_owned(),
+            },
+        );
+    }) {
+        Ok(bundle) => bundle,
+        Err(reason) => {
+            let _ = fail(control, FailCode::InvalidRequest, &reason);
+            return None;
+        }
+    };
+    let office = match open_or_provision_joined_satellite(
+        folder, join, token, enrolled, &local_key, admitted,
+    ) {
+        Ok(o) => Arc::new(o),
+        Err(e) => {
+            let _ = fail_with(control, &e);
+            return None;
+        }
+    };
+    finalize_joined_satellite_sync(control, folder, join.re_enroll, office)
+}
+
+fn finalize_joined_satellite_sync(
+    control: &mut Control,
+    folder: &Path,
+    re_enroll: bool,
+    office_arc: Arc<Office>,
+) -> Option<Office> {
+    // Gate `office.json`, pending key removal, `Joined`, and readiness on durable initial
+    // snapshot installation so a failed first snapshot remains cleanly resumable (`TASK-52` H-4).
+    let mut session = match federation::SatelliteSyncSession::connect(Arc::clone(&office_arc)) {
+        Ok(s) => s,
+        Err(reason) => {
+            let _ = fail(control, FailCode::StorageError, &reason);
+            return None;
+        }
+    };
+    let op_id = office_arc.next_uuid_v7();
+    if let Err(reason) = session.sync_initial_snapshot(&op_id) {
+        let _ = fail(control, FailCode::StorageError, &reason);
+        return None;
+    }
+    drop(session);
+    if !re_enroll {
+        if let Err(e) = office_arc.publish_satellite_office_file() {
+            let _ = fail_with(control, &e);
+            return None;
+        }
+    }
+    let _ = std::fs::remove_file(folder.join("pending-joining-key.v1.json"));
+    let info = office_arc.info();
+    let office_file = match OfficeFile::selected(
+        &info.office_id,
+        &info.office_name,
+        OfficeRole::Satellite,
+        &info.org_id,
+        &info.org_name,
+        &info.created_at,
+    ) {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = fail(
+                control,
+                FailCode::StorageError,
+                &format!("joined satellite office file invalid: {e}"),
+            );
+            return None;
+        }
+    };
+    emit(
+        control,
+        &ServerEvent::Joined {
+            office: office_file,
+        },
+    );
+    match Arc::try_unwrap(office_arc) {
+        Ok(o) => Some(o),
+        Err(_) => {
+            let _ = fail(
+                control,
+                FailCode::StorageError,
+                "satellite office still referenced after initial sync",
+            );
+            None
+        }
+    }
+}
+
+fn open_or_provision_joined_satellite(
+    folder: &Path,
+    join: &launch::Join,
+    token: &org_pki::invitation::InvitationToken,
+    enrolled: federation::EnrolledCertificateBundle,
+    local_key: &org_pki::SigningKey,
+    admitted: transfer::Admitted,
+) -> Result<Office, OfficeError> {
+    if join.re_enroll {
+        let opened = Office::open_as_owner(
+            folder,
+            Some(join.key.clone()),
+            &join.instance,
+            admitted.roots,
+            admitted.custody,
+            &admitted.admission.owner_member,
+        )?;
+        opened.re_enroll_satellite(org_office::SatelliteReEnrollSpec {
+            org_id: token.org_id.clone(),
+            new_hq_office_id: enrolled.hq_office_id,
+            new_hq_addresses: token.hq_addresses.clone(),
+            new_epoch: enrolled.epoch,
+            new_ca_cert_der: enrolled.ca_cert_der,
+            new_office_cert_der: enrolled.cert_der,
+            new_office_key_der: org_pki::Zeroizing::new(local_key.local_der().to_vec()),
+        })?;
+        Ok(opened)
+    } else {
+        Office::provision_satellite_pending(
+            folder,
+            org_office::SatelliteProvisionSpec {
+                new: org_office::NewOffice {
+                    office_id: join.office_id.clone(),
+                    office_name: join.office_name.clone(),
+                    role: org_office::OfficeRole::Satellite,
+                    org_id: token.org_id.clone(),
+                    org_name: token.org_name.clone(),
+                },
+                operation_id: join.operation_id.clone(),
+                hq_office_id: enrolled.hq_office_id,
+                hq_addresses: token.hq_addresses.clone(),
+                epoch: enrolled.epoch,
+                ca_cert_der: enrolled.ca_cert_der,
+                office_cert_der: enrolled.cert_der,
+                office_key_der: org_pki::Zeroizing::new(local_key.local_der().to_vec()),
+            },
+            join.key.clone(),
+            admitted.roots,
+            admitted.custody,
+        )
+    }
+}
+
 fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -> i32 {
     let (message, from_host) = match first_line(&mut control, FirstLine::Start, Some(id)) {
         Ok(first) => first,
@@ -432,14 +664,25 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
-    // The admission is for this office's owner, as a create checks it: the snapshot marks
-    // the owner the creation intent froze.
-    let owner = office
-        .org_snapshot()
-        .map(|snapshot| snapshot.members.into_iter().find(|member| member.owner));
-    match owner {
-        Ok(Some(owner)) if owner.id == admitted.admission.owner_member => {}
-        Ok(_) => {
+    // Verify writer custody against the opened office's role (`TASK-52` #1):
+    // - HQ requires the admitted `owner_member` to match the canonical organization owner.
+    // - Satellites verify custody identity (`office_id`, `organization_id`, `owner_member == office_id`).
+    let custody_ok = match office.info().role {
+        org_office::OfficeRole::Satellite => Ok(admitted.admission.owner_member
+            == office.info().office_id
+            && admitted.admission.identity.office_id == office.info().office_id
+            && admitted.admission.identity.organization_id == office.info().org_id),
+        _ => office.org_snapshot().map(|snapshot| {
+            snapshot
+                .members
+                .into_iter()
+                .find(|member| member.owner)
+                .is_some_and(|owner| owner.id == admitted.admission.owner_member)
+        }),
+    };
+    match custody_ok {
+        Ok(true) => {}
+        Ok(false) => {
             // Nothing was appended: the orderly stop puts back the clean-stop marker the
             // opening consumed.
             if let Err(error) = office.close() {
@@ -469,7 +712,241 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
     )
 }
 
-/// Takes the host's writer control and its admission, before the office is created or
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PendingJoiningKeyFile {
+    v: u32,
+    request_id: String,
+    wrapped_key_b64: String,
+}
+
+fn try_load_pending_joining_key(
+    path: &Path,
+    secrets_key: &org_office::Key,
+    binding: &org_pki::wrap::WrapBinding<'_>,
+) -> Option<(String, org_pki::SigningKey)> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let bytes = std::fs::read(path).ok()?;
+    let saved: PendingJoiningKeyFile = serde_json::from_slice(&bytes).ok()?;
+    let wrapped = STANDARD.decode(&saved.wrapped_key_b64).ok()?;
+    let raw = org_pki::wrap::unwrap(secrets_key.expose_bytes(), binding, &wrapped).ok()?;
+    let key = org_pki::SigningKey::from_local_der(&raw).ok()?;
+    Some((saved.request_id, key))
+}
+
+/// Persists a wrapped satellite joining TLS key + request_id before first contact with HQ so
+/// worker restarts during check-code approval reuse the exact same key & check code (`TASK-52` P2-4).
+fn load_or_create_pending_joining_key(
+    folder: &Path,
+    org_id: &str,
+    office_id: &str,
+    secrets_key: &org_office::Key,
+) -> Result<(String, org_pki::SigningKey), String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use org_pki::wrap::{self, WrapBinding, WrapPurpose};
+    let path = folder.join("pending-joining-key.v1.json");
+    let binding = WrapBinding {
+        organization_id: org_id,
+        office_id,
+        purpose: WrapPurpose::OfficeTlsKey,
+    };
+    if let Some(existing) = try_load_pending_joining_key(&path, secrets_key, &binding) {
+        return Ok(existing);
+    }
+    let key = org_pki::SigningKey::generate()
+        .map_err(|_| "failed generating satellite TLS key".to_owned())?;
+    let wrapped = wrap::wrap(secrets_key.expose_bytes(), &binding, key.local_der())
+        .map_err(|_| "failed wrapping pending joining key".to_owned())?;
+    let request_id = format!("req-{office_id}");
+    let payload = serde_json::to_vec_pretty(&PendingJoiningKeyFile {
+        v: 1,
+        request_id: request_id.clone(),
+        wrapped_key_b64: STANDARD.encode(wrapped),
+    })
+    .map_err(|e| e.to_string())?;
+    let _ = std::fs::create_dir_all(folder);
+    org_store::publish_one(folder, "pending-joining-key.v1.json", &payload, true)
+        .map_err(|e| format!("failed persisting pending joining key: {e}"))?;
+    Ok((request_id, key))
+}
+
+struct FederationRuntime {
+    hq: Option<federation::HqFederationServer>,
+    sat_stop: Arc<AtomicBool>,
+    sat_thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl FederationRuntime {
+    fn start(
+        office: &Arc<Office>,
+        session_manager: &Arc<org_office_sessions::SessionManager>,
+        hq_listening: &Arc<AtomicBool>,
+    ) -> Result<Self, String> {
+        let sat_stop = Arc::new(AtomicBool::new(false));
+        let wake_handler = build_federation_wake_handler(session_manager);
+        let hq = start_optional_hq_federation(office, Some(Arc::clone(&wake_handler)))?;
+        hq_listening.store(hq.is_some(), Ordering::SeqCst);
+        let sat_thread = start_optional_satellite_sync(
+            office,
+            &sat_stop,
+            wake_handler,
+            Arc::downgrade(session_manager),
+        );
+        Ok(Self {
+            hq,
+            sat_thread,
+            sat_stop,
+        })
+    }
+
+    fn stop(self) {
+        if let Some(fed) = self.hq {
+            fed.stop();
+        }
+        self.sat_stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.sat_thread {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn build_federation_wake_handler(
+    session_manager: &Arc<org_office_sessions::SessionManager>,
+) -> federation::WakeRelayHandler {
+    let sessions = Arc::downgrade(session_manager);
+    Arc::new(move |wake: federation::RelayedWake| {
+        let Some(sessions) = sessions.upgrade() else {
+            return Err("session manager shut down".to_owned());
+        };
+        if let Some(w) = wake.ask_withdrawal {
+            return sessions.on_ask_withdrawn_durable(&w.asker_id, &w.ask_id);
+        }
+        if let Some(ans) = wake.ask_answer {
+            // Dispatch structured answer transition and propagate persistence errors so
+            // federation only commits `delivered: true` after resume intent is durable (`TASK-52` P6-#2 / P7-#4).
+            return sessions
+                .on_ask_answered_durable(
+                    &ans.asker_id,
+                    &ans.ask_id,
+                    &ans.question_summary,
+                    &ans.answer_summary,
+                    (&wake.sender_id, &wake.sender_name, wake.sender_is_person),
+                    false,
+                )
+                .map(|_| ());
+        }
+        let kind = match wake.kind.as_str() {
+            "mention" => org_office_sessions::WakeKind::Mention,
+            "handoff" => org_office_sessions::WakeKind::Handoff,
+            "ask" => org_office_sessions::WakeKind::Ask,
+            "task" => org_office_sessions::WakeKind::TaskAssignment,
+            _ => org_office_sessions::WakeKind::DirectMessage,
+        };
+        let item = org_office_sessions::PendingWakeItem {
+            item_id: format!("relay:{}:{}", wake.source_id, wake.employee_id),
+            kind,
+            sender_id: wake.sender_id,
+            sender_name: wake.sender_name,
+            sender_is_person: wake.sender_is_person,
+            conversation_id: wake.conversation_id,
+            source_id: wake.source_id,
+            summary: wake.summary,
+            enqueued_at_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+        };
+        sessions
+            .enqueue_wake_durable(&wake.employee_id, item)
+            .map(|_| ())
+    })
+}
+
+fn start_optional_hq_federation(
+    office: &Arc<Office>,
+    wake_handler: Option<federation::WakeRelayHandler>,
+) -> Result<Option<federation::HqFederationServer>, String> {
+    if office.info().role != org_office::OfficeRole::Hq {
+        return Ok(None);
+    }
+    let Ok(bind_raw) = std::env::var("AGENTIC_ORG_FEDERATION_BIND") else {
+        return Ok(None);
+    };
+    let bind_raw = bind_raw.trim();
+    if bind_raw.is_empty() {
+        return Ok(None);
+    }
+    let addr: std::net::SocketAddr = bind_raw
+        .parse()
+        .map_err(|e| format!("invalid AGENTIC_ORG_FEDERATION_BIND `{bind_raw}`: {e}"))?;
+    let mut san_hosts = vec![addr.ip().to_string(), "localhost".to_owned()];
+    // Configure advertised endpoints separately from bind address so `0.0.0.0` binds cover DNS SANs (P2-16).
+    if let Ok(adv) = std::env::var("AGENTIC_ORG_FEDERATION_ADVERTISE") {
+        for item in adv.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            san_hosts.push(item.to_owned());
+        }
+    }
+    federation::HqFederationServer::start(Arc::clone(office), addr, &san_hosts, wake_handler)
+        .map(Some)
+}
+
+fn run_satellite_sync_tick(
+    office: &Arc<Office>,
+    stop: &Arc<AtomicBool>,
+    wake_handler: &federation::WakeRelayHandler,
+    sessions_for_recovery: &std::sync::Weak<org_office_sessions::SessionManager>,
+) {
+    let Ok(mut session) =
+        federation::SatelliteSyncSession::connect_cancellable(Arc::clone(office), Some(stop))
+    else {
+        return;
+    };
+    if office
+        .sync_status()
+        .is_ok_and(|s| s.initial_snapshot_required)
+    {
+        let op_id = office.next_uuid_v7();
+        if session.sync_initial_snapshot(&op_id).is_err() {
+            return;
+        }
+        // Run deferred session recovery once the full snapshot generation is durably installed (`TASK-52` P8-#4).
+        if let Some(sm) = sessions_for_recovery.upgrade() {
+            let _ = sm.recover_on_startup();
+        }
+    }
+    let _ = session.pull_org_events();
+    let _ = session.flush_work_outbox();
+    let _ = session.flush_message_outbox();
+    let _ = session.receive_inbound_relays(Some(wake_handler));
+}
+
+fn start_optional_satellite_sync(
+    office: &Arc<Office>,
+    stop: &Arc<AtomicBool>,
+    wake_handler: federation::WakeRelayHandler,
+    sessions_for_recovery: std::sync::Weak<org_office_sessions::SessionManager>,
+) -> Option<std::thread::JoinHandle<()>> {
+    if office.info().role != org_office::OfficeRole::Satellite {
+        return None;
+    }
+    let office = Arc::clone(office);
+    let stop = Arc::clone(stop);
+    std::thread::Builder::new()
+        .name("sat-federation-sync".into())
+        .spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                run_satellite_sync_tick(&office, &stop, &wake_handler, &sessions_for_recovery);
+                for _ in 0..40 {
+                    if stop.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+            }
+        })
+        .ok()
+}
+
+/// Starts the host's writer control and its admission, before the office is created or
 /// opened. `Err(code)` is the exit code: every office needs custody.
 fn admit(
     control: &mut Control,
@@ -533,6 +1010,104 @@ fn first_line(
 /// Binds the socket, says `ready`, serves until the host goes away, a stop signal arrives or
 /// the office's store stops, then closes the office and exits: 0 after an orderly stop, 1
 /// when the store stopped (the host restarts it).
+struct PreparedOfficeRuntime {
+    shared: serve::Shared,
+    session_manager: Arc<org_office_sessions::SessionManager>,
+    channel_watcher: Arc<watcher::ChannelWatcher>,
+    federation_rt: FederationRuntime,
+    host_gone: Arc<AtomicBool>,
+}
+
+fn prepare_office_runtime(
+    control: &mut Control,
+    office: &Arc<Office>,
+    info: &org_office::OfficeInfo,
+    socket: &Path,
+    auth: serve::LaunchAuth,
+    from_host: Lifetime,
+) -> Option<PreparedOfficeRuntime> {
+    let wake = Arc::new(org_feed::FeedWake::new());
+    let live_wake = Arc::clone(&wake);
+    let live = Arc::new(live::LiveEvents::for_owner(
+        Box::new(move || live_wake.notify()),
+        office.owner_member_id().to_owned(),
+    ));
+    let inbox = match inbox::Hq::for_office(Arc::clone(office)) {
+        Ok(inbox) => inbox,
+        Err(error) => {
+            eprintln!("agentic-org-office: inbox clock initialization failed: {error}");
+            log_causes(&error);
+            let _ = std::fs::remove_file(socket);
+            let _ = fail(
+                control,
+                FailCode::StorageError,
+                "cannot initialize inbox clock",
+            );
+            return None;
+        }
+    };
+    let session_manager = start_session_manager(Arc::clone(office), socket);
+    let channel_watcher = start_channel_watcher(Arc::clone(office), &session_manager);
+    let hq_federation_listening = Arc::new(AtomicBool::new(false));
+    let federation_rt =
+        match FederationRuntime::start(office, &session_manager, &hq_federation_listening) {
+            Ok(rt) => rt,
+            Err(reason) => {
+                eprintln!("agentic-org-office: federation listener startup failed: {reason}");
+                let _ = std::fs::remove_file(socket);
+                let _ = fail(
+                    control,
+                    FailCode::StorageError,
+                    "HQ federation listener failed to bind",
+                );
+                return None;
+            }
+        };
+    let ports = build_office_ports(
+        Arc::clone(office),
+        Arc::clone(&session_manager),
+        Arc::clone(&channel_watcher),
+        live,
+        &wake,
+        Arc::clone(&hq_federation_listening),
+    );
+    let mut shared = serve::Shared::new(info, socket, ports, auth);
+    let directory_office = Arc::clone(office);
+    shared.watch_directory_changes(move || {
+        directory_office
+            .org_snapshot()
+            .map_or(u64::MAX, |snapshot| snapshot.position.seq)
+    });
+    shared.register_inbox(inbox, office.is_hq());
+    let host_gone = Arc::new(AtomicBool::new(false));
+    let watcher = {
+        let host_gone = Arc::clone(&host_gone);
+        std::thread::Builder::new()
+            .name("org-office-control".into())
+            .spawn(move || {
+                startup::drain(from_host);
+                host_gone.store(true, Ordering::SeqCst);
+            })
+    };
+    if watcher.is_err() {
+        federation_rt.stop();
+        let _ = std::fs::remove_file(socket);
+        let _ = fail(
+            control,
+            FailCode::StorageError,
+            "cannot watch the control pipe",
+        );
+        return None;
+    }
+    Some(PreparedOfficeRuntime {
+        shared,
+        session_manager,
+        channel_watcher,
+        federation_rt,
+        host_gone,
+    })
+}
+
 fn serve_office(
     mut control: Control,
     transfer: Option<startup::Transfer>,
@@ -559,74 +1134,18 @@ fn serve_office(
             );
         }
     };
-    // Stop signals are handled only from here: before this the default disposition applies, so a
-    // server waiting for its first line or for the office lock can still be terminated.
     signals::install();
-    let wake = Arc::new(org_feed::FeedWake::new());
-    let live_wake = Arc::clone(&wake);
-    let live = Arc::new(live::LiveEvents::for_owner(
-        Box::new(move || live_wake.notify()),
-        office.owner_member_id().to_owned(),
-    ));
-    let inbox = match inbox::Hq::for_office(Arc::clone(&office)) {
-        Ok(inbox) => inbox,
-        Err(error) => {
-            eprintln!("agentic-org-office: inbox clock initialization failed: {error}");
-            log_causes(&error);
-            let _ = std::fs::remove_file(&socket);
-            return fail(
-                &mut control,
-                FailCode::StorageError,
-                "cannot initialize inbox clock",
-            );
-        }
+    let Some(mut prepared) =
+        prepare_office_runtime(&mut control, &office, &info, &socket, auth, from_host)
+    else {
+        return 1;
     };
-    let session_manager = start_session_manager(Arc::clone(&office), &socket);
-    let channel_watcher = start_channel_watcher(Arc::clone(&office), &session_manager);
-    let ports = build_office_ports(
-        Arc::clone(&office),
-        Arc::clone(&session_manager),
-        Arc::clone(&channel_watcher),
-        live,
-        &wake,
-    );
-    let mut shared = serve::Shared::new(&info, &socket, ports, auth);
-    // The organization's directory generation: the member watcher looks again when it moves.
-    // A read that fails gives a value no generation has, so the next good read differs.
-    let directory_office = Arc::clone(&office);
-    shared.watch_directory_changes(move || {
-        directory_office
-            .org_snapshot()
-            .map_or(u64::MAX, |snapshot| snapshot.position.seq)
-    });
-    shared.register_inbox(inbox, office.is_hq());
-    // The host's lifetime is the authenticated rendezvous (stdin is drained elsewhere).
-    // The fixed-buffer watcher never parses later input.
-    let host_gone = Arc::new(AtomicBool::new(false));
-    let watcher = {
-        let host_gone = Arc::clone(&host_gone);
-        std::thread::Builder::new()
-            .name("org-office-control".into())
-            .spawn(move || {
-                startup::drain(from_host);
-                host_gone.store(true, Ordering::SeqCst);
-            })
-    };
-    if watcher.is_err() {
-        let _ = std::fs::remove_file(&socket);
-        return fail(
-            &mut control,
-            FailCode::StorageError,
-            "cannot watch the control pipe",
-        );
-    }
-
-    announce_ready(&mut control, &socket, &mut shared);
-    let shared = Arc::new(shared);
-
+    announce_ready(&mut control, &socket, &mut prepared.shared);
+    let shared = Arc::new(prepared.shared);
     let transfers = match start_transfers(transfer, &shared, &office, instance, &mut control) {
         Ok(service) => service,
         Err(_) => {
+            prepared.federation_rt.stop();
             let _ = std::fs::remove_file(&socket);
             eprintln!("agentic-org-office: cannot start transfer service");
             return 1;
@@ -634,32 +1153,28 @@ fn serve_office(
     };
     let stopped = Arc::new(AtomicBool::new(false));
     let stop = || {
-        // A store that stopped (a failed flush or append) is fatal: log its fixed text and
-        // exit 1 so the host restarts the office from what is on the drive.
         if let Some(fatal) = office.fatal() {
             if !stopped.swap(true, Ordering::SeqCst) {
                 eprintln!("agentic-org-office: {fatal}");
             }
             return true;
         }
-        host_gone.load(Ordering::SeqCst) || signals::stop_requested()
+        prepared.host_gone.load(Ordering::SeqCst) || signals::stop_requested()
     };
     run_serve_loop(
         &listener,
         &shared,
-        &session_manager,
-        &channel_watcher,
+        &prepared.session_manager,
+        &prepared.channel_watcher,
         &stop,
     );
+    prepared.federation_rt.stop();
     drop(transfers);
-
     drop(listener);
     let _ = std::fs::remove_file(&socket);
-    // Every connection thread is gone (joined by `serve::run`): the only owners of the office
-    // left are `shared`, `session_manager`, `channel_watcher`, and this function.
     drop(shared);
-    drop(channel_watcher);
-    drop(session_manager);
+    drop(prepared.channel_watcher);
+    drop(prepared.session_manager);
     if stopped.load(Ordering::SeqCst) {
         return 1;
     }
@@ -858,21 +1373,31 @@ fn start_session_manager(
     office: Arc<Office>,
     socket: &Path,
 ) -> Arc<org_office_sessions::SessionManager> {
-    let session_manager = Arc::new(org_office_sessions::SessionManager::new(
-        office,
-        org_office_sessions::SessionManagerConfig::production(socket.to_path_buf()),
-    ));
+    let mut cfg = org_office_sessions::SessionManagerConfig::production(socket.to_path_buf());
+    if office.info().role == org_office::OfficeRole::Satellite {
+        cfg.hq_permits = Some(Arc::new(federation::SatelliteHqPermitCoordinator::new(
+            Arc::clone(&office),
+        )));
+    }
+    let needs_snapshot = office
+        .sync_status()
+        .is_ok_and(|s| s.initial_snapshot_required);
+    let session_manager = Arc::new(org_office_sessions::SessionManager::new(office, cfg));
     org_office_sessions::SessionManager::attach_self(&session_manager);
-    match session_manager.recover_on_startup() {
-        Ok(report) if !report.actions.is_empty() => {
-            eprintln!(
-                "agentic-org-office: startup session recovery recorded {} action(s)",
-                report.actions.len()
-            );
-        }
-        Ok(_) => {}
-        Err(error) => {
-            eprintln!("agentic-org-office: startup session recovery scan failed: {error}");
+    // Defer session recovery when a satellite is awaiting a complete HQ snapshot so a restart
+    // mid-snapshot never recovers agents against partially replaced state (`TASK-52` P8-#4).
+    if !needs_snapshot {
+        match session_manager.recover_on_startup() {
+            Ok(report) if !report.actions.is_empty() => {
+                eprintln!(
+                    "agentic-org-office: startup session recovery recorded {} action(s)",
+                    report.actions.len()
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("agentic-org-office: startup session recovery scan failed: {error}");
+            }
         }
     }
     session_manager
@@ -982,6 +1507,35 @@ fn build_session_hooks(session_manager: &Arc<org_office_sessions::SessionManager
     }
 }
 
+fn snapshot_pending(office: &Office) -> bool {
+    office
+        .sync_status()
+        .is_ok_and(|s| s.initial_snapshot_required)
+}
+
+fn snapshot_unavailable_api_error() -> org_proto::ApiError {
+    org_proto::ApiError::new(
+        org_proto::ErrorCode::Unavailable,
+        "organization snapshot is not available yet",
+    )
+}
+
+fn gate_rpc_port<F>(office: &Arc<Office>, inner: F) -> serve::HiringFn
+where
+    F: Fn(Option<&str>, &org_proto::Request) -> Option<org_proto::Response> + Send + Sync + 'static,
+{
+    let office = Arc::clone(office);
+    Box::new(move |member, request| {
+        if snapshot_pending(&office) {
+            return Some(org_proto::Response::error(
+                request.id,
+                snapshot_unavailable_api_error(),
+            ));
+        }
+        inner(member, request)
+    })
+}
+
 fn build_hiring_port(
     office: &Arc<Office>,
     wake: &Arc<org_feed::FeedWake>,
@@ -993,6 +1547,12 @@ fn build_hiring_port(
     let sessions = Arc::clone(session_manager);
     let watcher = Arc::clone(channel_watcher);
     Box::new(move |member, request| {
+        if snapshot_pending(&office) {
+            return Some(org_proto::Response::error(
+                request.id,
+                snapshot_unavailable_api_error(),
+            ));
+        }
         let response = office.dispatch_hiring_rpc(member, request);
         if matches!(
             response.as_ref().map(|r| &r.outcome),
@@ -1083,6 +1643,71 @@ fn build_submit_port(
     })
 }
 
+struct ReadPorts {
+    snapshot: serve::SnapshotFn,
+    projects_list: serve::ProjectsListFn,
+    project_inspect: serve::ProjectInspectFn,
+    who: serve::WhoFn,
+    status: serve::StatusFn,
+}
+
+fn build_read_ports(
+    office: &Arc<Office>,
+    session_manager: &Arc<org_office_sessions::SessionManager>,
+    live: &Arc<live::LiveEvents>,
+) -> ReadPorts {
+    let o_snap = Arc::clone(office);
+    let o_list = Arc::clone(office);
+    let o_insp = Arc::clone(office);
+    let o_who = Arc::clone(office);
+    let s_who = Arc::clone(session_manager);
+    let o_stat = Arc::clone(office);
+    let l_stat = Arc::clone(live);
+    ReadPorts {
+        snapshot: Box::new(move || {
+            if snapshot_pending(&o_snap) {
+                return Err(serve::SnapshotFailure::Unavailable);
+            }
+            o_snap.org_snapshot().map_err(|e| snapshot_failure(&e))
+        }),
+        projects_list: Box::new(move |params| {
+            if snapshot_pending(&o_list) {
+                return Ok(Err(snapshot_unavailable_api_error()));
+            }
+            o_list
+                .list_projects(params.include_archived)
+                .map(Ok)
+                .map_err(|e| logged("project.list", &e))
+        }),
+        project_inspect: Box::new(move |params| {
+            if snapshot_pending(&o_insp) {
+                return Ok(Err(snapshot_unavailable_api_error()));
+            }
+            o_insp
+                .inspect_project(&params.project)
+                .map_err(|e| logged("project.inspect", &e))
+        }),
+        who: Box::new(move |params| {
+            if snapshot_pending(&o_who) {
+                return Ok(Err(snapshot_unavailable_api_error()));
+            }
+            let overlay = wake_bridge::SessionRuntimeOverlay::new(Arc::clone(&s_who));
+            o_who
+                .who_with_runtime(params, &overlay)
+                .map_err(|e| logged("who", &e))
+        }),
+        status: Box::new(
+            move |member, params| match o_stat.set_status(member, params) {
+                Ok((result, changed)) => {
+                    l_stat.publish_presence(changed);
+                    Ok(Ok(result))
+                }
+                Err(refusal) => Ok(Err(refusal)),
+            },
+        ),
+    }
+}
+
 /// Composes the office RPC ports passed to `serve::Shared`.
 fn build_office_ports(
     office: Arc<Office>,
@@ -1090,11 +1715,13 @@ fn build_office_ports(
     channel_watcher: Arc<watcher::ChannelWatcher>,
     live: Arc<live::LiveEvents>,
     wake: &Arc<org_feed::FeedWake>,
+    hq_federation_listening: Arc<AtomicBool>,
 ) -> serve::OfficePorts {
     let messaging = build_messaging_ports(&office, &live, wake, &session_manager, &channel_watcher);
     let session_hooks = build_session_hooks(&session_manager);
     let hiring = build_hiring_port(&office, wake, &session_manager, &channel_watcher);
     let submit = build_submit_port(&office, wake, &session_manager, &channel_watcher);
+    let reads = build_read_ports(&office, &session_manager, &live);
     let task_svc = Arc::new(task_calls::TaskService::new(
         Arc::clone(&office),
         Arc::clone(&live),
@@ -1114,27 +1741,9 @@ fn build_office_ports(
                     .map_err(|e| logged("operation.get", &e))
             })
         },
-        snapshot: {
-            let office = Arc::clone(&office);
-            Box::new(move || office.org_snapshot().map_err(|e| snapshot_failure(&e)))
-        },
-        projects_list: {
-            let office = Arc::clone(&office);
-            Box::new(move |params| {
-                office
-                    .list_projects(params.include_archived)
-                    .map(Ok)
-                    .map_err(|e| logged("project.list", &e))
-            })
-        },
-        project_inspect: {
-            let office = Arc::clone(&office);
-            Box::new(move |params| {
-                office
-                    .inspect_project(&params.project)
-                    .map_err(|e| logged("project.inspect", &e))
-            })
-        },
+        snapshot: reads.snapshot,
+        projects_list: reads.projects_list,
+        project_inspect: reads.project_inspect,
         hiring: Some(hiring),
         sessions: Some(session_hooks.sessions),
         run_binding_verify: Some(session_hooks.run_binding_verify),
@@ -1149,29 +1758,8 @@ fn build_office_ports(
                     .map_err(|e| logged("msg.send", &e))
             }))
         },
-        who: {
-            let office = Arc::clone(&office);
-            let sessions = Arc::clone(&session_manager);
-            Box::new(move |params| {
-                let overlay = wake_bridge::SessionRuntimeOverlay::new(Arc::clone(&sessions));
-                office
-                    .who_with_runtime(params, &overlay)
-                    .map_err(|e| logged("who", &e))
-            })
-        },
-        status: {
-            let office = Arc::clone(&office);
-            let live = Arc::clone(&live);
-            Box::new(
-                move |member, params| match office.set_status(member, params) {
-                    Ok((result, changed)) => {
-                        live.publish_presence(changed);
-                        Ok(Ok(result))
-                    }
-                    Err(refusal) => Ok(Err(refusal)),
-                },
-            )
-        },
+        who: reads.who,
+        status: reads.status,
         live: Arc::clone(&live),
         feed: Some(messaging.feed),
         mailbox: Some(messaging.mailbox),
@@ -1179,40 +1767,46 @@ fn build_office_ports(
         tasks: Some(Box::new(move |member, request| {
             task_svc.dispatch(member, request)
         })),
-        git: Some(Box::new(move |member, request| {
+        git: Some(gate_rpc_port(&office, move |member, request| {
             git_svc.dispatch(member, request)
         })),
         processes: {
-            let office = Arc::clone(&office);
-            Some(Box::new(move |member, request| {
-                process_calls::dispatch_process_rpc(&office, member, request)
+            let o = Arc::clone(&office);
+            Some(gate_rpc_port(&office, move |member, request| {
+                process_calls::dispatch_process_rpc(&o, member, request)
             }))
         },
         costs: {
-            let office = Arc::clone(&office);
+            let o = Arc::clone(&office);
             let sessions = Arc::clone(&session_manager);
             let live = Arc::clone(&live);
-            Some(Box::new(move |member, request| {
-                cost_calls::dispatch_cost_budget_rpc(
-                    &office,
+            Some(gate_rpc_port(&office, move |member, request| {
+                cost_calls::dispatch_cost_budget_rpc(&o, Some(&sessions), &live, member, request)
+            }))
+        },
+        providers: {
+            let o = Arc::clone(&office);
+            let sessions = Arc::clone(&session_manager);
+            let wake = Arc::clone(wake);
+            Some(gate_rpc_port(&office, move |member, request| {
+                provider_calls::dispatch_provider_pool_rpc(
+                    &o,
                     Some(&sessions),
-                    &live,
+                    Some(&wake),
                     member,
                     request,
                 )
             }))
         },
-        providers: {
+        federation: {
             let office = Arc::clone(&office);
-            let sessions = Arc::clone(&session_manager);
-            let wake = Arc::clone(wake);
+            let hq_listening = Arc::clone(&hq_federation_listening);
             Some(Box::new(move |member, request| {
-                provider_calls::dispatch_provider_pool_rpc(
+                federation_calls::dispatch_federation_rpc(
                     &office,
-                    Some(&sessions),
-                    Some(&wake),
                     member,
                     request,
+                    hq_listening.load(Ordering::Acquire),
                 )
             }))
         },

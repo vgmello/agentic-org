@@ -142,6 +142,20 @@ impl ChatService {
         if !is_chat_method(request) && !request.is::<org_proto::msg::MsgDone>() {
             return None;
         }
+        // Refuse chat RPCs on a satellite awaiting a complete HQ snapshot (`TASK-52` P9-#3).
+        if self
+            .office
+            .sync_status()
+            .is_ok_and(|s| s.initial_snapshot_required)
+        {
+            return Some(Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::Conflict,
+                    "satellite office is awaiting a complete HQ snapshot",
+                ),
+            ));
+        }
         let Some(member) = member else {
             return Some(Response::error(
                 request.id,
@@ -302,6 +316,8 @@ impl ChatService {
                     self.watcher
                         .on_channel_message_posted(&committed.message, committed.conversation_kind);
                 }
+                crate::federation::sync_native_message_relays(&self.office);
+                crate::federation::enqueue_remote_chat_wakes(&self.office, member, &committed);
                 if let Some(sessions) = &self.sessions {
                     let (woke, presence) = crate::wake_bridge::on_chat_send_committed(
                         &self.office,
@@ -575,6 +591,7 @@ impl ChatService {
                         self.live.record_mailbox_change();
                     }
                 }
+                crate::federation::sync_native_message_relays(&self.office);
                 let (woke, presence) = match &self.sessions {
                     Some(sessions) => crate::wake_bridge::on_chat_ask_committed(
                         &self.office,
@@ -639,6 +656,7 @@ impl ChatService {
                 }
                 self.watcher
                     .on_question_closed(&committed.result.ask_id, "answered");
+                crate::federation::sync_native_message_relays(&self.office);
                 if let Some(sessions) = &self.sessions {
                     crate::wake_bridge::on_chat_answer_committed(
                         &self.office,

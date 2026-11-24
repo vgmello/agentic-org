@@ -523,6 +523,7 @@ pub struct Journal {
     disk: Arc<dyn Disk>,
     identity: OfficeIdentity,
     segment_bytes: AtomicU64,
+    release_lock: Mutex<()>,
     inner: Mutex<Inner>,
 }
 
@@ -611,6 +612,7 @@ impl Journal {
             disk,
             identity: identity.clone(),
             segment_bytes: AtomicU64::new(SEGMENT_BYTES),
+            release_lock: Mutex::new(()),
             inner: Mutex::new(Inner {
                 segments: VecDeque::new(),
                 active: None,
@@ -634,7 +636,7 @@ impl Journal {
         identity: &OfficeIdentity,
         custody: &dyn WriterAuthority,
     ) -> Result<(Journal, Recovered), JournalError> {
-        Self::open_on(Arc::new(RealDisk), durable, identity, custody)
+        Self::open_on(Arc::new(RealDisk), durable, identity, custody, None)
     }
 
     pub(crate) fn open_on(
@@ -642,6 +644,7 @@ impl Journal {
         durable: &Path,
         identity: &OfficeIdentity,
         custody: &dyn WriterAuthority,
+        min_consumer_watermark: Option<u64>,
     ) -> Result<(Journal, Recovered), JournalError> {
         if !durable.is_absolute() {
             return Err(JournalError::Internal(
@@ -848,16 +851,19 @@ impl Journal {
             file.flush_full().map_err(|e| flush_error(path, &e))?;
         }
         let materialized = materialized.min(point.ordinal);
-        let retained = entries
-            .iter()
-            .filter(|e| e.ordinal() > materialized)
-            .cloned()
-            .collect();
+        let retained = build_retained_queue(
+            &entries,
+            base.ordinal,
+            materialized,
+            point.ordinal,
+            min_consumer_watermark,
+        )?;
         let journal = Journal {
             dir,
             disk,
             identity: identity.clone(),
             segment_bytes: AtomicU64::new(SEGMENT_BYTES),
+            release_lock: Mutex::new(()),
             inner: Mutex::new(Inner {
                 segments,
                 active,
@@ -1060,9 +1066,78 @@ impl Journal {
         wanted.cloned().collect()
     }
 
+    /// Reads flushed entries strictly after `ordinal` and verifies strict contiguity (`ordinal + 1`
+    /// onward) so a consumer can never skip an evicted entry (`TASK-52` M-15).
+    pub fn after_contiguous(&self, ordinal: u64) -> Result<Vec<Arc<Entry>>, JournalError> {
+        let entries = self.after(ordinal);
+        let mut expected = ordinal.saturating_add(1);
+        for entry in &entries {
+            if entry.ordinal() != expected {
+                return Err(JournalError::MissingPredecessor { ordinal: expected });
+            }
+            expected = expected.saturating_add(1);
+        }
+        Ok(entries)
+    }
+
+    /// Reconstructs in-memory `retained` entries from on-disk segments starting at `base`
+    /// when a consumer registers after earlier entries were evicted from RAM (`TASK-52` M-15).
+    pub(crate) fn reconstruct_retained_from_segments(&self) -> Result<(), JournalError> {
+        let _release_guard = self.release_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let (base, seg_paths, already_starts_at_base) = {
+            let inner = self.inner();
+            let base = inner.base.clone();
+            let head_ord = inner.head.ordinal;
+            let starts = head_ord == base.ordinal
+                || inner
+                    .retained
+                    .front()
+                    .is_some_and(|e| e.ordinal() == base.ordinal + 1);
+            let paths: Vec<PathBuf> = inner.segments.iter().map(|s| s.path.clone()).collect();
+            (base, paths, starts)
+        };
+        if already_starts_at_base || seg_paths.is_empty() {
+            return Ok(());
+        }
+        let mut point = base;
+        let mut scanned = Vec::new();
+        for path in seg_paths {
+            let bytes = fs::read(&path).map_err(|e| io_error(&path, "read", &e))?;
+            let _ = scan(&bytes, &mut point, &self.identity, &mut scanned).map_err(
+                |bad| match bad {
+                    Bad::Chain { ordinal, reason }
+                    | Bad::Torn {
+                        ordinal, reason, ..
+                    } => JournalError::Corrupt { ordinal, reason },
+                },
+            )?;
+        }
+        let mut inner = self.inner();
+        let mut merged: VecDeque<Arc<Entry>> = scanned.into_iter().collect();
+        let last_scanned = merged.back().map_or(inner.base.ordinal, |e| e.ordinal());
+        for existing in &inner.retained {
+            if existing.ordinal() > last_scanned {
+                merged.push_back(Arc::clone(existing));
+            }
+        }
+        inner.retained = merged;
+        Ok(())
+    }
+
     /// Records that every file through `ordinal` is written and flushed, and lets go of
-    /// those entries.
+    /// retained entries up to `ordinal`.
     pub(crate) fn set_materialized(&self, ordinal: u64) -> Result<(), JournalError> {
+        self.set_materialized_with_release_cap(ordinal, ordinal)
+    }
+
+    /// Records that every file through `ordinal` is written and flushed, and lets go of
+    /// retained entries up to `release_cap` (which equals `ordinal` when no external journal
+    /// consumer is registered, or `ordinal.min(min_consumer_watermark)` under `ARCH-03`).
+    pub(crate) fn set_materialized_with_release_cap(
+        &self,
+        ordinal: u64,
+        release_cap: u64,
+    ) -> Result<(), JournalError> {
         {
             let inner = self.inner();
             if ordinal > inner.flushed {
@@ -1085,14 +1160,25 @@ impl Journal {
         )?;
         let mut inner = self.inner();
         inner.materialized = inner.materialized.max(ordinal);
+        let evict_through = ordinal.min(release_cap);
         while inner
             .retained
             .front()
-            .is_some_and(|e| e.ordinal() <= ordinal)
+            .is_some_and(|e| e.ordinal() <= evict_through)
         {
             inner.retained.pop_front();
         }
         Ok(())
+    }
+
+    /// Evicts in-memory retained entries through `ordinal.min(materialized)` once all
+    /// registered journal consumers have advanced past them (`ARCH-03`).
+    pub(crate) fn evict_retained_through(&self, ordinal: u64) {
+        let mut inner = self.inner();
+        let limit = ordinal.min(inner.materialized);
+        while inner.retained.front().is_some_and(|e| e.ordinal() <= limit) {
+            inner.retained.pop_front();
+        }
     }
 
     /// Drops every rolled segment whose entries are all at or below `ordinal` and the
@@ -1101,6 +1187,7 @@ impl Journal {
     /// so the segment the checkpoint leads to is on the drive by name before the
     /// checkpoint names it. Returns how many segments were dropped.
     pub(crate) fn release_through(&self, ordinal: u64) -> Result<usize, JournalError> {
+        let _release_guard = self.release_lock.lock().unwrap_or_else(|e| e.into_inner());
         let (drop, base) = {
             let inner = self.inner();
             let limit = ordinal.min(inner.materialized);
@@ -1139,10 +1226,14 @@ impl Journal {
         )?;
         {
             let mut inner = self.inner();
-            for _ in &drop {
-                inner.segments.pop_front();
+            for (path, _) in &drop {
+                if inner.segments.front().is_some_and(|s| &s.path == path) {
+                    inner.segments.pop_front();
+                }
             }
-            inner.base = base;
+            if base.ordinal > inner.base.ordinal {
+                inner.base = base;
+            }
         }
         for (path, _) in &drop {
             self.disk
@@ -1159,6 +1250,39 @@ impl Journal {
     pub fn segment_firsts(&self) -> Vec<u64> {
         self.inner().segments.iter().map(|s| s.first).collect()
     }
+}
+
+fn build_retained_queue(
+    entries: &[Arc<Entry>],
+    base_ordinal: u64,
+    materialized: u64,
+    head_ordinal: u64,
+    min_consumer_watermark: Option<u64>,
+) -> Result<VecDeque<Arc<Entry>>, JournalError> {
+    if let Some(wm) = min_consumer_watermark {
+        if wm < base_ordinal {
+            return Err(JournalError::MissingPredecessor { ordinal: wm });
+        }
+    }
+    let retain_floor = min_consumer_watermark.map_or(materialized, |wm| materialized.min(wm));
+    let retained: VecDeque<Arc<Entry>> = entries
+        .iter()
+        .filter(|e| e.ordinal() > retain_floor)
+        .cloned()
+        .collect();
+    if retain_floor < head_ordinal {
+        let mut expected = retain_floor + 1;
+        for entry in &retained {
+            if entry.ordinal() != expected {
+                return Err(JournalError::MissingPredecessor { ordinal: expected });
+            }
+            expected += 1;
+        }
+        if expected != head_ordinal + 1 {
+            return Err(JournalError::MissingPredecessor { ordinal: expected });
+        }
+    }
+    Ok(retained)
 }
 
 /// A change opening makes to the drive, held back until the opening is known to pass.

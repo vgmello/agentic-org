@@ -44,7 +44,7 @@ impl std::fmt::Debug for Message {
     }
 }
 impl Message {
-    fn validate(&self) -> Result<(), Refusal> {
+    pub fn validate(&self) -> Result<(), Refusal> {
         if self.id.is_empty()
             || self.id.len() > 128
             || !self

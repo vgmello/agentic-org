@@ -61,7 +61,10 @@ pub mod fixture;
 pub(crate) mod office_command;
 #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub mod seed;
-pub use office_command::{office_list, office_restart, HELP as OFFICE_HELP};
+pub use office_command::{
+    office_join, office_list, office_re_enroll, office_remove_pending, office_restart,
+    HELP as OFFICE_HELP,
+};
 pub(crate) mod project_command;
 pub use project_command::{
     project_create, project_inspect, project_list, ProjectCreateInput, HELP as PROJECT_HELP,

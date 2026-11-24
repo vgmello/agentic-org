@@ -26,6 +26,7 @@ pub mod hiring;
 pub mod may_hire;
 pub mod move_person;
 pub mod move_team;
+pub mod offices;
 pub mod provider_pools;
 pub mod roles;
 pub(crate) mod shared;
@@ -98,10 +99,12 @@ pub enum Op {
     RemoveProjectTeam,
     RegisterRepository,
     AttachProjectRepository,
+    RegisterSatelliteOffice,
+    ApplyReplicatedFiles,
 }
 
 impl Op {
-    pub const ALL: [Op; 33] = [
+    pub const ALL: [Op; 35] = [
         Op::CreateOrganization,
         Op::ImportOrganization,
         Op::CreateTeam,
@@ -135,6 +138,8 @@ impl Op {
         Op::RemoveProjectTeam,
         Op::RegisterRepository,
         Op::AttachProjectRepository,
+        Op::RegisterSatelliteOffice,
+        Op::ApplyReplicatedFiles,
     ];
 
     /// Structure changes answer only once durable (ADR-0014).
@@ -178,6 +183,8 @@ impl Op {
             Op::RemoveProjectTeam => "organization.remove_project_team",
             Op::RegisterRepository => "organization.register_repository",
             Op::AttachProjectRepository => "organization.attach_project_repository",
+            Op::RegisterSatelliteOffice => "organization.register_satellite_office",
+            Op::ApplyReplicatedFiles => "organization.apply_replicated_files",
         }
     }
 }

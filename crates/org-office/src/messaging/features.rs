@@ -132,18 +132,10 @@ pub(super) fn check_hr_access(
     }
 }
 
-fn membership_list(emps: &[&Employee], now_utc: &str) -> Vec<ConversationMembership> {
-    emps.iter()
-        .map(|e| ConversationMembership {
-            employee_id: e.id.clone(),
-            joined_at: now_utc.to_owned(),
-            left_at: None,
-        })
-        .collect()
-}
-
 /// Synthesizes missing automatic channels (`#general`, team channels, project channels)
-/// deterministically from the current organization snapshot.
+/// deterministically from the current organization snapshot. Membership is resolved dynamically
+/// via [`effective_auto_members`] so persisted auto-channel records stay compact at any org size
+/// (`TASK-52` P12-#2).
 pub fn virtual_auto_channels(
     read: &impl MessagingRead,
     now_utc: &str,
@@ -152,8 +144,6 @@ pub fn virtual_auto_channels(
         return Ok(Vec::new());
     };
     let existing = read.conversations()?;
-    let employees = read.employees()?;
-    let active: Vec<&Employee> = employees.iter().filter(|e| is_active_employee(e)).collect();
     let mut out = Vec::new();
     if !existing
         .iter()
@@ -171,16 +161,12 @@ pub fn virtual_auto_channels(
             project_id: None,
             archived: false,
             created_at: now_utc.to_owned(),
-            memberships: membership_list(&active, now_utc),
+            memberships: Vec::new(),
             pins: Vec::new(),
         });
     }
-    out.extend(virtual_team_channels(
-        read, &org.id, &existing, &active, now_utc,
-    )?);
-    out.extend(virtual_project_channels(
-        read, &org.id, &existing, &active, now_utc,
-    )?);
+    out.extend(virtual_team_channels(read, &org.id, &existing, now_utc)?);
+    out.extend(virtual_project_channels(read, &org.id, &existing, now_utc)?);
     Ok(out)
 }
 
@@ -188,7 +174,6 @@ fn virtual_team_channels(
     read: &impl MessagingRead,
     org_id: &Id,
     existing: &[ConversationRecord],
-    active: &[&Employee],
     now_utc: &str,
 ) -> Result<Vec<ConversationRecord>, org_store::EngineError> {
     let mut out = Vec::new();
@@ -202,11 +187,6 @@ fn virtual_team_channels(
         if exists {
             continue;
         }
-        let members: Vec<&Employee> = active
-            .iter()
-            .copied()
-            .filter(|e| e.home_team_id == team.id)
-            .collect();
         out.push(ConversationRecord {
             schema_version: SCHEMA_VERSION,
             revision: 1,
@@ -219,7 +199,7 @@ fn virtual_team_channels(
             project_id: None,
             archived: false,
             created_at: now_utc.to_owned(),
-            memberships: membership_list(&members, now_utc),
+            memberships: Vec::new(),
             pins: Vec::new(),
         });
     }
@@ -230,7 +210,6 @@ fn virtual_project_channels(
     read: &impl MessagingRead,
     org_id: &Id,
     existing: &[ConversationRecord],
-    active: &[&Employee],
     now_utc: &str,
 ) -> Result<Vec<ConversationRecord>, org_store::EngineError> {
     let mut out = Vec::new();
@@ -244,14 +223,6 @@ fn virtual_project_channels(
         if exists {
             continue;
         }
-        let members: Vec<&Employee> = active
-            .iter()
-            .copied()
-            .filter(|e| {
-                e.home_team_id == project.owner_team_id
-                    || project.contributing_team_ids.contains(&e.home_team_id)
-            })
-            .collect();
         out.push(ConversationRecord {
             schema_version: SCHEMA_VERSION,
             revision: 1,
@@ -264,14 +235,14 @@ fn virtual_project_channels(
             project_id: Some(project.id),
             archived: false,
             created_at: now_utc.to_owned(),
-            memberships: membership_list(&members, now_utc),
+            memberships: Vec::new(),
             pins: Vec::new(),
         });
     }
     Ok(out)
 }
 
-fn slugify_channel(name: &str) -> String {
+pub(crate) fn slugify_channel(name: &str) -> String {
     let mut out = String::new();
     let mut prev_dash = false;
     for ch in name.trim().chars() {
@@ -297,7 +268,7 @@ fn active_member(conv: &ConversationRecord, employee_id: &Id) -> bool {
         .any(|m| m.employee_id == *employee_id && m.left_at.is_none())
 }
 
-pub(super) fn effective_auto_members(
+pub(crate) fn effective_auto_members(
     read: &impl MessagingRead,
     conv: &ConversationRecord,
     owner: &Id,
@@ -331,12 +302,15 @@ pub(super) fn effective_auto_members(
                 .map(|e| e.id.clone())
                 .collect())
         }
-        None | Some(_) => Ok(conv
-            .memberships
-            .iter()
-            .filter(|m| m.left_at.is_none())
-            .map(|m| m.employee_id.clone())
-            .collect()),
+        None | Some(_) => {
+            let active_ids: BTreeSet<&Id> = active.iter().map(|e| &e.id).collect();
+            Ok(conv
+                .memberships
+                .iter()
+                .filter(|m| m.left_at.is_none() && active_ids.contains(&m.employee_id))
+                .map(|m| m.employee_id.clone())
+                .collect())
+        }
     }
 }
 
@@ -783,6 +757,15 @@ where
     };
     let path = records::conversation_path(&conv_id);
     let bytes = records::encode_json(&record);
+    // Enforce encoded OrgEvent headroom (512 KiB limit after base64+JSON framing) at write
+    // admission so an accepted HQ channel never stalls `OrgEvent` publication (`TASK-52` P11-#4).
+    const MAX_CHANNEL_RECORD_BYTES: usize = 360 * 1024;
+    if bytes.len() > MAX_CHANNEL_RECORD_BYTES {
+        return Err(refusal(
+            ErrorCode::TooLarge,
+            "channel definition exceeds replicated event size limit",
+        ));
+    }
     let summary = summarize_conversation(uow.view(), &record, caller, owner)
         .map_err(|_| refusal(ErrorCode::StorageError, "failed to summarize channel"))?;
     Ok((
@@ -859,6 +842,13 @@ where
         conv.revision = conv.revision.saturating_add(1);
         let path = records::conversation_path(&conv.id);
         let bytes = records::encode_json(&conv);
+        const MAX_CHANNEL_RECORD_BYTES: usize = 360 * 1024;
+        if bytes.len() > MAX_CHANNEL_RECORD_BYTES {
+            return Err(refusal(
+                ErrorCode::TooLarge,
+                "channel definition exceeds replicated event size limit",
+            ));
+        }
         change = if existed {
             change.put(path, bytes)
         } else {
@@ -1104,7 +1094,7 @@ fn collect_thread_reply_recipients(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn collect_recipient_reasons(
+pub(crate) fn collect_recipient_reasons(
     read: &impl MessagingRead,
     conv: &ConversationRecord,
     sender_id: &Id,
@@ -1126,7 +1116,7 @@ fn collect_recipient_reasons(
         }
         return Ok(reasons);
     }
-    if kind == "handoff" {
+    if kind == "handoff" || kind == "request" {
         if let Some(target_id) = meta
             .get("card")
             .and_then(|c| c.get("addressed_to"))
@@ -1162,7 +1152,7 @@ fn collect_recipient_reasons(
     Ok(reasons)
 }
 
-pub(super) fn upsert_participant_snapshot(
+pub(crate) fn upsert_participant_snapshot(
     read: &impl MessagingRead,
     org_id: &Id,
     conv_id: &Id,
@@ -1200,7 +1190,7 @@ pub(super) fn upsert_participant_snapshot(
     })
 }
 
-pub(super) fn build_mention_candidates(
+pub(crate) fn build_mention_candidates(
     employees: &[Employee],
     active_members: &[Id],
     owner: &Id,
@@ -1380,6 +1370,42 @@ fn build_new_message_record(
     record
 }
 
+/// Resolves the single office owning durable inbox state for `emp_id` (an agent's placed office
+/// when hired into an enrolled satellite, else HQ or `here_office_id` in single-office mode,
+/// `TASK-52` P5-#3).
+pub(super) fn recipient_owner_office_id(
+    read: &impl MessagingRead,
+    here_office_id: &Id,
+    emp_id: &Id,
+) -> Id {
+    let Ok(offices) = read.offices() else {
+        return here_office_id.clone();
+    };
+    if offices.len() <= 1 {
+        return here_office_id.clone();
+    }
+    let hq_id = offices
+        .iter()
+        .find(|o| o.role == crate::organization::records::OfficeRole::Hq)
+        .map(|o| o.id.clone())
+        .unwrap_or_else(|| here_office_id.clone());
+    let Ok(hires) = read.hire_requests() else {
+        return hq_id;
+    };
+    for req in hires {
+        if req.state == crate::organization::records::HireState::Hired
+            && req.employee_id.as_ref() == Some(emp_id)
+        {
+            if let Some(oid) = req.proposal.office_id.as_deref() {
+                if let Some(found) = offices.iter().find(|o| o.id.as_str() == oid) {
+                    return found.id.clone();
+                }
+            }
+        }
+    }
+    hq_id
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn append_send_recipient_states(
     read: &impl MessagingRead,
@@ -1398,11 +1424,15 @@ pub(super) fn append_send_recipient_states(
         .map_err(|_| refusal(ErrorCode::StorageError, "failed to allocate state_sequence"))?;
     let mut recipients = Vec::new();
     for (emp_id, because) in reasons {
-        state_seq = state_seq.saturating_add(1);
+        let owner_office = recipient_owner_office_id(read, &here.office_id, &emp_id);
         let disp = employees
             .iter()
             .find(|e| e.id == emp_id)
             .map(|e| e.name.clone());
+        let is_local_owner = owner_office == here.office_id;
+        if is_local_owner {
+            state_seq = state_seq.saturating_add(1);
+        }
         let state = RecipientStateRecord {
             organization_id: here.organization_id.clone(),
             message_id: record.id.clone(),
@@ -1421,20 +1451,24 @@ pub(super) fn append_send_recipient_states(
             delivered_because: because,
             related_message_ids: Vec::new(),
             expired_waiting_person: false,
-            owner_office_id: here.office_id.clone(),
+            owner_office_id: owner_office,
             origin_incarnation: origin_incarnation.clone(),
             origin_sequence: state_seq,
             org_epoch: 1,
             org_sequence: org_seq,
         };
-        change = upsert_participant_snapshot(
-            read,
-            &here.organization_id,
-            conv_id,
-            &emp_id,
-            state.clone(),
-            change,
-        )?;
+        // Persist durable inbox state ONLY at the recipient's single owning office while still
+        // returning every recipient in `recipients` for delivery notifications (`TASK-52` P5-#3).
+        if is_local_owner {
+            change = upsert_participant_snapshot(
+                read,
+                &here.organization_id,
+                conv_id,
+                &emp_id,
+                state.clone(),
+                change,
+            )?;
+        }
         recipients.push((emp_id, state));
     }
     Ok((change, recipients))
@@ -1498,11 +1532,26 @@ fn build_send_commit_change(
     );
     let mut change = Change::new(Ack::Committed);
     let conv_path = records::conversation_path(&conv.id);
+    const MAX_CHANNEL_RECORD_BYTES: usize = 360 * 1024;
     if !conv_persisted {
-        change = change.create(conv_path, records::encode_json(conv));
+        let encoded = records::encode_json(conv);
+        if encoded.len() > MAX_CHANNEL_RECORD_BYTES {
+            return Err(refusal(
+                ErrorCode::TooLarge,
+                "channel record exceeds replication size limit",
+            ));
+        }
+        change = change.create(conv_path, encoded);
     } else if conv.auto_scope.is_some() && conv_changed {
         conv.revision = conv.revision.saturating_add(1);
-        change = change.put(conv_path, records::encode_json(conv));
+        let encoded = records::encode_json(conv);
+        if encoded.len() > MAX_CHANNEL_RECORD_BYTES {
+            return Err(refusal(
+                ErrorCode::TooLarge,
+                "channel record exceeds replication size limit",
+            ));
+        }
+        change = change.put(conv_path, encoded);
     }
     change = change.create(
         records::message_path(&conv.id, &record.id),
@@ -1616,14 +1665,16 @@ where
     }
 
     let mut conv_changed = false;
-    for eid in &active_members {
-        if !conv.memberships.iter().any(|m| m.employee_id == *eid) {
-            conv.memberships.push(ConversationMembership {
-                employee_id: eid.clone(),
-                joined_at: now_utc.to_owned(),
-                left_at: None,
-            });
-            conv_changed = true;
+    if conv.auto_scope.is_none() {
+        for eid in &active_members {
+            if !conv.memberships.iter().any(|m| m.employee_id == *eid) {
+                conv.memberships.push(ConversationMembership {
+                    employee_id: eid.clone(),
+                    joined_at: now_utc.to_owned(),
+                    left_at: None,
+                });
+                conv_changed = true;
+            }
         }
     }
 

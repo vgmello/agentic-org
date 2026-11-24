@@ -48,6 +48,7 @@ pub use recovery::{
     SessionStore, StallWatchdog, DEFAULT_STALL_TIMEOUT, MAX_CONSECUTIVE_STALLS,
     MAX_RESUME_ATTEMPTS,
 };
+pub use router::{HqPermitAcquireSpec, HqPermitCoordinator};
 pub use runtime_registry::{RuntimeRegistry, RuntimeRegistryError};
 pub use subagents::{
     build_general_subagent_definition, subset_tools, BackgroundKind, BackgroundRegistry,

@@ -772,19 +772,41 @@ impl OrganizationWrite for SqliteTx {
 
     fn put_office_codes(&mut self, records: &[OfficeCode]) -> Result<(), EngineError> {
         let (db, scope) = self.view()?;
-        let clear = "DELETE FROM office_codes WHERE organization_id = ?1";
-        run(db, clear, vec![text(scope)])?;
-        let sql = "INSERT INTO office_codes (organization_id, code, office_id, issued_at, \
-                   retired_at) VALUES (?1, ?2, ?3, ?4, ?5)";
+        let existing_sql = "SELECT code, office_id, issued_at, retired_at FROM office_codes \
+                            WHERE organization_id = ?1 ORDER BY rowid";
+        let existing = all(db, existing_sql, vec![text(scope)], office_code_row)?;
+        for old in &existing {
+            if !records.iter().any(|r| r.code == old.code) {
+                return Err(EngineError::new("office codes must be retained"));
+            }
+        }
+        let insert_sql = "INSERT INTO office_codes (organization_id, code, office_id, issued_at, \
+                          retired_at) VALUES (?1, ?2, ?3, ?4, ?5)";
+        let update_sql = "UPDATE office_codes SET office_id = ?3, issued_at = ?4, retired_at = ?5 \
+                          WHERE organization_id = ?1 AND code = ?2";
         for record in records {
-            let values = vec![
-                text(scope),
-                text(&record.code),
-                text(record.office_id.as_str()),
-                text(&record.issued_at),
-                optional(record.retired_at.as_deref()),
-            ];
-            run(db, sql, values)?;
+            if let Some(old) = existing.iter().find(|e| e.code == record.code) {
+                if old == record {
+                    continue;
+                }
+                let values = vec![
+                    text(scope),
+                    text(&record.code),
+                    text(record.office_id.as_str()),
+                    text(&record.issued_at),
+                    optional(record.retired_at.as_deref()),
+                ];
+                run(db, update_sql, values)?;
+            } else {
+                let values = vec![
+                    text(scope),
+                    text(&record.code),
+                    text(record.office_id.as_str()),
+                    text(&record.issued_at),
+                    optional(record.retired_at.as_deref()),
+                ];
+                run(db, insert_sql, values)?;
+            }
         }
         Ok(())
     }

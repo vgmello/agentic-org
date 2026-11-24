@@ -76,6 +76,9 @@ pub const FD_MARKER: u8 = 0;
 pub enum HostFirstLine {
     /// With [`crate::CREATE_FLAG`].
     Create(CreateLine),
+    /// With [`crate::JOIN_FLAG`]: non-secret satellite enrollment metadata; the secret invitation
+    /// token travels ONLY over the verified rendezvous [`Handoff::Join`].
+    Join(JoinLine),
     /// With [`crate::OFFICE_FLAG`].
     Start(OfficeLine),
     /// With [`crate::DISCARD_FLAG`].
@@ -83,6 +86,127 @@ pub enum HostFirstLine {
     /// An op this build doesn't know: refused as a first line. Never written.
     #[serde(other, skip_serializing)]
     Unknown,
+}
+
+/// Non-secret satellite join/re-enroll first line (`doc-67` §Provisioning a satellite, D25).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawJoinLine")]
+pub struct JoinLine {
+    #[serde(flatten)]
+    pub office: OfficeLine,
+    pub invitation_id: String,
+    pub org_id: String,
+    pub org_name: String,
+    pub office_name: String,
+    pub hq_office_id: String,
+    pub hq_addresses: Vec<String>,
+    #[serde(default)]
+    pub re_enroll: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawJoinLine {
+    #[serde(default, rename = "v")]
+    _version: Option<IgnoredAny>,
+    instance_id: String,
+    office_id: String,
+    rendezvous: String,
+    invitation_id: String,
+    org_id: String,
+    org_name: String,
+    office_name: String,
+    hq_office_id: String,
+    hq_addresses: Vec<String>,
+    #[serde(default)]
+    re_enroll: bool,
+}
+
+impl TryFrom<RawJoinLine> for JoinLine {
+    type Error = &'static str;
+
+    fn try_from(raw: RawJoinLine) -> Result<Self, Self::Error> {
+        let line = JoinLine {
+            office: OfficeLine {
+                instance_id: raw.instance_id,
+                office_id: raw.office_id,
+                rendezvous: raw.rendezvous,
+            },
+            invitation_id: raw.invitation_id,
+            org_id: raw.org_id,
+            org_name: raw.org_name,
+            office_name: raw.office_name,
+            hq_office_id: raw.hq_office_id,
+            hq_addresses: raw.hq_addresses,
+            re_enroll: raw.re_enroll,
+        };
+        line.check()?;
+        Ok(line)
+    }
+}
+
+impl JoinLine {
+    fn check(&self) -> Result<(), &'static str> {
+        self.office.check()?;
+        if !org_proto::is_uuid_v7(&self.invitation_id)
+            || !crate::is_selected_entity_id(&self.org_id)
+            || !crate::is_selected_entity_id(&self.hq_office_id)
+            || self.hq_addresses.is_empty()
+        {
+            return Err("join line holds invalid organization, invitation, or HQ metadata");
+        }
+        if org_proto::OrganizationName::parse(&self.org_name).is_err()
+            || org_proto::OrganizationName::parse(&self.office_name).is_err()
+        {
+            return Err("join line holds an invalid organization or office name");
+        }
+        Ok(())
+    }
+}
+
+/// Redacted, non-`Clone` satellite invitation token secret carried ONLY in [`Handoff::Join`].
+pub struct InvitationSecret(String);
+
+impl std::fmt::Debug for InvitationSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InvitationSecret(<redacted>)")
+    }
+}
+
+impl Drop for InvitationSecret {
+    fn drop(&mut self) {
+        // SAFETY-free volatile zeroing via crate::zero on the UTF-8 buffer before drop.
+        let bytes = std::mem::take(&mut self.0).into_bytes();
+        let mut buf = bytes;
+        zero(&mut buf);
+    }
+}
+
+impl InvitationSecret {
+    pub fn new(token: String) -> Result<Self, &'static str> {
+        let trimmed = token.trim();
+        if trimmed.is_empty() || trimmed.len() > 16 * 1024 {
+            return Err("invalid invitation secret length");
+        }
+        Ok(Self(trimmed.to_owned()))
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Serialize for InvitationSecret {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for InvitationSecret {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        Self::new(raw).map_err(serde::de::Error::custom)
+    }
 }
 
 /// What every launch first line names: the instance, the office and the rendezvous socket.
@@ -351,6 +475,7 @@ impl HostFirstLine {
     fn check(&self) -> Result<(), LaunchError> {
         match self {
             HostFirstLine::Create(create) => create.check(),
+            HostFirstLine::Join(join) => join.check(),
             HostFirstLine::Start(line) | HostFirstLine::Discard(line) => line.check(),
             HostFirstLine::Unknown => Err("can't send an unknown op"),
         }
@@ -361,6 +486,7 @@ impl HostFirstLine {
     pub fn office(&self) -> Option<&OfficeLine> {
         match self {
             HostFirstLine::Create(create) => Some(&create.office),
+            HostFirstLine::Join(join) => Some(&join.office),
             HostFirstLine::Start(line) | HostFirstLine::Discard(line) => Some(line),
             HostFirstLine::Unknown => None,
         }
@@ -421,6 +547,7 @@ pub fn read_first_line(
     let message = decoded?;
     match (&message, expected) {
         (HostFirstLine::Create(_), FirstLine::Create)
+        | (HostFirstLine::Join(_), FirstLine::Join)
         | (HostFirstLine::Start(_), FirstLine::Start)
         | (HostFirstLine::Discard(_), FirstLine::Discard) => Ok(Some(message)),
         _ => Err(LaunchError::Invalid(
@@ -435,9 +562,12 @@ pub fn read_first_line(
 /// when they arrive this way; stdout is untrusted.
 pub fn write_server_event(w: &mut impl Write, event: &ServerEvent) -> Result<(), LaunchError> {
     match event {
-        ServerEvent::Created { office } => drop(office.to_vec()?),
+        ServerEvent::Created { office } | ServerEvent::Joined { office } => drop(office.to_vec()?),
         ServerEvent::Unknown => return Err(LaunchError::Invalid("can't send an unknown event")),
-        ServerEvent::Ready { .. } | ServerEvent::Discarded | ServerEvent::Failed { .. } => {}
+        ServerEvent::JoinPending { .. }
+        | ServerEvent::Ready { .. }
+        | ServerEvent::Discarded
+        | ServerEvent::Failed { .. } => {}
     }
     let body = Line {
         v: LAUNCH_VERSION,
@@ -504,7 +634,10 @@ pub fn read_server_event(r: &mut impl BufRead) -> Result<Option<RendezvousEvent>
     let event = serde_json::from_slice::<RawServerEvent>(&line)
         .map_err(LaunchError::Json)?
         .into_event();
-    if let RendezvousEvent::Server(ServerEvent::Created { office }) = &event {
+    if let RendezvousEvent::Server(
+        ServerEvent::Created { office } | ServerEvent::Joined { office },
+    ) = &event
+    {
         office.to_vec()?;
     }
     Ok(Some(event))
@@ -539,6 +672,17 @@ enum RawServerEvent {
         v: u32,
         office: crate::OfficeFile,
     },
+    JoinPending {
+        #[serde(rename = "v")]
+        _version: u32,
+        request_id: String,
+        check_code: String,
+    },
+    Joined {
+        #[serde(rename = "v")]
+        _version: u32,
+        office: crate::OfficeFile,
+    },
     Ready {
         #[allow(dead_code)]
         v: u32,
@@ -568,6 +712,15 @@ impl RawServerEvent {
             }
             Self::ChannelClosed { of, .. } => return RendezvousEvent::ChannelClosed { of },
             Self::Created { office, .. } => ServerEvent::Created { office },
+            Self::JoinPending {
+                request_id,
+                check_code,
+                ..
+            } => ServerEvent::JoinPending {
+                request_id,
+                check_code,
+            },
+            Self::Joined { office, .. } => ServerEvent::Joined { office },
             Self::Ready { socket, pid, .. } => ServerEvent::Ready { socket, pid },
             Self::Discarded { .. } => ServerEvent::Discarded,
             Self::Failed { code, message, .. } => ServerEvent::Failed { code, message },
@@ -653,6 +806,14 @@ pub enum Handoff {
         recovery_code: Option<RecoveryCode>,
         fds: Vec<HandoffFd>,
     },
+    /// After a join line (satellite): the office's secrets key, grant key, and one-time
+    /// invitation secret (never in argv or first line). `fds` is `["transfer"]`.
+    Join {
+        office_secrets_key: OfficeSecretsKey,
+        grant_key: GrantKey,
+        invitation: InvitationSecret,
+        fds: Vec<HandoffFd>,
+    },
     /// After a start line: the office secrets key, or `null` when the host has none for that
     /// office (present either way), and the grant key. A start without a key proceeds: the
     /// office serves its data and only what the key unwraps is unavailable. `fds` is
@@ -679,6 +840,7 @@ fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
 #[serde(rename_all = "snake_case")]
 enum HandoffOp {
     Create,
+    Join,
     Start,
     Discard,
 }
@@ -698,6 +860,8 @@ struct RawHandoff {
     grant_key: Option<Option<GrantKey>>,
     #[serde(default, deserialize_with = "present")]
     recovery_code: Option<Option<RecoveryCode>>,
+    #[serde(default, deserialize_with = "present")]
+    invitation: Option<Option<InvitationSecret>>,
     fds: Vec<HandoffFd>,
 }
 
@@ -711,26 +875,40 @@ impl<'de> Deserialize<'de> for Handoff {
             raw.office_secrets_key,
             raw.grant_key,
             raw.recovery_code,
+            raw.invitation,
         ) {
             (
                 HandoffOp::Create,
                 Some(Some(office_secrets_key)),
                 Some(Some(grant_key)),
                 recovery_code @ (None | Some(Some(_))),
+                None,
             ) => Ok(Handoff::Create {
                 office_secrets_key,
                 grant_key,
                 recovery_code: recovery_code.flatten(),
                 fds,
             }),
-            (HandoffOp::Start, Some(office_secrets_key), Some(Some(grant_key)), None) => {
+            (
+                HandoffOp::Join,
+                Some(Some(office_secrets_key)),
+                Some(Some(grant_key)),
+                None,
+                Some(Some(invitation)),
+            ) => Ok(Handoff::Join {
+                office_secrets_key,
+                grant_key,
+                invitation,
+                fds,
+            }),
+            (HandoffOp::Start, Some(office_secrets_key), Some(Some(grant_key)), None, None) => {
                 Ok(Handoff::Start {
                     office_secrets_key,
                     grant_key,
                     fds,
                 })
             }
-            (HandoffOp::Discard, None, None, None) => Ok(Handoff::Discard { fds }),
+            (HandoffOp::Discard, None, None, None, None) => Ok(Handoff::Discard { fds }),
             _ => Err(D::Error::custom(
                 "a handoff must carry exactly the fields of its op",
             )),
@@ -742,7 +920,9 @@ impl Handoff {
     /// The descriptors this header must name, in order.
     pub fn expected_fds(&self) -> &'static [HandoffFd] {
         match self {
-            Handoff::Create { .. } | Handoff::Start { .. } => &[HandoffFd::Transfer],
+            Handoff::Create { .. } | Handoff::Join { .. } | Handoff::Start { .. } => {
+                &[HandoffFd::Transfer]
+            }
             Handoff::Discard { .. } => &[],
         }
     }
@@ -751,6 +931,7 @@ impl Handoff {
     pub fn fds(&self) -> &[HandoffFd] {
         match self {
             Handoff::Create { fds, .. }
+            | Handoff::Join { fds, .. }
             | Handoff::Start { fds, .. }
             | Handoff::Discard { fds, .. } => fds,
         }
@@ -816,6 +997,29 @@ pub fn encode_create_handoff(
         office_secrets_key,
         grant_key,
         recovery_code,
+        fds: [HandoffFd::Transfer],
+    })
+}
+
+/// Borrow host-held secrets for a satellite join handoff; caller zeroes the returned line.
+pub fn encode_join_handoff(
+    office_secrets_key: &OfficeSecretsKey,
+    grant_key: &GrantKey,
+    invitation: &InvitationSecret,
+) -> Result<Vec<u8>, LaunchError> {
+    #[derive(Serialize)]
+    struct Join<'a> {
+        op: &'static str,
+        office_secrets_key: &'a OfficeSecretsKey,
+        grant_key: &'a GrantKey,
+        invitation: &'a InvitationSecret,
+        fds: [HandoffFd; 1],
+    }
+    encode_secret(&Join {
+        op: "join",
+        office_secrets_key,
+        grant_key,
+        invitation,
         fds: [HandoffFd::Transfer],
     })
 }

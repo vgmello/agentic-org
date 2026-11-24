@@ -95,6 +95,10 @@ pub struct PendingWakeQueueRecord {
     pub employee_id: String,
     #[serde(default)]
     pub items: Vec<PendingWakeItem>,
+    /// Bounded durable log of already-enqueued/dispatched wake item IDs so a receipt replay or
+    /// crash between wake dispatch and receipt commit never starts a duplicate turn (`TASK-52` P6-#11).
+    #[serde(default)]
+    pub seen_item_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hold_reason: Option<WakeHoldReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -110,6 +114,7 @@ impl PendingWakeQueueRecord {
             version: 1,
             employee_id: employee_id.to_owned(),
             items: Vec::new(),
+            seen_item_ids: Vec::new(),
             hold_reason: None,
             held_since_ms: None,
             retry_after_ms: None,
@@ -122,8 +127,14 @@ impl PendingWakeQueueRecord {
             .items
             .iter()
             .any(|existing| existing.item_id == item.item_id)
+            || self.seen_item_ids.iter().any(|id| id == &item.item_id)
         {
             return false;
+        }
+        self.seen_item_ids.push(item.item_id.clone());
+        if self.seen_item_ids.len() > 512 {
+            let drain = self.seen_item_ids.len() - 512;
+            self.seen_item_ids.drain(..drain);
         }
         self.items.push(item);
         self.updated_at = rfc3339_now();

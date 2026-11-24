@@ -25,6 +25,7 @@ mod folder;
 mod git;
 mod hiring;
 mod intent;
+mod invitations;
 mod messaging;
 mod private_notes;
 #[cfg(test)]
@@ -33,6 +34,9 @@ mod processes;
 #[cfg(test)]
 mod provider_pool_tests;
 mod providers;
+mod satellite;
+#[cfg(test)]
+mod satellite_tests;
 mod tasks;
 #[cfg(any(test, feature = "testkit"))]
 mod testkit;
@@ -57,6 +61,23 @@ use org_store::{
     Actor, Clock, Files, Id, OfficeIdentity, StoreError, SystemClock, WriterAuthority,
 };
 
+pub use self::invitations::{
+    ack_message_relay_and_enqueue_receipt_checked, admit_relay_item_if_active, is_peer_revoked,
+    promote_pending_removed_origin_withdrawals, publish_message_journal_relay_for_dest_checked,
+    register_peer_session_stop, run_if_peer_active, ApprovedSatelliteCert, CreateInvitationParams,
+    CreateInvitationResult, HqTlsIdentity, InvitationPollStatus, InvitationStatus,
+    InvitationSummaryView, JoinRequestAccepted, JoinRequestParams, PeerSessionGuard,
+    RelayAdmission, SatelliteRemovalResult,
+};
+pub use self::providers::OfficePermitSpec;
+pub use self::satellite::{
+    classify_replicated_snapshot_path, export_authoritative_state_snapshot_pages,
+    is_immutable_state_path, is_stale_snapshot_task_entry, resolve_employee_office,
+    strip_org_core_employee_refs_typed, task_id_for_work_path, ExportedSnapshotPages,
+    OrgDeltaPayload, PendingMessageJournalEntry, RelayedAskAnswer, RelayedAskWithdrawal,
+    RelayedMessageOutcome, SatelliteFederationConfig, SatelliteProvisionSpec,
+    SatelliteReEnrollSpec, SatelliteTlsIdentity, SnapshotExportProgress, SnapshotPathClass,
+};
 #[cfg(any(test, feature = "testkit"))]
 pub use self::testkit::TestOffice;
 use crate::{
@@ -168,8 +189,34 @@ pub struct Office {
     /// and turn-completion hold transitions so concurrent calls cannot clobber hold state or
     /// race task cancellation against budget clears (`TASK-97` / Pass 6).
     budget_op_lock: std::sync::Mutex<()>,
+    /// Serializes HQ invitation transitions, certificate issuance, revocation writes, and atomic
+    /// relay admission (`TASK-52` F8 / P16-#4).
+    federation_io_lock: std::sync::Mutex<()>,
+    /// Leaf lock protecting reads/writes of `revocations.v1.json` so revocation checks and
+    /// snapshot preparation keepalives never block on `federation_io_lock` or store
+    /// materialization (`TASK-52` P24-#1).
+    revocation_lock: std::sync::Mutex<()>,
+    /// Serializes concurrent HQ snapshot exports BEFORE `federation_io_lock` / materialization
+    /// so queued exports never hold `federation_io_lock` while waiting (`TASK-52` P24-#1).
+    snapshot_export_lock: std::sync::Mutex<()>,
+    /// Tracks removed satellite office IDs whose provisional HQ withdrawals have been promoted
+    /// in this process lifetime (empty on restart so crash-interrupted promotions always resume,
+    /// `TASK-52` P16-#3).
+    promoted_removed_offices: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// Per-peer epoch barriers (`read` for active peer mutations/sends, `write` on
+    /// `remove_satellite_office`) scoped to each peer office ID so removing one office never
+    /// blocks another office's keepalives or deliveries (`TASK-52` P19-#1 / P19-#2 / P25-#2).
+    peer_activity_fences:
+        std::sync::Mutex<std::collections::BTreeMap<String, std::sync::Arc<std::sync::RwLock<()>>>>,
+    /// Live HQ session stop flags keyed by peer office ID, signaled immediately on removal
+    /// (`TASK-52` P19-#2).
+    peer_session_stops: std::sync::Mutex<
+        std::collections::BTreeMap<String, Vec<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    >,
     /// Isolated `L4` provider bindings, discovery observations, permits, and cooldowns (`protected/providers.db`).
     providers: Arc<dyn crate::providers::ProviderPoolStore>,
+    /// Engine-independent replication store (`TASK-52`, `FC-145`, `ADR-0018` `ENG-3`).
+    replication: Arc<dyn crate::replication::ReplicationStore>,
     // The store closes before the lock is released: fields drop in order.
     store: OfficeStore,
     _lock: File,
@@ -235,35 +282,66 @@ pub(crate) struct CompanionStores {
     pub accounting: Arc<dyn crate::accounting::AccountingStore>,
     pub budgets: Arc<dyn crate::budgets::BudgetStore>,
     pub providers: Arc<dyn crate::providers::ProviderPoolStore>,
+    pub replication: Arc<dyn crate::replication::ReplicationStore>,
+}
+
+pub(crate) struct CompanionOpenSpec<'a> {
+    pub engine: EngineChoice,
+    pub roots: &'a DataRoots,
+    pub info: &'a OfficeInfo,
+    pub identity: &'a OfficeIdentity,
+    pub hq_office_id: &'a str,
+    pub ca_digest: org_sync_proto::Digest,
+    pub epoch: u64,
+    pub initial_snapshot_required: bool,
 }
 
 pub(crate) fn open_companion_stores(
-    engine: EngineChoice,
-    roots: &DataRoots,
-    info: &OfficeInfo,
+    spec: CompanionOpenSpec<'_>,
 ) -> Result<CompanionStores, OfficeError> {
+    let is_hq = spec.info.role == crate::model::OfficeRole::Hq;
     Ok(CompanionStores {
-        private_notes: crate::store::open::open_private_notes(engine, &roots.durable)?,
+        private_notes: crate::store::open::open_private_notes(
+            spec.engine,
+            &spec.roots.durable,
+            is_hq,
+        )?,
         accounting: crate::store::open::open_accounting(
-            engine,
-            &roots.durable,
-            &roots.runtime,
-            &info.office_id,
-            &info.org_id,
+            spec.engine,
+            &spec.roots.durable,
+            &spec.roots.runtime,
+            &spec.info.office_id,
+            &spec.info.org_id,
         )?,
         budgets: crate::store::open::open_budgets(
-            engine,
-            &roots.durable,
-            &roots.runtime,
-            &info.office_id,
-            &info.org_id,
+            spec.engine,
+            &spec.roots.durable,
+            &spec.roots.runtime,
+            &spec.info.office_id,
+            &spec.info.org_id,
+            is_hq,
         )?,
         providers: crate::store::open::open_providers(
-            engine,
-            &roots.durable,
-            &roots.runtime,
-            &info.office_id,
-            &info.org_id,
+            spec.engine,
+            &spec.roots.durable,
+            &spec.roots.runtime,
+            &spec.info.office_id,
+            &spec.info.org_id,
+            is_hq,
+        )?,
+        replication: crate::store::open::open_replication(
+            crate::store::open::ReplicationOpenSpec {
+                engine: spec.engine,
+                durable_root: &spec.roots.durable,
+                runtime_root: &spec.roots.runtime,
+                org_id: &spec.info.org_id,
+                local_office: &spec.info.office_id,
+                hq_office: spec.hq_office_id,
+                ca_digest: spec.ca_digest,
+                epoch: spec.epoch,
+                incarnation: spec.identity.journal_incarnation.as_str(),
+                initial_snapshot_required: spec.initial_snapshot_required,
+            },
         )?,
     })
 }
@@ -385,12 +463,69 @@ impl Office {
         refuse_older_build(&folder)?;
         let info = office_file::read(&folder)?.ok_or(OfficeError::NotFound)?;
         check_named_by(&folder, &info.office_id)?;
-        let intent = intent::read(&folder)?.ok_or_else(intent::older_build)?;
-        let (owner, creation, creation_command) =
-            validate_open_binding(&intent, &info, instance, &roots, &custody, active_owner)?;
+        let (owner, creation, creation_command, hq_office_id, epoch, initial_snapshot_required) =
+            match info.role {
+                crate::model::OfficeRole::Hq => {
+                    let intent = intent::read(&folder)?.ok_or_else(intent::older_build)?;
+                    let (owner, creation, cmd) = validate_open_binding(
+                        &intent,
+                        &info,
+                        instance,
+                        &roots,
+                        &custody,
+                        active_owner,
+                    )?;
+                    (owner, creation, cmd, info.office_id.clone(), 1, false)
+                }
+                crate::model::OfficeRole::Satellite => {
+                    let sat_intent = satellite::read_intent(&folder)?
+                        .ok_or(OfficeError::Invalid("missing satellite join intent"))?;
+                    let (fallback_owner, creation, cmd) =
+                        satellite::validate_satellite_open_binding(
+                            &sat_intent,
+                            &info,
+                            instance,
+                            &roots,
+                            &custody,
+                        )?;
+                    // Bind satellite open to the admitted owner member when provided so normal
+                    // worker restart finds the replicated owner in `org_snapshot()` (`TASK-52` P2-6).
+                    let owner = active_owner
+                        .and_then(|o| Id::parse(o).ok())
+                        .unwrap_or(fallback_owner);
+                    // Prefer the single atomic `federation-identity.v1.json` generation if present
+                    // so a crash right after D25 re-enrollment reconciles join-intent & checkpoint.
+                    let (hq_id, ep) = match satellite::read_active_identity_binding(
+                        &roots.durable,
+                        &info.office_id,
+                    )? {
+                        Some(id) => (id.hq_office_id, id.epoch),
+                        None => (sat_intent.hq_office_id, sat_intent.epoch),
+                    };
+                    (owner, creation, cmd, hq_id, ep, true)
+                }
+            };
 
         let store = open_store(&options.config(&roots, &custody)).map_err(storage)?;
-        let companions = open_companion_stores(options.engine, &roots, &info)?;
+        let ca_digest = satellite::read_ca_digest_for_open(&roots.durable, &info, &hq_office_id);
+        let companions = open_companion_stores(CompanionOpenSpec {
+            engine: options.engine,
+            roots: &roots,
+            info: &info,
+            identity: &custody.identity,
+            hq_office_id: &hq_office_id,
+            ca_digest,
+            epoch,
+            initial_snapshot_required,
+        })?;
+        if info.role == crate::model::OfficeRole::Satellite {
+            satellite::reconcile_satellite_replication_on_open(
+                companions.replication.as_ref(),
+                &hq_office_id,
+                ca_digest,
+                epoch,
+            )?;
+        }
         let clock_high_ms = AtomicU64::new(options.clock.now().0);
         let office = Office {
             folder,
@@ -409,26 +544,48 @@ impl Office {
             accounting: companions.accounting,
             budgets: companions.budgets,
             budget_op_lock: std::sync::Mutex::new(()),
+            federation_io_lock: std::sync::Mutex::new(()),
+            revocation_lock: std::sync::Mutex::new(()),
+            snapshot_export_lock: std::sync::Mutex::new(()),
+            promoted_removed_offices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            peer_activity_fences: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            peer_session_stops: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             providers: companions.providers,
+            replication: companions.replication,
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]
             _test_root: None,
         };
         office.check_standing()?;
-        office.ca()?;
+        register_startup_journal_consumers(&office)?;
         Ok(office)
     }
 
-    /// The projection holds this office's organization, with this office as its HQ.
+    /// Verifies this office's standing against its projection (`ARCH-02`): HQ requires both
+    /// matching organization and `standing.hq == true`; a satellite allows either pre-snapshot
+    /// empty standing or matching organization with `standing.hq == false`.
     fn check_standing(&self) -> Result<(), OfficeError> {
         let read = OfficeStanding {
             office: self.identity.office_id.clone(),
         };
         let (standing, _) = self.store.read(read).map_err(storage)?;
-        let ours = standing.organization.as_ref() == Some(&self.identity.organization_id);
-        if !ours || !standing.hq {
-            return Err(recovery());
+        match self.info.role {
+            crate::model::OfficeRole::Hq => {
+                let ours = standing.organization.as_ref() == Some(&self.identity.organization_id);
+                if !ours || !standing.hq {
+                    return Err(recovery());
+                }
+            }
+            crate::model::OfficeRole::Satellite => {
+                if let Some(org) = standing.organization.as_ref() {
+                    if org != &self.identity.organization_id || standing.hq {
+                        return Err(OfficeError::Invalid(
+                            "satellite projection does not match its enrolled organization or role",
+                        ));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -848,11 +1005,61 @@ impl Office {
         self.owner.as_str()
     }
 
+    /// Engine-independent replication store for `org-sync` state (`TASK-52` / `ENG-3`).
+    pub fn replication(&self) -> &Arc<dyn crate::replication::ReplicationStore> {
+        &self.replication
+    }
+
+    /// Live replication status snapshot for diagnostics and RPCs (`TASK-52`).
+    pub fn sync_status(&self) -> Result<crate::replication::SyncStatusSnapshot, OfficeError> {
+        self.replication.sync_status()
+    }
+
+    /// Registers a durable journal consumer watermark (`ARCH-03` / `TASK-52`).
+    pub fn register_replication_consumer(&self, consumer_id: &str) -> Result<u64, OfficeError> {
+        self.store.register_consumer(consumer_id).map_err(storage)
+    }
+
+    /// Advances a durable journal consumer watermark (`ARCH-03` / `TASK-52`).
+    pub fn advance_replication_consumer(
+        &self,
+        consumer_id: &str,
+        ordinal: u64,
+    ) -> Result<(), OfficeError> {
+        self.store
+            .advance_consumer(consumer_id, ordinal)
+            .map_err(storage)
+    }
+
+    /// Returns retained journal entries strictly after `ordinal` (`ARCH-03` / `TASK-52`).
+    pub fn journal_entries_after(&self, ordinal: u64) -> Vec<Arc<org_store::Entry>> {
+        self.store.entries_after(ordinal)
+    }
+
     /// Every row of the projection, to compare with another of the same engine.
     #[cfg(any(test, feature = "testkit"))]
     pub fn dump(&self) -> Vec<String> {
         self.store.dump()
     }
+}
+
+/// Eagerly registers durable journal consumers before admitting writes on multi-office HQ and all
+/// satellites, while leaving standalone single-office HQ unpinned (`TASK-52` P5-#9 / P6-#7).
+fn register_startup_journal_consumers(office: &Office) -> Result<(), OfficeError> {
+    match office.info.role {
+        crate::model::OfficeRole::Hq => {
+            office.ca()?;
+            if office.is_multi_office().unwrap_or(false) {
+                let _ = office.register_replication_consumer("org-sync-hq")?;
+                let _ = office.register_replication_consumer("org-sync-message-relay")?;
+            }
+        }
+        crate::model::OfficeRole::Satellite => {
+            let _ = office.register_replication_consumer("org-sync-work-outbox")?;
+            let _ = office.register_replication_consumer("org-sync-message-relay")?;
+        }
+    }
+    Ok(())
 }
 
 struct OverlayRuntime<'a> {
