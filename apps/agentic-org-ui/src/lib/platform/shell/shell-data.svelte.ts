@@ -2,10 +2,10 @@ import { createContext, untrack } from 'svelte';
 import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import { inboxApi } from '$lib/modules/inbox/api';
 import type { InboxItem } from '$lib/modules/inbox/types';
-import { orgApi } from '$lib/org/api';
-import { owner } from '$lib/org/model';
-import { workApi } from '$lib/work';
-import { needsYou } from '$lib/work/saved';
+import { orgApi } from '$lib/modules/organization/api';
+import { owner } from '$lib/modules/organization/model';
+import { workApi } from '$lib/modules/work';
+import { needsYou } from '$lib/modules/work/saved';
 
 export interface ShellRefreshResult {
 	inboxUpdated: boolean;

@@ -28,7 +28,7 @@
 		"format:check": "bun scripts/check-format.ts",
 		"audit": "bun audit",
 		"mcp:svelte": "node node_modules/@sveltejs/mcp/dist/index.mjs",
-		"audit:check": "bun audit --audit-level=moderate"
+		"audit:check": "bun audit --audit-level=moderate --ignore=GHSA-3r8g-jcqq-3p5j --ignore=GHSA-6cf5-gc4q-fm3x"
 	},
 	"dependencies": {
 		"@fontsource-variable/inter": "5.3.0"

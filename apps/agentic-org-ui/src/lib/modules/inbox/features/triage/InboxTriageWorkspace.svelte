@@ -55,7 +55,7 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { executeDecisionAction } from '$lib/home/actions';
 	import { isDenyAction } from '$lib/home/model';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
 	import type { ShellRefreshResult } from '$lib/platform/shell/shell-data.svelte';
 	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';

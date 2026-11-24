@@ -55,6 +55,34 @@ pub(super) fn harden_self() -> io::Result<()> {
     super::no_core_dumps()
 }
 
+pub(super) fn parent_pid(pid: libc::pid_t) -> io::Result<Option<libc::pid_t>> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: a correctly sized output record for PROC_PIDTBSDINFO.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if written <= 0 {
+        let error = io::Error::last_os_error();
+        return match error.raw_os_error() {
+            Some(libc::ESRCH) => Ok(None),
+            Some(_) => Err(error),
+            None => Ok(None),
+        };
+    }
+    if written != size {
+        return Err(invalid("truncated proc_bsdinfo response"));
+    }
+    // SAFETY: proc_pidinfo wrote the complete record.
+    Ok(Some(unsafe { info.assume_init() }.pbi_ppid as libc::pid_t))
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn hardened() -> io::Result<bool> {
     super::shared::core_dumps_disabled()

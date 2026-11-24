@@ -223,7 +223,16 @@ impl ReleaseStore {
         pin: &ReleasePin,
         check: impl Fn(&Directory, &VerifiedManifest) -> Result<(), Error>,
     ) -> Result<VerifiedManifest, Error> {
-        root.require_mode(0o500)?;
+        self.verify_tree_with_mode(root, pin, check, 0o500)
+    }
+    fn verify_tree_with_mode(
+        &self,
+        root: &Directory,
+        pin: &ReleasePin,
+        check: impl Fn(&Directory, &VerifiedManifest) -> Result<(), Error>,
+        root_mode: u32,
+    ) -> Result<VerifiedManifest, Error> {
+        root.require_mode(root_mode)?;
         let manifest = self.manifest_at(root)?;
         if &ReleasePin::of(&manifest) != pin {
             return Err(Error::InvalidRelease);
@@ -406,9 +415,9 @@ impl ReleaseStore {
             stage.seal_file(&file, false)?;
         }
         fault(Step::Controls)?;
-        seal_directories(&stage, &manifest)?;
+        seal_subdirectories(&stage, &manifest)?;
         fault(Step::Sealed)?;
-        self.verify_tree(&stage, &pin, check)?;
+        self.verify_tree_with_mode(&stage, &pin, check, 0o700)?;
         fault(Step::Staged)?;
         let intent = Intent {
             version: 1,
@@ -441,18 +450,24 @@ impl ReleaseStore {
             .output_child(&intent.commit.pin.release_id, false)
         {
             Ok(tree) => {
+                // Recovery after a crash between rename and fchmod may observe the
+                // newly published root at 0o700; seal it before final verification.
+                if tree.require_mode(0o700).is_ok() {
+                    tree.seal_directory()?;
+                }
                 self.verify_tree(&tree, &intent.commit.pin, check)?;
             }
             Err(Error::Io(std::io::ErrorKind::NotFound)) => {
                 let tree = self
                     .releases
                     .output_child(&stage_name(&intent.staging), false)?;
-                self.verify_tree(&tree, &intent.commit.pin, check)?;
+                self.verify_tree_with_mode(&tree, &intent.commit.pin, check, 0o700)?;
                 self.releases.publish_directory(
                     &stage_name(&intent.staging),
                     &self.releases,
                     &intent.commit.pin.release_id,
                 )?;
+                tree.seal_directory()?;
                 self.verify_installed(&intent.commit.pin, check)?;
             }
             Err(e) => return Err(e),
@@ -528,7 +543,7 @@ fn payload_parent(stage: &Directory, path: &str, create: bool) -> Result<Directo
     }
     Ok(current)
 }
-fn seal_directories(stage: &Directory, manifest: &VerifiedManifest) -> Result<(), Error> {
+fn seal_subdirectories(stage: &Directory, manifest: &VerifiedManifest) -> Result<(), Error> {
     let mut parents = BTreeSet::new();
     for file in manifest.manifest().files() {
         let mut parent = Path::new(file.path()).parent();
@@ -549,7 +564,7 @@ fn seal_directories(stage: &Directory, manifest: &VerifiedManifest) -> Result<()
         }
         directory.seal_directory()?;
     }
-    stage.seal_directory()
+    Ok(())
 }
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, Error> {
     let bytes = serde_json::to_vec(value).map_err(|_| Error::InvalidRelease)?;

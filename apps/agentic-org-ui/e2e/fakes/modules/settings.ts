@@ -3,8 +3,8 @@
 // Settings › Members and access agree; everything else is JSON. Mutations change the answers in memory.
 // Scenarios (query string): ?recovery=preparing|waiting|shown|shown_again|collected|collected_again|failed|unknown,
 // ?admin=other (the viewer is the owner but not the administrator), ?settings=fails|slow|empty.
-import { officeApi } from '$lib/office/api';
-import { orgApi } from '$lib/org/api';
+import { officeApi } from '$lib/modules/offices/office-api';
+import { orgApi } from '$lib/modules/organization/api';
 import type { SettingsApi } from '../../../src/lib/modules/settings/api';
 import type { GeneralSettings, RecoveryState } from '../../../src/lib/modules/settings/types';
 import general from '../data/settings/general.json' with { type: 'json' };

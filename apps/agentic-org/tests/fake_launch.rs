@@ -259,9 +259,10 @@ fn create_line() -> serde_json::Value {
         owner_member_id: OWNER.into(),
         hq_creation: org_office_launch::HqCreationV1 {
             version: org_office_launch::HqCreationV1::VERSION,
-            operation_id: "01JD5Z0000000000000000AP01".into(),
+            operation_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071f1".into(),
             escrow_profile: 1,
             bootstrap: Box::new(prepared),
+            import_source: None,
         },
     });
     serde_json::to_value(&line).unwrap()

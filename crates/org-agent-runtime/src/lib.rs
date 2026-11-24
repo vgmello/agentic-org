@@ -180,7 +180,8 @@ pub use plan::{
     StopPlan, StopSignal, StopStep,
 };
 pub use probe::{
-    Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun, ProbeSession, ProbeStep, Unavailable,
+    DiscoveredModel, ModelEntitlement, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun,
+    ProbeSession, ProbeStep, Unavailable,
 };
 pub use runtime::{AgentRuntime, PlanError};
 pub use session::{Control, ControlError, Decision, Output, Session};

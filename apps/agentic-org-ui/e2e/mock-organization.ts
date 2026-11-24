@@ -2,7 +2,7 @@ import { expect, type Page } from '@playwright/test';
 import { visit } from './ready';
 import type { Connection, OfficeInfo, Organization } from '../src/lib/proto';
 
-// The mocked office's own storage keys (src/lib/office/mock.ts).
+// The mocked office's own storage keys (src/lib/modules/offices/mock.ts).
 const CONNECTIONS_KEY = 'agentic-org.mock.connections';
 const ORGANIZATIONS_KEY = 'agentic-org.mock.organizations';
 
@@ -35,7 +35,7 @@ function hqOffice(organizationId: string, stopped: string | null): OfficeInfo {
  * (`/agents` redirects there in the shell).
  *
  * The Create organization page talks to the web API (FC-018), so the specs of other areas no
- * longer create their organization through it. This puts the mocked office (src/lib/office/mock.ts)
+ * longer create their organization through it. This puts the mocked office (src/lib/modules/offices/mock.ts)
  * into the state its own `createOrganization` leaves: the two sample organizations plus the new
  * one in the hosted list, and the new one remembered as the connection the shell opens.
  * `createPath` is the path the old entry visited; only its `?office=` scenario is read.

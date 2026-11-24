@@ -1,0 +1,404 @@
+{
+	"projects": {
+		"beacon": {
+			"features": [
+				{
+					"id": "feat-checkout",
+					"projectId": "beacon",
+					"projectNumber": 8,
+					"projectSlug": "beacon",
+					"number": 6,
+					"localSlug": "two-tap-checkout",
+					"title": "Two-tap mobile checkout",
+					"status": "in_progress",
+					"owner": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"workType": "build",
+					"revision": 3,
+					"path": "projects/beacon/features/feat-checkout/feature.md",
+					"deliveredAt": null,
+					"retiredReason": null,
+					"replacedBy": null,
+					"createdAt": "2026-11-04T10:00:00Z",
+					"createdBy": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"updatedAt": "2026-11-18T11:30:00Z",
+					"updatedBy": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"origins": [
+						{ "id": "req-checkout", "ref": "T-A46", "title": "Faster mobile checkout flow" }
+					],
+					"bodyMarkdown": "## Purpose\nLet shoppers complete a purchase in two taps on mobile devices without duplicate payment charges.\n\n## How it works\nCart confirmation and payment authorization run as separate idempotent calls tied to an operation ID.\n\n## Rules\n- No order is charged twice even when the network drops and the shopper retries.\n- Every button stays at least 44 px tall below 640 px.\n\n## Known limitations\nSplit-tender gift card payments are not supported yet; shoppers must use a single payment method.\n\n## Non-goals\nOne-click guest checkout without review screen.\n",
+					"tasks": [
+						{
+							"id": "0193c000-0000-7000-8000-000000000040",
+							"ref": "T-A40",
+							"type": "task",
+							"title": "Split the checkout service",
+							"status": "in_progress",
+							"team": { "id": "web", "name": "Web" },
+							"assignedTeam": { "id": "web", "name": "Web" },
+							"assignee": { "id": "sam", "name": "Sam Okafor", "kind": "agent" }
+						},
+						{
+							"id": "0193c000-0000-7000-8000-000000000044",
+							"ref": "T-A44",
+							"type": "task",
+							"title": "Decide the retry policy for payments",
+							"status": "blocked",
+							"team": { "id": "web", "name": "Web" },
+							"assignedTeam": { "id": "web", "name": "Web" },
+							"assignee": { "id": "mira", "name": "Mira Castillo", "kind": "agent" }
+						},
+						{
+							"id": "0193c000-0000-7000-8000-000000000038",
+							"ref": "T-A38",
+							"type": "task",
+							"title": "Receipt layout for small phones",
+							"status": "done",
+							"team": { "id": "web", "name": "Web" },
+							"assignedTeam": { "id": "design", "name": "Design" },
+							"assignee": { "id": "juno", "name": "Juno Park", "kind": "agent" }
+						},
+						{
+							"id": "0193c000-0000-7000-8000-000000000039",
+							"ref": "T-A39",
+							"type": "task",
+							"title": "Idempotency key storage schema",
+							"status": "done",
+							"team": { "id": "web", "name": "Web" },
+							"assignedTeam": { "id": "web", "name": "Web" },
+							"assignee": { "id": "sam", "name": "Sam Okafor", "kind": "agent" }
+						},
+						{
+							"id": "0193c000-0000-7000-8000-000000000036",
+							"ref": "T-A36",
+							"type": "task",
+							"title": "Deprecated prototype modal experiment",
+							"status": "cancelled",
+							"team": { "id": "web", "name": "Web" },
+							"assignedTeam": null,
+							"assignee": null,
+							"archived": true
+						}
+					],
+					"affectedBugs": [
+						{
+							"id": "0193c000-0000-7000-8000-000000000042",
+							"ref": "T-A42",
+							"type": "bug",
+							"title": "Pay button wraps under the total at 320 px",
+							"status": "in_progress",
+							"team": { "id": "web", "name": "Web" },
+							"assignedTeam": { "id": "web", "name": "Web" },
+							"assignee": { "id": "noor", "name": "Noor Haddad", "kind": "agent" }
+						}
+					],
+					"supportingDocs": [
+						{
+							"id": "doc-des-checkout",
+							"key": "DES-04",
+							"kind": "design",
+							"title": "Two-tap mobile checkout flow",
+							"status": "current"
+						},
+						{
+							"id": "doc-adr-0003",
+							"key": "ADR-0003",
+							"kind": "decision",
+							"title": "Split checkout into basket and payment authorization services",
+							"status": "draft"
+						}
+					],
+					"releases": [
+						{
+							"releaseId": "rel-beacon-1",
+							"ref": "R-1",
+							"title": "Checkout v2 foundation",
+							"versionLabel": "2.0.0",
+							"status": "Released",
+							"productChangelogDocId": "doc-rel-beacon-1-changelog",
+							"productChangelogTitle": "R-1 product changes"
+						},
+						{
+							"releaseId": "rel-beacon-2",
+							"ref": "R-2",
+							"title": "Saved cards & retry hardening",
+							"versionLabel": "2.1.0",
+							"status": "In progress"
+						}
+					],
+					"cost": {
+						"allowed": true,
+						"knownCostMicroUsd": 14850000,
+						"knownTokens": 2410500,
+						"complete": false,
+						"incompleteReason": "One Antigravity session does not report token usage.",
+						"leadTimeLabel": "14 days so far"
+					},
+					"history": [
+						{
+							"revision": 1,
+							"at": "2026-11-04T10:00:00Z",
+							"by": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+							"summary": "Created Planned feature F-6 from request T-A46"
+						},
+						{
+							"revision": 2,
+							"at": "2026-11-08T09:15:00Z",
+							"by": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+							"summary": "Moved to In progress with Noor Haddad as accountable owner"
+						},
+						{
+							"revision": 3,
+							"at": "2026-11-18T11:30:00Z",
+							"by": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+							"summary": "Documented split-tender gift card known limitation"
+						}
+					]
+				},
+				{
+					"id": "feat-saved-cards",
+					"projectId": "beacon",
+					"projectNumber": 8,
+					"projectSlug": "beacon",
+					"number": 7,
+					"localSlug": "saved-cards",
+					"title": "Saved cards behind a flag",
+					"status": "planned",
+					"owner": null,
+					"workType": "build",
+					"revision": 1,
+					"path": "projects/beacon/features/feat-saved-cards/feature.md",
+					"deliveredAt": null,
+					"retiredReason": null,
+					"replacedBy": null,
+					"createdAt": "2026-11-15T12:00:00Z",
+					"createdBy": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"updatedAt": "2026-11-15T12:00:00Z",
+					"updatedBy": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"origins": [],
+					"bodyMarkdown": "## Purpose\nAllow returning customers to pick a tokenized card stored with the payment processor.\n\n## How it works\nControlled by the saved-cards-v2 project flag until PCI review completes.\n\n## Rules\n- Raw card numbers never enter organization storage.\n\n## Known limitations\nApple Pay and corporate debit cards are excluded from initial rollout.\n\n## Non-goals\nCard vaulting inside Lumen infrastructure.\n",
+					"tasks": [
+						{
+							"id": "0193c000-0000-7000-8000-000000000041",
+							"ref": "T-A41",
+							"type": "task",
+							"title": "Saved cards behind a flag",
+							"status": "todo",
+							"team": { "id": "web", "name": "Web" },
+							"assignedTeam": { "id": "web", "name": "Web" },
+							"assignee": { "id": "sam", "name": "Sam Okafor", "kind": "agent" }
+						}
+					],
+					"affectedBugs": [],
+					"supportingDocs": [],
+					"releases": [
+						{
+							"releaseId": "rel-beacon-2",
+							"ref": "R-2",
+							"title": "Saved cards & retry hardening",
+							"versionLabel": "2.1.0",
+							"status": "In progress"
+						}
+					],
+					"cost": {
+						"allowed": true,
+						"knownCostMicroUsd": null,
+						"knownTokens": null,
+						"complete": true,
+						"leadTimeLabel": "3 days so far"
+					},
+					"history": [
+						{
+							"revision": 1,
+							"at": "2026-11-15T12:00:00Z",
+							"by": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+							"summary": "Created Planned feature F-7"
+						}
+					]
+				},
+				{
+					"id": "feat-receipts",
+					"projectId": "beacon",
+					"projectNumber": 8,
+					"projectSlug": "beacon",
+					"number": 4,
+					"localSlug": "mobile-receipts",
+					"title": "Mobile receipt layout",
+					"status": "live",
+					"owner": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+					"workType": "build",
+					"revision": 2,
+					"path": "projects/beacon/features/feat-receipts/feature.md",
+					"deliveredAt": "2026-11-14T11:10:00Z",
+					"retiredReason": null,
+					"replacedBy": null,
+					"createdAt": "2026-11-01T10:00:00Z",
+					"createdBy": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+					"updatedAt": "2026-11-14T11:10:00Z",
+					"updatedBy": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+					"origins": [],
+					"bodyMarkdown": "## Purpose\nReadable order receipt layout on 320 px screens and printed confirmation.\n\n## How it works\nSingle-column tabular totals with wrapping item labels.\n",
+					"tasks": [],
+					"affectedBugs": [],
+					"supportingDocs": [],
+					"releases": [
+						{
+							"releaseId": "rel-beacon-1",
+							"ref": "R-1",
+							"title": "Checkout v2 foundation",
+							"versionLabel": "2.0.0",
+							"status": "Released",
+							"productChangelogDocId": "doc-rel-beacon-1-changelog",
+							"productChangelogTitle": "R-1 product changes"
+						}
+					],
+					"cost": {
+						"allowed": true,
+						"knownCostMicroUsd": 4120000,
+						"knownTokens": 680000,
+						"complete": true,
+						"leadTimeLabel": "13 days"
+					},
+					"history": [
+						{
+							"revision": 2,
+							"at": "2026-11-14T11:10:00Z",
+							"by": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+							"summary": "Marked Live after R-1 delivery"
+						}
+					]
+				},
+				{
+					"id": "feat-legacy-cart",
+					"projectId": "beacon",
+					"projectNumber": 8,
+					"projectSlug": "beacon",
+					"number": 1,
+					"localSlug": "legacy-cart",
+					"title": "Legacy single-page cart",
+					"status": "retired",
+					"owner": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"workType": "build",
+					"revision": 4,
+					"path": "projects/beacon/features/feat-legacy-cart/feature.md",
+					"deliveredAt": "2026-09-10T10:00:00Z",
+					"retiredReason": "Replaced by two-tap mobile checkout to prevent duplicate payment captures.",
+					"replacedBy": {
+						"id": "feat-checkout",
+						"ref": "F-6",
+						"title": "Two-tap mobile checkout"
+					},
+					"createdAt": "2026-09-01T10:00:00Z",
+					"createdBy": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"updatedAt": "2026-11-10T09:00:00Z",
+					"updatedBy": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"origins": [],
+					"bodyMarkdown": "## Purpose\nOriginal single-page checkout form.\n",
+					"tasks": [],
+					"affectedBugs": [],
+					"supportingDocs": [],
+					"releases": [],
+					"cost": {
+						"allowed": false,
+						"reason": "Historical usage attribution is unavailable for retired pre-v2 work."
+					},
+					"history": [
+						{
+							"revision": 4,
+							"at": "2026-11-10T09:00:00Z",
+							"by": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+							"summary": "Retired with replacement F-6"
+						}
+					]
+				}
+			],
+			"eligibleTasks": [
+				{
+					"id": "0193c000-0000-7000-8000-000000000045",
+					"ref": "T-A45",
+					"type": "bug",
+					"title": "Card number field drops the last digit",
+					"status": "todo",
+					"currentFeature": null
+				},
+				{
+					"id": "0193c000-0000-7000-8000-000000000041",
+					"ref": "T-A41",
+					"type": "task",
+					"title": "Saved cards behind a flag",
+					"status": "todo",
+					"currentFeature": {
+						"id": "feat-saved-cards",
+						"ref": "F-7",
+						"title": "Saved cards behind a flag"
+					}
+				}
+			]
+		},
+		"atlas": {
+			"features": [
+				{
+					"id": "feat-canary",
+					"projectId": "atlas",
+					"projectNumber": 3,
+					"projectSlug": "atlas",
+					"number": 2,
+					"localSlug": "canary-rollout",
+					"title": "Automatic canary rollback",
+					"status": "in_progress",
+					"owner": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"workType": "build",
+					"revision": 2,
+					"path": "projects/atlas/features/feat-canary/feature.md",
+					"deliveredAt": null,
+					"retiredReason": null,
+					"replacedBy": null,
+					"createdAt": "2026-11-05T09:00:00Z",
+					"createdBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"updatedAt": "2026-11-17T09:00:00Z",
+					"updatedBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"origins": [],
+					"bodyMarkdown": "## Purpose\nRoll back failed canary deploys automatically within 2 minutes.\n\n## Known limitations\nDatabase schema rollbacks still require manual operator confirmation.\n",
+					"tasks": [
+						{
+							"id": "0193c000-0000-7000-8000-000000000031",
+							"ref": "T-A31",
+							"type": "task",
+							"title": "Retry deploys on 503",
+							"status": "in_progress",
+							"team": { "id": "platform", "name": "Platform" },
+							"assignedTeam": { "id": "platform", "name": "Platform" },
+							"assignee": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" }
+						}
+					],
+					"affectedBugs": [],
+					"supportingDocs": [
+						{
+							"id": "doc-atlas-pdss",
+							"key": "PDSS-01",
+							"kind": "product-dss",
+							"title": "Zero-downtime deploy pipeline",
+							"status": "current"
+						}
+					],
+					"releases": [],
+					"cost": {
+						"allowed": true,
+						"knownCostMicroUsd": 3200000,
+						"knownTokens": 540000,
+						"complete": true,
+						"leadTimeLabel": "12 days so far"
+					},
+					"history": [
+						{
+							"revision": 2,
+							"at": "2026-11-17T09:00:00Z",
+							"by": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+							"summary": "Updated canary rollback timeout"
+						}
+					]
+				}
+			],
+			"eligibleTasks": []
+		}
+	}
+}

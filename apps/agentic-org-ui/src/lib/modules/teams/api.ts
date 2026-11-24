@@ -1,4 +1,7 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { orgApi } from '$lib/modules/organization/api';
+import { createHttpTeamsApi } from './http-api';
 import type {
 	ActivityEntry,
 	ConversationRow,
@@ -36,16 +39,35 @@ export interface TeamsApi {
 	addPerson(organizationId: string, person: NewTeamPerson): Promise<{ memberId: string }>;
 }
 
-// The web API does not serve these yet: every call refuses. Under `bun run dev:mock`,
-// e2e/fakes/modules/teams.ts stands in for this file.
-export const teamsApi: TeamsApi = {
-	list: unavailableCall,
-	team: unavailableCall,
-	work: unavailableCall,
-	projects: unavailableCall,
-	activity: unavailableCall,
-	conversations: unavailableCall,
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayTeamsApi = createHttpTeamsApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	orgApi
+});
+
+// Production teams API backed by `/api/v1/organizations/{org}/snapshot` and projects/team mutations.
+// Under `bun run dev:mock`, e2e/fakes/modules/teams.ts stands in for this file.
+export const teamsApi: TeamsApi = Object.freeze<TeamsApi>({
+	list: (orgId) => (signedInSession() ? gatewayTeamsApi.list(orgId) : unavailableCall()),
+	team: (orgId, teamId) =>
+		signedInSession() ? gatewayTeamsApi.team(orgId, teamId) : unavailableCall(),
+	work: (orgId, teamId) =>
+		signedInSession() ? gatewayTeamsApi.work(orgId, teamId) : unavailableCall(),
+	projects: (orgId, teamId) =>
+		signedInSession() ? gatewayTeamsApi.projects(orgId, teamId) : unavailableCall(),
+	activity: (orgId, teamId) =>
+		signedInSession() ? gatewayTeamsApi.activity(orgId, teamId) : unavailableCall(),
+	conversations: (orgId, teamId) =>
+		signedInSession() ? gatewayTeamsApi.conversations(orgId, teamId) : unavailableCall(),
 	archive: unavailableCall,
-	delete: unavailableCall,
-	addPerson: unavailableCall
-};
+	delete: (orgId, teamId) =>
+		signedInSession() ? gatewayTeamsApi.delete(orgId, teamId) : unavailableCall(),
+	addPerson: (orgId, person) =>
+		signedInSession() ? gatewayTeamsApi.addPerson(orgId, person) : unavailableCall()
+});

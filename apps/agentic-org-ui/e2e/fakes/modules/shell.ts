@@ -1,6 +1,6 @@
 // Mock for src/lib/modules/shell/api.ts under `bun run dev:mock`. Projects, teams and members come from the
 // org mock (so the navigation and search match the pages); the Inbox count and work items are JSON.
-import { orgApi } from '$lib/org/api';
+import { orgApi } from '$lib/modules/organization/api';
 import type { ShellApi } from '../../../src/lib/modules/shell/api';
 import type { SearchHit } from '../../../src/lib/modules/shell/types';
 import inbox from '../data/shell/inbox.json' with { type: 'json' };

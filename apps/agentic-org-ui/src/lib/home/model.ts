@@ -13,8 +13,8 @@ import {
 	nonOwners,
 	peopleOf,
 	teamsOfProject
-} from '$lib/org/model';
-import { needsYou } from '$lib/work/saved';
+} from '$lib/modules/organization/model';
+import { needsYou } from '$lib/modules/work/saved';
 
 export type SignalTone = 'ok' | 'warn' | 'bad' | 'sky' | 'muted';
 export type BriefLens = 'today' | 'week' | 'board';
@@ -858,10 +858,9 @@ export function deriveProjectCards(
 			teamIds.add(row.ownerTeam.id);
 			for (const c of row.contributors) teamIds.add(c.id);
 		}
-		const memberIds = new Set(
-			snapshot.memberships.filter((m) => teamIds.has(m.team_id)).map((m) => m.member_id)
+		const projMembers = allMembers.filter(
+			(m) => Boolean(m.home_team_id) && teamIds.has(m.home_team_id!)
 		);
-		const projMembers = allMembers.filter((m) => memberIds.has(m.id));
 		const lead = homeProj?.lead ?? teams.map((t) => leadOf(snapshot, t)).find(Boolean);
 
 		const nowDate = new Date(nowMs);

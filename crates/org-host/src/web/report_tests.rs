@@ -1,12 +1,12 @@
 //! The mapping from the web process's ready line to the confinement it reports.
 
-use org_host_control::gateway::{GatewayReadyForSecrets, LandlockEnforcement, LandlockStatus};
+use org_host_control::web::{LandlockEnforcement, LandlockStatus, WebReadyForSecrets};
 use org_platform::confinement::Enforcement;
 
 use super::reported;
 
-fn ready(landlock: Option<(u32, LandlockEnforcement)>) -> GatewayReadyForSecrets {
-    GatewayReadyForSecrets {
+fn ready(landlock: Option<(u32, LandlockEnforcement)>) -> WebReadyForSecrets {
+    WebReadyForSecrets {
         landlock: landlock.map(|(abi, enforcement)| LandlockStatus { abi, enforcement }),
     }
 }

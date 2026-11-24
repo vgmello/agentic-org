@@ -28,7 +28,6 @@
     ]
   },
   "snapshot": {
-    "areas": [],
     "position": {
       "epoch": 1,
       "seq": 4
@@ -53,6 +52,9 @@
         "id": "sam",
         "kind": "agent",
         "name": "Sam Okafor",
+        "handle": "sam",
+        "home_team_id": "eng",
+        "title_in_team": "Staff engineer",
         "office_id": "office-1",
         "agent": {
           "role": "software engineer",
@@ -63,15 +65,6 @@
           "status": "active"
         },
         "reports_to_member_id": "you",
-        "version": 1
-      }
-    ],
-    "memberships": [
-      {
-        "id": "ms-1",
-        "team_id": "eng",
-        "member_id": "sam",
-        "title_in_team": "Staff engineer",
         "version": 1
       }
     ],

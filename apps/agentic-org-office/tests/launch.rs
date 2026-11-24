@@ -15,9 +15,9 @@ use std::time::Duration;
 mod joined_client;
 #[path = "support/teardown.rs"]
 mod test_teardown;
-use agentic_org_office::test_support::{test_admission, FakeWriter};
 use joined_client::Client;
 use org_office_launch::{office_dir, OfficeFile};
+use org_office_server::test_support::{test_admission, FakeWriter};
 use org_proto::location::selected_office_socket_in;
 use org_proto::{frame, OfficeRole, OfficeSecretsKey};
 use tempfile::TempDir;
@@ -762,22 +762,15 @@ fn stopping_the_server_with_a_client_connected_closes_it_and_exits_clean() {
     drop(idle);
 }
 
-/// A ULID made now (the command ids the office accepts), distinct for each `n`. `n` sits
-/// above the low 6 bits, which the store's operation ID drops (the wire ULID maps to a
-/// UUIDv7 with 74 of its 80 random bits).
+/// A canonical lowercase UUIDv7 made now (the command IDs the office accepts), distinct for each `n`.
 fn command_id(n: u8) -> String {
-    const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_millis();
-    let mut value = (ms << 80) | (u128::from(n) << 40);
-    let mut out = [0u8; 26];
-    for slot in out.iter_mut().rev() {
-        *slot = CROCKFORD[(value & 0x1F) as usize];
-        value >>= 5;
-    }
-    String::from_utf8(out.to_vec()).unwrap()
+        .as_millis() as u64;
+    let hi = (ms >> 16) as u32;
+    let mid = (ms & 0xffff) as u16;
+    format!("{hi:08x}-{mid:04x}-7000-8000-0000000000{n:02x}")
 }
 
 /// The creation's home team: the organization's top team.

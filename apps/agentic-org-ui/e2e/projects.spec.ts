@@ -131,9 +131,13 @@ test(
 		await expect(tabs(page)).toHaveText([
 			'Overview',
 			'Work',
+			'Features',
+			'Releases',
+			'Docs',
 			'Team',
 			'Activity',
 			'Conversations',
+			'Insights',
 			'Settings'
 		]);
 		await expect(tabs(page).first()).toHaveAttribute('aria-current', 'page');
@@ -162,10 +166,10 @@ test(
 
 		await tabs(page).filter({ hasText: 'Work' }).click();
 		await expect(page).toHaveURL(/\/projects\/beacon\/work$/);
-		// Until step 5, the Work tab shows v1's task board and bug list as its Tasks and Bugs tabs.
+		// Step 5 Work tab shows the unified Work queue scoped to this project: Tasks, Bugs, Requests.
 		const workViews = page.getByRole('tablist', { name: 'Work', exact: true });
-		await expect(workViews.getByRole('tab')).toHaveText(['Tasks', 'Bugs']);
-		await expect(workViews.getByRole('tab', { name: 'Tasks' })).toHaveAttribute(
+		await expect(workViews.getByRole('tab')).toHaveText([/^Tasks/, /^Bugs/, /^Requests/]);
+		await expect(workViews.getByRole('tab', { name: /^Tasks/ })).toHaveAttribute(
 			'aria-selected',
 			'true'
 		);
@@ -473,4 +477,89 @@ test('PROJ-2: New project opens from Home via Command bar / All projects, empty 
 	await expect(sheet).toBeVisible();
 	await expect(sheet.getByRole('radio', { name: 'An existing team' })).toBeChecked();
 	await expect(sheet.locator('#new-project-team')).toHaveValue('web');
+});
+
+test('PROJ-Activity: Project Activity and Overview latest activity list newest first', async ({
+	page
+}) => {
+	await open(page, '/projects/beacon/activity?mock=oldest-first');
+	const items = page.locator('section[aria-labelledby=project-tab-heading] ul > li');
+	await expect(items).toHaveCount(7);
+	const times = await items
+		.locator('time')
+		.evaluateAll((els) => els.map((el) => Date.parse(el.getAttribute('datetime') ?? '')));
+	for (let i = 1; i < times.length; i++) expect(times[i - 1]).toBeGreaterThanOrEqual(times[i]);
+	await expect(items.first()).toContainText('assigned T-A40 Split the checkout service');
+	await expect(items.last()).toContainText('updated the brief');
+
+	await visit(page, '/projects/beacon?mock=oldest-first');
+	const latest = page.locator('section[aria-labelledby=latest-heading] li');
+	await expect(latest).toHaveCount(5);
+	await expect(latest.first()).toContainText('assigned T-A40 Split the checkout service');
+});
+
+test('PROJ-Work: Work tabs have aria-controls, arrow-key navigation, and work at 320 px with 200% text', async ({
+	page
+}) => {
+	await open(page, '/projects/beacon/work');
+	const tablist = page.getByRole('tablist', { name: 'Work', exact: true });
+	const tasksTab = tablist.getByRole('tab', { name: /^Tasks/ });
+	const bugsTab = tablist.getByRole('tab', { name: /^Bugs/ });
+	const requestsTab = tablist.getByRole('tab', { name: /^Requests/ });
+	const panel = page.getByRole('tabpanel');
+
+	const panelId = await panel.getAttribute('id');
+	const tasksId = await tasksTab.getAttribute('id');
+	const bugsId = await bugsTab.getAttribute('id');
+	const requestsId = await requestsTab.getAttribute('id');
+	expect(panelId).toBeTruthy();
+	await expect(tasksTab).toHaveAttribute('aria-controls', panelId!);
+	await expect(bugsTab).toHaveAttribute('aria-controls', panelId!);
+	await expect(requestsTab).toHaveAttribute('aria-controls', panelId!);
+	await expect(tasksTab).toHaveAttribute('aria-selected', 'true');
+	await expect(tasksTab).toHaveAttribute('tabindex', '0');
+	await expect(bugsTab).toHaveAttribute('tabindex', '-1');
+	await expect(panel).toHaveAttribute('aria-labelledby', tasksId!);
+
+	await tasksTab.focus();
+	await page.keyboard.press('Shift+ArrowRight');
+	await page.keyboard.press('Control+ArrowRight');
+	await expect(tasksTab).toBeFocused();
+	await expect(tasksTab).toHaveAttribute('aria-selected', 'true');
+
+	await page.keyboard.press('ArrowRight');
+	await expect(bugsTab).toBeFocused();
+	await expect(bugsTab).toHaveAttribute('aria-selected', 'true');
+	await expect(bugsTab).toHaveAttribute('tabindex', '0');
+	await expect(tasksTab).toHaveAttribute('tabindex', '-1');
+	await expect(panel).toHaveAttribute('aria-labelledby', bugsId!);
+
+	await page.keyboard.press('ArrowRight');
+	await expect(requestsTab).toBeFocused();
+	await expect(requestsTab).toHaveAttribute('aria-selected', 'true');
+	await expect(panel).toHaveAttribute('aria-labelledby', requestsId!);
+
+	await page.keyboard.press('ArrowRight');
+	await expect(tasksTab).toBeFocused();
+	await expect(tasksTab).toHaveAttribute('aria-selected', 'true');
+
+	await page.keyboard.press('ArrowLeft');
+	await expect(requestsTab).toBeFocused();
+	await expect(requestsTab).toHaveAttribute('aria-selected', 'true');
+
+	await page.keyboard.press('Home');
+	await expect(tasksTab).toBeFocused();
+	await page.keyboard.press('End');
+	await expect(requestsTab).toBeFocused();
+
+	await page.setViewportSize({ width: 320, height: 800 });
+	await page.addStyleTag({ content: 'html { font-size: 200%; }' });
+	await expect(bugsTab).toBeVisible();
+	expect((await bugsTab.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+	await noSidewaysScroll(page);
+
+	await tasksTab.click();
+	await expect(tasksTab).toHaveAttribute('aria-selected', 'true');
+	expect((await tasksTab.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+	await noSidewaysScroll(page);
 });

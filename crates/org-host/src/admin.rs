@@ -2,11 +2,11 @@
 //!
 //! `admin.link.initial` gives setup the one registration link, bound to the frozen setup
 //! operation; a replay answers `already_issued` with no secret. `admin.reset` asks for local
-//! presence and confirmation at the host, then issues a registration link that cancels the
-//! previous one. An instance that has an administrator answers `administrator_present` and
-//! issues nothing: a registration link is for an instance without one, and setting a new
-//! administrator password (A3's branch) is not offered here (X5 review, fourth round,
-//! P2-10). Both calls require the signing check `recovery` uses; hello, the
+//! presence and confirmation at the host with the exact reason for the action (creating an
+//! initial administrator registration link when no administrator exists, or issuing a one-time
+//! password-reset link when one does). If an administrator registers concurrently during a
+//! registration-link confirmation dialog, it refuses with `administrator_present` rather than
+//! silently pivoting actions. Both calls require the signing check `recovery` uses; hello, the
 //! registered instance and the host's effective UID are enforced before dispatch.
 //!
 //! On a system that names a peer by its user alone (GNU/Linux, ADR-0017 decision 11) there
@@ -36,6 +36,13 @@ const SUBJECT: &str = "administrator";
 pub(crate) trait Presence: Send + Sync {
     fn local(&self, connection: &Connection) -> bool;
     fn confirm(&self, cancelled: &dyn Fn() -> bool) -> Result<(), ()>;
+    fn confirm_for(
+        &self,
+        _reason: org_platform_host::presence::ConfirmReason,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), ()> {
+        self.confirm(cancelled)
+    }
 }
 
 /// The platform presence bridge (Touch ID or the login password on macOS; refuses elsewhere).
@@ -46,6 +53,13 @@ impl Presence for NativePresence {
     }
     fn confirm(&self, cancelled: &dyn Fn() -> bool) -> Result<(), ()> {
         crate::recovery::presence::confirm(cancelled)
+    }
+    fn confirm_for(
+        &self,
+        reason: org_platform_host::presence::ConfirmReason,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), ()> {
+        crate::recovery::presence::confirm_for(reason, cancelled)
     }
 }
 
@@ -142,6 +156,10 @@ impl Admin {
         self.setup_operation == setup_operation && self.origin.as_str() == origin
     }
 
+    pub(crate) fn origin(&self) -> &str {
+        self.origin.as_str().trim_end_matches('/')
+    }
+
     /// The admission of every administrator's host call (`tls.set` too): a local
     /// `host.sock` client that passes the host's signing check.
     pub(crate) fn admit_peer(&self, c: &Connection, received: Received) -> Result<(), ApiError> {
@@ -191,7 +209,7 @@ impl Admin {
             if !c.recovery_peer_idle() {
                 return Err(denied());
             }
-            return self.reset_with(true, || Ok(()));
+            return self.reset_with(true, |_| Ok(()));
         }
         self.admit(c, received)?;
         if named_by_user_alone(c) {
@@ -207,9 +225,9 @@ impl Admin {
             return Err(denied());
         }
         let local = self.presence.local(c);
-        self.reset_with(local, || {
+        self.reset_with(local, |reason| {
             self.presence
-                .confirm(&|| !c.recovery_peer_idle())
+                .confirm_for(reason, &|| !c.recovery_peer_idle())
                 .and_then(|()| {
                     if c.recovery_peer_idle() {
                         Ok(())
@@ -247,12 +265,15 @@ impl Admin {
     }
 
     /// `admin reset` after presence: `local` is the presence check's answer and `confirm`
-    /// shows the OS dialog. One reset runs at a time.
+    /// shows the OS dialog with the right wording (`ConfirmReason`). One reset runs at a time.
+    /// When an administrator already exists, issues a one-time set-password link for that
+    /// administrator; when none exists yet, issues a one-time registration link.
     fn reset_with(
         &self,
         local: bool,
-        confirm: impl FnOnce() -> Result<(), ()>,
+        confirm: impl FnOnce(org_platform_host::presence::ConfirmReason) -> Result<(), ()>,
     ) -> Result<AdminLinkResult, ApiError> {
+        use org_platform_host::presence::ConfirmReason;
         if !local {
             return Err(denied());
         }
@@ -265,36 +286,66 @@ impl Admin {
                 )
             })?;
         let _resetting = Resetting(&self.resetting);
-        if self.db.administrator_exists().map_err(unavailable)? {
-            return Ok(AdminLinkResult::AdministratorPresent);
+        let has_admin = self.db.administrator_exists().map_err(unavailable)?;
+        let reason = if has_admin {
+            ConfirmReason::ResetAdminPassword
+        } else {
+            ConfirmReason::CreateAdminRegistrationLink
+        };
+        confirm(reason).map_err(|()| denied())?;
+        // Enforce the exact action the operator confirmed: if no admin existed before the
+        // dialog and one registered meanwhile, refuse rather than switching to password reset.
+        if !has_admin {
+            return match self
+                .db
+                .issue_unless_administrator(LinkKind::Registration, &subject()?, wall()?)
+                .map_err(unavailable)?
+            {
+                Some(issued) => self.issued(issued),
+                None => Ok(AdminLinkResult::AdministratorPresent),
+            };
         }
-        confirm().map_err(|()| denied())?;
-        // Re-checked after the dialog, in the transaction that issues the link: an
-        // administrator may have registered meanwhile.
         match self
             .db
-            .issue_unless_administrator(LinkKind::Registration, &subject()?, wall()?)
+            .issue_admin_password_reset_link(wall()?)
             .map_err(unavailable)?
         {
-            Some(issued) => self.issued(issued),
-            None => Ok(AdminLinkResult::AdministratorPresent),
+            Some((login, issued)) => self.issued_reset_password(login, issued),
+            None => Err(denied()),
         }
     }
 
     /// The link URL is built from the instance's own configured origin; the token goes after
     /// `#` so it never reaches a request line or a log.
     fn issued(&self, issued: Issued) -> Result<AdminLinkResult, ApiError> {
-        let token = issued.token.encode();
-        let origin = self.origin.as_str().trim_end_matches('/');
-        let mut url = String::with_capacity(origin.len() + "/register#".len() + token.len());
-        url.push_str(origin);
-        url.push_str("/register#");
-        url.push_str(&token);
-        let url = OneTimeLinkUrl::new(url).map_err(unavailable)?;
+        let url = self.format_link("/register#", &issued)?;
         Ok(AdminLinkResult::Issued {
             url,
             expires_at_ms: issued.expires_at_ms,
         })
+    }
+
+    fn issued_reset_password(
+        &self,
+        login: String,
+        issued: Issued,
+    ) -> Result<AdminLinkResult, ApiError> {
+        let url = self.format_link("/set-password#", &issued)?;
+        Ok(AdminLinkResult::ResetPassword {
+            login,
+            url,
+            expires_at_ms: issued.expires_at_ms,
+        })
+    }
+
+    fn format_link(&self, path_prefix: &str, issued: &Issued) -> Result<OneTimeLinkUrl, ApiError> {
+        let token = issued.token.encode();
+        let origin = self.origin.as_str().trim_end_matches('/');
+        let mut url = String::with_capacity(origin.len() + path_prefix.len() + token.len());
+        url.push_str(origin);
+        url.push_str(path_prefix);
+        url.push_str(&token);
+        OneTimeLinkUrl::new(url).map_err(unavailable)
     }
 }
 

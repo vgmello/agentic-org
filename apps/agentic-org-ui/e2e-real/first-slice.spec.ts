@@ -43,14 +43,9 @@ test('SIGN-22/1/9/27: setup link → register → signed in → SIGN-9 → sign 
 	await axe(page);
 	await page.screenshot({ path: `${shots}/02-welcome-admin.png` });
 
-	// The link works once (SIGN-38 part).
+	// The link works once (SIGN-38): link inspection detects the used link immediately on load.
 	const reused = await context.newPage();
 	await reused.goto(process.env.B6_LINK!);
-	// web-api v1 has no link-status call: the used link is refused when the form is sent.
-	await reused.getByLabel('Username').fill('sam');
-	await reused.getByLabel('Password (at least 12 characters)').fill(password);
-	await reused.getByLabel('Password again').fill(password);
-	await reused.getByRole('button', { name: 'Create account' }).click();
 	await expect(
 		reused.getByRole('heading', { name: 'This link has expired or was already used.' })
 	).toBeVisible();

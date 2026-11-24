@@ -113,7 +113,6 @@ function makeSnapshot(): OrgSnapshot {
 				version: 1
 			}
 		],
-		memberships: [],
 		projects: [
 			{ id: 'proj-b', name: 'Beta Release', key: 'v2.0', version: 1 },
 			{ id: 'proj-a', name: 'Alpha Core', key: 'v1.0', version: 1 },
@@ -1082,7 +1081,6 @@ describe('assembly-model', () => {
 			position: { epoch: 1, seq: 0 },
 			teams: [],
 			members: [{ id: 'you', name: 'You', kind: 'person', owner: true, version: 1 }],
-			memberships: [],
 			projects: [],
 			areas: []
 		};

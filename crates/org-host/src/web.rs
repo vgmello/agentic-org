@@ -8,11 +8,9 @@ use crate::{
     sync::lock,
 };
 use org_host_control::{
-    gateway::{
-        GatewayFd, GatewayFirstLine, GatewayHandoff, GatewayReadyForSecrets, GATEWAY_HANDOFF_FDS,
-    },
     listen::{ListenConfig, ListenMode},
-    GatewayState,
+    web::{WebFd, WebFirstLine, WebHandoff, WebReadyForSecrets, WEB_HANDOFF_FDS},
+    WebState,
 };
 use org_platform_host::admission::{Admission, Child, ChildEnv, ImageRefusal, SpawnRefused};
 use std::{
@@ -288,7 +286,11 @@ impl Stderr {
     /// Reads `stderr` to its end on a new thread, keeping its first [`STDERR_KEPT`]
     /// bytes and dropping the rest, so that a child never blocks on a full pipe.
     /// A test build also copies all of it into [`CAPTURED_STDERR`] under `instance`.
-    fn capture(mut stderr: impl Read + Send + 'static, instance: &str) -> io::Result<Arc<Self>> {
+    fn capture(
+        mut stderr: impl Read + Send + 'static,
+        instance: &str,
+        on_renewal_kept: Option<Arc<dyn Fn(&'static str) + Send + Sync>>,
+    ) -> io::Result<Arc<Self>> {
         #[cfg(test)]
         let instance = instance.to_owned();
         #[cfg(not(test))]
@@ -333,6 +335,11 @@ impl Stderr {
                     };
                     for reason in renewals.read(&bytes[..read]) {
                         crate::host_log::log(&renewal_kept_text(reason));
+                        if matches!(reason, "fetch_failed" | "unavailable") {
+                            if let Some(callback) = &on_renewal_kept {
+                                callback(reason);
+                            }
+                        }
                     }
                     #[cfg(test)]
                     lock(&CAPTURED_STDERR)
@@ -534,15 +541,18 @@ pub(crate) struct Configuration {
     pub listen: ListenConfig,
     pub check: ServerCheck,
     pub critical_paths: Vec<PathBuf>,
-    pub release: Option<org_host_control::gateway::WebRelease>,
+    pub release: Option<org_host_control::web::WebRelease>,
     /// The `https` listener's pair (`crate::web_tls`); `None` for plain HTTP.
     pub tls: Option<Arc<crate::web_tls::WebTls>>,
+    /// Invoked when the running web process reports a transient `tls.renew` fetch failure
+    /// (`fetch_failed` or `unavailable`), so the host can schedule a bounded re-announcement.
+    pub on_renewal_kept: Option<Arc<dyn Fn(&'static str) + Send + Sync>>,
 }
 /// The selected release's web process image pin (`Err`: the release has none) and the
 /// release identity bound into the web process's first line.
 pub(crate) type SelectedRelease<E> = (
     Result<crate::server_check::Pin, E>,
-    org_host_control::gateway::WebRelease,
+    org_host_control::web::WebRelease,
 );
 
 /// The web process admission policy of a build (`debug`: `cfg!(debug_assertions)`) with app
@@ -553,8 +563,8 @@ pub(crate) fn admission<E>(
     debug: bool,
     team_id: Option<&str>,
     release: Option<SelectedRelease<E>>,
-) -> (ServerCheck, Option<org_host_control::gateway::WebRelease>) {
-    let check = ServerCheck::gateway_for_build(debug, team_id)
+) -> (ServerCheck, Option<org_host_control::web::WebRelease>) {
+    let check = ServerCheck::web_for_build(debug, team_id)
         .unwrap_or(ServerCheck::WebRefused("malformed app team id"));
     match release {
         None => (check, None),
@@ -676,8 +686,10 @@ const HTTPS_GATE_EVERY: Duration = Duration::from_secs(2);
 /// `eligible`, and the `https` gate ([`https_gate`]) for `tls`: the web process starts only
 /// while the stored pair can be served, and the supervisor waits, without counting a failed
 /// start, while it cannot (a supplied pair that expired waits for the administrator's
-/// `tls.set`); a running one is stopped when it no longer can. The gate is asked at most
-/// every [`HTTPS_GATE_EVERY`], and each change of its answer is logged once.
+/// `tls.set`); a running one is stopped when it no longer can. To avoid repeating the gate
+/// check on every 50 ms supervisor poll, the last boolean verdict is cached for up to
+/// [`HTTPS_GATE_EVERY`] (2 s), after which `https_gate` re-evaluates the stored pair and its
+/// validity window against the current clock; each change of verdict is logged once.
 fn gated(
     eligible: Arc<dyn Fn() -> bool + Send + Sync>,
     tls: Arc<crate::web_tls::WebTls>,
@@ -717,7 +729,7 @@ fn gated(
 
 pub(crate) struct Supervisor {
     stop: Arc<AtomicBool>,
-    state: Arc<Mutex<GatewayState>>,
+    state: Arc<Mutex<WebState>>,
     thread: Option<JoinHandle<()>>,
 }
 impl Supervisor {
@@ -728,7 +740,7 @@ impl Supervisor {
         config: Configuration,
         first: Option<TcpListener>,
         handler: Arc<dyn Handler>,
-        state: Arc<Mutex<GatewayState>>,
+        state: Arc<Mutex<WebState>>,
         eligible: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> io::Result<Self> {
         // No bind, child or secret handoff for unverified TLS or a system on which the
@@ -815,7 +827,7 @@ impl Drop for Supervisor {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
-        *lock(&self.state) = GatewayState::Failed;
+        *lock(&self.state) = WebState::Failed;
     }
 }
 
@@ -844,7 +856,7 @@ trait Serving {
 /// again only once eligible, without counting a failure or waiting a backoff.
 fn supervise<S: Serving>(
     stopping: &AtomicBool,
-    state: &Mutex<GatewayState>,
+    state: &Mutex<WebState>,
     eligible: &dyn Fn() -> bool,
     timing: Timing,
     log: &dyn Fn(&str),
@@ -857,13 +869,13 @@ fn supervise<S: Serving>(
         // its listener: that one stays held, and browsers wait in its backlog); the same
         // controller observes actual completed provisioning.
         while !stopping.load(Ordering::SeqCst) && !eligible() {
-            *lock(state) = GatewayState::Starting;
+            *lock(state) = WebState::Starting;
             thread::park_timeout(POLL);
         }
         if stopping.load(Ordering::SeqCst) {
             break;
         }
-        *lock(state) = GatewayState::Starting;
+        *lock(state) = WebState::Starting;
         let mut stable = false;
         let reason = match start() {
             Ok(mut child) => {
@@ -885,7 +897,7 @@ fn supervise<S: Serving>(
                 let reason = if stopping.load(Ordering::SeqCst) {
                     String::new()
                 } else if child.serving() && child.reported() {
-                    *lock(state) = GatewayState::Running;
+                    *lock(state) = WebState::Running;
                     let running = Instant::now();
                     while !stopping.load(Ordering::SeqCst) && child.serving() && eligible() {
                         thread::park_timeout(POLL);
@@ -897,7 +909,7 @@ fn supervise<S: Serving>(
                         if running.elapsed() >= timing.stable {
                             failures = 0; // a stable run resets the count, as documented
                         }
-                        *lock(state) = GatewayState::Starting;
+                        *lock(state) = WebState::Starting;
                         drop(child); // kill/reap, then end control and its sessions
                         log("authenticated browser stopped because the host is no longer eligible; it starts again once eligible");
                         continue;
@@ -909,13 +921,13 @@ fn supervise<S: Serving>(
                 } else {
                     format!("it stopped before serving: {}", child.ended())
                 };
-                *lock(state) = GatewayState::Failed;
+                *lock(state) = WebState::Failed;
                 drop(child); // kill/reap, then end control, before restart
                 reason
             }
             Err(error) => error.to_string(),
         };
-        *lock(state) = GatewayState::Failed;
+        *lock(state) = WebState::Failed;
         if stopping.load(Ordering::SeqCst) {
             break;
         }
@@ -937,7 +949,7 @@ fn supervise<S: Serving>(
             thread::park_timeout(POLL);
         }
     }
-    *lock(state) = GatewayState::Failed;
+    *lock(state) = WebState::Failed;
 }
 
 struct Rendezvous {
@@ -1114,7 +1126,7 @@ impl Running {
         let mut spawned = held
             .release()
             .map_err(os_failed("resume the web process"))?;
-        let first = GatewayFirstLine {
+        let first = WebFirstLine {
             rendezvous: rendezvous
                 .path
                 .to_str()
@@ -1142,8 +1154,12 @@ impl Running {
             .map_err(os_failed("start the stdout drain"))?;
         // Its standard error is drained too; only its start is kept, for the one line
         // of a child that could not confine itself.
-        let captured = Stderr::capture(spawned.stderr, &config.instance)
-            .map_err(os_failed("start the stderr drain"))?;
+        let captured = Stderr::capture(
+            spawned.stderr,
+            &config.instance,
+            config.on_renewal_kept.clone(),
+        )
+        .map_err(os_failed("start the stderr drain"))?;
         let until = Instant::now() + wait;
         let mut stream = rendezvous
             .accept(&mut spawned.child, until, stop)
@@ -1157,7 +1173,7 @@ impl Running {
         );
         let ready = line(&mut receiver, until, stop, "ready line")
             .map_err(|error| with_refusal(error, &captured, &mut spawned.child))?;
-        let ready: GatewayReadyForSecrets = serde_json::from_slice(&ready)
+        let ready: WebReadyForSecrets = serde_json::from_slice(&ready)
             .map_err(|_| failed("the ready line does not match ready_for_secrets"))?;
         let enforcement = reported(&ready).map_err(failed)?;
         org_platform::confinement::verify_ready_report(&enforcement)
@@ -1255,20 +1271,20 @@ fn transfer_pair() -> io::Result<(UnixDatagram, UnixDatagram)> {
     Ok((transfer, child))
 }
 
-/// One [`GatewayHandoff`] line, then one `sendmsg` with the host.sock marker and
-/// exactly [`GATEWAY_HANDOFF_FDS`] in order: the transfer end, then the listener.
+/// One [`WebHandoff`] line, then one `sendmsg` with the host.sock marker and
+/// exactly [`WEB_HANDOFF_FDS`] in order: the transfer end, then the listener.
 fn send_handoff(
     stream: &mut UnixStream,
     child: &UnixDatagram,
     listener: &TcpListener,
     until: Instant,
 ) -> io::Result<()> {
-    let fds = GATEWAY_HANDOFF_FDS.map(|fd| match fd {
-        GatewayFd::Transfer => child.as_fd(),
-        GatewayFd::Listener => listener.as_fd(),
+    let fds = WEB_HANDOFF_FDS.map(|fd| match fd {
+        WebFd::Transfer => child.as_fd(),
+        WebFd::Listener => listener.as_fd(),
     });
     stream.set_write_timeout(Some(WAIT))?;
-    org_proto::frame::write_message(stream, &GatewayHandoff).map_err(invalid)?;
+    org_proto::frame::write_message(stream, &WebHandoff).map_err(invalid)?;
     org_socket::rights::send(
         stream.as_fd(),
         &[org_host_control::ops::HOST_SOCK_MARKER],
@@ -1352,9 +1368,9 @@ fn fatal_receive(what: &str, kind: io::ErrorKind) -> String {
 /// seccomp field; where the system has seccomp the host observes it on the process
 /// itself (Linux host design, section 3.3).
 fn reported(
-    ready: &GatewayReadyForSecrets,
+    ready: &WebReadyForSecrets,
 ) -> Result<org_platform::confinement::Enforcement, &'static str> {
-    use org_host_control::gateway::LandlockEnforcement::FullyEnforced;
+    use org_host_control::web::LandlockEnforcement::FullyEnforced;
     match ready.landlock {
         Some(status) if status.enforcement != FullyEnforced => {
             Err("the ready line reports landlock not fully enforced")

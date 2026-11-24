@@ -25,6 +25,7 @@
 		progressPercent,
 		projectBarTone,
 		projectHref,
+		sortActivityNewestFirst,
 		type ProjectBarTone
 	} from '../../present';
 	import { inlineLink } from '../../components/classes';
@@ -179,8 +180,8 @@
 				{/if}
 			{:else}
 				<p class="mt-2 max-w-prose text-sm/6 text-fg-muted" data-testid="no-brief">
-					No brief yet. The brief says what {p.name} is for and what it leaves out; it is written in the
-					project's Docs, which aren't built yet.
+					No brief yet. The brief says what {p.name} is for and what it leaves out; write it in
+					<a href={resolve(projectHref(p.id, 'docs') as '/')} class={inlineLink.sm}>Docs</a>.
 				</p>
 			{/if}
 		</section>
@@ -225,7 +226,7 @@
 				{#if rows.length === 0}
 					<p class="px-5 py-6 text-sm/6 text-fg-muted">No activity yet.</p>
 				{:else}
-					<ActivityRows rows={rows.slice(0, 5)} />
+					<ActivityRows rows={sortActivityNewestFirst(rows).slice(0, 5)} />
 				{/if}
 			{/snippet}
 		</Loaded>

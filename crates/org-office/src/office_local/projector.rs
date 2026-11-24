@@ -43,9 +43,18 @@ impl<E: Engine> Projector<E> for OfficeLocalFiles {
                     let reason = "the record is another organization's or office's";
                     return Err(ProjectionError::new(path, reason));
                 }
-                Ok(())
+                // Local security storage outside the acceptance journal (TASK-10 / H-06):
+                // validated on rebuild, never added to journal/source tracking.
+                Err(ProjectionError::skippable(
+                    path,
+                    "the CA key record is local security storage outside the journal",
+                ))
             }
             (Some(Kind::CaKey), None) => Ok(()),
+            (Some(Kind::CaKeyStaging), _) => Err(ProjectionError::skippable(
+                path,
+                "the CA key staging record is not a journal source",
+            )),
             // The marker is the office's note to its next opening, read before the store
             // opens and removed after: never a source. A rebuild that meets it leaves it
             // out; no entry may write it.

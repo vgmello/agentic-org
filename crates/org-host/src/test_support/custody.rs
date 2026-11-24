@@ -169,7 +169,7 @@ pub fn reserve_office(
         .map_err(|e| e.to_string())?;
     writers
         .reserve(
-            &crate::ids::generate().map_err(|e| e.to_string())?,
+            &crate::ids::uuid_v7().map_err(|e| e.to_string())?,
             &Binding {
                 organization_id,
                 office_id,

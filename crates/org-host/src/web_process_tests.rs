@@ -28,7 +28,7 @@ use org_host_control::{
     ops::{AccountVerify, AccountVerifyParams},
     Password, SessionHandle,
 };
-use org_host_control::{GatewayState, InstanceStatus, InstanceStatusParams};
+use org_host_control::{InstanceStatus, InstanceStatusParams, WebState};
 use org_platform::confinement::testing::{refuse_call, RefusedCall};
 use org_proto::{frame, selected_bootstrap::PlanV1, ApiError, Call, HelloParams, Request};
 use std::{
@@ -44,6 +44,12 @@ use std::{
 };
 
 mod browser_sessions;
+mod c2_hiring_and_agents;
+mod c3_sessions_and_enrollment;
+mod cli_and_custody;
+mod local_onboarding_and_tls;
+mod multi_person_accounts;
+mod open_existing_org;
 mod organizations;
 mod recovery_custody;
 
@@ -221,6 +227,8 @@ pub(super) enum Seed {
     Administrator,
     /// No account; one pending registration link, as `admin.link.initial` leaves it.
     RegistrationLink,
+    /// Fresh local HTTP instance with zero accounts and zero links (ADR-0034 default authless mode).
+    LocalAuthless,
 }
 
 /// Opens the fixture instance under `base`, runs `create` (first start only) with its
@@ -304,6 +312,7 @@ fn start_registered_host(
                     .expect("the first registration link");
                 link = Some(issued.token.encode().to_string());
             }
+            Seed::LocalAuthless => {}
         }
     });
     (host, socket, link)
@@ -568,7 +577,7 @@ fn create_hq_within(host: &Host, address: SocketAddr, wait: Duration) -> Created
     );
     let headers = browser_sessions::pair(&signed_in, "sign-in").headers();
     let instance = host.instance.as_ref().unwrap().id().to_owned();
-    let operation_id = crate::ids::generate().unwrap();
+    let operation_id = crate::ids::uuid_v7().unwrap();
     let body = create_body(
         &instance,
         &operation_id,
@@ -621,7 +630,7 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
     assert_eq!(version.body["result"]["api_version"], 1);
     assert_eq!(
         version.body["result"]["contract_revision"],
-        org_proto::gateway::CONTRACT_REVISION
+        org_proto::web::CONTRACT_REVISION
     );
     assert!(version
         .headers
@@ -760,7 +769,7 @@ fn create_hq_beside(host: &Host, address: SocketAddr, serving: bool) {
         .as_ref()
         .expect("a registered host creates organizations");
     let account = creating.account_for_test("Owner");
-    let operation_id = crate::ids::generate().unwrap();
+    let operation_id = crate::ids::uuid_v7().unwrap();
     let plan = PlanV1 {
         version: 1,
         name: "Example".into(),
@@ -827,13 +836,13 @@ fn lnx_3_host(outcome: &str) {
     };
     // The supervisor's own first settled state, before any organization exists: the web
     // process serves, or its start was refused or failed.
-    let mut before = GatewayState::NotConfigured;
+    let mut before = WebState::NotConfigured;
     wait_until("the web supervisor's first settled state", || {
         before = state(&mut wire, &mut id);
-        !matches!(before, GatewayState::NotConfigured | GatewayState::Starting)
+        !matches!(before, WebState::NotConfigured | WebState::Starting)
     });
     println!("state before HQ: {before:?}");
-    create_hq_beside(&host, address, matches!(before, GatewayState::Running));
+    create_hq_beside(&host, address, matches!(before, WebState::Running));
     println!("HQ: provisioned");
     let serving = |host: &Host| {
         wait_until("web_ready", || web_ready(host));
@@ -919,7 +928,7 @@ fn lnx_3_host(outcome: &str) {
             // comes up to 8 seconds later.)
             let web = host.web.as_ref().expect("the web process is supervised");
             wait_until("the supervisor gives up", || web.ended());
-            assert_eq!(state(&mut wire, &mut id), GatewayState::Failed);
+            assert_eq!(state(&mut wire, &mut id), WebState::Failed);
             assert!(!web_ready(&host));
             nothing_runs();
         }
@@ -1197,7 +1206,7 @@ fn a_host_stops_within_its_bound_while_its_web_start_and_a_create_wait() {
     };
     let fingerprint: [u8; 32] =
         <sha2::Sha256 as sha2::Digest>::digest(serde_json::to_vec(&plan).unwrap()).into();
-    let operation_id = crate::ids::generate().unwrap();
+    let operation_id = crate::ids::uuid_v7().unwrap();
     assert!(matches!(
         creating.create(&account, &operation_id, &plan, fingerprint),
         Ok(org_host_control::HostOpResult::Accepted)

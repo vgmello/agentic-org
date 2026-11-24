@@ -13,7 +13,7 @@ use std::{
 };
 
 use crate::{
-    change::{Bytes, Change, Clock, Operation, Outcome, Refusal},
+    change::{Bytes, Change, Clock, DurablePath, Operation, Outcome, Refusal},
     changes::{ChangeStream, Changes, Resync},
     custody::{JournalHead, OfficeIdentity, WriterAuthority},
     disk::{Disk, RealDisk},
@@ -73,6 +73,8 @@ pub struct StoreParts<E: Engine> {
     pub engine: Arc<E>,
     /// One projector per family. The store adds its own receipt family.
     pub projectors: Vec<Arc<dyn Projector<E>>>,
+    /// Durable subtrees owned by independent companion stores (pruned before rebuild walks).
+    pub excluded_prefixes: Vec<DurablePath>,
     pub clock: Arc<dyn Clock>,
     /// How long appended entries may wait for a flush nobody asked for.
     pub flush_interval: Duration,
@@ -97,6 +99,7 @@ impl<E: Engine> StoreParts<E> {
             custody,
             engine,
             projectors,
+            excluded_prefixes: Vec::new(),
             clock,
             flush_interval: Duration::from_millis(50),
             opening: Opening::Existing,
@@ -146,6 +149,7 @@ pub(crate) type Decide<E> =
 pub(crate) struct Job<E: Engine> {
     pub(crate) op: Option<Operation>,
     pub(crate) durable: bool,
+    pub(crate) dry_run: bool,
     pub(crate) decide: Decide<E>,
     pub(crate) to: SyncSender<Result<Reply, StoreError>>,
 }
@@ -317,6 +321,9 @@ pub struct Status {
     /// The ordinal of the flushed head the host last confirmed.
     pub confirmed: u64,
     pub materialized: u64,
+    /// Non-fatal persistent engine upkeep warning (for example repeated SQLite WAL checkpoint
+    /// failures), cleared once upkeep succeeds again.
+    pub upkeep_warning: Option<String>,
 }
 
 pub struct Store<E: Engine> {
@@ -337,6 +344,7 @@ impl<E: Engine> Store<E> {
             custody,
             engine,
             projectors,
+            excluded_prefixes,
             clock,
             flush_interval,
             opening,
@@ -367,7 +375,8 @@ impl<E: Engine> Store<E> {
             Opening::Existing => Journal::open_on(disk, &durable, &identity, custody.as_ref())?,
         };
         journal.set_segment_bytes(limits.segment_bytes);
-        let projectors = Projectors::new(projectors, &identity.office_id);
+        let projectors =
+            Projectors::new_with_exclusions(projectors, &identity.office_id, excluded_prefixes);
         if let Some(through) = materialize(&files, &journal)? {
             journal.set_materialized(through)?;
         }
@@ -495,10 +504,35 @@ impl<E: Engine> Store<E> {
     where
         F: FnMut(&mut UnitOfWork<'_, E>) -> Result<Change, Refusal> + Send + 'static,
     {
+        self.enqueue(op, durable, false, decide)
+    }
+
+    /// Runs `decide`, entry framing, projector application and engine validation on the
+    /// single writer, then unconditionally undoes the transaction to its savepoint.
+    /// Produces zero journal entries, zero files, zero receipts, and zero sequence or
+    /// feed advancement.
+    pub fn check<F>(&self, decide: F) -> Result<Reply, StoreError>
+    where
+        F: FnMut(&mut UnitOfWork<'_, E>) -> Result<Change, Refusal> + Send + 'static,
+    {
+        self.enqueue(None, false, true, decide)
+    }
+
+    fn enqueue<F>(
+        &self,
+        op: Option<Operation>,
+        durable: bool,
+        dry_run: bool,
+        decide: F,
+    ) -> Result<Reply, StoreError>
+    where
+        F: FnMut(&mut UnitOfWork<'_, E>) -> Result<Change, Refusal> + Send + 'static,
+    {
         let (to, answer) = mpsc::sync_channel(1);
         let job = Job {
             op,
             durable,
+            dry_run,
             decide: Box::new(decide),
             to,
         };
@@ -537,14 +571,14 @@ impl<E: Engine> Store<E> {
     }
 
     pub fn status(&self) -> Status {
-        status(&self.core.flow())
+        status(&self.core.flow(), self.core.engine.as_ref())
     }
 
     /// Waits until the store's status satisfies `ready`.
     pub fn wait_for(&self, ready: impl Fn(&Status) -> bool) -> Status {
         let mut flow = self.core.flow();
         loop {
-            let now = status(&flow);
+            let now = status(&flow, self.core.engine.as_ref());
             if ready(&now) {
                 return now;
             }
@@ -596,7 +630,7 @@ impl<E: Engine> Store<E> {
     }
 }
 
-fn status(flow: &Flow) -> Status {
+fn status<E: Engine>(flow: &Flow, engine: &E) -> Status {
     Status {
         stopped: flow.fatal.clone(),
         holding_back: flow.holding_back,
@@ -605,6 +639,7 @@ fn status(flow: &Flow) -> Status {
         flushed: flow.flushed,
         confirmed: flow.confirmed.as_ref().map_or(0, |head| head.ordinal),
         materialized: flow.materialized,
+        upkeep_warning: engine.upkeep_error().map(|error| error.to_string()),
     }
 }
 

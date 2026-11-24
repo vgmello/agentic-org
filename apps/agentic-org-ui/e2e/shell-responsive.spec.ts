@@ -642,3 +642,28 @@ test(
 		await shot(page, 'shell-menu-back-during-forward');
 	}
 );
+
+for (const width of [960, 1279]) {
+	test(
+		`SHELL-30 SET-200: at ${width}px with 200% text the shell reflows to the rail and settings keep adequate room`,
+		{ tag: '@webkit' },
+		async ({ page }) => {
+			await createOrganization(page);
+			await page.setViewportSize({ width, height: 900 });
+			await visit(page, '/settings');
+			await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+			await expect(page.locator('html')).toHaveCSS('font-size', '32px');
+			const nav = page.getByRole('navigation', { name: 'Main', exact: true });
+			// 4 rem icon rail (128 px at 32 px root) instead of 18 rem (576 px).
+			expect((await nav.locator('..').boundingBox())?.width).toBeCloseTo(128, 0);
+			const contentWidth = await page
+				.locator('main h2')
+				.first()
+				.evaluate((el) => el.getBoundingClientRect().width);
+			expect(contentWidth).toBeGreaterThanOrEqual(400);
+			expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+				width
+			);
+		}
+	);
+}

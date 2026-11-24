@@ -99,6 +99,47 @@ pub fn harden_self() -> io::Result<()> {
     native::harden_self()
 }
 
+/// The parent PID of `pid`, or `None` if the process no longer exists.
+/// Fails closed with the `process` refusal on targets without an adapter.
+pub fn parent_pid(pid: libc::pid_t) -> io::Result<Option<libc::pid_t>> {
+    if pid <= 0 {
+        return Ok(None);
+    }
+    native::parent_pid(pid)
+}
+
+/// Whether `pid` is `ancestor` or a live descendant of `ancestor` by walking parent PIDs
+/// through the kernel (`proc_pidinfo` on macOS, `/proc/<pid>/stat` on Linux).
+/// Probes `pid` first so dead PIDs return `Ok(false)` and targets without an adapter fail closed.
+pub fn is_descendant_of(pid: libc::pid_t, ancestor: libc::pid_t) -> io::Result<bool> {
+    if pid <= 0 || ancestor <= 0 {
+        return Ok(false);
+    }
+    let Some(first_ppid) = native::parent_pid(pid)? else {
+        return Ok(false);
+    };
+    if pid == ancestor {
+        return Ok(true);
+    }
+    const MAX_DEPTH: usize = 128;
+    let mut current = pid;
+    let mut ppid = first_ppid;
+    for _ in 0..MAX_DEPTH {
+        if ppid == ancestor {
+            return Ok(true);
+        }
+        if ppid <= 1 || ppid == current {
+            return Ok(false);
+        }
+        current = ppid;
+        let Some(next) = native::parent_pid(current)? else {
+            return Ok(false);
+        };
+        ppid = next;
+    }
+    Ok(false)
+}
+
 /// Whether [`harden_self`] holds for this process now: core dumps are disabled, and
 /// where the system has such an attribute the process is not dumpable. For a
 /// consumer's test of its own start path (`test-support`).

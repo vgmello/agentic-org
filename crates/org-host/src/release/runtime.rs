@@ -73,7 +73,7 @@ impl RuntimeRelease {
     pub fn office_program(&self) -> PathBuf {
         self.path("agentic-org-office")
     }
-    pub fn gateway_program(&self) -> PathBuf {
+    pub fn web_program(&self) -> PathBuf {
         self.path("agentic-org-web")
     }
     pub fn cli_program(&self) -> PathBuf {
@@ -93,9 +93,9 @@ impl RuntimeRelease {
         pin_of(&self.0.manifest, name)
     }
     /// Release identity the host binds into the web process's first line.
-    pub(crate) fn web_binding(&self) -> org_host_control::gateway::WebRelease {
+    pub(crate) fn web_binding(&self) -> org_host_control::web::WebRelease {
         let pin = self.pin();
-        org_host_control::gateway::WebRelease {
+        org_host_control::web::WebRelease {
             release_id: pin.release_id.clone(),
             manifest_sha256: pin.manifest_sha256.clone(),
             sequence: pin.sequence,

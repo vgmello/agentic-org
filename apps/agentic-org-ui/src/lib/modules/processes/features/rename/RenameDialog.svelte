@@ -16,7 +16,7 @@
 	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { registerModalBack } from '$lib/platform/shell/modal-back';
 	import { processesApi } from '../../api';
 	import { KIND_WORD, draftOf, validKey } from '../../present';

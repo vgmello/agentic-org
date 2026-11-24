@@ -5,7 +5,7 @@
 //! a response's result; §6.5's raw-JSON exception, see the crate docs), and copies in serde's and
 //! the transport's buffers survive; see `org_proto`'s `token` module docs.
 
-use org_proto::gateway::SecretText;
+use org_proto::web::SecretText;
 use serde::{Deserialize, Serialize};
 
 macro_rules! secret_text {
@@ -36,10 +36,9 @@ macro_rules! secret_text {
 }
 
 secret_text!(
-    /// A password, as typed: `account.verify`, `account.set_password`,
-    /// `account.reset_password` and `account.create`. The host keeps only its
-    /// Argon2id hash, and for `account.create` the journal row's create-time verifier (a copy of
-    /// that Argon2id PHC string, X-02 §6.3); never the password, a fast hash or a separate key.
+    /// A password, as typed: browser sign-in, registration, set-password, password change,
+    /// password-confirmed handovers, and `account.verify`. The host keeps only its Argon2id hash;
+    /// never the password, a fast hash or a separate key.
     Password
 );
 

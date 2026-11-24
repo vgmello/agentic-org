@@ -230,6 +230,7 @@ impl Host {
             cookie_digest: params.cookie_digest,
             proof_digest: params.proof_digest,
             origin: params.origin,
+            local_authless: false,
         }
     }
     fn seed(&self, login: &str, admin: bool) -> String {
@@ -343,7 +344,7 @@ fn plan(name: &str, slug: &str) -> PlanV1 {
     }
 }
 fn op() -> String {
-    crate::ids::generate().unwrap()
+    crate::ids::uuid_v7().unwrap()
 }
 fn code(result: Result<impl std::fmt::Debug, ApiError>) -> ErrorCode {
     result.expect_err("a refusal").code
@@ -1255,15 +1256,9 @@ fn a_registry_that_cannot_be_read_fails_the_list_instead_of_hiding_organizations
     host.idle();
     assert_eq!(host.list(&auth).organizations.len(), 1);
     // The linked row no longer reads: a second connection breaks its stored plan.
-    let raw = rusqlite::Connection::open(registry_file(host._root.path())).unwrap();
-    raw.execute_batch("PRAGMA ignore_check_constraints=ON;")
-        .unwrap();
-    assert_eq!(
-        raw.execute("UPDATE selected_provisioning SET prepared='{'", [])
-            .unwrap(),
-        1
-    );
-    drop(raw);
+    crate::hostdb::sqlite::corrupt_provisioning_prepared_for_test(&registry_file(
+        host._root.path(),
+    ));
     assert_eq!(
         code(host.call::<List>(true, &ListParams { auth: auth.clone() })),
         ErrorCode::Unavailable

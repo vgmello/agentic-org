@@ -10,16 +10,71 @@
 //! each of the last three prefixed with its length as one byte.
 use ring::{
     aead::{self, Aad, LessSafeKey, Nonce, UnboundKey},
+    hkdf,
     rand::{SecureRandom, SystemRandom},
 };
 use zeroize::Zeroizing;
 
 const DOMAIN: &[u8] = b"agentic-org/office-private-key/v1";
+const PROVIDER_CREDENTIAL_DOMAIN: &[u8] = b"agentic-org/provider-credential/v1";
+const HKDF_SALT: &[u8] = b"agentic-org/hkdf-salt/v1";
+const HKDF_INFO_OFFICE_PRIVATE_KEY: &[u8] = b"agentic-org/wrap-key/office-private-key/v1";
+const HKDF_INFO_PROVIDER_CREDENTIAL: &[u8] = b"agentic-org/wrap-key/provider-credential/v1";
 const VERSION: u8 = 1;
 const NONCE: usize = 12;
 const TAG: usize = 16;
 /// Largest private-key encoding accepted for wrapping.
 pub const MAX_KEY_BYTES: usize = 4096;
+
+/// Cryptographically distinct key classes derived from a per-office master key (ADR-0016, ADR-0032, TASK-11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyClass {
+    /// Wrapping key for office-owned private keys (Organization CA, TLS identity, invitation keys).
+    OfficePrivateKey,
+    /// Separate wrapping key for provider OAuth tokens and vendor sign-in credentials.
+    ProviderCredential,
+}
+
+impl KeyClass {
+    fn hkdf_info(self) -> &'static [u8] {
+        match self {
+            Self::OfficePrivateKey => HKDF_INFO_OFFICE_PRIVATE_KEY,
+            Self::ProviderCredential => HKDF_INFO_PROVIDER_CREDENTIAL,
+        }
+    }
+}
+
+struct Key32Len;
+impl hkdf::KeyType for Key32Len {
+    fn len(&self) -> usize {
+        32
+    }
+}
+
+/// Derives an independent 32-byte AES-256-GCM wrapping subkey for `class` via HKDF-SHA256.
+/// Org CA private keys and provider OAuth credentials MUST use distinct wrapping keys.
+pub fn derive_wrapping_key(
+    office_secrets_key: &[u8; 32],
+    class: KeyClass,
+) -> Result<Zeroizing<[u8; 32]>, WrapError> {
+    let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, HKDF_SALT);
+    let prk = salt.extract(office_secrets_key);
+    let info = [class.hkdf_info()];
+    let okm = prk
+        .expand(&info, Key32Len)
+        .map_err(|_| WrapError::Unavailable)?;
+    let mut out = Zeroizing::new([0u8; 32]);
+    okm.fill(out.as_mut()).map_err(|_| WrapError::Unavailable)?;
+    Ok(out)
+}
+
+/// Binding for a wrapped provider OAuth credential (ADR-0016 decision 3, ADR-0032).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProviderCredentialBinding<'a> {
+    pub organization_id: &'a str,
+    pub office_id: &'a str,
+    pub connection_id: &'a str,
+}
 
 /// The role of the wrapped private key. TLS identity and invitation keys are
 /// added with satellite enrollment.
@@ -74,6 +129,45 @@ pub fn wrap(
         return Err(WrapError::Invalid);
     }
     let aad = aad(binding)?;
+    wrap_with_aad(key, &aad, secret)
+}
+
+/// Opens a record made by [`wrap`] with the same key and binding.
+pub fn unwrap(
+    key: &[u8; 32],
+    binding: &WrapBinding<'_>,
+    record: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, WrapError> {
+    let aad = aad(binding)?;
+    unwrap_with_aad(key, &aad, record)
+}
+
+/// Encrypts a provider OAuth credential under a dedicated `KeyClass::ProviderCredential`
+/// wrapping key (derived via [`derive_wrapping_key`] or provisioned separately) and the
+/// `agentic-org/provider-credential/v1` AAD domain (ADR-0016, ADR-0032, TASK-11).
+pub fn wrap_provider_credential(
+    provider_key: &[u8; 32],
+    binding: &ProviderCredentialBinding<'_>,
+    secret: &[u8],
+) -> Result<Vec<u8>, WrapError> {
+    if secret.is_empty() || secret.len() > MAX_KEY_BYTES {
+        return Err(WrapError::Invalid);
+    }
+    let aad = provider_credential_aad(binding)?;
+    wrap_with_aad(provider_key, &aad, secret)
+}
+
+/// Opens a provider credential record made by [`wrap_provider_credential`].
+pub fn unwrap_provider_credential(
+    provider_key: &[u8; 32],
+    binding: &ProviderCredentialBinding<'_>,
+    record: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, WrapError> {
+    let aad = provider_credential_aad(binding)?;
+    unwrap_with_aad(provider_key, &aad, record)
+}
+
+fn wrap_with_aad(key: &[u8; 32], aad: &[u8], secret: &[u8]) -> Result<Vec<u8>, WrapError> {
     let mut nonce = [0; NONCE];
     SystemRandom::new()
         .fill(&mut nonce)
@@ -94,13 +188,11 @@ pub fn wrap(
     Ok(record)
 }
 
-/// Opens a record made by [`wrap`] with the same key and binding.
-pub fn unwrap(
+fn unwrap_with_aad(
     key: &[u8; 32],
-    binding: &WrapBinding<'_>,
+    aad: &[u8],
     record: &[u8],
 ) -> Result<Zeroizing<Vec<u8>>, WrapError> {
-    let aad = aad(binding)?;
     if record.len() <= 1 + NONCE + TAG || record.len() > 1 + NONCE + MAX_KEY_BYTES + TAG {
         return Err(WrapError::Rejected);
     }
@@ -130,14 +222,32 @@ fn cipher(key: &[u8; 32]) -> Result<LessSafeKey, WrapError> {
 }
 
 fn aad(binding: &WrapBinding<'_>) -> Result<Vec<u8>, WrapError> {
-    let fields = [
-        binding.purpose.label(),
-        binding.organization_id.as_bytes(),
-        binding.office_id.as_bytes(),
-    ];
+    encode_aad(
+        DOMAIN,
+        &[
+            binding.purpose.label(),
+            binding.organization_id.as_bytes(),
+            binding.office_id.as_bytes(),
+        ],
+    )
+}
+
+fn provider_credential_aad(binding: &ProviderCredentialBinding<'_>) -> Result<Vec<u8>, WrapError> {
+    encode_aad(
+        PROVIDER_CREDENTIAL_DOMAIN,
+        &[
+            b"provider-credential",
+            binding.organization_id.as_bytes(),
+            binding.office_id.as_bytes(),
+            binding.connection_id.as_bytes(),
+        ],
+    )
+}
+
+fn encode_aad(domain: &[u8], fields: &[&[u8]]) -> Result<Vec<u8>, WrapError> {
     let mut aad =
-        Vec::with_capacity(DOMAIN.len() + 1 + fields.iter().map(|f| 1 + f.len()).sum::<usize>());
-    aad.extend_from_slice(DOMAIN);
+        Vec::with_capacity(domain.len() + 1 + fields.iter().map(|f| 1 + f.len()).sum::<usize>());
+    aad.extend_from_slice(domain);
     aad.push(VERSION);
     for field in fields {
         let len = u8::try_from(field.len()).map_err(|_| WrapError::Invalid)?;

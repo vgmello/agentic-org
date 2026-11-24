@@ -16,13 +16,20 @@
 //! revision (`conflict`), then `already_exists`.
 
 pub mod add_person;
+pub mod agent_lifecycle;
 pub mod archive_team;
+pub mod authority;
 pub mod create_organization;
 pub mod create_team;
 pub mod deactivate_person;
+pub mod hiring;
+pub mod may_hire;
 pub mod move_person;
 pub mod move_team;
-mod shared;
+pub mod provider_pools;
+pub mod roles;
+pub(crate) mod shared;
+pub mod team_limit;
 pub mod update_person;
 pub mod update_team;
 
@@ -31,43 +38,103 @@ use org_store::{Ack, Actor, Change, Engine, Id, OfficeIdentity, Operation, Refus
 use serde::{Deserialize, Serialize};
 
 pub use add_person::AddPerson;
+pub use agent_lifecycle::{
+    CreateProviderConnection, MoveAgent, OffboardAgent, SetAgentStatus, SetWatchingModel,
+    UpdateAgent, UpsertAgentExecution,
+};
 pub use archive_team::ArchiveTeam;
+pub use authority::HIRE_DENIED;
 pub use create_organization::{CreateOrganization, Creator, OrganizationCreated};
 pub use create_team::{CreateTeam, TeamCreated};
 pub use deactivate_person::DeactivatePerson;
+pub use hiring::{ConfirmHire, DraftHire, HireAgent, HireChanged, WithdrawHire};
+pub use may_hire::SetMayHire;
 pub use move_person::MovePerson;
 pub use move_team::MoveTeam;
+pub use provider_pools::{
+    validate_endpoint_url, CreateModelProfile, UpdateModelProfile, UpdateProviderConnection,
+};
+pub use roles::{CreateRole, UpdateRole};
+pub use team_limit::SetTeamMaxMembers;
 pub use update_person::{Edit, UpdatePerson};
 pub use update_team::UpdateTeam;
 
-use super::ports::OrganizationRead;
+use crate::projects::ports::ProjectsRead;
 
 /// Every operation of the family. The one place their acknowledgement classes are
 /// declared (ADR-0014).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Op {
     CreateOrganization,
+    ImportOrganization,
     CreateTeam,
     UpdateTeam,
+    SetTeamMaxMembers,
     MoveTeam,
     ArchiveTeam,
     AddPerson,
     UpdatePerson,
     MovePerson,
     DeactivatePerson,
+    SetMayHire,
+    CreateRole,
+    UpdateRole,
+    DraftHire,
+    ConfirmHire,
+    HireAgent,
+    WithdrawHire,
+    UpdateAgent,
+    MoveAgent,
+    SetAgentStatus,
+    OffboardAgent,
+    UpsertAgentExecution,
+    CreateProviderConnection,
+    UpdateProviderConnection,
+    CreateModelProfile,
+    UpdateModelProfile,
+    SetWatchingModel,
+    CreateProject,
+    AddProjectTeam,
+    RemoveProjectTeam,
+    RegisterRepository,
+    AttachProjectRepository,
 }
 
 impl Op {
-    pub const ALL: [Op; 9] = [
+    pub const ALL: [Op; 33] = [
         Op::CreateOrganization,
+        Op::ImportOrganization,
         Op::CreateTeam,
         Op::UpdateTeam,
+        Op::SetTeamMaxMembers,
         Op::MoveTeam,
         Op::ArchiveTeam,
         Op::AddPerson,
         Op::UpdatePerson,
         Op::MovePerson,
         Op::DeactivatePerson,
+        Op::SetMayHire,
+        Op::CreateRole,
+        Op::UpdateRole,
+        Op::DraftHire,
+        Op::ConfirmHire,
+        Op::HireAgent,
+        Op::WithdrawHire,
+        Op::UpdateAgent,
+        Op::MoveAgent,
+        Op::SetAgentStatus,
+        Op::OffboardAgent,
+        Op::UpsertAgentExecution,
+        Op::CreateProviderConnection,
+        Op::UpdateProviderConnection,
+        Op::CreateModelProfile,
+        Op::UpdateModelProfile,
+        Op::SetWatchingModel,
+        Op::CreateProject,
+        Op::AddProjectTeam,
+        Op::RemoveProjectTeam,
+        Op::RegisterRepository,
+        Op::AttachProjectRepository,
     ];
 
     /// Structure changes answer only once durable (ADR-0014).
@@ -79,14 +146,38 @@ impl Op {
     pub const fn kind(self) -> &'static str {
         match self {
             Op::CreateOrganization => "organization.create",
+            Op::ImportOrganization => "organization.import",
             Op::CreateTeam => "organization.create_team",
             Op::UpdateTeam => "organization.update_team",
+            Op::SetTeamMaxMembers => "organization.set_team_max_members",
             Op::MoveTeam => "organization.move_team",
             Op::ArchiveTeam => "organization.archive_team",
             Op::AddPerson => "organization.add_person",
             Op::UpdatePerson => "organization.update_person",
             Op::MovePerson => "organization.move_person",
             Op::DeactivatePerson => "organization.deactivate_person",
+            Op::SetMayHire => "organization.set_may_hire",
+            Op::CreateRole => "organization.create_role",
+            Op::UpdateRole => "organization.update_role",
+            Op::DraftHire => "organization.draft_hire",
+            Op::ConfirmHire => "organization.confirm_hire",
+            Op::HireAgent => "organization.hire_agent",
+            Op::WithdrawHire => "organization.withdraw_hire",
+            Op::UpdateAgent => "organization.update_agent",
+            Op::MoveAgent => "organization.move_agent",
+            Op::SetAgentStatus => "organization.set_agent_status",
+            Op::OffboardAgent => "organization.offboard_agent",
+            Op::UpsertAgentExecution => "organization.upsert_agent_execution",
+            Op::CreateProviderConnection => "organization.create_provider_connection",
+            Op::UpdateProviderConnection => "organization.update_provider_connection",
+            Op::CreateModelProfile => "organization.create_model_profile",
+            Op::UpdateModelProfile => "organization.update_model_profile",
+            Op::SetWatchingModel => "organization.set_watching_model",
+            Op::CreateProject => "organization.create_project",
+            Op::AddProjectTeam => "organization.add_project_team",
+            Op::RemoveProjectTeam => "organization.remove_project_team",
+            Op::RegisterRepository => "organization.register_repository",
+            Op::AttachProjectRepository => "organization.attach_project_repository",
         }
     }
 }
@@ -140,7 +231,7 @@ pub trait Feature: Serialize + Clone + Send + 'static {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: OrganizationRead;
+        E::Tx: ProjectsRead;
 
     /// The identity a retry is matched on.
     fn operation(&self, id: Id, by: &Actor) -> Operation {
@@ -149,7 +240,7 @@ pub trait Feature: Serialize + Clone + Send + 'static {
 }
 
 /// What a retry of `command` is matched on: its kind, who asked and every field of it.
-fn operation(op: Op, id: Id, actor: Actor, command: &impl Serialize) -> Operation {
+pub(crate) fn operation(op: Op, id: Id, actor: Actor, command: &impl Serialize) -> Operation {
     let fields = serde_json::to_vec(command).expect("a command is plain data");
     Operation {
         id,
@@ -160,12 +251,12 @@ fn operation(op: Op, id: Id, actor: Actor, command: &impl Serialize) -> Operatio
 }
 
 /// A reply in its byte form: JSON.
-fn reply(value: &impl Serialize) -> Vec<u8> {
+pub(crate) fn reply(value: &impl Serialize) -> Vec<u8> {
     serde_json::to_vec(value).expect("a reply is plain data")
 }
 
 /// Refused before admission: nothing is recorded.
-fn invalid<T>(reason: &str) -> Result<T, Refusal> {
+pub(crate) fn invalid<T>(reason: &str) -> Result<T, Refusal> {
     Err(Refusal::invalid(reason))
 }
 
@@ -177,13 +268,13 @@ fn require(holds: bool, reason: &str) -> Result<(), Refusal> {
 }
 
 /// `id` is a stable ID, or the command is malformed.
-fn stable(id: &Id, what: &str) -> Result<(), Refusal> {
+pub(crate) fn stable(id: &Id, what: &str) -> Result<(), Refusal> {
     let reason = format!("{what} is a UUIDv7 in lowercase text");
     require(super::records::is_stable_id(id.as_str()), &reason)
 }
 
 /// A completed change's reply.
-fn changed(id: &Id, revision: u64, generation: u64) -> Vec<u8> {
+pub(crate) fn changed(id: &Id, revision: u64, generation: u64) -> Vec<u8> {
     reply(&Changed {
         id: id.clone(),
         revision,

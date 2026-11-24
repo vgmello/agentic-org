@@ -28,7 +28,7 @@ use org_host_control::ops::{
 use org_host_control::{HostOpResult, Password, SessionHandle, TlsPrivateKey};
 use org_proto::ErrorCode;
 
-use super::{connect_verified, not_running, registered, say};
+use super::{connect_verified, not_running, registered_with_origin, say};
 
 /// The command's help.
 pub const HELP: &str = "agentic-org admin tls set --cert <file> --key <file> --login <login> \
@@ -52,8 +52,7 @@ pub fn admin_tls_set(
     login: &str,
     out: &mut dyn Write,
 ) -> Result<(), String> {
-    let (record, id, socket) = registered(&crate::human::paths(name)?, name)?;
-    let origin = record.input.listen.origin().clone();
+    let (_record, id, socket, origin) = registered_with_origin(&crate::human::paths(name)?, name)?;
     set(
         &Target {
             socket: &socket,
@@ -110,7 +109,7 @@ pub(crate) fn set(
     // return early.
     let key =
         TlsPrivateKey::new(checked.key().to_owned()).map_err(|_| "the TLS key cannot be sent")?;
-    let operation_id = crate::ids::generate().map_err(|_| "no operation ID could be generated")?;
+    let operation_id = crate::ids::uuid_v7().map_err(|_| "no operation ID could be generated")?;
     // Before a password is asked for: it is sent only to a host this command identified. A
     // host it may not send one to is refused in its own words; only a failure to reach the
     // service says that the service is not running.

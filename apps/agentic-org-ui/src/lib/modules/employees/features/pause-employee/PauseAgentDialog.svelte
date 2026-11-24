@@ -1,11 +1,18 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
-	import { toAppError } from '$lib/office/api';
-	import { setAgentStatus } from '$lib/org/actions';
-	import { teamsOfMember } from '$lib/org/model';
-	import type { OrgSession } from '$lib/org/session';
+	import {
+		Dialog,
+		DialogContent,
+		DialogDescription,
+		DialogFooter,
+		DialogHeader,
+		DialogTitle
+	} from '$lib/components/ui/dialog';
+	import { toAppError } from '$lib/proto';
+	import { setAgentStatus } from '$lib/modules/organization/actions';
+	import { teamsOfMember } from '$lib/modules/organization/model';
+	import type { OrgSession } from '$lib/modules/organization/session';
 	import type { Member, OrgSnapshot } from '$lib/proto';
 
 	let {
@@ -42,7 +49,8 @@
 	$effect(() => {
 		const latest = agent;
 		untrack(() => {
-			if (open && shown && latest && latest.id === shown.id && latest.version !== shown.version) shown = latest;
+			if (open && shown && latest && latest.id === shown.id && latest.version !== shown.version)
+				shown = latest;
 		});
 	});
 
@@ -55,7 +63,10 @@
 			ondone({ name: shown.name });
 		} catch (e) {
 			const failure = toAppError(e);
-			error = failure.code === 'conflict' ? `${shown.name} changed at HQ while you were looking. Here's the latest.` : failure.message;
+			error =
+				failure.code === 'conflict'
+					? `${shown.name} changed at HQ while you were looking. Here's the latest.`
+					: failure.message;
 			ondone({ stale: true });
 		} finally {
 			busy = false;
@@ -68,14 +79,23 @@
 		<DialogHeader>
 			<DialogTitle text={`Pause ${shown?.name ?? ''}?`} />
 			<DialogDescription class="space-y-1 [overflow-wrap:anywhere]">
-				<span class="block">{shown?.name} won't be started or woken, and new tasks and messages wait until you resume.</span>
-				{#if teams.length > 0}<span class="block">{shown?.name} stays in {teams.join(', ')}.</span>{/if}
+				<span class="block"
+					>{shown?.name} won't be started or woken, and new tasks and messages wait until you resume.</span
+				>
+				{#if teams.length > 0}<span class="block">{shown?.name} stays in {teams.join(', ')}.</span
+					>{/if}
 			</DialogDescription>
-			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">
+					{error}
+				</p>{/if}
 		</DialogHeader>
 		<DialogFooter>
-			<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
-			<Button type="button" disabled={busy} onclick={confirm} class="[overflow-wrap:anywhere]">Pause {shown?.name}</Button>
+			<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}
+				>Cancel</Button
+			>
+			<Button type="button" disabled={busy} onclick={confirm} class="[overflow-wrap:anywhere]"
+				>Pause {shown?.name}</Button
+			>
 		</DialogFooter>
 	</DialogContent>
 </Dialog>

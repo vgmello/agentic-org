@@ -21,7 +21,7 @@
 	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { agentSetupApi } from '../../api';
 	import { modelNote, profileLabel } from '../../present';
 	import type { AgentSetupDetail } from '../../types';

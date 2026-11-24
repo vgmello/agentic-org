@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
+	import { resolve } from '$app/paths';
 	import {
 		Sheet,
 		SheetContent,
@@ -9,6 +10,7 @@
 	} from '$lib/components/ui/sheet';
 	import Plus from '@lucide/svelte/icons/plus';
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
+	import { icons } from '$lib/components/icons';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import {
 		PRESENCE_WORD,
@@ -23,9 +25,13 @@
 		sidebarNavAction
 	} from '$lib/modules/messaging/sidebar-nav';
 
-	/** The left column (CHAT-1): Needs you, Mentions, Threads, channels, direct messages, and what is read as the owner. */
+	/**
+	 * The left column (CHAT-1): Inbox (a link, with the common owner-waiting count: Chat keeps no second queue), Mentions,
+	 * Threads, channels, direct messages, and Between agents (what the owner reads as the owner).
+	 */
 	let {
 		bar,
+		inboxCount,
 		view,
 		ctx,
 		officeRunning,
@@ -36,9 +42,12 @@
 		onCloseFocus,
 		onselect,
 		onnewchannel,
-		onnewmessage
+		onnewmessage,
+		onbrowse
 	}: {
 		bar: Sidebar;
+		/** The Inbox count the navigation shows; undefined while unknown. */
+		inboxCount?: number;
 		view: ChatView;
 		ctx: ChatContext;
 		officeRunning: boolean;
@@ -50,14 +59,15 @@
 		onselect: (v: ChatView) => void;
 		onnewchannel: (opener: HTMLElement) => void;
 		onnewmessage: (opener: HTMLElement) => void;
+		onbrowse: (opener: HTMLElement) => void;
 	} = $props();
 
 	const item =
 		'flex w-full items-start gap-x-[min(.75rem,12px)] rounded-md px-[min(.5rem,8px)] py-1.5 text-left text-sm/6 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring';
 	const off = 'text-fg-secondary hover:bg-surface-raised hover:text-fg';
-	const here = (v: ChatView, id?: string) =>
+	const here = (v: ChatView, conversationId?: string) =>
 		view.type === v.type &&
-		(v.type !== 'conversation' || (view.type === 'conversation' && view.id === id));
+		(v.type !== 'conversation' || (view.type === 'conversation' && view.id === conversationId));
 	const unreadThreads = $derived(bar.threads.reduce((n, t) => n + t.new_replies, 0));
 	let nav = $state<HTMLElement | undefined>();
 	let bounds = $state({ left: 0, top: 0, width: 0, height: 0 });
@@ -102,14 +112,12 @@
 		};
 	});
 	export function focusSelected(preferred?: HTMLElement) {
-		const item =
+		const target =
 			preferred && nav?.contains(preferred)
 				? preferred
 				: (nav?.querySelector<HTMLElement>('[aria-current="true"]') ??
 					nav?.querySelector<HTMLElement>('button'));
-		const group = item?.closest('details');
-		if (group instanceof HTMLDetailsElement) group.open = true;
-		item?.focus();
+		target?.focus();
 	}
 
 	function handleNavKeydown(event: KeyboardEvent) {
@@ -118,12 +126,13 @@
 		if (!direction || !nav) return;
 		const target = event.target;
 		if (!(target instanceof HTMLElement)) return;
-		const currentButton = target.closest<HTMLButtonElement>('button[data-chat-nav-item]');
-		if (!currentButton || !nav.contains(currentButton)) return;
-		const items = [...nav.querySelectorAll<HTMLButtonElement>('button[data-chat-nav-item]')].filter(
-			(button) => !button.disabled && !button.closest('details:not([open])')
+		const currentItem = target.closest<HTMLElement>('[data-chat-nav-item]');
+		if (!currentItem || !nav.contains(currentItem)) return;
+		const items = [...nav.querySelectorAll<HTMLElement>('[data-chat-nav-item]')].filter(
+			(el) =>
+				!(el instanceof HTMLButtonElement && el.disabled) && !el.closest('details:not([open])')
 		);
-		const currentIndex = items.indexOf(currentButton);
+		const currentIndex = items.indexOf(currentItem);
 		const nextIndex = nextSidebarIndex(currentIndex, items.length, direction);
 		if (nextIndex < 0) return;
 		event.preventDefault();
@@ -197,28 +206,37 @@
 	>
 		<ul class="flex flex-col gap-0.5">
 			<li>
-				<button
-					type="button"
-					class={[item, here({ type: 'needs' }) ? 'chat-nav-on font-medium text-fg' : off]}
-					aria-current={here({ type: 'needs' }) ? 'true' : undefined}
+				<a
+					href={resolve('/inbox')}
+					class="{item} {off}"
+					aria-label={inboxCount
+						? `Inbox, ${inboxCount} ${inboxCount === 1 ? 'needs' : 'need'} you`
+						: 'Inbox'}
 					data-chat-nav-item
-					data-testid="needs-you-link"
-					onclick={() => onselect({ type: 'needs' })}
+					data-testid="inbox-link"
 				>
-					<HeroIcon class="size-[min(1.5rem,32px)] text-current" variant="outline" name="bell" />
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						aria-hidden="true"
+						class="size-[min(1.5rem,32px)] shrink-0 text-current"
+						><path d={icons.inbox} stroke-linecap="round" stroke-linejoin="round" /></svg
+					>
 					<span class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
 						<span
-							class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal] {bar
-								.needsYou.length
+							class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal] {inboxCount
 								? 'font-semibold text-fg'
-								: ''}">Needs you</span
+								: ''}">Inbox</span
 						>
-						{#if bar.needsYou.length}<span
+						{#if inboxCount}<span
 								class="t-amber shrink-0 rounded-full px-1.5 text-xs/5 font-semibold tabular-nums"
-								data-testid="needs-you-count">{bar.needsYou.length}</span
+								aria-hidden="true"
+								data-testid="inbox-count">{inboxCount}</span
 							>{/if}
 					</span>
-				</button>
+				</a>
 			</li>
 			<li>
 				<button
@@ -281,7 +299,18 @@
 			</ul>
 			<button
 				type="button"
-				class="{item} {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent"
+				class="{item} {off} mt-1"
+				data-testid="browse-channels"
+				onclick={(event) => onbrowse(event.currentTarget)}
+				><HeroIcon
+					class="size-[min(1.5rem,32px)] text-current"
+					variant="outline"
+					name="hashtag"
+				/><span class="min-w-0 flex-1 whitespace-normal">Browse channels</span></button
+			>
+			<button
+				type="button"
+				class="{item} {off} disabled:opacity-50 disabled:hover:bg-transparent"
 				disabled={!officeRunning}
 				onclick={(event) => onnewchannel(event.currentTarget)}
 				><Plus class="size-[min(1.5rem,32px)] shrink-0 text-current" aria-hidden="true" /><span
@@ -309,15 +338,15 @@
 		</div>
 
 		{#if bar.asOwner.length}
-			<details class="group" data-testid="as-owner">
-				<summary
-					class="cursor-pointer px-2 text-[11px]/6 font-semibold tracking-wider text-fg-muted uppercase hover:text-fg"
-					>Reading as the owner · {bar.asOwner.length}</summary
-				>
+			<div data-testid="as-owner">
+				<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase">
+					Between agents
+				</h2>
+				<p class="px-2 text-xs/5 text-fg-muted">You read these as the owner.</p>
 				<ul class="mt-1 flex flex-col gap-0.5">
 					{#each bar.asOwner as r (r.conversation.id)}{@render row(r)}{/each}
 				</ul>
-			</details>
+			</div>
 		{/if}
 	</nav>
 {/snippet}

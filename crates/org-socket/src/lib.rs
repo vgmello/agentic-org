@@ -7,7 +7,7 @@
 mod peer;
 pub mod rights;
 
-pub use peer::{effective_uid, peer_allowed};
+pub use peer::{effective_uid, peer_allowed, peer_pid};
 
 use std::io::{self, BufRead, BufReader, Read};
 use std::os::fd::{AsRawFd, RawFd};

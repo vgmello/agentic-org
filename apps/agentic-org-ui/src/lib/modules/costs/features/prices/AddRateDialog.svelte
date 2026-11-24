@@ -24,7 +24,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { errorClass, helpClass, inputClass, mobileButton } from '$lib/components/classes';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { costsApi } from '../../api';
 	import { OUTCOME_UNKNOWN } from '../../outcome';
 	import { rateInput } from '../../money';

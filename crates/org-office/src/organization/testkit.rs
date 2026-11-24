@@ -14,8 +14,9 @@ use org_store::{
 use super::{
     ports::{OrganizationRead, OrganizationWrite, RecordRef},
     records::{
-        Employee, Office, OfficeCode, Organization, Repository, Role, Team, TeamAllocation,
-        TeamCounter,
+        AgentExecutionConfig, Employee, HireRequest, ModelProfile, Office, OfficeCode,
+        Organization, ProviderConnection, Repository, Role, Team, TeamAllocation, TeamCounter,
+        WatchingModelSetting,
     },
 };
 
@@ -29,6 +30,11 @@ pub struct OrganizationTables {
     roles: BTreeMap<Id, Role>,
     teams: BTreeMap<Id, Team>,
     employees: BTreeMap<Id, Employee>,
+    hire_requests: BTreeMap<Id, HireRequest>,
+    agent_executions: BTreeMap<Id, AgentExecutionConfig>,
+    provider_connections: BTreeMap<Id, ProviderConnection>,
+    model_profiles: BTreeMap<Id, ModelProfile>,
+    watching_model: Option<WatchingModelSetting>,
     team_counter: Option<TeamCounter>,
     team_allocations: BTreeMap<u64, TeamAllocation>,
     record_refs: BTreeSet<RecordRef>,
@@ -39,6 +45,16 @@ fn record_ref(kind: &str, id: &Id) -> RecordRef {
         kind: kind.to_owned(),
         id: id.clone(),
         is_deleted: false,
+    }
+}
+
+impl OrganizationTables {
+    pub(crate) fn insert_record_ref(&mut self, kind: &str, id: &Id) {
+        self.record_refs.insert(record_ref(kind, id));
+    }
+
+    pub(crate) fn remove_record_ref(&mut self, kind: &str, id: &Id) {
+        self.record_refs.remove(&record_ref(kind, id));
     }
 }
 
@@ -67,6 +83,17 @@ impl FamilyTable for OrganizationTables {
         lines.extend(rows("roles", self.roles.values()));
         lines.extend(rows("teams", self.teams.values()));
         lines.extend(rows("employees", self.employees.values()));
+        lines.extend(rows("hire_requests", self.hire_requests.values()));
+        lines.extend(rows(
+            "agent_execution_configs",
+            self.agent_executions.values(),
+        ));
+        lines.extend(rows(
+            "provider_connections",
+            self.provider_connections.values(),
+        ));
+        lines.extend(rows("model_profiles", self.model_profiles.values()));
+        lines.extend(rows("watching_model_settings", &self.watching_model));
         lines.extend(rows("reference_counters", &self.team_counter));
         let allocations = self.team_allocations.values();
         lines.extend(rows("reference_allocations", allocations));
@@ -149,6 +176,50 @@ macro_rules! memory_read {
                 read(self.table(), |t| {
                     t.employees.values().any(|employee| employee.handle == handle)
                 })
+            }
+
+            fn hire_request(&self, id: &Id) -> Result<Option<HireRequest>, EngineError> {
+                read(self.table(), |t| t.hire_requests.get(id).cloned())
+            }
+
+            fn hire_requests(&self) -> Result<Vec<HireRequest>, EngineError> {
+                read(self.table(), |t| t.hire_requests.values().cloned().collect())
+            }
+
+            fn agent_execution(
+                &self,
+                employee_id: &Id,
+            ) -> Result<Option<AgentExecutionConfig>, EngineError> {
+                read(self.table(), |t| t.agent_executions.get(employee_id).cloned())
+            }
+
+            fn agent_executions(&self) -> Result<Vec<AgentExecutionConfig>, EngineError> {
+                read(self.table(), |t| t.agent_executions.values().cloned().collect())
+            }
+
+            fn provider_connection(
+                &self,
+                id: &Id,
+            ) -> Result<Option<ProviderConnection>, EngineError> {
+                read(self.table(), |t| t.provider_connections.get(id).cloned())
+            }
+
+            fn provider_connections(&self) -> Result<Vec<ProviderConnection>, EngineError> {
+                read(self.table(), |t| {
+                    t.provider_connections.values().cloned().collect()
+                })
+            }
+
+            fn model_profile(&self, id: &Id) -> Result<Option<ModelProfile>, EngineError> {
+                read(self.table(), |t| t.model_profiles.get(id).cloned())
+            }
+
+            fn model_profiles(&self) -> Result<Vec<ModelProfile>, EngineError> {
+                read(self.table(), |t| t.model_profiles.values().cloned().collect())
+            }
+
+            fn watching_model(&self) -> Result<Option<WatchingModelSetting>, EngineError> {
+                read(self.table(), |t| t.watching_model.clone())
             }
 
             fn team_counter(&self) -> Result<Option<TeamCounter>, EngineError> {
@@ -243,6 +314,72 @@ impl OrganizationWrite for MemoryTx {
         Ok(())
     }
 
+    fn put_hire_request(&mut self, record: &HireRequest) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?
+            .hire_requests
+            .insert(record.id.clone(), record.clone());
+        Ok(())
+    }
+
+    fn remove_hire_request(&mut self, id: &Id) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?
+            .hire_requests
+            .remove(id);
+        Ok(())
+    }
+
+    fn put_agent_execution(&mut self, record: &AgentExecutionConfig) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?
+            .agent_executions
+            .insert(record.employee_id.clone(), record.clone());
+        Ok(())
+    }
+
+    fn remove_agent_execution(&mut self, employee_id: &Id) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?
+            .agent_executions
+            .remove(employee_id);
+        Ok(())
+    }
+
+    fn put_provider_connection(&mut self, record: &ProviderConnection) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?
+            .provider_connections
+            .insert(record.id.clone(), record.clone());
+        Ok(())
+    }
+
+    fn remove_provider_connection(&mut self, id: &Id) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?
+            .provider_connections
+            .remove(id);
+        Ok(())
+    }
+
+    fn put_model_profile(&mut self, record: &ModelProfile) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?
+            .model_profiles
+            .insert(record.id.clone(), record.clone());
+        Ok(())
+    }
+
+    fn remove_model_profile(&mut self, id: &Id) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?
+            .model_profiles
+            .remove(id);
+        Ok(())
+    }
+
+    fn put_watching_model(&mut self, record: &WatchingModelSetting) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?.watching_model = Some(record.clone());
+        Ok(())
+    }
+
+    fn remove_watching_model(&mut self) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?.watching_model = None;
+        Ok(())
+    }
+
     fn put_team_counter(&mut self, record: &TeamCounter) -> Result<(), EngineError> {
         self.table_mut::<OrganizationTables>()?.team_counter = Some(record.clone());
         Ok(())
@@ -302,13 +439,14 @@ mod suite {
             Creator, DeactivatePerson, Edit, Feature, MovePerson, MoveTeam, Op, OrgRejection,
             OrganizationCreated, RejectCode, TeamCreated, UpdatePerson, UpdateTeam, NOT_AUTHORIZED,
         },
-        ports::{OrganizationEngine, OrganizationRead},
+        ports::OrganizationRead,
         projector::OrganizationFiles,
         records::{
             self, BuiltinKey, By, EmployeeKind, EmployeeStatus, Meta, OfficeRole, Role,
             TeamCounter, TeamStatus,
         },
     };
+    use crate::projects::ports::ProjectsEngine;
 
     /// The instant of every suite operation, and of the golden creation files.
     pub const CREATION_AT: Timestamp = Timestamp(1_700_000_000_000);
@@ -400,7 +538,7 @@ mod suite {
             })
         }
 
-        fn create_organization<E: OrganizationEngine>(
+        fn create_organization<E: ProjectsEngine>(
             &self,
             command: &CreateOrganization,
         ) -> Decision<E> {
@@ -409,18 +547,14 @@ mod suite {
         }
 
         /// `command` from `by`, decided as the office decides it: the owner is the creator.
-        fn feature<E: OrganizationEngine, C: Feature>(
-            &self,
-            by: &Actor,
-            command: &C,
-        ) -> Decision<E> {
+        fn feature<E: ProjectsEngine, C: Feature>(&self, by: &Actor, command: &C) -> Decision<E> {
             let (by, command) = (by.clone(), command.clone());
             self.counted(move |uow, here| command.decide(uow, here, &id(CREATOR), &by))
         }
 
         /// The owner archives `team` at whatever revision it has when decided, or at 1 when
         /// it does not exist.
-        fn archive_team<E: OrganizationEngine>(&self, team: &Id) -> Decision<E> {
+        fn archive_team<E: ProjectsEngine>(&self, team: &Id) -> Decision<E> {
             let team = team.clone();
             self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
                 let revision = uow.view().team(&team)?.map_or(1, |t| t.meta.revision);
@@ -433,7 +567,7 @@ mod suite {
         }
 
         /// The owner moves `team` under `parent` at whatever revision it has when decided.
-        fn move_team<E: OrganizationEngine>(&self, team: &Id, parent: &Id) -> Decision<E> {
+        fn move_team<E: ProjectsEngine>(&self, team: &Id, parent: &Id) -> Decision<E> {
             let (team, parent) = (team.clone(), parent.clone());
             self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
                 let revision = uow.view().team(&team)?.map_or(1, |t| t.meta.revision);
@@ -447,7 +581,7 @@ mod suite {
         }
 
         /// The owner moves `person` to `team` at whatever revision it has when decided.
-        fn move_person<E: OrganizationEngine>(&self, person: &Id, team: &Id) -> Decision<E> {
+        fn move_person<E: ProjectsEngine>(&self, person: &Id, team: &Id) -> Decision<E> {
             let (person, team) = (person.clone(), team.clone());
             self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
                 let revision = uow.view().employee(&person)?.map_or(1, |e| e.meta.revision);
@@ -462,7 +596,7 @@ mod suite {
 
         /// The owner appoints `lead` to `team` (none: clears it) at whatever revision the
         /// team has when decided.
-        fn set_lead<E: OrganizationEngine>(&self, team: &Id, lead: Option<Id>) -> Decision<E> {
+        fn set_lead<E: ProjectsEngine>(&self, team: &Id, lead: Option<Id>) -> Decision<E> {
             let team = team.clone();
             self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
                 let revision = uow.view().team(&team)?.map_or(1, |t| t.meta.revision);
@@ -477,7 +611,7 @@ mod suite {
 
         /// Any files at all, with a generation taken: what a faulty or foreign writer
         /// could leave behind for a rebuild to find.
-        fn write<E: OrganizationEngine>(&self, change: Change) -> Decision<E> {
+        fn write<E: ProjectsEngine>(&self, change: Change) -> Decision<E> {
             self.counted(move |uow: &mut UnitOfWork<'_, E>, _| {
                 uow.next(Stream::Organization)?;
                 Ok(change.clone())
@@ -505,7 +639,7 @@ mod suite {
         _dir: tempfile::TempDir,
     }
 
-    fn open_store<E: OrganizationEngine>(
+    fn open_store<E: ProjectsEngine>(
         root: &Path,
         custody: &Arc<FakeCustody>,
         engine: Arc<E>,
@@ -526,7 +660,7 @@ mod suite {
         Store::open(parts)
     }
 
-    impl<E: OrganizationEngine, G> Bench<E, G> {
+    impl<E: ProjectsEngine, G> Bench<E, G> {
         /// A new office with an empty journal and no organization.
         fn new(open: &dyn Fn() -> (Arc<E>, G)) -> Self {
             let dir = tempfile::tempdir().expect("a temporary directory");
@@ -804,7 +938,7 @@ mod suite {
 
     /// Creation writes its nine state files with the golden bytes and its receipt (ten
     /// files, one entry), at generation 1, with the creator as lead.
-    pub fn creation<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn creation<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::new(open);
         assert_eq!(bench.generation(), 0);
         let command = creation_command();
@@ -888,7 +1022,7 @@ mod suite {
 
     /// A retry returns the original reply without deciding again; the same ID with other
     /// content conflicts.
-    pub fn creation_retry_and_conflict<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn creation_retry_and_conflict<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::new(open);
         let command = creation_command();
         let first = bench.create_organization(1, &command).expect("created");
@@ -912,7 +1046,7 @@ mod suite {
 
     /// A second creation is refused, and so is one this store cannot hold; nothing is
     /// recorded, so a retry of a failed creation with the same ID decides afresh.
-    pub fn creation_refusals<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn creation_refusals<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::new(open);
         let good = creation_command();
         let refused = |change: &dyn Fn(&mut CreateOrganization)| {
@@ -961,7 +1095,7 @@ mod suite {
 
     /// Teams take the numbers 2 and 3, each with the counter and its allocation, and one
     /// generation each.
-    pub fn team_numbers<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn team_numbers<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::created(open);
         let expected = |team: u64, number: u64| TeamCreated {
             id: id(team),
@@ -1016,7 +1150,7 @@ mod suite {
     /// rejection that takes no generation and no number, and its retry is the same answer;
     /// an actor who is not the owner is refused unrecorded; an operation ID used again with
     /// another command conflicts.
-    pub fn team_refusals<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn team_refusals<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::created(open);
         assert_eq!(bench.created_team(2, 0x21, TEAM).number, 2);
         bench.archive_team(3, 0x21);
@@ -1115,7 +1249,7 @@ mod suite {
     }
 
     /// Every row of the family and its generation, to compare across a rebuild.
-    fn rows<E: OrganizationEngine, G>(bench: &Bench<E, G>) -> impl PartialEq + std::fmt::Debug {
+    fn rows<E: ProjectsEngine, G>(bench: &Bench<E, G>) -> impl PartialEq + std::fmt::Debug {
         bench.read(|snapshot| {
             Ok((
                 snapshot.generation()?,
@@ -1135,7 +1269,7 @@ mod suite {
 
     /// Creations submitted at once are numbered one after another: no number and no
     /// generation is given twice or skipped, whatever order the store took them in.
-    pub fn concurrent_team_numbers<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn concurrent_team_numbers<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         const TEAMS: u64 = 8;
         let bench = Bench::created(open);
         let by = Actor::Employee(id(CREATOR));
@@ -1205,9 +1339,122 @@ mod suite {
         assert_eq!((next.number, next.generation), (TEAMS + 2, TEAMS + 2));
     }
 
+    /// B2 risk C1: moving a parent team while a descendant team is renamed concurrently.
+    /// Tests both deterministic serial orders and a real multi-threaded writer race,
+    /// verifying that the final file sits solely at the moved path with the new name,
+    /// nothing remains at the old path, and a full rebuild matches byte-for-byte.
+    pub fn team_move_racing_descendant_rename<E: ProjectsEngine, G>(
+        open: &dyn Fn() -> (Arc<E>, G),
+    ) {
+        let setup = || {
+            let bench = Bench::created(open);
+            // Tree: TEAM -> B (0x21) -> D (0x22), and TEAM -> C (0x23).
+            bench.created_team(2, 0x21, TEAM);
+            bench.created_team(3, 0x22, 0x21);
+            bench.created_team(4, 0x23, TEAM);
+            bench
+        };
+        let verify_final = |bench: Bench<E, G>, label: &str| {
+            let team_d = bench.team(0x22);
+            assert_eq!(team_d.name, "Renamed D", "{label}");
+            assert_eq!(team_d.parent_team_id, Some(id(0x21)), "{label}");
+            assert_eq!(bench.team(0x21).parent_team_id, Some(id(0x23)), "{label}");
+            let new_chain = vec![id(TEAM), id(0x23), id(0x21), id(0x22)];
+            assert_eq!(
+                bench.read(|s| s.team_chain(&id(0x22))),
+                Some(new_chain.clone()),
+                "{label}"
+            );
+            let files = bench.state_files();
+            let old_path = format!(
+                "state/teams/{}/teams/{}/teams/{}/team.yaml",
+                id(TEAM),
+                id(0x21),
+                id(0x22)
+            );
+            let new_path = records::team_path(&new_chain).expect("new path");
+            assert!(
+                !files.contains_key(&old_path),
+                "{label}: stale file left at {old_path}"
+            );
+            let decoded =
+                records::decode_team(&files[new_path.as_str()]).expect("moved descendant file");
+            assert_eq!(decoded.name, "Renamed D", "{label}");
+            let before = rows(&bench);
+            let rebuilt = bench.rebuilt(open).expect("rebuild after move+rename");
+            assert!(rows(&rebuilt) == before, "{label}: rebuild row mismatch");
+            assert_eq!(
+                text(&rebuilt.state_files()),
+                text(&files),
+                "{label}: rebuild file mismatch"
+            );
+        };
+
+        // Order 1: move B under C, then rename descendant D.
+        {
+            let bench = setup();
+            let mv = bench.move_team(0x21, 0x23);
+            let mut rename = UpdateTeam::new(id(0x22), bench.team(0x22).meta.revision);
+            rename.name = Some("Renamed D".into());
+            bench.done(10, &mv);
+            bench.done(11, &rename);
+            verify_final(bench, "move-then-rename");
+        }
+
+        // Order 2: rename descendant D, then move B under C.
+        {
+            let bench = setup();
+            let mv = bench.move_team(0x21, 0x23);
+            let mut rename = UpdateTeam::new(id(0x22), bench.team(0x22).meta.revision);
+            rename.name = Some("Renamed D".into());
+            bench.done(11, &rename);
+            bench.done(10, &mv);
+            verify_final(bench, "rename-then-move");
+        }
+
+        // Concurrent race: two threads submit move(B -> C) and rename(D) at the same barrier.
+        {
+            let bench = setup();
+            let mv = bench.move_team(0x21, 0x23);
+            let mut rename = UpdateTeam::new(id(0x22), bench.team(0x22).meta.revision);
+            rename.name = Some("Renamed D".into());
+            let start = std::sync::Barrier::new(2);
+            let by = Actor::Employee(id(CREATOR));
+            std::thread::scope(|scope| {
+                let s1 = &bench.store;
+                let d1 = &bench.decisions;
+                let b1 = &by;
+                let start1 = &start;
+                let t1 = scope.spawn(move || {
+                    let decide = d1.feature(b1, &mv);
+                    let op = mv.operation(id(20), b1);
+                    start1.wait();
+                    let reply = s1.submit(Some(op), false, decide).expect("move submitted");
+                    assert_eq!(reply.outcome, Outcome::Completed);
+                });
+                let s2 = &bench.store;
+                let d2 = &bench.decisions;
+                let b2 = &by;
+                let start2 = &start;
+                let t2 = scope.spawn(move || {
+                    let decide = d2.feature(b2, &rename);
+                    let op = rename.operation(id(21), b2);
+                    start2.wait();
+                    let reply = s2
+                        .submit(Some(op), false, decide)
+                        .expect("rename submitted");
+                    assert_eq!(reply.outcome, Outcome::Completed);
+                });
+                t1.join().expect("move thread");
+                t2.join().expect("rename thread");
+            });
+            verify_final(bench, "concurrent-race");
+        }
+    }
+
     /// A team's file is nested in its parent's folder, at every depth, until the tree is
     /// too deep for a path.
-    pub fn nested_team_path<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn nested_team_path<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::created(open);
         bench.created_team(2, 0x21, TEAM);
         bench.created_team(3, 0x22, 0x21);
@@ -1251,7 +1498,7 @@ mod suite {
     /// The generation is the organization stream's high-water: a read returns its
     /// snapshot's, a refusal leaves it alone, and a rebuild from the files and the journal
     /// arrives at the same one with the same rows.
-    pub fn generation_and_rebuild<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn generation_and_rebuild<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::created(open);
         bench.created_team(2, 0x21, TEAM);
         bench.archive_team(3, 0x21);
@@ -1278,7 +1525,7 @@ mod suite {
     /// organization record, and a team led from outside it. An engine with constraints
     /// of its own does not let such files in at all: its backstop fails the write with
     /// an internal error, never a refusal, and nothing is accepted.
-    pub fn rebuild_validation<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn rebuild_validation<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let refused = |bench: Bench<E, G>, faulty: Change, reason: &str| {
             let generation = bench.generation();
             let decide = bench.decisions.write(faulty);
@@ -1383,7 +1630,7 @@ mod suite {
         }
     }
 
-    impl<E: OrganizationEngine> FamilyScript<E> for OrganizationScript {
+    impl<E: ProjectsEngine> FamilyScript<E> for OrganizationScript {
         type Spec = Step;
 
         fn projectors(&self, identity: &OfficeIdentity) -> Vec<Arc<dyn Projector<E>>> {
@@ -1498,7 +1745,7 @@ mod suite {
     /// files it left, with and without a crash. Every failure prints its seed.
     pub fn rebuild_equivalent<E, G>(open: &dyn Fn() -> (Arc<E>, G))
     where
-        E: OrganizationEngine + Dump,
+        E: ProjectsEngine + Dump,
     {
         rebuild_equivalence(open, &OrganizationScript::new(), 0..8);
     }
@@ -1528,6 +1775,10 @@ macro_rules! organization_conformance_tests {
         #[test]
         fn organization_concurrent_team_numbers() {
             $crate::organization_family::testkit::concurrent_team_numbers(&$open);
+        }
+        #[test]
+        fn organization_team_move_racing_descendant_rename() {
+            $crate::organization_family::testkit::team_move_racing_descendant_rename(&$open);
         }
         #[test]
         fn organization_team_refusals() {

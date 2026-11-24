@@ -1,0 +1,250 @@
+{
+	"projects": {
+		"beacon": {
+			"releases": [
+				{
+					"id": "rel-beacon-1",
+					"projectId": "beacon",
+					"projectNumber": 8,
+					"number": 1,
+					"versionLabel": "2.0.0",
+					"title": "Checkout v2 foundation",
+					"status": "released",
+					"owner": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"revision": 3,
+					"path": "projects/beacon/releases/rel-beacon-1/release.md",
+					"createdAt": "2026-11-03T10:00:00Z",
+					"createdBy": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"updatedAt": "2026-11-14T11:15:00Z",
+					"updatedBy": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"latestDeploymentSummary": "production/primary succeeded · 14 Nov",
+					"bodyMarkdown": "## Purpose\nDeliver the mobile receipt layout and the initial two-tap checkout flow behind a staged rollout flag.\n\n## Compatibility notes\nExisting cart sessions migrate transparently on first read.\n",
+					"productChangelogDocId": "doc-rel-beacon-1-changelog",
+					"productChangelogTitle": "R-1 product changes",
+					"supportingDocs": [],
+					"milestones": [
+						{
+							"id": "ms-b1-1",
+							"number": 1,
+							"title": "Mobile layout & idempotent cart",
+							"status": "completed",
+							"tasksDone": 3,
+							"tasksOpen": 0,
+							"tasksCancelled": 1
+						}
+					],
+					"features": [
+						{
+							"id": "feat-receipts",
+							"ref": "F-4",
+							"title": "Mobile receipt layout",
+							"status": "Live"
+						},
+						{
+							"id": "feat-checkout",
+							"ref": "F-6",
+							"title": "Two-tap mobile checkout",
+							"status": "In progress"
+						}
+					],
+					"tasks": [
+						{
+							"id": "0193c000-0000-7000-8000-000000000038",
+							"ref": "T-A38",
+							"type": "task",
+							"title": "Receipt layout for small phones",
+							"status": "Done",
+							"milestoneRef": "M-1"
+						},
+						{
+							"id": "0193c000-0000-7000-8000-000000000039",
+							"ref": "T-A39",
+							"type": "task",
+							"title": "Idempotency key storage schema",
+							"status": "Done",
+							"milestoneRef": "M-1"
+						}
+					],
+					"flagSettings": [
+						{
+							"flagId": "flg-two-tap",
+							"key": "two-tap-checkout",
+							"valueType": "boolean",
+							"environment": "production",
+							"target": "primary",
+							"intendedValue": "true",
+							"rolloutSummary": "25% traffic, fallback false",
+							"featureRef": "F-6"
+						}
+					],
+					"deployments": [
+						{
+							"id": "dep-beacon-prod-1",
+							"environment": "production",
+							"target": "primary",
+							"operation": "deploy",
+							"rollbackOfId": null,
+							"baselineDeploymentId": null,
+							"status": "succeeded",
+							"startedAt": "2026-11-14T11:00:00Z",
+							"finishedAt": "2026-11-14T11:03:00Z",
+							"externalUrl": null,
+							"summary": "Deployed R-1 to production/primary. Synthetic checkout probes passed.",
+							"repositoryCommits": [
+								{
+									"repositoryKey": "web-app",
+									"commitSha": "91c8e40b21a45bc9012f11a98e1234567890abcd"
+								},
+								{
+									"repositoryKey": "design-tokens",
+									"commitSha": "440a1f9c02d88e1102aa09bb1234567890fedcba"
+								}
+							],
+							"appliedFlags": [
+								{
+									"flagId": "flg-two-tap",
+									"key": "two-tap-checkout",
+									"appliedValue": "true",
+									"rolloutSummary": "25% traffic, fallback false",
+									"appliedAt": "2026-11-14T11:02:00Z"
+								}
+							],
+							"technicalChangelogDocId": "doc-dep-beacon-1-changelog",
+							"technicalChangelogTitle": "R-1 production/primary technical changes",
+							"actor": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" }
+						},
+						{
+							"id": "dep-beacon-stage-0",
+							"environment": "staging",
+							"target": "primary",
+							"operation": "deploy",
+							"rollbackOfId": null,
+							"baselineDeploymentId": null,
+							"status": "failed",
+							"startedAt": "2026-11-13T18:10:00Z",
+							"finishedAt": "2026-11-13T18:12:00Z",
+							"externalUrl": null,
+							"summary": "Staging smoke probe failed due to missing design-tokens asset hash; prior attempt kept.",
+							"repositoryCommits": [
+								{
+									"repositoryKey": "web-app",
+									"commitSha": "80a1d00e11a45bc9012f11a98e12345678900001"
+								}
+							],
+							"appliedFlags": [],
+							"actor": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" }
+						}
+					]
+				},
+				{
+					"id": "rel-beacon-2",
+					"projectId": "beacon",
+					"projectNumber": 8,
+					"number": 2,
+					"versionLabel": "2.1.0",
+					"title": "Saved cards & retry hardening",
+					"status": "in_progress",
+					"owner": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"revision": 1,
+					"path": "projects/beacon/releases/rel-beacon-2/release.md",
+					"createdAt": "2026-11-15T14:00:00Z",
+					"createdBy": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"updatedAt": "2026-11-18T09:00:00Z",
+					"updatedBy": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"bodyMarkdown": "## Purpose\nRoll out split checkout service hardening (F-6) and gated saved cards (F-7).\n",
+					"supportingDocs": [],
+					"milestones": [
+						{
+							"id": "ms-b2-1",
+							"number": 1,
+							"title": "Split checkout & saved cards",
+							"status": "in_progress",
+							"tasksDone": 1,
+							"tasksOpen": 2,
+							"tasksCancelled": 0
+						}
+					],
+					"features": [
+						{
+							"id": "feat-checkout",
+							"ref": "F-6",
+							"title": "Two-tap mobile checkout",
+							"status": "In progress"
+						},
+						{
+							"id": "feat-saved-cards",
+							"ref": "F-7",
+							"title": "Saved cards behind a flag",
+							"status": "Planned"
+						}
+					],
+					"tasks": [
+						{
+							"id": "0193c000-0000-7000-8000-000000000040",
+							"ref": "T-A40",
+							"type": "task",
+							"title": "Split the checkout service",
+							"status": "In progress",
+							"milestoneRef": "M-1"
+						},
+						{
+							"id": "0193c000-0000-7000-8000-000000000041",
+							"ref": "T-A41",
+							"type": "task",
+							"title": "Saved cards behind a flag",
+							"status": "To do",
+							"milestoneRef": "M-1"
+						}
+					],
+					"flagSettings": [
+						{
+							"flagId": "flg-saved-cards",
+							"key": "saved-cards-v2",
+							"valueType": "boolean",
+							"environment": "staging",
+							"target": "primary",
+							"intendedValue": "true",
+							"rolloutSummary": "100% internal staging",
+							"featureRef": "F-7"
+						}
+					],
+					"deployments": []
+				}
+			]
+		},
+		"atlas": {
+			"releases": [
+				{
+					"id": "rel-atlas-1",
+					"projectId": "atlas",
+					"projectNumber": 3,
+					"number": 1,
+					"versionLabel": "1.2.0",
+					"title": "Automatic canary rollback",
+					"status": "planned",
+					"owner": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"revision": 1,
+					"path": "projects/atlas/releases/rel-atlas-1/release.md",
+					"createdAt": "2026-11-12T10:00:00Z",
+					"createdBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"updatedAt": "2026-11-16T10:00:00Z",
+					"updatedBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"bodyMarkdown": "## Purpose\nShip automatic canary rollback and 503 retry handling.\n",
+					"supportingDocs": [],
+					"milestones": [],
+					"features": [
+						{
+							"id": "feat-canary",
+							"ref": "F-2",
+							"title": "Automatic canary rollback",
+							"status": "In progress"
+						}
+					],
+					"tasks": [],
+					"flagSettings": [],
+					"deployments": []
+				}
+			]
+		}
+	}
+}

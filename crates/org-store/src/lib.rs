@@ -38,7 +38,10 @@ pub use journal::{
     SEGMENT_BYTES,
 };
 pub use rebuild::{rebuild, RebuildReport};
-pub use receipts::{decode_receipt, encode_receipt, receipt_path, ReceiptProjector, RECEIPTS};
+pub use receipts::{
+    decode_receipt, encode_receipt, receipt_path, ReceiptProjector, ReceiptRetentionPolicy,
+    DEFAULT_MAX_RETAINED_RECEIPTS, DEFAULT_RECEIPT_RETENTION_DAYS, RECEIPTS,
+};
 pub use sequences::{FeedPosition, HighWaters, Sequences, Stream, MAX_POSITION};
 pub use store::{Limits, Opening, Reply, Status, Store, StoreParts, MAX_BATCH};
 pub use writer::UnitOfWork;

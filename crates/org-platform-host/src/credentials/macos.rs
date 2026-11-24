@@ -46,6 +46,10 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
 
+/// `errSecInteractionNotAllowed` (`Security/SecBase.h`): the Keychain is locked or user
+/// interaction is not allowed right now. Not exported by `security-framework-sys`.
+const INTERACTION_NOT_ALLOWED: i32 = -25308;
+
 type Attributes = Vec<(CFString, CFType)>;
 type Dictionary = CFDictionary<CFString, CFType>;
 trait Calls: Send + Sync {
@@ -239,6 +243,14 @@ impl Keychain {
         (query, changes, add)
     }
 
+    fn os_error(status: i32) -> CredentialError {
+        if status == INTERACTION_NOT_ALLOWED {
+            CredentialError::InteractionNotAllowed
+        } else {
+            CredentialError::Os(status)
+        }
+    }
+
     fn add(&self, name: &ItemName, value: &[u8]) -> Result<(), CredentialError> {
         if value.len() > MAX_ITEM_BYTES {
             return Err(CredentialError::TooLarge);
@@ -248,7 +260,7 @@ impl Keychain {
         match self.calls.add(&add) {
             Ok(()) => Ok(()),
             Err(DUPLICATE) => Err(CredentialError::Exists),
-            Err(e) => Err(CredentialError::Os(e)),
+            Err(e) => Err(Self::os_error(e)),
         }
     }
     fn replace(&self, name: &ItemName, value: &[u8]) -> Result<(), CredentialError> {
@@ -259,13 +271,10 @@ impl Keychain {
         match self.calls.update(&query, &changes) {
             Ok(()) => Ok(()),
             Err(MISSING) => match self.calls.add(&add) {
-                Err(DUPLICATE) => self
-                    .calls
-                    .update(&query, &changes)
-                    .map_err(CredentialError::Os),
-                result => result.map_err(CredentialError::Os),
+                Err(DUPLICATE) => self.calls.update(&query, &changes).map_err(Self::os_error),
+                result => result.map_err(Self::os_error),
             },
-            Err(e) => Err(CredentialError::Os(e)),
+            Err(e) => Err(Self::os_error(e)),
         }
     }
     fn load(&self, name: &ItemName) -> Result<Option<Secret>, CredentialError> {
@@ -278,7 +287,7 @@ impl Keychain {
         let item = match self.calls.copy_matching(&dictionary(query)) {
             Ok(Some(item)) => item,
             Err(MISSING) => return Ok(None),
-            Err(status) => return Err(CredentialError::Os(status)),
+            Err(status) => return Err(Self::os_error(status)),
             Ok(None) => return Err(CredentialError::Malformed),
         };
         let data = item
@@ -292,7 +301,7 @@ impl Keychain {
     fn delete(&self, name: &ItemName) -> Result<(), CredentialError> {
         match self.calls.delete(&dictionary(self.query(Some(name)))) {
             Ok(_) | Err(MISSING) => Ok(()),
-            Err(status) => Err(CredentialError::Os(status)),
+            Err(status) => Err(Self::os_error(status)),
         }
     }
     fn list(&self, is_item: &dyn Fn(&str) -> bool) -> Result<Listing, CredentialError> {
@@ -311,7 +320,7 @@ impl Keychain {
         let items = match self.calls.copy_matching(&dictionary(query)) {
             Ok(Some(items)) => items,
             Err(MISSING) => return Ok(Listing::default()),
-            Err(status) => return Err(CredentialError::Os(status)),
+            Err(status) => return Err(Self::os_error(status)),
             Ok(None) => return Err(CredentialError::Malformed),
         };
         let items = items

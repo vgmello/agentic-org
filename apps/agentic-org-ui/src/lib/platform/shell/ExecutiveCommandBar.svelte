@@ -16,7 +16,7 @@
 	import type { InboxItem } from '$lib/modules/inbox/types';
 	import type { Conversation } from '$lib/modules/messaging';
 	import { answerExecutiveQuestion, type OrgAiAnswer } from '$lib/home/model';
-	import { nonOwners } from '$lib/org/model';
+	import { nonOwners } from '$lib/modules/organization/model';
 	import type { ShellAiAskOptions } from './shell-ai';
 	import { useShellData } from './shell-data.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from './shortcuts';
@@ -69,7 +69,7 @@
 		if (!targetOrgId) return;
 		const seq = ++chatLoadSeq;
 		try {
-			const { chatApi } = await import('$lib/modules/messaging/legacy-api');
+			const { chatApi } = await import('$lib/modules/messaging/api');
 			const snap = await chatApi.snapshot(targetOrgId);
 			if (destroyed || seq !== chatLoadSeq || targetOrgId !== organizationId) return;
 			// Lock onto the currently highlighted entry ID before swapping results (for both `#` and

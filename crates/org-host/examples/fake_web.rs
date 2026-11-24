@@ -43,7 +43,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use org_host_control::gateway::{GatewayReadyForSecrets, LandlockEnforcement, LandlockStatus};
+use org_host_control::web::{LandlockEnforcement, LandlockStatus, WebReadyForSecrets};
 use org_platform::confinement;
 
 const ACK: &str = r#"{"v":1,"event":"fds.received","of":"handoff"}"#;
@@ -130,7 +130,7 @@ fn main() {
         }
     };
     let mut rendezvous: Option<PathBuf> = None;
-    let mut ready = GatewayReadyForSecrets { landlock: None };
+    let mut ready = WebReadyForSecrets { landlock: None };
     for (index, step) in steps.iter().enumerate() {
         let (word, rest) = step.split_once(' ').unwrap_or((step, ""));
         let send = |control: &mut Option<UnixStream>, text: &str| {

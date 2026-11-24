@@ -29,8 +29,16 @@
 			"why": "rewritten for the new Projects screens; not yet run on WebKit (BUG-169b)"
 		},
 		{
+			"spec": "docs-features-releases.spec.ts",
+			"why": "new Step 6 spec; not yet run on WebKit (BUG-169b)"
+		},
+		{
 			"spec": "costs.spec.ts",
 			"why": "new spec; not yet run on WebKit (BUG-169b)"
+		},
+		{
+			"spec": "insights.spec.ts",
+			"why": "new Step 7 spec; not yet run on WebKit (BUG-169b)"
 		},
 		{
 			"spec": "updates.spec.ts",
@@ -259,7 +267,7 @@
 				},
 				{
 					"spec": "work.spec.ts",
-					"match": "WORK: tasks and bugs from every project",
+					"match": "WORK-1/2/11: /work defaults to Needs me",
 					"count": 1
 				},
 				{
@@ -417,6 +425,7 @@
 			"specs": ["chat.spec.ts", "chat-*.spec.ts", "chat-followups-default-font.ts"],
 			"sources": [
 				"src/routes/(shell)/chat/**",
+				"src/lib/modules/chat/**",
 				"src/lib/modules/messaging/**",
 				"e2e/fixtures/heroicons-*.json",
 				"e2e/chat-followups.ts",
@@ -430,20 +439,16 @@
 				"src/routes/(shell)/teams/(views)/members/**",
 				"src/routes/(shell)/teams/{hire,hires}/**",
 				"src/lib/modules/employees/**",
-				"src/lib/org/people-edit*",
-				"src/lib/org/team-edit*",
+				"src/lib/modules/organization/people-edit*",
+				"src/lib/modules/organization/team-edit*",
 				"src/lib/modules/org-chart/**",
-				"src/lib/components/{AddPersonSheet,MoveTeamDialog,NewTeamSheet,ProjectTeamDialog,RemoveProjectDialog,RenameTeamDialog}.svelte",
+				"src/lib/modules/organization/features/{add-person/AddPersonSheet,teams/{MoveTeamDialog,NewTeamSheet,RenameTeamDialog},project-teams/{ProjectTeamDialog,RemoveProjectDialog}}.svelte",
 				"e2e/org-chart-menu.ts"
 			]
 		},
 		"offices": {
 			"specs": ["offices.spec.ts", "office-status-refresh.spec.ts"],
-			"sources": [
-				"src/routes/(shell)/settings/offices/**",
-				"src/lib/offices/**",
-				"src/lib/modules/offices/**"
-			]
+			"sources": ["src/routes/(shell)/settings/offices/**", "src/lib/modules/offices/**"]
 		},
 		"shell-look": {
 			"specs": [
@@ -461,13 +466,14 @@
 				"access.spec.ts",
 				"agent-setup.spec.ts",
 				"costs.spec.ts",
+				"insights.spec.ts",
 				"updates.spec.ts"
 			],
 			"sources": [
 				"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
 				"src/routes/(shell)/teams/(views)/+page.svelte",
 				"src/routes/(shell)/teams/[teamId]/**",
-				"src/routes/(shell)/settings/{+page.svelte,agents/**,roles/**,access/**,costs/**,updates/**}",
+				"src/routes/(shell)/settings/{+page.svelte,agents/**,roles/**,access/**,security/**,costs/**,updates/**}",
 				"src/lib/components/testing/look-primitives.*",
 				"src/lib/components/testing/focus-primitives.*",
 				"e2e/focus-primitives.ts"
@@ -476,6 +482,7 @@
 		"projects-work": {
 			"specs": [
 				"projects.spec.ts",
+				"docs-features-releases.spec.ts",
 				"work.spec.ts",
 				"tasks.spec.ts",
 				"dialog-block-title.spec.ts",
@@ -485,10 +492,13 @@
 				"src/routes/(shell)/projects/**",
 				"src/lib/modules/projects/**",
 				"src/routes/(shell)/work/**",
-				"src/lib/org/projects*",
-				"src/lib/org/team-edit*",
+				"src/lib/modules/organization/projects*",
+				"src/lib/modules/organization/team-edit*",
 				"src/lib/modules/copilot/**",
-				"src/lib/components/{BugSheet,BugsPanel,NewRequestDialog,NewTaskDialog,ProjectTeamDialog,ProjectTeams,RemoveProjectDialog,ReportBugDialog,RequestSheet,RequestsPanel,SeverityIcon,TaskSheet,TasksBoard,WorkReadingPanel}.svelte",
+				"src/lib/modules/organization/features/project-teams/{ProjectTeamDialog,ProjectTeams,RemoveProjectDialog}.svelte",
+				"src/lib/modules/work/components/SeverityIcon.svelte",
+				"src/lib/modules/work/features/{bugs/{BugSheet,BugsPanel,ReportBugDialog},requests/{NewRequestDialog,RequestSheet,RequestsPanel},tasks/{NewTaskDialog,TaskSheet,TasksBoard}}.svelte",
+				"src/lib/components/WorkReadingPanel.svelte",
 				"e2e/org-chart-menu.ts"
 			]
 		},
@@ -501,7 +511,9 @@
 			"sources": [
 				"src/lib/modules/copilot/**",
 				"src/routes/(shell)/work/**",
-				"src/lib/components/{BugSheet,NewRequestDialog,NewTaskDialog,RequestSheet,RequestsPanel,ReportBugDialog,SeverityIcon,TaskSheet,WorkReadingPanel}.svelte"
+				"src/lib/modules/work/components/SeverityIcon.svelte",
+				"src/lib/modules/work/features/{bugs/{BugSheet,ReportBugDialog},requests/{NewRequestDialog,RequestSheet,RequestsPanel},tasks/{NewTaskDialog,TaskSheet}}.svelte",
+				"src/lib/components/WorkReadingPanel.svelte"
 			]
 		},
 		"org-lifecycle": {
@@ -509,7 +521,9 @@
 				"retired-import.spec.ts",
 				"session-foundation.spec.ts",
 				"accessibility.spec.ts",
-				"organizations.spec.ts"
+				"organizations.spec.ts",
+				"local-access-and-tls.spec.ts",
+				"access-flows.spec.ts"
 			],
 			"sources": [
 				"src/routes/(onboarding)/**",
@@ -526,20 +540,21 @@
 		{
 			"category": "dialog-title-words",
 			"files": [
-				"src/lib/components/MoveTeamDialog.svelte",
-				"src/lib/components/NewRequestDialog.svelte",
-				"src/lib/components/NewTaskDialog.svelte",
-				"src/lib/components/ProjectTeamDialog.svelte",
-				"src/lib/components/RemoveProjectDialog.svelte",
-				"src/lib/components/RenameTeamDialog.svelte",
-				"src/lib/components/ReportBugDialog.svelte",
-				"src/lib/components/TasksBoard.svelte",
+				"src/lib/modules/organization/features/teams/MoveTeamDialog.svelte",
+				"src/lib/modules/work/features/requests/NewRequestDialog.svelte",
+				"src/lib/modules/work/features/tasks/NewTaskDialog.svelte",
+				"src/lib/modules/organization/features/project-teams/ProjectTeamDialog.svelte",
+				"src/lib/modules/organization/features/project-teams/RemoveProjectDialog.svelte",
+				"src/lib/modules/organization/features/teams/RenameTeamDialog.svelte",
+				"src/lib/modules/work/features/bugs/ReportBugDialog.svelte",
+				"src/lib/modules/work/features/tasks/TasksBoard.svelte",
 				"src/lib/modules/employees/features/configure-run/HowItRunsDialog.svelte",
 				"src/lib/modules/employees/features/edit-profile/EditAgentDialog.svelte",
 				"src/lib/modules/employees/features/offboard-employee/OffboardAgentDialog.svelte",
 				"src/lib/modules/employees/features/pause-employee/PauseAgentDialog.svelte",
 				"src/lib/modules/messaging/features/manage-channel/ChannelDialog.svelte",
 				"src/lib/modules/messaging/features/open-dm/NewMessageDialog.svelte",
+				"src/lib/modules/chat/features/browse-channels/BrowseChannelsDialog.svelte",
 				"src/lib/modules/messaging/features/run-command/CommandDialog.svelte"
 			],
 			"why": "Every migrated DialogTitle consumer also runs exact heading/accessible name/selection, closing text and word geometry regressions in the title category. Existing owning categories, shared FULL and unknown fail-closed mappings remain in effect. Route visits live in the helper; the literal route scanner cannot inventory them."
@@ -548,8 +563,8 @@
 			"category": "shell-look",
 			"files": [
 				"src/routes/(shell)/work/+page.svelte",
-				"src/lib/work/work-toolbar.ts",
-				"src/lib/components/RequestsPanel.svelte",
+				"src/lib/modules/work/work-toolbar.ts",
+				"src/lib/modules/work/features/requests/RequestsPanel.svelte",
 				"src/lib/components/WorkReadingPanel.svelte"
 			],
 			"why": "Work header, toolbar, search, board, and RequestsPanel changes also run shell-look's executive-ui.spec.ts parity suite alongside Work's owning categories."
@@ -557,24 +572,19 @@
 	],
 	"allowedCoupling": [
 		{
-			"from": "src/lib/modules/projects/features/work/ProjectWork.svelte",
-			"to": "src/lib/components/{BugsPanel,TasksBoard}.svelte",
-			"why": "Until Work items (plan step 5) builds the project board and list, the project's Work tab shows v1's task board and bug list so the release keeps them; the tasks, bugs, copilot and dialog-title specs keep covering them. Removed when step 5 replaces them."
-		},
-		{
 			"from": "src/lib/modules/projects/{components/ProcessSelect,features/overview/ProjectOverview}.svelte",
 			"to": "src/lib/modules/processes/index.ts",
 			"why": "A project chooses its development process from the processes module's catalogue and links to it (development-processes §3, PKG-4), through that module's public index; the processes specs cover the catalogue, the projects spec covers the choice."
 		},
 		{
 			"from": "src/lib/modules/members/features/directory/MembersDirectory.svelte",
-			"to": "src/lib/components/AddPersonSheet.svelte",
+			"to": "src/lib/modules/organization/features/add-person/AddPersonSheet.svelte",
 			"why": "The Members directory's Add a person opens the organization's existing add-a-person flow, as the top-bar New and a team's page do, without owning it; the org-chart specs cover that flow. It moves into the members module when the org chart slice is rebuilt."
 		},
 		{
-			"from": "src/lib/modules/members/features/profile/{IdentityDialog,MoveHomeTeamDialog}.svelte",
-			"to": "src/lib/org/{people-edit,team-edit}.ts",
-			"why": "The profile's own Edit and Move home team dialogs check a person's name and list the team tree with the organization's existing rules instead of copying them; the org-chart and projects-work specs keep covering those rules."
+			"from": "src/lib/modules/members/features/profile/{IdentityDialog,MoveHomeTeamDialog,ProfileFrame}.svelte",
+			"to": "src/lib/modules/organization/{people-edit,team-edit}.ts",
+			"why": "The profile's own Edit, Move home team and Remove person dialogs check a person's name, list the team tree and summarize removal with the organization's existing rules instead of copying them; the org-chart and projects-work specs keep covering those rules."
 		},
 		{
 			"from": "src/lib/modules/settings/recovery.ts",
@@ -583,13 +593,13 @@
 		},
 		{
 			"from": "src/lib/platform/shell/NewMenu.svelte",
-			"to": "src/lib/{components/{NewRequestDialog,AddPersonSheet}.svelte,modules/employees/index.ts,modules/messaging/{index,model,legacy-api}.ts}",
-			"why": "The top-bar New menu opens the existing creation flows (request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."
+			"to": "src/lib/modules/{organization/features/add-person/AddPersonSheet.svelte,employees/index.ts,messaging/{index,model,api}.ts}",
+			"why": "The top-bar New menu opens the existing creation flows (work item, request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."
 		},
 		{
 			"from": "src/lib/platform/shell/ExecutiveCommandBar.svelte",
-			"to": "src/lib/modules/messaging/{index,legacy-api}.ts",
-			"why": "CmdK # channel jump lazily reads live Chat conversation records via messaging/legacy-api (mirroring NewMenu) and types from messaging/index without statically bundling chat mocks; the chat and shell-look specs cover it."
+			"to": "src/lib/modules/messaging/{index,api}.ts",
+			"why": "CmdK # channel jump lazily reads live Chat conversation records via messaging/api (mirroring NewMenu) and types from messaging/index without statically bundling chat mocks; the chat and shell-look specs cover it."
 		},
 		{
 			"from": "e2e/*.spec.ts",
@@ -608,7 +618,7 @@
 		},
 		{
 			"from": "src/lib/modules/teams/features/{team-actions/TeamDialogs,team-page/AddPersonToTeam}.svelte",
-			"to": "src/lib/{components/{NewTeamSheet,MoveTeamDialog,RenameTeamDialog}.svelte,org/team-edit.ts}",
+			"to": "src/lib/modules/organization/{features/teams/{NewTeamSheet,MoveTeamDialog,RenameTeamDialog}.svelte,team-edit.ts}",
 			"why": "The Teams index and a team's page reuse the org chart's team dialogs (new, move, rename) through TeamDialogs, and read the org chart's team helpers (the team list for Home team, Delete's effects on contributed projects), without owning them; the org-chart specs cover those dialogs and helpers. Archive, Delete and Add a person from a team are the teams module's own (team-page.spec.ts)."
 		},
 		{
@@ -657,6 +667,16 @@
 			"why": "The processes mock stands in for the module's api.ts by name under dev:mock (README-screens \"Mock data\") and so implements its interface and types; e2e/fakes is shared, so a change to it runs the full suite anyway."
 		},
 		{
+			"from": "e2e/fakes/modules/copilot.ts",
+			"to": "src/lib/modules/copilot/{api,mock}.ts",
+			"why": "The dev-mock fake stands in for the copilot module's api.ts by name under dev:mock and composes its scripted mock; the fake is never part of a production build."
+		},
+		{
+			"from": "e2e/fakes/modules/{chat,chat-sample,messaging}.ts",
+			"to": "src/lib/modules/messaging/{api,engine,model,types}.ts",
+			"why": "The dev-mock fakes stand in for the chat and messaging modules' api.ts by name under dev:mock and compose the in-memory chat engine and sample fixture; fakes are never part of a production build."
+		},
+		{
 			"from": "e2e/processes{,-bugs}.spec.ts",
 			"to": "src/routes/(shell)/settings/+page.svelte",
 			"why": "The route scanner reads only the first path segment, so /settings/processes/** (owned by processes) is seen as the General settings page; the processes specs never open General itself."
@@ -665,6 +685,16 @@
 			"from": "e2e/executive-ui.spec.ts",
 			"to": "src/routes/(shell)/work/+page.svelte",
 			"why": "The executive UI parity spec opens /work to verify Work's unified queue header, theme surfaces, and responsive hit targets alongside the shell; projects-work and requests-copilot own and test Work's domain flows."
+		},
+		{
+			"from": "e2e/{local-access-and-tls,access-flows}.spec.ts",
+			"to": "src/routes/(shell)/settings/+page.svelte",
+			"why": "The route scanner reads only the first path segment, so /settings/security (which composes the shared InstanceSecurityPanel) is seen as the General settings page; these specs never open General itself."
+		},
+		{
+			"from": "e2e/insights.spec.ts",
+			"to": "src/routes/(shell)/projects/+page.svelte",
+			"why": "The route scanner reads only the first path segment, so /projects/[id]/insights (covered alongside /insights and /members/[id]/cost in Step 7) is seen as the Projects list page; this spec never opens /projects itself."
 		}
 	],
 	"rules": {
@@ -702,18 +732,19 @@
 			"src/routes/(onboarding)/+*",
 			"src/lib/utils.ts",
 			"src/lib/name.ts",
-			"src/lib/office/**",
-			"src/lib/work/**",
-			"src/lib/org/agents*",
-			"src/lib/org/reporting*",
+			"src/lib/modules/offices/{office-api,http-api,load,mock}.ts",
+			"src/lib/modules/work/*.ts",
+			"src/lib/modules/organization/agents*",
+			"src/lib/modules/organization/reporting*",
 			"src/lib/modules/messaging/drafts/**",
 			"src/lib/nav.ts",
 			"src/lib/format.ts",
 			"src/lib/proto*.ts",
-			"src/lib/org/{actions,api,commands,live,live-state.svelte,load,model,reducer,sample,session}.ts",
+			"src/lib/modules/organization/{actions,api,commands,http-api,live,live-state.svelte,load,mock,model,reducer,sample,session}.ts",
 			"src/lib/platform/{feature-factory,unavailable-api}.ts",
 			"src/lib/platform/http/**",
 			"src/lib/platform/auth/**",
+			"src/lib/platform/organizations/{readers,selection}.ts",
 			"src/lib/platform/tooling/**",
 			"src/lib/platform/shell/**",
 			"src/lib/home/**",

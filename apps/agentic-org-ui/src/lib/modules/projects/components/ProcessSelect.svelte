@@ -6,11 +6,12 @@
   the project gains. Nobody is hired, started or told anything by the choice itself.
 -->
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { selectClass, helpClass, errorClass } from '$lib/components/classes';
 	import { Label } from '$lib/components/ui/label';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { processesApi } from '$lib/modules/processes';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { projectsApi } from '../api';
 	import type { ProcessPreview } from '../types';
 
@@ -21,7 +22,8 @@
 		value = $bindable(''),
 		current = '',
 		disabled = false,
-		error
+		error,
+		catalogueResource
 	}: {
 		id: string;
 		organizationId: string;
@@ -34,9 +36,14 @@
 		disabled?: boolean;
 		/** A refusal of this field, shown on it. */
 		error?: string;
+		/** Optional pre-created catalogue resource (primarily for tests). */
+		catalogueResource?: Resource<Awaited<ReturnType<typeof processesApi.devProcesses>>>;
 	} = $props();
 
-	const catalogue = new Resource(() => processesApi.devProcesses(organizationId));
+	const ownedCatalogue = untrack(() => catalogueResource)
+		? undefined
+		: new Resource(() => processesApi.devProcesses(organizationId));
+	const catalogue = $derived(catalogueResource ?? ownedCatalogue!);
 	const choices = $derived(
 		(catalogue.data?.processes ?? [])
 			.filter((p) => p.status === 'current' && !p.invalid)
@@ -94,6 +101,10 @@
 	</select>
 	{#if error}
 		<p id="{id}-error" class={errorClass}>{error}</p>
+	{:else if catalogue.state === 'unsupported'}
+		<p id="{id}-help" class={helpClass} data-testid="resource-unsupported">
+			Development processes aren't available in this version, so only None can be chosen.
+		</p>
 	{:else if catalogue.state === 'error' || catalogue.state === 'unavailable'}
 		<p id="{id}-help" class={helpClass}>
 			Couldn't load the development processes, so only None can be chosen now.

@@ -22,6 +22,7 @@
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import Workflow from '@lucide/svelte/icons/workflow';
 	import type { Connection, ProjectSummary } from '$lib/proto';
+	import OrganizationSwitcher from './OrganizationSwitcher.svelte';
 	import ShellAccountMenu from './ShellAccountMenu.svelte';
 	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
 
@@ -119,6 +120,7 @@
 			<a
 				href={resolve('/home')}
 				onclick={(event) => onNavigate?.(event, '/home')}
+				aria-label="{connection.organization.name} home"
 				class={[
 					'exec-logo flex min-w-0 items-center rounded-lg py-1.5',
 					collapsed ? 'size-11 justify-center px-0' : 'flex-1 gap-2.5 px-2'
@@ -135,20 +137,39 @@
 					{connection.organization.name}
 				</span>
 			</a>
-			{#if onToggleCollapse && !collapsed}
-				<button
-					type="button"
-					onclick={onToggleCollapse}
-					aria-label={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
-					aria-pressed={pinned}
-					title={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
-					class={[
-						'exec-icon-btn flex size-7 shrink-0 items-center justify-center rounded-md',
-						pinned && 'is-pinned'
-					]}
-				>
-					<PanelLeft class="size-4" aria-hidden="true" />
-				</button>
+			{#if !collapsed}
+				<div class="flex shrink-0 items-center gap-0.5">
+					<OrganizationSwitcher {connection} />
+					{#if onToggleCollapse}
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button
+										{...props}
+										type="button"
+										onclick={onToggleCollapse}
+										aria-label={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
+										aria-pressed={pinned}
+										class={[
+											'exec-icon-btn flex size-7 shrink-0 items-center justify-center rounded-md',
+											pinned && 'is-pinned'
+										]}
+									>
+										<PanelLeft class="size-4" aria-hidden="true" />
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									side="bottom"
+									sideOffset={6}
+									class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+									>{pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}</Tooltip.Content
+								>
+							</Tooltip.Portal>
+						</Tooltip.Root>
+					{/if}
+				</div>
 			{/if}
 		</div>
 

@@ -1,0 +1,29 @@
+[package]
+name = "org-office-sessions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+libc.workspace = true
+org-agent-cli = { path = "../org-agent-cli" }
+org-agent-runtime = { path = "../org-agent-runtime" }
+org-agent-runtime-agy = { path = "../org-agent-runtime-agy" }
+org-agent-runtime-claude = { path = "../org-agent-runtime-claude" }
+org-agent-runtime-codex = { path = "../org-agent-runtime-codex" }
+org-command = { path = "../org-command" }
+org-office = { path = "../org-office" }
+org-pki = { path = "../org-pki" }
+org-platform = { path = "../org-platform" }
+org-proto = { path = "../org-proto" }
+org-supervise = { path = "../org-supervise" }
+ring = "=0.17.14"
+serde.workspace = true
+serde_json.workspace = true
+zeroize = "=1.9.1"
+
+[dev-dependencies]
+org-office = { path = "../org-office", features = ["testkit"] }
+tempfile.workspace = true

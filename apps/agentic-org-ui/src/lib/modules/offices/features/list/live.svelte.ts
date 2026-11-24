@@ -2,8 +2,8 @@
 // app is connected to answers, what the host says it can do, the statuses it pushes, and the restart countdowns. Created
 // while the page component initializes; `watch()` ties its effects to the page and `start()` runs from the page's mount.
 import { untrack } from 'svelte';
-import { officeApi } from '$lib/office/api';
-import { createProbe } from '$lib/offices/probe';
+import { officeApi } from '$lib/modules/offices/office-api';
+import { createProbe } from '$lib/modules/offices/probe';
 import {
 	applyStatusUpdate,
 	displayStatusFor,
@@ -12,7 +12,7 @@ import {
 	whyStopped,
 	type LiveCheck,
 	type RestartDeadlineSample
-} from '$lib/offices/model';
+} from '$lib/modules/offices/model';
 import type { OfficeInfo } from '$lib/proto';
 
 export interface LiveSource {

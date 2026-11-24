@@ -19,7 +19,7 @@
 		DialogTitle
 	} from '$lib/components/ui/dialog';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { membersApi } from '../../api';
 	import { busyText } from '../../present';
 	import type { MemberProfile, RunNowResult } from '../../types';

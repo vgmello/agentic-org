@@ -83,6 +83,11 @@ pub const DATAGRAM_PEER_FULL: i32 = native::DATAGRAM_PEER_FULL;
 /// fail with `ECONNRESET` (macOS) instead of only finding nothing to read (Linux).
 pub const DATAGRAM_PEER_CLOSE_MAY_RESET: bool = native::DATAGRAM_PEER_CLOSE_MAY_RESET;
 
+/// Whether closing a Unix stream peer that still has unread bytes in its receive buffer
+/// causes the remaining side's read to fail with `ECONNRESET` (Linux) rather than
+/// returning EOF (macOS).
+pub const STREAM_PEER_CLOSE_WITH_UNREAD_RESETS: bool = native::STREAM_PEER_CLOSE_WITH_UNREAD_RESETS;
+
 /// The `errno` of a socket call for an address family the kernel does not have at
 /// all, such as IPv6 on a kernel built without it. Its number differs by system.
 pub const EAFNOSUPPORT: i32 = libc::EAFNOSUPPORT;
@@ -101,6 +106,13 @@ mod adapter_tests;
 /// the peer.
 pub fn peer_uid(fd: RawFd) -> io::Result<u32> {
     native::peer_uid(fd)
+}
+
+/// The PID of the process at the other end of a connected Unix stream socket, as the
+/// kernel recorded it (`LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux). Fails closed
+/// on bad descriptors, truncated responses, or targets without an adapter.
+pub fn peer_pid(fd: RawFd) -> io::Result<libc::pid_t> {
+    native::peer_pid(fd)
 }
 
 /// One nonblocking descriptor receive (`recvmsg` with `SCM_RIGHTS`) on this system.

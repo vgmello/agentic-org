@@ -1,4 +1,4 @@
-import { orgApi } from '$lib/org/api';
+import { orgApi } from '$lib/modules/organization/api';
 
 // The member's name for the back link, read before the page draws so the link's label never changes after it shows.
 // If HQ can't say, the link reads "Runs" from the start; the log itself does not depend on it.

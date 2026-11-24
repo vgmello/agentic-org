@@ -1,4 +1,7 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { orgApi } from '$lib/modules/organization/api';
+import { createHttpMembersApi } from './http-api';
 import type {
 	ActivityEntry,
 	AssignableTask,
@@ -61,24 +64,57 @@ export interface MembersApi {
 	handOverOwnership(organizationId: string, toMemberId: string, password: string): Promise<void>;
 }
 
-// The web API does not serve these yet: every call refuses. Under `bun run dev:mock`,
-// e2e/fakes/modules/members.ts stands in for this file.
-export const membersApi: MembersApi = {
-	directory: unavailableCall,
-	profile: unavailableCall,
-	work: unavailableCall,
-	conversations: unavailableCall,
-	activity: unavailableCall,
-	runs: unavailableCall,
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayMembersApi = createHttpMembersApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	orgApi,
+	session: () => {
+		const s = signedInSession();
+		return s ? { accountAdmin: s.admin } : undefined;
+	}
+});
+
+// Production members API backed by `/api/v1/organizations/{org}` snapshot, mutations and access routes.
+// Under `bun run dev:mock`, e2e/fakes/modules/members.ts stands in for this file.
+export const membersApi: MembersApi = Object.freeze<MembersApi>({
+	directory: (orgId) =>
+		signedInSession() ? gatewayMembersApi.directory(orgId) : unavailableCall(),
+	profile: (orgId, memberId) =>
+		signedInSession() ? gatewayMembersApi.profile(orgId, memberId) : unavailableCall(),
+	work: (orgId, memberId) =>
+		signedInSession() ? gatewayMembersApi.work(orgId, memberId) : unavailableCall(),
+	conversations: (orgId, memberId) =>
+		signedInSession() ? gatewayMembersApi.conversations(orgId, memberId) : unavailableCall(),
+	activity: (orgId, memberId) =>
+		signedInSession() ? gatewayMembersApi.activity(orgId, memberId) : unavailableCall(),
+	runs: (orgId, memberId) =>
+		signedInSession() ? gatewayMembersApi.runs(orgId, memberId) : unavailableCall(),
 	sessionFile: unavailableCall,
-	role: unavailableCall,
+	role: (orgId, memberId) =>
+		signedInSession() ? gatewayMembersApi.role(orgId, memberId) : unavailableCall(),
 	runNow: unavailableCall,
 	setAllowHiring: unavailableCall,
-	moveHomeTeam: unavailableCall,
-	assignableTasks: unavailableCall,
+	moveHomeTeam: (orgId, memberId, toTeamId) =>
+		signedInSession()
+			? gatewayMembersApi.moveHomeTeam(orgId, memberId, toTeamId)
+			: unavailableCall(),
+	assignableTasks: (orgId) =>
+		signedInSession() ? gatewayMembersApi.assignableTasks(orgId) : unavailableCall(),
 	assignTask: unavailableCall,
-	inviteToSignIn: unavailableCall,
-	newSignInLink: unavailableCall,
-	removeAccess: unavailableCall,
-	handOverOwnership: unavailableCall
-};
+	inviteToSignIn: (orgId, memberId) =>
+		signedInSession() ? gatewayMembersApi.inviteToSignIn(orgId, memberId) : unavailableCall(),
+	newSignInLink: (orgId, memberId) =>
+		signedInSession() ? gatewayMembersApi.newSignInLink(orgId, memberId) : unavailableCall(),
+	removeAccess: (orgId, memberId) =>
+		signedInSession() ? gatewayMembersApi.removeAccess(orgId, memberId) : unavailableCall(),
+	handOverOwnership: (orgId, toMemberId, password) =>
+		signedInSession()
+			? gatewayMembersApi.handOverOwnership(orgId, toMemberId, password)
+			: unavailableCall()
+});

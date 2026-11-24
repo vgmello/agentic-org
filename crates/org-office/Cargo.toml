@@ -10,8 +10,13 @@ publish.workspace = true
 # `testkit`: the memory ports of the families on the office store and their conformance suites.
 testkit = ["org-store/testkit", "dep:tempfile"]
 
+[[example]]
+name = "store_latency"
+required-features = ["testkit"]
+
 [dependencies]
 org-docs = { path = "../org-docs" }
+org-process = { path = "../org-process" }
 org-store = { path = "../org-store" }
 org-proto = { path = "../org-proto" }
 # Only `writer::marker`: the host's custody marker in an office folder.

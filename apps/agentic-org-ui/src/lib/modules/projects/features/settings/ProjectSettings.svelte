@@ -22,7 +22,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { projectsApi } from '../../api';
 	import {

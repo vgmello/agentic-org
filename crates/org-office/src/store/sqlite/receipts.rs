@@ -220,3 +220,53 @@ pub(super) fn receipt(db: &Connection, id: &Id) -> Result<Option<Receipt>, Engin
         reply: reply.into(),
     }))
 }
+
+pub(super) fn list_receipts_by_prefix(
+    db: &Connection,
+    prefix: &str,
+) -> Result<Vec<Receipt>, EngineError> {
+    let rows = db
+        .prepare_cached(
+            "SELECT operation_id, kind, actor_kind, actor_id, fingerprint, outcome, ack, \
+             ordinal, at, reply FROM store_receipts \
+             WHERE substr(kind, 1, length(?1)) = ?1 \
+             ORDER BY ordinal ASC, operation_id ASC",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_map([prefix], receipt_row)?
+                .collect::<rusqlite::Result<Vec<ReceiptRow>>>()
+        })
+        .map_err(|error| failed(db, "listing receipts", &error))?;
+    let mut out = Vec::with_capacity(rows.len());
+    for (id, kind, actor_kind, actor_id, fingerprint, outcome, ack, ordinal, at, reply) in rows {
+        let stored_id = |text: &str| Id::parse(text).map_err(|_| foreign("an ID"));
+        let actor = match (actor_kind.as_str(), actor_id) {
+            ("employee", Some(id)) => Actor::Employee(stored_id(&id)?),
+            ("system", None) => Actor::System,
+            _ => return Err(foreign("an actor")),
+        };
+        let outcome = match outcome.as_str() {
+            "completed" => Outcome::Completed,
+            "rejected" => Outcome::Rejected,
+            _ => return Err(foreign("an outcome")),
+        };
+        let ack = match ack.as_str() {
+            "committed" => Ack::Committed,
+            "durable" => Ack::Durable,
+            _ => return Err(foreign("an acknowledgement class")),
+        };
+        let unsigned = |value: i64| u64::try_from(value).map_err(|_| foreign("a negative number"));
+        out.push(Receipt {
+            id: stored_id(&id)?,
+            kind,
+            actor,
+            fingerprint: hash(fingerprint)?,
+            outcome,
+            ack,
+            ordinal: unsigned(ordinal)?,
+            at: Timestamp(unsigned(at)?),
+            reply: reply.into(),
+        });
+    }
+    Ok(out)
+}

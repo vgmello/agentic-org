@@ -475,7 +475,7 @@ fn a_path_names_its_record_and_nothing_else_is_this_familys() {
         "state/teams/team.yaml",
         "state/teams/not-an-id/team.yaml",
         "state/teams/01900000-0000-7000-8000-00000000000a/work/tasks/x.md",
-        "state/teams/01900000-0000-7000-8000-00000000000a/agents/01900000-0000-7000-8000-00000000000e/execution.md",
+        "state/teams/01900000-0000-7000-8000-00000000000a/agents/01900000-0000-7000-8000-00000000000e/unknown.md",
         "state/teams/01900000-0000-7000-8000-00000000000a/hires/01900000-0000-7000-8000-00000000000e/profile.md",
         "state/teams/01900000-0000-7000-8000-00000000000a/teams/team.yaml",
         "state/identity/counters/organization/01900000-0000-7000-8000-000000000001/project.yaml",

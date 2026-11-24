@@ -296,26 +296,28 @@ impl<E: Engine> Writer<E> {
             }
         };
         // 1. A retry is matched before any validation of current state.
-        if let Some(op) = &job.op {
-            match tx.receipt(&op.id) {
-                Err(error) => return engine_failed(error),
-                Ok(Some(receipt)) => {
-                    if receipt.actor != op.actor
-                        || receipt.fingerprint != op.fingerprint
-                        || receipt.kind != op.kind
-                    {
-                        return Ok(Slot::Done(Err(StoreError::Conflict)));
+        if !job.dry_run {
+            if let Some(op) = &job.op {
+                match tx.receipt(&op.id) {
+                    Err(error) => return engine_failed(error),
+                    Ok(Some(receipt)) => {
+                        if receipt.actor != op.actor
+                            || receipt.fingerprint != op.fingerprint
+                            || receipt.kind != op.kind
+                        {
+                            return Ok(Slot::Done(Err(StoreError::Conflict)));
+                        }
+                        return Ok(Slot::Appended {
+                            ordinal: receipt.ordinal,
+                            durable: job.durable || receipt.ack == Ack::Durable,
+                            reply: Reply {
+                                outcome: receipt.outcome,
+                                bytes: receipt.reply,
+                            },
+                        });
                     }
-                    return Ok(Slot::Appended {
-                        ordinal: receipt.ordinal,
-                        durable: job.durable || receipt.ack == Ack::Durable,
-                        reply: Reply {
-                            outcome: receipt.outcome,
-                            bytes: receipt.reply,
-                        },
-                    });
+                    Ok(None) => {}
                 }
-                Ok(None) => {}
             }
         }
         // 2. Decide, on the projection at head.
@@ -344,7 +346,10 @@ impl<E: Engine> Writer<E> {
             Ok(Err(Refusal::Invalid(error))) => return fail(tx, mark, attempt, before, error),
             Ok(Err(Refusal::Rejected(reply))) => {
                 attempt.sequences = before;
-                if job.op.is_none() {
+                if job.dry_run || job.op.is_none() {
+                    if let Err(error) = tx.undo_to(mark) {
+                        return Err(Abort::Ended(StoreError::Engine(error)));
+                    }
                     let outcome = Outcome::Rejected;
                     return Ok(Slot::Done(Ok(Reply {
                         outcome,
@@ -373,6 +378,13 @@ impl<E: Engine> Writer<E> {
         });
         if let Err(error) = applied {
             return fail(tx, mark, attempt, before, error);
+        }
+        if job.dry_run {
+            attempt.sequences = before;
+            return match tx.undo_to(mark) {
+                Ok(()) => Ok(Slot::Done(Ok(reply))),
+                Err(error) => Err(Abort::Ended(StoreError::Engine(error))),
+            };
         }
         if core.hooks.crash_at(Site::DuringApply) {
             return Err(Abort::Crash);

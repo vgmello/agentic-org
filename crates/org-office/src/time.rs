@@ -2,11 +2,17 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[allow(dead_code)]
 pub(crate) fn now_rfc3339() -> String {
     format_epoch_ms(now_ms())
 }
 
+pub fn format_rfc3339_ms(ms: u64) -> String {
+    format_epoch_ms(ms)
+}
+
 /// Unix milliseconds now.
+#[allow(dead_code)]
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -29,7 +35,7 @@ fn days_in_month(year: i64, month: i64) -> i64 {
 /// length, truncated to milliseconds), then `Z` or a `+HH:MM` / `-HH:MM` offset. `None` for
 /// anything else (or a time before 1970). Compare times with this, never as text: `...00Z` and
 /// `...00.000Z` are the same instant, and an offset changes the instant.
-pub(crate) fn parse_rfc3339_ms(text: &str) -> Option<u64> {
+pub fn parse_rfc3339_ms(text: &str) -> Option<u64> {
     let b = text.as_bytes();
     let digits = |from: usize, len: usize| -> Option<i64> {
         let part = b.get(from..from + len)?;

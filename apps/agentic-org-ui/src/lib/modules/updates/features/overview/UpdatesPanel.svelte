@@ -90,8 +90,8 @@
 					/>
 				</div>
 			</Section>
-			<HowToUpdate instance={overview.instance.name} machine={hq?.host ?? 'the HQ machine'} />
 			<OfficeVersions offices={overview.offices} hqVersion={overview.instance.version} />
+			<HowToUpdate instance={overview.instance.name} machine={hq?.host ?? 'the HQ machine'} />
 		{/snippet}
 	</Loaded>
 </div>

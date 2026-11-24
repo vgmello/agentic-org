@@ -1,9 +1,12 @@
 use super::*;
-use crate::{accounts::identity::AccountId, hostdb::HostDbInit};
+use crate::{
+    accounts::identity::AccountId,
+    hostdb::{HostDb, HostDbInit},
+};
 use org_office_launch::writer::HighWaters;
 use std::os::unix::fs::PermissionsExt;
 
-const OPERATION: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const OPERATION: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607120";
 
 /// What a reservation binds, owned so a test child process can receive it.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -234,7 +237,7 @@ fn a_retried_reservation_with_other_inputs_is_refused() {
     for (operation, changed) in [
         (OPERATION, other_org),
         (OPERATION, other_member),
-        ("01ARZ3NDEKTSV4RRFFQ69G5FAW", input.clone()),
+        ("0190a5d2-7c3e-7a01-8b2c-3d4e5f607121", input.clone()),
     ] {
         assert!(writers.reserve(operation, &changed.binding()).is_err());
         assert_eq!(
@@ -295,7 +298,7 @@ fn an_older_writer_record_is_refused_and_kept() {
     old_shape["position"] = serde_json::Value::Null;
     old_shape["admission"]["version"] = serde_json::json!(1);
     old_shape["admission"]["identity"]["journal_incarnation"] =
-        serde_json::json!("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        serde_json::json!("0190a5d2-7c3e-7a01-8b2c-3d4e5f607120");
     let mut wrong_roots = current.clone();
     wrong_roots["admission"]["durable_root"] =
         serde_json::json!(writers.root.path.join("durable").to_str().unwrap());
@@ -458,9 +461,11 @@ fn lasting_custody_failures_are_refusals_not_unreadable() {
 /// it open, so its classification is checked here directly.)
 #[test]
 fn only_transient_store_and_registry_failures_are_unreadable() {
-    use crate::{host_secrets::Error as S, hostdb::Error as D};
+    use crate::{
+        host_secrets::Error as S,
+        hostdb::{Error as D, StoreFault as F},
+    };
     use io::ErrorKind as K;
-    use rusqlite::ErrorCode as C;
     let of = |error: io::Error| AdmitError::from(error);
     for kind in [
         K::Interrupted,
@@ -476,18 +481,13 @@ fn only_transient_store_and_registry_failures_are_unreadable() {
             "{kind:?}"
         );
     }
-    assert_eq!(of(store(S::Os(-25308))), AdmitError::Unreadable);
+    assert_eq!(of(store(S::InteractionNotAllowed)), AdmitError::Unreadable);
     assert_eq!(of(store(S::InUse)), AdmitError::Unreadable);
-    for code in [
-        C::DatabaseBusy,
-        C::DatabaseLocked,
-        C::SystemIoFailure,
-        C::OutOfMemory,
-    ] {
+    for fault in [F::Busy, F::TransientIo, F::OutOfMemory] {
         assert_eq!(
-            of(registry(D::Sql(code))),
+            of(registry(D::Store(fault))),
             AdmitError::Unreadable,
-            "{code:?}"
+            "{fault:?}"
         );
     }
     for kind in [
@@ -518,15 +518,12 @@ fn only_transient_store_and_registry_failures_are_unreadable() {
         let shown = format!("{error:?}");
         assert_eq!(of(store(error)), AdmitError::Refused, "{shown}");
     }
-    for code in [
-        C::NotADatabase,
-        C::DatabaseCorrupt,
-        C::SchemaChanged,
-        C::ConstraintViolation,
-        C::PermissionDenied,
-        C::ReadOnly,
-    ] {
-        assert_eq!(of(registry(D::Sql(code))), AdmitError::Refused, "{code:?}");
+    for fault in [F::Corrupt, F::Constraint, F::Other] {
+        assert_eq!(
+            of(registry(D::Store(fault))),
+            AdmitError::Refused,
+            "{fault:?}"
+        );
     }
     for error in [D::Unsafe, D::Version, D::Outdated] {
         assert_eq!(of(registry(error)), AdmitError::Refused);
@@ -538,7 +535,7 @@ fn copied_root_missing_custody_replaced_root_and_changed_epoch_never_promote() {
     let (root, writers, input) = fixture();
     let admission = writers.reserve(OPERATION, &input.binding()).unwrap();
     assert!(writers
-        .reserve("01ARZ3NDEKTSV4RRFFQ69G5FAW", &input.binding())
+        .reserve("0190a5d2-7c3e-7a01-8b2c-3d4e5f607121", &input.binding())
         .is_err());
     let mut control = lease(&writers, &input.office);
     let mut wrong = admission.identity.clone();
@@ -693,7 +690,7 @@ fn missing_device_cannot_be_recreated_while_another_writer_record_survives() {
     fs::create_dir(writers.marker(&second.office).unwrap().parent().unwrap()).unwrap();
     let before = retained_files(root.path());
     assert!(writers
-        .reserve("01ARZ3NDEKTSV4RRFFQ69G5FAW", &second.binding())
+        .reserve("0190a5d2-7c3e-7a01-8b2c-3d4e5f607121", &second.binding())
         .is_err());
     assert_eq!(retained_files(root.path()), before);
 }

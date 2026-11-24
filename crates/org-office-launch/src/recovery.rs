@@ -41,7 +41,7 @@ impl Request {
             || self.instance_id.len() > 255
             || self.office_id.len() > 255
             || self.organization_id.len() > 255
-            || org_proto::ulid_time_ms(&self.operation_id).is_none()
+            || !org_proto::is_uuid_v7(&self.operation_id)
         {
             return Err(invalid());
         }

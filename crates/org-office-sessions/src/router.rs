@@ -1,0 +1,596 @@
+//! Deterministic `L4` provider pool connection router, `endpoint_url` env plumbing, and
+//! §7 retry-eligible failover classification (`TASK-54`, `FC-098`, `FC-099`, `doc-88` §6-§7).
+
+use std::collections::HashSet;
+use std::ffi::OsString;
+use std::sync::Arc;
+
+use org_agent_runtime::{AgentRuntime, Token};
+use org_office::organization_family::features::validate_endpoint_url;
+use org_office::organization_family::records::{
+    PermissionPreset, ProviderAuthMode, ProviderConnection,
+};
+use org_office::providers::PermitAcquireOutcome;
+use org_office::Office;
+use org_proto::providers::{
+    ConnectionReadinessStatus, DiscoveredModelEntitlement, PermitAuthority,
+};
+use org_proto::{ApiError, ErrorCode};
+
+use crate::credentials::CredentialVault;
+use crate::runtime_registry::RuntimeRegistry;
+
+/// Fully admitted connection route ready to spawn a supervised agent session.
+pub(crate) struct AdmittedRoute {
+    pub adapter: Arc<dyn AgentRuntime>,
+    pub model_token: Option<Token>,
+    pub auth_env: Vec<(OsString, OsString)>,
+    pub endpoint_env: Vec<(OsString, OsString)>,
+    pub preset: PermissionPreset,
+    pub sandbox_enabled: bool,
+    pub connection_id: Option<String>,
+    pub permit: Option<(String, u64)>,
+    pub route_digest_suffix: String,
+}
+
+/// Maps a validated per-connection `endpoint_url` into the adapter's non-secret base-URL env var.
+pub fn endpoint_env_for(
+    driver: &str,
+    endpoint_url: &str,
+) -> Result<(&'static str, String), ApiError> {
+    if !validate_endpoint_url(endpoint_url) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "invalid provider connection endpoint_url",
+        ));
+    }
+    let lower = driver.to_ascii_lowercase();
+    let var = if lower.contains("google")
+        || lower.contains("agy")
+        || lower.contains("antigravity")
+        || lower.contains("gemini")
+    {
+        "GOOGLE_GEMINI_BASE_URL"
+    } else if lower.contains("openai") || lower.contains("codex") || lower.contains("gpt") {
+        "OPENAI_BASE_URL"
+    } else {
+        "ANTHROPIC_BASE_URL"
+    };
+    Ok((var, endpoint_url.to_owned()))
+}
+
+/// Maps a provider driver and auth mode to the runtime's allowlisted auth env variable name.
+pub fn auth_env_var_for(driver: &str, mode: ProviderAuthMode, secret: &str) -> &'static str {
+    let lower = driver.to_ascii_lowercase();
+    if lower.contains("google")
+        || lower.contains("agy")
+        || lower.contains("antigravity")
+        || lower.contains("gemini")
+    {
+        return if mode == ProviderAuthMode::SubscriptionCli {
+            "AGY_AUTH_TOKEN"
+        } else {
+            "GEMINI_API_KEY"
+        };
+    }
+    if lower.contains("openai") || lower.contains("codex") || lower.contains("gpt") {
+        return if mode == ProviderAuthMode::SubscriptionCli {
+            "CODEX_ACCESS_TOKEN"
+        } else {
+            "OPENAI_API_KEY"
+        };
+    }
+    if mode == ProviderAuthMode::SubscriptionCli || secret.starts_with("sk-ant-oat") {
+        "CLAUDE_CODE_OAUTH_TOKEN"
+    } else {
+        "ANTHROPIC_API_KEY"
+    }
+}
+
+const FAILOVER_PATTERNS: &[(&[&str], &str)] = &[
+    (
+        &["rate_limit", "rate limit", "429", "too many requests"],
+        "rate_limited",
+    ),
+    (
+        &[
+            "quota_exhausted",
+            "quota exceeded",
+            "usage limit",
+            "credit balance",
+        ],
+        "quota_exhausted",
+    ),
+    (
+        &[
+            "auth_expired",
+            "unauthorized",
+            "invalid_api_key",
+            "token expired",
+            "401",
+        ],
+        "auth_expired",
+    ),
+    (
+        &["model_unavailable", "model not found", "overloaded", "529"],
+        "model_unavailable",
+    ),
+];
+
+/// Classifies whether a turn failure is retry-eligible for §7 connection failover (`doc-88` §7).
+/// Only `rate_limited`, `quota_exhausted`, `auth_expired`, and `model_unavailable` qualify.
+pub fn classify_failover_error(errors: &[String], rate_limited: bool) -> Option<&'static str> {
+    if rate_limited {
+        return Some("rate_limited");
+    }
+    for raw in errors {
+        let lower = raw.to_ascii_lowercase();
+        for (needles, label) in FAILOVER_PATTERNS {
+            if needles.iter().any(|needle| lower.contains(needle)) {
+                return Some(label);
+            }
+        }
+    }
+    None
+}
+
+enum CandidateOutcome {
+    Admitted(AdmittedRoute),
+    Skipped {
+        reason: String,
+        cooldown_until: Option<String>,
+    },
+}
+
+struct RouteWalkCtx<'a> {
+    office: &'a Office,
+    vault: &'a CredentialVault,
+    runtimes: &'a RuntimeRegistry,
+    employee_id: &'a str,
+    task_id: Option<&'a str>,
+    model_id: &'a str,
+    profile_key: &'a str,
+    preset: PermissionPreset,
+    is_failover_switch: bool,
+    now_ms: u64,
+    excluded: &'a HashSet<String>,
+}
+
+fn permit_authority_for(office: &Office, conn: &ProviderConnection) -> PermitAuthority {
+    let multi_office = office.is_multi_office().unwrap_or(false);
+    if multi_office && conn.auth_mode == ProviderAuthMode::SubscriptionCli {
+        PermitAuthority::HqPool
+    } else {
+        PermitAuthority::OfficeLocal
+    }
+}
+
+fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOutcome, ApiError> {
+    if ctx.excluded.contains(cid) {
+        return Ok(CandidateOutcome::Skipped {
+            reason: format!("{cid}:ALREADY_TRIED"),
+            cooldown_until: None,
+        });
+    }
+    let Some(conn) = ctx.office.load_provider_connection(cid).map_err(|_| {
+        ApiError::new(
+            ErrorCode::StorageError,
+            "could not load provider connection",
+        )
+    })?
+    else {
+        return Ok(CandidateOutcome::Skipped {
+            reason: format!("{cid}:CONNECTION_NOT_FOUND"),
+            cooldown_until: None,
+        });
+    };
+    if conn.archived || !conn.enabled {
+        return Ok(CandidateOutcome::Skipped {
+            reason: format!("{cid}:CONNECTION_DISABLED"),
+            cooldown_until: None,
+        });
+    }
+    let (binding_rev, resolved_model) =
+        match check_local_readiness(ctx.office, &conn, ctx.model_id, ctx.now_ms)? {
+            Ok(v) => v,
+            Err(reason) => {
+                return Ok(CandidateOutcome::Skipped {
+                    reason: format!("{cid}:{reason}"),
+                    cooldown_until: None,
+                });
+            }
+        };
+    let authority = permit_authority_for(ctx.office, &conn);
+    let permit_outcome = ctx
+        .office
+        .acquire_turn_permit(
+            cid,
+            ctx.employee_id,
+            ctx.task_id,
+            ctx.model_id,
+            authority,
+            ctx.is_failover_switch,
+        )
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not acquire turn permit"))??;
+    let permit = match permit_outcome {
+        PermitAcquireOutcome::Granted(p) => p,
+        PermitAcquireOutcome::CoolingDown { cooldown_until } => {
+            return Ok(CandidateOutcome::Skipped {
+                reason: format!("{cid}:COOLDOWN({cooldown_until})"),
+                cooldown_until: Some(cooldown_until),
+            });
+        }
+        PermitAcquireOutcome::CapacityFull { occupied, max } => {
+            return Ok(CandidateOutcome::Skipped {
+                reason: format!("{cid}:CAPACITY_FULL({occupied}/{max})"),
+                cooldown_until: None,
+            });
+        }
+    };
+    match finalize_admitted_connection(
+        ctx.vault,
+        ctx.runtimes,
+        &conn,
+        AdmitParams {
+            preset: ctx.preset,
+            resolved_model: &resolved_model,
+            profile_key: ctx.profile_key,
+            binding_rev,
+            permit: (permit.id.clone(), permit.coordinator_generation),
+        },
+    ) {
+        Ok(route) => Ok(CandidateOutcome::Admitted(route)),
+        Err(err) => {
+            let _ = ctx.office.release_turn_permit(&permit.id);
+            Err(err)
+        }
+    }
+}
+
+/// Deterministic ordered pool selection & permit admission (`doc-88` §6 steps 1-3).
+pub(crate) fn select_and_admit_route(
+    office: &Office,
+    vault: &CredentialVault,
+    runtimes: &RuntimeRegistry,
+    employee_id: &str,
+    task_id: Option<&str>,
+    is_failover_switch: bool,
+    excluded_connections: &HashSet<String>,
+) -> Result<AdmittedRoute, ApiError> {
+    let exec = office
+        .load_agent_execution(employee_id)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not load execution config"))?;
+    let Some(cfg) = exec else {
+        let adapter = runtimes
+            .resolve("claude")
+            .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
+        return Ok(AdmittedRoute {
+            adapter,
+            model_token: None,
+            auth_env: Vec::new(),
+            endpoint_env: Vec::new(),
+            preset: PermissionPreset::SafeAsk,
+            sandbox_enabled: true,
+            connection_id: None,
+            permit: None,
+            route_digest_suffix: String::new(),
+        });
+    };
+    if !cfg.enabled {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "EXECUTION_DISABLED: agent execution configuration is disabled",
+        ));
+    }
+    let Some(profile) = office
+        .load_model_profile(cfg.model_profile_id.as_str())
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not load model profile"))?
+    else {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "PROFILE_NOT_FOUND: assigned model profile does not exist",
+        ));
+    };
+    if profile.archived {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "PROFILE_ARCHIVED: assigned model profile is archived",
+        ));
+    }
+
+    let ordered_ids: Vec<&str> = if profile.connection_ids.is_empty() {
+        profile
+            .generated_for_connection_id
+            .iter()
+            .map(|id| id.as_str())
+            .collect()
+    } else {
+        profile
+            .connection_ids
+            .iter()
+            .map(|id| id.as_str())
+            .collect()
+    };
+    let walk = RouteWalkCtx {
+        office,
+        vault,
+        runtimes,
+        employee_id,
+        task_id,
+        model_id: &cfg.model_id,
+        profile_key: &profile.key,
+        preset: cfg.permission_preset,
+        is_failover_switch,
+        now_ms: office.current_time_ms(),
+        excluded: excluded_connections,
+    };
+
+    let mut skips = Vec::new();
+    let mut earliest_cd: Option<String> = None;
+    for cid in ordered_ids {
+        match try_admit_candidate(&walk, cid)? {
+            CandidateOutcome::Admitted(route) => return Ok(route),
+            CandidateOutcome::Skipped {
+                reason,
+                cooldown_until,
+            } => {
+                if let Some(cd) = cooldown_until {
+                    if earliest_cd.as_deref().is_none_or(|e| cd.as_str() < e) {
+                        earliest_cd = Some(cd);
+                    }
+                }
+                skips.push(reason);
+            }
+        }
+    }
+
+    let cd_note = earliest_cd
+        .map(|u| format!("; earliest_cooldown={u}"))
+        .unwrap_or_default();
+    Err(ApiError::new(
+        ErrorCode::Conflict,
+        format!("POOL_EXHAUSTED: [{}]{cd_note}", skips.join(", ")),
+    ))
+}
+
+fn check_local_readiness(
+    office: &Office,
+    conn: &ProviderConnection,
+    target_model: &str,
+    now_ms: u64,
+) -> Result<Result<(u64, String), &'static str>, ApiError> {
+    let cid = conn.id.as_str();
+    let binding = office
+        .load_connection_binding(cid)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not load binding"))?;
+    let Some(binding) = binding else {
+        return Ok(Err("NOT_BOUND"));
+    };
+    let state = office
+        .load_connection_state(cid)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not load connection state"))?;
+    let Some(state) = state else {
+        return Ok(Err("STATE_UNKNOWN"));
+    };
+    if state.status != ConnectionReadinessStatus::Ready || state.is_stale(binding.revision, now_ms)
+    {
+        return Ok(Err(match state.status {
+            ConnectionReadinessStatus::AuthExpired => "AUTH_EXPIRED",
+            ConnectionReadinessStatus::Unavailable => "UNAVAILABLE",
+            _ => "STATE_STALE",
+        }));
+    }
+    let models = office
+        .load_connection_models(cid)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not load connection models"))?;
+    let matched = models.into_iter().find(|m| {
+        m.model_id == target_model
+            && m.entitlement == DiscoveredModelEntitlement::Confirmed
+            && !m.is_stale(now_ms)
+    });
+    match matched {
+        Some(m) => Ok(Ok((binding.revision, m.driver_model_id))),
+        None => Ok(Err("MODEL_UNVERIFIED")),
+    }
+}
+
+struct AdmitParams<'a> {
+    preset: PermissionPreset,
+    resolved_model: &'a str,
+    profile_key: &'a str,
+    binding_rev: u64,
+    permit: (String, u64),
+}
+
+fn finalize_admitted_connection(
+    vault: &CredentialVault,
+    runtimes: &RuntimeRegistry,
+    conn: &ProviderConnection,
+    params: AdmitParams<'_>,
+) -> Result<AdmittedRoute, ApiError> {
+    let AdmitParams {
+        preset,
+        resolved_model,
+        profile_key,
+        binding_rev,
+        permit,
+    } = params;
+    let adapter = runtimes
+        .resolve(&conn.runtime_driver)
+        .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
+    let mut auth_env = Vec::new();
+    if let Some(secret) = vault.load_unwrapped(conn.id.as_str()).map_err(|_| {
+        ApiError::new(
+            ErrorCode::Unavailable,
+            "provider credential could not be unwrapped",
+        )
+    })? {
+        let secret_str = std::str::from_utf8(&secret).map_err(|_| {
+            ApiError::new(ErrorCode::Unavailable, "provider credential is not UTF-8")
+        })?;
+        let var_name = auth_env_var_for(&conn.runtime_driver, conn.auth_mode, secret_str);
+        auth_env.push((OsString::from(var_name), OsString::from(secret_str)));
+    }
+    let mut endpoint_env = Vec::new();
+    if let Some(ref url) = conn.endpoint_url {
+        let (var, val) = endpoint_env_for(&conn.runtime_driver, url)?;
+        endpoint_env.push((OsString::from(var), OsString::from(val)));
+    }
+    let model_token = Token::try_from(resolved_model)
+        .ok()
+        .or_else(|| Token::try_from(profile_key).ok());
+    let digest_input = format!(
+        "conn={}:rev={}:bind={}:endpoint={}:model={}",
+        conn.id.as_str(),
+        conn.meta.revision,
+        binding_rev,
+        conn.endpoint_url.as_deref().unwrap_or(""),
+        resolved_model
+    );
+    let route_digest_suffix = hex_short_sha256(digest_input.as_bytes());
+    Ok(AdmittedRoute {
+        adapter,
+        model_token,
+        auth_env,
+        endpoint_env,
+        preset,
+        sandbox_enabled: true,
+        connection_id: Some(conn.id.as_str().to_owned()),
+        permit: Some(permit),
+        route_digest_suffix,
+    })
+}
+
+fn hex_short_sha256(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = ring::digest::digest(&ring::digest::SHA256, bytes);
+    let mut out = String::with_capacity(16);
+    for &b in &digest.as_ref()[..8] {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
+/// Outcome of attempting to re-acquire a turn permit on an idle warm session's existing connection.
+pub(crate) enum WarmPermitOutcome {
+    Granted((String, u64)),
+    /// Warm session no longer matches current config/readiness/route digest and must cold-start.
+    StaleWarm,
+    /// Connection is full or cooling down; `multi_connection` tells the caller whether another
+    /// connection in the profile pool may be able to serve if the warm session is recycled.
+    Unavailable {
+        multi_connection: bool,
+        reason: String,
+    },
+    /// Hard refusal (e.g. `BUDGET_HELD` or storage failure).
+    Refused(ApiError),
+}
+
+fn compute_route_digest(
+    conn: &ProviderConnection,
+    binding_rev: u64,
+    resolved_model: &str,
+) -> String {
+    let digest_input = format!(
+        "conn={}:rev={}:bind={}:endpoint={}:model={}",
+        conn.id.as_str(),
+        conn.meta.revision,
+        binding_rev,
+        conn.endpoint_url.as_deref().unwrap_or(""),
+        resolved_model
+    );
+    hex_short_sha256(digest_input.as_bytes())
+}
+
+/// Validates that an existing warm session still matches current config/readiness/route digest,
+/// and acquires a fresh turn permit on `connection_id` (`doc-88` §6 steps 3–4, `AE-04`, `AE-11`).
+pub(crate) fn acquire_warm_permit_for_office(
+    office: &Office,
+    connection_id: &str,
+    employee_id: &str,
+    task_id: Option<&str>,
+    expected_route_digest: Option<&str>,
+) -> WarmPermitOutcome {
+    let Ok(Some(cfg)) = office.load_agent_execution(employee_id) else {
+        return WarmPermitOutcome::Refused(ApiError::new(
+            ErrorCode::Conflict,
+            "EXECUTION_DISABLED: agent execution configuration missing",
+        ));
+    };
+    if !cfg.enabled {
+        return WarmPermitOutcome::Refused(ApiError::new(
+            ErrorCode::Conflict,
+            "EXECUTION_DISABLED: agent execution configuration is disabled",
+        ));
+    }
+    let Ok(Some(profile)) = office.load_model_profile(cfg.model_profile_id.as_str()) else {
+        return WarmPermitOutcome::Refused(ApiError::new(
+            ErrorCode::Conflict,
+            "PROFILE_NOT_FOUND: assigned model profile does not exist",
+        ));
+    };
+    if profile.archived {
+        return WarmPermitOutcome::Refused(ApiError::new(
+            ErrorCode::Conflict,
+            "PROFILE_ARCHIVED: assigned model profile is archived",
+        ));
+    }
+    let member_of_profile = profile
+        .connection_ids
+        .iter()
+        .chain(profile.generated_for_connection_id.iter())
+        .any(|id| id.as_str() == connection_id);
+    if !member_of_profile {
+        return WarmPermitOutcome::StaleWarm;
+    }
+    let Ok(Some(conn)) = office.load_provider_connection(connection_id) else {
+        return WarmPermitOutcome::StaleWarm;
+    };
+    let multi_connection = profile.connection_ids.len() > 1;
+    if conn.archived || !conn.enabled {
+        return WarmPermitOutcome::StaleWarm;
+    }
+    let now_ms = office.current_time_ms();
+    let (binding_rev, resolved_model) =
+        match check_local_readiness(office, &conn, &cfg.model_id, now_ms) {
+            Ok(Ok(v)) => v,
+            Ok(Err(_)) | Err(_) => return WarmPermitOutcome::StaleWarm,
+        };
+    if let Some(expected) = expected_route_digest {
+        let current_digest = compute_route_digest(&conn, binding_rev, &resolved_model);
+        if current_digest != expected {
+            return WarmPermitOutcome::StaleWarm;
+        }
+    }
+    let authority = permit_authority_for(office, &conn);
+    match office.acquire_turn_permit(
+        connection_id,
+        employee_id,
+        task_id,
+        &cfg.model_id,
+        authority,
+        false,
+    ) {
+        Ok(Ok(PermitAcquireOutcome::Granted(p))) => {
+            WarmPermitOutcome::Granted((p.id, p.coordinator_generation))
+        }
+        Ok(Ok(PermitAcquireOutcome::CoolingDown { cooldown_until })) => {
+            WarmPermitOutcome::Unavailable {
+                multi_connection,
+                reason: format!("{connection_id}:COOLDOWN({cooldown_until})"),
+            }
+        }
+        Ok(Ok(PermitAcquireOutcome::CapacityFull { occupied, max })) => {
+            WarmPermitOutcome::Unavailable {
+                multi_connection,
+                reason: format!("{connection_id}:CAPACITY_FULL({occupied}/{max})"),
+            }
+        }
+        Ok(Err(api_err)) => WarmPermitOutcome::Refused(api_err),
+        Err(_) => WarmPermitOutcome::Refused(ApiError::new(
+            ErrorCode::StorageError,
+            "could not acquire turn permit",
+        )),
+    }
+}

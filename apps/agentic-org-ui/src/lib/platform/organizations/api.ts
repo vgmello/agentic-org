@@ -84,7 +84,7 @@ export function createOrganizationsApi({
 	http: OrganizationsHttp;
 	/** The signed-in session's instance; requests are scoped to it. */
 	instanceId: () => string;
-	/** A canonical ULID from the server-corrected clock. */
+	/** A canonical lowercase UUIDv7 from the server-corrected clock. */
 	newId: () => string;
 }) {
 	async function lookup(operationId: string, signal?: AbortSignal): Promise<LookupReply> {

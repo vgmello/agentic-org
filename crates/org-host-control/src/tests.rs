@@ -1,9 +1,9 @@
 use serde_json::{json, Value};
 
-use crate::gateway::*;
 use crate::journal::{fingerprint_input, Journaled};
 use crate::listen::*;
 use crate::ops::*;
+use crate::web::*;
 use crate::*;
 
 const MAC: &str = "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5";
@@ -36,16 +36,60 @@ fn op_methods() {
         (TlsFetch::METHOD, "tls.fetch"),
         (WebServing::METHOD, "web.serving"),
         (TlsSet::METHOD, "tls.set"),
-        (AccountSetPassword::METHOD, "account.set_password"),
-        (AccountResetPassword::METHOD, "account.reset_password"),
-        (AccountCreate::METHOD, "account.create"),
         (RecoveryRelease::METHOD, "recovery.release"),
         (RecoveryAcknowledge::METHOD, "recovery.acknowledge"),
         (Subscribe::METHOD, "subscribe"),
         (crate::browser::LinkRegister::METHOD, "link.register"),
+        (crate::browser_accounts::LinkInspect::METHOD, "link.inspect"),
+        (
+            crate::browser_accounts::LinkRegisterAttach::METHOD,
+            "link.register_attach",
+        ),
+        (
+            crate::browser_accounts::LinkSetPassword::METHOD,
+            "link.set_password",
+        ),
+        (
+            crate::browser_accounts::BrowserChangePassword::METHOD,
+            "browser.change_password",
+        ),
+        (
+            crate::browser_accounts::BrowserAccountPreferencesSet::METHOD,
+            "browser.account.preferences.set",
+        ),
+        (
+            crate::browser_accounts::BrowserOrgAccessList::METHOD,
+            "browser.org_access_list",
+        ),
+        (
+            crate::browser_accounts::BrowserOrgInvite::METHOD,
+            "browser.org_invite",
+        ),
+        (
+            crate::browser_accounts::BrowserOrgPasswordResetLink::METHOD,
+            "browser.org_password_reset_link",
+        ),
+        (
+            crate::browser_accounts::BrowserOrgRemoveAccess::METHOD,
+            "browser.org_remove_access",
+        ),
+        (
+            crate::browser_accounts::BrowserOrgOwnerHandover::METHOD,
+            "browser.org_owner_handover",
+        ),
+        (
+            crate::browser_accounts::BrowserAdminHandover::METHOD,
+            "browser.admin_handover",
+        ),
         (crate::browser::SessionSignIn::METHOD, "session.sign_in"),
         (crate::browser::SessionValidate::METHOD, "session.validate"),
         (crate::browser::BrowserSessionEnd::METHOD, "session.end"),
+        (
+            crate::browser::BrowserCliApprovalDecide::METHOD,
+            "browser.cli_approval_decide",
+        ),
+        (CliApprovalCreate::METHOD, "cli.approval.create"),
+        (CliApprovalPoll::METHOD, "cli.approval.poll"),
     ] {
         assert_eq!(method, want);
     }
@@ -276,7 +320,6 @@ fn fingerprint_hashes_match_independently_pinned_vectors() {
     for case in vectors["cases"].as_array().unwrap() {
         match case["method"].as_str().unwrap() {
             "office.restart" => check::<OfficeRestartParams>(case),
-            "account.create" => check::<AccountCreateParams>(case),
             _ => panic!("unhandled vector method"),
         }
     }
@@ -312,7 +355,6 @@ fn journal_vectors_replay_only_the_same_op_for_the_same_account() {
         let method = case["method"].as_str().unwrap();
         let fingerprint = |side: &Value| match method {
             "office.restart" => journaled::<OfficeRestartParams>(method, side),
-            "account.create" => journaled::<AccountCreateParams>(method, side),
             other => panic!("{other}"),
         };
         let (stored_id, stored) = fingerprint(&case["stored"]["params"]);
@@ -331,29 +373,7 @@ fn journal_vectors_replay_only_the_same_op_for_the_same_account() {
         );
         assert!(!text.contains("password"), "{name}: {text}");
         let same_account = case["stored"]["account"] == case["retry"]["account"];
-        // Only account.create carries a password, and its rows say whether it matches.
-        let verifier_matches = match case.get("password_verifier") {
-            None => {
-                assert_ne!(method, "account.create", "{name}: no password_verifier");
-                true
-            }
-            Some(v) => {
-                assert_eq!(method, "account.create", "{name}");
-                let want = v == "match";
-                assert!(want || v == "mismatch", "{name}: {v}");
-                // The password never reaches the fingerprint, so the verifier is what tells two
-                // passwords apart.
-                let same_password =
-                    case["stored"]["params"]["password"] == case["retry"]["params"]["password"];
-                assert_eq!(want, same_password, "{name}");
-                if !want {
-                    // Only the password differs, and the fingerprint doesn't see it.
-                    assert_eq!(stored, retry, "{name}");
-                }
-                want
-            }
-        };
-        let outcome = if stored == retry && same_account && verifier_matches {
+        let outcome = if stored == retry && same_account {
             "replay"
         } else {
             "operation_reused"
@@ -569,8 +589,8 @@ fn the_host_sock_marker_is_zero() {
 #[test]
 fn gateway_rendezvous_lines_have_their_wire_shapes() {
     fn clone_only<T: Clone>() {}
-    clone_only::<GatewayFirstLine>();
-    let first = GatewayFirstLine {
+    clone_only::<WebFirstLine>();
+    let first = WebFirstLine {
         rendezvous: "/run/user/501/agentic-org/r/0123456789abcdef".into(),
         instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1".into(),
         release: None,
@@ -580,10 +600,7 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
         "instance_id": "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1"
     });
     assert_eq!(serde_json::to_value(&first).unwrap(), wire);
-    assert_eq!(
-        serde_json::from_value::<GatewayFirstLine>(wire).unwrap(),
-        first
-    );
+    assert_eq!(serde_json::from_value::<WebFirstLine>(wire).unwrap(), first);
     for bad in [
         json!({"v": 2, "rendezvous": "/r", "instance_id": "i"}),
         json!({"v": 1, "rendezvous": "r", "instance_id": "i"}),
@@ -592,15 +609,15 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
         json!({"v": 1, "rendezvous": "/r", "instance_id": ""}),
         json!({"v": 1, "rendezvous": "/r", "instance_id": "0190A5D2-7C3E-7A01-8B2C-3D4E5F6071A1"}),
     ] {
-        assert!(serde_json::from_value::<GatewayFirstLine>(bad).is_err());
+        assert!(serde_json::from_value::<WebFirstLine>(bad).is_err());
     }
 
-    let mac = GatewayReadyForSecrets { landlock: None };
+    let mac = WebReadyForSecrets { landlock: None };
     assert_eq!(
         serde_json::to_value(mac).unwrap(),
         json!({"v": 1, "event": "ready_for_secrets"})
     );
-    let linux = GatewayReadyForSecrets {
+    let linux = WebReadyForSecrets {
         landlock: Some(LandlockStatus {
             abi: 4,
             enforcement: LandlockEnforcement::FullyEnforced,
@@ -610,20 +627,19 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
                       "landlock": {"abi": 4, "enforcement": "fully_enforced"}});
     assert_eq!(serde_json::to_value(linux).unwrap(), wire);
     assert_eq!(
-        serde_json::from_value::<GatewayReadyForSecrets>(wire).unwrap(),
+        serde_json::from_value::<WebReadyForSecrets>(wire).unwrap(),
         linux
     );
     assert!(
-        serde_json::from_value::<GatewayReadyForSecrets>(json!({"v": 1, "event": "ready"}))
-            .is_err()
+        serde_json::from_value::<WebReadyForSecrets>(json!({"v": 1, "event": "ready"})).is_err()
     );
 
     // The handoff names the transfer socket, then the listener, and carries no key.
     let wire = json!({"v": 1, "fds": ["transfer", "listener"]});
-    assert_eq!(serde_json::to_value(GatewayHandoff).unwrap(), wire);
+    assert_eq!(serde_json::to_value(WebHandoff).unwrap(), wire);
     assert_eq!(
-        serde_json::from_value::<GatewayHandoff>(wire).unwrap(),
-        GatewayHandoff
+        serde_json::from_value::<WebHandoff>(wire).unwrap(),
+        WebHandoff
     );
     for bad in [
         json!({"v": 1, "fds": ["listener", "transfer"]}),
@@ -631,23 +647,20 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
         json!({"v": 1, "fds": []}),
         json!({"v": 2, "fds": ["transfer", "listener"]}),
     ] {
-        assert!(serde_json::from_value::<GatewayHandoff>(bad).is_err());
+        assert!(serde_json::from_value::<WebHandoff>(bad).is_err());
     }
 }
 
 #[test]
 fn passwords_and_keys_stay_redacted() {
-    let params: AccountSetPasswordParams = serde_json::from_value(json!({
-        "session": "the-handle", "current": "old secret", "new": "new secret"
+    let set_pw: crate::browser_accounts::LinkSetPasswordParams = serde_json::from_value(json!({
+        "link": "secret-link-token", "password": "fresh secret", "client_address": "127.0.0.1"
     }))
     .unwrap();
-    let printed = format!("{params:?}");
-    for secret in ["the-handle", "old secret", "new secret"] {
+    let printed = format!("{set_pw:?}");
+    for secret in ["secret-link-token", "fresh secret"] {
         assert!(!printed.contains(secret), "{printed}");
     }
-    let reset: AccountResetPasswordParams =
-        serde_json::from_value(json!({"login": "ada", "new": "fresh"})).unwrap();
-    assert_eq!(reset.new.expose(), "fresh");
     let set: TlsSetParams = serde_json::from_value(json!({
         "session": "h", "operation_id": "01M72N8MG00000000000000H03", "cert": "c", "key": "k-secret"
     }))
@@ -658,21 +671,25 @@ fn passwords_and_keys_stay_redacted() {
 
 #[test]
 fn account_and_recovery_ops_have_their_wire_shapes() {
-    let create: AccountCreateParams = serde_json::from_value(json!({
-        "session": "h", "operation_id": "01M72N8MG00000000000000H04", "login": "sam",
-        "password": "pw-secret", "admin": false, "owner_of": "01M72N8MG00000000000000G01"
+    let reset: crate::admin::AdminLinkResult = serde_json::from_value(json!({
+        "outcome": "reset_password",
+        "login": "alex",
+        "url": "http://127.0.0.1:7420/set-password#secret-token",
+        "expires_at_ms": 1_800_000_000_000_i64
+    }))
+    .unwrap();
+    assert!(!format!("{reset:?}").contains("secret-token"));
+    let inspect: crate::browser_accounts::LinkInspectResult = serde_json::from_value(json!({
+        "kind": "organization_invite",
+        "org_id": "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1",
+        "org_name": "Lumen Labs",
+        "member_id": "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a2"
     }))
     .unwrap();
     assert_eq!(
-        create.owner_of.as_deref(),
-        Some("01M72N8MG00000000000000G01")
+        serde_json::to_value(&inspect).unwrap()["kind"],
+        "organization_invite"
     );
-    assert!(!format!("{create:?}").contains("pw-secret"));
-    let done: HostOpResult<AccountCreated> = serde_json::from_value(json!({
-        "status": "completed", "result": {"account": "01M72N8MG00000000000000A02"}
-    }))
-    .unwrap();
-    assert!(matches!(done, HostOpResult::Completed { .. }));
 
     let release: RecoveryReleaseParams =
         serde_json::from_value(json!({"session": "h", "org_id": "o"})).unwrap();
@@ -699,31 +716,31 @@ mod listen_vectors;
 /// refused, never silently dropped (as for launch lines).
 #[test]
 fn gateway_lines_refuse_unknown_fields() {
-    let mut first = serde_json::to_value(GatewayFirstLine {
+    let mut first = serde_json::to_value(WebFirstLine {
         rendezvous: "/tmp/agentic-org/rendezvous.sock".into(),
         instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a2".into(),
         release: None,
     })
     .unwrap();
     let mut ready = serde_json::json!({"v": 1, "event": "ready_for_secrets"});
-    let mut handoff = serde_json::to_value(GatewayHandoff).unwrap();
+    let mut handoff = serde_json::to_value(WebHandoff).unwrap();
     // Each decodes as written, so each refusal below is the extra key's alone.
-    serde_json::from_value::<GatewayFirstLine>(first.clone()).unwrap();
-    serde_json::from_value::<GatewayReadyForSecrets>(ready.clone()).unwrap();
-    serde_json::from_value::<GatewayHandoff>(handoff.clone()).unwrap();
+    serde_json::from_value::<WebFirstLine>(first.clone()).unwrap();
+    serde_json::from_value::<WebReadyForSecrets>(ready.clone()).unwrap();
+    serde_json::from_value::<WebHandoff>(handoff.clone()).unwrap();
     first["db_key"] = serde_json::json!("01".repeat(32));
     ready["grant_key"] = serde_json::json!("secret");
     handoff["app_token"] = serde_json::json!("secret");
-    assert!(serde_json::from_value::<GatewayFirstLine>(first).is_err());
-    assert!(serde_json::from_value::<GatewayReadyForSecrets>(ready).is_err());
-    assert!(serde_json::from_value::<GatewayHandoff>(handoff).is_err());
+    assert!(serde_json::from_value::<WebFirstLine>(first).is_err());
+    assert!(serde_json::from_value::<WebReadyForSecrets>(ready).is_err());
+    assert!(serde_json::from_value::<WebHandoff>(handoff).is_err());
     // Nested: the Landlock report carries exactly its fields too.
     let landlock = serde_json::json!({"v": 1, "event": "ready_for_secrets",
         "landlock": {"abi": 3, "enforcement": "fully_enforced"}});
-    serde_json::from_value::<GatewayReadyForSecrets>(landlock.clone()).unwrap();
+    serde_json::from_value::<WebReadyForSecrets>(landlock.clone()).unwrap();
     let mut extra = landlock;
     extra["landlock"]["grant_key"] = serde_json::json!("secret");
-    assert!(serde_json::from_value::<GatewayReadyForSecrets>(extra).is_err());
+    assert!(serde_json::from_value::<WebReadyForSecrets>(extra).is_err());
 }
 
 /// X-02 §6.2: the chain is hashed in order, so the same blocks in another order are another
@@ -829,4 +846,131 @@ fn host_errors_carry_retry_and_rule_fields_only_when_set() {
     );
     let back: org_proto::ApiError = serde_json::from_value(limited).unwrap();
     assert_eq!(back.retry_after_ms, Some(1500));
+}
+
+#[test]
+fn cli_approval_wire_shapes_round_trip_and_redact_secrets() {
+    let created = CliApprovalCreateResult {
+        approval_id: "0193a5c0-0000-7000-8000-000000000001".into(),
+        url: OneTimeLinkUrl::new("http://127.0.0.1:7420/cli-approve#secret-approval-tok".into())
+            .unwrap(),
+        expires_at_ms: 1_762_766_700_000,
+    };
+    assert!(!format!("{created:?}").contains("secret-approval-tok"));
+    let created_json = serde_json::to_value(&created).unwrap();
+    let created_back: CliApprovalCreateResult = serde_json::from_value(created_json).unwrap();
+    assert_eq!(created_back.url.expose(), created.url.expose());
+
+    let approved = CliApprovalPollResult::Approved {
+        session: SessionHandle::new("native-session-secret".into()).unwrap(),
+        account: "0193a5c0-0000-7000-8000-000000000002".into(),
+        admin: true,
+        orgs: vec![],
+    };
+    assert!(!format!("{approved:?}").contains("native-session-secret"));
+    let approved_json = serde_json::to_value(&approved).unwrap();
+    assert_eq!(approved_json["status"], "approved");
+    let approved_back: CliApprovalPollResult = serde_json::from_value(approved_json).unwrap();
+    assert!(matches!(
+        approved_back,
+        CliApprovalPollResult::Approved { admin: true, .. }
+    ));
+
+    for (val, expected) in [
+        (CliApprovalPollResult::Pending, "pending"),
+        (CliApprovalPollResult::Declined, "declined"),
+        (CliApprovalPollResult::Expired, "expired"),
+    ] {
+        let j = serde_json::to_value(&val).unwrap();
+        assert_eq!(j["status"], expected);
+    }
+
+    let digest = "ab".repeat(32);
+    let decide: crate::browser::BrowserCliApprovalDecideParams = serde_json::from_value(json!({
+        "auth": {
+            "cookie_digest": digest,
+            "proof_digest": digest,
+            "origin": {"scheme": "http", "host": "127.0.0.1", "port": 7420}
+        },
+        "link": "secret-approval-tok",
+        "approve": true
+    }))
+    .unwrap();
+    assert!(!format!("{decide:?}").contains("secret-approval-tok"));
+}
+
+#[test]
+fn local_access_and_tls_enable_wire_shapes_round_trip_and_redact_secrets() {
+    use crate::browser::{
+        AuthModeChanged, BrowserAuthEnable, BrowserAuthEnableParams, BrowserLocalSession,
+        BrowserLocalSessionParams, BrowserOrigin, BrowserTlsEnable, BrowserTlsEnableParams,
+        BrowserTlsEnableResult, Digest32, TlsEnableMode,
+    };
+    use crate::listen::Hsts;
+    use crate::organization::BrowserAuth;
+    use org_proto::web::ListenScheme;
+
+    assert_eq!(BrowserLocalSession::METHOD, "browser.local_session");
+    assert_eq!(BrowserAuthEnable::METHOD, "browser.auth_enable");
+    assert_eq!(BrowserTlsEnable::METHOD, "browser.tls_enable");
+    assert_eq!(crate::event::AUTH_MODE_CHANGED, "auth.mode_changed");
+
+    let origin = BrowserOrigin {
+        scheme: "http".into(),
+        host: "127.0.0.1".into(),
+        port: 8080,
+    };
+    let local = BrowserLocalSessionParams {
+        origin: origin.clone(),
+    };
+    let local_json = serde_json::to_value(&local).unwrap();
+    let _: BrowserLocalSessionParams = serde_json::from_value(local_json).unwrap();
+
+    let auth_enable = BrowserAuthEnableParams {
+        login: "Owner".into(),
+        password: Password::new("super-secret-pass".into()).unwrap(),
+        client_address: "127.0.0.1".parse().unwrap(),
+        cookie_digest: Digest32([0xaa; 32]),
+        proof_digest: Digest32([0xbb; 32]),
+        origin: origin.clone(),
+    };
+    assert!(!format!("{auth_enable:?}").contains("super-secret-pass"));
+    let auth_json = serde_json::to_value(&auth_enable).unwrap();
+    let _: BrowserAuthEnableParams = serde_json::from_value(auth_json).unwrap();
+
+    let tls_supplied = BrowserTlsEnableParams {
+        auth: BrowserAuth::local_authless(origin.clone()),
+        mode: TlsEnableMode::Supplied {
+            cert: "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----".into(),
+            key: TlsPrivateKey::new("PRIVATE-KEY-SECRET-BYTES".into()).unwrap(),
+        },
+        hsts: Some(Hsts::On),
+    };
+    let debug = format!("{tls_supplied:?}");
+    assert!(!debug.contains("PRIVATE-KEY-SECRET-BYTES"));
+    assert!(!debug.contains("BEGIN CERTIFICATE"));
+    let tls_json = serde_json::to_value(&tls_supplied).unwrap();
+    assert_eq!(tls_json["auth"]["local_authless"], true);
+    assert_eq!(tls_json["mode"]["mode"], "supplied");
+    let _: BrowserTlsEnableParams = serde_json::from_value(tls_json).unwrap();
+
+    let tls_result = BrowserTlsEnableResult {
+        scheme: ListenScheme::Https,
+        origin: "https://127.0.0.1:8080".into(),
+        fingerprint: "sha256:00".into(),
+        source: "self_signed".into(),
+        restart_required: true,
+    };
+    let res_json = serde_json::to_value(&tls_result).unwrap();
+    assert_eq!(
+        serde_json::from_value::<BrowserTlsEnableResult>(res_json).unwrap(),
+        tls_result
+    );
+
+    let changed = AuthModeChanged { auth_enabled: true };
+    let ev_json = serde_json::to_value(&changed).unwrap();
+    assert_eq!(
+        serde_json::from_value::<AuthModeChanged>(ev_json).unwrap(),
+        changed
+    );
 }

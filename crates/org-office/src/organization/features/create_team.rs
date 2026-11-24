@@ -45,7 +45,7 @@ impl Feature for CreateTeam {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: OrganizationRead,
+        E::Tx: crate::projects::ports::ProjectsRead,
     {
         decide(uow, here, owner, by, self)
     }
@@ -60,7 +60,7 @@ pub fn decide<E: Engine>(
     command: &CreateTeam,
 ) -> Result<Change, Refusal>
 where
-    E::Tx: OrganizationRead,
+    E::Tx: crate::projects::ports::ProjectsRead,
 {
     stable(&command.id, "the team's ID")?;
     if let Some(parent) = &command.parent {

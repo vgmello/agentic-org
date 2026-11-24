@@ -60,6 +60,20 @@ describe('Resource', () => {
 		expect(r.state).toBe('unavailable');
 	});
 
+	it('marks an office unsupported answer as unsupported rather than a retryable error', async () => {
+		const r = new Resource(async () => {
+			throw {
+				source: 'api',
+				code: 'unsupported',
+				message: 'Update the office to read this view.'
+			};
+		});
+		await settle();
+		expect(r.state).toBe('unsupported');
+		expect(r.data).toBeUndefined();
+		expect(r.message).toBe('Update the office to read this view.');
+	});
+
 	it('allows retry when a read fails temporarily with an unavailable code', async () => {
 		const c = controlled<string[]>();
 		const r = new Resource(c.load);

@@ -23,9 +23,8 @@ export interface AccessPerson {
 	active: boolean;
 	state: AccessState;
 	/**
-	 * Set when `state` is `signed_in`: the account's username. Server-controlled: sent only when the server decides the
-	 * viewer may see it (who may see usernames is an open owner decision, recorded in the task contract); the page
-	 * shows it only when present.
+	 * Set when `state` is `signed_in`: the account's username. Shown only to the owner, the administrator and the
+	 * person themself; the server omits it for other viewers and the UI enforces the same rule.
 	 */
 	username?: string;
 	/** Set when `state` is `invited`: RFC 3339. The link works until then. */
@@ -35,8 +34,7 @@ export interface AccessPerson {
 /** The instance's administrator, who may be a person here or none yet. */
 export interface AccessAdministrator {
 	/**
-	 * The administrator account's username. Server-controlled like `AccessPerson.username`: the server decides whether
-	 * this viewer may see it (open owner decision, task contract).
+	 * The administrator account's username. Shown only to the owner, the administrator and the person themself.
 	 */
 	username?: string;
 	/** The person the account is tied to in this organization, when it has one. */
@@ -52,6 +50,8 @@ export interface AccessOverview {
 	/** Every person in the organization, deactivated people included. Agents are never listed: they have no account. */
 	people: AccessPerson[];
 	viewer: {
+		/** The viewer's own member ID in this organization, when tied to a person here. */
+		memberId?: string;
 		/** The viewer holds ownership: the owner's fact links to the org chart, where ownership moves. */
 		isOwner: boolean;
 		/** The viewer is the instance's administrator: the administrator's fact links to General. */

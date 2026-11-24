@@ -1,0 +1,32 @@
+// Prose and ordinary code the engine-boundary guard must not report.
+// This file is not compiled; it is read as text by the guard.
+
+/// Doc comments may describe the engine and its SQL: `rusqlite`, "SELECT x FROM t",
+/// INSERT INTO accounts, CREATE TABLE and DELETE FROM are prose here.
+#[cfg_attr(test, doc = "SELECT an account FROM the list, INSERT INTO the registry")]
+fn prose() {
+    let _ = "select an office from the list";
+    let _ = "delete the folder and restart";
+    let _ = "update the record";
+    let _ = "create the organization";
+    let _ = "drop the old store";
+    let _ = "commit";
+    let _ = "no rusqlite here";
+    let _ = "rusqlite";
+    let _ = "host-registry.db";
+    let _ = "schema.sql.bak";
+    let _ = "with the office secrets key";
+    let _ = "explain why the host stopped";
+    let _ = b"the store's bytes";
+}
+
+mod engine_free {
+    pub struct Sqlite;
+    pub fn rusqlite_like() {}
+}
+
+fn a_name_close_to_the_engine() {
+    engine_free::rusqlite_like();
+    let sqlite = engine_free::Sqlite;
+    let _ = sqlite;
+}

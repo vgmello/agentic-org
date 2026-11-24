@@ -1,35 +1,54 @@
-//! Private registry persistence. Callers must hold host.lock and the instance lock.
-//! The registry is the host's own database (decision D1) and holds no account
-//! until setup registers the first administrator. The registered start
-//! (`crate::registered`) creates it once per instance and refuses to recreate it.
+//! Engine-neutral host-registry persistence contract (ADR-0018).
+//!
+//! [`HostStore`] is the host's storage port; [`Error`] and [`StoreFault`] carry no driver
+//! types. The SQLite adapter lives under [`sqlite`] (the only module in `org-host` that
+//! imports `rusqlite` or holds SQL), [`memory`] provides a second in-memory adapter in
+//! tests, and `contract_tests` runs one conformance suite against both.
 
-pub(crate) mod accounts;
-mod administrator;
-mod clock;
-pub(crate) mod journal;
-pub(crate) mod links;
-pub(crate) mod lockout;
-pub(crate) mod provisioning;
-pub(crate) mod recovery;
-mod schema;
-pub(crate) mod sessions;
+pub(crate) mod sqlite;
+
 #[cfg(test)]
-mod tests;
-pub(crate) mod web_tls;
+mod contract_tests;
+#[cfg(test)]
+pub(crate) mod memory;
 
-use std::fs::{self, File, OpenOptions};
+use std::collections::BTreeSet;
 use std::io;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
+use org_office_launch::recovery::PublicRecord;
+
+use crate::accounts::identity::{AccountId, LoginKey};
+use crate::accounts::store::AccountStore;
 use crate::host_secrets::HostSecrets;
-use rusqlite::{config::DbConfig, Connection, OpenFlags, TransactionBehavior};
+use crate::links::{Issued, LinkKind, OneTimeLinks, Subject};
+use crate::sessions::BrowserSessions;
 
-const DB: &str = "host-registry.db";
-const TMP: &str = "host-registry.db.tmp";
-/// The registry schema version. There is no migration from earlier registries.
-const SCHEMA_VERSION: i64 = 1;
+pub(crate) use sqlite::HostDb;
+
+/// Engine-neutral class of storage failure (ADR-0018).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StoreFault {
+    /// The store is busy or locked by another writer (transient).
+    Busy,
+    /// A transient I/O failure in the storage engine.
+    TransientIo,
+    /// The storage engine ran out of memory (transient).
+    OutOfMemory,
+    /// A uniqueness, check, or foreign-key constraint refused the write.
+    Constraint,
+    /// The store is corrupt or not a valid database.
+    Corrupt,
+    /// Any other storage engine failure.
+    Other,
+}
+
+impl StoreFault {
+    /// Whether this storage fault may pass on its own and warrants retry rather than
+    /// permanent refusal.
+    pub(crate) fn is_transient(self) -> bool {
+        matches!(self, Self::Busy | Self::TransientIo | Self::OutOfMemory)
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Error {
@@ -47,27 +66,22 @@ pub(crate) enum Error {
     /// The registry predates a table this build needs and holds a different one.
     Outdated,
     Io(io::ErrorKind),
-    Sql(rusqlite::ErrorCode),
+    Store(StoreFault),
     Secret(crate::host_secrets::Error),
 }
+
 impl From<crate::accounts::verifier::InvalidVerifier> for Error {
     fn from(_: crate::accounts::verifier::InvalidVerifier) -> Self {
         Self::Unsafe
     }
 }
+
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Self::Io(e.kind())
     }
 }
-impl From<rusqlite::Error> for Error {
-    fn from(e: rusqlite::Error) -> Self {
-        Self::Sql(
-            e.sqlite_error_code()
-                .unwrap_or(rusqlite::ErrorCode::Unknown),
-        )
-    }
-}
+
 impl From<crate::host_secrets::Error> for Error {
     fn from(e: crate::host_secrets::Error) -> Self {
         Self::Secret(e)
@@ -79,379 +93,448 @@ pub(crate) struct HostDbInit {
     pub(crate) instance_id: String,
     pub(crate) clock_high_ms: i64,
 }
-pub(crate) struct HostDb {
-    connection: Mutex<Connection>,
-    instance_id: String,
-}
-fn cleanup_uncommitted_registry(home: &Path) -> Result<(), Error> {
-    for suffix in ["-wal", "-shm", "-journal"] {
-        let path = home.join(format!("{DB}{suffix}"));
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e.into()),
-        };
-        if !metadata.is_file() || metadata.uid() != crate::home::euid() {
-            return Err(Error::Unsafe);
-        }
-        fs::remove_file(path)?;
-        crate::host_log::log(&format!("removed orphan host registry sidecar {suffix}"));
+
+/// Engine-neutral account snapshot types.
+pub(crate) mod accounts {
+    use super::journal::Verifier;
+    use crate::accounts::identity::AccountId;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(crate) struct Link {
+        pub(in crate::hostdb) org_id: String,
+        pub(in crate::hostdb) member_id: String,
     }
-    // Interrupted creates leave only temps; no installed registry needs rollback recovery.
-    for name in [
-        TMP,
-        "host-registry.db.tmp-journal",
-        "host-registry.db.tmp-wal",
-        "host-registry.db.tmp-shm",
-    ] {
-        match fs::remove_file(home.join(name)) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
+
+    /// Stored authority, including revoked accounts; office IDs come from the catalog later.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(crate) struct Account {
+        pub(in crate::hostdb) account_id: AccountId,
+        pub(in crate::hostdb) login: String,
+        pub(in crate::hostdb) admin: bool,
+        pub(in crate::hostdb) revoked_at_ms: Option<i64>,
+        pub(in crate::hostdb) password_changed_at_ms: i64,
+        pub(in crate::hostdb) links: Vec<Link>,
+        pub(in crate::hostdb) time_zone: Option<String>,
+        pub(in crate::hostdb) last_org_id: Option<String>,
+    }
+
+    /// An owned PHC for hashing outside the database lock; deliberately has no Debug.
+    pub(crate) struct Credentials {
+        pub(in crate::hostdb) account: Account,
+        pub(in crate::hostdb) verifier: Verifier,
+    }
+
+    impl Link {
+        pub(crate) fn org_id(&self) -> &str {
+            &self.org_id
+        }
+        pub(crate) fn member_id(&self) -> &str {
+            &self.member_id
         }
     }
-    Ok(())
+
+    impl Account {
+        pub(crate) fn account_id(&self) -> &str {
+            self.account_id.as_str()
+        }
+        pub(crate) fn login(&self) -> &str {
+            &self.login
+        }
+        pub(crate) fn admin(&self) -> bool {
+            self.admin
+        }
+        pub(crate) fn revoked_at_ms(&self) -> Option<i64> {
+            self.revoked_at_ms
+        }
+        pub(crate) fn password_changed_at_ms(&self) -> i64 {
+            self.password_changed_at_ms
+        }
+        pub(crate) fn links(&self) -> &[Link] {
+            &self.links
+        }
+        pub(crate) fn time_zone(&self) -> Option<&str> {
+            self.time_zone.as_deref()
+        }
+        pub(crate) fn last_org_id(&self) -> Option<&str> {
+            self.last_org_id.as_deref()
+        }
+    }
+
+    impl Credentials {
+        pub(crate) fn account(&self) -> &Account {
+            &self.account
+        }
+        /// Borrow the checked verifier; password hashing belongs outside the registry lock.
+        pub(crate) fn verifier(&self) -> &Verifier {
+            &self.verifier
+        }
+    }
 }
 
-impl HostDb {
-    /// Protected provisioning only. Recheck administrator authority inside the
-    /// transaction; a legacy/member profile cannot establish organization ownership.
-    pub(crate) fn establish_organization_owner(
+/// Engine-neutral operation journal types.
+pub(crate) mod journal {
+    use super::Error;
+    use org_host_control::{journal::Journaled, HostOpResult};
+
+    pub(in crate::hostdb) const DAY: i64 = 86_400_000;
+    pub(crate) type Stored = HostOpResult<serde_json::Value>;
+
+    pub(crate) struct Attempt<'a> {
+        pub(crate) id: &'a str,
+        pub(crate) kind: &'static str,
+        pub(crate) fingerprint: [u8; 32],
+        pub(crate) account: &'a str,
+    }
+
+    impl<'a> Attempt<'a> {
+        pub(crate) fn new<J: Journaled>(op: &'a J, account: &'a str) -> Result<Self, Error> {
+            Ok(Self {
+                id: op.operation_id(),
+                kind: J::METHOD,
+                fingerprint: org_host_control::journal::fingerprint(op)
+                    .map_err(|_| Error::Unsafe)?,
+                account,
+            })
+        }
+    }
+
+    pub(crate) use crate::accounts::verifier::Verifier;
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) enum Lookup {
+        Vacant,
+        Replay(Stored),
+        NeedsVerification { verifier: Verifier, stored: Stored },
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) struct Effect {
+        pub(crate) stored: Stored,
+        /// Created account, not the acting account. Required only for a successful account.create.
+        pub(crate) verifier: Option<(String, Verifier)>,
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) enum Write {
+        Committed(Stored),
+        Existing(Lookup),
+    }
+
+    pub(in crate::hostdb) fn id_time(id: &str) -> Result<i64, Error> {
+        org_proto::uuid_v7_time_ms(id)
+            .and_then(|n| i64::try_from(n).ok())
+            .ok_or(Error::InvalidId)
+    }
+}
+
+/// Engine-neutral login lockout types.
+pub(crate) mod lockout {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub(crate) enum Socket {
+        Control,
+        Local,
+    }
+
+    impl Socket {
+        pub(in crate::hostdb) fn as_str(self) -> &'static str {
+            match self {
+                Self::Control => "control",
+                Self::Local => "local",
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Outcome {
+        Failure,
+        Success,
+        /// Only an already authorized password/reset operation may request this.
+        Reset,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub(crate) struct State {
+        pub(in crate::hostdb) now_ms: i64,
+        pub(in crate::hostdb) locked: bool,
+        pub(in crate::hostdb) until_ms: i64,
+    }
+
+    impl State {
+        /// How long until the key accepts another attempt; zero when unlocked.
+        pub(crate) fn retry_after_ms(&self) -> i64 {
+            self.until_ms.saturating_sub(self.now_ms).max(0)
+        }
+        pub(crate) fn now_ms(&self) -> i64 {
+            self.now_ms
+        }
+        pub(crate) fn is_locked(&self) -> bool {
+            self.locked
+        }
+    }
+}
+
+/// Engine-neutral selected HQ provisioning types.
+pub(crate) mod provisioning {
+    use org_proto::selected_bootstrap::PreparedV1;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct Reservation {
+        pub operation_id: String,
+        pub account: String,
+        pub fingerprint: [u8; 32],
+        pub prepared: PreparedV1,
+        pub owner_member: String,
+        pub recovery_handle: String,
+        pub key_fingerprint: Option<String>,
+        pub linked: bool,
+    }
+
+    /// Which of a plan's two catalog-unique values another create already holds.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum Taken {
+        Name,
+        Slug,
+    }
+}
+
+/// Engine-neutral REC-DEL-1 recovery ledger types.
+pub(crate) mod recovery {
+    use org_office_launch::recovery::Request;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum State {
+        Pending,
+        Delivered,
+        AckPending,
+        Acknowledged,
+    }
+
+    impl From<State> for org_host_control::recovery::DeliveryState {
+        fn from(s: State) -> Self {
+            match s {
+                State::Pending => Self::Pending,
+                State::Delivered => Self::Delivered,
+                State::AckPending => Self::AckPending,
+                State::Acknowledged => Self::Acknowledged,
+            }
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct Ledger {
+        pub version: u32,
+        pub binding: Request,
+        pub public_key: String,
+        pub package_sha256: String,
+        pub state: State,
+        pub ordinal: i64,
+        pub first_shown_ms: Option<i64>,
+        pub last_redelivered_ms: Option<i64>,
+        pub redelivery_count: i64,
+        pub acknowledged_ms: Option<i64>,
+        pub acknowledged_by: Option<String>,
+    }
+}
+
+/// Engine-neutral browser-session schema refusal text.
+pub(crate) mod sessions {
+    /// What the operator is told when `ensure_schema` refuses.
+    pub(crate) const OUTDATED: &str =
+        "host database from an earlier development build; run `agentic-org setup` on a new instance";
+}
+
+/// Engine-neutral web TLS persistence types.
+pub(crate) mod web_tls {
+    use org_host_control::ops::TlsRefusal;
+    use org_host_control::HostOpResult;
+
+    /// Who made the stored pair: the instance itself, or the operator (setup's configuration, or
+    /// `tls.set`).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum Source {
+        Made,
+        Supplied,
+    }
+
+    impl Source {
+        pub(crate) fn as_str(self) -> &'static str {
+            match self {
+                Source::Made => "made",
+                Source::Supplied => "supplied",
+            }
+        }
+
+        pub(crate) fn parse(text: &str) -> Option<Self> {
+            match text {
+                "made" => Some(Source::Made),
+                "supplied" => Some(Source::Supplied),
+                _ => None,
+            }
+        }
+    }
+
+    /// The stored pair, as the registry holds it.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(crate) struct StoredPair {
+        pub(crate) source: Source,
+        /// The chain, in the normal form `web_tls::check` returns.
+        pub(crate) cert_pem: String,
+        /// Names the key in the host's secrets (`tls.<hex>`).
+        pub(crate) pair_fp: [u8; 32],
+        pub(crate) set_at_ms: i64,
+    }
+
+    /// `tls.set`'s journaled result: `completed` (`{}`), or `rejected` with the one refusal that
+    /// is stored, `tls_key_mismatch`.
+    pub(crate) type TlsStored = HostOpResult<serde_json::Value, TlsRefusal>;
+
+    /// A `tls.set` journal lookup.
+    #[derive(Debug, PartialEq)]
+    pub(crate) enum TlsLookup {
+        Vacant,
+        Replay(TlsStored),
+    }
+}
+
+/// Engine-neutral host-registry persistence contract (ADR-0018).
+///
+/// Consuming host subsystems depend on this trait (or its focused sub-contracts
+/// [`AccountStore`], [`OneTimeLinks`], [`BrowserSessions`]) rather than on SQLite internals.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) trait HostStore:
+    AccountStore + OneTimeLinks + BrowserSessions + Send + Sync
+{
+    // Instance & organization ownership
+    fn verify_instance(&self, instance: &str) -> Result<(), Error>;
+    fn establish_organization_owner(
         &self,
         administrator: &accounts::Account,
         org: &str,
         member: &str,
-    ) -> Result<(), Error> {
-        if !org_office_launch::is_storage_id(org) || !org_proto::is_valid_member_id(member) {
-            return Err(Error::Unsafe);
-        }
-        let mut db = self.connection.lock().map_err(|_| Error::Unsafe)?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let id = administrator.account_id();
-        let admin: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1 AND admin=1 AND revoked_at_ms IS NULL)", [id], |r|r.get(0))?;
-        if !admin {
-            return Err(Error::Unsafe);
-        }
-        tx.execute(
-            "INSERT INTO org_owners VALUES(?1,?2,?3) ON CONFLICT(org_id) DO NOTHING",
-            (org, id, member),
-        )?;
-        tx.execute(
-            "INSERT INTO account_links VALUES(?1,?2,?3) ON CONFLICT(account_id,org_id) DO NOTHING",
-            (id, org, member),
-        )?;
-        let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM org_owners o JOIN account_links l ON l.account_id=o.account AND l.org_id=o.org_id AND l.member_id=o.owner_member_id WHERE o.org_id=?1 AND o.account=?2 AND o.owner_member_id=?3)", (org,id,member), |r|r.get(0))?;
-        if !valid {
-            return Err(Error::Conflict);
-        }
-        tx.commit()?;
-        Ok(())
-    }
-    pub(crate) fn verify_selected_owner(
+    ) -> Result<(), Error>;
+    fn verify_selected_owner(&self, org: &str, account: &str, member: &str) -> Result<(), Error>;
+
+    // Accounts & administrator
+    fn has_administrator(&self) -> Result<bool, Error>;
+    fn account_credentials(
         &self,
-        org: &str,
+        login_key: &LoginKey,
+    ) -> Result<Option<accounts::Credentials>, Error>;
+    fn account_authority(&self, account_id: &AccountId)
+        -> Result<Option<accounts::Account>, Error>;
+
+    // One-time links with administrator guard
+    fn issue_unless_administrator(
+        &self,
+        kind: LinkKind,
+        subject: &Subject,
+        now_ms: i64,
+    ) -> Result<Option<Issued>, crate::links::Error>;
+
+    // Login lockout
+    fn login_lockout(
+        &self,
+        socket: lockout::Socket,
+        key: &str,
+        wall_ms: u64,
+    ) -> Result<lockout::State, Error>;
+    fn record_login(
+        &self,
+        socket: lockout::Socket,
+        key: &str,
+        wall_ms: u64,
+        outcome: lockout::Outcome,
+    ) -> Result<lockout::State, Error>;
+    fn record_login_capped(
+        &self,
+        socket: lockout::Socket,
+        key: &str,
+        wall_ms: u64,
+        outcome: lockout::Outcome,
+        cap_ms: i64,
+    ) -> Result<lockout::State, Error>;
+    fn prune_login_lockouts(&self, wall_ms: u64) -> Result<usize, Error>;
+
+    // Provisioning
+    fn provisioning_taken(
+        &self,
+        name: &str,
+        slug: &str,
+    ) -> Result<Option<provisioning::Taken>, Error>;
+    fn provisioning_known(&self, operation: &str) -> Result<bool, Error>;
+    fn provisioning_linked_to(&self, org: &str)
+        -> Result<Option<provisioning::Reservation>, Error>;
+    fn provisioning_for_org(&self, org: &str) -> Result<Option<provisioning::Reservation>, Error>;
+    fn provisioning_reserved(&self) -> Result<Vec<provisioning::Reservation>, Error>;
+    fn provisioning_of(&self, account: &str) -> Result<Vec<provisioning::Reservation>, Error>;
+    fn provisioning_lookup(
+        &self,
         account: &str,
-        member: &str,
-    ) -> Result<(), Error> {
-        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
-        let valid: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM org_owners o JOIN accounts a ON a.account_id=o.account JOIN account_links l ON l.account_id=a.account_id AND l.org_id=o.org_id WHERE o.org_id=?1 AND o.account=?2 AND o.owner_member_id=?3 AND l.member_id=o.owner_member_id AND a.revoked_at_ms IS NULL)", (org,account,member), |r|r.get(0))?;
-        if valid {
-            Ok(())
-        } else {
-            Err(Error::Unsafe)
-        }
-    }
-    pub(crate) fn verify_instance(&self, instance: &str) -> Result<(), Error> {
-        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
-        let recorded: String =
-            db.query_row("SELECT value FROM meta WHERE key='instance_id'", [], |r| {
-                r.get(0)
-            })?;
-        if recorded != instance {
-            return Err(Error::Unsafe);
-        }
-        Ok(())
-    }
-
-    pub(crate) fn create(
-        home: &Path,
-        secrets: &dyn HostSecrets,
-        init: &HostDbInit,
-    ) -> Result<Self, Error> {
-        if !crate::instance::registry::valid_instance_id(&init.instance_id) {
-            return Err(Error::InvalidId);
-        }
-        let home = checked_home(home)?;
-        absent(&home.join(DB), Error::Exists)?;
-        let names = secrets.list()?;
-        // Pending recovery custody can precede writer reservation. Its presence,
-        // even if malformed, requires forward repair before any cleanup/reset.
-        if names.iter().any(|name| {
-            let name = name.as_str();
-            name == "writer-device" || name.starts_with("writer.") || name.starts_with("recovery.")
-        }) {
-            return Err(Error::Unsafe);
-        }
-        cleanup_uncommitted_registry(&home)?;
-        // A .put.* temp left when put's own cleanup failed is invisible to list/delete;
-        // DevSecrets::open removes it on the next open (Rowan's accepted residual).
-        for name in names {
-            secrets.delete(&name)?;
-        }
-        checkpoint(1)?;
-        checkpoint(2)?;
-        // The registry is plain SQLite protected by the account and file permissions
-        // (ADR-0016); no database key is generated or stored.
-        checkpoint(3)?;
-        let path = home.join(TMP);
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(&path)?;
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        drop(file); // A later close on this inode would cancel SQLite's POSIX locks.
-        let mut db = connect(&path)?;
-        db.pragma_update(None, "journal_mode", "DELETE")?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute_batch(schema::DDL)?;
-        tx.execute_batch(provisioning::DDL)?;
-        tx.execute_batch(recovery::DDL)?;
-        tx.execute_batch(links::DDL)?;
-        sessions::create_schema(&tx)?;
-        web_tls::create_schema(&tx)?;
-        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-        for (name, value) in [
-            ("instance_id", init.instance_id.clone()),
-            ("clock_high_ms", init.clock_high_ms.to_string()),
-        ] {
-            tx.execute("INSERT INTO meta(key,value) VALUES (?1,?2)", (name, value))?;
-        }
-        checkpoint(7)?; // A failure before COMMIT must roll back DDL and metadata together.
-        tx.commit()?;
-        enter_wal(&db)?;
-        db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
-        #[cfg(test)]
-        assert!(!db.db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)?);
-        db.close().map_err(|(_, e)| Error::from(e))?;
-        checkpoint(4)?;
-        for name in ["host-registry.db.tmp-wal", "host-registry.db.tmp-shm"] {
-            absent(&home.join(name), Error::Unsafe)?;
-        }
-        checked_file(&path, false)?
-            .ok_or(Error::Empty)?
-            .sync_all()?;
-        checkpoint(9)?; // Immediately before publishing the registry.
-        install(&path, &home.join(DB))?;
-        checkpoint(10)?; // Process death after rename must reopen the published registry.
-        File::open(&home)?.sync_all()?;
-        checkpoint(5)?;
-        let opened = Self::open(&home, secrets)?;
-        checkpoint(6)?;
-        Ok(opened)
-    }
-    /// Opens the plain-SQLite registry. `_custody` is not consulted: the registry
-    /// has no database key (ADR-0016). The parameter remains only until the
-    /// service caller drops it with the launch-contract cleanup.
-    pub(crate) fn open(home: &Path, _custody: &dyn HostSecrets) -> Result<Self, Error> {
-        let home = checked_home(home)?;
-        absent(&home.join("host-registry.db-journal"), Error::Unsafe)?;
-        let path = home.join(DB);
-        checked_file(&path, false)?.ok_or(Error::Empty)?;
-        for path in [
-            &path,
-            &home.join("host-registry.db-wal"),
-            &home.join("host-registry.db-shm"),
-        ] {
-            if let Some(file) = checked_file(path, true)? {
-                file.set_permissions(fs::Permissions::from_mode(0o600))?;
-            }
-        }
-        checkpoint(8)?; // Test the SQLite no-follow fence after validation.
-        let mut db = connect(&path)?;
-        let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version != SCHEMA_VERSION {
-            return Err(Error::Version);
-        }
-        for ddl in [schema::DDL, provisioning::DDL, recovery::DDL, links::DDL] {
-            require_schema(&db, ddl)?;
-        }
-        recovery::verify_all(&db)?;
-        let instance_id: String =
-            db.query_row("SELECT value FROM meta WHERE key='instance_id'", [], |r| {
-                r.get(0)
-            })?;
-        // Every digest is bound to this ID, so a tampered value is refused rather
-        // than used.
-        if !crate::instance::registry::valid_instance_id(&instance_id) {
-            return Err(Error::InvalidId);
-        }
-        sessions::ensure_schema(&mut db)?;
-        web_tls::ensure_schema(&mut db)?;
-        enter_wal(&db)?;
-        db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
-        Ok(Self {
-            connection: Mutex::new(db),
-            instance_id,
-        })
-    }
-}
-
-/// A version number alone is not evidence that an unknown or corrupt database is
-/// this host's registry: every table and index must match its source DDL.
-fn require_schema(db: &Connection, source: &str) -> Result<(), Error> {
-    for ddl in source.split(';').map(str::trim).filter(|s| !s.is_empty()) {
-        let words: Vec<_> = ddl.split_whitespace().collect();
-        let (kind, name) = match words.get(1..3) {
-            Some(["TABLE", name]) => ("table", name),
-            Some(["INDEX", name]) => ("index", name),
-            Some(["UNIQUE", "INDEX"]) => ("index", words.get(3).ok_or(Error::Unsafe)?),
-            _ => return Err(Error::Unsafe),
-        };
-        let actual: String = db
-            .query_row(
-                "SELECT sql FROM sqlite_schema WHERE type=?1 AND name=?2",
-                (kind, name),
-                |r| r.get(0),
-            )
-            .map_err(|_| Error::Unsafe)?;
-        if actual.split_whitespace().ne(ddl.split_whitespace()) {
-            return Err(Error::Unsafe);
-        }
-    }
-    Ok(())
-}
-
-#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
-impl HostDb {
-    /// Tests only: an account as a redeemed registration link will create it (A3).
-    pub(crate) fn seed_account(
+        operation: &str,
+    ) -> Result<Option<provisioning::Reservation>, Error>;
+    fn provisioning_offices(&self) -> Result<BTreeSet<String>, Error>;
+    fn provisioning(
         &self,
-        account_id: &str,
-        login: &str,
-        verifier: &journal::Verifier,
-        admin: bool,
-        at_ms: i64,
-    ) -> Result<(), Error> {
-        use crate::accounts::identity::{AccountId, LoginKey};
-        let id = AccountId::parse(account_id).map_err(|_| Error::InvalidId)?;
-        let key = LoginKey::new(login).map_err(|_| Error::Unsafe)?;
-        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
-        db.execute(
-            "INSERT INTO accounts VALUES (?1,?2,?3,?4,?5,?6,?6,NULL)",
-            (
-                id.as_str(),
-                key.as_str(),
-                login,
-                verifier.expose(),
-                i64::from(admin),
-                at_ms,
-            ),
-        )?;
-        Ok(())
-    }
-}
+        account: &accounts::Account,
+        operation: &str,
+        fingerprint: &[u8; 32],
+        wall: i64,
+    ) -> Result<Option<provisioning::Reservation>, Error>;
+    fn reserve_provisioning(
+        &self,
+        account: &accounts::Account,
+        frozen: &provisioning::Reservation,
+    ) -> Result<provisioning::Reservation, Error>;
+    fn provision_key_stored(
+        &self,
+        r: &provisioning::Reservation,
+        fingerprint: &str,
+    ) -> Result<(), Error>;
+    fn provision_linked(&self, r: &provisioning::Reservation) -> Result<(), Error>;
 
-fn absent(path: &Path, present: Error) -> Result<(), Error> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => Err(present),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.into()),
-    }
-}
-fn enter_wal(db: &Connection) -> Result<(), Error> {
-    let mode: String = db.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
-    require_wal(&mode)
-}
-fn require_wal(mode: &str) -> Result<(), Error> {
-    // A VFS can return its unchanged mode instead of accepting WAL.
-    if !mode.eq_ignore_ascii_case("wal") {
-        return Err(Error::Unsafe);
-    }
-    Ok(())
-}
+    // Recovery
+    fn recovery_state(&self, operation: &str) -> Result<Option<recovery::State>, Error>;
+    fn recovery_observed(&self, operation: &str) -> Result<recovery::Ledger, Error>;
+    fn recovery_source(&self, org: &str) -> Result<provisioning::Reservation, Error>;
+    fn recovery_status(
+        &self,
+        expected: &recovery::Ledger,
+        after: i64,
+    ) -> Result<org_host_control::recovery::StatusResult, Error>;
+    fn recovery_prepare(&self, public: &PublicRecord) -> Result<recovery::Ledger, Error>;
+    fn recovery_delivered(
+        &self,
+        expected: &recovery::Ledger,
+        account: &str,
+        redeliver: bool,
+        wall: i64,
+    ) -> Result<recovery::Ledger, Error>;
+    fn recovery_ack_intent(
+        &self,
+        expected: &recovery::Ledger,
+        account: &str,
+        wall: i64,
+    ) -> Result<recovery::Ledger, Error>;
+    fn recovery_reconcile(&self, custody: &dyn HostSecrets) -> Result<(), Error>;
 
-fn checked_home(home: &Path) -> Result<PathBuf, Error> {
-    if !home.is_absolute() {
-        return Err(Error::Unsafe);
-    }
-    let resolved = home.canonicalize()?;
-    let m = fs::symlink_metadata(home)?;
-    if !m.is_dir() || m.uid() != crate::home::euid() || m.mode() & 0o7777 != 0o700 {
-        return Err(Error::Unsafe);
-    }
-    Ok(resolved)
-}
-fn checked_file(path: &Path, empty_ok: bool) -> Result<Option<File>, Error> {
-    let file = match OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
-        .open(path)
-    {
-        Ok(file) => file,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
-    let m = file.metadata()?;
-    if !m.is_file() || m.uid() != crate::home::euid() || m.nlink() != 1 {
-        return Err(Error::Unsafe);
-    }
-    if !empty_ok && m.len() == 0 {
-        return Err(Error::Empty);
-    }
-    Ok(Some(file))
-}
-/// The first 16 bytes of every SQLite database file.
-const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
-/// Refuses a main file that is not empty and not a SQLite database before SQLite opens it.
-/// With a WAL beside it, SQLite reads page 1 from the log and would accept a main file that
-/// is not a database; a later checkpoint would then write the log into that file. An empty
-/// file passes: only `create` connects to one (its fresh temporary file), and `open` refuses
-/// an empty registry through `checked_file` first.
-fn check_database_header(path: &Path) -> Result<(), Error> {
-    use std::io::Read;
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
-        .open(path)?;
-    let mut header = Vec::with_capacity(SQLITE_HEADER.len());
-    file.take(SQLITE_HEADER.len() as u64)
-        .read_to_end(&mut header)?;
-    if header.is_empty() || header == SQLITE_HEADER {
-        Ok(())
-    } else {
-        Err(Error::Sql(rusqlite::ErrorCode::NotADatabase))
-    }
-}
-fn connect(path: &Path) -> Result<Connection, Error> {
-    check_database_header(path)?;
-    let db = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-    )?;
-    db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
-    db.pragma_update(None, "busy_timeout", 5000)?;
-    db.query_row("SELECT count(*) FROM sqlite_schema", [], |r| {
-        r.get::<_, i64>(0)
-    })?;
-    db.execute_batch("PRAGMA synchronous=FULL; PRAGMA fullfsync=ON; PRAGMA checkpoint_fullfsync=ON; PRAGMA foreign_keys=ON;")?;
-    Ok(db)
-}
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-fn install(from: &Path, to: &Path) -> Result<(), Error> {
-    use std::os::unix::ffi::OsStrExt;
-    let from = std::ffi::CString::new(from.as_os_str().as_bytes()).map_err(|_| Error::Unsafe)?;
-    let to = std::ffi::CString::new(to.as_os_str().as_bytes()).map_err(|_| Error::Unsafe)?;
-    // Exclusive rename never overwrites.
-    org_platform::fs::rename_noreplace(&from, &to)?;
-    Ok(())
-}
-fn checkpoint(step: u8) -> Result<(), Error> {
-    #[cfg(test)]
-    tests::checkpoint(step)?;
-    let _ = step;
-    Ok(())
+    // Web TLS
+    fn web_tls_pair(&self) -> Result<Option<web_tls::StoredPair>, Error>;
+    fn set_web_tls_pair(&self, pair: &web_tls::StoredPair) -> Result<(), Error>;
+    fn tls_set_lookup(
+        &self,
+        op: &journal::Attempt<'_>,
+        wall_ms: i64,
+    ) -> Result<web_tls::TlsLookup, Error>;
+    fn tls_set_write(
+        &self,
+        op: &journal::Attempt<'_>,
+        wall_ms: i64,
+        stored: &web_tls::TlsStored,
+        pair: Option<&web_tls::StoredPair>,
+    ) -> Result<Option<web_tls::TlsStored>, Error>;
 }

@@ -1,4 +1,8 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { membersApi } from '$lib/modules/members/api';
+import { orgApi } from '$lib/modules/organization/api';
+import { createHttpOrgChartApi } from './http-api';
 import type { OrgChart } from './types';
 
 /**
@@ -23,9 +27,25 @@ export interface OrgChartApi {
 	): Promise<void>;
 }
 
-// The web API does not serve these yet: every call refuses. Under `bun run dev:mock`,
-// e2e/fakes/modules/org-chart.ts stands in for this file.
-export const orgChartApi: OrgChartApi = {
-	chart: unavailableCall,
-	changeManager: unavailableCall
-};
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayOrgChartApi = createHttpOrgChartApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	orgApi,
+	membersApi
+});
+
+// Production org-chart API backed by live org snapshot and `members/set-reports-to`.
+// Under `bun run dev:mock`, e2e/fakes/modules/org-chart.ts stands in for this file.
+export const orgChartApi: OrgChartApi = Object.freeze<OrgChartApi>({
+	chart: (orgId) => (signedInSession() ? gatewayOrgChartApi.chart(orgId) : unavailableCall()),
+	changeManager: (orgId, employeeId, managerId, expectedRevision) =>
+		signedInSession()
+			? gatewayOrgChartApi.changeManager(orgId, employeeId, managerId, expectedRevision)
+			: unavailableCall()
+});

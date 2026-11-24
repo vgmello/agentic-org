@@ -5,7 +5,7 @@
       "name": "reserved creation is accepted",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "state": "reserved",
           "outcome": "accepted"
@@ -14,7 +14,7 @@
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "state": "reserved",
           "outcome": "accepted"
@@ -26,7 +26,7 @@
       "name": "linked creation completed",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "state": "linked",
           "outcome": "completed",
@@ -41,7 +41,7 @@
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "state": "linked",
           "outcome": "completed",
@@ -59,7 +59,7 @@
       "name": "abandoned creation is final without outcome",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "state": "abandoned"
         }
@@ -67,7 +67,7 @@
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "state": "abandoned"
         },
@@ -78,7 +78,7 @@
       "name": "stored invalid_name refusal",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "outcome": "rejected",
           "error": {
@@ -90,7 +90,7 @@
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "outcome": "rejected",
           "error": {
@@ -105,7 +105,7 @@
       "name": "office.restart completed without create state",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "outcome": "completed",
           "result": {}
@@ -114,7 +114,7 @@
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "outcome": "completed",
           "result": {}
@@ -126,7 +126,7 @@
       "name": "operation reuse never replaces identity",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "outcome": "rejected",
           "error": {
@@ -138,7 +138,7 @@
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "outcome": "rejected",
           "error": {
@@ -153,7 +153,7 @@
       "name": "org stored committed outcome",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "org",
           "outcome": "completed",
           "result": {}
@@ -162,7 +162,7 @@
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "org",
           "outcome": "completed",
           "result": {}
@@ -174,7 +174,7 @@
       "name": "work stored committed outcome",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "work",
           "outcome": "completed",
           "result": {}
@@ -183,7 +183,7 @@
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "work",
           "outcome": "completed",
           "result": {}
@@ -195,7 +195,7 @@
       "name": "msg stored committed outcome",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "msg",
           "outcome": "completed",
           "result": {}
@@ -204,7 +204,7 @@
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "msg",
           "outcome": "completed",
           "result": {}
@@ -216,7 +216,7 @@
       "name": "abandoned cannot claim completion",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "state": "abandoned",
           "outcome": "completed",
@@ -231,7 +231,7 @@
       "name": "reserved cannot claim completion",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "state": "reserved",
           "outcome": "completed",
@@ -246,7 +246,7 @@
       "name": "linked cannot still be accepted",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "state": "linked",
           "outcome": "accepted"
@@ -260,7 +260,7 @@
       "name": "work has no host journal state",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "work",
           "state": "linked",
           "outcome": "completed",
@@ -275,7 +275,7 @@
       "name": "lookup requires namespace",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "completed",
           "result": {}
         }
@@ -288,7 +288,7 @@
       "name": "accepted host lookup requires create state",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "host",
           "outcome": "accepted"
         }
@@ -330,14 +330,14 @@
       "category": "cancel",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "state": "abandoned"
         }
       },
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "state": "abandoned"
         },
         "http_status": 200
@@ -348,14 +348,14 @@
       "category": "cancel",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "state": "linked"
         }
       },
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "state": "linked"
         },
         "http_status": 200
@@ -368,7 +368,7 @@
         "error": {
           "code": "conflict",
           "message": "The create is still in progress; try again.",
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "state": "in_progress"
         }
       },
@@ -377,7 +377,7 @@
         "normalized": {
           "code": "conflict",
           "message": "The create is still in progress; try again.",
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "state": "in_progress"
         },
         "http_status": 409
@@ -388,14 +388,14 @@
       "category": "cancel",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "state": "future_state"
         }
       },
       "expect": {
         "valid": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "state": "unknown"
         },
         "http_status": null
@@ -405,7 +405,7 @@
       "name": "literal unknown cannot be a stored lookup outcome",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "org",
           "outcome": "unknown"
         }
@@ -418,7 +418,7 @@
       "name": "unrecognized stored refusal stays final",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "org",
           "outcome": "rejected",
           "error": {
@@ -431,7 +431,7 @@
         "valid": true,
         "final": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "org",
           "outcome": "rejected",
           "error": {
@@ -445,7 +445,7 @@
       "name": "future stored outcome requires update and stops polling",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "org",
           "outcome": "future_outcome"
         }
@@ -454,7 +454,7 @@
         "valid": true,
         "final": true,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "org",
           "outcome": "unsupported"
         }
@@ -464,7 +464,7 @@
       "name": "literal unknown domain code remains unresolved",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "kind": "org",
           "outcome": "rejected",
           "error": {
@@ -478,7 +478,7 @@
         "final": false,
         "normalized": {
           "kind": "org",
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "unknown"
         }
       }
@@ -488,7 +488,7 @@
       "category": "cancel",
       "wire": {
         "result": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "state": "in_progress"
         }
       },

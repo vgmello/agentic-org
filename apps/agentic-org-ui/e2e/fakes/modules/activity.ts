@@ -1,7 +1,7 @@
 // Mock for src/lib/modules/activity/api.ts under `bun run dev:mock`. Rows and threads are JSON with times given
 // as minutes ago; people, teams and projects come from the org mock so IDs match the other pages. New rows
 // "arrive" every ten seconds (six in all) so the live behaviour can be seen.
-import { orgApi } from '$lib/org/api';
+import { orgApi } from '$lib/modules/organization/api';
 import type { ActivityApi } from '../../../src/lib/modules/activity/api';
 import { matchesQuery } from '../../../src/lib/modules/activity/filter';
 import type {

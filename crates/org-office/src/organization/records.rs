@@ -5,11 +5,20 @@
 //! set. Team and employee files do not hold the organization ID: an office store holds one
 //! organization.
 
-mod yaml;
+mod hiring;
+pub(crate) mod yaml;
 
 use org_store::{DurablePath, Id, StoreError, Timestamp};
 use serde_json::{json, Value};
 
+pub use hiring::{
+    agent_execution_path, decode_agent_execution, decode_hire_request, decode_model_profile,
+    decode_provider_connection, decode_watching_model, encode_agent_execution, encode_hire_request,
+    encode_model_profile, encode_provider_connection, encode_watching_model, hire_request_path,
+    model_profile_path, provider_connection_path, watching_model_path, AgentExecutionConfig,
+    HireProposal, HireRequest, HireState, ModelProfile, PermissionPreset, ProviderAuthMode,
+    ProviderConnection, WatchingModelSetting,
+};
 pub use yaml::RecordError;
 use yaml::{Fields, Reader};
 
@@ -159,7 +168,7 @@ impl Meta {
         }
     }
 
-    fn write(&self, fields: &mut Fields) {
+    pub(crate) fn write(&self, fields: &mut Fields) {
         fields.insert("schema_version".into(), json!(SCHEMA_VERSION));
         fields.insert("revision".into(), json!(self.revision));
         fields.insert("created_at".into(), json!(self.created_at));
@@ -168,7 +177,7 @@ impl Meta {
         self.updated_by.write(fields, "updated");
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, RecordError> {
+    pub(crate) fn read(reader: &mut Reader) -> Result<Self, RecordError> {
         if reader.number("schema_version")? != SCHEMA_VERSION {
             return Err(reader.error("schema_version", "not 1"));
         }
@@ -945,6 +954,16 @@ pub enum Kind {
     Team(Vec<Id>),
     /// The home team's chain, the folder's kind and the employee.
     Employee(Vec<Id>, EmployeeKind, Id),
+    /// An agent's `execution.md` under its home team chain.
+    AgentExecution(Vec<Id>, Id),
+    /// A hire request under its target team chain (`hires/<id>.yaml`).
+    HireRequest(Vec<Id>, Id),
+    /// A provider connection (`provider-connections/<id>.yaml`).
+    ProviderConnection(Id),
+    /// A model profile (`model-profiles/<id>.yaml`).
+    ModelProfile(Id),
+    /// Organization-wide channel watching model profile setting (`execution/watching-model.yaml`).
+    WatchingModel,
     /// The scope the path names.
     TeamCounter(Id),
     TeamAllocation(Id, u64),
@@ -953,7 +972,7 @@ pub enum Kind {
 }
 
 /// A number as a path writes it: decimal, no sign, no leading zero, at least 1.
-fn path_number(text: &str) -> Option<u64> {
+pub(crate) fn path_number(text: &str) -> Option<u64> {
     let canonical = !text.starts_with('0') && text.bytes().all(|b| b.is_ascii_digit());
     text.parse().ok().filter(|_| canonical)
 }
@@ -970,6 +989,9 @@ pub fn kind_of(path: &DurablePath) -> Option<Kind> {
         ["state", "offices", name] => file(name).map(Kind::Office),
         ["state", "identity", "office-codes.yaml"] => Some(Kind::OfficeCodes),
         ["state", "roles", name] => name.strip_suffix(".md").and_then(stable_id).map(Kind::Role),
+        ["state", "provider-connections", name] => file(name).map(Kind::ProviderConnection),
+        ["state", "model-profiles", name] => file(name).map(Kind::ModelProfile),
+        ["state", "execution", "watching-model.yaml"] => Some(Kind::WatchingModel),
         ["state", "security", "ca-escrow.v1.bin"] => Some(Kind::CaEscrow),
         ["state", "identity", "counters", "organization", scope, "team.yaml"] => {
             id(scope).map(Kind::TeamCounter)
@@ -995,6 +1017,10 @@ pub fn kind_of(path: &DurablePath) -> Option<Kind> {
                 [folder, employee, "profile.md"] => {
                     Some(Kind::Employee(chain, kind(folder)?, id(employee)?))
                 }
+                ["agents", employee, "execution.md"] => {
+                    Some(Kind::AgentExecution(chain, id(employee)?))
+                }
+                ["hires", name] => Some(Kind::HireRequest(chain, file(name)?)),
                 _ => None,
             }
         }

@@ -2,7 +2,7 @@
 //! on both the gateway's control connection and `host.sock`.
 //!
 //! - **Open** (no session): `hello`, `account.verify`, and on `host.sock` only
-//!   `account.reset_password`.
+//!   `cli.approval.create` / `cli.approval.poll`.
 //! - **Session ops**: everything else here takes the `session` from `account.verify`. A session
 //!   ends on `session.end`, a password change, unlinking, `account.revoke`, its TTL (12 h absolute,
 //!   30 min idle by default), or EOF of the connection it was issued on.
@@ -21,7 +21,7 @@ use crate::listen::{
     Hsts, InvalidListenConfig, ListenFailure, ListenMode, ListenOrigin, Uncovered,
 };
 use crate::pem::{self, InvalidPem};
-use crate::{HostOpResult, Password, RecoveryCode, SessionHandle, TlsPrivateKey};
+use crate::{HostOpResult, OneTimeLinkUrl, Password, RecoveryCode, SessionHandle, TlsPrivateKey};
 
 /// `account.verify` (open): sign in. Argon2id on a bounded pool; an unknown login hashes against
 /// a dummy, and every failure is the same `not_authorized`. Lockout is per login and per socket;
@@ -59,6 +59,60 @@ impl Call for AccountVerify {
     const METHOD: &'static str = "account.verify";
     type Params = AccountVerifyParams;
     type Result = AccountVerifyResult;
+}
+
+/// `cli.approval.create` (open on `host.sock`): starts a browser-approved terminal sign-in
+/// (FC-173 / SIGN-40 / SES-8). Returns a one-time approval URL (10-minute TTL) whose secret
+/// travels only after `#`, bound to this `host.sock` connection.
+pub struct CliApprovalCreate;
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CliApprovalCreateParams {}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CliApprovalCreateResult {
+    pub approval_id: String,
+    pub url: OneTimeLinkUrl,
+    pub expires_at_ms: i64,
+}
+
+impl Call for CliApprovalCreate {
+    const METHOD: &'static str = "cli.approval.create";
+    type Params = CliApprovalCreateParams;
+    type Result = CliApprovalCreateResult;
+}
+
+/// `cli.approval.poll` (open on `host.sock`, same connection that created `approval_id`):
+/// checks approval status; once approved in a signed-in browser, issues a connection-bound
+/// native session (`SES-8`) on this connection without a terminal password.
+pub struct CliApprovalPoll;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CliApprovalPollParams {
+    pub approval_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CliApprovalPollResult {
+    Pending,
+    Approved {
+        session: SessionHandle,
+        account: String,
+        admin: bool,
+        orgs: Vec<LinkedOrg>,
+    },
+    Declined,
+    Expired,
+}
+
+impl Call for CliApprovalPoll {
+    const METHOD: &'static str = "cli.approval.poll";
+    type Params = CliApprovalPollParams;
+    type Result = CliApprovalPollResult;
 }
 
 /// The params of an op that names only its session.
@@ -655,73 +709,6 @@ impl From<InvalidListenConfig> for TlsRefusal {
             InvalidListenConfig::Hsts => TlsRefusal::HstsInvalid,
         }
     }
-}
-
-/// `account.set_password` (`host.sock`): change the password of the session's own account. A
-/// password change ends the account's sessions (X-02 §4.1).
-pub struct AccountSetPassword;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AccountSetPasswordParams {
-    pub session: SessionHandle,
-    pub current: Password,
-    pub new: Password,
-}
-
-impl Call for AccountSetPassword {
-    const METHOD: &'static str = "account.set_password";
-    type Params = AccountSetPasswordParams;
-    type Result = Empty;
-}
-
-/// `account.reset_password` (`host.sock`, no session): the way back from a forgotten password.
-/// macOS: the signed `agentic-org` peer and OS user presence. Linux: a root peer
-/// (`sudo agentic-org account reset-password`). Audited; it ends all of that account's sessions
-/// and clears the login's lockout.
-pub struct AccountResetPassword;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AccountResetPasswordParams {
-    pub login: String,
-    pub new: Password,
-}
-
-impl Call for AccountResetPassword {
-    const METHOD: &'static str = "account.reset_password";
-    type Params = AccountResetPasswordParams;
-    type Result = Empty;
-}
-
-/// `account.create` (`host.sock`; admin, the signed `agentic-org` peer and OS user presence on
-/// macOS; journaled): add an account. `admin: false` with `owner_of` makes an owner without the
-/// create right (dogfood 1.6, SRV-24). The actor is always the session, never a param. Logins are
-/// normalized (NFC, case-folded) and unique. Its fingerprint leaves out `password`; a replay whose
-/// password doesn't match the row's create-time verifier is `operation_reused`
-/// ([`crate::journal`]).
-pub struct AccountCreate;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AccountCreateParams {
-    pub session: SessionHandle,
-    pub operation_id: String,
-    pub login: String,
-    pub password: Password,
-    pub admin: bool,
-    /// The organization the new account owns (it links to that organization's owner member).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner_of: Option<String>,
-}
-
-/// `account.create`'s completed result: the new account's id.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AccountCreated {
-    pub account: String,
-}
-
-impl Call for AccountCreate {
-    const METHOD: &'static str = "account.create";
-    type Params = AccountCreateParams;
-    type Result = HostOpResult<AccountCreated>;
 }
 
 /// `recovery.release` (`host.sock`; admin, the signed `agentic-org` peer, OS user presence, on

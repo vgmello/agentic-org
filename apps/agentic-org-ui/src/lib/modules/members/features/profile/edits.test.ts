@@ -71,9 +71,8 @@ describe('Move home team', () => {
 			{ id: 'office', name: 'Office' },
 			{ id: 'design', name: 'Design' }
 		],
-		memberships: [
-			{ id: 'm1', member_id: 'kai', team_id: 'app' },
-			{ id: 'm2', member_id: 'kai', team_id: 'design' }
+		members: [
+			{ id: 'kai', kind: 'agent', name: 'Kai Lindqvist', home_team_id: 'design', version: 1 }
 		]
 	} as unknown as OrgSnapshot;
 	it("previews in the spec's words and names a lead's team left without a lead", () => {

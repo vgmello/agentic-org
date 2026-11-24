@@ -16,7 +16,7 @@ const go = async (page: Page, name: string) => {
 	await side(page).getByTestId('conversation-link').filter({ hasText: name }).first().click();
 };
 
-for (const view of ['needs', 'mentions', 'threads', 'search'] as const) {
+for (const view of ['mentions', 'threads', 'search'] as const) {
 	test(`CHAT-1/13 BUG-50: ${view} is outside the message live log`, async ({ page }) => {
 		await open(page);
 		if (view === 'mentions' || view === 'threads')
@@ -185,7 +185,7 @@ test('CHAT-1/3 BUG-49: the narrow conversation list is modal and restores select
 	await page.setViewportSize({ width: 960, height: 720 });
 	await open(page);
 	const toggle = page.getByRole('button', {
-		name: 'Conversations, 2 need you',
+		name: 'Conversations, 3 need you',
 		exact: true,
 		includeHidden: true
 	});
@@ -196,17 +196,18 @@ test('CHAT-1/3 BUG-49: the narrow conversation list is modal and restores select
 	await expect(dialog).toBeVisible();
 	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 	expect(await toggle.getAttribute('aria-controls')).toBe(await dialog.getAttribute('id'));
-	await expect(side(page).getByTestId('needs-you-link')).toBeFocused();
+	await expect(side(page).locator('[data-conversation="c-general"]')).toBeFocused();
 	const conversation = page.getByRole('region', {
 		name: 'Conversation',
 		exact: true,
 		includeHidden: true
 	});
 	expect(await conversation.evaluate((element) => element.inert)).toBe(true);
+	await side(page).getByTestId('inbox-link').focus();
 	await page.keyboard.press('Shift+Tab');
 	await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
 	await page.keyboard.press('Tab');
-	await expect(side(page).getByTestId('needs-you-link')).toBeFocused();
+	await expect(side(page).getByTestId('inbox-link')).toBeFocused();
 	const ines = side(page).locator('[data-conversation="c-dm-ines"]');
 	await ines.focus();
 	await ines.press('Enter');
@@ -279,7 +280,7 @@ test('CHAT-1 BUG-49: resizing preserves visible focus as the conversation list c
 }) => {
 	await page.setViewportSize({ width: 1056, height: 720 });
 	await open(page);
-	const selected = side(page).getByTestId('needs-you-link');
+	const selected = side(page).locator('[data-conversation="c-general"]');
 	await selected.focus();
 	await page.setViewportSize({ width: 960, height: 720 });
 	const toggle = page.getByRole('button', { name: /^Conversations/ });
@@ -312,7 +313,7 @@ test('CHAT-2/3 BUG-49: a sidebar dialog restores visible focus after a resize re
 	await page.setViewportSize({ width: 1056, height: 720 });
 	await page.keyboard.press('Escape');
 	await expect(dialog).toBeHidden();
-	await expect(side(page).getByTestId('needs-you-link')).toBeFocused();
+	await expect(side(page).locator('[data-conversation="c-general"]')).toBeFocused();
 	await shot(page, 'chat-sidebar-dialog-resize-focus');
 });
 

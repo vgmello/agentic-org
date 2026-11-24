@@ -14,6 +14,7 @@ import {
 	projectTabs,
 	slugFrom,
 	slugProblem,
+	sortActivityNewestFirst,
 	sortProjects,
 	tabAt,
 	type ServedTabs
@@ -25,6 +26,7 @@ const ALL: ServedTabs = {
 	features: true,
 	releases: true,
 	docs: true,
+	insights: true,
 	settings: true
 };
 const noFeatures = { planned: 0, inProgress: 0, live: 0 };
@@ -48,6 +50,7 @@ describe('projectTabs (PKG-15)', () => {
 			'Team',
 			'Activity',
 			'Conversations',
+			'Insights',
 			'Settings'
 		]);
 	});
@@ -75,6 +78,7 @@ describe('projectTabs (PKG-15)', () => {
 			'Team',
 			'Activity',
 			'Conversations',
+			'Insights',
 			'Settings'
 		]);
 	});
@@ -89,9 +93,13 @@ describe('projectTabs (PKG-15)', () => {
 		expect(labels(tabs)).toEqual([
 			'Overview',
 			'Work',
+			'Features',
+			'Releases',
+			'Docs',
 			'Team',
 			'Activity',
 			'Conversations',
+			'Insights',
 			'Settings'
 		]);
 	});
@@ -193,6 +201,22 @@ describe('counts', () => {
 			criticalBugs: 1,
 			attentionProjects: 1
 		});
+	});
+	it('sorts project activity newest first with invalid timestamps last', () => {
+		const input = [
+			{ id: 'old', at: '2026-11-18T08:00:00Z' },
+			{ id: 'bad', at: 'not-a-date' },
+			{ id: 'newest', at: '2026-11-20T12:00:00Z' },
+			{ id: 'mid', at: '2026-11-19T10:30:00Z' }
+		];
+		expect(sortActivityNewestFirst(input).map((r) => r.id)).toEqual([
+			'newest',
+			'mid',
+			'old',
+			'bad'
+		]);
+		// Pure: does not mutate the caller's array.
+		expect(input.map((r) => r.id)).toEqual(['old', 'bad', 'newest', 'mid']);
 	});
 });
 

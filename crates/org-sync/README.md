@@ -13,11 +13,11 @@ assert the complete signing preimage. See the protocol crate's
 [test-vector notes](../org-sync-proto/test-vectors/README.md) for the exact coverage.
 
 Replication between offices is milestone two (increment S1 of the
-[implementation plan](../../docs/implementation-plan.md)); today nothing enrols a second
+[implementation plan](../../.backlog/docs/doc-5%20-%20v1-Implementation-Plan.md)); today nothing enrols a second
 office. The durable sources that replication carries are defined by the data contract:
-[messaging](../../docs/design/organization-data/15-messaging-and-chat.md),
-[accounting](../../docs/design/organization-data/10-usage-and-cost-accounting.md) and
-[recovery](../../docs/design/organization-data/16-recovery-and-office-continuity.md).
+[messaging](../../.backlog/docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md),
+[accounting](../../.backlog/docs/organization-data/doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md) and
+[recovery](../../.backlog/docs/organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md).
 Where this core and those documents differ, the documents win and S1 changes the code.
 
 ## Writer contract

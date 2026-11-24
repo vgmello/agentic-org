@@ -2,7 +2,10 @@
 //!
 //! - `security/ca-key.v1.json`: the HQ's CA key record. The CA private key, wrapped by the
 //!   host-held office secrets key (ADR-0016), with what binds it to the organization's
-//!   escrow package. Written once, in the organization's first journal entry.
+//!   escrow package. Written atomically to local security storage outside the acceptance
+//!   journal (TASK-10 / H-06).
+//! - `security/ca-key.v1.staging`: temporary staging record during HQ creation, promoted to
+//!   `ca-key.v1.json` once Entry 1 commits and removed on completion or aborted pre-append.
 //! - `clean-stop`: the marker an orderly stop leaves. Never written through the journal.
 //!
 //! Both are one JSON object with a fixed key order, lowercase hex, no whitespace and a
@@ -47,6 +50,11 @@ pub fn ca_key_path(office: &Id) -> DurablePath {
     path(format!("local/offices/{office}/security/ca-key.v1.json"))
 }
 
+/// The transient staging CA key record written outside the acceptance journal during HQ creation.
+pub fn ca_key_staging_path(office: &Id) -> DurablePath {
+    path(format!("local/offices/{office}/security/ca-key.v1.staging"))
+}
+
 /// The clean-stop marker of `office`.
 pub fn clean_stop_path(office: &Id) -> DurablePath {
     path(format!("local/offices/{office}/clean-stop"))
@@ -56,12 +64,16 @@ pub fn clean_stop_path(office: &Id) -> DurablePath {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     CaKey,
+    CaKeyStaging,
     CleanStop,
 }
 
 pub fn kind_of(path: &DurablePath, office: &Id) -> Option<Kind> {
     if *path == ca_key_path(office) {
         return Some(Kind::CaKey);
+    }
+    if *path == ca_key_staging_path(office) {
+        return Some(Kind::CaKeyStaging);
     }
     (*path == clean_stop_path(office)).then_some(Kind::CleanStop)
 }

@@ -71,6 +71,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'tess',
 				name: 'Tess',
 				kind: 'agent',
+				home_team_id: 'leadership',
 				reports_to_member_id: 'you',
 				office_id: hqOfficeId,
 				agent: {
@@ -87,6 +88,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'maya',
 				name: 'Maya Chen',
 				kind: 'person',
+				home_team_id: 'leadership',
 				reports_to_member_id: 'you',
 				version: 1
 			},
@@ -94,6 +96,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'ada',
 				name: 'Ada',
 				kind: 'agent',
+				home_team_id: 'leadership',
 				reports_to_member_id: 'you',
 				office_id: hqOfficeId,
 				agent: {
@@ -110,6 +113,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'rowan',
 				name: 'Rowan',
 				kind: 'agent',
+				home_team_id: 'platform',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -126,6 +130,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'eden',
 				name: 'Eden Lin',
 				kind: 'agent',
+				home_team_id: 'product',
 				reports_to_member_id: 'you',
 				office_id: hqOfficeId,
 				agent: {
@@ -142,6 +147,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'emery',
 				name: 'Emery Park',
 				kind: 'agent',
+				home_team_id: 'product',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -158,6 +164,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'tomas',
 				name: 'Tomas',
 				kind: 'agent',
+				home_team_id: 'quality',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -174,6 +181,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'kai',
 				name: 'Kai',
 				kind: 'agent',
+				home_team_id: 'platform',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -190,6 +198,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'sage',
 				name: 'Sage',
 				kind: 'agent',
+				home_team_id: 'platform',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -206,6 +215,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'quinn',
 				name: 'Quinn',
 				kind: 'agent',
+				home_team_id: 'platform',
 				reports_to_member_id: 'ada',
 				office_id: POC_BUILD_OFFICE_ID,
 				agent: {
@@ -222,6 +232,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'jules',
 				name: 'Jules',
 				kind: 'agent',
+				home_team_id: 'app',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -238,6 +249,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'avery',
 				name: 'Avery',
 				kind: 'agent',
+				home_team_id: 'app',
 				reports_to_member_id: 'ada',
 				office_id: hqOfficeId,
 				agent: {
@@ -254,6 +266,7 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				id: 'noor',
 				name: 'Noor Haddad',
 				kind: 'agent',
+				home_team_id: 'quality',
 				reports_to_member_id: 'tomas',
 				agent: {
 					status: 'active',
@@ -265,21 +278,6 @@ export function pocOrgSnapshot(hqOfficeId = POC_HQ_OFFICE_ID): OrgSnapshot {
 				},
 				version: 1
 			}
-		],
-		memberships: [
-			{ id: 'ms-tess', team_id: 'leadership', member_id: 'tess', version: 1 },
-			{ id: 'ms-maya', team_id: 'leadership', member_id: 'maya', version: 1 },
-			{ id: 'ms-ada', team_id: 'leadership', member_id: 'ada', version: 1 },
-			{ id: 'ms-eden', team_id: 'product', member_id: 'eden', version: 1 },
-			{ id: 'ms-emery', team_id: 'product', member_id: 'emery', version: 1 },
-			{ id: 'ms-rowan', team_id: 'platform', member_id: 'rowan', version: 1 },
-			{ id: 'ms-kai', team_id: 'platform', member_id: 'kai', version: 1 },
-			{ id: 'ms-sage', team_id: 'platform', member_id: 'sage', version: 1 },
-			{ id: 'ms-quinn', team_id: 'platform', member_id: 'quinn', version: 1 },
-			{ id: 'ms-jules', team_id: 'app', member_id: 'jules', version: 1 },
-			{ id: 'ms-avery', team_id: 'app', member_id: 'avery', version: 1 },
-			{ id: 'ms-tomas', team_id: 'quality', member_id: 'tomas', version: 1 },
-			{ id: 'ms-noor', team_id: 'quality', member_id: 'noor', version: 1 }
 		],
 		projects: [
 			{ id: 'office-federation', name: 'Office federation', key: 'v0.9', version: 1 },

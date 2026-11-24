@@ -7,7 +7,7 @@
 //   slow · fails (reads fail) · empty (no people) · unavailable · viewer (no manage rights)
 //   invited (Leo Brandt has an open invitation) · deactivated (Hana Weiss is deactivated)
 //   refuse (the sign-in actions are refused) · gone (the next action on Leo finds him gone: he leaves the list)
-import { officeApi } from '$lib/office/api';
+import { officeApi } from '$lib/modules/offices/office-api';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { AccessApi } from '../../../src/lib/modules/access/api';
 import type { AccessOverview, AccessPerson } from '../../../src/lib/modules/access/types';
@@ -44,8 +44,21 @@ async function overview(organizationId: string): Promise<AccessOverview> {
 	const teamName = (id: string | undefined) => s.teams.find((t) => t.id === id)?.name;
 	const owner = ownerIdOf(s);
 	const admin = administratorAccount();
-	const viewer = viewerId();
 	const blocked = modes().includes('viewer');
+	// Under `?mock=viewer`, simulate an ordinary signed-in member (neither owner nor administrator).
+	const viewer = blocked
+		? (s.members.find(
+				(m) =>
+					m.kind === 'person' &&
+					present(m) &&
+					m.id !== owner &&
+					m.id !== admin.memberId &&
+					signInOf(m.id).account
+			)?.id ?? undefined)
+		: viewerId();
+	const isOwner = !blocked && viewer === owner;
+	const isAdministrator = !blocked && viewer === admin.memberId;
+	const canManage = isOwner || isAdministrator;
 
 	const people: AccessPerson[] = modes().includes('empty')
 		? []
@@ -55,6 +68,7 @@ async function overview(organizationId: string): Promise<AccessOverview> {
 					const access = signInOf(m.id);
 					const active = !isInactive(m);
 					const homeTeam = teamName(homeTeamId(s, m.id));
+					const showUsername = canManage || viewer === m.id;
 					return {
 						memberId: m.id,
 						name: m.name,
@@ -64,23 +78,29 @@ async function overview(organizationId: string): Promise<AccessOverview> {
 						administrator: m.id === admin.memberId,
 						active,
 						state: access.account ? 'signed_in' : access.invitedUntil ? 'invited' : 'no_account',
-						...(access.account ? { username: usernameOf(m.id) ?? handleOf(m) } : {}),
+						...(access.account && showUsername
+							? { username: usernameOf(m.id) ?? handleOf(m) }
+							: {}),
 						...(access.invitedUntil ? { inviteExpiresAt: access.invitedUntil } : {})
 					};
 				});
 
 	const adminPerson = people.find((p) => p.memberId === admin.memberId);
-	const isOwner = !blocked && viewer === owner;
-	const isAdministrator = !blocked && viewer === admin.memberId;
+	const showAdminUsername = canManage || (!!admin.memberId && viewer === admin.memberId);
 	return {
 		organization: { id: organizationId, name: connection?.organization.name ?? 'Organization' },
 		administrator: {
-			username: admin.username,
+			...(showAdminUsername ? { username: admin.username } : {}),
 			...(adminPerson ? { memberId: adminPerson.memberId, name: adminPerson.name } : {}),
 			isYou: isAdministrator
 		},
 		people,
-		viewer: { isOwner, isAdministrator, canManage: isOwner || isAdministrator }
+		viewer: {
+			...(viewer ? { memberId: viewer } : {}),
+			isOwner,
+			isAdministrator,
+			canManage
+		}
 	};
 }
 

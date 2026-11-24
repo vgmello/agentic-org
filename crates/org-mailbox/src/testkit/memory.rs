@@ -378,6 +378,55 @@ impl TriageStore for InMemoryStore {
         Ok(header)
     }
 
+    fn defer_local(&self, change: LocalStateTransition) -> Result<MessageHeader, StoreError> {
+        {
+            let data = lock(&self.0);
+            let header = &data
+                .rows
+                .get(&change.id)
+                .filter(|stored| stored.message.header.to_member_id == change.to_member_id)
+                .ok_or(StoreError::NotFound)?
+                .message
+                .header;
+            if let Some(exp_raw) = header.expires_at.as_deref() {
+                let past_exp = match (parse_utc(exp_raw), parse_utc(&change.now_utc)) {
+                    (Some(exp_ms), Some(now_ms)) => {
+                        exp_ms <= now_ms
+                            || change
+                                .snoozed_until
+                                .as_deref()
+                                .and_then(parse_utc)
+                                .is_some_and(|at_ms| at_ms >= exp_ms)
+                    }
+                    _ => true,
+                };
+                if past_exp {
+                    return Err(StoreError::InvalidTransition);
+                }
+            }
+        }
+        self.update_state_local(change)
+    }
+
+    fn unsnooze_local(&self, change: LocalStateTransition) -> Result<MessageHeader, StoreError> {
+        let mut data = lock(&self.0);
+        let header = &mut data
+            .rows
+            .get_mut(&change.id)
+            .filter(|stored| stored.message.header.to_member_id == change.to_member_id)
+            .ok_or(StoreError::NotFound)?
+            .message
+            .header;
+        if header.state != State::Snoozed || change.expired_waiting_person {
+            return Err(StoreError::InvalidTransition);
+        }
+        header.state = State::Unread;
+        header.read_at = None;
+        header.triage_gen += 1;
+        clear_snooze(header);
+        Ok(header.clone())
+    }
+
     fn check_notify(
         &self,
         member: &str,

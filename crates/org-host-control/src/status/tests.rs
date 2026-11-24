@@ -12,7 +12,7 @@ fn status_vector_uses_counts_and_instance_identity_without_office_ids() {
     let response: Response = serde_json::from_value(vector["response"].clone()).unwrap();
     let result = response.into_result::<InstanceStatus>().unwrap();
     assert_eq!(result.mode, InstanceMode::Service);
-    assert_eq!(result.gateway.state, GatewayState::NotConfigured);
+    assert_eq!(result.gateway.state, WebState::NotConfigured);
     assert_eq!(result.administrator, Administrator::None);
     assert_eq!(
         result.offices,
@@ -68,7 +68,7 @@ fn unknown_response_states_are_readable_but_never_sent() {
     result["administrator"] = json!("future_role");
     let typed: InstanceStatusResult = serde_json::from_value(result).unwrap();
     assert_eq!(typed.mode, InstanceMode::Unknown);
-    assert_eq!(typed.gateway.state, GatewayState::Unknown);
+    assert_eq!(typed.gateway.state, WebState::Unknown);
     assert!(serde_json::to_value(typed.mode).is_err());
     assert!(serde_json::to_value(typed.gateway).is_err());
     assert_eq!(typed.administrator, Administrator::Unknown);
@@ -120,14 +120,14 @@ fn every_known_mode_and_gateway_state_has_its_frozen_spelling() {
         );
     }
     for (state, wire) in [
-        (GatewayState::NotConfigured, "not_configured"),
-        (GatewayState::Starting, "starting"),
-        (GatewayState::Running, "running"),
-        (GatewayState::Failed, "failed"),
+        (WebState::NotConfigured, "not_configured"),
+        (WebState::Starting, "starting"),
+        (WebState::Running, "running"),
+        (WebState::Failed, "failed"),
     ] {
         assert_eq!(serde_json::to_value(state).unwrap(), json!(wire));
         assert_eq!(
-            serde_json::from_value::<GatewayState>(json!(wire)).unwrap(),
+            serde_json::from_value::<WebState>(json!(wire)).unwrap(),
             state
         );
     }

@@ -1,4 +1,4 @@
-//! The organization's structure: teams, members, memberships, projects, the teams working on
+//! The organization's structure: teams, members, projects, the teams working on
 //! each project, and each project's areas (see `docs/design/teams-and-org-chart.md` and
 //! `docs/design/tasks-projects-docs.md` §1.9, §2.5 and §4.8).
 //!
@@ -67,8 +67,7 @@
 //! ## Limits every command shares
 //! All are `invalid_request`, so a client can check them before sending:
 //! - **Client-made ids**, the ones a command creates (`team.create`'s `team_id`,
-//!   `team.add_member`'s and `member.move`'s new `membership_id`, `project.add_team`'s
-//!   `project_team_id`, and so on): 1 to [`ID_MAX_CHARS`] ASCII letters, digits, `-` or `_`
+//!   `project.add_team`'s `project_team_id`, and so on): 1 to [`ID_MAX_CHARS`] ASCII letters, digits, `-` or `_`
 //!   ([`is_valid_id`]). A ULID fits. An id that names something that already exists is only
 //!   looked up (`not_found`).
 //! - **Member ids** (`member.add_person`'s and `member.add_agent`'s `member_id`): exactly
@@ -95,7 +94,7 @@
 //! area's team is always one of its project's teams, or none: while the project has no team,
 //! after its team left as the project's last one, or after its team was deleted (the app then
 //! asks for one). HQ keeps that true inside the organization event that would break it:
-//! - an area lead who leaves the area's team (`team.remove_member`, `member.move`,
+//! - an area lead who leaves the area's team (`member.move`,
 //!   `member.offboard`, `member.remove`) stops being its lead, and the area's version goes up;
 //! - `project.remove_team` moves the leaving team's areas to `areas_to_team_id`, or leaves
 //!   them team-less when it was the project's last team (see [`ProjectRemoveTeam`]);
@@ -488,6 +487,15 @@ pub struct Member {
     pub id: String,
     pub kind: MemberKind,
     pub name: String,
+    /// The member's unique lowercase handle (e.g. `hr`, `alice`), when provided by `org-store`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    /// The employee's single home team ID (Doc 01).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_team_id: Option<String>,
+    /// The employee's optional title within its home team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_in_team: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -510,17 +518,6 @@ pub struct Member {
     /// existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
-    pub version: u64,
-}
-
-/// A member in a team. A member can be in any number of teams.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Membership {
-    pub id: String,
-    pub team_id: String,
-    pub member_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title_in_team: Option<String>,
     pub version: u64,
 }
 
@@ -743,14 +740,10 @@ pub struct OrgSnapshot {
     pub position: Position,
     pub teams: Vec<Team>,
     pub members: Vec<Member>,
-    pub memberships: Vec<Membership>,
     #[serde(default)]
     pub projects: Vec<Project>,
     #[serde(default)]
     pub project_teams: Vec<ProjectTeam>,
-    /// Every project's areas, deleted ones (tombstones) included.
-    #[serde(default)]
-    pub areas: Vec<Area>,
 }
 
 /// What happened to an organization command.
@@ -760,6 +753,8 @@ pub struct OrgSnapshot {
 pub enum CommandStatus {
     /// HQ committed it; `position` says where.
     Committed,
+    /// Dry-run validation succeeded without persisting any change; `position` is `None`.
+    Checked,
     /// HQ is unreachable, so this satellite queued it in its outbox. It's **pending**: not
     /// in the copy yet. The outcome arrives later, matched by `command_id`: an `org.changed`
     /// event if HQ commits it, or an `org.rejected` event (shown as blocked) if not.
@@ -862,25 +857,6 @@ command!(
     }
 );
 command!(
-    /// `team.add_member`. `membership_id` is client-made. Errors: `owner_protected`,
-    /// `not_found`, `invalid_request` (the member is an offboarded agent), `already_exists`.
-    TeamAddMember, "team.add_member", TeamAddMemberParams {
-        membership_id: String,
-        team_id: String,
-        member_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        title_in_team: Option<String>,
-    }
-);
-command!(
-    /// `team.remove_member`. Removing the lead clears the lead. Errors: `conflict`,
-    /// `not_found`.
-    TeamRemoveMember, "team.remove_member", TeamRemoveMemberParams {
-        membership_id: String,
-        expected_version: u64,
-    }
-);
-command!(
     /// `team.set_title`. Errors: `conflict`, `not_found`.
     TeamSetTitle, "team.set_title", TeamSetTitleParams {
         membership_id: String,
@@ -902,6 +878,10 @@ command!(
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         contact: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handle: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home_team_id: Option<String>,
     }
 );
 command!(
@@ -1145,6 +1125,7 @@ command!(
         description: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         teams: Vec<ProjectCreateTeam>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         general_area_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         general_area_name: Option<String>,
@@ -1152,6 +1133,22 @@ command!(
         repo: Option<RepoSpec>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         integration_branch: Option<String>,
+        /// Canonical lowercase project slug (B3). Derived from `name` by HQ when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slug: Option<String>,
+        /// Existing active team accountable for the project (B3). When omitted, HQ creates a
+        /// new owning team named after the project under `parent_team_id` (default `TEAM-1`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner_team_id: Option<String>,
+        /// Caller-minted UUIDv7 for the new owning team when `owner_team_id` is omitted (B3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        create_team_id: Option<String>,
+        /// Optional parent team for the newly created owning team (defaults to `TEAM-1`, B3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_team_id: Option<String>,
+        /// Optional contributing teams (active teams distinct from the owning team, B3).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        contributing_team_ids: Vec<String>,
     }
 );
 command!(
@@ -1266,12 +1263,6 @@ pub enum OrgChange {
     },
     MemberRemoved {
         member_id: String,
-    },
-    MembershipUpserted {
-        membership: Membership,
-    },
-    MembershipRemoved {
-        membership_id: String,
     },
     ProjectTeamAdded {
         project_team: ProjectTeam,

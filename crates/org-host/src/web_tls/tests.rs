@@ -495,7 +495,7 @@ fn the_first_start_makes_a_pair_and_later_starts_keep_it() {
     let line = lines.join("\n");
     assert!(line.contains(&fingerprint.to_string()), "{line}");
     assert!(line.contains("made by this instance"), "{line}");
-    assert!(!line.contains("BEGIN"), "{line}");
+    assert!(!line.contains("-----BEGIN"), "{line}");
     let (chain, key) = tls.fetch().unwrap();
     assert_eq!(chain, stored.cert_pem);
     assert!(f.secrets.holds(key.expose()));
@@ -582,10 +582,10 @@ fn a_supplied_pair_is_imported_and_never_made_again() {
         tls.servable(later),
         Err(store::Unservable::NotValid)
     ));
-    assert_eq!(tls.status(later), org_proto::gateway::TlsStatus::Missing);
+    assert_eq!(tls.status(later), org_proto::web::TlsStatus::Missing);
     // The administrator's replacement is served.
     let (cert, key) = pair_for(&["org.example"], later - DAY, later + 90 * DAY);
-    let id = crate::ids::generate().unwrap();
+    let id = crate::ids::uuid_v7().unwrap();
     let (answer, renew) = tls
         .set(&set_params(&id, &cert, &key), "account", later)
         .unwrap();
@@ -617,7 +617,7 @@ fn a_supplied_pair_that_does_not_verify_refuses_the_first_start_and_stores_nothi
         .err()
         .unwrap();
     assert!(refused.0.contains("tls_key_mismatch"), "{refused}");
-    assert!(!refused.0.contains("BEGIN"), "{refused}");
+    assert!(!refused.0.contains("-----BEGIN"), "{refused}");
     assert!(f.db.web_tls_pair().unwrap().is_none());
     assert!(f.secrets.names().is_empty());
     std::fs::remove_file(&key_path).unwrap();
@@ -657,7 +657,7 @@ fn tls_set_is_journaled_checked_and_installs_a_supplied_pair() {
     };
 
     // Unparseable: refused at the fingerprint, nothing stored, even under the same ID twice.
-    let id = crate::ids::generate().unwrap();
+    let id = crate::ids::uuid_v7().unwrap();
     for _ in 0..2 {
         let (answer, renew) = tls
             .set(&set_params(&id, "x", &key), "account", now)
@@ -710,7 +710,7 @@ fn tls_set_is_journaled_checked_and_installs_a_supplied_pair() {
         .unwrap_err();
     assert_eq!(reused.code, org_proto::ErrorCode::OperationReused);
     // A key that is not the certificate's: stored and replayed; nothing installed.
-    let mismatch = crate::ids::generate().unwrap();
+    let mismatch = crate::ids::uuid_v7().unwrap();
     for _ in 0..2 {
         let (answer, renew) = tls
             .set(&set_params(&mismatch, &cert, &other_key), "account", now)
@@ -744,10 +744,10 @@ fn a_pair_that_cannot_be_served_is_never_fetched() {
     let now = wall();
     let tls = f.start(&here, None, now).unwrap();
     assert!(tls.servable(now).is_ok());
-    assert_eq!(tls.status(now), org_proto::gateway::TlsStatus::Ok);
+    assert_eq!(tls.status(now), org_proto::web::TlsStatus::Ok);
     assert_eq!(
         tls.status(now + 370 * DAY),
-        org_proto::gateway::TlsStatus::Expiring
+        org_proto::web::TlsStatus::Expiring
     );
     // A row naming another origin's pair (written behind the host's back).
     let other = make(&origin("https://other.example"), now).unwrap();
@@ -770,7 +770,7 @@ fn a_pair_that_cannot_be_served_is_never_fetched() {
     }
     f.secrets.0.lock().unwrap().clear();
     assert!(matches!(tls.fetch(), Err(store::Unservable::Storage)));
-    assert_eq!(tls.status(now), org_proto::gateway::TlsStatus::Missing);
+    assert_eq!(tls.status(now), org_proto::web::TlsStatus::Missing);
     f.db.set_web_tls_pair(&crate::hostdb::web_tls::StoredPair {
         source: Source::Made,
         cert_pem: other.chain().into(),
@@ -820,7 +820,7 @@ fn only_the_instances_own_pair_is_renewed_while_running() {
         [format!("tls.{}", hex(&renewed.pair_fp))]
     );
     let (cert, key) = pair_for(&["org.example"], now - DAY, now + 10 * DAY);
-    let id = crate::ids::generate().unwrap();
+    let id = crate::ids::uuid_v7().unwrap();
     tls.set(&set_params(&id, &cert, &key), "account", now)
         .unwrap();
     let supplied = f.stored();
@@ -897,7 +897,7 @@ fn a_key_lost_while_running_closes_the_gate_after_a_failed_fetch() {
     );
     assert!(matches!(tls.fetch(), Err(store::Unservable::Storage)));
     assert!(matches!(tls.servable(now), Err(store::Unservable::Storage)));
-    assert_eq!(tls.status(now), org_proto::gateway::TlsStatus::Missing);
+    assert_eq!(tls.status(now), org_proto::web::TlsStatus::Missing);
 }
 
 /// A stored pair that has expired is judged from its remembered bounds after one full read:
@@ -918,5 +918,5 @@ fn an_expired_pair_is_read_once_by_the_gate() {
         tls.servable(later),
         Err(store::Unservable::NotValid)
     ));
-    assert_eq!(tls.status(later), org_proto::gateway::TlsStatus::Missing);
+    assert_eq!(tls.status(later), org_proto::web::TlsStatus::Missing);
 }

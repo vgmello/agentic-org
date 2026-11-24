@@ -11,9 +11,10 @@ export function testComposition(): Plugin {
 	const replacements = new Map(
 		[
 			['platform/shell/capabilities', 'capabilities'],
-			['office/api', 'office-api'],
-			['org/api', 'org-api'],
-			['work', 'work-api']
+			['modules/offices/office-api', 'office-api'],
+			['modules/organization/api', 'org-api'],
+			['modules/work', 'work-api'],
+			['modules/work/index', 'work-api']
 		].map(([source, target]) => [resolve(app, `src/lib/${source}`), resolve(fakes, `${target}.ts`)])
 	);
 	// A module's mock API is found by name: e2e/fakes/modules/<module>.ts stands in for src/lib/modules/<module>/api.ts.

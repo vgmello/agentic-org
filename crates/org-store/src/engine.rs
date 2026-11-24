@@ -52,8 +52,21 @@ pub trait Engine: Send + Sync + 'static {
     /// flusher starts, so the two never meet in a running store.
     ///
     /// The store depends on nothing it does, so it returns nothing: an engine whose
-    /// upkeep fails leaves it for the next round. The default does nothing.
+    /// upkeep fails leaves it for the next round. Persistent failures are reported through
+    /// [`Engine::upkeep_error`] so callers and health checks observe them instead of dropping
+    /// errors silently. The default does nothing.
     fn after_round(&self) {}
+
+    /// Persistent engine upkeep failure (for example repeated SQLite WAL checkpoint failures),
+    /// surfaced via [`crate::Status::upkeep_warning`]. Transient single-round contention stays
+    /// `None`; a subsequent healthy upkeep clears it.
+    ///
+    /// Called while [`crate::Store::status`] / [`crate::Store::wait_for`] holds the store's flow
+    /// mutex: implementations MUST be fast and non-blocking, never acquire I/O or database
+    /// connection locks, and never re-enter [`crate::Store`].
+    fn upkeep_error(&self) -> Option<EngineError> {
+        None
+    }
 }
 
 /// The store's own rows: the applied cursor, the hash of every source file, the receipts.
@@ -63,6 +76,12 @@ pub trait CoreRead {
     /// Every source at or under `prefix`, in byte order of path.
     fn sources_under(&self, prefix: &DurablePath) -> Result<Vec<DurablePath>, EngineError>;
     fn receipt(&self, id: &Id) -> Result<Option<Receipt>, EngineError>;
+
+    /// Lists all stored receipts whose `kind` starts with `prefix`, ordered by ascending
+    /// `(ordinal, operation_id)`. Used by `OrgFeed` to replay committed changes after restart.
+    fn list_receipts_by_prefix(&self, _prefix: &str) -> Result<Vec<Receipt>, EngineError> {
+        Ok(Vec::new())
+    }
 }
 
 pub trait CorePort: CoreRead {

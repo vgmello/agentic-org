@@ -504,7 +504,6 @@ const populatedSnapshot = () => ({
 			}
 		}
 	],
-	memberships: [{ id: 'membership', team_id: 'team', member_id: 'member', version: 1 }],
 	projects: [
 		{
 			id: 'project',
@@ -517,8 +516,7 @@ const populatedSnapshot = () => ({
 			}
 		}
 	],
-	project_teams: [{ id: 'link', project_id: 'project', team_id: 'team', version: 1 }],
-	areas: [{ id: 'area', project_id: 'project', name: 'General', version: 1 }]
+	project_teams: [{ id: 'link', project_id: 'project', team_id: 'team', version: 1 }]
 });
 it('validates nonempty domain records, read defaults and unknown runtimes without applying host-result privacy to domain paths', () => {
 	const snapshot = wire.readOrgSnapshot(populatedSnapshot());
@@ -529,16 +527,13 @@ it('validates nonempty domain records, read defaults and unknown runtimes withou
 	expect(snapshot.projects[0].repo?.github?.private).toBe(false);
 	expect(snapshot.projects[0].repo?.path).toBe('/public/repo');
 	expect(snapshot.members[0]).not.toHaveProperty('owner');
-	expect(snapshot.areas[0]).not.toHaveProperty('general');
 	const minimal = wire.readOrgSnapshot({
 		position: { epoch: 1, seq: 0 },
 		teams: [],
-		members: [],
-		memberships: []
+		members: []
 	});
 	expect(minimal.projects).toEqual([]);
 	expect(minimal.project_teams).toEqual([]);
-	expect(minimal.areas).toEqual([]);
 });
 it('rejects unsafe versions and positions at every known snapshot record boundary', () => {
 	const unsafe = Number.MAX_SAFE_INTEGER + 1;
@@ -556,9 +551,6 @@ it('rejects unsafe versions and positions at every known snapshot record boundar
 			s.members[0].version = unsafe;
 		},
 		(s: ReturnType<typeof populatedSnapshot>) => {
-			s.memberships[0].version = unsafe;
-		},
-		(s: ReturnType<typeof populatedSnapshot>) => {
 			s.projects[0].version = unsafe;
 		},
 		(s: ReturnType<typeof populatedSnapshot>) => {
@@ -566,9 +558,6 @@ it('rejects unsafe versions and positions at every known snapshot record boundar
 		},
 		(s: ReturnType<typeof populatedSnapshot>) => {
 			s.project_teams[0].version = unsafe;
-		},
-		(s: ReturnType<typeof populatedSnapshot>) => {
-			s.areas[0].version = unsafe;
 		}
 	];
 	for (const corrupt of corruptions) {
@@ -597,7 +586,7 @@ it('does not hide malformed known frames behind future-scope compatibility', () 
 });
 it('copies prepared params and future scopes instead of retaining mutable network objects', () => {
 	const input = {
-		operation_id: '01M72N8MG00000000000000006',
+		operation_id: '01a1c554-5200-7000-8000-000000000006',
 		scope: { kind: 'instance', instance_id: 'instance' },
 		params: { nested: { title: 'before' } }
 	};
@@ -616,7 +605,7 @@ it('preserves exact integer normalization for negative zero and the pre-move reu
 });
 
 const terminatorReaders: Record<string, (suffix: string) => unknown> = {
-	'operation ID': (suffix) => wire.readOperationId('01M72N8MG00000000000000006' + suffix),
+	'operation ID': (suffix) => wire.readOperationId('01a1c554-5200-7000-8000-000000000006' + suffix),
 	'lookup ID': (suffix) => wire.readLookupQuery([['instance_id', 'instance' + suffix]]),
 	proof: (suffix) =>
 		wire.readEstablishedSession({

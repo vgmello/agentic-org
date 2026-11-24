@@ -1,5 +1,27 @@
-const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const MAX_TIME = 2 ** 48 - 1;
+
+function hex2(byte: number): string {
+	return byte.toString(16).padStart(2, '0');
+}
+
+/** Encodes a 48-bit Unix millisecond timestamp and 10 random bytes as canonical lowercase UUIDv7. */
+export function formatUuidV7(timeMs: number, bytes: Uint8Array): string {
+	if (!Number.isSafeInteger(timeMs) || timeMs < 0 || timeMs > MAX_TIME)
+		throw new Error('Invalid operation time');
+	if (bytes.length !== 10) throw new Error('Operation IDs require 80 random bits');
+	const out = new Uint8Array(16);
+	let t = timeMs;
+	for (let i = 5; i >= 0; i--) {
+		out[i] = t % 256;
+		t = Math.floor(t / 256);
+	}
+	out[6] = 0x70 | (bytes[0] & 0x0f);
+	out[7] = bytes[1];
+	out[8] = 0x80 | (bytes[2] & 0x3f);
+	for (let i = 3; i < 10; i++) out[6 + i] = bytes[i];
+	const h = Array.from(out, hex2).join('');
+	return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
 
 /** Server-clock calibration is supplied by the session adapter, never inferred from a cookie. */
 export function createOperationClock({
@@ -14,24 +36,9 @@ export function createOperationClock({
 			offset = serverTimeMs - now();
 		},
 		newId(): string {
-			if (offset === undefined) throw new Error('Synchronize the server clock before creating an operation');
-			let time = Math.floor(now() + offset);
-			if (!Number.isSafeInteger(time) || time < 0 || time > MAX_TIME) throw new Error('Invalid operation time');
-			let id = '';
-			for (let i = 0; i < 10; i++, time = Math.floor(time / 32)) id = ALPHABET[time % 32] + id;
-			const bytes = random();
-			if (bytes.length !== 10) throw new Error('Operation IDs require 80 random bits');
-			let bits = 0;
-			let value = 0;
-			for (const byte of bytes) {
-				value = (value << 8) | byte;
-				bits += 8;
-				while (bits >= 5) {
-					bits -= 5;
-					id += ALPHABET[(value >>> bits) & 31];
-				}
-			}
-			return id;
+			if (offset === undefined)
+				throw new Error('Synchronize the server clock before creating an operation');
+			return formatUuidV7(Math.floor(now() + offset), random());
 		}
 	};
 }

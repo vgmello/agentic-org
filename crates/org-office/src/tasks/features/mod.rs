@@ -1,0 +1,510 @@
+//! Engine-independent domain features and read queries for unified typed tasks (`TASK-49`, `TASK-77`).
+
+pub mod core;
+pub mod ops;
+pub mod queries;
+
+use std::collections::{BTreeSet, VecDeque};
+
+use org_proto::tasks::{
+    ChecklistStepWire, TaskCommentWire, TaskDetailsWire, TaskEventWire, TaskRefSummary, TaskView,
+    TaskWatcherWire, TASK_BODY_MAX_CHARS, TASK_TITLE_MAX_CHARS,
+};
+use org_proto::{ApiError, ErrorCode};
+use org_store::{Change, Id, Refusal};
+use serde_json::{json, Value};
+
+use crate::organization::records::{Employee, EmployeeStatus, TeamStatus};
+use crate::tasks::ports::TasksRead;
+use crate::tasks::records::{
+    encode_json, event_path, task_path, ChecklistStepRecord, TaskCommentRecord, TaskDetailsRecord,
+    TaskEventRecord, TaskRecord, TaskWatcherRecord,
+};
+
+pub use self::core::{AssignTask, CreateTask, TransitionTask, UpdateTask};
+pub use self::ops::{
+    AddDependency, ChecklistAdd, ChecklistCheck, ChecklistEdit, ChecklistMove, ChecklistRemove,
+    CommentTask, RemoveDependency, UnwatchTask, WatchTask,
+};
+pub use self::queries::{
+    inspect_task, list_comments, list_history, list_labels, list_tasks, task_dependencies,
+};
+
+/// Result metadata returned to `org-office-server` after a task mutation commits.
+#[derive(Debug, Clone)]
+pub struct TaskWriteOutcome {
+    pub task: TaskView,
+    /// Set when the mutation assigned or reassigned the task to an active agent (`AVAIL-2`).
+    pub newly_assigned_agent: Option<Id>,
+    /// True when the answer was served from an idempotency receipt rather than a fresh commit.
+    pub replayed: bool,
+}
+
+pub(crate) fn validate_i64_u64(value: u64, field: &str) -> Result<u64, Refusal> {
+    if value > i64::MAX as u64 {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            format!("`{field}` exceeds maximum supported integer value"),
+        ));
+    }
+    Ok(value)
+}
+
+pub(crate) fn refuse(code: ErrorCode, message: impl Into<String>) -> Refusal {
+    let payload = ApiError::new(code, message);
+    Refusal::rejected(serde_json::to_vec(&payload).expect("ApiError serializes"))
+}
+
+pub fn decode_refusal(refusal: &Refusal) -> ApiError {
+    match refusal {
+        Refusal::Rejected(bytes) => serde_json::from_slice::<ApiError>(bytes)
+            .unwrap_or_else(|_| ApiError::new(ErrorCode::InvalidRequest, "task operation refused")),
+        Refusal::Invalid(err) => ApiError::new(ErrorCode::InvalidRequest, err.to_string()),
+    }
+}
+
+pub(crate) fn storage_refusal(err: impl std::fmt::Display) -> Refusal {
+    refuse(
+        ErrorCode::StorageError,
+        format!("task storage error: {err}"),
+    )
+}
+
+pub(crate) fn parse_uuid_v7(raw: &str, field: &str) -> Result<Id, Refusal> {
+    if !org_proto::is_uuid_v7(raw) {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            format!("{field} must be a canonical lowercase UUIDv7"),
+        ));
+    }
+    Id::parse(raw).map_err(|_| refuse(ErrorCode::InvalidRequest, format!("invalid {field}")))
+}
+
+/// Enforces `ADR-0031` (`TASKAUTH-1..3`): any active employee (person or agent) may mutate tasks;
+/// unknown, inactive, or paused employees are refused with `NotAuthorized`.
+pub(crate) fn require_active_employee<R: TasksRead>(
+    view: &R,
+    member_id: &str,
+) -> Result<Employee, Refusal> {
+    let Ok(id) = Id::parse(member_id) else {
+        return Err(refuse(
+            ErrorCode::NotAuthorized,
+            "caller is not a valid organization employee",
+        ));
+    };
+    let emp = view
+        .employee(&id)
+        .map_err(storage_refusal)?
+        .ok_or_else(|| refuse(ErrorCode::NotAuthorized, "caller is not an employee"))?;
+    if emp.status != EmployeeStatus::Active {
+        return Err(refuse(
+            ErrorCode::NotAuthorized,
+            "only active employees may change tasks (ADR-0031)",
+        ));
+    }
+    Ok(emp)
+}
+
+/// Resolves the active `office_code` for `office_id` so final `T-<CODE><N>` keys mint locally
+/// at commit even while HQ is unreachable (`ADR-0019`).
+pub(crate) fn require_office_code<R: TasksRead>(
+    view: &R,
+    office_id: &Id,
+) -> Result<String, Refusal> {
+    let code = view
+        .office_code(office_id)
+        .map_err(storage_refusal)?
+        .ok_or_else(|| {
+            refuse(
+                ErrorCode::Unavailable,
+                "this office does not have an active office code for task numbering",
+            )
+        })?;
+    Ok(code.code)
+}
+
+pub(crate) fn require_task<R: TasksRead>(view: &R, reference: &str) -> Result<TaskRecord, Refusal> {
+    view.resolve_task(reference)
+        .map_err(storage_refusal)?
+        .ok_or_else(|| refuse(ErrorCode::NotFound, format!("task `{reference}` not found")))
+}
+
+pub(crate) fn validate_active_team<R: TasksRead>(
+    view: &R,
+    team_id: &str,
+    field: &str,
+) -> Result<Id, Refusal> {
+    let id = parse_uuid_v7(team_id, field)?;
+    let team = view
+        .team(&id)
+        .map_err(storage_refusal)?
+        .ok_or_else(|| refuse(ErrorCode::NotFound, format!("team `{team_id}` not found")))?;
+    if team.status != TeamStatus::Active {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            format!("team `{team_id}` is archived"),
+        ));
+    }
+    Ok(id)
+}
+
+pub(crate) fn validate_active_employee<R: TasksRead>(
+    view: &R,
+    emp_id: &str,
+    field: &str,
+) -> Result<Employee, Refusal> {
+    let id = parse_uuid_v7(emp_id, field)?;
+    let emp = view
+        .employee(&id)
+        .map_err(storage_refusal)?
+        .ok_or_else(|| {
+            refuse(
+                ErrorCode::NotFound,
+                format!("employee `{emp_id}` not found"),
+            )
+        })?;
+    if emp.status != EmployeeStatus::Active {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            format!("employee `{emp_id}` is not active"),
+        ));
+    }
+    Ok(emp)
+}
+
+pub(crate) fn validate_title(raw: &str) -> Result<String, Refusal> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(refuse(ErrorCode::InvalidRequest, "title cannot be empty"));
+    }
+    if trimmed.contains('\n') || trimmed.contains('\r') {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            "title must be a single line",
+        ));
+    }
+    if trimmed.chars().count() > TASK_TITLE_MAX_CHARS {
+        return Err(refuse(
+            ErrorCode::TooLarge,
+            format!("title exceeds {TASK_TITLE_MAX_CHARS} characters"),
+        ));
+    }
+    Ok(trimmed.to_owned())
+}
+
+pub(crate) fn validate_body(raw: &str) -> Result<String, Refusal> {
+    if raw.chars().count() > TASK_BODY_MAX_CHARS {
+        return Err(refuse(
+            ErrorCode::TooLarge,
+            format!("body_markdown exceeds {TASK_BODY_MAX_CHARS} characters"),
+        ));
+    }
+    Ok(raw.to_owned())
+}
+
+pub(crate) fn validate_task_type(raw: &str) -> Result<String, Refusal> {
+    let trimmed = raw.trim().to_ascii_lowercase();
+    if trimmed.is_empty() || trimmed.len() > 64 {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            "task type must be 1..=64 characters",
+        ));
+    }
+    if !trimmed
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
+    {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            "task type must use lowercase ASCII letters, digits, `_`, or `-`",
+        ));
+    }
+    Ok(trimmed)
+}
+
+pub(crate) fn parse_details<R: TasksRead>(
+    view: &R,
+    task_id: &Id,
+    wire: &TaskDetailsWire,
+) -> Result<TaskDetailsRecord, Refusal> {
+    let opt_id = |raw: &Option<String>, field: &str| -> Result<Option<Id>, Refusal> {
+        match raw.as_deref() {
+            None => Ok(None),
+            Some(v) => Ok(Some(parse_uuid_v7(v, field)?)),
+        }
+    };
+    let duplicate_of = opt_id(&wire.duplicate_of_task_id, "duplicate_of_task_id")?;
+    let merged_into = opt_id(&wire.merged_into_task_id, "merged_into_task_id")?;
+    if duplicate_of.as_ref() == Some(task_id) || merged_into.as_ref() == Some(task_id) {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            "a task cannot reference itself as duplicate or merge target",
+        ));
+    }
+    for linked_task_id in [&duplicate_of, &merged_into].into_iter().flatten() {
+        if view
+            .task(linked_task_id)
+            .map_err(storage_refusal)?
+            .is_none()
+        {
+            return Err(refuse(
+                ErrorCode::NotFound,
+                format!("referenced task `{linked_task_id}` not found"),
+            ));
+        }
+    }
+    if wire.affects_feature_id.is_some() {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            "affects_feature_id cannot be set until the features catalog is enabled",
+        ));
+    }
+    validate_i64_u64(wire.reopen_count, "reopen_count")?;
+    if let Some(ref src) = wire.routing_source {
+        if !matches!(src.as_str(), "person" | "rule" | "copilot") {
+            return Err(refuse(
+                ErrorCode::InvalidRequest,
+                "routing_source must be `person`, `rule`, or `copilot`",
+            ));
+        }
+    }
+    let routed_by = opt_id(&wire.routed_by_employee_id, "routed_by_employee_id")?;
+    let triager = opt_id(&wire.suggested_triager_id, "suggested_triager_id")?;
+    let verifier = opt_id(&wire.suggested_verifier_id, "suggested_verifier_id")?;
+    for emp_id in [&routed_by, &triager, &verifier].into_iter().flatten() {
+        if view.employee(emp_id).map_err(storage_refusal)?.is_none() {
+            return Err(refuse(
+                ErrorCode::NotFound,
+                format!("referenced employee `{emp_id}` not found"),
+            ));
+        }
+    }
+    Ok(TaskDetailsRecord {
+        definition_of_done: wire.definition_of_done.clone(),
+        what_happened: wire.what_happened.clone(),
+        expected: wire.expected.clone(),
+        steps: wire.steps.clone(),
+        environment: wire.environment.clone(),
+        severity_confirmed: wire.severity_confirmed,
+        reopen_count: wire.reopen_count,
+        duplicate_of_task_id: duplicate_of,
+        closed_reason: wire.closed_reason.clone(),
+        affects_feature_id: None,
+        request_kind: wire.request_kind.clone(),
+        request_text: wire.request_text.clone(),
+        route_reason: wire.route_reason.clone(),
+        routing_source: wire.routing_source.clone(),
+        routed_by_employee_id: routed_by,
+        merged_into_task_id: merged_into,
+        suggested_triager_id: triager,
+        suggested_verifier_id: verifier,
+    })
+}
+
+/// Verifies that adding edge `source_id -> target_id` (`source` depends on `target`) introduces
+/// neither a self-loop nor a transitive dependency cycle (`TASK-77`).
+pub(crate) fn check_dependency_acyclic<R: TasksRead>(
+    view: &R,
+    source_id: &Id,
+    target_id: &Id,
+) -> Result<(), Refusal> {
+    if source_id == target_id {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            "a task cannot depend on itself",
+        ));
+    }
+    // BFS upstream from `target_id`: if `source_id` is reachable, adding `source -> target` cycles.
+    let mut visited = BTreeSet::new();
+    let mut queue = VecDeque::new();
+    visited.insert(target_id.clone());
+    queue.push_back(target_id.clone());
+    while let Some(curr) = queue.pop_front() {
+        let links = view.task_links_from(&curr).map_err(storage_refusal)?;
+        for link in links {
+            if link.kind != "depends_on" {
+                continue;
+            }
+            if &link.target_id == source_id {
+                return Err(refuse(
+                    ErrorCode::Conflict,
+                    format!(
+                        "dependency cycle detected: `{target_id}` already depends on `{source_id}`"
+                    ),
+                ));
+            }
+            if visited.insert(link.target_id.clone()) {
+                queue.push_back(link.target_id);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Appends the updated `task.json` and immutable `events/<rev>.json` into `change`.
+pub(crate) fn write_task_and_event(
+    change: Change,
+    task: &TaskRecord,
+    actor_id: &Id,
+    at: &str,
+    command_id: &str,
+    event_change: Value,
+) -> Result<Change, Refusal> {
+    let task_bytes = encode_json(task)
+        .map_err(|e| refuse(ErrorCode::StorageError, format!("encode task: {e}")))?;
+    let event = TaskEventRecord::build(
+        task.id.clone(),
+        task.meta.revision,
+        at.to_owned(),
+        actor_id.clone(),
+        command_id.to_owned(),
+        &event_change,
+    )
+    .map_err(|e| refuse(e.code, e.message))?;
+    let event_bytes = encode_json(&event)
+        .map_err(|e| refuse(ErrorCode::StorageError, format!("encode event: {e}")))?;
+    Ok(change
+        .put(task_path(&task.id), task_bytes)
+        .put(event_path(&task.id, task.meta.revision), event_bytes))
+}
+
+pub(crate) fn build_ref_summary(task: &TaskRecord) -> TaskRefSummary {
+    TaskRefSummary {
+        id: task.id.as_str().to_owned(),
+        key: task.key(),
+        title: task.title.clone(),
+        task_type: task.task_type.clone(),
+        status: task.status,
+        priority: task.priority,
+        rank_order: task.rank_order,
+    }
+}
+
+pub(crate) fn build_task_view<R: TasksRead>(
+    view: &R,
+    task: &TaskRecord,
+) -> Result<TaskView, Refusal> {
+    let steps = view.checklist_steps(&task.id).map_err(storage_refusal)?;
+    let comments = view.task_comments(&task.id).map_err(storage_refusal)?;
+    let watchers = view.task_watchers(&task.id).map_err(storage_refusal)?;
+    let links = view.task_links_from(&task.id).map_err(storage_refusal)?;
+    let mut depends_on: Vec<String> = links
+        .into_iter()
+        .filter(|l| l.kind == "depends_on")
+        .map(|l| l.target_id.as_str().to_owned())
+        .collect();
+    depends_on.sort();
+    depends_on.dedup();
+    let mut dependents: Vec<String> = view
+        .task_dependents(&task.id)
+        .map_err(storage_refusal)?
+        .into_iter()
+        .map(|id| id.as_str().to_owned())
+        .collect();
+    dependents.sort();
+    dependents.dedup();
+    let checklist_done = steps.iter().filter(|s| s.done).count() as u64;
+    Ok(TaskView {
+        id: task.id.as_str().to_owned(),
+        office_code: task.office_code.clone(),
+        number: task.number,
+        key: task.key(),
+        revision: task.meta.revision,
+        team_id: task.team_id.as_str().to_owned(),
+        assigned_team_id: task
+            .assigned_team_id
+            .as_ref()
+            .map(|id| id.as_str().to_owned()),
+        project_id: task.project_id.as_ref().map(|id| id.as_str().to_owned()),
+        task_type: task.task_type.clone(),
+        work_type: task.work_type,
+        title: task.title.clone(),
+        status: task.status,
+        assignee_id: task.assignee_id.as_ref().map(|id| id.as_str().to_owned()),
+        body_markdown: task.body_markdown.clone(),
+        feature_id: task.feature_id.as_ref().map(|id| id.as_str().to_owned()),
+        milestone_id: task.milestone_id.as_ref().map(|id| id.as_str().to_owned()),
+        priority: task.priority,
+        effort: task.effort,
+        severity: task.severity.clone(),
+        resolution: task.resolution.clone(),
+        blocked_reason: task.blocked_reason.clone(),
+        rank_order: task.rank_order,
+        labels: task.labels.clone(),
+        reference_files: task.reference_files.clone(),
+        modified_files: task.modified_files.clone(),
+        depends_on,
+        dependents,
+        details: task.details.as_ref().map(TaskDetailsRecord::to_wire),
+        created_at: task.meta.created_at.clone(),
+        created_by_kind: task.meta.created_by_kind.clone(),
+        created_by_id: task
+            .meta
+            .created_by_id
+            .as_ref()
+            .map(|id| id.as_str().to_owned()),
+        updated_at: task.meta.updated_at.clone(),
+        updated_by_kind: task.meta.updated_by_kind.clone(),
+        updated_by_id: task
+            .meta
+            .updated_by_id
+            .as_ref()
+            .map(|id| id.as_str().to_owned()),
+        checklist_total: steps.len() as u64,
+        checklist_done,
+        comment_count: comments.len() as u64,
+        watcher_count: watchers.len() as u64,
+    })
+}
+
+pub(crate) fn step_to_wire(step: &ChecklistStepRecord) -> ChecklistStepWire {
+    ChecklistStepWire {
+        id: step.id.as_str().to_owned(),
+        position: step.position,
+        text: step.text.clone(),
+        required: step.required,
+        done: step.done,
+        linked_task_id: step
+            .linked_task_id
+            .as_ref()
+            .map(|id| id.as_str().to_owned()),
+        checked_by_employee_id: step
+            .checked_by_employee_id
+            .as_ref()
+            .map(|id| id.as_str().to_owned()),
+        checked_at: step.checked_at.clone(),
+        revision: step.revision,
+    }
+}
+
+pub(crate) fn comment_to_wire(comment: &TaskCommentRecord) -> TaskCommentWire {
+    TaskCommentWire {
+        id: comment.id.as_str().to_owned(),
+        position: comment.position,
+        author_id: comment.author_id.as_str().to_owned(),
+        created_at: comment.created_at.clone(),
+        body_markdown: comment.body_markdown.clone(),
+    }
+}
+
+pub(crate) fn watcher_to_wire(w: &TaskWatcherRecord) -> TaskWatcherWire {
+    TaskWatcherWire {
+        id: w.id.as_str().to_owned(),
+        watcher_kind: w.watcher_kind.clone(),
+        watcher_id: w.watcher_id.as_ref().map(|id| id.as_str().to_owned()),
+    }
+}
+
+pub(crate) fn event_to_wire(ev: &TaskEventRecord) -> TaskEventWire {
+    let change = serde_json::from_str(&ev.change_json).unwrap_or_else(|_| json!({}));
+    TaskEventWire {
+        task_id: ev.task_id.as_str().to_owned(),
+        revision: ev.revision,
+        occurred_at: ev.occurred_at.clone(),
+        actor_kind: ev.actor_kind.clone(),
+        actor_id: ev.actor_id.as_ref().map(|id| id.as_str().to_owned()),
+        operation_id: ev.operation_id.clone(),
+        change,
+        payload_sha256: ev.payload_sha256.clone(),
+    }
+}

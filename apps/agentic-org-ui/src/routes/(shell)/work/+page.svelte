@@ -14,33 +14,39 @@
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import X from '@lucide/svelte/icons/x';
 	import { toast } from 'svelte-sonner';
-	import { owner } from '$lib/org/model';
-	import BugSheet from '$lib/components/BugSheet.svelte';
-	import NewRequestDialog from '$lib/components/NewRequestDialog.svelte';
-	import NewTaskDialog from '$lib/components/NewTaskDialog.svelte';
-	import RequestSheet from '$lib/components/RequestSheet.svelte';
-	import RequestsPanel from '$lib/components/RequestsPanel.svelte';
-	import TaskSheet from '$lib/components/TaskSheet.svelte';
+	import { owner } from '$lib/modules/organization/model';
+	import BugSheet from '$lib/modules/work/features/bugs/BugSheet.svelte';
+	import NewRequestDialog from '$lib/modules/work/features/requests/NewRequestDialog.svelte';
+	import NewTaskDialog from '$lib/modules/work/features/tasks/NewTaskDialog.svelte';
+	import RequestSheet from '$lib/modules/work/features/requests/RequestSheet.svelte';
+	import RequestsPanel from '$lib/modules/work/features/requests/RequestsPanel.svelte';
+	import TaskSheet from '$lib/modules/work/features/tasks/TaskSheet.svelte';
 	import WorkReadingPanel from '$lib/components/WorkReadingPanel.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
 	import type { WorkItemSummary } from '$lib/proto';
-	import { sender, workApi } from '$lib/work';
-	import { bugRef, severityWord } from '$lib/work/bugs';
+	import { sender, workApi } from '$lib/modules/work';
+	import { bugRef, severityWord } from '$lib/modules/work/bugs';
 	import {
 		assigneeInitials,
 		needsOwnerAttention,
 		projectDotTone,
 		workStatusLabel,
 		workStatusTone
-	} from '$lib/work/compact';
-	import { nameOf } from '$lib/work/people';
-	import { requestRef, requestsNeedingYou } from '$lib/work/requests-view';
-	import { countOf, defaultFilter, needsYou, savedFilters, type WorkTab } from '$lib/work/saved';
-	import { priorityWord, taskRef } from '$lib/work/tasks';
-	import { severityTone, type WorkTone } from '$lib/work/tones';
+	} from '$lib/modules/work/compact';
+	import { nameOf } from '$lib/modules/work/people';
+	import { requestRef, requestsNeedingYou } from '$lib/modules/work/requests-view';
+	import {
+		countOf,
+		defaultFilter,
+		needsYou,
+		savedFilters,
+		type WorkTab
+	} from '$lib/modules/work/saved';
+	import { priorityWord, taskRef } from '$lib/modules/work/tasks';
+	import { severityTone, type WorkTone } from '$lib/modules/work/tones';
 	import {
 		deriveBoardColumns,
 		deriveWorkScopeOptions,
@@ -55,7 +61,7 @@
 		type WorkGrouping,
 		type WorkLayout,
 		type WorkScopeFilter
-	} from '$lib/work/work-toolbar';
+	} from '$lib/modules/work/work-toolbar';
 
 	/** Work across every project (work-items-ux §11): Tasks, Bugs, and Requests with unified Inbox-parity controls. */
 	let { data } = $props();

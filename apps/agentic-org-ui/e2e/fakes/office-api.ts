@@ -1,6 +1,6 @@
-export { toAppError } from '../../src/lib/office/api';
-export type { OfficeApi } from '../../src/lib/office/api';
-import { createMockOffice } from '../../src/lib/office/mock';
+export { toAppError } from '../../src/lib/proto';
+export type { OfficeApi } from '../../src/lib/modules/offices/office-api';
+import { createMockOffice } from '../../src/lib/modules/offices/mock';
 import { ensurePocConnection, isPocDataset } from './mock-mode';
 
 const base = createMockOffice({ testHook: true });

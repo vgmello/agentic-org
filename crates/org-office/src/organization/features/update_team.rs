@@ -49,7 +49,7 @@ impl Feature for UpdateTeam {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: OrganizationRead,
+        E::Tx: crate::projects::ports::ProjectsRead,
     {
         decide(uow, here, owner, by, self)
     }

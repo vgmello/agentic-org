@@ -207,10 +207,6 @@ impl Offices {
     /// `office.restart`: starts an `offline` or `unavailable` office again now (see
     /// [`Supervisor::restart`]). Waits for the startup discards first, like a create. The
     /// caller's code signature is checked before this.
-    #[cfg_attr(
-        not(any(test, all(feature = "test-support", debug_assertions))),
-        expect(dead_code, reason = "activated by 2b.3 CLI")
-    )]
     pub(crate) fn restart_office(&self, office_id: &str) -> Result<(), ApiError> {
         self.wait_for_startup(Instant::now() + self.create_wait)?;
         self.settled_office(office_id)?;
@@ -255,6 +251,95 @@ impl Offices {
         }
     }
 
+    /// Updates every office in `org_id` to the new owner and gracefully reloads running workers
+    /// so the transferred owner takes effect immediately (`TASK-38` / `doc-78`). If any office
+    /// custody file fails to update, `restore_db` runs FIRST so `HostDb::org_owners` returns to
+    /// `(previous_owner_account, previous_owner_member)`, and then previously updated custody
+    /// files are rolled back against that restored database state before returning an error.
+    pub(crate) fn reload_org_offices(
+        &self,
+        org_id: &str,
+        previous_owner_account: &str,
+        previous_owner_member: &str,
+        new_owner_account: &str,
+        new_owner_member: &str,
+        restore_db: impl FnOnce() -> Result<(), crate::hostdb::Error>,
+    ) -> Result<(), ApiError> {
+        let office_ids: Vec<String> = self
+            .offices()
+            .into_iter()
+            .filter(|o| o.organization_id == org_id)
+            .map(|o| o.id)
+            .collect();
+        let mut updated: Vec<String> = Vec::with_capacity(office_ids.len());
+        for office_id in &office_ids {
+            if let Err(err) =
+                self.supervisor
+                    .update_owner(office_id, org_id, new_owner_account, new_owner_member)
+            {
+                host_log::log(&format!(
+                    "failed to update writer ownership for office {office_id}: {err}; rolling back"
+                ));
+                self.rollback_owner_updates(
+                    updated,
+                    org_id,
+                    previous_owner_account,
+                    previous_owner_member,
+                    restore_db,
+                );
+                return Err(ApiError::new(
+                    ErrorCode::StorageError,
+                    "could not update office ownership binding",
+                ));
+            }
+            updated.push(office_id.clone());
+        }
+        for office_id in office_ids {
+            self.supervisor.reload_office(&office_id);
+        }
+        Ok(())
+    }
+
+    fn rollback_owner_updates(
+        &self,
+        updated: Vec<String>,
+        org_id: &str,
+        previous_owner_account: &str,
+        previous_owner_member: &str,
+        restore_db: impl FnOnce() -> Result<(), crate::hostdb::Error>,
+    ) {
+        if let Err(db_err) = restore_db() {
+            host_log::log(&format!(
+                "failed to restore org_owners for {org_id} during handover rollback: {db_err:?}"
+            ));
+            return;
+        }
+        for done in updated.into_iter().rev() {
+            if let Err(revert_err) = self.supervisor.update_owner(
+                &done,
+                org_id,
+                previous_owner_account,
+                previous_owner_member,
+            ) {
+                host_log::log(&format!(
+                    "failed to roll back writer ownership for office {done}: {revert_err}"
+                ));
+            }
+        }
+    }
+
+    pub(crate) fn inspect_import(
+        &self,
+        repository_remote_url: &str,
+        state_branch: &str,
+    ) -> Result<org_office_launch::InspectImportResponse, ApiError> {
+        self.supervisor
+            .inspect_import(repository_remote_url, state_branch)
+            .map_err(|_| {
+                ApiError::new(ErrorCode::Unavailable, "organization inspector unavailable")
+            })
+    }
+
     /// `not_ready` if `office_id` is still being created, `not_found` if it isn't an office here.
     fn settled_office(&self, office_id: &str) -> Result<(), ApiError> {
         let catalog = lock(&self.catalog);
@@ -268,6 +353,16 @@ impl Offices {
             return Err(ApiError::new(ErrorCode::NotFound, "no such office here"));
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_catalog_for_test(&self, office: org_office_launch::OfficeFile) {
+        lock(&self.catalog).insert(office);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn kill_office_for_test(&self, office_id: &str) {
+        self.supervisor.kill_office_for_test(office_id);
     }
 
     #[cfg(all(feature = "test-support", debug_assertions))]
@@ -781,6 +876,134 @@ mod tests {
         assert_eq!(offices.state_of(OFFICE).status, OfficeStatus::Unavailable);
         offices.restart_office(OFFICE).unwrap();
         assert!(offices.supervisor.state(OFFICE).is_some());
+        offices.shutdown();
+    }
+
+    /// Regression test (TASK-38 review #1): when a multi-office org owner handover fails while
+    /// updating the second office's writer custody, `HostDb::org_owners` MUST be restored BEFORE
+    /// reverting office 1's writer custody so `Writers::verify` succeeds and office 1 stays
+    /// admittable under the previous owner.
+    #[test]
+    fn org_owner_handover_rollback_restores_db_before_reverting_earlier_offices() {
+        use crate::accounts::identity::AccountId;
+        use crate::accounts::rules::Username;
+        use crate::accounts::store::NewAccount;
+        use crate::hostdb::journal::Verifier;
+        use crate::hostdb::sqlite::accounts::multi_person::{
+            InviteRegistration, OrgOwnerHandoverOutcome,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let office1 = crate::ids::uuid_v7().unwrap();
+        let office2 = crate::ids::uuid_v7().unwrap();
+        // Reserve writer custody ONLY for office1; office2 intentionally lacks custody so
+        // `update_owner` fails on office2 after succeeding on office1.
+        let custody = crate::writer::TestCustody::reserve(home, INSTANCE, &[&office1]);
+        let org_id = custody.organization.clone();
+        let owner_id = AccountId::parse(&custody.account).unwrap();
+        let owner_member = custody.member.clone();
+
+        // Create and link Sam in the same organization as the handover target.
+        let sam_member = crate::ids::uuid_v7().unwrap();
+        let invite = custody
+            .db
+            .issue_org_invite(&org_id, &sam_member, 10_000)
+            .unwrap();
+        let verifier = Verifier::new(
+            "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+        )
+        .unwrap();
+        let new_sam = NewAccount::new(Username::new("Sam").unwrap(), verifier).unwrap();
+        let sam_id = match custody
+            .db
+            .redeem_invite_register(&invite.token, &new_sam, 10_100)
+            .unwrap()
+        {
+            InviteRegistration::Registered { account_id, .. } => account_id,
+            other => panic!("unexpected invite registration: {other:?}"),
+        };
+
+        // Catalog lists office1 (HQ, ordered first) and office2 (Satellite, ordered second).
+        let mut catalog = Catalog::default();
+        catalog.insert(OfficeFile::new(
+            &office1,
+            "HQ",
+            org_proto::OfficeRole::Hq,
+            &org_id,
+            "Acme",
+            "2026-11-08T00:00:00.000Z",
+        ));
+        catalog.insert(OfficeFile::new(
+            &office2,
+            "Satellite",
+            org_proto::OfficeRole::Satellite,
+            &org_id,
+            "Acme",
+            "2026-11-08T00:00:01.000Z",
+        ));
+        let supervisor = Supervisor::new(
+            SupervisorConfig {
+                program: home.join("no-such-server"),
+                home: home.to_path_buf(),
+                runtime_dir: None,
+                logs_dir: home.join("logs"),
+                log_max_bytes: 1024,
+                timings: Timings::default(),
+                keys: Arc::new(MemoryKeys::default()),
+                server_check: Arc::new(crate::server_check::ServerCheck::Skip),
+                sweep_orphans: false,
+            },
+            INSTANCE,
+        )
+        .with_writers(Arc::clone(&custody.writers));
+        supervisor.shutdown();
+        let offices = Offices::start(
+            home,
+            catalog,
+            Vec::new(),
+            supervisor,
+            Arc::new(Broadcast::default()),
+            &Timings::default(),
+        );
+
+        let transferred = custody
+            .db
+            .handover_org_owner(&org_id, &owner_id, &sam_member)
+            .unwrap();
+        assert_eq!(
+            transferred,
+            OrgOwnerHandoverOutcome::Transferred {
+                previous_member_id: owner_member.clone(),
+                to_account_id: sam_id.clone(),
+                to_member_id: sam_member.clone(),
+            }
+        );
+
+        let err = offices
+            .reload_org_offices(
+                &org_id,
+                owner_id.as_str(),
+                &owner_member,
+                sam_id.as_str(),
+                &sam_member,
+                || {
+                    custody
+                        .db
+                        .restore_org_owner(&org_id, &owner_id, &owner_member)
+                },
+            )
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::StorageError);
+
+        // Both HostDb::org_owners AND office1's writer custody must be back on the previous owner
+        // and office1 must still pass `admit()` / `verify()`.
+        assert_eq!(
+            custody.db.org_owner(&org_id).unwrap(),
+            Some((owner_id, owner_member.clone()))
+        );
+        let bound = custody.writers.admit(&office1).unwrap();
+        assert_eq!(bound.owner_member, owner_member);
         offices.shutdown();
     }
 }

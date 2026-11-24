@@ -4,7 +4,7 @@ use std::{ffi::c_void, ptr::NonNull};
 unsafe extern "C" {
     fn ag_recovery_local(token: *const u8, length: usize) -> i32;
     fn ag_recovery_current() -> i32;
-    fn ag_recovery_begin() -> *mut c_void;
+    fn ag_recovery_begin_reason(reason_code: i32) -> *mut c_void;
     fn ag_recovery_poll(handle: *mut c_void) -> i32;
     fn ag_recovery_free(handle: *mut c_void);
 }
@@ -23,14 +23,22 @@ impl Drop for Context {
         unsafe { ag_recovery_free(self.0.as_ptr()) };
     }
 }
-pub(super) fn confirm(cancelled: impl Fn() -> bool) -> Result<(), ()> {
+pub(super) fn confirm(
+    reason: super::ConfirmReason,
+    cancelled: impl Fn() -> bool,
+) -> Result<(), ()> {
     use std::time::{Duration, Instant};
     if cancelled() {
         return Err(());
     }
+    let code = match reason {
+        super::ConfirmReason::RecoveryCode => 0,
+        super::ConfirmReason::ResetAdminPassword => 1,
+        super::ConfirmReason::CreateAdminRegistrationLink => 2,
+    };
     // SAFETY: fixed SDK ABI returns one retained heap handle or null; no Rust
     // state/address crosses the asynchronous callback boundary.
-    let context = Context(NonNull::new(unsafe { ag_recovery_begin() }).ok_or(())?);
+    let context = Context(NonNull::new(unsafe { ag_recovery_begin_reason(code) }).ok_or(())?);
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
         if cancelled() || Instant::now() >= deadline {
@@ -50,7 +58,7 @@ use std::os::unix::net::UnixStream;
 /// A process's audit token (`audit_token_t`): eight 32-bit words.
 type AuditToken = [u8; 32];
 
-use super::{Confirmation, Unconfirmed};
+use super::{ConfirmReason, Confirmation, Unconfirmed};
 use org_platform::Refused;
 
 pub(super) fn local_peer(peer: &UnixStream) -> Result<bool, Refused> {
@@ -62,8 +70,11 @@ pub(super) fn current_context() -> Result<bool, Refused> {
     Ok(current())
 }
 
-pub(super) fn confirm_presence(cancelled: impl Fn() -> bool) -> Result<Confirmation, Unconfirmed> {
-    confirm(cancelled)
+pub(super) fn confirm_presence(
+    reason: ConfirmReason,
+    cancelled: impl Fn() -> bool,
+) -> Result<Confirmation, Unconfirmed> {
+    confirm(reason, cancelled)
         .map(|()| Confirmation::OsDialog)
         .map_err(|()| Unconfirmed::Denied)
 }

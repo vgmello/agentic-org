@@ -2,8 +2,13 @@
 	import X from '@lucide/svelte/icons/x';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
-	import { muteOf, PRESENCE_WORD, titleOf } from '$lib/modules/messaging/model';
-	import type { ChatState, Conversation, MuteMode, Presence } from '$lib/modules/messaging/types';
+	import {
+		muteOf,
+		presenceOf as memberPresence,
+		PRESENCE_WORD,
+		titleOf
+	} from '$lib/modules/messaging/model';
+	import type { ChatState, Conversation, MuteMode } from '$lib/modules/messaging/types';
 	import Avatar from '$lib/modules/messaging/components/Avatar.svelte';
 
 	/** Who is in a conversation and how the owner hears from them (CHAT-11); channels people made can be edited here (CHAT-2). */
@@ -49,8 +54,6 @@
 		{ id: 'digest', label: 'Daily digest' },
 		{ id: 'muted', label: 'Muted' }
 	];
-	const presenceOf = (id: string, kind: 'agent' | 'person'): Presence =>
-		chatState.presence[id] ?? (kind === 'agent' ? 'offline' : 'online');
 	let closeButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
 	export function focusClose() {
 		closeButton?.focus({ preventScroll: true });
@@ -91,19 +94,19 @@
 			</p>{/if}
 		<ul class="flex flex-col gap-3">
 			{#each members as m (m.id)}
+				{@const status = memberPresence(chatState, m)}
 				<li
 					class="flex items-center gap-x-3 max-[640px]:flex-wrap max-[640px]:gap-y-2"
 					data-testid="member-row"
 				>
-					<Avatar name={m.name} kind={m.kind} presence={presenceOf(m.id, m.kind)} />
+					<Avatar name={m.name} kind={m.kind} presence={status} />
 					<div class="min-w-0 flex-1 max-[640px]:basis-[200px]">
 						<p class="truncate text-sm/6 font-semibold text-fg">
-							{m.name}{#if m.owner}{' '}<span class="font-normal text-fg-muted">(you)</span>{/if}
+							{m.name}{#if m.owner}<span class="ml-1 font-normal text-fg-muted">(you)</span>{/if}
 						</p>
 						<p class="text-xs/5 break-words text-fg-muted">
-							{m.kind === 'agent' ? 'Agent' : m.owner ? 'Owner' : 'Person'} · {PRESENCE_WORD[
-								presenceOf(m.id, m.kind)
-							]} · @{m.handle}
+							{m.kind === 'agent' ? 'Agent' : m.owner ? 'Owner' : 'Person'}{#if status}{' · ' +
+									PRESENCE_WORD[status]}{/if} · @{m.handle}
 						</p>
 					</div>
 					{#if m.kind === 'agent' && conversation.kind !== 'dm'}

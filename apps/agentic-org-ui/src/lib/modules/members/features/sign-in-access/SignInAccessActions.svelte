@@ -13,7 +13,7 @@
 	import { mobileButton } from '$lib/components/classes';
 	import { focusIsFree } from '$lib/components/focus';
 	import { Button } from '$lib/components/ui/button';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import SignInAccessDialogs, {
 		NOT_IN_ORGANIZATION,
 		type SignInAction,

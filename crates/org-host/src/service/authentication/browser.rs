@@ -7,22 +7,29 @@
 //! is appended to the caller's `ended` list, also on a refusal, and the caller pushes `session.ended` after the delete on the
 //! same ordered connection writer.
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::Duration;
 
 use argon2::password_hash::{PasswordHash, PasswordVerifier};
 use org_host_control::browser::{
-    BrowserAccount, BrowserOrigin, BrowserSession, Digest32, LinkRegisterParams,
-    SessionSignInParams, SessionValidateParams,
+    BrowserAccount, BrowserAuthEnableParams, BrowserOpenChannelParams, BrowserOrigin,
+    BrowserSession, BrowserSessionGrantParams, Digest32, LinkRegisterParams, SessionSignInParams,
+    SessionValidateParams,
 };
+use org_host_control::listen::ListenMode;
 use org_host_control::ops::LinkedOrg;
+use org_host_control::organization::BrowserAuth;
 use org_proto::{ApiError, ErrorCode};
 
-use super::{argon, denied, hash_password, unavailable, Authentication, HashPermit, MAX_HASHES};
+use super::{
+    argon, denied, hash_password, sign_grant, unavailable, Authentication, GrantInput, HashPermit,
+    WebChannel, MAX_HASHES,
+};
 use crate::accounts::identity::{AccountId, LoginKey};
 use crate::accounts::rules::{check_new_password, PasswordRule, Username};
-use crate::accounts::store::{
-    AccountStore, Attempt, ClientAddress, NewAccount, Registration, ThrottleKey,
-};
-use crate::links::{LinkKind, OneTimeLinks};
+use crate::accounts::store::{AccountStore, Attempt, ClientAddress, NewAccount, ThrottleKey};
+use crate::links::LinkKind;
+use crate::service::listener::Connection;
 use crate::sessions::{
     Admission, BrowserSessions, Ended, NewSession, Origin, Scheme, SessionDigest, IDLE_MS,
 };
@@ -31,22 +38,22 @@ use crate::sessions::{
 /// normalization or Argon2 work.
 pub(crate) const FIELD_MAX_BYTES: usize = 4096;
 
-fn not_found() -> ApiError {
+pub(super) fn not_found() -> ApiError {
     ApiError::new(ErrorCode::NotFound, "link not found")
 }
-fn origin(origin: &BrowserOrigin) -> Result<Origin, ApiError> {
+pub(super) fn origin(origin: &BrowserOrigin) -> Result<Origin, ApiError> {
     Scheme::parse(&origin.scheme)
         .and_then(|scheme| Origin::new(scheme, &origin.host, origin.port).ok())
         .ok_or_else(|| ApiError::new(ErrorCode::InvalidRequest, "invalid origin"))
 }
-fn digest(value: &Digest32) -> SessionDigest {
+pub(super) fn digest(value: &Digest32) -> SessionDigest {
     SessionDigest(value.0)
 }
-fn store_error<E>(_: E) -> ApiError {
+pub(super) fn store_error<E>(_: E) -> ApiError {
     unavailable()
 }
 /// `rate_limited` with the longest wait if any of `keys` is locked.
-fn unless_locked(
+pub(super) fn unless_locked(
     accounts: &dyn AccountStore,
     keys: &[ThrottleKey<'_>],
     now_ms: i64,
@@ -64,7 +71,7 @@ fn unless_locked(
     Ok(())
 }
 /// Records one failure on each of `keys`.
-fn failed(
+pub(super) fn failed(
     accounts: &dyn AccountStore,
     keys: &[ThrottleKey<'_>],
     now_ms: i64,
@@ -77,8 +84,23 @@ fn failed(
     Ok(())
 }
 
+fn validate_registration_inputs(
+    params: &LinkRegisterParams,
+) -> Result<(Username, Origin), ApiError> {
+    if params.login.len() > FIELD_MAX_BYTES {
+        return Err(ApiError::rule("login", "format"));
+    }
+    let username = Username::new(&params.login).map_err(|_| ApiError::rule("login", "format"))?;
+    check_new_password(params.password.expose()).map_err(|rule| match rule {
+        PasswordRule::TooShort => ApiError::rule("password", "too_short"),
+        PasswordRule::TooLong => ApiError::rule("password", "too_long"),
+    })?;
+    let origin = origin(&params.origin)?;
+    Ok((username, origin))
+}
+
 impl Authentication {
-    fn permit(&self) -> Result<HashPermit<'_>, ApiError> {
+    pub(super) fn permit(&self) -> Result<HashPermit<'_>, ApiError> {
         self.hashing
             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
                 (n < MAX_HASHES).then_some(n + 1)
@@ -87,18 +109,16 @@ impl Authentication {
         Ok(HashPermit(&self.hashing))
     }
 
-    /// `link.register`: redeems the setup link and signs the new administrator in.
-    /// The per-address throttle is read first, and a link that would not redeem
-    /// is refused before any Argon2 work; every link refusal counts on the address.
+    /// `link.register`: redeems either the initial/reset administrator registration link OR an
+    /// organization person invitation link (`invite:<org_id>:<member_id>`) and signs the new
+    /// account in. The per-address throttle is read first, and a link that would not redeem is
+    /// refused before any Argon2 work; every link refusal counts on the address.
     pub(crate) fn register(
         &self,
         params: &LinkRegisterParams,
         now_ms: i64,
         ended: &mut Vec<Ended>,
     ) -> Result<BrowserSession, ApiError> {
-        if params.login.len() > FIELD_MAX_BYTES {
-            return Err(ApiError::rule("login", "format"));
-        }
         let accounts: &dyn AccountStore = &*self.db;
         let address = ClientAddress::of(params.client_address);
         let keys = [ThrottleKey::Address(&address)];
@@ -107,41 +127,23 @@ impl Authentication {
         let Some(token) = crate::links::Token::parse(params.link.expose()) else {
             return refuse();
         };
-        let username =
-            Username::new(&params.login).map_err(|_| ApiError::rule("login", "format"))?;
-        check_new_password(params.password.expose()).map_err(|rule| match rule {
-            PasswordRule::TooShort => ApiError::rule("password", "too_short"),
-            PasswordRule::TooLong => ApiError::rule("password", "too_long"),
-        })?;
-        let origin = origin(&params.origin)?;
-        let links: &dyn OneTimeLinks = &*self.db;
-        if links
-            .redeemable(LinkKind::Registration, &token, now_ms)
+        let (username, origin) = validate_registration_inputs(params)?;
+        let Ok(subject) = self
+            .db
+            .peek_link_subject(LinkKind::Registration, &token, now_ms)
             .map_err(store_error)?
-            .is_err()
-        {
+        else {
             return refuse();
-        }
+        };
         let verifier = {
             let _permit = self.permit()?;
             hash_password(&params.password)?
         };
         let new = NewAccount::new(username, verifier).map_err(store_error)?;
-        match accounts
-            .register_administrator(&token, &new, now_ms)
-            .map_err(store_error)?
-        {
-            Registration::Registered { account_id } => self.start(
-                &account_id,
-                digest(&params.cookie_digest),
-                digest(&params.proof_digest),
-                origin,
-                now_ms,
-                ended,
-            ),
-            Registration::Link(_) | Registration::AdministratorExists => refuse(),
-            Registration::LoginTaken => Err(ApiError::rule("login", "taken")),
+        if crate::hostdb::sqlite::accounts::multi_person::parse_invite_subject(&subject).is_some() {
+            return self.complete_invite_registration(&token, &new, params, origin, now_ms, ended);
         }
+        self.complete_admin_registration(&token, &new, params, origin, now_ms, ended)
     }
 
     /// `session.sign_in`: one identical refusal for an unknown login, a wrong
@@ -171,7 +173,10 @@ impl Authentication {
         let credentials = match &key {
             Some(key) => accounts.credentials(key).map_err(store_error)?,
             None => None,
-        };
+        }
+        .filter(|c| {
+            c.verifier.expose() != crate::hostdb::sqlite::local_auth::LOCAL_AUTHLESS_VERIFIER
+        });
         let verifier = credentials.as_ref().map_or(&self.dummy, |c| &c.verifier);
         let parsed = PasswordHash::new(verifier.expose()).map_err(|_| unavailable())?;
         let matches = argon()?
@@ -223,17 +228,28 @@ impl Authentication {
         let account = AccountId::parse(&record.account_id).map_err(|_| unavailable())?;
         match self.view(&record.id, &account, now_ms)? {
             Some(view) => {
-                sessions
-                    .touch(&[(record.id.as_str(), now_ms)], now_ms)
-                    .map_err(store_error)?;
+                // Flush synchronously when close to the 30-day idle boundary so a follow-up
+                // request or reap cannot observe stale `last_activity_ms` and falsely expire.
+                if now_ms.saturating_sub(record.last_activity_ms)
+                    >= IDLE_MS.saturating_sub(super::touch_batch::NEAR_EXPIRY_WINDOW_MS)
+                {
+                    let sessions: &dyn BrowserSessions = &*self.db;
+                    sessions
+                        .touch(&[(record.id.as_str(), now_ms)], now_ms)
+                        .map_err(store_error)?;
+                    self.touch_batcher.forget(&[record.id.as_str()]);
+                } else {
+                    self.touch_batcher.record(&self.db, &record.id, now_ms);
+                }
                 Ok(view)
             }
             None => {
-                ended.extend(
-                    sessions
-                        .end_account(account.as_str(), None)
-                        .map_err(store_error)?,
-                );
+                let removed = sessions
+                    .end_account(account.as_str(), None)
+                    .map_err(store_error)?;
+                let ids: Vec<&str> = removed.iter().map(|e| e.id.as_str()).collect();
+                self.touch_batcher.forget(&ids);
+                ended.extend(removed);
                 Err(denied())
             }
         }
@@ -257,8 +273,138 @@ impl Authentication {
             .ok_or_else(denied)
     }
 
+    /// Whether authentication is currently enforced on this host (`false` on default local HTTP HQ).
+    pub(crate) fn auth_enabled(&self) -> Result<bool, ApiError> {
+        self.db.auth_enabled().map_err(|_| unavailable())
+    }
+
+    /// Synthetic session ID used for HMAC grants in local-authless mode (valid 26-char ULID).
+    pub(super) const LOCAL_AUTHLESS_SESSION_ID: &'static str = "01000000000000000000000000";
+
+    /// Verifies that `connection` is an admitted plain-HTTP web connection and returns the
+    /// active local-authless owner account ID, failing closed with `not_authorized` otherwise.
+    fn local_authless_owner_id(&self, connection: &Connection) -> Result<AccountId, ApiError> {
+        if !matches!(
+            connection.web_listen().map(|c| c.scheme()),
+            Some(ListenMode::HttpLoopback | ListenMode::HttpPublished)
+        ) {
+            return Err(denied());
+        }
+        self.db
+            .local_authless_account()
+            .map_err(|_| unavailable())?
+            .ok_or_else(denied)
+    }
+
+    /// `browser.local_session`: returns the implicit local owner's session view while auth is
+    /// disabled on a local plain-HTTP instance.
+    pub(crate) fn local_authless_session(
+        &self,
+        connection: &Connection,
+        now_ms: i64,
+    ) -> Result<BrowserSession, ApiError> {
+        let id = self.local_authless_owner_id(connection)?;
+        self.view(Self::LOCAL_AUTHLESS_SESSION_ID, &id, now_ms)
+            .map_err(store_error)?
+            .ok_or_else(denied)
+    }
+
+    /// Authorizes a [`BrowserAuth`] envelope, allowing `local_authless` ONLY on a local plain-HTTP
+    /// instance whose authentication is disabled; otherwise validates the session pair digests.
+    pub(crate) fn browser_auth_account(
+        &self,
+        connection: &Connection,
+        auth: &BrowserAuth,
+        now_ms: i64,
+        ended: &mut Vec<Ended>,
+    ) -> Result<crate::hostdb::accounts::Account, ApiError> {
+        if auth.local_authless {
+            let id = self.local_authless_owner_id(connection)?;
+            return self
+                .db
+                .account_authority(&id)
+                .map_err(|_| unavailable())?
+                .filter(|a| a.revoked_at_ms().is_none())
+                .ok_or_else(denied);
+        }
+        self.browser_account(
+            &SessionValidateParams {
+                cookie_digest: auth.cookie_digest,
+                proof_digest: auth.proof_digest,
+                origin: auth.origin.clone(),
+            },
+            now_ms,
+            ended,
+        )
+    }
+
+    /// `browser.auth_enable`: opt-in authentication enablement on a local authless HTTP instance.
+    /// Validates login/password rules, hashes password with Argon2id, upgrades the local owner
+    /// account atomically (preserving all linked orgs), and starts a real browser session.
+    pub(crate) fn enable_local_auth(
+        &self,
+        connection: &Connection,
+        params: &BrowserAuthEnableParams,
+        now_ms: i64,
+        ended: &mut Vec<Ended>,
+    ) -> Result<BrowserSession, ApiError> {
+        if !matches!(
+            connection.web_listen().map(|c| c.scheme()),
+            Some(ListenMode::HttpLoopback | ListenMode::HttpPublished)
+        ) {
+            return Err(denied());
+        }
+        if self
+            .db
+            .local_authless_account()
+            .map_err(|_| unavailable())?
+            .is_none()
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "authentication is already enabled",
+            ));
+        }
+        if params.login.len() > FIELD_MAX_BYTES {
+            return Err(ApiError::rule("login", "format"));
+        }
+        let username =
+            Username::new(&params.login).map_err(|_| ApiError::rule("login", "format"))?;
+        check_new_password(params.password.expose()).map_err(|rule| match rule {
+            PasswordRule::TooShort => ApiError::rule("password", "too_short"),
+            PasswordRule::TooLong => ApiError::rule("password", "too_long"),
+        })?;
+        let origin = origin(&params.origin)?;
+        let verifier = {
+            let _permit = self.permit()?;
+            hash_password(&params.password)?
+        };
+        let account_id = self
+            .db
+            .enable_local_auth(&username, &verifier, now_ms)
+            .map_err(|err| match err {
+                crate::hostdb::Error::Conflict => {
+                    ApiError::new(ErrorCode::Conflict, "authentication is already enabled")
+                }
+                _ => unavailable(),
+            })?;
+        ended.push(Ended {
+            id: Self::LOCAL_AUTHLESS_SESSION_ID.to_owned(),
+            account_id: account_id.as_str().to_owned(),
+        });
+        self.start(
+            &account_id,
+            digest(&params.cookie_digest),
+            digest(&params.proof_digest),
+            origin,
+            now_ms,
+            ended,
+        )
+    }
+
     /// `session.end`: deletes one session. Ending an unknown session is not an error.
     pub(crate) fn end_browser(&self, session_id: &str) -> Result<Vec<Ended>, ApiError> {
+        self.touch_batcher.forget(&[session_id]);
         let sessions: &dyn BrowserSessions = &*self.db;
         Ok(sessions
             .end(session_id)
@@ -267,7 +413,134 @@ impl Authentication {
             .collect())
     }
 
-    fn start(
+    /// `browser.open_channel`: opens a Web channel to an office linked to the browser
+    /// session's account and binds the channel slot to the admitted web connection.
+    pub(crate) fn open_browser_channel(
+        &self,
+        connection: &Connection,
+        params: &BrowserOpenChannelParams,
+        endpoint: Arc<crate::supervisor::channels::Endpoint>,
+        organization: &str,
+        now_ms: i64,
+        ended: &mut Vec<Ended>,
+    ) -> Result<
+        (
+            String,
+            std::os::unix::net::UnixStream,
+            crate::supervisor::channels::ChannelSlot,
+        ),
+        ApiError,
+    > {
+        let account = self.browser_auth_account(connection, &params.auth, now_ms, ended)?;
+        if !account
+            .links()
+            .iter()
+            .any(|link| link.org_id() == organization)
+        {
+            return Err(denied());
+        }
+        let (id, socket, slot) = endpoint
+            .open(org_office_launch::ChannelKind::Web)
+            .map_err(|_| unavailable())?;
+        // Recheck session authority after worker handoff so a concurrent sign-out or auth enable
+        // cannot install a channel.
+        let account = self.browser_auth_account(connection, &params.auth, now_ms, ended)?;
+        if !account
+            .links()
+            .iter()
+            .any(|link| link.org_id() == organization)
+        {
+            return Err(denied());
+        }
+        let alive = connection.liveness();
+        if alive
+            .upgrade()
+            .is_none_or(|closed| closed.load(Ordering::SeqCst))
+            || !slot.is_live()
+        {
+            return Err(unavailable());
+        }
+        let mut channels = self.web_channels.lock().map_err(|_| unavailable())?;
+        channels.retain(|_, channel| channel.live());
+        if channels.len() >= 64 {
+            return Err(unavailable());
+        }
+        channels.insert(
+            id.clone(),
+            WebChannel {
+                endpoint: Arc::downgrade(&endpoint),
+                organization: organization.into(),
+                connection: alive,
+                _slot: slot.clone(),
+            },
+        );
+        Ok((id, socket, slot))
+    }
+
+    /// `browser.grant`: mints a short-lived HMAC-signed office grant for the live browser
+    /// session over an already-acknowledged Web channel on this connection.
+    pub(crate) fn grant_browser(
+        &self,
+        connection: &Connection,
+        params: &BrowserSessionGrantParams,
+        now_ms: i64,
+        ended: &mut Vec<Ended>,
+    ) -> Result<org_host_control::ops::SessionGrantResult, ApiError> {
+        if !connection.channel_received(&params.channel_id) {
+            return Err(denied());
+        }
+        let session = if params.auth.local_authless {
+            self.local_authless_session(connection, now_ms)?
+        } else {
+            let validate = SessionValidateParams {
+                cookie_digest: params.auth.cookie_digest,
+                proof_digest: params.auth.proof_digest,
+                origin: params.auth.origin.clone(),
+            };
+            self.validate_browser(&validate, now_ms, ended)?
+        };
+        let account_id = AccountId::parse(&session.account.id).map_err(|_| unavailable())?;
+        let account = self
+            .db
+            .account_authority(&account_id)
+            .map_err(|_| unavailable())?
+            .filter(|a| a.revoked_at_ms().is_none())
+            .ok_or_else(denied)?;
+        let (endpoint, organization) = {
+            let channels = self.web_channels.lock().map_err(|_| unavailable())?;
+            let bound = channels.get(&params.channel_id).ok_or_else(denied)?;
+            if !bound.connection.ptr_eq(&connection.liveness()) || !bound._slot.is_live() {
+                return Err(denied());
+            }
+            let endpoint = bound.endpoint.upgrade().ok_or_else(unavailable)?;
+            if endpoint.office != params.office_id || !endpoint.is_live() {
+                return Err(denied());
+            }
+            (endpoint, bound.organization.clone())
+        };
+        let link = account
+            .links()
+            .iter()
+            .find(|link| link.org_id() == organization)
+            .ok_or_else(denied)?;
+        let now_u64 = u64::try_from(now_ms).map_err(|_| unavailable())?;
+        let remaining_ms = session.idle_expires_at_ms.saturating_sub(now_u64);
+        let ttl = Duration::from_millis(remaining_ms).min(Duration::from_secs(300));
+        sign_grant(
+            &endpoint,
+            GrantInput {
+                account: account.account_id(),
+                member: link.member_id(),
+                org_id: &organization,
+                office_id: &params.office_id,
+                channel_id: &params.channel_id,
+                session_id: &session.session_id,
+                ttl,
+            },
+        )
+    }
+
+    pub(super) fn start(
         &self,
         account: &AccountId,
         cookie: SessionDigest,
@@ -276,6 +549,9 @@ impl Authentication {
         now_ms: i64,
         ended: &mut Vec<Ended>,
     ) -> Result<BrowserSession, ApiError> {
+        // Flush pending touches before `create` reaps expired sessions so an active session
+        // with a buffered touch cannot be reaped on stale `last_activity_ms`.
+        self.touch_batcher.flush(&self.db, now_ms, true);
         let new = NewSession::new(account.as_str(), cookie, proof, origin).map_err(store_error)?;
         let sessions: &dyn BrowserSessions = &*self.db;
         match sessions.create(&new, now_ms).map_err(store_error)? {
@@ -321,6 +597,8 @@ impl Authentication {
             account: BrowserAccount {
                 id: account.account_id().into(),
                 login: account.login().into(),
+                time_zone: account.time_zone().map(str::to_owned),
+                last_org_id: account.last_org_id().map(str::to_owned),
             },
             admin: account.admin(),
             orgs: account

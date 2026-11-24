@@ -18,15 +18,6 @@ const rows = (page: Page) => page.getByTestId('office-row');
  * fixed 264px ExecutiveSidebar, so the content column starts at 264 + 14rem.
  */
 const settingsChrome = (rootFont: number) => 264 + 14 * rootFont;
-/**
- * SET-200: the shared settings frame (src/routes/(shell)/settings/+layout.svelte) sits beside the fixed 264px
- * ExecutiveSidebar and switches to its 14rem side column at `min-[960px]:@min-[20rem]` (content column =
- * viewport - 264px - 14rem). At large root fonts (32px–40px) near the 960px–1100px boundary, the 264px sidebar
- * plus 14rem side column can leave narrow content width; those cases stay tracked under SET-200 until the
- * settings frame breakpoint scales with text size.
- */
-const SET_200 =
-	'SET-200: the settings frame beside the 264px sidebar leaves constrained content width at large text; remove once the frame scales cleanly.';
 
 test(
 	'OFC-1: the list shows HQ first with its status, where it runs, and how many agents',
@@ -928,7 +919,6 @@ for (const width of [320, 640, 960, 1280]) {
 			`OFC-13 BUG-70 Offices pill: list and details at ${width}px and ${scale * 100}% text`,
 			{ tag: '@webkit' },
 			async ({ page }) => {
-				test.fixme(width === 960 && scale === 2, SET_200);
 				await page.setViewportSize({ width, height: 900 });
 				await openOffices(page);
 				await expect(rows(page).first()).toContainText('Online');
@@ -1120,7 +1110,6 @@ for (const width of [390, 960]) {
 		`OFC-13 BUG-70 BUG-92: long status icon and label share one line at ${width}px and 200% text`,
 		{ tag: '@webkit' },
 		async ({ page }) => {
-			test.fixme(width === 960, SET_200);
 			await page.setViewportSize({ width, height: 900 });
 			await openOffices(page);
 			await expect(rows(page).first()).toContainText('Online');
@@ -1329,8 +1318,7 @@ async function expectReadableOfficeName(row: Locator) {
 async function expectFullStatusWord(row: Locator, chevronOnNextLine = false) {
 	const geometry = await row.evaluate((element) => {
 		const pill = element.querySelector('[data-status-icon]')!,
-			label = pill.lastElementChild!,
-			group = element.querySelector('[data-testid=office-actions]')!;
+			label = pill.lastElementChild!;
 		const css = getComputedStyle(element),
 			chevron = element.querySelector(':scope > svg, [data-testid=office-actions] > svg')!;
 		const box = element.getBoundingClientRect(),
@@ -1365,7 +1353,6 @@ for (const width of [320, 640, 960, 1280])
 			`OFC-1 OFC-13 BUG-70 A-OF1 preflight: rows and details at ${width}px and ${text * 100}% text`,
 			{ tag: '@webkit' },
 			async ({ page }) => {
-				test.fixme(width === 960 && text === 2, SET_200);
 				await page.setViewportSize({ width, height: 900 });
 				await openOffices(page);
 				await expect(rows(page).first()).toContainText('Online');
@@ -1387,7 +1374,7 @@ for (const width of [320, 640, 960, 1280])
 				await expectReadableOfficeName(row);
 				await expectVisibleStatusText(row);
 				if (test.info().project.name.endsWith('-20px') && width === 960 && text === 2)
-					await expectFullStatusWord(row, true);
+					await expectFullStatusWord(row);
 				await opener.press('Enter');
 				await expect(page.getByRole('dialog')).toBeVisible();
 				await expect(page.getByTestId('office-details')).toContainText("This Mac (you're here)");
@@ -1405,7 +1392,7 @@ for (const width of [320, 640, 960, 1280])
 				await expectReadableOfficeName(row);
 				await expectVisibleStatusText(row);
 				if (test.info().project.name.endsWith('-20px') && width === 960 && text === 2)
-					await expectFullStatusWord(row, true);
+					await expectFullStatusWord(row);
 				await expect(opener).toHaveAccessibleName(
 					/Engineering office with a long readable name, HQ/
 				);
@@ -1520,7 +1507,6 @@ test(
 	'OFC-13 BUG-70 BUG-91: the full status word and chevron stay visible in a narrow 960px content column at 40px root text',
 	{ tag: '@webkit' },
 	async ({ page }) => {
-		test.fixme(true, SET_200);
 		await page.setViewportSize({ width: 960, height: 900 });
 		await openOffices(page);
 		const row = rows(page).first();
@@ -1530,7 +1516,7 @@ test(
 		await pushOffice(page, { status: 'unavailable', status_reason: 'crashed' });
 		await expect(row).toContainText('Stopped');
 		await shot(page, 'of1-narrow-content-full-status-40px', { context: row });
-		await expectFullStatusWord(row, true);
+		await expectFullStatusWord(row);
 		await expectReadableOfficeName(row);
 		const opener = row.locator('button[aria-haspopup]');
 		await expect(row.getByRole('button')).toHaveCount(1);
@@ -1546,17 +1532,23 @@ test(
 );
 
 // Exercise the old failing pixels, including the viewport lg gutter transition at 304px.
+// Now that the shell and settings layouts reflow instead of starving a 1579px viewport to 299px, pin the Offices
+// container to `column` px under a >= 1024px (`lg:`) viewport so compact-row geometry stays covered at these pixels.
 for (const column of [299, 300, 301, 304]) {
 	test(
 		`OFC-13 BUG-70 BUG-91: readable status and name at the ${column}px content column`,
 		{ tag: '@webkit' },
 		async ({ page }) => {
-			await page.setViewportSize({ width: settingsChrome(40) + column, height: 900 });
+			await page.setViewportSize({ width: 1280, height: 900 });
 			await openOffices(page);
 			const row = rows(page).first();
 			await expect(row).toContainText('Online');
 			await page.addStyleTag({ content: 'html { font-size: 250% !important; }' });
 			await expect(page.locator('html')).toHaveCSS('font-size', '40px');
+			await row.evaluate((el, width) => {
+				const container = el.closest('[class~="@container"]') as HTMLElement | null;
+				if (container) container.style.width = `${width}px`;
+			}, column);
 			await pushOffice(page, {
 				name: 'Engineering office with a long readable name',
 				status: 'unavailable',
@@ -1651,7 +1643,6 @@ for (const rootFont of [20, 40])
 			`OFC-13 BUG-70 BUG-91: readable row at ${width}px viewport with computed ${rootFont}px root`,
 			{ tag: '@webkit' },
 			async ({ page }) => {
-				test.fixme(width === 960 && rootFont === 40, SET_200);
 				await page.setViewportSize({ width, height: 1100 });
 				await openOffices(page);
 				const row = rows(page).first();
@@ -1671,7 +1662,7 @@ for (const rootFont of [20, 40])
 				await shot(page, `of1-computed-root-${width}-${rootFont}`, { context: row });
 				await expectReadableOfficeName(row);
 				await expectVisibleStatusText(row);
-				await expectFullStatusWord(row, width === 960 && rootFont === 40);
+				await expectFullStatusWord(row);
 				expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
 					true
 				);
@@ -1922,10 +1913,9 @@ for (const status of ['Unreachable', 'Status unknown', 'Update needed']) {
 
 for (const status of ['Unreachable', 'Status unknown', 'Update needed']) {
 	test(
-		`OFC-13 BUG-70 BUG-119: full ${status} at 960px and 40px root awaits the shell fix`,
+		`OFC-13 BUG-70 BUG-119: full ${status} at 960px and 40px root`,
 		{ tag: '@webkit' },
 		async ({ page }) => {
-			test.fixme(true, SET_200);
 			await page.setViewportSize({ width: 960, height: 1100 });
 			await openOffices(page);
 			await expect(rows(page).first()).toContainText('Online');
@@ -1964,11 +1954,6 @@ for (const status of ['Unreachable', 'Status unknown', 'Update needed']) {
 			await shot(page, `of2-bug119-${status.replaceAll(' ', '-')}`, { context: row });
 			const text = await label.evaluate((e) => ({ width: e.clientWidth, natural: e.scrollWidth }));
 			expect(text.width).toBeGreaterThan(0);
-			// Ada01M77C980: preserve the deferred full-word requirement, not a silent pass.
-			test.fail(
-				true,
-				'BUG-119: shell leaves too little content width at 960px/root40; remove once fixed.'
-			);
 			expect(text.width, JSON.stringify(text)).toBe(text.natural);
 		}
 	);
@@ -1987,7 +1972,6 @@ for (const [width, rootFont] of [
 		`OFC-12 OFC-13 BUG-70 BUG-150: status flow ends every line at ${width}px root${rootFont}`,
 		{ tag: '@webkit' },
 		async ({ page }) => {
-			test.fixme(width === 1100 && rootFont === 40, SET_200);
 			await page.setViewportSize({ width, height: 1100 });
 			await openOffices(page);
 			await visit(page, '/offices?offices=empty&mock=unreachable');
@@ -2588,3 +2572,68 @@ test('OFC-13: a status change of an office that joined is announced in the spec�
 	await page.getByRole('dialog').last().getByRole('button', { name: 'Discard' }).click();
 	await expect(page.getByTestId('office-changes')).toHaveText('Laptop is online');
 });
+
+for (const outcome of ['arrive', 'fail again'] as const) {
+	test(
+		`BUG-166 BUG-70: pointer count Retry keeps focus while working; when counts ${outcome} focus ${outcome === 'arrive' ? 'goes to Offices heading' : 'stays on Retry'}`,
+		{ tag: '@webkit' },
+		async ({ page }) => {
+			await openOffices(page);
+			await visit(page, '/offices?offices=empty&org=fails_once');
+			await expect(page.getByTestId('count-error')).toBeVisible();
+			await page.evaluate(async (fail) => {
+				const modulePath = '/e2e/fakes/org-api.ts';
+				const { orgApi } = (await import(modulePath)) as {
+					orgApi: { view: (id: string) => Promise<unknown> };
+				};
+				const view = orgApi.view;
+				let held = false;
+				let release!: () => void;
+				const gate = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				(window as unknown as { __releaseCounts: () => void }).__releaseCounts = release;
+				orgApi.view = async (id: string) => {
+					if (!held) {
+						held = true;
+						await gate;
+						if (fail) throw new Error('Still unreadable.');
+					}
+					return view(id);
+				};
+			}, outcome === 'fail again');
+			const retry = page.getByTestId('count-error').getByRole('button', { name: /Retry|Retrying/ });
+			await retry.click();
+			await expect(retry).toHaveAttribute('aria-busy', 'true');
+			await expect(retry).toBeFocused();
+			await page.evaluate(() =>
+				(window as unknown as { __releaseCounts: () => void }).__releaseCounts()
+			);
+			if (outcome === 'arrive') {
+				await expect(page.getByTestId('count-error')).toHaveCount(0);
+				await expect(page.locator('#offices-heading')).toBeFocused();
+			} else {
+				await expect(retry).toHaveAttribute('aria-busy', 'false');
+				await expect(page.getByTestId('count-error')).toContainText('Still unreadable.');
+				await expect(retry).toBeFocused();
+				await expect(page.locator('#offices-heading')).not.toBeFocused();
+			}
+		}
+	);
+}
+
+test(
+	'BUG-166 BUG-70: pointer Retry on an unreachable office stays focused while it works',
+	{ tag: '@webkit' },
+	async ({ page }) => {
+		await openOffices(page);
+		await visit(page, '/offices?offices=empty&mock=unreachable');
+		const retry = rows(page).first().getByTestId('retry-office');
+		await expect(retry).toHaveAccessibleName('Retry reaching HQ');
+		await retry.click();
+		await expect(retry).toHaveText('Retrying…');
+		await expect(retry).toBeFocused();
+		await expect(retry).toHaveText('Retry', { timeout: 15_000 });
+		await expect(retry).toBeFocused();
+	}
+);

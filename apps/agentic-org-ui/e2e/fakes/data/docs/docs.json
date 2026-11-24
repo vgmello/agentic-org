@@ -1,0 +1,682 @@
+{
+	"projects": {
+		"beacon": {
+			"stateBranch": "org/state",
+			"sections": [
+				{
+					"path": "decisions",
+					"title": "Decisions",
+					"summary": "Architecture decisions (ADRs) recording context, options, and consequences.",
+					"position": 0,
+					"kinds": ["decision"],
+					"media": []
+				},
+				{
+					"path": "designs",
+					"title": "Designs",
+					"summary": "UX and implementation designs for Beacon checkout capabilities.",
+					"position": 1,
+					"kinds": ["design"],
+					"media": [
+						{
+							"id": "media-beacon-checkout-flow",
+							"path": "designs/checkout-sequence.mmd",
+							"type": "diagram",
+							"mediaType": "text/vnd.mermaid",
+							"bytes": 1420,
+							"title": "Two-tap checkout sequence",
+							"summary": "Browser, checkout service, and payment authorization idempotency flow."
+						}
+					]
+				},
+				{
+					"path": "reports",
+					"title": "Reports",
+					"summary": "Evaluations, spikes, and technical reviews with measured evidence.",
+					"position": 2,
+					"kinds": ["report"],
+					"media": []
+				}
+			],
+			"documents": [
+				{
+					"id": "doc-beacon-brief",
+					"projectId": "beacon",
+					"key": null,
+					"kind": "brief",
+					"title": "Beacon project brief",
+					"summary": "Living overview of Lumen's checkout: cart, payment, and receipt.",
+					"status": "current",
+					"owner": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"path": "projects/beacon/brief.md",
+					"sectionPath": null,
+					"scope": { "kind": "project" },
+					"revision": 3,
+					"version": null,
+					"issuedRevision": null,
+					"hasUnissuedChanges": false,
+					"createdAt": "2026-11-02T09:00:00Z",
+					"createdBy": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"updatedAt": "2026-11-17T16:05:00Z",
+					"updatedBy": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"bodyMarkdown": "## What it is\nBeacon is Lumen's checkout: cart, payment authorization, and receipts.\n\n## Who it serves\nCustomers buying on lumen.example from any device, including 320 px phones and 200% text.\n\n## How it works now\nCart persistence and payment authorization run as separate idempotent services so duplicate taps never charge twice.\n\n## Current known version and availability\nRelease R-1 (v2.0.0) succeeded on production/primary on 14 Nov. Saved cards remains gated behind a release flag.\n",
+					"links": [],
+					"ledTo": [
+						{
+							"id": "feat-checkout",
+							"kind": "feature",
+							"ref": "F-6",
+							"title": "Two-tap mobile checkout",
+							"status": "In progress",
+							"href": "/projects/beacon/features/feat-checkout"
+						}
+					],
+					"mentionedIn": [],
+					"codeLinks": [],
+					"versions": [],
+					"history": [
+						{
+							"revision": 1,
+							"at": "2026-11-02T09:00:00Z",
+							"by": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+							"summary": "Initial project brief",
+							"title": "Beacon project brief",
+							"bodyMarkdown": "## What it is\nBeacon is Lumen's checkout.\n"
+						},
+						{
+							"revision": 3,
+							"at": "2026-11-17T16:05:00Z",
+							"by": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+							"summary": "Recorded R-1 production deployment evidence",
+							"title": "Beacon project brief",
+							"bodyMarkdown": "## What it is\nBeacon is Lumen's checkout: cart, payment authorization, and receipts.\n\n## Who it serves\nCustomers buying on lumen.example from any device, including 320 px phones and 200% text.\n\n## How it works now\nCart persistence and payment authorization run as separate idempotent services so duplicate taps never charge twice.\n\n## Current known version and availability\nRelease R-1 (v2.0.0) succeeded on production/primary on 14 Nov. Saved cards remains gated behind a release flag.\n"
+						}
+					]
+				},
+				{
+					"id": "doc-adr-0002",
+					"projectId": "beacon",
+					"key": "ADR-0002",
+					"kind": "decision",
+					"title": "Storage: SQLite, one writer per office",
+					"summary": "Local SQLite with WAL mode and one writing office keeps state fast and deterministic.",
+					"status": "current",
+					"owner": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"path": "projects/beacon/docs/decisions/storage-sqlite-one-writer.md",
+					"sectionPath": "decisions",
+					"scope": { "kind": "project" },
+					"revision": 2,
+					"version": null,
+					"issuedRevision": null,
+					"hasUnissuedChanges": false,
+					"createdAt": "2026-11-05T11:00:00Z",
+					"createdBy": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"updatedAt": "2026-11-08T14:30:00Z",
+					"updatedBy": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"bodyMarkdown": "## Context\nEach office needs local durable storage for projected work items and checkout idempotency keys without running a separate database cluster.\n\n## Options considered\n- SQLite in WAL mode with a single writer connection\n- Turso embedded replica with concurrent writes\n- PostgreSQL sidecar per office\n\n## Decision\nUse SQLite in WAL mode with one serialized writer per office. Concurrent writes are handled through the office command queue.\n\n## Consequences\nZero external database dependencies and predictable local latency. Cross-office writes route through HQ.\n\n## Evidence\nSee the Turso vs SQLite storage evaluation report.\n\n## Tech debt accepted\nNone.\n\n## Not covered here\nOrganization Git state branch replication.\n",
+					"links": [],
+					"ledTo": [
+						{
+							"id": "0193c000-0000-7000-8000-000000000040",
+							"kind": "task",
+							"ref": "T-A40",
+							"title": "Split the checkout service",
+							"status": "In progress",
+							"href": "/work/T-A40"
+						}
+					],
+					"mentionedIn": [
+						{
+							"id": "doc-eval-storage",
+							"kind": "document",
+							"key": "EVAL-01",
+							"title": "Turso vs SQLite storage evaluation",
+							"status": "Current",
+							"href": "/projects/beacon/docs/doc-eval-storage"
+						}
+					],
+					"codeLinks": [
+						{
+							"id": "cl-sqlite-1",
+							"repositoryId": "0193b000-0000-7000-8000-000000000101",
+							"repositoryKey": "web-app",
+							"path": "src/checkout/idempotency-store.ts",
+							"symbol": "SqliteIdempotencyStore",
+							"note": "Single-writer checkout idempotency persistence."
+						}
+					],
+					"versions": [],
+					"history": [
+						{
+							"revision": 1,
+							"at": "2026-11-05T11:00:00Z",
+							"by": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+							"summary": "Initial storage decision draft",
+							"title": "Storage: SQLite, one writer",
+							"bodyMarkdown": "## Context\nEach office needs durable local storage.\n\n## Decision\nEvaluate SQLite vs Turso.\n"
+						},
+						{
+							"revision": 2,
+							"at": "2026-11-08T14:30:00Z",
+							"by": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+							"summary": "Recorded final SQLite WAL decision and consequences",
+							"title": "Storage: SQLite, one writer per office",
+							"bodyMarkdown": "## Context\nEach office needs local durable storage for projected work items and checkout idempotency keys without running a separate database cluster.\n\n## Options considered\n- SQLite in WAL mode with a single writer connection\n- Turso embedded replica with concurrent writes\n- PostgreSQL sidecar per office\n\n## Decision\nUse SQLite in WAL mode with one serialized writer per office. Concurrent writes are handled through the office command queue.\n\n## Consequences\nZero external database dependencies and predictable local latency. Cross-office writes route through HQ.\n\n## Evidence\nSee the Turso vs SQLite storage evaluation report.\n\n## Tech debt accepted\nNone.\n\n## Not covered here\nOrganization Git state branch replication.\n"
+						}
+					]
+				},
+				{
+					"id": "doc-adr-0003",
+					"projectId": "beacon",
+					"key": "ADR-0003",
+					"kind": "decision",
+					"title": "Split checkout into basket and payment authorization services",
+					"summary": "Separate payment authorization from basket persistence so retries stay idempotent across tabs.",
+					"status": "draft",
+					"owner": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"path": "projects/beacon/docs/decisions/split-checkout-services.md",
+					"sectionPath": "decisions",
+					"scope": { "kind": "project" },
+					"revision": 1,
+					"version": null,
+					"issuedRevision": null,
+					"hasUnissuedChanges": false,
+					"pendingPublication": 1,
+					"createdAt": "2026-11-16T08:15:00Z",
+					"createdBy": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"updatedAt": "2026-11-18T10:20:00Z",
+					"updatedBy": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"bodyMarkdown": "## Context\nRetrying a timed-out checkout request occasionally re-submitted payment capture because basket mutations and payment authorization shared one transaction.\n\n## Options considered\n- Keep one service with distributed locks\n- Split checkout into basket persistence and idempotent payment authorization\n\n## Decision\nSplit checkout into two services connected by an operation ID so duplicate taps replay the original authorization outcome.\n\n## Consequences\nNo order is charged twice. Adds an explicit pending-confirmation UI state when the gateway times out.\n\n## Evidence\nLoad test replay under 500 concurrent duplicate submits produced zero double charges.\n",
+					"links": [],
+					"ledTo": [
+						{
+							"id": "0193c000-0000-7000-8000-000000000040",
+							"kind": "task",
+							"ref": "T-A40",
+							"title": "Split the checkout service",
+							"status": "In progress",
+							"href": "/work/T-A40"
+						}
+					],
+					"mentionedIn": [],
+					"codeLinks": [],
+					"versions": [],
+					"history": [
+						{
+							"revision": 1,
+							"at": "2026-11-18T10:20:00Z",
+							"by": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+							"summary": "Drafted checkout service split decision",
+							"title": "Split checkout into basket and payment authorization services",
+							"bodyMarkdown": "## Context\nRetrying a timed-out checkout request occasionally re-submitted payment capture because basket mutations and payment authorization shared one transaction.\n\n## Options considered\n- Keep one service with distributed locks\n- Split checkout into basket persistence and idempotent payment authorization\n\n## Decision\nSplit checkout into two services connected by an operation ID so duplicate taps replay the original authorization outcome.\n\n## Consequences\nNo order is charged twice. Adds an explicit pending-confirmation UI state when the gateway times out.\n\n## Evidence\nLoad test replay under 500 concurrent duplicate submits produced zero double charges.\n"
+						}
+					]
+				},
+				{
+					"id": "doc-adr-0001",
+					"projectId": "beacon",
+					"key": "ADR-0001",
+					"kind": "decision",
+					"title": "Legacy single-request checkout endpoint",
+					"summary": "Deprecated in favor of ADR-0003 split basket and payment authorization.",
+					"status": "deprecated",
+					"owner": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"path": "projects/beacon/docs/decisions/legacy-single-request-checkout.md",
+					"sectionPath": "decisions",
+					"scope": { "kind": "project" },
+					"revision": 2,
+					"version": null,
+					"issuedRevision": null,
+					"hasUnissuedChanges": false,
+					"createdAt": "2026-10-12T09:00:00Z",
+					"createdBy": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"updatedAt": "2026-11-16T08:30:00Z",
+					"updatedBy": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+					"bodyMarkdown": "## Context\nInitial checkout MVP used one synchronous POST endpoint.\n\n## Decision\nKeep cart and payment in one handler for prototype launch.\n\n## Consequences\nSuperseded by ADR-0003 once mobile retries caused duplicate charges.\n",
+					"links": [],
+					"ledTo": [],
+					"mentionedIn": [
+						{
+							"id": "doc-adr-0003",
+							"kind": "document",
+							"key": "ADR-0003",
+							"title": "Split checkout into basket and payment authorization services",
+							"status": "Draft",
+							"href": "/projects/beacon/docs/doc-adr-0003"
+						}
+					],
+					"codeLinks": [],
+					"versions": [],
+					"history": [
+						{
+							"revision": 2,
+							"at": "2026-11-16T08:30:00Z",
+							"by": { "id": "avery", "name": "Avery Stone", "kind": "person" },
+							"summary": "Deprecated after ADR-0003",
+							"title": "Legacy single-request checkout endpoint",
+							"bodyMarkdown": "## Context\nInitial checkout MVP used one synchronous POST endpoint.\n\n## Decision\nKeep cart and payment in one handler for prototype launch.\n\n## Consequences\nSuperseded by ADR-0003 once mobile retries caused duplicate charges.\n"
+						}
+					]
+				},
+				{
+					"id": "doc-des-checkout",
+					"projectId": "beacon",
+					"key": "DES-04",
+					"kind": "design",
+					"title": "Two-tap mobile checkout flow",
+					"summary": "Layout, keyboard focus, and 320 px mobile geometry for F-6 checkout.",
+					"status": "current",
+					"owner": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+					"path": "projects/beacon/features/feat-checkout/designs/doc-des-checkout.md",
+					"sectionPath": "designs",
+					"scope": {
+						"kind": "feature",
+						"featureId": "feat-checkout",
+						"ref": "F-6",
+						"title": "Two-tap mobile checkout"
+					},
+					"revision": 2,
+					"version": null,
+					"issuedRevision": null,
+					"hasUnissuedChanges": false,
+					"createdAt": "2026-11-09T13:00:00Z",
+					"createdBy": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+					"updatedAt": "2026-11-17T11:15:00Z",
+					"updatedBy": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+					"bodyMarkdown": "## Goal\nLet a shopper complete payment in two taps on a 320 px phone without losing focus or double-submitting.\n\n## Users and jobs\nMobile shoppers paying with a saved card or card number entry.\n\n## Flow\n1. Review total and shipping summary.\n2. Tap Pay once; button disables with an inline status message until authorization confirms.\n\n## States\n- Loading total\n- Payment authorizing\n- Gateway timeout with Check status\n- Confirmed receipt\n\n## Risks\nLong localized totals wrapping the Pay button off-screen at 200% text.\n\n## Acceptance criteria\n- Pay button stays >= 44 px tall at 320 px.\n- No horizontal scroll at 200% text.\n",
+					"links": [],
+					"ledTo": [
+						{
+							"id": "0193c000-0000-7000-8000-000000000042",
+							"kind": "bug",
+							"ref": "T-A42",
+							"title": "Pay button wraps under the total at 320 px",
+							"status": "In progress",
+							"href": "/work/T-A42"
+						}
+					],
+					"mentionedIn": [],
+					"codeLinks": [
+						{
+							"id": "cl-checkout-ui",
+							"repositoryId": "0193b000-0000-7000-8000-000000000101",
+							"repositoryKey": "web-app",
+							"path": "src/routes/checkout/PayBar.svelte",
+							"note": "Primary Pay action bar."
+						}
+					],
+					"versions": [],
+					"history": [
+						{
+							"revision": 2,
+							"at": "2026-11-17T11:15:00Z",
+							"by": { "id": "juno", "name": "Juno Park", "kind": "agent" },
+							"summary": "Added 320 px Pay button acceptance criteria",
+							"title": "Two-tap mobile checkout flow",
+							"bodyMarkdown": "## Goal\nLet a shopper complete payment in two taps on a 320 px phone without losing focus or double-submitting.\n\n## Users and jobs\nMobile shoppers paying with a saved card or card number entry.\n\n## Flow\n1. Review total and shipping summary.\n2. Tap Pay once; button disables with an inline status message until authorization confirms.\n\n## States\n- Loading total\n- Payment authorizing\n- Gateway timeout with Check status\n- Confirmed receipt\n\n## Risks\nLong localized totals wrapping the Pay button off-screen at 200% text.\n\n## Acceptance criteria\n- Pay button stays >= 44 px tall at 320 px.\n- No horizontal scroll at 200% text.\n"
+						}
+					]
+				},
+				{
+					"id": "doc-eval-storage",
+					"projectId": "beacon",
+					"key": "EVAL-01",
+					"kind": "report",
+					"title": "Turso vs SQLite storage evaluation",
+					"summary": "Benchmark and reliability comparison for office local storage.",
+					"status": "current",
+					"owner": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"path": "projects/beacon/docs/reports/turso-vs-sqlite.md",
+					"sectionPath": "reports",
+					"scope": { "kind": "project" },
+					"revision": 1,
+					"version": null,
+					"issuedRevision": null,
+					"hasUnissuedChanges": false,
+					"evaluationExcerpt": {
+						"question": "Turso vs SQLite for office storage",
+						"verdict": "SQLite chosen: Turso concurrent writes are experimental"
+					},
+					"createdAt": "2026-11-04T15:00:00Z",
+					"createdBy": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"updatedAt": "2026-11-04T18:00:00Z",
+					"updatedBy": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"bodyMarkdown": "## Question\nShould an office store its local SQLite projection using standard SQLite WAL or Turso embedded replicas?\n\n## Options\n- SQLite 3.46 WAL with serialized writer\n- Turso embedded replica\n\n## Criteria\n- Deterministic write serialization\n- Offline resilience when HQ is unreachable\n- Zero external daemon overhead\n\n## Evidence\nSQLite sustained 4,200 transactions/sec in local tests with zero lock errors; Turso concurrent writes are still experimental and dropped sync state under simulated disconnects.\n\n## Verdict\nSQLite chosen: Turso concurrent writes are experimental and do not meet office durability criteria.\n\n## Left open\nRevisit if multi-region read replicas become a v2 requirement.\n",
+					"links": [],
+					"ledTo": [
+						{
+							"id": "doc-adr-0002",
+							"kind": "document",
+							"key": "ADR-0002",
+							"title": "Storage: SQLite, one writer per office",
+							"status": "Current",
+							"href": "/projects/beacon/docs/doc-adr-0002"
+						}
+					],
+					"mentionedIn": [],
+					"codeLinks": [],
+					"versions": [],
+					"history": [
+						{
+							"revision": 1,
+							"at": "2026-11-04T18:00:00Z",
+							"by": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+							"summary": "Recorded storage evaluation benchmarks and verdict",
+							"title": "Turso vs SQLite storage evaluation",
+							"bodyMarkdown": "## Question\nShould an office store its local SQLite projection using standard SQLite WAL or Turso embedded replicas?\n\n## Options\n- SQLite 3.46 WAL with serialized writer\n- Turso embedded replica\n\n## Criteria\n- Deterministic write serialization\n- Offline resilience when HQ is unreachable\n- Zero external daemon overhead\n\n## Evidence\nSQLite sustained 4,200 transactions/sec in local tests with zero lock errors; Turso concurrent writes are still experimental and dropped sync state under simulated disconnects.\n\n## Verdict\nSQLite chosen: Turso concurrent writes are experimental and do not meet office durability criteria.\n\n## Left open\nRevisit if multi-region read replicas become a v2 requirement.\n"
+						}
+					]
+				},
+				{
+					"id": "doc-rel-beacon-1-changelog",
+					"projectId": "beacon",
+					"key": null,
+					"kind": "changelog",
+					"title": "R-1 product changes",
+					"summary": "Product-facing additions, fixes, and known limitations for Checkout v2 foundation.",
+					"status": "current",
+					"owner": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"path": "projects/beacon/releases/rel-beacon-1/changelog.md",
+					"sectionPath": null,
+					"scope": {
+						"kind": "release",
+						"releaseId": "rel-beacon-1",
+						"ref": "R-1",
+						"title": "Checkout v2 foundation"
+					},
+					"revision": 1,
+					"version": null,
+					"issuedRevision": null,
+					"hasUnissuedChanges": false,
+					"createdAt": "2026-11-13T16:00:00Z",
+					"createdBy": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"updatedAt": "2026-11-14T09:00:00Z",
+					"updatedBy": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"bodyMarkdown": "## Added\n- Mobile receipt layout (F-4) enabled for all shoppers.\n- Two-tap mobile checkout (F-6) included; gated behind rollout flag on production/primary.\n\n## Fixed\n- Receipt totals no longer clip at 320 px.\n\n## Known limitations\n- Split-tender gift card payments are not supported in R-1.\n",
+					"links": [],
+					"ledTo": [],
+					"mentionedIn": [],
+					"codeLinks": [],
+					"versions": [],
+					"history": [
+						{
+							"revision": 1,
+							"at": "2026-11-14T09:00:00Z",
+							"by": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+							"summary": "Published R-1 product changelog",
+							"title": "R-1 product changes",
+							"bodyMarkdown": "## Added\n- Mobile receipt layout (F-4) enabled for all shoppers.\n- Two-tap mobile checkout (F-6) included; gated behind rollout flag on production/primary.\n\n## Fixed\n- Receipt totals no longer clip at 320 px.\n\n## Known limitations\n- Split-tender gift card payments are not supported in R-1.\n"
+						}
+					]
+				},
+				{
+					"id": "doc-dep-beacon-1-changelog",
+					"projectId": "beacon",
+					"key": null,
+					"kind": "changelog",
+					"title": "R-1 production/primary technical changes",
+					"summary": "Applied commits, flag snapshot, and validation notes for the 14 Nov production deploy.",
+					"status": "current",
+					"owner": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"path": "projects/beacon/releases/rel-beacon-1/deployments/dep-beacon-prod-1/changelog.md",
+					"sectionPath": null,
+					"scope": {
+						"kind": "deployment",
+						"deploymentId": "dep-beacon-prod-1",
+						"releaseId": "rel-beacon-1",
+						"releaseRef": "R-1",
+						"environment": "production",
+						"target": "primary"
+					},
+					"revision": 1,
+					"version": null,
+					"issuedRevision": null,
+					"hasUnissuedChanges": false,
+					"createdAt": "2026-11-14T11:05:00Z",
+					"createdBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"updatedAt": "2026-11-14T11:05:00Z",
+					"updatedBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"bodyMarkdown": "## Technical changes\nDeployed web-app commit 91c8e40b21 and design-tokens commit 440a1f9c02 to production/primary.\n\n## Data migrations\nNo schema migration required.\n\n## Feature flags\nConfirmed two-tap-checkout applied at 25% rollout with fallback false.\n\n## Validation and rollback\nSynthetic checkout probes passed in 180 ms. Rollback restores prior web-app commit 72ab9100fe.\n",
+					"links": [],
+					"ledTo": [],
+					"mentionedIn": [],
+					"codeLinks": [],
+					"versions": [],
+					"history": [
+						{
+							"revision": 1,
+							"at": "2026-11-14T11:05:00Z",
+							"by": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+							"summary": "Recorded production/primary deployment technical changelog",
+							"title": "R-1 production/primary technical changes",
+							"bodyMarkdown": "## Technical changes\nDeployed web-app commit 91c8e40b21 and design-tokens commit 440a1f9c02 to production/primary.\n\n## Data migrations\nNo schema migration required.\n\n## Feature flags\nConfirmed two-tap-checkout applied at 25% rollout with fallback false.\n\n## Validation and rollback\nSynthetic checkout probes passed in 180 ms. Rollback restores prior web-app commit 72ab9100fe.\n"
+						}
+					]
+				}
+			]
+		},
+		"atlas": {
+			"stateBranch": "org/state",
+			"sections": [
+				{
+					"path": "product",
+					"title": "Product documentation",
+					"summary": "Desired-state product behaviour by domain.",
+					"position": 0,
+					"kinds": ["product-dss"],
+					"media": []
+				},
+				{
+					"path": "technical",
+					"title": "Technical documentation",
+					"summary": "System architecture, contracts, and diagrams.",
+					"position": 1,
+					"kinds": ["technical-dss"],
+					"media": [
+						{
+							"id": "media-atlas-deploy-flow",
+							"path": "technical/diagrams/deploy-flow.mmd",
+							"type": "diagram",
+							"mediaType": "text/vnd.mermaid",
+							"bytes": 1840,
+							"title": "Deploy rollback state machine",
+							"summary": "Canary, health probe, and automatic rollback transitions."
+						}
+					]
+				}
+			],
+			"documents": [
+				{
+					"id": "doc-atlas-pdss",
+					"projectId": "atlas",
+					"key": "PDSS-01",
+					"kind": "product-dss",
+					"title": "Zero-downtime deploy pipeline",
+					"summary": "Desired behaviour for canary rollouts, health probes, and automatic rollback.",
+					"status": "current",
+					"owner": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"path": "projects/atlas/docs/product/zero-downtime-deploy.md",
+					"sectionPath": "product",
+					"scope": { "kind": "project" },
+					"revision": 4,
+					"version": 2,
+					"issuedRevision": 3,
+					"hasUnissuedChanges": true,
+					"createdAt": "2026-11-01T10:00:00Z",
+					"createdBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"updatedAt": "2026-11-18T11:00:00Z",
+					"updatedBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"bodyMarkdown": "## Behaviour\nEvery deploy runs a 10% canary for 120 seconds before shifting 100% traffic.\nTransient 503 responses retry up to 5 times with exponential backoff before failing.\n\n## States\n- Queued\n- Canary running\n- Promoting\n- Rolling back\n- Succeeded or Failed\n\n## Acceptance\n- A deploy finishes within 10 minutes.\n- A failed canary restores the prior version automatically.\n",
+					"links": [],
+					"ledTo": [
+						{
+							"id": "doc-atlas-tdss",
+							"kind": "document",
+							"key": "TDSS-01",
+							"title": "Atlas deploy controller architecture",
+							"status": "Current",
+							"href": "/projects/atlas/docs/doc-atlas-tdss"
+						}
+					],
+					"mentionedIn": [],
+					"codeLinks": [
+						{
+							"id": "cl-atlas-1",
+							"repositoryId": "0193b000-0000-7000-8000-000000000102",
+							"repositoryKey": "infra",
+							"path": "services/deploy/retry.go",
+							"symbol": "RetryOn503",
+							"note": "Five-attempt 503 backoff loop.",
+							"stale": true
+						}
+					],
+					"versions": [
+						{
+							"version": 1,
+							"revision": 1,
+							"title": "Zero-downtime deploy pipeline",
+							"bodyMarkdown": "## Behaviour\nEvery deploy runs a 10% canary for 60 seconds.\n\n## States\n- Queued\n- Canary running\n- Succeeded or Failed\n\n## Acceptance\n- A deploy finishes within 15 minutes.\n",
+							"note": "Initial desired state specification.",
+							"issuedAt": "2026-11-03T09:00:00Z",
+							"issuedBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+							"derivedFrom": []
+						},
+						{
+							"version": 2,
+							"revision": 3,
+							"title": "Zero-downtime deploy pipeline",
+							"bodyMarkdown": "## Behaviour\nEvery deploy runs a 10% canary for 120 seconds before shifting 100% traffic.\n\n## States\n- Queued\n- Canary running\n- Promoting\n- Rolling back\n- Succeeded or Failed\n\n## Acceptance\n- A deploy finishes within 10 minutes.\n- A failed canary restores the prior version automatically.\n",
+							"note": "Extended canary window to 120s and added automatic rollback.",
+							"issuedAt": "2026-11-11T14:00:00Z",
+							"issuedBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+							"derivedFrom": []
+						}
+					],
+					"history": [
+						{
+							"revision": 1,
+							"at": "2026-11-01T10:00:00Z",
+							"by": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+							"summary": "Initial Product DSS draft",
+							"title": "Zero-downtime deploy pipeline",
+							"bodyMarkdown": "## Behaviour\nEvery deploy runs a 10% canary for 60 seconds.\n\n## States\n- Queued\n- Canary running\n- Succeeded or Failed\n\n## Acceptance\n- A deploy finishes within 15 minutes.\n"
+						},
+						{
+							"revision": 3,
+							"at": "2026-11-11T14:00:00Z",
+							"by": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+							"summary": "Updated canary window and rollback criteria before v2",
+							"title": "Zero-downtime deploy pipeline",
+							"bodyMarkdown": "## Behaviour\nEvery deploy runs a 10% canary for 120 seconds before shifting 100% traffic.\n\n## States\n- Queued\n- Canary running\n- Promoting\n- Rolling back\n- Succeeded or Failed\n\n## Acceptance\n- A deploy finishes within 10 minutes.\n- A failed canary restores the prior version automatically.\n"
+						},
+						{
+							"revision": 4,
+							"at": "2026-11-18T11:00:00Z",
+							"by": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+							"summary": "Added 503 retry limit (unissued working change)",
+							"title": "Zero-downtime deploy pipeline",
+							"bodyMarkdown": "## Behaviour\nEvery deploy runs a 10% canary for 120 seconds before shifting 100% traffic.\nTransient 503 responses retry up to 5 times with exponential backoff before failing.\n\n## States\n- Queued\n- Canary running\n- Promoting\n- Rolling back\n- Succeeded or Failed\n\n## Acceptance\n- A deploy finishes within 10 minutes.\n- A failed canary restores the prior version automatically.\n"
+						}
+					]
+				},
+				{
+					"id": "doc-atlas-tdss",
+					"projectId": "atlas",
+					"key": "TDSS-01",
+					"kind": "technical-dss",
+					"title": "Atlas deploy controller architecture",
+					"summary": "Controller reconciliation loop and health probe contracts.",
+					"status": "current",
+					"owner": { "id": "mira", "name": "Mira Castillo", "kind": "agent" },
+					"path": "projects/atlas/docs/technical/deploy-controller.md",
+					"sectionPath": "technical",
+					"scope": { "kind": "project" },
+					"revision": 2,
+					"version": 1,
+					"issuedRevision": 2,
+					"hasUnissuedChanges": false,
+					"createdAt": "2026-11-04T10:00:00Z",
+					"createdBy": { "id": "mira", "name": "Mira Castillo", "kind": "agent" },
+					"updatedAt": "2026-11-06T12:00:00Z",
+					"updatedBy": { "id": "mira", "name": "Mira Castillo", "kind": "agent" },
+					"bodyMarkdown": "## Components\n- Deploy controller daemon\n- Canary traffic router\n\n## Contracts\nHealth probe returns HTTP 200 within 2 seconds.\n\n## Decisions\nUses immutable commit tags on every rollout.\n",
+					"links": [],
+					"ledTo": [],
+					"mentionedIn": [],
+					"codeLinks": [],
+					"versions": [
+						{
+							"version": 1,
+							"revision": 2,
+							"title": "Atlas deploy controller architecture",
+							"bodyMarkdown": "## Components\n- Deploy controller daemon\n- Canary traffic router\n\n## Contracts\nHealth probe returns HTTP 200 within 2 seconds.\n\n## Decisions\nUses immutable commit tags on every rollout.\n",
+							"note": "Initial technical architecture following PDSS-01 v1.",
+							"issuedAt": "2026-11-06T12:00:00Z",
+							"issuedBy": { "id": "mira", "name": "Mira Castillo", "kind": "agent" },
+							"derivedFrom": [
+								{
+									"documentId": "doc-atlas-pdss",
+									"title": "Zero-downtime deploy pipeline",
+									"key": "PDSS-01",
+									"version": 1
+								}
+							]
+						}
+					],
+					"history": [
+						{
+							"revision": 2,
+							"at": "2026-11-06T12:00:00Z",
+							"by": { "id": "mira", "name": "Mira Castillo", "kind": "agent" },
+							"summary": "Issued Technical DSS v1",
+							"title": "Atlas deploy controller architecture",
+							"bodyMarkdown": "## Components\n- Deploy controller daemon\n- Canary traffic router\n\n## Contracts\nHealth probe returns HTTP 200 within 2 seconds.\n\n## Decisions\nUses immutable commit tags on every rollout.\n"
+						}
+					]
+				},
+				{
+					"id": "doc-atlas-bad-meta",
+					"projectId": "atlas",
+					"key": "RPT-09",
+					"kind": "report",
+					"title": "Canary latency incident notes",
+					"summary": "Post-incident timing capture from staging cluster.",
+					"status": "draft",
+					"owner": null,
+					"path": "projects/atlas/docs/technical/canary-latency-incident.md",
+					"sectionPath": "technical",
+					"scope": { "kind": "project" },
+					"revision": 1,
+					"version": null,
+					"issuedRevision": null,
+					"hasUnissuedChanges": false,
+					"problem": {
+						"kind": "invalid_metadata",
+						"field": "owner_employee_id",
+						"message": "references unknown employee ID from direct Git edit"
+					},
+					"createdAt": "2026-11-15T09:00:00Z",
+					"createdBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"updatedAt": "2026-11-15T09:00:00Z",
+					"updatedBy": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+					"bodyMarkdown": "## Summary\nStaging canary probes spiked to 4.1 seconds during log rotation.\n\n## Findings\n- Log compression contended with health check worker pool.\n",
+					"links": [],
+					"ledTo": [],
+					"mentionedIn": [],
+					"codeLinks": [],
+					"versions": [],
+					"history": [
+						{
+							"revision": 1,
+							"at": "2026-11-15T09:00:00Z",
+							"by": { "id": "kai", "name": "Kai Lindqvist", "kind": "agent" },
+							"summary": "Imported direct Git commit with unrecognized owner field",
+							"title": "Canary latency incident notes",
+							"bodyMarkdown": "## Summary\nStaging canary probes spiked to 4.1 seconds during log rotation.\n\n## Findings\n- Log compression contended with health check worker pool.\n"
+						}
+					]
+				}
+			]
+		}
+	}
+}

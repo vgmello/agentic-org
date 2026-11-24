@@ -6,4 +6,4 @@
 
 mod command;
 
-pub use command::OrgCommand;
+pub use command::{OrgCommand, ParsedOrgCommand};

@@ -19,7 +19,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { suggestMessagingName } from '$lib/org/agents';
+	import { suggestMessagingName } from '$lib/modules/organization/agents';
 	import {
 		handleProblem,
 		isFull,

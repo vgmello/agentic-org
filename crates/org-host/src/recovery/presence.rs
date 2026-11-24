@@ -2,7 +2,7 @@
 //! Only `confirm` invokes OS authentication; context queries and tests never treat the
 //! adapter's availability as successful presence. A system without an adapter is never
 //! a local context and confirms nothing.
-use org_platform_host::presence::{self, Confirmation};
+use org_platform_host::presence::{self, ConfirmReason, Confirmation};
 
 pub(crate) fn local(connection: &crate::service::listener::Connection) -> bool {
     presence::local(connection.socket()).unwrap_or(false)
@@ -11,7 +11,10 @@ pub(crate) fn current() -> bool {
     presence::current().unwrap_or(false)
 }
 pub(crate) fn confirm(cancelled: impl Fn() -> bool) -> Result<(), ()> {
-    match presence::confirm(cancelled) {
+    confirm_for(ConfirmReason::RecoveryCode, cancelled)
+}
+pub(crate) fn confirm_for(reason: ConfirmReason, cancelled: impl Fn() -> bool) -> Result<(), ()> {
+    match presence::confirm_for(reason, cancelled) {
         Ok(Confirmation::OsDialog) => Ok(()),
         // The browser approval that completes this kind (ADR-0017 decision 11) is not
         // built: without it nothing is confirmed.

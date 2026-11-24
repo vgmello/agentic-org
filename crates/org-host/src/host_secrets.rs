@@ -78,7 +78,7 @@ impl Name {
             })
             || name
                 .strip_prefix("recovery.")
-                .is_some_and(org_office_launch::is_plain_id);
+                .is_some_and(org_proto::is_uuid_v7);
         valid
             .then(|| Self(name.to_owned()))
             .ok_or(Error::InvalidName)
@@ -145,6 +145,7 @@ pub(crate) enum Error {
     Unsafe,
     InUse,
     CaseAlias,
+    InteractionNotAllowed,
     Os(i32),
     Io(io::ErrorKind),
 }
@@ -165,6 +166,7 @@ impl From<CredentialError> for Error {
             CredentialError::Unsafe | CredentialError::Exists => Self::Unsafe,
             CredentialError::InUse => Self::InUse,
             CredentialError::CaseAlias => Self::CaseAlias,
+            CredentialError::InteractionNotAllowed => Self::InteractionNotAllowed,
             CredentialError::Os(status) => Self::Os(status),
             CredentialError::Io(kind) => Self::Io(kind),
             CredentialError::Refused(_) => Self::Io(io::ErrorKind::Unsupported),

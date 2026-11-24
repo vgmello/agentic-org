@@ -2,8 +2,8 @@
 	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { pageTitle } from '$lib/nav';
-	import { toAppError } from '$lib/office/api';
-	import { owner } from '$lib/org/model';
+	import { toAppError } from '$lib/proto';
+	import { owner } from '$lib/modules/organization/model';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import InboxTriageWorkspace from '$lib/modules/inbox/features/triage/InboxTriageWorkspace.svelte';
 

@@ -117,7 +117,7 @@ where
     try_run_http(listener, mode, origin, limits, || Ok(initialize()))
 }
 
-pub(crate) fn try_run_http<H, F, S>(
+pub(crate) fn try_run_http<H, F, B, S>(
     listener: TcpListener,
     mode: ListenMode,
     origin: ListenOrigin,
@@ -126,7 +126,8 @@ pub(crate) fn try_run_http<H, F, S>(
 ) -> io::Result<()>
 where
     H: Fn(Request<Incoming>) -> F + Send + Sync + 'static,
-    F: Future<Output = Result<Response<Full<Bytes>>, Infallible>> + Send + 'static,
+    F: Future<Output = Result<Response<B>, Infallible>> + Send + 'static,
+    B: hyper::body::Body<Data = Bytes, Error = Infallible> + Send + 'static,
     S: Future<Output = ()>,
 {
     limits.validate()?;
@@ -206,7 +207,7 @@ async fn until_shutdown<F: Future, S: Future<Output = ()>>(
 
 /// Serve one connection, then close it with a bounded linger (see `linger`),
 /// so an early reply to a request with unread body bytes is not reset.
-async fn serve_then_linger<T, H, F>(
+async fn serve_then_linger<T, H, F, B>(
     stream: T,
     peer: SocketAddr,
     handler: Arc<H>,
@@ -214,7 +215,8 @@ async fn serve_then_linger<T, H, F>(
 ) where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     H: Fn(Request<Incoming>) -> F + Send + Sync + 'static,
-    F: Future<Output = Result<Response<Full<Bytes>>, Infallible>> + Send + 'static,
+    F: Future<Output = Result<Response<B>, Infallible>> + Send + 'static,
+    B: hyper::body::Body<Data = Bytes, Error = Infallible> + Send + 'static,
 {
     let (stream, slot) = Reclaim::new(stream);
     let _ = serve_connection(stream, Some(peer), handler, limits).await;
@@ -223,7 +225,7 @@ async fn serve_then_linger<T, H, F>(
     }
 }
 
-async fn serve_connection<T, H, F>(
+async fn serve_connection<T, H, F, B>(
     stream: T,
     peer: Option<SocketAddr>,
     handler: Arc<H>,
@@ -232,7 +234,8 @@ async fn serve_connection<T, H, F>(
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     H: Fn(Request<Incoming>) -> F + Send + Sync + 'static,
-    F: Future<Output = Result<Response<Full<Bytes>>, Infallible>> + Send + 'static,
+    F: Future<Output = Result<Response<B>, Infallible>> + Send + 'static,
+    B: hyper::body::Body<Data = Bytes, Error = Infallible> + Send + 'static,
 {
     let mut builder = http1::Builder::new();
     builder

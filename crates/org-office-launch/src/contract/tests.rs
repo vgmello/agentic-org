@@ -92,9 +92,10 @@ fn selected_create() -> CreateLine {
         owner_member_id: OWNER.into(),
         hq_creation: HqCreationV1 {
             version: 2,
-            operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
+            operation_id: "019a9999-0000-7000-8000-000000000006".into(),
             escrow_profile: 1,
             bootstrap: Box::new(prepared),
+            import_source: None,
         },
     }
 }

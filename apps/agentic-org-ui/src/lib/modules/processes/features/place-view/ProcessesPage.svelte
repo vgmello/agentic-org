@@ -193,7 +193,7 @@
 			</p>
 		{/snippet}
 		{#snippet actions()}
-			{#if resource.state !== 'error'}
+			{#if resource.state !== 'error' && resource.state !== 'unsupported'}
 				<div class="flex w-full flex-wrap items-end gap-3 min-[640px]:w-auto">
 					<div class="w-full min-[640px]:w-60">
 						<label for="processes-show" class="block text-sm/6 font-medium text-fg">Show</label>
@@ -256,7 +256,7 @@
 		/>
 	{/if}
 
-	{#if resource.state !== 'error'}
+	{#if resource.state !== 'error' && resource.state !== 'unsupported'}
 		<nav
 			aria-label="Processes and standards"
 			class="flex gap-x-6 overflow-x-auto border-b border-line px-4 min-[640px]:px-6 min-[1024px]:px-8"
@@ -297,6 +297,13 @@
 			onretry={() => resource.reload()}
 			retrying={resource.reloading}
 		/>
+	{:else if resource.state === 'unsupported'}
+		<div class="px-4 py-12 min-[640px]:px-6 min-[1024px]:px-8" data-testid="resource-unsupported">
+			<h3 class="text-sm/6 font-semibold text-fg">Not available in this version</h3>
+			<p class="mt-1 max-w-xl text-sm/6 text-fg-muted [overflow-wrap:anywhere]">
+				{resource.message || "This version of the office doesn't support processes."}
+			</p>
+		</div>
 	{:else if notFound}
 		<EmptyState
 			title="That place isn't here"

@@ -341,6 +341,106 @@ impl Supervisor {
         }
     }
 
+    /// Updates an office's persisted writer owner binding.
+    pub(crate) fn update_owner(
+        &self,
+        office_id: &str,
+        org_id: &str,
+        owner_account: &str,
+        owner_member: &str,
+    ) -> io::Result<()> {
+        if let Some(spawner) = &self.spawner {
+            spawner.update_owner(office_id, org_id, owner_account, owner_member)?;
+        }
+        Ok(())
+    }
+
+    /// Gracefully reloads a supervised office worker without tripping crash backoff.
+    pub(crate) fn reload_office(&self, office_id: &str) {
+        let state = lock(&self.state);
+        if let Some(slot) = state.offices.get(office_id) {
+            let _ = slot.signals.send(Signal::Reload);
+        }
+    }
+
+    /// Runs `agentic-org-office --inspect-import` read-only to clone and validate an existing
+    /// organization's Git state branch (`TASK-39` / R1). Carries no keys, no writer custody,
+    /// clears the host environment to the minimal allowlist, and enforces a strict wall-clock timeout.
+    pub(crate) fn inspect_import(
+        &self,
+        repository_remote_url: &str,
+        state_branch: &str,
+    ) -> Result<org_office_launch::InspectImportResponse, String> {
+        use std::io::{Read, Write};
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        const INSPECT_TIMEOUT: Duration = Duration::from_secs(60);
+        const PASSED_ENV: [&str; 6] = ["HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG"];
+
+        self.config.server_check.may_spawn()?;
+        let request = org_office_launch::InspectImportRequest {
+            repository_remote_url: repository_remote_url.to_owned(),
+            state_branch: state_branch.to_owned(),
+        };
+        let line = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+        let mut cmd = Command::new(&self.config.program);
+        cmd.env_clear();
+        for name in PASSED_ENV {
+            if let Some(value) = std::env::var_os(name) {
+                cmd.env(name, value);
+            }
+        }
+        let mut child = cmd
+            .arg(org_office_launch::INSPECT_IMPORT_FLAG)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("could not run office inspector: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = writeln!(stdin, "{line}");
+        }
+        let stdout = child.stdout.take();
+        let reader = std::thread::spawn(move || {
+            let mut out = String::new();
+            if let Some(s) = stdout {
+                let _ = s.take(1024 * 1024).read_to_string(&mut out);
+            }
+            out
+        });
+        let deadline = Instant::now() + INSPECT_TIMEOUT;
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    return Err("office inspector timed out".to_owned());
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    return Err("office inspector wait failed".to_owned());
+                }
+            }
+        }
+        let out = reader.join().unwrap_or_default();
+        serde_json::from_str(out.trim())
+            .map_err(|_| "office inspector returned an unreadable response".to_owned())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn kill_office_for_test(&self, office_id: &str) {
+        let state = lock(&self.state);
+        if let Some(slot) = state.offices.get(office_id) {
+            let _ = slot.signals.send(Signal::KillForTest);
+        }
+    }
+
     /// Protected selected reservation has already installed its original key and
     /// writer custody. No create/discard cleanup is permitted on this path.
     pub(crate) fn begin_hq_create(
@@ -442,7 +542,7 @@ impl Supervisor {
                     return DiscardOutcome::Stopped;
                 }
                 // Restarts are for an office's own supervision thread only.
-                Ok(Signal::Restart) => continue,
+                Ok(Signal::Restart | Signal::Reload) => continue,
                 Ok(Signal::Event { event, .. }) => match event {
                     ServerEvent::Discarded => DiscardOutcome::Discarded,
                     ServerEvent::Failed { code, message } => {
@@ -461,6 +561,8 @@ impl Supervisor {
                     child.kill();
                     return DiscardOutcome::TimedOut;
                 }
+                #[cfg(test)]
+                Ok(Signal::KillForTest) => continue,
             };
             // It exits right after reporting.
             child.stop(Instant::now() + timings.shutdown_grace);
@@ -687,7 +789,7 @@ impl<'a> PendingCreate<'a> {
                     self.child.stop(deadline);
                     return CreateOutcome::Stopped;
                 }
-                Signal::Restart => {}
+                Signal::Restart | Signal::Reload => {}
                 Signal::Event {
                     event: ServerEvent::Created { office },
                     ..
@@ -708,6 +810,8 @@ impl<'a> PendingCreate<'a> {
                     self.child.stop(Instant::now() + grace);
                     return CreateOutcome::Crashed;
                 }
+                #[cfg(test)]
+                Signal::KillForTest => {}
             }
         }
     }
@@ -1425,9 +1529,10 @@ pub(crate) mod tests {
             owner_member_id: custody.member.clone(),
             hq_creation: org_office_launch::HqCreationV1 {
                 version: org_office_launch::HqCreationV1::VERSION,
-                operation_id: crate::ids::generate().unwrap(),
+                operation_id: crate::ids::uuid_v7().unwrap(),
                 escrow_profile: 1,
                 bootstrap: Box::new(prepared),
+                import_source: None,
             },
         }
     }

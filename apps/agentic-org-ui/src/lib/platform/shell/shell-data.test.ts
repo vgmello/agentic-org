@@ -6,12 +6,12 @@ const orgView = vi.fn();
 const workSnapshot = vi.fn();
 const inboxList = vi.fn();
 
-vi.mock('$lib/org/api', () => ({
+vi.mock('$lib/modules/organization/api', () => ({
 	orgApi: {
 		view: (...args: unknown[]) => orgView(...args)
 	}
 }));
-vi.mock('$lib/work', () => ({
+vi.mock('$lib/modules/work', () => ({
 	workApi: {
 		snapshot: (...args: unknown[]) => workSnapshot(...args)
 	}

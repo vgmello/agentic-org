@@ -43,6 +43,12 @@ pub(crate) enum Signal {
     },
     /// `office.restart`: start the office again now, if it isn't running.
     Restart,
+    /// Gracefully stop and immediately restart an active office (e.g. after ownership handover)
+    /// without tripping crash backoff.
+    Reload,
+    /// Tests only: SIGKILL the live office worker so supervision observes a real crash.
+    #[cfg(test)]
+    KillForTest,
 }
 
 /// The environment a server gets, besides `ORG_OFFICE_HOME`: only these of the host's own, so
@@ -301,6 +307,17 @@ impl Spawner {
             Some(runtime) => location::office_socket_in(runtime, office_id),
             None => location::office_socket_path(&self.home, office_id),
         }
+    }
+
+    pub(crate) fn update_owner(
+        &self,
+        office: &str,
+        org_id: &str,
+        owner_account: &str,
+        owner_member: &str,
+    ) -> io::Result<()> {
+        self.broker
+            .update_owner(office, org_id, owner_account, owner_member)
     }
 
     /// Whether `office` may start or be created: it holds valid writer custody and, for a

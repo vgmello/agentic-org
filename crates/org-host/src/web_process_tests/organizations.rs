@@ -42,10 +42,10 @@ use std::{
 
 /// A signed-in browser. Every reply it reads is kept, so a test can prove what never
 /// crossed HTTP.
-struct Browser {
+pub(super) struct Browser {
     address: SocketAddr,
     pair: Pair,
-    instance: String,
+    pub(super) instance: String,
     seen: RefCell<Vec<String>>,
 }
 impl Browser {
@@ -58,7 +58,7 @@ impl Browser {
         }
     }
     /// Signs in as the seeded administrator.
-    fn sign_in(host: &Host, address: SocketAddr) -> Self {
+    pub(super) fn sign_in(host: &Host, address: SocketAddr) -> Self {
         let reply = post_until_available(address, "/api/v1/session/sign-in", &credentials());
         let browser = Self::new(host, address, pair(&reply, "sign-in"));
         browser
@@ -74,18 +74,18 @@ impl Browser {
             .push(format!("{}\n{}", reply.headers, reply.body));
         reply
     }
-    fn get(&self, path: &str) -> Reply {
+    pub(super) fn get(&self, path: &str) -> Reply {
         self.keep(http(self.address, "GET", path, &self.pair.headers(), ""))
     }
-    fn post(&self, path: &str, body: &str) -> Reply {
+    pub(super) fn post(&self, path: &str, body: &str) -> Reply {
         self.keep(http(self.address, "POST", path, &self.pair.headers(), body))
     }
     fn body(&self, operation: &str, name: &str, slug: &str) -> String {
         create_body(&self.instance, operation, name, slug, remote(slug))
     }
     /// Posts a create and follows it on the lookup route to its organization view.
-    fn create(&self, name: &str, slug: &str) -> (String, Value) {
-        let operation = crate::ids::generate().unwrap();
+    pub(super) fn create(&self, name: &str, slug: &str) -> (String, Value) {
+        let operation = crate::ids::uuid_v7().unwrap();
         let posted = self.post("/api/v1/organizations", &self.body(&operation, name, slug));
         assert!(
             matches!(
@@ -145,7 +145,7 @@ fn is_uuid_v7(id: &str) -> bool {
 
 /// The view of a completed create: its name, UUIDv7 ids, one HQ office, the creator's
 /// person and the recovery state, never the code. Returns (organization, office, creator).
-fn checked(view: &Value, name: &str, slug: &str) -> (String, String, String) {
+pub(super) fn checked(view: &Value, name: &str, slug: &str) -> (String, String, String) {
     assert_eq!(view["name"], name, "{view}");
     assert_eq!(view["slug"], slug, "{view}");
     let (id, creator) = (text(&view["id"]), text(&view["employee_id"]));
@@ -162,7 +162,7 @@ fn checked(view: &Value, name: &str, slug: &str) -> (String, String, String) {
     (id.to_owned(), office.to_owned(), creator.to_owned())
 }
 
-fn all_files(root: &Path) -> Vec<PathBuf> {
+pub(super) fn all_files(root: &Path) -> Vec<PathBuf> {
     let mut all = Vec::new();
     files(root, &mut all);
     all.sort();
@@ -275,7 +275,7 @@ fn assert_no_process_left(base: &Path) {
 /// Stops the host and waits until nothing of it creates any more: no web or worker
 /// process, and no create thread (a create in flight runs on its own thread, which owns
 /// the host's creation state and ends when the supervisor stops its server).
-fn stop(host: Host, base: &Path) {
+pub(super) fn stop(host: Host, base: &Path) {
     let creating = Arc::downgrade(
         host.service
             .provisioning_for_test()
@@ -288,13 +288,13 @@ fn stop(host: Host, base: &Path) {
     assert_no_process_left(base);
 }
 
-fn restart(base: &Path, address: SocketAddr) -> Host {
+pub(super) fn restart(base: &Path, address: SocketAddr) -> Host {
     let (host, _socket) = host_at(fixture_config(base), base, |_, _, _| {});
     wait_serving(&host, address);
     host
 }
 
-fn wait_offices_active(host: &Host, count: usize) {
+pub(super) fn wait_offices_active(host: &Host, count: usize) {
     wait_until("every office active", || {
         let offices = host.offices.offices();
         offices.len() == count && offices.iter().all(|o| o.status == OfficeStatus::Active)
@@ -514,14 +514,7 @@ fn linked_on_disk(base: &Path, operation: &str) -> bool {
         .into_iter()
         .find(|p| p.file_name().unwrap() == "host-registry.db")
         .expect("the host registry");
-    rusqlite::Connection::open(registry)
-        .unwrap()
-        .query_row(
-            "SELECT linked FROM selected_provisioning WHERE operation_id=?1",
-            [operation],
-            |r| r.get(0),
-        )
-        .expect("the reservation")
+    crate::hostdb::sqlite::provisioning_linked_on_disk_for_test(&registry, operation)
 }
 
 #[test]
@@ -543,7 +536,7 @@ fn actual_host_stopped_in_the_middle_of_a_create_finishes_it_at_its_next_start_w
         .provisioning_for_test()
         .expect("a registered host creates organizations")
         .hold_drives();
-    let operation = crate::ids::generate().unwrap();
+    let operation = crate::ids::uuid_v7().unwrap();
     let posted = browser.post(
         "/api/v1/organizations",
         &browser.body(&operation, "Example", "example"),
@@ -610,7 +603,7 @@ fn actual_host_stop_leaves_no_create_worker_that_ignores_its_closed_stdin() {
     let worker = base.join("bin/agentic-org-office");
     fs::remove_file(&worker).unwrap();
     crate::supervisor::tests::write_create_server(&worker, &pid_file, true);
-    let operation = crate::ids::generate().unwrap();
+    let operation = crate::ids::uuid_v7().unwrap();
     let posted = browser.post(
         "/api/v1/organizations",
         &browser.body(&operation, "Example", "example"),
@@ -646,7 +639,7 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
     } = launch(Seed::Administrator);
     wait_serving(&host, address);
     let browser = Browser::sign_in(&host, address);
-    let operation = crate::ids::generate().unwrap();
+    let operation = crate::ids::uuid_v7().unwrap();
     let body = browser.body(&operation, "Example", "example");
     let before = host.service.organization_ops();
 
@@ -713,7 +706,7 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
     let ops_before = host.service.browser_ops();
     let instance = browser.instance.as_str();
     let other_instance = "0193a5c0-0000-7000-8000-000000000009";
-    let uuid_operation = "0193a5c0-0000-7000-8000-000000000001";
+    let ulid_operation = "01M72N8MG00000000000000001";
     for (body, field, rule, what) in [
         (
             create_body(
@@ -725,19 +718,19 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
             ),
             Some("operation_id"),
             Some("format"),
-            "an operation id that is no ULID",
+            "an operation id that is no UUIDv7",
         ),
         (
             create_body(
                 instance,
-                uuid_operation,
+                ulid_operation,
                 "Example",
                 "example",
                 remote("example"),
             ),
             Some("operation_id"),
             Some("format"),
-            "a UUID operation id",
+            "a ULID operation id",
         ),
         (
             create_body(
@@ -833,7 +826,7 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
     assert_eq!(file_url.body["error"]["rule"], "remote_required");
     // The lookup route decides its id and scope the same way.
     for target in [
-        format!("/api/v1/operations/host/{uuid_operation}?instance_id={instance}"),
+        format!("/api/v1/operations/host/{ulid_operation}?instance_id={instance}"),
         format!("/api/v1/operations/host/{operation}?instance_id={other_instance}"),
         format!("/api/v1/operations/host/{operation}"),
     ] {
@@ -877,7 +870,7 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
 
     // A duplicate name (any letter case) or slug is named, and stores nothing.
     for (name, slug, field) in [("EXAMPLE", "third", "name"), ("Third", "example", "slug")] {
-        let duplicate = crate::ids::generate().unwrap();
+        let duplicate = crate::ids::uuid_v7().unwrap();
         let reply = browser.post(
             "/api/v1/organizations",
             &browser.body(&duplicate, name, slug),
@@ -1081,4 +1074,1033 @@ fn actual_recovery_code_is_released_once_natively_and_no_credential_reaches_http
         "{databases} databases among {scanned} files"
     );
     assert!(contains(&fs::read(&key_file).unwrap(), &encodings(&key)[1]));
+}
+
+/// B2 Q8 production-path proof: a signed-in browser reads a live organization snapshot and
+/// creates a team through `agentic-org-web` -> `org-host` (`browser.open_channel` +
+/// `browser.grant`) -> `agentic-org-office` (`org-store`), surviving office restart and
+/// full deletion of `runtime/<office>/office.db`, with auth fail-closed on sign-out.
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_browser_reads_live_org_snapshot_and_creates_team_surviving_projection_rebuild() {
+    let Launched {
+        temp: _temp,
+        address,
+        host,
+        base,
+        ..
+    } = launch(Seed::Administrator);
+    wait_serving(&host, address);
+    let browser = Browser::sign_in(&host, address);
+    let (_, view) = browser.create("Example", "example");
+    let (organization, office, creator) = checked(&view, "Example", "example");
+    wait_offices_active(&host, 1);
+
+    // 1. Live snapshot via browser-to-office Web channel.
+    let snap_path = format!("/api/v1/organizations/{organization}/snapshot");
+    let teams_path = format!("/api/v1/organizations/{organization}/teams");
+    let snap = browser.get(&snap_path);
+    assert_eq!(snap.status, 200, "{}", snap.body);
+    let snapshot = &snap.body["result"]["snapshot"];
+    assert_eq!(snapshot["position"]["seq"], 1, "{snapshot}");
+    let teams = snapshot["teams"].as_array().expect("teams");
+    assert_eq!(teams.len(), 1, "{snapshot}");
+    let root_team_id = text(&teams[0]["id"]).to_owned();
+    assert!(is_uuid_v7(&root_team_id), "root team id {root_team_id}");
+    assert_eq!(teams[0]["lead_member_id"], creator.as_str(), "{snapshot}");
+    assert!(
+        snap.body["result"]["resume_cursor"]
+            .as_str()
+            .is_some_and(|c| !c.is_empty()),
+        "{}",
+        snap.body
+    );
+
+    // 2. Fail-closed checks: unauthenticated -> 401; unlinked org -> 404; bad scope -> 400.
+    let unauth = http(address, "GET", &snap_path, "", "");
+    assert_eq!(unauth.status, 401, "{}", unauth.body);
+    let unknown_org = "0193a5c0-0000-7000-8000-000000000099";
+    let missing = browser.get(&format!("/api/v1/organizations/{unknown_org}/snapshot"));
+    assert_eq!(missing.status, 404, "{}", missing.body);
+
+    let child_team_id = "0193a5c0-0000-7000-8000-000000000042";
+    let op_id = crate::ids::uuid_v7().unwrap();
+    let bad_scope = json!({
+        "operation_id": op_id,
+        "scope": { "kind": "organization", "instance_id": browser.instance, "org_id": unknown_org },
+        "params": { "team_id": child_team_id, "name": "Platform", "owner_team_id": root_team_id }
+    });
+    let refused = browser.post(&teams_path, &bad_scope.to_string());
+    assert_eq!(refused.status, 400, "{}", refused.body);
+
+    // 3. Create a child team end-to-end through the Web channel and verify idempotent replay.
+    let create_team = json!({
+        "operation_id": op_id,
+        "scope": { "kind": "organization", "instance_id": browser.instance, "org_id": organization },
+        "params": { "team_id": child_team_id, "name": "Platform", "owner_team_id": root_team_id }
+    });
+    let created = browser.post(&teams_path, &create_team.to_string());
+    assert_eq!(created.status, 200, "{}", created.body);
+    assert_eq!(created.body["outcome"], "completed", "{}", created.body);
+    assert_eq!(created.body["operation_id"], op_id.as_str());
+
+    let replay = browser.post(&teams_path, &create_team.to_string());
+    assert_eq!(replay.status, 200, "{}", replay.body);
+    assert_eq!(replay.body["outcome"], "completed", "{}", replay.body);
+
+    let snap2 = browser.get(&snap_path);
+    assert_eq!(snap2.status, 200, "{}", snap2.body);
+    assert_eq!(snap2.body["result"]["snapshot"]["position"]["seq"], 2);
+    let teams2 = snap2.body["result"]["snapshot"]["teams"]
+        .as_array()
+        .expect("teams");
+    assert_eq!(teams2.len(), 2, "{}", snap2.body);
+    assert!(
+        teams2
+            .iter()
+            .any(|t| t["id"] == child_team_id && t["name"] == "Platform"),
+        "{}",
+        snap2.body
+    );
+
+    // 4. Stop host, delete `runtime/<office>/office.db`, restart host: projection rebuilds
+    // from durable files and the browser reads the committed child team over a fresh channel.
+    stop(host, &base);
+    let database = Path::new(&organization)
+        .join("runtime")
+        .join(&office)
+        .join("office.db");
+    let projection = all_files(&base)
+        .into_iter()
+        .find(|p| p.ends_with(&database))
+        .unwrap_or_else(|| panic!("no {database:?} under {base:?}"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    fs::remove_dir_all(&projection).unwrap();
+    assert!(!projection.exists());
+
+    let host = restart(&base, address);
+    wait_offices_active(&host, 1);
+    assert!(projection.join("office.db").is_file());
+    let after = browser.get(&snap_path);
+    assert_eq!(after.status, 200, "{}", after.body);
+    assert_eq!(after.body["result"]["snapshot"]["position"]["seq"], 2);
+    let teams_after = after.body["result"]["snapshot"]["teams"]
+        .as_array()
+        .expect("teams");
+    assert!(
+        teams_after
+            .iter()
+            .any(|t| t["id"] == child_team_id && t["name"] == "Platform"),
+        "{}",
+        after.body
+    );
+
+    // 5. Sign out revokes the browser session; subsequent snapshot calls fail closed with 401.
+    let signed_out = browser.post("/api/v1/session/sign-out", "{}");
+    assert_eq!(signed_out.status, 200, "{}", signed_out.body);
+    let after_logout = browser.get(&snap_path);
+    assert_eq!(after_logout.status, 401, "{}", after_logout.body);
+    stop(host, &base);
+}
+
+/// B2.3b production-path proof: exercises every wired `/api/v1/organizations/{org}/*`
+/// mutation route (teams & people) and `GET /api/v1/operations/org/{id}` over real
+/// `agentic-org-web` -> `org-host` -> `agentic-org-office`, verifying idempotent replay,
+/// different-payload command_id conflict, stale expected_version 409, stored rejected
+/// receipt lookup, and persistence across host/office restart.
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_browser_exercises_all_org_mutations_and_operation_lookup_surviving_restart() {
+    let Launched {
+        temp: _temp,
+        address,
+        host,
+        base,
+        ..
+    } = launch(Seed::Administrator);
+    wait_serving(&host, address);
+    let browser = Browser::sign_in(&host, address);
+    let (_, view) = browser.create("Example", "example");
+    let (organization, _office, creator) = checked(&view, "Example", "example");
+    wait_offices_active(&host, 1);
+
+    let snap_path = format!("/api/v1/organizations/{organization}/snapshot");
+    let snap0 = browser.get(&snap_path);
+    assert_eq!(snap0.status, 200, "{}", snap0.body);
+    let root_team_id = text(&snap0.body["result"]["snapshot"]["teams"][0]["id"]).to_owned();
+
+    let scope = json!({
+        "kind": "organization",
+        "instance_id": browser.instance,
+        "org_id": organization
+    });
+    let submit = |route: &str, op_id: &str, params: Value| -> Reply {
+        let body = json!({
+            "operation_id": op_id,
+            "scope": scope,
+            "params": params
+        });
+        browser.post(
+            &format!("/api/v1/organizations/{organization}/{route}"),
+            &body.to_string(),
+        )
+    };
+    let org_lookup = |op_id: &str| -> Reply {
+        browser.get(&format!(
+            "/api/v1/operations/org/{op_id}?instance_id={}&org_id={organization}",
+            browser.instance
+        ))
+    };
+
+    // 1. Create two child teams (`teams/create`), verify replay & different-payload refusal.
+    let team_a = crate::ids::uuid_v7().unwrap();
+    let team_b = crate::ids::uuid_v7().unwrap();
+    let op_create_a = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/create",
+        &op_create_a,
+        json!({ "team_id": team_a, "name": "Engineering", "owner_team_id": root_team_id }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["outcome"], "completed");
+
+    let replay = submit(
+        "teams/create",
+        &op_create_a,
+        json!({ "team_id": team_a, "name": "Engineering", "owner_team_id": root_team_id }),
+    );
+    assert_eq!(replay.status, 200, "{}", replay.body);
+    assert_eq!(replay.body["outcome"], "completed");
+
+    let reused = submit(
+        "teams/create",
+        &op_create_a,
+        json!({ "team_id": team_a, "name": "Different", "owner_team_id": root_team_id }),
+    );
+    assert_eq!(reused.status, 409, "{}", reused.body);
+    assert_eq!(reused.body["outcome"], "rejected");
+    assert_eq!(reused.body["error"]["code"], "operation_reused");
+
+    let op_create_b = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/create",
+        &op_create_b,
+        json!({ "team_id": team_b, "name": "Platform", "owner_team_id": root_team_id }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // 2. Rename team_b, verify stale expected_version -> 409 conflict (stored rejection).
+    let op_rename = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/rename",
+        &op_rename,
+        json!({ "team_id": team_b, "expected_version": 1, "name": "Core Platform" }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_stale = crate::ids::uuid_v7().unwrap();
+    let stale = submit(
+        "teams/rename",
+        &op_stale,
+        json!({ "team_id": team_b, "expected_version": 1, "name": "Stale" }),
+    );
+    assert_eq!(stale.status, 409, "{}", stale.body);
+    assert_eq!(stale.body["outcome"], "rejected");
+    assert_eq!(stale.body["error"]["code"], "conflict");
+
+    // 3. Move team_b under team_a (`teams/move`).
+    let op_move_team = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/move",
+        &op_move_team,
+        json!({ "team_id": team_b, "expected_version": 2, "owner_team_id": team_a }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // 4. Add a person (`members/add-person`), update (`members/update-person`),
+    // set title (`teams/set-title`), set as lead (`teams/set-lead`), set manager (`members/set-reports-to`).
+    let person_id = crate::ids::uuid_v7().unwrap();
+    let op_add_person = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "members/add-person",
+        &op_add_person,
+        json!({
+            "member_id": person_id,
+            "name": "Ada Lovelace",
+            "contact": "ada@example.test",
+            "handle": "ada",
+            "home_team_id": team_b
+        }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_update_person = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "members/update-person",
+        &op_update_person,
+        json!({
+            "member_id": person_id,
+            "expected_version": 1,
+            "name": "Ada King",
+            "clear_contact": true
+        }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_set_title = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/set-title",
+        &op_set_title,
+        json!({
+            "membership_id": person_id,
+            "expected_version": 2,
+            "title_in_team": "Principal Engineer"
+        }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_set_lead = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/set-lead",
+        &op_set_lead,
+        json!({ "team_id": team_b, "expected_version": 3, "lead_member_id": person_id }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_set_mgr = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "members/set-reports-to",
+        &op_set_mgr,
+        json!({
+            "member_id": person_id,
+            "expected_version": 3,
+            "reports_to_member_id": creator
+        }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // Clear lead, move person to team_a, deactivate person, and archive empty team_b.
+    let op_clear_lead = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/set-lead",
+        &op_clear_lead,
+        json!({ "team_id": team_b, "expected_version": 4 }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_move_person = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "members/move",
+        &op_move_person,
+        json!({
+            "membership_id": person_id,
+            "expected_version": 4,
+            "new_membership_id": person_id,
+            "to_team_id": team_a
+        }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_remove_person = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "members/remove",
+        &op_remove_person,
+        json!({ "member_id": person_id, "expected_version": 5 }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_archive_b = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/delete",
+        &op_archive_b,
+        json!({ "team_id": team_b, "expected_version": 5 }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // 5. Lookup committed, rejected, and unknown operations via `GET /api/v1/operations/org/{id}`.
+    let ok_lookup = org_lookup(&op_create_a);
+    assert_eq!(ok_lookup.status, 200, "{}", ok_lookup.body);
+    assert_eq!(
+        ok_lookup.body["result"],
+        json!({
+            "operation_id": op_create_a,
+            "kind": "org",
+            "outcome": "completed",
+            "result": {}
+        })
+    );
+
+    let rej_lookup = org_lookup(&op_stale);
+    assert_eq!(rej_lookup.status, 200, "{}", rej_lookup.body);
+    assert_eq!(rej_lookup.body["result"]["kind"], "org");
+    assert_eq!(rej_lookup.body["result"]["outcome"], "rejected");
+    assert_eq!(rej_lookup.body["result"]["error"]["code"], "conflict");
+
+    let unknown_id = crate::ids::uuid_v7().unwrap();
+    let missing_lookup = org_lookup(&unknown_id);
+    assert_eq!(missing_lookup.status, 404, "{}", missing_lookup.body);
+
+    // 6. Restart host+office and confirm snapshot and operation lookup survive intact.
+    let snap_before = browser.get(&snap_path);
+    assert_eq!(snap_before.status, 200, "{}", snap_before.body);
+    stop(host, &base);
+    let host = restart(&base, address);
+    wait_offices_active(&host, 1);
+
+    let snap_after = browser.get(&snap_path);
+    assert_eq!(snap_after.status, 200, "{}", snap_after.body);
+    assert_eq!(
+        snap_after.body["result"]["snapshot"],
+        snap_before.body["result"]["snapshot"]
+    );
+    let after_lookup = org_lookup(&op_create_a);
+    assert_eq!(after_lookup.status, 200, "{}", after_lookup.body);
+    assert_eq!(after_lookup.body["result"]["outcome"], "completed");
+    let after_rej = org_lookup(&op_stale);
+    assert_eq!(after_rej.status, 200, "{}", after_rej.body);
+    assert_eq!(after_rej.body["result"]["outcome"], "rejected");
+    assert_eq!(after_rej.body["result"]["error"]["code"], "conflict");
+    stop(host, &base);
+}
+
+/// Real-process O1 (FC-019 / FC-021): browser `GET /api/v1/organizations/{org}/offices`,
+/// browser `POST /api/v1/organizations/{org}/offices/{office}/restart`, and native `host.sock`
+/// `office.list` / `office.restart` share live office state without exposing private endpoints.
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_browser_and_native_cli_list_offices_and_restart_contract() {
+    let Launched {
+        temp: _temp,
+        address,
+        host,
+        socket,
+        base,
+        ..
+    } = launch(Seed::Administrator);
+    wait_serving(&host, address);
+    let browser = Browser::sign_in(&host, address);
+    let (_, view) = browser.create("Example", "example");
+    let (organization, office, _creator) = checked(&view, "Example", "example");
+    wait_offices_active(&host, 1);
+
+    let instance_id = host.service.instance_id_for_test().unwrap().to_owned();
+
+    // 1. Browser lists live offices for the organization (no private endpoint leaked).
+    let listed = browser.get(&format!("/api/v1/organizations/{organization}/offices"));
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let offices = listed.body["result"]["offices"].as_array().unwrap();
+    assert_eq!(offices.len(), 1, "{}", listed.body);
+    assert_eq!(offices[0]["id"], office.as_str());
+    assert_eq!(offices[0]["organization_id"], organization.as_str());
+    assert_eq!(offices[0]["role"], "hq");
+    assert_eq!(offices[0]["status"], "active");
+    assert!(offices[0].get("endpoint").is_none());
+
+    // Foreign organization returns 404.
+    let foreign_org = crate::ids::uuid_v7().unwrap();
+    let missing_org = browser.get(&format!("/api/v1/organizations/{foreign_org}/offices"));
+    assert_eq!(missing_org.status, 404, "{}", missing_org.body);
+
+    // 2. Browser restart on an active office returns 409 conflict.
+    let op_conflict = crate::ids::uuid_v7().unwrap();
+    let active_restart = browser.post(
+        &format!("/api/v1/organizations/{organization}/offices/{office}/restart"),
+        &json!({
+            "operation_id": op_conflict,
+            "scope": {
+                "kind": "office",
+                "instance_id": instance_id,
+                "org_id": organization,
+                "office_id": office
+            },
+            "params": {}
+        })
+        .to_string(),
+    );
+    assert_eq!(active_restart.status, 409, "{}", active_restart.body);
+    assert_eq!(active_restart.body["outcome"], "rejected");
+    assert_eq!(active_restart.body["error"]["code"], "conflict");
+
+    // 3. Native `host.sock` session lists offices and enforces `office.restart` rules.
+    let stream = UnixStream::connect(&socket).unwrap();
+    stream.set_read_timeout(Some(super::WAIT)).unwrap();
+    let mut wire = BufReader::new(stream);
+    super::answer::<org_host_control::Hello>(&mut wire, 1, &Default::default()).unwrap();
+    let native = super::answer::<ops::AccountVerify>(
+        &mut wire,
+        2,
+        &ops::AccountVerifyParams {
+            login: "Owner".into(),
+            password: org_host_control::Password::new(PASSWORD.into()).unwrap(),
+        },
+    )
+    .unwrap();
+    let handle = || org_host_control::SessionHandle::new(native.session.expose().into()).unwrap();
+
+    let native_list = super::answer::<ops::OfficeList>(
+        &mut wire,
+        3,
+        &ops::OfficeListParams {
+            session: handle(),
+            org_id: Some(organization.clone()),
+        },
+    )
+    .unwrap();
+    assert_eq!(native_list.offices.len(), 1);
+    assert_eq!(native_list.offices[0].id, office);
+    assert_eq!(
+        native_list.offices[0].status,
+        org_proto::OfficeStatus::Active
+    );
+    assert!(native_list.offices[0].endpoint.is_none());
+
+    let foreign_list = super::answer::<ops::OfficeList>(
+        &mut wire,
+        4,
+        &ops::OfficeListParams {
+            session: handle(),
+            org_id: Some(foreign_org),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(foreign_list.code, org_proto::ErrorCode::NotFound);
+
+    let native_conflict = super::answer::<ops::OfficeRestart>(
+        &mut wire,
+        5,
+        &ops::OfficeRestartParams {
+            session: handle(),
+            operation_id: crate::ids::uuid_v7().unwrap(),
+            office_id: office.clone(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(native_conflict.code, org_proto::ErrorCode::Conflict);
+
+    let native_missing = super::answer::<ops::OfficeRestart>(
+        &mut wire,
+        6,
+        &ops::OfficeRestartParams {
+            session: handle(),
+            operation_id: crate::ids::uuid_v7().unwrap(),
+            office_id: crate::ids::uuid_v7().unwrap(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(native_missing.code, org_proto::ErrorCode::NotFound);
+
+    // `browser.office_restart` is strictly refused on `host.sock`.
+    let browser_on_host_sock = super::answer::<org_host_control::browser::BrowserOfficeRestart>(
+        &mut wire,
+        7,
+        &org_host_control::browser::BrowserOfficeRestartParams {
+            auth: org_host_control::organization::BrowserAuth {
+                cookie_digest: org_host_control::browser::Digest32([0; 32]),
+                proof_digest: org_host_control::browser::Digest32([0; 32]),
+                origin: org_host_control::browser::BrowserOrigin {
+                    scheme: "http".into(),
+                    host: "127.0.0.1".into(),
+                    port: address.port(),
+                },
+                local_authless: false,
+            },
+            operation_id: crate::ids::uuid_v7().unwrap(),
+            org_id: organization.clone(),
+            office_id: office.clone(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        browser_on_host_sock.code,
+        org_proto::ErrorCode::NotAuthorized
+    );
+
+    super::answer::<ops::SessionEnd>(&mut wire, 8, &ops::SessionParams { session: handle() })
+        .unwrap();
+    drop(wire);
+
+    // 3b. Exercise `setup_flow::office_command` (`agentic-org office list` & `office restart`)
+    // directly against the live `host.sock` (text + JSON + error translation + SessionEnd).
+    {
+        use crate::setup_flow::office_command::{list, restart, Target};
+        let target = Target {
+            socket: &socket,
+            instance_id: &instance_id,
+            name: None,
+        };
+        let mut typed = || Ok(org_host_control::Password::new(PASSWORD.into()).unwrap());
+        let mut wrong =
+            || Ok(org_host_control::Password::new("not the real password".into()).unwrap());
+        let by_code = matches!(
+            crate::test_programs::image_identity(),
+            org_platform_host::admission::ImageIdentity::CodeSignature
+        );
+        let mut out = Vec::new();
+        if by_code {
+            // Wrong password is refused cleanly.
+            let bad_pw = list(&target, "Owner", None, false, &mut wrong, &mut out).unwrap_err();
+            assert!(bad_pw.contains("invalid login or password"), "{bad_pw}");
+
+            // Human-readable list prints office id and status without leaking endpoints.
+            out.clear();
+            list(
+                &target,
+                "Owner",
+                Some(&organization),
+                false,
+                &mut typed,
+                &mut out,
+            )
+            .unwrap();
+            let text = String::from_utf8(out.clone()).unwrap();
+            assert!(text.contains(&office), "{text}");
+            assert!(text.contains("status=Active"), "{text}");
+            assert!(!text.contains(".sock"), "{text}");
+
+            // JSON list decodes as valid JSON with `endpoint` omitted.
+            out.clear();
+            list(
+                &target,
+                "Owner",
+                Some(&organization),
+                true,
+                &mut typed,
+                &mut out,
+            )
+            .unwrap();
+            let parsed: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(parsed["offices"][0]["id"], office.as_str());
+            assert!(parsed["offices"][0].get("endpoint").is_none());
+
+            // CLI restart on an active office reports the human conflict message.
+            out.clear();
+            let conflict_msg =
+                restart(&target, "Owner", &office, false, &mut typed, &mut out).unwrap_err();
+            assert!(
+                conflict_msg.contains("not offline or unavailable"),
+                "{conflict_msg}"
+            );
+        } else {
+            let asked = std::cell::Cell::new(0);
+            let mut count_pw = || {
+                asked.set(asked.get() + 1);
+                Ok(org_host_control::Password::new(PASSWORD.into()).unwrap())
+            };
+            let err = list(&target, "Owner", None, false, &mut count_pw, &mut out).unwrap_err();
+            assert!(err.contains("browser"), "{err}");
+            assert_eq!(
+                asked.get(),
+                0,
+                "no password asked when host cannot be identified"
+            );
+        }
+    }
+
+    // 4. Restart host with a 60s crash backoff, kill the real office worker, confirm browser
+    // observes `offline` (`crashed` + `next_restart_at`), trigger `POST .../restart`, verify
+    // it returns `active` promptly, and confirm idempotent replay of the same `operation_id`.
+    stop(host, &base);
+    let mut long_backoff = fixture_config(&base);
+    long_backoff.timings.backoff_initial = std::time::Duration::from_secs(60);
+    long_backoff.timings.exit_poll = std::time::Duration::from_millis(50);
+    let (host, _socket) = host_at(long_backoff, &base, |_, _, _| {});
+    wait_serving(&host, address);
+    wait_offices_active(&host, 1);
+
+    host.offices.kill_office_for_test(&office);
+    let offices_path = format!("/api/v1/organizations/{organization}/offices");
+    let deadline = std::time::Instant::now() + super::WAIT;
+    let offline_view = loop {
+        let resp = browser.get(&offices_path);
+        assert_eq!(resp.status, 200, "{}", resp.body);
+        let item = resp.body["result"]["offices"][0].clone();
+        if item["status"] == "offline" {
+            break item;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "office never reached offline state: {item}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
+    assert_eq!(offline_view["status_reason"], "crashed", "{offline_view}");
+    assert!(
+        offline_view["next_restart_at"].is_string(),
+        "{offline_view}"
+    );
+
+    let op_restart = crate::ids::uuid_v7().unwrap();
+    let restart_path = format!("/api/v1/organizations/{organization}/offices/{office}/restart");
+    let restart_body = json!({
+        "operation_id": op_restart,
+        "scope": {
+            "kind": "office",
+            "instance_id": instance_id,
+            "org_id": organization,
+            "office_id": office
+        },
+        "params": {}
+    })
+    .to_string();
+    let restarted = browser.post(&restart_path, &restart_body);
+    assert_eq!(restarted.status, 200, "{}", restarted.body);
+    assert_eq!(restarted.body["outcome"], "completed");
+    assert_eq!(restarted.body["operation_id"], op_restart);
+
+    // Wait for the restarted worker to become active (proves restart broke out of 60s backoff).
+    let active_deadline = std::time::Instant::now() + super::WAIT;
+    loop {
+        let resp = browser.get(&offices_path);
+        assert_eq!(resp.status, 200, "{}", resp.body);
+        if resp.body["result"]["offices"][0]["status"] == "active" {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < active_deadline,
+            "office did not recover to active after restart: {}",
+            resp.body
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+
+    // Replaying the same `operation_id` after recovery returns `200 completed` idempotently.
+    let replayed = browser.post(&restart_path, &restart_body);
+    assert_eq!(replayed.status, 200, "{}", replayed.body);
+    assert_eq!(replayed.body["outcome"], "completed");
+    assert_eq!(replayed.body["operation_id"], op_restart);
+
+    stop(host, &base);
+}
+
+/// Real-process B3 (FC-030 / FC-038): browser `/api/v1/organizations/{org}/projects` routes
+/// (`GET`, `POST`, `GET /{project}`, `POST /add-team`, `POST /remove-team`), `org.snapshot`
+/// consistency, idempotent replay + `operation.get`, native CLI `project list|inspect|create`,
+/// and full survival across host restart and deleting `office.db` (projection rebuild).
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_browser_and_native_cli_projects_lifecycle_survives_restart_and_rebuild() {
+    let Launched {
+        temp: _temp,
+        address,
+        host,
+        socket,
+        base,
+        ..
+    } = launch(Seed::Administrator);
+    wait_serving(&host, address);
+    let browser = Browser::sign_in(&host, address);
+    let (_, view) = browser.create("Example", "example");
+    let (organization, office, _creator) = checked(&view, "Example", "example");
+    wait_offices_active(&host, 1);
+
+    let instance_id = host.service.instance_id_for_test().unwrap().to_owned();
+    let scope = json!({
+        "kind": "organization",
+        "instance_id": instance_id,
+        "org_id": organization,
+    });
+
+    // 1. Create a contributing team ("Platform") and a second team ("Security").
+    let platform_team_id = crate::ids::uuid_v7().unwrap();
+    let create_platform = browser.post(
+        &format!("/api/v1/organizations/{organization}/teams"),
+        &json!({
+            "operation_id": crate::ids::uuid_v7().unwrap(),
+            "scope": scope,
+            "params": { "team_id": platform_team_id, "name": "Platform" }
+        })
+        .to_string(),
+    );
+    assert_eq!(create_platform.status, 200, "{}", create_platform.body);
+    assert_eq!(create_platform.body["outcome"], "completed");
+
+    let security_team_id = crate::ids::uuid_v7().unwrap();
+    let create_security = browser.post(
+        &format!("/api/v1/organizations/{organization}/teams"),
+        &json!({
+            "operation_id": crate::ids::uuid_v7().unwrap(),
+            "scope": scope,
+            "params": { "team_id": security_team_id, "name": "Security" }
+        })
+        .to_string(),
+    );
+    assert_eq!(create_security.status, 200, "{}", create_security.body);
+    assert_eq!(create_security.body["outcome"], "completed");
+
+    // 2. Create project P-1 ("Billing Service") without `owner_team_id`, passing caller-minted
+    // `create_team_id` so HQ creates a new accountable owning team under TEAM-1 atomically.
+    let project_id = crate::ids::uuid_v7().unwrap();
+    let expected_owner_team_id = crate::ids::uuid_v7().unwrap();
+    let create_project_op = crate::ids::uuid_v7().unwrap();
+    let create_project_body = json!({
+        "operation_id": create_project_op,
+        "scope": scope,
+        "params": {
+            "project_id": project_id,
+            "name": "Billing Service",
+            "create_team_id": expected_owner_team_id,
+            "contributing_team_ids": [platform_team_id]
+        }
+    })
+    .to_string();
+    let created = browser.post(
+        &format!("/api/v1/organizations/{organization}/projects"),
+        &create_project_body,
+    );
+    assert_eq!(created.status, 200, "{}", created.body);
+    assert_eq!(created.body["outcome"], "completed");
+    assert_eq!(created.body["operation_id"], create_project_op);
+
+    // 2b. Idempotent replay returns 200 completed; changed payload returns 409 operation_reused;
+    // and `/api/v1/operations/org/{op}` returns the retained outcome.
+    let replayed = browser.post(
+        &format!("/api/v1/organizations/{organization}/projects"),
+        &create_project_body,
+    );
+    assert_eq!(replayed.status, 200, "{}", replayed.body);
+    assert_eq!(replayed.body["outcome"], "completed");
+
+    let reused = browser.post(
+        &format!("/api/v1/organizations/{organization}/projects"),
+        &json!({
+            "operation_id": create_project_op,
+            "scope": scope,
+            "params": {
+                "project_id": project_id,
+                "name": "Different Project Name",
+                "create_team_id": expected_owner_team_id
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(reused.status, 409, "{}", reused.body);
+    assert_eq!(reused.body["outcome"], "rejected");
+    assert_eq!(reused.body["error"]["code"], "operation_reused");
+
+    let op_lookup = browser.get(&format!(
+        "/api/v1/operations/org/{create_project_op}?instance_id={instance_id}&org_id={organization}"
+    ));
+    assert_eq!(op_lookup.status, 200, "{}", op_lookup.body);
+    assert_eq!(op_lookup.body["result"]["outcome"], "completed");
+
+    // 3. List and inspect P-1 by key (`P-1`), slug (`billing-service`), and UUIDv7.
+    let listed = browser.get(&format!("/api/v1/organizations/{organization}/projects"));
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let projects = listed.body["result"]["projects"].as_array().unwrap();
+    assert_eq!(projects.len(), 1, "{}", listed.body);
+    assert_eq!(projects[0]["id"], project_id);
+    assert_eq!(projects[0]["number"], 1);
+    assert_eq!(projects[0]["key"], "P-1");
+    assert_eq!(projects[0]["slug"], "billing-service");
+    assert_eq!(projects[0]["name"], "Billing Service");
+    let owner_team_id = text(&projects[0]["owner_team_id"]).to_owned();
+    assert_eq!(owner_team_id, expected_owner_team_id);
+    assert_ne!(owner_team_id, platform_team_id);
+    assert_eq!(
+        projects[0]["contributing_team_ids"],
+        json!([platform_team_id])
+    );
+
+    for reference in ["P-1", "p-1", "billing-service", project_id.as_str()] {
+        let inspected = browser.get(&format!(
+            "/api/v1/organizations/{organization}/projects/{reference}"
+        ));
+        assert_eq!(inspected.status, 200, "{reference}: {}", inspected.body);
+        assert_eq!(inspected.body["result"]["id"], project_id);
+        assert_eq!(inspected.body["result"]["key"], "P-1");
+    }
+    let missing = browser.get(&format!(
+        "/api/v1/organizations/{organization}/projects/P-999"
+    ));
+    assert_eq!(missing.status, 404, "{}", missing.body);
+
+    // 4. Snapshot contains the project, its newly created owning team, and contributing link.
+    let snap = browser.get(&format!("/api/v1/organizations/{organization}/snapshot"));
+    assert_eq!(snap.status, 200, "{}", snap.body);
+    let snap_projects = snap.body["result"]["snapshot"]["projects"]
+        .as_array()
+        .unwrap();
+    assert_eq!(snap_projects.len(), 1, "{}", snap.body);
+    assert_eq!(snap_projects[0]["id"], project_id);
+    assert_eq!(snap_projects[0]["key"], "P-1");
+    let snap_teams = snap.body["result"]["snapshot"]["teams"].as_array().unwrap();
+    assert!(
+        snap_teams
+            .iter()
+            .any(|t| t["id"] == owner_team_id && t["name"] == "Billing Service"),
+        "owning team missing from snapshot: {snap_teams:?}"
+    );
+    let snap_links = snap.body["result"]["snapshot"]["project_teams"]
+        .as_array()
+        .unwrap();
+    assert_eq!(snap_links.len(), 2, "{}", snap.body);
+    assert!(
+        snap_links.iter().any(|l| l["team_id"] == owner_team_id),
+        "owning team link missing: {snap_links:?}"
+    );
+    assert!(
+        snap_links.iter().any(|l| l["team_id"] == platform_team_id),
+        "contributing team link missing: {snap_links:?}"
+    );
+
+    // 5. Add and remove a contributing team via `/projects/add-team` and `/projects/remove-team`.
+    let add_link_id = crate::ids::uuid_v7().unwrap();
+    let added = browser.post(
+        &format!("/api/v1/organizations/{organization}/projects/add-team"),
+        &json!({
+            "operation_id": crate::ids::uuid_v7().unwrap(),
+            "scope": scope,
+            "params": {
+                "project_team_id": add_link_id,
+                "project_id": project_id,
+                "team_id": security_team_id
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(added.status, 200, "{}", added.body);
+    assert_eq!(added.body["outcome"], "completed");
+
+    let after_add = browser.get(&format!(
+        "/api/v1/organizations/{organization}/projects/P-1"
+    ));
+    assert_eq!(after_add.status, 200, "{}", after_add.body);
+    let rev_after_add = after_add.body["result"]["revision"].as_u64().unwrap();
+    let contrib_after_add = after_add.body["result"]["contributing_team_ids"]
+        .as_array()
+        .unwrap();
+    assert_eq!(contrib_after_add.len(), 2, "{}", after_add.body);
+
+    // `project_team_id` in snapshot encodes `<project_id>:<team_id>`.
+    let remove_link_id = format!("{project_id}:{security_team_id}");
+    let removed = browser.post(
+        &format!("/api/v1/organizations/{organization}/projects/remove-team"),
+        &json!({
+            "operation_id": crate::ids::uuid_v7().unwrap(),
+            "scope": scope,
+            "params": {
+                "project_team_id": remove_link_id,
+                "expected_version": rev_after_add
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(removed.status, 200, "{}", removed.body);
+    assert_eq!(removed.body["outcome"], "completed");
+
+    let after_remove = browser.get(&format!(
+        "/api/v1/organizations/{organization}/projects/P-1"
+    ));
+    assert_eq!(after_remove.status, 200, "{}", after_remove.body);
+    assert_eq!(
+        after_remove.body["result"]["contributing_team_ids"],
+        json!([platform_team_id])
+    );
+
+    // 6. Exercise native `setup_flow::project_command` (`list`, `inspect`, `create`) over `host.sock`.
+    let mut expected_count = 1usize;
+    {
+        use crate::setup_flow::office_command::Target;
+        use crate::setup_flow::project_command::{create, inspect, list, ProjectCreateInput};
+        let target = Target {
+            socket: &socket,
+            instance_id: &instance_id,
+            name: None,
+        };
+        let mut typed = || Ok(org_host_control::Password::new(PASSWORD.into()).unwrap());
+        let by_code = matches!(
+            crate::test_programs::image_identity(),
+            org_platform_host::admission::ImageIdentity::CodeSignature
+        );
+        let mut out = Vec::new();
+        if by_code {
+            list(
+                &target,
+                "Owner",
+                Some(&organization),
+                false,
+                false,
+                &mut typed,
+                &mut out,
+            )
+            .unwrap();
+            let text_out = String::from_utf8(out.clone()).unwrap();
+            assert!(text_out.contains("P-1\tbilling-service"), "{text_out}");
+
+            out.clear();
+            inspect(
+                &target,
+                "Owner",
+                Some(&organization),
+                "P-1",
+                true,
+                &mut typed,
+                &mut out,
+            )
+            .unwrap();
+            let parsed: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(parsed["id"], project_id);
+            assert_eq!(parsed["key"], "P-1");
+
+            out.clear();
+            create(
+                &target,
+                "Owner",
+                &ProjectCreateInput {
+                    org_id: Some(&organization),
+                    name: "Analytics",
+                    slug: None,
+                    owner_team_id: Some(&security_team_id),
+                    parent_team_id: None,
+                    json: true,
+                },
+                &mut typed,
+                &mut out,
+            )
+            .unwrap();
+            let created_cli: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(created_cli["key"], "P-2");
+            assert_eq!(created_cli["slug"], "analytics");
+            assert_eq!(created_cli["owner_team_id"], security_team_id);
+            expected_count = 2;
+        }
+    }
+
+    // 7. Stop the host, DELETE the SQLite projection (`runtime/<office>/office.db`), restart the
+    // host, and verify projects + owning teams + contributing teams rebuild cleanly from durable YAML.
+    stop(host, &base);
+    let database = Path::new(&organization)
+        .join("runtime")
+        .join(&office)
+        .join("office.db");
+    let projection = all_files(&base)
+        .into_iter()
+        .find(|p| p.ends_with(&database))
+        .unwrap_or_else(|| panic!("no {database:?} under {base:?}"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    fs::remove_dir_all(&projection).unwrap();
+    assert!(!projection.exists());
+
+    let host = restart(&base, address);
+    wait_offices_active(&host, 1);
+    assert!(projection.join("office.db").is_file());
+
+    let after_rebuild = browser.get(&format!("/api/v1/organizations/{organization}/projects"));
+    assert_eq!(after_rebuild.status, 200, "{}", after_rebuild.body);
+    let rebuilt = after_rebuild.body["result"]["projects"].as_array().unwrap();
+    assert_eq!(rebuilt.len(), expected_count, "{}", after_rebuild.body);
+    assert_eq!(rebuilt[0]["id"], project_id);
+    assert_eq!(rebuilt[0]["key"], "P-1");
+    assert_eq!(rebuilt[0]["slug"], "billing-service");
+    assert_eq!(rebuilt[0]["owner_team_id"], owner_team_id);
+    assert_eq!(
+        rebuilt[0]["contributing_team_ids"],
+        json!([platform_team_id])
+    );
+
+    stop(host, &base);
 }

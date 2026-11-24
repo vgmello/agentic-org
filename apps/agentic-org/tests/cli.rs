@@ -14,6 +14,7 @@ fn help_and_version_do_not_start_a_host() {
         let result = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
             .args(args)
             .current_dir(sandbox.path())
+            .env("HOME", sandbox.path())
             .env("ORG_OFFICE_HOME", sandbox.path().join("office"))
             .env("ORG_OFFICE_DEV_KEY_DIR", sandbox.path().join("keys"))
             .output()
@@ -32,14 +33,15 @@ fn help_and_version_do_not_start_a_host() {
 fn unsupported_bootstrap_never_creates_partial_offices_or_service_state() {
     let sandbox = tempfile::tempdir().unwrap();
     for args in [
-        vec!["setup"],
         vec!["setup", "--offline"],
         vec!["setup", "--hq", "https://hq.invalid"],
+        vec!["setup", "--satellite"],
         vec!["--server"],
     ] {
         let result = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
             .args(args)
             .current_dir(sandbox.path())
+            .env("HOME", sandbox.path())
             .env("ORG_OFFICE_HOME", sandbox.path().join("office"))
             .env("ORG_OFFICE_DEV_KEY_DIR", sandbox.path().join("keys"))
             .output()

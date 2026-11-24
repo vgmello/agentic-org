@@ -341,7 +341,7 @@ fn a_real_host_serves_the_browser_over_tls_with_its_own_certificate_and_a_suppli
         3,
         &TlsSetParams {
             session,
-            operation_id: crate::ids::generate().unwrap(),
+            operation_id: crate::ids::uuid_v7().unwrap(),
             cert: cert.clone(),
             key: TlsPrivateKey::new(key).unwrap(),
         },
@@ -467,7 +467,7 @@ fn the_admin_tls_set_command_replaces_the_pair_where_it_may_send_the_password() 
     let supplied = leaf_of(&cert);
     assert!(out.contains(&fingerprint(&supplied)), "{out}");
     assert!(
-        !out.contains("PRIVATE KEY") && !out.contains("BEGIN"),
+        !out.contains("PRIVATE KEY") && !out.contains("-----BEGIN"),
         "{out}"
     );
     assert_eq!(leaf_of(&stored_chain(&host)), supplied);

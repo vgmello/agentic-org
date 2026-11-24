@@ -45,11 +45,11 @@ describe('create', () => {
 			]
 		]);
 	});
-	it('mints a canonical ULID and refuses anything else before sending', async () => {
-		const s = scripted([OP, 'not-a-ulid']);
+	it('mints a canonical lowercase UUIDv7 and refuses anything else before sending', async () => {
+		const s = scripted([OP, 'not-a-uuid']);
 		expect(s.api.newOperationId()).toBe(OP);
 		expect(() => s.api.newOperationId()).toThrow();
-		await expect(s.api.create('0193a5c0-0000-7000-8000-000000000009', params)).rejects.toThrow();
+		await expect(s.api.create('01M72N8MG00000000000000009', params)).rejects.toThrow();
 		expect(s.submit).not.toHaveBeenCalled();
 	});
 	it.each([

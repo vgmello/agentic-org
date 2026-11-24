@@ -15,9 +15,11 @@
 //! from there and never makes a second organization or a second CA. Nothing under the data
 //! roots is ever removed.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use org_store::{journal_dir, AnchorFacts, Files, Id, Opening, Outcome, StoreError};
+use org_store::{
+    journal_dir, AnchorFacts, Files, Id, OfficeIdentity, Opening, Outcome, StoreError,
+};
 
 use super::{
     check_roots,
@@ -35,13 +37,19 @@ use crate::{
     key::Key,
     model::{NewOffice, OfficeInfo, OfficeRole},
     office_file,
-    office_local::{read_ca, CaMaterial},
+    office_local::{
+        promote_staged_ca_key, read_ca, records::CaKey, remove_staged_ca_key, stage_ca_key,
+        write_ca_key, CaMaterial,
+    },
     organization::{
         features::{CreateOrganization, Creator},
-        operation_id, records,
+        import::{ImportOrganization, ImportedOrganization},
+        records,
     },
     private_fs::{private_dir, tighten_dir},
-    store::open::{open_store, CreateOrganizationOp, OfficeStanding},
+    store::open::{
+        open_store, CreateOrganizationOp, ImportOrganizationOp, OfficeStanding, OfficeStore,
+    },
 };
 
 /// The prefix of a publication's temporary files (`org_store::publish_one`).
@@ -50,9 +58,17 @@ const TEMPORARY: &str = ".store-tmp-";
 /// What a creation folder may hold besides its lock.
 const CREATION_ENTRIES: [&str; 2] = [intent::FILE, office_file::FILE_NAME];
 
+type ImportLoader =
+    Box<dyn FnOnce() -> Result<(ImportedOrganization, Option<Creator>), OfficeError>>;
+
+enum SeedMode {
+    Create,
+    Import(ImportLoader),
+}
+
 /// The request, checked as a whole: the binding's bootstrap names this office and
-/// organization, its creator is the owner, every ID is a UUIDv7 but the operation, which
-/// is the wire's ULID, and the custody is this office's.
+/// organization, its creator is the owner, every ID (including the operation) is a
+/// canonical lowercase UUIDv7, and the custody is this office's.
 fn intent_of(
     new: &NewOffice,
     binding: &Binding,
@@ -67,7 +83,7 @@ fn intent_of(
     let ok = prepared.valid()
         && prepared.creator.employee_id == binding.owner_member_id
         && uuid(&binding.owner_member_id)
-        && operation_id::from_wire_ulid(&binding.operation_id).is_ok()
+        && uuid(&binding.operation_id)
         && new.role == OfficeRole::Hq
         && uuid(&new.office_id)
         && uuid(&new.org_id)
@@ -154,6 +170,36 @@ impl Office {
         )
     }
 
+    /// Opens an existing organization from validated Git repository files (`TASK-39` / R1) as a
+    /// new HQ office, writing all imported state records and a fresh HQ CA in Entry 1 of the new
+    /// journal incarnation. `load_import` runs only if Entry 1 has not already committed locally,
+    /// so crash recovery after Entry 1 never requires reaching the remote Git repository again.
+    #[allow(clippy::too_many_arguments)]
+    pub fn import_hq(
+        folder: impl Into<PathBuf>,
+        new: &NewOffice,
+        key: Key,
+        binding: &Binding,
+        roots: DataRoots,
+        custody: Custody,
+        load_import: impl FnOnce() -> Result<(ImportedOrganization, Option<Creator>), OfficeError>
+            + 'static,
+        material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
+    ) -> Result<Office, OfficeError> {
+        let options = Options::production();
+        Self::seed_with(
+            folder.into(),
+            new,
+            Some(key),
+            binding,
+            roots,
+            custody,
+            SeedMode::Import(Box::new(load_import)),
+            material,
+            options,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn provision_with(
         folder: PathBuf,
@@ -162,6 +208,31 @@ impl Office {
         binding: &Binding,
         roots: DataRoots,
         custody: Custody,
+        material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
+        options: Options,
+    ) -> Result<Office, OfficeError> {
+        Self::seed_with(
+            folder,
+            new,
+            key,
+            binding,
+            roots,
+            custody,
+            SeedMode::Create,
+            material,
+            options,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seed_with(
+        folder: PathBuf,
+        new: &NewOffice,
+        key: Option<Key>,
+        binding: &Binding,
+        roots: DataRoots,
+        custody: Custody,
+        mode: SeedMode,
         material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
         options: Options,
     ) -> Result<Office, OfficeError> {
@@ -193,87 +264,65 @@ impl Office {
         if office_file::read(&folder)?.is_some_and(|done| done != info) {
             return Err(recovery());
         }
-        let creation = operation_id::from_wire_ulid(&intent.operation).map_err(|_| recovery())?;
+        let creation = Id::parse(&intent.operation).map_err(|_| recovery())?;
         let creation_command = intent.operation.clone();
         let owner = Id::parse(&intent.owner).map_err(|_| recovery())?;
 
         // A new journal incarnation until its anchor is written; after that, the one there
         // (an attempt that died after its folders and before its anchor makes them again).
-        let anchor = journal_dir(&roots.durable, &custody.identity).join("anchor.json");
-        let mut config = options.config(&roots, &custody);
-        if !exists(&anchor)? {
-            refuse_another_beginning(&roots, &custody)?;
-            config.opening = Opening::Create(AnchorFacts::default());
-        }
-        let store = open_store(&config).map_err(storage)?;
-
-        // The CA an earlier attempt committed: never generated again.
+        let store = open_seed_store(&roots, &custody, &options)?;
         let here = custody.identity.clone();
-        let files = Files::open(&roots.durable).map_err(OfficeError::storage)?;
-        let prior = read_ca(&files, &here.office_id).map_err(|_| recovery())?;
-        if let Some(records) = &prior {
-            records
-                .check(&here.organization_id, &here.office_id, &creation)
-                .map_err(|_| recovery())?;
-        }
-        let standing = OfficeStanding {
-            office: here.office_id.clone(),
-        };
-        let (standing, _) = store.read(standing).map_err(storage)?;
-        if prior.is_none() && standing.organization.is_some() {
-            return Err(recovery());
-        }
-        let prior = match prior {
-            Some(records) => {
-                let key = records.key;
-                let record = LocalRecord::new(
-                    key.organization_id.to_string(),
-                    key.operation_id.to_string(),
-                    key.public_key,
-                    records.package,
-                    key.wrapped_ca_key,
-                )?;
-                Some(record)
-            }
-            None => None,
-        };
-        let frozen = material(prior)?;
-        if frozen.organization_id != info.org_id || frozen.operation_id != creation.as_str() {
-            return Err(recovery());
-        }
-        let ca = CaMaterial {
-            public_key: frozen.public_key,
-            package: frozen.package.clone(),
-            wrapped_ca_key: frozen.wrapped_ca_key().to_vec(),
-        };
-        let reply = store.run(CreateOrganizationOp {
-            operation_id: creation.clone(),
-            here: here.clone(),
-            command: command(&intent)?,
+        let (ca, ca_key_record, entry_one_committed) = prepare_ca_for_creation(
+            &roots.durable,
+            &here,
+            &creation,
+            &info.org_id,
+            &store,
+            material,
+        )?;
+        run_seed_entry_one(
+            &store,
+            mode,
+            entry_one_committed,
+            &roots.durable,
+            &here,
+            &creation,
+            &owner,
+            &intent,
             ca,
-        });
-        match reply {
-            Ok(reply) if reply.outcome == Outcome::Completed => {}
-            // Refused, or the operation ID holds another creation: never a second one.
-            Ok(_) | Err(StoreError::Invalid(_) | StoreError::Conflict) => return Err(recovery()),
-            Err(error) => return Err(storage(error)),
-        }
+        )?;
         // H1: nobody is told the office exists before its files do.
         store.sync().map_err(storage)?;
+        // Promote the staged CA key into its permanent local security path outside
+        // `durable/recovery/`, and remove the staging file before final checks.
+        write_ca_key(&roots.durable, &here.office_id, &ca_key_record)
+            .map_err(OfficeError::storage)?;
+        remove_staged_ca_key(&roots.durable, &here.office_id).map_err(OfficeError::storage)?;
         #[cfg(test)]
         if let Some(spoil) = &options.before_final_checks {
             spoil();
         }
         let bytes = office_file::encode(&info)?;
+        let companions = super::open_companion_stores(options.engine, &roots, &info)?;
+        let clock_high_ms = std::sync::atomic::AtomicU64::new(options.clock.now().0);
         let office = Office {
             folder,
             info,
             durable: roots.durable,
+            runtime_root: roots.runtime,
             identity: here,
             owner,
             creation,
             creation_command,
             secrets_key: key,
+            clock: options.clock,
+            clock_high_ms,
+            runtime: crate::messaging::runtime::OfficeRuntime::new(),
+            private_notes: companions.private_notes,
+            accounting: companions.accounting,
+            budgets: companions.budgets,
+            budget_op_lock: std::sync::Mutex::new(()),
+            providers: companions.providers,
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]
@@ -285,6 +334,136 @@ impl Office {
             .map_err(OfficeError::storage)?;
         Ok(office)
     }
+}
+
+fn open_seed_store(
+    roots: &DataRoots,
+    custody: &Custody,
+    options: &Options,
+) -> Result<OfficeStore, OfficeError> {
+    let anchor = journal_dir(&roots.durable, &custody.identity).join("anchor.json");
+    let mut config = options.config(roots, custody);
+    if !exists(&anchor)? {
+        refuse_another_beginning(roots, custody)?;
+        config.opening = Opening::Create(AnchorFacts::default());
+    }
+    open_store(&config).map_err(storage)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_seed_entry_one(
+    store: &OfficeStore,
+    mode: SeedMode,
+    entry_one_committed: bool,
+    durable_root: &Path,
+    here: &OfficeIdentity,
+    creation: &Id,
+    owner: &Id,
+    intent: &Intent,
+    ca: CaMaterial,
+) -> Result<(), OfficeError> {
+    if entry_one_committed && matches!(mode, SeedMode::Import(_)) {
+        return Ok(());
+    }
+    let reply = match mode {
+        SeedMode::Create => store.run(CreateOrganizationOp {
+            operation_id: creation.clone(),
+            here: here.clone(),
+            command: command(intent)?,
+            ca,
+        }),
+        SeedMode::Import(load_import) => {
+            let (imported, new_owner_person) = load_import()?;
+            store.run(ImportOrganizationOp {
+                operation_id: creation.clone(),
+                here: here.clone(),
+                command: ImportOrganization {
+                    organization_id: here.organization_id.clone(),
+                    office_id: here.office_id.clone(),
+                    office_name: intent.office_name.clone(),
+                    owner_member_id: owner.clone(),
+                    new_owner_person,
+                    imported,
+                },
+                ca,
+            })
+        }
+    };
+    match reply {
+        Ok(reply) if reply.outcome == Outcome::Completed => Ok(()),
+        // Refused, or the operation ID holds another creation: never a second one.
+        Ok(_) | Err(StoreError::Invalid(_) | StoreError::Conflict) => {
+            let _ = remove_staged_ca_key(durable_root, &here.office_id);
+            Err(recovery())
+        }
+        Err(error) => Err(storage(error)),
+    }
+}
+
+/// Reconciles any staged/committed CA records from an earlier attempt, obtains or
+/// validates the CA material through `material`, and stages `ca-key.v1.staging` in local
+/// security storage outside `durable/recovery/` before Entry 1 commits (TASK-10 / H-06).
+fn prepare_ca_for_creation(
+    durable_root: &Path,
+    here: &OfficeIdentity,
+    creation: &Id,
+    org_id: &str,
+    store: &OfficeStore,
+    material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
+) -> Result<(CaMaterial, CaKey, bool), OfficeError> {
+    let files = Files::open(durable_root).map_err(OfficeError::storage)?;
+    promote_staged_ca_key(
+        durable_root,
+        &files,
+        &here.organization_id,
+        &here.office_id,
+        creation,
+    )
+    .map_err(|_| recovery())?;
+    let prior = read_ca(&files, &here.office_id).map_err(|_| recovery())?;
+    if let Some(records) = &prior {
+        records
+            .check(&here.organization_id, &here.office_id, creation)
+            .map_err(|_| recovery())?;
+    }
+    let standing = OfficeStanding {
+        office: here.office_id.clone(),
+    };
+    let (standing, _) = store.read(standing).map_err(storage)?;
+    if prior.is_none() && standing.organization.is_some() {
+        return Err(recovery());
+    }
+    let has_committed_ca = prior.is_some();
+    let entry_one_committed = has_committed_ca && standing.organization.is_some();
+    let prior = match prior {
+        Some(records) => {
+            let key = records.key;
+            Some(LocalRecord::new(
+                key.organization_id.to_string(),
+                key.operation_id.to_string(),
+                key.public_key,
+                records.package,
+                key.wrapped_ca_key,
+            )?)
+        }
+        None => None,
+    };
+    let frozen = material(prior)?;
+    if frozen.organization_id != org_id || frozen.operation_id != creation.as_str() {
+        return Err(recovery());
+    }
+    let ca = CaMaterial {
+        public_key: frozen.public_key,
+        package: frozen.package.clone(),
+        wrapped_ca_key: frozen.wrapped_ca_key().to_vec(),
+    };
+    let ca_key_record = ca.record(here, creation);
+    ca_key_record.check().map_err(|_| recovery())?;
+    if !has_committed_ca {
+        stage_ca_key(durable_root, &here.office_id, &ca_key_record)
+            .map_err(OfficeError::storage)?;
+    }
+    Ok((ca, ca_key_record, entry_one_committed))
 }
 
 /// Refuses a folder in which an office, this build's or an older one's, has begun: the

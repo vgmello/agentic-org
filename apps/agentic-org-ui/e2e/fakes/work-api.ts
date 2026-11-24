@@ -1,8 +1,8 @@
-export { workSender } from '../../src/lib/work/index';
-export type { WorkDraft } from '../../src/lib/work/index';
-import { workSender } from '../../src/lib/work/index';
-import { createMockWork } from '../../src/lib/work/api';
-import { orgApi } from '$lib/org/api';
+export { workSender } from '../../src/lib/modules/work/index';
+export type { WorkDraft } from '../../src/lib/modules/work/index';
+import { workSender } from '../../src/lib/modules/work/index';
+import { createMockWork } from '../../src/lib/modules/work/mock';
+import { orgApi } from '$lib/modules/organization/api';
 import { isPocDataset } from './mock-mode';
 import { pocWorkActivity, pocWorkItemById, pocWorkItems } from './poc-dataset';
 
@@ -30,7 +30,6 @@ export const workApi: typeof base = {
 		return base.activity(organizationId, itemId);
 	}
 };
-
 export const sender = workSender(workApi);
 if (typeof window !== 'undefined')
 	(window as unknown as { __mockWorkAs: typeof workApi.commandAs }).__mockWorkAs =

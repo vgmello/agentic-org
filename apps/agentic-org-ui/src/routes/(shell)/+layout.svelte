@@ -11,9 +11,9 @@
 	import { afterNavigate, goto, invalidate } from '$app/navigation';
 	import { selectDesktopSection } from '$lib/platform/shell/desktop-navigation';
 	import { navigating, page } from '$app/state';
-	import { orgApi } from '$lib/org/api';
-	import { noteChanged } from '$lib/org/live';
-	import { liveState } from '$lib/org/live-state.svelte';
+	import { orgApi } from '$lib/modules/organization/api';
+	import { noteChanged } from '$lib/modules/organization/live';
+	import { liveState } from '$lib/modules/organization/live-state.svelte';
 	import { areaFor } from '$lib/nav';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';

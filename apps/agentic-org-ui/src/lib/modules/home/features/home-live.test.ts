@@ -13,7 +13,7 @@ vi.mock('svelte', async (importOriginal) => {
 		untrack: <T>(fn: () => T) => untrackSpy(fn)
 	};
 });
-vi.mock('$lib/work', () => ({
+vi.mock('$lib/modules/work', () => ({
 	workApi: {
 		snapshot: (...args: unknown[]) => workSnapshot(...args)
 	}
@@ -23,8 +23,8 @@ vi.mock('$lib/modules/inbox/api', () => ({
 		list: (...args: unknown[]) => inboxList(...args)
 	}
 }));
-vi.mock('$lib/office/api', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('$lib/office/api')>();
+vi.mock('$lib/modules/offices/office-api', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/modules/offices/office-api')>();
 	return {
 		...actual,
 		officeApi: {

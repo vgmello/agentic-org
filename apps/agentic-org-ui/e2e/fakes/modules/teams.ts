@@ -7,8 +7,8 @@
 import type { TeamsApi } from '../../../src/lib/modules/teams/api';
 import type { TeamDetail, TeamProjectRow, TeamRow } from '../../../src/lib/modules/teams/types';
 import type { OrgSnapshot } from '$lib/proto';
-import { orgApi } from '$lib/org/api';
-import { newId } from '$lib/org/commands';
+import { orgApi } from '$lib/modules/organization/api';
+import { newId } from '$lib/modules/organization/commands';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { isPocDataset } from '../mock-mode';
 import { pocTeamRows } from '../poc-dataset';
@@ -228,14 +228,12 @@ export const teamsApi: TeamsApi = {
 			params: {
 				member_id: memberId,
 				name: person.name.trim(),
-				contact: person.contact || undefined
+				contact: person.contact || undefined,
+				handle,
+				home_team_id: person.homeTeamId
 			}
 		});
 		recordHandle(memberId, handle);
-		await orgApi.command(organizationId, {
-			method: 'team.add_member',
-			params: { membership_id: newId(), team_id: person.homeTeamId, member_id: memberId }
-		});
 		if (person.reportsToId) {
 			const me = (await snapshotFor(organizationId)).members.find((m) => m.id === memberId)!;
 			await orgApi.command(organizationId, {

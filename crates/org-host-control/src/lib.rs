@@ -54,7 +54,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod admin;
 pub mod browser;
-pub mod gateway;
+pub mod browser_accounts;
 pub mod journal;
 pub mod listen;
 pub mod ops;
@@ -63,9 +63,10 @@ pub mod pem;
 pub mod recovery;
 mod secret;
 mod status;
+pub mod web;
 pub use status::{
-    Administrator, GatewayState, GatewayStatus, InstanceMode, InstanceStatus, InstanceStatusParams,
-    InstanceStatusResult, OfficeCounts,
+    Administrator, InstanceMode, InstanceStatus, InstanceStatusParams, InstanceStatusResult,
+    OfficeCounts, WebState, WebStatus,
 };
 
 /// An organization's recovery code (X-02 §6.4), in `recovery.release`'s result: shown once,
@@ -90,6 +91,8 @@ pub mod event {
     pub const ORGANIZATION_CHANGED: &str = "organization.changed";
     pub const OFFICE_STATUS_CHANGED: &str = "office.status_changed";
     pub const ACCOUNT_CHANGED: &str = "account.changed";
+    /// Authentication mode changed (e.g. opt-in local auth enabled, ADR-0034).
+    pub const AUTH_MODE_CHANGED: &str = "auth.mode_changed";
     /// The operator renewed the TLS pair: the gateway calls `tls.fetch` and swaps it.
     pub const TLS_RENEW: &str = "tls.renew";
 }

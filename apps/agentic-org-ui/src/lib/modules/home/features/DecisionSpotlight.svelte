@@ -20,7 +20,7 @@
 	import type { OrgSnapshot } from '$lib/proto';
 	import { executeDecisionAction } from '$lib/home/actions';
 	import { isDenyAction, type HomeInboxState, type SpotlightDecision } from '$lib/home/model';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { useShellAi } from '$lib/platform/shell/shell-ai';
 	import HomeDayOne from './HomeDayOne.svelte';
 

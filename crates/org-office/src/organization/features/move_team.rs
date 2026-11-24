@@ -35,7 +35,7 @@ impl Feature for MoveTeam {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: OrganizationRead,
+        E::Tx: crate::projects::ports::ProjectsRead,
     {
         decide(uow, here, owner, by, self)
     }
@@ -49,7 +49,7 @@ pub fn decide<E: Engine>(
     command: &MoveTeam,
 ) -> Result<Change, Refusal>
 where
-    E::Tx: OrganizationRead,
+    E::Tx: crate::projects::ports::ProjectsRead,
 {
     stable(&command.id, "the team's ID")?;
     stable(&command.parent, "the parent team's ID")?;

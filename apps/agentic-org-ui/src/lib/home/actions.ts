@@ -1,7 +1,7 @@
 import type { OrgSnapshot } from '$lib/proto';
 import { inboxApi } from '$lib/modules/inbox/api';
-import { newId } from '$lib/org/commands';
-import { sender, workApi } from '$lib/work';
+import { newId } from '$lib/modules/organization/commands';
+import { sender, workApi } from '$lib/modules/work';
 import type { SpotlightDecision } from './model';
 
 /**

@@ -2,19 +2,19 @@
 //! (`org_proto::OrgSnapshot`), from one consistent read of the organization family. Pure:
 //! it reads through the read port and names no store and no engine.
 //!
-//! What the records do not hold yet, the snapshot leaves empty until the family that owns
-//! it is built: projects, project teams and areas; an agent's profile and its office
-//! (agents are hired through HR from B2 on, so the built-in HR lead has neither, and no
-//! reader takes it for an agent waiting to be placed). Every employee is a member of one
-//! team, its home team (data contract document 01), so each has one membership.
+//! Agents (including the built-in HR lead) carry their `office_id` (HQ office) and
+//! `AgentProfile` (`status`, `messaging_name`, `model`, `title`, `role`); `run_mode` stays
+//! unset until B6 adds live presence tracking. Every employee belongs to one home team
+//! (`Member::home_team_id`, data contract document 01).
 
-use org_proto::org::{Member, MemberKind, Membership, OrgSnapshot, Position, Team};
+use org_proto::org::{
+    AgentProfile, AgentRuntime, AgentStatus, Member, MemberKind, OrgSnapshot, Position, Project,
+    ProjectTeam, Team,
+};
 use org_store::{EngineError, Id};
 
-use super::{
-    ports::OrganizationRead,
-    records::{self, EmployeeKind},
-};
+use super::records::{self, EmployeeKind, EmployeeStatus, OfficeRole};
+use crate::projects::{ports::ProjectsRead, records::Project as ProjectRecord};
 
 /// The protocol position of directory generation `generation`. The organization's
 /// positions are one sequence, the generation, in the one epoch the store has: `epoch` is
@@ -28,21 +28,73 @@ pub fn position(generation: u64) -> Position {
 
 /// The snapshot `read` shows. `owner` is the person whose account owns the organization:
 /// the creator, as the creation binding names them (document 04).
-pub fn project(read: &impl OrganizationRead, owner: &Id) -> Result<OrgSnapshot, EngineError> {
+pub fn project(read: &impl ProjectsRead, owner: &Id) -> Result<OrgSnapshot, EngineError> {
     let generation = read.generation()?;
-    let teams = read.teams()?.into_iter().map(team).collect();
+    let teams = read
+        .teams()?
+        .into_iter()
+        .filter(|t| t.is_active())
+        .map(team)
+        .collect();
+    let hq_office_id = read
+        .offices()?
+        .into_iter()
+        .find(|office| office.role == OfficeRole::Hq)
+        .map(|office| office.id.to_string());
     let employees = read.employees()?;
-    let memberships = employees.iter().map(membership).collect();
-    let members = employees.iter().map(|e| member(e, owner)).collect();
+    let mut members = Vec::with_capacity(employees.len());
+    for employee in &employees {
+        if employee.status == EmployeeStatus::Inactive {
+            continue;
+        }
+        let exec = if employee.kind == EmployeeKind::Agent {
+            read.agent_execution(&employee.id)?
+        } else {
+            None
+        };
+        members.push(member(
+            employee,
+            owner,
+            hq_office_id.as_deref(),
+            exec.as_ref(),
+        ));
+    }
+    let project_records = read.projects()?;
+    let mut projects = Vec::with_capacity(project_records.len());
+    let mut project_teams = Vec::new();
+    for record in &project_records {
+        projects.push(project_summary(record));
+        project_teams.push(ProjectTeam {
+            id: format!("{}:{}", record.id, record.owner_team_id),
+            project_id: record.id.to_string(),
+            team_id: record.owner_team_id.to_string(),
+            version: record.meta.revision,
+        });
+        for team_id in &record.contributing_team_ids {
+            project_teams.push(ProjectTeam {
+                id: format!("{}:{}", record.id, team_id),
+                project_id: record.id.to_string(),
+                team_id: team_id.to_string(),
+                version: record.meta.revision,
+            });
+        }
+    }
     Ok(OrgSnapshot {
         position: position(generation),
         teams,
         members,
-        memberships,
-        projects: Vec::new(),
-        project_teams: Vec::new(),
-        areas: Vec::new(),
+        projects,
+        project_teams,
     })
+}
+
+fn project_summary(record: &ProjectRecord) -> Project {
+    let mut summary = Project::new(record.id.to_string(), record.name.clone());
+    summary.key = record.key();
+    summary.archived = record.archived;
+    summary.created_at = record.meta.created_at.clone();
+    summary.version = record.meta.revision;
+    summary
 }
 
 fn team(record: records::Team) -> Team {
@@ -55,10 +107,46 @@ fn team(record: records::Team) -> Team {
     }
 }
 
-fn member(record: &records::Employee, owner: &Id) -> Member {
+fn member(
+    record: &records::Employee,
+    owner: &Id,
+    hq_office_id: Option<&str>,
+    exec: Option<&records::AgentExecutionConfig>,
+) -> Member {
     let kind = match record.kind {
         EmployeeKind::Person => MemberKind::Person,
         EmployeeKind::Agent => MemberKind::Agent,
+    };
+    let (office_id, agent) = if record.kind == EmployeeKind::Agent {
+        let status = match record.status {
+            EmployeeStatus::Active => AgentStatus::Active,
+            EmployeeStatus::Paused => AgentStatus::Paused,
+            EmployeeStatus::Inactive => AgentStatus::Offboarded,
+        };
+        let profile = AgentProfile {
+            role: record
+                .role_text
+                .clone()
+                .unwrap_or_else(|| "Agent".to_owned()),
+            title: record
+                .title
+                .clone()
+                .or_else(|| record.title_in_team.clone())
+                .unwrap_or_else(|| record.name.clone()),
+            focus: record.focus.clone(),
+            runtime: AgentRuntime::ClaudeCode,
+            model: exec.map(|cfg| cfg.model_id.clone()),
+            // Runtime presence and run-mode status lines stay unset until B6.
+            run_mode: None,
+            schedule: None,
+            home: None,
+            messaging_name: record.handle.clone(),
+            status,
+            offboarded_at: record.offboarded_at.clone(),
+        };
+        (hq_office_id.map(str::to_owned), Some(profile))
+    } else {
+        (None, None)
     };
     // Reporting to the owner is stored as reporting to no one on the wire: one form per line.
     let reports_to = record.reports_to_employee_id.as_ref();
@@ -67,24 +155,15 @@ fn member(record: &records::Employee, owner: &Id) -> Member {
         id: record.id.to_string(),
         kind,
         name: record.name.clone(),
+        handle: Some(record.handle.clone()),
+        home_team_id: Some(record.home_team_id.to_string()),
+        title_in_team: record.title_in_team.clone(),
         contact: record.contact.clone(),
         owner: record.id == *owner,
-        office_id: None,
-        agent: None,
+        office_id,
+        agent,
         reports_to_member_id: reports_to,
         created_at: record.meta.created_at.clone(),
-        version: record.meta.revision,
-    }
-}
-
-/// An employee's membership of its home team. It has no record of its own, so it is named
-/// by its employee: each employee has exactly one.
-fn membership(record: &records::Employee) -> Membership {
-    Membership {
-        id: record.id.to_string(),
-        team_id: record.home_team_id.to_string(),
-        member_id: record.id.to_string(),
-        title_in_team: record.title_in_team.clone(),
         version: record.meta.revision,
     }
 }

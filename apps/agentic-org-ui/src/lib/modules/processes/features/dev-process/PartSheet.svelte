@@ -42,7 +42,7 @@
 		SheetHeader,
 		SheetTitle
 	} from '$lib/components/ui/sheet';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { registerModalBack } from '$lib/platform/shell/modal-back';
 	import DocumentText from '../../components/DocumentText.svelte';
 	import { KEY_HELP, partPath, validKey, withSkillKey } from '../../present';

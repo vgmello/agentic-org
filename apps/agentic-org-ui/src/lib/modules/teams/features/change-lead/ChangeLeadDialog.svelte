@@ -14,8 +14,8 @@
 		DialogHeader,
 		DialogTitle
 	} from '$lib/components/ui/dialog';
-	import { toAppError } from '$lib/office/api';
-	import type { OrgSession } from '$lib/org/session';
+	import { toAppError } from '$lib/proto';
+	import type { OrgSession } from '$lib/modules/organization/session';
 	import type { LeadCandidate, TeamRow } from '../../types';
 
 	let {

@@ -174,20 +174,23 @@ fn http(port: u16, method: &str, path: &str, headers: &str, body: &str) -> Optio
     })
 }
 
-/// A ULID made now (the operation IDs the host accepts).
-fn ulid_now() -> String {
-    const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+/// A canonical lowercase UUIDv7 made now (the operation IDs the host accepts).
+fn uuid_v7_now() -> String {
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_millis();
-    let mut value = (ms << 80) | 0x1234_5678;
-    let mut out = [0u8; 26];
-    for slot in out.iter_mut().rev() {
-        *slot = CROCKFORD[(value & 0x1F) as usize];
-        value >>= 5;
-    }
-    String::from_utf8(out.to_vec()).unwrap()
+        .as_millis() as u64;
+    let hi = (ms << 16) | (0x7 << 12) | 0x0123;
+    let lo = (0b10u64 << 62) | 0x1234_5678;
+    let hex = format!("{hi:016x}{lo:016x}");
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
 }
 
 /// The session a sign-in reply carries: its cookie and the proof, as request headers.
@@ -258,7 +261,7 @@ fn the_real_host_starts_the_real_worker_under_custody_and_its_socket_answers() {
 
     // The organization, created through the browser API.
     let instance = &world.account.instance_id;
-    let operation = ulid_now();
+    let operation = uuid_v7_now();
     let create = serde_json::json!({
         "operation_id": operation,
         "scope": { "kind": "instance", "instance_id": instance },
@@ -328,6 +331,98 @@ fn the_real_host_starts_the_real_worker_under_custody_and_its_socket_answers() {
     assert_eq!(identity.office.id, office);
     assert_eq!(identity.office.organization_id, organization);
     assert_eq!(identity.organization_name, "Acme");
+
+    // B6 / LNX-1: exercise real messaging through the browser API over the admitted host
+    // channel and verify `agent-os` enforces its run-binding contract against the live socket
+    // with no file-queue fallback.
+    let channels_reply = http(
+        world.port,
+        "GET",
+        &format!("/api/v1/organizations/{organization}/chat/channels"),
+        &session,
+        "",
+    )
+    .unwrap();
+    assert_eq!(
+        channels_reply.status, 200,
+        "channels: {}",
+        channels_reply.body
+    );
+    assert!(
+        channels_reply.body["result"]["channels"]
+            .as_array()
+            .is_some_and(|list| list.iter().any(|c| c["name"] == "general")),
+        "channels: {}",
+        channels_reply.body
+    );
+
+    let msg_id = uuid_v7_now();
+    let send_body = serde_json::json!({
+        "id": msg_id,
+        "to": "#general",
+        "kind": "msg",
+        "subject": "LNX-1",
+        "body": "Hello from LNX-1 real office"
+    })
+    .to_string();
+    let send_reply = http(
+        world.port,
+        "POST",
+        &format!("/api/v1/organizations/{organization}/chat/messages"),
+        &session,
+        &send_body,
+    )
+    .unwrap();
+    assert_eq!(send_reply.status, 200, "send: {}", send_reply.body);
+    assert_eq!(send_reply.body["result"]["id"], msg_id);
+
+    let list_body = serde_json::json!({ "conversation": "#general" }).to_string();
+    let list_reply = http(
+        world.port,
+        "POST",
+        &format!("/api/v1/organizations/{organization}/chat/messages/list"),
+        &session,
+        &list_body,
+    )
+    .unwrap();
+    assert_eq!(list_reply.status, 200, "list: {}", list_reply.body);
+    assert!(
+        list_reply.body["result"]["messages"]
+            .as_array()
+            .is_some_and(|list| list
+                .iter()
+                .any(|m| m["id"] == msg_id && m["body"] == "Hello from LNX-1 real office")),
+        "list: {}",
+        list_reply.body
+    );
+
+    let inbox_reply = http(
+        world.port,
+        "GET",
+        &format!("/api/v1/organizations/{organization}/inbox"),
+        &session,
+        "",
+    )
+    .unwrap();
+    assert_eq!(inbox_reply.status, 200, "inbox: {}", inbox_reply.body);
+    assert_eq!(
+        inbox_reply.body["result"]["degraded"],
+        serde_json::json!([])
+    );
+
+    // Real `agent-os` binary refuses unbound runs against the live office (no file queue).
+    let agent_os = sibling_program("agent-os");
+    let unbound = Command::new(&agent_os)
+        .args(["msg", "inbox"])
+        .env_clear()
+        .env("AGENT_OS_OFFICE", &office)
+        .env("AGENT_OS_RUNTIME_DIR", &world.account.runtime)
+        .output()
+        .unwrap();
+    assert!(!unbound.status.success(), "unbound agent-os must refuse");
+    let unbound_json: Value = serde_json::from_slice(&unbound.stdout).unwrap();
+    assert_eq!(unbound_json["ok"], false);
+    assert_eq!(unbound_json["error"]["code"], "not_authorized");
 
     // The service stops on SIGTERM, exits 0 and leaves no worker serving the socket.
     // SAFETY: sends a signal to this test's own child.
