@@ -210,12 +210,15 @@ try {
       const readiness = page.getByRole("progressbar", { name: "Project readiness" });
       const release = page.getByRole("region", { name: "Release summary" });
       const releaseReadiness = release.getByRole("progressbar", { name: "Release readiness" });
+      const assemblyCycle = page.locator(".assembly-metrics [data-assembly-cycle]");
       const panel = page.getByRole("complementary", { name: "Release gates" });
       const tools = page.getByRole("group", { name: "Activity sidebar tools" });
       const simulation = tools.getByRole("button", { name: "Simulation" });
       const gates = tools.getByRole("button", { name: "Release gates" });
       await readiness.waitFor();
       assert.equal(await assembly.getAttribute("aria-selected"), "true");
+      assert.equal(await page.locator(".project-header + #project-release-summary + .activity-workspace").count(), 1);
+      assert.equal(await release.count(), 1, "The release summary moved out of the Assembly line table");
       assert.equal(await readiness.getAttribute("max"), "4");
       assert.equal(await releaseReadiness.getAttribute("max"), "4");
       assert.equal(await releaseReadiness.getAttribute("value"), await readiness.getAttribute("value"));
@@ -236,6 +239,7 @@ try {
       await simulation.press("Enter");
       const playback = page.getByRole("complementary", { name: "Simulation" });
       await playback.getByRole("button", { name: "Reset simulation" }).click();
+      assert.equal(await assemblyCycle.textContent(), "—");
       await playback.getByRole("button", { name: "8×" }).click();
       await playback.getByRole("button", { name: "Add sample task" }).click();
       await playback.getByText("joined the queue").waitFor();
@@ -248,6 +252,8 @@ try {
       await lineEvents.getByText("T-S1 passed review and merged").waitFor();
       assert.doesNotMatch((await lineEvents.textContent())!, /T-A130|T-A84/);
       assert.match((await throughput.locator(".project-throughput-metrics dd").first().textContent())!, /\d h$/);
+      assert.equal(await assemblyCycle.textContent(), await throughput.locator(".project-throughput-metrics dd").first().textContent());
+      assert.equal(await releaseReadiness.getAttribute("value"), await readiness.getAttribute("value"));
       assert.match((await throughput.getByRole("listitem").last().textContent())!, /[2-9] tasks merged/);
       await simulation.press("Enter");
       await playback.getByRole("button", { name: "Reset simulation" }).click();
@@ -257,6 +263,7 @@ try {
 
       await page.getByRole("button", { name: "Review T-A118" }).click();
       assert.equal(await feed.getAttribute("aria-selected"), "true");
+      await release.waitFor();
       const decision = page.locator("#activity-triage-in2");
       assert.ok(await decision.evaluate((element) => element === document.activeElement));
       assert.equal(await page.locator("#activity-triage-in1").count(), 0);
@@ -265,6 +272,13 @@ try {
       assert.equal(await filterMenu.getByRole("group", { name: "Project", exact: true }).count(), 0);
       await filterMenu.getByRole("menuitemradio", { name: "Decisions", exact: true }).press("Enter");
       await feed.press("ArrowLeft");
+      await readiness.waitFor();
+      await page.locator(".project-toolbar").getByRole("link", { name: "Overview", exact: true }).click();
+      await page.waitForURL(address => address.hash === "#/projects/office-federation");
+      await page.locator(".project-header + #project-release-summary + .grid2").waitFor();
+      assert.equal(await releaseReadiness.getAttribute("max"), "4");
+      await release.getByRole("link", { name: /File access ruling/ }).waitFor();
+      await page.locator(".project-toolbar").getByRole("link", { name: "Activity", exact: true }).click();
       await readiness.waitFor();
     }
 
@@ -277,9 +291,11 @@ try {
       const usageHeading = insights.getByRole("heading", { name: /^Usage records/ });
       const usageRows = insights.getByRole("table", { name: "Usage records", exact: true }).locator("tbody tr");
       const periodCost = insights.locator(".insight-kpis > div").filter({ hasText: "Period cost" }).locator("dd").first();
+      const medianCycle = insights.locator(".insight-kpis > div").filter({ hasText: "Median cycle time" }).locator("dd").first();
 
       assert.equal(await page.getByRole("link", { name: "Insights", exact: true }).getAttribute("aria-current"), "page");
       assert.equal(await period.inputValue(), "month");
+      assert.match((await medianCycle.textContent())!, /\d h$/);
       const monthCost = await periodCost.textContent();
       await period.selectOption("last");
       assert.notEqual(await periodCost.textContent(), monthCost);
@@ -293,6 +309,7 @@ try {
       await insights.getByRole("button", { name: "Apply dates" }).click();
       assert.equal(await usageRows.count(), 1);
       assert.match((await usageRows.first().textContent())!, /T-A88/);
+      assert.equal(await medianCycle.textContent(), "—");
       await period.selectOption("month");
       assert.equal(await periodCost.textContent(), monthCost);
 
