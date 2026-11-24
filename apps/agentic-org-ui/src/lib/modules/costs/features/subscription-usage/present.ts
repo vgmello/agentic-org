@@ -2,6 +2,7 @@
 // Every null or undefined counter renders as "—", never fabricated as zero.
 import { formatDayTime } from '../../dates';
 import type {
+	SubscriptionCollectResult,
 	SubscriptionModelUsage,
 	SubscriptionUsageAuthSource,
 	SubscriptionUsageStatus,
@@ -164,4 +165,71 @@ export function formatCollectedAt(iso: string | undefined, zone: string): string
 	const parsed = new Date(iso);
 	if (Number.isNaN(parsed.getTime())) return undefined;
 	return formatDayTime(parsed, zone);
+}
+
+export interface CollectToastFeedback {
+	tone: 'success' | 'info' | 'error';
+	message: string;
+}
+
+/**
+ * Formats the post-collection toast from the office response, preserving both in-band snapshot
+ * statuses (`auth_required`, `unavailable`, `unsupported`) and any `deferredConnectionIds` retry
+ * instruction on mixed batch responses.
+ */
+export function collectOutcomeToast(res: SubscriptionCollectResult): CollectToastFeedback {
+	const deferredCount = res.deferredConnectionIds?.length ?? 0;
+	const deferredNote =
+		deferredCount > 0
+			? `${deferredCount} ${deferredCount === 1 ? 'connection was' : 'connections were'} deferred; refresh again for remaining connections.`
+			: '';
+	const withDeferred = (base: string): string => {
+		if (!deferredNote) return base;
+		return `${base.trimEnd().replace(/\.$/, '')}. ${deferredNote}`;
+	};
+
+	const authFailed = res.snapshots.find((s) => s.status === 'auth_required');
+	if (authFailed) {
+		return {
+			tone: 'error',
+			message: withDeferred(
+				authFailed.message ||
+					`Usage credential was rejected for ${authFailed.connectionName}. Update it and try again.`
+			)
+		};
+	}
+
+	const unavailableSnap = res.snapshots.find((s) => s.status === 'unavailable');
+	if (unavailableSnap) {
+		return {
+			tone: 'error',
+			message: withDeferred(
+				unavailableSnap.message ||
+					`Provider usage endpoint was unavailable for ${unavailableSnap.connectionName}.`
+			)
+		};
+	}
+
+	const unsupportedSnap = res.snapshots.find((s) => s.status === 'unsupported');
+	if (unsupportedSnap) {
+		return {
+			tone: 'info',
+			message: withDeferred(
+				unsupportedSnap.message ||
+					`${unsupportedSnap.connectionName} does not support subscription usage collection.`
+			)
+		};
+	}
+
+	if (deferredCount > 0) {
+		return {
+			tone: 'info',
+			message: `Updated subscription usage (${deferredCount} deferred; refresh again for remaining connections).`
+		};
+	}
+
+	return {
+		tone: 'success',
+		message: 'Subscription model usage updated.'
+	};
 }

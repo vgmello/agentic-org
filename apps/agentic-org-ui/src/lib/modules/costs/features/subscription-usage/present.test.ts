@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	authSourceLabel,
+	collectOutcomeToast,
 	credentialConfigLabel,
 	formatRequests,
 	formatSubscriptionTokens,
@@ -12,6 +13,7 @@ import {
 	subscriptionStatusDisplay,
 	summarizeWindow
 } from './present';
+import type { SubscriptionUsageSnapshot } from '../../types';
 
 describe('subscription usage presentation helpers (TASK-79)', () => {
 	it('formats utilization basis points and renders null/undefined as em-dash without fabricating zero', () => {
@@ -130,5 +132,112 @@ describe('subscription usage presentation helpers (TASK-79)', () => {
 				}
 			])
 		).toBe(true);
+	});
+
+	it('preserves deferred retry instructions alongside unsupported, unavailable, and auth_required collection outcomes', () => {
+		const baseSnap = (
+			overrides: Partial<SubscriptionUsageSnapshot>
+		): SubscriptionUsageSnapshot => ({
+			connectionId: 'conn-1',
+			connectionKey: 'claude-sub',
+			connectionName: 'Claude Max',
+			providerType: 'claude',
+			officeId: 'office-1',
+			authSource: 'dedicated_usage_credential',
+			hasUsageCredential: true,
+			hasEnrolledCredential: true,
+			status: 'ok',
+			stale: false,
+			isApiEquivalentEstimate: false,
+			models: [],
+			...overrides
+		});
+
+		expect(
+			collectOutcomeToast({
+				snapshots: [
+					baseSnap({
+						status: 'unsupported',
+						message: 'Provider does not expose a subscription usage endpoint for this account.'
+					})
+				],
+				collectedAt: '2026-11-24T12:00:00Z',
+				deferredConnectionIds: ['conn-2']
+			})
+		).toEqual({
+			tone: 'info',
+			message:
+				'Provider does not expose a subscription usage endpoint for this account. 1 connection was deferred; refresh again for remaining connections.'
+		});
+
+		expect(
+			collectOutcomeToast({
+				snapshots: [
+					baseSnap({
+						status: 'auth_required',
+						message: 'Usage token expired.'
+					})
+				],
+				collectedAt: '2026-11-24T12:00:00Z',
+				deferredConnectionIds: ['conn-2', 'conn-3']
+			})
+		).toEqual({
+			tone: 'error',
+			message:
+				'Usage token expired. 2 connections were deferred; refresh again for remaining connections.'
+		});
+
+		expect(
+			collectOutcomeToast({
+				snapshots: [
+					baseSnap({
+						status: 'unavailable',
+						message: 'Upstream returned 503.'
+					})
+				],
+				collectedAt: '2026-11-24T12:00:00Z',
+				deferredConnectionIds: ['conn-2']
+			})
+		).toEqual({
+			tone: 'error',
+			message:
+				'Upstream returned 503. 1 connection was deferred; refresh again for remaining connections.'
+		});
+
+		expect(
+			collectOutcomeToast({
+				snapshots: [
+					baseSnap({
+						status: 'unsupported',
+						message: 'Provider does not expose a subscription usage endpoint for this account.'
+					})
+				],
+				collectedAt: '2026-11-24T12:00:00Z'
+			})
+		).toEqual({
+			tone: 'info',
+			message: 'Provider does not expose a subscription usage endpoint for this account.'
+		});
+
+		expect(
+			collectOutcomeToast({
+				snapshots: [baseSnap({ status: 'ok' })],
+				collectedAt: '2026-11-24T12:00:00Z',
+				deferredConnectionIds: ['conn-2']
+			})
+		).toEqual({
+			tone: 'info',
+			message: 'Updated subscription usage (1 deferred; refresh again for remaining connections).'
+		});
+
+		expect(
+			collectOutcomeToast({
+				snapshots: [baseSnap({ status: 'ok' })],
+				collectedAt: '2026-11-24T12:00:00Z'
+			})
+		).toEqual({
+			tone: 'success',
+			message: 'Subscription model usage updated.'
+		});
 	});
 });

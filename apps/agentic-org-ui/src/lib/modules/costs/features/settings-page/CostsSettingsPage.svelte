@@ -28,6 +28,7 @@
 	import PricesSection from '../prices/PricesSection.svelte';
 	import SubscriptionCredentialDialog from '../subscription-usage/SubscriptionCredentialDialog.svelte';
 	import SubscriptionUsageSection from '../subscription-usage/SubscriptionUsageSection.svelte';
+	import { collectOutcomeToast } from '../subscription-usage/present';
 	import UsageRecordsSheet from '../usage-records/UsageRecordsSheet.svelte';
 	import { toAppError } from '$lib/proto';
 
@@ -146,30 +147,13 @@
 				timeZone: zone
 			});
 			await subscriptionUsage.reload();
-			const authFailed = res.snapshots.find((s) => s.status === 'auth_required');
-			const unavailableSnap = res.snapshots.find((s) => s.status === 'unavailable');
-			const unsupportedSnap = res.snapshots.find((s) => s.status === 'unsupported');
-			if (authFailed) {
-				toast.error(
-					authFailed.message ||
-						`Usage credential was rejected for ${authFailed.connectionName}. Update it and try again.`
-				);
-			} else if (unavailableSnap) {
-				toast.error(
-					unavailableSnap.message ||
-						`Provider usage endpoint was unavailable for ${unavailableSnap.connectionName}.`
-				);
-			} else if (unsupportedSnap) {
-				toast.info(
-					unsupportedSnap.message ||
-						`${unsupportedSnap.connectionName} does not support subscription usage collection.`
-				);
-			} else if (res.deferredConnectionIds && res.deferredConnectionIds.length > 0) {
-				toast.info(
-					`Updated subscription usage (${res.deferredConnectionIds.length} deferred; refresh again for remaining connections).`
-				);
+			const feedback = collectOutcomeToast(res);
+			if (feedback.tone === 'error') {
+				toast.error(feedback.message);
+			} else if (feedback.tone === 'info') {
+				toast.info(feedback.message);
 			} else {
-				toast.success('Subscription model usage updated.');
+				toast.success(feedback.message);
 			}
 		} catch (e) {
 			toast.error(toAppError(e).message);
