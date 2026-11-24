@@ -5340,6 +5340,7 @@ function workRow(w, isSubtask = false) {
     </div></div>${workSubtasks(w)}</li>`;
 }
 const showsNeedsYou = (w) => needsMe(w) && w.status !== "Scoped";
+const WORK_STATUS_ORDER = ["Blocked", ...ALL_STATUSES.filter((status) => status !== "Blocked")];
 function workGroups(items, field) {
   const groups = new Map();
   for (const item of items) {
@@ -5347,7 +5348,7 @@ function workGroups(items, field) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(item);
   }
-  const keys = field === "status" ? ALL_STATUSES.filter((status) => groups.has(status)) : [...groups.keys()];
+  const keys = field === "status" ? WORK_STATUS_ORDER.filter((status) => groups.has(status)) : [...groups.keys()];
   return keys.map((key) => {
     const label = field === "status" ? key : field === "proj" ? P[key].name
       : M[key] ? M[key].name + " · " + kindWord(key) : "Unassigned";
@@ -6754,6 +6755,7 @@ function memberRows(ids, opts = {}) {
 }
 
 const WORK_PRESETS = [["all", "All"], ["needs-me", "Needs me"], ["mine", "Mine"]];
+const WORK_DEFAULT_GROUP = "status";
 const WORK_GROUPS = [["project", "Project"], ["status", "Status"], ["assignee", "Assignee"]];
 const WORK_GROUP_FIELDS = { project: "proj", status: "status", assignee: "who" };
 const WORK_SORTS = [["default", "Original order"], ["title", "Title"], ["priority", "Priority"], ["eta", "ETA"]];
@@ -6766,7 +6768,7 @@ function workSelection() {
   const view = params.get("view");
   const primary = params.get("group") ?? view?.match(/^by-(.+)$/)?.[1];
   const subgroup = params.get("subgroup");
-  const group = own(WORK_GROUP_FIELDS, primary) ? primary : "none";
+  const group = primary === "none" || own(WORK_GROUP_FIELDS, primary) ? primary : WORK_DEFAULT_GROUP;
   return {
     view: WORK_PRESETS.some(([value]) => value === view) ? view : "all",
     group,
@@ -6774,10 +6776,10 @@ function workSelection() {
   };
 }
 
-function workHref({ view = "all", group = "none", subgroup = "none", item }) {
+function workHref({ view = "all", group = WORK_DEFAULT_GROUP, subgroup = "none", item }) {
   const params = new URLSearchParams();
   if (view !== "all") params.set("view", view);
-  if (group !== "none") params.set("group", group);
+  if (group !== WORK_DEFAULT_GROUP) params.set("group", group);
   if (group !== "none" && subgroup !== "none" && subgroup !== group) params.set("subgroup", subgroup);
   if (item) params.set("item", item);
   return params.size ? "#/work?" + params : "#/work";
