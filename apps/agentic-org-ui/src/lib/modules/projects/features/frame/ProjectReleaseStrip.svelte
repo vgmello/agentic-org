@@ -51,6 +51,7 @@
 	});
 
 	let releaseDetail = $state.raw<ReleaseDetail | undefined>(undefined);
+	let releaseDetailLoading = $state(false);
 	let releaseDetailSeq = 0;
 
 	$effect(() => {
@@ -60,18 +61,22 @@
 		const seq = ++releaseDetailSeq;
 		if (!relId) {
 			releaseDetail = undefined;
+			releaseDetailLoading = false;
 			return;
 		}
 		let cancelled = false;
+		releaseDetailLoading = true;
 		void releasesApi
 			.get(orgId, projId, relId)
 			.then((detail) => {
 				if (cancelled || seq !== releaseDetailSeq) return;
 				releaseDetail = detail;
+				releaseDetailLoading = false;
 			})
 			.catch(() => {
 				if (cancelled || seq !== releaseDetailSeq) return;
 				releaseDetail = undefined;
+				releaseDetailLoading = false;
 			});
 		return () => {
 			cancelled = true;
@@ -90,12 +95,27 @@
 		Boolean(shellData && shellData.loaded && shellData.loadedOrganizationId === organizationId)
 	);
 
-	const readiness = $derived.by(() => {
-		// Prefer release-scoped task/milestone counts when the active release detail is available.
+	type ReadinessState =
+		| { state: 'loading' }
+		| { state: 'unavailable' }
+		| {
+				state: 'ready';
+				finished: number;
+				total: number;
+				pct: number;
+				scopeLabel: string;
+		  };
+
+	const readiness = $derived.by<ReadinessState>(() => {
+		// 1. Prefer authoritative release-scoped counts when the active release detail is available.
 		if (releaseDetail) {
 			const releaseReadiness = computeReleaseDetailReadiness(releaseDetail);
-			if (releaseReadiness) return releaseReadiness;
+			if (releaseReadiness) return { state: 'ready', ...releaseReadiness };
 		}
+		if (releasesRead.state === 'loading' || releaseDetailLoading) {
+			return { state: 'loading' };
+		}
+		// 2. Fall back to live project work items only when the work read actually succeeded.
 		if (shellReady && shellData && !shellData.workError) {
 			const items = shellData.workItems.filter(
 				(item) =>
@@ -104,27 +124,34 @@
 					!(item.kind === 'request' && item.status === 'declined') &&
 					!(item.kind === 'task' && (item.resolution === 'cancelled' || item.status === 'closed'))
 			);
-			if (items.length > 0) {
-				const finished = items.filter((item) => isItemDone(item)).length;
-				const total = items.length;
+			const finished = items.filter((item) => isItemDone(item)).length;
+			const total = items.length;
+			const pct =
+				total <= 0 || finished <= 0
+					? 0
+					: finished >= total
+						? 100
+						: Math.min(99, Math.round((finished * 100) / total));
+			return { state: 'ready', finished, total, pct, scopeLabel: 'Project readiness' };
+		}
+		if (shellData && !shellReady && !shellData.workError) {
+			return { state: 'loading' };
+		}
+		// 3. When both release and live work reads are unavailable, NEVER render placeholder ZERO_TASKS as 0%.
+		if (!shellData) {
+			const total = countedTasks(fallbackTasks);
+			if (total > 0) {
+				const finished = fallbackTasks.done;
 				const pct =
 					finished <= 0
 						? 0
 						: finished >= total
 							? 100
 							: Math.min(99, Math.round((finished * 100) / total));
-				return { finished, total, pct, scopeLabel: 'Project readiness' };
+				return { state: 'ready', finished, total, pct, scopeLabel: 'Project readiness' };
 			}
 		}
-		const total = countedTasks(fallbackTasks);
-		const finished = fallbackTasks.done;
-		const pct =
-			total <= 0 || finished <= 0
-				? 0
-				: finished >= total
-					? 100
-					: Math.min(99, Math.round((finished * 100) / total));
-		return { finished, total, pct, scopeLabel: 'Project readiness' };
+		return { state: 'unavailable' };
 	});
 
 	interface GatePill {
@@ -135,32 +162,80 @@
 		href: string;
 	}
 
+	function escapeRegex(value: string): string {
+		return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	}
+
+	function matchesActiveRelease(
+		item: { title: string; why?: string; open?: { path: string } },
+		release: ReleaseRow
+	): boolean {
+		const path = item.open?.path ?? '';
+		if (
+			path.includes(`/releases/${encodeURIComponent(release.id)}`) ||
+			path.includes(`/releases/${release.id}`)
+		) {
+			return true;
+		}
+		const haystack = `${item.title} ${item.why ?? ''}`;
+		const refPattern = new RegExp(`\\bR-${release.number}\\b`, 'i');
+		if (refPattern.test(haystack)) return true;
+		const version = release.versionLabel?.trim();
+		if (version) {
+			const versionPattern = new RegExp(
+				`(^|[^A-Za-z0-9._-])${escapeRegex(version)}($|[^A-Za-z0-9._-])`,
+				'i'
+			);
+			if (versionPattern.test(haystack)) return true;
+		}
+		return false;
+	}
+
 	const gatePills = $derived.by<GatePill[]>(() => {
-		if (!shellReady || !shellData) return [];
+		// Require an active release and explicit release association so ordinary project approvals
+		// are never mislabeled as release gates.
+		if (!activeRelease || !shellReady || !shellData) return [];
 		const scoped = shellData.inboxItems.filter(
 			(item) =>
-				item.project?.id === projectId && (item.kind === 'approval' || item.kind === 'decision')
+				item.project?.id === projectId &&
+				(item.kind === 'approval' || item.kind === 'decision') &&
+				matchesActiveRelease(item, activeRelease)
 		);
-		return scoped.slice(0, 4).map((item) => {
+		const pills: GatePill[] = [];
+		for (const item of scoped) {
+			if (pills.length >= 4) break;
 			if (item.state !== 'handled') {
-				return {
+				pills.push({
 					id: item.id,
 					label: item.title,
-					state: 'pending' as const,
+					state: 'pending',
 					status: 'Pending',
 					href: `/inbox?item=${encodeURIComponent(item.id)}`
-				};
+				});
+				continue;
 			}
-			const outcome = item.handled?.outcome ?? 'Handled';
-			const blocked = /^(denied|declined|dismissed|changes requested)\b/i.test(outcome);
-			return {
-				id: item.id,
-				label: item.title,
-				state: blocked ? ('blocked' as const) : ('cleared' as const),
-				status: blocked ? 'Blocked' : 'Cleared',
-				href: `/inbox?item=${encodeURIComponent(item.id)}`
-			};
-		});
+			const outcome = item.handled?.outcome?.trim() ?? '';
+			if (/^(approved|cleared|passed|accepted)\b/i.test(outcome)) {
+				pills.push({
+					id: item.id,
+					label: item.title,
+					state: 'cleared',
+					status: 'Cleared',
+					href: `/inbox?item=${encodeURIComponent(item.id)}`
+				});
+			} else if (
+				/^(denied|rejected|declined|dismissed|blocked|changes requested)\b/i.test(outcome)
+			) {
+				pills.push({
+					id: item.id,
+					label: item.title,
+					state: 'blocked',
+					status: 'Blocked',
+					href: `/inbox?item=${encodeURIComponent(item.id)}`
+				});
+			}
+		}
+		return pills;
 	});
 
 	const releaseHref = $derived(
@@ -190,21 +265,27 @@
 
 		<div class="assembly-release-readiness">
 			<p class="assembly-release-label" data-testid="project-release-readiness">
-				{#if readiness.total > 0}
+				{#if readiness.state === 'loading'}
+					Loading delivery readiness…
+				{:else if readiness.state === 'unavailable'}
+					Delivery readiness unavailable
+				{:else if readiness.total > 0}
 					{readiness.scopeLabel} {readiness.pct}% · {readiness.finished}/{readiness.total} finished
 				{:else}
 					No delivery items recorded yet
 				{/if}
 			</p>
-			<progress
-				class={[
-					'assembly-progress-bar',
-					readiness.total > 0 && readiness.pct >= 100 && 'is-complete'
-				]}
-				value={readiness.pct}
-				max={100}
-				aria-label="{readiness.scopeLabel}: {readiness.pct}%"
-			></progress>
+			{#if readiness.state === 'ready'}
+				<progress
+					class={[
+						'assembly-progress-bar',
+						readiness.total > 0 && readiness.pct >= 100 && 'is-complete'
+					]}
+					value={readiness.pct}
+					max={100}
+					aria-label="{readiness.scopeLabel}: {readiness.pct}%"
+				></progress>
+			{/if}
 		</div>
 	</div>
 
@@ -394,6 +475,12 @@
 	.assembly-release-gates a:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: 2px;
+	}
+
+	@media (max-width: 720px), (pointer: coarse) {
+		.assembly-release-gates a {
+			min-height: 44px;
+		}
 	}
 
 	@media (max-width: 620px) {

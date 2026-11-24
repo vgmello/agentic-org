@@ -29,6 +29,7 @@
 	import {
 		deriveActivityCommandCenter,
 		deriveDecisionStreamEntries,
+		extractWorkRefsFromText,
 		mergeLiveActivityRows,
 		type FeedPhase,
 		type LineEventEntry,
@@ -784,22 +785,43 @@
 		})
 	);
 
-	function toneFromProjectEntry(entry: ActivityEntry): LineEventEntry['tone'] {
+	function projectEntryNeedsYou(entry: ActivityEntry): boolean {
+		const refs = extractWorkRefsFromText(entry.text);
+		if (refs.length === 0) return false;
+		if (workPhase === 'ready' && refs.some((ref) => model.actionableWorkRefs.has(ref))) {
+			return true;
+		}
+		if (inboxPhase === 'ready' && refs.some((ref) => model.openInboxWorkRefs.has(ref))) {
+			return true;
+		}
+		return false;
+	}
+
+	function toneFromProjectEntry(entry: ActivityEntry, needsYou: boolean): LineEventEntry['tone'] {
+		if (needsYou) return 'warn';
 		const lower = `${entry.kind} ${entry.text}`.toLowerCase();
 		if (lower.includes('fail') || lower.includes('block') || lower.includes('denied')) return 'bad';
-		if (lower.includes('review') || lower.includes('approv') || lower.includes('wait'))
-			return 'warn';
-		if (lower.includes('done') || lower.includes('merg') || lower.includes('finish')) return 'ok';
+		if (
+			lower.includes('done') ||
+			lower.includes('merg') ||
+			lower.includes('finish') ||
+			lower.includes('approved')
+		) {
+			return 'ok';
+		}
 		return '';
 	}
 
 	const extraLineEvents = $derived.by<LineEventEntry[]>(() =>
-		extraProjectActivity.map((entry) => ({
-			id: `proj-act-${entry.id}`,
-			at: entry.at,
-			tone: toneFromProjectEntry(entry),
-			text: entry.actor ? `${entry.actor} ${entry.text}` : entry.text
-		}))
+		extraProjectActivity.map((entry) => {
+			const needsYou = projectEntryNeedsYou(entry);
+			return {
+				id: `proj-act-${entry.id}`,
+				at: entry.at,
+				tone: toneFromProjectEntry(entry, needsYou),
+				text: entry.actor ? `${entry.actor} ${entry.text}` : entry.text
+			};
+		})
 	);
 
 	const mergedStreamEntries = $derived.by<StreamEntry[]>(() => {
@@ -812,7 +834,8 @@
 			const key = `${entry.at}|${entry.text}`;
 			if (Object.hasOwn(seen, key)) continue;
 			seen[key] = true;
-			const tone = toneFromProjectEntry(entry);
+			const needsYou = projectEntryNeedsYou(entry);
+			const tone = toneFromProjectEntry(entry, needsYou);
 			extras.push({
 				id: `proj-stream-${entry.id}`,
 				kind: 'work',
@@ -825,7 +848,7 @@
 				at: entry.at,
 				tone: tone || 'accent',
 				href: lockedProjectId ? `/projects/${encodeURIComponent(lockedProjectId)}/work` : '/work',
-				needsYou: tone === 'warn'
+				needsYou
 			});
 		}
 		return [...model.streamEntries, ...extras].sort(

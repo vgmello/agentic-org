@@ -1400,17 +1400,57 @@ describe('assembly-model', () => {
 			nowMs: NOW
 		});
 
-		// WorkItemSummary lacks lifecycle start/completion timestamps -> avgCycleHours stays honest null ("—")
+		// WorkItemSummary lacks lifecycle start/completion timestamps and recorded human-waiting spans,
+		// so avgCycleHours and non-empty waitingOnPeopleHours stay honest null ("—").
 		expect(model.avgCycleHours).toBeNull();
 		expect(formatTelemetryHours(model.avgCycleHours)).toBe('—');
 		expect(formatTelemetryHours(2.5)).toBe('2.5 h');
-		expect(model.waitingOnPeopleHours).toBeCloseTo(2, 1);
+		expect(model.waitingOnPeopleHours).toBeNull();
 		// Stations roster is scoped to team-a (Kai), excluding unrelated team-b agent (Ada)
 		expect(model.stationAgents.map((a) => a.id)).toEqual(['kai']);
 		expect(model.humanWaitingItems.map((i) => i.id)).toContain('w-wait');
 		expect(model.lineEvents).toHaveLength(2);
 		// Project 7d throughput counts only work events (1), ignoring conversation messages
 		expect(model.throughput7d.reduce((sum, d) => sum + d.count, 0)).toBe(1);
+
+		// A problem notice (e.g. run crash) casually mentioning two queued tasks MUST NOT classify
+		// those queued tasks as awaiting human review or fabricate waiting hours.
+		const problemMentionModel = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'Acme Corp',
+			workItems: [
+				makeItem({
+					id: 'w-q1',
+					short_id: 'T-70',
+					kind: 'task',
+					status: 'todo',
+					project_id: 'proj-a'
+				}),
+				makeItem({
+					id: 'w-q2',
+					short_id: 'T-71',
+					kind: 'task',
+					status: 'todo',
+					project_id: 'proj-a'
+				})
+			],
+			inboxItems: [
+				makeInbox({
+					id: 'in-crash',
+					kind: 'problem',
+					title: 'Run crashed mentioning T-70 and T-71',
+					project: { id: 'proj-a', name: 'Alpha Core' },
+					created_at: new Date(NOW - 2 * 3_600_000).toISOString()
+				})
+			],
+			activityRows: [],
+			projectScope: 'proj-a',
+			nowMs: NOW
+		});
+		expect(problemMentionModel.stageCounts.review).toBe(0);
+		expect(problemMentionModel.stageCounts.queue).toBe(2);
+		expect(problemMentionModel.humanWaitingItems).toEqual([]);
+		expect(problemMentionModel.waitingOnPeopleHours).toBe(0);
 
 		// Review-stage item without a linked Inbox review-entry timestamp returns null wait (never mutable updated_at)
 		// and empty activityRows produces empty lineEvents (never misattributed work-snapshot fallback)

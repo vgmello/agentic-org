@@ -73,6 +73,15 @@
 				: pageTitle('Project not found', 'Projects')
 	);
 
+	const MORE_TAB_IDS: Record<string, true> = {
+		features: true,
+		releases: true,
+		docs: true,
+		settings: true
+	};
+	const moreTabs = $derived(tabs.filter((t) => Object.hasOwn(MORE_TAB_IDS, t.id)));
+	const morePrimaryTabs = $derived(moreTabs.filter((t) => t.id !== 'settings'));
+	const moreSettingsTab = $derived(moreTabs.find((t) => t.id === 'settings'));
 	let toolbarControls = $state.raw<Snippet | undefined>(undefined);
 	let moreMenuOpen = $state(false);
 	const isActivityTab = $derived(tab?.id === 'activity');
@@ -266,70 +275,73 @@
 								{#if toolbarControls}
 									{@render toolbarControls()}
 								{/if}
-								<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
-									<DropdownMenu.Root bind:open={moreMenuOpen}>
-										<Tooltip.Root
-											delayDuration={250}
-											ignoreNonKeyboardFocus
-											disabled={moreMenuOpen}
-										>
-											<DropdownMenu.Trigger>
-												{#snippet child({ props: menuProps })}
-													<Tooltip.Trigger>
-														{#snippet child({ props: tipProps })}
-															<button
-																{...mergeProps(menuProps, tipProps)}
-																type="button"
-																aria-label="More actions for {p.name}"
-																data-testid="project-more-menu"
-																class="project-more-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-															>
-																<Ellipsis class="size-4" aria-hidden="true" />
-															</button>
-														{/snippet}
-													</Tooltip.Trigger>
-												{/snippet}
-											</DropdownMenu.Trigger>
-											<Tooltip.Portal>
-												<Tooltip.Content
-													side="bottom"
-													sideOffset={6}
-													escapeKeydownBehavior="defer-otherwise-close"
-													class="project-tooltip-content"
-												>
-													More actions
-												</Tooltip.Content>
-											</Tooltip.Portal>
-										</Tooltip.Root>
-										<DropdownMenu.Content align="end" class="triage-menu-surface w-48">
-											<DropdownMenu.Item
-												onSelect={() => void goto(resolve(projectHref(p.id, 'features') as '/'))}
+								{#if moreTabs.length > 0}
+									<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
+										<DropdownMenu.Root bind:open={moreMenuOpen}>
+											<Tooltip.Root
+												delayDuration={250}
+												ignoreNonKeyboardFocus
+												disabled={moreMenuOpen}
 											>
-												<Layers class="size-4" aria-hidden="true" />
-												<span>Features</span>
-											</DropdownMenu.Item>
-											<DropdownMenu.Item
-												onSelect={() => void goto(resolve(projectHref(p.id, 'releases') as '/'))}
-											>
-												<Package class="size-4" aria-hidden="true" />
-												<span>Releases</span>
-											</DropdownMenu.Item>
-											<DropdownMenu.Item
-												onSelect={() => void goto(resolve(projectHref(p.id, 'docs') as '/'))}
-											>
-												<FileText class="size-4" aria-hidden="true" />
-												<span>Docs</span>
-											</DropdownMenu.Item>
-											<DropdownMenu.Separator />
-											<DropdownMenu.Item
-												onSelect={() => void goto(resolve(projectHref(p.id, 'settings') as '/'))}
-											>
-												<Settings class="size-4" aria-hidden="true" />
-												<span>{p.viewer.canEdit ? 'Project settings' : 'View settings'}</span>
-											</DropdownMenu.Item>
-										</DropdownMenu.Content>
-									</DropdownMenu.Root>
-								</Tooltip.Provider>
+												<DropdownMenu.Trigger>
+													{#snippet child({ props: menuProps })}
+														<Tooltip.Trigger>
+															{#snippet child({ props: tipProps })}
+																<button
+																	{...mergeProps(menuProps, tipProps)}
+																	type="button"
+																	aria-label="More actions for {p.name}"
+																	data-testid="project-more-menu"
+																	class="project-more-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+																>
+																	<Ellipsis class="size-4" aria-hidden="true" />
+																</button>
+															{/snippet}
+														</Tooltip.Trigger>
+													{/snippet}
+												</DropdownMenu.Trigger>
+												<Tooltip.Portal>
+													<Tooltip.Content
+														side="bottom"
+														sideOffset={6}
+														escapeKeydownBehavior="defer-otherwise-close"
+														class="project-tooltip-content"
+													>
+														More actions
+													</Tooltip.Content>
+												</Tooltip.Portal>
+											</Tooltip.Root>
+											<DropdownMenu.Content align="end" class="triage-menu-surface w-48">
+												{#each morePrimaryTabs as item (item.id)}
+													<DropdownMenu.Item
+														onSelect={() => void goto(resolve(projectHref(p.id, item.path) as '/'))}
+													>
+														{#if item.id === 'features'}
+															<Layers class="size-4" aria-hidden="true" />
+														{:else if item.id === 'releases'}
+															<Package class="size-4" aria-hidden="true" />
+														{:else}
+															<FileText class="size-4" aria-hidden="true" />
+														{/if}
+														<span>{item.label}</span>
+													</DropdownMenu.Item>
+												{/each}
+												{#if morePrimaryTabs.length > 0 && moreSettingsTab}
+													<DropdownMenu.Separator />
+												{/if}
+												{#if moreSettingsTab}
+													<DropdownMenu.Item
+														onSelect={() =>
+															void goto(resolve(projectHref(p.id, moreSettingsTab.path) as '/'))}
+													>
+														<Settings class="size-4" aria-hidden="true" />
+														<span>{p.viewer.canEdit ? 'Project settings' : 'View settings'}</span>
+													</DropdownMenu.Item>
+												{/if}
+											</DropdownMenu.Content>
+										</DropdownMenu.Root>
+									</Tooltip.Provider>
+								{/if}
 							</div>
 						</div>
 					</div>

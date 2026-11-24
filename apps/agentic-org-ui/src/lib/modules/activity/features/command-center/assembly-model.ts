@@ -157,8 +157,12 @@ export interface ActivityCommandCenterModel {
 	actionableWorkCount: number;
 	/** Average hours from `created_at` to `updated_at` across completed/merged items; null when none. */
 	avgCycleHours: number | null;
-	/** Cumulative elapsed hours across review-stage items with recorded Inbox review timestamps; null when any review item lacks a review-entry timestamp. */
+	/** Cumulative elapsed hours waiting on human review; 0 when no items wait, null until recorded waiting spans are served. */
 	waitingOnPeopleHours: number | null;
+	/** Uppercase work refs/IDs currently actionable by the owner in this scope. */
+	actionableWorkRefs: ReadonlySet<string>;
+	/** Uppercase work refs/IDs currently referenced by open Inbox items in this scope. */
+	openInboxWorkRefs: ReadonlySet<string>;
 	/** Active non-former agents for the project station slot dots. */
 	stationAgents: StationAgentSlot[];
 	/** Items currently waiting in human review for the project dock "Needs a human" section. */
@@ -199,7 +203,6 @@ export interface CommandCenterInput {
 }
 
 const DAY_MS = 86_400_000;
-const HOUR_MS = 3_600_000;
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const TELEMETRY_HOURS = new Intl.NumberFormat('en-US', {
 	minimumFractionDigits: 1,
@@ -293,6 +296,28 @@ function belongsOnlyToArchivedProjects(
 function buildInboxLookup(openInbox: readonly InboxItem[]): Map<string, InboxItem> {
 	const map = new Map<string, InboxItem>();
 	for (const inbox of openInbox) {
+		for (const ref of extractInboxWorkRefs(inbox)) {
+			if (!map.has(ref)) map.set(ref, inbox);
+		}
+	}
+	return map;
+}
+
+/**
+ * Lookup of open Inbox items that represent a genuine human review/decision/question gate
+ * on a work item (never pulling queued tasks into review from unrelated `problem` crash notices
+ * that merely mention task references in prose).
+ */
+function buildReviewInboxLookup(openInbox: readonly InboxItem[]): Map<string, InboxItem> {
+	const map = new Map<string, InboxItem>();
+	for (const inbox of openInbox) {
+		if (inbox.kind === 'problem') {
+			const explicitPathRef = extractWorkRefFromPath(inbox.open?.path);
+			if (explicitPathRef && !map.has(explicitPathRef)) {
+				map.set(explicitPathRef, inbox);
+			}
+			continue;
+		}
 		for (const ref of extractInboxWorkRefs(inbox)) {
 			if (!map.has(ref)) map.set(ref, inbox);
 		}
@@ -1048,6 +1073,8 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 			});
 
 	const inboxByRef = buildInboxLookup(scopedOpenInbox);
+	const reviewInboxByRef = buildReviewInboxLookup(scopedOpenInbox);
+	const openInboxWorkRefs = new Set<string>(inboxByRef.keys());
 
 	// Scoped activity rows: exclude archived-only project rows on All projects, retain org-wide rows.
 	const scopedActivityRows = scopedProjectId
@@ -1067,7 +1094,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 			projItems,
 			areas,
 			snapshot,
-			inboxByRef,
+			reviewInboxByRef,
 			resolvedOwnerId
 		);
 		const doneCount = lanes.reduce((sum, l) => sum + l.doneCount, 0);
@@ -1099,7 +1126,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 				unassignedItems,
 				[],
 				snapshot,
-				inboxByRef,
+				reviewInboxByRef,
 				resolvedOwnerId
 			);
 			const doneCount = lanes.reduce((sum, l) => sum + l.doneCount, 0);
@@ -1134,7 +1161,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	let actionableWorkCount = 0;
 
 	for (const item of scopedWork) {
-		const stage = classifyAssemblyStage(item, inboxByRef, resolvedOwnerId);
+		const stage = classifyAssemblyStage(item, reviewInboxByRef, resolvedOwnerId);
 		if (!stage) continue;
 		stageCounts[stage] += 1;
 		if (isActionableWorkItem(item, resolvedOwnerId)) {
@@ -1144,7 +1171,8 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 		}
 		if (stage === 'review') {
 			const linked =
-				inboxByRef.get(item.short_id.toUpperCase()) ?? inboxByRef.get(item.id.toUpperCase());
+				reviewInboxByRef.get(item.short_id.toUpperCase()) ??
+				reviewInboxByRef.get(item.id.toUpperCase());
 			if (linked) linkedInboxIds.add(linked.id);
 		}
 		if ((stage === 'agents' || stage === 'ci') && item.assignee_id) {
@@ -1167,28 +1195,17 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const needsYouCount = stageCounts.review + unlinkedOpenInboxCount;
 
 	// Real delivery telemetry for project-scoped Assembly & dock (zero fabricated or misattributed values).
-	// WorkItemSummary lacks immutable lifecycle start/completion timestamps (updated_at changes on later edits),
-	// so avgCycleHours stays null (displayed as "—") until lifecycle transition history is served.
+	// WorkItemSummary lacks immutable lifecycle start/completion timestamps and recorded human-review
+	// waiting spans, so avgCycleHours stays null and waitingOnPeopleHours is 0 only when zero items wait
+	// (otherwise null / "—") until lifecycle transition history is served.
 	const avgCycleHours: number | null = null;
-	let waitingSumHours = 0;
-	let waitingTimestampComplete = true;
 	const humanWaitingItems: { id: string; title: string; href: string }[] = [];
 	for (const item of scopedWork) {
-		const stage = classifyAssemblyStage(item, inboxByRef, resolvedOwnerId);
+		const stage = classifyAssemblyStage(item, reviewInboxByRef, resolvedOwnerId);
 		if (stage === 'review') {
 			const linked =
-				inboxByRef.get(item.short_id.toUpperCase()) ?? inboxByRef.get(item.id.toUpperCase());
-			// Only use recorded immutable Inbox review-entry created_at; never fall back to mutable
-			// item.updated_at or adapter-inferred read times.
-			const sinceMs =
-				linked && !linked.created_at_inferred && linked.created_at
-					? Date.parse(linked.created_at)
-					: Number.NaN;
-			if (!Number.isNaN(sinceMs) && nowMs >= sinceMs) {
-				waitingSumHours += (nowMs - sinceMs) / HOUR_MS;
-			} else {
-				waitingTimestampComplete = false;
-			}
+				reviewInboxByRef.get(item.short_id.toUpperCase()) ??
+				reviewInboxByRef.get(item.id.toUpperCase());
 			humanWaitingItems.push({
 				id: item.id,
 				title: `${item.short_id} · ${item.title}`,
@@ -1196,8 +1213,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 			});
 		}
 	}
-	const waitingOnPeopleHours: number | null =
-		humanWaitingItems.length === 0 ? 0 : waitingTimestampComplete ? waitingSumHours : null;
+	const waitingOnPeopleHours: number | null = humanWaitingItems.length === 0 ? 0 : null;
 
 	// Agents roster for KPI & rail — project scope restricts station slots to project teams + assigned agents.
 	const nonFormerAgents = agentsOf(nonOwners(snapshot)).filter((m) => !isFormer(m));
@@ -1507,6 +1523,8 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 		actionableWorkCount,
 		avgCycleHours,
 		waitingOnPeopleHours,
+		actionableWorkRefs,
+		openInboxWorkRefs,
 		stationAgents,
 		humanWaitingItems,
 		lineEvents,

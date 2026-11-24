@@ -93,6 +93,7 @@
 		if (Number.isNaN(ms)) return { text: relativeAge(at, nowMs), full: at, iso: undefined };
 		return eventTime(new Date(ms), nowDate, accountZone.zone, true);
 	}
+	const hasPartialEntries = $derived(!isDecisionTab && entries.length > 0);
 	const showEmptyInboxShortcut = $derived(
 		activePhase === 'ready' &&
 			activeFilter === 'needs_you' &&
@@ -239,11 +240,11 @@
 		tabindex="0"
 		class="stream-body"
 	>
-		{#if activePhase === 'loading'}
+		{#if activePhase === 'loading' && !hasPartialEntries}
 			<div class="stream-empty" role="status" aria-live="polite">
 				<p>{isDecisionTab ? 'Loading decisions…' : 'Loading activity stream…'}</p>
 			</div>
-		{:else if activePhase === 'error'}
+		{:else if activePhase === 'error' && !hasPartialEntries}
 			<div class="stream-empty" role="alert">
 				<AlertTriangle class="size-7" style="color: var(--exec-warn);" aria-hidden="true" />
 				<h3>{isDecisionTab ? 'Unable to load decisions' : 'Unable to load activity feed'}</h3>
@@ -259,204 +260,229 @@
 					</button>
 				{/if}
 			</div>
-		{:else if filteredEntries.length === 0}
-			<div class="stream-empty">
-				<Activity class="size-7" style="color: var(--fg-secondary);" aria-hidden="true" />
-				<h3>
-					{activeMore > 0
-						? 'No matching activity in the latest loaded events'
-						: projectScope && activeFilter === 'all'
-							? 'No activity yet'
-							: 'No matching activity'}
-				</h3>
-				{#if showEmptyInboxShortcut}
+		{:else}
+			{#if activePhase === 'error' && hasPartialEntries}
+				<div class="stream-partial-alert" role="alert">
+					<AlertTriangle
+						class="size-4 shrink-0"
+						style="color: var(--exec-warn);"
+						aria-hidden="true"
+					/>
 					<p>
-						No matching activity events — {openInboxCount} waiting in Inbox.
+						Live activity feed unavailable ({activeError ?? 'office did not respond'}) — showing
+						loaded project history.
 					</p>
-					<a
-						href={resolve('/inbox')}
-						class="stream-inbox-action min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-					>
-						<Inbox class="size-3.5" aria-hidden="true" />
-						<span>Open Inbox</span>
-					</a>
-				{:else if showEmptyWorkShortcut}
-					<p>
-						No matching activity events — {actionableWorkCount}
-						{actionableWorkCount === 1 ? 'work item needs' : 'work items need'} attention.
-					</p>
-					<a
-						href={resolve('/work')}
-						class="stream-inbox-action min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-					>
-						<span>Open Work</span>
-					</a>
-				{:else}
-					<p>
-						{#if activeFilter === 'needs_you'}
-							{#if inboxPhase === 'loading' || workPhase === 'loading'}
-								No matching activity events yet — checking Inbox and Work…
-							{:else if inboxPhase === 'error' || workPhase === 'error'}
-								No matching activity events — Inbox or Work status unavailable.
+					{#if onRetry}
+						<button
+							type="button"
+							onclick={handleRetryClick}
+							class="stream-retry-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						>
+							<RefreshCw class="size-3.5" aria-hidden="true" />
+							<span>Retry</span>
+						</button>
+					{/if}
+				</div>
+			{/if}
+			{#if filteredEntries.length === 0}
+				<div class="stream-empty">
+					<Activity class="size-7" style="color: var(--fg-secondary);" aria-hidden="true" />
+					<h3>
+						{activeMore > 0
+							? 'No matching activity in the latest loaded events'
+							: projectScope && activeFilter === 'all'
+								? 'No activity yet'
+								: 'No matching activity'}
+					</h3>
+					{#if showEmptyInboxShortcut}
+						<p>
+							No matching activity events — {openInboxCount} waiting in Inbox.
+						</p>
+						<a
+							href={resolve('/inbox')}
+							class="stream-inbox-action min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						>
+							<Inbox class="size-3.5" aria-hidden="true" />
+							<span>Open Inbox</span>
+						</a>
+					{:else if showEmptyWorkShortcut}
+						<p>
+							No matching activity events — {actionableWorkCount}
+							{actionableWorkCount === 1 ? 'work item needs' : 'work items need'} attention.
+						</p>
+						<a
+							href={resolve('/work')}
+							class="stream-inbox-action min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						>
+							<span>Open Work</span>
+						</a>
+					{:else}
+						<p>
+							{#if activeFilter === 'needs_you'}
+								{#if inboxPhase === 'loading' || workPhase === 'loading'}
+									No matching activity events yet — checking Inbox and Work…
+								{:else if inboxPhase === 'error' || workPhase === 'error'}
+									No matching activity events — Inbox or Work status unavailable.
+								{:else if activeMore > 0}
+									No matching activity in the latest loaded events.
+								{:else}
+									Nothing in this scope is currently waiting on your review.
+								{/if}
 							{:else if activeMore > 0}
 								No matching activity in the latest loaded events.
 							{:else}
-								Nothing in this scope is currently waiting on your review.
+								Updates across work, runs, conversations, and decisions will appear here.
 							{/if}
-						{:else if activeMore > 0}
-							No matching activity in the latest loaded events.
-						{:else}
-							Updates across work, runs, conversations, and decisions will appear here.
-						{/if}
-					</p>
-				{/if}
-			</div>
-		{:else}
-			{#each dayGroups as group (group.key)}
-				<section class="activity-day" aria-labelledby={`activity-day-${group.key}`}>
-					<h2 id={`activity-day-${group.key}`}>{group.label}</h2>
-					<ol class="activity-timeline" role="list">
-						{#each group.entries as entry (entry.id)}
-							{@const hasLog = Boolean(entry.run?.log && entry.run.log.length > 0)}
-							{@const isExpanded = expandedRuns.has(entry.id)}
-							{@const when = entryTimestamp(entry.at)}
-							<li class="stream-row">
-								<div class="stream-row-avatar" data-tone={entry.tone} aria-hidden="true">
-									<span>{entry.actorInitials}</span>
-								</div>
-
-								<div class="stream-row-content">
-									<div class="stream-row-head">
-										<span class="stream-actor">{entry.actorName}</span>
-										<span class="stream-kind">
-											{#if entry.tone === 'ok'}
-												<CheckCircle2
-													class="size-3.5"
-													style="color: var(--exec-ok);"
-													aria-hidden="true"
-												/>
-											{:else if entry.tone === 'bad'}
-												<AlertTriangle
-													class="size-3.5"
-													style="color: var(--exec-bad);"
-													aria-hidden="true"
-												/>
-											{:else if entry.tone === 'warn'}
-												<AlertTriangle
-													class="size-3.5"
-													style="color: var(--exec-warn);"
-													aria-hidden="true"
-												/>
-											{:else if entry.kind === 'conversation'}
-												<MessageSquare
-													class="size-3.5"
-													style="color: var(--exec-sky);"
-													aria-hidden="true"
-												/>
-											{:else if entry.kind === 'run'}
-												<Play
-													class="size-3.5"
-													style="color: var(--tone-accent-ink);"
-													aria-hidden="true"
-												/>
-											{:else}
-												<Clock
-													class="size-3.5"
-													style="color: var(--fg-secondary);"
-													aria-hidden="true"
-												/>
-											{/if}
-											<span>{entry.kindLabel}</span>
-										</span>
-										{#if entry.needsYou}
-											<span class="stream-needs-pill">Needs you</span>
-										{/if}
-										{#each entry.projects as proj (proj)}
-											<span class="stream-project-pill">{proj}</span>
-										{/each}
+						</p>
+					{/if}
+				</div>
+			{:else}
+				{#each dayGroups as group (group.key)}
+					<section class="activity-day" aria-labelledby={`activity-day-${group.key}`}>
+						<h2 id={`activity-day-${group.key}`}>{group.label}</h2>
+						<ol class="activity-timeline" role="list">
+							{#each group.entries as entry (entry.id)}
+								{@const hasLog = Boolean(entry.run?.log && entry.run.log.length > 0)}
+								{@const isExpanded = expandedRuns.has(entry.id)}
+								{@const when = entryTimestamp(entry.at)}
+								<li class="stream-row">
+									<div class="stream-row-avatar" data-tone={entry.tone} aria-hidden="true">
+										<span>{entry.actorInitials}</span>
 									</div>
 
-									<div class="stream-row-text">
-										<a
-											href={resolve(entry.href as '/work')}
-											class="stream-row-link min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-										>
-											{entry.text}
-										</a>
-									</div>
-
-									{#if entry.preview}
-										<p class="stream-row-preview">{entry.preview}</p>
-									{/if}
-
-									{#if entry.run}
-										<p class="stream-run-meta">
-											<span>{entry.run.trigger}</span>
-											{#if entry.run.outcome}
-												<span aria-hidden="true">·</span>
-												<span class={entry.run.state === 'failed' ? 'is-bad' : 'is-ok'}>
-													{entry.run.outcome}
-												</span>
+									<div class="stream-row-content">
+										<div class="stream-row-head">
+											<span class="stream-actor">{entry.actorName}</span>
+											<span class="stream-kind">
+												{#if entry.tone === 'ok'}
+													<CheckCircle2
+														class="size-3.5"
+														style="color: var(--exec-ok);"
+														aria-hidden="true"
+													/>
+												{:else if entry.tone === 'bad'}
+													<AlertTriangle
+														class="size-3.5"
+														style="color: var(--exec-bad);"
+														aria-hidden="true"
+													/>
+												{:else if entry.tone === 'warn'}
+													<AlertTriangle
+														class="size-3.5"
+														style="color: var(--exec-warn);"
+														aria-hidden="true"
+													/>
+												{:else if entry.kind === 'conversation'}
+													<MessageSquare
+														class="size-3.5"
+														style="color: var(--exec-sky);"
+														aria-hidden="true"
+													/>
+												{:else if entry.kind === 'run'}
+													<Play
+														class="size-3.5"
+														style="color: var(--tone-accent-ink);"
+														aria-hidden="true"
+													/>
+												{:else}
+													<Clock
+														class="size-3.5"
+														style="color: var(--fg-secondary);"
+														aria-hidden="true"
+													/>
+												{/if}
+												<span>{entry.kindLabel}</span>
+											</span>
+											{#if entry.needsYou}
+												<span class="stream-needs-pill">Needs you</span>
 											{/if}
-										</p>
-									{/if}
+											{#each entry.projects as proj (proj)}
+												<span class="stream-project-pill">{proj}</span>
+											{/each}
+										</div>
 
-									{#if entry.inboxHref}
-										<div class="activity-triage">
-											{#if entry.inboxTitle}
-												<span class="activity-triage-title">{entry.inboxTitle}</span>
-											{/if}
+										<div class="stream-row-text">
 											<a
-												href={resolve(entry.inboxHref as '/inbox')}
-												class="stream-inbox-action min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												href={resolve(entry.href as '/work')}
+												class="stream-row-link min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 											>
-												<Inbox class="size-3.5" aria-hidden="true" />
-												<span>{entry.inboxLabel ?? 'Review in Inbox'}</span>
+												{entry.text}
 											</a>
 										</div>
-									{/if}
 
-									{#if hasLog}
-										<div class="stream-row-actions">
-											<button
-												type="button"
-												aria-expanded={isExpanded}
-												aria-controls={`run-log-${entry.id}`}
-												onclick={() => toggleRunLog(entry.id)}
-												class="stream-log-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-											>
-												{#if isExpanded}
-													<ChevronDown class="size-3.5" aria-hidden="true" />
-													<span>Hide run log</span>
-												{:else}
-													<ChevronRight class="size-3.5" aria-hidden="true" />
-													<span>Show run log</span>
+										{#if entry.preview}
+											<p class="stream-row-preview">{entry.preview}</p>
+										{/if}
+
+										{#if entry.run}
+											<p class="stream-run-meta">
+												<span>{entry.run.trigger}</span>
+												{#if entry.run.outcome}
+													<span aria-hidden="true">·</span>
+													<span class={entry.run.state === 'failed' ? 'is-bad' : 'is-ok'}>
+														{entry.run.outcome}
+													</span>
 												{/if}
-											</button>
-										</div>
-									{/if}
+											</p>
+										{/if}
 
-									{#if hasLog && entry.run?.log}
-										<ol
-											id={`run-log-${entry.id}`}
-											class="stream-run-log runlog"
-											hidden={!isExpanded}
-										>
-											{#each entry.run.log as line, idx (`${entry.id}-log-${idx}`)}
-												<li>{line}</li>
-											{/each}
-										</ol>
-									{/if}
-								</div>
+										{#if entry.inboxHref}
+											<div class="activity-triage">
+												{#if entry.inboxTitle}
+													<span class="activity-triage-title">{entry.inboxTitle}</span>
+												{/if}
+												<a
+													href={resolve(entry.inboxHref as '/inbox')}
+													class="stream-inbox-action min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												>
+													<Inbox class="size-3.5" aria-hidden="true" />
+													<span>{entry.inboxLabel ?? 'Review in Inbox'}</span>
+												</a>
+											</div>
+										{/if}
 
-								<time datetime={when.iso} title={when.full} class="stream-row-time tabular-nums">
-									{when.text}
-								</time>
-							</li>
-						{/each}
-					</ol>
-				</section>
-			{/each}
+										{#if hasLog}
+											<div class="stream-row-actions">
+												<button
+													type="button"
+													aria-expanded={isExpanded}
+													aria-controls={`run-log-${entry.id}`}
+													onclick={() => toggleRunLog(entry.id)}
+													class="stream-log-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												>
+													{#if isExpanded}
+														<ChevronDown class="size-3.5" aria-hidden="true" />
+														<span>Hide run log</span>
+													{:else}
+														<ChevronRight class="size-3.5" aria-hidden="true" />
+														<span>Show run log</span>
+													{/if}
+												</button>
+											</div>
+										{/if}
+
+										{#if hasLog && entry.run?.log}
+											<ol
+												id={`run-log-${entry.id}`}
+												class="stream-run-log runlog"
+												hidden={!isExpanded}
+											>
+												{#each entry.run.log as line, idx (`${entry.id}-log-${idx}`)}
+													<li>{line}</li>
+												{/each}
+											</ol>
+										{/if}
+									</div>
+
+									<time datetime={when.iso} title={when.full} class="stream-row-time tabular-nums">
+										{when.text}
+									</time>
+								</li>
+							{/each}
+						</ol>
+					</section>
+				{/each}
+			{/if}
 		{/if}
 	</div>
 </section>
@@ -927,6 +953,26 @@
 		white-space: nowrap;
 		flex-shrink: 0;
 		padding-block-start: 2px;
+	}
+
+	.stream-partial-alert {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px 12px;
+		margin-block-end: 14px;
+		padding: 10px 12px;
+		border: 1px solid color-mix(in srgb, var(--exec-warn) 42%, var(--line));
+		border-radius: var(--exec-ctrl-radius, 8px);
+		background: color-mix(in srgb, var(--exec-warn) 8%, var(--surface-raised, transparent));
+		color: var(--exec-ink);
+		font-size: 0.8125rem;
+		line-height: 1.4;
+	}
+
+	.stream-partial-alert p {
+		flex: 1 1 220px;
+		margin: 0;
 	}
 
 	@media (forced-colors: active) {
