@@ -39,10 +39,23 @@ try {
     if (route === "activity") {
       await page.getByRole("heading", { name: "Portfolio Assembly" }).waitFor();
       const gates = page.getByRole("button", { name: "Release gates" });
+      const panel = page.getByRole("complementary", { name: "Release operations" });
+      const activity = page.locator(".activity-main");
+      const fullWidth = (await activity.boundingBox())!.width;
       await gates.press("Enter");
-      await page.getByRole("dialog", { name: "Release operations" }).waitFor();
+      await panel.waitFor();
+      assert.equal(await gates.getAttribute("aria-expanded"), "true");
+      const bounds = (await panel.boundingBox())!;
+      const header = (await page.locator(".activity-header").boundingBox())!;
+      const body = (await page.locator(".activity-body").boundingBox())!;
+      assert.ok(Math.abs(bounds.y - header.y - header.height) <= 1, "Panel starts below the Activity header");
+      assert.ok(Math.abs(bounds.x + bounds.width - body.x - body.width) <= 1, "Panel docks to the right edge");
+      assert.ok(Math.abs(bounds.height - body.height) <= 1, "Panel fits the available height");
+      assert.ok((await activity.boundingBox())!.width < fullWidth, "Activity stays visible next to the panel");
       await page.keyboard.press("Escape");
-      await page.getByRole("dialog", { name: "Release operations" }).waitFor({ state: "hidden" });
+      await panel.waitFor({ state: "hidden" });
+      assert.equal((await activity.boundingBox())!.width, fullWidth);
+      assert.ok(await gates.evaluate((button) => button === document.activeElement), "Focus returns to Release gates");
     }
 
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
