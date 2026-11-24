@@ -1249,6 +1249,10 @@ html[data-assembly-dividers] .assembly-table tbody tr:not(.assembly-milestone) +
   border-block-end: 1px solid var(--line);
   background: var(--gray-900);
 }
+html[data-theme="report"] .assembly-release {
+  background: var(--workspace-secondary-surface);
+  --bar-track: color-mix(in srgb, var(--gray-500) 77%, var(--workspace-secondary-surface));
+}
 .assembly-release-overview {
   display: flex;
   flex: 1 1 230px;
