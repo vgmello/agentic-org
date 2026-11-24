@@ -219,23 +219,9 @@
 	function workSearchShortcut() {
 		const modalOverlaySelector =
 			'[role="dialog"]:not(.work-reading), [role="menu"], [role="alertdialog"], [role="listbox"]';
-		const listener = (event: KeyboardEvent) => {
+		// Capture-phase `/` intercepts before ExecutiveCommandBar's global shortcut.
+		const onSearchKey = (event: KeyboardEvent) => {
 			if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
-			if (event.key === 'Escape' && activeOpenRow) {
-				if (event.repeat) return;
-				if (document.querySelector(modalOverlaySelector)) return;
-				if (
-					event.target instanceof HTMLSelectElement ||
-					(event.target instanceof Element &&
-						Boolean(event.target.closest('select, [role="listbox"], [role="combobox"]')))
-				) {
-					return;
-				}
-				if (isEditableTarget(event.target)) return;
-				event.preventDefault();
-				closeInlineDetail(true);
-				return;
-			}
 			if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.key !== '/') {
 				return;
 			}
@@ -270,8 +256,37 @@
 				(document.getElementById(`${uid}-search`) as HTMLInputElement | null)?.focus();
 			});
 		};
-		window.addEventListener('keydown', listener, { capture: true });
-		return () => window.removeEventListener('keydown', listener, { capture: true });
+		// Bubble-phase Escape runs after Bits UI's document-level EscapeLayer so open tooltips,
+		// menus, or dialogs consume the first Escape and keep the reading panel open.
+		const onEscapeKey = (event: KeyboardEvent) => {
+			if (
+				event.defaultPrevented ||
+				event.isComposing ||
+				event.keyCode === 229 ||
+				event.key !== 'Escape' ||
+				event.repeat ||
+				!activeOpenRow
+			) {
+				return;
+			}
+			if (document.querySelector(modalOverlaySelector)) return;
+			if (
+				event.target instanceof HTMLSelectElement ||
+				(event.target instanceof Element &&
+					Boolean(event.target.closest('select, [role="listbox"], [role="combobox"]')))
+			) {
+				return;
+			}
+			if (isEditableTarget(event.target)) return;
+			event.preventDefault();
+			closeInlineDetail(true);
+		};
+		window.addEventListener('keydown', onSearchKey, { capture: true });
+		window.addEventListener('keydown', onEscapeKey);
+		return () => {
+			window.removeEventListener('keydown', onSearchKey, { capture: true });
+			window.removeEventListener('keydown', onEscapeKey);
+		};
 	}
 
 	function handleSearchKeydown(event: KeyboardEvent) {

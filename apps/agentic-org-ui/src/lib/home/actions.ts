@@ -3,7 +3,8 @@ import { inboxApi } from '$lib/modules/inbox/api';
 import { newId } from '$lib/modules/organization/commands';
 import { sender, workApi } from '$lib/modules/work';
 import { workItemsApi } from '$lib/modules/workitems/api';
-import type { DraftTask, Priority, Severity } from '$lib/modules/workitems/types';
+import { taskHref } from '$lib/modules/workitems/present';
+import type { Priority, Severity } from '$lib/modules/workitems/types';
 import { areaCapability } from '$lib/platform/shell/capabilities';
 import type { SpotlightDecision } from './model';
 
@@ -75,25 +76,10 @@ export async function executeDecisionAction(
 
 		switch (decision.primaryAction.kind) {
 			case 'approve_request': {
-				const detail = await workItemsApi.task(organizationId, item.short_id);
-				const drafts: DraftTask[] =
-					detail.request?.outcome && detail.request.outcome.draftTasks.length > 0
-						? detail.request.outcome.draftTasks
-						: [
-								{
-									draftId: newId(),
-									title: item.title,
-									team: detail.assignedTeam ?? detail.team,
-									...(detail.assignee ? { assignee: detail.assignee } : {}),
-									priority: detail.priority
-								}
-							];
-				await workItemsApi.approve(organizationId, item.id, {
-					drafts,
-					operationId: newId(),
-					expectedRevision: detail.revision
-				});
-				return { message: `Approved “${item.title}”.` };
+				return {
+					message: '',
+					navigateTo: `${taskHref(item.short_id)}?approve=1`
+				};
 			}
 			case 'verify_bug': {
 				await workItemsApi.verify(organizationId, item.id, {
@@ -101,7 +87,7 @@ export async function executeDecisionAction(
 					note: '',
 					expectedRevision: item.version
 				});
-				return { message: `Verified and closed “${item.title}”.` };
+				return { message: `Verified “${item.title}” as fixed.` };
 			}
 			case 'unblock_task': {
 				await workItemsApi.setStatus(organizationId, item.id, {

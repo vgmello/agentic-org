@@ -124,6 +124,7 @@ const pocRecord = (
 
 // Sums to $142.00 this month across Agentic Org's 5 active agents (Jules $40, Ada $32, Rowan $28, Kai $24, Eden $18),
 // 3 projects (agency-v1 $64, office-federation $45, look-feel $33), and 2 work types (build $112, run $30).
+// Every task reference and title matches a live item in `pocWorkItems()`.
 const pocUsageRecords: StoredRecord[] = [
 	pocRecord(
 		'poc-u-1',
@@ -148,8 +149,8 @@ const pocUsageRecords: StoredRecord[] = [
 		'gpt-6.1-sol',
 		'agency-v1',
 		'app',
-		'T-127',
-		'Gateway CSP headers check',
+		'BUG-86',
+		'Chat scrolls to top after sending',
 		'build',
 		14_000_000
 	),
@@ -162,8 +163,8 @@ const pocUsageRecords: StoredRecord[] = [
 		'gpt-6.1-sol',
 		'look-feel',
 		'app',
-		'T-131',
-		'Smoke run across themes',
+		'BUG-84',
+		'Search placeholder fails contrast',
 		'run',
 		8_000_000
 	),
@@ -175,9 +176,9 @@ const pocUsageRecords: StoredRecord[] = [
 		'anthropic',
 		'claude-sonnet-4-5',
 		'agency-v1',
-		'platform',
-		'T-120',
-		'Release sign-off audit',
+		'leadership',
+		'T-112',
+		'Re-sequence BUG-70 nav slices for IA v2',
 		'build',
 		14_000_000
 	),
@@ -204,8 +205,8 @@ const pocUsageRecords: StoredRecord[] = [
 		'claude-sonnet-4-5',
 		'office-federation',
 		'platform',
-		'T-119',
-		'Federation health checks',
+		'BUG-81',
+		'Satellite stays Offline after the Mac wakes',
 		'run',
 		8_000_000
 	),
@@ -232,8 +233,8 @@ const pocUsageRecords: StoredRecord[] = [
 		'gpt-6.1-sol',
 		'agency-v1',
 		'platform',
-		'T-122',
-		'Nightly soak run',
+		'BUG-88',
+		'Inbox loses replies when the office restarts',
 		'run',
 		10_000_000
 	),
@@ -246,8 +247,8 @@ const pocUsageRecords: StoredRecord[] = [
 		'gpt-6.1-sol',
 		'look-feel',
 		'product',
-		'T-130',
-		'Presence vocabulary across screens',
+		'T-131',
+		'Information architecture v2 prototype',
 		'build',
 		16_000_000
 	),
@@ -274,8 +275,8 @@ const pocUsageRecords: StoredRecord[] = [
 		'claude-sonnet-4-5',
 		'look-feel',
 		'product',
-		'T-132',
-		'Typography scale audit',
+		'T-130',
+		'Presence vocabulary across screens',
 		'build',
 		9_000_000
 	),
@@ -289,7 +290,7 @@ const pocUsageRecords: StoredRecord[] = [
 		'office-federation',
 		'platform',
 		'T-135',
-		'Office onboarding copy',
+		'HQ to satellite snapshot sync',
 		'build',
 		5_000_000
 	),
@@ -302,8 +303,8 @@ const pocUsageRecords: StoredRecord[] = [
 		'claude-sonnet-4-5',
 		'office-federation',
 		'platform',
-		'T-136',
-		'Verification sweep',
+		'R-11',
+		'Invite flow for a second office',
 		'run',
 		4_000_000
 	)

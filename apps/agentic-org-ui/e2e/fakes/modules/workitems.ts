@@ -83,8 +83,12 @@ function syncDerived(entry: StoredTask) {
 	entry.detail.budget = budgetWord(entry.cost.budget);
 	entry.detail.budgetHold = entry.cost.budget?.hold;
 	if (entry.detail.bug) {
+		const fixedAt = entry.detail.bug.fixed?.at;
+		const verifiedFixed = fixedAt
+			? entry.detail.bug.verifications.some((v) => v.result === 'fixed' && v.at >= fixedAt)
+			: false;
 		entry.detail.awaitingVerification =
-			entry.detail.bug.fixed !== null && entry.detail.status !== 'done';
+			fixedAt !== undefined && entry.detail.status !== 'done' && !verifiedFixed;
 	}
 }
 

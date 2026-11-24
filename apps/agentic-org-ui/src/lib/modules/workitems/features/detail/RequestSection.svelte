@@ -5,7 +5,9 @@
   editable Approve and create preview dialog, Ask for changes, Decline (with reason), and Merge into another request.
 -->
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import { newId } from '$lib/modules/organization/commands';
 	import { toAppError } from '$lib/proto';
@@ -77,6 +79,26 @@
 		approveOpId = newId();
 		approveOpen = true;
 	}
+
+	// Executive Spotlight/Inbox "Approve request" routes to `/work/[ref]?approve=1` so the owner
+	// reviews and confirms the editable draft tasks before creating work (RQS-9).
+	const wantsApprovePreview = $derived(page.url.searchParams.get('approve') === '1');
+	$effect(() => {
+		if (!wantsApprovePreview) return;
+		if (
+			!stale &&
+			task.status !== 'cancelled' &&
+			task.can.approve &&
+			request.outcome &&
+			!request.approved
+		) {
+			openApprove();
+		}
+		const nextUrl = new URL(page.url);
+		nextUrl.searchParams.delete('approve');
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- preserving current already-resolved URL + hash
+		void goto(nextUrl, { replaceState: true, noScroll: true, keepFocus: true });
+	});
 
 	function removeDraft(draftId: string) {
 		editableDrafts = editableDrafts.filter((d) => d.draftId !== draftId);
