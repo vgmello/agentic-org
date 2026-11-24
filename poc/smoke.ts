@@ -150,9 +150,11 @@ try {
       assert.ok(Math.abs(bounds.height - body.height) <= 1, "Panel fits the available height");
       assert.notEqual(await panel.evaluate((element) => getComputedStyle(element).boxShadow), "none");
       await simulation.hover();
-      await simulation.locator(".activity-tool-tip").waitFor();
+      await simulation.locator(".activity-tooltip").waitFor();
       await simulation.press("Enter");
       await panel.getByRole("heading", { name: "Simulation", exact: true }).waitFor();
+      await panel.getByRole("button", { name: "Reset simulation" }).hover();
+      await panel.getByRole("button", { name: "Reset simulation" }).locator(".activity-tooltip").waitFor();
       await panel.getByRole("button", { name: "Reset simulation" }).click();
       await panel.getByRole("button", { name: "8×" }).click();
       await panel.getByRole("button", { name: "Add sample task" }).click();

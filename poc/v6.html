@@ -7409,6 +7409,10 @@ function activityTimeline(items, options = {}) {
   </section>`).join("");
 }
 
+function activityIcon(label, icon, size = "ic16") {
+  return ic(icon, size) + `<span class="activity-tooltip" aria-hidden="true">${label}</span>`;
+}
+
 function assemblyPlayback() {
   const { playing, hours, speed } = assemblySimulation;
   const playLabel = playing ? "Pause simulation" : "Play simulation";
@@ -7418,10 +7422,10 @@ function assemblyPlayback() {
       <span>Elapsed <strong id="assembly-clock">${formatAssemblyHours(hours)}</strong></span>
     </div>
     <div class="assembly-controls">
-      <button class="btn outline icon" id="assembly-play" type="button" data-act="assembly-play" aria-label="${playLabel}" title="${playLabel}">${ic(playing ? "pause" : "play", "ic16")}</button>
+      <button class="btn outline icon activity-icon" id="assembly-play" type="button" data-act="assembly-play" aria-label="${playLabel}">${activityIcon(playLabel, playing ? "pause" : "play")}</button>
       <div class="seg" role="group" aria-label="Simulation speed">${ASSEMBLY_SPEEDS.map((rate) => `<button type="button" data-act="assembly-speed" data-v="${rate}" aria-pressed="${rate === speed}">${rate}×</button>`).join("")}</div>
-      <button class="btn ghost icon" type="button" data-act="assembly-restart" aria-label="Reset simulation" title="Reset simulation">${ic("refresh", "ic16")}</button>
-      <button class="btn ghost icon" type="button" data-act="assembly-add-sample" aria-label="Add sample task" title="Add sample task">${ic("plus", "ic16")}</button>
+      <button class="btn ghost icon activity-icon" type="button" data-act="assembly-restart" aria-label="Reset simulation">${activityIcon("Reset simulation", "refresh")}</button>
+      <button class="btn ghost icon activity-icon" type="button" data-act="assembly-add-sample" aria-label="Add sample task">${activityIcon("Add sample task", "plus")}</button>
     </div>
   </div>`;
 }
@@ -7438,8 +7442,7 @@ function updateAssemblyPlayback() {
       const play = document.getElementById("assembly-play");
       const label = sim.playing ? "Pause simulation" : "Play simulation";
       play.setAttribute("aria-label", label);
-      play.title = label;
-      play.innerHTML = ic(sim.playing ? "pause" : "play", "ic16");
+      play.innerHTML = activityIcon(label, sim.playing ? "pause" : "play");
     }
   }
   const rate = document.getElementById("assembly-rate");
@@ -7544,12 +7547,12 @@ function pageActivity() {
         ${isFeed ? activityFeedLayout(items) : assemblyLayout()}
       </div>
       <div class="activity-tools" role="group" aria-label="Activity sidebar tools">
-        ${Object.entries(ACTIVITY_PANELS).map(([id, { label, icon }]) => `<button class="btn ghost icon activity-tool" type="button" data-act="activity-panel" data-v="${id}" aria-label="${label}" aria-expanded="${S.actPanel === id}" aria-controls="activity-panel">${ic(icon, "ic20")}<span class="activity-tool-tip" aria-hidden="true">${label}</span></button>`).join("")}
+        ${Object.entries(ACTIVITY_PANELS).map(([id, { label, icon }]) => `<button class="btn ghost icon activity-icon activity-tool" type="button" data-act="activity-panel" data-v="${id}" aria-label="${label}" aria-expanded="${S.actPanel === id}" aria-controls="activity-panel">${activityIcon(label, icon, "ic20")}</button>`).join("")}
       </div>
       <aside class="activity-panel" id="activity-panel" aria-labelledby="activity-panel-title"${S.actPanel ? "" : " inert"}>
         <header class="side-panel-header">
           <h2 id="activity-panel-title" tabindex="-1">${ACTIVITY_PANELS[S.actPanel]?.label || ""}</h2>
-          <button class="btn ghost icon" type="button" data-act="activity-panel-close" aria-label="Collapse Activity sidebar" title="Collapse Activity sidebar">${ic("chev-right", "ic16")}</button>
+          <button class="btn ghost icon activity-icon" type="button" data-act="activity-panel-close" aria-label="Collapse Activity sidebar">${activityIcon("Collapse Activity sidebar", "chev-right")}</button>
         </header>
         <div class="activity-panel-controls">${S.actPanel === "simulation" ? assemblyPlayback() : ""}</div>
         <div class="activity-panel-body"></div>
