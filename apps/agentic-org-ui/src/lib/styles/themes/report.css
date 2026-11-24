@@ -378,18 +378,6 @@ html[data-ui-theme^='report'] .exec-lbl-rep {
 	display: inline;
 }
 
-html[data-ui-theme^='report'] .home-brief::before {
-	content: 'EXECUTIVE OPERATIONS BRIEFING  ·  LIVE EDITION';
-	display: block;
-	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-	font-size: 0.65rem;
-	line-height: 1;
-	font-weight: 600;
-	letter-spacing: 0.16em;
-	color: var(--exec-dim);
-	margin-bottom: 5px;
-}
-
 html[data-ui-theme^='report'] .brief-title-ico {
 	display: none;
 }
@@ -468,6 +456,15 @@ html[data-ui-theme^='report'] .work-bcard {
 	background: var(--exec-surface);
 	border-radius: var(--exec-ctrl-radius);
 	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+}
+
+html[data-ui-theme^='report'] .work-reading {
+	background: var(--exec-surface);
+	border-inline-start-color: var(--report-rule);
+}
+
+html[data-ui-theme='report'] .work-reading .work-kind {
+	border-inline-start-color: var(--report-rule);
 }
 
 html[data-ui-theme='report']

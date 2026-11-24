@@ -39,7 +39,8 @@
 		me,
 		items,
 		send,
-		onchanged
+		onchanged,
+		inline = false
 	}: {
 		open: boolean;
 		organizationId: string;
@@ -53,6 +54,8 @@
 		items: WorkItemSummary[];
 		send: (draft: WorkDraft) => Promise<unknown>;
 		onchanged: (message?: string) => void;
+		/** Render inline inside Work's split reading panel instead of a floating Sheet overlay. */
+		inline?: boolean;
 	} = $props();
 
 	type Step = 'route' | 'approve' | 'changes' | 'decline' | 'merge';
@@ -320,345 +323,364 @@
 	);
 </script>
 
-<Sheet bind:open>
-	<SheetContent side="right" class="w-full max-w-xl overflow-y-auto">
-		<SheetHeader class="border-b border-line pb-4">
-			<SheetTitle class="[overflow-wrap:anywhere]"
-				>{s ? `${requestRef(s)} · ${s.title}` : 'Request'}</SheetTitle
-			>
-			<SheetDescription
-				>{s
-					? `Raised ${shortDate(s.created_at)} by ${s.created_by === me ? 'you' : nameOf(snapshot, s.created_by)}`
-					: 'Loading…'}</SheetDescription
-			>
-		</SheetHeader>
+{#snippet body()}
+	{#if s && item}
+		{@const rTone = statusTone('request', s.status)}
+		<div
+			class={['flex min-w-0 flex-col gap-5', inline ? 'px-0 pt-4 pb-2' : 'px-4 pt-4 pb-6']}
+			data-testid="request-page"
+		>
+			<div class="flex flex-wrap items-center gap-2 text-sm/6">
+				<span
+					class={[
+						'inline-flex min-h-5 max-w-full items-center rounded-full px-2.5 py-0.5 text-xs/4 font-medium whitespace-normal text-wrap [overflow-wrap:anywhere]',
+						rTone === 'accent' ? 'req-sheet-accent' : pillToneClass(rTone)
+					]}
+					data-testid="request-state">{stateWords(s, snapshot)}</span
+				>
+				<span class="text-xs/5 text-fg-muted" data-testid="request-meta"
+					>{kindWord(s.request_kind)} · {projectName}</span
+				>
+				{#if item.route_reason && (s.status === 'routed' || s.status === 'scoping')}<span
+						class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]"
+						data-testid="route-reason"
+						>Sent because: {item.route_reason}{item.routed_by === 'rule'
+							? ' (suggested by rule)'
+							: ''}</span
+					>{/if}
+			</div>
 
-		{#if s && item}
-			{@const rTone = statusTone('request', s.status)}
-			<div class="flex min-w-0 flex-col gap-5 px-4 pt-4 pb-6" data-testid="request-page">
-				<div class="flex flex-wrap items-center gap-2 text-sm/6">
-					<span
-						class={[
-							'inline-flex min-h-5 max-w-full items-center rounded-full px-2.5 py-0.5 text-xs/4 font-medium whitespace-normal text-wrap [overflow-wrap:anywhere]',
-							rTone === 'accent' ? 'req-sheet-accent' : pillToneClass(rTone)
-						]}
-						data-testid="request-state">{stateWords(s, snapshot)}</span
-					>
-					<span class="text-xs/5 text-fg-muted" data-testid="request-meta"
-						>{kindWord(s.request_kind)} · {projectName}</span
-					>
-					{#if item.route_reason && (s.status === 'routed' || s.status === 'scoping')}<span
-							class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]"
-							data-testid="route-reason"
-							>Sent because: {item.route_reason}{item.routed_by === 'rule'
-								? ' (suggested by rule)'
-								: ''}</span
-						>{/if}
-				</div>
+			<section class="flex flex-col gap-1.5 text-sm/6" aria-labelledby="req-words">
+				<h3 id="req-words" class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase">
+					Your words
+				</h3>
+				<p
+					class="whitespace-pre-wrap rounded-md bg-surface-raised px-3 py-2.5 text-fg-body ring-1 ring-line ring-inset [overflow-wrap:anywhere]"
+					data-testid="request-words"
+				>
+					{item.text}
+				</p>
+			</section>
 
-				<section class="flex flex-col gap-1.5 text-sm/6" aria-labelledby="req-words">
-					<h3 id="req-words" class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase">
-						Your words
+			{#if outcome}
+				<section
+					class="flex flex-col gap-2 text-sm/6"
+					aria-labelledby="req-outcome"
+					data-testid="request-outcome"
+				>
+					<h3
+						id="req-outcome"
+						class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase"
+					>
+						Outcome
 					</h3>
-					<p
-						class="whitespace-pre-wrap rounded-md bg-surface-raised px-3 py-2.5 text-fg-body ring-1 ring-line ring-inset [overflow-wrap:anywhere]"
-						data-testid="request-words"
-					>
-						{item.text}
-					</p>
-				</section>
-
-				{#if outcome}
-					<section
-						class="flex flex-col gap-2 text-sm/6"
-						aria-labelledby="req-outcome"
-						data-testid="request-outcome"
-					>
-						<h3
-							id="req-outcome"
-							class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase"
-						>
-							Outcome
-						</h3>
-						{#if outcome.feature && outcome.feature.type !== 'unknown'}<p class="text-fg-body">
-								{outcome.feature.type === 'new'
-									? `A new feature: ${s.title}`
-									: 'Adds to an existing feature'}
-							</p>{/if}
-						{#if outcome.docs.length > 0}<p class="text-fg-secondary">
-								Docs: {outcome.docs.map((d) => d.doc_key).join(', ')}
-							</p>{/if}
-						{#if estimate}<p class="text-fg-body" data-testid="request-estimate">
-								Estimate: {estimate}
-							</p>{/if}
-						{#if made.length > 0}
-							<p class="text-fg-secondary" data-testid="proposed-as-approved">
-								Proposed: {outcome.draft_tasks.length}
-								{outcome.draft_tasks.length === 1 ? 'task' : 'tasks'} (the ones you approved are below).
-							</p>
-						{:else}
-							<ul
-								class="divide-y divide-line-subtle rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line"
-								aria-label="Proposed tasks"
-							>
-								{#each outcome.draft_tasks as d, i (i)}
-									<li
-										class="px-3 py-2 text-fg-body [overflow-wrap:anywhere]"
-										data-testid="draft-task"
-									>
-										{d.title}{#if d.assignee_id}<span class="text-fg-muted">
-												· {nameOf(snapshot, d.assignee_id)}</span
-											>{/if}
-									</li>
-								{:else}
-									<li class="px-3 py-2 text-fg-muted">No tasks proposed.</li>
-								{/each}
-							</ul>
-						{/if}
-					</section>
-				{/if}
-
-				{#if made.length > 0}
-					<section
-						class="flex flex-col gap-1.5 text-sm/6"
-						aria-labelledby="req-made"
-						data-testid="request-tasks"
-					>
-						<h3
-							id="req-made"
-							class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase"
-						>
-							Tasks created · {made.filter((t) => t.status === 'done').length} of {made.length} done
-						</h3>
+					{#if outcome.feature && outcome.feature.type !== 'unknown'}<p class="text-fg-body">
+							{outcome.feature.type === 'new'
+								? `A new feature: ${s.title}`
+								: 'Adds to an existing feature'}
+						</p>{/if}
+					{#if outcome.docs.length > 0}<p class="text-fg-secondary">
+							Docs: {outcome.docs.map((d) => d.doc_key).join(', ')}
+						</p>{/if}
+					{#if estimate}<p class="text-fg-body" data-testid="request-estimate">
+							Estimate: {estimate}
+						</p>{/if}
+					{#if made.length > 0}
+						<p class="text-fg-secondary" data-testid="proposed-as-approved">
+							Proposed: {outcome.draft_tasks.length}
+							{outcome.draft_tasks.length === 1 ? 'task' : 'tasks'} (the ones you approved are below).
+						</p>
+					{:else}
 						<ul
 							class="divide-y divide-line-subtle rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line"
+							aria-label="Proposed tasks"
 						>
-							{#each made as t (t.id)}
-								<li class="flex items-center gap-x-3 px-3 py-2">
-									<span class="font-mono text-xs/5 text-fg-muted">{taskRef(t)}</span><span
-										class="min-w-0 flex-1 [overflow-wrap:anywhere]">{t.title}</span
-									><span class="text-xs/5 text-fg-secondary"
-										>{STATUS_LABEL[t.status as 'todo'] ?? t.status}</span
-									>
+							{#each outcome.draft_tasks as d, i (i)}
+								<li
+									class="px-3 py-2 text-fg-body [overflow-wrap:anywhere]"
+									data-testid="draft-task"
+								>
+									{d.title}{#if d.assignee_id}<span class="text-fg-muted">
+											· {nameOf(snapshot, d.assignee_id)}</span
+										>{/if}
+								</li>
+							{:else}
+								<li class="px-3 py-2 text-fg-muted">No tasks proposed.</li>
+							{/each}
+						</ul>
+					{/if}
+				</section>
+			{/if}
+
+			{#if made.length > 0}
+				<section
+					class="flex flex-col gap-1.5 text-sm/6"
+					aria-labelledby="req-made"
+					data-testid="request-tasks"
+				>
+					<h3 id="req-made" class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase">
+						Tasks created · {made.filter((t) => t.status === 'done').length} of {made.length} done
+					</h3>
+					<ul
+						class="divide-y divide-line-subtle rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line"
+					>
+						{#each made as t (t.id)}
+							<li class="flex items-center gap-x-3 px-3 py-2">
+								<span class="font-mono text-xs/5 text-fg-muted">{taskRef(t)}</span><span
+									class="min-w-0 flex-1 [overflow-wrap:anywhere]">{t.title}</span
+								><span class="text-xs/5 text-fg-secondary"
+									>{STATUS_LABEL[t.status as 'todo'] ?? t.status}</span
+								>
+							</li>
+						{/each}
+					</ul>
+				</section>
+			{/if}
+
+			{#if s.status === 'declined' && item.decline_reason}<p
+					class="rounded-md bg-surface-raised px-3 py-2 text-sm/6 text-fg-body ring-1 ring-line ring-inset [overflow-wrap:anywhere]"
+					data-testid="decline-reason"
+				>
+					Declined: {item.decline_reason}
+				</p>{/if}
+			{#if s.status === 'merged'}<p
+					class="rounded-md bg-surface-raised px-3 py-2 text-sm/6 text-fg-body ring-1 ring-line ring-inset"
+					data-testid="merged-into"
+				>
+					Merged into {mergedInto
+						? `${requestRef(mergedInto)} · ${mergedInto.title}`
+						: 'another request'}.
+				</p>{/if}
+
+			<section class="flex flex-col gap-2 text-sm/6" aria-labelledby="req-talk">
+				<h3 id="req-talk" class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase">
+					What happened
+				</h3>
+				<ol class="flex flex-col gap-2" data-testid="request-history">
+					{#each lines as l, i (i)}
+						<li class="text-fg-secondary">
+							<span class="text-xs/5 text-fg-muted tabular-nums">{shortDate(l.at)}</span> · {l.text}{#if l.note}<p
+									class="mt-1 whitespace-pre-wrap rounded-md bg-surface-raised px-3 py-2 text-fg-body ring-1 ring-line ring-inset [overflow-wrap:anywhere]"
+								>
+									{l.note}
+								</p>{/if}
+						</li>
+					{/each}
+				</ol>
+			</section>
+
+			{#if !step && open_}
+				<div class="flex flex-wrap gap-2" data-testid="request-actions">
+					{#if s.status === 'scoped'}
+						{#if (outcome?.draft_tasks.length ?? 0) > 0}
+							<Button
+								size="sm"
+								class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+								onclick={() => begin('approve')}
+								>Approve and create {outcome?.draft_tasks.length}
+								{outcome?.draft_tasks.length === 1 ? 'task' : 'tasks'}…</Button
+							>
+						{:else}
+							<p class="basis-full text-sm/6 text-fg-body" data-testid="no-drafts">
+								No tasks were proposed, so there is nothing to approve. Ask for changes.
+							</p>
+						{/if}
+						<Button
+							size="sm"
+							variant="outline"
+							class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+							onclick={() => begin('changes')}>Ask for changes…</Button
+						>
+					{/if}
+					{#if s.status !== 'scoped'}<Button
+							size="sm"
+							variant="outline"
+							class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+							onclick={() => begin('route')}
+							>{s.status === 'new' ? 'Route…' : 'Change who scopes it…'}</Button
+						>{/if}
+					<Button
+						size="sm"
+						variant="outline"
+						class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						onclick={() => begin('merge')}
+						disabled={others.length === 0}
+						aria-describedby={others.length === 0 ? 'req-no-merge' : undefined}>Merge into…</Button
+					>
+					<Button
+						size="sm"
+						variant="outline"
+						class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						onclick={() => begin('decline')}>Decline…</Button
+					>
+					{#if others.length === 0}<p
+							id="req-no-merge"
+							class="basis-full text-xs/5 text-fg-muted"
+							data-testid="no-merge"
+						>
+							No other open requests to merge into.
+						</p>{/if}
+				</div>
+			{:else if step}
+				<section
+					class="flex flex-col gap-2 rounded-lg bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line"
+					data-testid="request-step"
+				>
+					{#if step === 'route'}
+						<Label for="req-scoper">Who scopes it</Label>
+						<select id="req-scoper" bind:value={target} class={field}>
+							<option value=""
+								>{s.status === 'new' ? 'Choose an agent…' : 'Nobody (take it back)'}</option
+							>
+							{#each suggestions as x (x.member.id)}<option value={x.member.id}
+									>{x.member.name} · {x.why}</option
+								>{/each}
+							{#each agents.filter((a) => !suggestions.some((x) => x.member.id === a.id)) as a (a.id)}<option
+									value={a.id}>{a.name}{a.agent?.status === 'paused' ? ' (paused)' : ''}</option
+								>{/each}
+						</select>
+						{#if snapshot.members.find((m) => m.id === target)?.agent?.status === 'paused'}<p
+								class="t-red rounded-md px-3 py-2 text-sm/6"
+								role="alert"
+							>
+								{nameOf(snapshot, target)} is paused and won't pick this up. Choose someone else or leave
+								it not routed.
+							</p>{/if}
+					{:else if step === 'merge'}
+						<Label for="req-into">Merge into</Label>
+						<select id="req-into" bind:value={into} class={field}
+							><option value="">Choose a request…</option>{#each others as o (o.id)}<option
+									value={o.id}>{requestRef(o)} · {o.title}</option
+								>{/each}</select
+						>
+						<p class="text-xs/5 text-fg-muted">
+							Its words are added to that request as a note, and you stop seeing this one in the
+							queue.
+						</p>
+					{:else if step === 'approve'}
+						<Label for="req-project">Which project?</Label>
+						<select id="req-project" bind:value={projectId} class={field}
+							><option value="">Choose a project…</option>{#each projects as p (p.id)}<option
+									value={p.id}>{p.name}</option
+								>{/each}</select
+						>
+						{#if projects.length === 0}<p class="t-red rounded-md px-3 py-2 text-sm/6" role="alert">
+								There is no project to put the tasks in. Create a project first.
+							</p>{/if}
+						<p class="text-sm/6 text-fg-body">
+							These become tasks in {projectId
+								? (projects.find((p) => p.id === projectId)?.name ?? 'that project')
+								: 'that project'}. Edit or remove any of them first.
+						</p>
+						{#if dropped > 0}<p class="text-xs/5 text-fg-muted" data-testid="drafts-dropped">
+								{dropped}
+								{dropped === 1 ? 'draft names' : 'drafts name'} a team or person that doesn't apply there,
+								so {dropped === 1 ? 'it is' : 'they are'} created without it.
+							</p>{/if}
+						<ul class="flex flex-col gap-2" aria-label="Tasks to create">
+							{#each drafts as d, i (i)}
+								<li class="flex flex-wrap items-center gap-x-2">
+									<input type="checkbox" bind:checked={d.keep} aria-label="Create task {i + 1}" />
+									<Input
+										bind:value={d.title}
+										class="min-w-0 flex-1 basis-40 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
+										disabled={!d.keep}
+										aria-label="Task {i + 1} title"
+										autocomplete="off"
+									/>
+									{#if d.keep && d.title.trim() !== '' && !teamStands(d.draft.team_id)}<span
+											class="shrink-0 text-xs/5 text-fg-muted"
+											data-testid="draft-without-team">loses its team</span
+										>{/if}
+									{#if d.keep && d.title.trim() !== '' && !assigneeStands(d.draft.assignee_id)}<span
+											class="shrink-0 text-xs/5 text-fg-muted"
+											data-testid="draft-without-person">loses its assignee</span
+										>{/if}
 								</li>
 							{/each}
 						</ul>
-					</section>
-				{/if}
-
-				{#if s.status === 'declined' && item.decline_reason}<p
-						class="rounded-md bg-surface-raised px-3 py-2 text-sm/6 text-fg-body ring-1 ring-line ring-inset [overflow-wrap:anywhere]"
-						data-testid="decline-reason"
-					>
-						Declined: {item.decline_reason}
-					</p>{/if}
-				{#if s.status === 'merged'}<p
-						class="rounded-md bg-surface-raised px-3 py-2 text-sm/6 text-fg-body ring-1 ring-line ring-inset"
-						data-testid="merged-into"
-					>
-						Merged into {mergedInto
-							? `${requestRef(mergedInto)} · ${mergedInto.title}`
-							: 'another request'}.
-					</p>{/if}
-
-				<section class="flex flex-col gap-2 text-sm/6" aria-labelledby="req-talk">
-					<h3 id="req-talk" class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase">
-						What happened
-					</h3>
-					<ol class="flex flex-col gap-2" data-testid="request-history">
-						{#each lines as l, i (i)}
-							<li class="text-fg-secondary">
-								<span class="text-xs/5 text-fg-muted tabular-nums">{shortDate(l.at)}</span> · {l.text}{#if l.note}<p
-										class="mt-1 whitespace-pre-wrap rounded-md bg-surface-raised px-3 py-2 text-fg-body ring-1 ring-line ring-inset [overflow-wrap:anywhere]"
-									>
-										{l.note}
-									</p>{/if}
-							</li>
-						{/each}
-					</ol>
-				</section>
-
-				{#if !step && open_}
-					<div class="flex flex-wrap gap-2" data-testid="request-actions">
-						{#if s.status === 'scoped'}
-							{#if (outcome?.draft_tasks.length ?? 0) > 0}
-								<Button
-									size="sm"
-									class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									onclick={() => begin('approve')}
-									>Approve and create {outcome?.draft_tasks.length}
-									{outcome?.draft_tasks.length === 1 ? 'task' : 'tasks'}…</Button
-								>
-							{:else}
-								<p class="basis-full text-sm/6 text-fg-body" data-testid="no-drafts">
-									No tasks were proposed, so there is nothing to approve. Ask for changes.
-								</p>
-							{/if}
-							<Button
-								size="sm"
-								variant="outline"
-								class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-								onclick={() => begin('changes')}>Ask for changes…</Button
-							>
-						{/if}
-						{#if s.status !== 'scoped'}<Button
-								size="sm"
-								variant="outline"
-								class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-								onclick={() => begin('route')}
-								>{s.status === 'new' ? 'Route…' : 'Change who scopes it…'}</Button
-							>{/if}
+					{:else}
+						<Label for="req-note">{step === 'changes' ? 'What should change' : 'Why'}</Label>
+						<Input
+							id="req-note"
+							bind:value={note}
+							class="focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
+							autocomplete="off"
+						/>
+					{/if}
+					<div class="flex flex-wrap gap-2">
+						<Button
+							size="sm"
+							class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+							disabled={busy || !canSubmit}
+							onclick={submitStep}
+						>
+							{step === 'route'
+								? target
+									? 'Send'
+									: 'Take back'
+								: step === 'merge'
+									? 'Merge'
+									: step === 'approve'
+										? `Create ${kept.length} ${kept.length === 1 ? 'task' : 'tasks'}`
+										: step === 'changes'
+											? 'Send back'
+											: 'Decline'}
+						</Button>
 						<Button
 							size="sm"
 							variant="outline"
 							class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-							onclick={() => begin('merge')}
-							disabled={others.length === 0}
-							aria-describedby={others.length === 0 ? 'req-no-merge' : undefined}
-							>Merge into…</Button
+							onclick={close}>Cancel</Button
 						>
-						<Button
-							size="sm"
-							variant="outline"
-							class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-							onclick={() => begin('decline')}>Decline…</Button
-						>
-						{#if others.length === 0}<p
-								id="req-no-merge"
-								class="basis-full text-xs/5 text-fg-muted"
-								data-testid="no-merge"
-							>
-								No other open requests to merge into.
-							</p>{/if}
 					</div>
-				{:else if step}
-					<section
-						class="flex flex-col gap-2 rounded-lg bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line"
-						data-testid="request-step"
-					>
-						{#if step === 'route'}
-							<Label for="req-scoper">Who scopes it</Label>
-							<select id="req-scoper" bind:value={target} class={field}>
-								<option value=""
-									>{s.status === 'new' ? 'Choose an agent…' : 'Nobody (take it back)'}</option
-								>
-								{#each suggestions as x (x.member.id)}<option value={x.member.id}
-										>{x.member.name} · {x.why}</option
-									>{/each}
-								{#each agents.filter((a) => !suggestions.some((x) => x.member.id === a.id)) as a (a.id)}<option
-										value={a.id}>{a.name}{a.agent?.status === 'paused' ? ' (paused)' : ''}</option
-									>{/each}
-							</select>
-							{#if snapshot.members.find((m) => m.id === target)?.agent?.status === 'paused'}<p
-									class="t-red rounded-md px-3 py-2 text-sm/6"
-									role="alert"
-								>
-									{nameOf(snapshot, target)} is paused and won't pick this up. Choose someone else or
-									leave it not routed.
-								</p>{/if}
-						{:else if step === 'merge'}
-							<Label for="req-into">Merge into</Label>
-							<select id="req-into" bind:value={into} class={field}
-								><option value="">Choose a request…</option>{#each others as o (o.id)}<option
-										value={o.id}>{requestRef(o)} · {o.title}</option
-									>{/each}</select
-							>
-							<p class="text-xs/5 text-fg-muted">
-								Its words are added to that request as a note, and you stop seeing this one in the
-								queue.
-							</p>
-						{:else if step === 'approve'}
-							<Label for="req-project">Which project?</Label>
-							<select id="req-project" bind:value={projectId} class={field}
-								><option value="">Choose a project…</option>{#each projects as p (p.id)}<option
-										value={p.id}>{p.name}</option
-									>{/each}</select
-							>
-							{#if projects.length === 0}<p
-									class="t-red rounded-md px-3 py-2 text-sm/6"
-									role="alert"
-								>
-									There is no project to put the tasks in. Create a project first.
-								</p>{/if}
-							<p class="text-sm/6 text-fg-body">
-								These become tasks in {projectId
-									? (projects.find((p) => p.id === projectId)?.name ?? 'that project')
-									: 'that project'}. Edit or remove any of them first.
-							</p>
-							{#if dropped > 0}<p class="text-xs/5 text-fg-muted" data-testid="drafts-dropped">
-									{dropped}
-									{dropped === 1 ? 'draft names' : 'drafts name'} a team or person that doesn't apply
-									there, so {dropped === 1 ? 'it is' : 'they are'} created without it.
-								</p>{/if}
-							<ul class="flex flex-col gap-2" aria-label="Tasks to create">
-								{#each drafts as d, i (i)}
-									<li class="flex flex-wrap items-center gap-x-2">
-										<input type="checkbox" bind:checked={d.keep} aria-label="Create task {i + 1}" />
-										<Input
-											bind:value={d.title}
-											class="min-w-0 flex-1 basis-40 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
-											disabled={!d.keep}
-											aria-label="Task {i + 1} title"
-											autocomplete="off"
-										/>
-										{#if d.keep && d.title.trim() !== '' && !teamStands(d.draft.team_id)}<span
-												class="shrink-0 text-xs/5 text-fg-muted"
-												data-testid="draft-without-team">loses its team</span
-											>{/if}
-										{#if d.keep && d.title.trim() !== '' && !assigneeStands(d.draft.assignee_id)}<span
-												class="shrink-0 text-xs/5 text-fg-muted"
-												data-testid="draft-without-person">loses its assignee</span
-											>{/if}
-									</li>
-								{/each}
-							</ul>
-						{:else}
-							<Label for="req-note">{step === 'changes' ? 'What should change' : 'Why'}</Label>
-							<Input
-								id="req-note"
-								bind:value={note}
-								class="focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
-								autocomplete="off"
-							/>
-						{/if}
-						<div class="flex flex-wrap gap-2">
-							<Button
-								size="sm"
-								class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-								disabled={busy || !canSubmit}
-								onclick={submitStep}
-							>
-								{step === 'route'
-									? target
-										? 'Send'
-										: 'Take back'
-									: step === 'merge'
-										? 'Merge'
-										: step === 'approve'
-											? `Create ${kept.length} ${kept.length === 1 ? 'task' : 'tasks'}`
-											: step === 'changes'
-												? 'Send back'
-												: 'Decline'}
-							</Button>
-							<Button
-								size="sm"
-								variant="outline"
-								class="h-auto min-h-9 max-w-full whitespace-normal text-wrap max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-								onclick={close}>Cancel</Button
-							>
-						</div>
-					</section>
-				{/if}
+				</section>
+			{/if}
 
-				{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">
-						{error}
-					</p>{/if}
-			</div>
-		{:else if error}
-			<p class="px-4 py-4 text-sm/6 text-danger" role="alert">{error}</p>
-		{/if}
-	</SheetContent>
-</Sheet>
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">
+					{error}
+				</p>{/if}
+		</div>
+	{:else if error}
+		<p class={['py-4 text-sm/6 text-danger', inline ? 'px-0' : 'px-4']} role="alert">{error}</p>
+	{/if}
+{/snippet}
+
+{#if inline}
+	{#if open}
+		<header class="border-b border-line pb-4">
+			<h2
+				id="work-detail-title"
+				tabindex="-1"
+				class="text-lg/7 font-semibold text-fg [overflow-wrap:anywhere] focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+			>
+				{s ? s.title : 'Request'}
+			</h2>
+			<p class="mt-1 text-sm/6 text-fg-muted">
+				{s
+					? `Raised ${shortDate(s.created_at)} by ${s.created_by === me ? 'you' : nameOf(snapshot, s.created_by)}`
+					: 'Loading…'}
+			</p>
+		</header>
+		{@render body()}
+	{/if}
+{:else}
+	<Sheet bind:open>
+		<SheetContent side="right" class="w-full max-w-xl overflow-y-auto">
+			<SheetHeader class="border-b border-line pb-4">
+				<SheetTitle class="[overflow-wrap:anywhere]"
+					>{s ? `${requestRef(s)} · ${s.title}` : 'Request'}</SheetTitle
+				>
+				<SheetDescription
+					>{s
+						? `Raised ${shortDate(s.created_at)} by ${s.created_by === me ? 'you' : nameOf(snapshot, s.created_by)}`
+						: 'Loading…'}</SheetDescription
+				>
+			</SheetHeader>
+			{@render body()}
+		</SheetContent>
+	</Sheet>
+{/if}
 
 <style>
 	.req-sheet-accent {

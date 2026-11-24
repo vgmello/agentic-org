@@ -488,7 +488,7 @@
 				"src/lib/org/projects*",
 				"src/lib/org/team-edit*",
 				"src/lib/modules/copilot/**",
-				"src/lib/components/{BugSheet,BugsPanel,NewRequestDialog,NewTaskDialog,ProjectTeamDialog,ProjectTeams,RemoveProjectDialog,ReportBugDialog,RequestSheet,RequestsPanel,SeverityIcon,TaskSheet,TasksBoard}.svelte",
+				"src/lib/components/{BugSheet,BugsPanel,NewRequestDialog,NewTaskDialog,ProjectTeamDialog,ProjectTeams,RemoveProjectDialog,ReportBugDialog,RequestSheet,RequestsPanel,SeverityIcon,TaskSheet,TasksBoard,WorkReadingPanel}.svelte",
 				"e2e/org-chart-menu.ts"
 			]
 		},
@@ -501,7 +501,7 @@
 			"sources": [
 				"src/lib/modules/copilot/**",
 				"src/routes/(shell)/work/**",
-				"src/lib/components/{BugSheet,NewRequestDialog,NewTaskDialog,RequestSheet,RequestsPanel,ReportBugDialog,SeverityIcon,TaskSheet}.svelte"
+				"src/lib/components/{BugSheet,NewRequestDialog,NewTaskDialog,RequestSheet,RequestsPanel,ReportBugDialog,SeverityIcon,TaskSheet,WorkReadingPanel}.svelte"
 			]
 		},
 		"org-lifecycle": {
@@ -549,7 +549,8 @@
 			"files": [
 				"src/routes/(shell)/work/+page.svelte",
 				"src/lib/work/work-toolbar.ts",
-				"src/lib/components/RequestsPanel.svelte"
+				"src/lib/components/RequestsPanel.svelte",
+				"src/lib/components/WorkReadingPanel.svelte"
 			],
 			"why": "Work header, toolbar, search, board, and RequestsPanel changes also run shell-look's executive-ui.spec.ts parity suite alongside Work's owning categories."
 		}

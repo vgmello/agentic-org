@@ -36,7 +36,8 @@
 		snapshot,
 		send,
 		onchanged,
-		start
+		start,
+		inline = false
 	}: {
 		open: boolean;
 		organizationId: string;
@@ -47,6 +48,8 @@
 		onchanged: (message?: string) => void;
 		/** Opened because a move was refused: show what to do about it at once. */
 		start?: { pending: 'done_anyway'; message: string };
+		/** Render inline inside Work's split reading panel instead of a floating Sheet overlay. */
+		inline?: boolean;
 	} = $props();
 
 	let item = $state<WorkItem | undefined>();
@@ -298,334 +301,359 @@
 	}
 </script>
 
-<Sheet bind:open>
-	<SheetContent side="right" class="w-full max-w-lg overflow-y-auto">
-		<SheetHeader class="border-b border-line pb-4">
-			<SheetTitle class="[overflow-wrap:anywhere]"
-				>{s ? `${taskRef(s)} · ${s.title}` : 'Task'}</SheetTitle
+{#snippet badges()}
+	{#if s}
+		{@const prio = priorityWord(s.priority)}
+		{@const sTone = statusTone('task', s.status)}
+		{@const pTone = priorityTone(s.priority)}
+		<div class="mt-2 flex flex-wrap items-center gap-1.5">
+			<span
+				class={[
+					'inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-medium',
+					sTone === 'accent' ? 'task-sheet-accent' : pillToneClass(sTone)
+				]}>{STATUS_LABEL[s.status as TaskStatus] ?? s.status}</span
 			>
-			<SheetDescription
-				>{s
-					? `Created ${shortDate(s.created_at)} by ${nameOf(snapshot, s.created_by)}`
-					: 'Loading…'}</SheetDescription
-			>
-			{#if s}
-				{@const prio = priorityWord(s.priority)}
-				{@const sTone = statusTone('task', s.status)}
-				{@const pTone = priorityTone(s.priority)}
-				<div class="mt-2 flex flex-wrap items-center gap-1.5">
-					<span
-						class={[
-							'inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-medium',
-							sTone === 'accent' ? 'task-sheet-accent' : pillToneClass(sTone)
-						]}>{STATUS_LABEL[s.status as TaskStatus] ?? s.status}</span
+			{#if prio}
+				<span
+					class={[
+						'inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-medium',
+						pTone === 'accent' ? 'task-sheet-accent' : pillToneClass(pTone)
+					]}>{prio}</span
+				>
+			{/if}
+		</div>
+	{/if}
+{/snippet}
+
+{#snippet body()}
+	{#if s && item}
+		<div
+			class={['flex flex-col gap-5', inline ? 'px-0 pt-4 pb-2' : 'px-4 pt-4 pb-6']}
+			data-testid="task-page"
+		>
+			<div class="flex flex-col gap-2">
+				<Label for="task-title">Title</Label>
+				<Input
+					id="task-title"
+					bind:value={title}
+					maxlength={WORK_LIMITS.title * 2}
+					disabled={busy}
+					autocomplete="off"
+					onblur={() => saveField('Title')}
+				/>
+			</div>
+
+			{#if fromRequest}<p
+					class="text-sm/6 text-fg-secondary [overflow-wrap:anywhere]"
+					data-testid="task-from-request"
+				>
+					From <a
+						class="font-medium text-link underline hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+						href={resolve(`/work?request=${fromRequest.id}` as '/work')}
+						onclick={() => (open = false)}>{fromRequest.ref} · {fromRequest.title}</a
 					>
-					{#if prio}
-						<span
-							class={[
-								'inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-medium',
-								pTone === 'accent' ? 'task-sheet-accent' : pillToneClass(pTone)
-							]}>{prio}</span
+				</p>{/if}
+			{#if fixed.length > 0}<p class="text-sm/6 text-fg-secondary" data-testid="task-fixes">
+					Fixes {fixed.map((b) => `${b.ref} · ${b.title}`).join(', ')}
+				</p>{/if}
+
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div class="flex flex-col gap-2">
+					<Label for="task-status">Status</Label>
+					<select
+						id="task-status"
+						bind:this={statusSelect}
+						disabled={busy}
+						value={s.status}
+						onchange={(e) => setStatus(e.currentTarget.value as TaskStatus)}
+						class={field}
+					>
+						<option value={s.status}
+							>{STATUS_LABEL[s.status as TaskStatus]}{s.status === 'done'
+								? s.resolution === 'cancelled'
+									? ' · Cancelled'
+									: ' · Completed'
+								: ''}</option
 						>
-					{/if}
+						{#each movesFrom(s.status) as m (m)}<option value={m}>{STATUS_LABEL[m]}</option>{/each}
+					</select>
+				</div>
+				<div class="flex flex-col gap-2">
+					<Label for="task-priority">Priority</Label>
+					<select
+						id="task-priority"
+						disabled={busy}
+						value={s.priority ?? 'normal'}
+						onchange={(e) =>
+							change(
+								{
+									method: 'task.update',
+									item_id: s.id,
+									expected_version: version,
+									priority: e.currentTarget.value as Priority
+								},
+								`${taskRef(s)} priority is now ${PRIORITIES.find((x) => x.id === e.currentTarget.value)?.label}.`
+							)}
+						class={field}
+					>
+						{#each PRIORITIES as p (p.id)}<option value={p.id}>{p.label}</option>{/each}
+					</select>
+				</div>
+			</div>
+
+			{#if s.status === 'blocked' && s.blocked_reason}
+				<p class="t-amber rounded-md px-3 py-2 text-sm/6 font-medium" data-testid="blocked-reason">
+					Blocked: {s.blocked_reason}
+				</p>
+			{/if}
+			{#if pending === 'blocked'}
+				<div
+					class="flex flex-col gap-2 rounded-md bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line"
+				>
+					<Label for="task-blocked-reason">What is it blocked on?</Label>
+					<Input
+						id="task-blocked-reason"
+						bind:value={blockedReason}
+						maxlength={WORK_LIMITS.blockedReason * 2}
+						autocomplete="off"
+					/>
+					<div class="flex gap-x-2">
+						<Button
+							size="sm"
+							class={actionBtn}
+							disabled={busy || blockedReason.trim() === ''}
+							onclick={confirmBlocked}>Block task</Button
+						>
+						<Button size="sm" variant="outline" class={actionBtn} onclick={cancelPending}
+							>Cancel</Button
+						>
+					</div>
 				</div>
 			{/if}
-		</SheetHeader>
+			{#if pending === 'done_anyway'}
+				<div
+					class="flex flex-col gap-2 rounded-md bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line"
+				>
+					<Label for="task-anyway">Why is it done with required steps left?</Label>
+					<Input id="task-anyway" bind:value={anywayReason} autocomplete="off" />
+					<div class="flex gap-x-2">
+						<Button
+							size="sm"
+							class={actionBtn}
+							disabled={busy || anywayReason.trim() === ''}
+							onclick={confirmAnyway}>Mark done anyway</Button
+						>
+						<Button size="sm" variant="outline" class={actionBtn} onclick={cancelPending}
+							>Cancel</Button
+						>
+					</div>
+				</div>
+			{/if}
+			{#if s.done_anyway && item.done_anyway_detail}
+				<p class="text-sm/6 text-fg-secondary" data-testid="done-anyway">
+					Done anyway: {item.done_anyway_detail.reason}
+				</p>
+			{/if}
 
-		{#if s && item}
-			<div class="flex flex-col gap-5 px-4 pt-4 pb-6" data-testid="task-page">
-				<div class="flex flex-col gap-2">
-					<Label for="task-title">Title</Label>
+			<div class="flex flex-col gap-2">
+				<Label for="task-assignee">Assignee</Label>
+				<select
+					id="task-assignee"
+					disabled={busy}
+					value={s.assignee_id ?? ''}
+					onchange={(e) => requestAssign(e.currentTarget.value)}
+					class={field}
+				>
+					<option value="">Unassigned</option>
+					{#each people as p (p.member.id)}<option value={p.member.id}>{p.label}</option>{/each}
+				</select>
+				{#if assignPending && assignWarning(snapshot, assignPending)}
+					<div
+						class="t-amber flex flex-col gap-2 rounded-md p-3 text-sm/6"
+						role="alert"
+						data-testid="assign-warning"
+					>
+						<p>{assignWarning(snapshot, assignPending)}</p>
+						<div class="flex gap-x-2">
+							<Button size="sm" class={actionBtn} disabled={busy} onclick={confirmAssign}
+								>Assign anyway</Button
+							><Button size="sm" variant="outline" class={actionBtn} onclick={cancelAssign}
+								>Cancel</Button
+							>
+						</div>
+					</div>
+				{/if}
+			</div>
+
+			<DraftableText
+				id="task-description"
+				label="Description"
+				rows={4}
+				bind:value={description}
+				limit={WORK_LIMITS.description}
+				disabled={busy}
+				onblur={() => saveField('Description')}
+				onchange={() => saveField('Description')}
+			/>
+			<div class="flex flex-col gap-2">
+				<Label for="task-dod">Definition of done</Label>
+				<textarea
+					id="task-dod"
+					bind:value={definitionOfDone}
+					rows="2"
+					maxlength={WORK_LIMITS.definitionOfDone * 2}
+					disabled={busy}
+					placeholder="The goal the agent works to"
+					class={field}
+					onblur={() => saveField('Definition of done')}></textarea>
+				<p class="h-5 text-xs/5 text-fg-muted" role="status" data-testid="saved">{saved}</p>
+			</div>
+
+			<section class="flex flex-col gap-2" aria-labelledby="task-checklist">
+				<h3
+					id="task-checklist"
+					class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase"
+				>
+					Checklist {#if item.checklist.length > 0}<span
+							class="font-normal text-fg-muted tabular-nums"
+							>{s.checklist.done} of {s.checklist.total}</span
+						>{/if}
+				</h3>
+				<ul
+					class="divide-y divide-line-subtle rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line"
+					data-testid="checklist"
+				>
+					{#each item.checklist as step (step.id)}
+						<li class="flex items-center gap-x-3 px-3 py-2 text-sm/6">
+							<Checkbox
+								checked={step.done}
+								disabled={busy || !!step.task_id}
+								aria-label={step.text}
+								onCheckedChange={(on) =>
+									change({ method: 'checklist.check', step_id: step.id, done: on === true })}
+							/>
+							<span
+								class="min-w-0 flex-1 [overflow-wrap:anywhere] {step.done
+									? 'text-fg-muted line-through'
+									: 'text-fg'}">{step.text}</span
+							>
+							{#if step.required}<Badge variant="secondary">Required</Badge>{/if}
+							<button
+								type="button"
+								class="rounded p-1 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-focus"
+								aria-label={`Remove step ${step.text}`}
+								disabled={busy}
+								onclick={() =>
+									change({
+										method: 'checklist.remove',
+										step_id: step.id,
+										expected_version: step.version
+									})}><Trash2 class="size-4" aria-hidden="true" /></button
+							>
+						</li>
+					{:else}
+						<li class="px-3 py-2 text-sm/6 text-fg-muted">No steps yet.</li>
+					{/each}
+				</ul>
+				<form class="flex gap-x-2" onsubmit={addStep}>
 					<Input
-						id="task-title"
-						bind:value={title}
-						maxlength={WORK_LIMITS.title * 2}
+						aria-label="New step"
+						placeholder="Add a step"
+						bind:value={newStep}
+						maxlength={WORK_LIMITS.stepText * 2}
 						disabled={busy}
 						autocomplete="off"
-						onblur={() => saveField('Title')}
 					/>
-				</div>
-
-				{#if fromRequest}<p
-						class="text-sm/6 text-fg-secondary [overflow-wrap:anywhere]"
-						data-testid="task-from-request"
+					<label class="flex shrink-0 items-center gap-x-1.5 text-sm/6 text-fg-secondary"
+						><Checkbox bind:checked={newRequired} aria-label="Required" /> Required</label
 					>
-						From <a
-							class="font-medium text-link underline hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-							href={resolve(`/work?request=${fromRequest.id}` as '/work')}
-							onclick={() => (open = false)}>{fromRequest.ref} · {fromRequest.title}</a
-						>
-					</p>{/if}
-				{#if fixed.length > 0}<p class="text-sm/6 text-fg-secondary" data-testid="task-fixes">
-						Fixes {fixed.map((b) => `${b.ref} · ${b.title}`).join(', ')}
-					</p>{/if}
-
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div class="flex flex-col gap-2">
-						<Label for="task-status">Status</Label>
-						<select
-							id="task-status"
-							bind:this={statusSelect}
-							disabled={busy}
-							value={s.status}
-							onchange={(e) => setStatus(e.currentTarget.value as TaskStatus)}
-							class={field}
-						>
-							<option value={s.status}
-								>{STATUS_LABEL[s.status as TaskStatus]}{s.status === 'done'
-									? s.resolution === 'cancelled'
-										? ' · Cancelled'
-										: ' · Completed'
-									: ''}</option
-							>
-							{#each movesFrom(s.status) as m (m)}<option value={m}>{STATUS_LABEL[m]}</option
-								>{/each}
-						</select>
-					</div>
-					<div class="flex flex-col gap-2">
-						<Label for="task-priority">Priority</Label>
-						<select
-							id="task-priority"
-							disabled={busy}
-							value={s.priority ?? 'normal'}
-							onchange={(e) =>
-								change(
-									{
-										method: 'task.update',
-										item_id: s.id,
-										expected_version: version,
-										priority: e.currentTarget.value as Priority
-									},
-									`${taskRef(s)} priority is now ${PRIORITIES.find((x) => x.id === e.currentTarget.value)?.label}.`
-								)}
-							class={field}
-						>
-							{#each PRIORITIES as p (p.id)}<option value={p.id}>{p.label}</option>{/each}
-						</select>
-					</div>
-				</div>
-
-				{#if s.status === 'blocked' && s.blocked_reason}
-					<p
-						class="t-amber rounded-md px-3 py-2 text-sm/6 font-medium"
-						data-testid="blocked-reason"
+					<Button
+						type="submit"
+						variant="outline"
+						class={actionBtn}
+						disabled={busy || newStep.trim() === ''}>Add step</Button
 					>
-						Blocked: {s.blocked_reason}
+				</form>
+			</section>
+
+			<p class="text-xs/5 text-fg-muted tabular-nums" data-testid="task-time">
+				{timeBlock(item.time)}
+			</p>
+
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">
+					{error}
+				</p>{/if}
+
+			<div class="border-t border-line pt-4">
+				{#if confirmDelete}
+					<p class="text-sm/6 text-fg-secondary">
+						Delete {taskRef(s)}? Its history stays and its number is never reused.
 					</p>
-				{/if}
-				{#if pending === 'blocked'}
-					<div
-						class="flex flex-col gap-2 rounded-md bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line"
-					>
-						<Label for="task-blocked-reason">What is it blocked on?</Label>
-						<Input
-							id="task-blocked-reason"
-							bind:value={blockedReason}
-							maxlength={WORK_LIMITS.blockedReason * 2}
-							autocomplete="off"
-						/>
-						<div class="flex gap-x-2">
-							<Button
-								size="sm"
-								class={actionBtn}
-								disabled={busy || blockedReason.trim() === ''}
-								onclick={confirmBlocked}>Block task</Button
-							>
-							<Button size="sm" variant="outline" class={actionBtn} onclick={cancelPending}
-								>Cancel</Button
-							>
-						</div>
-					</div>
-				{/if}
-				{#if pending === 'done_anyway'}
-					<div
-						class="flex flex-col gap-2 rounded-md bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line"
-					>
-						<Label for="task-anyway">Why is it done with required steps left?</Label>
-						<Input id="task-anyway" bind:value={anywayReason} autocomplete="off" />
-						<div class="flex gap-x-2">
-							<Button
-								size="sm"
-								class={actionBtn}
-								disabled={busy || anywayReason.trim() === ''}
-								onclick={confirmAnyway}>Mark done anyway</Button
-							>
-							<Button size="sm" variant="outline" class={actionBtn} onclick={cancelPending}
-								>Cancel</Button
-							>
-						</div>
-					</div>
-				{/if}
-				{#if s.done_anyway && item.done_anyway_detail}
-					<p class="text-sm/6 text-fg-secondary" data-testid="done-anyway">
-						Done anyway: {item.done_anyway_detail.reason}
-					</p>
-				{/if}
-
-				<div class="flex flex-col gap-2">
-					<Label for="task-assignee">Assignee</Label>
-					<select
-						id="task-assignee"
-						disabled={busy}
-						value={s.assignee_id ?? ''}
-						onchange={(e) => requestAssign(e.currentTarget.value)}
-						class={field}
-					>
-						<option value="">Unassigned</option>
-						{#each people as p (p.member.id)}<option value={p.member.id}>{p.label}</option>{/each}
-					</select>
-					{#if assignPending && assignWarning(snapshot, assignPending)}
-						<div
-							class="t-amber flex flex-col gap-2 rounded-md p-3 text-sm/6"
-							role="alert"
-							data-testid="assign-warning"
-						>
-							<p>{assignWarning(snapshot, assignPending)}</p>
-							<div class="flex gap-x-2">
-								<Button size="sm" class={actionBtn} disabled={busy} onclick={confirmAssign}
-									>Assign anyway</Button
-								><Button size="sm" variant="outline" class={actionBtn} onclick={cancelAssign}
-									>Cancel</Button
-								>
-							</div>
-						</div>
-					{/if}
-				</div>
-
-				<DraftableText
-					id="task-description"
-					label="Description"
-					rows={4}
-					bind:value={description}
-					limit={WORK_LIMITS.description}
-					disabled={busy}
-					onblur={() => saveField('Description')}
-					onchange={() => saveField('Description')}
-				/>
-				<div class="flex flex-col gap-2">
-					<Label for="task-dod">Definition of done</Label>
-					<textarea
-						id="task-dod"
-						bind:value={definitionOfDone}
-						rows="2"
-						maxlength={WORK_LIMITS.definitionOfDone * 2}
-						disabled={busy}
-						placeholder="The goal the agent works to"
-						class={field}
-						onblur={() => saveField('Definition of done')}></textarea>
-					<p class="h-5 text-xs/5 text-fg-muted" role="status" data-testid="saved">{saved}</p>
-				</div>
-
-				<section class="flex flex-col gap-2" aria-labelledby="task-checklist">
-					<h3
-						id="task-checklist"
-						class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase"
-					>
-						Checklist {#if item.checklist.length > 0}<span
-								class="font-normal text-fg-muted tabular-nums"
-								>{s.checklist.done} of {s.checklist.total}</span
-							>{/if}
-					</h3>
-					<ul
-						class="divide-y divide-line-subtle rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line"
-						data-testid="checklist"
-					>
-						{#each item.checklist as step (step.id)}
-							<li class="flex items-center gap-x-3 px-3 py-2 text-sm/6">
-								<Checkbox
-									checked={step.done}
-									disabled={busy || !!step.task_id}
-									aria-label={step.text}
-									onCheckedChange={(on) =>
-										change({ method: 'checklist.check', step_id: step.id, done: on === true })}
-								/>
-								<span
-									class="min-w-0 flex-1 [overflow-wrap:anywhere] {step.done
-										? 'text-fg-muted line-through'
-										: 'text-fg'}">{step.text}</span
-								>
-								{#if step.required}<Badge variant="secondary">Required</Badge>{/if}
-								<button
-									type="button"
-									class="rounded p-1 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-focus"
-									aria-label={`Remove step ${step.text}`}
-									disabled={busy}
-									onclick={() =>
-										change({
-											method: 'checklist.remove',
-											step_id: step.id,
-											expected_version: step.version
-										})}><Trash2 class="size-4" aria-hidden="true" /></button
-								>
-							</li>
-						{:else}
-							<li class="px-3 py-2 text-sm/6 text-fg-muted">No steps yet.</li>
-						{/each}
-					</ul>
-					<form class="flex gap-x-2" onsubmit={addStep}>
-						<Input
-							aria-label="New step"
-							placeholder="Add a step"
-							bind:value={newStep}
-							maxlength={WORK_LIMITS.stepText * 2}
-							disabled={busy}
-							autocomplete="off"
-						/>
-						<label class="flex shrink-0 items-center gap-x-1.5 text-sm/6 text-fg-secondary"
-							><Checkbox bind:checked={newRequired} aria-label="Required" /> Required</label
-						>
+					<div class="mt-2 flex gap-x-2">
 						<Button
-							type="submit"
-							variant="outline"
+							variant="destructive"
+							size="sm"
 							class={actionBtn}
-							disabled={busy || newStep.trim() === ''}>Add step</Button
+							disabled={busy}
+							onclick={remove}>Delete task</Button
 						>
-					</form>
-				</section>
-
-				<p class="text-xs/5 text-fg-muted tabular-nums" data-testid="task-time">
-					{timeBlock(item.time)}
-				</p>
-
-				{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">
-						{error}
-					</p>{/if}
-
-				<div class="border-t border-line pt-4">
-					{#if confirmDelete}
-						<p class="text-sm/6 text-fg-secondary">
-							Delete {taskRef(s)}? Its history stays and its number is never reused.
-						</p>
-						<div class="mt-2 flex gap-x-2">
-							<Button
-								variant="destructive"
-								size="sm"
-								class={actionBtn}
-								disabled={busy}
-								onclick={remove}>Delete task</Button
-							>
-							<Button
-								variant="outline"
-								size="sm"
-								class={actionBtn}
-								onclick={() => (confirmDelete = false)}>Keep</Button
-							>
-						</div>
-					{:else}
 						<Button
 							variant="outline"
 							size="sm"
 							class={actionBtn}
-							onclick={() => (confirmDelete = true)}>Delete…</Button
+							onclick={() => (confirmDelete = false)}>Keep</Button
 						>
-					{/if}
-				</div>
+					</div>
+				{:else}
+					<Button
+						variant="outline"
+						size="sm"
+						class={actionBtn}
+						onclick={() => (confirmDelete = true)}>Delete…</Button
+					>
+				{/if}
 			</div>
-		{:else if error}
-			<p class="px-4 py-4 text-sm/6 text-danger" role="alert">{error}</p>
-		{/if}
-	</SheetContent>
-</Sheet>
+		</div>
+	{:else if error}
+		<p class={['py-4 text-sm/6 text-danger', inline ? 'px-0' : 'px-4']} role="alert">{error}</p>
+	{/if}
+{/snippet}
+
+{#if inline}
+	{#if open}
+		<header class="border-b border-line pb-4">
+			<h2
+				id="work-detail-title"
+				tabindex="-1"
+				class="text-lg/7 font-semibold text-fg [overflow-wrap:anywhere] focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+			>
+				{s ? s.title : 'Task'}
+			</h2>
+			<p class="mt-1 text-sm/6 text-fg-muted">
+				{s ? `Created ${shortDate(s.created_at)} by ${nameOf(snapshot, s.created_by)}` : 'Loading…'}
+			</p>
+			{@render badges()}
+		</header>
+		{@render body()}
+	{/if}
+{:else}
+	<Sheet bind:open>
+		<SheetContent side="right" class="w-full max-w-lg overflow-y-auto">
+			<SheetHeader class="border-b border-line pb-4">
+				<SheetTitle class="[overflow-wrap:anywhere]"
+					>{s ? `${taskRef(s)} · ${s.title}` : 'Task'}</SheetTitle
+				>
+				<SheetDescription
+					>{s
+						? `Created ${shortDate(s.created_at)} by ${nameOf(snapshot, s.created_by)}`
+						: 'Loading…'}</SheetDescription
+				>
+				{@render badges()}
+			</SheetHeader>
+			{@render body()}
+		</SheetContent>
+	</Sheet>
+{/if}
 
 <style>
 	.task-sheet-accent {

@@ -947,3 +947,87 @@ test('Phase 3 Work parity: unified queue header, live search & / shortcut, Filte
 		.toBeGreaterThanOrEqual(44);
 	await page.keyboard.press('Escape');
 });
+
+test('Phase 4B: Work inline split reading panel, focus restore, mobile Back to Work, CmdK # channel jump, and Report masthead simplification', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await visit(page, '/work?theme=graphite&mock=poc');
+
+	// Desktop inline split reading panel side-by-side with Work list
+	await page.locator('[data-filter="all"]').click();
+	const custodyBtn = page.getByRole('button', { name: 'Custody lock fix' });
+	const custodyRow = custodyBtn.locator('xpath=ancestor::*[@data-testid="work-row"]');
+	await custodyBtn.click();
+
+	const workspace = page.locator('.work-workspace');
+	const readingPanel = page.getByTestId('work-reading-panel');
+	await expect(workspace).toHaveClass(/has-work-detail/);
+	await expect(readingPanel).toBeVisible();
+	await expect(readingPanel).toHaveAttribute('role', 'dialog');
+	await expect(readingPanel).toHaveAttribute('aria-modal', 'false');
+	await expect(custodyRow).toHaveAttribute('aria-current', 'true');
+	await expect(readingPanel).toContainText('Custody lock fix');
+	await expect(readingPanel).toContainText('Implementation and unit checks complete');
+	await expect(readingPanel).toHaveCSS('background-color', 'rgb(24, 25, 26)');
+
+	// Verify side-by-side layout on desktop (list column to the left of reading panel)
+	const listBox = (await page.locator('#work-results').boundingBox())!;
+	const panelBox = (await readingPanel.boundingBox())!;
+	expect(listBox.width).toBeGreaterThan(200);
+	expect(panelBox.width).toBeGreaterThanOrEqual(368);
+	expect(panelBox.x).toBeGreaterThanOrEqual(listBox.x + listBox.width - 2);
+
+	// Copy ref button is visible and meets >= 36px hit target
+	const copyRefBtn = readingPanel.getByRole('button', { name: /^Copy / });
+	await expect(copyRefBtn).toBeVisible();
+	expect((await copyRefBtn.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(36);
+
+	// Escape closes inline reading panel and restores focus to triggering row button
+	await page.keyboard.press('Escape');
+	await expect(readingPanel).toBeHidden();
+	await expect(workspace).not.toHaveClass(/has-work-detail/);
+	await expect(custodyBtn).toBeFocused();
+
+	// Below 960px stacks cleanly with Back to Work button (>= 44px) and hides results list while open
+	await page.setViewportSize({ width: 720, height: 900 });
+	await custodyBtn.click();
+	await expect(readingPanel).toBeVisible();
+	await expect(page.locator('#work-results')).toBeHidden();
+	const backBtn = readingPanel.getByRole('button', { name: 'Back to Work' });
+	await expect(backBtn).toBeVisible();
+	expect((await backBtn.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+	await backBtn.click();
+	await expect(readingPanel).toBeHidden();
+	await expect(page.locator('#work-results')).toBeVisible();
+	await expect(custodyBtn).toBeFocused();
+
+	// CmdK `#` channel jump mode surfaces Channels group cleanly and navigates to Chat channel
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.keyboard.press('ControlOrMeta+k');
+	const cmdDialog = page.getByRole('dialog', { name: 'Command palette and Org AI' });
+	await expect(cmdDialog).toBeVisible();
+	await cmdDialog.getByRole('combobox').fill('#');
+	await expect(cmdDialog.getByRole('option', { name: /#general.*Channels/ })).toBeVisible();
+	await cmdDialog.getByRole('combobox').fill('#gen');
+	await expect(cmdDialog.getByRole('option', { name: /#general.*Channels/ })).toBeVisible();
+	await page.keyboard.press('Enter');
+	await expect(cmdDialog).toBeHidden();
+	await expect(page).toHaveURL(/\/chat\?c=c-general$/);
+
+	// Single-key `#` shortcut on /chat opens CmdK directly in `#` channel jump mode
+	await page.locator('main').click({ position: { x: 12, y: 12 } });
+	await page.keyboard.press('#');
+	await expect(cmdDialog).toBeVisible();
+	await expect(cmdDialog.getByRole('combobox')).toHaveValue('#');
+	await expect(cmdDialog.getByRole('option', { name: /#general.*Channels/ })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(cmdDialog).toBeHidden();
+
+	// Report Day & Night masthead simplification: no obsolete EXECUTIVE OPERATIONS BRIEFING ::before banner
+	await visit(page, '/home?theme=report&mock=poc');
+	const reportBefore = await page
+		.locator('.home-brief')
+		.evaluate((el) => getComputedStyle(el, '::before').content);
+	expect(reportBefore === 'none' || reportBefore === 'normal').toBe(true);
+});

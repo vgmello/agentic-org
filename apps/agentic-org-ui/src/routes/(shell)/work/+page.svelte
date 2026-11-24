@@ -21,6 +21,7 @@
 	import RequestSheet from '$lib/components/RequestSheet.svelte';
 	import RequestsPanel from '$lib/components/RequestsPanel.svelte';
 	import TaskSheet from '$lib/components/TaskSheet.svelte';
+	import WorkReadingPanel from '$lib/components/WorkReadingPanel.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { toAppError } from '$lib/office/api';
@@ -95,6 +96,7 @@
 	let requestOpen = $state(false);
 	let newRequestOpen = $state(false);
 	let newTaskOpen = $state(false);
+	let lastTriggerEl: HTMLElement | null = null;
 	const requestsOn = workApi.requests;
 	const defaultTaskProject = $derived((snapshot.projects ?? []).find((p) => !p.archived));
 	const shortcutsEnabled = $derived(singleKeyShortcutsOn());
@@ -314,6 +316,8 @@
 		if (!wanted || items === undefined) return;
 		if (workApi.requests && items.some((i) => i.id === wanted && i.kind === 'request')) {
 			tab = 'requests';
+			taskOpen = false;
+			bugOpen = false;
 			requestId = wanted;
 			requestStart = undefined;
 			requestOpen = true;
@@ -331,6 +335,10 @@
 
 	function pick(next: WorkTab) {
 		tab = next;
+		taskOpen = false;
+		bugOpen = false;
+		requestOpen = false;
+		lastTriggerEl = null;
 		try {
 			window.localStorage.setItem(TAB_KEY(organizationId), next);
 		} catch {
@@ -371,26 +379,23 @@
 		}
 	}
 
-	// Capture unmodified `/` on the Work page to focus inline search without opening global CmdK.
+	// Capture unmodified `/` on Work to focus inline search, and `Escape` to close the inline reading panel.
 	function workShortcuts() {
+		const modalOverlaySelector =
+			'[role="dialog"]:not(.work-reading), [role="menu"], [role="alertdialog"], [role="listbox"]';
 		const listener = (event: KeyboardEvent) => {
-			if (
-				event.defaultPrevented ||
-				event.isComposing ||
-				event.keyCode === 229 ||
-				event.metaKey ||
-				event.ctrlKey ||
-				event.altKey ||
-				event.shiftKey ||
-				event.key !== '/'
-			) {
+			if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+			if (event.key === 'Escape' && hasDetail) {
+				if (event.target === searchInputEl) return;
+				if (document.querySelector(modalOverlaySelector)) return;
+				event.preventDefault();
+				closeDetail(true);
 				return;
 			}
-			if (
-				document.querySelector(
-					'[role="dialog"], [role="menu"], [role="alertdialog"], [role="listbox"]'
-				)
-			) {
+			if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.key !== '/') {
+				return;
+			}
+			if (document.querySelector(modalOverlaySelector)) {
 				return;
 			}
 			if (isEditableTarget(event.target)) return;
@@ -412,13 +417,47 @@
 	}
 
 	function openItem(item: WorkItemSummary) {
+		lastTriggerEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		requestOpen = false;
 		if (item.kind === 'bug') {
+			taskOpen = false;
 			bugId = item.id;
 			bugOpen = true;
 		} else {
+			bugOpen = false;
 			taskId = item.id;
 			taskOpen = true;
 		}
+	}
+
+	function openRequest(id: string, start?: 'route') {
+		lastTriggerEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		taskOpen = false;
+		bugOpen = false;
+		requestId = id;
+		requestStart = start;
+		requestOpen = true;
+	}
+
+	function closeDetail(restoreFocus = true) {
+		const closedId = activeItemId;
+		const trigger = lastTriggerEl;
+		taskOpen = false;
+		bugOpen = false;
+		requestOpen = false;
+		lastTriggerEl = null;
+		if (!restoreFocus) return;
+		void tick().then(() => {
+			if (trigger?.isConnected && trigger.offsetParent !== null) {
+				trigger.focus({ preventScroll: true });
+				return;
+			}
+			if (closedId) {
+				document
+					.querySelector<HTMLElement>(`#work-panel [data-item="${CSS.escape(closedId)}"] button`)
+					?.focus({ preventScroll: true });
+			}
+		});
 	}
 
 	const filters = $derived(savedFilters(tab, me));
@@ -458,7 +497,30 @@
 	const isScopeFiltered = $derived(hasWorkScopeFilters(scope));
 	const displayActive = $derived(grouping !== 'status' || showDividers);
 	const hasActiveFilters = $derived(Boolean(searchQuery.trim() || isScopeFiltered));
-	const activeItemId = $derived(taskOpen ? taskId : bugOpen ? bugId : undefined);
+	const hasDetail = $derived(taskOpen || bugOpen || requestOpen);
+	const activeItemId = $derived(
+		taskOpen ? taskId : bugOpen ? bugId : requestOpen ? requestId : undefined
+	);
+	const activeDetailItem = $derived(
+		activeItemId ? (items ?? []).find((i) => i.id === activeItemId) : undefined
+	);
+	const activeDetailKind = $derived<'Task' | 'Bug' | 'Request'>(
+		bugOpen ? 'Bug' : requestOpen ? 'Request' : 'Task'
+	);
+	const activeDetailRef = $derived(
+		activeDetailItem ? itemRef(activeDetailItem) : bugOpen ? 'BUG' : requestOpen ? 'REQ' : 'TSK'
+	);
+	const activeDetailLabel = $derived(
+		activeDetailItem ? `${activeDetailRef} · ${activeDetailItem.title}` : activeDetailKind
+	);
+	const activeDetailTone = $derived(
+		activeDetailItem && activeDetailItem.kind !== 'request'
+			? workStatusTone(activeDetailItem.kind, activeDetailItem.status)
+			: undefined
+	);
+	const activeDetailAttention = $derived(
+		activeDetailItem ? needsOwnerAttention(activeDetailItem, me) : false
+	);
 	const bugsOf = (projectId: string | undefined) =>
 		(items ?? []).filter((i) => i.kind === 'bug' && i.project_id === projectId);
 	const areasOf = (projectId: string | undefined) =>
@@ -481,8 +543,7 @@
 	<section
 		{@attach workShortcuts}
 		aria-label="Work workspace"
-		data-work-dividers={showDividers ? '' : undefined}
-		class="work-workspace flex min-h-0 w-full flex-col"
+		class="work-shell flex min-h-0 w-full flex-col"
 	>
 		<!-- Unified Inbox-parity header & controls (poc/operations.css .work-header.queue-header) -->
 		<header class="work-header queue-header">
@@ -797,149 +858,272 @@
 			role="tabpanel"
 			aria-labelledby="work-tab-{tab}"
 			tabindex={panelNeedsFocus ? 0 : -1}
-			class="work-body focus-visible:rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+			data-work-dividers={showDividers ? '' : undefined}
+			class={[
+				'work-workspace focus-visible:rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+				hasDetail && 'has-work-detail'
+			]}
 		>
-			{#if loadError}
-				<div class="exec-card flex flex-col items-center gap-3 px-6 py-10 text-center" role="alert">
-					<p class="text-sm/6 font-medium text-danger-text">
-						{tab === 'requests' ? "Can't load requests." : loadError}
-					</p>
-					<Button
-						type="button"
-						variant="outline"
-						class="min-h-9 [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11"
-						onclick={() => void load()}
-					>
-						{tab === 'requests' ? 'Retry' : 'Try again'}
-					</Button>
-				</div>
-			{:else if items === undefined}
-				{#if tab === 'requests'}
-					<ul
-						class="exec-card divide-y divide-line-subtle overflow-hidden"
-						aria-busy="true"
-						aria-label="Loading requests"
-						data-testid="requests-loading"
-					>
-						{#each [0, 1, 2] as n (n)}
-							<li class="flex items-center gap-x-3 px-4 py-3.5">
-								<span class="h-4 w-14 rounded bg-surface-overlay"></span>
-								<span class="h-4 flex-1 rounded bg-surface-overlay"></span>
-								<span class="h-4 w-24 rounded bg-surface-overlay"></span>
-							</li>
-						{/each}
-					</ul>
-				{:else}
+			<div class="work-results-pane">
+				{#if loadError}
 					<div
-						class="exec-card divide-y divide-line-subtle overflow-hidden"
-						role="status"
-						aria-busy="true"
+						class="exec-card flex flex-col items-center gap-3 px-6 py-10 text-center"
+						role="alert"
 					>
-						<p class="px-5 py-4 text-sm/6 text-fg-muted">Loading work…</p>
+						<p class="text-sm/6 font-medium text-danger-text">
+							{tab === 'requests' ? "Can't load requests." : loadError}
+						</p>
+						<Button
+							type="button"
+							variant="outline"
+							class="min-h-9 [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11"
+							onclick={() => void load()}
+						>
+							{tab === 'requests' ? 'Retry' : 'Try again'}
+						</Button>
 					</div>
-				{/if}
-			{:else if tab === 'requests'}
-				{#key organizationId}<RequestsPanel
-						{items}
-						{snapshot}
-						{me}
-						{now}
-						{organizationId}
-						externalQuery={searchQuery}
-						onClearExternalQuery={() => (searchQuery = '')}
-						hideNewButton={true}
-						onopen={(id, start) => ((requestId = id), (requestStart = start), (requestOpen = true))}
-						onnew={() => (newRequestOpen = true)}
-					/>{/key}
-			{:else if (snapshot.projects ?? []).length === 0}
-				<div
-					class="exec-card flex flex-col items-center gap-1.5 px-6 py-14 text-center"
-					data-testid="no-projects"
-				>
-					<p class="text-sm/6 font-semibold text-fg">
-						No projects yet. Work items live in projects.
-					</p>
-				</div>
-			{:else}
-				<div class="work-presets-bar">
-					<nav aria-label="Saved filters" class="work-presets queue-tabs">
-						{#each filters as f (f.id)}
-							{@const n = countOf(scopedPool, f)}
-							<button
-								type="button"
-								aria-pressed={active.id === f.id}
-								data-filter={f.id}
-								onclick={() => ((chosen = true), (filterId = f.id))}
-								class="work-preset"
-							>
-								<span>{f.label}</span>
-								<span class="work-preset-count tabular-nums">{n}</span>
-							</button>
-						{/each}
-					</nav>
-					{#if hasActiveFilters}
-						<div class="work-active-summary">
-							<span class="tabular-nums">{shown.length} shown</span>
-							<button type="button" class="work-reset-link" onclick={clearAllFilters}>
-								Reset filters
-							</button>
+				{:else if items === undefined}
+					{#if tab === 'requests'}
+						<ul
+							class="exec-card divide-y divide-line-subtle overflow-hidden"
+							aria-busy="true"
+							aria-label="Loading requests"
+							data-testid="requests-loading"
+						>
+							{#each [0, 1, 2] as n (n)}
+								<li class="flex items-center gap-x-3 px-4 py-3.5">
+									<span class="h-4 w-14 rounded bg-surface-overlay"></span>
+									<span class="h-4 flex-1 rounded bg-surface-overlay"></span>
+									<span class="h-4 w-24 rounded bg-surface-overlay"></span>
+								</li>
+							{/each}
+						</ul>
+					{:else}
+						<div
+							class="exec-card divide-y divide-line-subtle overflow-hidden"
+							role="status"
+							aria-busy="true"
+						>
+							<p class="px-5 py-4 text-sm/6 text-fg-muted">Loading work…</p>
 						</div>
 					{/if}
-				</div>
-
-				<div id="work-results" class="work-results">
-					{#if shown.length === 0}
-						<div
-							class="exec-card flex flex-col items-center gap-2.5 px-6 py-14 text-center"
-							data-testid="no-match"
-						>
-							<p class="text-sm/6 font-medium text-fg-muted">
-								{hasActiveFilters ? 'No work matches these filters.' : 'Nothing here.'}
-							</p>
-							{#if hasActiveFilters}
-								<Button
+				{:else if tab === 'requests'}
+					{#key organizationId}<RequestsPanel
+							{items}
+							{snapshot}
+							{me}
+							{now}
+							{organizationId}
+							externalQuery={searchQuery}
+							onClearExternalQuery={() => (searchQuery = '')}
+							hideNewButton={true}
+							onopen={openRequest}
+							onnew={() => (newRequestOpen = true)}
+						/>{/key}
+				{:else if (snapshot.projects ?? []).length === 0}
+					<div
+						class="exec-card flex flex-col items-center gap-1.5 px-6 py-14 text-center"
+						data-testid="no-projects"
+					>
+						<p class="text-sm/6 font-semibold text-fg">
+							No projects yet. Work items live in projects.
+						</p>
+					</div>
+				{:else}
+					<div class="work-presets-bar">
+						<nav aria-label="Saved filters" class="work-presets queue-tabs">
+							{#each filters as f (f.id)}
+								{@const n = countOf(scopedPool, f)}
+								<button
 									type="button"
-									variant="outline"
-									size="sm"
-									class="min-h-9 [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11"
-									onclick={clearAllFilters}
+									aria-pressed={active.id === f.id}
+									data-filter={f.id}
+									onclick={() => ((chosen = true), (filterId = f.id))}
+									class="work-preset"
 								>
+									<span>{f.label}</span>
+									<span class="work-preset-count tabular-nums">{n}</span>
+								</button>
+							{/each}
+						</nav>
+						{#if hasActiveFilters}
+							<div class="work-active-summary">
+								<span class="tabular-nums">{shown.length} shown</span>
+								<button type="button" class="work-reset-link" onclick={clearAllFilters}>
 									Reset filters
-								</Button>
-							{/if}
-						</div>
-					{:else if layout === 'board'}
-						<div class="work-board" data-testid="work-board">
-							{#each boardColumns as col (col.status)}
-								<section
-									class="work-bcol"
-									data-status={col.status}
-									aria-label="{col.label} ({col.items.length})"
-								>
-									<h2 class="work-bcol-head">
-										<span class="work-bcol-title">
-											<span class="work-status" data-tone={col.tone} aria-hidden="true">
-												{#if col.tone === 'done'}
-													<CheckCircle2 class="size-3.5" />
-												{:else if col.tone === 'blocked'}
-													<PauseCircle class="size-3.5" />
-												{:else if col.tone === 'review'}
-													<FileCheck2 class="size-3.5" />
-												{:else}
-													<span class="work-status-ring"></span>
-												{/if}
+								</button>
+							</div>
+						{/if}
+					</div>
+
+					<div id="work-results" class="work-results">
+						{#if shown.length === 0}
+							<div
+								class="exec-card flex flex-col items-center gap-2.5 px-6 py-14 text-center"
+								data-testid="no-match"
+							>
+								<p class="text-sm/6 font-medium text-fg-muted">
+									{hasActiveFilters ? 'No work matches these filters.' : 'Nothing here.'}
+								</p>
+								{#if hasActiveFilters}
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										class="min-h-9 [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11"
+										onclick={clearAllFilters}
+									>
+										Reset filters
+									</Button>
+								{/if}
+							</div>
+						{:else if layout === 'board'}
+							<div class="work-board" data-testid="work-board">
+								{#each boardColumns as col (col.status)}
+									<section
+										class="work-bcol"
+										data-status={col.status}
+										aria-label="{col.label} ({col.items.length})"
+									>
+										<h2 class="work-bcol-head">
+											<span class="work-bcol-title">
+												<span class="work-status" data-tone={col.tone} aria-hidden="true">
+													{#if col.tone === 'done'}
+														<CheckCircle2 class="size-3.5" />
+													{:else if col.tone === 'blocked'}
+														<PauseCircle class="size-3.5" />
+													{:else if col.tone === 'review'}
+														<FileCheck2 class="size-3.5" />
+													{:else}
+														<span class="work-status-ring"></span>
+													{/if}
+												</span>
+												<span>{col.label}</span>
 											</span>
-											<span>{col.label}</span>
-										</span>
-										<span class="work-group-cnt tabular-nums">{col.items.length}</span>
-									</h2>
-									{#if col.items.length === 0}
-										<p class="work-bcol-empty">No items</p>
-									{:else}
-										<ul class="work-bcol-list" role="list">
-											{#each col.items as item (item.id)}
+											<span class="work-group-cnt tabular-nums">{col.items.length}</span>
+										</h2>
+										{#if col.items.length === 0}
+											<p class="work-bcol-empty">No items</p>
+										{:else}
+											<ul class="work-bcol-list" role="list">
+												{#each col.items as item (item.id)}
+													{@const refText = itemRef(item)}
+													{@const attention = needsOwnerAttention(item, me)}
+													{@const prioWord = priorityWord(item.priority)}
+													{@const sevWord =
+														item.kind === 'bug' ? severityWord(item.severity) : undefined}
+													{@const sevTone =
+														item.kind === 'bug' ? severityTone(item.severity) : 'neutral'}
+													{@const dotTone = projectDotTone(item.project_id)}
+													{@const assigneeName = nameOf(snapshot, item.assignee_id)}
+													{@const checkComplete =
+														item.checklist.total > 0 && item.checklist.done >= item.checklist.total}
+													<li>
+														<div
+															class="work-bcard"
+															data-testid="work-card"
+															data-item={item.id}
+															data-dot={dotTone}
+															aria-current={activeItemId === item.id ? 'true' : undefined}
+														>
+															<button
+																type="button"
+																class="work-bcard-title"
+																onclick={() => openItem(item)}
+															>
+																{item.title}
+															</button>
+															<div class="work-bcard-meta">
+																<span class="work-ref">{refText}</span>
+																<span class="work-team" data-testid="work-project"
+																	><span class="min-w-0 [overflow-wrap:anywhere]"
+																		>{projectName(item.project_id)}</span
+																	></span
+																>
+																{#if item.kind === 'bug' && sevWord}
+																	<span
+																		class={[
+																			'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-medium',
+																			pillToneClass(sevTone)
+																		]}>{sevWord}</span
+																	>
+																{:else if prioWord}
+																	<span
+																		class={[
+																			'work-prio-pill inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4',
+																			item.priority === 'urgent'
+																				? 'is-urgent font-semibold'
+																				: 'font-medium'
+																		]}>{prioWord}</span
+																	>
+																{/if}
+															</div>
+															<div class="work-bcard-foot">
+																<span class="work-owner">
+																	<span class="work-owner-av" aria-hidden="true"
+																		>{assigneeInitials(assigneeName)}</span
+																	>
+																	<span>{assigneeName}</span>
+																</span>
+																{#if item.checklist.total > 0}
+																	<span
+																		class={['work-criteria', checkComplete && 'is-complete']}
+																		title="{item.checklist.done} of {item.checklist
+																			.total} steps done"
+																	>
+																		{item.checklist.done}/{item.checklist.total}
+																	</span>
+																{/if}
+																{#if attention}
+																	<span
+																		class="t-amber inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold"
+																	>
+																		Needs you
+																	</span>
+																{/if}
+															</div>
+														</div>
+													</li>
+												{/each}
+											</ul>
+										{/if}
+									</section>
+								{/each}
+							</div>
+						{:else}
+							<div
+								class="work-items"
+								data-testid="work-list"
+								data-work-dividers={showDividers ? '' : undefined}
+							>
+								{#each groups as group (group.key)}
+									<section class="work-group" aria-label="{group.label} ({group.items.length})">
+										<h2 class="work-group-title" data-dot={group.dotTone}>
+											{#if group.tone}
+												<span class="work-status" data-tone={group.tone} aria-hidden="true">
+													{#if group.tone === 'done'}
+														<CheckCircle2 class="size-3.5" />
+													{:else if group.tone === 'blocked'}
+														<PauseCircle class="size-3.5" />
+													{:else if group.tone === 'review'}
+														<FileCheck2 class="size-3.5" />
+													{:else}
+														<span class="work-status-ring"></span>
+													{/if}
+												</span>
+											{:else if group.dotTone}
+												<span class="work-group-dot" aria-hidden="true"></span>
+											{/if}
+											<span>{group.label}</span>
+											<span class="work-group-cnt tabular-nums">{group.items.length}</span>
+										</h2>
+										<ul class="work-list" role="list">
+											{#each group.items as item (item.id)}
 												{@const refText = itemRef(item)}
+												{@const ringTone = workStatusTone(item.kind, item.status)}
+												{@const statLabel = workStatusLabel(item.kind, item.status)}
 												{@const attention = needsOwnerAttention(item, me)}
+												{@const meter = priorityMeter(item.priority)}
 												{@const prioWord = priorityWord(item.priority)}
 												{@const sevWord =
 													item.kind === 'bug' ? severityWord(item.severity) : undefined}
@@ -949,28 +1133,74 @@
 												{@const assigneeName = nameOf(snapshot, item.assignee_id)}
 												{@const checkComplete =
 													item.checklist.total > 0 && item.checklist.done >= item.checklist.total}
-												<li>
+												<li class="work-item">
 													<div
-														class="work-bcard"
-														data-testid="work-card"
+														class="work-row"
+														data-testid="work-row"
 														data-item={item.id}
 														data-dot={dotTone}
 														aria-current={activeItemId === item.id ? 'true' : undefined}
 													>
-														<button
-															type="button"
-															class="work-bcard-title"
-															onclick={() => openItem(item)}
-														>
-															{item.title}
-														</button>
-														<div class="work-bcard-meta">
-															<span class="work-ref">{refText}</span>
-															<span class="work-team" data-testid="work-project"
-																><span class="min-w-0 [overflow-wrap:anywhere]"
-																	>{projectName(item.project_id)}</span
-																></span
-															>
+														<div class="work-summary">
+															<span class="work-ident">
+																{#if item.kind === 'task'}
+																	{#if meter}
+																		<span
+																			class="work-priority-mark"
+																			data-level={meter.level}
+																			data-tone={meter.tone}
+																			role="img"
+																			aria-label={meter.label}
+																			title={meter.label}
+																		>
+																			<span></span><span></span><span></span>
+																		</span>
+																	{:else}
+																		<span class="work-priority-spacer" aria-hidden="true"></span>
+																	{/if}
+																{/if}
+																<span class="work-ref">{refText}</span>
+															</span>
+															<span class="work-heading">
+																<span class="work-markers">
+																	<span
+																		class="work-status"
+																		data-tone={ringTone}
+																		data-attention={attention ? '' : undefined}
+																		role="img"
+																		aria-label={attention ? `${statLabel}, needs you` : statLabel}
+																		title={attention ? `${statLabel} · Needs you` : statLabel}
+																	>
+																		{#if ringTone === 'done'}
+																			<CheckCircle2 class="size-3.5" aria-hidden="true" />
+																		{:else if ringTone === 'blocked'}
+																			<PauseCircle class="size-3.5" aria-hidden="true" />
+																		{:else if ringTone === 'review'}
+																			<FileCheck2 class="size-3.5" aria-hidden="true" />
+																		{:else}
+																			<span class="work-status-ring" aria-hidden="true"></span>
+																		{/if}
+																	</span>
+																	{#if item.checklist.total > 0}
+																		<span
+																			class={['work-criteria', checkComplete && 'is-complete']}
+																			title="{item.checklist.done} of {item.checklist
+																				.total} steps done"
+																		>
+																			{item.checklist.done}/{item.checklist.total}
+																		</span>
+																	{/if}
+																</span>
+																<button
+																	type="button"
+																	class="work-title rounded-sm text-left text-fg"
+																	onclick={() => openItem(item)}
+																>
+																	{item.title}
+																</button>
+															</span>
+														</div>
+														<div class="work-facts">
 															{#if item.kind === 'bug' && sevWord}
 																<span
 																	class={[
@@ -988,187 +1218,78 @@
 																	]}>{prioWord}</span
 																>
 															{/if}
-														</div>
-														<div class="work-bcard-foot">
+															<span class="work-team" data-testid="work-project"
+																><span class="min-w-0 [overflow-wrap:anywhere]"
+																	>{projectName(item.project_id)}</span
+																></span
+															>
 															<span class="work-owner">
 																<span class="work-owner-av" aria-hidden="true"
 																	>{assigneeInitials(assigneeName)}</span
 																>
 																<span>{assigneeName}</span>
 															</span>
-															{#if item.checklist.total > 0}
-																<span
-																	class={['work-criteria', checkComplete && 'is-complete']}
-																	title="{item.checklist.done} of {item.checklist.total} steps done"
-																>
-																	{item.checklist.done}/{item.checklist.total}
-																</span>
-															{/if}
-															{#if attention}
-																<span
-																	class="t-amber inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold"
-																>
-																	Needs you
-																</span>
-															{/if}
 														</div>
 													</div>
 												</li>
 											{/each}
 										</ul>
-									{/if}
-								</section>
-							{/each}
-						</div>
-					{:else}
-						<div
-							class="work-items"
-							data-testid="work-list"
-							data-work-dividers={showDividers ? '' : undefined}
-						>
-							{#each groups as group (group.key)}
-								<section class="work-group" aria-label="{group.label} ({group.items.length})">
-									<h2 class="work-group-title" data-dot={group.dotTone}>
-										{#if group.tone}
-											<span class="work-status" data-tone={group.tone} aria-hidden="true">
-												{#if group.tone === 'done'}
-													<CheckCircle2 class="size-3.5" />
-												{:else if group.tone === 'blocked'}
-													<PauseCircle class="size-3.5" />
-												{:else if group.tone === 'review'}
-													<FileCheck2 class="size-3.5" />
-												{:else}
-													<span class="work-status-ring"></span>
-												{/if}
-											</span>
-										{:else if group.dotTone}
-											<span class="work-group-dot" aria-hidden="true"></span>
-										{/if}
-										<span>{group.label}</span>
-										<span class="work-group-cnt tabular-nums">{group.items.length}</span>
-									</h2>
-									<ul class="work-list" role="list">
-										{#each group.items as item (item.id)}
-											{@const refText = itemRef(item)}
-											{@const ringTone = workStatusTone(item.kind, item.status)}
-											{@const statLabel = workStatusLabel(item.kind, item.status)}
-											{@const attention = needsOwnerAttention(item, me)}
-											{@const meter = priorityMeter(item.priority)}
-											{@const prioWord = priorityWord(item.priority)}
-											{@const sevWord =
-												item.kind === 'bug' ? severityWord(item.severity) : undefined}
-											{@const sevTone =
-												item.kind === 'bug' ? severityTone(item.severity) : 'neutral'}
-											{@const dotTone = projectDotTone(item.project_id)}
-											{@const assigneeName = nameOf(snapshot, item.assignee_id)}
-											{@const checkComplete =
-												item.checklist.total > 0 && item.checklist.done >= item.checklist.total}
-											<li class="work-item">
-												<div
-													class="work-row"
-													data-testid="work-row"
-													data-item={item.id}
-													data-dot={dotTone}
-													aria-current={activeItemId === item.id ? 'true' : undefined}
-												>
-													<div class="work-summary">
-														<span class="work-ident">
-															{#if item.kind === 'task'}
-																{#if meter}
-																	<span
-																		class="work-priority-mark"
-																		data-level={meter.level}
-																		data-tone={meter.tone}
-																		role="img"
-																		aria-label={meter.label}
-																		title={meter.label}
-																	>
-																		<span></span><span></span><span></span>
-																	</span>
-																{:else}
-																	<span class="work-priority-spacer" aria-hidden="true"></span>
-																{/if}
-															{/if}
-															<span class="work-ref">{refText}</span>
-														</span>
-														<span class="work-heading">
-															<span class="work-markers">
-																<span
-																	class="work-status"
-																	data-tone={ringTone}
-																	data-attention={attention ? '' : undefined}
-																	role="img"
-																	aria-label={attention ? `${statLabel}, needs you` : statLabel}
-																	title={attention ? `${statLabel} · Needs you` : statLabel}
-																>
-																	{#if ringTone === 'done'}
-																		<CheckCircle2 class="size-3.5" aria-hidden="true" />
-																	{:else if ringTone === 'blocked'}
-																		<PauseCircle class="size-3.5" aria-hidden="true" />
-																	{:else if ringTone === 'review'}
-																		<FileCheck2 class="size-3.5" aria-hidden="true" />
-																	{:else}
-																		<span class="work-status-ring" aria-hidden="true"></span>
-																	{/if}
-																</span>
-																{#if item.checklist.total > 0}
-																	<span
-																		class={['work-criteria', checkComplete && 'is-complete']}
-																		title="{item.checklist.done} of {item.checklist
-																			.total} steps done"
-																	>
-																		{item.checklist.done}/{item.checklist.total}
-																	</span>
-																{/if}
-															</span>
-															<button
-																type="button"
-																class="work-title rounded-sm text-left text-fg"
-																onclick={() => openItem(item)}
-															>
-																{item.title}
-															</button>
-														</span>
-													</div>
-													<div class="work-facts">
-														{#if item.kind === 'bug' && sevWord}
-															<span
-																class={[
-																	'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-medium',
-																	pillToneClass(sevTone)
-																]}>{sevWord}</span
-															>
-														{:else if prioWord}
-															<span
-																class={[
-																	'work-prio-pill inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4',
-																	item.priority === 'urgent'
-																		? 'is-urgent font-semibold'
-																		: 'font-medium'
-																]}>{prioWord}</span
-															>
-														{/if}
-														<span class="work-team" data-testid="work-project"
-															><span class="min-w-0 [overflow-wrap:anywhere]"
-																>{projectName(item.project_id)}</span
-															></span
-														>
-														<span class="work-owner">
-															<span class="work-owner-av" aria-hidden="true"
-																>{assigneeInitials(assigneeName)}</span
-															>
-															<span>{assigneeName}</span>
-														</span>
-													</div>
-												</div>
-											</li>
-										{/each}
-									</ul>
-								</section>
-							{/each}
-						</div>
+									</section>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
+			</div>
+
+			{#if hasDetail && activeItemId}
+				<WorkReadingPanel
+					itemId={activeItemId}
+					refLabel={activeDetailRef}
+					kindLabel={activeDetailKind}
+					ariaLabel={activeDetailLabel}
+					statusTone={activeDetailTone}
+					needsAttention={activeDetailAttention}
+					onclose={() => closeDetail(true)}
+				>
+					{#if requestOpen}
+						<RequestSheet
+							bind:open={requestOpen}
+							inline={true}
+							{organizationId}
+							{requestId}
+							start={requestStart}
+							{snapshot}
+							{me}
+							items={items ?? []}
+							{send}
+							onchanged={(message) => (message && toast.success(message), void load())}
+						/>
+					{:else if bugOpen}
+						<BugSheet
+							bind:open={bugOpen}
+							inline={true}
+							{organizationId}
+							{bugId}
+							{snapshot}
+							areas={areasOf(bugProject)}
+							bugs={bugsOf(bugProject)}
+							items={items ?? []}
+							{send}
+							onchanged={() => void load()}
+						/>
+					{:else if taskOpen}
+						<TaskSheet
+							bind:open={taskOpen}
+							inline={true}
+							{organizationId}
+							{taskId}
+							{snapshot}
+							{send}
+							onchanged={() => void load()}
+						/>
 					{/if}
-				</div>
+				</WorkReadingPanel>
 			{/if}
 		</div>
 	</section>
@@ -1200,46 +1321,16 @@
 	)}
 	onadded={(ref) => (toast.success(`Added to ${ref}.`), void load())}
 />
-<RequestSheet
-	bind:open={requestOpen}
-	{organizationId}
-	{requestId}
-	start={requestStart}
-	{snapshot}
-	{me}
-	items={items ?? []}
-	{send}
-	onchanged={(message) => (message && toast.success(message), void load())}
-/>
-<TaskSheet
-	bind:open={taskOpen}
-	{organizationId}
-	{taskId}
-	{snapshot}
-	{send}
-	onchanged={() => void load()}
-/>
-<BugSheet
-	bind:open={bugOpen}
-	{organizationId}
-	{bugId}
-	{snapshot}
-	areas={areasOf(bugProject)}
-	bugs={bugsOf(bugProject)}
-	items={items ?? []}
-	{send}
-	onchanged={() => void load()}
-/>
 
 <style>
-	.work-workspace {
+	.work-shell {
 		--work-gutter: 24px;
 		--work-control-height: 36px;
 		min-width: 0;
 		min-height: 29rem;
 	}
 	@media (max-width: 720px), (pointer: coarse) {
-		.work-workspace {
+		.work-shell {
 			--work-gutter: 16px;
 			--work-control-height: 44px;
 		}
@@ -1562,13 +1653,47 @@
 		}
 	}
 
-	/* Body & saved filter presets row */
-	.work-body {
+	/* Body, split reading panel & saved filter presets row (poc/operations.css f1db7133, 0e3ec0ed) */
+	.work-workspace {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		flex: 1 1 auto;
+	}
+	.work-results-pane {
 		display: flex;
 		flex-direction: column;
 		gap: 14px;
 		min-width: 0;
 		padding: 14px var(--work-gutter) 40px;
+	}
+	@media (min-width: 960px) {
+		.work-workspace.has-work-detail {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) clamp(23rem, 46%, 45rem);
+			grid-template-rows: minmax(0, 1fr);
+			flex: 1 1 auto;
+			min-height: 16rem;
+			height: max(28rem, calc(100dvh - var(--exec-topbar-height, 68px) - 7.75rem));
+		}
+		.work-workspace.has-work-detail .work-results-pane {
+			overflow-y: auto;
+			overscroll-behavior-y: contain;
+			min-height: 0;
+		}
+		.work-workspace.has-work-detail :global(.work-reading) {
+			border-inline-start: 1px solid var(--exec-border);
+			overflow-x: hidden;
+			min-height: 0;
+		}
+	}
+	@media (max-width: 959px) {
+		.work-workspace.has-work-detail .work-results-pane {
+			display: none;
+		}
+		.work-shell:has(.work-workspace.has-work-detail) .work-toolbar {
+			display: none;
+		}
 	}
 	.work-presets-bar {
 		display: flex;

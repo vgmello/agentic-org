@@ -237,6 +237,15 @@ html[data-ui-theme='report-dark'] {
 	--work-selected-bar: #a5b4fc;
 }
 
+html[data-ui-theme='report-dark'] .work-reading {
+	background: #1e2939;
+	border-inline-start-color: var(--report-rule);
+}
+
+html[data-ui-theme='report-dark'] .work-reading .work-kind {
+	border-inline-start-color: rgba(255, 255, 255, 0.16);
+}
+
 /* Separate the workspace command dialog from the dark page behind it (poc/v6.html ffe0e0ce) */
 html[data-ui-theme='report-dark'] .exec-cmdk-dialog {
 	background-color: #182230;

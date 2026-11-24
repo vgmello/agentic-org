@@ -5,6 +5,7 @@
 	import { page } from '$app/state';
 	import Clock from '@lucide/svelte/icons/clock';
 	import Folder from '@lucide/svelte/icons/folder';
+	import Hash from '@lucide/svelte/icons/hash';
 	import Inbox from '@lucide/svelte/icons/inbox';
 	import Search from '@lucide/svelte/icons/search';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
@@ -49,11 +50,68 @@
 		'inline-flex h-[22px] items-center justify-center rounded-md bg-[var(--exec-well)] px-[7px] text-[0.7rem] font-semibold text-[var(--exec-muted)] shadow-[inset_0_0_0_1px_var(--exec-border)]';
 
 	const isHome = $derived(page.url.pathname === '/home');
+	const isChat = $derived(page.url.pathname === '/chat' || page.url.pathname.startsWith('/chat/'));
+
+	function channelSlug(value: string): string {
+		return value
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-+|-+$/g, '');
+	}
+
+	const channelEntries = $derived.by<CommandEntry[]>(() => {
+		const channels: CommandEntry[] = [
+			{
+				id: 'chan-c-general',
+				group: 'Channels',
+				label: '#general',
+				sub: 'Organization channel',
+				keywords: 'general organization all chat',
+				href: '/chat?c=c-general'
+			}
+		];
+		if (!snapshot) return channels;
+		const usedNames: Record<string, true> = { general: true };
+		const takeName = (raw: string, fallbackKind: 'project' | 'team') => {
+			let name = raw || 'channel';
+			if (usedNames[name]) {
+				const base = `${name}-${fallbackKind}`;
+				name = base;
+				for (let n = 2; usedNames[name]; n++) name = `${base}-${n}`;
+			}
+			usedNames[name] = true;
+			return name;
+		};
+		for (const p of (snapshot.projects ?? []).filter((x) => !x.archived)) {
+			const name = takeName(channelSlug(p.name) || channelSlug(p.key ?? ''), 'project');
+			channels.push({
+				id: `chan-c-project-${p.id}`,
+				group: 'Channels',
+				label: `#${name}`,
+				sub: `Project channel · ${p.name}`,
+				keywords: `${p.id} ${p.name} ${p.key ?? ''} ${name}`,
+				href: `/chat?c=${encodeURIComponent(`c-project-${p.id}`)}`
+			});
+		}
+		for (const t of snapshot.teams ?? []) {
+			const name = takeName(channelSlug(t.name), 'team');
+			channels.push({
+				id: `chan-c-team-${t.id}`,
+				group: 'Channels',
+				label: `#${name}`,
+				sub: `Team channel · ${t.name}`,
+				keywords: `${t.id} ${t.name} ${name}`,
+				href: `/chat?c=${encodeURIComponent(`c-team-${t.id}`)}`
+			});
+		}
+		return channels;
+	});
 
 	let open = $state(false);
 	let inlineOpen = $state(false);
 	let mode = $state<'cmd' | 'ai'>('cmd');
 	let query = $state('');
+	const isChannelQuery = $derived(query.trimStart().startsWith('#'));
 	let activeIdx = $state(0);
 	let aiHistory = $state<OrgAiAnswer[]>([]);
 	let inputEl = $state<HTMLInputElement | null>(null);
@@ -70,6 +128,16 @@
 
 	const entries = $derived.by<CommandEntry[]>(() => {
 		const trimmed = query.trim();
+		if (trimmed.startsWith('#')) {
+			const cq = trimmed.slice(1).trim().toLowerCase();
+			if (!cq) return channelEntries;
+			return channelEntries.filter(
+				(e) =>
+					e.label.toLowerCase().includes(cq) ||
+					e.sub.toLowerCase().includes(cq) ||
+					(e.keywords ? e.keywords.toLowerCase().includes(cq) : false)
+			);
+		}
 		const q = trimmed.toLowerCase();
 		const list: CommandEntry[] = [
 			{
@@ -199,7 +267,8 @@
 		}
 
 		if (!q) return list.slice(0, 15);
-		const allMatched = list.filter(
+		const searchable = isChat ? [...channelEntries, ...list] : [...list, ...channelEntries];
+		const allMatched = searchable.filter(
 			(e) =>
 				e.label.toLowerCase().includes(q) ||
 				e.sub.toLowerCase().includes(q) ||
@@ -277,12 +346,17 @@
 	}
 
 	function openModalWithQuery(nextMode: 'cmd' | 'ai', nextQuery: string) {
+		closeInline(false);
 		skipRestoreFocus = false;
 		query = nextQuery;
 		mode = nextMode;
 		open = true;
 		activeIdx = 0;
-		void tick().then(() => inputEl?.focus());
+		void tick().then(() => {
+			if (!inputEl) return;
+			inputEl.focus();
+			inputEl.setSelectionRange(nextQuery.length, nextQuery.length);
+		});
 	}
 
 	function closeModal(restoreFocus = true) {
@@ -370,6 +444,34 @@
 			}
 			return;
 		}
+		const overlayOpen =
+			Boolean(
+				document.querySelector(
+					'[role="menu"], [role="dialog"]:not(.work-reading), [role="alertdialog"], [role="listbox"]'
+				)
+			) ||
+			(event.target instanceof HTMLElement &&
+				Boolean(
+					event.target.closest(
+						'[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"]'
+					)
+				));
+		const altGr = event.ctrlKey && event.altKey && !event.metaKey;
+		if (
+			!open &&
+			isChat &&
+			singleKeyShortcutsOn() &&
+			event.key === '#' &&
+			!event.repeat &&
+			!event.metaKey &&
+			(altGr || (!event.ctrlKey && !event.altKey)) &&
+			!isEditableTarget(event.target) &&
+			!overlayOpen
+		) {
+			event.preventDefault();
+			openModalWithQuery('cmd', '#');
+			return;
+		}
 		if (
 			!open &&
 			singleKeyShortcutsOn() &&
@@ -380,14 +482,7 @@
 			!event.altKey &&
 			!event.shiftKey &&
 			!isEditableTarget(event.target) &&
-			!(
-				event.target instanceof HTMLElement &&
-				Boolean(
-					event.target.closest(
-						'[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"]'
-					)
-				)
-			)
+			!overlayOpen
 		) {
 			event.preventDefault();
 			if (isHome) openInline();
@@ -538,9 +633,11 @@
 					{#if entries.length === 0}
 						<div class="flex flex-col items-center gap-2 py-6 text-center">
 							<p class="text-sm text-[var(--exec-muted)]">
-								No matches for “{query}”.
+								{isChannelQuery
+									? `No channels matching “${query.trim()}”.`
+									: `No matches for “${query}”.`}
 							</p>
-							{#if query.trim()}
+							{#if query.trim() && !isChannelQuery}
 								<button
 									type="button"
 									onmousedown={(e) => e.preventDefault()}
@@ -575,7 +672,9 @@
 											idx === safeActiveIdx && 'is-active'
 										]}
 									>
-										{#if entry.group === 'Projects'}
+										{#if entry.group === 'Channels'}
+											<Hash class="size-4 shrink-0" aria-hidden="true" />
+										{:else if entry.group === 'Projects'}
 											<Folder class="size-4 shrink-0" aria-hidden="true" />
 										{:else if entry.group === 'Team'}
 											<Users class="size-4 shrink-0" aria-hidden="true" />
@@ -627,6 +726,9 @@
 		onOpenAutoFocus={(event) => {
 			event.preventDefault();
 			inputEl?.focus();
+			if (inputEl && query.length > 0) {
+				inputEl.setSelectionRange(query.length, query.length);
+			}
 		}}
 		onCloseAutoFocus={(event) => {
 			if (skipRestoreFocus) {
@@ -719,7 +821,9 @@
 			{#if mode === 'cmd'}
 				{#if entries.length === 0}
 					<p class="py-8 text-center text-sm text-[var(--exec-muted)]">
-						No matches for “{query}”. Switch to Ask Org AI for a live summary.
+						{isChannelQuery
+							? `No channels matching “${query.trim()}”.`
+							: `No matches for “${query}”. Switch to Ask Org AI for a live summary.`}
 					</p>
 				{:else}
 					<ul
@@ -743,7 +847,9 @@
 										idx === safeActiveIdx && 'is-active'
 									]}
 								>
-									{#if entry.group === 'Projects'}
+									{#if entry.group === 'Channels'}
+										<Hash class="size-4 shrink-0" aria-hidden="true" />
+									{:else if entry.group === 'Projects'}
 										<Folder class="size-4 shrink-0" aria-hidden="true" />
 									{:else if entry.group === 'Team'}
 										<Users class="size-4 shrink-0" aria-hidden="true" />

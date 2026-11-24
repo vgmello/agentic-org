@@ -385,6 +385,21 @@ html[data-ui-theme='graphite']:has(.work-header) .work-bcard[aria-current='true'
 		inset 0 0 0 1px var(--exec-border-hi);
 }
 
+html[data-ui-theme='graphite']:has(.work-header) .work-reading {
+	background: #18191a;
+	border-inline-start-color: var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-reading .work-kind {
+	border-inline-start-color: var(--graphite-inbox-line);
+}
+
+@media (min-width: 960px) {
+	html[data-ui-theme='graphite']:has(.work-header) .work-reading {
+		box-shadow: inset 9px 0 12px -10px rgb(0 0 0 / 0.7);
+	}
+}
+
 html[data-ui-theme='graphite']:has(.triage-workspace) .triage-page {
 	padding: 0;
 }
