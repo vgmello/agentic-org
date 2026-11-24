@@ -105,26 +105,26 @@
 					!(item.kind === 'task' && (item.resolution === 'cancelled' || item.status === 'closed'))
 			);
 			if (items.length > 0) {
-				const merged = items.filter((item) => isItemDone(item)).length;
+				const finished = items.filter((item) => isItemDone(item)).length;
 				const total = items.length;
 				const pct =
-					merged <= 0
+					finished <= 0
 						? 0
-						: merged >= total
+						: finished >= total
 							? 100
-							: Math.min(99, Math.round((merged * 100) / total));
-				return { merged, total, pct, scopeLabel: 'Project readiness' };
+							: Math.min(99, Math.round((finished * 100) / total));
+				return { finished, total, pct, scopeLabel: 'Project readiness' };
 			}
 		}
 		const total = countedTasks(fallbackTasks);
-		const merged = fallbackTasks.done;
+		const finished = fallbackTasks.done;
 		const pct =
-			total <= 0 || merged <= 0
+			total <= 0 || finished <= 0
 				? 0
-				: merged >= total
+				: finished >= total
 					? 100
-					: Math.min(99, Math.round((merged * 100) / total));
-		return { merged, total, pct, scopeLabel: 'Project readiness' };
+					: Math.min(99, Math.round((finished * 100) / total));
+		return { finished, total, pct, scopeLabel: 'Project readiness' };
 	});
 
 	interface GatePill {
@@ -191,7 +191,7 @@
 		<div class="assembly-release-readiness">
 			<p class="assembly-release-label" data-testid="project-release-readiness">
 				{#if readiness.total > 0}
-					{readiness.scopeLabel} {readiness.pct}% · {readiness.merged}/{readiness.total} merged
+					{readiness.scopeLabel} {readiness.pct}% · {readiness.finished}/{readiness.total} finished
 				{:else}
 					No delivery items recorded yet
 				{/if}
@@ -199,9 +199,9 @@
 			<progress
 				class={[
 					'assembly-progress-bar',
-					readiness.total > 0 && readiness.merged >= readiness.total && 'is-complete'
+					readiness.total > 0 && readiness.pct >= 100 && 'is-complete'
 				]}
-				value={readiness.merged}
+				value={readiness.finished}
 				max={Math.max(1, readiness.total)}
 				aria-label="{readiness.scopeLabel}: {readiness.pct}%"
 			></progress>

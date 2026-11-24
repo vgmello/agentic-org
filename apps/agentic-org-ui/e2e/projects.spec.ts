@@ -598,12 +598,12 @@ test('Phase 7 (5da47e1d + 53728c05): Project Release strip, More menu, Project A
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await open(page, '/projects/beacon?theme=classic');
 
-	// Release readiness strip on Overview + More menu (Beacon active R-2 has 2 open tasks -> 0% · 0/2 merged)
+	// Release readiness strip on Overview + More menu (Beacon active R-2 union: M-1 has 1 done + 2 open -> 33% · 1/3 finished)
 	const releaseStrip = page.getByTestId('project-release-strip');
 	await expect(releaseStrip).toBeVisible();
 	await expect(releaseStrip).toContainText('2.1.0 · Saved cards & retry hardening');
 	await expect(page.getByTestId('project-release-readiness')).toContainText(
-		'Release readiness 0% · 0/2 merged'
+		'Release readiness 33% · 1/3 finished'
 	);
 	await expect(releaseStrip).toHaveCSS('background-color', 'rgb(30, 41, 57)');
 
