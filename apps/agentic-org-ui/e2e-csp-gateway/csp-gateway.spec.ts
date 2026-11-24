@@ -24,9 +24,10 @@ const routes = [
 ];
 type Capture = (message: Violation | { kind: 'barrier' }) => Promise<void>;
 type CaptureWindow = Window & { captureCsp: Capture; unexpectedInlineRan?: boolean };
-// A3 enables the session pages. With no session (the harness serves no API), the instance URL, /welcome and
-// /sign-in show sign-in (SIGN-1, SIGN-7) and /register without a link explains it; every other area is unavailable.
-const signInPages = new Set(['/', '/welcome', '/sign-in']);
+// A3/A4.5 enable the session and organization-creation pages. With no session (the harness serves no API),
+// the instance URL, /welcome, /sign-in and /create show sign-in (SIGN-1, SIGN-7) and /register without a link
+// explains it; every other area is unavailable.
+const signInPages = new Set(['/', '/welcome', '/sign-in', '/create']);
 
 // One context spans fresh documents and another page, so capture cannot reset at each navigation.
 test('B1-05 Part A: the real gateway CSP permits every built route and captures blocked scripts', async ({

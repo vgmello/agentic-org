@@ -89,8 +89,9 @@
 		if (
 			item &&
 			(title.trim() !== item.summary.title ||
-				description !== (item.description ?? '') ||
-				definitionOfDone !== (item.definition_of_done ?? ''))
+				(description.trim() === '' ? '' : description) !== (item.description ?? '') ||
+				(definitionOfDone.trim() === '' ? '' : definitionOfDone) !==
+					(item.definition_of_done ?? ''))
 		) {
 			return false;
 		}

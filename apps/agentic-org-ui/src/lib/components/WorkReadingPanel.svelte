@@ -113,6 +113,9 @@
 					>
 						<span></span><span></span><span></span>
 					</span>
+					{#if priorityStrong}
+						<span class="work-detail-urgent">Urgent</span>
+					{/if}
 				{/if}
 				<span class="work-detail-ref">{refLabel}</span>
 				{#if statusTone}
@@ -232,6 +235,11 @@
 		font-weight: 600;
 		color: var(--exec-ink);
 		overflow-wrap: anywhere;
+	}
+	.work-detail-urgent {
+		color: var(--tone-bad-ink);
+		font-size: 0.75rem;
+		font-weight: 600;
 	}
 	.work-kind {
 		padding-inline-start: 8px;
@@ -420,6 +428,12 @@
 		.work-reading-status[data-attention]::after {
 			forced-color-adjust: none;
 			background: CanvasText;
+		}
+		.work-priority-mark[data-tone='strong'] span {
+			background: Highlight;
+		}
+		.work-detail-urgent {
+			color: Highlight;
 		}
 		.work-priority-mark[data-level='0'] span {
 			background: transparent;

@@ -383,6 +383,7 @@
 		if (event.isComposing || event.keyCode === 229 || event.key !== 'Escape') return;
 		event.preventDefault();
 		if (searchQuery) {
+			searchCloseSeq += 1;
 			searchQuery = '';
 		} else {
 			searchInputEl?.blur();
@@ -453,6 +454,7 @@
 	}
 
 	let savedQueueScrollTop = 0;
+	let searchCloseSeq = 0;
 	let taskSheetRef = $state<{ waitForPendingSave: () => Promise<boolean> } | undefined>();
 
 	function captureQueueScroll() {
@@ -471,11 +473,20 @@
 	}
 
 	async function maybeCloseDetailForSearch() {
+		const seq = ++searchCloseSeq;
 		const sheet = taskSheetRef;
 		if (taskOpen && sheet) {
 			const canClose = await sheet.waitForPendingSave();
-			if (!canClose || !taskOpen || taskSheetRef !== sheet) return;
+			if (
+				!canClose ||
+				seq !== searchCloseSeq ||
+				searchQuery.trim() === '' ||
+				!taskOpen ||
+				taskSheetRef !== sheet
+			)
+				return;
 		}
+		if (seq !== searchCloseSeq || searchQuery.trim() === '') return;
 		if (hasDetail) closeDetail(false);
 	}
 
@@ -704,6 +715,10 @@
 							value={searchQuery}
 							oninput={(e) => {
 								searchQuery = e.currentTarget.value;
+								if (searchQuery.trim() === '') {
+									searchCloseSeq += 1;
+									return;
+								}
 								if (hasDetail) void maybeCloseDetailForSearch();
 							}}
 							onkeydown={handleSearchKeydown}
@@ -717,6 +732,7 @@
 							<button
 								type="button"
 								onclick={() => {
+									searchCloseSeq += 1;
 									searchQuery = '';
 									searchInputEl?.focus();
 								}}
