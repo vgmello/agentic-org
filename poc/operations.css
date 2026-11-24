@@ -669,8 +669,11 @@ html[data-theme="graphite"] #content:has(.triage-workspace, .work-header) { back
 
 @media (min-width: 640px) {
   html[data-theme="graphite"][data-interior-page] #sidebar {
-    background-image: radial-gradient(ellipse at 18% 0%, rgb(255 255 255 / .035), transparent 52%);
-    box-shadow: inset -1px 0 #2D2E2F, inset -9px 0 16px -12px rgb(0 0 0 / .62), 4px 0 14px -6px rgb(0 0 0 / .64);
+    /* The raised frame casts its shadow back onto the sidebar. */
+    background-image:
+      linear-gradient(to left, rgb(0 0 0 / .37), transparent 10px),
+      radial-gradient(ellipse 210px 260px at top right, rgb(255 255 255 / .075), transparent);
+    box-shadow: inset -1px 0 #38393A;
   }
 }
 
@@ -681,8 +684,12 @@ html[data-theme="graphite"]:has(.triage-workspace) {
     background: #131516;
     box-shadow: inset -1px 0 var(--graphite-inbox-line);
   }
+  & .triage-header {
+    background-image: linear-gradient(to right, rgb(255 255 255 / .035), transparent 28rem);
+  }
   & .triage-queue {
-    background: #171819;
+    --triage-row-hover: #272829;
+    background: linear-gradient(rgb(255 255 255 / .022), transparent 24rem) #1B1C1D;
     border-inline-end-color: var(--graphite-inbox-line);
   }
   & .triage-group h2 { background: transparent; }
