@@ -28,7 +28,7 @@ export function matchNavCandidate(
 }
 
 const MODAL_OVERLAY_SELECTOR =
-	'[role="dialog"]:not(.work-reading), [role="alertdialog"], [role="menu"], [role="listbox"]';
+	'[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]';
 
 export interface NavKeyCallbacks {
 	onSidebarOpen?: () => void;
@@ -337,8 +337,41 @@ export class NavKeyController {
 		}
 	};
 
-	handlePointerDown = () => {
-		if (this.mode) this.cancel(false);
+	handlePointerDown = (event: PointerEvent) => {
+		if (!this.mode) return;
+		const target = event.target;
+		if (target instanceof Node) {
+			if (this.mode === 'sidebar') {
+				const nav = this.#findVisibleSidebarNav();
+				const container = nav?.closest('aside, [role="dialog"]') ?? nav;
+				if (container && container.contains(target)) {
+					// Release shortcut state without closing the mobile drawer so the link click completes.
+					this.#clearSelection();
+					if (this.#openingFrame !== undefined && typeof cancelAnimationFrame !== 'undefined') {
+						cancelAnimationFrame(this.#openingFrame);
+						this.#openingFrame = undefined;
+					}
+					this.#openingSidebar = false;
+					this.#pendingLetter = null;
+					this.mode = null;
+					this.hint = '';
+					this.#previousFocus = null;
+					this.#selectedIndex = -1;
+					return;
+				}
+			} else if (this.mode === 'inbox') {
+				const group = document.getElementById('triage-categories');
+				if (group && group.contains(target)) {
+					this.#clearSelection();
+					this.mode = null;
+					this.hint = '';
+					this.#previousFocus = null;
+					this.#selectedIndex = -1;
+					return;
+				}
+			}
+		}
+		this.cancel(false);
 	};
 
 	handleFocusIn = (event: FocusEvent) => {

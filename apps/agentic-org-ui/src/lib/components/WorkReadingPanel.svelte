@@ -48,10 +48,10 @@
 	let isOpening = $state(true);
 	let expanded = $state(false);
 	let availableWidth = $state(1200);
+	let defaultPanelPx = $state(736);
 	let copiedForId = $state<string | null>(null);
 	const copied = $derived(copiedForId === itemId);
-	const PANEL_DEFAULT_PX = 736; // 46rem at 16px root
-	const canExpand = $derived(availableWidth > PANEL_DEFAULT_PX + 16);
+	const canExpand = $derived(availableWidth > defaultPanelPx + 16);
 	let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
 	onDestroy(() => {
@@ -61,6 +61,8 @@
 	$effect(() => {
 		if (typeof window === 'undefined') return;
 		const measure = () => {
+			const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+			defaultPanelPx = Math.round(46 * rootPx);
 			const sidebar = document.querySelector<HTMLElement>('aside.exec-sidebar');
 			const sidebarWidth =
 				sidebar && sidebar.offsetParent !== null ? sidebar.getBoundingClientRect().width : 0;
@@ -71,9 +73,18 @@
 		const sidebar = document.querySelector<HTMLElement>('aside.exec-sidebar');
 		const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : undefined;
 		if (sidebar && ro) ro.observe(sidebar);
+		// Make shell chrome inert while this modal reading dialog is open so focus and pointer cannot escape behind it.
+		const shellEls = [
+			...document.querySelectorAll<HTMLElement>('aside.exec-sidebar, header')
+		].filter((el) => !panelEl?.contains(el));
+		const prevInert = shellEls.map((el) => el.inert);
+		for (const el of shellEls) el.inert = true;
 		return () => {
 			window.removeEventListener('resize', measure);
 			ro?.disconnect();
+			shellEls.forEach((el, i) => {
+				el.inert = prevInert[i];
+			});
 		};
 	});
 

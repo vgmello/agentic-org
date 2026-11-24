@@ -48,9 +48,12 @@
 
 	// Route changes reset internal <main> scroll (except hash targets) and focus the destination heading (app-shell-ux §0).
 	afterNavigate((move) => {
-		navKeys.cancel(false);
 		noteModalBackNavigation();
 		const routeChanged = move.from?.url?.pathname !== move.to?.url?.pathname;
+		if (routeChanged) {
+			navKeys.cancel(false);
+			mobileMenuOpen = false;
+		}
 		if (routeChanged && !move.to?.url?.hash && mainEl) {
 			mainEl.scrollTop = 0;
 		}

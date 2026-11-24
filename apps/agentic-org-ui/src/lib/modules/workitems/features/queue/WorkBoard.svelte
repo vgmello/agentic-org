@@ -31,7 +31,6 @@
 		TYPE_WORD,
 		assignmentText,
 		boardColumnsForMode,
-		neighbourColumn,
 		rowSpeech,
 		severityWord,
 		taskHref,
@@ -110,8 +109,15 @@
 
 	$effect(() => () => clearTimeout(announceTimer));
 
+	function canMoveTo(row: TaskRow, target: BoardColumn): boolean {
+		if (row.status === target || row.status === 'cancelled') return false;
+		// Bugs and requests close via the detail resolution/approval workflow rather than bare board status moves.
+		if (row.type !== 'task' && target === 'done') return false;
+		return true;
+	}
+
 	async function moveRow(row: TaskRow, target: BoardColumn) {
-		if (stale || row.status === target) return;
+		if (stale || !canMoveTo(row, target)) return;
 		if (target === 'blocked') {
 			blockTarget = row;
 			blockReason = row.blockedReason ?? '';
@@ -181,7 +187,16 @@
 		if (!event.altKey || stale) return;
 		if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
 			const step = event.key === 'ArrowLeft' ? -1 : 1;
-			const next = neighbourColumn(row.status, step);
+			const currentIdx = columns.findIndex((c) => c.rows.some((r) => r.id === row.id));
+			if (currentIdx < 0) return;
+			let next: BoardColumn | undefined;
+			for (let i = currentIdx + step; i >= 0 && i < columns.length; i += step) {
+				const candidate = columns[i].writableStatus;
+				if (candidate && canMoveTo(row, candidate)) {
+					next = candidate;
+					break;
+				}
+			}
 			if (!next) return;
 			event.preventDefault();
 			void moveRow(row, next);
@@ -343,7 +358,7 @@
 													<DropdownMenu.Group>
 														<DropdownMenu.GroupHeading>Move to</DropdownMenu.GroupHeading>
 														{#each ['todo', 'in_progress', 'blocked', 'done'] as const as dest (dest)}
-															{#if dest !== row.status}
+															{#if canMoveTo(row, dest)}
 																<DropdownMenu.Item onSelect={() => moveRow(row, dest)}>
 																	{STATUS_WORD[dest]}
 																</DropdownMenu.Item>

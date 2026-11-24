@@ -1095,6 +1095,11 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await page.keyboard.press('Shift+Tab');
 	const focusInsidePanel = await readingPanel.evaluate((el) => el.contains(document.activeElement));
 	expect(focusInsidePanel).toBe(true);
+	// Shell shortcut `S` must remain blocked while the modal Work reading panel is open.
+	await readingPanel.getByRole('button', { name: 'Back to Work' }).focus();
+	await page.keyboard.press('s');
+	await expect(page.getByTestId('nav-key-hint')).toBeHidden();
+	expect(await readingPanel.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 
 	await page.locator('.work-panel-backdrop').click({ position: { x: 320, y: 200 } });
 	await expect(readingPanel).toBeHidden();
@@ -1134,7 +1139,8 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await expect(gatesToggle).toHaveAttribute('aria-expanded', 'true');
 	await expect(page.locator('#activity-release-panel')).toBeVisible();
 
-	// 6-status board on default mock dataset populates Awaiting verification with fixed bug T-A42
+	// 6-status board on default mock dataset populates Awaiting verification with fixed bug T-A42,
+	// and Alt+ArrowLeft steps to visible left neighbour Blocked (opening Block dialog) rather than To do.
 	await enterMockedOrganization(page);
 	await visit(page, '/work?mock=default');
 	await page.getByRole('tab', { name: /^Tasks/ }).click();
@@ -1144,9 +1150,15 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 		.getByTestId('board-column')
 		.filter({ has: page.getByRole('heading', { name: /Awaiting verification/ }) });
 	await expect(awaitingCol).toBeVisible();
-	await expect(awaitingCol.locator('[data-ref="T-A42"]')).toBeVisible();
+	const bugCard = awaitingCol.locator('[data-ref="T-A42"]');
+	await expect(bugCard).toBeVisible();
+	await bugCard.focus();
+	await page.keyboard.press('Alt+ArrowLeft');
+	await expect(page.getByRole('dialog', { name: /Block T-A42/i })).toBeVisible();
+	await page.keyboard.press('Escape');
 
-	// Mobile (<640px): S -> I opens mobile sidebar drawer & navigates to /inbox; M from mobile Inbox detail returns to categories
+	// Mobile (<640px): S -> I opens mobile sidebar drawer & navigates to /inbox; M -> A from mobile Inbox detail
+	// survives ?item= clearing and selects Approvals; S then clicking a drawer link navigates cleanly.
 	await page.setViewportSize({ width: 390, height: 844 });
 	await visit(page, '/home?theme=graphite&mock=poc');
 	await page.locator('main').click({ position: { x: 12, y: 12 } });
@@ -1160,6 +1172,20 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await expect(page.locator('#triage-categories')).toBeHidden();
 	await mobileDetail.click({ position: { x: 16, y: 16 } });
 	await page.keyboard.press('m');
-	await expect(page.getByTestId('nav-key-hint')).toContainText('Inbox categories');
 	await expect(page.locator('#triage-categories')).toBeVisible();
+	await expect(page).toHaveURL(/\/inbox$/);
+	await expect(page.getByTestId('nav-key-hint')).toContainText('Inbox categories');
+	await page.keyboard.press('a');
+	await expect(
+		page
+			.getByRole('group', { name: 'Inbox categories' })
+			.getByRole('button', { name: /^Approvals/ })
+	).toHaveAttribute('aria-pressed', 'true');
+	await page.keyboard.press('s');
+	await expect(page.getByTestId('nav-key-hint')).toContainText('Sidebar');
+	await page
+		.locator('[data-exec-sidebar-nav]:visible')
+		.getByRole('link', { name: 'Activity' })
+		.click();
+	await expect(page).toHaveURL(/\/activity$/);
 });
