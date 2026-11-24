@@ -5112,10 +5112,6 @@ const back = (href, label) => `<a class="back" href="${href}">${ic("chev-left", 
 function linkTabs(base, tabs, cur, label = "Sections") {
   return `<nav class="tabs" aria-label="${esc(label)}">${tabs.map(([k, l, n]) => `<a class="tab" href="${base}${k ? "/" + k : ""}" ${cur === k ? 'aria-current="page"' : ""}>${esc(l)}${n != null ? `<span class="tcount">${n}</span>` : ""}</a>`).join("")}</nav>`;
 }
-function btnTabs(key, tabs, label, panel) {
-  return `<div class="tabs" role="tablist" aria-label="${esc(label)}">${tabs.map(([v, l, n]) => { const on = S[key] === v; return `<button type="button" role="tab" class="tab" id="tab-${key}-${v}" data-act="set" data-k="${key}" data-v="${v}" aria-selected="${on}" tabindex="${on ? 0 : -1}" aria-controls="${panel}">${esc(l)}${n != null ? `<span class="tcount">${n}</span>` : ""}</button>`; }).join("")}</div>`;
-}
-const tabPanel = (key, panel) => `id="${panel}" role="tabpanel" aria-labelledby="tab-${key}-${S[key]}"`;
 function seg(key, opts, label) {
   return `<span class="seg-label" aria-hidden="true">${esc(label)}</span><div class="seg${key === "theme" ? " theme-options" : ""}" role="group" aria-label="${esc(label)}">${opts.map(([v, l, i]) => `<button type="button" data-act="set" data-k="${key}" data-v="${v}" aria-pressed="${S[key] === v}">${i ? ic(i, "ic16") : ""}${esc(l)}</button>`).join("")}</div>`;
 }
@@ -5149,12 +5145,16 @@ function scopedWork(items) {
   return `<div class="subbar scoped-work-tools"><div class="queue-controls" role="group" aria-label="Work view controls">${scopedWorkControls()}</div></div>
     ${scopedWorkResults(items)}`;
 }
-function showMenu(id, groups, { align = "", icon, label, active, footer = "" } = {}) {
+function iconWithTooltip(label, icon, size = "ic16") {
+  return ic(icon, size) + `<span class="icon-tooltip" aria-hidden="true">${esc(label)}</span>`;
+}
+function showMenu(id, groups, { align = "", icon, label, active, focusTooltip = false, footer = "" } = {}) {
   const cur = groups.map(([k, , opts]) => { const o = opts.find((x) => String(x[0]) === String(S[k])); return o && o[0] !== "all" ? o[1] : null; }).filter(Boolean);
+  const tooltip = focusTooltip ? "" : ` title="${esc(label)}"`;
   const triggerAttrs = icon
-    ? `class="btn ghost icon" aria-label="${esc(label)}" title="${esc(label)}"${active ? " data-active" : ""}`
+    ? `class="btn ghost icon${focusTooltip ? " icon-with-tooltip" : ""}" aria-label="${esc(label)}"${tooltip}${active ? " data-active" : ""}`
     : 'class="btn textbtn"';
-  const triggerContent = icon ? ic(icon, "ic20")
+  const triggerContent = icon ? (focusTooltip ? iconWithTooltip(label, icon, "ic20") : ic(icon, "ic20"))
     : `Show <span class="cur">${esc(cur.length ? cur.join(", ") : "all")}</span>${ic("chev-down", "ic16 muted")}`;
   return `<div class="menu-wrap"><button ${triggerAttrs} type="button" data-act="menu" data-id="${id}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${id}">${triggerContent}</button>
     <div class="menu ${align}" id="menu-${id}" role="menu"${label ? ` aria-label="${esc(label)}"` : ""} hidden>${groups.map(([k, title, opts], gi) => `${gi ? "<hr>" : ""}<p class="menu-h" id="mh-${id}-${gi}">${esc(title)}</p><div role="group" aria-labelledby="mh-${id}-${gi}">${opts.map(([v, l, n]) => { const on = String(S[k]) === String(v); return `<button role="menuitemradio" aria-checked="${on}" type="button" data-act="set" data-k="${k}" data-v="${v}">${on ? ic("check", "ic20") : '<span class="spacer20" aria-hidden="true"></span>'}<span style="flex:1">${esc(l)}</span>${n != null ? `<span class="muted tnum">${n}</span>` : ""}</button>`; }).join("")}</div>`).join("")}${footer}</div></div>`;
@@ -7245,9 +7245,16 @@ function assemblySnapshot(simulated) {
 }
 const assemblyMerged = (entries) => entries.filter((entry) => entry.stage === "merged").length;
 const assemblyPct = (entries) => entries.length ? Math.round(100 * assemblyMerged(entries) / entries.length) : 0;
-function assemblyProgress(entries, label) {
+function assemblyProgressBar(done, total, label) {
+  return `<progress class="assembly-progress-bar" value="${done}" max="${total || 1}" aria-label="${esc(label)}"></progress>`;
+}
+function assemblyProgress(entries, label, features) {
   const done = assemblyMerged(entries), pct = assemblyPct(entries);
-  return `<div class="assembly-progress"><progress value="${done}" max="${entries.length || 1}" aria-label="${esc(label)}"></progress><span>${pct}% · ${done}/${entries.length}</span></div>`;
+  const detail = features
+    ? ` tasks · ${features.filter((feature) => assemblyMerged(feature.entries) === feature.entries.length).length}/${features.length} features`
+    : "";
+  const complete = features && entries.length > 0 && done === entries.length ? " · Complete" : "";
+  return `<div class="assembly-progress">${assemblyProgressBar(done, entries.length, label)}<span>${pct}% · ${done}/${entries.length}${detail}${complete}</span></div>`;
 }
 function assemblyChip(entry) {
   const { work, review, stage } = entry;
@@ -7265,7 +7272,7 @@ function assemblyMatrix(projects, entries, counts) {
   return `<section class="assembly-view" aria-label="Assembly line">
     <div class="assembly-summary">
       <div><p class="assembly-eyebrow">${project ? esc(project.release) : "All projects"}</p><h2>${project ? esc(project.name) : "Portfolio Assembly"}</h2></div>
-      <dl class="assembly-metrics"><div><dt>Readiness</dt><dd>${assemblyPct(entries)}%</dd></div>
+      <dl class="assembly-metrics"><div><dt>Readiness</dt><dd>${assemblyPct(entries)}%${assemblyProgressBar(counts.merged, entries.length, "Portfolio readiness")}</dd></div>
       <div><dt>Merged</dt><dd>${counts.merged} / ${entries.length}</dd></div>
       <div><dt>Agents busy</dt><dd>${new Set(entries.filter(({ stage, work }) => stage === "agents" && M[work.who]?.kind === "agent").map(({ work }) => work.who)).size}</dd></div>
       <div><dt>Needs review</dt><dd class="assembly-review-text">${counts.review}</dd></div></dl>
@@ -7273,7 +7280,7 @@ function assemblyMatrix(projects, entries, counts) {
     <div class="assembly-table-wrap" tabindex="0" role="region" aria-label="Delivery stages, scroll horizontally on smaller screens">
       <table class="assembly-table"><thead><tr>${headings.map(([label, sub]) => `<th scope="col">${label}<small>${sub}</small></th>`).join("")}</tr></thead>
       ${projects.map(({ id, project, entries: projectEntries, features }) => `<tbody>
-        <tr class="assembly-milestone"><th colspan="7" scope="rowgroup"><div><a class="alink" href="#/projects/${id}">${esc(project.milestoneTitle || project.name)}${project.release ? " · " + esc(project.release) : ""}</a>${assemblyProgress(projectEntries, project.name + " progress")}</div></th></tr>
+        <tr class="assembly-milestone"><th colspan="7" scope="rowgroup"><div><a class="alink" href="#/projects/${id}">${esc(project.milestoneTitle || project.name)}${project.release ? " · " + esc(project.release) : ""}</a>${assemblyProgress(projectEntries, project.name + " progress", features)}</div></th></tr>
         ${features.map((feature) => `<tr>
           <th scope="row">${esc(feature.label)}<small>${plural(feature.entries.length, "task", "tasks")}</small></th>
           ${ACTIVITY_STAGES.map(([stage]) => {
@@ -7409,10 +7416,6 @@ function activityTimeline(items, options = {}) {
   </section>`).join("");
 }
 
-function activityIcon(label, icon, size = "ic16") {
-  return ic(icon, size) + `<span class="activity-tooltip" aria-hidden="true">${label}</span>`;
-}
-
 function assemblyPlayback() {
   const { playing, hours, speed } = assemblySimulation;
   const playLabel = playing ? "Pause simulation" : "Play simulation";
@@ -7422,10 +7425,10 @@ function assemblyPlayback() {
       <span>Elapsed <strong id="assembly-clock">${formatAssemblyHours(hours)}</strong></span>
     </div>
     <div class="assembly-controls">
-      <button class="btn outline icon activity-icon" id="assembly-play" type="button" data-act="assembly-play" aria-label="${playLabel}">${activityIcon(playLabel, playing ? "pause" : "play")}</button>
+      <button class="btn outline icon icon-with-tooltip" id="assembly-play" type="button" data-act="assembly-play" aria-label="${playLabel}">${iconWithTooltip(playLabel, playing ? "pause" : "play")}</button>
       <div class="seg" role="group" aria-label="Simulation speed">${ASSEMBLY_SPEEDS.map((rate) => `<button type="button" data-act="assembly-speed" data-v="${rate}" aria-pressed="${rate === speed}">${rate}×</button>`).join("")}</div>
-      <button class="btn ghost icon activity-icon" type="button" data-act="assembly-restart" aria-label="Reset simulation">${activityIcon("Reset simulation", "refresh")}</button>
-      <button class="btn ghost icon activity-icon" type="button" data-act="assembly-add-sample" aria-label="Add sample task">${activityIcon("Add sample task", "plus")}</button>
+      <button class="btn ghost icon icon-with-tooltip" type="button" data-act="assembly-restart" aria-label="Reset simulation">${iconWithTooltip("Reset simulation", "refresh")}</button>
+      <button class="btn ghost icon icon-with-tooltip" type="button" data-act="assembly-add-sample" aria-label="Add sample task">${iconWithTooltip("Add sample task", "plus")}</button>
     </div>
   </div>`;
 }
@@ -7442,7 +7445,7 @@ function updateAssemblyPlayback() {
       const play = document.getElementById("assembly-play");
       const label = sim.playing ? "Pause simulation" : "Play simulation";
       play.setAttribute("aria-label", label);
-      play.innerHTML = activityIcon(label, sim.playing ? "pause" : "play");
+      play.innerHTML = iconWithTooltip(label, sim.playing ? "pause" : "play");
     }
   }
   const rate = document.getElementById("assembly-rate");
@@ -7521,6 +7524,28 @@ function addAssemblySample() {
   toast(`${work.id} added to the simulation.`, "check-circle");
 }
 
+function activityViewTabs() {
+  const views = [["assembly", "Assembly line", "board"], ["feed", "Activity feed", "signal"]];
+  return `<div class="queue-tabs" role="tablist" aria-label="Activity view">${views.map(([id, label, icon]) => {
+    const selected = S.actView === id;
+    return `<button class="queue-tab" type="button" role="tab" id="activity-tab-${id}" data-act="set" data-k="actView" data-v="${id}"
+      aria-selected="${selected}" tabindex="${selected ? 0 : -1}" aria-controls="activity-view">${ic(icon, "ic16")}${label}</button>`;
+  }).join("")}</div>`;
+}
+
+function activityFilterMenu(isFeed, waitingCount) {
+  const projects = [["all", "All projects"], ...Object.entries(P)
+    .filter(([, project]) => !project.archived).map(([id, project]) => [id, project.name + " · " + project.release])];
+  const types = [["all", "All events"], ["needs", "Needs you", waitingCount], ["work", "Work"], ["conversation", "Conversations"],
+    ["decision", "Decisions"], ["run", "Runs"], ["org", "Org changes"]];
+  const groups = [["actProject", "Project", projects]];
+  if (isFeed) groups.push(["actFilter", "Event type", types]);
+  return showMenu("activity-filter", groups, {
+    icon: "filter", label: "Filter activity", focusTooltip: true,
+    active: S.actProject !== "all" || (isFeed && S.actFilter !== "all"),
+  });
+}
+
 function pageActivity() {
   const inScope = (record) => S.actProject === "all" || record.proj === S.actProject;
   const all = acts().filter(inScope).map((event) => ({ ...event, inbox: ACTIVITY_TRIAGE[event.id] }));
@@ -7529,30 +7554,29 @@ function pageActivity() {
   const items = filter === "needs"
     ? activityNeedsFeed(all, waiting)
     : all.filter((event) => filter === "all" || event.type === filter);
-  const tabs = [["all", "All"], ["needs", "Needs you", waiting.length], ["work", "Work"], ["conversation", "Conversations"], ["decision", "Decisions"], ["run", "Runs"], ["org", "Org changes"]];
-  const projectOptions = [["all", "All projects"], ...Object.entries(P).filter(([, project]) => !project.archived).map(([id, project]) => [id, project.name + " · " + project.release])];
-  const projectFilter = `<label class="activity-scope"><span class="sr-only">Activity project</span><select class="field" id="activity-project">${projectOptions.map(([id, label]) => `<option value="${id}"${S.actProject === id ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></label>`;
-  const switcher = `<div class="seg activity-switch" role="group" aria-label="Activity view">${[["assembly", "Assembly line", "board"], ["feed", "Activity feed", "signal"]].map(([id, label, icon]) => `<button type="button" data-act="set" data-k="actView" data-v="${id}" aria-pressed="${S.actView === id}">${ic(icon, "ic16")}${label}</button>`).join("")}</div>`;
   const isFeed = S.actView === "feed";
+  const count = `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`;
   return `<section class="activity-workspace" aria-label="Activity command center">
-    <div class="section-header activity-header">
-      ${hdr("Activity", `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`)}
-      <div class="section-toolbar activity-toolbar">
-        ${switcher}${projectFilter}
-        ${isFeed ? btnTabs("actFilter", tabs, "Filter activity", "act-feed") : ""}
+    <header class="activity-header queue-header">
+      <div class="ph queue-headline"><div class="ph-t">
+        <h1 tabindex="-1">Activity</h1><p class="cnt queue-count" role="status"><i aria-hidden="true"></i>${count}</p>
+      </div></div>
+      <div class="activity-toolbar queue-toolbar">
+        ${activityViewTabs()}
+        <div class="queue-controls" role="group" aria-label="Activity view controls">${activityFilterMenu(isFeed, waiting.length)}</div>
       </div>
-    </div>
+    </header>
     <div class="activity-body"${S.actPanel ? " data-panel-open" : ""}>
-      <div class="activity-main" data-view="${S.actView}">
+      <div class="activity-main" id="activity-view" role="tabpanel" aria-labelledby="activity-tab-${S.actView}" tabindex="0" data-view="${S.actView}">
         ${isFeed ? activityFeedLayout(items) : assemblyLayout()}
       </div>
       <div class="activity-tools" role="group" aria-label="Activity sidebar tools">
-        ${Object.entries(ACTIVITY_PANELS).map(([id, { label, icon }]) => `<button class="btn ghost icon activity-icon activity-tool" type="button" data-act="activity-panel" data-v="${id}" aria-label="${label}" aria-expanded="${S.actPanel === id}" aria-controls="activity-panel">${activityIcon(label, icon, "ic20")}</button>`).join("")}
+        ${Object.entries(ACTIVITY_PANELS).map(([id, { label, icon }]) => `<button class="btn ghost icon icon-with-tooltip activity-tool" type="button" data-act="activity-panel" data-v="${id}" aria-label="${label}" aria-expanded="${S.actPanel === id}" aria-controls="activity-panel">${iconWithTooltip(label, icon, "ic20")}</button>`).join("")}
       </div>
       <aside class="activity-panel" id="activity-panel" aria-labelledby="activity-panel-title"${S.actPanel ? "" : " inert"}>
         <header class="side-panel-header">
           <h2 id="activity-panel-title" tabindex="-1">${ACTIVITY_PANELS[S.actPanel]?.label || ""}</h2>
-          <button class="btn ghost icon activity-icon" type="button" data-act="activity-panel-close" aria-label="Collapse Activity sidebar">${activityIcon("Collapse Activity sidebar", "chev-right")}</button>
+          <button class="btn ghost icon icon-with-tooltip" type="button" data-act="activity-panel-close" aria-label="Collapse Activity sidebar">${iconWithTooltip("Collapse Activity sidebar", "chev-right")}</button>
         </header>
         <div class="activity-panel-controls">${S.actPanel === "simulation" ? assemblyPlayback() : ""}</div>
         <div class="activity-panel-body"></div>
@@ -7566,7 +7590,7 @@ function activityFeedLayout(items) {
   return `<div class="activity-layout">
         <section class="activity-feed" aria-label="Activity feed">
           <div class="activity-bottleneck"><span>Work by stage</span><div class="activity-stage-bar" aria-hidden="true">${ACTIVITY_STAGES.map(([stage]) => `<i data-stage="${stage}" style="flex-grow:${counts[stage]}"></i>`).join("")}</div><span>${counts.review} in review · ${counts.queue} queued</span></div>
-          <div ${tabPanel("actFilter", "act-feed")}>${activityTimeline(items)}</div></section>
+          ${activityTimeline(items)}</section>
     </div>`;
 }
 
@@ -10004,15 +10028,10 @@ document.addEventListener("change", (e) => {
     S.focusAfter = "#settings-section";
     location.hash = e.target.value;
   }
-  if (e.target.id === "activity-project") {
-    S.actProject = e.target.value;
-    render(false);
-    document.getElementById("activity-project")?.focus();
-  }
 });
 document.addEventListener("mousedown", (e) => {
   // Keep focus in the active field or menu until the pointer selection is dispatched.
-  if (e.target.closest?.(".cmdk-home-results .cmdk-opt, :is(.work-header, .triage-header, .project-toolbar, .scoped-work-tools) .menu button")) e.preventDefault();
+  if (e.target.closest?.(".cmdk-home-results .cmdk-opt, :is(.queue-header, .project-toolbar, .scoped-work-tools) .menu button")) e.preventDefault();
 });
 function resetInboxSenderPreview(e) {
   const sender = e.target.closest?.(".triage-from-member[data-preview-dismissed]");
