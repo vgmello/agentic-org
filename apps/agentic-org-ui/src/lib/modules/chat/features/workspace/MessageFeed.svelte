@@ -74,7 +74,7 @@
 <div
 	bind:this={listEl}
 	data-focus-scope
-	class="min-h-16 flex-1 overflow-y-auto px-3 py-3 max-[640px]:px-[8px]"
+	class="chat-msgs-canvas min-h-16 flex-1 overflow-y-auto px-3 py-3 max-[640px]:px-[8px]"
 	data-testid="message-list"
 	tabindex="-1"
 	role="region"

@@ -1,22 +1,21 @@
 <!--
   @component
-  A team's page `/teams/:teamId` (offices-and-teams-ux §7.2): back to Teams; the name and TEAM- reference, where it
-  sits, its lead, real people and agent counts and its purpose; Hire an agent (the Hire flow with this team preset) and Add a person, and the team's menu (Move, Rename,
-  Change lead, Add team under, Archive, Delete). Above the tabs at most six members and All N members. Tabs are
-  links (Work, Projects, Activity, Conversations, Processes); changing tab focuses the tab's heading.
-  States: loading (a skeleton shaped like the page), unavailable (said in place), error with Retry, not found,
-  archived; the back link to Teams shows in each.
+  A team's page `/teams/:teamId` (Prototype Release 1149b4f1, offices-and-teams-ux §7.2):
+  back to Teams; unified .section-header with name, TEAM- reference, lead, real people/agent counts, and parent link;
+  shared .section-toolbar with primary tabs (Overview, Members, Work, Projects, Activity, Conversations, Processes),
+  optional tab controls, and primary actions (Hire an agent, Add a person, Team menu). Full roster lives in Members.
 -->
 <script lang="ts">
 	import { tick, type Snippet } from 'svelte';
 	import { afterNavigate, goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import { toast } from 'svelte-sonner';
 	import Callout from '$lib/components/Callout.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
-	import TabsNav from '$lib/components/TabsNav.svelte';
+	import TabsNav, { type Tab } from '$lib/components/TabsNav.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { hireUrl } from '$lib/modules/employees';
 	import { Resource } from '$lib/components/resource.svelte';
@@ -32,7 +31,6 @@
 	import { setTeamPageContext } from './context';
 	import AddPersonToTeam from './AddPersonToTeam.svelte';
 	import { fact, factsList, factsWrap, linkInLine } from './facts';
-	import TeamMembers from './TeamMembers.svelte';
 	import TeamPageSkeleton from './TeamPageSkeleton.svelte';
 	import { reloadOnChange } from './reload.svelte';
 
@@ -58,12 +56,22 @@
 	// Live changes, New › Add a person and this page's own actions apply in place, keeping what's shown until then.
 	reloadOnChange(team, () => loads);
 	const tab = $derived(tabFor(page.url.pathname, teamId));
-	const tabs = $derived(TEAM_TABS.map((t) => ({ label: t.label, href: teamHref(teamId, t.id) })));
 	const detail = $derived(team.data?.found ? team.data.detail : undefined);
+	let toolbarControls = $state.raw<Snippet | undefined>(undefined);
+	let openWorkCount = $state<number | undefined>(undefined);
+
+	const tabs = $derived<Tab[]>(
+		TEAM_TABS.map((t) => ({
+			label: t.label,
+			href: teamHref(teamId, t.id),
+			count:
+				t.id === 'members' ? detail?.members.length : t.id === 'work' ? openWorkCount : undefined
+		}))
+	);
 	const title = $derived(
 		team.state === 'ready'
 			? detail
-				? pageTitle(tab.id === 'work' ? undefined : tab.label, detail.team.name, 'Teams')
+				? pageTitle(tab.id === 'overview' ? undefined : tab.label, detail.team.name, 'Teams')
 				: pageTitle('Team not found', 'Teams')
 			: pageTitle('Team', 'Teams')
 	);
@@ -78,8 +86,17 @@
 		get teamName() {
 			return detail?.team.name ?? '';
 		},
+		get detail() {
+			return detail!;
+		},
 		get loads() {
 			return loads;
+		},
+		setToolbarControls: (controls) => {
+			toolbarControls = controls;
+		},
+		setOpenWorkCount: (count) => {
+			openWorkCount = count;
 		}
 	});
 
@@ -118,11 +135,11 @@
 <svelte:head><title>{title}</title></svelte:head>
 
 <!-- The one named back link, in every state: loading, failed, unavailable, not found and found. -->
-<div class="px-4 pt-6 min-[640px]:px-6 min-[1024px]:px-8">
+<div class="px-4 pt-5 min-[640px]:px-6 min-[1024px]:px-8">
 	<a
 		href={resolve('/teams')}
-		class="inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
-		>Teams</a
+		class="inline-flex min-h-6 items-center gap-1 rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
+		><ChevronLeft class="size-4 shrink-0" aria-hidden="true" />Teams</a
 	>
 </div>
 {#if team.state === 'loading'}
@@ -144,15 +161,13 @@
 				{@const d = lookup.detail}
 				{@const archived = d.team.status === 'archived'}
 				{@const parent = d.path.at(-1)}
-				<header
-					class="team-masthead border-b border-line px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8"
-				>
-					<div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
-						<!-- Wide enough that the facts don't wrap one at a time: the actions move below first. -->
-						<div class="min-w-0 flex-1 basis-80">
+				<div class="section-header team-header">
+					<header class="team-masthead ph px-4 pt-2 pb-5 min-[640px]:px-6 min-[1024px]:px-8">
+						<div class="min-w-0">
 							<h2
 								id="team-heading"
-								class="flex flex-wrap items-baseline gap-x-2 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere]"
+								tabindex="-1"
+								class="flex flex-wrap items-baseline gap-x-2 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere] focus:outline-none"
 							>
 								{d.team.name}
 							</h2>
@@ -181,15 +196,28 @@
 									</ul>
 								</div>
 							</div>
-							{#if d.purpose}<p class="mt-2 max-w-3xl text-sm/6 text-fg-secondary">
-									{d.purpose}
-								</p>{/if}
 						</div>
+					</header>
+					<div class="section-toolbar team-toolbar">
+						<div class="primary-tab-row">
+							<!-- Tabs wrap onto a second line rather than scroll out of sight (narrow widths, large text). -->
+							<TabsNav
+								label="{d.team.name} views"
+								{tabs}
+								class="tabs flex-wrap overflow-x-visible"
+							/>
+						</div>
+						{#if toolbarControls}
+							<div class="queue-controls" role="group" aria-label="View controls">
+								{@render toolbarControls()}
+							</div>
+						{/if}
 						{#if !archived}
-							<div class="flex flex-wrap items-center gap-3">
+							<div class="section-actions flex flex-wrap items-center gap-2">
 								<Button
 									href={resolve(hireUrl({ teamId: d.team.id }) as '/')}
 									variant="outline"
+									size="sm"
 									class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 									>Hire an agent</Button
 								>
@@ -198,7 +226,7 @@
 							</div>
 						{/if}
 					</div>
-				</header>
+				</div>
 				{#if archived}
 					<div class="px-4 pt-6 min-[640px]:px-6 min-[1024px]:px-8">
 						<Callout>
@@ -208,9 +236,6 @@
 						</Callout>
 					</div>
 				{/if}
-				<TeamMembers detail={d} />
-				<!-- Five tabs wrap onto a second line rather than scroll out of sight (narrow widths, large text). -->
-				<TabsNav label="{d.team.name} views" {tabs} class="flex-wrap overflow-x-visible" />
 				<section aria-labelledby="team-tab-heading">
 					<h3 id="team-tab-heading" tabindex="-1" class="sr-only">
 						{tab.label}
@@ -253,7 +278,74 @@
 />
 
 <style>
-	:global(html[data-ui-theme^='report']) .team-masthead {
-		border-bottom: 1.5px solid var(--report-masthead-rule);
+	.section-header {
+		position: relative;
+		z-index: 1;
+		flex: none;
+		container-type: inline-size;
+		--team-gutter: 1rem;
+	}
+	@media (min-width: 640px) {
+		.section-header {
+			--team-gutter: 1.5rem;
+		}
+	}
+	@media (min-width: 1024px) {
+		.section-header {
+			--team-gutter: 2rem;
+		}
+	}
+	.section-toolbar {
+		position: relative;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: stretch;
+		gap: 6px 12px;
+		padding: 4px var(--team-gutter) 1px;
+		border-block-end: 1px solid var(--line);
+	}
+	.section-toolbar > :not(.primary-tab-row) {
+		align-self: center;
+	}
+	.primary-tab-row {
+		position: relative;
+		display: flex;
+		align-items: stretch;
+		min-inline-size: 0;
+		max-inline-size: 100%;
+	}
+	.primary-tab-row::after {
+		content: '';
+		position: absolute;
+		inset-block-start: 100%;
+		inset-inline-start: calc(-1 * var(--team-gutter));
+		inline-size: 100cqi;
+		border-block-start: 1px solid var(--line);
+		pointer-events: none;
+	}
+	.primary-tab-row > :global(nav) {
+		min-width: 0;
+		max-width: 100%;
+		padding-inline: 0;
+		border-bottom: 0;
+	}
+	.queue-controls {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		margin-block: 4px;
+	}
+	.section-actions {
+		margin-inline-start: auto;
+		margin-block: 4px;
+	}
+	@container (max-width: 40rem) {
+		.primary-tab-row {
+			flex-basis: 100%;
+		}
+	}
+	:global(html[data-ui-theme^='report']) .team-toolbar {
+		border-block-end: 1.5px solid var(--report-masthead-rule);
 	}
 </style>

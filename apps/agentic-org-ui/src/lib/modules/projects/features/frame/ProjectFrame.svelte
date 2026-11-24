@@ -27,9 +27,6 @@
 	import { projectsApi } from '../../api';
 	import {
 		PROJECTS_URL,
-		countedTasks,
-		doneText,
-		progressPercent,
 		projectBarTone,
 		projectHealthLabel,
 		projectHref,
@@ -153,14 +150,6 @@
 			clearTimeout(timer);
 		};
 	});
-	const barFill: Record<ProjectBarTone, string> = {
-		ok: 'var(--tone-ok-bar)',
-		warn: 'var(--tone-warn-bar)',
-		bad: 'var(--tone-bad-bar)',
-		accent: 'var(--tone-accent-bar)',
-		archived: 'var(--quiet)'
-	};
-
 	function healthPillClass(tone: ProjectBarTone): string {
 		if (tone === 'bad') return 't-red';
 		if (tone === 'warn') return 't-amber';
@@ -198,16 +187,15 @@
 					</header>
 				{:else}
 					{@const p = lookup.project}
-					{@const totalTasks = countedTasks(p.tasks)}
-					{@const pct = progressPercent(p.tasks)}
 					{@const tone = projectBarTone(p.tasks, p.bugs, p.archived)}
 					<div class="section-header project-header">
 						<header
-							class="project-masthead ph px-4 pt-2 pb-3 min-[640px]:px-6 min-[1024px]:px-8"
+							class="project-masthead ph px-4 pt-2 pb-2 min-[640px]:px-6 min-[1024px]:px-8"
 							data-testid="project-header"
 						>
 							<h2
 								id="project-heading"
+								tabindex="-1"
 								class="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere] focus:outline-none"
 							>
 								{p.name}
@@ -232,45 +220,24 @@
 											{/if}<TeamLink team={t} />{/each}
 									</li>
 								{/if}
-								<li class="{fact} tabular-nums">{doneText(p.tasks)}</li>
 								<li class={fact}>
 									Slug: <span class="font-mono text-xs/5 text-fg-secondary">{p.slug}</span>
 								</li>
 							</ul>
-							<div class="mt-3 flex max-w-sm items-center gap-3">
-								<div
-									class="h-1.5 flex-1 overflow-hidden rounded-full bg-bar-track"
-									role="progressbar"
-									aria-label="{p.name} delivery progress"
-									aria-valuemin="0"
-									aria-valuemax={totalTasks}
-									aria-valuenow={p.tasks.done}
-									aria-valuetext={doneText(p.tasks)}
-								>
-									<span
-										class="block h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none"
-										style:width="{pct}%"
-										style:background={barFill[tone]}
-									></span>
-								</div>
-								{#if totalTasks > 0}
-									<span class="shrink-0 text-xs/5 font-semibold text-fg-muted tabular-nums"
-										>{pct}%</span
-									>
-								{/if}
-							</div>
 						</header>
 						<!-- Tabs wrap onto a second line rather than scroll out of sight (narrow widths, large text). -->
 						<div class="section-toolbar project-toolbar">
-							<TabsNav
-								label="{p.name} views"
-								tabs={tabs.map((t) => ({
-									label: t.label,
-									href: projectHref(p.id, t.path),
-									match: t.path ? ('prefix' as const) : ('exact' as const)
-								}))}
-								class="tabs flex-wrap overflow-x-visible"
-							/>
+							<div class="primary-tab-row">
+								<TabsNav
+									label="{p.name} views"
+									tabs={tabs.map((t) => ({
+										label: t.label,
+										href: projectHref(p.id, t.path),
+										match: t.path ? ('prefix' as const) : ('exact' as const)
+									}))}
+									class="tabs flex-wrap overflow-x-visible"
+								/>
+							</div>
 							<div class="project-toolbar-controls" role="group" aria-label="Project controls">
 								{#if toolbarControls}
 									{@render toolbarControls()}
@@ -402,56 +369,69 @@
 		}
 	}
 	.section-header {
+		position: relative;
+		z-index: 1;
 		flex: none;
+		container-type: inline-size;
+		--proj-gutter: 1rem;
+	}
+	@media (min-width: 640px) {
+		.section-header {
+			--proj-gutter: 1.5rem;
+		}
+	}
+	@media (min-width: 1024px) {
+		.section-header {
+			--proj-gutter: 2rem;
+		}
 	}
 	.section-toolbar {
 		position: relative;
 		display: flex;
 		flex-wrap: wrap;
-		align-items: center;
-		gap: 0 12px;
-		padding-inline: 1rem;
+		align-items: stretch;
+		gap: 6px 12px;
+		padding: 4px var(--proj-gutter) 1px;
 		border-block-end: 1px solid var(--line);
 	}
-	@media (min-width: 640px) {
-		.section-toolbar {
-			padding-inline: 1.5rem;
-		}
+	.section-toolbar > :not(.primary-tab-row) {
+		align-self: center;
 	}
-	@media (min-width: 1024px) {
-		.section-toolbar {
-			padding-inline: 2rem;
-		}
+	.primary-tab-row {
+		position: relative;
+		display: flex;
+		align-items: stretch;
+		min-inline-size: 0;
+		max-inline-size: 100%;
+		flex: 0 1 auto;
 	}
-	.section-toolbar > :global(nav) {
+	.primary-tab-row::after {
+		content: '';
+		position: absolute;
+		inset-block-start: 100%;
+		inset-inline-start: calc(-1 * var(--proj-gutter));
+		inline-size: 100cqi;
+		border-block-start: 1px solid var(--line);
+		pointer-events: none;
+	}
+	.primary-tab-row > :global(nav) {
 		min-width: 0;
 		max-width: 100%;
-		flex: 1 1 auto;
 		padding-inline: 0;
 		border-bottom: 0;
-		gap: 0.25rem;
-	}
-	.section-toolbar :global(nav a) {
-		padding-inline: 0.625rem;
-		border-top-left-radius: var(--exec-ctrl-radius, 6px);
-		border-top-right-radius: var(--exec-ctrl-radius, 6px);
-	}
-	.section-toolbar :global(nav a:hover:not([aria-current='page'])) {
-		background: var(--surface-raised);
-		border-bottom-color: transparent;
-	}
-	.section-toolbar :global(nav a[aria-current='page']) {
-		border-bottom-color: var(--tone-accent-ink);
-		box-shadow: inset 0 -1px var(--tone-accent-ink);
-		color: var(--fg);
 	}
 	.project-toolbar-controls {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 6px;
-		padding-block: 4px;
+		margin-block: 4px;
 		max-width: 100%;
+	}
+	@container (max-width: 40rem) {
+		.primary-tab-row {
+			flex-basis: 100%;
+		}
 	}
 	.project-more-btn {
 		display: inline-flex;

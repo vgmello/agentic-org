@@ -43,9 +43,9 @@ test('MP-2: Move home team records the destination and blocks teams they are alr
 	await page.getByRole('button', { name: /^More/ }).click();
 	await page.getByRole('menuitem', { name: 'Move home team…' }).click();
 	const dialog = page.getByRole('dialog');
-	await expect(dialog.getByRole('radio', { name: /^Platform/ })).toBeDisabled();
-	await expect(dialog).toContainText('Mira Castillo is already in this team');
+	// Single home-team invariant (TASK-17): current home team is disabled; other active teams are selectable.
 	await expect(dialog.getByRole('radio', { name: /^Web/ })).toBeDisabled();
+	await expect(dialog).toContainText('Current home team');
 	await dialog.getByRole('radio', { name: /^Engineering/ }).check();
 	await dialog.getByRole('button', { name: 'Move Mira Castillo' }).click();
 	await expect(dialog).toBeHidden();

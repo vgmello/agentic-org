@@ -23,6 +23,12 @@ html[data-ui-theme='cozy'] {
 	--cozy-panel-edge: rgba(255, 246, 235, 0.14);
 	--cozy-well: rgba(16, 13, 11, 0.44);
 	--cozy-well-edge: rgba(255, 245, 232, 0.12);
+	--cozy-summary-surface: linear-gradient(
+		90deg,
+		var(--cozy-well),
+		color-mix(in srgb, var(--cozy-well) 80%, transparent)
+	);
+	--cozy-work-canvas: #463c30;
 	--cozy-panel-shadow:
 		0 10px 30px -8px rgba(12, 9, 7, 0.44), inset 0 1px 0 rgba(255, 248, 238, 0.15),
 		inset 0 0 0 1px var(--cozy-panel-edge);
@@ -300,6 +306,8 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high'] {
 	--cozy-panel-edge: rgba(255, 248, 238, 0.3);
 	--cozy-well: rgba(20, 16, 14, 0.96);
 	--cozy-well-edge: rgba(255, 248, 238, 0.32);
+	--cozy-summary-surface: var(--cozy-well);
+	--cozy-work-canvas: var(--cozy-shell);
 	--cozy-secondary: rgba(255, 248, 240, 0.1);
 	--cozy-secondary-hover: rgba(255, 248, 240, 0.18);
 	--cozy-secondary-edge: rgba(255, 248, 238, 0.42);
@@ -533,14 +541,23 @@ html[data-ui-theme='cozy'] .triage-queue {
 	box-shadow: none;
 }
 
-/* Cozy Glass Work & Assembly canvas (poc/cozy.css 53728c05): warm matte canvas on Work and Assembly */
-html[data-ui-theme='cozy'] main:has(.work-header, .activity-main[data-view='assembly']) {
-	background: #463c30;
+/* Cozy Glass Work, Assembly & Chat body canvas (Prototype Release 1149b4f1):
+   Keep the matte canvas in the body so Work, Activity and Chat headers share the translucent Inbox shell. */
+html[data-ui-theme='cozy']
+	:is(
+		.work-results-canvas,
+		.activity-body:has(> .activity-main[data-view='assembly']),
+		.chat-frame .chat-msgs-canvas
+	) {
+	background: var(--cozy-work-canvas);
 }
 
-html[data-ui-theme='cozy'][data-cozy-contrast='high']
-	main:has(.work-header, .activity-main[data-view='assembly']) {
-	background: var(--cozy-shell);
+html[data-ui-theme='cozy'] .work-results-canvas {
+	flex-grow: 1;
+}
+
+html[data-ui-theme='cozy'] :is(.activity-bottleneck, .assembly-release) {
+	background: var(--cozy-summary-surface);
 }
 
 html[data-ui-theme='cozy']
@@ -615,21 +632,23 @@ html[data-ui-theme='cozy'] .activity-triage {
 	border-color: var(--cozy-well-edge);
 }
 
-/* Cozy Glass Chat surfaces (poc/cozy.css c64b187a): warm matte message canvas + espresso chrome, opaque drawers */
+/* Cozy Glass Chat surfaces (Prototype Release 1149b4f1): translucent header, summary-surface channel rail, matte message body */
 html[data-ui-theme='cozy'] .chat-frame {
-	--cozy-chat-chrome: rgba(26, 21, 18, 0.34);
-	background: rgba(26, 21, 18, 0.18);
+	--cozy-chat-chrome: rgba(26, 21, 18, 0.28);
 }
 
 html[data-ui-theme='cozy'][data-cozy-contrast='high'] .chat-frame {
-	--cozy-chat-chrome: rgba(20, 16, 14, 0.96);
-	background: var(--cozy-shell);
+	--cozy-chat-chrome: rgba(26, 21, 18, 0.5);
 }
 
-html[data-ui-theme='cozy'] .chat-frame :is(.chat-conv-head, .chat-rail, .chat-compose) {
+html[data-ui-theme='cozy'] .chat-frame .chat-compose {
 	background: var(--cozy-chat-chrome);
-	-webkit-backdrop-filter: blur(20px) saturate(125%);
-	backdrop-filter: blur(20px) saturate(125%);
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+}
+
+html[data-ui-theme='cozy'] .chat-frame .chat-rail {
+	background: var(--cozy-summary-surface);
 }
 
 html[data-ui-theme='cozy'] .chat-frame .chat-rail :is(h2, summary, button) {
@@ -688,6 +707,8 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high']
 		--cozy-panel-sheen: none;
 		--cozy-sidebar-sheen: none;
 		--cozy-well: #1a1512;
+		--cozy-summary-surface: var(--cozy-well);
+		--cozy-work-canvas: var(--cozy-shell);
 		--card: #241e19;
 		--popover: #1c1713;
 		--exec-sidebar-bg: #1e1915;

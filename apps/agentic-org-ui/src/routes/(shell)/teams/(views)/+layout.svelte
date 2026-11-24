@@ -1,6 +1,6 @@
 <script lang="ts">
-	// The Teams view switch (app-shell-ux §0): Teams · Members · Org chart. A team's own page
-	// (/teams/[teamId]) is outside this group, so it has no switch. Switching focuses the heading.
+	// The Teams view switch (Prototype Release 1149b4f1, app-shell-ux §0): Teams · Members · Org chart.
+	// Uses the shared .section-header.org-directory-header primary-tab underline strip; switching focuses the heading.
 	import TabsNav from '$lib/components/TabsNav.svelte';
 
 	let { children } = $props();
@@ -11,5 +11,7 @@
 	];
 </script>
 
-<TabsNav label="Teams views" tabs={views} focusHeading />
+<div class="section-header org-directory-header">
+	<TabsNav label="Teams views" tabs={views} focusHeading />
+</div>
 {@render children()}

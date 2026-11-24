@@ -267,6 +267,12 @@ html[data-ui-theme='report'] {
 	--workspace-secondary-surface: #ffffff;
 }
 
+/* Report Day project release readiness strip: white surface with >= 3:1 unfilled progress track (Prototype Release 1149b4f1) */
+html[data-ui-theme='report'] .assembly-release {
+	background: var(--workspace-secondary-surface);
+	--bar-track: color-mix(in srgb, var(--fg-muted) 72%, var(--workspace-secondary-surface));
+}
+
 /* ── Shared Modern 2D Executive Report Layout Tokens (Day & Night) ── */
 html[data-ui-theme^='report'] {
 	--exec-nav-label-size: 0.65rem;

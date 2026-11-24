@@ -155,3 +155,20 @@ test(
 		await shot(page, 'chat-thread-original-opener-after-reply');
 	}
 );
+
+test('Phase 8 (1149b4f1): Cozy Glass keeps Chat and Thread headers translucent above matte message canvas', async ({
+	page
+}) => {
+	await enterMockedOrganization(page);
+	await expect(page).toHaveURL(/\/teams\/members$/);
+	await visit(page, '/chat?c=c-release-v1&theme=cozy');
+	await expect(page.locator('.chat-msgs-canvas')).toHaveCSS('background-color', 'rgb(70, 60, 48)');
+	await expect(page.locator('.chat-conv-head')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+	await page.getByTestId('message-list').getByTestId('replies-link').first().click();
+	const pane = page.getByTestId('thread-panel');
+	await expect(pane).toBeVisible();
+	await expect(pane.locator('.side-panel-header')).toHaveCSS(
+		'background-color',
+		'rgba(0, 0, 0, 0)'
+	);
+});

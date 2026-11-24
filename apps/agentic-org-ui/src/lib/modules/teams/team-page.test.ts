@@ -34,17 +34,22 @@ const detail = (members: number, maxMembers = 6): TeamDetail => ({
 });
 
 describe('tabs', () => {
-	it('puts Work at the team URL and the others under it', () => {
+	it('puts Overview at the team URL and Members, Work, and the others under it', () => {
 		expect(teamHref('web')).toBe('/teams/web');
+		expect(teamHref('web', 'overview')).toBe('/teams/web');
+		expect(teamHref('web', 'members')).toBe('/teams/web/members');
+		expect(teamHref('web', 'work')).toBe('/teams/web/work');
 		expect(teamHref('web', 'processes')).toBe('/teams/web/processes');
 		expect(teamHref('a b', 'projects')).toBe('/teams/a%20b/projects');
 	});
-	it('reads the tab from the pathname, falling back to Work', () => {
-		expect(tabFor('/teams/web', 'web').id).toBe('work');
+	it('reads the tab from the pathname, falling back to Overview', () => {
+		expect(tabFor('/teams/web', 'web').id).toBe('overview');
+		expect(tabFor('/teams/web/members', 'web').id).toBe('members');
+		expect(tabFor('/teams/web/work', 'web').id).toBe('work');
 		expect(tabFor('/teams/web/activity', 'web').id).toBe('activity');
 		expect(tabFor('/teams/web/conversations/', 'web').id).toBe('conversations');
-		expect(tabFor('/teams/web/nope', 'web').id).toBe('work');
-		expect(tabFor('/teams/other/projects', 'web').id).toBe('work');
+		expect(tabFor('/teams/web/nope', 'web').id).toBe('overview');
+		expect(tabFor('/teams/other/projects', 'web').id).toBe('overview');
 	});
 });
 

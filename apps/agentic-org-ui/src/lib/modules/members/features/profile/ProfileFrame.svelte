@@ -370,21 +370,20 @@
 			{@const active = p.status !== 'inactive'}
 			{@const manage = p.viewer.isOwnerOrAdmin && active && !!record}
 			{@const tabs = tabsFor(p)}
-			<header
-				class="profile-masthead border-b border-line px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8"
-			>
-				<a
-					href={resolve('/teams/members')}
-					class="mb-3 inline-flex min-h-6 items-center text-sm/6 font-semibold max-[639px]:min-h-11 {linkClass}"
-					>Members</a
-				>
-				<div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
-					<div
-						class="flex min-w-0 flex-1 basis-72 flex-col gap-3 min-[640px]:flex-row min-[640px]:gap-x-4"
+			<div class="section-header profile-header">
+				<div class="px-4 pt-5 min-[640px]:px-6 min-[1024px]:px-8">
+					<a
+						href={resolve('/teams/members')}
+						class="inline-flex min-h-6 items-center text-sm/6 font-semibold max-[639px]:min-h-11 {linkClass}"
+						>Members</a
 					>
+				</div>
+				<header class="profile-masthead prof px-4 pt-2 pb-3 min-[640px]:px-6 min-[1024px]:px-8">
+					<div class="flex min-w-0 flex-1 flex-col gap-3 min-[640px]:flex-row min-[640px]:gap-x-4">
 						<Avatar name={p.name} class="size-10 shrink-0" />
 						<div class="min-w-0 flex-1">
 							<h2
+								id="profile-heading"
 								bind:this={nameHeading}
 								tabindex="-1"
 								class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere]"
@@ -463,30 +462,58 @@
 							</p>
 						</div>
 					</div>
+				</header>
+				<div class="section-toolbar profile-toolbar">
+					<div
+						class="primary-tab-row relative max-[639px]:hidden {tabStripFade}"
+						{@attach tabStrip(page.url.pathname)}
+					>
+						<TabsNav
+							label="{p.name}'s profile"
+							tabs={tabs.map((t) => ({ label: TAB_LABEL[t], href: tabHref(p.id, t) }))}
+							class="tabs"
+						/>
+					</div>
 					{#if active}
-						<div class="flex flex-wrap items-center gap-2.5">
+						<div class="section-actions profile-actions flex flex-wrap items-center gap-2">
 							{#if p.kind === 'agent'}
 								<Button
 									variant="outline"
+									size="sm"
 									class={actionBtn}
 									onclick={(e) => act('run', e.currentTarget)}>Run now</Button
 								>
 							{/if}
 							<Button
 								variant="outline"
+								size="sm"
 								class={actionBtn}
 								onclick={(e) => act('assign', e.currentTarget)}>Assign task</Button
 							>
+							{#if manage && p.kind === 'agent'}
+								<Button
+									variant="outline"
+									size="sm"
+									class="profile-pause {actionBtn}"
+									onclick={(e) => act(p.status === 'paused' ? 'resume' : 'pause', e.currentTarget)}
+									>{p.status === 'paused' ? 'Resume' : 'Pause'}</Button
+								>
+							{/if}
 							{#if manage}
 								<DropdownMenu>
 									<DropdownMenuTrigger>
 										{#snippet child({ props })}
-											<Button {...props} bind:ref={moreButton} variant="outline" class={actionBtn}
+											<Button
+												{...props}
+												bind:ref={moreButton}
+												variant="outline"
+												size="sm"
+												class={actionBtn}
 												>More<span class="sr-only"> actions for {p.name}</span></Button
 											>
 										{/snippet}
 									</DropdownMenuTrigger>
-									<DropdownMenuContent align="end">
+									<DropdownMenuContent align="end" class="triage-menu-surface">
 										{#if p.kind === 'agent'}
 											{#if p.status === 'paused'}
 												<DropdownMenuItem
@@ -528,20 +555,14 @@
 						</div>
 					{/if}
 				</div>
-			</header>
-			<div class="relative max-[639px]:hidden {tabStripFade}" {@attach tabStrip(page.url.pathname)}>
-				<TabsNav
+				<SectionMenu
+					class="min-[640px]:hidden"
 					label="{p.name}'s profile"
-					tabs={tabs.map((t) => ({ label: TAB_LABEL[t], href: tabHref(p.id, t) }))}
+					current={hasTab ? tab : ''}
+					sections={tabs.map((t) => ({ id: t, label: TAB_LABEL[t] }))}
+					onchoose={(id) => void chooseSection(id)}
 				/>
 			</div>
-			<SectionMenu
-				class="min-[640px]:hidden"
-				label="{p.name}'s profile"
-				current={hasTab ? tab : ''}
-				sections={tabs.map((t) => ({ id: t, label: TAB_LABEL[t] }))}
-				onchoose={(id) => void chooseSection(id)}
-			/>
 			<h3 bind:this={tabHeading} tabindex="-1" class="sr-only">
 				{hasTab ? TAB_LABEL[tab] : `No such tab for ${p.name}`}
 			</h3>
@@ -648,11 +669,76 @@
 {/if}
 
 <style>
-	.profile-masthead {
-		background: var(--exec-well);
+	.section-header {
+		position: relative;
+		z-index: 1;
+		flex: none;
+		container-type: inline-size;
+		--profile-gutter: 1rem;
 	}
-	:global(html[data-ui-theme^='report']) .profile-masthead {
-		border-bottom: 1.5px solid var(--report-masthead-rule);
+	@media (min-width: 640px) {
+		.section-header {
+			--profile-gutter: 1.5rem;
+		}
+	}
+	@media (min-width: 1024px) {
+		.section-header {
+			--profile-gutter: 2rem;
+		}
+	}
+	.profile-masthead {
+		border: 0;
+		background: none;
+		box-shadow: none;
+	}
+	.section-toolbar {
+		position: relative;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: stretch;
+		gap: 6px 12px;
+		padding: 4px var(--profile-gutter) 1px;
+		border-block-end: 1px solid var(--line);
+	}
+	.section-toolbar > :not(.primary-tab-row) {
+		align-self: center;
+	}
+	.primary-tab-row {
+		position: relative;
+		display: flex;
+		align-items: stretch;
+		min-inline-size: 0;
+		max-inline-size: 100%;
+	}
+	.primary-tab-row::after {
+		content: '';
+		position: absolute;
+		inset-block-start: 100%;
+		inset-inline-start: calc(-1 * var(--profile-gutter));
+		inline-size: 100cqi;
+		border-block-start: 1px solid var(--line);
+		pointer-events: none;
+	}
+	.primary-tab-row > :global(nav) {
+		min-width: 0;
+		max-width: 100%;
+		padding-inline: 0;
+		border-bottom: 0;
+	}
+	.section-actions {
+		margin-inline-start: auto;
+		margin-block: 4px;
+	}
+	@container (max-width: 40rem) {
+		.primary-tab-row {
+			flex-basis: 100%;
+		}
+		.section-toolbar :global(.profile-pause) {
+			display: none;
+		}
+	}
+	:global(html[data-ui-theme^='report']) .profile-toolbar {
+		border-block-end: 1.5px solid var(--report-masthead-rule);
 	}
 	:global(.profile-owner-pill) {
 		background: var(--tone-accent-bg);

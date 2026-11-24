@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { Tooltip, mergeProps } from 'bits-ui';
 	import X from '@lucide/svelte/icons/x';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
@@ -84,7 +85,11 @@
 	const title = $derived(titleOf(conversation, ctx, ctx.owner));
 	let closeButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
 	let headingEl = $state<HTMLHeadingElement | null>(null);
+	let closeTipOpen = $state(false);
+	let suppressCloseTip = false;
 	export function focusClose() {
+		suppressCloseTip = true;
+		closeTipOpen = false;
 		closeButton?.focus({ preventScroll: true });
 		closeButton?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	}
@@ -92,35 +97,72 @@
 		headingEl?.focus({ preventScroll: true });
 		headingEl?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	}
+	function handleCloseTipChange(next: boolean) {
+		if (next && suppressCloseTip) {
+			closeTipOpen = false;
+			return;
+		}
+		closeTipOpen = next;
+	}
 </script>
 
 <aside
 	data-chat-panel
-	class="absolute inset-y-0 right-0 {sidebarInline
+	class="thread absolute inset-y-0 right-0 {sidebarInline
 		? 'left-[256px]'
 		: 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col overflow-y-auto border-l border-line bg-surface shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none"
-	aria-label="Thread"
+	aria-labelledby="chat-thread-title"
 	data-testid="thread-panel"
 >
-	<div class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-		<h2
-			id="chat-thread-title"
-			bind:this={headingEl}
-			tabindex="-1"
-			class="min-w-0 rounded-sm text-sm/6 font-semibold break-words text-fg focus:outline-2 focus:outline-solid focus:outline-offset-2 focus:outline-focus focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-focus"
-		>
-			Thread <span class="font-normal text-fg-muted">in {title}</span>
-		</h2>
-		<Button
-			type="button"
-			variant="ghost"
-			size="icon-sm"
-			class="scroll-mt-16"
-			aria-label="Close thread"
-			bind:ref={closeButton}
-			onclick={onclose}><X aria-hidden="true" /></Button
-		>
-	</div>
+	<header
+		class="side-panel-header flex items-center justify-between gap-3 border-b border-line px-4 py-2"
+	>
+		<div class="thread-title flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+			<h2
+				id="chat-thread-title"
+				bind:this={headingEl}
+				tabindex="-1"
+				class="min-w-0 rounded-sm text-sm/6 font-semibold break-words text-fg focus:outline-2 focus:outline-solid focus:outline-offset-2 focus:outline-focus focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-focus"
+			>
+				Thread
+			</h2>
+			<span class="min-w-0 text-[0.8125rem]/5 break-words text-fg-muted">{title}</span>
+		</div>
+		<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
+			<Tooltip.Root bind:open={closeTipOpen} onOpenChange={handleCloseTipChange}>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<Button
+							{...mergeProps(props, {
+								onblur: () => {
+									suppressCloseTip = false;
+								},
+								onpointerenter: () => {
+									suppressCloseTip = false;
+								}
+							})}
+							type="button"
+							variant="ghost"
+							size="icon-sm"
+							class="scroll-mt-16"
+							aria-label="Close thread"
+							bind:ref={closeButton}
+							onclick={onclose}><X aria-hidden="true" /></Button
+						>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Portal>
+					<Tooltip.Content
+						side="left"
+						sideOffset={6}
+						class="z-60 rounded-md border border-line-strong bg-surface-overlay px-2 py-1 text-xs/5 font-medium text-fg shadow-md"
+					>
+						Close thread
+					</Tooltip.Content>
+				</Tooltip.Portal>
+			</Tooltip.Root>
+		</Tooltip.Provider>
+	</header>
 	<div
 		class="flex min-h-16 flex-1 flex-col gap-1 overflow-y-auto px-2 py-3 [@media(width<=640px)]:px-[8px]"
 		data-focus-scope
@@ -200,3 +242,12 @@
 		{onsend}
 	/>
 </aside>
+
+<style>
+	.side-panel-header {
+		min-block-size: calc(var(--control-height, 36px) + 16px);
+	}
+	:global(html[data-ui-theme='cozy']) .thread .side-panel-header {
+		background: transparent;
+	}
+</style>

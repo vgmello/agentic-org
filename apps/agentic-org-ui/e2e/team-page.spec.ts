@@ -35,7 +35,15 @@ test('TEAM-UX: at 390 px every tab is on screen; the strip wraps instead of scro
 	await openTeam(page, '/teams/eng');
 	const strip = page.getByRole('navigation', { name: 'Engineering views' });
 	const tabs = strip.getByRole('link');
-	await expect(tabs).toHaveText(['Work', 'Projects', 'Activity', 'Conversations', 'Processes']);
+	await expect(tabs).toHaveText([
+		'Overview',
+		/^Members\s*3$/,
+		/^Work(?:\s*\d+)?$/,
+		'Projects',
+		'Activity',
+		'Conversations',
+		'Processes'
+	]);
 	expect(await strip.evaluate((nav) => nav.scrollWidth - nav.clientWidth)).toBe(0);
 	const edge = await strip.evaluate((nav) => nav.getBoundingClientRect().right);
 	for (const tab of await tabs.all()) {
@@ -76,12 +84,12 @@ test('TEAM-UX: at 320 px and 200% text each member row keeps a text column of 20
 	page
 }) => {
 	await page.setViewportSize({ width: 320, height: 800 });
-	await openTeam(page, '/teams/eng');
+	await openTeam(page, '/teams/eng/members');
 	await page.evaluate(() => {
 		document.documentElement.style.fontSize = '200%';
 	});
 	const rows = page
-		.getByRole('region', { name: /^Members/ })
+		.getByTestId('team-members-roster')
 		.getByRole('listitem')
 		.filter({
 			has: page.locator('[data-member-text]')
@@ -118,7 +126,7 @@ test('TEAM-9: Delete names what still points at the team, with links, and offers
 	await dialog.getByRole('button', { name: 'Close' }).last().click();
 	// Nothing changed: the team, its people and its project are all still there.
 	await expect(page.getByRole('heading', { name: 'Web', exact: true })).toBeVisible();
-	await expect(page.getByRole('region', { name: /^Members/ })).toContainText('Noor Haddad');
+	await expect(page.getByTestId('team-overview')).toContainText('Noor Haddad');
 });
 
 test('TEAM-ARCHIVE: Archive also waits for the projects the team owns and its open tasks', async ({
@@ -137,7 +145,7 @@ test(
 	{ tag: '@webkit' },
 	async ({ page }) => {
 		await page.setViewportSize({ width: 390, height: 844 });
-		await openTeam(page, '/teams/web', 'Web');
+		await openTeam(page, '/teams/web/members', 'Web');
 		await page.getByRole('button', { name: 'Add a person' }).click();
 		const sheet = page.getByRole('dialog', { name: 'Add person' });
 		// One home team, preset to this team; no team checkboxes.
@@ -160,7 +168,7 @@ test(
 		await sheet.getByRole('button', { name: 'Add person' }).click();
 		await expect(sheet).toBeHidden();
 		await expect(page.getByText('Added Sam Ortiz. Agents can now reach Sam Ortiz.')).toBeVisible();
-		const members = page.getByRole('region', { name: /^Members/ });
+		const members = page.getByTestId('team-members-roster');
 		await expect(members).toContainText('Sam Ortiz');
 		await expect(members).toContainText('@sam-ortiz');
 	}
@@ -169,19 +177,15 @@ test(
 test('TEAM-LIVE: a change made elsewhere shows on the open team page without a reload', async ({
 	page
 }) => {
-	await openTeam(page, '/teams/web', 'Web');
-	const members = page.getByRole('region', { name: /^Members/ });
+	await openTeam(page, '/teams/web/members', 'Web');
+	const members = page.getByTestId('team-members-roster');
 	await expect(members).toContainText('2 of');
 	await orgChange(page, {
 		method: 'member.add_person',
-		params: { member_id: '01JC00000000000000000000R1', name: 'Rae Lindgren' }
-	});
-	await orgChange(page, {
-		method: 'team.add_member',
 		params: {
-			membership_id: '01JC00000000000000000000M1',
-			team_id: 'web',
-			member_id: '01JC00000000000000000000R1'
+			member_id: '01JC00000000000000000000R1',
+			name: 'Rae Lindgren',
+			home_team_id: 'web'
 		}
 	});
 	// No reload: the page re-read the team when the organization changed.
@@ -313,16 +317,14 @@ for (const removal of ['Archive', 'Delete'] as const)
 		const temp = await newTeamUnderEngineering(page, 'Temp');
 		const dialog = await teamAction(page, 'Temp', `${removal}…`);
 		await expect(dialog.getByRole('button', { name: `${removal} Temp` })).toBeEnabled();
-		// Someone adds a team under Temp after the dialog checked.
+		// Someone adds a team under Temp after the dialog checked; live blocker re-check blocks removal in place (§7.10).
 		await orgChange(page, {
 			method: 'team.create',
 			params: { team_id: 'temp-child', name: 'Child', owner_team_id: temp }
 		});
-		await dialog.getByRole('button', { name: `${removal} Temp` }).click();
-		await expect(dialog.getByRole('alert')).toHaveText(
-			'Temp still has 1 child team. Resolve them first.'
-		);
-		await dialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(dialog.getByRole('button', { name: `${removal} Temp` })).toHaveCount(0);
+		await expect(dialog).toContainText('Temp still has 1 child team.');
+		await dialog.getByRole('button', { name: 'Close' }).last().click();
 		await expect(page).toHaveURL(new RegExp(`/teams/${temp}$`));
 		await expect(page.getByRole('heading', { name: 'Temp', exact: true })).toBeVisible();
 		await expect(page.getByText('Archived')).toHaveCount(0);
@@ -371,3 +373,53 @@ for (const width of [390, 1024])
 			await owned.evaluate((a) => a.closest('li')!.getBoundingClientRect().height)
 		).toBeLessThanOrEqual(20);
 	});
+
+test('TEAM-OVERVIEW: opens on Overview with reconciled KPIs, legacy task redirect, scoped search, and M/Arrow tab shortcuts', async ({
+	page
+}) => {
+	await openTeam(page, '/teams/web', 'Web');
+	const overview = page.getByTestId('team-overview');
+	await expect(overview).toBeVisible();
+	await expect(overview.locator('[data-kpi="blocked"]')).toContainText('1');
+	await expect(overview.locator('[data-kpi="blocked"]')).toContainText('Of 3 open items');
+	await expect(overview.getByTestId('team-completions-unavailable')).toBeVisible();
+	// Active project Beacon + alphabetical contributors (Mira Castillo before Noor Haddad before Sam Okafor)
+	await expect(overview).toContainText('Beacon');
+	const contributorNames = await overview
+		.locator('table tbody th')
+		.evaluateAll((cells) => cells.map((c) => c.textContent?.trim()));
+	expect(contributorNames).toEqual(['Mira Castillo', 'Noor Haddad', 'Sam Okafor']);
+
+	// ArrowRight moves focus across primary tabs without navigating.
+	const nav = page.getByRole('navigation', { name: 'Web views' });
+	await nav.getByRole('link', { name: 'Overview', exact: true }).focus();
+	await page.keyboard.press('ArrowRight');
+	await expect(nav.getByRole('link', { name: /^Members/ })).toBeFocused();
+
+	// M activates Page menu navigation; Escape cancels and restores focus; repeated P cycles Projects -> Processes.
+	await page.locator('#team-heading').focus();
+	await page.keyboard.press('m');
+	await expect(nav.getByRole('link', { name: 'Overview', exact: true })).toBeFocused();
+	await page.keyboard.press('p');
+	await expect(nav.getByRole('link', { name: 'Projects', exact: true })).toBeFocused();
+	await page.keyboard.press('p');
+	await expect(nav.getByRole('link', { name: 'Processes', exact: true })).toBeFocused();
+	await page.keyboard.press('Escape');
+	await expect(page.locator('#team-heading')).toBeFocused();
+
+	// Preserve legacy deep links (`/teams/web?item=T-A44` -> `/teams/web/work?item=T-A44`).
+	await visit(page, '/teams/web?item=T-A44');
+	await expect(page).toHaveURL(/\/teams\/web\/work\?item=T-A44$/);
+
+	// Scoped search: `/` focuses, typing filters, Escape leaves query intact and exits field.
+	await page.locator('#team-heading').focus();
+	await page.keyboard.press('/');
+	const search = page.getByTestId('scoped-work-search');
+	await expect(search).toBeFocused();
+	await search.fill('Retry');
+	await expect(page.getByText('Decide the retry policy for payments')).toBeVisible();
+	await expect(page.getByText('Split the checkout service')).toHaveCount(0);
+	await page.keyboard.press('Escape');
+	await expect(search).toHaveValue('Retry');
+	await expect(page.locator('#team-heading')).toBeFocused();
+});

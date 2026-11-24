@@ -5,7 +5,7 @@
   Uses Resource + Loaded (handling loading, unavailable, unsupported, error, ready).
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onDestroy, tick, type Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -69,11 +69,13 @@
 	let {
 		organizationId,
 		scope,
-		projectArchived = false
+		projectArchived = false,
+		onRegisterToolbar = undefined
 	}: {
 		organizationId: string;
 		scope: WorkScope;
 		projectArchived?: boolean;
+		onRegisterToolbar?: (controls: Snippet | undefined) => void;
 	} = $props();
 
 	const uid = $props.id();
@@ -297,13 +299,30 @@
 
 	function handleSearchKeydown(event: KeyboardEvent) {
 		if (event.isComposing || event.keyCode === 229 || event.key !== 'Escape') return;
+		// Prototype Release 1149b4f1: Escape leaves the typed query intact and exits the field.
 		event.preventDefault();
-		if (filters.query) {
-			filters = { ...filters, query: '' };
+		const heading = document.querySelector<HTMLElement>(
+			'#project-heading, #shell-page-title, main h1, main h2'
+		);
+		if (heading) {
+			if (!heading.hasAttribute('tabindex')) heading.tabIndex = -1;
+			heading.focus({ preventScroll: true });
 		} else {
 			(event.currentTarget as HTMLInputElement | null)?.blur();
 		}
 	}
+
+	onDestroy(() => {
+		onRegisterToolbar?.(undefined);
+	});
+
+	$effect(() => {
+		if (isOrgScope || !onRegisterToolbar) return;
+		onRegisterToolbar(projectWorkToolbarControls);
+		return () => {
+			onRegisterToolbar(undefined);
+		};
+	});
 
 	// Sync Show view and bookmarked `?project=` / `?assignee=` filters with URL on `/work`.
 	const urlView = $derived(page.url.searchParams.get('view'));
@@ -462,7 +481,62 @@
 	);
 </script>
 
-<div class="work-page flex min-w-0 flex-col" {@attach workSearchShortcut}>
+{#snippet projectWorkToolbarControls()}
+	{#if activeTab === 'task' && queueRead.state === 'ready' && (queueRead.data?.rows.length ?? 0) > 0}
+		<div
+			class="project-work-controls"
+			role="group"
+			aria-label="Work view controls"
+			data-testid="project-work-controls"
+		>
+			<div class="work-layout-toggle" role="group" aria-label="Layout">
+				<button
+					type="button"
+					aria-pressed={layout === 'list'}
+					onclick={() => setLayout('list')}
+					class="queue-tab work-toggle-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+					>List</button
+				>
+				<button
+					type="button"
+					aria-pressed={layout === 'board'}
+					onclick={() => setLayout('board')}
+					class="queue-tab work-toggle-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+					>Board</button
+				>
+			</div>
+			{#if layout === 'board'}
+				<div
+					role="group"
+					aria-label="Board columns"
+					data-testid="board-mode-toggle"
+					class="inline-flex rounded-md bg-surface-raised p-0.5 ring-1 ring-line"
+				>
+					<button
+						type="button"
+						aria-pressed={boardMode === 'stages'}
+						onclick={() => (boardMode = 'stages')}
+						class="rounded-sm px-2.5 py-1 text-xs/5 font-medium focus-visible:outline-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11 {boardMode ===
+						'stages'
+							? 'bg-surface-overlay text-fg'
+							: 'text-fg-secondary hover:text-fg'}">4 stages</button
+					>
+					<button
+						type="button"
+						aria-pressed={boardMode === 'statuses'}
+						onclick={() => (boardMode = 'statuses')}
+						class="rounded-sm px-2.5 py-1 text-xs/5 font-medium focus-visible:outline-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11 {boardMode ===
+						'statuses'
+							? 'bg-surface-overlay text-fg'
+							: 'text-fg-secondary hover:text-fg'}">6 statuses</button
+					>
+				</div>
+			{/if}
+		</div>
+	{/if}
+{/snippet}
+
+<div class="work-page flex min-w-0 flex-1 flex-col" {@attach workSearchShortcut}>
 	{#if isOrgScope}
 		<div inert={activeOpenRow ? true : undefined}>
 			<PageHeader
@@ -582,36 +656,49 @@
 			{/if}
 
 			<div
-				class="flex min-w-0 flex-col gap-5 {gutters} py-6"
+				class={[
+					'flex min-w-0 flex-1 flex-col gap-5 py-6',
+					gutters,
+					isOrgScope && 'work-results-canvas'
+				]}
 				inert={isOrgScope && activeOpenRow ? true : undefined}
 			>
 				<!-- Top controls: Type tabs + Project actions / Show menu / Board-List toggle -->
-				<div class="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-2">
-					<div role="tablist" aria-label="Work" class="flex flex-wrap gap-x-1">
-						{#each tabs as t, index (t.id)}
-							{@const selected = activeTab === t.id && (!isOrgScope || showMode === 'mine')}
-							<button
-								id="{uid}-tab-{t.id}"
-								type="button"
-								role="tab"
-								aria-selected={selected}
-								aria-controls="{uid}-panel"
-								tabindex={activeTab === t.id ? 0 : -1}
-								onclick={() => selectTab(t.id)}
-								onkeydown={(e) => handleTabKey(e, index)}
-								class="px-3 py-2 text-sm/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11 {selected
-									? 'border-b-2 border-brand font-semibold text-fg'
-									: 'text-fg-secondary hover:text-fg'}"
-							>
-								{t.label}
-								<span class="ml-1 text-xs/5 font-normal text-fg-muted tabular-nums">
-									{q.rows.filter((r) => r.type === t.id).length}
-								</span>
-							</button>
-						{/each}
+				<div
+					class="work-toolbar-bar flex flex-wrap items-stretch justify-between gap-x-3 gap-y-1.5 border-b border-line"
+				>
+					<div
+						class="primary-tab-row"
+						data-page-menu={isOrgScope ? '' : undefined}
+						aria-keyshortcuts={isOrgScope && shortcutsEnabled ? 'M' : undefined}
+					>
+						<div role="tablist" aria-label="Work" class="flex flex-wrap gap-x-1">
+							{#each tabs as t, index (t.id)}
+								{@const selected = activeTab === t.id && (!isOrgScope || showMode === 'mine')}
+								<button
+									id="{uid}-tab-{t.id}"
+									type="button"
+									role="tab"
+									data-menu-label={t.label}
+									aria-selected={selected}
+									aria-controls="{uid}-panel"
+									tabindex={activeTab === t.id ? 0 : -1}
+									onclick={() => selectTab(t.id)}
+									onkeydown={(e) => handleTabKey(e, index)}
+									class="work-primary-tab inline-flex min-h-9 items-center gap-1.5 rounded-t-md border-b-2 px-3 pt-1.5 pb-[5px] text-sm/6 font-semibold whitespace-nowrap [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11 {selected
+										? 'is-selected'
+										: ''}"
+								>
+									<span>{t.label}</span>
+									<span class="work-tab-count text-xs/5 font-normal tabular-nums">
+										{q.rows.filter((r) => r.type === t.id).length}
+									</span>
+								</button>
+							{/each}
+						</div>
 					</div>
 
-					<div class="flex flex-wrap items-center gap-2">
+					<div class="my-1 flex flex-wrap items-center gap-2 self-center">
 						{#if isOrgScope}
 							<label class="flex items-center gap-2 text-xs/5 text-fg-muted">
 								<span>Show</span>
@@ -632,21 +719,12 @@
 							</label>
 						{/if}
 
-						{#if (!isOrgScope || (showMode !== 'needs_me' && showMode !== 'by_project' && showMode !== 'by_assignee')) && activeTab === 'task'}
+						{#if (!isOrgScope ? !onRegisterToolbar : showMode !== 'needs_me' && showMode !== 'by_project' && showMode !== 'by_assignee') && activeTab === 'task'}
 							<div
 								role="group"
 								aria-label="Layout"
 								class="inline-flex rounded-md bg-surface-raised p-0.5 ring-1 ring-line"
 							>
-								<button
-									type="button"
-									aria-pressed={layout === 'board'}
-									onclick={() => setLayout('board')}
-									class="rounded-sm px-2.5 py-1 text-xs/5 font-medium focus-visible:outline-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11 {layout ===
-									'board'
-										? 'bg-surface-overlay text-fg'
-										: 'text-fg-secondary hover:text-fg'}">Board</button
-								>
 								<button
 									type="button"
 									aria-pressed={layout === 'list'}
@@ -655,6 +733,15 @@
 									'list'
 										? 'bg-surface-overlay text-fg'
 										: 'text-fg-secondary hover:text-fg'}">List</button
+								>
+								<button
+									type="button"
+									aria-pressed={layout === 'board'}
+									onclick={() => setLayout('board')}
+									class="rounded-sm px-2.5 py-1 text-xs/5 font-medium focus-visible:outline-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11 {layout ===
+									'board'
+										? 'bg-surface-overlay text-fg'
+										: 'text-fg-secondary hover:text-fg'}">Board</button
 								>
 							</div>
 
@@ -793,8 +880,10 @@
 
 						<!-- Filter bar (WORK-1, TRI-7, BUG-12, BUG-13, RQS-15) -->
 						<div class="flex flex-wrap items-center gap-2.5" data-testid="filter-bar">
-							<div class="w-full min-[640px]:w-56">
-								<label for="{uid}-search" class="sr-only">Search work</label>
+							<div class="relative w-full min-[640px]:w-60">
+								<label for="{uid}-search" class="sr-only"
+									>{isOrgScope ? 'Search work' : 'Search work in this view'}</label
+								>
 								<Input
 									id="{uid}-search"
 									type="search"
@@ -802,8 +891,16 @@
 									onkeydown={handleSearchKeydown}
 									placeholder="Search title or T- ref…"
 									aria-describedby="{uid}-search-scope"
-									class={inputClass}
+									aria-keyshortcuts={shortcutsEnabled ? '/' : undefined}
+									class="{inputClass} {shortcutsEnabled && !filters.query ? 'pr-8' : ''}"
 								/>
+								{#if shortcutsEnabled && !filters.query}
+									<kbd
+										aria-hidden="true"
+										class="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 rounded border border-line-strong px-1.5 py-0.5 font-mono text-[11px]/none text-fg-muted min-[721px]:inline"
+										>/</kbd
+									>
+								{/if}
 								<span id="{uid}-search-scope" class="sr-only">
 									Searches shared titles, references, teams and projects.
 								</span>
@@ -1183,3 +1280,82 @@
 		onadded={reloadQueue}
 	/>
 </div>
+
+<style>
+	.work-primary-tab {
+		border-bottom-color: transparent;
+		color: var(--exec-body, var(--fg-secondary));
+		cursor: pointer;
+	}
+	.work-primary-tab:hover {
+		background: var(--exec-btn-ghost-bg-hover, var(--surface-raised));
+		color: var(--exec-ink, var(--fg));
+	}
+	.work-primary-tab.is-selected {
+		border-bottom-color: var(--tone-accent-ink);
+		color: var(--exec-ink, var(--fg));
+	}
+	.work-primary-tab:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: -4px;
+	}
+	.work-tab-count {
+		color: var(--exec-muted, var(--fg-muted));
+	}
+	.work-primary-tab.is-selected .work-tab-count {
+		color: var(--tone-accent-ink);
+	}
+	.project-work-controls {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		max-inline-size: 100%;
+	}
+	.work-layout-toggle {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		padding-inline-start: 8px;
+		border-inline-start: 1px solid var(--line);
+	}
+	.work-toggle-tab {
+		display: inline-flex;
+		align-items: center;
+		padding: 0 10px;
+		border: 1px solid transparent;
+		border-radius: var(--exec-ctrl-radius, 6px);
+		background: transparent;
+		color: var(--fg-secondary);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.work-toggle-tab:hover {
+		background: var(--surface-raised);
+		color: var(--fg);
+	}
+	.work-toggle-tab[aria-pressed='true'] {
+		background: var(--surface-raised);
+		border-color: var(--line-strong);
+		color: var(--fg);
+	}
+	.work-toggle-tab:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: -2px;
+	}
+	@media (forced-colors: active) {
+		.work-primary-tab {
+			border-bottom-color: Canvas;
+		}
+		.work-primary-tab.is-selected {
+			border-bottom-color: Highlight;
+		}
+		.work-toggle-tab[aria-pressed='true'] {
+			background: Highlight;
+			border-color: Highlight;
+			color: HighlightText;
+		}
+	}
+</style>

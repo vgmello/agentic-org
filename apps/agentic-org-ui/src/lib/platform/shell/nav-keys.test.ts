@@ -34,4 +34,23 @@ describe('matchNavCandidate', () => {
 		expect(matchNavCandidate(items, '1', -1)).toBe(-1);
 		expect(matchNavCandidate(items, '', -1)).toBe(-1);
 	});
+
+	it('cycles repeated initials across team and project page tab rows', () => {
+		const teamTabs = [
+			{ label: 'Overview' },
+			{ label: 'Members' },
+			{ label: 'Work' },
+			{ label: 'Projects' },
+			{ label: 'Activity' },
+			{ label: 'Conversations' },
+			{ label: 'Processes' }
+		];
+		const firstP = matchNavCandidate(teamTabs, 'p', -1);
+		expect(firstP).toBe(3); // Projects
+		const secondP = matchNavCandidate(teamTabs, 'p', firstP);
+		expect(secondP).toBe(6); // Processes
+		expect(matchNavCandidate(teamTabs, 'p', secondP)).toBe(3); // wraps to Projects
+		expect(matchNavCandidate(teamTabs, 'm', -1)).toBe(1); // Members
+		expect(matchNavCandidate(teamTabs, 'w', -1)).toBe(2); // Work
+	});
 });

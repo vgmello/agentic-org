@@ -908,12 +908,35 @@
 
 	function handleSearchInputKeydown(event: KeyboardEvent) {
 		if (event.isComposing || event.keyCode === 229 || event.key !== 'Escape') return;
+		// Prototype Release 1149b4f1: Escape leaves the typed query intact and exits the search field.
 		event.preventDefault();
-		if (searchQuery) {
-			setSearchQuery('');
-		} else {
-			document.getElementById('shell-page-title')?.focus({ preventScroll: true });
+		document.getElementById('shell-page-title')?.focus({ preventScroll: true });
+	}
+
+	function handleCategoryKeydown(event: KeyboardEvent) {
+		if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+		if (
+			event.key !== 'ArrowLeft' &&
+			event.key !== 'ArrowRight' &&
+			event.key !== 'Home' &&
+			event.key !== 'End'
+		) {
+			return;
 		}
+		const row = (event.currentTarget as HTMLElement | null)?.closest('.primary-tab-row');
+		if (!row) return;
+		const options = [...row.querySelectorAll<HTMLButtonElement>('.queue-tab')];
+		const index = options.indexOf(event.currentTarget as HTMLButtonElement);
+		if (index < 0 || options.length === 0) return;
+		const next =
+			event.key === 'Home'
+				? 0
+				: event.key === 'End'
+					? options.length - 1
+					: (index + (event.key === 'ArrowRight' ? 1 : -1) + options.length) % options.length;
+		event.preventDefault();
+		options[next]?.focus();
+		options[next]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	}
 </script>
 
@@ -956,6 +979,7 @@
 								type="text"
 								autocomplete="off"
 								placeholder="Search inbox…"
+								aria-keyshortcuts={shortcutsEnabled ? '/' : undefined}
 								class="triage-search-input"
 							/>
 							{#if searchQuery}
@@ -1002,7 +1026,7 @@
 						data-overflow-tabs={JSON.stringify(
 							OVERFLOW_TABS.map((t) => ({ id: t.id, label: t.label }))
 						)}
-						class="queue-tabs"
+						class="primary-tab-row"
 					>
 						{#each PRIMARY_TABS as tab (tab.id)}
 							{@const isSelected = activeTab === tab.id}
@@ -1012,6 +1036,7 @@
 								data-triage-label={tab.label}
 								aria-pressed={isSelected}
 								onclick={() => selectTab(tab.id)}
+								onkeydown={handleCategoryKeydown}
 								class="queue-tab"
 							>
 								<span>{tab.label}</span>
@@ -1019,7 +1044,7 @@
 							</button>
 						{/each}
 
-						<div class="triage-tab-tools">
+						<span class="triage-more-wrap">
 							<DropdownMenu.Root>
 								<DropdownMenu.Trigger>
 									{#snippet child({ props })}
@@ -1029,6 +1054,7 @@
 											data-triage-more=""
 											data-current-kind={overflowActive ? '' : undefined}
 											title={overflowActive ? `Viewing ${overflowActiveLabel}` : undefined}
+											onkeydown={handleCategoryKeydown}
 											class="queue-tab"
 										>
 											<span>More</span>
@@ -1062,188 +1088,188 @@
 									</DropdownMenu.RadioGroup>
 								</DropdownMenu.Content>
 							</DropdownMenu.Root>
+						</span>
+					</div>
 
-							<div class="queue-controls" role="group" aria-label="Inbox view controls">
-								<DropdownMenu.Root bind:open={filterMenuOpen}>
-									<Tooltip.Root disabled={filterMenuOpen}>
-										<Tooltip.Trigger>
-											{#snippet child({ props: tipProps })}
-												<DropdownMenu.Trigger>
-													{#snippet child({ props: menuProps })}
-														<button
-															{...mergeProps(tipProps, menuProps)}
-															type="button"
-															aria-label="Filter inbox"
-															data-active={isFiltered ? '' : undefined}
-															class="queue-icon-btn"
-														>
-															<ListFilter class="size-4" aria-hidden="true" />
-														</button>
-													{/snippet}
-												</DropdownMenu.Trigger>
+					<div class="queue-controls" role="group" aria-label="Inbox view controls">
+						<DropdownMenu.Root bind:open={filterMenuOpen}>
+							<Tooltip.Root disabled={filterMenuOpen}>
+								<Tooltip.Trigger>
+									{#snippet child({ props: tipProps })}
+										<DropdownMenu.Trigger>
+											{#snippet child({ props: menuProps })}
+												<button
+													{...mergeProps(tipProps, menuProps)}
+													type="button"
+													aria-label="Filter inbox"
+													data-active={isFiltered ? '' : undefined}
+													class="queue-icon-btn"
+												>
+													<ListFilter class="size-4" aria-hidden="true" />
+												</button>
 											{/snippet}
-										</Tooltip.Trigger>
-										<Tooltip.Portal>
-											<Tooltip.Content
-												side="bottom"
-												sideOffset={6}
-												class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-												>Filter inbox</Tooltip.Content
-											>
-										</Tooltip.Portal>
-									</Tooltip.Root>
-									<DropdownMenu.Content
-										preventScroll={false}
-										align="end"
-										class="triage-menu-surface max-h-[min(60dvh,28rem)] w-60 max-w-[calc(100vw-2rem)] overflow-y-auto motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+										</DropdownMenu.Trigger>
+									{/snippet}
+								</Tooltip.Trigger>
+								<Tooltip.Portal>
+									<Tooltip.Content
+										side="bottom"
+										sideOffset={6}
+										class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+										>Filter inbox</Tooltip.Content
 									>
-										<DropdownMenu.Label>Urgency</DropdownMenu.Label>
-										<DropdownMenu.RadioGroup
-											value={urgentOnly ? 'urgent' : 'all'}
-											onValueChange={(val) => setUrgentOnly(val === 'urgent')}
-										>
-											<DropdownMenu.RadioItem
-												value="all"
-												closeOnSelect={true}
-												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-											>
-												All items
-											</DropdownMenu.RadioItem>
-											<DropdownMenu.RadioItem
-												value="urgent"
-												closeOnSelect={true}
-												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-											>
-												Urgent only
-											</DropdownMenu.RadioItem>
-										</DropdownMenu.RadioGroup>
-										<DropdownMenu.Separator />
-										<DropdownMenu.Label>Project</DropdownMenu.Label>
-										<DropdownMenu.RadioGroup
-											value={scope.project ?? ''}
-											onValueChange={(val) => setScope({ ...scope, project: val || undefined })}
-										>
-											<DropdownMenu.RadioItem
-												value=""
-												closeOnSelect={true}
-												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-											>
-												All projects
-											</DropdownMenu.RadioItem>
-											{#each scopeOpts.projects as proj (proj.id)}
-												<DropdownMenu.RadioItem
-													value={proj.id}
-													closeOnSelect={true}
-													class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-												>
-													{proj.name}
-												</DropdownMenu.RadioItem>
-											{/each}
-										</DropdownMenu.RadioGroup>
-										<DropdownMenu.Separator />
-										<DropdownMenu.Label>Team</DropdownMenu.Label>
-										<DropdownMenu.RadioGroup
-											value={scope.team ?? ''}
-											onValueChange={(val) => setScope({ ...scope, team: val || undefined })}
-										>
-											<DropdownMenu.RadioItem
-												value=""
-												closeOnSelect={true}
-												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-											>
-												All teams
-											</DropdownMenu.RadioItem>
-											{#each scopeOpts.teams as team (team.id)}
-												<DropdownMenu.RadioItem
-													value={team.id}
-													closeOnSelect={true}
-													class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-												>
-													{team.name}
-												</DropdownMenu.RadioItem>
-											{/each}
-										</DropdownMenu.RadioGroup>
-										{#if isFiltered}
-											<DropdownMenu.Separator />
-											<DropdownMenu.Group>
-												<DropdownMenu.Item
-													onSelect={clearFilterMenu}
-													class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-												>
-													Reset filters
-												</DropdownMenu.Item>
-											</DropdownMenu.Group>
-										{/if}
-									</DropdownMenu.Content>
-								</DropdownMenu.Root>
-
-								<DropdownMenu.Root bind:open={displayMenuOpen}>
-									<Tooltip.Root disabled={displayMenuOpen}>
-										<Tooltip.Trigger>
-											{#snippet child({ props: tipProps })}
-												<DropdownMenu.Trigger>
-													{#snippet child({ props: menuProps })}
-														<button
-															{...mergeProps(tipProps, menuProps)}
-															type="button"
-															aria-label="Inbox display"
-															data-active={displayActive ? '' : undefined}
-															class="queue-icon-btn"
-														>
-															<SlidersHorizontal class="size-4" aria-hidden="true" />
-														</button>
-													{/snippet}
-												</DropdownMenu.Trigger>
-											{/snippet}
-										</Tooltip.Trigger>
-										<Tooltip.Portal>
-											<Tooltip.Content
-												side="bottom"
-												sideOffset={6}
-												class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-												>Inbox display</Tooltip.Content
-											>
-										</Tooltip.Portal>
-									</Tooltip.Root>
-									<DropdownMenu.Content
-										preventScroll={false}
-										align="end"
-										class="triage-menu-surface w-52 max-w-[calc(100vw-2rem)] motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+								</Tooltip.Portal>
+							</Tooltip.Root>
+							<DropdownMenu.Content
+								preventScroll={false}
+								align="end"
+								class="triage-menu-surface max-h-[min(60dvh,28rem)] w-60 max-w-[calc(100vw-2rem)] overflow-y-auto motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+							>
+								<DropdownMenu.Label>Urgency</DropdownMenu.Label>
+								<DropdownMenu.RadioGroup
+									value={urgentOnly ? 'urgent' : 'all'}
+									onValueChange={(val) => setUrgentOnly(val === 'urgent')}
+								>
+									<DropdownMenu.RadioItem
+										value="all"
+										closeOnSelect={true}
+										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 									>
-										<DropdownMenu.Label>Grouping</DropdownMenu.Label>
-										<DropdownMenu.RadioGroup
-											value={sortOrder}
-											onValueChange={(val) => {
-												if (val === 'priority' || val === 'date') setSortOrder(val);
-											}}
-										>
-											<DropdownMenu.RadioItem
-												value="priority"
-												closeOnSelect={true}
-												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-											>
-												Priority first
-											</DropdownMenu.RadioItem>
-											<DropdownMenu.RadioItem
-												value="date"
-												closeOnSelect={true}
-												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-											>
-												By date
-											</DropdownMenu.RadioItem>
-										</DropdownMenu.RadioGroup>
-										<DropdownMenu.Separator />
-										<DropdownMenu.CheckboxItem
-											checked={showDividers}
-											onCheckedChange={(checked) => toggleRowDividers(Boolean(checked))}
+										All items
+									</DropdownMenu.RadioItem>
+									<DropdownMenu.RadioItem
+										value="urgent"
+										closeOnSelect={true}
+										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+									>
+										Urgent only
+									</DropdownMenu.RadioItem>
+								</DropdownMenu.RadioGroup>
+								<DropdownMenu.Separator />
+								<DropdownMenu.Label>Project</DropdownMenu.Label>
+								<DropdownMenu.RadioGroup
+									value={scope.project ?? ''}
+									onValueChange={(val) => setScope({ ...scope, project: val || undefined })}
+								>
+									<DropdownMenu.RadioItem
+										value=""
+										closeOnSelect={true}
+										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+									>
+										All projects
+									</DropdownMenu.RadioItem>
+									{#each scopeOpts.projects as proj (proj.id)}
+										<DropdownMenu.RadioItem
+											value={proj.id}
+											closeOnSelect={true}
 											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 										>
-											Row dividers
-										</DropdownMenu.CheckboxItem>
-									</DropdownMenu.Content>
-								</DropdownMenu.Root>
-							</div>
-						</div>
+											{proj.name}
+										</DropdownMenu.RadioItem>
+									{/each}
+								</DropdownMenu.RadioGroup>
+								<DropdownMenu.Separator />
+								<DropdownMenu.Label>Team</DropdownMenu.Label>
+								<DropdownMenu.RadioGroup
+									value={scope.team ?? ''}
+									onValueChange={(val) => setScope({ ...scope, team: val || undefined })}
+								>
+									<DropdownMenu.RadioItem
+										value=""
+										closeOnSelect={true}
+										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+									>
+										All teams
+									</DropdownMenu.RadioItem>
+									{#each scopeOpts.teams as team (team.id)}
+										<DropdownMenu.RadioItem
+											value={team.id}
+											closeOnSelect={true}
+											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										>
+											{team.name}
+										</DropdownMenu.RadioItem>
+									{/each}
+								</DropdownMenu.RadioGroup>
+								{#if isFiltered}
+									<DropdownMenu.Separator />
+									<DropdownMenu.Group>
+										<DropdownMenu.Item
+											onSelect={clearFilterMenu}
+											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										>
+											Reset filters
+										</DropdownMenu.Item>
+									</DropdownMenu.Group>
+								{/if}
+							</DropdownMenu.Content>
+						</DropdownMenu.Root>
+
+						<DropdownMenu.Root bind:open={displayMenuOpen}>
+							<Tooltip.Root disabled={displayMenuOpen}>
+								<Tooltip.Trigger>
+									{#snippet child({ props: tipProps })}
+										<DropdownMenu.Trigger>
+											{#snippet child({ props: menuProps })}
+												<button
+													{...mergeProps(tipProps, menuProps)}
+													type="button"
+													aria-label="Inbox display"
+													data-active={displayActive ? '' : undefined}
+													class="queue-icon-btn"
+												>
+													<SlidersHorizontal class="size-4" aria-hidden="true" />
+												</button>
+											{/snippet}
+										</DropdownMenu.Trigger>
+									{/snippet}
+								</Tooltip.Trigger>
+								<Tooltip.Portal>
+									<Tooltip.Content
+										side="bottom"
+										sideOffset={6}
+										class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+										>Inbox display</Tooltip.Content
+									>
+								</Tooltip.Portal>
+							</Tooltip.Root>
+							<DropdownMenu.Content
+								preventScroll={false}
+								align="end"
+								class="triage-menu-surface w-52 max-w-[calc(100vw-2rem)] motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+							>
+								<DropdownMenu.Label>Grouping</DropdownMenu.Label>
+								<DropdownMenu.RadioGroup
+									value={sortOrder}
+									onValueChange={(val) => {
+										if (val === 'priority' || val === 'date') setSortOrder(val);
+									}}
+								>
+									<DropdownMenu.RadioItem
+										value="priority"
+										closeOnSelect={true}
+										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+									>
+										Priority first
+									</DropdownMenu.RadioItem>
+									<DropdownMenu.RadioItem
+										value="date"
+										closeOnSelect={true}
+										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+									>
+										By date
+									</DropdownMenu.RadioItem>
+								</DropdownMenu.RadioGroup>
+								<DropdownMenu.Separator />
+								<DropdownMenu.CheckboxItem
+									checked={showDividers}
+									onCheckedChange={(checked) => toggleRowDividers(Boolean(checked))}
+									class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+								>
+									Row dividers
+								</DropdownMenu.CheckboxItem>
+							</DropdownMenu.Content>
+						</DropdownMenu.Root>
 					</div>
 				</div>
 			</header>
@@ -1467,27 +1493,53 @@
 		background: var(--exec-btn-ghost-bg-hover);
 	}
 	.queue-toolbar {
-		padding: 4px var(--triage-gutter) 0;
-	}
-	.queue-tabs {
 		display: flex;
 		flex-wrap: wrap;
-		align-items: center;
-		gap: 2px 4px;
+		align-items: stretch;
+		gap: 6px 8px;
+		padding: 4px var(--triage-gutter) 1px;
 	}
-	.triage-tab-tools,
+	.queue-toolbar > :not(.primary-tab-row) {
+		align-self: center;
+	}
+	.primary-tab-row {
+		position: relative;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: stretch;
+		gap: 2px 4px;
+		min-inline-size: 0;
+		max-inline-size: 100%;
+	}
+	.primary-tab-row::after {
+		content: '';
+		position: absolute;
+		inset-block-start: 100%;
+		inset-inline-start: calc(-1 * var(--triage-gutter));
+		inline-size: 100cqi;
+		border-block-start: 1px solid var(--exec-border);
+		pointer-events: none;
+	}
+	.triage-more-wrap {
+		display: inline-flex;
+		flex: none;
+		align-items: stretch;
+	}
 	.queue-controls {
 		display: flex;
 		align-items: center;
 		gap: 4px;
+		margin-block: 4px;
 	}
 	.queue-tab {
 		display: inline-flex;
+		flex: none;
 		align-items: center;
 		gap: 6px;
-		padding: 5px 12px;
+		padding: 6px 12px 5px;
 		min-height: var(--triage-control-height);
 		border: 1px solid transparent;
+		border-block-end-width: 2px;
 		border-radius: var(--exec-ctrl-radius) var(--exec-ctrl-radius) 0 0;
 		background: transparent;
 		color: var(--exec-body);
@@ -1504,8 +1556,7 @@
 		color: var(--exec-ink);
 	}
 	.queue-tab:is([aria-pressed='true'], [data-current-kind]) {
-		border-bottom-color: var(--tone-accent-ink);
-		box-shadow: inset 0 -1px var(--tone-accent-ink);
+		border-block-end-color: var(--tone-accent-ink);
 		color: var(--exec-ink);
 	}
 	.queue-tab[aria-expanded='true'] {

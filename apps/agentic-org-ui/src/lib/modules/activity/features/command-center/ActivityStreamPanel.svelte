@@ -177,7 +177,7 @@
 
 	<!-- Compact Bottleneck Distribution Bar (rendered only when work data is ready) -->
 	{#if workReady}
-		<div class="stream-bottleneck">
+		<div class="stream-bottleneck activity-bottleneck">
 			<div class="stream-bottleneck-main">
 				<span class="stream-bottleneck-label">Open mix</span>
 				<div class="stream-stage-bar" role="img" aria-label={bottleneck.legend}>

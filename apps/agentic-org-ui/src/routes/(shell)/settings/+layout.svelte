@@ -26,11 +26,9 @@
 
 <div class="@container">
 	<div class="min-[960px]:@min-[28rem]:flex">
-		<TabsNav
-			label="Organization settings"
-			tabs={sections}
-			class="min-[960px]:@min-[28rem]:hidden"
-		/>
+		<div class="section-header settings-picker-header min-[960px]:@min-[28rem]:hidden">
+			<TabsNav label="Organization settings" tabs={sections} />
+		</div>
 		<nav
 			aria-label="Organization settings"
 			class="hidden w-56 shrink-0 border-r border-line px-3.5 py-5 min-[960px]:@min-[28rem]:block"
