@@ -1,14 +1,12 @@
 /* Wash the top of the sidebar with light and shade the recessed edge. */
 @media (min-width: 640px) and (forced-colors: none) {
   html[data-theme] {
-    --sidebar-edge-shadow: rgb(6 12 24 / .26);
-    --sidebar-edge-shade: linear-gradient(to left, var(--sidebar-edge-shadow), transparent 4px);
     --sidebar-top-light: rgb(198 220 248 / .085);
     --page-header-light: rgb(198 220 248 / .045);
   }
 
   html[data-theme="graphite"] {
-    --sidebar-edge-shadow: rgb(0 0 0 / .37);
+    --sidebar-edge-shade: linear-gradient(to left, rgb(0 0 0 / .37), transparent 4px);
     --sidebar-top-light: rgb(255 255 255 / .075);
     --page-header-light: rgb(255 255 255 / .035);
 
@@ -16,14 +14,12 @@
   }
 
   html[data-theme="ocean"] {
-    --sidebar-edge-shade: none;
     --sidebar-top-light: rgb(164 220 255 / .11);
     --page-header-light: rgb(164 220 255 / .055);
     --page-header-base-image: var(--ocean-header);
   }
 
   html[data-theme="report"] {
-    --sidebar-edge-shadow: rgb(46 65 88 / .12);
     --sidebar-top-light: rgb(255 255 255 / .96);
     --page-header-light: rgb(136 159 188 / .065);
   }
@@ -35,7 +31,7 @@
     z-index: -1;
     pointer-events: none;
     background:
-      var(--sidebar-edge-shade),
+      var(--sidebar-edge-shade, none),
       radial-gradient(ellipse 110% 330px at 0 -95px,
         var(--sidebar-top-light),
         color-mix(in srgb, var(--sidebar-top-light) 45%, transparent) 30%,
