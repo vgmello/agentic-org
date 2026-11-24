@@ -6721,11 +6721,12 @@ function pageProject(id, tab) {
   ];
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"), "ghost");
   const workControls = tab === "work" ? `<div class="queue-controls project-work-controls" role="group" aria-label="Work view controls">${scopedWorkControls()}</div>` : "";
+  const activityControls = tab === "activity" ? `<div class="queue-controls project-activity-controls">${activityViewControls(id)}</div>` : "";
   return back("#/projects", "Projects") + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id), projHeadProgress(id))}
     <div class="section-toolbar project-toolbar">
       ${linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab)}
-      <div class="queue-controls" role="group" aria-label="Project controls">${workControls}${more}</div>
+      <div class="queue-controls" role="group" aria-label="Project controls">${workControls}${activityControls}${more}</div>
     </div>
   </div>` + (tab === "overview" ? projectReleaseSummary(id) : "") + projectBody(id, tab);
 }
@@ -8096,6 +8097,18 @@ function activityFilterMenu(isFeed, waitingCount, projectId) {
   });
 }
 
+function activityViewControls(projectId, waitingCount = unhandled().filter((item) => item.proj === projectId).length) {
+  const viewKey = activityViewKey(projectId);
+  const isFeed = S[viewKey] === "feed";
+  const filter = !projectId || isFeed ? activityFilterMenu(isFeed, waitingCount, projectId) : "";
+  const display = isFeed ? "" : showMenu("assembly-display", [], {
+    icon: "adjustments", label: "Assembly line display", focusTooltip: true, active: S.assemblyDividers,
+    footer: displayCheckbox("assembly-dividers", "Row dividers", S.assemblyDividers),
+  });
+  return `${activityViewTabs(viewKey)}
+    <div class="queue-controls" role="group" aria-label="Activity view settings">${filter}${display}</div>`;
+}
+
 function pageActivity(projectId = null) {
   const scope = activityProject();
   const inScope = (record) => scope === "all" || record.proj === scope;
@@ -8105,28 +8118,17 @@ function pageActivity(projectId = null) {
   const items = filter === "needs"
     ? activityNeedsFeed(all, waiting)
     : all.filter((event) => filter === "all" || event.type === filter);
-  const viewKey = activityViewKey(projectId), view = S[viewKey];
+  const view = S[activityViewKey(projectId)];
   const isFeed = view === "feed";
-  const showFilter = !projectId || isFeed;
-  const display = isFeed ? "" : showMenu("assembly-display", [], {
-    icon: "adjustments", label: "Assembly line display", focusTooltip: true, active: S.assemblyDividers,
-    footer: displayCheckbox("assembly-dividers", "Row dividers", S.assemblyDividers),
-  });
   const panels = projectId && P[projectId].archived ? [["release", ACTIVITY_PANELS.release]] : Object.entries(ACTIVITY_PANELS);
   const count = `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`;
   return `<section class="activity-workspace" data-activity-scope="${esc(projectId || "portfolio")}" aria-label="${projectId ? "Project activity" : "Activity command center"}">
-    <header class="activity-header queue-header">
-      ${projectId ? "" : `<div class="ph queue-headline"><div class="ph-t">
+    ${projectId ? projectReleaseSummary(projectId) : `<header class="activity-header queue-header">
+      <div class="ph queue-headline"><div class="ph-t">
         <h1 tabindex="-1">Activity</h1><p class="cnt queue-count" role="status"><i aria-hidden="true"></i>${count}</p>
-      </div></div>`}
-      <div class="activity-toolbar queue-toolbar">
-        ${activityViewTabs(viewKey)}
-        <div class="queue-controls" role="group" aria-label="Activity view controls">
-          ${showFilter ? activityFilterMenu(isFeed, waiting.length, projectId) : ""}${display}
-        </div>
-      </div>
-    </header>
-    ${projectId ? projectReleaseSummary(projectId) : ""}
+      </div></div>
+      <div class="activity-toolbar queue-toolbar">${activityViewControls(null, waiting.length)}</div>
+    </header>`}
     <div class="activity-body"${S.actPanel ? " data-panel-open" : ""}>
       <div class="activity-main" id="activity-view" role="tabpanel" aria-labelledby="activity-tab-${view}" tabindex="0" data-view="${view}">
         ${isFeed ? activityFeedLayout(items, Boolean(projectId)) : assemblyLayout()}
