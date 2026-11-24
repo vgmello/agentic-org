@@ -216,11 +216,11 @@ try {
       const simulation = tools.getByRole("button", { name: "Simulation" });
       const gates = tools.getByRole("button", { name: "Release gates" });
       await readiness.waitFor();
-      const projectHeader = page.locator(".project-header > header");
+      const projectHeader = page.locator(".project-header");
       assert.equal(await projectHeader.getByRole("progressbar").count(), 0);
       assert.doesNotMatch((await projectHeader.textContent())!, /\bDue\b|\d+ of \d+ done/);
       assert.equal(await assembly.getAttribute("aria-selected"), "true");
-      const viewControls = page.locator(".project-toolbar .project-activity-controls");
+      const viewControls = projectHeader.locator(".project-activity-controls");
       const viewSettings = viewControls.getByRole("group", { name: "Activity view settings" });
       await viewControls.getByRole("tab", { name: "Assembly line", selected: true }).waitFor();
       await viewSettings.getByRole("button", { name: "Assembly line display" }).waitFor();
@@ -281,12 +281,12 @@ try {
       await filterMenu.getByRole("menuitemradio", { name: "Decisions", exact: true }).press("Enter");
       await feed.press("ArrowLeft");
       await readiness.waitFor();
-      await page.locator(".project-toolbar").getByRole("link", { name: "Overview", exact: true }).click();
+      await projectHeader.getByRole("link", { name: "Overview", exact: true }).click();
       await page.waitForURL(address => address.hash === "#/projects/office-federation");
       await page.locator(".project-header + #project-release-summary + .grid2").waitFor();
       assert.equal(await releaseReadiness.getAttribute("max"), "4");
       await release.getByRole("link", { name: /File access ruling/ }).waitFor();
-      await page.locator(".project-toolbar").getByRole("link", { name: "Activity", exact: true }).click();
+      await projectHeader.getByRole("link", { name: "Activity", exact: true }).click();
       await readiness.waitFor();
     }
 

@@ -242,19 +242,17 @@ html[data-theme="cozy"] {
 
   & .chat {
     --cozy-chat-chrome: rgb(26 21 18 / .28);
-    background: rgb(26 21 18 / .18);
   }
   & body.a11y-mode .chat {
     --cozy-chat-chrome: rgb(26 21 18 / .5);
-    background: var(--cozy-shell);
   }
-  & .chat :is(.chhead, .chlist, .thread, .compose) {
+  & .chat :is(.thread, .compose) {
     background: var(--cozy-chat-chrome);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
   & .chat .msgs .msg .hd span { color: color-mix(in srgb, var(--gray-400) 72%, var(--gray-300)); }
-  & .chat .thread .chhead { background: transparent; }
+  & .chat .chlist { background: var(--cozy-summary-surface); }
   & .chat .chlist :is(h2, a) { color: var(--gray-300); }
   & .chat .chlist a[aria-current="page"] {
     background: var(--tone-accent-soft);
