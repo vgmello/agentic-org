@@ -333,22 +333,33 @@ class SolReviewWrapperTests(unittest.TestCase):
                 kit_sol_review.ensure_private_dir(repo2, kit_sol_review.state_dir_for(repo2))
             self.assertEqual(stat.S_IMODE(os.stat(outside).st_mode), 0o755)
 
-            # Concurrent FileExistsError on mkdir succeeds when peer created a real dir.
+            # Concurrent FileExistsError on os.mkdir(..., dir_fd=...) succeeds when peer created a real dir.
             repo3 = Path(tmp) / "repo3"
             repo3.mkdir()
             target3 = kit_sol_review.state_dir_for(repo3)
-            orig_mkdir = Path.mkdir
+            orig_mkdir = os.mkdir
 
-            def racing_mkdir(self_path, *args, **kwargs):
-                if self_path == target3:
-                    orig_mkdir(self_path, mode=0o700)
+            def racing_mkdir(name, mode=0o777, *, dir_fd=None):
+                if name == "sol-reviews":
+                    orig_mkdir(name, mode, dir_fd=dir_fd)
                     raise FileExistsError("concurrent peer created dir")
-                return orig_mkdir(self_path, *args, **kwargs)
+                return orig_mkdir(name, mode, dir_fd=dir_fd)
 
-            with patch.object(Path, "mkdir", racing_mkdir):
+            with patch.object(os, "mkdir", racing_mkdir):
                 created = kit_sol_review.ensure_private_dir(repo3, target3)
             self.assertEqual(created, target3)
             self.assertEqual(stat.S_IMODE(os.stat(target3).st_mode), 0o700)
+
+            # Directory at manifest path and FIFO at message path must fail closed without blocking.
+            bad_sid = "01a20dec-7cf7-7dd2-b7b5-0ba962e7b138"
+            kit_sol_review.manifest_path_for(repo, bad_sid).mkdir()
+            with self.assertRaisesRegex(ValueError, "non-regular"):
+                kit_sol_review.load_manifest(repo, bad_sid)
+
+            fifo_path = p1[0].parent / "fifo_msg.txt"
+            os.mkfifo(fifo_path, 0o600)
+            with self.assertRaisesRegex(ValueError, "non-regular"):
+                kit_sol_review.emit_last_message(repo, fifo_path)
 
 
 if __name__ == "__main__":

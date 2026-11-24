@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -189,41 +190,64 @@ def review_env(base_env=None, codex_home=None):
     return env
 
 
-def reject_symlink_chain(root, target):
-    """Ensure neither target nor any ancestor inside root is a symlink."""
-    root_resolved = Path(root).resolve()
-    rel = Path(target).relative_to(root_resolved)
-    cur = root_resolved
-    for part in rel.parts:
-        cur = cur / part
-        if cur.is_symlink():
-            raise ValueError(f"Refusing symlinked review state path: {cur}")
+def _open_dir_step(parent_fd, part, create):
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        return os.open(part, dir_flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        if not create:
+            return None
+        try:
+            os.mkdir(part, 0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        try:
+            return os.open(part, dir_flags, dir_fd=parent_fd)
+        except OSError as exc:
+            raise ValueError(f"Refusing symlinked or non-directory review state component: {part}") from exc
+    except OSError as exc:
+        raise ValueError(f"Refusing symlinked or non-directory review state component: {part}") from exc
+
+
+@contextmanager
+def open_private_dir_fd(repo, path, create=True):
+    """Pin every path component from repo root with O_DIRECTORY|O_NOFOLLOW to prevent symlink TOCTOU."""
+    root_resolved = Path(repo).resolve()
+    rel = Path(path).relative_to(root_resolved)
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY
+    cur_fd = os.open(root_resolved, dir_flags)
+    try:
+        for part in rel.parts:
+            if part in ("", ".", ".."):
+                raise ValueError(f"Refusing unsafe review state path component: {part!r}")
+            next_fd = _open_dir_step(cur_fd, part, create=create)
+            if next_fd is None:
+                os.close(cur_fd)
+                cur_fd = None
+                yield None
+                return
+            os.close(cur_fd)
+            cur_fd = next_fd
+        if create:
+            os.fchmod(cur_fd, 0o700)
+        yield cur_fd
+    finally:
+        if cur_fd is not None:
+            os.close(cur_fd)
 
 
 def ensure_private_dir(repo, path):
-    reject_symlink_chain(repo, path)
-    root_resolved = Path(repo).resolve()
-    rel = Path(path).relative_to(root_resolved)
-    cur = root_resolved
-    for part in rel.parts:
-        cur = cur / part
-        if cur.is_symlink():
-            raise ValueError(f"Refusing symlinked review state directory: {cur}")
-        try:
-            cur.mkdir(mode=0o700)
-        except FileExistsError:
-            pass
-        if cur.is_symlink():
-            raise ValueError(f"Refusing symlinked review state directory: {cur}")
-        if not cur.is_dir():
-            raise ValueError(f"Review state path is not a directory: {cur}")
-    os.chmod(path, 0o700)
-    return path
+    with open_private_dir_fd(repo, path, create=True):
+        pass
+    return Path(path)
 
 
-def open_private_file(path, flags):
+def open_private_file_at(dir_fd, name, flags):
     open_flags = flags | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, open_flags, 0o600)
+    try:
+        fd = os.open(name, open_flags, 0o600, dir_fd=dir_fd)
+    except OSError as exc:
+        raise ValueError(f"Refusing symlinked or inaccessible review state file: {name}") from exc
     try:
         os.fchmod(fd, 0o600)
     except OSError:
@@ -232,10 +256,37 @@ def open_private_file(path, flags):
     return fd
 
 
+@contextmanager
 def open_private_write(repo, path):
-    reject_symlink_chain(repo, path)
-    fd = open_private_file(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
-    return os.fdopen(fd, "w", encoding="utf-8")
+    target = Path(path)
+    with open_private_dir_fd(repo, target.parent, create=True) as dir_fd:
+        fd = open_private_file_at(dir_fd, target.name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            yield fh
+
+
+def write_text_atomic_at(dir_fd, filename, payload):
+    """Create a 0600 temp file exclusively inside dir_fd and atomically replace filename."""
+    tmp_name = f".{filename}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+    fd = open_private_file_at(dir_fd, tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+        os.replace(tmp_name, filename, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except BaseException:
+        try:
+            os.unlink(tmp_name, dir_fd=dir_fd)
+        except OSError:
+            pass
+        raise
+
+
+def save_json_atomic(repo, path, data):
+    target = Path(path)
+    payload = json.dumps(data, indent=2) + "\n"
+    with open_private_dir_fd(repo, target.parent, create=True) as dir_fd:
+        write_text_atomic_at(dir_fd, target.name, payload)
 
 
 def state_dir_for(repo):
@@ -246,27 +297,36 @@ def manifest_path_for(repo, session_id):
     return state_dir_for(repo) / f"{session_id}.json"
 
 
-def load_manifest(repo, session_id):
-    path = manifest_path_for(repo, session_id)
-    reject_symlink_chain(repo, path)
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def save_json_atomic(repo, path, data):
-    ensure_private_dir(repo, path.parent)
-    reject_symlink_chain(repo, path)
-    tmp_path = path.parent / f".{path.name}.{uuid.uuid4().hex[:8]}.tmp"
-    payload = json.dumps(data, indent=2) + "\n"
+def read_private_regular_file_at(dir_fd, name, chmod_0600=False):
+    """Open name inside dir_fd non-blockingly without following symlinks and verify S_ISREG before reading."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        with open_private_write(repo, tmp_path) as fh:
-            fh.write(payload)
-            fh.flush()
-        os.replace(tmp_path, path)
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError(f"Refusing non-regular or symlinked review state file: {name}") from exc
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(f"Refusing non-regular review state file: {name}")
+        if chmod_0600:
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "r", encoding="utf-8") as fh:
+            fd = None
+            return fh.read()
     finally:
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
+        if fd is not None:
+            os.close(fd)
+
+
+def load_manifest(repo, session_id):
+    target = manifest_path_for(repo, session_id)
+    with open_private_dir_fd(repo, target.parent, create=False) as dir_fd:
+        if dir_fd is None:
+            return None
+        raw = read_private_regular_file_at(dir_fd, target.name)
+        return json.loads(raw) if raw is not None else None
 
 
 def save_manifest(repo, session_id, data):
@@ -278,18 +338,16 @@ def session_lock(repo, session_id):
     if not session_id:
         yield
         return
-    run_dir = ensure_private_dir(repo, state_dir_for(repo))
-    lock_path = run_dir / f"{session_id}.lock"
-    reject_symlink_chain(repo, lock_path)
-    fd = open_private_file(lock_path, os.O_RDWR | os.O_CREAT)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
+    with open_private_dir_fd(repo, state_dir_for(repo), create=True) as dir_fd:
+        fd = open_private_file_at(dir_fd, f"{session_id}.lock", os.O_RDWR | os.O_CREAT)
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
         finally:
-            os.close(fd)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
 
 
 def parse_events_jsonl(events_path):
@@ -555,9 +613,10 @@ def record_pass_result(repo, resolved_id, plan, outcome):
         "stderr_path": str(outcome["stderr_path"]),
         "message_path": str(outcome["last_msg_path"]),
     }
-    save_json_atomic(repo, Path(outcome["events_path"]).parent / "outcome.json", entry)
+    outcome_path = Path(outcome["events_path"]).parent / "outcome.json"
+    save_json_atomic(repo, outcome_path, entry)
     if not resolved_id:
-        return pass_usage, usage_scope
+        return pass_usage, usage_scope, outcome_path
 
     record = plan["manifest"] or {
         "session_id": resolved_id,
@@ -580,17 +639,19 @@ def record_pass_result(repo, resolved_id, plan, outcome):
     )
     record["passes"].append(entry)
     save_manifest(repo, resolved_id, record)
-    return pass_usage, usage_scope
+    return pass_usage, usage_scope, outcome_path
 
 
 def emit_last_message(repo, last_msg_path):
-    reject_symlink_chain(repo, last_msg_path)
-    if not last_msg_path.is_file():
+    target = Path(last_msg_path)
+    with open_private_dir_fd(repo, target.parent, create=False) as dir_fd:
+        if dir_fd is None:
+            return
+        text = read_private_regular_file_at(dir_fd, target.name, chmod_0600=True)
+    if not text:
         return
-    os.chmod(last_msg_path, 0o600)
-    text = last_msg_path.read_text(encoding="utf-8")
     sys.stdout.write(text)
-    if text and not text.endswith("\n"):
+    if not text.endswith("\n"):
         sys.stdout.write("\n")
 
 
@@ -602,11 +663,9 @@ def allocate_invocation_paths(repo, plan, create_dirs):
     stderr_path = inv_dir / "stderr.txt"
     last_msg_path = inv_dir / "message.txt"
     if create_dirs:
-        ensure_private_dir(repo, state_dir_for(repo))
-        ensure_private_dir(repo, inv_dir)
-        # Pre-create message.txt with mode 0600 so permissions hold even on timeout/crash.
-        with open_private_write(repo, last_msg_path):
-            pass
+        with open_private_dir_fd(repo, inv_dir, create=True) as inv_fd:
+            fd = open_private_file_at(inv_fd, "message.txt", os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+            os.close(fd)
     return events_path, stderr_path, last_msg_path
 
 
@@ -632,6 +691,18 @@ def print_dry_run(mode, repo, plan, argv, env, no_hygiene_header):
             indent=2,
         )
     )
+
+
+def run_inline_watchdog(repo, session_id, outcome_path, codex_home):
+    """Run the deterministic zero-LLM efficiency check on the just-completed pass (stderr-only)."""
+    if not session_id and not outcome_path:
+        return
+    try:
+        import kit_efficiency_watchdog as watchdog
+
+        watchdog.check_session_inline(repo, session_id, outcome_path=outcome_path, codex_home=codex_home)
+    except Exception as exc:  # pragma: no cover - watchdog warnings must never mask a review verdict
+        print(f"[efficiency-watchdog] WARNING: inline check skipped ({exc})", file=sys.stderr)
 
 
 def execute_review(mode, args):
@@ -670,7 +741,7 @@ def execute_review(mode, args):
         )
         ids, totals, completed, failed = parse_events_jsonl(events_path)
         resolved_id = ids[0] if ids else plan["session_id"]
-        pass_usage, usage_scope = record_pass_result(
+        pass_usage, usage_scope, outcome_path = record_pass_result(
             repo,
             resolved_id,
             plan,
@@ -702,6 +773,7 @@ def execute_review(mode, args):
             ),
             file=sys.stderr,
         )
+        run_inline_watchdog(repo, resolved_id, outcome_path, args.codex_home)
         if timed_out or exit_code != 0 or failed or completed != 1:
             print(
                 f"[sol-review] ERROR: exit={exit_code} timed_out={timed_out} failed={failed} "
