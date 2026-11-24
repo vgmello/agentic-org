@@ -827,7 +827,14 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 .chat-directory h2:not(:first-child) { margin-block-start: 12px; }
 .chat-directory a:focus-visible { outline-offset: -2px; }
 .chat .msg > .av { align-self: start; }
-.chat .compose input { min-width: 0; }
+.chat .compose .field {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-height);
+  max-height: min(12rem, 35dvh);
+  resize: none;
+  field-sizing: content;
+}
 
 @media (min-width: 960px) {
   .chat-directory summary { display: none; }

@@ -866,6 +866,8 @@ html[data-hide-work-subtasks] .work-subtasks { display: none; }
 /* Switch */
 .pref { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; max-width: 640px; }
 .pref .lbl { font-weight: 500; }
+.chat-send-pref { align-items: center; flex-wrap: wrap; margin-block-start: 16px; }
+.chat-send-pref select { width: auto; max-width: 100%; }
 .theme-pref, .theme-options { flex-wrap: wrap; }
 .theme-pref { align-items: center; }
 .seg.theme-options { max-width: 100%; }
@@ -973,13 +975,12 @@ textarea::placeholder, input.field::placeholder { color: var(--gray-400); }
 .msg .hd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .msg .hd b { font-weight: 600; }
 .msg .hd span { font-size: 12px; color: var(--gray-400); }
-.msg .tx { color: var(--gray-300); }
+.msg .tx { color: var(--gray-300); white-space: pre-wrap; overflow-wrap: anywhere; }
 .thr { margin-top: 4px; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--tone-accent-ink); }
 .thr:hover { color: var(--tone-accent-hover); }
 .ask { margin-top: 8px; border-radius: var(--radius-lg); box-shadow: inset 0 0 0 1px var(--line2); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; max-width: 560px; }
 .ask .q { font-weight: 600; }
-.compose { border-top: 1px solid var(--line); padding: 12px 24px; display: flex; gap: 8px; }
-.compose input { flex: 1; }
+.compose { border-top: 1px solid var(--line); padding: 12px 24px; display: flex; align-items: end; flex-shrink: 0; gap: 8px; }
 .readnote { display: flex; align-items: center; gap: 8px; margin: 12px 24px 0; padding: 8px 12px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line2); background: rgb(255 255 255 / .03); color: var(--gray-300); font-size: 13px; }
 .readnote .ic16 { flex: none; }
 .readfoot { border-top: 1px solid var(--line); padding: 14px 24px; color: var(--gray-400); font-size: 13px; display: flex; align-items: center; gap: 8px; }
@@ -4996,6 +4997,17 @@ const KEYS_STORE = "agentic-org.singleKeyShortcuts";
 function readSingleKey() { try { return localStorage.getItem(KEYS_STORE) !== "0"; } catch (e) { return true; } }
 function writeSingleKey(on) { try { localStorage.setItem(KEYS_STORE, on ? "1" : "0"); } catch (e) {} }
 S.singleKey = readSingleKey();
+const CHAT_SEND_STORE = "agentic-org.v6.chatSendShortcut";
+const CHAT_SEND_SHORTCUTS = {
+  either: { label: "Ctrl or Command + Enter", keys: "Control+Enter Meta+Enter" },
+  control: { label: "Ctrl + Enter", keys: "Control+Enter" },
+  command: { label: "Command + Enter", keys: "Meta+Enter" },
+};
+S.chatSend = "either";
+try {
+  const shortcut = localStorage.getItem(CHAT_SEND_STORE);
+  if (Object.hasOwn(CHAT_SEND_SHORTCUTS, shortcut)) S.chatSend = shortcut;
+} catch (e) {}
 function applyShortcuts() {
   const on = S.singleKey, phone = !!(window.matchMedia && window.matchMedia("(max-width: 639px)").matches);
   document.body.classList.toggle("nokeys", !on);
@@ -5484,7 +5496,7 @@ ${esc(detailCommentDrafts.get(prefix) || "")}</textarea>
   </section>`;
 }
 
-function fitWorkComment(field) {
+function fitTextarea(field) {
   if (!field || CSS.supports("field-sizing", "content")) return;
   field.style.height = "auto";
   field.style.height = `${field.scrollHeight}px`;
@@ -6502,7 +6514,7 @@ function postDetailComment(form) {
   }
   detailCommentDrafts.delete(prefix);
   field.value = "";
-  if (work) fitWorkComment(field);
+  if (work) fitTextarea(field);
   document.getElementById(work ? "work-comments" : "triage-comments").innerHTML = work ? workCommentsHtml(id) : inboxCommentsHtml(id);
   document.getElementById(work ? "work-comment-status" : "triage-comment-status").textContent = "Comment posted.";
   field.focus();
@@ -6943,6 +6955,32 @@ function msgHtml(m) {
       ${ans ? `<p class="muted">You answered: ${esc(ans)}</p>` : `<div class="actions">${m.ask.opts.map((o, i) => `<button class="btn ${i ? "outline" : "primary"} sm" type="button" data-act="answer" data-id="${m.ask.id}" data-inbox="${m.ask.inbox}" data-v="${esc(o)}">${esc(o)}</button>`).join("")}</div>`}</div>` : ""}
     ${m.thread ? `<button class="thr" type="button" data-act="thread" data-id="${m.id}" aria-expanded="${S.thread === m.id}">${ic("thread", "ic16")}${m.thread.length} replies</button>` : ""}</div></div>`;
 }
+const chatDrafts = new Map();
+function chatComposer(id, title) {
+  const shortcut = CHAT_SEND_SHORTCUTS[S.chatSend];
+  return `<form class="compose" data-form="send" data-id="${id}">
+    <label class="sr-only" for="compose">Message ${esc(title)}</label>
+    <p class="sr-only" id="chat-compose-help">Enter adds a new line. ${shortcut.label} sends.</p>
+    <textarea class="field" id="compose" name="message" rows="1" placeholder="Message ${esc(title)}" aria-describedby="chat-compose-help" autocomplete="off" enterkeyhint="enter">
+${esc(chatDrafts.get(id) || "")}</textarea>
+    <button class="btn primary" type="submit" title="Send (${shortcut.label})" aria-keyshortcuts="${shortcut.keys}">${ic("send", "ic20")}Send</button>
+  </form>`;
+}
+function sendChatMessage(form) {
+  const field = form.elements.message;
+  const text = field.value;
+  if (!text.trim()) return;
+  const id = form.dataset.id;
+  const message = { id: "u" + Date.now(), who: "you", time: "now", text };
+  CH[id].msgs.push(message);
+  chatDrafts.delete(id);
+  field.value = "";
+  fitTextarea(field);
+  const messages = form.previousElementSibling;
+  messages.insertAdjacentHTML("beforeend", msgHtml(message));
+  messages.scrollTop = messages.scrollHeight;
+  field.focus();
+}
 function pageChat(id) {
   id = id && CH[id] ? id : "agency-v1";
   const ch = CH[id];
@@ -6972,7 +7010,7 @@ function pageChat(id) {
     <section class="chmain" aria-labelledby="ch-title">
       ${ch.kind === "a2a" ? `<p class="readnote">${ic("eye", "ic16")}<span>Reading as the owner. To weigh in, message ${mlink(ch.pair[0])}.</span></p>` : ""}
       <div class="msgs" aria-label="Messages">${ch.msgs.map(msgHtml).join("")}</div>
-      ${ch.kind === "a2a" ? `<p class="readfoot">${ic("eye", "ic16")}You can read this conversation but not reply in it.</p>` : `<form class="compose" data-form="send" data-id="${id}"><label class="sr-only" for="compose">Message ${esc(title)}</label><input class="field" id="compose" placeholder="Message ${esc(title)}" autocomplete="off"><button class="btn primary" type="submit">${ic("send", "ic20")}Send</button></form>`}</section>
+      ${ch.kind === "a2a" ? `<p class="readfoot">${ic("eye", "ic16")}You can read this conversation but not reply in it.</p>` : chatComposer(id, title)}</section>
     ${threadMsg ? `<aside class="thread" aria-label="Thread"><div class="chhead"><h2 id="chat-thread-title" tabindex="-1" style="font-size:15px;font-weight:600">Thread</h2><span class="muted" style="font-size:13px">#${esc(ch.name)}</span><button class="btn ghost icon" style="margin-left:auto" type="button" data-act="thread-close" aria-label="Close thread">${ic("x", "ic20")}</button></div>
       <div class="msgs">${msgHtml(Object.assign({}, threadMsg, { thread: null }))}<hr style="border:0;border-top:1px solid var(--line2);width:100%">${threadMsg.thread.map((r) => msgHtml(Object.assign({ id: "r" }, r))).join("")}</div></aside>` : ""}
   </div>`;
@@ -7409,7 +7447,15 @@ function pagePreferences() {
     </div></section>
     <section class="section" aria-labelledby="h-keys"><div class="sec-h"><h2 id="h-keys">Keyboard</h2></div>
     <div class="pref"><div><p class="lbl" id="sk-l">Single-key shortcuts</p><p class="muted" id="sk-d" style="font-size:13px">N opens New task and / focuses Search, outside text fields.</p></div>
-    <button class="switch" type="button" role="switch" aria-checked="${S.singleKey}" aria-labelledby="sk-l" aria-describedby="sk-d" data-act="single-key"></button></div></section>`);
+    <button class="switch" type="button" role="switch" aria-checked="${S.singleKey}" aria-labelledby="sk-l" aria-describedby="sk-d" data-act="single-key"></button></div>
+    <div class="pref chat-send-pref">
+      <div><label class="lbl" for="chat-send-shortcut">Chat send shortcut</label>
+        <p class="muted" id="chat-send-shortcut-help">Enter adds a new line.</p></div>
+      <select class="field" id="chat-send-shortcut" aria-describedby="chat-send-shortcut-help">
+        ${Object.entries(CHAT_SEND_SHORTCUTS).map(([value, { label }]) =>
+          `<option value="${value}"${S.chatSend === value ? " selected" : ""}>${label}</option>`).join("")}
+      </select>
+    </div></section>`);
 }
 function pageSearch(q) {
   const groups = q.trim() ? searchResults(q.trim(), Infinity) : [];
@@ -8489,6 +8535,7 @@ function fitNav() {
 }
 let fitRaf = 0;
 window.addEventListener("resize", () => { cancelAnimationFrame(fitRaf); fitRaf = requestAnimationFrame(fitNav); });
+window.addEventListener("resize", () => fitTextarea(document.getElementById("compose")));
 function renderBanner(r0) {
   const el = document.getElementById("banner-ctl"); if (!el) return;
   const themeCtl = seg("theme", THEME_OPTIONS, "Theme");
@@ -8669,7 +8716,8 @@ function render(focus = true) {
   }
   S.lastRoute = key; S.focusAfter = null;
   mountHomeProjectHint();
-  fitWorkComment(document.getElementById("work-comment"));
+  fitTextarea(document.getElementById("work-comment"));
+  fitTextarea(document.getElementById("compose"));
   applyShortcuts();
 }
 
@@ -9352,12 +9400,16 @@ document.addEventListener("click", (e) => {
   if (CMDK.open && e.target.closest && e.target.closest('.cmdk-ai-card a[href^="#/"]')) { closeCmdk(false); }
 });
 document.addEventListener("input", (e) => {
+  if (e.target.id === "compose") {
+    chatDrafts.set(e.target.form.dataset.id, e.target.value);
+    fitTextarea(e.target);
+  }
   if (e.target.id === "triage-search") { S.inboxQuery = e.target.value; refreshInboxSearch(); }
   if (e.target.id === "triage-comment" || e.target.id === "work-comment") {
     e.target.setCustomValidity("");
     const id = e.target.form.dataset.id, work = e.target.id === "work-comment";
     detailCommentDrafts.set(work ? workCommentPrefix(id) : inboxCommentPrefix(id), e.target.value);
-    if (work) fitWorkComment(e.target);
+    if (work) fitTextarea(e.target);
   }
   if (e.target.id === "work-search") {
     S.workQuery = e.target.value;
@@ -9374,6 +9426,10 @@ document.addEventListener("input", (e) => {
 });
 document.addEventListener("change", (e) => {
   if (e.target.matches("[data-work-criterion]")) changeWorkCriterion(e.target);
+  if (e.target.id === "chat-send-shortcut" && Object.hasOwn(CHAT_SEND_SHORTCUTS, e.target.value)) {
+    S.chatSend = e.target.value;
+    try { localStorage.setItem(CHAT_SEND_STORE, S.chatSend); } catch (e) {}
+  }
   if (e.target.id === "settings-section") {
     S.focusAfter = "#settings-section";
     location.hash = e.target.value;
@@ -9421,10 +9477,16 @@ document.addEventListener("submit", (e) => {
     return;
   }
   if (e.target.dataset.form === "work-create") { createWorkTask(e.target); return; }
-  if (e.target.dataset.form === "send") { const inp = document.getElementById("compose"); const txt = inp.value.trim(); if (!txt) return; CH[e.target.dataset.id].msgs.push({ id: "u" + Date.now(), who: "you", time: "now", text: txt }); render(false); const c = document.getElementById("compose"); if (c) c.focus(); const ms = document.querySelector(".chmain .msgs"); if (ms) ms.scrollTop = ms.scrollHeight; }
+  if (e.target.dataset.form === "send") sendChatMessage(e.target);
 });
 document.addEventListener("keydown", (e) => {
   if (e.isComposing || e.target.closest?.(".work-task-dialog")) return;
+  if (e.target.id === "compose" && e.key === "Enter" && !e.altKey && !e.shiftKey
+      && ((e.ctrlKey && S.chatSend !== "command") || (e.metaKey && S.chatSend !== "control"))) {
+    e.preventDefault();
+    if (!e.repeat) e.target.form.requestSubmit();
+    return;
+  }
   if (e.target.id === "work-comment" && (e.metaKey || e.ctrlKey) && e.key === "Enter") {
     e.preventDefault();
     e.target.form.requestSubmit();
