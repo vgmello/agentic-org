@@ -3,6 +3,8 @@
 // of and its open tasks. HQ still decides and refuses on its own; this spares the person a confirmation that would be
 // refused, and names each blocker so it can be resolved. Archive ignores teams under it that are archived already;
 // Delete counts them, since they still point at it.
+import { toAppError } from '$lib/proto';
+import { UNAVAILABLE_MESSAGE } from '$lib/platform/unavailable-api';
 import type { MemberRow, TeamRef, WorkRow } from '$lib/modules/members';
 import type { TeamProjectRow, TeamRow } from './types';
 
@@ -66,8 +68,24 @@ export function blockedSentence(name: string, b: TeamBlockers): string {
 	return `${name} still has ${list(parts)}. Resolve them first.`;
 }
 
+/**
+ * Distinguishes an explicit unserved/unsupported work endpoint stub from a transient read failure (e.g. gateway 503).
+ * Never treats a transient 503 as a clean empty work list.
+ */
+export function classifyTeamWorkCheckError(
+	error: unknown
+): { kind: 'unserved' } | { kind: 'failed'; message: string } {
+	const failure = toAppError(error);
+	const isUnservedStub =
+		failure.source === 'api' &&
+		((failure.code === 'unavailable' && failure.message === UNAVAILABLE_MESSAGE) ||
+			failure.code === 'unsupported');
+	if (isUnservedStub) return { kind: 'unserved' };
+	return { kind: 'failed', message: failure.message };
+}
+
 /** Where the check stands while the Archive or Delete dialog is open. */
 export type BlockerCheck =
 	| { state: 'checking' }
 	| { state: 'failed'; message: string }
-	| { state: 'done'; blockers: TeamBlockers };
+	| { state: 'done'; blockers: TeamBlockers; workCheckError?: string };

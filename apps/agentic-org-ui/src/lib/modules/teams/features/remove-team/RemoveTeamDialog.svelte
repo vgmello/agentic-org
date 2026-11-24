@@ -50,6 +50,7 @@
 	const blockers = $derived(
 		check.state === 'done' && isBlocked(check.blockers) ? check.blockers : undefined
 	);
+	const workCheckError = $derived(check.state === 'done' ? check.workCheckError : undefined);
 	// The caller keeps `team` after closing, so the text doesn't flash empty while the dialog leaves.
 	const name = $derived(team?.name ?? '');
 	const verb = $derived(removal === 'archive' ? 'Archive' : 'Delete');
@@ -122,15 +123,30 @@
 				</p>
 			</div>
 		{/if}
+		{#if workCheckError}
+			<div id="remove-team-work-check" role="alert" class="text-sm/6">
+				<p class="text-danger-text [overflow-wrap:anywhere]">
+					Couldn't check open tasks for {name}: {workCheckError}
+				</p>
+				<p class="mt-1 text-fg-muted">
+					Check again, or go ahead: HQ refuses while anything still points at {name}.
+				</p>
+			</div>
+		{/if}
 		{#if error}<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">
 				{error}
 			</p>{/if}
 		<DialogFooter>
 			{#if blockers}
+				{#if workCheckError}
+					<Button type="button" variant="outline" disabled={busy} onclick={onrecheck}
+						>Check again</Button
+					>
+				{/if}
 				<Button type="button" variant="outline" onclick={close}>Close</Button>
 			{:else}
 				<Button type="button" variant="outline" disabled={busy} onclick={close}>Cancel</Button>
-				{#if check.state === 'failed'}
+				{#if check.state === 'failed' || workCheckError}
 					<Button type="button" variant="outline" disabled={busy} onclick={onrecheck}
 						>Check again</Button
 					>

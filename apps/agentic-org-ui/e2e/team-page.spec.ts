@@ -113,7 +113,7 @@ test('TEAM-9: Delete names what still points at the team, with links, and offers
 	const dialog = await teamAction(page, 'Web', 'Delete…');
 	await expect(dialog.getByRole('heading', { name: "Can't delete Web" })).toBeVisible();
 	await expect(dialog).toContainText(
-		'Web still has 2 home employees, 1 project it owns and 3 open tasks. Resolve them first.'
+		'Web still has 2 home employees, 1 project it owns and 6 open tasks. Resolve them first.'
 	);
 	await expect(dialog.getByRole('link', { name: 'Beacon' })).toHaveAttribute(
 		'href',
@@ -374,27 +374,28 @@ for (const width of [390, 1024])
 		).toBeLessThanOrEqual(20);
 	});
 
-test('TEAM-OVERVIEW: opens on Overview with reconciled KPIs, real project progress, frame-owned Work badge, legacy task detail open, header scoped search, and M/Arrow tab shortcuts', async ({
+test('TEAM-OVERVIEW: opens on Overview with reconciled KPIs, real project progress, frame-owned Work badge, legacy task detail open, row edit sync, inert background, header scoped search, and M/Arrow tab shortcuts', async ({
 	page
 }) => {
 	// Direct visit to Members already shows the live Work tab count without visiting Overview or Work first.
 	await openTeam(page, '/teams/web/members', 'Web');
 	const membersNav = page.getByRole('navigation', { name: 'Web views' });
-	await expect(membersNav.getByRole('link', { name: /^Work\s+3$/ })).toBeVisible();
+	await expect(membersNav.getByRole('link', { name: /^Work\s+6$/ })).toBeVisible();
 
 	await membersNav.getByRole('link', { name: 'Overview', exact: true }).click();
 	const overview = page.getByTestId('team-overview');
 	await expect(overview).toBeVisible();
 	await expect(overview.locator('[data-kpi="blocked"]')).toContainText('1');
-	await expect(overview.locator('[data-kpi="blocked"]')).toContainText('Of 3 open items');
+	await expect(overview.locator('[data-kpi="blocked"]')).toContainText('Of 6 open items');
 	await expect(overview.getByTestId('team-completions-unavailable')).toBeVisible();
-	// Active project Beacon renders real progress bar and health pill + alphabetical contributors
+	// Active project Beacon renders real progress bar and health pill + alphabetical contributors + unassigned reconciliation
 	await expect(overview).toContainText('Beacon');
 	await expect(overview.getByRole('progressbar', { name: 'Beacon progress' })).toBeVisible();
 	const contributorNames = await overview
 		.locator('table tbody th')
 		.evaluateAll((cells) => cells.map((c) => c.textContent?.trim()));
-	expect(contributorNames).toEqual(['Mira Castillo', 'Noor Haddad', 'Sam Okafor']);
+	expect(contributorNames).toEqual(['Juno Park', 'Mira Castillo', 'Noor Haddad', 'Sam Okafor']);
+	await expect(overview).toContainText('Plus 2 unassigned open items.');
 
 	// ArrowRight moves focus across primary tabs without navigating.
 	const nav = page.getByRole('navigation', { name: 'Web views' });
@@ -413,15 +414,41 @@ test('TEAM-OVERVIEW: opens on Overview with reconciled KPIs, real project progre
 	await page.keyboard.press('Escape');
 	await expect(page.locator('#team-heading')).toBeFocused();
 
-	// Legacy deep link (`/teams/web?item=T-A44` -> `/teams/web/work?item=T-A44`) opens T-A44 detail reading panel.
+	// Legacy deep link (`/teams/web?item=T-A44` -> `/teams/web/work?item=T-A44`) opens T-A44 detail reading panel
+	// and makes background tabs & work rows inert while the modal dialog is open.
 	await visit(page, '/teams/web?item=T-A44');
 	await expect(page).toHaveURL(/\/teams\/web\/work\?item=T-A44$/);
 	const panel = page.getByTestId('work-reading-panel');
 	await expect(panel).toBeVisible();
 	await expect(panel).toContainText('T-A44');
 	await expect(panel).toContainText('Decide the retry policy for payments');
+	expect(await page.locator('.team-header').evaluate((el) => Boolean(el.closest('[inert]')))).toBe(
+		true
+	);
 	await page.keyboard.press('Escape');
 	await expect(panel).toHaveCount(0);
+	expect(await page.locator('.team-header').evaluate((el) => Boolean(el.closest('[inert]')))).toBe(
+		false
+	);
+
+	// Ordinary row click opens matching detail from shared workitems store; closing it via the nested Close modal
+	// confirms nested portals remain interactive above inert background and updates both the row and Work badge.
+	await page.locator('[data-ref="T-A45"] a').click();
+	await expect(panel).toBeVisible();
+	await expect(panel).toContainText('T-A45');
+	await expect(panel).toContainText('Card number field drops the last digit');
+	await panel.getByLabel('Status').selectOption('done');
+	const closeDialog = page.getByRole('dialog', { name: 'Close T-A45' });
+	await expect(closeDialog).toBeVisible();
+	await closeDialog.getByRole('button', { name: 'Close item' }).click();
+	await expect(closeDialog).toBeHidden();
+	await expect(panel.getByRole('button', { name: 'Reopen…' })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(panel).toHaveCount(0);
+	await expect(page.locator('[data-ref="T-A45"]')).toContainText('Done');
+	await expect(
+		page.getByRole('navigation', { name: 'Web views' }).getByRole('link', { name: /^Work\s+5$/ })
+	).toBeVisible();
 
 	// Scoped search renders in the shared top header beside Workspace: `/` focuses, typing filters, Escape preserves query.
 	const headerSearchHost = page.getByTestId('header-scoped-search');

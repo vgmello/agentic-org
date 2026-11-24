@@ -13,7 +13,7 @@ import { unavailableCall } from '$lib/platform/unavailable-api';
 import { POC_ORG_ID } from '../mock-mode';
 import { pocTeamRows } from '../poc-dataset';
 import teamsData from '../data/teams/teams.json' with { type: 'json' };
-import tasksData from '../data/members/tasks.json' with { type: 'json' };
+import { projectCountsFromStore, teamWorkRowsFromStore } from './workitems';
 import {
 	activityFor,
 	conversationsFor,
@@ -23,8 +23,7 @@ import {
 	rows as memberRows,
 	scenario,
 	snapshotFor,
-	teamRef,
-	workRows
+	teamRef
 } from './members';
 
 const extras = teamsData as Record<
@@ -132,8 +131,8 @@ export const teamsApi: TeamsApi = {
 	},
 	async work(organizationId, teamId) {
 		await gate();
-		const s = await found(organizationId, teamId);
-		return scenario() === 'empty' ? [] : workRows(s, (t) => t.teamId === teamId);
+		await found(organizationId, teamId);
+		return scenario() === 'empty' ? [] : teamWorkRowsFromStore(organizationId, teamId);
 	},
 	async projects(organizationId, teamId) {
 		await gate();
@@ -146,17 +145,7 @@ export const teamsApi: TeamsApi = {
 				if (!project) return [];
 				const role = projectRole(s, project.id, teamId);
 				const owner = (s.project_teams ?? []).find((x) => x.project_id === project.id)?.team_id;
-				const projectTasks = tasksData.filter((t) => t.projectId === project.id);
-				const tasks = {
-					todo: projectTasks.filter((t) => t.state === 'todo').length,
-					inProgress: projectTasks.filter(
-						(t) => t.state === 'in_progress' || t.state === 'in_review'
-					).length,
-					blocked: projectTasks.filter((t) => t.state === 'blocked').length,
-					done: projectTasks.filter((t) => t.state === 'done').length,
-					cancelled: 0
-				};
-				const bugs = { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 };
+				const { openWork, tasks, bugs } = projectCountsFromStore(organizationId, project.id);
 				return [
 					{
 						id: project.id,
@@ -169,7 +158,7 @@ export const teamsApi: TeamsApi = {
 								(x) => x.project_id === project.id && x.team_id !== owner && x.team_id !== teamId
 							)
 							.flatMap((x) => refOf(s, x.team_id) ?? []),
-						openWork: projectTasks.filter((t) => t.state !== 'done').length,
+						openWork,
 						tasks,
 						bugs
 					}
@@ -195,13 +184,25 @@ export const teamsApi: TeamsApi = {
 	async archive(organizationId, teamId) {
 		await gate();
 		const s = await found(organizationId, teamId);
-		refuseWhileBlocked(s, teamId, 'archive', await homeEmployees(organizationId, teamId));
+		refuseWhileBlocked(
+			organizationId,
+			s,
+			teamId,
+			'archive',
+			await homeEmployees(organizationId, teamId)
+		);
 		archived.add(teamId);
 	},
 	async delete(organizationId, teamId) {
 		await gate();
 		const s = await found(organizationId, teamId);
-		refuseWhileBlocked(s, teamId, 'delete', await homeEmployees(organizationId, teamId));
+		refuseWhileBlocked(
+			organizationId,
+			s,
+			teamId,
+			'delete',
+			await homeEmployees(organizationId, teamId)
+		);
 		const team = s.teams.find((t) => t.id === teamId)!;
 		await orgApi.command(organizationId, {
 			method: 'team.delete',
@@ -270,6 +271,7 @@ async function homeEmployees(organizationId: string, teamId: string) {
 
 /** HQ's own rule, independent of the page's check: what still points at the team (§7.10, TEAM-9). */
 function refuseWhileBlocked(
+	organizationId: string,
 	s: OrgSnapshot,
 	teamId: string,
 	removal: 'archive' | 'delete',
@@ -284,7 +286,9 @@ function refuseWhileBlocked(
 			projectRole(s, p.project_id, teamId) === 'owner' &&
 			s.projects?.some((x) => x.id === p.project_id && !x.archived)
 	).length;
-	const open = tasksData.filter((t) => t.teamId === teamId && t.state !== 'done').length;
+	const open = teamWorkRowsFromStore(organizationId, teamId).filter(
+		(t) => t.state !== 'done'
+	).length;
 	const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 	const parts = [
 		children && plural(children, 'child team', 'child teams'),

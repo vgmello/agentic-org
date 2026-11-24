@@ -240,7 +240,7 @@
 									</span>
 								{/if}
 							</div>
-							{#if proj.progressPct !== null && proj.tone}
+							{#if proj.progressPct !== null}
 								<div class="prog-line">
 									<div
 										class="prog-bar"
@@ -251,7 +251,9 @@
 										aria-valuenow={proj.doneTasks}
 										aria-valuetext={proj.progressText}
 									>
-										<span style:width="{proj.progressPct}%" style:background={barFill[proj.tone]}
+										<span
+											style:width="{proj.progressPct}%"
+											style:background={barFill[proj.tone ?? 'accent']}
 										></span>
 									</div>
 									<span class="tabular-nums">{proj.progressText}</span>

@@ -6,8 +6,8 @@
   optional tab controls, and primary actions (Hire an agent, Add a person, Team menu). Full roster lives in Members.
 -->
 <script lang="ts">
-	import { tick, type Snippet } from 'svelte';
-	import { afterNavigate, goto, invalidate } from '$app/navigation';
+	import { onDestroy, tick, type Snippet } from 'svelte';
+	import { afterNavigate, beforeNavigate, goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
@@ -110,8 +110,17 @@
 	// A link inside the 14/24 facts line: a 24 px target, 44 px below 640 px, without growing the line (SHELL-33).
 	const inlineLink = linkInLine.sm;
 
-	// Changing tab moves focus to the tab's heading, so what was shown is announced (TEAM-10).
+	// Changing tab moves focus to the tab's heading, so what was shown is announced (TEAM-10),
+	// unless a modal dialog (such as Team Work's reading panel for ?item=...) already owns focus.
+	let tabFocusTimer: ReturnType<typeof setTimeout> | undefined;
+	onDestroy(() => clearTimeout(tabFocusTimer));
+	beforeNavigate(() => {
+		clearTimeout(tabFocusTimer);
+		tabFocusTimer = undefined;
+	});
 	afterNavigate((move) => {
+		clearTimeout(tabFocusTimer);
+		tabFocusTimer = undefined;
 		if (move.type === 'enter' || !move.from || !move.to) return;
 		const before = tabFor(move.from.url.pathname, teamId);
 		const base = teamHref(teamId);
@@ -119,7 +128,10 @@
 		if (!sameTeam(move.from.url.pathname) || !sameTeam(move.to.url.pathname)) return;
 		if (before.id === tabFor(move.to.url.pathname, teamId).id) return;
 		// After the shell's own after-navigation focus (a heading, once a tick has passed), so this one wins.
-		setTimeout(() => document.getElementById('team-tab-heading')?.focus(), 0);
+		tabFocusTimer = setTimeout(() => {
+			if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+			document.getElementById('team-tab-heading')?.focus();
+		}, 0);
 	});
 
 	function focusTeamHeading() {

@@ -18,13 +18,6 @@ export const TEAM_OVERVIEW_WINDOW_DAYS = 28;
 export const TEAM_OVERVIEW_MIN_TIMING_SAMPLES = 5;
 
 const DAY_MS = 86_400_000;
-const EMPTY_BUGS: ProjectRow['bugs'] = Object.freeze({
-	critical: 0,
-	major: 0,
-	minor: 0,
-	trivial: 0,
-	unset: 0
-});
 const UTC_DAY_FORMATTER = new Intl.DateTimeFormat('en-US', {
 	month: 'short',
 	day: 'numeric',
@@ -304,8 +297,8 @@ export function deriveTeamOverview(input: TeamOverviewInput): TeamOverviewModel 
 		}
 	];
 
-	// Active projects: real progress & health whenever an authorized read provides task counts;
-	// explicit unavailability when unserved (never hardcode "Active" or "No open tasks").
+	// Active projects: task progress requires served task counts; health labels require BOTH task and bug counts
+	// so partial data never claims "On track" by substituting zero bugs.
 	const projectMap = new Map<string, ProjectRow>();
 	for (const p of input.projectDetails ?? []) {
 		projectMap.set(p.id, p);
@@ -315,18 +308,18 @@ export function deriveTeamOverview(input: TeamOverviewInput): TeamOverviewModel 
 		.map((proj) => {
 			const detail = projectMap.get(proj.id);
 			const tasks = detail?.tasks ?? proj.tasks;
-			const bugs = detail?.bugs ?? proj.bugs ?? EMPTY_BUGS;
+			const bugs = detail?.bugs ?? proj.bugs;
 			const archived = detail?.archived ?? false;
 			if (tasks) {
 				const totalTasks = countedTasks(tasks);
-				const tone = projectBarTone(tasks, bugs, archived);
+				const tone = bugs ? projectBarTone(tasks, bugs, archived) : null;
 				return {
 					id: proj.id,
 					name: proj.name,
 					key: proj.key,
 					role: proj.role,
 					openWork: proj.openWork,
-					healthLabel: projectHealthLabel(tone),
+					healthLabel: tone ? projectHealthLabel(tone) : null,
 					tone,
 					progressPct: totalTasks > 0 ? progressPercent(tasks) : null,
 					progressText: doneText(tasks),

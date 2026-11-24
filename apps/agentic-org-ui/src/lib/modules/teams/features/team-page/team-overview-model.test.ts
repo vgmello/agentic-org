@@ -206,6 +206,31 @@ describe('deriveTeamOverview', () => {
 		});
 		expect(loadingModel.kpis.find((k) => k.id === 'blocked')?.value).toBe('—');
 		expect(loadingModel.kpis.find((k) => k.id === 'blocked')?.note).toBe('Loading open work…');
+
+		// Partial project data (task counts served, bug counts absent): show task progress without fabricating "On track".
+		const partialProjectModel = deriveTeamOverview({
+			detail: DETAIL,
+			workRows: [],
+			workState: 'ready',
+			projects: [
+				{
+					id: 'partial',
+					name: 'Partial',
+					role: 'owner',
+					tasks: { todo: 0, inProgress: 0, blocked: 0, done: 2, cancelled: 0 }
+				}
+			],
+			nowMs: NOW_MS
+		});
+		expect(partialProjectModel.activeProjects[0]).toMatchObject({
+			id: 'partial',
+			healthLabel: null,
+			tone: null,
+			progressPct: 100,
+			progressText: '2 of 2 tasks done',
+			doneTasks: 2,
+			totalTasks: 2
+		});
 	});
 
 	it('separates duplicate display names by stable assignee ID and protects against prototype keys and name-only rows', () => {

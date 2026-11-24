@@ -73,16 +73,37 @@
 		const sidebar = document.querySelector<HTMLElement>('aside.exec-sidebar');
 		const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : undefined;
 		if (sidebar && ro) ro.observe(sidebar);
-		// Make shell chrome inert while this modal reading dialog is open so focus and pointer cannot escape behind it.
-		const shellEls = [
-			...document.querySelectorAll<HTMLElement>('aside.exec-sidebar, header')
-		].filter((el) => !panelEl?.contains(el));
-		const prevInert = shellEls.map((el) => el.inert);
-		for (const el of shellEls) el.inert = true;
+		// Make every background sibling tree up to document.body inert while this modal reading dialog is open
+		// so focus and pointer cannot escape to shell chrome, team/project tabs, or list rows behind the dialog,
+		// while preserving portaled toasts and nested Bits UI menus/dialogs mounted on document.body.
+		const inertTargets: HTMLElement[] = [];
+		const shouldSkipSibling = (el: HTMLElement) =>
+			el.classList.contains('work-panel-backdrop') ||
+			el.hasAttribute('data-bits-portal') ||
+			el.hasAttribute('data-sonner-toaster') ||
+			Boolean(el.querySelector('[data-sonner-toaster]')) ||
+			el.getAttribute('role') === 'dialog' ||
+			el.getAttribute('role') === 'alertdialog';
+		let cur: HTMLElement | null = panelEl;
+		while (cur && cur !== document.body && cur.parentElement) {
+			for (const sibling of cur.parentElement.children) {
+				if (
+					sibling instanceof HTMLElement &&
+					sibling !== cur &&
+					!inertTargets.includes(sibling) &&
+					!shouldSkipSibling(sibling)
+				) {
+					inertTargets.push(sibling);
+				}
+			}
+			cur = cur.parentElement;
+		}
+		const prevInert = inertTargets.map((el) => el.inert);
+		for (const el of inertTargets) el.inert = true;
 		return () => {
 			window.removeEventListener('resize', measure);
 			ro?.disconnect();
-			shellEls.forEach((el, i) => {
+			inertTargets.forEach((el, i) => {
 				el.inert = prevInert[i];
 			});
 		};

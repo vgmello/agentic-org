@@ -8,6 +8,8 @@ import { orgApi } from '$lib/modules/organization/api';
 import { newId } from '$lib/modules/organization/commands';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgSnapshot } from '$lib/proto';
+import type { WorkRow, WorkState } from '$lib/modules/members';
+import type { ProjectRow } from '$lib/modules/projects/types';
 import type { WorkItemsApi } from '../../../src/lib/modules/workitems/api';
 import { OUTCOME_UNKNOWN, canAllowOnce } from '../../../src/lib/modules/workitems/budget';
 import { normalizeRef } from '../../../src/lib/modules/workitems/present';
@@ -709,6 +711,74 @@ function toRow(t: TaskDetail): TaskRow {
 		awaitingVerification: t.awaitingVerification,
 		...(t.request?.mergedInto ? { merged: true } : {})
 	};
+}
+
+function mapStatusToWorkState(status: TaskDetail['status']): WorkState | null {
+	if (status === 'cancelled') return null;
+	if (
+		status === 'todo' ||
+		status === 'in_progress' ||
+		status === 'in_review' ||
+		status === 'blocked' ||
+		status === 'done'
+	) {
+		return status;
+	}
+	return 'todo';
+}
+
+function mapPriorityToWorkRow(priority: TaskDetail['priority']): WorkRow['priority'] {
+	if (priority === 'normal') return 'medium';
+	return priority;
+}
+
+/** Shared live work rows for a team, backed by the same mutable store as WorkDetailPage reads & writes. */
+export function teamWorkRowsFromStore(organizationId: string, teamId: string): WorkRow[] {
+	const store = storeFor(organizationId);
+	const rows: WorkRow[] = [];
+	for (const { detail: d } of store.values()) {
+		if (d.team.id !== teamId && d.assignedTeam?.id !== teamId) continue;
+		const state = mapStatusToWorkState(d.status);
+		if (!state) continue;
+		rows.push({
+			ref: d.ref,
+			title: d.title,
+			project: d.project?.name,
+			assigneeId: d.assignee?.id,
+			assignee: d.assignee?.name,
+			priority: mapPriorityToWorkRow(d.priority),
+			state
+		});
+	}
+	return rows;
+}
+
+/** Shared live project task/bug counts from the same mutable workitems store. */
+export function projectCountsFromStore(
+	organizationId: string,
+	projectId: string
+): { openWork: number; tasks: ProjectRow['tasks']; bugs: ProjectRow['bugs'] } {
+	const store = storeFor(organizationId);
+	const tasks: ProjectRow['tasks'] = { todo: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 0 };
+	const bugs: ProjectRow['bugs'] = { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 };
+	let openWork = 0;
+	for (const { detail: d } of store.values()) {
+		if (d.project?.id !== projectId) continue;
+		if (d.status !== 'done' && d.status !== 'cancelled') openWork += 1;
+		if (d.type === 'bug') {
+			if (d.status !== 'done' && d.status !== 'cancelled') {
+				const sev = d.severity ?? 'unset';
+				bugs[sev] += 1;
+			}
+		} else {
+			if (d.status === 'todo') tasks.todo += 1;
+			else if (d.status === 'in_progress' || d.status === 'in_review') tasks.inProgress += 1;
+			else if (d.status === 'blocked') tasks.blocked += 1;
+			else if (d.status === 'done') tasks.done += 1;
+			else if (d.status === 'cancelled') tasks.cancelled += 1;
+		}
+	}
+	return { openWork, tasks, bugs };
 }
 
 function toLink(t: TaskDetail): TaskLink {
