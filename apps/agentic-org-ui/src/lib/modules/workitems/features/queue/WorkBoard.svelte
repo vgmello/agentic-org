@@ -110,9 +110,9 @@
 	$effect(() => () => clearTimeout(announceTimer));
 
 	function canMoveTo(row: TaskRow, target: BoardColumn): boolean {
+		// `task.set_status` accepts Tasks only; bugs and requests transition via their detail workflows.
+		if (row.type !== 'task') return false;
 		if (row.status === target || row.status === 'cancelled') return false;
-		// Bugs and requests close via the detail resolution/approval workflow rather than bare board status moves.
-		if (row.type !== 'task' && target === 'done') return false;
 		return true;
 	}
 
@@ -293,7 +293,7 @@
 								<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 								<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 								<li
-									draggable={!stale}
+									draggable={!stale && row.type === 'task' && row.status !== 'cancelled'}
 									tabindex="0"
 									aria-label={rowSpeech(row)}
 									data-testid="work-card"
@@ -355,17 +355,19 @@
 													</Tooltip.Portal>
 												</Tooltip.Root>
 												<DropdownMenu.Content align="end" class="w-48 bg-surface-sunken ring-line">
-													<DropdownMenu.Group>
-														<DropdownMenu.GroupHeading>Move to</DropdownMenu.GroupHeading>
-														{#each ['todo', 'in_progress', 'blocked', 'done'] as const as dest (dest)}
-															{#if canMoveTo(row, dest)}
-																<DropdownMenu.Item onSelect={() => moveRow(row, dest)}>
-																	{STATUS_WORD[dest]}
-																</DropdownMenu.Item>
-															{/if}
-														{/each}
-													</DropdownMenu.Group>
-													<DropdownMenu.Separator class="bg-line-subtle" />
+													{#if row.type === 'task' && row.status !== 'cancelled'}
+														<DropdownMenu.Group>
+															<DropdownMenu.GroupHeading>Move to</DropdownMenu.GroupHeading>
+															{#each ['todo', 'in_progress', 'blocked', 'done'] as const as dest (dest)}
+																{#if canMoveTo(row, dest)}
+																	<DropdownMenu.Item onSelect={() => moveRow(row, dest)}>
+																		{STATUS_WORD[dest]}
+																	</DropdownMenu.Item>
+																{/if}
+															{/each}
+														</DropdownMenu.Group>
+														<DropdownMenu.Separator class="bg-line-subtle" />
+													{/if}
 													<DropdownMenu.Group>
 														<DropdownMenu.GroupHeading>Priority</DropdownMenu.GroupHeading>
 														{#each PRIORITIES as p (p)}

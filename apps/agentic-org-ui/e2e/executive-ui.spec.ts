@@ -1139,8 +1139,8 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await expect(gatesToggle).toHaveAttribute('aria-expanded', 'true');
 	await expect(page.locator('#activity-release-panel')).toBeVisible();
 
-	// 6-status board on default mock dataset populates Awaiting verification with fixed bug T-A42,
-	// and Alt+ArrowLeft steps to visible left neighbour Blocked (opening Block dialog) rather than To do.
+	// 6-status board on default mock dataset populates Awaiting verification with fixed bug T-A42;
+	// generic board status moves remain limited to Tasks (bugs transition via their detail workflow).
 	await enterMockedOrganization(page);
 	await visit(page, '/work?mock=default');
 	await page.getByRole('tab', { name: /^Tasks/ }).click();
@@ -1152,10 +1152,11 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await expect(awaitingCol).toBeVisible();
 	const bugCard = awaitingCol.locator('[data-ref="T-A42"]');
 	await expect(bugCard).toBeVisible();
+	await expect(bugCard).toHaveAttribute('draggable', 'false');
 	await bugCard.focus();
 	await page.keyboard.press('Alt+ArrowLeft');
-	await expect(page.getByRole('dialog', { name: /Block T-A42/i })).toBeVisible();
-	await page.keyboard.press('Escape');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await expect(awaitingCol.locator('[data-ref="T-A42"]')).toBeVisible();
 
 	// Mobile (<640px): S -> I opens mobile sidebar drawer & navigates to /inbox; M -> A from mobile Inbox detail
 	// survives ?item= clearing and selects Approvals; S then clicking a drawer link navigates cleanly.
