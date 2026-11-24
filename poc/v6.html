@@ -900,8 +900,6 @@ textarea::placeholder, input.field::placeholder { color: var(--gray-400); }
 .progress.done > span { background: var(--gray-500); }
 .prog-line { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--gray-400); }
 .prog-line .progress { flex: 1; }
-.ph-prog { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: .8125rem; line-height: 20px; color: var(--gray-400); }
-.ph-prog .prog-line { flex: 0 1 360px; min-width: 200px; }
 .stats { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--gray-400); }
 .stats b { color: var(--white); font-weight: 600; font-size: 14px; }
 
@@ -5112,8 +5110,8 @@ function statusLine(id) {
     default: return task;
   }
 }
-function hdr(title, count, trailing = "", extra = "", below = "") {
-  return `<header class="ph"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>${extra}${count ? `<p class="cnt">${count}</p>` : ""}${below}</div>${trailing ? `<div class="ph-actions">${trailing}</div>` : ""}</header>`;
+function hdr(title, count, trailing = "", extra = "") {
+  return `<header class="ph"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>${extra}${count ? `<p class="cnt">${count}</p>` : ""}</div>${trailing ? `<div class="ph-actions">${trailing}</div>` : ""}</header>`;
 }
 const back = (href, label) => `<a class="back" href="${href}">${ic("chev-left", "ic16")}${esc(label)}</a>`;
 function linkTabs(base, tabs, cur, label = "Sections") {
@@ -5188,10 +5186,6 @@ function progress(p) {
   const ws = W.filter((w) => w.proj === p), total = ws.length, done = ws.filter((w) => !OPEN(w)).length, pct = total ? Math.round(done * 100 / total) : 0;
   if (!total) return `<p class="prog-line">No work items yet</p>`;
   return `<div class="prog-line"><div class="progress${P[p].archived ? " done" : ""}" role="progressbar" aria-label="${esc(P[p].name)} progress" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}" aria-valuetext="${done} of ${total} work items done"><span style="width:${pct}%"></span></div><span class="tnum">${done} of ${total} done</span></div>`;
-}
-function projHeadProgress(p) {
-  const due = P[p].due ? `<span class="due">Due ${esc(P[p].due)}</span>` : "";
-  return `<div class="ph-prog">${progress(p)}${due}</div>`;
 }
 function avStack(ids, max = 5) {
   return `<span class="avstack">${ids.slice(0, max).map((i) => av(i, 24)).join("")}${ids.length > max ? `<span class="more">+${ids.length - max}</span>` : ""}</span><span class="sr-only">${ids.map((i) => M[i].name).join(", ")}</span>`;
@@ -6723,7 +6717,7 @@ function pageProject(id, tab) {
   const workControls = tab === "work" ? `<div class="queue-controls project-work-controls" role="group" aria-label="Work view controls">${scopedWorkControls()}</div>` : "";
   const activityControls = tab === "activity" ? `<div class="queue-controls project-activity-controls">${activityViewControls(id)}</div>` : "";
   return back("#/projects", "Projects") + `<div class="section-header project-header">
-    ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id), projHeadProgress(id))}
+    ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id))}
     <div class="section-toolbar project-toolbar">
       ${linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab)}
       <div class="queue-controls" role="group" aria-label="Project controls">${workControls}${activityControls}${more}</div>

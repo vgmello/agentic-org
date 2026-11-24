@@ -216,6 +216,9 @@ try {
       const simulation = tools.getByRole("button", { name: "Simulation" });
       const gates = tools.getByRole("button", { name: "Release gates" });
       await readiness.waitFor();
+      const projectHeader = page.locator(".project-header > header");
+      assert.equal(await projectHeader.getByRole("progressbar").count(), 0);
+      assert.doesNotMatch((await projectHeader.textContent())!, /\bDue\b|\d+ of \d+ done/);
       assert.equal(await assembly.getAttribute("aria-selected"), "true");
       const viewControls = page.locator(".project-toolbar .project-activity-controls");
       const viewSettings = viewControls.getByRole("group", { name: "Activity view settings" });
