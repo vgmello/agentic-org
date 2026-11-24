@@ -317,6 +317,18 @@ html[data-ui-theme='graphite'] .exec-theme-pill.is-on {
 	box-shadow: inset 0 0 0 1.5px rgba(184, 184, 184, 0.85);
 }
 
+@media (min-width: 640px) and (forced-colors: none) {
+	html[data-ui-theme='graphite'] {
+		--sidebar-edge-shadow: rgb(0 0 0 / 0.37);
+		--sidebar-top-light: rgb(255 255 255 / 0.075);
+		--page-header-light: rgb(255 255 255 / 0.035);
+	}
+
+	html[data-ui-theme='graphite'] aside.exec-sidebar::before {
+		box-shadow: inset -1px 0 #38393a;
+	}
+}
+
 /* Graphite interior sidebar text hierarchy (poc/v6.html 13abb1f1) */
 html[data-ui-theme='graphite'][data-interior-page] .exec-nav-label,
 html[data-ui-theme='graphite'][data-interior-page] .exec-nav-label svg {
@@ -423,7 +435,8 @@ html[data-ui-theme='graphite']:has(.triage-workspace) .triage-header {
 }
 
 html[data-ui-theme='graphite']:has(.triage-workspace) .triage-queue {
-	background: #171819;
+	--triage-row-hover: #272829;
+	background: linear-gradient(rgb(255 255 255 / 0.022), transparent 24rem) #1b1c1d;
 	border-inline-end-color: var(--graphite-inbox-line);
 }
 

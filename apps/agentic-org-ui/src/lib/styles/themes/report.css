@@ -537,6 +537,14 @@ html[data-ui-theme='report'] .exec-legacy-compat [data-slot='badge'] {
 	border-radius: 3px;
 }
 
+@media (min-width: 640px) and (forced-colors: none) {
+	html[data-ui-theme='report'] {
+		--sidebar-edge-shadow: rgb(46 65 88 / 0.12);
+		--sidebar-top-light: rgb(255 255 255 / 0.96);
+		--page-header-light: rgb(136 159 188 / 0.065);
+	}
+}
+
 /* Settings preview swatch */
 .swatch-report {
 	background: linear-gradient(90deg, #f9fafc 0%, #f9fafc 28%, #ffffff 28%, #ffffff 100%);

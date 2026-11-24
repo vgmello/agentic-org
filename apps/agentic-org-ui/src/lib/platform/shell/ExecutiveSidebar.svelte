@@ -492,6 +492,8 @@
 
 <style>
 	.exec-sidebar {
+		position: relative;
+		isolation: isolate;
 		background-color: var(--exec-sidebar-bg);
 		background-image: var(--exec-sidebar-sheen);
 		-webkit-backdrop-filter: var(--exec-sidebar-blur);

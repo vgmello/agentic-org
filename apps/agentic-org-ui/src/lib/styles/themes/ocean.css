@@ -354,6 +354,18 @@ html[data-ui-theme='ocean'][data-interior-page]
 	backdrop-filter: none;
 }
 
+@media (min-width: 640px) and (forced-colors: none) {
+	html[data-ui-theme='ocean'] {
+		--sidebar-edge-shade: none;
+		--sidebar-top-light: rgb(164 220 255 / 0.11);
+		--page-header-light: rgb(164 220 255 / 0.055);
+	}
+
+	html[data-ui-theme='ocean'][data-interior-page] {
+		--page-header-base-image: var(--ocean-header);
+	}
+}
+
 /* Settings preview swatch */
 .swatch-ocean {
 	background:

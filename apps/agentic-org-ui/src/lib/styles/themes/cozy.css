@@ -553,6 +553,12 @@ html[data-ui-theme='cozy'] .work-items {
 	backdrop-filter: none;
 }
 
+html[data-ui-theme='cozy'] .work-ref {
+	color: var(--fg-secondary);
+	font-size: 0.875rem;
+	font-weight: 500;
+}
+
 html[data-ui-theme='cozy'] .work-group-title {
 	background: var(--cozy-well);
 	border-radius: 8px;

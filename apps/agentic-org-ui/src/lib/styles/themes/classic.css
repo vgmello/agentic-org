@@ -206,6 +206,17 @@ html[data-ui-theme='classic'] .exec-cta .exec-cta-sheen {
 	display: none;
 }
 
+/* Dark interior header tokens & section header surface (poc/v6.html 47d62a5b, poc/operations.css 19c88bd5) */
+html[data-ui-theme='classic'][data-interior-page] {
+	--workspace-header: #2d3b50;
+	--workspace-header-divider: #7b8ca4;
+	--workspace-mode-selected: #363e60;
+}
+
+html[data-ui-theme='classic'] :is(.section-header, .project-header) {
+	background-color: #1b2533;
+}
+
 /* Separate the workspace command dialog from the dark page behind it (poc/v6.html ffe0e0ce) */
 html[data-ui-theme='classic'] .exec-cmdk-dialog {
 	background-color: #182230;

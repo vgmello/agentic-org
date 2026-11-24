@@ -338,6 +338,39 @@ html[data-ui-theme='ocean'] {
 	color: var(--exec-ink);
 }
 
+/* Wash the top of the sidebar with light and shade the recessed edge (poc/operations.css aa02c1ee..2c58edcd) */
+@media (min-width: 640px) and (forced-colors: none) {
+	html[data-ui-theme] {
+		--sidebar-edge-shadow: rgb(6 12 24 / 0.26);
+		--sidebar-edge-shade: linear-gradient(to left, var(--sidebar-edge-shadow), transparent 4px);
+		--sidebar-top-light: rgb(198 220 248 / 0.085);
+		--page-header-light: rgb(198 220 248 / 0.045);
+	}
+
+	html[data-ui-theme]:not([data-ui-theme='cozy']) aside.exec-sidebar::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		pointer-events: none;
+		background:
+			var(--sidebar-edge-shade),
+			radial-gradient(
+				ellipse 110% 330px at 0 -95px,
+				var(--sidebar-top-light),
+				color-mix(in srgb, var(--sidebar-top-light) 45%, transparent) 30%,
+				transparent
+			);
+	}
+
+	html[data-interior-page][data-ui-theme]:not([data-ui-theme='cozy'])
+		:is(.queue-header, .section-header, .activity-header, .project-header) {
+		background-image:
+			linear-gradient(to right, var(--page-header-light), transparent 28rem),
+			var(--page-header-base-image, none);
+	}
+}
+
 /* Executive shared surface & tactile CTA primitives */
 .exec-card {
 	background-color: var(--exec-surface);
