@@ -579,4 +579,29 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		expect(parseInboxCommentsJson('not json')).toEqual([]);
 		expect(parseInboxCommentsJson(null)).toEqual([]);
 	});
+
+	it('uses reply-cutoff wording for Chat asks/approvals instead of claiming they are expired', () => {
+		const cutoff = new Date(NOW + 5 * 60_000).toISOString();
+		const askItem: InboxItem = {
+			...INBOX_ITEMS[2],
+			id: 'office:msg:ask-cutoff',
+			source: 'Chat ask',
+			expires_at: cutoff
+		};
+		const [before] = deriveTriageItems([], SNAPSHOT, 'owner', [askItem], NOW);
+		expect(before?.expiresLabel).toBe('Reply cutoff in 5m');
+
+		const [after] = deriveTriageItems([], SNAPSHOT, 'owner', [askItem], NOW + 6 * 60_000);
+		expect(after?.expiresLabel).toBe('Past reply cutoff');
+
+		const mailboxItem: InboxItem = {
+			...askItem,
+			id: 'office:msg:mail-expiry',
+			source: 'Chat message'
+		};
+		const [mailBefore] = deriveTriageItems([], SNAPSHOT, 'owner', [mailboxItem], NOW);
+		expect(mailBefore?.expiresLabel).toBe('Expires in 5m');
+		const [mailAfter] = deriveTriageItems([], SNAPSHOT, 'owner', [mailboxItem], NOW + 6 * 60_000);
+		expect(mailAfter?.expiresLabel).toBe('Expired');
+	});
 });
