@@ -38,7 +38,7 @@ import type {
 	UsageRecord,
 	UsageTotals
 } from '../../../src/lib/modules/costs/types';
-import { isPocDataset, mockMode } from '../mock-mode';
+import { mockMode, POC_ORG_ID } from '../mock-mode';
 import { pocAgentBudgets, pocOrganizationCost, pocProjectInvestments } from '../poc-dataset';
 import usage from '../data/costs/usage.json' with { type: 'json' };
 import priceData from '../data/costs/prices.json' with { type: 'json' };
@@ -532,7 +532,7 @@ export const costsApi: CostsApi = {
 		await read();
 		if (on('viewer'))
 			throw fail('not_authorized', "Only the owner and a project's manager see its cost.");
-		if (isPocDataset()) return structuredClone(pocProjectInvestments(request));
+		if (organizationId === POC_ORG_ID) return structuredClone(pocProjectInvestments(request));
 		const { snapshot } = await orgApi.view(organizationId);
 		// A project's manager is the lead of its accountable team (the first team listed on it) or of a team above it.
 		const above = (teamId: string | undefined): string[] => {
@@ -565,7 +565,7 @@ export const costsApi: CostsApi = {
 	async organizationCost(organizationId, request) {
 		await read();
 		ownerOnly();
-		if (isPocDataset()) return structuredClone(pocOrganizationCost(request));
+		if (organizationId === POC_ORG_ID) return structuredClone(pocOrganizationCost(request));
 		const { period, previous } = resolvePeriod(request);
 		const n = await names(organizationId);
 		const records = on('empty') ? [] : effective.filter((r) => within(r, period));
@@ -665,7 +665,7 @@ export const costsApi: CostsApi = {
 	async agentBudgets(organizationId) {
 		await read();
 		ownerOnly();
-		if (isPocDataset()) return structuredClone(pocAgentBudgets());
+		if (organizationId === POC_ORG_ID) return structuredClone(pocAgentBudgets());
 		const n = await names(organizationId);
 		const zone = on('no-zone') ? null : budgetData.zone.name;
 		const stored = mutableBudgets;

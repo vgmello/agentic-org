@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { onDestroy, tick, type Snippet } from 'svelte';
+	import { resolve } from '$app/paths';
+	import { Tooltip } from 'bits-ui';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import Check from '@lucide/svelte/icons/check';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
 	import Copy from '@lucide/svelte/icons/copy';
+	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import FileCheck2 from '@lucide/svelte/icons/file-check-2';
 	import PauseCircle from '@lucide/svelte/icons/pause-circle';
 	import X from '@lucide/svelte/icons/x';
@@ -15,6 +18,7 @@
 		refLabel,
 		kindLabel,
 		ariaLabel,
+		fullPageHref,
 		statusTone,
 		needsAttention = false,
 		priorityLevel,
@@ -27,6 +31,7 @@
 		refLabel: string;
 		kindLabel: 'Task' | 'Bug' | 'Request';
 		ariaLabel: string;
+		fullPageHref?: string;
 		statusTone?: WorkStatusRingTone;
 		needsAttention?: boolean;
 		priorityLevel?: 0 | 1 | 2 | 3;
@@ -139,30 +144,87 @@
 				<span class="work-kind">{kindLabel}</span>
 			</p>
 
-			<div class="work-detail-actions">
-				<button
-					type="button"
-					class="work-detail-btn"
-					aria-label={copied ? `Copied ${refLabel}` : `Copy ${refLabel}`}
-					title={copied ? 'Copied' : `Copy ${refLabel}`}
-					onclick={copyRef}
-				>
-					{#if copied}
-						<Check class="size-4" aria-hidden="true" />
-					{:else}
-						<Copy class="size-4" aria-hidden="true" />
+			<Tooltip.Provider delayDuration={150} ignoreNonKeyboardFocus>
+				<div class="work-detail-actions">
+					{#if fullPageHref}
+						<Tooltip.Root ignoreNonKeyboardFocus>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<a
+										{...props}
+										href={resolve(fullPageHref as '/')}
+										class="work-detail-btn"
+										aria-label="Open full page for {refLabel}"
+									>
+										<ExternalLink class="size-4" aria-hidden="true" />
+									</a>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									side="bottom"
+									sideOffset={6}
+									escapeKeydownBehavior="defer-otherwise-close"
+									class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+									>Open full page</Tooltip.Content
+								>
+							</Tooltip.Portal>
+						</Tooltip.Root>
 					{/if}
-				</button>
-				<button
-					type="button"
-					class="work-detail-btn"
-					aria-label="Close work details"
-					title="Close work details"
-					onclick={onclose}
-				>
-					<X class="size-4" aria-hidden="true" />
-				</button>
-			</div>
+					<Tooltip.Root ignoreNonKeyboardFocus>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									type="button"
+									class="work-detail-btn"
+									aria-label={copied ? `Copied ${refLabel}` : `Copy ${refLabel}`}
+									onclick={copyRef}
+								>
+									{#if copied}
+										<Check class="size-4" aria-hidden="true" />
+									{:else}
+										<Copy class="size-4" aria-hidden="true" />
+									{/if}
+								</button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Portal>
+							<Tooltip.Content
+								side="bottom"
+								sideOffset={6}
+								escapeKeydownBehavior="defer-otherwise-close"
+								class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+								>{copied ? 'Copied' : `Copy ${refLabel}`}</Tooltip.Content
+							>
+						</Tooltip.Portal>
+					</Tooltip.Root>
+					<Tooltip.Root ignoreNonKeyboardFocus>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									type="button"
+									class="work-detail-btn"
+									aria-label="Close work details"
+									onclick={onclose}
+								>
+									<X class="size-4" aria-hidden="true" />
+								</button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Portal>
+							<Tooltip.Content
+								side="bottom"
+								sideOffset={6}
+								escapeKeydownBehavior="defer-otherwise-close"
+								class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+								>Close</Tooltip.Content
+							>
+						</Tooltip.Portal>
+					</Tooltip.Root>
+				</div>
+			</Tooltip.Provider>
 		</div>
 
 		<p class="sr-only" role="status">{copied ? `${refLabel} copied.` : ''}</p>

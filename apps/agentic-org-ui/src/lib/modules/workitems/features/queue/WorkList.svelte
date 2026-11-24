@@ -36,13 +36,31 @@
 		rows,
 		tab,
 		groupBy,
-		showProject = true
+		showProject = true,
+		onopen
 	}: {
 		rows: TaskRow[];
 		tab: TaskType | 'all';
 		groupBy: GroupBy;
 		showProject?: boolean;
+		onopen?: (row: TaskRow, triggerEl: HTMLElement | null) => void;
 	} = $props();
+
+	function handleOpen(event: MouseEvent, row: TaskRow) {
+		if (
+			!onopen ||
+			event.defaultPrevented ||
+			event.button !== 0 ||
+			event.metaKey ||
+			event.ctrlKey ||
+			event.shiftKey ||
+			event.altKey
+		) {
+			return;
+		}
+		event.preventDefault();
+		onopen(row, event.currentTarget as HTMLElement | null);
+	}
 
 	const uid = $props.id();
 	const sortFn = $derived(tab === 'bug' ? bySeverityThenPriority : byPriorityThenAge);
@@ -115,6 +133,7 @@
 										<a
 											href={resolve(taskHref(row.ref) as '/')}
 											aria-label={rowSpeech(row)}
+											onclick={(e) => handleOpen(e, row)}
 											class="font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
 										>
 											{row.title}
@@ -240,6 +259,7 @@
 						<a
 							href={resolve(taskHref(row.ref) as '/')}
 							aria-label={rowSpeech(row)}
+							onclick={(e) => handleOpen(e, row)}
 							class="text-sm/6 font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
 						>
 							<span class="absolute inset-0"></span>

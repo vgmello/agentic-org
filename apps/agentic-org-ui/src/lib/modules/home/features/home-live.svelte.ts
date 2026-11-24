@@ -14,8 +14,8 @@ import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
 import { projectsApi } from '$lib/modules/projects/api';
 import type { ProjectRow } from '$lib/modules/projects/types';
 import { officeApi } from '$lib/modules/offices/office-api';
+import { loadShellWorkItems } from '$lib/platform/shell/shell-data.svelte';
 import { toAppError } from '$lib/proto';
-import { workApi } from '$lib/modules/work';
 
 export interface HomeOfficesAdapter<TOverview = unknown> {
 	overview(organizationId: string): Promise<TOverview>;
@@ -131,11 +131,11 @@ export class HomeLiveState<TOverview = unknown> {
 			}
 		};
 
-		const workPromise = workApi.snapshot(targetOrgId).then(
-			(res) => {
+		const workPromise = loadShellWorkItems(targetOrgId).then(
+			(items) => {
 				if (isStale()) return;
 				this.loadedOrganizationId = targetOrgId;
-				this.items = res.items;
+				this.items = items;
 				this.workFromSeed = false;
 				this.retryingWork = false;
 				this.allowShellFallback = false;

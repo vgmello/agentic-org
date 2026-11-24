@@ -19,6 +19,7 @@
 	import { CaptureDialog, taskHref } from '$lib/modules/workitems';
 	import { areaCapability } from './capabilities';
 	import { focusDestinationHeading } from './focus-destination';
+	import { useShellData } from './shell-data.svelte';
 	import { NewMessageDialog } from '$lib/modules/messaging';
 	import { chatMembers } from '$lib/modules/messaging/model';
 	import { toAppError } from '$lib/proto';
@@ -32,6 +33,12 @@
 
 	const organizationId = $derived(connection.organization.id);
 	const workAvailable = $derived(areaCapability('/work').available);
+	let shellData: ReturnType<typeof useShellData> | undefined;
+	try {
+		shellData = useShellData();
+	} catch {
+		shellData = undefined;
+	}
 	let menuOpen = $state(false);
 	let trigger = $state<HTMLButtonElement | null>(null);
 	let snapshot = $state.raw<OrgSnapshot | undefined>();
@@ -162,6 +169,7 @@
 		initialType={flow === 'request' ? 'request' : 'task'}
 		allowTypeSwitch={flow === 'work_item'}
 		oncreated={(created) => {
+			void shellData?.refresh();
 			void goto(resolve(taskHref(created.ref) as '/'));
 		}}
 	/>

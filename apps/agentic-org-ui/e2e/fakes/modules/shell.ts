@@ -5,7 +5,7 @@ import type { ShellApi } from '../../../src/lib/modules/shell/api';
 import type { SearchHit } from '../../../src/lib/modules/shell/types';
 import inbox from '../data/shell/inbox.json' with { type: 'json' };
 import work from '../data/shell/work.json' with { type: 'json' };
-import { isPocDataset } from '../mock-mode';
+import { POC_ORG_ID } from '../mock-mode';
 import { pocInboxItems } from '../poc-dataset';
 
 const LIMIT = 5;
@@ -16,9 +16,10 @@ export const shellApi: ShellApi = {
 	async navigation(organizationId) {
 		const { snapshot } = await orgApi.view(organizationId);
 		return {
-			inboxOpen: isPocDataset()
-				? pocInboxItems().filter((i) => i.state === 'open').length
-				: inbox.open,
+			inboxOpen:
+				organizationId === POC_ORG_ID
+					? pocInboxItems().filter((i) => i.state === 'open').length
+					: inbox.open,
 			projects: (snapshot.projects ?? [])
 				.filter((p) => !p.archived)
 				.map(({ id, name }) => ({ id, name })),

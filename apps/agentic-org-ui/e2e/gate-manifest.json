@@ -498,7 +498,6 @@
 				"src/lib/modules/organization/features/project-teams/{ProjectTeamDialog,ProjectTeams,RemoveProjectDialog}.svelte",
 				"src/lib/modules/work/components/SeverityIcon.svelte",
 				"src/lib/modules/work/features/{bugs/{BugSheet,BugsPanel,ReportBugDialog},requests/{NewRequestDialog,RequestSheet,RequestsPanel},tasks/{NewTaskDialog,TaskSheet,TasksBoard}}.svelte",
-				"src/lib/components/WorkReadingPanel.svelte",
 				"e2e/org-chart-menu.ts"
 			]
 		},
@@ -512,8 +511,7 @@
 				"src/lib/modules/copilot/**",
 				"src/routes/(shell)/work/**",
 				"src/lib/modules/work/components/SeverityIcon.svelte",
-				"src/lib/modules/work/features/{bugs/{BugSheet,ReportBugDialog},requests/{NewRequestDialog,RequestSheet,RequestsPanel},tasks/{NewTaskDialog,TaskSheet}}.svelte",
-				"src/lib/components/WorkReadingPanel.svelte"
+				"src/lib/modules/work/features/{bugs/{BugSheet,ReportBugDialog},requests/{NewRequestDialog,RequestSheet,RequestsPanel},tasks/{NewTaskDialog,TaskSheet}}.svelte"
 			]
 		},
 		"org-lifecycle": {
@@ -564,8 +562,7 @@
 			"files": [
 				"src/routes/(shell)/work/+page.svelte",
 				"src/lib/modules/work/work-toolbar.ts",
-				"src/lib/modules/work/features/requests/RequestsPanel.svelte",
-				"src/lib/components/WorkReadingPanel.svelte"
+				"src/lib/modules/work/features/requests/RequestsPanel.svelte"
 			],
 			"why": "Work header, toolbar, search, board, and RequestsPanel changes also run shell-look's executive-ui.spec.ts parity suite alongside Work's owning categories."
 		}
@@ -755,7 +752,7 @@
 			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
 			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",
 			"src/routes/(shell)/settings/+layout.svelte",
-			"src/lib/components/{MiniIcon,PageHeader,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt,Loaded,ConfirmDialog,CopyButton}.svelte",
+			"src/lib/components/{MiniIcon,PageHeader,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt,Loaded,ConfirmDialog,CopyButton,WorkReadingPanel}.svelte",
 			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,LiveBanner,Logo,resource,classes,focus,pills}.*",
 			"static/**",
 			"vite.config.ts",

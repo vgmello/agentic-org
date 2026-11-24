@@ -1,5 +1,5 @@
 import { createContext, untrack } from 'svelte';
-import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
+import type { ItemStatus, OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import { inboxApi } from '$lib/modules/inbox/api';
 import type { InboxItem } from '$lib/modules/inbox/types';
 import { orgApi } from '$lib/modules/organization/api';
@@ -8,6 +8,19 @@ import { workApi } from '$lib/modules/work';
 import { needsYou } from '$lib/modules/work/saved';
 import { workItemsApi } from '$lib/modules/workitems/api';
 import type { TaskRow } from '$lib/modules/workitems/types';
+import { areaCapability } from './capabilities';
+
+function summaryStatus(row: TaskRow): ItemStatus {
+	if (row.type === 'bug') {
+		return row.status === 'done' || row.status === 'cancelled' ? 'closed' : row.status;
+	}
+	if (row.type === 'request') {
+		if (row.status === 'done') return 'approved';
+		if (row.status === 'cancelled') return 'declined';
+		return row.status;
+	}
+	return row.status === 'cancelled' ? 'closed' : row.status;
+}
 
 function rowToSummary(row: TaskRow): WorkItemSummary {
 	const numMatch = /\d+$/.exec(row.ref);
@@ -17,7 +30,7 @@ function rowToSummary(row: TaskRow): WorkItemSummary {
 		kind: row.type,
 		number: numMatch ? Number(numMatch[0]) : 0,
 		title: row.title,
-		status: row.status === 'cancelled' ? 'closed' : row.status,
+		status: summaryStatus(row),
 		priority: row.priority,
 		severity: row.severity ?? undefined,
 		project_id: row.project?.id,
@@ -43,13 +56,16 @@ function rowToSummary(row: TaskRow): WorkItemSummary {
 	};
 }
 
-async function loadShellWorkItems(organizationId: string): Promise<WorkItemSummary[]> {
-	try {
-		const queue = await workItemsApi.queue(organizationId, { kind: 'organization' });
-		return queue.rows.map(rowToSummary);
-	} catch {
-		return (await workApi.snapshot(organizationId)).items;
+export async function loadShellWorkItems(organizationId: string): Promise<WorkItemSummary[]> {
+	if (areaCapability('/work').available) {
+		try {
+			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' });
+			return queue.rows.map(rowToSummary);
+		} catch {
+			// Fall back to legacy workApi when workItemsApi is unavailable.
+		}
 	}
+	return (await workApi.snapshot(organizationId)).items;
 }
 
 export interface ShellRefreshResult {

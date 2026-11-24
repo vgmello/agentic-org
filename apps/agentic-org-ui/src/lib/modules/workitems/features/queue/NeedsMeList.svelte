@@ -15,11 +15,29 @@
 
 	let {
 		rows,
-		sources
+		sources,
+		onopen
 	}: {
 		rows: TaskRow[];
 		sources: NeedsMe['source'][];
+		onopen?: (row: TaskRow, triggerEl: HTMLElement | null) => void;
 	} = $props();
+
+	function handleOpen(event: MouseEvent, row: TaskRow) {
+		if (
+			!onopen ||
+			event.defaultPrevented ||
+			event.button !== 0 ||
+			event.metaKey ||
+			event.ctrlKey ||
+			event.shiftKey ||
+			event.altKey
+		) {
+			return;
+		}
+		event.preventDefault();
+		onopen(row, event.currentTarget as HTMLElement | null);
+	}
 </script>
 
 {#if sources.length === 0}
@@ -60,6 +78,7 @@
 
 					<a
 						href={resolve(taskHref(row.ref) as '/')}
+						onclick={(e) => handleOpen(e, row)}
 						class="text-sm/6 font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
 					>
 						{row.title}
@@ -92,6 +111,7 @@
 					{/if}
 					<a
 						href={resolve(taskHref(row.ref) as '/')}
+						onclick={(e) => handleOpen(e, row)}
 						class="inline-flex items-center rounded-md px-3 py-1.5 text-sm/6 font-medium text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
 					>
 						Open {row.ref}

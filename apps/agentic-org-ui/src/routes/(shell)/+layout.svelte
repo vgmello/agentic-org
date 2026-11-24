@@ -65,17 +65,19 @@
 	let sidebarHovered = $state(false);
 	let sidebarFocused = $state(false);
 	let sidebarMenuOpen = $state(false);
-	let sidebarLeaveTimer: ReturnType<typeof setTimeout> | undefined;
+	let sidebarHoverTimer: ReturnType<typeof setTimeout> | undefined;
+	let sidebarFocusTimer: ReturnType<typeof setTimeout> | undefined;
 	const sidebarPinned = $derived(!uiPrefs.navCollapsed);
 	const sidebarCollapsed = $derived(
 		uiPrefs.navCollapsed && !sidebarHovered && !sidebarFocused && !sidebarMenuOpen
 	);
 
 	function handleSidebarMenuOpenChange(open: boolean) {
-		clearTimeout(sidebarLeaveTimer);
+		clearTimeout(sidebarFocusTimer);
 		sidebarMenuOpen = open;
 		if (!open) {
-			// Recompute focus containment after Bits UI focus restoration or outside click settles.
+			// Recompute focus containment after Bits UI focus restoration or outside click settles
+			// without cancelling any pending pointer-leave collapse timer.
 			const syncFocus = () => {
 				if (sidebarMenuOpen) return;
 				const active = document.activeElement;
@@ -87,19 +89,19 @@
 	}
 
 	function handleSidebarEnter() {
-		clearTimeout(sidebarLeaveTimer);
+		clearTimeout(sidebarHoverTimer);
 		sidebarHovered = true;
 	}
 	function handleSidebarLeave() {
-		clearTimeout(sidebarLeaveTimer);
-		sidebarLeaveTimer = setTimeout(() => {
+		clearTimeout(sidebarHoverTimer);
+		sidebarHoverTimer = setTimeout(() => {
 			sidebarHovered = false;
 		}, 240);
 	}
 	function handleSidebarFocusIn(event: FocusEvent) {
 		const target = event.target;
 		if (target instanceof HTMLElement && target.matches(':focus-visible')) {
-			clearTimeout(sidebarLeaveTimer);
+			clearTimeout(sidebarFocusTimer);
 			sidebarFocused = true;
 		}
 	}
@@ -107,20 +109,24 @@
 		if (sidebarMenuOpen) return;
 		const next = event.relatedTarget;
 		if (next instanceof Node && desktopNavigation?.contains(next)) return;
-		clearTimeout(sidebarLeaveTimer);
-		sidebarLeaveTimer = setTimeout(() => {
+		clearTimeout(sidebarFocusTimer);
+		sidebarFocusTimer = setTimeout(() => {
 			if (!sidebarMenuOpen) sidebarFocused = false;
 		}, 160);
 	}
 	function toggleSidebarPin() {
-		clearTimeout(sidebarLeaveTimer);
+		clearTimeout(sidebarHoverTimer);
+		clearTimeout(sidebarFocusTimer);
 		uiPrefs.toggleNavCollapsed();
 		if (uiPrefs.navCollapsed) {
 			sidebarHovered = false;
 			sidebarFocused = false;
 		}
 	}
-	onDestroy(() => clearTimeout(sidebarLeaveTimer));
+	onDestroy(() => {
+		clearTimeout(sidebarHoverTimer);
+		clearTimeout(sidebarFocusTimer);
+	});
 
 	const shellData = provideShellData({
 		getOrganizationId: () => organizationId,

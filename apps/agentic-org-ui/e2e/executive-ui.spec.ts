@@ -537,20 +537,30 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 		await page.screenshot({ path: `${captureDir}/poc-mirror-activity-assembly-report.png` });
 	}
 
-	// Opening a POC work item navigates cleanly to /work/T-118 on the unified workItemsApi store
+	// Opening a POC work item opens the inline WorkReadingPanel (with Back to Work + Open full page -> /work/T-118)
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Work' }).click();
 	await expect(page).toHaveURL(/\/work$/);
-	await page
-		.getByRole('link', { name: /Custody lock fix/ })
-		.first()
-		.click();
-	await expect(page).toHaveURL(/\/work\/T-118$/);
-	await expect(page.getByRole('heading', { name: /Custody lock fix/ })).toBeVisible();
-	await expect(page.getByText('Implementation and unit checks complete').first()).toBeVisible();
+	const custodyLink = page.getByRole('link', { name: /Custody lock fix/ }).first();
+	await custodyLink.click();
+	const readingPanel = page.getByTestId('work-reading-panel');
+	await expect(readingPanel).toBeVisible();
+	await expect(readingPanel).toContainText('Custody lock fix');
+	await expect(
+		readingPanel.getByText('Implementation and unit checks complete').first()
+	).toBeVisible();
 
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/poc-mirror-work-sheet-report.png` });
 	}
+
+	await readingPanel.getByRole('button', { name: 'Back to Work' }).click();
+	await expect(readingPanel).toBeHidden();
+	await expect(custodyLink).toBeFocused();
+	await custodyLink.click();
+	await expect(readingPanel).toBeVisible();
+	await readingPanel.getByRole('link', { name: 'Open full page for T-118' }).click();
+	await expect(page).toHaveURL(/\/work\/T-118$/);
+	await expect(page.getByRole('heading', { name: /Custody lock fix/ })).toBeVisible();
 });
 
 test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite surfaces, member card Escape, comments persistence, and dark CmdK contrast', async ({
@@ -820,7 +830,8 @@ test('Phase 3 Work parity: unified WorkQueueView header, live search & / shortcu
 	await expect(page.locator('header.work-header.queue-header')).toBeVisible();
 	await expect(page.locator('#shell-page-title')).toContainText('Work');
 
-	// `/` from initial Needs me view switches to Work search and focuses Search work
+	// `/` from explicit /work?view=needs_me awaits navigation and focuses Search work
+	await visit(page, '/work?view=needs_me&theme=graphite');
 	await expect(page.getByTestId('needs-me-list')).toBeVisible();
 	await page.locator('#shell-page-title').focus();
 	await page.keyboard.press('/');

@@ -10,6 +10,7 @@
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { pageTitle } from '$lib/nav';
+	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -49,11 +50,28 @@
 
 	let {
 		organizationId,
-		refParam
+		refParam,
+		embedded = false,
+		onchanged
 	}: {
 		organizationId: string;
 		refParam: string;
+		embedded?: boolean;
+		onchanged?: () => void;
 	} = $props();
+
+	let shellData: ReturnType<typeof useShellData> | undefined;
+	try {
+		shellData = useShellData();
+	} catch {
+		shellData = undefined;
+	}
+
+	async function reloadDetail() {
+		await taskRead.reload();
+		void shellData?.refresh();
+		onchanged?.();
+	}
 
 	const uid = $props.id();
 
@@ -128,7 +146,7 @@
 			});
 			editing = false;
 			toast.success(`Updated ${t.ref}.`);
-			await taskRead.reload();
+			await reloadDetail();
 		} catch (e) {
 			editError = toAppError(e).message;
 		} finally {
@@ -157,7 +175,7 @@
 				expectedRevision: t.revision
 			});
 			toast.success(`Moved ${t.ref} to ${STATUS_WORD[next]}.`);
-			await taskRead.reload();
+			await reloadDetail();
 		} catch (e) {
 			selectEl.value = t.status;
 			toast.error(toAppError(e).message);
@@ -184,7 +202,7 @@
 			selectedWhyId = '';
 			whyPickerOpen = false;
 			toast.success('Linked document.');
-			await taskRead.reload();
+			await reloadDetail();
 		} catch (e) {
 			toast.error(toAppError(e).message);
 		} finally {
@@ -193,16 +211,22 @@
 	}
 </script>
 
-<svelte:head><title>{documentTitle}</title></svelte:head>
+<svelte:head>
+	{#if !embedded}
+		<title>{documentTitle}</title>
+	{/if}
+</svelte:head>
 
-<div class="{gutters} pt-6">
-	<a
-		href={resolve(WORK_URL)}
-		class="inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
-	>
-		Work
-	</a>
-</div>
+{#if !embedded}
+	<div class="{gutters} pt-6">
+		<a
+			href={resolve(WORK_URL)}
+			class="inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
+		>
+			Work
+		</a>
+	</div>
+{/if}
 
 <Loaded
 	resource={taskRead}
@@ -227,11 +251,7 @@
 			{@const isStale = !!t.stale}
 
 			{#if t.stale}
-				<StaleBanner
-					stale={t.stale}
-					retrying={taskRead.reloading}
-					onretry={() => taskRead.reload()}
-				/>
+				<StaleBanner stale={t.stale} retrying={taskRead.reloading} onretry={() => reloadDetail()} />
 			{/if}
 
 			<!-- Header -->
@@ -263,7 +283,8 @@
 						</div>
 
 						<h2
-							id="work-detail-heading"
+							id={embedded ? 'work-detail-title' : 'work-detail-heading'}
+							tabindex="-1"
 							class="text-lg/7 font-semibold text-fg [overflow-wrap:anywhere] focus:outline-none"
 						>
 							{t.title}
@@ -418,7 +439,7 @@
 							{choices}
 							stale={isStale}
 							oncreatefix={() => (createFixOpen = true)}
-							onchanged={() => taskRead.reload()}
+							onchanged={() => reloadDetail()}
 						/>
 					{/if}
 
@@ -429,7 +450,7 @@
 							task={t}
 							request={t.request}
 							stale={isStale}
-							onchanged={() => taskRead.reload()}
+							onchanged={() => reloadDetail()}
 						/>
 					{/if}
 
@@ -441,7 +462,7 @@
 							steps={t.steps}
 							canEdit={t.can.edit}
 							stale={isStale}
-							onchanged={() => taskRead.reload()}
+							onchanged={() => reloadDetail()}
 						/>
 					{/if}
 
@@ -578,7 +599,7 @@
 						comments={t.comments}
 						canComment={t.can.edit}
 						stale={isStale}
-						onsharedchanged={() => taskRead.reload()}
+						onsharedchanged={() => reloadDetail()}
 					/>
 
 					<!-- Immutable Activity feed (newest last; unknown event kinds render as "Unknown change") -->
@@ -629,7 +650,7 @@
 					task={t}
 					{choices}
 					stale={isStale}
-					onchanged={() => taskRead.reload()}
+					onchanged={() => reloadDetail()}
 				/>
 			</div>
 
@@ -640,7 +661,7 @@
 				initialCloseKind={closeKind}
 				bind:reopenOpen
 				bind:blockOpen
-				onchanged={() => taskRead.reload()}
+				onchanged={() => reloadDetail()}
 			/>
 
 			{#if t.type === 'bug'}
@@ -651,7 +672,7 @@
 					projectId={t.project?.id ?? null}
 					fixesTaskId={t.id}
 					contextLabel="Creating a fix task linked to Bug {t.ref} ({t.title})."
-					oncreated={() => taskRead.reload()}
+					oncreated={() => reloadDetail()}
 				/>
 			{/if}
 		{/if}

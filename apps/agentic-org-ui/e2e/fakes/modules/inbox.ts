@@ -5,7 +5,7 @@
 import { orgApi } from '$lib/modules/organization/api';
 import type { InboxApi } from '../../../src/lib/modules/inbox/api';
 import type { InboxItem } from '../../../src/lib/modules/inbox/types';
-import { isPocDataset, mockLatency, mockMode } from '../mock-mode';
+import { mockLatency, mockMode, POC_ORG_ID } from '../mock-mode';
 import { pocInboxItems } from '../poc-dataset';
 import data from '../data/inbox/items.json' with { type: 'json' };
 
@@ -30,7 +30,7 @@ const listeners = new Set<() => void>();
 let liveTimer: ReturnType<typeof setTimeout> | undefined;
 
 async function load(organizationId: string): Promise<InboxItem[]> {
-	const currentDataset = isPocDataset() ? 'poc' : 'default';
+	const currentDataset = organizationId === POC_ORG_ID ? 'poc' : 'default';
 	if (items && loadedDataset === currentDataset) return items;
 	loadedDataset = currentDataset;
 	if (currentDataset === 'poc') {

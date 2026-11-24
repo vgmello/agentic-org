@@ -10,7 +10,7 @@ import type {
 	ActivityRun,
 	ActivityThread
 } from '../../../src/lib/modules/activity/types';
-import { isPocDataset, mockLatency, mockMode } from '../mock-mode';
+import { mockLatency, mockMode, POC_ORG_ID } from '../mock-mode';
 import { pocActivityRows } from '../poc-dataset';
 import arrivals from '../data/activity/arrivals.json' with { type: 'json' };
 import rowData from '../data/activity/rows.json' with { type: 'json' };
@@ -49,7 +49,7 @@ function arrive() {
 async function load(organizationId: string) {
 	const { snapshot } = await orgApi.view(organizationId);
 	people = new Map(snapshot.members.map((m) => [m.id, { id: m.id, name: m.name, kind: m.kind }]));
-	const currentDataset = isPocDataset() ? 'poc' : 'default';
+	const currentDataset = organizationId === POC_ORG_ID ? 'poc' : 'default';
 	if (rows && loadedDataset === currentDataset) return snapshot;
 	loadedDataset = currentDataset;
 	if (currentDataset === 'poc') {

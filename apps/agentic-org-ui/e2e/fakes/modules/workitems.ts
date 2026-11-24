@@ -321,6 +321,13 @@ function loadPersistedStore(organizationId: string): Map<string, StoredTask> | u
 			nextSeq = parsed.nextSeq;
 		}
 		const map = new Map<string, StoredTask>(parsed.entries);
+		for (const entry of map.values()) {
+			const m = /^T-A(\d+)$/.exec(entry.detail.ref);
+			if (m) {
+				const n = Number(m[1]);
+				if (n >= nextSeq) nextSeq = n + 1;
+			}
+		}
 		tagEntries(organizationId, map);
 		return map;
 	} catch {
@@ -567,7 +574,8 @@ function buildPocStore(): Map<string, StoredTask> {
 
 function storeFor(organizationId: string): Map<string, StoredTask> {
 	const poc = usePoc(organizationId);
-	const key = `${organizationId}:${poc ? 'poc' : 'default'}:${canPersist() ? 'p' : 'm'}`;
+	const persist = canPersist();
+	const key = `${organizationId}:${poc ? 'poc' : 'default'}:${persist ? 'p' : `m:${mockMode().trim()}`}`;
 	let s = stores.get(key);
 	if (!s) {
 		s = loadPersistedStore(organizationId) ?? (poc ? buildPocStore() : buildSeedStore());
@@ -817,11 +825,11 @@ export const workItemsApi: WorkItemsApi = {
 			? (choices.employees.find((e) => e.id === draft.assigneeId) ?? null)
 			: null;
 
+		const store = storeFor(organizationId);
 		const id = newId();
 		const ref = `T-A${nextSeq++}`;
 		const at = nowIso();
 		const fixes: TaskLink[] = [];
-		const store = storeFor(organizationId);
 		if (draft.fixesTaskId && store.has(draft.fixesTaskId)) {
 			const bugEntry = store.get(draft.fixesTaskId)!;
 			fixes.push(toLink(bugEntry.detail));
@@ -1222,6 +1230,7 @@ export const workItemsApi: WorkItemsApi = {
 		};
 		entry.privateNotes.push(created);
 		noteOps.set(change.operationId, structuredClone(created));
+		saveStore(organizationId, storeFor(organizationId));
 		// Private notes never write to shared activity (PN-01..06).
 		return structuredClone(created);
 	},
@@ -1254,6 +1263,7 @@ export const workItemsApi: WorkItemsApi = {
 		note.updatedAt = nowIso();
 		note.revision += 1;
 		noteOps.set(change.operationId, structuredClone(note));
+		saveStore(organizationId, storeFor(organizationId));
 		return structuredClone(note);
 	},
 
@@ -1274,6 +1284,7 @@ export const workItemsApi: WorkItemsApi = {
 		}
 		entry.privateNotes.splice(idx, 1);
 		noteOps.set(change.operationId, 'deleted');
+		saveStore(organizationId, storeFor(organizationId));
 	},
 
 	async publishNote(organizationId, taskId, noteId, change) {

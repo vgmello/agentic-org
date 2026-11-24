@@ -47,14 +47,32 @@
 		rows,
 		showProject = true,
 		stale = false,
-		onchanged
+		onchanged,
+		onopen
 	}: {
 		organizationId: string;
 		rows: TaskRow[];
 		showProject?: boolean;
 		stale?: boolean;
 		onchanged: () => void;
+		onopen?: (row: TaskRow, triggerEl: HTMLElement | null) => void;
 	} = $props();
+
+	function handleOpen(event: MouseEvent, row: TaskRow) {
+		if (
+			!onopen ||
+			event.defaultPrevented ||
+			event.button !== 0 ||
+			event.metaKey ||
+			event.ctrlKey ||
+			event.shiftKey ||
+			event.altKey
+		) {
+			return;
+		}
+		event.preventDefault();
+		onopen(row, event.currentTarget as HTMLElement | null);
+	}
 
 	const uid = $props.id();
 	let allDone = $state(false);
@@ -336,6 +354,7 @@
 
 								<a
 									href={resolve(taskHref(row.ref) as '/')}
+									onclick={(e) => handleOpen(e, row)}
 									class="text-sm/5 font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
 								>
 									{row.title}
