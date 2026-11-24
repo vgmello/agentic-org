@@ -785,14 +785,19 @@ html[data-hide-work-subtasks] .work-subtasks { display: none; }
 .work-priority-mark span { width: .15rem; height: .28rem; border-radius: 1px; background: currentColor; }
 .work-priority-mark span:nth-child(2) { height: .44rem; }
 .work-priority-mark span:nth-child(3) { height: .6rem; }
-.work-priority-mark[data-level="low"] span:nth-child(n+2),
-.work-priority-mark[data-level="medium"] span:nth-child(3) { opacity: .32; }
+.work-priority-mark[data-level="1"] span:nth-child(n+2),
+.work-priority-mark[data-level="2"] span:nth-child(3) { opacity: .32; }
+.work-priority-mark[data-level="0"] { color: var(--gray-400); }
+.work-priority-mark[data-level="0"] span {
+  width: 3px; border: 1px solid currentColor; background: transparent;
+}
 @media (forced-colors: active) {
   html[data-work-dividers] .work-row { border-block-end: 1px solid CanvasText; }
   .work-row:is(:hover, :focus-within) { outline: 1px solid Highlight; outline-offset: -1px; }
   .work-priority-mark span, .work-status[data-attention]::after {
     forced-color-adjust: none; background: CanvasText;
   }
+  .work-priority-mark[data-level="0"] span { border-color: CanvasText; }
   .work-status[data-attention]::after { box-shadow: 0 0 0 1px Canvas; }
 }
 .work-subtasks { margin-inline-start: 1rem; }
@@ -821,11 +826,11 @@ html[data-hide-work-subtasks] .work-subtasks { display: none; }
   content: ""; width: 7px; height: 7px; flex: none;
   border-radius: 50%; background: var(--work-team-color, var(--gray-500));
 }
-.work-items [data-team="leadership"] { --work-team-color: light-dark(#8d5119, #e4ac75); }
-.work-items [data-team="product"] { --work-team-color: light-dark(#7847a4, #c5a0f1); }
-.work-items [data-team="platform"] { --work-team-color: light-dark(#196794, #78bae7); }
-.work-items [data-team="app"] { --work-team-color: light-dark(#16785d, #70c8a5); }
-.work-items [data-team="quality"] { --work-team-color: light-dark(#ac3c64, #ee91b3); }
+:is(.work-row, .bcard, .work-reading)[data-team="leadership"] { --work-team-color: light-dark(#8d5119, #e4ac75); }
+:is(.work-row, .bcard, .work-reading)[data-team="product"] { --work-team-color: light-dark(#7847a4, #c5a0f1); }
+:is(.work-row, .bcard, .work-reading)[data-team="platform"] { --work-team-color: light-dark(#196794, #78bae7); }
+:is(.work-row, .bcard, .work-reading)[data-team="app"] { --work-team-color: light-dark(#16785d, #70c8a5); }
+:is(.work-row, .bcard, .work-reading)[data-team="quality"] { --work-team-color: light-dark(#ac3c64, #ee91b3); }
 @container (max-width: 54rem) {
   .work-row { align-items: stretch; flex-direction: column; gap: 4px; }
   .work-facts { justify-content: flex-start; }
@@ -5265,9 +5270,14 @@ function workStatus(status, attention = false) {
   return `<span class="work-status" data-tone="${tone}"${attention ? " data-attention" : ""} role="img" aria-label="${label}" title="${label}">${icon ? ic(icon, "ic16") : '<span class="work-status-ring" aria-hidden="true"></span>'}</span>`;
 }
 
+const WORK_PRIORITY_RANKS = { Low: 1, Medium: 2, Normal: 2, High: 3, Urgent: 4 };
+const workPriorityRank = (priority) => typeof priority === "string" && own(WORK_PRIORITY_RANKS, priority)
+  ? WORK_PRIORITY_RANKS[priority] : undefined;
+
 function workPriority(priority) {
-  const label = esc(`${priority} priority`);
-  return `<span class="work-priority-mark" data-level="${esc(priority.toLowerCase())}" role="img" aria-label="${label}" title="${label}"><span></span><span></span><span></span></span>`;
+  const rank = workPriorityRank(priority);
+  const label = rank ? esc(`${priority} priority`) : "No priority";
+  return `<span class="work-priority-mark" data-level="${Math.min(rank ?? 0, 3)}" role="img" aria-label="${label}" title="${label}"><span></span><span></span><span></span></span>`;
 }
 
 function workCriteria(criteria, id) {
@@ -5310,14 +5320,14 @@ function workRow(w, isSubtask = false) {
   const eta = workEta(w);
   return `<li class="${isSubtask ? "work-subtask" : "work-item"}"><div class="work-row" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}>
     <div class="work-summary">
-      <span class="work-ident">${task ? workPriority(w.pri) : ""}<span class="work-ref">${esc(w.id)}</span></span>
+      <span class="work-ident">${workPriority(w.pri)}<span class="work-ref">${esc(w.id)}</span></span>
       <span class="work-heading">
         <span class="work-markers">${workStatus(w.status, showsNeedsYou(w))}${workCriteria(w.criteria, w.id)}</span>
         <span>${workTitle(w, "work-title")}${eta ? ` <span class="work-eta">ETA ${esc(eta)}</span>` : ""}</span>
       </span>
     </div>
     <div class="work-facts">
-      ${task ? "" : `<span class="work-priority">${sev}</span>`}
+      ${!task && sev && !workPriorityRank(w.pri) ? `<span class="work-priority">${sev}</span>` : ""}
       ${plink(w.proj)}
       <span class="work-team">${team ? esc(TEAMS[team].name) : "No team"}</span>
       ${isSubtask ? "" : `<span class="work-owner">${av(w.who, 24)}${mlink(w.who)}</span>`}
@@ -5346,7 +5356,15 @@ function board(items) {
   if (!cols.length) return `<p class="empty-row">No work here yet.</p>`;
   return `<div class="board">${cols.map((st) => {
     const col = items.filter((w) => w.status === st);
-    return `<section class="bcol" aria-label="${esc(st)}"><h3><span>${esc(st)}</span><span class="muted">${col.length}</span></h3>${col.map((w) => `<div class="bcard" data-work-id="${esc(w.id)}">${workTitle(w, "t")}<span class="m"><span class="mono">${w.id}</span>${SEP}${esc(P[w.proj].name)}</span><span class="m">${av(w.who, 24)}${w.who ? mlink(w.who) : "Unassigned"}</span>${showsNeedsYou(w) ? `<span>${pill("Needs you", "amber", "bell", true)}</span>` : ""}</div>`).join("")}</section>`;
+    return `<section class="bcol" aria-label="${esc(st)}"><h3><span>${esc(st)}</span><span class="muted">${col.length}</span></h3>${col.map((w) => {
+      const team = workTeam(w);
+      return `<div class="bcard" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}>
+        ${workTitle(w, "t")}
+        <span class="m">${workPriority(w.pri)}<span class="mono">${esc(w.id)}</span>${SEP}${esc(P[w.proj].name)}</span>
+        <span class="m">${av(w.who, 24)}${w.who ? mlink(w.who) : "Unassigned"}</span>
+        ${showsNeedsYou(w) ? `<span>${pill("Needs you", "amber", "bell", true)}</span>` : ""}
+      </div>`;
+    }).join("")}</section>`;
   }).join("")}</div>`;
 }
 
@@ -5391,11 +5409,12 @@ function workWorkspace(results, items = W) {
 
 function workDetail(w, parent) {
   const team = workTeam(w), eta = workEta(w);
-  return `<section class="triage-reading work-reading" aria-labelledby="work-detail-title">
+  const priority = workPriorityRank(w.pri) ? esc(w.pri) : "";
+  return `<section class="triage-reading work-reading" aria-labelledby="work-detail-title"${team ? ` data-team="${esc(team)}"` : ""}>
     <article class="triage-document">
       <div class="work-detail-bar">
         <button class="btn ghost sm work-back" type="button" data-act="work-close-detail">${ic("chev-left", "ic16")}Back to work</button>
-        <p class="work-detail-id">${workStatus(w.status, showsNeedsYou(w))}${esc(w.id)}<span class="work-kind">${{ task: "Task", bug: "Bug", request: "Request" }[w.kind]}</span></p>
+        <p class="work-detail-id">${workPriority(w.pri)}${esc(w.id)}${workStatus(w.status, showsNeedsYou(w))}<span class="work-kind">${{ task: "Task", bug: "Bug", request: "Request" }[w.kind]}</span></p>
         <div class="work-detail-actions">
           <button class="btn ghost icon sm" type="button" data-act="work-comment-focus" aria-label="Leave a comment" title="Leave a comment">${ic("chat", "ic16")}</button>
           <button class="btn ghost icon sm" type="button" data-act="work-copy-link" data-id="${esc(w.id)}" aria-label="Copy task link" title="Copy task link">${ic("copy", "ic16")}</button>
@@ -5411,7 +5430,8 @@ function workDetail(w, parent) {
         <dl class="triage-fields">
           <div><dt>Status</dt><dd>${esc(w.status)}${showsNeedsYou(w) ? '<span class="work-detail-attention">· Needs you</span>' : ""}</dd></div>
           <div><dt>Assignee</dt><dd>${mlink(w.who)}</dd></div>
-          ${w.kind !== "request" ? `<div><dt>Priority</dt><dd>${esc(w.pri)}</dd></div>` : ""}
+          <div><dt>Priority</dt><dd>${priority || "No priority"}</dd></div>
+          ${w.kind === "bug" && w.pri && !priority ? `<div><dt>Severity</dt><dd>${esc(w.pri)}</dd></div>` : ""}
           <div><dt>Project</dt><dd>${plink(w.proj)}</dd></div>
           ${team ? `<div><dt>Team</dt><dd><a class="alink" href="#/teams/${esc(team)}">${esc(TEAMS[team].name)}</a></dd></div>` : ""}
           ${eta ? `<div><dt>ETA</dt><dd>${esc(eta)}</dd></div>` : ""}
@@ -5427,7 +5447,7 @@ function workDetail(w, parent) {
       ${w.subtasks?.length ? `<section class="work-detail-section" aria-labelledby="work-detail-subtasks">
         <h3 id="work-detail-subtasks">Subtasks</h3>
         <ul class="work-detail-links" role="list">${w.subtasks.map((subtask) => `<li>
-          <a class="alink" href="${esc(workItemHref(subtask.id))}">${workStatus(subtask.status)}<span class="work-ref">${esc(subtask.id)}</span><span>${esc(subtask.title)}</span>${workCriteria(subtask.criteria, subtask.id)}</a>
+          <a class="alink" href="${esc(workItemHref(subtask.id))}">${workPriority(subtask.pri)}<span class="work-ref">${esc(subtask.id)}</span>${workStatus(subtask.status)}<span>${esc(subtask.title)}</span>${workCriteria(subtask.criteria, subtask.id)}</a>
         </li>`).join("")}</ul>
       </section>` : ""}
       ${workRelatedInbox(w)}
@@ -6699,7 +6719,6 @@ const WORK_PRESETS = [["all", "All"], ["needs-me", "Needs me"], ["mine", "Mine"]
 const WORK_GROUPS = [["none", "No grouping"], ["project", "Project"], ["status", "Status"], ["assignee", "Assignee"]];
 const WORK_GROUP_FIELDS = { project: "proj", status: "status", assignee: "who" };
 const WORK_SORTS = [["default", "Original order"], ["title", "Title"], ["priority", "Priority"], ["eta", "ETA"]];
-const WORK_PRIORITIES = { Low: 1, Minor: 1, Medium: 2, Major: 2, High: 3, Critical: 4 };
 const TASK_PRIORITIES = ["Low", "Medium", "High"];
 const WORK_TASK_STORE = "agentic-org.v6.task.";
 Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all", workSort: "default", workOrder: "asc" });
@@ -6758,7 +6777,7 @@ function workFilteredItems() {
 
 function sortWorkItems(items) {
   const descending = S.workOrder === "desc";
-  const read = { title: (w) => w.title, priority: (w) => WORK_PRIORITIES[w.pri], eta: (w) => w.etaHours }[S.workSort];
+  const read = { title: (w) => w.title, priority: (w) => workPriorityRank(w.pri), eta: (w) => w.etaHours }[S.workSort];
   if (!read) return descending ? [...items].reverse() : items;
   return [...items].sort((left, right) => {
     const a = read(left), b = read(right);
@@ -6847,7 +6866,7 @@ function openWorkTask(trigger) {
           <option value="">Unassigned</option>
         </select></label>
         <label>Status<select class="field" name="status">${statusOptions(STATUSES.task, status)}</select></label>
-        <label>Priority<select class="field" name="priority">${statusOptions(TASK_PRIORITIES, "Medium")}</select></label>
+        <label>Priority<select class="field" name="priority"><option value="">No priority</option>${statusOptions(TASK_PRIORITIES, "Medium")}</select></label>
         <label>ETA (hours)<input class="field" name="eta" type="number" min="0" step="any" placeholder="Optional"></label>
       </div>
       <div class="actions">
@@ -6877,7 +6896,7 @@ function savedWorkTasks() {
         const { id, ref, title, description, proj, who, status, pri, etaHours, createdAt } = JSON.parse(localStorage.getItem(key));
         if (typeof id !== "string" || key !== WORK_TASK_STORE + id ||
           typeof title !== "string" || !title.trim() || !own(P, proj) || (who !== null && !own(M, who)) ||
-          !STATUSES.task.includes(status) || !TASK_PRIORITIES.includes(pri) ||
+          !STATUSES.task.includes(status) || (pri != null && pri !== "" && !workPriorityRank(pri)) ||
           (etaHours != null && (!Number.isFinite(etaHours) || etaHours < 0)) ||
           !Number.isFinite(createdAt) || !Number.isFinite(new Date(createdAt).getTime())) continue;
         const legacy = OLD_LOCAL_WORK_REF.test(id);
