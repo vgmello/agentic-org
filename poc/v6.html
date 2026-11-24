@@ -4913,7 +4913,7 @@ const PAST_SESSIONS = [
 
 /* ---------------------------------------------------------------- state */
 const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
-  scopedWorkLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", actReleaseOpen: false, openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
+  scopedWorkLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", actPanel: null, openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
   taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false, confirmDeny: null, briefCopied: false };
 const ORG_NAME_STORE = "agentic-org.v6.organizationName";
 let orgName = "Agentic Org";
@@ -7134,6 +7134,10 @@ const DELIVERY_HISTORY = {
   "agency-v1": [2, 4, 3, 2], "office-federation": [0, 2, 2, 1], "look-feel": [1, 2, 1, 1]
 };
 const RELEASE_GATES = { in1: "Release sign-off", in5: "Security review", in2: "File access ruling", in17: "Design sign-off" };
+const ACTIVITY_PANELS = {
+  release: { label: "Release gates", icon: "flag" },
+  simulation: { label: "Simulation", icon: "clock" },
+};
 const ASSEMBLY_SPEEDS = [1, 3, 8];
 const ASSEMBLY_MOVES = {
   queue: ["agents", "started agent work"],
@@ -7310,16 +7314,14 @@ function assemblyEventLog() {
   </section>`;
 }
 
-function releaseOperations(projects, entries, counts, simulated) {
+function releaseOperations({ projects, entries, counts }) {
   const gates = IN.filter((item) => own(RELEASE_GATES, item.id) && projects.some(({ id }) => id === item.proj));
   const agents = [...new Set(entries.filter((entry) => ["agents", "ci", "review"].includes(entry.stage) && entry.work.who)
     .map((entry) => entry.work.who))].filter((id) => M[id].kind === "agent");
-  const throughput = simulated ? assemblyThroughput() : null;
   return `<div class="activity-rail">
-    <section><h3>Release gates</h3><ul>${gates.map((item) => `<li><a href="#/inbox/${item.id}">${esc(RELEASE_GATES[item.id])}</a><span class="${item.handled ? "muted" : "assembly-review-text"}">${item.handled ? esc(item.outcome) : "Pending"}</span></li>`).join("") || "<li>No gates in this scope</li>"}</ul></section>
-    ${simulated ? assemblyEventLog() : ""}
+    <section aria-label="Gate status"><ul>${gates.map((item) => `<li><a href="#/inbox/${item.id}">${esc(RELEASE_GATES[item.id])}</a><span class="${item.handled ? "muted" : "assembly-review-text"}">${item.handled ? esc(item.outcome) : "Pending"}</span></li>`).join("") || "<li>No gates in this scope</li>"}</ul></section>
     <section><h3>Stations</h3><dl>${ACTIVITY_STAGES.map(([stage, label]) => `<div><dt>${label}</dt><dd>${counts[stage]}</dd></div>`).join("")}</dl></section>
-    ${throughput ? `<section><h3>Simulation throughput</h3><dl><div><dt>Merged this run</dt><dd>${throughput.merged}</dd></div><div><dt>Tasks per hour</dt><dd id="assembly-rate">${throughput.rate}</dd></div></dl></section>` : activityThroughput(projects)}
+    ${activityThroughput(projects)}
     <section><h3>Active agents</h3><ul class="activity-agents">${agents.map((agent) => {
       const entry = entries.find(({ work, stage }) => work.who === agent && ["agents", "ci", "review"].includes(stage));
       return `<li><div>${av(agent, 24)}${mlink(agent)}</div><span class="muted">${entry.work.id} · ${ACTIVITY_STAGES.find(([stage]) => stage === entry.stage)[1]}</span></li>`;
@@ -7327,17 +7329,26 @@ function releaseOperations(projects, entries, counts, simulated) {
   </div>`;
 }
 
-function refreshReleasePanel(snapshot) {
-  const body = document.getElementById("release-panel-body");
-  const panel = body.closest(".release-panel");
-  const simulated = S.actView === "assembly";
-  const { projects, entries, counts } = snapshot ?? assemblySnapshot(simulated);
+function simulationDetails() {
+  const { merged, rate } = assemblyThroughput();
+  return `<div class="activity-rail">
+    ${assemblyEventLog()}
+    <section><h3>Simulation throughput</h3><dl><div><dt>Merged this run</dt><dd>${merged}</dd></div><div><dt>Tasks per hour</dt><dd id="assembly-rate">${rate}</dd></div></dl></section>
+  </div>`;
+}
+
+function refreshActivityPanel(snapshot) {
+  const panel = document.getElementById("activity-panel");
+  if (!panel || !S.actPanel) return;
+  const body = panel.querySelector(".activity-panel-body");
   const scroll = panel.scrollTop;
   const log = body.querySelector(".assembly-event-log");
   const logScroll = log?.scrollTop ?? 0;
   const active = document.activeElement;
   const href = body.contains(active) && active.getAttribute("href");
-  body.innerHTML = releaseOperations(projects, entries, counts, simulated);
+  body.innerHTML = S.actPanel === "simulation"
+    ? simulationDetails()
+    : releaseOperations(snapshot ?? assemblySnapshot(S.actView === "assembly"));
   const nextLog = body.querySelector(".assembly-event-log");
   if (nextLog) nextLog.scrollTop = logScroll;
   const focus = href ? body.querySelector(`a[href="${CSS.escape(href)}"]`) : active === log ? nextLog : null;
@@ -7346,18 +7357,25 @@ function refreshReleasePanel(snapshot) {
   panel.scrollTop = scroll;
 }
 
-function setReleasePanelOpen(open) {
-  const panel = document.getElementById("release-panel");
-  const trigger = document.querySelector(".activity-release-trigger");
-  S.actReleaseOpen = open;
-  panel.parentElement.toggleAttribute("data-release-open", open);
+function setActivityPanel(next) {
+  const previous = S.actPanel;
+  S.actPanel = next;
+  const panel = document.getElementById("activity-panel");
+  const open = Boolean(next);
+  panel.parentElement.toggleAttribute("data-panel-open", open);
   panel.inert = !open;
-  trigger.setAttribute("aria-expanded", String(open));
+  for (const button of document.querySelectorAll(".activity-tool")) {
+    button.setAttribute("aria-expanded", String(button.dataset.v === next));
+  }
   if (open) {
-    refreshReleasePanel();
-    document.getElementById("release-panel-title").focus({ preventScroll: true });
+    const title = document.getElementById("activity-panel-title");
+    title.textContent = ACTIVITY_PANELS[next].label;
+    panel.querySelector(".activity-panel-controls").innerHTML = next === "simulation" ? assemblyPlayback() : "";
+    refreshActivityPanel();
+    panel.scrollTop = 0;
+    title.focus({ preventScroll: true });
   } else {
-    trigger.focus({ preventScroll: true });
+    document.querySelector(`.activity-tool[data-v="${previous}"]`)?.focus({ preventScroll: true });
   }
 }
 function activityNeedsFeed(items, waiting) {
@@ -7391,22 +7409,19 @@ function activityTimeline(items, options = {}) {
   </section>`).join("");
 }
 
-function assemblyPlayLabel() {
-  return assemblySimulation.playing ? ic("pause", "ic16") + "Pause" : ic("play", "ic16") + "Play";
-}
-
 function assemblyPlayback() {
   const { playing, hours, speed } = assemblySimulation;
+  const playLabel = playing ? "Pause simulation" : "Play simulation";
   return `<div class="assembly-playback" id="assembly-playback" role="group" aria-label="Assembly simulation">
     <div class="assembly-clock">
-      <span class="assembly-play-state" id="assembly-play-state" data-playing="${playing}" role="status">Simulation · ${playing ? "Running" : "Paused"}</span>
+      <span class="assembly-play-state" id="assembly-play-state" data-playing="${playing}" role="status">${playing ? "Running" : "Paused"}</span>
       <span>Elapsed <strong id="assembly-clock">${formatAssemblyHours(hours)}</strong></span>
     </div>
     <div class="assembly-controls">
-      <button class="btn outline" id="assembly-play" type="button" data-act="assembly-play">${assemblyPlayLabel()}</button>
+      <button class="btn outline icon" id="assembly-play" type="button" data-act="assembly-play" aria-label="${playLabel}" title="${playLabel}">${ic(playing ? "pause" : "play", "ic16")}</button>
       <div class="seg" role="group" aria-label="Simulation speed">${ASSEMBLY_SPEEDS.map((rate) => `<button type="button" data-act="assembly-speed" data-v="${rate}" aria-pressed="${rate === speed}">${rate}×</button>`).join("")}</div>
-      <button class="btn ghost" type="button" data-act="assembly-restart">${ic("refresh", "ic16")}Reset</button>
-      <button class="btn ghost" type="button" data-act="assembly-add-sample">${ic("plus", "ic16")}Add sample task</button>
+      <button class="btn ghost icon" type="button" data-act="assembly-restart" aria-label="Reset simulation" title="Reset simulation">${ic("refresh", "ic16")}</button>
+      <button class="btn ghost icon" type="button" data-act="assembly-add-sample" aria-label="Add sample task" title="Add sample task">${ic("plus", "ic16")}</button>
     </div>
   </div>`;
 }
@@ -7414,22 +7429,27 @@ function assemblyPlayback() {
 function updateAssemblyPlayback() {
   const sim = assemblySimulation;
   const clock = document.getElementById("assembly-clock");
-  if (!clock) return;
-  clock.textContent = formatAssemblyHours(sim.hours);
-  const state = document.getElementById("assembly-play-state");
-  if (state.dataset.playing !== String(sim.playing)) {
-    state.dataset.playing = String(sim.playing);
-    state.textContent = "Simulation · " + (sim.playing ? "Running" : "Paused");
-    document.getElementById("assembly-play").innerHTML = assemblyPlayLabel();
+  if (clock) {
+    clock.textContent = formatAssemblyHours(sim.hours);
+    const state = document.getElementById("assembly-play-state");
+    if (state.dataset.playing !== String(sim.playing)) {
+      state.dataset.playing = String(sim.playing);
+      state.textContent = sim.playing ? "Running" : "Paused";
+      const play = document.getElementById("assembly-play");
+      const label = sim.playing ? "Pause simulation" : "Play simulation";
+      play.setAttribute("aria-label", label);
+      play.title = label;
+      play.innerHTML = ic(sim.playing ? "pause" : "play", "ic16");
+    }
   }
   const rate = document.getElementById("assembly-rate");
-  if (rate && S.actReleaseOpen) rate.textContent = assemblyThroughput().rate;
+  if (rate) rate.textContent = assemblyThroughput().rate;
   syncAssemblySimulationTimer();
 }
 
 function syncAssemblySimulationTimer() {
   const sim = assemblySimulation;
-  const running = sim.playing && !document.hidden && route()[0] === "activity" && S.actView === "assembly";
+  const running = sim.playing && !document.hidden && route()[0] === "activity";
   if (running && sim.timer === null) sim.timer = setInterval(advanceAssemblySimulation, 250);
   if (!running && sim.timer !== null) {
     clearInterval(sim.timer);
@@ -7459,7 +7479,10 @@ function animateAssemblyCards(layout, previousPositions) {
 
 function refreshAssemblySimulation(animate = false) {
   const layout = document.getElementById("assembly-layout");
-  if (!layout) return;
+  if (!layout) {
+    if (S.actPanel === "simulation") refreshActivityPanel();
+    return;
+  }
   const tableScroll = layout.querySelector(".assembly-table-wrap").scrollLeft;
   const content = layout.closest(".activity-main");
   const pageScroll = content.scrollTop;
@@ -7478,7 +7501,7 @@ function refreshAssemblySimulation(animate = false) {
   const table = next.querySelector(".assembly-table-wrap");
   table.scrollLeft = tableScroll;
   if (focus) (next.querySelector(focusSelector) || table).focus({ preventScroll: true });
-  if (S.actReleaseOpen) refreshReleasePanel(snapshot);
+  refreshActivityPanel(snapshot);
   content.scrollTop = pageScroll;
   if (positions) animateAssemblyCards(next, positions);
 }
@@ -7513,20 +7536,23 @@ function pageActivity() {
       ${hdr("Activity", `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`)}
       <div class="section-toolbar activity-toolbar">
         ${switcher}${projectFilter}
-        <button class="btn outline activity-release-trigger" type="button" data-act="activity-release-toggle" aria-expanded="${S.actReleaseOpen}" aria-controls="release-panel">${ic("flag", "ic16")}Release gates</button>
         ${isFeed ? btnTabs("actFilter", tabs, "Filter activity", "act-feed") : ""}
       </div>
     </div>
-    <div class="activity-body"${S.actReleaseOpen ? " data-release-open" : ""}>
+    <div class="activity-body"${S.actPanel ? " data-panel-open" : ""}>
       <div class="activity-main" data-view="${S.actView}">
-        ${isFeed ? activityFeedLayout(items) : assemblyPlayback() + assemblyLayout()}
+        ${isFeed ? activityFeedLayout(items) : assemblyLayout()}
       </div>
-      <aside class="release-panel" id="release-panel" aria-labelledby="release-panel-title"${S.actReleaseOpen ? "" : " inert"}>
+      <div class="activity-tools" role="group" aria-label="Activity sidebar tools">
+        ${Object.entries(ACTIVITY_PANELS).map(([id, { label, icon }]) => `<button class="btn ghost icon activity-tool" type="button" data-act="activity-panel" data-v="${id}" aria-label="${label}" aria-expanded="${S.actPanel === id}" aria-controls="activity-panel">${ic(icon, "ic20")}<span class="activity-tool-tip" aria-hidden="true">${label}</span></button>`).join("")}
+      </div>
+      <aside class="activity-panel" id="activity-panel" aria-labelledby="activity-panel-title"${S.actPanel ? "" : " inert"}>
         <header class="side-panel-header">
-          <h2 id="release-panel-title" tabindex="-1">Release operations</h2>
-          <button class="btn ghost icon" type="button" data-act="activity-release-close" aria-label="Collapse release operations" title="Collapse release operations">${ic("chev-right", "ic16")}</button>
+          <h2 id="activity-panel-title" tabindex="-1">${ACTIVITY_PANELS[S.actPanel]?.label || ""}</h2>
+          <button class="btn ghost icon" type="button" data-act="activity-panel-close" aria-label="Collapse Activity sidebar" title="Collapse Activity sidebar">${ic("chev-right", "ic16")}</button>
         </header>
-        <div id="release-panel-body"></div>
+        <div class="activity-panel-controls">${S.actPanel === "simulation" ? assemblyPlayback() : ""}</div>
+        <div class="activity-panel-body"></div>
       </aside>
     </div>
   </section>`;
@@ -9035,7 +9061,10 @@ function render(focus = true) {
     case "projects": html = !r1 ? pageProjects() : own(P, r1) ? pageProject(r1, r2) : notFound(); break;
     case "work": html = pageWork(); break;
     case "chat": html = pageChat(own(CH, r1) ? r1 : null); break;
-    case "activity": html = pageActivity(); break;
+    case "activity":
+      if (!document.querySelector(".activity-workspace")) S.actPanel = "release";
+      html = pageActivity();
+      break;
     case "teams": html = MEMBER_ALIASES.includes(r1) ? pageMembersDir() : r1 === "org-chart" ? pageOrgChart() : !r1 ? pageTeams() : own(TEAMS, r1) ? pageTeam(r1, r2) : notFound(); break;
     case "members": html = own(M, r1) ? pageMember(r1, r2) : notFound(); break;
     case "settings": html = !r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, own(M, r2) ? r2 : null) : notFound(); break;
@@ -9048,7 +9077,7 @@ function render(focus = true) {
   const key = location.hash;
   const priorPanel = main.querySelector("#work-panel");
   const priorActivity = main.querySelector(".activity-main");
-  const releaseScroll = document.getElementById("release-panel")?.scrollTop ?? 0;
+  const panelScroll = document.getElementById("activity-panel")?.scrollTop ?? 0;
   const pageScroll = content.scrollTop;
   const priorBoard = main.querySelector("#work-results .board");
   const workBoardScroll = priorBoard && { left: priorBoard.scrollLeft, top: priorBoard.scrollTop };
@@ -9072,9 +9101,9 @@ function render(focus = true) {
   renderBanner(r0);
   const activity = main.querySelector(".activity-main");
   if (activity && priorActivity?.dataset.view === activity.dataset.view) activity.scrollTop = priorActivity.scrollTop;
-  if (activity && S.actReleaseOpen) {
-    refreshReleasePanel();
-    document.getElementById("release-panel").scrollTop = releaseScroll;
+  if (activity && S.actPanel) {
+    refreshActivityPanel();
+    document.getElementById("activity-panel").scrollTop = panelScroll;
   }
   const titleBase = r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found");
   document.title = titleBase + " · Agentic Org";
@@ -9679,11 +9708,11 @@ document.addEventListener("click", (e) => {
     case "assembly-add-sample":
       addAssemblySample();
       break;
-    case "activity-release-toggle":
-      setReleasePanelOpen(!S.actReleaseOpen);
+    case "activity-panel":
+      setActivityPanel(S.actPanel === v ? null : v);
       break;
-    case "activity-release-close":
-      setReleasePanelOpen(false);
+    case "activity-panel-close":
+      setActivityPanel(null);
       break;
     case "activity-review": {
       S.actView = "feed";
@@ -10121,9 +10150,9 @@ document.addEventListener("keydown", (e) => {
       document.querySelector(".triage-header h1").focus({ preventScroll: true });
       return;
     }
-    if (S.actReleaseOpen && e.target.closest("#release-panel, .activity-release-trigger")) {
+    if (S.actPanel && e.target.closest("#activity-panel, .activity-tools")) {
       e.preventDefault();
-      setReleasePanelOpen(false);
+      setActivityPanel(null);
       return;
     }
     const sender = document.querySelector(".triage-from-member:is(:hover, :focus-within):not([data-preview-dismissed])");
