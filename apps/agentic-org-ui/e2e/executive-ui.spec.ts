@@ -1207,7 +1207,7 @@ test('TASK-81: Inbox snooze presets, custom validation & expiry warning, Snoozed
 	const firstTitle = ((await detailHeading.textContent()) ?? '').trim();
 	expect(firstTitle.length).toBeGreaterThan(0);
 
-	// Open Snooze menu and inspect presets + custom dialog validation & expiry warning.
+	// Open Snooze menu on the first (expiring) item and verify past-time + after-expiry rejections match office rules.
 	await page.getByTestId('inbox-snooze-trigger').click();
 	await expect(page.getByRole('menuitem', { name: /Later today/ })).toBeVisible();
 	await expect(page.getByRole('menuitem', { name: /Tomorrow/ })).toBeVisible();
@@ -1216,6 +1216,7 @@ test('TASK-81: Inbox snooze presets, custom validation & expiry warning, Snoozed
 
 	const dialog = page.getByRole('dialog');
 	await expect(dialog.getByRole('heading', { name: 'Snooze until…' })).toBeVisible();
+	await expect(dialog).toContainText('Not private: visible to the sender');
 
 	// Reject past timestamp cleanly.
 	await dialog.getByLabel('Return date').fill('2020-01-01');
@@ -1224,10 +1225,29 @@ test('TASK-81: Inbox snooze presets, custom validation & expiry warning, Snoozed
 	await expect(dialog.getByLabel('Return time')).toHaveAttribute('aria-invalid', 'true');
 	await expect(dialog).toContainText('Return time must be in the future.');
 
-	// Future date past item expiry displays expiry warning and submits with note.
+	// Reject timestamp at/after item expiry (matching messaging_ops.rs expiry guard).
 	await dialog.getByLabel('Return date').fill('2030-05-10');
 	await dialog.getByLabel('Return time').fill('10:00');
 	await expect(dialog.getByTestId('snooze-expiry-warning')).toBeVisible();
+	await dialog.getByRole('button', { name: 'Snooze' }).click();
+	await expect(dialog.getByLabel('Return time')).toHaveAttribute('aria-invalid', 'true');
+	await expect(dialog).toContainText(
+		"Return time must be earlier than the item's expiry deadline."
+	);
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(dialog).toBeHidden();
+
+	// Select a non-expiring open item (Today group), verify snooze with note, Snoozed view, re-snooze, and Un-snooze.
+	const todayRow = page.locator('section[aria-label="Today"] [data-triage-row]').first();
+	await todayRow.click();
+	const snoozedTitle = ((await detailHeading.textContent()) ?? '').trim();
+	expect(snoozedTitle.length).toBeGreaterThan(0);
+
+	await page.getByTestId('inbox-snooze-trigger').click();
+	await page.getByRole('menuitem', { name: /Custom date/ }).click();
+	await expect(dialog.getByRole('heading', { name: 'Snooze until…' })).toBeVisible();
+	await dialog.getByLabel('Return date').fill('2030-05-10');
+	await dialog.getByLabel('Return time').fill('10:00');
 	await dialog.getByLabel('Snooze note (optional)').fill('Wait for post-deploy verification');
 	await dialog.getByRole('button', { name: 'Snooze' }).click();
 	await expect(dialog).toBeHidden();
@@ -1245,7 +1265,7 @@ test('TASK-81: Inbox snooze presets, custom validation & expiry warning, Snoozed
 	await snoozedMenuItem.click();
 
 	await expect(page.locator('.triage-queue-summary')).toContainText('Snoozed items');
-	await expect(detailHeading).toHaveText(firstTitle);
+	await expect(detailHeading).toHaveText(snoozedTitle);
 	await expect(page.getByTestId('detail-snoozed-until')).toContainText('10 May 2030, 10:00');
 	await expect(page.getByTestId('detail-snooze-note')).toHaveText(
 		'Wait for post-deploy verification'
@@ -1263,5 +1283,13 @@ test('TASK-81: Inbox snooze presets, custom validation & expiry warning, Snoozed
 		.getByRole('group', { name: 'Inbox categories' })
 		.getByRole('button', { name: /^All/ })
 		.click();
-	await expect(page.locator('[data-triage-row]', { hasText: firstTitle })).toBeVisible();
+	await expect(page.locator('[data-triage-row]', { hasText: snoozedTitle })).toBeVisible();
+
+	// Live resurfacing without navigation: a snoozed item whose return time arrives resurfaces automatically
+	// via shell inbox subscription and updates the open waiting badge.
+	await visit(page, '/inbox?theme=graphite&mock=poc,snooze-due');
+	await expect(
+		page.locator('[data-triage-row]', { hasText: 'Resurfaced snoozed item' })
+	).toBeVisible({ timeout: 10_000 });
+	await expect(waitingBadge).toContainText(`${initialOpen + 1} waiting on you`);
 });

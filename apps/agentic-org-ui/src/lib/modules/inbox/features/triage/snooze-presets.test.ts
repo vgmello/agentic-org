@@ -52,16 +52,53 @@ describe('Inbox snooze presets and custom date/time validation (TASK-81)', () =>
 		);
 	});
 
-	it('flags when a snooze return time exceeds the item expiry deadline', () => {
+	it('rejects nonexistent DST spring-forward local times, selects earlier fall-back hour, and enforces expiry deadline', () => {
+		const now = new Date('2027-03-10T12:00:00.000Z');
+		// America/New_York springs forward on 2027-03-14 at 02:00 -> 03:00; 02:30 does not exist.
+		expect(parseCustomSnoozeDateTime('2027-03-14', '02:30', 'America/New_York', now)).toEqual({
+			ok: false,
+			field: 'time',
+			error: 'That local time does not exist because of a daylight-saving shift.'
+		});
+
+		// America/New_York falls back on 2027-11-07 at 02:00 -> 01:00; 01:30 selects the earlier EDT occurrence (05:30Z).
+		const fallNow = new Date('2027-11-06T12:00:00.000Z');
+		expect(
+			parseCustomSnoozeDateTime('2027-11-07', '01:30', 'America/New_York', fallNow)
+		).toMatchObject({
+			ok: true,
+			iso: '2027-11-07T05:30:00.000Z'
+		});
+
+		// Enforces exact messaging_ops.rs expiry rule (a >= e rejected).
+		const expiresAt = '2027-03-12T15:00:00.000Z';
+		expect(parseCustomSnoozeDateTime('2027-03-12', '15:00', 'UTC', now, expiresAt)).toEqual({
+			ok: false,
+			field: 'time',
+			error: "Return time must be earlier than the item's expiry deadline."
+		});
+		expect(parseCustomSnoozeDateTime('2027-03-12', '14:59', 'UTC', now, expiresAt)).toMatchObject({
+			ok: true,
+			iso: '2027-03-12T14:59:00.000Z'
+		});
+	});
+
+	it('flags when a snooze return time is at or after the item expiry deadline', () => {
 		expect(snoozeExceedsExpiry('2026-11-24T14:00:00Z', '2026-11-23T18:00:00Z')).toBe(true);
+		expect(snoozeExceedsExpiry('2026-11-23T18:00:00Z', '2026-11-23T18:00:00Z')).toBe(true);
 		expect(snoozeExceedsExpiry('2026-11-23T16:00:00Z', '2026-11-23T18:00:00Z')).toBe(false);
 		expect(snoozeExceedsExpiry('2026-11-24T14:00:00Z', undefined)).toBe(false);
 	});
 
-	it('formats short and full return labels in the requested time zone', () => {
+	it('formats short and full return labels accurately across 23-hour DST spring-forward days', () => {
 		const now = new Date('2026-11-23T10:00:00Z');
 		const formatted = formatSnoozeReturn('2026-11-24T14:00:00Z', now, 'UTC');
 		expect(formatted.short).toBe('Tomorrow, 14:00');
 		expect(formatted.full).toBe('24 Nov 2026, 14:00 UTC');
+
+		// 2027-03-13 23:30 EST -> next calendar day 2027-03-14 09:00 EDT is still "Tomorrow, 09:00"
+		const dstEve = new Date('2027-03-14T04:30:00.000Z');
+		const dstNext = formatSnoozeReturn('2027-03-14T13:00:00.000Z', dstEve, 'America/New_York');
+		expect(dstNext.short).toBe('Tomorrow, 09:00');
 	});
 });

@@ -1226,6 +1226,12 @@ export const costsApi: CostsApi = {
 	async collectSubscriptionUsage(organizationId, options) {
 		await read();
 		ownerOnly();
+		if (on('collect-fails')) {
+			throw fail(
+				'unavailable',
+				'Provider usage endpoint could not be reached. Try refreshing again shortly.'
+			);
+		}
 		const snaps = subscriptionSnapshotsFor(organizationId);
 		const nowIso = new Date(NOW.getTime() + 5 * 60_000).toISOString();
 		const targetIds = options?.connectionId
@@ -1242,9 +1248,10 @@ export const costsApi: CostsApi = {
 			snap.collectedAt = nowIso;
 			snap.lastOkCollectedAt = nowIso;
 			snap.freshUntil = new Date(Date.parse(nowIso) + 15 * 60_000).toISOString();
+			delete snap.issueCode;
 			delete snap.message;
 			if (snap.models.length === 0) {
-				snap.models = defaultCodexModels();
+				snap.models = snap.providerType === 'codex' ? defaultCodexModels() : defaultClaudeModels();
 			} else {
 				for (const m of snap.models) {
 					if (m.daily.requests !== null && m.daily.requests !== undefined) {
@@ -1275,13 +1282,13 @@ export const costsApi: CostsApi = {
 		snap.hasUsageCredential = true;
 		snap.authSource = 'dedicated_usage_credential';
 		if (draft.accountHint) snap.accountHint = draft.accountHint;
-		snap.status = 'ok';
-		snap.stale = false;
-		snap.collectedAt = nowIso;
-		snap.lastOkCollectedAt = nowIso;
-		delete snap.message;
-		if (snap.models.length === 0) {
-			snap.models = snap.providerType === 'codex' ? defaultCodexModels() : defaultClaudeModels();
+		// Mirror crates/org-office/src/accounting/subscription_usage.rs:229 — saving a credential
+		// resolves missing auth to `never_collected` until a separate collection run succeeds.
+		if (snap.status === 'auth_required' || snap.models.length === 0) {
+			snap.status = 'never_collected';
+			snap.stale = true;
+			snap.issueCode = 'NOT_COLLECTED_YET';
+			snap.message = 'Run usage collection to fetch subscription usage from provider.';
 		}
 		return structuredClone({
 			connectionId: snap.connectionId,

@@ -259,6 +259,7 @@ function mapWireInboxItem(
 			actions,
 			...optField('choices', choices),
 			...optField('open', extractOpenFromActions(r.actions, reference)),
+			snoozeable: Boolean(extractMessageId(reference)),
 			state,
 			...optField('snoozed_until', asStr(r.snoozed_until)),
 			...optField('snooze_note', asStr(r.snooze_note) || undefined),
@@ -269,31 +270,38 @@ function mapWireInboxItem(
 
 function mapSnoozedChatInboxItem(
 	raw: unknown,
-	fallbackIso: string
+	fallbackIso: string,
+	existing?: InboxItem
 ): { item: InboxItem; rawSource?: string } | undefined {
 	const r = asRec(raw);
 	const id = asStr(r?.id);
 	if (!r || !id || r.state !== 'snoozed') return undefined;
 	const rawKind = asStr(r.kind) ?? 'msg';
-	const kind: InboxKind = rawKind === 'request' ? 'question' : 'question';
+	const kind: InboxKind = existing?.kind ?? 'question';
 	const fromId = asStr(r.from_member_id) ?? 'unknown';
 	const fromName = asStr(r.from_display_name) ?? fromId;
 	const subject = asStr(r.subject)?.trim();
 	const reason = asStr(r.reason)?.trim();
-	const title = subject || reason || `Snoozed message from ${fromName}`;
-	const reference = `chat:msg:${id}`;
+	const title = subject || existing?.title || reason || `Snoozed message from ${fromName}`;
+	const reference = existing?.id ?? `chat:msg:${id}`;
+	const expiresAt = asStr(r.expires_at) ?? existing?.expires_at;
 	return {
 		rawSource: rawKind === 'request' ? 'ask' : 'mailbox',
 		item: {
 			id: reference,
 			kind,
-			source: rawKind === 'request' ? 'Chat ask' : 'Chat message',
+			source: existing?.source ?? (rawKind === 'request' ? 'Chat ask' : 'Chat message'),
 			title,
-			who: { id: fromId, name: fromName, kind: 'agent' },
-			why: reason ?? subject ?? 'Snoozed chat message waiting to return.',
-			created_at: asStr(r.created_at) ?? fallbackIso,
-			actions: ['reply', 'dismiss'],
-			open: { path: `/chat?m=${encodeURIComponent(id)}`, label: 'Open in Chat' },
+			who: existing?.who ?? { id: fromId, name: fromName, kind: 'agent' },
+			...optField('team', existing?.team),
+			...optField('project', existing?.project),
+			why: reason ?? existing?.why ?? subject ?? 'Snoozed chat message waiting to return.',
+			...optField('recommendation', existing?.recommendation),
+			created_at: asStr(r.created_at) ?? existing?.created_at ?? fallbackIso,
+			...optField('expires_at', expiresAt),
+			actions: existing?.actions.length ? existing.actions : ['reply', 'dismiss'],
+			open: existing?.open ?? { path: `/chat?m=${encodeURIComponent(id)}`, label: 'Open in Chat' },
+			snoozeable: true,
 			state: 'snoozed',
 			...optField('snoozed_until', asStr(r.snoozed_until)),
 			...optField('snooze_note', asStr(r.snooze_note) || undefined)
@@ -371,6 +379,7 @@ export function createHttpInboxApi({
 	newId = defaultNewId
 }: HttpInboxApiOptions): InboxApi {
 	const cachedItems = new Map<string, Map<string, { item: InboxItem; rawSource?: string }>>();
+	const snoozedErrors = new Map<string, string>();
 	const localListeners = new Map<string, Set<() => void>>();
 
 	function notify(orgId: string) {
@@ -378,6 +387,10 @@ export function createHttpInboxApi({
 	}
 
 	return Object.freeze({
+		snoozedError(organizationId: string): string | undefined {
+			return snoozedErrors.get(organizationId);
+		},
+
 		async list(organizationId: string): Promise<InboxItem[]> {
 			let reply: GatewayReply;
 			try {
@@ -398,30 +411,61 @@ export function createHttpInboxApi({
 				.map((entry) => mapWireInboxItem(entry, asOf))
 				.filter((x): x is { item: InboxItem; rawSource?: string } => x !== undefined);
 
-			// Also fetch snoozed chat inbox items (`TASK-81`) without failing primary inbox load when unsupported.
+			// Paginate snoozed chat inbox items (`TASK-81`) using the real gateway `{ result }` envelope.
+			// Keep the active queue usable on transient snoozed-list errors while surfacing a retryable error.
+			const prevCache = cachedItems.get(organizationId);
+			const prevByMsgId = new Map<string, InboxItem>();
+			for (const entry of prevCache?.values() ?? []) {
+				const mid = extractMessageId(entry.item.id);
+				if (mid) prevByMsgId.set(mid, entry.item);
+			}
 			const seenMsgIds = new Set(
 				mapped.map((m) => extractMessageId(m.item.id)).filter((id): id is string => Boolean(id))
 			);
+			const chatInboxPath = `/api/v1/organizations/${encodeURIComponent(organizationId)}/chat/inbox`;
+			let cursor: number | undefined;
+			const MAX_SNOOZED_PAGES = 20;
+			snoozedErrors.delete(organizationId);
 			try {
-				const snoozedReply = await http.submit(
-					`/api/v1/organizations/${encodeURIComponent(organizationId)}/chat/inbox`,
-					{ state: 'snoozed', limit: 100 }
-				);
-				if (snoozedReply && snoozedReply.status === 200) {
-					const snoozedBody = asRec(snoozedReply.body);
-					const snoozedResult = snoozedBody?.ok === true ? asRec(snoozedBody.result) : undefined;
-					const snoozedRaw = Array.isArray(snoozedResult?.items) ? snoozedResult.items : [];
+				for (let page = 0; page < MAX_SNOOZED_PAGES; page += 1) {
+					const snoozedReply = await http.submit(chatInboxPath, {
+						state: 'snoozed',
+						limit: 100,
+						...(cursor !== undefined ? { cursor } : {})
+					});
+					if (!snoozedReply) break;
+					if (snoozedReply.status === 404 || snoozedReply.status === 501) break;
+					const snoozedResult = unwrapInboxReply(
+						snoozedReply,
+						'Snoozed items could not be loaded.'
+					);
+					const snoozedRaw = Array.isArray(snoozedResult.items) ? snoozedResult.items : [];
 					for (const entry of snoozedRaw) {
-						const mappedSnoozed = mapSnoozedChatInboxItem(entry, asOf);
+						const rawId = asStr(asRec(entry)?.id);
+						const mappedSnoozed = mapSnoozedChatInboxItem(
+							entry,
+							asOf,
+							rawId ? prevByMsgId.get(rawId) : undefined
+						);
 						if (!mappedSnoozed) continue;
 						const msgId = extractMessageId(mappedSnoozed.item.id);
 						if (msgId && seenMsgIds.has(msgId)) continue;
 						if (msgId) seenMsgIds.add(msgId);
 						mapped.push(mappedSnoozed);
 					}
+					const nextCursor = asNum(snoozedResult.next_cursor);
+					if (nextCursor === undefined || nextCursor === cursor) break;
+					cursor = nextCursor;
 				}
-			} catch {
-				// Degrade gracefully when the secondary snoozed chat listing is not available on this server.
+			} catch (err) {
+				const appErr = asRec(err);
+				const code = asStr(appErr?.code);
+				if (code !== 'unsupported' && code !== 'not_found') {
+					snoozedErrors.set(
+						organizationId,
+						asStr(appErr?.message) || 'Could not load snoozed items. Try again.'
+					);
+				}
 			}
 
 			cachedItems.set(organizationId, new Map(mapped.map((m) => [m.item.id, m])));

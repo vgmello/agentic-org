@@ -32,6 +32,8 @@
 		hasActiveFilters,
 		zone = 'UTC',
 		nowMs = Date.now(),
+		snoozedError,
+		onRetrySnoozed,
 		onSelect,
 		onResetFilters
 	}: {
@@ -46,6 +48,8 @@
 		hasActiveFilters: boolean;
 		zone?: string;
 		nowMs?: number;
+		snoozedError?: string;
+		onRetrySnoozed?: () => void;
 		onSelect: (id: string) => void;
 		onResetFilters: () => void;
 	} = $props();
@@ -101,6 +105,25 @@
 	</div>
 
 	<div class="triage-queue-scroll flex-1 overflow-y-auto">
+		{#if activeTab === 'snoozed' && snoozedError}
+			<div
+				role="alert"
+				data-testid="snoozed-load-error"
+				class="m-3 flex flex-col items-start gap-2 rounded-md border border-line bg-surface-raised p-3 text-xs text-fg-secondary"
+			>
+				<p class="[overflow-wrap:anywhere]">{snoozedError}</p>
+				{#if onRetrySnoozed}
+					<button
+						type="button"
+						onclick={onRetrySnoozed}
+						class="triage-reset-btn inline-flex min-h-9 items-center gap-1.5 px-3 text-xs font-semibold [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+					>
+						<RotateCcw class="size-3.5" aria-hidden="true" />
+						<span>Try again</span>
+					</button>
+				{/if}
+			</div>
+		{/if}
 		{#if groups.length === 0}
 			<div class="triage-empty">
 				{#if hasActiveFilters || (activeTab !== 'all' && totalOpenCount > 0)}

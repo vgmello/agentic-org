@@ -90,6 +90,7 @@
 	let denyInputEl = $state<HTMLInputElement | null>(null);
 	let denyBtnEl = $state<HTMLButtonElement | null>(null);
 	let snoozeBtnEl = $state<HTMLButtonElement | null>(null);
+	let presetNowMs = $state(Date.now());
 	let commentInputEl = $state<HTMLTextAreaElement | null>(null);
 	let readingEl = $state<HTMLElement | null>(null);
 	let copiedKey = $state<string | undefined>(undefined);
@@ -182,9 +183,17 @@
 		)
 	);
 	const canSnooze = $derived(
-		Boolean(item && item.sourceKind === 'inbox' && item.inboxItem && item.state !== 'handled')
+		Boolean(
+			item &&
+			item.sourceKind === 'inbox' &&
+			item.inboxItem &&
+			item.inboxItem.snoozeable !== false &&
+			item.state !== 'handled'
+		)
 	);
-	const snoozePresets = $derived(computeSnoozePresets(new Date(nowMs), zone));
+	const snoozePresets = $derived(
+		computeSnoozePresets(new Date(Math.max(nowMs, presetNowMs)), zone)
+	);
 	const snoozeReturn = $derived(
 		item?.state === 'snoozed' && item.snoozed?.untilIso
 			? formatSnoozeReturn(item.snoozed.untilIso, new Date(nowMs), zone)
@@ -614,7 +623,9 @@
 						{#if item.snoozed?.note}
 							<div>
 								<dt>Snooze note</dt>
-								<dd data-testid="detail-snooze-note">{item.snoozed.note}</dd>
+								<dd class="[overflow-wrap:anywhere]" data-testid="detail-snooze-note">
+									{item.snoozed.note}
+								</dd>
 							</div>
 						{/if}
 					{/if}
@@ -700,7 +711,9 @@
 								{/if}
 							</div>
 							{#if item.snoozed?.note}
-								<p class="triage-detail-muted text-xs">Note: {item.snoozed.note}</p>
+								<p class="triage-detail-muted text-xs [overflow-wrap:anywhere]">
+									Note: {item.snoozed.note}
+								</p>
 							{/if}
 							<div class="flex flex-wrap items-center gap-2">
 								<button
@@ -716,7 +729,11 @@
 									</span>
 								</button>
 
-								<DropdownMenu.Root>
+								<DropdownMenu.Root
+									onOpenChange={(open) => {
+										if (open) presetNowMs = Date.now();
+									}}
+								>
 									<DropdownMenu.Trigger>
 										{#snippet child({ props })}
 											<button
@@ -741,12 +758,15 @@
 										{#each snoozePresets as preset (preset.id)}
 											{@const afterExpiry = snoozeExceedsExpiry(preset.iso, item.expiresAtIso)}
 											<DropdownMenu.Item
-												onSelect={() => onDefer(item, preset.iso, item.snoozed?.note)}
+												disabled={afterExpiry}
+												onSelect={() => {
+													if (!afterExpiry) onDefer(item, preset.iso, item.snoozed?.note);
+												}}
 												class="flex min-h-9 items-center justify-between gap-3 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 											>
 												<span>{preset.label}</span>
 												<span class="text-xs text-fg-muted tabular-nums">
-													{preset.detail}{afterExpiry ? ' · after expiry' : ''}
+													{preset.detail}{afterExpiry ? ' · past expiry' : ''}
 												</span>
 											</DropdownMenu.Item>
 										{/each}
@@ -862,7 +882,11 @@
 								{/if}
 
 								{#if canSnooze && !isDenying}
-									<DropdownMenu.Root>
+									<DropdownMenu.Root
+										onOpenChange={(open) => {
+											if (open) presetNowMs = Date.now();
+										}}
+									>
 										<DropdownMenu.Trigger>
 											{#snippet child({ props })}
 												<button
@@ -888,12 +912,15 @@
 											{#each snoozePresets as preset (preset.id)}
 												{@const afterExpiry = snoozeExceedsExpiry(preset.iso, item.expiresAtIso)}
 												<DropdownMenu.Item
-													onSelect={() => onDefer(item, preset.iso)}
+													disabled={afterExpiry}
+													onSelect={() => {
+														if (!afterExpiry) onDefer(item, preset.iso);
+													}}
 													class="flex min-h-9 items-center justify-between gap-3 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 												>
 													<span>{preset.label}</span>
 													<span class="text-xs text-fg-muted tabular-nums">
-														{preset.detail}{afterExpiry ? ' · after expiry' : ''}
+														{preset.detail}{afterExpiry ? ' · past expiry' : ''}
 													</span>
 												</DropdownMenu.Item>
 											{/each}
@@ -1082,7 +1109,7 @@
 								<span class="triage-event-marker" aria-hidden="true">
 									<Clock class="size-4" />
 								</span>
-								<p>
+								<p class="[overflow-wrap:anywhere]">
 									Snoozed until {snoozeReturn?.full ?? 'later'}{item.snoozed?.note
 										? ` · ${item.snoozed.note}`
 										: ''}

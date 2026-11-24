@@ -13,7 +13,7 @@ const UNSNOOZE_PATH = `/api/v1/organizations/${ORG}/chat/unsnooze`;
 const CHAT_INBOX_PATH = `/api/v1/organizations/${ORG}/chat/inbox`;
 
 function ok(result: unknown): GatewayReply {
-	return { status: 200, body: { ok: true, result } };
+	return { status: 200, body: { result } };
 }
 
 describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
@@ -260,9 +260,32 @@ describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
 		});
 	});
 
-	it('merges snoozed chat items on list and routes defer/unsnooze to /chat/defer and /chat/unsnooze (TASK-81)', async () => {
-		const submit = vi.fn().mockImplementation(async (path: string) => {
+	it('merges paginated snoozed chat items on real { result } envelope, marks non-msg unsnoozeable, surfaces snoozed errors, and routes defer/unsnooze (TASK-81)', async () => {
+		const submit = vi.fn().mockImplementation(async (path: string, body?: { cursor?: number }) => {
 			if (path === CHAT_INBOX_PATH) {
+				if (body?.cursor === 11) {
+					return ok({
+						items: [
+							{
+								id: 'snz-2',
+								conversation_id: 'conv-2',
+								thread_id: 'snz-2',
+								from_member_id: 'm-kai',
+								from_display_name: 'Kai',
+								kind: 'msg',
+								priority: 'normal',
+								urgent: false,
+								subject: 'Second page snoozed item',
+								created_at: '2026-11-21T08:05:00.000Z',
+								state: 'snoozed',
+								triage_gen: 1,
+								snoozed_until: '2026-11-26T09:00:00.000Z',
+								delivered_because: 'direct',
+								local_seq: 12
+							}
+						]
+					});
+				}
 				return ok({
 					items: [
 						{
@@ -283,7 +306,8 @@ describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
 							delivered_because: 'direct',
 							local_seq: 11
 						}
-					]
+					],
+					next_cursor: 11
 				});
 			}
 			if (path === DEFER_PATH) {
@@ -320,6 +344,18 @@ describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
 							clears: 'replied',
 							dismissable: true,
 							actions: []
+						},
+						{
+							ref: 'off-1:budget:b-1',
+							source: 'budget',
+							kind: 'problem',
+							member: { id: 'm-kai', name: 'Kai', kind: 'agent' },
+							summary: 'Daily budget reached',
+							created_at_ms: Date.parse('2026-11-21T10:05:00Z'),
+							state: 'open',
+							clears: 'resolved',
+							dismissable: false,
+							actions: []
 						}
 					]
 				})
@@ -330,14 +366,36 @@ describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
 		const api = createHttpInboxApi({ http, now: () => '2026-11-21T12:00:00Z' });
 		const items = await api.list(ORG);
 		expect(submit).toHaveBeenCalledWith(CHAT_INBOX_PATH, { state: 'snoozed', limit: 100 });
-		expect(items).toHaveLength(2);
-		expect(items[1]).toMatchObject({
+		expect(submit).toHaveBeenCalledWith(CHAT_INBOX_PATH, {
+			state: 'snoozed',
+			limit: 100,
+			cursor: 11
+		});
+		expect(items).toHaveLength(4);
+		expect(items[0].snoozeable).toBe(true);
+		expect(items[1].snoozeable).toBe(false);
+		expect(items[2]).toMatchObject({
 			id: 'chat:msg:snz-1',
 			title: 'Follow up on gateway TLS rotation',
 			state: 'snoozed',
+			snoozeable: true,
 			snoozed_until: '2026-11-24T09:00:00.000Z',
 			snooze_note: 'After Monday standup'
 		});
+		expect(items[3]).toMatchObject({
+			id: 'chat:msg:snz-2',
+			state: 'snoozed'
+		});
+		expect(api.snoozedError?.(ORG)).toBeUndefined();
+
+		// Transient snoozed-list error keeps active items usable and reports retryable snoozedError.
+		submit.mockResolvedValueOnce({
+			status: 503,
+			body: { error: { code: 'unavailable', message: 'Office temporarily busy' } }
+		});
+		const activeOnly = await api.list(ORG);
+		expect(activeOnly).toHaveLength(2);
+		expect(api.snoozedError?.(ORG)).toBe('Office temporarily busy');
 
 		const deferred = await api.defer(
 			ORG,

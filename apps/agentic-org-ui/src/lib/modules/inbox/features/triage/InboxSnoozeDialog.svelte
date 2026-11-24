@@ -63,12 +63,12 @@
 
 	const livePreview = $derived.by(() => {
 		if (!dateValue || !timeValue) return undefined;
-		const parsed = parseCustomSnoozeDateTime(dateValue, timeValue, zone, new Date());
-		if (!parsed.ok) return undefined;
+		const parsedNoExpiry = parseCustomSnoozeDateTime(dateValue, timeValue, zone, new Date());
+		if (!parsedNoExpiry.ok) return undefined;
 		return {
-			iso: parsed.iso,
-			full: formatFull(parsed.date, zone),
-			exceedsExpiry: snoozeExceedsExpiry(parsed.iso, target?.expiresAtIso)
+			iso: parsedNoExpiry.iso,
+			full: formatFull(parsedNoExpiry.date, zone),
+			exceedsExpiry: snoozeExceedsExpiry(parsedNoExpiry.iso, target?.expiresAtIso)
 		};
 	});
 
@@ -81,7 +81,13 @@
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
 		if (!target || submitting || busy) return;
-		const parsed = parseCustomSnoozeDateTime(dateValue, timeValue, zone, new Date());
+		const parsed = parseCustomSnoozeDateTime(
+			dateValue,
+			timeValue,
+			zone,
+			new Date(),
+			target.expiresAtIso
+		);
 		if (!parsed.ok) {
 			fieldError = { field: parsed.field, message: parsed.error };
 			await tick();
@@ -176,10 +182,10 @@
 							class="flex items-start gap-2 rounded-md border border-line bg-surface-raised px-3 py-2.5 text-xs/5 text-fg-secondary"
 						>
 							<AlertTriangle class="mt-0.5 size-4 shrink-0 text-fg" aria-hidden="true" />
-							<p>
-								This return time is after the item's expiry deadline{expiryFull
+							<p class="[overflow-wrap:anywhere]">
+								Return time must be earlier than the item's expiry deadline{expiryFull
 									? ` (${expiryFull})`
-									: ''}. The request may lapse before it returns to your inbox.
+									: ''}. Choose an earlier time to snooze this request.
 							</p>
 						</div>
 					{/if}
@@ -197,7 +203,9 @@
 							placeholder="Why you deferred this item…"
 							class="mt-1.5 {inputClass}"
 						/>
-						<p class={helpClass}>Visible in the Snoozed list and activity history.</p>
+						<p class={helpClass}>
+							Not private: visible to the sender, in your Snoozed list, and in activity history.
+						</p>
 					</div>
 				</fieldset>
 

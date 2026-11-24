@@ -53,7 +53,10 @@ function localCalendarParts(date: Date, zone: string): LocalCalendarParts {
 	};
 }
 
-/** Converts a local wall-clock date/time in `zone` into an exact UTC Date (with DST refinement). */
+/**
+ * Converts a local wall-clock date/time in `zone` into an exact UTC Date (with DST refinement).
+ * For repeated fall-back local hours, selects the earlier occurrence deterministically.
+ */
 export function zonedWallToUtc(
 	year: number,
 	month: number,
@@ -63,9 +66,41 @@ export function zonedWallToUtc(
 	zone: string
 ): Date {
 	const utcGuess = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
-	let candidate = utcGuess - offsetMinutes(new Date(utcGuess), zone) * 60_000;
-	candidate = utcGuess - offsetMinutes(new Date(candidate), zone) * 60_000;
-	return new Date(candidate);
+	const off1 = offsetMinutes(new Date(utcGuess), zone);
+	const first = utcGuess - off1 * 60_000;
+	const off2 = offsetMinutes(new Date(first), zone);
+	const second = utcGuess - off2 * 60_000;
+	// On a fall-back repeated hour, `Math.min(first, second)` picks the earlier occurrence when both round-trip.
+	const candidates = first <= second ? [first, second] : [second, first];
+	for (const ms of candidates) {
+		const dt = new Date(ms);
+		const p = localCalendarParts(dt, zone);
+		if (
+			p.year === year &&
+			p.month === month &&
+			p.day === day &&
+			p.hour === hour &&
+			p.minute === minute
+		) {
+			return dt;
+		}
+	}
+	return new Date(second);
+}
+
+function roundTripsWallClock(
+	date: Date,
+	year: number,
+	month: number,
+	day: number,
+	hour: number,
+	minute: number,
+	zone: string
+): boolean {
+	const p = localCalendarParts(date, zone);
+	return (
+		p.year === year && p.month === month && p.day === day && p.hour === hour && p.minute === minute
+	);
 }
 
 function addDaysWall(
@@ -82,6 +117,10 @@ function addDaysWall(
 	};
 }
 
+function formatDayKeyFromWall(w: { year: number; month: number; day: number }): string {
+	return `${w.year}-${String(w.month).padStart(2, '0')}-${String(w.day).padStart(2, '0')}`;
+}
+
 /** Short + full human labels for a snooze return timestamp in `zone`. */
 export function formatSnoozeReturn(
 	untilIso: string,
@@ -94,8 +133,12 @@ export function formatSnoozeReturn(
 	}
 	const full = formatFull(target, zone);
 	const targetKey = dayKey(target, zone);
-	const today = dayKey(now, zone);
-	const tomorrow = dayKey(new Date(now.getTime() + 86_400_000), zone);
+	const nowLocal = localCalendarParts(now, zone);
+	const today = formatDayKeyFromWall(nowLocal);
+	// Compute tomorrow from the local calendar date so 23-hour DST spring-forward days stay exact.
+	const tomorrow = formatDayKeyFromWall(
+		addDaysWall(nowLocal.year, nowLocal.month, nowLocal.day, 1)
+	);
 	const clock = formatClock(target, zone);
 	if (targetKey === today) return { short: `Today, ${clock}`, full };
 	if (targetKey === tomorrow) return { short: `Tomorrow, ${clock}`, full };
@@ -170,12 +213,19 @@ export function defaultCustomSnoozeInputs(now: Date, zone: string): { date: stri
 export type CustomSnoozeValidation =
 	{ ok: true; iso: string; date: Date } | { ok: false; field: 'date' | 'time'; error: string };
 
-/** Parses and validates user-entered YYYY-MM-DD and HH:MM in `zone`, rejecting past timestamps. */
+/**
+ * Parses and validates user-entered YYYY-MM-DD and HH:MM in `zone`, rejecting:
+ * - invalid calendar dates or clock times
+ * - nonexistent DST spring-forward local times
+ * - timestamps at or before `now`
+ * - timestamps at or after `expiresAtIso` (matching `messaging_ops.rs` expiry guard)
+ */
 export function parseCustomSnoozeDateTime(
 	dateStr: string,
 	timeStr: string,
 	zone: string,
-	now: Date
+	now: Date,
+	expiresAtIso?: string
 ): CustomSnoozeValidation {
 	const dMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
 	if (!dMatch) {
@@ -204,7 +254,18 @@ export function parseCustomSnoozeDateTime(
 	}
 
 	const target = zonedWallToUtc(year, month, day, hour, minute, zone);
-	if (Number.isNaN(target.getTime()) || target.getTime() <= now.getTime()) {
+	if (
+		Number.isNaN(target.getTime()) ||
+		!roundTripsWallClock(target, year, month, day, hour, minute, zone)
+	) {
+		return {
+			ok: false,
+			field: 'time',
+			error: 'That local time does not exist because of a daylight-saving shift.'
+		};
+	}
+
+	if (target.getTime() <= now.getTime()) {
 		return {
 			ok: false,
 			field: 'time',
@@ -212,10 +273,30 @@ export function parseCustomSnoozeDateTime(
 		};
 	}
 
+	if (expiresAtIso) {
+		const expiresMs = Date.parse(expiresAtIso);
+		if (!Number.isNaN(expiresMs)) {
+			if (expiresMs <= now.getTime()) {
+				return {
+					ok: false,
+					field: 'time',
+					error: 'This item has already expired and cannot be snoozed.'
+				};
+			}
+			if (target.getTime() >= expiresMs) {
+				return {
+					ok: false,
+					field: 'time',
+					error: "Return time must be earlier than the item's expiry deadline."
+				};
+			}
+		}
+	}
+
 	return { ok: true, iso: target.toISOString(), date: target };
 }
 
-/** True when a chosen snooze return timestamp falls after the item's expiry deadline. */
+/** True when a chosen snooze return timestamp falls at or after the item's expiry deadline (`a >= e`). */
 export function snoozeExceedsExpiry(
 	untilIso: string | undefined,
 	expiresAtIso: string | undefined
@@ -224,5 +305,5 @@ export function snoozeExceedsExpiry(
 	const untilMs = Date.parse(untilIso);
 	const expiresMs = Date.parse(expiresAtIso);
 	if (Number.isNaN(untilMs) || Number.isNaN(expiresMs)) return false;
-	return untilMs > expiresMs;
+	return untilMs >= expiresMs;
 }

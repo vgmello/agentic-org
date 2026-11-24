@@ -28,6 +28,22 @@ const failed = new Set<string>();
 const refusals = new Map<string, string>();
 const listenersByOrg = new Map<string, Set<() => void>>();
 const liveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const snoozeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function releaseDueSnoozes(all: InboxItem[], nowMs = Date.now()): boolean {
+	let released = false;
+	for (const item of all) {
+		if (item.state !== 'snoozed' || !item.snoozed_until) continue;
+		const dueMs = Date.parse(item.snoozed_until);
+		if (!Number.isNaN(dueMs) && dueMs <= nowMs) {
+			item.state = 'open';
+			delete item.snoozed_until;
+			delete item.snooze_note;
+			released = true;
+		}
+	}
+	return released;
+}
 
 async function load(organizationId: string): Promise<InboxItem[]> {
 	const cached = itemsByOrg.get(organizationId);
@@ -37,6 +53,25 @@ async function load(organizationId: string): Promise<InboxItem[]> {
 	const promise = (async (): Promise<InboxItem[]> => {
 		if (organizationId === POC_ORG_ID) {
 			const next = pocInboxItems();
+			if (mockMode().includes('snooze-due')) {
+				const dueIso = new Date(Date.now() + 1200).toISOString();
+				next.push({
+					id: 'poc-snooze-due',
+					kind: 'question',
+					source: 'Chat message',
+					title: 'Resurfaced snoozed item',
+					who: { id: 'ada', name: 'Ada', kind: 'agent' },
+					team: { id: 'platform', name: 'Platform (Rust)' },
+					project: { id: 'agentic-org-v1', name: 'Agentic Org v1.0' },
+					why: 'Check the rollout notes once the snooze window expires.',
+					created_at: new Date(Date.now() - 45 * MINUTE).toISOString(),
+					actions: ['reply', 'dismiss'],
+					snoozeable: true,
+					state: 'snoozed',
+					snoozed_until: dueIso,
+					snooze_note: 'Due momentarily'
+				});
+			}
 			itemsByOrg.set(organizationId, next);
 			return next;
 		}
@@ -104,6 +139,7 @@ export const inboxApi: InboxApi = {
 		const mode = mockMode();
 		if (mode.includes('error')) throw new Error('The office did not answer in time.');
 		const all = await load(organizationId);
+		releaseDueSnoozes(all);
 		return structuredClone(mode.includes('empty') ? [] : all);
 	},
 	async act(organizationId, itemId, request) {
@@ -143,15 +179,38 @@ export const inboxApi: InboxApi = {
 		const item = all.find((i) => i.id === itemId);
 		if (!item) throw new Error('This item is gone.');
 		if (item.state === 'handled') throw new Error('Handled items cannot be snoozed.');
+		const nowMs = Date.now();
 		const untilMs = Date.parse(untilIso);
-		if (Number.isNaN(untilMs) || untilMs <= Date.now()) {
+		if (Number.isNaN(untilMs) || untilMs <= nowMs) {
 			throw new Error('Return time must be in the future.');
+		}
+		if (item.expires_at) {
+			const expiresMs = Date.parse(item.expires_at);
+			if (!Number.isNaN(expiresMs) && (expiresMs <= nowMs || untilMs >= expiresMs)) {
+				throw new Error("Return time must be earlier than the item's expiry deadline.");
+			}
 		}
 		item.state = 'snoozed';
 		item.snoozed_until = new Date(untilMs).toISOString();
 		const trimmed = note?.trim();
 		if (trimmed) item.snooze_note = trimmed;
 		else delete item.snooze_note;
+
+		const timerKey = `${organizationId}:${itemId}`;
+		const prevTimer = snoozeTimers.get(timerKey);
+		if (prevTimer) clearTimeout(prevTimer);
+		const delay = untilMs - nowMs;
+		if (delay > 0 && delay <= 60_000) {
+			snoozeTimers.set(
+				timerKey,
+				setTimeout(() => {
+					snoozeTimers.delete(timerKey);
+					const current = itemsByOrg.get(organizationId);
+					if (current && releaseDueSnoozes(current)) notify(organizationId);
+				}, delay + 20)
+			);
+		}
+
 		notify(organizationId);
 		return structuredClone(item);
 	},
@@ -161,6 +220,12 @@ export const inboxApi: InboxApi = {
 		const item = all.find((i) => i.id === itemId);
 		if (!item) throw new Error('This item is gone.');
 		if (item.state !== 'snoozed') throw new Error('This item is not snoozed.');
+		const timerKey = `${organizationId}:${itemId}`;
+		const prevTimer = snoozeTimers.get(timerKey);
+		if (prevTimer) {
+			clearTimeout(prevTimer);
+			snoozeTimers.delete(timerKey);
+		}
 		item.state = 'open';
 		delete item.snoozed_until;
 		delete item.snooze_note;
@@ -175,6 +240,24 @@ export const inboxApi: InboxApi = {
 			listenersByOrg.set(organizationId, set);
 		}
 		set.add(onChange);
+		if (mockMode().includes('snooze-due')) {
+			const timerKey = `${organizationId}:poc-snooze-due`;
+			if (!snoozeTimers.has(timerKey)) {
+				const orgItems = itemsByOrg.get(organizationId);
+				const target = orgItems?.find((i) => i.id === 'poc-snooze-due' && i.state === 'snoozed');
+				if (target?.snoozed_until) {
+					const delay = Math.max(100, Date.parse(target.snoozed_until) - Date.now() + 25);
+					snoozeTimers.set(
+						timerKey,
+						setTimeout(() => {
+							snoozeTimers.delete(timerKey);
+							const current = itemsByOrg.get(organizationId);
+							if (current && releaseDueSnoozes(current)) notify(organizationId);
+						}, delay)
+					);
+				}
+			}
+		}
 		if (mockMode().includes('live') && !liveTimers.has(organizationId)) {
 			liveTimers.set(
 				organizationId,

@@ -607,7 +607,7 @@ export const GATEWAY_OPERATION_NAMES = [
 	'events.poll'
 ] as const;
 
-const accountReader = object({ id: text, login: text });
+const accountReader = object({ id: text, login: text, time_zone: optional(text) });
 const linkReader = object({ org_id: text, employee_id: text, office_ids: array(text) });
 const sessionFields = {
 	instance_id: text,

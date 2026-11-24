@@ -521,7 +521,8 @@ test('TASK-79: subscription model usage renders provider windows, em-dash unknow
 	await expect(dialog).toBeHidden();
 	await expect(codexCard.getByTestId('subscription-status')).toHaveText('Sign-in needed');
 
-	// ?mock=auth-required shows Sign-in needed and partial totals; setting a credential recovers the connection.
+	// ?mock=auth-required shows Sign-in needed and partial totals; saving a credential moves to
+	// Not collected yet until an explicit Refresh collects live usage from the provider.
 	await visit(page, '/settings/costs?mock=auth-required');
 	await expect(subSection.getByTestId('subscription-partial-totals')).toContainText(
 		'Totals are partial'
@@ -534,9 +535,16 @@ test('TASK-79: subscription model usage renders provider windows, em-dash unknow
 	await authDialog.getByLabel('Account hint (optional)').fill('billing@lumen.dev');
 	await authDialog.getByRole('button', { name: 'Save credential' }).click();
 	await expect(authDialog).toBeHidden();
-	await expect(authCodex.getByTestId('subscription-status')).toHaveText('Current');
+	await expect(authCodex.getByTestId('subscription-status')).toHaveText('Not collected yet');
 	await expect(authCodex).toContainText('billing@lumen.dev');
+	await authCodex.getByRole('button', { name: 'Refresh' }).click();
+	await expect(authCodex.getByTestId('subscription-status')).toHaveText('Current');
 	await expect(authCodex.locator('[data-subscription-model="gpt-5-codex"]')).toBeVisible();
+
+	// ?mock=collect-fails surfaces a clear error when collection fails.
+	await visit(page, '/settings/costs?mock=collect-fails');
+	await subSection.getByRole('button', { name: 'Refresh usage' }).click();
+	await expect(page.getByText(/Provider usage endpoint could not be reached/)).toBeVisible();
 
 	// ?mock=stale flags stale snapshot and refreshes back to Current.
 	await visit(page, '/settings/costs?mock=stale');

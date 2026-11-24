@@ -198,6 +198,10 @@
 		organizationId === targetOrg;
 
 	const allItems = $derived(deriveTriageItems(workItems, snapshot, ownerId, inboxItems, nowMs));
+	const snoozedLoadError = $derived.by(() => {
+		void inboxItems;
+		return inboxApi.snoozedError?.(organizationId);
+	});
 	const totalOpenCount = $derived(openWaitingCount(allItems));
 	const scopeOpts = $derived.by(() => {
 		const fromItems = triageScopeOptions(allItems);
@@ -491,10 +495,11 @@
 		startSelVersion: number,
 		startHref: string,
 		candidateNeighborIds: readonly string[],
-		message: string
+		message: string,
+		clearDrafts = true
 	) {
-		// Clear draft and armed Deny guard immediately once the mutation succeeds, even if refresh fails.
-		clearItemDrafts(targetOrg, resolvedId);
+		// Clear draft and armed Deny guard immediately once the mutation succeeds, unless preserved across snooze.
+		if (clearDrafts) clearItemDrafts(targetOrg, resolvedId);
 		if (organizationId === targetOrg && decliningId === resolvedId) decliningId = undefined;
 		if (message) toast.success(message);
 
@@ -705,6 +710,18 @@
 		note?: string
 	): Promise<boolean> {
 		if (actionLocked || !item.inboxItem) return false;
+		const untilMs = Date.parse(untilIso);
+		if (Number.isNaN(untilMs) || untilMs <= Date.now()) {
+			toast.error('Return time must be in the future.');
+			return false;
+		}
+		if (item.expiresAtIso) {
+			const expiresMs = Date.parse(item.expiresAtIso);
+			if (!Number.isNaN(expiresMs) && (expiresMs <= Date.now() || untilMs >= expiresMs)) {
+				toast.error("Return time must be earlier than the item's expiry deadline.");
+				return false;
+			}
+		}
 		const token = ++actionSeq;
 		const targetOrg = organizationId;
 		const startSelVersion = selectionVersion;
@@ -730,7 +747,8 @@
 					startSelVersion,
 					startHref,
 					candidateIds,
-					`Snoozed until ${shortLabel}.`
+					`Snoozed until ${shortLabel}.`,
+					false
 				);
 			}
 			return true;
@@ -760,7 +778,8 @@
 				startSelVersion,
 				startHref,
 				candidateIds,
-				`Returned “${item.title}” to Inbox.`
+				`Returned “${item.title}” to Inbox.`,
+				false
 			);
 		} catch (e) {
 			toast.error(toAppError(e).message);
@@ -776,8 +795,13 @@
 
 	function restoreSnoozeFocus(event: Event) {
 		event.preventDefault();
-		if (snoozeOpener?.isConnected) snoozeOpener.focus();
-		else document.getElementById('triage-detail-heading')?.focus();
+		const target =
+			(snoozeOpener?.isConnected ? snoozeOpener : null) ??
+			document.getElementById('triage-detail-heading') ??
+			document.querySelector<HTMLElement>('[data-triage-row]') ??
+			searchInputEl ??
+			document.getElementById('shell-page-title');
+		target?.focus();
 	}
 
 	function navigateRelative(delta: number) {
@@ -1245,6 +1269,8 @@
 					{hasActiveFilters}
 					zone={accountZone.zone}
 					{nowMs}
+					snoozedError={snoozedLoadError}
+					onRetrySnoozed={() => void onRefresh()}
 					onSelect={selectItem}
 					onResetFilters={resetFilters}
 				/>

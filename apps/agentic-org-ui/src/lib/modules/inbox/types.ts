@@ -41,6 +41,8 @@ export interface InboxItem {
 	choices?: { id: string; label: string }[];
 	/** Where the item's subject lives, for Open. */
 	open?: { path: string; label: string };
+	/** Whether the item's backing source supports snooze/un-snooze (`TASK-81`); defaults to true when omitted. */
+	snoozeable?: boolean;
 	state: 'open' | 'snoozed' | 'handled';
 	/** RFC 3339 timestamp when a snoozed item returns to the open inbox (`TASK-81`). */
 	snoozed_until?: string;

@@ -24,6 +24,8 @@ export interface InboxApi {
 	): Promise<InboxItem>;
 	/** Releases a snoozed inbox item back to the open queue early (`TASK-81`). */
 	unsnooze(organizationId: string, itemId: string): Promise<InboxItem>;
+	/** Optional error message from the last snoozed-list fetch when active Inbox loaded but Snoozed failed. */
+	snoozedError?(organizationId: string): string | undefined;
 	/** Told when the durable result of any source changes (cleared here, in another client or in the CLI). Resolves to the function that stops listening. */
 	subscribe(organizationId: string, onChange: () => void): Promise<() => void>;
 }
@@ -77,6 +79,8 @@ export const inboxApi: InboxApi = Object.freeze<InboxApi>({
 			: unavailableCall(),
 	unsnooze: (organizationId, itemId) =>
 		signedInSession() ? gatewayInboxApi.unsnooze(organizationId, itemId) : unavailableCall(),
+	snoozedError: (organizationId) =>
+		signedInSession() ? gatewayInboxApi.snoozedError?.(organizationId) : undefined,
 	subscribe: (organizationId, onChange) =>
 		signedInSession() ? gatewayInboxApi.subscribe(organizationId, onChange) : unavailableCall()
 });
