@@ -38,6 +38,14 @@ export const STATUS_WORD: Record<TaskStatus, string> = {
 	cancelled: 'Cancelled'
 };
 export const STATUSES: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'];
+/** Blocked-first order when grouping lists by status (Prototype Release 3c4e3541). */
+export const STATUS_GROUP_ORDER: TaskStatus[] = [
+	'blocked',
+	'todo',
+	'in_progress',
+	'done',
+	'cancelled'
+];
 export const isOpen = (s: TaskStatus) => s !== 'done' && s !== 'cancelled';
 
 export const PRIORITY_WORD: Record<Priority, string> = {
@@ -98,12 +106,27 @@ export function bySeverityThenPriority(a: TaskRow, b: TaskRow): number {
 // ---- Board ---------------------------------------------------------------------------------------------------------
 
 export type BoardColumn = 'todo' | 'in_progress' | 'blocked' | 'done';
+export type BoardStatusColumn =
+	'todo' | 'in_progress' | 'blocked' | 'awaiting_verification' | 'done' | 'cancelled';
+export type BoardMode = 'stages' | 'statuses';
 export const BOARD_COLUMNS: BoardColumn[] = ['todo', 'in_progress', 'blocked', 'done'];
+export const BOARD_STATUS_COLUMNS: BoardStatusColumn[] = [
+	'todo',
+	'in_progress',
+	'blocked',
+	'awaiting_verification',
+	'done',
+	'cancelled'
+];
+export const BOARD_COLUMN_WORD: Record<BoardStatusColumn, string> = {
+	...STATUS_WORD,
+	awaiting_verification: 'Awaiting verification'
+};
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 
 /**
  * The board's columns (TSK-1): To do, In progress, Blocked and Done. Done keeps the last seven days unless all are
- * asked for; Cancelled is not a board column and stays in the list's status view.
+ * asked for; Cancelled is not a board column in the default 4-stage view and stays in the list's status view.
  */
 export function boardColumns(
 	rows: TaskRow[],
@@ -119,6 +142,47 @@ export function boardColumns(
 			column,
 			rows: [...shown].sort(byPriorityThenAge),
 			hiddenDone: inColumn.length - shown.length
+		};
+	});
+}
+
+/**
+ * Board columns supporting both the default 4-stage board (`stages`) and the expanded 6-status board (`statuses`)
+ * from Prototype Release 3c4e3541 (`Awaiting verification` + `Cancelled` columns).
+ */
+export function boardColumnsForMode(
+	rows: TaskRow[],
+	mode: BoardMode,
+	opts: { allDone: boolean; now: Date }
+): {
+	column: BoardStatusColumn;
+	rows: TaskRow[];
+	hiddenDone: number;
+	writableStatus: BoardColumn | null;
+}[] {
+	if (mode === 'stages') {
+		return boardColumns(rows, opts).map((c) => ({ ...c, writableStatus: c.column }));
+	}
+	return BOARD_STATUS_COLUMNS.map((column) => {
+		const inColumn = rows.filter((r) => {
+			if (column === 'awaiting_verification')
+				return Boolean(r.awaitingVerification) && isOpen(r.status);
+			if (r.awaitingVerification && isOpen(r.status)) return false;
+			return r.status === column;
+		});
+		const shown =
+			column === 'done' && !opts.allDone
+				? inColumn.filter((r) => opts.now.getTime() - new Date(r.statusAt).getTime() <= WEEK_MS)
+				: inColumn;
+		const writableStatus: BoardColumn | null =
+			column === 'todo' || column === 'in_progress' || column === 'blocked' || column === 'done'
+				? column
+				: null;
+		return {
+			column,
+			rows: [...shown].sort(byPriorityThenAge),
+			hiddenDone: inColumn.length - shown.length,
+			writableStatus
 		};
 	});
 }
@@ -183,7 +247,7 @@ export function groupRows(rows: TaskRow[], by: GroupBy, sort = byPriorityThenAge
 	const fixedOrder: Partial<Record<GroupBy, string[]>> = {
 		severity: [...SEVERITIES, 'unset'],
 		priority: PRIORITIES,
-		status: STATUSES
+		status: STATUS_GROUP_ORDER
 	};
 	const order = fixedOrder[by];
 	const list = [...groups.values()].map((g) => ({ ...g, rows: g.rows.sort(sort) }));

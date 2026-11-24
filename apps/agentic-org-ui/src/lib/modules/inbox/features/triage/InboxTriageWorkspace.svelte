@@ -46,6 +46,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { navigating, page } from '$app/state';
+	import { mergeProps, Tooltip } from 'bits-ui';
 	import { toast } from 'svelte-sonner';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ListFilter from '@lucide/svelte/icons/list-filter';
@@ -136,6 +137,8 @@
 	let urgentOnly = $state(false);
 	let sortOrder = $state<TriageOrder>('priority');
 	let showDividers = $state(safeReadDividers());
+	let filterMenuOpen = $state(false);
+	let displayMenuOpen = $state(false);
 
 	// Monotonic operation token prevents stale in-flight actions from clearing newer busy/selection state.
 	let actionSeq = 0;
@@ -727,6 +730,12 @@
 		}
 
 		if (!shortcutsEnabled || event.repeat || denyGuardVisible) return;
+		if (
+			event.target instanceof Element &&
+			event.target.closest('#triage-categories, aside.exec-sidebar')
+		) {
+			return;
+		}
 
 		if (event.key === 'j') {
 			event.preventDefault();
@@ -754,8 +763,35 @@
 	// Scope single-character shortcuts strictly to the triage workspace container (WCAG 2.1.4).
 	function workspaceShortcuts(node: HTMLElement) {
 		const listener = (event: KeyboardEvent) => handleWorkspaceKeydown(event);
+		const onNavTabSelect = (event: Event) => {
+			const tabId = (event as CustomEvent<{ tabId?: string }>).detail?.tabId;
+			if (tabId) selectTab(parseTriageTab(tabId));
+		};
+		const onShowCategories = () => {
+			if (showingMobileDetail) {
+				selectionVersion += 1;
+				mobileDetailOpen = false;
+				syncUrl({ item: null });
+			}
+		};
 		node.addEventListener('keydown', listener);
-		return () => node.removeEventListener('keydown', listener);
+		node.addEventListener('inbox:select-tab', onNavTabSelect);
+		node.addEventListener('inbox:show-categories', onShowCategories);
+		return () => {
+			node.removeEventListener('keydown', listener);
+			node.removeEventListener('inbox:select-tab', onNavTabSelect);
+			node.removeEventListener('inbox:show-categories', onShowCategories);
+		};
+	}
+
+	function handleSearchInputKeydown(event: KeyboardEvent) {
+		if (event.isComposing || event.keyCode === 229 || event.key !== 'Escape') return;
+		event.preventDefault();
+		if (searchQuery) {
+			setSearchQuery('');
+		} else {
+			document.getElementById('shell-page-title')?.focus({ preventScroll: true });
+		}
 	}
 </script>
 
@@ -772,268 +808,324 @@
 		class="exec-card triage-workspace flex min-h-0 w-full flex-col overflow-hidden"
 	>
 		<!-- Header & Controls (poc/operations.css queue-header) -->
-		<header class="inbox-head triage-header queue-header">
-			<div class="queue-headline">
-				<div class="ph-t">
-					<h1 id="shell-page-title" tabindex="-1" class="triage-h1">Inbox</h1>
-					<span role="status" class="queue-count">
-						<i class={[totalOpenCount === 0 && 'is-ok']} aria-hidden="true"></i>
-						<span class="tabular-nums">
-							{totalOpenCount === 0 ? '0 waiting on you' : `${totalOpenCount} waiting on you`}
+		<Tooltip.Provider delayDuration={150}>
+			<header class="inbox-head triage-header queue-header">
+				<div class="queue-headline">
+					<div class="ph-t">
+						<h1 id="shell-page-title" tabindex="-1" class="triage-h1">Inbox</h1>
+						<span role="status" class="queue-count">
+							<i class={[totalOpenCount === 0 && 'is-ok']} aria-hidden="true"></i>
+							<span class="tabular-nums">
+								{totalOpenCount === 0 ? '0 waiting on you' : `${totalOpenCount} waiting on you`}
+							</span>
 						</span>
-					</span>
-				</div>
-
-				<div class="queue-search-wrap">
-					<div class="triage-search">
-						<Search class="triage-search-ico size-4 shrink-0" aria-hidden="true" />
-						<label class="sr-only" for="triage-search-input">Search inbox</label>
-						<input
-							bind:this={searchInputEl}
-							value={searchQuery}
-							oninput={(e) => setSearchQuery(e.currentTarget.value)}
-							id="triage-search-input"
-							type="text"
-							autocomplete="off"
-							placeholder="Search inbox…"
-							class="triage-search-input"
-						/>
-						{#if searchQuery}
-							<button
-								type="button"
-								onclick={() => {
-									setSearchQuery('');
-									searchInputEl?.focus();
-								}}
-								aria-label="Clear search"
-								class="triage-clear-btn inline-flex min-h-9 min-w-9 items-center justify-center [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-							>
-								<X class="size-3.5" aria-hidden="true" />
-							</button>
-						{:else if shortcutsEnabled}
-							<kbd class="triage-search-kbd" aria-hidden="true">/</kbd>
-						{/if}
 					</div>
-				</div>
-			</div>
 
-			<!-- 3 Primary Categories + More dropdown + Filter & Display icon menus -->
-			<div class="triage-toolbar queue-toolbar">
-				<div role="group" aria-label="Inbox categories" class="queue-tabs">
-					{#each PRIMARY_TABS as tab (tab.id)}
-						{@const isSelected = activeTab === tab.id}
-						<button
-							type="button"
-							aria-pressed={isSelected}
-							onclick={() => selectTab(tab.id)}
-							class="queue-tab"
-						>
-							<span>{tab.label}</span>
-							<span class="queue-tab-count">{counts[tab.id]}</span>
-						</button>
-					{/each}
-
-					<div class="triage-tab-tools">
-						<DropdownMenu.Root>
-							<DropdownMenu.Trigger>
-								{#snippet child({ props })}
-									<button
-										{...props}
-										type="button"
-										data-current-kind={overflowActive ? '' : undefined}
-										title={overflowActive ? `Viewing ${overflowActiveLabel}` : undefined}
-										class="queue-tab"
-									>
-										<span>More</span>
-										<ChevronDown class="size-3.5 shrink-0 opacity-75" aria-hidden="true" />
-									</button>
-								{/snippet}
-							</DropdownMenu.Trigger>
-							<DropdownMenu.Content
-								preventScroll={false}
-								align="start"
-								class="w-52 motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
-							>
-								<DropdownMenu.RadioGroup
-									value={overflowActive ? activeTab : ''}
-									onValueChange={(val) => {
-										if (val) selectTab(val as TriageTab);
-									}}
-								>
-									{#each OVERFLOW_TABS as tab (tab.id)}
-										<DropdownMenu.RadioItem
-											value={tab.id}
-											closeOnSelect={true}
-											class="flex min-h-9 items-center justify-between gap-3 pr-8 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-										>
-											<span>{tab.label}</span>
-											<span class="triage-menu-count font-mono text-xs tabular-nums">
-												{counts[tab.id]}
-											</span>
-										</DropdownMenu.RadioItem>
-									{/each}
-								</DropdownMenu.RadioGroup>
-							</DropdownMenu.Content>
-						</DropdownMenu.Root>
-
-						<div class="queue-controls" role="group" aria-label="Inbox view controls">
-							<DropdownMenu.Root>
-								<DropdownMenu.Trigger>
-									{#snippet child({ props })}
-										<button
-											{...props}
-											type="button"
-											aria-label="Filter inbox"
-											title="Filter inbox"
-											data-active={isFiltered ? '' : undefined}
-											class="queue-icon-btn"
-										>
-											<ListFilter class="size-4" aria-hidden="true" />
-										</button>
-									{/snippet}
-								</DropdownMenu.Trigger>
-								<DropdownMenu.Content
-									preventScroll={false}
-									align="end"
-									class="max-h-[min(60dvh,28rem)] w-60 max-w-[calc(100vw-2rem)] overflow-y-auto motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
-								>
-									<DropdownMenu.Label>Urgency</DropdownMenu.Label>
-									<DropdownMenu.RadioGroup
-										value={urgentOnly ? 'urgent' : 'all'}
-										onValueChange={(val) => setUrgentOnly(val === 'urgent')}
-									>
-										<DropdownMenu.RadioItem
-											value="all"
-											closeOnSelect={true}
-											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-										>
-											All items
-										</DropdownMenu.RadioItem>
-										<DropdownMenu.RadioItem
-											value="urgent"
-											closeOnSelect={true}
-											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-										>
-											Urgent only
-										</DropdownMenu.RadioItem>
-									</DropdownMenu.RadioGroup>
-									<DropdownMenu.Separator />
-									<DropdownMenu.Label>Project</DropdownMenu.Label>
-									<DropdownMenu.RadioGroup
-										value={scope.project ?? ''}
-										onValueChange={(val) => setScope({ ...scope, project: val || undefined })}
-									>
-										<DropdownMenu.RadioItem
-											value=""
-											closeOnSelect={true}
-											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-										>
-											All projects
-										</DropdownMenu.RadioItem>
-										{#each scopeOpts.projects as proj (proj.id)}
-											<DropdownMenu.RadioItem
-												value={proj.id}
-												closeOnSelect={true}
-												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+					<div class="queue-search-wrap">
+						<div class="triage-search">
+							<Search class="triage-search-ico size-4 shrink-0" aria-hidden="true" />
+							<label class="sr-only" for="triage-search-input">Search inbox</label>
+							<input
+								bind:this={searchInputEl}
+								value={searchQuery}
+								oninput={(e) => setSearchQuery(e.currentTarget.value)}
+								onkeydown={handleSearchInputKeydown}
+								id="triage-search-input"
+								type="text"
+								autocomplete="off"
+								placeholder="Search inbox…"
+								class="triage-search-input"
+							/>
+							{#if searchQuery}
+								<Tooltip.Root>
+									<Tooltip.Trigger>
+										{#snippet child({ props })}
+											<button
+												{...props}
+												type="button"
+												onclick={() => {
+													setSearchQuery('');
+													searchInputEl?.focus();
+												}}
+												aria-label="Clear search"
+												class="triage-clear-btn inline-flex min-h-9 min-w-9 items-center justify-center [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 											>
-												{proj.name}
-											</DropdownMenu.RadioItem>
-										{/each}
-									</DropdownMenu.RadioGroup>
-									<DropdownMenu.Separator />
-									<DropdownMenu.Label>Team</DropdownMenu.Label>
-									<DropdownMenu.RadioGroup
-										value={scope.team ?? ''}
-										onValueChange={(val) => setScope({ ...scope, team: val || undefined })}
-									>
-										<DropdownMenu.RadioItem
-											value=""
-											closeOnSelect={true}
-											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												<X class="size-3.5" aria-hidden="true" />
+											</button>
+										{/snippet}
+									</Tooltip.Trigger>
+									<Tooltip.Portal>
+										<Tooltip.Content
+											side="bottom"
+											sideOffset={6}
+											class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+											>Clear search</Tooltip.Content
 										>
-											All teams
-										</DropdownMenu.RadioItem>
-										{#each scopeOpts.teams as team (team.id)}
-											<DropdownMenu.RadioItem
-												value={team.id}
-												closeOnSelect={true}
-												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-											>
-												{team.name}
-											</DropdownMenu.RadioItem>
-										{/each}
-									</DropdownMenu.RadioGroup>
-									{#if isFiltered}
-										<DropdownMenu.Separator />
-										<DropdownMenu.Group>
-											<DropdownMenu.Item
-												onSelect={clearFilterMenu}
-												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-											>
-												Reset filters
-											</DropdownMenu.Item>
-										</DropdownMenu.Group>
-									{/if}
-								</DropdownMenu.Content>
-							</DropdownMenu.Root>
-
-							<DropdownMenu.Root>
-								<DropdownMenu.Trigger>
-									{#snippet child({ props })}
-										<button
-											{...props}
-											type="button"
-											aria-label="Inbox display"
-											title="Inbox display"
-											data-active={displayActive ? '' : undefined}
-											class="queue-icon-btn"
-										>
-											<SlidersHorizontal class="size-4" aria-hidden="true" />
-										</button>
-									{/snippet}
-								</DropdownMenu.Trigger>
-								<DropdownMenu.Content
-									preventScroll={false}
-									align="end"
-									class="w-52 max-w-[calc(100vw-2rem)] motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
-								>
-									<DropdownMenu.Label>Grouping</DropdownMenu.Label>
-									<DropdownMenu.RadioGroup
-										value={sortOrder}
-										onValueChange={(val) => {
-											if (val === 'priority' || val === 'date') setSortOrder(val);
-										}}
-									>
-										<DropdownMenu.RadioItem
-											value="priority"
-											closeOnSelect={true}
-											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-										>
-											Priority first
-										</DropdownMenu.RadioItem>
-										<DropdownMenu.RadioItem
-											value="date"
-											closeOnSelect={true}
-											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-										>
-											By date
-										</DropdownMenu.RadioItem>
-									</DropdownMenu.RadioGroup>
-									<DropdownMenu.Separator />
-									<DropdownMenu.CheckboxItem
-										checked={showDividers}
-										onCheckedChange={(checked) => toggleRowDividers(Boolean(checked))}
-										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									>
-										Row dividers
-									</DropdownMenu.CheckboxItem>
-								</DropdownMenu.Content>
-							</DropdownMenu.Root>
+									</Tooltip.Portal>
+								</Tooltip.Root>
+							{:else if shortcutsEnabled}
+								<kbd class="triage-search-kbd" aria-hidden="true">/</kbd>
+							{/if}
 						</div>
 					</div>
 				</div>
-			</div>
-		</header>
+
+				<!-- 3 Primary Categories + More dropdown + Filter & Display icon menus -->
+				<div class="triage-toolbar queue-toolbar">
+					<div
+						id="triage-categories"
+						role="group"
+						aria-label="Inbox categories"
+						aria-keyshortcuts={shortcutsEnabled ? 'M' : undefined}
+						data-overflow-tabs={JSON.stringify(
+							OVERFLOW_TABS.map((t) => ({ id: t.id, label: t.label }))
+						)}
+						class="queue-tabs"
+					>
+						{#each PRIMARY_TABS as tab (tab.id)}
+							{@const isSelected = activeTab === tab.id}
+							<button
+								type="button"
+								data-triage-tab={tab.id}
+								data-triage-label={tab.label}
+								aria-pressed={isSelected}
+								onclick={() => selectTab(tab.id)}
+								class="queue-tab"
+							>
+								<span>{tab.label}</span>
+								<span class="queue-tab-count">{counts[tab.id]}</span>
+							</button>
+						{/each}
+
+						<div class="triage-tab-tools">
+							<DropdownMenu.Root>
+								<DropdownMenu.Trigger>
+									{#snippet child({ props })}
+										<button
+											{...props}
+											type="button"
+											data-triage-more=""
+											data-current-kind={overflowActive ? '' : undefined}
+											title={overflowActive ? `Viewing ${overflowActiveLabel}` : undefined}
+											class="queue-tab"
+										>
+											<span>More</span>
+											<ChevronDown class="size-3.5 shrink-0 opacity-75" aria-hidden="true" />
+										</button>
+									{/snippet}
+								</DropdownMenu.Trigger>
+								<DropdownMenu.Content
+									preventScroll={false}
+									align="start"
+									class="w-52 motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+								>
+									<DropdownMenu.RadioGroup
+										value={overflowActive ? activeTab : ''}
+										onValueChange={(val) => {
+											if (val) selectTab(val as TriageTab);
+										}}
+									>
+										{#each OVERFLOW_TABS as tab (tab.id)}
+											<DropdownMenu.RadioItem
+												value={tab.id}
+												closeOnSelect={true}
+												class="flex min-h-9 items-center justify-between gap-3 pr-8 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												<span>{tab.label}</span>
+												<span class="triage-menu-count font-mono text-xs tabular-nums">
+													{counts[tab.id]}
+												</span>
+											</DropdownMenu.RadioItem>
+										{/each}
+									</DropdownMenu.RadioGroup>
+								</DropdownMenu.Content>
+							</DropdownMenu.Root>
+
+							<div class="queue-controls" role="group" aria-label="Inbox view controls">
+								<DropdownMenu.Root bind:open={filterMenuOpen}>
+									<Tooltip.Root disabled={filterMenuOpen}>
+										<Tooltip.Trigger>
+											{#snippet child({ props: tipProps })}
+												<DropdownMenu.Trigger>
+													{#snippet child({ props: menuProps })}
+														<button
+															{...mergeProps(tipProps, menuProps)}
+															type="button"
+															aria-label="Filter inbox"
+															data-active={isFiltered ? '' : undefined}
+															class="queue-icon-btn"
+														>
+															<ListFilter class="size-4" aria-hidden="true" />
+														</button>
+													{/snippet}
+												</DropdownMenu.Trigger>
+											{/snippet}
+										</Tooltip.Trigger>
+										<Tooltip.Portal>
+											<Tooltip.Content
+												side="bottom"
+												sideOffset={6}
+												class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+												>Filter inbox</Tooltip.Content
+											>
+										</Tooltip.Portal>
+									</Tooltip.Root>
+									<DropdownMenu.Content
+										preventScroll={false}
+										align="end"
+										class="max-h-[min(60dvh,28rem)] w-60 max-w-[calc(100vw-2rem)] overflow-y-auto motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+									>
+										<DropdownMenu.Label>Urgency</DropdownMenu.Label>
+										<DropdownMenu.RadioGroup
+											value={urgentOnly ? 'urgent' : 'all'}
+											onValueChange={(val) => setUrgentOnly(val === 'urgent')}
+										>
+											<DropdownMenu.RadioItem
+												value="all"
+												closeOnSelect={true}
+												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												All items
+											</DropdownMenu.RadioItem>
+											<DropdownMenu.RadioItem
+												value="urgent"
+												closeOnSelect={true}
+												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												Urgent only
+											</DropdownMenu.RadioItem>
+										</DropdownMenu.RadioGroup>
+										<DropdownMenu.Separator />
+										<DropdownMenu.Label>Project</DropdownMenu.Label>
+										<DropdownMenu.RadioGroup
+											value={scope.project ?? ''}
+											onValueChange={(val) => setScope({ ...scope, project: val || undefined })}
+										>
+											<DropdownMenu.RadioItem
+												value=""
+												closeOnSelect={true}
+												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												All projects
+											</DropdownMenu.RadioItem>
+											{#each scopeOpts.projects as proj (proj.id)}
+												<DropdownMenu.RadioItem
+													value={proj.id}
+													closeOnSelect={true}
+													class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												>
+													{proj.name}
+												</DropdownMenu.RadioItem>
+											{/each}
+										</DropdownMenu.RadioGroup>
+										<DropdownMenu.Separator />
+										<DropdownMenu.Label>Team</DropdownMenu.Label>
+										<DropdownMenu.RadioGroup
+											value={scope.team ?? ''}
+											onValueChange={(val) => setScope({ ...scope, team: val || undefined })}
+										>
+											<DropdownMenu.RadioItem
+												value=""
+												closeOnSelect={true}
+												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												All teams
+											</DropdownMenu.RadioItem>
+											{#each scopeOpts.teams as team (team.id)}
+												<DropdownMenu.RadioItem
+													value={team.id}
+													closeOnSelect={true}
+													class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												>
+													{team.name}
+												</DropdownMenu.RadioItem>
+											{/each}
+										</DropdownMenu.RadioGroup>
+										{#if isFiltered}
+											<DropdownMenu.Separator />
+											<DropdownMenu.Group>
+												<DropdownMenu.Item
+													onSelect={clearFilterMenu}
+													class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+												>
+													Reset filters
+												</DropdownMenu.Item>
+											</DropdownMenu.Group>
+										{/if}
+									</DropdownMenu.Content>
+								</DropdownMenu.Root>
+
+								<DropdownMenu.Root bind:open={displayMenuOpen}>
+									<Tooltip.Root disabled={displayMenuOpen}>
+										<Tooltip.Trigger>
+											{#snippet child({ props: tipProps })}
+												<DropdownMenu.Trigger>
+													{#snippet child({ props: menuProps })}
+														<button
+															{...mergeProps(tipProps, menuProps)}
+															type="button"
+															aria-label="Inbox display"
+															data-active={displayActive ? '' : undefined}
+															class="queue-icon-btn"
+														>
+															<SlidersHorizontal class="size-4" aria-hidden="true" />
+														</button>
+													{/snippet}
+												</DropdownMenu.Trigger>
+											{/snippet}
+										</Tooltip.Trigger>
+										<Tooltip.Portal>
+											<Tooltip.Content
+												side="bottom"
+												sideOffset={6}
+												class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+												>Inbox display</Tooltip.Content
+											>
+										</Tooltip.Portal>
+									</Tooltip.Root>
+									<DropdownMenu.Content
+										preventScroll={false}
+										align="end"
+										class="w-52 max-w-[calc(100vw-2rem)] motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+									>
+										<DropdownMenu.Label>Grouping</DropdownMenu.Label>
+										<DropdownMenu.RadioGroup
+											value={sortOrder}
+											onValueChange={(val) => {
+												if (val === 'priority' || val === 'date') setSortOrder(val);
+											}}
+										>
+											<DropdownMenu.RadioItem
+												value="priority"
+												closeOnSelect={true}
+												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												Priority first
+											</DropdownMenu.RadioItem>
+											<DropdownMenu.RadioItem
+												value="date"
+												closeOnSelect={true}
+												class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+											>
+												By date
+											</DropdownMenu.RadioItem>
+										</DropdownMenu.RadioGroup>
+										<DropdownMenu.Separator />
+										<DropdownMenu.CheckboxItem
+											checked={showDividers}
+											onCheckedChange={(checked) => toggleRowDividers(Boolean(checked))}
+											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+										>
+											Row dividers
+										</DropdownMenu.CheckboxItem>
+									</DropdownMenu.Content>
+								</DropdownMenu.Root>
+							</div>
+						</div>
+					</div>
+				</div>
+			</header>
+		</Tooltip.Provider>
 
 		<!-- Split Master-Detail Body -->
 		{#if loading}

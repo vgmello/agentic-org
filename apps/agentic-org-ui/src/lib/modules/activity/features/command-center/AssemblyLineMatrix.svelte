@@ -19,6 +19,44 @@
 		onRetry?: () => void;
 	} = $props();
 
+	let tableEl = $state<HTMLTableElement | null>(null);
+	let prevChipState: Record<string, { stage: string; rect: DOMRect }> = {};
+
+	$effect.pre(() => {
+		void model.milestones;
+		if (!tableEl || typeof window === 'undefined') return;
+		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+		const next: Record<string, { stage: string; rect: DOMRect }> = {};
+		for (const el of tableEl.querySelectorAll<HTMLElement>('.assembly-chip[data-chip-id]')) {
+			const id = el.dataset.chipId;
+			const stage = el.dataset.stage;
+			if (id && stage) next[id] = { stage, rect: el.getBoundingClientRect() };
+		}
+		prevChipState = next;
+	});
+
+	$effect(() => {
+		void model.milestones;
+		if (!tableEl || Object.keys(prevChipState).length === 0 || typeof window === 'undefined')
+			return;
+		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+		for (const el of tableEl.querySelectorAll<HTMLElement>('.assembly-chip[data-chip-id]')) {
+			const id = el.dataset.chipId;
+			const stage = el.dataset.stage;
+			if (!id || !stage) continue;
+			const prev = prevChipState[id];
+			if (!prev || prev.stage === stage) continue;
+			const cur = el.getBoundingClientRect();
+			const dx = prev.rect.left - cur.left;
+			const dy = prev.rect.top - cur.top;
+			if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+			el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }], {
+				duration: 320,
+				easing: 'cubic-bezier(0.2, 0.7, 0.25, 1)'
+			});
+		}
+	});
+
 	const agentsBusyLabel = $derived(
 		model.activeAgentsCount > 0
 			? `${model.busyAgentsCount} / ${model.activeAgentsCount}`
@@ -63,6 +101,14 @@
 				<dd class={dataUnavailable ? '' : 'assembly-metric-sky'}>
 					{dataUnavailable ? '—' : `${model.readinessPct}%`}
 				</dd>
+				<progress
+					class={['assembly-progress-bar', !dataUnavailable && model.isComplete && 'is-complete']}
+					value={dataUnavailable ? 0 : model.mergedItems}
+					max={Math.max(1, model.totalItems)}
+					aria-label={dataUnavailable
+						? 'Portfolio readiness unavailable'
+						: `Portfolio readiness: ${model.readinessPct}%`}
+				></progress>
 			</div>
 			<div>
 				<dt>Merged</dt>
@@ -129,7 +175,7 @@
 		<!-- 7-Column Swimlane Pipeline Table -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div class="assembly-table-wrap" tabindex="0" role="region" aria-label="Assembly line matrix">
-			<table class="assembly-table">
+			<table class="assembly-table" bind:this={tableEl}>
 				<thead>
 					<tr>
 						<th scope="col" class="col-track">
@@ -219,6 +265,7 @@
 												<a
 													href={resolve(chip.href as '/work')}
 													class="assembly-chip"
+													data-chip-id={chip.id}
 													data-stage="queue"
 													title={chip.tooltip}
 												>
@@ -239,6 +286,7 @@
 												<a
 													href={resolve(chip.href as '/work')}
 													class="assembly-chip"
+													data-chip-id={chip.id}
 													data-stage="agents"
 													title={chip.tooltip}
 												>
@@ -264,6 +312,7 @@
 												<a
 													href={resolve(chip.href as '/work')}
 													class="assembly-chip"
+													data-chip-id={chip.id}
 													data-stage="ci"
 													title={chip.tooltip}
 												>
@@ -284,6 +333,7 @@
 												<a
 													href={resolve(chip.href as '/inbox')}
 													class="assembly-chip"
+													data-chip-id={chip.id}
 													data-stage="review"
 													title={chip.tooltip}
 												>
@@ -304,6 +354,7 @@
 												<a
 													href={resolve(chip.href as '/work')}
 													class="assembly-chip"
+													data-chip-id={chip.id}
 													data-stage="merged"
 													title={chip.tooltip}
 												>
@@ -384,11 +435,14 @@
 
 <style>
 	.assembly-view {
+		display: flex;
+		flex: 1 0 auto;
+		flex-direction: column;
 		min-width: 0;
 		max-width: 100%;
 		overflow: hidden;
-		border: 1px solid var(--line);
-		border-radius: var(--exec-inset-radius, 12px);
+		border: 0;
+		border-radius: 0;
 		background-color: var(--exec-surface);
 		background-image: var(--exec-panel-sheen);
 		-webkit-backdrop-filter: var(--exec-blur);
@@ -401,7 +455,7 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 12px 20px;
-		padding: 14px 16px;
+		padding: 14px var(--activity-gutter, 24px);
 		border-bottom: 1px solid var(--line);
 	}
 
@@ -470,6 +524,12 @@
 		color: var(--exec-sky);
 	}
 
+	.assembly-metrics .assembly-progress-bar {
+		display: block;
+		width: clamp(60px, 6cqi, 92px);
+		margin-block-start: 4px;
+	}
+
 	.assembly-review-text,
 	.assembly-metrics dd.assembly-review-text {
 		color: var(--exec-warn);
@@ -522,6 +582,7 @@
 	}
 
 	.assembly-table-wrap {
+		flex: 1 0 auto;
 		overflow-x: auto;
 		max-width: 100%;
 	}
@@ -535,6 +596,7 @@
 		width: 100%;
 		min-width: 760px;
 		border-collapse: collapse;
+		table-layout: fixed;
 		text-align: start;
 		font-size: 0.8125rem;
 		line-height: 1.45;
@@ -558,14 +620,22 @@
 		font-weight: 600;
 	}
 
+	.assembly-table thead th:first-child {
+		width: 22%;
+	}
+
+	.assembly-table thead th:last-child {
+		width: 13%;
+	}
+
 	.assembly-table thead th.col-track {
 		min-width: 156px;
-		padding-inline-start: 16px;
+		padding-inline-start: var(--activity-gutter, 24px);
 	}
 
 	.assembly-table thead th.col-release {
 		min-width: 112px;
-		padding-inline-end: 16px;
+		padding-inline-end: var(--activity-gutter, 24px);
 	}
 
 	.assembly-table small {
@@ -611,7 +681,7 @@
 	}
 
 	.assembly-lane-head {
-		padding-inline-start: 16px;
+		padding-inline-start: var(--activity-gutter, 24px);
 		font-weight: 550;
 	}
 
@@ -630,10 +700,12 @@
 		--stage-color: var(--fg-secondary);
 		--stage-bg: var(--exec-well);
 		--stage-ring: var(--exec-border-hi);
+		position: relative;
 		display: inline-flex;
 		align-items: center;
 		gap: 5px;
 		min-height: 36px;
+		max-width: 100%;
 		padding: 4px 10px;
 		border-radius: var(--exec-sm-radius, 6px);
 		background: var(--stage-bg);
@@ -644,7 +716,7 @@
 		font-weight: 550;
 		line-height: 1.25;
 		text-decoration: none;
-		white-space: nowrap;
+		overflow-wrap: anywhere;
 		transition: box-shadow 0.15s ease;
 	}
 
@@ -720,7 +792,15 @@
 		white-space: nowrap;
 	}
 
-	.assembly-milestone-progress,
+	.assembly-milestone-progress {
+		display: inline-flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px 12px;
+		font-weight: 500;
+		white-space: normal;
+	}
+
 	.assembly-overall-progress {
 		display: inline-flex;
 		align-items: center;
@@ -737,7 +817,8 @@
 		color: var(--exec-ok);
 	}
 
-	.assembly-progress progress {
+	.assembly-progress progress,
+	.assembly-progress-bar {
 		appearance: none;
 		width: 78px;
 		height: 7px;
@@ -748,11 +829,16 @@
 		overflow: hidden;
 	}
 
+	.assembly-milestone .assembly-progress progress {
+		width: clamp(96px, 12cqi, 144px);
+	}
+
 	.assembly-legend .assembly-progress progress {
 		background: var(--exec-surface);
 	}
 
-	.assembly-progress progress::-webkit-progress-bar {
+	.assembly-progress progress::-webkit-progress-bar,
+	.assembly-progress-bar::-webkit-progress-bar {
 		border-radius: inherit;
 		background: var(--exec-well);
 	}
@@ -761,21 +847,25 @@
 		background: var(--exec-surface);
 	}
 
-	.assembly-progress progress::-webkit-progress-value {
+	.assembly-progress progress::-webkit-progress-value,
+	.assembly-progress-bar::-webkit-progress-value {
 		border-radius: inherit;
 		background: var(--tone-accent-ink);
 	}
 
-	.assembly-progress progress::-moz-progress-bar {
+	.assembly-progress progress::-moz-progress-bar,
+	.assembly-progress-bar::-moz-progress-bar {
 		border-radius: inherit;
 		background: var(--tone-accent-ink);
 	}
 
-	.assembly-progress progress.is-complete::-webkit-progress-value {
+	.assembly-progress progress.is-complete::-webkit-progress-value,
+	.assembly-progress-bar.is-complete::-webkit-progress-value {
 		background: var(--exec-ok);
 	}
 
-	.assembly-progress progress.is-complete::-moz-progress-bar {
+	.assembly-progress progress.is-complete::-moz-progress-bar,
+	.assembly-progress-bar.is-complete::-moz-progress-bar {
 		background: var(--exec-ok);
 	}
 
@@ -785,7 +875,7 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 8px 16px;
-		padding: 11px 16px;
+		padding: 11px var(--activity-gutter, 24px);
 		background: var(--exec-well);
 	}
 

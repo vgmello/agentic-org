@@ -261,6 +261,7 @@ html[data-ui-theme='report'] {
 	--triage-row-selected: #d6e2f0;
 	--work-row-hover: #eaedf3;
 	--work-row-selected: #d6e2f0;
+	--side-panel-surface: #ffffff;
 }
 
 /* ── Shared Modern 2D Executive Report Layout Tokens (Day & Night) ── */
@@ -539,7 +540,6 @@ html[data-ui-theme='report'] .exec-legacy-compat [data-slot='badge'] {
 
 @media (min-width: 640px) and (forced-colors: none) {
 	html[data-ui-theme='report'] {
-		--sidebar-edge-shadow: rgb(46 65 88 / 0.12);
 		--sidebar-top-light: rgb(255 255 255 / 0.96);
 		--page-header-light: rgb(136 159 188 / 0.065);
 	}

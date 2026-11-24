@@ -364,8 +364,12 @@
 				</div>
 			</header>
 
-			<!-- Two-column body: main column + side column -->
-			<div class="grid gap-6 {gutters} py-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+			<!-- Two-column body: main column + side column (container-responsive when embedded in WorkReadingPanel) -->
+			<div
+				class="grid gap-6 {gutters} py-6 {embedded
+					? 'work-detail-embedded-grid'
+					: 'lg:grid-cols-[minmax(0,1fr)_22rem]'}"
+			>
 				<div class="flex min-w-0 flex-col gap-6">
 					<!-- Edit title & description inline form -->
 					{#if editing}
@@ -678,3 +682,14 @@
 		{/if}
 	{/snippet}
 </Loaded>
+
+<style>
+	.work-detail-embedded-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	@container work-reading (min-width: 56rem) {
+		.work-detail-embedded-grid {
+			grid-template-columns: minmax(0, 1fr) 22rem;
+		}
+	}
+</style>

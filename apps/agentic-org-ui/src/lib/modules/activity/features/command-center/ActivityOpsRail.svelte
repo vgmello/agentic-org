@@ -7,11 +7,13 @@
 	let {
 		model,
 		loading = false,
-		unavailableReason = undefined
+		unavailableReason = undefined,
+		embedded = false
 	}: {
 		model: ActivityCommandCenterModel;
 		loading?: boolean;
 		unavailableReason?: string;
+		embedded?: boolean;
 	} = $props();
 
 	const agentsCapacity = $derived(
@@ -22,13 +24,24 @@
 	const dataUnavailable = $derived(loading || Boolean(unavailableReason));
 </script>
 
-<aside class="ops-rail activity-rail" aria-label="Operational context">
+{#snippet railSections()}
 	<!-- 1. Release Gates -->
-	<section class="ops-section" aria-labelledby="ops-gates-heading">
-		<div class="ops-section-head">
-			<h2 id="ops-gates-heading">Release gates</h2>
-			<span class="ops-section-meta">{model.scopeTitle}</span>
-		</div>
+	<section
+		class="ops-section"
+		aria-labelledby={embedded ? undefined : 'ops-gates-heading'}
+		aria-label={embedded ? 'Release gates' : undefined}
+	>
+		{#if !embedded}
+			<div class="ops-section-head">
+				<h2 id="ops-gates-heading">Release gates</h2>
+				<span class="ops-section-meta">{model.scopeTitle}</span>
+			</div>
+		{:else}
+			<div class="ops-section-head">
+				<span class="ops-sub-label">Scope</span>
+				<span class="ops-section-meta">{model.scopeTitle}</span>
+			</div>
+		{/if}
 
 		{#if loading}
 			<p class="ops-note">Loading release gates…</p>
@@ -97,7 +110,11 @@
 	<!-- 2. Stations -->
 	<section class="ops-section" aria-labelledby="ops-stations-heading">
 		<div class="ops-section-head">
-			<h2 id="ops-stations-heading">Stations</h2>
+			{#if embedded}
+				<h3 id="ops-stations-heading">Stations</h3>
+			{:else}
+				<h2 id="ops-stations-heading">Stations</h2>
+			{/if}
 			<span class="ops-section-meta">live counts</span>
 		</div>
 		{#if loading}
@@ -132,7 +149,11 @@
 	<!-- 3. Throughput (7d) -->
 	<section class="ops-section" aria-labelledby="ops-throughput-heading">
 		<div class="ops-section-head">
-			<h2 id="ops-throughput-heading">Throughput (7d)</h2>
+			{#if embedded}
+				<h3 id="ops-throughput-heading">Throughput (7d)</h3>
+			{:else}
+				<h2 id="ops-throughput-heading">Throughput (7d)</h2>
+			{/if}
 			<span class="ops-section-meta tabular-nums">{model.throughputMeta}</span>
 		</div>
 		{#if model.throughputSource === 'unavailable'}
@@ -163,7 +184,11 @@
 	<!-- 4. Active Agents -->
 	<section class="ops-section" aria-labelledby="ops-agents-heading">
 		<div class="ops-section-head">
-			<h2 id="ops-agents-heading">Active agents</h2>
+			{#if embedded}
+				<h3 id="ops-agents-heading">Active agents</h3>
+			{:else}
+				<h2 id="ops-agents-heading">Active agents</h2>
+			{/if}
 			<span class="ops-section-meta tabular-nums">{dataUnavailable ? '—' : agentsCapacity}</span>
 		</div>
 
@@ -205,7 +230,17 @@
 			{/if}
 		{/if}
 	</section>
-</aside>
+{/snippet}
+
+{#if embedded}
+	<div class="ops-rail activity-rail is-embedded">
+		{@render railSections()}
+	</div>
+{:else}
+	<aside class="ops-rail activity-rail" aria-label="Operational context">
+		{@render railSections()}
+	</aside>
+{/if}
 
 <style>
 	.ops-rail {
@@ -218,6 +253,16 @@
 		-webkit-backdrop-filter: var(--exec-blur);
 		backdrop-filter: var(--exec-blur);
 		padding: 4px 16px;
+	}
+
+	.ops-rail.is-embedded {
+		border: 0;
+		border-radius: 0;
+		background-color: transparent;
+		background-image: none;
+		-webkit-backdrop-filter: none;
+		backdrop-filter: none;
+		padding: 0 var(--activity-panel-padding, 16px) 24px;
 	}
 
 	.ops-section {
@@ -238,9 +283,10 @@
 		min-width: 0;
 	}
 
-	.ops-section h2 {
+	.ops-section h2,
+	.ops-section h3 {
 		color: var(--exec-ink);
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		font-weight: 650;
 		flex-shrink: 0;
 	}
@@ -561,22 +607,22 @@
 	}
 
 	@media (min-width: 640px) and (max-width: 1249px) {
-		.ops-rail {
+		.ops-rail:not(.is-embedded) {
 			display: grid;
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 			gap: 16px;
 			padding: 16px;
 		}
-		.ops-section {
+		.ops-rail:not(.is-embedded) .ops-section {
 			padding: 0;
 		}
-		.ops-section + .ops-section {
+		.ops-rail:not(.is-embedded) .ops-section + .ops-section {
 			border-top: 0;
 		}
 	}
 
 	@media (min-width: 960px) and (max-width: 1249px) {
-		.ops-rail {
+		.ops-rail:not(.is-embedded) {
 			grid-template-columns: repeat(4, minmax(0, 1fr));
 			gap: 14px;
 		}

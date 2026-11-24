@@ -262,6 +262,7 @@ html[data-ui-theme='graphite'] {
 	--exec-hor-date-bg: var(--graphite-panel);
 	--exec-hor-date-month-ink: #a2a5ad;
 	--exec-hor-date-day-ink: #f1f1f3;
+	--side-panel-surface: #18191a;
 }
 
 html[data-ui-theme='graphite'] .exec-canvas::before,
@@ -319,7 +320,7 @@ html[data-ui-theme='graphite'] .exec-theme-pill.is-on {
 
 @media (min-width: 640px) and (forced-colors: none) {
 	html[data-ui-theme='graphite'] {
-		--sidebar-edge-shadow: rgb(0 0 0 / 0.37);
+		--sidebar-edge-shade: linear-gradient(to left, rgb(0 0 0 / 0.37), transparent 4px);
 		--sidebar-top-light: rgb(255 255 255 / 0.075);
 		--page-header-light: rgb(255 255 255 / 0.035);
 	}

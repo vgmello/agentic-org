@@ -63,6 +63,10 @@
 	--exec-blur: none;
 	--exec-shadow: inset 0 0 0 1px var(--exec-border);
 	--exec-shadow-hi: inset 0 0 0 1px var(--exec-border-hi);
+	--side-panel-scrim: rgb(0 0 0 / 0.24);
+	--side-panel-shadow: -12px 0 28px -16px rgb(0 0 0 / 0.38);
+	--activity-panel-shadow: -6px 0 12px -6px rgb(0 0 0 / 0.24);
+	--tooltip-shadow: 0 4px 12px rgb(0 0 0 / 0.22);
 	--exec-ink: #ffffff;
 	--exec-body: #d1d5dc;
 	--exec-muted: #99a1af;
@@ -293,6 +297,9 @@
 	--exec-hor-date-bg: var(--exec-bg);
 	--exec-hor-date-month-ink: var(--exec-dim);
 	--exec-hor-date-day-ink: var(--exec-ink);
+
+	/* Sliding side-panel and docked Activity tools surface (Prototype Release 3c4e3541) */
+	--side-panel-surface: var(--surface-sunken, var(--exec-bg));
 }
 
 /* Report-only vs standard section labels (poc/v6.html:3246-3248) */
@@ -338,11 +345,9 @@ html[data-ui-theme='ocean'] {
 	color: var(--exec-ink);
 }
 
-/* Wash the top of the sidebar with light and shade the recessed edge (poc/operations.css aa02c1ee..2c58edcd) */
+/* Wash the top of the sidebar with light; recessed edge shade is Graphite-only (Prototype Release 3c4e3541) */
 @media (min-width: 640px) and (forced-colors: none) {
 	html[data-ui-theme] {
-		--sidebar-edge-shadow: rgb(6 12 24 / 0.26);
-		--sidebar-edge-shade: linear-gradient(to left, var(--sidebar-edge-shadow), transparent 4px);
 		--sidebar-top-light: rgb(198 220 248 / 0.085);
 		--page-header-light: rgb(198 220 248 / 0.045);
 	}
@@ -354,7 +359,7 @@ html[data-ui-theme='ocean'] {
 		z-index: -1;
 		pointer-events: none;
 		background:
-			var(--sidebar-edge-shade),
+			var(--sidebar-edge-shade, none),
 			radial-gradient(
 				ellipse 110% 330px at 0 -95px,
 				var(--sidebar-top-light),

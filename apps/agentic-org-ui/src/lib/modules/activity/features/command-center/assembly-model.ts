@@ -1037,12 +1037,13 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 		const totalCount = lanes.reduce((sum, l) => sum + l.totalCount, 0);
 		const isComplete = totalCount > 0 && doneCount === totalCount;
 		const pct = computeCompletionPct(doneCount, totalCount);
+		const completeTracks = lanes.filter((l) => l.isComplete).length;
 		const trackWord = lanes.length === 1 ? 'track' : 'tracks';
 		milestones.push({
 			id: project.id,
 			name: project.name,
 			key: project.key,
-			summary: `${pct}% · ${doneCount}/${totalCount} done · ${lanes.length} ${trackWord}`,
+			summary: `${pct}% · ${doneCount}/${totalCount} tasks · ${completeTracks}/${lanes.length} ${trackWord}${isComplete ? ' · Complete' : ''}`,
 			doneCount,
 			totalCount,
 			pct,
@@ -1068,11 +1069,12 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 			const totalCount = lanes.reduce((sum, l) => sum + l.totalCount, 0);
 			const isComplete = totalCount > 0 && doneCount === totalCount;
 			const pct = computeCompletionPct(doneCount, totalCount);
+			const completeTracks = lanes.filter((l) => l.isComplete).length;
 			const trackWord = lanes.length === 1 ? 'track' : 'tracks';
 			milestones.push({
 				id: '__unassigned__',
 				name: 'Organization',
-				summary: `${pct}% · ${doneCount}/${totalCount} done · ${lanes.length} ${trackWord}`,
+				summary: `${pct}% · ${doneCount}/${totalCount} tasks · ${completeTracks}/${lanes.length} ${trackWord}${isComplete ? ' · Complete' : ''}`,
 				doneCount,
 				totalCount,
 				pct,

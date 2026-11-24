@@ -287,6 +287,7 @@ html[data-ui-theme='cozy'] {
 	--exec-hor-date-bg: rgba(16, 13, 11, 0.56);
 	--exec-hor-date-month-ink: #c6bab0;
 	--exec-hor-date-day-ink: #faf6f0;
+	--side-panel-surface: #352b22;
 }
 
 /* Cozy Glass High Contrast mode (`data-cozy-contrast='high'`) */
@@ -352,6 +353,7 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high'] {
 	--exec-scroll-hint-pill-bg: #1a1512;
 	--exec-scroll-hint-ink: #ffffff;
 	--exec-scroll-hint-ink-hover: #ffffff;
+	--side-panel-surface: #1a1512;
 }
 
 /* Ambient Cozy studio room & full-bleed glass shell (only active in Cozy Glass) */
@@ -584,13 +586,16 @@ html[data-ui-theme='cozy'] .work-bcard:is(:hover, :focus-within) {
 	box-shadow: var(--cozy-panel-shadow-hi);
 }
 
-/* Cozy Glass Activity surfaces (poc/cozy.css 580b6715): frosted assembly/rail panels, borderless timeline feed */
-html[data-ui-theme='cozy'] :is(.assembly-view, .activity-rail) {
+/* Cozy Glass Activity surfaces (poc/cozy.css 3c4e3541): warm panel background on Assembly, opaque --side-panel-surface on dock & tools */
+html[data-ui-theme='cozy'] .assembly-view {
 	background-color: var(--exec-surface);
 	background-image: var(--cozy-panel-sheen);
-	-webkit-backdrop-filter: blur(20px) saturate(125%);
-	backdrop-filter: blur(20px) saturate(125%);
-	box-shadow: var(--cozy-panel-shadow);
+	box-shadow: none;
+}
+
+html[data-ui-theme='cozy'] :is(.activity-panel, .activity-tools) {
+	background: var(--side-panel-surface);
+	box-shadow: none;
 }
 
 html[data-ui-theme='cozy'] .activity-feed {
@@ -695,6 +700,7 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high']
 		--exec-cmdk-bg-hover: #241e19;
 		--exec-cmdk-blur: none;
 		--exec-cta-glass-blur: none;
+		--side-panel-surface: #1a1512;
 	}
 
 	html[data-ui-theme='cozy'] .chat-frame,

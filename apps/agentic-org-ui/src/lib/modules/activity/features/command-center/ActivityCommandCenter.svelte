@@ -1,10 +1,13 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { Tooltip } from 'bits-ui';
 	import Activity from '@lucide/svelte/icons/activity';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import Flag from '@lucide/svelte/icons/flag';
 	import Layers from '@lucide/svelte/icons/layers';
 	import { activityApi } from '$lib/modules/activity/api';
 	import type { ActivityQuery, ActivityRow } from '$lib/modules/activity/types';
@@ -40,6 +43,8 @@
 
 	// CRITICAL DEFAULT: Assembly Line Matrix is shown FIRST by default.
 	let viewMode = $state<'assembly' | 'feed'>('assembly');
+	let panelOpen = $state(typeof window !== 'undefined' ? window.innerWidth >= 1024 : true);
+	let toolsBtnEl = $state<HTMLButtonElement | null>(null);
 	let projectScope = $state<string>('all');
 	let streamFilter = $state<StreamFilterTab>('all');
 	let activityRows = $state.raw<ActivityRow[] | undefined>(undefined);
@@ -782,9 +787,40 @@
 		const tablist = (event.currentTarget as HTMLElement | null)?.closest('[role="tablist"]');
 		tablist?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
 	}
+
+	function attachReleasePanelEscape() {
+		// Bubble-phase window listener runs after Bits UI's document-level EscapeLayer so open tooltips
+		// consume the first Escape and a second Escape collapses the Release gates dock.
+		const onEscapeKey = (event: KeyboardEvent) => {
+			if (
+				event.defaultPrevented ||
+				event.isComposing ||
+				event.keyCode === 229 ||
+				event.key !== 'Escape' ||
+				event.repeat ||
+				!panelOpen
+			) {
+				return;
+			}
+			const target = event.target;
+			if (
+				!(target instanceof Element) ||
+				!target.closest('#activity-release-panel, .activity-tools')
+			) {
+				return;
+			}
+			event.preventDefault();
+			panelOpen = false;
+			toolsBtnEl?.focus();
+		};
+		window.addEventListener('keydown', onEscapeKey);
+		return () => {
+			window.removeEventListener('keydown', onEscapeKey);
+		};
+	}
 </script>
 
-<div class="act-page cmd-page">
+<div class="act-page cmd-page activity-workspace" {@attach attachReleasePanelEscape}>
 	{#if showLiveBanner}
 		<div class="cmd-live-banner" role="status" tabindex="-1">
 			<span class="cmd-live-text">
@@ -954,10 +990,10 @@
 		</div>
 	</div>
 
-	<div class="cmd-body">
-		<!-- Responsive 2-Column Main + Operational Rail -->
-		<div class="cmd-layout activity-layout">
-			<div class="cmd-main">
+	<!-- Collapsible Release Gates Dock + Slim Tool Rail (poc/operations.css 3c4e3541) -->
+	<Tooltip.Provider delayDuration={150} ignoreNonKeyboardFocus>
+		<div class="activity-body" data-panel-open={panelOpen ? '' : undefined}>
+			<div class="activity-main" data-view={viewMode}>
 				{#if viewMode === 'assembly'}
 					<AssemblyLineMatrix
 						{model}
@@ -967,44 +1003,126 @@
 						onRetry={retryShellAndInbox}
 					/>
 				{:else}
-					<ActivityStreamPanel
-						entries={model.streamEntries}
-						{decisionEntries}
-						needsYouCount={model.streamNeedsYouCount}
-						openInboxCount={inboxPhase === 'ready' ? model.openInboxCount : 0}
-						actionableWorkCount={workPhase === 'ready' ? model.actionableWorkCount : 0}
-						bottleneck={model.bottleneck}
-						bind:activeFilter={streamFilter}
-						showTabs={false}
-						{nowMs}
-						{feedPhase}
-						{feedError}
-						{feedMore}
-						{decisionPhase}
-						{decisionError}
-						{decisionMore}
-						{inboxPhase}
-						{workPhase}
-						onRetry={retryFeed}
-						onRetryDecisions={retryDecisions}
-					/>
+					<div class="activity-stream-pad">
+						<ActivityStreamPanel
+							entries={model.streamEntries}
+							{decisionEntries}
+							needsYouCount={model.streamNeedsYouCount}
+							openInboxCount={inboxPhase === 'ready' ? model.openInboxCount : 0}
+							actionableWorkCount={workPhase === 'ready' ? model.actionableWorkCount : 0}
+							bottleneck={model.bottleneck}
+							bind:activeFilter={streamFilter}
+							showTabs={false}
+							{nowMs}
+							{feedPhase}
+							{feedError}
+							{feedMore}
+							{decisionPhase}
+							{decisionError}
+							{decisionMore}
+							{inboxPhase}
+							{workPhase}
+							onRetry={retryFeed}
+							onRetryDecisions={retryDecisions}
+						/>
+					</div>
 				{/if}
 			</div>
 
-			<ActivityOpsRail {model} loading={!shellReady} unavailableReason={workUnavailableReason} />
+			<aside
+				id="activity-release-panel"
+				class="activity-panel"
+				aria-label="Release gates and operational context"
+				inert={!panelOpen ? true : undefined}
+			>
+				<div class="side-panel-header">
+					<h2>Release gates</h2>
+					<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									type="button"
+									aria-label="Hide release gates"
+									onclick={() => {
+										panelOpen = false;
+										toolsBtnEl?.focus();
+									}}
+									class="activity-tool-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+								>
+									<ChevronRight class="size-4" aria-hidden="true" />
+								</button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Portal>
+							<Tooltip.Content
+								side="left"
+								sideOffset={6}
+								escapeKeydownBehavior="defer-otherwise-close"
+								class="activity-tooltip-content"
+							>
+								Hide release gates
+							</Tooltip.Content>
+						</Tooltip.Portal>
+					</Tooltip.Root>
+				</div>
+
+				<ActivityOpsRail
+					{model}
+					loading={!shellReady}
+					unavailableReason={workUnavailableReason}
+					embedded
+				/>
+			</aside>
+
+			<div class="activity-tools">
+				<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus>
+					<Tooltip.Trigger>
+						{#snippet child({ props })}
+							<button
+								{...props}
+								bind:this={toolsBtnEl}
+								type="button"
+								aria-expanded={panelOpen}
+								aria-controls="activity-release-panel"
+								aria-label={panelOpen ? 'Hide release gates' : 'Show release gates'}
+								data-testid="activity-gates-toggle"
+								onclick={() => (panelOpen = !panelOpen)}
+								class="activity-tool-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+							>
+								<Flag class="size-4" aria-hidden="true" />
+							</button>
+						{/snippet}
+					</Tooltip.Trigger>
+					<Tooltip.Portal>
+						<Tooltip.Content
+							side="left"
+							sideOffset={6}
+							escapeKeydownBehavior="defer-otherwise-close"
+							class="activity-tooltip-content"
+						>
+							{panelOpen ? 'Hide release gates' : 'Show release gates'}
+						</Tooltip.Content>
+					</Tooltip.Portal>
+				</Tooltip.Root>
+			</div>
 		</div>
-	</div>
+	</Tooltip.Provider>
 </div>
 
 <style>
 	.cmd-page {
 		--activity-gutter: 24px;
+		--control-height: 36px;
 		display: flex;
+		flex: 1 1 auto;
 		flex-direction: column;
 		width: 100%;
 		min-width: 0;
+		min-height: 0;
 		max-width: 100%;
-		padding: 0 0 48px;
+		padding: 0;
+		container: activity / inline-size;
 	}
 
 	@media (min-width: 640px) {
@@ -1016,6 +1134,7 @@
 	@media (max-width: 720px), (pointer: coarse) {
 		.cmd-page {
 			--activity-gutter: 16px;
+			--control-height: 44px;
 		}
 	}
 
@@ -1320,24 +1439,164 @@
 		outline-offset: 2px;
 	}
 
-	.cmd-layout {
+	.activity-body {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr);
-		align-items: start;
-		gap: 20px;
+		flex: 1 1 auto;
+		min-height: 0;
 		min-width: 0;
+		max-width: 100%;
+		grid-template-columns: minmax(0, 1fr) 0px calc(var(--control-height, 36px) + 16px);
+		grid-template-rows: minmax(0, 1fr);
+		grid-template-areas: 'main panel tools';
+		--activity-panel-padding: clamp(14px, 2cqi, 22px);
+	}
+
+	.activity-body[data-panel-open] {
+		grid-template-columns: minmax(0, 1fr) clamp(17rem, 27%, 24rem) calc(
+				var(--control-height, 36px) + 16px
+			);
+	}
+
+	.activity-main,
+	.activity-panel {
+		min-width: 0;
+		overflow: auto;
+		overscroll-behavior: contain;
+	}
+
+	.activity-main {
+		grid-area: main;
 		max-width: 100%;
 	}
 
-	.cmd-main {
-		min-width: 0;
-		max-width: 100%;
+	.activity-main[data-view='assembly'] {
+		display: flex;
+		flex-direction: column;
 	}
 
-	@media (min-width: 1250px) {
-		.cmd-layout,
-		.activity-layout:has(:global(.activity-feed)) {
-			grid-template-columns: minmax(0, 1fr) minmax(246px, 280px);
+	.activity-stream-pad {
+		padding: 18px var(--activity-gutter) 32px;
+	}
+
+	.activity-panel {
+		grid-area: panel;
+		visibility: hidden;
+		overflow-x: hidden;
+		z-index: 1;
+		background: var(--side-panel-surface, var(--exec-surface));
+		border-inline-start: 1px solid var(--line);
+		box-shadow: var(--activity-panel-shadow);
+	}
+
+	.activity-body[data-panel-open] .activity-panel {
+		visibility: visible;
+	}
+
+	.side-panel-header {
+		position: sticky;
+		inset-block-start: 0;
+		z-index: 1;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		padding: 8px var(--activity-panel-padding);
+		border-block-end: 1px solid var(--line);
+		background: var(--side-panel-surface, var(--exec-surface));
+	}
+
+	.side-panel-header h2 {
+		margin: 0;
+		color: var(--exec-ink);
+		font-size: 0.9375rem;
+		font-weight: 650;
+	}
+
+	.activity-tools {
+		grid-area: tools;
+		z-index: 2;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 4px;
+		padding-block: 8px;
+		border-inline-start: 1px solid var(--line);
+		background: var(--side-panel-surface, var(--exec-surface));
+	}
+
+	.activity-tool-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border: 0;
+		border-radius: var(--exec-ctrl-radius, 6px);
+		background: transparent;
+		color: var(--fg-secondary);
+		cursor: pointer;
+	}
+
+	.activity-tool-btn:hover {
+		background: var(--exec-well);
+		color: var(--exec-ink);
+	}
+
+	.activity-tool-btn[aria-expanded='true'] {
+		background: var(--exec-well);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--line-strong);
+	}
+
+	.activity-tool-btn:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 1px;
+	}
+
+	:global(.activity-tooltip-content) {
+		z-index: 60;
+		padding: 4px 8px;
+		border: 1px solid var(--line-strong);
+		border-radius: var(--exec-sm-radius, 6px);
+		background: var(--side-panel-surface, var(--surface-overlay, var(--exec-surface)));
+		color: var(--exec-ink);
+		font-size: 0.75rem;
+		font-weight: 500;
+		line-height: 1.3;
+		box-shadow: var(--tooltip-shadow);
+		pointer-events: none;
+	}
+
+	@container activity (max-width: 42.5rem) {
+		.activity-body,
+		.activity-body[data-panel-open] {
+			grid-template-columns: minmax(0, 1fr) calc(var(--control-height, 36px) + 16px);
+			grid-template-rows: minmax(0, 1fr) 0px;
+			grid-template-areas:
+				'main tools'
+				'panel tools';
+		}
+
+		.activity-body[data-panel-open] {
+			grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
+		}
+
+		.activity-panel {
+			border-inline-start: 0;
+			border-block-start: 1px solid var(--line);
+			box-shadow: none;
+		}
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.activity-body {
+			transition: grid-template-columns 220ms cubic-bezier(0.2, 0.7, 0.25, 1);
+		}
+
+		.activity-panel {
+			transition: visibility 0s 220ms;
+		}
+
+		.activity-body[data-panel-open] .activity-panel {
+			transition-delay: 0s;
 		}
 	}
 
@@ -1361,7 +1620,8 @@
 		}
 		.cmd-needs-pill,
 		.cmd-live-banner,
-		.cmd-live-reconnect {
+		.cmd-live-reconnect,
+		.activity-tool-btn[aria-expanded='true'] {
 			border: 1px solid CanvasText;
 		}
 	}
