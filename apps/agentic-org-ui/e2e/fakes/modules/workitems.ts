@@ -444,7 +444,7 @@ function buildPocStore(): Map<string, StoredTask> {
 	const memberRef = (id: string | undefined): EmployeeRef | null => {
 		if (!id) return null;
 		const m = members.find((x) => x.id === id);
-		if (!m) return null;
+		if (!m || (m.kind !== 'person' && m.kind !== 'agent')) return null;
 		return { id: m.id, name: m.name, kind: m.kind };
 	};
 	const fallbackReporter: EmployeeRef = memberRef('ada') ?? {
@@ -481,6 +481,11 @@ function buildPocStore(): Map<string, StoredTask> {
 		if (s === 'cancelled') return 'cancelled';
 		return 'todo';
 	};
+	const mapType = (k: string): TaskDetail['type'] => (k === 'bug' || k === 'request' ? k : 'task');
+	const mapPriority = (p: string | undefined): TaskDetail['priority'] =>
+		p === 'urgent' || p === 'high' || p === 'normal' || p === 'low' ? p : 'normal';
+	const mapSeverity = (s: string | undefined): TaskDetail['severity'] =>
+		s === 'critical' || s === 'major' || s === 'minor' || s === 'trivial' ? s : null;
 
 	for (const w of pocWorkItems()) {
 		const pIdx = projects.findIndex((p) => p.id === w.project_id);
@@ -527,15 +532,18 @@ function buildPocStore(): Map<string, StoredTask> {
 			}
 		];
 
+		const itemType = mapType(w.kind);
+		const itemPriority = mapPriority(w.priority);
+		const itemSeverity = itemType === 'bug' ? mapSeverity(w.severity) : null;
 		const detail: TaskDetail = {
 			id: w.id,
 			ref: w.short_id,
-			type: w.kind,
+			type: itemType,
 			title: w.title,
 			description,
 			status,
-			priority: w.priority ?? 'normal',
-			severity: w.kind === 'bug' ? (w.severity ?? null) : null,
+			priority: itemPriority,
+			severity: itemSeverity,
 			effort: null,
 			project: proj ? { id: proj.id, name: proj.name, number: pIdx + 1 } : null,
 			team: ownerTeam,
@@ -594,8 +602,8 @@ function buildPocStore(): Map<string, StoredTask> {
 								steps: null,
 								environment: 'HQ macOS office',
 								reported: {
-									severity: w.severity ?? null,
-									priority: w.priority ?? 'normal',
+									severity: itemSeverity,
+									priority: itemPriority,
 									at: w.created_at,
 									by: reporter
 								}
@@ -799,13 +807,19 @@ async function loadChoices(organizationId: string): Promise<Choices> {
 		.sort((a, b) => a.path.localeCompare(b.path));
 	const employees = snapshot.members
 		.filter((m) => m.agent?.status !== 'offboarded')
-		.map((m) => ({
-			id: m.id,
-			name: m.name,
-			kind: m.kind,
-			role: m.agent?.role ?? m.title_in_team,
-			availability: m.agent ? 'Available' : 'Person'
-		}))
+		.flatMap((m) =>
+			m.kind === 'person' || m.kind === 'agent'
+				? [
+						{
+							id: m.id,
+							name: m.name,
+							kind: m.kind,
+							role: m.agent?.role ?? m.title_in_team,
+							availability: m.agent ? 'Available' : 'Person'
+						}
+					]
+				: []
+		)
 		.sort((a, b) => a.name.localeCompare(b.name));
 	const seeds = projectsData.projects as Record<string, { number: number; owner?: string }>;
 	const projects: ProjectChoice[] = (snapshot.projects ?? []).map((p, idx) => {
