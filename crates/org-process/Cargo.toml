@@ -9,3 +9,6 @@ publish = false
 [dependencies]
 org-docs = { path = "../org-docs" }
 serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -47,3 +47,6 @@ tokio = { workspace = true, features = ["test-util"] }
 [build-dependencies]
 # build.rs embed_release_trust: validates the public publisher registry at build time.
 org-release = { path = "../../crates/org-release" }
+
+[lints]
+workspace = true

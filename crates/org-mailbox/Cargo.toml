@@ -12,3 +12,6 @@ testkit = []
 org-proto = { path = "../org-proto" }
 serde_json.workspace = true
 sha2.workspace = true
+
+[lints]
+workspace = true

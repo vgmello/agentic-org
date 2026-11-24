@@ -33,7 +33,7 @@
 //! is asked anything. `agentic-org serve --setup <file>` runs exactly that and then serves.
 use std::ffi::OsString;
 use std::io::Write;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, BorrowedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -1215,9 +1215,6 @@ pub(crate) fn run_at(
     // Whether this run froze the record from a file: if a later step of the reservation
     // refuses, the record is taken away again, so that nothing this run saved remains.
     let mut froze_from_file = false;
-    // Whether this run reserved the instance (or continued a reservation it had not
-    // finished): it reports the modes of the instance folder.
-    let mut reserved_now = false;
     // The address of a file's configuration, held from its check until the instance is
     // reserved with it, and beyond (`preflight`).
     let mut held = None;
@@ -1333,94 +1330,16 @@ pub(crate) fn run_at(
     // starts, since the host reserves the instance again.
     let registry = Registry::open(&paths.locator, &paths.user_temp)
         .map_err(|e| fail("opening the instance locator", e))?;
-    let (instance_id, socket) = match &record.instance_id {
-        Some(recorded) => {
-            // The runtime folders are not kept: a cache that was cleared since (a container
-            // started on its volumes again) has none, and they are made again here, as the
-            // host makes them at its start (X5 review, fourth round, P1-4).
-            registry
-                .restore_temp_folders()
-                .map_err(|e| fail("restoring instance temp folders", e))?;
-            let (id, temp) = registry
-                .locate(name, &record.input.root)
-                .map_err(|e| fail("locating the instance", e))?;
-            if &id != recorded {
-                return Err(
-                    "the reserved instance is not the one setup recorded; nothing was changed"
-                        .into(),
-                );
-            }
-            (id, temp.join("host.sock"))
-        }
-        None => {
-            reserved_now = true;
-            let reserve = |record: &mut Record| -> Result<(String, PathBuf), String> {
-                registry
-                    .restore_temp_folders()
-                    .map_err(|e| fail("restoring instance temp folders", e))?;
-                let reserved = {
-                    let instance = registry
-                        .reserve(name, &record.input.root)
-                        .map_err(|e| fail("reserving the instance", e))?;
-                    instance
-                        .set_browser(&record.input.listen)
-                        .map_err(|e| fail("recording the instance address", e))?;
-                    instance
-                        .prepare_layout()
-                        .map_err(|e| fail("preparing the instance folder", e))?;
-                    // While the root lock is held: the directory is checked against the root
-                    // itself, and recorded together with the instance it belongs to.
-                    record.credentials = match (&record.input.credentials, &platform.credentials) {
-                        // The configuration names it. In the foreground mode it is a mounted
-                        // volume, which setup never makes.
-                        (Some(configured), _) if record.input.service == Service::Foreground => {
-                            Some(unused_mounted_store(
-                                configured,
-                                instance.root_descriptor(),
-                                records.as_fd(),
-                            )?)
-                        }
-                        (Some(configured), _) => Some(use_credential_directory(
-                            configured,
-                            instance.root_descriptor(),
-                            Path::new("/"),
-                            unused_as_the_host_will(records.as_fd()),
-                        )?),
-                        (None, CredentialDirectory::Below(base)) => {
-                            Some(make_credential_directory(
-                                base,
-                                instance.id(),
-                                instance.root_descriptor(),
-                                Path::new("/"),
-                                open_as_the_host_will(records.as_fd()),
-                            )?)
-                        }
-                        (None, CredentialDirectory::Unused) => None,
-                    };
-                    (
-                        instance.id().to_owned(),
-                        instance.temp_folder().join("host.sock"),
-                    )
-                };
-                record.instance_id = Some(reserved.0.clone());
-                journal.write(record).map_err(|e| fail("saving setup", e))?;
-                Ok(reserved)
-            };
-            match reserve(&mut record) {
-                Ok(reserved) => reserved,
-                Err(refused) => {
-                    return Err(refused_reservation(
-                        refused,
-                        &registry,
-                        &journal,
-                        froze_from_file,
-                        name,
-                        &record.input,
-                    ))
-                }
-            }
-        }
-    };
+    let reserved_now = record.instance_id.is_none();
+    let (instance_id, socket) = reserve_setup_instance(
+        &registry,
+        &journal,
+        platform,
+        records.as_fd(),
+        name,
+        &mut record,
+        froze_from_file,
+    )?;
     if let Some(credentials) = &record.credentials {
         say(out, format!("Secrets: {}", credentials.display()))?;
     }
@@ -1475,12 +1394,130 @@ pub(crate) fn run_at(
     if let Some(folder) = &development {
         development_folder(folder, &record.input.root)?;
     }
-    let service_id = service_id(&instance_id);
+    start_registered_setup(
+        platform,
+        request,
+        out,
+        &journal,
+        &mut record,
+        &instance_id,
+        &socket,
+    )
+    .map(|()| None)
+}
+
+fn reserve_setup_instance(
+    registry: &Registry,
+    journal: &Journal,
+    platform: &Platform,
+    records: BorrowedFd<'_>,
+    name: Option<&str>,
+    record: &mut Record,
+    froze_from_file: bool,
+) -> Result<(String, PathBuf), String> {
+    match &record.instance_id {
+        Some(recorded) => {
+            // The runtime folders are not kept: a cache that was cleared since (a container
+            // started on its volumes again) has none, and they are made again here, as the
+            // host makes them at its start (X5 review, fourth round, P1-4).
+            registry
+                .restore_temp_folders()
+                .map_err(|e| fail("restoring instance temp folders", e))?;
+            let (id, temp) = registry
+                .locate(name, &record.input.root)
+                .map_err(|e| fail("locating the instance", e))?;
+            if &id != recorded {
+                return Err(
+                    "the reserved instance is not the one setup recorded; nothing was changed"
+                        .into(),
+                );
+            }
+            Ok((id, temp.join("host.sock")))
+        }
+        None => {
+            let reserve = |record: &mut Record| -> Result<(String, PathBuf), String> {
+                registry
+                    .restore_temp_folders()
+                    .map_err(|e| fail("restoring instance temp folders", e))?;
+                let reserved = {
+                    let instance = registry
+                        .reserve(name, &record.input.root)
+                        .map_err(|e| fail("reserving the instance", e))?;
+                    instance
+                        .set_browser(&record.input.listen)
+                        .map_err(|e| fail("recording the instance address", e))?;
+                    instance
+                        .prepare_layout()
+                        .map_err(|e| fail("preparing the instance folder", e))?;
+                    // While the root lock is held: the directory is checked against the root
+                    // itself, and recorded together with the instance it belongs to.
+                    record.credentials = match (&record.input.credentials, &platform.credentials) {
+                        // The configuration names it. In the foreground mode it is a mounted
+                        // volume, which setup never makes.
+                        (Some(configured), _) if record.input.service == Service::Foreground => {
+                            Some(unused_mounted_store(
+                                configured,
+                                instance.root_descriptor(),
+                                records,
+                            )?)
+                        }
+                        (Some(configured), _) => Some(use_credential_directory(
+                            configured,
+                            instance.root_descriptor(),
+                            Path::new("/"),
+                            unused_as_the_host_will(records),
+                        )?),
+                        (None, CredentialDirectory::Below(base)) => {
+                            Some(make_credential_directory(
+                                base,
+                                instance.id(),
+                                instance.root_descriptor(),
+                                Path::new("/"),
+                                open_as_the_host_will(records),
+                            )?)
+                        }
+                        (None, CredentialDirectory::Unused) => None,
+                    };
+                    (
+                        instance.id().to_owned(),
+                        instance.temp_folder().join("host.sock"),
+                    )
+                };
+                record.instance_id = Some(reserved.0.clone());
+                journal.write(record).map_err(|e| fail("saving setup", e))?;
+                Ok(reserved)
+            };
+            reserve(record).map_err(|refused| {
+                refused_reservation(
+                    refused,
+                    registry,
+                    journal,
+                    froze_from_file,
+                    name,
+                    &record.input,
+                )
+            })
+        }
+    }
+}
+
+fn start_registered_setup(
+    platform: &Platform,
+    request: Request<'_>,
+    out: &mut dyn Write,
+    journal: &Journal,
+    record: &mut Record,
+    instance_id: &str,
+    socket: &Path,
+) -> Result<(), String> {
+    let name = request.name.as_deref();
+    let shown = name.unwrap_or("default");
+    let service_id = service_id(instance_id);
     let unit = Unit {
         instance_id: service_id.clone(),
-        program: request.program.clone(),
+        program: request.program,
         args: ["serve", "--name", shown].map(OsString::from).to_vec(),
-        env: std::mem::take(&mut request.env),
+        env: request.env,
     };
     platform
         .service
@@ -1488,9 +1525,7 @@ pub(crate) fn run_at(
         .map_err(|e| fail("registering the service", e))?;
     if !record.service_registered {
         record.service_registered = true;
-        journal
-            .write(&record)
-            .map_err(|e| fail("saving setup", e))?;
+        journal.write(record).map_err(|e| fail("saving setup", e))?;
     }
     say(out, "Service registered.")?;
     for line in lingering_report(&platform.service.lingering(), &user_name()) {
@@ -1513,7 +1548,7 @@ pub(crate) fn run_at(
 
     // 6. Readiness: hello and instance.status for this instance, with its browser service
     // running, within the deadline. Until then nothing says the browser can be used.
-    let status = ready(&socket, &instance_id, READY_WITHIN, || {
+    let status = ready(socket, instance_id, READY_WITHIN, || {
         // A failed browser service no longer holds its address; if something else does,
         // that is the reason.
         (!address_free(listen)).then(|| port_held_elsewhere(listen, name))
@@ -1522,9 +1557,7 @@ pub(crate) fn run_at(
     say(out, "Service running.")?;
     if !record.registry_created {
         record.registry_created = true;
-        journal
-            .write(&record)
-            .map_err(|e| fail("saving setup", e))?;
+        journal.write(record).map_err(|e| fail("saving setup", e))?;
     }
 
     // 7. The initial link, at most once.
@@ -1532,15 +1565,14 @@ pub(crate) fn run_at(
         return say(
             out,
             running_with_administrator(shown, record.input.listen.origin().as_str()),
-        )
-        .map(|()| None);
+        );
     }
     say(out, "Instance ready. It has no administrator yet.")?;
     // The link is shown only in a terminal; noninteractive setup does not ask for it.
     let result = if record.initial_link_issued || !request.terminal {
         AdminLinkResult::AlreadyIssued
     } else {
-        let mut wire = connect(&socket, &instance_id)?;
+        let mut wire = connect(socket, instance_id)?;
         let result = wire
             .call::<AdminLinkInitial>(
                 &AdminLinkInitialParams {
@@ -1550,12 +1582,10 @@ pub(crate) fn run_at(
             )
             .map_err(|e| fail("asking for the registration link", e))?;
         record.initial_link_issued = true;
-        journal
-            .write(&record)
-            .map_err(|e| fail("saving setup", e))?;
+        journal.write(record).map_err(|e| fail("saving setup", e))?;
         result
     };
-    show_link(out, result, name, record.input.listen.origin()).map(|()| None)
+    show_link(out, result, name, record.input.listen.origin())
 }
 
 /// What a reservation that refused says: its reason, then what the registry holds for the

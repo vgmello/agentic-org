@@ -13,3 +13,6 @@ serde_json.workspace = true
 
 [dev-dependencies]
 org-agent-runtime = { path = "../org-agent-runtime", features = ["testkit"] }
+
+[lints]
+workspace = true

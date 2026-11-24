@@ -11,3 +11,6 @@ testkit = []
 
 [dependencies]
 org-sync-proto = { path = "../org-sync-proto" }
+
+[lints]
+workspace = true

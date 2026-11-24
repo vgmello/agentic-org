@@ -10,7 +10,11 @@ From the repository root:
 
 ```sh
 cargo fmt --check
-CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --all-targets -- -D warnings
+CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --lib --bins --message-format=short -- -D clippy::too_many_lines
+CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --all-targets --keep-going --message-format=short -- -D warnings
+CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --release --lib --bins --message-format=short -- -D clippy::too_many_lines
+CARGO_BUILD_JOBS=2 cargo clippy --locked --workspace --release --lib --bins --keep-going --message-format=short -- \
+  -D clippy::undocumented_unsafe_blocks -D clippy::allow_attributes_without_reason
 CARGO_BUILD_JOBS=2 cargo test --locked --workspace
 cargo deny --locked check
 gitleaks git --redact
@@ -67,6 +71,27 @@ report. The scoped minimatch override patches GHSA-g3hv-75wg-m249 without replac
 older minimatch 3 API used by other tools.
 
 ## Lint and formatting
+
+Clippy warns on `dbg!()`, `todo!()`, and `unimplemented!()` in the targets it
+checks, including test targets. The local and CI Clippy gates use `-D warnings`
+to make these findings errors. Use assertions in tests and explicit error paths
+for unsupported production behavior. New Rust workspace members must set
+`[lints]` with `workspace = true` in their manifests.
+
+The production Clippy command checks the 200-line limit for library and binary
+functions. Test-only code can keep longer scenarios and fixtures. Keep functions
+focused and extract coherent steps as their responsibilities grow. The release
+Clippy commands check code that builds with debug assertions disabled. They check
+length separately so missing safety documentation or reasons does not hide
+production function length findings.
+
+The all-targets gate requires safety documentation and a reason on lint
+suppressions. Use safe code where practical. When unsafe is necessary, add a
+`// SAFETY:` comment that explains why the operation's preconditions hold.
+Use a narrowly scoped `#[expect(lint_name, reason = "...")]` for reviewed
+exceptions. Remove the expectation when the lint no longer applies. The
+[unsafe documentation pilot inventory](docs/unsafe-documentation-pilot.md)
+records the starting findings for cleanup.
 
 ESLint runs the recommended JavaScript, TypeScript and Svelte rules. Its
 `eslint-suppressions.json` records existing per-file/rule debt. Additional findings

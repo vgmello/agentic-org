@@ -34,6 +34,7 @@ jobs:
 
       # The runner's rustup installs the channel and components pinned in rust-toolchain.toml.
       - name: Install Rust
+        id: rust-toolchain
         run: |
           rustup toolchain install --no-self-update
           rustc --version
@@ -63,31 +64,62 @@ jobs:
       # Linux with musl is such a target, and its test binaries run on this runner. Consumers
       # whose system code lives behind org-platform build there too (crates that compile C cannot
       # be built for musl on this runner).
-      - name: Refusing adapters (a target without an adapter)
-        if: runner.os == 'Linux'
-        run: |
-          rustup target add x86_64-unknown-linux-musl
-          cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
-          cargo clippy --locked -p org-supervise -p org-socket --lib --target x86_64-unknown-linux-musl -- -D warnings
-          cargo test --locked -p org-platform -p org-platform-host --all-features --target x86_64-unknown-linux-musl
+      - name: Install musl target
+        id: rust-musl
+        if: ${{ runner.os == 'Linux' && !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Clippy refusing adapters
+        if: ${{ !cancelled() && steps.rust-musl.outcome == 'success' }}
+        run: cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
+
+      - name: Clippy musl consumers
+        if: ${{ !cancelled() && steps.rust-musl.outcome == 'success' }}
+        run: cargo clippy --locked -p org-supervise -p org-socket --lib --target x86_64-unknown-linux-musl -- -D warnings
+
+      - name: Test refusing adapters
+        if: ${{ !cancelled() && steps.rust-musl.outcome == 'success' }}
+        run: cargo test --locked -p org-platform -p org-platform-host --all-features --target x86_64-unknown-linux-musl
+
+      # Report each native lint result even if an earlier check found debt.
+      - name: Clippy production function length
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: cargo clippy --locked --workspace --lib --bins -- -D clippy::too_many_lines
 
       - name: cargo clippy
-        run: |
-          cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo clippy --locked -p org-office --features testkit --example store_latency -- -D warnings
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: cargo clippy --locked --workspace --all-targets --keep-going -- -D warnings
+
+      - name: Clippy release production function length
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: cargo clippy --locked --workspace --release --lib --bins -- -D clippy::too_many_lines
+
+      - name: Clippy release safety documentation and suppression reasons
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: >-
+          cargo clippy --locked --workspace --release --lib --bins --keep-going --
+          -D clippy::undocumented_unsafe_blocks -D clippy::allow_attributes_without_reason
+
+      - name: Clippy store latency example
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
+        run: cargo clippy --locked -p org-office --features testkit --example store_latency -- -D warnings
 
       # agentic-org-web's dependency-closure test reads the locked graph for every platform with
       # `cargo metadata --offline`. A build downloads only this platform's packages, so the rest
       # are fetched here; without this step the test fails on a runner with a cold cache.
       - name: cargo fetch (every platform's locked packages)
+        id: rust-fetch
+        if: ${{ !cancelled() && steps.rust-toolchain.outcome == 'success' }}
         run: cargo fetch --locked
 
       # --no-fail-fast: a failing test binary must not hide the result of every crate after it.
       - name: cargo test
+        if: ${{ !cancelled() && steps.rust-fetch.outcome == 'success' }}
         run: cargo test --locked --workspace --no-fail-fast
 
       # ADR-0014 / TASK-33 (B1c): office store latency measurement and regression guard on macOS & Linux.
       - name: Office store latency benchmark & regression check (B1c)
+        if: ${{ !cancelled() && steps.rust-fetch.outcome == 'success' }}
         run: |
           cargo run --locked --release -p org-office --features testkit --example store_latency -- \
             --iterations 200 --durable-iterations 20 --check-regression \
