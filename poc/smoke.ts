@@ -31,9 +31,11 @@ try {
       const group = page.getByRole("group", { name: "Group by", exact: true });
       const subgroup = page.getByRole("group", { name: "Subgroup by", exact: true });
       const groups = page.locator("#work-results .work-group");
+      await groups.first().getByRole("heading", { name: /^Blocked\b/ }).waitFor();
       await display.press("Enter");
+      assert.equal(await group.getByRole("menuitemradio", { name: "Status" }).getAttribute("aria-checked"), "true");
       await group.getByRole("menuitemradio", { name: "Project" }).press("Enter");
-      await groups.first().waitFor();
+      await groups.first().getByRole("heading", { name: /^Agentic Org/ }).waitFor();
       assert.ok(page.url().endsWith("#/work?group=project"));
       await display.press("Enter");
       assert.equal(await subgroup.getByRole("menuitemradio", { name: "Project" }).count(), 0);
@@ -54,6 +56,12 @@ try {
       await display.press("Enter");
       await group.getByRole("menuitemradio", { name: "No grouping" }).press("Enter");
       await groups.first().waitFor({ state: "detached" });
+      assert.ok(page.url().endsWith("#/work?group=none"), "Clearing the default is explicit in the URL");
+      await page.reload();
+      await page.locator("#work-results .work-list").waitFor();
+      assert.equal(await groups.count(), 0, "No grouping survives a reload");
+      await page.goto(url.href);
+      await groups.first().getByRole("heading", { name: /^Blocked\b/ }).waitFor();
     }
     if (route === "activity") {
       await page.getByRole("heading", { name: "Portfolio Assembly" }).waitFor();
