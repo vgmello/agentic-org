@@ -123,7 +123,18 @@ try {
       const gates = page.getByRole("button", { name: "Release gates" });
       const panel = page.getByRole("complementary", { name: "Release operations" });
       const activity = page.locator(".activity-main");
+      const assembly = page.locator(".assembly-view");
+      const assertAssemblyWidth = async () => {
+        const contentBounds = (await activity.boundingBox())!;
+        const assemblyBounds = (await assembly.boundingBox())!;
+        assert.ok(Math.abs(assemblyBounds.x - contentBounds.x) <= 1, "Assembly starts at the activity edge");
+        assert.ok(Math.abs(assemblyBounds.width - contentBounds.width) <= 1, "Assembly fills the available width");
+        assert.ok(assemblyBounds.y + assemblyBounds.height >= contentBounds.y + contentBounds.height - 1, "Assembly fills the available height");
+      };
       const fullWidth = (await activity.boundingBox())!.width;
+      await assertAssemblyWidth();
+      const playback = (await page.locator(".assembly-playback").boundingBox())!;
+      assert.ok(Math.abs((await assembly.boundingBox())!.y - playback.y - playback.height) <= 1, "Assembly starts immediately below playback");
       await gates.press("Enter");
       await panel.waitFor();
       assert.equal(await gates.getAttribute("aria-expanded"), "true");
@@ -134,6 +145,8 @@ try {
       assert.ok(Math.abs(bounds.x + bounds.width - body.x - body.width) <= 1, "Panel docks to the right edge");
       assert.ok(Math.abs(bounds.height - body.height) <= 1, "Panel fits the available height");
       assert.ok((await activity.boundingBox())!.width < fullWidth, "Activity stays visible next to the panel");
+      assert.notEqual(await panel.evaluate((element) => getComputedStyle(element).boxShadow), "none");
+      await assertAssemblyWidth();
       await page.keyboard.press("Escape");
       await panel.waitFor({ state: "hidden" });
       assert.equal((await activity.boundingBox())!.width, fullWidth);
