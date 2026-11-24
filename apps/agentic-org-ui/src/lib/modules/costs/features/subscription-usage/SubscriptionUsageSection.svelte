@@ -72,6 +72,14 @@
 			<span aria-hidden="true"> · </span>
 			<span>{summary.tokens} tok</span>
 		</p>
+		{#if summary.tokenBreakdown}
+			<p
+				class="mt-0.5 text-[11px]/4 text-fg-muted tabular-nums [overflow-wrap:anywhere]"
+				data-testid="window-token-breakdown"
+			>
+				{summary.tokenBreakdown}
+			</p>
+		{/if}
 	</div>
 {/snippet}
 

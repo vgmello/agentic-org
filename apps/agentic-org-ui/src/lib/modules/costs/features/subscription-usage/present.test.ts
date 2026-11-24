@@ -71,6 +71,37 @@ describe('subscription usage presentation helpers (TASK-79)', () => {
 			hasMetrics: true,
 			durationLabel: '5h'
 		});
+
+		// Reported component tokens must stay visible without fabricating totalTokens when provider omits it.
+		expect(
+			summarizeWindow({
+				inputTokens: 1000,
+				outputTokens: null,
+				totalTokens: null
+			})
+		).toEqual({
+			utilization: '—',
+			requests: '—',
+			tokens: '—',
+			tokenBreakdown: '1 K in',
+			hasUtilization: false,
+			hasMetrics: true,
+			durationLabel: undefined
+		});
+
+		expect(
+			summarizeWindow({
+				inputTokens: 12_500,
+				outputTokens: 4200,
+				cacheReadTokens: 800,
+				cacheWriteTokens: 150,
+				totalTokens: null
+			})
+		).toMatchObject({
+			tokens: '—',
+			tokenBreakdown: '12.5 K in · 4.2 K out · 800 cache read · 150 cache write',
+			hasMetrics: true
+		});
 	});
 
 	it('maps statuses, auth sources, providers, short-term presence, and non-API-equivalent notice', () => {
@@ -109,6 +140,20 @@ describe('subscription usage presentation helpers (TASK-79)', () => {
 		expect(
 			credentialConfigLabel({
 				authSource: 'none',
+				hasUsageCredential: false,
+				hasEnrolledCredential: true
+			})
+		).toBe('Enrolled subscription credential available');
+		expect(
+			credentialConfigLabel({
+				authSource: 'dedicated_usage_credential',
+				hasUsageCredential: false,
+				hasEnrolledCredential: false
+			})
+		).toBe('No credential configured (last used dedicated usage credential)');
+		expect(
+			credentialConfigLabel({
+				authSource: 'dedicated_usage_credential',
 				hasUsageCredential: false,
 				hasEnrolledCredential: true
 			})

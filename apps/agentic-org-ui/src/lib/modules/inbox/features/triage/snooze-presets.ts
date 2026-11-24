@@ -146,16 +146,19 @@ export function formatSnoozeReturn(
 	return { short: `${formatDate(target, zone, now)}, ${clock}`, full };
 }
 
-/** Computes timezone-aware presets: Later today, Tomorrow 09:00, Next week (Mon 09:00). */
+/** Computes timezone-aware presets: Later today (when on today's date), Tomorrow 09:00, Next week (Mon 09:00). */
 export function computeSnoozePresets(now: Date, zone: string): SnoozePreset[] {
 	const local = localCalendarParts(now, zone);
+	const todayKey = formatDayKeyFromWall(local);
 
-	// Later today: 17:00 in zone if at least 30 min ahead, otherwise +3 hours rounded to nearest 5m.
+	// Later today: 17:00 in zone if at least 30 min ahead, otherwise +3 hours rounded up to 5m;
+	// omit when the candidate crosses midnight into tomorrow so "Later today" never schedules tomorrow.
 	const fivePmToday = zonedWallToUtc(local.year, local.month, local.day, 17, 0, zone);
-	const laterTarget =
+	const laterCandidate =
 		fivePmToday.getTime() - now.getTime() >= 30 * 60_000
 			? fivePmToday
 			: new Date(Math.ceil((now.getTime() + 3 * 3_600_000) / 300_000) * 300_000);
+	const laterTarget = dayKey(laterCandidate, zone) === todayKey ? laterCandidate : undefined;
 
 	// Tomorrow 09:00 in zone.
 	const tomorrowWall = addDaysWall(local.year, local.month, local.day, 1);
@@ -180,13 +183,16 @@ export function computeSnoozePresets(now: Date, zone: string): SnoozePreset[] {
 		zone
 	);
 
-	return [
-		{
+	const presets: SnoozePreset[] = [];
+	if (laterTarget) {
+		presets.push({
 			id: 'later_today',
 			label: 'Later today',
 			detail: formatSnoozeReturn(laterTarget.toISOString(), now, zone).short,
 			iso: laterTarget.toISOString()
-		},
+		});
+	}
+	presets.push(
 		{
 			id: 'tomorrow',
 			label: 'Tomorrow',
@@ -199,7 +205,8 @@ export function computeSnoozePresets(now: Date, zone: string): SnoozePreset[] {
 			detail: formatSnoozeReturn(nextWeekTarget.toISOString(), now, zone).short,
 			iso: nextWeekTarget.toISOString()
 		}
-	];
+	);
+	return presets;
 }
 
 /** Default inputs for the Custom date & time snooze dialog (tomorrow at 09:00 in `zone`). */

@@ -35,13 +35,16 @@
 	let {
 		organizationId,
 		zone,
-		memberHref
+		memberHref,
+		viewerIsOwner
 	}: {
 		organizationId: string;
 		/** The viewing account's IANA zone: periods and times are read in it. */
 		zone: string;
 		/** Where an agent's budgets are set (its profile's Cost tab). */
 		memberHref: (memberId: string) => string;
+		/** Known owner scope from the signed-in session, used when `organizationCost` is unavailable. */
+		viewerIsOwner?: boolean;
 	} = $props();
 
 	const HEADING = 'costs-heading';
@@ -95,7 +98,9 @@
 	/** Subscription model usage is owner-scoped like budgets: never shown to non-owner viewers. */
 	const subscriptionAllowed = $derived(
 		subscriptionUsage.state === 'loading'
-			? !!(cost.data && cost.data.allowed)
+			? cost.state === 'unavailable'
+				? viewerIsOwner === true
+				: !!(cost.data && cost.data.allowed)
 			: !(subscriptionUsage.data && !subscriptionUsage.data.allowed)
 	);
 

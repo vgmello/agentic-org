@@ -23,11 +23,17 @@ describe('Inbox snooze presets and custom date/time validation (TASK-81)', () =>
 		expect(presets[2].iso).toBe('2026-11-30T14:00:00.000Z');
 	});
 
-	it('falls back to +3h for Later today when 17:00 has passed or is under 30 min away', () => {
+	it('falls back to +3h for Later today when 17:00 has passed or is under 30 min away, and omits it when +3h crosses midnight', () => {
 		const now = new Date('2026-11-23T16:40:00.000Z');
 		const presets = computeSnoozePresets(now, 'UTC');
 		expect(presets[0].iso).toBe('2026-11-23T19:40:00.000Z');
 		expect(presets[0].detail).toBe('Today, 19:40');
+
+		// At 22:00 Europe/Dublin, +3h would be 01:00 tomorrow; omit "Later today" rather than scheduling tomorrow.
+		const lateDublin = new Date('2026-11-23T22:00:00.000Z');
+		const latePresets = computeSnoozePresets(lateDublin, 'Europe/Dublin');
+		expect(latePresets.map((p) => p.id)).toEqual(['tomorrow', 'next_week']);
+		expect(latePresets[0].detail).toBe('Tomorrow, 09:00');
 	});
 
 	it('validates custom date/time inputs and rejects past or invalid calendar dates', () => {

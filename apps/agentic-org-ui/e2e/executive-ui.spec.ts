@@ -1209,7 +1209,10 @@ test('TASK-81: Inbox snooze presets, custom validation & expiry warning, Snoozed
 
 	// Open Snooze menu on the first (expiring) item and verify past-time + after-expiry rejections match office rules.
 	await page.getByTestId('inbox-snooze-trigger').click();
-	await expect(page.getByRole('menuitem', { name: /Later today/ })).toBeVisible();
+	const laterTodayItem = page.getByRole('menuitem', { name: /Later today/ });
+	if ((await laterTodayItem.count()) > 0) {
+		await expect(laterTodayItem).toContainText('Today,');
+	}
 	await expect(page.getByRole('menuitem', { name: /Tomorrow/ })).toBeVisible();
 	await expect(page.getByRole('menuitem', { name: /Next week/ })).toBeVisible();
 	await page.getByRole('menuitem', { name: /Custom date/ }).click();

@@ -193,7 +193,8 @@
 							<p class="[overflow-wrap:anywhere]">
 								This return time is at or after the shown deadline{expiryFull
 									? ` (${expiryFull})`
-									: ''}. If the office enforces this expiry deadline, choose an earlier time.
+									: ''}. The item may time out before it returns, and the office rejects return
+								times past a message's expiry.
 							</p>
 						</div>
 					{/if}

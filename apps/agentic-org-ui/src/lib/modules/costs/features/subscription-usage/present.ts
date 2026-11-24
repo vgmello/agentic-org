@@ -60,12 +60,28 @@ export interface WindowCellSummary {
 	utilization: string;
 	requests: string;
 	tokens: string;
+	/** Provider-reported component token counts when any are present (kept distinct from omitted totals). */
+	tokenBreakdown?: string;
 	hasUtilization: boolean;
 	hasMetrics: boolean;
 	durationLabel?: string;
 }
 
-/** Summarizes one usage window without fabricating zeros for null/missing counters. */
+/** Formats any provider-reported component token counts without fabricating a sum. */
+export function formatTokenBreakdown(win: SubscriptionUsageWindow): string | undefined {
+	const parts: string[] = [];
+	const input = formatSubscriptionTokens(win.inputTokens);
+	if (input !== '—') parts.push(`${input} in`);
+	const output = formatSubscriptionTokens(win.outputTokens);
+	if (output !== '—') parts.push(`${output} out`);
+	const cacheRead = formatSubscriptionTokens(win.cacheReadTokens);
+	if (cacheRead !== '—') parts.push(`${cacheRead} cache read`);
+	const cacheWrite = formatSubscriptionTokens(win.cacheWriteTokens);
+	if (cacheWrite !== '—') parts.push(`${cacheWrite} cache write`);
+	return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
+/** Summarizes one usage window without fabricating zeros or totals for null/missing counters. */
 export function summarizeWindow(win: SubscriptionUsageWindow | undefined): WindowCellSummary {
 	if (!win) {
 		return {
@@ -79,12 +95,15 @@ export function summarizeWindow(win: SubscriptionUsageWindow | undefined): Windo
 	const utilization = formatUtilization(win.utilizationBps);
 	const requests = formatRequests(win.requests);
 	const tokens = formatSubscriptionTokens(win.totalTokens);
+	const tokenBreakdown = formatTokenBreakdown(win);
 	const hasUtilization = utilization !== '—';
-	const hasMetrics = hasUtilization || requests !== '—' || tokens !== '—';
+	const hasMetrics =
+		hasUtilization || requests !== '—' || tokens !== '—' || Boolean(tokenBreakdown);
 	return {
 		utilization,
 		requests,
 		tokens,
+		...(tokenBreakdown ? { tokenBreakdown } : {}),
 		hasUtilization,
 		hasMetrics,
 		durationLabel: formatWindowDuration(win.windowSeconds)
@@ -135,22 +154,32 @@ export function authSourceLabel(source: SubscriptionUsageAuthSource): string {
 }
 
 /**
- * Human-readable credential status combining the last collection's `authSource` with live credential
- * presence flags (`hasUsageCredential` / `hasEnrolledCredential`), so a newly saved credential never
- * displays as "No credential configured" before the first collection runs.
+ * Human-readable credential status driven by live office credential presence flags
+ * (`hasUsageCredential` / `hasEnrolledCredential`), with historical `authSource` labeled
+ * separately so a revoked credential never appears currently configured.
  */
 export function credentialConfigLabel(snapshot: {
 	authSource: SubscriptionUsageAuthSource;
 	hasUsageCredential: boolean;
 	hasEnrolledCredential: boolean;
 }): string {
-	if (snapshot.authSource === 'dedicated_usage_credential') return 'Dedicated usage credential';
-	if (snapshot.authSource === 'enrolled_subscription_credential') {
-		return 'Enrolled subscription credential';
+	if (snapshot.hasUsageCredential) {
+		return snapshot.authSource === 'dedicated_usage_credential'
+			? 'Dedicated usage credential'
+			: 'Dedicated usage credential saved';
 	}
-	if (snapshot.hasUsageCredential) return 'Dedicated usage credential saved';
-	if (snapshot.hasEnrolledCredential) return 'Enrolled subscription credential available';
-	return authSourceLabel(snapshot.authSource);
+	if (snapshot.hasEnrolledCredential) {
+		return snapshot.authSource === 'enrolled_subscription_credential'
+			? 'Enrolled subscription credential'
+			: 'Enrolled subscription credential available';
+	}
+	if (snapshot.authSource === 'dedicated_usage_credential') {
+		return 'No credential configured (last used dedicated usage credential)';
+	}
+	if (snapshot.authSource === 'enrolled_subscription_credential') {
+		return 'No credential configured (last used enrolled subscription credential)';
+	}
+	return 'No credential configured';
 }
 
 export function providerLabel(providerType: string): string {

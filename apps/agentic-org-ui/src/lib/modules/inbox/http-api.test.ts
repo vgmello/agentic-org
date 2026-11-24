@@ -380,7 +380,8 @@ describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
 			state: 'snoozed',
 			snoozeable: true,
 			snoozed_until: '2026-11-24T09:00:00.000Z',
-			snooze_note: 'After Monday standup'
+			snooze_note: 'After Monday standup',
+			open: { path: '/chat?c=conv-1&m=snz-1', label: 'Open in Chat' }
 		});
 		expect(items[3]).toMatchObject({
 			id: 'chat:msg:snz-2',
