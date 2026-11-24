@@ -465,7 +465,7 @@
 				</header>
 				<div class="section-toolbar profile-toolbar">
 					<div
-						class="primary-tab-row relative max-[639px]:hidden {tabStripFade}"
+						class="primary-tab-row relative {tabStripFade}"
 						{@attach tabStrip(page.url.pathname)}
 					>
 						<TabsNav
@@ -709,6 +709,11 @@
 		align-items: stretch;
 		min-inline-size: 0;
 		max-inline-size: 100%;
+	}
+	@media (max-width: 639px) {
+		.primary-tab-row {
+			display: none;
+		}
 	}
 	.primary-tab-row::after {
 		content: '';

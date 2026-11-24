@@ -146,6 +146,17 @@ export const teamsApi: TeamsApi = {
 				if (!project) return [];
 				const role = projectRole(s, project.id, teamId);
 				const owner = (s.project_teams ?? []).find((x) => x.project_id === project.id)?.team_id;
+				const projectTasks = tasksData.filter((t) => t.projectId === project.id);
+				const tasks = {
+					todo: projectTasks.filter((t) => t.state === 'todo').length,
+					inProgress: projectTasks.filter(
+						(t) => t.state === 'in_progress' || t.state === 'in_review'
+					).length,
+					blocked: projectTasks.filter((t) => t.state === 'blocked').length,
+					done: projectTasks.filter((t) => t.state === 'done').length,
+					cancelled: 0
+				};
+				const bugs = { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 };
 				return [
 					{
 						id: project.id,
@@ -158,8 +169,9 @@ export const teamsApi: TeamsApi = {
 								(x) => x.project_id === project.id && x.team_id !== owner && x.team_id !== teamId
 							)
 							.flatMap((x) => refOf(s, x.team_id) ?? []),
-						openWork: tasksData.filter((t) => t.projectId === project.id && t.state !== 'done')
-							.length
+						openWork: projectTasks.filter((t) => t.state !== 'done').length,
+						tasks,
+						bugs
 					}
 				];
 			});

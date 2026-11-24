@@ -9,6 +9,7 @@
 	import ScopedSearchInput from '$lib/components/ScopedSearchInput.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { mobileButton } from '$lib/components/classes';
+	import { useScopedSearchContext } from '$lib/platform/shell/scoped-search.svelte';
 	import { membersApi } from '../../api';
 	import WorkRows from '../../components/WorkRows.svelte';
 	import { profileContext } from '../profile/context.svelte';
@@ -16,10 +17,26 @@
 
 	const ctx = profileContext();
 	const work = tabResource((o, m) => membersApi.work(o, m));
+	const scopedSearch = useScopedSearchContext();
 
 	let query = $state('');
 	let taskFilter = $state<'all' | 'open' | 'done'>('all');
 	const isAgent = $derived(ctx.profile.kind === 'agent');
+
+	$effect(() => {
+		if (!scopedSearch) return;
+		const agent = isAgent;
+		const name = ctx.profile.name;
+		return scopedSearch.register({
+			getValue: () => query,
+			setValue: (next) => {
+				query = next;
+			},
+			label: agent ? `Search tasks for ${name}` : `Search work for ${name}`,
+			placeholder: agent ? 'Search tasks…' : 'Search work…',
+			headingSelector: '#profile-heading, #shell-page-title, main h1, main h2'
+		});
+	});
 </script>
 
 <Loaded
@@ -58,14 +75,16 @@
 			class="flex flex-wrap items-center justify-between gap-3 border-b border-line-subtle px-4 py-3 min-[640px]:px-6 min-[1024px]:px-8"
 		>
 			<div class="flex min-w-0 flex-1 flex-wrap items-center gap-3">
-				<ScopedSearchInput
-					bind:value={query}
-					label={isAgent
-						? `Search tasks for ${ctx.profile.name}`
-						: `Search work for ${ctx.profile.name}`}
-					placeholder={isAgent ? 'Search tasks…' : 'Search work…'}
-					headingSelector="#profile-heading, #shell-page-title, main h1, main h2"
-				/>
+				{#if !scopedSearch}
+					<ScopedSearchInput
+						bind:value={query}
+						label={isAgent
+							? `Search tasks for ${ctx.profile.name}`
+							: `Search work for ${ctx.profile.name}`}
+						placeholder={isAgent ? 'Search tasks…' : 'Search work…'}
+						headingSelector="#profile-heading, #shell-page-title, main h1, main h2"
+					/>
+				{/if}
 				{#if isAgent}
 					<div
 						role="group"

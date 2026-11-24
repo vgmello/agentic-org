@@ -81,10 +81,17 @@ describe('createHttpTeamsApi', () => {
 				name: 'Checkout',
 				role: 'contributor',
 				key: 'P-1',
-				ownerTeam: { id: ENG, name: 'Engineering', ref: '' },
-				openWork: 0
+				ownerTeam: { id: ENG, name: 'Engineering', ref: '' }
 			}
 		]);
+		await expect(api.work(ORG, ENG)).rejects.toMatchObject({
+			source: 'api',
+			code: 'unavailable'
+		});
+		await expect(api.activity(ORG, ENG)).rejects.toMatchObject({
+			source: 'api',
+			code: 'unavailable'
+		});
 	});
 
 	it('adds a person with explicit handle/home team, sets optional manager, and tags handle conflicts', async () => {

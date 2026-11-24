@@ -28,11 +28,10 @@
 		shellData = undefined;
 	}
 
-	const work = new Resource(() => teamsApi.work(team.organizationId, team.teamId));
+	const work = team.work;
 	const projects = new Resource(() => teamsApi.projects(team.organizationId, team.teamId));
 	const activity = new Resource(() => teamsApi.activity(team.organizationId, team.teamId));
 
-	reloadOnChange(work, () => team.loads);
 	reloadOnChange(projects, () => team.loads);
 	reloadOnChange(activity, () => team.loads);
 
@@ -40,30 +39,21 @@
 		void accountZone.ensure(team.organizationId);
 	});
 
-	$effect(() => {
-		if (work.state === 'ready' && work.data) {
-			team.setOpenWorkCount(work.data.filter((r) => r.state !== 'done').length);
-		}
-	});
-
-	const memberIdByName = $derived.by<Record<string, string>>(() => {
-		const map: Record<string, string> = {};
-		for (const m of shellData?.snapshot?.members ?? []) {
-			map[m.name] = m.id;
-		}
-		return map;
-	});
+	const memberNameById = $derived<Record<string, string>>(
+		Object.fromEntries((shellData?.snapshot?.members ?? []).map((m) => [m.id, m.name]))
+	);
 
 	const model = $derived(
 		deriveTeamOverview({
 			detail: team.detail,
-			workRows: work.data,
-			projects: projects.data,
-			activity: activity.data,
+			workRows: work.state === 'ready' ? work.data : undefined,
+			workState: work.state,
+			projects: projects.state === 'ready' ? projects.data : undefined,
+			activity: activity.state === 'ready' ? activity.data : undefined,
 			// Authorized completion transition history & approval wait records are not yet exposed on TeamsApi;
 			// pass null so timing medians and 28-day completion counts state unavailability honestly.
 			completions: null,
-			memberIdByName
+			memberNameById
 		})
 	);
 
@@ -180,8 +170,12 @@
 			</header>
 			{#if work.state === 'loading'}
 				<p class="insight-empty" role="status">Loading open work…</p>
-			{:else if work.state === 'error' || work.state === 'unavailable'}
-				<p class="insight-empty">Open work isn't available from this server right now.</p>
+			{:else if work.state === 'unavailable' || work.state === 'unsupported'}
+				<p class="insight-empty" data-testid="team-work-unavailable">
+					Open work isn't served by this server yet.
+				</p>
+			{:else if work.state === 'error'}
+				<p class="insight-empty">Couldn't load open work right now.</p>
 			{:else if model.openByStatus.length === 0}
 				<p class="insight-empty">No open work assigned.</p>
 			{:else}
@@ -235,16 +229,18 @@
 								<a href={resolve(projectHref(proj.id) as '/')} class="insight-link font-semibold">
 									{proj.name}
 								</a>
-								<span
-									class={[
-										'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold whitespace-nowrap',
-										healthPillClass(proj.tone)
-									]}
-								>
-									{proj.healthLabel}
-								</span>
+								{#if proj.healthLabel && proj.tone}
+									<span
+										class={[
+											'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold whitespace-nowrap',
+											healthPillClass(proj.tone)
+										]}
+									>
+										{proj.healthLabel}
+									</span>
+								{/if}
 							</div>
-							{#if proj.progressPct !== null}
+							{#if proj.progressPct !== null && proj.tone}
 								<div class="prog-line">
 									<div
 										class="prog-bar"
@@ -282,8 +278,12 @@
 			</header>
 			{#if work.state === 'loading'}
 				<p class="insight-empty" role="status">Loading contributions…</p>
-			{:else if work.state === 'error' || work.state === 'unavailable'}
-				<p class="insight-empty">Contributor counts aren't available right now.</p>
+			{:else if work.state === 'unavailable' || work.state === 'unsupported'}
+				<p class="insight-empty" data-testid="team-contributions-unavailable">
+					Contributor counts aren't served by this server yet.
+				</p>
+			{:else if work.state === 'error'}
+				<p class="insight-empty">Couldn't load contributor counts right now.</p>
 			{:else if model.contributors.length === 0 && model.unassignedOpen === 0}
 				<p class="insight-empty">No completions or current assignments.</p>
 			{:else}
@@ -334,6 +334,13 @@
 							({model.unassignedBlocked} blocked){/if}.
 					</p>
 				{/if}
+				{#if model.unresolvedAttributionOpen > 0}
+					<p class="team-overview-reconcile">
+						{model.unresolvedAttributionOpen} open {model.unresolvedAttributionOpen === 1
+							? 'item has'
+							: 'items have'} name-only attribution without a stable member ID.
+					</p>
+				{/if}
 			{/if}
 		</section>
 	</div>
@@ -347,8 +354,12 @@
 		</header>
 		{#if activity.state === 'loading'}
 			<p class="insight-empty" role="status">Loading recent activity…</p>
-		{:else if activity.state === 'error' || activity.state === 'unavailable'}
-			<p class="insight-empty">Recent activity isn't available right now.</p>
+		{:else if activity.state === 'unavailable' || activity.state === 'unsupported'}
+			<p class="insight-empty" data-testid="team-activity-unavailable">
+				Recent activity isn't served by this server yet.
+			</p>
+		{:else if activity.state === 'error'}
+			<p class="insight-empty">Couldn't load recent activity right now.</p>
 		{:else if model.recentActivity.length === 0}
 			<p class="insight-empty">No recent team activity.</p>
 		{:else}

@@ -374,17 +374,23 @@ for (const width of [390, 1024])
 		).toBeLessThanOrEqual(20);
 	});
 
-test('TEAM-OVERVIEW: opens on Overview with reconciled KPIs, legacy task redirect, scoped search, and M/Arrow tab shortcuts', async ({
+test('TEAM-OVERVIEW: opens on Overview with reconciled KPIs, real project progress, frame-owned Work badge, legacy task detail open, header scoped search, and M/Arrow tab shortcuts', async ({
 	page
 }) => {
-	await openTeam(page, '/teams/web', 'Web');
+	// Direct visit to Members already shows the live Work tab count without visiting Overview or Work first.
+	await openTeam(page, '/teams/web/members', 'Web');
+	const membersNav = page.getByRole('navigation', { name: 'Web views' });
+	await expect(membersNav.getByRole('link', { name: /^Work\s+3$/ })).toBeVisible();
+
+	await membersNav.getByRole('link', { name: 'Overview', exact: true }).click();
 	const overview = page.getByTestId('team-overview');
 	await expect(overview).toBeVisible();
 	await expect(overview.locator('[data-kpi="blocked"]')).toContainText('1');
 	await expect(overview.locator('[data-kpi="blocked"]')).toContainText('Of 3 open items');
 	await expect(overview.getByTestId('team-completions-unavailable')).toBeVisible();
-	// Active project Beacon + alphabetical contributors (Mira Castillo before Noor Haddad before Sam Okafor)
+	// Active project Beacon renders real progress bar and health pill + alphabetical contributors
 	await expect(overview).toContainText('Beacon');
+	await expect(overview.getByRole('progressbar', { name: 'Beacon progress' })).toBeVisible();
 	const contributorNames = await overview
 		.locator('table tbody th')
 		.evaluateAll((cells) => cells.map((c) => c.textContent?.trim()));
@@ -407,14 +413,22 @@ test('TEAM-OVERVIEW: opens on Overview with reconciled KPIs, legacy task redirec
 	await page.keyboard.press('Escape');
 	await expect(page.locator('#team-heading')).toBeFocused();
 
-	// Preserve legacy deep links (`/teams/web?item=T-A44` -> `/teams/web/work?item=T-A44`).
+	// Legacy deep link (`/teams/web?item=T-A44` -> `/teams/web/work?item=T-A44`) opens T-A44 detail reading panel.
 	await visit(page, '/teams/web?item=T-A44');
 	await expect(page).toHaveURL(/\/teams\/web\/work\?item=T-A44$/);
+	const panel = page.getByTestId('work-reading-panel');
+	await expect(panel).toBeVisible();
+	await expect(panel).toContainText('T-A44');
+	await expect(panel).toContainText('Decide the retry policy for payments');
+	await page.keyboard.press('Escape');
+	await expect(panel).toHaveCount(0);
 
-	// Scoped search: `/` focuses, typing filters, Escape leaves query intact and exits field.
+	// Scoped search renders in the shared top header beside Workspace: `/` focuses, typing filters, Escape preserves query.
+	const headerSearchHost = page.getByTestId('header-scoped-search');
+	await expect(headerSearchHost).toBeVisible();
+	const search = headerSearchHost.getByTestId('scoped-work-search');
 	await page.locator('#team-heading').focus();
 	await page.keyboard.press('/');
-	const search = page.getByTestId('scoped-work-search');
 	await expect(search).toBeFocused();
 	await search.fill('Retry');
 	await expect(page.getByText('Decide the retry policy for payments')).toBeVisible();

@@ -202,3 +202,28 @@ test('MP-8: leaving the profile while a sign-in dialog closes reports nothing to
 	await page.waitForTimeout(1500);
 	expect(warnings).toEqual([]);
 });
+
+test('MP-9: below 640px only the mobile section picker is shown and Member Work registers shared header scoped search', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await page.setViewportSize({ width: 390, height: 844 });
+	await visit(page, '/members/noor');
+	await expect(page.locator('.profile-toolbar .primary-tab-row')).toBeHidden();
+	const mobileNav = page.getByRole('navigation', { name: "Noor Haddad's profile" });
+	await expect(mobileNav).toHaveCount(1);
+	await expect(mobileNav.getByRole('button', { name: 'Section: Overview' })).toBeVisible();
+
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await expect(page.locator('.profile-toolbar .primary-tab-row')).toBeVisible();
+	await expect(page.getByRole('navigation', { name: "Noor Haddad's profile" })).toHaveCount(1);
+	await expect(
+		page.getByRole('navigation', { name: "Noor Haddad's profile" }).getByRole('button', {
+			name: /^Section:/
+		})
+	).toHaveCount(0);
+	await visit(page, '/members/noor/work');
+	await expect(
+		page.getByTestId('header-scoped-search').getByTestId('scoped-work-search')
+	).toBeVisible();
+});

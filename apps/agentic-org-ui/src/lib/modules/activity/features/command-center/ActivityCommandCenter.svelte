@@ -1014,27 +1014,32 @@
 	}
 	function handleProjectViewKeydown(event: KeyboardEvent) {
 		if (
-			event.key !== 'ArrowLeft' &&
-			event.key !== 'ArrowRight' &&
-			event.key !== 'Home' &&
-			event.key !== 'End'
-		)
+			event.altKey ||
+			event.ctrlKey ||
+			event.metaKey ||
+			event.shiftKey ||
+			(event.key !== 'ArrowLeft' &&
+				event.key !== 'ArrowRight' &&
+				event.key !== 'Home' &&
+				event.key !== 'End')
+		) {
 			return;
+		}
+		const current = event.currentTarget as HTMLButtonElement | null;
+		const group = current?.closest('[role="tablist"], .activity-view-tabs');
+		if (!current || !group) return;
+		const buttons = [...group.querySelectorAll<HTMLButtonElement>('[data-project-view]')];
+		const index = buttons.indexOf(current);
+		if (index < 0 || buttons.length === 0) return;
 		event.preventDefault();
-		const next: 'assembly' | 'feed' =
+		const nextIdx =
 			event.key === 'Home'
-				? 'assembly'
+				? 0
 				: event.key === 'End'
-					? 'feed'
-					: viewMode === 'assembly'
-						? 'feed'
-						: 'assembly';
-		viewMode = next;
-		const group = (event.currentTarget as HTMLElement | null)?.closest(
-			'[role="tablist"], .activity-view-tabs'
-		);
-		const target = group?.querySelector<HTMLButtonElement>(`[data-project-view="${next}"]`);
-		target?.focus();
+					? buttons.length - 1
+					: (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+		// Manual activation: move focus from the focused control; Enter/Space activates it.
+		buttons[nextIdx]?.focus();
 	}
 </script>
 

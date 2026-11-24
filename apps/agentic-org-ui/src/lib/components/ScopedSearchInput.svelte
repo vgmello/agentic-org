@@ -14,6 +14,7 @@
 
 	let {
 		value = $bindable(''),
+		onvaluechange,
 		label = 'Search work in this view',
 		placeholder = 'Search work…',
 		headingSelector = '#team-heading, #project-heading, #shell-page-title, main h1, main h2',
@@ -21,12 +22,18 @@
 		class: className = ''
 	}: {
 		value?: string;
+		onvaluechange?: (next: string) => void;
 		label?: string;
 		placeholder?: string;
 		headingSelector?: string;
 		id?: string;
 		class?: string;
 	} = $props();
+
+	function updateValue(next: string) {
+		value = next;
+		onvaluechange?.(next);
+	}
 
 	const uid = $props.id();
 	const inputId = $derived(id ?? `${uid}-scoped-search`);
@@ -78,7 +85,8 @@
 		bind:this={inputEl}
 		id={inputId}
 		type="search"
-		bind:value
+		{value}
+		oninput={(e) => updateValue(e.currentTarget.value)}
 		onkeydown={handleKeydown}
 		{placeholder}
 		autocomplete="off"
@@ -96,7 +104,7 @@
 							type="button"
 							aria-label="Clear search"
 							onclick={() => {
-								value = '';
+								updateValue('');
 								inputEl?.focus();
 							}}
 							class="scoped-clear-btn inline-flex min-h-8 min-w-8 items-center justify-center [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"

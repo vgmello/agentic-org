@@ -12,8 +12,30 @@
 	let {
 		rows,
 		hideAssignee = false,
-		linked = true
-	}: { rows: WorkRow[]; hideAssignee?: boolean; linked?: boolean } = $props();
+		linked = true,
+		onopen
+	}: {
+		rows: WorkRow[];
+		hideAssignee?: boolean;
+		linked?: boolean;
+		onopen?: (row: WorkRow, triggerEl: HTMLElement | null) => void;
+	} = $props();
+
+	function handleOpen(event: MouseEvent, row: WorkRow) {
+		if (
+			!onopen ||
+			event.defaultPrevented ||
+			event.button !== 0 ||
+			event.metaKey ||
+			event.ctrlKey ||
+			event.shiftKey ||
+			event.altKey
+		) {
+			return;
+		}
+		event.preventDefault();
+		onopen(row, event.currentTarget as HTMLElement | null);
+	}
 	const STATE: Record<WorkState, { word: string; class: string }> = {
 		todo: { word: 'To do', class: '' },
 		in_progress: {
@@ -35,6 +57,7 @@
 <ul role="list" class="divide-y divide-line-subtle">
 	{#each rows as row (row.ref)}
 		<li
+			data-ref={row.ref}
 			class={[
 				'relative flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-4 transition-colors duration-150 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8',
 				linked && 'hover:bg-surface-raised/60'
@@ -45,6 +68,7 @@
 					{#if linked}
 						<a
 							href={resolve(`/work/${row.ref}` as '/')}
+							onclick={(e) => handleOpen(e, row)}
 							class="rounded-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
 							><span class="absolute inset-0" aria-hidden="true"></span><span
 								class="font-mono font-normal text-fg-muted">{row.ref}</span

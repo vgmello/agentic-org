@@ -1,6 +1,6 @@
 // Pure, strictly reconciled derivation for Team Overview (Prototype Release 1149b4f1).
 // Uses real authorized team assignments, project progress/health, activity, and optional completion
-// transition records. Never fabricates timing medians, completion timestamps, or attribution.
+// transition records. Never fabricates timing medians, completion timestamps, open counts, or attribution.
 import {
 	countedTasks,
 	doneText,
@@ -18,6 +18,13 @@ export const TEAM_OVERVIEW_WINDOW_DAYS = 28;
 export const TEAM_OVERVIEW_MIN_TIMING_SAMPLES = 5;
 
 const DAY_MS = 86_400_000;
+const EMPTY_BUGS: ProjectRow['bugs'] = Object.freeze({
+	critical: 0,
+	major: 0,
+	minor: 0,
+	trivial: 0,
+	unset: 0
+});
 const UTC_DAY_FORMATTER = new Intl.DateTimeFormat('en-US', {
 	month: 'short',
 	day: 'numeric',
@@ -62,9 +69,11 @@ export interface TeamActiveProjectSummary {
 	name: string;
 	key?: string;
 	role: 'owner' | 'contributor';
-	openWork: number;
-	healthLabel: string;
-	tone: ProjectBarTone;
+	openWork?: number;
+	/** Null when real project health counts are not served by this server. */
+	healthLabel: string | null;
+	/** Null when real project health counts are not served by this server. */
+	tone: ProjectBarTone | null;
 	progressPct: number | null;
 	progressText: string;
 	doneTasks: number;
@@ -78,41 +87,47 @@ export interface TeamContributorRow {
 	completed: number | null;
 	open: number;
 	blocked: number;
+	/** True when the server supplied only a display name without a stable assignee/contributor ID. */
+	unresolvedAttribution: boolean;
 }
 
 export interface TeamOverviewModel {
 	windowLabel: string;
 	kpis: TeamOverviewKpi[];
+	workAvailable: boolean;
 	completionsAvailable: boolean;
 	completedTotal: number | null;
 	weekly: TeamWeeklyBucket[];
 	weeklyMax: number;
-	openTotal: number;
-	blockedTotal: number;
+	openTotal: number | null;
+	blockedTotal: number | null;
 	openByStatus: TeamStatusCount[];
 	openStatusMax: number;
 	activeProjects: TeamActiveProjectSummary[];
 	contributors: TeamContributorRow[];
 	unassignedOpen: number;
 	unassignedBlocked: number;
+	unresolvedAttributionOpen: number;
 	unattributedCompletions: number;
 	recentActivity: ActivityEntry[];
 }
 
 export interface TeamOverviewInput {
 	detail: TeamDetail;
-	/** Team work rows in the same scope as the team's Work tab; undefined while loading/unavailable. */
+	/** Team work rows in the same scope as the team's Work tab; undefined while loading, failed, or unavailable. */
 	workRows?: readonly WorkRow[];
+	/** Resource state for `workRows`, used to surface honest unavailability notes on the Blocked KPI. */
+	workState?: 'loading' | 'unavailable' | 'unsupported' | 'error' | 'ready';
 	/** Active projects owned or contributed to by this team. */
 	projects?: readonly TeamProjectRow[];
-	/** Optional full project summaries (from projectsApi.list) for real progress & health. */
+	/** Optional full project summaries (when an authorized read supplies them) for real progress & health. */
 	projectDetails?: readonly ProjectRow[];
 	/** Team activity entries. */
 	activity?: readonly ActivityEntry[];
 	/** Optional authorized completion transition records; null/undefined means completion transitions are not served. */
 	completions?: readonly TeamCompletionRecord[] | null;
-	/** Optional org-wide member lookup for linking cross-team assignees by name. */
-	memberIdByName?: Readonly<Record<string, string>>;
+	/** Optional org-wide member lookup by stable ID for resolving display names of cross-team assignees. */
+	memberNameById?: ReadonlyMap<string, string> | Readonly<Record<string, string>>;
 	/** Reference timestamp in ms (defaults to Date.now()). */
 	nowMs?: number;
 }
@@ -164,16 +179,21 @@ export function deriveTeamOverview(input: TeamOverviewInput): TeamOverviewModel 
 	const endExclusiveMs = endDayMs + DAY_MS;
 	const windowLabel = `${formatUtcDayLabel(startDayMs)}–${formatUtcDayLabel(endDayMs)}`;
 
-	const workRows = input.workRows ?? [];
+	const workAvailable = Array.isArray(input.workRows);
+	const workRows: readonly WorkRow[] = Array.isArray(input.workRows) ? input.workRows : [];
 	const openRows = workRows.filter((row) => row.state !== 'done');
-	const openTotal = openRows.length;
-	const blockedTotal = openRows.filter((row) => row.state === 'blocked').length;
+	const openTotal = workAvailable ? openRows.length : null;
+	const blockedTotal = workAvailable
+		? openRows.filter((row) => row.state === 'blocked').length
+		: null;
 
 	const openByStatus: TeamStatusCount[] = [];
-	for (const entry of OPEN_STATUS_ORDER) {
-		const count = openRows.filter((row) => row.state === entry.state).length;
-		if (count > 0) {
-			openByStatus.push({ state: entry.state, label: entry.label, count });
+	if (workAvailable) {
+		for (const entry of OPEN_STATUS_ORDER) {
+			const count = openRows.filter((row) => row.state === entry.state).length;
+			if (count > 0) {
+				openByStatus.push({ state: entry.state, label: entry.label, count });
+			}
 		}
 	}
 	const openStatusMax = openByStatus.reduce((max, row) => Math.max(max, row.count), 0);
@@ -247,6 +267,14 @@ export function deriveTeamOverview(input: TeamOverviewInput): TeamOverviewModel 
 				? 'Approval wait not recorded yet'
 				: 'Time waiting on you per completed item';
 
+	const blockedNote = workAvailable
+		? `Of ${plural(openTotal!, 'open item', 'open items')}`
+		: input.workState === 'loading'
+			? 'Loading open work…'
+			: input.workState === 'error'
+				? 'Open work unavailable'
+				: 'Open work not served yet';
+
 	const kpis: TeamOverviewKpi[] = [
 		{
 			id: 'completed',
@@ -271,23 +299,27 @@ export function deriveTeamOverview(input: TeamOverviewInput): TeamOverviewModel 
 		{
 			id: 'blocked',
 			label: 'Blocked now',
-			value: String(blockedTotal),
-			note: `Of ${plural(openTotal, 'open item', 'open items')}`
+			value: blockedTotal === null ? '—' : String(blockedTotal),
+			note: blockedNote
 		}
 	];
 
-	// Active projects with real health & progress when projectDetails are served.
-	const projectMap: Record<string, ProjectRow> = {};
+	// Active projects: real progress & health whenever an authorized read provides task counts;
+	// explicit unavailability when unserved (never hardcode "Active" or "No open tasks").
+	const projectMap = new Map<string, ProjectRow>();
 	for (const p of input.projectDetails ?? []) {
-		projectMap[p.id] = p;
+		projectMap.set(p.id, p);
 	}
 	const activeProjects: TeamActiveProjectSummary[] = (input.projects ?? [])
-		.filter((proj) => !projectMap[proj.id]?.archived)
+		.filter((proj) => !projectMap.get(proj.id)?.archived)
 		.map((proj) => {
-			const detail = projectMap[proj.id];
-			if (detail) {
-				const totalTasks = countedTasks(detail.tasks);
-				const tone = projectBarTone(detail.tasks, detail.bugs, detail.archived);
+			const detail = projectMap.get(proj.id);
+			const tasks = detail?.tasks ?? proj.tasks;
+			const bugs = detail?.bugs ?? proj.bugs ?? EMPTY_BUGS;
+			const archived = detail?.archived ?? false;
+			if (tasks) {
+				const totalTasks = countedTasks(tasks);
+				const tone = projectBarTone(tasks, bugs, archived);
 				return {
 					id: proj.id,
 					name: proj.name,
@@ -296,9 +328,9 @@ export function deriveTeamOverview(input: TeamOverviewInput): TeamOverviewModel 
 					openWork: proj.openWork,
 					healthLabel: projectHealthLabel(tone),
 					tone,
-					progressPct: totalTasks > 0 ? progressPercent(detail.tasks) : null,
-					progressText: doneText(detail.tasks),
-					doneTasks: detail.tasks.done,
+					progressPct: totalTasks > 0 ? progressPercent(tasks) : null,
+					progressText: doneText(tasks),
+					doneTasks: tasks.done,
 					totalTasks
 				};
 			}
@@ -308,94 +340,122 @@ export function deriveTeamOverview(input: TeamOverviewInput): TeamOverviewModel 
 				key: proj.key,
 				role: proj.role,
 				openWork: proj.openWork,
-				healthLabel: 'Active',
-				tone: 'accent',
+				healthLabel: null,
+				tone: null,
 				progressPct: null,
 				progressText:
-					proj.openWork === 0
-						? 'No open tasks'
-						: `${plural(proj.openWork, 'open task', 'open tasks')}`,
+					typeof proj.openWork === 'number'
+						? proj.openWork === 0
+							? 'No open tasks · progress & health unavailable'
+							: `${plural(proj.openWork, 'open task', 'open tasks')} · progress & health unavailable`
+						: "Progress and health aren't served by this server yet.",
 				doneTasks: 0,
 				totalTasks: 0
 			};
 		});
 
-	// Contributors table: shared scope reconciliation across open work + 28d completions, sorted A-Z.
-	const memberById: Record<string, { id: string; name: string }> = {};
-	const memberIdByLowerName: Record<string, string> = {};
+	// Contributors table: strictly keyed by stable ID in a Map (zero prototype collisions;
+	// never collapses two people with the same name or guesses a link from name-only rows).
+	const memberNameMap = new Map<string, string>();
 	for (const m of input.detail.members) {
-		memberById[m.id] = { id: m.id, name: m.name };
-		memberIdByLowerName[m.name.trim().toLowerCase()] = m.id;
+		memberNameMap.set(m.id, m.name);
 	}
-	for (const [name, id] of Object.entries(input.memberIdByName ?? {})) {
-		const key = name.trim().toLowerCase();
-		if (!Object.hasOwn(memberIdByLowerName, key)) {
-			memberIdByLowerName[key] = id;
+	if (input.memberNameById instanceof Map) {
+		for (const [id, name] of input.memberNameById) {
+			if (!memberNameMap.has(id)) memberNameMap.set(id, name);
 		}
-		if (!Object.hasOwn(memberById, id)) {
-			memberById[id] = { id, name };
+	} else if (input.memberNameById) {
+		for (const [id, name] of Object.entries(input.memberNameById)) {
+			if (!memberNameMap.has(id)) memberNameMap.set(id, name);
 		}
 	}
 
-	const bucketMap: Record<string, TeamContributorRow> = {};
-	function ensureContributor(memberId: string | undefined, name: string): TeamContributorRow {
-		const trimmed = name.trim();
-		const resolvedId = memberId ?? memberIdByLowerName[trimmed.toLowerCase()];
-		const displayName =
-			resolvedId && memberById[resolvedId] ? memberById[resolvedId].name : trimmed;
-		const key = resolvedId ? `id:${resolvedId}` : `name:${displayName.toLowerCase()}`;
-		if (!Object.hasOwn(bucketMap, key)) {
-			bucketMap[key] = {
+	const bucketMap = new Map<string, TeamContributorRow>();
+	function ensureContributor(
+		memberId: string | undefined,
+		fallbackName: string
+	): TeamContributorRow {
+		const trimmedId = memberId?.trim() || undefined;
+		const trimmedName = fallbackName.trim();
+		if (trimmedId) {
+			const key = `id:${trimmedId}`;
+			let entry = bucketMap.get(key);
+			if (!entry) {
+				const displayName = memberNameMap.get(trimmedId) ?? (trimmedName || trimmedId);
+				entry = {
+					key,
+					memberId: trimmedId,
+					name: displayName,
+					completed: completionsAvailable ? 0 : null,
+					open: 0,
+					blocked: 0,
+					unresolvedAttribution: false
+				};
+				bucketMap.set(key, entry);
+			}
+			return entry;
+		}
+		const key = `unresolved:${trimmedName.toLowerCase()}`;
+		let entry = bucketMap.get(key);
+		if (!entry) {
+			entry = {
 				key,
-				memberId: resolvedId,
-				name: displayName,
+				memberId: undefined,
+				name: trimmedName,
 				completed: completionsAvailable ? 0 : null,
 				open: 0,
-				blocked: 0
+				blocked: 0,
+				unresolvedAttribution: true
 			};
+			bucketMap.set(key, entry);
 		}
-		return bucketMap[key];
+		return entry;
 	}
 
 	let unassignedOpen = 0;
 	let unassignedBlocked = 0;
+	let unresolvedAttributionOpen = 0;
 	for (const row of openRows) {
-		const assignee = row.assignee?.trim();
-		if (!assignee) {
+		const id = row.assigneeId?.trim() || undefined;
+		const name = row.assignee?.trim() || '';
+		if (!id && !name) {
 			unassignedOpen += 1;
 			if (row.state === 'blocked') unassignedBlocked += 1;
 			continue;
 		}
-		const entry = ensureContributor(undefined, assignee);
+		const entry = ensureContributor(id, name || id!);
 		entry.open += 1;
 		if (row.state === 'blocked') entry.blocked += 1;
+		if (!id) unresolvedAttributionOpen += 1;
 	}
 
 	let unattributedCompletions = 0;
 	if (completionsAvailable) {
 		for (const rec of inWindowCompletions) {
-			const resolvedName =
-				rec.contributorName?.trim() ||
-				(rec.contributorId && memberById[rec.contributorId]?.name) ||
-				'';
-			if (!resolvedName && !rec.contributorId) {
+			const id = rec.contributorId?.trim() || undefined;
+			const name = rec.contributorName?.trim() || (id ? (memberNameMap.get(id) ?? '') : '');
+			if (!id && !name) {
 				unattributedCompletions += 1;
 				continue;
 			}
-			const entry = ensureContributor(rec.contributorId, resolvedName || rec.contributorId!);
+			const entry = ensureContributor(id, name || id!);
 			entry.completed = (entry.completed ?? 0) + 1;
 		}
 	}
 
-	const contributors = Object.values(bucketMap)
+	const contributors = [...bucketMap.values()]
 		.filter((row) => row.open > 0 || (row.completed !== null && row.completed > 0))
-		.toSorted((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+		.toSorted(
+			(a, b) =>
+				a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }) || a.key.localeCompare(b.key)
+		);
 
 	const recentActivity = sortActivityNewestFirst(input.activity ?? []).slice(0, 3);
 
 	return {
 		windowLabel,
 		kpis,
+		workAvailable,
 		completionsAvailable,
 		completedTotal,
 		weekly,
@@ -408,6 +468,7 @@ export function deriveTeamOverview(input: TeamOverviewInput): TeamOverviewModel 
 		contributors,
 		unassignedOpen,
 		unassignedBlocked,
+		unresolvedAttributionOpen,
 		unattributedCompletions,
 		recentActivity
 	};

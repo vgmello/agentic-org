@@ -53,12 +53,18 @@
 	const organizationId = $derived(connection.organization.id);
 	const session = $derived(sessionFor(orgApi, organizationId));
 	const team = new Resource(() => lookUpTeam(() => teamsApi.team(organizationId, teamId)));
+	const work = new Resource(() => teamsApi.work(organizationId, teamId));
 	// Live changes, New › Add a person and this page's own actions apply in place, keeping what's shown until then.
 	reloadOnChange(team, () => loads);
+	reloadOnChange(work, () => loads);
 	const tab = $derived(tabFor(page.url.pathname, teamId));
 	const detail = $derived(team.data?.found ? team.data.detail : undefined);
 	let toolbarControls = $state.raw<Snippet | undefined>(undefined);
-	let openWorkCount = $state<number | undefined>(undefined);
+	const openWorkCount = $derived(
+		work.state === 'ready' && work.data
+			? work.data.filter((r) => r.state !== 'done').length
+			: undefined
+	);
 
 	const tabs = $derived<Tab[]>(
 		TEAM_TABS.map((t) => ({
@@ -92,11 +98,11 @@
 		get loads() {
 			return loads;
 		},
+		get work() {
+			return work;
+		},
 		setToolbarControls: (controls) => {
 			toolbarControls = controls;
-		},
-		setOpenWorkCount: (count) => {
-			openWorkCount = count;
 		}
 	});
 

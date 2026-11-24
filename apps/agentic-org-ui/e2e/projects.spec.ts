@@ -638,12 +638,16 @@ test('Phase 7 (5da47e1d + 53728c05): Project Release strip, More menu, Project A
 	await expect(page.getByTestId('project-feed-filter-btn')).toBeVisible();
 	await expect(page.getByTestId('assembly-display-btn')).toHaveCount(0);
 
-	// Project Work: release strip omitted, inline List/Board controls in .project-toolbar, List view defaults to Status grouping
+	// Project Work: release strip omitted, inline List/Board controls in .project-toolbar, shared header scoped search, List view defaults to Status grouping
 	await tabs(page).filter({ hasText: 'Work' }).click();
 	await expect(page).toHaveURL(/\/projects\/beacon\/work$/);
 	await expect(page.getByTestId('project-release-strip')).toHaveCount(0);
 	const projectWorkControls = page.locator('.project-toolbar').getByTestId('project-work-controls');
 	await expect(projectWorkControls).toBeVisible();
+	await expect(
+		page.getByTestId('header-scoped-search').getByTestId('scoped-work-search')
+	).toBeVisible();
+	await expect(page.getByTestId('filter-bar').locator('input[type="search"]')).toHaveCount(0);
 	const listBtn = projectWorkControls
 		.getByRole('group', { name: 'Layout' })
 		.getByRole('button', { name: 'List' });

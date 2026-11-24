@@ -1345,13 +1345,24 @@ test('Phase 7 (5da47e1d + 53728c05): Assembly Display row dividers persistence, 
 		'rgb(53, 43, 34)'
 	);
 
-	// 3. Phase 8 (1149b4f1): Cozy Glass translucent headers + matte body on Work; Inbox Escape preserves query
+	// Phase 8 (1149b4f1): Activity arrow navigation moves focus from the focused tab without premature activation.
+	const actTabs = page.locator('.activity-view-tabs');
+	const assemblyBtn = actTabs.getByRole('button', { name: 'Assembly line', exact: true });
+	const activityBtn = actTabs.getByRole('button', { name: 'Activity', exact: true });
+	await expect(assemblyBtn).toHaveAttribute('aria-pressed', 'true');
+	await activityBtn.focus();
+	await page.keyboard.press('ArrowLeft');
+	await expect(assemblyBtn).toBeFocused();
+	await expect(assemblyBtn).toHaveAttribute('aria-pressed', 'true');
+
+	// 3. Phase 8 (1149b4f1): Cozy Glass keeps Work header AND toolbar translucent above matte #463c30 results canvas; Inbox Escape preserves query
 	await visit(page, '/work?theme=cozy&mock=poc');
+	await expect(page.locator('.work-header')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+	await expect(page.locator('.work-toolbar-bar')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
 	await expect(page.locator('.work-results-canvas')).toHaveCSS(
 		'background-color',
 		'rgb(70, 60, 48)'
 	);
-	await expect(page.locator('.work-header')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
 
 	await visit(page, '/inbox?theme=cozy&mock=poc');
 	const inboxSearch = page.getByLabel('Search inbox');

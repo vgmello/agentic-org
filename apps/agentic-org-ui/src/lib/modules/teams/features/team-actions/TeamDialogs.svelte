@@ -95,7 +95,13 @@
 				teamsApi.list(organizationId),
 				membersApi.directory(organizationId),
 				teamsApi.projects(organizationId, teamId),
-				teamsApi.work(organizationId, teamId)
+				teamsApi.work(organizationId, teamId).catch((e) => {
+					const code = toAppError(e).code;
+					if (code === 'unavailable' || code === 'unimplemented' || code === 'unsupported') {
+						return [];
+					}
+					throw e;
+				})
 			]);
 			if (run === checkRun)
 				check = {

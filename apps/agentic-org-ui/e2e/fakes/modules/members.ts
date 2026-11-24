@@ -466,6 +466,7 @@ export function workRows(
 			ref: t.ref,
 			title: t.title,
 			project: s.projects?.find((p) => p.id === t.projectId)?.name,
+			assigneeId: t.assigneeId || undefined,
 			assignee: t.assigneeId ? nameOf(s, t.assigneeId) : undefined,
 			priority: t.priority as WorkRow['priority'],
 			state: t.state as WorkState

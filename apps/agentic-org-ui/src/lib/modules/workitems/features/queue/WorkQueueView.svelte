@@ -20,6 +20,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { gutters, inputClass, mobileButton, selectClass } from '$lib/components/classes';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useScopedSearchContext } from '$lib/platform/shell/scoped-search.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
 	import { workItemsApi } from '../../api';
 	import {
@@ -123,6 +124,21 @@
 	} catch {
 		shellData = undefined;
 	}
+	const scopedSearch = useScopedSearchContext();
+	const usesHeaderScopedSearch = $derived(!isOrgScope && Boolean(scopedSearch));
+
+	$effect(() => {
+		if (!scopedSearch || isOrgScope) return;
+		return scopedSearch.register({
+			getValue: () => filters.query,
+			setValue: (next) => {
+				filters = { ...filters, query: next };
+			},
+			label: 'Search work in this view',
+			placeholder: 'Search work…',
+			headingSelector: '#project-heading, #shell-page-title, main h1, main h2'
+		});
+	});
 
 	function reloadQueue() {
 		queueRead.reload();
@@ -657,15 +673,19 @@
 
 			<div
 				class={[
-					'flex min-w-0 flex-1 flex-col gap-5 py-6',
-					gutters,
-					isOrgScope && 'work-results-canvas'
+					'flex min-w-0 flex-1 flex-col',
+					!isOrgScope && 'gap-5 py-6',
+					!isOrgScope && gutters
 				]}
 				inert={isOrgScope && activeOpenRow ? true : undefined}
 			>
 				<!-- Top controls: Type tabs + Project actions / Show menu / Board-List toggle -->
 				<div
-					class="work-toolbar-bar flex flex-wrap items-stretch justify-between gap-x-3 gap-y-1.5 border-b border-line"
+					class={[
+						'work-toolbar-bar flex flex-wrap items-stretch justify-between gap-x-3 gap-y-1.5 border-b border-line',
+						isOrgScope && gutters,
+						isOrgScope && 'pt-2'
+					]}
 				>
 					<div
 						class="primary-tab-row"
@@ -802,13 +822,17 @@
 					</div>
 				</div>
 
-				<!-- Main panel -->
+				<!-- Main panel (Cozy Glass matte canvas begins below the translucent toolbar on Org Work) -->
 				<div
 					id="{uid}-panel"
 					role={tabSelected ? 'tabpanel' : 'region'}
 					aria-labelledby={tabSelected ? `${uid}-tab-${activeTab}` : undefined}
 					aria-label={tabSelected ? undefined : activeShowLabel}
-					class="flex min-w-0 flex-col gap-4"
+					class={[
+						'flex min-w-0 flex-1 flex-col gap-4',
+						isOrgScope && 'work-results-canvas py-5',
+						isOrgScope && gutters
+					]}
 				>
 					{#if isOrgScope && showMode === 'needs_me'}
 						<NeedsMeList
@@ -880,31 +904,33 @@
 
 						<!-- Filter bar (WORK-1, TRI-7, BUG-12, BUG-13, RQS-15) -->
 						<div class="flex flex-wrap items-center gap-2.5" data-testid="filter-bar">
-							<div class="relative w-full min-[640px]:w-60">
-								<label for="{uid}-search" class="sr-only"
-									>{isOrgScope ? 'Search work' : 'Search work in this view'}</label
-								>
-								<Input
-									id="{uid}-search"
-									type="search"
-									bind:value={filters.query}
-									onkeydown={handleSearchKeydown}
-									placeholder="Search title or T- ref…"
-									aria-describedby="{uid}-search-scope"
-									aria-keyshortcuts={shortcutsEnabled ? '/' : undefined}
-									class="{inputClass} {shortcutsEnabled && !filters.query ? 'pr-8' : ''}"
-								/>
-								{#if shortcutsEnabled && !filters.query}
-									<kbd
-										aria-hidden="true"
-										class="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 rounded border border-line-strong px-1.5 py-0.5 font-mono text-[11px]/none text-fg-muted min-[721px]:inline"
-										>/</kbd
+							{#if !usesHeaderScopedSearch}
+								<div class="relative w-full min-[640px]:w-60">
+									<label for="{uid}-search" class="sr-only"
+										>{isOrgScope ? 'Search work' : 'Search work in this view'}</label
 									>
-								{/if}
-								<span id="{uid}-search-scope" class="sr-only">
-									Searches shared titles, references, teams and projects.
-								</span>
-							</div>
+									<Input
+										id="{uid}-search"
+										type="search"
+										bind:value={filters.query}
+										onkeydown={handleSearchKeydown}
+										placeholder="Search title or T- ref…"
+										aria-describedby="{uid}-search-scope"
+										aria-keyshortcuts={shortcutsEnabled ? '/' : undefined}
+										class="{inputClass} {shortcutsEnabled && !filters.query ? 'pr-8' : ''}"
+									/>
+									{#if shortcutsEnabled && !filters.query}
+										<kbd
+											aria-hidden="true"
+											class="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 rounded border border-line-strong px-1.5 py-0.5 font-mono text-[11px]/none text-fg-muted min-[721px]:inline"
+											>/</kbd
+										>
+									{/if}
+									<span id="{uid}-search-scope" class="sr-only">
+										Searches shared titles, references, teams and projects.
+									</span>
+								</div>
+							{/if}
 
 							<select
 								aria-label="Filter by status"

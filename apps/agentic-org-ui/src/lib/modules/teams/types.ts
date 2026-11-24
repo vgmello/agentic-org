@@ -2,6 +2,7 @@
 // (docs/design/organization-data/01-organization-structure.md): `number` gives the readable `TEAM-<n>` reference,
 // `max_members` the member limit. Counts are of active employees whose home team it is (TEAM-2).
 import type { MemberRef, PresenceId, TeamRef } from '$lib/modules/members';
+import type { ProjectRow } from '$lib/modules/projects/types';
 
 export type { ActivityEntry, ConversationRow, WorkRow } from '$lib/modules/members';
 
@@ -51,7 +52,12 @@ export interface TeamProjectRow extends TeamProject {
 	ownerTeam?: TeamRef;
 	/** The other contributing teams: neither this team nor the owner (TEAM-13). */
 	contributors?: TeamRef[];
-	openWork: number;
+	/** Real open-task count when served by HQ; omitted when unavailable. */
+	openWork?: number;
+	/** Real project task counts when served by an authorized read; omitted when unavailable. */
+	tasks?: ProjectRow['tasks'];
+	/** Real project bug counts when served by an authorized read; omitted when unavailable. */
+	bugs?: ProjectRow['bugs'];
 }
 
 /** Someone who may lead a team: an active employee whose home team it is. */

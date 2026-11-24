@@ -39,7 +39,7 @@ const RESERVED_TEAM_SEGMENTS: ReadonlySet<string> = new Set([
 	'org-chart'
 ]);
 
-const TEAM_ROUTE = /^\/teams\/([^/]+)(?:\/projects)?$/;
+const TEAM_ROUTE = /^\/teams\/([^/]+)(?:\/(?:members|projects))?$/;
 const MEMBER_ROUTE = /^\/members\/([^/]+)(?:\/role)?$/;
 const PROJECT_ROUTE = /^\/projects\/([^/]+)(?:\/(?:team|settings))?$/;
 

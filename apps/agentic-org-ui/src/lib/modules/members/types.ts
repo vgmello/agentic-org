@@ -229,6 +229,7 @@ export interface WorkRow {
 	ref: string;
 	title: string;
 	project?: string;
+	assigneeId?: string;
 	assignee?: string;
 	priority?: 'urgent' | 'high' | 'medium' | 'low';
 	state: WorkState;

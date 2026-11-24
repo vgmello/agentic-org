@@ -18,6 +18,8 @@
 	import { answerExecutiveQuestion, type OrgAiAnswer } from '$lib/home/model';
 	import { nonOwners } from '$lib/modules/organization/model';
 	import NewMenu from './NewMenu.svelte';
+	import ScopedSearchInput from '$lib/components/ScopedSearchInput.svelte';
+	import { useScopedSearchContext } from './scoped-search.svelte';
 	import type { ShellAiAskOptions } from './shell-ai';
 	import { useShellData } from './shell-data.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from './shortcuts';
@@ -57,6 +59,8 @@
 		'inline-flex h-[22px] items-center justify-center rounded-md bg-[var(--exec-well)] px-[7px] text-[0.7rem] font-semibold text-[var(--exec-muted)] shadow-[inset_0_0_0_1px_var(--exec-border)]';
 
 	const shellData = useShellData();
+	const scopedSearch = useScopedSearchContext();
+	const activeScopedSearch = $derived(scopedSearch?.active);
 	const organizationId = $derived(shellData.organizationId);
 	const isHome = $derived(page.url.pathname === '/home');
 	const isChat = $derived(page.url.pathname === '/chat' || page.url.pathname.startsWith('/chat/'));
@@ -679,11 +683,23 @@
 <svelte:window onkeydown={handleWindowKeydown} onpointerdown={handleWindowPointerDown} />
 
 <header
-	class="exec-topbar relative z-30 flex shrink-0 items-center justify-center gap-3 overflow-visible px-4 sm:px-6"
+	class="exec-topbar relative z-30 flex shrink-0 flex-wrap items-center justify-center gap-2.5 overflow-visible px-4 sm:px-6"
 >
+	{#if activeScopedSearch}
+		<div class="exec-scoped-search-host min-w-0 shrink" data-testid="header-scoped-search">
+			<ScopedSearchInput
+				value={activeScopedSearch.getValue()}
+				onvaluechange={(next) => activeScopedSearch.setValue(next)}
+				label={activeScopedSearch.label}
+				placeholder={activeScopedSearch.placeholder}
+				headingSelector={activeScopedSearch.headingSelector}
+				class="w-full max-w-[18rem]"
+			/>
+		</div>
+	{/if}
 	<div
 		bind:this={homeShellEl}
-		class="exec-cmdk-bar relative flex w-full max-w-[640px] items-center"
+		class="exec-cmdk-bar relative flex min-w-0 flex-1 max-w-[640px] items-center"
 	>
 		{#if isHome}
 			<label
