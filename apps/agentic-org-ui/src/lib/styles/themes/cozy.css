@@ -667,7 +667,8 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high']
 
 /* Reduced transparency (prefers-reduced-transparency: reduce): opaque espresso surfaces and zero backdrop blur */
 @media (prefers-reduced-transparency: reduce) {
-	html[data-ui-theme='cozy'] {
+	html[data-ui-theme='cozy'],
+	html[data-ui-theme='cozy'][data-cozy-contrast='high'] {
 		--cozy-shell: #241e19;
 		--cozy-panel-sheen: none;
 		--cozy-sidebar-sheen: none;
@@ -690,16 +691,17 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high']
 		--exec-cta-glass-blur: none;
 	}
 
-	html[data-ui-theme='cozy'] .chat-frame {
+	html[data-ui-theme='cozy'] .chat-frame,
+	html[data-ui-theme='cozy'][data-cozy-contrast='high'] .chat-frame {
 		--cozy-chat-chrome: #1a1512;
 		background: #241e19;
 	}
 
+	html[data-ui-theme='cozy'] .cozy-room::after,
+	html[data-ui-theme='cozy'] .exec-topbar::before,
 	html[data-ui-theme='cozy']
 		:is(
-			.cozy-room::after,
 			.cozy-shell,
-			.exec-topbar::before,
 			.exec-well,
 			.exec-cta,
 			.exec-ai-btn,

@@ -1088,17 +1088,21 @@ test('Phase 4B: saving inline Task A while switching to Task B keeps B enabled, 
 	await expect(readingPanel.locator('#task-title')).toBeEnabled();
 	await expect(page.getByRole('button', { name: 'Alpha task — saved' })).toBeVisible();
 
-	// Editing Beta's title and pressing Escape directly (without tabbing away) flushes blur-save before unmount
+	// Editing Beta's title and pressing Escape blurs & saves while keeping the reading panel open
+	// so errors/conflicts stay visible; pressing Escape again closes the reading panel
 	await readingPanel.locator('#task-title').fill('Beta task — escape saved');
 	await page.keyboard.press('Escape');
-	await expect(readingPanel).toBeHidden();
+	await expect(readingPanel).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Beta task — escape saved' })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(readingPanel).toBeHidden();
 
-	// Deleting a task inside the inline reading panel never drops focus to document.body
+	// Deleting a task inside the inline reading panel never drops focus to document.body even after the row disappears
 	await page.getByRole('button', { name: 'Beta task — escape saved' }).click();
 	await readingPanel.getByRole('button', { name: 'Delete' }).click();
 	await readingPanel.getByRole('button', { name: 'Delete task' }).click();
 	await expect(readingPanel).toBeHidden();
+	await expect(page.getByRole('button', { name: 'Beta task — escape saved' })).toBeHidden();
 	await expect
 		.poll(() => page.evaluate(() => document.activeElement?.tagName ?? 'BODY'))
 		.not.toBe('BODY');

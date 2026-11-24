@@ -1,6 +1,7 @@
 <script lang="ts">
 	import DraftableText from '$lib/modules/copilot/features/draft-text/DraftableText.svelte';
 	import { onDestroy, untrack } from 'svelte';
+	import { toast } from 'svelte-sonner';
 	import { resolve } from '$app/paths';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { Badge } from '$lib/components/ui/badge';
@@ -173,9 +174,11 @@
 			onchanged(announce);
 			return true;
 		} catch (e) {
-			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forTask !== taskId)
-				return false;
 			const err = toAppError(e);
+			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forTask !== taskId) {
+				if (forOrg === organizationId) toast.error(err.message);
+				return false;
+			}
 			error = err.message;
 			if (err.source === 'api' && err.code === 'conflict') await load(true);
 			if (err.source === 'api' && err.code === 'checklist_incomplete') pending = 'done_anyway';

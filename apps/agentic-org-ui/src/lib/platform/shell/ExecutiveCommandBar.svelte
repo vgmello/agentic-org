@@ -72,9 +72,9 @@
 			const { chatApi } = await import('$lib/modules/messaging/legacy-api');
 			const snap = await chatApi.snapshot(targetOrgId);
 			if (destroyed || seq !== chatLoadSeq || targetOrgId !== organizationId) return;
-			// Lock onto the currently highlighted channel entry ID before swapping results so Enter
-			// never activates a different channel if order changes or an earlier channel was archived.
-			if (!activeEntryId && (open || inlineOpen) && isChannelQuery && safeActiveIdx >= 0) {
+			// Lock onto the currently highlighted entry ID before swapping results (for both `#` and
+			// unprefixed searches that include channels) so Enter never runs a substituted item.
+			if (!activeEntryId && (open || inlineOpen) && query.trim().length > 0 && safeActiveIdx >= 0) {
 				const currentEntry = entries[safeActiveIdx];
 				if (currentEntry) activeEntryId = currentEntry.id;
 			}
@@ -480,6 +480,7 @@
 			...aiHistory.filter((x) => x.query.toLowerCase() !== ans.query.toLowerCase())
 		];
 		query = '';
+		resetActive();
 	}
 
 	function askQuestion(prompt: string, opts?: ShellAiAskOptions) {
@@ -525,6 +526,7 @@
 			event.preventDefault();
 			if (open) {
 				mode = mode === 'cmd' ? 'ai' : 'cmd';
+				resetActive();
 				if (mode === 'cmd') void loadChatConversations(organizationId);
 				void tick().then(() => inputEl?.focus());
 			} else {
@@ -859,6 +861,7 @@
 					aria-selected={mode === 'cmd'}
 					onclick={() => {
 						mode = 'cmd';
+						resetActive();
 						void loadChatConversations(organizationId);
 					}}
 					class="exec-cmdk-tab inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"

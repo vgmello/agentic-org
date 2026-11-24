@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
+	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -140,9 +141,11 @@
 			onchanged(message);
 			return true;
 		} catch (e) {
-			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forBug !== bugId)
-				return false;
 			const err = toAppError(e);
+			if (destroyed || seq !== saveSeq || forOrg !== organizationId || forBug !== bugId) {
+				if (forOrg === organizationId) toast.error(err.message);
+				return false;
+			}
 			error = err.message;
 			if (err.source === 'api' && err.code === 'checklist_incomplete') askAnyway = true;
 			if (err.source === 'api' && err.code === 'conflict') await load();

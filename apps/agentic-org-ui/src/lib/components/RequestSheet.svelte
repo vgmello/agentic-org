@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
+	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -161,9 +162,12 @@
 			return true;
 		} catch (e) {
 			const err = toAppError(e);
-			// A failure of a call made for a request the sheet has left says nothing about the one it shows now.
-			if (destroyed || mine !== sheet || forOrg !== organizationId || forRequest !== requestId)
+			// A failure of a call made for a request the sheet has left says nothing about the one it shows now,
+			// but still surfaces a toast for the same organization so a failed save is never silently lost.
+			if (destroyed || mine !== sheet || forOrg !== organizationId || forRequest !== requestId) {
+				if (forOrg === organizationId) toast.error(err.message);
 				return false;
+			}
 			error = err.message;
 			if (err.source === 'api' && err.code === 'conflict') await load();
 			return false;

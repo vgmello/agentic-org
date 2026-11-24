@@ -185,11 +185,22 @@
 		try {
 			const got = (await workApi.snapshot(targetOrgId)).items;
 			if (destroyed || isCancelled() || seq !== loadSeq) return;
+			const hadFocusInWork =
+				document.activeElement instanceof HTMLElement &&
+				Boolean(document.activeElement.closest('#work-results'));
 			items = got;
 			now = new Date().toISOString();
 			loadError = undefined;
 			// Open on the default filter of the live tab until the owner picks one.
 			if (!chosen) filterId = defaultFilter(tab, got, me);
+			if (hadFocusInWork) {
+				void tick().then(() => {
+					if (destroyed || hasDetail) return;
+					if (!document.activeElement || document.activeElement === document.body) {
+						focusWorkFallback();
+					}
+				});
+			}
 		} catch (e) {
 			if (destroyed || isCancelled() || seq !== loadSeq) return;
 			if (items === undefined) loadError = toAppError(e).message;
@@ -395,6 +406,17 @@
 					return;
 				}
 				if (document.querySelector(modalOverlaySelector)) return;
+				// If a text field inside the inline reading panel has focus, blur it first so any
+				// blur-saved edit flushes with the panel still open to show errors/conflicts; the next Escape closes.
+				if (
+					(event.target instanceof HTMLInputElement ||
+						event.target instanceof HTMLTextAreaElement) &&
+					Boolean(event.target.closest('.work-reading'))
+				) {
+					event.preventDefault();
+					event.target.blur();
+					return;
+				}
 				event.preventDefault();
 				closeDetail(true);
 				return;
