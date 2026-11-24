@@ -17,6 +17,18 @@ bun poc/server.ts
 
 Defaults to `http://localhost:3000` (override with `PORT=3001 bun poc/server.ts`).
 
+## Quick browser check
+
+```bash
+bun poc/smoke.ts work graphite
+bun poc/smoke.ts activity ocean
+```
+
+Pass a v6 route and theme to check the affected page in Chromium. The command uses
+the installed Playwright dependency and starts and stops its own preview. It saves
+a screenshot under `.playwright/`. Work and Activity also check their right-side
+panels and keyboard dismissal.
+
 ## Production boundary
 
 The production web UI lives in [`apps/agentic-org-ui/`](../apps/agentic-org-ui/). Nothing in `poc/` is imported into or bundled with production builds.
