@@ -5107,6 +5107,10 @@ function statusLine(id) {
 function hdr(title, count, trailing = "", extra = "") {
   return `<header class="ph"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>${extra}${count ? `<p class="cnt">${count}</p>` : ""}</div>${trailing ? `<div class="ph-actions">${trailing}</div>` : ""}</header>`;
 }
+function queueHeadline(title, count, announce = false) {
+  return `<div class="ph queue-headline"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>
+    <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}</span></div></div>`;
+}
 const back = (href, label) => `<a class="back" href="${href}">${ic("chev-left", "ic16")}${esc(label)}</a>`;
 function linkTabs(base, tabs, cur, label = "Sections") {
   return `<nav class="tabs" aria-label="${esc(label)}">${tabs.map(([k, l, n]) => `<a class="tab" data-menu-label="${esc(l)}" href="${base}${k ? "/" + k : ""}" ${cur === k ? 'aria-current="page"' : ""}>${esc(l)}${n != null ? `<span class="tcount">${n}</span>` : ""}</a>`).join("")}</nav>`;
@@ -6542,8 +6546,7 @@ function pageInbox(sel) {
     : (S.inboxOrder === "date" ? "By date" : "Priority first");
   return `<section class="triage-workspace${sel && item ? " triage-has-detail" : ""}" aria-label="Inbox workspace">
     <header class="triage-header queue-header">
-      <div class="ph queue-headline"><div class="ph-t"><h1 tabindex="-1">Inbox</h1><span class="cnt queue-count" role="status"><i aria-hidden="true"></i>${unhandled().length} waiting on you</span></div>
-      </div>
+      ${queueHeadline("Inbox", unhandled().length + " waiting on you", true)}
       <div class="triage-toolbar queue-toolbar" id="triage-categories">${inboxCategories()}</div>
     </header>
     <div class="triage-split">
@@ -7277,12 +7280,7 @@ function pageWork() {
   S.workGroup = selection.group;
   S.workSubgroup = selection.subgroup;
   return `<header class="work-header queue-header">
-    <div class="ph queue-headline">
-      <div class="ph-t">
-        <h1 tabindex="-1">Work</h1>
-        <p class="cnt queue-count"><i aria-hidden="true"></i>${W.filter(OPEN).length} open · ${W.filter(needsMe).length} need you</p>
-      </div>
-    </div>
+    ${queueHeadline("Work", `${W.filter(OPEN).length} open · ${W.filter(needsMe).length} need you`)}
     <div class="work-toolbar queue-toolbar">
       <div class="primary-tab-row" data-page-menu>
         <div class="queue-tabs" role="group" aria-label="Work views">
@@ -8151,9 +8149,7 @@ function pageActivity(projectId = null) {
   const count = `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`;
   return `<section class="activity-workspace" data-activity-scope="${esc(projectId || "portfolio")}" aria-label="${projectId ? "Project activity" : "Activity command center"}">
     ${projectId ? projectReleaseSummary(projectId) : `<header class="activity-header queue-header">
-      <div class="ph queue-headline"><div class="ph-t">
-        <h1 tabindex="-1">Activity</h1><p class="cnt queue-count" role="status"><i aria-hidden="true"></i>${count}</p>
-      </div></div>
+      ${queueHeadline("Activity", count, true)}
       <div class="activity-toolbar queue-toolbar">${activityViewControls(null, waiting.length)}</div>
     </header>`}
     <div class="activity-body"${S.actPanel ? " data-panel-open" : ""}>
@@ -8191,7 +8187,7 @@ function activityFeedLayout(items, noProj) {
 /* ---------------------------------------------------------------- teams */
 function teamsHeader(title, count, current, controls = "", actions = "") {
   const tabs = linkTabs("#/teams", [["", "Teams", Object.keys(TEAMS).length], ["members", "Members", memberIds().length], ["org-chart", "Org chart"]], current, "Teams views");
-  return `<div class="section-header">${hdr(title, count)}${sectionTabs(tabs, controls, actions)}</div>`;
+  return `<div class="section-header org-directory-header">${queueHeadline(title, count)}${sectionTabs(tabs, controls, actions)}</div>`;
 }
 function ownerCard() {
   const reports = memberIds().filter((k) => M[k].mgr === "you");
@@ -8199,7 +8195,7 @@ function ownerCard() {
 }
 function pageTeams() {
   const all = memberIds(), ppl = all.filter(isPerson).length;
-  const create = `<button class="btn outline" type="button" data-act="proto" data-v="New team">${ic("plus", "ic20")}New team</button>`;
+  const create = `<button class="btn primary" type="button" data-act="proto" data-v="New team">${ic("plus", "ic16")}New team</button>`;
   return teamsHeader("Teams", `${plural(Object.keys(TEAMS).length, "team", "teams")} · ${plural(ppl, "person", "people")} · ${plural(all.length - ppl, "agent", "agents")}`, "", "", create) +
   `<div class="owner-wrap">${ownerCard()}</div>
   <ul class="rows" role="list" aria-label="Teams">${Object.entries(TEAMS).map(([k, t]) => {
@@ -8219,25 +8215,30 @@ function pageTeam(id, tab) {
   const count = `${plural(t.members.length, "member", "members")} · ${plural(people, "person", "people")} · ${plural(t.members.length - people, "agent", "agents")}`;
   const actions = hireMenu(id) + moreMenu("tmore", "More actions for " + t.name, menuItem("proto", "Edit team " + t.name, "pencil", "Edit team") + menuItem("proto", "Move team " + t.name + " (choose its parent team)", "user-group", "Move team…") + menuItem("proto", "Change manager of " + t.name, "user", "Change manager…"));
   const description = `<p class="desc">${esc(t.purpose)} Lead: ${mlink(t.lead, "link")} (${kindWord(t.lead)}).</p>`;
-  if (tab === "members") return back("#/teams/" + id, t.name) + hdr(t.name, count, actions) + description + `<section aria-labelledby="h-mem" style="margin-top:16px"><div class="sec-h" style="padding:0 var(--gutter);margin-bottom:8px"><h2 id="h-mem">All members <span class="cnt">${t.members.length}</span></h2></div>${memberRows(t.members, { noTeam: true })}</section>`;
   tab = tab || "work";
   const ws = W.filter((w) => t.members.includes(w.who));
+  const tabs = linkTabs("#/teams/" + id, [
+    ["", "Work", ws.filter(OPEN).length], ["projects", "Projects"], ["activity", "Activity"],
+    ["conversations", "Conversations"], ["members", "Members", t.members.length],
+  ], tab === "work" ? "" : tab, "Team sections");
+  const controls = tab === "work" ? scopedWorkControls() : "";
+  const header = back("#/teams", "Teams") + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, controls, actions)}</div>`;
+  if (tab === "members") return header + description + `<section aria-labelledby="h-mem" style="margin-top:16px"><div class="sec-h" style="padding:0 var(--gutter);margin-bottom:8px"><h2 id="h-mem">All members <span class="cnt">${t.members.length}</span></h2></div>${memberRows(t.members, { noTeam: true })}</section>`;
   let body;
   if (tab === "work") body = scopedWorkWorkspace();
   else if (tab === "projects") body = `<ul class="rows" role="list">${Object.keys(P).filter((p) => P[p].teams.includes(id)).map((p) => `<li class="linked"><div class="grow"><p class="rt"><a class="stretch" href="#/projects/${p}">${esc(P[p].name)}</a>${leadOf(p) ? `<span class="sec">${esc(leadTxt(p))}</span>` : ""}</p><div style="max-width:320px;margin-top:8px">${progress(p)}</div></div>${projPill(p)}</li>`).join("")}</ul>`;
   else if (tab === "activity") body = activityTimeline(acts().filter((a) => t.members.includes(a.who)));
   else body = `<div class="section">${conversationPreview(t.channel)}</div>`;
   const shown = t.members.slice(0, MEMBER_CAP);
-  const tabs = linkTabs("#/teams/" + id, [["", "Work", ws.filter(OPEN).length], ["projects", "Projects"], ["activity", "Activity"], ["conversations", "Conversations"]], tab === "work" ? "" : tab, "Team sections");
-  const controls = tab === "work" ? scopedWorkControls() : "";
-  return back("#/teams", "Teams") + `<div class="section-header">${hdr(t.name, count)}${sectionTabs(tabs, controls, actions)}</div>` + description + body +
+  return header + description + body +
     `<section aria-labelledby="h-mem" style="margin-top:16px"><div class="sec-h" style="padding:0 var(--gutter);margin-bottom:8px"><h2 id="h-mem">Members <span class="cnt">${t.members.length}</span></h2></div>${memberRows(shown, { noTeam: true })}
     ${t.members.length > MEMBER_CAP ? `<p class="more-row"><a class="link" href="#/teams/${id}/members">All ${t.members.length} members${ic("chev-right", "ic16")}</a></p>` : ""}</section>`;
 }
 function pageMembersDir() {
   const all = memberIds(), ppl = all.filter(isPerson).length;
   const ids = all.filter((k) => S.people === "all" || (S.people === "people" ? isPerson(k) : !isPerson(k)));
-  const show = showMenu("mshow", [["people", "Show", [["all", "All", all.length], ["people", "People", ppl], ["agents", "Agents", all.length - ppl]]]]);
+  const show = showMenu("mshow", [["people", "Show", [["all", "All", all.length], ["people", "People", ppl], ["agents", "Agents", all.length - ppl]]]],
+    { icon: "filter", label: "Filter members", active: S.people !== "all" });
   return teamsHeader("Members", `${plural(all.length, "member", "members")} · ${plural(ppl, "person", "people")} · ${plural(all.length - ppl, "agent", "agents")}`, "members", show, hireMenu()) +
     memberRows(ids, { emptyText: "No members match this filter." });
 }
