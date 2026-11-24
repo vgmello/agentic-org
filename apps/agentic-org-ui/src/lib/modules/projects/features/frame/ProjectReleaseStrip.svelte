@@ -167,26 +167,31 @@
 	}
 
 	function matchesActiveRelease(
-		item: { title: string; why?: string; open?: { path: string } },
+		item: { title: string; open?: { path: string } },
 		release: ReleaseRow
 	): boolean {
 		const path = item.open?.path ?? '';
-		if (
-			path.includes(`/releases/${encodeURIComponent(release.id)}`) ||
-			path.includes(`/releases/${release.id}`)
-		) {
-			return true;
+		const pathReleaseMatch = path.match(/\/releases\/([^/?#]+)/i);
+		if (pathReleaseMatch) {
+			let targetId: string;
+			try {
+				targetId = decodeURIComponent(pathReleaseMatch[1]);
+			} catch {
+				targetId = pathReleaseMatch[1];
+			}
+			// Subject link release ID takes strict precedence over prose so an older release's approval
+			// mentioning the active release never clears a gate on the active release.
+			return targetId === release.id || targetId.toUpperCase() === `R-${release.number}`;
 		}
-		const haystack = `${item.title} ${item.why ?? ''}`;
 		const refPattern = new RegExp(`\\bR-${release.number}\\b`, 'i');
-		if (refPattern.test(haystack)) return true;
+		if (refPattern.test(item.title)) return true;
 		const version = release.versionLabel?.trim();
 		if (version) {
 			const versionPattern = new RegExp(
 				`(^|[^A-Za-z0-9._-])${escapeRegex(version)}($|[^A-Za-z0-9._-])`,
 				'i'
 			);
-			if (versionPattern.test(haystack)) return true;
+			if (versionPattern.test(item.title)) return true;
 		}
 		return false;
 	}
@@ -378,7 +383,8 @@
 	}
 
 	.assembly-release-link {
-		display: inline-block;
+		display: inline-flex;
+		align-items: center;
 		border-radius: 4px;
 		text-decoration: none;
 	}
@@ -478,6 +484,7 @@
 	}
 
 	@media (max-width: 720px), (pointer: coarse) {
+		.assembly-release-link,
 		.assembly-release-gates a {
 			min-height: 44px;
 		}

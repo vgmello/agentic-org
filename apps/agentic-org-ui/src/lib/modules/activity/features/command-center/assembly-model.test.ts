@@ -1413,8 +1413,8 @@ describe('assembly-model', () => {
 		// Project 7d throughput counts only work events (1), ignoring conversation messages
 		expect(model.throughput7d.reduce((sum, d) => sum + d.count, 0)).toBe(1);
 
-		// A problem notice (e.g. run crash) casually mentioning two queued tasks MUST NOT classify
-		// those queued tasks as awaiting human review or fabricate waiting hours.
+		// A problem notice (e.g. dismiss-only run crash) mentioning or linking to queued tasks MUST NOT
+		// classify them as awaiting human review, expose them in openInboxWorkRefs, or fabricate wait hours.
 		const problemMentionModel = deriveActivityCommandCenter({
 			snapshot,
 			organizationName: 'Acme Corp',
@@ -1439,6 +1439,8 @@ describe('assembly-model', () => {
 					id: 'in-crash',
 					kind: 'problem',
 					title: 'Run crashed mentioning T-70 and T-71',
+					open: { path: '/work/T-70', label: 'Open T-70' },
+					actions: ['dismiss'],
 					project: { id: 'proj-a', name: 'Alpha Core' },
 					created_at: new Date(NOW - 2 * 3_600_000).toISOString()
 				})
@@ -1451,6 +1453,8 @@ describe('assembly-model', () => {
 		expect(problemMentionModel.stageCounts.queue).toBe(2);
 		expect(problemMentionModel.humanWaitingItems).toEqual([]);
 		expect(problemMentionModel.waitingOnPeopleHours).toBe(0);
+		expect(problemMentionModel.openInboxWorkRefs.has('T-70')).toBe(false);
+		expect(problemMentionModel.openInboxWorkRefs.has('T-71')).toBe(false);
 
 		// Review-stage item without a linked Inbox review-entry timestamp returns null wait (never mutable updated_at)
 		// and empty activityRows produces empty lineEvents (never misattributed work-snapshot fallback)

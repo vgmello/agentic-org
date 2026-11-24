@@ -305,19 +305,13 @@ function buildInboxLookup(openInbox: readonly InboxItem[]): Map<string, InboxIte
 
 /**
  * Lookup of open Inbox items that represent a genuine human review/decision/question gate
- * on a work item (never pulling queued tasks into review from unrelated `problem` crash notices
- * that merely mention task references in prose).
+ * on a work item (never pulling queued tasks into review from runtime `problem`/crash notices,
+ * even when those notices link to `/work/<ref>` or mention task refs in prose).
  */
 function buildReviewInboxLookup(openInbox: readonly InboxItem[]): Map<string, InboxItem> {
 	const map = new Map<string, InboxItem>();
 	for (const inbox of openInbox) {
-		if (inbox.kind === 'problem') {
-			const explicitPathRef = extractWorkRefFromPath(inbox.open?.path);
-			if (explicitPathRef && !map.has(explicitPathRef)) {
-				map.set(explicitPathRef, inbox);
-			}
-			continue;
-		}
+		if (inbox.kind === 'problem') continue;
 		for (const ref of extractInboxWorkRefs(inbox)) {
 			if (!map.has(ref)) map.set(ref, inbox);
 		}
@@ -1074,7 +1068,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 
 	const inboxByRef = buildInboxLookup(scopedOpenInbox);
 	const reviewInboxByRef = buildReviewInboxLookup(scopedOpenInbox);
-	const openInboxWorkRefs = new Set<string>(inboxByRef.keys());
+	const openInboxWorkRefs = new Set<string>(reviewInboxByRef.keys());
 
 	// Scoped activity rows: exclude archived-only project rows on All projects, retain org-wide rows.
 	const scopedActivityRows = scopedProjectId
