@@ -5443,15 +5443,16 @@ function workWorkspace(results, items = W) {
 function workDetail(w, parent) {
   const team = workTeam(w), eta = workEta(w);
   const priority = workPriorityRank(w.pri) ? esc(w.pri) : "";
+  const expandLabel = "Expand task to full page";
   return `<dialog class="side-panel work-panel" id="work-panel" aria-labelledby="work-detail-title" data-item="${esc(w.id)}">
     <section class="triage-reading work-reading"${team ? ` data-team="${esc(team)}"` : ""}>
       <div class="side-panel-header work-detail-bar">
         <p class="work-detail-id">${workPriority(w.pri)}${esc(w.id)}${workStatus(w.status, showsNeedsYou(w))}<span class="work-kind">${{ task: "Task", bug: "Bug", request: "Request" }[w.kind]}</span></p>
         <div class="work-detail-actions">
-          <button class="btn ghost icon sm" type="button" data-act="work-comment-focus" aria-label="Leave a comment" title="Leave a comment">${ic("chat", "ic16")}</button>
-          <button class="btn ghost icon sm" type="button" data-act="work-copy-link" data-id="${esc(w.id)}" aria-label="Copy task link" title="Copy task link">${ic("copy", "ic16")}</button>
-          <button class="btn ghost icon sm work-panel-expand" type="button" data-act="work-expand-detail" aria-label="Expand task to full page" title="Expand task to full page">${ic("maximize", "ic16")}</button>
-          <button class="btn ghost icon sm" type="button" data-act="work-close-detail" aria-label="Close task" title="Close task">${ic("x", "ic16")}</button>
+          <button class="btn ghost icon sm icon-with-tooltip" type="button" data-act="work-comment-focus" aria-label="Leave a comment">${iconWithTooltip("Leave a comment", "chat")}</button>
+          <button class="btn ghost icon sm icon-with-tooltip" type="button" data-act="work-copy-link" data-id="${esc(w.id)}" aria-label="Copy task link">${iconWithTooltip("Copy task link", "copy")}</button>
+          <button class="btn ghost icon sm icon-with-tooltip work-panel-expand" type="button" data-act="work-expand-detail" aria-label="${expandLabel}">${iconWithTooltip(expandLabel, "maximize")}</button>
+          <button class="btn ghost icon sm icon-with-tooltip" type="button" data-act="work-close-detail" aria-label="Close task">${iconWithTooltip("Close task", "x")}</button>
         </div>
       </div>
     <article class="triage-document">
@@ -5508,8 +5509,7 @@ function setWorkPanelExpanded(panel, expanded) {
   const button = panel.querySelector(".work-panel-expand");
   const label = expanded ? "Restore task panel" : "Expand task to full page";
   button.setAttribute("aria-label", label);
-  button.title = label;
-  button.innerHTML = ic(expanded ? "minimize" : "maximize", "ic16");
+  button.innerHTML = iconWithTooltip(label, expanded ? "minimize" : "maximize");
 }
 
 function workRelatedInbox(w) {
