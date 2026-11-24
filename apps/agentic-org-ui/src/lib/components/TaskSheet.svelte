@@ -90,7 +90,19 @@
 		try {
 			const got = await workApi.get(forOrg, forTask);
 			if (destroyed || forOrg !== organizationId || forTask !== taskId || seq !== loadSeq) return;
+			const prev = item;
 			item = got;
+			if (reset) {
+				title = got.summary.title;
+				description = got.description ?? '';
+				definitionOfDone = got.definition_of_done ?? '';
+			} else if (prev) {
+				// Refresh untouched fields from the newer server copy while preserving unsaved edits.
+				if (title === prev.summary.title) title = got.summary.title;
+				if (description === (prev.description ?? '')) description = got.description ?? '';
+				if (definitionOfDone === (prev.definition_of_done ?? ''))
+					definitionOfDone = got.definition_of_done ?? '';
+			}
 			const fixedNow = (
 				await Promise.all(
 					got.links
@@ -113,11 +125,6 @@
 			if (destroyed || forOrg !== organizationId || forTask !== taskId || seq !== loadSeq) return;
 			fixed = fixedNow;
 			fromRequest = originNow;
-			if (reset) {
-				title = got.summary.title;
-				description = got.description ?? '';
-				definitionOfDone = got.definition_of_done ?? '';
-			}
 		} catch (e) {
 			// An answer for a task that is no longer the one open says nothing about this one.
 			if (!destroyed && forOrg === organizationId && forTask === taskId && seq === loadSeq)
