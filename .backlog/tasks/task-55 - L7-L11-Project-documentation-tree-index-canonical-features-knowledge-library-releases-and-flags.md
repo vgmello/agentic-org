@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-24T16:55:00Z'
+updated_date: '2026-11-24T17:07:00Z'
 labels:
   - backend
   - rust
@@ -61,4 +61,6 @@ Backend Implementation Blueprint (L7 & L11):
 
 <!-- SECTION:NOTES:BEGIN -->
 Principal Designer & Search Architect audit (2026-11-24): (1) Fix live PKG-1 violation in apps/agentic-org-ui/src/lib/modules/docs/present.ts:91-92 (remove hardcoded product-dss/technical-dss branches; resolve default section dynamically from overview.sections[].kinds); (2) Harmonize agent-os doc CLI verbs to doc-96 §2.1 / doc-32 §8 canonical names (doc inspect|create|update instead of show|new|edit; update doc-52 AUTH-5) within TASK-85.3 4 KiB catalogue headroom; (3) Upgrade DocsTab.svelte to desktop split tree+reader (>=1024px, stacked list->detail with back link <1024px) showing index.yaml freshness and calm 'Indexed for agents (doc index)' indicator; (4) Replace @lucide/svelte imports in DocsTab/DocumentPage with Heroicons (SHELL-32) and replace amber tone.owner on Unissued changes / stale links with sky info / red danger tones (SHELL-31); (5) Register project documents/versions into TASK-91 SearchRead with strict project-scoped visibility for agents (doc-86).
+
+2026-11-24 Agent Decision Capture AX alignment (TASK-111/TASK-112): Ensure agent-os doc create --kind decision provides zero-ceremony defaults so agents never hand-author YAML front matter or look up UUIDs — default --project from active binding, derive --path from the active process's decision section (overview.sections[].kinds) + slugified title, default owner_employee_id to bound caller, auto-derive 1-line summary if omitted, and support --link-task <ref> for public Why-links.
 <!-- SECTION:NOTES:END -->

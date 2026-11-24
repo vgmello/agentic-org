@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-23T03:22:00Z'
-updated_date: '2026-11-24T16:55:00Z'
+updated_date: '2026-11-24T17:07:00Z'
 labels:
   - backend
   - ui
@@ -60,3 +60,9 @@ Delivers deterministic, offline-first cross-entity full-text search (Tier A) in 
 - [ ] #3 Exposes search.query on office RPC (operations.json policy: serve) and agent-os search query (--q, repeatable --types, --project, --channel, --status, --modified-file, --assignee, --label, --count, --limit, --cursor, --fields, --format) within TASK-85.3 4 KiB catalogue headroom returning compact ranked hits + truthful SearchCoverage metadata in <5 ms p95 over session attach; upgrades agent-os task list --query to use the FTS5 index (replacing the 4N+1 literal substring scan); updates tasks-create & batch-and-attach skills (doc-96) to teach agents multi-query expansion.
 - [ ] #4 Wires GET /api/v1/organizations/{org}/search in agentic-org-web (strict query validation) and replaces work: [] / unavailableCall stubs in apps/agentic-org-ui (ShellTopbar/ShellSearch FC-006 and SearchPage.svelte WHY-4) with live search; updates doc-28, doc-71, doc-74, doc-96, doc-3 (FC-006/FC-062/FC-077), and records an ADR covering v1 FTS5 + v2 pluggable SearchRead hybrid path.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-24 Agent Decision Capture alignment (TASK-111): Index kind, title, why, alternatives, and private_note_tags inside the disposable 0700/0600 HQ-only runtime/<office-id>/private/task-notes-search.db (weighting title 6x > tags 4x > why/alternatives/body 2x), expose --types private_decision alongside shared --types decision with strict pre-ranking author_id == caller filter for agents (and people-only --author filter), keeping WHY-4 shared knowledge search 100% free of private rows.
+<!-- SECTION:NOTES:END -->
