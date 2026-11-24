@@ -590,8 +590,9 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		};
 		const [before] = deriveTriageItems([], SNAPSHOT, 'owner', [askItem], NOW);
 		expect(before?.expiresLabel).toBe('Reply cutoff in 5m');
+		expect(before?.auditChecks).toContain('Reply cutoff in 5m');
 
-		// 20 seconds before cutoff must still read as upcoming, never "Past reply cutoff".
+		// 20 seconds before cutoff must still read as upcoming in both badge and Request history.
 		const [subMinute] = deriveTriageItems(
 			[],
 			SNAPSHOT,
@@ -600,9 +601,12 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 			Date.parse(cutoff) - 20_000
 		);
 		expect(subMinute?.expiresLabel).toBe('Reply cutoff in 1m');
+		expect(subMinute?.auditChecks).toContain('Reply cutoff in 1m');
+		expect(subMinute?.auditChecks).not.toContain('Expired');
 
 		const [after] = deriveTriageItems([], SNAPSHOT, 'owner', [askItem], NOW + 6 * 60_000);
 		expect(after?.expiresLabel).toBe('Past reply cutoff');
+		expect(after?.auditChecks).toContain('Past reply cutoff');
 
 		const mailboxItem: InboxItem = {
 			...askItem,
@@ -611,7 +615,18 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		};
 		const [mailBefore] = deriveTriageItems([], SNAPSHOT, 'owner', [mailboxItem], NOW);
 		expect(mailBefore?.expiresLabel).toBe('Expires in 5m');
+		expect(mailBefore?.auditChecks).toContain('Expires in 5m');
+		const [mailSubMinute] = deriveTriageItems(
+			[],
+			SNAPSHOT,
+			'owner',
+			[mailboxItem],
+			Date.parse(cutoff) - 20_000
+		);
+		expect(mailSubMinute?.expiresLabel).toBe('Expires in 1m');
+		expect(mailSubMinute?.auditChecks).toContain('Expires in 1m');
 		const [mailAfter] = deriveTriageItems([], SNAPSHOT, 'owner', [mailboxItem], NOW + 6 * 60_000);
 		expect(mailAfter?.expiresLabel).toBe('Expired');
+		expect(mailAfter?.auditChecks).toContain('Expired');
 	});
 });

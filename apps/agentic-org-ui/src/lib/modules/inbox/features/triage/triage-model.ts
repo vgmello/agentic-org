@@ -355,21 +355,6 @@ function parseTimestamp(iso: string | undefined, fallbackMs: number): number {
 /**
  * Derives the unified list of open and handled triage items from canonical work items and inbox items.
  */
-function isAskReplyCutoffSource(source: string | undefined): boolean {
-	return source === 'Chat ask' || source === 'Chat approval';
-}
-
-function formatReplyCutoffBadge(iso: string, nowMs: number): string {
-	const diffMs = Date.parse(iso) - nowMs;
-	if (Number.isNaN(diffMs)) return 'Time-sensitive';
-	if (diffMs <= 0) return 'Past reply cutoff';
-	const diffMin = Math.max(1, Math.ceil(diffMs / 60_000));
-	if (diffMin < 60) return `Reply cutoff in ${diffMin}m`;
-	const diffH = Math.round(diffMin / 60);
-	if (diffH < 24) return `Reply cutoff in ${diffH}h`;
-	return 'Reply cutoff tomorrow';
-}
-
 export function deriveTriageItems(
 	workItems: readonly WorkItemSummary[],
 	snapshot: OrgSnapshot,
@@ -438,9 +423,7 @@ export function deriveTriageItems(
 				: undefined;
 
 		const expiresLabel = inbox?.expires_at
-			? isAskReplyCutoffSource(inbox.source)
-				? formatReplyCutoffBadge(inbox.expires_at, nowMs)
-				: decision.badgeText
+			? decision.badgeText
 			: decision.sourceKind === 'work' && decision.urgent
 				? decision.badgeText
 				: undefined;
