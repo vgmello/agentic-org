@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	authSourceLabel,
+	credentialConfigLabel,
 	formatRequests,
 	formatSubscriptionTokens,
 	formatUtilization,
@@ -96,6 +97,20 @@ describe('subscription usage presentation helpers (TASK-79)', () => {
 			'Enrolled subscription credential'
 		);
 		expect(authSourceLabel('none')).toBe('No credential configured');
+		expect(
+			credentialConfigLabel({
+				authSource: 'none',
+				hasUsageCredential: true,
+				hasEnrolledCredential: false
+			})
+		).toBe('Dedicated usage credential saved');
+		expect(
+			credentialConfigLabel({
+				authSource: 'none',
+				hasUsageCredential: false,
+				hasEnrolledCredential: true
+			})
+		).toBe('Enrolled subscription credential available');
 
 		expect(providerLabel('claude')).toBe('Claude');
 		expect(providerLabel('codex')).toBe('Codex');

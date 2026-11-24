@@ -21,7 +21,7 @@
 	} from '../../types';
 	import CostsError from '../states/CostsError.svelte';
 	import {
-		authSourceLabel,
+		credentialConfigLabel,
 		formatCollectedAt,
 		hasAnyShortTerm,
 		providerLabel,
@@ -234,7 +234,7 @@
 												</span>
 											</div>
 											<p class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
-												<span>{authSourceLabel(snap.authSource)}</span>
+												<span>{credentialConfigLabel(snap)}</span>
 												{#if snap.accountHint}
 													<span aria-hidden="true"> · </span>
 													<span>{snap.accountHint}</span>

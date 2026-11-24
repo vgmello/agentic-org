@@ -708,19 +708,13 @@
 		item: TriageItem,
 		untilIso: string,
 		note?: string
-	): Promise<boolean> {
-		if (actionLocked || !item.inboxItem) return false;
+	): Promise<{ ok: true } | { ok: false; error: string }> {
+		if (actionLocked || !item.inboxItem) return { ok: false, error: 'Action already in progress.' };
 		const untilMs = Date.parse(untilIso);
 		if (Number.isNaN(untilMs) || untilMs <= Date.now()) {
-			toast.error('Return time must be in the future.');
-			return false;
-		}
-		if (item.expiresAtIso) {
-			const expiresMs = Date.parse(item.expiresAtIso);
-			if (!Number.isNaN(expiresMs) && (expiresMs <= Date.now() || untilMs >= expiresMs)) {
-				toast.error("Return time must be earlier than the item's expiry deadline.");
-				return false;
-			}
+			const msg = 'Return time must be in the future.';
+			toast.error(msg);
+			return { ok: false, error: msg };
 		}
 		const token = ++actionSeq;
 		const targetOrg = organizationId;
@@ -751,10 +745,11 @@
 					false
 				);
 			}
-			return true;
+			return { ok: true };
 		} catch (e) {
-			toast.error(toAppError(e).message);
-			return false;
+			const msg = toAppError(e).message;
+			toast.error(msg);
+			return { ok: false, error: msg };
 		} finally {
 			if (activeAction?.token === token) activeAction = undefined;
 		}

@@ -52,7 +52,7 @@ describe('Inbox snooze presets and custom date/time validation (TASK-81)', () =>
 		);
 	});
 
-	it('rejects nonexistent DST spring-forward local times, selects earlier fall-back hour, and enforces expiry deadline', () => {
+	it('rejects nonexistent DST spring-forward local times and selects earlier fall-back hour across negative and positive UTC zones', () => {
 		const now = new Date('2027-03-10T12:00:00.000Z');
 		// America/New_York springs forward on 2027-03-14 at 02:00 -> 03:00; 02:30 does not exist.
 		expect(parseCustomSnoozeDateTime('2027-03-14', '02:30', 'America/New_York', now)).toEqual({
@@ -70,16 +70,13 @@ describe('Inbox snooze presets and custom date/time validation (TASK-81)', () =>
 			iso: '2027-11-07T05:30:00.000Z'
 		});
 
-		// Enforces exact messaging_ops.rs expiry rule (a >= e rejected).
-		const expiresAt = '2027-03-12T15:00:00.000Z';
-		expect(parseCustomSnoozeDateTime('2027-03-12', '15:00', 'UTC', now, expiresAt)).toEqual({
-			ok: false,
-			field: 'time',
-			error: "Return time must be earlier than the item's expiry deadline."
-		});
-		expect(parseCustomSnoozeDateTime('2027-03-12', '14:59', 'UTC', now, expiresAt)).toMatchObject({
+		// Europe/Berlin falls back on 2027-10-31 at 03:00 -> 02:00; 02:30 selects the earlier CEST occurrence (00:30Z).
+		const berlinNow = new Date('2027-10-30T12:00:00.000Z');
+		expect(
+			parseCustomSnoozeDateTime('2027-10-31', '02:30', 'Europe/Berlin', berlinNow)
+		).toMatchObject({
 			ok: true,
-			iso: '2027-03-12T14:59:00.000Z'
+			iso: '2027-10-31T00:30:00.000Z'
 		});
 	});
 

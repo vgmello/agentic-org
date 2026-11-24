@@ -1226,17 +1226,27 @@ export const costsApi: CostsApi = {
 	async collectSubscriptionUsage(organizationId, options) {
 		await read();
 		ownerOnly();
-		if (on('collect-fails')) {
-			throw fail(
-				'unavailable',
-				'Provider usage endpoint could not be reached. Try refreshing again shortly.'
-			);
-		}
 		const snaps = subscriptionSnapshotsFor(organizationId);
 		const nowIso = new Date(NOW.getTime() + 5 * 60_000).toISOString();
 		const targetIds = options?.connectionId
 			? new Set([options.connectionId])
 			: new Set(snaps.map((s) => s.connectionId));
+		if (on('collect-fails')) {
+			// Mirror production HTTP 200 in-band provider failure (`status: 'unavailable'`).
+			for (const snap of snaps) {
+				if (!targetIds.has(snap.connectionId)) continue;
+				snap.status = 'unavailable';
+				snap.stale = true;
+				snap.collectedAt = nowIso;
+				snap.issueCode = 'PROVIDER_UNAVAILABLE';
+				snap.message =
+					'Provider usage endpoint could not be reached. Try refreshing again shortly.';
+			}
+			return structuredClone({
+				snapshots: snaps.filter((s) => targetIds.has(s.connectionId)),
+				collectedAt: nowIso
+			});
+		}
 		for (const snap of snaps) {
 			if (!targetIds.has(snap.connectionId)) continue;
 			if (snap.status === 'auth_required' && !snap.hasUsageCredential) {
@@ -1245,6 +1255,9 @@ export const costsApi: CostsApi = {
 			}
 			snap.status = 'ok';
 			snap.stale = false;
+			snap.authSource = snap.hasUsageCredential
+				? 'dedicated_usage_credential'
+				: 'enrolled_subscription_credential';
 			snap.collectedAt = nowIso;
 			snap.lastOkCollectedAt = nowIso;
 			snap.freshUntil = new Date(Date.parse(nowIso) + 15 * 60_000).toISOString();
@@ -1280,10 +1293,9 @@ export const costsApi: CostsApi = {
 		if (!snap) throw fail('not_found', 'Subscription connection not found.');
 		const nowIso = new Date().toISOString();
 		snap.hasUsageCredential = true;
-		snap.authSource = 'dedicated_usage_credential';
 		if (draft.accountHint) snap.accountHint = draft.accountHint;
-		// Mirror crates/org-office/src/accounting/subscription_usage.rs:229 — saving a credential
-		// resolves missing auth to `never_collected` until a separate collection run succeeds.
+		// Mirror crates/org-office/src/accounting/subscription_usage.rs:229-259:
+		// preserve last collection's authSource until collection runs; move auth_required -> never_collected.
 		if (snap.status === 'auth_required' || snap.models.length === 0) {
 			snap.status = 'never_collected';
 			snap.stale = true;

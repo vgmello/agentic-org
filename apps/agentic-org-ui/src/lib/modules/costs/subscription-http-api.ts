@@ -207,14 +207,16 @@ export function createHttpSubscriptionUsageApi({
 			const seenModels = new Set<string>();
 			let cursor: string | undefined;
 			let totalsCursor: string | undefined;
+			let snapshotsDone = false;
+			let totalsDone = false;
 			let collectedAsOf: string | undefined;
 			let partialTotals = false;
 			let excludedSnapshotCount = 0;
 
 			for (let page = 0; page < MAX_PAGES; page += 1) {
 				const params = new URLSearchParams({ limit: '100' });
-				if (cursor) params.set('cursor', cursor);
-				if (totalsCursor) params.set('totals_cursor', totalsCursor);
+				if (!snapshotsDone && cursor) params.set('cursor', cursor);
+				if (!totalsDone && totalsCursor) params.set('totals_cursor', totalsCursor);
 				let reply: GatewayReply;
 				try {
 					reply = await http.read(`${base}?${params.toString()}`);
@@ -226,26 +228,44 @@ export function createHttpSubscriptionUsageApi({
 					} satisfies AppError;
 				}
 				const result = unwrapReply(reply, 'Subscription usage could not be loaded.');
-				const pageSnaps = Array.isArray(result.snapshots)
-					? result.snapshots
-							.map(decodeSnapshot)
-							.filter((s): s is SubscriptionUsageSnapshot => s !== undefined)
-					: [];
-				for (const snap of pageSnaps) {
-					if (!seenSnapshots.has(snap.connectionId)) {
-						seenSnapshots.add(snap.connectionId);
-						snapshots.push(snap);
+				if (!snapshotsDone) {
+					const pageSnaps = Array.isArray(result.snapshots)
+						? result.snapshots
+								.map(decodeSnapshot)
+								.filter((s): s is SubscriptionUsageSnapshot => s !== undefined)
+						: [];
+					for (const snap of pageSnaps) {
+						if (!seenSnapshots.has(snap.connectionId)) {
+							seenSnapshots.add(snap.connectionId);
+							snapshots.push(snap);
+						}
+					}
+					const nextCursor = asStr(result.next_cursor);
+					if (!nextCursor || nextCursor === cursor) {
+						snapshotsDone = true;
+						cursor = undefined;
+					} else {
+						cursor = nextCursor;
 					}
 				}
-				const pageTotals = Array.isArray(result.totals_by_model)
-					? result.totals_by_model
-							.map(decodeModelUsage)
-							.filter((m): m is SubscriptionModelUsage => m !== undefined)
-					: [];
-				for (const m of pageTotals) {
-					if (!seenModels.has(m.model)) {
-						seenModels.add(m.model);
-						totalsByModel.push(m);
+				if (!totalsDone) {
+					const pageTotals = Array.isArray(result.totals_by_model)
+						? result.totals_by_model
+								.map(decodeModelUsage)
+								.filter((m): m is SubscriptionModelUsage => m !== undefined)
+						: [];
+					for (const m of pageTotals) {
+						if (!seenModels.has(m.model)) {
+							seenModels.add(m.model);
+							totalsByModel.push(m);
+						}
+					}
+					const nextTotalsCursor = asStr(result.next_totals_cursor);
+					if (!nextTotalsCursor || nextTotalsCursor === totalsCursor) {
+						totalsDone = true;
+						totalsCursor = undefined;
+					} else {
+						totalsCursor = nextTotalsCursor;
 					}
 				}
 				if (page === 0) {
@@ -253,23 +273,17 @@ export function createHttpSubscriptionUsageApi({
 					partialTotals = result.partial_totals === true;
 					excludedSnapshotCount = asNum(result.excluded_snapshot_count) ?? 0;
 				}
-				const nextCursor = asStr(result.next_cursor);
-				const nextTotalsCursor = asStr(result.next_totals_cursor);
-				if (
-					(!nextCursor || nextCursor === cursor) &&
-					(!nextTotalsCursor || nextTotalsCursor === totalsCursor)
-				) {
-					break;
-				}
-				cursor = nextCursor;
-				totalsCursor = nextTotalsCursor;
+				if (snapshotsDone && totalsDone) break;
 			}
 
+			const hasMore = !snapshotsDone || !totalsDone;
 			return {
 				snapshots,
 				totalsByModel,
 				...(collectedAsOf ? { collectedAsOf } : {}),
-				partialTotals,
+				...(!snapshotsDone && cursor ? { nextCursor: cursor } : {}),
+				...(!totalsDone && totalsCursor ? { nextTotalsCursor: totalsCursor } : {}),
+				partialTotals: partialTotals || hasMore,
 				excludedSnapshotCount,
 				isApiEquivalentEstimate: false
 			};

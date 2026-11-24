@@ -430,4 +430,46 @@ describe('createHttpInboxApi (real InboxListResult wire schema)', () => {
 			code: 'unsupported'
 		});
 	});
+
+	it('prevents stale overlapping refreshes from overwriting newer snoozed state and flags max-page truncation', async () => {
+		let releaseSlowSnooze!: (reply: GatewayReply) => void;
+		const slowSnooze = new Promise<GatewayReply>((resolve) => {
+			releaseSlowSnooze = resolve;
+		});
+		let callCount = 0;
+		const submit = vi.fn().mockImplementation(async () => {
+			callCount += 1;
+			if (callCount === 1) return slowSnooze;
+			return ok({ items: [] });
+		});
+		const read = vi.fn().mockResolvedValue(ok({ as_of: { epoch: 1, seq: 1 }, items: [] }));
+		const api = createHttpInboxApi({ http: { read, submit } });
+
+		const older = api.list(ORG);
+		const newer = api.list(ORG);
+		await newer;
+		expect(api.snoozedError?.(ORG)).toBeUndefined();
+
+		// Older request now fails with 503 — must NOT clobber newer clean state.
+		releaseSlowSnooze({
+			status: 503,
+			body: { error: { code: 'unavailable', message: 'Stale older failure' } }
+		});
+		await older;
+		expect(api.snoozedError?.(ORG)).toBeUndefined();
+
+		// 20 full pages with remaining next_cursor surfaces explicit truncation notice.
+		let page = 0;
+		const truncApi = createHttpInboxApi({
+			http: {
+				read: vi.fn().mockResolvedValue(ok({ as_of: { epoch: 1, seq: 2 }, items: [] })),
+				submit: vi.fn().mockImplementation(async () => {
+					page += 1;
+					return ok({ items: [], next_cursor: page * 100 });
+				})
+			}
+		});
+		await truncApi.list(ORG);
+		expect(truncApi.snoozedError?.(ORG)).toContain('first 2,000 snoozed items');
+	});
 });

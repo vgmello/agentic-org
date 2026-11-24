@@ -380,6 +380,7 @@ export function createHttpInboxApi({
 }: HttpInboxApiOptions): InboxApi {
 	const cachedItems = new Map<string, Map<string, { item: InboxItem; rawSource?: string }>>();
 	const snoozedErrors = new Map<string, string>();
+	const listSeqByOrg = new Map<string, number>();
 	const localListeners = new Map<string, Set<() => void>>();
 
 	function notify(orgId: string) {
@@ -392,6 +393,9 @@ export function createHttpInboxApi({
 		},
 
 		async list(organizationId: string): Promise<InboxItem[]> {
+			const seq = (listSeqByOrg.get(organizationId) ?? 0) + 1;
+			listSeqByOrg.set(organizationId, seq);
+
 			let reply: GatewayReply;
 			try {
 				reply = await http.read(
@@ -424,8 +428,9 @@ export function createHttpInboxApi({
 			);
 			const chatInboxPath = `/api/v1/organizations/${encodeURIComponent(organizationId)}/chat/inbox`;
 			let cursor: number | undefined;
+			let truncated = false;
+			let nextSnoozedError: string | undefined;
 			const MAX_SNOOZED_PAGES = 20;
-			snoozedErrors.delete(organizationId);
 			try {
 				for (let page = 0; page < MAX_SNOOZED_PAGES; page += 1) {
 					const snoozedReply = await http.submit(chatInboxPath, {
@@ -455,20 +460,29 @@ export function createHttpInboxApi({
 					}
 					const nextCursor = asNum(snoozedResult.next_cursor);
 					if (nextCursor === undefined || nextCursor === cursor) break;
+					if (page === MAX_SNOOZED_PAGES - 1) {
+						truncated = true;
+						break;
+					}
 					cursor = nextCursor;
+				}
+				if (truncated) {
+					nextSnoozedError = 'Showing the first 2,000 snoozed items; more exist on the server.';
 				}
 			} catch (err) {
 				const appErr = asRec(err);
 				const code = asStr(appErr?.code);
 				if (code !== 'unsupported' && code !== 'not_found') {
-					snoozedErrors.set(
-						organizationId,
-						asStr(appErr?.message) || 'Could not load snoozed items. Try again.'
-					);
+					nextSnoozedError = asStr(appErr?.message) || 'Could not load snoozed items. Try again.';
 				}
 			}
 
-			cachedItems.set(organizationId, new Map(mapped.map((m) => [m.item.id, m])));
+			// Guard cache and snoozedError against stale overlapping list() refreshes.
+			if (listSeqByOrg.get(organizationId) === seq) {
+				if (nextSnoozedError) snoozedErrors.set(organizationId, nextSnoozedError);
+				else snoozedErrors.delete(organizationId);
+				cachedItems.set(organizationId, new Map(mapped.map((m) => [m.item.id, m])));
+			}
 			return mapped.map((m) => m.item);
 		},
 

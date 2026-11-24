@@ -536,15 +536,22 @@ test('TASK-79: subscription model usage renders provider windows, em-dash unknow
 	await authDialog.getByRole('button', { name: 'Save credential' }).click();
 	await expect(authDialog).toBeHidden();
 	await expect(authCodex.getByTestId('subscription-status')).toHaveText('Not collected yet');
+	await expect(authCodex).toContainText('Dedicated usage credential saved');
 	await expect(authCodex).toContainText('billing@lumen.dev');
 	await authCodex.getByRole('button', { name: 'Refresh' }).click();
 	await expect(authCodex.getByTestId('subscription-status')).toHaveText('Current');
 	await expect(authCodex.locator('[data-subscription-model="gpt-5-codex"]')).toBeVisible();
 
-	// ?mock=collect-fails surfaces a clear error when collection fails.
+	// ?mock=collect-fails returns an HTTP 200 in-band unavailable status: shows error toast & Unavailable badge, not a success toast.
 	await visit(page, '/settings/costs?mock=collect-fails');
 	await subSection.getByRole('button', { name: 'Refresh usage' }).click();
-	await expect(page.getByText(/Provider usage endpoint could not be reached/)).toBeVisible();
+	await expect(
+		page.getByText(/Provider usage endpoint could not be reached/).first()
+	).toBeVisible();
+	await expect(
+		subSection.locator('[data-subscription="sub-claude-pro"]').getByTestId('subscription-status')
+	).toHaveText('Unavailable');
+	await expect(page.getByText('Subscription model usage updated.')).toHaveCount(0);
 
 	// ?mock=stale flags stale snapshot and refreshes back to Current.
 	await visit(page, '/settings/costs?mock=stale');

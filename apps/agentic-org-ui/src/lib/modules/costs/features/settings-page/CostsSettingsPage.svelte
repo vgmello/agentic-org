@@ -146,7 +146,19 @@
 				timeZone: zone
 			});
 			await subscriptionUsage.reload();
-			if (res.deferredConnectionIds && res.deferredConnectionIds.length > 0) {
+			const authFailed = res.snapshots.find((s) => s.status === 'auth_required');
+			const unavailableSnap = res.snapshots.find((s) => s.status === 'unavailable');
+			if (authFailed) {
+				toast.error(
+					authFailed.message ||
+						`Usage credential was rejected for ${authFailed.connectionName}. Update it and try again.`
+				);
+			} else if (unavailableSnap) {
+				toast.error(
+					unavailableSnap.message ||
+						`Provider usage endpoint was unavailable for ${unavailableSnap.connectionName}.`
+				);
+			} else if (res.deferredConnectionIds && res.deferredConnectionIds.length > 0) {
 				toast.info(
 					`Updated subscription usage (${res.deferredConnectionIds.length} deferred; refresh again for remaining connections).`
 				);

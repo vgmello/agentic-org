@@ -35,7 +35,11 @@
 	}: {
 		zone: string;
 		busy?: boolean;
-		onsubmit: (item: TriageItem, untilIso: string, note?: string) => Promise<boolean>;
+		onsubmit: (
+			item: TriageItem,
+			untilIso: string,
+			note?: string
+		) => Promise<{ ok: true } | { ok: false; error: string }>;
 		onCloseAutoFocus?: (event: Event) => void;
 	} = $props();
 
@@ -81,13 +85,7 @@
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
 		if (!target || submitting || busy) return;
-		const parsed = parseCustomSnoozeDateTime(
-			dateValue,
-			timeValue,
-			zone,
-			new Date(),
-			target.expiresAtIso
-		);
+		const parsed = parseCustomSnoozeDateTime(dateValue, timeValue, zone, new Date());
 		if (!parsed.ok) {
 			fieldError = { field: parsed.field, message: parsed.error };
 			await tick();
@@ -98,8 +96,14 @@
 		fieldError = undefined;
 		submitting = true;
 		try {
-			const ok = await onsubmit(target, parsed.iso, noteValue.trim() || undefined);
-			if (ok) open = false;
+			const res = await onsubmit(target, parsed.iso, noteValue.trim() || undefined);
+			if (res.ok) {
+				open = false;
+			} else {
+				fieldError = { field: 'time', message: res.error };
+				await tick();
+				timeInputEl?.focus();
+			}
 		} finally {
 			submitting = false;
 		}
@@ -183,9 +187,9 @@
 						>
 							<AlertTriangle class="mt-0.5 size-4 shrink-0 text-fg" aria-hidden="true" />
 							<p class="[overflow-wrap:anywhere]">
-								Return time must be earlier than the item's expiry deadline{expiryFull
+								This return time is at or after the shown deadline{expiryFull
 									? ` (${expiryFull})`
-									: ''}. Choose an earlier time to snooze this request.
+									: ''}. If the office enforces this expiry deadline, choose an earlier time.
 							</p>
 						</div>
 					{/if}

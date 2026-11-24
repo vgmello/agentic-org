@@ -133,6 +133,25 @@ export function authSourceLabel(source: SubscriptionUsageAuthSource): string {
 	}
 }
 
+/**
+ * Human-readable credential status combining the last collection's `authSource` with live credential
+ * presence flags (`hasUsageCredential` / `hasEnrolledCredential`), so a newly saved credential never
+ * displays as "No credential configured" before the first collection runs.
+ */
+export function credentialConfigLabel(snapshot: {
+	authSource: SubscriptionUsageAuthSource;
+	hasUsageCredential: boolean;
+	hasEnrolledCredential: boolean;
+}): string {
+	if (snapshot.authSource === 'dedicated_usage_credential') return 'Dedicated usage credential';
+	if (snapshot.authSource === 'enrolled_subscription_credential') {
+		return 'Enrolled subscription credential';
+	}
+	if (snapshot.hasUsageCredential) return 'Dedicated usage credential saved';
+	if (snapshot.hasEnrolledCredential) return 'Enrolled subscription credential available';
+	return authSourceLabel(snapshot.authSource);
+}
+
 export function providerLabel(providerType: string): string {
 	const key = providerType.trim().toLowerCase();
 	if (key === 'claude' || key === 'anthropic' || key === 'claude_code') return 'Claude';

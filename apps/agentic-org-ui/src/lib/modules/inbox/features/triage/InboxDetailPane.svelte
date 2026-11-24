@@ -758,15 +758,12 @@
 										{#each snoozePresets as preset (preset.id)}
 											{@const afterExpiry = snoozeExceedsExpiry(preset.iso, item.expiresAtIso)}
 											<DropdownMenu.Item
-												disabled={afterExpiry}
-												onSelect={() => {
-													if (!afterExpiry) onDefer(item, preset.iso, item.snoozed?.note);
-												}}
+												onSelect={() => onDefer(item, preset.iso, item.snoozed?.note)}
 												class="flex min-h-9 items-center justify-between gap-3 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 											>
 												<span>{preset.label}</span>
 												<span class="text-xs text-fg-muted tabular-nums">
-													{preset.detail}{afterExpiry ? ' · past expiry' : ''}
+													{preset.detail}{afterExpiry ? ' · after deadline' : ''}
 												</span>
 											</DropdownMenu.Item>
 										{/each}
@@ -912,15 +909,12 @@
 											{#each snoozePresets as preset (preset.id)}
 												{@const afterExpiry = snoozeExceedsExpiry(preset.iso, item.expiresAtIso)}
 												<DropdownMenu.Item
-													disabled={afterExpiry}
-													onSelect={() => {
-														if (!afterExpiry) onDefer(item, preset.iso);
-													}}
+													onSelect={() => onDefer(item, preset.iso)}
 													class="flex min-h-9 items-center justify-between gap-3 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 												>
 													<span>{preset.label}</span>
 													<span class="text-xs text-fg-muted tabular-nums">
-														{preset.detail}{afterExpiry ? ' · past expiry' : ''}
+														{preset.detail}{afterExpiry ? ' · after deadline' : ''}
 													</span>
 												</DropdownMenu.Item>
 											{/each}

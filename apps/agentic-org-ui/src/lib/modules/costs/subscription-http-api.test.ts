@@ -178,4 +178,92 @@ describe('createHttpSubscriptionUsageApi (real cost_routes.rs wire envelope)', (
 			message: 'Owner only'
 		});
 	});
+
+	it('tracks snapshot and totals pagination streams independently without restarting an exhausted stream', async () => {
+		const read = vi
+			.fn()
+			.mockResolvedValueOnce(
+				ok({
+					snapshots: [
+						{
+							connection_id: 'c1',
+							connection_key: 'k1',
+							connection_name: 'One',
+							provider_type: 'claude',
+							office_id: 'off-1',
+							status: 'ok',
+							auth_source: 'dedicated_usage_credential',
+							has_usage_credential: true,
+							has_enrolled_credential: false,
+							stale: false,
+							is_api_equivalent_estimate: false,
+							models: []
+						}
+					],
+					totals_by_model: [{ model: 'm1', total: {}, daily: {}, weekly: {} }],
+					next_cursor: 's2',
+					next_totals_cursor: 't2',
+					partial_totals: false,
+					excluded_snapshot_count: 0,
+					is_api_equivalent_estimate: false
+				})
+			)
+			.mockResolvedValueOnce(
+				ok({
+					snapshots: [
+						{
+							connection_id: 'c2',
+							connection_key: 'k2',
+							connection_name: 'Two',
+							provider_type: 'claude',
+							office_id: 'off-1',
+							status: 'ok',
+							auth_source: 'dedicated_usage_credential',
+							has_usage_credential: true,
+							has_enrolled_credential: false,
+							stale: false,
+							is_api_equivalent_estimate: false,
+							models: []
+						}
+					],
+					totals_by_model: [{ model: 'm2', total: {}, daily: {}, weekly: {} }],
+					next_cursor: 's3',
+					partial_totals: false,
+					excluded_snapshot_count: 0,
+					is_api_equivalent_estimate: false
+				})
+			)
+			.mockResolvedValueOnce(
+				ok({
+					snapshots: [
+						{
+							connection_id: 'c3',
+							connection_key: 'k3',
+							connection_name: 'Three',
+							provider_type: 'codex',
+							office_id: 'off-1',
+							status: 'ok',
+							auth_source: 'dedicated_usage_credential',
+							has_usage_credential: true,
+							has_enrolled_credential: false,
+							stale: false,
+							is_api_equivalent_estimate: false,
+							models: []
+						}
+					],
+					totals_by_model: [{ model: 'm1', total: {}, daily: {}, weekly: {} }],
+					partial_totals: false,
+					excluded_snapshot_count: 0,
+					is_api_equivalent_estimate: false
+				})
+			);
+
+		const api = createHttpSubscriptionUsageApi({ http: { read, submit: vi.fn() } });
+		const overview = await api.subscriptionUsage(ORG);
+		expect(read).toHaveBeenCalledTimes(3);
+		expect(read).toHaveBeenNthCalledWith(3, `${BASE}?limit=100&cursor=s3`);
+		expect(overview.snapshots.map((s) => s.connectionId)).toEqual(['c1', 'c2', 'c3']);
+		expect(overview.totalsByModel.map((m) => m.model)).toEqual(['m1', 'm2']);
+		expect(overview.partialTotals).toBe(false);
+	});
 });

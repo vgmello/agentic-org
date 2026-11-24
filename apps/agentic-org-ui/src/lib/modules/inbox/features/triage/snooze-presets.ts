@@ -55,7 +55,8 @@ function localCalendarParts(date: Date, zone: string): LocalCalendarParts {
 
 /**
  * Converts a local wall-clock date/time in `zone` into an exact UTC Date (with DST refinement).
- * For repeated fall-back local hours, selects the earlier occurrence deterministically.
+ * Probes offsets on both sides of the target instant so repeated fall-back hours in both positive
+ * and negative UTC-offset zones deterministically select the earliest round-tripping occurrence.
  */
 export function zonedWallToUtc(
 	year: number,
@@ -66,26 +67,26 @@ export function zonedWallToUtc(
 	zone: string
 ): Date {
 	const utcGuess = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
-	const off1 = offsetMinutes(new Date(utcGuess), zone);
-	const first = utcGuess - off1 * 60_000;
-	const off2 = offsetMinutes(new Date(first), zone);
-	const second = utcGuess - off2 * 60_000;
-	// On a fall-back repeated hour, `Math.min(first, second)` picks the earlier occurrence when both round-trip.
-	const candidates = first <= second ? [first, second] : [second, first];
-	for (const ms of candidates) {
+	const probeOffsets = new Set<number>([
+		offsetMinutes(new Date(utcGuess - 18 * 3_600_000), zone),
+		offsetMinutes(new Date(utcGuess), zone),
+		offsetMinutes(new Date(utcGuess + 18 * 3_600_000), zone)
+	]);
+	const candidates = new Set<number>();
+	for (const off of probeOffsets) {
+		const first = utcGuess - off * 60_000;
+		candidates.add(first);
+		const refined = utcGuess - offsetMinutes(new Date(first), zone) * 60_000;
+		candidates.add(refined);
+	}
+	const sorted = [...candidates].sort((a, b) => a - b);
+	for (const ms of sorted) {
 		const dt = new Date(ms);
-		const p = localCalendarParts(dt, zone);
-		if (
-			p.year === year &&
-			p.month === month &&
-			p.day === day &&
-			p.hour === hour &&
-			p.minute === minute
-		) {
+		if (roundTripsWallClock(dt, year, month, day, hour, minute, zone)) {
 			return dt;
 		}
 	}
-	return new Date(second);
+	return new Date(sorted[0] ?? utcGuess);
 }
 
 function roundTripsWallClock(
@@ -218,14 +219,15 @@ export type CustomSnoozeValidation =
  * - invalid calendar dates or clock times
  * - nonexistent DST spring-forward local times
  * - timestamps at or before `now`
- * - timestamps at or after `expiresAtIso` (matching `messaging_ops.rs` expiry guard)
+ *
+ * Note: Expiry enforcement stays authoritative on the office (`msg.defer`) because active inbox rows
+ * may surface an optional ask's shorter `wait_until` rather than its 24h `msg.expires_at`.
  */
 export function parseCustomSnoozeDateTime(
 	dateStr: string,
 	timeStr: string,
 	zone: string,
-	now: Date,
-	expiresAtIso?: string
+	now: Date
 ): CustomSnoozeValidation {
 	const dMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
 	if (!dMatch) {
@@ -271,26 +273,6 @@ export function parseCustomSnoozeDateTime(
 			field: 'time',
 			error: 'Return time must be in the future.'
 		};
-	}
-
-	if (expiresAtIso) {
-		const expiresMs = Date.parse(expiresAtIso);
-		if (!Number.isNaN(expiresMs)) {
-			if (expiresMs <= now.getTime()) {
-				return {
-					ok: false,
-					field: 'time',
-					error: 'This item has already expired and cannot be snoozed.'
-				};
-			}
-			if (target.getTime() >= expiresMs) {
-				return {
-					ok: false,
-					field: 'time',
-					error: "Return time must be earlier than the item's expiry deadline."
-				};
-			}
-		}
 	}
 
 	return { ok: true, iso: target.toISOString(), date: target };
