@@ -283,7 +283,7 @@ html[data-theme="cozy"] {
 
   & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-horizon, .hb-skel-card,
     .card, .bcard, .c-entry, .sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast,
-    .agent-rail, .prof, .split .list, .activity-rail) {
+    .agent-rail, .prof, .split .list) {
     background: var(--cozy-panel);
     backdrop-filter: blur(20px) saturate(125%);
     -webkit-backdrop-filter: blur(20px) saturate(125%);

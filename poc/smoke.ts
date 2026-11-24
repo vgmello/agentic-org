@@ -120,6 +120,31 @@ try {
     }
     if (route === "activity") {
       await page.getByRole("heading", { name: "Portfolio Assembly" }).waitFor();
+      const assemblyTab = page.getByRole("tab", { name: "Assembly line" });
+      const feedTab = page.getByRole("tab", { name: "Activity feed" });
+      const filter = page.getByRole("button", { name: "Filter activity" });
+      const filters = page.getByRole("menu", { name: "Filter activity" });
+      assert.equal(await assemblyTab.getAttribute("aria-selected"), "true");
+      await filter.press("Enter");
+      await filters.getByRole("menuitemradio", { name: /Office federation/ }).press("Enter");
+      await page.getByRole("heading", { name: "Office federation" }).waitFor();
+      assert.equal(await filter.getAttribute("data-active"), "");
+      await filter.press("Enter");
+      await filters.getByRole("menuitemradio", { name: "All projects" }).press("Enter");
+      await assemblyTab.press("ArrowRight");
+      assert.equal(await feedTab.getAttribute("aria-selected"), "true");
+      assert.ok(await feedTab.evaluate((tab) => tab === document.activeElement), "Focus follows the active view tab");
+      await filter.press("Enter");
+      await filters.getByRole("menuitemradio", { name: "Decisions" }).press("Enter");
+      assert.deepEqual(await page.locator(".activity-timeline .kind").allTextContents(), ["Decision", "Decision"]);
+      await filter.press("Enter");
+      await filters.getByRole("menuitemradio", { name: "All events" }).press("Enter");
+      await feedTab.press("ArrowLeft");
+      await page.getByRole("heading", { name: "Portfolio Assembly" }).waitFor();
+
+      const readiness = page.getByRole("progressbar", { name: "Portfolio readiness" });
+      assert.equal(await readiness.getAttribute("max"), "19");
+      assert.match((await page.locator(".assembly-milestone").first().textContent())!, /\d+\/\d+ tasks · \d+\/\d+ features/);
       const tools = page.getByRole("group", { name: "Activity sidebar tools" });
       const gates = tools.getByRole("button", { name: "Release gates" });
       const simulation = tools.getByRole("button", { name: "Simulation" });
@@ -149,16 +174,20 @@ try {
       assert.ok(Math.abs(toolbar.x + toolbar.width - body.x - body.width) <= 1, "Icons stay at the right edge");
       assert.ok(Math.abs(bounds.height - body.height) <= 1, "Panel fits the available height");
       assert.notEqual(await panel.evaluate((element) => getComputedStyle(element).boxShadow), "none");
+      if (theme === "cozy") {
+        assert.equal(await panel.locator(".activity-rail").evaluate((element) => getComputedStyle(element).borderTopWidth), "0px");
+      }
       await simulation.hover();
-      await simulation.locator(".activity-tooltip").waitFor();
+      await simulation.locator(".icon-tooltip").waitFor();
       await simulation.press("Enter");
       await panel.getByRole("heading", { name: "Simulation", exact: true }).waitFor();
       await panel.getByRole("button", { name: "Reset simulation" }).hover();
-      await panel.getByRole("button", { name: "Reset simulation" }).locator(".activity-tooltip").waitFor();
+      await panel.getByRole("button", { name: "Reset simulation" }).locator(".icon-tooltip").waitFor();
       await panel.getByRole("button", { name: "Reset simulation" }).click();
       await panel.getByRole("button", { name: "8×" }).click();
       await panel.getByRole("button", { name: "Add sample task" }).click();
       await panel.getByText("joined the queue").waitFor();
+      assert.equal(await readiness.getAttribute("max"), "20", "The readiness bar tracks simulation updates");
       await panel.getByRole("button", { name: "Play simulation" }).click();
       await gates.click();
       await panel.getByRole("link", { name: "Release sign-off" }).waitFor();

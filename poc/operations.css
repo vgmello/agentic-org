@@ -391,13 +391,13 @@ html:is([data-theme="classic"], [data-theme="report-dark"]) .section-header { ba
   background: currentColor;
 }
 .queue-controls .menu { max-height: min(60dvh, 28rem); overflow-y: auto; }
-#main :is(.work-toolbar, .scoped-work-tools, .project-toolbar) .menu {
+#main :is(.work-toolbar, .scoped-work-tools, .project-toolbar, .activity-toolbar) .menu {
   background: var(--gray-800);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 @media (min-width: 960px) and (pointer: fine) {
-  .work-toolbar .queue-controls .menu { max-height: min(76dvh, 40rem); }
+  :is(.work-toolbar, .activity-toolbar) .queue-controls .menu { max-height: min(76dvh, 40rem); }
 }
 .queue-count {
   display: inline-flex;
@@ -428,7 +428,7 @@ html:is([data-theme="classic"], [data-theme="report-dark"]) .section-header { ba
   white-space: nowrap;
 }
 .queue-tab:hover { background: var(--hover); color: var(--white); }
-.queue-tab:is([aria-pressed="true"], [data-current-kind]) {
+.queue-tab:is([aria-pressed="true"], [aria-selected="true"], [data-current-kind]) {
   border-bottom-color: var(--tone-accent-ink);
   box-shadow: inset 0 -1px var(--tone-accent-ink);
   color: var(--white);
@@ -723,7 +723,10 @@ html[data-theme^="report"] .triage-queue {
 @container queue-header (max-width: 47.5rem) {
   .queue-toolbar { position: relative; padding-block-end: 4px; }
   .queue-toolbar .menu-wrap { position: static; }
-  .triage-toolbar .triage-tab-tools .menu, .work-toolbar .menu { inset-inline: var(--gutter) auto; max-width: calc(100% - 2 * var(--gutter)); }
+  .triage-toolbar .triage-tab-tools .menu, :is(.work-toolbar, .activity-toolbar) .menu {
+    inset-inline: var(--gutter) auto;
+    max-width: calc(100% - 2 * var(--gutter));
+  }
   .queue-toolbar .menu button { white-space: normal; }
   .triage-toolbar .queue-controls .menu { inset-inline: auto var(--gutter); }
 }
@@ -967,11 +970,11 @@ html[data-theme="graphite"]:has(.triage-workspace) {
   min-height: 0;
   container: activity / inline-size;
 }
-.activity-toolbar { gap: 6px 12px; padding-block: 8px; }
-.activity-toolbar > .tabs { gap: 16px; }
-.activity-scope, .activity-scope select { max-width: 100%; }
-.activity-scope select { min-height: var(--control-height); }
-.activity-switch { min-height: var(--control-height); }
+.activity-header { flex: none; }
+.activity-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; }
+@container queue-header (max-width: 23rem) {
+  .activity-toolbar .queue-tab .ic { display: none; }
+}
 .activity-body {
   display: grid;
   flex: 1 1 auto;
@@ -1015,14 +1018,14 @@ html[data-theme="graphite"]:has(.triage-workspace) {
   border-inline-start: 1px solid var(--line);
   background: var(--side-panel-surface);
 }
-.activity-icon { position: relative; }
+.icon-with-tooltip { position: relative; }
 .activity-tool.btn { width: var(--control-height); }
 .activity-tool.btn[aria-expanded="true"] {
   background: var(--hover);
   color: var(--white);
   box-shadow: inset 0 0 0 1px var(--line2);
 }
-.activity-tooltip {
+.icon-tooltip {
   position: absolute;
   z-index: 1;
   inset-block-start: calc(100% + 6px);
@@ -1031,17 +1034,17 @@ html[data-theme="graphite"]:has(.triage-workspace) {
   padding: 4px 8px;
   border: 1px solid var(--line2);
   border-radius: var(--radius-md);
-  background: var(--side-panel-surface);
+  background: var(--side-panel-surface, var(--gray-800));
   color: var(--white);
   font-size: .75rem;
   pointer-events: none;
 }
-.activity-icon:is(:hover, :focus-visible) .activity-tooltip { display: block; }
-.activity-tool .activity-tooltip {
+.icon-with-tooltip:not([aria-haspopup="menu"][aria-expanded="true"]):is(:hover, :focus-visible) .icon-tooltip { display: block; }
+.activity-tool .icon-tooltip {
   inset-block-start: auto;
   inset-inline-end: calc(100% + 8px);
 }
-#assembly-play .activity-tooltip { inset-inline: 0 auto; }
+#assembly-play .icon-tooltip { inset-inline: 0 auto; }
 .activity-body[data-panel-open] .activity-panel { visibility: visible; }
 @container activity (max-width: 42.5rem) {
   .activity-body, .activity-body[data-panel-open] {
@@ -1084,7 +1087,7 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 .assembly-controls :is(.btn, .seg) { min-height: var(--control-height); }
 .assembly-controls .seg button { min-height: calc(var(--control-height) - 8px); }
 @media (max-width: 720px), (pointer: coarse) {
-  :is(.activity-switch, .assembly-controls .seg) button { min-height: var(--control-height); }
+  .assembly-controls .seg button { min-height: var(--control-height); }
 }
 .activity-layout { padding-block-end: 32px; }
 .assembly-layout, .assembly-view {
@@ -1112,6 +1115,7 @@ html[data-theme="graphite"]:has(.triage-workspace) {
   font-size: .75rem;
 }
 .assembly-metrics dd { color: var(--white); font-size: 1rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.assembly-metrics .assembly-progress-bar { display: block; width: clamp(60px, 6cqi, 92px); margin-block-start: 4px; }
 .assembly-review-text, .assembly-metrics dd.assembly-review-text { color: var(--tone-warn-ink); }
 .assembly-table-wrap { flex: 1 0 auto; overflow-x: auto; }
 .assembly-table-wrap:focus-visible { outline-offset: -2px; }
@@ -1133,11 +1137,15 @@ html[data-theme="graphite"]:has(.triage-workspace) {
 .assembly-table thead th { background: var(--hover); }
 .assembly-table tbody tr:not(.assembly-milestone):hover { background: var(--hover); }
 .assembly-table small { display: block; color: var(--gray-400); font-size: .75rem; font-weight: 400; }
-.assembly-milestone th { color: var(--tone-accent-ink); background: var(--tone-accent-soft); }
+.assembly-table .assembly-milestone th {
+  color: var(--tone-accent-ink);
+  background: var(--tone-accent-soft);
+  border-block-color: var(--line2);
+}
 .assembly-milestone th > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .assembly-progress { display: grid; justify-items: start; gap: 2px; color: var(--gray-400); font-size: .75rem; white-space: nowrap; }
-.assembly-milestone .assembly-progress { display: flex; align-items: center; gap: 8px; font-weight: 400; }
-.assembly-progress progress {
+.assembly-milestone .assembly-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-weight: 400; white-space: normal; }
+.assembly-progress-bar {
   appearance: none;
   width: 76px;
   height: 5px;
@@ -1146,9 +1154,10 @@ html[data-theme="graphite"]:has(.triage-workspace) {
   background: var(--bar-track);
   color: var(--tone-accent);
 }
-.assembly-progress progress::-webkit-progress-bar { border-radius: inherit; background: var(--bar-track); }
-.assembly-progress progress::-webkit-progress-value { border-radius: inherit; background: var(--tone-accent); }
-.assembly-progress progress::-moz-progress-bar { border-radius: inherit; background: var(--tone-accent); }
+.assembly-progress-bar::-webkit-progress-bar { border-radius: inherit; background: var(--bar-track); }
+.assembly-progress-bar::-webkit-progress-value { border-radius: inherit; background: var(--tone-accent); }
+.assembly-progress-bar::-moz-progress-bar { border-radius: inherit; background: var(--tone-accent); }
+.assembly-milestone .assembly-progress-bar { width: clamp(96px, 12cqi, 144px); }
 .assembly-cell { display: flex; flex-wrap: wrap; gap: 4px; }
 .assembly-chip, .assembly-legend [data-stage], .activity-stage-bar [data-stage] {
   --stage-color: var(--gray-400);
