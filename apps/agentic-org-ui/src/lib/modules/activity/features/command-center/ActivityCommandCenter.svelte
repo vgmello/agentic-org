@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, type Snippet } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { Tooltip } from 'bits-ui';
+	import { mergeProps, Tooltip } from 'bits-ui';
 	import Activity from '@lucide/svelte/icons/activity';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
@@ -9,12 +9,18 @@
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Flag from '@lucide/svelte/icons/flag';
 	import Layers from '@lucide/svelte/icons/layers';
+	import ListFilter from '@lucide/svelte/icons/list-filter';
+	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+	import { initialsOf } from '$lib/home/model';
 	import { activityApi } from '$lib/modules/activity/api';
 	import type { ActivityQuery, ActivityRow } from '$lib/modules/activity/types';
 	import { inboxApi } from '$lib/modules/inbox/api';
 	import type { InboxItem } from '$lib/modules/inbox/types';
+	import type { ActivityEntry } from '$lib/modules/members';
 	import { accountZone } from '$lib/modules/preferences';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import type { OrgSnapshot } from '$lib/proto';
 	import ActivityOpsRail from './ActivityOpsRail.svelte';
 	import ActivityStreamPanel from './ActivityStreamPanel.svelte';
@@ -24,6 +30,8 @@
 		deriveDecisionStreamEntries,
 		mergeLiveActivityRows,
 		type FeedPhase,
+		type LineEventEntry,
+		type StreamEntry,
 		type StreamFilterTab
 	} from './assembly-model';
 
@@ -32,19 +40,32 @@
 	let {
 		organizationId,
 		organizationName,
-		snapshot
+		snapshot,
+		lockedProjectId = undefined,
+		releaseLabel = undefined,
+		extraProjectActivity = [],
+		onRegisterToolbar = undefined
 	}: {
 		organizationId: string;
 		organizationName: string;
 		snapshot: OrgSnapshot;
+		lockedProjectId?: string;
+		releaseLabel?: string;
+		extraProjectActivity?: readonly ActivityEntry[];
+		onRegisterToolbar?: (controls: Snippet | undefined) => void;
 	} = $props();
 
 	const shellData = useShellData();
+	const isProjectMode = $derived(Boolean(lockedProjectId));
 
 	// CRITICAL DEFAULT: Assembly Line Matrix is shown FIRST by default.
 	let viewMode = $state<'assembly' | 'feed'>('assembly');
 	let panelOpen = $state(typeof window !== 'undefined' ? window.innerWidth >= 1024 : true);
 	let toolsBtnEl = $state<HTMLButtonElement | null>(null);
+	let panelScrollEl = $state<HTMLDivElement | null>(null);
+	let hasMorePanelScroll = $state(false);
+	let displayMenuOpen = $state(false);
+	let filterMenuOpen = $state(false);
 	let projectScope = $state<string>('all');
 	let streamFilter = $state<StreamFilterTab>('all');
 	let activityRows = $state.raw<ActivityRow[] | undefined>(undefined);
@@ -134,6 +155,66 @@
 
 	onDestroy(() => {
 		destroyed = true;
+		onRegisterToolbar?.(undefined);
+	});
+
+	$effect(() => {
+		if (!isProjectMode || !onRegisterToolbar) return;
+		onRegisterToolbar(projectToolbarControls);
+		return () => {
+			onRegisterToolbar(undefined);
+		};
+	});
+
+	function updatePanelScrollMore() {
+		if (!panelScrollEl || !panelOpen) {
+			hasMorePanelScroll = false;
+			return;
+		}
+		const remaining =
+			panelScrollEl.scrollHeight - panelScrollEl.scrollTop - panelScrollEl.clientHeight;
+		const next = remaining > 12;
+		if (!next && hasMorePanelScroll && typeof document !== 'undefined') {
+			const active = document.activeElement;
+			if (active instanceof HTMLElement && active.classList.contains('activity-panel-more')) {
+				panelScrollEl.focus({ preventScroll: true });
+			}
+		}
+		hasMorePanelScroll = next;
+	}
+
+	function scrollPanelMore() {
+		if (!panelScrollEl) return;
+		const step = Math.max(180, Math.round(panelScrollEl.clientHeight * 0.72));
+		const reduced =
+			typeof window !== 'undefined' &&
+			window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+		panelScrollEl.scrollBy({ top: step, behavior: reduced ? 'auto' : 'smooth' });
+	}
+
+	$effect(() => {
+		const el = panelScrollEl;
+		void panelOpen;
+		void viewMode;
+		void model.milestones.length;
+		void model.lineEvents.length;
+		void extraProjectActivity.length;
+		if (!el) {
+			hasMorePanelScroll = false;
+			return;
+		}
+		const check = () => updatePanelScrollMore();
+		check();
+		el.addEventListener('scroll', check, { passive: true });
+		const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : undefined;
+		ro?.observe(el);
+		if (el.firstElementChild) ro?.observe(el.firstElementChild);
+		const raf = requestAnimationFrame(check);
+		return () => {
+			cancelAnimationFrame(raf);
+			el.removeEventListener('scroll', check);
+			ro?.disconnect();
+		};
 	});
 
 	const shellReady = $derived(
@@ -169,7 +250,11 @@
 	);
 
 	const effectiveProjectScope = $derived(
-		projectScope === 'all' || activeProjectIds.has(projectScope) ? projectScope : 'all'
+		lockedProjectId
+			? lockedProjectId
+			: projectScope === 'all' || activeProjectIds.has(projectScope)
+				? projectScope
+				: 'all'
 	);
 
 	const activeAllQuery = $derived<ActivityQuery>(
@@ -662,6 +747,55 @@
 		})
 	);
 
+	function toneFromProjectEntry(entry: ActivityEntry): LineEventEntry['tone'] {
+		const lower = `${entry.kind} ${entry.text}`.toLowerCase();
+		if (lower.includes('fail') || lower.includes('block') || lower.includes('denied')) return 'bad';
+		if (lower.includes('review') || lower.includes('approv') || lower.includes('wait'))
+			return 'warn';
+		if (lower.includes('done') || lower.includes('merg') || lower.includes('finish')) return 'ok';
+		return '';
+	}
+
+	const extraLineEvents = $derived.by<LineEventEntry[]>(() =>
+		extraProjectActivity.map((entry) => ({
+			id: `proj-act-${entry.id}`,
+			at: entry.at,
+			tone: toneFromProjectEntry(entry),
+			text: entry.actor ? `${entry.actor} ${entry.text}` : entry.text
+		}))
+	);
+
+	const mergedStreamEntries = $derived.by<StreamEntry[]>(() => {
+		if (extraProjectActivity.length === 0) return model.streamEntries;
+		const seen: Record<string, true> = {};
+		for (const e of model.streamEntries) seen[`${e.at}|${e.text}`] = true;
+		const projectLabel = model.selectedProject?.name ?? organizationName;
+		const extras: StreamEntry[] = [];
+		for (const entry of extraProjectActivity) {
+			const key = `${entry.at}|${entry.text}`;
+			if (Object.hasOwn(seen, key)) continue;
+			seen[key] = true;
+			const tone = toneFromProjectEntry(entry);
+			extras.push({
+				id: `proj-stream-${entry.id}`,
+				kind: 'work',
+				kindLabel: entry.kind || 'Work',
+				actorName: entry.actor || 'Team',
+				actorInitials: initialsOf(entry.actor || 'Team'),
+				actorKind: 'person',
+				text: entry.text,
+				projects: projectLabel ? [projectLabel] : [],
+				at: entry.at,
+				tone: tone || 'accent',
+				href: lockedProjectId ? `/projects/${encodeURIComponent(lockedProjectId)}/work` : '/work',
+				needsYou: tone === 'warn'
+			});
+		}
+		return [...model.streamEntries, ...extras].sort(
+			(a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0)
+		);
+	});
+
 	const headerSubtitle = $derived(
 		!shellReady
 			? `Loading pipeline and live stream for ${organizationName}…`
@@ -818,9 +952,172 @@
 			window.removeEventListener('keydown', onEscapeKey);
 		};
 	}
+	function handleProjectViewKeydown(event: KeyboardEvent) {
+		if (
+			event.key !== 'ArrowLeft' &&
+			event.key !== 'ArrowRight' &&
+			event.key !== 'Home' &&
+			event.key !== 'End'
+		)
+			return;
+		event.preventDefault();
+		const next: 'assembly' | 'feed' =
+			event.key === 'Home'
+				? 'assembly'
+				: event.key === 'End'
+					? 'feed'
+					: viewMode === 'assembly'
+						? 'feed'
+						: 'assembly';
+		viewMode = next;
+		const tablist = (event.currentTarget as HTMLElement | null)?.closest('[role="tablist"]');
+		const target = tablist?.querySelector<HTMLButtonElement>(`[data-project-view="${next}"]`);
+		target?.focus();
+	}
 </script>
 
-<div class="act-page cmd-page activity-workspace" {@attach attachReleasePanelEscape}>
+{#snippet assemblyDisplayMenu()}
+	<DropdownMenu.Root bind:open={displayMenuOpen}>
+		<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus disabled={displayMenuOpen}>
+			<DropdownMenu.Trigger>
+				{#snippet child({ props: menuProps })}
+					<Tooltip.Trigger>
+						{#snippet child({ props: tipProps })}
+							<button
+								{...mergeProps(menuProps, tipProps)}
+								type="button"
+								aria-label="Assembly line display"
+								data-testid="assembly-display-btn"
+								data-active={uiPrefs.assemblyDividers ? '' : undefined}
+								class="activity-icon-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+							>
+								<SlidersHorizontal class="size-4" aria-hidden="true" />
+							</button>
+						{/snippet}
+					</Tooltip.Trigger>
+				{/snippet}
+			</DropdownMenu.Trigger>
+			<Tooltip.Portal>
+				<Tooltip.Content
+					side="bottom"
+					sideOffset={6}
+					escapeKeydownBehavior="defer-otherwise-close"
+					class="activity-tooltip-content"
+				>
+					Assembly line display
+				</Tooltip.Content>
+			</Tooltip.Portal>
+		</Tooltip.Root>
+		<DropdownMenu.Content align="end" class="triage-menu-surface w-48">
+			<DropdownMenu.Label>Display</DropdownMenu.Label>
+			<DropdownMenu.CheckboxItem
+				checked={uiPrefs.assemblyDividers}
+				onCheckedChange={(checked) => uiPrefs.setAssemblyDividers(Boolean(checked))}
+				data-testid="assembly-row-dividers-toggle"
+				class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+			>
+				Row dividers
+			</DropdownMenu.CheckboxItem>
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
+{/snippet}
+
+{#snippet projectToolbarControls()}
+	<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
+		<div class="project-activity-controls" data-testid="project-activity-controls">
+			<div class="project-view-tabs" role="tablist" aria-label="Project activity view">
+				<button
+					type="button"
+					role="tab"
+					data-project-view="assembly"
+					aria-selected={viewMode === 'assembly'}
+					tabindex={viewMode === 'assembly' ? 0 : -1}
+					onclick={() => (viewMode = 'assembly')}
+					onkeydown={handleProjectViewKeydown}
+					class="project-view-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+				>
+					<Layers class="project-view-ic size-3.5" aria-hidden="true" />
+					<span>Assembly line</span>
+				</button>
+				<button
+					type="button"
+					role="tab"
+					data-project-view="feed"
+					aria-selected={viewMode === 'feed'}
+					tabindex={viewMode === 'feed' ? 0 : -1}
+					onclick={() => (viewMode = 'feed')}
+					onkeydown={handleProjectViewKeydown}
+					class="project-view-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+				>
+					<Activity class="project-view-ic size-3.5" aria-hidden="true" />
+					<span>Activity feed</span>
+				</button>
+			</div>
+
+			{#if viewMode === 'assembly'}
+				{@render assemblyDisplayMenu()}
+			{:else}
+				<DropdownMenu.Root bind:open={filterMenuOpen}>
+					<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus disabled={filterMenuOpen}>
+						<DropdownMenu.Trigger>
+							{#snippet child({ props: menuProps })}
+								<Tooltip.Trigger>
+									{#snippet child({ props: tipProps })}
+										<button
+											{...mergeProps(menuProps, tipProps)}
+											type="button"
+											aria-label="Filter activity"
+											data-testid="project-feed-filter-btn"
+											data-active={streamFilter !== 'all' ? '' : undefined}
+											class="activity-icon-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+										>
+											<ListFilter class="size-4" aria-hidden="true" />
+										</button>
+									{/snippet}
+								</Tooltip.Trigger>
+							{/snippet}
+						</DropdownMenu.Trigger>
+						<Tooltip.Portal>
+							<Tooltip.Content
+								side="bottom"
+								sideOffset={6}
+								escapeKeydownBehavior="defer-otherwise-close"
+								class="activity-tooltip-content"
+							>
+								Filter activity
+							</Tooltip.Content>
+						</Tooltip.Portal>
+					</Tooltip.Root>
+					<DropdownMenu.Content align="end" class="triage-menu-surface w-48">
+						<DropdownMenu.Label>Event type</DropdownMenu.Label>
+						<DropdownMenu.RadioGroup
+							value={streamFilter}
+							onValueChange={(val) => {
+								if (val) streamFilter = val as StreamFilterTab;
+							}}
+						>
+							{#each streamTabs as tab (tab.id)}
+								<DropdownMenu.RadioItem
+									value={tab.id}
+									closeOnSelect={true}
+									class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+								>
+									<span>{tab.label}</span>
+								</DropdownMenu.RadioItem>
+							{/each}
+						</DropdownMenu.RadioGroup>
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
+			{/if}
+		</div>
+	</Tooltip.Provider>
+{/snippet}
+
+<div
+	class="act-page cmd-page activity-workspace"
+	data-activity-scope={isProjectMode ? 'project' : 'portfolio'}
+	{@attach attachReleasePanelEscape}
+>
 	{#if showLiveBanner}
 		<div class="cmd-live-banner" role="status" tabindex="-1">
 			<span class="cmd-live-text">
@@ -853,144 +1150,158 @@
 		</div>
 	{/if}
 
-	<!-- Command Center Section Header & Aligned Toolbar (poc/operations.css 19c88bd5) -->
-	<div class="section-header activity-header">
-		<header class="ph cmd-header">
-			<div class="ph-t cmd-title-group">
-				<h1 id="shell-page-title" tabindex="-1" class="cmd-h1 focus:outline-none">Activity</h1>
-				<p class="cmd-subtitle">{headerSubtitle}</p>
-			</div>
+	<!-- Command Center Section Header & Aligned Toolbar (Portfolio mode only; Project mode uses ProjectFrame toolbar) -->
+	{#if !isProjectMode}
+		<div class="section-header activity-header">
+			<header class="ph cmd-header">
+				<div class="ph-t cmd-title-group">
+					<h1 id="shell-page-title" tabindex="-1" class="cmd-h1 focus:outline-none">Activity</h1>
+					<p class="cmd-subtitle">{headerSubtitle}</p>
+				</div>
 
-			<!-- Waiting-on-you Pill (honest loading/unavailable states with visible Retry focus) -->
-			<div class="cmd-status-slot" tabindex="-1">
-				{#if workUnavailableReason || inboxPhase === 'error' || isHeaderRetrying}
-					<button
-						type="button"
-						disabled={isHeaderRetrying}
-						aria-busy={isHeaderRetrying}
-						onclick={handleHeaderRetry}
-						class="cmd-needs-pill is-warn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-					>
-						<AlertTriangle class="size-3.5" aria-hidden="true" />
-						<span>
-							{#if isHeaderRetrying}
-								Retrying…
-							{:else if workUnavailableReason}
-								Retry work load
-							{:else}
-								Inbox unavailable
-							{/if}
-						</span>
-					</button>
-				{:else if !shellReady || inboxPhase === 'loading'}
-					<span
-						class="cmd-needs-pill is-neutral min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-					>
-						<span>Loading status…</span>
-					</span>
-				{:else if model.needsYouCount > 0}
-					<a
-						href={resolve('/inbox')}
-						class="cmd-needs-pill is-warn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-					>
-						<span class="cmd-needs-dot" aria-hidden="true"></span>
-						<span class="tabular-nums">{model.needsYouCount} need you</span>
-					</a>
-				{:else}
-					<span
-						class="cmd-needs-pill is-ok min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-					>
-						<CheckCircle2 class="size-3.5" aria-hidden="true" />
-						<span>All caught up</span>
-					</span>
-				{/if}
-			</div>
-		</header>
-
-		<div class="section-toolbar activity-toolbar">
-			<!-- Segmented View Toggle: Assembly line (FIRST, active by default) | Activity (SECOND) -->
-			<div
-				class="exec-well cmd-view-toggle activity-switch"
-				role="group"
-				aria-label="Activity view"
-			>
-				<button
-					type="button"
-					aria-pressed={viewMode === 'assembly'}
-					onclick={() => (viewMode = 'assembly')}
-					class={[
-						'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
-						viewMode === 'assembly' && 'is-on'
-					]}
-				>
-					<Layers class="size-3.5" aria-hidden="true" />
-					<span>Assembly line</span>
-				</button>
-				<button
-					type="button"
-					aria-pressed={viewMode === 'feed'}
-					onclick={() => (viewMode = 'feed')}
-					class={[
-						'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
-						viewMode === 'feed' && 'is-on'
-					]}
-				>
-					<Activity class="size-3.5" aria-hidden="true" />
-					<span>Activity</span>
-				</button>
-			</div>
-
-			<!-- Project Scope Select -->
-			<div class="cmd-select-wrap activity-scope">
-				<select
-					aria-label="Project scope"
-					value={effectiveProjectScope}
-					onchange={(event) => (projectScope = event.currentTarget.value)}
-					class="cmd-select min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-				>
-					<option value="all">
-						All projects ({model.activeProjects.length} active)
-					</option>
-					{#each model.activeProjects as project (project.id)}
-						<option value={project.id}>
-							{project.name}{#if project.key}
-								· {project.key}{/if}
-						</option>
-					{/each}
-				</select>
-				<ChevronDown class="cmd-select-chevron size-3.5" aria-hidden="true" />
-			</div>
-
-			{#if viewMode === 'feed'}
-				<!-- WAI-ARIA Tabs Pattern with roving tabindex and Arrow/Home/End navigation -->
-				<div class="tabs activity-stream-tabs" role="tablist" aria-label="Filter activity stream">
-					{#each streamTabs as tab, index (tab.id)}
+				<!-- Waiting-on-you Pill (honest loading/unavailable states with visible Retry focus) -->
+				<div class="cmd-status-slot" tabindex="-1">
+					{#if workUnavailableReason || inboxPhase === 'error' || isHeaderRetrying}
 						<button
 							type="button"
-							role="tab"
-							id={`activity-tab-${tab.id}`}
-							tabindex={streamFilter === tab.id ? 0 : -1}
-							aria-selected={streamFilter === tab.id}
-							aria-controls={`activity-panel-${tab.id}`}
-							onclick={() => (streamFilter = tab.id)}
-							onkeydown={(event) => handleStreamTabKeydown(event, index)}
+							disabled={isHeaderRetrying}
+							aria-busy={isHeaderRetrying}
+							onclick={handleHeaderRetry}
+							class="cmd-needs-pill is-warn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						>
+							<AlertTriangle class="size-3.5" aria-hidden="true" />
+							<span>
+								{#if isHeaderRetrying}
+									Retrying…
+								{:else if workUnavailableReason}
+									Retry work load
+								{:else}
+									Inbox unavailable
+								{/if}
+							</span>
+						</button>
+					{:else if !shellReady || inboxPhase === 'loading'}
+						<span
+							class="cmd-needs-pill is-neutral min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						>
+							<span>Loading status…</span>
+						</span>
+					{:else if model.needsYouCount > 0}
+						<a
+							href={resolve('/inbox')}
+							class="cmd-needs-pill is-warn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						>
+							<span class="cmd-needs-dot" aria-hidden="true"></span>
+							<span class="tabular-nums">{model.needsYouCount} need you</span>
+						</a>
+					{:else}
+						<span
+							class="cmd-needs-pill is-ok min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						>
+							<CheckCircle2 class="size-3.5" aria-hidden="true" />
+							<span>All caught up</span>
+						</span>
+					{/if}
+				</div>
+			</header>
+
+			<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
+				<div class="section-toolbar activity-toolbar">
+					<!-- Segmented View Toggle: Assembly line (FIRST, active by default) | Activity (SECOND) -->
+					<div
+						class="exec-well cmd-view-toggle activity-switch"
+						role="group"
+						aria-label="Activity view"
+					>
+						<button
+							type="button"
+							aria-pressed={viewMode === 'assembly'}
+							onclick={() => (viewMode = 'assembly')}
 							class={[
-								'activity-stream-tab min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
-								streamFilter === tab.id && 'is-active'
+								'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
+								viewMode === 'assembly' && 'is-on'
 							]}
 						>
-							<span>{tab.label}</span>
-							{#if tab.id === 'needs_you' && model.streamNeedsYouCount > 0}
-								<span class="activity-stream-badge tabular-nums">{model.streamNeedsYouCount}</span>
-							{/if}
+							<Layers class="size-3.5" aria-hidden="true" />
+							<span>Assembly line</span>
 						</button>
-					{/each}
-				</div>
-			{/if}
-		</div>
-	</div>
+						<button
+							type="button"
+							aria-pressed={viewMode === 'feed'}
+							onclick={() => (viewMode = 'feed')}
+							class={[
+								'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
+								viewMode === 'feed' && 'is-on'
+							]}
+						>
+							<Activity class="size-3.5" aria-hidden="true" />
+							<span>Activity</span>
+						</button>
+					</div>
 
-	<!-- Collapsible Release Gates Dock + Slim Tool Rail (poc/operations.css 3c4e3541) -->
+					<!-- Project Scope Select -->
+					<div class="cmd-select-wrap activity-scope">
+						<select
+							aria-label="Project scope"
+							value={effectiveProjectScope}
+							onchange={(event) => (projectScope = event.currentTarget.value)}
+							class="cmd-select min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						>
+							<option value="all">
+								All projects ({model.activeProjects.length} active)
+							</option>
+							{#each model.activeProjects as project (project.id)}
+								<option value={project.id}>
+									{project.name}{#if project.key}
+										· {project.key}{/if}
+								</option>
+							{/each}
+						</select>
+						<ChevronDown class="cmd-select-chevron size-3.5" aria-hidden="true" />
+					</div>
+
+					{#if viewMode === 'assembly'}
+						<div class="activity-toolbar-end">
+							{@render assemblyDisplayMenu()}
+						</div>
+					{:else}
+						<!-- WAI-ARIA Tabs Pattern with roving tabindex and Arrow/Home/End navigation -->
+						<div
+							class="tabs activity-stream-tabs"
+							role="tablist"
+							aria-label="Filter activity stream"
+						>
+							{#each streamTabs as tab, index (tab.id)}
+								<button
+									type="button"
+									role="tab"
+									id={`activity-tab-${tab.id}`}
+									tabindex={streamFilter === tab.id ? 0 : -1}
+									aria-selected={streamFilter === tab.id}
+									aria-controls={`activity-panel-${tab.id}`}
+									onclick={() => (streamFilter = tab.id)}
+									onkeydown={(event) => handleStreamTabKeydown(event, index)}
+									class={[
+										'activity-stream-tab min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
+										streamFilter === tab.id && 'is-active'
+									]}
+								>
+									<span>{tab.label}</span>
+									{#if tab.id === 'needs_you' && model.streamNeedsYouCount > 0}
+										<span class="activity-stream-badge tabular-nums"
+											>{model.streamNeedsYouCount}</span
+										>
+									{/if}
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			</Tooltip.Provider>
+		</div>
+	{/if}
+
+	<!-- Collapsible Release Gates Dock + Slim Tool Rail (poc/operations.css 53728c05) -->
 	<Tooltip.Provider delayDuration={150} ignoreNonKeyboardFocus>
 		<div class="activity-body" data-panel-open={panelOpen ? '' : undefined}>
 			<div class="activity-main" data-view={viewMode}>
@@ -1000,12 +1311,15 @@
 						loading={!shellReady}
 						unavailableReason={workUnavailableReason}
 						{inboxPhase}
+						projectScope={isProjectMode}
+						{releaseLabel}
+						hasActivityEntries={extraLineEvents.length > 0 || model.lineEvents.length > 0}
 						onRetry={retryShellAndInbox}
 					/>
 				{:else}
 					<div class="activity-stream-pad">
 						<ActivityStreamPanel
-							entries={model.streamEntries}
+							entries={mergedStreamEntries}
 							{decisionEntries}
 							needsYouCount={model.streamNeedsYouCount}
 							openInboxCount={inboxPhase === 'ready' ? model.openInboxCount : 0}
@@ -1013,6 +1327,7 @@
 							bottleneck={model.bottleneck}
 							bind:activeFilter={streamFilter}
 							showTabs={false}
+							projectScope={isProjectMode}
 							{nowMs}
 							{feedPhase}
 							{feedError}
@@ -1035,44 +1350,68 @@
 				aria-label="Release gates and operational context"
 				inert={!panelOpen ? true : undefined}
 			>
-				<div class="side-panel-header">
-					<h2>Release gates</h2>
-					<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<button
-									{...props}
-									type="button"
-									aria-label="Hide release gates"
-									onclick={() => {
-										panelOpen = false;
-										toolsBtnEl?.focus();
-									}}
-									class="activity-tool-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+				<div
+					bind:this={panelScrollEl}
+					class="activity-panel-scroll"
+					role="region"
+					aria-label="Release gates sidebar contents"
+					tabindex="0"
+				>
+					<div class="side-panel-header">
+						<h2>Release gates</h2>
+						<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button
+										{...props}
+										type="button"
+										aria-label="Hide release gates"
+										onclick={() => {
+											panelOpen = false;
+											toolsBtnEl?.focus();
+										}}
+										class="activity-tool-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+									>
+										<ChevronRight class="size-4" aria-hidden="true" />
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									side="left"
+									sideOffset={6}
+									escapeKeydownBehavior="defer-otherwise-close"
+									class="activity-tooltip-content"
 								>
-									<ChevronRight class="size-4" aria-hidden="true" />
-								</button>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Portal>
-							<Tooltip.Content
-								side="left"
-								sideOffset={6}
-								escapeKeydownBehavior="defer-otherwise-close"
-								class="activity-tooltip-content"
-							>
-								Hide release gates
-							</Tooltip.Content>
-						</Tooltip.Portal>
-					</Tooltip.Root>
+									Hide release gates
+								</Tooltip.Content>
+							</Tooltip.Portal>
+						</Tooltip.Root>
+					</div>
+
+					<ActivityOpsRail
+						{model}
+						loading={!shellReady}
+						unavailableReason={workUnavailableReason}
+						embedded
+						projectScope={isProjectMode}
+						zone={accountZone.zone}
+						{nowMs}
+						{extraLineEvents}
+					/>
 				</div>
 
-				<ActivityOpsRail
-					{model}
-					loading={!shellReady}
-					unavailableReason={workUnavailableReason}
-					embedded
-				/>
+				<button
+					type="button"
+					class="activity-panel-more"
+					data-testid="activity-panel-more"
+					hidden={!panelOpen || !hasMorePanelScroll}
+					onclick={scrollPanelMore}
+				>
+					<span>Scroll for more</span>
+					<ChevronDown class="size-3.5" aria-hidden="true" />
+				</button>
 			</aside>
 
 			<div class="activity-tools">
@@ -1457,8 +1796,107 @@
 			);
 	}
 
+	.activity-toolbar-end {
+		display: flex;
+		align-items: center;
+		margin-inline-start: auto;
+	}
+
+	.project-activity-controls {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		max-inline-size: 100%;
+	}
+
+	.project-view-tabs {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		padding-inline-start: 8px;
+		border-inline-start: 1px solid var(--line);
+	}
+
+	.project-view-tab {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 0 10px;
+		border: 1px solid transparent;
+		border-radius: var(--exec-ctrl-radius, 6px);
+		background: transparent;
+		color: var(--fg-secondary);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+
+	.project-view-tab:hover {
+		background: var(--surface-raised);
+		color: var(--fg);
+	}
+
+	.project-view-tab[aria-selected='true'] {
+		background: var(--surface-raised);
+		border-color: var(--line-strong);
+		color: var(--fg);
+	}
+
+	.project-view-tab:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: -2px;
+	}
+
+	@media (max-width: 640px) {
+		.project-view-tab {
+			padding-inline: 8px;
+		}
+		.project-view-tab :global(.project-view-ic) {
+			display: none;
+		}
+	}
+
+	.activity-icon-btn {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border: 0;
+		border-radius: var(--exec-ctrl-radius, 6px);
+		background: transparent;
+		color: var(--fg-secondary);
+		cursor: pointer;
+	}
+
+	.activity-icon-btn:hover,
+	.activity-icon-btn[aria-expanded='true'] {
+		background: var(--surface-raised);
+		color: var(--fg);
+	}
+
+	.activity-icon-btn[data-active] {
+		color: var(--tone-accent-ink);
+	}
+
+	.activity-icon-btn[data-active]::after {
+		content: '';
+		position: absolute;
+		inset: 5px 5px auto auto;
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: currentColor;
+	}
+
+	.activity-icon-btn:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 2px;
+	}
+
 	.activity-main,
-	.activity-panel {
+	.activity-panel-scroll {
 		min-width: 0;
 		overflow: auto;
 		overscroll-behavior: contain;
@@ -1480,8 +1918,11 @@
 
 	.activity-panel {
 		grid-area: panel;
+		display: grid;
+		grid-template-rows: minmax(0, 1fr);
+		position: relative;
+		min-width: 0;
 		visibility: hidden;
-		overflow-x: hidden;
 		z-index: 1;
 		background: var(--side-panel-surface, var(--exec-surface));
 		border-inline-start: 1px solid var(--line);
@@ -1490,6 +1931,45 @@
 
 	.activity-body[data-panel-open] .activity-panel {
 		visibility: visible;
+	}
+
+	.activity-panel-scroll {
+		overflow-x: hidden;
+		scrollbar-width: thin;
+		scrollbar-color: var(--fg-secondary) transparent;
+		scroll-padding-block-end: var(--control-height, 36px);
+	}
+
+	.activity-panel-scroll:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: -2px;
+	}
+
+	.activity-panel-more:not([hidden]) {
+		position: absolute;
+		z-index: 2;
+		inset: auto 0 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		min-height: var(--control-height, 36px);
+		border: 0;
+		border-block-start: 1px solid var(--line-strong);
+		background: var(--side-panel-surface, var(--exec-surface));
+		color: var(--fg-secondary);
+		font-size: 0.8125rem;
+		font-weight: 550;
+		cursor: pointer;
+	}
+
+	.activity-panel-more:hover {
+		color: var(--exec-ink);
+	}
+
+	.activity-panel-more:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: -2px;
 	}
 
 	.side-panel-header {

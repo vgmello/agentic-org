@@ -261,7 +261,10 @@ html[data-ui-theme='report'] {
 	--triage-row-selected: #d6e2f0;
 	--work-row-hover: #eaedf3;
 	--work-row-selected: #d6e2f0;
+	--detail-panel-surface: #ffffff;
 	--side-panel-surface: #ffffff;
+	--assembly-surface: #ffffff;
+	--workspace-secondary-surface: #ffffff;
 }
 
 /* ── Shared Modern 2D Executive Report Layout Tokens (Day & Night) ── */

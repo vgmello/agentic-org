@@ -1039,7 +1039,7 @@
 								<DropdownMenu.Content
 									preventScroll={false}
 									align="start"
-									class="w-52 motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+									class="triage-menu-surface w-52 motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
 								>
 									<DropdownMenu.RadioGroup
 										value={overflowActive ? activeTab : ''}
@@ -1095,7 +1095,7 @@
 									<DropdownMenu.Content
 										preventScroll={false}
 										align="end"
-										class="max-h-[min(60dvh,28rem)] w-60 max-w-[calc(100vw-2rem)] overflow-y-auto motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+										class="triage-menu-surface max-h-[min(60dvh,28rem)] w-60 max-w-[calc(100vw-2rem)] overflow-y-auto motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
 									>
 										<DropdownMenu.Label>Urgency</DropdownMenu.Label>
 										<DropdownMenu.RadioGroup
@@ -1208,7 +1208,7 @@
 									<DropdownMenu.Content
 										preventScroll={false}
 										align="end"
-										class="w-52 max-w-[calc(100vw-2rem)] motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
+										class="triage-menu-surface w-52 max-w-[calc(100vw-2rem)] motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
 									>
 										<DropdownMenu.Label>Grouping</DropdownMenu.Label>
 										<DropdownMenu.RadioGroup

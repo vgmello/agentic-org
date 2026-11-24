@@ -40,6 +40,7 @@
 		inboxPhase = 'ready',
 		workPhase = 'ready',
 		showTabs = true,
+		projectScope = false,
 		onRetry = undefined,
 		onRetryDecisions = undefined
 	}: {
@@ -60,6 +61,7 @@
 		inboxPhase?: FeedPhase;
 		workPhase?: FeedPhase;
 		showTabs?: boolean;
+		projectScope?: boolean;
 		onRetry?: () => void;
 		onRetryDecisions?: () => void;
 	} = $props();
@@ -261,7 +263,9 @@
 				<h3>
 					{activeMore > 0
 						? 'No matching activity in the latest loaded events'
-						: 'No matching activity'}
+						: projectScope && activeFilter === 'all'
+							? 'No activity yet'
+							: 'No matching activity'}
 				</h3>
 				{#if showEmptyInboxShortcut}
 					<p>
@@ -530,8 +534,9 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 8px 16px;
-		padding: 10px 4px;
+		padding: 8px var(--activity-gutter, 16px);
 		border-bottom: 1px solid var(--line);
+		background: var(--workspace-secondary-surface, var(--exec-well));
 		font-size: 0.75rem;
 	}
 

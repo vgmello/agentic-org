@@ -33,7 +33,7 @@ const noFeatures = { planned: 0, inProgress: 0, live: 0 };
 const labels = (tabs: { label: string }[]) => tabs.map((t) => t.label);
 
 describe('projectTabs (PKG-15)', () => {
-	it('with no development process, Features and Releases sit between Work and Docs', () => {
+	it('with no development process, core tabs lead and Features/Releases/Docs/Settings follow', () => {
 		expect(
 			labels(
 				projectTabs(
@@ -43,19 +43,19 @@ describe('projectTabs (PKG-15)', () => {
 			)
 		).toEqual([
 			'Overview',
+			'Activity',
 			'Work',
+			'Insights',
+			'Conversations',
+			'Team',
 			'Features',
 			'Releases',
 			'Docs',
-			'Team',
-			'Activity',
-			'Conversations',
-			'Insights',
 			'Settings'
 		]);
 	});
 
-	it("puts the process's tabs in order and adds Features only when held and not given", () => {
+	it("puts the process's tabs after core navigation and adds Features only when held and not given", () => {
 		const tabs = projectTabs(
 			{
 				developmentProcess: { id: 'p', name: 'DSS' },
@@ -70,15 +70,15 @@ describe('projectTabs (PKG-15)', () => {
 		);
 		expect(labels(tabs)).toEqual([
 			'Overview',
+			'Activity',
 			'Work',
+			'Insights',
+			'Conversations',
+			'Team',
 			'Product',
 			'Releases',
 			'Features',
 			'Docs',
-			'Team',
-			'Activity',
-			'Conversations',
-			'Insights',
 			'Settings'
 		]);
 	});
@@ -92,14 +92,14 @@ describe('projectTabs (PKG-15)', () => {
 		});
 		expect(labels(tabs)).toEqual([
 			'Overview',
+			'Activity',
 			'Work',
+			'Insights',
+			'Conversations',
+			'Team',
 			'Features',
 			'Releases',
 			'Docs',
-			'Team',
-			'Activity',
-			'Conversations',
-			'Insights',
 			'Settings'
 		]);
 	});

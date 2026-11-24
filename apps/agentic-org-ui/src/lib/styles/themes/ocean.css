@@ -365,6 +365,10 @@ html[data-ui-theme='ocean'][data-interior-page]
 	}
 }
 
+html[data-ui-theme='ocean'] .project-header {
+	background-image: var(--ocean-header);
+}
+
 /* Settings preview swatch */
 .swatch-ocean {
 	background:

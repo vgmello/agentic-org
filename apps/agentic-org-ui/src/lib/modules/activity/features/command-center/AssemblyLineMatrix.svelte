@@ -3,19 +3,29 @@
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import Layers from '@lucide/svelte/icons/layers';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
-	import type { ActivityCommandCenterModel, FeedPhase } from './assembly-model';
+	import {
+		formatTelemetryHours,
+		type ActivityCommandCenterModel,
+		type FeedPhase
+	} from './assembly-model';
 
 	let {
 		model,
 		loading = false,
 		unavailableReason = undefined,
 		inboxPhase = 'ready',
+		projectScope = false,
+		releaseLabel = undefined,
+		hasActivityEntries = false,
 		onRetry = undefined
 	}: {
 		model: ActivityCommandCenterModel;
 		loading?: boolean;
 		unavailableReason?: string;
 		inboxPhase?: FeedPhase;
+		projectScope?: boolean;
+		releaseLabel?: string;
+		hasActivityEntries?: boolean;
 		onRetry?: () => void;
 	} = $props();
 
@@ -63,6 +73,14 @@
 			: String(model.stageCounts.agents)
 	);
 	const dataUnavailable = $derived(loading || Boolean(unavailableReason));
+	const totalTracks = $derived(
+		model.milestones.reduce((sum, milestone) => sum + milestone.lanes.length, 0)
+	);
+	const summaryEyebrow = $derived(
+		projectScope ? (releaseLabel ?? model.scopeEyebrow) : model.scopeEyebrow
+	);
+	const summaryTitle = $derived(projectScope ? 'Assembly line' : model.scopeTitle);
+	const avgCycleLabel = $derived(formatTelemetryHours(model.avgCycleHours));
 
 	function handleRetryClick(event: MouseEvent) {
 		const section = (event.currentTarget as HTMLElement | null)?.closest<HTMLElement>(
@@ -77,9 +95,9 @@
 	<!-- Summary Strip -->
 	<div class="assembly-summary">
 		<div class="min-w-0">
-			<div class="assembly-eyebrow">{model.scopeEyebrow}</div>
+			<div class="assembly-eyebrow">{summaryEyebrow}</div>
 			<div class="mt-0.5 flex flex-wrap items-center gap-2.5">
-				<h2 class="assembly-scope-title">{model.scopeTitle}</h2>
+				<h2 class="assembly-scope-title">{summaryTitle}</h2>
 				<span class="assembly-live-pill">
 					<span class="assembly-live-dot" aria-hidden="true"></span>
 					<span>
@@ -106,8 +124,8 @@
 					value={dataUnavailable ? 0 : model.mergedItems}
 					max={Math.max(1, model.totalItems)}
 					aria-label={dataUnavailable
-						? 'Portfolio readiness unavailable'
-						: `Portfolio readiness: ${model.readinessPct}%`}
+						? 'Readiness unavailable'
+						: `${projectScope ? 'Release' : 'Portfolio'} readiness: ${model.readinessPct}%`}
 				></progress>
 			</div>
 			<div>
@@ -136,10 +154,17 @@
 					{/if}
 				</dd>
 			</div>
-			<div>
-				<dt>Open</dt>
-				<dd>{dataUnavailable ? '—' : model.openItems}</dd>
-			</div>
+			{#if projectScope}
+				<div>
+					<dt>Avg. cycle time</dt>
+					<dd data-testid="assembly-avg-cycle">{dataUnavailable ? '—' : avgCycleLabel}</dd>
+				</div>
+			{:else}
+				<div>
+					<dt>Open</dt>
+					<dd>{dataUnavailable ? '—' : model.openItems}</dd>
+				</div>
+			{/if}
 		</dl>
 	</div>
 
@@ -165,11 +190,26 @@
 				</button>
 			{/if}
 		</div>
-	{:else if model.milestones.length === 0}
+	{:else if model.milestones.length === 0 || (projectScope && model.totalItems === 0 && !hasActivityEntries)}
 		<div class="assembly-empty">
 			<Layers class="size-7" style="color: var(--fg-secondary);" aria-hidden="true" />
-			<h3>No active projects on the line yet</h3>
-			<p>Create a project or add tasks to track delivery from queue through human review.</p>
+			<h3>
+				{#if projectScope && !hasActivityEntries}
+					No activity yet
+				{:else if projectScope}
+					No tasks on the assembly line yet
+				{:else}
+					No active projects on the line yet
+				{/if}
+			</h3>
+			<p>
+				{#if projectScope && !hasActivityEntries}
+					What happens in {model.scopeTitle} shows here as it happens: tasks created, assigned and finished,
+					bugs reported, and delivery moving through human review.
+				{:else}
+					Create a project or add tasks to track delivery from queue through human review.
+				{/if}
+			</p>
 		</div>
 	{:else}
 		<!-- 7-Column Swimlane Pipeline Table -->
@@ -181,8 +221,12 @@
 						<th scope="col" class="col-track">
 							<span>Milestone › Track</span>
 							<small>
-								{model.milestones.length}
-								{model.milestones.length === 1 ? 'project' : 'projects'}
+								{#if projectScope}
+									{totalTracks} {totalTracks === 1 ? 'track' : 'tracks'}
+								{:else}
+									{model.milestones.length}
+									{model.milestones.length === 1 ? 'project' : 'projects'}
+								{/if}
 							</small>
 						</th>
 						<th scope="col" class="col-stage">
@@ -413,23 +457,25 @@
 			</span>
 		</div>
 
-		<div class="assembly-progress assembly-overall-progress">
-			<span class="tabular-nums">
-				{#if dataUnavailable}
-					—
-				{:else}
-					{model.readinessPct}% · {model.mergedItems}/{model.totalItems} merged
-				{/if}
-			</span>
-			<progress
-				class={!dataUnavailable && model.isComplete ? 'is-complete' : ''}
-				value={dataUnavailable ? 0 : model.mergedItems}
-				max={Math.max(1, model.totalItems)}
-				aria-label={dataUnavailable
-					? 'Overall readiness unavailable'
-					: `Overall readiness: ${model.readinessPct}%`}
-			></progress>
-		</div>
+		{#if !projectScope}
+			<div class="assembly-progress assembly-overall-progress">
+				<span class="tabular-nums">
+					{#if dataUnavailable}
+						—
+					{:else}
+						{model.readinessPct}% · {model.mergedItems}/{model.totalItems} merged
+					{/if}
+				</span>
+				<progress
+					class={!dataUnavailable && model.isComplete ? 'is-complete' : ''}
+					value={dataUnavailable ? 0 : model.mergedItems}
+					max={Math.max(1, model.totalItems)}
+					aria-label={dataUnavailable
+						? 'Overall readiness unavailable'
+						: `Overall readiness: ${model.readinessPct}%`}
+				></progress>
+			</div>
+		{/if}
 	</div>
 </section>
 
@@ -443,10 +489,7 @@
 		overflow: hidden;
 		border: 0;
 		border-radius: 0;
-		background-color: var(--exec-surface);
-		background-image: var(--exec-panel-sheen);
-		-webkit-backdrop-filter: var(--exec-blur);
-		backdrop-filter: var(--exec-blur);
+		background-color: var(--assembly-surface, var(--exec-surface));
 	}
 
 	.assembly-summary {
@@ -604,9 +647,17 @@
 
 	.assembly-table :is(th, td) {
 		padding: 10px 10px;
-		border-block-end: 1px solid var(--line);
 		text-align: start;
 		vertical-align: top;
+	}
+
+	:global(html[data-assembly-dividers])
+		.assembly-table
+		tbody
+		tr:not(.assembly-milestone)
+		+ tr
+		> :is(th, td) {
+		border-block-start: 1px solid var(--line);
 	}
 
 	.assembly-table tr > :is(th, td) + :is(th, td) {
@@ -614,7 +665,8 @@
 	}
 
 	.assembly-table thead th {
-		background: var(--exec-well);
+		background: var(--workspace-secondary-surface, var(--exec-well));
+		border-block-end: 1px solid var(--line);
 		color: var(--exec-ink);
 		font-size: 0.75rem;
 		font-weight: 600;
@@ -648,6 +700,7 @@
 
 	.assembly-milestone th {
 		padding: 9px 16px;
+		border-block: 1px solid var(--line-strong);
 		background: var(--tone-accent-bg);
 		color: var(--exec-ink);
 		font-weight: 650;

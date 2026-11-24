@@ -1301,3 +1301,46 @@ test('TASK-81: Inbox snooze presets, custom validation & expiry warning, Snoozed
 	).toBeVisible({ timeout: 10_000 });
 	await expect(waitingBadge).toContainText(`${initialOpen + 1} waiting on you`);
 });
+
+test('Phase 7 (5da47e1d + 53728c05): Assembly Display row dividers persistence, Release gates dock independent scroll, and cross-theme surface parity', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+
+	// 1. Portfolio Activity in Classic Night: Assembly & Release gates dock #1e2939, row dividers off by default & persisted
+	await visit(page, '/activity?theme=classic&mock=poc');
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'classic');
+	await expect(page.locator('.assembly-view')).toHaveCSS('background-color', 'rgb(30, 41, 57)');
+	await expect(page.locator('#activity-release-panel')).toHaveCSS(
+		'background-color',
+		'rgb(30, 41, 57)'
+	);
+
+	await expect(page.locator('html')).not.toHaveAttribute('data-assembly-dividers');
+	await page.getByTestId('assembly-display-btn').click();
+	const dividersItem = page.getByTestId('assembly-row-dividers-toggle');
+	await expect(dividersItem).toHaveAttribute('aria-checked', 'false');
+	await dividersItem.click();
+	await expect(page.locator('html')).toHaveAttribute('data-assembly-dividers', '');
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(page.locator('html')).toHaveAttribute('data-assembly-dividers', '');
+	// Turn back off so default state stays clean
+	await page.getByTestId('assembly-display-btn').click();
+	await page.getByTestId('assembly-row-dividers-toggle').click();
+	await expect(page.locator('html')).not.toHaveAttribute('data-assembly-dividers');
+
+	// 2. Theme surfaces across Report Day, Report Night, Graphite, Cozy on Assembly
+	await visit(page, '/activity?theme=report&mock=poc');
+	await expect(page.locator('.assembly-view')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+	await visit(page, '/activity?theme=report-dark&mock=poc');
+	await expect(page.locator('.assembly-view')).toHaveCSS('background-color', 'rgb(30, 41, 57)');
+	await visit(page, '/activity?theme=graphite&mock=poc');
+	await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(24, 25, 26)');
+	await visit(page, '/activity?theme=cozy&mock=poc');
+	await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(70, 60, 48)');
+	await expect(page.locator('#activity-release-panel')).toHaveCSS(
+		'background-color',
+		'rgb(53, 43, 34)'
+	);
+});

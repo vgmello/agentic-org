@@ -130,14 +130,14 @@ test(
 		await expect(header).toContainText('6 of 12 tasks done');
 		await expect(tabs(page)).toHaveText([
 			'Overview',
+			'Activity',
 			'Work',
+			'Insights',
+			'Conversations',
+			'Team',
 			'Features',
 			'Releases',
 			'Docs',
-			'Team',
-			'Activity',
-			'Conversations',
-			'Insights',
 			'Settings'
 		]);
 		await expect(tabs(page).first()).toHaveAttribute('aria-current', 'page');
@@ -486,14 +486,39 @@ test('PROJ-Activity: Project Activity and Overview latest activity list newest f
 	page
 }) => {
 	await open(page, '/projects/beacon/activity?mock=oldest-first');
-	const items = page.locator('section[aria-labelledby=project-tab-heading] ul > li');
-	await expect(items).toHaveCount(7);
+	// Release gates dock chronological Line events list is newest first even when backend sends oldest-first.
+	const items = page.locator('[data-testid="project-line-events"] ol > li');
+	await expect(
+		items.filter({ hasText: 'assigned T-A40 Split the checkout service' })
+	).toBeVisible();
+	await expect(items.filter({ hasText: 'updated the brief' })).toBeVisible();
+	expect(await items.count()).toBeGreaterThanOrEqual(7);
 	const times = await items
 		.locator('time')
 		.evaluateAll((els) => els.map((el) => Date.parse(el.getAttribute('datetime') ?? '')));
 	for (let i = 1; i < times.length; i++) expect(times[i - 1]).toBeGreaterThanOrEqual(times[i]);
-	await expect(items.first()).toContainText('assigned T-A40 Split the checkout service');
-	await expect(items.last()).toContainText('updated the brief');
+	const texts = await items.allTextContents();
+	const newestIdx = texts.findIndex((t) => t.includes('assigned T-A40 Split the checkout service'));
+	const oldestIdx = texts.findIndex((t) => t.includes('updated the brief'));
+	expect(newestIdx).toBeGreaterThanOrEqual(0);
+	expect(oldestIdx).toBeGreaterThan(newestIdx);
+
+	// Switching to Activity feed on the same toolbar also lists entries newest first.
+	await page
+		.getByTestId('project-activity-controls')
+		.getByRole('tab', { name: 'Activity feed' })
+		.click();
+	const streamRows = page.locator('.activity-timeline > li.stream-row');
+	await expect(
+		streamRows.filter({ hasText: 'assigned T-A40 Split the checkout service' })
+	).toBeVisible();
+	const streamTexts = await streamRows.allTextContents();
+	const sNewest = streamTexts.findIndex((t) =>
+		t.includes('assigned T-A40 Split the checkout service')
+	);
+	const sOldest = streamTexts.findIndex((t) => t.includes('updated the brief'));
+	expect(sNewest).toBeGreaterThanOrEqual(0);
+	expect(sOldest).toBeGreaterThan(sNewest);
 
 	await visit(page, '/projects/beacon?mock=oldest-first');
 	const latest = page.locator('section[aria-labelledby=latest-heading] li');
@@ -565,4 +590,66 @@ test('PROJ-Work: Work tabs have aria-controls, arrow-key navigation, and work at
 	await expect(tasksTab).toHaveAttribute('aria-selected', 'true');
 	expect((await tasksTab.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 	await noSidewaysScroll(page);
+});
+
+test('Phase 7 (5da47e1d + 53728c05): Project Release strip, More menu, Project Activity Assembly/Feed + dock + row dividers, Work status grouping, and Insights delivery view', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await open(page, '/projects/beacon?theme=classic');
+
+	// Release readiness strip on Overview + More menu
+	const releaseStrip = page.getByTestId('project-release-strip');
+	await expect(releaseStrip).toBeVisible();
+	await expect(page.getByTestId('project-release-readiness')).toContainText(/Readiness \d+%/);
+	await expect(releaseStrip).toHaveCSS('background-color', 'rgb(30, 41, 57)');
+
+	await page.getByTestId('project-more-menu').click();
+	await expect(page.getByRole('menuitem', { name: 'Features' })).toBeVisible();
+	await expect(page.getByRole('menuitem', { name: 'Releases' })).toBeVisible();
+	await page.keyboard.press('Escape');
+
+	// Project Activity: Assembly line default, toolbar switcher, Release gates dock + Line events
+	await tabs(page).filter({ hasText: 'Activity' }).click();
+	await expect(page).toHaveURL(/\/projects\/beacon\/activity$/);
+	await expect(releaseStrip).toBeVisible();
+	const projControls = page.getByTestId('project-activity-controls');
+	await expect(projControls).toBeVisible();
+	await expect(projControls.getByRole('tab', { name: 'Assembly line' })).toHaveAttribute(
+		'aria-selected',
+		'true'
+	);
+	await expect(page.getByTestId('assembly-avg-cycle')).toBeVisible();
+	await expect(page.getByTestId('project-line-events')).toContainText(
+		'assigned T-A40 Split the checkout service to Web · Sam Okafor'
+	);
+	await expect(page.locator('.assembly-view')).toHaveCSS('background-color', 'rgb(30, 41, 57)');
+
+	// Switch to Activity feed on same project toolbar -> Filter icon replaces Display
+	await projControls.getByRole('tab', { name: 'Activity feed' }).click();
+	await expect(page.getByTestId('project-feed-filter-btn')).toBeVisible();
+	await expect(page.getByTestId('assembly-display-btn')).toHaveCount(0);
+
+	// Project Work: release strip omitted, List view defaults to Status grouping
+	await tabs(page).filter({ hasText: 'Work' }).click();
+	await expect(page).toHaveURL(/\/projects\/beacon\/work$/);
+	await expect(page.getByTestId('project-release-strip')).toHaveCount(0);
+	const listBtn = page.getByRole('group', { name: 'Layout' }).getByRole('button', { name: 'List' });
+	if ((await listBtn.count()) > 0) {
+		await listBtn.click();
+		await expect(page.locator('.work-group-title').first()).toBeVisible();
+	}
+
+	// Project Insights: shared Charts/Tables toggle, Median cycle time, Token mix, Current release delivery
+	await tabs(page).filter({ hasText: 'Insights' }).click();
+	await expect(page).toHaveURL(/\/projects\/beacon\/insights$/);
+	await expect(page.getByTestId('project-kpi-tiles')).toContainText('Median cycle time');
+	await expect(page.getByTestId('token-mix-card')).toBeVisible();
+	await expect(page.getByTestId('insights-release-delivery')).toBeVisible();
+	const displayToggle = page.getByTestId('insights-display-toggle');
+	await displayToggle.getByRole('button', { name: 'Tables' }).click();
+	await expect(page.getByTestId('trend-table')).toBeVisible();
+	await expect(page.getByTestId('token-mix-table')).toBeVisible();
+	await displayToggle.getByRole('button', { name: 'Charts' }).click();
+	await expect(page.getByTestId('trend-svg')).toBeVisible();
 });

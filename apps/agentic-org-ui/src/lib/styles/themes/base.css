@@ -298,8 +298,11 @@
 	--exec-hor-date-month-ink: var(--exec-dim);
 	--exec-hor-date-day-ink: var(--exec-ink);
 
-	/* Sliding side-panel and docked Activity tools surface (Prototype Release 3c4e3541) */
-	--side-panel-surface: var(--surface-sunken, var(--exec-bg));
+	/* Sliding side-panel, Assembly, and workspace surface tokens (Prototype Releases 3c4e3541 + 53728c05) */
+	--detail-panel-surface: var(--surface-sunken, var(--exec-bg));
+	--side-panel-surface: var(--detail-panel-surface);
+	--workspace-secondary-surface: var(--exec-well, var(--surface-sunken));
+	--assembly-surface: var(--exec-surface);
 }
 
 /* Report-only vs standard section labels (poc/v6.html:3246-3248) */
@@ -374,6 +377,18 @@ html[data-ui-theme='ocean'] {
 			linear-gradient(to right, var(--page-header-light), transparent 28rem),
 			var(--page-header-base-image, none);
 	}
+
+	html[data-interior-page][data-ui-theme] .project-header > .ph {
+		background: none;
+	}
+}
+
+/* Match Inbox dropdown menus to Work menus: opaque popover surface without backdrop-blur (Prototype Release 53728c05) */
+[data-slot='dropdown-menu-content'].triage-menu-surface,
+.triage-toolbar [data-slot='dropdown-menu-content'] {
+	background-color: var(--popover);
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
 }
 
 /* Executive shared surface & tactile CTA primitives */

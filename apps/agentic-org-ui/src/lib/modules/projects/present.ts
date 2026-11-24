@@ -64,16 +64,25 @@ export const SERVED: ServedTabs = {
 };
 
 /**
- * The tab bar (development-processes §4): Overview and Work; the development process's tabs in order; Features and
- * Releases when the project holds them (or has no process) and the process gave no tab for them; then Docs, Team,
- * Activity, Conversations, Insights; Settings last. Nothing about tabs is stored on the project.
+ * The tab bar (Prototype Release 53728c05 + development-processes §4):
+ * Overview, Activity, Work, Insights, Conversations, Team first; then any development process tabs,
+ * Features and Releases when held (or no process) and not provided by the process, Docs, and Settings last.
+ * Nothing about tabs is stored on the project.
  */
 export function projectTabs(
 	project: Pick<ProjectDetail, 'developmentProcess' | 'processTabs' | 'features' | 'releases'>,
 	served: ServedTabs = SERVED
 ): ProjectTab[] {
-	const tabs: ProjectTab[] = [{ id: 'overview', label: 'Overview', path: '' }];
+	const tabs: ProjectTab[] = [
+		{ id: 'overview', label: 'Overview', path: '' },
+		{ id: 'activity', label: 'Activity', path: 'activity' }
+	];
 	if (served.work) tabs.push({ id: 'work', label: 'Work', path: 'work' });
+	if (served.insights) tabs.push({ id: 'insights', label: 'Insights', path: 'insights' });
+	tabs.push(
+		{ id: 'conversations', label: 'Conversations', path: 'conversations' },
+		{ id: 'team', label: 'Team', path: 'team' }
+	);
 	const given = new Set(project.processTabs.map((t) => t.view));
 	if (served.processTabs)
 		for (const t of project.processTabs)
@@ -89,12 +98,6 @@ export function projectTabs(
 	if (served.releases && needsReleases)
 		tabs.push({ id: 'releases', label: 'Releases', path: 'releases' });
 	if (served.docs) tabs.push({ id: 'docs', label: 'Docs', path: 'docs' });
-	tabs.push(
-		{ id: 'team', label: 'Team', path: 'team' },
-		{ id: 'activity', label: 'Activity', path: 'activity' },
-		{ id: 'conversations', label: 'Conversations', path: 'conversations' }
-	);
-	if (served.insights) tabs.push({ id: 'insights', label: 'Insights', path: 'insights' });
 	if (served.settings) tabs.push({ id: 'settings', label: 'Settings', path: 'settings' });
 	return tabs;
 }

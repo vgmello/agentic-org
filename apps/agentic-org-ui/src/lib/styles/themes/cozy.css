@@ -288,6 +288,7 @@ html[data-ui-theme='cozy'] {
 	--exec-hor-date-month-ink: #c6bab0;
 	--exec-hor-date-day-ink: #faf6f0;
 	--side-panel-surface: #352b22;
+	--assembly-surface: transparent;
 }
 
 /* Cozy Glass High Contrast mode (`data-cozy-contrast='high'`) */
@@ -532,12 +533,13 @@ html[data-ui-theme='cozy'] .triage-queue {
 	box-shadow: none;
 }
 
-/* Cozy Glass Work surfaces (poc/cozy.css 4622ad46, f1db7133): warm matte canvas, --cozy-well group headers, no double-boxed .work-items */
-html[data-ui-theme='cozy'] main:has(.work-header) {
+/* Cozy Glass Work & Assembly canvas (poc/cozy.css 53728c05): warm matte canvas on Work and Assembly */
+html[data-ui-theme='cozy'] main:has(.work-header, .activity-main[data-view='assembly']) {
 	background: #463c30;
 }
 
-html[data-ui-theme='cozy'][data-cozy-contrast='high'] main:has(.work-header) {
+html[data-ui-theme='cozy'][data-cozy-contrast='high']
+	main:has(.work-header, .activity-main[data-view='assembly']) {
 	background: var(--cozy-shell);
 }
 
@@ -586,11 +588,13 @@ html[data-ui-theme='cozy'] .work-bcard:is(:hover, :focus-within) {
 	box-shadow: var(--cozy-panel-shadow-hi);
 }
 
-/* Cozy Glass Activity surfaces (poc/cozy.css 3c4e3541): warm panel background on Assembly, opaque --side-panel-surface on dock & tools */
+/* Cozy Glass Activity surfaces (poc/cozy.css 53728c05): Assembly uses transparent Work canvas; dock & tools keep opaque --side-panel-surface */
 html[data-ui-theme='cozy'] .assembly-view {
-	background-color: var(--exec-surface);
-	background-image: var(--cozy-panel-sheen);
+	background-color: transparent;
+	background-image: none;
 	box-shadow: none;
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
 }
 
 html[data-ui-theme='cozy'] :is(.activity-panel, .activity-tools) {

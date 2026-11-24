@@ -11,6 +11,7 @@ import {
 	deriveDecisionStreamEntries,
 	extractInboxWorkRefs,
 	filterStreamEntries,
+	formatTelemetryHours,
 	mergeLiveActivityRows
 } from './assembly-model';
 
@@ -1314,5 +1315,104 @@ describe('assembly-model', () => {
 		expect(entryT9?.needsYou).toBe(false);
 		expect(entryChatT8?.inboxHref).toBe('/inbox?item=in-t8');
 		expect(entryChatT8?.needsYou).toBe(true);
+	});
+
+	it('derives project telemetry (avgCycleHours, waitingOnPeopleHours, stationAgents, humanWaitingItems, lineEvents) and supports explicit archived project scope', () => {
+		const snapshot = makeSnapshot();
+		const workItems: WorkItemSummary[] = [
+			makeItem({
+				id: 'w-done-1',
+				short_id: 'T-10',
+				kind: 'task',
+				status: 'done',
+				project_id: 'proj-a',
+				area_id: 'area-api',
+				created_at: new Date(NOW - 10 * 3_600_000).toISOString(),
+				updated_at: new Date(NOW - 4 * 3_600_000).toISOString() // 6h cycle
+			}),
+			makeItem({
+				id: 'w-done-2',
+				short_id: 'T-11',
+				kind: 'task',
+				status: 'done',
+				project_id: 'proj-a',
+				area_id: 'area-api',
+				created_at: new Date(NOW - 16 * 3_600_000).toISOString(),
+				updated_at: new Date(NOW - 4 * 3_600_000).toISOString() // 12h cycle -> avg 9.0h
+			}),
+			makeItem({
+				id: 'w-wait',
+				short_id: 'T-12',
+				kind: 'task',
+				status: 'blocked',
+				project_id: 'proj-a',
+				area_id: 'area-ui',
+				created_at: new Date(NOW - 5 * 3_600_000).toISOString(),
+				updated_at: new Date(NOW - 2 * 3_600_000).toISOString() // 2h waiting on people
+			}),
+			makeItem({
+				id: 'w-old',
+				short_id: 'T-99',
+				kind: 'task',
+				status: 'done',
+				project_id: 'proj-old',
+				created_at: new Date(NOW - 8 * 3_600_000).toISOString(),
+				updated_at: new Date(NOW - 3 * 3_600_000).toISOString()
+			})
+		];
+
+		const model = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'Acme Corp',
+			workItems,
+			inboxItems: [
+				makeInbox({
+					id: 'in-wait',
+					title: 'Unblock T-12',
+					project: { id: 'proj-a', name: 'Alpha Core' },
+					open: { path: '/work/T-12', label: 'Open T-12' },
+					created_at: new Date(NOW - 2 * 3_600_000).toISOString()
+				})
+			],
+			activityRows: [
+				{
+					id: 'ev-1',
+					at: new Date(NOW - 120_000).toISOString(),
+					actor: { id: 'kai', name: 'Kai Sato', kind: 'agent' },
+					kind: 'work',
+					action: 'task-done',
+					text: 'finished T-11',
+					teamIds: [],
+					projectIds: ['proj-a'],
+					memberIds: ['kai']
+				}
+			],
+			projectScope: 'proj-a',
+			nowMs: NOW
+		});
+
+		expect(model.avgCycleHours).toBeCloseTo(9, 1);
+		expect(formatTelemetryHours(model.avgCycleHours)).toBe('9.0 h');
+		expect(formatTelemetryHours(null)).toBe('—');
+		expect(model.waitingOnPeopleHours).toBeCloseTo(2, 1);
+		expect(model.stationAgents.length).toBeGreaterThan(0);
+		expect(model.humanWaitingItems.map((i) => i.id)).toContain('w-wait');
+		expect(model.lineEvents).toHaveLength(1);
+		expect(model.lineEvents[0].text).toContain('finished T-11');
+
+		// Explicit archived project scope still resolves that archived project
+		const archivedModel = deriveActivityCommandCenter({
+			snapshot,
+			organizationName: 'Acme Corp',
+			workItems,
+			inboxItems: [],
+			activityRows: [],
+			projectScope: 'proj-old',
+			nowMs: NOW
+		});
+		expect(archivedModel.selectedProject?.id).toBe('proj-old');
+		expect(archivedModel.scopeTitle).toBe('Archived Legacy');
+		expect(archivedModel.totalItems).toBe(1);
+		expect(archivedModel.avgCycleHours).toBeCloseTo(5, 1);
 	});
 });

@@ -96,7 +96,8 @@
 
 	let activeTab = $derived<TaskType>(isOrgScope ? readStoredTab(organizationId) : 'task');
 	let layout = $derived<LayoutMode>(readStoredLayout(scopeKey));
-	let taskGroupBy = $state<GroupBy>('none');
+	// Project Work lists default to grouping by Status with Blocked first (Prototype Release 53728c05).
+	let taskGroupBy = $derived<GroupBy>(isOrgScope ? 'none' : 'status');
 	let bugGroupBy = $state<GroupBy>('assigned_team');
 	let requestGroupBy = $state<GroupBy>('status');
 	let subgroupBy = $state<GroupBy>('none');

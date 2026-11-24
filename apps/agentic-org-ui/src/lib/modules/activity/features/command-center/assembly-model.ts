@@ -122,6 +122,19 @@ export interface StreamEntry {
 	};
 }
 
+export interface StationAgentSlot {
+	id: string;
+	name: string;
+	busy: boolean;
+}
+
+export interface LineEventEntry {
+	id: string;
+	at: string;
+	tone: 'ok' | 'warn' | 'bad' | '';
+	text: string;
+}
+
 export interface ActivityCommandCenterModel {
 	activeProjects: ProjectSummary[];
 	selectedProject?: ProjectSummary;
@@ -142,6 +155,16 @@ export interface ActivityCommandCenterModel {
 	needsYouCount: number;
 	openInboxCount: number;
 	actionableWorkCount: number;
+	/** Average hours from `created_at` to `updated_at` across completed/merged items; null when none. */
+	avgCycleHours: number | null;
+	/** Cumulative elapsed hours across items currently waiting in human review. */
+	waitingOnPeopleHours: number;
+	/** Active non-former agents for the project station slot dots. */
+	stationAgents: StationAgentSlot[];
+	/** Items currently waiting in human review for the project dock "Needs a human" section. */
+	humanWaitingItems: { id: string; title: string; href: string }[];
+	/** Chronological line event log (newest first, max 30) for the project dock. */
+	lineEvents: LineEventEntry[];
 	milestones: AssemblyMilestone[];
 	bottleneck: BottleneckSummary;
 	releaseGates: ReleaseGateRow[];
@@ -174,7 +197,18 @@ export interface CommandCenterInput {
 }
 
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+const TELEMETRY_HOURS = new Intl.NumberFormat('en-US', {
+	minimumFractionDigits: 1,
+	maximumFractionDigits: 1
+});
+
+/** Formats a telemetry duration in hours (e.g. `14.5 h`), or `—` when null/unavailable. */
+export function formatTelemetryHours(hours: number | null | undefined): string {
+	if (hours === null || hours === undefined || !Number.isFinite(hours) || hours < 0) return '—';
+	return `${TELEMETRY_HOURS.format(hours)} h`;
+}
 
 export function computeCompletionPct(done: number, total: number): number {
 	if (total <= 0 || done <= 0) return 0;
@@ -988,7 +1022,7 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const selectedProject =
 		input.projectScope === 'all'
 			? undefined
-			: activeProjects.find((p) => p.id === input.projectScope);
+			: (snapshot.projects ?? []).find((p) => p.id === input.projectScope);
 
 	const nonDeletedWork = workItems.filter((i) => !i.deleted);
 	const workByRef = new Map<string, WorkItemSummary>();
@@ -1129,11 +1163,48 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 	const unlinkedOpenInboxCount = scopedOpenInbox.filter((i) => !linkedInboxIds.has(i.id)).length;
 	const needsYouCount = stageCounts.review + unlinkedOpenInboxCount;
 
+	// Real delivery telemetry for project-scoped Assembly & dock (zero simulated values).
+	const completedDurationsHours: number[] = [];
+	let waitingOnPeopleHours = 0;
+	const humanWaitingItems: { id: string; title: string; href: string }[] = [];
+	for (const item of scopedWork) {
+		const stage = classifyAssemblyStage(item, inboxByRef, resolvedOwnerId);
+		if (stage === 'merged') {
+			const createdMs = Date.parse(item.created_at);
+			const updatedMs = Date.parse(item.updated_at);
+			if (!Number.isNaN(createdMs) && !Number.isNaN(updatedMs) && updatedMs > createdMs) {
+				completedDurationsHours.push((updatedMs - createdMs) / HOUR_MS);
+			}
+		} else if (stage === 'review') {
+			const linked =
+				inboxByRef.get(item.short_id.toUpperCase()) ?? inboxByRef.get(item.id.toUpperCase());
+			const sinceIso = linked?.created_at ?? item.updated_at;
+			const sinceMs = Date.parse(sinceIso);
+			if (!Number.isNaN(sinceMs) && nowMs > sinceMs) {
+				waitingOnPeopleHours += (nowMs - sinceMs) / HOUR_MS;
+			}
+			humanWaitingItems.push({
+				id: item.id,
+				title: `${item.short_id} · ${item.title}`,
+				href: linked ? inboxItemHref(linked.id) : workItemHref(item)
+			});
+		}
+	}
+	const avgCycleHours =
+		completedDurationsHours.length > 0
+			? completedDurationsHours.reduce((sum, h) => sum + h, 0) / completedDurationsHours.length
+			: null;
+
 	// Agents roster for KPI & rail
 	const nonFormerAgents = agentsOf(nonOwners(snapshot)).filter((m) => !isFormer(m));
 	const activeAgents = nonFormerAgents.filter((m) => m.agent?.status === 'active');
 	const activeAgentsCount = activeAgents.length;
 	const busyAgentsCount = activeAgents.filter((a) => busyAssigneeIds.has(a.id)).length;
+	const stationAgents: StationAgentSlot[] = activeAgents.map((a) => ({
+		id: a.id,
+		name: a.name,
+		busy: busyAssigneeIds.has(a.id)
+	}));
 
 	const workByAssignee = new Map<string, WorkItemSummary[]>();
 	for (const item of scopedWork) {
@@ -1372,6 +1443,13 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 					? `${needsYouCount} ${needsYouCount === 1 ? 'item' : 'items'} waiting on human review`
 					: 'No human review bottlenecks right now';
 
+	const lineEvents: LineEventEntry[] = streamEntries.slice(0, 30).map((entry) => ({
+		id: entry.id,
+		at: entry.at,
+		tone: entry.tone === 'ok' || entry.tone === 'warn' || entry.tone === 'bad' ? entry.tone : '',
+		text: `${entry.actorName} ${entry.text}`.trim()
+	}));
+
 	return {
 		activeProjects,
 		selectedProject,
@@ -1392,6 +1470,11 @@ export function deriveActivityCommandCenter(input: CommandCenterInput): Activity
 		needsYouCount,
 		openInboxCount: scopedOpenInbox.length,
 		actionableWorkCount,
+		avgCycleHours,
+		waitingOnPeopleHours,
+		stationAgents,
+		humanWaitingItems,
+		lineEvents,
 		milestones,
 		bottleneck,
 		releaseGates,
