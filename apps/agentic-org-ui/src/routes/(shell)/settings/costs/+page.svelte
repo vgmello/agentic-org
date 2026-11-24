@@ -4,10 +4,21 @@
 	import { pageTitle } from '$lib/nav';
 	import { CostsSettingsPage } from '$lib/modules/costs';
 	import { tabHref } from '$lib/modules/members';
+	import { owner } from '$lib/modules/organization/model';
 	import { accountZone } from '$lib/modules/preferences';
+	import { appSession } from '$lib/platform/auth/app-session.svelte';
+	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 
 	let { data } = $props();
+	const shellData = useShellData();
 	const organizationId = $derived(data.connection.organization.id);
+	const viewerIsOwner = $derived.by(() => {
+		if (appSession.state.kind !== 'signed-in') return undefined;
+		const ownerId = shellData.snapshot ? owner(shellData.snapshot)?.id : undefined;
+		if (!ownerId) return undefined;
+		const link = appSession.state.session.organizations.find((o) => o.org_id === organizationId);
+		return link?.employee_id === ownerId;
+	});
 	$effect(() => void accountZone.ensure(organizationId));
 </script>
 
@@ -17,6 +28,7 @@
 	{#key `${organizationId}|${accountZone.zone}`}<CostsSettingsPage
 			{organizationId}
 			zone={accountZone.zone}
+			{viewerIsOwner}
 			memberHref={(memberId) => tabHref(memberId, 'cost')}
 		/>{/key}
 {/if}

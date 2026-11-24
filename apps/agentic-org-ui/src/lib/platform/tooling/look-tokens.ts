@@ -176,6 +176,18 @@ export const overrides: Record<string, Record<string, string>> = {};
 /** Files allowed to name raw palette colours, each with its reason. */
 export const allowlist: Record<string, string> = {
 	'src/app.css': 'The token definitions: the only place palette values are named.',
+	'src/lib/styles/themes/base.css': 'Shared executive theme fallback tokens and surfaces.',
+	'src/lib/styles/themes/ocean.css': 'Ocean Dark theme token definitions and canvas palette.',
+	'src/lib/styles/themes/classic.css':
+		'Classic Slate theme token definitions and flat surface palette.',
+	'src/lib/styles/themes/graphite.css':
+		'Graphite matte dark theme token definitions and neutral charcoal/silver palette.',
+	'src/lib/styles/themes/cozy.css':
+		'Cozy Glass warm espresso frosted glass theme, studio room backdrop, and high-contrast tokens.',
+	'src/lib/styles/themes/report.css':
+		'Report (Modern 2D Executive Day) theme tokens and editorial layout.',
+	'src/lib/styles/themes/report-dark.css':
+		'Report Night (Modern 2D Executive Dark) theme tokens and palette.',
 	'src/lib/platform/tooling/look-tokens.ts': 'This mapping table.',
 	'src/lib/platform/tooling/look-tokens.test.ts': 'The guard and its fixtures.'
 };

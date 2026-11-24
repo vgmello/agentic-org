@@ -236,7 +236,7 @@
 	);
 </script>
 
-<div class="border-t border-line px-4 py-3">
+<div class="chat-compose border-t border-line bg-surface-sunken/30 px-4 py-3">
 	{#if displayNote}<p
 			class="mb-2 text-sm/6 {canWrite ? 'text-info-text-strong' : 'text-fg-secondary'}"
 			data-testid="composer-note"
@@ -324,7 +324,7 @@
 				}}
 				onclick={track}
 				onkeyup={(e) => (e.key.startsWith('Arrow') && popup ? undefined : track())}
-				class="w-full resize-none rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus"
+				class="w-full resize-none rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-field-border placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus"
 				data-testid="composer"></textarea>
 		</div>
 		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-danger" role="alert">
@@ -399,6 +399,7 @@
 			<Button
 				type="button"
 				size="sm"
+				class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 				disabled={busy || text.trim() === ''}
 				onclick={() => void send()}
 				><SendHorizontal aria-hidden="true" /> Send<span class="sr-only"> (⌘ Enter)</span></Button
@@ -411,6 +412,11 @@
 	@media (width < 640px), (height <= 32rem) {
 		textarea {
 			max-block-size: min(128px, calc(100dvh - var(--chat-header-height, 4rem)));
+		}
+	}
+	@media (height <= 320px) {
+		textarea {
+			max-block-size: min(128px, calc(100dvh - 104px));
 		}
 	}
 </style>

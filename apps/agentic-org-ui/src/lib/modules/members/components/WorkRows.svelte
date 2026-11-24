@@ -21,8 +21,8 @@
 			class: 'bg-brand/10 text-brand-text ring-brand/30'
 		},
 		in_review: { word: 'In review', class: 'bg-brand/10 text-brand-text ring-brand/30' },
-		blocked: { word: 'Blocked', class: 'bg-danger/10 text-danger-text ring-danger/20' },
-		done: { word: 'Done', class: 'bg-success/10 text-success-text ring-success/20' }
+		blocked: { word: 'Blocked', class: 't-red' },
+		done: { word: 'Done', class: 't-green' }
 	};
 	const PRIORITY = {
 		urgent: 'Urgent',
@@ -35,7 +35,10 @@
 <ul role="list" class="divide-y divide-line-subtle">
 	{#each rows as row (row.ref)}
 		<li
-			class="relative flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8"
+			class={[
+				'relative flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-4 transition-colors duration-150 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8',
+				linked && 'hover:bg-surface-raised/60'
+			]}
 		>
 			<div class="min-w-0 flex-1 basis-60">
 				<p class="text-sm/6 font-semibold text-fg">

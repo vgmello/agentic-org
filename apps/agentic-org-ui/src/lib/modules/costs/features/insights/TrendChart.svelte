@@ -14,15 +14,16 @@
 	let {
 		buckets,
 		title = 'Spend trend',
-		description = 'Known API-equivalent cost per bucket across the selected period.'
+		description = 'Known API-equivalent cost per bucket across the selected period.',
+		mode = $bindable<'chart' | 'table'>('chart')
 	}: {
 		buckets: TrendBucket[];
 		title?: string;
 		description?: string;
+		mode?: 'chart' | 'table';
 	} = $props();
 
 	const headingId = $props.id();
-	let mode = $state<'chart' | 'table'>('chart');
 
 	const maxMicro = $derived(
 		buckets.reduce((max, b) => Math.max(max, b.totals.knownCostMicroUsd ?? 0), 0)

@@ -26,9 +26,9 @@
 	const active = $derived(p.status !== 'inactive');
 
 	const HEALTH: Record<Supervision['tone'], { word: string; class: string }> = {
-		ok: { word: 'Healthy', class: tone.ok },
+		ok: { word: 'Healthy', class: 't-green' },
 		waiting: { word: 'Waiting', class: tone.neutral },
-		problem: { word: 'Problem', class: tone.bad },
+		problem: { word: 'Problem', class: 't-red' },
 		unknown: { word: 'Unknown', class: tone.neutral }
 	};
 	const linkClass =
@@ -111,7 +111,7 @@
 {/snippet}
 {#snippet holds()}
 	{#if p.supervision?.holds.length}
-		<ul role="list" class="space-y-1">
+		<ul role="list" class="flex flex-col gap-1">
 			{#each p.supervision.holds as hold (hold)}<li class="text-fg-secondary">{hold}</li>{/each}
 		</ul>
 	{:else}None{/if}
@@ -121,7 +121,7 @@
 	{#if !r.known}Runtime readiness unknown
 	{:else if r.reasons.length === 0}Ready to run
 	{:else}
-		<ul role="list" class="space-y-1">
+		<ul role="list" class="flex flex-col gap-1">
 			{#each r.reasons as reason (reason)}<li class="text-fg-secondary">{reason}</li>{/each}
 		</ul>
 	{/if}

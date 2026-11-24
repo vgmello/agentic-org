@@ -42,11 +42,8 @@
 {#snippet bar(row: BreakdownRow)}
 	{@const pct = share(row)}
 	<span class="flex items-center gap-x-3">
-		<span
-			aria-hidden="true"
-			class="h-2 min-w-12 flex-1 overflow-hidden rounded-full bg-surface-overlay"
-		>
-			<span class="block h-full rounded-full bg-brand" style:width="{pct ?? 0}%"></span>
+		<span aria-hidden="true" class="h-2 min-w-12 flex-1 overflow-hidden rounded-full bg-bar-track">
+			<span class="breakdown-fill block h-full rounded-full" style:width="{pct ?? 0}%"></span>
 		</span>
 		<span class="w-10 shrink-0 text-right text-sm/6 text-fg-secondary tabular-nums"
 			>{pct === undefined ? '—' : `${pct}%`}</span
@@ -79,7 +76,7 @@
 		<tbody>
 			{#each rows as row (row.id)}
 				<tr
-					class="border-b border-line-subtle align-top {row.overhead
+					class="border-b border-line-subtle align-top transition-colors duration-150 hover:bg-surface-raised/50 motion-reduce:transition-none {row.overhead
 						? 'border-t border-t-line'
 						: ''}"
 					data-row={row.id}
@@ -143,3 +140,9 @@
 		{/each}
 	</ul>
 </div>
+
+<style>
+	.breakdown-fill {
+		background: var(--tone-accent-bar);
+	}
+</style>

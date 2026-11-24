@@ -166,19 +166,24 @@ test(
 	}
 );
 
-test('TEAM-LIVE: a change made elsewhere (New › Add a person) shows on the open team page', async ({
+test('TEAM-LIVE: a change made elsewhere shows on the open team page without a reload', async ({
 	page
 }) => {
 	await openTeam(page, '/teams/web', 'Web');
 	const members = page.getByRole('region', { name: /^Members/ });
 	await expect(members).toContainText('2 of');
-	await page.getByRole('button', { name: 'New', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Add a person' }).click();
-	const sheet = page.getByRole('dialog', { name: 'Add person' });
-	await sheet.getByLabel('Name').fill('Rae Lindgren');
-	await sheet.getByRole('checkbox', { name: 'Engineering › Web' }).click();
-	await sheet.getByRole('button', { name: 'Add person' }).click();
-	await expect(sheet).toBeHidden();
+	await orgChange(page, {
+		method: 'member.add_person',
+		params: { member_id: '01JC00000000000000000000R1', name: 'Rae Lindgren' }
+	});
+	await orgChange(page, {
+		method: 'team.add_member',
+		params: {
+			membership_id: '01JC00000000000000000000M1',
+			team_id: 'web',
+			member_id: '01JC00000000000000000000R1'
+		}
+	});
 	// No reload: the page re-read the team when the organization changed.
 	await expect(members).toContainText('Rae Lindgren');
 	await expect(members).toContainText('3 of');
@@ -213,7 +218,11 @@ test('TEAM-REF: a team created here gets the next TEAM reference on its page', a
 	await visit(page, '/teams');
 	await page.getByRole('link', { name: /^QA , level 2/ }).click();
 	await expect(page.getByRole('heading', { name: 'QA', exact: true })).toBeVisible();
-	await expect(page.locator('header')).toContainText('TEAM-6');
+	await expect(
+		page
+			.getByRole('main')
+			.locator('header', { has: page.getByRole('heading', { name: 'QA', exact: true }) })
+	).toContainText('TEAM-6');
 });
 
 /** Adds a team under Engineering from its page and opens the new team's page, all without a reload. */
@@ -288,7 +297,7 @@ test('TEAM-9: Delete leaves for Teams without showing the team as not found, and
 	await dialog.getByRole('button', { name: 'Delete Temp' }).click();
 	await expect(page).toHaveURL(/\/teams$/);
 	await expect(page.getByText('Deleted Temp.')).toBeVisible();
-	await expect(page.getByRole('heading', { level: 1, name: 'Teams' })).toBeFocused();
+	await expect(page.getByRole('heading', { name: /^Teams\b/ })).toBeFocused();
 	await expect(page.getByRole('link', { name: /^Temp , level 2/ })).toHaveCount(0);
 	expect(
 		await page.evaluate(
@@ -338,7 +347,9 @@ for (const width of [390, 1024])
 				).toBe(true);
 		};
 		await openTeam(page, '/teams/web', 'Web');
-		const header = page.getByRole('main').locator('header').first();
+		const header = page
+			.getByRole('main')
+			.locator('header', { has: page.getByRole('heading', { name: 'Web', exact: true }) });
 		for (const name of ['Noor Haddad', 'Engineering']) {
 			const link = header.getByRole('link', { name, exact: true });
 			await reachable(link);

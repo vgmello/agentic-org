@@ -12,7 +12,8 @@ import { newId } from '$lib/modules/organization/commands';
 import { officeApi } from '$lib/modules/offices/office-api';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { Member, OrgSnapshot } from '$lib/proto';
-import { mockLatency, mockMode } from '../mock-mode';
+import { mockLatency, mockMode, POC_ORG_ID } from '../mock-mode';
+import { pocMemberRows } from '../poc-dataset';
 import type { MembersApi } from '../../../src/lib/modules/members/api';
 import { busyText } from '../../../src/lib/modules/members/present';
 import type {
@@ -274,6 +275,7 @@ function presenceOf(m: Member): MemberRow['presence'] {
 }
 
 export async function rows(organizationId: string): Promise<MemberRow[]> {
+	if (organizationId === POC_ORG_ID) return structuredClone(pocMemberRows());
 	const s = await snapshotFor(organizationId);
 	const offices = await officesFor(organizationId);
 	const ownerId = ownerIdOf(s);
@@ -501,7 +503,7 @@ const member = async (organizationId: string, memberId: string) => {
  */
 async function signInGate(memberId: string) {
 	await gate();
-	await mockLatency(250);
+	await mockLatency();
 	if (modes().includes('refuse') || modes().includes('viewer'))
 		throw fail('not_authorized', 'Only the owner or the administrator changes sign-in access.');
 	if (modes().includes('gone') && memberId === 'leo') state.left.add('leo');

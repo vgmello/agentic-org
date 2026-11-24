@@ -1,83 +1,183 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
+	import ExecutiveCommandBar from '$lib/platform/shell/ExecutiveCommandBar.svelte';
+	import ExecutiveSidebar from '$lib/platform/shell/ExecutiveSidebar.svelte';
 	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
-	import ShellTopbar from '$lib/platform/shell/ShellTopbar.svelte';
+	import HomeScrollHint from '$lib/modules/home/features/HomeScrollHint.svelte';
+	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
 
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { afterNavigate, goto, invalidate } from '$app/navigation';
 	import { selectDesktopSection } from '$lib/platform/shell/desktop-navigation';
 	import { navigating, page } from '$app/state';
+	import { inboxApi } from '$lib/modules/inbox/api';
 	import { orgApi } from '$lib/modules/organization/api';
 	import { noteChanged } from '$lib/modules/organization/live';
 	import { liveState } from '$lib/modules/organization/live-state.svelte';
 	import { areaFor } from '$lib/nav';
-	import { shellApi } from '$lib/modules/shell/api';
-	import type { ShellNavigation } from '$lib/modules/shell/types';
-	import { officeApi } from '$lib/modules/offices/office-api';
-	import { createProbe } from '$lib/modules/offices/probe';
-	import { displayStatus, statusInfo, type LiveCheck } from '$lib/modules/offices/model';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
-	import { provideDraftStore } from '$lib/modules/messaging';
+	import { noteModalBackNavigation } from '$lib/platform/shell/modal-back';
+	import { NavKeyController } from '$lib/platform/shell/nav-keys.svelte';
+	import { provideShellAi, type ShellAiAskOptions } from '$lib/platform/shell/shell-ai';
+	import { provideShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
+	import { officesApi } from '$lib/modules/offices/api';
+	import { layerOffices } from '$lib/modules/offices/layer';
 
 	let { data, children } = $props();
 	const organizationId = $derived(data.connection.organization.id);
+	const isHome = $derived(page.url.pathname === '/home');
 	const chatDrafts = provideDraftStore(() => organizationId);
 	$effect.pre(() => chatDrafts.syncScope());
 	onDestroy(() => chatDrafts.dispose());
 
-	// The navigation's Inbox count and Projects/Teams lists. Refused (not served) leaves them out.
-	let navigation = $state.raw<ShellNavigation | undefined>();
-	let navigationRequest = 0;
-	function loadNavigation(id: string) {
-		const mine = ++navigationRequest;
-		shellApi
-			.navigation(id)
-			.then((next) => {
-				if (mine === navigationRequest) navigation = next;
-			})
-			.catch(() => {
-				if (mine === navigationRequest) navigation = undefined;
-			});
-	}
-	$effect(() => loadNavigation(organizationId));
-
-	// The footer's office line: the saved status is never shown as live; the office answering hello verifies
-	// it (the same probe and words as Offices). Checked on opening and every half minute.
-	let officeCheck = $state<LiveCheck>('checking');
-	let officeCapabilities = $state.raw<string[] | undefined>();
-	const officeProbe = createProbe(officeApi, (next, capabilities) => {
-		officeCheck = next;
-		if (next === 'up') officeCapabilities = capabilities;
+	let askHandler: ((prompt: string, opts?: ShellAiAskOptions) => void) | undefined;
+	provideShellAi({
+		ask(prompt: string, opts?: ShellAiAskOptions) {
+			askHandler?.(prompt, opts);
+		}
 	});
-	onMount(() => {
-		void officeProbe.run('background');
-		const again = setInterval(() => void officeProbe.run('background'), 30_000);
-		return () => clearInterval(again);
-	});
-	const officeStatus = $derived(
-		statusInfo(displayStatus(true, officeCheck, data.connection.office.status, officeCapabilities))
-	);
 
-	// Route changes focus the destination heading (app-shell-ux §0), unless the page already moved focus.
+	$effect(() => {
+		document.documentElement.toggleAttribute('data-interior-page', !isHome);
+		return () => {
+			document.documentElement.removeAttribute('data-interior-page');
+		};
+	});
+
+	// Route changes reset internal <main> scroll (except hash targets) and focus the destination heading (app-shell-ux §0).
 	afterNavigate((move) => {
+		noteModalBackNavigation();
+		const routeChanged = move.from?.url?.pathname !== move.to?.url?.pathname;
+		if (routeChanged) {
+			navKeys.cancel(false);
+			mobileMenuOpen = false;
+		}
+		if (routeChanged && !move.to?.url?.hash && mainEl) {
+			mainEl.scrollTop = 0;
+		}
 		if (move.type !== 'link' && move.type !== 'popstate') return;
-		if (move.from?.url.pathname === move.to?.url.pathname) return;
+		if (!routeChanged) return;
 		const focused = document.activeElement;
 		if (focused && focused !== document.body && document.contains(focused)) return;
 		void focusDestinationHeading();
 	});
 	onMount(() => void appSession.boot());
+
 	let desktopNavigation = $state<HTMLDivElement | null>(null);
+	let mainEl = $state<HTMLElement | null>(null);
+	let mobileMenuOpen = $state(false);
+	let sidebarHovered = $state(false);
+	let sidebarFocused = $state(false);
+	let sidebarMenuOpen = $state(false);
+	let sidebarHoverTimer: ReturnType<typeof setTimeout> | undefined;
+	let sidebarFocusTimer: ReturnType<typeof setTimeout> | undefined;
+	const navKeys = new NavKeyController({
+		onSidebarOpen() {
+			if (typeof window !== 'undefined' && window.innerWidth < 640) {
+				mobileMenuOpen = true;
+			} else if (uiPrefs.navCollapsed) {
+				clearTimeout(sidebarFocusTimer);
+				sidebarFocused = true;
+			}
+		},
+		onSidebarCancel() {
+			if (typeof window !== 'undefined' && window.innerWidth < 640 && mobileMenuOpen) {
+				mobileMenuOpen = false;
+			}
+		}
+	});
+	const sidebarPinned = $derived(!uiPrefs.navCollapsed);
+	const sidebarCollapsed = $derived(
+		uiPrefs.navCollapsed &&
+			!sidebarHovered &&
+			!sidebarFocused &&
+			!sidebarMenuOpen &&
+			navKeys.mode !== 'sidebar'
+	);
+
+	function handleSidebarMenuOpenChange(open: boolean) {
+		clearTimeout(sidebarFocusTimer);
+		sidebarMenuOpen = open;
+		if (!open) {
+			// Recompute focus containment after Bits UI focus restoration or outside click settles
+			// without cancelling any pending pointer-leave collapse timer.
+			const syncFocus = () => {
+				if (sidebarMenuOpen) return;
+				const active = document.activeElement;
+				sidebarFocused = Boolean(active instanceof Node && desktopNavigation?.contains(active));
+			};
+			queueMicrotask(syncFocus);
+			requestAnimationFrame(syncFocus);
+		}
+	}
+
+	function handleSidebarEnter() {
+		clearTimeout(sidebarHoverTimer);
+		sidebarHovered = true;
+	}
+	function handleSidebarLeave() {
+		clearTimeout(sidebarHoverTimer);
+		sidebarHoverTimer = setTimeout(() => {
+			sidebarHovered = false;
+		}, 240);
+	}
+	function handleSidebarFocusIn(event: FocusEvent) {
+		const target = event.target;
+		if (target instanceof HTMLElement && target.matches(':focus-visible')) {
+			clearTimeout(sidebarFocusTimer);
+			sidebarFocused = true;
+		}
+	}
+	function handleSidebarFocusOut(event: FocusEvent) {
+		if (sidebarMenuOpen) return;
+		const next = event.relatedTarget;
+		if (next instanceof Node && desktopNavigation?.contains(next)) return;
+		clearTimeout(sidebarFocusTimer);
+		sidebarFocusTimer = setTimeout(() => {
+			if (!sidebarMenuOpen) sidebarFocused = false;
+		}, 160);
+	}
+	function toggleSidebarPin() {
+		clearTimeout(sidebarHoverTimer);
+		clearTimeout(sidebarFocusTimer);
+		uiPrefs.toggleNavCollapsed();
+		if (uiPrefs.navCollapsed) {
+			sidebarHovered = false;
+			sidebarFocused = false;
+		}
+	}
+	onDestroy(() => {
+		clearTimeout(sidebarHoverTimer);
+		clearTimeout(sidebarFocusTimer);
+	});
+
+	const shellData = provideShellData({
+		getOrganizationId: () => organizationId,
+		getBaseOffices: () => data.connection.organization.offices,
+		loadOffices: (id, baseOffices) =>
+			officesApi
+				.overview(id)
+				.then((overview) => layerOffices(baseOffices, overview))
+				.catch(() => baseOffices)
+	});
+
+	let leaving = false;
+
+	$effect(() => {
+		const id = organizationId;
+		const reset = untrack(() => shellData.loadedOrganizationId !== id);
+		const { cancel } = shellData.load(id, reset);
+		return cancel;
+	});
+	onDestroy(() => shellData.dispose());
+
 	function focusDesktopNavigation() {
 		desktopNavigation?.querySelector<HTMLElement>('a[aria-current="page"]')?.focus();
 	}
 
-	// Loading the latest now would cancel a navigation in flight (the click would be lost), so wait for it to end: the page
-	// it goes to loads the latest itself, and the catch-up in live.ts asks again if that load is still behind. A navigation
-	// that was cancelled leaves the page where it was: nothing else will load the latest then, so do it.
 	async function reload() {
 		if (navigating.to) {
 			const from = page.url.href;
@@ -85,15 +185,12 @@
 			if (page.url.href !== from) return;
 		}
 		await invalidate('app:org');
-		loadNavigation(organizationId);
+		void shellData.refresh();
 	}
 
-	// Whether the live feed is off, by organization (`liveState`): the screens then show what they last loaded, and say so.
-	// Listening itself failed (not the office): Retry listens again.
 	let cannotListen = $state(false);
 	let retrying = $state(false);
 	let listening = $state(false);
-	// How many `live` notices each organization has sent, to tell an answer from `feedLive` that a newer notice overtook.
 	const liveNotices: Record<string, number> = {};
 	let retryTimer: ReturnType<typeof setTimeout> | undefined;
 	const showPaused = $derived(liveState.paused[organizationId] === true || cannotListen);
@@ -102,9 +199,6 @@
 	});
 
 	let stop: (() => void) | undefined;
-	let leaving = false;
-	// The office says when the organization changes (someone else's command, or ours): the screens load it again, unless
-	// they already show it. It also says when it cannot keep telling us.
 	function listen() {
 		orgApi
 			.onFeed((notice) => {
@@ -125,8 +219,6 @@
 				cannotListen = true;
 			});
 	}
-	// What the feed said before this was listening (it went down while the shell was away or starting), and again for each
-	// organization the shell switches to: its last notice may have been missed.
 	$effect(() => {
 		const id = organizationId;
 		if (!listening) return;
@@ -141,12 +233,30 @@
 	});
 	function retry() {
 		retrying = true;
-		// The feed answers by saying it is live; if it is not back, the button comes back after a moment.
 		clearTimeout(retryTimer);
 		retryTimer = setTimeout(() => (retrying = false), 3000);
 		if (cannotListen) listen();
 		void orgApi.retryFeed(organizationId).catch(() => undefined);
 	}
+	$effect(() => {
+		const id = organizationId;
+		let cancelled = false;
+		let stopInbox: (() => void) | undefined;
+		void inboxApi
+			.subscribe(id, () => {
+				if (!cancelled && !leaving) void shellData.refresh();
+			})
+			.then((unsub) => {
+				if (cancelled || leaving) unsub();
+				else stopInbox = unsub;
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+			stopInbox?.();
+		};
+	});
+
 	onMount(() => {
 		listen();
 		return () => {
@@ -157,39 +267,114 @@
 	});
 </script>
 
-<!-- The app fills the window edge to edge. The full 18 rem desktop sidebar needs at least 40 rem of viewport
-  (leaving >= 22 rem for the page), so enlarged text at 960–1279 px reflows to the 4 rem icon rail instead of
-  starving the content column (app-shell-ux SHELL-30). -->
-<div class="fixed inset-0 @container overflow-hidden bg-surface">
+<!-- The app fills the window edge to edge. -->
+<div class="exec-canvas fixed inset-0 overflow-hidden" {@attach navKeys.attach}>
+	<div class="cozy-room" aria-hidden="true">
+		<div class="cozy-alcove"></div>
+		<div class="cozy-credenza"></div>
+		<div class="cozy-plant"></div>
+		<div class="cozy-alcove"></div>
+	</div>
+	<div class="cozy-shell" aria-hidden="true"></div>
 	<div
 		bind:this={desktopNavigation}
-		class="fixed inset-y-0 z-50 hidden w-16 flex-col min-[640px]:flex min-[960px]:@min-[40rem]:w-72"
+		class={[
+			'fixed inset-y-0 z-40 hidden flex-col transition-[width] duration-300 ease-out min-[640px]:flex',
+			sidebarCollapsed ? 'w-[68px]' : 'w-[264px]'
+		]}
 	>
-		<Sidebar
+		<ExecutiveSidebar
 			connection={data.connection}
-			{navigation}
-			{officeStatus}
+			needsYouCount={shellData.needsYouCount}
+			projects={shellData.snapshot?.projects ?? []}
+			collapsed={sidebarCollapsed}
+			pinned={sidebarPinned}
+			onToggleCollapse={toggleSidebarPin}
+			onMenuOpenChange={handleSidebarMenuOpenChange}
+			onPointerEnter={handleSidebarEnter}
+			onPointerLeave={handleSidebarLeave}
+			onFocusIn={handleSidebarFocusIn}
+			onFocusOut={handleSidebarFocusOut}
 			onNavigate={(event, href) => selectDesktopSection(event, href, goto)}
 		/>
 	</div>
-	<main
-		aria-labelledby="shell-page-title"
-		class="h-full overflow-y-auto min-[640px]:pl-16 min-[960px]:@min-[40rem]:pl-72"
+	<div
+		class={[
+			'exec-shell-main exec-legacy-compat relative z-10 flex h-full flex-col overflow-hidden transition-[padding] duration-300 ease-out',
+			sidebarCollapsed ? 'min-[640px]:pl-[68px]' : 'min-[640px]:pl-[264px]'
+		]}
 	>
-		<ShellTopbar heading={areaFor(page.url.pathname)} connection={data.connection}>
+		<div data-shell-header class="flex shrink-0 items-center gap-2 px-4 min-[640px]:hidden">
 			<MobileNavigation
+				bind:open={mobileMenuOpen}
 				connection={data.connection}
-				{navigation}
-				{officeStatus}
+				needsYouCount={shellData.needsYouCount}
+				projects={shellData.snapshot?.projects ?? []}
 				onWiden={focusDesktopNavigation}
 			/>
-		</ShellTopbar>
-		{#if showPaused}<LiveBanner
-				loadedAt={liveState.loadedAt[organizationId]}
-				{retrying}
-				onretry={retry}
-			/>{/if}
-		{@render children()}
-	</main>
+			<span class="text-sm font-semibold">{areaFor(page.url.pathname) ?? 'Agentic Org'}</span>
+		</div>
+		<ExecutiveCommandBar
+			connection={data.connection}
+			snapshot={shellData.snapshot}
+			items={shellData.workItems}
+			inboxItems={shellData.inboxItems}
+			offices={shellData.offices}
+			ownerId={shellData.ownerId}
+			registerAsk={(fn) => {
+				askHandler = fn;
+			}}
+		/>
+		<div class="relative flex min-h-0 flex-1 flex-col">
+			{#if isHome}
+				<HomeScrollHint scrollContainer={mainEl} />
+			{/if}
+			<main
+				bind:this={mainEl}
+				tabindex="-1"
+				aria-label={areaFor(page.url.pathname) ?? 'Agentic Org'}
+				class="flex min-h-0 flex-1 flex-col overflow-y-auto focus:outline-none"
+			>
+				{#if showPaused}<div class="shrink-0">
+						<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />
+					</div>{/if}
+				{@render children()}
+			</main>
+		</div>
+	</div>
 </div>
 <Toaster position="bottom-right" />
+{#if navKeys.hint}
+	<div
+		role="status"
+		aria-live="polite"
+		data-testid="nav-key-hint"
+		class="pointer-events-none fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md bg-surface-overlay px-3 py-1.5 text-xs/5 font-medium text-fg shadow-lg ring-1 ring-line"
+	>
+		{navKeys.hint}
+	</div>
+{/if}
+
+<style>
+	.exec-shell-main main > :global(:not(.chat-frame)) {
+		flex-shrink: 0;
+	}
+	.exec-shell-main :global(.chat-frame) {
+		flex: 1 1 0%;
+		min-height: 0;
+		height: auto;
+	}
+	@media (min-height: 640px) {
+		.exec-shell-main :global(.activity-workspace),
+		.exec-shell-main :global(.project-frame-activity) {
+			flex: 1 1 0%;
+			min-height: 0;
+			height: auto;
+		}
+	}
+	@media (height <= 320px) {
+		.exec-shell-main :global(.chat-frame) {
+			min-height: 28rem;
+		}
+	}
+</style>

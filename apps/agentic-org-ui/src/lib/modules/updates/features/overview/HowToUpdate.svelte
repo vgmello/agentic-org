@@ -29,14 +29,14 @@
 		<div class="mt-3 flex flex-wrap items-center gap-3">
 			<code
 				data-testid="upgrade-command"
-				class="min-w-0 flex-1 basis-56 rounded-md bg-surface-sunken px-3 py-2 font-mono max-[639px]:basis-full min-[640px]:py-1.5 text-sm/6 text-fg-bright [overflow-wrap:anywhere]"
+				class="min-w-0 flex-1 basis-56 rounded-md bg-surface-sunken px-3 py-2 font-mono text-sm/6 text-fg-bright ring-1 ring-line ring-inset [overflow-wrap:anywhere] max-[639px]:basis-full min-[640px]:py-1.5"
 				>{command}</code
 			>
 			<CopyButton text={command} label="Copy command" />
 		</div>
 		<ul
 			role="list"
-			class="mt-4 list-disc space-y-2 pl-5 text-sm/6 text-fg-body marker:text-fg-subtle"
+			class="mt-4 flex list-disc flex-col gap-2 pl-5 text-sm/6 text-fg-body marker:text-fg-subtle"
 			data-testid="upgrade-effects"
 		>
 			<li>It downloads and verifies the complete release, unless it's already downloaded.</li>

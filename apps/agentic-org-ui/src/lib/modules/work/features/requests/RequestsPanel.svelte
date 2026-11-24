@@ -5,6 +5,7 @@
 	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { Input } from '$lib/components/ui/input';
 	import { nameOf } from '$lib/modules/work/people';
+	import { matchesWorkSearch } from '$lib/modules/work/work-toolbar';
 	import {
 		ageWord,
 		filterActive,
@@ -27,6 +28,10 @@
 		me,
 		now,
 		organizationId,
+		externalQuery = '',
+		onClearExternalQuery,
+		hideNewButton = false,
+		selectedId,
 		onopen,
 		onnew
 	}: {
@@ -37,6 +42,14 @@
 		/** The owner's id: "Raised by me". */
 		me: string;
 		now: string;
+		/** Optional live query from the Work header search bar. */
+		externalQuery?: string;
+		/** Clear the Work header search query when the user clears Requests filters. */
+		onClearExternalQuery?: () => void;
+		/** Hide the inline New request button when the Work toolbar owns the primary CTA. */
+		hideNewButton?: boolean;
+		/** Currently open request id in Work's inline reading panel. */
+		selectedId?: string;
 		/** Open a request's page; `start` begins one of its steps at once (the Route button of a request not routed). */
 		onopen: (id: string, start?: 'route') => void;
 		onnew: () => void;
@@ -113,24 +126,47 @@
 			project: projectsHere.has(filter.project) ? filter.project : ''
 		};
 	});
-	const shown = $derived(filterRequests(requests, live));
+	const projectName = (id: string | undefined) =>
+		id ? ((snapshot.projects ?? []).find((p) => p.id === id)?.name ?? '') : '';
+	const hasExternalQuery = $derived(externalQuery.trim().length > 0);
+	const shown = $derived(
+		filterRequests(requests, live).filter((r) =>
+			matchesWorkSearch(r, externalQuery, {
+				refText: requestRef(r),
+				projectName: projectName(r.project_id),
+				assigneeName: nameOf(snapshot, r.assignee_id)
+			})
+		)
+	);
 	const groups = $derived(groupRequests(shown));
 	const total = $derived(requests.length);
 	const matching = $derived(shown.length);
+	function clearFilters() {
+		filter = { ...NO_FILTER };
+		onClearExternalQuery?.();
+	}
 	const selectClass =
-		'h-11 max-w-full min-w-0 rounded-md bg-surface px-2 py-1.5 text-sm/6 sm:h-9 text-fg outline-1 -outline-offset-1 outline-field-border focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus';
-	const projectName = (id: string | undefined) =>
-		id ? ((snapshot.projects ?? []).find((p) => p.id === id)?.name ?? '') : '';
+		'min-h-9 max-w-full min-w-0 rounded-md bg-surface px-2 py-1.5 text-sm/6 text-fg outline-1 -outline-offset-1 outline-field-border focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11';
 </script>
 
 <div class="space-y-4" data-testid="requests-queue">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<p class="text-sm/6 text-fg-secondary">
-			Ideas and needs that aren't tasks yet. Someone scopes each one, then you approve it.
-		</p>
-		<Button size="sm" class="min-h-11 sm:min-h-0" onclick={onnew} data-testid="new-request"
-			>New request</Button
-		>
+		<div class="min-w-0">
+			<p class="text-xs/5 font-medium text-fg-muted">Requests across every project.</p>
+			<p class="text-sm/6 text-fg-secondary">
+				Ideas and needs that aren't tasks yet. Someone scopes each one, then you approve it.
+			</p>
+		</div>
+		{#if !hideNewButton}
+			<button
+				type="button"
+				class="req-cta inline-flex min-h-9 items-center justify-center rounded-lg px-3.5 text-sm/5 font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11"
+				onclick={onnew}
+				data-testid="new-request"
+			>
+				New request
+			</button>
+		{/if}
 	</div>
 
 	{#if total > 0}
@@ -170,14 +206,14 @@
 				aria-label="Search requests"
 				placeholder="Search"
 				bind:value={filter.query}
-				class="min-h-11 max-w-56 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus sm:min-h-0"
+				class="min-h-9 max-w-56 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11"
 				autocomplete="off"
 			/>
-			{#if filterActive(live)}<Button
+			{#if filterActive(live) || hasExternalQuery}<Button
 					size="sm"
 					variant="outline"
-					class="min-h-11 sm:min-h-0"
-					onclick={() => (filter = { ...NO_FILTER })}>Clear</Button
+					class="min-h-9 min-w-9 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11"
+					onclick={clearFilters}>Clear</Button
 				>{/if}
 			<span class="text-sm/6 text-fg-muted" aria-live="polite" data-testid="request-count"
 				>{matching === total
@@ -195,14 +231,14 @@
 			No requests yet. Capture one when something comes to mind: write what you need and choose who
 			scopes it.
 		</p>
-	{:else if matching === 0 && live.state === 'open' && !narrowed(live)}
+	{:else if matching === 0 && live.state === 'open' && !narrowed(live) && !hasExternalQuery}
 		<p
 			class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-secondary"
 			data-testid="nothing-open"
 		>
 			Nothing is open. <button
 				type="button"
-				class="inline-flex min-h-11 items-center underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-0"
+				class="inline-flex min-h-9 items-center underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11"
 				onclick={() => (filter.state = 'all')}>Show all requests</button
 			>
 		</p>
@@ -213,8 +249,8 @@
 		>
 			No requests match. <button
 				type="button"
-				class="inline-flex min-h-11 items-center underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-0"
-				onclick={() => (filter = { ...NO_FILTER })}>Clear filters</button
+				class="inline-flex min-h-9 items-center underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11"
+				onclick={clearFilters}>Clear filters</button
 			>
 		</p>
 	{:else}
@@ -222,7 +258,7 @@
 			{@const list = groups[group.id]}
 			{#if list.length > 0}
 				<details
-					open={!group.collapsed || narrowed(live) || live.state === group.id}
+					open={!group.collapsed || narrowed(live) || hasExternalQuery || live.state === group.id}
 					class="group rounded-xl bg-surface-raised outline-1 -outline-offset-1 outline-line"
 					data-testid="request-group"
 					data-group={group.id}
@@ -241,7 +277,8 @@
 								<span class="w-16 shrink-0 text-fg-muted">{requestRef(r)}</span>
 								<button
 									type="button"
-									class="min-h-11 min-w-0 flex-1 text-left font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [overflow-wrap:break-word] sm:min-h-0"
+									aria-current={r.id === selectedId ? 'true' : undefined}
+									class="min-h-9 min-w-9 flex-1 text-left font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [overflow-wrap:break-word] [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11"
 									onclick={() => onopen(r.id)}>{r.title}</button
 								>
 								<span class="text-fg-secondary" data-testid="request-words-state"
@@ -254,7 +291,9 @@
 											snapshot
 										)}{/if}</span
 								>
-								{#if projectName(r.project_id)}<Badge variant="secondary"
+								{#if projectName(r.project_id)}<Badge
+										variant="secondary"
+										class="h-auto min-h-5 max-w-full whitespace-normal [overflow-wrap:anywhere]"
 										>{projectName(r.project_id)}</Badge
 									>{/if}
 								<span class="w-16 shrink-0 text-right text-fg-muted"
@@ -263,7 +302,7 @@
 								{#if nextAction(r)}<Button
 										size="sm"
 										variant="outline"
-										class="min-h-11 sm:min-h-0"
+										class="min-h-9 min-w-9 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11"
 										aria-label="{nextAction(r)} {requestRef(r)}"
 										onclick={() => onopen(r.id, r.status === 'new' ? 'route' : undefined)}
 										>{nextAction(r)}</Button
@@ -276,3 +315,32 @@
 		{/each}
 	{/if}
 </div>
+
+<style>
+	/* Primary Requests CTA: >= 4.5:1 WCAG AA contrast at rest & hover across all 4 themes */
+	.req-cta {
+		background: var(--primary);
+		color: var(--on-emphasis);
+		cursor: pointer;
+	}
+	.req-cta:hover {
+		background: color-mix(in srgb, var(--primary) 84%, var(--surface));
+	}
+	:global(html[data-ui-theme='ocean']) .req-cta {
+		background: var(--primary-hover);
+	}
+	:global(html[data-ui-theme='ocean']) .req-cta:hover {
+		background: color-mix(in srgb, var(--primary-hover) 84%, var(--surface));
+	}
+	:global(html[data-ui-theme='report']) .req-cta {
+		border-radius: var(--exec-ctrl-radius);
+	}
+	:global(html[data-ui-theme='report']) .req-cta:hover {
+		background: var(--primary-hover);
+	}
+	@media (forced-colors: active) {
+		.req-cta {
+			border: 1px solid ButtonText;
+		}
+	}
+</style>

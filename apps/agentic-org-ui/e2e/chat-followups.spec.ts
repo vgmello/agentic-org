@@ -15,7 +15,8 @@ import {
 	kindGeometry,
 	navigation,
 	openChat,
-	sidebarGeometry
+	sidebarGeometry,
+	tokenColor
 } from './chat-followups';
 
 for (const width of [320, 640, 960, 1280])
@@ -204,7 +205,8 @@ for (const width of [320, 640, 960, 1280])
 				await page.mouse.move(0, 0);
 				await inheritsColour(attach.locator('svg'), attach);
 				await attach.hover();
-				await expect(attach).toHaveCSS('color', 'rgb(255, 255, 255)');
+				const hoverFg = await tokenColor(page, '--fg');
+				await expect(attach).toHaveCSS('color', hoverFg);
 				await shot(page, `bug99-attach-hover-${width}-${scale}`, { context: attach });
 				await inheritsColour(attach.locator('svg'), attach);
 				await page.getByLabel('Attach files').setInputFiles({
@@ -216,7 +218,7 @@ for (const width of [320, 640, 960, 1280])
 				await page.mouse.move(0, 0);
 				await inheritsColour(remove.locator('svg'), remove);
 				await remove.hover();
-				await expect(remove).toHaveCSS('color', 'rgb(255, 255, 255)');
+				await expect(remove).toHaveCSS('color', hoverFg);
 				await shot(page, `bug99-remove-hover-${width}-${scale}`, { context: remove });
 				await inheritsColour(remove.locator('svg'), remove);
 			}

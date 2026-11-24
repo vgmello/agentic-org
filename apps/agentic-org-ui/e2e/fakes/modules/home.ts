@@ -3,7 +3,8 @@
 // `nobody`, `nomonth` or `error` (the projects section fails).
 import { orgApi } from '$lib/modules/organization/api';
 import type { HomeApi } from '../../../src/lib/modules/home/api';
-import { mockLatency, mockMode } from '../mock-mode';
+import { mockLatency, mockMode, POC_ORG_ID } from '../mock-mode';
+import { pocHomeProjects } from '../poc-dataset';
 import summary from '../data/home/summary.json' with { type: 'json' };
 
 const MINUTE = 60_000;
@@ -16,6 +17,7 @@ export const homeApi: HomeApi = {
 		const mode = mockMode();
 		if (mode.includes('error')) throw new Error('The office did not answer in time.');
 		if (mode.includes('noprojects')) return [];
+		if (organizationId === POC_ORG_ID) return structuredClone(pocHomeProjects());
 		return (snapshot.projects ?? [])
 			.filter((p) => !p.archived)
 			.map((p) => {
@@ -39,7 +41,7 @@ export const homeApi: HomeApi = {
 	},
 	async workingNow(organizationId) {
 		const { snapshot } = await orgApi.view(organizationId);
-		await mockLatency(350);
+		await mockLatency();
 		const mode = mockMode();
 		if (mode.includes('nopresence')) return { live: false, agents: [] };
 		if (mode.includes('nobody')) return { live: true, agents: [] };
@@ -57,7 +59,7 @@ export const homeApi: HomeApi = {
 		};
 	},
 	async month() {
-		await mockLatency(450);
+		await mockLatency();
 		return mockMode().includes('nomonth') ? null : summary.month;
 	}
 };

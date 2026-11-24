@@ -31,7 +31,8 @@ import type {
 	Viewer,
 	WhyLink
 } from '../../../src/lib/modules/workitems/types';
-import { mockMode } from '../mock-mode';
+import { mockMode, POC_ORG_ID } from '../mock-mode';
+import { pocOrgSnapshot, pocUsageRecords, pocWorkItems } from '../poc-dataset';
 import seedData from '../data/workitems/tasks.json' with { type: 'json' };
 import projectsData from '../data/projects/projects.json' with { type: 'json' };
 
@@ -82,8 +83,15 @@ function syncDerived(entry: StoredTask) {
 	entry.detail.budget = budgetWord(entry.cost.budget);
 	entry.detail.budgetHold = entry.cost.budget?.hold;
 	if (entry.detail.bug) {
+		const fixedAt = entry.detail.bug.fixed?.at;
+		const verifiedFixed = fixedAt
+			? entry.detail.bug.verifications.some((v) => v.result === 'fixed' && v.at >= fixedAt)
+			: false;
 		entry.detail.awaitingVerification =
-			entry.detail.bug.fixed !== null && entry.detail.status !== 'done';
+			fixedAt !== undefined &&
+			entry.detail.status !== 'done' &&
+			entry.detail.status !== 'cancelled' &&
+			!verifiedFixed;
 	}
 }
 
@@ -298,11 +306,377 @@ function buildSeedStore(): Map<string, StoredTask> {
 	return map;
 }
 
+const usePoc = (organizationId: string) => organizationId === POC_ORG_ID;
+const STORAGE_PREFIX = 'agentic-org.mock.workitems.v1.';
+const canPersist = () => {
+	const mode = mockMode().trim();
+	return mode === '' || mode === 'poc' || mode === 'default';
+};
+const entryOrg = new WeakMap<StoredTask, string>();
+
+function tagEntries(organizationId: string, map: Map<string, StoredTask>) {
+	for (const entry of map.values()) entryOrg.set(entry, organizationId);
+}
+
+function loadPersistedStore(organizationId: string): Map<string, StoredTask> | undefined {
+	if (!canPersist() || typeof sessionStorage === 'undefined') return undefined;
+	try {
+		const raw = sessionStorage.getItem(`${STORAGE_PREFIX}${organizationId}`);
+		if (!raw) return undefined;
+		const parsed = JSON.parse(raw) as { nextSeq?: number; entries: [string, StoredTask][] };
+		if (typeof parsed.nextSeq === 'number' && parsed.nextSeq > nextSeq) {
+			nextSeq = parsed.nextSeq;
+		}
+		const map = new Map<string, StoredTask>(parsed.entries);
+		for (const entry of map.values()) {
+			const m = /^T-A(\d+)$/.exec(entry.detail.ref);
+			if (m) {
+				const n = Number(m[1]);
+				if (n >= nextSeq) nextSeq = n + 1;
+			}
+		}
+		tagEntries(organizationId, map);
+		return map;
+	} catch {
+		return undefined;
+	}
+}
+
+function saveStore(organizationId: string, store: Map<string, StoredTask>) {
+	if (!canPersist() || typeof sessionStorage === 'undefined') return;
+	try {
+		sessionStorage.setItem(
+			`${STORAGE_PREFIX}${organizationId}`,
+			JSON.stringify({ nextSeq, entries: [...store.entries()] })
+		);
+	} catch {
+		// ignore quota/private-mode storage errors
+	}
+}
+
+function pocCostByRef(): Map<string, TaskCostAmounts> {
+	const snap = pocOrgSnapshot();
+	const members = snap.members ?? [];
+	const memberRef = (id: string | undefined): EmployeeRef | null => {
+		if (!id) return null;
+		const m = members.find((x) => x.id === id);
+		if (!m || m.kind !== 'agent') return null;
+		return { id: m.id, name: m.name, kind: m.kind };
+	};
+	const fallbackAgent: EmployeeRef = memberRef('ada') ?? {
+		id: 'ada',
+		name: 'Ada',
+		kind: 'agent'
+	};
+	const costByRef = new Map<string, TaskCostAmounts>();
+	for (const r of pocUsageRecords()) {
+		const ref = r.attribution.taskRef;
+		if (!ref) continue;
+		const existing = costByRef.get(ref) ?? {
+			knownCostMicroUsd: 0,
+			knownTokens: 0,
+			records: 0,
+			unpricedRecords: 0,
+			includesApiEquivalent: false,
+			byAgent: [],
+			budget: null
+		};
+		const tokens = r.tokens ? r.tokens.reduce((sum, n) => sum + n, 0) : 0;
+		const cost = r.costMicroUsd ?? 0;
+		existing.records += 1;
+		existing.knownCostMicroUsd = (existing.knownCostMicroUsd ?? 0) + cost;
+		existing.knownTokens = (existing.knownTokens ?? 0) + tokens;
+		if (r.costMicroUsd === null) existing.unpricedRecords += 1;
+		if (r.apiEquivalent) existing.includesApiEquivalent = true;
+		if (r.consumer.kind === 'agent') {
+			const agent = memberRef(r.consumer.memberId) ?? fallbackAgent;
+			const agentRow = existing.byAgent.find((a) => a.agent.id === agent.id);
+			if (agentRow) {
+				agentRow.tokens = (agentRow.tokens ?? 0) + tokens;
+				agentRow.costMicroUsd = (agentRow.costMicroUsd ?? 0) + cost;
+				if (r.occurredAt > agentRow.lastActivityAt) agentRow.lastActivityAt = r.occurredAt;
+			} else {
+				existing.byAgent.push({
+					agent,
+					tokens,
+					costMicroUsd: cost,
+					lastActivityAt: r.occurredAt
+				});
+			}
+		}
+		costByRef.set(ref, existing);
+	}
+	return costByRef;
+}
+
+function syncPocLedgerCosts(store: Map<string, StoredTask>) {
+	const costByRef = pocCostByRef();
+	for (const entry of store.values()) {
+		const derived = costByRef.get(entry.detail.ref);
+		if (!derived) continue;
+		const existingBudget = entry.cost.budget;
+		entry.cost = {
+			...structuredClone(derived),
+			budget: existingBudget
+		};
+		if (entry.cost.budget) {
+			const spent =
+				entry.cost.budget.unit === 'usd'
+					? (entry.cost.knownCostMicroUsd ?? 0)
+					: (entry.cost.knownTokens ?? 0);
+			entry.cost.budget.spent = spent;
+			if (spent >= entry.cost.budget.limit && entry.detail.time.open && !entry.cost.budget.hold) {
+				entry.cost.budget.hold = 'held';
+			}
+		}
+		syncDerived(entry);
+	}
+}
+
+function buildPocStore(): Map<string, StoredTask> {
+	const map = new Map<string, StoredTask>();
+	const snap = pocOrgSnapshot();
+	const projects = snap.projects ?? [];
+	const teams = snap.teams ?? [];
+	const members = snap.members ?? [];
+	const projectTeams = snap.project_teams ?? [];
+
+	const memberRef = (id: string | undefined): EmployeeRef | null => {
+		if (!id) return null;
+		const m = members.find((x) => x.id === id);
+		if (!m || (m.kind !== 'person' && m.kind !== 'agent')) return null;
+		return { id: m.id, name: m.name, kind: m.kind };
+	};
+	const fallbackReporter: EmployeeRef = memberRef('ada') ?? {
+		id: 'ada',
+		name: 'Ada',
+		kind: 'agent'
+	};
+	const fallbackTeam = teams[0]
+		? { id: teams[0].id, name: teams[0].name }
+		: { id: 'platform', name: 'Platform (Rust)' };
+
+	const pocNeedsMe: Record<string, TaskRow['needsMe']> = {
+		'w-t118': {
+			source: 'owner_block',
+			text: 'File-access choice waiting 25m · Build box office offline',
+			inboxItemId: 'in2'
+		},
+		'w-t124': {
+			source: 'owner_block',
+			text: 'Waiting for local test access permission',
+			inboxItemId: 'in3'
+		},
+		'w-t121': {
+			source: 'approval',
+			text: "Approve publishing Kai's sync update to v1.0",
+			inboxItemId: 'in1'
+		}
+	};
+
+	const mapStatus = (s: string): TaskDetail['status'] => {
+		if (s === 'in_progress' || s === 'scoping') return 'in_progress';
+		if (s === 'blocked') return 'blocked';
+		if (s === 'done' || s === 'closed' || s === 'approved') return 'done';
+		if (s === 'cancelled') return 'cancelled';
+		return 'todo';
+	};
+	const mapType = (k: string): TaskDetail['type'] => (k === 'bug' || k === 'request' ? k : 'task');
+	const mapPriority = (p: string | undefined): TaskDetail['priority'] =>
+		p === 'urgent' || p === 'high' || p === 'normal' || p === 'low' ? p : 'normal';
+	const mapSeverity = (s: string | undefined): TaskDetail['severity'] =>
+		s === 'critical' || s === 'major' || s === 'minor' || s === 'trivial' ? s : null;
+
+	for (const w of pocWorkItems()) {
+		const pIdx = projects.findIndex((p) => p.id === w.project_id);
+		const proj = pIdx >= 0 ? projects[pIdx] : undefined;
+		const ptLink = proj ? projectTeams.find((l) => l.project_id === proj.id) : undefined;
+		const ownerTeamRaw = ptLink ? teams.find((t) => t.id === ptLink.team_id) : undefined;
+		const ownerTeam = ownerTeamRaw
+			? { id: ownerTeamRaw.id, name: ownerTeamRaw.name }
+			: fallbackTeam;
+		const assigneeMember = w.assignee_id ? members.find((m) => m.id === w.assignee_id) : undefined;
+		const assignedTeamRaw = assigneeMember?.home_team_id
+			? teams.find((t) => t.id === assigneeMember.home_team_id)
+			: undefined;
+		const assignedTeam = assignedTeamRaw
+			? { id: assignedTeamRaw.id, name: assignedTeamRaw.name }
+			: ownerTeam;
+		const assignee = memberRef(w.assignee_id);
+		const reporter = memberRef(w.created_by) ?? fallbackReporter;
+		const status = mapStatus(w.status);
+		const isClosed = status === 'done' || status === 'cancelled';
+		const description =
+			w.id === 'w-t118'
+				? 'Implementation and unit checks complete; awaiting file-access ruling between timed access and fixed lock.'
+				: w.blocked_reason
+					? `${w.title} — ${w.blocked_reason}`
+					: `${w.title} (${w.short_id}).`;
+
+		const steps: ChecklistStep[] = [
+			{
+				id: `${w.id}-s1`,
+				text: 'Implementation and unit checks complete',
+				required: true,
+				done: true,
+				revision: 1,
+				checked: { at: agoHours(2), by: assignee ?? reporter }
+			},
+			{
+				id: `${w.id}-s2`,
+				text: 'Review sign-off recorded',
+				required: true,
+				done: isClosed,
+				revision: 1,
+				...(isClosed ? { checked: { at: agoHours(1), by: reporter } } : {})
+			}
+		];
+
+		const itemType = mapType(w.kind);
+		const itemPriority = mapPriority(w.priority);
+		const itemSeverity = itemType === 'bug' ? mapSeverity(w.severity) : null;
+		const detail: TaskDetail = {
+			id: w.id,
+			ref: w.short_id,
+			type: itemType,
+			title: w.title,
+			description,
+			status,
+			priority: itemPriority,
+			severity: itemSeverity,
+			effort: null,
+			project: proj ? { id: proj.id, name: proj.name, number: pIdx + 1 } : null,
+			team: ownerTeam,
+			assignedTeam,
+			assignee,
+			reporter,
+			createdAt: w.created_at,
+			updatedAt: w.updated_at,
+			statusAt: w.updated_at,
+			checklist: checklistCount(steps),
+			blockedReason: status === 'blocked' ? (w.blocked_reason ?? 'Blocked') : null,
+			reopenCount: w.reopen_count ?? 0,
+			needsMe: pocNeedsMe[w.id] ?? null,
+			budget: null,
+			awaitingVerification: false,
+			revision: 1,
+			feature: null,
+			milestone: null,
+			resolution: isClosed ? (w.kind === 'bug' ? 'fixed' : 'completed') : null,
+			latestUpdate: { at: w.updated_at, by: assignee ?? reporter },
+			steps,
+			comments: [],
+			activity: [
+				{
+					id: `${w.id}-ev1`,
+					at: w.created_at,
+					actor: reporter,
+					kind: 'created',
+					text: `created ${w.kind === 'bug' ? 'Bug' : w.kind === 'request' ? 'Request' : 'Task'} ${w.short_id}`
+				}
+			],
+			output: [],
+			completion: isClosed
+				? { at: w.updated_at, by: assignee ?? reporter, text: 'Completed and verified.' }
+				: null,
+			fixes: [],
+			relatesTo: [],
+			repositories: [],
+			why: [],
+			time: {
+				createdAt: w.created_at,
+				startedAt: status === 'todo' ? null : agoHours(3),
+				startUnavailable: false,
+				open: !isClosed,
+				leadSeconds: 10800,
+				cycleSeconds: status === 'todo' ? null : 7200,
+				waitingOnYouSeconds: pocNeedsMe[w.id] ? 1500 : 0,
+				blockedSeconds: status === 'blocked' ? 1500 : 0
+			},
+			...(w.kind === 'bug'
+				? {
+						bug: {
+							report: {
+								whatHappened: description,
+								expected: 'Works reliably without regressions.',
+								steps: null,
+								environment: 'HQ macOS office',
+								reported: {
+									severity: itemSeverity,
+									priority: itemPriority,
+									at: w.created_at,
+									by: reporter
+								}
+							},
+							severityConfirmed: Boolean(w.severity_confirmed),
+							suggestedVerifier: reporter,
+							suggestedTriager: null,
+							fixed: isClosed
+								? {
+										how: { kind: 'note' },
+										note: 'Resolved and verified.',
+										at: w.updated_at,
+										by: assignee ?? reporter
+									}
+								: null,
+							verifications: [],
+							closedReason: null,
+							duplicateOf: null,
+							fixTasks: []
+						}
+					}
+				: {}),
+			...(w.kind === 'request'
+				? {
+						request: {
+							text: description,
+							routeReason: null,
+							routingSource: 'person',
+							outcome: null,
+							declineReason: null,
+							mergedInto: null,
+							created: []
+						}
+					}
+				: {}),
+			can: {
+				edit: true,
+				triage: w.kind === 'bug',
+				verify: false,
+				approve: w.kind === 'request'
+			}
+		};
+
+		const entry: StoredTask = {
+			detail,
+			cost: {
+				knownCostMicroUsd: null,
+				knownTokens: null,
+				records: 0,
+				unpricedRecords: 0,
+				includesApiEquivalent: false,
+				byAgent: [],
+				budget: null
+			},
+			privateNotes: []
+		};
+		syncDerived(entry);
+		map.set(detail.id, entry);
+	}
+	syncPocLedgerCosts(map);
+	return map;
+}
+
 function storeFor(organizationId: string): Map<string, StoredTask> {
-	let s = stores.get(organizationId);
+	const poc = usePoc(organizationId);
+	const persist = canPersist();
+	const key = `${organizationId}:${poc ? 'poc' : 'default'}:${persist ? 'p' : `m:${mockMode().trim()}`}`;
+	let s = stores.get(key);
 	if (!s) {
-		s = buildSeedStore();
-		stores.set(organizationId, s);
+		s = loadPersistedStore(organizationId) ?? (poc ? buildPocStore() : buildSeedStore());
+		if (poc) syncPocLedgerCosts(s);
+		tagEntries(organizationId, s);
+		stores.set(key, s);
 	}
 	return s;
 }
@@ -332,7 +706,8 @@ function toRow(t: TaskDetail): TaskRow {
 		needsMe: t.needsMe ? { ...t.needsMe } : null,
 		budget: t.budget,
 		budgetHold: t.budgetHold,
-		awaitingVerification: t.awaitingVerification
+		awaitingVerification: t.awaitingVerification,
+		...(t.request?.mergedInto ? { merged: true } : {})
 	};
 }
 
@@ -340,19 +715,26 @@ function toLink(t: TaskDetail): TaskLink {
 	return { id: t.id, ref: t.ref, type: t.type, title: t.title, status: t.status };
 }
 
+function actorFor(organizationId: string): EmployeeRef {
+	return viewerInfo(organizationId).employee ?? VIEWER_EMPLOYEE;
+}
+
 function pushEvent(entry: StoredTask, kind: string, text: string, note?: string) {
 	const at = nowIso();
+	const orgId = entryOrg.get(entry);
+	const actor = orgId ? actorFor(orgId) : VIEWER_EMPLOYEE;
 	entry.detail.activity.push({
 		id: newId(),
 		at,
-		actor: VIEWER_EMPLOYEE,
+		actor,
 		kind,
 		text,
 		...(note ? { note } : {})
 	});
 	entry.detail.updatedAt = at;
-	entry.detail.latestUpdate = { at, by: VIEWER_EMPLOYEE };
+	entry.detail.latestUpdate = { at, by: actor };
 	entry.detail.revision += 1;
+	if (orgId) saveStore(orgId, storeFor(orgId));
 }
 
 async function readGate() {
@@ -376,8 +758,15 @@ function staleCopy() {
 	return on('stale') ? { stale: { copiedAt: agoHours(1) } } : {};
 }
 
-function viewerInfo(): Viewer {
+function viewerInfo(organizationId: string): Viewer {
 	if (on('no-employee')) return { employee: null, teamIds: [], owner: true };
+	if (usePoc(organizationId)) {
+		return {
+			employee: { id: 'you', name: 'You', kind: 'person' },
+			teamIds: ['leadership', 'platform', 'app', 'product', 'quality'],
+			owner: !on('viewer') && !on('agent-pm')
+		};
+	}
 	return {
 		employee: VIEWER_EMPLOYEE,
 		teamIds: ['eng', 'web'],
@@ -418,13 +807,19 @@ async function loadChoices(organizationId: string): Promise<Choices> {
 		.sort((a, b) => a.path.localeCompare(b.path));
 	const employees = snapshot.members
 		.filter((m) => m.agent?.status !== 'offboarded')
-		.map((m) => ({
-			id: m.id,
-			name: m.name,
-			kind: m.kind,
-			role: m.agent?.role ?? m.title_in_team,
-			availability: m.agent ? 'Available' : 'Person'
-		}))
+		.flatMap((m) =>
+			m.kind === 'person' || m.kind === 'agent'
+				? [
+						{
+							id: m.id,
+							name: m.name,
+							kind: m.kind,
+							role: m.agent?.role ?? m.title_in_team,
+							availability: m.agent ? 'Available' : 'Person'
+						}
+					]
+				: []
+		)
 		.sort((a, b) => a.name.localeCompare(b.name));
 	const seeds = projectsData.projects as Record<string, { number: number; owner?: string }>;
 	const projects: ProjectChoice[] = (snapshot.projects ?? []).map((p, idx) => {
@@ -442,7 +837,12 @@ async function loadChoices(organizationId: string): Promise<Choices> {
 			archived: Boolean(p.archived)
 		};
 	});
-	return { teams, employees, projects, organizationName: 'Lumen Labs' };
+	return {
+		teams,
+		employees,
+		projects,
+		organizationName: usePoc(organizationId) ? 'Agentic Org' : 'Lumen Labs'
+	};
 }
 
 export const workItemsApi: WorkItemsApi = {
@@ -451,7 +851,7 @@ export const workItemsApi: WorkItemsApi = {
 		if (on('empty')) {
 			return {
 				rows: [],
-				viewer: viewerInfo(),
+				viewer: viewerInfo(organizationId),
 				needsMeSources: on('no-needs-me')
 					? []
 					: ['owner_block', 'verify', 'critical', 'budget', 'approval'],
@@ -467,7 +867,7 @@ export const workItemsApi: WorkItemsApi = {
 			scope.kind === 'project' ? all.filter((r) => r.project?.id === scope.projectId) : all;
 		return {
 			rows,
-			viewer: viewerInfo(),
+			viewer: viewerInfo(organizationId),
 			needsMeSources: on('no-needs-me')
 				? []
 				: ['owner_block', 'review', 'handoff', 'ask', 'budget', 'verify', 'critical', 'approval'],
@@ -533,16 +933,17 @@ export const workItemsApi: WorkItemsApi = {
 			? (choices.employees.find((e) => e.id === draft.assigneeId) ?? null)
 			: null;
 
+		const store = storeFor(organizationId);
 		const id = newId();
 		const ref = `T-A${nextSeq++}`;
 		const at = nowIso();
 		const fixes: TaskLink[] = [];
-		const store = storeFor(organizationId);
 		if (draft.fixesTaskId && store.has(draft.fixesTaskId)) {
 			const bugEntry = store.get(draft.fixesTaskId)!;
 			fixes.push(toLink(bugEntry.detail));
 		}
 
+		const actor = actorFor(organizationId);
 		const detail: TaskDetail = {
 			id,
 			ref,
@@ -557,7 +958,7 @@ export const workItemsApi: WorkItemsApi = {
 			team: { id: team.id, name: team.name },
 			assignedTeam: assignedTeam ? { id: assignedTeam.id, name: assignedTeam.name } : null,
 			assignee: assignee ? { id: assignee.id, name: assignee.name, kind: assignee.kind } : null,
-			reporter: VIEWER_EMPLOYEE,
+			reporter: actor,
 			createdAt: at,
 			updatedAt: at,
 			statusAt: at,
@@ -576,14 +977,14 @@ export const workItemsApi: WorkItemsApi = {
 			feature: null,
 			milestone: null,
 			resolution: null,
-			latestUpdate: { at, by: VIEWER_EMPLOYEE },
+			latestUpdate: { at, by: actor },
 			steps: [],
 			comments: [],
 			activity: [
 				{
 					id: newId(),
 					at,
-					actor: VIEWER_EMPLOYEE,
+					actor,
 					kind: 'created',
 					text: `created ${draft.type === 'bug' ? 'Bug' : draft.type === 'request' ? 'Request' : 'Task'} ${ref}`
 				}
@@ -616,11 +1017,11 @@ export const workItemsApi: WorkItemsApi = {
 									severity: draft.severity,
 									priority: draft.priority,
 									at,
-									by: VIEWER_EMPLOYEE
+									by: actor
 								}
 							},
 							severityConfirmed: false,
-							suggestedVerifier: VIEWER_EMPLOYEE,
+							suggestedVerifier: actor,
 							suggestedTriager: null,
 							fixed: null,
 							verifications: [],
@@ -664,7 +1065,9 @@ export const workItemsApi: WorkItemsApi = {
 			},
 			privateNotes: []
 		};
+		entryOrg.set(entry, organizationId);
 		store.set(id, entry);
+		saveStore(organizationId, store);
 
 		// Derive inverse fixed_by on the bug if this is a fix task.
 		if (draft.fixesTaskId && store.has(draft.fixesTaskId)) {
@@ -698,7 +1101,7 @@ export const workItemsApi: WorkItemsApi = {
 		entry.detail.comments.push({
 			id: newId(),
 			kind: 'comment',
-			author: VIEWER_EMPLOYEE,
+			author: actorFor(organizationId),
 			at: nowIso(),
 			body: change.text
 		});
@@ -851,7 +1254,7 @@ export const workItemsApi: WorkItemsApi = {
 		if (!step) throw fail('not_found', 'Checklist step not found.');
 		if (change.done !== undefined) {
 			step.done = change.done;
-			step.checked = change.done ? { at: nowIso(), by: VIEWER_EMPLOYEE } : undefined;
+			step.checked = change.done ? { at: nowIso(), by: actorFor(organizationId) } : undefined;
 			pushEvent(entry, 'step', `${change.done ? 'checked' : 'unchecked'} "${step.text}"`);
 		}
 		if (change.required !== undefined) {
@@ -892,7 +1295,7 @@ export const workItemsApi: WorkItemsApi = {
 		entry.detail.comments.push({
 			id: newId(),
 			kind: 'comment',
-			author: VIEWER_EMPLOYEE,
+			author: actorFor(organizationId),
 			at: nowIso(),
 			body
 		});
@@ -927,7 +1330,7 @@ export const workItemsApi: WorkItemsApi = {
 		const at = nowIso();
 		const created: PrivateNote = {
 			id: newId(),
-			author: VIEWER_EMPLOYEE,
+			author: actorFor(organizationId),
 			body: change.body,
 			createdAt: at,
 			updatedAt: at,
@@ -936,6 +1339,7 @@ export const workItemsApi: WorkItemsApi = {
 		};
 		entry.privateNotes.push(created);
 		noteOps.set(change.operationId, structuredClone(created));
+		saveStore(organizationId, storeFor(organizationId));
 		// Private notes never write to shared activity (PN-01..06).
 		return structuredClone(created);
 	},
@@ -968,6 +1372,7 @@ export const workItemsApi: WorkItemsApi = {
 		note.updatedAt = nowIso();
 		note.revision += 1;
 		noteOps.set(change.operationId, structuredClone(note));
+		saveStore(organizationId, storeFor(organizationId));
 		return structuredClone(note);
 	},
 
@@ -988,6 +1393,7 @@ export const workItemsApi: WorkItemsApi = {
 		}
 		entry.privateNotes.splice(idx, 1);
 		noteOps.set(change.operationId, 'deleted');
+		saveStore(organizationId, storeFor(organizationId));
 	},
 
 	async publishNote(organizationId, taskId, noteId, change) {
@@ -1008,7 +1414,7 @@ export const workItemsApi: WorkItemsApi = {
 		entry.detail.comments.push({
 			id: newId(),
 			kind: 'comment',
-			author: VIEWER_EMPLOYEE,
+			author: actorFor(organizationId),
 			at: nowIso(),
 			body: note.body
 		});
@@ -1033,7 +1439,7 @@ export const workItemsApi: WorkItemsApi = {
 			how,
 			note: change.note || null,
 			at: nowIso(),
-			by: VIEWER_EMPLOYEE
+			by: actorFor(organizationId)
 		};
 		entry.detail.can.verify = true;
 		pushEvent(entry, 'fixed', `marked ${entry.detail.ref} as fixed`, change.note || undefined);
@@ -1049,7 +1455,7 @@ export const workItemsApi: WorkItemsApi = {
 			result: change.result,
 			note: change.note || null,
 			at,
-			by: VIEWER_EMPLOYEE
+			by: actorFor(organizationId)
 		});
 		if (change.result === 'still_happens') {
 			entry.detail.bug.fixed = null;
@@ -1155,7 +1561,7 @@ export const workItemsApi: WorkItemsApi = {
 			created.push(toLink(made.detail));
 		}
 		req.created = created;
-		req.approved = { at: nowIso(), by: VIEWER_EMPLOYEE };
+		req.approved = { at: nowIso(), by: actorFor(organizationId) };
 		entry.detail.status = 'done';
 		entry.detail.resolution = 'completed';
 		entry.detail.needsMe = null;
@@ -1174,7 +1580,7 @@ export const workItemsApi: WorkItemsApi = {
 		if (!entry.detail.request) throw fail('invalid_request', 'Not a request.');
 		entry.detail.request.changesAsked = {
 			at: nowIso(),
-			by: VIEWER_EMPLOYEE,
+			by: actorFor(organizationId),
 			comment: change.comment
 		};
 		entry.detail.needsMe = null;

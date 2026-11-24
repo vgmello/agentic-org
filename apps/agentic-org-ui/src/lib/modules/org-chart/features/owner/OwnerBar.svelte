@@ -29,7 +29,7 @@
 <section
 	aria-labelledby="owner-bar-name"
 	data-owner-bar
-	class="flex flex-wrap items-center justify-between gap-x-6 gap-y-4 rounded-lg border border-line bg-shade/10 p-4"
+	class="exec-well flex flex-wrap items-center justify-between gap-x-6 gap-y-4 p-4"
 >
 	<div class="flex min-w-0 flex-1 basis-64 items-center gap-x-4">
 		<Avatar name={owner.name} size="lg" class="max-[359px]:hidden" />

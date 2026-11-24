@@ -29,8 +29,8 @@ beforeEach(() => {
 		})
 	};
 	query = vi.fn((selector: string) => {
-		expect(selector).toBe('main h1');
-		return heading;
+		expect(['#shell-page-title', 'main h1', 'main h2']).toContain(selector);
+		return selector === '#shell-page-title' ? heading : null;
 	});
 	vi.stubGlobal('window', { location: { href: 'http://localhost/settings/offices' } });
 	vi.stubGlobal('document', {
@@ -130,9 +130,30 @@ describe('shared mobile/desktop destination heading focus', () => {
 		const focused = focusDestinationHeading();
 		expect(query).not.toHaveBeenCalled();
 		await focused;
-		expect(query).toHaveBeenCalledExactlyOnceWith('main h1');
+		expect(query).toHaveBeenCalledExactlyOnceWith('#shell-page-title');
 		expect(heading.tabIndex).toBe(-1);
 		expect(heading.focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+	});
+
+	it('falls back to main h1 and then main h2 when #shell-page-title is absent', async () => {
+		query.mockImplementation((selector: string) => (selector === 'main h1' ? heading : null));
+		await focusDestinationHeading();
+		expect(query.mock.calls.map(([selector]) => selector)).toEqual([
+			'#shell-page-title',
+			'main h1'
+		]);
+		expect(heading.focus).toHaveBeenCalledTimes(1);
+
+		query.mockClear();
+		heading.focus.mockClear();
+		query.mockImplementation((selector: string) => (selector === 'main h2' ? heading : null));
+		await focusDestinationHeading();
+		expect(query.mock.calls.map(([selector]) => selector)).toEqual([
+			'#shell-page-title',
+			'main h1',
+			'main h2'
+		]);
+		expect(heading.focus).toHaveBeenCalledTimes(1);
 	});
 
 	it('does nothing when the destination has no main heading', async () => {

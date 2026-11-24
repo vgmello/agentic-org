@@ -13,6 +13,13 @@
 	const info = $derived(statusInfo(status));
 	const glyph = $derived(statusIcon(status));
 	// The word is always shown: neither the icon nor its color alone carries the status.
+	const pill = {
+		ok: 't-green',
+		info: 'office-pill-info',
+		muted: '',
+		warn: 't-amber',
+		bad: 't-red'
+	} as const;
 	const color = {
 		ok: 'text-success',
 		info: 'text-info',
@@ -23,7 +30,7 @@
 </script>
 
 <StatusPill
-	class="min-w-0 max-w-full shrink whitespace-nowrap"
+	class="min-w-0 max-w-full shrink whitespace-nowrap {pill[info.tone]}"
 	label={info.label}
 	data-status-icon={glyph}
 >
@@ -59,3 +66,14 @@
 		{:else}<CircleHelp class="size-3.5 shrink-0 {color[info.tone]}" aria-hidden="true" />{/if}
 	{/snippet}
 </StatusPill>
+
+<style>
+	:global(.office-pill-info) {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+	:global(.t-amber) :global(svg.text-warning) {
+		color: var(--tone-warn-ink);
+	}
+</style>

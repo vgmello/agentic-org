@@ -30,7 +30,11 @@ function visibleBelowHeader(element: Element) {
 	const r = element.getBoundingClientRect();
 	const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
 	return (
-		r.y >= (document.querySelector('[data-shell-header]')?.getBoundingClientRect().bottom ?? 0) &&
+		r.y >=
+			((
+				document.querySelector('header.exec-topbar') ??
+				document.querySelector('[data-shell-header]')
+			)?.getBoundingClientRect().bottom ?? 0) &&
 		r.bottom <= innerHeight &&
 		!!hit &&
 		element.contains(hit)
@@ -38,7 +42,7 @@ function visibleBelowHeader(element: Element) {
 }
 
 for (const [width, height, inline] of [
-	[959, 720, true],
+	[1032, 720, true],
 	[960, 720, false],
 	[720, 450, false],
 	[639, 720, false],
@@ -84,7 +88,7 @@ for (const [width, height, inline] of [
 			await expect(chatNav(page).locator('[data-conversation="c-general"]')).toBeFocused();
 			await shot(page, `chat-narrow-${width}-list`);
 			const bounds = (await dialog.boundingBox())!;
-			expect(bounds.x).toBeCloseTo(width >= 960 ? 288 : width >= 640 ? 64 : 0, 0);
+			expect(bounds.x).toBeCloseTo(width >= 640 ? 264 : 0, 0);
 			expect(bounds.width).toBeCloseTo(256, 0);
 			expect(bounds.y).toBeGreaterThanOrEqual(0);
 			expect(bounds.y + bounds.height).toBeLessThanOrEqual(height + 0.5);
@@ -217,8 +221,10 @@ for (const panel of ['thread', 'members'] as const) {
 						return {
 							visible:
 								r.y >=
-									(document.querySelector('[data-shell-header]')?.getBoundingClientRect().bottom ??
-										0) &&
+									((
+										document.querySelector('header.exec-topbar') ??
+										document.querySelector('[data-shell-header]')
+									)?.getBoundingClientRect().bottom ?? 0) &&
 								r.bottom <= innerHeight &&
 								!!hit &&
 								element.contains(hit),

@@ -28,13 +28,14 @@
 </script>
 
 <div class="@container">
-	<fieldset
-		class="hidden h-9 rounded-md bg-surface-raised outline-1 -outline-offset-1 outline-line @min-[40rem]:inline-flex"
-	>
+	<fieldset class="exec-well hidden h-9 items-center gap-0.5 p-0.5 @min-[40rem]:inline-flex">
 		<legend class="sr-only">Outcome</legend>
 		{#each OUTCOME_FILTERS as f (f.id)}
 			<label
-				class="relative flex h-full cursor-pointer items-center gap-x-1.5 px-3 text-sm/6 font-medium text-fg-muted before:absolute before:inset-1 before:rounded-sm hover:text-fg has-checked:font-semibold has-checked:text-fg has-checked:before:bg-surface-overlay has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-focus"
+				class={[
+					'outcome-tab relative flex h-full cursor-pointer items-center gap-x-1.5 rounded-lg px-3 text-sm/6 font-medium transition-colors has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-focus',
+					value === f.id ? 'is-on font-semibold' : 'text-fg-muted hover:text-fg'
+				]}
 			>
 				<input type="radio" name="{ids}-outcome" value={f.id} bind:group={value} class="sr-only" />
 				<span class="relative whitespace-nowrap">{f.label}</span>
@@ -74,3 +75,11 @@
 		</DropdownMenu>
 	</div>
 </div>
+
+<style>
+	.outcome-tab.is-on {
+		background: var(--exec-accent-soft);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
+</style>

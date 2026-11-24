@@ -71,7 +71,7 @@ const fail = (code: string, message: string, extra: Record<string, unknown> = {}
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
 
 async function read() {
-	await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 200));
+	if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 	if (on('unavailable')) await unavailableCall();
 	if (on('fails'))
 		throw {
@@ -82,7 +82,7 @@ async function read() {
 }
 
 async function write() {
-	await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 400));
+	if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 	if (on('unavailable')) await unavailableCall();
 	if (on('viewer')) throw fail('not_authorized', "You don't have access to change agent setup.");
 	if (on('save-fails'))

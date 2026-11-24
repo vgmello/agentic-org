@@ -146,7 +146,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "f81844775f876724dc502a342f5cd237c917f1d2105b67d2a001c2bb16d9930a"
+      "sha256": "c59bfc1dc88e6b98ddf289fb8b7406393701e52bf6519900bc377d47e7ca3c16"
     },
     {
       "path": "Cargo.lock",
@@ -162,7 +162,7 @@
     },
     {
       "path": "apps/agentic-org-ui/AGENTS.md",
-      "sha256": "03cfeaa96ee26e6d6bb54f01f381d450c1dc9a6543e0cedd52a6b3b126f45652"
+      "sha256": "9c9a6e9fc1ce69df8ced43afadc5b7457dc57eb7fb00c187f1aae117f480cafa"
     },
     {
       "path": "apps/agentic-org-ui/components.json",

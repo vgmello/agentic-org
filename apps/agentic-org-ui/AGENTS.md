@@ -1,5 +1,9 @@
 Claude Code and Codex start at the repository root (see the root `AGENTS.md`, "Tools for agents"). Both get the Svelte MCP tools below from the exact, lockfile-pinned dev dependency `@sveltejs/mcp` in `apps/agentic-org-ui/node_modules`: Claude Code through the root `.mcp.json`, Codex through `.codex/config.toml`. Run `bun install --frozen-lockfile` in `apps/agentic-org-ui` first. This configuration never downloads the package at run time and fails without `node_modules`; the upstream Svelte plugin, whose server downloads it, is not used. If the tools are unavailable, report that limitation rather than claiming they were used. The documentation tools query svelte.dev; the local server's autofixer runs locally.
 
+## UI Rules
+
+- **Icon-only controls require a tooltip (owner rule, 2026-11-24):** Every icon-only button, link, or interactive control without a visible text label (for example comment, copy, expand, close, filter, display, or sidebar toggle icons) MUST provide both an accessible name (`aria-label`) and a visible tooltip on hover and keyboard focus (matching the action name and optional shortcut, dismissible with `Escape`, WCAG 1.4.13). Never ship an unlabeled icon-only control without a tooltip.
+
 You are able to use the Svelte MCP server, where you have access to comprehensive Svelte 5 and SvelteKit documentation. Here's how to use the available tools effectively:
 
 ## Available Svelte MCP Tools:

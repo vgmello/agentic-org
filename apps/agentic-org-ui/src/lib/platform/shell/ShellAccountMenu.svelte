@@ -16,7 +16,15 @@
 	import type { Connection } from '$lib/proto';
 	import AboutDialog from './AboutDialog.svelte';
 
-	let { connection, compact = false }: { connection: Connection; compact?: boolean } = $props();
+	let {
+		connection,
+		compact = false,
+		onOpenChange
+	}: {
+		connection: Connection;
+		compact?: boolean;
+		onOpenChange?: (open: boolean) => void;
+	} = $props();
 
 	let aboutOpen = $state(false);
 	const canSignOut = $derived(appSession.state.kind === 'signed-in' && appSession.authEnabled);
@@ -33,7 +41,7 @@
 		'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus';
 </script>
 
-<DropdownMenu.Root>
+<DropdownMenu.Root onOpenChange={(next) => onOpenChange?.(next)}>
 	<Tooltip.Root disabled={!compact}>
 		<Tooltip.Trigger>
 			{#snippet child({ props: tooltipProps })}
@@ -88,7 +96,8 @@
 				role="tooltip"
 				side="right"
 				sideOffset={12}
-				class="z-[100] rounded-md bg-tooltip px-3 py-2 text-xs text-fg">You · Owner</Tooltip.Content
+				class="z-[100] rounded-md bg-tooltip px-3 py-2 text-xs text-on-emphasis"
+				>You · Owner</Tooltip.Content
 			></Tooltip.Portal
 		>
 	</Tooltip.Root>

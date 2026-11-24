@@ -19,6 +19,11 @@
 		type Sidebar
 	} from '$lib/modules/messaging/model';
 	import Avatar from '$lib/modules/messaging/components/Avatar.svelte';
+	import {
+		isTextEntryTarget,
+		nextSidebarIndex,
+		sidebarNavAction
+	} from '$lib/modules/messaging/sidebar-nav';
 
 	/**
 	 * The left column (CHAT-1): Inbox (a link, with the common owner-waiting count: Chat keeps no second queue), Mentions,
@@ -58,8 +63,7 @@
 	} = $props();
 
 	const item =
-		'flex w-full items-start gap-x-[min(.75rem,12px)] rounded-md px-[min(.5rem,8px)] py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring';
-	const on = 'bg-surface-overlay text-fg';
+		'flex w-full items-start gap-x-[min(.75rem,12px)] rounded-md px-[min(.5rem,8px)] py-1.5 text-left text-sm/6 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring';
 	const off = 'text-fg-secondary hover:bg-surface-raised hover:text-fg';
 	const here = (v: ChatView, conversationId?: string) =>
 		view.type === v.type &&
@@ -115,6 +119,25 @@
 					nav?.querySelector<HTMLElement>('button'));
 		target?.focus();
 	}
+
+	function handleNavKeydown(event: KeyboardEvent) {
+		if (isTextEntryTarget(event.target)) return;
+		const direction = sidebarNavAction(event);
+		if (!direction || !nav) return;
+		const target = event.target;
+		if (!(target instanceof HTMLElement)) return;
+		const currentItem = target.closest<HTMLElement>('[data-chat-nav-item]');
+		if (!currentItem || !nav.contains(currentItem)) return;
+		const items = [...nav.querySelectorAll<HTMLElement>('[data-chat-nav-item]')].filter(
+			(el) =>
+				!(el instanceof HTMLButtonElement && el.disabled) && !el.closest('details:not([open])')
+		);
+		const currentIndex = items.indexOf(currentItem);
+		const nextIndex = nextSidebarIndex(currentIndex, items.length, direction);
+		if (nextIndex < 0) return;
+		event.preventDefault();
+		items[nextIndex]?.focus();
+	}
 </script>
 
 {#snippet row(r: ConversationRow)}
@@ -122,11 +145,12 @@
 	<li>
 		<button
 			type="button"
-			class="{item} {active ? on : off}"
+			class={[item, active ? 'chat-nav-on font-medium text-fg' : off]}
 			aria-current={active ? 'true' : undefined}
 			aria-label={r.other && r.presence
 				? `${r.title}, ${PRESENCE_WORD[r.presence]}${r.mentions ? `, ${r.mentions} mentions` : r.unread ? `, ${r.unread} unread` : ''}`
 				: undefined}
+			data-chat-nav-item
 			data-testid="conversation-link"
 			data-conversation={r.conversation.id}
 			onclick={() => onselect({ type: 'conversation', id: r.conversation.id })}
@@ -156,13 +180,13 @@
 					>{/if}
 				{#if r.mentions > 0}
 					<span
-						class="shrink-0 rounded-full bg-primary px-1.5 text-xs/5 font-semibold text-on-emphasis"
+						class="shrink-0 rounded-full bg-primary px-1.5 text-xs/5 font-semibold text-on-emphasis tabular-nums"
 						aria-label="{r.mentions} mentions"
 						data-testid="mention-count">{r.mentions}</span
 					>
 				{:else if r.unread > 0}
 					<span
-						class="shrink-0 text-xs/5 font-semibold text-fg-body"
+						class="chat-unread-pill shrink-0 rounded-full px-1.5 text-xs/5 font-semibold tabular-nums"
 						aria-label="{r.unread} unread"
 						data-testid="unread-count">{r.unread}</span
 					>
@@ -173,12 +197,14 @@
 {/snippet}
 
 {#snippet navigation()}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<nav
 		bind:this={nav}
-		class="flex h-full w-full min-w-0 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-line bg-shade/10 p-[min(.75rem,12px)]"
+		onkeydown={handleNavKeydown}
+		class="chat-rail flex h-full w-full min-w-0 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-line p-[min(.75rem,12px)]"
 		aria-label="Chat"
 	>
-		<ul class="space-y-0.5">
+		<ul class="flex flex-col gap-0.5">
 			<li>
 				<a
 					href={resolve('/inbox')}
@@ -186,6 +212,7 @@
 					aria-label={inboxCount
 						? `Inbox, ${inboxCount} ${inboxCount === 1 ? 'needs' : 'need'} you`
 						: 'Inbox'}
+					data-chat-nav-item
 					data-testid="inbox-link"
 				>
 					<svg
@@ -204,7 +231,7 @@
 								: ''}">Inbox</span
 						>
 						{#if inboxCount}<span
-								class="shrink-0 rounded-full bg-warning px-1.5 text-xs/5 font-semibold text-on-warning"
+								class="t-amber shrink-0 rounded-full px-1.5 text-xs/5 font-semibold tabular-nums"
 								aria-hidden="true"
 								data-testid="inbox-count">{inboxCount}</span
 							>{/if}
@@ -214,8 +241,9 @@
 			<li>
 				<button
 					type="button"
-					class="{item} {here({ type: 'mentions' }) ? on : off}"
+					class={[item, here({ type: 'mentions' }) ? 'chat-nav-on font-medium text-fg' : off]}
 					aria-current={here({ type: 'mentions' }) ? 'true' : undefined}
+					data-chat-nav-item
 					data-testid="mentions-link"
 					onclick={() => onselect({ type: 'mentions' })}
 				>
@@ -228,7 +256,8 @@
 						<span class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal]"
 							>Mentions</span
 						>
-						{#if bar.mentions.length}<span class="shrink-0 text-xs/5 font-semibold text-fg-body"
+						{#if bar.mentions.length}<span
+								class="shrink-0 text-xs/5 font-semibold text-fg-body tabular-nums"
 								>{bar.mentions.length}</span
 							>{/if}
 					</span>
@@ -237,8 +266,9 @@
 			<li>
 				<button
 					type="button"
-					class="{item} {here({ type: 'threads' }) ? on : off}"
+					class={[item, here({ type: 'threads' }) ? 'chat-nav-on font-medium text-fg' : off]}
 					aria-current={here({ type: 'threads' }) ? 'true' : undefined}
+					data-chat-nav-item
 					data-testid="threads-link"
 					onclick={() => onselect({ type: 'threads' })}
 				>
@@ -251,7 +281,8 @@
 						<span class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal]"
 							>Threads</span
 						>
-						{#if unreadThreads}<span class="shrink-0 text-xs/5 font-semibold text-fg-body"
+						{#if unreadThreads}<span
+								class="shrink-0 text-xs/5 font-semibold text-fg-body tabular-nums"
 								>{unreadThreads}</span
 							>{/if}
 					</span>
@@ -260,8 +291,10 @@
 		</ul>
 
 		<div>
-			<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase">Channels</h2>
-			<ul class="mt-1 space-y-0.5" data-testid="channels">
+			<h2 class="px-2 text-[11px]/6 font-semibold tracking-wider text-fg-muted uppercase">
+				Channels
+			</h2>
+			<ul class="mt-1 flex flex-col gap-0.5" data-testid="channels">
 				{#each bar.channels as r (r.conversation.id)}{@render row(r)}{/each}
 			</ul>
 			<button
@@ -287,10 +320,10 @@
 		</div>
 
 		<div>
-			<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase">
+			<h2 class="px-2 text-[11px]/6 font-semibold tracking-wider text-fg-muted uppercase">
 				Direct messages
 			</h2>
-			<ul class="mt-1 space-y-0.5" data-testid="dms">
+			<ul class="mt-1 flex flex-col gap-0.5" data-testid="dms">
 				{#each bar.dms as r (r.conversation.id)}{@render row(r)}{/each}
 			</ul>
 			<button
@@ -310,7 +343,7 @@
 					Between agents
 				</h2>
 				<p class="px-2 text-xs/5 text-fg-muted">You read these as the owner.</p>
-				<ul class="mt-1 space-y-0.5">
+				<ul class="mt-1 flex flex-col gap-0.5">
 					{#each bar.asOwner as r (r.conversation.id)}{@render row(r)}{/each}
 				</ul>
 			</div>
@@ -350,3 +383,18 @@
 		</SheetContent>
 	</Sheet>
 {/if}
+
+<style>
+	.chat-rail {
+		background: var(--exec-sidebar-bg);
+	}
+	.chat-nav-on {
+		background: var(--tone-accent-bg);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+	.chat-unread-pill {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+	}
+</style>

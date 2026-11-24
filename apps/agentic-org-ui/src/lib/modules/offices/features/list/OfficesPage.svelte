@@ -340,7 +340,7 @@
 		{/snippet}
 	</PageHeader>
 
-	<div class="{compactRow.gutters} space-y-5 px-4 py-6 sm:px-6 lg:px-8">
+	<div class="{compactRow.gutters} flex flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
 		{#if sample}
 			<!-- TEMPORARY: agent counts and placement come from the invented organization until the real snapshot is wired in. -->
 			<p
@@ -443,7 +443,7 @@
 					data-testid="offices-loading"
 				>
 					<span class="sr-only" role="status">Loading the other offices…</span>
-					<span class="min-w-0 flex-1 space-y-3" aria-hidden="true">
+					<span class="flex min-w-0 flex-1 flex-col gap-3" aria-hidden="true">
 						<span
 							class="block h-4 w-32 max-w-full animate-pulse rounded bg-surface-overlay motion-reduce:animate-none"
 						></span>

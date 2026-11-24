@@ -198,18 +198,22 @@ test('§7.4: the added row is focused even when a live change supersedes the rea
 	await expect(rows(page)).toHaveCount(13);
 });
 
-test('§7.1: a person added from the top bar’s New appears in the open directory without a reload', async ({
+test('§7.1: a person added elsewhere appears in the open directory without a reload', async ({
 	page
 }) => {
 	await openMembers(page);
 	await choose(page, 'People');
 	await expect(rows(page)).toHaveCount(4);
-	await page.getByRole('button', { name: 'New', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Add a person', exact: true }).click();
-	const sheet = page.getByRole('dialog');
-	await sheet.getByLabel('Name').fill('Yara Example');
-	await sheet.getByRole('button', { name: 'Add person', exact: true }).click();
-	await expect(sheet).toHaveCount(0);
+	await page.evaluate(async () => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
+		const id = saved[saved.length - 1].organization.id as string;
+		await (
+			window as unknown as { __mockOrgChange: (id: string, command: object) => Promise<unknown> }
+		).__mockOrgChange(id, {
+			method: 'member.add_person',
+			params: { member_id: '01JC00000000000000000000Y1', name: 'Yara Example' }
+		});
+	});
 	// The page was not reloaded: the filter choice made before the add is still in place.
 	await expect(filter(page, 'People')).toBeChecked();
 	await expect(rows(page).filter({ hasText: 'Yara Example' })).toHaveCount(1);

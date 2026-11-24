@@ -126,9 +126,7 @@
 				{#if e.id === ownerId}<span class="{pill} bg-brand/10 text-brand-text ring-brand/30"
 						>Owner</span
 					>{/if}
-				{#if e.status === 'paused'}<span class="{pill} bg-quiet/10 text-fg-secondary ring-quiet/20"
-						>Paused</span
-					>{/if}
+				{#if e.status === 'paused'}<span class="{pill} t-amber">Paused</span>{/if}
 			</p>
 		</div>
 		<DropdownMenu>

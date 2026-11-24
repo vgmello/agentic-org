@@ -207,7 +207,7 @@
 			<ul role="list" class="divide-y divide-line-subtle" aria-labelledby="roles-heading">
 				{#each roles as role (role.id)}
 					<li
-						class="relative flex flex-wrap items-start gap-x-4 gap-y-2 px-4 py-4 transition-colors duration-150 hover:bg-tint/[0.02] motion-reduce:transition-none min-[640px]:flex-nowrap min-[640px]:px-6 min-[1024px]:px-8"
+						class="relative flex flex-wrap items-start gap-x-4 gap-y-2 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:flex-nowrap min-[640px]:px-6 min-[1024px]:px-8"
 						data-role={role.id}
 					>
 						<div class="min-w-0 flex-1 basis-full min-[640px]:basis-auto">

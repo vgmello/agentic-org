@@ -1,0 +1,558 @@
+/*
+ * Theme: report — Modern 2D Executive Report (Day) + shared structural rules for Report & Report Night
+ * Crisp #FFFFFF canvas, #F9FAFC sidebar, #0B101B ink, #1D4E89 blue,
+ * #16A34A/#15803D/#ECFDF3 green, #EAB308/#A16207/#FEF9C3 yellow, #B83232/#9B2424/#FBEDED red,
+ * #E5EAF1 unified --bar-track, open boxless KPI strip & flat hairline rules.
+ * Strictly scoped to `html[data-ui-theme^='report']`, `html[data-ui-theme='report']`, and `.swatch-report`.
+ * Binds both executive tokens and app-wide look tokens to Report Day's single semantic ramp.
+ */
+
+html[data-ui-theme='report'] {
+	color-scheme: light;
+
+	/* Intra-theme unified semantic tokens */
+	--bar-track: #e5eaf1;
+
+	--tone-accent: #1d4e89;
+	--tone-accent-bar: #1d4e89;
+	--tone-accent-hi: #163c6b;
+	--tone-accent-ink: #1d4e89;
+	--tone-accent-bg: #eef4fa;
+	--tone-accent-ring: #c5d4e6;
+
+	--tone-ok: #16a34a;
+	--tone-ok-bar: #15803d;
+	--tone-ok-ink: #15803d;
+	--tone-ok-bg: #ecfdf3;
+	--tone-ok-ring: #bbf7d0;
+
+	--tone-warn: #eab308;
+	--tone-warn-bar: #a16207;
+	--tone-warn-ink: #a16207;
+	--tone-warn-bg: #fef9c3;
+	--tone-warn-ring: #fde68a;
+
+	--tone-bad: #b83232;
+	--tone-bad-bar: #b83232;
+	--tone-bad-ink: #9b2424;
+	--tone-bad-bg: #fbeded;
+	--tone-bad-ring: #e6bebe;
+
+	--tone-queued: #52489c;
+	--tone-queued-ink: #52489c;
+
+	/* App-wide look tokens (Work, Projects, Teams, Offices, Chat, Costs, Settings, Pills) */
+	--surface: #ffffff;
+	--surface-sunken: #f9fafc;
+	--surface-chip: #eef1f6;
+	--tooltip: #0b101b;
+	--scrim: #0b101b;
+	--tint: #0b101b;
+	--shade: #0b101b;
+	--surface-raised: #f7f8fa;
+	--surface-overlay: #eef1f6;
+
+	--line-subtle: #eef1f6;
+	--line: #e2e7ef;
+	--line-strong: #cbd3df;
+	--field-border: #758296;
+
+	--fg: #0b101b;
+	--fg-bright: #0b101b;
+	--fg-body: #2c3646;
+	--fg-secondary: #334155;
+	--fg-muted: #526074;
+	--fg-subtle: #576478;
+	--on-emphasis: #ffffff;
+	--on-warning: #0b101b;
+	--on-warning-strong: #0b101b;
+
+	--quiet: #64748b;
+	--quiet-emphasis: #475569;
+
+	--primary: #0b101b;
+	--primary-hover: var(--tone-accent);
+	--ring: var(--tone-accent);
+	--brand: var(--tone-accent);
+	--focus: var(--tone-accent);
+	--link: var(--tone-accent-ink);
+	--brand-text: var(--tone-accent-ink);
+	--brand-text-strong: var(--tone-accent-hi);
+	--brand-text-stronger: #0b101b;
+
+	--info: var(--tone-accent);
+	--info-emphasis: var(--tone-accent);
+	--info-text: var(--tone-accent-ink);
+	--info-text-strong: var(--tone-accent-hi);
+	--info-text-stronger: #0b101b;
+
+	--success: var(--tone-ok);
+	--success-emphasis: var(--tone-ok);
+	--success-text: var(--tone-ok-ink);
+	--positive: var(--tone-ok);
+	--positive-emphasis: var(--tone-ok);
+	--positive-text: var(--tone-ok-ink);
+	--positive-text-strong: var(--tone-ok-ink);
+
+	--warning: var(--tone-warn);
+	--warning-emphasis: var(--tone-warn);
+	--warning-deep: var(--tone-warn-ink);
+	--warning-text: var(--tone-warn-ink);
+	--warning-text-strong: var(--tone-warn-ink);
+	--warning-text-stronger: var(--tone-warn-ink);
+
+	--danger: var(--tone-bad);
+	--danger-emphasis: var(--tone-bad);
+	--danger-text: var(--tone-bad-ink);
+	--danger-text-strong: var(--tone-bad-ink);
+	--danger-text-stronger: var(--tone-bad-ink);
+
+	/* shadcn-svelte semantic bindings */
+	--background: #ffffff;
+	--foreground: #0b101b;
+	--card: #ffffff;
+	--card-foreground: #0b101b;
+	--popover: #ffffff;
+	--popover-foreground: #0b101b;
+	--primary-foreground: #ffffff;
+	--secondary: #eef1f6;
+	--secondary-foreground: #0b101b;
+	--muted: #f4f6f9;
+	--muted-foreground: #526074;
+	--accent: #eef4fa;
+	--accent-foreground: #0b101b;
+	--destructive: var(--tone-bad);
+	--border: #e2e7ef;
+	--input: #758296;
+
+	/* Report Day surfaces & typography */
+	--exec-bg: #ffffff;
+	--exec-sidebar-bg: #f9fafc;
+	--exec-sidebar-blur: none;
+	--exec-sidebar-sheen: none;
+	--exec-logo-weight: 700;
+	--exec-logo-tracking: -0.025em;
+	--exec-surface: #ffffff;
+	--exec-surface-hi: #f8fafc;
+	--exec-well: #f7f8fa;
+	--exec-panel-sheen: none;
+	--exec-border: #eef1f6;
+	--exec-border-hi: #dce2ec;
+	--exec-blur: none;
+	--exec-shadow: none;
+	--exec-shadow-hi: none;
+	--exec-ink: #0b101b;
+	--exec-body: #2c3646;
+	--exec-muted: #526074;
+	--exec-dim: #576478;
+	--exec-pillar-name-ink: #475569;
+	--exec-on-accent: #ffffff;
+
+	/* Report Day top bar & command pill */
+	--exec-topbar-bg: #ffffff;
+	--exec-topbar-border: 1px solid #f1f4f8;
+	--exec-topbar-fade: none;
+	--exec-topbar-fade-blur: none;
+	--exec-cmdk-bg: #f5f7fa;
+	--exec-cmdk-bg-hover: #f1f4f8;
+	--exec-cmdk-blur: none;
+	--exec-cmdk-shadow: inset 0 0 0 1px #e8ecf2;
+	--exec-cmdk-shadow-hover: inset 0 0 0 1px #cbd5e1;
+	--exec-cmdk-hover-lift: none;
+	--exec-cmdk-trigger-ink: var(--exec-muted);
+	--exec-cmdk-trigger-hover-bg: transparent;
+	--exec-cmdk-icon: var(--exec-muted);
+	--exec-cmdk-icon-hover: #0b101b;
+	--exec-cmdk-kbd-bg: #ffffff;
+	--exec-cmdk-kbd-shadow: inset 0 0 0 1px #e2e7ef;
+	--exec-cmdk-kbd-ink: #475569;
+	--exec-cmdk-sep: #e2e7ef;
+	--exec-ai-bg: #0b101b;
+	--exec-ai-bg-hover: var(--tone-accent);
+	--exec-ai-shadow: none;
+	--exec-ai-shadow-hover: none;
+	--exec-ai-ink: #ffffff;
+	--exec-ai-ink-hover: #ffffff;
+	--exec-ai-ico: #93c5fd;
+	--exec-ai-ico-hover: #ffffff;
+
+	/* Flat 2D bars bound to unified --tone-*-bar ramp */
+	--exec-bar-budget: linear-gradient(90deg, #1d4e89 0%, #3b82c4 52%, #eab308 100%);
+	--exec-bar-sky: var(--tone-accent-bar);
+	--exec-bar-ok: var(--tone-ok-bar);
+	--exec-bar-warn: var(--tone-warn-bar);
+	--exec-bar-bad: var(--tone-bad-bar);
+	--exec-seg-agents: var(--tone-accent-bar);
+	--exec-seg-ci: var(--tone-ok-bar);
+	--exec-seg-human: var(--tone-warn-bar);
+	--exec-seg-queued: var(--tone-queued);
+	--exec-seg-queued-high: var(--tone-bad-bar);
+
+	/* Authoritative monochrome CTAs & steel-blue hover (consistent with --primary across all pages) */
+	--exec-cta-bg: #0b101b;
+	--exec-cta-fill: #1d4e89;
+	--exec-cta-shadow: none;
+	--exec-cta-shadow-hover: none;
+	--exec-cta-hover-lift: none;
+	--exec-cta-glass-radius: 4px;
+	--exec-cta-glass-bg: #0b101b;
+	--exec-cta-glass-bg-hover: #1d4e89;
+	--exec-cta-glass-blur: none;
+	--exec-cta-glass-shadow: none;
+	--exec-cta-glass-shadow-hover: none;
+	--exec-cta-glass-ink: #ffffff;
+	--exec-cta-glass-ico: #ffffff;
+	--exec-btn-outline-bg: #ffffff;
+	--exec-btn-outline-bg-hover: #eef2f7;
+	--exec-btn-outline-ink: #0b101b;
+	--exec-btn-outline-ink-hover: #0b101b;
+	--exec-btn-outline-ring: #b8c4d4;
+	--exec-btn-outline-ring-hover: #94a3b8;
+	--exec-btn-ghost-bg-hover: #f4f6f9;
+	--exec-avatar-bg: #f1f4f8;
+	--exec-avatar-ring: #ffffff;
+
+	/* Deny guard */
+	--exec-deny-bg: #ffffff;
+	--exec-deny-bg-hover: var(--tone-bad-bg);
+	--exec-deny-ink: var(--tone-bad-ink);
+	--exec-deny-ink-hover: #7f1d1d;
+	--exec-deny-ring: var(--tone-bad-ring);
+	--exec-deny-ring-hover: var(--tone-bad);
+	--exec-deny-guard-bg: var(--tone-bad-bg);
+	--exec-deny-guard-ring: var(--tone-bad-ring);
+	--exec-deny-confirm-bg: var(--tone-bad);
+	--exec-deny-confirm-hover: var(--tone-bad-ink);
+	--exec-deny-confirm-ink: #ffffff;
+
+	/* Executive Brief memo (borderless editorial column on Report Day) */
+	--exec-cos-bg: transparent;
+	--exec-cos-fade: #ffffff;
+	--exec-cos-border: transparent;
+	--exec-cos-rule: transparent;
+
+	/* Unread rail dot */
+	--exec-nav-dot: var(--tone-warn);
+	--exec-nav-dot-halo: rgba(234, 179, 8, 0.2);
+	--exec-nav-dot-ring: #f9fafc;
+
+	/* Report structural rules */
+	--report-rule: #e2e7ef;
+	--report-rule-subtle: #eef1f6;
+	--report-masthead-rule: #0b101b;
+	--report-accent-bar: #0b101b;
+
+	/* Report Day masthead emphasis & flat borderless pills */
+	--exec-h1-em-warn: #0b101b;
+	--exec-h1-em-calm: #0b101b;
+	--exec-h1-em-ok: #0b101b;
+	--exec-h1-em-bad: #0b101b;
+	--exec-h1-em-ul-warn: var(--tone-bad);
+	--exec-h1-em-ul-calm: var(--tone-accent);
+	--exec-h1-em-ul-ok: var(--tone-ok);
+	--exec-h1-em-ul-bad: var(--tone-bad);
+	--exec-pill-ring-ok: none;
+	--exec-pill-ring-warn: none;
+	--exec-pill-ring-bad: none;
+	--exec-pill-ring-muted: none;
+
+	/* Report Day Inbox & Work row hover & selected tints (poc/operations.css 4622ad46) */
+	--triage-row-hover: #eaedf3;
+	--triage-row-selected: #d6e2f0;
+	--work-row-hover: #eaedf3;
+	--work-row-selected: #d6e2f0;
+	--detail-panel-surface: #ffffff;
+	--side-panel-surface: #ffffff;
+	--assembly-surface: #ffffff;
+	--workspace-secondary-surface: #ffffff;
+}
+
+/* ── Shared Modern 2D Executive Report Layout Tokens (Day & Night) ── */
+html[data-ui-theme^='report'] {
+	--exec-nav-label-size: 0.65rem;
+	--exec-nav-label-tracking: 0.11em;
+	--exec-topbar-height: 56px;
+	--exec-cmdk-radius: 6px;
+	--exec-cmdk-trigger-radius: 4px;
+	--exec-cmdk-kbd-radius: 3px;
+	--exec-ai-radius: 4px;
+
+	--exec-page-max-w: none;
+	--exec-page-gap: 0px;
+	--exec-hero-align: flex-end;
+	--exec-hero-pad-b: 18px;
+	--exec-hero-border: 1.5px solid var(--report-masthead-rule);
+	--exec-h1-weight: 700;
+	--exec-h1-tracking: -0.038em;
+	--exec-h1-em-decoration: underline;
+
+	--exec-section-head-display: flex;
+	--exec-section-title-size: 1.25rem;
+	--exec-section-title-weight: 700;
+	--exec-section-title-tracking: -0.028em;
+	--exec-section-sub-size: 0.8125rem;
+	--exec-capacity-title-size: 1.25rem;
+	--exec-capacity-title-leading: 1.25;
+	--exec-capacity-title-weight: 700;
+	--exec-capacity-title-tracking: -0.028em;
+	--exec-capacity-sub-size: 0.75rem;
+	--exec-spot-title-size: 1.125rem;
+	--exec-spot-title-weight: 650;
+	--exec-brief-title-size: 1.25rem;
+	--exec-brief-title-weight: 700;
+	--exec-brief-title-tracking: -0.028em;
+	--exec-section-gap: 0px;
+	--exec-stage-gap: 0px;
+	--exec-section-border: 1px solid var(--report-rule);
+	--exec-kpi-pad-y: 22px 0 26px;
+	--exec-section-pad-y: 32px 0 34px;
+	--exec-time-pad: 32px 0 8px;
+	--exec-col-divider: 1px solid var(--report-rule-subtle);
+
+	--exec-panel-bg: transparent;
+	--exec-panel-bg-hover: transparent;
+	--exec-panel-blur: none;
+	--exec-panel-shadow: none;
+	--exec-panel-shadow-hover: none;
+	--exec-panel-radius: 0px;
+
+	--exec-pillar-pad: 4px 28px;
+	--exec-pillar-pad-sm: 16px 0;
+	--exec-pillar-edge-pad: 0px;
+	--exec-kpi-num-size: 2.2rem;
+	--exec-kpi-num-lh: 1.05;
+	--exec-kpi-num-weight: 750;
+	--exec-kpi-num-tracking: -0.045em;
+
+	--exec-bar-height: 6px;
+	--exec-bar-radius: 1px;
+	--exec-time-bar-height: 14px;
+	--exec-time-bar-radius: 1px;
+
+	--exec-pill-radius: 3px;
+
+	--exec-spot-accent-display: none;
+	--exec-spot-pad-sm: 0 0 24px;
+	--exec-spot-pad-md: 0 0 24px;
+	--exec-spot-pad-xl: 0 36px 0 0;
+	--exec-brief-pad: 0 0 0 36px;
+	--exec-brief-pad-sm: 24px 0 0;
+	--exec-memo-bg: transparent;
+	--exec-memo-shadow: none;
+	--exec-memo-radius: 0px;
+	--exec-memo-pad: 0px;
+	--exec-memo-gap: 0px;
+	--exec-memo-item-py: 12px;
+	--exec-memo-first-pt: 2px;
+
+	--exec-lenses-radius: 4px;
+	--exec-lenses-shadow: inset 0 0 0 1px var(--report-rule);
+	--exec-sm-radius: 4px;
+	--exec-ctrl-radius: 4px;
+	--exec-inset-radius: 4px;
+
+	--exec-proj-pad: 4px 28px;
+	--exec-proj-pad-sm: 16px 0;
+	--exec-proj-edge-pad: 0px;
+	--exec-proj-row-pt: 24px;
+	--exec-proj-row-mt: 20px;
+	--exec-proj-row-pt-md: 20px;
+	--exec-proj-row-mt-md: 16px;
+
+	/* Release horizon / milestones in Report Day & Night */
+	--exec-horizon-pad: 22px 0;
+	--exec-hor-item-bg: var(--exec-well);
+	--exec-hor-item-bg-hover: var(--exec-surface-hi);
+	--exec-hor-date-bg: var(--exec-ink);
+	--exec-hor-date-month-ink: var(--exec-surface);
+	--exec-hor-date-day-ink: var(--exec-surface);
+	--work-reading-border: var(--report-rule);
+}
+
+html[data-ui-theme='report'] {
+	--exec-hor-date-bg: #0b101b;
+	--exec-hor-date-month-ink: #94a3b8;
+	--exec-hor-date-day-ink: #ffffff;
+}
+
+html[data-ui-theme^='report'] .exec-lbl-std {
+	display: none;
+}
+
+html[data-ui-theme^='report'] .exec-lbl-rep {
+	display: inline;
+}
+
+html[data-ui-theme^='report'] .brief-title-ico {
+	display: none;
+}
+
+html[data-ui-theme^='report'] .exec-cos-mark {
+	background: var(--tone-accent);
+	color: #ffffff;
+	box-shadow: none;
+	border-radius: 4px;
+}
+
+/* ── Shared Modern 2D Executive Report Structural Primitives (Day & Night) ── */
+html[data-ui-theme^='report'] .exec-canvas::before,
+html[data-ui-theme^='report'] .exec-canvas::after {
+	display: none;
+}
+
+html[data-ui-theme^='report'] .exec-well {
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+	border-radius: 4px;
+	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+}
+
+html[data-ui-theme^='report'] .exec-card {
+	border-radius: 4px;
+	box-shadow: inset 0 0 0 1px var(--report-rule);
+}
+
+html[data-ui-theme^='report'] .exec-card:hover {
+	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+}
+
+html[data-ui-theme^='report'] .exec-cta {
+	border-radius: 4px;
+}
+
+html[data-ui-theme^='report'] .exec-cta .exec-cta-sheen {
+	display: none;
+}
+
+html[data-ui-theme='report'] .t-green,
+html[data-ui-theme='report'] .t-amber,
+html[data-ui-theme='report'] .t-red {
+	border-radius: 3px;
+	box-shadow: none;
+}
+
+/* Domain views 2D flat editorial polish under Report Day & Report Night */
+html[data-ui-theme^='report'] .inbox-page,
+html[data-ui-theme^='report'] .act-page {
+	max-width: none;
+}
+
+html[data-ui-theme^='report'] .triage-page,
+html[data-ui-theme^='report'] .work-page {
+	padding: 0;
+}
+
+html[data-ui-theme^='report'] .work-header {
+	border-bottom: 1.5px solid var(--report-masthead-rule);
+}
+
+html[data-ui-theme^='report'] .work-group-title {
+	border-radius: var(--exec-ctrl-radius);
+	box-shadow: inset 0 0 0 1px var(--report-rule);
+}
+
+html[data-ui-theme^='report'] .work-bcol {
+	background: var(--exec-well);
+	border-radius: var(--exec-ctrl-radius);
+	box-shadow: inset 0 0 0 1px var(--report-rule);
+}
+
+html[data-ui-theme^='report'] .work-bcard {
+	background: var(--exec-surface);
+	border-radius: var(--exec-ctrl-radius);
+	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+}
+
+html[data-ui-theme^='report'] .work-reading {
+	background: var(--exec-surface);
+	border-inline-start-color: var(--report-rule);
+}
+
+html[data-ui-theme='report'] .work-reading .work-kind {
+	border-inline-start-color: var(--report-rule);
+}
+
+html[data-ui-theme='report']
+	:is(.work-row, .work-bcard):is(:hover, :focus-within, [aria-current='true'])
+	:is(.work-ref, .work-criteria, .work-owner) {
+	color: #334155;
+}
+
+html[data-ui-theme='report']
+	:is(.work-row, .work-bcard):is(:hover, :focus-within, [aria-current='true'])
+	.work-status[data-tone='active'] {
+	color: #7c4905;
+}
+
+html[data-ui-theme='report']
+	:is(.work-row, .work-bcard):is(:hover, :focus-within, [aria-current='true'])
+	:is(.work-status[data-tone='done'], .work-criteria.is-complete) {
+	color: #0f5d2c;
+}
+
+html[data-ui-theme^='report'] .triage-workspace,
+html[data-ui-theme^='report'] .triage-workspace:hover {
+	border-radius: 0;
+	box-shadow: none;
+}
+
+@media (min-width: 960px) {
+	html[data-ui-theme^='report'] .triage-workspace {
+		height: max(600px, calc(100dvh - var(--exec-topbar-height, 56px)));
+	}
+}
+
+/* Report Day hover & selected row expiry / handled-ok inks (>= 4.5:1 AA on #eaedf3 and #d6e2f0) */
+html[data-ui-theme='report']
+	.triage-item:is(:hover, :focus-visible, [aria-current='true'])
+	.triage-expiry {
+	color: #7c4905;
+}
+
+html[data-ui-theme='report']
+	.triage-item:is(:hover, :focus-visible, [aria-current='true'])
+	.triage-outcome.is-ok {
+	color: #0f5d2c;
+}
+
+html[data-ui-theme^='report'] .act-head {
+	padding-bottom: 16px;
+	border-bottom: 1.5px solid var(--report-masthead-rule);
+}
+
+html[data-ui-theme^='report'] .inbox-head:not(.queue-header) {
+	padding-bottom: 16px;
+	border-bottom: 1.5px solid var(--report-masthead-rule);
+}
+
+html[data-ui-theme^='report'] .inbox-card,
+html[data-ui-theme^='report'] .act-list {
+	border-radius: 4px;
+	background: transparent;
+}
+
+html[data-ui-theme^='report'] .bg-bar-track,
+html[data-ui-theme^='report'] .bg-bar-track > span,
+html[data-ui-theme^='report'] .bg-bar-track > div {
+	border-radius: 1px;
+}
+
+html[data-ui-theme='report'] .exec-legacy-compat [data-slot='badge'] {
+	border-radius: 3px;
+}
+
+@media (min-width: 640px) and (forced-colors: none) {
+	html[data-ui-theme='report'] {
+		--sidebar-top-light: rgb(255 255 255 / 0.96);
+		--page-header-light: rgb(136 159 188 / 0.065);
+	}
+}
+
+/* Settings preview swatch */
+.swatch-report {
+	background: linear-gradient(90deg, #f9fafc 0%, #f9fafc 28%, #ffffff 28%, #ffffff 100%);
+}
+
+.swatch-report .swatch-bar {
+	background: linear-gradient(90deg, #0b101b 0%, #1d4e89 65%, #16a34a 100%);
+}

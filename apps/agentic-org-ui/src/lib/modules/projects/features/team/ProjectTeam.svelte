@@ -21,23 +21,33 @@
 	const view = new Resource(() => projectsApi.team(frame.organizationId, frame.projectId));
 
 	const gutters = 'px-4 min-[640px]:px-6 min-[1024px]:px-8';
-	const h4 = 'text-sm/6 font-semibold text-fg';
+	const h4 = 'text-xs/5 font-semibold tracking-wider uppercase text-fg-muted';
 </script>
 
 {#snippet teamRow(t: ProjectTeamEntry, role: 'Accountable' | 'Contributor')}
 	<li
-		class="relative flex flex-wrap items-baseline gap-x-4 gap-y-1 py-4 {gutters}"
+		class="relative flex flex-wrap items-baseline gap-x-4 gap-y-1 py-4 transition-colors hover:bg-surface-raised {gutters}"
 		data-team={t.id}
 	>
 		<p class="min-w-0 flex-1 basis-60 text-sm/6">
 			<a href={resolve(`/teams/${encodeURIComponent(t.id)}` as '/')} class={rowTitleLink}
 				><span class="absolute inset-0" aria-hidden="true"></span>{t.name}</a
 			>
-			{#if t.ref}<span class="ml-2 font-mono text-xs/5 text-fg-muted">{t.ref}</span>{/if}
+			{#if t.ref}<span
+					class="ml-2 rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[11px]/4 text-fg-muted ring-1 ring-line ring-inset"
+					>{t.ref}</span
+				>{/if}
 		</p>
-		<p class="text-xs/5 text-fg-muted">
-			<span class="font-medium text-fg-secondary">{role}</span>
-			· {t.lead ? `Led by ${t.lead.name}` : 'No lead'}
+		<p class="flex flex-wrap items-center gap-2 text-xs/5 text-fg-muted">
+			<span
+				class={[
+					'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-medium',
+					role === 'Accountable'
+						? 'proj-role-owner'
+						: 'bg-surface-raised text-fg-secondary ring-1 ring-line ring-inset'
+				]}>{role}</span
+			>
+			<span>· {t.lead ? `Led by ${t.lead.name}` : 'No lead'}</span>
 		</p>
 	</li>
 {/snippet}
@@ -80,7 +90,9 @@
 			{:else}
 				<ul role="list" class="mt-2 divide-y divide-line-subtle border-t border-line-subtle">
 					{#each v.members as m (m.id)}
-						<li class="relative flex items-center gap-x-4 py-4 {gutters}">
+						<li
+							class="relative flex items-center gap-x-4 py-3.5 transition-colors hover:bg-surface-raised {gutters}"
+						>
 							<Avatar name={m.name} />
 							<div class="min-w-0 flex-1">
 								<p class="text-sm/6">
@@ -90,7 +102,7 @@
 										><span class="absolute inset-0" aria-hidden="true"></span>{m.name}</a
 									>
 								</p>
-								<p class="mt-1 text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
+								<p class="mt-0.5 text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
 									{kindWord(m.kind)}{#if m.role}
 										· {m.role}{/if} · {m.homeTeam.name}
 								</p>
@@ -102,3 +114,11 @@
 		</section>
 	{/snippet}
 </Loaded>
+
+<style>
+	.proj-role-owner {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+</style>

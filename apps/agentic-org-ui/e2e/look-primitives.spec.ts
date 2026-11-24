@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 import { enterMockedOrganization } from './mock-organization';
+import { resolveThemeColor } from './theme-token';
 
 async function open(page: Page, path = '/agents') {
 	await enterMockedOrganization(page);
@@ -10,14 +11,7 @@ async function open(page: Page, path = '/agents') {
 }
 
 async function tokenColor(page: Page, token: string) {
-	return page.evaluate((token) => {
-		const reference = document.createElement('span');
-		reference.style.color = `var(${token})`;
-		document.body.append(reference);
-		const color = getComputedStyle(reference).color;
-		reference.remove();
-		return color;
-	}, token);
+	return resolveThemeColor(page, token);
 }
 
 async function css(locator: Locator, property: string) {
@@ -138,7 +132,7 @@ for (const width of [320, 640, 960, 1280]) {
 			expect.soft(style.x).toBe(8);
 			expect.soft(style.y).toBe(4);
 			expect.soft(style.shadow).not.toBe('none');
-			expect.soft(await css(status, 'color')).toBe(await tokenColor(page, '--color-green-300'));
+			expect.soft(await css(status, 'color')).toBe(await tokenColor(page, '--tone-ok-ink'));
 			const ratio = await contrast(status);
 			expect.soft(ratio).toBeGreaterThanOrEqual(4.5);
 			console.info(`Presence text contrast at ${width}px: ${ratio.toFixed(2)}:1`);
@@ -311,7 +305,7 @@ test(
 		const status = page.locator('[data-member=noor] [data-presence]');
 		await expect(status).toHaveText('Paused');
 		// Amber means waiting on the owner (§6a); Paused is a neutral state.
-		expect(await css(status, 'color')).toBe(await tokenColor(page, '--color-gray-300'));
+		expect(await css(status, 'color')).toBe(await tokenColor(page, '--fg-secondary'));
 		expect(await contrast(status)).toBeGreaterThanOrEqual(4.5);
 		expect(await css(status, 'padding-top')).toBe('4px');
 		await shot(page, 'look-pill-paused', { context: status });

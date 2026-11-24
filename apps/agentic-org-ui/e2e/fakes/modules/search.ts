@@ -56,7 +56,6 @@ export const searchApi: SearchPageApi = {
 		const terms = extractSearchTerms(query);
 		const titleOnly = on('title-only');
 		const projectNames = new Map((snapshot.projects ?? []).map((p) => [p.id, p.name]));
-
 		const projects: SearchHit[] = (snapshot.projects ?? [])
 			.filter((p) => !p.archived && has(query, p.name, p.key))
 			.map((p) => ({

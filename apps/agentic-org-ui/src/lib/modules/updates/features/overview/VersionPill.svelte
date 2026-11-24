@@ -12,9 +12,19 @@
 
 	let { label, tone }: { label: string; tone: Tone } = $props();
 
+	const pillClass = $derived(
+		tone === 'ok'
+			? 't-green'
+			: tone === 'owner'
+				? 't-amber'
+				: tone === 'bad'
+					? 't-red'
+					: tones[tone]
+	);
+
 	/** StatusPill truncates by default; a status word is never cut (§6a). */
 	const wraps =
 		'items-start rounded-lg text-left [&>span]:overflow-visible [&>span]:whitespace-normal';
 </script>
 
-<StatusPill {label} class={cn(tones[tone], wraps)} data-testid="version-pill" />
+<StatusPill {label} class={cn(pillClass, wraps)} data-testid="version-pill" />

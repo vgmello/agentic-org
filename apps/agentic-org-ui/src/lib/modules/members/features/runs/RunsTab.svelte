@@ -42,10 +42,10 @@
 		accepted: tone.info,
 		running: 'bg-brand/10 text-brand-text ring-brand/30',
 		switching: tone.info,
-		blocked: tone.bad,
-		recovery_required: tone.bad,
-		succeeded: tone.ok,
-		failed: tone.bad,
+		blocked: 't-red',
+		recovery_required: 't-red',
+		succeeded: 't-green',
+		failed: 't-red',
 		cancelled: tone.neutral
 	};
 
@@ -114,7 +114,7 @@
 							<StatusPill label={TURN_STATE[t.state]} class={STATE_TONE[t.state]} />
 						</div>
 						<div class="mt-1 {factsWrap}">
-							<ul role="list" class="{factsList} text-xs/5 text-fg-muted">
+							<ul role="list" class="{factsList} text-xs/5 text-fg-muted tabular-nums">
 								<li class={fact}><time datetime={t.startedAt}>{whenText(t.startedAt)}</time></li>
 								<li class={fact}>{startedByText(t.startedBy)}</li>
 								<li class={fact}>{durationFact(t)}</li>
@@ -129,7 +129,7 @@
 							{:else}
 								<details class="group min-w-0 flex-1 basis-72">
 									<summary
-										class="inline-flex min-h-6 cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden gap-x-1 rounded-sm text-sm/6 font-semibold text-fg-secondary hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
+										class="inline-flex min-h-6 cursor-pointer list-none items-center gap-x-1 rounded-sm text-sm/6 font-semibold text-fg-secondary hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 [&::-webkit-details-marker]:hidden"
 									>
 										<svg
 											viewBox="0 0 20 20"
@@ -144,10 +144,10 @@
 										>
 										{t.attempts.length === 1 ? '1 attempt' : `${t.attempts.length} attempts`}
 									</summary>
-									<ol role="list" class="mt-2 space-y-2">
+									<ol role="list" class="mt-2 flex flex-col gap-2">
 										{#each t.attempts as a (a.n)}
 											<li
-												class="rounded-md bg-tint/[0.03] px-3 py-2 text-xs/5 text-fg-muted ring-1 ring-line ring-inset [overflow-wrap:anywhere]"
+												class="rounded-md bg-surface-raised px-3 py-2 text-xs/5 text-fg-muted ring-1 ring-line ring-inset [overflow-wrap:anywhere]"
 											>
 												<p class="text-sm/6 text-fg-secondary">
 													{a.n}. {a.connection} · <span class="font-mono">{a.model}</span>

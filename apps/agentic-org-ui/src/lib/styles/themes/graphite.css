@@ -1,0 +1,558 @@
+/*
+ * Theme: graphite — Matte Graphite Dark (Linear-inspired)
+ * Matte #161718 canvas, #141516 sidebar rail, #1b1d20 panels, #202226 raised surfaces,
+ * #2a2d32 active state, crisp 5px/7px radii, zero backdrop blur, zero glow,
+ * neutral matte charcoal/silver accents (#a8a8a8 / #c5c5c5 / #dedede, solid #535353 / #616161).
+ * Strictly scoped to `html[data-ui-theme='graphite']` and `.swatch-graphite`.
+ * Binds both executive tokens and app-wide look tokens to Graphite's single semantic ramp.
+ */
+
+html[data-ui-theme='graphite'] {
+	color-scheme: dark;
+
+	/* Graphite matte surface palette */
+	--graphite-canvas: #161718;
+	--graphite-rail: #141516;
+	--graphite-panel: #1b1d20;
+	--graphite-raised: #202226;
+	--graphite-hover: #23252a;
+	--graphite-active: #2a2d32;
+
+	/* Intra-theme unified semantic tokens */
+	--bar-track: #303238;
+
+	--tone-accent: #a8a8a8;
+	--tone-accent-bar: #a8a8a8;
+	--tone-accent-hi: #dedede;
+	--tone-accent-ink: #c5c5c5;
+	--tone-accent-bg: rgba(184, 184, 184, 0.09);
+	--tone-accent-ring: rgba(184, 184, 184, 0.75);
+
+	--tone-ok: #71c598;
+	--tone-ok-bar: #71c598;
+	--tone-ok-ink: #91d9b0;
+	--tone-ok-bg: rgba(113, 197, 152, 0.1);
+	--tone-ok-ring: rgba(113, 197, 152, 0.25);
+
+	--tone-warn: #dbb65e;
+	--tone-warn-bar: #dbb65e;
+	--tone-warn-ink: #eccf8c;
+	--tone-warn-bg: rgba(219, 182, 94, 0.1);
+	--tone-warn-ring: rgba(219, 182, 94, 0.25);
+
+	--tone-bad: #e18b92;
+	--tone-bad-bar: #e18b92;
+	--tone-bad-ink: #f0aab0;
+	--tone-bad-bg: rgba(225, 139, 146, 0.1);
+	--tone-bad-ring: rgba(225, 139, 146, 0.26);
+
+	--tone-queued: #969aa5;
+	--tone-queued-ink: #b8bbc4;
+
+	/* App-wide look tokens (Work, Projects, Teams, Offices, Chat, Costs, Settings, Pills) */
+	--surface: var(--graphite-canvas);
+	--surface-sunken: var(--graphite-rail);
+	--surface-chip: var(--graphite-raised);
+	--surface-raised: var(--graphite-panel);
+	--surface-overlay: var(--graphite-hover);
+	--line-subtle: #23252a;
+	--line: #282a2e;
+	--line-strong: #35373d;
+	--field-border: #737782;
+
+	--fg: #f1f1f3;
+	--fg-bright: #f1f1f3;
+	--fg-body: #c6c8ce;
+	--fg-secondary: #c6c8ce;
+	--fg-muted: #a2a5ad;
+	--fg-subtle: #8e919a;
+	--on-emphasis: #ffffff;
+
+	--primary: #535353;
+	--primary-hover: #616161;
+	--ring: var(--tone-accent);
+	--brand: var(--tone-accent);
+	--focus: var(--tone-accent);
+	--link: var(--tone-accent-ink);
+	--brand-text: var(--tone-accent-ink);
+	--brand-text-strong: #dedede;
+	--brand-text-stronger: #e5e5e5;
+
+	--info: var(--tone-accent);
+	--info-emphasis: #535353;
+	--info-text: var(--tone-accent-ink);
+	--info-text-strong: #dedede;
+	--info-text-stronger: #e5e5e5;
+
+	--success: var(--tone-ok);
+	--success-emphasis: var(--tone-ok);
+	--success-text: var(--tone-ok-ink);
+	--positive: var(--tone-ok);
+	--positive-emphasis: var(--tone-ok);
+	--positive-text: var(--tone-ok-ink);
+	--positive-text-strong: var(--tone-ok-ink);
+
+	--warning: var(--tone-warn);
+	--warning-emphasis: var(--tone-warn);
+	--warning-deep: var(--tone-warn);
+	--warning-text: var(--tone-warn-ink);
+	--warning-text-strong: var(--tone-warn-ink);
+	--warning-text-stronger: var(--tone-warn-ink);
+
+	--danger: var(--tone-bad);
+	--danger-emphasis: #9f434d;
+	--danger-text: var(--tone-bad-ink);
+	--danger-text-strong: #f5c7cc;
+	--danger-text-stronger: #f5c7cc;
+
+	/* shadcn-svelte semantic bindings */
+	--background: var(--graphite-canvas);
+	--foreground: #f1f1f3;
+	--card: var(--graphite-panel);
+	--card-foreground: #f1f1f3;
+	--popover: var(--graphite-raised);
+	--popover-foreground: #f1f1f3;
+	--primary-foreground: #ffffff;
+	--secondary: var(--graphite-raised);
+	--secondary-foreground: #f1f1f3;
+	--muted: var(--graphite-panel);
+	--muted-foreground: #a2a5ad;
+	--accent: var(--graphite-active);
+	--accent-foreground: #f1f1f3;
+	--destructive: var(--tone-bad-ink);
+	--border: #282a2e;
+	--input: #737782;
+
+	/* Graphite matte executive surfaces & crisp radii */
+	--exec-bg: var(--graphite-canvas);
+	--exec-sidebar-bg: var(--graphite-rail);
+	--exec-sidebar-blur: none;
+	--exec-sidebar-sheen: none;
+	--exec-surface: var(--graphite-panel);
+	--exec-surface-hi: var(--graphite-raised);
+	--exec-well: var(--graphite-canvas);
+	--exec-panel-sheen: none;
+	--exec-panel-bg: var(--graphite-panel);
+	--exec-panel-bg-hover: var(--graphite-raised);
+	--exec-border: #282a2e;
+	--exec-border-hi: #35373d;
+	--exec-blur: none;
+	--exec-shadow: inset 0 0 0 1px #282a2e;
+	--exec-shadow-hi: inset 0 0 0 1px #35373d;
+	--exec-ink: #f1f1f3;
+	--exec-body: #c6c8ce;
+	--exec-muted: #a2a5ad;
+	--exec-dim: #a2a5ad;
+	--exec-pillar-name-ink: #a2a5ad;
+	--exec-on-accent: #ffffff;
+	--exec-accent: #535353;
+
+	/* Compact radii (5px controls, 7px panels) */
+	--exec-panel-radius: 7px;
+	--exec-lenses-radius: 5px;
+	--exec-sm-radius: 5px;
+	--exec-ctrl-radius: 5px;
+	--exec-inset-radius: 7px;
+	--exec-memo-radius: 7px;
+	--exec-page-gap: 1.25rem;
+	--exec-section-gap: 0.75rem;
+	--exec-stage-gap: 0.75rem;
+
+	/* Graphite top bar & flat command pill */
+	--exec-topbar-height: 58px;
+	--exec-topbar-bg: var(--graphite-canvas);
+	--exec-topbar-border: 1px solid #282a2e;
+	--exec-topbar-fade: none;
+	--exec-topbar-fade-blur: none;
+	--exec-cmdk-radius: 5px;
+	--exec-cmdk-bg: var(--graphite-panel);
+	--exec-cmdk-bg-hover: var(--graphite-hover);
+	--exec-cmdk-blur: none;
+	--exec-cmdk-shadow: inset 0 0 0 1px #35373d;
+	--exec-cmdk-shadow-hover: inset 0 0 0 1px #696c74;
+	--exec-cmdk-hover-lift: none;
+	--exec-cmdk-trigger-radius: 5px;
+	--exec-cmdk-trigger-ink: #a2a5ad;
+	--exec-cmdk-trigger-hover-bg: var(--graphite-hover);
+	--exec-cmdk-icon: #a2a5ad;
+	--exec-cmdk-icon-hover: #f1f1f3;
+	--exec-cmdk-kbd-radius: 5px;
+	--exec-cmdk-kbd-bg: var(--graphite-canvas);
+	--exec-cmdk-kbd-shadow: inset 0 0 0 1px #35373d;
+	--exec-cmdk-kbd-ink: #c6c8ce;
+	--exec-cmdk-sep: #35373d;
+	--exec-ai-radius: 5px;
+	--exec-ai-bg: var(--graphite-panel);
+	--exec-ai-bg-hover: var(--graphite-hover);
+	--exec-ai-shadow: inset 0 0 0 1px #35373d;
+	--exec-ai-shadow-hover: inset 0 0 0 1px #696c74;
+	--exec-ai-ink: #f1f1f3;
+	--exec-ai-ink-hover: #ffffff;
+	--exec-ai-ico: var(--tone-accent-ink);
+	--exec-ai-ico-hover: #e5e5e5;
+
+	/* Flat bars bound to Graphite semantic tones */
+	--exec-bar-budget: var(--tone-accent-bar);
+	--exec-bar-sky: var(--tone-accent-bar);
+	--exec-bar-ok: var(--tone-ok-bar);
+	--exec-bar-warn: var(--tone-warn-bar);
+	--exec-bar-bad: var(--tone-bad-bar);
+	--exec-seg-agents: var(--tone-accent-bar);
+	--exec-seg-ci: var(--tone-ok-bar);
+	--exec-seg-human: var(--tone-warn-bar);
+	--exec-seg-queued: var(--tone-queued);
+	--exec-seg-queued-high: var(--tone-bad-bar);
+
+	/* Solid flat neutral charcoal CTAs (white on #535353 = 7.69:1, hover #616161 = 6.19:1; border #858891 >= 4.77:1) */
+	--exec-cta-bg: #535353;
+	--exec-cta-fill: #616161;
+	--exec-cta-shadow: inset 0 0 0 1px #858891;
+	--exec-cta-shadow-hover: inset 0 0 0 1px #a8a8a8;
+	--exec-cta-hover-lift: none;
+	--exec-cta-glass-radius: 5px;
+	--exec-cta-glass-bg: #535353;
+	--exec-cta-glass-bg-hover: #616161;
+	--exec-cta-glass-blur: none;
+	--exec-cta-glass-shadow: inset 0 0 0 1px #858891;
+	--exec-cta-glass-shadow-hover: inset 0 0 0 1px #a8a8a8;
+	--exec-cta-glass-ink: #ffffff;
+	--exec-cta-glass-ico: #ffffff;
+	--exec-btn-outline-bg: var(--graphite-canvas);
+	--exec-btn-outline-bg-hover: var(--graphite-hover);
+	--exec-btn-outline-ink: #c6c8ce;
+	--exec-btn-outline-ink-hover: #f1f1f3;
+	--exec-btn-outline-ring: #35373d;
+	--exec-btn-outline-ring-hover: #696c74;
+	--exec-btn-ghost-bg-hover: var(--graphite-hover);
+	--exec-avatar-bg: var(--graphite-raised);
+	--exec-avatar-ring: var(--graphite-panel);
+
+	/* Deny guard (white on #9f434d = 6.21:1, hover #ae4954 = 5.41:1) */
+	--exec-deny-bg: transparent;
+	--exec-deny-bg-hover: rgba(225, 139, 146, 0.14);
+	--exec-deny-ink: var(--tone-bad-ink);
+	--exec-deny-ink-hover: #f5c7cc;
+	--exec-deny-ring: var(--tone-bad-ring);
+	--exec-deny-ring-hover: rgba(225, 139, 146, 0.48);
+	--exec-deny-guard-bg: var(--tone-bad-bg);
+	--exec-deny-guard-ring: var(--tone-bad-ring);
+	--exec-deny-confirm-bg: #9f434d;
+	--exec-deny-confirm-hover: #ae4954;
+	--exec-deny-confirm-ink: #ffffff;
+
+	/* Executive Brief memo */
+	--exec-cos-bg: var(--graphite-canvas);
+	--exec-cos-fade: var(--graphite-canvas);
+	--exec-cos-border: #35373d;
+	--exec-cos-rule: var(--tone-accent);
+
+	/* Unread rail dot (no glow halo in matte Graphite) */
+	--exec-nav-dot: var(--tone-warn);
+	--exec-nav-dot-halo: transparent;
+	--exec-nav-dot-ring: var(--graphite-rail);
+
+	/* Home scroll cue */
+	--exec-scroll-hint-bg: var(--graphite-canvas);
+	--exec-scroll-hint-pill-bg: #1b1d20;
+	--exec-scroll-hint-ink: #c6c8ce;
+	--exec-scroll-hint-ink-hover: #f1f1f3;
+
+	--exec-hor-item-bg: var(--graphite-canvas);
+	--exec-hor-item-bg-hover: var(--graphite-hover);
+	--exec-hor-date-bg: var(--graphite-panel);
+	--exec-hor-date-month-ink: #a2a5ad;
+	--exec-hor-date-day-ink: #f1f1f3;
+	--detail-panel-surface: #18191a;
+	--side-panel-surface: #18191a;
+	--assembly-surface: transparent;
+}
+
+html[data-ui-theme='graphite'] .exec-canvas::before,
+html[data-ui-theme='graphite'] .exec-canvas::after {
+	display: none;
+}
+
+html[data-ui-theme='graphite'] .exec-card {
+	border-radius: 7px;
+}
+
+html[data-ui-theme='graphite'] .exec-well {
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+	border-radius: 5px;
+	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+}
+
+html[data-ui-theme='graphite'] .exec-cta,
+html[data-ui-theme='graphite'] .exec-cta-glass {
+	border-radius: 5px;
+	border: 1px solid #858891;
+}
+
+html[data-ui-theme='graphite'] .exec-cta:hover,
+html[data-ui-theme='graphite'] .exec-cta:focus-visible,
+html[data-ui-theme='graphite'] .exec-cta-glass:hover,
+html[data-ui-theme='graphite'] .exec-cta-glass:focus-visible {
+	border-color: #a8a8a8;
+}
+
+html[data-ui-theme='graphite'] .exec-cta .exec-cta-sheen {
+	display: none;
+}
+
+/* Matte active nav & switcher state matching Graphite's flat Linear style */
+html[data-ui-theme='graphite'] .exec-nav-item:hover {
+	background: var(--graphite-hover);
+	color: var(--exec-ink);
+}
+
+html[data-ui-theme='graphite'] .exec-nav-item.is-active {
+	background: var(--graphite-active);
+	color: var(--exec-ink);
+	box-shadow:
+		inset 2px 0 0 #a8a8a8,
+		inset 0 0 0 1px #737782;
+}
+
+html[data-ui-theme='graphite'] .exec-theme-pill.is-on {
+	background: var(--graphite-active);
+	color: var(--exec-ink);
+	box-shadow: inset 0 0 0 1.5px rgba(184, 184, 184, 0.85);
+}
+
+@media (min-width: 640px) and (forced-colors: none) {
+	html[data-ui-theme='graphite'] {
+		--sidebar-edge-shade: linear-gradient(to left, rgb(0 0 0 / 0.37), transparent 4px);
+		--sidebar-top-light: rgb(255 255 255 / 0.075);
+		--page-header-light: rgb(255 255 255 / 0.035);
+	}
+
+	html[data-ui-theme='graphite'] aside.exec-sidebar::before {
+		box-shadow: inset -1px 0 #38393a;
+	}
+}
+
+/* Graphite interior sidebar text hierarchy (poc/v6.html 13abb1f1) */
+html[data-ui-theme='graphite'][data-interior-page] .exec-nav-label,
+html[data-ui-theme='graphite'][data-interior-page] .exec-nav-label svg {
+	color: #85888e;
+}
+
+html[data-ui-theme='graphite'][data-interior-page]
+	.exec-nav-item:not([aria-current='page']):not(:hover) {
+	color: var(--exec-body);
+}
+
+/* Graphite Work and Inbox share a matte reading canvas (poc/operations.css 1f5f7149..e75d920a, 215be52a) */
+html[data-ui-theme='graphite'] main:has(.triage-workspace, .work-header) {
+	background: #18191a;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace, .work-header) {
+	--graphite-inbox-line: #262728;
+	--work-reading-border: #262728;
+	--triage-row-hover: #202226;
+	--triage-row-selected: #2a2d32;
+	--work-row-hover: #202226;
+	--work-row-selected: #2a2d32;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace, .work-header) .exec-sidebar {
+	background-color: #131516;
+	box-shadow: inset -1px 0 var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace, .work-header) .exec-topbar {
+	background: #18191a;
+	border-bottom-color: var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-page {
+	padding: 0;
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-header {
+	border-bottom-color: var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-group-title {
+	background: #1b1d20;
+	box-shadow: inset 0 0 0 1px var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-bcol {
+	background: #141516;
+	box-shadow: inset 0 0 0 1px var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-bcard {
+	background: #1b1d20;
+	box-shadow: inset 0 0 0 1px #282a2e;
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-bcard:is(:hover, :focus-within) {
+	background: #202226;
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-bcard[aria-current='true'] {
+	background: #2a2d32;
+	box-shadow:
+		inset 3px 0 0 var(--tone-accent-ink),
+		inset 0 0 0 1px var(--exec-border-hi);
+}
+
+html[data-ui-theme='graphite'] main:has(.activity-main[data-view='assembly']) {
+	background: #18191a;
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-reading {
+	background: #18191a;
+	border-inline-start-color: var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.work-header) .work-reading .work-kind {
+	border-inline-start-color: var(--graphite-inbox-line);
+}
+
+@media (min-width: 960px) {
+	html[data-ui-theme='graphite'] main:has(.activity-main[data-view='assembly']) {
+		background: #18191a;
+	}
+
+	html[data-ui-theme='graphite']:has(.work-header) .work-reading {
+		box-shadow: inset 9px 0 12px -10px rgb(0 0 0 / 0.7);
+	}
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-page {
+	padding: 0;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-workspace,
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-workspace:hover {
+	background-color: #18191a;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+@media (min-width: 960px) {
+	html[data-ui-theme='graphite']:has(.triage-workspace) .triage-workspace {
+		height: max(600px, calc(100dvh - var(--exec-topbar-height, 58px)));
+	}
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-header {
+	border-bottom-color: var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-queue {
+	--triage-row-hover: #272829;
+	background: linear-gradient(rgb(255 255 255 / 0.022), transparent 24rem) #1b1c1d;
+	border-inline-end-color: var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-queue-summary {
+	border-bottom-color: var(--graphite-inbox-line);
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-group-head {
+	background: transparent;
+	border-bottom-color: transparent;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-item {
+	grid-template-columns: 30px minmax(0, 1fr) max-content;
+	column-gap: 10px;
+	row-gap: 2px;
+	padding-block: 10px;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-person {
+	display: contents;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-person > .triage-avatar-sm {
+	grid-area: 1 / 1 / span 2;
+	align-self: center;
+	width: 30px;
+	height: 30px;
+	font-size: 0.75rem;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-item .triage-title {
+	grid-area: 1 / 2;
+	padding-inline-start: 0;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-sender {
+	grid-area: 2 / 2;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0 6px;
+	color: var(--exec-body);
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-sender strong {
+	font-weight: 500;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-kind::before {
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	background: currentColor;
+	content: '';
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-kind-ico {
+	display: none;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-stamp {
+	grid-area: 1 / 3 / span 2;
+	display: grid;
+	align-content: start;
+	justify-items: end;
+	gap: 3px;
+	padding-block-start: 2px;
+	color: var(--exec-muted);
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-stamp time {
+	font-variant-numeric: tabular-nums;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-state-icon {
+	display: inline-flex;
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-state-icon[data-state='urgent'] {
+	color: var(--tone-warn-ink);
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-state-icon[data-state='handled'] {
+	color: var(--tone-ok-ink);
+}
+
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-meta {
+	grid-column: 2 / -1;
+	padding-inline-start: 0;
+}
+
+@media (min-width: 960px) {
+	html[data-ui-theme='graphite']:has(.triage-workspace) .triage-reading {
+		box-shadow: inset 9px 0 12px -10px rgb(0 0 0 / 0.7);
+	}
+}
+
+/* Settings preview swatch */
+.swatch-graphite {
+	background: linear-gradient(90deg, #141516 0%, #141516 28%, #161718 28%, #161718 100%);
+}
+
+.swatch-graphite .swatch-bar {
+	background: linear-gradient(90deg, #535353 0%, #a8a8a8 62%, #71c598 100%);
+}

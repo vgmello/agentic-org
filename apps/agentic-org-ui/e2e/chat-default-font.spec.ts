@@ -86,9 +86,8 @@ for (const [width, surface] of [
 		const readPlacement = () =>
 			composer.evaluate((element) => {
 				const box = element.getBoundingClientRect();
-				const headerBottom = document
-					.querySelector('[data-shell-header]')!
-					.getBoundingClientRect().bottom;
+				const headerBottom = (document.querySelector('header.exec-topbar') ??
+					document.querySelector('[data-shell-header]'))!.getBoundingClientRect().bottom;
 				const x = box.left + box.width / 2;
 				const visible =
 					box.top >= headerBottom &&

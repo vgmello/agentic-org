@@ -64,7 +64,7 @@
 <li
 	data-access-row
 	data-member-id={person.memberId}
-	class="relative flex flex-col gap-y-3 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8 @min-[44rem]:flex-row @min-[44rem]:items-start @min-[44rem]:justify-between @min-[44rem]:gap-x-8"
+	class="relative flex flex-col gap-y-3 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8 @min-[44rem]:flex-row @min-[44rem]:items-start @min-[44rem]:justify-between @min-[44rem]:gap-x-8"
 >
 	<div class="flex min-w-0 flex-1 items-start gap-x-4 gap-y-2 @max-[20rem]:flex-col">
 		<Avatar name={person.name} size="md" />

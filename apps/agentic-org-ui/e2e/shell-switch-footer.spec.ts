@@ -93,7 +93,7 @@ async function textFits(locator: Locator) {
 	await expect(locator).toHaveCSS('white-space', 'normal');
 	await expect(locator).toHaveCSS('overflow-x', 'visible');
 }
-async function footerChecks(page: Page, width: number, scale: number, office = 'HQ') {
+async function footerChecks(page: Page, width: number, _scale: number, office = 'HQ') {
 	const scope = await footerScope(page, width);
 	const account = accountButton(scope);
 	await account.scrollIntoViewIfNeeded();
@@ -110,6 +110,7 @@ async function footerChecks(page: Page, width: number, scale: number, office = '
 	await line.hover();
 	expect(await contrast(words)).toBeGreaterThanOrEqual(4.5);
 	if (width < 640) expect((await line.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+	await page.keyboard.press('Tab');
 	await line.focus();
 	await expect(line).toBeFocused();
 	await expect(line).toHaveCSS('outline-width', '2px');
@@ -145,19 +146,28 @@ for (const width of [320, 960, 1280]) {
 }
 
 test(
-	'footer: the rail keeps a 48 px account button and the eight destinations',
+	'footer: the collapsed rail keeps a 48 px account button, compact office status and all destinations',
 	{
 		tag: '@webkit'
 	},
 	async ({ page }) => {
 		await page.setViewportSize({ width: 640, height: 900 });
 		await openShell(page);
+		await page.getByRole('button', { name: 'Auto-hide sidebar', exact: true }).click();
+		await page.mouse.move(620, 20);
+		const aside = page.getByRole('complementary', { name: 'Sidebar', exact: true });
+		await expect(aside).toHaveAttribute('data-collapsed', 'true');
+		await expect.poll(async () => Math.round((await aside.boundingBox())?.width ?? 0)).toBe(68);
 		const account = page.getByRole('button', { name: 'You · Owner, account menu', exact: true });
 		expect((await account.boundingBox())?.width).toBe(48);
-		await expect(officeLine(page.locator('body'))).toBeHidden();
+		const compactOffice = officeLine(aside);
+		await expect(compactOffice).toBeVisible();
+		await expect(compactOffice.locator('span')).toHaveCount(0);
 		await expect(
-			page.getByRole('navigation', { name: 'Main', exact: true }).locator(':scope > ul > li > a')
-		).toHaveCount(8);
+			page
+				.getByRole('navigation', { name: 'Main', exact: true })
+				.locator('ul:not(#exec-nav-favs) > li > a')
+		).toHaveCount(12);
 		await shot(page, 'footer-rail');
 	}
 );
@@ -240,7 +250,9 @@ for (const [path, label, state] of [
 		await page.setViewportSize({ width: 320, height: 900 });
 		await openShell(page);
 		await visit(page, path);
-		await expect(page.locator('[data-shell-header]')).toContainText(label);
+		await expect(
+			page.getByRole('button', { name: 'Menu', exact: true }).locator('..')
+		).toContainText(label);
 		if (state) await expect(page.getByRole('heading', { name: state, exact: true })).toBeVisible();
 		else await expect(page.getByTestId('office-down')).toBeVisible();
 		const line = await footerChecks(page, 320, 1);

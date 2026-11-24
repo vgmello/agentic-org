@@ -34,43 +34,22 @@ import type {
 	ReleaseCapRow,
 	ResolvedPeriod,
 	SpeedKindRow,
+	SubscriptionModelUsage,
+	SubscriptionUsageOverview,
+	SubscriptionUsageSnapshot,
 	TrendBucket,
 	UsageRecord,
 	UsageTotals
 } from '../../../src/lib/modules/costs/types';
-import { mockMode } from '../mock-mode';
+import { mockMode, POC_ORG_ID } from '../mock-mode';
+import { pocUsageRecords, type PocStoredUsageRecord } from '../poc-dataset';
 import usage from '../data/costs/usage.json' with { type: 'json' };
 import priceData from '../data/costs/prices.json' with { type: 'json' };
 import budgetData from '../data/costs/budgets.json' with { type: 'json' };
 import projectsData from '../data/projects/projects.json' with { type: 'json' };
 import releasesData from '../data/releases/releases.json' with { type: 'json' };
 
-type StoredRecord = {
-	id: string;
-	occurredAt: string;
-	consumer: { kind: 'agent'; memberId: string } | { kind: 'one_off'; label: string };
-	runtime: string;
-	provider: string;
-	model: string;
-	attribution: {
-		basis: UsageRecord['attribution']['basis'];
-		taskRef?: string;
-		taskTitle?: string;
-		projectId?: string;
-		teamId?: string;
-	};
-	workType: 'build' | 'run' | null;
-	tokens: [number, number, number, number, number] | null;
-	tokenStatus: UsageRecord['tokenStatus'];
-	costMicroUsd: number | null;
-	costBasis: UsageRecord['costBasis'];
-	costStatus: UsageRecord['costStatus'];
-	priceId?: string | null;
-	apiEquivalent?: boolean;
-	issue?: string;
-	supersedesId?: string;
-	correction?: { reason: string; byName: string; at: string };
-};
+type StoredRecord = PocStoredUsageRecord;
 type StoredPrice = Omit<PriceVersion, 'used'> & { scheduled?: boolean };
 type StoredBudget = {
 	unit: BudgetUnit;
@@ -86,6 +65,16 @@ const all = usage.records as StoredRecord[];
 const superseded = new Set(all.map((r) => r.supersedesId).filter(Boolean));
 /** The effective ledger: records nothing has replaced. */
 const effective = all.filter((r) => !superseded.has(r.id));
+const pocLedger: StoredRecord[] = pocUsageRecords();
+
+function ledgerFor(organizationId: string): StoredRecord[] {
+	return organizationId === POC_ORG_ID ? pocLedger : effective;
+}
+
+function coverageGapsFor(organizationId: string) {
+	if (on('empty') || organizationId === POC_ORG_ID) return [];
+	return usage.gaps;
+}
 
 /** The scheduled rate always starts on the first of next month, so it stays scheduled whatever the date. */
 function nextMonthStart(): string {
@@ -97,10 +86,25 @@ let prices: StoredPrice[] = (structuredClone(priceData) as StoredPrice[]).map((p
 );
 const operations = new Map<string, PriceVersion>();
 let unknownOnce = false;
-const mutableBudgets: Record<string, { daily?: StoredBudget; monthly?: StoredBudget }> =
-	structuredClone(
-		budgetData.budgets as Record<string, { daily?: StoredBudget; monthly?: StoredBudget }>
-	);
+type OrgBudgetMap = Record<string, { daily?: StoredBudget; monthly?: StoredBudget }>;
+const budgetsByOrg = new Map<string, OrgBudgetMap>();
+function budgetsFor(organizationId: string): OrgBudgetMap {
+	let map = budgetsByOrg.get(organizationId);
+	if (!map) {
+		map =
+			organizationId === POC_ORG_ID
+				? {
+						ada: { monthly: { unit: 'usd', limit: 40_000_000, warned: true } },
+						eden: { monthly: { unit: 'usd', limit: 30_000_000 } },
+						jules: { monthly: { unit: 'usd', limit: 40_000_000, warned: true, hold: 'held' } },
+						kai: { monthly: { unit: 'usd', limit: 35_000_000 } },
+						rowan: { monthly: { unit: 'usd', limit: 35_000_000, warned: true } }
+					}
+				: structuredClone(budgetData.budgets as OrgBudgetMap);
+		budgetsByOrg.set(organizationId, map);
+	}
+	return map;
+}
 const budgetOperations = new Map<string, { applied: true; message: string }>();
 let budgetUnknownOnce = false;
 let budgetActionUnknownOnce = false;
@@ -132,7 +136,7 @@ const fail = (code: string, message: string, extra: Record<string, unknown> = {}
 	Object.assign(new Error(message), { source: 'api', code, message, ...extra });
 
 async function read() {
-	await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 200));
+	if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 	if (on('unavailable')) await unavailableCall();
 	if (on('fails') || on('costs-fail'))
 		throw fail('internal', "HQ didn't answer. Check that the office is running, then try again.");
@@ -466,7 +470,7 @@ export const costsApi: CostsApi = {
 	},
 
 	async addPrice(_organizationId, draft) {
-		await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 500));
+		if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 		if (on('unavailable')) await unavailableCall();
 		const replay = operations.get(draft.operationId);
 		if (replay) return structuredClone(replay);
@@ -519,7 +523,7 @@ export const costsApi: CostsApi = {
 	},
 
 	async priceOperation(_organizationId, operationId) {
-		await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 300));
+		if (on('slow')) await new Promise((r) => setTimeout(r, 2500));
 		if (on('unavailable')) await unavailableCall();
 		const price = operations.get(operationId);
 		return price
@@ -544,7 +548,7 @@ export const costsApi: CostsApi = {
 			(p) => !managed || above(owner(p.id)).includes('web')
 		);
 		const month = resolvePeriod({ kind: 'this_month', timeZone: request.timeZone }).period;
-		const records = on('empty') ? [] : effective;
+		const records = on('empty') ? [] : ledgerFor(organizationId);
 		return structuredClone({
 			scope: managed ? ('managed' as const) : ('organization' as const),
 			thisMonth: month,
@@ -556,7 +560,7 @@ export const costsApi: CostsApi = {
 					thisMonth: totalsOf(mine.filter((r) => within(r, month)))
 				};
 			}),
-			coverage: { checkpointAt: usage.checkpointAt, gaps: on('empty') ? [] : usage.gaps }
+			coverage: { checkpointAt: usage.checkpointAt, gaps: coverageGapsFor(organizationId) }
 		});
 	},
 
@@ -565,9 +569,10 @@ export const costsApi: CostsApi = {
 		ownerOnly();
 		const { period, previous } = resolvePeriod(request);
 		const n = await names(organizationId);
-		const records = on('empty') ? [] : effective.filter((r) => within(r, period));
+		const ledger = on('empty') ? [] : ledgerFor(organizationId);
+		const records = ledger.filter((r) => within(r, period));
 		const totalsPrevious = previous
-			? totalsOf(on('empty') ? [] : effective.filter((r) => within(r, previous)))
+			? totalsOf(ledger.filter((r) => within(r, previous)))
 			: undefined;
 		const onTask = records.filter((r) => r.attribution.projectId);
 		const notOnTask = records.filter((r) => !r.attribution.projectId);
@@ -635,7 +640,7 @@ export const costsApi: CostsApi = {
 			byWorkType,
 			coverage: {
 				checkpointAt: usage.checkpointAt,
-				gaps: period.toNow && !on('empty') ? usage.gaps : []
+				gaps: period.toNow ? coverageGapsFor(organizationId) : []
 			}
 		});
 	},
@@ -647,7 +652,7 @@ export const costsApi: CostsApi = {
 			throw fail('internal', "HQ didn't answer. Check that the office is running, then try again.");
 		const { period } = resolvePeriod(request);
 		const n = await names(organizationId);
-		const list = (on('empty') ? [] : effective)
+		const list = (on('empty') ? [] : ledgerFor(organizationId))
 			.filter((r) => within(r, period) && matches(r, key))
 			.toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt));
 		const offset = Number(cursor ?? 0);
@@ -664,10 +669,11 @@ export const costsApi: CostsApi = {
 		ownerOnly();
 		const n = await names(organizationId);
 		const zone = on('no-zone') ? null : budgetData.zone.name;
-		const stored = mutableBudgets;
+		const stored = budgetsFor(organizationId);
+		const ledger = ledgerFor(organizationId);
 		const agents: AgentBudget[] = n.agents
 			.map((m) => {
-				const mine = effective.filter(
+				const mine = ledger.filter(
 					(r) => r.consumer.kind === 'agent' && r.consumer.memberId === m.id
 				);
 				const unmeasured = mine.some((r) => r.runtime === 'antigravity');
@@ -703,7 +709,7 @@ export const costsApi: CostsApi = {
 		const n = await names(organizationId);
 		const allMine = on('empty')
 			? []
-			: effective.filter((r) => r.attribution.projectId === projectId);
+			: ledgerFor(organizationId).filter((r) => r.attribution.projectId === projectId);
 		const records = allMine.filter((r) => within(r, period));
 		const prevTotals = previous ? totalsOf(allMine.filter((r) => within(r, previous))) : undefined;
 		const meta = projectMeta[projectId];
@@ -756,7 +762,7 @@ export const costsApi: CostsApi = {
 			speed,
 			coverage: {
 				checkpointAt: usage.checkpointAt,
-				gaps: period.toNow && !on('empty') ? usage.gaps : []
+				gaps: period.toNow ? coverageGapsFor(organizationId) : []
 			},
 			viewer: { scope: managed ? ('managed' as const) : ('organization' as const), canExport: true }
 		} satisfies ProjectInsights);
@@ -773,7 +779,7 @@ export const costsApi: CostsApi = {
 			throw fail('not_authorized', "Only the owner and this project's manager see its costs.");
 		const { period } = resolvePeriod(request);
 		const n = await names(organizationId);
-		const list = (on('empty') ? [] : effective)
+		const list = (on('empty') ? [] : ledgerFor(organizationId))
 			.filter(
 				(r) =>
 					r.attribution.projectId === projectId && within(r, period) && matchesProjectKey(r, key)
@@ -802,7 +808,7 @@ export const costsApi: CostsApi = {
 		const thisMonth = resolvePeriod({ kind: 'this_month', timeZone: request.timeZone }).period;
 		const lastMonth = resolvePeriod({ kind: 'last_month', timeZone: request.timeZone }).period;
 		const n = await names(organizationId);
-		const visibleAll = (on('empty') ? [] : effective).filter((r) =>
+		const visibleAll = (on('empty') ? [] : ledgerFor(organizationId)).filter((r) =>
 			managed ? !!(r.attribution.projectId && allowedIds.has(r.attribution.projectId)) : true
 		);
 		const periodRecords = visibleAll.filter((r) => within(r, period));
@@ -879,7 +885,7 @@ export const costsApi: CostsApi = {
 			...(notOnTask && notOnTask.records > 0 ? { notOnTask } : {}),
 			coverage: {
 				checkpointAt: usage.checkpointAt,
-				gaps: period.toNow && !on('empty') ? usage.gaps : []
+				gaps: period.toNow ? coverageGapsFor(organizationId) : []
 			},
 			viewer: { scope: managed ? ('managed' as const) : ('organization' as const), canExport: true }
 		} satisfies OrganizationInsights);
@@ -899,7 +905,7 @@ export const costsApi: CostsApi = {
 			);
 		const { period } = resolvePeriod(request);
 		const n = await names(organizationId);
-		const list = (on('empty') ? [] : effective)
+		const list = (on('empty') ? [] : ledgerFor(organizationId))
 			.filter((r) => {
 				if (!within(r, period)) return false;
 				if (scope.kind === 'project') return r.attribution.projectId === scope.projectId;
@@ -913,7 +919,7 @@ export const costsApi: CostsApi = {
 			records: list,
 			coverage: {
 				checkpointAt: usage.checkpointAt,
-				gaps: period.toNow && !on('empty') ? usage.gaps : []
+				gaps: period.toNow ? coverageGapsFor(organizationId) : []
 			}
 		});
 	},
@@ -930,7 +936,7 @@ export const costsApi: CostsApi = {
 		const allowedIds = managedProjectIds(snapshot);
 		const n = await names(organizationId);
 		const zone = request.timeZone;
-		const allAgent = (on('empty') ? [] : effective).filter((r) => {
+		const allAgent = (on('empty') ? [] : ledgerFor(organizationId)).filter((r) => {
 			if (r.consumer.kind !== 'agent' || r.consumer.memberId !== memberId) return false;
 			if (managed) return !!(r.attribution.projectId && allowedIds.has(r.attribution.projectId));
 			return true;
@@ -1018,9 +1024,11 @@ export const costsApi: CostsApi = {
 			const bZone = on('no-zone') ? null : budgetData.zone.name;
 			const fullAgentRecords = on('empty')
 				? []
-				: effective.filter((r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId);
+				: ledgerFor(organizationId).filter(
+						(r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId
+					);
 			const unmeasured = fullAgentRecords.some((r) => r.runtime === 'antigravity');
-			const b = mutableBudgets[memberId];
+			const b = budgetsFor(organizationId)[memberId];
 			if (bZone && b && !on('empty')) {
 				const { day, month } = budgetWindows(bZone);
 				budgets = {
@@ -1060,7 +1068,7 @@ export const costsApi: CostsApi = {
 			...(budgets ? { budgets } : {}),
 			coverage: {
 				checkpointAt: usage.checkpointAt,
-				gaps: on('empty') ? [] : usage.gaps
+				gaps: coverageGapsFor(organizationId)
 			}
 		} satisfies MemberCostOverview);
 	},
@@ -1078,7 +1086,7 @@ export const costsApi: CostsApi = {
 		const managed = on('manager');
 		const allowedIds = managedProjectIds(snapshot);
 		const n = await names(organizationId);
-		const list = (on('empty') ? [] : effective)
+		const list = (on('empty') ? [] : ledgerFor(organizationId))
 			.filter((r) => {
 				if (r.consumer.kind !== 'agent' || r.consumer.memberId !== memberId) return false;
 				if (managed && (!r.attribution.projectId || !allowedIds.has(r.attribution.projectId)))
@@ -1095,7 +1103,7 @@ export const costsApi: CostsApi = {
 		});
 	},
 
-	async setAgentBudget(_organizationId, memberId, draft) {
+	async setAgentBudget(organizationId, memberId, draft) {
 		await new Promise((r) => setTimeout(r, on('slow') ? 2000 : 250));
 		if (on('unavailable')) await unavailableCall();
 		if (on('viewer') || on('manager'))
@@ -1107,8 +1115,9 @@ export const costsApi: CostsApi = {
 		const zone = on('no-zone') ? null : budgetData.zone.name;
 		if (!zone)
 			throw fail('invalid_request', "Agent budgets can't run without a known budget time zone.");
-		const entry = (mutableBudgets[memberId] ??= {});
-		const mine = effective.filter(
+		const orgBudgets = budgetsFor(organizationId);
+		const entry = (orgBudgets[memberId] ??= {});
+		const mine = ledgerFor(organizationId).filter(
 			(r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId
 		);
 		const unmeasured = mine.some((r) => r.runtime === 'antigravity');
@@ -1130,7 +1139,7 @@ export const costsApi: CostsApi = {
 		return structuredClone(budgetState(nextStored, mine, window, unmeasured));
 	},
 
-	async agentBudgetAction(_organizationId, memberId, action) {
+	async agentBudgetAction(organizationId, memberId, action) {
 		await new Promise((r) => setTimeout(r, on('slow') ? 2000 : 250));
 		if (on('unavailable')) await unavailableCall();
 		if (on('viewer') || on('manager'))
@@ -1139,7 +1148,7 @@ export const costsApi: CostsApi = {
 			throw fail('storage_error', "HQ couldn't record the budget change. Nothing changed.");
 		const replay = budgetOperations.get(action.operationId);
 		if (replay) return { message: replay.message };
-		const entry = mutableBudgets[memberId];
+		const entry = budgetsFor(organizationId)[memberId];
 		const current = entry?.[action.periodKind];
 		if (!current) throw fail('not_found', 'No budget is set for this period.');
 		let message = 'Budget updated.';
@@ -1150,7 +1159,7 @@ export const costsApi: CostsApi = {
 			if (current.extended)
 				throw fail('invalid_request', 'This budget already used its one 20% extension.');
 			const zone = budgetData.zone.name;
-			const mine = effective.filter(
+			const mine = ledgerFor(organizationId).filter(
 				(r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId
 			);
 			const { day, month } = budgetWindows(zone);
@@ -1196,8 +1205,295 @@ export const costsApi: CostsApi = {
 		return budgetOperations.has(operationId)
 			? { state: 'applied' }
 			: { state: 'not_applied', reason: 'HQ has no record of this budget change.' };
+	},
+
+	async subscriptionUsage(organizationId) {
+		await read();
+		ownerOnly();
+		if (on('empty')) {
+			return structuredClone({
+				snapshots: [],
+				totalsByModel: [],
+				partialTotals: false,
+				excludedSnapshotCount: 0,
+				isApiEquivalentEstimate: false
+			} satisfies SubscriptionUsageOverview);
+		}
+		const snaps = subscriptionSnapshotsFor(organizationId);
+		return structuredClone(buildSubscriptionOverview(snaps));
+	},
+
+	async collectSubscriptionUsage(organizationId, options) {
+		await read();
+		ownerOnly();
+		const snaps = subscriptionSnapshotsFor(organizationId);
+		const nowIso = new Date(NOW.getTime() + 5 * 60_000).toISOString();
+		const targetIds = options?.connectionId
+			? new Set([options.connectionId])
+			: new Set(snaps.map((s) => s.connectionId));
+		if (on('collect-fails') || on('collect-unsupported')) {
+			// Mirror production HTTP 200 in-band provider failure (`status: 'unavailable'` or `'unsupported'`).
+			const unsupported = on('collect-unsupported');
+			for (const snap of snaps) {
+				if (!targetIds.has(snap.connectionId)) continue;
+				snap.status = unsupported ? 'unsupported' : 'unavailable';
+				snap.stale = true;
+				snap.collectedAt = nowIso;
+				snap.issueCode = unsupported ? 'PROVIDER_UNSUPPORTED' : 'PROVIDER_UNAVAILABLE';
+				snap.message = unsupported
+					? 'This provider connection does not expose a subscription usage endpoint.'
+					: 'Provider usage endpoint could not be reached. Try refreshing again shortly.';
+			}
+			return structuredClone({
+				snapshots: snaps.filter((s) => targetIds.has(s.connectionId)),
+				collectedAt: nowIso
+			});
+		}
+		for (const snap of snaps) {
+			if (!targetIds.has(snap.connectionId)) continue;
+			if (snap.status === 'auth_required' && !snap.hasUsageCredential) {
+				snap.collectedAt = nowIso;
+				continue;
+			}
+			snap.status = 'ok';
+			snap.stale = false;
+			snap.authSource = snap.hasUsageCredential
+				? 'dedicated_usage_credential'
+				: 'enrolled_subscription_credential';
+			snap.collectedAt = nowIso;
+			snap.lastOkCollectedAt = nowIso;
+			snap.freshUntil = new Date(Date.parse(nowIso) + 15 * 60_000).toISOString();
+			delete snap.issueCode;
+			delete snap.message;
+			if (snap.models.length === 0) {
+				snap.models = snap.providerType === 'codex' ? defaultCodexModels() : defaultClaudeModels();
+			} else {
+				for (const m of snap.models) {
+					if (m.daily.requests !== null && m.daily.requests !== undefined) {
+						m.daily.requests += 2;
+					}
+					if (m.total.requests !== null && m.total.requests !== undefined) {
+						m.total.requests += 2;
+					}
+				}
+			}
+		}
+		return structuredClone({
+			snapshots: snaps.filter((s) => targetIds.has(s.connectionId)),
+			collectedAt: nowIso
+		});
+	},
+
+	async setSubscriptionUsageCredential(organizationId, draft) {
+		await read();
+		ownerOnly();
+		if (!draft.secret.trim()) {
+			throw fail('invalid_request', 'A usage credential secret is required.');
+		}
+		const snaps = subscriptionSnapshotsFor(organizationId);
+		const snap = snaps.find((s) => s.connectionId === draft.connectionId);
+		if (!snap) throw fail('not_found', 'Subscription connection not found.');
+		const nowIso = new Date().toISOString();
+		snap.hasUsageCredential = true;
+		if (draft.accountHint) snap.accountHint = draft.accountHint;
+		// Mirror crates/org-office/src/accounting/subscription_usage.rs:229-259:
+		// preserve last collection's authSource until collection runs; move auth_required -> never_collected.
+		if (snap.status === 'auth_required' || snap.models.length === 0) {
+			snap.status = 'never_collected';
+			snap.stale = true;
+			snap.issueCode = 'NOT_COLLECTED_YET';
+			snap.message = 'Run usage collection to fetch subscription usage from provider.';
+		}
+		return structuredClone({
+			connectionId: snap.connectionId,
+			officeId: snap.officeId,
+			configured: true,
+			configuredAt: nowIso,
+			...(draft.expiresAt ? { expiresAt: draft.expiresAt } : {}),
+			...(snap.accountHint ? { accountHint: snap.accountHint } : {})
+		});
+	},
+
+	async revokeSubscriptionUsageCredential(organizationId, connectionId) {
+		await read();
+		ownerOnly();
+		const snaps = subscriptionSnapshotsFor(organizationId);
+		const snap = snaps.find((s) => s.connectionId === connectionId);
+		if (!snap) throw fail('not_found', 'Subscription connection not found.');
+		snap.hasUsageCredential = false;
+		if (!snap.hasEnrolledCredential || on('auth-required') || snap.providerType === 'codex') {
+			snap.authSource = 'none';
+			snap.status = 'auth_required';
+			snap.models = [];
+			snap.message =
+				'Usage credential revoked. Save a new private credential to resume collection.';
+		} else {
+			snap.authSource = 'enrolled_subscription_credential';
+		}
+		return structuredClone({
+			connectionId: snap.connectionId,
+			officeId: snap.officeId,
+			configured: false
+		});
 	}
 };
+
+// ---- Subscription Model Usage Fixtures (TASK-79) ------------------------------------------------------------------
+
+function defaultClaudeModels(): SubscriptionModelUsage[] {
+	return [
+		{
+			model: 'claude-opus-4-1',
+			total: { utilizationBps: null, requests: 342, totalTokens: 18_400_000 },
+			daily: { windowSeconds: 86_400, utilizationBps: 4200, requests: 48, totalTokens: 2_650_000 },
+			weekly: {
+				windowSeconds: 604_800,
+				utilizationBps: 6150,
+				requests: 214,
+				totalTokens: 11_900_000
+			},
+			shortTerm: {
+				windowSeconds: 18_000,
+				utilizationBps: 3850,
+				requests: null,
+				totalTokens: null
+			}
+		},
+		{
+			model: 'claude-sonnet-4-5',
+			total: { utilizationBps: null, requests: 910, totalTokens: 42_100_000 },
+			daily: { windowSeconds: 86_400, utilizationBps: 2800, requests: 126, totalTokens: 5_800_000 },
+			weekly: {
+				windowSeconds: 604_800,
+				utilizationBps: 4400,
+				requests: 580,
+				totalTokens: 27_400_000
+			},
+			shortTerm: {
+				windowSeconds: 18_000,
+				utilizationBps: 1900,
+				requests: 31,
+				totalTokens: 1_250_000
+			}
+		}
+	];
+}
+
+function defaultCodexModels(): SubscriptionModelUsage[] {
+	return [
+		{
+			model: 'gpt-5-codex',
+			total: { utilizationBps: null, requests: 518, totalTokens: 29_300_000 },
+			daily: { windowSeconds: 86_400, utilizationBps: 5100, requests: 74, totalTokens: 4_120_000 },
+			weekly: {
+				windowSeconds: 604_800,
+				utilizationBps: 5500,
+				requests: 332,
+				totalTokens: 19_200_000
+			},
+			shortTerm: {
+				windowSeconds: 18_000,
+				utilizationBps: 2400,
+				requests: 19,
+				totalTokens: null
+			}
+		}
+	];
+}
+
+const subscriptionsByOrg = new Map<
+	string,
+	{ modeKey: string; snapshots: SubscriptionUsageSnapshot[] }
+>();
+
+function subscriptionSnapshotsFor(organizationId: string): SubscriptionUsageSnapshot[] {
+	const modeKey = `${on('auth-required') ? 'auth' : ''}|${on('stale') ? 'stale' : ''}`;
+	const existing = subscriptionsByOrg.get(organizationId);
+	if (existing && existing.modeKey === modeKey) return existing.snapshots;
+
+	const authReq = on('auth-required');
+	const isStale = on('stale');
+	const snapshots: SubscriptionUsageSnapshot[] = [
+		{
+			connectionId: 'sub-claude-pro',
+			connectionKey: 'claude-team-max',
+			connectionName: 'Claude Team Max',
+			providerType: 'claude',
+			subscriptionIdentity: 'org_claude_lumen',
+			officeId: 'office-hq',
+			status: 'ok',
+			authSource: 'enrolled_subscription_credential',
+			hasUsageCredential: false,
+			hasEnrolledCredential: true,
+			accountHint: 'eng@lumen.dev',
+			collectedAt: isStale ? '2026-11-19T12:15:00.000Z' : '2026-11-19T14:52:00.000Z',
+			lastOkCollectedAt: isStale ? '2026-11-19T12:15:00.000Z' : '2026-11-19T14:52:00.000Z',
+			freshUntil: isStale ? '2026-11-19T12:30:00.000Z' : '2026-11-19T15:07:00.000Z',
+			stale: isStale,
+			...(isStale
+				? { message: 'Snapshot is older than the freshness window. Select Refresh to update.' }
+				: {}),
+			isApiEquivalentEstimate: false,
+			models: defaultClaudeModels()
+		},
+		{
+			connectionId: 'sub-codex-team',
+			connectionKey: 'codex-pro-workspace',
+			connectionName: 'Codex Pro Workspace',
+			providerType: 'codex',
+			subscriptionIdentity: 'org_codex_lumen',
+			officeId: 'office-hq',
+			status: authReq ? 'auth_required' : 'ok',
+			authSource: authReq ? 'none' : 'dedicated_usage_credential',
+			hasUsageCredential: !authReq,
+			hasEnrolledCredential: true,
+			accountHint: 'platform@lumen.dev',
+			collectedAt: '2026-11-19T14:50:00.000Z',
+			...(authReq ? {} : { lastOkCollectedAt: '2026-11-19T14:50:00.000Z' }),
+			freshUntil: '2026-11-19T15:05:00.000Z',
+			stale: false,
+			...(authReq
+				? {
+						issueCode: 'auth_required',
+						message:
+							'Provider rejected the usage credential. Save a new private usage credential to resume collection.'
+					}
+				: {}),
+			isApiEquivalentEstimate: false,
+			models: authReq ? [] : defaultCodexModels()
+		}
+	];
+	subscriptionsByOrg.set(organizationId, { modeKey, snapshots });
+	return snapshots;
+}
+
+function buildSubscriptionOverview(
+	snapshots: SubscriptionUsageSnapshot[]
+): SubscriptionUsageOverview {
+	const excluded = snapshots.filter((s) => s.status !== 'ok' || s.stale);
+	const included = snapshots.filter((s) => s.status === 'ok' && !s.stale);
+	const byModel = new Map<string, SubscriptionModelUsage>();
+	for (const snap of included) {
+		for (const m of snap.models) {
+			if (!byModel.has(m.model)) {
+				byModel.set(m.model, structuredClone(m));
+			}
+		}
+	}
+	const latest = snapshots
+		.map((s) => s.collectedAt)
+		.filter((v): v is string => Boolean(v))
+		.toSorted()
+		.at(-1);
+	return {
+		snapshots,
+		totalsByModel: [...byModel.values()].toSorted((a, b) => a.model.localeCompare(b.model)),
+		...(latest ? { collectedAsOf: latest } : {}),
+		partialTotals: excluded.length > 0,
+		excludedSnapshotCount: excluded.length,
+		isApiEquivalentEstimate: false
+	};
+}
 
 // ---- Step 7 Insights & Member Cost Helpers ------------------------------------------------------------------------
 

@@ -1035,7 +1035,7 @@
 		<section
 			bind:this={conversationEl}
 			inert={(compactPanels && !!panelKind) || sidebarOpen}
-			class="flex min-w-0 flex-1 flex-col overflow-y-auto"
+			class="chat-canvas flex min-w-0 flex-1 flex-col overflow-y-auto"
 			aria-label="Conversation"
 		>
 			<ConversationHeader
