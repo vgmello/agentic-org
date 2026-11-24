@@ -26,6 +26,40 @@ try {
     await page.locator("#main h1").first().waitFor({ state: "visible" });
     assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
 
+    if (route === "inbox") {
+      const categories = page.getByRole("group", { name: "Inbox queue controls" });
+      const category = (name: RegExp) => categories.getByRole("button", { name });
+      const search = page.getByRole("searchbox", { name: "Search inbox" });
+      await search.press("m");
+      await search.press("a");
+      assert.equal(await search.inputValue(), "ma");
+      await search.press("Escape");
+      assert.ok(await search.evaluate((input) => input !== document.activeElement));
+      assert.equal(await search.inputValue(), "ma", "Escape leaves the draft search intact");
+      await search.clear();
+      await search.press("Escape");
+
+      await page.keyboard.press("m");
+      await page.keyboard.press("d");
+      await page.keyboard.press("Enter");
+      assert.equal(await category(/^Decisions/).getAttribute("aria-pressed"), "true");
+      await page.keyboard.press("m");
+      await page.keyboard.press("a");
+      await page.keyboard.press("a");
+      await page.keyboard.press("a");
+      await page.keyboard.press("Enter");
+      assert.equal(await category(/^Approvals/).getAttribute("aria-pressed"), "true", "Repeated initials select the next match without wrapping");
+
+      await page.keyboard.press("m");
+      await page.keyboard.press("d");
+      await page.keyboard.press("Escape");
+      assert.equal(await category(/^Approvals/).getAttribute("aria-pressed"), "true");
+      await page.keyboard.press("m");
+      await page.keyboard.press("m");
+      await page.getByRole("menu", { name: "More inbox categories" }).waitFor();
+      await page.keyboard.press("Escape");
+    }
+
     if (route === "work") {
       const display = page.getByRole("button", { name: "Work display" });
       const group = page.getByRole("group", { name: "Group by", exact: true });
@@ -88,6 +122,12 @@ try {
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     const screenshot = resolve(import.meta.dir, "../.playwright", `poc-${route.replace(/[^a-z0-9]+/gi, "-")}-${theme}.png`);
     await page.screenshot({ path: screenshot });
+    if (route === "inbox") {
+      await page.keyboard.press("s");
+      await page.keyboard.press("w");
+      await page.waitForURL((address) => address.hash === "#/work");
+      await page.getByRole("heading", { name: "Work", exact: true }).waitFor();
+    }
     assert.deepEqual(errors, [], "No browser errors");
     console.log(`Passed ${route} (${theme})\nScreenshot ${screenshot}`);
   } finally {
