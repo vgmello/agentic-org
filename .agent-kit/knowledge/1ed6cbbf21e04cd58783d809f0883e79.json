@@ -1,0 +1,21 @@
+{
+  "title": "Only integrate Prototype Release commits from poc/ after baseline 2c58edcd",
+  "kind": "decision",
+  "summary": "From baseline 2c58edcd onward, do not port intermediate WIP commits under poc/. Only port approved prototype commits whose subject starts with 'Prototype Release:' (first diffing 2c58edcd..<first_release_sha> -- poc/, then <prev_release_sha>..<next_release_sha> -- poc/).",
+  "rationale": "Owner workflow rule (2026-11-24): the prototype agent commits WIP frequently and marks owner-approved releases with 'Prototype Release: <name>'. Tracked in docs/poc-sync-state.md so the Svelte integration agent only ports approved releases.",
+  "sources": [
+    {
+      "path": "docs/poc-sync-state.md",
+      "sha256": "774a1dc466e0bc0d44a463231d82af6d3ae9756cf815a4e08d2ded91d76d5ead"
+    }
+  ],
+  "version": 1,
+  "id": "1ed6cbbf21e04cd58783d809f0883e79",
+  "status": "ACCEPTED",
+  "root": "/Users/vgmello/projects/agentic-org-poc-ui",
+  "created_at": "2026-11-24T05:42:04.739444+00:00",
+  "head": "37e4a6028dcffc80cde6928353d9cfe1bd6b70f9",
+  "reviewed_by": "e7c967f9-f420-4c26-959c-8a76074ba57f",
+  "review_rationale": "Owner-approved Prototype Release handoff workflow verified in docs/poc-sync-state.md",
+  "reviewed_at": "2026-11-24T05:42:19.961303+00:00"
+}
