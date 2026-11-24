@@ -174,6 +174,19 @@
 		void accountZone.ensure(organizationId);
 	});
 
+	$effect(() => {
+		void inboxItems;
+		void workItems;
+		nowMs = Date.now();
+	});
+
+	$effect(() => {
+		const timer = setInterval(() => {
+			nowMs = Date.now();
+		}, 30_000);
+		return () => clearInterval(timer);
+	});
+
 	// Composes overlapping syncUrl() updates while an earlier goto() is still settling.
 	let pendingUrl: URL | undefined;
 	let pendingBaseHref = '';

@@ -1197,11 +1197,14 @@ test('TASK-81: Inbox snooze presets, custom validation & expiry warning, Snoozed
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await visit(page, '/inbox?theme=graphite&mock=poc');
 
+	await expect(page.locator('[data-triage-row]').first()).toBeVisible();
 	const waitingBadge = page.locator('.queue-count');
+	await expect(waitingBadge).toContainText(/[1-9]\d*\s+waiting on you/);
 	const initialText = (await waitingBadge.textContent()) ?? '';
 	const initialMatch = /(\d+)\s+waiting on you/.exec(initialText);
 	expect(initialMatch).not.toBeNull();
 	const initialOpen = Number(initialMatch![1]);
+	expect(initialOpen).toBeGreaterThan(0);
 
 	const detailHeading = page.locator('#triage-detail-heading');
 	const firstTitle = ((await detailHeading.textContent()) ?? '').trim();

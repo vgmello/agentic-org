@@ -360,9 +360,10 @@ function isAskReplyCutoffSource(source: string | undefined): boolean {
 }
 
 function formatReplyCutoffBadge(iso: string, nowMs: number): string {
-	const diffMin = Math.round((Date.parse(iso) - nowMs) / 60_000);
-	if (Number.isNaN(diffMin)) return 'Time-sensitive';
-	if (diffMin <= 0) return 'Past reply cutoff';
+	const diffMs = Date.parse(iso) - nowMs;
+	if (Number.isNaN(diffMs)) return 'Time-sensitive';
+	if (diffMs <= 0) return 'Past reply cutoff';
+	const diffMin = Math.max(1, Math.ceil(diffMs / 60_000));
 	if (diffMin < 60) return `Reply cutoff in ${diffMin}m`;
 	const diffH = Math.round(diffMin / 60);
 	if (diffH < 24) return `Reply cutoff in ${diffH}h`;

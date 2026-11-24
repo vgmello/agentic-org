@@ -591,6 +591,16 @@ describe('triage model derivation, filtering, grouping and neighbour selection',
 		const [before] = deriveTriageItems([], SNAPSHOT, 'owner', [askItem], NOW);
 		expect(before?.expiresLabel).toBe('Reply cutoff in 5m');
 
+		// 20 seconds before cutoff must still read as upcoming, never "Past reply cutoff".
+		const [subMinute] = deriveTriageItems(
+			[],
+			SNAPSHOT,
+			'owner',
+			[askItem],
+			Date.parse(cutoff) - 20_000
+		);
+		expect(subMinute?.expiresLabel).toBe('Reply cutoff in 1m');
+
 		const [after] = deriveTriageItems([], SNAPSHOT, 'owner', [askItem], NOW + 6 * 60_000);
 		expect(after?.expiresLabel).toBe('Past reply cutoff');
 
