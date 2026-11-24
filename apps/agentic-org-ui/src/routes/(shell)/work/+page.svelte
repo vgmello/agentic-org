@@ -32,7 +32,6 @@
 	import {
 		assigneeInitials,
 		needsOwnerAttention,
-		priorityMeter,
 		projectDotTone,
 		workStatusLabel,
 		workStatusTone
@@ -598,8 +597,25 @@
 			? workStatusTone(activeDetailItem.kind, activeDetailItem.status)
 			: undefined
 	);
+	type PrioritySignal = {
+		level: 0 | 1 | 2 | 3;
+		label: string;
+		strong?: boolean;
+	};
+
+	function prioritySignal(priority: WorkItemSummary['priority']): PrioritySignal {
+		if (priority === 'urgent') return { level: 3, label: 'Urgent priority', strong: true };
+		if (priority === 'high') return { level: 3, label: 'High priority' };
+		if (priority === 'normal') return { level: 2, label: 'Normal priority' };
+		if (priority === 'low') return { level: 1, label: 'Low priority' };
+		return { level: 0, label: 'No priority' };
+	}
+
 	const activeDetailAttention = $derived(
 		activeDetailItem ? needsOwnerAttention(activeDetailItem, me) : false
+	);
+	const activeDetailPriority = $derived(
+		activeDetailItem ? prioritySignal(activeDetailItem.priority) : undefined
 	);
 	const bugsOf = (projectId: string | undefined) =>
 		(items ?? []).filter((i) => i.kind === 'bug' && i.project_id === projectId);
@@ -647,13 +663,16 @@
 				<div class="queue-search-wrap">
 					<div class="work-search">
 						<Search class="work-search-ico size-4 shrink-0" aria-hidden="true" />
-						<label class="sr-only" for="work-search-input">Search work</label>
+						<label class="sr-only" for="work-search">Search work</label>
 						<input
 							bind:this={searchInputEl}
 							value={searchQuery}
-							oninput={(e) => (searchQuery = e.currentTarget.value)}
+							oninput={(e) => {
+								searchQuery = e.currentTarget.value;
+								if (hasDetail) closeDetail(false);
+							}}
 							onkeydown={handleSearchKeydown}
-							id="work-search-input"
+							id="work-search"
 							type="search"
 							autocomplete="off"
 							placeholder="Search work…"
@@ -1090,6 +1109,7 @@
 												{#each col.items as item (item.id)}
 													{@const refText = itemRef(item)}
 													{@const attention = needsOwnerAttention(item, me)}
+													{@const prioSig = prioritySignal(item.priority)}
 													{@const prioWord = priorityWord(item.priority)}
 													{@const sevWord =
 														item.kind === 'bug' ? severityWord(item.severity) : undefined}
@@ -1115,6 +1135,17 @@
 																{item.title}
 															</button>
 															<div class="work-bcard-meta">
+																<span
+																	class="work-priority-mark"
+																	data-level={prioSig.level}
+																	data-priority-level={prioSig.level}
+																	data-tone={prioSig.strong ? 'strong' : undefined}
+																	role="img"
+																	aria-label={prioSig.label}
+																	title={prioSig.label}
+																>
+																	<span></span><span></span><span></span>
+																</span>
 																<span class="work-ref">{refText}</span>
 																<span class="work-team" data-testid="work-project"
 																	><span class="min-w-0 [overflow-wrap:anywhere]"
@@ -1204,7 +1235,7 @@
 												{@const ringTone = workStatusTone(item.kind, item.status)}
 												{@const statLabel = workStatusLabel(item.kind, item.status)}
 												{@const attention = needsOwnerAttention(item, me)}
-												{@const meter = priorityMeter(item.priority)}
+												{@const prioSig = prioritySignal(item.priority)}
 												{@const prioWord = priorityWord(item.priority)}
 												{@const sevWord =
 													item.kind === 'bug' ? severityWord(item.severity) : undefined}
@@ -1224,22 +1255,17 @@
 													>
 														<div class="work-summary">
 															<span class="work-ident">
-																{#if item.kind === 'task'}
-																	{#if meter}
-																		<span
-																			class="work-priority-mark"
-																			data-level={meter.level}
-																			data-tone={meter.tone}
-																			role="img"
-																			aria-label={meter.label}
-																			title={meter.label}
-																		>
-																			<span></span><span></span><span></span>
-																		</span>
-																	{:else}
-																		<span class="work-priority-spacer" aria-hidden="true"></span>
-																	{/if}
-																{/if}
+																<span
+																	class="work-priority-mark"
+																	data-level={prioSig.level}
+																	data-priority-level={prioSig.level}
+																	data-tone={prioSig.strong ? 'strong' : undefined}
+																	role="img"
+																	aria-label={prioSig.label}
+																	title={prioSig.label}
+																>
+																	<span></span><span></span><span></span>
+																</span>
 																<span class="work-ref">{refText}</span>
 															</span>
 															<span class="work-heading">
@@ -1324,59 +1350,64 @@
 			</div>
 
 			{#if hasDetail && activeItemId}
-				<WorkReadingPanel
-					itemId={activeItemId}
-					refLabel={activeDetailRef}
-					kindLabel={activeDetailKind}
-					ariaLabel={activeDetailLabel}
-					statusTone={activeDetailTone}
-					needsAttention={activeDetailAttention}
-					onclose={() => closeDetail(true)}
-				>
-					{#if requestOpen}
-						{#key requestId}
-							<RequestSheet
-								bind:open={requestOpen}
-								inline={true}
-								{organizationId}
-								{requestId}
-								start={requestStart}
-								{snapshot}
-								{me}
-								items={items ?? []}
-								{send}
-								onchanged={(message) => (message && toast.success(message), void load())}
-							/>
-						{/key}
-					{:else if bugOpen}
-						{#key bugId}
-							<BugSheet
-								bind:open={bugOpen}
-								inline={true}
-								{organizationId}
-								{bugId}
-								{snapshot}
-								areas={areasOf(bugProject)}
-								bugs={bugsOf(bugProject)}
-								items={items ?? []}
-								{send}
-								onchanged={() => void load()}
-							/>
-						{/key}
-					{:else if taskOpen}
-						{#key taskId}
-							<TaskSheet
-								bind:open={taskOpen}
-								inline={true}
-								{organizationId}
-								{taskId}
-								{snapshot}
-								{send}
-								onchanged={() => void load()}
-							/>
-						{/key}
-					{/if}
-				</WorkReadingPanel>
+				{#key activeItemId}
+					<WorkReadingPanel
+						itemId={activeItemId}
+						refLabel={activeDetailRef}
+						kindLabel={activeDetailKind}
+						ariaLabel={activeDetailLabel}
+						statusTone={activeDetailTone}
+						needsAttention={activeDetailAttention}
+						priorityLevel={activeDetailPriority?.level}
+						priorityLabel={activeDetailPriority?.label}
+						priorityStrong={activeDetailPriority?.strong}
+						onclose={() => closeDetail(true)}
+					>
+						{#if requestOpen}
+							{#key requestId}
+								<RequestSheet
+									bind:open={requestOpen}
+									inline={true}
+									{organizationId}
+									{requestId}
+									start={requestStart}
+									{snapshot}
+									{me}
+									items={items ?? []}
+									{send}
+									onchanged={(message) => (message && toast.success(message), void load())}
+								/>
+							{/key}
+						{:else if bugOpen}
+							{#key bugId}
+								<BugSheet
+									bind:open={bugOpen}
+									inline={true}
+									{organizationId}
+									{bugId}
+									{snapshot}
+									areas={areasOf(bugProject)}
+									bugs={bugsOf(bugProject)}
+									items={items ?? []}
+									{send}
+									onchanged={() => void load()}
+								/>
+							{/key}
+						{:else if taskOpen}
+							{#key taskId}
+								<TaskSheet
+									bind:open={taskOpen}
+									inline={true}
+									{organizationId}
+									{taskId}
+									{snapshot}
+									{send}
+									onchanged={() => void load()}
+								/>
+							{/key}
+						{/if}
+					</WorkReadingPanel>
+				{/key}
 			{/if}
 		</div>
 	</section>
@@ -1754,33 +1785,15 @@
 		min-width: 0;
 		padding: 14px var(--work-gutter) 40px;
 	}
-	@media (min-width: 960px) {
-		.work-workspace.has-work-detail {
-			display: grid;
-			grid-template-columns: minmax(0, 1fr) clamp(23rem, 46%, 45rem);
-			grid-template-rows: minmax(0, 1fr);
-			flex: 1 1 auto;
-			min-height: 16rem;
-			height: max(28rem, calc(100dvh - var(--exec-topbar-height, 68px) - 7.75rem));
-		}
-		.work-workspace.has-work-detail .work-results-pane {
-			overflow-y: auto;
-			overscroll-behavior-y: contain;
-			min-height: 0;
-		}
-		.work-workspace.has-work-detail :global(.work-reading) {
-			border-inline-start: 1px solid var(--work-reading-border, var(--exec-border));
-			overflow-x: hidden;
-			min-height: 0;
-		}
+	/* Full-width Work reading panel (poc/operations.css 19c88bd5, 2e3974ba) */
+	.work-workspace.has-work-detail .work-results-pane {
+		display: none;
 	}
-	@media (max-width: 959px) {
-		.work-workspace.has-work-detail .work-results-pane {
-			display: none;
-		}
-		.work-shell:has(.work-workspace.has-work-detail) .work-toolbar {
-			display: none;
-		}
+	.work-shell:has(.work-workspace.has-work-detail) .work-toolbar {
+		display: none;
+	}
+	.work-shell:has(.work-workspace.has-work-detail) .queue-headline {
+		padding-block-end: 12px;
 	}
 	.work-presets-bar {
 		display: flex;
@@ -1983,7 +1996,9 @@
 		white-space: nowrap;
 	}
 	.work-title {
-		font-weight: 600;
+		color: var(--exec-ink);
+		font-size: 0.9375rem;
+		font-weight: 550;
 		overflow-wrap: anywhere;
 		min-height: var(--work-control-height);
 		display: inline-flex;
@@ -2017,8 +2032,7 @@
 		color: var(--tone-ok-ink);
 	}
 	.work-status,
-	.work-priority-mark,
-	.work-priority-spacer {
+	.work-priority-mark {
 		position: relative;
 		display: inline-flex;
 		flex: none;
@@ -2097,9 +2111,17 @@
 	.work-priority-mark span:nth-child(3) {
 		height: 0.6rem;
 	}
-	.work-priority-mark[data-level='low'] span:nth-child(n + 2),
-	.work-priority-mark[data-level='medium'] span:nth-child(3) {
+	.work-priority-mark[data-level='1'] span:nth-child(n + 2),
+	.work-priority-mark[data-level='2'] span:nth-child(3) {
 		opacity: 0.32;
+	}
+	.work-priority-mark[data-level='0'] {
+		color: var(--fg-muted);
+	}
+	.work-priority-mark[data-level='0'] span {
+		width: 3px;
+		border: 1px solid currentColor;
+		background: transparent;
 	}
 	.work-facts {
 		display: flex;
@@ -2351,6 +2373,10 @@
 		.work-status[data-attention]::after {
 			forced-color-adjust: none;
 			background: CanvasText;
+		}
+		.work-priority-mark[data-level='0'] span {
+			background: transparent;
+			border-color: CanvasText;
 		}
 		.work-status[data-attention]::after {
 			box-shadow: 0 0 0 1px Canvas;

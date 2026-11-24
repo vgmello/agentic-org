@@ -39,6 +39,7 @@
 		decisionMore = 0,
 		inboxPhase = 'ready',
 		workPhase = 'ready',
+		showTabs = true,
 		onRetry = undefined,
 		onRetryDecisions = undefined
 	}: {
@@ -58,6 +59,7 @@
 		decisionMore?: number;
 		inboxPhase?: FeedPhase;
 		workPhase?: FeedPhase;
+		showTabs?: boolean;
 		onRetry?: () => void;
 		onRetryDecisions?: () => void;
 	} = $props();
@@ -143,32 +145,34 @@
 </script>
 
 <section class="stream-panel activity-feed" aria-label="Chronological activity stream">
-	<!-- WAI-ARIA Tabs Pattern with roving tabindex and Arrow/Home/End navigation -->
-	<div class="stream-tabs-wrap">
-		<div class="stream-tabs" role="tablist" aria-label="Filter activity stream">
-			{#each tabs as tab, index (tab.id)}
-				<button
-					type="button"
-					role="tab"
-					id={`activity-tab-${tab.id}`}
-					tabindex={activeFilter === tab.id ? 0 : -1}
-					aria-selected={activeFilter === tab.id}
-					aria-controls={`activity-panel-${tab.id}`}
-					onclick={() => (activeFilter = tab.id)}
-					onkeydown={(event) => handleTabKeydown(event, index)}
-					class={[
-						'stream-tab min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
-						activeFilter === tab.id && 'is-active'
-					]}
-				>
-					<span>{tab.label}</span>
-					{#if tab.id === 'needs_you' && needsYouCount > 0}
-						<span class="stream-tab-badge tabular-nums">{needsYouCount}</span>
-					{/if}
-				</button>
-			{/each}
+	{#if showTabs}
+		<!-- WAI-ARIA Tabs Pattern with roving tabindex and Arrow/Home/End navigation -->
+		<div class="stream-tabs-wrap">
+			<div class="stream-tabs" role="tablist" aria-label="Filter activity stream">
+				{#each tabs as tab, index (tab.id)}
+					<button
+						type="button"
+						role="tab"
+						id={`activity-tab-${tab.id}`}
+						tabindex={activeFilter === tab.id ? 0 : -1}
+						aria-selected={activeFilter === tab.id}
+						aria-controls={`activity-panel-${tab.id}`}
+						onclick={() => (activeFilter = tab.id)}
+						onkeydown={(event) => handleTabKeydown(event, index)}
+						class={[
+							'stream-tab min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
+							activeFilter === tab.id && 'is-active'
+						]}
+					>
+						<span>{tab.label}</span>
+						{#if tab.id === 'needs_you' && needsYouCount > 0}
+							<span class="stream-tab-badge tabular-nums">{needsYouCount}</span>
+						{/if}
+					</button>
+				{/each}
+			</div>
 		</div>
-	</div>
+	{/if}
 
 	<!-- Compact Bottleneck Distribution Bar (rendered only when work data is ready) -->
 	{#if workReady}

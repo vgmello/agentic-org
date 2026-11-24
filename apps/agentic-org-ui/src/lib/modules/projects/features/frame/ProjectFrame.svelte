@@ -176,63 +176,78 @@
 				{@const totalTasks = countedTasks(p.tasks)}
 				{@const pct = progressPercent(p.tasks)}
 				{@const tone = projectBarTone(p.tasks, p.bugs, p.archived)}
-				<header
-					class="project-masthead border-b border-line px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8"
-					data-testid="project-header"
-				>
-					<h2
-						id="project-heading"
-						class="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere] focus:outline-none"
+				<div class="section-header project-header">
+					<header
+						class="project-masthead ph px-4 pt-2 pb-3 min-[640px]:px-6 min-[1024px]:px-8"
+						data-testid="project-header"
 					>
-						{p.name}
-						<span
-							class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs/5 font-normal text-fg-muted ring-1 ring-line ring-inset"
-							>{projectRef(p)}</span
+						<h2
+							id="project-heading"
+							class="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere] focus:outline-none"
 						>
-						<span
-							class={[
-								'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs/5 font-semibold whitespace-nowrap',
-								healthPillClass(tone)
-							]}>{projectHealthLabel(tone)}</span
-						>
-					</h2>
-					<ul role="list" class="mt-2 {factsLine} text-sm/6 text-fg-muted">
-						<li class={fact} data-testid="owner-team">
-							Accountable team: <TeamLink team={p.ownerTeam} />
-						</li>
-						{#if p.contributors.length > 0}
-							<li class={fact} data-testid="contributors">
-								Contributors: {#each p.contributors as t, i (t.id)}{#if i > 0},
-									{/if}<TeamLink team={t} />{/each}
-							</li>
-						{/if}
-						<li class="{fact} tabular-nums">{doneText(p.tasks)}</li>
-						<li class={fact}>
-							Slug: <span class="font-mono text-xs/5 text-fg-secondary">{p.slug}</span>
-						</li>
-					</ul>
-					<div class="mt-3 flex max-w-sm items-center gap-3">
-						<div
-							class="h-1.5 flex-1 overflow-hidden rounded-full bg-bar-track"
-							role="progressbar"
-							aria-label="{p.name} delivery progress"
-							aria-valuemin="0"
-							aria-valuemax={totalTasks}
-							aria-valuenow={p.tasks.done}
-							aria-valuetext={doneText(p.tasks)}
-						>
+							{p.name}
 							<span
-								class="block h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none"
-								style:width="{pct}%"
-								style:background={barFill[tone]}
-							></span>
-						</div>
-						{#if totalTasks > 0}
-							<span class="shrink-0 text-xs/5 font-semibold text-fg-muted tabular-nums">{pct}%</span
+								class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs/5 font-normal text-fg-muted ring-1 ring-line ring-inset"
+								>{projectRef(p)}</span
 							>
-						{/if}
+							<span
+								class={[
+									'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs/5 font-semibold whitespace-nowrap',
+									healthPillClass(tone)
+								]}>{projectHealthLabel(tone)}</span
+							>
+						</h2>
+						<ul role="list" class="mt-2 {factsLine} text-sm/6 text-fg-muted">
+							<li class={fact} data-testid="owner-team">
+								Accountable team: <TeamLink team={p.ownerTeam} />
+							</li>
+							{#if p.contributors.length > 0}
+								<li class={fact} data-testid="contributors">
+									Contributors: {#each p.contributors as t, i (t.id)}{#if i > 0},
+										{/if}<TeamLink team={t} />{/each}
+								</li>
+							{/if}
+							<li class="{fact} tabular-nums">{doneText(p.tasks)}</li>
+							<li class={fact}>
+								Slug: <span class="font-mono text-xs/5 text-fg-secondary">{p.slug}</span>
+							</li>
+						</ul>
+						<div class="mt-3 flex max-w-sm items-center gap-3">
+							<div
+								class="h-1.5 flex-1 overflow-hidden rounded-full bg-bar-track"
+								role="progressbar"
+								aria-label="{p.name} delivery progress"
+								aria-valuemin="0"
+								aria-valuemax={totalTasks}
+								aria-valuenow={p.tasks.done}
+								aria-valuetext={doneText(p.tasks)}
+							>
+								<span
+									class="block h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none"
+									style:width="{pct}%"
+									style:background={barFill[tone]}
+								></span>
+							</div>
+							{#if totalTasks > 0}
+								<span class="shrink-0 text-xs/5 font-semibold text-fg-muted tabular-nums"
+									>{pct}%</span
+								>
+							{/if}
+						</div>
+					</header>
+					<!-- Tabs wrap onto a second line rather than scroll out of sight (narrow widths, large text). -->
+					<div class="section-toolbar project-toolbar">
+						<TabsNav
+							label="{p.name} views"
+							tabs={tabs.map((t) => ({
+								label: t.label,
+								href: projectHref(p.id, t.path),
+								match: t.path ? ('prefix' as const) : ('exact' as const)
+							}))}
+							class="tabs flex-wrap overflow-x-visible"
+						/>
 					</div>
-				</header>
+				</div>
 				{#if p.stale}
 					<StaleNotice stale={p.stale} retrying={read.reloading} onretry={() => read.reload()} />
 				{/if}
@@ -246,16 +261,6 @@
 						</Callout>
 					</div>
 				{/if}
-				<!-- Tabs wrap onto a second line rather than scroll out of sight (narrow widths, large text). -->
-				<TabsNav
-					label="{p.name} views"
-					tabs={tabs.map((t) => ({
-						label: t.label,
-						href: projectHref(p.id, t.path),
-						match: t.path ? ('prefix' as const) : ('exact' as const)
-					}))}
-					class="flex-wrap overflow-x-visible"
-				/>
 				<section aria-labelledby="project-tab-heading">
 					<h3 id="project-tab-heading" tabindex="-1" class="sr-only">{tab?.label}</h3>
 					{@render content()}
@@ -266,12 +271,41 @@
 {/if}
 
 <style>
+	.section-header {
+		flex: none;
+	}
+	.section-toolbar {
+		position: relative;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0 12px;
+		padding-inline: 1rem;
+		border-block-end: 1px solid var(--line);
+	}
+	@media (min-width: 640px) {
+		.section-toolbar {
+			padding-inline: 1.5rem;
+		}
+	}
+	@media (min-width: 1024px) {
+		.section-toolbar {
+			padding-inline: 2rem;
+		}
+	}
+	.section-toolbar > :global(nav) {
+		min-width: 0;
+		max-width: 100%;
+		flex: 1 1 auto;
+		padding-inline: 0;
+		border-bottom: 0;
+	}
 	.proj-pill-accent {
 		background: var(--tone-accent-bg);
 		color: var(--tone-accent-ink);
 		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
 	}
-	:global(html[data-ui-theme^='report']) .project-masthead {
-		border-bottom: 1.5px solid var(--report-masthead-rule);
+	:global(html[data-ui-theme^='report']) .project-toolbar {
+		border-block-end: 1.5px solid var(--report-masthead-rule);
 	}
 </style>

@@ -57,6 +57,14 @@
 	const overview = $derived(resource.data);
 	const rows = $derived(overview ? sortProjects(overview.projects) : []);
 	const summary = $derived(projectsPortfolioSummary(rows));
+	let showFilter = $state<'all' | 'active' | 'archived'>('all');
+	const filteredRows = $derived(
+		showFilter === 'active'
+			? rows.filter((r) => !r.archived)
+			: showFilter === 'archived'
+				? rows.filter((r) => r.archived)
+				: rows
+	);
 	const amounts = $derived(investment.data?.allowed ? investment.data.value : undefined);
 	const orgTotalInvestment = $derived(portfolioInvestmentWords(amounts));
 	const canCreate = $derived(!!overview?.viewer.canCreate);
@@ -131,7 +139,7 @@
 {#snippet createButton(idPrefix: string)}
 	<div class={['flex flex-col gap-y-1', idPrefix === 'empty' ? 'items-center' : 'items-start']}>
 		<Button
-			class="min-h-9 {mobileButton} [@media(pointer:coarse)]:min-h-11"
+			class="min-h-9 {mobileButton} [@media(pointer:coarse)]:min-h-11 [@media(width<=720px)]:min-h-11"
 			disabled={paused}
 			aria-describedby={paused ? `${idPrefix}-paused` : undefined}
 			onclick={(e: MouseEvent) => newProject(e)}
@@ -163,20 +171,55 @@
 		</p>{/if}
 {/snippet}
 
-<div class="projects-masthead">
+<div class="projects-masthead section-header project-header">
 	<PageHeader
 		id="projects-heading"
 		title="Projects"
 		count={overview?.projects.length}
 		countLabel={overview?.projects.length === 1 ? 'project' : 'projects'}
 		description="What the organization's teams work on. Each project has one accountable team; other teams can contribute."
-	>
-		{#snippet actions()}
-			{#if overview && canCreate && overview.projects.length > 0}
-				{@render createButton('header')}
+		class="ph"
+	/>
+	{#if overview && overview.projects.length > 0}
+		<div class="section-toolbar project-toolbar project-directory-tools">
+			<div class="queue-controls" role="group" aria-label="Filter projects">
+				<button
+					type="button"
+					class="project-filter-btn"
+					aria-pressed={showFilter === 'all'}
+					onclick={() => (showFilter = 'all')}
+				>
+					<span>All</span>
+					<span class="project-filter-cnt tabular-nums">{rows.length}</span>
+				</button>
+				<button
+					type="button"
+					class="project-filter-btn"
+					aria-pressed={showFilter === 'active'}
+					onclick={() => (showFilter = 'active')}
+				>
+					<span>Active</span>
+					<span class="project-filter-cnt tabular-nums">{summary.active}</span>
+				</button>
+				{#if summary.archived > 0}
+					<button
+						type="button"
+						class="project-filter-btn"
+						aria-pressed={showFilter === 'archived'}
+						onclick={() => (showFilter = 'archived')}
+					>
+						<span>Archived</span>
+						<span class="project-filter-cnt tabular-nums">{summary.archived}</span>
+					</button>
+				{/if}
+			</div>
+			{#if canCreate}
+				<div class="project-toolbar-actions">
+					{@render createButton('header')}
+				</div>
 			{/if}
-		{/snippet}
-	</PageHeader>
+		</div>
+	{/if}
 </div>
 
 {#if overview?.stale}
@@ -331,7 +374,12 @@
 						{#if amounts}<span class="text-right">Investment</span>{/if}
 					</div>
 					<ul role="list" class="divide-y divide-line-subtle" aria-labelledby="projects-heading">
-						{#each rows as r (r.id)}
+						{#if filteredRows.length === 0}
+							<li class="px-4 py-8 text-center text-sm/6 text-fg-muted min-[640px]:px-6">
+								No projects match this filter.
+							</li>
+						{/if}
+						{#each filteredRows as r (r.id)}
 							{@const total = countedTasks(r.tasks)}
 							{@const pct = progressPercent(r.tasks)}
 							{@const tone = projectBarTone(r.tasks, r.bugs, r.archived)}
@@ -454,6 +502,98 @@
 />
 
 <style>
+	.section-header {
+		flex: none;
+	}
+	.section-header:has(.section-toolbar) :global(header) {
+		border-bottom: 0;
+		padding-block-end: 0.5rem;
+	}
+	.section-toolbar {
+		position: relative;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem 0.75rem;
+		padding: 0.375rem 1rem 0.75rem;
+		border-block-end: 1px solid var(--line);
+	}
+	@media (min-width: 640px) {
+		.section-toolbar {
+			padding-inline: 1.5rem;
+		}
+	}
+	@media (min-width: 1024px) {
+		.section-toolbar {
+			padding-inline: 2rem;
+		}
+	}
+	.queue-controls {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.25rem;
+	}
+	.project-filter-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		min-height: 2.25rem;
+		padding: 0.25rem 0.75rem;
+		border: 1px solid transparent;
+		border-radius: var(--exec-ctrl-radius, 8px);
+		background: transparent;
+		color: var(--exec-body);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		white-space: nowrap;
+		cursor: pointer;
+		transition:
+			background-color 120ms ease-out,
+			color 120ms ease-out;
+	}
+	.project-filter-btn:hover {
+		background: var(--exec-btn-ghost-bg-hover);
+		color: var(--exec-ink);
+	}
+	.project-filter-btn[aria-pressed='true'] {
+		background: var(--tone-accent-bg);
+		border-color: var(--tone-accent-ring);
+		color: var(--exec-ink);
+	}
+	.project-filter-btn:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 2px;
+	}
+	.project-filter-cnt {
+		color: var(--exec-muted);
+		font-size: 0.75rem;
+	}
+	.project-filter-btn[aria-pressed='true'] .project-filter-cnt {
+		color: var(--tone-accent-ink);
+	}
+	.project-toolbar-actions {
+		margin-inline-start: auto;
+	}
+	@media (max-width: 720px), (pointer: coarse) {
+		.project-filter-btn {
+			min-height: 2.75rem;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.project-filter-btn {
+			transition: none;
+		}
+	}
+	@media (forced-colors: active) {
+		.project-filter-btn {
+			border: 1px solid ButtonText;
+		}
+		.project-filter-btn[aria-pressed='true'] {
+			border: 2px solid Highlight;
+			color: Highlight;
+		}
+	}
 	.projects-masthead :global(h2) {
 		font-size: 1.25rem;
 		line-height: 1.75rem;
@@ -461,6 +601,12 @@
 	}
 	:global(html[data-ui-theme^='report']) .projects-masthead :global(header) {
 		border-bottom: 1.5px solid var(--report-masthead-rule);
+	}
+	:global(html[data-ui-theme^='report']) .projects-masthead:has(.section-toolbar) :global(header) {
+		border-bottom: 0;
+	}
+	:global(html[data-ui-theme^='report']) .projects-masthead .section-toolbar {
+		border-block-end: 1.5px solid var(--report-masthead-rule);
 	}
 	.proj-kpi-tile {
 		background: var(--exec-panel-bg);

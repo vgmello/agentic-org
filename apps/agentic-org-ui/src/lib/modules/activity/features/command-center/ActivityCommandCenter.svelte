@@ -751,64 +751,46 @@
 		slot?.focus();
 		retryShellAndInbox();
 	}
+
+	const streamTabs: { id: StreamFilterTab; label: string }[] = [
+		{ id: 'all', label: 'All' },
+		{ id: 'needs_you', label: 'Needs you' },
+		{ id: 'work', label: 'Work' },
+		{ id: 'run', label: 'Runs' },
+		{ id: 'decision', label: 'Decisions' },
+		{ id: 'conversation', label: 'Chat' },
+		{ id: 'org', label: 'Org' }
+	];
+
+	function handleStreamTabKeydown(event: KeyboardEvent, index: number) {
+		let nextIndex: number;
+		if (event.key === 'ArrowRight') {
+			nextIndex = (index + 1) % streamTabs.length;
+		} else if (event.key === 'ArrowLeft') {
+			nextIndex = (index - 1 + streamTabs.length) % streamTabs.length;
+		} else if (event.key === 'Home') {
+			nextIndex = 0;
+		} else if (event.key === 'End') {
+			nextIndex = streamTabs.length - 1;
+		} else {
+			return;
+		}
+
+		event.preventDefault();
+		const targetTab = streamTabs[nextIndex];
+		streamFilter = targetTab.id;
+		const tablist = (event.currentTarget as HTMLElement | null)?.closest('[role="tablist"]');
+		tablist?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+	}
 </script>
 
 <div class="act-page cmd-page">
-	<!-- Command Center Header -->
-	<header class="act-head cmd-header">
-		<div class="cmd-title-group">
-			<h1 id="shell-page-title" tabindex="-1" class="cmd-h1 focus:outline-none">Activity</h1>
-			<p class="cmd-subtitle">{headerSubtitle}</p>
-		</div>
-
-		<div class="cmd-controls">
-			<!-- Project Scope Select -->
-			<div class="cmd-select-wrap">
-				<select
-					aria-label="Project scope"
-					value={effectiveProjectScope}
-					onchange={(event) => (projectScope = event.currentTarget.value)}
-					class="cmd-select min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-				>
-					<option value="all">
-						All projects ({model.activeProjects.length} active)
-					</option>
-					{#each model.activeProjects as project (project.id)}
-						<option value={project.id}>
-							{project.name}{#if project.key}
-								· {project.key}{/if}
-						</option>
-					{/each}
-				</select>
-				<ChevronDown class="cmd-select-chevron size-3.5" aria-hidden="true" />
-			</div>
-
-			<!-- Segmented View Toggle: Assembly line (FIRST, active by default) | Activity (SECOND) -->
-			<div class="exec-well cmd-view-toggle" role="group" aria-label="Activity view">
-				<button
-					type="button"
-					aria-pressed={viewMode === 'assembly'}
-					onclick={() => (viewMode = 'assembly')}
-					class={[
-						'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
-						viewMode === 'assembly' && 'is-on'
-					]}
-				>
-					<Layers class="size-3.5" aria-hidden="true" />
-					<span>Assembly line</span>
-				</button>
-				<button
-					type="button"
-					aria-pressed={viewMode === 'feed'}
-					onclick={() => (viewMode = 'feed')}
-					class={[
-						'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
-						viewMode === 'feed' && 'is-on'
-					]}
-				>
-					<Activity class="size-3.5" aria-hidden="true" />
-					<span>Activity</span>
-				</button>
+	<!-- Command Center Section Header & Aligned Toolbar (poc/operations.css 19c88bd5) -->
+	<div class="section-header activity-header">
+		<header class="ph cmd-header">
+			<div class="ph-t cmd-title-group">
+				<h1 id="shell-page-title" tabindex="-1" class="cmd-h1 focus:outline-none">Activity</h1>
+				<p class="cmd-subtitle">{headerSubtitle}</p>
 			</div>
 
 			<!-- Waiting-on-you Pill (honest loading/unavailable states with visible Retry focus) -->
@@ -855,103 +837,199 @@
 					</span>
 				{/if}
 			</div>
-		</div>
-	</header>
+		</header>
 
-	{#if showLiveBanner}
-		<div class="cmd-live-banner" role="status" tabindex="-1">
-			<span class="cmd-live-text">
-				<AlertTriangle class="size-3.5 shrink-0" aria-hidden="true" />
-				<span>
-					{#if isReconnecting}
-						Reconnecting live updates…
-					{:else if inboxSubFailed || activitySubFailed}
-						Live updates paused
-					{:else}
-						Live catch-up failed — snapshots may be stale
-					{/if}
-				</span>
-			</span>
-			<button
-				type="button"
-				disabled={isReconnecting}
-				aria-busy={isReconnecting}
-				onclick={reconnectLiveUpdates}
-				class="cmd-live-reconnect min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+		<div class="section-toolbar activity-toolbar">
+			<!-- Segmented View Toggle: Assembly line (FIRST, active by default) | Activity (SECOND) -->
+			<div
+				class="exec-well cmd-view-toggle activity-switch"
+				role="group"
+				aria-label="Activity view"
 			>
-				{#if isReconnecting}
-					Reconnecting…
-				{:else if inboxSubFailed || activitySubFailed}
-					Reconnect
-				{:else}
-					Retry
-				{/if}
-			</button>
-		</div>
-	{/if}
+				<button
+					type="button"
+					aria-pressed={viewMode === 'assembly'}
+					onclick={() => (viewMode = 'assembly')}
+					class={[
+						'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
+						viewMode === 'assembly' && 'is-on'
+					]}
+				>
+					<Layers class="size-3.5" aria-hidden="true" />
+					<span>Assembly line</span>
+				</button>
+				<button
+					type="button"
+					aria-pressed={viewMode === 'feed'}
+					onclick={() => (viewMode = 'feed')}
+					class={[
+						'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
+						viewMode === 'feed' && 'is-on'
+					]}
+				>
+					<Activity class="size-3.5" aria-hidden="true" />
+					<span>Activity</span>
+				</button>
+			</div>
 
-	<!-- Responsive 2-Column Main + Operational Rail -->
-	<div class="cmd-layout activity-layout">
-		<div class="cmd-main">
-			{#if viewMode === 'assembly'}
-				<AssemblyLineMatrix
-					{model}
-					loading={!shellReady}
-					unavailableReason={workUnavailableReason}
-					{inboxPhase}
-					onRetry={retryShellAndInbox}
-				/>
-			{:else}
-				<ActivityStreamPanel
-					entries={model.streamEntries}
-					{decisionEntries}
-					needsYouCount={model.streamNeedsYouCount}
-					openInboxCount={inboxPhase === 'ready' ? model.openInboxCount : 0}
-					actionableWorkCount={workPhase === 'ready' ? model.actionableWorkCount : 0}
-					bottleneck={model.bottleneck}
-					bind:activeFilter={streamFilter}
-					{nowMs}
-					{feedPhase}
-					{feedError}
-					{feedMore}
-					{decisionPhase}
-					{decisionError}
-					{decisionMore}
-					{inboxPhase}
-					{workPhase}
-					onRetry={retryFeed}
-					onRetryDecisions={retryDecisions}
-				/>
+			<!-- Project Scope Select -->
+			<div class="cmd-select-wrap activity-scope">
+				<select
+					aria-label="Project scope"
+					value={effectiveProjectScope}
+					onchange={(event) => (projectScope = event.currentTarget.value)}
+					class="cmd-select min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+				>
+					<option value="all">
+						All projects ({model.activeProjects.length} active)
+					</option>
+					{#each model.activeProjects as project (project.id)}
+						<option value={project.id}>
+							{project.name}{#if project.key}
+								· {project.key}{/if}
+						</option>
+					{/each}
+				</select>
+				<ChevronDown class="cmd-select-chevron size-3.5" aria-hidden="true" />
+			</div>
+
+			{#if viewMode === 'feed'}
+				<!-- WAI-ARIA Tabs Pattern with roving tabindex and Arrow/Home/End navigation -->
+				<div class="tabs activity-stream-tabs" role="tablist" aria-label="Filter activity stream">
+					{#each streamTabs as tab, index (tab.id)}
+						<button
+							type="button"
+							role="tab"
+							id={`activity-tab-${tab.id}`}
+							tabindex={streamFilter === tab.id ? 0 : -1}
+							aria-selected={streamFilter === tab.id}
+							aria-controls={`activity-panel-${tab.id}`}
+							onclick={() => (streamFilter = tab.id)}
+							onkeydown={(event) => handleStreamTabKeydown(event, index)}
+							class={[
+								'activity-stream-tab min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
+								streamFilter === tab.id && 'is-active'
+							]}
+						>
+							<span>{tab.label}</span>
+							{#if tab.id === 'needs_you' && model.streamNeedsYouCount > 0}
+								<span class="activity-stream-badge tabular-nums">{model.streamNeedsYouCount}</span>
+							{/if}
+						</button>
+					{/each}
+				</div>
 			{/if}
 		</div>
+	</div>
 
-		<ActivityOpsRail {model} loading={!shellReady} unavailableReason={workUnavailableReason} />
+	<div class="cmd-body">
+		{#if showLiveBanner}
+			<div class="cmd-live-banner" role="status" tabindex="-1">
+				<span class="cmd-live-text">
+					<AlertTriangle class="size-3.5 shrink-0" aria-hidden="true" />
+					<span>
+						{#if isReconnecting}
+							Reconnecting live updates…
+						{:else if inboxSubFailed || activitySubFailed}
+							Live updates paused
+						{:else}
+							Live catch-up failed — snapshots may be stale
+						{/if}
+					</span>
+				</span>
+				<button
+					type="button"
+					disabled={isReconnecting}
+					aria-busy={isReconnecting}
+					onclick={reconnectLiveUpdates}
+					class="cmd-live-reconnect min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+				>
+					{#if isReconnecting}
+						Reconnecting…
+					{:else if inboxSubFailed || activitySubFailed}
+						Reconnect
+					{:else}
+						Retry
+					{/if}
+				</button>
+			</div>
+		{/if}
+
+		<!-- Responsive 2-Column Main + Operational Rail -->
+		<div class="cmd-layout activity-layout">
+			<div class="cmd-main">
+				{#if viewMode === 'assembly'}
+					<AssemblyLineMatrix
+						{model}
+						loading={!shellReady}
+						unavailableReason={workUnavailableReason}
+						{inboxPhase}
+						onRetry={retryShellAndInbox}
+					/>
+				{:else}
+					<ActivityStreamPanel
+						entries={model.streamEntries}
+						{decisionEntries}
+						needsYouCount={model.streamNeedsYouCount}
+						openInboxCount={inboxPhase === 'ready' ? model.openInboxCount : 0}
+						actionableWorkCount={workPhase === 'ready' ? model.actionableWorkCount : 0}
+						bottleneck={model.bottleneck}
+						bind:activeFilter={streamFilter}
+						showTabs={false}
+						{nowMs}
+						{feedPhase}
+						{feedError}
+						{feedMore}
+						{decisionPhase}
+						{decisionError}
+						{decisionMore}
+						{inboxPhase}
+						{workPhase}
+						onRetry={retryFeed}
+						onRetryDecisions={retryDecisions}
+					/>
+				{/if}
+			</div>
+
+			<ActivityOpsRail {model} loading={!shellReady} unavailableReason={workUnavailableReason} />
+		</div>
 	</div>
 </div>
 
 <style>
 	.cmd-page {
+		--activity-gutter: 24px;
 		display: flex;
 		flex-direction: column;
-		gap: 18px;
 		width: 100%;
 		min-width: 0;
 		max-width: 100%;
-		padding: 12px 24px 48px;
+		padding: 0 0 48px;
 	}
 
 	@media (min-width: 640px) {
 		.cmd-page {
-			padding-inline: 32px;
+			--activity-gutter: 32px;
 		}
+	}
+
+	@media (max-width: 720px), (pointer: coarse) {
+		.cmd-page {
+			--activity-gutter: 16px;
+		}
+	}
+
+	.section-header {
+		flex: none;
 	}
 
 	.cmd-header {
 		display: flex;
 		flex-wrap: wrap;
-		align-items: flex-end;
+		align-items: center;
 		justify-content: space-between;
-		gap: 14px 20px;
+		gap: 10px 20px;
+		padding: 14px var(--activity-gutter) 8px;
 	}
 
 	.cmd-title-group {
@@ -977,12 +1055,78 @@
 		overflow-wrap: anywhere;
 	}
 
-	.cmd-controls {
+	.section-toolbar {
+		position: relative;
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 10px;
+		gap: 6px 12px;
+		padding: 8px var(--activity-gutter);
+		border-block-end: 1px solid var(--line);
+	}
+
+	.activity-stream-tabs {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px 12px;
+		min-width: 0;
 		max-width: 100%;
+		padding-inline: 0;
+		box-shadow: none;
+	}
+
+	.activity-stream-tab {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		padding: 0 8px;
+		border: 0;
+		border-bottom: 2px solid transparent;
+		background: transparent;
+		color: var(--fg-secondary);
+		font-size: 0.8125rem;
+		font-weight: 550;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+
+	.activity-stream-tab:hover {
+		color: var(--exec-ink);
+	}
+
+	.activity-stream-tab:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: -2px;
+	}
+
+	.activity-stream-tab.is-active {
+		color: var(--exec-ink);
+		border-bottom-color: var(--tone-accent);
+	}
+
+	.activity-stream-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 18px;
+		padding: 1px 6px;
+		border-radius: var(--exec-pill-radius, 999px);
+		background: var(--exec-warn-bg);
+		box-shadow: inset 0 0 0 1px var(--exec-warn-ring);
+		color: var(--exec-warn);
+		font-size: 0.6875rem;
+		font-weight: 650;
+	}
+
+	.cmd-body {
+		display: flex;
+		flex-direction: column;
+		gap: 18px;
+		min-width: 0;
+		padding: 18px var(--activity-gutter) 0;
 	}
 
 	.cmd-select-wrap {
@@ -1198,9 +1342,6 @@
 	}
 
 	@media (width < 40rem) {
-		.cmd-controls {
-			width: 100%;
-		}
 		.cmd-select-wrap {
 			flex: 1 1 100%;
 		}
@@ -1209,8 +1350,13 @@
 		}
 	}
 
+	:global(html[data-ui-theme^='report']) .activity-toolbar {
+		border-block-end: 1.5px solid var(--report-masthead-rule);
+	}
+
 	@media (forced-colors: active) {
-		.cmd-toggle-btn.is-on {
+		.cmd-toggle-btn.is-on,
+		.activity-stream-tab.is-active {
 			border: 2px solid Highlight;
 		}
 		.cmd-needs-pill,

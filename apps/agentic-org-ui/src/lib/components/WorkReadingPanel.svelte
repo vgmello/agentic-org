@@ -17,6 +17,9 @@
 		ariaLabel,
 		statusTone,
 		needsAttention = false,
+		priorityLevel,
+		priorityLabel,
+		priorityStrong = false,
 		onclose,
 		children
 	}: {
@@ -26,11 +29,15 @@
 		ariaLabel: string;
 		statusTone?: WorkStatusRingTone;
 		needsAttention?: boolean;
+		priorityLevel?: 0 | 1 | 2 | 3;
+		priorityLabel?: string;
+		priorityStrong?: boolean;
 		onclose: () => void;
 		children: Snippet;
 	} = $props();
 
 	let panelEl = $state<HTMLElement | null>(null);
+	let isOpening = $state(true);
 	let copiedForId = $state<string | null>(null);
 	const copied = $derived(copiedForId === itemId);
 	let copyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -74,42 +81,56 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
 <aside
 	bind:this={panelEl}
-	class="work-reading"
+	class={['work-reading', isOpening && 'is-opening']}
 	role="dialog"
 	aria-modal="false"
 	aria-label={ariaLabel}
 	data-testid="work-reading-panel"
+	onanimationend={(event) => {
+		if (event.target === event.currentTarget) isOpening = false;
+	}}
 >
 	<article class="work-document">
 		<div class="work-detail-bar">
-			<div class="work-detail-lead">
-				<button type="button" class="work-back-btn" onclick={onclose}>
-					<ArrowLeft class="size-4 shrink-0" aria-hidden="true" />
-					<span>Back to Work</span>
-				</button>
-				<p class="work-detail-id">
-					{#if statusTone}
-						<span
-							class="work-reading-status"
-							data-tone={statusTone}
-							data-attention={needsAttention ? '' : undefined}
-							aria-hidden="true"
-						>
-							{#if statusTone === 'done'}
-								<CheckCircle2 class="size-3.5" />
-							{:else if statusTone === 'blocked'}
-								<PauseCircle class="size-3.5" />
-							{:else if statusTone === 'review'}
-								<FileCheck2 class="size-3.5" />
-							{:else}
-								<span class="work-reading-status-ring"></span>
-							{/if}
-						</span>
-					{/if}
-					<span class="work-detail-ref">{refLabel}</span>
-					<span class="work-kind">{kindLabel}</span>
-				</p>
-			</div>
+			<button type="button" class="work-back-btn" onclick={onclose}>
+				<ArrowLeft class="size-4 shrink-0" aria-hidden="true" />
+				<span>Back to Work</span>
+			</button>
+			<p class="work-detail-id">
+				{#if priorityLevel !== undefined && priorityLabel}
+					<span
+						class="work-priority-mark"
+						data-level={priorityLevel}
+						data-priority-level={priorityLevel}
+						data-tone={priorityStrong ? 'strong' : undefined}
+						role="img"
+						aria-label={priorityLabel}
+						title={priorityLabel}
+					>
+						<span></span><span></span><span></span>
+					</span>
+				{/if}
+				<span class="work-detail-ref">{refLabel}</span>
+				{#if statusTone}
+					<span
+						class="work-reading-status"
+						data-tone={statusTone}
+						data-attention={needsAttention ? '' : undefined}
+						aria-hidden="true"
+					>
+						{#if statusTone === 'done'}
+							<CheckCircle2 class="size-3.5" />
+						{:else if statusTone === 'blocked'}
+							<PauseCircle class="size-3.5" />
+						{:else if statusTone === 'review'}
+							<FileCheck2 class="size-3.5" />
+						{:else}
+							<span class="work-reading-status-ring"></span>
+						{/if}
+					</span>
+				{/if}
+				<span class="work-kind">{kindLabel}</span>
+			</p>
 
 			<div class="work-detail-actions">
 				<button
@@ -153,15 +174,15 @@
 		background: var(--exec-surface);
 		color: var(--exec-ink);
 		container: work-reading / inline-size;
-		overflow-x: hidden;
-		overflow-y: auto;
-		overscroll-behavior-y: contain;
+		overflow-x: clip;
+		overflow-y: visible;
 	}
 	.work-document {
 		width: 100%;
-		max-width: 100%;
+		max-width: none;
 		min-width: 0;
-		padding: clamp(16px, 3cqi, 28px) clamp(16px, 4cqi, 32px) 36px;
+		margin-inline: 0;
+		padding: clamp(12px, 2cqi, 24px) var(--work-gutter, 24px) 36px;
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
@@ -170,28 +191,23 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		justify-content: space-between;
 		gap: 8px 12px;
 		min-width: 0;
 	}
-	.work-detail-lead {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 6px 10px;
-		min-width: 0;
-	}
 	.work-back-btn {
-		display: none;
+		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		min-height: 44px;
-		padding: 0 8px 0 2px;
+		min-height: 36px;
+		padding: 0 8px 0 0;
 		border-radius: var(--exec-ctrl-radius);
 		color: var(--exec-body);
 		font-size: 0.8125rem;
 		font-weight: 600;
 		cursor: pointer;
+		transition:
+			background-color 120ms ease-out,
+			color 120ms ease-out;
 	}
 	.work-back-btn:hover {
 		color: var(--exec-ink);
@@ -224,6 +240,13 @@
 		align-items: center;
 		gap: 4px;
 		flex-shrink: 0;
+		margin-inline-start: auto;
+	}
+	@container work-reading (max-width: 22rem) {
+		.work-detail-id {
+			order: 1;
+			flex-basis: 100%;
+		}
 	}
 	.work-detail-btn {
 		display: inline-flex;
@@ -264,6 +287,45 @@
 	.work-reading :global(textarea:focus-visible) {
 		border-color: var(--focus);
 		outline-color: var(--focus);
+	}
+	.work-priority-mark {
+		position: relative;
+		display: inline-flex;
+		flex: none;
+		align-items: flex-end;
+		justify-content: center;
+		gap: 2px;
+		width: 1rem;
+		height: 1rem;
+		padding-bottom: 3px;
+		color: var(--exec-muted);
+	}
+	.work-priority-mark[data-tone='strong'] {
+		color: var(--exec-ink);
+	}
+	.work-priority-mark span {
+		width: 0.15rem;
+		height: 0.28rem;
+		border-radius: 1px;
+		background: currentColor;
+	}
+	.work-priority-mark span:nth-child(2) {
+		height: 0.44rem;
+	}
+	.work-priority-mark span:nth-child(3) {
+		height: 0.6rem;
+	}
+	.work-priority-mark[data-level='1'] span:nth-child(n + 2),
+	.work-priority-mark[data-level='2'] span:nth-child(3) {
+		opacity: 0.32;
+	}
+	.work-priority-mark[data-level='0'] {
+		color: var(--fg-muted);
+	}
+	.work-priority-mark[data-level='0'] span {
+		width: 3px;
+		border: 1px solid currentColor;
+		background: transparent;
 	}
 	.work-reading-status {
 		position: relative;
@@ -313,50 +375,31 @@
 		border-inline-end: 0.24rem solid currentColor;
 		transform: translateX(50%);
 	}
-	@media (max-width: 959px) {
-		.work-document {
-			padding: 12px 16px 32px;
-		}
-		.work-back-btn {
-			display: inline-flex;
-		}
-	}
 	@media (max-width: 720px), (pointer: coarse) {
 		.work-detail-btn {
 			min-width: 44px;
 			min-height: 44px;
 		}
+		.work-back-btn {
+			min-height: 44px;
+		}
 	}
 	@media (prefers-reduced-motion: no-preference) {
-		.work-document {
-			animation: work-detail-fade 0.18s ease-out;
+		.work-reading.is-opening {
+			animation: work-reveal 280ms cubic-bezier(0.25, 0.7, 0.25, 1);
 		}
-		@keyframes work-detail-fade {
+		@keyframes work-reveal {
 			from {
-				opacity: 0;
+				clip-path: inset(0 100% 0 0);
 			}
 			to {
-				opacity: 1;
-			}
-		}
-		@media (min-width: 960px) {
-			.work-document {
-				animation: work-detail-enter 0.22s ease-out;
-			}
-			@keyframes work-detail-enter {
-				from {
-					opacity: 0;
-					transform: translateX(16px);
-				}
-				to {
-					opacity: 1;
-					transform: translateX(0);
-				}
+				clip-path: inset(0);
 			}
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.work-detail-btn {
+		.work-detail-btn,
+		.work-back-btn {
 			transition: none;
 		}
 	}
@@ -369,9 +412,16 @@
 			outline: 2px solid Highlight;
 			outline-offset: 1px;
 		}
+		.work-priority-mark span,
 		.work-reading-status[data-attention]::after {
 			forced-color-adjust: none;
 			background: CanvasText;
+		}
+		.work-priority-mark[data-level='0'] span {
+			background: transparent;
+			border-color: CanvasText;
+		}
+		.work-reading-status[data-attention]::after {
 			box-shadow: 0 0 0 1px Canvas;
 		}
 	}
