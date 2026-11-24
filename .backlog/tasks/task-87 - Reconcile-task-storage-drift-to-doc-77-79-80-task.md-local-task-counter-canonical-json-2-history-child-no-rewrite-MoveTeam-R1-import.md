@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-23T03:22:00Z'
-updated_date: '2026-11-24T01:57:00Z'
+updated_date: '2026-11-24T04:52:00Z'
 labels:
   - backend
   - rust
@@ -68,4 +68,6 @@ Inside durable/state/ (the Git-replicated org tree), every other domain (organiz
 
 <!-- SECTION:NOTES:BEGIN -->
 Update (2026-11-24): R1 Git import wiring (TaskFiles/ProcessFiles in apply_imported_to_engine, ARCH-06 Part B) was already shipped on v1 in TASK-97 (9ec28e8b) — do not duplicate it here. Preserve #[serde(default)] attachments[] front matter cleanly for TASK-98.4.
+
+Architect Review Note (2026-11-24): When moving CreateTask from Ack::Durable to Ack::Committed (AC #3, ADR-0014 d3), implement ADR-0019 durable block reservation on office_task_counters.reserved_through (tasks/features/core.rs:93-100, 140) so office restarts never collide T- numbers while keeping routine task creation <1 ms. Keep tasks inside office.db (never split into a 3rd tasks.db).
 <!-- SECTION:NOTES:END -->
