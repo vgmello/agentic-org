@@ -5031,8 +5031,10 @@ function applyShortcuts() {
   const on = S.singleKey, phone = !!(window.matchMedia && window.matchMedia("(max-width: 639px)").matches);
   document.body.classList.toggle("nokeys", !on);
   const q = document.getElementById("q"), nb = document.getElementById("new-btn");
+  const nav = document.getElementById("nav");
   if (q) { if (on && !phone) q.setAttribute("aria-keyshortcuts", "/"); else q.removeAttribute("aria-keyshortcuts"); }
   if (nb) { if (on) { nb.setAttribute("aria-keyshortcuts", "N"); nb.title = "New · N"; } else { nb.removeAttribute("aria-keyshortcuts"); nb.title = "New"; } }
+  if (on) nav.setAttribute("aria-keyshortcuts", "S"); else nav.removeAttribute("aria-keyshortcuts");
 }
 const inTextField = (el) => !!el && (["input", "textarea", "select"].includes((el.tagName || "").toLowerCase()) || !!el.isContentEditable);
 const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu:not([hidden])") || document.body.classList.contains("drawer"));
@@ -6446,7 +6448,7 @@ function inboxViewControls() {
 }
 function inboxCategories() {
   const moreActive = INBOX_MORE.includes(S.inboxKind);
-  return `<div class="queue-tabs" role="group" aria-label="Inbox queue controls">${INBOX_TABS.map((key) => `
+  return `<div class="queue-tabs" role="group" aria-label="Inbox queue controls"${S.singleKey ? ' aria-keyshortcuts="M"' : ""}>${INBOX_TABS.map((key) => `
     <button class="queue-tab" type="button" data-act="inbox-category" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}
     <div class="triage-tab-tools">
       <div class="menu-wrap"><button class="queue-tab" type="button" data-act="menu" data-id="inbox-kinds"
@@ -7796,7 +7798,7 @@ function pagePreferences() {
       </div>` : ""}
     </div></section>
     <section class="section" aria-labelledby="h-keys"><div class="sec-h"><h2 id="h-keys">Keyboard</h2></div>
-    <div class="pref"><div><p class="lbl" id="sk-l">Single-key shortcuts</p><p class="muted" id="sk-d" style="font-size:13px">N opens New task and / focuses Search, outside text fields.</p></div>
+    <div class="pref"><div><p class="lbl" id="sk-l">Single-key shortcuts</p><p class="muted" id="sk-d" style="font-size:13px">Outside text fields, N opens New task and / focuses Search. Press S for the sidebar or M for the Inbox menu, then type an item's first letter. Repeat the letter to select the next match.</p></div>
     <button class="switch" type="button" role="switch" aria-checked="${S.singleKey}" aria-labelledby="sk-l" aria-describedby="sk-d" data-act="single-key"></button></div>
     <div class="pref chat-send-pref">
       <div><label class="lbl" for="chat-send-shortcut">Chat send shortcut</label>
@@ -9000,6 +9002,7 @@ function placeSearchToolbar(main, page) {
 const pageSearchInput = () => localSearchHost.querySelector("input")
   || (pageSearchTools.contains(homeSearchField) && !homeSearchField.hidden ? homeSearchInput : null);
 function render(focus = true) {
+  endNavigationKeys();
   if (/^#\/?members\/you(\/|$)/.test(location.hash)) {
     try { history.replaceState(null, "", "#/home"); } catch (e) { location.hash = "#/home"; return; }
   }
@@ -9354,6 +9357,107 @@ function endSearch() { closeCmdk(false); }
 const narrowSearch = () => !!(window.matchMedia && window.matchMedia("(max-width: 639px)").matches);
 function closeNarrowSearch() { closeCmdk(true); }
 function goSearch(href) { closeCmdk(false); if (location.hash === href) render(true); else location.hash = href; }
+
+/* ---------------------------------------------------------------- keyboard navigation */
+const NAVIGATION_KEY_DELAY = 650;
+let navigationKeys = null;
+
+function endNavigationKeys(restoreFocus = false) {
+  if (!navigationKeys) return;
+  const { origin, openedDrawer, hint, timer } = navigationKeys;
+  navigationKeys = null;
+  clearTimeout(timer);
+  hint.remove();
+  if (restoreFocus) {
+    if (openedDrawer) document.body.classList.remove("drawer");
+    const focus = origin.isConnected && origin !== document.body ? origin : document.querySelector("#main h1");
+    focus?.focus({ preventScroll: true });
+  }
+}
+
+function startNavigationKeys(key) {
+  const inbox = key === "m";
+  const origin = document.activeElement;
+  let scope = document.getElementById(inbox ? "triage-categories" : "nav");
+  if (!scope) return false;
+  if (inbox && narrow() && scope.closest(".triage-has-detail")) {
+    resetInboxSelection();
+    render(false);
+    scope = document.getElementById("triage-categories");
+  }
+  const openedDrawer = !inbox && narrowSearch();
+  if (openedDrawer) document.body.classList.add("drawer");
+  const current = inbox
+    ? scope.querySelector('.queue-tab[aria-pressed="true"], .queue-tab[data-current-kind]')
+    : scope.querySelector('a[aria-current="page"]');
+  const first = scope.querySelector(inbox ? ".queue-tab" : "a.nav-item");
+  (current?.getClientRects().length ? current : first)?.focus();
+  const selector = inbox ? ".queue-tab, #menu-inbox-kinds [data-act=inbox-category]" : "a.nav-item";
+  const entries = [...scope.querySelectorAll(selector)].filter((node) => inbox || node.getClientRects().length)
+    .map((target) => {
+      const label = inbox ? (target.dataset.v ? inboxTabLabel(target.dataset.v) : "More")
+        : target.querySelector(".lbl, .t").textContent.trim();
+      return { target, label };
+    });
+  const hint = document.createElement("div");
+  hint.className = "toast";
+  const instruction = document.createElement("p");
+  instruction.textContent = (inbox ? "Inbox menu" : "Sidebar") + " · Type an item's first letter · Esc to cancel";
+  hint.append(instruction);
+  document.getElementById("toasts").append(hint);
+  navigationKeys = { scope, origin, openedDrawer, entries, hint, instruction, letter: "", index: 0, target: null, timer: null };
+  return true;
+}
+
+function selectNavigationKeyTarget() {
+  const target = navigationKeys?.target;
+  endNavigationKeys();
+  if (target?.isConnected) target.click();
+}
+
+function handleNavigationKeys(e) {
+  if (navigationKeys && e.key === "Escape") {
+    e.preventDefault();
+    endNavigationKeys(true);
+    return true;
+  }
+  if (e.key === "Shift") return false;
+  if (!S.singleKey || e.altKey || e.ctrlKey || e.metaKey || inTextField(e.target)) {
+    endNavigationKeys();
+    return false;
+  }
+  const key = e.key.toLowerCase();
+  if (!navigationKeys) {
+    if (e.repeat || (key !== "m" && key !== "s") || overlayOpen() || !startNavigationKeys(key)) return false;
+    e.preventDefault();
+    return true;
+  }
+  if (key === "enter" && navigationKeys.target) {
+    e.preventDefault();
+    selectNavigationKeyTarget();
+    return true;
+  }
+  if (!/^[a-z]$/.test(key)) {
+    endNavigationKeys();
+    return false;
+  }
+  e.preventDefault();
+  if (e.repeat) return true;
+  const selection = navigationKeys;
+  const index = key === selection.letter ? selection.index + 1 : 0;
+  const entry = selection.entries.filter(({ label }) => label.toLowerCase().startsWith(key))[index];
+  if (entry) {
+    Object.assign(selection, { letter: key, index, target: entry.target });
+    const visible = entry.target.getClientRects().length ? entry.target : selection.scope.querySelector('[aria-controls="menu-inbox-kinds"]');
+    visible?.focus();
+    selection.instruction.textContent = entry.label + " · Enter to select · Esc to cancel";
+  }
+  if (selection.target) {
+    clearTimeout(selection.timer);
+    selection.timer = setTimeout(selectNavigationKeyTarget, NAVIGATION_KEY_DELAY);
+  }
+  return true;
+}
 
 /* ---------------------------------------------------------------- actions */
 function toast(text, icon = "info", undoFn = null) {
@@ -9869,7 +9973,9 @@ function resetInboxSenderPreview(e) {
   if (sender && !sender.contains(e.relatedTarget)) delete sender.dataset.previewDismissed;
 }
 document.addEventListener("pointerover", resetInboxSenderPreview);
+document.addEventListener("pointerdown", () => endNavigationKeys());
 document.addEventListener("focusin", (e) => {
+  if (navigationKeys && !navigationKeys.scope.contains(e.target)) endNavigationKeys();
   resetInboxSenderPreview(e);
   if (CMDK.inline && e.target !== homeSearchInput && !homeSearchResults.contains(e.target)) closeCmdk(false);
   if (e.target.closest && !e.target.closest(".menu-wrap")) closeMenus();
@@ -9959,6 +10065,7 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.target === homeSearchInput || e.target.id === "cmdk-input")) { e.preventDefault(); runCmdkItem(CMDK.active); return; }
     return;
   }
+  if (handleNavigationKeys(e)) return;
   const openMenu = e.target.closest && e.target.closest(".menu:not([hidden])");
   if (openMenu) {
     const items = [...openMenu.querySelectorAll('[role^="menuitem"]')], i = items.indexOf(e.target);
@@ -9995,6 +10102,11 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "Escape") {
+    if (e.target.matches("#triage-search, #triage-comment")) {
+      e.preventDefault();
+      document.querySelector(".triage-header h1").focus({ preventScroll: true });
+      return;
+    }
     if (S.actReleaseOpen && e.target.closest("#release-panel, .activity-release-trigger")) {
       e.preventDefault();
       setReleasePanelOpen(false);
@@ -10070,7 +10182,8 @@ document.addEventListener("keydown", (e) => {
     if (input) input.focus(); else openCmdk();
     return;
   }
-  if (e.key.toLowerCase() === "a" && !e.metaKey && !e.ctrlKey && !e.altKey && route()[0] === "inbox") {
+  if (e.key.toLowerCase() === "a" && !e.metaKey && !e.ctrlKey && !e.altKey && route()[0] === "inbox"
+      && !e.target.closest("#triage-categories, #sidebar")) {
     const approval = document.querySelector('.triage-document [data-act="handle"].primary');
     if (approval && IN.some((item) => item.id === approval.dataset.id && item.kind === "approval")) {
       e.preventDefault(); approval.click(); return;
