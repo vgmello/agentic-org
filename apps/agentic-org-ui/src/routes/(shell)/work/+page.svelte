@@ -446,7 +446,40 @@
 		requestOpen = true;
 	}
 
+	function focusWorkFallback(closedId?: string, trigger?: HTMLElement | null) {
+		if (trigger?.isConnected && trigger.offsetParent !== null) {
+			trigger.focus({ preventScroll: true });
+			return;
+		}
+		if (closedId) {
+			const rowBtn = document.querySelector<HTMLElement>(
+				`#work-panel [data-item="${CSS.escape(closedId)}"] button`
+			);
+			if (rowBtn?.isConnected && rowBtn.offsetParent !== null) {
+				rowBtn.focus({ preventScroll: true });
+				return;
+			}
+		}
+		const firstRowBtn = document.querySelector<HTMLElement>('#work-results button:not([disabled])');
+		if (firstRowBtn?.isConnected && firstRowBtn.offsetParent !== null) {
+			firstRowBtn.focus({ preventScroll: true });
+			return;
+		}
+		const activeTabEl = document.getElementById(`work-tab-${tab}`);
+		if (activeTabEl?.isConnected) {
+			activeTabEl.focus({ preventScroll: true });
+			return;
+		}
+		searchInputEl?.focus({ preventScroll: true });
+	}
+
 	function closeDetail(restoreFocus = true) {
+		// Flush blur-based edits (e.g. TaskSheet title/description) before unmounting the inline editor,
+		// because Firefox does not dispatch blur when a focused element is removed from the DOM.
+		const active = document.activeElement;
+		if (active instanceof HTMLElement && active.closest('.work-reading')) {
+			active.blur();
+		}
 		const closedId = activeItemId;
 		const trigger = lastTriggerEl;
 		taskOpen = false;
@@ -455,17 +488,29 @@
 		lastTriggerEl = null;
 		if (!restoreFocus) return;
 		void tick().then(() => {
-			if (trigger?.isConnected && trigger.offsetParent !== null) {
-				trigger.focus({ preventScroll: true });
-				return;
-			}
-			if (closedId) {
-				document
-					.querySelector<HTMLElement>(`#work-panel [data-item="${CSS.escape(closedId)}"] button`)
-					?.focus({ preventScroll: true });
-			}
+			if (hasDetail) return;
+			focusWorkFallback(closedId, trigger);
 		});
 	}
+
+	// Ensure indirect closes (e.g. TaskSheet deletion setting open = false) never drop focus to document.body.
+	let prevHasDetail = false;
+	$effect(() => {
+		const openNow = hasDetail;
+		if (prevHasDetail && !openNow) {
+			const trigger = lastTriggerEl;
+			lastTriggerEl = null;
+			untrack(() => {
+				void tick().then(() => {
+					if (hasDetail) return;
+					if (!document.activeElement || document.activeElement === document.body) {
+						focusWorkFallback(undefined, trigger);
+					}
+				});
+			});
+		}
+		prevHasDetail = openNow;
+	});
 
 	const filters = $derived(savedFilters(tab, me));
 	const active = $derived(

@@ -654,12 +654,14 @@
 				</section>
 			{/if}
 
-			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">
+			{#if error}<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">
 					{error}
 				</p>{/if}
 		</div>
 	{:else if error}
-		<p class={['py-4 text-sm/6 text-danger', inline ? 'px-0' : 'px-4']} role="alert">{error}</p>
+		<p class={['py-4 text-sm/6 text-danger-text', inline ? 'px-0' : 'px-4']} role="alert">
+			{error}
+		</p>
 	{/if}
 {/snippet}
 

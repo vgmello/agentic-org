@@ -72,6 +72,12 @@
 			const { chatApi } = await import('$lib/modules/messaging/legacy-api');
 			const snap = await chatApi.snapshot(targetOrgId);
 			if (destroyed || seq !== chatLoadSeq || targetOrgId !== organizationId) return;
+			// Lock onto the currently highlighted channel entry ID before swapping results so Enter
+			// never activates a different channel if order changes or an earlier channel was archived.
+			if (!activeEntryId && (open || inlineOpen) && isChannelQuery && safeActiveIdx >= 0) {
+				const currentEntry = entries[safeActiveIdx];
+				if (currentEntry) activeEntryId = currentEntry.id;
+			}
 			chatConversations = snap.state.conversations;
 			chatConversationsOrgId = targetOrgId;
 		} catch {
@@ -174,6 +180,7 @@
 	let query = $state('');
 	const isChannelQuery = $derived(query.trimStart().startsWith('#'));
 	let activeIdx = $state(0);
+	let activeEntryId = $state<string | undefined>(undefined);
 	let aiHistory = $state<OrgAiAnswer[]>([]);
 	let inputEl = $state<HTMLInputElement | null>(null);
 	let homeInputEl = $state<HTMLInputElement | null>(null);
@@ -358,14 +365,30 @@
 		return shown;
 	});
 
-	const safeActiveIdx = $derived(entries.length > 0 ? Math.min(activeIdx, entries.length - 1) : 0);
+	const safeActiveIdx = $derived.by(() => {
+		if (entries.length === 0) return -1;
+		if (activeEntryId) {
+			return entries.findIndex((e) => e.id === activeEntryId);
+		}
+		return Math.min(activeIdx, entries.length - 1);
+	});
 	const activeOptionId = $derived(
-		mode === 'cmd' && entries.length > 0 ? `exec-cmdk-opt-${safeActiveIdx}` : undefined
+		mode === 'cmd' && safeActiveIdx >= 0 ? `exec-cmdk-opt-${safeActiveIdx}` : undefined
 	);
 	const inlineListboxVisible = $derived(isHome && inlineOpen && entries.length > 0);
 	const inlineActiveOptionId = $derived(
-		inlineListboxVisible ? `exec-cmdk-home-opt-${safeActiveIdx}` : undefined
+		inlineListboxVisible && safeActiveIdx >= 0 ? `exec-cmdk-home-opt-${safeActiveIdx}` : undefined
 	);
+
+	function setActiveIndex(idx: number) {
+		activeIdx = idx;
+		activeEntryId = entries[idx]?.id;
+	}
+
+	function resetActive() {
+		activeIdx = 0;
+		activeEntryId = undefined;
+	}
 	const currentAi = $derived(aiHistory[0]);
 	const earlierAi = $derived(aiHistory.slice(1, 5));
 	const askedSet = $derived(new Set(aiHistory.map((h) => h.query.toLowerCase())));
@@ -379,7 +402,7 @@
 
 	function resetModalState() {
 		query = '';
-		activeIdx = 0;
+		resetActive();
 	}
 
 	function closeInline(clearQuery = true) {
@@ -387,14 +410,14 @@
 		if (clearQuery) {
 			query = '';
 		}
-		activeIdx = 0;
+		resetActive();
 	}
 
 	function openInline() {
 		open = false;
 		mode = 'cmd';
 		inlineOpen = true;
-		activeIdx = 0;
+		resetActive();
 		void loadChatConversations(organizationId);
 		void tick().then(() => homeInputEl?.focus());
 	}
@@ -404,7 +427,7 @@
 		skipRestoreFocus = false;
 		mode = nextMode;
 		open = true;
-		activeIdx = 0;
+		resetActive();
 		if (nextMode === 'cmd') void loadChatConversations(organizationId);
 	}
 
@@ -414,7 +437,7 @@
 		query = nextQuery;
 		mode = nextMode;
 		open = true;
-		activeIdx = 0;
+		resetActive();
 		if (nextMode === 'cmd') void loadChatConversations(organizationId);
 		void tick().then(() => {
 			if (!inputEl) return;
@@ -464,7 +487,7 @@
 		skipRestoreFocus = false;
 		mode = 'ai';
 		open = true;
-		activeIdx = 0;
+		resetActive();
 		submitAi(prompt, opts);
 		void tick().then(() => inputEl?.focus());
 	}
@@ -555,7 +578,7 @@
 
 	$effect(() => {
 		if ((!open || mode !== 'cmd') && !inlineListboxVisible) return;
-		if (entries.length === 0) return;
+		if (entries.length === 0 || safeActiveIdx < 0) return;
 		void query;
 		const targetId = inlineListboxVisible
 			? `exec-cmdk-home-opt-${safeActiveIdx}`
@@ -588,21 +611,31 @@
 			event.preventDefault();
 			if (isHome && !open && !inlineOpen) {
 				inlineOpen = true;
-				activeIdx = 0;
+				if (entries.length > 0) setActiveIndex(0);
+				else resetActive();
 				return;
 			}
-			activeIdx = entries.length > 0 ? (safeActiveIdx + 1) % entries.length : 0;
+			if (entries.length > 0) {
+				setActiveIndex(safeActiveIdx < 0 ? 0 : (safeActiveIdx + 1) % entries.length);
+			}
 		} else if (event.key === 'ArrowUp') {
 			event.preventDefault();
 			if (isHome && !open && !inlineOpen) {
 				inlineOpen = true;
-				activeIdx = entries.length > 0 ? entries.length - 1 : 0;
+				if (entries.length > 0) setActiveIndex(entries.length - 1);
+				else resetActive();
 				return;
 			}
-			activeIdx = entries.length > 0 ? (safeActiveIdx - 1 + entries.length) % entries.length : 0;
+			if (entries.length > 0) {
+				setActiveIndex(
+					safeActiveIdx < 0
+						? entries.length - 1
+						: (safeActiveIdx - 1 + entries.length) % entries.length
+				);
+			}
 		} else if (event.key === 'Enter') {
 			const canRun = (open && mode === 'cmd') || (isHome && !open && inlineOpen);
-			if (canRun && entries[safeActiveIdx]) {
+			if (canRun && safeActiveIdx >= 0 && entries[safeActiveIdx]) {
 				event.preventDefault();
 				runEntry(entries[safeActiveIdx]);
 			}
@@ -613,7 +646,7 @@
 			} else if (query.length > 0) {
 				event.preventDefault();
 				query = '';
-				activeIdx = 0;
+				resetActive();
 			}
 		}
 	}
@@ -647,12 +680,12 @@
 					aria-activedescendant={inlineActiveOptionId}
 					onfocus={() => {
 						inlineOpen = true;
-						activeIdx = 0;
+						resetActive();
 						void loadChatConversations(organizationId);
 					}}
 					oninput={(event) => {
 						inlineOpen = true;
-						activeIdx = 0;
+						resetActive();
 						if (
 							event.currentTarget.value.trimStart().startsWith('#') &&
 							chatConversationsOrgId !== organizationId
@@ -735,7 +768,7 @@
 										tabindex={-1}
 										aria-selected={idx === safeActiveIdx}
 										onmousedown={(e) => e.preventDefault()}
-										onmouseenter={() => (activeIdx = idx)}
+										onmouseenter={() => setActiveIndex(idx)}
 										onclick={() => runEntry(entry)}
 										class={[
 											'exec-cmdk-home-opt flex min-h-9 w-full items-center gap-3 rounded-[10px] px-3 py-2 text-left text-sm transition-colors',
@@ -866,7 +899,7 @@
 				bind:this={inputEl}
 				bind:value={query}
 				oninput={(event) => {
-					activeIdx = 0;
+					resetActive();
 					if (
 						event.currentTarget.value.trimStart().startsWith('#') &&
 						chatConversationsOrgId !== organizationId
@@ -921,7 +954,7 @@
 									role="option"
 									tabindex={-1}
 									aria-selected={idx === safeActiveIdx}
-									onmouseenter={() => (activeIdx = idx)}
+									onmouseenter={() => setActiveIndex(idx)}
 									onclick={() => runEntry(entry)}
 									class={[
 										'exec-cmdk-opt flex min-h-9 w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left text-sm transition-colors',

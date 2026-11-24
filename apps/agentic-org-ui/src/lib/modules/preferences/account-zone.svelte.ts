@@ -11,6 +11,7 @@ class AccountZone {
 	detected = detectZone();
 	loaded = $state(false);
 	#organization: string | undefined;
+	#loadSeq = 0;
 
 	get effective(): { zone: string; status: ZoneStatus } {
 		return effectiveZone(this.saved, this.detected);
@@ -26,10 +27,14 @@ class AccountZone {
 	async ensure(organizationId: string): Promise<void> {
 		if (this.#organization === organizationId) return;
 		this.#organization = organizationId;
+		const seq = ++this.#loadSeq;
 		this.loaded = false;
 		try {
-			this.saved = (await preferencesApi.timeZone(organizationId)).saved;
+			const res = await preferencesApi.timeZone(organizationId);
+			if (seq !== this.#loadSeq || this.#organization !== organizationId) return;
+			this.saved = res.saved;
 		} catch {
+			if (seq !== this.#loadSeq || this.#organization !== organizationId) return;
 			this.saved = null;
 		}
 		this.loaded = true;
@@ -38,7 +43,11 @@ class AccountZone {
 	/** Saves a zone; resolves when it is kept, rejects with the reason when it is not. */
 	async save(organizationId: string, zone: string): Promise<void> {
 		await preferencesApi.saveTimeZone(organizationId, zone);
-		this.saved = zone;
+		if (this.#organization === organizationId) {
+			this.#loadSeq += 1;
+			this.saved = zone;
+			this.loaded = true;
+		}
 	}
 }
 

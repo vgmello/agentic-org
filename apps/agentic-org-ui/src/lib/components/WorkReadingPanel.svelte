@@ -55,9 +55,11 @@
 	});
 
 	async function copyRef() {
+		const targetId = itemId;
+		const targetRef = refLabel;
 		try {
-			await navigator.clipboard.writeText(refLabel);
-			const targetId = itemId;
+			await navigator.clipboard.writeText(targetRef);
+			if (targetId !== itemId) return;
 			copiedForId = targetId;
 			clearTimeout(copyTimer);
 			copyTimer = setTimeout(() => {
@@ -362,6 +364,10 @@
 		.work-detail-btn,
 		.work-back-btn {
 			border: 1px solid ButtonText;
+		}
+		.work-reading :global(:is(input, textarea, select):focus-visible) {
+			outline: 2px solid Highlight;
+			outline-offset: 1px;
 		}
 		.work-reading-status[data-attention]::after {
 			forced-color-adjust: none;

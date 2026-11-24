@@ -651,6 +651,74 @@ html[data-ui-theme='cozy'] .chat-frame .chat-compose textarea {
 	outline-color: var(--field-border);
 }
 
+html[data-ui-theme='cozy'][data-cozy-contrast='high']
+	:is(
+		.work-bcard,
+		.work-reading,
+		.assembly-view,
+		.activity-rail,
+		.chat-frame .chat-conv-head,
+		.chat-frame .chat-rail,
+		.chat-frame .chat-compose
+	) {
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+}
+
+/* Reduced transparency (prefers-reduced-transparency: reduce): opaque espresso surfaces and zero backdrop blur */
+@media (prefers-reduced-transparency: reduce) {
+	html[data-ui-theme='cozy'] {
+		--cozy-shell: #241e19;
+		--cozy-panel-sheen: none;
+		--cozy-sidebar-sheen: none;
+		--cozy-well: #1a1512;
+		--card: #241e19;
+		--popover: #1c1713;
+		--exec-sidebar-bg: #1e1915;
+		--exec-sidebar-blur: none;
+		--exec-surface: #241e19;
+		--exec-surface-hi: #2f2721;
+		--exec-well: #1a1512;
+		--exec-panel-bg: var(--exec-surface);
+		--exec-panel-bg-hover: var(--exec-surface-hi);
+		--exec-blur: none;
+		--exec-topbar-fade: #1e1915;
+		--exec-topbar-fade-blur: none;
+		--exec-cmdk-bg: #1a1512;
+		--exec-cmdk-bg-hover: #241e19;
+		--exec-cmdk-blur: none;
+		--exec-cta-glass-blur: none;
+	}
+
+	html[data-ui-theme='cozy'] .chat-frame {
+		--cozy-chat-chrome: #1a1512;
+		background: #241e19;
+	}
+
+	html[data-ui-theme='cozy']
+		:is(
+			.cozy-room::after,
+			.cozy-shell,
+			.exec-topbar::before,
+			.exec-well,
+			.exec-cta,
+			.exec-ai-btn,
+			.work-bcard,
+			.work-reading,
+			.assembly-view,
+			.activity-rail,
+			.chat-frame .chat-conv-head,
+			.chat-frame .chat-rail,
+			.chat-frame .chat-compose,
+			[data-slot='dialog-content'],
+			[data-slot='sheet-content'],
+			[data-slot='popover-content']
+		) {
+		-webkit-backdrop-filter: none;
+		backdrop-filter: none;
+	}
+}
+
 /* Settings preview swatch */
 .swatch-cozy {
 	background:

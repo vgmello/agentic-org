@@ -1088,6 +1088,21 @@ test('Phase 4B: saving inline Task A while switching to Task B keeps B enabled, 
 	await expect(readingPanel.locator('#task-title')).toBeEnabled();
 	await expect(page.getByRole('button', { name: 'Alpha task — saved' })).toBeVisible();
 
+	// Editing Beta's title and pressing Escape directly (without tabbing away) flushes blur-save before unmount
+	await readingPanel.locator('#task-title').fill('Beta task — escape saved');
+	await page.keyboard.press('Escape');
+	await expect(readingPanel).toBeHidden();
+	await expect(page.getByRole('button', { name: 'Beta task — escape saved' })).toBeVisible();
+
+	// Deleting a task inside the inline reading panel never drops focus to document.body
+	await page.getByRole('button', { name: 'Beta task — escape saved' }).click();
+	await readingPanel.getByRole('button', { name: 'Delete' }).click();
+	await readingPanel.getByRole('button', { name: 'Delete task' }).click();
+	await expect(readingPanel).toBeHidden();
+	await expect
+		.poll(() => page.evaluate(() => document.activeElement?.tagName ?? 'BODY'))
+		.not.toBe('BODY');
+
 	// Ask -> Search & Commands tab switch loads real Chat conversations on first single-event `#release-v1` query
 	// (#release-v1 exists only in the real Chat conversation snapshot, not the snapshot-derived fallback)
 	await page.getByRole('button', { name: 'Ask', exact: true }).click();
