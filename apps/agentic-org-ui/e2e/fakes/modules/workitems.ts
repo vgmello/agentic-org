@@ -32,7 +32,7 @@ import type {
 	WhyLink
 } from '../../../src/lib/modules/workitems/types';
 import { mockMode, POC_ORG_ID } from '../mock-mode';
-import { pocOrgSnapshot, pocWorkItems } from '../poc-dataset';
+import { pocOrgSnapshot, pocUsageRecords, pocWorkItems } from '../poc-dataset';
 import seedData from '../data/workitems/tasks.json' with { type: 'json' };
 import projectsData from '../data/projects/projects.json' with { type: 'json' };
 
@@ -88,7 +88,10 @@ function syncDerived(entry: StoredTask) {
 			? entry.detail.bug.verifications.some((v) => v.result === 'fixed' && v.at >= fixedAt)
 			: false;
 		entry.detail.awaitingVerification =
-			fixedAt !== undefined && entry.detail.status !== 'done' && !verifiedFixed;
+			fixedAt !== undefined &&
+			entry.detail.status !== 'done' &&
+			entry.detail.status !== 'cancelled' &&
+			!verifiedFixed;
 	}
 }
 
@@ -400,6 +403,46 @@ function buildPocStore(): Map<string, StoredTask> {
 		return 'todo';
 	};
 
+	const pocLedger = pocUsageRecords();
+	const costByRef = new Map<string, TaskCostAmounts>();
+	for (const r of pocLedger) {
+		const ref = r.attribution.taskRef;
+		if (!ref) continue;
+		const existing = costByRef.get(ref) ?? {
+			knownCostMicroUsd: 0,
+			knownTokens: 0,
+			records: 0,
+			unpricedRecords: 0,
+			includesApiEquivalent: false,
+			byAgent: [],
+			budget: null
+		};
+		const tokens = r.tokens ? r.tokens.reduce((sum, n) => sum + n, 0) : 0;
+		const cost = r.costMicroUsd ?? 0;
+		existing.records += 1;
+		existing.knownCostMicroUsd = (existing.knownCostMicroUsd ?? 0) + cost;
+		existing.knownTokens = (existing.knownTokens ?? 0) + tokens;
+		if (r.costMicroUsd === null) existing.unpricedRecords += 1;
+		if (r.apiEquivalent) existing.includesApiEquivalent = true;
+		if (r.consumer.kind === 'agent') {
+			const agent = memberRef(r.consumer.memberId) ?? fallbackReporter;
+			const agentRow = existing.byAgent.find((a) => a.agent.id === agent.id);
+			if (agentRow) {
+				agentRow.tokens = (agentRow.tokens ?? 0) + tokens;
+				agentRow.costMicroUsd = (agentRow.costMicroUsd ?? 0) + cost;
+				if (r.occurredAt > agentRow.lastAt) agentRow.lastAt = r.occurredAt;
+			} else {
+				existing.byAgent.push({
+					agent,
+					tokens,
+					costMicroUsd: cost,
+					lastAt: r.occurredAt
+				});
+			}
+		}
+		costByRef.set(ref, existing);
+	}
+
 	for (const w of pocWorkItems()) {
 		const pIdx = projects.findIndex((p) => p.id === w.project_id);
 		const proj = pIdx >= 0 ? projects[pIdx] : undefined;
@@ -559,7 +602,7 @@ function buildPocStore(): Map<string, StoredTask> {
 
 		const entry: StoredTask = {
 			detail,
-			cost: {
+			cost: costByRef.get(w.short_id) ?? {
 				knownCostMicroUsd: null,
 				knownTokens: null,
 				records: 0,

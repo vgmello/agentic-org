@@ -640,7 +640,7 @@ export function deriveDecisionSpotlight(
 			const recommendation = isRequest
 				? `${actorName} scoped this request. Approving turns it into active work for the team.`
 				: isFixedBug
-					? `${actorName} marked this fix complete. Verify and close if it meets expectations.`
+					? `${actorName} marked this fix complete. Verify whether it resolves the bug; close it separately on the bug page.`
 					: isNewBug
 						? `New ${item.severity ?? 'reported'} bug waiting for triage and owner confirmation.`
 						: item.blocked_reason
@@ -713,7 +713,7 @@ export function deriveDecisionSpotlight(
 			const backgroundContext = isRequest
 				? `${item.short_id} in ${projectName} is scoped and ready for approval. Approving converts the scoped outcome into executable work items assigned to the team; denying returns it with your note.`
 				: isFixedBug
-					? `${item.short_id} (${item.severity ?? 'reported'} severity) in ${projectName} was marked fixed by ${actorName}. Verifying closes the bug and clears it from the delivery queue.`
+					? `${item.short_id} (${item.severity ?? 'reported'} severity) in ${projectName} was marked fixed by ${actorName}. Verifying records your check and clears pending verification; close the bug on its page once confirmed.`
 					: isNewBug
 						? `${item.short_id} was reported in ${projectName}${item.severity ? ` with ${item.severity} severity` : ''}. Triaging routes it to the responsible area and sets priority for an agent or owner.`
 						: `${item.short_id} in ${projectName} is currently blocked${item.blocked_reason ? ` (${item.blocked_reason})` : ''}. Resuming moves it back to in-progress so ${actorName} can continue.`;
