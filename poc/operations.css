@@ -265,6 +265,37 @@
   box-shadow: none;
 }
 .work-toolbar #work-new-task { margin-inline-start: auto; }
+
+.project-header { flex: none; }
+.project-header > .ph { border-bottom: 0; padding-block-end: 8px; }
+.project-toolbar {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 12px;
+  padding-inline: var(--gutter);
+  border-block-end: 1px solid var(--line);
+}
+.project-toolbar > .tabs {
+  min-width: 0;
+  max-width: 100%;
+  padding-inline: 0;
+  box-shadow: none;
+}
+.project-toolbar > .queue-controls { padding-block: 4px; }
+html:is([data-theme="classic"], [data-theme="report-dark"]) .project-header { background: #1b2533; }
+@media (min-width: 960px) {
+  .project-directory-tools .menu { inset-inline: 0 auto; }
+}
+@media (max-width: 959px) {
+  .project-toolbar .menu-wrap { position: static; }
+  .project-toolbar .menu {
+    inset-inline: var(--gutter) auto;
+    max-inline-size: calc(100% - 2 * var(--gutter));
+  }
+  .project-toolbar .menu button { white-space: normal; }
+}
 .triage-tab-tools, .queue-controls {
   display: flex;
   align-items: center;
@@ -283,7 +314,7 @@
   background: currentColor;
 }
 .queue-controls .menu { max-height: min(60dvh, 28rem); overflow-y: auto; }
-#main :is(.work-toolbar, .scoped-work-tools) .menu {
+#main :is(.work-toolbar, .scoped-work-tools, .project-toolbar) .menu {
   background: var(--gray-800);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -706,14 +737,15 @@ html[data-theme^="report"] .triage-queue {
     flex: 1 1 auto;
     min-height: 16rem;
   }
-  .scoped-work-tools + .has-work-detail { min-height: max(26rem, calc(100dvh - 6rem)); }
+  :is(.scoped-work-tools, .project-header) + .has-work-detail { min-height: max(26rem, calc(100dvh - 6rem)); }
   .has-work-detail #work-results { overflow-y: auto; overscroll-behavior-y: contain; }
   .work-reading { border-inline-start: 1px solid var(--line); overflow-x: hidden; }
 }
 @media (max-width: 959px) {
   .has-work-detail #work-results,
   .work-header:has(+ .has-work-detail) .work-toolbar,
-  .subbar:has(+ .has-work-detail) { display: none; }
+  .subbar:has(+ .has-work-detail),
+  .project-header:has(+ .has-work-detail) .project-work-controls { display: none; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .work-reading .triage-document { animation: work-detail-enter .22s ease-out; }
