@@ -96,6 +96,27 @@ try {
       assert.equal(await groups.count(), 0, "No grouping survives a reload");
       await page.goto(url.href);
       await groups.first().getByRole("heading", { name: /^Blocked\b/ }).waitFor();
+      const layout = page.getByRole("group", { name: "Work layout" });
+      await layout.getByRole("button", { name: "Board" }).press("Enter");
+      const board = page.getByRole("region", { name: "Work board" });
+      const columns = board.locator(".bcol");
+      const cards = board.locator(".bcard");
+      const cardIds = () => cards.evaluateAll((items) => items.map((item) => item.getAttribute("data-work-id")).sort());
+      assert.equal(await columns.count(), 6);
+      const detailedIds = await cardIds();
+      const attention = board.locator(".bcard[data-attention]").first();
+      await attention.locator(".board-card-footer .pill").waitFor();
+      assert.equal(await attention.locator(":scope > *").count(), 3);
+      const trailingGutter = await board.evaluate((el) => {
+        el.scrollLeft = el.scrollWidth;
+        const lastColumn = el.querySelector(".bcol:last-child")!;
+        return el.getBoundingClientRect().left + el.clientWidth - lastColumn.getBoundingClientRect().right;
+      });
+      assert.ok(trailingGutter >= 15, "The final board column scrolls clear of the right edge");
+      await page.getByRole("button", { name: "4-Stage Unified" }).press("Enter");
+      assert.equal(await columns.count(), 4);
+      assert.deepEqual(await cardIds(), detailedIds, "Unified stages keep every card");
+      await layout.getByRole("button", { name: "List" }).press("Enter");
     }
     if (route === "activity") {
       await page.getByRole("heading", { name: "Portfolio Assembly" }).waitFor();

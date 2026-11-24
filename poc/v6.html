@@ -958,14 +958,6 @@ textarea::placeholder, input.field::placeholder { color: var(--gray-400); }
 .dl dd a { color: var(--tone-accent-ink); } .dl dd a:hover { color: var(--tone-accent-hover); }
 .blk h3 { font-size: 12px; font-weight: 600; color: var(--gray-400); margin-bottom: 4px; }
 
-/* Board */
-.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(240px, 1fr); gap: 16px; padding: 16px var(--gutter) 32px; overflow-x: auto; }
-.bcol { background: rgb(0 0 0 / .1); border-radius: var(--radius-lg); padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 160px; }
-.bcol h3 { font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; }
-.bcard { border-radius: var(--radius-md); background: var(--gray-800); box-shadow: inset 0 0 0 1px var(--line2); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 20px; }
-.bcard .t { font-weight: 600; }
-.bcard .m { display: flex; align-items: center; gap: 6px; color: var(--gray-400); font-size: 12px; flex-wrap: wrap; }
-
 /* Chat */
 .chat { display: grid; grid-template-columns: 240px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: 100dvh; }
 .chat.withthread { grid-template-columns: 240px 1fr 340px; }
@@ -2746,7 +2738,7 @@ html[data-theme="ocean"]:where([data-interior-page]) {
     .chlist a[aria-current="page"], .subnav a[aria-current="page"]) {
     background-color: var(--ocean-selected);
   }
-  & :is(.card, .bcard, .c-entry, .k-doc, .split .list, .bcol, .thread, .compose,
+  & :is(.card, .bcard, .c-entry, .k-doc, .split .list, .thread, .compose,
     .assembly-view, .activity-rail) {
     background-color: var(--ocean-glass-fill);
     background-image: var(--ocean-glass-sheen);
@@ -4156,7 +4148,7 @@ html[data-theme="graphite"] {
   & .cmdk-opt[aria-selected="true"] .ic { color: var(--tone-accent-ink); }
   & :is(.cmdk-tabs, .cmdk-foot, .cmdk-in-row) { border-color: var(--line); }
   & .cmdk-sep { background: var(--line2); }
-  & :is(.cmdk-tabs, .cmdk-foot, .split .list, .chlist, .subnav, .prof, .agent-rail, .bcol) { background: var(--graphite-rail); }
+  & :is(.cmdk-tabs, .cmdk-foot, .split .list, .chlist, .subnav, .prof, .agent-rail) { background: var(--graphite-rail); }
   & :is(.cmdk-dialog, .menu, .sheet, .toast, .sres) {
     background: var(--graphite-raised);
     box-shadow: inset 0 0 0 1px var(--line2), 0 12px 34px rgb(0 0 0 / .35);
@@ -4919,7 +4911,7 @@ const PAST_SESSIONS = [
 ];
 
 /* ---------------------------------------------------------------- state */
-const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
+const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
   scopedWorkLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", actReleaseOpen: false, openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
   taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false, confirmDeny: null, briefCopied: false };
 const ORG_NAME_STORE = "agentic-org.v6.organizationName";
@@ -5133,10 +5125,15 @@ function workListDisplayOptions() {
   return `${displayCheckbox("work-subtasks", "Show subtasks", S.workSubtasks)}${displayCheckbox("work-dividers", "Row dividers", S.workDividers)}`;
 }
 function workLayoutToggle(key) {
+  const stageToggle = S[key] === "board" ? `
+    <div class="work-layout-toggle" role="group" aria-label="Board stages">
+      ${[["detailed", "6 statuses"], ["unified", "4-Stage Unified"]].map(([mode, label]) => `<button class="queue-tab" type="button"
+        data-act="set" data-k="workBoardStages" data-v="${mode}" aria-pressed="${S.workBoardStages === mode}" aria-controls="work-results">${label}</button>`).join("")}
+    </div>` : "";
   return `<div class="work-layout-toggle" role="group" aria-label="Work layout">
     ${[["list", "List"], ["board", "Board"]].map(([layout, label]) => `<button class="queue-tab" type="button"
       data-act="set" data-k="${key}" data-v="${layout}" aria-pressed="${S[key] === layout}" aria-controls="work-results">${ic(layout, "ic16")}${label}</button>`).join("")}
-  </div>`;
+  </div>${stageToggle}`;
 }
 function scopedWorkControls() {
   const display = S.scopedWorkLayout === "list" ? showMenu("work-display", [], {
@@ -5369,21 +5366,36 @@ function workList(items, { groupBy, subgroupBy, emptyText = "No work here yet." 
   });
   return `<div class="work-items">${sections.join("")}</div>`;
 }
+const BOARD_STAGES = ["To do", "In progress", "Blocked", "Done"];
+const BOARD_DETAILED_STAGES = [...BOARD_STAGES, "New", "Fixed"];
+const BOARD_ACTIVE_STATUSES = new Set(["Triaged", "Rowan is scoping", "Scoped"]);
+const BOARD_UNIFIED_STATUS = { New: "To do", Fixed: "Done" };
+
 function board(items) {
-  const cols = ALL_STATUSES.filter((st) => items.some((w) => w.status === st));
-  if (!cols.length) return `<p class="empty-row">No work here yet.</p>`;
-  return `<div class="board">${cols.map((st) => {
-    const col = items.filter((w) => w.status === st);
-    return `<section class="bcol" aria-label="${esc(st)}"><h3><span>${esc(st)}</span><span class="muted">${col.length}</span></h3>${col.map((w) => {
+  if (!items.length) return `<p class="empty-row">No work here yet.</p>`;
+  const unified = S.workBoardStages === "unified";
+  const columns = new Map((unified ? BOARD_STAGES : BOARD_DETAILED_STAGES).map((stage) => [stage, []]));
+  for (const item of items) {
+    const status = unified ? BOARD_UNIFIED_STATUS[item.status] ?? item.status : item.status;
+    const stage = BOARD_ACTIVE_STATUSES.has(status) ? "In progress" : status;
+    const column = columns.get(stage) ?? columns.get(OPEN(item) ? "To do" : "Done");
+    column.push(item);
+  }
+  return `<div class="board" role="region" aria-label="Work board" tabindex="0">
+    <div class="board-columns" style="--board-column-count:${columns.size}">${[...columns].map(([stage, tasks]) => `
+    <section class="bcol" aria-label="${esc(stage)}"><h3><span>${esc(stage)}</span><span class="muted">${tasks.length}</span></h3>${tasks.map((w) => {
       const team = workTeam(w);
-      return `<div class="bcard" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}>
+      const attention = showsNeedsYou(w);
+      return `<div class="bcard" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}${attention ? " data-attention" : ""}>
         ${workTitle(w, "t")}
-        <span class="m">${workPriority(w.pri)}<span class="mono">${esc(w.id)}</span>${SEP}${esc(P[w.proj].name)}</span>
-        <span class="m">${av(w.who, 24)}${w.who ? mlink(w.who) : "Unassigned"}</span>
-        ${showsNeedsYou(w) ? `<span>${pill("Needs you", "amber", "bell", true)}</span>` : ""}
+        <div class="board-card-meta" title="${esc(w.status)}">${workPriority(w.pri)}<span class="mono">${esc(w.id)}</span>${SEP}<span class="board-project">${esc(P[w.proj].name)}</span></div>
+        <div class="board-card-footer">
+          <span class="board-assignee">${av(w.who, 24)}<span class="board-owner-label">${mlink(w.who)}</span></span>
+          ${attention ? pill("Needs you", "amber", "bell", true) : ""}
+        </div>
       </div>`;
-    }).join("")}</section>`;
-  }).join("")}</div>`;
+    }).join("")}</section>`).join("")}</div>
+  </div>`;
 }
 
 function workItemHref(item) {
@@ -9037,7 +9049,8 @@ function render(focus = true) {
   const priorActivity = main.querySelector(".activity-main");
   const releaseScroll = document.getElementById("release-panel")?.scrollTop ?? 0;
   const pageScroll = content.scrollTop;
-  const workBoardScroll = main.querySelector("#work-results .board")?.scrollLeft;
+  const priorBoard = main.querySelector("#work-results .board");
+  const workBoardScroll = priorBoard && { left: priorBoard.scrollLeft, top: priorBoard.scrollTop };
   const toolbarFocus = pageSearchTools.contains(document.activeElement) ? document.activeElement.id : "";
   const toolbarCaret = toolbarFocus && document.activeElement.type === "search"
     ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
@@ -9067,7 +9080,7 @@ function render(focus = true) {
   if (sameWorkPage) {
     content.scrollTop = pageScroll;
     const board = main.querySelector("#work-results .board");
-    if (board && workBoardScroll !== undefined) board.scrollLeft = workBoardScroll;
+    if (board && workBoardScroll) board.scrollTo(workBoardScroll);
   }
   if (workPanel) {
     if (sameWorkPage && priorPanel?.hasAttribute("data-expanded")) setWorkPanelExpanded(workPanel, true);

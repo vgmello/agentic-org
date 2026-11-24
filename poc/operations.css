@@ -277,6 +277,72 @@
 }
 .work-toolbar #work-new-task { margin-inline-start: auto; }
 
+/* Work board */
+.work-header + #work-results:has(> .board) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.board {
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior-inline: contain;
+  scroll-padding-inline: var(--gutter);
+}
+.board:focus-visible { outline-offset: -2px; }
+.board-columns {
+  --board-column-width: 15.5rem;
+  --board-column-gap: 18px;
+  display: grid;
+  grid-template-columns: repeat(var(--board-column-count), minmax(0, 1fr));
+  gap: var(--board-column-gap);
+  min-width: calc(var(--board-column-count) * var(--board-column-width) +
+    (var(--board-column-count) - 1) * var(--board-column-gap) + 2 * var(--gutter));
+  padding: 12px var(--gutter) 24px;
+}
+.bcol { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.bcol > h3 {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 4px 10px;
+  border-block-end: 1px solid var(--line2);
+  font-size: .875rem;
+  font-weight: 600;
+}
+.bcard {
+  display: grid;
+  grid-template-rows: 2lh 1.25rem 1.5rem;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line2);
+  border-radius: var(--radius-lg);
+  font-size: var(--item-title-size);
+  line-height: 1.35;
+}
+.board .bcard[data-attention] { border-color: var(--tone-warn-ring); }
+.bcard > .t {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+.board-card-meta, .board-card-footer, .board-assignee {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--gray-300);
+  font-size: .8125rem;
+}
+.board-card-meta > .mono { flex: none; font-size: .8125rem; }
+.board-card-footer { justify-content: space-between; }
+.board-project, .board-owner-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .section-header { flex: none; }
 .section-header > .ph { border-bottom: 0; padding-block-end: 8px; }
 .section-toolbar {
