@@ -6723,7 +6723,7 @@ function pageProject(id, tab) {
       ${linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab)}
       <div class="queue-controls" role="group" aria-label="Project controls">${workControls}${more}</div>
     </div>
-  </div>` + projectBody(id, tab);
+  </div>` + (tab === "overview" || tab === "activity" ? projectReleaseSummary(id) : "") + projectBody(id, tab);
 }
 function projectBody(id, tab) {
   const pr = P[id], ws = W.filter((w) => w.proj === id);
@@ -6981,11 +6981,14 @@ function projectInsights(id) {
     next.set("group", label);
     return { label, values: [total], href: "#/projects/" + id + "/insights?" + next.toString(), drill: true };
   });
+  const medianCycle = insightMedian(done.map(({ cycle }) => cycle));
   const stats = [
     ["Investment to date", usage.length ? insightUsd(investment) : "—", "All recorded usage"],
     ["Period cost", records.length ? insightUsd(spend) : "—", records.length ? insightDelta(spend, insightSum(previous(usage), (record) => record.cost)) : "No recorded usage"],
     ["Tokens", records.length ? insightCompact.format(insightSum(records, insightTokens)) : "—", records.length ? insightDelta(insightSum(records, insightTokens), insightSum(previous(usage), insightTokens)) : "No recorded usage"],
     ["Completed", String(done.length), done.length ? insightDelta(done.length, previous(completions).length) : "No recorded completions"],
+    ["Median cycle time", medianCycle === null ? "—" : formatTelemetryHours(medianCycle),
+      medianCycle === null ? "At least 5 completed items needed" : plural(done.length, "completed item", "completed items")],
     ["Working time", "—", "Not tracked yet"],
   ];
   const completionTypes = ["Task", "Bug"];
@@ -7634,14 +7637,18 @@ function releaseGateState(item) {
   if (!item.handled) return "pending";
   return releaseGateBlocked(item.outcome) ? "blocked" : "cleared";
 }
-function assemblyReleaseSummary(id, release, entries, merged) {
+const releaseReadinessLabel = (entries, merged) => `Readiness ${assemblyPct(entries)}% · ${merged}/${entries.length} tasks merged`;
+function projectReleaseSummary(id) {
+  const release = P[id].release;
+  if (!release) return "";
+  const { entries, counts: { merged } } = assemblySnapshot(true, id);
   const gates = releaseGates([id]);
   const gateStates = { pending: ["clock", "Pending"], blocked: ["deny", "Blocked"], cleared: ["check", "Cleared"] };
-  return `<section class="assembly-release" aria-label="Release summary">
+  return `<section class="assembly-release" id="project-release-summary" aria-label="Release summary">
     <div class="assembly-release-overview">
       <div><p class="assembly-release-label">Release</p><p class="assembly-release-name">${esc(release)}</p></div>
       <div class="assembly-release-readiness">
-        <p class="assembly-release-label">Readiness ${assemblyPct(entries)}% · ${merged}/${entries.length} tasks merged</p>
+        <p class="assembly-release-label" id="project-release-readiness">${releaseReadinessLabel(entries, merged)}</p>
         ${assemblyProgressBar(merged, entries.length, "Release readiness")}
       </div>
     </div>
@@ -7660,6 +7667,7 @@ function assemblyMatrix(projects, entries, counts) {
   const scopeLabel = project ? project.release : "All projects";
   const title = projectId ? "Assembly line" : project?.name || "Portfolio Assembly";
   const featureCount = projects[0]?.features.length ?? 0;
+  const cycleTime = projectId ? averageAssemblyCycle(assemblyLineEvents().filter(({ stage }) => stage === "merged")) : null;
   const headings = [["Milestone › Feature", projectId ? plural(featureCount, "feature", "features") : plural(projects.length, "project", "projects")],
     ...ACTIVITY_STAGES.map(([stage, label]) => [label, String(counts[stage])]), ["Into release", "Tasks merged"]];
   return `<section class="assembly-view" aria-label="Assembly line">
@@ -7668,7 +7676,8 @@ function assemblyMatrix(projects, entries, counts) {
       <dl class="assembly-metrics"><div><dt>Readiness</dt><dd>${assemblyPct(entries)}%${assemblyProgressBar(counts.merged, entries.length, projectId ? "Project readiness" : "Portfolio readiness")}</dd></div>
       <div><dt>Merged</dt><dd>${counts.merged} / ${entries.length}</dd></div>
       <div><dt>Agents busy</dt><dd>${new Set(entries.filter(({ stage, work }) => stage === "agents" && M[work.who]?.kind === "agent").map(({ work }) => work.who)).size}</dd></div>
-      <div><dt>Needs review</dt><dd class="assembly-review-text">${counts.review}</dd></div></dl>
+      <div><dt>Needs review</dt><dd class="assembly-review-text">${counts.review}</dd></div>
+      ${projectId ? `<div><dt title="Time from the first simulated stage to merge">Avg. cycle time</dt><dd data-assembly-cycle>${cycleTime === null ? "—" : formatTelemetryHours(cycleTime)}</dd></div>` : ""}</dl>
     </div>
     <div class="assembly-table-wrap" tabindex="0" role="region" aria-label="Delivery stages, scroll horizontally on smaller screens">
       <table class="assembly-table"><thead><tr>${headings.map(([label, sub]) => `<th scope="col">${label}<small>${sub}</small></th>`).join("")}</tr></thead>
@@ -7683,7 +7692,6 @@ function assemblyMatrix(projects, entries, counts) {
         </tr>`).join("")}${features.length ? "" : '<tr><td colspan="7" class="assembly-dash">No tasks on this assembly line.</td></tr>'}
       </tbody>`).join("")}</table>
     </div>
-    ${projectId && project?.release ? assemblyReleaseSummary(projectId, project.release, entries, counts.merged) : ""}
     <div class="assembly-legend" aria-label="Delivery stages">${ACTIVITY_STAGES.map(([stage, label]) => `<span data-stage="${stage}"><i aria-hidden="true"></i>${label}</span>`).join("")}
       ${projectId ? "" : assemblyProgress(entries, "Release readiness")}</div>
   </section>`;
@@ -7718,6 +7726,9 @@ function assemblyEventLog() {
 
 const telemetryHours = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const formatTelemetryHours = (hours) => telemetryHours.format(hours) + " h";
+function averageAssemblyCycle(merges) {
+  return merges.length ? merges.reduce((sum, { hour, started }) => sum + hour - started, 0) / merges.length : null;
+}
 
 function projectThroughput(id, events, waiting, gates) {
   const history = DELIVERY_HISTORY[id] || [];
@@ -7735,7 +7746,7 @@ function projectThroughput(id, events, waiting, gates) {
     return { label, count };
   });
   const peak = Math.max(4, ...days.map(({ count }) => count));
-  const cycle = merges.length ? merges.reduce((sum, { hour, started }) => sum + hour - started, 0) / merges.length : null;
+  const cycle = averageAssemblyCycle(merges);
   const now = new Date();
   const waitingSince = waiting.filter(({ review }) => !review?.handled).map(({ work, review }) => {
     const age = review && activityEventTime(review.time, now).age;
@@ -7996,8 +8007,17 @@ function animateAssemblyCards(layout, previousPositions) {
 
 function refreshAssemblySimulation(animate = false) {
   const layout = document.getElementById("assembly-layout");
+  const projectId = projectActivityId();
+  const snapshot = layout || projectId ? assemblySnapshot(true) : null;
+  const readiness = document.querySelector("#project-release-summary progress");
+  if (readiness && snapshot) {
+    const { entries, counts: { merged } } = snapshot;
+    readiness.max = entries.length || 1;
+    readiness.value = merged;
+    document.getElementById("project-release-readiness").textContent = releaseReadinessLabel(entries, merged);
+  }
   if (!layout) {
-    if (S.actPanel === "simulation" || projectActivityId()) refreshActivityPanel();
+    if (S.actPanel === "simulation" || projectId) refreshActivityPanel(snapshot);
     return;
   }
   const tableScroll = layout.querySelector(".assembly-table-wrap").scrollLeft;
@@ -8012,7 +8032,6 @@ function refreshAssemblySimulation(animate = false) {
   const positions = animate && matchMedia("(prefers-reduced-motion: no-preference)").matches
     ? new Map([...layout.querySelectorAll("[data-assembly-work]")].map((card) => [card.dataset.assemblyWork, card.getBoundingClientRect()]))
     : null;
-  const snapshot = assemblySnapshot(true);
   layout.outerHTML = assemblyLayout(snapshot);
   const next = document.getElementById("assembly-layout");
   const table = next.querySelector(".assembly-table-wrap");
