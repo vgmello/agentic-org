@@ -249,17 +249,47 @@
   position: relative;
   z-index: 1;
   container: queue-header / inline-size;
-  border-bottom: 1px solid var(--line);
 }
 .queue-headline { border-bottom: 0; }
-.queue-toolbar { padding: 4px var(--gutter) 0; }
-.work-toolbar {
+.queue-toolbar, .section-toolbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 12px;
+  gap: 6px 8px;
+  padding: 4px var(--gutter) 1px;
 }
-.work-header .work-toolbar { padding-block: 8px 12px; }
+.work-toolbar, .section-toolbar { column-gap: 12px; }
+:is(.work-toolbar, .project-toolbar:has(.project-work-controls, .project-activity-controls)) {
+  align-items: stretch;
+
+  & > :not(.primary-tab-row) { align-self: center; }
+  & > .primary-tab-row { align-items: stretch; }
+  & > #work-new-task, &.project-toolbar > .queue-controls { margin-block: 4px; }
+}
+/* The divider follows the tabs when adjacent controls wrap below them. */
+.primary-tab-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.primary-tab-row::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 100%;
+  inset-inline-start: calc(-1 * var(--gutter));
+  inline-size: 100cqi;
+  border-block-start: 1px solid var(--line);
+  pointer-events: none;
+}
+.primary-tab-row > .queue-tabs {
+  flex-wrap: nowrap;
+  min-inline-size: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
 .work-layout-toggle, .project-activity-controls > .queue-tabs {
   display: flex;
   gap: 2px;
@@ -268,12 +298,15 @@
 }
 .scoped-work-tools .work-layout-toggle { padding-inline-start: 0; border-inline-start: 0; }
 .scoped-work-tools .menu { inset-inline: 0 auto; }
-:is(.work-layout-toggle, .project-activity-controls) .queue-tab { border-radius: var(--radius-md); }
+:is(.work-layout-toggle, .project-activity-controls) .queue-tab {
+  border-radius: var(--radius-md);
+  border-block-end-width: 1px;
+  padding-block-start: 5px;
+}
 .work-layout-toggle .queue-tab[aria-pressed="true"],
 .project-activity-controls .queue-tab[aria-selected="true"] {
   background: var(--hover);
   border-color: var(--line2);
-  box-shadow: none;
 }
 .work-toolbar #work-new-task { margin-inline-start: auto; }
 
@@ -345,26 +378,21 @@
 
 .section-header { flex: none; }
 .section-header > .ph { border-bottom: 0; padding-block-end: 8px; }
+.project-header { container-type: inline-size; }
 #main .project-header > .ph { background: none; }
 html[data-theme="ocean"] .project-header { background-image: var(--ocean-header); }
-.section-toolbar {
-  position: relative;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 12px;
-  padding-inline: var(--gutter);
+.section-toolbar { position: relative; }
+.project-directory-tools {
+  padding-block: 4px;
   border-block-end: 1px solid var(--line);
 }
-.section-toolbar > .tabs {
-  min-width: 0;
-  max-width: 100%;
+.project-toolbar .tabs {
+  flex-shrink: 1;
+  min-inline-size: 0;
   padding-inline: 0;
-  box-shadow: none;
+  border: 0;
 }
-.section-toolbar.project-toolbar > .tabs { gap: 4px; }
 .project-toolbar .tcount { padding: 0; background: none; }
-.project-toolbar > .queue-controls { padding-block: 4px; }
 .project-toolbar > .queue-controls:has(.project-activity-controls), .project-activity-controls {
   flex-wrap: wrap;
   max-inline-size: 100%;
@@ -384,7 +412,7 @@ html[data-theme="ocean"] .project-header { background-image: var(--ocean-header)
   }
   .project-toolbar .menu button { white-space: normal; }
 }
-.triage-tab-tools, .queue-controls {
+.queue-controls {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -425,29 +453,29 @@ html[data-theme="ocean"] .project-header { background-image: var(--ocean-header)
   flex: none;
 }
 .queue-tabs { display: flex; flex-wrap: wrap; gap: 2px 4px; }
-.triage-tab-tools > .menu-wrap > .menu { inset-inline: 0 auto; }
-:is(.queue-tab, :where(.project-toolbar) .tab) {
+.triage-toolbar .primary-tab-row > .menu-wrap > .menu { inset-inline: 0 auto; }
+:is(.queue-tab, .tab) {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
+  padding: 6px 12px 5px;
   min-height: var(--control-height);
   border: 1px solid transparent;
+  border-block-end-width: 2px;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   color: var(--gray-300);
   font-weight: 600;
   white-space: nowrap;
 }
-:is(.queue-tab, :where(.project-toolbar) .tab):hover { background: var(--hover); color: var(--white); }
-.project-toolbar .tab:hover:not([aria-current="page"]) { box-shadow: none; }
-:is(.queue-tab, :where(.project-toolbar) .tab):is([aria-pressed="true"], [aria-selected="true"], [aria-current="page"], [data-current-kind]) {
-  border-bottom-color: var(--tone-accent-ink);
-  box-shadow: inset 0 -1px var(--tone-accent-ink);
+:is(.queue-tab, .tab):hover { background: var(--hover); color: var(--white); }
+:is(.queue-tab, .tab):is([aria-pressed="true"], [aria-selected="true"], [aria-current="page"], [data-current-kind]) {
+  border-block-end-color: var(--tone-accent-ink);
   color: var(--white);
 }
 .queue-tab[aria-expanded="true"] { background: var(--hover); color: var(--white); }
-.queue-tab:focus-visible { outline-offset: -2px; }
-:is(.queue-tab, :where(.project-toolbar) .tab):is([aria-pressed="true"], [aria-current="page"], [data-current-kind]) span { color: var(--tone-accent-ink); }
+:is(.queue-tab, .tab):focus-visible { outline-offset: -4px; }
+:is(.queue-tab, .tab):is([aria-pressed="true"], [aria-current="page"], [data-current-kind]) span { color: var(--tone-accent-ink); }
 .queue-tab span, .project-toolbar .tcount, .triage-menu-count {
   color: var(--gray-400);
   font-variant-numeric: tabular-nums;
@@ -521,9 +549,19 @@ html[data-theme^="report"] .triage-queue {
   --triage-row-selected: color-mix(in srgb, var(--tone-accent-ink) 18%, var(--hover));
 }
 @media (forced-colors: active) {
-  .triage-item[aria-current="true"], .work-layout-toggle .queue-tab[aria-pressed="true"] {
+  .triage-item[aria-current="true"] {
     outline: 1px solid Highlight;
     outline-offset: -1px;
+  }
+  :is(.queue-tab, .tab) { border-color: Canvas; }
+  :is(.queue-tab, .tab):is([aria-pressed="true"], [aria-selected="true"], [aria-current="page"], [data-current-kind]) {
+    border-block-end-color: Highlight;
+  }
+  .work-layout-toggle .queue-tab[aria-pressed="true"],
+  .project-activity-controls .queue-tab[aria-selected="true"] {
+    background: Highlight;
+    border-color: Highlight;
+    color: HighlightText;
   }
 }
 .triage-person { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
@@ -724,6 +762,7 @@ html[data-theme^="report"] .triage-queue {
   .triage-queue { border-inline-end: 0; }
   .triage-workspace:not(.triage-has-detail) .triage-reading,
   .triage-has-detail :is(.triage-toolbar, .triage-queue) { display: none; }
+  .triage-has-detail .queue-header { border-block-end: 1px solid var(--line); }
   .triage-has-detail .queue-headline { padding-block-end: 12px; }
   .triage-document { padding-block-start: 10px; }
   .triage-document .triage-back { display: inline-flex; align-self: start; padding-inline-start: 0; color: var(--gray-300); }
@@ -733,9 +772,12 @@ html[data-theme^="report"] .triage-queue {
   .queue-toolbar .menu button { min-height: var(--control-height); }
 }
 @container queue-header (max-width: 47.5rem) {
-  .queue-toolbar { position: relative; padding-block-end: 4px; }
+  .queue-toolbar { position: relative; }
   .queue-toolbar .menu-wrap { position: static; }
-  .triage-toolbar .triage-tab-tools .menu, :is(.work-toolbar, .activity-toolbar) .menu {
+  .triage-toolbar .primary-tab-row .menu {
+    max-width: calc(100cqi - 2 * var(--gutter));
+  }
+  :is(.work-toolbar, .activity-toolbar) .menu {
     inset-inline: var(--gutter) auto;
     max-width: calc(100% - 2 * var(--gutter));
   }
@@ -994,7 +1036,6 @@ html[data-theme="graphite"]:has(.triage-workspace) {
   container: activity / inline-size;
 }
 .activity-header { flex: none; }
-.activity-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; }
 @container queue-header (max-width: 23rem) {
   .activity-toolbar .queue-tab .ic { display: none; }
 }

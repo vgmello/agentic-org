@@ -644,11 +644,7 @@ body.nokeys .search kbd { display: none; }
 .cols2 > .section + .section { border-left: 1px solid var(--line); }
 
 /* Tabs */
-.tabs { display: flex; gap: 24px; overflow-x: auto; overflow-y: hidden; box-shadow: inset 0 -1px 0 var(--line2); padding: 0 var(--gutter); flex-shrink: 0; }
-.tab { box-shadow: inset 0 -2px 0 transparent; padding: 0.875rem 0.25rem; font-weight: 600; white-space: nowrap; color: var(--gray-400); display: inline-flex; align-items: center; gap: 8px; }
-.tab:hover { color: var(--white); box-shadow: inset 0 -2px 0 var(--line2); }
-.tab[aria-current="page"], .tab[aria-pressed="true"], .tab[aria-selected="true"] { color: var(--white); box-shadow: inset 0 -2px 0 var(--indigo-400); }
-.tab:focus-visible { outline-offset: -2px; }
+.tabs { display: flex; gap: 4px; overflow-x: auto; border-block-end: 1px solid var(--line); padding-inline: var(--gutter); flex-shrink: 0; scrollbar-width: none; }
 .tcount { border-radius: 99px; background: var(--hover); padding: 1px 8px; font-size: 0.75rem; line-height: 1.125rem; font-weight: 500; color: var(--gray-300); }
 .subbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px var(--gutter); border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .menu [role="menuitemcheckbox"][aria-checked="false"] .ic20 { visibility: hidden; }
@@ -4200,8 +4196,6 @@ html[data-theme="graphite"] {
     & .topbar { height: 58px; }
     & .cmdk-shell { height: 42px; width: min(560px, 100%); }
     & .subbar { padding-block: 8px; }
-    & .tabs { gap: 18px; }
-    & .tab { padding-block: 9px; }
     & :is(.rows > li, .feed > li, .ibx) { padding-block: 10px; }
     & .grp-h { padding-block: 5px; }
     & :is(.hb-pillars, .hb-stage, .hb-bento) { gap: 12px; }
@@ -6462,16 +6456,15 @@ function inboxViewControls() {
 }
 function inboxCategories() {
   const moreActive = INBOX_MORE.includes(S.inboxKind);
-  return `<div class="queue-tabs" role="group" aria-label="Inbox queue controls"${S.singleKey ? ' aria-keyshortcuts="M"' : ""}>${INBOX_TABS.map((key) => `
-    <button class="queue-tab" type="button" data-act="inbox-category" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}
-    <div class="triage-tab-tools">
+  return `<div class="primary-tab-row" role="group" aria-label="Inbox queue controls"${S.singleKey ? ' aria-keyshortcuts="M"' : ""}>
+    <div class="queue-tabs">${INBOX_TABS.map((key) => `
+      <button class="queue-tab" type="button" data-act="inbox-category" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}
+    </div>
       <div class="menu-wrap"><button class="queue-tab" type="button" data-act="menu" data-id="inbox-kinds"
         aria-haspopup="menu" aria-expanded="false" aria-controls="menu-inbox-kinds"${moreActive ? ` data-current-kind title="Viewing ${esc(inboxTabLabel(S.inboxKind))}"` : ""}>More${ic("chev-down", "ic14")}</button>
         <div class="menu" id="menu-inbox-kinds" role="menu" aria-label="More inbox categories" hidden>${INBOX_MORE.map((key) => `
           <button type="button" role="menuitemradio" aria-checked="${S.inboxKind === key}" data-act="inbox-category" data-v="${key}">${inboxTabLabel(key)}<span class="triage-menu-count">${inboxItems(key).length}</span></button>`).join("")}</div></div>
-      ${inboxViewControls()}
-    </div>
-  </div>`;
+  </div>${inboxViewControls()}`;
 }
 function inboxSelection(items, sel) {
   return IN.find((item) => item.id === sel) || (narrow() ? null : items[0]);
@@ -6719,7 +6712,7 @@ function pageProject(id, tab) {
   return back("#/projects", "Projects") + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id))}
     <div class="section-toolbar project-toolbar">
-      ${linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab)}
+      <div class="primary-tab-row">${linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab)}</div>
       <div class="queue-controls" role="group" aria-label="Project controls">${workControls}${activityControls}${more}</div>
     </div>
   </div>` + (tab === "overview" ? projectReleaseSummary(id) : "") + projectBody(id, tab);
@@ -7254,9 +7247,11 @@ function pageWork() {
       </div>
     </div>
     <div class="work-toolbar queue-toolbar">
-      <div class="queue-tabs" role="group" aria-label="Work views">
-        ${WORK_PRESETS.map(([value, label]) => `<button class="queue-tab" type="button" data-act="work-preset"
-          data-v="${value}" aria-pressed="${selection.view === value}">${label}<span data-work-count="${value}">${workPresetItems(filtered, value).length}</span></button>`).join("")}
+      <div class="primary-tab-row">
+        <div class="queue-tabs" role="group" aria-label="Work views">
+          ${WORK_PRESETS.map(([value, label]) => `<button class="queue-tab" type="button" data-act="work-preset"
+            data-v="${value}" aria-pressed="${selection.view === value}">${label}<span data-work-count="${value}">${workPresetItems(filtered, value).length}</span></button>`).join("")}
+        </div>
       </div>
       ${workLayoutToggle("workLayout")}
       ${workViewControls(selection.group)}
@@ -8099,7 +8094,8 @@ function activityViewControls(projectId, waitingCount = unhandled().filter((item
     icon: "adjustments", label: "Assembly line display", focusTooltip: true, active: S.assemblyDividers,
     footer: displayCheckbox("assembly-dividers", "Row dividers", S.assemblyDividers),
   });
-  return `${activityViewTabs(viewKey)}
+  const tabs = activityViewTabs(viewKey);
+  return `${projectId ? tabs : `<div class="primary-tab-row">${tabs}</div>`}
     <div class="queue-controls" role="group" aria-label="Activity view settings">${filter}${display}</div>`;
 }
 
@@ -9684,7 +9680,9 @@ function render(focus = true) {
   const shell = document.getElementById("agent-shell");
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
   placeSearchToolbar(main, r0);
-  for (const current of main.querySelectorAll(".tabs > [aria-current=page]")) {
+  for (const current of main.querySelectorAll(
+    ".tabs > [aria-current=page], .primary-tab-row > .queue-tabs > :is([aria-pressed=true], [aria-selected=true])"
+  )) {
     const tabs = current.parentElement;
     const { left, right } = current.getBoundingClientRect();
     const bounds = tabs.getBoundingClientRect();
