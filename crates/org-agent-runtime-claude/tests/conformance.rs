@@ -225,9 +225,19 @@ fn plan_keeps_background_tasks_enabled_and_maps_private_config_dir() {
     let deny_write = settings["sandbox"]["filesystem"]["denyWrite"]
         .as_array()
         .expect("denyWrite array");
-    assert!(deny_write
-        .iter()
-        .any(|v| v == "/office/agents/ada/home/claude"));
+    if org_platform::confinement::unix_socket_path_filter_supported() {
+        assert!(deny_write
+            .iter()
+            .any(|v| v == "/office/agents/ada/home/claude"));
+    } else {
+        // Linux bwrap mounts `/` read-only: paths outside allowWrite are omitted from
+        // `sandbox.filesystem.denyWrite` (preventing 0-byte 0444 host stubs, TASK-144) while
+        // denies overlapping allowWrite stay and `permissions.deny` keeps full coverage.
+        assert!(!deny_write
+            .iter()
+            .any(|v| v == "/office/agents/ada/home/claude"));
+        assert!(deny_write.iter().any(|v| v == "/work/t-1/.git/hooks/**"));
+    }
     let deny_read = settings["sandbox"]["filesystem"]["denyRead"]
         .as_array()
         .expect("denyRead array");
@@ -420,6 +430,19 @@ fn classifies_sandbox_bypass_and_permission_change_escalations_and_dedups_aborte
         o,
         Output::Event(SessionEvent::ApprovalRequested(req))
             if req.kind == ApprovalKind::Command && req.escalation == Escalation::SandboxBypass
+    )));
+
+    let net_bypass = session.on_line(
+        br#"{"type":"control_request","request_id":"req-net","request":{"subtype":"can_use_tool","tool_name":"SandboxNetworkAccess","input":{"host":"index.crates.io","port":443}}}"#,
+        now,
+    );
+    assert!(net_bypass.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::ApprovalRequested(req))
+            if req.kind == ApprovalKind::Other
+                && req.escalation == Escalation::SandboxBypass
+                && req.effective_escalation() == Escalation::SandboxBypass
+                && req.capability.is_none()
     )));
 
     let perm_chg = session.on_line(

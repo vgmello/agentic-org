@@ -13,8 +13,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use org_agent_runtime::{
-    AgentIdentity, AgentName, Decision, EnvName, LaunchContext, PathPattern, RuntimeId, SessionId,
-    SessionKind, SessionSpec, SpecPath, Token,
+    AgentIdentity, AgentName, Decision, EnvName, LaunchContext, PathPattern, RuntimeId,
+    SandboxSpec, SessionId, SessionKind, SessionSpec, SpecPath, Token,
 };
 use org_office::organization_family::records::{
     BuiltinKey, Employee, EmployeeKind, EmployeeStatus, PermissionPreset,
@@ -885,22 +885,39 @@ impl SessionManager {
         let home = self.office.agent_private_home_path(employee.id.as_str());
         let workspace = canonical_or_spec(&home)?;
         let (preset, sandbox_enabled) = self.load_preset_and_sandbox(employee.id.as_str())?;
-        let socket_str = self.config.office_socket.display().to_string();
-        let socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
-        let denied_globs = self.denied_office_globs_for(Some(employee.id.as_str()));
-        let mut cfg = build_session_policy(
+        let cfg = self.build_employee_preset_cfg(
+            employee.id.as_str(),
             preset,
             sandbox_enabled,
             &workspace,
+            false,
+        )?;
+        Ok(build_grants_summary(employee.id.as_str(), &cfg, &[]))
+    }
+
+    fn build_employee_preset_cfg(
+        &self,
+        employee_id: &str,
+        preset: PermissionPreset,
+        sandbox_enabled: bool,
+        workspace: &SpecPath,
+        create_root: bool,
+    ) -> Result<PresetConfig, ApiError> {
+        let socket_str = self.config.office_socket.display().to_string();
+        let socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
+        let denied_globs = self.denied_office_globs_for(Some(employee_id));
+        let mut cfg = build_session_policy(
+            preset,
+            sandbox_enabled,
+            workspace,
             socket_spec.as_ref(),
             &denied_globs,
             1,
         )
         .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid permission preset"))?;
-        let (wt_writable, wt_write_denies) =
-            self.worktree_sandbox_grants(employee.id.as_str(), false);
+        let (wt_writable, wt_write_denies) = self.worktree_sandbox_grants(employee_id, create_root);
         apply_worktree_sandbox_rules(&mut cfg, &wt_writable, &wt_write_denies);
-        Ok(build_grants_summary(employee.id.as_str(), &cfg, &[]))
+        Ok(cfg)
     }
 
     /// Owner approves or denies a pending escalation (`allow_once`, `allow_always`, `deny`).
@@ -1532,21 +1549,19 @@ impl SessionManager {
             .resolve_binary(admitted.adapter.as_ref(), None)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
 
-        let socket_str = self.config.office_socket.display().to_string();
-        let office_socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
-        let denied_globs = self.denied_office_globs_for(Some(&emp_id));
-        let mut preset_cfg = build_session_policy(
+        let is_linux_claude_bwrap =
+            is_linux_claude_bwrap(admitted.sandbox_enabled, admitted.adapter.id().as_str());
+        if is_linux_claude_bwrap {
+            ensure_bwrap_deny_dirs(&self.office, &emp_id);
+        }
+
+        let preset_cfg = self.build_employee_preset_cfg(
+            &emp_id,
             admitted.preset,
             admitted.sandbox_enabled,
             &workspace_spec,
-            office_socket_spec.as_ref(),
-            &denied_globs,
-            1,
-        )
-        .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid permission preset"))?;
-        let (wt_writable, wt_write_denies) = self.worktree_sandbox_grants(&emp_id, true);
-        apply_worktree_sandbox_rules(&mut preset_cfg, &wt_writable, &wt_write_denies);
-
+            true,
+        )?;
         let (runtime_dir, tmpdir) = self.prepare_run_dirs(&emp_id)?;
         let subagent_def =
             build_general_subagent_definition(preset_cfg.allowed_tools.as_deref(), None);
@@ -1554,13 +1569,14 @@ impl SessionManager {
 
         let instructions =
             self.build_instructions(employee, &home, &workspace_real, &preset_cfg, opts.task_ref)?;
-        let spec = build_session_spec(
+        let spec = build_session_spec_for_launch(
             admitted.adapter.id(),
             employee,
             admitted.model_token,
             workspace_spec,
             instructions,
             &preset_cfg,
+            is_linux_claude_bwrap,
         )?;
         let spec_hash = if admitted.route_digest_suffix.is_empty() {
             spec.spec_hash()
@@ -1683,15 +1699,16 @@ impl SessionManager {
         let binding_file = runtime_dir.join(format!("session-binding-{run_id}.v1"));
         let mut binding_guard = BindingGuard::new(&self.bindings, &emp_id, &run_id, &binding_file);
         write_owner_only_binding_file(&binding_file, binding.expose_token())?;
-        let env = self.build_environment(
-            &home,
-            &workspace_real,
-            &tmpdir,
-            &emp_id,
-            &session_id,
-            binding.expose_token(),
-            &binding_file,
-        )?;
+        let env = self.build_environment(SessionEnvInput {
+            home: &home,
+            workspace: &workspace_real,
+            tmpdir: &tmpdir,
+            employee_id: &emp_id,
+            session_id: &session_id,
+            token: binding.expose_token(),
+            binding_file: &binding_file,
+            sandbox_enabled: preset_cfg.sandbox.enabled,
+        })?;
         let mark = SessionMark::new(mark_str.clone())
             .map_err(|_| ApiError::new(ErrorCode::StorageError, "invalid session mark"))?;
         let launch = org_supervise::runtime::prepare_with_auth(plan, &ctx, env, &auth_env, mark)
@@ -2032,29 +2049,22 @@ impl SessionManager {
         Ok(assemble_standing_instructions(&input, &table))
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "session environment bundles paths, identifiers, token, and binding file"
-    )]
-    fn build_environment(
-        &self,
-        home: &Path,
-        workspace: &Path,
-        tmpdir: &Path,
-        employee_id: &str,
-        session_id: &str,
-        token: &str,
-        binding_file: &Path,
-    ) -> Result<Environment, ApiError> {
+    fn build_environment(&self, input: SessionEnvInput<'_>) -> Result<Environment, ApiError> {
         let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
         let captured_path =
             std::env::var_os("PATH").unwrap_or_else(|| OsString::from("/usr/bin:/bin"));
-        let forbidden = vec![home.to_path_buf(), workspace.to_path_buf()];
+        let forbidden = vec![input.home.to_path_buf(), input.workspace.to_path_buf()];
         let search_path = SearchPath::new(&helper_dir, &captured_path, &forbidden)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "invalid helper search path"))?;
         let mut captured = vec![
-            (OsString::from("HOME"), home.as_os_str().to_os_string()),
-            (OsString::from("TMPDIR"), tmpdir.as_os_str().to_os_string()),
+            (
+                OsString::from("HOME"),
+                input.home.as_os_str().to_os_string(),
+            ),
+            (
+                OsString::from("TMPDIR"),
+                input.tmpdir.as_os_str().to_os_string(),
+            ),
             (OsString::from("LANG"), OsString::from("en_US.UTF-8")),
             (OsString::from("TERM"), OsString::from("dumb")),
         ];
@@ -2063,17 +2073,23 @@ impl SessionManager {
         // Host `~/.cargo/credentials{,.toml}` are explicitly read+write denied; `$CARGO_HOME`
         // stays outside `writable_roots` (enforced by OS sandbox and approval bridge), and host
         // `~/.cargo/config.toml` must not store secrets when shared with agents.
+        // When forwarding `CARGO_HOME` into a network-sandboxed session, default Cargo to
+        // `CARGO_NET_OFFLINE=true` so builds use the local cache instead of hitting closed egress
+        // (`TASK-143`).
         let rust_forbidden = vec![
-            home.to_path_buf(),
-            workspace.to_path_buf(),
+            input.home.to_path_buf(),
+            input.workspace.to_path_buf(),
             self.office.durable_root().to_path_buf(),
             self.office.runtime_root().to_path_buf(),
         ];
-        for (var, default_rel) in [("RUSTUP_HOME", ".rustup"), ("CARGO_HOME", ".cargo")] {
-            if let Some(dir) = host_rust_dir_env(var, default_rel, &rust_forbidden) {
-                captured.push((OsString::from(var), dir));
-            }
-        }
+        append_rust_toolchain_env(
+            &mut captured,
+            std::env::var_os("RUSTUP_HOME"),
+            std::env::var_os("CARGO_HOME"),
+            std::env::var_os("HOME"),
+            &rust_forbidden,
+            input.sandbox_enabled,
+        );
         let info = self.office.info();
         let context = vec![
             (
@@ -2087,19 +2103,19 @@ impl SessionManager {
             (OsString::from("AGENT_OS_ORG"), OsString::from(&info.org_id)),
             (
                 OsString::from("AGENT_OS_AGENT_ID"),
-                OsString::from(employee_id),
+                OsString::from(input.employee_id),
             ),
             (
                 OsString::from("AGENT_OS_SESSION_ID"),
-                OsString::from(session_id),
+                OsString::from(input.session_id),
             ),
             (
                 OsString::from("AGENT_OS_SESSION_TOKEN"),
-                OsString::from(token),
+                OsString::from(input.token),
             ),
             (
                 OsString::from("AGENT_OS_BINDING_FILE"),
-                binding_file.as_os_str().to_os_string(),
+                input.binding_file.as_os_str().to_os_string(),
             ),
         ];
         Environment::new(search_path, &captured)
@@ -3591,6 +3607,39 @@ fn build_objective_text(employee: &Employee, requester: &str, text: &str) -> Str
     }
 }
 
+fn is_linux_claude_bwrap(sandbox_enabled: bool, runtime_id: &str) -> bool {
+    sandbox_enabled
+        && runtime_id == "claude"
+        && !org_platform::confinement::unix_socket_path_filter_supported()
+}
+
+fn build_session_spec_for_launch(
+    runtime: RuntimeId,
+    employee: &Employee,
+    model: Option<Token>,
+    workspace: SpecPath,
+    instructions: String,
+    preset_cfg: &PresetConfig,
+    linux_claude_bwrap: bool,
+) -> Result<SessionSpec, ApiError> {
+    let mut spec = build_session_spec(
+        runtime,
+        employee,
+        model,
+        workspace,
+        instructions,
+        preset_cfg,
+    )?;
+    if linux_claude_bwrap {
+        // Keep `spec.policy.deny` and `preset_cfg.policy.deny` 100% complete (enforced by
+        // Claude `permissions.deny` and `decide_escalation_with_roots`), while pruning absent
+        // paths from Linux `bwrap` `sandbox.deny_read`/`deny_write` so `@anthropic-ai/sandbox-runtime`
+        // never materializes permanent 0-byte `0444` files on the host (`TASK-144`).
+        prune_nonexistent_bwrap_denies(&mut spec.sandbox);
+    }
+    Ok(spec)
+}
+
 fn build_session_spec(
     runtime: RuntimeId,
     employee: &Employee,
@@ -3657,6 +3706,117 @@ fn write_owner_only_binding_file(path: &Path, token: &str) -> Result<(), ApiErro
     Ok(())
 }
 
+struct SessionEnvInput<'a> {
+    home: &'a Path,
+    workspace: &'a Path,
+    tmpdir: &'a Path,
+    employee_id: &'a str,
+    session_id: &'a str,
+    token: &'a str,
+    binding_file: &'a Path,
+    sandbox_enabled: bool,
+}
+
+fn append_rust_toolchain_env(
+    captured: &mut Vec<(OsString, OsString)>,
+    rustup_explicit: Option<OsString>,
+    cargo_explicit: Option<OsString>,
+    host_home: Option<OsString>,
+    forbidden: &[PathBuf],
+    sandbox_enabled: bool,
+) {
+    if let Some(dir) =
+        host_rust_dir_env_from(rustup_explicit, host_home.clone(), ".rustup", forbidden)
+    {
+        captured.push((OsString::from("RUSTUP_HOME"), dir));
+    }
+    if let Some(dir) = host_rust_dir_env_from(cargo_explicit, host_home, ".cargo", forbidden) {
+        captured.push((OsString::from("CARGO_HOME"), dir));
+        if sandbox_enabled {
+            captured.push((OsString::from("CARGO_NET_OFFLINE"), OsString::from("true")));
+        }
+    }
+}
+
+/// Pre-creates fixed `0700` sensitive office directories before launching a Linux Claude `bwrap`
+/// sandbox so `bwrap` bind-mounts read-only masks over real directories instead of colliding with
+/// future directory creation (`TASK-144`). Never creates `<durable>/private` on satellites (`ARCH-02`).
+fn ensure_bwrap_deny_dirs(office: &Office, employee_id: &str) {
+    let durable = office.durable_root();
+    let office_id = &office.info().office_id;
+    let office_local = durable.join("local").join("offices").join(office_id);
+    let runtime_root = office.runtime_root();
+    let office_rt = runtime_root.join(office_id);
+    for sub in [
+        "state",
+        "journal",
+        "authority",
+        "messaging",
+        "budgets",
+        "accounting",
+        "recovery",
+    ] {
+        let _ = ensure_owner_only_dir(&durable.join(sub));
+    }
+    if office.info().role == org_office::OfficeRole::Hq {
+        let _ = ensure_owner_only_dir(&durable.join("private"));
+    }
+    for sub in [
+        "auth",
+        "connections",
+        "sessions",
+        "enroll-tmp",
+        "security",
+        "subscription-usage",
+    ] {
+        let _ = ensure_owner_only_dir(&office_local.join(sub));
+    }
+    for dir in [
+        office_rt.join("protected"),
+        office_rt.join("git-home"),
+        runtime_root.join("snapshot-import"),
+        runtime_root.join("snapshot-export"),
+    ] {
+        let _ = ensure_owner_only_dir(&dir);
+    }
+    let repos_root = office_rt.join("repositories");
+    let self_admins = org_office::git::OfficeGitState::load(runtime_root, office_id)
+        .ok()
+        .map(|gs| collect_self_active_admins(&gs, employee_id))
+        .unwrap_or_default();
+    if self_admins.is_empty() {
+        let _ = ensure_owner_only_dir(&repos_root);
+    } else {
+        for repo_id in self_admins.keys() {
+            let objects_dir = repos_root.join(format!("{repo_id}.git")).join("objects");
+            if objects_dir.is_dir() {
+                let _ = ensure_owner_only_dir(&objects_dir.join("info"));
+            }
+        }
+    }
+}
+
+fn pattern_exists_for_bwrap(pat: &PathPattern) -> bool {
+    let raw = pat.as_str();
+    let prefix = raw
+        .strip_suffix("/**")
+        .or_else(|| raw.strip_suffix("/*"))
+        .unwrap_or(raw);
+    if prefix.contains('*') || prefix.contains('?') || prefix.contains('[') {
+        return true;
+    }
+    std::fs::symlink_metadata(prefix).is_ok()
+}
+
+/// Drops non-existent concrete paths from Linux `bwrap` `sandbox.deny_read` and `sandbox.deny_write`
+/// so `@anthropic-ai/sandbox-runtime` never materializes permanent 0-byte `0444` files on the host
+/// (`TASK-144`). Callers must leave `policy.deny` untouched so tool-level denies and the approval
+/// bridge retain 100% coverage of absent future paths.
+pub(crate) fn prune_nonexistent_bwrap_denies(sandbox: &mut SandboxSpec) {
+    sandbox.deny_read.retain(pattern_exists_for_bwrap);
+    sandbox.deny_write.retain(pattern_exists_for_bwrap);
+}
+
 fn office_env_names() -> Vec<EnvName> {
     [
         "AGENT_OS_SOCKET",
@@ -3668,6 +3828,7 @@ fn office_env_names() -> Vec<EnvName> {
         "AGENT_OS_BINDING_FILE",
         "RUSTUP_HOME",
         "CARGO_HOME",
+        "CARGO_NET_OFFLINE",
     ]
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static env name"))
@@ -3705,15 +3866,6 @@ fn canonicalize_with_tail(path: &Path) -> PathBuf {
         cur = parent;
     }
     path.to_path_buf()
-}
-
-fn host_rust_dir_env(name: &str, default_rel: &str, forbidden: &[PathBuf]) -> Option<OsString> {
-    host_rust_dir_env_from(
-        std::env::var_os(name),
-        std::env::var_os("HOME"),
-        default_rel,
-        forbidden,
-    )
 }
 
 pub(crate) fn host_rust_dir_env_from(
@@ -4042,5 +4194,180 @@ mod manager_helper_tests {
             );
         }
         assert!(!file.exists(), "BindingGuard drop must unlink binding file");
+    }
+
+    #[test]
+    fn prune_nonexistent_bwrap_denies_drops_absent_paths_and_preserves_policy_enforcement() {
+        use crate::preset::{decide_escalation_with_roots, EscalationDisposition};
+        use org_agent_runtime::{
+            AgentRuntime, ApprovalId, ApprovalKind, ApprovalRequest, Escalation, ToolCapability,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let workspace = root.join("workspace");
+        let existing_db = root.join("office.db");
+        let existing_dir = root.join("objects").join("info");
+        let absent_journal = root.join("office.db-journal");
+        let absent_sibling = root.join("agents").join("sibling-1");
+        let absent_hooks = root.join("repo.git").join("hooks");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&existing_dir).unwrap();
+        std::fs::write(&existing_db, b"sqlite").unwrap();
+
+        let denied = vec![
+            PathPattern::try_from(existing_db.to_str().unwrap()).unwrap(),
+            PathPattern::try_from(format!("{}/**", existing_dir.display()).as_str()).unwrap(),
+            PathPattern::try_from(absent_journal.to_str().unwrap()).unwrap(),
+            PathPattern::try_from(format!("{}/**", absent_sibling.display()).as_str()).unwrap(),
+            PathPattern::try_from("/run/user/*/bus").unwrap(),
+        ];
+        let ws_spec = SpecPath::try_from(workspace.to_str().unwrap()).unwrap();
+        let mut preset_cfg = build_session_policy(
+            PermissionPreset::AutonomousSandboxed,
+            true,
+            &ws_spec,
+            None,
+            &denied,
+            1,
+        )
+        .unwrap();
+        let absent_hooks_pat =
+            PathPattern::try_from(format!("{}/**", absent_hooks.display()).as_str()).unwrap();
+        apply_worktree_sandbox_rules(&mut preset_cfg, &[], &[absent_hooks_pat]);
+
+        let mut sandbox = preset_cfg.sandbox.clone();
+        prune_nonexistent_bwrap_denies(&mut sandbox);
+
+        let deny_read: Vec<&str> = sandbox.deny_read.iter().map(PathPattern::as_str).collect();
+        let deny_write: Vec<&str> = sandbox.deny_write.iter().map(PathPattern::as_str).collect();
+        assert!(deny_read.contains(&existing_db.to_str().unwrap()));
+        assert!(deny_read.iter().any(|p| p.contains("objects/info/**")));
+        assert!(deny_read.contains(&"/run/user/*/bus"));
+        assert!(!deny_read.contains(&absent_journal.to_str().unwrap()));
+        assert!(!deny_read.iter().any(|p| p.contains("sibling-1")));
+        assert!(!deny_write.iter().any(|p| p.contains("repo.git/hooks")));
+        assert!(!deny_write.iter().any(|p| p.contains(".git/hooks")));
+
+        // Policy deny rules remain 100% intact for both Claude `permissions.deny` and approval bridge.
+        let spec = SessionSpec {
+            runtime: RuntimeId::try_from("claude").unwrap(),
+            kind: SessionKind::Home {},
+            agent: AgentIdentity {
+                name: AgentName::try_from("eng").unwrap(),
+                description: "Engineer".to_owned(),
+                prompt: "Engineer".to_owned(),
+            },
+            model: None,
+            effort: None,
+            workspace: ws_spec,
+            read_only_dirs: Vec::new(),
+            instructions: String::new(),
+            permission_mode: preset_cfg.permission_mode,
+            policy: preset_cfg.policy.clone(),
+            sandbox,
+            mcp_servers: Default::default(),
+            tools: preset_cfg.allowed_tools.clone(),
+        };
+        let runtime_dir = root.join("rt");
+        let tmpdir = root.join("tmp");
+        std::fs::create_dir_all(&runtime_dir).unwrap();
+        std::fs::create_dir_all(&tmpdir).unwrap();
+        let ctx = LaunchContext {
+            runtime_path: PathBuf::from("/usr/local/bin/claude"),
+            runtime_version: None,
+            runtime_dir: SpecPath::try_from(runtime_dir.to_str().unwrap()).unwrap(),
+            tmpdir: SpecPath::try_from(tmpdir.to_str().unwrap()).unwrap(),
+            office_env_names: office_env_names(),
+            new_session_id: Some(
+                SessionId::try_from("11111111-1111-4111-8111-111111111111").unwrap(),
+            ),
+            resume: None,
+            config_dir: None,
+        };
+        let (plan, _) = org_agent_runtime_claude::ClaudeRuntime::new()
+            .plan_session(&spec, &ctx)
+            .unwrap();
+        let settings_bytes = &plan
+            .files
+            .iter()
+            .find(|f| f.rel_path.as_str() == "claude-settings.json")
+            .unwrap()
+            .contents;
+        let settings: serde_json::Value = serde_json::from_slice(settings_bytes).unwrap();
+        let perm_denies: Vec<&str> = settings["permissions"]["deny"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        assert!(perm_denies.contains(&format!("Read(/{})", absent_journal.display()).as_str()));
+        assert!(perm_denies.contains(&format!("Read(/{}/**)", absent_sibling.display()).as_str()));
+        assert!(perm_denies.contains(&format!("Write(/{}/**)", absent_hooks.display()).as_str()));
+
+        let mut write_req = ApprovalRequest::new(
+            ApprovalId::new("req-absent-sibling"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({
+                "file_path": format!("{}/secret.txt", absent_sibling.display())
+            }),
+        );
+        write_req.capability = Some(ToolCapability::Edit);
+        assert!(matches!(
+            decide_escalation_with_roots(
+                &write_req,
+                &preset_cfg.policy,
+                preset_cfg.preset,
+                None,
+                Some(&preset_cfg.sandbox.writable_roots),
+            ),
+            EscalationDisposition::AutoDeny { .. }
+        ));
+    }
+
+    #[test]
+    fn cargo_net_offline_is_set_only_when_cargo_home_forwarded_in_sandboxed_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let cargo_dir = root.join("host-cargo");
+        let helper_dir = root.join("helpers");
+        let home_dir = root.join("home");
+        let ws_dir = root.join("ws");
+        for d in [&cargo_dir, &helper_dir, &home_dir, &ws_dir] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let search = SearchPath::new(
+            &helper_dir,
+            std::ffi::OsStr::new("/usr/bin"),
+            &[home_dir.clone(), ws_dir.clone()],
+        )
+        .unwrap();
+
+        let mut sandboxed = Vec::new();
+        append_rust_toolchain_env(
+            &mut sandboxed,
+            None,
+            Some(cargo_dir.as_os_str().to_os_string()),
+            None,
+            &[home_dir.clone(), ws_dir.clone()],
+            true,
+        );
+        assert!(sandboxed
+            .iter()
+            .any(|(k, v)| k == "CARGO_NET_OFFLINE" && v == "true"));
+        assert!(Environment::new(search, &sandboxed).is_ok());
+
+        let mut unsandboxed = Vec::new();
+        append_rust_toolchain_env(
+            &mut unsandboxed,
+            None,
+            Some(cargo_dir.as_os_str().to_os_string()),
+            None,
+            &[home_dir, ws_dir],
+            false,
+        );
+        assert!(!unsandboxed.iter().any(|(k, _)| k == "CARGO_NET_OFFLINE"));
     }
 }

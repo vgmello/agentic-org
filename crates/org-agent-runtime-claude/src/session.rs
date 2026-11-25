@@ -1298,19 +1298,26 @@ fn classify_approval_kind(tool_name: &str) -> ApprovalKind {
         "Bash" => ApprovalKind::Command,
         "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => ApprovalKind::FileChange,
         "ExitPlanMode" | "EnterPlanMode" => ApprovalKind::Permissions,
-        "Read" | "Glob" | "Grep" | "LS" | "Agent" | "Task" | "TaskOutput" | "TaskStop" => {
-            ApprovalKind::Other
-        }
+        "Read"
+        | "Glob"
+        | "Grep"
+        | "LS"
+        | "Agent"
+        | "Task"
+        | "TaskOutput"
+        | "TaskStop"
+        | "SandboxNetworkAccess" => ApprovalKind::Other,
         other if other.starts_with("mcp__") => ApprovalKind::Other,
         _ => ApprovalKind::Unknown,
     }
 }
 
 fn classify_escalation(tool_name: &str, kind: ApprovalKind, input: &Value) -> Escalation {
-    if input
-        .get("dangerouslyDisableSandbox")
-        .and_then(Value::as_bool)
-        == Some(true)
+    if tool_name == "SandboxNetworkAccess"
+        || input
+            .get("dangerouslyDisableSandbox")
+            .and_then(Value::as_bool)
+            == Some(true)
     {
         return Escalation::SandboxBypass;
     }

@@ -60,8 +60,8 @@ impl std::fmt::Debug for Environment {
 
 impl Environment {
     /// Build from captured login/service data only. No server environment is inherited.
-    /// Only HOME, LANG, USER, LOGNAME, SHELL, TERM, TMPDIR, RUSTUP_HOME and CARGO_HOME are
-    /// accepted here.
+    /// Only HOME, LANG, USER, LOGNAME, SHELL, TERM, TMPDIR, RUSTUP_HOME, CARGO_HOME and
+    /// CARGO_NET_OFFLINE are accepted here.
     pub fn new(path: SearchPath, captured: &[(OsString, OsString)]) -> io::Result<Self> {
         let mut result = Self(BTreeMap::new());
         result.0.insert("PATH".into(), path.0);
@@ -78,6 +78,7 @@ impl Environment {
                         | "TMPDIR"
                         | "RUSTUP_HOME"
                         | "CARGO_HOME"
+                        | "CARGO_NET_OFFLINE"
                 )
             ) {
                 return Err(invalid("name is not in the captured environment allowlist"));
@@ -210,6 +211,7 @@ fn is_forbidden_auth_name(raw: &OsStr, name: &str) -> bool {
                 | "TMPDIR"
                 | "RUSTUP_HOME"
                 | "CARGO_HOME"
+                | "CARGO_NET_OFFLINE"
                 | "NODE_OPTIONS"
                 | "BASH_ENV"
                 | "ENV"
