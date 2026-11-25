@@ -4,9 +4,13 @@ Standalone interactive static HTML prototypes used to explore and iterate on the
 
 ## Contents
 
-- `v6.html` — Current Executive UI prototype (served at `/` and `/v6`). Includes the 4 production themes (`Ocean`, `Classic`, `Report`, and `Report Night`) plus experimental prototype themes (`Graphite`, `Cozy Glass`).
-- `v5.html` — Earlier Executive UI prototype iteration (served at `/v5`).
-- `cozy.css`, `operations.css`, `fonts/` — Prototype-local stylesheets and font assets.
+- `v6.html` — Current Executive UI prototype shell (served at `/` and `/v6`). Includes the 4 production themes (`Ocean`, `Classic`, `Report`, and `Report Night`) plus experimental prototype themes (`Graphite`, `Cozy Glass`).
+- `v6/` — Modular stylesheets and plain ES modules imported by `v6.html` (bundled natively by Bun with zero build config):
+  - `v6/styles/` — Base, Home, and per-theme stylesheets (`base.css`, `home.css`, `theme-ocean-classic.css`, `theme-report.css`, `theme-graphite.css`).
+  - `v6/data.js`, `v6/state.js`, `v6/ui.js`, `v6/main.js` — Mock org fixtures, persisted prototype state, shared UI helpers, and boot entry.
+  - `v6/pages/` — Page renderers (`home.js`, `inbox.js`, `work.js`, `task-composer.js`, `projects.js`, `insights.js`, `chat.js`, `activity.js`, `teams.js`, `agent-profile.js`, `agent-focus.js`, `settings.js`).
+  - `v6/shell/` — App shell (`sidebar.js`, `router.js`, `cmdk.js`, `keyboard.js`, `dialogs.js`, `actions.js`).
+- `cozy.css`, `operations.css`, `fonts/` — Shared prototype stylesheets and font assets.
 - `server.ts` — Local Bun static dev server with HMR.
 
 ## Running locally
@@ -20,11 +24,13 @@ Defaults to `http://localhost:3000` (override with `PORT=3001 bun apps/agentic-o
 ## Quick browser check
 
 ```bash
+bun apps/agentic-org-web-prototype/smoke.ts --all
 bun apps/agentic-org-web-prototype/smoke.ts work graphite
 bun apps/agentic-org-web-prototype/smoke.ts activity ocean
 ```
 
-Pass a v6 route and theme to check the affected page in Chromium. The command uses
+Pass `--all` to run all 5 behavioral checks plus a 27-route / 6-theme sweep in a single browser session,
+or pass a v6 route and theme to check one affected page in Chromium. The command uses
 the installed Playwright dependency and starts and stops its own preview. It saves
 a screenshot under `.playwright/`. Work and Activity also check their right-side
 panels and keyboard dismissal.

@@ -123,11 +123,14 @@ html[data-theme="cozy"] {
 
   & .cozy-room {
     position: fixed;
-    inset: 0;
+    inset: -28px;
     z-index: 0;
     display: block;
     overflow: hidden;
     pointer-events: none;
+    contain: strict;
+    transform: translateZ(0);
+    filter: blur(24px) saturate(130%);
     background: radial-gradient(circle at 50% 38%, #9e8a75 0%, #7d6a56 42%, #5c4e41 76%, #3f342b 100%);
   }
 
@@ -136,7 +139,6 @@ html[data-theme="cozy"] {
     inset: -18% 10% 24%;
     content: "";
     background: radial-gradient(ellipse at 50% 18%, rgb(232 184 120 / .25), rgb(181 146 110 / .2) 38%, transparent 72%);
-    filter: blur(28px);
   }
 
   & .cozy-room::after {
@@ -144,7 +146,6 @@ html[data-theme="cozy"] {
     inset: 0;
     content: "";
     background: rgb(58 46 37 / .15);
-    backdrop-filter: blur(10px);
   }
 
   & .cozy-alcove {
@@ -212,20 +213,22 @@ html[data-theme="cozy"] {
     z-index: 0;
     display: block;
     pointer-events: none;
+    contain: strict;
+    transform: translateZ(0);
   }
 
   & :is(.cozy-shell, .sidebar, .proto-banner) {
     background: var(--cozy-shell);
-    backdrop-filter: blur(28px) saturate(135%);
-    -webkit-backdrop-filter: blur(28px) saturate(135%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   & .sidebar { box-shadow: inset -1px 0 var(--line); }
   & .topbar { gap: 8px; }
   & .topbar::before {
     background: var(--cozy-shell);
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     mask-image: linear-gradient(#000 30%, transparent);
   }
   & .proto-banner { border-bottom-color: var(--line); box-shadow: var(--cozy-panel-shadow); }
@@ -290,24 +293,34 @@ html[data-theme="cozy"] {
   }
 
   & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-horizon, .hb-skel-card,
-    .card, .bcard, .c-entry, .sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast,
-    .agent-rail, .prof, .split .list) {
+    .card, .bcard, .c-entry, .prof, .split .list) {
     background: var(--cozy-panel);
-    backdrop-filter: blur(20px) saturate(125%);
-    -webkit-backdrop-filter: blur(20px) saturate(125%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     border: 1px solid var(--cozy-panel-edge);
     border-radius: 8px;
     box-shadow: var(--cozy-panel-shadow);
     color: var(--white);
   }
+  & :is(.sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast, .tess-pill) {
+    background: rgb(38 31 25 / .86);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    border: 1px solid var(--cozy-panel-edge);
+    border-radius: 10px;
+    box-shadow: 0 24px 60px -10px rgb(10 7 5 / .68), inset 0 1px rgb(255 248 238 / .16);
+    color: var(--white);
+  }
 
   & :is(.hb-spot-meta, .hb-spot-next, .hb-cos-memo, .hb-ai-brief, .hb-brief-lenses, .hb-dig-item,
-    .hb-hor-item, .work-group-title, .grp-h, .subnav, .ctx-body, .runlog, .k-doc,
+    .hb-hor-item, .work-group-title, .grp-h, .subnav, .ctx-body, .runlog, .k-doc, .c-trace-panel, .af-tools-drawer,
     .cmdk-tabs, .cmdk-foot, .cmdk-ai-card, .cmdk-tab-grp, .cmdk-trigger kbd, .seg, .search,
     .field, textarea, code, pre, .triage-queue, .triage-audit, .activity-triage) {
     background: var(--cozy-well);
     box-shadow: inset 0 0 0 1px var(--cozy-well-edge);
   }
+  & .af-shell { background: radial-gradient(circle at 26% 52%, rgb(206 142 74 / .13), transparent 48%), #211a14; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  & :is(.af-chat-card, .af-composer-pill) { background: rgb(42 34 28 / .72); box-shadow: var(--cozy-panel-shadow), inset 0 0 0 1px var(--cozy-panel-edge); backdrop-filter: none; -webkit-backdrop-filter: none; }
 
   & :is(.triage-queue, .triage-audit, .activity-triage) { box-shadow: none; }
   & :is(.overlay, .scrim), & .work-task-dialog::backdrop { background: rgb(16 13 11 / .62); }
@@ -352,6 +365,42 @@ html[data-theme="cozy"] {
     .nav-fold-btn, .cmdk-opt, .cmdk-esc, .cmdk-ai-prev-chip, .cmdk-tab, .menu button,
     .hb-brief-lenses, .hb-brief-lenses button, .hb-arrow-btn, .hb-pill-link, .hb-dig-item, .hb-hor-item) {
     border-radius: 8px;
+  }
+  & .work-toolbar {
+    --toolbar-seg-bg: var(--cozy-well);
+    --toolbar-seg-border: var(--cozy-well-edge);
+    --toolbar-seg-active-bg: rgb(255 248 240 / .13);
+    --toolbar-seg-active-border: var(--line2);
+  }
+  & .work-toolbar .queue-controls .menu button { border-radius: 5px; }
+  & .stc-dialog {
+    --stc-surface: rgb(38 31 25 / .88);
+    --stc-well: rgb(18 14 11 / .46);
+    --stc-chip-bg: rgb(255 246 235 / .07);
+    --stc-chip-hover: rgb(255 246 235 / .14);
+    --stc-popover-bg: rgb(42 34 28 / .96);
+    --stc-line: rgb(255 246 235 / .12);
+    --stc-border: rgb(255 246 235 / .22);
+    --stc-shadow: 0 24px 60px -10px rgb(10 7 5 / .68), inset 0 1px rgb(255 248 238 / .16);
+    --stc-radius: 12px;
+    background: var(--stc-surface);
+  }
+  & .stc-dialog textarea.stc-prompt { background: transparent; box-shadow: none; }
+  & .stc-dialog :is(.btn.primary, .btn.outline, .stc-popover, .stc-menu) {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  & body.a11y-mode :is(.sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast) {
+    background: #1a1512;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  & body.a11y-mode .stc-dialog {
+    --stc-surface: #1a1512;
+    --stc-well: #241e19;
+    --stc-popover-bg: #241e19;
+    --stc-border: rgb(255 248 238 / .42);
+    --stc-shadow: none;
   }
 
   & :is(.btn.primary, .h4-cta.hb-cta-glass, .cmdk-ask-go:not(:disabled)) {
