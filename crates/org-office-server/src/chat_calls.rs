@@ -109,6 +109,7 @@ pub(crate) struct ChatService {
     watcher: Arc<crate::watcher::ChannelWatcher>,
     owner_id: String,
     ask_waiters: AskWaiters,
+    sat_sync_wake: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl ChatService {
@@ -128,6 +129,24 @@ impl ChatService {
             watcher,
             owner_id,
             ask_waiters: AskWaiters::default(),
+            sat_sync_wake: None,
+        }
+    }
+
+    pub(crate) fn with_sat_sync_wake(mut self, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.sat_sync_wake = Some(wake);
+        self
+    }
+
+    /// Wakes any locally held `chat.ask` / `chat.wait_ask` callers (for inbound cross-office
+    /// answers and withdrawals).
+    pub(crate) fn notify_ask_waiters(&self) {
+        self.ask_waiters.notify();
+    }
+
+    fn notify_sat_sync(&self) {
+        if let Some(wake) = &self.sat_sync_wake {
+            wake();
         }
     }
 
@@ -139,7 +158,10 @@ impl ChatService {
         stopping: &AtomicBool,
         request: &Request,
     ) -> Option<Response> {
-        if !is_chat_method(request) && !request.is::<org_proto::msg::MsgDone>() {
+        if !is_chat_method(request)
+            && !request.is::<org_proto::msg::MsgDone>()
+            && !request.is::<org_proto::msg::MsgReply>()
+        {
             return None;
         }
         // Refuse chat RPCs on a satellite awaiting a complete HQ snapshot (`TASK-52` P9-#3).
@@ -281,7 +303,45 @@ impl ChatService {
         if request.is::<org_proto::msg::MsgDone>() {
             return Some(self.handle_msg_done(member, request));
         }
+        if request.is::<org_proto::msg::MsgReply>() {
+            return Some(self.handle_msg_reply(member, request));
+        }
         None
+    }
+
+    fn finish_chat_send_committed(
+        &self,
+        member: &str,
+        committed: &mut org_office::messaging::features::ChatSendCommitted,
+    ) {
+        if committed.inserted {
+            let mut owner_touched = false;
+            for header in committed.delivered_headers() {
+                self.mailbox.notify_member(&header.to_member_id);
+                if header.to_member_id == self.owner_id {
+                    owner_touched = true;
+                }
+                self.live
+                    .publish_live(Live::Received(Box::new(header_only_received(header))));
+            }
+            if owner_touched {
+                self.live.record_mailbox_change();
+            }
+            self.watcher
+                .on_channel_message_posted(&committed.message, committed.conversation_kind);
+        }
+        crate::federation::sync_native_message_relays(&self.office);
+        self.notify_sat_sync();
+        if let Some(sessions) = &self.sessions {
+            let (woke, presence) = crate::wake_bridge::on_chat_send_committed(
+                &self.office,
+                sessions,
+                member,
+                committed,
+            );
+            committed.result.woke_agents = woke;
+            committed.result.recipient_presence = presence;
+        }
     }
 
     fn handle_chat_send(&self, member: &str, request: &Request) -> Response {
@@ -300,39 +360,38 @@ impl ChatService {
         }
         match self.office.chat_send(member, params) {
             Ok(Ok(mut committed)) => {
-                if committed.inserted {
-                    let mut owner_touched = false;
-                    for header in committed.delivered_headers() {
-                        self.mailbox.notify_member(&header.to_member_id);
-                        if header.to_member_id == self.owner_id {
-                            owner_touched = true;
-                        }
-                        self.live
-                            .publish_live(Live::Received(Box::new(header_only_received(header))));
-                    }
-                    if owner_touched {
-                        self.live.record_mailbox_change();
-                    }
-                    self.watcher
-                        .on_channel_message_posted(&committed.message, committed.conversation_kind);
-                }
-                crate::federation::sync_native_message_relays(&self.office);
-                crate::federation::enqueue_remote_chat_wakes(&self.office, member, &committed);
-                if let Some(sessions) = &self.sessions {
-                    let (woke, presence) = crate::wake_bridge::on_chat_send_committed(
-                        &self.office,
-                        sessions,
-                        member,
-                        &committed,
-                    );
-                    committed.result.woke_agents = woke;
-                    committed.result.recipient_presence = presence;
-                }
+                self.finish_chat_send_committed(member, &mut committed);
                 ok_reply::<ChatSend>(request.id, &committed.result)
             }
             Ok(Err(refusal)) => Response::error(request.id, refusal),
             Err(error) => {
                 crate::logged("chat.send", &error);
+                storage_err(request.id)
+            }
+        }
+    }
+
+    fn handle_msg_reply(&self, member: &str, request: &Request) -> Response {
+        let Ok(params) = request.params::<org_proto::msg::MsgReply>() else {
+            return invalid_params(request.id, org_proto::msg::MsgReply::METHOD);
+        };
+        match self.office.chat_reply(member, params) {
+            Ok(Ok(mut committed)) => {
+                if member == self.owner_id && committed.inserted {
+                    self.live.record_mailbox_change();
+                }
+                self.finish_chat_send_committed(member, &mut committed);
+                let reply = org_proto::msg::SendResult {
+                    id: committed.result.id,
+                    thread_id: committed.result.thread_id,
+                    local_seq: committed.result.local_seq,
+                    origin_seq: committed.result.origin_seq,
+                };
+                ok_reply::<org_proto::msg::MsgReply>(request.id, &reply)
+            }
+            Ok(Err(refusal)) => Response::error(request.id, refusal),
+            Err(error) => {
+                crate::logged("msg.reply", &error);
                 storage_err(request.id)
             }
         }
@@ -347,6 +406,8 @@ impl ChatService {
                 if member == self.owner_id {
                     self.live.record_mailbox_change();
                 }
+                crate::federation::sync_native_message_relays(&self.office);
+                self.notify_sat_sync();
                 ok_reply::<MsgAccept>(request.id, &result)
             }
             Ok(Err(refusal)) => Response::error(request.id, refusal),
@@ -592,6 +653,7 @@ impl ChatService {
                     }
                 }
                 crate::federation::sync_native_message_relays(&self.office);
+                self.notify_sat_sync();
                 let (woke, presence) = match &self.sessions {
                     Some(sessions) => crate::wake_bridge::on_chat_ask_committed(
                         &self.office,
@@ -657,6 +719,7 @@ impl ChatService {
                 self.watcher
                     .on_question_closed(&committed.result.ask_id, "answered");
                 crate::federation::sync_native_message_relays(&self.office);
+                self.notify_sat_sync();
                 if let Some(sessions) = &self.sessions {
                     crate::wake_bridge::on_chat_answer_committed(
                         &self.office,
@@ -691,6 +754,8 @@ impl ChatService {
                 }
                 self.watcher
                     .on_question_closed(&committed.result.ask_id, "withdrawn");
+                crate::federation::sync_native_message_relays(&self.office);
+                self.notify_sat_sync();
                 if let Some(sessions) = &self.sessions {
                     crate::wake_bridge::on_msg_withdraw_committed(sessions, member, &committed);
                 }

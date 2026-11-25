@@ -1392,15 +1392,19 @@ pub(crate) fn is_satellite_office_removed_locked(
     office: &Office,
     office_id: &str,
 ) -> Result<bool, OfficeError> {
-    Ok(load_revocations(office)?
-        .removed_offices
-        .contains(office_id))
+    Ok(removed_satellite_offices_locked(office)?.contains(office_id))
 }
 
 /// Loads all permanently removed satellite office IDs fail-closed when `office.federation_io_lock` is held.
 pub(crate) fn removed_satellite_offices_locked(
     office: &Office,
 ) -> Result<BTreeSet<String>, OfficeError> {
+    // Only HQ maintains the local CA `revocations.v1.json` store; satellites learn enrolled
+    // offices from HQ's replicated org projection and store `org-ca.v1.der` without a local
+    // revocations file (`TASK-117`). Keep HQ strictly fail-closed via `load_revocations`.
+    if office.info.role == crate::OfficeRole::Satellite {
+        return Ok(BTreeSet::new());
+    }
     Ok(load_revocations(office)?.removed_offices)
 }
 

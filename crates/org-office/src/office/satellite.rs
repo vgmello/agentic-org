@@ -127,8 +127,16 @@ pub struct RelayedAskWithdrawal {
     pub asker_id: String,
 }
 
+/// Exact wake action derived for one local active agent recipient of a relayed message.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayedRecipientWake {
+    pub employee_id: String,
+    pub kind: String,
+}
+
 /// Summary of a durably committed inbound relayed native message so the destination office can
-/// derive and deduplicate local agent wakes and resume suspended required askers (`TASK-52` P4-#8 / P6-#2).
+/// derive and deduplicate local agent wakes, resume suspended required askers, and notify local
+/// waiters/live streams (`TASK-52` P4-#8 / P6-#2, `TASK-117`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RelayedMessageOutcome {
     pub message_id: String,
@@ -137,12 +145,28 @@ pub struct RelayedMessageOutcome {
     pub sender_name: String,
     pub sender_is_person: bool,
     pub is_dm: bool,
+    #[serde(default)]
+    pub inserted: bool,
+    #[serde(default)]
+    pub conversation_kind: Option<org_proto::chat::ConversationKind>,
     pub summary: String,
     pub local_agent_recipients: Vec<String>,
+    #[serde(default)]
+    pub local_recipient_wakes: Vec<RelayedRecipientWake>,
+    #[serde(default)]
+    pub local_delivered_headers: Vec<org_proto::msg::MessageHeader>,
     #[serde(default)]
     pub answered_ask: Option<RelayedAskAnswer>,
     #[serde(default)]
     pub withdrawn_ask: Option<RelayedAskWithdrawal>,
+    #[serde(default)]
+    pub closed_ask_id: Option<String>,
+    #[serde(default)]
+    pub closed_ask_reason: Option<String>,
+    #[serde(default)]
+    pub handoff_accepted: bool,
+    #[serde(skip)]
+    pub delivered_message: Option<crate::messaging::records::MessageRecord>,
 }
 
 /// Batch returned by [`Office::collect_pending_message_journal_entries`].
@@ -2132,6 +2156,64 @@ fn append_origin_close_answer_relays(
     Ok(true)
 }
 
+fn append_handoff_accept_relay(
+    office: &Office,
+    ctx: &PlacementContext,
+    cand: &OriginCloseCandidate<'_>,
+    conv: &crate::messaging::records::ConversationRecord,
+    ask_msg: &crate::messaging::records::MessageRecord,
+    ans: &crate::messaging::records::ParticipantAnswerFile,
+    out: &mut Vec<PendingMessageJournalEntry>,
+) -> Result<bool, OfficeError> {
+    if cand.origin_only || ask_msg.kind != "handoff" {
+        return Ok(true);
+    }
+    let dests = route_origin_close_destinations(office, ctx, conv, office.info.office_id.as_str())?;
+    if !dests.is_empty() {
+        out.push(PendingMessageJournalEntry {
+            ordinal: cand.ordinal,
+            conversation_id: cand.cid.as_str().to_owned(),
+            message_id: format!("accept-{}-{}", cand.ask_id, ans.employee_id),
+            files: vec![(cand.ans_path.to_owned(), Some(STANDARD.encode(cand.bytes)))],
+            destination_offices: dests,
+            expires_at_ms: None,
+        });
+    }
+    Ok(true)
+}
+
+fn push_origin_close_entries(
+    office: &Office,
+    ctx: &PlacementContext,
+    cand: &OriginCloseCandidate<'_>,
+    conv: &crate::messaging::records::ConversationRecord,
+    ask_msg: &crate::messaging::records::MessageRecord,
+    out: &mut Vec<PendingMessageJournalEntry>,
+) -> Result<(), OfficeError> {
+    let dests = route_origin_close_destinations(office, ctx, conv, office.info.office_id.as_str())?;
+    if dests.is_empty() {
+        return Ok(());
+    }
+    for (message_id, files) in build_origin_close_entries(
+        cand.cid,
+        conv,
+        ask_msg,
+        cand.ans_path,
+        cand.bytes,
+        cand.ask_id,
+    ) {
+        out.push(PendingMessageJournalEntry {
+            ordinal: cand.ordinal,
+            conversation_id: cand.cid.as_str().to_owned(),
+            message_id,
+            files,
+            destination_offices: dests.clone(),
+            expires_at_ms: None,
+        });
+    }
+    Ok(())
+}
+
 fn append_one_origin_close_relay(
     office: &Office,
     ctx: &PlacementContext,
@@ -2143,10 +2225,12 @@ fn append_one_origin_close_relay(
     else {
         return Ok(true);
     };
+    let is_committed_authoritative = ans.reason.as_deref() == Some("origin-close");
     let is_withdrawal = crate::messaging::asks::decode_ask_answer_file(&ans)
         .1
         .is_some();
-    if ans.reason.as_deref() != Some("origin-close") && !is_withdrawal {
+    let is_handoff_accept = ans.answer.is_none() && ans.accepted_by.is_some();
+    if !is_committed_authoritative && !is_withdrawal && !is_handoff_accept {
         return Ok(true);
     }
     let Some(conv) = office
@@ -2167,9 +2251,10 @@ fn append_one_origin_close_relay(
     else {
         return Ok(false);
     };
-    let local_id = office.info.office_id.as_str();
-    let is_ask_origin = ask_msg.origin_office_id.as_str() == local_id;
-    let is_committed_authoritative = ans.reason.as_deref() == Some("origin-close");
+    if is_handoff_accept {
+        return append_handoff_accept_relay(office, ctx, cand, &conv, &ask_msg, &ans, out);
+    }
+    let is_ask_origin = ask_msg.origin_office_id.as_str() == office.info.office_id.as_str();
     let hq_finalizes_removed = office.info.role == crate::model::OfficeRole::Hq
         && is_committed_authoritative
         && ctx
@@ -2179,28 +2264,7 @@ fn append_one_origin_close_relay(
         return Ok(true);
     }
     if is_ask_origin || hq_finalizes_removed {
-        let dests = route_origin_close_destinations(office, ctx, &conv, local_id)?;
-        if dests.is_empty() {
-            return Ok(true);
-        }
-        let entries = build_origin_close_entries(
-            cand.cid,
-            &conv,
-            &ask_msg,
-            cand.ans_path,
-            cand.bytes,
-            cand.ask_id,
-        );
-        for (message_id, files) in entries {
-            out.push(PendingMessageJournalEntry {
-                ordinal: cand.ordinal,
-                conversation_id: cand.cid.as_str().to_owned(),
-                message_id,
-                files,
-                destination_offices: dests.clone(),
-                expires_at_ms: None,
-            });
-        }
+        push_origin_close_entries(office, ctx, cand, &conv, &ask_msg, out)?;
         return Ok(true);
     }
     let origin = ask_msg.origin_office_id.as_str();
@@ -2524,13 +2588,53 @@ fn resolve_relayed_conversation(
     Ok((conv, write_mode, active_members))
 }
 
+struct RelayedRecipientDeliveries {
+    local_agent_recipients: Vec<String>,
+    local_recipient_wakes: Vec<RelayedRecipientWake>,
+    local_delivered_headers: Vec<org_proto::msg::MessageHeader>,
+}
+
+fn relayed_wake_kind_for_message(
+    conv_kind: org_proto::chat::ConversationKind,
+    msg: &crate::messaging::records::MessageRecord,
+    target_id: &str,
+    delivered_because: org_proto::chat::DeliveredBecause,
+    is_mentioned: bool,
+    open_question_asker_id: Option<&str>,
+) -> Option<&'static str> {
+    use org_proto::chat::{ConversationKind, DeliveredBecause};
+    if msg.kind == "announcement" {
+        return None;
+    }
+    if msg.kind == org_proto::msg::KIND_REQUEST {
+        return Some("ask");
+    }
+    if msg.kind == "handoff"
+        && (delivered_because == DeliveredBecause::Addressed
+            || matches!(conv_kind, ConversationKind::Dm | ConversationKind::GroupDm))
+    {
+        return Some("handoff");
+    }
+    if open_question_asker_id == Some(target_id) {
+        return Some("ask_answer");
+    }
+    if delivered_because == DeliveredBecause::Mention || is_mentioned {
+        return Some("mention");
+    }
+    if matches!(conv_kind, ConversationKind::Dm | ConversationKind::GroupDm) {
+        return Some("direct_message");
+    }
+    None
+}
+
 fn attach_relayed_recipient_states(
     view: &impl crate::messaging::ports::MessagingRead,
     ctx: &RelayedRecipientCtx<'_>,
     mut change: org_store::Change,
-) -> Result<(org_store::Change, Vec<String>), org_store::Refusal> {
+) -> Result<(org_store::Change, RelayedRecipientDeliveries), org_store::Refusal> {
     use crate::messaging::features::{
-        build_mention_candidates, collect_recipient_reasons, upsert_participant_snapshot,
+        build_mention_candidates, collect_recipient_reasons, to_wire_header,
+        upsert_participant_snapshot,
     };
     use crate::messaging::mentions::extract_mentions;
     use crate::messaging::records::RecipientStateRecord;
@@ -2549,7 +2653,28 @@ fn attach_relayed_recipient_states(
         &ctx.msg.kind,
         &ctx.msg.metadata,
     )?;
+    let open_question_asker_id = ctx
+        .msg
+        .thread_root_id
+        .as_deref()
+        .and_then(|root_id| view.message(root_id).ok().flatten())
+        .filter(|root| {
+            root.kind == org_proto::msg::KIND_REQUEST
+                && crate::messaging::asks::is_open_ask_card(view, root)
+        })
+        .and_then(|root| root.sender_employee_id.map(|id| id.as_str().to_owned()));
+    let local_seq = view
+        .message_local_seq(&ctx.msg.id)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| {
+            view.max_local_seq()
+                .ok()
+                .map_or(ctx.msg.origin_sequence, |s| s.saturating_add(1))
+        });
     let mut local_agent_recipients = Vec::new();
+    let mut local_recipient_wakes = Vec::new();
+    let mut local_delivered_headers = Vec::new();
     for (emp_id, because) in reasons {
         // Commit inbox recipient state ONLY at the single office owning that recipient so multiple
         // offices never create diverging inbox copies for the same employee (`TASK-52` P4-#3).
@@ -2565,7 +2690,24 @@ fn attach_relayed_recipient_states(
         let emp = ctx.employees.iter().find(|e| e.id == emp_id);
         let display_name = emp.map(|e| e.name.clone());
         if emp.is_some_and(|e| e.kind == EmployeeKind::Agent) {
-            local_agent_recipients.push(emp_id.as_str().to_owned());
+            let is_mentioned = scan
+                .resolved
+                .iter()
+                .any(|m| m.employee_id == emp_id.as_str());
+            if let Some(wake_kind) = relayed_wake_kind_for_message(
+                ctx.conv.kind,
+                ctx.msg,
+                emp_id.as_str(),
+                because,
+                is_mentioned,
+                open_question_asker_id.as_deref(),
+            ) {
+                local_agent_recipients.push(emp_id.as_str().to_owned());
+                local_recipient_wakes.push(RelayedRecipientWake {
+                    employee_id: emp_id.as_str().to_owned(),
+                    kind: wake_kind.to_owned(),
+                });
+            }
         }
         let state = RecipientStateRecord {
             organization_id: ctx.here.organization_id.clone(),
@@ -2591,6 +2733,7 @@ fn attach_relayed_recipient_states(
             org_epoch: ctx.msg.org_epoch,
             org_sequence: ctx.msg.org_sequence,
         };
+        local_delivered_headers.push(to_wire_header(ctx.msg, Some(&state), local_seq));
         change = upsert_participant_snapshot(
             view,
             &ctx.here.organization_id,
@@ -2600,7 +2743,14 @@ fn attach_relayed_recipient_states(
             change,
         )?;
     }
-    Ok((change, local_agent_recipients))
+    Ok((
+        change,
+        RelayedRecipientDeliveries {
+            local_agent_recipients,
+            local_recipient_wakes,
+            local_delivered_headers,
+        },
+    ))
 }
 
 fn attach_relayed_ask_answer(
@@ -2608,15 +2758,15 @@ fn attach_relayed_ask_answer(
     rctx: &RelayedRecipientCtx<'_>,
     incoming_answer: Option<&(Id, String, crate::messaging::records::ParticipantAnswerFile)>,
     mut change: org_store::Change,
-) -> Result<(org_store::Change, Option<RelayedAskAnswer>), org_store::Refusal> {
+) -> Result<(org_store::Change, Option<RelayedAskAnswer>, Option<String>), org_store::Refusal> {
     let Some((emp_id, ask_id, answer_file)) = incoming_answer else {
-        return Ok((change, None));
+        return Ok((change, None, None));
     };
     let Some(ask_msg) = view
         .message(ask_id)
         .map_err(|_| org_store::Refusal::invalid("read ask message"))?
     else {
-        return Ok((change, None));
+        return Ok((change, None, None));
     };
     if ask_msg.conversation_id != rctx.conv.id || ask_msg.kind != "request" {
         return Err(org_store::Refusal::invalid(
@@ -2674,8 +2824,9 @@ fn attach_relayed_ask_answer(
     let resume_info = emit_resume
         .then(|| build_local_ask_answer_resume(rctx, &ask_msg, &card, &validated))
         .flatten();
+    let closed_ask_id = emit_resume.then(|| ask_id.clone());
     if skip_write {
-        return Ok((change, resume_info));
+        return Ok((change, resume_info, closed_ask_id));
     }
     let mut stored_answer = answer_file.clone();
     if is_ask_origin {
@@ -2692,7 +2843,7 @@ fn attach_relayed_ask_answer(
         &ask_msg.created_at,
         change,
     )?;
-    Ok((next_change, resume_info))
+    Ok((next_change, resume_info, closed_ask_id))
 }
 
 /// Evaluates `(skip_write, emit_resume)` for a relayed ask answer:
@@ -2820,13 +2971,13 @@ fn decide_apply_relayed_message<E: crate::store::open::OfficeEngine>(
         if existing_msg.content_sha256 != req.msg.content_sha256 {
             return Err(Refusal::invalid("relayed message content_sha256 conflict"));
         }
-        let (_, answered_ask) = attach_relayed_ask_answer(
+        let (_, answered_ask, closed_ask_id) = attach_relayed_ask_answer(
             view,
             &rctx,
             req.incoming_answer.as_ref(),
             Change::new(Ack::Durable),
         )?;
-        let (_, local_agent_recipients) =
+        let (_, delivered) =
             attach_relayed_recipient_states(view, &rctx, Change::new(Ack::Durable))?;
         let outcome = RelayedMessageOutcome {
             message_id: req.msg.id.clone(),
@@ -2835,10 +2986,18 @@ fn decide_apply_relayed_message<E: crate::store::open::OfficeEngine>(
             sender_name,
             sender_is_person,
             is_dm: conv.kind == org_proto::chat::ConversationKind::Dm,
+            inserted: false,
+            conversation_kind: Some(conv.kind),
             summary: req.msg.body_markdown.chars().take(180).collect(),
-            local_agent_recipients,
+            local_agent_recipients: delivered.local_agent_recipients,
+            local_recipient_wakes: delivered.local_recipient_wakes,
+            local_delivered_headers: delivered.local_delivered_headers,
             answered_ask,
             withdrawn_ask: None,
+            closed_ask_reason: closed_ask_id.as_ref().map(|_| "answered".to_owned()),
+            closed_ask_id,
+            handoff_accepted: false,
+            delivered_message: None,
         };
         let reply = serde_json::to_vec(&outcome).unwrap_or_default();
         return Ok(Change::new(Ack::Durable).reply(reply));
@@ -2854,9 +3013,9 @@ fn decide_apply_relayed_message<E: crate::store::open::OfficeEngine>(
         ConvWriteMode::None => {}
     }
     change = change.create(message_path(&conv.id, &req.msg.id), encode_json(&req.msg));
-    let (change, answered_ask) =
+    let (change, answered_ask, closed_ask_id) =
         attach_relayed_ask_answer(view, &rctx, req.incoming_answer.as_ref(), change)?;
-    let (change, local_agent_recipients) = attach_relayed_recipient_states(view, &rctx, change)?;
+    let (change, delivered) = attach_relayed_recipient_states(view, &rctx, change)?;
     let outcome = RelayedMessageOutcome {
         message_id: req.msg.id.clone(),
         conversation_id: conv.id.as_str().to_owned(),
@@ -2864,10 +3023,18 @@ fn decide_apply_relayed_message<E: crate::store::open::OfficeEngine>(
         sender_name,
         sender_is_person,
         is_dm: conv.kind == org_proto::chat::ConversationKind::Dm,
+        inserted: true,
+        conversation_kind: Some(conv.kind),
         summary: req.msg.body_markdown.chars().take(180).collect(),
-        local_agent_recipients,
+        local_agent_recipients: delivered.local_agent_recipients,
+        local_recipient_wakes: delivered.local_recipient_wakes,
+        local_delivered_headers: delivered.local_delivered_headers,
         answered_ask,
         withdrawn_ask: None,
+        closed_ask_reason: closed_ask_id.as_ref().map(|_| "answered".to_owned()),
+        closed_ask_id,
+        handoff_accepted: false,
+        delivered_message: None,
     };
     let reply = serde_json::to_vec(&outcome).unwrap_or_default();
     Ok(change.reply(reply))
@@ -2975,10 +3142,18 @@ struct ParsedOriginAskRecovery {
     ask_msg: crate::messaging::records::MessageRecord,
 }
 
+struct ParsedHandoffAccept {
+    cid: Id,
+    emp_id: Id,
+    message_id: String,
+    answer: crate::messaging::records::ParticipantAnswerFile,
+}
+
 enum ParsedRelayedDelta {
     ConversationOnly(Box<crate::messaging::records::ConversationRecord>),
     OriginAskRecovery(Box<ParsedOriginAskRecovery>),
     OriginAskClose(Box<ParsedOriginAskClose>),
+    HandoffAccept(Box<ParsedHandoffAccept>),
     Message(Box<ParsedRelayedMessage>),
 }
 
@@ -3252,36 +3427,43 @@ fn build_local_ask_withdrawal_reply(
     ask_msg: &crate::messaging::records::MessageRecord,
     is_withdrawal: bool,
 ) -> Vec<u8> {
-    if !is_withdrawal {
-        return Vec::new();
-    }
-    let Some(asker_id) = ask_msg.sender_employee_id.as_ref() else {
-        return Vec::new();
-    };
-    let owner_office = req
-        .ctx
-        .employee_offices
-        .get(asker_id.as_str())
-        .map(String::as_str)
-        .unwrap_or(req.ctx.hq_office_id.as_str());
-    if owner_office != req.here.office_id.as_str() {
-        return Vec::new();
-    }
-    let is_agent = view.employees().ok().is_some_and(|emps| {
-        emps.iter().any(|e| {
-            e.id == *asker_id && e.kind == crate::organization::records::EmployeeKind::Agent
+    let withdrawn_ask = if is_withdrawal {
+        ask_msg.sender_employee_id.as_ref().and_then(|asker_id| {
+            let owner_office = req
+                .ctx
+                .employee_offices
+                .get(asker_id.as_str())
+                .map(String::as_str)
+                .unwrap_or(req.ctx.hq_office_id.as_str());
+            if owner_office != req.here.office_id.as_str() {
+                return None;
+            }
+            let is_agent = view.employees().ok().is_some_and(|emps| {
+                emps.iter().any(|e| {
+                    e.id == *asker_id && e.kind == crate::organization::records::EmployeeKind::Agent
+                })
+            });
+            is_agent.then(|| RelayedAskWithdrawal {
+                ask_id: req.ask_id.clone(),
+                asker_id: asker_id.as_str().to_owned(),
+            })
         })
-    });
-    if !is_agent {
-        return Vec::new();
-    }
+    } else {
+        None
+    };
     let outcome = RelayedMessageOutcome {
         conversation_id: req.cid.as_str().to_owned(),
         sender_id: req.emp_id.as_str().to_owned(),
-        withdrawn_ask: Some(RelayedAskWithdrawal {
-            ask_id: req.ask_id.clone(),
-            asker_id: asker_id.as_str().to_owned(),
-        }),
+        withdrawn_ask,
+        closed_ask_id: Some(req.ask_id.clone()),
+        closed_ask_reason: Some(
+            if is_withdrawal {
+                "withdrawn"
+            } else {
+                "answered"
+            }
+            .to_owned(),
+        ),
         ..Default::default()
     };
     serde_json::to_vec(&outcome).unwrap_or_default()
@@ -3462,11 +3644,24 @@ fn assemble_message_less_delta(
 ) -> Result<ParsedRelayedDelta, OfficeError> {
     match (parsed_conv, parsed_answer) {
         (Some((_, conv)), None) => Ok(ParsedRelayedDelta::ConversationOnly(Box::new(conv))),
+        (None, Some((cid, emp, msg_id, ans)))
+            if ans.answer.is_none() && ans.accepted_by.as_ref() == Some(&emp) =>
+        {
+            Ok(ParsedRelayedDelta::HandoffAccept(Box::new(
+                ParsedHandoffAccept {
+                    cid,
+                    emp_id: emp,
+                    message_id: msg_id,
+                    answer: ans,
+                },
+            )))
+        }
         (None, Some((cid, emp, ask_id, mut ans)))
-            if ans.reason.as_deref() == Some("origin-close")
-                || crate::messaging::asks::decode_ask_answer_file(&ans)
-                    .1
-                    .is_some() =>
+            if ans.answer.is_some()
+                && (ans.reason.as_deref() == Some("origin-close")
+                    || crate::messaging::asks::decode_ask_answer_file(&ans)
+                        .1
+                        .is_some()) =>
         {
             ans.reason = Some("origin-close".to_owned());
             Ok(ParsedRelayedDelta::OriginAskClose(Box::new(
@@ -3622,6 +3817,205 @@ fn apply_relayed_origin_close(
     }
 }
 
+struct ApplyRelayedHandoffAcceptOp {
+    operation_id: Id,
+    owner: Id,
+    ctx: PlacementContext,
+    origin_office: String,
+    cid: Id,
+    emp_id: Id,
+    message_id: String,
+    answer: crate::messaging::records::ParticipantAnswerFile,
+}
+
+impl crate::store::open::StoreOp for ApplyRelayedHandoffAcceptOp {
+    type Out = Result<org_store::Reply, org_store::StoreError>;
+
+    fn run<E: crate::store::open::OfficeEngine>(self, store: &org_store::Store<E>) -> Self::Out {
+        let op = org_store::Operation {
+            id: self.operation_id.clone(),
+            kind: "replication.apply_handoff_accept",
+            actor: Actor::System,
+            fingerprint: org_store::Sha256::of_parts(&[
+                self.cid.as_str().as_bytes(),
+                b"\0",
+                self.message_id.as_bytes(),
+                b"\0",
+                self.emp_id.as_str().as_bytes(),
+            ]),
+        };
+        store.submit(Some(op), false, move |uow| {
+            decide_apply_relayed_handoff_accept(uow.view(), &self)
+        })
+    }
+}
+
+fn validate_relayed_handoff_accept_target(
+    view: &impl crate::messaging::ports::MessagingRead,
+    req: &ApplyRelayedHandoffAcceptOp,
+    employees: &[crate::organization::records::Employee],
+    conv: &crate::messaging::records::ConversationRecord,
+    active_members: &[Id],
+) -> Result<(), org_store::Refusal> {
+    use crate::messaging::features::{build_mention_candidates, collect_recipient_reasons};
+    use crate::messaging::mentions::extract_mentions;
+    use org_store::Refusal;
+
+    if !req
+        .answer
+        .accepted_at
+        .as_deref()
+        .is_some_and(|ts| !ts.trim().is_empty())
+    {
+        return Err(Refusal::invalid(
+            "relayed handoff accept missing accepted_at",
+        ));
+    }
+    if let Some(reason) = req.answer.reason.as_deref() {
+        if org_proto::msg::json_string_len(reason) > org_proto::msg::MAX_NOTE_BYTES {
+            return Err(Refusal::invalid(
+                "relayed handoff accept reason exceeds size limit",
+            ));
+        }
+    }
+    let Some(msg) = view
+        .message(&req.message_id)
+        .map_err(|_| Refusal::invalid("read handoff message"))?
+    else {
+        return Err(Refusal::invalid(
+            "handoff message not present on this office",
+        ));
+    };
+    if msg.conversation_id != req.cid || msg.kind != "handoff" {
+        return Err(Refusal::invalid("relayed handoff accept target mismatch"));
+    }
+    if msg.sender_employee_id.as_ref() == Some(&req.emp_id) {
+        return Err(Refusal::invalid("handoff sender cannot accept own handoff"));
+    }
+    let sender_id = msg.sender_employee_id.as_ref().unwrap_or(&req.owner);
+    let candidates = build_mention_candidates(employees, active_members, &req.owner);
+    let scan = extract_mentions(&msg.body_markdown, &candidates);
+    let reasons = collect_recipient_reasons(
+        view,
+        conv,
+        sender_id,
+        active_members,
+        &scan.resolved,
+        msg.thread_root_id.as_deref(),
+        &msg.kind,
+        &msg.metadata,
+    )?;
+    if !reasons.contains_key(&req.emp_id) {
+        return Err(Refusal::invalid(
+            "relayed handoff accepter is not an addressed recipient",
+        ));
+    }
+    Ok(())
+}
+
+fn decide_apply_relayed_handoff_accept(
+    view: &impl crate::messaging::ports::MessagingRead,
+    req: &ApplyRelayedHandoffAcceptOp,
+) -> Result<org_store::Change, org_store::Refusal> {
+    use crate::messaging::records::{encode_json, participant_answer_path};
+    use crate::organization::records::EmployeeStatus;
+    use org_store::{Ack, Change, Refusal};
+
+    let employees = view
+        .employees()
+        .map_err(|_| Refusal::invalid("read employees"))?;
+    let Some(emp) = employees
+        .iter()
+        .find(|e| e.id == req.emp_id && e.status == EmployeeStatus::Active)
+    else {
+        return Err(Refusal::invalid("relayed handoff accepter is not active"));
+    };
+    // Enforce origin-office placement for ALL employees (Agents at their placed office; Persons
+    // strictly at HQ per `doc-90`) so a satellite can never forge a Person/owner acceptance.
+    let placed = req
+        .ctx
+        .employee_offices
+        .get(emp.id.as_str())
+        .map(String::as_str)
+        .unwrap_or(req.ctx.hq_office_id.as_str());
+    if placed != req.origin_office.as_str() {
+        return Err(Refusal::invalid(
+            "relayed handoff accepter is not placed at authenticated origin office",
+        ));
+    }
+    let Some(conv) = view
+        .conversation(&req.cid)
+        .map_err(|_| Refusal::invalid("read conversation"))?
+    else {
+        return Err(Refusal::invalid("conversation missing for handoff accept"));
+    };
+    let active_members =
+        crate::messaging::features::effective_auto_members(view, &conv, &req.owner)
+            .map_err(|_| Refusal::invalid("resolve conversation members"))?;
+    if !active_members.contains(&req.emp_id) && req.emp_id != req.owner {
+        return Err(Refusal::invalid(
+            "relayed handoff accepter is not an active member",
+        ));
+    }
+    validate_relayed_handoff_accept_target(view, req, &employees, &conv, &active_members)?;
+    let outcome = RelayedMessageOutcome {
+        conversation_id: req.cid.as_str().to_owned(),
+        sender_id: req.emp_id.as_str().to_owned(),
+        handoff_accepted: true,
+        ..Default::default()
+    };
+    let reply = serde_json::to_vec(&outcome).unwrap_or_default();
+    if let Some(existing) = view
+        .answer_for_message(&req.message_id)
+        .map_err(|_| Refusal::invalid("read existing handoff accept"))?
+    {
+        if existing.accepted_by.as_ref() == Some(&req.emp_id)
+            || !is_canonical_relayed_ask_winner(Some(&existing), &req.emp_id, &req.answer)
+        {
+            return Ok(Change::new(Ack::Durable).reply(reply));
+        }
+    }
+    let path = participant_answer_path(&req.cid, &req.emp_id, &req.message_id);
+    Ok(Change::new(Ack::Durable)
+        .put(path, encode_json(&req.answer))
+        .reply(reply))
+}
+
+fn apply_relayed_handoff_accept(
+    office: &Office,
+    origin_office: &str,
+    op_id: Id,
+    ctx: PlacementContext,
+    parsed: ParsedHandoffAccept,
+) -> Result<RelayedMessageOutcome, OfficeError> {
+    let reply = office
+        .store
+        .run(ApplyRelayedHandoffAcceptOp {
+            operation_id: op_id,
+            owner: office.owner.clone(),
+            ctx,
+            origin_office: origin_office.to_owned(),
+            cid: parsed.cid,
+            emp_id: parsed.emp_id,
+            message_id: parsed.message_id,
+            answer: parsed.answer,
+        })
+        .map_err(storage)?;
+    match reply.outcome {
+        Outcome::Completed => {
+            if reply.bytes.is_empty() {
+                Ok(RelayedMessageOutcome::default())
+            } else {
+                serde_json::from_slice(&reply.bytes)
+                    .map_err(|_| OfficeError::Invalid("corrupt relayed handoff accept reply"))
+            }
+        }
+        Outcome::Rejected => Err(OfficeError::Invalid(
+            "relayed handoff accept rejected by validation",
+        )),
+    }
+}
+
 fn apply_validated_relayed_message(
     office: &Office,
     origin_office: &str,
@@ -3682,12 +4076,16 @@ fn apply_validated_relayed_message(
         ParsedRelayedDelta::OriginAskClose(boxed) => {
             return apply_relayed_origin_close(office, origin_office, op_id, ctx, *boxed);
         }
+        ParsedRelayedDelta::HandoffAccept(boxed) => {
+            return apply_relayed_handoff_accept(office, origin_office, op_id, ctx, *boxed);
+        }
         ParsedRelayedDelta::Message(boxed) => *boxed,
     };
     let now_ms = office.monotonic_now_ms();
     if message_expires_at_ms(&msg).is_some_and(|exp| exp <= now_ms) {
         return Err(OfficeError::Invalid("relayed message already expired"));
     }
+    let delivered_msg_for_outcome = msg.clone();
     let reply = office
         .store
         .run(ApplyRelayedMessageOp {
@@ -3703,8 +4101,14 @@ fn apply_validated_relayed_message(
         })
         .map_err(storage)?;
     match reply.outcome {
-        Outcome::Completed => serde_json::from_slice(&reply.bytes)
-            .map_err(|_| OfficeError::Invalid("corrupt relayed message commit reply")),
+        Outcome::Completed => {
+            let mut outcome: RelayedMessageOutcome = serde_json::from_slice(&reply.bytes)
+                .map_err(|_| OfficeError::Invalid("corrupt relayed message commit reply"))?;
+            if outcome.inserted {
+                outcome.delivered_message = Some(delivered_msg_for_outcome);
+            }
+            Ok(outcome)
+        }
         Outcome::Rejected => Err(OfficeError::Invalid(
             "relayed message rejected by native messaging validation",
         )),
@@ -4131,6 +4535,17 @@ pub fn classify_replicated_snapshot_path(path: &str) -> SnapshotPathClass {
     SnapshotPathClass::OrgCoreStructure
 }
 
+fn is_replicated_op_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "organization.apply_replicated_files"
+            | "replication.apply_message"
+            | "replication.apply_conversation"
+            | "replication.apply_origin_close"
+            | "replication.apply_handoff_accept"
+    )
+}
+
 /// Determines provenance directly from durable journal operation kind (with bounded-ring fallback),
 /// preventing long catch-ups (>2,048 ops) from ever re-exporting replicated HQ work (`TASK-52` P8-#3).
 fn is_replicated_journal_entry(
@@ -4138,15 +4553,10 @@ fn is_replicated_journal_entry(
     replication: &dyn crate::replication::ReplicationStore,
 ) -> bool {
     entry.header.operation.as_ref().is_some_and(|op| {
-        matches!(
-            op.kind.as_str(),
-            "organization.apply_replicated_files"
-                | "replication.apply_message"
-                | "replication.apply_conversation"
-                | "replication.apply_origin_close"
-        ) || replication
-            .is_replicated_op_id(op.id.as_str())
-            .unwrap_or(false)
+        is_replicated_op_kind(op.kind.as_str())
+            || replication
+                .is_replicated_op_id(op.id.as_str())
+                .unwrap_or(false)
     })
 }
 
@@ -4282,4 +4692,27 @@ pub(crate) fn read_ca_digest_for_open(
         return Digest::from_bytes(cert_fingerprint_sha256(&bytes));
     }
     Digest::ZERO
+}
+
+#[cfg(test)]
+mod replicated_kind_tests {
+    use super::is_replicated_op_kind;
+
+    #[test]
+    fn replicated_op_kinds_include_handoff_accept_without_ring_fallback() {
+        for kind in [
+            "organization.apply_replicated_files",
+            "replication.apply_message",
+            "replication.apply_conversation",
+            "replication.apply_origin_close",
+            "replication.apply_handoff_accept",
+        ] {
+            assert!(
+                is_replicated_op_kind(kind),
+                "missing replicated kind {kind}"
+            );
+        }
+        assert!(!is_replicated_op_kind("messaging.accept_handoff"));
+        assert!(!is_replicated_op_kind("messaging.send"));
+    }
 }

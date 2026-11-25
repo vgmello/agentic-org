@@ -330,6 +330,29 @@ fn require_owner(office: &Office, actor: &str) -> Result<Result<Id, ApiError>, O
     Ok(Ok(caller.id))
 }
 
+fn require_hq_owner(office: &Office, actor: &str) -> Result<Result<Id, ApiError>, OfficeError> {
+    if office.info.role != crate::OfficeRole::Hq {
+        return Ok(Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "organization provider connections and model profiles can only be mutated on HQ",
+        )));
+    }
+    require_owner(office, actor)
+}
+
+fn require_office_operator(
+    office: &Office,
+    actor: &str,
+) -> Result<Result<(), ApiError>, OfficeError> {
+    if office.info.role == crate::OfficeRole::Satellite && actor == office.info.office_id {
+        return Ok(Ok(()));
+    }
+    match require_owner(office, actor)? {
+        Ok(_) => Ok(Ok(())),
+        Err(e) => Ok(Err(e)),
+    }
+}
+
 fn parse_uuid(raw: &str, label: &str) -> Result<Id, ApiError> {
     if !org_proto::is_uuid_v7(raw) {
         return Err(ApiError::new(
@@ -439,8 +462,12 @@ fn op_connection_list(
     actor: &str,
     params: ProviderConnectionListParams,
 ) -> Result<Result<ProviderConnectionListResult, ApiError>, OfficeError> {
-    if let Err(e) = office.require_active_member(actor)? {
-        return Ok(Err(e));
+    let is_sat_operator =
+        office.info.role == crate::OfficeRole::Satellite && actor == office.info.office_id;
+    if !is_sat_operator {
+        if let Err(e) = office.require_active_member(actor)? {
+            return Ok(Err(e));
+        }
     }
     let conns = office
         .load_provider_connections()?
@@ -456,7 +483,7 @@ fn op_connection_update(
     actor: &str,
     params: ProviderConnectionUpdateParams,
 ) -> Result<Result<EntityOpResult, ApiError>, OfficeError> {
-    let owner_id = match require_owner(office, actor)? {
+    let owner_id = match require_hq_owner(office, actor)? {
         Ok(id) => id,
         Err(e) => return Ok(Err(e)),
     };
@@ -482,7 +509,7 @@ fn op_profile_create(
     actor: &str,
     params: ModelProfileCreateParams,
 ) -> Result<Result<EntityOpResult, ApiError>, OfficeError> {
-    let owner_id = match require_owner(office, actor)? {
+    let owner_id = match require_hq_owner(office, actor)? {
         Ok(id) => id,
         Err(e) => return Ok(Err(e)),
     };
@@ -512,7 +539,7 @@ fn op_profile_update(
     actor: &str,
     params: ModelProfileUpdateParams,
 ) -> Result<Result<EntityOpResult, ApiError>, OfficeError> {
-    let owner_id = match require_owner(office, actor)? {
+    let owner_id = match require_hq_owner(office, actor)? {
         Ok(id) => id,
         Err(e) => return Ok(Err(e)),
     };
@@ -588,7 +615,7 @@ fn op_binding_set(
     actor: &str,
     params: ProviderBindingSetParams,
 ) -> Result<Result<ProviderBindingSetResult, ApiError>, OfficeError> {
-    if let Err(e) = require_owner(office, actor)? {
+    if let Err(e) = require_office_operator(office, actor)? {
         return Ok(Err(e));
     }
     if let Err(e) = validate_binding_set_params(&params) {
@@ -675,7 +702,7 @@ fn op_binding_list(
     actor: &str,
     params: ProviderBindingListParams,
 ) -> Result<Result<ProviderBindingListResult, ApiError>, OfficeError> {
-    if let Err(e) = require_owner(office, actor)? {
+    if let Err(e) = require_office_operator(office, actor)? {
         return Ok(Err(e));
     }
     let now_ms = office.monotonic_now_ms();
@@ -719,7 +746,7 @@ fn op_connection_refresh(
     actor: &str,
     params: ProviderConnectionRefreshParams,
 ) -> Result<Result<ProviderConnectionRefreshResult, ApiError>, OfficeError> {
-    if let Err(e) = require_owner(office, actor)? {
+    if let Err(e) = require_office_operator(office, actor)? {
         return Ok(Err(e));
     }
     let Some(conn) = office.load_provider_connection(&params.connection_id)? else {
@@ -1182,7 +1209,7 @@ fn op_quota_status(
     actor: &str,
     params: ProviderQuotaStatusParams,
 ) -> Result<Result<ProviderQuotaStatusResult, ApiError>, OfficeError> {
-    if let Err(e) = require_owner(office, actor)? {
+    if let Err(e) = require_office_operator(office, actor)? {
         return Ok(Err(e));
     }
     let snap = office.providers.quota_snapshot(
@@ -1212,7 +1239,7 @@ fn op_cooldown_record(
     actor: &str,
     params: ProviderCooldownRecordParams,
 ) -> Result<Result<ProviderCooldownRecordResult, ApiError>, OfficeError> {
-    if let Err(e) = require_owner(office, actor)? {
+    if let Err(e) = require_office_operator(office, actor)? {
         return Ok(Err(e));
     }
     if office
