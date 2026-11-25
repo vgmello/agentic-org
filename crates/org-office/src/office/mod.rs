@@ -75,7 +75,7 @@ pub use self::satellite::{
     is_immutable_state_path, is_stale_snapshot_task_entry, resolve_employee_office,
     strip_org_core_employee_refs_typed, task_id_for_work_path, ExportedSnapshotPages,
     OrgDeltaPayload, PendingMessageJournalEntry, RelayedAskAnswer, RelayedAskWithdrawal,
-    RelayedMessageOutcome, SatelliteFederationConfig, SatelliteProvisionSpec,
+    RelayedMessageOutcome, RelayedRecipientWake, SatelliteFederationConfig, SatelliteProvisionSpec,
     SatelliteReEnrollSpec, SatelliteTlsIdentity, SnapshotExportProgress, SnapshotPathClass,
 };
 #[cfg(any(test, feature = "testkit"))]

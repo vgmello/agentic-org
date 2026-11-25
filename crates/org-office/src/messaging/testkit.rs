@@ -212,7 +212,8 @@ macro_rules! memory_messaging_read {
                         .filter(|((mid, _), _)| mid == message_id)
                         .min_by_key(|(_, ans)| {
                             (
-                                ans.reason.as_deref() != Some("origin-close"),
+                                !(ans.reason.as_deref() == Some("origin-close")
+                                    && ans.answer.is_some()),
                                 ans.accepted_at.as_deref().unwrap_or(""),
                                 ans.employee_id.as_str(),
                             )
