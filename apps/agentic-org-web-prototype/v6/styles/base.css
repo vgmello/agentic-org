@@ -1039,7 +1039,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .agent-rail { background: rgb(0 0 0 / .08); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
 
 .orb-section { position: relative; display: flex; flex-direction: column; align-items: center; padding: 20px 20px 18px; border-bottom: 1px solid var(--line); background: radial-gradient(circle at 50% 44%, var(--tone-accent-soft), transparent 70%); }
-.orb-expand-btn { position: absolute; top: 10px; right: 10px; z-index: 2; }
+.orb-expand-btn { position: absolute; top: 16px; right: 18px; z-index: 2; }
 .orb-stage { position: relative; width: 200px; height: 200px; flex-shrink: 0; }
 .orb-stage-btn { border: 0; padding: 0; background: transparent; border-radius: 999px; cursor: pointer; transition: transform .2s ease, box-shadow .2s ease; }
 .orb-stage-btn:hover { transform: scale(1.025); box-shadow: 0 0 0 1px var(--tone-accent-ring), 0 0 28px var(--tone-accent-soft); }

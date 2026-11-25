@@ -264,7 +264,7 @@
 
   & > :not(.primary-tab-row) { align-self: center; }
   & > .primary-tab-row { align-items: stretch; }
-  & > #work-new-task, &.section-toolbar > :is(.queue-controls, .section-actions) { margin-block: 4px; }
+  & > #work-new-task, &.section-toolbar > :is(.queue-controls, .section-actions) { margin-block: 4px 12px; }
 }
 /* The divider follows the tabs when adjacent controls wrap below them. */
 .primary-tab-row {
