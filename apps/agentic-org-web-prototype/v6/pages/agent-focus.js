@@ -228,10 +228,8 @@ function bindFocusEvents(shell, aid, sess, orb) {
   });
 }
 
-function closeAgentFocus(restoreRail = true) {
-  if (!focusState) return;
-  const { overlay, orb, meterTimer, triggerEl, sess } = focusState;
-  focusState = null;
+function finalizeCloseFocus(state, restoreRail) {
+  const { overlay, orb, meterTimer, triggerEl, sess } = state;
   clearInterval(meterTimer);
   if (orb._ro) { orb._ro.disconnect(); orb._ro = null; }
   orb.stop();
@@ -246,6 +244,24 @@ function closeAgentFocus(restoreRail = true) {
     resumeRailOrbAfterFocus();
     if (triggerEl?.isConnected) triggerEl.focus({ preventScroll: true });
   }
+}
+
+function closeAgentFocus(restoreRail = true) {
+  if (!focusState) return;
+  const state = focusState;
+  focusState = null;
+  const shell = state.overlay.firstElementChild;
+  const reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  if (!restoreRail || reduced || !shell) {
+    finalizeCloseFocus(state, restoreRail);
+    return;
+  }
+  shell.removeAttribute("data-expanded");
+  shell.classList.add("is-closing");
+  let done = false;
+  const finish = () => { if (done) return; done = true; finalizeCloseFocus(state, true); };
+  shell.addEventListener("transitionend", (e) => { if (e.target === shell && e.propertyName === "width") finish(); }, { once: true });
+  setTimeout(finish, 300);
 }
 
 function openAgentFocus(aid, triggerEl = null) {
@@ -263,6 +279,10 @@ function openAgentFocus(aid, triggerEl = null) {
   </section>`;
   (document.getElementById("content") || document.body).appendChild(overlay);
   document.body.classList.add("agent-focus-open");
+  const shell = overlay.firstElementChild;
+  const reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  if (reduced) shell.setAttribute("data-expanded", "");
+  else requestAnimationFrame(() => requestAnimationFrame(() => shell.setAttribute("data-expanded", "")));
   const canvas = document.getElementById("af-orb-canvas");
   const orb = new NeuralOrb(canvas);
   orb.setState(avail.active ? sess.status.state : "paused");
@@ -285,7 +305,7 @@ function openAgentFocus(aid, triggerEl = null) {
   };
   const meterTimer = setInterval(() => paintFocusTelemetry(aid, sess, orb), 140);
   focusState = { aid, overlay, orb, meterTimer, triggerEl, sess };
-  bindFocusEvents(overlay.firstElementChild, aid, sess, orb);
+  bindFocusEvents(shell, aid, sess, orb);
   paintFocusAll(aid, sess, orb, true);
   const input = document.getElementById("af-prompt-input");
   (input && !input.disabled ? input : document.getElementById("af-close-btn"))?.focus({ preventScroll: true });

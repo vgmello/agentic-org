@@ -48,6 +48,7 @@ function traceMetaText(en) {
 }
 
 function renderTraceBodyHtml(en) {
+  const meta = traceMetaText(en);
   const thoughts = (en.thoughts || []).map((t) => `<li class="c-trace-thought"><span class="c-trace-tag">Reasoning</span><span>${esc(t)}</span></li>`).join("");
   const steps = (en.steps || []).map((s) => `<div class="c-step${s.running ? " is-running" : ""}">
     <span class="c-step-dot"></span>
@@ -57,6 +58,7 @@ function renderTraceBodyHtml(en) {
   </div>${s.out ? `<div class="c-step-out">${esc(s.out)}</div>` : ""}`).join("");
   const emptyNote = !thoughts && !steps ? `<p class="c-trace-empty">Preparing turn trace…</p>` : "";
   return `<div class="c-trace-panel" id="trace-${esc(en.id)}">
+    ${meta ? `<div class="c-trace-summary">${esc(meta)}</div>` : ""}
     ${thoughts ? `<ul class="c-trace-thoughts" role="list">${thoughts}</ul>` : ""}
     ${steps ? `<div class="c-steps">${steps}</div>` : ""}
     ${emptyNote}
@@ -68,7 +70,6 @@ function renderTurnTraceHtml(en) {
   const hasTrace = processing || (en.steps?.length || 0) > 0 || (en.thoughts?.length || 0) > 0;
   if (!hasTrace) return "";
   const open = isTraceOpen(en.id);
-  const meta = traceMetaText(en);
   const statusChip = processing
     ? `<span class="c-thinking-cue" role="status"><span class="c-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Thinking…</span></span>`
     : "";
@@ -77,9 +78,8 @@ function renderTurnTraceHtml(en) {
     <div class="c-trace-bar">
       ${statusChip}
       <button type="button" class="c-trace-toggle" data-trace-toggle="${esc(en.id)}" aria-expanded="${open}" aria-controls="trace-${esc(en.id)}">
-        ${ic("chev-right", "ic14 c-trace-chev")}
+        <span class="c-trace-rule" aria-hidden="true"></span>
         <span>${btnLabel}</span>
-        ${meta ? `<span class="c-trace-meta">${esc(meta)}</span>` : ""}
       </button>
     </div>
     ${open ? renderTraceBodyHtml(en) : ""}
