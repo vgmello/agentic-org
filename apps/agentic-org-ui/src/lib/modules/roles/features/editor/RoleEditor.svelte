@@ -63,7 +63,8 @@
 		discardDraftIfVersion,
 		draftKey,
 		keepDraft,
-		keptDraft
+		keptDraft,
+		retainMountedAttempt
 	} from './kept-drafts';
 
 	let {
@@ -200,6 +201,7 @@
 			keptVersion = undefined;
 			discardDraft(slot);
 		}
+		attemptId = '';
 		discarding = false;
 	}
 
@@ -219,10 +221,14 @@
 	// Cross-tab sign-out or account switch closes and clears any mounted draft immediately;
 	// same-account reauthentication does not fire onSessionEnded, so the draft stays intact.
 	$effect(() => appSession.onSessionEnded(resetOnSessionEnd));
-	// Leaving the page with the sheet open keeps the text, as Back does.
+	// Leaving the page with the sheet open keeps the text BEFORE mounted-attempt retention releases.
 	$effect(() => () => {
 		unmounted = true;
 		if (open) keepOrDiscard();
+	});
+	// Keep retry identity alive while this editor holds an attemptId (including during close animation).
+	$effect(() => {
+		if (attemptId) return retainMountedAttempt(attemptId);
 	});
 
 	const title = $derived(

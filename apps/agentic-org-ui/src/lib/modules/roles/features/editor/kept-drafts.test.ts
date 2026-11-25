@@ -7,7 +7,8 @@ import {
 	hasRetainedAttempt,
 	keepDraft,
 	keptDraft,
-	onAttemptReleased
+	onAttemptReleased,
+	retainMountedAttempt
 } from './kept-drafts';
 
 it('keeps a draft per organization and role until it is discarded', () => {
@@ -101,6 +102,22 @@ it('discards only the matching draft version so a late save never deletes newer 
 		expect(keptDraft(key)).toBeUndefined();
 		expect(hasRetainedAttempt('att-shared')).toBe(false);
 		expect(released).toEqual(['att-shared']);
+
+		// A mounted editor holding the same attemptId keeps it retained even if late cleanup discards the kept copy.
+		const v3 = keepDraft(key, {
+			name: 'Reopened',
+			key: '',
+			body: 'Body',
+			expectedRevision: 0,
+			attemptId: 'att-mounted'
+		});
+		const releaseMounted = retainMountedAttempt('att-mounted');
+		discardDraftIfVersion(key, v3);
+		expect(hasRetainedAttempt('att-mounted')).toBe(true);
+		expect(released).toEqual(['att-shared']);
+		releaseMounted();
+		expect(hasRetainedAttempt('att-mounted')).toBe(false);
+		expect(released).toEqual(['att-shared', 'att-mounted']);
 	} finally {
 		unsub();
 	}

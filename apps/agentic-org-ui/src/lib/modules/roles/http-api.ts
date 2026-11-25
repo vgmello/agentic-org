@@ -62,6 +62,7 @@ type PendingCreate = {
 	committedRevision?: number;
 	hasUnresolvedFollowUp?: boolean;
 	conflicted?: boolean;
+	detailsEvicted?: boolean;
 	resolved?: Role;
 };
 
@@ -74,6 +75,7 @@ type PendingUpdate = {
 	committedRevision?: number;
 	hasUnresolvedFollowUp?: boolean;
 	conflicted?: boolean;
+	detailsEvicted?: boolean;
 	resolved?: Role;
 };
 
@@ -237,28 +239,32 @@ function deleteIfCurrent<T>(map: Map<string, T>, key: string | undefined, expect
 	if (key && map.get(key) === expected) map.delete(key);
 }
 
+type SettledEntry = {
+	attemptId?: string;
+	committedRevision?: number;
+	hasUnresolvedFollowUp?: boolean;
+	detailsEvicted?: boolean;
+	resolved?: Role;
+};
+
+function isInSettledWindow(entry: SettledEntry): boolean {
+	return (
+		entry.committedRevision !== undefined && !entry.hasUnresolvedFollowUp && !entry.detailsEvicted
+	);
+}
+
 function isReclaimableEvicted(
-	entry: {
-		attemptId?: string;
-		committedRevision?: number;
-		hasUnresolvedFollowUp?: boolean;
-		resolved?: Role;
-	},
+	entry: SettledEntry,
 	isAttemptRetained?: (attemptId: string) => boolean
 ): boolean {
-	if (!isAttemptRetained || entry.resolved || entry.committedRevision === undefined) return false;
+	if (!isAttemptRetained || !entry.detailsEvicted || entry.committedRevision === undefined) {
+		return false;
+	}
 	if (entry.hasUnresolvedFollowUp) return false;
 	return !entry.attemptId || !isAttemptRetained(entry.attemptId);
 }
 
-function pruneResolved<
-	T extends {
-		attemptId?: string;
-		committedRevision?: number;
-		hasUnresolvedFollowUp?: boolean;
-		resolved?: Role;
-	}
->(
+function pruneResolved<T extends SettledEntry>(
 	map: Map<string, T>,
 	activeKeys: ReadonlyMap<string, Promise<unknown>>,
 	isAttemptRetained?: (attemptId: string) => boolean
@@ -266,7 +272,7 @@ function pruneResolved<
 	let settled = 0;
 	for (const [key, entry] of map) {
 		if (activeKeys.has(key)) continue;
-		if (entry.resolved) {
+		if (isInSettledWindow(entry)) {
 			settled++;
 		} else if (isReclaimableEvicted(entry, isAttemptRetained)) {
 			map.delete(key);
@@ -275,8 +281,9 @@ function pruneResolved<
 	if (settled <= MAX_RESOLVED_ATTEMPTS) return;
 	for (const [key, entry] of map) {
 		if (settled <= MAX_RESOLVED_ATTEMPTS) break;
-		if (!entry.resolved || activeKeys.has(key)) continue;
+		if (activeKeys.has(key) || !isInSettledWindow(entry)) continue;
 		entry.resolved = undefined;
+		entry.detailsEvicted = true;
 		settled--;
 		if (isReclaimableEvicted(entry, isAttemptRetained)) {
 			map.delete(key);
@@ -582,7 +589,12 @@ export function createHttpRolesApi({
 	async function resolveCommittedMatch(
 		organizationId: string,
 		roleId: string,
-		existing: { submitted: SubmittedRolePayload; committedRevision?: number; resolved?: Role },
+		existing: {
+			submitted: SubmittedRolePayload;
+			committedRevision?: number;
+			detailsEvicted?: boolean;
+			resolved?: Role;
+		},
 		session: SessionToken
 	): Promise<Role> {
 		if (existing.resolved) return existing.resolved;
@@ -595,6 +607,7 @@ export function createHttpRolesApi({
 				? authoritative
 				: buildFallbackRole({ id: roleId, revision }, existing.submitted, authoritative?.created);
 		existing.resolved = role;
+		existing.detailsEvicted = false;
 		return role;
 	}
 
@@ -628,6 +641,7 @@ export function createHttpRolesApi({
 			committedRevision?: number;
 			hasUnresolvedFollowUp?: boolean;
 			conflicted?: boolean;
+			detailsEvicted?: boolean;
 			resolved?: Role;
 		},
 		session: SessionToken
@@ -660,6 +674,7 @@ export function createHttpRolesApi({
 			existing.committedRevision = updated.revision;
 			existing.hasUnresolvedFollowUp = false;
 			existing.conflicted = false;
+			existing.detailsEvicted = false;
 			existing.resolved = updated;
 			return updated;
 		} catch (err) {
@@ -749,6 +764,7 @@ export function createHttpRolesApi({
 			authoritative && authoritative.revision === ack.revision
 				? authoritative
 				: buildFallbackRole(ack, desired, authoritative?.created);
+		attempt.detailsEvicted = false;
 		attempt.resolved = role;
 		return role;
 	}
@@ -837,6 +853,7 @@ export function createHttpRolesApi({
 			authoritative && authoritative.revision === ack.revision
 				? authoritative
 				: buildFallbackRole(ack, desired);
+		attempt.detailsEvicted = false;
 		attempt.resolved = role;
 		return role;
 	}
@@ -899,7 +916,7 @@ export function createHttpRolesApi({
 					if (
 						entry.attemptId === attemptId &&
 						!inFlightKeys.has(key) &&
-						!entry.resolved &&
+						entry.detailsEvicted &&
 						entry.committedRevision !== undefined &&
 						!entry.hasUnresolvedFollowUp
 					) {

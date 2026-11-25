@@ -912,6 +912,8 @@ describe('createHttpRolesApi', () => {
 			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
 			sessionScope: () => 'inst-1:acct-a',
 			sessionGeneration: () => 1,
+			// Exercise the production retention callback returning false (open editor has no kept-draft copy).
+			isAttemptRetained: () => false,
 			newCommandId: nextId,
 			newEntityId: nextId
 		});
@@ -1196,6 +1198,8 @@ describe('createHttpRolesApi', () => {
 			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
 			sessionScope: () => 'inst-1:acct-a',
 			sessionGeneration: () => 1,
+			// Exercise the production retention callback returning false (open editor has no kept-draft copy).
+			isAttemptRetained: () => false,
 			newCommandId: nextId,
 			newEntityId: nextId
 		});
@@ -1344,6 +1348,8 @@ describe('createHttpRolesApi', () => {
 			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
 			sessionScope: () => 'inst-1:acct-a',
 			sessionGeneration: () => 1,
+			// Exercise the production retention callback returning false (open editor has no kept-draft copy).
+			isAttemptRetained: () => false,
 			newCommandId: nextId,
 			newEntityId: nextId
 		});

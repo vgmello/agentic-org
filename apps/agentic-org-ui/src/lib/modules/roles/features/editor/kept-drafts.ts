@@ -27,6 +27,7 @@ type KeptEntry = {
 };
 
 const kept = new Map<string, KeptEntry>();
+const mountedAttemptCounts = new Map<string, number>();
 let nextVersion = 0;
 let attemptReleasedListeners: ((attemptId: string) => void)[] = [];
 
@@ -77,8 +78,26 @@ export function discardDraftIfVersion(key: string, version: number | undefined) 
 	notifyIfAttemptReleased(entry.draft.attemptId);
 }
 
-/** True while any retained draft still references `attemptId` so retry identity outlives detail-cache eviction. */
+/** Marks `attemptId` as actively held by a mounted editor until the returned disposer runs. */
+export function retainMountedAttempt(attemptId: string): () => void {
+	if (!attemptId) return () => {};
+	mountedAttemptCounts.set(attemptId, (mountedAttemptCounts.get(attemptId) ?? 0) + 1);
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		const next = (mountedAttemptCounts.get(attemptId) ?? 1) - 1;
+		if (next > 0) mountedAttemptCounts.set(attemptId, next);
+		else {
+			mountedAttemptCounts.delete(attemptId);
+			notifyIfAttemptReleased(attemptId);
+		}
+	};
+}
+
+/** True while any mounted editor or retained draft still references `attemptId`. */
 export function hasRetainedAttempt(attemptId: string): boolean {
+	if ((mountedAttemptCounts.get(attemptId) ?? 0) > 0) return true;
 	for (const entry of kept.values()) {
 		if (entry.draft.attemptId === attemptId) return true;
 	}
