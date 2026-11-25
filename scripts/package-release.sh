@@ -105,14 +105,14 @@ if [[ "$PROFILE" == "release" ]]; then
     echo "Building release binaries with embedded trust registry ..." >&2
     ORG_RELEASE_TRUST_REGISTRY="$(cd "$(dirname "$TRUST_REGISTRY")" && pwd)/$(basename "$TRUST_REGISTRY")" \
     ORG_RELEASE_MIN_SEQUENCE="$SEQUENCE" \
-      cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --release \
+      cargo build --locked --manifest-path "$ROOT_DIR/Cargo.toml" --release \
       -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
   fi
 else
   BIN_DIR="$ROOT_DIR/target/debug"
   if [[ "$SKIP_BUILD" -eq 0 ]]; then
     echo "Building development binaries ..." >&2
-    cargo build --manifest-path "$ROOT_DIR/Cargo.toml" \
+    cargo build --locked --manifest-path "$ROOT_DIR/Cargo.toml" \
       -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
   fi
 fi

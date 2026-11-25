@@ -24,6 +24,11 @@ import tempfile
 from pathlib import Path
 
 EXECUTABLES = ("agentic-org", "agentic-org-office", "agentic-org-web", "agent-os")
+MACOS_SIGNING_IDS = {
+    "agentic-org": "com.vgmello.agentic-org.org-office-host",
+    "agentic-org-office": "com.vgmello.agentic-org.office",
+    "agentic-org-web": "com.vgmello.agentic-org.web",
+}
 RELEASE_FORMAT = "agentic-org-release-v1"
 ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
 RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
@@ -129,7 +134,7 @@ def cmd_keygen(args: argparse.Namespace) -> int:
     return 0
 
 
-def macos_cdhash_for(path: Path) -> str:
+def macos_cdhash_for(path: Path, rel: str) -> str:
     proc = subprocess.run(
         ["codesign", "-dvvv", str(path)],
         check=False,
@@ -152,6 +157,15 @@ def macos_cdhash_for(path: Path) -> str:
         raise SystemExit(
             f"refusing macOS executable {path} without Developer ID Application authority"
         )
+    expected_id = MACOS_SIGNING_IDS.get(rel)
+    if expected_id is not None:
+        id_match = re.search(r"^Identifier=(.+)$", combined, re.MULTILINE)
+        actual_id = id_match.group(1).strip() if id_match else ""
+        if actual_id != expected_id:
+            raise SystemExit(
+                f"macOS executable {path} signing Identifier `{actual_id}` does not match "
+                f"required `{expected_id}`"
+            )
     team_match = re.search(r"^TeamIdentifier=([A-Z0-9]{10})\b", combined, re.MULTILINE)
     if not team_match:
         raise SystemExit(
@@ -287,7 +301,7 @@ def payload_manifest_entry(
     data = path.read_bytes()
     cdhash = None
     if is_exec and platform == "macos" and signed:
-        cdhash = macos_cdhash_for(path)
+        cdhash = macos_cdhash_for(path, rel)
     entry = {
         "path": rel,
         "size": len(data),

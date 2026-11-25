@@ -149,22 +149,25 @@ resolve_sha256_input() {
 
 validate_tar_entries() {
   local archive="$1"
-  local verbose_listing names_listing bad_type bad_path
-  verbose_listing="$(tar -tvzf "$archive")"
-  names_listing="$(tar -tzf "$archive")"
-  if [[ -z "$verbose_listing" || -z "$names_listing" ]]; then
+  local verbose_file="$2"
+  local names_file="$3"
+  local bad_type bad_path
+  # Write tar listings to private files (never piped into early-exit awk/grep under pipefail).
+  tar -tvzf "$archive" > "$verbose_file"
+  tar -tzf "$archive" > "$names_file"
+  if [[ ! -s "$verbose_file" || ! -s "$names_file" ]]; then
     echo "install.sh: archive is empty" >&2
     exit 1
   fi
   # 1. Reject symlinks, hardlinks, devices, FIFOs, and directory entries (regular files only).
-  bad_type="$(printf '%s\n' "$verbose_listing" | awk 'substr($1, 1, 1) != "-" { print; exit }')"
+  bad_type="$(awk 'substr($1, 1, 1) != "-" { print; exit }' "$verbose_file")"
   if [[ -n "$bad_type" ]]; then
     echo "install.sh: refusing non-regular archive entry: $bad_type" >&2
     exit 1
   fi
   # 2. Validate full unsplit entry paths from `tar -tzf` (immune to whitespace/$NF tricks):
   #    reject leading `/`, `..` path segments, whitespace/control chars, backslashes, and duplicates.
-  bad_path="$(printf '%s\n' "$names_listing" | awk '
+  bad_path="$(awk '
     {
       p = $0
       if (p == "" || substr(p, 1, 1) == "/" || p ~ /[[:space:][:cntrl:]]/ || index(p, "\\") > 0) {
@@ -177,7 +180,7 @@ validate_tar_entries() {
         print "duplicate:" p; exit
       }
     }
-  ')"
+  ' "$names_file")"
   if [[ -n "$bad_path" ]]; then
     echo "install.sh: refusing unsafe archive path: $bad_path" >&2
     exit 1
@@ -187,13 +190,100 @@ validate_tar_entries() {
 extract_json_string() {
   local json_text="$1"
   local key="$2"
-  printf '%s\n' "$json_text" | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n 1
+  awk -v k="$key" '
+    { buf = buf $0 "\n" }
+    END {
+      pat = "\"" k "\"[[:space:]]*:[[:space:]]*\"[^\"]*\""
+      if (match(buf, pat)) {
+        s = substr(buf, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*"/, "", s)
+        sub(/"$/, "", s)
+        print s
+      }
+    }
+  ' <<< "$json_text"
 }
 
 extract_json_uint() {
   local json_text="$1"
   local key="$2"
-  printf '%s\n' "$json_text" | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p" | head -n 1
+  awk -v k="$key" '
+    { buf = buf $0 "\n" }
+    END {
+      pat = "\"" k "\"[[:space:]]*:[[:space:]]*[0-9]+"
+      if (match(buf, pat)) {
+        s = substr(buf, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*/, "", s)
+        print s
+      }
+    }
+  ' <<< "$json_text"
+}
+
+# Order-independent, minified-JSON-safe lookup of a key entry in release-trust-registry.json.
+# Emits `public_key_hex|min_sequence|max_sequence` for the exact matching `key_id`.
+lookup_registry_key_entry() {
+  local registry_file="$1"
+  local target_kid="$2"
+  awk -v kid="$target_kid" '
+    BEGIN { RS = "}" }
+    {
+      obj = $0
+      # Keep only the innermost `{...` object segment in case outer braces preceded this item.
+      n = split(obj, parts, "{")
+      seg = parts[n]
+      got_kid = ""
+      if (match(seg, /"key_id"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+        got_kid = substr(seg, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*"/, "", got_kid)
+        sub(/"$/, "", got_kid)
+      }
+      if (got_kid != kid) next
+      pub = ""; min_s = ""; max_s = ""
+      if (match(seg, /"public_key_hex"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+        pub = substr(seg, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*"/, "", pub)
+        sub(/"$/, "", pub)
+      }
+      if (match(seg, /"min_sequence"[[:space:]]*:[[:space:]]*[0-9]+/)) {
+        min_s = substr(seg, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*/, "", min_s)
+      }
+      if (match(seg, /"max_sequence"[[:space:]]*:[[:space:]]*[0-9]+/)) {
+        max_s = substr(seg, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*/, "", max_s)
+      }
+      printf "%s|%s|%s\n", pub, min_s, max_s
+      exit
+    }
+  ' "$registry_file"
+}
+
+# Order-independent, minified-JSON-safe lookup of a file entry SHA-256 in release.v1.json.
+lookup_manifest_file_sha256() {
+  local manifest_file="$1"
+  local target_path="$2"
+  awk -v wanted="$target_path" '
+    BEGIN { RS = "}" }
+    {
+      n = split($0, parts, "{")
+      seg = parts[n]
+      got_path = ""
+      if (match(seg, /"path"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+        got_path = substr(seg, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*"/, "", got_path)
+        sub(/"$/, "", got_path)
+      }
+      if (got_path != wanted) next
+      if (match(seg, /"sha256"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+        sha = substr(seg, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*"/, "", sha)
+        sub(/"$/, "", sha)
+        print sha
+        exit
+      }
+    }
+  ' "$manifest_file"
 }
 
 verify_pubkey_signature() {
@@ -201,7 +291,9 @@ verify_pubkey_signature() {
   local sig_file="$2"
   local pubkey_input="$3"
   require_cmd openssl
-  if ! openssl pkeyutl -help 2>&1 | grep -q -- '-rawin'; then
+  local pkeyutl_help
+  pkeyutl_help="$(openssl pkeyutl -help 2>&1 || true)"
+  if [[ "$pkeyutl_help" != *"-rawin"* ]]; then
     echo "install.sh: installed openssl does not support Ed25519 '-rawin' verification (e.g. stock macOS LibreSSL); install OpenSSL 3+ or pass --sha256 <file|hex>" >&2
     exit 1
   fi
@@ -223,49 +315,23 @@ verify_pubkey_signature() {
       echo "install.sh: manifest contains invalid sequence" >&2
       exit 1
     fi
-    # Exact string match (no regex interpolation) on key_id; extract public_key_hex and sequence bounds.
-    reg_line="$(awk -v kid="$key_id" '
-      /"key_id"[[:space:]]*:/ {
-        v = $0
-        sub(/.*"key_id"[[:space:]]*:[[:space:]]*"/, "", v)
-        sub(/".*/, "", v)
-        matched = (v == kid)
-        if (matched) { pub = ""; min_s = ""; max_s = "" }
-      }
-      matched && /"public_key_hex"[[:space:]]*:/ {
-        v = $0
-        sub(/.*"public_key_hex"[[:space:]]*:[[:space:]]*"/, "", v)
-        sub(/".*/, "", v)
-        pub = v
-      }
-      matched && /"min_sequence"[[:space:]]*:/ {
-        v = $0
-        sub(/.*"min_sequence"[[:space:]]*:[[:space:]]*/, "", v)
-        sub(/[^0-9].*/, "", v)
-        min_s = v
-      }
-      matched && /"max_sequence"[[:space:]]*:/ {
-        v = $0
-        sub(/.*"max_sequence"[[:space:]]*:[[:space:]]*/, "", v)
-        sub(/[^0-9].*/, "", v)
-        max_s = v
-      }
-      matched && /\}/ {
-        print pub, min_s, max_s
-        exit
-      }
-    ' "$pubkey_input")"
-    read -r pub_hex min_seq max_seq <<< "$reg_line"
+    reg_line="$(lookup_registry_key_entry "$pubkey_input" "$key_id")"
+    IFS='|' read -r pub_hex min_seq max_seq <<< "$reg_line"
     if [[ ! "${pub_hex:-}" =~ ^[0-9a-fA-F]{64}$ ]]; then
       echo "install.sh: signing key_id not found in trust registry: $pubkey_input" >&2
       exit 1
     fi
-    if [[ -n "${min_seq:-}" && "$seq" -lt "$min_seq" ]]; then
-      echo "install.sh: manifest sequence ($seq) below key min_sequence ($min_seq)" >&2
+    # Fail closed unless both sequence bounds are valid positive integers with min <= seq <= max.
+    if [[ ! "${min_seq:-}" =~ ^[1-9][0-9]*$ || ! "${max_seq:-}" =~ ^[1-9][0-9]*$ ]]; then
+      echo "install.sh: trust registry key entry missing valid min_sequence/max_sequence bounds" >&2
       exit 1
     fi
-    if [[ -n "${max_seq:-}" && "$seq" -gt "$max_seq" ]]; then
-      echo "install.sh: manifest sequence ($seq) exceeds key max_sequence ($max_seq)" >&2
+    if [[ "$min_seq" -gt "$max_seq" ]]; then
+      echo "install.sh: trust registry key has invalid bounds (min_sequence=$min_seq > max_sequence=$max_seq)" >&2
+      exit 1
+    fi
+    if [[ "$seq" -lt "$min_seq" || "$seq" -gt "$max_seq" ]]; then
+      echo "install.sh: manifest sequence ($seq) outside key bounds [$min_seq, $max_seq]" >&2
       exit 1
     fi
     require_cmd xxd
@@ -378,12 +444,13 @@ if [[ -n "$SHA256_INPUT" ]]; then
   echo "Verified archive SHA-256: $EXPECTED_SHA" >&2
 fi
 
-validate_tar_entries "$STAGED_ARCHIVE"
+TAR_VERBOSE_FILE="$TMP_DIR/tar.verbose"
+TAR_NAMES_FILE="$TMP_DIR/tar.names"
+validate_tar_entries "$STAGED_ARCHIVE" "$TAR_VERBOSE_FILE" "$TAR_NAMES_FILE"
 mkdir -p "$BIN_DIR"
 
-ARCHIVE_ENTRIES="$(tar -tzf "$STAGED_ARCHIVE")"
-if printf '%s\n' "$ARCHIVE_ENTRIES" | grep -qx "release.v1.json" \
-   && printf '%s\n' "$ARCHIVE_ENTRIES" | grep -qx "release.v1.sig"; then
+if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
+   && grep -qxF "release.v1.sig" "$TAR_NAMES_FILE"; then
   echo "Installing signed release bundle into protected release store ..." >&2
   if [[ -z "$STORE_DIR" ]]; then
     if [[ "$PLATFORM" == "linux" ]]; then
@@ -428,15 +495,7 @@ if printf '%s\n' "$ARCHIVE_ENTRIES" | grep -qx "release.v1.json" \
       exit 1
     fi
     if [[ -n "$PUBKEY_FILE" ]]; then
-      EXPECTED_CLI_SHA="$(awk '
-        /"path"[[:space:]]*:[[:space:]]*"agentic-org"/ { in_entry=1 }
-        in_entry && /"sha256"/ {
-          gsub(/.*"sha256"[[:space:]]*:[[:space:]]*"/, "")
-          gsub(/".*/, "")
-          print
-          exit
-        }
-      ' "$BOOTSTRAP_DIR/release.v1.json")"
+      EXPECTED_CLI_SHA="$(lookup_manifest_file_sha256 "$BOOTSTRAP_DIR/release.v1.json" "agentic-org")"
       verify_sha256 "$BOOTSTRAP_DIR/agentic-org" "$EXPECTED_CLI_SHA"
     fi
     chmod 0700 "$BOOTSTRAP_DIR/agentic-org"
