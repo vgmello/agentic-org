@@ -891,12 +891,12 @@ function agentRailHtml(aid, tab) {
   const m = M[aid], sess = getConsoleSession(aid), avail = agentSessionAvailability(aid);
   const st = sess.busy || avail.active ? sess.status : { state: avail.state, detail: avail.title.toLowerCase() };
   const curNow = avail.active ? sess.current : null;
-  const expandLabel = `Expand ${m.name} orb & chat to full screen`;
+  const expandLabel = `Open ${m.name} in Analysis Mode`;
   const liveLink = tab !== "sessions" && avail.active ? `<a class="link" style="margin-top:10px;font-size:0.75rem" href="#/members/${aid}/sessions">Open live session${ic("chev-right", "ic14")}</a>` : "";
   return `<aside class="agent-rail" aria-label="Agent orb and context">
     <div class="orb-section">
-      <button type="button" class="btn ghost icon sm icon-with-tooltip orb-expand-btn" data-act="agent-focus-open" data-id="${aid}" aria-label="${esc(expandLabel)}">${iconWithTooltip("Expand orb & chat", "maximize")}</button>
-      <button type="button" class="orb-stage orb-stage-btn" data-act="agent-focus-open" data-id="${aid}" aria-label="${esc(expandLabel)}" title="Open full-screen orb & chat">
+      <button type="button" class="btn ghost icon sm icon-with-tooltip orb-expand-btn" data-act="agent-focus-open" data-id="${aid}" aria-label="${esc(expandLabel)}">${iconWithTooltip("Analysis Mode", "maximize")}</button>
+      <button type="button" class="orb-stage orb-stage-btn" data-act="agent-focus-open" data-id="${aid}" aria-label="${esc(expandLabel)}" title="Open Analysis Mode">
         <canvas id="c-orb-canvas" role="img" aria-label="Neural orb reflecting ${esc(m.name)} activity"></canvas>
       </button>
       <div class="telemetry-strip" id="c-telemetry" data-cstate="${esc(st.state)}">
@@ -922,7 +922,7 @@ function sessionsSubbarHtml(aid, disabled) {
           </div>
           <button type="button" class="btn outline sm" id="c-trace-global" aria-pressed="${!!S.consoleTools}">${ic("eye", "ic16")}Show traces</button>
           <button type="button" class="btn outline sm" id="c-sim-btn" ${S.consoleView !== "activity" ? "hidden" : ""} ${disabled}>${ic("play", "ic16")}Simulate request</button>
-          <button type="button" class="btn outline sm" data-act="agent-focus-open" data-id="${aid}">${ic("maximize", "ic16")}Full screen</button>
+          <button type="button" class="btn outline sm" data-act="agent-focus-open" data-id="${aid}">${ic("maximize", "ic16")}Analysis Mode</button>
         </div>
       </div>`;
 }

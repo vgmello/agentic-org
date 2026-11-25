@@ -27,15 +27,15 @@ function setText(id, text) {
 }
 
 function focusCornerActionsHtml(m, sess) {
-  return `<div class="af-corner-actions" role="toolbar" aria-label="${esc(m.name)} focus controls">
+  return `<div class="af-corner-actions" role="toolbar" aria-label="${esc(m.name)} Analysis Mode controls">
     <button type="button" class="btn ghost icon sm icon-with-tooltip af-icon-toggle" id="af-trace-toggle" aria-pressed="${!!S.consoleTools}" aria-label="Show all traces">
       ${iconWithTooltip("Show all traces", "eye")}
     </button>
     <button type="button" class="btn ghost icon sm icon-with-tooltip af-icon-toggle" id="af-tools-toggle" aria-pressed="${!!S.agentFocusTools}" aria-controls="af-tools-drawer" aria-label="Tools & context (${sess.stats.toolCalls})">
       ${iconWithTooltip("Tools & context", "wrench")}
     </button>
-    <button type="button" class="btn ghost icon sm icon-with-tooltip af-close-btn" id="af-close-btn" aria-label="Exit full screen">
-      ${iconWithTooltip("Exit full screen (Esc)", "minimize")}
+    <button type="button" class="btn ghost icon sm icon-with-tooltip af-close-btn" id="af-close-btn" aria-label="Exit Analysis Mode">
+      ${iconWithTooltip("Exit Analysis Mode (Esc)", "minimize")}
     </button>
   </div>`;
 }
@@ -273,7 +273,7 @@ function openAgentFocus(aid, triggerEl = null) {
   const avail = agentSessionAvailability(aid);
   const overlay = document.createElement("div");
   overlay.id = "agent-focus-root";
-  overlay.innerHTML = `<section class="af-shell" role="dialog" aria-modal="true" aria-label="${esc(m.name)} live chat" data-agent="${esc(aid)}">
+  overlay.innerHTML = `<section class="af-shell" role="dialog" aria-modal="true" aria-label="${esc(m.name)} Analysis Mode" data-agent="${esc(aid)}">
     ${focusCornerActionsHtml(m, sess)}
     <div class="af-stage"><div class="af-body">${focusLeftColumnHtml(m, sess, avail)}${focusRightColumnHtml(m, avail)}</div></div>
   </section>`;

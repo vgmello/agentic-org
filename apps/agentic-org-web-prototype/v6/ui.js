@@ -82,7 +82,11 @@ function linkTabs(base, tabs, cur, label = "Sections") {
   return `<nav class="tabs" aria-label="${esc(label)}">${tabs.map(([k, l, n]) => `<a class="tab" data-menu-label="${esc(l)}" href="${base}${k ? "/" + k : ""}" ${cur === k ? 'aria-current="page"' : ""}>${esc(l)}${n != null ? `<span class="tcount">${n}</span>` : ""}</a>`).join("")}</nav>`;
 }
 function seg(key, opts, label) {
-  return `<span class="seg-label" aria-hidden="true">${esc(label)}</span><div class="seg${key === "theme" ? " theme-options" : ""}" role="group" aria-label="${esc(label)}">${opts.map(([v, l, i]) => `<button type="button" data-act="set" data-k="${key}" data-v="${v}" aria-pressed="${S[key] === v}">${i ? ic(i, "ic16") : ""}${esc(l)}</button>`).join("")}</div>`;
+  return `<span class="seg-label" aria-hidden="true">${esc(label)}</span><div class="seg${key === "theme" ? " theme-options" : ""}" role="group" aria-label="${esc(label)}">${opts.map(([v, l, i]) => {
+    const icon = typeof i === "string" && i ? ic(i, "ic16") : "";
+    const count = typeof i === "number" ? `<span class="tcount">${i}</span>` : "";
+    return `<button type="button" data-act="set" data-k="${key}" data-v="${v}" aria-pressed="${S[key] === v}">${icon}${esc(l)}${count}</button>`;
+  }).join("")}</div>`;
 }
 function displayCheckbox(action, label, checked) {
   return `<button role="menuitemcheckbox" tabindex="-1" aria-checked="${checked}" type="button" data-act="${action}">${ic("check", "ic20")}${label}</button>`;
