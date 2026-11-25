@@ -2988,7 +2988,7 @@ fn decide_apply_relayed_message<E: crate::store::open::OfficeEngine>(
             is_dm: conv.kind == org_proto::chat::ConversationKind::Dm,
             inserted: false,
             conversation_kind: Some(conv.kind),
-            summary: req.msg.body_markdown.chars().take(180).collect(),
+            summary: relayed_wake_summary(&req.msg.body_markdown, &req.msg.id),
             local_agent_recipients: delivered.local_agent_recipients,
             local_recipient_wakes: delivered.local_recipient_wakes,
             local_delivered_headers: delivered.local_delivered_headers,
@@ -3025,7 +3025,7 @@ fn decide_apply_relayed_message<E: crate::store::open::OfficeEngine>(
         is_dm: conv.kind == org_proto::chat::ConversationKind::Dm,
         inserted: true,
         conversation_kind: Some(conv.kind),
-        summary: req.msg.body_markdown.chars().take(180).collect(),
+        summary: relayed_wake_summary(&req.msg.body_markdown, &req.msg.id),
         local_agent_recipients: delivered.local_agent_recipients,
         local_recipient_wakes: delivered.local_recipient_wakes,
         local_delivered_headers: delivered.local_delivered_headers,
@@ -3038,6 +3038,23 @@ fn decide_apply_relayed_message<E: crate::store::open::OfficeEngine>(
     };
     let reply = serde_json::to_vec(&outcome).unwrap_or_default();
     Ok(change.reply(reply))
+}
+
+const MAX_RELAYED_WAKE_SUMMARY_CHARS: usize = 4096;
+
+fn relayed_wake_summary(body: &str, message_id: &str) -> String {
+    let mut chars = body.chars();
+    let prefix: String = chars
+        .by_ref()
+        .take(MAX_RELAYED_WAKE_SUMMARY_CHARS)
+        .collect();
+    if chars.next().is_some() {
+        format!(
+            "{prefix}\n...[truncated; run `agent-os msg read --id {message_id}` for the full body]"
+        )
+    } else {
+        prefix
+    }
 }
 
 struct ApplyRelayedConversationOnlyOp {

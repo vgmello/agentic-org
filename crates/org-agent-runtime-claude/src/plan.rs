@@ -542,12 +542,7 @@ fn build_settings_json(
             }
         }
 
-        let allow_sockets: Vec<Value> = spec
-            .sandbox
-            .allowed_unix_sockets
-            .iter()
-            .map(|p| Value::String(p.as_str().to_owned()))
-            .collect();
+        let network = build_sandbox_network_json(&spec.sandbox.allowed_unix_sockets);
 
         root.insert(
             "sandbox".to_owned(),
@@ -560,9 +555,7 @@ fn build_settings_json(
                     "denyWrite": deny_write,
                     "denyRead": deny_read,
                 },
-                "network": {
-                    "allowUnixSockets": allow_sockets,
-                }
+                "network": network,
             }),
         );
     } else {
@@ -570,6 +563,23 @@ fn build_settings_json(
     }
 
     Ok(serde_json::to_vec(&Value::Object(root)).expect("settings JSON serialization cannot fail"))
+}
+
+fn build_sandbox_network_json(allowed_unix_sockets: &[SpecPath]) -> Value {
+    let allow_sockets: Vec<Value> = allowed_unix_sockets
+        .iter()
+        .map(|p| Value::String(p.as_str().to_owned()))
+        .collect();
+    let mut network = Map::new();
+    network.insert("allowUnixSockets".to_owned(), Value::Array(allow_sockets));
+    if !allowed_unix_sockets.is_empty()
+        && !org_platform::confinement::unix_socket_path_filter_supported()
+    {
+        // Linux seccomp filters `socket(AF_UNIX)` without inspecting `connect()` paths,
+        // so Claude's `bwrap` sandbox blocks `agent-os` unless `allowAllUnixSockets` is set.
+        network.insert("allowAllUnixSockets".to_owned(), Value::Bool(true));
+    }
+    Value::Object(network)
 }
 
 /// Claude Code's file tools that take a path rule. `Read` rules also cover Claude's other
