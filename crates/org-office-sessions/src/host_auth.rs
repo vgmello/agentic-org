@@ -10,11 +10,36 @@ use std::ffi::OsString;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use org_agent_runtime::{LaunchPlan, SpecPath};
 use org_office::organization_family::records::ProviderAuthMode;
 use zeroize::Zeroizing;
+
+/// Process-wide single-flight lock serializing host Claude OAuth refresh probes so concurrent
+/// expiring sessions never race on single-use rotating refresh tokens.
+static CLAUDE_OAUTH_REFRESH_LOCK: Mutex<()> = Mutex::new(());
+static REFRESH_TEMP_SEQ: AtomicU64 = AtomicU64::new(1);
+
+/// Safe host environment variables forwarded to the bounded host-side Claude OAuth refresh probe.
+/// Never includes `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ORG_*`, or `AGENT_OS_*`.
+const REFRESH_SAFE_HOST_ENV: &[&str] = &[
+    "HOME",
+    "PATH",
+    "USER",
+    "LOGNAME",
+    "TMPDIR",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_RUNTIME_DIR",
+    "LANG",
+    "LC_ALL",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+];
 
 const MAX_HOST_CLAUDE_CRED_BYTES: usize = 64 * 1024;
 /// Maximum byte length for an agent's `TMPDIR` so Linux `bwrap`/`socat` bridge sockets
@@ -135,13 +160,36 @@ pub(crate) fn append_host_claude_oauth(
     resolved.expires_at_ms
 }
 
-/// Triggers a bounded host-side Claude CLI refresh under the host account's own home so expired
+/// Triggers a bounded, single-flight, env-scrubbed host-side Claude CLI refresh so expired
 /// `subscription_cli` OAuth access tokens rotate cleanly before spawning an isolated session.
+/// Returns `true` only when the post-refresh host token is verifiably non-expiring or rotated.
 pub(crate) fn refresh_host_claude_oauth(runtime_binary: &Path) -> bool {
+    refresh_host_claude_oauth_with(runtime_binary, resolve_host_claude_oauth_entry)
+}
+
+fn refresh_host_claude_oauth_with(
+    runtime_binary: &Path,
+    read_entry: impl Fn() -> Option<ClaudeOAuthToken>,
+) -> bool {
     if !runtime_binary.is_file() {
         return false;
     }
-    let Ok(mut child) = Command::new(runtime_binary)
+    let _single_flight = CLAUDE_OAUTH_REFRESH_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let before = read_entry();
+    let now = crate::credentials::now_ms();
+    if before.as_ref().is_some_and(|tok| {
+        tok.expires_at_ms.is_some() && !is_oauth_expiring(tok.expires_at_ms, now)
+    }) {
+        return true;
+    }
+    let Some(scratch) = PrivateRefreshScratch::create() else {
+        return false;
+    };
+    let mut cmd = Command::new(runtime_binary);
+    cmd.env_clear()
+        .current_dir(&scratch.dir)
         .args([
             "-p",
             "ok",
@@ -150,33 +198,98 @@ pub(crate) fn refresh_host_claude_oauth(runtime_binary: &Path) -> bool {
             "--no-session-persistence",
             "--output-format",
             "text",
+            "--setting-sources",
+            "",
+            "--tools",
+            "",
+            "--disable-slash-commands",
+            "--strict-mcp-config",
+            "--mcp-config",
         ])
-        .env_remove("CLAUDE_CODE_OAUTH_TOKEN")
+        .arg(&scratch.empty_mcp)
+        .env("DISABLE_AUTOUPDATER", "1")
+        .env("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
+        .stderr(Stdio::null());
+    for var in REFRESH_SAFE_HOST_ENV {
+        if let Some(val) = std::env::var_os(var) {
+            cmd.env(var, val);
+        }
+    }
+    let Ok(mut child) = cmd.spawn() else {
         return false;
     };
     let deadline = Instant::now() + OAUTH_REFRESH_TIMEOUT;
-    loop {
+    let exited_ok = loop {
         match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
+            Ok(Some(status)) => break status.success(),
             Ok(None) => {
                 if Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return false;
+                    break false;
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
             Err(_) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return false;
+                break false;
             }
         }
+    };
+    if !exited_ok {
+        return false;
+    }
+    let Some(after) = read_entry() else {
+        return false;
+    };
+    oauth_token_rotated_or_fresh(before.as_ref(), &after, crate::credentials::now_ms())
+}
+
+fn oauth_token_rotated_or_fresh(
+    before: Option<&ClaudeOAuthToken>,
+    after: &ClaudeOAuthToken,
+    now_ms: u64,
+) -> bool {
+    let not_expiring =
+        after.expires_at_ms.is_some() && !is_oauth_expiring(after.expires_at_ms, now_ms);
+    let rotated = before.is_some_and(|b| b.access_token.as_str() != after.access_token.as_str());
+    not_expiring || rotated
+}
+
+struct PrivateRefreshScratch {
+    dir: PathBuf,
+    empty_mcp: PathBuf,
+}
+
+impl PrivateRefreshScratch {
+    fn create() -> Option<Self> {
+        use std::os::unix::fs::DirBuilderExt as _;
+        let base = std::env::temp_dir();
+        let pid = std::process::id();
+        for _ in 0..8 {
+            let seq = REFRESH_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+            let dir = base.join(format!("org-oauth-refresh-{pid}-{seq}"));
+            let mut builder = std::fs::DirBuilder::new();
+            builder.mode(0o700);
+            if builder.create(&dir).is_ok() {
+                let empty_mcp = dir.join("empty-mcp.json");
+                if std::fs::write(&empty_mcp, b"{\"mcpServers\":{}}\n").is_ok() {
+                    return Some(Self { dir, empty_mcp });
+                }
+                let _ = std::fs::remove_dir_all(&dir);
+                return None;
+            }
+        }
+        None
+    }
+}
+
+impl Drop for PrivateRefreshScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
@@ -198,9 +311,28 @@ pub(crate) fn resolve_host_claude_oauth_token() -> Option<Zeroizing<String>> {
 }
 
 /// Resolves the host user's local Claude Code OAuth access token + expiry from
-/// `$HOME/.claude/.credentials.json` or macOS Keychain (`Claude Code-credentials`).
+/// `$HOME/.claude/.credentials.json` and/or macOS Keychain (`Claude Code-credentials`),
+/// preferring whichever source holds the fresher `expiresAt` timestamp.
 pub(crate) fn resolve_host_claude_oauth_entry() -> Option<ClaudeOAuthToken> {
-    read_claude_credentials_file().or_else(read_claude_keychain_token)
+    let file_tok = read_claude_credentials_file();
+    let keychain_tok = read_claude_keychain_token();
+    pick_fresher_oauth_entry(file_tok, keychain_tok)
+}
+
+fn pick_fresher_oauth_entry(
+    file_tok: Option<ClaudeOAuthToken>,
+    keychain_tok: Option<ClaudeOAuthToken>,
+) -> Option<ClaudeOAuthToken> {
+    match (file_tok, keychain_tok) {
+        (Some(f), Some(k)) => match (f.expires_at_ms, k.expires_at_ms) {
+            (Some(fe), Some(ke)) if ke > fe => Some(k),
+            (None, Some(_)) => Some(k),
+            _ => Some(f),
+        },
+        (Some(f), None) => Some(f),
+        (None, Some(k)) => Some(k),
+        (None, None) => None,
+    }
 }
 
 fn read_claude_credentials_file() -> Option<ClaudeOAuthToken> {
@@ -390,5 +522,94 @@ mod tests {
         let link = dir.path().join("link.json");
         std::os::unix::fs::symlink(&valid, &link).unwrap();
         assert!(read_claude_credentials_from_path(&link).is_none());
+    }
+
+    #[test]
+    fn pick_fresher_oauth_entry_prefers_newer_keychain_over_stale_file() {
+        let stale = ClaudeOAuthToken {
+            access_token: Zeroizing::new("stale-file-tok".into()),
+            expires_at_ms: Some(1_000),
+        };
+        let fresh = ClaudeOAuthToken {
+            access_token: Zeroizing::new("fresh-keychain-tok".into()),
+            expires_at_ms: Some(9_000_000),
+        };
+        let picked = pick_fresher_oauth_entry(Some(stale), Some(fresh)).unwrap();
+        assert_eq!(picked.access_token.as_str(), "fresh-keychain-tok");
+        assert_eq!(picked.expires_at_ms, Some(9_000_000));
+
+        let no_exp = ClaudeOAuthToken {
+            access_token: Zeroizing::new("no-exp".into()),
+            expires_at_ms: None,
+        };
+        let with_exp = ClaudeOAuthToken {
+            access_token: Zeroizing::new("with-exp".into()),
+            expires_at_ms: Some(5_000),
+        };
+        let picked2 = pick_fresher_oauth_entry(Some(no_exp), Some(with_exp)).unwrap();
+        assert_eq!(picked2.access_token.as_str(), "with-exp");
+    }
+
+    #[test]
+    fn refresh_host_claude_oauth_scrubs_env_isolates_flags_and_verifies_rotation() {
+        use std::os::unix::fs::PermissionsExt as _;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let capture = dir.path().join("capture.txt");
+        let fake_claude = dir.path().join("fake-claude");
+        let script = format!(
+            "#!/bin/sh\nprintf 'ARGS=%s\\nPWD=%s\\nAPI=%s\\nOAUTH=%s\\nAUTOUPD=%s\\n' \"$*\" \"$(pwd)\" \"${{ANTHROPIC_API_KEY:-}}\" \"${{CLAUDE_CODE_OAUTH_TOKEN:-}}\" \"${{DISABLE_AUTOUPDATER:-}}\" > {}\nexit 0\n",
+            capture.display()
+        );
+        std::fs::write(&fake_claude, script).unwrap();
+        std::fs::set_permissions(&fake_claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Case 1: script exits 0 but token does NOT rotate -> must return false.
+        let unrotated = refresh_host_claude_oauth_with(&fake_claude, || {
+            Some(ClaudeOAuthToken {
+                access_token: Zeroizing::new("still-expired".into()),
+                expires_at_ms: Some(1),
+            })
+        });
+        assert!(
+            !unrotated,
+            "refresh must return false when token stays expired and unchanged"
+        );
+        let log = std::fs::read_to_string(&capture).unwrap();
+        assert!(
+            log.contains("--setting-sources  --tools  --disable-slash-commands --strict-mcp-config --mcp-config "),
+            "refresh probe must pass isolation flags: {log}"
+        );
+        assert!(
+            log.contains("API=\n") && log.contains("OAUTH=\n") && log.contains("AUTOUPD=1\n"),
+            "refresh probe must scrub API/OAuth tokens and disable autoupdater: {log}"
+        );
+        assert!(
+            log.contains("org-oauth-refresh-"),
+            "refresh probe must run in isolated temp dir: {log}"
+        );
+
+        // Case 2: second read returns rotated token -> must return true.
+        let called_once = Arc::new(AtomicBool::new(false));
+        let called_clone = Arc::clone(&called_once);
+        let rotated = refresh_host_claude_oauth_with(&fake_claude, move || {
+            if !called_clone.swap(true, Ordering::SeqCst) {
+                Some(ClaudeOAuthToken {
+                    access_token: Zeroizing::new("old-tok".into()),
+                    expires_at_ms: Some(1),
+                })
+            } else {
+                Some(ClaudeOAuthToken {
+                    access_token: Zeroizing::new("new-rotated-tok".into()),
+                    expires_at_ms: Some(crate::credentials::now_ms() + 3_600_000),
+                })
+            }
+        });
+        assert!(
+            rotated,
+            "refresh must return true after verified token rotation"
+        );
     }
 }

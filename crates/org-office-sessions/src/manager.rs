@@ -1356,12 +1356,14 @@ impl SessionManager {
         check_registry_startable(&reg, emp_id)?;
         let finished = if let Some(handle) = reg.live.get(emp_id) {
             let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-            let workspace_matches = handle.workspace.as_deref() == requested_workspace;
-            let oauth_fresh = !crate::host_auth::is_oauth_expiring(
-                handle.oauth_expires_at_ms,
-                crate::credentials::now_ms(),
+            let stop_reason = warm_handle_stop_reason(
+                &self.office,
+                emp_id,
+                handle,
+                requested_workspace,
+                state.state,
             );
-            if workspace_matches && oauth_fresh && is_warm_state_reusable(state.state) {
+            if stop_reason.is_none() && is_warm_state_reusable(state.state) {
                 if let Some(text) = objective {
                     let text = self.prepend_watch_notices(emp_id, text);
                     let tx = handle.tx.clone();
@@ -1390,13 +1392,9 @@ impl SessionManager {
                 }
                 return Ok((Some(state.to_view()), None));
             }
-            if !workspace_matches {
+            if let Some(reason) = stop_reason {
                 let _ = handle.tx.send(PumpCommand::Stop {
-                    reason: "workspace_changed".into(),
-                });
-            } else if !oauth_fresh {
-                let _ = handle.tx.send(PumpCommand::Stop {
-                    reason: "oauth_token_expiring".into(),
+                    reason: reason.into(),
                 });
             }
             true
@@ -1783,6 +1781,7 @@ impl SessionManager {
         let PreparedSessionLaunch {
             emp_id,
             run_id,
+            runtime_id,
             connection_id,
             route_digest,
             oauth_expires_at_ms,
@@ -1807,6 +1806,7 @@ impl SessionManager {
         let pump_ctx = PumpContext {
             employee_id: emp_id.clone(),
             run_id,
+            runtime_id,
             connection_id: connection_id.clone(),
             active_permit: Arc::clone(&active_permit),
             workspace: workspace_arg.clone(),
@@ -2003,9 +2003,15 @@ impl SessionManager {
         ];
         // Preserve host read-only Rust toolchain directories when present so managed agents can
         // run `rustc`/`cargo --offline` inside their isolated task worktrees (`TASK-126`).
-        // Host `~/.cargo/credentials*` are explicitly read+write denied in `denied_office_globs_for`.
+        // Host `~/.cargo/{credentials*,config*}` are explicitly denied in `denied_office_globs_for`.
+        let rust_forbidden = vec![
+            home.to_path_buf(),
+            workspace.to_path_buf(),
+            self.office.durable_root().to_path_buf(),
+            self.office.runtime_root().to_path_buf(),
+        ];
         for (var, default_rel) in [("RUSTUP_HOME", ".rustup"), ("CARGO_HOME", ".cargo")] {
-            if let Some(dir) = host_rust_dir_env(var, default_rel, &forbidden) {
+            if let Some(dir) = host_rust_dir_env(var, default_rel, &rust_forbidden) {
                 captured.push((OsString::from(var), dir));
             }
         }
@@ -2078,9 +2084,12 @@ impl SessionManager {
         ] {
             push_glob_pattern(&mut out, &office_local.join(sub));
         }
-        if let Some(org_dir) = durable.parent() {
-            self.append_runtime_office_denies(&mut out, org_dir, office_id, self_employee_id);
-        }
+        self.append_runtime_office_denies(
+            &mut out,
+            self.office.runtime_root(),
+            office_id,
+            self_employee_id,
+        );
         self.append_sibling_and_socket_denies(&mut out, &office_local, office_id, self_employee_id);
         append_cargo_credential_denies(&mut out);
         out
@@ -2089,17 +2098,27 @@ impl SessionManager {
     fn append_runtime_office_denies(
         &self,
         out: &mut Vec<PathPattern>,
-        org_dir: &Path,
+        runtime_root: &Path,
         office_id: &str,
         self_employee_id: Option<&str>,
     ) {
-        let runtime_root = org_dir.join("runtime");
         push_glob_pattern(out, &runtime_root.join("snapshot-import"));
-        if let Ok(entries) = std::fs::read_dir(&runtime_root) {
+        push_glob_pattern(out, &runtime_root.join("snapshot-export"));
+        if let Ok(office_ids) = self.office.enrolled_office_ids() {
+            for other_office_id in office_ids {
+                if other_office_id != office_id {
+                    push_glob_pattern(out, &runtime_root.join(&other_office_id));
+                }
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(runtime_root) {
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();
-                if name_str != office_id && name_str != "snapshot-import" {
+                if name_str != office_id
+                    && name_str != "snapshot-import"
+                    && name_str != "snapshot-export"
+                {
                     push_glob_pattern(out, &entry.path());
                 }
             }
@@ -2109,6 +2128,11 @@ impl SessionManager {
             "office.db",
             "office.db-wal",
             "office.db-shm",
+            "office.db-journal",
+            "office.db.new",
+            "office.db.new-wal",
+            "office.db.new-shm",
+            "office.db.new-journal",
             "git-state.json",
         ] {
             push_exact_pattern(out, &office_rt.join(file));
@@ -2119,7 +2143,7 @@ impl SessionManager {
         match self_employee_id {
             Some(emp_id) => {
                 self.append_runtime_team_sibling_denies(out, &office_rt, emp_id);
-                self.append_sibling_git_admin_denies(out, &office_rt, emp_id);
+                self.append_runtime_git_denies(out, runtime_root, &office_rt, emp_id);
             }
             None => {
                 push_glob_pattern(out, &office_rt.join("teams"));
@@ -2128,26 +2152,35 @@ impl SessionManager {
         }
     }
 
-    fn append_sibling_git_admin_denies(
+    fn append_runtime_git_denies(
         &self,
         out: &mut Vec<PathPattern>,
+        runtime_root: &Path,
         office_rt: &Path,
         emp_id: &str,
     ) {
-        let Ok(git_state) = org_office::git::OfficeGitState::load(
-            self.office.runtime_root(),
-            &self.office.info().office_id,
-        ) else {
+        let repos_root = office_rt.join("repositories");
+        let Ok(git_state) =
+            org_office::git::OfficeGitState::load(runtime_root, &self.office.info().office_id)
+        else {
+            // Fail closed on corrupt/unreadable git-state.json: deny all bare caches.
+            push_glob_pattern(out, &repos_root);
             return;
         };
-        let repos_root = office_rt.join("repositories");
-        for ws in git_state.workspaces.values() {
-            if ws.employee_id != emp_id && !ws.admin_dir_name.is_empty() {
-                let admin = repos_root
-                    .join(format!("{}.git", ws.repository_id))
-                    .join("worktrees")
-                    .join(&ws.admin_dir_name);
-                push_glob_pattern(out, &admin);
+        let self_admins_by_repo = collect_self_active_admins(&git_state, emp_id);
+        for cache_dir in self.collect_bare_cache_dirs(&repos_root, Some(&git_state)) {
+            let repo_id = cache_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".git"));
+            let Some(self_admins) = repo_id.and_then(|rid| self_admins_by_repo.get(rid)) else {
+                // Untargeted repository cache: deny all read and write access (`doc-35`).
+                push_glob_pattern(out, &cache_dir);
+                continue;
+            };
+            let wt_dir = cache_dir.join("worktrees");
+            for other in collect_non_self_admin_names(&wt_dir, repo_id, &git_state, self_admins) {
+                push_glob_pattern(out, &wt_dir.join(other));
             }
         }
     }
@@ -2169,7 +2202,7 @@ impl SessionManager {
             .map(|s| s.teams)
             .unwrap_or_default();
         let mut cursor = office_rt.to_path_buf();
-        for team_id in &chain {
+        for (idx, team_id) in chain.iter().enumerate() {
             let teams_dir = cursor.join("teams");
             for team in &all_teams {
                 if team.id != *team_id {
@@ -2184,7 +2217,13 @@ impl SessionManager {
                 }
             }
             cursor = teams_dir.join(team_id);
+            // Ancestor teams' `agents/` directories belong to other teams' agents; deny them.
+            if idx + 1 < chain.len() {
+                push_glob_pattern(out, &cursor.join("agents"));
+            }
         }
+        // Deny any existing or future child subteams nested under the employee's own leaf team.
+        push_glob_pattern(out, &cursor.join("teams"));
         let agents_dir = cursor.join("agents");
         for other in self.collect_sibling_agent_ids(&agents_dir, Some(emp_id)) {
             push_glob_pattern(out, &agents_dir.join(other));
@@ -2196,7 +2235,8 @@ impl SessionManager {
             return Vec::new();
         };
         let Ok(snapshot) = self.office.org_snapshot() else {
-            return vec![emp.home_team_id.as_str().to_owned()];
+            // Fail closed on snapshot read failure so caller denies `office_rt/teams/**`.
+            return Vec::new();
         };
         let parent_by_id: HashMap<&str, Option<&str>> = snapshot
             .teams
@@ -2261,26 +2301,43 @@ impl SessionManager {
             collect_existing_worktree_dirs(&canon_root, 0, &mut wt_dirs);
             for wt_dir in wt_dirs {
                 push_exact_pattern(&mut write_denies, &wt_dir.join(".git"));
+                push_exact_pattern(&mut write_denies, &wt_dir.join(".git").join("hooks"));
                 push_glob_pattern(&mut write_denies, &wt_dir.join(".git").join("hooks"));
             }
         }
-        let repos_root = office_rt.join("repositories");
-        for cache_dir in self.collect_bare_cache_dirs(&repos_root) {
-            append_bare_cache_sandbox_rules(
-                &cache_dir,
-                git_state.as_ref(),
-                &mut writable,
-                &mut write_denies,
-            );
+        // Scope bare-cache writable grants strictly to repositories targeted by `employee_id`'s
+        // concrete active worktrees (`doc-35` §Sandbox / `FC-103`). Never grant `<cache>/worktrees`
+        // parent directory as writable.
+        if let Some(gs) = &git_state {
+            let repos_root = office_rt.join("repositories");
+            let self_admins_by_repo = collect_self_active_admins(gs, employee_id);
+            for (repo_id, self_admins) in &self_admins_by_repo {
+                let cache_dir = repos_root.join(format!("{repo_id}.git"));
+                append_bare_cache_sandbox_rules(
+                    &cache_dir,
+                    self_admins,
+                    &mut writable,
+                    &mut write_denies,
+                );
+            }
         }
         (writable, write_denies)
     }
 
-    fn collect_bare_cache_dirs(&self, repos_root: &Path) -> Vec<PathBuf> {
+    fn collect_bare_cache_dirs(
+        &self,
+        repos_root: &Path,
+        git_state: Option<&org_office::git::OfficeGitState>,
+    ) -> Vec<PathBuf> {
         let mut dirs = std::collections::BTreeSet::new();
         if let Ok(Ok(repos)) = self.office.list_repositories(None) {
             for r in repos {
                 dirs.insert(repos_root.join(format!("{}.git", r.record.id.as_str())));
+            }
+        }
+        if let Some(gs) = git_state {
+            for ws in gs.workspaces.values() {
+                dirs.insert(repos_root.join(format!("{}.git", ws.repository_id)));
             }
         }
         if let Ok(entries) = std::fs::read_dir(repos_root) {
@@ -2392,10 +2449,18 @@ pub(crate) fn spawn_bg_worker(
     name: &str,
     f: impl FnOnce(Arc<SessionManager>) + Send + 'static,
 ) {
+    let _ = spawn_bg_worker_checked(mgr, name, f);
+}
+
+pub(crate) fn spawn_bg_worker_checked(
+    mgr: &Arc<SessionManager>,
+    name: &str,
+    f: impl FnOnce(Arc<SessionManager>) + Send + 'static,
+) -> bool {
     {
         let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
         if reg.draining || reg.shutting_down {
-            return;
+            return false;
         }
         reg.bg_workers.retain(|h| !h.is_finished());
         reg.bg_spawning += 1;
@@ -2410,7 +2475,9 @@ pub(crate) fn spawn_bg_worker(
     {
         let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
         reg.bg_workers.push(handle);
+        return true;
     }
+    false
 }
 
 fn stop_all_inner(mgr: &SessionManager, reason: &str, permanent: bool) {
@@ -2822,20 +2889,18 @@ fn acquire_or_reroute_warm_permit(
     }
 }
 
-fn try_refresh_host_claude_subscription(mgr: &SessionManager, req: &FailoverRequest) -> bool {
-    if req.reason != "auth_expired" || req.oauth_refresh_attempted {
-        return false;
-    }
-    let Ok(Some(conn)) = mgr
-        .office
-        .load_provider_connection(&req.failed_connection_id)
-    else {
-        return false;
-    };
+pub(crate) fn is_host_claude_subscription_refresh_eligible(
+    mgr: &SessionManager,
+    connection_id: &str,
+) -> Option<PathBuf> {
+    let conn = mgr.office.load_provider_connection(connection_id).ok()??;
     if conn.auth_mode != org_office::organization_family::records::ProviderAuthMode::SubscriptionCli
-        || !conn.runtime_driver.eq_ignore_ascii_case("claude")
     {
-        return false;
+        return None;
+    }
+    let adapter = mgr.config.runtimes.resolve(&conn.runtime_driver).ok()?;
+    if adapter.id().as_str() != "claude" {
+        return None;
     }
     if mgr
         .enrollment
@@ -2845,65 +2910,138 @@ fn try_refresh_host_claude_subscription(mgr: &SessionManager, req: &FailoverRequ
         .flatten()
         .is_some()
     {
+        return None;
+    }
+    mgr.config
+        .runtimes
+        .resolve_binary(adapter.as_ref(), None)
+        .ok()
+}
+
+fn try_refresh_host_claude_subscription(mgr: &SessionManager, req: &FailoverRequest) -> bool {
+    if req.reason != "auth_expired" || req.oauth_refresh_attempted {
         return false;
     }
-    let Ok(adapter) = mgr.config.runtimes.resolve("claude") else {
-        return false;
-    };
-    let Ok(binary) = mgr.config.runtimes.resolve_binary(adapter.as_ref(), None) else {
+    let Some(binary) = is_host_claude_subscription_refresh_eligible(mgr, &req.failed_connection_id)
+    else {
         return false;
     };
     crate::host_auth::refresh_host_claude_oauth(&binary)
 }
 
-fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
-    let refreshed_same_conn = try_refresh_host_claude_subscription(mgr, &req);
-    if !refreshed_same_conn {
-        match req.reason {
-            "rate_limited" | "quota_exhausted" => {
-                let _ = mgr.office.record_connection_cooldown_internal(
-                    &req.failed_connection_id,
-                    None,
-                    req.rate_limit_resets_at.as_deref(),
-                    None,
-                );
-                crate::router::report_cooldown_any(
-                    &mgr.office,
-                    mgr.config.hq_permits.as_deref(),
-                    &req.failed_connection_id,
-                    req.rate_limit_resets_at.as_deref(),
-                    Some(req.reason),
-                );
-            }
-            "auth_expired" => {
-                let _ = mgr
-                    .office
-                    .mark_connection_auth_expired_internal(&req.failed_connection_id, req.reason);
-            }
-            _ => {}
+fn warm_handle_stop_reason(
+    office: &Office,
+    emp_id: &str,
+    handle: &LiveSessionHandle,
+    requested_workspace: Option<&str>,
+    state: SessionState,
+) -> Option<&'static str> {
+    if handle.workspace.as_deref() != requested_workspace {
+        return Some("workspace_changed");
+    }
+    if state != SessionState::Idle {
+        return None;
+    }
+    if crate::host_auth::is_oauth_expiring(handle.oauth_expires_at_ms, crate::credentials::now_ms())
+    {
+        return Some("oauth_token_expiring");
+    }
+    if handle.connection_id.is_none()
+        && office.load_agent_execution(emp_id).ok().flatten().is_some()
+    {
+        return Some("warm_route_stale");
+    }
+    None
+}
+
+fn collect_non_self_admin_names(
+    wt_dir: &Path,
+    repo_id: Option<&str>,
+    git_state: &org_office::git::OfficeGitState,
+    self_admins: &std::collections::BTreeSet<String>,
+) -> std::collections::BTreeSet<String> {
+    let mut other_admins = std::collections::BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(wt_dir) {
+        for name in entries
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| !self_admins.contains(n))
+        {
+            other_admins.insert(name);
         }
     }
-    let dead_handle = {
-        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
-        if reg.draining || reg.shutting_down || reg.starting.contains(&req.employee_id) {
-            return;
-        }
-        if let Some(existing) = reg.live.get(&req.employee_id) {
-            let matches_failed_run = existing
-                .state
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .run_id
-                .as_deref()
-                == Some(req.failed_run_id.as_str());
-            if !matches_failed_run {
-                // A newer replacement pump is already registered; leave it intact so shutdown can stop it.
-                return;
+    if let Some(rid) = repo_id {
+        for ws in git_state.workspaces.values() {
+            if ws.repository_id == rid
+                && !ws.admin_dir_name.is_empty()
+                && !self_admins.contains(&ws.admin_dir_name)
+            {
+                other_admins.insert(ws.admin_dir_name.clone());
             }
         }
-        let old = reg.live.remove(&req.employee_id);
-        reg.starting.insert(req.employee_id.clone());
-        old
+    }
+    other_admins
+}
+
+fn record_failover_connection_health(mgr: &SessionManager, req: &FailoverRequest) {
+    match req.reason {
+        "rate_limited" | "quota_exhausted" => {
+            let _ = mgr.office.record_connection_cooldown_internal(
+                &req.failed_connection_id,
+                None,
+                req.rate_limit_resets_at.as_deref(),
+                None,
+            );
+            crate::router::report_cooldown_any(
+                &mgr.office,
+                mgr.config.hq_permits.as_deref(),
+                &req.failed_connection_id,
+                req.rate_limit_resets_at.as_deref(),
+                Some(req.reason),
+            );
+        }
+        "auth_expired" => {
+            let _ = mgr
+                .office
+                .mark_connection_auth_expired_internal(&req.failed_connection_id, req.reason);
+        }
+        _ => {}
+    }
+}
+
+fn take_failed_live_handle(
+    mgr: &SessionManager,
+    req: &FailoverRequest,
+) -> Option<Option<LiveSessionHandle>> {
+    let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+    if reg.draining || reg.shutting_down || reg.starting.contains(&req.employee_id) {
+        return None;
+    }
+    if let Some(existing) = reg.live.get(&req.employee_id) {
+        let matches_failed_run = existing
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .run_id
+            .as_deref()
+            == Some(req.failed_run_id.as_str());
+        if !matches_failed_run {
+            return None;
+        }
+    }
+    let old = reg.live.remove(&req.employee_id);
+    reg.starting.insert(req.employee_id.clone());
+    Some(old)
+}
+
+fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
+    let is_stale_recycle = req.reason == "warm_route_stale";
+    let refreshed_same_conn = !is_stale_recycle && try_refresh_host_claude_subscription(mgr, &req);
+    if !is_stale_recycle && !refreshed_same_conn {
+        record_failover_connection_health(mgr, &req);
+    }
+    let Some(dead_handle) = take_failed_live_handle(mgr, &req) else {
+        return;
     };
     if let Some(mut old) = dead_handle {
         let _ = old.tx.send(PumpCommand::Stop {
@@ -2929,17 +3067,25 @@ fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
         instruction: Some(req.objective.clone()),
         workspace: req.workspace.clone(),
     };
-    let mut excluded: HashSet<String> = req.tried_connections.iter().cloned().collect();
+    let mut excluded: HashSet<String> = if is_stale_recycle {
+        HashSet::new()
+    } else {
+        req.tried_connections.iter().cloned().collect()
+    };
     if refreshed_same_conn {
         excluded.remove(&req.failed_connection_id);
     }
     let opts = LaunchRouteOpts {
         resume_runtime_session_id: None,
         task_ref: req.task_ref.as_deref(),
-        is_failover_switch: true,
+        is_failover_switch: !is_stale_recycle,
         oauth_refresh_attempted: req.oauth_refresh_attempted || refreshed_same_conn,
         excluded_connections: excluded,
-        tried_connections: req.tried_connections.clone(),
+        tried_connections: if is_stale_recycle {
+            Vec::new()
+        } else {
+            req.tried_connections.clone()
+        },
     };
     let objective = mgr.prepend_watch_notices(employee.id.as_str(), req.objective.clone());
     let launch_res = mgr
@@ -3408,6 +3554,23 @@ fn collect_existing_worktree_dirs(
     }
 }
 
+fn collect_self_active_admins(
+    git_state: &org_office::git::OfficeGitState,
+    employee_id: &str,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let mut by_repo: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for ws in git_state.workspaces.values() {
+        if ws.employee_id == employee_id && ws.state == "active" && !ws.admin_dir_name.is_empty() {
+            by_repo
+                .entry(ws.repository_id.clone())
+                .or_default()
+                .insert(ws.admin_dir_name.clone());
+        }
+    }
+    by_repo
+}
+
 fn append_cargo_credential_denies(out: &mut Vec<PathPattern>) {
     let mut dirs = Vec::new();
     if let Some(raw) = std::env::var_os("CARGO_HOME") {
@@ -3423,27 +3586,37 @@ fn append_cargo_credential_denies(out: &mut Vec<PathPattern>) {
         }
     }
     for dir in dirs {
-        push_exact_pattern(out, &dir.join("credentials"));
-        push_exact_pattern(out, &dir.join("credentials.toml"));
+        for file in ["credentials", "credentials.toml", "config", "config.toml"] {
+            push_exact_pattern(out, &dir.join(file));
+        }
     }
 }
 
 fn append_bare_cache_sandbox_rules(
     cache_dir: &Path,
-    git_state: Option<&org_office::git::OfficeGitState>,
+    self_admin_names: &std::collections::BTreeSet<String>,
     writable: &mut Vec<SpecPath>,
     write_denies: &mut Vec<PathPattern>,
 ) {
     let canon = canonicalize_with_tail(cache_dir);
-    for rel in [
-        "objects",
-        "refs/heads/task",
-        "logs/refs/heads/task",
-        "worktrees",
-    ] {
+    for rel in ["objects", "refs/heads/task", "logs/refs/heads/task"] {
         let p = canon.join(rel);
         if let Ok(spec) = SpecPath::try_from(p.to_string_lossy().as_ref()) {
             writable.push(spec);
+        }
+    }
+    // Grant ONLY concrete self worktree admin directories (`doc-35` §Sandbox / `FC-103`),
+    // never the parent `<cache>/worktrees` directory.
+    for admin in self_admin_names {
+        let admin_dir = canon.join("worktrees").join(admin);
+        if let Ok(spec) = SpecPath::try_from(admin_dir.to_string_lossy().as_ref()) {
+            writable.push(spec);
+        }
+        for admin_file in ["commondir", "gitdir", "config.worktree"] {
+            push_raw_pattern(
+                write_denies,
+                &format!("{}/worktrees/{admin}/{admin_file}", canon.display()),
+            );
         }
     }
     for rel_dir in [
@@ -3455,6 +3628,9 @@ fn append_bare_cache_sandbox_rules(
         "refs/office",
         "refs/replace",
     ] {
+        // Deny both the exact directory (prevents rename/replace via writable parent like `objects/`)
+        // and its subtree (`/**`).
+        push_raw_pattern(write_denies, &format!("{}/{rel_dir}", canon.display()));
         push_raw_pattern(write_denies, &format!("{}/{rel_dir}/**", canon.display()));
     }
     for rel_file in [
@@ -3467,35 +3643,6 @@ fn append_bare_cache_sandbox_rules(
         "shallow",
     ] {
         push_raw_pattern(write_denies, &format!("{}/{rel_file}", canon.display()));
-    }
-    // Emit concrete per-worktree admin file denies (no interior `*` wildcard, which would cause
-    // Codex `path_pattern_base` to downgrade `worktrees/` itself to read-only).
-    let mut admin_names = std::collections::BTreeSet::new();
-    if let Ok(entries) = std::fs::read_dir(canon.join("worktrees")) {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                admin_names.insert(name.to_owned());
-            }
-        }
-    }
-    let repo_id = canon
-        .file_name()
-        .and_then(|n| n.to_str())
-        .and_then(|n| n.strip_suffix(".git"));
-    if let (Some(gs), Some(rid)) = (git_state, repo_id) {
-        for ws in gs.workspaces.values() {
-            if ws.repository_id == rid && !ws.admin_dir_name.is_empty() {
-                admin_names.insert(ws.admin_dir_name.clone());
-            }
-        }
-    }
-    for admin in admin_names {
-        for admin_file in ["commondir", "gitdir", "config.worktree"] {
-            push_raw_pattern(
-                write_denies,
-                &format!("{}/worktrees/{admin}/{admin_file}", canon.display()),
-            );
-        }
     }
 }
 

@@ -343,10 +343,12 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
         }
     };
     match finalize_admitted_connection(
+        ctx.office,
         ctx.vault,
         ctx.runtimes,
         &conn,
         AdmitParams {
+            employee_id: ctx.employee_id,
             preset: ctx.preset,
             resolved_model: &resolved_model,
             profile_key: ctx.profile_key,
@@ -530,6 +532,7 @@ fn check_local_readiness(
 }
 
 struct AdmitParams<'a> {
+    employee_id: &'a str,
     preset: PermissionPreset,
     resolved_model: &'a str,
     profile_key: &'a str,
@@ -539,12 +542,14 @@ struct AdmitParams<'a> {
 }
 
 fn finalize_admitted_connection(
+    office: &Office,
     vault: &CredentialVault,
     runtimes: &RuntimeRegistry,
     conn: &ProviderConnection,
     params: AdmitParams<'_>,
 ) -> Result<AdmittedRoute, ApiError> {
     let AdmitParams {
+        employee_id,
         preset,
         resolved_model,
         profile_key,
@@ -576,7 +581,14 @@ fn finalize_admitted_connection(
     let model_token = Token::try_from(resolved_model)
         .ok()
         .or_else(|| Token::try_from(profile_key).ok());
-    let route_digest_suffix = compute_route_digest(conn, binding_rev, resolved_model, exec_rev);
+    let route_digest_suffix = compute_route_digest(
+        office,
+        employee_id,
+        conn,
+        binding_rev,
+        resolved_model,
+        exec_rev,
+    );
     Ok(AdmittedRoute {
         adapter,
         model_token,
@@ -618,20 +630,45 @@ pub(crate) enum WarmPermitOutcome {
     Refused(ApiError),
 }
 
+fn compute_worktree_sandbox_digest(office: &Office, employee_id: &str) -> String {
+    let Ok(git_state) =
+        org_office::git::OfficeGitState::load(office.runtime_root(), &office.info().office_id)
+    else {
+        return "err".to_owned();
+    };
+    let mut entries: Vec<String> = git_state
+        .workspaces
+        .values()
+        .filter(|ws| ws.employee_id == employee_id && ws.state == "active")
+        .map(|ws| {
+            format!(
+                "{}:{}:{}",
+                ws.repository_id, ws.admin_dir_name, ws.worktree_path
+            )
+        })
+        .collect();
+    entries.sort();
+    hex_short_sha256(entries.join("|").as_bytes())
+}
+
 fn compute_route_digest(
+    office: &Office,
+    employee_id: &str,
     conn: &ProviderConnection,
     binding_rev: u64,
     resolved_model: &str,
     exec_rev: u64,
 ) -> String {
+    let wt_digest = compute_worktree_sandbox_digest(office, employee_id);
     let digest_input = format!(
-        "conn={}:rev={}:bind={}:endpoint={}:model={}:exec={}",
+        "conn={}:rev={}:bind={}:endpoint={}:model={}:exec={}:wt={}",
         conn.id.as_str(),
         conn.meta.revision,
         binding_rev,
         conn.endpoint_url.as_deref().unwrap_or(""),
         resolved_model,
-        exec_rev
+        exec_rev,
+        wt_digest
     );
     hex_short_sha256(digest_input.as_bytes())
 }
@@ -692,8 +729,14 @@ pub(crate) fn acquire_warm_permit_for_office(
             Ok(Err(_)) | Err(_) => return WarmPermitOutcome::StaleWarm,
         };
     if let Some(expected) = expected_route_digest {
-        let current_digest =
-            compute_route_digest(&conn, binding_rev, &resolved_model, cfg.meta.revision);
+        let current_digest = compute_route_digest(
+            office,
+            employee_id,
+            &conn,
+            binding_rev,
+            &resolved_model,
+            cfg.meta.revision,
+        );
         if current_digest != expected {
             return WarmPermitOutcome::StaleWarm;
         }

@@ -1419,30 +1419,59 @@ fn build_permit_hooks(
 
 fn recycle_stale_warm_handle(
     employee_id: &str,
-    tx: &std::sync::mpsc::Sender<PumpCommand>,
+    expected_run_id: &str,
     reason: &str,
     ctx: &TurnEndDrainCtx,
-) {
-    let _ = tx.send(PumpCommand::Stop {
-        reason: reason.to_owned(),
-    });
-    let removed = ctx
-        .registry
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .live
-        .remove(employee_id);
-    if let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) {
-        let emp = employee_id.to_owned();
-        crate::manager::spawn_bg_worker(&mgr, "org-warm-recycle", move |m| {
-            if let Some(mut old) = removed {
-                if let Some(thread) = old.thread.take() {
-                    let _ = thread.join();
-                }
-            }
-            let _ = m.process_due_wakes_for(&emp);
+) -> bool {
+    let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) else {
+        return false;
+    };
+    let removed = {
+        let mut reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if reg.draining || reg.shutting_down {
+            return false;
+        }
+        let still_recyclable = reg.live.get(employee_id).is_some_and(|handle| {
+            let permit_free = handle
+                .active_permit
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_none();
+            let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+            st.run_id.as_deref() == Some(expected_run_id)
+                && st.state == SessionState::Idle
+                && permit_free
         });
+        if !still_recyclable {
+            return false;
+        }
+        let Some(handle) = reg.live.remove(employee_id) else {
+            return false;
+        };
+        let _ = handle.tx.send(PumpCommand::Stop {
+            reason: reason.to_owned(),
+        });
+        handle
+    };
+    let emp = employee_id.to_owned();
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(removed)));
+    let worker_slot = std::sync::Arc::clone(&slot);
+    let spawned = crate::manager::spawn_bg_worker_checked(&mgr, "org-warm-recycle", move |m| {
+        if let Some(mut old) = worker_slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            if let Some(thread) = old.thread.take() {
+                let _ = thread.join();
+            }
+        }
+        let _ = m.process_due_wakes_for(&emp);
+    });
+    if !spawned {
+        if let Some(old) = slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            let mut reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.live.entry(employee_id.to_owned()).or_insert(old);
+        }
+        return false;
     }
+    true
 }
 
 fn try_send_wake_on_live_handle(
@@ -1454,7 +1483,15 @@ fn try_send_wake_on_live_handle(
     let handle_info = {
         let reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
         reg.live.get(employee_id).map(|handle| {
+            let run_id = handle
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .run_id
+                .clone()
+                .unwrap_or_default();
             (
+                run_id,
                 handle.tx.clone(),
                 handle.connection_id.clone(),
                 handle.route_digest.clone(),
@@ -1463,11 +1500,23 @@ fn try_send_wake_on_live_handle(
             )
         })
     };
-    let Some((tx, conn_id, route_digest, oauth_expires_at_ms, active_permit)) = handle_info else {
+    let Some((run_id, tx, conn_id, route_digest, oauth_expires_at_ms, active_permit)) = handle_info
+    else {
         return Ok(false);
     };
     if crate::host_auth::is_oauth_expiring(oauth_expires_at_ms, now_ms()) {
-        recycle_stale_warm_handle(employee_id, &tx, "oauth_token_expiring", ctx);
+        recycle_stale_warm_handle(employee_id, &run_id, "oauth_token_expiring", ctx);
+        return Ok(false);
+    }
+    if conn_id.is_none()
+        && ctx
+            .office
+            .load_agent_execution(employee_id)
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        recycle_stale_warm_handle(employee_id, &run_id, "warm_route_stale", ctx);
         return Ok(false);
     }
     let acquired_pid = match acquire_live_handle_permit(
@@ -1481,7 +1530,7 @@ fn try_send_wake_on_live_handle(
     ) {
         Ok(pid) => pid,
         Err(LivePermitError::Stale) => {
-            recycle_stale_warm_handle(employee_id, &tx, "warm_route_stale", ctx);
+            recycle_stale_warm_handle(employee_id, &run_id, "warm_route_stale", ctx);
             return Ok(false);
         }
         Err(LivePermitError::Hold(reason)) => return Err(reason),

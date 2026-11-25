@@ -155,6 +155,7 @@ impl SessionRuntimeState {
 pub(crate) struct PumpContext {
     pub employee_id: String,
     pub run_id: String,
+    pub runtime_id: String,
     pub connection_id: Option<String>,
     pub active_permit: Arc<Mutex<Option<(String, u64)>>>,
     pub workspace: Option<String>,
@@ -195,11 +196,13 @@ struct PumpLoopState {
     last_permit_renew: Instant,
     permit_lease_deadline: Option<Instant>,
     current_objective: String,
+    turn_reply: Option<String>,
+    oauth_refresh_attempted: bool,
     failover_pending: Option<FailoverRequest>,
 }
 
 impl PumpLoopState {
-    fn new() -> Self {
+    fn new(oauth_refresh_attempted: bool) -> Self {
         Self {
             out_framer: LineFramer::new(),
             err_framer: LineFramer::new(),
@@ -219,6 +222,8 @@ impl PumpLoopState {
             last_permit_renew: Instant::now(),
             permit_lease_deadline: None,
             current_objective: String::new(),
+            turn_reply: None,
+            oauth_refresh_attempted,
             failover_pending: None,
         }
     }
@@ -239,7 +244,7 @@ pub(crate) fn run_pump(
     let (io_tx, io_rx) = mpsc::channel::<ReaderMsg>();
     let out_reader = spawn_pipe_reader(stdout, io_tx.clone(), false);
     let err_reader = spawn_pipe_reader(stderr, io_tx, true);
-    let mut loop_state = PumpLoopState::new();
+    let mut loop_state = PumpLoopState::new(ctx.oauth_refresh_attempted);
 
     apply_outputs(
         session.start(Instant::now()),
@@ -480,9 +485,15 @@ fn enqueue_background_wakes(ctx: &PumpContext, loop_state: &mut PumpLoopState) {
     }
 }
 
-fn ensure_permit_for_turn(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> bool {
+enum PermitCheck {
+    Ready,
+    StaleWarm,
+    Refused,
+}
+
+fn ensure_permit_for_turn(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> PermitCheck {
     let Some(conn_id) = ctx.connection_id.as_deref() else {
-        return true;
+        return PermitCheck::Ready;
     };
     let already_held = ctx
         .active_permit
@@ -493,24 +504,25 @@ fn ensure_permit_for_turn(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> 
         loop_state
             .permit_lease_deadline
             .get_or_insert_with(|| Instant::now() + Duration::from_secs(60));
-        return true;
+        return PermitCheck::Ready;
     }
     let Some(acquire) = ctx.hooks.on_permit_acquire.as_ref() else {
-        return true;
+        return PermitCheck::Ready;
     };
     match acquire(conn_id, ctx.task_ref.as_deref()) {
         Ok(permit) => {
             *ctx.active_permit.lock().unwrap_or_else(|p| p.into_inner()) = Some(permit);
             loop_state.permit_lease_deadline = Some(Instant::now() + Duration::from_secs(60));
-            true
+            PermitCheck::Ready
         }
+        Err(reason) if reason.starts_with("WARM_ROUTE_STALE") => PermitCheck::StaleWarm,
         Err(reason) => {
             let mut st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
             st.last_error = Some(reason);
             if st.state == SessionState::Running {
                 st.state = SessionState::Idle;
             }
-            false
+            PermitCheck::Refused
         }
     }
 }
@@ -528,13 +540,35 @@ fn dispatch_next_turn(
     {
         return;
     }
-    if !ensure_permit_for_turn(ctx, loop_state) {
-        loop_state.pending_turns.clear();
-        return;
+    match ensure_permit_for_turn(ctx, loop_state) {
+        PermitCheck::Ready => {}
+        PermitCheck::StaleWarm => {
+            let objective = loop_state.pending_turns.join("\n\n");
+            loop_state.pending_turns.clear();
+            loop_state.failover_pending = Some(FailoverRequest {
+                employee_id: ctx.employee_id.clone(),
+                failed_run_id: ctx.run_id.clone(),
+                failed_connection_id: ctx.connection_id.clone().unwrap_or_default(),
+                objective,
+                workspace: ctx.workspace.clone(),
+                task_ref: ctx.task_ref.clone(),
+                tried_connections: Vec::new(),
+                oauth_refresh_attempted: false,
+                reason: "warm_route_stale",
+                rate_limit_resets_at: None,
+            });
+            loop_state.stop_requested = true;
+            return;
+        }
+        PermitCheck::Refused => {
+            loop_state.pending_turns.clear();
+            return;
+        }
     }
     let text = loop_state.pending_turns.remove(0);
     let objective_for_disk = text.clone();
     loop_state.current_objective = text.clone();
+    loop_state.turn_reply = None;
     loop_state.had_external_effect = false;
     loop_state.accepted_commands_baseline = ctx.bindings.accepted_commands(&ctx.employee_id).len();
     loop_state.rate_limited = false;
@@ -753,11 +787,15 @@ fn handle_event(
         }
         SessionEvent::TurnStarted { .. } => {
             loop_state.turn_active = true;
+            loop_state.turn_reply = None;
             state.state = SessionState::Running;
             drop(state);
             persist_turn_update(ctx, |rec| rec.active = true);
         }
-        SessionEvent::AssistantText { text, .. } => state.last_reply = Some(text.clone()),
+        SessionEvent::AssistantText { text, .. } => {
+            state.last_reply = Some(text.clone());
+            loop_state.turn_reply = Some(text.clone());
+        }
         SessionEvent::TurnEnded {
             outcome, errors, ..
         } => {
@@ -878,7 +916,11 @@ fn handle_turn_ended(
 }
 
 pub(crate) fn is_claude_auth_expired_reply(reply: &str) -> bool {
-    let lower = reply.trim().to_ascii_lowercase();
+    let trimmed = reply.trim();
+    if trimmed.is_empty() || trimmed.len() > 1024 {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
     (lower.starts_with("failed to authenticate")
         && (lower.contains("401")
             || lower.contains("oauth")
@@ -887,6 +929,32 @@ pub(crate) fn is_claude_auth_expired_reply(reply: &str) -> bool {
             && (lower.contains("oauth") || lower.contains("authentication_error")))
         || lower.starts_with("401 oauth access token has expired")
         || lower == "oauth access token has expired"
+}
+
+pub(crate) fn classify_turn_failover_reason(
+    runtime_id: &str,
+    outcome: &org_agent_runtime::TurnOutcome,
+    errors: &[String],
+    turn_reply: Option<&str>,
+    has_effects: bool,
+    rate_limited: bool,
+) -> Option<&'static str> {
+    let reply_auth_expired = !has_effects
+        && runtime_id == "claude"
+        && turn_reply.is_some_and(is_claude_auth_expired_reply);
+    if matches!(outcome, org_agent_runtime::TurnOutcome::Completed) && !reply_auth_expired {
+        return None;
+    }
+    if reply_auth_expired || matches!(outcome, org_agent_runtime::TurnOutcome::SignedOut) {
+        return Some("auth_expired");
+    }
+    if let Some(reason) = crate::router::classify_failover_error(errors, rate_limited) {
+        return Some(reason);
+    }
+    if let org_agent_runtime::TurnOutcome::Failed { reason } = outcome {
+        return crate::router::classify_failover_error(std::slice::from_ref(reason), false);
+    }
+    None
 }
 
 fn evaluate_turn_failover(
@@ -899,20 +967,17 @@ fn evaluate_turn_failover(
     let turn_cmds = ctx.bindings.accepted_commands(&ctx.employee_id).len();
     let has_effects =
         loop_state.had_external_effect || turn_cmds > loop_state.accepted_commands_baseline;
-    let reply_auth_expired = !has_effects
-        && state
-            .last_reply
-            .as_deref()
-            .is_some_and(is_claude_auth_expired_reply);
-    if matches!(outcome, org_agent_runtime::TurnOutcome::Completed) && !reply_auth_expired {
-        return false;
-    }
-    let reason = if reply_auth_expired {
-        "auth_expired"
-    } else if let Some(r) = crate::router::classify_failover_error(errors, loop_state.rate_limited)
-    {
-        r
-    } else {
+    let Some(reason) = classify_turn_failover_reason(
+        &ctx.runtime_id,
+        outcome,
+        errors,
+        loop_state.turn_reply.as_deref(),
+        has_effects,
+        loop_state.rate_limited,
+    ) else {
+        if matches!(outcome, org_agent_runtime::TurnOutcome::Completed) {
+            loop_state.oauth_refresh_attempted = false;
+        }
         return false;
     };
     let Some(conn_id) = ctx.connection_id.as_ref() else {
@@ -937,7 +1002,7 @@ fn evaluate_turn_failover(
         workspace: ctx.workspace.clone(),
         task_ref: ctx.task_ref.clone(),
         tried_connections: tried,
-        oauth_refresh_attempted: ctx.oauth_refresh_attempted,
+        oauth_refresh_attempted: loop_state.oauth_refresh_attempted,
         reason,
         rate_limit_resets_at: loop_state.rate_limit_resets_at.clone(),
     });
