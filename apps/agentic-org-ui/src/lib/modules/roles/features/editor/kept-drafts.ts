@@ -21,24 +21,39 @@ export interface KeptDraft {
 	hasUncertainAttempt?: boolean;
 }
 
-const kept = new Map<string, KeptDraft>();
+type KeptEntry = {
+	draft: KeptDraft;
+	version: number;
+};
+
+const kept = new Map<string, KeptEntry>();
+let nextVersion = 0;
 
 /** One editor per caller, organization and role; a new role has one slot per caller+organization. */
 export const draftKey = (organizationId: string, roleId?: string, caller = '') =>
 	`${caller}\u0000${organizationId}\u0000${roleId ?? ''}`;
 
-export function keepDraft(key: string, draft: KeptDraft) {
-	kept.set(key, structuredClone(draft));
+/** Stores a copy of `draft` and returns its monotonic version stamp for safe late-save cleanup. */
+export function keepDraft(key: string, draft: KeptDraft): number {
+	const version = ++nextVersion;
+	kept.set(key, { draft: structuredClone(draft), version });
+	return version;
 }
 
 /** The kept draft, if any; it stays kept until saved or discarded. */
 export function keptDraft(key: string): KeptDraft | undefined {
-	const draft = kept.get(key);
-	return draft ? structuredClone(draft) : undefined;
+	const entry = kept.get(key);
+	return entry ? structuredClone(entry.draft) : undefined;
 }
 
 export function discardDraft(key: string) {
 	kept.delete(key);
+}
+
+/** Discards the kept draft only when its version matches `version`, preserving newer edits. */
+export function discardDraftIfVersion(key: string, version: number | undefined) {
+	if (version === undefined) return;
+	if (kept.get(key)?.version === version) kept.delete(key);
 }
 
 /** Removes all retained drafts belonging to `caller` (or all drafts if `caller` is omitted). */

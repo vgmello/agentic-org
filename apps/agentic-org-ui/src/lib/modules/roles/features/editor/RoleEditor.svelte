@@ -58,7 +58,13 @@
 	} from '../../present';
 	import type { RoleField } from '../../types';
 	import RoleBody from '../role-page/RoleBody.svelte';
-	import { discardDraft, draftKey, keepDraft, keptDraft } from './kept-drafts';
+	import {
+		discardDraft,
+		discardDraftIfVersion,
+		draftKey,
+		keepDraft,
+		keptDraft
+	} from './kept-drafts';
 
 	let {
 		organizationId,
@@ -94,6 +100,7 @@
 	let discarding = false;
 	let confirmedSave = false;
 	let unmounted = false;
+	let keptVersion: number | undefined;
 
 	let nameField = $state<HTMLElement | null>(null);
 	let keyField = $state<HTMLElement | null>(null);
@@ -131,6 +138,7 @@
 		notice = undefined;
 		discarding = false;
 		confirmedSave = false;
+		keptVersion = undefined;
 		open = true;
 	}
 
@@ -159,6 +167,7 @@
 	function resetOnSessionEnd() {
 		discarding = true;
 		confirmedSave = false;
+		keptVersion = undefined;
 		discardDraft(slot);
 		name = '';
 		key = '';
@@ -177,7 +186,7 @@
 	function keepOrDiscard() {
 		const shouldKeep = !discarding && !confirmedSave && isSameEditorSession() && typed();
 		if (shouldKeep)
-			keepDraft(slot, {
+			keptVersion = keepDraft(slot, {
 				name,
 				key,
 				body,
@@ -187,7 +196,10 @@
 				attemptId,
 				hasUncertainAttempt: hasUncertainAttempt || busy
 			});
-		else discardDraft(slot);
+		else {
+			keptVersion = undefined;
+			discardDraft(slot);
+		}
 		discarding = false;
 	}
 
@@ -285,7 +297,16 @@
 					})
 				: await rolesApi.create(organizationId, { ...draft, attemptId: currentAttempt });
 			if (unmounted) {
-				if (keptDraft(saveSlot)?.attemptId === currentAttempt) discardDraft(saveSlot);
+				const kept = keptDraft(saveSlot);
+				if (
+					kept &&
+					unchanged(
+						draft,
+						normalizeDraft({ name: kept.name, key: kept.key, bodyMarkdown: kept.body })
+					)
+				) {
+					discardDraftIfVersion(saveSlot, keptVersion);
+				}
 				return;
 			}
 			if (!isSameEditorSession()) {

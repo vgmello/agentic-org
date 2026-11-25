@@ -59,7 +59,6 @@ type PendingCreate = {
 	submitted: SubmittedRolePayload;
 	dispatched?: boolean;
 	committedRevision?: number;
-	inFlight?: Promise<unknown>;
 	resolved?: Role;
 };
 
@@ -69,7 +68,6 @@ type PendingUpdate = {
 	submitted: SubmittedRolePayload;
 	dispatched?: boolean;
 	committedRevision?: number;
-	inFlight?: Promise<unknown>;
 	resolved?: Role;
 };
 
@@ -228,32 +226,22 @@ function deleteIfCurrent<T>(map: Map<string, T>, key: string | undefined, expect
 	if (key && map.get(key) === expected) map.delete(key);
 }
 
-function pruneResolved<T extends { resolved?: Role; inFlight?: Promise<unknown> }>(
-	map: Map<string, T>
+function pruneResolved<T extends { resolved?: Role }>(
+	map: Map<string, T>,
+	activeKeys: ReadonlyMap<string, Promise<unknown>>
 ): void {
 	let settled = 0;
-	for (const entry of map.values()) {
-		if (entry.resolved && !entry.inFlight) settled++;
+	for (const [key, entry] of map) {
+		if (entry.resolved && !activeKeys.has(key)) settled++;
 	}
 	if (settled <= MAX_RESOLVED_ATTEMPTS) return;
 	for (const [key, entry] of map) {
 		if (settled <= MAX_RESOLVED_ATTEMPTS) break;
-		if (entry.resolved && !entry.inFlight) {
+		if (entry.resolved && !activeKeys.has(key)) {
 			map.delete(key);
 			settled--;
 		}
 	}
-}
-
-function runTracked<T extends { inFlight?: Promise<unknown> }, R>(
-	entry: T,
-	fn: () => Promise<R>
-): Promise<R> {
-	const task = fn().finally(() => {
-		if (entry.inFlight === task) entry.inFlight = undefined;
-	});
-	entry.inFlight = task;
-	return task;
 }
 
 /**
@@ -283,6 +271,27 @@ export function createHttpRolesApi({
 	// first so an already-committed create is updated in place rather than duplicated.
 	const pendingCreates = new Map<string, PendingCreate>();
 	const pendingUpdates = new Map<string, PendingUpdate>();
+	const inFlightKeys = new Map<string, Promise<unknown>>();
+
+	function createAttemptKey(
+		caller: string,
+		organizationId: string,
+		attemptId: string | undefined
+	): string | undefined {
+		return attemptId ? JSON.stringify(['create', caller, organizationId, attemptId]) : undefined;
+	}
+
+	function updateAttemptKey(
+		caller: string,
+		organizationId: string,
+		roleId: string,
+		expectedRevision: number,
+		attemptId: string | undefined
+	): string | undefined {
+		return attemptId
+			? JSON.stringify(['update', caller, organizationId, roleId, expectedRevision, attemptId])
+			: undefined;
+	}
 
 	function currentSessionToken(): SessionToken {
 		return {
@@ -302,22 +311,37 @@ export function createHttpRolesApi({
 		if (!isSameSession(session)) throw SESSION_CHANGED_ERROR;
 	}
 
-	async function settleInFlight<T extends { inFlight?: Promise<unknown> }>(
-		map: Map<string, T>,
+	async function withAttemptLock<T extends { resolved?: Role }, R>(
 		attemptKey: string | undefined,
-		session: SessionToken
-	): Promise<T | undefined> {
-		let existing = attemptKey ? map.get(attemptKey) : undefined;
-		while (existing?.inFlight) {
-			try {
-				await existing.inFlight;
-			} catch {
-				/* Re-inspect the settled attempt below in this caller's session. */
+		map: Map<string, T>,
+		session: SessionToken,
+		fn: () => Promise<R>
+	): Promise<R> {
+		if (!attemptKey) return fn();
+		const prev = inFlightKeys.get(attemptKey);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const tail = prev
+			? prev.then(
+					() => gate,
+					() => gate
+				)
+			: gate;
+		// Claim the attempt slot synchronously before any `await` so concurrent retries serialize.
+		inFlightKeys.set(attemptKey, tail);
+		try {
+			if (prev) {
+				await prev.catch(() => {});
+				assertSameSession(session);
 			}
-			assertSameSession(session);
-			existing = attemptKey ? map.get(attemptKey) : undefined;
+			return await fn();
+		} finally {
+			if (inFlightKeys.get(attemptKey) === tail) inFlightKeys.delete(attemptKey);
+			pruneResolved(map, inFlightKeys);
+			release();
 		}
-		return existing;
 	}
 
 	async function readGateway(path: string, fallbackMessage: string): Promise<GatewayReply> {
@@ -512,6 +536,57 @@ export function createHttpRolesApi({
 		return readRoleEntityAck(result, roleId, fallback);
 	}
 
+	async function runFollowUpUpdate(
+		organizationId: string,
+		roleId: string,
+		baseAttemptId: string | undefined,
+		desired: SubmittedRolePayload,
+		existing: { submitted: SubmittedRolePayload; committedRevision?: number; resolved?: Role },
+		session: SessionToken
+	): Promise<Role> {
+		assertSameSession(session);
+		const expectedRevision = existing.committedRevision!;
+		const followUpAttemptId = `${baseAttemptId}:rev:${expectedRevision}`;
+		const followUpKey = updateAttemptKey(
+			session.caller,
+			organizationId,
+			roleId,
+			expectedRevision,
+			followUpAttemptId
+		);
+		const prevResolved = existing.resolved;
+		existing.resolved = undefined;
+		try {
+			const updated = await updateRoleInSession(
+				organizationId,
+				roleId,
+				{
+					...desired,
+					expectedRevision,
+					attemptId: followUpAttemptId
+				},
+				session
+			);
+			existing.submitted = desired;
+			existing.committedRevision = updated.revision;
+			existing.resolved = updated;
+			return updated;
+		} catch (err) {
+			assertSameSession(session);
+			const latest = extractConflictLatest(err, roleId);
+			if (latest) {
+				existing.committedRevision = latest.revision;
+			} else if (
+				prevResolved &&
+				existing.committedRevision === prevResolved.revision &&
+				(!followUpKey || !pendingUpdates.has(followUpKey))
+			) {
+				existing.resolved = prevResolved;
+			}
+			throw err;
+		}
+	}
+
 	async function resolveChangedPendingUpdate(
 		organizationId: string,
 		roleId: string,
@@ -541,21 +616,14 @@ export function createHttpRolesApi({
 				return { retryFresh: true };
 			}
 		}
-		assertSameSession(session);
-		const followUp = await updateRoleInSession(
+		const followUp = await runFollowUpUpdate(
 			organizationId,
 			roleId,
-			{
-				...desired,
-				expectedRevision: existing.committedRevision,
-				attemptId: `${edit.attemptId}:rev:${existing.committedRevision}`
-			},
+			edit.attemptId,
+			desired,
+			existing,
 			session
 		);
-		existing.submitted = desired;
-		existing.committedRevision = followUp.revision;
-		existing.resolved = followUp;
-		pruneResolved(pendingUpdates);
 		return { resolved: followUp };
 	}
 
@@ -587,63 +655,57 @@ export function createHttpRolesApi({
 				? authoritative
 				: buildFallbackRole(ack, desired, authoritative?.created);
 		attempt.resolved = role;
-		pruneResolved(pendingUpdates);
 		return role;
 	}
 
-	async function updateRoleInSession(
+	function updateRoleInSession(
 		organizationId: string,
 		roleId: string,
 		edit: RoleEdit,
 		session: SessionToken
 	): Promise<Role> {
-		assertSameSession(session);
 		const fallback = 'Could not save the role.';
 		const desired = toSubmittedPayload(edit);
-		const attemptKey = edit.attemptId
-			? JSON.stringify([
-					session.caller,
-					organizationId,
-					roleId,
-					edit.expectedRevision,
-					edit.attemptId
-				])
-			: undefined;
+		const attemptKey = updateAttemptKey(
+			session.caller,
+			organizationId,
+			roleId,
+			edit.expectedRevision,
+			edit.attemptId
+		);
 
-		let existing = await settleInFlight(pendingUpdates, attemptKey, session);
-		if (existing?.resolved && samePayload(existing.submitted, desired)) return existing.resolved;
-		if (
-			attemptKey &&
-			existing &&
-			(existing.committedRevision !== undefined || !samePayload(existing.submitted, desired))
-		) {
-			const current = existing;
-			const outcome = await runTracked(current, () =>
-				resolveChangedPendingUpdate(
+		return withAttemptLock(attemptKey, pendingUpdates, session, async () => {
+			assertSameSession(session);
+			let existing = attemptKey ? pendingUpdates.get(attemptKey) : undefined;
+			if (existing?.resolved && samePayload(existing.submitted, desired)) return existing.resolved;
+			if (
+				attemptKey &&
+				existing &&
+				(existing.committedRevision !== undefined || !samePayload(existing.submitted, desired))
+			) {
+				const outcome = await resolveChangedPendingUpdate(
 					organizationId,
 					roleId,
 					edit,
 					desired,
-					current,
+					existing,
 					attemptKey,
 					session,
 					fallback
-				)
-			);
-			if ('resolved' in outcome) return outcome.resolved;
-			existing = undefined;
-		}
+				);
+				if ('resolved' in outcome) return outcome.resolved;
+				existing = undefined;
+			}
 
-		assertSameSession(session);
-		const attempt: PendingUpdate = existing ?? {
-			caller: session.caller,
-			commandId: newCommandId(),
-			submitted: desired
-		};
-		if (attemptKey) pendingUpdates.set(attemptKey, attempt);
+			assertSameSession(session);
+			const attempt: PendingUpdate = existing ?? {
+				caller: session.caller,
+				commandId: newCommandId(),
+				submitted: desired
+			};
+			if (attemptKey) pendingUpdates.set(attemptKey, attempt);
 
-		return runTracked(attempt, () =>
-			runInitialUpdate(
+			return runInitialUpdate(
 				organizationId,
 				roleId,
 				edit.expectedRevision,
@@ -652,8 +714,8 @@ export function createHttpRolesApi({
 				attemptKey,
 				session,
 				fallback
-			)
-		);
+			);
+		});
 	}
 
 	async function updateRole(organizationId: string, roleId: string, edit: RoleEdit): Promise<Role> {
@@ -678,7 +740,6 @@ export function createHttpRolesApi({
 				? authoritative
 				: buildFallbackRole(ack, desired);
 		attempt.resolved = role;
-		pruneResolved(pendingCreates);
 		return role;
 	}
 
@@ -708,29 +769,15 @@ export function createHttpRolesApi({
 				return { retryFresh: true };
 			}
 		}
-		assertSameSession(session);
-		try {
-			const updated = await updateRoleInSession(
-				organizationId,
-				existing.roleId,
-				{
-					...desired,
-					expectedRevision: existing.committedRevision,
-					attemptId: `${draft.attemptId}:rev:${existing.committedRevision}`
-				},
-				session
-			);
-			existing.submitted = desired;
-			existing.committedRevision = updated.revision;
-			existing.resolved = updated;
-			pruneResolved(pendingCreates);
-			return { resolved: updated };
-		} catch (err) {
-			assertSameSession(session);
-			const latest = extractConflictLatest(err, existing.roleId);
-			if (latest) existing.committedRevision = latest.revision;
-			throw err;
-		}
+		const updated = await runFollowUpUpdate(
+			organizationId,
+			existing.roleId,
+			draft.attemptId,
+			desired,
+			existing,
+			session
+		);
+		return { resolved: updated };
 	}
 
 	return Object.freeze<HttpRolesApi>({
@@ -826,49 +873,46 @@ export function createHttpRolesApi({
 			};
 		},
 
-		async create(organizationId: string, draft: RoleDraft): Promise<Role> {
+		create(organizationId: string, draft: RoleDraft): Promise<Role> {
 			const fallback = 'Could not create the role.';
 			const session = currentSessionToken();
 			const desired = toSubmittedPayload(draft);
-			const attemptKey = draft.attemptId
-				? JSON.stringify([session.caller, organizationId, draft.attemptId])
-				: undefined;
+			const attemptKey = createAttemptKey(session.caller, organizationId, draft.attemptId);
 
-			let existing = await settleInFlight(pendingCreates, attemptKey, session);
-			if (existing?.resolved && samePayload(existing.submitted, desired)) return existing.resolved;
-			if (
-				attemptKey &&
-				existing &&
-				(existing.committedRevision !== undefined || !samePayload(existing.submitted, desired))
-			) {
-				const current = existing;
-				const outcome = await runTracked(current, () =>
-					resolveChangedPendingCreate(
+			return withAttemptLock(attemptKey, pendingCreates, session, async () => {
+				assertSameSession(session);
+				let existing = attemptKey ? pendingCreates.get(attemptKey) : undefined;
+				if (existing?.resolved && samePayload(existing.submitted, desired))
+					return existing.resolved;
+				if (
+					attemptKey &&
+					existing &&
+					(existing.committedRevision !== undefined || !samePayload(existing.submitted, desired))
+				) {
+					const outcome = await resolveChangedPendingCreate(
 						organizationId,
 						draft,
 						desired,
-						current,
+						existing,
 						attemptKey,
 						session,
 						fallback
-					)
-				);
-				if ('resolved' in outcome) return outcome.resolved;
-				existing = undefined;
-			}
+					);
+					if ('resolved' in outcome) return outcome.resolved;
+					existing = undefined;
+				}
 
-			assertSameSession(session);
-			const attempt: PendingCreate = existing ?? {
-				caller: session.caller,
-				commandId: newCommandId(),
-				roleId: newEntityId(),
-				submitted: desired
-			};
-			if (attemptKey) pendingCreates.set(attemptKey, attempt);
+				assertSameSession(session);
+				const attempt: PendingCreate = existing ?? {
+					caller: session.caller,
+					commandId: newCommandId(),
+					roleId: newEntityId(),
+					submitted: desired
+				};
+				if (attemptKey) pendingCreates.set(attemptKey, attempt);
 
-			return runTracked(attempt, () =>
-				runInitialCreate(organizationId, desired, attempt, attemptKey, session, fallback)
-			);
+				return runInitialCreate(organizationId, desired, attempt, attemptKey, session, fallback);
+			});
 		},
 
 		update: updateRole,

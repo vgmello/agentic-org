@@ -1105,4 +1105,158 @@ describe('createHttpRolesApi', () => {
 		});
 		expect(edited.revision).toBe(2);
 	});
+
+	it('serializes simultaneous same-attempt creates and multiple edited waiters gated on readback without conflicts', async () => {
+		let seq = 1;
+		const nextId = () => `0193a5c0-0000-7000-8000-0000000008${String(seq++).padStart(2, '0')}`;
+		let releaseReadback!: () => void;
+		const readbackGate = new Promise<void>((resolve) => {
+			releaseReadback = resolve;
+		});
+
+		let rev = 0;
+		const submit = vi.fn(async (path: string, body: Record<string, unknown>) => {
+			if (path.endsWith('/roles')) {
+				rev = 1;
+				return { status: 200, body: { result: { id: body.role_id, revision: 1, generation: 60 } } };
+			}
+			// Enforce expected_version strictly so concurrent unserialized updates would 409!
+			if (body.expected_version !== rev) {
+				return { status: 409, body: { error: { code: 'conflict', message: 'stale' } } };
+			}
+			rev += 1;
+			return {
+				status: 200,
+				body: { result: { id: body.role_id, revision: rev, generation: 60 + rev } }
+			};
+		});
+		const read = vi.fn(async () => {
+			await readbackGate;
+			return Promise.reject(new Error('offline'));
+		});
+
+		const api = createHttpRolesApi({
+			http: { read, submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			sessionScope: () => 'inst-1:acct-a',
+			sessionGeneration: () => 1,
+			newCommandId: nextId,
+			newEntityId: nextId
+		});
+
+		// Fire two simultaneous creates + two edited waiters before any microtask resolves.
+		const c1 = api.create(ORG, { name: 'Planner', bodyMarkdown: 'V1.', attemptId: 'att-sim' });
+		const c2 = api.create(ORG, { name: 'Planner', bodyMarkdown: 'V1.', attemptId: 'att-sim' });
+		const w1 = api.create(ORG, { name: 'Planner', bodyMarkdown: 'V2.', attemptId: 'att-sim' });
+		const w2 = api.create(ORG, { name: 'Planner', bodyMarkdown: 'V2.', attemptId: 'att-sim' });
+		releaseReadback();
+
+		const [r1, r2, r3, r4] = await Promise.all([c1, c2, w1, w2]);
+		expect(r1.id).toBe(r2.id);
+		expect(r1.revision).toBe(1);
+		expect(r2.revision).toBe(1);
+		expect(r3.id).toBe(r1.id);
+		expect(r3.revision).toBe(2);
+		expect(r4).toEqual(r3);
+		// Exactly 1 POST /roles and 1 POST /roles/update across all four concurrent calls!
+		expect(submit).toHaveBeenCalledTimes(2);
+	});
+
+	it('reconciles a 504 follow-up update instead of returning stale rev 1 from cache when original text is retried', async () => {
+		let seq = 1;
+		const nextId = () => `0193a5c0-0000-7000-8000-0000000009${String(seq++).padStart(2, '0')}`;
+		const submit = vi
+			.fn()
+			// 1. Create commits rev 1 ("Original.").
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: { id: '0193a5c0-0000-7000-8000-000000000902', revision: 1, generation: 70 }
+				}
+			})
+			// 2. Follow-up edit ("Edited.") commits rev 2 on server but returns 504.
+			.mockResolvedValueOnce({ status: 504, body: { outcome: 'unknown' } })
+			// 3. User reverts to "Original." -> must replay the 504 follow-up (returns rev 2)...
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: { id: '0193a5c0-0000-7000-8000-000000000902', revision: 2, generation: 71 }
+				}
+			})
+			// 4. ...and write "Original." as rev 3!
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: { id: '0193a5c0-0000-7000-8000-000000000902', revision: 3, generation: 72 }
+				}
+			});
+
+		const api = createHttpRolesApi({
+			http: { read: vi.fn().mockRejectedValue(new Error('offline')), submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			sessionScope: () => 'inst-1:acct-a',
+			sessionGeneration: () => 1,
+			newCommandId: nextId,
+			newEntityId: nextId
+		});
+
+		const created = await api.create(ORG, {
+			name: 'Editor',
+			bodyMarkdown: 'Original.',
+			attemptId: 'att-stale-cache'
+		});
+		expect(created.revision).toBe(1);
+
+		await expect(
+			api.create(ORG, { name: 'Editor', bodyMarkdown: 'Edited.', attemptId: 'att-stale-cache' })
+		).rejects.toMatchObject({ code: 'unavailable' });
+
+		const reconciled = await api.create(ORG, {
+			name: 'Editor',
+			bodyMarkdown: 'Original.',
+			attemptId: 'att-stale-cache'
+		});
+		expect(submit).toHaveBeenCalledTimes(4);
+		expect(submit.mock.calls[2]).toEqual(submit.mock.calls[1]);
+		expect(submit.mock.calls[3]?.[1]).toMatchObject({
+			role_id: '0193a5c0-0000-7000-8000-000000000902',
+			expected_version: 2,
+			body: 'Original.'
+		});
+		expect(reconciled).toMatchObject({
+			id: '0193a5c0-0000-7000-8000-000000000902',
+			bodyMarkdown: 'Original.',
+			revision: 3
+		});
+	});
+
+	it('evicts the oldest settled attempt once 64 settled results are cached', async () => {
+		let seq = 1;
+		const nextId = () => `0193a5c0-0000-7000-8000-${String(seq++).padStart(12, '0')}`;
+		const submit = vi.fn(async (_path: string, body: Record<string, unknown>) => ({
+			status: 200,
+			body: { result: { id: body.role_id, revision: 1, generation: seq } }
+		}));
+		const api = createHttpRolesApi({
+			http: { read: vi.fn().mockRejectedValue(new Error('offline')), submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			sessionScope: () => 'inst-1:acct-a',
+			sessionGeneration: () => 1,
+			newCommandId: nextId,
+			newEntityId: nextId
+		});
+
+		for (let i = 1; i <= 65; i++) {
+			await api.create(ORG, { name: `Role ${i}`, bodyMarkdown: 'Body.', attemptId: `cap-${i}` });
+		}
+		expect(submit).toHaveBeenCalledTimes(65);
+
+		// #65 is still cached (within 64-entry cap).
+		await api.create(ORG, { name: 'Role 65', bodyMarkdown: 'Body.', attemptId: 'cap-65' });
+		expect(submit).toHaveBeenCalledTimes(65);
+
+		// #1 was evicted by the 65th settled entry -> triggers a fresh submit.
+		await api.create(ORG, { name: 'Role 1', bodyMarkdown: 'Body.', attemptId: 'cap-1' });
+		expect(submit).toHaveBeenCalledTimes(66);
+	});
 });

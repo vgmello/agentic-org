@@ -1,5 +1,12 @@
 import { expect, it } from 'vitest';
-import { clearDraftsForCaller, discardDraft, draftKey, keepDraft, keptDraft } from './kept-drafts';
+import {
+	clearDraftsForCaller,
+	discardDraft,
+	discardDraftIfVersion,
+	draftKey,
+	keepDraft,
+	keptDraft
+} from './kept-drafts';
 
 it('keeps a draft per organization and role until it is discarded', () => {
 	const edit = draftKey('org-a', 'role-swe');
@@ -63,4 +70,26 @@ it('preserves hasUncertainAttempt so restoring original text still reconciles a 
 		hasUncertainAttempt: true
 	});
 	clearDraftsForCaller('inst-1:acct-alice');
+});
+
+it('discards only the matching draft version so a late save never deletes newer unsaved text', () => {
+	const key = draftKey('org-a', undefined, 'inst-1:acct-alice');
+	const v1 = keepDraft(key, {
+		name: 'Version 1',
+		key: '',
+		body: 'First',
+		expectedRevision: 0,
+		attemptId: 'att-shared'
+	});
+	const v2 = keepDraft(key, {
+		name: 'Version 2',
+		key: '',
+		body: 'Newer unsaved text',
+		expectedRevision: 0,
+		attemptId: 'att-shared'
+	});
+	discardDraftIfVersion(key, v1);
+	expect(keptDraft(key)?.name).toBe('Version 2');
+	discardDraftIfVersion(key, v2);
+	expect(keptDraft(key)).toBeUndefined();
 });
