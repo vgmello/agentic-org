@@ -33,7 +33,7 @@ pub(crate) fn answer(
         .or_else(|| dispatch_triage(request, mailbox, member))
 }
 
-fn is_mailbox_call(request: &Request) -> bool {
+pub(crate) fn is_mailbox_call(request: &Request) -> bool {
     is_send_or_read_call(request) || is_triage_call(request)
 }
 
