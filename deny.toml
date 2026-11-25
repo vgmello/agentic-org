@@ -8,6 +8,7 @@ ignore = []
 
 [licenses]
 confidence-threshold = 0.93
+private = { ignore = true }
 allow = [
     "Apache-2.0",
     "BSD-3-Clause",

@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { stopInstance } from './teardown';
 
-const shots = '../../.agents/agent-kit/logs/a3/b6-screens';
+const shots = '../../.playwright/a3-b6-screens';
 const base = () => process.env.B6_BASE!;
 const login = 'alex';
 const password = 'correct horse battery';
