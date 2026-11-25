@@ -1020,7 +1020,7 @@ function paintAgentFeed(sess) {
     const replyHtml = en.reply || en.phase === "streaming"
       ? `<div class="c-reply" data-entry-reply="${esc(en.id)}">${esc(en.reply)}${en.streaming ? '<span class="c-caret-blink"></span>' : ""}</div>`
       : "";
-    return `<article class="c-entry" data-from="${esc(en.from)}"><div class="c-entry-hd"><span class="c-entry-who">${av(en.from, 24)}${esc(M[en.from] ? M[en.from].name : en.from)} ${pill(en.kind, "gray")}</span><span class="muted" style="font-size:0.75rem">${esc(en.time)}</span></div><div class="c-entry-prompt">${esc(en.text)}</div>${traceHtml}${replyHtml}</article>`;
+    return `<article class="c-entry" data-from="${esc(en.from)}"><div class="c-entry-hd"><span class="c-entry-who">${av(en.from, 24)}${esc(M[en.from] ? M[en.from].name : en.from)} ${pill(en.kind, "gray")}</span><span class="muted" style="font-size:0.75rem">${esc(en.time)}</span></div><div class="c-entry-prompt">${esc(en.text)}</div>${replyHtml}${traceHtml}</article>`;
   }).join("") : `<p class="empty-row">No messages yet in this view.</p>`;
 }
 

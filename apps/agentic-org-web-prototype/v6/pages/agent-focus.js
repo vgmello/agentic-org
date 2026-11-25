@@ -110,8 +110,8 @@ function focusTurnHtml(en) {
     : "";
   return `<article class="af-turn" data-entry-id="${esc(en.id)}">
     <div class="af-msg-user is-you"><div class="af-user-bubble">${esc(en.text)}</div></div>
-    <div class="af-turn-between">${traceHtml}</div>
     ${replyHtml}
+    <div class="af-turn-trace">${traceHtml}</div>
   </article>`;
 }
 
@@ -261,7 +261,7 @@ function openAgentFocus(aid, triggerEl = null) {
     ${focusCornerActionsHtml(m, sess)}
     <div class="af-stage"><div class="af-body">${focusLeftColumnHtml(m, sess, avail)}${focusRightColumnHtml(m, avail)}</div></div>
   </section>`;
-  document.body.appendChild(overlay);
+  (document.getElementById("content") || document.body).appendChild(overlay);
   document.body.classList.add("agent-focus-open");
   const canvas = document.getElementById("af-orb-canvas");
   const orb = new NeuralOrb(canvas);
