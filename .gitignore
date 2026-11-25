@@ -23,8 +23,5 @@ dist/
 /.agents/agent-memory/
 /.agents/*.local.md
 /.repowise/
-/.agents/agent-kit/tools/
-# A lead session's local handover (AGENTS.md, "Session start").
-/.agents/agent-kit/tasks/HANDOVER.md
 # Local UI screenshot captures and generated HTML gallery
 /screenshots/

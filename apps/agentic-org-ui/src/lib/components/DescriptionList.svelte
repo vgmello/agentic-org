@@ -1,12 +1,13 @@
 <!--
   @component
-  Label/value rows for a record's details and settings pages (Tailwind Plus description list, dark).
-  A value is text or a snippet; `mono` sets IDs, paths and hashes in the system mono font, wrapping anywhere.
-  An optional `action` snippet per row holds that row's one control (Change, Copy…), right-aligned.
+  Key/value metadata rows for record details and settings panels.
+  Each row renders a term, a text value or custom snippet (`mono` for IDs, paths, and hashes),
+  and an optional right-aligned action snippet.
   Usage: <DescriptionList items={[{ term: 'Workspace', value: '/Users/ada/org', mono: true }]} />
 -->
 <script lang="ts" module>
 	export interface DescriptionItem {
+		id?: string;
 		term: string;
 		value?: string;
 		content?: Snippet;
@@ -17,26 +18,41 @@
 
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { cn } from '$lib/utils';
 
 	let { items, class: className = '' }: { items: DescriptionItem[]; class?: string } = $props();
 </script>
 
-<dl class="divide-y divide-line-subtle {className}">
-	{#each items as item (item.term)}
+<dl class={cn('divide-y divide-line-subtle', className)}>
+	{#each items as item (item.id !== undefined ? `id:${item.id}` : `term:${item.term}`)}
 		<div
-			class="px-4 py-4 min-[640px]:grid min-[640px]:grid-cols-3 min-[640px]:gap-4 min-[640px]:px-6 min-[1024px]:px-8"
+			class="flex flex-col gap-1 px-4 py-4 min-[640px]:grid min-[640px]:grid-cols-3 min-[640px]:items-baseline min-[640px]:gap-x-6 min-[640px]:px-6 min-[1024px]:px-8"
 		>
-			<dt class="text-sm/6 font-medium text-fg">{item.term}</dt>
-			<dd class="mt-1 flex gap-x-4 text-sm/6 text-fg-muted min-[640px]:col-span-2 min-[640px]:mt-0">
-				<span
-					class="min-w-0 flex-1 {item.mono
-						? 'font-mono [overflow-wrap:anywhere]'
-						: 'wrap-break-word'}"
+			<dt class="min-w-0 text-sm/6 font-medium wrap-break-word text-fg">{item.term}</dt>
+			{#if item.action}
+				<dd
+					class="flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-2 text-sm/6 text-fg-muted min-[640px]:col-span-2"
+				>
+					<div
+						class={cn(
+							'min-w-0 flex-1 basis-40',
+							item.mono ? 'font-mono [overflow-wrap:anywhere]' : 'wrap-break-word'
+						)}
+					>
+						{#if item.content}{@render item.content()}{:else}{item.value}{/if}
+					</div>
+					<div class="ms-auto shrink-0">{@render item.action()}</div>
+				</dd>
+			{:else}
+				<dd
+					class={cn(
+						'min-w-0 text-sm/6 text-fg-muted min-[640px]:col-span-2',
+						item.mono ? 'font-mono [overflow-wrap:anywhere]' : 'wrap-break-word'
+					)}
 				>
 					{#if item.content}{@render item.content()}{:else}{item.value}{/if}
-				</span>
-				{#if item.action}<span class="shrink-0">{@render item.action()}</span>{/if}
-			</dd>
+				</dd>
+			{/if}
 		</div>
 	{/each}
 </dl>

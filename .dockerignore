@@ -2,6 +2,8 @@
 # deploy/container/Dockerfile): the build context is the repository root, and only these
 # files are sent to the Docker daemon.
 *
+!LICENSE
+!NOTICE
 !deploy/container/setup.json
 !target/linux/debug/agentic-org
 !target/linux/debug/agentic-org-office

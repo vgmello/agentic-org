@@ -5,7 +5,9 @@ name: CI
 on:
   push:
     branches: ["**"]
-  # Manual runs work only once this file is on the repo's default branch (today `main`, not `v1`).
+  pull_request:
+    branches: [main, v1]
+  # Manual runs work only once this file is on the repo's default branch.
   workflow_dispatch:
 
 # No `concurrency` block: cancelling a branch's run on a newer push would leave the earlier commit
@@ -40,11 +42,10 @@ jobs:
           rustc --version
           cargo --version
 
-      # Caches are saved only on v1, so branches don't churn the repo's cache quota. Branches restore
-      # only their own and the default branch's caches, so making v1 the default branch would warm them.
+      # Caches are saved only on main and v1, so feature branches don't churn the repo's cache quota.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/v1' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v1' }}
 
       - name: cargo fmt --check
         if: runner.os == 'Linux'
@@ -148,12 +149,20 @@ jobs:
       - name: Compare the list with its base
         env:
           BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          if [ "$GITHUB_REF" = "refs/heads/v1" ]; then
+          if [ -n "$PR_BASE" ]; then
+            base="$PR_BASE"
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] || [ "$GITHUB_REF" = "refs/heads/v1" ]; then
             base="$BEFORE"
-          else
+          elif git rev-parse --verify origin/v1 >/dev/null 2>&1; then
             base="$(git merge-base HEAD origin/v1)" || {
               echo "This branch shares no history with v1."; exit 1; }
+          elif git rev-parse --verify origin/main >/dev/null 2>&1; then
+            base="$(git merge-base HEAD origin/main)" || {
+              echo "This branch shares no history with main."; exit 1; }
+          else
+            echo "No base branch ref available to compare with."; exit 0
           fi
           case "$base" in
             ""|0000000000000000000000000000000000000000)
@@ -178,7 +187,7 @@ jobs:
       - name: Docker
         run: docker version
 
-      # build.sh keeps its cargo home and its output in target/linux. Saved only on v1, as the
+      # build.sh keeps its cargo home and its output in target/linux. Saved only on main and v1, as the
       # rust job's cache is; the key changes with what decides how the dependencies build.
       - name: Restore the Linux build cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -255,11 +264,11 @@ jobs:
 
       # The incremental state of the workspace's own crates is not worth its size in the cache.
       - name: Drop incremental state before the cache is saved
-        if: github.ref == 'refs/heads/v1'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v1'
         run: rm -rf target/linux/debug/incremental target/linux/release/incremental
 
       - name: Save the Linux build cache
-        if: github.ref == 'refs/heads/v1'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v1'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -438,7 +447,7 @@ jobs:
         run: rustup toolchain install --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/v1' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v1' }}
       - run: bun install --frozen-lockfile
       - run: bunx --no-install playwright install --with-deps chromium webkit firefox
       - name: Real gateway CSP in Chromium, WebKit and Firefox

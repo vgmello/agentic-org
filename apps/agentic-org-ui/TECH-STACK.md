@@ -6,7 +6,7 @@ this static application to browsers. See the
 and [project structure](../../docs/design/project-structure.md).
 
 The application lives in `apps/agentic-org-ui` (package `agentic-org-ui`); the worker is
-`apps/agentic-org-office` (`agentic-org-office`). Licensed UI remains inside this product application.
+`apps/agentic-org-office` (`agentic-org-office`).
 Versions are pinned in `package.json`; `bun.lock` is the frontend lockfile.
 
 ## Current implementation
@@ -15,9 +15,8 @@ Versions are pinned in `package.json`; `bun.lock` is the frontend lockfile.
 | ----------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | UI framework            | SvelteKit 2 + Svelte 5 runes                                | Static SPA, adapter-static, ssr=false, index.html fallback.                                                                                   |
 | Language                | Strict TypeScript                                           | Wire readers and server adapters arrive with each increment.                                                                                  |
-| Styling                 | Tailwind CSS v4                                             | CSS-first configuration and tokens in src/app.css; dark theme.                                                                                |
-| Look                    | Tailwind Plus application UI, ported to Svelte              | Licensed inside apps/agentic-org-ui, never as a separate UI kit.                                                                              |
-| Components              | shadcn-svelte on Bits UI                                    | Shared primitives under src/lib/components/ui.                                                                                                |
+| Styling                 | Tailwind CSS v4                                             | CSS-first configuration, semantic look tokens in `src/app.css`, and multi-theme stylesheets.                                                  |
+| Components              | shadcn-svelte on Bits UI                                    | Shared MIT-licensed primitives under `src/lib/components/ui` plus custom app components.                                                      |
 | Icons and font          | Lucide/Heroicons; bundled Inter Variable                    | No remote font dependency.                                                                                                                    |
 | Package manager         | Bun                                                         | Frozen install, check, test and build scripts.                                                                                                |
 | Unit tests              | Vitest                                                      | Domain behavior, test fakes, canonical vectors and platform boundaries.                                                                       |

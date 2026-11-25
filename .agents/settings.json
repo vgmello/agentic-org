@@ -38,7 +38,6 @@
     "svelte-lsp@agentic-org": true
   },
   "enabledMcpjsonServers": [
-    "starter_kit_context",
     "svelte"
   ],
   "hooks": {
@@ -52,26 +51,6 @@
             "timeout": 30
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.agents/agent-kit/runtime/kit_codex_hooks.py\" checkpoint",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.agents/agent-kit/runtime/kit_codex_hooks.py\" checkpoint",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "PreToolUse": [
@@ -82,34 +61,6 @@
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.agents/check-tools.sh --gate",
             "timeout": 30
-          },
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.agents/agent-kit/runtime/kit_hooks.py\" guard",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|MultiEdit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.agents/agent-kit/runtime/kit_hooks.py\" format",
-            "timeout": 40
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.agents/agent-kit/runtime/kit_hooks.py\" verify",
-            "timeout": 360
           }
         ]
       }
