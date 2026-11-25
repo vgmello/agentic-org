@@ -13,7 +13,7 @@ import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, 
 import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, setSheetReturn } from "./dialogs.js";
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
 import { homeSearchField, homeSearchInput, homeSearchResults, pageSearchInput, render, route } from "./router.js";
-import { UTIL, askTessInPanel, clearReadNotifications, clearTessHistory, closeNotificationsPopover, closeTessPanel, dismissTessContext, isTessDocked, markAllNotificationsRead, markNotificationRead, openTessPanel, toggleNotificationsPopover, toggleTessPanel } from "./topbar-utils.js";
+import { UTIL, askTessInPanel, clearCompanionHistory, clearReadNotifications, closeCompanion, closeNotificationsPopover, dismissCompanionContext, handleCompanionEscape, handleCompanionInput, isCompanionModal, markAllNotificationsRead, markNotificationRead, minimizeCompanion, openTessPanel, setCompanionTarget, toggleCompanionPicker, toggleExpandCompanion, toggleNotificationsPopover, toggleTessPanel } from "./topbar-utils.js";
 import { ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
 import { spotQueue, toast } from "../ui.js";
 
@@ -345,11 +345,18 @@ const CLICK_ACTIONS = {
   "cmdk-ai-ask": (_e, _t, _id, v) => askInCmdk(v),
   "brief-ai-ask": (_e, _t, _id, v) => openTessPanel(v),
   "tess-toggle": (_e, t) => toggleTessPanel(t),
-  "tess-close": () => closeTessPanel(true),
-  "tess-open-dm": () => closeTessPanel(false),
-  "tess-clear": () => clearTessHistory(),
-  "tess-ask-chip": (_e, _t, _id, v) => askTessInPanel(v),
-  "tess-dismiss-ctx": (_e, _t, _id, v) => dismissTessContext(v),
+  "tess-close": () => { if (!handleCompanionEscape()) closeCompanion(true); },
+  "cmp-close": () => closeCompanion(true),
+  "cmp-minimize": () => minimizeCompanion(),
+  "cmp-restore": (_e, t) => openTessPanel("", t),
+  "cmp-expand": () => toggleExpandCompanion(),
+  "cmp-open-chat": () => closeCompanion(false),
+  "cmp-clear": () => clearCompanionHistory(),
+  "cmp-target": (_e, _t, _id, v) => setCompanionTarget(v),
+  "cmp-picker-toggle": () => toggleCompanionPicker(),
+  "cmp-pick": (_e, _t, _id, v) => setCompanionTarget(v),
+  "cmp-ask-chip": (_e, _t, _id, v) => askTessInPanel(v),
+  "cmp-dismiss-ctx": (_e, _t, _id, v) => dismissCompanionContext(v),
   "notif-toggle": (_e, t) => toggleNotificationsPopover(t),
   "notif-close": () => closeNotificationsPopover(true),
   "notif-open": (_e, _t, id) => markNotificationRead(id),
@@ -392,7 +399,7 @@ function dismissTopbarOverlaysForLink(link) {
   const act = link.dataset.act;
   if (act === "notif-open" && link.dataset.id) { markNotificationRead(link.dataset.id); return; }
   if (act === "notif-close") { closeNotificationsPopover(false); return; }
-  if (act === "tess-open-dm" || (link.closest("#tess-panel") && !isTessDocked())) closeTessPanel(false);
+  if (act === "cmp-open-chat" || (link.closest("#tess-panel") && isCompanionModal())) closeCompanion(false);
 }
 
 function handleHashLinkClick(e) {
@@ -473,6 +480,7 @@ document.addEventListener("input", (e) => {
   if (target.form?.dataset.form === "insight-range") target.form.elements.to.setCustomValidity("");
   if (target.name === "title" && target.form?.dataset.form === "work-create") target.setCustomValidity("");
   INPUT_BY_ID[target.id]?.(target);
+  if (handleCompanionInput(target)) return;
   if (target === homeSearchInput && !CMDK.inline) { openCmdk(homeSearchInput.value, "cmd", homeSearchInput, true); return; }
   if (target === homeSearchInput || target.id === "cmdk-input") { CMDK.q = target.value; CMDK.active = 0; renderCmdk(); }
 });
@@ -623,7 +631,7 @@ function dismissLocalEscapeTarget(e) {
 function handleEscapeKeydown(e) {
   if (dismissLocalEscapeTarget(e)) return;
   if (UTIL.notifOpen) { e.preventDefault(); closeNotificationsPopover(true); return; }
-  if (UTIL.tessOpen && (!isTessDocked() || e.target.closest?.("#tess-panel"))) { e.preventDefault(); closeTessPanel(true); return; }
+  if (handleCompanionEscape()) { e.preventDefault(); return; }
   if (isAgentFocusOpen()) { e.preventDefault(); closeAgentFocus(true); return; }
   const closeThread = e.target.closest(".thread")?.querySelector('[data-act="thread-close"]');
   if (closeThread) { e.preventDefault(); closeThread.click(); return; }
@@ -785,7 +793,7 @@ if (window.matchMedia) {
 }
 window.addEventListener("hashchange", () => {
   closeCmdk(false); closeNotificationsPopover(false);
-  if (UTIL.tessOpen && !isTessDocked()) closeTessPanel(false);
+  if (isCompanionModal()) closeCompanion(false);
   document.querySelector(".work-task-dialog[open]")?.close(); document.body.classList.remove("drawer");
   S.thread = null; S.replying = null; S.replyMode = null; S.confirmDeny = null;
   IN.forEach((i) => { if (i.handled) i.handledNow = false; });

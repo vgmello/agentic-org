@@ -1,10 +1,27 @@
-import { M, P, W } from "../data.js";
-import { answerOrgQuestion } from "../pages/home.js";
 import { CMDK, closeCmdk, isMacPlatform } from "./cmdk.js";
-import { S, qs } from "../state.js";
+import {
+  COMP,
+  clearCompanionHistory,
+  closeCompanion,
+  dismissCompanionContext,
+  handleCompanionEscape,
+  handleCompanionInput,
+  isCompanionModal,
+  minimizeCompanion,
+  openCompanion,
+  registerCompanionHooks,
+  renderCompanion,
+  sendCompanionMessage,
+  setCompanionTarget,
+  syncCompanionRoute,
+  toggleCompanion,
+  toggleCompanionPicker,
+  toggleExpandCompanion,
+} from "./companion.js";
+import { S } from "../state.js";
 import { esc, ic } from "../ui.js";
 
-/* ---------------------------------------------------------------- topbar utilities (Notifications + Persistent Tess Panel) */
+/* ---------------------------------------------------------------- topbar utilities (Notifications + Floating Companion triggers) */
 
 const runningJobs = [];
 const notifications = [
@@ -52,28 +69,7 @@ const notifications = [
 
 const UTIL = {
   notifOpen: false,
-  tessOpen: false,
-  dismissedCtxKey: null,
   notifReturnTo: null,
-  tessReturnTo: null,
-  currentRoute: ["home"],
-};
-
-const TESS_STARTERS = {
-  empty: [
-    "How do I launch my first project?",
-    "What's my starting budget & AI capacity?",
-  ],
-  work: [
-    "What's slowing v1.0?",
-    "What needs me first?",
-    "Budget, capacity & idle agents",
-  ],
-  default: [
-    "What needs me first?",
-    "What's slowing v1.0?",
-    "What happened in the last 4 hours?",
-  ],
 };
 
 function announceNotif(text) {
@@ -93,24 +89,6 @@ function unreadNotificationsCount() {
 
 function activeTessJobs() {
   return runningJobs.filter((j) => j.source === "tess");
-}
-
-function describeRouteContext(r = UTIL.currentRoute) {
-  const [page, r1] = r;
-  const item = qs().get("item");
-  if (item) {
-    const task = W.find((w) => w.id === item);
-    return { key: `item:${item}`, label: task ? `Work · ${task.id}` : `Task · ${item}` };
-  }
-  if (page === "projects" && r1 && P[r1]) return { key: `proj:${r1}`, label: `Project · ${P[r1].name}` };
-  if (page === "members" && r1 && M[r1]) return { key: `member:${r1}`, label: `Member · ${M[r1].name}` };
-  const map = { home: "Home", inbox: "Inbox", work: "Work", chat: "Chat", activity: "Activity", projects: "Projects", teams: "Teams", settings: "Settings" };
-  return { key: `page:${page || "home"}`, label: map[page] || "Workspace" };
-}
-
-function isTessDocked() {
-  const w = window.innerWidth;
-  return w >= 1440 || (w >= 1280 && document.body.classList.contains("nav-collapsed"));
 }
 
 /* ---------------------------------------------------------------- triggers */
@@ -139,14 +117,15 @@ function syncTessTrigger() {
   if (!btn) return;
   const busy = activeTessJobs();
   const offline = isOfflineMode();
+  const active = COMP.mode !== "closed";
   const kbd = isMacPlatform ? "⌘/" : "Ctrl /";
   btn.classList.toggle("is-busy", busy.length > 0);
   btn.classList.toggle("is-offline", offline);
-  btn.classList.toggle("is-active", UTIL.tessOpen);
-  btn.setAttribute("aria-expanded", String(UTIL.tessOpen));
+  btn.classList.toggle("is-active", active);
+  btn.setAttribute("aria-expanded", String(active && COMP.mode !== "minimized"));
   const statusText = busy.length
     ? `Tess · ${busy.length > 1 ? `Refining ${busy.length} tasks` : busy[0].step || "Working"}`
-    : offline ? `Tess · Offline local summary (${kbd})` : `Ask Tess (${kbd})`;
+    : offline ? `Tess · Offline local summary (${kbd})` : `Ask Tess or message an agent (${kbd})`;
   btn.title = statusText;
   btn.setAttribute("aria-label", statusText);
   const dot = busy.length > 0 ? `<span class="tess-live-dot" aria-hidden="true"></span>` : "";
@@ -173,9 +152,7 @@ function renderNotifRunningSection() {
 }
 
 function renderNotifRecentSection() {
-  if (!notifications.length) {
-    return `<p class="notif-empty">All caught up — no recent system notifications.</p>`;
-  }
+  if (!notifications.length) return `<p class="notif-empty">All caught up — no recent system notifications.</p>`;
   const rows = notifications.map((n) => `
     <li>
       <a class="notif-row${n.read ? "" : " is-unread"}" href="${esc(n.href)}" data-act="notif-open" data-id="${esc(n.id)}">
@@ -243,121 +220,6 @@ function renderNotifPopover() {
     </div>`;
 }
 
-/* ---------------------------------------------------------------- persistent Tess side panel */
-
-function renderTessActiveStrip() {
-  const busy = activeTessJobs();
-  if (!busy.length) return "";
-  const label = busy.length > 1
-    ? `Refining ${busy.length} tasks in background…`
-    : `${busy[0].title} — ${busy[0].step || "Refining…"}`;
-  return `<div class="tess-busy-strip" role="status">
-    <span class="notif-job-spin" aria-hidden="true"></span>
-    <span>${esc(label)}</span>
-  </div>`;
-}
-
-function renderTessContextBar() {
-  const ctx = describeRouteContext();
-  if (UTIL.dismissedCtxKey === ctx.key) return "";
-  return `<div class="tess-ctx-bar">
-    <span class="tess-ctx-pill">
-      <span>Viewing: <strong>${esc(ctx.label)}</strong></span>
-      <button type="button" data-act="tess-dismiss-ctx" data-v="${esc(ctx.key)}" aria-label="Dismiss page context">${ic("x", "ic14")}</button>
-    </span>
-  </div>`;
-}
-
-function renderTessThread() {
-  const turns = [...CMDK.aiHistory].reverse();
-  if (!turns.length) {
-    return `<div class="tess-welcome">
-      <p class="tess-welcome-lead">Ask Tess about blockers, release readiness, agent workload, or recent updates.</p>
-      <p class="tess-welcome-sub">Answers draw from live workspace state and stay with you as you navigate.</p>
-    </div>`;
-  }
-  return `<div class="tess-thread">${turns.map((turn) => `
-    <div class="tess-turn">
-      <div class="tess-q">${esc(turn.q)}</div>
-      <div class="tess-a">
-        <div class="tess-a-hd">${ic("sparkle", "ic14")}<span>Tess</span></div>
-        <div class="tess-a-body">${turn.html}</div>
-      </div>
-    </div>`).join("")}</div>`;
-}
-
-function renderTessStarters() {
-  const asked = new Set(CMDK.aiHistory.map((x) => x.q.trim().toLowerCase()));
-  const key = S.homeState === "empty" ? "empty" : UTIL.currentRoute[0] === "work" ? "work" : "default";
-  const chips = (TESS_STARTERS[key] || TESS_STARTERS.default).filter((q) => !asked.has(q.toLowerCase())).slice(0, 3);
-  if (!chips.length) return "";
-  return `<div class="tess-chips" aria-label="Suggested prompts">${chips.map((q) => `
-    <button type="button" class="tess-chip" data-act="tess-ask-chip" data-v="${esc(q)}">
-      ${ic("sparkle", "ic14")}<span>${esc(q)}</span>
-    </button>`).join("")}</div>`;
-}
-
-function syncTessPanelChrome(panel, scrim, open, docked) {
-  panel.hidden = !open;
-  panel.classList.toggle("is-docked", docked);
-  panel.classList.toggle("is-modal", open && !docked);
-  panel.setAttribute("role", docked ? "complementary" : "dialog");
-  if (open && !docked) panel.setAttribute("aria-modal", "true");
-  else panel.removeAttribute("aria-modal");
-  document.body.classList.toggle("tess-open", docked);
-  if (scrim) scrim.hidden = !(open && !docked);
-}
-
-function renderTessHeader(busy, offline) {
-  const statusLbl = busy.length ? `Refining (${busy.length})` : offline ? "Offline · Local only" : "Chief of Staff";
-  const clearBtn = CMDK.aiHistory.length
-    ? `<button type="button" class="notif-text-btn" data-act="tess-clear">Clear</button>` : "";
-  return `<div class="tess-hd">
-    <div class="tess-hd-who">
-      <span class="tess-hd-mark" aria-hidden="true">${ic("sparkle", "ic14")}</span>
-      <div class="tess-hd-txt">
-        <strong>Tess</strong>
-        <span class="tess-hd-status${offline ? " is-offline" : ""}">${esc(statusLbl)}</span>
-      </div>
-    </div>
-    <div class="tess-hd-acts">
-      ${clearBtn}
-      <a class="tess-dm-link" href="#/chat/tess" data-act="tess-open-dm" title="Open full Tess DM">DM ${ic("open", "ic14")}</a>
-      <button type="button" class="btn ghost icon sm" data-act="tess-close" aria-label="Close Tess panel">${ic("x", "ic16")}</button>
-    </div>
-  </div>`;
-}
-
-function renderTessPanel() {
-  const panel = document.getElementById("tess-panel");
-  if (!panel) return;
-  const open = UTIL.tessOpen;
-  syncTessPanelChrome(panel, document.getElementById("tess-panel-scrim"), open, open && isTessDocked());
-  if (!open) return;
-
-  const offline = isOfflineMode();
-  const offlineNotice = offline
-    ? `<div class="tess-offline-note">${ic("offline", "ic14")}<span>Offline quick summary · Local data only</span></div>` : "";
-  const draftVal = document.getElementById("tess-panel-input")?.value || "";
-
-  panel.innerHTML = `
-    ${renderTessHeader(activeTessJobs(), offline)}
-    ${renderTessContextBar()}
-    ${renderTessActiveStrip()}
-    ${offlineNotice}
-    <div class="tess-body" id="tess-panel-body">
-      ${renderTessThread()}
-      ${renderTessStarters()}
-    </div>
-    <form class="tess-compose" data-form="tess-panel-ask">
-      <input id="tess-panel-input" type="text" value="${esc(draftVal)}" placeholder="Ask Tess anything…" autocomplete="off" aria-label="Ask Tess">
-      <button type="submit" class="btn primary sm icon tess-send-btn" aria-label="Send to Tess">${ic("send", "ic14")}</button>
-    </form>`;
-
-  const body = document.getElementById("tess-panel-body");
-  if (body) body.scrollTop = body.scrollHeight;
-}
-
 /* ---------------------------------------------------------------- public controls */
 
 function closeNotificationsPopover(restoreFocus = false) {
@@ -372,60 +234,12 @@ function closeNotificationsPopover(restoreFocus = false) {
 function toggleNotificationsPopover(trigger) {
   if (UTIL.notifOpen) { closeNotificationsPopover(true); return; }
   if (CMDK.open) closeCmdk(false);
-  if (UTIL.tessOpen && !isTessDocked()) closeTessPanel(false);
+  if (window.innerWidth < 900 && COMP.mode === "open") closeCompanion(false);
   UTIL.notifOpen = true;
   UTIL.notifReturnTo = trigger || document.getElementById("notif-trigger");
   syncNotifTrigger();
   renderNotifPopover();
   document.querySelector("#notif-popover .notif-x")?.focus({ preventScroll: true });
-}
-
-function closeTessPanel(restoreFocus = false) {
-  if (!UTIL.tessOpen) return;
-  UTIL.tessOpen = false;
-  syncTessTrigger();
-  renderTessPanel();
-  if (restoreFocus && UTIL.tessReturnTo && document.body.contains(UTIL.tessReturnTo)) UTIL.tessReturnTo.focus();
-  UTIL.tessReturnTo = null;
-}
-
-function askTessInPanel(rawQ) {
-  const q = String(rawQ || "").trim();
-  if (!q) return;
-  const ans = answerOrgQuestion(q);
-  if (ans) {
-    ans._state = S.homeState;
-    CMDK.aiAns = ans;
-    CMDK.aiHistory = [ans, ...CMDK.aiHistory.filter((x) => x.q.toLowerCase() !== ans.q.toLowerCase())];
-  }
-  const inp = document.getElementById("tess-panel-input");
-  if (inp) inp.value = "";
-  renderTessPanel();
-  document.getElementById("tess-panel-input")?.focus({ preventScroll: true });
-}
-
-function openTessPanel(initialQuestion = "", trigger = null) {
-  if (CMDK.open) closeCmdk(false);
-  closeNotificationsPopover(false);
-  const wasOpen = UTIL.tessOpen;
-  UTIL.tessOpen = true;
-  if (!wasOpen) UTIL.tessReturnTo = trigger || document.getElementById("tess-trigger");
-  if (initialQuestion && String(initialQuestion).trim()) {
-    askTessInPanel(initialQuestion);
-  } else {
-    renderTessPanel();
-  }
-  syncTessTrigger();
-  document.getElementById("tess-panel-input")?.focus({ preventScroll: true });
-}
-
-function toggleTessPanel(trigger) {
-  if (UTIL.currentRoute[0] === "chat" && UTIL.currentRoute[1] === "tess") {
-    document.getElementById("compose")?.focus();
-    return;
-  }
-  if (UTIL.tessOpen) closeTessPanel(true);
-  else openTessPanel("", trigger);
 }
 
 function markNotificationRead(id) {
@@ -446,18 +260,6 @@ function clearReadNotifications() {
   }
   syncNotifTrigger();
   renderNotifPopover();
-}
-
-function clearTessHistory() {
-  CMDK.aiAns = null;
-  CMDK.aiHistory = [];
-  renderTessPanel();
-  document.getElementById("tess-panel-input")?.focus({ preventScroll: true });
-}
-
-function dismissTessContext(key) {
-  UTIL.dismissedCtxKey = key;
-  renderTessPanel();
 }
 
 function startBackgroundJob({ id, title, step = "Tess refining & routing…", source = "tess" }) {
@@ -487,43 +289,45 @@ function finishBackgroundJob(id, { title, summary, href = "#/work", icon = "chec
 }
 
 function syncTopbarUtils(r = null) {
-  if (Array.isArray(r)) {
-    const prevKey = describeRouteContext(UTIL.currentRoute).key;
-    UTIL.currentRoute = r;
-    const nextKey = describeRouteContext(r).key;
-    if (prevKey !== nextKey) UTIL.dismissedCtxKey = null;
-  }
+  syncCompanionRoute(r);
   syncNotifTrigger();
   syncTessTrigger();
   if (UTIL.notifOpen) renderNotifPopover();
-  if (UTIL.tessOpen) renderTessPanel();
 }
 
-function isTopbarPopoverOpen() {
-  return UTIL.notifOpen || (UTIL.tessOpen && !isTessDocked());
-}
+registerCompanionHooks({
+  onChange: () => syncTessTrigger(),
+  activeJobs: activeTessJobs,
+  closeNotif: closeNotificationsPopover,
+});
 
 window.addEventListener("resize", () => {
-  if (UTIL.tessOpen) renderTessPanel();
+  if (COMP.mode !== "closed") renderCompanion();
   if (UTIL.notifOpen) positionNotifPopover();
 });
 
 export {
+  COMP,
   UTIL,
-  askTessInPanel,
+  clearCompanionHistory,
   clearReadNotifications,
-  clearTessHistory,
+  closeCompanion,
   closeNotificationsPopover,
-  closeTessPanel,
-  dismissTessContext,
+  dismissCompanionContext,
   finishBackgroundJob,
-  isTessDocked,
-  isTopbarPopoverOpen,
+  handleCompanionEscape,
+  handleCompanionInput,
+  isCompanionModal,
   markAllNotificationsRead,
   markNotificationRead,
-  openTessPanel,
+  minimizeCompanion,
+  openCompanion as openTessPanel,
+  sendCompanionMessage as askTessInPanel,
+  setCompanionTarget,
   startBackgroundJob,
   syncTopbarUtils,
+  toggleCompanion as toggleTessPanel,
+  toggleCompanionPicker,
+  toggleExpandCompanion,
   toggleNotificationsPopover,
-  toggleTessPanel,
 };

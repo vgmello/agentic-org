@@ -304,14 +304,15 @@ html[data-theme="cozy"] {
   }
   & :is(.sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast, .notif-popover, .tess-panel) {
     background: rgb(38 31 25 / .88);
-    backdrop-filter: blur(24px) saturate(140%);
-    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    backdrop-filter: blur(28px) saturate(145%);
+    -webkit-backdrop-filter: blur(28px) saturate(145%);
     border: 1px solid var(--cozy-panel-edge);
     border-radius: 10px;
-    box-shadow: 0 24px 60px -10px rgb(10 7 5 / .68), inset 0 1px rgb(255 248 238 / .16);
+    box-shadow: 0 28px 68px -12px rgb(10 7 5 / .74), inset 0 1px rgb(255 248 238 / .18);
     color: var(--white);
   }
-  & .tess-panel { border-radius: 0; border-top: 0; border-right: 0; border-bottom: 0; }
+  & .tess-panel { border-radius: 16px; }
+  & .tess-panel.is-minimized { border-radius: 999px; }
 
   & :is(.hb-spot-meta, .hb-spot-next, .hb-cos-memo, .hb-ai-brief, .hb-brief-lenses, .hb-dig-item,
     .hb-hor-item, .work-group-title, .grp-h, .subnav, .ctx-body, .runlog, .k-doc, .c-trace-panel, .af-tools-drawer,
