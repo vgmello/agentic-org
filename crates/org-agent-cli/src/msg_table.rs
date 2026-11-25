@@ -639,7 +639,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "send",
-        summary: "Send a message to a member or #channel",
+        summary: "Send DM or #channel message",
         call: "chat.send",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -657,7 +657,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "ask",
-        summary: "Send a structured ask with bounded wait",
+        summary: "Send structured ask (bounded wait)",
         call: "chat.ask",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -675,7 +675,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "withdraw",
-        summary: "Withdraw an open structured ask",
+        summary: "Withdraw open structured ask",
         call: "msg.withdraw",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -693,7 +693,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "reply",
-        summary: "Reply to a message or answer an ask",
+        summary: "Reply to message or ask",
         call: "msg.reply",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -711,7 +711,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "accept",
-        summary: "Accept a handoff message addressed to the caller",
+        summary: "Accept a handoff addressed to you",
         call: "msg.accept",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -729,7 +729,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "inbox",
-        summary: "List inbox items addressed to the caller with delivery reasons",
+        summary: "List inbox items and delivery reasons",
         call: "chat.inbox",
         kind: Kind::List,
         input: MSG_INBOX_INPUT,
@@ -744,7 +744,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "read",
-        summary: "Read a message or claim next unread",
+        summary: "Read message or claim next unread",
         call: "msg.read",
         kind: Kind::Read,
         input: MSG_READ_INPUT,
@@ -759,7 +759,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "list",
-        summary: "List messages in a channel, conversation, or thread",
+        summary: "List channel, DM, or thread messages",
         call: "chat.messages",
         kind: Kind::List,
         input: MSG_LIST_INPUT,
@@ -774,7 +774,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "done",
-        summary: "Mark a message done in the caller's triage state",
+        summary: "Mark inbox message done",
         call: "msg.done",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -828,7 +828,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "msg",
         verb: "wait",
-        summary: "Wait for a matching message (up to 90s)",
+        summary: "Wait for message or ask (<=90s)",
         call: "msg.wait",
         kind: Kind::Read,
         input: MSG_WAIT_INPUT,
@@ -843,7 +843,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "channel",
         verb: "list",
-        summary: "List channels visible to the caller",
+        summary: "List visible channels",
         call: "chat.channels",
         kind: Kind::List,
         input: CHANNEL_LIST_INPUT,
@@ -894,7 +894,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "channel",
         verb: "summarize",
-        summary: "Summarize a channel question (ADR-0024)",
+        summary: "Summarize channel Q&A",
         call: "chat.channel_summarize",
         kind: Kind::Read,
         input: CHANNEL_SUMMARIZE_INPUT,
@@ -909,7 +909,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "status",
         verb: "set",
-        summary: "Set the bound agent's short live status line",
+        summary: "Set live status line",
         call: "status.set",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -927,7 +927,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "status",
         verb: "clear",
-        summary: "Clear the bound agent's live status line",
+        summary: "Clear live status line",
         call: "status.set",
         kind: Kind::Write {
             ack: Ack::Committed,

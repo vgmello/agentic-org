@@ -24,12 +24,15 @@ use super::office_command::{connect_cli_session, end_session, AskPassword, Targe
 use super::{registered, say};
 
 /// Help text for `agentic-org org`.
-pub const HELP: &str = "agentic-org org <subcommand>\n\n\
+pub const HELP: &str = "agentic-org org <subcommand>\n\
+Use when: creating an organization and its HQ office on this host, or listing visible organizations.\n\n\
 Subcommands:\n  \
 create <name> --slug <slug> --repo <https://...|ssh://...> [--branch <state_branch>] [--login <login>] [--name <instance>] [--no-wait] [--json]\n      \
-Create a new organization and its HQ office on this host (default branch: main)\n  \
+Create a new organization and its HQ office on this host (default branch: main)\n      \
+Use when: bootstrapping a new organization on an HQ instance from a remote Git repository.\n  \
 list [--login <login>] [--name <instance>] [--json]\n      \
-List organizations visible to the account and any creates in flight\n\n\
+List organizations visible to the account and any creates in flight\n      \
+Use when: looking up org/HQ IDs or checking the status of an in-flight organization create.\n\n\
 When --login is omitted, uses the local authless session if authentication is disabled,\n\
 or prints a browser approval link to stderr when authentication is enabled.";
 
@@ -331,5 +334,14 @@ mod tests {
         })
         .unwrap_err();
         assert!(bad_repo.contains("invalid organization plan"), "{bad_repo}");
+    }
+
+    #[test]
+    fn help_includes_use_when_guidance_for_each_subcommand() {
+        assert!(HELP.contains("create ") && HELP.contains("list "));
+        assert!(
+            HELP.matches("Use when:").count() >= 3,
+            "expected command + 2 subcommand Use when cues:\n{HELP}"
+        );
     }
 }

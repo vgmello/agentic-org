@@ -32,7 +32,10 @@ use super::{connect_verified, not_running, registered_with_origin, say};
 
 /// The command's help.
 pub const HELP: &str = "agentic-org admin tls set --cert <file> --key <file> --login <login> \
-[--name <instance>]\nReplaces the TLS certificate and key of an instance whose browser listener \
+[--name <instance>]\n\
+Use when: installing or rotating an HTTPS instance's browser PEM certificate chain and private \
+key without restarting the host.\n\
+Replaces the TLS certificate and key of an instance whose browser listener \
 is https, without restarting it, and prints the new certificate's SHA-256 fingerprint. The \
 files are PEM: the certificate chain, leaf first, and an unencrypted private key; they must \
 name the instance's host and be valid now. Asks for the administrator's password at the \
@@ -190,4 +193,15 @@ pub(crate) fn set(
 
 fn shown(name: Option<&str>) -> &str {
     name.unwrap_or("default")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HELP;
+
+    #[test]
+    fn admin_tls_set_help_includes_use_when_guidance() {
+        assert!(HELP.contains("Use when:"), "{HELP}");
+        assert!(HELP.contains("admin tls set"), "{HELP}");
+    }
 }

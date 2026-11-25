@@ -233,7 +233,7 @@ pub const PROCESS_COMMANDS: &[Command] = &[
     Command {
         resource: "process",
         verb: "list",
-        summary: "List effective processes and standards",
+        summary: "List effective processes/standards",
         call: "process.effective",
         kind: Kind::List,
         input: PROCESS_LIST_INPUT,
@@ -248,7 +248,7 @@ pub const PROCESS_COMMANDS: &[Command] = &[
     Command {
         resource: "process",
         verb: "inspect",
-        summary: "Read a process/standard or its --why chain",
+        summary: "Read process/standard or --why chain",
         call: "process.show",
         kind: Kind::Read,
         input: PROCESS_INSPECT_INPUT,
@@ -263,7 +263,7 @@ pub const PROCESS_COMMANDS: &[Command] = &[
     Command {
         resource: "process",
         verb: "create",
-        summary: "Create a process or standard",
+        summary: "Create process/standard",
         call: "process.write",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -281,7 +281,7 @@ pub const PROCESS_COMMANDS: &[Command] = &[
     Command {
         resource: "process",
         verb: "update",
-        summary: "Update a process or standard",
+        summary: "Update process/standard",
         call: "process.write",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -299,7 +299,7 @@ pub const PROCESS_COMMANDS: &[Command] = &[
     Command {
         resource: "skill",
         verb: "list",
-        summary: "List built-in product skills",
+        summary: "List built-in skills",
         call: "skill.list",
         kind: Kind::List,
         input: &[],
@@ -314,7 +314,7 @@ pub const PROCESS_COMMANDS: &[Command] = &[
     Command {
         resource: "skill",
         verb: "read",
-        summary: "Read a built-in product skill",
+        summary: "Read built-in skill",
         call: "skill.read",
         kind: Kind::Read,
         input: SKILL_READ_INPUT,

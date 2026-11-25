@@ -31,32 +31,45 @@ use super::{connect_verified, not_running, registered, say};
 use crate::human::Wire;
 
 /// Help text for `agentic-org office`.
-pub const HELP: &str = "agentic-org office <subcommand>\n\n\
+pub const HELP: &str = "agentic-org office <subcommand>\n\
+Use when: inspecting offices, restarting an offline office, or managing HQ/satellite mTLS federation.\n\n\
 Subcommands:\n  \
 list [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
-List offices visible to the account with their live readiness status\n  \
+List offices visible to the account with their live readiness status\n      \
+Use when: finding office IDs, HQ/satellite roles, or checking live readiness and crash backoff.\n  \
 restart <office_id> [--login <login>] [--name <instance>] [--json]\n      \
-Restart an offline or unavailable office (requires administrator or organization owner)\n  \
+Restart an offline or unavailable office (requires administrator or organization owner)\n      \
+Use when: recovering an offline or crashed office without restarting the whole host.\n  \
 invite <office_name> --address <host:port> [--address <host:port>...] [--org <org_id>] [--ttl <secs>] [--re-enroll-office <office_id>] [--login <login>] [--name <instance>] [--json]\n      \
-Create a one-time satellite office invitation on HQ (owner-only)\n  \
+Create a one-time satellite office invitation on HQ (owner-only)\n      \
+Use when: starting satellite enrollment from HQ (or re-enrollment with --re-enroll-office).\n  \
 invitations [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
-List satellite office invitations on HQ with status and expiry (check codes appear only on the satellite)\n  \
+List satellite office invitations on HQ with status and expiry (check codes appear only on the satellite)\n      \
+Use when: inspecting pending or expired satellite invitations on HQ before approving or cancelling.\n  \
 approve <invitation_id> --code <check_code> [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
-Approve a pending satellite enrollment on HQ using its check code\n  \
+Approve a pending satellite enrollment on HQ using its check code\n      \
+Use when: completing satellite enrollment on HQ after reading the out-of-band check code from the satellite.\n  \
 decline <invitation_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
-Decline an active satellite invitation on HQ\n  \
+Decline an active satellite invitation on HQ\n      \
+Use when: rejecting a pending satellite join request on HQ.\n  \
 cancel <invitation_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
-Cancel an active satellite invitation on HQ\n  \
+Cancel an active satellite invitation on HQ\n      \
+Use when: revoking an unused satellite invitation on HQ before approval completes.\n  \
 remove <office_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
-Revoke a satellite office's certificates and remove it on HQ\n  \
+Revoke a satellite office's certificates and remove it on HQ\n      \
+Use when: decommissioning a satellite office from HQ and revoking its Org-CA mTLS certificates.\n  \
 sync-status [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]\n      \
-Show live replication and federation sync status for an HQ or satellite office\n  \
+Show live replication and federation sync status for an HQ or satellite office\n      \
+Use when: verifying live mTLS federation and replication health on HQ or a satellite.\n  \
 join (--invitation-file <path> | --invitation-stdin) --yes [--login <login>] [--name <instance>] [--json]\n      \
-Join this host as a satellite office using an HQ-issued invitation token\n  \
+Join this host as a satellite office using an HQ-issued invitation token\n      \
+Use when: enrolling this remote host as a new satellite office using an HQ invitation token.\n  \
 remove-pending <office_id> [--login <login>] [--name <instance>] [--json]\n      \
-Cancel and remove a pending satellite join before approval completes\n  \
+Cancel and remove a pending satellite join before approval completes\n      \
+Use when: aborting an unapproved join on the satellite host before HQ approves it.\n  \
 re-enroll <office_id> (--invitation-file <path> | --invitation-stdin) --yes [--login <login>] [--name <instance>] [--json]\n      \
-Re-enroll an existing satellite onto a replacement HQ after R1 import (D25)\n\n\
+Re-enroll an existing satellite onto a replacement HQ after R1 import (D25)\n      \
+Use when: reconnecting an existing satellite office to a replacement HQ after Git import.\n\n\
 When --login is omitted, uses the local authless session if authentication is disabled,\n\
 or prints a browser approval link to stderr when authentication is enabled.";
 
@@ -600,5 +613,14 @@ mod tests {
             "{line}"
         );
         assert!(!line.contains("should-never-appear"), "{line}");
+    }
+
+    #[test]
+    fn help_includes_use_when_guidance_for_every_subcommand() {
+        assert!(
+            super::HELP.matches("Use when:").count() >= 13,
+            "expected command + 12 subcommand Use when cues:\n{}",
+            super::HELP
+        );
     }
 }
