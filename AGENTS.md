@@ -194,9 +194,6 @@ Until the product can carry the team's own coordination (see the goal above), co
 - When the parent `agentic-org-project` overlay is attached (providing `.agents/skills/caveman/SKILL.md`), delegated sessions read and apply it before their first response (delegate-only, never the main lead's voice; never reduces scope, tests, or review depth).
 - Include the skill reference (or text if file reads are unavailable) and delegate-only scope in every dispatch. Source changes invalidate old packets—resolve current guidance before subsequent assignments.
 
-## Tailwind Plus (licensed UI)
-The app's look uses Tailwind Plus components, which the licence allows in our open-source end product. **Allowed:** using or modifying them (including converting them to Svelte) **inside the product UI application (`apps/agentic-org-ui`)**. **Not allowed:** publishing them separately (a shared UI kit or component package, a template or starter, a Figma kit), or building a website-builder or admin-panel product from them. Never move them into `crates/` or a standalone package.
-
 ## Backlog.md Workflow (Parent Maintainer Workspace Only)
 
 When working inside the parent **`agentic-org-project`** workspace (where a sibling/parent `backlog/` store exists), run all `backlog` CLI commands from that parent repository root—never inside this standalone code checkout. Standalone open-source clones do not include `backlog/` and can skip this section.

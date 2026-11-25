@@ -31,7 +31,6 @@ bun run build
 - Include tests for new behavior and regression tests for bug fixes. Never write to a real user's organization directory from tests—always use temporary directories.
 - Keep pull request descriptions concise using the repository PR template (**Why**, **What**, **Notes**, **Breaking changes**).
 - Do not commit secrets, credentials, or personal local paths. Run `gitleaks git --redact` if you have Gitleaks installed.
-- Note on UI components: `apps/agentic-org-ui` currently contains Tailwind Plus-derived UI patterns covered by a separate third-party carve-out (see [NOTICE](NOTICE)); do not extract them into standalone crates or packages.
 
 ## Licensing of Contributions (Contributor License Grant)
 

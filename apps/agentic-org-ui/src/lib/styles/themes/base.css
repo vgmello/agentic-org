@@ -554,7 +554,7 @@ html[data-ui-theme='ocean'] {
 }
 
 /*
- * Light-scheme readability bridge for existing Tailwind Plus screens (/projects, /work,
+ * Light-scheme readability bridge for legacy dark-first screens (/projects, /work,
  * /offices, /org-chart, /agents, /chat, /processes) whenever ANY light theme (Report) is active.
  */
 html.light {
