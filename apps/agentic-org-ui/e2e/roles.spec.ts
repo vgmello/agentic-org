@@ -483,3 +483,28 @@ test('RL-3: reopening Ask HR after a failure keeps the text and clears the old r
 	await expect(page.getByLabel('What should this role do?')).toHaveValue('Keep releases moving');
 	await expect(dialog.getByRole('alert')).toHaveCount(0);
 });
+
+test('cross-tab sign-out closes and clears an open role draft immediately', async ({
+	page,
+	context
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/roles');
+	await page.getByRole('button', { name: 'New role…' }).click();
+	await expect(editor(page)).toBeVisible();
+	await editor(page).getByLabel('Name').fill('Confidential Role');
+	await editor(page).getByLabel('Text').fill('Secret draft body');
+
+	// Sign out from a second tab via the real account menu; BroadcastChannel ends Tab 1's session.
+	const otherTab = await context.newPage();
+	await visit(otherTab, '/settings/roles');
+	await otherTab.getByRole('button', { name: 'You · Owner' }).click();
+	await otherTab.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
+	await expect(otherTab).toHaveURL(/\/sign-in/);
+
+	// Tab 1's open role editor must close and drop its draft text without leaking to the next caller.
+	await expect(editor(page)).toBeHidden();
+	await expect(page.locator('body')).not.toContainText('Confidential Role');
+	await expect(page.locator('body')).not.toContainText('Secret draft body');
+	await otherTab.close();
+});

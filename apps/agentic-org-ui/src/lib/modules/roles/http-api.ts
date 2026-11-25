@@ -39,6 +39,7 @@ const SESSION_CHANGED_ERROR: AppError = {
 	code: 'not_authorized',
 	message: 'Your session changed. Sign in and try again.'
 };
+const MAX_RESOLVED_ATTEMPTS = 64;
 
 type SessionToken = {
 	caller: string;
@@ -58,6 +59,8 @@ type PendingCreate = {
 	submitted: SubmittedRolePayload;
 	dispatched?: boolean;
 	committedRevision?: number;
+	inFlight?: Promise<unknown>;
+	resolved?: Role;
 };
 
 type PendingUpdate = {
@@ -66,6 +69,8 @@ type PendingUpdate = {
 	submitted: SubmittedRolePayload;
 	dispatched?: boolean;
 	committedRevision?: number;
+	inFlight?: Promise<unknown>;
+	resolved?: Role;
 };
 
 export interface HttpRolesApi extends RolesApi {
@@ -223,6 +228,34 @@ function deleteIfCurrent<T>(map: Map<string, T>, key: string | undefined, expect
 	if (key && map.get(key) === expected) map.delete(key);
 }
 
+function pruneResolved<T extends { resolved?: Role; inFlight?: Promise<unknown> }>(
+	map: Map<string, T>
+): void {
+	let settled = 0;
+	for (const entry of map.values()) {
+		if (entry.resolved && !entry.inFlight) settled++;
+	}
+	if (settled <= MAX_RESOLVED_ATTEMPTS) return;
+	for (const [key, entry] of map) {
+		if (settled <= MAX_RESOLVED_ATTEMPTS) break;
+		if (entry.resolved && !entry.inFlight) {
+			map.delete(key);
+			settled--;
+		}
+	}
+}
+
+function runTracked<T extends { inFlight?: Promise<unknown> }, R>(
+	entry: T,
+	fn: () => Promise<R>
+): Promise<R> {
+	const task = fn().finally(() => {
+		if (entry.inFlight === task) entry.inFlight = undefined;
+	});
+	entry.inFlight = task;
+	return task;
+}
+
 /**
  * Production HTTP adapter for Organization settings › Roles (`FC-108`, `TASK-41`).
  * Talks directly to `/api/v1/organizations/{org}/roles*` and fails closed when unavailable.
@@ -267,6 +300,24 @@ export function createHttpRolesApi({
 
 	function assertSameSession(session: SessionToken): void {
 		if (!isSameSession(session)) throw SESSION_CHANGED_ERROR;
+	}
+
+	async function settleInFlight<T extends { inFlight?: Promise<unknown> }>(
+		map: Map<string, T>,
+		attemptKey: string | undefined,
+		session: SessionToken
+	): Promise<T | undefined> {
+		let existing = attemptKey ? map.get(attemptKey) : undefined;
+		while (existing?.inFlight) {
+			try {
+				await existing.inFlight;
+			} catch {
+				/* Re-inspect the settled attempt below in this caller's session. */
+			}
+			assertSameSession(session);
+			existing = attemptKey ? map.get(attemptKey) : undefined;
+		}
+		return existing;
 	}
 
 	async function readGateway(path: string, fallbackMessage: string): Promise<GatewayReply> {
@@ -501,8 +552,43 @@ export function createHttpRolesApi({
 			},
 			session
 		);
-		deleteIfCurrent(pendingUpdates, attemptKey, existing);
+		existing.submitted = desired;
+		existing.committedRevision = followUp.revision;
+		existing.resolved = followUp;
+		pruneResolved(pendingUpdates);
 		return { resolved: followUp };
+	}
+
+	async function runInitialUpdate(
+		organizationId: string,
+		roleId: string,
+		expectedRevision: number,
+		desired: SubmittedRolePayload,
+		attempt: PendingUpdate,
+		attemptKey: string | undefined,
+		session: SessionToken,
+		fallback: string
+	): Promise<Role> {
+		const ack = await submitRoleUpdate(
+			organizationId,
+			roleId,
+			expectedRevision,
+			attempt,
+			attemptKey,
+			session,
+			fallback
+		);
+		attempt.committedRevision = ack.revision;
+		assertSameSession(session);
+		const authoritative = await fetchAuthoritativeRole(organizationId, ack.id);
+		assertSameSession(session);
+		const role =
+			authoritative && authoritative.revision === ack.revision
+				? authoritative
+				: buildFallbackRole(ack, desired, authoritative?.created);
+		attempt.resolved = role;
+		pruneResolved(pendingUpdates);
+		return role;
 	}
 
 	async function updateRoleInSession(
@@ -524,21 +610,25 @@ export function createHttpRolesApi({
 				])
 			: undefined;
 
-		let existing = attemptKey ? pendingUpdates.get(attemptKey) : undefined;
+		let existing = await settleInFlight(pendingUpdates, attemptKey, session);
+		if (existing?.resolved && samePayload(existing.submitted, desired)) return existing.resolved;
 		if (
 			attemptKey &&
 			existing &&
 			(existing.committedRevision !== undefined || !samePayload(existing.submitted, desired))
 		) {
-			const outcome = await resolveChangedPendingUpdate(
-				organizationId,
-				roleId,
-				edit,
-				desired,
-				existing,
-				attemptKey,
-				session,
-				fallback
+			const current = existing;
+			const outcome = await runTracked(current, () =>
+				resolveChangedPendingUpdate(
+					organizationId,
+					roleId,
+					edit,
+					desired,
+					current,
+					attemptKey,
+					session,
+					fallback
+				)
 			);
 			if ('resolved' in outcome) return outcome.resolved;
 			existing = undefined;
@@ -552,25 +642,44 @@ export function createHttpRolesApi({
 		};
 		if (attemptKey) pendingUpdates.set(attemptKey, attempt);
 
-		const ack = await submitRoleUpdate(
-			organizationId,
-			roleId,
-			edit.expectedRevision,
-			attempt,
-			attemptKey,
-			session,
-			fallback
+		return runTracked(attempt, () =>
+			runInitialUpdate(
+				organizationId,
+				roleId,
+				edit.expectedRevision,
+				desired,
+				attempt,
+				attemptKey,
+				session,
+				fallback
+			)
 		);
-		deleteIfCurrent(pendingUpdates, attemptKey, attempt);
-		assertSameSession(session);
-		const authoritative = await fetchAuthoritativeRole(organizationId, ack.id);
-		assertSameSession(session);
-		if (authoritative && authoritative.revision === ack.revision) return authoritative;
-		return buildFallbackRole(ack, desired, authoritative?.created);
 	}
 
 	async function updateRole(organizationId: string, roleId: string, edit: RoleEdit): Promise<Role> {
 		return updateRoleInSession(organizationId, roleId, edit, currentSessionToken());
+	}
+
+	async function runInitialCreate(
+		organizationId: string,
+		desired: SubmittedRolePayload,
+		attempt: PendingCreate,
+		attemptKey: string | undefined,
+		session: SessionToken,
+		fallback: string
+	): Promise<Role> {
+		const ack = await submitRoleCreate(organizationId, attempt, attemptKey, session, fallback);
+		attempt.committedRevision = ack.revision;
+		assertSameSession(session);
+		const authoritative = await fetchAuthoritativeRole(organizationId, ack.id);
+		assertSameSession(session);
+		const role =
+			authoritative && authoritative.revision === ack.revision
+				? authoritative
+				: buildFallbackRole(ack, desired);
+		attempt.resolved = role;
+		pruneResolved(pendingCreates);
+		return role;
 	}
 
 	async function resolveChangedPendingCreate(
@@ -607,11 +716,14 @@ export function createHttpRolesApi({
 				{
 					...desired,
 					expectedRevision: existing.committedRevision,
-					attemptId: `${draft.attemptId}:followup`
+					attemptId: `${draft.attemptId}:rev:${existing.committedRevision}`
 				},
 				session
 			);
-			deleteIfCurrent(pendingCreates, attemptKey, existing);
+			existing.submitted = desired;
+			existing.committedRevision = updated.revision;
+			existing.resolved = updated;
+			pruneResolved(pendingCreates);
 			return { resolved: updated };
 		} catch (err) {
 			assertSameSession(session);
@@ -722,20 +834,24 @@ export function createHttpRolesApi({
 				? JSON.stringify([session.caller, organizationId, draft.attemptId])
 				: undefined;
 
-			let existing = attemptKey ? pendingCreates.get(attemptKey) : undefined;
+			let existing = await settleInFlight(pendingCreates, attemptKey, session);
+			if (existing?.resolved && samePayload(existing.submitted, desired)) return existing.resolved;
 			if (
 				attemptKey &&
 				existing &&
 				(existing.committedRevision !== undefined || !samePayload(existing.submitted, desired))
 			) {
-				const outcome = await resolveChangedPendingCreate(
-					organizationId,
-					draft,
-					desired,
-					existing,
-					attemptKey,
-					session,
-					fallback
+				const current = existing;
+				const outcome = await runTracked(current, () =>
+					resolveChangedPendingCreate(
+						organizationId,
+						draft,
+						desired,
+						current,
+						attemptKey,
+						session,
+						fallback
+					)
 				);
 				if ('resolved' in outcome) return outcome.resolved;
 				existing = undefined;
@@ -750,13 +866,9 @@ export function createHttpRolesApi({
 			};
 			if (attemptKey) pendingCreates.set(attemptKey, attempt);
 
-			const ack = await submitRoleCreate(organizationId, attempt, attemptKey, session, fallback);
-			deleteIfCurrent(pendingCreates, attemptKey, attempt);
-			assertSameSession(session);
-			const authoritative = await fetchAuthoritativeRole(organizationId, ack.id);
-			assertSameSession(session);
-			if (authoritative && authoritative.revision === ack.revision) return authoritative;
-			return buildFallbackRole(ack, desired);
+			return runTracked(attempt, () =>
+				runInitialCreate(organizationId, desired, attempt, attemptKey, session, fallback)
+			);
 		},
 
 		update: updateRole,

@@ -93,6 +93,7 @@
 	/** Set by Cancel and by a confirmed save: this close leaves nothing to keep. */
 	let discarding = false;
 	let confirmedSave = false;
+	let unmounted = false;
 
 	let nameField = $state<HTMLElement | null>(null);
 	let keyField = $state<HTMLElement | null>(null);
@@ -133,9 +134,9 @@
 		open = true;
 	}
 
-	/** What was typed differs from what the editor opened with (or an uncertain attempt still needs reconciliation). */
+	/** What was typed differs from what the editor opened with (or an uncertain/in-flight attempt still needs reconciliation). */
 	function typed(): boolean {
-		if (hasUncertainAttempt) return true;
+		if (hasUncertainAttempt || busy) return true;
 		const draft = normalizeDraft({ name, key, bodyMarkdown: body });
 		if (editing) return !!latest || !unchanged(editing, draft);
 		const initial = mode.kind === 'new' ? mode.draft : undefined;
@@ -155,6 +156,24 @@
 		return appSession.sessionGeneration === editorSessionGeneration;
 	}
 
+	function resetOnSessionEnd() {
+		discarding = true;
+		confirmedSave = false;
+		discardDraft(slot);
+		name = '';
+		key = '';
+		body = '';
+		errors = {};
+		failure = undefined;
+		notice = undefined;
+		latest = undefined;
+		conflictMessage = '';
+		attemptId = '';
+		hasUncertainAttempt = false;
+		restored = false;
+		open = false;
+	}
+
 	function keepOrDiscard() {
 		const shouldKeep = !discarding && !confirmedSave && isSameEditorSession() && typed();
 		if (shouldKeep)
@@ -166,7 +185,7 @@
 				latest,
 				conflictMessage,
 				attemptId,
-				hasUncertainAttempt
+				hasUncertainAttempt: hasUncertainAttempt || busy
 			});
 		else discardDraft(slot);
 		discarding = false;
@@ -185,8 +204,12 @@
 				if (!busy) open = false;
 			});
 	});
+	// Cross-tab sign-out or account switch closes and clears any mounted draft immediately;
+	// same-account reauthentication does not fire onSessionEnded, so the draft stays intact.
+	$effect(() => appSession.onSessionEnded(resetOnSessionEnd));
 	// Leaving the page with the sheet open keeps the text, as Back does.
 	$effect(() => () => {
+		unmounted = true;
 		if (open) keepOrDiscard();
 	});
 
@@ -247,9 +270,49 @@
 		failure = err.message;
 	}
 
+	async function executeSave(draft: RoleDraft) {
+		busy = true;
+		failure = undefined;
+		const saveSlot = slot;
+		const wasCreating = !editing;
+		const currentAttempt = attemptId || (attemptId = newStableId());
+		try {
+			const saved = editing
+				? await rolesApi.update(organizationId, editing.id, {
+						...draft,
+						expectedRevision,
+						attemptId: currentAttempt
+					})
+				: await rolesApi.create(organizationId, { ...draft, attemptId: currentAttempt });
+			if (unmounted) {
+				if (keptDraft(saveSlot)?.attemptId === currentAttempt) discardDraft(saveSlot);
+				return;
+			}
+			if (!isSameEditorSession()) {
+				resetOnSessionEnd();
+				return;
+			}
+			confirmedSave = true;
+			discarding = true;
+			hasUncertainAttempt = false;
+			discardDraft(saveSlot);
+			open = false;
+			onsaved(saved, wasCreating);
+		} catch (e) {
+			if (unmounted || !isSameEditorSession()) return;
+			handleSubmitError(e, saveSlot);
+		} finally {
+			if (!unmounted) busy = false;
+		}
+	}
+
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
 		if (busy) return;
+		if (!isSameEditorSession()) {
+			resetOnSessionEnd();
+			return;
+		}
 		const draft = normalizeDraft({ name, key, bodyMarkdown: body });
 		errors = checkDraft(draft);
 		notice = undefined;
@@ -260,37 +323,14 @@
 			notice = NOTHING_TO_SAVE;
 			return;
 		}
-		busy = true;
-		failure = undefined;
-		const saveSlot = slot;
-		const wasCreating = !editing;
-		try {
-			const currentAttempt = attemptId || (attemptId = newStableId());
-			const saved = editing
-				? await rolesApi.update(organizationId, editing.id, {
-						...draft,
-						expectedRevision,
-						attemptId: currentAttempt
-					})
-				: await rolesApi.create(organizationId, { ...draft, attemptId: currentAttempt });
-			confirmedSave = true;
-			discarding = true;
-			hasUncertainAttempt = false;
-			discardDraft(saveSlot);
-			open = false;
-			onsaved(saved, wasCreating);
-		} catch (e) {
-			handleSubmitError(e, saveSlot);
-		} finally {
-			busy = false;
-		}
+		await executeSave(draft);
 	}
 </script>
 
 <!-- A click outside or Escape doesn't dismiss the sheet while the role is being saved. -->
 <Sheet
 	bind:open
-	onOpenChange={(next) => !next && busy && (open = true)}
+	onOpenChange={(next) => !next && busy && isSameEditorSession() && (open = true)}
 	onOpenChangeComplete={(next) => !next && keepOrDiscard()}
 >
 	<SheetContent

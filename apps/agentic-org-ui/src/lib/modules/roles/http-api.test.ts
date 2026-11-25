@@ -1003,4 +1003,106 @@ describe('createHttpRolesApi', () => {
 			revision: 3
 		});
 	});
+
+	it('coalesces and reuses an acknowledged create/update across the readback gap so reopening a draft never duplicates', async () => {
+		let seq = 1;
+		const nextId = () => `0193a5c0-0000-7000-8000-0000000007${String(seq++).padStart(2, '0')}`;
+		let releaseReadback!: () => void;
+		const readbackGate = new Promise<void>((resolve) => {
+			releaseReadback = resolve;
+		});
+
+		const submit = vi
+			.fn()
+			// 1. Initial create commits as 0702 rev 1.
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: { id: '0193a5c0-0000-7000-8000-000000000702', revision: 1, generation: 50 }
+				}
+			})
+			// 2. Edited retry against the same attemptId updates 0702 in place to rev 2.
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: { id: '0193a5c0-0000-7000-8000-000000000702', revision: 2, generation: 51 }
+				}
+			});
+
+		let readCount = 0;
+		const read = vi.fn(async (path: string) => {
+			readCount++;
+			if (readCount === 1) await readbackGate;
+			if (path.includes('/roles/0193a5c0-0000-7000-8000-000000000702')) {
+				return {
+					status: 200,
+					body: {
+						result: {
+							id: '0193a5c0-0000-7000-8000-000000000702',
+							name: 'Analyst',
+							body: readCount === 1 ? 'First.' : 'Edited.',
+							revision: readCount === 1 ? 1 : 2
+						}
+					}
+				};
+			}
+			return Promise.reject(new Error('offline'));
+		});
+
+		const api = createHttpRolesApi({
+			http: { read, submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			sessionScope: () => 'inst-1:acct-a',
+			sessionGeneration: () => 1,
+			newCommandId: nextId,
+			newEntityId: nextId
+		});
+
+		const firstCall = api.create(ORG, {
+			name: 'Analyst',
+			bodyMarkdown: 'First.',
+			attemptId: 'att-readback-gap'
+		});
+		// Allow POST /roles to resolve and enter fetchAuthoritativeRole (which pauses on readbackGate).
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(submit).toHaveBeenCalledTimes(1);
+
+		// Reopened editor submits the SAME attemptId during the readback gap!
+		const concurrentCall = api.create(ORG, {
+			name: 'Analyst',
+			bodyMarkdown: 'First.',
+			attemptId: 'att-readback-gap'
+		});
+		releaseReadback();
+
+		const [firstRole, concurrentRole] = await Promise.all([firstCall, concurrentCall]);
+		expect(submit).toHaveBeenCalledTimes(1);
+		expect(firstRole.id).toBe('0193a5c0-0000-7000-8000-000000000702');
+		expect(concurrentRole).toEqual(firstRole);
+
+		// A post-readback retry with the same attemptId and identical text also reuses the acknowledged result.
+		const postReadbackSame = await api.create(ORG, {
+			name: 'Analyst',
+			bodyMarkdown: 'First.',
+			attemptId: 'att-readback-gap'
+		});
+		expect(submit).toHaveBeenCalledTimes(1);
+		expect(postReadbackSame).toEqual(firstRole);
+
+		// A post-readback retry with EDITED text updates the committed role in place rather than posting a duplicate.
+		const edited = await api.create(ORG, {
+			name: 'Analyst',
+			bodyMarkdown: 'Edited.',
+			attemptId: 'att-readback-gap'
+		});
+		expect(submit).toHaveBeenCalledTimes(2);
+		expect(submit.mock.calls[1]?.[0]).toBe(`/api/v1/organizations/${ORG}/roles/update`);
+		expect(submit.mock.calls[1]?.[1]).toMatchObject({
+			role_id: '0193a5c0-0000-7000-8000-000000000702',
+			expected_version: 1,
+			body: 'Edited.'
+		});
+		expect(edited.revision).toBe(2);
+	});
 });
