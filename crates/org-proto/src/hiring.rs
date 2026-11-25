@@ -18,7 +18,15 @@ pub struct RoleRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_by_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_by_id: Option<String>,
 }
 
 /// Proposal payload carried on hire requests and confirmations.

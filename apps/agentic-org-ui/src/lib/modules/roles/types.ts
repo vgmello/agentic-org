@@ -98,6 +98,8 @@ export interface RoleDraft {
 	/** Empty or missing: no key. */
 	key?: string;
 	bodyMarkdown: string;
+	/** Optional client-local logical-save correlation token for safe idempotent retries. */
+	attemptId?: string;
 }
 
 export interface RoleEdit extends RoleDraft {
@@ -107,3 +109,19 @@ export interface RoleEdit extends RoleDraft {
 
 /** A refusal tied to one field of the editor (`already_exists` key, `invalid_name`…). */
 export type RoleField = 'name' | 'key' | 'body';
+
+/**
+ * What the Roles screens read and change (roles-ux §1). Every change is authorized and revision-checked by the
+ * server. Refusals reject with an AppError; a refusal about one editor field also carries `field`
+ * (`name`, `key` or `body`), and a revision conflict (`conflict`) carries `latest`, the role as it is now.
+ */
+export interface RolesApi {
+	list(organizationId: string): Promise<RolesOverview>;
+	/** Rejects with `not_found` when there is no such role. */
+	role(organizationId: string, roleId: string): Promise<RoleDetail>;
+	create(organizationId: string, draft: RoleDraft): Promise<Role>;
+	/** Writes revision `expectedRevision + 1`; rejects with `conflict` and `latest` when the role moved on. */
+	update(organizationId: string, roleId: string, edit: RoleEdit): Promise<Role>;
+	/** The HR lead drafts a role from a description. Nothing is created: the person reviews the draft first. */
+	askHrToDraft(organizationId: string, description: string): Promise<RoleDraft>;
+}

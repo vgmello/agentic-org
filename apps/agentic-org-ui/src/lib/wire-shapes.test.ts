@@ -49,6 +49,7 @@ const keys = {
 		'name',
 		'handle',
 		'home_team_id',
+		'role_id',
 		'title_in_team',
 		'contact',
 		'owner',
@@ -117,7 +118,7 @@ describe('canonical office wire payloads shared with Rust', () => {
 		expectKeys(wire.snapshot, keys.snapshot, ['areas']);
 		expect(wire.snapshot).not.toHaveProperty('memberships');
 		const agent = wire.snapshot.members.find((member) => member.kind === 'agent');
-		expectKeys(agent, keys.member, ['contact', 'owner', 'created_at']);
+		expectKeys(agent, keys.member, ['role_id', 'contact', 'owner', 'created_at']);
 		expectKeys(agent?.agent, keys.profile, ['focus', 'model', 'schedule', 'home', 'offboarded_at']);
 		expectKeys(wire.snapshot.teams[0], keys.team, ['owner_team_id']);
 		expectKeys(wire.snapshot.projects[0], keys.project, [

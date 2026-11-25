@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Parent-repo backlog/ migration (2026-11-25, 885c0326); prior AX & Rust quality sessions on v1",
-  "rationale": "Re-anchored skill catalog after migrating .backlog/ out of the code repo into parent agentic-org-project/backlog/ (commit 885c0326): removed deleted .backlog/ evidence and phase paths while preserving full code-repo skill coverage (AGENTS.md, security-boundaries, rust-workspace, principal-ax-designer, ui-maintenance, kit-maintenance, hq-creation-provider, and docs/design/organization-data), and refreshed verified SHA-256 digests for updated AGENTS.md and principal-ax-designer/SKILL.md.",
+  "reviewed_by": "Consolidation into .agents/ (2026-11-25, 3c6b0187); prior backlog/ migration (885c0326) & AX/Rust sessions",
+  "rationale": "Re-anchored skill catalog after consolidating .agent-kit/.claude/.codex into .agents/ (commit 3c6b0187): replaced symlinked .codex/config.toml evidence path with canonical .agents/codex/config.toml, tightened AGENTS.md under the 24 KiB skill cap with all rules preserved, added canonical .agents/codex and .agents/agents path prefixes, and refreshed verified SHA-256 digests for the 5 evidence files updated by 3c6b0187.",
   "project_evidence": [
     {
       "path": ".agents/agent-kit/project-roles/code-reviewer.md",
@@ -22,11 +22,11 @@
     },
     {
       "path": ".agents/agent-kit/project-skills/hq-creation-provider/SKILL.md",
-      "sha256": "8c415b1df618756743687c5f83cc6f2eea8292d362d519cf25af2340d67bea9d"
+      "sha256": "8b788f9d4cdc22f646f19aa098cf13ba94bd49a351d76176192e4c1bd8b0cf41"
     },
     {
       "path": ".agents/agent-kit/project-skills/kit-maintenance/SKILL.md",
-      "sha256": "9034015870774e754825535ebd29dfc6093968278ac3fbbdad139d4a30e6139f"
+      "sha256": "fcaa8970e94b061c0655e3282ceeab8ddff992ac2827b97a397b83f215cf0b4f"
     },
     {
       "path": ".agents/agent-kit/project-skills/principal-ax-designer/SKILL.md",
@@ -34,7 +34,7 @@
     },
     {
       "path": ".agents/agent-kit/project-skills/rust-workspace/SKILL.md",
-      "sha256": "7e7d4ff5349f8bca9a8a51c4fc5c599b99f77f471bed3bf9e45352636de5ad1b"
+      "sha256": "40ecffcf954dec3ee20faffddf8eb95060650d5befb59bef991c4168b39387fc"
     },
     {
       "path": ".agents/agent-kit/project-skills/security-boundaries/SKILL.md",
@@ -51,6 +51,10 @@
     {
       "path": ".agents/agent-kit/tasks/v1-hq-creation-provider-source-grant.json",
       "sha256": "77bac99ef8ac2069ad0fafb054643063712700c0d2a7c2e59b90645c51f7b3b8"
+    },
+    {
+      "path": ".agents/codex/config.toml",
+      "sha256": "99ecbd78bc0698e05c8963c6e23aa189df8d34f8fab5a9647958364f711f4766"
     },
     {
       "path": ".agents/skills/caveman/SKILL.md",
@@ -73,16 +77,12 @@
       "sha256": "96e025333e54533a31d37f70c7094da8df8b89c3c622a70d7edbf6332b84da47"
     },
     {
-      "path": ".codex/config.toml",
-      "sha256": "44ea359a905970c2f36831b93397413f94d5e623f6b37038358e9c9b32366098"
-    },
-    {
       "path": ".github/workflows/ci.yml",
       "sha256": "1d55ebe0d6bd4c229e35fbb5ee5a134480318ac2542b911a744a6835191bd82b"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "a19f85550aef300256db80db917c731f11af1111dd7ef53a4b77b1a2b5b65409"
+      "sha256": "08dbba4e3078812b88221c45d3144e0b32fa36f19f34d09bf43f3ec1a8ba1117"
     },
     {
       "path": "Cargo.lock",
@@ -215,6 +215,8 @@
         "crates/org-process/src/skills.rs",
         "apps/agent-os",
         ".agents/agent-kit/project-skills/principal-ax-designer",
+        ".agents/agents/principal-ax-designer.md",
+        ".agents/codex/agents/principal-ax-designer.toml",
         ".claude/agents/principal-ax-designer.md",
         ".codex/agents/principal-ax-designer.toml"
       ],
@@ -336,6 +338,8 @@
       "description": "Project kit setup and truthful service/review evidence",
       "paths": [
         ".agents/agent-kit",
+        ".agents/codex",
+        ".agents/agents",
         ".codex",
         ".agents/skills",
         "AGENTS.md",

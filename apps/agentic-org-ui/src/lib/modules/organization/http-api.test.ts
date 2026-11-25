@@ -47,6 +47,73 @@ describe('createHttpOrgApi', () => {
 		expect(view.snapshot.teams).toHaveLength(1);
 	});
 
+	it('decodes valid UUIDv7 role_id on live snapshots and rejects malformed member fields', async () => {
+		const ROLE_ID = '0193a5c0-0000-7000-8000-000000000040';
+		const validSnap = {
+			position: { epoch: 1, seq: 3 },
+			teams: [{ id: PARENT, name: 'Example', version: 1 }],
+			members: [
+				{
+					id: MEMBER,
+					kind: 'agent',
+					name: 'Ada',
+					role_id: ROLE_ID,
+					version: 1
+				}
+			]
+		};
+		const read = vi
+			.fn()
+			.mockResolvedValueOnce({
+				status: 200,
+				body: { result: { snapshot: validSnap } }
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: {
+						snapshot: {
+							position: { epoch: 1, seq: 3 },
+							teams: [],
+							members: [{ id: MEMBER, kind: 'person', name: 'Bad', owner: 'false', version: 1 }]
+						}
+					}
+				}
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: {
+						snapshot: {
+							position: { epoch: 1, seq: 3 },
+							teams: [],
+							members: [{ id: MEMBER, kind: 'agent', name: 'Bad', role_id: 'not-uuid', version: 1 }]
+						}
+					}
+				}
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: { snapshot: validSnap },
+					error: { code: 'unavailable', message: 'contradictory' }
+				}
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					error: { code: 'not_authorized', message: 'session denied' }
+				}
+			});
+		const api = createHttpOrgApi({ http: { read, submit: vi.fn() }, instanceId: () => INSTANCE });
+		const ok = await api.view(ORG);
+		expect(ok.snapshot.members[0]?.role_id).toBe(ROLE_ID);
+		await expect(api.view(ORG)).rejects.toMatchObject({ source: 'api', code: 'unavailable' });
+		await expect(api.view(ORG)).rejects.toMatchObject({ source: 'api', code: 'unavailable' });
+		await expect(api.view(ORG)).rejects.toMatchObject({ source: 'api', code: 'unavailable' });
+		await expect(api.view(ORG)).rejects.toMatchObject({ source: 'api', code: 'unavailable' });
+	});
+
 	it('posts all 11 B2 organization mutations to their exact gateway routes with strict scope', async () => {
 		const submit = vi.fn().mockResolvedValue({
 			status: 200,

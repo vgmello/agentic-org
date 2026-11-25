@@ -669,10 +669,11 @@ const agentReader = object({
 });
 const memberReader = object({
 	id: text,
-	kind: word(['agent', 'person'] as const),
+	kind: (value) => openWord(['agent', 'person'] as const)(text(value)),
 	name: text,
 	handle: optional(text),
 	home_team_id: optional(text),
+	role_id: optional(operationId),
 	title_in_team: optional(text),
 	contact: optional(text),
 	owner: omittedFalse,

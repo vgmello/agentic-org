@@ -7,7 +7,12 @@ import {
 } from '$lib/proto';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { formatUuidV7 } from '$lib/platform/http/clock';
-import { readOperationId } from '$lib/platform/http/wire';
+import {
+	readJsonObject,
+	readOperationId,
+	readOrgSnapshot,
+	readResponse
+} from '$lib/platform/http/wire';
 import { ready, type OrgCommand, type OrgCommandInput } from './commands';
 import { normalizeKinds } from './model';
 import type { OrgApi } from './api';
@@ -40,19 +45,6 @@ function readAppError(
 		code: err ? asApiCode(err.code) : fallbackCode,
 		message: typeof err?.message === 'string' && err.message ? err.message : fallbackMessage
 	};
-}
-
-function isSnapshot(value: unknown): value is OrgSnapshot {
-	if (!value || typeof value !== 'object') return false;
-	const s = value as Partial<OrgSnapshot>;
-	return (
-		!!s.position &&
-		typeof s.position === 'object' &&
-		typeof s.position.epoch === 'number' &&
-		typeof s.position.seq === 'number' &&
-		Array.isArray(s.teams) &&
-		Array.isArray(s.members)
-	);
 }
 
 function prepareOrgCommand(input: OrgCommandInput | OrgCommand, newId: () => string): OrgCommand {
@@ -271,9 +263,14 @@ export function createHttpOrgApi({
 							: 'unavailable';
 				throw readAppError(reply.body, fallback, 'The organization could not be loaded.');
 			}
-			const root = reply.body as { result?: { snapshot?: unknown } } | null;
-			const snapshot = root?.result?.snapshot;
-			if (!isSnapshot(snapshot)) {
+			let snapshot: OrgSnapshot;
+			try {
+				const envelope = readResponse(reply.body, readJsonObject);
+				if ('error' in envelope) {
+					throw new Error('Unexpected error envelope on 200');
+				}
+				snapshot = readOrgSnapshot(envelope.result.snapshot);
+			} catch {
 				throw {
 					source: 'api',
 					code: 'unavailable',
