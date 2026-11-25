@@ -1,6 +1,6 @@
 import { isEditableTarget, isPlainKey, singleKeyShortcutsOn } from './shortcuts';
 
-export type NavKeyScope = 'sidebar' | 'inbox';
+export type NavKeyScope = 'sidebar' | 'inbox' | 'page';
 
 export interface NavKeyCandidate {
 	label: string;
@@ -40,6 +40,7 @@ export class NavKeyController {
 	mode = $state<NavKeyScope | null>(null);
 	hint = $state('');
 	#previousFocus: HTMLElement | null = null;
+	#activePageScope: HTMLElement | null = null;
 	#selectedCandidate: NavKeyCandidate | null = null;
 	#selectedIndex = -1;
 	#commitTimer: ReturnType<typeof setTimeout> | undefined;
@@ -73,20 +74,35 @@ export class NavKeyController {
 		this.mode = null;
 		this.hint = '';
 		this.#previousFocus = null;
+		this.#activePageScope = null;
 		this.#selectedIndex = -1;
 		if (prevMode === 'sidebar') this.#callbacks.onSidebarCancel?.();
 		if (restoreFocus) {
 			if (prevFocus?.isConnected && prevFocus.offsetParent !== null) {
 				prevFocus.focus({ preventScroll: true });
+				prevFocus.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
 			} else {
 				document.getElementById('shell-page-title')?.focus({ preventScroll: true });
 			}
 		}
 	}
 
+	#modeHint(mode: 'sidebar' | 'inbox' | 'page'): string {
+		if (mode === 'sidebar') return "Sidebar · Type an item's first letter · Esc to cancel";
+		if (mode === 'inbox') return 'Inbox categories · Type a letter · Esc to cancel';
+		return "Page menu · Type an item's first letter · Esc to cancel";
+	}
+
 	#findVisibleSidebarNav(): HTMLElement | null {
 		const navs = [...document.querySelectorAll<HTMLElement>('[data-exec-sidebar-nav]')];
 		return navs.find((el) => el.offsetParent !== null) ?? null;
+	}
+
+	#findVisiblePageMenu(): HTMLElement | null {
+		const scopes = [...document.querySelectorAll<HTMLElement>('main [data-page-menu]')];
+		return (
+			scopes.find((el) => el.offsetParent !== null && el.querySelector('[data-menu-label]')) ?? null
+		);
 	}
 
 	#collectSidebarCandidates(): NavKeyCandidate[] {
@@ -136,6 +152,22 @@ export class NavKeyController {
 		return out;
 	}
 
+	#collectPageMenuCandidates(): NavKeyCandidate[] {
+		const scope =
+			this.#activePageScope?.isConnected && this.#activePageScope.offsetParent !== null
+				? this.#activePageScope
+				: this.#findVisiblePageMenu();
+		if (!scope) return [];
+		this.#activePageScope = scope;
+		const nodes = [...scope.querySelectorAll<HTMLElement>('[data-menu-label]')].filter(
+			(el) => el.offsetParent !== null
+		);
+		return nodes.map((el) => ({
+			label: (el.dataset.menuLabel ?? el.textContent ?? '').trim(),
+			element: el
+		}));
+	}
+
 	#activate(candidate: NavKeyCandidate) {
 		const prevMode = this.mode;
 		this.#clearSelection();
@@ -149,6 +181,7 @@ export class NavKeyController {
 		this.mode = null;
 		this.hint = '';
 		this.#previousFocus = null;
+		this.#activePageScope = null;
 		this.#selectedIndex = -1;
 		// Trigger navigation / action while the element is still mounted, then close any transient sheet.
 		if (candidate.onActivate) {
@@ -161,14 +194,24 @@ export class NavKeyController {
 
 	#selectByLetter(letter: string): boolean {
 		const candidates =
-			this.mode === 'sidebar' ? this.#collectSidebarCandidates() : this.#collectInboxCandidates();
+			this.mode === 'sidebar'
+				? this.#collectSidebarCandidates()
+				: this.mode === 'inbox'
+					? this.#collectInboxCandidates()
+					: this.#collectPageMenuCandidates();
 		const nextIdx = matchNavCandidate(candidates, letter, this.#selectedIndex);
 		if (nextIdx < 0) return false;
 		const chosen = candidates[nextIdx];
 		this.#selectedIndex = nextIdx;
 		this.#selectedCandidate = chosen;
 		chosen.element.focus({ preventScroll: true });
-		const prefix = this.mode === 'sidebar' ? 'Sidebar' : 'Inbox categories';
+		chosen.element.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+		const prefix =
+			this.mode === 'sidebar'
+				? 'Sidebar'
+				: this.mode === 'inbox'
+					? 'Inbox categories'
+					: 'Page menu';
 		this.hint = `${prefix} · ${chosen.label} · Enter to open · Esc to cancel`;
 		clearTimeout(this.#commitTimer);
 		this.#commitTimer = setTimeout(() => {
@@ -186,6 +229,7 @@ export class NavKeyController {
 		this.#clearSelection();
 		this.#selectedIndex = -1;
 		this.#pendingLetter = null;
+		this.#activePageScope = null;
 		this.#openingSidebar = true;
 		this.hint = "Sidebar · Type an item's first letter · Esc to cancel";
 		this.#callbacks.onSidebarOpen?.();
@@ -228,6 +272,7 @@ export class NavKeyController {
 		this.#clearSelection();
 		this.#selectedIndex = -1;
 		this.#pendingLetter = null;
+		this.#activePageScope = null;
 		this.hint = 'Inbox categories · Type a letter · Esc to cancel';
 
 		const focusCategories = (attemptsLeft: number) => {
@@ -270,6 +315,38 @@ export class NavKeyController {
 		return true;
 	}
 
+	enterPageMenu(): boolean {
+		if (this.enterInboxCategories()) return true;
+		const scope = this.#findVisiblePageMenu();
+		if (!scope) return false;
+		this.#activePageScope = scope;
+		const candidates = this.#collectPageMenuCandidates();
+		if (candidates.length === 0) {
+			this.#activePageScope = null;
+			return false;
+		}
+		this.#previousFocus =
+			document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		this.mode = 'page';
+		this.#clearSelection();
+		this.#pendingLetter = null;
+		this.hint = "Page menu · Type an item's first letter · Esc to cancel";
+
+		const activeIdx = candidates.findIndex(
+			(c) =>
+				c.element.getAttribute('aria-current') === 'page' ||
+				c.element.getAttribute('aria-pressed') === 'true' ||
+				c.element.getAttribute('aria-selected') === 'true' ||
+				c.element.hasAttribute('data-current-kind')
+		);
+		this.#selectedIndex = activeIdx;
+		const current =
+			(activeIdx >= 0 ? candidates[activeIdx].element : null) ?? candidates[0]?.element;
+		current?.focus({ preventScroll: true });
+		current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+		return true;
+	}
+
 	handleKeydown = (event: KeyboardEvent) => {
 		if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
 		if (!singleKeyShortcutsOn()) {
@@ -289,12 +366,29 @@ export class NavKeyController {
 				event.key === 'ArrowDown' ||
 				event.key === 'ArrowUp' ||
 				event.key === 'ArrowLeft' ||
-				event.key === 'ArrowRight'
+				event.key === 'ArrowRight' ||
+				event.key === 'Home' ||
+				event.key === 'End'
 			) {
 				this.#clearSelection();
+				this.hint = this.#modeHint(this.mode);
 				return;
 			}
 			if (event.key === 'Enter' && this.#selectedCandidate) {
+				if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+					// Clear pending shortcut mode without firing onSidebarCancel so the mobile drawer stays open
+					// for native modified-Enter link activation (e.g. Cmd+Enter opening in a new tab).
+					this.#clearSelection();
+					this.#openingSidebar = false;
+					this.#openingInbox = false;
+					this.#pendingLetter = null;
+					this.mode = null;
+					this.hint = '';
+					this.#previousFocus = null;
+					this.#activePageScope = null;
+					this.#selectedIndex = -1;
+					return;
+				}
 				event.preventDefault();
 				event.stopPropagation();
 				this.#activate(this.#selectedCandidate);
@@ -331,7 +425,7 @@ export class NavKeyController {
 			event.preventDefault();
 			this.enterSidebar();
 		} else if (key === 'm') {
-			if (this.enterInboxCategories()) {
+			if (this.enterPageMenu()) {
 				event.preventDefault();
 			}
 		}
@@ -356,6 +450,7 @@ export class NavKeyController {
 					this.mode = null;
 					this.hint = '';
 					this.#previousFocus = null;
+					this.#activePageScope = null;
 					this.#selectedIndex = -1;
 					return;
 				}
@@ -366,6 +461,17 @@ export class NavKeyController {
 					this.mode = null;
 					this.hint = '';
 					this.#previousFocus = null;
+					this.#selectedIndex = -1;
+					return;
+				}
+			} else if (this.mode === 'page') {
+				const scope = this.#activePageScope ?? this.#findVisiblePageMenu();
+				if (scope && scope.contains(target)) {
+					this.#clearSelection();
+					this.mode = null;
+					this.hint = '';
+					this.#previousFocus = null;
+					this.#activePageScope = null;
 					this.#selectedIndex = -1;
 					return;
 				}
@@ -398,6 +504,15 @@ export class NavKeyController {
 			if (group && group.contains(target)) {
 				const candidates = this.#collectInboxCandidates();
 				const focusedIdx = candidates.findIndex((c) => !c.onActivate && c.element === target);
+				if (focusedIdx >= 0) this.#selectedIndex = focusedIdx;
+				return;
+			}
+			this.cancel(false);
+		} else if (this.mode === 'page') {
+			const scope = this.#activePageScope ?? this.#findVisiblePageMenu();
+			if (scope && scope.contains(target)) {
+				const candidates = this.#collectPageMenuCandidates();
+				const focusedIdx = candidates.findIndex((c) => c.element === target);
 				if (focusedIdx >= 0) this.#selectedIndex = focusedIdx;
 				return;
 			}

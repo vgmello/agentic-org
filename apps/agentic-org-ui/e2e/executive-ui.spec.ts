@@ -871,7 +871,7 @@ test('Phase 3 Work parity: unified WorkQueueView header, live search & / shortcu
 		page.locator('[data-testid="work-row"] .work-priority-mark[data-priority-level]')
 	).toHaveCount(initialCount);
 
-	// `/` shortcut focuses Work search input; live search filters rows; Escape clears then blurs
+	// `/` shortcut focuses Work search input; live search filters rows; Escape preserves query and exits field (1149b4f1)
 	await page.locator('#shell-page-title').focus();
 	await page.keyboard.press('/');
 	await expect(searchInput).toBeFocused();
@@ -879,10 +879,10 @@ test('Phase 3 Work parity: unified WorkQueueView header, live search & / shortcu
 	await expect(workRows).toHaveCount(1);
 	await expect(workRows.first()).toContainText('Custody lock fix');
 	await searchInput.press('Escape');
-	await expect(searchInput).toHaveValue('');
-	await expect(searchInput).toBeFocused();
-	await searchInput.press('Escape');
+	await expect(searchInput).toHaveValue('Custody');
 	await expect(searchInput).not.toBeFocused();
+	await page.getByRole('button', { name: 'Clear filters' }).click();
+	await expect(searchInput).toHaveValue('');
 	await expect(workRows).toHaveCount(initialCount);
 
 	// Exact 720px viewport hit targets (>= 44px inclusive width <= 720px)
@@ -1338,9 +1338,39 @@ test('Phase 7 (5da47e1d + 53728c05): Assembly Display row dividers persistence, 
 	await visit(page, '/activity?theme=graphite&mock=poc');
 	await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(24, 25, 26)');
 	await visit(page, '/activity?theme=cozy&mock=poc');
-	await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(70, 60, 48)');
+	// Phase 8 (1149b4f1): Cozy Glass keeps matte #463c30 in the body so the Activity header stays translucent.
+	await expect(page.locator('.activity-body')).toHaveCSS('background-color', 'rgb(70, 60, 48)');
 	await expect(page.locator('#activity-release-panel')).toHaveCSS(
 		'background-color',
 		'rgb(53, 43, 34)'
 	);
+
+	// Phase 8 (1149b4f1): Activity arrow navigation moves focus from the focused tab without premature activation.
+	const actTabs = page.locator('.activity-view-tabs');
+	const assemblyBtn = actTabs.getByRole('button', { name: 'Assembly line', exact: true });
+	const activityBtn = actTabs.getByRole('button', { name: 'Activity', exact: true });
+	await expect(assemblyBtn).toHaveAttribute('aria-pressed', 'true');
+	await activityBtn.focus();
+	await page.keyboard.press('ArrowLeft');
+	await expect(assemblyBtn).toBeFocused();
+	await expect(assemblyBtn).toHaveAttribute('aria-pressed', 'true');
+
+	// 3. Phase 8 (1149b4f1): Cozy Glass keeps Work header AND toolbar translucent above matte #463c30 results canvas; Inbox Escape preserves query
+	await visit(page, '/work?theme=cozy&mock=poc');
+	await expect(page.locator('.work-header')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+	await expect(page.locator('.work-toolbar-bar')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+	await expect(page.locator('.work-results-canvas')).toHaveCSS(
+		'background-color',
+		'rgb(70, 60, 48)'
+	);
+
+	await visit(page, '/inbox?theme=cozy&mock=poc');
+	const inboxSearch = page.getByLabel('Search inbox');
+	await page.locator('#shell-page-title').focus();
+	await page.keyboard.press('/');
+	await expect(inboxSearch).toBeFocused();
+	await inboxSearch.fill('Custody');
+	await inboxSearch.press('Escape');
+	await expect(inboxSearch).toHaveValue('Custody');
+	await expect(page.locator('#shell-page-title')).toBeFocused();
 });

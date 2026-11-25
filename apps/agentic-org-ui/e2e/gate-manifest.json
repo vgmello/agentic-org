@@ -752,7 +752,7 @@
 			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
 			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",
 			"src/routes/(shell)/settings/+layout.svelte",
-			"src/lib/components/{MiniIcon,PageHeader,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt,Loaded,ConfirmDialog,CopyButton,WorkReadingPanel}.svelte",
+			"src/lib/components/{MiniIcon,PageHeader,ScopedSearchInput,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt,Loaded,ConfirmDialog,CopyButton,WorkReadingPanel}.svelte",
 			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,LiveBanner,Logo,resource,classes,focus,pills}.*",
 			"static/**",
 			"vite.config.ts",

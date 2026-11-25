@@ -50,7 +50,7 @@
 </script>
 
 <div
-	class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3 max-[640px]:px-[8px]"
+	class="chat-conv-head flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3 max-[640px]:px-[8px]"
 >
 	<div class="min-w-0 max-w-full">
 		<div class="flex min-w-0 flex-wrap items-center gap-2">

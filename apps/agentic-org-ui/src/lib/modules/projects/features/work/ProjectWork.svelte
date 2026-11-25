@@ -15,5 +15,6 @@
 		organizationId={frame.organizationId}
 		scope={{ kind: 'project', projectId: frame.projectId }}
 		projectArchived={frame.project.archived}
+		onRegisterToolbar={frame.setToolbarControls}
 	/>
 {/key}

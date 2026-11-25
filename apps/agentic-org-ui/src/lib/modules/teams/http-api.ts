@@ -214,7 +214,7 @@ export function createHttpTeamsApi({
 			};
 		},
 
-		work: async () => [],
+		work: unavailableCall,
 
 		async projects(organizationId: string, teamId: string): Promise<TeamProjectRow[]> {
 			const [{ snapshot }, projects] = await Promise.all([
@@ -241,14 +241,13 @@ export function createHttpTeamsApi({
 					role: isOwner ? 'owner' : 'contributor',
 					...(p.key ? { key: p.key } : {}),
 					...(!isOwner && ownerTeam ? { ownerTeam: teamRef(ownerTeam) } : {}),
-					...(contributors.length > 0 ? { contributors } : {}),
-					openWork: 0
+					...(contributors.length > 0 ? { contributors } : {})
 				});
 			}
 			return rows.sort((a, b) => a.name.localeCompare(b.name));
 		},
 
-		activity: async () => [],
+		activity: unavailableCall,
 		conversations: async () => [],
 		archive: unavailableCall,
 

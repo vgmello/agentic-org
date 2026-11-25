@@ -3,9 +3,11 @@
 import { toAppError } from '$lib/proto';
 import type { TeamDetail, TeamMember } from './types';
 
-/** The tabs, in order. Work is the default and lives at the team's own URL (§7.2; processes-ux "Where"). */
+/** The tabs, in order. Overview is the default at the team's URL (Prototype Release 1149b4f1). */
 export const TEAM_TABS = [
-	{ id: 'work', label: 'Work', path: '' },
+	{ id: 'overview', label: 'Overview', path: '' },
+	{ id: 'members', label: 'Members', path: '/members' },
+	{ id: 'work', label: 'Work', path: '/work' },
 	{ id: 'projects', label: 'Projects', path: '/projects' },
 	{ id: 'activity', label: 'Activity', path: '/activity' },
 	{ id: 'conversations', label: 'Conversations', path: '/conversations' },
@@ -13,10 +15,10 @@ export const TEAM_TABS = [
 ] as const;
 export type TeamTabId = (typeof TEAM_TABS)[number]['id'];
 
-export const teamHref = (teamId: string, tab: TeamTabId = 'work') =>
+export const teamHref = (teamId: string, tab: TeamTabId = 'overview') =>
 	`/teams/${encodeURIComponent(teamId)}${TEAM_TABS.find((t) => t.id === tab)!.path}`;
 
-/** Which tab a pathname under `/teams/<id>` shows; anything else is Work. */
+/** Which tab a pathname under `/teams/<id>` shows; anything else is Overview. */
 export function tabFor(pathname: string, teamId: string): (typeof TEAM_TABS)[number] {
 	const base = teamHref(teamId);
 	const rest = pathname.startsWith(base) ? pathname.slice(base.length).replace(/\/$/, '') : '';

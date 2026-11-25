@@ -378,8 +378,9 @@ html[data-ui-theme='ocean'] {
 			var(--page-header-base-image, none);
 	}
 
-	html[data-interior-page][data-ui-theme] .project-header > .ph {
+	html[data-interior-page][data-ui-theme] .section-header > :is(.ph, .prof) {
 		background: none;
+		border-block-end: 0;
 	}
 }
 

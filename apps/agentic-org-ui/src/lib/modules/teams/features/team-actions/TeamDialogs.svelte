@@ -18,7 +18,12 @@
 	import { deleteSummary } from '$lib/modules/organization/team-edit';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { teamsApi } from '../../api';
-	import { teamBlockers, type BlockerCheck, type TeamRemoval } from '../../blockers';
+	import {
+		classifyTeamWorkCheckError,
+		teamBlockers,
+		type BlockerCheck,
+		type TeamRemoval
+	} from '../../blockers';
 	import type { LeadCandidate, TeamAction, TeamRow } from '../../types';
 	import RemoveTeamDialog from '../remove-team/RemoveTeamDialog.svelte';
 	import ChangeLeadDialog from '../change-lead/ChangeLeadDialog.svelte';
@@ -91,16 +96,25 @@
 		const run = ++checkRun;
 		if (!quiet) check = { state: 'checking' };
 		try {
-			const [teams, members, projects, work] = await Promise.all([
+			const [teams, members, projects, workOutcome] = await Promise.all([
 				teamsApi.list(organizationId),
 				membersApi.directory(organizationId),
 				teamsApi.projects(organizationId, teamId),
-				teamsApi.work(organizationId, teamId)
+				teamsApi.work(organizationId, teamId).then(
+					(rows) => ({ ok: true as const, rows }),
+					(e) => ({ ok: false as const, outcome: classifyTeamWorkCheckError(e) })
+				)
 			]);
+			const work = workOutcome.ok ? workOutcome.rows : [];
+			const workCheckError =
+				!workOutcome.ok && workOutcome.outcome.kind === 'failed'
+					? workOutcome.outcome.message
+					: undefined;
 			if (run === checkRun)
 				check = {
 					state: 'done',
-					blockers: teamBlockers(teamId, { teams, members, projects, work }, kind)
+					blockers: teamBlockers(teamId, { teams, members, projects, work }, kind),
+					...(workCheckError ? { workCheckError } : {})
 				};
 		} catch (e) {
 			if (run === checkRun) check = { state: 'failed', message: toAppError(e).message };

@@ -83,7 +83,7 @@
 		<section aria-labelledby={headingId} class="flex flex-col gap-2">
 			{#if groupBy !== 'none'}
 				<div
-					class="sticky top-14 z-10 flex flex-wrap items-baseline justify-between gap-2 border-b border-line bg-surface py-2 min-[640px]:top-16"
+					class="work-group-title sticky top-14 z-10 flex flex-wrap items-baseline justify-between gap-2 border-b border-line bg-surface py-2 min-[640px]:top-16"
 					data-testid="work-group-heading"
 				>
 					<h3 id={headingId} class="text-sm/6 font-semibold text-fg">

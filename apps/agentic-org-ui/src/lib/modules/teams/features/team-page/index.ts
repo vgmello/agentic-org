@@ -1,5 +1,7 @@
 // The team page's parts, for its routes: the page around the tabs, and one component per tab.
 export { default as TeamPage } from './TeamPage.svelte';
+export { default as TeamOverview } from './TeamOverview.svelte';
+export { default as TeamMembers } from './TeamMembers.svelte';
 export { default as TeamWork } from './TeamWork.svelte';
 export { default as TeamProjects } from './TeamProjects.svelte';
 export { default as TeamActivity } from './TeamActivity.svelte';

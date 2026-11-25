@@ -20,6 +20,10 @@
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
 	import { noteModalBackNavigation } from '$lib/platform/shell/modal-back';
 	import { NavKeyController } from '$lib/platform/shell/nav-keys.svelte';
+	import {
+		createScopedSearchHost,
+		setScopedSearchContext
+	} from '$lib/platform/shell/scoped-search.svelte';
 	import { provideShellAi, type ShellAiAskOptions } from '$lib/platform/shell/shell-ai';
 	import { provideShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
@@ -39,6 +43,7 @@
 			askHandler?.(prompt, opts);
 		}
 	});
+	setScopedSearchContext(createScopedSearchHost());
 
 	$effect(() => {
 		document.documentElement.toggleAttribute('data-interior-page', !isHome);

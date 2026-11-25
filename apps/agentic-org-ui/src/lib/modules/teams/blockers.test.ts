@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { MemberRow, WorkRow } from '$lib/modules/members';
-import { blockedSentence, isBlocked, teamBlockers, type TeamFacts } from './blockers';
+import { UNAVAILABLE_MESSAGE } from '$lib/platform/unavailable-api';
+import {
+	blockedSentence,
+	classifyTeamWorkCheckError,
+	isBlocked,
+	teamBlockers,
+	type TeamFacts
+} from './blockers';
 import type { TeamProjectRow, TeamRow } from './types';
 
 const team = (id: string, parentId?: string, status: TeamRow['status'] = 'active'): TeamRow => ({
@@ -118,5 +125,29 @@ describe('team blockers', () => {
 		).toBe(
 			'Web still has 1 home employee, 1 project it owns and 2 open tasks. Resolve them first.'
 		);
+	});
+
+	it('distinguishes unserved adapter stubs from transient gateway 503 failures during work precheck', () => {
+		expect(
+			classifyTeamWorkCheckError({
+				source: 'api',
+				code: 'unavailable',
+				message: UNAVAILABLE_MESSAGE
+			})
+		).toEqual({ kind: 'unserved' });
+		expect(
+			classifyTeamWorkCheckError({
+				source: 'api',
+				code: 'unsupported',
+				message: 'Work reads are not supported.'
+			})
+		).toEqual({ kind: 'unserved' });
+		expect(
+			classifyTeamWorkCheckError({
+				source: 'api',
+				code: 'unavailable',
+				message: 'Gateway temporarily unavailable (503).'
+			})
+		).toEqual({ kind: 'failed', message: 'Gateway temporarily unavailable (503).' });
 	});
 });

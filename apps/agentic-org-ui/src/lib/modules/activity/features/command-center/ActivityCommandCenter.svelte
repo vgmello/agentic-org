@@ -1012,27 +1012,47 @@
 			window.removeEventListener('keydown', onEscapeKey);
 		};
 	}
+	let focusedProjectView = $state<'assembly' | 'feed' | null>(null);
+
 	function handleProjectViewKeydown(event: KeyboardEvent) {
 		if (
-			event.key !== 'ArrowLeft' &&
-			event.key !== 'ArrowRight' &&
-			event.key !== 'Home' &&
-			event.key !== 'End'
-		)
+			event.altKey ||
+			event.ctrlKey ||
+			event.metaKey ||
+			event.shiftKey ||
+			(event.key !== 'ArrowLeft' &&
+				event.key !== 'ArrowRight' &&
+				event.key !== 'Home' &&
+				event.key !== 'End')
+		) {
 			return;
+		}
+		const current = event.currentTarget as HTMLButtonElement | null;
+		const group = current?.closest('[role="tablist"], .activity-view-tabs');
+		if (!current || !group) return;
+		const buttons = [...group.querySelectorAll<HTMLButtonElement>('[data-project-view]')];
+		const index = buttons.indexOf(current);
+		if (index < 0 || buttons.length === 0) return;
 		event.preventDefault();
-		const next: 'assembly' | 'feed' =
+		const nextIdx =
 			event.key === 'Home'
-				? 'assembly'
+				? 0
 				: event.key === 'End'
-					? 'feed'
-					: viewMode === 'assembly'
-						? 'feed'
-						: 'assembly';
-		viewMode = next;
-		const tablist = (event.currentTarget as HTMLElement | null)?.closest('[role="tablist"]');
-		const target = tablist?.querySelector<HTMLButtonElement>(`[data-project-view="${next}"]`);
-		target?.focus();
+					? buttons.length - 1
+					: (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+		// Manual activation: move focus + roving tabindex from the focused control; Enter/Space activates it.
+		const nextBtn = buttons[nextIdx];
+		const nextMode = nextBtn?.dataset.projectView as 'assembly' | 'feed' | undefined;
+		if (nextMode) focusedProjectView = nextMode;
+		nextBtn?.focus();
+	}
+
+	function handleProjectViewFocusOut(event: FocusEvent) {
+		const container = event.currentTarget as HTMLElement | null;
+		const related = event.relatedTarget;
+		if (!container || !(related instanceof Node) || !container.contains(related)) {
+			focusedProjectView = null;
+		}
 	}
 </script>
 
@@ -1085,7 +1105,12 @@
 {#snippet projectToolbarControls()}
 	<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
 		<div class="project-activity-controls" data-testid="project-activity-controls">
-			<div class="project-view-tabs" role="tablist" aria-label="Project activity view">
+			<div
+				class="project-view-tabs"
+				role="tablist"
+				aria-label="Project activity view"
+				onfocusout={handleProjectViewFocusOut}
+			>
 				<button
 					type="button"
 					role="tab"
@@ -1093,7 +1118,8 @@
 					aria-controls="project-view-panel-assembly"
 					data-project-view="assembly"
 					aria-selected={viewMode === 'assembly'}
-					tabindex={viewMode === 'assembly' ? 0 : -1}
+					tabindex={(focusedProjectView ?? viewMode) === 'assembly' ? 0 : -1}
+					onfocus={() => (focusedProjectView = 'assembly')}
 					onclick={() => (viewMode = 'assembly')}
 					onkeydown={handleProjectViewKeydown}
 					class="project-view-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
@@ -1108,7 +1134,8 @@
 					aria-controls="project-view-panel-feed"
 					data-project-view="feed"
 					aria-selected={viewMode === 'feed'}
-					tabindex={viewMode === 'feed' ? 0 : -1}
+					tabindex={(focusedProjectView ?? viewMode) === 'feed' ? 0 : -1}
+					onfocus={() => (focusedProjectView = 'feed')}
 					onclick={() => (viewMode = 'feed')}
 					onkeydown={handleProjectViewKeydown}
 					class="project-view-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
@@ -1118,61 +1145,63 @@
 				</button>
 			</div>
 
-			{#if viewMode === 'assembly'}
-				{@render assemblyDisplayMenu()}
-			{:else}
-				<DropdownMenu.Root bind:open={filterMenuOpen}>
-					<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus disabled={filterMenuOpen}>
-						<DropdownMenu.Trigger>
-							{#snippet child({ props: menuProps })}
-								<Tooltip.Trigger>
-									{#snippet child({ props: tipProps })}
-										<button
-											{...mergeProps(menuProps, tipProps)}
-											type="button"
-											aria-label="Filter activity"
-											data-testid="project-feed-filter-btn"
-											data-active={streamFilter !== 'all' ? '' : undefined}
-											class="activity-icon-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-										>
-											<ListFilter class="size-4" aria-hidden="true" />
-										</button>
-									{/snippet}
-								</Tooltip.Trigger>
-							{/snippet}
-						</DropdownMenu.Trigger>
-						<Tooltip.Portal>
-							<Tooltip.Content
-								side="bottom"
-								sideOffset={6}
-								escapeKeydownBehavior="defer-otherwise-close"
-								class="activity-tooltip-content"
-							>
-								Filter activity
-							</Tooltip.Content>
-						</Tooltip.Portal>
-					</Tooltip.Root>
-					<DropdownMenu.Content align="end" class="triage-menu-surface w-48">
-						<DropdownMenu.Label>Event type</DropdownMenu.Label>
-						<DropdownMenu.RadioGroup
-							value={streamFilter}
-							onValueChange={(val) => {
-								if (val) streamFilter = val as StreamFilterTab;
-							}}
-						>
-							{#each streamTabs as tab (tab.id)}
-								<DropdownMenu.RadioItem
-									value={tab.id}
-									closeOnSelect={true}
-									class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+			<div class="queue-controls" role="group" aria-label="Activity view settings">
+				{#if viewMode === 'assembly'}
+					{@render assemblyDisplayMenu()}
+				{:else}
+					<DropdownMenu.Root bind:open={filterMenuOpen}>
+						<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus disabled={filterMenuOpen}>
+							<DropdownMenu.Trigger>
+								{#snippet child({ props: menuProps })}
+									<Tooltip.Trigger>
+										{#snippet child({ props: tipProps })}
+											<button
+												{...mergeProps(menuProps, tipProps)}
+												type="button"
+												aria-label="Filter activity"
+												data-testid="project-feed-filter-btn"
+												data-active={streamFilter !== 'all' ? '' : undefined}
+												class="activity-icon-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+											>
+												<ListFilter class="size-4" aria-hidden="true" />
+											</button>
+										{/snippet}
+									</Tooltip.Trigger>
+								{/snippet}
+							</DropdownMenu.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									side="bottom"
+									sideOffset={6}
+									escapeKeydownBehavior="defer-otherwise-close"
+									class="activity-tooltip-content"
 								>
-									<span>{tab.label}</span>
-								</DropdownMenu.RadioItem>
-							{/each}
-						</DropdownMenu.RadioGroup>
-					</DropdownMenu.Content>
-				</DropdownMenu.Root>
-			{/if}
+									Filter activity
+								</Tooltip.Content>
+							</Tooltip.Portal>
+						</Tooltip.Root>
+						<DropdownMenu.Content align="end" class="triage-menu-surface w-48">
+							<DropdownMenu.Label>Event type</DropdownMenu.Label>
+							<DropdownMenu.RadioGroup
+								value={streamFilter}
+								onValueChange={(val) => {
+									if (val) streamFilter = val as StreamFilterTab;
+								}}
+							>
+								{#each streamTabs as tab (tab.id)}
+									<DropdownMenu.RadioItem
+										value={tab.id}
+										closeOnSelect={true}
+										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+									>
+										<span>{tab.label}</span>
+									</DropdownMenu.RadioItem>
+								{/each}
+							</DropdownMenu.RadioGroup>
+						</DropdownMenu.Content>
+					</DropdownMenu.Root>
+				{/if}
+			</div>
 		</div>
 	</Tooltip.Provider>
 {/snippet}
@@ -1271,36 +1300,40 @@
 
 			<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
 				<div class="section-toolbar activity-toolbar">
-					<!-- Segmented View Toggle: Assembly line (FIRST, active by default) | Activity (SECOND) -->
-					<div
-						class="exec-well cmd-view-toggle activity-switch"
-						role="group"
-						aria-label="Activity view"
-					>
-						<button
-							type="button"
-							aria-pressed={viewMode === 'assembly'}
-							onclick={() => (viewMode = 'assembly')}
-							class={[
-								'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
-								viewMode === 'assembly' && 'is-on'
-							]}
-						>
-							<Layers class="size-3.5" aria-hidden="true" />
-							<span>Assembly line</span>
-						</button>
-						<button
-							type="button"
-							aria-pressed={viewMode === 'feed'}
-							onclick={() => (viewMode = 'feed')}
-							class={[
-								'cmd-toggle-btn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
-								viewMode === 'feed' && 'is-on'
-							]}
-						>
-							<Activity class="size-3.5" aria-hidden="true" />
-							<span>Activity</span>
-						</button>
+					<!-- Primary View Tabs: Assembly line (FIRST, active by default) | Activity (SECOND) -->
+					<div class="primary-tab-row" data-page-menu>
+						<div class="activity-view-tabs" role="group" aria-label="Activity view">
+							<button
+								type="button"
+								data-menu-label="Assembly line"
+								data-project-view="assembly"
+								aria-pressed={viewMode === 'assembly'}
+								onclick={() => (viewMode = 'assembly')}
+								onkeydown={handleProjectViewKeydown}
+								class={[
+									'cmd-toggle-btn queue-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
+									viewMode === 'assembly' && 'is-on'
+								]}
+							>
+								<Layers class="size-3.5" aria-hidden="true" />
+								<span>Assembly line</span>
+							</button>
+							<button
+								type="button"
+								data-menu-label="Activity"
+								data-project-view="feed"
+								aria-pressed={viewMode === 'feed'}
+								onclick={() => (viewMode = 'feed')}
+								onkeydown={handleProjectViewKeydown}
+								class={[
+									'cmd-toggle-btn queue-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
+									viewMode === 'feed' && 'is-on'
+								]}
+							>
+								<Activity class="size-3.5" aria-hidden="true" />
+								<span>Activity</span>
+							</button>
+						</div>
 					</div>
 
 					<!-- Project Scope Select -->
@@ -1559,7 +1592,10 @@
 	}
 
 	.section-header {
+		position: relative;
+		z-index: 1;
 		flex: none;
+		container-type: inline-size;
 	}
 
 	.cmd-header {
@@ -1598,10 +1634,39 @@
 		position: relative;
 		display: flex;
 		flex-wrap: wrap;
-		align-items: center;
+		align-items: stretch;
 		gap: 6px 12px;
-		padding: 8px var(--activity-gutter);
+		padding: 4px var(--activity-gutter) 1px;
 		border-block-end: 1px solid var(--line);
+	}
+
+	.section-toolbar > :not(.primary-tab-row) {
+		align-self: center;
+		margin-block: 4px;
+	}
+
+	.primary-tab-row {
+		position: relative;
+		display: flex;
+		align-items: stretch;
+		min-inline-size: 0;
+		max-inline-size: 100%;
+	}
+
+	.primary-tab-row::after {
+		content: '';
+		position: absolute;
+		inset-block-start: 100%;
+		inset-inline-start: calc(-1 * var(--activity-gutter));
+		inline-size: 100cqi;
+		border-block-start: 1px solid var(--line);
+		pointer-events: none;
+	}
+
+	.activity-view-tabs {
+		display: flex;
+		align-items: stretch;
+		gap: 4px;
 	}
 
 	.activity-stream-tabs {
@@ -1704,22 +1769,16 @@
 		pointer-events: none;
 	}
 
-	.cmd-view-toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 3px;
-		padding: 3px;
-	}
-
 	.cmd-toggle-btn {
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		padding: 0 12px;
-		border: 0;
-		border-radius: var(--exec-ctrl-radius, 8px);
+		padding: 6px 12px 5px;
+		border: 1px solid transparent;
+		border-block-end-width: 2px;
+		border-radius: var(--exec-ctrl-radius, 8px) var(--exec-ctrl-radius, 8px) 0 0;
 		background: transparent;
-		color: var(--fg-secondary);
+		color: var(--exec-body, var(--fg-secondary));
 		font-size: 0.8125rem;
 		font-weight: 600;
 		white-space: nowrap;
@@ -1727,18 +1786,18 @@
 	}
 
 	.cmd-toggle-btn:hover {
+		background: var(--exec-btn-ghost-bg-hover, var(--surface-raised));
 		color: var(--exec-ink);
 	}
 
 	.cmd-toggle-btn:focus-visible {
 		outline: 2px solid var(--focus);
-		outline-offset: 1px;
+		outline-offset: -4px;
 	}
 
 	.cmd-toggle-btn.is-on {
-		background: var(--exec-accent-soft);
+		border-block-end-color: var(--tone-accent-ink);
 		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1.5px var(--tone-accent-ink);
 	}
 
 	.cmd-status-slot {
@@ -2175,9 +2234,17 @@
 	}
 
 	@media (forced-colors: active) {
+		.cmd-toggle-btn {
+			border-block-end-color: Canvas;
+		}
 		.cmd-toggle-btn.is-on,
 		.activity-stream-tab.is-active {
-			border: 2px solid Highlight;
+			border-block-end-color: Highlight;
+		}
+		.project-view-tab[aria-selected='true'] {
+			background: Highlight;
+			border-color: Highlight;
+			color: HighlightText;
 		}
 		.cmd-needs-pill,
 		.cmd-live-banner,

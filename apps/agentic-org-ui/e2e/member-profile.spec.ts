@@ -43,9 +43,9 @@ test('MP-2: Move home team records the destination and blocks teams they are alr
 	await page.getByRole('button', { name: /^More/ }).click();
 	await page.getByRole('menuitem', { name: 'Move home team…' }).click();
 	const dialog = page.getByRole('dialog');
-	await expect(dialog.getByRole('radio', { name: /^Platform/ })).toBeDisabled();
-	await expect(dialog).toContainText('Mira Castillo is already in this team');
+	// Single home-team invariant (TASK-17): current home team is disabled; other active teams are selectable.
 	await expect(dialog.getByRole('radio', { name: /^Web/ })).toBeDisabled();
+	await expect(dialog).toContainText('Current home team');
 	await dialog.getByRole('radio', { name: /^Engineering/ }).check();
 	await dialog.getByRole('button', { name: 'Move Mira Castillo' }).click();
 	await expect(dialog).toBeHidden();
@@ -201,4 +201,49 @@ test('MP-8: leaving the profile while a sign-in dialog closes reports nothing to
 	await expect(page).toHaveURL(/\/settings\/access$/);
 	await page.waitForTimeout(1500);
 	expect(warnings).toEqual([]);
+});
+
+test('MP-9: below 640px only the mobile section picker is shown and Member Work registers shared header scoped search', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await page.setViewportSize({ width: 390, height: 844 });
+	await visit(page, '/members/noor');
+	await expect(page.locator('.profile-toolbar .primary-tab-row')).toBeHidden();
+	const mobileNav = page.getByRole('navigation', { name: "Noor Haddad's profile" });
+	await expect(mobileNav).toHaveCount(1);
+	await expect(mobileNav.getByRole('button', { name: 'Section: Overview' })).toBeVisible();
+
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await expect(page.locator('.profile-toolbar .primary-tab-row')).toBeVisible();
+	await expect(page.getByRole('navigation', { name: "Noor Haddad's profile" })).toHaveCount(1);
+	await expect(
+		page.getByRole('navigation', { name: "Noor Haddad's profile" }).getByRole('button', {
+			name: /^Section:/
+		})
+	).toHaveCount(0);
+	await visit(page, '/members/noor/work');
+	const search = page.getByTestId('header-scoped-search').getByTestId('scoped-work-search');
+	await expect(search).toBeVisible();
+	await expect(page.getByText('Pay button wraps under the total at 320 px')).toBeVisible();
+	await search.fill('In progress');
+	await expect(page.getByText('Pay button wraps under the total at 320 px')).toBeVisible();
+	await search.fill('zzz-no-match');
+	await expect(page.getByText('Pay button wraps under the total at 320 px')).toHaveCount(0);
+	await expect(page.getByText('No work matches this search.')).toBeVisible();
+
+	// Opening inline Pause on a wide agent profile, resizing below 640px (hiding inline Pause),
+	// and cancelling returns focus cleanly to the visible More menu button.
+	const pauseBtn = page
+		.locator('.profile-toolbar')
+		.getByRole('button', { name: 'Pause', exact: true });
+	await expect(pauseBtn).toBeVisible();
+	await pauseBtn.click();
+	const pauseDialog = page.getByRole('dialog');
+	await expect(pauseDialog).toBeVisible();
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(pauseBtn).toBeHidden();
+	await pauseDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(pauseDialog).toBeHidden();
+	await expect(page.getByRole('button', { name: /^More/ })).toBeFocused();
 });

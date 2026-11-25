@@ -1,13 +1,9 @@
 <!--
   @component
-  Underline link tabs driven by the URL (app-shell-ux §6a): each tab is a link, the current one has
-  `aria-current="page"` and an indigo underline as well as white text. For in-place filters that do not
-  change the URL, use buttons with `aria-selected` instead, not this.
-
-  `match: 'prefix'` keeps a tab current on the pages under it (a project's Work tab on /projects/p/work/…).
-  `focusHeading` moves focus to the destination heading after the move (a view switch, §0).
-  The strip scrolls inside itself when the tabs do not fit; the page never scrolls sideways.
-  Usage: <TabsNav label="Teams views" tabs={[{ label: 'Teams', href: '/teams' }, …]} focusHeading />
+  Underline link tabs driven by the URL (Prototype Release 1149b4f1, app-shell-ux §6a):
+  each tab is a link using the Inbox primary-tab 2px underline at the divider, top rounded corners,
+  `aria-current="page"`, ArrowLeft/ArrowRight/Home/End focus movement, `M` page-menu registration
+  (`data-page-menu` + `data-menu-label`), and auto-scrolling the active tab into view on narrow screens.
 -->
 <script lang="ts" module>
 	export interface Tab {
@@ -24,17 +20,36 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
+	import { singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
 
 	let {
 		tabs,
 		label,
 		focusHeading = false,
+		pageMenu = true,
 		class: className = ''
-	}: { tabs: Tab[]; label: string; focusHeading?: boolean; class?: string } = $props();
+	}: {
+		tabs: Tab[];
+		label: string;
+		focusHeading?: boolean;
+		/** Marks this strip as a primary page menu reachable via the `M` shortcut. */
+		pageMenu?: boolean;
+		class?: string;
+	} = $props();
+
+	let navEl = $state<HTMLElement | null>(null);
+	let focusedHref = $state<string | null>(null);
+	const shortcutsEnabled = $derived(singleKeyShortcutsOn());
 
 	const isCurrent = (tab: Tab) =>
 		page.url.pathname === tab.href ||
 		(tab.match === 'prefix' && page.url.pathname.startsWith(tab.href + '/'));
+
+	const currentHref = $derived(tabs.find(isCurrent)?.href ?? tabs[0]?.href ?? null);
+	// Single sequential Tab stop for the strip (WAI-ARIA roving tabindex), resetting to current route on exit.
+	const tabStopHref = $derived(
+		focusedHref && tabs.some((t) => t.href === focusedHref) ? focusedHref : currentHref
+	);
 
 	async function choose(event: MouseEvent, tab: Tab) {
 		if (!focusHeading || event.defaultPrevented || event.button !== 0) return;
@@ -43,28 +58,142 @@
 		if (page.url.pathname !== tab.href) await goto(resolve(tab.href as '/'));
 		await focusDestinationHeading();
 	}
+
+	function handleKeydown(event: KeyboardEvent, index: number) {
+		if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+		if (
+			event.key !== 'ArrowLeft' &&
+			event.key !== 'ArrowRight' &&
+			event.key !== 'Home' &&
+			event.key !== 'End'
+		) {
+			return;
+		}
+		const links = navEl ? [...navEl.querySelectorAll<HTMLAnchorElement>('a[data-menu-label]')] : [];
+		if (links.length === 0) return;
+		const nextIdx =
+			event.key === 'Home'
+				? 0
+				: event.key === 'End'
+					? links.length - 1
+					: (index + (event.key === 'ArrowRight' ? 1 : -1) + links.length) % links.length;
+		event.preventDefault();
+		const nextTab = tabs[nextIdx];
+		if (nextTab) focusedHref = nextTab.href;
+		links[nextIdx]?.focus();
+		links[nextIdx]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	}
+
+	function handleFocusOut(event: FocusEvent) {
+		const related = event.relatedTarget;
+		if (!navEl || !(related instanceof Node) || !navEl.contains(related)) {
+			focusedHref = null;
+		}
+	}
+
+	// Keep the focused tab (when focus is inside the strip) or the active route tab visible on navigation & resize.
+	$effect(() => {
+		void page.url.pathname;
+		void tabs.length;
+		const el = navEl;
+		if (!el) return;
+		const revealTab = () => {
+			if (el.offsetParent === null) return;
+			const active = document.activeElement;
+			const target =
+				active instanceof HTMLElement && el.contains(active)
+					? active
+					: el.querySelector<HTMLElement>('a[aria-current="page"]');
+			if (!target) return;
+			const bounds = el.getBoundingClientRect();
+			if (bounds.width <= 0) return;
+			const { left, right } = target.getBoundingClientRect();
+			if (left < bounds.left || right > bounds.right) {
+				target.scrollIntoView({ block: 'nearest', inline: 'center' });
+			}
+		};
+		revealTab();
+		const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(revealTab) : undefined;
+		ro?.observe(el);
+		return () => ro?.disconnect();
+	});
 </script>
 
 <nav
+	bind:this={navEl}
 	aria-label={label}
-	class="flex gap-x-6 overflow-x-auto border-b border-line px-4 min-[640px]:px-6 min-[1024px]:px-8 {className}"
+	data-page-menu={pageMenu ? '' : undefined}
+	aria-keyshortcuts={pageMenu && shortcutsEnabled ? 'M' : undefined}
+	onfocusout={handleFocusOut}
+	class="tabs-nav flex gap-x-1 overflow-x-auto border-b border-line px-4 min-[640px]:px-6 min-[1024px]:px-8 {className}"
 >
-	{#each tabs as tab (tab.href)}
+	{#each tabs as tab, index (tab.href)}
 		{@const current = isCurrent(tab)}
 		<a
 			href={resolve(tab.href as '/')}
+			data-menu-label={tab.label}
 			aria-current={current ? 'page' : undefined}
+			tabindex={tab.href === tabStopHref ? 0 : -1}
+			onfocus={() => (focusedHref = tab.href)}
 			onclick={(event) => choose(event, tab)}
-			class="-mb-px flex min-h-11 items-center gap-x-2 border-b-2 py-3 text-sm/6 font-semibold whitespace-nowrap focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {current
-				? 'border-brand text-fg'
-				: 'border-transparent text-fg-muted hover:border-line-strong hover:text-fg'}"
+			onkeydown={(event) => handleKeydown(event, index)}
+			class="tabs-nav-link flex min-h-11 shrink-0 items-center gap-x-1.5 rounded-t-md border-b-2 px-3 pt-1.5 pb-[5px] text-sm/6 font-semibold whitespace-nowrap min-[640px]:min-h-9 [@media(pointer:coarse)]:min-h-11 {current
+				? 'is-current'
+				: ''}"
 		>
-			{tab.label}
+			<span>{tab.label}</span>
 			{#if tab.count !== undefined}
-				<span class="rounded-full bg-surface-overlay px-2 text-xs/5 font-medium text-fg-secondary"
-					>{tab.count}</span
-				>
+				<span class="tabs-nav-count tabular-nums">{tab.count}</span>
 			{/if}
 		</a>
 	{/each}
 </nav>
+
+<style>
+	.tabs-nav {
+		scrollbar-width: none;
+	}
+	.tabs-nav::-webkit-scrollbar {
+		display: none;
+	}
+	.tabs-nav-link {
+		border-bottom-color: transparent;
+		color: var(--exec-body, var(--fg-muted));
+		transition:
+			background-color 120ms ease-out,
+			color 120ms ease-out;
+	}
+	.tabs-nav-link:hover {
+		background: var(--exec-btn-ghost-bg-hover, var(--surface-raised));
+		color: var(--exec-ink, var(--fg));
+	}
+	.tabs-nav-link.is-current {
+		border-bottom-color: var(--tone-accent-ink);
+		color: var(--exec-ink, var(--fg));
+	}
+	.tabs-nav-link:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: -4px;
+	}
+	.tabs-nav-count {
+		color: var(--exec-muted, var(--fg-muted));
+		font-size: 0.75rem;
+		font-weight: 500;
+	}
+	.tabs-nav-link.is-current .tabs-nav-count {
+		color: var(--tone-accent-ink);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.tabs-nav-link {
+			transition: none;
+		}
+	}
+	@media (forced-colors: active) {
+		.tabs-nav-link {
+			border-bottom-color: Canvas;
+		}
+		.tabs-nav-link.is-current {
+			border-bottom-color: Highlight;
+		}
+	}
+</style>

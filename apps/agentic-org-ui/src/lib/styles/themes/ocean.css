@@ -365,7 +365,7 @@ html[data-ui-theme='ocean'][data-interior-page]
 	}
 }
 
-html[data-ui-theme='ocean'] .project-header {
+html[data-ui-theme='ocean'] .section-header {
 	background-image: var(--ocean-header);
 }
 

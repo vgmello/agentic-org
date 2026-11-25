@@ -8,6 +8,8 @@ import { orgApi } from '$lib/modules/organization/api';
 import { newId } from '$lib/modules/organization/commands';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgSnapshot } from '$lib/proto';
+import type { AssignableTask, WorkRow, WorkState } from '$lib/modules/members';
+import type { ProjectRow } from '$lib/modules/projects/types';
 import type { WorkItemsApi } from '../../../src/lib/modules/workitems/api';
 import { OUTCOME_UNKNOWN, canAllowOnce } from '../../../src/lib/modules/workitems/budget';
 import { normalizeRef } from '../../../src/lib/modules/workitems/present';
@@ -54,6 +56,7 @@ interface StoredTask {
 
 // Per-organization in-memory store (reset on page reload).
 const stores = new Map<string, Map<string, StoredTask>>();
+const archivedTeamIds = new Set<string>();
 const createdOps = new Map<string, { id: string; ref: string }>();
 const budgetOps = new Map<string, { state: 'applied' | 'not_applied'; reason?: string }>();
 const noteOps = new Map<string, PrivateNote | 'deleted' | 'published'>();
@@ -709,6 +712,167 @@ function toRow(t: TaskDetail): TaskRow {
 		awaitingVerification: t.awaitingVerification,
 		...(t.request?.mergedInto ? { merged: true } : {})
 	};
+}
+
+function mapStatusToWorkState(status: TaskDetail['status']): WorkState | null {
+	if (status === 'cancelled') return null;
+	if (
+		status === 'todo' ||
+		status === 'in_progress' ||
+		status === 'in_review' ||
+		status === 'blocked' ||
+		status === 'done'
+	) {
+		return status;
+	}
+	return 'todo';
+}
+
+function mapPriorityToWorkRow(priority: TaskDetail['priority']): WorkRow['priority'] {
+	if (priority === 'normal') return 'medium';
+	return priority;
+}
+
+/** Records a team's archived state so workitem mutations (e.g. reopen) enforce the archived-team rule. */
+export function setTeamArchivedInStore(teamId: string, isArchived: boolean) {
+	if (isArchived) archivedTeamIds.add(teamId);
+	else archivedTeamIds.delete(teamId);
+}
+
+function toWorkRow(d: TaskDetail): WorkRow | null {
+	const state = mapStatusToWorkState(d.status);
+	if (!state) return null;
+	return {
+		ref: d.ref,
+		kind: d.type,
+		title: d.title,
+		project: d.project?.name,
+		assigneeId: d.assignee?.id,
+		assignee: d.assignee?.name,
+		priority: mapPriorityToWorkRow(d.priority),
+		state
+	};
+}
+
+/** Shared live work rows for a team, backed by the same mutable store as WorkDetailPage reads & writes. */
+export function teamWorkRowsFromStore(organizationId: string, teamId: string): WorkRow[] {
+	const store = storeFor(organizationId);
+	const rows: WorkRow[] = [];
+	for (const { detail: d } of store.values()) {
+		if (d.team.id !== teamId && d.assignedTeam?.id !== teamId) continue;
+		const row = toWorkRow(d);
+		if (row) rows.push(row);
+	}
+	return rows;
+}
+
+/** Shared live work rows for a member, backed by the same mutable workitems store. */
+export function memberWorkRowsFromStore(organizationId: string, memberId: string): WorkRow[] {
+	const store = storeFor(organizationId);
+	const rows: WorkRow[] = [];
+	for (const { detail: d } of store.values()) {
+		if (d.assignee?.id !== memberId) continue;
+		const row = toWorkRow(d);
+		if (row) rows.push(row);
+	}
+	return rows;
+}
+
+/** Unassigned open items in the shared store that can be assigned from a member's profile. */
+export function assignableTasksFromStore(organizationId: string): AssignableTask[] {
+	const store = storeFor(organizationId);
+	const out: AssignableTask[] = [];
+	for (const { detail: d } of store.values()) {
+		if (d.assignee || d.status === 'done' || d.status === 'cancelled') continue;
+		out.push({
+			ref: d.ref,
+			title: d.title,
+			project: d.project?.name
+		});
+	}
+	return out;
+}
+
+/** Updates a task's assignee in the shared workitems store through the shared write gate and eligibility checks. */
+export async function assignTaskInStore(
+	organizationId: string,
+	ref: string,
+	assignee: EmployeeRef
+): Promise<void> {
+	await writeGate();
+	const store = storeFor(organizationId);
+	const needle = normalizeRef(ref);
+	for (const entry of store.values()) {
+		if (normalizeRef(entry.detail.ref) === needle) {
+			if (entry.detail.status === 'done' || entry.detail.status === 'cancelled') {
+				throw fail('conflict', `${entry.detail.ref} is already closed and can't be assigned.`);
+			}
+			if (entry.detail.assignee) {
+				if (entry.detail.assignee.id === assignee.id) return;
+				throw fail(
+					'conflict',
+					`${entry.detail.ref} is already assigned to ${entry.detail.assignee.name}.`
+				);
+			}
+			entry.detail.assignee = assignee;
+			entry.detail.revision += 1;
+			entry.detail.updatedAt = nowIso();
+			pushEvent(entry, 'assigned', `assigned ${entry.detail.ref} to ${assignee.name}`);
+			syncDerived(entry);
+			return;
+		}
+	}
+	throw fail('not_found', `${ref} isn't in this organization.`);
+}
+
+/** Whether a work ref is tracked in the shared workitems store (so member summaries prefer live state). */
+export function hasTaskRefInStore(organizationId: string, ref: string): boolean {
+	const store = storeFor(organizationId);
+	const needle = normalizeRef(ref);
+	for (const { detail } of store.values()) {
+		if (normalizeRef(detail.ref) === needle) return true;
+	}
+	return false;
+}
+
+/** First open task assigned to a member in the shared store (for MemberRow.workingOn). */
+export function firstAssignedTaskFromStore(
+	organizationId: string,
+	memberId: string
+): { ref: string; title: string } | undefined {
+	const store = storeFor(organizationId);
+	for (const { detail: d } of store.values()) {
+		if (d.assignee?.id === memberId && d.status !== 'done' && d.status !== 'cancelled') {
+			return { ref: d.ref, title: d.title };
+		}
+	}
+	return undefined;
+}
+
+/** Shared live project task/bug counts from the same mutable workitems store. */
+export function projectCountsFromStore(
+	organizationId: string,
+	projectId: string
+): { openWork: number; tasks: ProjectRow['tasks']; bugs: ProjectRow['bugs'] } {
+	const store = storeFor(organizationId);
+	const tasks: ProjectRow['tasks'] = { todo: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 0 };
+	const bugs: ProjectRow['bugs'] = { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 };
+	let openWork = 0;
+	for (const { detail: d } of store.values()) {
+		if (d.project?.id !== projectId) continue;
+		if (d.status !== 'done' && d.status !== 'cancelled') openWork += 1;
+		// TaskCounts covers every work type by status; open bugs are also tallied by severity.
+		if (d.status === 'todo') tasks.todo += 1;
+		else if (d.status === 'in_progress' || d.status === 'in_review') tasks.inProgress += 1;
+		else if (d.status === 'blocked') tasks.blocked += 1;
+		else if (d.status === 'done') tasks.done += 1;
+		else if (d.status === 'cancelled') tasks.cancelled += 1;
+		if (d.type === 'bug' && d.status !== 'done' && d.status !== 'cancelled') {
+			const sev = d.severity ?? 'unset';
+			bugs[sev] += 1;
+		}
+	}
+	return { openWork, tasks, bugs };
 }
 
 function toLink(t: TaskDetail): TaskLink {
@@ -1521,6 +1685,17 @@ export const workItemsApi: WorkItemsApi = {
 	async reopen(organizationId, taskId, change) {
 		await writeGate();
 		const entry = findEntry(organizationId, taskId);
+		const archivedTeam =
+			(archivedTeamIds.has(entry.detail.team.id) ? entry.detail.team : null) ??
+			(entry.detail.assignedTeam && archivedTeamIds.has(entry.detail.assignedTeam.id)
+				? entry.detail.assignedTeam
+				: null);
+		if (archivedTeam || on('archived')) {
+			throw fail(
+				'conflict',
+				`${archivedTeam?.name ?? entry.detail.team.name} is archived and takes no new work.`
+			);
+		}
 		entry.detail.status = 'todo';
 		entry.detail.statusAt = nowIso();
 		entry.detail.resolution = null;

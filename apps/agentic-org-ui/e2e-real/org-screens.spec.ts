@@ -72,9 +72,17 @@ test('U1: Offices, Teams, People, Org Chart, Projects, and Access work end-to-en
 		await expect(teamTreeLink(page, name)).toBeVisible();
 	}
 
-	// Open Engineering team page and add two people with explicit handles (PEOPLE-3, PEOPLE-4).
+	// Open Engineering team page: lands on Overview with explicit unavailable states (never fake zeros),
+	// then switch to Members tab to verify added people (PEOPLE-3, PEOPLE-4).
 	await teamTreeLink(page, 'Engineering').click();
 	await expect(page).toHaveURL(/\/teams\/[^/]+$/);
+	const engTeamUrl = page.url();
+	const teamOverview = page.getByTestId('team-overview');
+	await expect(teamOverview).toBeVisible();
+	await expect(teamOverview.locator('[data-kpi="blocked"]')).toContainText('—');
+	await expect(teamOverview.getByTestId('team-work-unavailable')).toBeVisible();
+	await expect(teamOverview.getByTestId('team-activity-unavailable')).toBeVisible();
+
 	await page.getByRole('button', { name: 'Add a person', exact: true }).click();
 	let dialog = page.getByRole('dialog');
 	await dialog.getByLabel('Name', { exact: true }).fill('Ada Lovelace');
@@ -82,6 +90,10 @@ test('U1: Offices, Teams, People, Org Chart, Projects, and Access work end-to-en
 	await dialog.getByLabel(/Contact/).fill('ada@lumen.test');
 	await dialog.getByRole('button', { name: 'Add person', exact: true }).click();
 	await expect(dialog).toBeHidden();
+	await page
+		.getByRole('navigation', { name: 'Engineering views' })
+		.getByRole('link', { name: /^Members\b/ })
+		.click();
 	await expect(page.getByRole('link', { name: /Ada Lovelace/ })).toBeVisible();
 
 	// Add a second person to test manager assignment, edit, move home team, and offboarding.
@@ -105,6 +117,7 @@ test('U1: Offices, Teams, People, Org Chart, Projects, and Access work end-to-en
 	// Rename Design -> Product Design and Delete Temp (TEAM-9).
 	await page.goto(`${base}/teams`);
 	await teamTreeLink(page, 'Design').click();
+	await expect(page).toHaveURL(/\/teams\/[^/]+$/);
 	await page.getByRole('button', { name: 'Actions for Design', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Rename…', exact: true }).click();
 	dialog = page.getByRole('dialog');
@@ -115,6 +128,7 @@ test('U1: Offices, Teams, People, Org Chart, Projects, and Access work end-to-en
 
 	await page.goto(`${base}/teams`);
 	await teamTreeLink(page, 'Temp').click();
+	await expect(page).toHaveURL(/\/teams\/[^/]+$/);
 	await page.getByRole('button', { name: 'Actions for Temp', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Delete…', exact: true }).click();
 	dialog = page.getByRole('dialog');
@@ -212,6 +226,13 @@ test('U1: Offices, Teams, People, Org Chart, Projects, and Access work end-to-en
 	await teamsSection.getByRole('checkbox', { name: /Product Design/ }).uncheck();
 	await teamsSection.getByRole('button', { name: 'Save', exact: true }).click();
 	await expect(teamsSection.getByRole('status')).toHaveText('Saved');
+
+	// Verify Engineering Team Overview lists live Checkout project link with explicit progress/health unavailability (never fake "No open tasks").
+	await page.goto(engTeamUrl);
+	const engOverview = page.getByTestId('team-overview');
+	await expect(engOverview.getByRole('link', { name: 'Checkout', exact: true })).toBeVisible();
+	await expect(engOverview).toContainText("Progress and health aren't served by this server yet.");
+	await expect(engOverview).not.toContainText('No open tasks');
 
 	// 7. Access (/settings/access): live people list and issue one-time invite link for Ada.
 	await page.goto(`${base}/settings/access`);

@@ -73,16 +73,68 @@
 		const sidebar = document.querySelector<HTMLElement>('aside.exec-sidebar');
 		const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : undefined;
 		if (sidebar && ro) ro.observe(sidebar);
-		// Make shell chrome inert while this modal reading dialog is open so focus and pointer cannot escape behind it.
-		const shellEls = [
-			...document.querySelectorAll<HTMLElement>('aside.exec-sidebar, header')
-		].filter((el) => !panelEl?.contains(el));
-		const prevInert = shellEls.map((el) => el.inert);
-		for (const el of shellEls) el.inert = true;
+		// Make every background sibling tree up to document.body inert while this modal reading dialog is open
+		// so focus and pointer cannot escape to shell chrome, team/project tabs, or list rows behind the dialog,
+		// while preserving nested Bits UI portals/dialogs and Sonner's stable polite live-region container
+		// (even when 0 toasts are currently mounted) so later save/close toasts remain announced to screen readers.
+		const inertTargets: HTMLElement[] = [];
+		const isSonnerLiveRegion = (el: HTMLElement) =>
+			el.tagName === 'SECTION' &&
+			el.getAttribute('aria-live') === 'polite' &&
+			el.getAttribute('aria-relevant') === 'additions text';
+		const shouldSkipSibling = (el: HTMLElement) =>
+			el.classList.contains('work-panel-backdrop') ||
+			el.hasAttribute('data-bits-portal') ||
+			el.hasAttribute('data-sonner-toaster') ||
+			isSonnerLiveRegion(el) ||
+			Boolean(el.querySelector('[data-sonner-toaster]')) ||
+			el.getAttribute('role') === 'dialog' ||
+			el.getAttribute('role') === 'alertdialog';
+		let cur: HTMLElement | null = panelEl;
+		while (cur && cur !== document.body && cur.parentElement) {
+			for (const sibling of cur.parentElement.children) {
+				if (
+					sibling instanceof HTMLElement &&
+					sibling !== cur &&
+					!inertTargets.includes(sibling) &&
+					!shouldSkipSibling(sibling)
+				) {
+					inertTargets.push(sibling);
+				}
+			}
+			cur = cur.parentElement;
+		}
+		const prevInert = inertTargets.map((el) => el.inert);
+		for (const el of inertTargets) el.inert = true;
+		// Stop Sonner's document-level Alt+T hotkey at document.body (bubble phase) WITHOUT preventDefault(),
+		// so macOS Option+T (`†`) text entry still works inside inputs/textareas while focus never jumps to toasts.
+		const blockToastFocusHotkey = (event: KeyboardEvent) => {
+			if (event.altKey && !event.ctrlKey && !event.metaKey && event.code === 'KeyT') {
+				event.stopPropagation();
+			}
+		};
+		const guardModalFocus = (event: FocusEvent) => {
+			const target = event.target;
+			if (!(target instanceof Node) || !panelEl || panelEl.contains(target)) return;
+			if (
+				target instanceof Element &&
+				target.closest(
+					'[role="dialog"]:not(.work-reading), [role="alertdialog"], [role="menu"], [data-bits-portal]'
+				)
+			) {
+				return;
+			}
+			const fallback = focusableInside(panelEl)[0] ?? backBtnEl ?? panelEl;
+			fallback?.focus({ preventScroll: true });
+		};
+		document.body.addEventListener('keydown', blockToastFocusHotkey);
+		document.addEventListener('focusin', guardModalFocus, true);
 		return () => {
 			window.removeEventListener('resize', measure);
+			document.body.removeEventListener('keydown', blockToastFocusHotkey);
+			document.removeEventListener('focusin', guardModalFocus, true);
 			ro?.disconnect();
-			shellEls.forEach((el, i) => {
+			inertTargets.forEach((el, i) => {
 				el.inert = prevInert[i];
 			});
 		};

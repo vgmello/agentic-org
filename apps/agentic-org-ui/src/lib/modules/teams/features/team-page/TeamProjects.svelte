@@ -22,8 +22,12 @@
 
 	const projects = new Resource(() => teamsApi.projects(team.organizationId, team.teamId));
 	reloadOnChange(projects, () => team.loads);
-	const openWork = (n: number) =>
-		n === 0 ? 'No open tasks' : `${n} open ${n === 1 ? 'task' : 'tasks'}`;
+	const openWork = (n: number | undefined) =>
+		n === undefined
+			? 'Open tasks not served yet'
+			: n === 0
+				? 'No open tasks'
+				: `${n} open ${n === 1 ? 'task' : 'tasks'}`;
 </script>
 
 <!-- A team named in a row's facts: a link inside the line, above the row's stretched link (TEAM-13). -->
