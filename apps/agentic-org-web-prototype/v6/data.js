@@ -51,6 +51,12 @@ const W = [
   { id: "T-A121", kind: "task", title: "Split codec 2a.3.2b",
     description: "Split the 2a.3.2b codec into encoder and decoder changes so each can be reviewed on its own. Keep the existing wire format and confirm that a satellite on the previous version can still sync.\n\nReview the shared fixtures before requesting the release sign-off.",
     status: "In progress", requestedBy: "ada", proj: "agency-v1", who: "kai", pri: "Medium", etaHours: 2,
+    materializedFromIdeation: true,
+    ideationComments: [
+      { id: "ic-121-1", who: "tess", at: Date.now() - 86400000, text: "Routed owner intake to @Ada (Engineering Manager) and @Rowan (Staff Engineer): “Break up the huge 2a.3.2b codec change so reviews don't stall v1.0.”" },
+      { id: "ic-121-2", who: "rowan", at: Date.now() - 82800000, text: "We debated splitting by message type vs encoder/decoder boundary. Encoder vs decoder keeps wire compatibility testable on its own without duplicating fixtures." },
+      { id: "ic-121-3", who: "ada", at: Date.now() - 79200000, text: "Agreed — encoder/decoder split is cleanest. Materializing into the final spec and assigning @Kai." },
+    ],
     criteria: [
       { text: "Split encoders", done: true },
       { text: "Split decoders", done: false },
@@ -149,6 +155,11 @@ const W = [
   { id: "T-A146", kind: "task", title: "Sign the Apple developer agreement for notarization",
     description: "Complete the Apple Developer agreement required for notarization. Confirm the agreement version in the developer account, then identify the account holder who can sign it.\n\nKeep the release gate open until the signed agreement is confirmed.",
     status: "To do", requestedBy: "you", proj: "agency-v1", who: "ada", pri: "High",
+    materializedFromIdeation: true,
+    ideationComments: [
+      { id: "ic-146-1", who: "tess", at: Date.now() - 172800000, text: "Routed owner intake to @Ada: “We need Apple notarization unblocked before cutting the macOS v1.0 installer.”" },
+      { id: "ic-146-2", who: "ada", at: Date.now() - 169200000, text: "Checked notarization logs — it's blocked on the updated Apple Developer Program License Agreement, not a signing cert bug. Splitting into version check (T-A150) and account-holder check (T-A151)." },
+    ],
     subtasks: [
       { id: "T-A150", title: "Confirm the agreement version",
         description: "Match the agreement version in the Apple Developer account to the one listed on the notarization requirement. Record the result for the signer.",

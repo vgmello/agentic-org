@@ -465,13 +465,14 @@ function workDetailIdeation(w) {
   }
   if (!comments.length) return "";
   const open = !!S.openIdeation[w.id];
+  const agentName = w.who && M[w.who]?.kind === "agent" ? M[w.who].name : "Executing agents";
   return `<section class="work-ideation-fold" aria-labelledby="work-ideation-fold-h">
     <div class="work-ideation-fold-bar">
       <div class="work-ideation-fold-copy">
-        <h3 id="work-ideation-fold-h">Ideation history <span class="cnt">${comments.length}</span></h3>
-        <span class="work-ideation-ax">Excluded from default agent context · <code>--include-ideation</code></span>
+        <h3 id="work-ideation-fold-h">Ideation comments <span class="cnt">${comments.length}</span></h3>
+        <span class="work-ideation-ax">${esc(agentName)} sees final spec + execution comments only · Opt-in via <code>agent-os task view ${esc(w.id)} --include-ideation</code></span>
       </div>
-      <button class="btn outline sm" type="button" data-act="work-toggle-ideation" data-id="${esc(w.id)}" aria-expanded="${open}">${open ? "Hide ideation" : "Show ideation"}</button>
+      <button class="btn outline sm" type="button" data-act="work-toggle-ideation" data-id="${esc(w.id)}" aria-expanded="${open}">${open ? "Hide ideation" : `Show ideation (${comments.length})`}</button>
     </div>
     ${open ? `<div class="work-ideation-fold-body">${workIdeationCommentsList(comments)}</div>` : ""}
   </section>`;
@@ -586,8 +587,12 @@ function workHistory(w) {
 
 function workDiscussion(w) {
   const prefix = workCommentPrefix(w.id);
+  const hasIdeation = !!(w.ideationComments?.length);
   return `<section class="triage-activity work-discussion" aria-labelledby="work-activity-title">
-    <h3 id="work-activity-title">Activity</h3>
+    <div class="work-ideation-head">
+      <h3 id="work-activity-title">${hasIdeation ? "Execution comments &amp; activity" : "Activity"}</h3>
+      ${hasIdeation ? '<span class="work-exec-badge">Visible to agent by default</span>' : ""}
+    </div>
     <form class="triage-comment-form" data-form="work-comment" data-id="${esc(w.id)}">
       <label class="sr-only" for="work-comment">Comment on this task</label>
       <textarea id="work-comment" name="comment" rows="2" maxlength="2000" placeholder="Leave a comment…" aria-keyshortcuts="Meta+Enter Control+Enter" required>

@@ -187,8 +187,9 @@ function addDraftInboxNotice(created, leadId) {
     time: "Just now",
     what: `Draft ready to refine: ${created.title}`,
     why: `Tess routed your request to ${M[leadId]?.name || "the project lead"} in Draft mode. Discuss details or click Materialize & Publish on ${created.id} when ready.`,
-    rec: { tone: "ok", label: "Next step", text: `Open ${created.id} to review criteria, add ideation comments, or publish to To do.` },
-    actions: ["Open draft"],
+    rec: `Open ${created.id} to review criteria, add ideation notes, or click Materialize & Publish to move it into To do.`,
+    recTone: "ok",
+    src: { href: `#/work?item=${created.id}`, label: `Open draft ${created.id}` },
     handled: false,
   });
   return inboxId;
