@@ -550,11 +550,15 @@ fn build_sandbox_json(spec: &SessionSpec, ctx: &LaunchContext) -> Value {
         }
     }
 
-    let allow_all_unix = !spec.sandbox.allowed_unix_sockets.is_empty()
-        && !org_platform::confinement::unix_socket_path_filter_supported();
-    if allow_all_unix {
-        append_linux_privileged_socket_denies(&mut deny_read, &mut deny_write);
-    }
+    let is_linux_bwrap = !org_platform::confinement::unix_socket_path_filter_supported();
+    let allow_all_unix = !spec.sandbox.allowed_unix_sockets.is_empty() && is_linux_bwrap;
+    apply_linux_bwrap_sandbox_rules(
+        &mut deny_read,
+        &mut deny_write,
+        &writable,
+        is_linux_bwrap,
+        allow_all_unix,
+    );
     let network = build_sandbox_network_json(&spec.sandbox.allowed_unix_sockets, allow_all_unix);
 
     json!({
@@ -570,6 +574,64 @@ fn build_sandbox_json(spec: &SessionSpec, ctx: &LaunchContext) -> Value {
     })
 }
 
+fn apply_linux_bwrap_sandbox_rules(
+    deny_read: &mut Vec<String>,
+    deny_write: &mut Vec<String>,
+    writable: &[String],
+    is_linux_bwrap: bool,
+    allow_all_unix: bool,
+) {
+    if allow_all_unix {
+        append_linux_privileged_socket_denies(deny_read);
+    }
+    if is_linux_bwrap {
+        // Linux `bwrap` mounts `/` read-only (`--ro-bind / /`) and only `allowWrite` roots are
+        // writable. Omitting `denyWrite` entries outside `allowWrite` keeps write protection
+        // intact while preventing `@anthropic-ai/sandbox-runtime` from creating 0-byte `0444`
+        // regular files on the real host for absent paths (`TASK-144`). Full write denies remain
+        // enforced in `permissions.deny` and the office approval bridge.
+        *deny_write = filter_linux_bwrap_deny_write(std::mem::take(deny_write), writable);
+    }
+}
+
+fn split_path_segments(raw: &str) -> Vec<&str> {
+    raw.split('/').filter(|seg| !seg.is_empty()).collect()
+}
+
+/// Returns `true` when `pattern` could match any path at, inside, or enclosing `root`.
+/// Used on Linux `bwrap` (where `/` is read-only) so `denyWrite` retains every write deny that
+/// overlaps an `allowWrite` root while dropping disjoint entries outside `allowWrite`.
+fn pattern_overlaps_root(pattern: &str, root: &str) -> bool {
+    let trimmed = pattern
+        .strip_suffix("/**")
+        .or_else(|| pattern.strip_suffix("/*"))
+        .unwrap_or(pattern);
+    let pat_segs = split_path_segments(trimmed);
+    let root_segs = split_path_segments(root);
+    for (p, r) in pat_segs.iter().zip(root_segs.iter()) {
+        if *p == "**" {
+            return true;
+        }
+        if p.contains('*') || p.contains('?') || p.contains('[') {
+            continue;
+        }
+        if p != r {
+            return false;
+        }
+    }
+    true
+}
+
+pub(crate) fn filter_linux_bwrap_deny_write(
+    deny_write: Vec<String>,
+    writable: &[String],
+) -> Vec<String> {
+    deny_write
+        .into_iter()
+        .filter(|pat| writable.iter().any(|root| pattern_overlaps_root(pat, root)))
+        .collect()
+}
+
 const LINUX_PRIVILEGED_SOCKET_DENIES: &[&str] = &[
     "/run/user/*/bus",
     "/run/user/*/systemd/**",
@@ -581,18 +643,13 @@ const LINUX_PRIVILEGED_SOCKET_DENIES: &[&str] = &[
     "/run/podman/**",
 ];
 
-fn append_linux_privileged_socket_denies(
-    deny_read: &mut Vec<String>,
-    deny_write: &mut Vec<String>,
-) {
+fn append_linux_privileged_socket_denies(deny_read: &mut Vec<String>) {
     // Defense-in-depth when Linux seccomp requires `allowAllUnixSockets`: hide well-known
     // privileged host sockets (systemd user D-Bus, system D-Bus, Docker/Podman) inside bwrap.
+    // Under Linux `bwrap` `/` is already read-only, so these only need `denyRead` (`TASK-144`).
     for &pat in LINUX_PRIVILEGED_SOCKET_DENIES {
         if !deny_read.iter().any(|p| p == pat) {
             deny_read.push(pat.to_owned());
-        }
-        if !deny_write.iter().any(|p| p == pat) {
-            deny_write.push(pat.to_owned());
         }
     }
 }
@@ -848,8 +905,7 @@ mod sandbox_network_tests {
     #[test]
     fn linux_privileged_socket_denies_mask_dbus_and_docker_without_duplicates() {
         let mut deny_read = vec!["/run/docker.sock".to_owned()];
-        let mut deny_write = Vec::new();
-        append_linux_privileged_socket_denies(&mut deny_read, &mut deny_write);
+        append_linux_privileged_socket_denies(&mut deny_read);
         for expected in [
             "/run/user/*/bus",
             "/run/user/*/systemd/**",
@@ -861,10 +917,6 @@ mod sandbox_network_tests {
                 deny_read.iter().any(|p| p == expected),
                 "deny_read missing {expected}"
             );
-            assert!(
-                deny_write.iter().any(|p| p == expected),
-                "deny_write missing {expected}"
-            );
         }
         assert_eq!(
             deny_read
@@ -873,5 +925,54 @@ mod sandbox_network_tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn filter_linux_bwrap_deny_write_keeps_only_entries_overlapping_allow_write() {
+        let writable = vec![
+            "/work/t-1".to_owned(),
+            "/run/user/1001/t/abc".to_owned(),
+            "/var/lib/org/repos/r1.git/objects".to_owned(),
+            "/var/lib/org/repos/r1.git/worktrees/wt1".to_owned(),
+        ];
+        let deny_write = vec![
+            "/work/t-1/.git/hooks/**".to_owned(),
+            "/var/lib/org/repos/r1.git/objects/info".to_owned(),
+            "/var/lib/org/repos/r1.git/objects/info/**".to_owned(),
+            "/var/lib/org/repos/r1.git/worktrees/wt1/commondir".to_owned(),
+            "/var/lib/org/repos/r1.git/hooks".to_owned(),
+            "/var/lib/org/repos/r1.git/hooks/**".to_owned(),
+            "/var/lib/org/repos/r1.git/config".to_owned(),
+            "/office/durable/authority/**".to_owned(),
+            "/home/agents/.claude".to_owned(),
+            "/run/user/*/bus".to_owned(),
+            "/var/lib/org/repos/**".to_owned(),
+        ];
+        let kept = filter_linux_bwrap_deny_write(deny_write, &writable);
+        for must_keep in [
+            "/work/t-1/.git/hooks/**",
+            "/var/lib/org/repos/r1.git/objects/info",
+            "/var/lib/org/repos/r1.git/objects/info/**",
+            "/var/lib/org/repos/r1.git/worktrees/wt1/commondir",
+            "/var/lib/org/repos/**",
+        ] {
+            assert!(
+                kept.iter().any(|p| p == must_keep),
+                "expected {must_keep} to remain in denyWrite: {kept:?}"
+            );
+        }
+        for must_drop in [
+            "/var/lib/org/repos/r1.git/hooks",
+            "/var/lib/org/repos/r1.git/hooks/**",
+            "/var/lib/org/repos/r1.git/config",
+            "/office/durable/authority/**",
+            "/home/agents/.claude",
+            "/run/user/*/bus",
+        ] {
+            assert!(
+                !kept.iter().any(|p| p == must_drop),
+                "expected {must_drop} outside allowWrite to be dropped: {kept:?}"
+            );
+        }
     }
 }
