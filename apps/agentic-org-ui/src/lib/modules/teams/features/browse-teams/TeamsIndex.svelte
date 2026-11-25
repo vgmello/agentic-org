@@ -9,6 +9,7 @@
 	import { invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
+	import Avatar from '$lib/components/Avatar.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
@@ -43,6 +44,14 @@
 			for (const p of row.team.projects) seenProjects[p.id] = true;
 		}
 		return { people, agents, topLevel, projects: Object.keys(seenProjects).length };
+	});
+	const ownerInfo = $derived.by(() => {
+		const owner = snapshot.members.find((m) => m.owner);
+		if (!owner) return undefined;
+		const reports = snapshot.members.filter(
+			(m) => m.agent?.status !== 'offboarded' && m.reports_to_member_id === owner.id
+		);
+		return { owner, reports };
 	});
 	const session = $derived(sessionFor(orgApi, organizationId));
 	let dialogs = $state<ReturnType<typeof TeamDialogs>>();
@@ -114,6 +123,40 @@
 	emptyDescription="Every organization starts with its top-level team. If none shows here, HQ hasn't sent the organization's teams yet."
 >
 	<div class="flex flex-col gap-5 px-4 py-5 min-[640px]:px-6 min-[1024px]:px-8">
+		{#if ownerInfo}
+			{@const { owner, reports } = ownerInfo}
+			<div
+				class="exec-card flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 min-[640px]:px-5"
+				data-testid="teams-owner-card"
+			>
+				<div class="flex min-w-0 items-center gap-3">
+					<Avatar name={owner.name} size="md" />
+					<div class="min-w-0">
+						<p class="flex flex-wrap items-baseline gap-x-1.5 text-sm/6">
+							<span class="font-semibold text-fg">{owner.name}</span>
+							<span class="text-xs/5 text-fg-muted">· Owner</span>
+						</p>
+						<p class="text-xs/5 text-fg-muted">
+							{#if reports.length > 0}
+								{plural(reports.length, 'member reports', 'members report')} directly:
+								{reports
+									.slice(0, 4)
+									.map((m) => m.name)
+									.join(', ')}{reports.length > 4 ? ` +${reports.length - 4}` : ''}
+							{:else}
+								Full access to this organization
+							{/if}
+						</p>
+					</div>
+				</div>
+				<Button
+					href={resolve(`/members/${encodeURIComponent(owner.id)}` as '/')}
+					variant="outline"
+					size="sm"
+					class="min-h-8">Profile</Button
+				>
+			</div>
+		{/if}
 		{#if active.length > 0}
 			<section
 				aria-label="Teams summary"
