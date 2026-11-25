@@ -118,6 +118,7 @@ function toggleNavPinned() {
   if (!S.navPinned) S.navHover = false;
   try { localStorage.setItem(NAV_PIN_STORE, S.navPinned ? "1" : "0"); } catch (e) {}
   applyNavCollapsed();
+  window.dispatchEvent(new Event("resize"));
 }
 const SR = { q: "", open: false, active: 0, flat: [] };
 const KEYS_STORE = "agentic-org.singleKeyShortcuts";
@@ -145,7 +146,7 @@ function applyShortcuts() {
   if (on) nav.setAttribute("aria-keyshortcuts", "S"); else nav.removeAttribute("aria-keyshortcuts");
 }
 const inTextField = (el) => !!el && (["input", "textarea", "select"].includes((el.tagName || "").toLowerCase()) || !!el.isContentEditable);
-const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu:not([hidden]), .af-shell") || document.body.classList.contains("drawer"));
+const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu:not([hidden]), .af-shell, #notif-popover:not([hidden]), #tess-panel.is-modal:not([hidden])") || document.body.classList.contains("drawer"));
 const qs = () => new URLSearchParams((location.hash.split("?")[1]) || "");
 
 export {

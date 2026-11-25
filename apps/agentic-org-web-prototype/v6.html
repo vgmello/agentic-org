@@ -153,12 +153,18 @@
         <span class="cmdk-ph">Workspace</span>
         <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
       </button>
-      <span class="cmdk-sep" aria-hidden="true"></span>
-      <button class="cmdk-ai-btn" id="cmdk-ai-trigger" type="button" data-act="cmdk-open-ai" aria-haspopup="dialog" aria-controls="cmdk-dialog">
-        <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg>
-        <span>Ask</span>
-      </button>
       <div class="cmdk-dialog cmdk-home-results" id="cmdk-home-results" hidden></div>
+    </div>
+    <div class="topbar-utils" id="topbar-utils">
+      <button class="util-btn util-tess" id="tess-trigger" type="button" data-act="tess-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="tess-panel" aria-keyshortcuts="Meta+/ Control+/" title="Ask Tess (⌘/)">
+        <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg><span class="util-lbl">Tess</span>
+      </button>
+      <div class="notif-wrap" id="notif-wrap">
+        <button class="util-btn util-notif" id="notif-trigger" type="button" data-act="notif-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="notif-popover" aria-label="Notifications" title="Notifications">
+          <svg class="ic ic16" aria-hidden="true"><use href="#i-bell"/></svg>
+        </button>
+      </div>
+      <span class="sr-only" id="notif-live" aria-live="polite"></span>
     </div>
   </header>
   <main id="main" tabindex="-1"></main>
@@ -168,6 +174,9 @@
 </p>
 
 <div id="overlay-root"></div>
+<div class="notif-popover" id="notif-popover" role="dialog" aria-label="Notifications" hidden></div>
+<div class="tess-panel-scrim" id="tess-panel-scrim" data-act="tess-close" hidden></div>
+<aside class="tess-panel" id="tess-panel" aria-label="Tess assistant" hidden></aside>
 <div class="cmdk-backdrop" id="cmdk-root" hidden>
   <div class="cmdk-dialog" id="cmdk-dialog" role="dialog" aria-modal="true" aria-label="Command palette and Ask Tess">
     <div class="cmdk-tabs">

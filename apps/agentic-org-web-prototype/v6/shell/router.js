@@ -11,6 +11,7 @@ import { fitTextarea, pageWork, scopedWorkQueries, scopedWorkType, setWorkPanelE
 import { isMacPlatform } from "./cmdk.js";
 import { endNavigationKeys } from "./keyboard.js";
 import { mountHomeProjectHint, renderBanner, renderNav } from "./sidebar.js";
+import { syncTopbarUtils } from "./topbar-utils.js";
 import { S, applyShortcuts, qs } from "../state.js";
 import { esc, ic } from "../ui.js";
 
@@ -20,7 +21,9 @@ const own = (o, k) => k != null && Object.prototype.hasOwnProperty.call(o, k);
 const TITLES = { home: "Home", inbox: "Inbox", projects: "Projects", work: "Work", chat: "Chat", activity: "Activity", teams: "Teams", members: "Member", settings: "Organization settings", preferences: "Your preferences", search: "Search" };
 const MEMBER_ALIASES = ["members", "people", "everyone"];
 const homeToolbar = document.getElementById("home-toolbar");
-const [drawerButton, commandBar] = homeToolbar.children;
+const drawerButton = homeToolbar.querySelector(".menu-btn");
+const commandBar = document.getElementById("cmdk-shell");
+const topbarUtils = document.getElementById("topbar-utils");
 const pageSearchTools = document.createElement("div");
 pageSearchTools.id = "page-search-tools";
 const localSearchHost = document.getElementById("cmdk-local");
@@ -52,9 +55,9 @@ function attachToolbarHost(main, heading) {
     heading.classList.add("has-page-toolbar");
     heading.prepend(drawerButton);
     heading.append(pageSearchTools);
-    pageSearchTools.append(commandBar);
-  } else if (commandBar.parentElement !== homeToolbar) {
-    homeToolbar.append(drawerButton, commandBar);
+    pageSearchTools.append(commandBar, topbarUtils);
+  } else if (commandBar.parentElement !== homeToolbar || topbarUtils.parentElement !== homeToolbar) {
+    homeToolbar.append(drawerButton, commandBar, topbarUtils);
   }
   homeToolbar.hidden = Boolean(heading);
 }
@@ -78,8 +81,6 @@ function placeSearchToolbar(main, currentRoute) {
   const isHome = page === "home", workspaceSearch = Boolean(heading && !search);
   syncHomeSearchField(isHome, workspaceSearch);
   document.getElementById("cmdk-trigger").hidden = isHome;
-  document.getElementById("cmdk-ai-trigger").hidden = !isHome;
-  commandBar.querySelector(".cmdk-sep").hidden = !isHome;
   localSearchHost.hidden = !search;
   const showShortcut = Boolean(search) && S.singleKey;
   localSearchHost.innerHTML = search
@@ -232,6 +233,7 @@ function render(focus = true) {
   fitTextarea(document.getElementById("work-comment"));
   fitTextarea(document.getElementById("compose"));
   applyShortcuts();
+  syncTopbarUtils(r);
   syncAssemblySimulationTimer();
 }
 

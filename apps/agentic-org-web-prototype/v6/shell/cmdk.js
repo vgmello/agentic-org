@@ -1,8 +1,10 @@
 import { CH, M, P } from "../data.js";
 import { answerOrgQuestion } from "../pages/home.js";
+import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { canonicalWorkRef, workHref, workItems } from "../pages/work.js";
 import { closeMenus } from "./actions.js";
 import { homeSearchField, homeSearchInput, homeSearchResults, pageSearchTools, render, route } from "./router.js";
+import { closeNotificationsPopover, openTessPanel } from "./topbar-utils.js";
 import { S, toggleNavPinned } from "../state.js";
 import { av, esc, ic, kindWord, leadTxt, memberIds, toast, unhandled } from "../ui.js";
 
@@ -49,7 +51,7 @@ const CMDK_AI_STARTERS_EMPTY = [
 function cmdkCommands() {
   const isEmpty = S.homeState === "empty";
   return [
-    { group: "Actions", label: "New task", sub: "Create a work item, bug, or request", icon: "plus", tag: "Command", run: () => toast("New task (prototype action)") },
+    { group: "Actions", label: "New task", sub: "Send a task, bug, or request to Tess", icon: "plus", tag: "Command", run: () => openSmartTaskComposer() },
     { group: "Actions", label: "New project", sub: "Start a project wizard to group work", icon: "folder", tag: "Wizard", run: () => toast("New project wizard (prototype action)") },
     { group: "Actions", label: "Hire an agent", sub: "Describe role, review suggestion, hire", icon: "sparkle", tag: "Wizard", run: () => toast("Hire an agent wizard (Describe, Suggestion, Review, Hiring)") },
     { group: "Actions", label: "New message", sub: "Start a conversation in Chat", icon: "chat", tag: "Command", run: () => toast("New message (prototype action)") },
@@ -75,25 +77,18 @@ function cmdkCommands() {
 function askInCmdk(rawQ) {
   const q = String(rawQ || "").trim();
   if (!q) return;
-  if (CMDK.inline) openCmdk(q, "ai", homeSearchInput);
-  CMDK.mode = "ai";
-  const ans = answerOrgQuestion(q);
-  if (ans) {
-    ans._state = S.homeState;
-    CMDK.aiAns = ans;
-    CMDK.aiHistory = [ans, ...CMDK.aiHistory.filter((x) => x.q.toLowerCase() !== ans.q.toLowerCase())];
-  }
-  CMDK.q = "";
-  const inp = document.getElementById("cmdk-input");
-  if (inp) { inp.value = ""; inp.focus(); }
-  renderCmdk();
+  closeCmdk(false);
+  openTessPanel(q);
 }
 function setCmdkMode(mode) {
-  if (CMDK.inline) {
-    if (mode === "ai") openCmdk(CMDK.q, "ai", homeSearchInput);
+  if (mode === "ai") {
+    const q = CMDK.q;
+    closeCmdk(false);
+    openTessPanel(q);
     return;
   }
-  CMDK.mode = mode === "ai" ? "ai" : "cmd";
+  if (CMDK.inline) return;
+  CMDK.mode = "cmd";
   CMDK.active = 0;
   renderCmdk();
   const inp = document.getElementById("cmdk-input");
@@ -126,6 +121,7 @@ function openCmdk(prefill = "", mode = "cmd", trigger = document.activeElement, 
   Object.assign(CMDK, { inline, returnTo: inline ? homeSearchInput : trigger, open: true, mode: mode === "ai" ? "ai" : "cmd", q: prefill, active: 0 });
   resetStaleCmdkAiState();
   closeMenus();
+  closeNotificationsPopover(false);
   const list = document.getElementById("cmdk-list");
   const input = CMDK.inline ? homeSearchInput : document.getElementById("cmdk-input");
   mountCmdkListHost(list);
@@ -200,7 +196,7 @@ function appendCmdkOrgResults(groups, q) {
   if (S.homeState === "empty") return;
   const matches = (i) => i.what.toLowerCase().includes(q) || i.sub.toLowerCase().includes(q) || M[i.from].name.toLowerCase().includes(q);
   const inboxHits = unhandled().filter(matches).slice(0, 3)
-    .map((i) => ({ href: "#/inbox/" + i.id, label: i.what, sub: `${M[i.from].name} · ${i.sub}`, icon: "bell", tag: "Inbox" }));
+    .map((i) => ({ href: "#/inbox/" + i.id, label: i.what, sub: `${M[i.from].name} · ${i.sub}`, icon: "inbox", tag: "Inbox" }));
   if (inboxHits.length) groups.push(["Needs you", inboxHits]);
   searchResults(q, 4).forEach(([g, items]) => groups.push([g, items]));
 }

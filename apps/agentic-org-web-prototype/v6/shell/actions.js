@@ -13,6 +13,7 @@ import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, 
 import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, setSheetReturn } from "./dialogs.js";
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
 import { homeSearchField, homeSearchInput, homeSearchResults, pageSearchInput, render, route } from "./router.js";
+import { UTIL, askTessInPanel, clearReadNotifications, clearTessHistory, closeNotificationsPopover, closeTessPanel, dismissTessContext, isTessDocked, markAllNotificationsRead, markNotificationRead, openTessPanel, toggleNotificationsPopover, toggleTessPanel } from "./topbar-utils.js";
 import { ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
 import { spotQueue, toast } from "../ui.js";
 
@@ -338,11 +339,22 @@ const CLICK_ACTIONS = {
   "chat-jump": (_e, t) => openCmdk("#", "cmd", t, false),
   "search-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
   "cmdk-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
-  "cmdk-open-ai": (_e, t) => openCmdk("", "ai", t),
+  "cmdk-open-ai": (_e, t) => openTessPanel("", t),
   "cmdk-close": () => closeCmdk(true),
   "cmdk-mode": (_e, _t, _id, v) => setCmdkMode(v),
   "cmdk-ai-ask": (_e, _t, _id, v) => askInCmdk(v),
-  "brief-ai-ask": (_e, _t, _id, v) => { openCmdk("", "ai"); askInCmdk(v); },
+  "brief-ai-ask": (_e, _t, _id, v) => openTessPanel(v),
+  "tess-toggle": (_e, t) => toggleTessPanel(t),
+  "tess-close": () => closeTessPanel(true),
+  "tess-open-dm": () => closeTessPanel(false),
+  "tess-clear": () => clearTessHistory(),
+  "tess-ask-chip": (_e, _t, _id, v) => askTessInPanel(v),
+  "tess-dismiss-ctx": (_e, _t, _id, v) => dismissTessContext(v),
+  "notif-toggle": (_e, t) => toggleNotificationsPopover(t),
+  "notif-close": () => closeNotificationsPopover(true),
+  "notif-open": (_e, _t, id) => markNotificationRead(id),
+  "notif-mark-all": () => markAllNotificationsRead(),
+  "notif-clear-read": () => clearReadNotifications(),
   "brief-lens": (_e, _t, _id, v) => { S.briefLens = v; S.briefCopied = false; render(false); document.querySelector(`[data-act="brief-lens"][data-v="${CSS.escape(v || "")}"]`)?.focus(); },
   "brief-expand": () => { S.briefExpanded = !S.briefExpanded; render(false); },
   "ai-copy-brief": () => handleCopyBrief(),
@@ -376,6 +388,13 @@ function handleBackdropOrJumpClick(e) {
   return false;
 }
 
+function dismissTopbarOverlaysForLink(link) {
+  const act = link.dataset.act;
+  if (act === "notif-open" && link.dataset.id) { markNotificationRead(link.dataset.id); return; }
+  if (act === "notif-close") { closeNotificationsPopover(false); return; }
+  if (act === "tess-open-dm" || (link.closest("#tess-panel") && !isTessDocked())) closeTessPanel(false);
+}
+
 function handleHashLinkClick(e) {
   const link = e.target.closest('a[href^="#/"]');
   if (!link || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false;
@@ -383,6 +402,7 @@ function handleHashLinkClick(e) {
   e.preventDefault();
   document.body.classList.remove("drawer");
   closeMenus();
+  dismissTopbarOverlaysForLink(link);
   if (link.dataset.act === "insight-drill") { updateProjectInsights(new URLSearchParams(href.split("?")[1]), "insights-usage-heading"); return true; }
   if (location.hash !== href) location.hash = href;
   else if (link.matches(".work-item-link")) document.getElementById("work-detail-title")?.focus({ preventScroll: true });
@@ -400,6 +420,7 @@ document.addEventListener("click", (e) => {
   if (handleBackdropOrJumpClick(e) || handleHashLinkClick(e)) return;
   const t = e.target.closest("[data-act]");
   if (!e.target.closest(".menu-wrap")) closeMenus();
+  if (UTIL.notifOpen && !e.target.closest("#notif-wrap, #notif-popover")) closeNotificationsPopover(false);
   if (!e.target.closest(".search")) {
     if (SR.open) closeSearch();
     if (document.body.classList.contains("searching")) { const q = document.getElementById("q"); if (q) q.value = ""; SR.q = ""; document.body.classList.remove("searching"); }
@@ -518,6 +539,10 @@ document.addEventListener("submit", (e) => {
     return;
   }
   if (e.target.dataset.form === "work-create") { createWorkTask(e.target); return; }
+  if (e.target.dataset.form === "tess-panel-ask") {
+    askTessInPanel(document.getElementById("tess-panel-input")?.value || "");
+    return;
+  }
   if (e.target.dataset.form === "send") sendChatMessage(e.target);
 });
 
@@ -597,6 +622,8 @@ function dismissLocalEscapeTarget(e) {
 
 function handleEscapeKeydown(e) {
   if (dismissLocalEscapeTarget(e)) return;
+  if (UTIL.notifOpen) { e.preventDefault(); closeNotificationsPopover(true); return; }
+  if (UTIL.tessOpen && (!isTessDocked() || e.target.closest?.("#tess-panel"))) { e.preventDefault(); closeTessPanel(true); return; }
   if (isAgentFocusOpen()) { e.preventDefault(); closeAgentFocus(true); return; }
   const closeThread = e.target.closest(".thread")?.querySelector('[data-act="thread-close"]');
   if (closeThread) { e.preventDefault(); closeThread.click(); return; }
@@ -699,12 +726,22 @@ function isCmdKCombo(e) {
   return (e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K");
 }
 
+function isCmdSlashCombo(e) {
+  return (e.metaKey || e.ctrlKey) && !e.altKey && e.key === "/";
+}
+
 function handleSearchGlobalKeydown(e) {
   if (isCmdKCombo(e)) {
     e.preventDefault();
     const pageInput = pageSearchInput();
     if (CMDK.open && (!CMDK.inline || pageInput !== homeSearchInput)) closeCmdk(true);
     else openCmdk(pageInput?.value || "");
+    return true;
+  }
+  if (isCmdSlashCombo(e)) {
+    e.preventDefault();
+    if (CMDK.open) { const q = CMDK.q; closeCmdk(false); openTessPanel(q); }
+    else toggleTessPanel(document.activeElement);
     return true;
   }
   if (!CMDK.open && e.target === homeSearchInput && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -747,7 +784,9 @@ if (window.matchMedia) {
   if (mqp.addEventListener) mqp.addEventListener("change", applyShortcuts); else if (mqp.addListener) mqp.addListener(applyShortcuts);
 }
 window.addEventListener("hashchange", () => {
-  closeCmdk(false); document.querySelector(".work-task-dialog[open]")?.close(); document.body.classList.remove("drawer");
+  closeCmdk(false); closeNotificationsPopover(false);
+  if (UTIL.tessOpen && !isTessDocked()) closeTessPanel(false);
+  document.querySelector(".work-task-dialog[open]")?.close(); document.body.classList.remove("drawer");
   S.thread = null; S.replying = null; S.replyMode = null; S.confirmDeny = null;
   IN.forEach((i) => { if (i.handled) i.handledNow = false; });
   render(true);
