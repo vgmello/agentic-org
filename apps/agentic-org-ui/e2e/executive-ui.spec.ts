@@ -93,6 +93,17 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'classic');
 	await expect(page).toHaveURL(/\/home$/);
 	await expect(inlineListbox).toBeHidden();
+
+	// Escape from empty Home search exits focus so single-key `S` sidebar shortcut works immediately
+	await homeCombo.focus();
+	await expect(homeCombo).toBeFocused();
+	await homeCombo.press('Escape');
+	await expect(inlineListbox).toBeHidden();
+	await expect(homeCombo).not.toBeFocused();
+	await page.keyboard.press('s');
+	await expect(page.getByTestId('nav-key-hint')).toContainText('Sidebar');
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('nav-key-hint')).toBeHidden();
 	await page
 		.getByRole('group', { name: 'Theme' })
 		.getByRole('button', { name: 'Ocean', exact: true })

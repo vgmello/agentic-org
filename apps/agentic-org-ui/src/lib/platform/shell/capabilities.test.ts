@@ -4,7 +4,7 @@ import { areaCapability } from './capabilities';
 const VALID_ROLE_ID = '0193a5c0-0000-7000-8000-000000000040';
 
 describe('production shell capabilities', () => {
-	it('enables session, onboarding, security, U1 org/office/project, B7 home/inbox/chat, and FC-108 roles routes', () => {
+	it('enables session, onboarding, security, U1 org/office/project, B7 home/inbox/chat, B4/B5 work, and FC-108 roles routes', () => {
 		for (const path of [
 			'/',
 			'/sign-in',
@@ -17,6 +17,8 @@ describe('production shell capabilities', () => {
 			'/cli-approve',
 			'/home',
 			'/inbox',
+			'/work',
+			'/work/T-A1',
 			'/chat',
 			'/settings/offices',
 			'/offices',
@@ -37,6 +39,7 @@ describe('production shell capabilities', () => {
 			'/members/0193a5c0-0000-7000-8000-000000000002/role',
 			'/projects',
 			'/projects/0193a5c0-0000-7000-8000-000000000003',
+			'/projects/0193a5c0-0000-7000-8000-000000000003/work',
 			'/projects/0193a5c0-0000-7000-8000-000000000003/team',
 			'/projects/0193a5c0-0000-7000-8000-000000000003/settings'
 		])
@@ -49,7 +52,7 @@ describe('production shell capabilities', () => {
 			'/security/x',
 			'/approve/x',
 			'/cli-approve/x',
-			'/work',
+			'/work/T-A1/extra',
 			'/activity',
 			'/settings',
 			'/settings/costs',
@@ -72,7 +75,6 @@ describe('production shell capabilities', () => {
 			'/projects/p1/features',
 			'/projects/p1/releases',
 			'/projects/p1/insights',
-			'/projects/p1/work',
 			'/search',
 			'/processes',
 			'/sessions',

@@ -932,15 +932,25 @@
 		}
 	}
 
-	function handleInlineEscape(event: KeyboardEvent) {
-		if (inlineOpen) {
-			event.preventDefault();
-			closeInline(false);
-		} else if (query.length > 0) {
-			event.preventDefault();
-			query = '';
-			resetActive();
+	function exitHomeSearch() {
+		const heading = document.querySelector<HTMLElement>('#shell-page-title, main h1, main h2');
+		if (heading) {
+			if (!heading.hasAttribute('tabindex')) heading.tabIndex = -1;
+			heading.focus({ preventScroll: true });
+		} else {
+			homeInputEl?.blur();
 		}
+	}
+
+	function handleInlineEscape(event: KeyboardEvent) {
+		event.preventDefault();
+		event.stopPropagation();
+		if (inlineOpen) {
+			closeInline(false);
+			if (query.length === 0) exitHomeSearch();
+			return;
+		}
+		exitHomeSearch();
 	}
 
 	function handleInputKeydown(event: KeyboardEvent) {

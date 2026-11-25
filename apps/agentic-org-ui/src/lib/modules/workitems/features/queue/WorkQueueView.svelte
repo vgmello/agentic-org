@@ -125,17 +125,20 @@
 		shellData = undefined;
 	}
 	const scopedSearch = useScopedSearchContext();
-	const usesHeaderScopedSearch = $derived(!isOrgScope && Boolean(scopedSearch));
+	const usesHeaderScopedSearch = $derived(Boolean(scopedSearch));
 
 	$effect(() => {
-		if (!scopedSearch || isOrgScope) return;
+		if (!scopedSearch) return;
 		return scopedSearch.register({
 			getValue: () => filters.query,
 			setValue: (next) => {
 				filters = { ...filters, query: next };
+				if (isOrgScope && activeShow === 'needs_me' && next.trim()) {
+					void setShow('mine');
+				}
 			},
-			label: 'Search work in this view',
-			placeholder: 'Search work…',
+			label: isOrgScope ? 'Search work' : 'Search work in this view',
+			placeholder: isOrgScope ? 'Search title or T- ref…' : 'Search work…',
 			headingSelector: '#project-heading, #shell-page-title, main h1, main h2'
 		});
 	});
@@ -240,45 +243,56 @@
 		});
 	});
 
+	function focusWorkSearchInput() {
+		const headerInput = document.querySelector<HTMLInputElement>(
+			'[data-testid="scoped-work-search"]'
+		);
+		if (headerInput && headerInput.offsetParent !== null) {
+			headerInput.focus();
+			return true;
+		}
+		const localInput = document.getElementById(`${uid}-search`) as HTMLInputElement | null;
+		if (localInput) {
+			localInput.focus();
+			return true;
+		}
+		return false;
+	}
+
+	function isBareSlashEvent(event: KeyboardEvent, modalSelector: string): boolean {
+		if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return false;
+		if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+			return false;
+		}
+		return !document.querySelector(modalSelector) && !isEditableTarget(event.target);
+	}
+
+	function focusSearchAfterShowSwitch() {
+		const run = async () => {
+			if (isOrgScope && activeShow === 'needs_me' && queueRead.data) {
+				await setShow('mine');
+			}
+			await tick();
+			focusWorkSearchInput();
+		};
+		void run();
+	}
+
 	function workSearchShortcut() {
 		const modalOverlaySelector =
 			'[role="dialog"]:not(.work-reading), [role="menu"], [role="alertdialog"], [role="listbox"]';
 		// Capture-phase `/` intercepts before ExecutiveCommandBar's global shortcut.
 		const onSearchKey = (event: KeyboardEvent) => {
-			if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
-			if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.key !== '/') {
-				return;
-			}
-			if (document.querySelector(modalOverlaySelector)) return;
-			if (isEditableTarget(event.target)) return;
-			if (activeOpenRow) {
-				event.stopPropagation();
-				if (!shortcutsEnabled || event.repeat) return;
-				event.preventDefault();
-				closeInlineDetail(false);
-				const focusSearch = async () => {
-					if (isOrgScope && activeShow === 'needs_me' && queueRead.data) {
-						await setShow('mine');
-					}
-					await tick();
-					(document.getElementById(`${uid}-search`) as HTMLInputElement | null)?.focus();
-				};
-				void focusSearch();
-				return;
-			}
-			const searchEl = document.getElementById(`${uid}-search`) as HTMLInputElement | null;
-			if (!searchEl && !(isOrgScope && activeShow === 'needs_me' && queueRead.data)) return;
+			if (!isBareSlashEvent(event, modalOverlaySelector)) return;
+			const needsSwitch = isOrgScope && activeShow === 'needs_me' && Boolean(queueRead.data);
+			if (!activeOpenRow && !needsSwitch && usesHeaderScopedSearch) return;
+			if (!activeOpenRow && !needsSwitch && !document.getElementById(`${uid}-search`)) return;
 			event.stopPropagation();
 			if (!shortcutsEnabled || event.repeat) return;
 			event.preventDefault();
-			if (searchEl) {
-				searchEl.focus();
-				return;
-			}
-			void setShow('mine').then(async () => {
-				await tick();
-				(document.getElementById(`${uid}-search`) as HTMLInputElement | null)?.focus();
-			});
+			if (activeOpenRow) closeInlineDetail(false);
+			if (activeOpenRow || needsSwitch) focusSearchAfterShowSwitch();
+			else focusWorkSearchInput();
 		};
 		// Bubble-phase Escape runs after Bits UI's document-level EscapeLayer so open tooltips,
 		// menus, or dialogs consume the first Escape and keep the reading panel open.
@@ -900,7 +914,10 @@
 						{/if}
 
 						<!-- Filter bar (WORK-1, TRI-7, BUG-12, BUG-13, RQS-15) -->
-						<div class="flex flex-wrap items-center gap-2.5" data-testid="filter-bar">
+						<div
+							class="work-filter-bar flex flex-wrap items-center gap-1.5"
+							data-testid="filter-bar"
+						>
 							{#if !usesHeaderScopedSearch}
 								<div class="relative w-full min-[640px]:w-60">
 									<label for="{uid}-search" class="sr-only"
@@ -1321,6 +1338,27 @@
 	.work-primary-tab:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: -4px;
+	}
+	.work-filter-bar :global(select) {
+		height: 2rem;
+		min-height: 2rem;
+		padding-block: 0.25rem;
+		padding-inline: 0.5rem 1.5rem;
+		border-radius: var(--exec-ctrl-radius, 6px);
+		background-color: var(--exec-well, var(--surface-raised));
+		outline-color: var(--exec-border-hi, var(--line-strong));
+		color: var(--exec-body, var(--fg));
+		font-size: 0.8125rem;
+	}
+	.work-filter-bar :global(select:hover) {
+		background-color: var(--exec-surface-hi, var(--surface-overlay));
+		color: var(--exec-ink, var(--fg));
+	}
+	@media (max-width: 720px), (pointer: coarse) {
+		.work-filter-bar :global(select) {
+			min-height: 2.75rem;
+			font-size: 0.9375rem;
+		}
 	}
 	.work-tab-count {
 		color: var(--exec-muted, var(--fg-muted));
