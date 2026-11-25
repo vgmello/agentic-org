@@ -577,7 +577,6 @@ fn a_server_given_no_key_line_does_nothing() {
 
 fn signal(run: &Run, signal: libc::c_int) {
     // SAFETY: signalling a child process we started.
-    #[allow(unsafe_code)]
     unsafe {
         libc::kill(run.child.id() as libc::pid_t, signal);
     }

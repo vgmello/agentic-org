@@ -85,10 +85,8 @@ fn child_entry() {
         "core-limit-parent" => {
             let mut limits = std::mem::MaybeUninit::<libc::rlimit>::uninit();
             // SAFETY: correctly sized output slot, querying this isolated helper only.
-            assert_eq!(
-                unsafe { libc::getrlimit(libc::RLIMIT_CORE, limits.as_mut_ptr()) },
-                0
-            );
+            let rc = unsafe { libc::getrlimit(libc::RLIMIT_CORE, limits.as_mut_ptr()) };
+            assert_eq!(rc, 0);
             // SAFETY: successful query initialized both fields.
             let limits = unsafe { limits.assume_init() };
             assert_eq!((limits.rlim_cur, limits.rlim_max), (0, 0));
@@ -422,10 +420,8 @@ fn mark_and_identity_must_be_persisted_before_stdin_is_exposed() {
         .is_err());
     let mut status = 0;
     // SAFETY: observing only the test child; its owner must already have reaped it.
-    assert_eq!(
-        unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) },
-        -1
-    );
+    let waited = unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) };
+    assert_eq!(waited, -1);
     assert_eq!(
         io::Error::last_os_error().raw_os_error(),
         Some(libc::ECHILD)
@@ -475,10 +471,8 @@ fn exit_wait_retains_child_and_drop_reaps_it() {
     assert_eq!(child.child.try_exit().unwrap(), Some(status));
     drop(child);
     // SAFETY: only our test child; Drop must have reaped it.
-    assert_eq!(
-        unsafe { libc::waitpid(pid as i32, std::ptr::null_mut(), libc::WNOHANG) },
-        -1
-    );
+    let waited = unsafe { libc::waitpid(pid as i32, std::ptr::null_mut(), libc::WNOHANG) };
+    assert_eq!(waited, -1);
     assert_eq!(
         io::Error::last_os_error().raw_os_error(),
         Some(libc::ECHILD)
@@ -497,10 +491,8 @@ fn deadline_does_not_reap_and_owner_drop_kills_a_live_child() {
         .is_none());
     drop(child);
     // SAFETY: observing only the pid from the test's owned child.
-    assert_eq!(
-        unsafe { libc::waitpid(pid as i32, std::ptr::null_mut(), libc::WNOHANG) },
-        -1
-    );
+    let waited = unsafe { libc::waitpid(pid as i32, std::ptr::null_mut(), libc::WNOHANG) };
+    assert_eq!(waited, -1);
     assert_eq!(
         io::Error::last_os_error().raw_os_error(),
         Some(libc::ECHILD)

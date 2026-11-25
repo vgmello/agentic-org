@@ -34,8 +34,13 @@ mod linux;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 use linux as native;
 
-// Unused in a build for macOS, where only its tests call it.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(
+    target_os = "macos",
+    allow(
+        dead_code,
+        reason = "refusing fallback module is used on unsupported targets and in unit tests"
+    )
+)]
 mod refused;
 #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
 use refused as native;

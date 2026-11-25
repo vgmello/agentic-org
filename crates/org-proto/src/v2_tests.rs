@@ -512,10 +512,16 @@ fn agent_profile_input_serializes_byte_identically_to_the_v1_profile() {
 #[derive(Debug, Deserialize)]
 struct UpdateAgentRetired {
     #[serde(default, deserialize_with = "retired::home")]
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "field exists solely to reject retired `home` during deserialization"
+    )]
     home: Option<Retired>,
     #[serde(default, deserialize_with = "retired::home")]
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "field exists solely to reject retired `clear_home` during deserialization"
+    )]
     clear_home: Option<Retired>,
 }
 

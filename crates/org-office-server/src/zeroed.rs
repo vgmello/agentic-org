@@ -2,7 +2,6 @@
 //! carries the office secrets key, and the launch contract asks the server to read it "unbuffered or
 //! through a small buffer you control": std's `BufReader` frees its buffer without clearing it.
 //! Best effort, like the rest of the zeroing (copies elsewhere remain).
-#![allow(unsafe_code)]
 
 use std::fs::File;
 use std::io::{self, BufRead, Read};
@@ -71,11 +70,7 @@ impl Drop for SecretBuffer {
 fn wipe_bytes(bytes: &mut [u8]) {
     #[cfg(test)]
     WIPES.with(|w| w.set(w.get() + 1));
-    for byte in bytes {
-        // SAFETY: `byte` is a valid, aligned, exclusive reference into the buffer.
-        unsafe { std::ptr::write_volatile(byte, 0) };
-    }
-    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    org_proto::zero_bytes(bytes);
 }
 
 impl ZeroedReader {

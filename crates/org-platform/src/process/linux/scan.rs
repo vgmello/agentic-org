@@ -1252,14 +1252,15 @@ mod tests {
         }
 
         fn native(&self) -> RecoveryScan {
+            // SAFETY: getuid has no pointer arguments or side effects.
+            let uid = unsafe { libc::getuid() };
             RecoveryScan {
                 procfs: File::open(self.root.path()).unwrap(),
                 procfs_mount_id: 0,
                 mark_prefix: MARK.to_vec(),
-                // SAFETY: simple process and user identity getters.
                 context: RecoveryContext {
-                    uid: unsafe { libc::getuid() },
-                    pid: unsafe { libc::getpid() as u32 },
+                    uid,
+                    pid: std::process::id(),
                     boot: "boot".into(),
                 },
                 pins: BTreeMap::new(),
@@ -1371,10 +1372,8 @@ mod tests {
         let error = native.reopen(fixture.pid(), &pin, deadline).err().unwrap();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         // SAFETY: the fixture still owns this unreaped child and its individual PID.
-        assert_eq!(
-            unsafe { libc::kill(fixture.pid() as libc::pid_t, libc::SIGKILL) },
-            0
-        );
+        let rc = unsafe { libc::kill(fixture.pid() as libc::pid_t, libc::SIGKILL) };
+        assert_eq!(rc, 0);
         assert!(exited(&pin.fd, Some(deadline)).unwrap());
         assert!(native
             .reopen(fixture.pid(), &pin, deadline)

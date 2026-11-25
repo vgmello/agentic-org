@@ -60,8 +60,13 @@ mod host_secrets;
 mod hostdb;
 pub mod human;
 mod ids;
-// Composed into `admin.link.initial` and `admin.reset` by A2 B3.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "composed into admin.link.initial and admin.reset in A2 B3"
+    )
+)]
 mod links;
 pub mod release;
 mod web;

@@ -300,15 +300,16 @@ fn protect_a_page_of_the_pad() {
     assert!(start + page <= pad as usize + length, "PAD is too short");
     // SAFETY: the page lies wholly inside this process's own environment string, which
     // nothing reads again.
-    assert_eq!(
-        unsafe { libc::mprotect(start as *mut libc::c_void, page, libc::PROT_NONE) },
-        0
-    );
+    let rc = unsafe { libc::mprotect(start as *mut libc::c_void, page, libc::PROT_NONE) };
+    assert_eq!(rc, 0);
 }
 
 /// A probe child, and the write end of its standard input, closed after the child is
 /// killed.
-struct Held(TestChild, #[allow(dead_code)] std::fs::File);
+struct Held(
+    TestChild,
+    #[expect(dead_code, reason = "holds the child's stdin pipe open until drop")] std::fs::File,
+);
 
 /// Starts `program` with `argv` and the environment `env`, lets it run, and when
 /// `ready` is given waits until it prints that line.

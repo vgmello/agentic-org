@@ -8,8 +8,14 @@
 //! build reads (a release host uses the Keychain, which tests never touch), so every test that
 //! starts one runs in debug builds only.
 
-// Only the argument checks run in release builds: their helpers are unused there.
-#![cfg_attr(not(debug_assertions), allow(unused_imports, dead_code))]
+#![cfg_attr(
+    not(debug_assertions),
+    allow(
+        unused_imports,
+        dead_code,
+        reason = "only argument checks run in release builds; process test helpers are debug-only"
+    )
+)]
 
 mod support;
 
@@ -293,7 +299,10 @@ fn a_worker_that_ignores_the_stop_is_killed_and_the_service_exits_0_within_its_b
     instance.wait_until_active(&mut host);
     let pids = instance.pids(A);
     assert_eq!(pids.len(), 1);
-    let alive = |pid: u32| unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+    let alive = |pid: u32| {
+        // SAFETY: signal 0 performs only a process-existence check on the test worker PID.
+        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    };
     assert!(alive(pids[0]));
     let asked = Instant::now();
     signal(&host, libc::SIGTERM);

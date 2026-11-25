@@ -178,7 +178,10 @@ fn execute_tls_enable(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "live HTTPS rotation coordinates service, registry, TLS state, account, listen config, mode, and clock"
+)]
 fn rotate_live_https(
     service: &Service,
     instance: &crate::instance::registry::Instance,

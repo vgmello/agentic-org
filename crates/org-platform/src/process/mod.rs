@@ -52,10 +52,12 @@ mod linux;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 use linux as native;
 
-// Unused in a build for macOS or GNU/Linux, where only its tests call it.
 #[cfg_attr(
     any(target_os = "macos", all(target_os = "linux", target_env = "gnu")),
-    allow(dead_code)
+    allow(
+        dead_code,
+        reason = "refusing fallback module is used on unsupported targets and in unit tests"
+    )
 )]
 mod refused;
 #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
@@ -530,55 +532,71 @@ pub fn spawn_piped(
     }
     let (output, output_child) = pipe()?;
     let (error, error_child) = pipe()?;
-    let mut actions = std::mem::MaybeUninit::<libc::posix_spawn_file_actions_t>::uninit();
-    let mut attrs = std::mem::MaybeUninit::<libc::posix_spawnattr_t>::uninit();
-    // SAFETY: valid init slots; every successful initialization is destroyed below.
-    check(unsafe { libc::posix_spawn_file_actions_init(actions.as_mut_ptr()) })?;
-    let result = (|| {
-        // SAFETY: actions initialized above, attrs initialized here and destroyed on every
-        // closure result. Strings, fds, sigsets and pointers outlive the spawn call.
-        check(unsafe { libc::posix_spawnattr_init(attrs.as_mut_ptr()) })?;
-        let result: io::Result<libc::pid_t> = (|| unsafe {
-            let actions = actions.as_mut_ptr();
-            let attrs = attrs.as_mut_ptr();
-            for (source, target) in [
-                (input_child.as_raw_fd(), 0),
-                (output_child.as_raw_fd(), 1),
-                (error_child.as_raw_fd(), 2),
-            ] {
-                check(libc::posix_spawn_file_actions_adddup2(
-                    actions, source, target,
-                ))?;
-            }
-            native::add_chdir(actions, cwd)?;
-            let mut mask = std::mem::zeroed();
-            let mut defaults = std::mem::zeroed();
-            libc::sigemptyset(&mut mask);
-            libc::sigfillset(&mut defaults);
-            libc::sigdelset(&mut defaults, libc::SIGKILL);
-            libc::sigdelset(&mut defaults, libc::SIGSTOP);
-            check(libc::posix_spawnattr_setsigmask(attrs, &mask))?;
-            check(libc::posix_spawnattr_setsigdefault(attrs, &defaults))?;
-            let flags = native::session_flags(actions)?;
-            check(libc::posix_spawnattr_setflags(attrs, flags as _))?;
-            let mut pid = 0;
-            check(libc::posix_spawn(
-                &mut pid,
-                program.as_ptr(),
-                actions,
-                attrs,
-                argv.as_ptr(),
-                envp.as_ptr(),
+    struct FileActions(libc::posix_spawn_file_actions_t);
+    impl Drop for FileActions {
+        fn drop(&mut self) {
+            // SAFETY: `FileActions` is constructed only after `posix_spawn_file_actions_init`
+            // succeeded and owns this object exclusively until drop.
+            unsafe { libc::posix_spawn_file_actions_destroy(&mut self.0) };
+        }
+    }
+    struct SpawnAttrs(libc::posix_spawnattr_t);
+    impl Drop for SpawnAttrs {
+        fn drop(&mut self) {
+            // SAFETY: `SpawnAttrs` is constructed only after `posix_spawnattr_init`
+            // succeeded and owns this object exclusively until drop.
+            unsafe { libc::posix_spawnattr_destroy(&mut self.0) };
+        }
+    }
+    let mut raw_actions = std::mem::MaybeUninit::<libc::posix_spawn_file_actions_t>::zeroed();
+    // SAFETY: valid init slot; ownership transfers to `FileActions` immediately on success.
+    check(unsafe { libc::posix_spawn_file_actions_init(raw_actions.as_mut_ptr()) })?;
+    // SAFETY: `posix_spawn_file_actions_init` succeeded; `FileActions` destroys it on every exit,
+    // including unwinding.
+    let mut actions = FileActions(unsafe { raw_actions.assume_init() });
+    let mut raw_attrs = std::mem::MaybeUninit::<libc::posix_spawnattr_t>::zeroed();
+    // SAFETY: valid init slot; ownership transfers to `SpawnAttrs` immediately on success.
+    check(unsafe { libc::posix_spawnattr_init(raw_attrs.as_mut_ptr()) })?;
+    // SAFETY: `posix_spawnattr_init` succeeded; `SpawnAttrs` destroys it on every exit,
+    // including unwinding.
+    let mut attrs = SpawnAttrs(unsafe { raw_attrs.assume_init() });
+    // SAFETY: `actions` and `attrs` are live initialized objects owned by their Drop guards;
+    // all C strings, descriptors, sigsets, and pointer arrays outlive `posix_spawn`.
+    let pid = unsafe {
+        let actions = &mut actions.0 as *mut libc::posix_spawn_file_actions_t;
+        let attrs = &mut attrs.0 as *mut libc::posix_spawnattr_t;
+        for (source, target) in [
+            (input_child.as_raw_fd(), 0),
+            (output_child.as_raw_fd(), 1),
+            (error_child.as_raw_fd(), 2),
+        ] {
+            check(libc::posix_spawn_file_actions_adddup2(
+                actions, source, target,
             ))?;
-            Ok(pid)
-        })();
-        // SAFETY: attrs was successfully initialized.
-        unsafe { libc::posix_spawnattr_destroy(attrs.as_mut_ptr()) };
-        result
-    })();
-    // SAFETY: actions was successfully initialized, independently of attrs/result.
-    unsafe { libc::posix_spawn_file_actions_destroy(actions.as_mut_ptr()) };
-    Ok((result?, input.into(), output.into(), error.into()))
+        }
+        native::add_chdir(actions, cwd)?;
+        let mut mask = std::mem::zeroed();
+        let mut defaults = std::mem::zeroed();
+        libc::sigemptyset(&mut mask);
+        libc::sigfillset(&mut defaults);
+        libc::sigdelset(&mut defaults, libc::SIGKILL);
+        libc::sigdelset(&mut defaults, libc::SIGSTOP);
+        check(libc::posix_spawnattr_setsigmask(attrs, &mask))?;
+        check(libc::posix_spawnattr_setsigdefault(attrs, &defaults))?;
+        let flags = native::session_flags(actions)?;
+        check(libc::posix_spawnattr_setflags(attrs, flags as _))?;
+        let mut pid = 0;
+        check(libc::posix_spawn(
+            &mut pid,
+            program.as_ptr(),
+            actions,
+            attrs,
+            argv.as_ptr(),
+            envp.as_ptr(),
+        ))?;
+        pid
+    };
+    Ok((pid, input.into(), output.into(), error.into()))
 }
 
 /// Fill `bytes` from the kernel's random source, without blocking. An entropy pool

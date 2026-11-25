@@ -96,7 +96,10 @@ fn entry() -> io::Result<()> {
     // The parent uses POSIX_SPAWN_CLOEXEC_DEFAULT and explicit dup2 of 0/1/2.
     // Four slots suffice to detect any additional descriptor without unbounded
     // allocation or accidentally closing an OwnedFd held by the caller.
-    let mut fds: [libc::proc_fdinfo; 4] = unsafe { mem::zeroed() };
+    let mut fds = [libc::proc_fdinfo {
+        proc_fd: 0,
+        proc_fdtype: 0,
+    }; 4];
     // SAFETY: initialized fixed array, exact byte size, current process only.
     let count = unsafe {
         libc::proc_pidinfo(
@@ -268,8 +271,10 @@ mod tests {
 
     #[test]
     fn a_refused_entry_names_the_descriptors_it_found() {
-        // SAFETY: every bit pattern is a valid list of descriptor records.
-        let mut fds: [libc::proc_fdinfo; 4] = unsafe { mem::zeroed() };
+        let mut fds = [libc::proc_fdinfo {
+            proc_fd: 0,
+            proc_fdtype: 0,
+        }; 4];
         for (slot, number) in fds.iter_mut().zip([0, 1, 2, 142]) {
             slot.proc_fd = number;
         }

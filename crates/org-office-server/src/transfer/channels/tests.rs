@@ -1,5 +1,5 @@
 use super::*;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsFd, AsRawFd};
 
 #[test]
 fn registry_rejects_each_identity_fault_and_tracks_only_live_opaque_ids() {
@@ -567,7 +567,6 @@ fn poisoned_registry_refuses_registration_and_ack_while_cleanup_still_recovers()
 }
 
 #[test]
-#[allow(unsafe_code)]
 fn nonblocking_source_delivers_a_complete_reply_larger_than_its_send_buffer() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     use std::io::Write;
@@ -579,20 +578,7 @@ fn nonblocking_source_delivers_a_complete_reply_larger_than_its_send_buffer() {
     HOLD_THREAD_EXIT.with(|gate| *gate.borrow_mut() = Some((entered, released)));
     let (socket, mut peer) = UnixStream::pair().unwrap();
     socket.set_nonblocking(true).unwrap();
-    let small: libc::c_int = 4096;
-    // SAFETY: this test owns the live socket and passes a correctly sized int.
-    assert_eq!(
-        unsafe {
-            libc::setsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_SNDBUF,
-                (&small as *const libc::c_int).cast(),
-                std::mem::size_of_val(&small) as _,
-            )
-        },
-        0
-    );
+    org_socket::rights::set_buffer_sizes(socket.as_fd(), 4096).unwrap();
     channels
         .open(owned_channel(
             socket,
@@ -624,7 +610,6 @@ fn nonblocking_source_delivers_a_complete_reply_larger_than_its_send_buffer() {
 }
 
 #[test]
-#[allow(unsafe_code)]
 fn shutdown_interrupts_a_channel_blocked_writing_before_joining_it() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     use std::io::Write;
@@ -632,20 +617,7 @@ fn shutdown_interrupts_a_channel_blocked_writing_before_joining_it() {
     let (mut channels, _events, _, _, _office_root) = manager();
     channels.hello.server_version = "x".repeat(org_proto::MAX_FRAME_BYTES / 2);
     let (socket, mut peer) = UnixStream::pair().unwrap();
-    let small: libc::c_int = 4096;
-    // SAFETY: this test owns the live socket and passes a correctly sized int.
-    assert_eq!(
-        unsafe {
-            libc::setsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_SNDBUF,
-                (&small as *const libc::c_int).cast(),
-                std::mem::size_of_val(&small) as _,
-            )
-        },
-        0
-    );
+    org_socket::rights::set_buffer_sizes(socket.as_fd(), 4096).unwrap();
     channels
         .open(owned_channel(
             socket,

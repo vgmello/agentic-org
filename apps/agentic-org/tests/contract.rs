@@ -112,7 +112,13 @@ fn retired_calls_are_refused_under_each_non_app_policy() {
     home.write_office(&hq(A, ORG_A, "Acme", T));
     // No development app and no team id: nobody. Debug builds also try another executable as the
     // allowed development app (this test process isn't it), and one that isn't built yet.
-    #[allow(unused_mut)]
+    #[cfg_attr(
+        not(debug_assertions),
+        allow(
+            unused_mut,
+            reason = "debug builds append development app policy configs"
+        )
+    )]
     let mut configs = vec![home.config()];
     #[cfg(debug_assertions)]
     for dev_app in ["/bin/sh", "/nonexistent/Org.app/Contents/MacOS/Org"] {

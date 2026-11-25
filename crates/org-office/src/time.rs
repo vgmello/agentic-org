@@ -1,8 +1,9 @@
 //! RFC 3339 UTC timestamps with millisecond precision (`YYYY-MM-DDTHH:MM:SS.mmmZ`), `std` only.
 
+#[cfg(test)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn now_rfc3339() -> String {
     format_epoch_ms(now_ms())
 }
@@ -12,7 +13,7 @@ pub fn format_rfc3339_ms(ms: u64) -> String {
 }
 
 /// Unix milliseconds now.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

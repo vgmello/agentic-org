@@ -198,6 +198,8 @@ impl Directory {
                 libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
             )
         })?;
+        // SAFETY: `duplicate` is a newly opened directory descriptor; ownership transfers
+        // to the `DIR` handle on non-null return via `mem::forget(duplicate)` below.
         let pointer = unsafe { libc::fdopendir(duplicate.as_raw_fd()) };
         if pointer.is_null() {
             return Err(io::Error::last_os_error().into());

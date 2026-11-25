@@ -116,16 +116,21 @@ pub(crate) fn root(path: &Path) -> io::Result<OwnedFd> {
     Ok(current)
 }
 
+pub(crate) fn effective_uid() -> libc::uid_t {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() }
+}
+
 pub(crate) fn private_directory(fd: &OwnedFd) -> io::Result<()> {
     let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
     // SAFETY: an owned directory descriptor and a valid output slot.
     if unsafe { libc::fstat(fd.as_raw_fd(), info.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
     }
-    // SAFETY: successful fstat initialized the record; geteuid only queries credentials.
+    // SAFETY: successful fstat initialized the record.
     let info = unsafe { info.assume_init() };
     if info.st_mode & libc::S_IFMT != libc::S_IFDIR
-        || info.st_uid != unsafe { libc::geteuid() }
+        || info.st_uid != effective_uid()
         || info.st_mode & 0o7777 != 0o700
     {
         return Err(io::Error::new(

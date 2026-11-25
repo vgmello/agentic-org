@@ -899,10 +899,8 @@ fn a_child_gets_its_pipes_its_environment_and_nothing_else() {
     // closing keeps it out.
     let leaky = File::open("/dev/null").unwrap();
     // SAFETY: a valid descriptor of this test; clears only its close-on-exec flag.
-    assert_eq!(
-        unsafe { libc::fcntl(leaky.as_raw_fd(), libc::F_SETFD, 0) },
-        0
-    );
+    let rc = unsafe { libc::fcntl(leaky.as_raw_fd(), libc::F_SETFD, 0) };
+    assert_eq!(rc, 0);
     assert!(
         std::env::vars_os().count() > 0,
         "this test needs an environment of its own"
@@ -1453,10 +1451,8 @@ fn a_path_admission_starts_a_script_and_checks_its_reader_by_pid() {
     let reporting = path_admission(development(&work.fixture)).unwrap();
     let leaky = File::open("/dev/null").unwrap();
     // SAFETY: a valid descriptor of this test; clears only its close-on-exec flag.
-    assert_eq!(
-        unsafe { libc::fcntl(leaky.as_raw_fd(), libc::F_SETFD, 0) },
-        0
-    );
+    let rc = unsafe { libc::fcntl(leaky.as_raw_fd(), libc::F_SETFD, 0) };
+    assert_eq!(rc, 0);
     let mut started = start(&reporting, &["report"]);
     let report = report_of(&mut started);
     let numbers: Vec<&str> = report.inherited_fds().iter().map(|(fd, _)| *fd).collect();

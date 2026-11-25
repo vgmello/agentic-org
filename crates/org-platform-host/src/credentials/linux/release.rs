@@ -758,17 +758,18 @@ fn open_lock(
 ) -> Result<Option<File>, CredentialError> {
     let flags = libc::O_RDWR | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
     let at = directory.as_raw_fd();
-    // SAFETY: a valid directory descriptor and a NUL-terminated name; the mode is
-    // read only with O_CREAT.
     let opened = if create {
-        match owned(unsafe {
+        // SAFETY: `at` is a valid directory descriptor and `LOCK` is a NUL-terminated name;
+        // mode `0o600` is passed because `O_CREAT` is set.
+        let created = unsafe {
             libc::openat(
                 at,
                 LOCK.as_ptr(),
                 flags | libc::O_CREAT | libc::O_EXCL,
                 0o600,
             )
-        }) {
+        };
+        match owned(created) {
             Ok(lock) => lock
                 .set_permissions(Permissions::from_mode(0o600))
                 .map(|()| lock),

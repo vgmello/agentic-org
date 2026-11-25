@@ -23,6 +23,36 @@
         {
           "argv": [
             "python3",
+            ".agent-kit/runtime/kit_rust_hygiene.py"
+          ],
+          "paths": [
+            "Cargo.toml",
+            "*/Cargo.toml",
+            ".agent-kit/runtime/kit_rust_hygiene.py"
+          ]
+        },
+        {
+          "argv": [
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "org-platform",
+            "--test",
+            "rust_hygiene",
+            "--quiet"
+          ],
+          "paths": [
+            "*.rs",
+            "Cargo.toml",
+            "*/Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml"
+          ]
+        },
+        {
+          "argv": [
+            "python3",
             "docs/design/organization-data/test_schema.py"
           ],
           "paths": [

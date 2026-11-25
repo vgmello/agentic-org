@@ -852,8 +852,9 @@ impl UnitDirectory {
         let entry = self.entry(name)?;
         let temporary = self.entry(&format!("{name}.{}.tmp", std::process::id()))?;
         let directory = self.file.as_raw_fd();
-        // SAFETY (each call below): the held directory and NUL-terminated single names.
+        // SAFETY: `directory` is our held directory fd and `temporary` is a NUL-terminated single name.
         unsafe { libc::unlinkat(directory, temporary.as_ptr(), 0) };
+        // SAFETY: `directory` is our held directory fd and `temporary` is a NUL-terminated single name.
         let fd = unsafe {
             libc::openat(
                 directory,
@@ -874,8 +875,10 @@ impl UnitDirectory {
         drop(file);
         let published = written.map_err(system).and_then(|()| {
             let status = if replace {
+                // SAFETY: `directory` is our held directory fd; both names are NUL-terminated single entries.
                 unsafe { libc::renameat(directory, temporary.as_ptr(), directory, entry.as_ptr()) }
             } else {
+                // SAFETY: `directory` is our held directory fd; both names are NUL-terminated single entries.
                 unsafe { libc::linkat(directory, temporary.as_ptr(), directory, entry.as_ptr(), 0) }
             };
             if status == 0 {
@@ -891,6 +894,7 @@ impl UnitDirectory {
                 system(error)
             })
         });
+        // SAFETY: `directory` is our held directory fd and `temporary` is a NUL-terminated single name.
         unsafe { libc::unlinkat(directory, temporary.as_ptr(), 0) };
         published?;
         self.file.sync_all().map_err(system)

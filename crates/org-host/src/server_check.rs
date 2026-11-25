@@ -89,7 +89,13 @@ const WEB_SIGNING: SigningRule = SigningRule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ServerCheck {
     /// Debug builds: no check.
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    #[cfg_attr(
+        not(debug_assertions),
+        allow(
+            dead_code,
+            reason = "ServerCheck::Skip is constructed only in debug builds and tests"
+        )
+    )]
     Skip,
     /// Every server must satisfy this requirement and run hardened code.
     Requirement(String),
@@ -1236,11 +1242,9 @@ mod tests {
                     .expect("an image that is not the pinned one was started");
                 let refused = SpawnRefused::of(&error).expect("an image refusal");
                 assert_eq!(refused.refusal, ImageRefusal::Unidentified);
-                // SAFETY: signal 0 only checks the pid.
-                assert!(
-                    unsafe { libc::kill(refused.pid as libc::pid_t, 0) } != 0,
-                    "the refused child was left behind"
-                );
+                // SAFETY: signal 0 only probes whether the refused child PID exists.
+                let rc = unsafe { libc::kill(refused.pid as libc::pid_t, 0) };
+                assert!(rc != 0, "the refused child was left behind");
             }
             (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
         }
@@ -1394,11 +1398,9 @@ mod tests {
                 let refused = SpawnRefused::of(&error).expect("an image refusal");
                 assert_eq!(refused.refusal, ImageRefusal::NotTheImage);
                 assert!(check.why(&refused.refusal).contains("office server"));
-                // SAFETY: signal 0 only checks the pid.
-                assert!(
-                    unsafe { libc::kill(refused.pid as libc::pid_t, 0) } != 0,
-                    "the refused child was left behind"
-                );
+                // SAFETY: signal 0 only probes whether the refused child PID exists.
+                let rc = unsafe { libc::kill(refused.pid as libc::pid_t, 0) };
+                assert!(rc != 0, "the refused child was left behind");
             }
             (ImageIdentity::VerifiedBytes, Err(NoAdmission::Refused(why))) => {
                 assert_eq!(why, check.why(&ImageRefusal::Unpinned));

@@ -135,6 +135,7 @@ pub(super) fn static_signing(
     if status != 0 || information.is_null() {
         return None;
     }
+    // SAFETY: SecCodeCopySigningInformation succeeded and returned a non-null create-rule CFDictionaryRef.
     let information: CFDictionary<CFString, CFType> =
         unsafe { CFDictionary::wrap_under_create_rule(information) };
     // SAFETY: the Security framework owns this process-lifetime constant.
@@ -185,8 +186,9 @@ fn parse_signing(
         keys.into_iter()
             .zip(values)
             .map(|(key, value)| {
-                // SAFETY: the keys and values of the dictionary, retained by it.
+                // SAFETY: `key` is a valid CFStringRef entry from the live entitlements dictionary.
                 let key = unsafe { CFString::wrap_under_get_rule(key.cast()) }.to_string();
+                // SAFETY: `value` is a valid CFTypeRef entry from the live entitlements dictionary.
                 let value = unsafe { CFType::wrap_under_get_rule(value) };
                 if key == KEYCHAIN_ACCESS_GROUPS {
                     keychain_access_groups = value.downcast::<CFArray>().and_then(|array| {

@@ -1,6 +1,9 @@
 //! SIGTERM and SIGINT ask the server to stop: the handler only sets a flag (all it may safely
 //! do), and the accept loop notices it, closes the databases and exits cleanly.
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "installing POSIX SIGTERM/SIGINT handlers requires libc::sigaction FFI"
+)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

@@ -254,15 +254,13 @@ fn received_typed_descriptors_keep_the_receive_fence_flags_without_repair() {
     assert_eq!(datagram_adopted.as_raw_fd(), datagram_raw);
     assert_eq!(listener_adopted.as_raw_fd(), listener_raw);
     // SAFETY: adoption retained ownership of the same descriptors and must not change flags.
-    assert_eq!(
-        unsafe {
-            [
-                libc::fcntl(datagram_raw, libc::F_GETFD),
-                libc::fcntl(listener_raw, libc::F_GETFD),
-            ]
-        },
-        flags
-    );
+    let after = unsafe {
+        [
+            libc::fcntl(datagram_raw, libc::F_GETFD),
+            libc::fcntl(listener_raw, libc::F_GETFD),
+        ]
+    };
+    assert_eq!(after, flags);
     datagram_adopted.send(b"ok").unwrap();
     assert!(crate::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap());
     let mut bytes = [0; 2];

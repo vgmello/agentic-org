@@ -862,7 +862,10 @@ fn commit_new_mailbox_message(
     Ok((change, out))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mailbox message record assembly takes explicit identity, input, conversation, sender, and metadata fields"
+)]
 fn build_mailbox_message_record(
     here: &OfficeIdentity,
     input: &MailboxCommitInput,

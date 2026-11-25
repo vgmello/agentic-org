@@ -122,7 +122,10 @@ impl SessionManager {
 
     /// Handles an answer to an ask: resumes a suspended asker (`ASK-5..9`, `ASK-11..12`), ignores
     /// a currently running turn (`ADR-0023` d6), or wakes an idle asker (`WAKE-7`).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "public ask-answered hook takes explicit asker, ask, question/answer summaries, responder, and subagent flag"
+    )]
     pub fn on_ask_answered(
         &self,
         asker_id: &str,

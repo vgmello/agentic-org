@@ -1,4 +1,7 @@
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "startup tests construct raw SCM_RIGHTS control messages via libc FFI"
+)]
 
 use crate::test_teardown::teardown_failed;
 
@@ -8,7 +11,7 @@ use org_proto::{GrantKey, OfficeRole, OfficeSecretsKey, RecoveryCode};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, Write};
-use std::os::fd::RawFd;
+use std::os::fd::{AsFd, RawFd};
 use std::os::unix::net::{UnixDatagram, UnixListener};
 use std::path::Path;
 use std::time::Duration;
@@ -1148,20 +1151,7 @@ fn concurrent_receipts_and_server_events_share_one_writer_and_never_interleave_f
 fn event_writer_holds_the_shared_lock_until_the_whole_backpressured_frame_finishes() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let (socket, peer) = UnixStream::pair().unwrap();
-    let small: libc::c_int = 4096;
-    // SAFETY: this test owns the live socket and the correctly sized int buffer.
-    assert_eq!(
-        unsafe {
-            libc::setsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_SNDBUF,
-                (&small as *const libc::c_int).cast(),
-                std::mem::size_of_val(&small) as _,
-            )
-        },
-        0
-    );
+    org_socket::rights::set_buffer_sizes(socket.as_fd(), 4096).unwrap();
     let writer = Arc::new(Mutex::new(socket));
     let owned = Arc::clone(&writer);
     let writing = std::thread::spawn(move || {
@@ -1187,20 +1177,7 @@ fn event_writer_holds_the_shared_lock_until_the_whole_backpressured_frame_finish
 fn rendezvous_event_write_has_one_five_second_whole_frame_deadline() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let (socket, peer) = UnixStream::pair().unwrap();
-    let small: libc::c_int = 4096;
-    // SAFETY: owned live socket, correctly sized int.
-    assert_eq!(
-        unsafe {
-            libc::setsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_SNDBUF,
-                (&small as *const libc::c_int).cast(),
-                std::mem::size_of_val(&small) as _,
-            )
-        },
-        0
-    );
+    org_socket::rights::set_buffer_sizes(socket.as_fd(), 4096).unwrap();
     let writer = Arc::new(Mutex::new(socket));
     let (cancel, cancelled) = std::sync::mpsc::channel();
     let watchdog = std::thread::spawn(move || {
@@ -1234,20 +1211,7 @@ fn rendezvous_event_write_has_one_five_second_whole_frame_deadline() {
 fn a_partly_written_event_ends_the_rendezvous_so_nothing_follows_the_truncated_frame() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let (socket, peer) = UnixStream::pair().unwrap();
-    let small: libc::c_int = 4096;
-    // SAFETY: owned live socket, correctly sized int.
-    assert_eq!(
-        unsafe {
-            libc::setsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_SNDBUF,
-                (&small as *const libc::c_int).cast(),
-                std::mem::size_of_val(&small) as _,
-            )
-        },
-        0
-    );
+    org_socket::rights::set_buffer_sizes(socket.as_fd(), 4096).unwrap();
     let writer = Arc::new(Mutex::new(socket));
     // The host reads nothing, so the frame only partly fits before its deadline.
     let start = std::time::Instant::now();

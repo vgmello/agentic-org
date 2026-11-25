@@ -9,12 +9,15 @@ use std::{
 struct Signals(libc::sigset_t);
 impl Signals {
     fn block() -> Result<Self, String> {
-        // SAFETY: sigset_t accepts zero initialization, then sigemptyset initializes it.
-        let mut set = unsafe { std::mem::zeroed() };
-        let mut old = unsafe { std::mem::zeroed() };
-        // SAFETY: valid writable masks and supported signal constants.
-        unsafe {
-            if libc::sigemptyset(&mut set) != 0 {
+        let mut set = std::mem::MaybeUninit::<libc::sigset_t>::zeroed();
+        let mut old = std::mem::MaybeUninit::<libc::sigset_t>::zeroed();
+        // SAFETY: `MaybeUninit::zeroed()` initializes every byte of `set` and `old`
+        // (necessary on 64-bit Linux where `pthread_sigmask` writes only the 8-byte
+        // kernel mask prefix of the 128-byte `libc::sigset_t`); `sigemptyset`,
+        // `sigaddset`, and `pthread_sigmask` take valid writable pointers and supported
+        // signal constants, and `old.assume_init()` runs only after success.
+        let old = unsafe {
+            if libc::sigemptyset(set.as_mut_ptr()) != 0 {
                 return Err("signal mask unavailable".into());
             }
             for signal in [
@@ -24,21 +27,24 @@ impl Signals {
                 libc::SIGQUIT,
                 libc::SIGTSTP,
             ] {
-                if libc::sigaddset(&mut set, signal) != 0 {
+                if libc::sigaddset(set.as_mut_ptr(), signal) != 0 {
                     return Err("signal mask unavailable".into());
                 }
             }
-            if libc::pthread_sigmask(libc::SIG_BLOCK, &set, &mut old) != 0 {
+            if libc::pthread_sigmask(libc::SIG_BLOCK, set.as_ptr(), old.as_mut_ptr()) != 0 {
                 return Err("signal mask unavailable".into());
             }
-        }
+            old.assume_init()
+        };
         Ok(Self(old))
     }
     fn pending(&self) -> bool {
-        // SAFETY: sigpending initializes this valid writable mask.
-        let mut set = unsafe { std::mem::zeroed() };
+        let mut set = std::mem::MaybeUninit::<libc::sigset_t>::zeroed();
+        // SAFETY: `MaybeUninit::zeroed()` initializes all bytes of `set` (including any
+        // tail bytes left untouched by Linux `sigpending`); short-circuit `||` ensures
+        // `sigismember` only reads `set` after `sigpending` returns 0.
         unsafe {
-            libc::sigpending(&mut set) != 0
+            libc::sigpending(set.as_mut_ptr()) != 0
                 || [
                     libc::SIGINT,
                     libc::SIGTERM,
@@ -47,7 +53,7 @@ impl Signals {
                     libc::SIGTSTP,
                 ]
                 .iter()
-                .any(|s| libc::sigismember(&set, *s) == 1)
+                .any(|s| libc::sigismember(set.as_ptr(), *s) == 1)
         }
     }
 }

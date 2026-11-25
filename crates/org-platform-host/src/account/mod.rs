@@ -73,7 +73,13 @@
 
 // Only the GNU/Linux adapters of admission and credentials ask these questions, so on
 // every other target the entries and what they reach have no caller.
-#![cfg_attr(not(all(target_os = "linux", target_env = "gnu")), allow(dead_code))]
+#![cfg_attr(
+    not(all(target_os = "linux", target_env = "gnu")),
+    allow(
+        dead_code,
+        reason = "only GNU/Linux admission and credential adapters call account queries"
+    )
+)]
 
 use std::io;
 use std::os::fd::BorrowedFd;
@@ -83,8 +89,13 @@ mod linux;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 use linux as native;
 
-// Unused in a build for GNU/Linux, where only its tests call it.
-#[cfg_attr(all(target_os = "linux", target_env = "gnu"), allow(dead_code))]
+#[cfg_attr(
+    all(target_os = "linux", target_env = "gnu"),
+    allow(
+        dead_code,
+        reason = "refusing fallback module is used on non-GNU/Linux targets and in unit tests"
+    )
+)]
 mod refused;
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 use refused as native;

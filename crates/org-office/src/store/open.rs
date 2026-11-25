@@ -413,7 +413,13 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let tasks: Arc<dyn Projector<E>> = Arc::new(TaskFiles::new());
     let processes: Arc<dyn Projector<E>> = Arc::new(ProcessFiles::new());
     let local = OfficeLocalFiles::new(organization, here.office_id.clone());
-    #[cfg_attr(not(any(test, feature = "testkit")), allow(unused_mut))]
+    #[cfg_attr(
+        not(any(test, feature = "testkit")),
+        allow(
+            unused_mut,
+            reason = "test and testkit builds push optional probe projectors below"
+        )
+    )]
     let mut projectors: Vec<Arc<dyn Projector<E>>> = vec![
         files,
         projects,
@@ -426,7 +432,6 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     if let Some(probe) = &config.testing.probe {
         projectors.push(probe.projector());
     }
-    #[cfg_attr(not(any(test, feature = "testkit")), allow(unused_mut))]
     let mut parts = StoreParts::new(
         config.durable_root.clone(),
         config.identity.clone(),

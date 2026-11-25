@@ -1248,9 +1248,6 @@ command!(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
-// A member carries an agent profile, so `MemberUpserted` is much larger than the others. These
-// are short-lived wire values; boxing would change the public type for no practical gain.
-#[allow(clippy::large_enum_variant)]
 pub enum OrgChange {
     TeamUpserted {
         team: Team,

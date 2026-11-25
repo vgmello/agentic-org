@@ -126,10 +126,8 @@ fn the_send_flags_suppress_sigpipe_exactly_where_the_fact_says() {
         let (stream, peer) = UnixStream::pair().unwrap();
         drop(peer);
         // SAFETY: this child runs this test alone; SIGPIPE goes back to its default.
-        assert_ne!(
-            unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) },
-            libc::SIG_ERR
-        );
+        let prev = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+        assert_ne!(prev, libc::SIG_ERR);
         let flags = send_flags().unwrap();
         // SAFETY: a live socket and a one-byte buffer.
         let sent = unsafe { libc::send(stream.as_raw_fd(), b"x".as_ptr().cast(), 1, flags) };

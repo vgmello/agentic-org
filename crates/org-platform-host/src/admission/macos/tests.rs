@@ -75,11 +75,9 @@ fn start(admission: &Admission, args: &[&str]) -> std::io::Result<Started> {
 fn refusal(result: std::io::Result<Started>) -> ImageRefusal {
     let error = result.err().expect("the child was admitted");
     let refused = SpawnRefused::of(&error).expect("an image refusal");
-    // SAFETY: signal 0 only checks the pid. The refused child is killed and reaped.
-    assert!(
-        unsafe { libc::kill(refused.pid as libc::pid_t, 0) } != 0,
-        "a refused child was left behind"
-    );
+    // SAFETY: signal 0 only probes whether the refused child PID exists; it must already be reaped.
+    let rc = unsafe { libc::kill(refused.pid as libc::pid_t, 0) };
+    assert!(rc != 0, "a refused child was left behind");
     refused.refusal.clone()
 }
 

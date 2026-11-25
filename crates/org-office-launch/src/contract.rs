@@ -668,8 +668,8 @@ enum RawServerEvent {
         of: String,
     },
     Created {
-        #[allow(dead_code)]
-        v: u32,
+        #[serde(rename = "v")]
+        _version: u32,
         office: crate::OfficeFile,
     },
     JoinPending {
@@ -684,18 +684,18 @@ enum RawServerEvent {
         office: crate::OfficeFile,
     },
     Ready {
-        #[allow(dead_code)]
-        v: u32,
+        #[serde(rename = "v")]
+        _version: u32,
         socket: String,
         pid: u32,
     },
     Discarded {
-        #[allow(dead_code)]
-        v: u32,
+        #[serde(rename = "v")]
+        _version: u32,
     },
     Failed {
-        #[allow(dead_code)]
-        v: u32,
+        #[serde(rename = "v")]
+        _version: u32,
         code: crate::FailCode,
         message: String,
     },

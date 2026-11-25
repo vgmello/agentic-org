@@ -972,7 +972,6 @@ pub enum WaitReason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
-#[allow(clippy::large_enum_variant)] // short-lived wire values, as `OrgChange`
 pub enum WorkChange {
     /// An item, whole, after the change. Apply it only if it is newer than the copy held
     /// (`(generation, version)`).

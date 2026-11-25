@@ -4,8 +4,11 @@
 //! to two new close-on-exec descriptors and fds 0 and 1 are reopened on `/dev/null`; a child
 //! then gets `/dev/null` unless it is given its own pipes. fd 2 (the logs) stays.
 //!
-//! Unsafe code in the server is kept to this file, `signals.rs` and `zeroed.rs`.
-#![allow(unsafe_code)]
+//! Unsafe code in the server is kept to this file, `signals.rs` and `transfer.rs`.
+#![expect(
+    unsafe_code,
+    reason = "descriptor duplication and /dev/null redirection require POSIX dup/dup2/fcntl FFI"
+)]
 
 use std::fs::File;
 use std::io;

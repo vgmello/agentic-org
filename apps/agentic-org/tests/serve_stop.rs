@@ -9,8 +9,14 @@
 //! Each instance is set up under a temporary application base (`ORG_DEV_ACCOUNT_BASE`),
 //! which only a debug build reads, so every test runs in debug builds only.
 
-// The helpers are unused in release builds.
-#![cfg_attr(not(debug_assertions), allow(unused_imports, dead_code))]
+#![cfg_attr(
+    not(debug_assertions),
+    allow(
+        unused_imports,
+        dead_code,
+        reason = "serve_stop tests run in debug builds only; helpers are unused in release builds"
+    )
+)]
 
 mod support;
 
@@ -179,11 +185,9 @@ fn full_pipe() -> (File, OwnedFd) {
 /// long after the signal it did.
 fn stop(serve: &mut Serve) -> (ExitStatus, Duration) {
     let sent = Instant::now();
-    // SAFETY: sends a signal to our own child.
-    assert_eq!(
-        unsafe { libc::kill(serve.0.id() as libc::pid_t, libc::SIGTERM) },
-        0
-    );
+    // SAFETY: sends SIGTERM to this test's own live child process.
+    let rc = unsafe { libc::kill(serve.0.id() as libc::pid_t, libc::SIGTERM) };
+    assert_eq!(rc, 0);
     loop {
         if let Some(status) = serve.0.try_wait().unwrap() {
             return (status, sent.elapsed());

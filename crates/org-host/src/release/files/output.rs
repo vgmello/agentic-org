@@ -235,6 +235,7 @@ impl Directory {
         struct Entries(*mut libc::DIR);
         impl Drop for Entries {
             fn drop(&mut self) {
+                // SAFETY: sole owner of the live DIR handle returned by fdopendir.
                 unsafe {
                     libc::closedir(self.0);
                 }
@@ -253,6 +254,8 @@ impl Directory {
                     Err(e.into())
                 };
             }
+            // SAFETY: `entry` is non-null from `readdir` on this live stream, and `d_name`
+            // is a NUL-terminated C string valid until the next `readdir` or `closedir`.
             let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
             if matches!(name.to_bytes(), b"." | b"..") {
                 continue;

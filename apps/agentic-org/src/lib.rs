@@ -1,4 +1,7 @@
 //! Human CLI dispatch and host composition. No agent CLI or office data ownership.
+
+#![deny(unsafe_code)]
+
 mod admin;
 mod context;
 mod office;

@@ -38,7 +38,6 @@ pub trait Engine: Send + Sync + 'static {
     fn snapshot(&self) -> Result<Self::Snapshot, EngineError>;
     /// Builds a new, empty projection with `build` and installs it atomically in place of
     /// this one. If `build` fails the current projection stays.
-    #[allow(clippy::type_complexity)]
     fn replace(
         &self,
         build: &mut dyn FnMut(&mut Self::Tx) -> Result<Cursor, StoreError>,

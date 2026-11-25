@@ -1,4 +1,7 @@
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "composition tests inspect socket flags via fcntl and send raw SCM_RIGHTS fds via libc FFI"
+)]
 //! Run the real root composition in an isolated test child, then inspect cleanup
 //! BEFORE that child's process exit can mask a forgotten service or database.
 use super::super::*;
@@ -93,9 +96,11 @@ fn probe(failure: bool) {
         let (mut stream, _) = listener.accept().unwrap();
         // Match the fake-host activation fixture: macOS accepted sockets may
         // retain the nonblocking listener flag. A socket timeout does not clear it.
+        // SAFETY: `stream` is an owned live socket; F_GETFL only queries its status flags.
         let before = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
         assert!(before >= 0);
         stream.set_nonblocking(false).unwrap();
+        // SAFETY: `stream` is an owned live socket; F_GETFL only queries its status flags.
         let after = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
         assert!(after >= 0);
         assert_eq!(after & libc::O_NONBLOCK, 0);

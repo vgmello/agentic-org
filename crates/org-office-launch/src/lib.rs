@@ -118,7 +118,7 @@
 //! `offices/.refused/<folder name>` and never starts it.
 //! [`refused_dir`] and [`OfficeFile::names_folder`] give both sides one rule.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
@@ -706,15 +706,10 @@ impl Write for ByteCounter {
     }
 }
 
-/// Overwrite with zeros in a way the optimizer can't remove (best effort, as
-/// [`org_proto::zero_bytes`] does).
-#[allow(unsafe_code)]
+/// Overwrite with zeros in a way the optimizer can't remove (best effort via
+/// [`org_proto::zero_bytes`]).
 fn zero(bytes: &mut [u8]) {
-    for b in bytes.iter_mut() {
-        // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.
-        unsafe { std::ptr::write_volatile(b, 0) };
-    }
-    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    org_proto::zero_bytes(bytes);
 }
 
 /// The `"v"` of `office.json`, read before the rest so a newer file reports its version.

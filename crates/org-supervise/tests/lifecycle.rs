@@ -313,10 +313,8 @@ fn premature_cleanup_retains_a_live_child_and_external_reaping_disarms_signals()
         .unwrap()
         .unwrap();
     // SAFETY: deliberate contract violation confined to this test's exited child.
-    assert_eq!(
-        unsafe { libc::waitpid(child.identity().pid as i32, std::ptr::null_mut(), 0) },
-        child.identity().pid as i32
-    );
+    let waited = unsafe { libc::waitpid(child.identity().pid as i32, std::ptr::null_mut(), 0) };
+    assert_eq!(waited, child.identity().pid as i32);
     let error = child
         .stop(&stdin, &StopPolicy::default(), StopMode::Fast)
         .unwrap_err();
@@ -483,10 +481,8 @@ fn failed_probe_identity_recording_removes_the_owned_cwd_and_reaps_the_child() {
         .is_err());
     assert!(!cwd.exists());
     // SAFETY: only the child whose failed persistence guard must have reaped it.
-    assert_eq!(
-        unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) },
-        -1
-    );
+    let waited = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) };
+    assert_eq!(waited, -1);
     assert_eq!(
         io::Error::last_os_error().raw_os_error(),
         Some(libc::ECHILD)

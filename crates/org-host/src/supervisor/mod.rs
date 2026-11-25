@@ -2134,11 +2134,9 @@ pub(crate) mod tests {
         assert_eq!(supervisor.adopt(*adoptable).status, OfficeStatus::Offline);
         assert_eq!(supervisor.state(OFFICE), None, "adopted after shutdown");
         // The stop reaps the server: signal 0 then finds no such process.
-        // SAFETY: signal 0 only checks the pid.
-        assert!(
-            unsafe { libc::kill(pid, 0) } != 0,
-            "the server outlived the shutdown"
-        );
+        // SAFETY: signal 0 only probes whether the stopped child PID exists.
+        let rc = unsafe { libc::kill(pid, 0) };
+        assert!(rc != 0, "the server outlived the shutdown");
         // The HQ's original key stays: it was installed before the create, not by it.
         assert!(keys.holds(OFFICE, &key));
     }
@@ -2213,11 +2211,9 @@ pub(crate) mod tests {
             "{took:?}"
         );
         drop(pending);
-        // SAFETY: signal 0 only checks the pid.
-        assert!(
-            unsafe { libc::kill(pid, 0) } != 0,
-            "the run's server outlived its owner"
-        );
+        // SAFETY: signal 0 only probes whether the stopped child PID exists.
+        let rc = unsafe { libc::kill(pid, 0) };
+        assert!(rc != 0, "the run's server outlived its owner");
     }
 
     /// X5 review V2: a create whose worker has not connected to its launch rendezvous yet
@@ -2260,11 +2256,9 @@ pub(crate) mod tests {
             assert!(failed, "the create did not fail");
             let took = returned.duration_since(asked);
             assert!(took < Duration::from_secs(1), "{took:?}");
-            // SAFETY: signal 0 only checks the pid.
-            assert!(
-                unsafe { libc::kill(pid, 0) } != 0,
-                "the worker outlived its handshake"
-            );
+            // SAFETY: signal 0 only probes whether the stopped worker PID exists.
+            let rc = unsafe { libc::kill(pid, 0) };
+            assert!(rc != 0, "the worker outlived its handshake");
         });
     }
 

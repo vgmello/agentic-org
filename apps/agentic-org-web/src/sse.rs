@@ -744,7 +744,10 @@ async fn deliver_instance_event(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scoped SSE delivery takes explicit channel, filter, cursor, and payload fields"
+)]
 async fn deliver_scoped_event(
     tx: &mpsc::Sender<Bytes>,
     subs: &[Subscription],

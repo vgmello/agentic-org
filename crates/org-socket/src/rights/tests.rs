@@ -90,12 +90,16 @@ fn impossible_control_capacity_returns_an_error_instead_of_panicking() {
 #[test]
 fn control_capacity_checks_the_last_representable_layout_and_integer_wrap() {
     // Fixed ABI boundaries, checked without allocating a multi-gigabyte buffer.
+    // SAFETY: CMSG_SPACE(0) and CMSG_SPACE(1) perform pure alignment arithmetic with no pointers.
+    let cmsg_align = unsafe { libc::CMSG_SPACE(1) - libc::CMSG_SPACE(0) } as usize;
     let (last_count, last_space) = match (
         mem::size_of::<libc::cmsghdr>(),
         mem::align_of::<libc::cmsghdr>(),
+        cmsg_align,
     ) {
-        (12, 4) => (1_073_741_820usize, 4_294_967_292usize),
-        (16, 8) => (1_073_741_818usize, 4_294_967_288usize),
+        (12, 4, 4) => (1_073_741_820usize, 4_294_967_292usize),
+        // (16, 8, 8) is 64-bit glibc; (16, 4, 8) is x86_64 musl (4-byte struct align, 8-byte CMSG_ALIGN).
+        (16, 8, 8) | (16, 4, 8) => (1_073_741_818usize, 4_294_967_288usize),
         layout => panic!("unverified cmsghdr layout: {layout:?}"),
     };
     assert_eq!(control_space(last_count), Some(last_space));
@@ -105,6 +109,7 @@ fn control_capacity_checks_the_last_representable_layout_and_integer_wrap() {
         None
     );
     assert_eq!(control_space(usize::MAX / mem::size_of::<RawFd>()), None);
+    // SAFETY: CMSG_SPACE(0) performs pure alignment arithmetic with no pointer dereference.
     let overhead = unsafe { libc::CMSG_SPACE(0) } as usize;
     assert_eq!(
         control_space(usize::MAX / mem::size_of::<RawFd>() - overhead / mem::size_of::<RawFd>()),
@@ -143,8 +148,11 @@ fn ancillary_classification_requires_both_socket_level_and_rights_type() {
         let actual = parsed.len();
         if actual == 0 {
             // SAFETY: the parser returned no owner; our exclusive fd remains live.
-            assert!(unsafe { libc::fcntl(raw, libc::F_GETFD) } >= 0);
-            drop(unsafe { OwnedFd::from_raw_fd(raw) });
+            let fd_flags = unsafe { libc::fcntl(raw, libc::F_GETFD) };
+            assert!(fd_flags >= 0);
+            // SAFETY: the parser returned no owner, so this test still holds exclusive ownership of `raw`.
+            let owned = unsafe { OwnedFd::from_raw_fd(raw) };
+            drop(owned);
         }
         drop(parsed);
         assert_closed(peer);

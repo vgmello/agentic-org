@@ -99,10 +99,9 @@ mod tests {
         let mut words = [0_u32; 8];
         let mut count = 8;
         // SAFETY: system own-task port and writable eight-word audit-token ABI.
-        assert_eq!(
-            unsafe { task_info(mach_task_self_, 15, words.as_mut_ptr().cast(), &mut count) },
-            0
-        );
+        let status =
+            unsafe { task_info(mach_task_self_, 15, words.as_mut_ptr().cast(), &mut count) };
+        assert_eq!(status, 0);
         assert_eq!(count, 8);
         let encode = |words: [u32; 8]| {
             let mut token = [0; 32];

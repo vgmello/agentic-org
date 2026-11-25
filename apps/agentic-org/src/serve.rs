@@ -106,8 +106,13 @@ impl Build {
 
 /// What the command line asks for.
 #[derive(Debug, Default, PartialEq, Eq)]
-// A release build reads only `version`: it refuses the rest.
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
+#[cfg_attr(
+    not(debug_assertions),
+    allow(
+        dead_code,
+        reason = "release builds read only `version` and refuse dev CLI options"
+    )
+)]
 struct Args {
     version: bool,
     /// The registered instance to serve.
@@ -141,8 +146,14 @@ fn run_as(
     // What the service makes is its user's alone, whatever mask started it: a container
     // runtime starts it with 022, as a shell may, where the registered unit sets
     // `UMask=0077` (X5 review F10). Before any thread exists or any file is made.
+    #[expect(
+        unsafe_code,
+        reason = "setting process umask(0o077) at service startup requires POSIX FFI"
+    )]
     // SAFETY: umask has no preconditions and cannot fail.
-    unsafe { libc::umask(0o077) };
+    unsafe {
+        libc::umask(0o077);
+    }
     // Before any thread exists, so every thread inherits the mask.
     let signals = ShutdownSignals::block().map_err(|e| format!("blocking signals: {e}"))?;
     let registered = args.name.is_some() || args.setup.is_some();
@@ -266,7 +277,13 @@ fn start_unless_stopped<H>(
 /// [`Config::trusted`] set (no development app), and its app policy has no development-app
 /// rule at all (`AppPolicy::with_dev_app` and `Config::dev_app_path` exist only in debug
 /// builds, so release code never calls this).
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
+#[cfg_attr(
+    not(debug_assertions),
+    allow(
+        dead_code,
+        reason = "release builds have no development CLI peer policy; unit tests cover it"
+    )
+)]
 fn dev_cli_peer(
     build: Build,
     named: bool,
@@ -423,10 +440,9 @@ mod tests {
             .unwrap_err()
             .contains("unexpected argument"));
         // The composition's own check is the host's rule for this process's user.
-        // SAFETY: no arguments and no side effects; it cannot fail.
         assert_eq!(
             Config::refuse_root().is_err(),
-            unsafe { libc::geteuid() } == 0
+            org_socket::effective_uid() == 0
         );
     }
 
@@ -564,7 +580,10 @@ mod tests {
 
     /// A stop watched with a signal the test sends (`send`), and the overruns it recorded:
     /// the signal's number and when.
-    #[allow(clippy::type_complexity)]
+    #[expect(
+        clippy::type_complexity,
+        reason = "test helper returns stop guard, signal sender, and recorded overrun log"
+    )]
     fn watched(
         bound: Duration,
     ) -> (
@@ -619,6 +638,10 @@ mod tests {
     /// that is full and never read, with [`FULL_STDERR_CHILD`] set to `case`, and returns
     /// its exit status and stdout, or `None` if it had not ended within 20 s (it is then
     /// killed). A write to its stderr blocks for as long as it lives.
+    #[expect(
+        unsafe_code,
+        reason = "pipe nonblocking toggle for full-stderr test fixture requires POSIX fcntl FFI"
+    )]
     fn with_full_stderr(test: &str, case: &str) -> Option<(std::process::ExitStatus, String)> {
         use std::io::Write;
         use std::os::fd::AsRawFd;
@@ -627,11 +650,9 @@ mod tests {
         // SAFETY: a valid descriptor this function owns; fcntl reads or sets its flags.
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
         assert!(flags >= 0);
-        // SAFETY: as above.
-        assert_eq!(
-            unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) },
-            0
-        );
+        // SAFETY: a valid descriptor this function owns; fcntl sets its status flags.
+        let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+        assert_eq!(rc, 0);
         loop {
             match full.write(&[b'x'; 4096]) {
                 Ok(_) => {}
@@ -640,8 +661,9 @@ mod tests {
             }
         }
         // Blocking again (the child shares this open file), and full.
-        // SAFETY: as above.
-        assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFL, flags) }, 0);
+        // SAFETY: a valid descriptor this function owns; fcntl restores its original status flags.
+        let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
+        assert_eq!(rc, 0);
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", test, "--nocapture", "--test-threads=1"])
             .env(FULL_STDERR_CHILD, case)

@@ -87,7 +87,10 @@ macro_rules! __org_platform_before_main_refused {
     };
 }
 #[cfg(any(test, feature = "test-support"))]
-#[allow(unused_imports)]
+#[allow(
+    unused_imports,
+    reason = "re-exported as native::run_before_main on targets using the refusing adapter"
+)]
 pub use crate::__org_platform_before_main_refused as run_before_main;
 
 /// No claim beyond POSIX.

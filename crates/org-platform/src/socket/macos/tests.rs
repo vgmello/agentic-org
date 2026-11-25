@@ -120,10 +120,8 @@ pub(super) unsafe fn proc_pidfdinfo(
             // Keep genuine metadata in the buffer so a deleted count guard is
             // not masked by the listener's later state check.
             // SAFETY: these are the unchanged live output buffers from the helper.
-            assert_eq!(
-                unsafe { libc::proc_pidfdinfo(pid, fd, flavor, buffer, size) },
-                size
-            );
+            let actual = unsafe { libc::proc_pidfdinfo(pid, fd, flavor, buffer, size) };
+            assert_eq!(actual, size);
             return result;
         }
     }

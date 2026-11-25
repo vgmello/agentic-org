@@ -1617,7 +1617,10 @@ impl SessionManager {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "spawn persistence records prepared process, identifiers, mark, objective, stalls, and runtime session"
+    )]
     fn spawn_and_persist(
         &self,
         prepared: org_supervise::PreparedSpawn,
@@ -2615,7 +2618,6 @@ fn build_idle_session_view(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn extract_persisted_turn(
     persisted: Option<ActiveTurnRecord>,
 ) -> (

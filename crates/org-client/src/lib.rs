@@ -33,6 +33,8 @@
 //!
 //! The client is blocking and thread-based, like `org_proto::frame`.
 
+#![forbid(unsafe_code)]
+
 pub mod agent;
 mod error;
 mod helper;

@@ -78,8 +78,13 @@ pub(super) struct OfficeKeys {
     source: Source,
 }
 
-// A release build never chooses the development store (`keys::store_for`).
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
+#[cfg_attr(
+    not(debug_assertions),
+    allow(
+        dead_code,
+        reason = "release builds never select the development key store"
+    )
+)]
 enum Source {
     /// A release build's protected store (the Keychain, or an item store below a release
     /// directory), open since it was chosen. A key is its 32 bytes.
@@ -98,8 +103,13 @@ struct Development {
 
 impl OfficeKeys {
     /// Keys as the items of the Keychain store `store`.
-    // Debug builds never choose this store (`keys::store_for`); its tests still run there.
-    #[cfg_attr(debug_assertions, allow(dead_code))]
+    #[cfg_attr(
+        debug_assertions,
+        allow(
+            dead_code,
+            reason = "debug builds never select Keychain custody in production; unit tests cover it"
+        )
+    )]
     pub(super) fn keychain(store: Credentials) -> Self {
         Self {
             source: Source::Protected(store),
@@ -115,7 +125,13 @@ impl OfficeKeys {
     }
 
     /// The development store in `dir` (absolute), or in `dir/<instance id>`.
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    #[cfg_attr(
+        not(debug_assertions),
+        allow(
+            dead_code,
+            reason = "release builds never construct the development key store"
+        )
+    )]
     pub(super) fn development(dir: &Path, instance_id: Option<&str>) -> Self {
         Self {
             source: Source::Development(Development {
@@ -249,8 +265,13 @@ impl OfficeSecretsKeys for OfficeKeys {
 
 /// The office secrets keys of a system with no protected store: refuses every call (see the
 /// module docs).
-// Debug builds never choose it (`keys::store_for`); its tests still run there.
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(
+    debug_assertions,
+    allow(
+        dead_code,
+        reason = "debug builds never choose UnsupportedKeys in production; unit tests cover it"
+    )
+)]
 pub(super) struct UnsupportedKeys;
 
 impl OfficeSecretsKeys for UnsupportedKeys {
