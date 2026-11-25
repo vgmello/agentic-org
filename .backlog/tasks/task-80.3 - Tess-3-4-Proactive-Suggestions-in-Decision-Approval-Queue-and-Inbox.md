@@ -1,10 +1,12 @@
 ---
 id: TASK-80.3
-title: 'Tess 3/4: Proactive Suggestions in Decision & Approval Queue and Inbox'
+title: >-
+  Tess 5/5 (v2): Proactive Background Monitoring & Suggestions Queue in Owner
+  Inbox
 status: To Do
 assignee: []
 created_date: '2026-11-22T02:35:00Z'
-updated_date: '2026-11-23T04:07:00Z'
+updated_date: '2026-11-25T00:01:00Z'
 labels:
   - backend
   - ui
@@ -14,6 +16,7 @@ labels:
 milestone: m-1
 dependencies:
   - TASK-80.1
+  - TASK-80.4
 documentation:
   - .backlog/docs/specs/doc-39 - Spec-App-Shell-and-Navigation-UX.md
   - >-
@@ -49,3 +52,9 @@ Backend Implementation Blueprint (Tess 3/4 — Suggestions Queue):
 2. Execution & audit: Tess NEVER mutates assignments, budgets, or release gates silently; suggestion.apply executes the proposed office command ONLY after explicit owner confirmation and records dual attribution (Tess proposal + owner execution) in the office journal; dismiss closes without mutating target state.
 3. Verification: dual-engine org-office tests, inbox source integration tests in org-office-server, and HTTP route tests in agentic-org-web.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-24 4-Way Council Scope Alignment: Kept in m-1 (v2) for autonomous background monitoring/wake budgets; directly reuses the Suggestion record, server --dry-run preflight, pinned --if-match, and human HostChannel suggestion.apply pipeline shipped in m-0 TASK-80.4 with zero rework.
+<!-- SECTION:NOTES:END -->

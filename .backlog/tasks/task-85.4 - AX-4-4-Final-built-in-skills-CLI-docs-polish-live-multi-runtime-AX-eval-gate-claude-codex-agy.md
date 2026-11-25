@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-24T03:17:00Z'
-updated_date: '2026-11-24T17:07:00Z'
+updated_date: '2026-11-25T00:01:00Z'
 labels:
   - ax
   - backend
@@ -55,4 +55,6 @@ Postponed final v1 AX acceptance gate executed once the complete v1 agent-os CLI
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-24 Agent Decision Capture AX eval gate (TASK-111/TASK-112): Include agent-os note (--kind decision, promote) and docs-and-decisions skill in the final v1 AX polish pass and add 5 empirical multi-runtime record-judged scenarios across claude/codex/agy (including cost-effective models): DEC-AX-1 (Anti-Spam: 0 decisions on mechanical task), DEC-AX-2 (Meaningful Fork: 1-2 decisions with exit 0, non-empty why/alternatives, 0 spurious Git ADRs), DEC-AX-3 (Turn-40 Compact Recall: <=1 call, <1 KiB stdout across 15 verbose scratch notes), DEC-AX-4 (Promotion & ADR-0031 Firewall: 0 private_note_id in Git, Agent B sees ADR only), DEC-AX-5 (Non-Task Standalone Decision without creating an unsolicited task).
+
+2026-11-24 Embedded Tess AX eval gate (TASK-80.1/80.4): Add TESS-AX-1..6 live multi-runtime record-judged scenarios across claude -p, codex, and agy (flagship + cost-effective models): TESS-AX-1 (Product Q&A via skill read <=2 hops, <=2,500 uncached tok), TESS-AX-2 (Batched session attach org synthesis <50ms IPC, Brief read-only), TESS-AX-3 (ConfirmRequired policy_violation >=90% 1-turn recovery to suggestion create, 0 silent mutations, 0 raw JSON fences), TESS-AX-4 (acting_for_caller_id dual-intersection, ADR-0031 private-note denial, prompt-injection immunity, per-caller session isolation), TESS-AX-5 (Stale revision ConflictDetail recovery on proposals), TESS-AX-6 (3/3 runtime parity including Codex sandboxed agent-os shell, >=80% turn-2+ KV cache hit, 0 MCP servers).
 <!-- SECTION:NOTES:END -->

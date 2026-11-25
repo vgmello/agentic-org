@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-24T04:23:00Z'
+updated_date: '2026-11-25T00:01:00Z'
 labels:
   - feature
   - backend
@@ -48,3 +49,9 @@ Gives people real-time visibility and control over running agent turns inside Ch
 - [ ] #4 Streams coalesced per-member live activity over LiveEvents (Feed::Presence) -> chat.events_poll -> /api/v1/events/stream without evicting message events from the 1024-entry ring and strictly emitting coarse labels only (zero raw tool inputs/outputs/diffs/thinking text, preserving doc-40 CHAT-4 and zero overlap with TASK-43).
 - [ ] #5 Wires live Feed::Presence frames into apps/agentic-org-ui (messaging/http-api.ts, ChatWorkspace.svelte, Composer.svelte with aria-live='polite') to show ephemeral 'Thinking…' / 'Running <tool>…' status, an explicit 'Stop turn' button, an explicit 'Steer' submit action (distinct from queued Send), and a link to TASK-43's session log viewer; verified by fake-CLI adapter tests (Codex native steer + Claude/Agy NeedsInterrupt + Interrupt) and Playwright E2E; updates doc-71 and doc-3 (FC-081/FC-102).
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-24 Shared Streaming Infrastructure with Embedded Tess (TASK-80.4): Design PumpCommand::{InterruptTurn,SteerTurn} and a shared post-redaction SessionStreamHub cleanly inside crates/org-office-sessions so both TASK-103 (Chat Turn Controls) and TASK-80.4 (Ask Tess SSE stream + Stop button) reuse the exact same interrupt/steer/stream primitives.
+<!-- SECTION:NOTES:END -->

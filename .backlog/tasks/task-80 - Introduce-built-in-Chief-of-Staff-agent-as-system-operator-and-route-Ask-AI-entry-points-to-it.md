@@ -1,12 +1,12 @@
 ---
 id: TASK-80
 title: >-
-  Built-in Chief of Staff agent (Tess): org-wide orchestrator, Executive Brief,
-  Suggestions Queue, and Ask Tess
+  Built-in Chief of Staff agent (Tess): Embedded Product Assistant, Safe System
+  Operator, Ask Tess Side Panel (v1) & Proactive Brief/Queue (v2)
 status: To Do
 assignee: []
 created_date: '2026-11-22T02:08:00Z'
-updated_date: '2026-11-23T04:07:00Z'
+updated_date: '2026-11-25T00:01:00Z'
 labels:
   - backend
   - ui
@@ -17,7 +17,7 @@ labels:
   - home
   - inbox
   - blog
-milestone: m-1
+milestone: m-0
 dependencies:
   - TASK-42
   - TASK-45
@@ -31,7 +31,7 @@ documentation:
     Organization-Data-01-—-Organization-Structure.md
   - .backlog/docs/specs/doc-39 - Spec-App-Shell-and-Navigation-UX.md
   - .backlog/docs/design/doc-36 - Design-Smart-Features-Not-in-v1.md
-priority: medium
+priority: high
 type: feature
 ordinal: 80000
 ---
@@ -39,7 +39,7 @@ ordinal: 80000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Introduce Tess, a built-in AI Chief of Staff agent provisioned automatically with every organization alongside the built-in HR lead. Tess turns Agentic Org into an AI-native executive workspace and is the sole agent in the organization permitted to orchestrate across everything and everyone (all teams, projects, agents, people, and system workflows), while non-Chief-of-Staff agents remain bounded to their team, reporting, and project scopes. Tess is provisioned with may_hire = true so she can hire agents into any team in the organization through the HR hire flow (respecting ADR-0029 provisioning and team max_members limits). Tess synthesizes live operations into a read-only Executive Brief on Home, answers org-wide and item-scoped questions via Ask Tess (⌘K and card-level Ask about this), and submits concrete proposals (suggestion items) into the owner Decision & Approval Queue without ever mutating state silently. Profile bio/charter carries the full expansion "Tactical Execution & Squad Supervisor" (profile only — never repeated inline in banners, cards, or signatures).
+Delivers Tess (employees.builtin_key='chief_of_staff'), Agentic Org's embedded Chief of Staff and product-aware assistant running on whichever local coding agent runtime the user has installed (Claude, Codex, or Agy) over agent-os CLI + session attach (zero MCP wrappers per CLI-12, 30x-50x lower token tax). Splits cleanly into v1 (m-0) Interactive Embedded Tess (80.1 Identity/Sandbox/Dual-Auth, 80.4 Operator CLI/Product-Guide Skills/MutationPolicy/SSE Streaming/Two-Phase Action Proposals, 80.5 Persistent Right-Hand Tess Side Panel UI replacing the cramped ⌘K AI tab) and v2 (m-1) Autonomous Proactive Tess (80.2 scheduled LLM Executive Brief, 80.3 proactive background Suggestions Queue reusing 80.4's exact proposal pipeline).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

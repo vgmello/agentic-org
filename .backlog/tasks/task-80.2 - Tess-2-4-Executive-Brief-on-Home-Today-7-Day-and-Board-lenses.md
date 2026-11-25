@@ -1,10 +1,12 @@
 ---
 id: TASK-80.2
-title: 'Tess 2/4: Executive Brief on Home (Today, 7-Day, and Board lenses)'
+title: >-
+  Tess 4/5 (v2): Scheduled & LLM-Synthesized Executive Brief on Home (Today,
+  7-Day, and Board lenses)
 status: To Do
 assignee: []
 created_date: '2026-11-22T02:35:00Z'
-updated_date: '2026-11-23T04:07:00Z'
+updated_date: '2026-11-25T00:01:00Z'
 labels:
   - backend
   - ui
@@ -13,6 +15,7 @@ labels:
 milestone: m-1
 dependencies:
   - TASK-80.1
+  - TASK-80.4
 documentation:
   - .backlog/docs/specs/doc-39 - Spec-App-Shell-and-Navigation-UX.md
   - >-
@@ -48,3 +51,9 @@ Backend Implementation Blueprint (Tess 2/4 — Executive Brief API):
 3. Strictly read-only payload (no inline mutation actions); verify caller authorization scoping (owner vs PM vs member) and zero leakage of private notes/secrets.
 4. Verification: cargo test -p org-office -p org-office-sessions -p org-office-server -p agentic-org-web.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-24 4-Way Council Scope Alignment: Kept in m-1 (v2) because v1 Home already ships deterministic zero-token deriveExecutiveBrief (apps/agentic-org-ui/src/lib/home/model.ts:1462-1638). Runs BriefRefresh turns over TASK-80.1/80.4 with inline action attachments suppressed so Executive Brief stays strictly read-only.
+<!-- SECTION:NOTES:END -->
