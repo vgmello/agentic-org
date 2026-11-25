@@ -278,8 +278,26 @@ function presenceOf(m: Member): MemberRow['presence'] {
 	return p ? { id: p.id as PresenceId, ...(p.detail ? { detail: p.detail } : {}) } : undefined;
 }
 
+function reconcileWorkingOn(
+	organizationId: string,
+	memberId: string,
+	fixtureWorkingOn: MemberRow['workingOn']
+): MemberRow['workingOn'] {
+	const assignedTask = firstAssignedTaskFromStore(organizationId, memberId);
+	if (assignedTask) return assignedTask;
+	if (fixtureWorkingOn && !hasTaskRefInStore(organizationId, fixtureWorkingOn.ref)) {
+		return fixtureWorkingOn;
+	}
+	return undefined;
+}
+
 export async function rows(organizationId: string): Promise<MemberRow[]> {
-	if (organizationId === POC_ORG_ID) return structuredClone(pocMemberRows());
+	if (organizationId === POC_ORG_ID) {
+		return structuredClone(pocMemberRows()).map((row) => ({
+			...row,
+			workingOn: reconcileWorkingOn(organizationId, row.id, row.workingOn)
+		}));
+	}
 	const s = await snapshotFor(organizationId);
 	const offices = await officesFor(organizationId);
 	const ownerId = ownerIdOf(s);
@@ -289,12 +307,7 @@ export async function rows(organizationId: string): Promise<MemberRow[]> {
 			const x = extras[m.id] ?? {};
 			const office = m.kind === 'agent' ? offices.find((o) => o.id === m.office_id) : undefined;
 			const boss = s.members.find((b) => b.id === m.reports_to_member_id && b.id !== m.id);
-			const assignedTask = firstAssignedTaskFromStore(organizationId, m.id);
-			const workingOn =
-				assignedTask ??
-				(x.workingOn && !hasTaskRefInStore(organizationId, x.workingOn.ref)
-					? x.workingOn
-					: undefined);
+			const workingOn = reconcileWorkingOn(organizationId, m.id, x.workingOn);
 			return {
 				id: m.id,
 				kind: m.kind as 'agent' | 'person',

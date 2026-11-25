@@ -807,7 +807,8 @@ export async function assignTaskInStore(
 			if (entry.detail.status === 'done' || entry.detail.status === 'cancelled') {
 				throw fail('conflict', `${entry.detail.ref} is already closed and can't be assigned.`);
 			}
-			if (entry.detail.assignee && entry.detail.assignee.id !== assignee.id) {
+			if (entry.detail.assignee) {
+				if (entry.detail.assignee.id === assignee.id) return;
 				throw fail(
 					'conflict',
 					`${entry.detail.ref} is already assigned to ${entry.detail.assignee.name}.`
