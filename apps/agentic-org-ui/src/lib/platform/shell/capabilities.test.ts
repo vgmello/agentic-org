@@ -20,6 +20,7 @@ describe('production shell capabilities', () => {
 			'/work',
 			'/work/T-A1',
 			'/chat',
+			'/activity',
 			'/settings/offices',
 			'/offices',
 			'/settings/roles',
@@ -40,6 +41,7 @@ describe('production shell capabilities', () => {
 			'/projects',
 			'/projects/0193a5c0-0000-7000-8000-000000000003',
 			'/projects/0193a5c0-0000-7000-8000-000000000003/work',
+			'/projects/0193a5c0-0000-7000-8000-000000000003/activity',
 			'/projects/0193a5c0-0000-7000-8000-000000000003/team',
 			'/projects/0193a5c0-0000-7000-8000-000000000003/settings'
 		])
@@ -53,7 +55,6 @@ describe('production shell capabilities', () => {
 			'/approve/x',
 			'/cli-approve/x',
 			'/work/T-A1/extra',
-			'/activity',
 			'/settings',
 			'/settings/costs',
 			'/settings/agents',

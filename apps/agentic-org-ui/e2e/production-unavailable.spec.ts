@@ -5,8 +5,6 @@ import { shot } from './shot';
 // Each unbuilt path with the area the shell names for it (app-shell-ux §0): routes without a live
 // gateway adapter stay explicitly unavailable in production builds.
 const areas = [
-	['work', 'Work'],
-	['activity', 'Activity'],
 	['settings', 'Organization settings'],
 	['processes', 'Organization settings'],
 	['sessions', 'Activity']
@@ -64,7 +62,9 @@ test('A3, A4, U1, B7: enabled session, live org, home, inbox, and chat routes re
 		'/security',
 		'/home',
 		'/inbox',
+		'/work',
 		'/chat',
+		'/activity',
 		'/teams',
 		'/teams/members',
 		'/teams/org-chart',
@@ -86,7 +86,7 @@ test('A3, A4, U1, B7: enabled session, live org, home, inbox, and chat routes re
 			page.getByRole('heading', { level: 1, name: 'This link has expired or was already used.' })
 		).toBeVisible();
 	}
-	await visit(page, '/activity');
+	await visit(page, '/insights');
 	await expect(page.getByTestId('area-unavailable')).toBeVisible();
 });
 

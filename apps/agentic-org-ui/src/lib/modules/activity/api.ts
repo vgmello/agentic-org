@@ -1,4 +1,9 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { inboxApi } from '$lib/modules/inbox/api';
+import { orgApi } from '$lib/modules/organization/api';
+import { workItemsApi } from '$lib/modules/workitems/api';
+import { createHttpActivityApi } from './http-api';
 import type {
 	ActivityOptions,
 	ActivityPage,
@@ -19,11 +24,54 @@ export interface ActivityApi {
 	subscribe(organizationId: string, onRow: (row: ActivityRow) => void): Promise<() => void>;
 }
 
-// The web API does not serve the feed yet: every call refuses and screens say so. Under `bun run dev:mock`,
-// e2e/fakes/modules/activity.ts stands in for this file.
-export const activityApi: ActivityApi = {
-	feed: unavailableCall,
-	options: unavailableCall,
-	thread: unavailableCall,
-	subscribe: unavailableCall
-};
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+function subscribeActivityFeeds(organizationId: string, onEvent: () => void): () => void {
+	const session = signedInSession();
+	if (!session) return () => {};
+	const scope = {
+		kind: 'organization' as const,
+		instance_id: session.instance_id,
+		org_id: organizationId
+	};
+	return appSession.controller().subscribeEvents(
+		[
+			{ scope, feed: 'organization' },
+			{ scope, feed: 'work' },
+			{ scope, feed: 'messaging' },
+			{ scope, feed: 'presence' }
+		],
+		{
+			onChange: () => onEvent(),
+			onResync: () => onEvent()
+		}
+	);
+}
+
+const gatewayActivityApi = createHttpActivityApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	orgApi,
+	workItemsApi,
+	inboxApi,
+	viewerId: (organizationId) =>
+		signedInSession()?.organizations.find((o) => o.org_id === organizationId)?.employee_id,
+	subscribe: subscribeActivityFeeds
+});
+
+// Production routes through the signed-in browser gateway and fails closed when signed out.
+// Under `bun run dev:mock`, `e2e/fakes/modules/activity.ts` stands in for this file.
+export const activityApi: ActivityApi = Object.freeze<ActivityApi>({
+	feed: (organizationId, query, limit) =>
+		signedInSession() ? gatewayActivityApi.feed(organizationId, query, limit) : unavailableCall(),
+	options: (organizationId) =>
+		signedInSession() ? gatewayActivityApi.options(organizationId) : unavailableCall(),
+	thread: (organizationId, threadId) =>
+		signedInSession() ? gatewayActivityApi.thread(organizationId, threadId) : unavailableCall(),
+	subscribe: (organizationId, onRow) =>
+		signedInSession() ? gatewayActivityApi.subscribe(organizationId, onRow) : unavailableCall()
+});
