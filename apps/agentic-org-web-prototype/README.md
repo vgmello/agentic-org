@@ -25,11 +25,13 @@ Defaults to `http://localhost:3000` (override with `PORT=3001 bun apps/agentic-o
 ## Quick browser check
 
 ```bash
+bun apps/agentic-org-web-prototype/smoke.ts --all
 bun apps/agentic-org-web-prototype/smoke.ts work graphite
 bun apps/agentic-org-web-prototype/smoke.ts activity ocean
 ```
 
-Pass a v6 route and theme to check the affected page in Chromium. The command uses
+Pass `--all` to run all 5 behavioral checks plus a 27-route / 6-theme sweep in a single browser session,
+or pass a v6 route and theme to check one affected page in Chromium. The command uses
 the installed Playwright dependency and starts and stops its own preview. It saves
 a screenshot under `.playwright/`. Work and Activity also check their right-side
 panels and keyboard dismissal.

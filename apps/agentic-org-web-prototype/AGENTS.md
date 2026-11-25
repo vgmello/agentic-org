@@ -3,7 +3,17 @@
 For changes confined to `apps/agentic-org-web-prototype/`, use targeted local checks and relevant browser
 verification for acceptance. This replaces the repository's code review cycle
 for prototype work, including reviewer agents and final review.
-Use `bun apps/agentic-org-web-prototype/smoke.ts <route> <theme>` for a quick Chromium check and screenshot.
+Use `bun apps/agentic-org-web-prototype/smoke.ts <route> <theme>` for a quick Chromium check and screenshot,
+or `bun apps/agentic-org-web-prototype/smoke.ts --all` to run all 5 behavioral checks plus a 27-route / 6-theme zero-error sweep in one browser pass.
+
+## v6 Prototype Layout (Edit Directly — Zero Build Config)
+
+- Shell: `v6.html` (links stylesheets in cascade order + `<script type="module" src="./v6/main.js">`).
+- Styles: `v6/styles/` (`base.css`, `home.css`, `theme-ocean-classic.css`, `theme-report.css`, `theme-graphite.css`), plus shared `operations.css` and `cozy.css`.
+- Core JS: `v6/data.js`, `v6/state.js`, `v6/ui.js`, `v6/main.js`.
+- Pages: `v6/pages/` (`home.js`, `inbox.js`, `work.js`, `projects.js`, `insights.js`, `chat.js`, `activity.js`, `teams.js`, `agent-profile.js`, `settings.js`).
+- App shell: `v6/shell/` (`sidebar.js`, `router.js`, `cmdk.js`, `keyboard.js`, `dialogs.js`, `actions.js`).
+- Keep `v5.html` untouched (historical snapshot).
 
 Commit and push each verified prototype update to `poc/ui-themes-prototype`
 with a normal commit subject. When the owner explicitly approves a release,
