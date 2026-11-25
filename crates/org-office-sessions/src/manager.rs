@@ -3118,6 +3118,9 @@ fn take_failed_live_handle(
 }
 
 pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
+    if is_admissions_closed(mgr) {
+        return;
+    }
     let is_stale_recycle = req.reason == "warm_route_stale";
     let refreshed_same_conn = !is_stale_recycle && try_refresh_host_claude_subscription(mgr, &req);
     if !is_stale_recycle && !refreshed_same_conn {

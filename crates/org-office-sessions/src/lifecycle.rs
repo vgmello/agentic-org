@@ -1544,7 +1544,7 @@ fn try_send_wake_on_live_handle(
         recycle_stale_warm_handle(employee_id, &run_id, "warm_route_stale", ctx);
         return Ok(false);
     }
-    let acquired_pid = match acquire_live_handle_permit(
+    let acquired_permit = match acquire_live_handle_permit(
         &ctx.office,
         ctx.hq_permits.as_deref(),
         conn_id.as_deref(),
@@ -1553,40 +1553,78 @@ fn try_send_wake_on_live_handle(
         employee_id,
         queue_task_id,
     ) {
-        Ok(pid) => pid,
+        Ok(permit) => permit,
         Err(LivePermitError::Stale) => {
             recycle_stale_warm_handle(employee_id, &run_id, "warm_route_stale", ctx);
             return Ok(false);
         }
         Err(LivePermitError::Hold(reason)) => return Err(reason),
     };
-    let sent = {
-        let reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
-        let still_live = !reg.draining
-            && !reg.shutting_down
-            && !reg.starting.contains(employee_id)
-            && reg.live.get(employee_id).is_some_and(|handle| {
-                handle
-                    .state
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .run_id
-                    .as_deref()
-                    == Some(run_id.as_str())
-            });
-        still_live && tx.send(PumpCommand::SendTurn(objective)).is_ok()
-    };
-    if sent {
-        return Ok(true);
-    }
-    if let Some(pid) = acquired_pid {
-        let _ = active_permit
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take();
+    let (sent, release_pid) = commit_wake_send_locked(
+        &ctx.registry,
+        employee_id,
+        &run_id,
+        &tx,
+        &active_permit,
+        acquired_permit,
+        objective,
+    );
+    if let Some(pid) = release_pid {
         crate::router::release_turn_permit_any(&ctx.office, ctx.hq_permits.as_deref(), &pid);
     }
-    Ok(false)
+    Ok(sent)
+}
+
+fn commit_wake_send_locked(
+    registry: &Arc<Mutex<SessionRegistry>>,
+    employee_id: &str,
+    run_id: &str,
+    tx: &std::sync::mpsc::Sender<PumpCommand>,
+    active_permit: &Arc<Mutex<Option<(String, u64)>>>,
+    acquired_permit: Option<(String, u64)>,
+    objective: String,
+) -> (bool, Option<String>) {
+    let reg = registry.lock().unwrap_or_else(|p| p.into_inner());
+    let still_live = !reg.draining
+        && !reg.shutting_down
+        && !reg.starting.contains(employee_id)
+        && reg.live.get(employee_id).is_some_and(|handle| {
+            handle
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .run_id
+                .as_deref()
+                == Some(run_id)
+        });
+    if !still_live {
+        return (false, acquired_permit.map(|(pid, _)| pid));
+    }
+    let (installed_pid, redundant_pid) = match acquired_permit {
+        Some(p) => {
+            let mut slot = active_permit.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.is_none() {
+                let pid = p.0.clone();
+                *slot = Some(p);
+                (Some(pid), None)
+            } else {
+                (None, Some(p.0))
+            }
+        }
+        None => (None, None),
+    };
+    if tx.send(PumpCommand::SendTurn(objective)).is_ok() {
+        return (true, redundant_pid);
+    }
+    let rollback_pid = installed_pid.and_then(|pid| {
+        let mut slot = active_permit.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_some_and(|(cur, _)| cur == &pid) {
+            slot.take().map(|(id, _)| id)
+        } else {
+            None
+        }
+    });
+    (false, rollback_pid.or(redundant_pid))
 }
 
 enum LivePermitError {
@@ -1602,7 +1640,7 @@ fn acquire_live_handle_permit(
     active_permit: &Arc<Mutex<Option<(String, u64)>>>,
     employee_id: &str,
     task_id: Option<&str>,
-) -> Result<Option<String>, LivePermitError> {
+) -> Result<Option<(String, u64)>, LivePermitError> {
     let Some(cid) = conn_id else {
         return Ok(None);
     };
@@ -1621,17 +1659,7 @@ fn acquire_live_handle_permit(
         task_id,
         route_digest,
     ) {
-        crate::router::WarmPermitOutcome::Granted(p) => {
-            let pid = p.0.clone();
-            let mut slot = active_permit.lock().unwrap_or_else(|e| e.into_inner());
-            if slot.is_none() {
-                *slot = Some(p);
-                return Ok(Some(pid));
-            }
-            drop(slot);
-            crate::router::release_turn_permit_any(office, hq_permits, &pid);
-            Ok(None)
-        }
+        crate::router::WarmPermitOutcome::Granted(p) => Ok(Some(p)),
         crate::router::WarmPermitOutcome::StaleWarm => Err(LivePermitError::Stale),
         crate::router::WarmPermitOutcome::Unavailable { .. } => {
             Err(LivePermitError::Hold(WakeHoldReason::AdmissionRefused))

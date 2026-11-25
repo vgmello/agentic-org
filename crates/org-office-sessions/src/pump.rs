@@ -200,6 +200,7 @@ struct PumpLoopState {
     permit_lease_deadline: Option<Instant>,
     current_objective: String,
     turn_reply: Option<String>,
+    turns_dispatched: u64,
     oauth_refresh_attempted: bool,
     failover_pending: Option<FailoverRequest>,
 }
@@ -226,6 +227,7 @@ impl PumpLoopState {
             permit_lease_deadline: None,
             current_objective: String::new(),
             turn_reply: None,
+            turns_dispatched: 0,
             oauth_refresh_attempted,
             failover_pending: None,
         }
@@ -488,13 +490,7 @@ fn drain_commands(
             }
             PumpCommand::Stop { reason } => {
                 loop_state.stop_requested = true;
-                let preserve = matches!(
-                    reason.as_str(),
-                    "warm_route_stale" | "oauth_token_expiring" | "pool_reroute"
-                );
-                if stop_preserve != Some(false) {
-                    stop_preserve = Some(preserve);
-                }
+                stop_preserve = merge_stop_preserve(stop_preserve, &reason);
                 if let Ok(outs) = session.control(Control::Close, Instant::now()) {
                     apply_outputs(outs, stdin, ctx, loop_state, session);
                 }
@@ -503,6 +499,16 @@ fn drain_commands(
         }
     }
     finalize_drained_stop(stop_preserve, ctx, loop_state);
+}
+
+fn merge_stop_preserve(current: Option<bool>, reason: &str) -> Option<bool> {
+    if current == Some(false) {
+        return Some(false);
+    }
+    Some(matches!(
+        reason,
+        "warm_route_stale" | "oauth_token_expiring" | "pool_reroute"
+    ))
 }
 
 fn finalize_drained_stop(
@@ -544,7 +550,12 @@ enum PermitCheck {
 }
 
 fn ensure_permit_for_turn(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> PermitCheck {
-    if crate::host_auth::is_oauth_expiring(ctx.oauth_expires_at_ms, now_ms()) {
+    // Only proactively recycle on OAuth pre-expiry during warm reuse (Turn 2+). Turn 1 of a fresh
+    // cold start already attempted pre-launch refresh and must run so an unrotatable/revoked token
+    // surfaces bounded `auth_expired` failover instead of an infinite cold-start loop.
+    if loop_state.turns_dispatched > 0
+        && crate::host_auth::is_oauth_expiring(ctx.oauth_expires_at_ms, now_ms())
+    {
         return PermitCheck::StaleWarm;
     }
     let Some(conn_id) = ctx.connection_id.as_deref() else {
@@ -625,6 +636,7 @@ fn dispatch_next_turn(
         Instant::now(),
     ) {
         loop_state.turn_active = true;
+        loop_state.turns_dispatched = loop_state.turns_dispatched.saturating_add(1);
         persist_turn_update(ctx, |rec| {
             rec.objective = objective_for_disk;
             rec.active = true;
@@ -1332,9 +1344,32 @@ mod pump_tests {
         let ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), Some(1));
         let mut loop_state = PumpLoopState::new(false);
 
+        // Verify stop_preserve precedence across mixed Stop reason orderings:
+        // non-recycle Stop always wins over recycle Stop in either order.
+        assert_eq!(merge_stop_preserve(None, "warm_route_stale"), Some(true));
+        assert_eq!(
+            merge_stop_preserve(None, "oauth_token_expiring"),
+            Some(true)
+        );
+        assert_eq!(merge_stop_preserve(None, "pool_reroute"), Some(true));
+        assert_eq!(
+            merge_stop_preserve(Some(true), "user_stop"),
+            Some(false),
+            "non-recycle Stop after recycle Stop must win"
+        );
+        assert_eq!(
+            merge_stop_preserve(Some(false), "warm_route_stale"),
+            Some(false),
+            "recycle Stop after non-recycle Stop must not override"
+        );
+
         // Simulate recycle Stop arriving before SendTurn in the same drain pass.
         loop_state.pending_turns.push("queued-wake".into());
-        finalize_drained_stop(Some(true), &ctx, &mut loop_state);
+        finalize_drained_stop(
+            merge_stop_preserve(None, "warm_route_stale"),
+            &ctx,
+            &mut loop_state,
+        );
         assert!(loop_state.pending_turns.is_empty());
         let req = loop_state
             .failover_pending
@@ -1346,13 +1381,34 @@ mod pump_tests {
 
         // Non-recycle Stop (e.g. user stop / shutdown) clears failover_pending.
         loop_state.pending_turns.push("discard-on-user-stop".into());
-        finalize_drained_stop(Some(false), &ctx, &mut loop_state);
+        finalize_drained_stop(
+            merge_stop_preserve(Some(true), "user_stop"),
+            &ctx,
+            &mut loop_state,
+        );
         assert!(loop_state.failover_pending.is_none());
 
-        // Legacy employee without connection_id still triggers StaleWarm on expiring OAuth.
+        // Turn 1 (`turns_dispatched == 0`) with expiring OAuth MUST remain Ready (prevents
+        // unbounded cold-start loop when refresh fails or token doesn't rotate in 5m lead window).
         let legacy_ctx = test_pump_ctx(dir.path(), None, Some(1));
         assert!(matches!(
             ensure_permit_for_turn(&legacy_ctx, &mut loop_state),
+            PermitCheck::Ready
+        ));
+        assert!(matches!(
+            ensure_permit_for_turn(&ctx, &mut loop_state),
+            PermitCheck::Ready
+        ));
+
+        // Warm reuse (Turn 2+, `turns_dispatched > 0`) triggers StaleWarm on expiring OAuth for
+        // BOTH connected and legacy (`connection_id: None`) sessions.
+        loop_state.turns_dispatched = 1;
+        assert!(matches!(
+            ensure_permit_for_turn(&legacy_ctx, &mut loop_state),
+            PermitCheck::StaleWarm
+        ));
+        assert!(matches!(
+            ensure_permit_for_turn(&ctx, &mut loop_state),
             PermitCheck::StaleWarm
         ));
     }
