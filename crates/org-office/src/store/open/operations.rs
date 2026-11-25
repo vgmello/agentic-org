@@ -614,6 +614,20 @@ impl ReadOp for OfficeIdsList {
     }
 }
 
+/// Lists all offices registered in this organization's replicated `org-store` (`TASK-120`).
+pub struct OfficesList;
+
+impl ReadOp for OfficesList {
+    type Out = Vec<crate::organization::records::Office>;
+
+    fn read<S: TasksRead>(
+        self,
+        read: &S,
+    ) -> Result<Vec<crate::organization::records::Office>, StoreError> {
+        Ok(read.offices()?)
+    }
+}
+
 /// Registers (or idempotently refreshes) an enrolled satellite office at HQ (`TASK-52`).
 pub type RegisterSatelliteOfficeOp =
     StructureOp<crate::organization::features::offices::RegisterSatelliteOffice>;

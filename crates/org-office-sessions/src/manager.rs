@@ -1467,7 +1467,9 @@ impl SessionManager {
             )
         };
         let run_id = format!("run-{}", next_entropy_hex(10)?);
-        let session_id = format!("sess-{}", next_entropy_hex(10)?);
+        // Claude Code (`--session-id`), Codex, and Agy accept canonical lowercase UUIDs;
+        // Claude Code 2.1.323+ rejects non-UUID strings before the `initialize` handshake.
+        let session_id = next_uuid_v4()?;
         let mark_str = format!("m-{}", next_entropy_hex(12)?);
 
         let resume_sid = opts
@@ -1478,6 +1480,11 @@ impl SessionManager {
         } else {
             SessionId::try_from(session_id.as_str()).ok()
         };
+        let host_config_dir = if admitted.auth_env.is_empty() {
+            resolve_host_runtime_config_dir(admitted.adapter.id().as_str())
+        } else {
+            None
+        };
         let ctx = LaunchContext {
             runtime_path: binary,
             runtime_version: None,
@@ -1486,7 +1493,7 @@ impl SessionManager {
             office_env_names: office_env_names(),
             new_session_id: new_sid,
             resume: resume_sid,
-            config_dir: None,
+            config_dir: host_config_dir,
         };
         let (plan, session) = admitted
             .adapter
@@ -2853,6 +2860,41 @@ fn canonical_or_spec(path: &Path) -> Result<SpecPath, ApiError> {
 fn next_entropy_hex(bytes_len: usize) -> Result<String, ApiError> {
     random_hex(bytes_len)
         .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))
+}
+
+fn next_uuid_v4() -> Result<String, ApiError> {
+    use ring::rand::{SecureRandom, SystemRandom};
+    let mut b = [0_u8; 16];
+    SystemRandom::new()
+        .fill(&mut b)
+        .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))?;
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+    ))
+}
+
+/// Locates the host user's existing runtime configuration directory (e.g. `~/.claude`, `~/.codex`,
+/// `~/.gemini`) when no vault credential is injected, so local OAuth-authenticated CLI runtimes
+/// can authenticate even while `HOME` is isolated to the agent's private home. Adapters add
+/// S2 deny rules over `config_dir` so agent tools cannot read or modify credentials.
+fn resolve_host_runtime_config_dir(runtime_id: &str) -> Option<SpecPath> {
+    let subdir = match runtime_id {
+        "claude" => ".claude",
+        "codex" => ".codex",
+        "agy" => ".gemini",
+        _ => return None,
+    };
+    let host_home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let candidate = host_home.join(subdir);
+    if !candidate.is_dir() {
+        return None;
+    }
+    let resolved = candidate.canonicalize().unwrap_or(candidate);
+    let text = resolved.display().to_string();
+    SpecPath::try_from(text.as_str()).ok()
 }
 
 fn handle_call<C: Call>(

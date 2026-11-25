@@ -106,26 +106,49 @@ fn flag_takes_value(forwarded: &[String], flag_name: &str) -> bool {
         .any(|f| f.is_flag() && f.flag() == flag_name && f.ty != org_command::Type::Boolean)
 }
 
+fn command_accepts_flag(forwarded: &[String], flag_name: &str) -> bool {
+    let (resource, verb) = match forwarded {
+        [a, b, v, ..] if a == "task" && b == "note" => ("task-note", v.as_str()),
+        [r, v, ..] => (r.as_str(), v.as_str()),
+        _ => return false,
+    };
+    org_agent_cli::table::table()
+        .find(resource, verb)
+        .is_some_and(|cmd| {
+            cmd.input
+                .iter()
+                .any(|f| f.is_flag() && f.flag() == flag_name)
+        })
+}
+
 fn try_consume_selector<'a, I: Iterator<Item = &'a String>>(
     arg: &str,
+    forwarded: &[String],
     iter: &mut I,
     instance: &mut Option<String>,
     office: &mut Option<String>,
 ) -> Result<bool, String> {
-    if let Some(val) = arg.strip_prefix("--name=") {
-        set_selector(instance, "--name", val)?;
+    let name_is_command_flag = command_accepts_flag(forwarded, "name");
+    if let Some(val) = arg.strip_prefix("--instance=") {
+        set_selector(instance, "--instance", val)?;
         return Ok(true);
+    }
+    if !name_is_command_flag {
+        if let Some(val) = arg.strip_prefix("--name=") {
+            set_selector(instance, "--name", val)?;
+            return Ok(true);
+        }
     }
     if let Some(val) = arg.strip_prefix("--office=") {
         set_selector(office, "--office", val)?;
         return Ok(true);
     }
-    if arg == "--name" || arg == "--office" {
+    if arg == "--instance" || (!name_is_command_flag && arg == "--name") || arg == "--office" {
         let value = iter
             .next()
             .filter(|v| !v.starts_with("--"))
             .ok_or_else(|| format!("{arg} needs a value"))?;
-        let slot = if arg == "--name" { instance } else { office };
+        let slot = if arg == "--office" { office } else { instance };
         set_selector(slot, arg, value)?;
         return Ok(true);
     }
@@ -154,7 +177,7 @@ fn split_office_selectors(args: &[String]) -> Result<OfficeCommandSelectors, Str
             forwarded.push(arg.clone());
             continue;
         }
-        if try_consume_selector(arg, &mut iter, &mut instance, &mut office)? {
+        if try_consume_selector(arg, &forwarded, &mut iter, &mut instance, &mut office)? {
             continue;
         }
         if let Some(flag_name) = arg.strip_prefix("--") {
@@ -304,6 +327,23 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(after_undone.instance.as_deref(), Some("hq"));
+
+        // Subcommands that define their own `--name` flag (like `hr hire` and `team create`)
+        // must keep `--name` in forwarded args while `--instance` selects the host instance.
+        let hire_with_name = super::split_office_selectors(&[
+            "hr".to_owned(),
+            "hire".to_owned(),
+            "--name".to_owned(),
+            "Worker EU".to_owned(),
+            "--instance".to_owned(),
+            "hq".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(hire_with_name.instance.as_deref(), Some("hq"));
+        assert_eq!(
+            hire_with_name.forwarded,
+            vec!["hr", "hire", "--name", "Worker EU"]
+        );
 
         let dash_val = super::split_office_selectors(&[
             "task".to_owned(),

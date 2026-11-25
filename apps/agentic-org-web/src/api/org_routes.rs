@@ -769,7 +769,35 @@ pub(super) async fn execute_org_offices(
     let Some(org) = list.organizations.into_iter().find(|org| org.id == org_id) else {
         return not_found();
     };
-    let offices = org.offices.into_iter().map(OfficeView::from).collect();
+    let mut offices: Vec<OfficeView> = org.offices.into_iter().map(OfficeView::from).collect();
+    if let Some(local_office_id) = offices.first().map(|o| o.id.clone()) {
+        let auth = api.auth(&pair);
+        if let Ok(dir) = api
+            .offices
+            .call_typed::<org_proto::federation::OfficeDirectoryList>(
+                &auth,
+                &local_office_id,
+                &org_proto::federation::OfficeDirectoryListParams {},
+                true,
+            )
+            .await
+        {
+            for remote in dir.offices {
+                if !offices.iter().any(|existing| existing.id == remote.id) {
+                    offices.push(OfficeView {
+                        id: remote.id,
+                        organization_id: remote.organization_id,
+                        name: remote.name,
+                        role: remote.role,
+                        host: format!("Remote ({})", remote.slug),
+                        status: org_proto::OfficeStatus::Active,
+                        status_reason: None,
+                        next_restart_at: None,
+                    });
+                }
+            }
+        }
+    }
     result(OfficeList { offices })
 }
 

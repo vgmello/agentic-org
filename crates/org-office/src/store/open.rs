@@ -50,10 +50,10 @@ pub use operations::{
     CheckHrMessageAccess, CheckOp, CreateOrganizationOp, CreateProjectOp, CreateTeamOp,
     DeactivatePersonOp, DirectoryGeneration, DirectorySnapshot, EmployeeById, HireInspectById,
     HiresList, ImportOrganizationOp, ModelProfileById, ModelProfilesList, MovePersonOp, MoveTeamOp,
-    OfficeIdsList, OfficeStanding, OfficesCount, ProjectCheckOp, ProjectInspectByRef, ProjectsList,
-    ProviderConnectionById, ProviderConnectionsList, ReceiptById, RegisterSatelliteOfficeOp,
-    RemoveProjectTeamOp, RoleById, RoleInspectByRef, RolesList, Standing, StructureOp, TopTeamId,
-    UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
+    OfficeIdsList, OfficeStanding, OfficesCount, OfficesList, ProjectCheckOp, ProjectInspectByRef,
+    ProjectsList, ProviderConnectionById, ProviderConnectionsList, ReceiptById,
+    RegisterSatelliteOfficeOp, RemoveProjectTeamOp, RoleById, RoleInspectByRef, RolesList,
+    Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
 };
 
 use super::sqlite::{

@@ -312,6 +312,17 @@ impl Office {
             .map_err(OfficeError::storage)?
             .0)
     }
+
+    /// Returns all offices registered in this organization's replicated state (`TASK-120`).
+    pub fn list_org_offices(
+        &self,
+    ) -> Result<Vec<crate::organization::records::Office>, OfficeError> {
+        Ok(self
+            .store
+            .read(crate::store::open::OfficesList)
+            .map_err(OfficeError::storage)?
+            .0)
+    }
 }
 
 // ---- Implementation functions ----
