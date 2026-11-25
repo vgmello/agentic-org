@@ -101,6 +101,34 @@ function orbPalette(light) {
   };
 }
 
+function createGlowSprite(r, g, b) {
+  const size = 48, half = size / 2;
+  const c = document.createElement("canvas");
+  c.width = size; c.height = size;
+  const gctx = c.getContext("2d");
+  const grad = gctx.createRadialGradient(half, half, 1, half, half, half);
+  grad.addColorStop(0, `rgba(${r},${g},${b},1)`);
+  grad.addColorStop(0.45, `rgba(${r},${g},${b},0.35)`);
+  grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  gctx.fillStyle = grad;
+  gctx.fillRect(0, 0, size, size);
+  return c;
+}
+
+function buildOrbColorTable(light) {
+  const pal = orbPalette(light);
+  const cool = [], warm = [];
+  for (let i = 0; i < 8; i++) {
+    const t = i / 7;
+    const [dr, dg, db] = pal.dot(t, t);
+    cool.push(`rgb(${dr},${dg},${db})`);
+    warm.push(`rgb(${Math.round(dr + (249 - dr) * 0.85)},${Math.round(dg + (115 - dg) * 0.85)},${Math.round(db + (22 - db) * 0.85)})`);
+  }
+  const coolGlow = createGlowSprite(pal.auraA[0], pal.auraA[1], pal.auraA[2]);
+  const warmGlow = createGlowSprite(249, 115, 22);
+  return { pal, cool, warm, coolGlow, warmGlow, light };
+}
+
 class NeuralOrb {
   constructor(canvas) {
     this.canvas = canvas;
@@ -131,7 +159,11 @@ class NeuralOrb {
     this.ripples = [];
     this.nodes = this._buildNodes();
     this.pts = this.nodes.map(() => ({ sx: 0, sy: 0, wz: 0, sr: 0, act: 0, core: false }));
+    this.sorted = this.pts.slice();
+    this.linkable = [];
+    this._colors = buildOrbColorTable(isLightTheme());
     this._raf = null;
+    this._lastDraw = 0;
     this.resize();
     this._draw(0.016);
   }
@@ -238,13 +270,18 @@ class NeuralOrb {
       return;
     }
     let last = performance.now();
+    this._lastDraw = last;
     const tick = (now) => {
       if (!document.body.contains(this.canvas)) { this.stop(); return; }
+      this._raf = requestAnimationFrame(tick);
+      if (document.hidden) { last = now; return; }
+      const active = this.state !== "idle" && this.state !== "paused" || this.ripples.length > 0 || this.firing > 0.03;
+      if (!active && now - this._lastDraw < 30) return;
       const dt = clamp((now - last) / 1000, 0.001, 0.05);
       last = now;
+      this._lastDraw = now;
       this._step(dt);
       this._draw(dt);
-      this._raf = requestAnimationFrame(tick);
     };
     this._raf = requestAnimationFrame(tick);
   }
@@ -296,6 +333,8 @@ class NeuralOrb {
     for (let i = this.ripples.length - 1; i >= 0; i--) {
       const rp = this.ripples[i];
       rp.age += dt; rp.r += rp.speed * dt; rp.intensity *= Math.pow(0.32, dt);
+      rp.cosLo = Math.cos(Math.min(Math.PI, rp.r + rp.width));
+      rp.cosHi = Math.cos(Math.max(0, rp.r - rp.width));
       if (rp.r > Math.PI * 1.15 || rp.intensity < 0.02) this.ripples.splice(i, 1);
     }
   }
@@ -321,10 +360,13 @@ class NeuralOrb {
     }
   }
   _rippleCrest(rx, ry, rz) {
+    if (!this.ripples.length) return 0;
     let crest = 0;
-    for (const rp of this.ripples) {
-      const ang = Math.acos(clamp(rx * rp.fx + ry * rp.fy + rz * rp.fz, -1, 1));
-      const off = Math.abs(ang - rp.r);
+    for (let i = 0; i < this.ripples.length; i++) {
+      const rp = this.ripples[i];
+      const dot = rx * rp.fx + ry * rp.fy + rz * rp.fz;
+      if (dot < rp.cosLo || dot > rp.cosHi) continue;
+      const off = Math.abs(Math.acos(clamp(dot, -1, 1)) - rp.r);
       if (off >= rp.width) continue;
       const wv = Math.cos((off / rp.width) * HALF_PI);
       crest += wv * wv * rp.intensity * Math.min(1, rp.age * 14);
@@ -338,6 +380,7 @@ class NeuralOrb {
     const morphAmp = (0.008 + this.thinking * 0.016 + this.firing * 0.056 + spd * 0.028) * 0.38;
     const settle = 1 - Math.pow(0.74, dt * 60);
     const coreExp = 0.24 + fill * 0.68, coreGlow = 0.16 + fill * 0.44, coreDotScale = 0.82 + fill * 0.42;
+    const hasRipples = this.ripples.length > 0;
     for (let i = 0; i < this.nodes.length; i++) {
       const n = this.nodes[i];
       const rx = n.nx * X.x + n.ny * Y.x + n.nz * Z.x;
@@ -346,7 +389,7 @@ class NeuralOrb {
       const w1 = Math.sin(rx * 2.4 + fieldPhase + Math.cos(ry * 2.1 - fieldPhase * 0.68));
       const w2 = Math.cos(ry * 2.8 - rz * 2.3 + fieldPhase * 0.85 + Math.sin(rz * 2.2 + rx * 1.7 - fieldPhase * 0.55));
       const w3 = Math.sin((rx - ry + rz) * 3.2 - fieldPhase * 1.25);
-      const crest = this._rippleCrest(rx, ry, rz);
+      const crest = hasRipples ? this._rippleCrest(rx, ry, rz) : 0;
       const drive = Math.max(0, (w1 * 0.48 + w2 * 0.34 + w3 * 0.18 + 0.1) / 1.1) * fieldGain + crest + (n.core ? coreGlow : 0);
       n.act += (Math.min(1.28, drive) - n.act) * settle;
       const breathe = Math.sin(breathPhase + n.phase) * (0.012 + this.thinking * 0.008);
@@ -363,9 +406,19 @@ class NeuralOrb {
   _drawLinks(ctx, sorted, radius, fill, warmth, pal) {
     const mix = (a, b, t) => Math.round(a + (b - a) * t);
     const thresh = Math.max(0.42, 0.54 - this.speedFactor * 0.1);
-    const linkable = sorted.filter((p) => p.wz < 0.15 && (p.core ? fill > 0.35 && p.act > 0.50 : p.act > thresh));
+    const linkable = this.linkable;
+    linkable.length = 0;
+    for (let i = 0; i < sorted.length; i++) {
+      const p = sorted[i];
+      if (p.wz < 0.15 && (p.core ? fill > 0.35 && p.act > 0.50 : p.act > thresh)) linkable.push(p);
+    }
+    if (linkable.length < 2) return;
     const maxD = radius * 0.27, maxDSq = maxD * maxD;
     ctx.lineCap = "round";
+    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = `rgb(${mix(pal.link[0], 253, warmth)},${mix(pal.link[1], 186, warmth)},${mix(pal.link[2], 116, warmth)})`;
+    ctx.globalAlpha = 0.28 + this.speedFactor * 0.14;
+    ctx.beginPath();
     for (let i = 0; i < linkable.length; i++) {
       const a = linkable[i];
       let links = 0;
@@ -373,51 +426,46 @@ class NeuralOrb {
         const b = linkable[j];
         const dx = b.sx - a.sx, dy = b.sy - a.sy, d2 = dx * dx + dy * dy;
         if (d2 <= 16 || d2 >= maxDSq) continue;
-        const str = Math.min(1, (a.act + b.act) * 0.46) * (1 - Math.sqrt(d2) / maxD);
-        ctx.strokeStyle = `rgba(${mix(pal.link[0], 253, warmth)},${mix(pal.link[1], 186, warmth)},${mix(pal.link[2], 116, warmth)},${(str * 0.46).toFixed(3)})`;
-        ctx.lineWidth = 0.75 + str * 1.1;
-        ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
+        ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy);
         links++;
       }
     }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
-  _drawParticles(ctx, sorted, warmth, pal) {
-    const mix = (a, b, t) => Math.round(a + (b - a) * t);
-    for (const p of sorted) {
+  _drawParticles(ctx, sorted, warmth, colors) {
+    const table = warmth > 0.45 ? colors.warm : colors.cool;
+    const glow = warmth > 0.45 ? colors.warmGlow : colors.coolGlow;
+    const spdBoost = this.speedFactor * 0.35;
+    for (let i = 0; i < sorted.length; i++) {
+      const p = sorted[i];
       const front = clamp01((1.1 - p.wz) / 2.2), act = Math.min(1, p.act);
-      const [dr, dg, db] = pal.dot(front, act);
-      const r = mix(dr, 249, warmth), g = mix(dg, 115, warmth), b = mix(db, 22, warmth);
-      const alpha = Math.min(0.98, (p.core ? 0.26 : 0.30) + front * 0.52 + act * 0.22);
-      if (act > 0.42 && front > 0.34) {
-        const bloomR = p.sr * (2.0 + act * 0.95 + this.speedFactor * 0.38);
-        const bloomA = Math.min(0.32, (act - 0.38) * front * 0.3);
-        const bloom = ctx.createRadialGradient(p.sx, p.sy, p.sr * 0.15, p.sx, p.sy, bloomR);
-        bloom.addColorStop(0, `rgba(${r},${g},${b},${bloomA.toFixed(3)})`);
-        bloom.addColorStop(0.55, `rgba(${r},${g},${b},${(bloomA * 0.32).toFixed(3)})`);
-        bloom.addColorStop(1, `rgba(${r},${g},${b},0)`);
-        ctx.fillStyle = bloom;
-        ctx.beginPath(); ctx.arc(p.sx, p.sy, bloomR, 0, TAU); ctx.fill();
+      const idx = Math.min(7, (front * 4 + act * 3.5) | 0);
+      const alpha = Math.min(0.96, (p.core ? 0.26 : 0.30) + front * 0.52 + act * 0.2);
+      if (act > 0.45 && front > 0.38) {
+        const bloomR = p.sr * (2.1 + act * 0.85 + spdBoost);
+        ctx.globalAlpha = Math.min(0.32, (act - 0.38) * front * 0.32);
+        ctx.drawImage(glow, p.sx - bloomR, p.sy - bloomR, bloomR * 2, bloomR * 2);
       }
-      ctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = table[idx];
       ctx.beginPath(); ctx.arc(p.sx, p.sy, p.sr, 0, TAU); ctx.fill();
-      if (!p.core && front > 0.68 && act > 0.62) {
-        ctx.fillStyle = pal.spec;
-        ctx.beginPath(); ctx.arc(p.sx - p.sr * 0.24, p.sy - p.sr * 0.24, p.sr * 0.36, 0, TAU); ctx.fill();
-      }
     }
+    ctx.globalAlpha = 1;
   }
   _draw(dt) {
     const { ctx, w, h } = this;
+    const light = isLightTheme();
+    if (this._colors.light !== light) this._colors = buildOrbColorTable(light);
     const cx = w * 0.5, cy = h * 0.5, radius = Math.min(w, h) * 0.41;
     const fill = this.contextFill;
     const warmth = fill > 0.75 ? clamp01((fill - 0.75) / 0.25) : 0;
-    const pal = orbPalette(isLightTheme());
     ctx.clearRect(0, 0, w, h);
-    this._drawAura(ctx, cx, cy, radius, warmth, pal);
+    this._drawAura(ctx, cx, cy, radius, warmth, this._colors.pal);
     this._projectNodes(dt, cx, cy, radius, fill);
-    const sorted = [...this.pts].sort((a, b) => b.wz - a.wz);
-    this._drawLinks(ctx, sorted, radius, fill, warmth, pal);
-    this._drawParticles(ctx, sorted, warmth, pal);
+    this.sorted.sort((a, b) => b.wz - a.wz);
+    this._drawLinks(ctx, this.sorted, radius, fill, warmth, this._colors.pal);
+    this._drawParticles(ctx, this.sorted, warmth, this._colors);
   }
 }
 

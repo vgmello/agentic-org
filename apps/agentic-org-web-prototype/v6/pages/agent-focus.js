@@ -23,7 +23,7 @@ function isAgentFocusOpen() {
 
 function setText(id, text) {
   const el = document.getElementById(id);
-  if (el) el.textContent = text;
+  if (el && el.textContent !== text) el.textContent = text;
 }
 
 function focusCornerActionsHtml(m, sess) {
@@ -229,8 +229,8 @@ function bindFocusEvents(shell, aid, sess, orb) {
 }
 
 function finalizeCloseFocus(state, restoreRail) {
-  const { overlay, orb, meterTimer, triggerEl, sess } = state;
-  clearInterval(meterTimer);
+  const { overlay, orb, triggerEl, sess } = state;
+  if (state.tokenRaf) cancelAnimationFrame(state.tokenRaf);
   if (orb._ro) { orb._ro.disconnect(); orb._ro = null; }
   orb.stop();
   overlay.remove();
@@ -296,15 +296,22 @@ function openAgentFocus(aid, triggerEl = null) {
     orb._ro = ro;
   }
   sess.orb = orb;
+  const state = { aid, overlay, orb, triggerEl, sess, tokenRaf: 0, pendingEntry: null };
   sess.onChange = () => paintFocusAll(aid, sess, orb, false);
   sess.onTokenFrame = (entry) => {
-    const el = document.querySelector(`#af-thread [data-af-reply="${CSS.escape(entry.id)}"]`);
-    if (el) el.innerHTML = `${esc(entry.reply)}${entry.streaming ? '<span class="c-caret-blink"></span>' : ""}`;
-    paintFocusTelemetry(aid, sess, orb);
-    scrollFocusToBottom(false);
+    state.pendingEntry = entry;
+    if (state.tokenRaf) return;
+    state.tokenRaf = requestAnimationFrame(() => {
+      state.tokenRaf = 0;
+      const cur = state.pendingEntry;
+      if (!cur || focusState !== state) return;
+      const el = document.querySelector(`#af-thread [data-af-reply="${CSS.escape(cur.id)}"]`);
+      if (el) el.innerHTML = `${esc(cur.reply)}${cur.streaming ? '<span class="c-caret-blink"></span>' : ""}`;
+      paintFocusTelemetry(aid, sess, orb);
+      scrollFocusToBottom(false);
+    });
   };
-  const meterTimer = setInterval(() => paintFocusTelemetry(aid, sess, orb), 140);
-  focusState = { aid, overlay, orb, meterTimer, triggerEl, sess };
+  focusState = state;
   bindFocusEvents(shell, aid, sess, orb);
   paintFocusAll(aid, sess, orb, true);
   const input = document.getElementById("af-prompt-input");
