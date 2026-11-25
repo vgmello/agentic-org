@@ -35,6 +35,7 @@ mod msg_calls;
 mod org_feed;
 mod process_calls;
 mod provider_calls;
+mod provider_refresh;
 mod revocations;
 mod serve;
 mod signals;
@@ -1310,6 +1311,7 @@ fn serve_office(
         prepared.host_gone.load(Ordering::SeqCst) || signals::stop_requested()
     };
     run_serve_loop(
+        &office,
         &listener,
         &shared,
         &prepared.session_manager,
@@ -1332,6 +1334,7 @@ fn serve_office(
 /// The orderly stop: the store closes (flushed, confirmed, written) and leaves its clean-stop
 /// marker. An office something still holds is dropped instead: a stop without the marker.
 fn run_serve_loop(
+    office: &Arc<Office>,
     listener: &std::os::unix::net::UnixListener,
     shared: &Arc<serve::Shared>,
     session_manager: &Arc<org_office_sessions::SessionManager>,
@@ -1349,6 +1352,8 @@ fn run_serve_loop(
         Arc::clone(&wake_stop),
         std::time::Duration::from_secs(2),
     );
+    let readiness_thread =
+        provider_refresh::spawn_readiness_refresh_loop(Arc::clone(office), Arc::clone(&wake_stop));
     let snooze_thread = shared.mailbox().map(|mailbox| {
         let stop_flag = Arc::clone(&wake_stop);
         std::thread::Builder::new()
@@ -1369,6 +1374,9 @@ fn run_serve_loop(
         let _ = t.join();
     }
     let _ = watch_thread.join();
+    if let Some(t) = readiness_thread {
+        let _ = t.join();
+    }
     if let Some(Some(t)) = snooze_thread {
         let _ = t.join();
     }

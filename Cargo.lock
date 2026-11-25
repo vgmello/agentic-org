@@ -767,6 +767,7 @@ version = "0.0.0"
 dependencies = [
  "org-client",
  "org-command",
+ "org-platform",
  "org-proto",
  "serde_json",
  "sha2",

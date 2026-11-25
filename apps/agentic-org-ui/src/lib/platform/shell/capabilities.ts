@@ -7,7 +7,7 @@ const available = Object.freeze({ available: true as const });
 
 // A3: session pages; A4.5: Create organization; A6: /set-password + /settings/access;
 // TASK-76/62: /security + /cli-approve; U1 (TASK-40): Offices, Teams, Members, Org Chart, Projects;
-// B7 (TASK-46): Home, Inbox, Chat.
+// B7 (TASK-46): Home, Inbox, Chat; FC-108 (TASK-41): Roles directory.
 const EXACT_ENABLED_PAGES: ReadonlySet<string> = new Set([
 	'/',
 	'/sign-in',
@@ -23,6 +23,7 @@ const EXACT_ENABLED_PAGES: ReadonlySet<string> = new Set([
 	'/chat',
 	'/settings/offices',
 	'/offices',
+	'/settings/roles',
 	'/settings/access',
 	'/teams',
 	'/teams/members',
@@ -39,16 +40,24 @@ const RESERVED_TEAM_SEGMENTS: ReadonlySet<string> = new Set([
 	'org-chart'
 ]);
 
+const ROLE_ROUTE =
+	/^\/settings\/roles\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TEAM_ROUTE = /^\/teams\/([^/]+)(?:\/(?:members|projects))?$/;
 const MEMBER_ROUTE = /^\/members\/([^/]+)(?:\/role)?$/;
 const PROJECT_ROUTE = /^\/projects\/([^/]+)(?:\/(?:team|settings))?$/;
 
+function normalizePathname(pathname: string): string {
+	return pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+}
+
 function isLiveRoute(pathname: string): boolean {
-	if (EXACT_ENABLED_PAGES.has(pathname)) return true;
-	const team = TEAM_ROUTE.exec(pathname);
+	const normalized = normalizePathname(pathname);
+	if (EXACT_ENABLED_PAGES.has(normalized)) return true;
+	if (ROLE_ROUTE.test(normalized)) return true;
+	const team = TEAM_ROUTE.exec(normalized);
 	if (team && !RESERVED_TEAM_SEGMENTS.has(team[1])) return true;
-	if (MEMBER_ROUTE.test(pathname)) return true;
-	if (PROJECT_ROUTE.test(pathname)) return true;
+	if (MEMBER_ROUTE.test(normalized)) return true;
+	if (PROJECT_ROUTE.test(normalized)) return true;
 	return false;
 }
 

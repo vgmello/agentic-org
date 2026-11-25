@@ -14,6 +14,7 @@
 
 pub mod binding;
 pub mod credentials;
+mod host_auth;
 pub mod instructions;
 mod lifecycle;
 pub mod manager;

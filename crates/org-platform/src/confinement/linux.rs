@@ -20,6 +20,10 @@ use std::path::Path;
 
 pub(super) use super::shared::fill_entropy;
 use super::{Confined, Enforcement, Layers};
+
+pub(super) fn unix_socket_path_filter_supported() -> bool {
+    false
+}
 #[cfg(any(test, feature = "test-support"))]
 pub(super) use profile::refuse_call;
 

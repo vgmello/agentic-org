@@ -30,8 +30,8 @@ use crate::organization::{
     wire,
 };
 use crate::store::open::{
-    AgentExecutionById, CheckHrMessageAccess, EmployeeById, HireInspectById, HiresList,
-    ModelProfileById, ModelProfilesList, ProviderConnectionById, ReceiptById, RoleById,
+    AgentExecutionById, CheckHrMessageAccess, EmployeeById, EmployeesList, HireInspectById,
+    HiresList, ModelProfileById, ModelProfilesList, ProviderConnectionById, ReceiptById, RoleById,
     RoleInspectByRef, RolesList, StructureOp,
 };
 
@@ -64,6 +64,11 @@ impl Office {
             return Ok(None);
         };
         Ok(self.store.read(EmployeeById(id)).map_err(storage)?.0)
+    }
+
+    /// Lists all employees registered in the organization.
+    pub fn list_employees(&self) -> Result<Vec<records::Employee>, OfficeError> {
+        Ok(self.store.read(EmployeesList).map_err(storage)?.0)
     }
 
     /// Reads one role record by canonical UUIDv7 ID.
@@ -824,15 +829,56 @@ fn proposal_to_wire(p: &HireProposal) -> HireProposalWire {
     }
 }
 
+fn by_to_wire(by: &crate::organization::records::By) -> (Option<String>, Option<String>) {
+    match by {
+        crate::organization::records::By::Employee(id) => {
+            (Some("employee".to_owned()), Some(id.as_str().to_owned()))
+        }
+        crate::organization::records::By::System => (Some("system".to_owned()), None),
+        crate::organization::records::By::Unknown => (Some("unknown".to_owned()), None),
+    }
+}
+
+/// `9999-12-31T23:59:59.999Z`: largest UTC millisecond with a four-digit RFC 3339 year.
+const MAX_RFC3339_4DIGIT_YEAR_MS: u64 = 253_402_300_799_999;
+
+fn normalize_rfc3339_case(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| match c {
+            't' => 'T',
+            'z' => 'Z',
+            other => other,
+        })
+        .collect()
+}
+
+fn canonical_wire_time(raw: Option<&str>) -> Option<String> {
+    raw.map(|value| match crate::time::parse_rfc3339_ms(value) {
+        Some(ms) if ms <= MAX_RFC3339_4DIGIT_YEAR_MS => crate::time::format_rfc3339_ms(ms),
+        Some(_) if value.as_bytes().get(17..19) == Some(b"60") => {
+            crate::time::format_rfc3339_ms(MAX_RFC3339_4DIGIT_YEAR_MS)
+        }
+        Some(_) => normalize_rfc3339_case(value),
+        None => value.to_owned(),
+    })
+}
+
 fn role_to_wire(r: &Role) -> RoleRecord {
+    let (created_by_kind, created_by_id) = by_to_wire(&r.meta.created_by);
+    let (updated_by_kind, updated_by_id) = by_to_wire(&r.meta.updated_by);
     RoleRecord {
         id: r.id.as_str().to_owned(),
         key: r.key.clone(),
         name: r.name.clone(),
         body: r.body.clone(),
         revision: r.meta.revision,
-        created_at: r.meta.created_at.clone(),
-        updated_at: r.meta.updated_at.clone(),
+        created_at: canonical_wire_time(r.meta.created_at.as_deref()),
+        created_by_kind,
+        created_by_id,
+        updated_at: canonical_wire_time(r.meta.updated_at.as_deref()),
+        updated_by_kind,
+        updated_by_id,
     }
 }
 
@@ -886,5 +932,59 @@ fn profile_to_wire(p: &ModelProfile) -> ModelProfileRecord {
             .map(|i| i.as_str().to_owned())
             .collect(),
         revision: p.meta.revision,
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+    use crate::organization::records::{By, Meta};
+
+    #[test]
+    fn role_to_wire_canonicalizes_rfc3339_variants_and_leap_seconds() {
+        let role = Role {
+            id: Id::parse("01900000-0000-7000-8000-0000000000a1").unwrap(),
+            key: Some("eng".into()),
+            name: "Engineer".into(),
+            body: "## Mission\nBuild.\n".into(),
+            meta: Meta {
+                revision: 2,
+                created_at: Some("2028-02-29t08:00:00+02:00".into()),
+                created_by: By::System,
+                updated_at: Some("2026-12-31t23:59:60z".into()),
+                updated_by: By::Employee(
+                    Id::parse("01900000-0000-7000-8000-000000000001").unwrap(),
+                ),
+            },
+        };
+        let wire = role_to_wire(&role);
+        assert_eq!(wire.created_at.as_deref(), Some("2028-02-29T06:00:00.000Z"));
+        assert_eq!(wire.updated_at.as_deref(), Some("2027-01-01T00:00:00.000Z"));
+        assert_eq!(wire.created_by_kind.as_deref(), Some("system"));
+        assert_eq!(wire.updated_by_kind.as_deref(), Some("employee"));
+        assert_eq!(
+            wire.updated_by_id.as_deref(),
+            Some("01900000-0000-7000-8000-000000000001")
+        );
+
+        // Offset timestamps whose UTC year exceeds 9999 preserve their validated 4-digit offset form;
+        // leap second 9999-12-31T23:59:60Z clamps to 9999-12-31T23:59:59.999Z for browser parity.
+        let boundary = Role {
+            meta: Meta {
+                created_at: Some("9999-12-31t23:59:59-00:01".into()),
+                updated_at: Some("9999-12-31T23:59:60Z".into()),
+                ..role.meta
+            },
+            ..role
+        };
+        let wire_boundary = role_to_wire(&boundary);
+        assert_eq!(
+            wire_boundary.created_at.as_deref(),
+            Some("9999-12-31T23:59:59-00:01")
+        );
+        assert_eq!(
+            wire_boundary.updated_at.as_deref(),
+            Some("9999-12-31T23:59:59.999Z")
+        );
     }
 }

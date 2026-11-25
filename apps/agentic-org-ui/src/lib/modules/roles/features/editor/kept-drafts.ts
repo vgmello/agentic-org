@@ -1,7 +1,10 @@
 // Unsaved editor text kept when the editor closes without a deliberate Cancel: browser Back with the editor open
 // (app-shell-ux §6: Back closes the modal only) or leaving the page while it is open. §6a keeps input on failure
 // and disconnect; this keeps it across Back too. Reopening the same editor restores it. Memory only, for this tab:
-// nothing is written to storage, so a reload or sign-out drops it.
+// nothing is written to storage, and drafts are scoped per caller so a different account never sees an earlier
+// caller's text after sign-out/sign-in in the same tab.
+import { appSession } from '$lib/platform/auth/app-session.svelte';
+import { drafts } from '$lib/platform/auth/draft-registry';
 import type { Role } from '../../types';
 
 export interface KeptDraft {
@@ -13,24 +16,130 @@ export interface KeptDraft {
 	/** The newer version shown after a conflict, if any. */
 	latest?: Role;
 	conflictMessage?: string;
+	/** Logical-save token kept with an unsaved draft so retrying after an uncertain outcome replays cleanly. */
+	attemptId?: string;
+	/** Set after an uncertain save failure so restoring the original text still reconciles with HQ. */
+	hasUncertainAttempt?: boolean;
 }
 
-const kept = new Map<string, KeptDraft>();
+type KeptEntry = {
+	draft: KeptDraft;
+	version: number;
+};
 
-/** One editor per organization and role; a new role has one slot per organization. */
-export const draftKey = (organizationId: string, roleId?: string) =>
-	`${organizationId}\u0000${roleId ?? ''}`;
+const kept = new Map<string, KeptEntry>();
+const mountedAttemptCounts = new Map<string, number>();
+let nextVersion = 0;
+let attemptReleasedListeners: ((attemptId: string) => void)[] = [];
+let unregisterKeptProbe: (() => void) | undefined;
 
-export function keepDraft(key: string, draft: KeptDraft) {
-	kept.set(key, structuredClone(draft));
+function syncKeptDraftProbe() {
+	if (kept.size > 0 && !unregisterKeptProbe) {
+		unregisterKeptProbe = drafts.registerRetained(() => kept.size > 0);
+	} else if (kept.size === 0 && unregisterKeptProbe) {
+		unregisterKeptProbe();
+		unregisterKeptProbe = undefined;
+	}
+}
+
+function notifyIfAttemptReleased(attemptId: string | undefined) {
+	if (!attemptId || hasRetainedAttempt(attemptId)) return;
+	for (const listener of [...attemptReleasedListeners]) {
+		try {
+			listener(attemptId);
+		} catch {
+			/* Keep draft cleanup isolated from listener failures. */
+		}
+	}
+}
+
+/** One editor per caller, organization and role; a new role has one slot per caller+organization. */
+export const draftKey = (organizationId: string, roleId?: string, caller = '') =>
+	`${caller}\u0000${organizationId}\u0000${roleId ?? ''}`;
+
+/** Stores a copy of `draft` and returns its monotonic version stamp for safe late-save cleanup. */
+export function keepDraft(key: string, draft: KeptDraft): number {
+	const previousAttempt = kept.get(key)?.draft.attemptId;
+	const version = ++nextVersion;
+	kept.set(key, { draft: structuredClone(draft), version });
+	syncKeptDraftProbe();
+	if (previousAttempt && previousAttempt !== draft.attemptId) {
+		notifyIfAttemptReleased(previousAttempt);
+	}
+	return version;
 }
 
 /** The kept draft, if any; it stays kept until saved or discarded. */
 export function keptDraft(key: string): KeptDraft | undefined {
-	const draft = kept.get(key);
-	return draft ? structuredClone(draft) : undefined;
+	const entry = kept.get(key);
+	return entry ? structuredClone(entry.draft) : undefined;
 }
 
 export function discardDraft(key: string) {
+	const attemptId = kept.get(key)?.draft.attemptId;
 	kept.delete(key);
+	syncKeptDraftProbe();
+	notifyIfAttemptReleased(attemptId);
 }
+
+/** Discards the kept draft only when its version matches `version`, preserving newer edits. */
+export function discardDraftIfVersion(key: string, version: number | undefined) {
+	if (version === undefined) return;
+	const entry = kept.get(key);
+	if (entry?.version !== version) return;
+	kept.delete(key);
+	syncKeptDraftProbe();
+	notifyIfAttemptReleased(entry.draft.attemptId);
+}
+
+/** Marks `attemptId` as actively held by a mounted editor until the returned disposer runs. */
+export function retainMountedAttempt(attemptId: string): () => void {
+	if (!attemptId) return () => {};
+	mountedAttemptCounts.set(attemptId, (mountedAttemptCounts.get(attemptId) ?? 0) + 1);
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		const next = (mountedAttemptCounts.get(attemptId) ?? 1) - 1;
+		if (next > 0) mountedAttemptCounts.set(attemptId, next);
+		else {
+			mountedAttemptCounts.delete(attemptId);
+			notifyIfAttemptReleased(attemptId);
+		}
+	};
+}
+
+/** True while any mounted editor or retained draft still references `attemptId`. */
+export function hasRetainedAttempt(attemptId: string): boolean {
+	if ((mountedAttemptCounts.get(attemptId) ?? 0) > 0) return true;
+	for (const entry of kept.values()) {
+		if (entry.draft.attemptId === attemptId) return true;
+	}
+	return false;
+}
+
+/** Fires when the last retained draft referencing an `attemptId` is discarded or replaced. */
+export function onAttemptReleased(listener: (attemptId: string) => void): () => void {
+	if (!attemptReleasedListeners.includes(listener)) attemptReleasedListeners.push(listener);
+	return () => {
+		attemptReleasedListeners = attemptReleasedListeners.filter((entry) => entry !== listener);
+	};
+}
+
+/** Removes all retained drafts belonging to `caller` (or all drafts if `caller` is omitted). */
+export function clearDraftsForCaller(caller?: string) {
+	if (caller === undefined) {
+		kept.clear();
+		syncKeptDraftProbe();
+		return;
+	}
+	const prefix = `${caller}\u0000`;
+	for (const key of kept.keys()) {
+		if (key.startsWith(prefix)) kept.delete(key);
+	}
+	syncKeptDraftProbe();
+}
+
+appSession.onSessionEnded((caller) => {
+	clearDraftsForCaller(caller);
+});

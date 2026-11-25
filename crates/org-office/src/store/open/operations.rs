@@ -419,10 +419,10 @@ impl ReadOp for RoleInspectByRef {
     fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         let target = self.0.trim();
         let roles = read.roles()?;
-        if let Some(found) = roles
-            .iter()
-            .find(|r| r.id.as_str() == target || r.key.as_deref() == Some(target))
-        {
+        if let Some(found) = roles.iter().find(|r| r.id.as_str() == target) {
+            return Ok(Some(found.clone()));
+        }
+        if let Some(found) = roles.iter().find(|r| r.key.as_deref() == Some(target)) {
             return Ok(Some(found.clone()));
         }
         let mut by_name = roles
@@ -510,6 +510,17 @@ impl ReadOp for EmployeeById {
 
     fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(read.employee(&self.0)?)
+    }
+}
+
+/// Lists all employees in the organization.
+pub struct EmployeesList;
+
+impl ReadOp for EmployeesList {
+    type Out = Vec<records::Employee>;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.employees()?)
     }
 }
 
@@ -611,6 +622,20 @@ impl ReadOp for OfficeIdsList {
             .into_iter()
             .map(|o| o.id.as_str().to_owned())
             .collect())
+    }
+}
+
+/// Lists all offices registered in this organization's replicated `org-store` (`TASK-120`).
+pub struct OfficesList;
+
+impl ReadOp for OfficesList {
+    type Out = Vec<crate::organization::records::Office>;
+
+    fn read<S: TasksRead>(
+        self,
+        read: &S,
+    ) -> Result<Vec<crate::organization::records::Office>, StoreError> {
+        Ok(read.offices()?)
     }
 }
 

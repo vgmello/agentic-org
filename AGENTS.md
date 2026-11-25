@@ -80,74 +80,40 @@ Build order is in `backlog/docs/doc-5 - v1-Implementation-Plan.md`; `backlog/doc
 
 ## Tools for agents
 
-Start the agent (Claude Code or Codex) at the repository root; it is the entry point for
-all work, including the UI. **Every tool below is required and must be green before
-any work starts**, in every checkout and worktree (each is prepared on its own; a new
-worktree runs the setup commands below first). Run `.agents/check-tools.sh` from the
-repository root to check: it prints nothing when all are present. When it reports a
-missing tool, do not start or continue the task: tell the user each missing tool, what
-it is for and the command that fixes it, and wait until the check passes. Never work
-around a missing tool, and never disable or bypass the check (for example by creating
-its `.agents/.tools-ready` marker by hand).
+Start the agent (Claude Code or Codex) at the repository root for all work, including UI. **Every tool below must be green before work starts** in every checkout/worktree (prepare each independently). Run `.agents/check-tools.sh` from the repo root (prints nothing when green). If anything is missing, stop, report each missing tool, purpose, and fix command, and wait until green. Never work around a missing tool or bypass the check (e.g. creating `.agents/.tools-ready` by hand).
 
-- **Claude Code** runs the check automatically at session start and before every
-  Edit/Write tool call, and blocks those calls while a tool is missing. Shell commands
-  stay available only to install the tools; never write project files through the
-  shell while the check is red.
-- **Codex** runs `.agents/check-tools.sh --codex` itself before starting work; that
-  mode skips the rows marked *Claude Code only*.
-- **Required skills loaded:** `svelte-code-writer`, `svelte-core-bestpractices`,
-  `shadcn-svelte` and `playwright-cli`. The check proves each is installed and valid;
-  only the agent can see whether its session loaded them. At session start, confirm
-  each appears in your list of available skills (Claude Code loads them from
-  `.claude/skills/`, pre-approved in `.claude/settings.json`; Codex from
-  `.agents/skills/`). If any is missing, stop, name it and tell
-  the user; do not start work.
-- **Worktrees:** a subagent in a separate worktree is gated against the session's
-  checkout, so prepare and check the worktree (`cd` into it and run the check) before
-  that subagent starts.
+- **Claude Code** runs the check at session start and before every Edit/Write call, blocking edits while red; never write project files via shell while red.
+- **Codex** runs `.agents/check-tools.sh --codex` before work (skips *Claude Code only* rows).
+- **Required skills loaded:** `svelte-code-writer`, `svelte-core-bestpractices`, `shadcn-svelte`, `playwright-cli`. Confirm each appears in your available skills (`.claude/skills/` in Claude Code; `.agents/skills/` in Codex); if any is missing, stop and tell the user.
+- **Worktrees:** prepare and check a new worktree (`cd` in and run the check) before starting a subagent there.
 
 | Tool | What it gives agents | Set up with |
 | --- | --- | --- |
 | UI dependencies | Svelte MCP server, pinned shadcn-svelte CLI, type checks, lint, tests | `cd apps/agentic-org-ui && bun install --frozen-lockfile` |
 | Playwright browsers | UI browser tests | `cd apps/agentic-org-ui && bunx --no-install playwright install chromium webkit firefox` |
-| Node (`.node-version`) and Bun (`packageManager` in the UI `package.json`) | UI toolchain | install the pinned versions |
-| rustup and the pinned toolchain | Rust toolchain from `rust-toolchain.toml` | <https://rustup.rs>, then `rustup toolchain install` at the repository root |
-| rust-analyzer | Rust navigation (Claude Code LSP tool, Codex Rust LSP MCP) | `rustup component add rust-analyzer` at the repository root |
-| svelte-language-server | Svelte navigation (Claude Code: the repository's `svelte-lsp` plugin; Codex: `svelte_lsp` in `.codex/config.toml`) | `npm i -g svelte-language-server@0.18.6` |
-| mcp-language-server (*Codex only*) | Codex's bridge to the Rust, TypeScript and Svelte language servers (`.codex/config.toml`) | `go install github.com/isaacphi/mcp-language-server@v0.1.1` |
-| typescript-language-server with TypeScript 6 | TypeScript navigation (Claude Code LSP tool; Codex: `typescript_lsp` in `.codex/config.toml`); TypeScript 7 has no `tsserver` | `npm i -g typescript-language-server@6.1.0 typescript@6.0.3` |
+| Node (`.node-version`) and Bun (`packageManager` in UI `package.json`) | UI toolchain | install the pinned versions |
+| rustup and the pinned toolchain | Rust toolchain from `rust-toolchain.toml` | <https://rustup.rs>, then `rustup toolchain install` at repo root |
+| rust-analyzer | Rust navigation (Claude Code LSP, Codex Rust LSP MCP) | `rustup component add rust-analyzer` at repo root |
+| svelte-language-server | Svelte navigation (`svelte-lsp` plugin; Codex `svelte_lsp` in `.codex/config.toml`) | `npm i -g svelte-language-server@0.18.6` |
+| mcp-language-server (*Codex only*) | Codex bridge to Rust, TypeScript and Svelte LSPs (`.codex/config.toml`) | `go install github.com/isaacphi/mcp-language-server@v0.1.1` |
+| typescript-language-server with TypeScript 6 | TS navigation (Claude Code LSP; Codex `typescript_lsp`); TS 7 has no `tsserver` | `npm i -g typescript-language-server@6.1.0 typescript@6.0.3` |
 | python3 | repository schema and verification scripts | install Python 3 |
 | cargo-deny 0.20.2, Gitleaks 8.30.1 | required local checks | Homebrew on macOS; see `DEVELOPMENT.md` |
 | playwright-cli | browser skill | `bun add --global --exact @playwright/cli@0.1.24` |
 | Required skills | the skills below (Claude Code loads via `.claude -> .agents` symlink) | committed in `.agents/skills/`; run `ln -s .agents .claude` if `.claude` is missing |
 
-If tools that are installed are reported missing, the agent was probably started
-without your shell's `PATH`; start it from a terminal with your normal profile.
+If installed tools show missing, start the agent from a terminal with your normal `PATH`.
 
-Claude Code configuration in the repository supplies the rest; approve it when Claude
-Code first asks (Codex uses `.codex/config.toml`, symlinked to `.agents/codex/config.toml`):
+Repo config supplies the rest (approve when Claude Code asks; Codex uses `.codex/config.toml`, symlinked to `.agents/codex/config.toml`):
+- `.mcp.json`: lockfile-pinned Svelte MCP (`apps/agentic-org-ui/node_modules`), never downloaded at runtime.
+- `.agents/skills/`: required skills (sources in `skills-lock.json`; do not edit vendored copies). Follow `apps/agentic-org-ui/AGENTS.md` for Svelte docs/autofixer and `svelte-file-editor`.
+- `.agents/marketplace/`: repo `svelte-lsp` plugin (`svelteserver` only; upstream `svelte` plugin is unused because it downloads `@sveltejs/mcp`).
+- `.agents/settings.json`: `typescript-lsp`, `rust-analyzer-lsp`, `svelte-lsp` plugins, tool check at session start and before Edit/Write, pre-approved skills, and `permissions.deny` rules.
 
-- `.mcp.json`: the Svelte MCP server, run from the lockfile-pinned
-  `apps/agentic-org-ui/node_modules`, never downloaded at run time.
-- `.agents/skills/`: required skills (sources in `skills-lock.json`; do not edit those
-  vendored copies). Follow `apps/agentic-org-ui/AGENTS.md` for Svelte documentation and
-  autofixer use; the `svelte-file-editor` agent comes from the UI app.
-- `.agents/marketplace/`: the repository's own `svelte-lsp` plugin, which only runs
-  `svelteserver` for `.svelte` files. The upstream `svelte` plugin is not used because
-  its MCP server downloads `@sveltejs/mcp` at run time.
-- `.agents/settings.json`: the `typescript-lsp`, `rust-analyzer-lsp` and `svelte-lsp`
-  plugins, the tool check at session start and before Edit/Write tool calls, pre-approval of the
-  required skills, and `permissions.deny` rules for the download forms below.
-
-Use only pinned tools; never download a package at run time. The vendored skills show
-download forms (`npx`, `pnpm dlx`, `bunx --bun`, `@latest`, `npm init`, `npm install -g`).
-Use these instead:
-
+Use only pinned tools; never download packages at runtime (ignore vendored `npx`/`pnpm dlx`/`bunx --bun`/`@latest`/`npm init`/`npm install -g`):
 - shadcn-svelte: `cd apps/agentic-org-ui && bunx --no-install shadcn-svelte <command>`
-  (the version in the UI's `package.json`).
-- Playwright test runner: `cd apps/agentic-org-ui && bunx --no-install playwright <command>`.
-- Browser automation: the pinned global `playwright-cli`.
+- Playwright tests: `cd apps/agentic-org-ui && bunx --no-install playwright <command>`
+- Browser automation: pinned global `playwright-cli`.
 
 `DEVELOPMENT.md` has the full list of checks and versions.
 

@@ -164,6 +164,7 @@ pub(crate) struct PumpContext {
     pub state: Arc<Mutex<SessionRuntimeState>>,
     pub stop_plan: org_agent_runtime::StopPlan,
     pub cleanup_paths: Vec<org_agent_runtime::CleanupPath>,
+    pub binding_file: std::path::PathBuf,
     pub hooks: PumpHooks,
 }
 
@@ -1055,6 +1056,7 @@ pub(crate) fn finalize_child(
         .map(|c| c.summary)
         .collect::<Vec<_>>();
     ctx.bindings.revoke(&ctx.employee_id, Some(&ctx.run_id));
+    let _ = std::fs::remove_file(&ctx.binding_file);
     if let Ok(policy) = org_supervise::runtime::stop_policy(&ctx.stop_plan) {
         let _ = child.stop(&stdin, &policy, mode);
     } else {

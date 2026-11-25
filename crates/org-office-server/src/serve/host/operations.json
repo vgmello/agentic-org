@@ -114,6 +114,7 @@
   {"method":"msg.unsnooze","policy":"serve"},
   {"method":"msg.wait","policy":"invalid_request"},
   {"method":"msg.withdraw","policy":"serve"},
+  {"method":"office.directory","policy":"serve"},
   {"method":"office.invitation.approve","policy":"serve"},
   {"method":"office.invitation.cancel","policy":"serve"},
   {"method":"office.invitation.create","policy":"serve"},

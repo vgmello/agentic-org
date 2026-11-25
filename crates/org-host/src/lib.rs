@@ -372,6 +372,12 @@ pub fn default_office_home() -> Option<PathBuf> {
     home::default_office_home()
 }
 
+/// The account's default protected release-store folder (`<trusted-app-base>/release-store`),
+/// used by `agentic-org release install|status` and release-build `setup` / `serve` admission.
+pub fn default_release_store_dir() -> Result<PathBuf, String> {
+    trusted_office_home().map(|home| home.join("release-store"))
+}
+
 /// The office home a trusted (release) host serves: its account's own office home, this
 /// system's application base for `<pw_dir>`, and only when the shared rule
 /// ([`default_office_home`]: `ORG_OFFICE_HOME`, else the base for `$HOME`), the one the app and

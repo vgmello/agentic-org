@@ -55,6 +55,14 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 docs/design/organization-data/test_schema.py
 
+      - name: Published scripts and docs hygiene
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          fi
+          python3 .github/scripts/check_published_docs_hygiene.py --require-shellcheck
+
       # ADR-0017 LNX-5: zero platform predicates outside crates/org-platform and crates/org-platform-host
       # (.github/platform-conditionals.allow is empty). `cargo test` below runs it again with the rest.
       - name: Platform conditionals (LNX-5)

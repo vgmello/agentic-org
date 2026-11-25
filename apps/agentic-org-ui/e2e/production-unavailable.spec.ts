@@ -29,7 +29,8 @@ test(
 		for (const [path, area] of [
 			...areas.map(([path, name]) => [`/${path}`, name] as const),
 			['/teams/hire', 'Teams'],
-			['/settings/costs', 'Organization settings']
+			['/settings/costs', 'Organization settings'],
+			['/settings/roles/update', 'Organization settings']
 		] as const) {
 			await visit(page, path);
 			await expect(page.getByTestId('area-unavailable')).toBeVisible();
@@ -69,6 +70,8 @@ test('A3, A4, U1, B7: enabled session, live org, home, inbox, and chat routes re
 		'/teams/org-chart',
 		'/projects',
 		'/settings/offices',
+		'/settings/roles',
+		'/settings/roles/0193a5c0-0000-7000-8000-000000000040',
 		'/settings/access'
 	]) {
 		await visit(page, path);
@@ -115,13 +118,18 @@ test(
 test('SRV-18 / BUG-53: unknown routes keep their error and a named browser tab', async ({
 	page
 }) => {
-	await visit(page, '/no-such-area');
-	await expect(page).toHaveTitle('Page not found · Agentic Org');
-	await expect(page.getByRole('heading', { name: 'Something went wrong' })).toBeVisible();
-	await expect(page.getByText('404', { exact: true })).toBeVisible();
-	await expect(page.getByRole('main')).toHaveCount(1);
-	await expect(page.locator('main main')).toHaveCount(0);
-	await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
+	for (const unknownPath of [
+		'/no-such-area',
+		'/settings/roles/0193a5c0-0000-7000-8000-000000000040/extra'
+	]) {
+		await visit(page, unknownPath);
+		await expect(page).toHaveTitle('Page not found · Agentic Org');
+		await expect(page.getByRole('heading', { name: 'Something went wrong' })).toBeVisible();
+		await expect(page.getByText('404', { exact: true })).toBeVisible();
+		await expect(page.getByRole('main')).toHaveCount(1);
+		await expect(page.locator('main main')).toHaveCount(0);
+		await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
+	}
 	// The start is the instance URL, an enabled session page: without a gateway it opens sign-in.
 	await page.getByRole('link', { name: 'Back to the start' }).click();
 	await expect(page).toHaveURL(/\/sign-in(\?|$)/);

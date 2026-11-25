@@ -115,7 +115,7 @@ agentic-org office list --name hq --json
 ### Sign-In, Context & Administration
 
 - `agentic-org sign-in [--name <instance>] [--office <office_id>] [-- <command...>]`
-  Start a browser-approved terminal session (`SIGN-40` / `SES-8`) without a terminal password prompt.
+  Start a browser-approved terminal session without a terminal password prompt.
   **Use when:** authenticating a terminal via a browser approval link (especially on Linux, containers, or HTTPS hosts where terminal passwords are refused) or executing one office command over a grant-bound channel.
 - `agentic-org context show`
   Show the saved non-secret default instance and office selection.
@@ -178,7 +178,7 @@ agentic-org office list --name hq --json
   Cancel and remove a pending satellite join before approval completes.
   **Use when:** aborting an unapproved join on the satellite host before HQ approves it.
 - `agentic-org office re-enroll <office_id> (--invitation-file <path> | --invitation-stdin) --yes [--login <login>] [--name <instance>] [--json]`
-  Re-enroll an existing satellite office onto a replacement HQ after Git import (D25).
+  Re-enroll an existing satellite office onto a replacement HQ after Git import.
   **Use when:** reconnecting an existing satellite office to a replacement HQ after Git recovery import.
 
 ### Projects, Repositories, Worktrees & Tasks
@@ -192,6 +192,54 @@ agentic-org office list --name hq --json
 - `agentic-org project create <name> --login <login> [--org <org_id>] [--slug <slug>] [--owner-team <team_id>] [--parent-team <team_id>] [--name <instance>] [--json]`
   Create a project (creates a dedicated owning team automatically unless `--owner-team` is given).
   **Use when:** creating a new organization project with an accountable owning team.
+
+### Providers, Releases, Messaging & Agents
+
+- `agentic-org provider create <name> --key <key> --provider <type> --runtime <claude|codex|agy> [--auth-mode <subscription_cli|api_key|cloud_iam>] [--subscription-id <id>] [--max-turns <n>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+  Create an org-wide provider connection and auto-generated model profile on HQ.
+  **Use when:** enabling Claude, Codex, or Agy for agents across an organization.
+- `agentic-org provider list [--include-archived] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+  List org-wide provider connections.
+  **Use when:** finding a provider `connection_id` before binding it on an HQ or satellite office.
+- `agentic-org provider bind <connection_id> --auth-ref <ref> [--binary <path>] [--account-ref <ref>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+  Bind a provider connection to the local HQ or satellite office.
+  **Use when:** configuring a headless Linux satellite or HQ office to run local `claude`, `codex`, or `agy` turns.
+- `agentic-org provider refresh <connection_id> --driver-version <ver> --model <id[:driver_id]> [--account-ref <ref>] [--ttl <secs>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+  Record a fresh local readiness and discovered-model observation for a bound provider connection.
+  **Use when:** marking a headless office's local runtime binding ready for agent session routing (accepts comma-separated `--model` entries).
+- `agentic-org provider bindings [--connection <id>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+  List provider bindings and local readiness on this office.
+  **Use when:** verifying an office has a local binding for a provider connection.
+- `agentic-org provider models [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]`
+  List model profiles available for hiring.
+  **Use when:** finding a `model_profile_id` before hiring an agent with `agentic-org hr hire`.
+- `agentic-org release install <bundle.tar.gz | bundle-dir> [--store <dir>] [--json]`
+  Verify Ed25519 signature, closed inventory, and executable hashes, then atomically pin a signed release into this host's release store.
+  **Use when:** installing or upgrading prebuilt signed binaries on macOS or Linux without compiling from source (see [Remote Satellite Office Setup](remote-office-setup.md)).
+- `agentic-org release status [--store <dir>] [--json]`
+  Show the active pinned release ID, sequence, manifest SHA-256, and installed executable paths.
+  **Use when:** verifying which signed release is currently active on this host.
+- `agentic-org msg send|inbox|read|reply|ask|accept|withdraw|list|wait`
+  Send direct messages, channel posts, asks, replies, or handoffs over an approved office channel.
+  **Use when:** messaging local or remote office agents from your terminal without running a managed agent session.
+- `agentic-org channel list|join|leave|summarize`
+  Discover and manage organization messaging channels over an approved office channel.
+  **Use when:** finding `#channels` or joining/summarizing shared channels across offices.
+- `agentic-org hr hire|list|inspect`
+  Hire and manage agents across HQ and satellite offices over an approved office channel (confirm or withdraw pending proposals with `hr hire --id <proposal_id> [--withdraw]`).
+  **Use when:** hiring an agent onto HQ or a remote satellite office from the terminal.
+- `agentic-org agent inspect|update|move|pause|resume|offboard|execution-get|execution-set`
+  Inspect or manage hired agents and their execution configuration (`model_profile_id`, `model_id`, `permission_preset`, `system_prompt_markdown`) over an approved office channel.
+  **Use when:** checking agent status, placement, lifecycle state, or configuring an agent's model profile, permission preset, and system prompt.
+- `agentic-org team list|inspect|create|update`
+  Discover, inspect, or create organization teams over an approved office channel.
+  **Use when:** finding a `team_id` before hiring agents or creating projects.
+- `agentic-org role list|inspect|create|update`
+  Discover, inspect, or create role catalog entries over an approved office channel.
+  **Use when:** inspecting or authoring reusable role definitions before hiring agents.
+- `agentic-org who`
+  List people and agents with live presence and `@handles` over an approved office channel.
+  **Use when:** checking active handles and online presence across HQ and satellite offices.
 - `agentic-org repo register|list|attach|status|push`
   Register and manage organization/project Git repositories and push task branches over an approved office channel.
   **Use when:** registering a Git repo, attaching it to a project's integration branch, checking office bare-cache status, or pushing a task branch.
@@ -218,7 +266,7 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
   Direct messages (DMs), channel messages, handoffs, inbox triage, and structured asks. Send a DM with `agent-os msg send --to <handle|employee_id|owner>` or browse a DM with `agent-os msg list --participant <handle>`.
   **Use when:** sending a DM or `#channel` post (`msg send`), asking typed questions/approvals with bounded wait (`msg ask`), replying in a thread or answering an ask (`msg reply`), accepting a handoff (`msg accept`), triaging your inbox (`msg inbox|read|done|defer|unsnooze`), or waiting up to 90s for a reply (`msg wait`).
 - `agent-os channel list|join|leave|summarize`
-  Discover channels, manage manual channel membership, and summarize channel Q&A (`ADR-0024`).
+  Discover channels, manage manual channel membership, and summarize channel Q&A.
   **Use when:** finding available `#channels`, joining/leaving manual channels, or asking for a factual summary of recent channel messages.
 - `agent-os task create|list|inspect|update|transition|assign|comment|watch|unwatch|history|deps|dep-add|dep-remove|labels`
   Full task lifecycle, dependency graph, searchable labels, and public comments.

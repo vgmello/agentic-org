@@ -308,10 +308,28 @@ fn satellite_operator_grant_allows_only_sync_status_on_satellite_after_security_
         }
     }
     for method in [
+        "office.directory",
+        "provider.connection.list",
+        "provider.binding.list",
+        "provider.binding.set",
+        "provider.connection.refresh",
+        "model_profile.list",
+    ] {
+        let mut req = request(sat_claims.clone());
+        req.method = method.into();
+        assert_eq!(
+            authorize(&req, "channel", &satellite, &DenyNonMember),
+            Ok("office".into()),
+            "satellite operator grant must authorize local/read-only {method}"
+        );
+    }
+
+    for method in [
         "org.snapshot",
         "project.list",
         "who",
         "team.create",
+        "provider.connection.create",
         "office.invitation.list",
         "office.remove",
     ] {

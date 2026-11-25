@@ -26,6 +26,24 @@ function compose() {
 	let controller: Controller | undefined;
 	let booted: Promise<void> | undefined;
 	let operationClock: ReturnType<typeof createOperationClock> | undefined;
+	let activeCaller: string | undefined;
+	let sessionGeneration = 0;
+	let sessionEndedListeners: ((caller: string | undefined) => void)[] = [];
+	function callerOf(next: AppSessionState): string | undefined {
+		return next.kind === 'signed-in'
+			? `${next.session.instance_id}:${next.session.account.id}`
+			: undefined;
+	}
+	function notifySessionEnded(caller: string | undefined) {
+		sessionGeneration++;
+		for (const listener of [...sessionEndedListeners]) {
+			try {
+				listener(caller);
+			} catch {
+				/* Keep auth state transitions isolated from listener failures. */
+			}
+		}
+	}
 	function get(): Controller {
 		if (controller) return controller;
 		const options = { origin: location.origin, ...LIMITS };
@@ -42,12 +60,26 @@ function compose() {
 			channel: new BroadcastChannel('org-session'),
 			now: () => Date.now(),
 			changed: (next) => {
+				const previousCaller = activeCaller;
+				const nextCaller = callerOf(next);
 				state = next;
-				if (next.kind === 'signed-in' && typeof next.session.server_time_ms === 'number') {
-					const clock = createOperationClock();
-					clock.synchronize(next.session.server_time_ms);
-					operationClock = clock;
+				if (next.kind === 'signed-in') {
+					if (previousCaller && nextCaller && previousCaller !== nextCaller) {
+						notifySessionEnded(previousCaller);
+					}
+					activeCaller = nextCaller;
+					if (typeof next.session.server_time_ms === 'number') {
+						const clock = createOperationClock();
+						clock.synchronize(next.session.server_time_ms);
+						operationClock = clock;
+					} else {
+						operationClock = undefined;
+					}
 				} else {
+					if (next.kind === 'signed-out' && previousCaller) {
+						notifySessionEnded(previousCaller);
+						activeCaller = undefined;
+					}
 					operationClock = undefined;
 				}
 			},
@@ -61,6 +93,13 @@ function compose() {
 		get state() {
 			return state;
 		},
+		get callerScope() {
+			return callerOf(state);
+		},
+		/** Increments on explicit sign-out or account switch (unchanged across same-account reauth). */
+		get sessionGeneration() {
+			return sessionGeneration;
+		},
 		get access() {
 			return access;
 		},
@@ -69,6 +108,13 @@ function compose() {
 		},
 		get listenScheme() {
 			return access.listen_scheme;
+		},
+		/** Fires when the active caller signs out or switches account (not during same-account reauth). */
+		onSessionEnded(listener: (caller: string | undefined) => void): () => void {
+			if (!sessionEndedListeners.includes(listener)) sessionEndedListeners.push(listener);
+			return () => {
+				sessionEndedListeners = sessionEndedListeners.filter((entry) => entry !== listener);
+			};
 		},
 		controller: get,
 		/** Mints a canonical lowercase UUIDv7 calibrated immediately on sign-in/refresh. */

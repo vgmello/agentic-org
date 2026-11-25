@@ -498,13 +498,27 @@ pub(crate) fn list(
         },
         None,
     );
-    end_session(&mut wire, &session);
-    let listed = match answer? {
-        Ok(listed) => listed,
-        Err(ErrorCode::NotFound) => return Err("organization not found".into()),
-        Err(ErrorCode::NotAuthorized) => return Err("not authorized to list offices".into()),
-        Err(code) => return Err(format!("the service refused office list ({code:?})")),
+    let mut listed = match answer {
+        Ok(Ok(listed)) => listed,
+        Ok(Err(ErrorCode::NotFound)) => {
+            end_session(&mut wire, &session);
+            return Err("organization not found".into());
+        }
+        Ok(Err(ErrorCode::NotAuthorized)) => {
+            end_session(&mut wire, &session);
+            return Err("not authorized to list offices".into());
+        }
+        Ok(Err(code)) => {
+            end_session(&mut wire, &session);
+            return Err(format!("the service refused office list ({code:?})"));
+        }
+        Err(err) => {
+            end_session(&mut wire, &session);
+            return Err(err);
+        }
     };
+    merge_remote_directory_offices(&mut wire, &session, &mut listed.offices);
+    end_session(&mut wire, &session);
     if json {
         let encoded = serde_json::to_string_pretty(&listed)
             .map_err(|_| "could not encode office list".to_owned())?;
@@ -519,10 +533,67 @@ pub(crate) fn list(
     Ok(())
 }
 
+fn merge_remote_directory_offices(
+    wire: &mut Wire,
+    session: &SessionHandle,
+    offices: &mut Vec<OfficeInfo>,
+) {
+    let mut by_org: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    // Prefer Active local offices first for each organization, then fall back to non-Active ones.
+    for active_pass in [true, false] {
+        for office in offices.iter() {
+            let is_active = office.status == org_proto::OfficeStatus::Active;
+            if is_active != active_pass {
+                continue;
+            }
+            let entry = by_org.entry(office.organization_id.clone()).or_default();
+            if !entry.iter().any(|id| id == &office.id) {
+                entry.push(office.id.clone());
+            }
+        }
+    }
+    for (org_id, candidates) in by_org {
+        for local_office_id in candidates {
+            let Ok(mut channel) = super::project_command::OfficeSession::open_for_office(
+                wire,
+                session,
+                Some(&org_id),
+                Some(&local_office_id),
+            ) else {
+                continue;
+            };
+            let Ok(Ok(dir)) = channel.call::<org_proto::federation::OfficeDirectoryList>(
+                wire,
+                session,
+                &org_proto::federation::OfficeDirectoryListParams {},
+            ) else {
+                continue;
+            };
+            for remote in dir.offices {
+                if !offices.iter().any(|existing| existing.id == remote.id) {
+                    offices.push(OfficeInfo {
+                        id: remote.id,
+                        organization_id: remote.organization_id,
+                        name: remote.name,
+                        role: remote.role,
+                        host: format!("Remote ({})", remote.slug),
+                        endpoint: None,
+                        status: org_proto::OfficeStatus::Active,
+                        status_reason: None,
+                        next_restart_at: None,
+                    });
+                }
+            }
+            break;
+        }
+    }
+}
+
 fn format_office_line(office: &OfficeInfo) -> String {
     let mut line = format!(
-        "{}\torg={}\trole={:?}\tstatus={:?}\tname={}",
-        office.id, office.organization_id, office.role, office.status, office.name
+        "{}\torg={}\trole={:?}\tstatus={:?}\thost={}\tname={}",
+        office.id, office.organization_id, office.role, office.status, office.host, office.name
     );
     if let Some(reason) = &office.status_reason {
         line.push_str(&format!("\treason={reason:?}"));

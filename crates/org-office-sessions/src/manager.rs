@@ -183,6 +183,7 @@ struct PlannedSessionLaunch {
     tried_connections: Vec<String>,
     home: PathBuf,
     workspace_real: PathBuf,
+    runtime_dir: PathBuf,
     tmpdir: PathBuf,
     preset_cfg: PresetConfig,
     spec_hash: String,
@@ -204,6 +205,7 @@ struct PreparedSessionLaunch {
     task_ref: Option<String>,
     tried_connections: Vec<String>,
     home: PathBuf,
+    binding_file: PathBuf,
     preset_cfg: PresetConfig,
     spec_hash: String,
     objective: String,
@@ -225,15 +227,22 @@ struct BindingGuard<'a> {
     bindings: &'a RunBindingRegistry,
     employee_id: &'a str,
     run_id: &'a str,
+    binding_file: &'a Path,
     armed: bool,
 }
 
 impl<'a> BindingGuard<'a> {
-    fn new(bindings: &'a RunBindingRegistry, employee_id: &'a str, run_id: &'a str) -> Self {
+    fn new(
+        bindings: &'a RunBindingRegistry,
+        employee_id: &'a str,
+        run_id: &'a str,
+        binding_file: &'a Path,
+    ) -> Self {
         Self {
             bindings,
             employee_id,
             run_id,
+            binding_file,
             armed: true,
         }
     }
@@ -247,6 +256,7 @@ impl Drop for BindingGuard<'_> {
     fn drop(&mut self) {
         if self.armed {
             self.bindings.revoke(self.employee_id, Some(self.run_id));
+            let _ = std::fs::remove_file(self.binding_file);
         }
     }
 }
@@ -739,7 +749,15 @@ impl SessionManager {
             .into_iter()
             .map(zeroize::Zeroizing::new)
             .collect();
-        let Ok(Some(exec)) = self.office.load_agent_execution(employee_id) else {
+        let Ok(exec_opt) = self.office.load_agent_execution(employee_id) else {
+            return secrets;
+        };
+        let Some(exec) = exec_opt else {
+            // Unconfigured agents fall back to Claude host subscription auth (`router.rs`),
+            // so redact host Claude OAuth if present.
+            if let Some(tok) = crate::host_auth::resolve_host_claude_oauth_token() {
+                secrets.push(tok);
+            }
             return secrets;
         };
         let Ok(Some(prof)) = self
@@ -748,18 +766,41 @@ impl SessionManager {
         else {
             return secrets;
         };
+        let mut uses_claude_host_subscription = false;
         let conn_ids = prof
             .generated_for_connection_id
             .iter()
             .chain(prof.connection_ids.iter());
         for conn_id in conn_ids {
+            let mut has_vault_secret = false;
             if let Ok(Some(raw)) = self.enrollment.vault().load_unwrapped(conn_id.as_str()) {
                 if let Ok(text) = std::str::from_utf8(&raw) {
+                    has_vault_secret = true;
                     secrets.push(zeroize::Zeroizing::new(text.to_owned()));
                 }
             }
+            if !has_vault_secret && self.is_claude_subscription_connection(conn_id.as_str()) {
+                uses_claude_host_subscription = true;
+            }
+        }
+        if uses_claude_host_subscription {
+            if let Some(tok) = crate::host_auth::resolve_host_claude_oauth_token() {
+                secrets.push(tok);
+            }
         }
         secrets
+    }
+
+    fn is_claude_subscription_connection(&self, connection_id: &str) -> bool {
+        let Ok(Some(conn)) = self.office.load_provider_connection(connection_id) else {
+            return false;
+        };
+        conn.auth_mode
+            == org_office::organization_family::records::ProviderAuthMode::SubscriptionCli
+            && matches!(
+                conn.runtime_driver.trim().to_ascii_lowercase().as_str(),
+                "anthropic" | "claude" | "claude-code"
+            )
     }
 
     fn live_runtime_session_id(&self, employee_id: &str) -> Option<String> {
@@ -794,7 +835,7 @@ impl SessionManager {
         let (preset, sandbox_enabled) = self.load_preset_and_sandbox(employee.id.as_str())?;
         let socket_str = self.config.office_socket.display().to_string();
         let socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
-        let denied_globs = self.denied_office_globs();
+        let denied_globs = self.denied_office_globs_for(Some(employee.id.as_str()));
         let cfg = build_session_policy(
             preset,
             sandbox_enabled,
@@ -1431,7 +1472,7 @@ impl SessionManager {
 
         let socket_str = self.config.office_socket.display().to_string();
         let office_socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
-        let denied_globs = self.denied_office_globs();
+        let denied_globs = self.denied_office_globs_for(Some(&emp_id));
         let preset_cfg = build_session_policy(
             admitted.preset,
             admitted.sandbox_enabled,
@@ -1467,7 +1508,9 @@ impl SessionManager {
             )
         };
         let run_id = format!("run-{}", next_entropy_hex(10)?);
-        let session_id = format!("sess-{}", next_entropy_hex(10)?);
+        // Claude Code (`--session-id`), Codex, and Agy accept canonical lowercase UUIDs;
+        // Claude Code 2.1.323+ rejects non-UUID strings before the `initialize` handshake.
+        let session_id = next_uuid_v4()?;
         let mark_str = format!("m-{}", next_entropy_hex(12)?);
 
         let resume_sid = opts
@@ -1478,6 +1521,10 @@ impl SessionManager {
         } else {
             SessionId::try_from(session_id.as_str()).ok()
         };
+        let allow_host_auth =
+            crate::host_auth::allows_host_subscription_auth(&admitted.auth_env, admitted.auth_mode);
+        let adapter_id = admitted.adapter.id();
+        let runtime_name = adapter_id.as_str();
         let ctx = LaunchContext {
             runtime_path: binary,
             runtime_version: None,
@@ -1486,7 +1533,7 @@ impl SessionManager {
             office_env_names: office_env_names(),
             new_session_id: new_sid,
             resume: resume_sid,
-            config_dir: None,
+            config_dir: crate::host_auth::host_config_dir_for(runtime_name, allow_host_auth),
         };
         let (plan, session) = admitted
             .adapter
@@ -1494,6 +1541,12 @@ impl SessionManager {
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "runtime rejected session spec"))?;
 
         let mut launch_env = admitted.auth_env;
+        crate::host_auth::append_host_claude_oauth(
+            runtime_name,
+            allow_host_auth,
+            &plan,
+            &mut launch_env,
+        );
         launch_env.extend(admitted.endpoint_env);
 
         Ok(PlannedSessionLaunch {
@@ -1510,6 +1563,7 @@ impl SessionManager {
             tried_connections: opts.tried_connections,
             home,
             workspace_real,
+            runtime_dir,
             tmpdir,
             preset_cfg,
             spec_hash,
@@ -1539,6 +1593,7 @@ impl SessionManager {
             tried_connections,
             home,
             workspace_real,
+            runtime_dir,
             tmpdir,
             preset_cfg,
             spec_hash,
@@ -1553,7 +1608,9 @@ impl SessionManager {
             .bindings
             .issue(&emp_id, &run_id, &session_id, 0)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "could not mint session token"))?;
-        let mut binding_guard = BindingGuard::new(&self.bindings, &emp_id, &run_id);
+        let binding_file = runtime_dir.join(format!("session-binding-{run_id}.v1"));
+        let mut binding_guard = BindingGuard::new(&self.bindings, &emp_id, &run_id, &binding_file);
+        write_owner_only_binding_file(&binding_file, binding.expose_token())?;
         let env = self.build_environment(
             &home,
             &workspace_real,
@@ -1561,6 +1618,7 @@ impl SessionManager {
             &emp_id,
             &session_id,
             binding.expose_token(),
+            &binding_file,
         )?;
         let mark = SessionMark::new(mark_str.clone())
             .map_err(|_| ApiError::new(ErrorCode::StorageError, "invalid session mark"))?;
@@ -1607,6 +1665,7 @@ impl SessionManager {
             task_ref,
             tried_connections,
             home,
+            binding_file,
             preset_cfg,
             spec_hash,
             objective,
@@ -1702,6 +1761,7 @@ impl SessionManager {
             permit,
             task_ref,
             tried_connections,
+            binding_file,
             objective,
             spawned,
             mut session,
@@ -1727,6 +1787,7 @@ impl SessionManager {
             state: Arc::clone(&runtime_state),
             stop_plan: lifecycle.stop,
             cleanup_paths: lifecycle.cleanup_after_exit,
+            binding_file,
             hooks,
         };
         if is_admissions_closed(self) {
@@ -1793,16 +1854,22 @@ impl SessionManager {
     }
 
     fn prepare_run_dirs(&self, employee_id: &str) -> Result<(PathBuf, PathBuf), ApiError> {
+        let office_id = &self.office.info().office_id;
         let base = self
             .office
             .durable_root()
             .join("local")
             .join("offices")
-            .join(&self.office.info().office_id)
+            .join(office_id)
             .join("agents")
             .join(employee_id);
         let runtime_dir = base.join("runtime");
-        let tmpdir = base.join("tmp");
+        let tmpdir = crate::host_auth::resolve_agent_tmpdir(
+            &self.config.office_socket,
+            &base.join("tmp"),
+            office_id,
+            employee_id,
+        );
         for dir in [&runtime_dir, &tmpdir] {
             ensure_owner_only_dir(dir)?;
         }
@@ -1846,6 +1913,14 @@ impl SessionManager {
                 .map_err(|e| ApiError::new(ErrorCode::StorageError, e.to_string()))??,
             Err(err) => return Err(err),
         };
+        let exec_prompt = self
+            .office
+            .load_agent_execution(employee.id.as_str())
+            .ok()
+            .flatten()
+            .map(|cfg| cfg.system_prompt_markdown);
+        let combined_agent_instructions =
+            combine_agent_instructions(&employee.body, exec_prompt.as_deref());
         let table = org_agent_cli::table::table();
         let input = InstructionInput {
             organization_name: &info.org_name,
@@ -1858,7 +1933,7 @@ impl SessionManager {
             role_instructions: role.as_ref().map(|r| r.body.as_str()),
             process_instructions: (!rendered_processes.text.is_empty())
                 .then_some(rendered_processes.text.as_str()),
-            agent_instructions: &employee.body,
+            agent_instructions: &combined_agent_instructions,
             is_hr_lead: employee.builtin_key == Some(BuiltinKey::Hr),
             private_home: &home.display().to_string(),
             workspace: &workspace.display().to_string(),
@@ -1868,6 +1943,10 @@ impl SessionManager {
         Ok(assemble_standing_instructions(&input, &table))
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "session environment bundles paths, identifiers, token, and binding file"
+    )]
     fn build_environment(
         &self,
         home: &Path,
@@ -1876,6 +1955,7 @@ impl SessionManager {
         employee_id: &str,
         session_id: &str,
         token: &str,
+        binding_file: &Path,
     ) -> Result<Environment, ApiError> {
         let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
         let captured_path =
@@ -1912,45 +1992,121 @@ impl SessionManager {
                 OsString::from("AGENT_OS_SESSION_TOKEN"),
                 OsString::from(token),
             ),
+            (
+                OsString::from("AGENT_OS_BINDING_FILE"),
+                binding_file.as_os_str().to_os_string(),
+            ),
         ];
         Environment::new(search_path, &captured)
             .and_then(|env| env.with_context(&context))
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "could not build session env"))
     }
 
+    #[cfg(test)]
     pub(crate) fn denied_office_globs(&self) -> Vec<PathPattern> {
+        self.denied_office_globs_for(None)
+    }
+
+    pub(crate) fn denied_office_globs_for(
+        &self,
+        self_employee_id: Option<&str>,
+    ) -> Vec<PathPattern> {
         let mut out = Vec::new();
-        let mut push_glob = |path: &Path| {
-            let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-            let glob = format!("{}/**", resolved.display());
-            if let Ok(pat) = PathPattern::try_from(glob.as_str()) {
-                out.push(pat);
-            }
-        };
-        push_glob(self.office.folder());
+        push_glob_pattern(&mut out, self.office.folder());
         let durable = self.office.durable_root();
-        let office_local = durable
-            .join("local")
-            .join("offices")
-            .join(&self.office.info().office_id);
-        push_glob(&durable.join("state"));
-        push_glob(&durable.join("journal"));
-        push_glob(&durable.join("authority"));
-        push_glob(&durable.join("private"));
-        push_glob(&durable.join("messaging"));
-        push_glob(&durable.join("budgets"));
-        push_glob(&durable.join("accounting"));
-        push_glob(&durable.join("recovery"));
-        push_glob(&office_local.join("auth"));
-        push_glob(&office_local.join("connections"));
-        push_glob(&office_local.join("sessions"));
-        push_glob(&office_local.join("enroll-tmp"));
-        push_glob(&office_local.join("security"));
-        push_glob(&office_local.join("subscription-usage"));
-        if let Some(org_dir) = durable.parent() {
-            push_glob(&org_dir.join("runtime"));
+        let office_id = &self.office.info().office_id;
+        let office_local = durable.join("local").join("offices").join(office_id);
+        for sub in [
+            "state",
+            "journal",
+            "authority",
+            "private",
+            "messaging",
+            "budgets",
+            "accounting",
+            "recovery",
+        ] {
+            push_glob_pattern(&mut out, &durable.join(sub));
         }
+        for sub in [
+            "auth",
+            "connections",
+            "sessions",
+            "enroll-tmp",
+            "security",
+            "subscription-usage",
+        ] {
+            push_glob_pattern(&mut out, &office_local.join(sub));
+        }
+        if let Some(org_dir) = durable.parent() {
+            push_glob_pattern(&mut out, &org_dir.join("runtime"));
+        }
+        self.append_sibling_and_socket_denies(&mut out, &office_local, office_id, self_employee_id);
         out
+    }
+
+    fn append_sibling_and_socket_denies(
+        &self,
+        out: &mut Vec<PathPattern>,
+        office_local: &Path,
+        office_id: &str,
+        self_employee_id: Option<&str>,
+    ) {
+        let agents_root = office_local.join("agents");
+        let sibling_ids = self.collect_sibling_agent_ids(&agents_root, self_employee_id);
+        for other in &sibling_ids {
+            push_glob_pattern(out, &agents_root.join(other));
+        }
+        if let Some(sock_parent) = self.config.office_socket.parent() {
+            push_exact_pattern(out, &sock_parent.join("host.sock"));
+            if sock_parent.file_name().and_then(|s| s.to_str()) == Some("run") {
+                if let Some(instance_root) = sock_parent.parent() {
+                    push_exact_pattern(out, &instance_root.join("host.sock"));
+                }
+            }
+            push_glob_pattern(out, &sock_parent.join("r"));
+            let short_root = sock_parent.join("t");
+            let own_slug =
+                self_employee_id.map(|emp| crate::host_auth::agent_tmpdir_slug(office_id, emp));
+            for other in &sibling_ids {
+                let slug = crate::host_auth::agent_tmpdir_slug(office_id, other);
+                if own_slug.as_deref() != Some(slug.as_str()) {
+                    push_glob_pattern(out, &short_root.join(slug));
+                }
+            }
+            if let Ok(entries) = std::fs::read_dir(&short_root) {
+                for entry in entries.flatten() {
+                    if own_slug.as_deref() != entry.file_name().to_str() {
+                        push_glob_pattern(out, &entry.path());
+                    }
+                }
+            }
+        }
+        append_privileged_socket_patterns(out);
+    }
+
+    fn collect_sibling_agent_ids(
+        &self,
+        agents_root: &Path,
+        self_employee_id: Option<&str>,
+    ) -> std::collections::BTreeSet<String> {
+        let mut ids = std::collections::BTreeSet::new();
+        if let Ok(entries) = std::fs::read_dir(agents_root) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    ids.insert(name.to_owned());
+                }
+            }
+        }
+        if let Ok(employees) = self.office.list_employees() {
+            for emp in employees {
+                ids.insert(emp.id.as_str().to_owned());
+            }
+        }
+        if let Some(me) = self_employee_id {
+            ids.remove(me);
+        }
+        ids
     }
 
     fn idle_view_for(&self, employee_id: &str) -> Result<SessionView, ApiError> {
@@ -2132,13 +2288,34 @@ fn spawn_pump_thread(
     active_permit: &Arc<Mutex<Option<(String, u64)>>>,
 ) -> Result<JoinHandle<()>, ApiError> {
     let thread_name = format!("org-session-{}", &emp_id[..emp_id.len().min(8)]);
-    match thread::Builder::new()
-        .name(thread_name)
-        .spawn(move || run_pump(spawned, session, rx, pump_ctx))
-    {
+    let payload = Arc::new(Mutex::new(Some((spawned, session, rx, pump_ctx))));
+    let worker_payload = Arc::clone(&payload);
+    match thread::Builder::new().name(thread_name).spawn(move || {
+        let Some((spawned, session, rx, pump_ctx)) = worker_payload
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        else {
+            return;
+        };
+        run_pump(spawned, session, rx, pump_ctx);
+    }) {
         Ok(handle) => Ok(handle),
         Err(_) => {
-            mgr.bindings.revoke(emp_id, None);
+            if let Some((spawned, mut session, _rx, pump_ctx)) =
+                payload.lock().unwrap_or_else(|p| p.into_inner()).take()
+            {
+                let _ = crate::pump::finalize_child(
+                    spawned.child,
+                    spawned.stdin,
+                    &mut session,
+                    &pump_ctx,
+                    org_supervise::StopMode::Graceful,
+                    false,
+                );
+            } else {
+                mgr.bindings.revoke(emp_id, None);
+            }
             if let Some((pid, _)) = active_permit
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
@@ -2829,6 +3006,21 @@ fn sanitize_agent_name(handle: &str) -> String {
     out
 }
 
+fn write_owner_only_binding_file(path: &Path, token: &str) -> Result<(), ApiError> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let _ = std::fs::remove_file(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not write session binding"))?;
+    file.write_all(token.as_bytes())
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not write session binding"))?;
+    Ok(())
+}
+
 fn office_env_names() -> Vec<EnvName> {
     [
         "AGENT_OS_SOCKET",
@@ -2837,6 +3029,7 @@ fn office_env_names() -> Vec<EnvName> {
         "AGENT_OS_AGENT_ID",
         "AGENT_OS_SESSION_ID",
         "AGENT_OS_SESSION_TOKEN",
+        "AGENT_OS_BINDING_FILE",
     ]
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static env name"))
@@ -2853,6 +3046,76 @@ fn canonical_or_spec(path: &Path) -> Result<SpecPath, ApiError> {
 fn next_entropy_hex(bytes_len: usize) -> Result<String, ApiError> {
     random_hex(bytes_len)
         .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))
+}
+
+fn push_raw_pattern(out: &mut Vec<PathPattern>, raw: &str) {
+    if let Ok(pat) = PathPattern::try_from(raw) {
+        if !out.contains(&pat) {
+            out.push(pat);
+        }
+    }
+}
+
+fn push_glob_pattern(out: &mut Vec<PathPattern>, path: &Path) {
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    push_raw_pattern(out, &format!("{}/**", resolved.display()));
+}
+
+fn push_exact_pattern(out: &mut Vec<PathPattern>, path: &Path) {
+    push_raw_pattern(out, &path.display().to_string());
+    if let Ok(resolved) = path.canonicalize() {
+        push_raw_pattern(out, &resolved.display().to_string());
+    }
+}
+
+fn append_privileged_socket_patterns(out: &mut Vec<PathPattern>) {
+    // Keep non-wildcard system socket paths plus concrete `$XDG_RUNTIME_DIR` children here
+    // (avoiding `/run/user/*/...` wildcards which Codex's `path_pattern_base` truncates to
+    // `/run/user`, blocking `/run/user/<uid>` sockets/tmpdir; Claude adds `/run/user/*/...`
+    // privately in `org-agent-runtime-claude/src/plan.rs`).
+    for privileged in [
+        "/run/dbus/system_bus_socket",
+        "/var/run/dbus/system_bus_socket",
+        "/var/run/docker.sock",
+        "/run/docker.sock",
+        "/run/podman/**",
+    ] {
+        push_raw_pattern(out, privileged);
+    }
+    if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR") {
+        let xdg_path = PathBuf::from(xdg);
+        if xdg_path.is_absolute() {
+            push_exact_pattern(out, &xdg_path.join("bus"));
+            push_glob_pattern(out, &xdg_path.join("systemd"));
+            push_glob_pattern(out, &xdg_path.join("podman"));
+        }
+    }
+}
+
+fn combine_agent_instructions(profile_body: &str, system_prompt: Option<&str>) -> String {
+    let body = profile_body.trim();
+    let prompt = system_prompt.map(str::trim).unwrap_or("");
+    match (prompt.is_empty(), body.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => prompt.to_owned(),
+        (true, false) => body.to_owned(),
+        (false, false) if prompt == body => prompt.to_owned(),
+        (false, false) => format!("{prompt}\n\n{body}"),
+    }
+}
+
+fn next_uuid_v4() -> Result<String, ApiError> {
+    use ring::rand::{SecureRandom, SystemRandom};
+    let mut b = [0_u8; 16];
+    SystemRandom::new()
+        .fill(&mut b)
+        .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))?;
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+    ))
 }
 
 fn handle_call<C: Call>(
@@ -2901,4 +3164,50 @@ fn map_vault_err(err: EnrollmentVaultError) -> ApiError {
         ),
     };
     ApiError::new(code, msg)
+}
+
+#[cfg(test)]
+mod manager_helper_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    #[test]
+    fn combine_agent_instructions_merges_and_deduplicates_cleanly() {
+        assert_eq!(combine_agent_instructions("", None), "");
+        assert_eq!(
+            combine_agent_instructions("  role body  ", None),
+            "role body"
+        );
+        assert_eq!(
+            combine_agent_instructions("", Some("  exec prompt  ")),
+            "exec prompt"
+        );
+        assert_eq!(
+            combine_agent_instructions("same text", Some("same text")),
+            "same text"
+        );
+        assert_eq!(
+            combine_agent_instructions("profile", Some("exec")),
+            "exec\n\nprofile"
+        );
+    }
+
+    #[test]
+    fn binding_file_is_owner_only_and_removed_on_guard_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("session-binding-run-1.v1");
+        let bindings = RunBindingRegistry::new();
+        let issued = bindings.issue("emp-1", "run-1", "sess-1", 0).unwrap();
+        {
+            let _guard = BindingGuard::new(&bindings, "emp-1", "run-1", &file);
+            write_owner_only_binding_file(&file, issued.expose_token()).unwrap();
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+            assert_eq!(
+                std::fs::read_to_string(&file).unwrap(),
+                issued.expose_token()
+            );
+        }
+        assert!(!file.exists(), "BindingGuard drop must unlink binding file");
+    }
 }

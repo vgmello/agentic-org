@@ -212,6 +212,7 @@ export interface Member {
 	name: string;
 	handle?: string;
 	home_team_id?: string;
+	role_id?: string;
 	title_in_team?: string;
 	contact?: string;
 	owner?: boolean;

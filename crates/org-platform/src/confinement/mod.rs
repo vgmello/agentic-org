@@ -284,3 +284,10 @@ pub fn layers(enforcement: &Enforcement) -> io::Result<Layers> {
 pub fn fill_entropy(bytes: &mut [u8]) -> io::Result<()> {
     native::fill_entropy(bytes)
 }
+
+/// Whether this target's sandbox mechanism can filter outbound `AF_UNIX` connections by socket
+/// path (macOS Seatbelt can; Linux seccomp filters `socket(AF_UNIX)` at syscall entry without
+/// inspecting `connect()` paths). Unknown targets return `true` (fail closed).
+pub fn unix_socket_path_filter_supported() -> bool {
+    native::unix_socket_path_filter_supported()
+}

@@ -170,6 +170,7 @@ fn member(
         name: record.name.clone(),
         handle: Some(record.handle.clone()),
         home_team_id: Some(record.home_team_id.to_string()),
+        role_id: record.role_id.as_ref().map(Id::to_string),
         title_in_team: record.title_in_team.clone(),
         contact: record.contact.clone(),
         owner: record.id == *owner,
