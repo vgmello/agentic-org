@@ -115,7 +115,7 @@ agentic-org office list --name hq --json
 ### Sign-In, Context & Administration
 
 - `agentic-org sign-in [--name <instance>] [--office <office_id>] [-- <command...>]`
-  Start a browser-approved terminal session (`SIGN-40` / `SES-8`) without a terminal password prompt.
+  Start a browser-approved terminal session without a terminal password prompt.
   **Use when:** authenticating a terminal via a browser approval link (especially on Linux, containers, or HTTPS hosts where terminal passwords are refused) or executing one office command over a grant-bound channel.
 - `agentic-org context show`
   Show the saved non-secret default instance and office selection.
@@ -178,7 +178,7 @@ agentic-org office list --name hq --json
   Cancel and remove a pending satellite join before approval completes.
   **Use when:** aborting an unapproved join on the satellite host before HQ approves it.
 - `agentic-org office re-enroll <office_id> (--invitation-file <path> | --invitation-stdin) --yes [--login <login>] [--name <instance>] [--json]`
-  Re-enroll an existing satellite office onto a replacement HQ after Git import (D25).
+  Re-enroll an existing satellite office onto a replacement HQ after Git import.
   **Use when:** reconnecting an existing satellite office to a replacement HQ after Git recovery import.
 
 ### Projects, Repositories, Worktrees & Tasks
@@ -266,7 +266,7 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
   Direct messages (DMs), channel messages, handoffs, inbox triage, and structured asks. Send a DM with `agent-os msg send --to <handle|employee_id|owner>` or browse a DM with `agent-os msg list --participant <handle>`.
   **Use when:** sending a DM or `#channel` post (`msg send`), asking typed questions/approvals with bounded wait (`msg ask`), replying in a thread or answering an ask (`msg reply`), accepting a handoff (`msg accept`), triaging your inbox (`msg inbox|read|done|defer|unsnooze`), or waiting up to 90s for a reply (`msg wait`).
 - `agent-os channel list|join|leave|summarize`
-  Discover channels, manage manual channel membership, and summarize channel Q&A (`ADR-0024`).
+  Discover channels, manage manual channel membership, and summarize channel Q&A.
   **Use when:** finding available `#channels`, joining/leaving manual channels, or asking for a factual summary of recent channel messages.
 - `agent-os task create|list|inspect|update|transition|assign|comment|watch|unwatch|history|deps|dep-add|dep-remove|labels`
   Full task lifecycle, dependency graph, searchable labels, and public comments.

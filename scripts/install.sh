@@ -8,26 +8,29 @@ usage() {
 Agentic Org Installer
 
 Usage:
+  # Upgrade an existing installation to the latest GitHub Release:
+  curl -fsSL https://raw.githubusercontent.com/vgmello/agentic-org/v1/scripts/install.sh | bash
+
+  # Install the latest (or pinned --version) GitHub Release on a new host:
+  install.sh [--version <tag>] --sha256 <file|hex> [--repo vgmello/agentic-org] [--base-url <url>] [--bin-dir ~/.local/bin] [--store <dir>]
+  install.sh [--version <tag>] --pubkey <publisher.pub.pem|trust-registry.json> [--bin-dir ~/.local/bin] [--store <dir>]
+
   # Install or upgrade from a local release archive:
   install.sh --archive <path.tar.gz> [--sha256 <file|hex>] [--pubkey <file>] [--bin-dir ~/.local/bin] [--store <dir>]
 
-  # Install or upgrade from a GitHub Release tag (or custom --base-url):
-  install.sh --version <tag> --sha256 <file|hex> [--repo vgmello/agentic-org] [--base-url <url>] [--bin-dir ~/.local/bin] [--store <dir>]
-  install.sh --version <tag> --pubkey <publisher.pub.pem|trust-registry.json> [--bin-dir ~/.local/bin]
-
-  # Install an unsigned development archive (explicit opt-in only):
-  install.sh --archive <path-dev.tar.gz> --allow-unsigned [--bin-dir ~/.local/bin]
+  # Install an unsigned local archive (explicit opt-in only):
+  install.sh --archive <path.tar.gz> --allow-unsigned [--bin-dir ~/.local/bin]
 
 Options:
   --archive <path>       Local .tar.gz release archive to install
   --sha256 <file|hex>    Expected archive SHA-256 (file or 64-char hex digest)
   --pubkey <path>        Trusted publisher Ed25519 public key PEM or trust-registry JSON
-  --version <tag>        Release tag to download (e.g. v0.1.0)
+  --version <tag>        Release tag to download (defaults to latest GitHub Release)
   --repo <owner/repo>    GitHub repository (default: vgmello/agentic-org)
-  --base-url <url>       Custom base URL for archive downloads
+  --base-url <url>       Custom base URL for archive downloads (requires --version)
   --bin-dir <dir>        Directory for CLI symlinks (default: ~/.local/bin)
   --store <dir>          Explicit release store directory
-  --allow-unsigned       Allow installing an unsigned development archive
+  --allow-unsigned       Allow installing an unsigned local archive
   -h, --help             Show this help
 EOF
 }
@@ -77,7 +80,81 @@ done
 
 require_cmd tar
 require_cmd awk
-require_cmd sed
+if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+  echo "install.sh: required command not found: sha256sum or shasum" >&2
+  exit 1
+fi
+
+if [[ ! "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "install.sh: invalid --repo value (expected owner/repo): $REPO" >&2
+  exit 2
+fi
+
+if [[ -n "$BASE_URL" ]]; then
+  BASE_URL="${BASE_URL%/}"
+  if [[ ! "$BASE_URL" =~ ^https?:// ]]; then
+    echo "install.sh: --base-url must start with http:// or https://: $BASE_URL" >&2
+    exit 2
+  fi
+fi
+
+if [[ "$ALLOW_UNSIGNED" -eq 1 && -n "$PUBKEY_FILE" ]]; then
+  echo "install.sh: --allow-unsigned cannot be combined with --pubkey" >&2
+  exit 2
+fi
+
+if [[ "$ALLOW_UNSIGNED" -eq 1 && -z "$ARCHIVE" ]]; then
+  echo "install.sh: --allow-unsigned is only supported with local --archive installs" >&2
+  exit 2
+fi
+
+download_file() {
+  local url="$1"
+  local dest="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$dest" -- "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    LC_ALL=C wget -q -O "$dest" -- "$url"
+  else
+    echo "install.sh: required command not found: curl or wget" >&2
+    exit 1
+  fi
+}
+
+resolve_latest_version() {
+  local repo="$1"
+  local latest_url="https://github.com/${repo}/releases/latest"
+  local effective_url=""
+  if command -v curl >/dev/null 2>&1; then
+    effective_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' -- "$latest_url")" || {
+      echo "install.sh: failed to query latest release for ${repo}" >&2
+      exit 1
+    }
+  elif command -v wget >/dev/null 2>&1; then
+    effective_url="$(LC_ALL=C wget -v -S --max-redirect=5 --spider -- "$latest_url" 2>&1 \
+      | awk 'tolower($1) == "location:" { loc = $2 } END { gsub(/\r/, "", loc); print loc }')" || true
+    if [[ -z "$effective_url" ]]; then
+      echo "install.sh: failed to query latest release for ${repo}" >&2
+      exit 1
+    fi
+  else
+    echo "install.sh: required command not found: curl or wget" >&2
+    exit 1
+  fi
+  if [[ "$effective_url" != *"/releases/tag/"* ]]; then
+    echo "install.sh: no published release found for ${repo}; pass --version <tag> or --archive <path.tar.gz>" >&2
+    exit 1
+  fi
+  local tag="${effective_url##*/releases/tag/}"
+  tag="${tag%%\?*}"
+  tag="${tag%%#*}"
+  tag="${tag%/}"
+  if [[ ! "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$ ]]; then
+    echo "install.sh: resolved invalid release tag from ${effective_url}" >&2
+    exit 1
+  fi
+  printf '%s' "$tag"
+}
 
 UNAME_S="$(uname -s)"
 UNAME_M="$(uname -m)"
@@ -210,10 +287,12 @@ extract_json_uint() {
   awk -v k="$key" '
     { buf = buf $0 "\n" }
     END {
-      pat = "\"" k "\"[[:space:]]*:[[:space:]]*[0-9]+"
+      pat = "\"" k "\"[[:space:]]*:[[:space:]]*[0-9]+([[:space:]]*[,}]|[[:space:]]*$)"
       if (match(buf, pat)) {
         s = substr(buf, RSTART, RLENGTH)
         sub(/^[^:]*:[[:space:]]*/, "", s)
+        sub(/[[:space:]]*[,}][[:space:]]*$/, "", s)
+        sub(/[[:space:]]*$/, "", s)
         print s
       }
     }
@@ -247,13 +326,17 @@ lookup_registry_key_entry() {
         sub(/^[^:]*:[[:space:]]*"/, "", pub)
         sub(/"$/, "", pub)
       }
-      if (match(seg, /"min_sequence"[[:space:]]*:[[:space:]]*[0-9]+/)) {
+      if (match(seg, /"min_sequence"[[:space:]]*:[[:space:]]*[0-9]+([[:space:]]*,|[[:space:]]*$)/)) {
         min_s = substr(seg, RSTART, RLENGTH)
         sub(/^[^:]*:[[:space:]]*/, "", min_s)
+        sub(/[[:space:]]*,[[:space:]]*$/, "", min_s)
+        sub(/[[:space:]]*$/, "", min_s)
       }
-      if (match(seg, /"max_sequence"[[:space:]]*:[[:space:]]*([0-9]+|null)/)) {
+      if (match(seg, /"max_sequence"[[:space:]]*:[[:space:]]*([0-9]+|null)([[:space:]]*,|[[:space:]]*$)/)) {
         max_s = substr(seg, RSTART, RLENGTH)
         sub(/^[^:]*:[[:space:]]*/, "", max_s)
+        sub(/[[:space:]]*,[[:space:]]*$/, "", max_s)
+        sub(/[[:space:]]*$/, "", max_s)
       }
       printf "%s|%s|%s\n", pub, min_s, max_s
       exit
@@ -291,6 +374,15 @@ lookup_manifest_file_sha256() {
   ' "$manifest_file"
 }
 
+hex_to_bin() {
+  local hex="$1"
+  local i byte
+  for ((i = 0; i < ${#hex}; i += 2)); do
+    byte="${hex:i:2}"
+    printf '%b' "\\0$(printf '%03o' "0x${byte}")"
+  done
+}
+
 resolve_registry_pubkey_pem() {
   local manifest_file="$1"
   local registry_file="$2"
@@ -314,36 +406,46 @@ resolve_registry_pubkey_pem() {
     exit 1
   fi
   verify_registry_sequence_bounds "$seq" "${min_seq:-}" "${max_seq:-}"
-  require_cmd xxd
   local spki_der="$TMP_DIR/publisher.pub.der"
-  printf '302a300506032b6570032100%s' "$pub_hex" | xxd -r -p > "$spki_der"
+  hex_to_bin "302a300506032b6570032100${pub_hex}" > "$spki_der"
   openssl pkey -pubin -inform DER -in "$spki_der" -out "$out_pem" >/dev/null 2>&1
+}
+
+# Compare two normalized unsigned decimal integers (0 or [1-9][0-9]*) without float/64-bit overflow.
+uint_lt() {
+  LC_ALL=C awk -v a="$1" -v b="$2" \
+    'BEGIN { exit !(length(a) < length(b) || (length(a) == length(b) && ("s" a) < ("s" b))) }'
 }
 
 verify_registry_sequence_bounds() {
   local seq="$1"
   local min_seq="$2"
   local max_seq="$3"
-  # Fail closed unless min_sequence is a non-negative integer and max_sequence is either
-  # `null` (unbounded per org-release schema) or a non-negative integer >= min_sequence.
-  if [[ ! "$min_seq" =~ ^(0|[1-9][0-9]*)$ ]]; then
+  local u64_max="18446744073709551615"
+  # Fail closed unless min_sequence is a valid u64 and max_sequence is either
+  # `null` (unbounded) or a valid u64 >= min_sequence.
+  if uint_lt "$u64_max" "$seq"; then
+    echo "install.sh: manifest sequence ($seq) exceeds unsigned 64-bit limit" >&2
+    exit 1
+  fi
+  if [[ ! "$min_seq" =~ ^(0|[1-9][0-9]*)$ ]] || uint_lt "$u64_max" "$min_seq"; then
     echo "install.sh: trust registry key entry missing valid min_sequence bound" >&2
     exit 1
   fi
-  if [[ "$max_seq" != "null" && ! "$max_seq" =~ ^(0|[1-9][0-9]*)$ ]]; then
+  if [[ "$max_seq" != "null" ]] && { [[ ! "$max_seq" =~ ^(0|[1-9][0-9]*)$ ]] || uint_lt "$u64_max" "$max_seq"; }; then
     echo "install.sh: trust registry key entry missing valid max_sequence bound" >&2
     exit 1
   fi
-  if [[ "$seq" -lt "$min_seq" ]]; then
+  if uint_lt "$seq" "$min_seq"; then
     echo "install.sh: manifest sequence ($seq) below key min_sequence ($min_seq)" >&2
     exit 1
   fi
   if [[ "$max_seq" != "null" ]]; then
-    if [[ "$min_seq" -gt "$max_seq" ]]; then
+    if uint_lt "$max_seq" "$min_seq"; then
       echo "install.sh: trust registry key has invalid bounds (min_sequence=$min_seq > max_sequence=$max_seq)" >&2
       exit 1
     fi
-    if [[ "$seq" -gt "$max_seq" ]]; then
+    if uint_lt "$max_seq" "$seq"; then
       echo "install.sh: manifest sequence ($seq) exceeds key max_sequence ($max_seq)" >&2
       exit 1
     fi
@@ -435,14 +537,34 @@ verify_installed_binary_in_store() {
   esac
 }
 
+TRUSTED_CLI=""
+if TRUSTED_CLI="$(find_trusted_installed_cli)"; then
+  :
+else
+  TRUSTED_CLI=""
+fi
+
+# Fail closed BEFORE downloading or mutating any directories when no trust anchor is available.
+if [[ -z "$TRUSTED_CLI" && -z "$SHA256_INPUT" && -z "$PUBKEY_FILE" && "$ALLOW_UNSIGNED" -ne 1 ]]; then
+  echo "install.sh: cold install requires explicit out-of-band verification: pass --sha256 <file|hex> or --pubkey <publisher.pub.pem|trust-registry.json>" >&2
+  exit 1
+fi
+
 OUT_OF_BAND_VERIFIED=0
 ORIGINAL_BASENAME=""
 if [[ -z "$ARCHIVE" ]]; then
   if [[ -z "$VERSION" ]]; then
-    echo "install.sh: pass --archive <path.tar.gz> or --version <tag>" >&2
+    if [[ -n "$BASE_URL" ]]; then
+      echo "install.sh: --base-url requires --version <tag>" >&2
+      exit 2
+    fi
+    VERSION="$(resolve_latest_version "$REPO")"
+    echo "Resolved latest release: ${VERSION}" >&2
+  fi
+  if [[ ! "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$ ]]; then
+    echo "install.sh: invalid --version tag: $VERSION" >&2
     exit 2
   fi
-  require_cmd curl
   NAME="agentic-org-${VERSION}-${PLATFORM}-${ARCH}.tar.gz"
   if [[ -z "$BASE_URL" ]]; then
     BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
@@ -450,7 +572,7 @@ if [[ -z "$ARCHIVE" ]]; then
   ARCHIVE="$TMP_DIR/$NAME"
   ORIGINAL_BASENAME="$NAME"
   echo "Downloading ${BASE_URL}/${NAME} ..." >&2
-  curl -fsSL "${BASE_URL}/${NAME}" -o "$ARCHIVE"
+  download_file "${BASE_URL}/${NAME}" "$ARCHIVE"
 else
   ORIGINAL_BASENAME="$(basename "$ARCHIVE")"
 fi
@@ -477,11 +599,27 @@ fi
 TAR_VERBOSE_FILE="$TMP_DIR/tar.verbose"
 TAR_NAMES_FILE="$TMP_DIR/tar.names"
 validate_tar_entries "$STAGED_ARCHIVE" "$TAR_VERBOSE_FILE" "$TAR_NAMES_FILE"
-mkdir -p "$BIN_DIR"
 
 if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
    && grep -qxF "release.v1.sig" "$TAR_NAMES_FILE"; then
+  BOOTSTRAP_DIR="$TMP_DIR/bootstrap"
+  mkdir -p "$BOOTSTRAP_DIR"
+  chmod 0700 "$BOOTSTRAP_DIR"
+
+  # Always verify caller-supplied --pubkey when provided (even during upgrades).
+  if [[ -n "$PUBKEY_FILE" ]]; then
+    tar -xzf "$STAGED_ARCHIVE" -C "$BOOTSTRAP_DIR" release.v1.json release.v1.sig
+    verify_pubkey_signature "$BOOTSTRAP_DIR/release.v1.json" "$BOOTSTRAP_DIR/release.v1.sig" "$PUBKEY_FILE"
+    echo "Verified Ed25519 manifest signature." >&2
+  fi
+
+  if [[ -z "$TRUSTED_CLI" && "$OUT_OF_BAND_VERIFIED" -ne 1 && -z "$PUBKEY_FILE" ]]; then
+    echo "install.sh: cold install requires explicit out-of-band verification: pass --sha256 <file|hex> or --pubkey <publisher.pub.pem|trust-registry.json>" >&2
+    exit 1
+  fi
+
   echo "Installing signed release bundle into protected release store ..." >&2
+  mkdir -p "$BIN_DIR"
   if [[ -z "$STORE_DIR" ]]; then
     if [[ "$PLATFORM" == "linux" ]]; then
       mkdir -p "${HOME}/.local/share/agentic-org"
@@ -501,24 +639,10 @@ if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
   fi
 
   # On upgrades, always use the existing trusted installed binary — never execute the untrusted archive.
-  TRUSTED_CLI=""
-  if TRUSTED_CLI="$(find_trusted_installed_cli)"; then
+  if [[ -n "$TRUSTED_CLI" ]]; then
     echo "Using existing trusted installer: $TRUSTED_CLI" >&2
     INSTALL_JSON="$("$TRUSTED_CLI" "${INSTALL_ARGS[@]}")"
   else
-    # Cold bootstrap requires explicit out-of-band trust (--sha256 or --pubkey).
-    if [[ "$OUT_OF_BAND_VERIFIED" -ne 1 && -z "$PUBKEY_FILE" ]]; then
-      echo "install.sh: cold install requires explicit out-of-band verification: pass --sha256 <file|hex> or --pubkey <publisher.pub.pem|trust-registry.json>" >&2
-      exit 1
-    fi
-    BOOTSTRAP_DIR="$TMP_DIR/bootstrap"
-    mkdir -p "$BOOTSTRAP_DIR"
-    chmod 0700 "$BOOTSTRAP_DIR"
-    if [[ -n "$PUBKEY_FILE" ]]; then
-      tar -xzf "$STAGED_ARCHIVE" -C "$BOOTSTRAP_DIR" release.v1.json release.v1.sig
-      verify_pubkey_signature "$BOOTSTRAP_DIR/release.v1.json" "$BOOTSTRAP_DIR/release.v1.sig" "$PUBKEY_FILE"
-      echo "Verified Ed25519 manifest signature." >&2
-    fi
     tar -xzf "$STAGED_ARCHIVE" -C "$BOOTSTRAP_DIR" agentic-org
     if [[ ! -f "$BOOTSTRAP_DIR/agentic-org" || -L "$BOOTSTRAP_DIR/agentic-org" ]]; then
       echo "install.sh: extracted agentic-org is not a regular file" >&2
@@ -546,9 +670,10 @@ if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
   echo "Pinned release ${RELEASE_ID} in ${EFFECTIVE_STORE_DIR}." >&2
 else
   if [[ "$ALLOW_UNSIGNED" -ne 1 ]]; then
-    echo "install.sh: refusing unsigned archive (pass --allow-unsigned only for local development bundles)" >&2
+    echo "install.sh: refusing unsigned archive (pass --allow-unsigned only for unsigned local archives)" >&2
     exit 1
   fi
+  mkdir -p "$BIN_DIR"
   BUNDLE_NAME="${ORIGINAL_BASENAME%.tar.gz}"
   if [[ ! "$BUNDLE_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$ ]]; then
     echo "install.sh: unsafe archive filename: $BUNDLE_NAME" >&2

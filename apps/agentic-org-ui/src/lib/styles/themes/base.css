@@ -574,61 +574,14 @@ html[data-ui-theme='ocean'] {
 }
 
 /*
- * Light-scheme readability bridge for existing Tailwind Plus screens (/projects, /work,
- * /offices, /org-chart, /agents, /chat, /processes) whenever ANY light theme (Report) is active.
+ * Light-scheme background and primary CTA contrast for light themes (Report).
  */
 html.light {
 	background: var(--exec-bg);
 }
 
-html.light .exec-legacy-compat .text-white {
-	color: #0b101b;
-}
-
-html.light .exec-legacy-compat .text-gray-300 {
-	color: #2c3646;
-}
-
-html.light .exec-legacy-compat .text-gray-400 {
-	color: #475569;
-}
-
-html.light .exec-legacy-compat .text-gray-500 {
-	color: #64748b;
-}
-
-html.light .exec-legacy-compat .bg-gray-800 {
-	background-color: #ffffff;
-}
-
-html.light .exec-legacy-compat .bg-gray-900,
-html.light .exec-legacy-compat .bg-gray-950 {
-	background-color: #f9fafc;
-}
-
-html.light .exec-legacy-compat .bg-white\/5 {
-	background-color: rgba(11, 16, 27, 0.04);
-}
-
-html.light .exec-legacy-compat .bg-white\/10 {
-	background-color: rgba(11, 16, 27, 0.07);
-}
-
-html.light .exec-legacy-compat .border-white\/5,
-html.light .exec-legacy-compat .border-white\/10,
-html.light .exec-legacy-compat .divide-white\/5 > :not(:first-child) {
-	border-color: #e2e7ef;
-}
-
-html.light .exec-legacy-compat .ring-white\/5,
-html.light .exec-legacy-compat .ring-white\/10 {
-	--tw-ring-color: #dce2ec;
-}
-
 /* Preserve white text on intentional solid primary buttons inside any light theme */
-html.light .exec-legacy-compat button.bg-indigo-500,
 html.light .exec-legacy-compat button.bg-primary,
-html.light .exec-legacy-compat a.bg-indigo-500,
 html.light .exec-legacy-compat .exec-cta:not(.exec-cta-glass) {
 	color: #ffffff;
 }

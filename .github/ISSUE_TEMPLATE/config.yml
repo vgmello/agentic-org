@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a Security Vulnerability
+    url: https://github.com/vgmello/agentic-org/security/advisories/new
+    about: Please report security issues privately via GitHub Security Advisories instead of opening a public issue.

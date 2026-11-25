@@ -94,11 +94,9 @@ add a `// SAFETY:` comment directly on the `unsafe` block explaining why its
 preconditions hold. Use a narrowly scoped `#[expect(lint_name, reason = "...")]`
 for unconditional exceptions (or `allow(..., reason = "...")` when a lint fires
 only on a subset of targets/profiles), and remove expectations when they no
-longer apply. `crates/org-platform/tests/rust_hygiene.rs` (run in workspace tests
-and `kit_hooks.py check`) enforces cross-platform `allow` reasons and
-`write_volatile` confinement via `syn`/`proc_macro2`, and
-`.agents/agent-kit/runtime/kit_rust_hygiene.py` verifies `[lints] workspace = true` on
-every workspace member manifest. When editing Linux platform
+longer apply. `crates/org-platform/tests/rust_hygiene.rs` (run in workspace tests)
+enforces cross-platform `allow` reasons and `write_volatile` confinement via
+`syn`/`proc_macro2`. When editing Linux platform
 adapters on macOS, also run
 `cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-gnu -- -D warnings`.
 The [unsafe documentation pilot inventory](docs/unsafe-documentation-pilot.md)
@@ -131,14 +129,11 @@ Both harnesses get the same tools from committed configuration:
 
 | Tool | Claude Code | Codex |
 | --- | --- | --- |
-| Instructions | `CLAUDE.md` imports `AGENTS.md` | `AGENTS.md` |
-| Required-tools check (`.agents/check-tools.sh`) | session start and Edit/Write hooks in `.claude/settings.json` | run with `--codex` before work |
-| Repowise lookup (`starter_kit_context`) | `.mcp.json` | `.codex/config.toml` |
+| Instructions | `AGENTS.md` (with `.claude -> .agents` bootstrap) | `AGENTS.md` |
+| Required-tools check (`.agents/check-tools.sh`) | session start and Edit/Write hooks in `.agents/settings.json` | run with `--codex` before work |
 | Svelte MCP, pinned `@sveltejs/mcp` | `.mcp.json` | `.codex/config.toml` |
-| Skills (`.agents/skills`) | committed links in `.claude/skills` | `.agents/skills` |
-| Rust, TypeScript and Svelte language servers | LSP plugins in `.claude/settings.json` (Svelte: the repository's `svelte-lsp` plugin in `.claude/marketplace`) | `mcp-language-server` entries in `.codex/config.toml` |
-| Kit hooks (secret-file guard, format, verify, checkpoint) | `.claude/settings.json` | `.codex/hooks.json` |
-| Roles | `.claude/agents` | `.codex/agents` |
+| Skills (`.agents/skills`) | via `.claude -> .agents` symlink | `.agents/skills` |
+| Rust, TypeScript and Svelte language servers | LSP plugins in `.agents/settings.json` (Svelte: the repository's `svelte-lsp` plugin in `.agents/marketplace`) | `mcp-language-server` entries in `.codex/config.toml` |
 
 Trust the project when Claude Code asks, so it installs the plugins and starts the
 servers. Install the binaries both harnesses run:
@@ -147,7 +142,6 @@ servers. Install the binaries both harnesses run:
 rustup component add rust-analyzer rust-src
 bun add --global --exact typescript@6.0.3 typescript-language-server@6.1.0 svelte-language-server@0.18.6
 go install github.com/isaacphi/mcp-language-server@v0.1.1
-python3 .agents/agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs
 ```
 
 Codex needs `mcp-language-server`; Claude Code does not. Run `bun install` in
@@ -170,21 +164,3 @@ Newly installed skills are available to an agent from its next turn.
 
 `cargo-nextest` is optional for local test selection and reporting. It does not
 replace the repository's required `cargo test --workspace` gate.
-
-### The principal designer agent
-
-For a new or changed screen, component or flow in `apps/agentic-org-ui`, and for UX
-reviews, a lead may dispatch the `principal-designer` agent when it is useful. It is defined
-for both tools:
-`.claude/agents/principal-designer.md` for Claude Code and
-`.codex/agents/principal-designer.toml` for Codex. Both are thin: they point at one persona,
-`.agents/agent-kit/project-skills/principal-designer/`, so the knowledge is maintained in one
-place. The assignment names the job: design (propose), implement (build) or review
-(read-only). The agent sorts what a screen shows by what the data is worth to the person,
-weighs Fitts's, Hick's and Jakob's laws, proximity and the isolation effect while building,
-and runs a measured consistency audit before handing over. Product specs outrank it. The
-lead still owns the increment, file ownership and the review gates in `AGENTS.md`.
-
-The persona's third-party UI/UX Pro Max companion skill is disabled (owner, 2026-11-18): agents
-do not check for, install or use it. Its former instructions stay commented out in the persona
-file for reference.

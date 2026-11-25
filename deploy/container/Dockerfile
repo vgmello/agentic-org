@@ -1,4 +1,4 @@
-# Agentic Org as the main process of a container (ADR-0017 decisions 4 and 10, LNX-2).
+# Agentic Org container image (host, web service, office worker, and agent-os CLI).
 #
 # Build, from the repository root, after building the four executables for Linux and the UI:
 #
@@ -51,6 +51,7 @@ COPY --chown=root:root --chmod=0755 \
 # The web process serves the UI build beside its executable, and nothing else.
 COPY --chown=root:root ${UI}/ /opt/agentic-org/bin/ui/
 RUN chmod -R u=rwX,go=rX /opt/agentic-org/bin/ui
+COPY --chown=root:root --chmod=0644 LICENSE NOTICE /opt/agentic-org/
 COPY --chown=root:root --chmod=0644 deploy/container/setup.json /etc/agentic-org/setup.json
 
 # `agent-os` is first on an agent's PATH.
