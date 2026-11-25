@@ -10,9 +10,10 @@ import { removeTeam } from "../pages/projects.js";
 import { addIdeationComment, changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkCounts, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
-import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, setSheetReturn } from "./dialogs.js";
+import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, openShortcutsHelp, setSheetReturn } from "./dialogs.js";
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
 import { homeSearchField, homeSearchInput, homeSearchResults, pageSearchInput, render, route } from "./router.js";
+import { UTIL, askTessInPanel, clearCompanionHistory, clearReadNotifications, closeCompanion, closeNotificationsPopover, dismissCompanionContext, handleCompanionEscape, handleCompanionInput, isCompanionModal, markAllNotificationsRead, markNotificationRead, openTessPanel, toggleExpandCompanion, toggleNotificationsPopover, toggleTessPanel, toggleTessPillVisible } from "./topbar-utils.js";
 import { ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
 import { spotQueue, toast } from "../ui.js";
 
@@ -338,11 +339,30 @@ const CLICK_ACTIONS = {
   "chat-jump": (_e, t) => openCmdk("#", "cmd", t, false),
   "search-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
   "cmdk-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
-  "cmdk-open-ai": (_e, t) => openCmdk("", "ai", t),
+  "cmdk-open-ai": (_e, t) => openTessPanel("", t),
   "cmdk-close": () => closeCmdk(true),
   "cmdk-mode": (_e, _t, _id, v) => setCmdkMode(v),
   "cmdk-ai-ask": (_e, _t, _id, v) => askInCmdk(v),
-  "brief-ai-ask": (_e, _t, _id, v) => { openCmdk("", "ai"); askInCmdk(v); },
+  "brief-ai-ask": (_e, _t, _id, v) => openTessPanel(v),
+  "tess-toggle": (_e, t) => toggleTessPanel(t),
+  "tess-close": () => { if (!handleCompanionEscape()) closeCompanion(true); },
+  "cmp-close": () => closeCompanion(true),
+  "cmp-restore": (_e, t) => openTessPanel("", t),
+  "cmp-expand": () => toggleExpandCompanion(),
+  "cmp-clear": () => clearCompanionHistory(),
+  "cmp-ask-chip": (_e, _t, _id, v) => askTessInPanel(v),
+  "cmp-dismiss-ctx": (_e, _t, _id, v) => dismissCompanionContext(v),
+  "toggle-tess-pill": (_e, t) => {
+    toggleTessPillVisible();
+    if (t.matches('[role="switch"]')) render(false);
+    toast(S.showTessPill ? "Tess shown at bottom-right." : "Tess hidden. Press ⌘/ anytime to open.", "sparkle");
+  },
+  "shortcuts-help": (_e, t) => { closeMenus(); closeNotificationsPopover(false); openShortcutsHelp(t); },
+  "notif-toggle": (_e, t) => toggleNotificationsPopover(t),
+  "notif-close": () => closeNotificationsPopover(true),
+  "notif-open": (_e, _t, id) => markNotificationRead(id),
+  "notif-mark-all": () => markAllNotificationsRead(),
+  "notif-clear-read": () => clearReadNotifications(),
   "brief-lens": (_e, _t, _id, v) => { S.briefLens = v; S.briefCopied = false; render(false); document.querySelector(`[data-act="brief-lens"][data-v="${CSS.escape(v || "")}"]`)?.focus(); },
   "brief-expand": () => { S.briefExpanded = !S.briefExpanded; render(false); },
   "ai-copy-brief": () => handleCopyBrief(),
@@ -376,6 +396,14 @@ function handleBackdropOrJumpClick(e) {
   return false;
 }
 
+function dismissTopbarOverlaysForLink(link) {
+  const act = link.dataset.act;
+  if (act === "notif-open" && link.dataset.id) { markNotificationRead(link.dataset.id); return; }
+  if (act === "notif-close") { closeNotificationsPopover(false); return; }
+  if (link.closest("#tess-panel") && isCompanionModal()) closeCompanion(false);
+  if (act === "close-sheet") closeSheet();
+}
+
 function handleHashLinkClick(e) {
   const link = e.target.closest('a[href^="#/"]');
   if (!link || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false;
@@ -383,6 +411,7 @@ function handleHashLinkClick(e) {
   e.preventDefault();
   document.body.classList.remove("drawer");
   closeMenus();
+  dismissTopbarOverlaysForLink(link);
   if (link.dataset.act === "insight-drill") { updateProjectInsights(new URLSearchParams(href.split("?")[1]), "insights-usage-heading"); return true; }
   if (location.hash !== href) location.hash = href;
   else if (link.matches(".work-item-link")) document.getElementById("work-detail-title")?.focus({ preventScroll: true });
@@ -400,6 +429,7 @@ document.addEventListener("click", (e) => {
   if (handleBackdropOrJumpClick(e) || handleHashLinkClick(e)) return;
   const t = e.target.closest("[data-act]");
   if (!e.target.closest(".menu-wrap")) closeMenus();
+  if (UTIL.notifOpen && !e.target.closest("#notif-wrap, #notif-popover")) closeNotificationsPopover(false);
   if (!e.target.closest(".search")) {
     if (SR.open) closeSearch();
     if (document.body.classList.contains("searching")) { const q = document.getElementById("q"); if (q) q.value = ""; SR.q = ""; document.body.classList.remove("searching"); }
@@ -452,6 +482,7 @@ document.addEventListener("input", (e) => {
   if (target.form?.dataset.form === "insight-range") target.form.elements.to.setCustomValidity("");
   if (target.name === "title" && target.form?.dataset.form === "work-create") target.setCustomValidity("");
   INPUT_BY_ID[target.id]?.(target);
+  if (handleCompanionInput(target)) return;
   if (target === homeSearchInput && !CMDK.inline) { openCmdk(homeSearchInput.value, "cmd", homeSearchInput, true); return; }
   if (target === homeSearchInput || target.id === "cmdk-input") { CMDK.q = target.value; CMDK.active = 0; renderCmdk(); }
 });
@@ -518,6 +549,10 @@ document.addEventListener("submit", (e) => {
     return;
   }
   if (e.target.dataset.form === "work-create") { createWorkTask(e.target); return; }
+  if (e.target.dataset.form === "tess-panel-ask") {
+    askTessInPanel(document.getElementById("tess-panel-input")?.value || "");
+    return;
+  }
   if (e.target.dataset.form === "send") sendChatMessage(e.target);
 });
 
@@ -597,6 +632,8 @@ function dismissLocalEscapeTarget(e) {
 
 function handleEscapeKeydown(e) {
   if (dismissLocalEscapeTarget(e)) return;
+  if (UTIL.notifOpen) { e.preventDefault(); closeNotificationsPopover(true); return; }
+  if (handleCompanionEscape()) { e.preventDefault(); return; }
   if (isAgentFocusOpen()) { e.preventDefault(); closeAgentFocus(true); return; }
   const closeThread = e.target.closest(".thread")?.querySelector('[data-act="thread-close"]');
   if (closeThread) { e.preventDefault(); closeThread.click(); return; }
@@ -689,14 +726,46 @@ function isNewTaskKey(e) {
   return e.key === "n" || e.key === "N" || (!/^[a-z]$/i.test(e.key) && e.code === "KeyN");
 }
 
+function tryShortcutsHelpKey(e) {
+  if (e.key !== "?" || e.isComposing || e.repeat || inTextField(e.target) || overlayOpen()) return false;
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  e.preventDefault();
+  openShortcutsHelp(document.activeElement);
+  return true;
+}
+
 function handleSingleKeyShortcut(e) {
-  if (isSingleKeyBlocked(e) || tryPunctuationShortcut(e)) return;
+  if (tryShortcutsHelpKey(e) || isSingleKeyBlocked(e) || tryPunctuationShortcut(e)) return;
   if (e.metaKey || e.ctrlKey || e.altKey || tryInboxApprovalShortcut(e)) return;
   if (isNewTaskKey(e)) { e.preventDefault(); openSmartTaskComposer(document.activeElement); }
 }
 
 function isCmdKCombo(e) {
   return (e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "k" || e.key === "K");
+}
+
+function isCmdSlashCombo(e) {
+  return (e.metaKey || e.ctrlKey) && !e.altKey && e.key === "/";
+}
+
+function isTessExpandCombo(e) {
+  return (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.key === "e" || e.key === "E" || e.key === "m" || e.key === "M");
+}
+
+function tryTessGlobalShortcut(e) {
+  if (isCmdSlashCombo(e)) {
+    e.preventDefault();
+    if (CMDK.open) { const q = CMDK.q; closeCmdk(false); openTessPanel(q); }
+    else toggleTessPanel(document.activeElement);
+    return true;
+  }
+  if (isTessExpandCombo(e)) {
+    e.preventDefault();
+    if (CMDK.open) closeCmdk(false);
+    toggleExpandCompanion();
+    return true;
+  }
+  return false;
 }
 
 function handleSearchGlobalKeydown(e) {
@@ -707,6 +776,7 @@ function handleSearchGlobalKeydown(e) {
     else openCmdk(pageInput?.value || "");
     return true;
   }
+  if (tryTessGlobalShortcut(e)) return true;
   if (!CMDK.open && e.target === homeSearchInput && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
     e.preventDefault(); openCmdk(homeSearchInput.value, "cmd", homeSearchInput, true); return true;
   }
@@ -747,7 +817,9 @@ if (window.matchMedia) {
   if (mqp.addEventListener) mqp.addEventListener("change", applyShortcuts); else if (mqp.addListener) mqp.addListener(applyShortcuts);
 }
 window.addEventListener("hashchange", () => {
-  closeCmdk(false); document.querySelector(".work-task-dialog[open]")?.close(); document.body.classList.remove("drawer");
+  closeCmdk(false); closeNotificationsPopover(false);
+  if (isCompanionModal()) closeCompanion(false);
+  document.querySelector(".work-task-dialog[open]")?.close(); document.body.classList.remove("drawer");
   S.thread = null; S.replying = null; S.replyMode = null; S.confirmDeny = null;
   IN.forEach((i) => { if (i.handled) i.handledNow = false; });
   render(true);

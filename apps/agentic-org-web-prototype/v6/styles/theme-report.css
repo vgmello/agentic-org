@@ -849,36 +849,35 @@ html[data-theme="report-dark"] .cmdk-opt-tag { background: #243144; color: #99a1
 html[data-theme="report-dark"] .cmdk-foot { background: #131b27; border-top-color: rgba(255, 255, 255, .07); color: #99a1af; }
 html[data-theme="report-dark"] .cmdk-foot kbd { background: #1e2939; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14); color: #d1d5dc; }
 
-/* Separate the workspace palette from the dark page behind it. */
+/* Separate the workspace palette from the dark page behind it with crisp, non-washed contrast. */
 html:is([data-theme="classic"], [data-theme="report-dark"]) {
   & #cmdk-dialog {
-    border: 1px solid #8393ab;
-    box-shadow: 0 24px 60px -16px rgba(0, 0, 0, .58);
-  }
-  &[data-interior-page] {
-    --workspace-header: #2d3b50;
-    --workspace-header-divider: #7b8ca4;
-    --workspace-mode-selected: #363e60;
+    background: #182230;
+    border: 1px solid rgba(255, 255, 255, .16);
+    box-shadow: 0 28px 72px -12px rgba(0, 0, 0, .72);
   }
   & .cmdk-tabs {
-    background: var(--workspace-header, #34445a);
-    border-bottom-color: var(--workspace-header-divider, #8b9cb3);
+    background: #131b27;
+    border-bottom: 1px solid rgba(255, 255, 255, .09);
   }
-  & .cmdk-tab-grp { background: #222e41; box-shadow: inset 0 0 0 1px #56667d; }
-  & .cmdk-tab { color: #d9e1ec; }
+  & .cmdk-tab-grp {
+    background: #1d2839;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10);
+  }
+  & .cmdk-tab { color: #a7b6cc; }
   & .cmdk-tab:hover { color: #ffffff; }
   & .cmdk-tab[aria-selected="true"] {
-    background: var(--workspace-mode-selected, #414673);
+    background: #2b3a54;
     color: #ffffff;
-    box-shadow: inset 0 0 0 1px #93a1d8;
+    box-shadow: inset 0 0 0 1px rgba(139, 152, 255, .44);
   }
   & .cmdk-tab[aria-selected="true"] .ic { color: var(--tone-accent-ink); }
   & .cmdk-esc {
-    background: #26354a;
-    color: #e5eaf1;
-    box-shadow: inset 0 0 0 1px #8999af;
+    background: #1d2839;
+    color: #d6dfec;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .15);
   }
-  & .cmdk-esc:hover { background: #41546d; color: #ffffff; }
+  & .cmdk-esc:hover { background: #2b3a54; color: #ffffff; }
 }
 
 /* Report Night Full-Width Report Canvas (Exact Classic Palette) */

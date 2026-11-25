@@ -1,5 +1,6 @@
-import { IN, M, OFFICES, OPEN, P, STATUSES, TEAMS, W } from "../data.js";
+import { IN, M, OFFICES, P, STATUSES, TEAMS, W, OPEN } from "../data.js";
 import { own, render, route } from "../shell/router.js";
+import { finishBackgroundJob, startBackgroundJob } from "../shell/topbar-utils.js";
 import { S } from "../state.js";
 import { av, esc, ic, memberIds, toast } from "../ui.js";
 import { persistCreatedWorkTask, workHref, workSelection } from "./work.js";
@@ -23,7 +24,6 @@ const AGENT_ROUTING_RULES = [
 const COMPLEX_INTAKE_RE = /\b(design|architect|policy|feature|workflow|lifecycle|refactor|sync|federation|migration|explore|proposal|strategy|system|redesign|research|refine|multi|permission|security|archive|ideation|draft|inbox|routing)\b/i;
 
 let STC = null;
-const tessIntakes = [];
 
 function activeProjects() {
   return Object.entries(P).filter(([, pr]) => !pr.archived);
@@ -195,100 +195,77 @@ function addDraftInboxNotice(created, leadId) {
   return inboxId;
 }
 
-function renderTessIntakeTray() {
-  let tray = document.getElementById("tess-intake-tray");
-  if (!tessIntakes.length) { tray?.remove(); return; }
-  if (!tray) {
-    tray = document.createElement("aside");
-    tray.id = "tess-intake-tray";
-    tray.className = "tess-intake-tray";
-    tray.setAttribute("aria-label", "Tess background task intake");
-    document.body.appendChild(tray);
-    tray.addEventListener("click", handleTrayClick);
-  }
-  const latest = tessIntakes[0];
-  const activeCount = tessIntakes.filter((i) => i.state === "processing").length;
-  if (activeCount > 0) {
-    const label = activeCount > 1 ? `Tess refining ${activeCount} tasks…` : `Tess refining: “${latest.shortTitle}”`;
-    tray.innerHTML = `<div class="tess-pill is-busy">
-      <span class="tess-pill-dot" aria-hidden="true"></span>
-      ${ic("sparkle", "ic14")}
-      <span class="tess-pill-txt">${esc(label)}</span>
-    </div>`;
-    return;
-  }
-  const routeTxt = latest.mode === "draft"
-    ? `Draft ${latest.taskId} with ${M[latest.leadId]?.name || "lead"}`
-    : `Filed ${latest.taskId}${latest.who && M[latest.who] ? " · " + M[latest.who].name : ""}`;
-  tray.innerHTML = `<div class="tess-pill is-done" data-mode="${latest.mode}">
-    ${ic(latest.mode === "draft" ? "pencil" : "check-circle", "ic14")}
-    <span class="tess-pill-txt">${esc(routeTxt)}</span>
-    <a class="tess-pill-link" href="${esc(latest.href)}" data-tray-act="open">${latest.mode === "draft" ? "Open draft" : "Open"}</a>
-    <button class="tess-pill-x" type="button" data-tray-act="dismiss" aria-label="Dismiss">${ic("x", "ic14")}</button>
-  </div>`;
+function finalizeDraftIntake(intake, ctx) {
+  const leadId = tessPickRefinementLead(intake.prompt, ctx.proj, intake.mentions, intake.pinnedAssignee);
+  const created = persistCreatedWorkTask({
+    title: ctx.title,
+    description: tessBuildDescription(intake.prompt, ctx.kind, ctx.proj),
+    kind: ctx.kind,
+    proj: ctx.proj,
+    who: leadId,
+    requestedBy: "you",
+    status: "Draft",
+    pri: ctx.effPri,
+    etaHours: null,
+    criteria: tessBuildCriteria(intake.prompt, ctx.kind),
+    ideationComments: seedIdeationComments(leadId, intake.prompt, ctx.proj, intake.mentions),
+    draftPrompt: intake.prompt.trim(),
+  });
+  addDraftInboxNotice(created, leadId);
+  const leadName = M[leadId]?.name || "lead";
+  finishBackgroundJob(intake.id, {
+    title: `Draft ${created.id} ready with ${leadName}`,
+    summary: `${created.title} — open to refine scope or publish to To do.`,
+    href: `#/work?item=${created.id}`,
+    icon: "pencil",
+    tone: "accent",
+  });
+  toast(`Draft ${created.id} opened with ${leadName} · Ready to refine`, "sparkle");
 }
 
-function handleTrayClick(e) {
-  const act = e.target.closest("[data-tray-act]")?.dataset.trayAct;
-  if (act === "dismiss") {
-    tessIntakes.length = 0;
-    renderTessIntakeTray();
-  } else if (act === "open") {
-    setTimeout(() => { tessIntakes.length = 0; renderTessIntakeTray(); }, 150);
-  }
+function finalizeFastIntake(intake, ctx) {
+  const who = tessPickAssignee(intake.prompt, ctx.proj, intake.mentions, intake.pinnedAssignee);
+  const status = ctx.kind === "bug" ? STATUSES.bug[0] : STATUSES.task[0];
+  const created = persistCreatedWorkTask({
+    title: ctx.title,
+    description: tessBuildDescription(intake.prompt, ctx.kind, ctx.proj),
+    kind: ctx.kind,
+    proj: ctx.proj,
+    who,
+    requestedBy: "you",
+    status,
+    pri: ctx.effPri,
+    etaHours: 2,
+    criteria: tessBuildCriteria(intake.prompt, ctx.kind),
+  });
+  const assigneeNote = who && M[who] ? ` · Assigned to ${M[who].name}` : "";
+  finishBackgroundJob(intake.id, {
+    title: `Tess filed ${created.id}`,
+    summary: `${created.title}${assigneeNote}`,
+    href: `#/work?item=${created.id}`,
+    icon: "check-circle",
+    tone: "ok",
+  });
+  toast(`Tess filed ${created.id}${assigneeNote}`, "check-circle");
 }
 
 function finalizeAsyncIntake(intake) {
   const kind = tessInferType(intake.prompt, intake.pinnedType);
   const pri = tessInferPriority(intake.prompt, kind, intake.pinnedPriority);
   const severity = kind === "bug" ? tessInferSeverity(intake.prompt, intake.pinnedSeverity) : null;
-  const proj = intake.proj === "none" ? activeProjects()[0][0] : intake.proj;
-  const title = tessCleanTitle(intake.prompt);
-  const complex = isComplexIntake(intake.prompt, kind, intake.mentions);
-
-  if (complex) {
-    const leadId = tessPickRefinementLead(intake.prompt, proj, intake.mentions, intake.pinnedAssignee);
-    const created = persistCreatedWorkTask({
-      title,
-      description: tessBuildDescription(intake.prompt, kind, proj),
-      kind,
-      proj,
-      who: leadId,
-      requestedBy: "you",
-      status: "Draft",
-      pri: kind === "bug" && severity ? severity : pri,
-      etaHours: null,
-      criteria: tessBuildCriteria(intake.prompt, kind),
-      ideationComments: seedIdeationComments(leadId, intake.prompt, proj, intake.mentions),
-      draftPrompt: intake.prompt.trim(),
-    });
-    addDraftInboxNotice(created, leadId);
-    Object.assign(intake, { state: "done", mode: "draft", taskId: created.id, leadId, href: `#/work?item=${created.id}` });
-    toast(`Draft ${created.id} opened with ${M[leadId]?.name || "lead"} · Ready to refine`, "sparkle");
-  } else {
-    const who = tessPickAssignee(intake.prompt, proj, intake.mentions, intake.pinnedAssignee);
-    const status = kind === "bug" ? STATUSES.bug[0] : STATUSES.task[0];
-    const created = persistCreatedWorkTask({
-      title,
-      description: tessBuildDescription(intake.prompt, kind, proj),
-      kind,
-      proj,
-      who,
-      requestedBy: "you",
-      status,
-      pri: kind === "bug" && severity ? severity : pri,
-      etaHours: 2,
-      criteria: tessBuildCriteria(intake.prompt, kind),
-    });
-    Object.assign(intake, { state: "done", mode: "fast", taskId: created.id, who, href: `#/work?item=${created.id}` });
-    toast(`Tess filed ${created.id}${who && M[who] ? ` · Assigned to ${M[who].name}` : ""}`, "check-circle");
-  }
+  const ctx = {
+    kind,
+    proj: intake.proj === "none" ? activeProjects()[0][0] : intake.proj,
+    title: tessCleanTitle(intake.prompt),
+    effPri: kind === "bug" && severity ? severity : pri,
+  };
+  if (isComplexIntake(intake.prompt, kind, intake.mentions)) finalizeDraftIntake(intake, ctx);
+  else finalizeFastIntake(intake, ctx);
   render(false);
-  renderTessIntakeTray();
 }
 
 function enqueueTessIntake(state) {
-  const shortTitle = tessCleanTitle(state.prompt).slice(0, 34);
+  const shortTitle = tessCleanTitle(state.prompt).slice(0, 38);
   const intake = {
     id: "intake-" + Date.now(),
     state: "processing",
@@ -302,10 +279,15 @@ function enqueueTessIntake(state) {
     pinnedPriority: state.pinnedPriority,
     pinnedSeverity: state.pinnedSeverity,
   };
-  tessIntakes.unshift(intake);
-  renderTessIntakeTray();
-  toast("Sent to Tess — refining in background", "sparkle");
-  const delay = isComplexIntake(intake.prompt, intake.pinnedType || "task", intake.mentions) ? 1400 : 900;
+  const complex = isComplexIntake(intake.prompt, intake.pinnedType || "task", intake.mentions);
+  startBackgroundJob({
+    id: intake.id,
+    title: `Refining: ${shortTitle}`,
+    step: complex ? "Tess routing to project lead for Draft…" : "Tess classifying & assigning…",
+    source: "tess",
+  });
+  toast("Sent to Tess — track live progress in Notifications", "sparkle");
+  const delay = complex ? 1600 : 1000;
   setTimeout(() => finalizeAsyncIntake(intake), delay);
 }
 

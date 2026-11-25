@@ -118,12 +118,16 @@ function toggleNavPinned() {
   if (!S.navPinned) S.navHover = false;
   try { localStorage.setItem(NAV_PIN_STORE, S.navPinned ? "1" : "0"); } catch (e) {}
   applyNavCollapsed();
+  window.dispatchEvent(new Event("resize"));
 }
 const SR = { q: "", open: false, active: 0, flat: [] };
 const KEYS_STORE = "agentic-org.singleKeyShortcuts";
+const TESS_PILL_STORE = "agentic-org.v6.showTessPill";
 function readSingleKey() { try { return localStorage.getItem(KEYS_STORE) !== "0"; } catch (e) { return true; } }
 function writeSingleKey(on) { try { localStorage.setItem(KEYS_STORE, on ? "1" : "0"); } catch (e) {} }
 S.singleKey = readSingleKey();
+S.showTessPill = true;
+try { S.showTessPill = localStorage.getItem(TESS_PILL_STORE) !== "0"; } catch (e) {}
 const CHAT_SEND_STORE = "agentic-org.v6.chatSendShortcut";
 const CHAT_SEND_SHORTCUTS = {
   either: { label: "Ctrl or Command + Enter", keys: "Control+Enter Meta+Enter" },
@@ -141,11 +145,19 @@ function applyShortcuts() {
   const q = document.getElementById("q"), nb = document.getElementById("new-btn");
   const nav = document.getElementById("nav");
   if (q) { if (on && !phone) q.setAttribute("aria-keyshortcuts", "/"); else q.removeAttribute("aria-keyshortcuts"); }
-  if (nb) { if (on) { nb.setAttribute("aria-keyshortcuts", "N"); nb.title = "New · N"; } else { nb.removeAttribute("aria-keyshortcuts"); nb.title = "New"; } }
+  if (nb) {
+    if (on) { nb.setAttribute("aria-keyshortcuts", "N"); nb.dataset.tip = "New task · N"; nb.removeAttribute("title"); }
+    else { nb.removeAttribute("aria-keyshortcuts"); delete nb.dataset.tip; nb.title = "New task"; }
+  }
+  const navBtn = document.getElementById("nav-collapse-btn");
+  if (navBtn) {
+    if (on) navBtn.dataset.tip = `${S.navPinned ? "Auto-hide sidebar" : "Pin sidebar"} · S`;
+    else delete navBtn.dataset.tip;
+  }
   if (on) nav.setAttribute("aria-keyshortcuts", "S"); else nav.removeAttribute("aria-keyshortcuts");
 }
 const inTextField = (el) => !!el && (["input", "textarea", "select"].includes((el.tagName || "").toLowerCase()) || !!el.isContentEditable);
-const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu:not([hidden]), .af-shell") || document.body.classList.contains("drawer"));
+const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu:not([hidden]), .af-shell, #notif-popover:not([hidden]), #tess-panel.is-expanded:not([hidden])") || document.body.classList.contains("drawer"));
 const qs = () => new URLSearchParams((location.hash.split("?")[1]) || "");
 
 export {
@@ -159,6 +171,7 @@ export {
   ORG_NAME_STORE,
   S,
   SR,
+  TESS_PILL_STORE,
   THEME_OPTIONS,
   WORK_ARCHIVED_STORE,
   WORK_DIVIDERS_STORE,

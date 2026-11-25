@@ -9,21 +9,14 @@ import { effectiveHealth, esc, ic, seg, unhandled } from "../ui.js";
 const NAV_CAP = 5;
 const TEAM_ICON = { leadership: "flag", product: "adjustments", platform: "terminal", app: "bolt", quality: "doc-check" };
 function syncNavSearchChrome(homeError, r0) {
-  const aiBtn = document.getElementById("cmdk-ai-trigger");
   const cmdkShell = document.getElementById("cmdk-shell");
   const cmdkTr = document.getElementById("cmdk-trigger");
   homeSearchField.classList.toggle("is-offline", homeError);
   homeSearchInput.disabled = homeError;
-  homeSearchInput.placeholder = homeError ? "HQ office offline — search & AI unavailable"
+  homeSearchInput.placeholder = homeError ? "HQ office offline — search unavailable"
     : r0 === "home" ? "Search, run a command, or ask Tess…" : "Search…";
   if (cmdkShell) cmdkShell.classList.toggle("is-offline", homeError);
   if (cmdkTr) { cmdkTr.classList.toggle("is-offline", homeError); cmdkTr.disabled = homeError; }
-  if (aiBtn) {
-    aiBtn.classList.toggle("is-offline", homeError);
-    aiBtn.disabled = homeError;
-    aiBtn.innerHTML = homeError ? `${ic("offline", "ic14")}<span>Offline</span>` : `${ic("sparkle", "ic14")}<span>Ask</span>`;
-    aiBtn.title = homeError ? "Tess unavailable while HQ office is offline" : "Ask Tess";
-  }
   if (homeError && CMDK.open) closeCmdk(false);
 }
 
