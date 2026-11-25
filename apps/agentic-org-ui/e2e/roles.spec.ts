@@ -536,3 +536,37 @@ test('SIGN-19: cross-tab sign-out asks before discarding open or retained role d
 	await expect(page.locator('body')).not.toContainText('Secret draft body');
 	await otherTab.close();
 });
+
+test('SIGN-20: overlapping sign-out confirmations dismiss on the other tab once one tab confirms', async ({
+	page,
+	context
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/roles');
+	await page.getByRole('button', { name: 'New role…' }).click();
+	await editor(page).getByLabel('Name').fill('Overlap Draft');
+	await editor(page).getByRole('button', { name: 'Close' }).click();
+	await expect(editor(page)).toBeHidden();
+
+	const otherTab = await context.newPage();
+	await visit(otherTab, '/settings/roles');
+
+	// Open the sign-out confirmation dialog in BOTH tabs simultaneously.
+	await page.getByRole('button', { name: 'You · Owner' }).click();
+	await page.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
+	const tab1Confirm = page.getByRole('heading', { name: /Sign out\?/ });
+	await expect(tab1Confirm).toBeVisible();
+
+	await otherTab.getByRole('button', { name: 'You · Owner' }).click();
+	await otherTab.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
+	const tab2Confirm = otherTab.getByRole('heading', { name: /Sign out\?/ });
+	await expect(tab2Confirm).toBeVisible();
+
+	// Confirm in Tab 2: Tab 1 must navigate to /sign-in with its confirmation modal dismissed.
+	await otherTab.getByRole('button', { name: 'Sign out', exact: true }).click();
+	await expect(otherTab).toHaveURL(/\/sign-in/);
+	await expect(page).toHaveURL(/\/sign-in/);
+	await expect(tab1Confirm).toBeHidden();
+	await expect(page.getByLabel('Username')).toBeVisible();
+	await otherTab.close();
+});

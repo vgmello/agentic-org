@@ -12,6 +12,10 @@ function compose() {
 	let signingOut = $state(false);
 	let failed = $state(false);
 	let query: ReturnType<typeof createUnsavedQuery> | undefined;
+	appSession.onSessionEnded(() => {
+		confirming = false;
+		failed = false;
+	});
 	const ready = () =>
 		(query ??= createUnsavedQuery({
 			channel: new BroadcastChannel('org-drafts'),

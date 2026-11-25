@@ -37,6 +37,9 @@
 	const ended = $derived(
 		!elsewhere && current.kind === 'signed-in' && current.reauth !== undefined
 	);
+	const showConfirm = $derived(
+		signOutFlow.confirming && !elsewhere && current.kind === 'signed-in'
+	);
 	let dismissed = $state(false);
 	let editable = $state(false);
 	let password = $state('');
@@ -74,8 +77,8 @@
 	});
 	$effect(() => {
 		if (!confirmDialog) return;
-		if (signOutFlow.confirming && !confirmDialog.open) confirmDialog.showModal();
-		else if (!signOutFlow.confirming && confirmDialog.open) confirmDialog.close();
+		if (showConfirm && !confirmDialog.open) confirmDialog.showModal();
+		else if (!showConfirm && confirmDialog.open) confirmDialog.close();
 	});
 	// SIGN-20 / SIGN-31: when an active session signs out or switches accounts in any tab,
 	// every open protected tab leaves its loaded page immediately.
