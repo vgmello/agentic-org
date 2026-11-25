@@ -17,6 +17,8 @@ export interface KeptDraft {
 	conflictMessage?: string;
 	/** Logical-save token kept with an unsaved draft so retrying after an uncertain outcome replays cleanly. */
 	attemptId?: string;
+	/** Set after an uncertain save failure so restoring the original text still reconciles with HQ. */
+	hasUncertainAttempt?: boolean;
 }
 
 const kept = new Map<string, KeptDraft>();

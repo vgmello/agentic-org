@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { OrgSnapshot } from '$lib/proto';
+import { NotDispatchedError } from '$lib/platform/http/errors';
 import { createHttpRolesApi } from './http-api';
 import { HR_CANT_RUN, conflictLatest, refusedField } from './present';
 
@@ -526,7 +527,7 @@ describe('createHttpRolesApi', () => {
 										body: '## Mission\nBoundary.\n',
 										revision: 1,
 										created_at: '9999-12-31t23:59:59-00:01',
-										updated_at: '9999-12-31T23:59:59.999Z'
+										updated_at: '9999-12-31T23:59:60Z'
 									}
 								}
 							}
@@ -812,5 +813,194 @@ describe('createHttpRolesApi', () => {
 		});
 		expect(fresh.id).toBe('0193a5c0-0000-7000-8000-000000000307');
 		expect(submit.mock.calls[5]?.[1]).not.toEqual(submit.mock.calls[4]?.[1]);
+	});
+
+	it('never continues a pending create or update under a new account when session changes mid-replay', async () => {
+		let seq = 1;
+		const nextId = () => `0193a5c0-0000-7000-8000-0000000004${String(seq++).padStart(2, '0')}`;
+		let currentCaller = 'inst-1:acct-a';
+		let generation = 1;
+
+		const submit = vi
+			.fn()
+			// 1. Account A create hits 504.
+			.mockResolvedValueOnce({ status: 504, body: { outcome: 'unknown' } })
+			// 2. Account A edited retry replays original create, but another tab switches to Account B mid-flight.
+			.mockImplementationOnce(async () => {
+				currentCaller = 'inst-1:acct-b';
+				generation++;
+				api.clearCaller('inst-1:acct-a');
+				throw new Error('Session changed');
+			})
+			// 3. Account B update hits 504.
+			.mockResolvedValueOnce({ status: 504, body: { outcome: 'unknown' } })
+			// 4. Account B edited retry replays original update and returns 200 just as session switches back to A.
+			.mockImplementationOnce(async () => {
+				currentCaller = 'inst-1:acct-a';
+				generation++;
+				api.clearCaller('inst-1:acct-b');
+				return {
+					status: 200,
+					body: { result: { id: ROLE_SWE, revision: 2, generation: 20 } }
+				};
+			});
+
+		const api = createHttpRolesApi({
+			http: { read: vi.fn().mockRejectedValue(new Error('offline')), submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			sessionScope: () => currentCaller,
+			sessionGeneration: () => generation,
+			newCommandId: nextId,
+			newEntityId: nextId
+		});
+
+		await expect(
+			api.create(ORG, { name: 'Lead', bodyMarkdown: 'Original.', attemptId: 'att-cross-create' })
+		).rejects.toMatchObject({ code: 'unavailable' });
+
+		await expect(
+			api.create(ORG, { name: 'Lead', bodyMarkdown: 'Edited.', attemptId: 'att-cross-create' })
+		).rejects.toMatchObject({ source: 'api', code: 'not_authorized' });
+		// Must NOT fall through and submit a fresh create under Account B!
+		expect(submit).toHaveBeenCalledTimes(2);
+
+		await expect(
+			api.update(ORG, ROLE_SWE, {
+				name: 'SWE',
+				bodyMarkdown: 'Edit one.',
+				expectedRevision: 1,
+				attemptId: 'att-cross-update'
+			})
+		).rejects.toMatchObject({ code: 'unavailable' });
+
+		await expect(
+			api.update(ORG, ROLE_SWE, {
+				name: 'SWE',
+				bodyMarkdown: 'Edit two.',
+				expectedRevision: 1,
+				attemptId: 'att-cross-update'
+			})
+		).rejects.toMatchObject({ source: 'api', code: 'not_authorized' });
+		// Must NOT submit the follow-up update under Account A!
+		expect(submit).toHaveBeenCalledTimes(4);
+	});
+
+	it('discards unsent NotDispatchedError attempts so oversized payloads do not trap subsequent corrected saves', async () => {
+		let seq = 1;
+		const nextId = () => `0193a5c0-0000-7000-8000-0000000005${String(seq++).padStart(2, '0')}`;
+		const submit = vi
+			.fn()
+			// 1. Fresh create rejected preflight for exceeding 256 KiB.
+			.mockRejectedValueOnce(new NotDispatchedError('JSON request exceeds its limit'))
+			// 2. Shortened create submits once cleanly without replaying the oversized payload.
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: { id: '0193a5c0-0000-7000-8000-000000000504', revision: 1, generation: 30 }
+				}
+			})
+			// 3. Fresh update rejected preflight for exceeding 256 KiB.
+			.mockRejectedValueOnce(new NotDispatchedError('JSON request exceeds its limit'))
+			// 4. Shortened update submits once cleanly.
+			.mockResolvedValueOnce({
+				status: 200,
+				body: { result: { id: ROLE_SWE, revision: 2, generation: 31 } }
+			});
+
+		const api = createHttpRolesApi({
+			http: { read: vi.fn().mockRejectedValue(new Error('offline')), submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			sessionScope: () => 'inst-1:acct-a',
+			sessionGeneration: () => 1,
+			newCommandId: nextId,
+			newEntityId: nextId
+		});
+
+		await expect(
+			api.create(ORG, { name: 'Huge', bodyMarkdown: 'x'.repeat(100), attemptId: 'att-huge-c' })
+		).rejects.toMatchObject({ source: 'api', code: 'too_large' });
+
+		const created = await api.create(ORG, {
+			name: 'Huge',
+			bodyMarkdown: 'Short.',
+			attemptId: 'att-huge-c'
+		});
+		expect(submit).toHaveBeenCalledTimes(2);
+		expect(submit.mock.calls[1]?.[1]).toMatchObject({ body: 'Short.' });
+		expect(created.revision).toBe(1);
+
+		await expect(
+			api.update(ORG, ROLE_SWE, {
+				name: 'SWE',
+				bodyMarkdown: 'y'.repeat(100),
+				expectedRevision: 1,
+				attemptId: 'att-huge-u'
+			})
+		).rejects.toMatchObject({ source: 'api', code: 'too_large' });
+
+		const updated = await api.update(ORG, ROLE_SWE, {
+			name: 'SWE',
+			bodyMarkdown: 'Short edit.',
+			expectedRevision: 1,
+			attemptId: 'att-huge-u'
+		});
+		expect(submit).toHaveBeenCalledTimes(4);
+		expect(submit.mock.calls[3]?.[1]).toMatchObject({ body: 'Short edit.', expected_version: 1 });
+		expect(updated.revision).toBe(2);
+	});
+
+	it('reconciles a 504 update even when the user restores the original text', async () => {
+		let seq = 1;
+		const nextId = () => `0193a5c0-0000-7000-8000-0000000006${String(seq++).padStart(2, '0')}`;
+		const submit = vi
+			.fn()
+			// 1. Update with changed body hits 504 (actually committed on server as rev 2).
+			.mockResolvedValueOnce({ status: 504, body: { outcome: 'unknown' } })
+			// 2. User restores original text and saves again -> replays rev 1 -> 2 first...
+			.mockResolvedValueOnce({
+				status: 200,
+				body: { result: { id: ROLE_SWE, revision: 2, generation: 40 } }
+			})
+			// 3. ...then commits the restored original text as rev 3!
+			.mockResolvedValueOnce({
+				status: 200,
+				body: { result: { id: ROLE_SWE, revision: 3, generation: 41 } }
+			});
+
+		const api = createHttpRolesApi({
+			http: { read: vi.fn().mockRejectedValue(new Error('offline')), submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			sessionScope: () => 'inst-1:acct-a',
+			sessionGeneration: () => 1,
+			newCommandId: nextId
+		});
+
+		await expect(
+			api.update(ORG, ROLE_SWE, {
+				name: 'Software Engineer',
+				bodyMarkdown: 'Temporary draft.',
+				expectedRevision: 1,
+				attemptId: 'att-restore'
+			})
+		).rejects.toMatchObject({ code: 'unavailable' });
+
+		const restored = await api.update(ORG, ROLE_SWE, {
+			name: 'Software Engineer',
+			bodyMarkdown: 'Original text.',
+			expectedRevision: 1,
+			attemptId: 'att-restore'
+		});
+		expect(submit).toHaveBeenCalledTimes(3);
+		expect(submit.mock.calls[1]).toEqual(submit.mock.calls[0]);
+		expect(submit.mock.calls[2]?.[1]).toMatchObject({
+			role_id: ROLE_SWE,
+			expected_version: 2,
+			body: 'Original text.'
+		});
+		expect(restored).toMatchObject({
+			id: ROLE_SWE,
+			bodyMarkdown: 'Original text.',
+			revision: 3
+		});
 	});
 });

@@ -27,6 +27,7 @@ function compose() {
 	let booted: Promise<void> | undefined;
 	let operationClock: ReturnType<typeof createOperationClock> | undefined;
 	let activeCaller: string | undefined;
+	let sessionGeneration = 0;
 	let sessionEndedListeners: ((caller: string | undefined) => void)[] = [];
 	function callerOf(next: AppSessionState): string | undefined {
 		return next.kind === 'signed-in'
@@ -34,6 +35,7 @@ function compose() {
 			: undefined;
 	}
 	function notifySessionEnded(caller: string | undefined) {
+		sessionGeneration++;
 		for (const listener of [...sessionEndedListeners]) {
 			try {
 				listener(caller);
@@ -93,6 +95,10 @@ function compose() {
 		},
 		get callerScope() {
 			return callerOf(state);
+		},
+		/** Increments on explicit sign-out or account switch (unchanged across same-account reauth). */
+		get sessionGeneration() {
+			return sessionGeneration;
 		},
 		get access() {
 			return access;

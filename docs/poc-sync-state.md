@@ -11,7 +11,7 @@ Tracks the exact `apps/agentic-org-web-prototype/` commit watermarks applied to 
    ```
    A release marker can be an empty commit, so search without a path filter.
    Process only markers that have yet to be applied. If there are none, wait for the next approval.
-2. Read the marker body with `git show -s --format=%B <release_sha>`. Use its approved behavior and pages to select changes, comparing the relevant watermark to the marker with `git diff <last_synced_sha> <release_sha> -- apps/agentic-org-web-prototype/`. If the marker covers a subset, port only the approved scope. Prototype changes after the marker wait for their own approval.
+2. Read the marker body with `git show -s --format=%B <release_sha>`. Use its approved behavior and pages to select changes, comparing the relevant watermark to the marker with `git diff -M <last_synced_sha> <release_sha> -- poc/ apps/agentic-org-web-prototype/`. If the marker covers a subset, port only the approved scope. Prototype changes after the marker wait for their own approval.
 3. Port the approved behavior into `apps/agentic-org-ui/` using existing Svelte components and real product data. Keep prototype fixtures in `apps/agentic-org-web-prototype/`. Verify WCAG AA contrast, unit tests, E2E checks (`--workers=1`), and side-by-side POC vs Svelte screenshots.
 4. Complete Codex `gpt-6.2-sol` review and a fresh final sign-off for the Svelte changes, then commit and push. Record the release marker SHA, applied prototype range, and resulting Svelte commit in the history below. Advance the watermarks for the areas actually ported. The existing entries are historical.
 

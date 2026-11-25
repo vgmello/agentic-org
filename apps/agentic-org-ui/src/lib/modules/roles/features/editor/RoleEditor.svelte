@@ -86,10 +86,13 @@
 	let expectedRevision = $state(0);
 	let attemptId = $state('');
 	let editorCaller = $state('');
+	let editorSessionGeneration = $state(0);
+	let hasUncertainAttempt = $state(false);
 	/** Text kept from an earlier close was put back in the fields. */
 	let restored = $state(false);
-	/** Set by Cancel and by a save: this close leaves nothing to keep. */
+	/** Set by Cancel and by a confirmed save: this close leaves nothing to keep. */
 	let discarding = false;
+	let confirmedSave = false;
 
 	let nameField = $state<HTMLElement | null>(null);
 	let keyField = $state<HTMLElement | null>(null);
@@ -106,6 +109,7 @@
 		mode = next;
 		const caller = appSession.callerScope ?? '';
 		editorCaller = caller;
+		editorSessionGeneration = appSession.sessionGeneration;
 		const role = next.kind === 'edit' ? next.role : undefined;
 		const draft = next.kind === 'new' ? next.draft : undefined;
 		const slotKey = draftKey(organizationId, role?.id, caller);
@@ -119,16 +123,19 @@
 		latest = kept?.latest;
 		conflictMessage = kept?.conflictMessage ?? '';
 		attemptId = kept?.attemptId ?? newStableId();
+		hasUncertainAttempt = kept?.hasUncertainAttempt ?? false;
 		restored = !!kept;
 		errors = {};
 		failure = undefined;
 		notice = undefined;
 		discarding = false;
+		confirmedSave = false;
 		open = true;
 	}
 
-	/** What was typed differs from what the editor opened with. */
+	/** What was typed differs from what the editor opened with (or an uncertain attempt still needs reconciliation). */
 	function typed(): boolean {
+		if (hasUncertainAttempt) return true;
 		const draft = normalizeDraft({ name, key, bodyMarkdown: body });
 		if (editing) return !!latest || !unchanged(editing, draft);
 		const initial = mode.kind === 'new' ? mode.draft : undefined;
@@ -142,23 +149,41 @@
 		);
 	}
 
+	function isSameEditorSession(): boolean {
+		if (appSession.state.kind === 'signed-out') return false;
+		if ((appSession.callerScope ?? '') !== editorCaller) return false;
+		return appSession.sessionGeneration === editorSessionGeneration;
+	}
+
 	function keepOrDiscard() {
-		const sameSession =
-			appSession.state.kind !== 'signed-out' && (appSession.callerScope ?? '') === editorCaller;
-		if (!discarding && sameSession && typed())
-			keepDraft(slot, { name, key, body, expectedRevision, latest, conflictMessage, attemptId });
+		const shouldKeep = !discarding && !confirmedSave && isSameEditorSession() && typed();
+		if (shouldKeep)
+			keepDraft(slot, {
+				name,
+				key,
+				body,
+				expectedRevision,
+				latest,
+				conflictMessage,
+				attemptId,
+				hasUncertainAttempt
+			});
 		else discardDraft(slot);
 		discarding = false;
 	}
 
 	function cancel() {
 		discarding = true;
+		hasUncertainAttempt = false;
 		open = false;
 	}
 
-	// Back with the sheet open closes it only, and focus returns to its opener (§6).
+	// Back with the sheet open closes it only when not saving, and focus returns to its opener (§6).
 	$effect(() => {
-		if (open) return registerModalBack(() => (open = false));
+		if (open)
+			return registerModalBack(() => {
+				if (!busy) open = false;
+			});
 	});
 	// Leaving the page with the sheet open keeps the text, as Back does.
 	$effect(() => () => {
@@ -188,6 +213,40 @@
 		fieldFor(field === 'key' ? 'key' : 'name')?.focus();
 	}
 
+	function isUnchangedEdit(draft: RoleDraft): boolean {
+		if (!editing || editing.invalid || latest || hasUncertainAttempt) return false;
+		return unchanged(editing, draft);
+	}
+
+	function handleSubmitError(e: unknown, saveSlot: string) {
+		const newer = conflictLatest(e);
+		const field = refusedField(e);
+		const err = toAppError(e);
+		if (newer) {
+			if (mode.kind === 'new') {
+				discardDraft(saveSlot);
+				mode = { kind: 'edit', role: newer, employeeCount: 0 };
+			}
+			latest = newer;
+			expectedRevision = newer.revision;
+			conflictMessage = err.message;
+			attemptId = newStableId();
+			hasUncertainAttempt = false;
+			// The notice is at the top of the sheet, away from Save: bring it into view and read it.
+			setTimeout(() => document.getElementById('role-conflict')?.focus(), 0);
+			return;
+		}
+		if (field) {
+			errors = { ...errors, [field]: err.message };
+			focusField(field);
+			return;
+		}
+		if (err.code === 'unavailable' || err.code === 'unknown') {
+			hasUncertainAttempt = true;
+		}
+		failure = err.message;
+	}
+
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
 		if (busy) return;
@@ -196,13 +255,15 @@
 		notice = undefined;
 		const first = (['name', 'key', 'body'] as const).find((f) => errors[f]);
 		if (first) return focusField(first);
-		if (editing && !editing.invalid && !latest && unchanged(editing, draft)) {
+		if (isUnchangedEdit(draft)) {
 			// Nothing to save: the sheet stays open and says so; no revision is added.
 			notice = NOTHING_TO_SAVE;
 			return;
 		}
 		busy = true;
 		failure = undefined;
+		const saveSlot = slot;
+		const wasCreating = !editing;
 		try {
 			const currentAttempt = attemptId || (attemptId = newStableId());
 			const saved = editing
@@ -212,28 +273,14 @@
 						attemptId: currentAttempt
 					})
 				: await rolesApi.create(organizationId, { ...draft, attemptId: currentAttempt });
+			confirmedSave = true;
 			discarding = true;
+			hasUncertainAttempt = false;
+			discardDraft(saveSlot);
 			open = false;
-			onsaved(saved, !editing);
+			onsaved(saved, wasCreating);
 		} catch (e) {
-			const newer = conflictLatest(e);
-			const field = refusedField(e);
-			const message = toAppError(e).message;
-			if (newer) {
-				if (mode.kind === 'new') {
-					discardDraft(slot);
-					mode = { kind: 'edit', role: newer, employeeCount: 0 };
-				}
-				latest = newer;
-				expectedRevision = newer.revision;
-				conflictMessage = message;
-				attemptId = newStableId();
-				// The notice is at the top of the sheet, away from Save: bring it into view and read it.
-				setTimeout(() => document.getElementById('role-conflict')?.focus(), 0);
-			} else if (field) {
-				errors = { ...errors, [field]: message };
-				focusField(field);
-			} else failure = message;
+			handleSubmitError(e, saveSlot);
 		} finally {
 			busy = false;
 		}

@@ -851,6 +851,9 @@ fn normalize_rfc3339_case(value: &str) -> String {
 fn canonical_wire_time(raw: Option<&str>) -> Option<String> {
     raw.map(|value| match crate::time::parse_rfc3339_ms(value) {
         Some(ms) if ms <= MAX_RFC3339_4DIGIT_YEAR_MS => crate::time::format_rfc3339_ms(ms),
+        Some(_) if value.as_bytes().get(17..19) == Some(b"60") => {
+            crate::time::format_rfc3339_ms(MAX_RFC3339_4DIGIT_YEAR_MS)
+        }
         Some(_) => normalize_rfc3339_case(value),
         None => value.to_owned(),
     })
@@ -959,11 +962,12 @@ mod wire_tests {
             Some("01900000-0000-7000-8000-000000000001")
         );
 
-        // Offset timestamps whose UTC year exceeds 9999 preserve their validated 4-digit offset form.
+        // Offset timestamps whose UTC year exceeds 9999 preserve their validated 4-digit offset form;
+        // leap second 9999-12-31T23:59:60Z clamps to 9999-12-31T23:59:59.999Z for browser parity.
         let boundary = Role {
             meta: Meta {
                 created_at: Some("9999-12-31t23:59:59-00:01".into()),
-                updated_at: Some("9999-12-31T23:59:59.999Z".into()),
+                updated_at: Some("9999-12-31T23:59:60Z".into()),
                 ..role.meta
             },
             ..role

@@ -47,3 +47,20 @@ it('isolates retained drafts by caller and clears only the signed-out caller', (
 	expect(keptDraft(bob)?.name).toBe('Bob Draft');
 	clearDraftsForCaller('inst-1:acct-bob');
 });
+
+it('preserves hasUncertainAttempt so restoring original text still reconciles a 504 save', () => {
+	const key = draftKey('org-a', 'role-swe', 'inst-1:acct-alice');
+	keepDraft(key, {
+		name: 'Software Engineer',
+		key: 'swe',
+		body: 'Original text',
+		expectedRevision: 1,
+		attemptId: 'att-504',
+		hasUncertainAttempt: true
+	});
+	expect(keptDraft(key)).toMatchObject({
+		attemptId: 'att-504',
+		hasUncertainAttempt: true
+	});
+	clearDraftsForCaller('inst-1:acct-alice');
+});

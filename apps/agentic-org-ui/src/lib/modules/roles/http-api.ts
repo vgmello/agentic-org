@@ -1,4 +1,5 @@
 import type { AppError, Member, OrgSnapshot } from '$lib/proto';
+import { NotDispatchedError } from '$lib/platform/http/errors';
 import {
 	gatewayStatusCode,
 	readGatewayAppError,
@@ -17,7 +18,6 @@ import {
 	readRoleRecordWithId,
 	type WireRoleRecord
 } from './wire';
-import type { RolesApi } from './api';
 import type {
 	Attribution,
 	Role,
@@ -27,12 +27,23 @@ import type {
 	RoleEmployee,
 	RoleField,
 	RoleSummary,
+	RolesApi,
 	RolesOverview
 } from './types';
 
 const CONFLICT_MESSAGE =
 	"This role changed while you were editing. Here's the newer version; your changes are kept.";
 const UNCERTAIN_OUTCOME_MESSAGE = 'The outcome of this request is not confirmed yet.';
+const SESSION_CHANGED_ERROR: AppError = {
+	source: 'api',
+	code: 'not_authorized',
+	message: 'Your session changed. Sign in and try again.'
+};
+
+type SessionToken = {
+	caller: string;
+	generation: number;
+};
 
 type SubmittedRolePayload = {
 	name: string;
@@ -45,6 +56,7 @@ type PendingCreate = {
 	commandId: string;
 	roleId: string;
 	submitted: SubmittedRolePayload;
+	dispatched?: boolean;
 	committedRevision?: number;
 };
 
@@ -52,6 +64,7 @@ type PendingUpdate = {
 	caller: string;
 	commandId: string;
 	submitted: SubmittedRolePayload;
+	dispatched?: boolean;
 	committedRevision?: number;
 };
 
@@ -191,6 +204,25 @@ function shouldPreserveAttempt(reply: GatewayReply): boolean {
 	);
 }
 
+function toNotDispatchedAppError(err: NotDispatchedError): AppError {
+	if (/exceeds its limit/i.test(err.message)) {
+		return {
+			source: 'api',
+			code: 'too_large',
+			message: 'This role is too large to save. Shorten the text and try again.'
+		};
+	}
+	return {
+		source: 'api',
+		code: 'invalid_request',
+		message: err.message
+	};
+}
+
+function deleteIfCurrent<T>(map: Map<string, T>, key: string | undefined, expected: T): void {
+	if (key && map.get(key) === expected) map.delete(key);
+}
+
 /**
  * Production HTTP adapter for Organization settings › Roles (`FC-108`, `TASK-41`).
  * Talks directly to `/api/v1/organizations/{org}/roles*` and fails closed when unavailable.
@@ -199,6 +231,7 @@ export function createHttpRolesApi({
 	http,
 	orgApi,
 	sessionScope,
+	sessionGeneration,
 	newEntityId = newStableId,
 	newCommandId = newStableId
 }: {
@@ -206,6 +239,8 @@ export function createHttpRolesApi({
 	orgApi: Pick<OrgApi, 'view'>;
 	/** Stable caller identity (`instance_id:account_id`) so pending retry IDs never cross accounts. */
 	sessionScope?: () => string | undefined;
+	/** Monotonic session generation bumped on sign-out / account switch (unchanged across same-account reauth). */
+	sessionGeneration?: () => number;
 	newEntityId?: () => string;
 	newCommandId?: () => string;
 }): HttpRolesApi {
@@ -216,10 +251,29 @@ export function createHttpRolesApi({
 	const pendingCreates = new Map<string, PendingCreate>();
 	const pendingUpdates = new Map<string, PendingUpdate>();
 
+	function currentSessionToken(): SessionToken {
+		return {
+			caller: sessionScope?.() ?? '',
+			generation: sessionGeneration?.() ?? 0
+		};
+	}
+
+	function isSameSession(session: SessionToken): boolean {
+		return (
+			(sessionGeneration?.() ?? 0) === session.generation &&
+			(sessionScope?.() ?? '') === session.caller
+		);
+	}
+
+	function assertSameSession(session: SessionToken): void {
+		if (!isSameSession(session)) throw SESSION_CHANGED_ERROR;
+	}
+
 	async function readGateway(path: string, fallbackMessage: string): Promise<GatewayReply> {
 		try {
 			return await http.read(path);
-		} catch {
+		} catch (err) {
+			if (err instanceof Error && err.message === 'Session changed') throw SESSION_CHANGED_ERROR;
 			throw { source: 'api', code: 'unavailable', message: fallbackMessage } satisfies AppError;
 		}
 	}
@@ -231,8 +285,39 @@ export function createHttpRolesApi({
 	): Promise<GatewayReply> {
 		try {
 			return await http.submit(path, body);
-		} catch {
+		} catch (err) {
+			if (err instanceof NotDispatchedError) throw err;
+			if (err instanceof Error && err.message === 'Session changed') throw SESSION_CHANGED_ERROR;
 			throw { source: 'api', code: 'unavailable', message: fallbackMessage } satisfies AppError;
+		}
+	}
+
+	async function dispatchAttempt<T extends { dispatched?: boolean; committedRevision?: number }>(
+		path: string,
+		body: unknown,
+		pending: Map<string, T>,
+		attempt: T,
+		attemptKey: string | undefined,
+		session: SessionToken
+	): Promise<GatewayReply> {
+		assertSameSession(session);
+		try {
+			const reply = await submitGateway(path, body, UNCERTAIN_OUTCOME_MESSAGE);
+			attempt.dispatched = true;
+			assertSameSession(session);
+			return reply;
+		} catch (err) {
+			if (err instanceof NotDispatchedError) {
+				if (!attempt.dispatched && attempt.committedRevision === undefined) {
+					deleteIfCurrent(pending, attemptKey, attempt);
+				}
+				throw toNotDispatchedAppError(err);
+			}
+			if (err !== SESSION_CHANGED_ERROR) {
+				attempt.dispatched = true;
+			}
+			assertSameSession(session);
+			throw err;
 		}
 	}
 
@@ -293,9 +378,10 @@ export function createHttpRolesApi({
 		organizationId: string,
 		attempt: PendingCreate,
 		attemptKey: string | undefined,
+		session: SessionToken,
 		fallback: string
 	) {
-		const reply = await submitGateway(
+		const reply = await dispatchAttempt(
 			`/api/v1/organizations/${encodeURIComponent(organizationId)}/roles`,
 			{
 				command_id: attempt.commandId,
@@ -304,7 +390,10 @@ export function createHttpRolesApi({
 				body: attempt.submitted.bodyMarkdown,
 				...(attempt.submitted.key ? { key: attempt.submitted.key } : {})
 			},
-			UNCERTAIN_OUTCOME_MESSAGE
+			pendingCreates,
+			attempt,
+			attemptKey,
+			session
 		);
 		if (isUnknownOutcomeReply(reply)) {
 			throw {
@@ -314,7 +403,7 @@ export function createHttpRolesApi({
 			} satisfies AppError;
 		}
 		if (reply.status !== 200) {
-			if (attemptKey && !shouldPreserveAttempt(reply)) pendingCreates.delete(attemptKey);
+			if (!shouldPreserveAttempt(reply)) deleteIfCurrent(pendingCreates, attemptKey, attempt);
 			const err = readGatewayAppError(reply.body, gatewayStatusCode(reply.status), fallback);
 			throw withField(err);
 		}
@@ -328,9 +417,10 @@ export function createHttpRolesApi({
 		expectedRevision: number,
 		attempt: PendingUpdate,
 		attemptKey: string | undefined,
+		session: SessionToken,
 		fallback: string
 	) {
-		const reply = await submitGateway(
+		const reply = await dispatchAttempt(
 			`/api/v1/organizations/${encodeURIComponent(organizationId)}/roles/update`,
 			{
 				command_id: attempt.commandId,
@@ -342,7 +432,10 @@ export function createHttpRolesApi({
 					? { key: attempt.submitted.key, clear_key: false }
 					: { clear_key: true })
 			},
-			UNCERTAIN_OUTCOME_MESSAGE
+			pendingUpdates,
+			attempt,
+			attemptKey,
+			session
 		);
 		if (isUnknownOutcomeReply(reply)) {
 			throw {
@@ -352,10 +445,12 @@ export function createHttpRolesApi({
 			} satisfies AppError;
 		}
 		if (reply.status !== 200) {
-			if (attemptKey && !shouldPreserveAttempt(reply)) pendingUpdates.delete(attemptKey);
+			if (!shouldPreserveAttempt(reply)) deleteIfCurrent(pendingUpdates, attemptKey, attempt);
 			const err = readGatewayAppError(reply.body, gatewayStatusCode(reply.status), fallback);
 			if (err.code === 'conflict') {
+				assertSameSession(session);
 				const latest = await fetchAuthoritativeRole(organizationId, roleId);
+				assertSameSession(session);
 				if (latest) {
 					throw { ...err, message: CONFLICT_MESSAGE, latest };
 				}
@@ -373,6 +468,7 @@ export function createHttpRolesApi({
 		desired: SubmittedRolePayload,
 		existing: PendingUpdate,
 		attemptKey: string,
+		session: SessionToken,
 		fallback: string
 	): Promise<{ resolved: Role } | { retryFresh: true }> {
 		if (existing.committedRevision === undefined) {
@@ -383,30 +479,49 @@ export function createHttpRolesApi({
 					edit.expectedRevision,
 					existing,
 					attemptKey,
+					session,
 					fallback
 				);
 				existing.committedRevision = replayed.revision;
 			} catch (err) {
-				if (pendingUpdates.has(attemptKey)) throw err;
+				assertSameSession(session);
+				if (pendingUpdates.get(attemptKey) === existing) throw err;
 				if (isTerminalUpdateRefusal((err as AppError | undefined)?.code)) throw err;
 				return { retryFresh: true };
 			}
 		}
-		const followUp = await updateRole(organizationId, roleId, {
-			...desired,
-			expectedRevision: existing.committedRevision,
-			attemptId: `${edit.attemptId}:rev:${existing.committedRevision}`
-		});
-		pendingUpdates.delete(attemptKey);
+		assertSameSession(session);
+		const followUp = await updateRoleInSession(
+			organizationId,
+			roleId,
+			{
+				...desired,
+				expectedRevision: existing.committedRevision,
+				attemptId: `${edit.attemptId}:rev:${existing.committedRevision}`
+			},
+			session
+		);
+		deleteIfCurrent(pendingUpdates, attemptKey, existing);
 		return { resolved: followUp };
 	}
 
-	async function updateRole(organizationId: string, roleId: string, edit: RoleEdit): Promise<Role> {
+	async function updateRoleInSession(
+		organizationId: string,
+		roleId: string,
+		edit: RoleEdit,
+		session: SessionToken
+	): Promise<Role> {
+		assertSameSession(session);
 		const fallback = 'Could not save the role.';
-		const caller = sessionScope?.() ?? '';
 		const desired = toSubmittedPayload(edit);
 		const attemptKey = edit.attemptId
-			? JSON.stringify([caller, organizationId, roleId, edit.expectedRevision, edit.attemptId])
+			? JSON.stringify([
+					session.caller,
+					organizationId,
+					roleId,
+					edit.expectedRevision,
+					edit.attemptId
+				])
 			: undefined;
 
 		let existing = attemptKey ? pendingUpdates.get(attemptKey) : undefined;
@@ -422,14 +537,16 @@ export function createHttpRolesApi({
 				desired,
 				existing,
 				attemptKey,
+				session,
 				fallback
 			);
 			if ('resolved' in outcome) return outcome.resolved;
 			existing = undefined;
 		}
 
+		assertSameSession(session);
 		const attempt: PendingUpdate = existing ?? {
-			caller,
+			caller: session.caller,
 			commandId: newCommandId(),
 			submitted: desired
 		};
@@ -441,12 +558,19 @@ export function createHttpRolesApi({
 			edit.expectedRevision,
 			attempt,
 			attemptKey,
+			session,
 			fallback
 		);
-		if (attemptKey) pendingUpdates.delete(attemptKey);
+		deleteIfCurrent(pendingUpdates, attemptKey, attempt);
+		assertSameSession(session);
 		const authoritative = await fetchAuthoritativeRole(organizationId, ack.id);
+		assertSameSession(session);
 		if (authoritative && authoritative.revision === ack.revision) return authoritative;
 		return buildFallbackRole(ack, desired, authoritative?.created);
+	}
+
+	async function updateRole(organizationId: string, roleId: string, edit: RoleEdit): Promise<Role> {
+		return updateRoleInSession(organizationId, roleId, edit, currentSessionToken());
 	}
 
 	async function resolveChangedPendingCreate(
@@ -455,27 +579,42 @@ export function createHttpRolesApi({
 		desired: SubmittedRolePayload,
 		existing: PendingCreate,
 		attemptKey: string,
+		session: SessionToken,
 		fallback: string
 	): Promise<{ resolved: Role } | { retryFresh: true }> {
 		if (existing.committedRevision === undefined) {
 			try {
-				const replayed = await submitRoleCreate(organizationId, existing, attemptKey, fallback);
+				const replayed = await submitRoleCreate(
+					organizationId,
+					existing,
+					attemptKey,
+					session,
+					fallback
+				);
 				existing.committedRevision = replayed.revision;
 			} catch (err) {
-				if (pendingCreates.has(attemptKey)) throw err;
+				assertSameSession(session);
+				if (pendingCreates.get(attemptKey) === existing) throw err;
 				if ((err as AppError | undefined)?.code === 'not_authorized') throw err;
 				return { retryFresh: true };
 			}
 		}
+		assertSameSession(session);
 		try {
-			const updated = await updateRole(organizationId, existing.roleId, {
-				...desired,
-				expectedRevision: existing.committedRevision,
-				attemptId: `${draft.attemptId}:followup`
-			});
-			pendingCreates.delete(attemptKey);
+			const updated = await updateRoleInSession(
+				organizationId,
+				existing.roleId,
+				{
+					...desired,
+					expectedRevision: existing.committedRevision,
+					attemptId: `${draft.attemptId}:followup`
+				},
+				session
+			);
+			deleteIfCurrent(pendingCreates, attemptKey, existing);
 			return { resolved: updated };
 		} catch (err) {
+			assertSameSession(session);
 			const latest = extractConflictLatest(err, existing.roleId);
 			if (latest) existing.committedRevision = latest.revision;
 			throw err;
@@ -577,10 +716,10 @@ export function createHttpRolesApi({
 
 		async create(organizationId: string, draft: RoleDraft): Promise<Role> {
 			const fallback = 'Could not create the role.';
-			const caller = sessionScope?.() ?? '';
+			const session = currentSessionToken();
 			const desired = toSubmittedPayload(draft);
 			const attemptKey = draft.attemptId
-				? JSON.stringify([caller, organizationId, draft.attemptId])
+				? JSON.stringify([session.caller, organizationId, draft.attemptId])
 				: undefined;
 
 			let existing = attemptKey ? pendingCreates.get(attemptKey) : undefined;
@@ -595,23 +734,27 @@ export function createHttpRolesApi({
 					desired,
 					existing,
 					attemptKey,
+					session,
 					fallback
 				);
 				if ('resolved' in outcome) return outcome.resolved;
 				existing = undefined;
 			}
 
+			assertSameSession(session);
 			const attempt: PendingCreate = existing ?? {
-				caller,
+				caller: session.caller,
 				commandId: newCommandId(),
 				roleId: newEntityId(),
 				submitted: desired
 			};
 			if (attemptKey) pendingCreates.set(attemptKey, attempt);
 
-			const ack = await submitRoleCreate(organizationId, attempt, attemptKey, fallback);
-			if (attemptKey) pendingCreates.delete(attemptKey);
+			const ack = await submitRoleCreate(organizationId, attempt, attemptKey, session, fallback);
+			deleteIfCurrent(pendingCreates, attemptKey, attempt);
+			assertSameSession(session);
 			const authoritative = await fetchAuthoritativeRole(organizationId, ack.id);
+			assertSameSession(session);
 			if (authoritative && authoritative.revision === ack.revision) return authoritative;
 			return buildFallbackRole(ack, desired);
 		},

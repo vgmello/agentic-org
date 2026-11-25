@@ -72,7 +72,7 @@ function formatValidatedTimestamp(
 ): string | undefined {
 	if (!Number.isFinite(epochMs) || epochMs < 0) return undefined;
 	if (epochMs > MAX_RFC3339_4DIGIT_YEAR_MS) {
-		if (second === 60) return undefined;
+		if (second === 60) return new Date(MAX_RFC3339_4DIGIT_YEAR_MS).toISOString();
 		const normalized = value.replace('t', 'T').replace('z', 'Z');
 		return Number.isFinite(Date.parse(normalized)) ? normalized : undefined;
 	}
