@@ -2343,9 +2343,14 @@ impl SessionManager {
             }
             collect_existing_worktree_dirs(&canon_root, 0, &mut wt_dirs);
             for wt_dir in wt_dirs {
-                push_exact_pattern(&mut write_denies, &wt_dir.join(".git"));
-                push_exact_pattern(&mut write_denies, &wt_dir.join(".git").join("hooks"));
-                push_glob_pattern(&mut write_denies, &wt_dir.join(".git").join("hooks"));
+                let dot_git = wt_dir.join(".git");
+                push_exact_pattern(&mut write_denies, &dot_git);
+                // Worktrees have a regular `.git` file (not a directory); only deny `.git/hooks`
+                // when `.git` is a directory so Linux `bwrap` never tries to mask under a file.
+                if dot_git.is_dir() {
+                    push_exact_pattern(&mut write_denies, &dot_git.join("hooks"));
+                    push_glob_pattern(&mut write_denies, &dot_git.join("hooks"));
+                }
             }
         }
         // Scope bare-cache writable grants strictly to repositories targeted by `employee_id`'s
@@ -3678,7 +3683,7 @@ fn is_safe_worktree_admin_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
-        && !name.contains(['/', '\\', '\0'])
+        && !name.contains(['/', '\\', '\0', '*', '?', '['])
         && !name.contains("..")
 }
 
@@ -3691,6 +3696,7 @@ fn collect_self_active_admins(
     for ws in git_state.workspaces.values() {
         if ws.employee_id == employee_id
             && ws.state == "active"
+            && is_safe_worktree_admin_name(&ws.repository_id)
             && is_safe_worktree_admin_name(&ws.admin_dir_name)
         {
             by_repo
@@ -3716,8 +3722,12 @@ fn append_cargo_credential_denies(out: &mut Vec<PathPattern>) {
             dirs.push(p);
         }
     }
+    // Deny Cargo registry token files (`credentials`, `credentials.toml`) only. Do NOT read-deny
+    // `config` / `config.toml`: Cargo unconditionally opens them on every `cargo` invocation, and
+    // Linux `bwrap` turns read-denies on non-existent files into `EACCES` stubs, breaking `cargo`.
+    // `$CARGO_HOME` stays outside `writable_roots`, so agents still cannot modify `config.toml`.
     for dir in dirs {
-        for file in ["credentials", "credentials.toml", "config", "config.toml"] {
+        for file in ["credentials", "credentials.toml"] {
             push_exact_pattern(out, &dir.join(file));
         }
     }
@@ -3743,37 +3753,48 @@ fn append_bare_cache_sandbox_rules(
         if let Ok(spec) = SpecPath::try_from(admin_dir.to_string_lossy().as_ref()) {
             writable.push(spec);
         }
-        for admin_file in ["commondir", "gitdir", "config.worktree"] {
+        for admin_file in ["commondir", "gitdir"] {
             push_raw_pattern(
                 write_denies,
                 &format!("{}/worktrees/{admin}/{admin_file}", canon.display()),
             );
         }
+        // Only deny `config.worktree` when present: Linux `bwrap` masks non-existent `denyWrite`
+        // files with unreadable stubs (turning `ENOENT` into `EACCES`), and `<cache>/config` is
+        // outside `writable_roots` so `extensions.worktreeConfig` cannot be enabled by the agent.
+        if admin_dir.join("config.worktree").exists() {
+            push_raw_pattern(
+                write_denies,
+                &format!("{}/worktrees/{admin}/config.worktree", canon.display()),
+            );
+        }
     }
-    for rel_dir in [
-        "hooks",
-        "info",
-        "objects/info",
-        "refs/remotes",
-        "refs/tags",
-        "refs/office",
-        "refs/replace",
-    ] {
-        // Deny both the exact directory (prevents rename/replace via writable parent like `objects/`)
-        // and its subtree (`/**`).
+    // Always protect directories that live inside writable roots (`objects/info`) or always exist
+    // in bare repos (`hooks`, `info`, `refs/remotes`, `refs/tags`). Guard optional dirs
+    // (`refs/office`, `refs/replace`) when present so `bwrap` never turns missing `refs/replace`
+    // into an `EACCES` stub (`<cache>` and `<cache>/refs` are outside `writable_roots`).
+    for rel_dir in ["hooks", "info", "objects/info", "refs/remotes", "refs/tags"] {
         push_raw_pattern(write_denies, &format!("{}/{rel_dir}", canon.display()));
         push_raw_pattern(write_denies, &format!("{}/{rel_dir}/**", canon.display()));
     }
-    for rel_file in [
-        "config",
-        "config.worktree",
-        "HEAD",
-        "packed-refs",
-        "description",
-        "FETCH_HEAD",
-        "shallow",
-    ] {
+    for rel_dir in ["refs/office", "refs/replace"] {
+        if canon.join(rel_dir).exists() {
+            push_raw_pattern(write_denies, &format!("{}/{rel_dir}", canon.display()));
+            push_raw_pattern(write_denies, &format!("{}/{rel_dir}/**", canon.display()));
+        }
+    }
+    // Always protect core bare-repo metadata files (`config`, `HEAD`, `description`). Guard
+    // optional Git files (`packed-refs`, `shallow`, `FETCH_HEAD`, `config.worktree`) ONLY when
+    // they exist on disk: `<cache>` is outside `writable_roots` (already OS-read-only), and
+    // listing non-existent `packed-refs` in `denyWrite` makes Linux `bwrap` return `EACCES`
+    // instead of `ENOENT`, breaking `git status` and `git commit`.
+    for rel_file in ["config", "HEAD", "description"] {
         push_raw_pattern(write_denies, &format!("{}/{rel_file}", canon.display()));
+    }
+    for rel_file in ["packed-refs", "shallow", "FETCH_HEAD", "config.worktree"] {
+        if canon.join(rel_file).exists() {
+            push_raw_pattern(write_denies, &format!("{}/{rel_file}", canon.display()));
+        }
     }
 }
 

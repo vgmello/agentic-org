@@ -3676,7 +3676,6 @@ fn task126_worktree_sandbox_grants_protect_git_metadata_and_compile_cleanly_for_
         "/office.db-journal",
         "/office.db.new",
         "/office.db.new-wal",
-        "/config.toml",
         "/credentials.toml",
         &format!("/teams/{root_team_id}/teams/**"),
     ] {
@@ -3685,6 +3684,12 @@ fn task126_worktree_sandbox_grants_protect_git_metadata_and_compile_cleanly_for_
             "denied_office_globs must deny `{needle}`: {denied_strs:?}"
         );
     }
+    assert!(
+        !denied_strs
+            .iter()
+            .any(|s| s.ends_with("/.cargo/config.toml") || s.ends_with("/.cargo/config")),
+        "must not read-deny ~/.cargo/config.toml (breaks cargo under Linux bwrap): {denied_strs:?}"
+    );
     assert!(
         !denied_strs
             .iter()
@@ -3728,16 +3733,35 @@ fn task126_worktree_sandbox_grants_protect_git_metadata_and_compile_cleanly_for_
         "/refs/remotes/**",
         "/worktrees/self-admin/commondir",
         "/worktrees/self-admin/gitdir",
-        "/worktrees/self-admin/config.worktree",
         "/.git",
-        "/.git/hooks",
-        "/.git/hooks/**",
     ] {
         assert!(
             deny_strs.iter().any(|s| s.ends_with(needle)),
             "worktree_sandbox_grants missing write deny `{needle}`: {deny_strs:?}"
         );
     }
+    // Optional non-existent bare-cache files (`packed-refs`, `shallow`, `config.worktree`) must
+    // NOT be emitted into `deny_write` (Linux bwrap turns missing denyWrite files into EACCES stubs).
+    for absent in [
+        "/packed-refs",
+        "/shallow",
+        "/worktrees/self-admin/config.worktree",
+        "/.git/hooks",
+    ] {
+        assert!(
+            !deny_strs.iter().any(|s| s.ends_with(absent)),
+            "absent optional git path `{absent}` must not be emitted into deny_write: {deny_strs:?}"
+        );
+    }
+    // When `packed-refs` DOES exist on disk, it MUST be protected in `deny_write`.
+    std::fs::write(cache_dir.join("packed-refs"), "# pack-refs\n").unwrap();
+    let (_, wt_write_denies_with_packed) = mgr.worktree_sandbox_grants(&self_emp_id, false);
+    assert!(
+        wt_write_denies_with_packed
+            .iter()
+            .any(|p| p.as_str().ends_with("/packed-refs")),
+        "existing packed-refs must be write-denied"
+    );
 
     // Verify Codex adapter compiles the resulting policy without downgrading self worktree root.
     let ws_dir = tempfile::tempdir().unwrap();
