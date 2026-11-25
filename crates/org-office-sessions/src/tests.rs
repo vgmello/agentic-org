@@ -4589,6 +4589,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
             task_ref: None,
             tried_connections: Vec::new(),
             oauth_refresh_attempted: false,
+            oauth_token_fp: None,
             reason: "warm_route_stale",
             rate_limit_resets_at: None,
         },
@@ -4682,5 +4683,137 @@ fn task126_host_rust_dir_env_rejects_office_roots_and_symlinks() {
         )
         .is_none(),
         "must reject symlink escaping into durable_root"
+    );
+}
+
+#[test]
+fn task126_org_topology_invalidates_warm_digest_and_expiring_oauth_triggers_stale_permit() {
+    use org_office::git::{OfficeGitState, TaskWorkspaceRecord};
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    let hire_in = |team_id: &str, name: &str, handle: &str| -> String {
+        let req = Request::new::<HrHire>(
+            1,
+            &HrHireParams {
+                command_id: new_uuid_v7(),
+                request_id: new_uuid_v7(),
+                employee_id: new_uuid_v7(),
+                home_team_id: team_id.to_owned(),
+                role_id: None,
+                proposal: HireProposalWire {
+                    name: name.into(),
+                    handle: handle.into(),
+                    title: Some("Engineer".into()),
+                    focus: None,
+                    role_text: None,
+                    title_in_team: Some("Engineer".into()),
+                    reports_to_employee_id: Some(owner_id.clone()),
+                    office_id: None,
+                    model_profile_id: None,
+                    model_id: None,
+                    permission_preset: Some("autonomous_sandboxed".into()),
+                    tools_config: Vec::new(),
+                    system_prompt_markdown: None,
+                    body: Some("Work.".into()),
+                },
+                reason: "Topology test hire".into(),
+            },
+        )
+        .unwrap();
+        let resp = office.dispatch_hiring_rpc(Some(&owner_id), &req).unwrap();
+        match resp.outcome {
+            org_proto::Outcome::Result(v) => {
+                serde_json::from_value::<org_proto::hiring::HireOpResult>(v)
+                    .unwrap()
+                    .employee_id
+                    .unwrap()
+            }
+            org_proto::Outcome::Error(e) => panic!("hire failed: {e:?}"),
+        }
+    };
+    let emp_a = hire_in(&root_team_id, "Warm A", "warm-a");
+
+    // 1. Zero-worktree state: hiring a sibling agent OR creating a new team MUST invalidate digest.
+    let d_zero_0 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    let _emp_b = hire_in(&root_team_id, "Warm B", "warm-b");
+    let d_zero_1 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    assert_ne!(
+        d_zero_0, d_zero_1,
+        "hiring sibling agent must invalidate zero-worktree warm digest"
+    );
+    let sub_team = new_uuid_v7();
+    office
+        .submit_org(
+            &owner_id,
+            org_office::rules::OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+                command_id: new_uuid_v7(),
+                team_id: sub_team.clone(),
+                name: "New Team".into(),
+                owner_team_id: Some(root_team_id.clone()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let d_zero_2 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    assert_ne!(
+        d_zero_1, d_zero_2,
+        "creating a team must invalidate zero-worktree warm digest"
+    );
+
+    // 2. Active-worktree state with pre-existing R1 and R2: hiring emp_c MUST still invalidate
+    // emp_a's digest even when R1/R2 repo list and R1 peer admins do not change.
+    let office_id = office.info().office_id.clone();
+    let office_rt = office.runtime_root().join(&office_id);
+    let repo1 = "01a212a8-982e-71ca-a6de-322dba762e01";
+    let repo2 = "01a212a8-982e-71ca-a6de-322dba762e02";
+    std::fs::create_dir_all(
+        office_rt
+            .join("repositories")
+            .join(format!("{repo1}.git/worktrees/a1")),
+    )
+    .unwrap();
+    std::fs::create_dir_all(office_rt.join("repositories").join(format!("{repo2}.git"))).unwrap();
+    let mut gs = OfficeGitState::default();
+    gs.workspaces.insert(
+        OfficeGitState::workspace_key("t-1", repo1, &emp_a),
+        TaskWorkspaceRecord {
+            office_id: office_id.clone(),
+            employee_id: emp_a.clone(),
+            task_id: "t-1".into(),
+            task_key: "T-1".into(),
+            repository_id: repo1.into(),
+            repository_key: Some("r1".into()),
+            branch: "task/T-1".into(),
+            worktree_path: office_rt.join("wt-a1").display().to_string(),
+            admin_dir_name: "a1".into(),
+            base_commit: "abc".into(),
+            pushed_head: None,
+            state: "active".into(),
+        },
+    );
+    gs.save(office.runtime_root(), &office_id).unwrap();
+    let d_act_0 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    let _emp_c = hire_in(&sub_team, "Warm C", "warm-c");
+    let d_act_1 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    assert_ne!(
+        d_act_0, d_act_1,
+        "hiring sibling agent must invalidate active-worktree warm digest even when repos do not change"
+    );
+
+    // 3. `build_pump_hooks` with an expiring OAuth timestamp must return `WARM_ROUTE_STALE` from
+    // `on_permit_acquire` so queued in-pump turns recycle cleanly instead of using an expiring token.
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    );
+    let hooks = mgr.build_pump_hooks(&emp_a, "digest".into(), Some(1));
+    let acquire = hooks.on_permit_acquire.expect("permit acquire hook");
+    let err = acquire("conn-1", None).expect_err("expiring OAuth must fail warm permit acquire");
+    assert!(
+        err.starts_with("WARM_ROUTE_STALE"),
+        "expected WARM_ROUTE_STALE on expiring OAuth, got: {err}"
     );
 }

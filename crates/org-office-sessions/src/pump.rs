@@ -69,6 +69,7 @@ pub(crate) struct FailoverRequest {
     pub task_ref: Option<String>,
     pub tried_connections: Vec<String>,
     pub oauth_refresh_attempted: bool,
+    pub oauth_token_fp: Option<String>,
     pub reason: &'static str,
     pub rate_limit_resets_at: Option<String>,
 }
@@ -162,6 +163,7 @@ pub(crate) struct PumpContext {
     pub task_ref: Option<String>,
     pub tried_connections: Vec<String>,
     pub oauth_refresh_attempted: bool,
+    pub oauth_token_fp: Option<String>,
     pub store: SessionStore,
     pub bindings: RunBindingRegistry,
     pub state: Arc<Mutex<SessionRuntimeState>>,
@@ -351,7 +353,12 @@ fn should_exit_loop(
             // acquires/verifies its own permit right before `Control::Send` (`doc-88` §6).
             release_active_permit(ctx);
             loop_state.permit_lease_deadline = None;
-            if let Some(hook) = &ctx.hooks.on_turn_ended {
+            if let Some(hook) = ctx
+                .hooks
+                .on_turn_ended
+                .as_ref()
+                .filter(|_| loop_state.pending_turns.is_empty())
+            {
                 hook(&ctx.employee_id);
             }
         }
@@ -463,7 +470,29 @@ fn drain_commands(
             }
             PumpCommand::Stop { reason } => {
                 loop_state.stop_requested = true;
-                loop_state.failover_pending = None;
+                let preserve_queued = matches!(
+                    reason.as_str(),
+                    "warm_route_stale" | "oauth_token_expiring" | "pool_reroute"
+                );
+                if preserve_queued && !loop_state.pending_turns.is_empty() {
+                    let objective = loop_state.pending_turns.join("\n\n");
+                    loop_state.pending_turns.clear();
+                    loop_state.failover_pending = Some(FailoverRequest {
+                        employee_id: ctx.employee_id.clone(),
+                        failed_run_id: ctx.run_id.clone(),
+                        failed_connection_id: ctx.connection_id.clone().unwrap_or_default(),
+                        objective,
+                        workspace: ctx.workspace.clone(),
+                        task_ref: ctx.task_ref.clone(),
+                        tried_connections: Vec::new(),
+                        oauth_refresh_attempted: false,
+                        oauth_token_fp: ctx.oauth_token_fp.clone(),
+                        reason: "warm_route_stale",
+                        rate_limit_resets_at: None,
+                    });
+                } else {
+                    loop_state.failover_pending = None;
+                }
                 if let Ok(outs) = session.control(Control::Close, Instant::now()) {
                     apply_outputs(outs, stdin, ctx, loop_state, session);
                 }
@@ -557,6 +586,7 @@ fn dispatch_next_turn(
                 task_ref: ctx.task_ref.clone(),
                 tried_connections: Vec::new(),
                 oauth_refresh_attempted: false,
+                oauth_token_fp: ctx.oauth_token_fp.clone(),
                 reason: "warm_route_stale",
                 rate_limit_resets_at: None,
             });
@@ -1006,6 +1036,7 @@ fn evaluate_turn_failover(
         task_ref: ctx.task_ref.clone(),
         tried_connections: tried,
         oauth_refresh_attempted: loop_state.oauth_refresh_attempted,
+        oauth_token_fp: ctx.oauth_token_fp.clone(),
         reason,
         rate_limit_resets_at: loop_state.rate_limit_resets_at.clone(),
     });

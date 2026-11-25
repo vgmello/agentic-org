@@ -10,7 +10,6 @@ use std::ffi::OsString;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -21,7 +20,6 @@ use zeroize::Zeroizing;
 /// Process-wide single-flight lock serializing host Claude OAuth refresh probes so concurrent
 /// expiring sessions never race on single-use rotating refresh tokens.
 static CLAUDE_OAUTH_REFRESH_LOCK: Mutex<()> = Mutex::new(());
-static REFRESH_TEMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// Safe host environment variables forwarded to the bounded host-side Claude OAuth refresh probe.
 /// Never includes `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ORG_*`, or `AGENT_OS_*`.
@@ -132,17 +130,35 @@ pub(crate) fn host_config_dir_for(runtime_id: &str, allowed: bool) -> Option<Spe
     SpecPath::try_from(text.as_str()).ok()
 }
 
+/// Non-secret metadata for a host Claude OAuth token injected into a session launch.
+pub(crate) struct HostOAuthMeta {
+    pub expires_at_ms: Option<u64>,
+    pub token_fp: String,
+}
+
+/// Non-reversible 16-hex SHA-256 fingerprint of an OAuth access token (never plaintext).
+pub(crate) fn oauth_token_fingerprint(token: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
+    let mut out = String::with_capacity(16);
+    for &b in &digest.as_ref()[..8] {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
 /// Appends `CLAUDE_CODE_OAUTH_TOKEN` to `launch_env` when a Claude `subscription_cli` route has
 /// no vault credential and the runtime plan both accepts and protects `CLAUDE_CODE_OAUTH_TOKEN`.
 /// Proactively refreshes an expiring/expired host OAuth token via `runtime_binary` before launch
-/// and returns the token's `expiresAt` timestamp (epoch ms) when known.
+/// and returns its non-secret expiry and token fingerprint metadata.
 pub(crate) fn append_host_claude_oauth(
     runtime_id: &str,
     allowed: bool,
     runtime_binary: &Path,
     plan: &LaunchPlan,
     launch_env: &mut Vec<(OsString, OsString)>,
-) -> Option<u64> {
+) -> Option<HostOAuthMeta> {
     if !allowed || runtime_id != "claude" || !plan_protects_claude_oauth(plan) {
         return None;
     }
@@ -153,30 +169,44 @@ pub(crate) fn append_host_claude_oauth(
             resolved = refreshed;
         }
     }
+    let token_fp = oauth_token_fingerprint(resolved.access_token.as_str());
     launch_env.push((
         OsString::from("CLAUDE_CODE_OAUTH_TOKEN"),
         OsString::from(resolved.access_token.as_str()),
     ));
-    resolved.expires_at_ms
+    Some(HostOAuthMeta {
+        expires_at_ms: resolved.expires_at_ms,
+        token_fp,
+    })
 }
 
 /// Triggers a bounded, single-flight, env-scrubbed host-side Claude CLI refresh so expired
 /// `subscription_cli` OAuth access tokens rotate cleanly before spawning an isolated session.
 /// Returns `true` only when the post-refresh host token is verifiably non-expiring or rotated.
 pub(crate) fn refresh_host_claude_oauth(runtime_binary: &Path) -> bool {
-    refresh_host_claude_oauth_with(runtime_binary, false, resolve_host_claude_oauth_entry)
+    refresh_host_claude_oauth_with(runtime_binary, false, None, resolve_host_claude_oauth_entry)
 }
 
-/// Reactive variant used after a 401 auth-expired failure: still runs one bounded probe even when
-/// the stored token's local `expiresAt` has not elapsed (early server-side revocation), and
-/// succeeds only when the token actually rotates.
-pub(crate) fn refresh_host_claude_oauth_reactive(runtime_binary: &Path) -> bool {
-    refresh_host_claude_oauth_with(runtime_binary, true, resolve_host_claude_oauth_entry)
+/// Reactive variant used after a 401 auth-expired failure: if another session or host CLI has
+/// already rotated the host credentials away from `failed_token_fp` to a fresh token, returns
+/// `true` immediately without probing or poisoning the shared connection. Otherwise runs one
+/// bounded probe and succeeds when the token rotates (or becomes non-expiring if previously stale).
+pub(crate) fn refresh_host_claude_oauth_reactive(
+    runtime_binary: &Path,
+    failed_token_fp: Option<&str>,
+) -> bool {
+    refresh_host_claude_oauth_with(
+        runtime_binary,
+        true,
+        failed_token_fp,
+        resolve_host_claude_oauth_entry,
+    )
 }
 
 fn refresh_host_claude_oauth_with(
     runtime_binary: &Path,
     force_probe: bool,
+    failed_token_fp: Option<&str>,
     read_entry: impl Fn() -> Option<ClaudeOAuthToken>,
 ) -> bool {
     if !runtime_binary.is_file() {
@@ -190,12 +220,35 @@ fn refresh_host_claude_oauth_with(
     let before_fresh = before.as_ref().is_some_and(|tok| {
         tok.expires_at_ms.is_some() && !is_oauth_expiring(tok.expires_at_ms, now)
     });
-    if !force_probe && before_fresh {
+    if before_fresh && (!force_probe || already_rotated_from(before.as_ref(), failed_token_fp)) {
         return true;
     }
     let Some(scratch) = PrivateRefreshScratch::create() else {
         return false;
     };
+    if !run_claude_refresh_probe(runtime_binary, &scratch) {
+        return false;
+    }
+    let Some(after) = read_entry() else {
+        return false;
+    };
+    oauth_token_rotated_or_fresh(
+        before.as_ref(),
+        failed_token_fp,
+        &after,
+        crate::credentials::now_ms(),
+        force_probe && before_fresh,
+    )
+}
+
+fn already_rotated_from(before: Option<&ClaudeOAuthToken>, failed_token_fp: Option<&str>) -> bool {
+    match (before, failed_token_fp) {
+        (Some(tok), Some(fp)) => oauth_token_fingerprint(tok.access_token.as_str()) != fp,
+        _ => false,
+    }
+}
+
+fn run_claude_refresh_probe(runtime_binary: &Path, scratch: &PrivateRefreshScratch) -> bool {
     let mut cmd = Command::new(runtime_binary);
     cmd.env_clear()
         .current_dir(&scratch.dir)
@@ -230,45 +283,30 @@ fn refresh_host_claude_oauth_with(
         return false;
     };
     let deadline = Instant::now() + OAUTH_REFRESH_TIMEOUT;
-    let exited_ok = loop {
+    loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status.success(),
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break false;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(_) => {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Ok(None) | Err(_) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                break false;
+                return false;
             }
         }
-    };
-    if !exited_ok {
-        return false;
     }
-    let Some(after) = read_entry() else {
-        return false;
-    };
-    oauth_token_rotated_or_fresh(
-        before.as_ref(),
-        &after,
-        crate::credentials::now_ms(),
-        force_probe && before_fresh,
-    )
 }
 
 fn oauth_token_rotated_or_fresh(
     before: Option<&ClaudeOAuthToken>,
+    failed_token_fp: Option<&str>,
     after: &ClaudeOAuthToken,
     now_ms: u64,
     require_rotation: bool,
 ) -> bool {
-    let rotated = before.is_some_and(|b| b.access_token.as_str() != after.access_token.as_str());
+    let rotated = match failed_token_fp {
+        Some(fp) => oauth_token_fingerprint(after.access_token.as_str()) != fp,
+        None => before.is_some_and(|b| b.access_token.as_str() != after.access_token.as_str()),
+    };
     if require_rotation {
         return rotated;
     }
@@ -286,10 +324,9 @@ impl PrivateRefreshScratch {
     fn create() -> Option<Self> {
         use std::os::unix::fs::DirBuilderExt as _;
         let base = std::env::temp_dir();
-        let pid = std::process::id();
         for _ in 0..8 {
-            let seq = REFRESH_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
-            let dir = base.join(format!("org-oauth-refresh-{pid}-{seq}"));
+            let suffix = crate::credentials::random_hex(8).ok()?;
+            let dir = base.join(format!("org-oauth-refresh-{suffix}"));
             let mut builder = std::fs::DirBuilder::new();
             builder.mode(0o700);
             if builder.create(&dir).is_ok() {
@@ -571,7 +608,7 @@ mod tests {
     #[test]
     fn refresh_host_claude_oauth_scrubs_env_isolates_flags_and_verifies_rotation() {
         use std::os::unix::fs::PermissionsExt as _;
-        use std::sync::atomic::AtomicBool;
+        use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
 
         let dir = tempfile::tempdir().unwrap();
@@ -585,7 +622,7 @@ mod tests {
         std::fs::set_permissions(&fake_claude, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         // Case 1: script exits 0 but token does NOT rotate -> must return false.
-        let unrotated = refresh_host_claude_oauth_with(&fake_claude, false, || {
+        let unrotated = refresh_host_claude_oauth_with(&fake_claude, false, None, || {
             Some(ClaudeOAuthToken {
                 access_token: Zeroizing::new("still-expired".into()),
                 expires_at_ms: Some(1),
@@ -612,7 +649,7 @@ mod tests {
         // Case 2: second read returns rotated token -> must return true.
         let called_once = Arc::new(AtomicBool::new(false));
         let called_clone = Arc::clone(&called_once);
-        let rotated = refresh_host_claude_oauth_with(&fake_claude, false, move || {
+        let rotated = refresh_host_claude_oauth_with(&fake_claude, false, None, move || {
             if !called_clone.swap(true, Ordering::SeqCst) {
                 Some(ClaudeOAuthToken {
                     access_token: Zeroizing::new("old-tok".into()),
@@ -629,35 +666,73 @@ mod tests {
             rotated,
             "refresh must return true after verified token rotation"
         );
+    }
 
-        // Case 3: reactive 401 refresh on early-revoked token whose local expiresAt is still
-        // in the future MUST probe and return false if unchanged, true only if rotated.
+    #[test]
+    fn refresh_host_claude_oauth_reactive_handles_peer_rotation_and_early_revocation() {
+        use std::os::unix::fs::PermissionsExt as _;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let capture = dir.path().join("capture.txt");
+        let fake_claude = dir.path().join("fake-claude");
+        std::fs::write(
+            &fake_claude,
+            format!("#!/bin/sh\necho ran > {}\nexit 0\n", capture.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Case 1: reactive 401 refresh when another session/host already rotated `T1 -> T2`
+        // MUST return true immediately WITHOUT spawning a probe or poisoning the shared pool.
         let future_exp = crate::credentials::now_ms() + 3_600_000;
-        let unchanged_reactive = refresh_host_claude_oauth_with(&fake_claude, true, move || {
-            Some(ClaudeOAuthToken {
-                access_token: Zeroizing::new("revoked-early".into()),
-                expires_at_ms: Some(future_exp),
-            })
-        });
+        let fp_t1 = oauth_token_fingerprint("revoked-early");
+        let peer_rotated =
+            refresh_host_claude_oauth_with(&fake_claude, true, Some(&fp_t1), move || {
+                Some(ClaudeOAuthToken {
+                    access_token: Zeroizing::new("already-rotated-by-peer".into()),
+                    expires_at_ms: Some(future_exp),
+                })
+            });
         assert!(
-            !unchanged_reactive,
-            "reactive refresh must require token rotation when local expiresAt is still future"
+            peer_rotated,
+            "reactive refresh must succeed immediately when host token already rotated away from failed_token_fp"
         );
-        let reactive_flag = Arc::new(AtomicBool::new(false));
-        let reactive_clone = Arc::clone(&reactive_flag);
-        let rotated_reactive = refresh_host_claude_oauth_with(&fake_claude, true, move || {
-            if !reactive_clone.swap(true, Ordering::SeqCst) {
+        assert!(
+            !capture.exists(),
+            "already-rotated reactive refresh must not spawn redundant probe"
+        );
+
+        // Case 2: reactive 401 refresh on early-revoked token whose local expiresAt is still
+        // in the future and still matches failed_token_fp MUST probe and require rotation.
+        let unchanged_reactive =
+            refresh_host_claude_oauth_with(&fake_claude, true, Some(&fp_t1), move || {
                 Some(ClaudeOAuthToken {
                     access_token: Zeroizing::new("revoked-early".into()),
                     expires_at_ms: Some(future_exp),
                 })
-            } else {
-                Some(ClaudeOAuthToken {
-                    access_token: Zeroizing::new("fresh-rotated-early".into()),
-                    expires_at_ms: Some(future_exp + 1_000),
-                })
-            }
-        });
+            });
+        assert!(
+            !unchanged_reactive,
+            "reactive refresh must require token rotation when local token still matches failed_token_fp"
+        );
+        let reactive_flag = Arc::new(AtomicBool::new(false));
+        let reactive_clone = Arc::clone(&reactive_flag);
+        let rotated_reactive =
+            refresh_host_claude_oauth_with(&fake_claude, true, Some(&fp_t1), move || {
+                if !reactive_clone.swap(true, Ordering::SeqCst) {
+                    Some(ClaudeOAuthToken {
+                        access_token: Zeroizing::new("revoked-early".into()),
+                        expires_at_ms: Some(future_exp),
+                    })
+                } else {
+                    Some(ClaudeOAuthToken {
+                        access_token: Zeroizing::new("fresh-rotated-early".into()),
+                        expires_at_ms: Some(future_exp + 1_000),
+                    })
+                }
+            });
         assert!(
             rotated_reactive,
             "reactive refresh must return true when early-revoked token rotates"

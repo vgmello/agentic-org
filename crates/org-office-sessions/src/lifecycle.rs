@@ -480,7 +480,12 @@ impl SessionManager {
         out
     }
 
-    pub(crate) fn build_pump_hooks(&self, employee_id: &str, route_digest: String) -> PumpHooks {
+    pub(crate) fn build_pump_hooks(
+        &self,
+        employee_id: &str,
+        route_digest: String,
+        oauth_expires_at_ms: Option<u64>,
+    ) -> PumpHooks {
         let open_asks_check = Arc::clone(&self.open_required_asks);
         let has_open: OpenRequiredAsksHook = Arc::new(move |emp_id: &str| {
             open_asks_check
@@ -545,7 +550,7 @@ impl SessionManager {
         });
 
         let (on_permit_acquire, on_permit_renew, on_permit_release, on_permit_release_pending) =
-            build_permit_hooks(self, employee_id, route_digest);
+            build_permit_hooks(self, employee_id, route_digest, oauth_expires_at_ms);
 
         let rl_office = Arc::clone(&self.office);
         let rl_hq_permits = self.config.hq_permits.clone();
@@ -1349,6 +1354,7 @@ fn build_permit_hooks(
     mgr: &SessionManager,
     employee_id: &str,
     route_digest: String,
+    oauth_expires_at_ms: Option<u64>,
 ) -> (
     PermitAcquireHook,
     PermitRenewHook,
@@ -1359,6 +1365,9 @@ fn build_permit_hooks(
     let acq_hq_permits = mgr.config.hq_permits.clone();
     let acq_emp = employee_id.to_owned();
     let on_permit_acquire: PermitAcquireHook = Arc::new(move |conn_id, task_id| {
+        if crate::host_auth::is_oauth_expiring(oauth_expires_at_ms, now_ms()) {
+            return Err("WARM_ROUTE_STALE: oauth token expiring".into());
+        }
         let digest = (!route_digest.is_empty()).then_some(route_digest.as_str());
         match crate::router::acquire_warm_permit_for_office(
             &acq_office,

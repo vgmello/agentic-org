@@ -190,6 +190,7 @@ struct PlannedSessionLaunch {
     connection_id: Option<String>,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
+    oauth_token_fp: Option<String>,
     oauth_refresh_attempted: bool,
     workspace_arg: Option<String>,
     permit: Option<(String, u64)>,
@@ -215,6 +216,7 @@ struct PreparedSessionLaunch {
     connection_id: Option<String>,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
+    oauth_token_fp: Option<String>,
     oauth_refresh_attempted: bool,
     workspace_arg: Option<String>,
     permit: Option<(String, u64)>,
@@ -1568,15 +1570,14 @@ impl SessionManager {
             .plan_session(&spec, &ctx)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "runtime rejected session spec"))?;
 
-        let mut launch_env = admitted.auth_env;
-        let oauth_expires_at_ms = crate::host_auth::append_host_claude_oauth(
+        let (launch_env, oauth_expires_at_ms, oauth_token_fp) = assemble_launch_env(
+            admitted.auth_env,
+            admitted.endpoint_env,
             runtime_name,
             allow_host_auth,
             &ctx.runtime_path,
             &plan,
-            &mut launch_env,
         );
-        launch_env.extend(admitted.endpoint_env);
 
         Ok(PlannedSessionLaunch {
             emp_id,
@@ -1587,6 +1588,7 @@ impl SessionManager {
             connection_id: admitted.connection_id,
             route_digest: admitted.route_digest_suffix,
             oauth_expires_at_ms,
+            oauth_token_fp,
             oauth_refresh_attempted: opts.oauth_refresh_attempted,
             workspace_arg: params.workspace.clone(),
             permit: permit_guard.take(),
@@ -1619,6 +1621,7 @@ impl SessionManager {
             connection_id,
             route_digest,
             oauth_expires_at_ms,
+            oauth_token_fp,
             oauth_refresh_attempted,
             workspace_arg,
             permit,
@@ -1694,6 +1697,7 @@ impl SessionManager {
             connection_id,
             route_digest,
             oauth_expires_at_ms,
+            oauth_token_fp,
             oauth_refresh_attempted,
             workspace_arg,
             permit: permit_guard.take(),
@@ -1794,6 +1798,7 @@ impl SessionManager {
             connection_id,
             route_digest,
             oauth_expires_at_ms,
+            oauth_token_fp,
             oauth_refresh_attempted,
             workspace_arg,
             permit,
@@ -1811,7 +1816,7 @@ impl SessionManager {
         if !objective.is_empty() {
             let _ = tx.send(PumpCommand::SendTurn(objective));
         }
-        let hooks = self.build_pump_hooks(&emp_id, route_digest.clone());
+        let hooks = self.build_pump_hooks(&emp_id, route_digest.clone(), oauth_expires_at_ms);
         let pump_ctx = PumpContext {
             employee_id: emp_id.clone(),
             run_id,
@@ -1822,6 +1827,7 @@ impl SessionManager {
             task_ref,
             tried_connections,
             oauth_refresh_attempted,
+            oauth_token_fp,
             store: self.store.clone(),
             bindings: self.bindings.clone(),
             state: Arc::clone(&runtime_state),
@@ -2207,7 +2213,9 @@ impl SessionManager {
             };
             let wt_dir = cache_dir.join("worktrees");
             for other in collect_non_self_admin_names(&wt_dir, repo_id, &git_state, self_admins) {
-                push_glob_pattern(out, &wt_dir.join(other));
+                let p = wt_dir.join(other);
+                push_exact_pattern(out, &p);
+                push_glob_pattern(out, &p);
             }
         }
     }
@@ -2233,7 +2241,9 @@ impl SessionManager {
             if let Ok(entries) = std::fs::read_dir(&teams_dir) {
                 for entry in entries.flatten() {
                     if entry.file_name().to_str() != Some(team_id.as_str()) {
-                        push_glob_pattern(out, &entry.path());
+                        let p = entry.path();
+                        push_exact_pattern(out, &p);
+                        push_glob_pattern(out, &p);
                     }
                 }
             }
@@ -2312,7 +2322,7 @@ impl SessionManager {
             }
             my_root = my_root.join("agents").join(employee_id);
             if create_root {
-                let _ = std::fs::create_dir_all(&my_root);
+                let _ = ensure_owner_only_dir(&my_root);
             }
             let canon_root = canonicalize_with_tail(&my_root);
             if let Ok(spec) = SpecPath::try_from(canon_root.to_string_lossy().as_ref()) {
@@ -2969,6 +2979,27 @@ pub(crate) fn is_host_claude_subscription_refresh_eligible(
         .ok()
 }
 
+fn assemble_launch_env(
+    mut launch_env: Vec<(OsString, OsString)>,
+    endpoint_env: Vec<(OsString, OsString)>,
+    runtime_name: &str,
+    allow_host_auth: bool,
+    runtime_path: &Path,
+    plan: &org_agent_runtime::LaunchPlan,
+) -> (Vec<(OsString, OsString)>, Option<u64>, Option<String>) {
+    let host_oauth = crate::host_auth::append_host_claude_oauth(
+        runtime_name,
+        allow_host_auth,
+        runtime_path,
+        plan,
+        &mut launch_env,
+    );
+    let expires_at_ms = host_oauth.as_ref().and_then(|m| m.expires_at_ms);
+    let token_fp = host_oauth.map(|m| m.token_fp);
+    launch_env.extend(endpoint_env);
+    (launch_env, expires_at_ms, token_fp)
+}
+
 fn try_refresh_host_claude_subscription(mgr: &SessionManager, req: &FailoverRequest) -> bool {
     if req.reason != "auth_expired" || req.oauth_refresh_attempted {
         return false;
@@ -2977,7 +3008,7 @@ fn try_refresh_host_claude_subscription(mgr: &SessionManager, req: &FailoverRequ
     else {
         return false;
     };
-    crate::host_auth::refresh_host_claude_oauth_reactive(&binary)
+    crate::host_auth::refresh_host_claude_oauth_reactive(&binary, req.oauth_token_fp.as_deref())
 }
 
 fn warm_handle_stop_reason(

@@ -636,6 +636,9 @@ pub(crate) fn compute_worktree_sandbox_digest(office: &Office, employee_id: &str
     else {
         return "err".to_owned();
     };
+    let Some(topo_digest) = compute_org_topology_digest(office, employee_id) else {
+        return "err".to_owned();
+    };
     let mut self_entries = Vec::new();
     let mut targeted_repos = std::collections::BTreeSet::new();
     for ws in git_state.workspaces.values() {
@@ -649,8 +652,9 @@ pub(crate) fn compute_worktree_sandbox_digest(office: &Office, employee_id: &str
     }
     if targeted_repos.is_empty() {
         // Zero-worktree sessions emit a blanket `<office_rt>/repositories/**` deny, so untargeted
-        // repos cloned later are already blocked without needing a warm recycle.
-        return hex_short_sha256(b"none");
+        // repos cloned later are already blocked; topology still invalidates on sibling hires,
+        // new teams, team moves, or newly enrolled offices.
+        return hex_short_sha256(format!("topo={topo_digest}|wt=none").as_bytes());
     }
     self_entries.sort();
     let Ok(Ok(repos)) = office.list_repositories(None) else {
@@ -664,12 +668,39 @@ pub(crate) fn compute_worktree_sandbox_digest(office: &Office, employee_id: &str
     );
     let peer_admins = collect_digest_peer_admins(&git_state, &targeted_repos, &repos_root);
     let material = format!(
-        "self={}|repos={}|peers={}",
+        "topo={topo_digest}|self={}|repos={}|peers={}",
         self_entries.join(","),
         known_repos.join(","),
         peer_admins.join(",")
     );
     hex_short_sha256(material.as_bytes())
+}
+
+fn compute_org_topology_digest(office: &Office, employee_id: &str) -> Option<String> {
+    let emp = office.load_employee(employee_id).ok()??;
+    let snapshot = office.org_snapshot().ok()?;
+    let employees = office.list_employees().ok()?;
+    let mut team_entries: Vec<String> = snapshot
+        .teams
+        .iter()
+        .map(|t| format!("{}:{}", t.id, t.owner_team_id.as_deref().unwrap_or("")))
+        .collect();
+    team_entries.sort();
+    let mut emp_ids: Vec<String> = employees
+        .into_iter()
+        .map(|e| e.id.as_str().to_owned())
+        .collect();
+    emp_ids.sort();
+    let mut office_ids = office.enrolled_office_ids().ok()?;
+    office_ids.sort();
+    let material = format!(
+        "home={}|teams={}|emps={}|offices={}",
+        emp.home_team_id,
+        team_entries.join(","),
+        emp_ids.join(","),
+        office_ids.join(",")
+    );
+    Some(hex_short_sha256(material.as_bytes()))
 }
 
 fn collect_digest_repo_ids<'a>(
