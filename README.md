@@ -10,7 +10,7 @@ apps/
   agentic-org-office/          Office worker daemon (runs agent turns, store, mailbox, and sync)
   agentic-org-web/             Browser BFF & HTTP/HTTPS server serving the UI and `/api/v1`
   agent-os/                    Agent-facing CLI used inside supervised agent turns
-  agentic-org-ui/              Static browser application (SvelteKit 5), served by `agentic-org-web`
+  agentic-org-ui/              Static browser application (SvelteKit 2, Svelte 5), served by `agentic-org-web`
   agentic-org-web-prototype/   Standalone static HTML/CSS UI prototypes (never bundled into production)
 crates/
   org-host/                    Host library composed by `agentic-org serve`
@@ -71,6 +71,6 @@ Agentic Org is licensed under the **Functional Source License, Version 1.1, Apac
 
 We want Agentic Org to be openly inspectable, easy to self-host without paywalls or license keys, and safe for teams to adopt long-term without vendor lock-in—while ensuring third-party cloud providers cannot simply take our work and sell it as a competing hosted SaaS. `FSL-1.1-ALv2` keeps self-hosting and internal business use completely free while protecting the sustainability of the project, and guarantees that every version becomes standard Apache-2.0 open source after two years.
 
-### Third-party notices
+### Third-party notices & UI carve-out
 
-See [NOTICE](NOTICE) for third-party attributions (including MIT-licensed Heroicons and documentation attributions).
+See [NOTICE](NOTICE) for third-party attributions and scope exclusions. While `DescriptionList.svelte` and `StatTile.svelte` have been rewritten cleanly, a full file-level audit of older screens in `apps/agentic-org-ui/` is still tracked under `TASK-122`; until complete, any remaining Tailwind Plus-derived UI patterns stay subject to Tailwind Plus license terms and are excluded from the `FSL-1.1-ALv2` and future `Apache-2.0` grants.

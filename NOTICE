@@ -2,17 +2,29 @@ Agentic Org
 Copyright 2026 Vitor M
 
 This repository is licensed under the Functional Source License, Version 1.1,
-ALv2 Future License (FSL-1.1-ALv2). See LICENSE for the full terms.
+ALv2 Future License (FSL-1.1-ALv2), except as noted below for third-party
+components and assets.
 
 ========================================================================
-Third-Party Attributions
+Third-Party Components & Carve-Outs
 ========================================================================
 
-1. Heroicons v2.2.0 (apps/agentic-org-ui)
+1. Tailwind Plus UI patterns (apps/agentic-org-ui)
+   Portions of the older screens in `apps/agentic-org-ui/` were originally
+   derived from Tailwind Plus (https://tailwindcss.com/plus) under a
+   commercial Tailwind Plus license permitting inclusion in this end-user
+   application. Until a full file-level audit and clean-room replacement
+   of those remaining screens is complete, any remaining Tailwind
+   Plus-derived portions stay subject to Tailwind Plus license terms and
+   are excluded from the FSL-1.1-ALv2 license grant and its future
+   Apache-2.0 conversion. They may not be extracted into a separate UI
+   kit, component library, template, starter, or admin-panel builder.
+
+2. Heroicons v2.2.0 (apps/agentic-org-ui)
    Icon SVG paths in `apps/agentic-org-ui/src/lib/components/heroicons.ts`,
    `icons.ts`, and `glyphs.ts` are from Heroicons v2.2.0 by Tailwind Labs,
    Inc., licensed under the MIT License.
 
-2. Rust Style Guide (docs/rust-style-guide.LICENSE)
+3. Rust Style Guide (docs/rust-style-guide.LICENSE)
    Third-party documentation license notice retained in
    `docs/rust-style-guide.LICENSE`.
