@@ -50,7 +50,7 @@ canonical files and selected execution/control contracts, start with
 and `backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md`.
 Designs (`backlog/docs/design/`), ADRs (`backlog/decisions/`) and UX/AX specs
 (`backlog/docs/specs/`) explain those contracts in context; where one differs from
-the data contract, the data contract wins. Use `principal-designer` for browser UX and `principal-ax-designer` for `agent-os` AX (`doc-96` outranks persona). A requirement doc says what is to be
+the data contract, the data contract wins. When the parent `agentic-org-project` overlay is attached, use its `principal-designer` role for browser UX and `principal-ax-designer` role for `agent-os` AX (`doc-96` outranks persona). A requirement doc says what is to be
 built; what exists is in the checklist evidence and executable status doc below.
 
 `backlog/docs/doc-3 - Feature-Checklist.md` is the single feature delivery checklist.
@@ -191,32 +191,17 @@ Until the product can carry the team's own coordination (see the goal above), co
 ### Communication for the lead and delegates
 
 - The main lead answers concisely in normal prose with evidence, risks, and decisions needed.
-- Every delegated session (implementation, lookup, architecture, final review) reads and applies `.agents/skills/caveman/SKILL.md` before its first response (delegate-only, never the main lead's voice; never reduces scope, tests, or review depth).
+- When the parent `agentic-org-project` overlay is attached (providing `.agents/skills/caveman/SKILL.md`), delegated sessions read and apply it before their first response (delegate-only, never the main lead's voice; never reduces scope, tests, or review depth).
 - Include the skill reference (or text if file reads are unavailable) and delegate-only scope in every dispatch. Source changes invalidate old packets—resolve current guidance before subsequent assignments.
 
 ## Tailwind Plus (licensed UI)
 The app's look uses Tailwind Plus components, which the licence allows in our open-source end product. **Allowed:** using or modifying them (including converting them to Svelte) **inside the product UI application (`apps/agentic-org-ui`)**. **Not allowed:** publishing them separately (a shared UI kit or component package, a template or starter, a Figma kit), or building a website-builder or admin-panel product from them. Never move them into `crates/` or a standalone package.
 
-<!-- BACKLOG.MD GUIDELINES START -->
-<!-- backlog.md-instructions-version: 1.55.3 -->
-<CRITICAL_INSTRUCTION>
+## Backlog.md Workflow (Parent Maintainer Workspace Only)
 
-## Backlog.md Workflow
+When working inside the parent **`agentic-org-project`** workspace (where a sibling/parent `backlog/` store exists), run all `backlog` CLI commands from that parent repository root—never inside this standalone code checkout. Standalone open-source clones do not include `backlog/` and can skip this section.
 
-This project uses Backlog.md in the parent **`agentic-org-project`** repository (`backlog/`). Run all `backlog` CLI commands from that parent repository root, not inside this code checkout.
-
-**At the beginning of each conversation in this project, run `backlog instructions overview` (from the parent repo root) before answering or taking action. Re-read it only if you have not read it yet in the current conversation.**
-
-Use the overview to decide whether to search, read, create, or update Backlog tasks.
-
-Before task lifecycle actions, read the matching detailed guide:
-- `backlog instructions task-creation` before creating or splitting tasks
-- `backlog instructions task-execution` before planning, changing status or assignee, adding a plan or implementation notes, or implementing task work
-- `backlog instructions task-finalization` before checking acceptance criteria, writing final summaries, or moving tasks to terminal statuses
-
-Use `backlog <command> --help` before running unfamiliar commands. Help shows options, fields, and examples.
-
-Do not edit Backlog task, draft, document, decision, or milestone markdown files directly. Use the `backlog` CLI so metadata, relationships, and history stay consistent.
-
-</CRITICAL_INSTRUCTION>
-<!-- BACKLOG.MD GUIDELINES END -->
+When `backlog/` is present in the parent workspace:
+- Run `backlog instructions overview` from the parent repo root before searching, creating, or updating Backlog tasks.
+- Before task lifecycle actions, read the matching detailed guide (`task-creation`, `task-execution`, or `task-finalization`).
+- Do not edit Backlog markdown files directly; always use the `backlog` CLI.

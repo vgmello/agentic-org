@@ -22,7 +22,7 @@ config/
 deploy/
   container/                   Container image and deployment definitions
 docs/
-  architecture/                System and architecture guides
+  architecture/                System and architecture HTML guides
   design/organization-data/    Canonical SQL schema and executable schema verification tests
 ```
 
@@ -70,3 +70,7 @@ Agentic Org is licensed under the **Functional Source License, Version 1.1, Apac
 ### Why we chose `FSL-1.1-ALv2`
 
 We want Agentic Org to be openly inspectable, easy to self-host without paywalls or license keys, and safe for teams to adopt long-term without vendor lock-in—while ensuring third-party cloud providers cannot simply take our work and sell it as a competing hosted SaaS. `FSL-1.1-ALv2` keeps self-hosting and internal business use completely free while protecting the sustainability of the project, and guarantees that every version becomes standard Apache-2.0 open source after two years.
+
+### Third-party notices & UI carve-out
+
+See [NOTICE](NOTICE) for third-party attributions and scope exclusions. In particular, Tailwind Plus-derived UI patterns currently inside `apps/agentic-org-ui/` remain subject to Tailwind Plus license terms and are excluded from the `FSL-1.1-ALv2` and future `Apache-2.0` grants (they must not be extracted into standalone UI kits, templates, or component packages).

@@ -1,8 +1,7 @@
 # Agentic Org in a container
 
 The whole instance (the host, the web process and the offices) runs as the main process
-of one container ([ADR-0017](../../docs/adr/0017-linux-and-container-hosting.md),
-decisions 4 and 10; [Linux host design](../../docs/design/linux-host.md), section 3.4).
+of one container (ADR-0017 decisions 4 and 10; Linux host design section 3.4).
 
 ## Run it
 

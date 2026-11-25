@@ -31,11 +31,16 @@ bun run build
 - Include tests for new behavior and regression tests for bug fixes. Never write to a real user's organization directory from tests—always use temporary directories.
 - Keep pull request descriptions concise using the repository PR template (**Why**, **What**, **Notes**, **Breaking changes**).
 - Do not commit secrets, credentials, or personal local paths. Run `gitleaks git --redact` if you have Gitleaks installed.
-- Note on UI components: `apps/agentic-org-ui` contains Tailwind Plus components licensed for use inside this application; do not extract them into standalone crates or packages.
+- Note on UI components: `apps/agentic-org-ui` currently contains Tailwind Plus-derived UI patterns covered by a separate third-party carve-out (see [NOTICE](NOTICE)); do not extract them into standalone crates or packages.
 
-## Licensing of Contributions
+## Licensing of Contributions (Contributor License Grant)
 
-By submitting a contribution to this repository, you agree that your contribution is licensed under the repository's [LICENSE](LICENSE) (`FSL-1.1-ALv2`, converting to `Apache-2.0` two years after release).
+By submitting a pull request or other contribution to this repository, you confirm that:
+
+1. You have the right to submit the contribution (either as original work or under compatible third-party terms).
+2. You grant the project copyright holder (`Vitor M`) and its successors and assigns (including any future corporate entity operating Agentic Org) a perpetual, worldwide, non-exclusive, royalty-free, irrevocable copyright and patent license to use, modify, redistribute, sublicense, and offer commercial or hosted versions of your contribution—in addition to distributing it under the repository's [LICENSE](LICENSE) (`FSL-1.1-ALv2`, converting to `Apache-2.0` two years after release).
+
+You retain ownership of the copyright in your own contributions.
 
 ## Code of Conduct
 

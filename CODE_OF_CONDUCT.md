@@ -56,8 +56,9 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainers privately via GitHub. All complaints will be
-reviewed and investigated promptly and fairly.
+reported privately to the project maintainer using the contact details listed on
+the repository owner's GitHub profile (https://github.com/vgmello). All
+complaints will be reviewed and investigated promptly and fairly.
 
 ## Attribution
 
