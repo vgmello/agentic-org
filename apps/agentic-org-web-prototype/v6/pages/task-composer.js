@@ -169,7 +169,7 @@ function seedIdeationComments(leadId, prompt, projId, mentions) {
       id: "ic-2",
       who: leadId,
       at: now,
-      text: `Taking this in Draft to refine before execution.${tagNote} Review the initial criteria below or add constraints here — once we click Materialize & Publish, this ideation thread folds out of executing agent context.`,
+      text: `Taking this in Draft to refine before execution.${tagNote} As we agree on scope or technical details here, I'll update the task description and criteria directly — once you click Publish, this ideation thread folds out of executing agent context.`,
     },
   ];
 }
@@ -186,8 +186,8 @@ function addDraftInboxNotice(created, leadId) {
     task: created.id,
     time: "Just now",
     what: `Draft ready to refine: ${created.title}`,
-    why: `Tess routed your request to ${M[leadId]?.name || "the project lead"} in Draft mode. Discuss details or click Materialize & Publish on ${created.id} when ready.`,
-    rec: `Open ${created.id} to review criteria, add ideation notes, or click Materialize & Publish to move it into To do.`,
+    why: `Tess routed your request to ${M[leadId]?.name || "the project lead"} in Draft mode. Discuss details while the lead keeps the task updated, then publish ${created.id} when ready.`,
+    rec: `Open ${created.id} to refine scope, review updates to the description/criteria, or click Publish to move it into execution.`,
     recTone: "ok",
     src: { href: `#/work?item=${created.id}`, label: `Open draft ${created.id}` },
     handled: false,

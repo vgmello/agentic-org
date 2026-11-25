@@ -426,16 +426,17 @@ function workDetailSubtasks(w) {
 
 function workDetailDraftBanner(w) {
   if (w.status === "Draft") {
+    const targetStatus = w.kind === "bug" ? STATUSES.bug[0] : STATUSES.task[0];
     return `<div class="work-draft-banner" role="region" aria-label="Draft ideation phase">
       <div class="work-draft-banner-copy">
         <p class="work-draft-eyebrow">${ic("pencil", "ic14")}Draft · Ideation phase</p>
-        <p class="work-draft-note">Discuss scope and refine below. Publishing materializes this thread into the final spec and excludes ideation comments from default agent context.</p>
+        <p class="work-draft-note">Discuss below while leads &amp; agents keep the description and criteria above up to date. Publishing moves status to ${esc(targetStatus)}, folds ideation comments out of agent context, and begins official execution comments.</p>
       </div>
-      <button class="btn primary sm" type="button" data-act="work-publish-draft" data-id="${esc(w.id)}">${ic("sparkle", "ic14")}Materialize &amp; Publish</button>
+      <button class="btn primary sm" type="button" data-act="work-publish-draft" data-id="${esc(w.id)}">${ic("check-circle", "ic14")}Publish to ${esc(targetStatus)}</button>
     </div>`;
   }
   if (w.materializedFromIdeation) {
-    return `<p class="work-materialized-stamp">${ic("sparkle", "ic14")}Spec materialized from ${w.ideationComments?.length || 0} ideation notes · Agent execution context starts clean.</p>`;
+    return `<p class="work-materialized-stamp">${ic("check-circle", "ic14")}Published from Draft · ${w.ideationComments?.length || 0} ideation comments folded out of default agent context.</p>`;
   }
   return "";
 }
@@ -905,10 +906,6 @@ function persistCreatedWorkTask(fields) {
 function publishDraftTask(id) {
   const w = W.find((item) => item.id === id);
   if (!w || w.status !== "Draft") return;
-  const userNotes = (w.ideationComments || []).filter((c) => c.who === "you").map((c) => c.text.trim()).filter(Boolean);
-  if (userNotes.length) {
-    w.description = `${w.description.replace(/\s+$/, "")}\n\nRefined decisions:\n${userNotes.map((n) => `• ${n}`).join("\n")}`;
-  }
   w.status = w.kind === "bug" ? STATUSES.bug[0] : STATUSES.task[0];
   w.materializedFromIdeation = true;
   w.publishedAt = Date.now();
@@ -916,13 +913,13 @@ function publishDraftTask(id) {
   for (const inboxItem of IN) {
     if (inboxItem.task === w.id && inboxItem.sub === "Draft refinement") {
       inboxItem.handled = true;
-      inboxItem.outcome = `Materialized & published to ${w.status}`;
+      inboxItem.outcome = `Published to ${w.status}`;
     }
   }
   saveWorkTask(w);
   WORK_DISCUSSIONS[w.id] = WORK_DISCUSSIONS[w.id] || { events: [] };
-  WORK_DISCUSSIONS[w.id].events.unshift(["sparkle", `Materialized spec from ${(w.ideationComments || []).length} ideation notes and published to ${w.status}`, "Just now"]);
-  toast(`Published ${w.id} to ${w.status} · Ideation folded out of agent context`, "check-circle");
+  WORK_DISCUSSIONS[w.id].events.unshift(["check-circle", `Published from Draft to ${w.status} (${(w.ideationComments || []).length} ideation comments folded)`, "Just now"]);
+  toast(`Published ${w.id} to ${w.status} · New comments are now official execution comments`, "check-circle");
 }
 
 function addIdeationComment(form) {
@@ -932,15 +929,17 @@ function addIdeationComment(form) {
   w.ideationComments = w.ideationComments || [];
   w.ideationComments.push({ id: "ic-" + Date.now(), who: "you", at: Date.now(), text });
   const lead = w.who && M[w.who] ? w.who : "ada";
+  const prefix = w.description.includes("\n\nAgreed during ideation:") ? "\n" : "\n\nAgreed during ideation:\n";
+  w.description = `${w.description.replace(/\s+$/, "")}${prefix}• ${text}`;
   w.ideationComments.push({
     id: "ic-ack-" + Date.now(),
     who: lead,
     at: Date.now() + 50,
-    text: `Noted — I'll synthesize that into the final spec when you click Materialize & Publish.`,
+    text: `Agreed — I updated the task description above with that decision. Ready to publish whenever you are.`,
   });
   saveWorkTask(w);
   ta.value = "";
-  toast("Added ideation note to Draft", "check-circle");
+  toast(`${M[lead]?.name || "Lead"} updated the Draft description`, "check-circle");
 }
 
 async function createWorkTask(form) {
