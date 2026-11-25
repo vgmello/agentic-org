@@ -7,6 +7,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import StatusPill from '$lib/components/StatusPill.svelte';
+	import { WORK_PRIORITY_LABELS, WORK_STATE_LABELS } from '../present';
 	import type { WorkRow, WorkState } from '../types';
 
 	let {
@@ -36,22 +37,13 @@
 		event.preventDefault();
 		onopen(row, event.currentTarget as HTMLElement | null);
 	}
-	const STATE: Record<WorkState, { word: string; class: string }> = {
-		todo: { word: 'To do', class: '' },
-		in_progress: {
-			word: 'In progress',
-			class: 'bg-brand/10 text-brand-text ring-brand/30'
-		},
-		in_review: { word: 'In review', class: 'bg-brand/10 text-brand-text ring-brand/30' },
-		blocked: { word: 'Blocked', class: 't-red' },
-		done: { word: 'Done', class: 't-green' }
+	const STATE_CLASS: Record<WorkState, string> = {
+		todo: '',
+		in_progress: 'bg-brand/10 text-brand-text ring-brand/30',
+		in_review: 'bg-brand/10 text-brand-text ring-brand/30',
+		blocked: 't-red',
+		done: 't-green'
 	};
-	const PRIORITY = {
-		urgent: 'Urgent',
-		high: 'High priority',
-		medium: 'Medium priority',
-		low: 'Low priority'
-	} as const;
 </script>
 
 <ul role="list" class="divide-y divide-line-subtle">
@@ -81,12 +73,12 @@
 					{/if}
 				</p>
 				<p class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-fg-muted">
-					{#each [row.project, hideAssignee ? undefined : (row.assignee ?? 'Unassigned'), row.priority && PRIORITY[row.priority]].filter(Boolean) as part, i (i)}
+					{#each [row.project, hideAssignee ? undefined : (row.assignee ?? 'Unassigned'), row.priority && WORK_PRIORITY_LABELS[row.priority]].filter(Boolean) as part, i (i)}
 						{#if i > 0}<span aria-hidden="true">·</span>{/if}<span>{part}</span>
 					{/each}
 				</p>
 			</div>
-			<StatusPill label={STATE[row.state].word} class={STATE[row.state].class} />
+			<StatusPill label={WORK_STATE_LABELS[row.state]} class={STATE_CLASS[row.state]} />
 		</li>
 	{/each}
 </ul>

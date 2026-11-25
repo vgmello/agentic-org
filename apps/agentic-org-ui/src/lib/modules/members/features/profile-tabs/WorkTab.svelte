@@ -11,6 +11,7 @@
 	import { mobileButton } from '$lib/components/classes';
 	import { useScopedSearchContext } from '$lib/platform/shell/scoped-search.svelte';
 	import { membersApi } from '../../api';
+	import { WORK_PRIORITY_LABELS, WORK_STATE_LABELS } from '../../present';
 	import WorkRows from '../../components/WorkRows.svelte';
 	import { profileContext } from '../profile/context.svelte';
 	import { tabResource } from './reload.svelte';
@@ -64,19 +65,6 @@
 			isAgent && taskFilter !== 'all'
 				? rows.filter((r) => (taskFilter === 'open' ? r.state !== 'done' : r.state === 'done'))
 				: rows}
-		{@const STATE_LABELS: Record<string, string> = {
-			todo: 'To do',
-			in_progress: 'In progress',
-			in_review: 'In review',
-			blocked: 'Blocked',
-			done: 'Done'
-		}}
-		{@const PRIORITY_LABELS: Record<string, string> = {
-			urgent: 'Urgent',
-			high: 'High priority',
-			medium: 'Medium priority',
-			low: 'Low priority'
-		}}
 		{@const filtered = needle
 			? byState.filter((r) =>
 					[
@@ -84,8 +72,8 @@
 						r.title,
 						r.project,
 						r.state,
-						STATE_LABELS[r.state],
-						r.priority ? PRIORITY_LABELS[r.priority] : undefined
+						WORK_STATE_LABELS[r.state],
+						r.priority ? WORK_PRIORITY_LABELS[r.priority] : undefined
 					]
 						.filter((part): part is string => Boolean(part))
 						.some((part) => part.toLowerCase().includes(needle))

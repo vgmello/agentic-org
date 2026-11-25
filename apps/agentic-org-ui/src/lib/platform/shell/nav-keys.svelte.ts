@@ -376,8 +376,17 @@ export class NavKeyController {
 			}
 			if (event.key === 'Enter' && this.#selectedCandidate) {
 				if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
-					// Preserve native modified-Enter behavior (e.g. open link in new tab) without double-activating.
-					this.cancel(false);
+					// Clear pending shortcut mode without firing onSidebarCancel so the mobile drawer stays open
+					// for native modified-Enter link activation (e.g. Cmd+Enter opening in a new tab).
+					this.#clearSelection();
+					this.#openingSidebar = false;
+					this.#openingInbox = false;
+					this.#pendingLetter = null;
+					this.mode = null;
+					this.hint = '';
+					this.#previousFocus = null;
+					this.#activePageScope = null;
+					this.#selectedIndex = -1;
 					return;
 				}
 				event.preventDefault();

@@ -39,6 +39,7 @@
 	const inputId = $derived(id ?? `${uid}-scoped-search`);
 	let inputEl = $state<HTMLInputElement | null>(null);
 	let clearTipOpen = $state(false);
+	const clearTipTether = Tooltip.createTether();
 	const shortcutsEnabled = $derived(singleKeyShortcutsOn());
 
 	const MODAL_OVERLAY_SELECTOR =
@@ -67,6 +68,7 @@
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.isComposing || event.keyCode === 229 || event.key !== 'Escape') return;
 		// Prototype Release 1149b4f1: Escape leaves the typed query intact and exits the field.
+		clearTipTether.close();
 		clearTipOpen = false;
 		event.preventDefault();
 		event.stopPropagation();
@@ -98,7 +100,7 @@
 	/>
 	{#if value}
 		<Tooltip.Provider delayDuration={150} ignoreNonKeyboardFocus>
-			<Tooltip.Root bind:open={clearTipOpen}>
+			<Tooltip.Root bind:open={clearTipOpen} tether={clearTipTether}>
 				<Tooltip.Trigger>
 					{#snippet child({ props })}
 						<button
@@ -106,6 +108,7 @@
 							type="button"
 							aria-label="Clear search"
 							onclick={() => {
+								clearTipTether.close();
 								clearTipOpen = false;
 								updateValue('');
 								inputEl?.focus();
@@ -121,7 +124,7 @@
 						side="bottom"
 						sideOffset={6}
 						escapeKeydownBehavior="defer-otherwise-close"
-						class="z-60 rounded-md border border-line-strong bg-popover px-2 py-1 text-xs/5 font-medium text-popover-foreground shadow-md"
+						class="z-60 rounded-md border border-line-strong bg-surface px-2 py-1 text-xs/5 font-medium text-fg shadow-md"
 					>
 						Clear search
 					</Tooltip.Content>

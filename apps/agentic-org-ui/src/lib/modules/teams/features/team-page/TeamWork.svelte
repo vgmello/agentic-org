@@ -13,7 +13,13 @@
 	import Loaded from '$lib/components/Loaded.svelte';
 	import ScopedSearchInput from '$lib/components/ScopedSearchInput.svelte';
 	import WorkReadingPanel from '$lib/components/WorkReadingPanel.svelte';
-	import { WorkRows, type WorkRow, type WorkState } from '$lib/modules/members';
+	import {
+		WORK_PRIORITY_LABELS,
+		WORK_STATE_LABELS,
+		WorkRows,
+		type WorkRow,
+		type WorkState
+	} from '$lib/modules/members';
 	import type { WorkStatusRingTone } from '$lib/modules/work/compact';
 	import WorkDetailPage from '$lib/modules/workitems/features/detail/WorkDetailPage.svelte';
 	import { normalizeRef, taskHref } from '$lib/modules/workitems/present';
@@ -171,30 +177,7 @@
 		};
 	}
 
-	const STATE_LABELS: Record<string, string> = {
-		todo: 'To do',
-		in_progress: 'In progress',
-		in_review: 'In review',
-		blocked: 'Blocked',
-		done: 'Done'
-	};
-	const PRIORITY_LABELS: Record<string, string> = {
-		urgent: 'Urgent',
-		high: 'High priority',
-		medium: 'Medium priority',
-		low: 'Low priority'
-	};
-
-	function filterWorkRows<
-		T extends {
-			ref: string;
-			title: string;
-			project?: string;
-			assignee?: string;
-			priority?: string;
-			state: string;
-		}
-	>(rows: T[], rawQuery: string): T[] {
+	function filterWorkRows(rows: WorkRow[], rawQuery: string): WorkRow[] {
 		const needle = rawQuery.trim().toLowerCase();
 		if (!needle) return rows;
 		return rows.filter((r) =>
@@ -204,8 +187,8 @@
 				r.project,
 				r.assignee,
 				r.state,
-				STATE_LABELS[r.state],
-				r.priority ? PRIORITY_LABELS[r.priority] : undefined
+				WORK_STATE_LABELS[r.state],
+				r.priority ? WORK_PRIORITY_LABELS[r.priority] : undefined
 			]
 				.filter((part): part is string => Boolean(part))
 				.some((part) => part.toLowerCase().includes(needle))
@@ -269,8 +252,8 @@
 			kindLabel={readingKindLabel(activeOpenRow.kind)}
 			ariaLabel="{activeOpenRow.ref} · {activeOpenRow.title}"
 			fullPageHref={taskHref(activeOpenRow.ref)}
-			statusTone={readingStatusTone(activeOpenRow.state)}
-			needsAttention={activeOpenRow.state === 'blocked'}
+			statusTone={matchedRow ? readingStatusTone(activeOpenRow.state) : undefined}
+			needsAttention={matchedRow ? activeOpenRow.state === 'blocked' : false}
 			priorityLevel={pri.level}
 			priorityLabel={pri.label}
 			priorityStrong={pri.strong}

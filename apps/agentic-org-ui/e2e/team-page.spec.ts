@@ -341,7 +341,7 @@ for (const removal of ['Archive', 'Delete'] as const)
 		await expect(confirm).toBeEnabled();
 		await confirm.click();
 		await expect(dialog.getByRole('alert')).toContainText(
-			'Temp still has 1 child team. Resolve it first.'
+			'Temp still has 1 child team. Resolve them first.'
 		);
 		await dialog.getByRole('button', { name: 'Cancel' }).click();
 		await expect(page).toHaveURL(new RegExp(`/teams/${temp}\\?mock=blocked_on_submit$`));

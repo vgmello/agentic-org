@@ -231,4 +231,19 @@ test('MP-9: below 640px only the mobile section picker is shown and Member Work 
 	await search.fill('zzz-no-match');
 	await expect(page.getByText('Pay button wraps under the total at 320 px')).toHaveCount(0);
 	await expect(page.getByText('No work matches this search.')).toBeVisible();
+
+	// Opening inline Pause on a wide agent profile, resizing below 640px (hiding inline Pause),
+	// and cancelling returns focus cleanly to the visible More menu button.
+	const pauseBtn = page
+		.locator('.profile-toolbar')
+		.getByRole('button', { name: 'Pause', exact: true });
+	await expect(pauseBtn).toBeVisible();
+	await pauseBtn.click();
+	const pauseDialog = page.getByRole('dialog');
+	await expect(pauseDialog).toBeVisible();
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(pauseBtn).toBeHidden();
+	await pauseDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(pauseDialog).toBeHidden();
+	await expect(page.getByRole('button', { name: /^More/ })).toBeFocused();
 });

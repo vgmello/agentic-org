@@ -91,26 +91,29 @@
 		}
 	}
 
-	// Keep the selected tab visible on navigation and when the strip becomes visible or resizes.
+	// Keep the focused tab (when focus is inside the strip) or the active route tab visible on navigation & resize.
 	$effect(() => {
 		void page.url.pathname;
 		void tabs.length;
 		const el = navEl;
 		if (!el) return;
-		const revealCurrent = () => {
+		const revealTab = () => {
 			if (el.offsetParent === null) return;
-			const current = el.querySelector<HTMLElement>('a[aria-current="page"]');
-			if (!current) return;
+			const active = document.activeElement;
+			const target =
+				active instanceof HTMLElement && el.contains(active)
+					? active
+					: el.querySelector<HTMLElement>('a[aria-current="page"]');
+			if (!target) return;
 			const bounds = el.getBoundingClientRect();
 			if (bounds.width <= 0) return;
-			const { left, right } = current.getBoundingClientRect();
+			const { left, right } = target.getBoundingClientRect();
 			if (left < bounds.left || right > bounds.right) {
-				current.scrollIntoView({ block: 'nearest', inline: 'center' });
+				target.scrollIntoView({ block: 'nearest', inline: 'center' });
 			}
 		};
-		revealCurrent();
-		const ro =
-			typeof ResizeObserver !== 'undefined' ? new ResizeObserver(revealCurrent) : undefined;
+		revealTab();
+		const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(revealTab) : undefined;
 		ro?.observe(el);
 		return () => ro?.disconnect();
 	});

@@ -184,13 +184,20 @@ export const teamsApi: TeamsApi = {
 	async archive(organizationId, teamId) {
 		await gate();
 		const s = await found(organizationId, teamId);
-		if (scenario() === 'blocked_on_submit') {
-			const name = s.teams.find((t) => t.id === teamId)!.name;
-			throw fail('conflict', `${name} still has 1 child team. Resolve it first.`);
-		}
+		// Exercise the real refuseWhileBlocked path when a race introduces a blocker right before submit.
+		const sForCheck =
+			scenario() === 'blocked_on_submit'
+				? {
+						...s,
+						teams: [
+							...s.teams,
+							{ ...s.teams[0], id: `${teamId}-race-child`, name: 'Child', owner_team_id: teamId }
+						]
+					}
+				: s;
 		refuseWhileBlocked(
 			organizationId,
-			s,
+			sForCheck,
 			teamId,
 			'archive',
 			await homeEmployees(organizationId, teamId)
@@ -201,13 +208,19 @@ export const teamsApi: TeamsApi = {
 	async delete(organizationId, teamId) {
 		await gate();
 		const s = await found(organizationId, teamId);
-		if (scenario() === 'blocked_on_submit') {
-			const name = s.teams.find((t) => t.id === teamId)!.name;
-			throw fail('conflict', `${name} still has 1 child team. Resolve it first.`);
-		}
+		const sForCheck =
+			scenario() === 'blocked_on_submit'
+				? {
+						...s,
+						teams: [
+							...s.teams,
+							{ ...s.teams[0], id: `${teamId}-race-child`, name: 'Child', owner_team_id: teamId }
+						]
+					}
+				: s;
 		refuseWhileBlocked(
 			organizationId,
-			s,
+			sForCheck,
 			teamId,
 			'delete',
 			await homeEmployees(organizationId, teamId)

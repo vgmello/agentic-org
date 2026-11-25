@@ -29,6 +29,7 @@ import {
 	assignTaskInStore,
 	assignableTasksFromStore,
 	firstAssignedTaskFromStore,
+	hasTaskRefInStore,
 	memberWorkRowsFromStore
 } from './workitems';
 import data from '../data/members/members.json' with { type: 'json' };
@@ -289,6 +290,11 @@ export async function rows(organizationId: string): Promise<MemberRow[]> {
 			const office = m.kind === 'agent' ? offices.find((o) => o.id === m.office_id) : undefined;
 			const boss = s.members.find((b) => b.id === m.reports_to_member_id && b.id !== m.id);
 			const assignedTask = firstAssignedTaskFromStore(organizationId, m.id);
+			const workingOn =
+				assignedTask ??
+				(x.workingOn && !hasTaskRefInStore(organizationId, x.workingOn.ref)
+					? x.workingOn
+					: undefined);
 			return {
 				id: m.id,
 				kind: m.kind as 'agent' | 'person',
@@ -311,7 +317,7 @@ export async function rows(organizationId: string): Promise<MemberRow[]> {
 							: null
 						: undefined,
 				reportsTo: boss ? { id: boss.id, name: boss.name } : undefined,
-				workingOn: x.workingOn ?? assignedTask,
+				workingOn,
 				runsOn: m.kind === 'agent' ? x.runsOn : undefined,
 				howItRuns: m.kind === 'agent' ? x.howItRuns : undefined,
 				contact: m.contact ?? x.contact,
@@ -715,12 +721,12 @@ export const membersApi: MembersApi = {
 	async assignTask(organizationId, memberId, ref) {
 		await gate();
 		const { m } = await member(organizationId, memberId);
-		state.assigned.set(ref, memberId);
-		assignTaskInStore(organizationId, ref, {
+		await assignTaskInStore(organizationId, ref, {
 			id: memberId,
 			name: m.name,
 			kind: m.kind === 'agent' ? 'agent' : 'person'
 		});
+		state.assigned.set(ref, memberId);
 	},
 	async inviteToSignIn(organizationId, memberId) {
 		await signInGate(memberId);

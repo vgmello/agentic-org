@@ -6,8 +6,26 @@ import type {
 	PresenceId,
 	StartedByKind,
 	Turn,
-	TurnState
+	TurnState,
+	WorkRow,
+	WorkState
 } from './types';
+
+/** Shared work-row state and priority labels used by both WorkRows rendering and scoped search filters. */
+export const WORK_STATE_LABELS: Record<WorkState, string> = {
+	todo: 'To do',
+	in_progress: 'In progress',
+	in_review: 'In review',
+	blocked: 'Blocked',
+	done: 'Done'
+};
+
+export const WORK_PRIORITY_LABELS: Record<NonNullable<WorkRow['priority']>, string> = {
+	urgent: 'Urgent',
+	high: 'High priority',
+	medium: 'Medium priority',
+	low: 'Low priority'
+};
 
 /** Presence words in the spec's priority order (our-org-in-the-app §5). */
 export const PRESENCE: Record<
