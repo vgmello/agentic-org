@@ -15,6 +15,41 @@ use org_office::organization_family::records::ProviderAuthMode;
 use zeroize::Zeroizing;
 
 const MAX_HOST_CLAUDE_CRED_BYTES: usize = 64 * 1024;
+/// Maximum byte length for an agent's `TMPDIR` so Linux `bwrap`/`socat` bridge sockets
+/// (`$TMPDIR/<name>.sock`, ~35 bytes) stay well under the 108-byte `sun_path` limit.
+const MAX_SHORT_TMPDIR_BYTES: usize = 70;
+
+/// Chooses an owner-only per-agent `TMPDIR` inside the office's short runtime socket directory
+/// (`<socket_parent>/t/<8-hex>`) whenever that stays within [`MAX_SHORT_TMPDIR_BYTES`] and shorter
+/// than `durable_fallback`, avoiding Linux `ENAMETOOLONG` (`sun_path` > 108 bytes) in Claude's
+/// `bubblewrap`/`socat` sandbox while keeping `TMPDIR` out of shared `/tmp`.
+pub(crate) fn resolve_agent_tmpdir(
+    office_socket: &Path,
+    durable_fallback: &Path,
+    office_id: &str,
+    employee_id: &str,
+) -> PathBuf {
+    let Some(sock_parent) = office_socket.parent() else {
+        return durable_fallback.to_path_buf();
+    };
+    let digest = ring::digest::digest(
+        &ring::digest::SHA256,
+        format!("{office_id}:{employee_id}").as_bytes(),
+    );
+    let mut slug = String::with_capacity(8);
+    for &b in &digest.as_ref()[..4] {
+        use std::fmt::Write as _;
+        let _ = write!(slug, "{b:02x}");
+    }
+    let candidate = sock_parent.join("t").join(slug);
+    let cand_len = candidate.as_os_str().len();
+    let fallback_len = durable_fallback.as_os_str().len();
+    if cand_len <= MAX_SHORT_TMPDIR_BYTES && cand_len < fallback_len {
+        candidate
+    } else {
+        durable_fallback.to_path_buf()
+    }
+}
 
 /// Returns whether an admitted route may fall back to host-local CLI subscription auth.
 pub(crate) fn allows_host_subscription_auth(
@@ -143,5 +178,15 @@ mod tests {
             parse_claude_oauth_access_token(br#"{"claudeAiOauth":{"accessToken":"  "}}"#).is_none()
         );
         assert!(parse_claude_oauth_access_token(br#"not-json"#).is_none());
+    }
+
+    #[test]
+    fn resolve_agent_tmpdir_prefers_short_socket_parent_for_linux_sun_path() {
+        let sock = Path::new("/home/agents/.cache/agentic-org/tmp/ao/2oe/f8fc7ab6ed98.sock");
+        let deep = Path::new("/home/agents/.local/share/agentic-org/instances/default/org/offices/off/durable/local/offices/off/agents/emp/tmp");
+        let picked = resolve_agent_tmpdir(sock, deep, "off-1", "emp-1");
+        assert!(picked.starts_with("/home/agents/.cache/agentic-org/tmp/ao/2oe/t/"));
+        assert!(picked.as_os_str().len() <= MAX_SHORT_TMPDIR_BYTES);
+        assert_ne!(picked, resolve_agent_tmpdir(sock, deep, "off-1", "emp-2"));
     }
 }

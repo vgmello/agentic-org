@@ -1826,16 +1826,22 @@ impl SessionManager {
     }
 
     fn prepare_run_dirs(&self, employee_id: &str) -> Result<(PathBuf, PathBuf), ApiError> {
+        let office_id = &self.office.info().office_id;
         let base = self
             .office
             .durable_root()
             .join("local")
             .join("offices")
-            .join(&self.office.info().office_id)
+            .join(office_id)
             .join("agents")
             .join(employee_id);
         let runtime_dir = base.join("runtime");
-        let tmpdir = base.join("tmp");
+        let tmpdir = crate::host_auth::resolve_agent_tmpdir(
+            &self.config.office_socket,
+            &base.join("tmp"),
+            office_id,
+            employee_id,
+        );
         for dir in [&runtime_dir, &tmpdir] {
             ensure_owner_only_dir(dir)?;
         }

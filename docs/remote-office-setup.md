@@ -41,6 +41,16 @@ Remote Satellite 2 (apps-main-eu — 100.75.102.17, Ubuntu x86_64, zero compiler
   ```bash
   sudo apt-get update && sudo apt-get install -y bubblewrap socat
   ```
+- **Required on Ubuntu 24.04 / 26.04 (AppArmor `bwrap-userns-restrict` compatibility):** Ubuntu's default `bwrap-userns-restrict` profile strips capabilities from child processes inside `bwrap`, which blocks Claude Code's `apply-seccomp` helper (`nested userns is capability-restricted`). Enable nested userns for `bwrap` once per Linux host:
+  ```bash
+  echo "kernel.apparmor_restrict_unprivileged_userns = 0" | sudo tee /etc/sysctl.d/99-agentic-org-bwrap.conf
+  sudo sysctl -p /etc/sysctl.d/99-agentic-org-bwrap.conf
+  if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
+    sudo mkdir -p /etc/apparmor.d/disable
+    sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/bwrap-userns-restrict
+    sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict || true
+  fi
+  ```
 - **Not required on remote hosts:** Rust (`cargo`/`rustc`), Node.js, Bun, or a C compiler.
 
 ---
