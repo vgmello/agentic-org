@@ -137,7 +137,20 @@ fn read_claude_credentials_file() -> Option<Zeroizing<String>> {
 }
 
 fn read_claude_credentials_from_path(cred_path: &Path) -> Option<Zeroizing<String>> {
-    let file = std::fs::File::open(cred_path).ok()?;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(
+            org_platform::fs::O_NOFOLLOW
+                | org_platform::fs::O_NONBLOCK
+                | org_platform::fs::O_CLOEXEC,
+        )
+        .open(cred_path)
+        .ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_HOST_CLAUDE_CRED_BYTES as u64 {
+        return None;
+    }
     let mut bytes = Zeroizing::new(Vec::new());
     file.take(MAX_HOST_CLAUDE_CRED_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
@@ -290,5 +303,9 @@ mod tests {
         )
         .unwrap();
         assert!(read_claude_credentials_from_path(&oversized).is_none());
+
+        let link = dir.path().join("link.json");
+        std::os::unix::fs::symlink(&valid, &link).unwrap();
+        assert!(read_claude_credentials_from_path(&link).is_none());
     }
 }

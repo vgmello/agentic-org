@@ -150,12 +150,13 @@ scp dist/agentic-org-0.1.0-v5-linux-x86_64.tar.gz \
     agents@apps-main-eu:~/dist/
 ```
 
-Then install on the remote host:
+Then install on the remote host (cold installs require explicit `--sha256` or `--pubkey`; subsequent upgrades reuse the installed trusted binary):
 ```bash
 ssh agents@apps-main-eu '
   export PATH="$HOME/.local/bin:$PATH"
   bash "$HOME/dist/install.sh" \
     --archive "$HOME/dist/agentic-org-0.1.0-v5-linux-x86_64.tar.gz" \
+    --sha256 "$HOME/dist/agentic-org-0.1.0-v5-linux-x86_64.tar.gz.sha256" \
     --bin-dir "$HOME/.local/bin"
   agentic-org release status --json
   agentic-org --version
@@ -380,7 +381,7 @@ If you are building your own private signed release bundle (instead of downloadi
 # 1. Generate a publisher Ed25519 keypair + ADR-0009 trust registry (once)
 python3 scripts/release_tool.py keygen --out-dir "$HOME/.config/agentic-org/publisher"
 
-# 2. Build static UI (or supply a prebuilt --ui-dir) and compile/sign/package (.tar.gz + .sha256 + .deb)
+# 2. Build static UI (or supply a prebuilt --ui-dir) and compile/sign/package (.tar.gz + .sha256; --deb is for --profile dev only)
 ./scripts/package-release.sh \
   --profile release \
   --release-id 0.1.0-v1 \
@@ -388,8 +389,7 @@ python3 scripts/release_tool.py keygen --out-dir "$HOME/.config/agentic-org/publ
   --signing-key "$HOME/.config/agentic-org/publisher/publisher.key.pem" \
   --trust-registry "$HOME/.config/agentic-org/publisher/release-trust-registry.json" \
   --ui-dir /path/to/apps/agentic-org-ui/build \
-  --out-dir "$HOME/dist" \
-  --deb
+  --out-dir "$HOME/dist"
 ```
 
 Ship the resulting `dist/agentic-org-<id>-linux-x86_64.tar.gz` and `.sha256` (plus `scripts/install.sh`) to any compiler-free Linux host and follow Step 2.

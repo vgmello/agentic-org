@@ -129,7 +129,7 @@ def cmd_keygen(args: argparse.Namespace) -> int:
     return 0
 
 
-def macos_cdhash_for(path: Path) -> str | None:
+def macos_cdhash_for(path: Path) -> str:
     proc = subprocess.run(
         ["codesign", "-dvvv", str(path)],
         check=False,
@@ -138,10 +138,40 @@ def macos_cdhash_for(path: Path) -> str | None:
         text=True,
     )
     if proc.returncode != 0:
-        return None
+        raise SystemExit(
+            f"signed macOS release requires codesign verification on {path}: "
+            f"{proc.stderr.strip()}"
+        )
     combined = proc.stdout + "\n" + proc.stderr
-    match = re.search(r"^CDHash=([0-9a-fA-F]{40})\b", combined, re.MULTILINE)
-    return match.group(1).lower() if match else None
+    if re.search(r"^Signature=adhoc\b", combined, re.MULTILINE):
+        raise SystemExit(
+            f"refusing ad-hoc signed macOS executable {path}; signed macOS releases require "
+            f"Developer ID Application signing with hardened runtime"
+        )
+    if not re.search(r"^Authority=Developer ID Application:", combined, re.MULTILINE):
+        raise SystemExit(
+            f"refusing macOS executable {path} without Developer ID Application authority"
+        )
+    team_match = re.search(r"^TeamIdentifier=([A-Z0-9]{10})\b", combined, re.MULTILINE)
+    if not team_match:
+        raise SystemExit(
+            f"refusing macOS executable {path} without a valid 10-char TeamIdentifier"
+        )
+    expected_team = os.environ.get("ORG_APP_TEAM_ID", "").strip()
+    if expected_team and team_match.group(1) != expected_team:
+        raise SystemExit(
+            f"macOS executable {path} TeamIdentifier {team_match.group(1)} does not match "
+            f"ORG_APP_TEAM_ID {expected_team}"
+        )
+    flags_match = re.search(r"^CodeDirectory .*\bflags=0x[0-9a-fA-F]+\(([^)]*)\)", combined, re.MULTILINE)
+    if not flags_match or "runtime" not in flags_match.group(1).split(","):
+        raise SystemExit(
+            f"refusing macOS executable {path} without hardened runtime flag (`--options runtime`)"
+        )
+    cdhash_match = re.search(r"^CDHash=([0-9a-fA-F]{40})\b", combined, re.MULTILINE)
+    if not cdhash_match:
+        raise SystemExit(f"signed macOS release missing CDHash on {path}")
+    return cdhash_match.group(1).lower()
 
 
 def collect_ui_files(ui_dir: Path) -> list[tuple[str, Path]]:
@@ -258,8 +288,6 @@ def payload_manifest_entry(
     cdhash = None
     if is_exec and platform == "macos" and signed:
         cdhash = macos_cdhash_for(path)
-        if not cdhash:
-            raise SystemExit(f"signed macOS release requires codesign CDHash on {path}")
     entry = {
         "path": rel,
         "size": len(data),

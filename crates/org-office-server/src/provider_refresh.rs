@@ -110,7 +110,9 @@ fn probe_runtime_version(
         return None;
     }
     let program: PathBuf = match binary_hint.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(path) if Path::new(path).is_file() => PathBuf::from(path),
+        Some(path) if Path::new(path).is_absolute() && Path::new(path).is_file() => {
+            PathBuf::from(path)
+        }
         Some(_) => return None,
         None => {
             let adapter = runtimes.resolve(driver).ok()?;
@@ -334,5 +336,10 @@ mod tests {
         let stop = AtomicBool::new(true);
         let runtimes = RuntimeRegistry::production();
         assert!(probe_runtime_version(Some("/bin/sh"), "claude", &runtimes, &stop).is_none());
+
+        let running = AtomicBool::new(false);
+        assert!(
+            probe_runtime_version(Some("./relative-bin"), "claude", &runtimes, &running).is_none()
+        );
     }
 }

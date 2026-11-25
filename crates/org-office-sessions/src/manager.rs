@@ -749,7 +749,15 @@ impl SessionManager {
             .into_iter()
             .map(zeroize::Zeroizing::new)
             .collect();
-        let Ok(Some(exec)) = self.office.load_agent_execution(employee_id) else {
+        let Ok(exec_opt) = self.office.load_agent_execution(employee_id) else {
+            return secrets;
+        };
+        let Some(exec) = exec_opt else {
+            // Unconfigured agents fall back to Claude host subscription auth (`router.rs`),
+            // so redact host Claude OAuth if present.
+            if let Some(tok) = crate::host_auth::resolve_host_claude_oauth_token() {
+                secrets.push(tok);
+            }
             return secrets;
         };
         let Ok(Some(prof)) = self
@@ -771,18 +779,8 @@ impl SessionManager {
                     secrets.push(zeroize::Zeroizing::new(text.to_owned()));
                 }
             }
-            if !has_vault_secret {
-                if let Ok(Some(conn)) = self.office.load_provider_connection(conn_id.as_str()) {
-                    if conn.auth_mode
-                        == org_office::organization_family::records::ProviderAuthMode::SubscriptionCli
-                        && matches!(
-                            conn.runtime_driver.trim().to_ascii_lowercase().as_str(),
-                            "anthropic" | "claude" | "claude-code"
-                        )
-                    {
-                        uses_claude_host_subscription = true;
-                    }
-                }
+            if !has_vault_secret && self.is_claude_subscription_connection(conn_id.as_str()) {
+                uses_claude_host_subscription = true;
             }
         }
         if uses_claude_host_subscription {
@@ -791,6 +789,18 @@ impl SessionManager {
             }
         }
         secrets
+    }
+
+    fn is_claude_subscription_connection(&self, connection_id: &str) -> bool {
+        let Ok(Some(conn)) = self.office.load_provider_connection(connection_id) else {
+            return false;
+        };
+        conn.auth_mode
+            == org_office::organization_family::records::ProviderAuthMode::SubscriptionCli
+            && matches!(
+                conn.runtime_driver.trim().to_ascii_lowercase().as_str(),
+                "anthropic" | "claude" | "claude-code"
+            )
     }
 
     fn live_runtime_session_id(&self, employee_id: &str) -> Option<String> {
@@ -2042,11 +2052,29 @@ impl SessionManager {
         office_id: &str,
         self_employee_id: Option<&str>,
     ) {
+        let agents_root = office_local.join("agents");
+        let sibling_ids = self.collect_sibling_agent_ids(&agents_root, self_employee_id);
+        for other in &sibling_ids {
+            push_glob_pattern(out, &agents_root.join(other));
+        }
         if let Some(sock_parent) = self.config.office_socket.parent() {
             push_exact_pattern(out, &sock_parent.join("host.sock"));
+            if sock_parent.file_name().and_then(|s| s.to_str()) == Some("run") {
+                if let Some(instance_root) = sock_parent.parent() {
+                    push_exact_pattern(out, &instance_root.join("host.sock"));
+                }
+            }
+            push_glob_pattern(out, &sock_parent.join("r"));
+            let short_root = sock_parent.join("t");
             let own_slug =
                 self_employee_id.map(|emp| crate::host_auth::agent_tmpdir_slug(office_id, emp));
-            if let Ok(entries) = std::fs::read_dir(sock_parent.join("t")) {
+            for other in &sibling_ids {
+                let slug = crate::host_auth::agent_tmpdir_slug(office_id, other);
+                if own_slug.as_deref() != Some(slug.as_str()) {
+                    push_glob_pattern(out, &short_root.join(slug));
+                }
+            }
+            if let Ok(entries) = std::fs::read_dir(&short_root) {
                 for entry in entries.flatten() {
                     if own_slug.as_deref() != entry.file_name().to_str() {
                         push_glob_pattern(out, &entry.path());
@@ -2054,26 +2082,31 @@ impl SessionManager {
                 }
             }
         }
-        let agents_root = office_local.join("agents");
-        let mut sibling_ids = std::collections::BTreeSet::new();
-        if let Ok(entries) = std::fs::read_dir(&agents_root) {
+        append_privileged_socket_patterns(out);
+    }
+
+    fn collect_sibling_agent_ids(
+        &self,
+        agents_root: &Path,
+        self_employee_id: Option<&str>,
+    ) -> std::collections::BTreeSet<String> {
+        let mut ids = std::collections::BTreeSet::new();
+        if let Ok(entries) = std::fs::read_dir(agents_root) {
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
-                    sibling_ids.insert(name.to_owned());
+                    ids.insert(name.to_owned());
                 }
             }
         }
         if let Ok(employees) = self.office.list_employees() {
             for emp in employees {
-                sibling_ids.insert(emp.id.as_str().to_owned());
+                ids.insert(emp.id.as_str().to_owned());
             }
         }
-        for other in sibling_ids {
-            if self_employee_id != Some(other.as_str()) {
-                push_glob_pattern(out, &agents_root.join(&other));
-            }
+        if let Some(me) = self_employee_id {
+            ids.remove(me);
         }
-        append_privileged_socket_patterns(out);
+        ids
     }
 
     fn idle_view_for(&self, employee_id: &str) -> Result<SessionView, ApiError> {
@@ -3036,10 +3069,11 @@ fn push_exact_pattern(out: &mut Vec<PathPattern>, path: &Path) {
 }
 
 fn append_privileged_socket_patterns(out: &mut Vec<PathPattern>) {
+    // Keep non-wildcard system socket paths plus concrete `$XDG_RUNTIME_DIR` children here
+    // (avoiding `/run/user/*/...` wildcards which Codex's `path_pattern_base` truncates to
+    // `/run/user`, blocking `/run/user/<uid>` sockets/tmpdir; Claude adds `/run/user/*/...`
+    // privately in `org-agent-runtime-claude/src/plan.rs`).
     for privileged in [
-        "/run/user/*/bus",
-        "/run/user/*/systemd/**",
-        "/run/user/*/podman/**",
         "/run/dbus/system_bus_socket",
         "/var/run/dbus/system_bus_socket",
         "/var/run/docker.sock",

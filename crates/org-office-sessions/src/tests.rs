@@ -2137,12 +2137,23 @@ printf '{"kind":"reply","text":"Completed in %s with token=%s"}\n' "$pwd_now" "$
         "denied_office_globs must deny host.sock: {denied_strs:?}"
     );
     assert!(
-        denied_strs.iter().any(|s| s == "/run/user/*/bus"),
-        "denied_office_globs must deny systemd user D-Bus: {denied_strs:?}"
+        denied_strs.iter().any(|s| s.ends_with("/r/**")),
+        "denied_office_globs must deny host rendezvous sockets r/**: {denied_strs:?}"
     );
     assert!(
         denied_strs.iter().any(|s| s == "/var/run/docker.sock"),
         "denied_office_globs must deny docker.sock: {denied_strs:?}"
+    );
+    assert!(
+        !denied_strs.iter().any(|s| s.starts_with("/run/user/*")),
+        "denied_office_globs must not emit /run/user/* wildcard (breaks Codex path_pattern_base): {denied_strs:?}"
+    );
+    let sibling_slug = crate::host_auth::agent_tmpdir_slug(&office.info().office_id, &owner_id);
+    assert!(
+        denied_strs
+            .iter()
+            .any(|s| s.contains(&format!("/t/{sibling_slug}/**"))),
+        "denied_office_globs must pre-deny sibling short tmpdir before creation: {denied_strs:?}"
     );
     assert!(
         denied_strs

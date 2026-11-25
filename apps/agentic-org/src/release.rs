@@ -83,6 +83,40 @@ fn resolve_bundle_source(source_raw: &str) -> Result<(PathBuf, fs::Metadata), St
     Ok((canonical, sym))
 }
 
+struct StagingDirGuard(PathBuf);
+
+impl Drop for StagingDirGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn install_archive_into_store(
+    store: &mut ReleaseStore,
+    store_dir: &Path,
+    source: &Path,
+) -> Result<ReleasePin, String> {
+    let staging_root = store_dir.join("staging");
+    fs::create_dir_all(&staging_root)
+        .map_err(|e| format!("preparing staging folder ({}): {e}", staging_root.display()))?;
+    let _ = fs::set_permissions(&staging_root, fs::Permissions::from_mode(0o700));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let run_staging = staging_root.join(format!("install-{}-{nanos}", std::process::id()));
+    fs::create_dir(&run_staging)
+        .map_err(|e| format!("preparing staging run ({}): {e}", run_staging.display()))?;
+    let _guard = StagingDirGuard(run_staging.clone());
+    fs::set_permissions(&run_staging, fs::Permissions::from_mode(0o700))
+        .map_err(|e| format!("securing staging run ({}): {e}", run_staging.display()))?;
+    let mut bundle = ArchiveBundle::open(source, &run_staging)
+        .map_err(|e| format!("verifying release archive `{}`: {e}", source.display()))?;
+    store
+        .install_archive(&mut bundle)
+        .map_err(|e| format!("installing release archive `{}`: {e}", source.display()))
+}
+
 fn run_install(arguments: &[String]) -> Result<(), String> {
     if matches!(arguments, [flag] if flag == "--help" || flag == "-h") {
         println!("{HELP}");
@@ -123,27 +157,7 @@ fn run_install(arguments: &[String]) -> Result<(), String> {
             .install_directory(&bundle)
             .map_err(|e| format!("installing release directory `{}`: {e}", source.display()))?
     } else if meta.is_file() {
-        let staging_root = store_dir.join("staging");
-        fs::create_dir_all(&staging_root)
-            .map_err(|e| format!("preparing staging folder ({}): {e}", staging_root.display()))?;
-        let _ = fs::set_permissions(&staging_root, fs::Permissions::from_mode(0o700));
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let run_staging = staging_root.join(format!("install-{}-{nanos}", std::process::id()));
-        fs::create_dir(&run_staging)
-            .map_err(|e| format!("preparing staging run ({}): {e}", run_staging.display()))?;
-        fs::set_permissions(&run_staging, fs::Permissions::from_mode(0o700))
-            .map_err(|e| format!("securing staging run ({}): {e}", run_staging.display()))?;
-        let mut bundle = ArchiveBundle::open(&source, &run_staging)
-            .map_err(|e| format!("verifying release archive `{}`: {e}", source.display()))?;
-        let pin = store
-            .install_archive(&mut bundle)
-            .map_err(|e| format!("installing release archive `{}`: {e}", source.display()))?;
-        drop(bundle);
-        let _ = fs::remove_dir_all(&run_staging);
-        pin
+        install_archive_into_store(&mut store, &store_dir, &source)?
     } else {
         return Err(format!(
             "bundle path `{}` must be a `.tar.gz` archive or release directory",
@@ -280,5 +294,15 @@ mod tests {
         std::os::unix::fs::symlink(&archive, &leaf_link).unwrap();
         let err = super::resolve_bundle_source(leaf_link.to_str().unwrap()).unwrap_err();
         assert!(err.contains("symlink"), "{err}");
+
+        // StagingDirGuard always cleans up staging directory on drop (including early error exits).
+        let stage = dir.path().join("install-test");
+        std::fs::create_dir(&stage).unwrap();
+        std::fs::write(stage.join("input-1.gz"), b"frozen").unwrap();
+        {
+            let _guard = super::StagingDirGuard(stage.clone());
+            assert!(stage.exists());
+        }
+        assert!(!stage.exists());
     }
 }

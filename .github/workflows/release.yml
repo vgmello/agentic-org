@@ -73,17 +73,31 @@ jobs:
           SIGNING_KEY_PEM: ${{ secrets.ORG_RELEASE_SIGNING_KEY_PEM }}
           TRUST_REGISTRY_JSON: ${{ secrets.ORG_RELEASE_TRUST_REGISTRY_JSON }}
           APPLE_TEAM_ID: ${{ secrets.ORG_APP_TEAM_ID }}
+          MACOS_P12_B64: ${{ secrets.MACOS_SIGNING_P12_B64 }}
+          MACOS_P12_PASS: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          MACOS_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           PLATFORM: ${{ matrix.platform }}
           IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           if [[ -n "$SIGNING_KEY_PEM" && -n "$TRUST_REGISTRY_JSON" ]]; then
-            if [[ "$PLATFORM" == "macos" && -z "$APPLE_TEAM_ID" ]]; then
-              if [[ "$IS_TAG" == "true" ]]; then
-                echo "Signed macOS release tags require ORG_APP_TEAM_ID and Developer ID signing." >&2
-                exit 1
+            if [[ "$PLATFORM" == "macos" ]]; then
+              if [[ -z "$APPLE_TEAM_ID" || -z "$MACOS_P12_B64" || -z "$MACOS_P12_PASS" || -z "$MACOS_IDENTITY" ]]; then
+                if [[ "$IS_TAG" == "true" ]]; then
+                  echo "Signed macOS release tags require ORG_APP_TEAM_ID, MACOS_SIGNING_P12_B64, MACOS_SIGNING_P12_PASSWORD, and MACOS_SIGNING_IDENTITY secrets." >&2
+                  exit 1
+                fi
+                echo "signed=false" >> "$GITHUB_OUTPUT"
+                exit 0
               fi
-              echo "signed=false" >> "$GITHUB_OUTPUT"
-              exit 0
+              KEYCHAIN="$RUNNER_TEMP/release-signing.keychain-db"
+              security create-keychain -p "$MACOS_P12_PASS" "$KEYCHAIN"
+              security set-keychain-settings -lut 21600 "$KEYCHAIN"
+              security unlock-keychain -p "$MACOS_P12_PASS" "$KEYCHAIN"
+              printf '%s' "$MACOS_P12_B64" | base64 --decode > "$RUNNER_TEMP/dev-id.p12"
+              chmod 0600 "$RUNNER_TEMP/dev-id.p12"
+              security import "$RUNNER_TEMP/dev-id.p12" -P "$MACOS_P12_PASS" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+              security list-keychain -d user -s "$KEYCHAIN"
+              rm -f "$RUNNER_TEMP/dev-id.p12"
             fi
             mkdir -p "$RUNNER_TEMP/release-keys"
             chmod 0700 "$RUNNER_TEMP/release-keys"
@@ -101,17 +115,48 @@ jobs:
       - name: Build and package release archive
         env:
           RELEASE_ID: ${{ github.event.inputs.release_id || github.ref_name }}
-          SEQUENCE: ${{ github.event.inputs.sequence || '1' }}
+          # Strictly monotonic across tagged release workflow runs; manual dispatch may override explicitly.
+          SEQUENCE: ${{ github.event.inputs.sequence || github.run_number }}
           SIGNED: ${{ steps.signing.outputs.signed }}
+          PLATFORM: ${{ matrix.platform }}
           ORG_APP_TEAM_ID: ${{ secrets.ORG_APP_TEAM_ID }}
+          MACOS_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: |
-          ARGS=(--release-id "$RELEASE_ID" --sequence "$SEQUENCE" --out-dir dist)
-          if [[ "$SIGNED" == "true" ]]; then
-            ARGS+=(--profile release --signing-key "$RUNNER_TEMP/release-keys/publisher.key.pem" --trust-registry "$RUNNER_TEMP/release-keys/release-trust-registry.json")
-          else
-            ARGS+=(--profile dev)
+          if [[ ! "$SEQUENCE" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Release sequence must be a positive integer (got '$SEQUENCE')" >&2
+            exit 1
           fi
-          bash scripts/package-release.sh "${ARGS[@]}"
+          if [[ "$SIGNED" == "true" && "$PLATFORM" == "macos" ]]; then
+            # Build first, sign all four executables with Developer ID + hardened runtime, then package.
+            ORG_RELEASE_TRUST_REGISTRY="$RUNNER_TEMP/release-keys/release-trust-registry.json" \
+            ORG_RELEASE_MIN_SEQUENCE="$SEQUENCE" \
+              cargo build --release -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
+            for bin in agentic-org agentic-org-office agentic-org-web agent-os; do
+              codesign --force --options runtime --timestamp --sign "$MACOS_IDENTITY" "target/release/$bin"
+            done
+            bash scripts/package-release.sh \
+              --release-id "$RELEASE_ID" \
+              --sequence "$SEQUENCE" \
+              --out-dir dist \
+              --profile release \
+              --skip-build \
+              --signing-key "$RUNNER_TEMP/release-keys/publisher.key.pem" \
+              --trust-registry "$RUNNER_TEMP/release-keys/release-trust-registry.json"
+          elif [[ "$SIGNED" == "true" ]]; then
+            bash scripts/package-release.sh \
+              --release-id "$RELEASE_ID" \
+              --sequence "$SEQUENCE" \
+              --out-dir dist \
+              --profile release \
+              --signing-key "$RUNNER_TEMP/release-keys/publisher.key.pem" \
+              --trust-registry "$RUNNER_TEMP/release-keys/release-trust-registry.json"
+          else
+            bash scripts/package-release.sh \
+              --release-id "$RELEASE_ID" \
+              --sequence "$SEQUENCE" \
+              --out-dir dist \
+              --profile dev
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.platform }}-${{ matrix.arch }}

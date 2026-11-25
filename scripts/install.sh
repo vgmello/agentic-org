@@ -92,12 +92,13 @@ case "$UNAME_M" in
   *) echo "install.sh: unsupported CPU architecture: $UNAME_M" >&2; exit 1 ;;
 esac
 
+# Match org_host::default_release_store_dir() (<trusted-app-base>/release-store).
 if [[ -n "$STORE_DIR" ]]; then
   EFFECTIVE_STORE_DIR="$STORE_DIR"
 elif [[ "$PLATFORM" == "linux" ]]; then
-  EFFECTIVE_STORE_DIR="${HOME}/.local/share/agentic-org/releases"
+  EFFECTIVE_STORE_DIR="${HOME}/.local/share/agentic-org/release-store"
 else
-  EFFECTIVE_STORE_DIR="${HOME}/Library/Application Support/agentic.org/releases"
+  EFFECTIVE_STORE_DIR="${HOME}/Library/Application Support/agentic.org/release-store"
 fi
 
 RAW_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agentic-org-install.XXXXXX")"
@@ -138,35 +139,47 @@ resolve_sha256_input() {
   local raw="$1"
   if [[ "$raw" =~ ^[0-9a-fA-F]{64}$ ]]; then
     printf '%s' "$raw"
-  elif [[ -f "$raw" ]]; then
+  elif [[ -f "$raw" && ! -L "$raw" ]]; then
     awk '{print $1; exit}' "$raw"
   else
-    echo "install.sh: --sha256 must be an existing checksum file or a 64-char hex digest: $raw" >&2
+    echo "install.sh: --sha256 must be a regular checksum file or a 64-char hex digest: $raw" >&2
     exit 1
   fi
 }
 
 validate_tar_entries() {
   local archive="$1"
-  local listing
-  listing="$(tar -tvzf "$archive")"
-  if [[ -z "$listing" ]]; then
+  local verbose_listing names_listing bad_type bad_path
+  verbose_listing="$(tar -tvzf "$archive")"
+  names_listing="$(tar -tzf "$archive")"
+  if [[ -z "$verbose_listing" || -z "$names_listing" ]]; then
     echo "install.sh: archive is empty" >&2
     exit 1
   fi
-  # Reject symlinks, hardlinks, devices, FIFOs, directories, absolute paths, and `..` traversal.
-  local bad_line
-  bad_line="$(printf '%s\n' "$listing" | awk '
-    substr($1, 1, 1) != "-" { print; exit }
+  # 1. Reject symlinks, hardlinks, devices, FIFOs, and directory entries (regular files only).
+  bad_type="$(printf '%s\n' "$verbose_listing" | awk 'substr($1, 1, 1) != "-" { print; exit }')"
+  if [[ -n "$bad_type" ]]; then
+    echo "install.sh: refusing non-regular archive entry: $bad_type" >&2
+    exit 1
+  fi
+  # 2. Validate full unsplit entry paths from `tar -tzf` (immune to whitespace/$NF tricks):
+  #    reject leading `/`, `..` path segments, whitespace/control chars, backslashes, and duplicates.
+  bad_path="$(printf '%s\n' "$names_listing" | awk '
     {
-      path = $NF
-      if (substr(path, 1, 1) == "/" || path == ".." || index(path, "/../") > 0 || substr(path, 1, 3) == "../" || (length(path) >= 3 && substr(path, length(path) - 2) == "/..")) {
-        print; exit
+      p = $0
+      if (p == "" || substr(p, 1, 1) == "/" || p ~ /[[:space:][:cntrl:]]/ || index(p, "\\") > 0) {
+        print p; exit
+      }
+      if (p == ".." || substr(p, 1, 3) == "../" || index(p, "/../") > 0 || (length(p) >= 3 && substr(p, length(p) - 2) == "/..")) {
+        print p; exit
+      }
+      if (seen[p]++) {
+        print "duplicate:" p; exit
       }
     }
   ')"
-  if [[ -n "$bad_line" ]]; then
-    echo "install.sh: refusing unsafe archive entry: $bad_line" >&2
+  if [[ -n "$bad_path" ]]; then
+    echo "install.sh: refusing unsafe archive path: $bad_path" >&2
     exit 1
   fi
 }
@@ -177,31 +190,82 @@ extract_json_string() {
   printf '%s\n' "$json_text" | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n 1
 }
 
+extract_json_uint() {
+  local json_text="$1"
+  local key="$2"
+  printf '%s\n' "$json_text" | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p" | head -n 1
+}
+
 verify_pubkey_signature() {
   local manifest_file="$1"
   local sig_file="$2"
   local pubkey_input="$3"
   require_cmd openssl
-  if [[ ! -f "$pubkey_input" ]]; then
-    echo "install.sh: public key file not found: $pubkey_input" >&2
+  if ! openssl pkeyutl -help 2>&1 | grep -q -- '-rawin'; then
+    echo "install.sh: installed openssl does not support Ed25519 '-rawin' verification (e.g. stock macOS LibreSSL); install OpenSSL 3+ or pass --sha256 <file|hex>" >&2
+    exit 1
+  fi
+  if [[ ! -f "$pubkey_input" || -L "$pubkey_input" ]]; then
+    echo "install.sh: public key file not found or is a symlink: $pubkey_input" >&2
     exit 1
   fi
   local pem_file="$pubkey_input"
   if ! grep -q "BEGIN PUBLIC KEY" "$pubkey_input" 2>/dev/null; then
-    # Accept a release-trust-registry.json file by matching manifest key_id -> public_key_hex.
-    local key_id pub_hex
-    key_id="$(extract_json_string "$(cat "$manifest_file")" "key_id")"
-    pub_hex="$(awk -v kid="$key_id" '
-      $0 ~ "\"key_id\"[[:space:]]*:[[:space:]]*\"" kid "\"" { matched=1 }
-      matched && /"public_key_hex"/ {
-        gsub(/.*"public_key_hex"[[:space:]]*:[[:space:]]*"/, "")
-        gsub(/".*/, "")
-        print
+    local manifest_text key_id seq reg_line pub_hex min_seq max_seq
+    manifest_text="$(cat "$manifest_file")"
+    key_id="$(extract_json_string "$manifest_text" "key_id")"
+    seq="$(extract_json_uint "$manifest_text" "sequence")"
+    if [[ ! "$key_id" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "install.sh: manifest contains invalid key_id" >&2
+      exit 1
+    fi
+    if [[ ! "$seq" =~ ^[1-9][0-9]*$ ]]; then
+      echo "install.sh: manifest contains invalid sequence" >&2
+      exit 1
+    fi
+    # Exact string match (no regex interpolation) on key_id; extract public_key_hex and sequence bounds.
+    reg_line="$(awk -v kid="$key_id" '
+      /"key_id"[[:space:]]*:/ {
+        v = $0
+        sub(/.*"key_id"[[:space:]]*:[[:space:]]*"/, "", v)
+        sub(/".*/, "", v)
+        matched = (v == kid)
+        if (matched) { pub = ""; min_s = ""; max_s = "" }
+      }
+      matched && /"public_key_hex"[[:space:]]*:/ {
+        v = $0
+        sub(/.*"public_key_hex"[[:space:]]*:[[:space:]]*"/, "", v)
+        sub(/".*/, "", v)
+        pub = v
+      }
+      matched && /"min_sequence"[[:space:]]*:/ {
+        v = $0
+        sub(/.*"min_sequence"[[:space:]]*:[[:space:]]*/, "", v)
+        sub(/[^0-9].*/, "", v)
+        min_s = v
+      }
+      matched && /"max_sequence"[[:space:]]*:/ {
+        v = $0
+        sub(/.*"max_sequence"[[:space:]]*:[[:space:]]*/, "", v)
+        sub(/[^0-9].*/, "", v)
+        max_s = v
+      }
+      matched && /\}/ {
+        print pub, min_s, max_s
         exit
       }
     ' "$pubkey_input")"
-    if [[ ! "$pub_hex" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    read -r pub_hex min_seq max_seq <<< "$reg_line"
+    if [[ ! "${pub_hex:-}" =~ ^[0-9a-fA-F]{64}$ ]]; then
       echo "install.sh: signing key_id not found in trust registry: $pubkey_input" >&2
+      exit 1
+    fi
+    if [[ -n "${min_seq:-}" && "$seq" -lt "$min_seq" ]]; then
+      echo "install.sh: manifest sequence ($seq) below key min_sequence ($min_seq)" >&2
+      exit 1
+    fi
+    if [[ -n "${max_seq:-}" && "$seq" -gt "$max_seq" ]]; then
+      echo "install.sh: manifest sequence ($seq) exceeds key max_sequence ($max_seq)" >&2
       exit 1
     fi
     require_cmd xxd
@@ -226,7 +290,6 @@ find_trusted_installed_cli() {
   if [[ -z "$candidate" ]]; then
     return 1
   fi
-  # Ensure the candidate resolves to a real executable inside the active release store.
   local resolved_dir resolved_bin canonical_store
   resolved_dir="$(cd "$(dirname "$candidate")" && pwd -P)"
   if [[ -L "$candidate" ]]; then
@@ -277,6 +340,7 @@ verify_installed_binary_in_store() {
 }
 
 OUT_OF_BAND_VERIFIED=0
+ORIGINAL_BASENAME=""
 if [[ -z "$ARCHIVE" ]]; then
   if [[ -z "$VERSION" ]]; then
     echo "install.sh: pass --archive <path.tar.gz> or --version <tag>" >&2
@@ -288,8 +352,11 @@ if [[ -z "$ARCHIVE" ]]; then
     BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
   fi
   ARCHIVE="$TMP_DIR/$NAME"
+  ORIGINAL_BASENAME="$NAME"
   echo "Downloading ${BASE_URL}/${NAME} ..." >&2
   curl -fsSL "${BASE_URL}/${NAME}" -o "$ARCHIVE"
+else
+  ORIGINAL_BASENAME="$(basename "$ARCHIVE")"
 fi
 
 if [[ ! -f "$ARCHIVE" || -L "$ARCHIVE" ]]; then
@@ -297,22 +364,24 @@ if [[ ! -f "$ARCHIVE" || -L "$ARCHIVE" ]]; then
   exit 1
 fi
 
+# Stage the input archive into our private 0700 TMP_DIR immediately so all hashing,
+# tar inspection, and extraction operate on an immutable private copy (no TOCTOU swap).
+STAGED_ARCHIVE="$TMP_DIR/release.tar.gz"
+cp "$ARCHIVE" "$STAGED_ARCHIVE"
+chmod 0600 "$STAGED_ARCHIVE"
+
+# Only an explicit caller-provided --sha256 establishes out-of-band checksum trust.
 if [[ -n "$SHA256_INPUT" ]]; then
   EXPECTED_SHA="$(resolve_sha256_input "$SHA256_INPUT")"
-  verify_sha256 "$ARCHIVE" "$EXPECTED_SHA"
+  verify_sha256 "$STAGED_ARCHIVE" "$EXPECTED_SHA"
   OUT_OF_BAND_VERIFIED=1
   echo "Verified archive SHA-256: $EXPECTED_SHA" >&2
-elif [[ -n "$ARCHIVE" && -f "${ARCHIVE}.sha256" && ! -L "${ARCHIVE}.sha256" && -z "$VERSION" ]]; then
-  EXPECTED_SHA="$(resolve_sha256_input "${ARCHIVE}.sha256")"
-  verify_sha256 "$ARCHIVE" "$EXPECTED_SHA"
-  OUT_OF_BAND_VERIFIED=1
-  echo "Verified archive SHA-256 from adjacent checksum file: $EXPECTED_SHA" >&2
 fi
 
-validate_tar_entries "$ARCHIVE"
+validate_tar_entries "$STAGED_ARCHIVE"
 mkdir -p "$BIN_DIR"
 
-ARCHIVE_ENTRIES="$(tar -tzf "$ARCHIVE")"
+ARCHIVE_ENTRIES="$(tar -tzf "$STAGED_ARCHIVE")"
 if printf '%s\n' "$ARCHIVE_ENTRIES" | grep -qx "release.v1.json" \
    && printf '%s\n' "$ARCHIVE_ENTRIES" | grep -qx "release.v1.sig"; then
   echo "Installing signed release bundle into protected release store ..." >&2
@@ -329,10 +398,6 @@ if printf '%s\n' "$ARCHIVE_ENTRIES" | grep -qx "release.v1.json" \
     mkdir -p "$(dirname "$STORE_DIR")"
   fi
 
-  STAGED_ARCHIVE="$TMP_DIR/release.tar.gz"
-  cp "$ARCHIVE" "$STAGED_ARCHIVE"
-  chmod 0600 "$STAGED_ARCHIVE"
-
   INSTALL_ARGS=(release install "$STAGED_ARCHIVE" --json)
   if [[ -n "$STORE_DIR" ]]; then
     INSTALL_ARGS+=(--store "$STORE_DIR")
@@ -344,9 +409,9 @@ if printf '%s\n' "$ARCHIVE_ENTRIES" | grep -qx "release.v1.json" \
     echo "Using existing trusted installer: $TRUSTED_CLI" >&2
     INSTALL_JSON="$("$TRUSTED_CLI" "${INSTALL_ARGS[@]}")"
   else
-    # Cold bootstrap requires out-of-band trust (--sha256 or --pubkey) before executing the bundle binary.
+    # Cold bootstrap requires explicit out-of-band trust (--sha256 or --pubkey).
     if [[ "$OUT_OF_BAND_VERIFIED" -ne 1 && -z "$PUBKEY_FILE" ]]; then
-      echo "install.sh: cold install requires out-of-band verification: pass --sha256 <file|hex> or --pubkey <publisher.pub.pem|trust-registry.json>" >&2
+      echo "install.sh: cold install requires explicit out-of-band verification: pass --sha256 <file|hex> or --pubkey <publisher.pub.pem|trust-registry.json>" >&2
       exit 1
     fi
     BOOTSTRAP_DIR="$TMP_DIR/bootstrap"
@@ -395,7 +460,7 @@ else
     echo "install.sh: refusing unsigned archive (pass --allow-unsigned only for local development bundles)" >&2
     exit 1
   fi
-  BUNDLE_NAME="$(basename "$ARCHIVE" .tar.gz)"
+  BUNDLE_NAME="${ORIGINAL_BASENAME%.tar.gz}"
   if [[ ! "$BUNDLE_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$ ]]; then
     echo "install.sh: unsafe archive filename: $BUNDLE_NAME" >&2
     exit 1
@@ -404,7 +469,7 @@ else
   rm -rf "$DEST_DIR"
   mkdir -p "$DEST_DIR"
   chmod 0700 "$DEST_DIR"
-  tar -xzf "$ARCHIVE" -C "$DEST_DIR"
+  tar -xzf "$STAGED_ARCHIVE" -C "$DEST_DIR"
   for bin in agentic-org agentic-org-office agentic-org-web agent-os; do
     if [[ ! -f "$DEST_DIR/$bin" || -L "$DEST_DIR/$bin" ]]; then
       echo "install.sh: missing or non-regular binary in archive: $bin" >&2
