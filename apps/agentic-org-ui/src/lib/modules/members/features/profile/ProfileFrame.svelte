@@ -49,6 +49,7 @@
 	import { fact, factsList, factsWrap } from '../../components/facts';
 	import { FIRST_POLL_MS, LatestRead, awaitingOffice, nextPollDelay } from './pending';
 	import IdentityDialog from './IdentityDialog.svelte';
+	import AgentOrbRail from './AgentOrbRail.svelte';
 	import { offboardPreview } from './identity';
 	import MoveHomeTeamDialog from './MoveHomeTeamDialog.svelte';
 	import ProfileSkeleton from './ProfileSkeleton.svelte';
@@ -579,7 +580,16 @@
 			<h3 bind:this={tabHeading} tabindex="-1" class="sr-only">
 				{hasTab ? TAB_LABEL[tab] : `No such tab for ${p.name}`}
 			</h3>
-			{@render tabContent()}
+			{#if p.kind === 'agent'}
+				<div class="agent-shell" data-testid="agent-profile-shell">
+					<div class="agent-main min-w-0">
+						{@render tabContent()}
+					</div>
+					<AgentOrbRail profile={p} />
+				</div>
+			{:else}
+				{@render tabContent()}
+			{/if}
 
 			{#if p.kind === 'agent'}
 				{#key opening}<RunNowDialog
@@ -762,5 +772,15 @@
 		background: var(--tone-accent-bg);
 		color: var(--tone-accent-ink);
 		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+	.agent-shell {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		align-items: start;
+	}
+	@media (min-width: 1024px) {
+		.agent-shell {
+			grid-template-columns: minmax(0, 1fr) 18.5rem;
+		}
 	}
 </style>

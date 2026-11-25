@@ -1,6 +1,7 @@
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { orgApi } from '$lib/modules/organization/api';
+import { workItemsApi } from '$lib/modules/workitems/api';
 import { createHttpMembersApi } from './http-api';
 import type {
 	ActivityEntry,
@@ -74,6 +75,7 @@ const gatewayMembersApi = createHttpMembersApi({
 		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
 	},
 	orgApi,
+	workItemsApi,
 	session: () => {
 		const s = signedInSession();
 		return s ? { accountAdmin: s.admin } : undefined;

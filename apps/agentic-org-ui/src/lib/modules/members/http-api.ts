@@ -12,7 +12,16 @@ import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgApi } from '$lib/modules/organization/api';
 import { newStableId } from '$lib/modules/organization/commands';
 import { readRoleRecordWithId } from '$lib/modules/roles/wire';
+import type { WorkItemsApi } from '$lib/modules/workitems/api';
+import type { TaskRow } from '$lib/modules/workitems/types';
 import type { MembersApi } from './api';
+import {
+	buildAssignableTasks,
+	buildMemberActivity,
+	buildMemberWorkRows,
+	pickCurrentTask,
+	readMemberConversations
+} from './live-hydration';
 import type {
 	EmployeeStatus,
 	MemberProfile,
@@ -113,14 +122,25 @@ function mapMemberRow(
 export function createHttpMembersApi({
 	http,
 	orgApi,
+	workItemsApi,
 	session,
 	newEntityId = newStableId
 }: {
 	http: GatewayHttpTransport;
 	orgApi: Pick<OrgApi, 'view' | 'command'>;
+	workItemsApi?: Pick<WorkItemsApi, 'queue'>;
 	session: () => MembersSessionInfo | undefined;
 	newEntityId?: () => string;
 }): MembersApi {
+	async function safeWorkRows(organizationId: string): Promise<TaskRow[]> {
+		if (!workItemsApi) return [];
+		try {
+			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' });
+			return queue.rows;
+		} catch {
+			return [];
+		}
+	}
 	async function readAccessMap(
 		organizationId: string
 	): Promise<ReadonlyMap<string, GatewayAccessEntry> | undefined> {
@@ -175,23 +195,27 @@ export function createHttpMembersApi({
 
 	return Object.freeze({
 		async directory(organizationId: string): Promise<MemberRow[]> {
-			const [{ snapshot }, accessById, org] = await Promise.all([
+			const [{ snapshot }, accessById, org, workRows] = await Promise.all([
 				orgApi.view(organizationId),
 				readAccessMap(organizationId),
-				readOrgView(organizationId)
+				readOrgView(organizationId),
+				safeWorkRows(organizationId)
 			]);
 			const teamsById = new Map(snapshot.teams.map((t) => [t.id, t]));
 			const membersById = new Map(snapshot.members.map((m) => [m.id, m]));
-			return snapshot.members.map((m) =>
-				mapMemberRow(m, snapshot, teamsById, membersById, accessById, org)
-			);
+			return snapshot.members.map((m) => {
+				const row = mapMemberRow(m, snapshot, teamsById, membersById, accessById, org);
+				const workingOn = row.status !== 'inactive' ? pickCurrentTask(workRows, m.id) : undefined;
+				return workingOn ? { ...row, workingOn } : row;
+			});
 		},
 
 		async profile(organizationId: string, memberId: string): Promise<MemberProfile> {
-			const [{ snapshot }, accessById, org] = await Promise.all([
+			const [{ snapshot }, accessById, org, workRows] = await Promise.all([
 				orgApi.view(organizationId),
 				readAccessMap(organizationId),
-				readOrgView(organizationId)
+				readOrgView(organizationId),
+				safeWorkRows(organizationId)
 			]);
 			const member = snapshot.members.find((m) => m.id === memberId);
 			if (!member) {
@@ -210,8 +234,11 @@ export function createHttpMembersApi({
 			const viewerMember = org?.employee_id ? membersById.get(org.employee_id) : undefined;
 			const isOwnerOrAdmin = Boolean(session()?.accountAdmin || viewerMember?.owner);
 			const access = accessById?.get(memberId);
+			const currentTask =
+				row.status !== 'inactive' ? pickCurrentTask(workRows, memberId) : undefined;
 			return {
 				...row,
+				...(currentTask ? { workingOn: currentTask, currentTask } : {}),
 				...(member.agent?.title ? { title: member.agent.title } : {}),
 				...(member.agent?.focus ? { focus: member.agent.focus } : {}),
 				leads,
@@ -225,9 +252,17 @@ export function createHttpMembersApi({
 			};
 		},
 
-		work: async () => [],
-		conversations: async () => [],
-		activity: async () => [],
+		async work(organizationId: string, memberId: string) {
+			const rows = await safeWorkRows(organizationId);
+			return buildMemberWorkRows(rows, memberId);
+		},
+		async conversations(organizationId: string, memberId: string) {
+			return readMemberConversations(http, organizationId, memberId);
+		},
+		async activity(organizationId: string, memberId: string) {
+			const rows = await safeWorkRows(organizationId);
+			return buildMemberActivity(rows, memberId);
+		},
 		runs: async () => [],
 		sessionFile: unavailableCall,
 
@@ -290,7 +325,10 @@ export function createHttpMembersApi({
 			});
 		},
 
-		assignableTasks: async () => [],
+		async assignableTasks(organizationId: string) {
+			const rows = await safeWorkRows(organizationId);
+			return buildAssignableTasks(rows);
+		},
 		assignTask: unavailableCall,
 
 		async inviteToSignIn(organizationId: string, memberId: string): Promise<SignInLink> {
