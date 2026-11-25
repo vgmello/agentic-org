@@ -24,6 +24,7 @@ use crate::runtime_registry::RuntimeRegistry;
 pub(crate) struct AdmittedRoute {
     pub adapter: Arc<dyn AgentRuntime>,
     pub model_token: Option<Token>,
+    pub auth_mode: Option<ProviderAuthMode>,
     pub auth_env: Vec<(OsString, OsString)>,
     pub endpoint_env: Vec<(OsString, OsString)>,
     pub preset: PermissionPreset,
@@ -396,6 +397,7 @@ pub(crate) fn select_and_admit_route(
         return Ok(AdmittedRoute {
             adapter,
             model_token: None,
+            auth_mode: None,
             auth_env: Vec::new(),
             endpoint_env: Vec::new(),
             preset: PermissionPreset::SafeAsk,
@@ -581,6 +583,7 @@ fn finalize_admitted_connection(
     Ok(AdmittedRoute {
         adapter,
         model_token,
+        auth_mode: Some(conn.auth_mode),
         auth_env,
         endpoint_env,
         preset,

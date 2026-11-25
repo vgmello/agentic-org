@@ -24,8 +24,14 @@ pub const OFFICE_ENV: &str = "AGENT_OS_OFFICE";
 pub const RUNTIME_DIR_ENV: &str = "AGENT_OS_RUNTIME_DIR";
 /// Environment variable carrying the run's session binding token (`doc-28` §2.8).
 pub const SESSION_TOKEN_ENV: &str = "AGENT_OS_SESSION_TOKEN";
+/// Environment variable naming an owner-only (`0600`) file holding the run's session token
+/// (fallback when a runtime scrubs `*_TOKEN` variables from tool subprocesses, e.g. Claude
+/// Code `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`).
+pub const BINDING_FILE_ENV: &str = "AGENT_OS_BINDING_FILE";
 /// Environment variable naming the bound agent's employee ID (`doc-28` §2.8).
 pub const AGENT_ID_ENV: &str = "AGENT_OS_AGENT_ID";
+
+const MAX_BINDING_FILE_BYTES: u64 = 4096;
 
 /// Run binding configuration supplied to `agent-os` by its office.
 #[derive(Clone, Default)]
@@ -65,14 +71,27 @@ impl Binding {
             .or_else(|| non_empty(OFFICE_RUNTIME_DIR_ENV))
             .map(PathBuf::from)
             .or_else(|| non_empty(OFFICE_HOME_ENV).map(|h| PathBuf::from(h).join("run")));
+        let session_token = non_empty(SESSION_TOKEN_ENV)
+            .or_else(|| non_empty(BINDING_FILE_ENV).and_then(|p| read_binding_file_token(&p)));
         Self {
             socket: non_empty(SOCKET_ENV).map(PathBuf::from),
             office_id: non_empty(OFFICE_ENV),
             runtime_dir,
-            session_token: non_empty(SESSION_TOKEN_ENV),
+            session_token,
             agent_id: non_empty(AGENT_ID_ENV),
         }
     }
+}
+
+fn read_binding_file_token(path: &str) -> Option<String> {
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).ok()?;
+    let mut buf = String::new();
+    file.take(MAX_BINDING_FILE_BYTES)
+        .read_to_string(&mut buf)
+        .ok()?;
+    let trimmed = buf.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 /// Connects lazily to the bound office socket and executes `org-command` requests.
@@ -296,5 +315,17 @@ mod tests {
         let err = missing.connect_client().err().expect("refused");
         assert_eq!(err.code, ErrorCode::NotFound);
         assert!(err.message.contains(missing_id), "{}", err.message);
+    }
+
+    #[test]
+    fn binding_file_reads_trimmed_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("session-binding.v1");
+        std::fs::write(&file, "  tok-from-file-123\n").unwrap();
+        assert_eq!(
+            read_binding_file_token(file.to_str().unwrap()).as_deref(),
+            Some("tok-from-file-123")
+        );
+        assert_eq!(read_binding_file_token("/nonexistent/binding"), None);
     }
 }

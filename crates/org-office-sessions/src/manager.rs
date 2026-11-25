@@ -183,6 +183,7 @@ struct PlannedSessionLaunch {
     tried_connections: Vec<String>,
     home: PathBuf,
     workspace_real: PathBuf,
+    runtime_dir: PathBuf,
     tmpdir: PathBuf,
     preset_cfg: PresetConfig,
     spec_hash: String,
@@ -204,6 +205,7 @@ struct PreparedSessionLaunch {
     task_ref: Option<String>,
     tried_connections: Vec<String>,
     home: PathBuf,
+    binding_file: PathBuf,
     preset_cfg: PresetConfig,
     spec_hash: String,
     objective: String,
@@ -225,15 +227,22 @@ struct BindingGuard<'a> {
     bindings: &'a RunBindingRegistry,
     employee_id: &'a str,
     run_id: &'a str,
+    binding_file: &'a Path,
     armed: bool,
 }
 
 impl<'a> BindingGuard<'a> {
-    fn new(bindings: &'a RunBindingRegistry, employee_id: &'a str, run_id: &'a str) -> Self {
+    fn new(
+        bindings: &'a RunBindingRegistry,
+        employee_id: &'a str,
+        run_id: &'a str,
+        binding_file: &'a Path,
+    ) -> Self {
         Self {
             bindings,
             employee_id,
             run_id,
+            binding_file,
             armed: true,
         }
     }
@@ -247,6 +256,7 @@ impl Drop for BindingGuard<'_> {
     fn drop(&mut self) {
         if self.armed {
             self.bindings.revoke(self.employee_id, Some(self.run_id));
+            let _ = std::fs::remove_file(self.binding_file);
         }
     }
 }
@@ -758,6 +768,9 @@ impl SessionManager {
                     secrets.push(zeroize::Zeroizing::new(text.to_owned()));
                 }
             }
+        }
+        if let Some(tok) = crate::host_auth::resolve_host_claude_oauth_token() {
+            secrets.push(tok);
         }
         secrets
     }
@@ -1480,11 +1493,10 @@ impl SessionManager {
         } else {
             SessionId::try_from(session_id.as_str()).ok()
         };
-        let host_config_dir = if admitted.auth_env.is_empty() {
-            resolve_host_runtime_config_dir(admitted.adapter.id().as_str())
-        } else {
-            None
-        };
+        let allow_host_auth =
+            crate::host_auth::allows_host_subscription_auth(&admitted.auth_env, admitted.auth_mode);
+        let adapter_id = admitted.adapter.id();
+        let runtime_name = adapter_id.as_str();
         let ctx = LaunchContext {
             runtime_path: binary,
             runtime_version: None,
@@ -1493,7 +1505,7 @@ impl SessionManager {
             office_env_names: office_env_names(),
             new_session_id: new_sid,
             resume: resume_sid,
-            config_dir: host_config_dir,
+            config_dir: crate::host_auth::host_config_dir_for(runtime_name, allow_host_auth),
         };
         let (plan, session) = admitted
             .adapter
@@ -1501,6 +1513,12 @@ impl SessionManager {
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "runtime rejected session spec"))?;
 
         let mut launch_env = admitted.auth_env;
+        crate::host_auth::append_host_claude_oauth(
+            runtime_name,
+            allow_host_auth,
+            &plan,
+            &mut launch_env,
+        );
         launch_env.extend(admitted.endpoint_env);
 
         Ok(PlannedSessionLaunch {
@@ -1517,6 +1535,7 @@ impl SessionManager {
             tried_connections: opts.tried_connections,
             home,
             workspace_real,
+            runtime_dir,
             tmpdir,
             preset_cfg,
             spec_hash,
@@ -1546,6 +1565,7 @@ impl SessionManager {
             tried_connections,
             home,
             workspace_real,
+            runtime_dir,
             tmpdir,
             preset_cfg,
             spec_hash,
@@ -1560,7 +1580,9 @@ impl SessionManager {
             .bindings
             .issue(&emp_id, &run_id, &session_id, 0)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "could not mint session token"))?;
-        let mut binding_guard = BindingGuard::new(&self.bindings, &emp_id, &run_id);
+        let binding_file = runtime_dir.join("session-binding.v1");
+        let mut binding_guard = BindingGuard::new(&self.bindings, &emp_id, &run_id, &binding_file);
+        write_owner_only_binding_file(&binding_file, binding.expose_token())?;
         let env = self.build_environment(
             &home,
             &workspace_real,
@@ -1568,6 +1590,7 @@ impl SessionManager {
             &emp_id,
             &session_id,
             binding.expose_token(),
+            &binding_file,
         )?;
         let mark = SessionMark::new(mark_str.clone())
             .map_err(|_| ApiError::new(ErrorCode::StorageError, "invalid session mark"))?;
@@ -1614,6 +1637,7 @@ impl SessionManager {
             task_ref,
             tried_connections,
             home,
+            binding_file,
             preset_cfg,
             spec_hash,
             objective,
@@ -1709,6 +1733,7 @@ impl SessionManager {
             permit,
             task_ref,
             tried_connections,
+            binding_file,
             objective,
             spawned,
             mut session,
@@ -1734,6 +1759,7 @@ impl SessionManager {
             state: Arc::clone(&runtime_state),
             stop_plan: lifecycle.stop,
             cleanup_paths: lifecycle.cleanup_after_exit,
+            binding_file,
             hooks,
         };
         if is_admissions_closed(self) {
@@ -1883,6 +1909,10 @@ impl SessionManager {
         Ok(assemble_standing_instructions(&input, &table))
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "session environment bundles paths, identifiers, token, and binding file"
+    )]
     fn build_environment(
         &self,
         home: &Path,
@@ -1891,6 +1921,7 @@ impl SessionManager {
         employee_id: &str,
         session_id: &str,
         token: &str,
+        binding_file: &Path,
     ) -> Result<Environment, ApiError> {
         let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
         let captured_path =
@@ -1926,6 +1957,10 @@ impl SessionManager {
             (
                 OsString::from("AGENT_OS_SESSION_TOKEN"),
                 OsString::from(token),
+            ),
+            (
+                OsString::from("AGENT_OS_BINDING_FILE"),
+                binding_file.as_os_str().to_os_string(),
             ),
         ];
         Environment::new(search_path, &captured)
@@ -2844,6 +2879,21 @@ fn sanitize_agent_name(handle: &str) -> String {
     out
 }
 
+fn write_owner_only_binding_file(path: &Path, token: &str) -> Result<(), ApiError> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let _ = std::fs::remove_file(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not write session binding"))?;
+    file.write_all(token.as_bytes())
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not write session binding"))?;
+    Ok(())
+}
+
 fn office_env_names() -> Vec<EnvName> {
     [
         "AGENT_OS_SOCKET",
@@ -2852,6 +2902,7 @@ fn office_env_names() -> Vec<EnvName> {
         "AGENT_OS_AGENT_ID",
         "AGENT_OS_SESSION_ID",
         "AGENT_OS_SESSION_TOKEN",
+        "AGENT_OS_BINDING_FILE",
     ]
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static env name"))
@@ -2894,27 +2945,6 @@ fn next_uuid_v4() -> Result<String, ApiError> {
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
     ))
-}
-
-/// Locates the host user's existing runtime configuration directory (e.g. `~/.claude`, `~/.codex`,
-/// `~/.gemini`) when no vault credential is injected, so local OAuth-authenticated CLI runtimes
-/// can authenticate even while `HOME` is isolated to the agent's private home. Adapters add
-/// S2 deny rules over `config_dir` so agent tools cannot read or modify credentials.
-fn resolve_host_runtime_config_dir(runtime_id: &str) -> Option<SpecPath> {
-    let subdir = match runtime_id {
-        "claude" => ".claude",
-        "codex" => ".codex",
-        "agy" => ".gemini",
-        _ => return None,
-    };
-    let host_home = std::env::var_os("HOME").map(PathBuf::from)?;
-    let candidate = host_home.join(subdir);
-    if !candidate.is_dir() {
-        return None;
-    }
-    let resolved = candidate.canonicalize().unwrap_or(candidate);
-    let text = resolved.display().to_string();
-    SpecPath::try_from(text.as_str()).ok()
 }
 
 fn handle_call<C: Call>(
