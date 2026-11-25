@@ -7,12 +7,12 @@ import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
 import { removeTeam } from "../pages/projects.js";
-import { changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, normalizeAgentTaskState, openWorkTask, refreshAgentTaskCounts, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
+import { changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, normalizeScopedWorkState, openWorkTask, refreshScopedWorkCounts, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
 import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, setSheetReturn } from "./dialogs.js";
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
 import { homeSearchField, homeSearchInput, homeSearchResults, pageSearchInput, render, route } from "./router.js";
-import { ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
+import { ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
 import { spotQueue, toast } from "../ui.js";
 
 /* ---------------------------------------------------------------- actions */
@@ -143,7 +143,7 @@ function handleSetAction(t, v) {
   const val = v === "true" ? true : v === "false" ? false : v;
   const scope = k === "theme" ? t.closest("#main, #banner-ctl") : document;
   S[k] = val;
-  normalizeAgentTaskState(k, val);
+  normalizeScopedWorkState(k, val);
   if (k === "theme") applyTheme(true);
   if (menuId === "menu-inbox-filter") resetInboxSelection();
   render(false);
@@ -286,6 +286,14 @@ const CLICK_ACTIONS = {
   "work-subtasks": (_e, t) => toggleStoredFlag("workSubtasks", "data-hide-work-subtasks", WORK_SUBTASKS_STORE, t, true),
   "inbox-dividers": (_e, t) => toggleStoredFlag("inboxDividers", "data-inbox-dividers", INBOX_DIVIDERS_STORE, t),
   "work-dividers": (_e, t) => toggleStoredFlag("workDividers", "data-work-dividers", WORK_DIVIDERS_STORE, t),
+  "work-archived": (_e, t) => {
+    const menuId = t.closest(".menu")?.id;
+    S.workShowArchived = !S.workShowArchived;
+    try { localStorage.setItem(WORK_ARCHIVED_STORE, S.workShowArchived ? "1" : "0"); } catch (e) {}
+    render(false);
+    const trigger = menuId ? document.querySelector(`[aria-controls="${menuId}"]`) : null;
+    trigger?.focus();
+  },
   "fav-proj": (_e, _t, id) => { const idx = S.favProjs.indexOf(id); if (idx >= 0) { S.favProjs.splice(idx, 1); toast(`Removed ${P[id].name} from favorites.`); } else { S.favProjs.push(id); toast(`Added ${P[id].name} to favorites.`); } render(false); },
   thread: (_e, _t, id) => { S.thread = S.thread === id ? null : id; render(false); (S.thread ? document.getElementById("chat-thread-title") : document.querySelector(`.chmain [data-act="thread"][data-id="${CSS.escape(id)}"]`))?.focus(); },
   "thread-close": () => document.querySelector(`.chmain [data-act="thread"][data-id="${CSS.escape(S.thread)}"]`)?.click(),
@@ -429,7 +437,7 @@ const INPUT_BY_ID = {
     const currentRoute = route(), view = scopedWorkView(currentRoute, scopedWorkType(currentRoute));
     scopedWorkQueries.set(view.key, target.value);
     document.getElementById("work-results").innerHTML = scopedWorkResults(view);
-    refreshAgentTaskCounts(view);
+    refreshScopedWorkCounts(view);
   },
   "work-search": handleWorkSearchInput,
   "o-name": (target) => target.setCustomValidity(""),
@@ -462,7 +470,7 @@ document.addEventListener("change", (e) => {
 });
 
 document.addEventListener("mousedown", (e) => {
-  if (e.target.closest?.(".cmdk-home-results .cmdk-opt, :is(.queue-header, .section-toolbar) .menu button")) e.preventDefault();
+  if (e.target.closest?.(".cmdk-home-results .cmdk-opt, :is(.queue-header, .work-subbar-header, .section-toolbar) .menu button")) e.preventDefault();
 });
 
 function resetInboxSenderPreview(e) {
@@ -495,8 +503,13 @@ document.addEventListener("submit", (e) => {
     const field = e.target.elements.name, name = field.value.trim();
     if (!name) { field.setCustomValidity("Enter an organization name."); field.reportValidity(); return; }
     setOrgName(field.value = name); showOrgName();
-    try { localStorage.setItem(ORG_NAME_STORE, name); toast("Organization name saved.", "check-circle"); }
-    catch (err) { toast("Organization name updated for this session."); }
+    const days = Number(e.target.elements.archiveDays?.value);
+    if (Number.isFinite(days) && days >= 0) S.archiveAfterDays = days;
+    try {
+      localStorage.setItem(ORG_NAME_STORE, name);
+      localStorage.setItem(ARCHIVE_AFTER_DAYS_STORE, String(S.archiveAfterDays));
+      toast("Organization settings saved.", "check-circle");
+    } catch (err) { toast("Organization settings updated for this session."); }
     return;
   }
   if (e.target.dataset.form === "work-create") { createWorkTask(e.target); return; }
@@ -552,7 +565,7 @@ function handleOpenMenuKeydown(e, openMenu) {
   if (e.key === "ArrowUp") return go(i - 1);
   if (e.key === "Home") return go(0);
   if (e.key === "End") return go(items.length - 1);
-  const applyDisplay = e.key === "Enter" && openMenu.matches("#menu-work-display, #menu-agent-task-display, #menu-inbox-display, #menu-assembly-display") && e.target.getAttribute("role") === "menuitemcheckbox";
+  const applyDisplay = e.key === "Enter" && openMenu.matches("#menu-work-display, #menu-scoped-work-display, #menu-inbox-display, #menu-assembly-display") && e.target.getAttribute("role") === "menuitemcheckbox";
   if (e.key === "Escape" || applyDisplay) {
     e.preventDefault(); if (applyDisplay) e.target.click();
     const trigger = document.querySelector(`[aria-controls="${openMenu.id}"]`);

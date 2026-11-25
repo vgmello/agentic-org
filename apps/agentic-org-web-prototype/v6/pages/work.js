@@ -5,8 +5,22 @@ import { own, route } from "../shell/router.js";
 import { S, qs } from "../state.js";
 import { SEP, av, displayCheckbox, esc, ic, iconWithTooltip, kindWord, memberIds, mlink, pill, plink, queueHeadline, showMenu, toast } from "../ui.js";
 
+function isArchivedWork(w) {
+  return !OPEN(w) && S.archiveAfterDays > 0 && w.closedDaysAgo != null && w.closedDaysAgo >= S.archiveAfterDays;
+}
+function visibleWorkItems(items) {
+  return S.workShowArchived ? items : items.filter((w) => !isArchivedWork(w));
+}
 function workListDisplayOptions() {
   return `${displayCheckbox("work-subtasks", "Show subtasks", S.workSubtasks)}${displayCheckbox("work-dividers", "Row dividers", S.workDividers)}`;
+}
+function workDisplayFooter(listLayout) {
+  return `<hr><p class="menu-h">Options</p>${listLayout ? workListDisplayOptions() : ""}${displayCheckbox("work-archived", "Show archived", S.workShowArchived)}`;
+}
+function isWorkDisplayActive(listLayout, group, subgroup, sort, order) {
+  return (listLayout && (group !== WORK_DEFAULT_GROUP || subgroup !== "none"))
+    || sort !== "default" || order !== "asc"
+    || S.workShowArchived || !S.workSubtasks || S.workDividers;
 }
 function workLayoutToggle(key) {
   const stageToggle = S[key] === "board" ? `
@@ -18,12 +32,6 @@ function workLayoutToggle(key) {
     ${[["list", "List"], ["board", "Board"]].map(([layout, label]) => `<button class="queue-tab" type="button"
       data-act="set" data-k="${key}" data-v="${layout}" aria-pressed="${S[key] === layout}" aria-controls="work-results">${ic(layout, "ic16")}${label}</button>`).join("")}
   </div>${stageToggle}`;
-}
-function scopedWorkControls() {
-  const display = S.scopedWorkLayout === "list" ? showMenu("work-display", [], {
-    icon: "adjustments", label: "Work display", footer: workListDisplayOptions(),
-  }) : "";
-  return workLayoutToggle("scopedWorkLayout") + display;
 }
 const scopedWorkQueries = new Map();
 
@@ -45,125 +53,140 @@ function scopedWorkView(currentRoute, type) {
   const items = type === "project" ? W.filter((w) => w.proj === id)
     : type === "team" ? teamWork(id)
     : W.filter((w) => w.who === id);
-  return { type, key, items };
+  return { type, id, key, items };
 }
 
-const AGENT_TASK_PRESETS = [["open", "Open"], ["needs-me", "Needs me"], ["all", "All"]];
-const AGENT_TASK_GROUPS = [["status", "Status"], ["project", "Project"]];
+const SCOPED_WORK_GROUPS = {
+  agent: [["status", "Status"], ["project", "Project"]],
+  person: [["status", "Status"], ["project", "Project"]],
+  project: [["status", "Status"], ["assignee", "Assignee"]],
+  team: [["status", "Status"], ["project", "Project"], ["assignee", "Assignee"]],
+};
 
-function agentTaskHasFilters() {
-  return S.agentTaskStatus !== "all" || S.agentTaskProject !== "all";
+function scopedWorkPresets(type, id) {
+  return type === "person" && id === "you"
+    ? [["all", "All"], ["needs-me", "Needs me"]]
+    : [["all", "All"], ["needs-me", "Needs me"], ["mine", "Mine"]];
 }
 
-function normalizeAgentTaskState(key, value) {
-  if (key === "agentTaskGroup" && (value === "none" || value === S.agentTaskSubgroup)) {
-    S.agentTaskSubgroup = "none";
-  } else if (key === "agentTaskStatus" && value !== "all" && !OPEN({ status: value }) && S.agentTaskView === "open") {
-    S.agentTaskView = "all";
-  } else if (key === "agentTaskView" && value === "open" && S.agentTaskStatus !== "all" && !OPEN({ status: S.agentTaskStatus })) {
-    S.agentTaskStatus = "all";
+function isRequestedMineScope(type, id) {
+  return type === "agent" || (type === "person" && id !== "you");
+}
+
+function scopedWorkHasFilters(type) {
+  return S.scopedWorkStatus !== "all"
+    || (type !== "project" && S.scopedWorkProject !== "all")
+    || (type === "project" && S.scopedWorkTeam !== "all");
+}
+
+function normalizeScopedWorkState(key, value) {
+  if (key === "scopedWorkGroup" && (value === "none" || value === S.scopedWorkSubgroup)) {
+    S.scopedWorkSubgroup = "none";
   }
 }
 
-function agentTaskBaseItems(items, query = "") {
-  const { agentTaskStatus: status, agentTaskProject: project } = S;
-  return items.filter((w) => {
+function scopedWorkBaseItems(type, items, query = "") {
+  const { scopedWorkStatus: status, scopedWorkProject: project, scopedWorkTeam: team } = S;
+  return visibleWorkItems(items).filter((w) => {
     if (status !== "all" && w.status !== status) return false;
-    if (project !== "all" && w.proj !== project) return false;
+    if (type !== "project" && project !== "all" && w.proj !== project) return false;
+    if (type === "project" && team !== "all" && (workTeam(w) ?? "none") !== team) return false;
     return !query || workMatches(w, query);
   });
 }
 
-function agentTaskPresetItems(items, view) {
-  if (view === "open") return items.filter(OPEN);
-  if (view === "needs-me") return items.filter((w) => OPEN(w) && needsMe(w));
+function scopedWorkPresetItems(items, view, type, id) {
+  if (view === "needs-me") return items.filter(needsMe);
+  if (view === "mine") {
+    return isRequestedMineScope(type, id)
+      ? items.filter((w) => w.requestedBy === "you")
+      : items.filter((w) => w.who === "you");
+  }
   return items;
 }
 
-function agentTaskGrouping() {
-  const group = S.agentTaskGroup === "none" || AGENT_TASK_GROUPS.some(([v]) => v === S.agentTaskGroup)
-    ? S.agentTaskGroup : WORK_DEFAULT_GROUP;
-  const subgroup = group !== "none" && S.agentTaskSubgroup !== group && AGENT_TASK_GROUPS.some(([v]) => v === S.agentTaskSubgroup)
-    ? S.agentTaskSubgroup : "none";
-  return { group, subgroup };
+function scopedWorkGrouping(type) {
+  const allowed = SCOPED_WORK_GROUPS[type] ?? SCOPED_WORK_GROUPS.team;
+  const has = (v) => allowed.some(([key]) => key === v);
+  const group = S.scopedWorkGroup === "none" || has(S.scopedWorkGroup) ? S.scopedWorkGroup : WORK_DEFAULT_GROUP;
+  const subgroup = group !== "none" && S.scopedWorkSubgroup !== group && has(S.scopedWorkSubgroup) ? S.scopedWorkSubgroup : "none";
+  return { allowed, group, subgroup };
 }
 
-function agentTaskEmptyText(query) {
-  if (query || agentTaskHasFilters()) return "No tasks match these filters.";
-  if (S.agentTaskView === "needs-me") return "Nothing needs you from this agent.";
-  if (S.agentTaskView === "open") return "No open tasks right now.";
-  return "No tasks assigned yet.";
+function scopedWorkEmptyText(type, id, view, query) {
+  if (query || scopedWorkHasFilters(type)) return "No work matches these filters.";
+  if (view === "needs-me") return "Nothing needs you here.";
+  if (view === "mine") return isRequestedMineScope(type, id) ? `No tasks you requested for ${M[id].name}.` : "Nothing is assigned to you here.";
+  return "No active work here right now.";
 }
 
-function agentTaskMenus(group) {
-  const filter = showMenu("agent-task-filter", [
-    ["agentTaskStatus", "Status", [["all", "All statuses"], ...ALL_STATUSES.map((status) => [status, status])]],
-    ["agentTaskProject", "Project", [["all", "All projects"], ...Object.entries(P).map(([id, project]) => [id, project.name])]],
-  ], { icon: "filter", label: "Filter tasks", active: agentTaskHasFilters() });
-  const listLayout = S.agentTaskLayout === "list";
-  const display = showMenu("agent-task-display", [
-    ...(listLayout ? [["agentTaskGroup", "Group by", [["none", "No grouping"], ...AGENT_TASK_GROUPS]]] : []),
+function scopedWorkMenus(type) {
+  const filterGroups = [
+    ["scopedWorkStatus", "Status", [["all", "All statuses"], ...ALL_STATUSES.map((s) => [s, s])]],
+    ...(type !== "project" ? [["scopedWorkProject", "Project", [["all", "All projects"], ...Object.entries(P).map(([id, p]) => [id, p.name])]]] : []),
+    ...(type === "project" ? [["scopedWorkTeam", "Team", [["all", "All teams"], ...Object.entries(TEAMS).map(([id, t]) => [id, t.name]), ["none", "No team"]]]] : []),
+  ];
+  const filter = showMenu("scoped-work-filter", filterGroups, { icon: "filter", label: "Filter work", active: scopedWorkHasFilters(type) });
+  const listLayout = S.scopedWorkLayout === "list";
+  const { allowed, group, subgroup } = scopedWorkGrouping(type);
+  const display = showMenu("scoped-work-display", [
+    ...(listLayout ? [["scopedWorkGroup", "Group by", [["none", "No grouping"], ...allowed]]] : []),
     ...(listLayout && group !== "none"
-      ? [["agentTaskSubgroup", "Subgroup by", [["none", "No subgroup"], ...AGENT_TASK_GROUPS.filter(([value]) => value !== group)]]]
+      ? [["scopedWorkSubgroup", "Subgroup by", [["none", "No subgroup"], ...allowed.filter(([v]) => v !== group)]]]
       : []),
-    ["agentTaskSort", "Sort by", WORK_SORTS],
-    ["agentTaskOrder", "Direction", [["asc", "Ascending"], ["desc", "Descending"]]],
+    ["scopedWorkSort", "Sort by", WORK_SORTS],
+    ["scopedWorkOrder", "Direction", [["asc", "Ascending"], ["desc", "Descending"]]],
   ], {
-    icon: "adjustments", label: "Task display",
-    active: (listLayout && group !== "none") || S.agentTaskSort !== "default" || S.agentTaskOrder !== "asc",
-    footer: listLayout ? "<hr>" + workListDisplayOptions() : "",
+    icon: "adjustments", label: "Work display",
+    active: isWorkDisplayActive(listLayout, group, subgroup, S.scopedWorkSort, S.scopedWorkOrder),
+    footer: workDisplayFooter(listLayout),
   });
-  return `<div class="queue-controls" role="group" aria-label="Agent task view controls">${filter}${display}</div>`;
+  return `<div class="queue-controls" role="group" aria-label="Work view controls">${filter}${display}</div>`;
 }
 
-function agentTasksToolbar(id, items) {
-  const query = canonicalWorkRef(scopedWorkQueries.get("agent:" + id)).toLowerCase();
-  const base = agentTaskBaseItems(items, query);
-  const { group } = agentTaskGrouping();
-  return `<div class="agent-tasks-header">
-    <div class="work-toolbar queue-toolbar agent-tasks-toolbar">
+function scopedWorkToolbar(type, id, items) {
+  const query = canonicalWorkRef(scopedWorkQueries.get(type + ":" + id)).toLowerCase();
+  const base = scopedWorkBaseItems(type, items, query);
+  const presets = scopedWorkPresets(type, id);
+  const activeView = presets.some(([v]) => v === S.scopedWorkView) ? S.scopedWorkView : "all";
+  const mineHint = isRequestedMineScope(type, id) ? ` title="Tasks you requested for ${esc(M[id].name)}"` : "";
+  return `<div class="work-subbar-header">
+    <div class="work-toolbar queue-toolbar">
       <div class="primary-tab-row">
-        <div class="queue-tabs" role="group" aria-label="Agent task views">
-          ${AGENT_TASK_PRESETS.map(([value, label]) => `<button class="queue-tab" type="button" data-act="set"
-            data-k="agentTaskView" data-v="${value}" aria-pressed="${S.agentTaskView === value}" aria-controls="work-results">${label}<span data-agent-task-count="${value}">${agentTaskPresetItems(base, value).length}</span></button>`).join("")}
+        <div class="queue-tabs" role="group" aria-label="Work views">
+          ${presets.map(([value, label]) => `<button class="queue-tab" type="button" data-act="set"
+            data-k="scopedWorkView" data-v="${value}" aria-pressed="${activeView === value}" aria-controls="work-results"${value === "mine" ? mineHint : ""}>${label}<span data-scoped-work-count="${value}">${scopedWorkPresetItems(base, value, type, id).length}</span></button>`).join("")}
         </div>
       </div>
-      ${workLayoutToggle("agentTaskLayout")}
-      ${agentTaskMenus(group)}
+      ${workLayoutToggle("scopedWorkLayout")}
+      ${scopedWorkMenus(type)}
     </div>
   </div>`;
 }
 
-function agentTaskResults(items, query) {
-  const base = agentTaskBaseItems(items, query);
-  const filtered = sortWorkItems(agentTaskPresetItems(base, S.agentTaskView), S.agentTaskSort, S.agentTaskOrder);
-  if (!filtered.length) return `<p class="empty-row">${esc(agentTaskEmptyText(query))}</p>`;
-  if (S.agentTaskLayout === "board") return board(filtered, { hideOwner: true });
-  const { group, subgroup } = agentTaskGrouping();
-  return workList(filtered, {
-    groupBy: WORK_GROUP_FIELDS[group],
-    subgroupBy: WORK_GROUP_FIELDS[subgroup],
-    hideOwner: true,
-  });
-}
-
-function refreshAgentTaskCounts({ type, key, items }) {
-  if (type !== "agent") return;
+function refreshScopedWorkCounts({ type, id, key, items }) {
+  if (!type) return;
   const query = canonicalWorkRef(scopedWorkQueries.get(key)).toLowerCase();
-  const base = agentTaskBaseItems(items, query);
-  for (const counter of document.querySelectorAll("[data-agent-task-count]")) {
-    counter.textContent = agentTaskPresetItems(base, counter.dataset.agentTaskCount).length;
+  const base = scopedWorkBaseItems(type, items, query);
+  for (const counter of document.querySelectorAll("[data-scoped-work-count]")) {
+    counter.textContent = scopedWorkPresetItems(base, counter.dataset.scopedWorkCount, type, id).length;
   }
 }
 
-function scopedWorkResults({ type, key, items }) {
+function scopedWorkResults({ type, id, key, items }) {
   const query = canonicalWorkRef(scopedWorkQueries.get(key)).toLowerCase();
-  if (type === "agent") return agentTaskResults(items, query);
-  const filtered = query ? items.filter((w) => workMatches(w, query)) : items;
-  if (query && !filtered.length) return '<p class="empty-row">No work matches this search.</p>';
-  if (S.scopedWorkLayout === "board") return board(filtered);
+  const presets = scopedWorkPresets(type, id);
+  const view = presets.some(([v]) => v === S.scopedWorkView) ? S.scopedWorkView : "all";
+  const base = scopedWorkBaseItems(type, items, query);
+  const filtered = sortWorkItems(scopedWorkPresetItems(base, view, type, id), S.scopedWorkSort, S.scopedWorkOrder);
+  if (!filtered.length) return `<p class="empty-row">${esc(scopedWorkEmptyText(type, id, view, query))}</p>`;
+  const hideOwner = type === "agent" || type === "person";
+  if (S.scopedWorkLayout === "board") return board(filtered, { hideOwner });
+  const { group, subgroup } = scopedWorkGrouping(type);
   return workList(filtered, {
-    groupBy: type === "project" ? WORK_GROUP_FIELDS[WORK_DEFAULT_GROUP] : undefined,
+    groupBy: WORK_GROUP_FIELDS[group],
+    subgroupBy: WORK_GROUP_FIELDS[subgroup],
+    hideOwner,
   });
 }
 
@@ -242,7 +265,7 @@ function workRow(w, isSubtask = false, hideOwner = false) {
       <span class="work-ident">${workPriority(w.pri)}<span class="work-ref">${esc(w.id)}</span></span>
       <span class="work-heading">
         <span class="work-markers">${workStatus(w.status, showsNeedsYou(w))}${workCriteria(w.criteria, w.id)}</span>
-        <span>${workTitle(w, "work-title")}${eta ? ` <span class="work-eta">ETA ${esc(eta)}</span>` : ""}</span>
+        <span>${workTitle(w, "work-title")}${eta ? ` <span class="work-eta">ETA ${esc(eta)}</span>` : ""}${isArchivedWork(w) ? '<span class="work-archived-tag">Archived</span>' : ""}</span>
       </span>
     </div>
     <div class="work-facts">
@@ -285,6 +308,20 @@ const BOARD_DETAILED_STAGES = [...BOARD_STAGES, "New", "Fixed"];
 const BOARD_ACTIVE_STATUSES = new Set(["Triaged", "Rowan is scoping", "Scoped"]);
 const BOARD_UNIFIED_STATUS = { New: "To do", Fixed: "Done" };
 
+function boardCard(w, hideOwner) {
+  const team = workTeam(w);
+  const attention = showsNeedsYou(w);
+  const archived = isArchivedWork(w);
+  const ownerHtml = hideOwner ? "" : `<span class="board-assignee">${av(w.who, 24)}<span class="board-owner-label">${mlink(w.who)}</span></span>`;
+  const badges = (attention ? pill("Needs you", "amber", "bell", true) : "") + (archived ? pill("Archived", "gray", null, true) : "");
+  const footer = ownerHtml || badges ? `<div class="board-card-footer">${ownerHtml}${badges}</div>` : "";
+  return `<div class="bcard" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}${attention ? " data-attention" : ""}>
+    ${workTitle(w, "t")}
+    <div class="board-card-meta" title="${esc(w.status)}">${workPriority(w.pri)}<span class="mono">${esc(w.id)}</span>${SEP}<span class="board-project">${esc(P[w.proj].name)}</span></div>
+    ${footer}
+  </div>`;
+}
+
 function board(items, { hideOwner = false } = {}) {
   if (!items.length) return `<p class="empty-row">No work here yet.</p>`;
   const unified = S.workBoardStages === "unified";
@@ -297,19 +334,7 @@ function board(items, { hideOwner = false } = {}) {
   }
   return `<div class="board" role="region" aria-label="Work board" tabindex="0">
     <div class="board-columns" style="--board-column-count:${columns.size}">${[...columns].map(([stage, tasks]) => `
-    <section class="bcol" aria-label="${esc(stage)}"><h3><span>${esc(stage)}</span><span class="muted">${tasks.length}</span></h3>${tasks.map((w) => {
-      const team = workTeam(w);
-      const attention = showsNeedsYou(w);
-      const footer = !hideOwner || attention ? `<div class="board-card-footer">
-          ${hideOwner ? "" : `<span class="board-assignee">${av(w.who, 24)}<span class="board-owner-label">${mlink(w.who)}</span></span>`}
-          ${attention ? pill("Needs you", "amber", "bell", true) : ""}
-        </div>` : "";
-      return `<div class="bcard" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}${attention ? " data-attention" : ""}>
-        ${workTitle(w, "t")}
-        <div class="board-card-meta" title="${esc(w.status)}">${workPriority(w.pri)}<span class="mono">${esc(w.id)}</span>${SEP}<span class="board-project">${esc(P[w.proj].name)}</span></div>
-        ${footer}
-      </div>`;
-    }).join("")}</section>`).join("")}</div>
+    <section class="bcol" aria-label="${esc(stage)}"><h3><span>${esc(stage)}</span><span class="muted">${tasks.length}</span></h3>${tasks.map((w) => boardCard(w, hideOwner)).join("")}</section>`).join("")}</div>
   </div>`;
 }
 
@@ -575,7 +600,7 @@ function workMatches(w, query) {
 function workFilteredItems() {
   const query = canonicalWorkRef(S.workQuery).toLowerCase();
   const { workStatus: status, workProject: project, workTeam: team } = S;
-  return W.filter((w) => {
+  return visibleWorkItems(W).filter((w) => {
     if (status !== "all" && w.status !== status) return false;
     if (project !== "all" && w.proj !== project) return false;
     if (team !== "all" && (workTeam(w) ?? "none") !== team) return false;
@@ -616,7 +641,7 @@ function refreshWorkResults() {
   }
 }
 
-function workViewControls(group) {
+function workViewControls(group, subgroup) {
   const filter = showMenu("work-filter", [
     ["workStatus", "Status", [["all", "All statuses"], ...ALL_STATUSES.map((status) => [status, status])]],
     ["workProject", "Project", [["all", "All projects"], ...Object.entries(P).map(([id, project]) => [id, project.name])]],
@@ -632,8 +657,8 @@ function workViewControls(group) {
     ["workOrder", "Direction", [["asc", "Ascending"], ["desc", "Descending"]]],
   ], {
     icon: "adjustments", label: "Work display",
-    active: (listLayout && group !== "none") || S.workSort !== "default" || S.workOrder !== "asc",
-    footer: listLayout ? "<hr>" + workListDisplayOptions() : "",
+    active: isWorkDisplayActive(listLayout, group, subgroup, S.workSort, S.workOrder),
+    footer: workDisplayFooter(listLayout),
   });
   return `<div class="queue-controls" role="group" aria-label="Work view controls">${filter}${display}</div>`;
 }
@@ -656,7 +681,7 @@ function pageWork() {
         </div>
       </div>
       ${workLayoutToggle("workLayout")}
-      ${workViewControls(selection.group)}
+      ${workViewControls(selection.group, selection.subgroup)}
       <button class="btn primary" id="work-new-task" type="button" data-act="work-new-task">${ic("plus", "ic16")}New task</button>
     </div>
   </header>${workWorkspace(workResults(filtered, selection))}`;
@@ -826,22 +851,22 @@ async function createWorkTask(form) {
 }
 
 export {
-  agentTasksToolbar,
   canonicalWorkRef,
   changeWorkCriterion,
   closeWorkPanel,
   createWorkTask,
   findWorkItem,
   fitTextarea,
+  isArchivedWork,
   loadWorkTasks,
-  normalizeAgentTaskState,
+  normalizeScopedWorkState,
   openWorkTask,
   pageWork,
-  refreshAgentTaskCounts,
+  refreshScopedWorkCounts,
   refreshWorkResults,
-  scopedWorkControls,
   scopedWorkQueries,
   scopedWorkResults,
+  scopedWorkToolbar,
   scopedWorkType,
   scopedWorkView,
   scopedWorkWorkspace,
@@ -849,6 +874,7 @@ export {
   setWorkPanelExpanded,
   showSidePanel,
   teamWork,
+  visibleWorkItems,
   workCommentPrefix,
   workGroups,
   workHref,

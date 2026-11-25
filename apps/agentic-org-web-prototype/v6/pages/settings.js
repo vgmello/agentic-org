@@ -1,7 +1,7 @@
 import { M, OFFICES, officeName } from "../data.js";
 import { agentSetupFields } from "./teams.js";
 import { searchResults } from "../shell/cmdk.js";
-import { CHAT_SEND_SHORTCUTS, S, THEME_OPTIONS, getOrgName } from "../state.js";
+import { ARCHIVE_DAY_OPTIONS, CHAT_SEND_SHORTCUTS, S, THEME_OPTIONS, getOrgName } from "../state.js";
 import { SEP, av, avStack, back, empty, esc, hdr, ic, mlink, pill, plural, presPill, seg } from "../ui.js";
 
 const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["processes", "Processes", "refresh"], ["access", "Members and access", "key"], ["updates", "Updates", "download"], ["appearance", "Appearance", "adjustments"]];
@@ -27,6 +27,7 @@ function pageSettings(sec = "general", sub) {
   let header = hdr(label, "Organization settings"), body;
   const agents = Object.keys(M).filter((k) => M[k].kind === "agent");
   if (sec === "general") body = `<form class="form" data-form="org-settings"><div><label for="o-name">Organization name</label><input class="field" id="o-name" name="name" value="${esc(getOrgName())}" required maxlength="80" aria-describedby="org-name-help"><p class="help" id="org-name-help">Shown in this prototype’s sidebar.</p></div>
+    <div><label for="o-archive-days">Auto-archive closed tasks</label><select class="field" id="o-archive-days" name="archiveDays" aria-describedby="org-archive-help">${ARCHIVE_DAY_OPTIONS.map(([days, txt]) => `<option value="${days}"${S.archiveAfterDays === days ? " selected" : ""}>${esc(txt)}</option>`).join("")}</select><p class="help" id="org-archive-help">Closed tasks stay visible for recent context, then archive automatically across Work, Projects, Teams, and Agent Tasks. Toggle “Show archived” in Display to inspect them.</p></div>
     <div><label for="o-owner">Owner</label><input class="field" id="o-owner" value="You" disabled></div><div><label for="o-data">Data location</label><input class="field" id="o-data" value="This Mac · HQ office" disabled><p class="help">Change where things run in Offices.</p></div>
     <div><button class="btn primary" type="submit">Save changes</button></div></form>`;
   else if (sec === "offices") {

@@ -1,8 +1,8 @@
 /* ---------------------------------------------------------------- state */
 const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
-  scopedWorkLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", actPanel: null,
+  scopedWorkView: "all", scopedWorkLayout: "list", scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all", scopedWorkGroup: "status", scopedWorkSubgroup: "none", scopedWorkSort: "default", scopedWorkOrder: "asc",
+  actView: "assembly", actProject: "all", actFilter: "all", actPanel: null,
   projectActView: "assembly", projectActFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
-  agentTaskView: "open", agentTaskLayout: "list", agentTaskStatus: "all", agentTaskProject: "all", agentTaskGroup: "status", agentTaskSubgroup: "none", agentTaskSort: "default", agentTaskOrder: "asc",
   consoleView: "activity", consoleScope: "all", consoleTools: false, agentFocusTools: false, openTraces: {}, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false, confirmDeny: null, briefCopied: false };
 const ORG_NAME_STORE = "agentic-org.v6.organizationName";
 let orgName = "Agentic Org";
@@ -62,10 +62,30 @@ try { S.inboxDividers = localStorage.getItem(INBOX_DIVIDERS_STORE) === "1"; } ca
 document.documentElement.toggleAttribute("data-inbox-dividers", S.inboxDividers);
 const WORK_DIVIDERS_STORE = "agentic-org.v6.workDividers";
 const WORK_SUBTASKS_STORE = "agentic-org.v6.workSubtasks";
+const WORK_ARCHIVED_STORE = "agentic-org.v6.workShowArchived";
+const ARCHIVE_AFTER_DAYS_STORE = "agentic-org.v6.archiveAfterDays";
+const ARCHIVE_DAY_OPTIONS = [
+  [0, "Off (never auto-archive)"],
+  [3, "3 days after closed"],
+  [7, "7 days after closed"],
+  [10, "10 days after closed"],
+  [14, "14 days after closed"],
+  [30, "30 days after closed"],
+];
 S.workDividers = false;
 S.workSubtasks = true;
+S.workShowArchived = false;
+S.archiveAfterDays = 10;
 try { S.workDividers = localStorage.getItem(WORK_DIVIDERS_STORE) === "1"; } catch (e) {}
 try { S.workSubtasks = localStorage.getItem(WORK_SUBTASKS_STORE) !== "0"; } catch (e) {}
+try { S.workShowArchived = localStorage.getItem(WORK_ARCHIVED_STORE) === "1"; } catch (e) {}
+try {
+  const rawDays = localStorage.getItem(ARCHIVE_AFTER_DAYS_STORE);
+  if (rawDays !== null) {
+    const savedDays = Number(rawDays);
+    if (ARCHIVE_DAY_OPTIONS.some(([d]) => d === savedDays)) S.archiveAfterDays = savedDays;
+  }
+} catch (e) {}
 document.documentElement.toggleAttribute("data-work-dividers", S.workDividers);
 const ASSEMBLY_DIVIDERS_STORE = "agentic-org.v6.assemblyDividers";
 S.assemblyDividers = false;
@@ -129,6 +149,8 @@ const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu
 const qs = () => new URLSearchParams((location.hash.split("?")[1]) || "");
 
 export {
+  ARCHIVE_AFTER_DAYS_STORE,
+  ARCHIVE_DAY_OPTIONS,
   ASSEMBLY_DIVIDERS_STORE,
   CHAT_SEND_SHORTCUTS,
   CHAT_SEND_STORE,
@@ -138,6 +160,7 @@ export {
   S,
   SR,
   THEME_OPTIONS,
+  WORK_ARCHIVED_STORE,
   WORK_DIVIDERS_STORE,
   WORK_SUBTASKS_STORE,
   applyCozyContrast,

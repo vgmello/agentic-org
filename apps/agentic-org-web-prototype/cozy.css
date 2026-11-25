@@ -358,6 +358,13 @@ html[data-theme="cozy"] {
     .hb-brief-lenses, .hb-brief-lenses button, .hb-arrow-btn, .hb-pill-link, .hb-dig-item, .hb-hor-item) {
     border-radius: 8px;
   }
+  & .work-toolbar {
+    --toolbar-seg-bg: var(--cozy-well);
+    --toolbar-seg-border: var(--cozy-well-edge);
+    --toolbar-seg-active-bg: rgb(255 248 240 / .13);
+    --toolbar-seg-active-border: var(--line2);
+  }
+  & .work-toolbar .queue-controls .menu button { border-radius: 5px; }
 
   & :is(.btn.primary, .h4-cta.hb-cta-glass, .cmdk-ask-go:not(:disabled)) {
     background: var(--cozy-primary);

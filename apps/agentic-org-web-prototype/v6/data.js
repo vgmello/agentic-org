@@ -32,7 +32,7 @@ const HEALTH = { "On track": { tone: "green", icon: "check-circle" }, "At risk":
 const W = [
   { id: "T-A112", kind: "task", title: "Re-sequence T-A70 nav slices for IA v2",
     description: "Reorder the IA v2 navigation work so the page structure lands before the visual polish. The revised sequence gives each owner a dependency they can verify before handing off their slice.",
-    status: "Done", proj: "agency-v1", who: "ada", pri: "High",
+    status: "Done", closedDaysAgo: 2, requestedBy: "you", proj: "agency-v1", who: "ada", pri: "High",
     criteria: [
       { text: "Sequence the slices", done: true },
       { text: "Assign owners", done: true },
@@ -42,7 +42,7 @@ const W = [
   },
   { id: "T-A118", kind: "task", title: "Custody lock fix",
     description: "Keep a single writer in charge when an office goes offline during a custody transfer. Verify the lock clears after the office reconnects so work can resume without a manual reset. The release decision is waiting in Inbox.",
-    status: "Blocked", waitsOn: "you", proj: "office-federation", who: "sage", pri: "High", etaHours: 6,
+    status: "Blocked", waitsOn: "you", requestedBy: "you", proj: "office-federation", who: "sage", pri: "High", etaHours: 6,
     criteria: [
       { text: "Prevent a second office from taking the same lock", done: true },
       { text: "Verify recovery after reconnecting", done: false }
@@ -50,7 +50,7 @@ const W = [
   },
   { id: "T-A121", kind: "task", title: "Split codec 2a.3.2b",
     description: "Split the 2a.3.2b codec into encoder and decoder changes so each can be reviewed on its own. Keep the existing wire format and confirm that a satellite on the previous version can still sync.\n\nReview the shared fixtures before requesting the release sign-off.",
-    status: "In progress", proj: "agency-v1", who: "kai", pri: "Medium", etaHours: 2,
+    status: "In progress", requestedBy: "ada", proj: "agency-v1", who: "kai", pri: "Medium", etaHours: 2,
     criteria: [
       { text: "Split encoders", done: true },
       { text: "Split decoders", done: false },
@@ -60,7 +60,7 @@ const W = [
   },
   { id: "T-A124", kind: "task", title: "CSP gates in the UI suite",
     description: "Add regression checks for the UI’s Content Security Policy across the browser suite. Inventory the existing fixtures, confirm which local test permissions the runner needs, then run the suite against the app build.\n\nThe suite is waiting on approval for the local test gateway.",
-    status: "Blocked", waitsOn: "you", proj: "agency-v1", who: "jules", pri: "High", etaHours: 8,
+    status: "Blocked", waitsOn: "you", requestedBy: "you", proj: "agency-v1", who: "jules", pri: "High", etaHours: 8,
     subtasks: [
       { id: "T-A147", title: "Inventory CSP fixtures",
         description: "Compare the current browser fixtures against the policies the app serves. Record which directives are already covered and identify the fixtures the suite still needs.",
@@ -89,7 +89,7 @@ const W = [
   },
   { id: "T-A131", kind: "task", title: "Information architecture v2 prototype",
     description: "Build the clickable IA v2 prototype around the daily workflow. Make it easy to open an Inbox item, find its task and navigate back with the keyboard.\n\nThe primary routes are linked. Record a walkthrough of the remaining cases before the design handoff.",
-    status: "In progress", proj: "look-feel", who: "emery", pri: "High", etaHours: 5,
+    status: "In progress", requestedBy: "you", proj: "look-feel", who: "emery", pri: "High", etaHours: 5,
     criteria: [
       { text: "Map primary routes", done: true },
       { text: "Link prototype views", done: true },
@@ -99,7 +99,7 @@ const W = [
   },
   { id: "T-A133", kind: "task", title: "Restyle status pills",
     description: "Update status pills to use the shared semantic colors and typography. Check that the label stays readable in both compact rows and narrow layouts.",
-    status: "Done", proj: "look-feel", who: "avery", pri: "Low",
+    status: "Done", closedDaysAgo: 1, proj: "look-feel", who: "avery", pri: "Low",
     criteria: [
       { text: "Apply the shared status colors", done: true },
       { text: "Verify labels on a narrow screen", done: true }
@@ -107,7 +107,7 @@ const W = [
   },
   { id: "T-A135", kind: "task", title: "HQ to satellite snapshot sync",
     description: "Send a small snapshot from HQ to the satellite office and verify that the replay produces the same records. Keep this as the first end-to-end check once the build box comes back online.",
-    status: "To do", proj: "office-federation", who: "quinn", pri: "Medium", etaHours: 12,
+    status: "To do", requestedBy: "you", proj: "office-federation", who: "quinn", pri: "Medium", etaHours: 12,
     criteria: [
       { text: "Create a snapshot", done: false },
       { text: "Transfer to the satellite", done: false },
@@ -124,7 +124,7 @@ const W = [
   },
   { id: "T-A140", kind: "task", title: "Review Sage's lock fix 492e59e4",
     description: "Review the custody lock change at revision 492e59e4. Check the lease-release path and leave reproducible notes for Sage on any findings that affect the handoff.",
-    status: "Done", proj: "agency-v1", who: "tomas", pri: "High",
+    status: "Done", closedDaysAgo: 3, requestedBy: "you", proj: "agency-v1", who: "tomas", pri: "High",
     criteria: [
       { text: "Review how the lease is released", done: true },
       { text: "Leave handoff notes for Sage", done: true }
@@ -132,7 +132,7 @@ const W = [
   },
   { id: "T-A142", kind: "task", title: "Write the v1.0 release notes",
     description: "Write the v1.0 release notes for the people installing and operating an office. Call out the sync changes, the new checks and any steps the reader needs to take before upgrading.",
-    status: "Done", proj: "agency-v1", who: "you", pri: "Medium",
+    status: "Done", closedDaysAgo: 4, proj: "agency-v1", who: "you", pri: "Medium",
     criteria: [
       { text: "Summarize the sync changes and release checks", done: true },
       { text: "Document the upgrade steps", done: true }
@@ -140,7 +140,7 @@ const W = [
   },
   { id: "T-A144", kind: "task", title: "Onboarding checklist for new people",
     description: "Give new people a short checklist for joining an office, finding their team and opening their first task. Include the links they need to finish setup without waiting for an introduction.",
-    status: "Done", proj: "agency-v1", who: "maya", pri: "Low",
+    status: "Done", closedDaysAgo: 5, requestedBy: "you", proj: "agency-v1", who: "maya", pri: "Low",
     criteria: [
       { text: "Link the team directory and first task", done: true },
       { text: "Walk through the checklist with a new member", done: true }
@@ -148,7 +148,7 @@ const W = [
   },
   { id: "T-A146", kind: "task", title: "Sign the Apple developer agreement for notarization",
     description: "Complete the Apple Developer agreement required for notarization. Confirm the agreement version in the developer account, then identify the account holder who can sign it.\n\nKeep the release gate open until the signed agreement is confirmed.",
-    status: "To do", proj: "agency-v1", who: "ada", pri: "High",
+    status: "To do", requestedBy: "you", proj: "agency-v1", who: "ada", pri: "High",
     subtasks: [
       { id: "T-A150", title: "Confirm the agreement version",
         description: "Match the agreement version in the Apple Developer account to the one listed on the notarization requirement. Record the result for the signer.",
@@ -164,7 +164,7 @@ const W = [
   },
   { id: "T-A70", kind: "bug", title: "Landing page hides what needs you",
     description: "The landing page pushed items needing a decision below the first screen. Verify that urgent requests are visible when the briefing opens, including at shorter viewport heights.",
-    status: "Fixed", proj: "agency-v1", who: "ada", pri: "Major",
+    status: "Fixed", closedDaysAgo: 18, requestedBy: "you", proj: "agency-v1", who: "ada", pri: "Major",
     criteria: [
       { text: "Keep urgent decisions visible on the first screen", done: true },
       { text: "Verify the briefing on short viewports", done: true }
@@ -172,7 +172,7 @@ const W = [
   },
   { id: "T-A76", kind: "bug", title: "Status pill truncates letter by letter at 390 px",
     description: "At a 390-pixel viewport, the status label could wrap one letter at a time. Verify the label keeps a readable shape beside a long work item title.",
-    status: "Fixed", proj: "look-feel", who: "avery", pri: "Minor",
+    status: "Fixed", closedDaysAgo: 14, proj: "look-feel", who: "avery", pri: "Minor",
     criteria: [
       { text: "Reproduce the label wrapping at 390 pixels", done: true },
       { text: "Verify the label beside a long title", done: true }
@@ -180,7 +180,7 @@ const W = [
   },
   { id: "T-A81", kind: "bug", title: "Satellite stays Offline after the Mac wakes",
     description: "The satellite stayed offline in the UI after the Mac woke up. Verify that the connection recovers and the presence status updates after sleep.",
-    status: "Fixed", proj: "office-federation", who: "sage", pri: "Critical",
+    status: "Fixed", closedDaysAgo: 21, requestedBy: "you", proj: "office-federation", who: "sage", pri: "Critical",
     criteria: [
       { text: "Reconnect the satellite after the Mac wakes", done: true },
       { text: "Refresh presence after reconnecting", done: true }
@@ -196,7 +196,7 @@ const W = [
   },
   { id: "T-A86", kind: "bug", title: "Chat scrolls to top after sending",
     description: "After sending a message, Chat jumped to the oldest entries. Keep focus in the composer and bring the newly sent message into view.",
-    status: "Fixed", proj: "agency-v1", who: "jules", pri: "Major",
+    status: "Fixed", closedDaysAgo: 16, proj: "agency-v1", who: "jules", pri: "Major",
     criteria: [
       { text: "Keep focus in the composer after sending", done: true },
       { text: "Scroll to the newest message", done: true }
@@ -212,7 +212,7 @@ const W = [
   },
   { id: "T-A9",  kind: "request", title: "Read-only view of an agent's journal and memory",
     description: "Provide a read-only view of an agent’s journal and remembered context so an owner can understand recent decisions before assigning work.",
-    status: "Approved", proj: "agency-v1", who: "emery", pri: "by Emery" },
+    status: "Approved", closedDaysAgo: 4, proj: "agency-v1", who: "emery", pri: "by Emery" },
   { id: "T-A11", kind: "request", title: "Invite flow for a second office",
     description: "Explore the invitation flow for someone joining a second office. Show which office they are joining and what happens before their first sync completes.",
     status: "Rowan is scoping", proj: "office-federation", who: "rowan", pri: "Sent Nov 9",
@@ -223,7 +223,7 @@ const W = [
   },
   { id: "T-A12", kind: "request", title: "Export activity as CSV",
     description: "Let an owner export the current Activity view to CSV for monthly reporting. Include timestamps, people, projects and event types, and apply the filters visible on the page.",
-    status: "Approved", proj: "agency-v1", who: "maya", pri: "From Maya Chen",
+    status: "Approved", closedDaysAgo: 2, proj: "agency-v1", who: "maya", pri: "From Maya Chen",
     criteria: [
       { text: "Agree on the CSV columns", done: true },
       { text: "Export the filtered Activity view", done: false }
@@ -231,7 +231,7 @@ const W = [
   },
   { id: "T-A7",  kind: "request", title: "Dark-only look for v1.0",
     description: "Record the initial decision to begin with a dark theme for v1.0 so the team can focus on the core workflows during the first implementation pass.",
-    status: "Approved", proj: "look-feel", who: "eden", pri: "Approved Nov 10" }
+    status: "Approved", closedDaysAgo: 15, proj: "look-feel", who: "eden", pri: "Approved Nov 10" }
 ];
 const WORK_DISCUSSIONS = {
   "T-A12": {

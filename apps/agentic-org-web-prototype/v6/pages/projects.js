@@ -3,7 +3,7 @@ import { activityViewControls, pageActivity, projectReleaseSummary } from "./act
 import { msgHtml } from "./chat.js";
 import { projectInsights } from "./insights.js";
 import { notFound } from "./settings.js";
-import { scopedWorkControls, scopedWorkWorkspace } from "./work.js";
+import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
 import { render } from "../shell/router.js";
 import { S } from "../state.js";
 import { SEP, acts, av, avStack, back, esc, feed, hdr, ic, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, presPill, progress, projMembers, projPill, sectionTabs, showMenu, statusLine, toast } from "../ui.js";
@@ -37,11 +37,10 @@ function pageProject(id, tab) {
     ["team", "Team", projMembers(id).length],
   ];
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"), "ghost");
-  const workControls = tab === "work" ? `<div class="queue-controls project-work-controls" role="group" aria-label="Work view controls">${scopedWorkControls()}</div>` : "";
   const activityControls = tab === "activity" ? `<div class="queue-controls project-activity-controls">${activityViewControls(id)}</div>` : "";
   return back("#/projects", "Projects") + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id))}
-    ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab), workControls + activityControls + more)}
+    ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab), activityControls + more)}
   </div>` + (tab === "overview" ? projectReleaseSummary(id) : "") + projectBody(id, tab);
 }
 function projectBody(id, tab) {
@@ -55,7 +54,7 @@ function projectBody(id, tab) {
       <section class="section"><div class="sec-h"><h2>${ic("bell", "ic20 c-amber")}Needs you for this project</h2></div>${needs.length ? `<div class="cards">${needs.map(needsCard).join("")}</div>` : `<p class="muted" style="padding-bottom:24px">Nothing needs you on this project.</p>`}</section>
     </div><aside class="compact"><div class="sec-h"><h2 style="font-size:14px;font-weight:600">Recent activity</h2></div>${feed(acts().filter((a) => a.proj === id).slice(0, 5), { noProj: true })}</aside></div>`;
   }
-  if (tab === "work") return scopedWorkWorkspace();
+  if (tab === "work") return scopedWorkToolbar("project", id, ws) + scopedWorkWorkspace();
   if (tab === "team") return projectTeams(id) + memberRows(projMembers(id), { emptyText: "No members yet." });
   if (tab === "activity") return pageActivity(id);
   if (tab === "insights") return projectInsights(id);

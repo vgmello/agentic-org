@@ -4,7 +4,7 @@ import { agentRailHtml, agentSessionAvailability, getConsoleSession } from "./ag
 import { INSIGHT_COMPLETIONS, INSIGHT_DAY, INSIGHT_TODAY, insightBuckets, insightChart, insightCompletions, insightDayLabel, insightInRange, insightMedian } from "./insights.js";
 import { conversationPreview, memberRows } from "./projects.js";
 import { healthMark, notFound } from "./settings.js";
-import { agentTasksToolbar, scopedWorkControls, scopedWorkWorkspace, teamWork, workGroups, workList } from "./work.js";
+import { scopedWorkToolbar, scopedWorkWorkspace, teamWork, visibleWorkItems, workGroups, workList } from "./work.js";
 import { S } from "../state.js";
 import { SEP, acts, av, avStack, back, esc, feed, hireMenu, ic, isPerson, joinSep, kindWord, leadOf, leadTxt, linkTabs, memberIds, menuItem, mlink, moreMenu, needsCard, openFrom, pill, plink, plural, presInline, presPill, progress, projPill, queueHeadline, sectionTabs, showMenu, statusLine } from "../ui.js";
 
@@ -116,11 +116,10 @@ function pageTeam(id, tab = "overview") {
     ["", "Overview"], ["members", "Members", t.members.length], ["work", "Work", ws.filter(OPEN).length],
     ["projects", "Projects"], ["activity", "Activity"], ["conversations", "Conversations"],
   ], tab === "overview" ? "" : tab, "Team sections");
-  const controls = tab === "work" ? scopedWorkControls() : "";
-  const header = back("#/teams", "Teams") + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, controls, actions)}</div>`;
+  const header = back("#/teams", "Teams") + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, "", actions)}</div>`;
   if (tab === "overview") return header + teamOverview(id, ws);
   if (tab === "members") return header + `<section aria-labelledby="h-mem"><h2 class="team-roster-title" id="h-mem">All members</h2>${memberRows(t.members, { noTeam: true })}</section>`;
-  if (tab === "work") return header + scopedWorkWorkspace();
+  if (tab === "work") return header + scopedWorkToolbar("team", id, ws) + scopedWorkWorkspace();
   if (tab === "projects") {
     const projects = teamProjects(id);
     return header + (projects.length ? `<ul class="rows" role="list" aria-label="Team projects">${projects.map((p) => `<li class="linked"><div class="grow"><p class="rt"><a class="stretch" href="#/projects/${p}">${esc(P[p].name)}</a>${leadOf(p) ? `<span class="sec">${esc(leadTxt(p))}</span>` : ""}</p><div style="max-width:320px;margin-top:8px">${progress(p)}</div></div>${projPill(p)}</li>`).join("")}</ul>` : '<p class="empty-row">No projects for this team.</p>');
@@ -185,7 +184,7 @@ function personOverviewHtml(m, owner, myW, myActs) {
     ? `<p class="why" style="font-size:0.875rem">${esc(m.task)}${m.proj ? " · " + plink(m.proj) : ""}</p>${m.goal ? `<p class="meta"><span class="pin wrap">${ic("flag", "ic14")}<span>Goal: ${esc(m.goal)}</span></span></p>` : ""}`
     : `<p class="muted">Not working on anything right now.</p>`;
   const left = owner
-    ? `<section class="section"><div class="sec-h"><h2>Assigned to you</h2></div></section><div class="compact" style="padding:0 var(--gutter)">${workList(myW)}</div>`
+    ? `<section class="section"><div class="sec-h"><h2>Assigned to you</h2></div></section><div class="compact" style="padding:0 var(--gutter)">${workList(visibleWorkItems(myW), { hideOwner: true })}</div>`
     : `<section class="section"><div class="sec-h"><h2>Working on</h2></div>${working}</section><section class="section compact"><div class="sec-h"><h2>Recent activity</h2></div>${feed(myActs.slice(0, 5))}</section>`;
   const aside = `<div class="setup"><h2>About</h2><dl class="dl"><dt>Kind</dt><dd>${owner ? "Owner" : "Person"}</dd><dt>Role</dt><dd>${esc(m.role)}</dd><dt>Access</dt><dd>${owner ? "Owner · not a member of any team" : "Member"}</dd></dl></div>`;
   return `<div class="grid2"><div>${left}</div><aside>${aside}</aside></div>`;
@@ -193,7 +192,7 @@ function personOverviewHtml(m, owner, myW, myActs) {
 
 function personMemberView(id, tab, m, owner, myW, myActs) {
   const tabs = [["", "Overview"], ["work", "Work", myW.filter(OPEN).length], ["conversations", "Conversations"], ["activity", "Activity"]];
-  if (tab === "work") return { tabs, controls: scopedWorkControls(), body: scopedWorkWorkspace() };
+  if (tab === "work") return { tabs, controls: "", body: scopedWorkToolbar("person", id, myW) + scopedWorkWorkspace() };
   if (tab === "activity") return { tabs, controls: "", body: activityTimeline(myActs) };
   if (tab === "conversations") return { tabs, controls: "", body: personConversationsHtml(id) };
   if (tab === "overview") return { tabs, controls: "", body: personOverviewHtml(m, owner, myW, myActs) };
@@ -250,7 +249,7 @@ function agentKnowledgeTab(id, m) {
 function agentTabContent(id, tab, m, avail, myW, myActs) {
   if (tab === "overview") return { controls: "", leftBody: agentOverviewTab(id, m, avail, myW, myActs) };
   if (tab === "tasks") {
-    return { controls: "", leftBody: agentTasksToolbar(id, myW) + scopedWorkWorkspace() };
+    return { controls: "", leftBody: scopedWorkToolbar("agent", id, myW) + scopedWorkWorkspace() };
   }
   if (tab === "sessions") return { controls: "", leftBody: `<div id="agent-sessions-root" data-agent="${id}"></div>` };
   if (tab === "journal") {
