@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
 use org_agent_runtime::{
-    Activity, ApprovalId, Control, ControlError, CostBasis, Decision, ExitInfo, Output, Session,
-    SessionEvent, SessionId, StartFailure, TurnOutcome, Usage, UsageScope,
+    Activity, ApprovalId, Control, ControlError, CostBasis, Decision, ExitInfo, NoticeKind, Output,
+    Session, SessionEvent, SessionId, StartFailure, TurnOutcome, Usage, UsageScope,
 };
 
 use crate::plan::AgySessionConfig;
@@ -13,8 +13,9 @@ use crate::protocol::{
     classify_rpc_error_outcome, classify_stop_reason, classify_tool_capability, encode_initialize,
     encode_jsonrpc_error, encode_permission_cancelled, encode_permission_selected,
     encode_session_cancel, encode_session_close, encode_session_open, encode_session_prompt,
-    encode_set_model, extract_rpc_error_message, parse_acp_usage, parse_permission_request,
-    parse_stderr_line, rpc_id_key, AcpUsage,
+    encode_set_model, extract_rpc_error_message, is_auth_rpc_error, is_banned_mode,
+    parse_acp_usage, parse_permission_request, parse_stderr_line, rpc_error, rpc_id_key,
+    rpc_result, AcpUsage,
 };
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -39,6 +40,14 @@ struct PendingApproval {
     tool_call_id: Option<String>,
 }
 
+/// One live `session/prompt` RPC slot in an active turn (initial prompt + any mid-turn steers).
+#[derive(Debug, Clone)]
+struct PromptSlot {
+    req_id: u64,
+    delivery_id: Option<String>,
+    acked: bool,
+}
+
 /// Pure sans-I/O ACP JSON-RPC 2.0 protocol state machine for `agy acp --stdio`.
 pub(crate) struct AgySession {
     cfg: AgySessionConfig,
@@ -51,19 +60,19 @@ pub(crate) struct AgySession {
     handshake_deadline: Option<Instant>,
     session_id: Option<SessionId>,
     runtime_version: Option<String>,
+    reported_mode: Option<String>,
     active_model: Option<String>,
-    /// Current owning `session/prompt` RPC id for the open turn.
-    active_prompt_id: Option<u64>,
-    /// Prior `session/prompt` RPC ids superseded by mid-turn steering (`old_id -> delivery_id`).
-    /// On live `agy 1.5.17`, sending a mid-turn `session/prompt` resolves the prior prompt id
-    /// immediately without aborting running tools and transfers turn ownership to the new id.
-    superseded_prompts: BTreeMap<u64, String>,
-    /// New mid-turn `session/prompt` RPC ids mapped to their unacknowledged `delivery_id`.
-    steer_prompt_ids: BTreeMap<u64, String>,
+    /// Ordered chain of live `session/prompt` slots for the open turn (`[0]` is oldest,
+    /// `last()` is newest owning prompt). Replacing split maps prevents chained-steer corruption.
+    prompt_chain: Vec<PromptSlot>,
     pending_approvals: BTreeMap<ApprovalId, PendingApproval>,
     turn_text_buf: String,
-    turn_usage: AcpUsage,
-    saw_turn_usage: bool,
+    /// Authoritative finalized token usage summed across `session/prompt` `result.usage` payloads.
+    confirmed_usage: AcpUsage,
+    saw_confirmed_usage: bool,
+    /// Current-segment streaming `usage_update` snapshot (cleared when prompt `result.usage`
+    /// finalizes the segment; only folded into `flush_turn_usage` if unfinalized on crash/EOF).
+    streamed_usage: Option<AcpUsage>,
 }
 
 impl AgySession {
@@ -79,14 +88,14 @@ impl AgySession {
             handshake_deadline: None,
             session_id: None,
             runtime_version: None,
+            reported_mode: None,
             active_model: None,
-            active_prompt_id: None,
-            superseded_prompts: BTreeMap::new(),
-            steer_prompt_ids: BTreeMap::new(),
+            prompt_chain: Vec::new(),
             pending_approvals: BTreeMap::new(),
             turn_text_buf: String::new(),
-            turn_usage: AcpUsage::default(),
-            saw_turn_usage: false,
+            confirmed_usage: AcpUsage::default(),
+            saw_confirmed_usage: false,
+            streamed_usage: None,
         }
     }
 
@@ -112,20 +121,16 @@ impl AgySession {
     }
 
     fn fail_pending_mid_turn_deliveries(&mut self, reason: &str) -> Vec<Output> {
-        let mut seen = BTreeSet::new();
-        let mut out = Vec::new();
-        for delivery_id in std::mem::take(&mut self.superseded_prompts)
-            .into_values()
-            .chain(std::mem::take(&mut self.steer_prompt_ids).into_values())
-        {
-            if seen.insert(delivery_id.clone()) {
-                out.push(Output::Event(SessionEvent::MidTurnDeliveryFailed {
+        std::mem::take(&mut self.prompt_chain)
+            .into_iter()
+            .filter_map(|slot| (!slot.acked).then_some(slot.delivery_id).flatten())
+            .map(|delivery_id| {
+                Output::Event(SessionEvent::MidTurnDeliveryFailed {
                     delivery_id,
                     reason: reason.to_owned(),
-                }));
-            }
-        }
-        out
+                })
+            })
+            .collect()
     }
 
     fn flush_assistant_text(&mut self) -> Option<Output> {
@@ -140,17 +145,21 @@ impl AgySession {
     }
 
     fn flush_turn_usage(&mut self) -> Option<Output> {
-        if !self.saw_turn_usage && self.turn_usage.is_zero() {
+        let mut total = std::mem::take(&mut self.confirmed_usage);
+        let saw_confirmed = std::mem::replace(&mut self.saw_confirmed_usage, false);
+        let streamed = self.streamed_usage.take();
+        if let Some(est) = &streamed {
+            total.add_assign(est);
+        }
+        if !saw_confirmed && streamed.is_none() && total.is_zero() {
             return None;
         }
-        let raw = std::mem::take(&mut self.turn_usage);
-        self.saw_turn_usage = false;
         let mut u = Usage::new(UsageScope::TurnDelta, UsageScope::TurnDelta);
-        u.input = raw.input;
-        u.output = raw.output;
-        u.cache_read = raw.cache_read;
-        u.cache_write = raw.cache_write;
-        u.reasoning = raw.reasoning;
+        u.input = total.input;
+        u.output = total.output;
+        u.cache_read = total.cache_read;
+        u.cache_write = total.cache_write;
+        u.reasoning = total.reasoning;
         u.cost_basis = CostBasis::None;
         u.model = self.active_model.clone().or_else(|| self.cfg.model.clone());
         Some(Output::Event(SessionEvent::Usage(u)))
@@ -177,15 +186,18 @@ fn finish_opening_ready(s: &mut AgySession) -> Vec<Output> {
         runtime_version: s.runtime_version.clone(),
         pid: None,
         agents: vec![s.cfg.agent_name.clone()],
-        permission_mode: Some(s.cfg.expected_mode.reported_name.to_owned()),
+        permission_mode: s.reported_mode.clone(),
     }));
     out
 }
 
-fn fail_opening(s: &mut AgySession, detail: String) -> Vec<Output> {
+fn fail_opening(s: &mut AgySession, detail: String, err_val: Option<&Value>) -> Vec<Output> {
+    let prev = s.phase;
     s.handshake_deadline = None;
     s.phase = Phase::Failed;
-    let reason = if s.cfg.resume_session_id.is_some() {
+    let reason = if err_val.is_some_and(is_auth_rpc_error) {
+        StartFailure::AuthRequired
+    } else if prev == Phase::OpeningSession && s.cfg.resume_session_id.is_some() {
         StartFailure::ResumeFailed { detail }
     } else {
         StartFailure::Other { detail }
@@ -219,11 +231,8 @@ fn handle_rpc_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
     if s.model_req_id == Some(req_id) {
         return handle_set_model_response(s, val);
     }
-    if s.superseded_prompts.contains_key(&req_id) {
-        return handle_superseded_prompt_response(s, req_id, val);
-    }
-    if s.active_prompt_id == Some(req_id) {
-        return handle_active_prompt_response(s, req_id, val);
+    if let Some(idx) = s.prompt_chain.iter().position(|slot| slot.req_id == req_id) {
+        return handle_prompt_slot_response(s, idx, val);
     }
     Vec::new()
 }
@@ -233,14 +242,19 @@ fn handle_init_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
     if s.phase != Phase::OpeningInit {
         return Vec::new();
     }
-    if let Some(err) = val.get("error") {
+    if let Some(err) = rpc_error(val) {
         return fail_opening(
             s,
             format!("ACP initialize failed: {}", extract_rpc_error_message(err)),
+            Some(err),
         );
     }
-    let Some(result) = val.get("result") else {
-        return fail_opening(s, "ACP initialize response missing `result`".to_owned());
+    let Some(result) = rpc_result(val) else {
+        return fail_opening(
+            s,
+            "ACP initialize response missing `result`".to_owned(),
+            None,
+        );
     };
     let proto_ver = result
         .get("protocolVersion")
@@ -250,6 +264,7 @@ fn handle_init_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
         return fail_opening(
             s,
             format!("ACP initialize reported unsupported protocolVersion={proto_ver}"),
+            None,
         );
     }
     s.runtime_version = result
@@ -268,23 +283,53 @@ fn handle_init_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
     )]
 }
 
+fn validate_session_open_mode(s: &mut AgySession, result: &Value) -> Result<(), Vec<Output>> {
+    let reported = result
+        .pointer("/modes/currentModeId")
+        .and_then(Value::as_str);
+    let Some(mode) = reported else {
+        s.reported_mode = None;
+        return Ok(());
+    };
+    if is_banned_mode(mode) || mode != s.cfg.expected_mode.reported_name {
+        s.handshake_deadline = None;
+        s.phase = Phase::Failed;
+        return Err(vec![Output::Event(SessionEvent::StartFailed {
+            reason: StartFailure::ModeMismatch {
+                requested: s.cfg.expected_mode.reported_name.to_owned(),
+                reported: mode.to_owned(),
+            },
+        })]);
+    }
+    s.reported_mode = Some(mode.to_owned());
+    Ok(())
+}
+
 fn handle_session_open_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
     s.session_req_id = None;
     if s.phase != Phase::OpeningSession {
         return Vec::new();
     }
-    if let Some(err) = val.get("error") {
+    if let Some(err) = rpc_error(val) {
         return fail_opening(
             s,
             format!(
                 "ACP session open failed: {}",
                 extract_rpc_error_message(err)
             ),
+            Some(err),
         );
     }
-    let Some(result) = val.get("result") else {
-        return fail_opening(s, "ACP session open response missing `result`".to_owned());
+    let Some(result) = rpc_result(val) else {
+        return fail_opening(
+            s,
+            "ACP session open response missing `result`".to_owned(),
+            None,
+        );
     };
+    if let Err(mismatch) = validate_session_open_mode(s, result) {
+        return mismatch;
+    }
     let sid = match result
         .get("sessionId")
         .and_then(Value::as_str)
@@ -292,12 +337,20 @@ fn handle_session_open_response(s: &mut AgySession, val: &Value) -> Vec<Output> 
     {
         Some(Ok(id)) => id,
         Some(Err(_)) => {
-            return fail_opening(s, "ACP session open carried invalid sessionId".to_owned());
+            return fail_opening(
+                s,
+                "ACP session open carried invalid sessionId".to_owned(),
+                None,
+            );
         }
         None => match s.cfg.resume_session_id.clone() {
             Some(resumed) => resumed,
             None => {
-                return fail_opening(s, "ACP session/new response missing sessionId".to_owned());
+                return fail_opening(
+                    s,
+                    "ACP session/new response missing sessionId".to_owned(),
+                    None,
+                );
             }
         },
     };
@@ -324,13 +377,21 @@ fn handle_set_model_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
     if s.phase != Phase::OpeningModel {
         return Vec::new();
     }
-    if let Some(err) = val.get("error") {
+    if let Some(err) = rpc_error(val) {
         return fail_opening(
             s,
             format!(
                 "ACP session/set_model failed: {}",
                 extract_rpc_error_message(err)
             ),
+            Some(err),
+        );
+    }
+    if rpc_result(val).is_none() {
+        return fail_opening(
+            s,
+            "ACP session/set_model response missing `result`".to_owned(),
+            None,
         );
     }
     if let Some(requested) = &s.cfg.model {
@@ -339,47 +400,45 @@ fn handle_set_model_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
     finish_opening_ready(s)
 }
 
-fn handle_superseded_prompt_response(s: &mut AgySession, req_id: u64, val: &Value) -> Vec<Output> {
-    let Some(delivery_id) = s.superseded_prompts.remove(&req_id) else {
-        return Vec::new();
+fn handle_prompt_slot_response(s: &mut AgySession, idx: usize, val: &Value) -> Vec<Output> {
+    if let Some(err) = rpc_error(val) {
+        return handle_prompt_slot_error(s, idx, err);
+    }
+    let Some(result) = rpc_result(val) else {
+        return vec![Output::Event(SessionEvent::ProtocolError {
+            detail: "ACP session/prompt response missing `result` and `error`".to_owned(),
+        })];
     };
+    let slot = s.prompt_chain.remove(idx);
     let mut out = Vec::new();
-    if let Some(result) = val.get("result") {
-        if let Some(usage_val) = result.get("usage") {
-            s.turn_usage.add_assign(&parse_acp_usage(usage_val));
-            s.saw_turn_usage = true;
-        }
-        s.steer_prompt_ids.retain(|_, d| d != &delivery_id);
-        if let Some(text) = s.flush_assistant_text() {
-            out.push(text);
-        }
+    if let Some(did) = slot.delivery_id.filter(|_| !slot.acked) {
         out.push(Output::Event(SessionEvent::MidTurnDelivered {
-            delivery_id,
+            delivery_id: did,
         }));
     }
-    out
-}
-
-fn handle_active_prompt_response(s: &mut AgySession, req_id: u64, val: &Value) -> Vec<Output> {
-    if let Some(err) = val.get("error") {
-        return handle_active_prompt_error(s, req_id, err);
+    if idx < s.prompt_chain.len() {
+        // Live `agy 1.5.17` resolves a superseded prompt immediately when a mid-turn steer
+        // arrives and transfers turn ownership to the next surviving slot without aborting tools.
+        let next = &mut s.prompt_chain[idx];
+        if !next.acked {
+            if let Some(did) = next.delivery_id.clone() {
+                next.acked = true;
+                out.push(Output::Event(SessionEvent::MidTurnDelivered {
+                    delivery_id: did,
+                }));
+            }
+        }
     }
-    s.active_prompt_id = None;
-    let mut out = Vec::new();
-    if let Some(delivery_id) = s.steer_prompt_ids.remove(&req_id) {
-        s.superseded_prompts.retain(|_, d| d != &delivery_id);
-        out.push(Output::Event(SessionEvent::MidTurnDelivered {
-            delivery_id,
-        }));
+    if let Some(usage_val) = result.get("usage") {
+        s.confirmed_usage.add_assign(&parse_acp_usage(usage_val));
+        s.saw_confirmed_usage = true;
+        s.streamed_usage = None;
     }
-    out.extend(s.fail_pending_mid_turn_deliveries("turn ended before mid-turn prompt ack"));
     if let Some(text) = s.flush_assistant_text() {
         out.push(text);
     }
-    let result = val.get("result").unwrap_or(&Value::Null);
-    if let Some(usage_val) = result.get("usage") {
-        s.turn_usage.add_assign(&parse_acp_usage(usage_val));
-        s.saw_turn_usage = true;
+    if !s.prompt_chain.is_empty() {
+        return out;
     }
     if let Some(u) = s.flush_turn_usage() {
         out.push(u);
@@ -389,32 +448,19 @@ fn handle_active_prompt_response(s: &mut AgySession, req_id: u64, val: &Value) -
     out
 }
 
-fn handle_active_prompt_error(s: &mut AgySession, req_id: u64, err: &Value) -> Vec<Output> {
+fn handle_prompt_slot_error(s: &mut AgySession, idx: usize, err: &Value) -> Vec<Output> {
+    let slot = s.prompt_chain.remove(idx);
     let mut out = Vec::new();
-    if let Some(delivery_id) = s.steer_prompt_ids.remove(&req_id) {
-        let reason = extract_rpc_error_message(err);
-        let mut restored_prompt = None;
-        s.superseded_prompts.retain(|&old_id, d| {
-            if d == &delivery_id {
-                restored_prompt = Some(old_id);
-                false
-            } else {
-                true
-            }
-        });
+    if let Some(did) = slot.delivery_id.filter(|_| !slot.acked) {
         out.push(Output::Event(SessionEvent::MidTurnDeliveryFailed {
-            delivery_id,
-            reason,
+            delivery_id: did,
+            reason: extract_rpc_error_message(err),
         }));
-        if let Some(old_id) = restored_prompt {
-            // The steered prompt was rejected while the prior prompt is still running: restore
-            // turn ownership to `old_id` so the running turn finishes cleanly.
-            s.active_prompt_id = Some(old_id);
-            return out;
-        }
     }
-    s.active_prompt_id = None;
-    out.extend(s.fail_pending_mid_turn_deliveries("active turn failed"));
+    if !s.prompt_chain.is_empty() {
+        // Another live prompt slot still owns this turn; keep `Phase::Busy` until it settles.
+        return out;
+    }
     if let Some(text) = s.flush_assistant_text() {
         out.push(text);
     }
@@ -537,6 +583,7 @@ fn handle_session_update(s: &mut AgySession, params: &Value) -> Vec<Output> {
         "tool_call" => handle_tool_call_update_start(update),
         "tool_call_update" => handle_tool_call_update_status(s, update),
         "usage_update" => handle_usage_update(s, update),
+        "current_mode_update" => handle_current_mode_update(s, update),
         "config_option_update" => {
             if update.get("configOptionId").and_then(Value::as_str) == Some("model") {
                 if let Some(m) = update.get("currentValue").and_then(Value::as_str) {
@@ -552,6 +599,36 @@ fn handle_session_update(s: &mut AgySession, params: &Value) -> Vec<Output> {
             type_name: format!("session/update/{other}"),
         })],
     }
+}
+
+fn handle_current_mode_update(
+    s: &mut AgySession,
+    update: &serde_json::Map<String, Value>,
+) -> Vec<Output> {
+    let Some(mode) = update
+        .get("currentModeId")
+        .or_else(|| update.get("mode"))
+        .and_then(Value::as_str)
+    else {
+        return Vec::new();
+    };
+    s.reported_mode = Some(mode.to_owned());
+    let mut out = vec![Output::Event(SessionEvent::ModeChanged {
+        mode: Some(mode.to_owned()),
+    })];
+    if is_banned_mode(mode) && !matches!(s.phase, Phase::Closing | Phase::Failed | Phase::Ended) {
+        s.phase = Phase::Closing;
+        s.handshake_deadline = None;
+        out.push(Output::Event(SessionEvent::Notice {
+            kind: NoticeKind::Warning,
+            text: format!("Agy ACP switched to banned permission mode `{mode}`; stopping session"),
+        }));
+        if let Some(sid) = s.session_id.as_ref() {
+            out.push(encode_session_cancel(sid.as_str()));
+        }
+        out.push(Output::CloseStdin);
+    }
+    out
 }
 
 fn handle_message_chunk(
@@ -630,11 +707,16 @@ fn handle_tool_call_update_status(
 }
 
 fn handle_usage_update(s: &mut AgySession, update: &serde_json::Map<String, Value>) -> Vec<Output> {
+    if !s.turn_open {
+        return Vec::new();
+    }
     if let Some(usage_val) = update.get("usage") {
         let parsed = parse_acp_usage(usage_val);
         if !parsed.is_zero() {
-            s.turn_usage.add_assign(&parsed);
-            s.saw_turn_usage = true;
+            match &mut s.streamed_usage {
+                Some(existing) => existing.merge_max(&parsed),
+                None => s.streamed_usage = Some(parsed),
+            }
         }
     }
     Vec::new()
@@ -651,12 +733,17 @@ fn control_send(s: &mut AgySession, text: String) -> Result<Vec<Output>, Control
         return Err(ControlError::NotReady);
     };
     let req_id = s.alloc_id();
-    s.active_prompt_id = Some(req_id);
+    s.prompt_chain = vec![PromptSlot {
+        req_id,
+        delivery_id: None,
+        acked: false,
+    }];
     s.phase = Phase::Busy;
     s.turn_open = true;
     s.turn_text_buf.clear();
-    s.turn_usage = AcpUsage::default();
-    s.saw_turn_usage = false;
+    s.confirmed_usage = AcpUsage::default();
+    s.saw_confirmed_usage = false;
+    s.streamed_usage = None;
     Ok(vec![
         encode_session_prompt(req_id, sid.as_str(), &text),
         Output::Event(SessionEvent::TurnStarted {
@@ -678,13 +765,18 @@ fn control_deliver_mid_turn(
     if s.phase == Phase::Idle {
         return Err(ControlError::InvalidState);
     }
-    let (Some(old_id), Some(sid)) = (s.active_prompt_id, s.session_id.clone()) else {
+    if s.prompt_chain.is_empty() {
+        return Err(ControlError::NotReady);
+    }
+    let Some(sid) = s.session_id.clone() else {
         return Err(ControlError::NotReady);
     };
     let new_id = s.alloc_id();
-    s.superseded_prompts.insert(old_id, delivery_id.clone());
-    s.steer_prompt_ids.insert(new_id, delivery_id);
-    s.active_prompt_id = Some(new_id);
+    s.prompt_chain.push(PromptSlot {
+        req_id: new_id,
+        delivery_id: Some(delivery_id),
+        acked: false,
+    });
     Ok(vec![encode_session_prompt(new_id, sid.as_str(), &text)])
 }
 
@@ -783,6 +875,7 @@ impl Session for AgySession {
             out.extend(fail_opening(
                 self,
                 "Agy ACP stdout closed before session ready".to_owned(),
+                None,
             ));
             return out;
         }
@@ -801,7 +894,6 @@ impl Session for AgySession {
                     reason: "Agy ACP stdout closed during turn".to_owned(),
                 }
             };
-            self.active_prompt_id = None;
             finish_turn(self, outcome, Vec::new(), &mut out);
         }
         out
@@ -816,14 +908,11 @@ impl Session for AgySession {
         self.handshake_deadline = None;
         let mut out = self.cancel_pending_approvals();
         if is_opening(prev) {
-            let reason = if self.cfg.resume_session_id.is_some() {
-                StartFailure::ResumeFailed {
-                    detail: format!("Agy ACP exited before ready ({exit:?})"),
-                }
+            let detail = format!("Agy ACP exited before ready ({exit:?})");
+            let reason = if prev == Phase::OpeningSession && self.cfg.resume_session_id.is_some() {
+                StartFailure::ResumeFailed { detail }
             } else {
-                StartFailure::Other {
-                    detail: format!("Agy ACP exited before ready ({exit:?})"),
-                }
+                StartFailure::Other { detail }
             };
             out.push(Output::Event(SessionEvent::StartFailed { reason }));
         } else if prev == Phase::Busy || prev == Phase::Closing {
@@ -849,7 +938,7 @@ impl Session for AgySession {
                 }));
             }
         }
-        self.active_prompt_id = None;
+        self.prompt_chain.clear();
         out.push(Output::Event(SessionEvent::Ended { exit }));
         out
     }
@@ -882,6 +971,9 @@ impl Session for AgySession {
             Control::Interrupt => {
                 if is_opening(self.phase) {
                     return Err(ControlError::NotReady);
+                }
+                if self.phase == Phase::Idle {
+                    return Ok(Vec::new());
                 }
                 let Some(sid) = self.session_id.as_ref() else {
                     return Err(ControlError::NotReady);

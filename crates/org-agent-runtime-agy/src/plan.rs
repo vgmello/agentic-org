@@ -158,6 +158,9 @@ pub(crate) fn build_headless_plan(
     validate_session_kind(&spec.kind)?;
     validate_paths(spec, ctx)?;
     validate_deny_rules(&spec.policy.deny)?;
+    if spec.effort.is_some() {
+        return Err(PlanError::Unsupported("effort"));
+    }
     let effective_mode = spec.effective_permission_mode(caps);
     let expected_mode = map_permission_mode(effective_mode)?;
     let _ = spec

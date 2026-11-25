@@ -672,4 +672,374 @@ fn capability_validation_and_probes_fail_closed() {
             method: Some("agy-cli".to_owned()),
         }
     );
+
+    // Headless plan rejects `spec.effort` (encoded in ACP modelId, not CLI flag).
+    let mut effort_spec = sample_spec();
+    effort_spec.effort = Some(Token::try_from("high").unwrap());
+    assert!(matches!(
+        runtime.plan_session(&effort_spec, &sample_ctx()),
+        Err(PlanError::Unsupported("effort"))
+    ));
+}
+
+#[test]
+fn chained_mid_turn_steers_handle_intermediate_and_superseded_errors_cleanly() {
+    let runtime = AgyRuntime::new();
+    let spec = sample_spec();
+    let now = Instant::now();
+
+    // Case A: Send(3), Steer(4, "d1"), Steer(5, "d2"); id=4 errors -> d1 fails, id=3 result
+    // hands off to d2 (never falsely acking d1!), and id=5 error leaves turn cleanly ended.
+    let (_, mut s_a) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let _ = s_a.start(now);
+    for line in &agy_acp_script().opening {
+        let _ = s_a.on_line(line, now);
+    }
+    let _ = s_a
+        .control(Control::Send { text: "go".into() }, now)
+        .unwrap();
+    let _ = s_a
+        .control(
+            Control::DeliverMidTurn {
+                delivery_id: "d1".into(),
+                text: "s1".into(),
+            },
+            now,
+        )
+        .unwrap();
+    let _ = s_a
+        .control(
+            Control::DeliverMidTurn {
+                delivery_id: "d2".into(),
+                text: "s2".into(),
+            },
+            now,
+        )
+        .unwrap();
+    let err4 = s_a.on_line(
+        br#"{"jsonrpc":"2.0","id":4,"error":{"code":-32603,"message":"steer 1 failed"}}"#,
+        now,
+    );
+    assert!(err4.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::MidTurnDeliveryFailed { delivery_id, .. }) if delivery_id == "d1"
+    )));
+    assert!(!err4
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. }))));
+    // If id=5 also errors while id=3 is still running, turn stays Busy until id=3 resolves.
+    let err5 = s_a.on_line(
+        br#"{"jsonrpc":"2.0","id":5,"error":{"code":-32603,"message":"steer 2 failed"}}"#,
+        now,
+    );
+    assert!(err5.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::MidTurnDeliveryFailed { delivery_id, .. }) if delivery_id == "d2"
+    )));
+    assert!(!err5
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. }))));
+    assert_eq!(
+        s_a.control(
+            Control::Send {
+                text: "nope".into()
+            },
+            now
+        ),
+        Err(ControlError::Busy)
+    );
+    let end3 = s_a.on_line(
+        br#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}"#,
+        now,
+    );
+    assert!(!end3
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::MidTurnDelivered { .. }))));
+    assert!(end3.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+            ..
+        })
+    )));
+
+    // Case B: Send(3), Steer(4, "d1"), Steer(5, "d2"); id=3 errors -> id=4 result acks BOTH d1
+    // and d2 handoff without false failure when id=5 completes.
+    let (_, mut s_b) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let _ = s_b.start(now);
+    for line in &agy_acp_script().opening {
+        let _ = s_b.on_line(line, now);
+    }
+    let _ = s_b
+        .control(Control::Send { text: "go".into() }, now)
+        .unwrap();
+    let _ = s_b
+        .control(
+            Control::DeliverMidTurn {
+                delivery_id: "d1".into(),
+                text: "s1".into(),
+            },
+            now,
+        )
+        .unwrap();
+    let _ = s_b
+        .control(
+            Control::DeliverMidTurn {
+                delivery_id: "d2".into(),
+                text: "s2".into(),
+            },
+            now,
+        )
+        .unwrap();
+    let err3 = s_b.on_line(
+        br#"{"jsonrpc":"2.0","id":3,"error":{"code":-32001,"message":"orig aborted"}}"#,
+        now,
+    );
+    assert!(!err3
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. }))));
+    let res4 = s_b.on_line(
+        br#"{"jsonrpc":"2.0","id":4,"result":{"stopReason":"end_turn"}}"#,
+        now,
+    );
+    assert!(res4.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::MidTurnDelivered { delivery_id }) if delivery_id == "d1"
+    )));
+    assert!(res4.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::MidTurnDelivered { delivery_id }) if delivery_id == "d2"
+    )));
+    let res5 = s_b.on_line(
+        br#"{"jsonrpc":"2.0","id":5,"result":{"stopReason":"end_turn"}}"#,
+        now,
+    );
+    assert!(!res5
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::MidTurnDeliveryFailed { .. }))));
+    assert!(res5.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+            ..
+        })
+    )));
+}
+
+#[test]
+fn usage_deduplicates_streamed_updates_and_falls_back_on_eof() {
+    let runtime = AgyRuntime::new();
+    let spec = sample_spec();
+    let now = Instant::now();
+    let (_, mut session) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let _ = session.start(now);
+    for line in &agy_acp_script().opening {
+        let _ = session.on_line(line, now);
+    }
+
+    // Idle usage_update outside any open turn is ignored.
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"usage_update","usage":{"inputTokens":999,"outputTokens":999}}}}"#,
+        now,
+    );
+
+    // During a turn: cumulative usage_update snapshots + authoritative result.usage must NOT double-count.
+    let _ = session
+        .control(Control::Send { text: "t1".into() }, now)
+        .unwrap();
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"usage_update","usage":{"inputTokens":50,"outputTokens":10}}}}"#,
+        now,
+    );
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"usage_update","usage":{"inputTokens":100,"outputTokens":20}}}}"#,
+        now,
+    );
+    let done = session.on_line(
+        br#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage":{"inputTokens":120,"outputTokens":25}}}"#,
+        now,
+    );
+    assert!(done.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::Usage(u)) if u.input == 120 && u.output == 25
+    )));
+
+    // Crash/EOF mid-turn without result.usage flushes the max streamed usage snapshot once.
+    let _ = session
+        .control(Control::Send { text: "t2".into() }, now)
+        .unwrap();
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"usage_update","usage":{"inputTokens":40,"outputTokens":8}}}}"#,
+        now,
+    );
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"usage_update","usage":{"inputTokens":70,"outputTokens":14}}}}"#,
+        now,
+    );
+    let eof = session.on_stdout_closed(now);
+    assert!(eof.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::Usage(u)) if u.input == 70 && u.output == 14
+    )));
+}
+
+#[test]
+fn modes_jsonrpc_nulls_auth_error_option_selection_and_idle_interrupt_hardening() {
+    let runtime = AgyRuntime::new();
+    let spec = sample_spec();
+    let now = Instant::now();
+
+    // 1. Omitted `modes` -> Ready { permission_mode: None } (never fabricated).
+    let (_, mut s_none) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let _ = s_none.start(now);
+    let _ = s_none.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"error":null,"result":{"protocolVersion":1,"agentInfo":{"version":"1.5.17"}}}"#,
+        now,
+    );
+    let ready_none = s_none.on_line(
+        br#"{"jsonrpc":"2.0","id":2,"error":null,"result":{"sessionId":"sid-none","models":{"currentModelId":"gemini-4-neon-high"}}}"#,
+        now,
+    );
+    assert!(ready_none.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::Ready {
+            permission_mode: None,
+            ..
+        })
+    )));
+    // Idle Interrupt emits zero frames.
+    assert!(s_none.control(Control::Interrupt, now).unwrap().is_empty());
+
+    // 2. Permission option ordering: prefer `allow_once`/`reject_once` over `allow_always`.
+    let perm = s_none.on_line(
+        br#"{"jsonrpc":"2.0","id":"opt-1","method":"session/request_permission","params":{"toolCall":{"toolCallId":"tc-opt","title":"Edit file","kind":"edit","locations":[{"path":"/work/t-1/a.rs"}]},"options":[{"optionId":"allow","kind":"allow_always"},{"optionId":"once-allow","kind":"allow_once"},{"optionId":"deny","kind":"reject_always"},{"optionId":"once-deny","kind":"reject_once"}]}}"#,
+        now,
+    );
+    let req = perm
+        .iter()
+        .find_map(|o| match o {
+            Output::Event(SessionEvent::ApprovalRequested(r)) => Some(r),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(req.kind, ApprovalKind::FileChange);
+    assert_eq!(req.blocked_path.as_deref(), Some("/work/t-1/a.rs"));
+    let ans = s_none
+        .control(
+            Control::Answer {
+                request_id: ApprovalId::new("opt-1"),
+                decision: Decision::AllowOnce,
+            },
+            now,
+        )
+        .unwrap();
+    let ans_json: serde_json::Value = match &ans[0] {
+        Output::Write(line) => serde_json::from_slice(line.as_bytes()).unwrap(),
+        other => panic!("expected Write, got {other:?}"),
+    };
+    assert_eq!(ans_json["result"]["outcome"]["optionId"], "once-allow");
+
+    // 3. `tool_call_update status=cancelled` withdraws pending approval; `Deny { stop_turn: true }` sends `session/cancel`.
+    let _ = s_none
+        .control(Control::Send { text: "go".into() }, now)
+        .unwrap();
+    let _ = s_none.on_line(
+        br#"{"jsonrpc":"2.0","id":"c-1","method":"session/request_permission","params":{"toolCall":{"toolCallId":"tc-cancel","name":"run_command"}}}"#,
+        now,
+    );
+    let cancelled = s_none.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"tc-cancel","status":"cancelled"}}}"#,
+        now,
+    );
+    assert!(cancelled.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::ApprovalCancelled { id }) if id == &ApprovalId::new("c-1")
+    )));
+    let _ = s_none.on_line(
+        br#"{"jsonrpc":"2.0","id":"d-stop","method":"session/request_permission","params":{"toolCall":{"toolCallId":"tc-ds","name":"run_command"}}}"#,
+        now,
+    );
+    let deny_stop = s_none
+        .control(
+            Control::Answer {
+                request_id: ApprovalId::new("d-stop"),
+                decision: Decision::Deny {
+                    message: None,
+                    stop_turn: true,
+                },
+            },
+            now,
+        )
+        .unwrap();
+    assert!(deny_stop.iter().any(|o| match o {
+        Output::Write(line) => String::from_utf8_lossy(line.as_bytes()).contains("session/cancel"),
+        _ => false,
+    }));
+
+    // 4. `current_mode_update` with banned mode emits ModeChanged + fast-stops session.
+    let mode_upd = s_none.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"current_mode_update","currentModeId":"yolo"}}}"#,
+        now,
+    );
+    assert!(mode_upd.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::ModeChanged { mode: Some(m) }) if m == "yolo"
+    )));
+    assert!(mode_upd.iter().any(|o| matches!(o, Output::CloseStdin)));
+}
+
+#[test]
+fn opening_mode_mismatch_auth_error_and_resume_failure_scoping() {
+    let runtime = AgyRuntime::new();
+    let spec = sample_spec();
+    let now = Instant::now();
+
+    // Banned or mismatched `modes.currentModeId` in `session/new` fails closed with ModeMismatch.
+    for bad_mode in ["yolo", "auto", "accept-edits"] {
+        let (_, mut s_bad) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+        let _ = s_bad.start(now);
+        let _ = s_bad.on_line(
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}"#,
+            now,
+        );
+        let frame = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"sid-m","modes":{{"currentModeId":"{bad_mode}"}}}}}}"#
+        );
+        let res = s_bad.on_line(frame.as_bytes(), now);
+        assert!(res.iter().any(|o| matches!(
+            o,
+            Output::Event(SessionEvent::StartFailed {
+                reason: StartFailure::ModeMismatch { reported, .. }
+            }) if reported == bad_mode
+        )));
+    }
+
+    // 6. Auth RPC error (-32000) during opening emits StartFailure::AuthRequired;
+    // error in OpeningInit on resumed session does NOT emit ResumeFailed.
+    let mut resume_ctx = sample_ctx();
+    resume_ctx.resume = Some(SessionId::try_from("agy-res").unwrap());
+    let (_, mut s_auth) = runtime.plan_session(&spec, &resume_ctx).unwrap();
+    let _ = s_auth.start(now);
+    let auth_fail = s_auth.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":null,"error":{"code":-32000,"message":"Authentication required"}}"#,
+        now,
+    );
+    assert!(auth_fail.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::StartFailed {
+            reason: StartFailure::AuthRequired
+        })
+    )));
+    let (_, mut s_init_err) = runtime.plan_session(&spec, &resume_ctx).unwrap();
+    let _ = s_init_err.start(now);
+    let init_fail = s_init_err.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal boot error"}}"#,
+        now,
+    );
+    assert!(init_fail.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::StartFailed {
+            reason: StartFailure::Other { .. }
+        })
+    )));
 }

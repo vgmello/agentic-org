@@ -4384,4 +4384,24 @@ mod manager_helper_tests {
         );
         assert!(!unsandboxed.iter().any(|(k, _)| k == "CARGO_NET_OFFLINE"));
     }
+
+    #[test]
+    fn pattern_exists_for_bwrap_preserves_root_glob_and_agy_credential_denies_match_adapter() {
+        assert!(pattern_exists_for_bwrap(
+            &PathPattern::try_from("/**").unwrap()
+        ));
+        assert!(pattern_exists_for_bwrap(
+            &PathPattern::try_from("/*").unwrap()
+        ));
+        let mut agy_denies = Vec::new();
+        append_agy_credential_denies(&mut agy_denies);
+        if std::env::var_os("HOME").is_some() {
+            for rel in org_agent_runtime_agy::AGY_CONFIG_CREDENTIAL_FILES {
+                assert!(
+                    agy_denies.iter().any(|p| p.as_str().ends_with(rel)),
+                    "missing agy credential deny for `{rel}`: {agy_denies:?}"
+                );
+            }
+        }
+    }
 }

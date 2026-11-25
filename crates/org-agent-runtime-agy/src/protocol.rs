@@ -23,6 +23,14 @@ impl AcpUsage {
         self.reasoning = self.reasoning.saturating_add(other.reasoning);
     }
 
+    pub(crate) fn merge_max(&mut self, other: &AcpUsage) {
+        self.input = self.input.max(other.input);
+        self.output = self.output.max(other.output);
+        self.cache_read = self.cache_read.max(other.cache_read);
+        self.cache_write = self.cache_write.max(other.cache_write);
+        self.reasoning = self.reasoning.max(other.reasoning);
+    }
+
     pub(crate) fn is_zero(&self) -> bool {
         self.input == 0
             && self.output == 0
@@ -30,6 +38,24 @@ impl AcpUsage {
             && self.cache_write == 0
             && self.reasoning == 0
     }
+}
+
+/// Returns the non-null JSON-RPC `error` payload, if present.
+pub(crate) fn rpc_error(val: &Value) -> Option<&Value> {
+    val.get("error").filter(|v| !v.is_null())
+}
+
+/// Returns the non-null JSON-RPC `result` payload, if present.
+pub(crate) fn rpc_result(val: &Value) -> Option<&Value> {
+    val.get("result").filter(|v| !v.is_null())
+}
+
+/// Returns `true` for ACP permission modes that bypass office approval enforcement.
+pub(crate) fn is_banned_mode(mode: &str) -> bool {
+    matches!(
+        mode.to_ascii_lowercase().as_str(),
+        "yolo" | "bypasspermissions" | "danger-full-access" | "auto"
+    )
 }
 
 /// Converts a JSON-RPC request/response `id` (string or integer) into a stable lookup key.
@@ -236,6 +262,21 @@ pub(crate) fn classify_tool_kind(tool: &str) -> ApprovalKind {
     }
 }
 
+fn classify_acp_tool_call_kind(tc: &Value) -> ApprovalKind {
+    match tc
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("execute") => ApprovalKind::Command,
+        Some("edit" | "delete" | "move") => ApprovalKind::FileChange,
+        Some("switch_mode") => ApprovalKind::Permissions,
+        Some("read" | "search") => ApprovalKind::Other,
+        _ => ApprovalKind::Unknown,
+    }
+}
+
 fn is_bypass_flag_triggered(val: Option<&Value>) -> bool {
     match val {
         None | Some(Value::Null) | Some(Value::Bool(false)) => false,
@@ -284,7 +325,10 @@ pub(crate) fn parse_permission_request(
         .or_else(|| tc.get("args"))
         .cloned()
         .unwrap_or(Value::Null);
-    let kind = classify_tool_kind(tool);
+    let kind = match classify_tool_kind(tool) {
+        ApprovalKind::Unknown => classify_acp_tool_call_kind(tc),
+        known => known,
+    };
     let escalation = classify_escalation(tool, kind, &input);
     let mut request = ApprovalRequest::new(approval_id, kind, escalation, tool, input.clone());
     request.capability = classify_tool_capability(tool);
@@ -298,6 +342,7 @@ pub(crate) fn parse_permission_request(
         .or_else(|| input.get("Path"))
         .or_else(|| input.get("TargetFile"))
         .or_else(|| input.get("AbsolutePath"))
+        .or_else(|| tc.pointer("/locations/0/path"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
     let tool_call_id = tc
@@ -315,26 +360,44 @@ pub(crate) fn parse_permission_request(
     }
 }
 
+/// Selects one-shot allow/deny option IDs, strictly preferring `allow_once` / `reject_once`
+/// over bare option IDs and never selecting `allow_always` / `reject_always` (`AllowOnce`).
 fn extract_permission_options(options: Option<&Value>) -> (String, String) {
-    let mut allow = None;
-    let mut deny = None;
+    let mut exact_allow = None;
+    let mut exact_deny = None;
+    let mut fallback_allow = None;
+    let mut fallback_deny = None;
     if let Some(arr) = options.and_then(Value::as_array) {
         for opt in arr {
             let Some(opt_id) = opt.get("optionId").and_then(Value::as_str) else {
                 continue;
             };
             let kind = opt.get("kind").and_then(Value::as_str).unwrap_or("");
-            if allow.is_none() && (kind == "allow_once" || opt_id == "allow") {
-                allow = Some(opt_id.to_owned());
+            if exact_allow.is_none() && kind == "allow_once" {
+                exact_allow = Some(opt_id.to_owned());
+            } else if fallback_allow.is_none()
+                && opt_id == "allow"
+                && !matches!(kind, "allow_always" | "reject_always")
+            {
+                fallback_allow = Some(opt_id.to_owned());
             }
-            if deny.is_none() && (kind == "reject_once" || opt_id == "deny") {
-                deny = Some(opt_id.to_owned());
+            if exact_deny.is_none() && kind == "reject_once" {
+                exact_deny = Some(opt_id.to_owned());
+            } else if fallback_deny.is_none()
+                && opt_id == "deny"
+                && !matches!(kind, "allow_always" | "reject_always")
+            {
+                fallback_deny = Some(opt_id.to_owned());
             }
         }
     }
     (
-        allow.unwrap_or_else(|| "allow".to_owned()),
-        deny.unwrap_or_else(|| "deny".to_owned()),
+        exact_allow
+            .or(fallback_allow)
+            .unwrap_or_else(|| "allow".to_owned()),
+        exact_deny
+            .or(fallback_deny)
+            .unwrap_or_else(|| "deny".to_owned()),
     )
 }
 
@@ -404,16 +467,20 @@ pub(crate) fn extract_rpc_error_message(err: &Value) -> String {
     }
 }
 
-pub(crate) fn classify_rpc_error_outcome(err: &Value) -> (TurnOutcome, Vec<String>) {
-    let msg = extract_rpc_error_message(err);
+pub(crate) fn is_auth_rpc_error(err: &Value) -> bool {
     let code = err.get("code").and_then(Value::as_i64);
-    let lower = msg.to_ascii_lowercase();
-    let outcome = if code == Some(-32000)
+    let lower = extract_rpc_error_message(err).to_ascii_lowercase();
+    code == Some(-32000)
         || lower.contains("authentication required")
         || lower.contains("not authenticated")
         || lower.contains("unauthorized")
         || lower.contains("not logged in")
-    {
+}
+
+pub(crate) fn classify_rpc_error_outcome(err: &Value) -> (TurnOutcome, Vec<String>) {
+    let msg = extract_rpc_error_message(err);
+    let lower = msg.to_ascii_lowercase();
+    let outcome = if is_auth_rpc_error(err) {
         TurnOutcome::SignedOut
     } else if lower.contains("quota") || lower.contains("rate limit") || lower.contains("exhausted")
     {
