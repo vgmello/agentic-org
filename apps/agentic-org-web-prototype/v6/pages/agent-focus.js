@@ -1,6 +1,6 @@
 import { M } from "../data.js";
 import { S } from "../state.js";
-import { av, esc, ic, iconWithTooltip, pill, plural } from "../ui.js";
+import { esc, ic, iconWithTooltip, plural } from "../ui.js";
 import {
   NeuralOrb,
   agentSessionAvailability,
@@ -21,41 +21,39 @@ function isAgentFocusOpen() {
   return !!focusState;
 }
 
-function focusTopBarHtml(aid, m) {
-  const modelMeta = m.setup ? `${m.setup.runtime} · ${m.setup.model}` : "";
-  return `<header class="af-topbar">
-    <div class="af-who">
-      ${av(aid, 32, "word")}
-      <div class="af-who-txt">
-        <h2 id="af-title">${esc(m.name)} <span class="af-role">${esc(m.role)}</span></h2>
-        ${modelMeta ? `<p class="af-meta">${esc(modelMeta)}</p>` : ""}
-      </div>
-    </div>
-    <div class="af-header-actions">
-      <button type="button" class="btn ghost icon sm icon-with-tooltip af-close-btn" id="af-close-btn" aria-label="Restore agent profile">
-        ${iconWithTooltip("Restore agent profile", "minimize")}
-      </button>
-    </div>
-  </header>`;
+function setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+function focusCornerActionsHtml(m, sess) {
+  return `<div class="af-corner-actions" role="toolbar" aria-label="${esc(m.name)} focus controls">
+    <button type="button" class="btn ghost icon sm icon-with-tooltip af-icon-toggle" id="af-trace-toggle" aria-pressed="${!!S.consoleTools}" aria-label="Show all traces">
+      ${iconWithTooltip("Show all traces", "eye")}
+    </button>
+    <button type="button" class="btn ghost icon sm icon-with-tooltip af-icon-toggle" id="af-tools-toggle" aria-pressed="${!!S.agentFocusTools}" aria-controls="af-tools-drawer" aria-label="Tools & context (${sess.stats.toolCalls})">
+      ${iconWithTooltip("Tools & context", "wrench")}
+    </button>
+    <button type="button" class="btn ghost icon sm icon-with-tooltip af-close-btn" id="af-close-btn" aria-label="Exit full screen">
+      ${iconWithTooltip("Exit full screen (Esc)", "minimize")}
+    </button>
+  </div>`;
 }
 
 function focusLeftColumnHtml(m, sess, avail) {
   const st = sess.busy || avail.active ? sess.status : { state: avail.state, detail: avail.title.toLowerCase() };
   const pct = Math.round(sess.ratio * 100);
   const canCompact = avail.active && !sess.busy;
-  return `<section class="af-orb-col${S.agentFocusTools ? " has-tools" : ""}" id="af-orb-col" aria-label="${esc(m.name)} neural orb and live telemetry">
+  return `<section class="af-orb-col${S.agentFocusTools ? " has-tools" : ""}" id="af-orb-col" aria-label="${esc(m.name)} neural orb">
     <div class="af-orb-wrap">
       <div class="af-orb-stage">
         <canvas id="af-orb-canvas" role="img" aria-label="Neural orb reacting to ${esc(m.name)} output tokens and speed"></canvas>
       </div>
       <div class="af-telemetry" id="af-telemetry" data-cstate="${esc(st.state)}">
         <span class="c-dot"></span>
-        <span class="af-tel-lbl">STATE: <b class="c-state-txt" id="af-state-txt">${esc(st.state)}</b></span>
+        <span class="af-tel-lbl">STATE: <b class="c-state-txt" id="af-state-txt">${esc(st.state.toUpperCase())}</b></span>
         <span class="af-tel-sep" aria-hidden="true">|</span>
         <span class="af-speed tnum" id="af-speed"><b id="af-tps">0.4 Hz</b></span>
-      </div>
-      <div class="af-live-actions">
-        <button type="button" class="btn outline sm" id="af-stop-btn" ${avail.active && sess.busy ? "" : "hidden"}>${ic("pause", "ic16")}Stop turn</button>
       </div>
     </div>
     <div class="af-tools-drawer" id="af-tools-drawer" ${S.agentFocusTools ? "" : "hidden"}>
@@ -84,37 +82,15 @@ function focusLeftColumnHtml(m, sess, avail) {
   </section>`;
 }
 
-function focusRightColumnHtml(m, sess, avail) {
+function focusRightColumnHtml(m, avail) {
   const disabled = avail.active ? "" : "disabled";
   const notice = avail.active ? "" : `<div class="callout af-notice" role="status">${ic("info", "ic20")}<div><p style="font-weight:600;color:var(--white)">${esc(avail.title)}</p><p style="font-size:0.8125rem">${esc(avail.reason)}</p></div></div>`;
   const placeholder = avail.active ? `Ask ${esc(m.name)} anything…` : `${esc(avail.title)} — chat unavailable`;
   return `<section class="af-chat-col" aria-label="Chat with ${esc(m.name)}">
     <div class="af-chat-card">
-      <div class="af-card-head">
-        <div class="af-card-title">
-          <span class="af-card-eyebrow">${esc(m.name.toUpperCase())} CONVERSATION</span>
-          <span class="af-tok-pill tnum" id="af-turn-tokens" hidden>0 tokens</span>
-        </div>
-        <div class="af-card-controls">
-          <button type="button" class="btn outline xs af-toggle" id="af-trace-toggle" aria-pressed="${!!S.consoleTools}">
-            ${ic("eye", "ic14")}<span>Show traces</span>
-          </button>
-          <button type="button" class="btn outline xs af-toggle" id="af-tools-toggle" aria-pressed="${!!S.agentFocusTools}" aria-controls="af-tools-drawer">
-            ${ic("wrench", "ic14")}<span>Tools</span><span class="af-badge tnum" id="af-tools-count">${sess.stats.toolCalls}</span>
-          </button>
-        </div>
-      </div>
       ${notice}
       <div class="af-messages" id="af-messages">
         <div class="af-thread" id="af-thread"></div>
-      </div>
-      <div class="af-prompts-bar">
-        <span class="af-prompts-lbl">PROMPTS:</span>
-        <div class="c-chips">
-          <button type="button" class="c-chip-btn" data-af-ask="Give me a fast release status summary." ${disabled}>Fast Status Summary</button>
-          <button type="button" class="c-chip-btn" data-af-ask="Explain the custody lock trade-offs." ${disabled}>Custody Lock Trade-Offs</button>
-          <button type="button" class="c-chip-btn" data-af-ask="What are you working on right now?" ${disabled}>Current Focus</button>
-        </div>
       </div>
     </div>
     <form class="af-composer-pill" id="af-prompt-form">
@@ -126,35 +102,17 @@ function focusRightColumnHtml(m, sess, avail) {
   </section>`;
 }
 
-function focusTurnHtml(aid, en) {
-  const isYou = en.from === "you";
-  const whoName = M[en.from] ? M[en.from].name : en.from;
-  const userMeta = isYou
-    ? `<span class="af-turn-time">${esc(en.time)}</span>`
-    : `<span class="af-turn-who">${av(en.from, 20)}${esc(whoName)} ${pill(en.kind, "gray")}</span><span class="af-turn-time">${esc(en.time)}</span>`;
+function focusTurnHtml(en) {
   const traceHtml = renderTurnTraceHtml(en);
   const showReply = Boolean(en.reply) || en.phase === "streaming";
   const replyHtml = showReply
-    ? `<div class="af-msg-agent">
-        ${av(aid, 32)}
-        <div class="af-agent-body">
-          <div class="af-reply-text" data-af-reply="${esc(en.id)}">${esc(en.reply)}${en.streaming ? '<span class="c-caret-blink"></span>' : ""}</div>
-        </div>
-      </div>`
+    ? `<div class="af-reply-text" data-af-reply="${esc(en.id)}">${esc(en.reply)}${en.streaming ? '<span class="c-caret-blink"></span>' : ""}</div>`
     : "";
   return `<article class="af-turn" data-entry-id="${esc(en.id)}">
-    <div class="af-msg-user${isYou ? " is-you" : ""}">
-      <div class="af-user-meta">${userMeta}</div>
-      <div class="af-user-bubble">${esc(en.text)}</div>
-    </div>
+    <div class="af-msg-user is-you"><div class="af-user-bubble">${esc(en.text)}</div></div>
     <div class="af-turn-between">${traceHtml}</div>
     ${replyHtml}
   </article>`;
-}
-
-function setText(id, text) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = text;
 }
 
 function paintFocusContextSection(sess, avail) {
@@ -173,7 +131,6 @@ function paintFocusContextSection(sess, avail) {
 
 function paintFocusToolsDrawer(sess, avail) {
   paintFocusContextSection(sess, avail);
-  setText("af-tools-count", String(sess.stats.toolCalls));
   setText("af-tools-total", plural(sess.stats.toolCalls, "call", "calls"));
   const allSteps = sess.entries.flatMap((en) => en.steps || []).slice(-6).reverse();
   const listEl = document.getElementById("af-tools-list");
@@ -206,22 +163,11 @@ function paintFocusTelemetry(aid, sess, orb) {
   const st = sess.busy || avail.active ? sess.status : { state: avail.state, detail: avail.title.toLowerCase() };
   const tel = document.getElementById("af-telemetry");
   if (tel) tel.dataset.cstate = st.state;
-  const stEl = document.getElementById("af-state-txt");
-  if (stEl) stEl.textContent = st.state.toUpperCase();
+  setText("af-state-txt", st.state.toUpperCase());
   const rate = telemetryRateLabel(st.state, orb, sess);
-  const tpsEl = document.getElementById("af-tps");
-  if (tpsEl) tpsEl.textContent = rate.text;
+  setText("af-tps", rate.text);
   const speedWrap = document.getElementById("af-speed");
   if (speedWrap) speedWrap.classList.toggle("is-live", rate.live);
-  const last = sess.entries[sess.entries.length - 1];
-  const tokPill = document.getElementById("af-turn-tokens");
-  if (tokPill) {
-    const estTokens = last?.reply ? Math.max(1, Math.round(last.reply.length / 4)) : 0;
-    tokPill.hidden = !estTokens;
-    if (estTokens) tokPill.textContent = `${estTokens} tokens`;
-  }
-  const stopBtn = document.getElementById("af-stop-btn");
-  if (stopBtn) stopBtn.hidden = !(avail.active && sess.busy);
   const cStop = document.getElementById("af-composer-stop");
   if (cStop) cStop.hidden = !(avail.active && sess.busy);
 }
@@ -239,9 +185,11 @@ function paintFocusAll(aid, sess, orb, forceScroll = false) {
   paintFocusToolsDrawer(sess, avail);
   const thread = document.getElementById("af-thread");
   if (!thread) return;
-  thread.innerHTML = sess.entries.length
-    ? sess.entries.map((en) => focusTurnHtml(aid, en)).join("")
-    : `<div class="af-empty"><p>Start a conversation with ${esc(M[aid].name)}.</p><p class="muted">Watch the orb respond live to every output token and speed change.</p></div>`;
+  const chatEntries = sess.entries.filter((en) => en.from === "you");
+  const shown = chatEntries.length ? chatEntries : sess.entries;
+  thread.innerHTML = shown.length
+    ? shown.map((en) => focusTurnHtml(en)).join("")
+    : `<div class="af-empty"><p>Start a conversation with ${esc(M[aid].name)}.</p></div>`;
   const traceBtn = document.getElementById("af-trace-toggle");
   if (traceBtn) traceBtn.setAttribute("aria-pressed", String(!!S.consoleTools));
   scrollFocusToBottom(forceScroll);
@@ -261,7 +209,6 @@ function bindFocusEvents(shell, aid, sess, orb) {
     document.getElementById("af-orb-col").classList.toggle("has-tools", S.agentFocusTools);
     requestAnimationFrame(() => orb.resize());
   });
-  shell.querySelector("#af-stop-btn").addEventListener("click", () => sess.stopRun());
   shell.querySelector("#af-composer-stop").addEventListener("click", () => sess.stopRun());
   shell.querySelector("#af-compact-btn").addEventListener("click", () => sess.compactNow());
   shell.querySelector("#af-thread").addEventListener("click", (e) => {
@@ -278,13 +225,6 @@ function bindFocusEvents(shell, aid, sess, orb) {
     inp.value = "";
     sess.enqueue("you", "chat", txt, true);
     scrollFocusToBottom(true);
-  });
-  shell.querySelectorAll("[data-af-ask]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (!agentSessionAvailability(aid).active) return;
-      sess.enqueue("you", "chat", btn.dataset.afAsk, true);
-      scrollFocusToBottom(true);
-    });
   });
 }
 
@@ -317,9 +257,9 @@ function openAgentFocus(aid, triggerEl = null) {
   const avail = agentSessionAvailability(aid);
   const overlay = document.createElement("div");
   overlay.id = "agent-focus-root";
-  overlay.innerHTML = `<section class="af-shell" role="dialog" aria-modal="true" aria-labelledby="af-title" data-agent="${esc(aid)}">
-    ${focusTopBarHtml(aid, m)}
-    <div class="af-stage"><div class="af-body">${focusLeftColumnHtml(m, sess, avail)}${focusRightColumnHtml(m, sess, avail)}</div></div>
+  overlay.innerHTML = `<section class="af-shell" role="dialog" aria-modal="true" aria-label="${esc(m.name)} live chat" data-agent="${esc(aid)}">
+    ${focusCornerActionsHtml(m, sess)}
+    <div class="af-stage"><div class="af-body">${focusLeftColumnHtml(m, sess, avail)}${focusRightColumnHtml(m, avail)}</div></div>
   </section>`;
   document.body.appendChild(overlay);
   document.body.classList.add("agent-focus-open");
