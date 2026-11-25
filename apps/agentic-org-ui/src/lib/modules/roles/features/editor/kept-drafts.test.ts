@@ -4,6 +4,7 @@ import {
 	discardDraft,
 	discardDraftIfVersion,
 	draftKey,
+	hasRetainedAttempt,
 	keepDraft,
 	keptDraft
 } from './kept-drafts';
@@ -90,6 +91,8 @@ it('discards only the matching draft version so a late save never deletes newer 
 	});
 	discardDraftIfVersion(key, v1);
 	expect(keptDraft(key)?.name).toBe('Version 2');
+	expect(hasRetainedAttempt('att-shared')).toBe(true);
 	discardDraftIfVersion(key, v2);
 	expect(keptDraft(key)).toBeUndefined();
+	expect(hasRetainedAttempt('att-shared')).toBe(false);
 });

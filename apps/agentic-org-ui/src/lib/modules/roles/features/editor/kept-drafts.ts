@@ -56,6 +56,14 @@ export function discardDraftIfVersion(key: string, version: number | undefined) 
 	if (kept.get(key)?.version === version) kept.delete(key);
 }
 
+/** True while any retained draft still references `attemptId` so retry identity outlives detail-cache eviction. */
+export function hasRetainedAttempt(attemptId: string): boolean {
+	for (const entry of kept.values()) {
+		if (entry.draft.attemptId === attemptId) return true;
+	}
+	return false;
+}
+
 /** Removes all retained drafts belonging to `caller` (or all drafts if `caller` is omitted). */
 export function clearDraftsForCaller(caller?: string) {
 	if (caller === undefined) {

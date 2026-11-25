@@ -447,6 +447,7 @@
 							bind:ref={nameField}
 							id="role-name"
 							bind:value={name}
+							readonly={busy}
 							autocomplete="off"
 							required
 							aria-invalid={errors.name ? true : undefined}
@@ -467,7 +468,7 @@
 							bind:ref={keyField}
 							id="role-key"
 							bind:value={key}
-							readonly={!!lockedBy}
+							readonly={busy || !!lockedBy}
 							autocomplete="off"
 							autocapitalize="none"
 							spellcheck={false}
@@ -498,6 +499,7 @@
 						bind:this={bodyField}
 						id="role-body"
 						bind:value={body}
+						readonly={busy}
 						rows="16"
 						spellcheck="true"
 						aria-invalid={errors.body ? true : undefined}

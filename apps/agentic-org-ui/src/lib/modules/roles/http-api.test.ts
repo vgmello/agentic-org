@@ -1230,15 +1230,121 @@ describe('createHttpRolesApi', () => {
 		});
 	});
 
-	it('evicts the oldest settled attempt once 64 settled results are cached', async () => {
+	it('evicts cached role details past 64 saves while preserving retained draft identity so retries never duplicate', async () => {
 		let seq = 1;
 		const nextId = () => `0193a5c0-0000-7000-8000-${String(seq++).padStart(12, '0')}`;
-		const submit = vi.fn(async (_path: string, body: Record<string, unknown>) => ({
-			status: 200,
-			body: { result: { id: body.role_id, revision: 1, generation: seq } }
-		}));
+		const retained = new Set(['cap-1']);
+		const submit = vi.fn(async (path: string, body: Record<string, unknown>) => {
+			if (path.endsWith('/roles')) {
+				return {
+					status: 200,
+					body: { result: { id: body.role_id, revision: 1, generation: seq } }
+				};
+			}
+			return {
+				status: 200,
+				body: { result: { id: body.role_id, revision: 2, generation: seq } }
+			};
+		});
+		const read = vi.fn().mockRejectedValue(new Error('offline'));
 		const api = createHttpRolesApi({
-			http: { read: vi.fn().mockRejectedValue(new Error('offline')), submit },
+			http: { read, submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			sessionScope: () => 'inst-1:acct-a',
+			sessionGeneration: () => 1,
+			isAttemptRetained: (attemptId) => retained.has(attemptId),
+			newCommandId: nextId,
+			newEntityId: nextId
+		});
+
+		const first = await api.create(ORG, {
+			name: 'Role 1',
+			bodyMarkdown: 'Body.',
+			attemptId: 'cap-1'
+		});
+		for (let i = 2; i <= 65; i++) {
+			await api.create(ORG, { name: `Role ${i}`, bodyMarkdown: 'Body.', attemptId: `cap-${i}` });
+		}
+		expect(submit).toHaveBeenCalledTimes(65);
+		const readsAfter65 = read.mock.calls.length;
+
+		// #65 is still cached in detail memory (0 extra read, 0 extra submit).
+		await api.create(ORG, { name: 'Role 65', bodyMarkdown: 'Body.', attemptId: 'cap-65' });
+		expect(submit).toHaveBeenCalledTimes(65);
+		expect(read).toHaveBeenCalledTimes(readsAfter65);
+
+		// #1's heavy resolved detail was evicted (triggers readback), but its entity identity stayed
+		// alive because `cap-1` is retained: returns the SAME role ID with ZERO duplicate POST /roles!
+		const retriedFirst = await api.create(ORG, {
+			name: 'Role 1',
+			bodyMarkdown: 'Body.',
+			attemptId: 'cap-1'
+		});
+		expect(submit).toHaveBeenCalledTimes(65);
+		expect(read.mock.calls.length).toBeGreaterThan(readsAfter65);
+		expect(retriedFirst.id).toBe(first.id);
+
+		// Editing retained `cap-1` after detail eviction updates the existing role in place (no duplicate).
+		const editedFirst = await api.create(ORG, {
+			name: 'Role 1',
+			bodyMarkdown: 'Edited after 65 saves.',
+			attemptId: 'cap-1'
+		});
+		expect(submit).toHaveBeenCalledTimes(66);
+		expect(submit.mock.calls[65]?.[0]).toBe(`/api/v1/organizations/${ORG}/roles/update`);
+		expect(submit.mock.calls[65]?.[1]).toMatchObject({ role_id: first.id, expected_version: 1 });
+		expect(editedFirst.id).toBe(first.id);
+		expect(editedFirst.revision).toBe(2);
+
+		// A finalized non-retained attempt (#2) is completely evicted once 64 newer entries settle.
+		await api.create(ORG, { name: 'Role 66', bodyMarkdown: 'Body.', attemptId: 'cap-66' });
+		const beforeNonRetained = submit.mock.calls.length;
+		await api.create(ORG, { name: 'Role 2', bodyMarkdown: 'Body.', attemptId: 'cap-2' });
+		expect(submit.mock.calls.length).toBe(beforeNonRetained + 1);
+	});
+
+	it('never silently adopts a conflict revision or restores stale cached success on conflict', async () => {
+		let seq = 1;
+		const nextId = () => `0193a5c0-0000-7000-8000-0000000010${String(seq++).padStart(2, '0')}`;
+		let serverRev = 0;
+		let readbackFails = false;
+		let createdId = '';
+
+		const submit = vi.fn(async (path: string, body: Record<string, unknown>) => {
+			if (path.endsWith('/roles')) {
+				serverRev = 1;
+				createdId = String(body.role_id);
+				return { status: 200, body: { result: { id: createdId, revision: 1, generation: 80 } } };
+			}
+			if (body.expected_version !== serverRev) {
+				return {
+					status: 409,
+					body: { error: { code: 'conflict', message: 'changed by another editor' } }
+				};
+			}
+			serverRev += 1;
+			return {
+				status: 200,
+				body: { result: { id: createdId, revision: serverRev, generation: 80 + serverRev } }
+			};
+		});
+		const read = vi.fn(async () => {
+			if (readbackFails) throw new Error('offline');
+			return {
+				status: 200,
+				body: {
+					result: {
+						id: createdId,
+						name: 'Role',
+						body: 'Independent edit at rev 3.',
+						revision: serverRev
+					}
+				}
+			};
+		});
+
+		const api = createHttpRolesApi({
+			http: { read, submit },
 			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
 			sessionScope: () => 'inst-1:acct-a',
 			sessionGeneration: () => 1,
@@ -1246,17 +1352,35 @@ describe('createHttpRolesApi', () => {
 			newEntityId: nextId
 		});
 
-		for (let i = 1; i <= 65; i++) {
-			await api.create(ORG, { name: `Role ${i}`, bodyMarkdown: 'Body.', attemptId: `cap-${i}` });
-		}
-		expect(submit).toHaveBeenCalledTimes(65);
+		// Create rev 1.
+		const rev1 = await api.create(ORG, {
+			name: 'Role',
+			bodyMarkdown: 'V1.',
+			attemptId: 'att-conflict'
+		});
+		expect(rev1.revision).toBe(1);
 
-		// #65 is still cached (within 64-entry cap).
-		await api.create(ORG, { name: 'Role 65', bodyMarkdown: 'Body.', attemptId: 'cap-65' });
-		expect(submit).toHaveBeenCalledTimes(65);
+		// Another editor independently advances the role to rev 3.
+		serverRev = 3;
 
-		// #1 was evicted by the 65th settled entry -> triggers a fresh submit.
-		await api.create(ORG, { name: 'Role 1', bodyMarkdown: 'Body.', attemptId: 'cap-1' });
-		expect(submit).toHaveBeenCalledTimes(66);
+		// Retry 1 with edited text conflicts against rev 3 (conflict readback succeeds).
+		const err1 = await api
+			.create(ORG, { name: 'Role', bodyMarkdown: 'My edit.', attemptId: 'att-conflict' })
+			.catch((e) => e);
+		expect(err1).toMatchObject({ code: 'conflict' });
+		expect(conflictLatest(err1)?.revision).toBe(3);
+
+		// Retry 2 without explicit rebase must STILL send expected_version: 1 and conflict (NOT overwrite rev 3!).
+		readbackFails = true;
+		await expect(
+			api.create(ORG, { name: 'Role', bodyMarkdown: 'My edit.', attemptId: 'att-conflict' })
+		).rejects.toMatchObject({ code: 'conflict' });
+		expect(serverRev).toBe(3);
+
+		// Even after conflict with failed readback, retrying original text must NOT return stale rev 1 cache.
+		await expect(
+			api.create(ORG, { name: 'Role', bodyMarkdown: 'V1.', attemptId: 'att-conflict' })
+		).rejects.toMatchObject({ code: 'conflict' });
+		expect(serverRev).toBe(3);
 	});
 });

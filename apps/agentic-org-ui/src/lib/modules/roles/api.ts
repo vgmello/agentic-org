@@ -1,6 +1,7 @@
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { orgApi } from '$lib/modules/organization/api';
+import { hasRetainedAttempt } from './features/editor/kept-drafts';
 import { createHttpRolesApi } from './http-api';
 import type { RolesApi } from './types';
 
@@ -18,6 +19,7 @@ const gatewayRolesApi = createHttpRolesApi({
 	orgApi,
 	sessionScope: () => appSession.callerScope,
 	sessionGeneration: () => appSession.sessionGeneration,
+	isAttemptRetained: hasRetainedAttempt,
 	newEntityId: () => appSession.newOperationId(),
 	newCommandId: () => appSession.newOperationId()
 });
