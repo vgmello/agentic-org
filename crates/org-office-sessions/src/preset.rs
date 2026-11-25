@@ -331,12 +331,78 @@ fn build_deny_strings(raw_strings: &[String], concrete_targets: &[String]) -> Ve
     for target in concrete_targets {
         let p = std::path::Path::new(target);
         push_unique_path(&mut deny_strings, resolve_path_for_root_check(p));
+        push_unique_path(&mut deny_strings, resolve_path_for_deny(p));
         if p.is_absolute() {
             push_unique_path(&mut deny_strings, p.canonicalize().ok());
             push_unique_path(&mut deny_strings, lexical_normalize_abs(p));
         }
     }
     deny_strings
+}
+
+fn push_deny_components(
+    path: &std::path::Path,
+    queue: &mut std::collections::VecDeque<std::ffi::OsString>,
+    prepend: bool,
+) {
+    let mut parts: Vec<std::ffi::OsString> = Vec::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::RootDir => parts.push(std::path::MAIN_SEPARATOR_STR.into()),
+            std::path::Component::Prefix(pref) => parts.push(pref.as_os_str().to_os_string()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => parts.push("..".into()),
+            std::path::Component::Normal(seg) => parts.push(seg.to_os_string()),
+        }
+    }
+    if prepend {
+        for part in parts.into_iter().rev() {
+            queue.push_front(part);
+        }
+    } else {
+        queue.extend(parts);
+    }
+}
+
+/// Bounded component-by-component path resolver used strictly for deny matching (`matches_any_deny`).
+/// Follows both live and dangling symlinks via `read_link` and collapses `..` while canonicalizing
+/// existing prefixes so unsandboxed (`writable_roots = None`) sessions still block writes through
+/// dangling symlinks or symlink+`..` traversals into denied targets.
+fn resolve_path_for_deny(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    const MAX_SYMLINK_HOPS: usize = 40;
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut queue = std::collections::VecDeque::new();
+    push_deny_components(path, &mut queue, false);
+    let mut cur = std::path::PathBuf::new();
+    let mut hops = 0usize;
+    while let Some(seg) = queue.pop_front() {
+        if seg == std::path::MAIN_SEPARATOR_STR {
+            cur = std::path::PathBuf::from(std::path::MAIN_SEPARATOR_STR);
+            continue;
+        }
+        if seg == ".." {
+            if cur.parent().is_some() {
+                cur.pop();
+            }
+            continue;
+        }
+        let next = cur.join(&seg);
+        if let Ok(target) = std::fs::read_link(&next) {
+            hops += 1;
+            if hops > MAX_SYMLINK_HOPS {
+                return None;
+            }
+            if target.is_absolute() {
+                cur = std::path::PathBuf::from(std::path::MAIN_SEPARATOR_STR);
+            }
+            push_deny_components(&target, &mut queue, true);
+            continue;
+        }
+        cur = next.canonicalize().unwrap_or(next);
+    }
+    cur.is_absolute().then_some(cur)
 }
 
 fn lexical_normalize_abs(path: &std::path::Path) -> Option<std::path::PathBuf> {
@@ -609,15 +675,32 @@ fn extract_change_dest_paths(
     }
 }
 
-fn extract_change_item_path(item: &serde_json::Value) -> Option<&str> {
-    let map = item.as_object()?;
-    map.get("path")
-        .or_else(|| map.get("file_path"))
-        .or_else(|| map.get("filePath"))
-        .or_else(|| map.get("notebook_path"))
-        .or_else(|| map.get("notebookPath"))
-        .and_then(serde_json::Value::as_str)
-        .filter(|s| !s.trim().is_empty())
+const CHANGE_ITEM_PATH_KEYS: &[&str] = &[
+    "path",
+    "file_path",
+    "filePath",
+    "notebook_path",
+    "notebookPath",
+    "TargetFile",
+    "AbsolutePath",
+    "target_file",
+];
+
+fn extract_change_array_item(
+    item: &serde_json::Value,
+    targets: &mut Vec<String>,
+    opaque: &mut bool,
+) {
+    let Some(map) = item.as_object() else {
+        *opaque = true;
+        return;
+    };
+    let before = targets.len();
+    extract_optional_path_keys(map, CHANGE_ITEM_PATH_KEYS, targets, opaque);
+    if targets.len() == before {
+        *opaque = true;
+    }
+    extract_change_dest_paths(map, targets, opaque);
 }
 
 fn extract_changes_targets(
@@ -628,13 +711,7 @@ fn extract_changes_targets(
     match changes {
         serde_json::Value::Array(items) if !items.is_empty() => {
             for item in items {
-                match extract_change_item_path(item) {
-                    Some(path) => targets.push(path.to_owned()),
-                    None => *opaque = true,
-                }
-                if let Some(map) = item.as_object() {
-                    extract_change_dest_paths(map, targets, opaque);
-                }
+                extract_change_array_item(item, targets, opaque);
             }
         }
         serde_json::Value::Object(map) if !map.is_empty() => {
@@ -645,12 +722,7 @@ fn extract_changes_targets(
                     targets.push(k.clone());
                 }
                 if let Some(vmap) = v.as_object() {
-                    extract_optional_path_keys(
-                        vmap,
-                        &["path", "file_path", "filePath", "notebook_path"],
-                        targets,
-                        opaque,
-                    );
+                    extract_optional_path_keys(vmap, CHANGE_ITEM_PATH_KEYS, targets, opaque);
                     extract_change_dest_paths(vmap, targets, opaque);
                 }
             }
@@ -745,7 +817,12 @@ fn rule_matches_tool(rule: &Rule, request: &ApprovalRequest, is_deny: bool) -> b
     }
     if ToolCapability::is_capability_token(rule_tool) {
         return match ToolCapability::parse_rule_token(rule_tool) {
-            Some(cap) => request.capability == Some(cap),
+            Some(cap) => {
+                request.capability == Some(cap)
+                    || (is_deny
+                        && cap == ToolCapability::Edit
+                        && request.kind == ApprovalKind::FileChange)
+            }
             // Fail closed on unrecognized capability tokens: always match denies, never allows.
             None => is_deny,
         };
@@ -1404,7 +1481,7 @@ fn matches_any_deny(rules: &[Rule], request: &ApprovalRequest, strings: &[String
             RuleScope::Any => true,
             RuleScope::Path(pattern) => strings
                 .iter()
-                .any(|s| path_matches_glob(s, pattern.as_str())),
+                .any(|s| path_matches_glob_deny(s, pattern.as_str())),
             RuleScope::CommandPrefix(prefix) => {
                 matches_command_prefix_deny(&request.input, prefix.as_str())
             }
@@ -1444,6 +1521,17 @@ fn matches_any_allow(rules: &[Rule], request: &ApprovalRequest, strings: &[Strin
             _ => false, // Unknown allow scope is dropped.
         }
     })
+}
+
+fn path_matches_glob_deny(candidate: &str, pattern: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        path_matches_glob(&candidate.to_lowercase(), &pattern.to_lowercase())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        path_matches_glob(candidate, pattern)
+    }
 }
 
 fn path_matches_glob(candidate: &str, pattern: &str) -> bool {

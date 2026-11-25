@@ -5342,15 +5342,15 @@ fn task126_approval_bridge_covers_opaque_rename_targets_and_safe_ask_readonly_pr
         req
     };
 
-    // Finding 3: notebook_path, rename move_path / kind.move_path, and mixed malformed changes.
-    let mut nb_outside = ApprovalRequest::new(
+    // Finding 3: notebook_path (real Claude `capability: None`), rename move_path / kind.move_path,
+    // and mixed malformed / dual-key changes.
+    let nb_outside = ApprovalRequest::new(
         ApprovalId::new("nb-1"),
         ApprovalKind::FileChange,
         Escalation::None,
         "NotebookEdit",
         serde_json::json!({ "notebook_path": cargo_home.join("nb.ipynb").to_str().unwrap() }),
     );
-    nb_outside.capability = Some(org_agent_runtime::ToolCapability::Edit);
     assert!(matches!(
         crate::preset::decide_escalation_with_roots(
             &nb_outside,
@@ -5479,4 +5479,179 @@ fn task126_approval_bridge_covers_opaque_rename_targets_and_safe_ask_readonly_pr
         ),
         crate::preset::EscalationDisposition::AutoDeny { .. }
     ));
+}
+
+#[test]
+fn task126_pass3_notebook_edit_unsandboxed_deny_resolver_macos_case_and_dual_key_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let canon_dir = dir.path().canonicalize().unwrap();
+    let ws = canon_dir.join("workspace");
+    let wt = canon_dir.join("worktree");
+    let admin_dir = canon_dir.join("cache.git/worktrees/self-admin");
+    let cargo_home = canon_dir.join("host-cargo");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::create_dir_all(&admin_dir).unwrap();
+    std::fs::create_dir_all(&cargo_home).unwrap();
+    std::fs::write(
+        wt.join(".git"),
+        "gitdir: ../cache.git/worktrees/self-admin\n",
+    )
+    .unwrap();
+
+    let ws_spec = SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+    let wt_spec = SpecPath::try_from(wt.to_str().unwrap()).unwrap();
+    let admin_spec = SpecPath::try_from(admin_dir.to_str().unwrap()).unwrap();
+    let mut cfg = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let write_denies = vec![
+        org_agent_runtime::PathPattern::try_from(
+            admin_dir.join("config.worktree").to_str().unwrap(),
+        )
+        .unwrap(),
+        org_agent_runtime::PathPattern::try_from(wt.join(".git").to_str().unwrap()).unwrap(),
+    ];
+    crate::preset::apply_worktree_sandbox_rules(&mut cfg, &[wt_spec, admin_spec], &write_denies);
+    // Simulate an owner previously granting `AllowAlways` on `NotebookEdit`.
+    cfg.policy.allow.push(org_agent_runtime::Rule {
+        tool: org_agent_runtime::RuleTool::try_from("NotebookEdit").unwrap(),
+        scope: org_agent_runtime::RuleScope::Any,
+    });
+
+    // Finding 1: NotebookEdit (`capability: None`, `kind: FileChange`) must still hit `cap:edit` denies.
+    #[cfg(unix)]
+    {
+        let adm_link = wt.join("adm");
+        std::os::unix::fs::symlink(&admin_dir, &adm_link).unwrap();
+        let dangling_cw = wt.join("cw");
+        std::os::unix::fs::symlink(admin_dir.join("config.worktree"), &dangling_cw).unwrap();
+
+        for target in [adm_link.join("config.worktree"), wt.join(".git")] {
+            let nb_req = ApprovalRequest::new(
+                ApprovalId::new("nb-deny"),
+                ApprovalKind::FileChange,
+                Escalation::None,
+                "NotebookEdit",
+                serde_json::json!({ "notebook_path": target.to_str().unwrap() }),
+            );
+            assert!(
+                matches!(
+                    crate::preset::decide_escalation_with_roots(
+                        &nb_req,
+                        &cfg.policy,
+                        cfg.preset,
+                        None,
+                        Some(cfg.sandbox.writable_roots.as_slice()),
+                    ),
+                    crate::preset::EscalationDisposition::AutoDeny { ref reason }
+                        if reason.contains("denied by office security policy")
+                ),
+                "NotebookEdit (capability: None) must AutoDeny via policy deny on target: {}",
+                target.display()
+            );
+        }
+
+        // Finding 2: Unsandboxed (`writable_roots: None`) dangling symlink & symlink+`..` traversal.
+        for unsandboxed_bypass in [
+            dangling_cw.display().to_string(),
+            format!("{}/sub/../config.worktree", adm_link.display()),
+        ] {
+            let mut req = ApprovalRequest::new(
+                ApprovalId::new("unsbx"),
+                ApprovalKind::FileChange,
+                Escalation::None,
+                "Write",
+                serde_json::json!({ "file_path": unsandboxed_bypass, "content": "x" }),
+            );
+            req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+            assert!(
+                matches!(
+                    crate::preset::decide_escalation_with_roots(
+                        &req,
+                        &cfg.policy,
+                        cfg.preset,
+                        cfg.allowed_tools.as_deref(),
+                        None,
+                    ),
+                    crate::preset::EscalationDisposition::AutoDeny { .. }
+                ),
+                "unsandboxed deny bypass must AutoDeny: {unsandboxed_bypass}"
+            );
+        }
+    }
+
+    // Finding 3: macOS APFS case-folded absent denied target inside writable admin dir.
+    #[cfg(target_os = "macos")]
+    {
+        let mut upper = ApprovalRequest::new(
+            ApprovalId::new("apfs-case"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({
+                "file_path": admin_dir.join("CONFIG.WORKTREE").to_str().unwrap(),
+                "content": "x"
+            }),
+        );
+        upper.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        assert!(matches!(
+            crate::preset::decide_escalation_with_roots(
+                &upper,
+                &cfg.policy,
+                cfg.preset,
+                cfg.allowed_tools.as_deref(),
+                Some(cfg.sandbox.writable_roots.as_slice()),
+            ),
+            crate::preset::EscalationDisposition::AutoDeny { .. }
+        ));
+    }
+
+    // Finding 4: Dual-key array `changes` item and `notebookPath` inside object `changes`.
+    for payload in [
+        serde_json::json!({
+            "changes": [{
+                "path": wt.join("ok.rs").to_str().unwrap(),
+                "file_path": cargo_home.join("config.toml").to_str().unwrap()
+            }]
+        }),
+        serde_json::json!({
+            "changes": [{
+                "path": wt.join("ok.rs").to_str().unwrap(),
+                "file_path": 123
+            }]
+        }),
+        serde_json::json!({
+            "fileChanges": {
+                wt.join("ok.rs").to_str().unwrap(): {
+                    "notebookPath": cargo_home.join("nb.ipynb").to_str().unwrap()
+                }
+            }
+        }),
+    ] {
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("chg-dual"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "ApplyPatch",
+            payload,
+        );
+        req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        assert!(matches!(
+            crate::preset::decide_escalation_with_roots(
+                &req,
+                &cfg.policy,
+                cfg.preset,
+                cfg.allowed_tools.as_deref(),
+                Some(cfg.sandbox.writable_roots.as_slice()),
+            ),
+            crate::preset::EscalationDisposition::AutoDeny { .. }
+        ));
+    }
 }
