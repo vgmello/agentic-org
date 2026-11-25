@@ -513,6 +513,17 @@ impl ReadOp for EmployeeById {
     }
 }
 
+/// Lists all employees in the organization.
+pub struct EmployeesList;
+
+impl ReadOp for EmployeesList {
+    type Out = Vec<records::Employee>;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.employees()?)
+    }
+}
+
 /// Reads one role record by UUIDv7 ID.
 pub struct RoleById(pub Id);
 
@@ -611,6 +622,20 @@ impl ReadOp for OfficeIdsList {
             .into_iter()
             .map(|o| o.id.as_str().to_owned())
             .collect())
+    }
+}
+
+/// Lists all offices registered in this organization's replicated `org-store` (`TASK-120`).
+pub struct OfficesList;
+
+impl ReadOp for OfficesList {
+    type Out = Vec<crate::organization::records::Office>;
+
+    fn read<S: TasksRead>(
+        self,
+        read: &S,
+    ) -> Result<Vec<crate::organization::records::Office>, StoreError> {
+        Ok(read.offices()?)
     }
 }
 

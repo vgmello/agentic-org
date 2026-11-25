@@ -295,6 +295,10 @@ fn verify_satellite_provision_isolation_reopen_d25_and_revocation(
     // Verify ARCH-02: satellite MUST NOT create `<durable>/private/task-notes.db` and private notes fail closed.
     assert!(!sat_roots.durable.join("private/task-notes.db").exists());
     assert!(!sat.is_hq().unwrap());
+    // Satellites hold no organization CA key: `hq_creation_record` and `hq_creation_public_record`
+    // must return `Ok(None)` so worker restarts pass `hq_creation::verify_existing` (`CaStatus::NotHq`).
+    assert!(sat.hq_creation_record().unwrap().is_none());
+    assert!(sat.hq_creation_public_record().unwrap().is_none());
     let loaded_tls = sat.load_satellite_tls_identity().unwrap();
     assert_eq!(loaded_tls.federation.hq_office_id, hq.info().office_id);
 

@@ -769,7 +769,47 @@ pub(super) async fn execute_org_offices(
     let Some(org) = list.organizations.into_iter().find(|org| org.id == org_id) else {
         return not_found();
     };
-    let offices = org.offices.into_iter().map(OfficeView::from).collect();
+    let mut offices: Vec<OfficeView> = org.offices.into_iter().map(OfficeView::from).collect();
+    // Prefer Active local offices first, falling back through any other local office if offline.
+    let mut candidate_ids: Vec<String> = offices
+        .iter()
+        .filter(|o| o.status == org_proto::OfficeStatus::Active)
+        .map(|o| o.id.clone())
+        .collect();
+    for office in &offices {
+        if !candidate_ids.iter().any(|id| id == &office.id) {
+            candidate_ids.push(office.id.clone());
+        }
+    }
+    let auth = api.auth(&pair);
+    for local_office_id in candidate_ids {
+        if let Ok(dir) = api
+            .offices
+            .call_typed::<org_proto::federation::OfficeDirectoryList>(
+                &auth,
+                &local_office_id,
+                &org_proto::federation::OfficeDirectoryListParams {},
+                true,
+            )
+            .await
+        {
+            for remote in dir.offices {
+                if !offices.iter().any(|existing| existing.id == remote.id) {
+                    offices.push(OfficeView {
+                        id: remote.id,
+                        organization_id: remote.organization_id,
+                        name: remote.name,
+                        role: remote.role,
+                        host: format!("Remote ({})", remote.slug),
+                        status: org_proto::OfficeStatus::Active,
+                        status_reason: None,
+                        next_restart_at: None,
+                    });
+                }
+            }
+            break;
+        }
+    }
     result(OfficeList { offices })
 }
 

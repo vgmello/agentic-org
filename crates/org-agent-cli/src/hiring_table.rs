@@ -250,6 +250,47 @@ const AGENT_LIFECYCLE_INPUT: &[Field] = &[Field::required(
     "Agent employee UUIDv7",
 )];
 
+const AGENT_EXECUTION_OUTPUT: &[Field] = &[
+    Field::required("employee_id", Type::String, "Agent employee UUIDv7"),
+    Field::required("model_profile_id", Type::String, "Model profile UUIDv7"),
+    Field::required("model_id", Type::String, "Model identifier"),
+    Field::required(
+        "tools_config",
+        Type::List(&STRING_TYPE),
+        "Enabled tool names",
+    ),
+    Field::required("permission_preset", Type::String, "Permission preset"),
+    Field::required("enabled", Type::Boolean, "Whether execution is enabled"),
+    Field::required(
+        "system_prompt_markdown",
+        Type::String,
+        "Agent system prompt",
+    ),
+    Field::required("revision", Type::Integer, "Record revision"),
+];
+
+const AGENT_EXECUTION_SET_INPUT: &[Field] = &[
+    Field::required("member", Type::String, "Agent employee UUIDv7"),
+    Field::required("model_profile_id", Type::String, "Model profile UUIDv7"),
+    Field::required("model_id", Type::String, "Model identifier"),
+    Field::optional(
+        "permission_preset",
+        Type::Enum(&[
+            "safe_ask",
+            "read_only",
+            "workspace_edits",
+            "autonomous_sandboxed",
+        ]),
+        "Execution permission preset (full replacement; defaults to safe_ask when omitted)",
+    ),
+    Field::optional("enabled", Type::Boolean, "Enable or disable execution"),
+    Field::required(
+        "system_prompt_markdown",
+        Type::String,
+        "Agent system prompt markdown",
+    ),
+];
+
 const MEMBER_SET_MAY_HIRE_INPUT: &[Field] = &[
     Field::required("member", Type::String, "Employee UUIDv7"),
     Field::required(
@@ -472,6 +513,39 @@ pub const HIRING_COMMANDS: &[Command] = &[
         example: Example {
             input: r#"{"member":"0193a5c0-0000-7000-8000-000000000051"}"#,
             output: r#"{"id":"0193a5c0-0000-7000-8000-000000000051","revision":6,"generation":10}"#,
+        },
+    },
+    Command {
+        resource: "agent",
+        verb: "execution-get",
+        summary: "Inspect agent execution configuration",
+        call: "member.agent_execution_get",
+        kind: Kind::Read,
+        input: AGENT_LIFECYCLE_INPUT,
+        content_field: None,
+        output: AGENT_EXECUTION_OUTPUT,
+        errors: READ_ERRORS,
+        example: Example {
+            input: r#"{"member":"0193a5c0-0000-7000-8000-000000000051"}"#,
+            output: r#"{"employee_id":"0193a5c0-0000-7000-8000-000000000051","model_profile_id":"0193a5c0-0000-7000-8000-000000000060","model_id":"sonnet","tools_config":[],"permission_preset":"autonomous_sandboxed","enabled":true,"system_prompt_markdown":"You are an engineer.","revision":1}"#,
+        },
+    },
+    Command {
+        resource: "agent",
+        verb: "execution-set",
+        summary: "Configure agent model profile, preset, and prompt",
+        call: "member.agent_execution_set",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::Optional,
+        },
+        input: AGENT_EXECUTION_SET_INPUT,
+        content_field: Some("system_prompt_markdown"),
+        output: ENTITY_OP_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"member":"0193a5c0-0000-7000-8000-000000000051","model_profile_id":"0193a5c0-0000-7000-8000-000000000060","model_id":"sonnet","permission_preset":"autonomous_sandboxed","system_prompt_markdown":"You are an engineer."}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000051","revision":1,"generation":10}"#,
         },
     },
     Command {

@@ -342,11 +342,7 @@ fn build_permissions_value(
         }
     }
     if let Some(cfg_dir) = &ctx.config_dir {
-        let trimmed = cfg_dir.as_str().trim_end_matches('/');
-        let glob = format!("{trimmed}/**");
-        for &tool in CAP_EDIT_TOOLS {
-            deny_rules.push(json!({ "tool": tool, "path": glob }));
-        }
+        append_config_dir_permission_denies(&mut deny_rules, cfg_dir);
     }
 
     let mut allow_rules = Vec::new();
@@ -395,12 +391,21 @@ fn build_sandbox_value(spec: &SessionSpec, ctx: &LaunchContext) -> Value {
             deny_write.push(cfg_dir.as_str().to_owned());
         }
     }
-    let deny_read: Vec<String> = spec
+    let mut deny_read: Vec<String> = spec
         .sandbox
         .deny_read
         .iter()
         .map(|p| p.as_str().to_owned())
         .collect();
+    if let Some(cfg_dir) = &ctx.config_dir {
+        let trimmed = cfg_dir.as_str().trim_end_matches('/');
+        for cred_name in AGY_CONFIG_CREDENTIAL_FILES {
+            let cred_path = format!("{trimmed}/{cred_name}");
+            if !deny_read.iter().any(|p| p == &cred_path) {
+                deny_read.push(cred_path);
+            }
+        }
+    }
     let sockets: Vec<String> = spec
         .sandbox
         .allowed_unix_sockets
@@ -537,6 +542,22 @@ pub(crate) fn auth_env_names() -> Vec<EnvName> {
     .collect()
 }
 
+const AGY_CONFIG_CREDENTIAL_FILES: &[&str] = &["oauth_creds.json", "google_accounts.json"];
+
+fn append_config_dir_permission_denies(deny_rules: &mut Vec<Value>, cfg_dir: &SpecPath) {
+    let trimmed = cfg_dir.as_str().trim_end_matches('/');
+    let glob = format!("{trimmed}/**");
+    for &tool in CAP_EDIT_TOOLS {
+        deny_rules.push(json!({ "tool": tool, "path": glob }));
+    }
+    for cred_name in AGY_CONFIG_CREDENTIAL_FILES {
+        let cred_path = format!("{trimmed}/{cred_name}");
+        for &tool in CAP_READ_TOOLS {
+            deny_rules.push(json!({ "tool": tool, "path": cred_path }));
+        }
+    }
+}
+
 fn secret_env_names() -> Vec<EnvName> {
     [
         "GEMINI_API_KEY",
@@ -549,4 +570,61 @@ fn secret_env_names() -> Vec<EnvName> {
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static secret env"))
     .collect()
+}
+
+#[cfg(test)]
+mod config_dir_tests {
+    use super::*;
+    use org_agent_runtime::{
+        AgentIdentity, AgentName, PermissionMode, PermissionPolicy, RuntimeId, SandboxSpec,
+        SessionKind,
+    };
+    use std::path::PathBuf;
+
+    #[test]
+    fn config_dir_denies_agy_credential_reads() {
+        let spec = SessionSpec {
+            runtime: RuntimeId::try_from("agy").unwrap(),
+            kind: SessionKind::Home {},
+            agent: AgentIdentity {
+                name: AgentName::try_from("agent").unwrap(),
+                description: "Agent".into(),
+                prompt: "Prompt".into(),
+            },
+            model: None,
+            effort: None,
+            workspace: SpecPath::try_from("/workspace").unwrap(),
+            read_only_dirs: Vec::new(),
+            instructions: "Instructions".into(),
+            permission_mode: PermissionMode::AcceptEdits,
+            policy: PermissionPolicy {
+                version: 1,
+                allow: Vec::new(),
+                deny: Vec::new(),
+            },
+            sandbox: SandboxSpec {
+                enabled: true,
+                writable_roots: vec![SpecPath::try_from("/workspace").unwrap()],
+                deny_write: Vec::new(),
+                deny_read: Vec::new(),
+                allowed_unix_sockets: Vec::new(),
+            },
+            mcp_servers: Default::default(),
+            tools: None,
+        };
+        let ctx = LaunchContext {
+            runtime_path: PathBuf::from("/usr/local/bin/agy"),
+            runtime_version: None,
+            runtime_dir: SpecPath::try_from("/runtime").unwrap(),
+            tmpdir: SpecPath::try_from("/tmp/agent").unwrap(),
+            office_env_names: Vec::new(),
+            new_session_id: None,
+            resume: None,
+            config_dir: Some(SpecPath::try_from("/home/u/.gemini").unwrap()),
+        };
+        let sandbox = build_sandbox_value(&spec, &ctx);
+        let deny_read = sandbox["filesystem"]["denyRead"].as_array().unwrap();
+        assert!(deny_read.contains(&json!("/home/u/.gemini/oauth_creds.json")));
+        assert!(deny_read.contains(&json!("/home/u/.gemini/google_accounts.json")));
+    }
 }

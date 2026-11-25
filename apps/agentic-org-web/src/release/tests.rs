@@ -110,11 +110,12 @@ fn signed_assets_are_verified_before_csp_and_remain_memory_only() {
 #[test]
 fn signed_manifest_alone_cannot_admit_the_running_image() {
     let input = Input::new();
+    let root = input.directory();
     let (manifest, _) = input.verified();
-    // This signed Linux fixture has no macOS image identity. macOS must reject
-    // it, and unsupported platforms must refuse even a valid signed manifest.
+    // This signed Linux fixture has no macOS image identity and a synthetic 3-byte
+    // payload digest that cannot match the running test binary on Linux either.
     assert!(matches!(
-        verify_running_image(&manifest),
+        verify_running_image(&root, &manifest),
         Err(BuildError::ReleaseImageMismatch)
     ));
 }

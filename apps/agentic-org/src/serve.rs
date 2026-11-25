@@ -297,10 +297,27 @@ fn dev_cli_peer(
     }
 }
 
-/// A release build's config: only what it was built with.
+/// A release build's config: only what it was built with, bound to the verified installed
+/// release in the account's protected release store before any custody or socket is opened.
 #[cfg(not(debug_assertions))]
 fn config(_args: Args) -> Result<Config, String> {
-    Config::trusted()
+    let config = Config::trusted()?;
+    let store_dir = org_host::default_release_store_dir()?;
+    let store = org_host::release::ReleaseStore::open(&store_dir).map_err(|e| {
+        format!(
+            "opening release store ({}): {e}; install a signed release first with `agentic-org release install <bundle.tar.gz>`",
+            store_dir.display()
+        )
+    })?;
+    let release = store.admit_self().map_err(|e| {
+        format!(
+            "admitting installed release ({}): {e}; run the installed binary from the release store or reinstall with `agentic-org release install <bundle.tar.gz>`",
+            store_dir.display()
+        )
+    })?;
+    config
+        .with_runtime_release(release)
+        .map_err(|e| e.to_string())
 }
 
 /// A debug build's config: what it was built with, with the arguments' overrides and the

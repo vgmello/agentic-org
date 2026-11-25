@@ -48,12 +48,13 @@ pub use messaging_ops::{
 pub use operations::{
     AddPersonOp, AddProjectTeamOp, AgentExecutionById, ApplyReplicatedFilesOp, ArchiveTeamOp,
     CheckHrMessageAccess, CheckOp, CreateOrganizationOp, CreateProjectOp, CreateTeamOp,
-    DeactivatePersonOp, DirectoryGeneration, DirectorySnapshot, EmployeeById, HireInspectById,
-    HiresList, ImportOrganizationOp, ModelProfileById, ModelProfilesList, MovePersonOp, MoveTeamOp,
-    OfficeIdsList, OfficeStanding, OfficesCount, ProjectCheckOp, ProjectInspectByRef, ProjectsList,
-    ProviderConnectionById, ProviderConnectionsList, ReceiptById, RegisterSatelliteOfficeOp,
-    RemoveProjectTeamOp, RoleById, RoleInspectByRef, RolesList, Standing, StructureOp, TopTeamId,
-    UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
+    DeactivatePersonOp, DirectoryGeneration, DirectorySnapshot, EmployeeById, EmployeesList,
+    HireInspectById, HiresList, ImportOrganizationOp, ModelProfileById, ModelProfilesList,
+    MovePersonOp, MoveTeamOp, OfficeIdsList, OfficeStanding, OfficesCount, OfficesList,
+    ProjectCheckOp, ProjectInspectByRef, ProjectsList, ProviderConnectionById,
+    ProviderConnectionsList, ReceiptById, RegisterSatelliteOfficeOp, RemoveProjectTeamOp, RoleById,
+    RoleInspectByRef, RolesList, Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp,
+    WatchingModelRead,
 };
 
 use super::sqlite::{

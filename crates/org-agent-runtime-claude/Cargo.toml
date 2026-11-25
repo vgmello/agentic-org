@@ -9,11 +9,11 @@ description = "Sans-I/O Claude Code adapter implementing the org-agent-runtime p
 
 [dependencies]
 org-agent-runtime = { path = "../org-agent-runtime" }
+org-platform = { path = "../org-platform" }
 serde_json.workspace = true
 
 [dev-dependencies]
 org-agent-runtime = { path = "../org-agent-runtime", features = ["testkit"] }
-org-platform = { path = "../org-platform" }
 org-supervise = { path = "../org-supervise" }
 tempfile.workspace = true
 

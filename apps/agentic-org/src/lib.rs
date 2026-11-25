@@ -7,6 +7,8 @@ mod context;
 mod office;
 mod org;
 mod project;
+mod provider;
+mod release;
 mod serve;
 mod service;
 mod setup;
@@ -34,6 +36,24 @@ office     office list|restart|invite|invitations|approve|decline|cancel|remove|
 Use when: listing/restarting offices or running HQ/satellite mTLS enrollment and sync checks.\n  \
 project    project list|inspect|create: list, inspect, or create projects\n             \
 Use when: discovering, inspecting, or creating organization projects and owning teams.\n  \
+provider   provider create|list|bind|refresh|bindings|models: manage AI provider connections and local office bindings\n             \
+Use when: configuring org-wide Claude/Codex/Agy connections on HQ or binding local runtimes on HQ/satellite offices.\n  \
+release    release install|status: verify and pin a signed release bundle into this host's release store\n             \
+Use when: installing or upgrading prebuilt signed binaries on macOS or Linux without compiling from source.\n  \
+msg        msg send|inbox|read|reply|ask|accept|withdraw|list|wait: message people and agents across offices\n             \
+Use when: sending DMs, channel messages, or replies to local or remote office agents from your terminal.\n  \
+channel    channel list|join|leave|summarize: manage organization messaging channels\n             \
+Use when: discovering or inspecting shared channels across offices.\n  \
+hr         hr hire|list|inspect: hire and manage agents across HQ and satellite offices\n             \
+Use when: hiring new agents onto HQ or a remote satellite office from the terminal.\n  \
+agent      agent inspect|update|move|pause|resume|offboard|execution-get|execution-set: inspect or manage hired agents\n             \
+Use when: checking agent status, execution settings, or lifecycle state.\n  \
+team       team list|inspect|create|update: manage organization teams\n             \
+Use when: discovering or creating teams before hiring agents or creating projects.\n  \
+role       role list|inspect|create|update: manage role catalog entries\n             \
+Use when: inspecting or creating reusable role definitions for hiring.\n  \
+who        List people and agents with live presence and handles\n             \
+Use when: discovering handles and online status across HQ and satellite offices.\n  \
 repo       repo register|list|attach|status|push: manage repositories and push task branches\n             \
 Use when: registering/attaching Git repos, checking office cache status, or pushing task branches.\n  \
 worktree   worktree list|prepare: list or prepare isolated task worktrees\n             \
@@ -101,10 +121,26 @@ pub fn run(arguments: Vec<String>) -> Result<(), String> {
         [command, rest @ ..] if command == "org" => org::run(rest),
         [command, rest @ ..] if command == "office" => office::run(rest),
         [command, rest @ ..] if command == "project" => project::run(rest),
+        [command, rest @ ..] if command == "provider" => provider::run(rest),
+        [command, rest @ ..] if command == "release" => release::run(rest),
         [command, ..]
             if matches!(
                 command.as_str(),
-                "task" | "checklist" | "task-note" | "repo" | "worktree"
+                "task"
+                    | "checklist"
+                    | "task-note"
+                    | "repo"
+                    | "worktree"
+                    | "msg"
+                    | "channel"
+                    | "hr"
+                    | "agent"
+                    | "team"
+                    | "role"
+                    | "person"
+                    | "who"
+                    | "session"
+                    | "grant"
             ) =>
         {
             sign_in::run_office_command(&arguments)
@@ -155,6 +191,17 @@ mod tests {
             vec!["help", "office", "invite"],
             vec!["help", "project"],
             vec!["help", "project", "create"],
+            vec!["help", "provider"],
+            vec!["help", "provider", "bind"],
+            vec!["help", "release"],
+            vec!["help", "release", "install"],
+            vec!["help", "msg"],
+            vec!["help", "channel"],
+            vec!["help", "hr"],
+            vec!["help", "agent"],
+            vec!["help", "team"],
+            vec!["help", "role"],
+            vec!["help", "who"],
             vec!["help", "sign-in"],
             vec!["help", "context"],
             vec!["help", "context", "show"],
@@ -192,6 +239,8 @@ mod tests {
             ("ORG_HELP", org_host::setup_flow::ORG_HELP, 3),
             ("OFFICE_HELP", org_host::setup_flow::OFFICE_HELP, 13),
             ("PROJECT_HELP", org_host::setup_flow::PROJECT_HELP, 4),
+            ("PROVIDER_HELP", org_host::setup_flow::PROVIDER_HELP, 6),
+            ("release::HELP", crate::release::HELP, 3),
             ("SIGN_IN_HELP", org_host::setup_flow::SIGN_IN_HELP, 1),
             ("CONTEXT_HELP", org_host::setup_flow::CONTEXT_HELP, 4),
             (
@@ -237,6 +286,15 @@ mod tests {
             "org",
             "office",
             "project",
+            "provider",
+            "release",
+            "msg",
+            "channel",
+            "hr",
+            "agent",
+            "team",
+            "role",
+            "who",
             "repo",
             "worktree",
             "task",

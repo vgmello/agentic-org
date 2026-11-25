@@ -285,6 +285,16 @@ pub trait ProviderPoolStore: Send + Sync {
         models: &[OfficeConnectionModel],
     ) -> Result<(), OfficeError>;
 
+    /// Atomically renews a `Ready` observation only if the current binding still matches
+    /// `expected_binding_revision` and the current readiness state is still `Ready`.
+    /// Returns `Ok(true)` if renewed, or `Ok(false)` if skipped due to a concurrent update.
+    fn renew_ready_observation_if_unchanged(
+        &self,
+        expected_binding_revision: u64,
+        state: &OfficeConnectionState,
+        models: &[OfficeConnectionModel],
+    ) -> Result<bool, OfficeError>;
+
     // ---- Quota permits & cooldowns ----
     fn coordinator_generation(&self) -> Result<u64, OfficeError>;
 

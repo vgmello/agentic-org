@@ -2117,9 +2117,10 @@ printf '{"kind":"reply","text":"Completed in %s with token=%s"}\n' "$pwd_now" "$
         org_proto::Outcome::Result(_)
     ));
 
-    // Medium #5: denied_office_globs includes enroll-tmp and sibling runtime/.
+    // Medium #5 + TASK-120/124 Pass 1: denied_office_globs_for covers enroll-tmp, sibling runtime/,
+    // host.sock, sibling agents' runtime dirs, and Linux privileged sockets (while excluding self).
     let denied_strs: Vec<String> = manager
-        .denied_office_globs()
+        .denied_office_globs_for(Some(&agent_id))
         .iter()
         .map(|p| p.as_str().to_owned())
         .collect();
@@ -2130,6 +2131,41 @@ printf '{"kind":"reply","text":"Completed in %s with token=%s"}\n' "$pwd_now" "$
     assert!(
         denied_strs.iter().any(|s| s.contains("/runtime/**")),
         "denied_office_globs must include runtime/: {denied_strs:?}"
+    );
+    assert!(
+        denied_strs.iter().any(|s| s.ends_with("/host.sock")),
+        "denied_office_globs must deny host.sock: {denied_strs:?}"
+    );
+    assert!(
+        denied_strs.iter().any(|s| s.ends_with("/r/**")),
+        "denied_office_globs must deny host rendezvous sockets r/**: {denied_strs:?}"
+    );
+    assert!(
+        denied_strs.iter().any(|s| s == "/var/run/docker.sock"),
+        "denied_office_globs must deny docker.sock: {denied_strs:?}"
+    );
+    assert!(
+        !denied_strs.iter().any(|s| s.starts_with("/run/user/*")),
+        "denied_office_globs must not emit /run/user/* wildcard (breaks Codex path_pattern_base): {denied_strs:?}"
+    );
+    let sibling_slug = crate::host_auth::agent_tmpdir_slug(&office.info().office_id, &owner_id);
+    assert!(
+        denied_strs
+            .iter()
+            .any(|s| s.contains(&format!("/t/{sibling_slug}/**"))),
+        "denied_office_globs must pre-deny sibling short tmpdir before creation: {denied_strs:?}"
+    );
+    assert!(
+        denied_strs
+            .iter()
+            .any(|s| s.contains(&format!("/agents/{owner_id}/**"))),
+        "denied_office_globs must deny sibling agent dirs: {denied_strs:?}"
+    );
+    assert!(
+        !denied_strs
+            .iter()
+            .any(|s| s.contains(&format!("/agents/{agent_id}/**"))),
+        "denied_office_globs must NOT deny self agent dir: {denied_strs:?}"
     );
 
     let _guard = Mutex::new(());

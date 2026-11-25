@@ -953,7 +953,11 @@ impl Office {
     }
 
     /// The HQ's creation record with the wrapped CA key, read from its file and checked.
+    /// Satellite offices hold no organization CA and return `Ok(None)`.
     pub fn hq_creation_record(&self) -> Result<Option<LocalRecord>, OfficeError> {
+        if self.info.role != crate::model::OfficeRole::Hq {
+            return Ok(None);
+        }
         let records = self.ca()?;
         let key = records.key;
         LocalRecord::new(
@@ -973,8 +977,11 @@ impl Office {
     }
 
     /// The HQ's public creation record: the escrow package and what binds it. It carries
-    /// no private key in any form.
+    /// no private key in any form. Satellite offices hold no organization CA and return `Ok(None)`.
     pub fn hq_creation_public_record(&self) -> Result<Option<PublicRecord>, OfficeError> {
+        if self.info.role != crate::model::OfficeRole::Hq {
+            return Ok(None);
+        }
         let records = self.ca()?;
         Ok(Some(PublicRecord {
             version: 1,

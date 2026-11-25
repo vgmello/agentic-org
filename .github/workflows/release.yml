@@ -1,0 +1,214 @@
+name: Release Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: "Release ID (e.g. v0.1.0)"
+        required: true
+      sequence:
+        description: "Monotonic release sequence (>= 1)"
+        required: true
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  build-ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .node-version
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+      - name: Install UI dependencies and build static UI
+        working-directory: apps/agentic-org-ui
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: static-ui
+          path: apps/agentic-org-ui/build
+          if-no-files-found: error
+
+  package:
+    needs: build-ui
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+          - os: macos-15
+            platform: macos
+            arch: aarch64
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: static-ui
+          path: apps/agentic-org-ui/build
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install --no-self-update
+      - name: Prepare signing material
+        id: signing
+        env:
+          SIGNING_KEY_PEM: ${{ secrets.ORG_RELEASE_SIGNING_KEY_PEM }}
+          TRUST_REGISTRY_JSON: ${{ secrets.ORG_RELEASE_TRUST_REGISTRY_JSON }}
+          APPLE_TEAM_ID: ${{ secrets.ORG_APP_TEAM_ID }}
+          HOST_KEYCHAIN_GROUP: ${{ secrets.ORG_HOST_KEYCHAIN_GROUP }}
+          MACOS_P12_B64: ${{ secrets.MACOS_SIGNING_P12_B64 }}
+          MACOS_P12_PASS: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          MACOS_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          PLATFORM: ${{ matrix.platform }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          if [[ -n "$SIGNING_KEY_PEM" && -n "$TRUST_REGISTRY_JSON" ]]; then
+            if [[ "$PLATFORM" == "macos" ]]; then
+              if [[ -z "$APPLE_TEAM_ID" || -z "$HOST_KEYCHAIN_GROUP" || -z "$MACOS_P12_B64" || -z "$MACOS_P12_PASS" || -z "$MACOS_IDENTITY" ]]; then
+                if [[ "$IS_TAG" == "true" ]]; then
+                  echo "Signed macOS release tags require ORG_APP_TEAM_ID, ORG_HOST_KEYCHAIN_GROUP, MACOS_SIGNING_P12_B64, MACOS_SIGNING_P12_PASSWORD, and MACOS_SIGNING_IDENTITY secrets." >&2
+                  exit 1
+                fi
+                echo "signed=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              KEYCHAIN="$RUNNER_TEMP/release-signing.keychain-db"
+              security create-keychain -p "$MACOS_P12_PASS" "$KEYCHAIN"
+              security set-keychain-settings -lut 21600 "$KEYCHAIN"
+              security unlock-keychain -p "$MACOS_P12_PASS" "$KEYCHAIN"
+              printf '%s' "$MACOS_P12_B64" | base64 --decode > "$RUNNER_TEMP/dev-id.p12"
+              chmod 0600 "$RUNNER_TEMP/dev-id.p12"
+              security import "$RUNNER_TEMP/dev-id.p12" -P "$MACOS_P12_PASS" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+              security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_P12_PASS" "$KEYCHAIN"
+              security list-keychain -d user -s "$KEYCHAIN"
+              rm -f "$RUNNER_TEMP/dev-id.p12"
+            fi
+            mkdir -p "$RUNNER_TEMP/release-keys"
+            chmod 0700 "$RUNNER_TEMP/release-keys"
+            printf '%s\n' "$SIGNING_KEY_PEM" > "$RUNNER_TEMP/release-keys/publisher.key.pem"
+            chmod 0600 "$RUNNER_TEMP/release-keys/publisher.key.pem"
+            printf '%s\n' "$TRUST_REGISTRY_JSON" > "$RUNNER_TEMP/release-keys/release-trust-registry.json"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            if [[ "$IS_TAG" == "true" ]]; then
+              echo "Tagged releases fail closed when ORG_RELEASE_SIGNING_KEY_PEM or ORG_RELEASE_TRUST_REGISTRY_JSON is unset." >&2
+              exit 1
+            fi
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build and package release archive
+        env:
+          RELEASE_ID: ${{ github.event.inputs.release_id || github.ref_name }}
+          # Strictly monotonic across tagged release workflow runs; manual dispatch may override explicitly.
+          SEQUENCE: ${{ github.event.inputs.sequence || github.run_number }}
+          SIGNED: ${{ steps.signing.outputs.signed }}
+          PLATFORM: ${{ matrix.platform }}
+          ORG_APP_TEAM_ID: ${{ secrets.ORG_APP_TEAM_ID }}
+          ORG_HOST_KEYCHAIN_GROUP: ${{ secrets.ORG_HOST_KEYCHAIN_GROUP }}
+          MACOS_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          if [[ ! "$SEQUENCE" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Release sequence must be a positive integer (got '$SEQUENCE')" >&2
+            exit 1
+          fi
+          if [[ "$SIGNED" == "true" && "$PLATFORM" == "macos" ]]; then
+            # Build with embedded trust registry and host keychain group, sign with exact identifiers
+            # (keychain-access-groups entitlement on `agentic-org` only), then package.
+            ORG_RELEASE_TRUST_REGISTRY="$RUNNER_TEMP/release-keys/release-trust-registry.json" \
+            ORG_RELEASE_MIN_SEQUENCE="$SEQUENCE" \
+            ORG_APP_TEAM_ID="$ORG_APP_TEAM_ID" \
+            ORG_HOST_KEYCHAIN_GROUP="$ORG_HOST_KEYCHAIN_GROUP" \
+              cargo build --locked --release -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
+            cat > "$RUNNER_TEMP/host-entitlements.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>keychain-access-groups</key>
+            <array>
+              <string>${ORG_HOST_KEYCHAIN_GROUP}</string>
+            </array>
+          </dict>
+          </plist>
+          EOF
+            codesign --force --options runtime --timestamp \
+              --identifier com.vgmello.agentic-org.org-office-host \
+              --entitlements "$RUNNER_TEMP/host-entitlements.plist" \
+              --sign "$MACOS_IDENTITY" "target/release/agentic-org"
+            codesign --force --options runtime --timestamp \
+              --identifier com.vgmello.agentic-org.office \
+              --sign "$MACOS_IDENTITY" "target/release/agentic-org-office"
+            codesign --force --options runtime --timestamp \
+              --identifier com.vgmello.agentic-org.web \
+              --sign "$MACOS_IDENTITY" "target/release/agentic-org-web"
+            codesign --force --options runtime --timestamp \
+              --identifier com.vgmello.agentic-org.agent-os \
+              --sign "$MACOS_IDENTITY" "target/release/agent-os"
+            bash scripts/package-release.sh \
+              --release-id "$RELEASE_ID" \
+              --sequence "$SEQUENCE" \
+              --out-dir dist \
+              --profile release \
+              --skip-build \
+              --signing-key "$RUNNER_TEMP/release-keys/publisher.key.pem" \
+              --trust-registry "$RUNNER_TEMP/release-keys/release-trust-registry.json"
+          elif [[ "$SIGNED" == "true" ]]; then
+            bash scripts/package-release.sh \
+              --release-id "$RELEASE_ID" \
+              --sequence "$SEQUENCE" \
+              --out-dir dist \
+              --profile release \
+              --signing-key "$RUNNER_TEMP/release-keys/publisher.key.pem" \
+              --trust-registry "$RUNNER_TEMP/release-keys/release-trust-registry.json"
+          else
+            bash scripts/package-release.sh \
+              --release-id "$RELEASE_ID" \
+              --sequence "$SEQUENCE" \
+              --out-dir dist \
+              --profile dev
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" artifacts/* \
+            --title "Agentic Org ${GITHUB_REF_NAME}" \
+            --generate-notes
