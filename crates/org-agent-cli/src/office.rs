@@ -235,7 +235,11 @@ impl OfficeTransport for BoundOffice {
 
 impl Office for BoundOffice {
     fn call(&mut self, request: &Request) -> Result<Answer, Refusal> {
-        dispatch::execute(self, request)
+        let mut answer = dispatch::execute(self, request)?;
+        if let Some(client) = &self.client {
+            answer.waiting_messages = client.last_waiting_messages();
+        }
+        Ok(answer)
     }
 }
 

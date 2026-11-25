@@ -198,7 +198,7 @@ impl AgentRuntime for RecordingRuntime {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            steer: false,
+            mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
             interrupt_in_band: true,
             idle_interrupt_ends_turn: false,
             approval_bridge: false,
@@ -348,7 +348,7 @@ impl LiveOfficeNode {
             &channel_watcher,
             Arc::clone(&sat_wake),
         );
-        let wake_handler = build_federation_wake_handler(&sessions);
+        let wake_handler = build_federation_wake_handler(&sessions, &messaging.chat_svc);
         let delivery_notifier = build_federation_delivery_notifier(
             office.owner_member_id().to_owned(),
             &messaging.chat_svc,

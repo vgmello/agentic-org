@@ -119,6 +119,11 @@ pub type RunBindingActiveFn = Box<dyn Fn(&str) -> bool + Send + Sync>;
 /// Records an accepted `agent-os` command for a bound managed run (`ADR-0030` decision 8).
 pub type RecordCommandFn = Box<dyn Fn(&str, &str) + Send + Sync>;
 
+/// Looks up the lock-free in-memory `AtomicU32` counter of waiting messages/wakes for a bound
+/// agent (`TASK-115` AC #6 / `doc-101`). Looked up once on bind; hot-path RPCs do one relaxed load.
+pub type WaitingMessagesCounterFn =
+    Box<dyn Fn(&str) -> Arc<std::sync::atomic::AtomicU32> + Send + Sync>;
+
 /// Stops an agent's active session and revokes its binding when paused or offboarded (`SUB-5`, `B2 Q9`).
 pub type AgentLifecycleHookFn = Box<dyn Fn(&str, &str) + Send + Sync>;
 
@@ -158,6 +163,7 @@ pub struct OfficePorts {
     pub run_binding_verify: Option<RunBindingVerifyFn>,
     pub run_binding_active: Option<RunBindingActiveFn>,
     pub record_agent_command: Option<RecordCommandFn>,
+    pub waiting_messages_counter: Option<WaitingMessagesCounterFn>,
     pub on_agent_stop: Option<AgentLifecycleHookFn>,
     pub hr_message_guard: Option<HrMessageGuardFn>,
     pub submit: SubmitFn,
@@ -988,6 +994,7 @@ fn serve_connection_as(
             poll,
         );
         let mut binding = initial;
+        let mut bound_waiting: Option<(String, Arc<std::sync::atomic::AtomicU32>)> = None;
         let mut subscribed = false;
         // The last subscription's thread: a new one waits for it, so a client that binds and
         // subscribes in a loop never has more than two.
@@ -1132,12 +1139,41 @@ fn serve_connection_as(
                 refuse_revoked(&out, request.id, &control, shared.timing);
                 break;
             }
+            let mut response = response;
+            attach_waiting_messages_hint(shared, &binding, &mut bound_waiting, &mut response);
             if !send(&out, request.id, &response, shared.timing) {
                 break;
             }
         }
         generation.fetch_add(1, Ordering::SeqCst);
     });
+}
+
+fn attach_waiting_messages_hint(
+    shared: &Shared,
+    binding: &Binding,
+    cached: &mut Option<(String, Arc<std::sync::atomic::AtomicU32>)>,
+    response: &mut Response,
+) {
+    if binding.via_grant() {
+        return;
+    }
+    let (Some(member), Some(lookup)) = (binding.member(), &shared.ports.waiting_messages_counter)
+    else {
+        return;
+    };
+    let count = match cached {
+        Some((id, counter)) if id == member => counter.load(Ordering::Relaxed),
+        _ => {
+            let counter = lookup(member);
+            let n = counter.load(Ordering::Relaxed);
+            *cached = Some((member.to_owned(), counter));
+            n
+        }
+    };
+    if count > 0 {
+        response.waiting_messages = Some(count);
+    }
 }
 
 fn refuse_revoked(out: &Mutex<UnixStream>, id: u64, control: &Control, timing: Timing) {
@@ -3043,6 +3079,7 @@ mod tests {
             run_binding_verify: None,
             run_binding_active: None,
             record_agent_command: None,
+            waiting_messages_counter: None,
             on_agent_stop: None,
             hr_message_guard: None,
             submit: Box::new(|_, _, _| Err("none".to_owned())),
@@ -3510,6 +3547,7 @@ mod tests {
                 run_binding_verify: None,
                 run_binding_active: None,
                 record_agent_command: None,
+                waiting_messages_counter: None,
                 on_agent_stop: None,
                 hr_message_guard: None,
                 submit: Box::new(move |_, _, _| {
@@ -3997,6 +4035,7 @@ mod tests {
                     run_binding_verify: None,
                     run_binding_active: None,
                     record_agent_command: None,
+                    waiting_messages_counter: None,
                     on_agent_stop: None,
                     hr_message_guard: None,
                     submit: Box::new(|_, _, _| Err("none".to_owned())),
@@ -4503,6 +4542,7 @@ mod tests {
                 run_binding_verify: None,
                 run_binding_active: None,
                 record_agent_command: None,
+                waiting_messages_counter: None,
                 on_agent_stop: None,
                 hr_message_guard: None,
                 submit: Box::new(|_, _, _| Err("none".to_owned())),

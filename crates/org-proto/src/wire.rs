@@ -119,6 +119,10 @@ pub struct Response {
     pub id: u64,
     #[serde(flatten)]
     pub outcome: Outcome,
+    /// Optional count of pending wakes/messages waiting for the bound agent (`TASK-115` / `doc-101`).
+    /// Omitted on the wire when `None` (or `0`) so non-agent and idle responses remain unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_messages: Option<u32>,
 }
 
 /// A response's outcome. On the wire it is a `result` or an `error` key, never both.
@@ -140,6 +144,8 @@ struct RawResponse {
     result: Option<Value>,
     #[serde(default)]
     error: Option<ApiError>,
+    #[serde(default)]
+    waiting_messages: Option<u32>,
 }
 
 impl TryFrom<RawResponse> for Response {
@@ -155,6 +161,7 @@ impl TryFrom<RawResponse> for Response {
         Ok(Self {
             id: raw.id,
             outcome,
+            waiting_messages: raw.waiting_messages.filter(|&n| n > 0),
         })
     }
 }
@@ -170,6 +177,7 @@ impl Response {
         Ok(Self {
             id,
             outcome: Outcome::Result(value),
+            waiting_messages: None,
         })
     }
 
@@ -178,7 +186,14 @@ impl Response {
         Self {
             id,
             outcome: Outcome::Error(error),
+            waiting_messages: None,
         }
+    }
+
+    /// Attaches a non-zero waiting-messages count hint (`TASK-115` / `doc-101`).
+    pub fn with_waiting_messages(mut self, count: u32) -> Self {
+        self.waiting_messages = (count > 0).then_some(count);
+        self
     }
 
     /// Read the outcome as call `C`'s result.
@@ -299,10 +314,12 @@ impl fmt::Debug for Request {
 
 impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Response")
-            .field("id", &self.id)
-            .field("outcome", &self.outcome)
-            .finish()
+        let mut s = f.debug_struct("Response");
+        s.field("id", &self.id).field("outcome", &self.outcome);
+        if let Some(waiting) = self.waiting_messages {
+            s.field("waiting_messages", &waiting);
+        }
+        s.finish()
     }
 }
 

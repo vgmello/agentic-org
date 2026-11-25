@@ -364,14 +364,12 @@ impl Session for EchoSession {
             State::Idle | State::Busy => {}
         }
         match control {
-            Control::Send { urgent: true, .. }
+            Control::DeliverMidTurn { .. }
                 if self.state == State::Busy && self.bug == Some(Bug::UrgentSendSteers) =>
             {
                 Ok(vec![])
             }
-            Control::Send { urgent: true, .. } if self.state == State::Busy => {
-                Err(ControlError::NeedsInterrupt)
-            }
+            Control::DeliverMidTurn { .. } => Err(ControlError::Unsupported),
             Control::Send { .. }
                 if self.state == State::Busy
                     && !self.pending.is_empty()
@@ -640,7 +638,7 @@ impl AgentRuntime for EchoRuntime {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            steer: false,
+            mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
             interrupt_in_band: true,
             idle_interrupt_ends_turn: false,
             approval_bridge: true,
@@ -857,13 +855,7 @@ fn a_session_runs_a_turn_through_the_port() {
     assert_eq!(hello.as_bytes(), b"{\"type\":\"hello\"}\n");
     assert_eq!(session.next_deadline(), Some(t0 + OPEN_TIMEOUT));
     assert_eq!(
-        session.control(
-            Control::Send {
-                text: "hi".into(),
-                urgent: false
-            },
-            t0
-        ),
+        session.control(Control::Send { text: "hi".into() }, t0),
         Err(ControlError::NotReady)
     );
 
@@ -878,7 +870,6 @@ fn a_session_runs_a_turn_through_the_port() {
         .control(
             Control::Send {
                 text: "line\u{2028}two".into(),
-                urgent: false,
             },
             t0,
         )
@@ -892,15 +883,25 @@ fn a_session_runs_a_turn_through_the_port() {
     assert!(!line[..line.len() - 1].contains(&b'\n'));
     assert_eq!(out[1], Output::Event(SessionEvent::Status(Activity::Busy)));
 
-    // While busy: normal input waits, urgent input needs an interrupt on this runtime.
-    let busy = |urgent| Control::Send {
-        text: "more".into(),
-        urgent,
-    };
-    assert_eq!(session.control(busy(false), t0), Err(ControlError::Busy));
+    // While busy: normal Send returns Busy, mid-turn delivery is Unsupported on this runtime.
     assert_eq!(
-        session.control(busy(true), t0),
-        Err(ControlError::NeedsInterrupt)
+        session.control(
+            Control::Send {
+                text: "more".into(),
+            },
+            t0
+        ),
+        Err(ControlError::Busy)
+    );
+    assert_eq!(
+        session.control(
+            Control::DeliverMidTurn {
+                delivery_id: "d-1".into(),
+                text: "more".into(),
+            },
+            t0
+        ),
+        Err(ControlError::Unsupported)
     );
 
     // An approval: only the id the session raised can be answered, once.
@@ -1108,11 +1109,8 @@ fn ready_session(now: Instant) -> (Box<dyn Session>, LineFramer) {
     (session, framer)
 }
 
-fn send(text: &str, urgent: bool) -> Control {
-    Control::Send {
-        text: text.into(),
-        urgent,
-    }
+fn send(text: &str) -> Control {
+    Control::Send { text: text.into() }
 }
 
 /// The fake's fixture lines for the testkit: `ready` opens, the Send alone starts the turn,
@@ -1131,6 +1129,7 @@ fn echo_script() -> Script {
             approval.cancel = Some(br#"{"type":"cancel","id":"req-9"}"#.to_vec());
             approval
         }),
+        mid_turn_step: None,
     }
 }
 
@@ -1170,8 +1169,8 @@ fn the_testkit_catches_every_planted_bug() {
     let rule_3: Check = testkit::check_ended_once_and_last;
     let rule_1_approval: Check = testkit::check_busy_while_approval_pending;
     let cancel: Check = testkit::check_answer_after_cancel;
-    let urgent: Check = |make, script, now| {
-        testkit::check_urgent_send(make, script, &EchoRuntime.capabilities(), now)
+    let mid_turn: Check = |make, script, now| {
+        testkit::check_mid_turn_delivery(make, script, &EchoRuntime.capabilities(), now)
     };
     let usage: Check = testkit::check_usage_before_turn_end;
     let all: Check =
@@ -1199,7 +1198,7 @@ fn the_testkit_catches_every_planted_bug() {
         (Bug::RefusedAnswerDropsPending, "rule 2", rule_2),
         (Bug::EndedNotLastWithApproval, "rule 3", rule_3),
         (Bug::AnswerAfterCancelAccepted, "approval rule", cancel),
-        (Bug::UrgentSendSteers, "steering rule", urgent),
+        (Bug::UrgentSendSteers, "mid-turn rule", mid_turn),
         (Bug::BypassInOpening, "bypass rule", rule_1),
         (Bug::PermissionsAsNone, "escalation rule", rule_1_approval),
         (Bug::UsageAfterTurnEnded, "usage rule", usage),
@@ -1239,7 +1238,7 @@ fn an_answer_error_keeps_the_pending_approval() {
     // real one still works, once.
     let t0 = Instant::now();
     let (mut session, mut framer) = ready_session(t0);
-    session.control(send("go", false), t0).unwrap();
+    session.control(send("go"), t0).unwrap();
     feed(
         session.as_mut(),
         &mut framer,
@@ -1274,7 +1273,7 @@ fn stray_lines_do_not_change_the_session_state() {
     opening.start(t0);
     feed(opening.as_mut(), &mut framer, b"{\"type\":\"done\"}\n", t0);
     assert_eq!(
-        opening.control(send("early", false), t0),
+        opening.control(send("early"), t0),
         Err(ControlError::NotReady)
     );
 
@@ -1283,7 +1282,7 @@ fn stray_lines_do_not_change_the_session_state() {
     for line in [&b"{\"type\":\"done\"}\n"[..], b"{\"type\":\"ready\"}\n"] {
         feed(session.as_mut(), &mut framer, line, t0);
         assert_eq!(
-            session.control(send("after close", false), t0),
+            session.control(send("after close"), t0),
             Err(ControlError::Closed)
         );
     }

@@ -2,8 +2,23 @@
 
 use crate::{CostBasis, UsageScope};
 
+/// How a runtime supports non-destructive mid-turn message delivery (`doc-101`, `ADR-0035`).
+///
+/// Mid-turn delivery NEVER aborts a running turn or tool call (`Control::Interrupt` is reserved
+/// for explicit destructive turn abort).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MidTurnDelivery {
+    /// No mid-turn delivery; addressed messages queue until `TurnEnded`.
+    None,
+    /// Immediate non-destructive mid-turn injection (e.g. Codex `turn/steer`, Agy ACP `session/prompt`).
+    NativeSteer,
+    /// In-band runtime hook injection at the next tool/step boundary (e.g. Claude `initialize`
+    /// `PostToolUse` `hook_callback` returning synchronous `hookSpecificOutput.additionalContext`).
+    StepHook,
+}
+
 /// What a runtime can and can't do. Fixed per adapter (and version range); the office reads it
-/// to choose how to act, e.g. interrupt-then-send where there's no steering.
+/// to choose how to act, e.g. staging non-destructive mid-turn messages where supported.
 ///
 /// ## Each part of the spec: enforced, dropped, or refused
 /// The contract ([`crate::AgentRuntime::plan_session`]) sorts every part of the spec into one
@@ -48,9 +63,9 @@ use crate::{CostBasis, UsageScope};
 ///   policy's `version`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capabilities {
-    /// Urgent input can steer a running turn ([`crate::Control::Send`] with `urgent`).
-    /// Otherwise the office interrupts, then sends.
-    pub steer: bool,
+    /// How this runtime supports non-destructive mid-turn message delivery
+    /// ([`crate::Control::DeliverMidTurn`]).
+    pub mid_turn_delivery: MidTurnDelivery,
     /// [`crate::Control::Interrupt`] stops the turn in-band and the process lives on.
     /// Otherwise interrupting means stopping the process and resuming.
     pub interrupt_in_band: bool,
@@ -121,6 +136,13 @@ pub struct Capabilities {
     /// The runtime versions this adapter was tested with. Outside them the office warns but
     /// doesn't block.
     pub tested_versions: VersionRange,
+}
+
+impl Capabilities {
+    /// Whether this runtime supports non-destructive mid-turn delivery (`NativeSteer` or `StepHook`).
+    pub const fn supports_mid_turn_delivery(&self) -> bool {
+        !matches!(self.mid_turn_delivery, MidTurnDelivery::None)
+    }
 }
 
 /// An inclusive range of runtime versions, in the runtime's own version syntax. Only the

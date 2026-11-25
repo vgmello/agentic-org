@@ -1039,7 +1039,7 @@ impl AgentRuntime for WatchScriptedRuntime {
     }
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            steer: false,
+            mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
             interrupt_in_band: false,
             idle_interrupt_ends_turn: false,
             approval_bridge: false,

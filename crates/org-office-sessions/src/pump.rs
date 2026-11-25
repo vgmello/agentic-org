@@ -29,6 +29,7 @@ const POST_EXIT_DRAIN_GRACE: Duration = Duration::from_millis(500);
 
 pub(crate) enum PumpCommand {
     SendTurn(String),
+    NotifyPendingWakes,
     AnswerApproval {
         approval_id: String,
         decision: Decision,
@@ -41,6 +42,31 @@ pub(crate) enum PumpCommand {
         reason: String,
     },
 }
+
+/// One coalesced, fenced mid-turn delivery staged from `pending-wakes.v1.json` without yet
+/// mutating disk (`TASK-115` / `doc-101` §4B).
+#[derive(Clone, Debug)]
+pub(crate) struct StagedMidTurnBatch {
+    pub delivery_id: String,
+    pub item_ids: Vec<String>,
+    pub text: String,
+    pub has_agent_item: bool,
+    pub agent_sender_convs: Vec<(String, String)>,
+}
+
+/// Result of inspecting `pending-wakes.v1.json` for mid-turn delivery while a turn is active.
+pub(crate) enum MidTurnStageOutcome {
+    None,
+    Wait(Duration),
+    Ready(StagedMidTurnBatch),
+}
+
+/// Inspects eligible mid-turn wakes without removing them from disk (`TASK-115`).
+pub(crate) type StageMidTurnWakesHook =
+    Arc<dyn Fn(&str, u32, u32) -> MidTurnStageOutcome + Send + Sync>;
+/// Commits removal of only the runtime-acknowledged `item_ids` (preserving `seen_item_ids`)
+/// after `SessionEvent::MidTurnDelivered` (`TASK-115` / `doc-101` §4B).
+pub(crate) type MidTurnDeliveredHook = Arc<dyn Fn(&str, &StagedMidTurnBatch) + Send + Sync>;
 
 pub(crate) type TurnEndedHook = Arc<dyn Fn(&str) + Send + Sync>;
 pub(crate) type OpenRequiredAsksHook = Arc<dyn Fn(&str) -> bool + Send + Sync>;
@@ -90,6 +116,8 @@ pub(crate) struct PumpHooks {
     pub on_permit_release_pending: Option<PermitReleasePendingHook>,
     pub on_rate_limit: Option<RateLimitHook>,
     pub on_failover: Option<FailoverHook>,
+    pub stage_mid_turn_wakes: Option<StageMidTurnWakesHook>,
+    pub on_mid_turn_delivered: Option<MidTurnDeliveredHook>,
 }
 
 pub(crate) struct SessionRuntimeState {
@@ -158,6 +186,7 @@ pub(crate) struct PumpContext {
     pub employee_id: String,
     pub run_id: String,
     pub runtime_id: String,
+    pub supports_mid_turn: bool,
     pub connection_id: Option<String>,
     pub active_permit: Arc<Mutex<Option<(String, u64)>>>,
     pub workspace: Option<String>,
@@ -204,6 +233,11 @@ struct PumpLoopState {
     turns_dispatched: u64,
     oauth_refresh_attempted: bool,
     failover_pending: Option<FailoverRequest>,
+    mid_turn_dirty: bool,
+    mid_turn_next_check: Option<Instant>,
+    in_flight_delivery: Option<StagedMidTurnBatch>,
+    mid_turn_total_this_turn: u32,
+    mid_turn_agent_this_turn: u32,
 }
 
 impl PumpLoopState {
@@ -231,6 +265,11 @@ impl PumpLoopState {
             turns_dispatched: 0,
             oauth_refresh_attempted,
             failover_pending: None,
+            mid_turn_dirty: false,
+            mid_turn_next_check: None,
+            in_flight_delivery: None,
+            mid_turn_total_this_turn: 0,
+            mid_turn_agent_this_turn: 0,
         }
     }
 }
@@ -264,6 +303,7 @@ pub(crate) fn run_pump(
         drain_commands(&commands, &mut stdin, &ctx, &mut loop_state, &mut session);
         enqueue_background_wakes(&ctx, &mut loop_state);
         dispatch_next_turn(&mut stdin, &ctx, &mut loop_state, &mut session);
+        maybe_deliver_mid_turn(&mut stdin, &ctx, &mut loop_state, &mut session);
         if loop_state.stop_requested {
             break;
         }
@@ -469,12 +509,26 @@ fn drain_commands(
     while let Ok(cmd) = commands.try_recv() {
         match cmd {
             PumpCommand::SendTurn(text) => loop_state.pending_turns.push(text),
+            PumpCommand::NotifyPendingWakes => {
+                loop_state.mid_turn_dirty = true;
+                loop_state.mid_turn_next_check = None;
+            }
             PumpCommand::AnswerApproval {
                 approval_id,
                 decision,
                 allow_always_tool,
             } => {
                 apply_approval_resolution(&ctx.state, &approval_id, allow_always_tool.as_deref());
+                // Wake mid-turn staging once pending approvals clear (`doc-101` §4A).
+                if ctx
+                    .state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .pending_approvals
+                    .is_empty()
+                {
+                    loop_state.mid_turn_dirty = true;
+                }
                 let ctrl = Control::Answer {
                     request_id: ApprovalId::new(approval_id),
                     decision,
@@ -629,15 +683,14 @@ fn dispatch_next_turn(
     loop_state.rate_limited = false;
     loop_state.rate_limit_resets_at = None;
     loop_state.last_permit_renew = Instant::now();
-    if let Ok(outs) = session.control(
-        Control::Send {
-            text,
-            urgent: false,
-        },
-        Instant::now(),
-    ) {
+    if let Ok(outs) = session.control(Control::Send { text }, Instant::now()) {
         loop_state.turn_active = true;
         loop_state.turns_dispatched = loop_state.turns_dispatched.saturating_add(1);
+        loop_state.in_flight_delivery = None;
+        loop_state.mid_turn_total_this_turn = 0;
+        loop_state.mid_turn_agent_this_turn = 0;
+        loop_state.mid_turn_dirty = true;
+        loop_state.mid_turn_next_check = None;
         persist_turn_update(ctx, |rec| {
             rec.objective = objective_for_disk;
             rec.active = true;
@@ -646,6 +699,69 @@ fn dispatch_next_turn(
     } else {
         release_active_permit(ctx);
         loop_state.permit_lease_deadline = None;
+    }
+}
+
+const MID_TURN_NOT_READY_RETRY: Duration = Duration::from_millis(50);
+
+fn maybe_deliver_mid_turn(
+    stdin: &mut org_supervise::ChildStdin,
+    ctx: &PumpContext,
+    loop_state: &mut PumpLoopState,
+    session: &mut Box<dyn org_agent_runtime::Session>,
+) {
+    if !loop_state.turn_active
+        || loop_state.stop_requested
+        || loop_state.suspend_now
+        || loop_state.in_flight_delivery.is_some()
+        || !ctx.supports_mid_turn
+    {
+        return;
+    }
+    let Some(stage_hook) = ctx.hooks.stage_mid_turn_wakes.as_ref() else {
+        return;
+    };
+    let due = loop_state.mid_turn_dirty
+        || loop_state
+            .mid_turn_next_check
+            .is_some_and(|at| Instant::now() >= at);
+    if !due {
+        return;
+    }
+    {
+        let st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+        if st.state != SessionState::Running || !st.pending_approvals.is_empty() {
+            return;
+        }
+    }
+    loop_state.mid_turn_dirty = false;
+    loop_state.mid_turn_next_check = None;
+    match stage_hook(
+        &ctx.employee_id,
+        loop_state.mid_turn_total_this_turn,
+        loop_state.mid_turn_agent_this_turn,
+    ) {
+        MidTurnStageOutcome::None => {}
+        MidTurnStageOutcome::Wait(dur) => {
+            loop_state.mid_turn_next_check = Some(Instant::now() + dur);
+        }
+        MidTurnStageOutcome::Ready(batch) => {
+            let ctrl = Control::DeliverMidTurn {
+                delivery_id: batch.delivery_id.clone(),
+                text: batch.text.clone(),
+            };
+            match session.control(ctrl, Instant::now()) {
+                Ok(outs) => {
+                    loop_state.in_flight_delivery = Some(batch);
+                    apply_outputs(outs, stdin, ctx, loop_state, session);
+                }
+                Err(org_agent_runtime::ControlError::NotReady) => {
+                    loop_state.mid_turn_next_check =
+                        Some(Instant::now() + MID_TURN_NOT_READY_RETRY);
+                }
+                Err(_) => {}
+            }
+        }
     }
 }
 
@@ -842,11 +958,51 @@ fn handle_event(
             persist_turn_update(ctx, |rec| rec.runtime_session_id = Some(id));
         }
         SessionEvent::TurnStarted { .. } => {
+            if !loop_state.turn_active {
+                loop_state.in_flight_delivery = None;
+                loop_state.mid_turn_total_this_turn = 0;
+                loop_state.mid_turn_agent_this_turn = 0;
+            }
             loop_state.turn_active = true;
             loop_state.turn_reply = None;
+            loop_state.mid_turn_dirty = true;
             state.state = SessionState::Running;
             drop(state);
             persist_turn_update(ctx, |rec| rec.active = true);
+        }
+        SessionEvent::MidTurnDelivered { delivery_id } => {
+            let matched = loop_state
+                .in_flight_delivery
+                .as_ref()
+                .is_some_and(|b| b.delivery_id == *delivery_id)
+                .then(|| loop_state.in_flight_delivery.take())
+                .flatten();
+            if let Some(batch) = matched {
+                loop_state.mid_turn_total_this_turn =
+                    loop_state.mid_turn_total_this_turn.saturating_add(1);
+                if batch.has_agent_item {
+                    loop_state.mid_turn_agent_this_turn =
+                        loop_state.mid_turn_agent_this_turn.saturating_add(1);
+                }
+                loop_state.mid_turn_dirty = true;
+                loop_state.mid_turn_next_check = None;
+                let emp_id = ctx.employee_id.clone();
+                let hook = ctx.hooks.on_mid_turn_delivered.clone();
+                drop(state);
+                if let Some(cb) = hook {
+                    cb(&emp_id, &batch);
+                }
+            }
+        }
+        SessionEvent::MidTurnDeliveryFailed { delivery_id, .. } => {
+            // Rollback without touching disk so pending items drain cleanly on TurnEnded (`doc-101` §4B).
+            if loop_state
+                .in_flight_delivery
+                .as_ref()
+                .is_some_and(|b| b.delivery_id == *delivery_id)
+            {
+                loop_state.in_flight_delivery = None;
+            }
         }
         SessionEvent::AssistantText { text, .. } => {
             state.last_reply = Some(text.clone());
@@ -945,6 +1101,9 @@ fn handle_turn_ended(
 ) {
     loop_state.turn_active = false;
     loop_state.turn_just_ended = true;
+    loop_state.in_flight_delivery = None;
+    loop_state.mid_turn_dirty = false;
+    loop_state.mid_turn_next_check = None;
     state.watchdog.record_turn_completed(Instant::now());
     if !errors.is_empty() {
         state.last_error = Some(errors.join("; "));
@@ -1315,6 +1474,7 @@ mod pump_tests {
             employee_id: "emp-1".into(),
             run_id: "run-1".into(),
             runtime_id: "claude".into(),
+            supports_mid_turn: false,
             connection_id,
             active_permit: Arc::new(Mutex::new(None)),
             workspace: None,
@@ -1340,6 +1500,8 @@ mod pump_tests {
                 on_permit_release_pending: None,
                 on_rate_limit: None,
                 on_failover: None,
+                stage_mid_turn_wakes: None,
+                on_mid_turn_delivered: None,
             },
         }
     }

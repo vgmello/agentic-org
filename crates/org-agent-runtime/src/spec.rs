@@ -800,7 +800,7 @@ mod tests {
 
     fn caps(deny_rules: bool, deny_write: bool, deny_read: bool, tools: bool) -> Capabilities {
         Capabilities {
-            steer: false,
+            mid_turn_delivery: crate::MidTurnDelivery::None,
             interrupt_in_band: true,
             idle_interrupt_ends_turn: false,
             approval_bridge: true,

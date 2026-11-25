@@ -118,6 +118,7 @@ fn write_answer(request: &Request, data: Value, revision: Option<u64>) -> Answer
         ack: Some(Ack::Committed),
         revision,
         next_cursor: None,
+        waiting_messages: None,
     }
 }
 

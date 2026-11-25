@@ -1760,7 +1760,7 @@ impl AgentRuntime for ScriptedRuntime {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            steer: false,
+            mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
             interrupt_in_band: false,
             idle_interrupt_ends_turn: false,
             approval_bridge: false,
@@ -4592,6 +4592,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
                 oauth_expires_at_ms: None,
                 workspace: None,
                 active_permit: Arc::clone(&permit),
+                supports_mid_turn: false,
             },
         );
     }

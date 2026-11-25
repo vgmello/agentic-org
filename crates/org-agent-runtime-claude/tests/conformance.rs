@@ -100,6 +100,8 @@ fn claude_script() -> Script {
     let approval_cancel = br#"{"type":"control_cancel_request","request_id":"perm-42"}"#.to_vec();
     let turn_result = br#"{"type":"result","subtype":"success","is_error":false,"result":"Done.","stop_reason":"end_turn","terminal_reason":"completed","total_cost_usd":0.0025,"session_id":"00000000-0000-0000-0000-000000000001"}"#.to_vec();
 
+    let hook_cb = br#"{"type":"control_request","request_id":"hk-1","request":{"subtype":"hook_callback","callback_id":"office-mid-turn-post-tool-use","input":{"tool_name":"Bash"},"tool_use_id":"toolu_1"}}"#.to_vec();
+
     let mut approval = ScriptApproval::new(approval_req, ApprovalId::new("perm-42"));
     approval.cancel = Some(approval_cancel);
 
@@ -109,6 +111,7 @@ fn claude_script() -> Script {
         turn_end: vec![turn_result],
         stderr: vec![b"claude diagnostic notice".to_vec()],
         approval: Some(approval),
+        mid_turn_step: Some(hook_cb),
     }
 }
 
@@ -352,13 +355,7 @@ fn handles_unsolicited_background_wakeup_and_rate_limits() {
         })
     )));
     assert_eq!(
-        session.control(
-            Control::Send {
-                text: "hi".into(),
-                urgent: false
-            },
-            now
-        ),
+        session.control(Control::Send { text: "hi".into() }, now),
         Err(ControlError::Busy)
     );
 
@@ -402,13 +399,7 @@ fn classifies_sandbox_bypass_and_permission_change_escalations_and_dedups_aborte
         now,
     );
     let _ = session
-        .control(
-            Control::Send {
-                text: "run".into(),
-                urgent: false,
-            },
-            now,
-        )
+        .control(Control::Send { text: "run".into() }, now)
         .unwrap();
 
     // Two content blocks with the SAME message id should be deduplicated, not double-counted.
@@ -737,7 +728,6 @@ fn enforces_agent_description_remote_control_init_tools_and_unknown_tool_escalat
         .control(
             Control::Send {
                 text: "check".into(),
-                urgent: false,
             },
             now,
         )
@@ -879,7 +869,6 @@ fn preserves_idle_background_usage_tracks_streaming_msg_ids_and_handles_idle_edg
         .control(
             Control::Send {
                 text: "next user turn".into(),
-                urgent: false,
             },
             now,
         )
@@ -936,7 +925,6 @@ fn preserves_idle_background_usage_tracks_streaming_msg_ids_and_handles_idle_edg
         .control(
             Control::Send {
                 text: "racing send".into(),
-                urgent: false,
             },
             now,
         )
@@ -1144,7 +1132,6 @@ fn send_turn(session: &mut dyn org_agent_runtime::Session) {
         .control(
             Control::Send {
                 text: "work".into(),
-                urgent: false,
             },
             Instant::now(),
         )
@@ -1647,7 +1634,6 @@ fn l7_a_send_keeps_waiting_on_approval_while_background_approvals_are_pending() 
         .control(
             Control::Send {
                 text: "next".into(),
-                urgent: false,
             },
             Instant::now(),
         )
@@ -1919,4 +1905,140 @@ fn capability_translation_covers_presets_rules_init_and_approvals() {
         runtime.plan_session(&bad_deny, &sample_ctx()),
         Err(PlanError::Unsupported(_))
     ));
+}
+
+#[test]
+fn task115_step_hook_registers_post_tool_use_delivers_additional_context_and_fails_on_turn_end() {
+    let runtime = ClaudeRuntime::new();
+    let caps = runtime.capabilities();
+    assert_eq!(
+        caps.mid_turn_delivery,
+        org_agent_runtime::MidTurnDelivery::StepHook
+    );
+    assert!(caps.supports_mid_turn_delivery());
+
+    let (_, mut session) = runtime.plan_session(&sample_spec(), &sample_ctx()).unwrap();
+    let now = Instant::now();
+
+    // 1. initialize registers in-band PostToolUse hook callback with zero shell forks.
+    let start_out = session.start(now);
+    let init_text = match &start_out[0] {
+        Output::Write(line) => String::from_utf8_lossy(line.as_bytes()).into_owned(),
+        other => panic!("expected initialize write, got {other:?}"),
+    };
+    let init_json: serde_json::Value = serde_json::from_str(&init_text).unwrap();
+    assert_eq!(
+        init_json["request"]["hooks"]["PostToolUse"][0]["hookCallbackIds"][0],
+        "office-mid-turn-post-tool-use"
+    );
+
+    let _ = session.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["ac-dev-ada"],"current_permission_mode":"default"}}}"#,
+        now,
+    );
+    assert_eq!(
+        session.control(
+            Control::DeliverMidTurn {
+                delivery_id: "idle-1".into(),
+                text: "nope".into(),
+            },
+            now
+        ),
+        Err(ControlError::InvalidState)
+    );
+
+    let _ = session
+        .control(
+            Control::Send {
+                text: "work".into(),
+            },
+            now,
+        )
+        .unwrap();
+
+    // 2. PostToolUse hook_callback with NO staged payload replies synchronously `{continue: true}`.
+    let noop = session.on_line(
+        br#"{"type":"control_request","request_id":"hk-noop","request":{"subtype":"hook_callback","callback_id":"office-mid-turn-post-tool-use","input":{"tool_name":"Read"}}}"#,
+        now,
+    );
+    assert_eq!(noop.len(), 1);
+    let Output::Write(noop_line) = &noop[0] else {
+        panic!("expected hook control_response write")
+    };
+    let noop_json: serde_json::Value = serde_json::from_slice(noop_line.as_bytes()).unwrap();
+    assert_eq!(noop_json["response"]["request_id"], "hk-noop");
+    assert_eq!(noop_json["response"]["response"]["continue"], true);
+    assert!(noop_json["response"]["response"]
+        .get("hookSpecificOutput")
+        .is_none());
+
+    // 3. Stage payload -> second stage returns NotReady -> hook_callback delivers additionalContext + MidTurnDelivered.
+    assert!(session
+        .control(
+            Control::DeliverMidTurn {
+                delivery_id: "del-42".into(),
+                text: "URGENT PEER NOTICE".into(),
+            },
+            now
+        )
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        session.control(
+            Control::DeliverMidTurn {
+                delivery_id: "del-43".into(),
+                text: "second".into(),
+            },
+            now
+        ),
+        Err(ControlError::NotReady)
+    );
+
+    let delivered = session.on_line(
+        br#"{"type":"control_request","request_id":"hk-2","request":{"subtype":"hook_callback","callback_id":"office-mid-turn-post-tool-use","input":{"tool_name":"Bash"}}}"#,
+        now,
+    );
+    let Output::Write(del_line) = &delivered[0] else {
+        panic!("expected delivered control_response")
+    };
+    let del_json: serde_json::Value = serde_json::from_slice(del_line.as_bytes()).unwrap();
+    assert_eq!(
+        del_json["response"]["response"]["hookSpecificOutput"]["hookEventName"],
+        "PostToolUse"
+    );
+    assert_eq!(
+        del_json["response"]["response"]["hookSpecificOutput"]["additionalContext"],
+        "URGENT PEER NOTICE"
+    );
+    assert!(
+        delivered.contains(&Output::Event(SessionEvent::MidTurnDelivered {
+            delivery_id: "del-42".into(),
+        }))
+    );
+
+    // 4. Stage another payload and finish turn before next hook -> MidTurnDeliveryFailed BEFORE TurnEnded.
+    session
+        .control(
+            Control::DeliverMidTurn {
+                delivery_id: "del-late".into(),
+                text: "late".into(),
+            },
+            now,
+        )
+        .unwrap();
+    let end = session.on_line(
+        br#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#,
+        now,
+    );
+    let fail_idx = end.iter().position(|o| {
+        matches!(
+            o,
+            Output::Event(SessionEvent::MidTurnDeliveryFailed { delivery_id, .. })
+                if delivery_id == "del-late"
+        )
+    });
+    let end_idx = end
+        .iter()
+        .position(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. })));
+    assert!(matches!((fail_idx, end_idx), (Some(f), Some(e)) if f < e));
 }

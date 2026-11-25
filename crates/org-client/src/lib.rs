@@ -46,7 +46,7 @@ use std::ops::Deref;
 use std::os::unix::fs::FileTypeExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -122,6 +122,8 @@ struct Shared {
     events: Arc<EventSlot>,
     next_subscription: AtomicU64,
     queued_bytes: AtomicUsize,
+    /// Non-zero pending wakes/messages hint observed on the most recent response (`TASK-115`).
+    last_waiting_messages: AtomicU32,
     /// To cut the connection from any thread.
     stream: UnixStream,
 }
@@ -501,6 +503,7 @@ impl Client {
             events: Arc::new(Mutex::new(None)),
             next_subscription: AtomicU64::new(1),
             queued_bytes: AtomicUsize::new(0),
+            last_waiting_messages: AtomicU32::new(0),
             stream,
         });
         let (outbound, queue) = mpsc::sync_channel(WRITE_QUEUE);
@@ -636,6 +639,13 @@ impl Client {
         })
     }
 
+    /// Returns the non-zero `waiting_messages` hint reported on the most recent office response,
+    /// if any (`TASK-115` / `doc-101`).
+    pub fn last_waiting_messages(&self) -> Option<u32> {
+        let count = self.shared.last_waiting_messages.load(Ordering::Relaxed);
+        (count > 0).then_some(count)
+    }
+
     fn send_request(
         &self,
         request: Request,
@@ -674,7 +684,11 @@ impl Client {
         if !matches!(outcome, Ok(Ok(_))) && self.settle(&state) {
             *sent = false;
         }
-        finish_outcome(outcome, deadline)
+        let response = finish_outcome(outcome, deadline)?;
+        self.shared
+            .last_waiting_messages
+            .store(response.waiting_messages.unwrap_or(0), Ordering::Relaxed);
+        Ok(response)
     }
 
     /// This call is out of time (or the connection is going away). What happens to its request
@@ -1202,6 +1216,7 @@ mod tests {
             events: Arc::new(Mutex::new(None)),
             next_subscription: AtomicU64::new(1),
             queued_bytes: AtomicUsize::new(0),
+            last_waiting_messages: AtomicU32::new(0),
             stream: stream.try_clone().unwrap(),
         };
         let mut polls = 0;
@@ -1226,6 +1241,7 @@ mod tests {
             events: Arc::new(Mutex::new(None)),
             next_subscription: AtomicU64::new(1),
             queued_bytes: AtomicUsize::new(0),
+            last_waiting_messages: AtomicU32::new(0),
             stream: stream.try_clone().unwrap(),
         };
         let polls = std::cell::Cell::new(0);
@@ -1259,6 +1275,7 @@ mod tests {
             events: Arc::new(Mutex::new(None)),
             next_subscription: AtomicU64::new(1),
             queued_bytes: AtomicUsize::new(0),
+            last_waiting_messages: AtomicU32::new(0),
             stream,
         };
         let (entered, shutdown_started) = mpsc::channel();

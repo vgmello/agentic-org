@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use crate::{
     ApprovalId, Capabilities, Control, ControlError, Decision, ExitInfo, LaunchContext, LaunchPlan,
-    Output, Session, SessionEvent, SessionSpec, MAX_LINE_BYTES,
+    MidTurnDelivery, Output, Session, SessionEvent, SessionSpec, MAX_LINE_BYTES,
 };
 
 /// Runtime lines that walk a session through one turn: what the runtime would write to stdout,
@@ -49,6 +49,10 @@ pub struct Script {
     /// Lines that raise (and withdraw) an approval during the turn, for the approval checks.
     /// `None` for a runtime without an approval bridge: those checks are then skipped.
     pub approval: Option<ScriptApproval>,
+    /// Optional line fed after a busy [`Control::DeliverMidTurn`] to trigger delivery confirmation
+    /// (`hook_callback` for [`MidTurnDelivery::StepHook`] or RPC ack for
+    /// [`MidTurnDelivery::NativeSteer`]).
+    pub mid_turn_step: Option<Vec<u8>>,
 }
 
 /// The approval part of a [`Script`]. `#[non_exhaustive]` so it can grow: build it with
@@ -89,7 +93,7 @@ pub fn check_all(
     check_error_changes_nothing(make, script, now);
     check_ended_once_and_last(make, script, now);
     check_answer_after_cancel(make, script, now);
-    check_urgent_send(make, script, caps, now);
+    check_mid_turn_delivery(make, script, caps, now);
     check_usage_before_turn_end(make, script, now);
 }
 
@@ -108,7 +112,7 @@ pub fn check_busy_while_approval_pending(
     into_turn(session.as_mut(), script, now);
     raise(session.as_mut(), approval, now);
     assert_eq!(
-        session.control(send(false), now),
+        session.control(send(), now),
         Err(ControlError::Busy),
         "rule 1 broken: a normal Send while an approval is pending must return Busy"
     );
@@ -145,9 +149,10 @@ pub fn check_answer_after_cancel(
     );
 }
 
-/// An urgent [`Control::Send`] during a turn: accepted where the runtime can steer
-/// ([`Capabilities::steer`]), [`ControlError::NeedsInterrupt`] where it can't.
-pub fn check_urgent_send(
+/// Non-destructive mid-turn delivery ([`Control::DeliverMidTurn`]): matches declared
+/// [`Capabilities::mid_turn_delivery`], never emits interrupt frames, refuses idle calls, and
+/// fails cleanly if the turn ends before a staged `StepHook` payload is consumed.
+pub fn check_mid_turn_delivery(
     make: &mut dyn FnMut() -> Box<dyn Session>,
     script: &Script,
     caps: &Capabilities,
@@ -155,20 +160,98 @@ pub fn check_urgent_send(
 ) {
     let mut session = make();
     open(session.as_mut(), script, now);
+
+    // Idle DeliverMidTurn must be refused without mutating state.
+    let idle_res = session.control(deliver_mid_turn("d-idle"), now);
+    let expected_idle = match caps.mid_turn_delivery {
+        MidTurnDelivery::None => Err(ControlError::Unsupported),
+        MidTurnDelivery::NativeSteer | MidTurnDelivery::StepHook => Err(ControlError::InvalidState),
+    };
+    assert_eq!(
+        idle_res, expected_idle,
+        "mid-turn rule broken: DeliverMidTurn while idle returned {idle_res:?}, expected {expected_idle:?}"
+    );
+
     into_turn(session.as_mut(), script, now);
-    let result = session.control(send(true), now);
-    if caps.steer {
-        assert!(
-            result.is_ok(),
-            "steering rule broken: an urgent Send must steer on a runtime that can: {result:?}"
-        );
-    } else {
-        assert_eq!(
-            result,
-            Err(ControlError::NeedsInterrupt),
-            "steering rule broken: an urgent Send must return NeedsInterrupt where the \
-             runtime can't steer"
-        );
+    let result = session.control(deliver_mid_turn("d-1"), now);
+    match caps.mid_turn_delivery {
+        MidTurnDelivery::None => {
+            assert_eq!(
+                result,
+                Err(ControlError::Unsupported),
+                "mid-turn rule broken: DeliverMidTurn must return Unsupported when mid_turn_delivery is None"
+            );
+        }
+        MidTurnDelivery::NativeSteer => {
+            let out = result.unwrap_or_else(|e| {
+                panic!("mid-turn rule broken: NativeSteer DeliverMidTurn refused during turn: {e}")
+            });
+            assert_no_interrupt_writes(&out);
+            if let Some(ack_line) = &script.mid_turn_step {
+                let ack_out = session.on_line(ack_line, now);
+                assert!(
+                    ack_out.contains(&Output::Event(SessionEvent::MidTurnDelivered {
+                        delivery_id: "d-1".to_owned(),
+                    })),
+                    "mid-turn rule broken: NativeSteer ack line did not emit MidTurnDelivered: {ack_out:?}"
+                );
+            }
+        }
+        MidTurnDelivery::StepHook => {
+            let out = result.unwrap_or_else(|e| {
+                panic!("mid-turn rule broken: StepHook DeliverMidTurn refused during turn: {e}")
+            });
+            assert_no_interrupt_writes(&out);
+            // Second staged payload while one is pending must return NotReady.
+            assert_eq!(
+                session.control(deliver_mid_turn("d-2"), now),
+                Err(ControlError::NotReady),
+                "mid-turn rule broken: StepHook must refuse a second staged payload with NotReady"
+            );
+            if let Some(hook_line) = &script.mid_turn_step {
+                let hook_out = session.on_line(hook_line, now);
+                assert_no_interrupt_writes(&hook_out);
+                assert!(
+                    hook_out.contains(&Output::Event(SessionEvent::MidTurnDelivered {
+                        delivery_id: "d-1".to_owned(),
+                    })),
+                    "mid-turn rule broken: StepHook callback did not emit MidTurnDelivered: {hook_out:?}"
+                );
+            }
+            // Also verify unconsumed staged payload emits MidTurnDeliveryFailed before TurnEnded.
+            let mut s2 = make();
+            open(s2.as_mut(), script, now);
+            into_turn(s2.as_mut(), script, now);
+            s2.control(deliver_mid_turn("d-unconsumed"), now)
+                .expect("StepHook staging succeeds");
+            let end_out = end_turn(s2.as_mut(), script, now);
+            let fail_pos = end_out.iter().position(|o| {
+                matches!(
+                    o,
+                    Output::Event(SessionEvent::MidTurnDeliveryFailed { delivery_id, .. })
+                        if delivery_id == "d-unconsumed"
+                )
+            });
+            let end_pos = end_out
+                .iter()
+                .position(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. })));
+            assert!(
+                matches!((fail_pos, end_pos), (Some(f), Some(e)) if f < e),
+                "mid-turn rule broken: unconsumed StepHook payload must emit MidTurnDeliveryFailed before TurnEnded: {end_out:?}"
+            );
+        }
+    }
+}
+
+fn assert_no_interrupt_writes(out: &[Output]) {
+    for item in out {
+        if let Output::Write(line) = item {
+            let text = String::from_utf8_lossy(line.as_bytes());
+            assert!(
+                !text.contains("\"interrupt\"") && !text.contains("\"turn/interrupt\""),
+                "mid-turn rule broken: DeliverMidTurn must NEVER emit interrupt frames: {text}"
+            );
+        }
     }
 }
 
@@ -371,13 +454,13 @@ pub fn check_busy_during_turn(
     open(session.as_mut(), script, now);
     into_turn(session.as_mut(), script, now);
     assert_eq!(
-        session.control(send(false), now),
+        session.control(send(), now),
         Err(ControlError::Busy),
         "rule 1 broken: a normal Send during a turn must return Busy"
     );
     end_turn(session.as_mut(), script, now);
     assert!(
-        session.control(send(false), now).is_ok(),
+        session.control(send(), now).is_ok(),
         "testkit: after the script's turn_end lines, a normal Send was still refused (the \
          script doesn't end the turn, or rule 2 is broken: the refused Send was queued)"
     );
@@ -401,11 +484,21 @@ pub fn check_error_changes_nothing(
         now,
     };
     pair.both("start", &|s| s.start(now));
-    pair.try_on_a("a Send while opening", send(false), false);
+    pair.try_on_a("a Send while opening", send(), false);
+    pair.try_on_a(
+        "a DeliverMidTurn while opening",
+        deliver_mid_turn("d-open"),
+        true,
+    );
     pair.try_on_a("an Answer while opening", answer_never_raised(), true);
     for line in &script.opening {
         pair.both("an opening line", &|s| s.on_line(line, now));
     }
+    pair.try_on_a(
+        "a DeliverMidTurn while idle",
+        deliver_mid_turn("d-idle"),
+        true,
+    );
     pair.try_on_a(
         "an Answer for an approval never raised",
         answer_never_raised(),
@@ -415,7 +508,7 @@ pub fn check_error_changes_nothing(
         pair.both("a stderr line", &|s| s.on_stderr_line(line, now));
     }
     pair.both("a Send while idle", &|s| {
-        s.control(send(false), now)
+        s.control(send(), now)
             .unwrap_or_else(|e| panic!("testkit: a normal Send while idle was refused: {e}"))
     });
     for line in &script.turn {
@@ -425,11 +518,7 @@ pub fn check_error_changes_nothing(
         pair.both("an approval request", &|s| {
             s.on_line(&approval.request, now)
         });
-        pair.try_on_a(
-            "a normal Send while an approval is pending",
-            send(false),
-            true,
-        );
+        pair.try_on_a("a normal Send while an approval is pending", send(), true);
         pair.try_on_a(
             "an Answer to the wrong approval",
             answer_never_raised(),
@@ -440,19 +529,23 @@ pub fn check_error_changes_nothing(
             s.control(answer(&approval.id), now)
         });
     }
-    pair.try_on_a("a normal Send during the turn", send(false), true);
+    pair.try_on_a("a normal Send during the turn", send(), true);
     pair.try_on_a(
         "an Answer never raised, during the turn",
         answer_never_raised(),
         true,
     );
-    pair.try_on_a("an urgent Send during the turn", send(true), false);
+    pair.try_on_a(
+        "a DeliverMidTurn during the turn",
+        deliver_mid_turn("d-busy"),
+        false,
+    );
     for line in &script.turn_end {
         pair.both("a turn_end line", &|s| s.on_line(line, now));
     }
     // A refused Send must not have been queued: this one writes the same as on the twin.
     pair.both("a Send after the turn", &|s| {
-        s.control(send(false), now).unwrap_or_else(|e| {
+        s.control(send(), now).unwrap_or_else(|e| {
             panic!("testkit: after the script's turn_end lines, a normal Send was refused: {e}")
         })
     });
@@ -622,8 +715,8 @@ fn assert_finished(session: &mut dyn Session, script: &Script, name: &str, now: 
         "rule 3 broken ({name}): a deadline after Ended"
     );
     for control in [
-        send(false),
-        send(true),
+        send(),
+        deliver_mid_turn("d-ended"),
         Control::Interrupt,
         Control::Close,
         answer_never_raised(),
@@ -660,10 +753,16 @@ fn varied_exit(i: usize) -> ExitInfo {
     }
 }
 
-fn send(urgent: bool) -> Control {
+fn send() -> Control {
     Control::Send {
         text: "org-agent-runtime testkit".to_owned(),
-        urgent,
+    }
+}
+
+fn deliver_mid_turn(id: &str) -> Control {
+    Control::DeliverMidTurn {
+        delivery_id: id.to_owned(),
+        text: "org-agent-runtime mid-turn notice".to_owned(),
     }
 }
 
@@ -729,7 +828,7 @@ fn open(session: &mut dyn Session, script: &Script, now: Instant) -> Vec<Output>
 /// Sends a normal message while idle and feeds the turn lines.
 fn into_turn(session: &mut dyn Session, script: &Script, now: Instant) -> Vec<Output> {
     let mut out = session
-        .control(send(false), now)
+        .control(send(), now)
         .unwrap_or_else(|e| panic!("testkit: a normal Send while idle was refused: {e}"));
     for line in &script.turn {
         out.extend(session.on_line(line, now));

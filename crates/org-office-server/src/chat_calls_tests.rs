@@ -1743,3 +1743,35 @@ fn task95_real_office_dry_run_forwarded_and_refused_writes_leave_store_unchanged
     assert_eq!(before.projects.len(), after.projects.len());
     assert_eq!(open_owner_inbox_count(&fx), 0);
 }
+
+#[test]
+fn task115_agent_os_waiting_messages_meta_and_active_ask_waiter_tracking() {
+    let fx = LiveOfficeFixture::start();
+    let hr_binding = fx.issue_binding_for(&fx.hr_id);
+
+    // 1. With 0 waiting messages, meta.waiting_messages MUST be omitted completely.
+    let clean_out = org_agent_cli::execute(&["org".into(), "inspect".into()], hr_binding.clone());
+    assert_eq!(clean_out.exit_code, 0, "{}", clean_out.stdout);
+    let clean_env: Value = serde_json::from_str(&clean_out.stdout).unwrap();
+    assert!(
+        clean_env["meta"].get("waiting_messages").is_none(),
+        "zero waiting_messages must be omitted: {clean_env}"
+    );
+
+    // 2. When the per-employee in-memory AtomicU32 is non-zero, agent-os attaches meta.waiting_messages.
+    let counter = fx.sessions.waiting_messages_counter(&fx.hr_id);
+    counter.store(3, std::sync::atomic::Ordering::Relaxed);
+    let hinted_out = org_agent_cli::execute(&["org".into(), "inspect".into()], hr_binding);
+    assert_eq!(hinted_out.exit_code, 0, "{}", hinted_out.stdout);
+    let hinted_env: Value = serde_json::from_str(&hinted_out.stdout).unwrap();
+    assert_eq!(hinted_env["meta"]["waiting_messages"], Value::from(3));
+    counter.store(0, std::sync::atomic::Ordering::Relaxed);
+
+    // 3. Human grant calls never carry waiting_messages even if a counter is non-zero.
+    let owner_counter = fx.sessions.waiting_messages_counter(&fx.owner_id);
+    owner_counter.store(5, std::sync::atomic::Ordering::Relaxed);
+    let req = Request::new::<org_proto::OrgSnapshotCall>(901, &org_proto::Empty {}).unwrap();
+    let owner_resp = fx.shared.answer_for_test(&req, &fx.owner_id, true);
+    assert_eq!(owner_resp.waiting_messages, None);
+    owner_counter.store(0, std::sync::atomic::Ordering::Relaxed);
+}

@@ -13,9 +13,9 @@ mod probe;
 mod session;
 
 use org_agent_runtime::{
-    AgentRuntime, Capabilities, CostBasis, LaunchContext, LaunchPlan, PlanError, Probe,
-    ProbeContext, ProbeOutput, ProbeResult, ProbeRun, RuntimeId, Session, SessionSpec, UsageScope,
-    VersionRange,
+    AgentRuntime, Capabilities, CostBasis, LaunchContext, LaunchPlan, MidTurnDelivery, PlanError,
+    Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun, RuntimeId, Session, SessionSpec,
+    UsageScope, VersionRange,
 };
 
 use crate::plan::{build_headless_plan, build_take_over_plan};
@@ -44,7 +44,7 @@ impl AgentRuntime for ClaudeRuntime {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            steer: false,
+            mid_turn_delivery: MidTurnDelivery::StepHook,
             interrupt_in_band: true,
             idle_interrupt_ends_turn: false,
             approval_bridge: true,

@@ -13,6 +13,7 @@ use org_agent_runtime::{
 use crate::plan::ExpectedMode;
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(15);
+const POST_TOOL_USE_CALLBACK_ID: &str = "office-mid-turn-post-tool-use";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -75,6 +76,9 @@ pub(crate) struct ClaudeSession {
     turn_usage_by_msg: BTreeMap<String, MessageUsage>,
     streaming_message_id: Option<String>,
     turn_model: Option<String>,
+    /// Staged non-destructive mid-turn delivery `(delivery_id, text)` injected on the next
+    /// in-band `PostToolUse` `hook_callback` (`doc-101`, `ADR-0035`).
+    staged_mid_turn: Option<(String, String)>,
 }
 
 impl ClaudeSession {
@@ -105,6 +109,7 @@ impl ClaudeSession {
             turn_usage_by_msg: BTreeMap::new(),
             streaming_message_id: None,
             turn_model: None,
+            staged_mid_turn: None,
         }
     }
 
@@ -119,15 +124,19 @@ impl ClaudeSession {
         self.aborting = true;
         self.phase = Phase::Closing;
         self.stop_reason = Some(detail.clone());
+        let mut out = Vec::new();
+        if let Some(fail) = fail_staged_mid_turn(self, "session stopped before next tool boundary")
+        {
+            out.push(fail);
+        }
         let interrupt = self.encode_interrupt_request();
-        vec![
-            Output::Event(SessionEvent::Notice {
-                kind: NoticeKind::Warning,
-                text: detail,
-            }),
-            interrupt,
-            Output::CloseStdin,
-        ]
+        out.push(Output::Event(SessionEvent::Notice {
+            kind: NoticeKind::Warning,
+            text: detail,
+        }));
+        out.push(interrupt);
+        out.push(Output::CloseStdin);
+        out
     }
 
     fn is_tool_allowed(&self, tool_name: &str) -> bool {
@@ -363,6 +372,9 @@ impl ClaudeSession {
             })];
         };
         let subtype = req.get("subtype").and_then(Value::as_str).unwrap_or("");
+        if subtype == "hook_callback" {
+            return handle_hook_callback(self, request_id, req);
+        }
         if subtype != "can_use_tool" {
             return vec![Output::Event(SessionEvent::Unknown {
                 type_name: format!("control_request/{subtype}"),
@@ -806,61 +818,13 @@ impl ClaudeSession {
 
     fn handle_result(&mut self, val: &Value) -> Vec<Output> {
         let mut out = Vec::new();
-
-        if let Some(raw_sid) = val.get("session_id").and_then(Value::as_str) {
-            if let Ok(sid) = SessionId::try_from(raw_sid) {
-                if self.emitted_session_id.as_ref() != Some(&sid) {
-                    self.emitted_session_id = Some(sid.clone());
-                    out.push(Output::Event(SessionEvent::SessionStarted {
-                        runtime_session_id: sid,
-                    }));
-                }
-            }
+        if let Some(ev) = record_result_session_id(self, val) {
+            out.push(ev);
         }
-
-        if let Some(denials) = val.get("permission_denials").and_then(Value::as_array) {
-            for denial in denials {
-                let tool = denial
-                    .get("tool_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_owned();
-                let tool_use_id = denial
-                    .get("tool_use_id")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned);
-                let message = denial
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned);
-                out.push(Output::Event(SessionEvent::ActionDenied {
-                    tool,
-                    tool_use_id,
-                    message,
-                }));
-            }
-        }
-
+        collect_result_denials(val, &mut out);
         // Always emit Usage BEFORE TurnEnded (usage rule).
-        let msg_totals = self
-            .sum_turn_usage()
-            .or_else(|| val.get("usage").map(parse_claude_usage));
-        let cost_usd = val.get("total_cost_usd").and_then(Value::as_f64);
-        if msg_totals.is_some() || cost_usd.is_some() {
-            let mut usage = Usage::new(UsageScope::TurnDelta, UsageScope::Cumulative);
-            usage.model = self.turn_model.clone();
-            if let Some(t) = msg_totals {
-                usage.input = t.input;
-                usage.output = t.output;
-                usage.cache_read = t.cache_read;
-                usage.cache_write = t.cache_write;
-                usage.reasoning = t.reasoning;
-            }
-            if let Some(cost) = cost_usd {
-                usage.cost_usd = Some(cost);
-                usage.cost_basis = CostBasis::ListPriceEstimate;
-            }
-            out.push(Output::Event(SessionEvent::Usage(usage)));
+        if let Some(usage) = build_result_usage(self, val) {
+            out.push(usage);
         }
 
         let (outcome, errors) = map_result_outcome(val);
@@ -870,6 +834,11 @@ impl ClaudeSession {
         // process ending (stdout closed or exit) cancels them.
         match self.phase {
             Phase::Busy => {
+                if let Some(fail) =
+                    fail_staged_mid_turn(self, "turn ended before next tool boundary")
+                {
+                    out.push(fail);
+                }
                 self.phase = Phase::Idle;
                 self.turn_open = false;
                 out.push(Output::Event(SessionEvent::TurnEnded { outcome, errors }));
@@ -880,7 +849,14 @@ impl ClaudeSession {
                 };
                 out.push(Output::Event(SessionEvent::Status(status)));
             }
-            Phase::Closing => out.extend(self.end_closed_turn(Some((outcome, errors)))),
+            Phase::Closing => {
+                if let Some(fail) =
+                    fail_staged_mid_turn(self, "turn ended before next tool boundary")
+                {
+                    out.push(fail);
+                }
+                out.extend(self.end_closed_turn(Some((outcome, errors))));
+            }
             Phase::Opening | Phase::Idle | Phase::Failed | Phase::Ended => {}
         }
         out
@@ -910,7 +886,17 @@ impl Session for ClaudeSession {
         let payload = json!({
             "type": "control_request",
             "request_id": req_id,
-            "request": { "subtype": "initialize" }
+            "request": {
+                "subtype": "initialize",
+                "hooks": {
+                    "PostToolUse": [
+                        {
+                            "matcher": "",
+                            "hookCallbackIds": [POST_TOOL_USE_CALLBACK_ID]
+                        }
+                    ]
+                }
+            }
         });
         let line = encode_line(&payload).expect("static initialize JSON encodes cleanly");
         self.init_request_id = Some(req_id);
@@ -966,6 +952,11 @@ impl Session for ClaudeSession {
                 }));
             }
             Phase::Busy => {
+                if let Some(fail) =
+                    fail_staged_mid_turn(self, "Claude stdout closed before next tool boundary")
+                {
+                    out.push(fail);
+                }
                 if let Some(u) = self.flush_open_usage() {
                     out.push(u);
                 }
@@ -985,6 +976,11 @@ impl Session for ClaudeSession {
                 }
             }
             Phase::Closing => {
+                if let Some(fail) =
+                    fail_staged_mid_turn(self, "Claude stdout closed before next tool boundary")
+                {
+                    out.push(fail);
+                }
                 if let Some(u) = self.flush_open_usage() {
                     out.push(u);
                 }
@@ -1010,6 +1006,11 @@ impl Session for ClaudeSession {
                 }));
             }
             Phase::Busy => {
+                if let Some(fail) =
+                    fail_staged_mid_turn(self, "Claude exited before next tool boundary")
+                {
+                    out.push(fail);
+                }
                 if let Some(u) = self.flush_open_usage() {
                     out.push(u);
                 }
@@ -1027,6 +1028,11 @@ impl Session for ClaudeSession {
                 }
             }
             Phase::Closing => {
+                if let Some(fail) =
+                    fail_staged_mid_turn(self, "Claude exited before next tool boundary")
+                {
+                    out.push(fail);
+                }
                 if let Some(u) = self.flush_open_usage() {
                     out.push(u);
                 }
@@ -1063,15 +1069,9 @@ impl Session for ClaudeSession {
         }
 
         match control {
-            Control::Send { text, urgent } => match self.phase {
+            Control::Send { text } => match self.phase {
                 Phase::Opening | Phase::Failed => Err(ControlError::NotReady),
-                Phase::Busy => {
-                    if urgent {
-                        Err(ControlError::NeedsInterrupt)
-                    } else {
-                        Err(ControlError::Busy)
-                    }
-                }
+                Phase::Busy => Err(ControlError::Busy),
                 Phase::Idle => {
                     let payload = json!({
                         "type": "user",
@@ -1096,6 +1096,18 @@ impl Session for ClaudeSession {
                     }));
                     out.push(Output::Event(SessionEvent::Status(self.busy_status())));
                     Ok(out)
+                }
+                Phase::Closing | Phase::Ended => Err(ControlError::Closed),
+            },
+            Control::DeliverMidTurn { delivery_id, text } => match self.phase {
+                Phase::Opening | Phase::Failed => Err(ControlError::NotReady),
+                Phase::Idle => Err(ControlError::InvalidState),
+                Phase::Busy => {
+                    if self.staged_mid_turn.is_some() {
+                        return Err(ControlError::NotReady);
+                    }
+                    self.staged_mid_turn = Some((delivery_id, text));
+                    Ok(Vec::new())
                 }
                 Phase::Closing | Phase::Ended => Err(ControlError::Closed),
             },
@@ -1341,6 +1353,119 @@ fn parse_limit_status(raw: Option<&str>) -> LimitStatus {
         Some("allowed_warning" | "warning") => LimitStatus::Warning,
         Some("rejected" | "rate_limited") => LimitStatus::Rejected,
         _ => LimitStatus::Unknown,
+    }
+}
+
+fn fail_staged_mid_turn(s: &mut ClaudeSession, reason: &str) -> Option<Output> {
+    let (delivery_id, _) = s.staged_mid_turn.take()?;
+    Some(Output::Event(SessionEvent::MidTurnDeliveryFailed {
+        delivery_id,
+        reason: reason.to_owned(),
+    }))
+}
+
+fn handle_hook_callback(
+    s: &mut ClaudeSession,
+    request_id: &str,
+    req: &serde_json::Map<String, Value>,
+) -> Vec<Output> {
+    let callback_id = req.get("callback_id").and_then(Value::as_str).unwrap_or("");
+    let delivered =
+        if callback_id == POST_TOOL_USE_CALLBACK_ID && !s.aborting && s.phase == Phase::Busy {
+            s.staged_mid_turn.take()
+        } else {
+            None
+        };
+    let (body, event) = match delivered {
+        Some((delivery_id, text)) => (
+            json!({
+                "continue": true,
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": text,
+                }
+            }),
+            Some(Output::Event(SessionEvent::MidTurnDelivered {
+                delivery_id,
+            })),
+        ),
+        None => (json!({ "continue": true }), None),
+    };
+    let payload = json!({
+        "type": "control_response",
+        "response": {
+            "subtype": "success",
+            "request_id": request_id,
+            "response": body,
+        }
+    });
+    let line = encode_line(&payload).expect("hook_callback control_response encodes");
+    let mut out = vec![Output::Write(line)];
+    if let Some(ev) = event {
+        out.push(ev);
+    }
+    out
+}
+
+fn record_result_session_id(s: &mut ClaudeSession, val: &Value) -> Option<Output> {
+    let raw_sid = val.get("session_id").and_then(Value::as_str)?;
+    let sid = SessionId::try_from(raw_sid).ok()?;
+    if s.emitted_session_id.as_ref() == Some(&sid) {
+        return None;
+    }
+    s.emitted_session_id = Some(sid.clone());
+    Some(Output::Event(SessionEvent::SessionStarted {
+        runtime_session_id: sid,
+    }))
+}
+
+fn build_result_usage(s: &ClaudeSession, val: &Value) -> Option<Output> {
+    let msg_totals = s
+        .sum_turn_usage()
+        .or_else(|| val.get("usage").map(parse_claude_usage));
+    let cost_usd = val.get("total_cost_usd").and_then(Value::as_f64);
+    if msg_totals.is_none() && cost_usd.is_none() {
+        return None;
+    }
+    let mut usage = Usage::new(UsageScope::TurnDelta, UsageScope::Cumulative);
+    usage.model = s.turn_model.clone();
+    if let Some(t) = msg_totals {
+        usage.input = t.input;
+        usage.output = t.output;
+        usage.cache_read = t.cache_read;
+        usage.cache_write = t.cache_write;
+        usage.reasoning = t.reasoning;
+    }
+    if let Some(cost) = cost_usd {
+        usage.cost_usd = Some(cost);
+        usage.cost_basis = CostBasis::ListPriceEstimate;
+    }
+    Some(Output::Event(SessionEvent::Usage(usage)))
+}
+
+fn collect_result_denials(val: &Value, out: &mut Vec<Output>) {
+    let Some(denials) = val.get("permission_denials").and_then(Value::as_array) else {
+        return;
+    };
+    for denial in denials {
+        let tool = denial
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned();
+        let tool_use_id = denial
+            .get("tool_use_id")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        let message = denial
+            .get("message")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        out.push(Output::Event(SessionEvent::ActionDenied {
+            tool,
+            tool_use_id,
+            message,
+        }));
     }
 }
 

@@ -3,6 +3,7 @@
 //! `C10` always-available presence & human/task auto-start).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -14,17 +15,19 @@ use org_proto::sessions::SessionState;
 
 use crate::binding::RunBindingRegistry;
 use crate::credentials::{now_ms, rfc3339_now};
-use crate::manager::{SessionManager, SessionRegistry};
+use crate::manager::{set_waiting_messages_count, SessionManager, SessionRegistry};
 use crate::pump::{
-    FailoverHook, OpenRequiredAsksHook, PermitAcquireHook, PermitReleaseHook,
-    PermitReleasePendingHook, PermitRenewHook, PumpCommand, PumpHooks, RateLimitHook,
-    SuspendedHook, TurnEndedHook,
+    FailoverHook, MidTurnDeliveredHook, MidTurnStageOutcome, OpenRequiredAsksHook,
+    PermitAcquireHook, PermitReleaseHook, PermitReleasePendingHook, PermitRenewHook, PumpCommand,
+    PumpHooks, RateLimitHook, StageMidTurnWakesHook, StagedMidTurnBatch, SuspendedHook,
+    TurnEndedHook,
 };
 use crate::recovery::SessionStore;
 use crate::wake::{
-    compose_coalesced_wake_objective, compose_required_ask_resume_objective, PendingAskAnswer,
-    PendingWakeItem, PendingWakeQueueRecord, SuspendedAskEntry, SuspendedStateRecord,
-    WakeHoldReason, WakeKind, WakeOutcome, WakeQuotaRecord,
+    compose_coalesced_wake_objective, compose_mid_turn_notice_batch,
+    compose_required_ask_resume_objective, sender_conv_key, MidTurnLimits, MidTurnRateTracker,
+    MidTurnSelection, PendingAskAnswer, PendingWakeItem, PendingWakeQueueRecord, SuspendedAskEntry,
+    SuspendedStateRecord, WakeHoldReason, WakeKind, WakeOutcome, WakeQuotaRecord,
 };
 
 struct DispatchWakeGuard {
@@ -120,11 +123,13 @@ impl SessionManager {
         }
     }
 
-    /// Handles an answer to an ask: resumes a suspended asker (`ASK-5..9`, `ASK-11..12`), ignores
-    /// a currently running turn (`ADR-0023` d6), or wakes an idle asker (`WAKE-7`).
+    /// Handles an answer to an ask: resumes a suspended asker (`ASK-5..9`, `ASK-11..12`), skips
+    /// duplicate delivery only when an active `msg ask`/`msg wait` waiter already received the
+    /// answer inline (`ADR-0023` d6), or enqueues an `AskAnswer` wake for mid-turn or next-turn
+    /// delivery (`TASK-115` / `doc-101` §4A).
     #[expect(
         clippy::too_many_arguments,
-        reason = "public ask-answered hook takes explicit asker, ask, question/answer summaries, responder, and subagent flag"
+        reason = "public ask-answered hook takes explicit asker, ask, question/answer summaries, responder, subagent flag, and active-waiter flag"
     )]
     pub fn on_ask_answered(
         &self,
@@ -136,6 +141,7 @@ impl SessionManager {
         answered_by_name: &str,
         answered_by_person: bool,
         asked_by_subagent: bool,
+        satisfied_active_waiter: bool,
     ) -> WakeOutcome {
         self.on_ask_answered_durable(
             asker_id,
@@ -144,13 +150,18 @@ impl SessionManager {
             answer_summary,
             (answered_by_id, answered_by_name, answered_by_person),
             asked_by_subagent,
+            satisfied_active_waiter,
         )
         .unwrap_or(WakeOutcome::Ignored)
     }
 
     /// Durable variant of `on_ask_answered` that propagates suspended-state and pending-wake
     /// persistence failures so cross-office federation only commits `delivered: true` after
-    /// resume intent is durably recorded (`TASK-52` P7-#4).
+    /// resume intent is durably recorded (`TASK-52` P7-#4, `TASK-115`).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "durable ask-answered hook takes explicit asker, ask, summaries, responder, subagent flag, and active-waiter flag"
+    )]
     pub fn on_ask_answered_durable(
         &self,
         asker_id: &str,
@@ -159,6 +170,7 @@ impl SessionManager {
         answer_summary: &str,
         responder: (&str, &str, bool),
         asked_by_subagent: bool,
+        satisfied_active_waiter: bool,
     ) -> Result<WakeOutcome, String> {
         let (answered_by_id, answered_by_name, answered_by_person) = responder;
         let suspended_resume = {
@@ -180,7 +192,7 @@ impl SessionManager {
         if suspended_resume {
             return Ok(self.resume_suspended_with_retry(asker_id));
         }
-        if self.has_live_active_turn(asker_id) {
+        if satisfied_active_waiter {
             return Ok(WakeOutcome::Ignored);
         }
         let item = PendingWakeItem {
@@ -188,6 +200,8 @@ impl SessionManager {
             kind: WakeKind::AskAnswer,
             sender_id: answered_by_id.to_owned(),
             sender_name: answered_by_name.to_owned(),
+            sender_handle: None,
+            sender_relation: None,
             sender_is_person: answered_by_person,
             conversation_id: None,
             source_id: ask_id.to_owned(),
@@ -260,7 +274,7 @@ impl SessionManager {
     pub fn enqueue_wake_durable(
         &self,
         target_employee_id: &str,
-        item: PendingWakeItem,
+        mut item: PendingWakeItem,
     ) -> Result<WakeOutcome, String> {
         let Some(employee) = self.load_agent_employee(target_employee_id) else {
             return Ok(WakeOutcome::Ignored);
@@ -269,6 +283,7 @@ impl SessionManager {
             self.on_agent_offboarded(target_employee_id);
             return Ok(WakeOutcome::Ignored);
         }
+        self.enrich_wake_provenance(&employee, &mut item);
         {
             let _lock = self
                 .lifecycle_lock
@@ -285,8 +300,63 @@ impl SessionManager {
             self.store
                 .write_pending_wakes_redacted(&queue, &refs)
                 .map_err(|e| format!("write pending wakes failed: {e}"))?;
+            set_waiting_messages_count(
+                &self.waiting_messages,
+                target_employee_id,
+                queue.items.len(),
+            );
         }
         Ok(self.process_due_wakes_for(target_employee_id))
+    }
+
+    /// Populates office-verified `sender_handle` and reporting-chain `sender_relation` badge
+    /// (`doc-78`, `doc-101` §4C) so untrusted message fences carry authenticated provenance.
+    fn enrich_wake_provenance(&self, target: &Employee, item: &mut PendingWakeItem) {
+        let sender_emp = self.office.load_employee(&item.sender_id).ok().flatten();
+        if item.sender_handle.is_none() {
+            if let Some(emp) = sender_emp.as_ref().filter(|e| !e.handle.is_empty()) {
+                item.sender_handle = Some(emp.handle.clone());
+            }
+        }
+        if item.sender_relation.is_none() {
+            let relation = if item.sender_id == self.office.owner_member_id() {
+                "owner"
+            } else if target
+                .reports_to_employee_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == item.sender_id)
+            {
+                "reports_to"
+            } else if self
+                .office
+                .org_snapshot()
+                .ok()
+                .and_then(|snap| {
+                    snap.teams
+                        .into_iter()
+                        .find(|t| t.id == target.home_team_id.as_str())
+                })
+                .is_some_and(|team| team.lead_member_id.as_deref() == Some(item.sender_id.as_str()))
+            {
+                "team_lead"
+            } else if item.sender_is_person
+                || sender_emp
+                    .as_ref()
+                    .is_some_and(|e| e.kind == EmployeeKind::Person)
+            {
+                "person"
+            } else {
+                "peer"
+            };
+            item.sender_relation = Some(relation.to_owned());
+        }
+    }
+
+    fn notify_live_pump_pending_wakes(&self, employee_id: &str) {
+        let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(handle) = reg.live.get(employee_id).filter(|h| h.supports_mid_turn) {
+            let _ = handle.tx.send(PumpCommand::NotifyPendingWakes);
+        }
     }
 
     /// Wakes an idle agent on task assignment from either a person or another agent (`AVAIL-2`).
@@ -304,6 +374,8 @@ impl SessionManager {
             kind: WakeKind::TaskAssignment,
             sender_id: actor_id.to_owned(),
             sender_name: actor_name.to_owned(),
+            sender_handle: None,
+            sender_relation: None,
             sender_is_person: actor_is_person,
             conversation_id: None,
             source_id: task_id.to_owned(),
@@ -353,6 +425,7 @@ impl SessionManager {
             .remove(employee_id);
         let _ = self.store.clear_pending_wakes(employee_id);
         let _ = self.store.clear_suspended_state(employee_id);
+        set_waiting_messages_count(&self.waiting_messages, employee_id, 0);
     }
 
     /// Scans all session folders, flushes any deferred session usage, and retries any held resumes
@@ -528,6 +601,7 @@ impl SessionManager {
             budget_hold: Arc::clone(&self.budget_hold),
             lifecycle_lock: Arc::clone(&self.lifecycle_lock),
             dispatching_wakes: Arc::clone(&self.dispatching_wakes),
+            waiting_messages: Arc::clone(&self.waiting_messages),
             bindings: self.bindings.clone(),
             office: Arc::clone(&self.office),
             hq_permits: self.config.hq_permits.clone(),
@@ -541,11 +615,13 @@ impl SessionManager {
             drain_pending_wakes_into_live_pump(emp_id, &drain_ctx);
         });
 
+        let (stage_mid_turn_wakes, on_mid_turn_delivered) = build_mid_turn_hooks(self);
+
         let usage_office = Arc::clone(&self.office);
         let usage_store = self.store.clone();
-        let usage_seq = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let usage_seq = Arc::new(AtomicU64::new(1));
         let on_usage: crate::pump::UsageHook = Arc::new(move |emp_id, run_id, usage| {
-            let seq = usage_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let seq = usage_seq.fetch_add(1, Ordering::Relaxed);
             record_session_usage(&usage_office, &usage_store, emp_id, run_id, seq, usage);
         });
 
@@ -585,6 +661,8 @@ impl SessionManager {
             on_permit_release_pending: Some(on_permit_release_pending),
             on_rate_limit: Some(on_rate_limit),
             on_failover: Some(on_failover),
+            stage_mid_turn_wakes: Some(stage_mid_turn_wakes),
+            on_mid_turn_delivered: Some(on_mid_turn_delivered),
         }
     }
 
@@ -879,11 +957,16 @@ impl SessionManager {
                 self.queue_hold_reason(employee, task_ref, queue.has_person_item(), ts)
             {
                 let first = queue.items[0].clone();
+                let has_mid_turn_eligible =
+                    queue.items.iter().any(|i| i.kind.is_mid_turn_eligible());
                 let changed = queue.hold_reason != Some(reason);
                 queue.set_hold(reason, ts, retry_after);
                 self.write_wakes_redacted(&queue);
                 if changed {
                     self.record_wake_held(emp_id, &first, reason, retry_after);
+                }
+                if reason == WakeHoldReason::Busy && has_mid_turn_eligible {
+                    self.notify_live_pump_pending_wakes(emp_id);
                 }
                 return WakeOutcome::Queued { reason };
             }
@@ -1095,6 +1178,7 @@ impl SessionManager {
         queue.items.retain(|i| !claimed.contains(&i.item_id));
         if queue.items.is_empty() && queue.seen_item_ids.is_empty() {
             let _ = self.store.clear_pending_wakes(emp_id);
+            set_waiting_messages_count(&self.waiting_messages, emp_id, 0);
         } else {
             if queue.items.is_empty() {
                 // Retain `seen_item_ids` across drain so replay after receipt commit failure
@@ -1105,6 +1189,7 @@ impl SessionManager {
             }
             queue.updated_at = rfc3339_now();
             self.write_wakes_redacted(&queue);
+            set_waiting_messages_count(&self.waiting_messages, emp_id, queue.items.len());
         }
     }
 
@@ -1185,6 +1270,7 @@ impl SessionManager {
                 self.store
                     .clear_pending_wakes(&emp_id)
                     .map_err(|e| format!("failed clearing pending wakes: {e}"))?;
+                set_waiting_messages_count(&self.waiting_messages, &emp_id, 0);
                 continue;
             }
             if queue.items.is_empty() {
@@ -1196,6 +1282,7 @@ impl SessionManager {
             self.store
                 .write_pending_wakes_redacted(&queue, &refs)
                 .map_err(|e| format!("failed writing pending wakes: {e}"))?;
+            set_waiting_messages_count(&self.waiting_messages, &emp_id, queue.items.len());
         }
         Ok(())
     }
@@ -1255,12 +1342,232 @@ struct TurnEndDrainCtx {
     budget_hold: Arc<Mutex<Option<String>>>,
     lifecycle_lock: Arc<Mutex<()>>,
     dispatching_wakes: Arc<Mutex<HashSet<String>>>,
+    waiting_messages: Arc<Mutex<HashMap<String, Arc<AtomicU32>>>>,
     bindings: RunBindingRegistry,
     office: Arc<Office>,
     hq_permits: Option<Arc<dyn crate::router::HqPermitCoordinator>>,
     weak_mgr: Option<std::sync::Weak<SessionManager>>,
     hourly_limit: usize,
     window_ms: u64,
+}
+
+fn build_mid_turn_hooks(mgr: &SessionManager) -> (StageMidTurnWakesHook, MidTurnDeliveredHook) {
+    let stage_store = mgr.store.clone();
+    let stage_office = Arc::clone(&mgr.office);
+    let stage_budget = Arc::clone(&mgr.budget_hold);
+    let stage_lock = Arc::clone(&mgr.lifecycle_lock);
+    let stage_rates = Arc::clone(&mgr.mid_turn_rates);
+    let stage_limits: MidTurnLimits = mgr.config.mid_turn_limits;
+    let delivery_seq = Arc::new(AtomicU64::new(1));
+
+    let stage_hook: StageMidTurnWakesHook = Arc::new(move |emp_id, turn_total, turn_agent| {
+        stage_mid_turn_batch(
+            &stage_office,
+            &stage_store,
+            &stage_budget,
+            &stage_lock,
+            &stage_rates,
+            &delivery_seq,
+            stage_limits,
+            emp_id,
+            turn_total,
+            turn_agent,
+        )
+    });
+
+    let commit_store = mgr.store.clone();
+    let commit_lock = Arc::clone(&mgr.lifecycle_lock);
+    let commit_rates = Arc::clone(&mgr.mid_turn_rates);
+    let commit_waiting = Arc::clone(&mgr.waiting_messages);
+    let commit_bindings = mgr.bindings.clone();
+    let hourly_window_ms = mgr.config.mid_turn_limits.hourly_window_ms;
+
+    let delivered_hook: MidTurnDeliveredHook = Arc::new(move |emp_id, batch| {
+        commit_mid_turn_delivered(
+            &commit_store,
+            &commit_lock,
+            &commit_rates,
+            &commit_waiting,
+            &commit_bindings,
+            hourly_window_ms,
+            emp_id,
+            batch,
+        );
+    });
+
+    (stage_hook, delivered_hook)
+}
+
+fn employee_allows_mid_turn_staging(
+    office: &Office,
+    store: &SessionStore,
+    budget_hold: &Mutex<Option<String>>,
+    emp_id: &str,
+) -> bool {
+    let Some(emp) = office.load_employee(emp_id).ok().flatten() else {
+        return false;
+    };
+    if emp.status != EmployeeStatus::Active {
+        return false;
+    }
+    if store.read_suspended_state(emp_id).ok().flatten().is_some() {
+        return false;
+    }
+    if store
+        .read_active_turn(emp_id)
+        .ok()
+        .flatten()
+        .is_some_and(|rec| rec.stall_locked || rec.recovery_required)
+    {
+        return false;
+    }
+    let has_mem_hold = budget_hold
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .is_some();
+    let has_db_hold = office
+        .active_budget_holds(Some(emp_id), None)
+        .is_ok_and(|h| !h.is_empty());
+    !has_mem_hold && !has_db_hold
+}
+
+fn build_staged_mid_turn_batch(
+    eligible: &[crate::wake::PendingWakeItem],
+    delivery_seq: &AtomicU64,
+    ts: u64,
+) -> MidTurnStageOutcome {
+    let (text, item_ids) = compose_mid_turn_notice_batch(eligible);
+    if item_ids.is_empty() {
+        return MidTurnStageOutcome::None;
+    }
+    let id_set: HashSet<&str> = item_ids.iter().map(String::as_str).collect();
+    let mut has_agent_item = false;
+    let mut agent_sender_convs = Vec::new();
+    for item in eligible
+        .iter()
+        .filter(|item| id_set.contains(item.item_id.as_str()) && !item.sender_is_person)
+    {
+        has_agent_item = true;
+        let key = sender_conv_key(item);
+        if !agent_sender_convs.contains(&key) {
+            agent_sender_convs.push(key);
+        }
+    }
+    let seq = delivery_seq.fetch_add(1, Ordering::Relaxed);
+    MidTurnStageOutcome::Ready(StagedMidTurnBatch {
+        delivery_id: format!("mt-{ts}-{seq}"),
+        item_ids,
+        text,
+        has_agent_item,
+        agent_sender_convs,
+    })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal helper separates read-only staging from PumpHooks wiring"
+)]
+fn stage_mid_turn_batch(
+    office: &Office,
+    store: &SessionStore,
+    budget_hold: &Mutex<Option<String>>,
+    lifecycle_lock: &Mutex<()>,
+    mid_turn_rates: &Mutex<HashMap<String, MidTurnRateTracker>>,
+    delivery_seq: &AtomicU64,
+    limits: MidTurnLimits,
+    emp_id: &str,
+    turn_total: u32,
+    turn_agent: u32,
+) -> MidTurnStageOutcome {
+    if !employee_allows_mid_turn_staging(office, store, budget_hold, emp_id) {
+        return MidTurnStageOutcome::None;
+    }
+    // Phase 2A: read pending-wakes.v1.json WITHOUT mutating disk so a crash or failed delivery
+    // preserves every queued item for the next turn (`TASK-115` / `doc-101` §4B).
+    let items = {
+        let _guard = lifecycle_lock.lock().unwrap_or_else(|p| p.into_inner());
+        match store.read_pending_wakes(emp_id) {
+            Ok(Some(queue)) if !queue.items.is_empty() => queue.items,
+            _ => return MidTurnStageOutcome::None,
+        }
+    };
+    let ts = now_ms();
+    let selection = {
+        let mut rates = mid_turn_rates.lock().unwrap_or_else(|p| p.into_inner());
+        let tracker = rates.entry(emp_id.to_owned()).or_default();
+        tracker.select_batch(&items, ts, turn_total, turn_agent, limits)
+    };
+    match selection {
+        MidTurnSelection::None => MidTurnStageOutcome::None,
+        MidTurnSelection::WaitMs(ms) => MidTurnStageOutcome::Wait(Duration::from_millis(ms.max(1))),
+        MidTurnSelection::Ready(eligible) => {
+            build_staged_mid_turn_batch(&eligible, delivery_seq, ts)
+        }
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal helper commits only runtime-acked item_ids under lifecycle_lock"
+)]
+fn commit_mid_turn_delivered(
+    store: &SessionStore,
+    lifecycle_lock: &Mutex<()>,
+    mid_turn_rates: &Mutex<HashMap<String, MidTurnRateTracker>>,
+    waiting_messages: &Mutex<HashMap<String, Arc<AtomicU32>>>,
+    bindings: &RunBindingRegistry,
+    hourly_window_ms: u64,
+    emp_id: &str,
+    batch: &StagedMidTurnBatch,
+) {
+    let claimed: HashSet<&str> = batch.item_ids.iter().map(String::as_str).collect();
+    let tokens = bindings.active_tokens();
+    let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    {
+        let _guard = lifecycle_lock.lock().unwrap_or_else(|p| p.into_inner());
+        if let Ok(Some(mut queue)) = store.read_pending_wakes(emp_id) {
+            queue
+                .items
+                .retain(|i| !claimed.contains(i.item_id.as_str()));
+            if queue.items.is_empty() && queue.seen_item_ids.is_empty() {
+                let _ = store.clear_pending_wakes(emp_id);
+                set_waiting_messages_count(waiting_messages, emp_id, 0);
+            } else {
+                if queue.items.is_empty() {
+                    // Retain `seen_item_ids` across mid-turn drain for `TASK-52` P7-#12 idempotency.
+                    queue.hold_reason = None;
+                    queue.held_since_ms = None;
+                    queue.retry_after_ms = None;
+                }
+                queue.updated_at = rfc3339_now();
+                let _ = store.write_pending_wakes_redacted(&queue, &refs);
+                set_waiting_messages_count(waiting_messages, emp_id, queue.items.len());
+            }
+        }
+    }
+    {
+        let mut rates = mid_turn_rates.lock().unwrap_or_else(|p| p.into_inner());
+        rates
+            .entry(emp_id.to_owned())
+            .or_default()
+            .record_delivered(
+                now_ms(),
+                batch.has_agent_item,
+                &batch.agent_sender_convs,
+                hourly_window_ms,
+            );
+    }
+    let _ = store.append_history(
+        emp_id,
+        &serde_json::json!({
+            "type": "mid_turn_delivered",
+            "delivery_id": batch.delivery_id,
+            "item_ids": batch.item_ids,
+            "count": batch.item_ids.len(),
+            "at": rfc3339_now(),
+        }),
+        &refs,
+    );
 }
 
 fn insert_open_required_ask(
@@ -1780,18 +2087,26 @@ fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) 
             }),
             &refs,
         );
-        clear_or_retain_seen_wakes(&ctx.store, employee_id, &mut queue, &refs);
+        clear_or_retain_seen_wakes(
+            &ctx.store,
+            &ctx.waiting_messages,
+            employee_id,
+            &mut queue,
+            &refs,
+        );
     }
 }
 
 fn clear_or_retain_seen_wakes(
     store: &SessionStore,
+    waiting_messages: &Mutex<HashMap<String, Arc<AtomicU32>>>,
     employee_id: &str,
     queue: &mut PendingWakeQueueRecord,
     redaction_tokens: &[&str],
 ) {
     if queue.seen_item_ids.is_empty() {
         let _ = store.clear_pending_wakes(employee_id);
+        set_waiting_messages_count(waiting_messages, employee_id, 0);
         return;
     }
     // Preserve `seen_item_ids` when draining wakes into a live session so a lost `RelayAck`
@@ -1802,6 +2117,7 @@ fn clear_or_retain_seen_wakes(
     queue.retry_after_ms = None;
     queue.updated_at = rfc3339_now();
     let _ = store.write_pending_wakes_redacted(queue, redaction_tokens);
+    set_waiting_messages_count(waiting_messages, employee_id, 0);
 }
 
 fn record_session_usage(

@@ -731,9 +731,8 @@ impl Session for AgySession {
             return Err(ControlError::Closed);
         }
         match cmd {
-            Control::Send { text, urgent } => match self.phase {
+            Control::Send { text } => match self.phase {
                 Phase::Opening => Err(ControlError::NotReady),
-                Phase::Busy if urgent => Err(ControlError::NeedsInterrupt),
                 Phase::Busy => Err(ControlError::Busy),
                 Phase::Idle => {
                     let line = encode_line(&json!({
@@ -758,6 +757,7 @@ impl Session for AgySession {
                 }
                 _ => Err(ControlError::Closed),
             },
+            Control::DeliverMidTurn { .. } => Err(ControlError::Unsupported),
             Control::Interrupt => match self.phase {
                 Phase::Opening => Err(ControlError::NotReady),
                 Phase::Idle | Phase::Busy => Ok(vec![self.encode_interrupt_request()]),

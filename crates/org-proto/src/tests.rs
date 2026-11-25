@@ -1017,7 +1017,18 @@ fn envelope_debug_elides_payloads_that_may_hold_secrets() {
     let resp = Response {
         id: 7,
         outcome: Outcome::Result(params.clone()),
+        waiting_messages: None,
     };
+    let wire_none = serde_json::to_string(&resp).unwrap();
+    assert!(!wire_none.contains("waiting_messages"), "{wire_none}");
+    let hinted = resp.clone().with_waiting_messages(2);
+    let wire_hint = serde_json::to_string(&hinted).unwrap();
+    assert!(wire_hint.contains(r#""waiting_messages":2"#), "{wire_hint}");
+    let decoded: Response = serde_json::from_str(&wire_hint).unwrap();
+    assert_eq!(decoded.waiting_messages, Some(2));
+    let decoded_zero: Response =
+        serde_json::from_str(r#"{"id":7,"result":{},"waiting_messages":0}"#).unwrap();
+    assert_eq!(decoded_zero.waiting_messages, None);
     let debug = format!("{resp:?}");
     assert!(!debug.contains(&hex[..8]), "{debug}");
     assert!(debug.contains("id: 7"), "{debug}");

@@ -825,12 +825,13 @@ impl FederationRuntime {
     fn start(
         office: &Arc<Office>,
         session_manager: &Arc<org_office_sessions::SessionManager>,
+        chat_svc: &Arc<chat_calls::ChatService>,
         delivery_notifier: federation::InboundDeliveryNotifier,
         sat_wake: Arc<SatSyncWake>,
         hq_listening: &Arc<AtomicBool>,
     ) -> Result<Self, String> {
         let sat_stop = Arc::new(AtomicBool::new(false));
-        let wake_handler = build_federation_wake_handler(session_manager);
+        let wake_handler = build_federation_wake_handler(session_manager, chat_svc);
         let hq = start_optional_hq_federation(
             office,
             Some(Arc::clone(&wake_handler)),
@@ -924,8 +925,10 @@ fn build_federation_delivery_notifier(
 
 fn build_federation_wake_handler(
     session_manager: &Arc<org_office_sessions::SessionManager>,
+    chat_svc: &Arc<chat_calls::ChatService>,
 ) -> federation::WakeRelayHandler {
     let sessions = Arc::downgrade(session_manager);
+    let chat = Arc::downgrade(chat_svc);
     Arc::new(move |wake: federation::RelayedWake| {
         let Some(sessions) = sessions.upgrade() else {
             return Err("session manager shut down".to_owned());
@@ -936,6 +939,9 @@ fn build_federation_wake_handler(
         if let Some(ans) = wake.ask_answer {
             // Dispatch structured answer transition and propagate persistence errors so
             // federation only commits `delivered: true` after resume intent is durable (`TASK-52` P6-#2 / P7-#4).
+            let satisfied_active_waiter = chat
+                .upgrade()
+                .is_some_and(|svc| svc.has_active_ask_waiter(&ans.asker_id, &ans.ask_id));
             return sessions
                 .on_ask_answered_durable(
                     &ans.asker_id,
@@ -944,6 +950,7 @@ fn build_federation_wake_handler(
                     &ans.answer_summary,
                     (&wake.sender_id, &wake.sender_name, wake.sender_is_person),
                     false,
+                    satisfied_active_waiter,
                 )
                 .map(|_| ());
         }
@@ -960,6 +967,8 @@ fn build_federation_wake_handler(
             kind,
             sender_id: wake.sender_id,
             sender_name: wake.sender_name,
+            sender_handle: None,
+            sender_relation: None,
             sender_is_person: wake.sender_is_person,
             conversation_id: wake.conversation_id,
             source_id: wake.source_id,
@@ -1195,6 +1204,7 @@ fn prepare_office_runtime(
     let federation_rt = match FederationRuntime::start(
         office,
         &session_manager,
+        &messaging.chat_svc,
         delivery_notifier,
         sat_sync_wake,
         &hq_federation_listening,
@@ -1912,6 +1922,12 @@ fn build_office_ports(
         run_binding_verify: Some(session_hooks.run_binding_verify),
         run_binding_active: Some(session_hooks.run_binding_active),
         record_agent_command: Some(session_hooks.record_agent_command),
+        waiting_messages_counter: {
+            let sessions = Arc::clone(&session_manager);
+            Some(Box::new(move |member| {
+                sessions.waiting_messages_counter(member)
+            }))
+        },
         on_agent_stop: Some(session_hooks.on_agent_stop),
         hr_message_guard: {
             let office = Arc::clone(&office);
