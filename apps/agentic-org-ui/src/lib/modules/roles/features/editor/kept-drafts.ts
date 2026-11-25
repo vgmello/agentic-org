@@ -35,7 +35,7 @@ let unregisterKeptProbe: (() => void) | undefined;
 
 function syncKeptDraftProbe() {
 	if (kept.size > 0 && !unregisterKeptProbe) {
-		unregisterKeptProbe = drafts.register(() => kept.size > 0);
+		unregisterKeptProbe = drafts.registerRetained(() => kept.size > 0);
 	} else if (kept.size === 0 && unregisterKeptProbe) {
 		unregisterKeptProbe();
 		unregisterKeptProbe = undefined;

@@ -231,9 +231,10 @@
 	$effect(() => {
 		if (attemptId) return retainMountedAttempt(attemptId);
 	});
-	// Register dirty drafts with the tab/cross-tab sign-out guard (SIGN-15, SIGN-19).
+	// Register mounted open drafts as editable (SIGN-15/SIGN-19); during close handoff keep only SIGN-19 retention.
 	$effect(() => {
-		if (open || attemptId) return drafts.register(() => typed());
+		if (open) return drafts.register(() => typed());
+		if (attemptId) return drafts.registerRetained(() => typed());
 	});
 
 	const title = $derived(

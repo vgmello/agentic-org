@@ -6,19 +6,27 @@ export type DraftProbe = () => boolean;
 
 export function createDraftRegistry() {
 	const probes = new Set<DraftProbe>();
+	const retainedProbes = new Set<DraftProbe>();
 	return Object.freeze({
-		/** Registers a probe; the returned function removes it (call it when the page goes away). */
+		/** Registers a mounted editable page/editor probe (counts toward both `hasEditable` and `hasUnsavedText`). */
 		register(probe: DraftProbe): () => void {
 			probes.add(probe);
 			return () => {
 				probes.delete(probe);
 			};
 		},
-		/** Whether this page has editable fields at all (the Not now bar's copy depends on it). */
+		/** Registers an off-screen retained-draft probe (counts toward SIGN-19 sign-out confirmation, not page `hasEditable`). */
+		registerRetained(probe: DraftProbe): () => void {
+			retainedProbes.add(probe);
+			return () => {
+				retainedProbes.delete(probe);
+			};
+		},
+		/** Whether this page currently has mounted editable fields (the Not now bar's copy depends on it). */
 		hasEditable: () => probes.size > 0,
-		/** True only when a registered page reports unsaved text; a throwing probe counts as unsaved. */
+		/** True only when a mounted editor or retained draft reports unsaved text; a throwing probe counts as unsaved. */
 		hasUnsavedText(): boolean {
-			for (const probe of probes) {
+			for (const probe of [...probes, ...retainedProbes]) {
 				try {
 					if (probe()) return true;
 				} catch {

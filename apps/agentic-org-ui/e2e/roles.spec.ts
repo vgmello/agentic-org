@@ -529,7 +529,8 @@ test('SIGN-19: cross-tab sign-out asks before discarding open or retained role d
 	await otherTab.getByRole('button', { name: 'Sign out', exact: true }).click();
 	await expect(otherTab).toHaveURL(/\/sign-in/);
 
-	// Tab 1's open role editor must close and drop its draft text without leaking to the next caller.
+	// SIGN-20: Tab 1 must also leave Roles to /sign-in and clear its open draft without leaking data.
+	await expect(page).toHaveURL(/\/sign-in/);
 	await expect(editor(page)).toBeHidden();
 	await expect(page.locator('body')).not.toContainText('Confidential Role');
 	await expect(page.locator('body')).not.toContainText('Secret draft body');

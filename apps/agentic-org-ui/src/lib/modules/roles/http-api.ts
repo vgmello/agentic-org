@@ -188,7 +188,8 @@ function isPreCommitValidationRefusal(code: string | undefined): boolean {
 		code === 'too_large' ||
 		code === 'invalid_request' ||
 		code === 'invalid_name' ||
-		code === 'already_exists'
+		code === 'already_exists' ||
+		code === 'not_authorized'
 	);
 }
 

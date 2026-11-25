@@ -77,6 +77,16 @@
 		if (signOutFlow.confirming && !confirmDialog.open) confirmDialog.showModal();
 		else if (!signOutFlow.confirming && confirmDialog.open) confirmDialog.close();
 	});
+	// SIGN-20 / SIGN-31: when an active session signs out or switches accounts in any tab,
+	// every open protected tab leaves its loaded page immediately.
+	$effect(() => {
+		if (elsewhere || current.kind !== 'signed-out') return;
+		if (current.reason === 'signed-out') {
+			void goto(resolve('/sign-in?note=signed-out'), { replaceState: true });
+		} else if (current.reason === 'changed-account') {
+			void goto(resolve('/sign-in'), { replaceState: true });
+		}
+	});
 
 	function notNow() {
 		dismissed = true;
@@ -121,9 +131,6 @@
 
 	async function confirmSignOut() {
 		await signOutFlow.confirm();
-		if (appSession.state.kind === 'signed-out' && !elsewhere) {
-			await goto(resolve('/sign-in?note=signed-out'), { replaceState: true });
-		}
 	}
 </script>
 

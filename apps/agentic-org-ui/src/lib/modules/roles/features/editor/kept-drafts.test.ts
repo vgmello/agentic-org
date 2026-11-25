@@ -19,7 +19,8 @@ it('keeps a draft per organization and role until it is discarded', () => {
 	expect(fresh).not.toBe(edit);
 	keepDraft(edit, { name: 'Lead', key: 'swe', body: 'x', expectedRevision: 3 });
 	expect(keptDraft(edit)).toEqual({ name: 'Lead', key: 'swe', body: 'x', expectedRevision: 3 });
-	expect(drafts.hasEditable()).toBe(true);
+	// Retained off-screen drafts trigger SIGN-19 sign-out confirmation without claiming the current page has editable fields.
+	expect(drafts.hasEditable()).toBe(false);
 	expect(drafts.hasUnsavedText()).toBe(true);
 	expect(keptDraft(fresh)).toBeUndefined();
 	expect(keptDraft(draftKey('org-b', 'role-swe'))).toBeUndefined();

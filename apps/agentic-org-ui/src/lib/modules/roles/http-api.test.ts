@@ -1580,4 +1580,95 @@ describe('createHttpRolesApi', () => {
 		});
 		expect(updated.revision).toBe(2);
 	});
+
+	it('clears unresolved follow-up when a revised follow-up gets initial 401 so restoring confirmed text after reauth writes no extra revision', async () => {
+		let seq = 1;
+		const nextId = () => `0193a5c0-0000-7000-8000-0000000013${String(seq++).padStart(2, '0')}`;
+		const submit = vi
+			.fn()
+			// Create flow: 1. initial create 504 -> 2. replay confirms rev 1 -> 3. revised follow-up gets initial 401.
+			.mockResolvedValueOnce({ status: 504, body: { outcome: 'unknown' } })
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: { id: '0193a5c0-0000-7000-8000-000000001302', revision: 1, generation: 96 }
+				}
+			})
+			.mockResolvedValueOnce({
+				status: 401,
+				body: { error: { code: 'not_authorized', message: 'Sign in again.' } }
+			})
+			// Update flow: 4. initial update 504 -> 5. replay confirms rev 2 -> 6. revised follow-up gets initial 401.
+			.mockResolvedValueOnce({ status: 504, body: { outcome: 'unknown' } })
+			.mockResolvedValueOnce({
+				status: 200,
+				body: { result: { id: ROLE_SWE, revision: 2, generation: 97 } }
+			})
+			.mockResolvedValueOnce({
+				status: 401,
+				body: { error: { code: 'not_authorized', message: 'Sign in again.' } }
+			});
+
+		const api = createHttpRolesApi({
+			http: { read: vi.fn().mockRejectedValue(new Error('offline')), submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			sessionScope: () => 'inst-1:acct-a',
+			sessionGeneration: () => 1,
+			isAttemptRetained: () => false,
+			newCommandId: nextId,
+			newEntityId: nextId
+		});
+
+		await expect(
+			api.create(ORG, { name: 'SecOps', bodyMarkdown: 'Original.', attemptId: 'att-401-fup-c' })
+		).rejects.toMatchObject({ code: 'unavailable' });
+
+		await expect(
+			api.create(ORG, { name: 'SecOps', bodyMarkdown: 'Revised.', attemptId: 'att-401-fup-c' })
+		).rejects.toMatchObject({ code: 'not_authorized' });
+
+		// After same-account reauth, restoring the confirmed text returns rev 1 with ZERO extra update!
+		const createRestored = await api.create(ORG, {
+			name: 'SecOps',
+			bodyMarkdown: 'Original.',
+			attemptId: 'att-401-fup-c'
+		});
+		expect(submit).toHaveBeenCalledTimes(3);
+		expect(createRestored).toMatchObject({
+			id: '0193a5c0-0000-7000-8000-000000001302',
+			bodyMarkdown: 'Original.',
+			revision: 1
+		});
+
+		await expect(
+			api.update(ORG, ROLE_SWE, {
+				name: 'SWE',
+				bodyMarkdown: 'Confirmed edit.',
+				expectedRevision: 1,
+				attemptId: 'att-401-fup-u'
+			})
+		).rejects.toMatchObject({ code: 'unavailable' });
+
+		await expect(
+			api.update(ORG, ROLE_SWE, {
+				name: 'SWE',
+				bodyMarkdown: 'Revised edit.',
+				expectedRevision: 1,
+				attemptId: 'att-401-fup-u'
+			})
+		).rejects.toMatchObject({ code: 'not_authorized' });
+
+		const updateRestored = await api.update(ORG, ROLE_SWE, {
+			name: 'SWE',
+			bodyMarkdown: 'Confirmed edit.',
+			expectedRevision: 1,
+			attemptId: 'att-401-fup-u'
+		});
+		expect(submit).toHaveBeenCalledTimes(6);
+		expect(updateRestored).toMatchObject({
+			id: ROLE_SWE,
+			bodyMarkdown: 'Confirmed edit.',
+			revision: 2
+		});
+	});
 });
