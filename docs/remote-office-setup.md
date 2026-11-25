@@ -15,7 +15,7 @@ Local HQ (e.g. mac-air — 100.64.54.90)
   └── Hosts local agents (e.g. @backend, @ui, @pm, @poc)
 
 Remote Satellite 1 (apps-worker-eu — 100.79.93.22, Ubuntu x86_64)
-  ├── systemd --user service running signed ADR-0009 release store
+  ├── systemd --user service running signed release store
   └── Hosts managed remote agents (e.g. @worker-eu-eng via claude / codex / agy)
 
 Remote Satellite 2 (apps-main-eu — 100.75.102.17, Ubuntu x86_64, zero compiler)
@@ -35,7 +35,7 @@ Remote Satellite 2 (apps-main-eu — 100.75.102.17, Ubuntu x86_64, zero compiler
   loginctl enable-linger "$USER"
   systemctl --user is-system-running
   ```
-- Base tools: `curl`, `tar`, `python3`, `sha256sum`
+- Base tools: `curl` (or `wget`), `tar`, `sha256sum` (no Python or compiler required to install)
 - AI agent CLI runtime(s) installed and signed in under the service user (e.g. `claude --version`, `codex --version`, or `agy --version`)
 - **Required on Linux for Claude Code sandboxing and subprocess env scrubbing (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`):**
   ```bash
@@ -134,11 +134,15 @@ lsof -iTCP:7420 -iTCP:7443 -sTCP:LISTEN
 
 Run on each remote Linux host (`apps-worker-eu`, `apps-main-eu`, etc.) — **zero Rust compilation**.
 
-### Option A: Install from a GitHub Release tag
+### Option A: Install or upgrade from GitHub Releases
 ```bash
-# Cold install requires out-of-band verification (--sha256 <64-hex|file> or --pubkey <publisher.pub.pem>):
+# Cold install (resolves the latest release automatically when --version is omitted;
+# requires out-of-band verification via --sha256 <64-hex|file> or --pubkey <publisher.pub.pem|trust-registry.json>):
 curl -fsSL https://raw.githubusercontent.com/vgmello/agentic-org/v1/scripts/install.sh \
-  | bash -s -- --version v0.1.0 --sha256 "<expected-archive-sha256>" --bin-dir "$HOME/.local/bin"
+  | bash -s -- --sha256 "<expected-archive-sha256>" --bin-dir "$HOME/.local/bin"
+
+# Upgrade an already-installed host to the latest release (reuses the trusted installed binary):
+curl -fsSL https://raw.githubusercontent.com/vgmello/agentic-org/v1/scripts/install.sh | bash
 ```
 
 ### Option B: Install from a locally staged `.tar.gz` + `.sha256` bundle
@@ -166,7 +170,7 @@ ssh agents@apps-main-eu '
 
 What `install.sh` does automatically:
 - Verifies the archive SHA-256 against the `.sha256` checksum file.
-- Tightens Ubuntu User-Private-Group directory permissions (`chmod go-w ~/.local ~/.local/share` and `0700 ~/.local/share/agentic-org`) required by ADR-0009.
+- Tightens Ubuntu User-Private-Group directory permissions (`chmod go-w ~/.local ~/.local/share` and `0700 ~/.local/share/agentic-org`) required for the protected release store.
 - Runs `agentic-org release install` to verify the Ed25519 manifest signature, closed inventory, and executable digests, pinning the release atomically into `~/.local/share/agentic-org/release-store`.
 - Symlinks `agentic-org` and `agent-os` into `~/.local/bin`.
 
@@ -378,7 +382,7 @@ ssh agents@apps-main-eu '
 If you are building your own private signed release bundle (instead of downloading from GitHub Releases), run once on a Linux build host (such as `apps-worker-eu` or CI):
 
 ```bash
-# 1. Generate a publisher Ed25519 keypair + ADR-0009 trust registry (once)
+# 1. Generate a publisher Ed25519 keypair + trust registry (once)
 python3 scripts/release_tool.py keygen --out-dir "$HOME/.config/agentic-org/publisher"
 
 # 2. Build static UI (or supply a prebuilt --ui-dir) and compile/sign/package (.tar.gz + .sha256; --deb is for --profile dev only)
