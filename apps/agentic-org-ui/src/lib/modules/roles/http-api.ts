@@ -59,6 +59,7 @@ type PendingCreate = {
 	roleId: string;
 	submitted: SubmittedRolePayload;
 	dispatched?: boolean;
+	mayHaveCommitted?: boolean;
 	committedRevision?: number;
 	hasUnresolvedFollowUp?: boolean;
 	conflicted?: boolean;
@@ -72,6 +73,7 @@ type PendingUpdate = {
 	commandId: string;
 	submitted: SubmittedRolePayload;
 	dispatched?: boolean;
+	mayHaveCommitted?: boolean;
 	committedRevision?: number;
 	hasUnresolvedFollowUp?: boolean;
 	conflicted?: boolean;
@@ -211,13 +213,11 @@ function isTerminalUpdateRefusal(code: string | undefined): boolean {
 	return code === 'not_authorized' || code === 'conflict' || code === 'not_found';
 }
 
-function shouldPreserveAttempt(reply: GatewayReply): boolean {
-	return (
-		isUnknownOutcomeReply(reply) ||
-		reply.status >= 500 ||
-		reply.status === 401 ||
-		reply.status === 429
-	);
+function shouldPreserveAttempt(reply: GatewayReply, mayHaveCommitted: boolean): boolean {
+	// An initial 401 proves the gateway rejected the request before admission; only preserve
+	// across reauthentication when an earlier uncertain attempt may already have committed.
+	if (reply.status === 401) return mayHaveCommitted;
+	return isUnknownOutcomeReply(reply) || reply.status >= 500 || reply.status === 429;
 }
 
 function toNotDispatchedAppError(err: NotDispatchedError): AppError {
@@ -417,7 +417,9 @@ export function createHttpRolesApi({
 		}
 	}
 
-	async function dispatchAttempt<T extends { dispatched?: boolean; committedRevision?: number }>(
+	async function dispatchAttempt<
+		T extends { dispatched?: boolean; mayHaveCommitted?: boolean; committedRevision?: number }
+	>(
 		path: string,
 		body: unknown,
 		pending: Map<string, T>,
@@ -440,6 +442,7 @@ export function createHttpRolesApi({
 			}
 			if (err !== SESSION_CHANGED_ERROR) {
 				attempt.dispatched = true;
+				attempt.mayHaveCommitted = true;
 			}
 			assertSameSession(session);
 			throw err;
@@ -521,6 +524,7 @@ export function createHttpRolesApi({
 			session
 		);
 		if (isUnknownOutcomeReply(reply)) {
+			attempt.mayHaveCommitted = true;
 			throw {
 				source: 'api',
 				code: 'unavailable',
@@ -528,10 +532,14 @@ export function createHttpRolesApi({
 			} satisfies AppError;
 		}
 		if (reply.status !== 200) {
-			if (!shouldPreserveAttempt(reply)) deleteIfCurrent(pendingCreates, attemptKey, attempt);
+			if (reply.status >= 500) attempt.mayHaveCommitted = true;
+			if (!shouldPreserveAttempt(reply, Boolean(attempt.mayHaveCommitted))) {
+				deleteIfCurrent(pendingCreates, attemptKey, attempt);
+			}
 			const err = readGatewayAppError(reply.body, gatewayStatusCode(reply.status), fallback);
 			throw withField(err);
 		}
+		attempt.mayHaveCommitted = true;
 		const result = unwrapGatewayResult(reply, fallback);
 		return readRoleEntityAck(result, attempt.roleId, fallback);
 	}
@@ -563,6 +571,7 @@ export function createHttpRolesApi({
 			session
 		);
 		if (isUnknownOutcomeReply(reply)) {
+			attempt.mayHaveCommitted = true;
 			throw {
 				source: 'api',
 				code: 'unavailable',
@@ -570,7 +579,10 @@ export function createHttpRolesApi({
 			} satisfies AppError;
 		}
 		if (reply.status !== 200) {
-			if (!shouldPreserveAttempt(reply)) deleteIfCurrent(pendingUpdates, attemptKey, attempt);
+			if (reply.status >= 500) attempt.mayHaveCommitted = true;
+			if (!shouldPreserveAttempt(reply, Boolean(attempt.mayHaveCommitted))) {
+				deleteIfCurrent(pendingUpdates, attemptKey, attempt);
+			}
 			const err = readGatewayAppError(reply.body, gatewayStatusCode(reply.status), fallback);
 			if (err.code === 'conflict') {
 				assertSameSession(session);
@@ -582,6 +594,7 @@ export function createHttpRolesApi({
 			}
 			throw withField(err);
 		}
+		attempt.mayHaveCommitted = true;
 		const result = unwrapGatewayResult(reply, fallback);
 		return readRoleEntityAck(result, roleId, fallback);
 	}

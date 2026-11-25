@@ -45,7 +45,9 @@ function isValidCalendarAndClock(
 	minute: number,
 	second: number
 ): boolean {
-	if (year < 1970 || month < 1 || month > 12) return false;
+	// Allow 1969 so offset-adjusted instants >= 1970-01-01T00:00:00Z (e.g. 1969-12-31T23:30:00-01:00)
+	// pass calendar validation before formatValidatedTimestamp enforces epochMs >= 0 (matching time.rs).
+	if (year < 1969 || month < 1 || month > 12) return false;
 	if (day < 1 || day > daysInMonth(year, month)) return false;
 	return hour <= 23 && minute <= 59 && second <= 60;
 }

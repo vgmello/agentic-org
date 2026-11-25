@@ -118,6 +118,13 @@
 		dismissed = true;
 		await goto(resolve(signInHref(page.url.pathname + page.url.search, location.origin, 'ended')));
 	}
+
+	async function confirmSignOut() {
+		await signOutFlow.confirm();
+		if (appSession.state.kind === 'signed-out' && !elsewhere) {
+			await goto(resolve('/sign-in?note=signed-out'), { replaceState: true });
+		}
+	}
 </script>
 
 {#if ended && dismissed}
@@ -249,7 +256,7 @@
 		<button
 			type="button"
 			class="rounded-md bg-danger-emphasis px-3 py-1.5 text-sm font-semibold"
-			onclick={() => signOutFlow.confirm()}>Sign out</button
+			onclick={confirmSignOut}>Sign out</button
 		>
 	</div>
 </dialog>

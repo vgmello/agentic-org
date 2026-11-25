@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { drafts } from '$lib/platform/auth/draft-registry';
 import {
 	clearDraftsForCaller,
 	discardDraft,
@@ -18,10 +19,14 @@ it('keeps a draft per organization and role until it is discarded', () => {
 	expect(fresh).not.toBe(edit);
 	keepDraft(edit, { name: 'Lead', key: 'swe', body: 'x', expectedRevision: 3 });
 	expect(keptDraft(edit)).toEqual({ name: 'Lead', key: 'swe', body: 'x', expectedRevision: 3 });
+	expect(drafts.hasEditable()).toBe(true);
+	expect(drafts.hasUnsavedText()).toBe(true);
 	expect(keptDraft(fresh)).toBeUndefined();
 	expect(keptDraft(draftKey('org-b', 'role-swe'))).toBeUndefined();
 	discardDraft(edit);
 	expect(keptDraft(edit)).toBeUndefined();
+	expect(drafts.hasUnsavedText()).toBe(false);
+	expect(drafts.hasEditable()).toBe(false);
 });
 
 it('hands out copies, so editing the restored text does not change what is kept', () => {

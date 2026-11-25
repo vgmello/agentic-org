@@ -484,7 +484,7 @@ test('RL-3: reopening Ask HR after a failure keeps the text and clears the old r
 	await expect(dialog.getByRole('alert')).toHaveCount(0);
 });
 
-test('cross-tab sign-out closes and clears an open role draft immediately', async ({
+test('SIGN-19: cross-tab sign-out asks before discarding open or retained role drafts, honors Stay, and closes/clears on confirm', async ({
 	page,
 	context
 }) => {
@@ -495,11 +495,38 @@ test('cross-tab sign-out closes and clears an open role draft immediately', asyn
 	await editor(page).getByLabel('Name').fill('Confidential Role');
 	await editor(page).getByLabel('Text').fill('Secret draft body');
 
-	// Sign out from a second tab via the real account menu; BroadcastChannel ends Tab 1's session.
+	// Sign out from a second tab via the real account menu: SIGN-19 asks before discarding Tab 1's draft.
 	const otherTab = await context.newPage();
 	await visit(otherTab, '/settings/roles');
 	await otherTab.getByRole('button', { name: 'You · Owner' }).click();
 	await otherTab.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
+	const confirmHeading = otherTab.getByRole('heading', { name: /Sign out\?/ });
+	await expect(confirmHeading).toBeVisible();
+
+	// Choosing Stay keeps Tab 2 signed in and leaves Tab 1's open draft intact.
+	await otherTab.getByRole('button', { name: 'Stay', exact: true }).click();
+	await expect(confirmHeading).toBeHidden();
+	await expect(otherTab).toHaveURL(/\/settings\/roles$/);
+	await expect(editor(page)).toBeVisible();
+	await expect(editor(page).getByLabel('Name')).toHaveValue('Confidential Role');
+
+	// Closing Tab 1 without Cancel retains the draft; cross-tab sign-out must still confirm first.
+	await editor(page).getByRole('button', { name: 'Close' }).click();
+	await expect(editor(page)).toBeHidden();
+	await expect(page).toHaveURL(/\/settings\/roles$/);
+	await otherTab.getByRole('button', { name: 'You · Owner' }).click();
+	await otherTab.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
+	await expect(confirmHeading).toBeVisible();
+	await otherTab.getByRole('button', { name: 'Stay', exact: true }).click();
+	await expect(confirmHeading).toBeHidden();
+
+	// Reopen Tab 1 (restores retained draft), then confirm Sign out from Tab 2.
+	await page.getByRole('button', { name: 'New role…' }).click();
+	await expect(editor(page).getByLabel('Name')).toHaveValue('Confidential Role');
+	await otherTab.getByRole('button', { name: 'You · Owner' }).click();
+	await otherTab.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
+	await expect(confirmHeading).toBeVisible();
+	await otherTab.getByRole('button', { name: 'Sign out', exact: true }).click();
 	await expect(otherTab).toHaveURL(/\/sign-in/);
 
 	// Tab 1's open role editor must close and drop its draft text without leaking to the next caller.

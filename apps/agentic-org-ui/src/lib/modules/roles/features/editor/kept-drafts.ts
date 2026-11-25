@@ -4,6 +4,7 @@
 // nothing is written to storage, and drafts are scoped per caller so a different account never sees an earlier
 // caller's text after sign-out/sign-in in the same tab.
 import { appSession } from '$lib/platform/auth/app-session.svelte';
+import { drafts } from '$lib/platform/auth/draft-registry';
 import type { Role } from '../../types';
 
 export interface KeptDraft {
@@ -30,6 +31,16 @@ const kept = new Map<string, KeptEntry>();
 const mountedAttemptCounts = new Map<string, number>();
 let nextVersion = 0;
 let attemptReleasedListeners: ((attemptId: string) => void)[] = [];
+let unregisterKeptProbe: (() => void) | undefined;
+
+function syncKeptDraftProbe() {
+	if (kept.size > 0 && !unregisterKeptProbe) {
+		unregisterKeptProbe = drafts.register(() => kept.size > 0);
+	} else if (kept.size === 0 && unregisterKeptProbe) {
+		unregisterKeptProbe();
+		unregisterKeptProbe = undefined;
+	}
+}
 
 function notifyIfAttemptReleased(attemptId: string | undefined) {
 	if (!attemptId || hasRetainedAttempt(attemptId)) return;
@@ -51,6 +62,7 @@ export function keepDraft(key: string, draft: KeptDraft): number {
 	const previousAttempt = kept.get(key)?.draft.attemptId;
 	const version = ++nextVersion;
 	kept.set(key, { draft: structuredClone(draft), version });
+	syncKeptDraftProbe();
 	if (previousAttempt && previousAttempt !== draft.attemptId) {
 		notifyIfAttemptReleased(previousAttempt);
 	}
@@ -66,6 +78,7 @@ export function keptDraft(key: string): KeptDraft | undefined {
 export function discardDraft(key: string) {
 	const attemptId = kept.get(key)?.draft.attemptId;
 	kept.delete(key);
+	syncKeptDraftProbe();
 	notifyIfAttemptReleased(attemptId);
 }
 
@@ -75,6 +88,7 @@ export function discardDraftIfVersion(key: string, version: number | undefined) 
 	const entry = kept.get(key);
 	if (entry?.version !== version) return;
 	kept.delete(key);
+	syncKeptDraftProbe();
 	notifyIfAttemptReleased(entry.draft.attemptId);
 }
 
@@ -116,12 +130,14 @@ export function onAttemptReleased(listener: (attemptId: string) => void): () => 
 export function clearDraftsForCaller(caller?: string) {
 	if (caller === undefined) {
 		kept.clear();
+		syncKeptDraftProbe();
 		return;
 	}
 	const prefix = `${caller}\u0000`;
 	for (const key of kept.keys()) {
 		if (key.startsWith(prefix)) kept.delete(key);
 	}
+	syncKeptDraftProbe();
 }
 
 appSession.onSessionEnded((caller) => {

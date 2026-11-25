@@ -7,6 +7,7 @@
 	import { resolve } from '$app/paths';
 	import { agentSetupHref } from '$lib/modules/agent-setup';
 	import { RoleBody } from '$lib/modules/roles';
+	import { areaCapability } from '$lib/platform/shell/capabilities';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { membersApi } from '../../api';
 	import { profileContext } from '../profile/context.svelte';
@@ -43,11 +44,13 @@
 					A role describes what an employee is for. It grants no authority.
 				</p>
 			{/if}
-			<p class="mt-4">
-				<a href={resolve(agentSetupHref(ctx.profile.id) as '/')} class={linkClass}
-					>{view.role ? 'Change the role in Agent setup' : 'Choose a role in Agent setup'}</a
-				>
-			</p>
+			{#if areaCapability(agentSetupHref(ctx.profile.id)).available}
+				<p class="mt-4">
+					<a href={resolve(agentSetupHref(ctx.profile.id) as '/')} class={linkClass}
+						>{view.role ? 'Change the role in Agent setup' : 'Choose a role in Agent setup'}</a
+					>
+				</p>
+			{/if}
 		</div>
 	{/snippet}
 </Loaded>

@@ -42,6 +42,7 @@
 	} from '$lib/components/ui/sheet';
 	import { toAppError } from '$lib/proto';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
+	import { drafts } from '$lib/platform/auth/draft-registry';
 	import { registerModalBack } from '$lib/platform/shell/modal-back';
 	import { newStableId } from '$lib/modules/organization/commands';
 	import { rolesApi } from '../../api';
@@ -229,6 +230,10 @@
 	// Keep retry identity alive while this editor holds an attemptId (including during close animation).
 	$effect(() => {
 		if (attemptId) return retainMountedAttempt(attemptId);
+	});
+	// Register dirty drafts with the tab/cross-tab sign-out guard (SIGN-15, SIGN-19).
+	$effect(() => {
+		if (open || attemptId) return drafts.register(() => typed());
 	});
 
 	const title = $derived(

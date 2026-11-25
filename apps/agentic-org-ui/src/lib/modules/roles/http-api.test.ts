@@ -448,6 +448,13 @@ describe('createHttpRolesApi', () => {
 				revision: 1,
 				created_at: '2100-02-29T00:00:00Z'
 			},
+			{
+				id: ROLE_SWE,
+				name: 'Pre-epoch UTC',
+				body: '',
+				revision: 1,
+				created_at: '1969-12-31T23:30:00Z'
+			},
 			{ id: ROLE_SWE, name: 'Unsafe Rev', body: '', revision: Number.MAX_SAFE_INTEGER + 1 }
 		];
 		for (const bad of badReads) {
@@ -540,6 +547,32 @@ describe('createHttpRolesApi', () => {
 		const boundaryDetail = await apiYearBoundary.role(ORG, ROLE_SWE);
 		expect(boundaryDetail.role.created.at).toBe('9999-12-31T23:59:59-00:01');
 		expect(boundaryDetail.role.updated.at).toBe('9999-12-31T23:59:59.999Z');
+
+		// 1969-12-31T23:30:00-01:00 resolves to 1970-01-01T00:30:00Z (valid in Rust time.rs).
+		const apiEpochOffset = createHttpRolesApi({
+			http: {
+				read: vi.fn(async (path: string) =>
+					path.includes('/roles/')
+						? {
+								status: 200,
+								body: {
+									result: {
+										id: ROLE_SWE,
+										name: 'Epoch Offset Role',
+										body: '## Mission\nEpoch.\n',
+										revision: 1,
+										created_at: '1969-12-31T23:30:00-01:00'
+									}
+								}
+							}
+						: orgListReply(OWNER)
+				),
+				submit: vi.fn()
+			},
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) }
+		});
+		const epochOffsetDetail = await apiEpochOffset.role(ORG, ROLE_SWE);
+		expect(epochOffsetDetail.role.created.at).toBe('1969-12-31T23:30:00-01:00');
 
 		// Error-only 200 envelopes must map to `unavailable`, never `not_found`.
 		const apiErrorOn200 = createHttpRolesApi({
@@ -1461,5 +1494,90 @@ describe('createHttpRolesApi', () => {
 			api.create(ORG, { name: 'Role', bodyMarkdown: 'V1.', attemptId: 'att-conflict' })
 		).rejects.toMatchObject({ code: 'conflict' });
 		expect(serverRev).toBe(3);
+	});
+
+	it('does not retain an obsolete pre-401 draft when no earlier request may have committed', async () => {
+		let seq = 1;
+		const nextId = () => `0193a5c0-0000-7000-8000-0000000012${String(seq++).padStart(2, '0')}`;
+		const submit = vi
+			.fn()
+			// 1. Initial create refused with 401 (definitely not admitted).
+			.mockResolvedValueOnce({
+				status: 401,
+				body: { error: { code: 'not_authorized', message: 'Sign in again.' } }
+			})
+			// 2. After same-account reauth, user saves revised draft with a duplicate key -> refused directly
+			//    without ever committing the obsolete pre-401 payload!
+			.mockResolvedValueOnce({
+				status: 409,
+				body: { error: { code: 'already_exists', message: 'a role with that key already exists' } }
+			})
+			// 3. Initial update refused with 401 (definitely not admitted).
+			.mockResolvedValueOnce({
+				status: 401,
+				body: { error: { code: 'not_authorized', message: 'Sign in again.' } }
+			})
+			// 4. After same-account reauth, revised update submits ONLY the revised body directly.
+			.mockResolvedValueOnce({
+				status: 200,
+				body: { result: { id: ROLE_SWE, revision: 2, generation: 95 } }
+			});
+
+		const api = createHttpRolesApi({
+			http: { read: vi.fn().mockRejectedValue(new Error('offline')), submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			sessionScope: () => 'inst-1:acct-a',
+			sessionGeneration: () => 1,
+			isAttemptRetained: () => false,
+			newCommandId: nextId,
+			newEntityId: nextId
+		});
+
+		await expect(
+			api.create(ORG, {
+				name: 'Obsolete',
+				bodyMarkdown: 'Old text.',
+				attemptId: 'att-401-create'
+			})
+		).rejects.toMatchObject({ code: 'not_authorized' });
+
+		await expect(
+			api.create(ORG, {
+				name: 'Revised',
+				key: 'software-engineer',
+				bodyMarkdown: 'New text.',
+				attemptId: 'att-401-create'
+			})
+		).rejects.toMatchObject({ code: 'already_exists', field: 'key' });
+		expect(submit).toHaveBeenCalledTimes(2);
+		expect(submit.mock.calls[1]?.[1]).toMatchObject({
+			name: 'Revised',
+			key: 'software-engineer',
+			body: 'New text.'
+		});
+
+		await expect(
+			api.update(ORG, ROLE_SWE, {
+				name: 'Obsolete Edit',
+				bodyMarkdown: 'Old edit.',
+				expectedRevision: 1,
+				attemptId: 'att-401-update'
+			})
+		).rejects.toMatchObject({ code: 'not_authorized' });
+
+		const updated = await api.update(ORG, ROLE_SWE, {
+			name: 'Revised Edit',
+			bodyMarkdown: 'New edit.',
+			expectedRevision: 1,
+			attemptId: 'att-401-update'
+		});
+		expect(submit).toHaveBeenCalledTimes(4);
+		expect(submit.mock.calls[3]?.[1]).toMatchObject({
+			role_id: ROLE_SWE,
+			expected_version: 1,
+			name: 'Revised Edit',
+			body: 'New edit.'
+		});
+		expect(updated.revision).toBe(2);
 	});
 });
