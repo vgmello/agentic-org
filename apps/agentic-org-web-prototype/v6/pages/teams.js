@@ -276,7 +276,7 @@ function memberActionsHtml(id, m, agent, owner, tab) {
     : `<button role="menuitem" type="button" data-act="proto" data-v="Edit ${esc(m.name)}">${ic("pencil", "ic20")}Edit</button>`;
   return `<button class="btn ${hasSecondaryPrimary ? "outline" : "primary"}" type="button" data-act="go" data-v="#/chat/${CH["dm-" + id] ? "dm-" + id : "general"}">${ic("chat", "ic20")}Message</button>
       ${agent ? `<button class="btn outline" type="button" data-act="agent-focus-open" data-id="${id}">${ic("maximize", "ic20")}Analysis Mode</button>` : ""}
-      <button class="btn outline" type="button" data-act="proto" data-v="Assign a task to ${esc(m.name)}">${ic("clipboard", "ic20")}Assign task</button>
+      <button class="btn outline" type="button" data-act="work-new-task" data-id="${id}">${ic("clipboard", "ic20")}Assign task</button>
       <div class="menu-wrap"><button class="btn outline icon" type="button" data-act="menu" data-id="more" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-more" aria-label="More actions for ${esc(m.name)}" title="More actions">${ic("ellipsis", "ic20")}</button><div class="menu" id="menu-more" role="menu" hidden>${more}</div></div>`;
 }
 

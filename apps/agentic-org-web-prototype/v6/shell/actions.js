@@ -8,6 +8,7 @@ import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment,
 import { updateProjectInsights } from "../pages/insights.js";
 import { removeTeam } from "../pages/projects.js";
 import { changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, normalizeScopedWorkState, openWorkTask, refreshScopedWorkCounts, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
+import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
 import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, setSheetReturn } from "./dialogs.js";
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
@@ -274,7 +275,7 @@ const CLICK_ACTIONS = {
   "work-expand-detail": (_e, t) => { const panel = t.closest("dialog"); setWorkPanelExpanded(panel, !panel.hasAttribute("data-expanded")); },
   "agent-focus-open": (_e, t, id) => { if (id) openAgentFocus(id, t); },
   "work-close-detail": () => closeWorkPanel(),
-  "work-new-task": (_e, t) => openWorkTask(t),
+  "work-new-task": (_e, t, id) => openSmartTaskComposer(t, { agentId: id || undefined }),
   "work-cancel-task": (_e, t) => t.closest("dialog").close(),
   run: (_e, _t, id) => { S.openRuns[id] = !S.openRuns[id]; render(false); document.querySelector(`[data-act="run"][data-id="${id}"]`)?.focus(); },
   "v4-acc": (_e, _t, id) => { S.v4Open[id] = !S.v4Open[id]; render(false); document.querySelector(`[data-act="v4-acc"][data-id="${id}"]`)?.focus(); },
@@ -688,7 +689,7 @@ function isNewTaskKey(e) {
 function handleSingleKeyShortcut(e) {
   if (isSingleKeyBlocked(e) || tryPunctuationShortcut(e)) return;
   if (e.metaKey || e.ctrlKey || e.altKey || tryInboxApprovalShortcut(e)) return;
-  if (isNewTaskKey(e)) { e.preventDefault(); toast("New task (prototype action)"); }
+  if (isNewTaskKey(e)) { e.preventDefault(); openSmartTaskComposer(document.activeElement); }
 }
 
 function isCmdKCombo(e) {

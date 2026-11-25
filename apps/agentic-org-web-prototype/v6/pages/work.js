@@ -166,6 +166,7 @@ function scopedWorkToolbar(type, id, items) {
       ${workLayoutToggle("scopedWorkLayout")}
       ${scopedWorkMenus(type)}
       ${workArchivedChip()}
+      ${type === "project" || type === "team" ? `<button class="btn primary" id="work-new-task" type="button" data-act="work-new-task">${ic("plus", "ic16")}New task</button>` : ""}
     </div>
   </div>`;
 }
@@ -818,6 +819,18 @@ function loadWorkTasks() {
   }
 }
 
+function persistCreatedWorkTask(fields) {
+  const task = {
+    id: "T-A" + (lastWorkNumber(savedWorkTasks()) + 1),
+    createdAt: Date.now(),
+    kind: "task",
+    ...fields,
+  };
+  saveWorkTask(task);
+  W.unshift(task);
+  return task;
+}
+
 async function createWorkTask(form) {
   const data = new FormData(form);
   const title = data.get("title").trim();
@@ -869,6 +882,7 @@ export {
   normalizeScopedWorkState,
   openWorkTask,
   pageWork,
+  persistCreatedWorkTask,
   refreshScopedWorkCounts,
   refreshWorkResults,
   scopedWorkQueries,

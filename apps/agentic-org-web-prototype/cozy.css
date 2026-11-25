@@ -293,14 +293,22 @@ html[data-theme="cozy"] {
   }
 
   & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-horizon, .hb-skel-card,
-    .card, .bcard, .c-entry, .sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast,
-    .prof, .split .list) {
+    .card, .bcard, .c-entry, .prof, .split .list) {
     background: var(--cozy-panel);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     border: 1px solid var(--cozy-panel-edge);
     border-radius: 8px;
     box-shadow: var(--cozy-panel-shadow);
+    color: var(--white);
+  }
+  & :is(.sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast) {
+    background: rgb(38 31 25 / .86);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    border: 1px solid var(--cozy-panel-edge);
+    border-radius: 10px;
+    box-shadow: 0 24px 60px -10px rgb(10 7 5 / .68), inset 0 1px rgb(255 248 238 / .16);
     color: var(--white);
   }
 
@@ -365,6 +373,35 @@ html[data-theme="cozy"] {
     --toolbar-seg-active-border: var(--line2);
   }
   & .work-toolbar .queue-controls .menu button { border-radius: 5px; }
+  & .stc-dialog {
+    --stc-surface: rgb(38 31 25 / .88);
+    --stc-well: rgb(18 14 11 / .46);
+    --stc-chip-bg: rgb(255 246 235 / .07);
+    --stc-chip-hover: rgb(255 246 235 / .14);
+    --stc-popover-bg: rgb(42 34 28 / .96);
+    --stc-line: rgb(255 246 235 / .12);
+    --stc-border: rgb(255 246 235 / .22);
+    --stc-shadow: 0 24px 60px -10px rgb(10 7 5 / .68), inset 0 1px rgb(255 248 238 / .16);
+    --stc-radius: 12px;
+    background: var(--stc-surface);
+  }
+  & .stc-dialog textarea.stc-prompt { background: transparent; box-shadow: none; }
+  & .stc-dialog :is(.btn.primary, .btn.outline, .stc-popover, .stc-menu) {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  & body.a11y-mode :is(.sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast) {
+    background: #1a1512;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  & body.a11y-mode .stc-dialog {
+    --stc-surface: #1a1512;
+    --stc-well: #241e19;
+    --stc-popover-bg: #241e19;
+    --stc-border: rgb(255 248 238 / .42);
+    --stc-shadow: none;
+  }
 
   & :is(.btn.primary, .h4-cta.hb-cta-glass, .cmdk-ask-go:not(:disabled)) {
     background: var(--cozy-primary);
