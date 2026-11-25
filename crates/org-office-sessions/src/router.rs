@@ -230,6 +230,7 @@ struct RouteWalkCtx<'a> {
     model_id: &'a str,
     profile_key: &'a str,
     preset: PermissionPreset,
+    exec_rev: u64,
     is_failover_switch: bool,
     now_ms: u64,
     excluded: &'a HashSet<String>,
@@ -350,6 +351,7 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
             resolved_model: &resolved_model,
             profile_key: ctx.profile_key,
             binding_rev,
+            exec_rev: ctx.exec_rev,
             permit: (permit.id.clone(), permit.coordinator_generation),
         },
     ) {
@@ -452,6 +454,7 @@ pub(crate) fn select_and_admit_route(
         model_id: &cfg.model_id,
         profile_key: &profile.key,
         preset: cfg.permission_preset,
+        exec_rev: cfg.meta.revision,
         is_failover_switch,
         now_ms: office.current_time_ms(),
         excluded: excluded_connections,
@@ -531,6 +534,7 @@ struct AdmitParams<'a> {
     resolved_model: &'a str,
     profile_key: &'a str,
     binding_rev: u64,
+    exec_rev: u64,
     permit: (String, u64),
 }
 
@@ -545,6 +549,7 @@ fn finalize_admitted_connection(
         resolved_model,
         profile_key,
         binding_rev,
+        exec_rev,
         permit,
     } = params;
     let adapter = runtimes
@@ -571,15 +576,7 @@ fn finalize_admitted_connection(
     let model_token = Token::try_from(resolved_model)
         .ok()
         .or_else(|| Token::try_from(profile_key).ok());
-    let digest_input = format!(
-        "conn={}:rev={}:bind={}:endpoint={}:model={}",
-        conn.id.as_str(),
-        conn.meta.revision,
-        binding_rev,
-        conn.endpoint_url.as_deref().unwrap_or(""),
-        resolved_model
-    );
-    let route_digest_suffix = hex_short_sha256(digest_input.as_bytes());
+    let route_digest_suffix = compute_route_digest(conn, binding_rev, resolved_model, exec_rev);
     Ok(AdmittedRoute {
         adapter,
         model_token,
@@ -606,6 +603,7 @@ fn hex_short_sha256(bytes: &[u8]) -> String {
 }
 
 /// Outcome of attempting to re-acquire a turn permit on an idle warm session's existing connection.
+#[derive(Debug)]
 pub(crate) enum WarmPermitOutcome {
     Granted((String, u64)),
     /// Warm session no longer matches current config/readiness/route digest and must cold-start.
@@ -624,14 +622,16 @@ fn compute_route_digest(
     conn: &ProviderConnection,
     binding_rev: u64,
     resolved_model: &str,
+    exec_rev: u64,
 ) -> String {
     let digest_input = format!(
-        "conn={}:rev={}:bind={}:endpoint={}:model={}",
+        "conn={}:rev={}:bind={}:endpoint={}:model={}:exec={}",
         conn.id.as_str(),
         conn.meta.revision,
         binding_rev,
         conn.endpoint_url.as_deref().unwrap_or(""),
-        resolved_model
+        resolved_model,
+        exec_rev
     );
     hex_short_sha256(digest_input.as_bytes())
 }
@@ -692,7 +692,8 @@ pub(crate) fn acquire_warm_permit_for_office(
             Ok(Err(_)) | Err(_) => return WarmPermitOutcome::StaleWarm,
         };
     if let Some(expected) = expected_route_digest {
-        let current_digest = compute_route_digest(&conn, binding_rev, &resolved_model);
+        let current_digest =
+            compute_route_digest(&conn, binding_rev, &resolved_model, cfg.meta.revision);
         if current_digest != expected {
             return WarmPermitOutcome::StaleWarm;
         }

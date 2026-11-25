@@ -526,6 +526,7 @@ impl SessionManager {
             bindings: self.bindings.clone(),
             office: Arc::clone(&self.office),
             hq_permits: self.config.hq_permits.clone(),
+            weak_mgr: self.weak_self(),
             hourly_limit: self.config.hourly_wake_limit,
             window_ms: self.config.wake_window.as_millis() as u64,
         };
@@ -1252,6 +1253,7 @@ struct TurnEndDrainCtx {
     bindings: RunBindingRegistry,
     office: Arc<Office>,
     hq_permits: Option<Arc<dyn crate::router::HqPermitCoordinator>>,
+    weak_mgr: Option<std::sync::Weak<SessionManager>>,
     hourly_limit: usize,
     window_ms: u64,
 }
@@ -1415,6 +1417,34 @@ fn build_permit_hooks(
     )
 }
 
+fn recycle_stale_warm_handle(
+    employee_id: &str,
+    tx: &std::sync::mpsc::Sender<PumpCommand>,
+    reason: &str,
+    ctx: &TurnEndDrainCtx,
+) {
+    let _ = tx.send(PumpCommand::Stop {
+        reason: reason.to_owned(),
+    });
+    let removed = ctx
+        .registry
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .live
+        .remove(employee_id);
+    if let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) {
+        let emp = employee_id.to_owned();
+        crate::manager::spawn_bg_worker(&mgr, "org-warm-recycle", move |m| {
+            if let Some(mut old) = removed {
+                if let Some(thread) = old.thread.take() {
+                    let _ = thread.join();
+                }
+            }
+            let _ = m.process_due_wakes_for(&emp);
+        });
+    }
+}
+
 fn try_send_wake_on_live_handle(
     employee_id: &str,
     queue_task_id: Option<&str>,
@@ -1428,13 +1458,18 @@ fn try_send_wake_on_live_handle(
                 handle.tx.clone(),
                 handle.connection_id.clone(),
                 handle.route_digest.clone(),
+                handle.oauth_expires_at_ms,
                 Arc::clone(&handle.active_permit),
             )
         })
     };
-    let Some((tx, conn_id, route_digest, active_permit)) = handle_info else {
+    let Some((tx, conn_id, route_digest, oauth_expires_at_ms, active_permit)) = handle_info else {
         return Ok(false);
     };
+    if crate::host_auth::is_oauth_expiring(oauth_expires_at_ms, now_ms()) {
+        recycle_stale_warm_handle(employee_id, &tx, "oauth_token_expiring", ctx);
+        return Ok(false);
+    }
     let acquired_pid = match acquire_live_handle_permit(
         &ctx.office,
         ctx.hq_permits.as_deref(),
@@ -1446,10 +1481,8 @@ fn try_send_wake_on_live_handle(
     ) {
         Ok(pid) => pid,
         Err(LivePermitError::Stale) => {
-            let _ = tx.send(PumpCommand::Stop {
-                reason: "warm_route_stale".into(),
-            });
-            return Err(WakeHoldReason::AdmissionRefused);
+            recycle_stale_warm_handle(employee_id, &tx, "warm_route_stale", ctx);
+            return Ok(false);
         }
         Err(LivePermitError::Hold(reason)) => return Err(reason),
     };

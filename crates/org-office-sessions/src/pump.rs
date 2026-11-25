@@ -68,6 +68,7 @@ pub(crate) struct FailoverRequest {
     pub workspace: Option<String>,
     pub task_ref: Option<String>,
     pub tried_connections: Vec<String>,
+    pub oauth_refresh_attempted: bool,
     pub reason: &'static str,
     pub rate_limit_resets_at: Option<String>,
 }
@@ -159,6 +160,7 @@ pub(crate) struct PumpContext {
     pub workspace: Option<String>,
     pub task_ref: Option<String>,
     pub tried_connections: Vec<String>,
+    pub oauth_refresh_attempted: bool,
     pub store: SessionStore,
     pub bindings: RunBindingRegistry,
     pub state: Arc<Mutex<SessionRuntimeState>>,
@@ -875,6 +877,18 @@ fn handle_turn_ended(
     });
 }
 
+pub(crate) fn is_claude_auth_expired_reply(reply: &str) -> bool {
+    let lower = reply.trim().to_ascii_lowercase();
+    (lower.starts_with("failed to authenticate")
+        && (lower.contains("401")
+            || lower.contains("oauth")
+            || lower.contains("authentication_error")))
+        || (lower.starts_with("api error: 401")
+            && (lower.contains("oauth") || lower.contains("authentication_error")))
+        || lower.starts_with("401 oauth access token has expired")
+        || lower == "oauth access token has expired"
+}
+
 fn evaluate_turn_failover(
     state: &mut SessionRuntimeState,
     loop_state: &mut PumpLoopState,
@@ -882,19 +896,28 @@ fn evaluate_turn_failover(
     outcome: &org_agent_runtime::TurnOutcome,
     errors: &[String],
 ) -> bool {
-    if matches!(outcome, org_agent_runtime::TurnOutcome::Completed) {
+    let turn_cmds = ctx.bindings.accepted_commands(&ctx.employee_id).len();
+    let has_effects =
+        loop_state.had_external_effect || turn_cmds > loop_state.accepted_commands_baseline;
+    let reply_auth_expired = !has_effects
+        && state
+            .last_reply
+            .as_deref()
+            .is_some_and(is_claude_auth_expired_reply);
+    if matches!(outcome, org_agent_runtime::TurnOutcome::Completed) && !reply_auth_expired {
         return false;
     }
-    let Some(reason) = crate::router::classify_failover_error(errors, loop_state.rate_limited)
-    else {
+    let reason = if reply_auth_expired {
+        "auth_expired"
+    } else if let Some(r) = crate::router::classify_failover_error(errors, loop_state.rate_limited)
+    {
+        r
+    } else {
         return false;
     };
     let Some(conn_id) = ctx.connection_id.as_ref() else {
         return false;
     };
-    let turn_cmds = ctx.bindings.accepted_commands(&ctx.employee_id).len();
-    let has_effects =
-        loop_state.had_external_effect || turn_cmds > loop_state.accepted_commands_baseline;
     if has_effects {
         state.state = SessionState::RecoveryRequired;
         state.recovery_required = true;
@@ -914,6 +937,7 @@ fn evaluate_turn_failover(
         workspace: ctx.workspace.clone(),
         task_ref: ctx.task_ref.clone(),
         tried_connections: tried,
+        oauth_refresh_attempted: ctx.oauth_refresh_attempted,
         reason,
         rate_limit_resets_at: loop_state.rate_limit_resets_at.clone(),
     });

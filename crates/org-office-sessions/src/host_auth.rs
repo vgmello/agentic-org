@@ -23,6 +23,22 @@ const MAX_SHORT_TMPDIR_BYTES: usize = 70;
 /// Upper bound on macOS Keychain lookup so a locked Keychain never hangs session launch or
 /// transcript redaction.
 const KEYCHAIN_LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
+/// Proactive refresh lead time before a host Claude OAuth access token expires (5 minutes).
+pub(crate) const OAUTH_REFRESH_LEAD_MS: u64 = 5 * 60 * 1000;
+/// Upper bound on a host-side `claude` OAuth token refresh probe before session launch.
+const OAUTH_REFRESH_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Resolved host Claude Code OAuth access token and its optional expiry timestamp (epoch ms).
+pub(crate) struct ClaudeOAuthToken {
+    pub access_token: Zeroizing<String>,
+    pub expires_at_ms: Option<u64>,
+}
+
+/// Returns `true` when an OAuth token with `expires_at_ms` is already expired or within
+/// [`OAUTH_REFRESH_LEAD_MS`] of expiry.
+pub(crate) fn is_oauth_expiring(expires_at_ms: Option<u64>, now_ms: u64) -> bool {
+    expires_at_ms.is_some_and(|exp| now_ms.saturating_add(OAUTH_REFRESH_LEAD_MS) >= exp)
+}
 
 /// Deterministic 8-hex per-agent slug used under `<socket_parent>/t/<slug>`.
 pub(crate) fn agent_tmpdir_slug(office_id: &str, employee_id: &str) -> String {
@@ -93,20 +109,74 @@ pub(crate) fn host_config_dir_for(runtime_id: &str, allowed: bool) -> Option<Spe
 
 /// Appends `CLAUDE_CODE_OAUTH_TOKEN` to `launch_env` when a Claude `subscription_cli` route has
 /// no vault credential and the runtime plan both accepts and protects `CLAUDE_CODE_OAUTH_TOKEN`.
+/// Proactively refreshes an expiring/expired host OAuth token via `runtime_binary` before launch
+/// and returns the token's `expiresAt` timestamp (epoch ms) when known.
 pub(crate) fn append_host_claude_oauth(
     runtime_id: &str,
     allowed: bool,
+    runtime_binary: &Path,
     plan: &LaunchPlan,
     launch_env: &mut Vec<(OsString, OsString)>,
-) {
+) -> Option<u64> {
     if !allowed || runtime_id != "claude" || !plan_protects_claude_oauth(plan) {
-        return;
+        return None;
     }
-    if let Some(token) = resolve_host_claude_oauth_token() {
-        launch_env.push((
-            OsString::from("CLAUDE_CODE_OAUTH_TOKEN"),
-            OsString::from(token.as_str()),
-        ));
+    let mut resolved = resolve_host_claude_oauth_entry()?;
+    if is_oauth_expiring(resolved.expires_at_ms, crate::credentials::now_ms()) {
+        refresh_host_claude_oauth(runtime_binary);
+        if let Some(refreshed) = resolve_host_claude_oauth_entry() {
+            resolved = refreshed;
+        }
+    }
+    launch_env.push((
+        OsString::from("CLAUDE_CODE_OAUTH_TOKEN"),
+        OsString::from(resolved.access_token.as_str()),
+    ));
+    resolved.expires_at_ms
+}
+
+/// Triggers a bounded host-side Claude CLI refresh under the host account's own home so expired
+/// `subscription_cli` OAuth access tokens rotate cleanly before spawning an isolated session.
+pub(crate) fn refresh_host_claude_oauth(runtime_binary: &Path) -> bool {
+    if !runtime_binary.is_file() {
+        return false;
+    }
+    let Ok(mut child) = Command::new(runtime_binary)
+        .args([
+            "-p",
+            "ok",
+            "--model",
+            "haiku",
+            "--no-session-persistence",
+            "--output-format",
+            "text",
+        ])
+        .env_remove("CLAUDE_CODE_OAUTH_TOKEN")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let deadline = Instant::now() + OAUTH_REFRESH_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
     }
 }
 
@@ -122,13 +192,18 @@ fn plan_protects_claude_oauth(plan: &LaunchPlan) -> bool {
     accepts && protects
 }
 
-/// Resolves the host user's local Claude Code OAuth access token from
-/// `$HOME/.claude/.credentials.json` or macOS Keychain (`Claude Code-credentials`).
+/// Resolves the host user's local Claude Code OAuth access token (for transcript redaction).
 pub(crate) fn resolve_host_claude_oauth_token() -> Option<Zeroizing<String>> {
+    resolve_host_claude_oauth_entry().map(|e| e.access_token)
+}
+
+/// Resolves the host user's local Claude Code OAuth access token + expiry from
+/// `$HOME/.claude/.credentials.json` or macOS Keychain (`Claude Code-credentials`).
+pub(crate) fn resolve_host_claude_oauth_entry() -> Option<ClaudeOAuthToken> {
     read_claude_credentials_file().or_else(read_claude_keychain_token)
 }
 
-fn read_claude_credentials_file() -> Option<Zeroizing<String>> {
+fn read_claude_credentials_file() -> Option<ClaudeOAuthToken> {
     let cred_path = std::env::var_os("HOME")
         .map(PathBuf::from)?
         .join(".claude")
@@ -136,7 +211,7 @@ fn read_claude_credentials_file() -> Option<Zeroizing<String>> {
     read_claude_credentials_from_path(&cred_path)
 }
 
-fn read_claude_credentials_from_path(cred_path: &Path) -> Option<Zeroizing<String>> {
+fn read_claude_credentials_from_path(cred_path: &Path) -> Option<ClaudeOAuthToken> {
     use std::os::unix::fs::OpenOptionsExt as _;
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -158,10 +233,10 @@ fn read_claude_credentials_from_path(cred_path: &Path) -> Option<Zeroizing<Strin
     if bytes.len() > MAX_HOST_CLAUDE_CRED_BYTES {
         return None;
     }
-    parse_claude_oauth_access_token(&bytes)
+    parse_claude_oauth_token(&bytes)
 }
 
-fn read_claude_keychain_token() -> Option<Zeroizing<String>> {
+fn read_claude_keychain_token() -> Option<ClaudeOAuthToken> {
     let security_bin = Path::new("/usr/bin/security");
     if !security_bin.is_file() {
         return None;
@@ -195,7 +270,7 @@ fn read_claude_keychain_token() -> Option<Zeroizing<String>> {
                 if buf.len() > MAX_HOST_CLAUDE_CRED_BYTES {
                     return None;
                 }
-                return parse_claude_oauth_access_token(&buf);
+                return parse_claude_oauth_token(&buf);
             }
             Ok(None) => {
                 if Instant::now() >= deadline {
@@ -214,14 +289,18 @@ fn read_claude_keychain_token() -> Option<Zeroizing<String>> {
     }
 }
 
-fn parse_claude_oauth_access_token(raw: &[u8]) -> Option<Zeroizing<String>> {
+fn parse_claude_oauth_token(raw: &[u8]) -> Option<ClaudeOAuthToken> {
     let val: serde_json::Value = serde_json::from_slice(raw).ok()?;
-    let token = val
-        .get("claudeAiOauth")?
-        .get("accessToken")?
-        .as_str()?
-        .trim();
-    (!token.is_empty()).then(|| Zeroizing::new(token.to_owned()))
+    let oauth = val.get("claudeAiOauth")?;
+    let token = oauth.get("accessToken")?.as_str()?.trim();
+    if token.is_empty() {
+        return None;
+    }
+    let expires_at_ms = oauth.get("expiresAt").and_then(serde_json::Value::as_u64);
+    Some(ClaudeOAuthToken {
+        access_token: Zeroizing::new(token.to_owned()),
+        expires_at_ms,
+    })
 }
 
 #[cfg(test)]
@@ -230,17 +309,21 @@ mod tests {
 
     #[test]
     fn parses_claude_oauth_access_token_json() {
-        let valid = br#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-example"}}"#;
-        assert_eq!(
-            parse_claude_oauth_access_token(valid)
-                .as_deref()
-                .map(String::as_str),
-            Some("sk-ant-oat01-example")
-        );
-        assert!(
-            parse_claude_oauth_access_token(br#"{"claudeAiOauth":{"accessToken":"  "}}"#).is_none()
-        );
-        assert!(parse_claude_oauth_access_token(br#"not-json"#).is_none());
+        let valid = br#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-example","expiresAt":1795620000000}}"#;
+        let parsed = parse_claude_oauth_token(valid).unwrap();
+        assert_eq!(parsed.access_token.as_str(), "sk-ant-oat01-example");
+        assert_eq!(parsed.expires_at_ms, Some(1_795_620_000_000));
+        assert!(is_oauth_expiring(
+            parsed.expires_at_ms,
+            1_795_620_000_000 - OAUTH_REFRESH_LEAD_MS
+        ));
+        assert!(!is_oauth_expiring(
+            parsed.expires_at_ms,
+            1_795_620_000_000 - OAUTH_REFRESH_LEAD_MS - 1
+        ));
+        assert!(!is_oauth_expiring(None, 1_795_620_000_000));
+        assert!(parse_claude_oauth_token(br#"{"claudeAiOauth":{"accessToken":"  "}}"#).is_none());
+        assert!(parse_claude_oauth_token(br#"not-json"#).is_none());
     }
 
     #[test]
@@ -290,8 +373,8 @@ mod tests {
         .unwrap();
         assert_eq!(
             read_claude_credentials_from_path(&valid)
-                .as_deref()
-                .map(String::as_str),
+                .as_ref()
+                .map(|e| e.access_token.as_str()),
             Some("sk-ant-bounded-tok")
         );
 

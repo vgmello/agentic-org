@@ -40,7 +40,9 @@ use crate::instructions::{
     assemble_standing_instructions, compose_turn_objective, InstructionInput, TurnTrigger,
     SAME_USER_ISOLATION_NOTICE,
 };
-use crate::preset::{build_grants_summary, build_session_policy, PresetConfig};
+use crate::preset::{
+    apply_worktree_sandbox_rules, build_grants_summary, build_session_policy, PresetConfig,
+};
 use crate::pump::{run_pump, FailoverRequest, PumpCommand, PumpContext, SessionRuntimeState};
 use crate::recovery::{
     ActiveTurnRecord, NativeProcessExitOracle, PendingStartRecord, ProcessExitOracle,
@@ -100,6 +102,7 @@ pub(crate) struct LiveSessionHandle {
     pub thread: Option<JoinHandle<()>>,
     pub connection_id: Option<String>,
     pub route_digest: String,
+    pub oauth_expires_at_ms: Option<u64>,
     pub workspace: Option<String>,
     pub active_permit: Arc<Mutex<Option<(String, u64)>>>,
 }
@@ -177,6 +180,8 @@ struct PlannedSessionLaunch {
     runtime_id: String,
     connection_id: Option<String>,
     route_digest: String,
+    oauth_expires_at_ms: Option<u64>,
+    oauth_refresh_attempted: bool,
     workspace_arg: Option<String>,
     permit: Option<(String, u64)>,
     task_ref: Option<String>,
@@ -200,6 +205,8 @@ struct PreparedSessionLaunch {
     runtime_id: String,
     connection_id: Option<String>,
     route_digest: String,
+    oauth_expires_at_ms: Option<u64>,
+    oauth_refresh_attempted: bool,
     workspace_arg: Option<String>,
     permit: Option<(String, u64)>,
     task_ref: Option<String>,
@@ -836,7 +843,7 @@ impl SessionManager {
         let socket_str = self.config.office_socket.display().to_string();
         let socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
         let denied_globs = self.denied_office_globs_for(Some(employee.id.as_str()));
-        let cfg = build_session_policy(
+        let mut cfg = build_session_policy(
             preset,
             sandbox_enabled,
             &workspace,
@@ -845,6 +852,9 @@ impl SessionManager {
             1,
         )
         .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid permission preset"))?;
+        let (wt_writable, wt_write_denies) =
+            self.worktree_sandbox_grants(employee.id.as_str(), false);
+        apply_worktree_sandbox_rules(&mut cfg, &wt_writable, &wt_write_denies);
         Ok(build_grants_summary(employee.id.as_str(), &cfg, &[]))
     }
 
@@ -1347,7 +1357,11 @@ impl SessionManager {
         let finished = if let Some(handle) = reg.live.get(emp_id) {
             let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
             let workspace_matches = handle.workspace.as_deref() == requested_workspace;
-            if workspace_matches && is_warm_state_reusable(state.state) {
+            let oauth_fresh = !crate::host_auth::is_oauth_expiring(
+                handle.oauth_expires_at_ms,
+                crate::credentials::now_ms(),
+            );
+            if workspace_matches && oauth_fresh && is_warm_state_reusable(state.state) {
                 if let Some(text) = objective {
                     let text = self.prepend_watch_notices(emp_id, text);
                     let tx = handle.tx.clone();
@@ -1379,6 +1393,10 @@ impl SessionManager {
             if !workspace_matches {
                 let _ = handle.tx.send(PumpCommand::Stop {
                     reason: "workspace_changed".into(),
+                });
+            } else if !oauth_fresh {
+                let _ = handle.tx.send(PumpCommand::Stop {
+                    reason: "oauth_token_expiring".into(),
                 });
             }
             true
@@ -1421,6 +1439,7 @@ impl SessionManager {
             resume_runtime_session_id,
             task_ref,
             is_failover_switch: false,
+            oauth_refresh_attempted: false,
             excluded_connections: HashSet::new(),
             tried_connections: Vec::new(),
         };
@@ -1473,7 +1492,7 @@ impl SessionManager {
         let socket_str = self.config.office_socket.display().to_string();
         let office_socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
         let denied_globs = self.denied_office_globs_for(Some(&emp_id));
-        let preset_cfg = build_session_policy(
+        let mut preset_cfg = build_session_policy(
             admitted.preset,
             admitted.sandbox_enabled,
             &workspace_spec,
@@ -1482,6 +1501,8 @@ impl SessionManager {
             1,
         )
         .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid permission preset"))?;
+        let (wt_writable, wt_write_denies) = self.worktree_sandbox_grants(&emp_id, true);
+        apply_worktree_sandbox_rules(&mut preset_cfg, &wt_writable, &wt_write_denies);
 
         let (runtime_dir, tmpdir) = self.prepare_run_dirs(&emp_id)?;
         let subagent_def =
@@ -1541,9 +1562,10 @@ impl SessionManager {
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "runtime rejected session spec"))?;
 
         let mut launch_env = admitted.auth_env;
-        crate::host_auth::append_host_claude_oauth(
+        let oauth_expires_at_ms = crate::host_auth::append_host_claude_oauth(
             runtime_name,
             allow_host_auth,
+            &ctx.runtime_path,
             &plan,
             &mut launch_env,
         );
@@ -1557,6 +1579,8 @@ impl SessionManager {
             runtime_id: admitted.adapter.id().as_str().to_owned(),
             connection_id: admitted.connection_id,
             route_digest: admitted.route_digest_suffix,
+            oauth_expires_at_ms,
+            oauth_refresh_attempted: opts.oauth_refresh_attempted,
             workspace_arg: params.workspace.clone(),
             permit: permit_guard.take(),
             task_ref: opts.task_ref.map(str::to_owned),
@@ -1587,6 +1611,8 @@ impl SessionManager {
             runtime_id,
             connection_id,
             route_digest,
+            oauth_expires_at_ms,
+            oauth_refresh_attempted,
             workspace_arg,
             permit,
             task_ref,
@@ -1660,6 +1686,8 @@ impl SessionManager {
             runtime_id,
             connection_id,
             route_digest,
+            oauth_expires_at_ms,
+            oauth_refresh_attempted,
             workspace_arg,
             permit: permit_guard.take(),
             task_ref,
@@ -1757,6 +1785,8 @@ impl SessionManager {
             run_id,
             connection_id,
             route_digest,
+            oauth_expires_at_ms,
+            oauth_refresh_attempted,
             workspace_arg,
             permit,
             task_ref,
@@ -1782,6 +1812,7 @@ impl SessionManager {
             workspace: workspace_arg.clone(),
             task_ref,
             tried_connections,
+            oauth_refresh_attempted,
             store: self.store.clone(),
             bindings: self.bindings.clone(),
             state: Arc::clone(&runtime_state),
@@ -1833,6 +1864,7 @@ impl SessionManager {
                 thread: Some(thread),
                 connection_id,
                 route_digest,
+                oauth_expires_at_ms,
                 workspace: workspace_arg,
                 active_permit,
             },
@@ -1963,12 +1995,20 @@ impl SessionManager {
         let forbidden = vec![home.to_path_buf(), workspace.to_path_buf()];
         let search_path = SearchPath::new(&helper_dir, &captured_path, &forbidden)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "invalid helper search path"))?;
-        let captured = vec![
+        let mut captured = vec![
             (OsString::from("HOME"), home.as_os_str().to_os_string()),
             (OsString::from("TMPDIR"), tmpdir.as_os_str().to_os_string()),
             (OsString::from("LANG"), OsString::from("en_US.UTF-8")),
             (OsString::from("TERM"), OsString::from("dumb")),
         ];
+        // Preserve host read-only Rust toolchain directories when present so managed agents can
+        // run `rustc`/`cargo --offline` inside their isolated task worktrees (`TASK-126`).
+        // Host `~/.cargo/credentials*` are explicitly read+write denied in `denied_office_globs_for`.
+        for (var, default_rel) in [("RUSTUP_HOME", ".rustup"), ("CARGO_HOME", ".cargo")] {
+            if let Some(dir) = host_rust_dir_env(var, default_rel, &forbidden) {
+                captured.push((OsString::from(var), dir));
+            }
+        }
         let info = self.office.info();
         let context = vec![
             (
@@ -2039,10 +2079,218 @@ impl SessionManager {
             push_glob_pattern(&mut out, &office_local.join(sub));
         }
         if let Some(org_dir) = durable.parent() {
-            push_glob_pattern(&mut out, &org_dir.join("runtime"));
+            self.append_runtime_office_denies(&mut out, org_dir, office_id, self_employee_id);
         }
         self.append_sibling_and_socket_denies(&mut out, &office_local, office_id, self_employee_id);
+        append_cargo_credential_denies(&mut out);
         out
+    }
+
+    fn append_runtime_office_denies(
+        &self,
+        out: &mut Vec<PathPattern>,
+        org_dir: &Path,
+        office_id: &str,
+        self_employee_id: Option<&str>,
+    ) {
+        let runtime_root = org_dir.join("runtime");
+        push_glob_pattern(out, &runtime_root.join("snapshot-import"));
+        if let Ok(entries) = std::fs::read_dir(&runtime_root) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str != office_id && name_str != "snapshot-import" {
+                    push_glob_pattern(out, &entry.path());
+                }
+            }
+        }
+        let office_rt = runtime_root.join(office_id);
+        for file in [
+            "office.db",
+            "office.db-wal",
+            "office.db-shm",
+            "git-state.json",
+        ] {
+            push_exact_pattern(out, &office_rt.join(file));
+        }
+        for dir in ["protected", "git-home"] {
+            push_glob_pattern(out, &office_rt.join(dir));
+        }
+        match self_employee_id {
+            Some(emp_id) => {
+                self.append_runtime_team_sibling_denies(out, &office_rt, emp_id);
+                self.append_sibling_git_admin_denies(out, &office_rt, emp_id);
+            }
+            None => {
+                push_glob_pattern(out, &office_rt.join("teams"));
+                push_glob_pattern(out, &office_rt.join("repositories"));
+            }
+        }
+    }
+
+    fn append_sibling_git_admin_denies(
+        &self,
+        out: &mut Vec<PathPattern>,
+        office_rt: &Path,
+        emp_id: &str,
+    ) {
+        let Ok(git_state) = org_office::git::OfficeGitState::load(
+            self.office.runtime_root(),
+            &self.office.info().office_id,
+        ) else {
+            return;
+        };
+        let repos_root = office_rt.join("repositories");
+        for ws in git_state.workspaces.values() {
+            if ws.employee_id != emp_id && !ws.admin_dir_name.is_empty() {
+                let admin = repos_root
+                    .join(format!("{}.git", ws.repository_id))
+                    .join("worktrees")
+                    .join(&ws.admin_dir_name);
+                push_glob_pattern(out, &admin);
+            }
+        }
+    }
+
+    fn append_runtime_team_sibling_denies(
+        &self,
+        out: &mut Vec<PathPattern>,
+        office_rt: &Path,
+        emp_id: &str,
+    ) {
+        let chain = self.resolve_employee_team_chain(emp_id);
+        if chain.is_empty() {
+            push_glob_pattern(out, &office_rt.join("teams"));
+            return;
+        }
+        let all_teams = self
+            .office
+            .org_snapshot()
+            .map(|s| s.teams)
+            .unwrap_or_default();
+        let mut cursor = office_rt.to_path_buf();
+        for team_id in &chain {
+            let teams_dir = cursor.join("teams");
+            for team in &all_teams {
+                if team.id != *team_id {
+                    push_glob_pattern(out, &teams_dir.join(&team.id));
+                }
+            }
+            if let Ok(entries) = std::fs::read_dir(&teams_dir) {
+                for entry in entries.flatten() {
+                    if entry.file_name().to_str() != Some(team_id.as_str()) {
+                        push_glob_pattern(out, &entry.path());
+                    }
+                }
+            }
+            cursor = teams_dir.join(team_id);
+        }
+        let agents_dir = cursor.join("agents");
+        for other in self.collect_sibling_agent_ids(&agents_dir, Some(emp_id)) {
+            push_glob_pattern(out, &agents_dir.join(other));
+        }
+    }
+
+    pub(crate) fn resolve_employee_team_chain(&self, employee_id: &str) -> Vec<String> {
+        let Ok(Some(emp)) = self.office.load_employee(employee_id) else {
+            return Vec::new();
+        };
+        let Ok(snapshot) = self.office.org_snapshot() else {
+            return vec![emp.home_team_id.as_str().to_owned()];
+        };
+        let parent_by_id: HashMap<&str, Option<&str>> = snapshot
+            .teams
+            .iter()
+            .map(|t| (t.id.as_str(), t.owner_team_id.as_deref()))
+            .collect();
+        let mut chain = Vec::new();
+        let mut cur = Some(emp.home_team_id.as_str());
+        let mut visited = HashSet::new();
+        while let Some(tid) = cur {
+            if !visited.insert(tid) {
+                break;
+            }
+            chain.push(tid.to_owned());
+            cur = parent_by_id.get(tid).copied().flatten();
+        }
+        chain.reverse();
+        chain
+    }
+
+    pub(crate) fn worktree_sandbox_grants(
+        &self,
+        employee_id: &str,
+        create_root: bool,
+    ) -> (Vec<SpecPath>, Vec<PathPattern>) {
+        let office_rt = self
+            .office
+            .runtime_root()
+            .join(&self.office.info().office_id);
+        let mut writable = Vec::new();
+        let mut write_denies = Vec::new();
+        let git_state = org_office::git::OfficeGitState::load(
+            self.office.runtime_root(),
+            &self.office.info().office_id,
+        )
+        .ok();
+        let chain = self.resolve_employee_team_chain(employee_id);
+        if !chain.is_empty() {
+            let mut my_root = office_rt.clone();
+            for tid in &chain {
+                my_root = my_root.join("teams").join(tid);
+            }
+            my_root = my_root.join("agents").join(employee_id);
+            if create_root {
+                let _ = std::fs::create_dir_all(&my_root);
+            }
+            let canon_root = canonicalize_with_tail(&my_root);
+            if let Ok(spec) = SpecPath::try_from(canon_root.to_string_lossy().as_ref()) {
+                writable.push(spec);
+            }
+            // Emit concrete per-worktree `.git` / `.git/hooks/**` denies (no interior `**`
+            // wildcards, which would cause Codex `path_pattern_base` to downgrade `canon_root`
+            // to read-only).
+            let mut wt_dirs = std::collections::BTreeSet::new();
+            if let Some(gs) = &git_state {
+                for ws in gs.workspaces.values() {
+                    if ws.employee_id == employee_id && ws.state == "active" {
+                        wt_dirs.insert(canonicalize_with_tail(Path::new(&ws.worktree_path)));
+                    }
+                }
+            }
+            collect_existing_worktree_dirs(&canon_root, 0, &mut wt_dirs);
+            for wt_dir in wt_dirs {
+                push_exact_pattern(&mut write_denies, &wt_dir.join(".git"));
+                push_glob_pattern(&mut write_denies, &wt_dir.join(".git").join("hooks"));
+            }
+        }
+        let repos_root = office_rt.join("repositories");
+        for cache_dir in self.collect_bare_cache_dirs(&repos_root) {
+            append_bare_cache_sandbox_rules(
+                &cache_dir,
+                git_state.as_ref(),
+                &mut writable,
+                &mut write_denies,
+            );
+        }
+        (writable, write_denies)
+    }
+
+    fn collect_bare_cache_dirs(&self, repos_root: &Path) -> Vec<PathBuf> {
+        let mut dirs = std::collections::BTreeSet::new();
+        if let Ok(Ok(repos)) = self.office.list_repositories(None) {
+            for r in repos {
+                dirs.insert(repos_root.join(format!("{}.git", r.record.id.as_str())));
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(repos_root) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().ends_with(".git") {
+                    dirs.insert(entry.path());
+                }
+            }
+        }
+        dirs.into_iter().collect()
     }
 
     fn append_sibling_and_socket_denies(
@@ -2436,6 +2684,7 @@ struct LaunchRouteOpts<'a> {
     resume_runtime_session_id: Option<&'a str>,
     task_ref: Option<&'a str>,
     is_failover_switch: bool,
+    oauth_refresh_attempted: bool,
     excluded_connections: HashSet<String>,
     tried_connections: Vec<String>,
 }
@@ -2573,29 +2822,66 @@ fn acquire_or_reroute_warm_permit(
     }
 }
 
+fn try_refresh_host_claude_subscription(mgr: &SessionManager, req: &FailoverRequest) -> bool {
+    if req.reason != "auth_expired" || req.oauth_refresh_attempted {
+        return false;
+    }
+    let Ok(Some(conn)) = mgr
+        .office
+        .load_provider_connection(&req.failed_connection_id)
+    else {
+        return false;
+    };
+    if conn.auth_mode != org_office::organization_family::records::ProviderAuthMode::SubscriptionCli
+        || !conn.runtime_driver.eq_ignore_ascii_case("claude")
+    {
+        return false;
+    }
+    if mgr
+        .enrollment
+        .vault()
+        .load_unwrapped(conn.id.as_str())
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return false;
+    }
+    let Ok(adapter) = mgr.config.runtimes.resolve("claude") else {
+        return false;
+    };
+    let Ok(binary) = mgr.config.runtimes.resolve_binary(adapter.as_ref(), None) else {
+        return false;
+    };
+    crate::host_auth::refresh_host_claude_oauth(&binary)
+}
+
 fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
-    match req.reason {
-        "rate_limited" | "quota_exhausted" => {
-            let _ = mgr.office.record_connection_cooldown_internal(
-                &req.failed_connection_id,
-                None,
-                req.rate_limit_resets_at.as_deref(),
-                None,
-            );
-            crate::router::report_cooldown_any(
-                &mgr.office,
-                mgr.config.hq_permits.as_deref(),
-                &req.failed_connection_id,
-                req.rate_limit_resets_at.as_deref(),
-                Some(req.reason),
-            );
+    let refreshed_same_conn = try_refresh_host_claude_subscription(mgr, &req);
+    if !refreshed_same_conn {
+        match req.reason {
+            "rate_limited" | "quota_exhausted" => {
+                let _ = mgr.office.record_connection_cooldown_internal(
+                    &req.failed_connection_id,
+                    None,
+                    req.rate_limit_resets_at.as_deref(),
+                    None,
+                );
+                crate::router::report_cooldown_any(
+                    &mgr.office,
+                    mgr.config.hq_permits.as_deref(),
+                    &req.failed_connection_id,
+                    req.rate_limit_resets_at.as_deref(),
+                    Some(req.reason),
+                );
+            }
+            "auth_expired" => {
+                let _ = mgr
+                    .office
+                    .mark_connection_auth_expired_internal(&req.failed_connection_id, req.reason);
+            }
+            _ => {}
         }
-        "auth_expired" => {
-            let _ = mgr
-                .office
-                .mark_connection_auth_expired_internal(&req.failed_connection_id, req.reason);
-        }
-        _ => {}
     }
     let dead_handle = {
         let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
@@ -2643,11 +2929,15 @@ fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
         instruction: Some(req.objective.clone()),
         workspace: req.workspace.clone(),
     };
-    let excluded: HashSet<String> = req.tried_connections.iter().cloned().collect();
+    let mut excluded: HashSet<String> = req.tried_connections.iter().cloned().collect();
+    if refreshed_same_conn {
+        excluded.remove(&req.failed_connection_id);
+    }
     let opts = LaunchRouteOpts {
         resume_runtime_session_id: None,
         task_ref: req.task_ref.as_deref(),
         is_failover_switch: true,
+        oauth_refresh_attempted: req.oauth_refresh_attempted || refreshed_same_conn,
         excluded_connections: excluded,
         tried_connections: req.tried_connections.clone(),
     };
@@ -3030,6 +3320,8 @@ fn office_env_names() -> Vec<EnvName> {
         "AGENT_OS_SESSION_ID",
         "AGENT_OS_SESSION_TOKEN",
         "AGENT_OS_BINDING_FILE",
+        "RUSTUP_HOME",
+        "CARGO_HOME",
     ]
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static env name"))
@@ -3048,6 +3340,165 @@ fn next_entropy_hex(bytes_len: usize) -> Result<String, ApiError> {
         .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))
 }
 
+fn canonicalize_with_tail(path: &Path) -> PathBuf {
+    if let Ok(resolved) = path.canonicalize() {
+        return resolved;
+    }
+    let mut tail = Vec::new();
+    let mut cur = path;
+    while let Some(parent) = cur.parent() {
+        if let Some(name) = cur.file_name() {
+            tail.push(name.to_os_string());
+        }
+        if let Ok(mut base) = parent.canonicalize() {
+            for seg in tail.into_iter().rev() {
+                base.push(seg);
+            }
+            return base;
+        }
+        cur = parent;
+    }
+    path.to_path_buf()
+}
+
+fn host_rust_dir_env(name: &str, default_rel: &str, forbidden: &[PathBuf]) -> Option<OsString> {
+    let candidate = match std::env::var_os(name) {
+        Some(raw) => PathBuf::from(raw),
+        None => PathBuf::from(std::env::var_os("HOME")?).join(default_rel),
+    };
+    if !candidate.is_absolute() || !candidate.is_dir() {
+        return None;
+    }
+    let resolved = candidate.canonicalize().unwrap_or(candidate);
+    let forbidden_canon: Vec<PathBuf> = forbidden
+        .iter()
+        .map(|p| canonicalize_with_tail(p))
+        .collect();
+    if forbidden_canon
+        .iter()
+        .any(|root| resolved.starts_with(root))
+    {
+        return None;
+    }
+    Some(resolved.into_os_string())
+}
+
+fn collect_existing_worktree_dirs(
+    dir: &Path,
+    depth: usize,
+    out: &mut std::collections::BTreeSet<PathBuf>,
+) {
+    if depth > 6 {
+        return;
+    }
+    if dir.join(".git").exists() {
+        out.insert(canonicalize_with_tail(dir));
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if ft.is_dir() {
+            collect_existing_worktree_dirs(&entry.path(), depth + 1, out);
+        }
+    }
+}
+
+fn append_cargo_credential_denies(out: &mut Vec<PathPattern>) {
+    let mut dirs = Vec::new();
+    if let Some(raw) = std::env::var_os("CARGO_HOME") {
+        let p = PathBuf::from(raw);
+        if p.is_absolute() {
+            dirs.push(p);
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let p = PathBuf::from(home).join(".cargo");
+        if p.is_absolute() {
+            dirs.push(p);
+        }
+    }
+    for dir in dirs {
+        push_exact_pattern(out, &dir.join("credentials"));
+        push_exact_pattern(out, &dir.join("credentials.toml"));
+    }
+}
+
+fn append_bare_cache_sandbox_rules(
+    cache_dir: &Path,
+    git_state: Option<&org_office::git::OfficeGitState>,
+    writable: &mut Vec<SpecPath>,
+    write_denies: &mut Vec<PathPattern>,
+) {
+    let canon = canonicalize_with_tail(cache_dir);
+    for rel in [
+        "objects",
+        "refs/heads/task",
+        "logs/refs/heads/task",
+        "worktrees",
+    ] {
+        let p = canon.join(rel);
+        if let Ok(spec) = SpecPath::try_from(p.to_string_lossy().as_ref()) {
+            writable.push(spec);
+        }
+    }
+    for rel_dir in [
+        "hooks",
+        "info",
+        "objects/info",
+        "refs/remotes",
+        "refs/tags",
+        "refs/office",
+        "refs/replace",
+    ] {
+        push_raw_pattern(write_denies, &format!("{}/{rel_dir}/**", canon.display()));
+    }
+    for rel_file in [
+        "config",
+        "config.worktree",
+        "HEAD",
+        "packed-refs",
+        "description",
+        "FETCH_HEAD",
+        "shallow",
+    ] {
+        push_raw_pattern(write_denies, &format!("{}/{rel_file}", canon.display()));
+    }
+    // Emit concrete per-worktree admin file denies (no interior `*` wildcard, which would cause
+    // Codex `path_pattern_base` to downgrade `worktrees/` itself to read-only).
+    let mut admin_names = std::collections::BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(canon.join("worktrees")) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                admin_names.insert(name.to_owned());
+            }
+        }
+    }
+    let repo_id = canon
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".git"));
+    if let (Some(gs), Some(rid)) = (git_state, repo_id) {
+        for ws in gs.workspaces.values() {
+            if ws.repository_id == rid && !ws.admin_dir_name.is_empty() {
+                admin_names.insert(ws.admin_dir_name.clone());
+            }
+        }
+    }
+    for admin in admin_names {
+        for admin_file in ["commondir", "gitdir", "config.worktree"] {
+            push_raw_pattern(
+                write_denies,
+                &format!("{}/worktrees/{admin}/{admin_file}", canon.display()),
+            );
+        }
+    }
+}
+
 fn push_raw_pattern(out: &mut Vec<PathPattern>, raw: &str) {
     if let Ok(pat) = PathPattern::try_from(raw) {
         if !out.contains(&pat) {
@@ -3057,15 +3508,14 @@ fn push_raw_pattern(out: &mut Vec<PathPattern>, raw: &str) {
 }
 
 fn push_glob_pattern(out: &mut Vec<PathPattern>, path: &Path) {
-    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let resolved = canonicalize_with_tail(path);
     push_raw_pattern(out, &format!("{}/**", resolved.display()));
 }
 
 fn push_exact_pattern(out: &mut Vec<PathPattern>, path: &Path) {
     push_raw_pattern(out, &path.display().to_string());
-    if let Ok(resolved) = path.canonicalize() {
-        push_raw_pattern(out, &resolved.display().to_string());
-    }
+    let resolved = canonicalize_with_tail(path);
+    push_raw_pattern(out, &resolved.display().to_string());
 }
 
 fn append_privileged_socket_patterns(out: &mut Vec<PathPattern>) {

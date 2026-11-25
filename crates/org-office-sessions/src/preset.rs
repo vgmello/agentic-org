@@ -159,6 +159,37 @@ pub fn build_session_policy(
     })
 }
 
+/// Extends a [`PresetConfig`] with agent-owned task worktree writable roots and bare-cache
+/// write-only denies (`doc-35` / `FC-103` / `TASK-126`) without denying read access to shared
+/// Git metadata (`HEAD`, `config`, `packed-refs`, `refs/remotes`).
+pub fn apply_worktree_sandbox_rules(
+    cfg: &mut PresetConfig,
+    extra_writable_roots: &[SpecPath],
+    extra_write_denies: &[PathPattern],
+) {
+    if cfg.preset != PermissionPreset::ReadOnly {
+        for root in extra_writable_roots {
+            if !cfg.sandbox.writable_roots.contains(root) {
+                cfg.sandbox.writable_roots.push(root.clone());
+            }
+        }
+    }
+    let edit_tool = RuleTool::try_from(ToolCapability::Edit.as_rule_token())
+        .expect("static edit capability token is valid");
+    for pat in extra_write_denies {
+        if !cfg.sandbox.deny_write.contains(pat) {
+            cfg.sandbox.deny_write.push(pat.clone());
+        }
+        let deny_rule = Rule {
+            tool: edit_tool.clone(),
+            scope: RuleScope::Path(pat.clone()),
+        };
+        if !cfg.policy.deny.contains(&deny_rule) {
+            cfg.policy.deny.push(deny_rule);
+        }
+    }
+}
+
 /// How the office answers an incoming [`ApprovalRequest`] from a runtime session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EscalationDisposition {
