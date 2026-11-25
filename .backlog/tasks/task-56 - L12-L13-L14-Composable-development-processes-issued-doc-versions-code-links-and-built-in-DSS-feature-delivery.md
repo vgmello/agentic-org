@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-24T16:55:00Z'
+updated_date: '2026-11-25T00:16:00Z'
 labels:
   - backend
   - rust
@@ -29,6 +29,9 @@ documentation:
   - docs/specs/req-07-composable-process-packages-and-team-blueprints.md
   - .backlog/docs/specs/doc-39 - Spec-App-Shell-and-Navigation-UX.md
   - .backlog/docs/specs/doc-52 - Spec-Knowledge-Decisions-and-Tech-Debt-UX.md
+  - >-
+    .backlog/docs/design/doc-99 -
+    Design-Dynamic-Documentation-Processes-and-Unified-Search.md
 priority: medium
 type: feature
 ordinal: 56000

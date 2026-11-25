@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-24T04:52:00Z'
+updated_date: '2026-11-25T00:16:00Z'
 labels:
   - backend
   - rust
@@ -25,6 +26,9 @@ documentation:
     Organization-Data-03-—-Features-and-Work.md
   - .backlog/docs/specs/doc-49 - Spec-Work-Items-and-Tasks-UX.md
   - .backlog/docs/design/doc-28 - Design-agent-os-Command-Line.md
+  - >-
+    .backlog/docs/design/doc-100 -
+    Design-Storage-Scalability-DB-Split-Verdict-and-Two-Tier-Task-Archive.md
 priority: high
 type: enhancement
 ordinal: 120000

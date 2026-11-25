@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-24T04:52:00Z'
+updated_date: '2026-11-25T00:16:00Z'
 labels:
   - v2
   - backend
@@ -28,6 +29,9 @@ documentation:
   - >-
     .backlog/decisions/decision-14 -
     ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md
+  - >-
+    .backlog/docs/design/doc-100 -
+    Design-Storage-Scalability-DB-Split-Verdict-and-Two-Tier-Task-Archive.md
 priority: medium
 type: enhancement
 ordinal: 121000

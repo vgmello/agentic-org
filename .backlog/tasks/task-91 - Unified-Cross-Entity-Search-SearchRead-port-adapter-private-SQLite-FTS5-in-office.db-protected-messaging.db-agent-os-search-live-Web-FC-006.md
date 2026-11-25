@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-23T03:22:00Z'
-updated_date: '2026-11-24T17:07:00Z'
+updated_date: '2026-11-25T00:16:00Z'
 labels:
   - backend
   - ui
@@ -42,6 +42,12 @@ documentation:
   - >-
     .backlog/docs/organization-data/doc-86 -
     Organization-Data-18-—-Development-Processes-and-Project-Documentation.md
+  - >-
+    .backlog/docs/design/doc-98 -
+    Design-Two-Tier-Agent-Decision-Capture-and-Promotion.md
+  - >-
+    .backlog/docs/design/doc-99 -
+    Design-Dynamic-Documentation-Processes-and-Unified-Search.md
 priority: high
 type: feature
 ordinal: 97000

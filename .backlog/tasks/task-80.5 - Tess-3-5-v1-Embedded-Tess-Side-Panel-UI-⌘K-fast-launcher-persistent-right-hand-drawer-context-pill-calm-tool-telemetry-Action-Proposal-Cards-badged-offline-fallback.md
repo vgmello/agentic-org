@@ -7,6 +7,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-25T00:01:00Z'
+updated_date: '2026-11-25T00:15:00Z'
 labels:
   - ui
   - ux
@@ -25,6 +26,9 @@ documentation:
   - apps/agentic-org-ui/src/lib/modules/home/features/ExecutiveBriefCard.svelte
   - apps/agentic-org-ui/src/lib/modules/home/features/DecisionSpotlight.svelte
   - apps/agentic-org-ui/src/lib/home/model.ts
+  - >-
+    .backlog/docs/design/doc-97 -
+    Design-Embedded-Tess-—-Chief-of-Staff-and-Product-Assistant.md
 parent_task_id: TASK-80
 priority: high
 type: feature

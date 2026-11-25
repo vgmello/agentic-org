@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-24T04:23:00Z'
-updated_date: '2026-11-25T00:01:00Z'
+updated_date: '2026-11-25T00:15:00Z'
 labels:
   - feature
   - backend
@@ -30,6 +30,9 @@ documentation:
   - .backlog/docs/specs/doc-53 - Spec-Employee-Supervision-and-Approvals-UX.md
   - .backlog/docs/design/doc-71 - Design-Web-HTTP-API-v1.md
   - .backlog/docs/doc-3 - Feature-Checklist.md
+  - >-
+    .backlog/docs/design/doc-97 -
+    Design-Embedded-Tess-—-Chief-of-Staff-and-Product-Assistant.md
 priority: high
 type: feature
 ordinal: 118000

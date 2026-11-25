@@ -7,6 +7,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-24T17:07:00Z'
+updated_date: '2026-11-25T00:15:00Z'
 labels:
   - backend
   - rust
@@ -34,6 +35,9 @@ documentation:
   - >-
     .backlog/docs/specs/doc-96 -
     Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md
+  - >-
+    .backlog/docs/design/doc-98 -
+    Design-Two-Tier-Agent-Decision-Capture-and-Promotion.md
 priority: high
 type: feature
 ordinal: 126000

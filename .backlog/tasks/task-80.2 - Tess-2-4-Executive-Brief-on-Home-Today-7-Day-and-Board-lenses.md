@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-22T02:35:00Z'
-updated_date: '2026-11-25T00:01:00Z'
+updated_date: '2026-11-25T00:15:00Z'
 labels:
   - backend
   - ui
@@ -21,6 +21,9 @@ documentation:
   - >-
     .backlog/docs/organization-data/doc-78 -
     Organization-Data-04-—-Agent-Structure.md
+  - >-
+    .backlog/docs/design/doc-97 -
+    Design-Embedded-Tess-—-Chief-of-Staff-and-Product-Assistant.md
 parent_task_id: TASK-80
 priority: medium
 type: feature

@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-23T03:22:00Z'
-updated_date: '2026-11-24T04:52:00Z'
+updated_date: '2026-11-25T00:16:00Z'
 labels:
   - backend
   - rust
@@ -43,6 +43,9 @@ documentation:
   - >-
     .backlog/decisions/decision-21 -
     ADR-0021-The-office-store-one-journal-of-file-changes-a-projection-rebuilt-from-files.md
+  - >-
+    .backlog/docs/design/doc-100 -
+    Design-Storage-Scalability-DB-Split-Verdict-and-Two-Tier-Task-Archive.md
 priority: high
 type: enhancement
 ordinal: 93000
