@@ -13,7 +13,7 @@ import { unavailableCall } from '$lib/platform/unavailable-api';
 import { POC_ORG_ID } from '../mock-mode';
 import { pocTeamRows } from '../poc-dataset';
 import teamsData from '../data/teams/teams.json' with { type: 'json' };
-import { projectCountsFromStore, teamWorkRowsFromStore } from './workitems';
+import { projectCountsFromStore, setTeamArchivedInStore, teamWorkRowsFromStore } from './workitems';
 import {
 	activityFor,
 	conversationsFor,
@@ -184,6 +184,10 @@ export const teamsApi: TeamsApi = {
 	async archive(organizationId, teamId) {
 		await gate();
 		const s = await found(organizationId, teamId);
+		if (scenario() === 'blocked_on_submit') {
+			const name = s.teams.find((t) => t.id === teamId)!.name;
+			throw fail('conflict', `${name} still has 1 child team. Resolve it first.`);
+		}
 		refuseWhileBlocked(
 			organizationId,
 			s,
@@ -192,10 +196,15 @@ export const teamsApi: TeamsApi = {
 			await homeEmployees(organizationId, teamId)
 		);
 		archived.add(teamId);
+		setTeamArchivedInStore(teamId, true);
 	},
 	async delete(organizationId, teamId) {
 		await gate();
 		const s = await found(organizationId, teamId);
+		if (scenario() === 'blocked_on_submit') {
+			const name = s.teams.find((t) => t.id === teamId)!.name;
+			throw fail('conflict', `${name} still has 1 child team. Resolve it first.`);
+		}
 		refuseWhileBlocked(
 			organizationId,
 			s,
@@ -209,6 +218,7 @@ export const teamsApi: TeamsApi = {
 			params: { team_id: teamId, expected_version: team.version }
 		});
 		archived.delete(teamId);
+		setTeamArchivedInStore(teamId, false);
 	},
 	async addPerson(organizationId, person) {
 		await gate();

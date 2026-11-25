@@ -23,13 +23,16 @@ import type {
 	PresenceId,
 	TeamRef,
 	Turn,
-	TurnState,
-	WorkRow,
-	WorkState
+	TurnState
 } from '../../../src/lib/modules/members/types';
+import {
+	assignTaskInStore,
+	assignableTasksFromStore,
+	firstAssignedTaskFromStore,
+	memberWorkRowsFromStore
+} from './workitems';
 import data from '../data/members/members.json' with { type: 'json' };
 import runsData from '../data/members/runs.json' with { type: 'json' };
-import tasksData from '../data/members/tasks.json' with { type: 'json' };
 import activityData from '../data/members/activity.json' with { type: 'json' };
 import conversationsData from '../data/members/conversations.json' with { type: 'json' };
 import rolesData from '../data/members/roles.json' with { type: 'json' };
@@ -285,8 +288,7 @@ export async function rows(organizationId: string): Promise<MemberRow[]> {
 			const x = extras[m.id] ?? {};
 			const office = m.kind === 'agent' ? offices.find((o) => o.id === m.office_id) : undefined;
 			const boss = s.members.find((b) => b.id === m.reports_to_member_id && b.id !== m.id);
-			const assigned = [...state.assigned].find(([, who]) => who === m.id)?.[0];
-			const task = assigned ? tasksData.find((t) => t.ref === assigned) : undefined;
+			const assignedTask = firstAssignedTaskFromStore(organizationId, m.id);
 			return {
 				id: m.id,
 				kind: m.kind as 'agent' | 'person',
@@ -309,7 +311,7 @@ export async function rows(organizationId: string): Promise<MemberRow[]> {
 							: null
 						: undefined,
 				reportsTo: boss ? { id: boss.id, name: boss.name } : undefined,
-				workingOn: x.workingOn ?? (task ? { ref: task.ref, title: task.title } : undefined),
+				workingOn: x.workingOn ?? assignedTask,
 				runsOn: m.kind === 'agent' ? x.runsOn : undefined,
 				howItRuns: m.kind === 'agent' ? x.howItRuns : undefined,
 				contact: m.contact ?? x.contact,
@@ -453,25 +455,7 @@ export function shiftTimes(lines: unknown[], start: number) {
 	for (const { o, t } of stamps) o.timestamp = new Date(t + shift).toISOString();
 }
 
-// ---- work, activity, conversations ----
-
-export function workRows(
-	s: OrgSnapshot,
-	filter: (t: (typeof tasksData)[number]) => boolean
-): WorkRow[] {
-	return tasksData
-		.map((t) => ({ ...t, assigneeId: state.assigned.get(t.ref) ?? t.assigneeId }))
-		.filter(filter)
-		.map((t) => ({
-			ref: t.ref,
-			title: t.title,
-			project: s.projects?.find((p) => p.id === t.projectId)?.name,
-			assigneeId: t.assigneeId || undefined,
-			assignee: t.assigneeId ? nameOf(s, t.assigneeId) : undefined,
-			priority: t.priority as WorkRow['priority'],
-			state: t.state as WorkState
-		}));
-}
+// ---- activity, conversations ----
 
 export const activityFor = (pick: (a: (typeof activityData)[number]) => boolean) =>
 	activityData.filter(pick).map((a) => ({
@@ -624,8 +608,8 @@ export const membersApi: MembersApi = {
 	},
 	async work(organizationId, memberId) {
 		await gate();
-		const s = await snapshotFor(organizationId);
-		return scenario() === 'empty' ? [] : workRows(s, (t) => t.assigneeId === memberId);
+		await snapshotFor(organizationId);
+		return scenario() === 'empty' ? [] : memberWorkRowsFromStore(organizationId, memberId);
 	},
 	async conversations(_organizationId, memberId) {
 		await gate();
@@ -725,18 +709,18 @@ export const membersApi: MembersApi = {
 	},
 	async assignableTasks(organizationId) {
 		await gate();
-		const s = await snapshotFor(organizationId);
-		return tasksData
-			.filter((t) => !(state.assigned.get(t.ref) ?? t.assigneeId) && t.state !== 'done')
-			.map((t) => ({
-				ref: t.ref,
-				title: t.title,
-				project: s.projects?.find((p) => p.id === t.projectId)?.name
-			}));
+		await snapshotFor(organizationId);
+		return assignableTasksFromStore(organizationId);
 	},
-	async assignTask(_organizationId, memberId, ref) {
+	async assignTask(organizationId, memberId, ref) {
 		await gate();
+		const { m } = await member(organizationId, memberId);
 		state.assigned.set(ref, memberId);
+		assignTaskInStore(organizationId, ref, {
+			id: memberId,
+			name: m.name,
+			kind: m.kind === 'agent' ? 'agent' : 'person'
+		});
 	},
 	async inviteToSignIn(organizationId, memberId) {
 		await signInGate(memberId);

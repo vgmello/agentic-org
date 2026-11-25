@@ -6,8 +6,10 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import TabsNav, { type Tab } from '$lib/components/TabsNav.svelte';
+	import { singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
 
 	let { children } = $props();
+	const shortcutsEnabled = $derived(singleKeyShortcutsOn());
 	const sections: Tab[] = [
 		{ label: 'General', href: '/settings' },
 		{ label: 'Offices', href: '/settings/offices', match: 'prefix' },
@@ -31,6 +33,8 @@
 		</div>
 		<nav
 			aria-label="Organization settings"
+			data-page-menu=""
+			aria-keyshortcuts={shortcutsEnabled ? 'M' : undefined}
 			class="hidden w-56 shrink-0 border-r border-line px-3.5 py-5 min-[960px]:@min-[28rem]:block"
 		>
 			<p
@@ -45,6 +49,7 @@
 					<li>
 						<a
 							href={resolve(section.href as '/')}
+							data-menu-label={section.label}
 							aria-current={current ? 'page' : undefined}
 							class={[
 								'settings-nav-item flex min-h-9 items-center rounded-lg px-3 py-1.5 text-sm/6 font-semibold transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus',

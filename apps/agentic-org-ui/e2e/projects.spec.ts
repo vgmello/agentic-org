@@ -633,26 +633,39 @@ test('Phase 7 (5da47e1d + 53728c05): Project Release strip, More menu, Project A
 	);
 	await expect(page.locator('.assembly-view')).toHaveCSS('background-color', 'rgb(30, 41, 57)');
 
-	// Switch to Activity feed on same project toolbar -> Filter icon replaces Display
-	await projControls.getByRole('tab', { name: 'Activity feed' }).click();
+	// Switch to Activity feed on same project toolbar -> Filter icon replaces Display;
+	// WAI-ARIA roving tabindex lets ArrowLeft -> Tab exit the tablist in one Tab press.
+	const activityFeedTab = projControls.getByRole('tab', { name: 'Activity feed' });
+	const assemblyLineTab = projControls.getByRole('tab', { name: 'Assembly line' });
+	await activityFeedTab.click();
 	await expect(page.getByTestId('project-feed-filter-btn')).toBeVisible();
 	await expect(page.getByTestId('assembly-display-btn')).toHaveCount(0);
+	await activityFeedTab.focus();
+	await page.keyboard.press('ArrowLeft');
+	await expect(assemblyLineTab).toBeFocused();
+	await page.keyboard.press('Tab');
+	await expect(activityFeedTab).not.toBeFocused();
+	await expect(assemblyLineTab).not.toBeFocused();
 
-	// Project Work: release strip omitted, inline List/Board controls in .project-toolbar, shared header scoped search, List view defaults to Status grouping
+	// Project Work: release strip omitted, inline List/Board controls in .project-toolbar, single header scoped search, List view defaults to Status grouping
 	await tabs(page).filter({ hasText: 'Work' }).click();
 	await expect(page).toHaveURL(/\/projects\/beacon\/work$/);
 	await expect(page.getByTestId('project-release-strip')).toHaveCount(0);
 	const projectWorkControls = page.locator('.project-toolbar').getByTestId('project-work-controls');
 	await expect(projectWorkControls).toBeVisible();
-	await expect(
-		page.getByTestId('header-scoped-search').getByTestId('scoped-work-search')
-	).toBeVisible();
+	const headerSearch = page.getByTestId('header-scoped-search').getByTestId('scoped-work-search');
+	await expect(headerSearch).toBeVisible();
+	await expect(page.locator('input[type="search"]')).toHaveCount(1);
 	await expect(page.getByTestId('filter-bar').locator('input[type="search"]')).toHaveCount(0);
 	const listBtn = projectWorkControls
 		.getByRole('group', { name: 'Layout' })
 		.getByRole('button', { name: 'List' });
 	await listBtn.click();
 	await expect(page.locator('.work-group-title').first()).toBeVisible();
+	await headerSearch.fill('Retry');
+	await expect(page.getByText('Decide the retry policy for payments').first()).toBeVisible();
+	await expect(page.getByText('Split the checkout service')).toHaveCount(0);
+	await headerSearch.fill('');
 
 	// Project Insights: shared Charts/Tables toggle, Median cycle time, Token mix, Current release delivery
 	await tabs(page).filter({ hasText: 'Insights' }).click();

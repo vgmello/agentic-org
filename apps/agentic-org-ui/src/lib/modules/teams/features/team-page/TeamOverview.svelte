@@ -286,8 +286,12 @@
 				</p>
 			{:else if work.state === 'error'}
 				<p class="insight-empty">Couldn't load contributor counts right now.</p>
-			{:else if model.contributors.length === 0 && model.unassignedOpen === 0}
-				<p class="insight-empty">No completions or current assignments.</p>
+			{:else if model.contributors.length === 0 && model.unassignedOpen === 0 && model.unattributedCompletions === 0}
+				<p class="insight-empty">
+					{model.completionsAvailable
+						? 'No completions or current assignments.'
+						: 'No current assignments.'}
+				</p>
 			{:else}
 				{#if model.contributors.length > 0}
 					<div class="insight-table-scroll">
@@ -334,6 +338,12 @@
 							? 'item'
 							: 'items'}{#if model.unassignedBlocked > 0}
 							({model.unassignedBlocked} blocked){/if}.
+					</p>
+				{/if}
+				{#if model.unattributedCompletions > 0}
+					<p class="team-overview-reconcile">
+						Plus {model.unattributedCompletions} unattributed
+						{model.unattributedCompletions === 1 ? 'completion' : 'completions'} in the last 28 days.
 					</p>
 				{/if}
 				{#if model.unresolvedAttributionOpen > 0}

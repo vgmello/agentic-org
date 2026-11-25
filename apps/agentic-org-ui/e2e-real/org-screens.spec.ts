@@ -117,6 +117,7 @@ test('U1: Offices, Teams, People, Org Chart, Projects, and Access work end-to-en
 	// Rename Design -> Product Design and Delete Temp (TEAM-9).
 	await page.goto(`${base}/teams`);
 	await teamTreeLink(page, 'Design').click();
+	await expect(page).toHaveURL(/\/teams\/[^/]+$/);
 	await page.getByRole('button', { name: 'Actions for Design', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Rename…', exact: true }).click();
 	dialog = page.getByRole('dialog');
@@ -127,6 +128,7 @@ test('U1: Offices, Teams, People, Org Chart, Projects, and Access work end-to-en
 
 	await page.goto(`${base}/teams`);
 	await teamTreeLink(page, 'Temp').click();
+	await expect(page).toHaveURL(/\/teams\/[^/]+$/);
 	await page.getByRole('button', { name: 'Actions for Temp', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Delete…', exact: true }).click();
 	dialog = page.getByRole('dialog');

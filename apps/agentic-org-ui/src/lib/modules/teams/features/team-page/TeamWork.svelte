@@ -27,6 +27,7 @@
 
 	let query = $state('');
 	let openRowRef = $state<string | null>(null);
+	let openSnapshot = $state<WorkRow | null>(null);
 	let lastTriggerEl: HTMLElement | null = null;
 	let dismissedUrlItem = $state<string | null>(null);
 
@@ -45,16 +46,35 @@
 	});
 
 	const urlItem = $derived(page.url.searchParams.get('item'));
-	const activeOpenRow = $derived.by<WorkRow | null>(() => {
+	const requestedRef = $derived(
+		openRowRef
+			? normalizeRef(openRowRef)
+			: urlItem && normalizeRef(urlItem) !== dismissedUrlItem
+				? normalizeRef(urlItem)
+				: null
+	);
+	const matchedRow = $derived.by<WorkRow | null>(() => {
+		if (!requestedRef) return null;
 		const rows = work.state === 'ready' ? (work.data ?? []) : [];
-		if (openRowRef) {
-			return rows.find((r) => normalizeRef(r.ref) === normalizeRef(openRowRef!)) ?? null;
-		}
-		if (urlItem && normalizeRef(urlItem) !== dismissedUrlItem) {
-			return rows.find((r) => normalizeRef(r.ref) === normalizeRef(urlItem)) ?? null;
-		}
-		return null;
+		return rows.find((r) => normalizeRef(r.ref) === requestedRef) ?? null;
 	});
+	// Keep the reading panel mounted if an already-open item leaves the team list (e.g. cancelled)
+	// so the user sees the confirmation inside WorkDetailPage and closing still strips ?item= and restores focus.
+	$effect(() => {
+		if (!requestedRef) {
+			openSnapshot = null;
+			return;
+		}
+		if (matchedRow) {
+			openSnapshot = matchedRow;
+		}
+	});
+	const activeOpenRow = $derived<WorkRow | null>(
+		matchedRow ??
+			(requestedRef && openSnapshot && normalizeRef(openSnapshot.ref) === requestedRef
+				? openSnapshot
+				: null)
+	);
 
 	$effect(() => {
 		if (!urlItem) {
@@ -94,9 +114,10 @@
 	}
 
 	function closeInlineDetail(restoreFocus = true) {
-		const closedRef = activeOpenRow?.ref ?? openRowRef;
+		const closedRef = activeOpenRow?.ref ?? openRowRef ?? openSnapshot?.ref ?? null;
 		const trigger = lastTriggerEl;
 		openRowRef = null;
+		openSnapshot = null;
 		lastTriggerEl = null;
 		if (urlItem) {
 			dismissedUrlItem = normalizeRef(urlItem);
@@ -150,13 +171,42 @@
 		};
 	}
 
+	const STATE_LABELS: Record<string, string> = {
+		todo: 'To do',
+		in_progress: 'In progress',
+		in_review: 'In review',
+		blocked: 'Blocked',
+		done: 'Done'
+	};
+	const PRIORITY_LABELS: Record<string, string> = {
+		urgent: 'Urgent',
+		high: 'High priority',
+		medium: 'Medium priority',
+		low: 'Low priority'
+	};
+
 	function filterWorkRows<
-		T extends { ref: string; title: string; project?: string; assignee?: string; state: string }
+		T extends {
+			ref: string;
+			title: string;
+			project?: string;
+			assignee?: string;
+			priority?: string;
+			state: string;
+		}
 	>(rows: T[], rawQuery: string): T[] {
 		const needle = rawQuery.trim().toLowerCase();
 		if (!needle) return rows;
 		return rows.filter((r) =>
-			[r.ref, r.title, r.project, r.assignee, r.state]
+			[
+				r.ref,
+				r.title,
+				r.project,
+				r.assignee,
+				r.state,
+				STATE_LABELS[r.state],
+				r.priority ? PRIORITY_LABELS[r.priority] : undefined
+			]
 				.filter((part): part is string => Boolean(part))
 				.some((part) => part.toLowerCase().includes(needle))
 		);

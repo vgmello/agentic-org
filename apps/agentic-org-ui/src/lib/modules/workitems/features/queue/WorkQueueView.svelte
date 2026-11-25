@@ -5,7 +5,7 @@
   Uses Resource + Loaded (handling loading, unavailable, unsupported, error, ready).
 -->
 <script lang="ts">
-	import { onDestroy, tick, type Snippet } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -328,15 +328,12 @@
 		}
 	}
 
-	onDestroy(() => {
-		onRegisterToolbar?.(undefined);
-	});
-
 	$effect(() => {
-		if (isOrgScope || !onRegisterToolbar) return;
-		onRegisterToolbar(projectWorkToolbarControls);
+		const register = onRegisterToolbar;
+		if (isOrgScope || !register) return;
+		register(projectWorkToolbarControls);
 		return () => {
-			onRegisterToolbar(undefined);
+			register(undefined);
 		};
 	});
 
@@ -498,7 +495,7 @@
 </script>
 
 {#snippet projectWorkToolbarControls()}
-	{#if activeTab === 'task' && queueRead.state === 'ready' && (queueRead.data?.rows.length ?? 0) > 0}
+	{#if activeTab === 'task' && queueRead.state === 'ready'}
 		<div
 			class="project-work-controls"
 			role="group"

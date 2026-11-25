@@ -207,16 +207,23 @@
 	let nameHeading = $state<HTMLElement | null>(null);
 
 	/**
-	 * Focus goes back to what opened the dialog; if that control is gone (Resume became Pause…, More went away after
-	 * Offboard), to the control that replaced it, else the More button, else the profile's heading.
+	 * Focus goes back to what opened the dialog; if that control is gone or hidden after a responsive resize
+	 * (Resume became Pause…, inline Pause collapsed into More, More went away after Offboard), fall through to the
+	 * next visible focusable control, then the profile heading.
 	 */
 	function refocus() {
-		const target =
-			(opener?.isConnected && opener) ||
-			document.querySelector<HTMLElement>('[data-lifecycle-control]') ||
-			(moreButton?.isConnected && moreButton) ||
-			nameHeading;
-		target?.focus();
+		const candidates: (HTMLElement | null | undefined)[] = [
+			opener,
+			document.querySelector<HTMLElement>('[data-lifecycle-control]'),
+			moreButton,
+			nameHeading
+		];
+		for (const candidate of candidates) {
+			if (!candidate?.isConnected) continue;
+			if (candidate !== nameHeading && candidate.offsetParent === null) continue;
+			candidate.focus();
+			if (document.activeElement === candidate) return;
+		}
 	}
 	function restore(event: Event) {
 		event.preventDefault();
@@ -710,7 +717,7 @@
 		min-inline-size: 0;
 		max-inline-size: 100%;
 	}
-	@media (max-width: 639px) {
+	@media (width < 640px) {
 		.primary-tab-row {
 			display: none;
 		}

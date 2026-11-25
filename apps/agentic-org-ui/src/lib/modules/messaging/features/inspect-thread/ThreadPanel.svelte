@@ -117,17 +117,15 @@
 	<header
 		class="side-panel-header flex items-center justify-between gap-3 border-b border-line px-4 py-2"
 	>
-		<div class="thread-title flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-			<h2
-				id="chat-thread-title"
-				bind:this={headingEl}
-				tabindex="-1"
-				class="min-w-0 rounded-sm text-sm/6 font-semibold break-words text-fg focus:outline-2 focus:outline-solid focus:outline-offset-2 focus:outline-focus focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-focus"
-			>
-				Thread
-			</h2>
-			<span class="min-w-0 text-[0.8125rem]/5 break-words text-fg-muted">{title}</span>
-		</div>
+		<h2
+			id="chat-thread-title"
+			bind:this={headingEl}
+			tabindex="-1"
+			class="thread-title flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 rounded-sm text-sm/6 font-semibold break-words text-fg focus:outline-2 focus:outline-solid focus:outline-offset-2 focus:outline-focus focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-focus"
+		>
+			<span>Thread</span>
+			<span class="min-w-0 text-[0.8125rem]/5 font-normal break-words text-fg-muted">{title}</span>
+		</h2>
 		<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
 			<Tooltip.Root bind:open={closeTipOpen} onOpenChange={handleCloseTipChange}>
 				<Tooltip.Trigger>
@@ -155,7 +153,7 @@
 					<Tooltip.Content
 						side="left"
 						sideOffset={6}
-						class="z-60 rounded-md border border-line-strong bg-surface-overlay px-2 py-1 text-xs/5 font-medium text-fg shadow-md"
+						class="z-60 rounded-md border border-line-strong bg-popover px-2 py-1 text-xs/5 font-medium text-popover-foreground shadow-md"
 					>
 						Close thread
 					</Tooltip.Content>

@@ -38,11 +38,18 @@
 	} = $props();
 
 	let navEl = $state<HTMLElement | null>(null);
+	let focusedHref = $state<string | null>(null);
 	const shortcutsEnabled = $derived(singleKeyShortcutsOn());
 
 	const isCurrent = (tab: Tab) =>
 		page.url.pathname === tab.href ||
 		(tab.match === 'prefix' && page.url.pathname.startsWith(tab.href + '/'));
+
+	const currentHref = $derived(tabs.find(isCurrent)?.href ?? tabs[0]?.href ?? null);
+	// Single sequential Tab stop for the strip (WAI-ARIA roving tabindex), resetting to current route on exit.
+	const tabStopHref = $derived(
+		focusedHref && tabs.some((t) => t.href === focusedHref) ? focusedHref : currentHref
+	);
 
 	async function choose(event: MouseEvent, tab: Tab) {
 		if (!focusHeading || event.defaultPrevented || event.button !== 0) return;
@@ -71,22 +78,41 @@
 					? links.length - 1
 					: (index + (event.key === 'ArrowRight' ? 1 : -1) + links.length) % links.length;
 		event.preventDefault();
+		const nextTab = tabs[nextIdx];
+		if (nextTab) focusedHref = nextTab.href;
 		links[nextIdx]?.focus();
 		links[nextIdx]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	}
 
-	// Keep the selected tab visible when the tab row overflows horizontally on narrow screens.
+	function handleFocusOut(event: FocusEvent) {
+		const related = event.relatedTarget;
+		if (!navEl || !(related instanceof Node) || !navEl.contains(related)) {
+			focusedHref = null;
+		}
+	}
+
+	// Keep the selected tab visible on navigation and when the strip becomes visible or resizes.
 	$effect(() => {
 		void page.url.pathname;
 		void tabs.length;
-		if (!navEl) return;
-		const current = navEl.querySelector<HTMLElement>('a[aria-current="page"]');
-		if (!current) return;
-		const { left, right } = current.getBoundingClientRect();
-		const bounds = navEl.getBoundingClientRect();
-		if (left < bounds.left || right > bounds.right) {
-			current.scrollIntoView({ block: 'nearest', inline: 'center' });
-		}
+		const el = navEl;
+		if (!el) return;
+		const revealCurrent = () => {
+			if (el.offsetParent === null) return;
+			const current = el.querySelector<HTMLElement>('a[aria-current="page"]');
+			if (!current) return;
+			const bounds = el.getBoundingClientRect();
+			if (bounds.width <= 0) return;
+			const { left, right } = current.getBoundingClientRect();
+			if (left < bounds.left || right > bounds.right) {
+				current.scrollIntoView({ block: 'nearest', inline: 'center' });
+			}
+		};
+		revealCurrent();
+		const ro =
+			typeof ResizeObserver !== 'undefined' ? new ResizeObserver(revealCurrent) : undefined;
+		ro?.observe(el);
+		return () => ro?.disconnect();
 	});
 </script>
 
@@ -95,6 +121,7 @@
 	aria-label={label}
 	data-page-menu={pageMenu ? '' : undefined}
 	aria-keyshortcuts={pageMenu && shortcutsEnabled ? 'M' : undefined}
+	onfocusout={handleFocusOut}
 	class="tabs-nav flex gap-x-1 overflow-x-auto border-b border-line px-4 min-[640px]:px-6 min-[1024px]:px-8 {className}"
 >
 	{#each tabs as tab, index (tab.href)}
@@ -103,6 +130,8 @@
 			href={resolve(tab.href as '/')}
 			data-menu-label={tab.label}
 			aria-current={current ? 'page' : undefined}
+			tabindex={tab.href === tabStopHref ? 0 : -1}
+			onfocus={() => (focusedHref = tab.href)}
 			onclick={(event) => choose(event, tab)}
 			onkeydown={(event) => handleKeydown(event, index)}
 			class="tabs-nav-link flex min-h-11 shrink-0 items-center gap-x-1.5 rounded-t-md border-b-2 px-3 pt-1.5 pb-[5px] text-sm/6 font-semibold whitespace-nowrap min-[640px]:min-h-9 [@media(pointer:coarse)]:min-h-11 {current

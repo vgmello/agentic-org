@@ -80,10 +80,17 @@ export class NavKeyController {
 		if (restoreFocus) {
 			if (prevFocus?.isConnected && prevFocus.offsetParent !== null) {
 				prevFocus.focus({ preventScroll: true });
+				prevFocus.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
 			} else {
 				document.getElementById('shell-page-title')?.focus({ preventScroll: true });
 			}
 		}
+	}
+
+	#modeHint(mode: 'sidebar' | 'inbox' | 'page'): string {
+		if (mode === 'sidebar') return "Sidebar · Type an item's first letter · Esc to cancel";
+		if (mode === 'inbox') return 'Inbox categories · Type a letter · Esc to cancel';
+		return "Page menu · Type an item's first letter · Esc to cancel";
 	}
 
 	#findVisibleSidebarNav(): HTMLElement | null {
@@ -364,9 +371,15 @@ export class NavKeyController {
 				event.key === 'End'
 			) {
 				this.#clearSelection();
+				this.hint = this.#modeHint(this.mode);
 				return;
 			}
 			if (event.key === 'Enter' && this.#selectedCandidate) {
+				if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+					// Preserve native modified-Enter behavior (e.g. open link in new tab) without double-activating.
+					this.cancel(false);
+					return;
+				}
 				event.preventDefault();
 				event.stopPropagation();
 				this.#activate(this.#selectedCandidate);

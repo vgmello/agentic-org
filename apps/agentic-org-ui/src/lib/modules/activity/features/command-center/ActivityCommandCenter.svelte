@@ -1012,6 +1012,8 @@
 			window.removeEventListener('keydown', onEscapeKey);
 		};
 	}
+	let focusedProjectView = $state<'assembly' | 'feed' | null>(null);
+
 	function handleProjectViewKeydown(event: KeyboardEvent) {
 		if (
 			event.altKey ||
@@ -1038,8 +1040,19 @@
 				: event.key === 'End'
 					? buttons.length - 1
 					: (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
-		// Manual activation: move focus from the focused control; Enter/Space activates it.
-		buttons[nextIdx]?.focus();
+		// Manual activation: move focus + roving tabindex from the focused control; Enter/Space activates it.
+		const nextBtn = buttons[nextIdx];
+		const nextMode = nextBtn?.dataset.projectView as 'assembly' | 'feed' | undefined;
+		if (nextMode) focusedProjectView = nextMode;
+		nextBtn?.focus();
+	}
+
+	function handleProjectViewFocusOut(event: FocusEvent) {
+		const container = event.currentTarget as HTMLElement | null;
+		const related = event.relatedTarget;
+		if (!container || !(related instanceof Node) || !container.contains(related)) {
+			focusedProjectView = null;
+		}
 	}
 </script>
 
@@ -1092,7 +1105,12 @@
 {#snippet projectToolbarControls()}
 	<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
 		<div class="project-activity-controls" data-testid="project-activity-controls">
-			<div class="project-view-tabs" role="tablist" aria-label="Project activity view">
+			<div
+				class="project-view-tabs"
+				role="tablist"
+				aria-label="Project activity view"
+				onfocusout={handleProjectViewFocusOut}
+			>
 				<button
 					type="button"
 					role="tab"
@@ -1100,7 +1118,8 @@
 					aria-controls="project-view-panel-assembly"
 					data-project-view="assembly"
 					aria-selected={viewMode === 'assembly'}
-					tabindex={viewMode === 'assembly' ? 0 : -1}
+					tabindex={(focusedProjectView ?? viewMode) === 'assembly' ? 0 : -1}
+					onfocus={() => (focusedProjectView = 'assembly')}
 					onclick={() => (viewMode = 'assembly')}
 					onkeydown={handleProjectViewKeydown}
 					class="project-view-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
@@ -1115,7 +1134,8 @@
 					aria-controls="project-view-panel-feed"
 					data-project-view="feed"
 					aria-selected={viewMode === 'feed'}
-					tabindex={viewMode === 'feed' ? 0 : -1}
+					tabindex={(focusedProjectView ?? viewMode) === 'feed' ? 0 : -1}
+					onfocus={() => (focusedProjectView = 'feed')}
 					onclick={() => (viewMode = 'feed')}
 					onkeydown={handleProjectViewKeydown}
 					class="project-view-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"

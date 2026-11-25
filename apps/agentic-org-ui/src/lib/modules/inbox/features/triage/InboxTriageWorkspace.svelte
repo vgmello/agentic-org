@@ -854,7 +854,7 @@
 		if (!shortcutsEnabled || event.repeat || denyGuardVisible) return;
 		if (
 			event.target instanceof Element &&
-			event.target.closest('#triage-categories, aside.exec-sidebar')
+			event.target.closest('#triage-categories, .triage-toolbar, aside.exec-sidebar')
 		) {
 			return;
 		}
@@ -954,7 +954,7 @@
 	>
 		<!-- Header & Controls (poc/operations.css queue-header) -->
 		<Tooltip.Provider delayDuration={150}>
-			<header class="inbox-head triage-header queue-header">
+			<header class="inbox-head triage-header queue-header section-header">
 				<div class="queue-headline">
 					<div class="ph-t">
 						<h1 id="shell-page-title" tabindex="-1" class="triage-h1">Inbox</h1>
@@ -1017,7 +1017,7 @@
 				</div>
 
 				<!-- 3 Primary Categories + More dropdown + Filter & Display icon menus -->
-				<div class="triage-toolbar queue-toolbar">
+				<div class="triage-toolbar queue-toolbar section-toolbar">
 					<div
 						id="triage-categories"
 						role="group"
@@ -1049,12 +1049,11 @@
 								<DropdownMenu.Trigger>
 									{#snippet child({ props })}
 										<button
-											{...props}
+											{...mergeProps(props, { onkeydown: handleCategoryKeydown })}
 											type="button"
 											data-triage-more=""
 											data-current-kind={overflowActive ? '' : undefined}
 											title={overflowActive ? `Viewing ${overflowActiveLabel}` : undefined}
-											onkeydown={handleCategoryKeydown}
 											class="queue-tab"
 										>
 											<span>More</span>

@@ -223,7 +223,12 @@ test('MP-9: below 640px only the mobile section picker is shown and Member Work 
 		})
 	).toHaveCount(0);
 	await visit(page, '/members/noor/work');
-	await expect(
-		page.getByTestId('header-scoped-search').getByTestId('scoped-work-search')
-	).toBeVisible();
+	const search = page.getByTestId('header-scoped-search').getByTestId('scoped-work-search');
+	await expect(search).toBeVisible();
+	await expect(page.getByText('Pay button wraps under the total at 320 px')).toBeVisible();
+	await search.fill('In progress');
+	await expect(page.getByText('Pay button wraps under the total at 320 px')).toBeVisible();
+	await search.fill('zzz-no-match');
+	await expect(page.getByText('Pay button wraps under the total at 320 px')).toHaveCount(0);
+	await expect(page.getByText('No work matches this search.')).toBeVisible();
 });

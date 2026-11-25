@@ -106,12 +106,11 @@
 		}
 		const prevInert = inertTargets.map((el) => el.inert);
 		for (const el of inertTargets) el.inert = true;
-		// Keep Sonner's Alt+T hotkey and external focusin from pulling focus outside the modal into the
-		// exempt toast live region while still permitting nested dialogs/menus/portals above this panel.
+		// Stop Sonner's document-level Alt+T hotkey at document.body (bubble phase) WITHOUT preventDefault(),
+		// so macOS Option+T (`†`) text entry still works inside inputs/textareas while focus never jumps to toasts.
 		const blockToastFocusHotkey = (event: KeyboardEvent) => {
 			if (event.altKey && !event.ctrlKey && !event.metaKey && event.code === 'KeyT') {
-				event.preventDefault();
-				event.stopImmediatePropagation();
+				event.stopPropagation();
 			}
 		};
 		const guardModalFocus = (event: FocusEvent) => {
@@ -128,11 +127,11 @@
 			const fallback = focusableInside(panelEl)[0] ?? backBtnEl ?? panelEl;
 			fallback?.focus({ preventScroll: true });
 		};
-		window.addEventListener('keydown', blockToastFocusHotkey, true);
+		document.body.addEventListener('keydown', blockToastFocusHotkey);
 		document.addEventListener('focusin', guardModalFocus, true);
 		return () => {
 			window.removeEventListener('resize', measure);
-			window.removeEventListener('keydown', blockToastFocusHotkey, true);
+			document.body.removeEventListener('keydown', blockToastFocusHotkey);
 			document.removeEventListener('focusin', guardModalFocus, true);
 			ro?.disconnect();
 			inertTargets.forEach((el, i) => {

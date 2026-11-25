@@ -311,7 +311,7 @@ test('TEAM-9: Delete leaves for Teams without showing the team as not found, and
 });
 
 for (const removal of ['Archive', 'Delete'] as const)
-	test(`TEAM-9: HQ refuses a ${removal.toLowerCase()} that became blocked after the check, and keeps the team`, async ({
+	test(`TEAM-9: live blocker recheck disables ${removal.toLowerCase()} when a child appears while open`, async ({
 		page
 	}) => {
 		const temp = await newTeamUnderEngineering(page, 'Temp');
@@ -326,6 +326,25 @@ for (const removal of ['Archive', 'Delete'] as const)
 		await expect(dialog).toContainText('Temp still has 1 child team.');
 		await dialog.getByRole('button', { name: 'Close' }).last().click();
 		await expect(page).toHaveURL(new RegExp(`/teams/${temp}$`));
+		await expect(page.getByRole('heading', { name: 'Temp', exact: true })).toBeVisible();
+		await expect(page.getByText('Archived')).toHaveCount(0);
+	});
+
+for (const removal of ['Archive', 'Delete'] as const)
+	test(`TEAM-9: HQ command-time refusal on ${removal.toLowerCase()} shows alert and keeps the team`, async ({
+		page
+	}) => {
+		const temp = await newTeamUnderEngineering(page, 'Temp');
+		await visit(page, `/teams/${temp}?mock=blocked_on_submit`);
+		const dialog = await teamAction(page, 'Temp', `${removal}…`);
+		const confirm = dialog.getByRole('button', { name: `${removal} Temp` });
+		await expect(confirm).toBeEnabled();
+		await confirm.click();
+		await expect(dialog.getByRole('alert')).toContainText(
+			'Temp still has 1 child team. Resolve it first.'
+		);
+		await dialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(page).toHaveURL(new RegExp(`/teams/${temp}\\?mock=blocked_on_submit$`));
 		await expect(page.getByRole('heading', { name: 'Temp', exact: true })).toBeVisible();
 		await expect(page.getByText('Archived')).toHaveCount(0);
 	});
@@ -466,10 +485,22 @@ test('TEAM-OVERVIEW: opens on Overview with reconciled KPIs, real project progre
 		.getByRole('link', { name: 'Overview', exact: true })
 		.click();
 	await expect(page.getByTestId('team-overview')).toContainText('2 of 7 tasks done');
-	await page
-		.getByRole('navigation', { name: 'Web views' })
-		.getByRole('link', { name: /^Work\s+5$/ })
-		.click();
+
+	// Deep-linked item cancelled from the reading panel stays mounted until closed, then clears ?item= and restores focus.
+	await visit(page, '/teams/web/work?item=T-A46');
+	await expect(panel).toBeVisible();
+	await expect(panel).toContainText('T-A46');
+	await panel.getByLabel('Status').selectOption('cancelled');
+	const cancelDialog = page.getByRole('dialog', { name: 'Close T-A46' });
+	await expect(cancelDialog).toBeVisible();
+	await cancelDialog.getByRole('button', { name: 'Close item' }).click();
+	await expect(cancelDialog).toBeHidden();
+	await expect(panel).toBeVisible();
+	await expect(panel.getByRole('button', { name: 'Reopen…' })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(panel).toHaveCount(0);
+	await expect(page).toHaveURL(/\/teams\/web\/work$/);
+	await expect(page.locator('#team-heading')).toBeFocused();
 
 	// Scoped search renders in the shared top header beside Workspace: `/` focuses, typing filters, Escape preserves query.
 	const headerSearchHost = page.getByTestId('header-scoped-search');
