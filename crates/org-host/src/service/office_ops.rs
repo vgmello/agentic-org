@@ -6,7 +6,9 @@ use org_host_control::{
     ops::{OfficeJoin, OfficeList, OfficeReEnroll, OfficeRemovePending, OfficeRestart},
     HostOpResult,
 };
-use org_proto::{ApiError, Empty, ErrorCode, ListOfficesResult, OfficeInfo, Request, Response};
+use org_proto::{
+    ApiError, Empty, ErrorCode, ListOfficesResult, OfficeInfo, OfficeRole, Request, Response,
+};
 
 use super::{
     browser_now_ms, finish_ended_browser_sessions, listener::Connection, office_join, ok,
@@ -56,6 +58,23 @@ pub(super) fn journal_error(error: DbError) -> ApiError {
     }
 }
 
+/// Offices visible to `account`: every office belonging to an organization the account is linked
+/// to, plus—when `allow_unlinked_satellite` is true (native `host.sock` only)—any local satellite
+/// office (`OfficeRole::Satellite`) when `account` is an instance administrator. Unlinked
+/// `OfficeRole::Hq` offices remain strictly hidden, and browser (`ChannelKind::Web`) requests
+/// require an explicit organization link.
+pub(super) fn office_visible_to_account(
+    account: &Account,
+    office: &OfficeInfo,
+    allow_unlinked_satellite: bool,
+) -> bool {
+    account
+        .links()
+        .iter()
+        .any(|l| l.org_id() == office.organization_id)
+        || (allow_unlinked_satellite && account.admin() && office.role == OfficeRole::Satellite)
+}
+
 /// Resolve an office visible to `account`. Reserved offices whose creation has not yet
 /// linked the organization are intentionally absent from `offices` and answer `NotFound`,
 /// preventing pre-link existence oracles; host startup waits still surface `NotReady`.
@@ -64,28 +83,40 @@ fn find_linked_office(
     account: &Account,
     org_filter: Option<&str>,
     office_id: &str,
-) -> Result<(OfficeInfo, String), ApiError> {
+    allow_unlinked_satellite: bool,
+) -> Result<(OfficeInfo, Option<String>), ApiError> {
     let office = offices
         .iter()
         .find(|o| o.id == office_id && org_filter.is_none_or(|org| o.organization_id == org))
         .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "office not found"))?;
-    let link = account
+    if let Some(link) = account
         .links()
         .iter()
         .find(|l| l.org_id() == office.organization_id)
-        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "office not found"))?;
-    Ok((office.clone(), link.member_id().to_owned()))
+    {
+        return Ok((office.clone(), Some(link.member_id().to_owned())));
+    }
+    if allow_unlinked_satellite && account.admin() && office.role == OfficeRole::Satellite {
+        return Ok((office.clone(), None));
+    }
+    Err(ApiError::new(ErrorCode::NotFound, "office not found"))
 }
 
 fn check_restart_authority(
     db: &HostDb,
     account: &Account,
     org_id: &str,
-    member_id: &str,
+    member_id: Option<&str>,
 ) -> Result<(), ApiError> {
     if account.admin() {
         return Ok(());
     }
+    let Some(member_id) = member_id else {
+        return Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "only the administrator or organization owner may restart an office",
+        ));
+    };
     db.verify_selected_owner(org_id, account.account_id(), member_id)
         .map_err(|error| match error {
             DbError::Unsafe => ApiError::new(
@@ -96,18 +127,28 @@ fn check_restart_authority(
         })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal helper threading explicit browser-vs-local satellite visibility gate"
+)]
 fn run_journaled_restart(
     service: &Service,
     db: &HostDb,
     account: &Account,
     org_filter: Option<&str>,
     office_id: &str,
+    allow_unlinked_satellite: bool,
     attempt: &Attempt<'_>,
     now: i64,
 ) -> Result<HostOpResult<Empty>, ApiError> {
-    let (office, member_id) =
-        find_linked_office(&service.offices.offices(), account, org_filter, office_id)?;
-    check_restart_authority(db, account, &office.organization_id, &member_id)?;
+    let (office, member_id) = find_linked_office(
+        &service.offices.offices(),
+        account,
+        org_filter,
+        office_id,
+        allow_unlinked_satellite,
+    )?;
+    check_restart_authority(db, account, &office.organization_id, member_id.as_deref())?;
     // Serialize journal lookup -> restart -> journal write across concurrent worker threads
     // (mirroring `WebTls::set`) so simultaneous retries cannot race into false `Conflict` or
     // execute a duplicate restart before `OperationReused` is recorded.
@@ -174,6 +215,7 @@ pub(super) fn restart_browser_office(
             &account,
             Some(&p.org_id),
             &p.office_id,
+            false,
             &attempt,
             now,
         )
@@ -213,20 +255,24 @@ pub(super) fn list_session_offices(
         let p = request
             .params::<OfficeList>()
             .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid office list request"))?;
+        let allow_unlinked_satellite =
+            connection.channel_kind() == org_office_launch::ChannelKind::Local;
+        let all_offices = service.offices.offices();
         if let Some(org_id) = &p.org_id {
-            if !account.links().iter().any(|l| l.org_id() == org_id) {
+            let visible_org = account.links().iter().any(|l| l.org_id() == org_id)
+                || (allow_unlinked_satellite
+                    && account.admin()
+                    && all_offices
+                        .iter()
+                        .any(|o| o.role == OfficeRole::Satellite && o.organization_id == *org_id));
+            if !visible_org {
                 return Err(ApiError::new(ErrorCode::NotFound, "organization not found"));
             }
         }
-        let offices = service
-            .offices
-            .offices()
+        let offices = all_offices
             .into_iter()
             .filter(|o| {
-                account
-                    .links()
-                    .iter()
-                    .any(|l| l.org_id() == o.organization_id)
+                office_visible_to_account(&account, o, allow_unlinked_satellite)
                     && p.org_id.as_deref().is_none_or(|id| o.organization_id == id)
             })
             .map(|mut o| {
@@ -256,7 +302,18 @@ pub(super) fn restart_session_office(
             .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid restart request"))?;
         let (db, _) = authentication.provisioning_storage();
         let attempt = Attempt::new(&p, account.account_id()).map_err(journal_error)?;
-        run_journaled_restart(service, &db, &account, None, &p.office_id, &attempt, now)
+        let allow_unlinked_satellite =
+            connection.channel_kind() == org_office_launch::ChannelKind::Local;
+        run_journaled_restart(
+            service,
+            &db,
+            &account,
+            None,
+            &p.office_id,
+            allow_unlinked_satellite,
+            &attempt,
+            now,
+        )
     });
     match reply {
         Ok(res) => connection.send_response(ok::<OfficeRestart>(request.id, &res)),
@@ -695,6 +752,251 @@ mod tests {
 
         drop(local_peer);
         local_offices.shutdown();
+        offices.shutdown();
+    }
+
+    #[test]
+    fn satellite_admin_sees_and_restarts_unlinked_satellite_only() {
+        let home = tempfile::tempdir().unwrap();
+        let (_root, authentication, _) = crate::service::authentication::tests::fixture();
+        let (db, _) = authentication.provisioning_storage();
+        let now = super::browser_now_ms().unwrap();
+        let verifier =
+            hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
+
+        let org_sat = crate::ids::uuid_v7().unwrap();
+        let org_hq = crate::ids::uuid_v7().unwrap();
+        let sat_office_id = crate::ids::uuid_v7().unwrap();
+        let hq_office_id = crate::ids::uuid_v7().unwrap();
+
+        let admin_acct = crate::ids::generate().unwrap();
+        let regular_acct = crate::ids::generate().unwrap();
+        db.seed_account(&admin_acct, "HostAdmin", &verifier, true, now)
+            .unwrap();
+        db.seed_account(&regular_acct, "Regular", &verifier, false, now)
+            .unwrap();
+
+        let mut service =
+            service_tests::service(home.path()).with_authentication(Some(Arc::new(authentication)));
+        service.instance_id = Some(crate::ids::uuid_v7().unwrap());
+        service.offices.insert_catalog_for_test(OfficeFile::new(
+            &sat_office_id,
+            "Berlin",
+            OfficeRole::Satellite,
+            &org_sat,
+            "Acme",
+            "2026-11-25T00:00:00.000Z",
+        ));
+        service
+            .offices
+            .insert_catalog_for_test(office_file(&org_hq, &hq_office_id, "ForeignHQ"));
+        let offices = service.offices.clone();
+
+        let (host_stream, peer_stream) = std::os::unix::net::UnixStream::pair().unwrap();
+        let _local = listener::LocalConnection::start(host_stream, Arc::new(service)).unwrap();
+        peer_stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut peer = std::io::BufReader::new(peer_stream);
+        service_tests::exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+
+        // Instance admin with zero org links sees the local satellite office ONLY (never unlinked HQ).
+        let admin_session = sign_in_native(&mut peer, 2, "HostAdmin");
+        let listed = service_tests::exchange::<OfficeList>(
+            &mut peer,
+            3,
+            &OfficeListParams {
+                session: SessionHandle::new(admin_session.expose().into()).unwrap(),
+                org_id: None,
+            },
+        )
+        .unwrap()
+        .into_result::<OfficeList>()
+        .unwrap();
+        assert_eq!(listed.offices.len(), 1);
+        assert_eq!(listed.offices[0].id, sat_office_id);
+        assert_eq!(listed.offices[0].role, OfficeRole::Satellite);
+
+        // Filtering by the satellite's org succeeds; filtering by an unlinked HQ org is NotFound.
+        let filtered = service_tests::exchange::<OfficeList>(
+            &mut peer,
+            4,
+            &OfficeListParams {
+                session: SessionHandle::new(admin_session.expose().into()).unwrap(),
+                org_id: Some(org_sat.clone()),
+            },
+        )
+        .unwrap()
+        .into_result::<OfficeList>()
+        .unwrap();
+        assert_eq!(filtered.offices.len(), 1);
+        assert_eq!(filtered.offices[0].id, sat_office_id);
+
+        let foreign_hq_list = service_tests::exchange::<OfficeList>(
+            &mut peer,
+            5,
+            &OfficeListParams {
+                session: SessionHandle::new(admin_session.expose().into()).unwrap(),
+                org_id: Some(org_hq.clone()),
+            },
+        )
+        .unwrap()
+        .into_result::<OfficeList>()
+        .unwrap_err();
+        assert_api_code(foreign_hq_list, ErrorCode::NotFound);
+
+        // Admin can restart the unlinked satellite, but gets NotFound for the unlinked HQ.
+        let restarted = service_tests::exchange::<OfficeRestart>(
+            &mut peer,
+            6,
+            &OfficeRestartParams {
+                session: SessionHandle::new(admin_session.expose().into()).unwrap(),
+                operation_id: crate::ids::uuid_v7().unwrap(),
+                office_id: sat_office_id.clone(),
+            },
+        )
+        .unwrap()
+        .into_result::<OfficeRestart>()
+        .unwrap();
+        assert!(matches!(restarted, HostOpResult::Completed { .. }));
+
+        let foreign_hq_restart = service_tests::exchange::<OfficeRestart>(
+            &mut peer,
+            7,
+            &OfficeRestartParams {
+                session: SessionHandle::new(admin_session.expose().into()).unwrap(),
+                operation_id: crate::ids::uuid_v7().unwrap(),
+                office_id: hq_office_id,
+            },
+        )
+        .unwrap()
+        .into_result::<OfficeRestart>()
+        .unwrap_err();
+        assert_api_code(foreign_hq_restart, ErrorCode::NotFound);
+
+        // Unlinked non-admin sees zero offices and gets NotFound on both org_sat and sat_office_id.
+        let regular_session = sign_in_native(&mut peer, 8, "Regular");
+        let reg_listed = service_tests::exchange::<OfficeList>(
+            &mut peer,
+            9,
+            &OfficeListParams {
+                session: SessionHandle::new(regular_session.expose().into()).unwrap(),
+                org_id: None,
+            },
+        )
+        .unwrap()
+        .into_result::<OfficeList>()
+        .unwrap();
+        assert!(reg_listed.offices.is_empty());
+
+        let reg_restart = service_tests::exchange::<OfficeRestart>(
+            &mut peer,
+            10,
+            &OfficeRestartParams {
+                session: SessionHandle::new(regular_session.expose().into()).unwrap(),
+                operation_id: crate::ids::uuid_v7().unwrap(),
+                office_id: sat_office_id,
+            },
+        )
+        .unwrap()
+        .into_result::<OfficeRestart>()
+        .unwrap_err();
+        assert_api_code(reg_restart, ErrorCode::NotFound);
+
+        drop(peer);
+        offices.shutdown();
+    }
+
+    #[test]
+    fn browser_office_restart_refuses_unlinked_satellite_for_admin() {
+        use org_host_control::{
+            browser::{
+                BrowserOfficeRestart, BrowserOfficeRestartParams, BrowserOrigin, Digest32,
+                SessionSignIn, SessionSignInParams,
+            },
+            organization::BrowserAuth,
+        };
+
+        let home = tempfile::tempdir().unwrap();
+        let (_root, authentication, _) = crate::service::authentication::tests::fixture();
+        let (db, _) = authentication.provisioning_storage();
+        let now = super::browser_now_ms().unwrap();
+        let verifier =
+            hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
+
+        let org_sat = crate::ids::uuid_v7().unwrap();
+        let sat_office_id = crate::ids::uuid_v7().unwrap();
+        let admin_acct = crate::ids::generate().unwrap();
+        db.seed_account(&admin_acct, "HostAdmin", &verifier, true, now)
+            .unwrap();
+
+        let service =
+            service_tests::service(home.path()).with_authentication(Some(Arc::new(authentication)));
+        service.offices.insert_catalog_for_test(OfficeFile::new(
+            &sat_office_id,
+            "Berlin",
+            OfficeRole::Satellite,
+            &org_sat,
+            "Acme",
+            "2026-11-25T00:00:00.000Z",
+        ));
+
+        let (web, mut peer, offices) = service_tests::web_peer_for(
+            service,
+            r#"{"address":"127.0.0.1","port":48125,"scheme":"http_loopback","origin":"http://127.0.0.1:48125","hsts":"off"}"#,
+        );
+        service_tests::exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        let origin = BrowserOrigin {
+            scheme: "http".into(),
+            host: "127.0.0.1".into(),
+            port: 48125,
+        };
+        let cookie_digest = Digest32([33; 32]);
+        let proof_digest = Digest32([34; 32]);
+        service_tests::exchange::<SessionSignIn>(
+            &mut peer,
+            2,
+            &SessionSignInParams {
+                login: "HostAdmin".into(),
+                password: Password::new("synthetic test password".into()).unwrap(),
+                cookie_digest,
+                proof_digest,
+                origin: origin.clone(),
+                client_address: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            },
+        )
+        .unwrap()
+        .into_result::<SessionSignIn>()
+        .unwrap();
+        let auth = BrowserAuth {
+            cookie_digest,
+            proof_digest,
+            origin,
+            local_authless: false,
+        };
+        let err = service_tests::exchange::<BrowserOfficeRestart>(
+            &mut peer,
+            3,
+            &BrowserOfficeRestartParams {
+                auth,
+                operation_id: crate::ids::uuid_v7().unwrap(),
+                org_id: org_sat,
+                office_id: sat_office_id,
+            },
+        )
+        .unwrap()
+        .into_result::<BrowserOfficeRestart>()
+        .unwrap_err();
+        assert_api_code(err, ErrorCode::NotFound);
+
+        drop(web);
+        drop(peer);
         offices.shutdown();
     }
 }

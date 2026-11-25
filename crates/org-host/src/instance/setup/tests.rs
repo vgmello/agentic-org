@@ -16,6 +16,7 @@ fn input(root: PathBuf) -> Input {
         root,
         credentials: None,
         listen: listen(7420),
+        federation: None,
     }
 }
 fn pin() -> ReleasePin {
@@ -666,4 +667,79 @@ fn http_published_is_only_for_the_foreground_mode_and_is_never_implied() {
     let refused = Journal::snapshot(&base, None).unwrap_err().to_string();
     assert!(refused.contains("http_published"), "{refused}");
     assert!(Journal::open(&base, None).unwrap().read().is_err());
+}
+
+#[test]
+fn federation_config_validates_round_trips_and_is_frozen_in_setup_records() {
+    let valid = FederationConfig::parse(
+        " 0.0.0.0:7443 ",
+        vec![
+            " hq.example.com ".into(),
+            "10.0.0.5".into(),
+            "HQ.EXAMPLE.COM".into(),
+            "2001:db8::1".into(),
+        ],
+    )
+    .unwrap();
+    assert_eq!(valid.bind, "0.0.0.0:7443");
+    assert_eq!(
+        valid.advertise,
+        vec!["hq.example.com", "10.0.0.5", "2001:db8::1"]
+    );
+
+    for (bind, adv) in [
+        ("not-an-addr", vec![]),
+        ("0.0.0.0:0", vec![]),
+        ("hq.example.com:7443", vec![]),
+        ("0.0.0.0:7443", vec!["".into()]),
+        ("0.0.0.0:7443", vec!["hq.example.com:7443".into()]),
+        ("0.0.0.0:7443", vec!["127.0.0.1:7443".into()]),
+        ("0.0.0.0:7443", vec!["[::1]".into()]),
+        ("0.0.0.0:7443", vec!["a,b".into()]),
+        ("0.0.0.0:7443", vec!["bad host".into()]),
+        ("0.0.0.0:7443", vec!["büro.example.com".into()]),
+        ("0.0.0.0:7443", vec!["hq.example.com/path".into()]),
+        ("0.0.0.0:7443", vec!["-bad.example".into()]),
+        ("0.0.0.0:7443", vec!["bad..example".into()]),
+        ("0.0.0.0:7443", vec!["bad_.example".into()]),
+    ] {
+        assert!(
+            FederationConfig::parse(bind, adv.clone()).is_err(),
+            "{bind:?} {adv:?} should be refused"
+        );
+    }
+
+    // JSON `--config` refuses duplicate advertise entries (case-insensitive / canonical IP).
+    let dup_json = r#"{
+      "version": 1, "service": "registered", "root": "/data/hq",
+      "listen": {"address": "127.0.0.1", "port": 7420, "scheme": "http_loopback",
+                 "origin": "http://127.0.0.1:7420", "hsts": "off"},
+      "federation": {"bind": "0.0.0.0:7443", "advertise": ["hq.example.com", "HQ.EXAMPLE.COM"]}
+    }"#;
+    assert!(Input::from_configuration(dup_json.as_bytes()).is_err());
+
+    let text = r#"{
+      "version": 1, "service": "registered", "root": "/data/hq",
+      "listen": {"address": "127.0.0.1", "port": 7420, "scheme": "http_loopback",
+                 "origin": "http://127.0.0.1:7420", "hsts": "off"},
+      "federation": {"bind": "0.0.0.0:7443", "advertise": ["hq.example.com", "10.0.0.5"]}
+    }"#;
+    let configured = Input::from_configuration(text.as_bytes()).unwrap();
+    assert_eq!(
+        configured.input.federation,
+        Some(FederationConfig {
+            bind: "0.0.0.0:7443".into(),
+            advertise: vec!["hq.example.com".into(), "10.0.0.5".into()],
+        })
+    );
+
+    let (_temp, base) = base();
+    let mut with_fed = input(base.join("instance"));
+    with_fed.federation = configured.input.federation.clone();
+    let journal = Journal::open(&base, None).unwrap();
+    let record = journal.freeze(with_fed.clone(), true, pin()).unwrap();
+    assert_eq!(Journal::snapshot(&base, None).unwrap(), record);
+    let mut changed = with_fed;
+    changed.federation = Some(FederationConfig::parse("0.0.0.0:7444", vec![]).unwrap());
+    assert!(journal.freeze(changed, true, pin()).is_err());
 }

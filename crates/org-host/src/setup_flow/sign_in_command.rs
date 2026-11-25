@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use super::cli_context::{self, CliContext};
 use super::office_command::Target;
-use super::{connect_verified, not_running, registered, say};
+use super::{registered, say};
 use crate::human::Wire;
 
 /// Help text for `agentic-org sign-in`.
@@ -123,11 +123,17 @@ pub(crate) fn approve_on_target(
     max_wait: Duration,
     out: &mut dyn Write,
 ) -> Result<(Wire, SessionHandle, String, Vec<LinkedOrg>), String> {
-    let mut wire = connect_verified(target.socket, target.instance_id, |_stream: &UnixStream| {
-        Ok(())
-    })
-    .map_err(|why| not_running(target.name, why))?;
+    let wire = super::office_command::connect_local_peer(target)?;
+    approve_on_wire(wire, poll_interval, max_wait, out)
+}
 
+/// Runs the browser-approved sign-in flow over an already-verified `host.sock` [`Wire`].
+pub(super) fn approve_on_wire(
+    mut wire: Wire,
+    poll_interval: Duration,
+    max_wait: Duration,
+    out: &mut dyn Write,
+) -> Result<(Wire, SessionHandle, String, Vec<LinkedOrg>), String> {
     let created = match wire.call_answer::<CliApprovalCreate>(&CliApprovalCreateParams {}, None)? {
         Ok(created) => created,
         Err(ErrorCode::NotAuthorized) => {

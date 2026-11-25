@@ -109,6 +109,7 @@ impl Drop for Lifecycle {
 struct Session {
     account: AccountId,
     password_changed_at_ms: i64,
+    local_authless: bool,
     id: String,
     connection: Weak<AtomicBool>,
     created: Instant,
@@ -119,6 +120,7 @@ struct Session {
 struct Channel {
     endpoint: Weak<crate::supervisor::channels::Endpoint>,
     organization: String,
+    satellite_operator: bool,
     _slot: crate::supervisor::channels::ChannelSlot,
 }
 struct WebChannel {
@@ -290,11 +292,19 @@ impl Authentication {
                     account.is_none_or(|account| {
                         account.revoked_at_ms().is_some()
                             || account.password_changed_at_ms() != session.password_changed_at_ms
+                            || (session.local_authless
+                                && self.db.local_authless_account().ok().flatten().as_ref()
+                                    != Some(&session.account))
                             || session.channels.values().any(|channel| {
-                                !account
+                                let linked = account
                                     .links()
                                     .iter()
-                                    .any(|link| link.org_id() == channel.organization)
+                                    .any(|link| link.org_id() == channel.organization);
+                                if channel.satellite_operator {
+                                    !(linked || account.admin())
+                                } else {
+                                    !linked
+                                }
                             })
                     })
                 })
@@ -494,6 +504,26 @@ impl Authentication {
         connection: &Connection,
         account_id: &AccountId,
     ) -> Result<AccountVerifyResult, ApiError> {
+        self.issue_account_with_mode(connection, account_id, false)
+    }
+
+    /// Issues a connection-bound native session for the local authless administrator account
+    /// (`session.local`). Tagged `local_authless` so enabling authentication immediately revokes
+    /// active sessions even if the wall clock did not advance.
+    pub(crate) fn issue_local_authless(
+        &self,
+        connection: &Connection,
+        account_id: &AccountId,
+    ) -> Result<AccountVerifyResult, ApiError> {
+        self.issue_account_with_mode(connection, account_id, true)
+    }
+
+    fn issue_account_with_mode(
+        &self,
+        connection: &Connection,
+        account_id: &AccountId,
+        local_authless: bool,
+    ) -> Result<AccountVerifyResult, ApiError> {
         let account = self
             .db
             .account_authority(account_id)
@@ -502,12 +532,20 @@ impl Authentication {
         if account.revoked_at_ms().is_some() {
             return Err(denied());
         }
-        self.issue(connection, account)
+        self.issue_with_mode(connection, account, local_authless)
     }
     fn issue(
         &self,
         connection: &Connection,
         account: Account,
+    ) -> Result<AccountVerifyResult, ApiError> {
+        self.issue_with_mode(connection, account, false)
+    }
+    fn issue_with_mode(
+        &self,
+        connection: &Connection,
+        account: Account,
+        local_authless: bool,
     ) -> Result<AccountVerifyResult, ApiError> {
         self.reap();
         // Read before the session table is locked and before a session exists: a
@@ -553,6 +591,7 @@ impl Authentication {
         let session = Session {
             account: AccountId::parse(account.account_id()).map_err(|_| unavailable())?,
             password_changed_at_ms: account.password_changed_at_ms(),
+            local_authless,
             id: crate::ids::generate().map_err(|_| unavailable())?,
             connection: alive,
             created: now,
@@ -588,8 +627,12 @@ impl Authentication {
             .account_authority(&session.account)
             .map_err(storage)?
             .ok_or_else(denied)?;
+        let authless_closed = session.local_authless
+            && self.db.local_authless_account().map_err(storage)?.as_ref()
+                != Some(&session.account);
         if account.revoked_at_ms().is_some()
             || account.password_changed_at_ms() != session.password_changed_at_ms
+            || authless_closed
         {
             let removed = sessions.remove(&key);
             drop(sessions);
@@ -645,20 +688,67 @@ impl Authentication {
         ),
         ApiError,
     > {
+        self.open_channel_inner(connection, handle, endpoint, organization, false)
+    }
+
+    /// Opens a local `host.sock` channel to a joined satellite office for an instance
+    /// administrator who has no local `account_org_links` row for that organization. The
+    /// resulting grant carries `member = office_id`, which the satellite office admits solely for
+    /// read-only `office.sync_status` checks.
+    pub(super) fn open_satellite_operator_channel(
+        &self,
+        connection: &Connection,
+        handle: &SessionHandle,
+        endpoint: Arc<crate::supervisor::channels::Endpoint>,
+        organization: &str,
+    ) -> Result<
+        (
+            String,
+            std::os::unix::net::UnixStream,
+            crate::supervisor::channels::ChannelSlot,
+        ),
+        ApiError,
+    > {
+        self.open_channel_inner(connection, handle, endpoint, organization, true)
+    }
+
+    fn open_channel_inner(
+        &self,
+        connection: &Connection,
+        handle: &SessionHandle,
+        endpoint: Arc<crate::supervisor::channels::Endpoint>,
+        organization: &str,
+        satellite_operator: bool,
+    ) -> Result<
+        (
+            String,
+            std::os::unix::net::UnixStream,
+            crate::supervisor::channels::ChannelSlot,
+        ),
+        ApiError,
+    > {
+        let may_open = |account: &Account| {
+            account
+                .links()
+                .iter()
+                .any(|link| link.org_id() == organization)
+                || (satellite_operator
+                    && account.admin()
+                    && connection.channel_kind() == org_office_launch::ChannelKind::Local)
+        };
         let account = self.authorize(connection, handle)?;
-        if !account
-            .links()
-            .iter()
-            .any(|link| link.org_id() == organization)
-        {
+        if !may_open(&account) {
             return Err(denied());
         }
         // Authorization is checked before contacting the worker and repeated
-        // after its descriptor receipt, because logout may race that handoff.
+        // after its descriptor receipt, because logout or authority changes may race that handoff.
         let (id, socket, slot) = endpoint
             .open(connection.channel_kind())
             .map_err(|_| unavailable())?;
-        self.authorize(connection, handle)?;
+        let refreshed = self.authorize(connection, handle)?;
+        if !may_open(&refreshed) {
+            return Err(denied());
+        }
         let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
         let session = sessions.get_mut(&digest(handle)).ok_or_else(denied)?;
         session
@@ -672,6 +762,7 @@ impl Authentication {
             Channel {
                 endpoint: Arc::downgrade(&endpoint),
                 organization: organization.into(),
+                satellite_operator,
                 _slot: slot.clone(),
             },
         );
@@ -699,11 +790,20 @@ impl Authentication {
         if endpoint.office != office || !endpoint.is_live() || !bound._slot.is_live() {
             return Err(denied());
         }
-        let link = account
+        let member = if let Some(link) = account
             .links()
             .iter()
             .find(|link| link.org_id() == bound.organization)
-            .ok_or_else(denied)?;
+        {
+            link.member_id()
+        } else if bound.satellite_operator
+            && account.admin()
+            && connection.channel_kind() == org_office_launch::ChannelKind::Local
+        {
+            office
+        } else {
+            return Err(denied());
+        };
         let remaining = ABSOLUTE
             .checked_sub(Instant::now().duration_since(session.created))
             .ok_or_else(denied)?;
@@ -711,7 +811,7 @@ impl Authentication {
             &endpoint,
             GrantInput {
                 account: account.account_id(),
-                member: link.member_id(),
+                member,
                 org_id: &bound.organization,
                 office_id: office,
                 channel_id: channel,

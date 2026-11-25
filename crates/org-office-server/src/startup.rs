@@ -16,8 +16,10 @@ use org_socket::rights::{ReceiveError, StreamReceiver};
 use crate::fdswap::ControlPipe;
 use crate::zeroed::{SecretBuffer, ZeroedReader};
 
-// X-02 §5.1 uses §5.2's header framing, including its 1024-byte limit.
+// X-02 §5.1 uses §5.2's header framing, including its 1024-byte limit for Create/Start/Discard.
+// Satellite `--join` handoffs also carry the one-time invitation token (up to 16 KiB with CA DER).
 const HANDOFF_HEADER_MAX_BYTES: usize = org_office_launch::TRANSFER_HEADER_MAX_BYTES;
+const JOIN_HANDOFF_HEADER_MAX_BYTES: usize = org_office_launch::JOIN_HANDOFF_HEADER_MAX_BYTES;
 
 /// A launch request: the launch first line and its secret handoff. Launch v2 is gone (A1.5).
 pub(super) enum Request {
@@ -128,7 +130,12 @@ impl Control {
                 let receiver = self
                     .receiver
                     .insert(StreamReceiver::new(stream.try_clone().map_err(io_error)?));
-                let handoff = read_handoff(stream, receiver, &self.fence)?;
+                let max_handoff_bytes = if matches!(line, HostFirstLine::Join(_)) {
+                    JOIN_HANDOFF_HEADER_MAX_BYTES
+                } else {
+                    HANDOFF_HEADER_MAX_BYTES
+                };
+                let handoff = read_handoff(stream, receiver, &self.fence, max_handoff_bytes)?;
                 if !matches!(
                     (&line, &handoff),
                     (HostFirstLine::Create(_), Handoff::Create { .. })
@@ -299,9 +306,10 @@ fn read_handoff(
     stream: &UnixStream,
     receiver: &mut StreamReceiver,
     fence: &Mutex<()>,
+    max_bytes: usize,
 ) -> Result<Handoff, LaunchError> {
     // Allocate once before keys arrive: never grow/reallocate a secret-bearing buffer.
-    let mut header = SecretBuffer::new(HANDOFF_HEADER_MAX_BYTES + 1);
+    let mut header = SecretBuffer::new(max_bytes + 1);
     let bytes = header.as_mut();
     for index in 0..bytes.len() {
         let (byte, _fds) = receive(stream, || receiver.receive_byte(0, fence))?;

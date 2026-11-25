@@ -200,6 +200,7 @@ impl Host {
         let instance_name = instance.name().to_owned();
         // An `https` instance imports the pair setup verified at its first start.
         config.supplied_tls = record.tls.clone();
+        config.federation = record.input.federation.clone();
         let host = Self::start_with(
             config,
             Some(instance),

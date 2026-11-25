@@ -26,13 +26,13 @@ crates/
   ...                  Domain and protocol libraries
 ```
 
+## Command-line reference
+
+See [docs/cli-reference.md](docs/cli-reference.md) for the complete `agentic-org` operator CLI reference (instance setup with HQ mTLS federation, `org create|list`, remote satellite `office invite|join|approve|sync-status`, projects, repos, and tasks), or run `agentic-org help <command>`.
+
 ## What runs today
 
-Nothing a person can use end to end yet. `agentic-org serve` runs the host;
-`agentic-org setup` refuses without changing anything; `agentic-org-web` refuses to
-open a listener. `backlog/docs/design/doc-63 - Design-Executables-and-Entry-Points.md` (in parent `agentic-org-project`) lists
-exactly what each executable does now, and the implementation plan says in which
-increment each part becomes usable.
+`backlog/docs/design/doc-63 - Design-Executables-and-Entry-Points.md` and `backlog/docs/doc-3 - Feature-Checklist.md` (in parent `agentic-org-project`) track the current status of each executable and v1 feature.
 
 ## Build and test
 

@@ -55,6 +55,7 @@ impl Fixture {
             root: self.base.join("instance"),
             credentials: None,
             listen,
+            federation: None,
         };
         let pin = ReleasePin {
             release_id: "fixture-1".into(),
@@ -331,6 +332,7 @@ impl Fixture {
             root: self.base.join("instance"),
             credentials: Some(credentials.to_owned()),
             listen,
+            federation: None,
         };
         let pin = ReleasePin {
             release_id: "fixture-1".into(),
@@ -589,6 +591,7 @@ fn a_foreground_record_without_its_secrets_volume_does_not_start_where_one_is_re
         root: f.base.join("instance"),
         credentials: None,
         listen,
+        federation: None,
     };
     let pin = ReleasePin {
         release_id: "fixture-1".into(),

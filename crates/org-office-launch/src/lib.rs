@@ -735,9 +735,9 @@ pub use contract::{
     write_server_event, ChannelKind, CreateLine, Handoff, HandoffFd, HostFirstLine, HqCreationV1,
     ImportSourceV1, InspectImportPerson, InspectImportPreview, InspectImportRequest,
     InspectImportResponse, InvitationSecret, JoinLine, OfficeLine, ReadyForSecrets, RecoveryCode,
-    RefusalReason, RendezvousEvent, TransferRecord, CHANNEL_PROFILE, FD_MARKER, LAUNCH_VERSION,
-    LOCAL_ONLY_NOT_RESTORED, MAX_CHANNELS, MAX_WEB_CHANNELS, TRANSFER_HEADER_MAX_BYTES,
-    TRANSFER_SOCKET_BUFFER_BYTES,
+    RefusalReason, RendezvousEvent, TransferRecord, CHANNEL_PROFILE, FD_MARKER,
+    JOIN_HANDOFF_HEADER_MAX_BYTES, LAUNCH_VERSION, LOCAL_ONLY_NOT_RESTORED, MAX_CHANNELS,
+    MAX_WEB_CHANNELS, TRANSFER_HEADER_MAX_BYTES, TRANSFER_SOCKET_BUFFER_BYTES,
 };
 pub mod writer;
 
