@@ -27,6 +27,7 @@
 		setScopedSearchContext
 	} from '$lib/platform/shell/scoped-search.svelte';
 	import { provideShellAi, type ShellAiAskOptions } from '$lib/platform/shell/shell-ai';
+	import { provideShellCommand } from '$lib/platform/shell/shell-command';
 	import { provideShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
 	import { officesApi } from '$lib/modules/offices/api';
@@ -40,7 +41,20 @@
 	onDestroy(() => chatDrafts.dispose());
 
 	const tessPanel = provideTessPanel();
+	let commandBar = $state<ReturnType<typeof ExecutiveCommandBar> | undefined>();
 	let focusAskTrigger: (() => void) | undefined;
+
+	provideShellCommand({
+		openPalette(prefill?: string) {
+			commandBar?.openPalette(prefill);
+		},
+		toggleTess() {
+			tessPanel.toggle();
+		},
+		async openTessChat() {
+			await commandBar?.openTessChat();
+		}
+	});
 
 	function askTess(prompt: string, opts?: ShellAiAskOptions) {
 		tessPanel.ask(
@@ -340,6 +354,7 @@
 			<span class="text-sm font-semibold">{areaFor(page.url.pathname) ?? 'Agentic Org'}</span>
 		</div>
 		<ExecutiveCommandBar
+			bind:this={commandBar}
 			connection={data.connection}
 			snapshot={shellData.snapshot}
 			items={shellData.workItems}
@@ -410,6 +425,13 @@
 	@media (min-height: 640px) {
 		.exec-shell-main :global(.activity-workspace),
 		.exec-shell-main :global(.project-frame-activity) {
+			flex: 1 1 0%;
+			min-height: 0;
+			height: auto;
+		}
+	}
+	@media (min-width: 960px) and (min-height: 640px) {
+		.exec-shell-main main > :global(.triage-page) {
 			flex: 1 1 0%;
 			min-height: 0;
 			height: auto;

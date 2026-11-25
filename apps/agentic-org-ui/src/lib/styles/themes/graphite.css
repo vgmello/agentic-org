@@ -248,9 +248,30 @@ html[data-ui-theme='graphite'] {
 	--exec-lens-on-bg: var(--graphite-active);
 	--exec-lens-on-ink: #f1f1f3;
 	--exec-lens-on-shadow: none;
+	--exec-cmdk-dialog-radius: 7px;
+	--exec-cmdk-tab-grp-radius: 5px;
+	--exec-cmdk-tab-radius: 5px;
+	--exec-cmdk-esc-radius: 5px;
+	--exec-cmdk-opt-radius: 5px;
 	--exec-cmdk-menu-bg: var(--graphite-raised);
 	--exec-cmdk-menu-blur: none;
 	--exec-cmdk-menu-shadow: inset 0 0 0 1px #35373d, 0 16px 40px rgb(0 0 0 / 0.42);
+	--exec-cmdk-tabs-bg: var(--graphite-rail);
+	--exec-cmdk-foot-bg: var(--graphite-rail);
+	--exec-cmdk-tab-grp-bg: var(--graphite-panel);
+	--exec-cmdk-tab-grp-shadow: inset 0 0 0 1px var(--exec-border-hi);
+	--exec-cmdk-tab-active-bg: var(--graphite-active);
+	--exec-cmdk-tab-active-shadow: none;
+	--exec-cmdk-esc-bg: var(--graphite-panel);
+	--exec-cmdk-esc-shadow: inset 0 0 0 1px var(--exec-border-hi);
+	--exec-cmdk-opt-hover-bg: var(--graphite-hover);
+	--exec-cmdk-opt-hover-shadow: none;
+	--exec-cmdk-opt-active-bg: var(--graphite-active);
+	--exec-cmdk-opt-active-shadow: inset 0 0 0 1px #52555d;
+	--exec-cmdk-tag-bg: rgba(255, 255, 255, 0.07);
+	--exec-cmdk-foot-kbd-bg: var(--graphite-panel);
+	--exec-cmdk-foot-kbd-ring: #35373d;
+	--exec-cmdk-foot-kbd-ink: #c6c8ce;
 
 	/* Unread rail dot (no glow halo in matte Graphite) */
 	--exec-nav-dot: var(--tone-warn);
@@ -430,21 +451,8 @@ html[data-ui-theme='graphite']:has(.work-header) .work-reading .work-kind {
 	}
 }
 
-html[data-ui-theme='graphite']:has(.triage-workspace) .triage-page {
-	padding: 0;
-}
-
-html[data-ui-theme='graphite']:has(.triage-workspace) .triage-workspace,
-html[data-ui-theme='graphite']:has(.triage-workspace) .triage-workspace:hover {
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-workspace {
 	background-color: #18191a;
-	border-radius: 0;
-	box-shadow: none;
-}
-
-@media (min-width: 960px) {
-	html[data-ui-theme='graphite']:has(.triage-workspace) .triage-workspace {
-		height: max(600px, calc(100dvh - var(--exec-topbar-height, 58px)));
-	}
 }
 
 html[data-ui-theme='graphite']:has(.triage-workspace) .triage-header {

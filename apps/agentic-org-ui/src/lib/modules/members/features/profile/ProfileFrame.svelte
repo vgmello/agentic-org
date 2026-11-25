@@ -17,6 +17,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
+	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TabsNav from '$lib/components/TabsNav.svelte';
 	import { mobileButton } from '$lib/components/classes';
@@ -385,15 +386,19 @@
 						>Members</a
 					>
 				</div>
-				<header class="profile-masthead prof px-4 pt-2 pb-3 min-[640px]:px-6 min-[1024px]:px-8">
-					<div class="flex min-w-0 flex-1 flex-col gap-3 min-[640px]:flex-row min-[640px]:gap-x-4">
+				<header
+					class="profile-masthead prof flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pt-2 pb-3 min-[640px]:px-6 min-[1024px]:px-8"
+				>
+					<div
+						class="flex min-w-0 flex-1 basis-64 flex-col gap-3 min-[640px]:flex-row min-[640px]:gap-x-4"
+					>
 						<Avatar name={p.name} class="size-10 shrink-0" />
 						<div class="min-w-0 flex-1">
 							<h2
 								id="profile-heading"
 								bind:this={nameHeading}
 								tabindex="-1"
-								class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere]"
+								class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[clamp(1.375rem,2.2vw,1.875rem)]/[1.22] font-semibold tracking-[-0.03em] text-fg [overflow-wrap:anywhere]"
 							>
 								{p.name}{p.viewer.isSelf ? ' (you)' : ''}
 								{#if p.owner}<StatusPill label="Owner" class="profile-owner-pill" />{/if}
@@ -469,6 +474,7 @@
 							</p>
 						</div>
 					</div>
+					<InteriorSearchBar class="w-full shrink-0 sm:w-[clamp(18rem,28vw,25rem)]" />
 				</header>
 				<div class="section-toolbar profile-toolbar">
 					<div

@@ -528,7 +528,7 @@
 					<span class="triage-from-time">{item.ageLabel}</span>
 				</p>
 
-				<h2 id="triage-detail-heading" tabindex="-1" class="triage-detail-title font-semibold">
+				<h2 id="triage-detail-heading" tabindex="-1" class="triage-detail-title font-bold">
 					{@render highlighted(item.title)}
 				</h2>
 			</header>
@@ -1238,8 +1238,8 @@
 	.triage-from-link {
 		display: inline-flex;
 		align-items: center;
-		min-width: 36px;
-		min-height: 36px;
+		min-width: 24px;
+		min-height: 24px;
 		color: var(--exec-ink);
 		font-weight: 600;
 		text-decoration: none;

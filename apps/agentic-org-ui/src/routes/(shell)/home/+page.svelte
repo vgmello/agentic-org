@@ -8,6 +8,7 @@
 	import DecisionSpotlight from '$lib/modules/home/features/DecisionSpotlight.svelte';
 	import ExecutiveBriefCard from '$lib/modules/home/features/ExecutiveBriefCard.svelte';
 	import { HomeLiveState } from '$lib/modules/home/features/home-live.svelte';
+	import { fitBelowFold } from '$lib/modules/home/features/home-fold';
 	import HomeKpiStrip from '$lib/modules/home/features/HomeKpiStrip.svelte';
 	import HomeMilestones from '$lib/modules/home/features/HomeMilestones.svelte';
 	import HomeSkeleton from '$lib/modules/home/features/HomeSkeleton.svelte';
@@ -16,6 +17,7 @@
 	import { layerOffices } from '$lib/modules/offices/layer';
 	import { useTessPanel } from '$lib/modules/tess/tess-panel.svelte';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import {
 		deriveCatchUpDigest,
 		deriveDecisionSpotlight,
@@ -185,7 +187,10 @@
 
 <svelte:head><title>{pageTitle('Home')}</title></svelte:head>
 
-<div class="home-page mx-auto flex w-full flex-col px-6 pt-3 pb-12 sm:px-8">
+<div
+	{@attach fitBelowFold(uiPrefs.theme)}
+	class="home-page mx-auto flex w-full flex-col px-6 pt-3 pb-12 sm:px-8"
+>
 	<!-- Zone 1: Executive Greeting Header -->
 	<section class="home-hero flex flex-wrap justify-between gap-4">
 		<div class="home-brief flex min-w-0 flex-col gap-1">
@@ -262,21 +267,25 @@
 			<ExecutiveBriefCard {brief} {catchUp} />
 		</section>
 
-		{#if projectCards.length > 0}
-			<ProjectScorecard
-				projects={projectCards}
-				attentionCount={kpis.projectsAttention}
-				{spotlightIds}
-				onSpotJump={handleSpotJump}
-			/>
-		{/if}
+		{#if projectCards.length > 0 || milestones.length > 0 || taskTime.totalOpen > 0}
+			<div class="home-below-fold flex flex-col">
+				{#if projectCards.length > 0}
+					<ProjectScorecard
+						projects={projectCards}
+						attentionCount={kpis.projectsAttention}
+						{spotlightIds}
+						onSpotJump={handleSpotJump}
+					/>
+				{/if}
 
-		{#if milestones.length > 0}
-			<HomeMilestones {milestones} {spotlightIds} onSpotJump={handleSpotJump} />
-		{/if}
+				{#if milestones.length > 0}
+					<HomeMilestones {milestones} {spotlightIds} onSpotJump={handleSpotJump} />
+				{/if}
 
-		{#if taskTime.totalOpen > 0}
-			<CapacityBreakdown {taskTime} offlineOffices={kpis.offlineOffices} />
+				{#if taskTime.totalOpen > 0}
+					<CapacityBreakdown {taskTime} offlineOffices={kpis.offlineOffices} />
+				{/if}
+			</div>
 		{/if}
 	{/if}
 </div>
@@ -284,6 +293,9 @@
 <style>
 	.home-page {
 		max-width: var(--exec-page-max-w);
+		gap: var(--exec-page-gap);
+	}
+	.home-below-fold {
 		gap: var(--exec-page-gap);
 	}
 	.home-hero {

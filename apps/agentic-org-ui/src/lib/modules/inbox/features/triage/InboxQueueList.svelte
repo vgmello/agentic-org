@@ -338,7 +338,6 @@
 	}
 	.triage-item[aria-current='true'] {
 		background-color: var(--triage-row-selected, var(--exec-accent-soft));
-		box-shadow: inset 3px 0 0 var(--tone-accent-ink);
 	}
 	.triage-person {
 		display: flex;
@@ -392,7 +391,7 @@
 	}
 	.triage-title {
 		color: var(--exec-ink);
-		font-size: 0.875rem;
+		font-size: 0.9375rem;
 		font-weight: 600;
 		line-height: 1.44;
 		padding-inline-start: 32px;

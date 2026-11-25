@@ -4,9 +4,23 @@
  * frosted espresso glass shell/panels, rounded pill Ask bar (9999px),
  * optional High Contrast mode (`html[data-ui-theme='cozy'][data-cozy-contrast='high']`).
  * Strictly scoped to `.cozy-room`, `.cozy-shell`, `html[data-ui-theme='cozy']`, and `.swatch-cozy`.
- * Strictly CSP-safe: zero external font URLs, zero data: URIs.
+ * Strictly CSP-safe: self-hosted OFL fonts only (`font-src 'self'`), zero external URLs, zero data: URIs.
  * All backdrop-filter rules list `-webkit-backdrop-filter` FIRST, `backdrop-filter` SECOND.
  */
+
+@font-face {
+	font-family: 'Cozy Inter';
+	src: url('/fonts/cozy-inter.woff2') format('woff2');
+	font-weight: 400 750;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'Cozy JetBrains Mono';
+	src: url('/fonts/cozy-jetbrains-mono.woff2') format('woff2');
+	font-weight: 400 650;
+	font-display: swap;
+}
 
 .cozy-room,
 .cozy-shell {
@@ -15,6 +29,9 @@
 
 html[data-ui-theme='cozy'] {
 	color-scheme: dark;
+	--cozy-font: 'Cozy Inter', 'Inter Variable', Inter, system-ui, sans-serif;
+	--cozy-mono: 'Cozy JetBrains Mono', 'JetBrains Mono', ui-monospace, monospace;
+	font-family: var(--cozy-font);
 
 	/* Cozy Glass layered warm espresso tokens (lightened to match POC warm studio glass while keeping Svelte emerald CTAs) */
 	--cozy-shell: linear-gradient(155deg, rgba(52, 44, 38, 0.56), rgba(36, 30, 26, 0.64));
@@ -191,11 +208,20 @@ html[data-ui-theme='cozy'] {
 	--exec-cmdk-bg: rgba(24, 20, 17, 0.38);
 	--exec-cmdk-bg-hover: rgba(32, 26, 22, 0.48);
 	--exec-cmdk-blur: blur(20px) saturate(125%);
-	--exec-cmdk-menu-bg: rgba(26, 20, 16, 0.88);
-	--exec-cmdk-menu-blur: blur(32px) saturate(150%);
+	--exec-cmdk-dialog-radius: 8px;
+	--exec-cmdk-tab-grp-radius: 8px;
+	--exec-cmdk-tab-radius: 8px;
+	--exec-cmdk-esc-radius: 8px;
+	--exec-cmdk-opt-radius: 8px;
+	--exec-cmdk-menu-bg: linear-gradient(165deg, rgba(56, 48, 42, 0.88), rgba(36, 31, 27, 0.92));
+	--exec-cmdk-menu-blur: blur(28px) saturate(135%);
 	--exec-cmdk-menu-shadow:
-		inset 0 1px 0 rgba(255, 248, 238, 0.16), inset 0 0 0 1px rgba(255, 245, 232, 0.18),
-		0 22px 54px -14px rgba(10, 7, 5, 0.72);
+		inset 0 1px 0 rgba(255, 248, 238, 0.16), inset 0 0 0 1px rgba(255, 246, 235, 0.16),
+		0 24px 60px -12px rgba(12, 9, 7, 0.62);
+	--exec-cmdk-tabs-bg: rgba(16, 13, 11, 0.38);
+	--exec-cmdk-foot-bg: rgba(16, 13, 11, 0.38);
+	--exec-cmdk-tag-bg: rgba(255, 248, 240, 0.08);
+	--exec-cmdk-opt-ring: rgba(110, 196, 199, 0.34);
 	--exec-cmdk-shadow: var(--cozy-panel-shadow);
 	--exec-cmdk-shadow-hover: var(--cozy-panel-shadow-hi);
 	--exec-cmdk-hover-lift: none;
@@ -308,6 +334,8 @@ html[data-ui-theme='cozy'] {
 	--exec-hor-date-day-ink: #faf6f0;
 	--side-panel-surface: #352b22;
 	--assembly-surface: transparent;
+	--triage-row-hover: rgba(255, 248, 240, 0.09);
+	--triage-row-selected: var(--tone-accent-bg);
 }
 
 /* Cozy Glass High Contrast mode (`data-cozy-contrast='high'`) */
@@ -377,6 +405,26 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high'] {
 	--exec-scroll-hint-ink: #ffffff;
 	--exec-scroll-hint-ink-hover: #ffffff;
 	--side-panel-surface: #1a1512;
+	--triage-row-hover: rgba(255, 248, 240, 0.12);
+	--triage-row-selected: rgba(39, 87, 83, 0.72);
+}
+
+html[data-ui-theme='cozy'] body {
+	font-family: var(--cozy-font);
+}
+
+html[data-ui-theme='cozy']
+	:is(
+		code,
+		pre,
+		.font-mono,
+		.work-ref,
+		.triage-queue-count,
+		.interior-search-kbd,
+		.interior-workspace-btn kbd,
+		.exec-cmdk-opt-tag
+	) {
+	font-family: var(--cozy-mono);
 }
 
 /* Ambient Cozy studio room & full-bleed glass shell (only active in Cozy Glass) */
@@ -550,9 +598,30 @@ html[data-ui-theme='cozy'] .exec-brand-mark {
 	background: #2f6148;
 }
 
+html[data-ui-theme='cozy'] .triage-workspace {
+	background: transparent;
+}
+
 html[data-ui-theme='cozy'] .triage-queue {
 	background: var(--cozy-well);
 	box-shadow: none;
+}
+
+html[data-ui-theme='cozy'] .triage-queue-summary {
+	background: rgba(16, 13, 11, 0.16);
+}
+
+html[data-ui-theme='cozy'] .triage-group-head {
+	background: rgba(255, 248, 240, 0.09);
+	border-bottom: 1px solid var(--exec-border);
+}
+
+html[data-ui-theme='cozy'][data-cozy-contrast='high'] .triage-queue {
+	background: var(--cozy-well);
+}
+
+html[data-ui-theme='cozy'][data-cozy-contrast='high'] .triage-group-head {
+	background: rgba(255, 248, 240, 0.12);
 }
 
 /* Cozy Glass Work, Assembly & Chat body canvas (Prototype Release 1149b4f1):
@@ -746,6 +815,11 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high']
 	html[data-ui-theme='cozy'][data-cozy-contrast='high'] .chat-frame {
 		--cozy-chat-chrome: #1a1512;
 		background: #241e19;
+	}
+
+	html[data-ui-theme='cozy'] .triage-queue,
+	html[data-ui-theme='cozy'][data-cozy-contrast='high'] .triage-queue {
+		background: #1a1512;
 	}
 
 	html[data-ui-theme='cozy'] .cozy-room::after,

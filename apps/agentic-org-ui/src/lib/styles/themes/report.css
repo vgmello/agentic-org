@@ -235,9 +235,37 @@ html[data-ui-theme='report'] {
 	--exec-lens-on-bg: #0b101b;
 	--exec-lens-on-ink: #ffffff;
 	--exec-lens-on-shadow: none;
+	--exec-cmdk-dialog-radius: 6px;
+	--exec-cmdk-tab-grp-radius: 4px;
+	--exec-cmdk-tab-radius: 3px;
+	--exec-cmdk-esc-radius: 3px;
+	--exec-cmdk-opt-radius: 3px;
+	--exec-cmdk-tag-radius: 3px;
+	--exec-cmdk-kbd-small-radius: 3px;
+	--exec-cmdk-grp-tracking: 0.1em;
 	--exec-cmdk-menu-bg: #ffffff;
 	--exec-cmdk-menu-blur: none;
 	--exec-cmdk-menu-shadow: inset 0 0 0 1px #dce2ec, 0 20px 48px -20px rgba(11, 16, 27, 0.18);
+	--exec-cmdk-tabs-bg: #f9fafc;
+	--exec-cmdk-tab-grp-bg: #eef1f6;
+	--exec-cmdk-tab-grp-shadow: none;
+	--exec-cmdk-tab-active-bg: #0b101b;
+	--exec-cmdk-tab-active-ink: #ffffff;
+	--exec-cmdk-tab-active-ico: #ffffff;
+	--exec-cmdk-tab-active-shadow: none;
+	--exec-cmdk-esc-bg: #f4f6f9;
+	--exec-cmdk-esc-shadow: none;
+	--exec-cmdk-esc-ink: #475569;
+	--exec-cmdk-opt-hover-bg: #f4f6f9;
+	--exec-cmdk-opt-hover-shadow: inset 2.5px 0 0 #0b101b;
+	--exec-cmdk-opt-active-bg: #f4f6f9;
+	--exec-cmdk-opt-active-shadow: inset 2.5px 0 0 #0b101b;
+	--exec-cmdk-opt-active-ico: #0b101b;
+	--exec-cmdk-tag-bg: #eef1f6;
+	--exec-cmdk-foot-bg: #f9fafc;
+	--exec-cmdk-foot-kbd-bg: #ffffff;
+	--exec-cmdk-foot-kbd-ring: #e2e7ef;
+	--exec-cmdk-foot-kbd-ink: #0b101b;
 	--exec-scroll-hint-bg: #ffffff;
 	--exec-scroll-hint-pill-bg: transparent;
 	--exec-scroll-hint-ink: #475569;
@@ -458,7 +486,6 @@ html[data-ui-theme^='report'] .act-page {
 	max-width: none;
 }
 
-html[data-ui-theme^='report'] .triage-page,
 html[data-ui-theme^='report'] .work-page {
 	padding: 0;
 }
@@ -509,18 +536,6 @@ html[data-ui-theme='report']
 	:is(.work-row, .work-bcard):is(:hover, :focus-within, [aria-current='true'])
 	:is(.work-status[data-tone='done'], .work-criteria.is-complete) {
 	color: #0f5d2c;
-}
-
-html[data-ui-theme^='report'] .triage-workspace,
-html[data-ui-theme^='report'] .triage-workspace:hover {
-	border-radius: 0;
-	box-shadow: none;
-}
-
-@media (min-width: 960px) {
-	html[data-ui-theme^='report'] .triage-workspace {
-		height: max(600px, calc(100dvh - var(--exec-topbar-height, 56px)));
-	}
 }
 
 /* Report Day hover & selected row expiry / handled-ok inks (>= 4.5:1 AA on #eaedf3 and #d6e2f0) */

@@ -14,6 +14,7 @@
 	import { toast } from 'svelte-sonner';
 	import Callout from '$lib/components/Callout.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
+	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TabsNav, { type Tab } from '$lib/components/TabsNav.svelte';
 	import { Button } from '$lib/components/ui/button';
@@ -180,12 +181,14 @@
 				{@const archived = d.team.status === 'archived'}
 				{@const parent = d.path.at(-1)}
 				<div class="section-header team-header">
-					<header class="team-masthead ph px-4 pt-2 pb-5 min-[640px]:px-6 min-[1024px]:px-8">
-						<div class="min-w-0">
+					<header
+						class="team-masthead ph flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pt-2 pb-5 min-[640px]:px-6 min-[1024px]:px-8"
+					>
+						<div class="min-w-0 flex-1 basis-64">
 							<h2
 								id="team-heading"
 								tabindex="-1"
-								class="flex flex-wrap items-baseline gap-x-2 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere] focus:outline-none"
+								class="flex flex-wrap items-baseline gap-x-2 text-[clamp(1.375rem,2.2vw,1.875rem)]/[1.22] font-semibold tracking-[-0.03em] text-fg [overflow-wrap:anywhere] focus:outline-none"
 							>
 								{d.team.name}
 							</h2>
@@ -215,6 +218,7 @@
 								</div>
 							</div>
 						</div>
+						<InteriorSearchBar class="w-full shrink-0 sm:w-[clamp(18rem,28vw,25rem)]" />
 					</header>
 					<div class="section-toolbar team-toolbar">
 						<div class="primary-tab-row">

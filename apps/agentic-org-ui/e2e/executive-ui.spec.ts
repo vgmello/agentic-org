@@ -982,10 +982,10 @@ test('Phase 4B + 5B: Activity & Projects toolbars, CmdK # channel jump, Ask -> S
 		expect(mastheadBefore === 'none' || mastheadBefore === 'normal').toBe(true);
 	}
 
-	// Cmd+K after Ask loads real Chat conversations on first single-event `#release-v1` query
+	// Cmd+K after Cmd+/ Ask Tess loads real Chat conversations on first single-event `#release-v1` query
 	await enterMockedOrganization(page);
 	await visit(page, '/work?mock=default');
-	await page.getByRole('button', { name: 'Ask', exact: true }).click();
+	await page.keyboard.press('ControlOrMeta+/');
 	await expect(page.getByTestId('tess-panel')).toBeVisible();
 	await page.keyboard.press('ControlOrMeta+k');
 	await expect(cmdDialog).toBeVisible();

@@ -5,6 +5,7 @@
 	import { page } from '$app/state';
 	import ArrowUp from '@lucide/svelte/icons/arrow-up';
 	import Compass from '@lucide/svelte/icons/compass';
+	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
@@ -12,6 +13,7 @@
 	import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/modules/inbox/types';
 	import { areaFor } from '$lib/nav';
+	import { useShellCommand } from '$lib/platform/shell/shell-command';
 	import { TESS_STARTERS, type TessPanelState } from './tess-panel.svelte';
 
 	interface Props {
@@ -34,7 +36,13 @@
 		onCloseRestoreFocus
 	}: Props = $props();
 
+	const shellCommand = useShellCommand();
 	const routeLabel = $derived(areaFor(page.url.pathname) ?? 'Home');
+
+	async function openTessDmInChat() {
+		panel.close();
+		await shellCommand?.openTessChat();
+	}
 	const isTessChatActive = $derived(
 		page.url.pathname === '/chat' &&
 			(page.url.searchParams.get('c')?.toLowerCase().includes('tess') ?? false)
@@ -127,10 +135,20 @@
 							<span>Local summary</span>
 						</span>
 					</div>
-					<p class="truncate text-xs text-[var(--exec-muted)]">Chief of Staff</p>
+					<p class="truncate text-xs text-[var(--exec-muted)]">DM thread · Chief of Staff</p>
 				</div>
 			</div>
 			<div class="flex shrink-0 items-center gap-1">
+				<button
+					type="button"
+					onclick={() => void openTessDmInChat()}
+					aria-label="Open DM with Tess in Chat"
+					title="Open DM with Tess in Chat"
+					class="tess-open-chat inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium"
+				>
+					<MessageSquare class="size-3.5 shrink-0" aria-hidden="true" />
+					<span>Chat</span>
+				</button>
 				{#if panel.turns.length > 0}
 					<button
 						type="button"
@@ -347,6 +365,21 @@
 	.tess-ctx-dismiss:hover {
 		background: var(--exec-accent-soft);
 		color: var(--exec-ink);
+	}
+	.tess-open-chat {
+		background: var(--exec-cmdk-tag-bg, var(--exec-well));
+		color: var(--exec-body);
+		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+		cursor: pointer;
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease,
+			box-shadow 0.14s ease;
+	}
+	.tess-open-chat:hover {
+		background: var(--exec-accent-soft);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-cmdk-opt-ring, var(--exec-accent-ring));
 	}
 	.tess-ctx-bar {
 		background: var(--exec-well);

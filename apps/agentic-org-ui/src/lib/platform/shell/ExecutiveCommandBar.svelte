@@ -27,9 +27,7 @@
 	import type { Conversation } from '$lib/modules/messaging';
 	import { nonOwners } from '$lib/modules/organization/model';
 	import NewMenu, { type NewMenuAction } from './NewMenu.svelte';
-	import ScopedSearchInput from '$lib/components/ScopedSearchInput.svelte';
 	import { areaCapability } from './capabilities';
-	import { useScopedSearchContext } from './scoped-search.svelte';
 	import type { ShellAiAskOptions } from './shell-ai';
 	import { useShellData } from './shell-data.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from './shortcuts';
@@ -93,12 +91,9 @@
 		action?: () => void;
 	}
 
-	const kbdClass =
-		'inline-flex h-[22px] items-center justify-center rounded-md bg-[var(--exec-well)] px-[7px] text-[0.7rem] font-semibold text-[var(--exec-muted)] shadow-[inset_0_0_0_1px_var(--exec-border)]';
+	const kbdClass = 'exec-cmdk-foot-kbd';
 
 	const shellData = useShellData();
-	const scopedSearch = useScopedSearchContext();
-	const activeScopedSearch = $derived(scopedSearch?.active);
 	const organizationId = $derived(shellData.organizationId);
 	const isHome = $derived(page.url.pathname === '/home');
 	const isChat = $derived(page.url.pathname === '/chat' || page.url.pathname.startsWith('/chat/'));
@@ -241,6 +236,7 @@
 	});
 
 	let open = $state(false);
+	let modalMode = $state<'cmd' | 'ai'>('cmd');
 	let inlineOpen = $state(false);
 	let query = $state('');
 	const isChannelQuery = $derived(query.trimStart().startsWith('#'));
@@ -676,6 +672,7 @@
 
 	function resetModalState() {
 		query = '';
+		modalMode = 'cmd';
 		resetActive();
 	}
 
@@ -693,6 +690,51 @@
 		resetActive();
 		void loadChatConversations(organizationId);
 		void tick().then(() => homeInputEl?.focus());
+	}
+
+	export function openPalette(prefill?: string) {
+		if (prefill && prefill.trim().length > 0) {
+			openModalWithQuery(prefill.trim());
+		} else {
+			openModal();
+		}
+	}
+
+	async function findTessDmId(orgId: string): Promise<string | undefined> {
+		try {
+			const { chatApi } = await import('$lib/modules/messaging/api');
+			const snap = await chatApi.snapshot(orgId);
+			const tessMember = (snapshot?.members ?? []).find((m) => isTessMember(m));
+			const tessDm = snap.state.conversations.find(
+				(c) =>
+					c.kind === 'dm' &&
+					!c.archived &&
+					(Boolean(tessMember && c.members.includes(tessMember.id)) ||
+						Boolean(c.name?.toLowerCase().includes('tess')))
+			);
+			return tessDm?.id;
+		} catch {
+			return undefined;
+		}
+	}
+
+	function isTessMember(m: NonNullable<OrgSnapshot>['members'][number]): boolean {
+		return (
+			m.name.toLowerCase().includes('tess') ||
+			m.agent?.messaging_name?.toLowerCase() === 'tess' ||
+			Boolean(m.agent?.role?.toLowerCase().includes('chief of staff'))
+		);
+	}
+
+	export async function openTessChat() {
+		const tessDmId = organizationId ? await findTessDmId(organizationId) : undefined;
+		if (tessDmId) {
+			const base = resolve('/chat');
+			// eslint-disable-next-line svelte/no-navigation-without-resolve -- base passes through resolve() while query string stays intact
+			await goto(`${base}?c=${encodeURIComponent(tessDmId)}`);
+			return;
+		}
+		await goto(resolve('/chat'));
 	}
 
 	function openModal() {
@@ -772,8 +814,12 @@
 		}
 		if ((event.metaKey || event.ctrlKey) && event.key === '/') {
 			event.preventDefault();
+			if (open) {
+				modalMode = modalMode === 'cmd' ? 'ai' : 'cmd';
+				void tick().then(() => inputEl?.focus());
+				return;
+			}
 			if (inlineOpen) closeInline(false);
-			if (open) closeModal(false);
 			onToggleTess?.();
 			return;
 		}
@@ -856,53 +902,60 @@
 		};
 	});
 
+	function stepActiveIndex(delta: 1 | -1) {
+		const defaultIdx = delta === 1 ? 0 : entries.length - 1;
+		if (isHome && !open && !inlineOpen) {
+			inlineOpen = true;
+			if (entries.length > 0) setActiveIndex(defaultIdx);
+			else resetActive();
+			return;
+		}
+		if (entries.length === 0) return;
+		const next =
+			safeActiveIdx < 0 ? defaultIdx : (safeActiveIdx + delta + entries.length) % entries.length;
+		setActiveIndex(next);
+	}
+
+	function handleEnterKey(event: KeyboardEvent) {
+		if (open && modalMode === 'ai') {
+			const q = query.trim();
+			if (q) {
+				event.preventDefault();
+				handoffToTess(q);
+			}
+			return;
+		}
+		const canRun = open || (isHome && !open && inlineOpen);
+		if (canRun && safeActiveIdx >= 0 && entries[safeActiveIdx]) {
+			event.preventDefault();
+			runEntry(entries[safeActiveIdx]);
+		}
+	}
+
+	function handleInlineEscape(event: KeyboardEvent) {
+		if (inlineOpen) {
+			event.preventDefault();
+			closeInline(false);
+		} else if (query.length > 0) {
+			event.preventDefault();
+			query = '';
+			resetActive();
+		}
+	}
+
 	function handleInputKeydown(event: KeyboardEvent) {
 		if (event.isComposing || event.keyCode === 229) return;
 		if (event.key === 'Tab' && isHome && !open && inlineOpen) {
 			inlineOpen = false;
 			return;
 		}
-		if (event.key === 'ArrowDown') {
+		if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
 			event.preventDefault();
-			if (isHome && !open && !inlineOpen) {
-				inlineOpen = true;
-				if (entries.length > 0) setActiveIndex(0);
-				else resetActive();
-				return;
-			}
-			if (entries.length > 0) {
-				setActiveIndex(safeActiveIdx < 0 ? 0 : (safeActiveIdx + 1) % entries.length);
-			}
-		} else if (event.key === 'ArrowUp') {
-			event.preventDefault();
-			if (isHome && !open && !inlineOpen) {
-				inlineOpen = true;
-				if (entries.length > 0) setActiveIndex(entries.length - 1);
-				else resetActive();
-				return;
-			}
-			if (entries.length > 0) {
-				setActiveIndex(
-					safeActiveIdx < 0
-						? entries.length - 1
-						: (safeActiveIdx - 1 + entries.length) % entries.length
-				);
-			}
+			stepActiveIndex(event.key === 'ArrowDown' ? 1 : -1);
 		} else if (event.key === 'Enter') {
-			const canRun = open || (isHome && !open && inlineOpen);
-			if (canRun && safeActiveIdx >= 0 && entries[safeActiveIdx]) {
-				event.preventDefault();
-				runEntry(entries[safeActiveIdx]);
-			}
+			handleEnterKey(event);
 		} else if (event.key === 'Escape' && isHome && !open) {
-			if (inlineOpen) {
-				event.preventDefault();
-				closeInline(false);
-			} else if (query.length > 0) {
-				event.preventDefault();
-				query = '';
-				resetActive();
-			}
+			handleInlineEscape(event);
 		}
 	}
 </script>
@@ -964,17 +1017,16 @@
 			{/if}
 		</div>
 	{:else}
-		<ul id={listboxId} class="flex flex-col gap-0.5" role="listbox" aria-label="Search results">
+		<ul
+			id={listboxId}
+			class="exec-cmdk-list flex flex-col gap-[3px]"
+			role="listbox"
+			aria-label="Search results"
+		>
 			{#each entries as entry, idx (entry.id)}
 				{@const showGroup = idx === 0 || entries[idx - 1].group !== entry.group}
 				{#if showGroup}
-					<li
-						role="presentation"
-						class={[
-							'exec-cmdk-grp px-3 pt-2.5 pb-1 text-[11px] font-semibold tracking-[0.08em] uppercase',
-							idx === 0 && 'pt-1.5'
-						]}
-					>
+					<li role="presentation" class={['exec-cmdk-grp', idx === 0 && 'is-first']}>
 						{entry.group}
 					</li>
 				{/if}
@@ -989,20 +1041,20 @@
 						onmouseenter={() => setActiveIndex(idx)}
 						onclick={() => runEntry(entry)}
 						class={[
-							'exec-cmdk-opt flex min-h-10 w-full items-center gap-3 rounded-[10px] px-3 py-2 text-left text-sm transition-colors',
+							'exec-cmdk-opt flex w-full items-center text-left',
 							idx === safeActiveIdx && 'is-active'
 						]}
 					>
 						{@render renderIcon(entry.icon)}
-						<span class="flex min-w-0 flex-1 items-baseline gap-2.5 overflow-hidden">
-							<span class="exec-cmdk-opt-lbl shrink-0 font-medium">{entry.label}</span>
-							<span class="hidden min-w-0 truncate text-xs text-[var(--exec-dim)] sm:inline">
+						<span
+							class="exec-cmdk-opt-txt flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden"
+						>
+							<span class="exec-cmdk-opt-lbl shrink-0">{entry.label}</span>
+							<span class="exec-cmdk-opt-sub hidden min-w-0 truncate sm:inline">
 								{entry.sub}
 							</span>
 						</span>
-						<span
-							class="exec-cmdk-opt-tag shrink-0 rounded-[6px] px-2 py-0.5 text-[11px] font-medium"
-						>
+						<span class="exec-cmdk-opt-tag shrink-0">
 							{entry.tag}
 						</span>
 					</button>
@@ -1014,24 +1066,12 @@
 
 <svelte:window onkeydown={handleWindowKeydown} onpointerdown={handleWindowPointerDown} />
 
-<header
-	class="exec-topbar relative z-30 flex shrink-0 flex-wrap items-center justify-center gap-2.5 overflow-visible px-4 sm:px-6"
->
-	{#if activeScopedSearch}
-		<div class="exec-scoped-search-host min-w-0 shrink" data-testid="header-scoped-search">
-			<ScopedSearchInput
-				value={activeScopedSearch.getValue()}
-				onvaluechange={(next) => activeScopedSearch.setValue(next)}
-				label={activeScopedSearch.label}
-				placeholder={activeScopedSearch.placeholder}
-				headingSelector={activeScopedSearch.headingSelector}
-				class="w-full max-w-[18rem]"
-			/>
-		</div>
-	{/if}
-	<div bind:this={homeShellEl} class="relative flex min-w-0 flex-1 max-w-[640px] flex-col">
-		<div class="exec-cmdk-bar flex w-full items-center">
-			{#if isHome}
+{#if isHome}
+	<header
+		class="exec-topbar relative z-30 flex shrink-0 flex-wrap items-center justify-center gap-2.5 overflow-visible px-4 sm:px-6"
+	>
+		<div bind:this={homeShellEl} class="relative flex min-w-0 flex-1 max-w-[640px] flex-col">
+			<div class="exec-cmdk-bar flex w-full items-center">
 				<label
 					class="exec-cmdk-trigger exec-cmdk-home-field flex min-w-0 flex-1 items-center text-left"
 				>
@@ -1068,57 +1108,38 @@
 					/>
 					<kbd class="exec-cmdk-kbd hidden sm:inline-flex" aria-hidden="true">⌘K</kbd>
 				</label>
-			{:else}
+				<span class="exec-cmdk-sep mx-1.5 h-[22px] w-px shrink-0" aria-hidden="true"></span>
 				<button
+					bind:this={askBtnEl}
 					type="button"
-					onclick={() => openModal()}
-					aria-haspopup="dialog"
-					aria-expanded={open}
-					class="exec-cmdk-trigger flex min-w-0 flex-1 items-center text-left"
+					aria-expanded={tessOpen}
+					onclick={handleAskClick}
+					class="exec-ai-btn inline-flex shrink-0 items-center px-3.5"
 				>
-					<Search class="exec-cmdk-ico size-[18px] shrink-0" aria-hidden="true" />
-					<span class="min-w-0 flex-1 truncate">Search, run a command, or ask Tess…</span>
-					<kbd class="exec-cmdk-kbd hidden sm:inline-flex">⌘K</kbd>
+					<Sparkles class="exec-ai-ico size-[15px] shrink-0" aria-hidden="true" />
+					<span>Ask</span>
 				</button>
-			{/if}
-			<span class="exec-cmdk-sep mx-1.5 h-[22px] w-px shrink-0" aria-hidden="true"></span>
-			<button
-				bind:this={askBtnEl}
-				type="button"
-				aria-expanded={tessOpen}
-				onclick={handleAskClick}
-				class="exec-ai-btn inline-flex shrink-0 items-center px-3.5"
-			>
-				<Sparkles class="exec-ai-ico size-[15px] shrink-0" aria-hidden="true" />
-				<span>Ask</span>
-			</button>
-		</div>
-
-		{#if isHome && inlineOpen}
-			<div
-				class="exec-cmdk-home-results exec-cmdk-surface flex flex-col overflow-hidden rounded-[14px]"
-			>
-				<div class="min-h-0 flex-1 overflow-y-auto p-2">
-					{@render renderEntries('exec-cmdk-home-listbox', 'exec-cmdk-home-opt', true)}
-				</div>
-				<div
-					class="exec-cmdk-foot flex flex-wrap items-center justify-between gap-3 border-t border-[var(--exec-border)] px-3.5 py-2 text-[11px] text-[var(--exec-dim)]"
-					aria-hidden="true"
-				>
-					<div class="flex items-center gap-3">
-						<span><kbd class={[kbdClass, 'mr-1']}>↑↓</kbd> Move</span>
-						<span><kbd class={[kbdClass, 'mr-1']}>↵</kbd> Open</span>
-						<span><kbd class={[kbdClass, 'mr-1']}>Esc</kbd> Close</span>
-					</div>
-					<span><kbd class={[kbdClass, 'mr-1']}>⌘/</kbd> Ask Tess</span>
-				</div>
 			</div>
-		{/if}
-	</div>
-	{#if connection}
-		<NewMenu bind:this={newMenu} {connection} headless />
-	{/if}
-</header>
+
+			{#if inlineOpen}
+				<div class="exec-cmdk-home-results exec-cmdk-surface flex flex-col overflow-hidden">
+					<div class="min-h-0 flex-1 overflow-y-auto p-2.5">
+						{@render renderEntries('exec-cmdk-home-listbox', 'exec-cmdk-home-opt', true)}
+					</div>
+					<div class="exec-cmdk-foot" aria-hidden="true">
+						<span><kbd class={kbdClass}>↑</kbd><kbd class={kbdClass}>↓</kbd> Navigate</span>
+						<span><kbd class={kbdClass}>↵</kbd> Run / Ask</span>
+						<span><kbd class={kbdClass}>⌘/</kbd> Ask Tess</span>
+						<span><kbd class={kbdClass}>Esc</kbd> Close</span>
+					</div>
+				</div>
+			{/if}
+		</div>
+	</header>
+{/if}
+{#if connection}
+	<NewMenu bind:this={newMenu} {connection} headless />
+{/if}
 
 <Dialog.Root
 	bind:open
@@ -1142,23 +1163,64 @@
 				skipRestoreFocus = false;
 			}
 		}}
-		class="exec-cmdk-dialog exec-cmdk-surface top-[9vh] flex max-h-[78vh] w-full max-w-[calc(100%-2rem)] translate-y-0 flex-col gap-0 overflow-hidden rounded-[16px] p-0 ring-0 motion-reduce:animate-none motion-reduce:transition-none motion-reduce:duration-0 motion-reduce:data-closed:animate-none motion-reduce:data-open:animate-none sm:max-w-[640px]"
+		class="exec-cmdk-dialog exec-cmdk-surface top-[9vh] flex max-h-[78vh] w-full max-w-[calc(100%-2rem)] translate-y-0 flex-col gap-0 overflow-hidden p-0 ring-0 motion-reduce:animate-none motion-reduce:transition-none motion-reduce:duration-0 motion-reduce:data-closed:animate-none motion-reduce:data-open:animate-none sm:max-w-[650px]"
 	>
 		<Dialog.Title class="sr-only" text="Command palette" />
 		<Dialog.Description class="sr-only">
 			Search projects, work, team members, run commands, or ask Tess.
 		</Dialog.Description>
 
-		<div
-			class="exec-cmdk-input-row flex items-center gap-3 border-b border-[var(--exec-border)] px-4 py-3.5"
-		>
-			<Search class="size-[18px] shrink-0 text-[var(--exec-accent-ink)]" aria-hidden="true" />
+		<div class="exec-cmdk-tabs flex items-center justify-between gap-2.5">
+			<div
+				class="exec-cmdk-tab-grp inline-flex items-center gap-1"
+				role="tablist"
+				aria-label="Palette mode"
+			>
+				<button
+					type="button"
+					role="tab"
+					aria-selected={modalMode === 'cmd'}
+					onclick={() => {
+						modalMode = 'cmd';
+						void tick().then(() => inputEl?.focus());
+					}}
+					class="exec-cmdk-tab inline-flex items-center gap-1.5"
+				>
+					<Search class="size-3.5 shrink-0" aria-hidden="true" />
+					<span>Search &amp; Commands</span>
+				</button>
+				<button
+					type="button"
+					role="tab"
+					aria-selected={modalMode === 'ai'}
+					onclick={() => {
+						modalMode = 'ai';
+						void tick().then(() => inputEl?.focus());
+					}}
+					class="exec-cmdk-tab inline-flex items-center gap-1.5"
+				>
+					<Sparkles class="size-3.5 shrink-0" aria-hidden="true" />
+					<span>Ask Tess</span>
+				</button>
+			</div>
+			<Dialog.Close class={cn('exec-cmdk-close inline-flex items-center justify-center')}>
+				ESC
+			</Dialog.Close>
+		</div>
+
+		<div class="exec-cmdk-input-row flex items-center gap-3">
+			{#if modalMode === 'ai'}
+				<Sparkles class="size-5 shrink-0 text-[var(--tone-accent-ink)]" aria-hidden="true" />
+			{:else}
+				<Search class="size-5 shrink-0 text-[var(--tone-accent-ink)]" aria-hidden="true" />
+			{/if}
 			<input
 				bind:this={inputEl}
 				bind:value={query}
 				oninput={(event) => {
 					resetActive();
 					if (
+						modalMode === 'cmd' &&
 						event.currentTarget.value.trimStart().startsWith('#') &&
 						chatConversationsOrgId !== organizationId
 					) {
@@ -1169,36 +1231,62 @@
 				type="text"
 				role="combobox"
 				aria-autocomplete="list"
-				aria-expanded={entries.length > 0}
-				aria-controls={entries.length > 0 ? 'exec-cmdk-listbox' : undefined}
-				aria-activedescendant={activeOptionId}
-				placeholder="Search, run a command, or ask Tess…"
-				class="exec-cmdk-input min-w-0 flex-1 bg-transparent text-[15px] text-[var(--exec-ink)] outline-none"
+				aria-expanded={modalMode === 'cmd' && entries.length > 0}
+				aria-controls={modalMode === 'cmd' && entries.length > 0 ? 'exec-cmdk-listbox' : undefined}
+				aria-activedescendant={modalMode === 'cmd' ? activeOptionId : undefined}
+				placeholder={modalMode === 'ai'
+					? "Ask Tess — what's blocked, release pace, budget, or idle agents…"
+					: 'Type a command, search anything, or ask a question…'}
+				class="exec-cmdk-input min-w-0 flex-1 bg-transparent text-base text-[var(--exec-ink)] outline-none"
 			/>
-			<Dialog.Close
-				class={cn(
-					kbdClass,
-					'exec-cmdk-close inline-flex min-h-9 min-w-9 items-center justify-center px-2.5 text-[11px]'
-				)}
-			>
-				ESC
-			</Dialog.Close>
+			{#if modalMode === 'ai'}
+				<button
+					type="button"
+					disabled={!query.trim()}
+					onclick={() => {
+						const q = query.trim();
+						if (q) handoffToTess(q);
+					}}
+					class="exec-cmdk-ask-go inline-flex shrink-0 items-center gap-1.5"
+				>
+					Ask
+				</button>
+			{/if}
 		</div>
 
 		<div class="min-h-0 flex-1 overflow-y-auto p-2.5">
-			{@render renderEntries('exec-cmdk-listbox', 'exec-cmdk-opt', false)}
+			{#if modalMode === 'ai'}
+				<div class="exec-cmdk-ai-pane flex flex-col gap-3 p-1.5">
+					<span class="exec-cmdk-grp is-first">Suggested executive questions</span>
+					<div class="flex flex-wrap gap-2 px-1">
+						{#each buildAskTessEntries() as entry (entry.id)}
+							{@const promptText = entry.label.replace(/^Ask:\s*/i, '')}
+							<button
+								type="button"
+								onclick={() => handoffToTess(promptText)}
+								class="exec-cmdk-ai-chip inline-flex items-center gap-1.5"
+							>
+								<Sparkles
+									class="size-3.5 shrink-0 text-[var(--tone-accent-ink)]"
+									aria-hidden="true"
+								/>
+								<span>{promptText}</span>
+							</button>
+						{/each}
+					</div>
+				</div>
+			{:else}
+				{@render renderEntries('exec-cmdk-listbox', 'exec-cmdk-opt', false)}
+			{/if}
 		</div>
 
-		<div
-			class="exec-cmdk-foot flex flex-wrap items-center justify-between gap-3 border-t border-[var(--exec-border)] px-4 py-2 text-[11px] text-[var(--exec-dim)]"
-			aria-hidden="true"
-		>
-			<div class="flex items-center gap-3">
-				<span><kbd class={[kbdClass, 'mr-1']}>↑↓</kbd> Move</span>
-				<span><kbd class={[kbdClass, 'mr-1']}>↵</kbd> Open</span>
-				<span><kbd class={[kbdClass, 'mr-1']}>Esc</kbd> Close</span>
-			</div>
-			<span><kbd class={[kbdClass, 'mr-1']}>⌘/</kbd> Ask Tess</span>
+		<div class="exec-cmdk-foot" aria-hidden="true">
+			{#if modalMode === 'cmd'}
+				<span><kbd class={kbdClass}>↑</kbd><kbd class={kbdClass}>↓</kbd> Navigate</span>
+			{/if}
+			<span><kbd class={kbdClass}>↵</kbd> Run / Ask</span>
+			<span><kbd class={kbdClass}>⌘/</kbd> Switch Search &amp; AI</span>
+			<span><kbd class={kbdClass}>Esc</kbd> Close</span>
 		</div>
 	</Dialog.Content>
 </Dialog.Root>
@@ -1253,16 +1341,129 @@
 	.exec-cmdk-home-field {
 		cursor: text;
 	}
-	.exec-cmdk-home-field:focus-within,
-	.exec-cmdk-input-row:focus-within {
-		outline: 2px solid var(--focus);
-		outline-offset: -2px;
+	.exec-cmdk-home-field:focus-within {
+		outline: 1px solid var(--exec-border-hi);
+		outline-offset: -1px;
 	}
 	:global(.exec-cmdk-surface) {
 		background: var(--exec-cmdk-menu-bg);
 		-webkit-backdrop-filter: var(--exec-cmdk-menu-blur);
 		backdrop-filter: var(--exec-cmdk-menu-blur);
 		box-shadow: var(--exec-cmdk-menu-shadow);
+		line-height: 1.714;
+		letter-spacing: 0.008em;
+		font-optical-sizing: none;
+	}
+	:global(.exec-cmdk-dialog) {
+		border-radius: var(--exec-cmdk-dialog-radius, 18px);
+	}
+	.exec-cmdk-tabs {
+		padding: 12px 16px 10px;
+		border-bottom: 1px solid var(--exec-border);
+		background: var(--exec-cmdk-tabs-bg, var(--exec-well));
+	}
+	.exec-cmdk-tab-grp {
+		padding: 3px;
+		border-radius: var(--exec-cmdk-tab-grp-radius, 10px);
+		background: var(--exec-cmdk-tab-grp-bg, color-mix(in srgb, var(--exec-ink) 5%, transparent));
+		box-shadow: var(--exec-cmdk-tab-grp-shadow, inset 0 0 0 1px var(--exec-border));
+	}
+	.exec-cmdk-tab {
+		padding: 5px 12px;
+		border-radius: var(--exec-cmdk-tab-radius, 8px);
+		font-size: 0.78125rem;
+		line-height: 1.5;
+		font-weight: 600;
+		color: var(--exec-muted);
+		cursor: pointer;
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease,
+			box-shadow 0.14s ease;
+	}
+	.exec-cmdk-tab:hover {
+		color: var(--exec-ink);
+	}
+	.exec-cmdk-tab[aria-selected='true'] {
+		background: var(--exec-cmdk-tab-active-bg, var(--exec-accent-soft));
+		color: var(--exec-cmdk-tab-active-ink, var(--exec-ink));
+		box-shadow: var(
+			--exec-cmdk-tab-active-shadow,
+			inset 0 0 0 1px var(--exec-cmdk-opt-ring, var(--exec-accent-ring))
+		);
+	}
+	.exec-cmdk-tab[aria-selected='true'] :global(svg) {
+		color: var(--exec-cmdk-tab-active-ico, var(--tone-accent-ink));
+	}
+	:global(.exec-cmdk-close) {
+		padding: 3px 8px;
+		border-radius: var(--exec-cmdk-esc-radius, 6px);
+		background: var(--exec-cmdk-esc-bg, var(--exec-cmdk-tag-bg, var(--exec-well)));
+		box-shadow: var(--exec-cmdk-esc-shadow, inset 0 0 0 1px var(--exec-border-hi));
+		color: var(--exec-cmdk-esc-ink, var(--exec-muted));
+		font-family: inherit;
+		font-size: 0.6875rem;
+		line-height: 1.5;
+		font-weight: 600;
+		cursor: pointer;
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease,
+			box-shadow 0.14s ease;
+	}
+	:global(.exec-cmdk-close:hover) {
+		background: var(--exec-btn-ghost-bg-hover);
+		color: var(--exec-ink);
+		box-shadow: var(--exec-cmdk-esc-shadow, inset 0 0 0 1px var(--exec-border-hi));
+	}
+	.exec-cmdk-input-row {
+		padding: 16px 18px;
+		border-bottom: 1px solid var(--exec-border);
+	}
+	.exec-cmdk-input {
+		line-height: 1.45;
+		letter-spacing: 0.008em;
+	}
+	.exec-cmdk-ask-go {
+		height: 32px;
+		padding: 0 14px;
+		border-radius: 9px;
+		background: var(--exec-accent-soft);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-cmdk-opt-ring, var(--exec-accent-ring));
+		font-size: 0.8125rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease;
+	}
+	.exec-cmdk-ask-go:hover:not(:disabled) {
+		background: var(--exec-cta-bg);
+		color: var(--exec-on-accent);
+	}
+	.exec-cmdk-ask-go:disabled {
+		opacity: 0.42;
+		cursor: default;
+	}
+	.exec-cmdk-ai-chip {
+		padding: 7px 13px;
+		border-radius: 999px;
+		background: var(--exec-cmdk-tag-bg, var(--exec-well));
+		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--exec-body);
+		cursor: pointer;
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease,
+			box-shadow 0.14s ease;
+	}
+	.exec-cmdk-ai-chip:hover {
+		background: var(--exec-accent-soft);
+		box-shadow: inset 0 0 0 1px var(--exec-cmdk-opt-ring, var(--exec-accent-ring));
+		color: var(--exec-ink);
 	}
 	.exec-cmdk-home-results {
 		position: absolute;
@@ -1270,37 +1471,103 @@
 		inset-inline: 0;
 		z-index: 40;
 		max-height: min(27rem, 58dvh);
+		border-radius: var(--exec-cmdk-dialog-radius, 14px);
 	}
 	.exec-cmdk-grp {
+		padding: 9px 12px 4px;
+		font-size: 0.6875rem;
+		line-height: 1.714;
+		font-weight: 650;
+		letter-spacing: var(--exec-cmdk-grp-tracking, 0.08em);
+		text-transform: uppercase;
 		color: var(--exec-dim);
 	}
+	.exec-cmdk-grp.is-first {
+		padding-top: 4px;
+	}
 	.exec-cmdk-opt {
+		gap: 11px;
+		padding: 10px 12px;
+		border-radius: var(--exec-cmdk-opt-radius, 10px);
 		color: var(--exec-body);
+		font-size: 0.875rem;
+		line-height: 1.714;
+		letter-spacing: 0.008em;
+		cursor: pointer;
+		transition:
+			background-color 0.1s ease,
+			color 0.1s ease;
 	}
 	.exec-cmdk-opt-lbl {
-		color: var(--exec-ink);
+		font-weight: 500;
+		color: inherit;
+	}
+	.exec-cmdk-opt-sub {
+		font-size: 0.75rem;
+		line-height: 1.714;
+		color: var(--exec-dim);
 	}
 	.exec-cmdk-opt :global(.exec-cmdk-row-ico) {
+		width: 17px;
+		height: 17px;
 		color: var(--exec-muted);
 		transition: color 0.14s ease;
 	}
 	.exec-cmdk-opt-tag {
-		background: var(--exec-well);
+		padding: 1px 7px;
+		border-radius: var(--exec-cmdk-tag-radius, 5px);
+		background: var(--exec-cmdk-tag-bg, var(--exec-well));
 		color: var(--exec-muted);
-		box-shadow: inset 0 0 0 1px var(--exec-border);
+		font-size: 0.6875rem;
+		line-height: 1.714;
+		font-weight: 500;
 	}
-	.exec-cmdk-opt:hover,
-	.exec-cmdk-opt.is-active {
-		background: var(--exec-accent-soft);
+	.exec-cmdk-opt:hover {
+		background: var(--exec-cmdk-opt-hover-bg, var(--exec-accent-soft));
 		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+		box-shadow: var(
+			--exec-cmdk-opt-hover-shadow,
+			inset 0 0 0 1px var(--exec-cmdk-opt-ring, var(--exec-accent-ring))
+		);
+	}
+	.exec-cmdk-opt.is-active {
+		background: var(--exec-cmdk-opt-active-bg, var(--exec-accent-soft));
+		color: var(--exec-ink);
+		box-shadow: var(
+			--exec-cmdk-opt-active-shadow,
+			inset 0 0 0 1px var(--exec-cmdk-opt-ring, var(--exec-accent-ring))
+		);
 	}
 	.exec-cmdk-opt:hover :global(.exec-cmdk-row-ico),
 	.exec-cmdk-opt.is-active :global(.exec-cmdk-row-ico) {
-		color: var(--exec-accent-ink);
+		color: var(--exec-cmdk-opt-active-ico, var(--tone-accent-ink));
 	}
 	.exec-cmdk-foot {
-		background: color-mix(in srgb, var(--exec-well) 72%, transparent);
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px 16px;
+		padding: 9px 16px;
+		border-top: 1px solid var(--exec-border);
+		background: var(--exec-cmdk-foot-bg, var(--exec-well));
+		font-size: 0.72rem;
+		line-height: 1.714;
+		color: var(--exec-dim);
+	}
+	.exec-cmdk-foot span {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+	}
+	.exec-cmdk-foot-kbd {
+		padding: 1px 5px;
+		border-radius: var(--exec-cmdk-kbd-small-radius, 4px);
+		background: var(--exec-cmdk-foot-kbd-bg, var(--exec-cmdk-tag-bg, var(--exec-well)));
+		box-shadow: inset 0 0 0 1px var(--exec-cmdk-foot-kbd-ring, var(--exec-border-hi));
+		font-family: inherit;
+		font-size: 0.6875rem;
+		line-height: 1.45;
+		color: var(--exec-cmdk-foot-kbd-ink, var(--exec-muted));
 	}
 	.exec-cmdk-trigger:hover {
 		color: var(--exec-ink);

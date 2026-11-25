@@ -232,12 +232,23 @@ html[data-ui-theme='ocean'] {
 	--exec-hor-date-month-ink: #8599b2;
 	--exec-hor-date-day-ink: #f8fafc;
 
-	/* Darker frosted translucent CMD+K glass so background text stays softly diffused and readable */
-	--exec-cmdk-menu-bg: rgba(7, 14, 28, 0.88);
-	--exec-cmdk-menu-blur: blur(36px) saturate(185%);
+	/* POC Ocean CMD+K calmer frosted steel-navy glass (poc/v6.html:372-526, 2741-2753) */
+	--exec-cmdk-dialog-radius: 18px;
+	--exec-cmdk-menu-bg: var(--ocean-glass-sheen), rgba(20, 34, 59, 0.92);
+	--exec-cmdk-menu-blur: blur(34px) saturate(185%);
 	--exec-cmdk-menu-shadow:
-		inset 0 1px 0 rgba(186, 222, 255, 0.16), inset 0 0 0 1px rgba(186, 222, 255, 0.18),
-		0 24px 60px -16px rgba(2, 6, 23, 0.82);
+		inset 0 1px 0 rgba(186, 222, 255, 0.22), inset 0 0 0 1px rgba(186, 222, 255, 0.16),
+		0 32px 84px rgba(0, 0, 0, 0.74);
+	--exec-cmdk-tabs-bg: rgba(8, 15, 28, 0.36);
+	--exec-cmdk-tab-grp-bg: rgba(186, 222, 255, 0.05);
+	--exec-cmdk-tab-grp-shadow: inset 0 0 0 1px rgba(186, 222, 255, 0.1);
+	--exec-cmdk-tab-active-bg: rgba(56, 189, 248, 0.22);
+	--exec-cmdk-foot-bg: rgba(11, 22, 42, 0.52);
+	--exec-cmdk-tag-bg: rgba(186, 222, 255, 0.08);
+	--exec-cmdk-opt-ring: rgba(125, 211, 252, 0.3);
+	--exec-cmdk-foot-kbd-bg: rgba(186, 222, 255, 0.08);
+	--exec-cmdk-foot-kbd-ring: rgba(186, 222, 255, 0.15);
+	--exec-cmdk-foot-kbd-ink: #b0bfd1;
 }
 
 /* POC Ocean 28px dot grid + 3 ambient radial orbs (poc/v6.html:89-99) */
@@ -351,6 +362,8 @@ html[data-ui-theme='ocean'][data-interior-page] {
 	--exec-cmdk-bg: rgba(20, 34, 59, 0.72);
 	--exec-cmdk-bg-hover: rgba(29, 51, 78, 0.82);
 	--exec-cmdk-blur: none;
+	--triage-row-hover: rgba(29, 51, 78, 0.45);
+	--triage-row-selected: var(--ocean-selected);
 }
 
 html[data-ui-theme='ocean'][data-interior-page] .exec-canvas::before {
@@ -392,6 +405,22 @@ html[data-ui-theme='ocean'][data-interior-page]
 
 html[data-ui-theme='ocean'] .section-header {
 	background-image: var(--ocean-header);
+}
+
+html[data-ui-theme='ocean'][data-interior-page] .triage-workspace {
+	background: transparent;
+}
+
+html[data-ui-theme='ocean'][data-interior-page] .triage-queue {
+	background: var(--ocean-list);
+}
+
+html[data-ui-theme='ocean'][data-interior-page] .triage-queue-summary {
+	background: var(--ocean-well);
+}
+
+html[data-ui-theme='ocean'][data-interior-page] .triage-group-head {
+	background: rgba(0, 0, 0, 0.14);
 }
 
 /* Settings preview swatch */

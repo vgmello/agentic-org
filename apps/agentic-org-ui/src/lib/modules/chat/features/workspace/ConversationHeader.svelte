@@ -1,10 +1,10 @@
 <script lang="ts">
 	import Pin from '@lucide/svelte/icons/pin';
-	import Search from '@lucide/svelte/icons/search';
 	import Users from '@lucide/svelte/icons/users';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import type { Conversation } from '$lib/modules/messaging';
+	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
 
 	let {
 		viewTitle,
@@ -112,21 +112,14 @@
 				><Users aria-hidden="true" /> Members</Button
 			>
 		{/if}
-		<div class="relative min-w-0 max-w-full max-[640px]:w-full">
-			<Search
-				class="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-fg-muted"
-				aria-hidden="true"
-			/>
-			<label class="sr-only" for="chat-search">Search chat</label>
-			<input
-				id="chat-search"
-				type="search"
-				value={query}
-				oninput={(event) => onquerychange(event.currentTarget.value)}
-				placeholder="Search · from:@ada in:#atlas has:ask"
-				class="w-56 max-w-full rounded-md bg-surface py-1.5 pr-3 pl-8 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus max-[640px]:w-full"
-				data-testid="chat-search"
-			/>
-		</div>
+		<InteriorSearchBar
+			id="chat-search"
+			inputTestId="chat-search"
+			value={query}
+			onValueChange={onquerychange}
+			label="Search chat"
+			placeholder="Search · from:@ada in:#atlas has:ask"
+			class="w-[clamp(18rem,28vw,25rem)] max-w-full max-[640px]:w-full"
+		/>
 	</div>
 </div>
