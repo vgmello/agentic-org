@@ -250,23 +250,19 @@ test('REQUEST page (/work/T-A43 and /work/T-A49): editable Approve and create pr
 	);
 });
 
-test('CAPTURE & TOP-BAR NEW MENU: Project and Work item in New menu, Report bug validation, similar bugs & discard', async ({
+test('CAPTURE & CMD+K ACTIONS: Actions in Cmd+K open real flows, Report bug validation, similar bugs & discard', async ({
 	page
 }) => {
 	await open(page, '/work');
-	await page.getByRole('button', { name: 'New', exact: true }).click();
-	const items = page.getByRole('menuitem');
-	await expect(items).toHaveText([
-		'Project',
-		'Work item',
-		'Request',
-		'Message',
-		'Hire an agent',
-		'Add a person'
-	]);
+	await page.keyboard.press('ControlOrMeta+k');
+	const cmdk = page.getByRole('dialog', { name: 'Command palette' });
+	await expect(cmdk).toBeVisible();
+	for (const label of ['New task', 'New project', 'Hire an agent', 'New message', 'Add a person']) {
+		await expect(cmdk.getByRole('option', { name: new RegExp(`^${label}\\b`) })).toBeVisible();
+	}
 
-	// Open Work item from New menu, switch to Bug, verify disabled reason & similar bug match (BUG-2/3/4/9).
-	await page.getByRole('menuitem', { name: 'Work item', exact: true }).click();
+	// Open New task from Cmd+K Actions, switch to Bug, verify disabled reason & similar bug match (BUG-2/3/4/9).
+	await cmdk.getByRole('option', { name: /^New task\b/ }).click();
 	const newDialog = page.getByRole('dialog', { name: /New task/ });
 	await newDialog.getByText('Bug', { exact: true }).click();
 	const bugDialog = page.getByRole('dialog', { name: /Report a bug/ });

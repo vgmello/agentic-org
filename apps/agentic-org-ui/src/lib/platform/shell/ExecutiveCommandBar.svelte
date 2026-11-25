@@ -3,22 +3,32 @@
 	import { afterNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import Clock from '@lucide/svelte/icons/clock';
+	import Activity from '@lucide/svelte/icons/activity';
+	import Building2 from '@lucide/svelte/icons/building-2';
+	import ClipboardList from '@lucide/svelte/icons/clipboard-list';
+	import DollarSign from '@lucide/svelte/icons/dollar-sign';
 	import Folder from '@lucide/svelte/icons/folder';
 	import Hash from '@lucide/svelte/icons/hash';
+	import House from '@lucide/svelte/icons/house';
 	import Inbox from '@lucide/svelte/icons/inbox';
+	import MessageSquare from '@lucide/svelte/icons/message-square';
+	import Palette from '@lucide/svelte/icons/palette';
+	import PanelLeft from '@lucide/svelte/icons/panel-left';
+	import Plus from '@lucide/svelte/icons/plus';
 	import Search from '@lucide/svelte/icons/search';
+	import Settings from '@lucide/svelte/icons/settings';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
+	import UserPlus from '@lucide/svelte/icons/user-plus';
 	import Users from '@lucide/svelte/icons/users';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { cn } from '$lib/utils';
 	import type { Connection, OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/modules/inbox/types';
 	import type { Conversation } from '$lib/modules/messaging';
-	import { answerExecutiveQuestion, type OrgAiAnswer } from '$lib/home/model';
 	import { nonOwners } from '$lib/modules/organization/model';
-	import NewMenu from './NewMenu.svelte';
+	import NewMenu, { type NewMenuAction } from './NewMenu.svelte';
 	import ScopedSearchInput from '$lib/components/ScopedSearchInput.svelte';
+	import { areaCapability } from './capabilities';
 	import { useScopedSearchContext } from './scoped-search.svelte';
 	import type { ShellAiAskOptions } from './shell-ai';
 	import { useShellData } from './shell-data.svelte';
@@ -32,7 +42,10 @@
 		inboxItems = [],
 		offices = [],
 		ownerId = 'owner',
-		registerAsk
+		tessOpen = false,
+		onToggleTess,
+		onAskTess,
+		registerAskTriggerFocus
 	}: {
 		connection?: Connection;
 		snapshot?: OrgSnapshot;
@@ -40,14 +53,39 @@
 		inboxItems?: readonly InboxItem[];
 		offices?: OfficeInfo[];
 		ownerId?: string;
-		registerAsk?: (fn: (prompt: string, opts?: ShellAiAskOptions) => void) => void;
+		tessOpen?: boolean;
+		onToggleTess?: () => void;
+		onAskTess?: (prompt: string, opts?: ShellAiAskOptions) => void;
+		registerAskTriggerFocus?: (fn: () => void) => void;
 	} = $props();
 
 	let newMenu = $state<ReturnType<typeof NewMenu> | undefined>();
+	let askBtnEl = $state<HTMLButtonElement | null>(null);
+
+	type CommandIcon =
+		| 'plus'
+		| 'folder'
+		| 'sparkles'
+		| 'message'
+		| 'user-plus'
+		| 'panel-left'
+		| 'palette'
+		| 'house'
+		| 'inbox'
+		| 'clipboard'
+		| 'activity'
+		| 'users'
+		| 'building'
+		| 'dollar'
+		| 'settings'
+		| 'hash'
+		| 'search';
 
 	interface CommandEntry {
 		id: string;
 		group: string;
+		tag: string;
+		icon: CommandIcon;
 		label: string;
 		sub: string;
 		keywords?: string;
@@ -64,6 +102,7 @@
 	const organizationId = $derived(shellData.organizationId);
 	const isHome = $derived(page.url.pathname === '/home');
 	const isChat = $derived(page.url.pathname === '/chat' || page.url.pathname.startsWith('/chat/'));
+	const openInboxCount = $derived(inboxItems.filter((item) => item.state === 'open').length);
 
 	let chatConversations = $state.raw<Conversation[] | undefined>(undefined);
 	let chatConversationsOrgId = $state<string | undefined>(undefined);
@@ -74,6 +113,18 @@
 		destroyed = true;
 	});
 
+	$effect(() => {
+		registerAskTriggerFocus?.(() => {
+			askBtnEl?.focus();
+		});
+	});
+
+	// Keep unused props typed cleanly for callers while Tess panel reads the same shell context.
+	$effect(() => {
+		void offices;
+		void ownerId;
+	});
+
 	async function loadChatConversations(targetOrgId = organizationId) {
 		if (!targetOrgId) return;
 		const seq = ++chatLoadSeq;
@@ -81,8 +132,6 @@
 			const { chatApi } = await import('$lib/modules/messaging/api');
 			const snap = await chatApi.snapshot(targetOrgId);
 			if (destroyed || seq !== chatLoadSeq || targetOrgId !== organizationId) return;
-			// Lock onto the currently highlighted entry ID before swapping results (for both `#` and
-			// unprefixed searches that include channels) so Enter never runs a substituted item.
 			if (!activeEntryId && (open || inlineOpen) && query.trim().length > 0 && safeActiveIdx >= 0) {
 				const currentEntry = entries[safeActiveIdx];
 				if (currentEntry) activeEntryId = currentEntry.id;
@@ -129,6 +178,8 @@
 					return {
 						id: `chan-${c.id}`,
 						group: 'Channels',
+						tag: 'Channel',
+						icon: 'hash',
 						label: `#${name}`,
 						sub,
 						keywords: `${c.id} ${name} ${sub}`,
@@ -140,6 +191,8 @@
 			{
 				id: 'chan-c-general',
 				group: 'Channels',
+				tag: 'Channel',
+				icon: 'hash',
 				label: '#general',
 				sub: 'Organization channel',
 				keywords: 'general organization all chat',
@@ -163,6 +216,8 @@
 			channels.push({
 				id: `chan-c-project-${p.id}`,
 				group: 'Channels',
+				tag: 'Channel',
+				icon: 'hash',
 				label: `#${name}`,
 				sub: `Project channel · ${p.name}`,
 				keywords: `${p.id} ${p.name} ${p.key ?? ''} ${name}`,
@@ -174,6 +229,8 @@
 			channels.push({
 				id: `chan-c-team-${t.id}`,
 				group: 'Channels',
+				tag: 'Channel',
+				icon: 'hash',
 				label: `#${name}`,
 				sub: `Team channel · ${t.name}`,
 				keywords: `${t.id} ${t.name} ${name}`,
@@ -185,115 +242,299 @@
 
 	let open = $state(false);
 	let inlineOpen = $state(false);
-	let mode = $state<'cmd' | 'ai'>('cmd');
 	let query = $state('');
 	const isChannelQuery = $derived(query.trimStart().startsWith('#'));
 	let activeIdx = $state(0);
 	let activeEntryId = $state<string | undefined>(undefined);
-	let aiHistory = $state<OrgAiAnswer[]>([]);
 	let inputEl = $state<HTMLInputElement | null>(null);
 	let homeInputEl = $state<HTMLInputElement | null>(null);
 	let homeShellEl = $state<HTMLDivElement | null>(null);
 	let skipRestoreFocus = false;
 
-	const AI_STARTERS = [
-		'What needs me first?',
-		'Which projects need attention?',
-		'Team & office status',
-		'Where is task time going?'
-	];
-
-	const entries = $derived.by<CommandEntry[]>(() => {
-		const trimmed = query.trim();
-		if (trimmed.startsWith('#')) {
-			const cq = trimmed.slice(1).trim().toLowerCase();
-			if (!cq) return channelEntries;
-			return channelEntries.filter(
-				(e) =>
-					e.label.toLowerCase().includes(cq) ||
-					e.sub.toLowerCase().includes(cq) ||
-					(e.keywords ? e.keywords.toLowerCase().includes(cq) : false)
-			);
+	function triggerNewAction(kind: NewMenuAction, fallbackHref?: string) {
+		if (newMenu) {
+			newMenu.runAction(kind);
+			return;
 		}
-		const q = trimmed.toLowerCase();
-		const list: CommandEntry[] = [
+		if (fallbackHref) {
+			void goto(resolve(fallbackHref as '/'));
+		}
+	}
+
+	function handoffToTess(prompt: string, opts?: ShellAiAskOptions) {
+		closeInline(true);
+		closeModal(false);
+		onAskTess?.(prompt, opts);
+	}
+
+	function buildActionEntries(): CommandEntry[] {
+		const defs: Array<{ route: string; entry: CommandEntry }> = [
+			{
+				route: '/work',
+				entry: {
+					id: 'act-new-task',
+					group: 'Actions',
+					tag: 'Command',
+					icon: 'plus',
+					label: 'New task',
+					sub: 'Create a work item, bug, or request',
+					keywords: 'create work item task bug request new',
+					action: () => triggerNewAction('task', '/work?new=1')
+				}
+			},
+			{
+				route: '/projects',
+				entry: {
+					id: 'act-new-project',
+					group: 'Actions',
+					tag: 'Wizard',
+					icon: 'folder',
+					label: 'New project',
+					sub: 'Start a project wizard to group work',
+					keywords: 'create project wizard new',
+					action: () => triggerNewAction('project', '/projects?new=1')
+				}
+			},
+			{
+				route: '/teams/hire',
+				entry: {
+					id: 'act-hire-agent',
+					group: 'Actions',
+					tag: 'Wizard',
+					icon: 'sparkles',
+					label: 'Hire an agent',
+					sub: 'Describe role, review suggestion, hire',
+					keywords: 'hire agent hr employee role specialist new',
+					action: () => triggerNewAction('hire', '/teams/hire')
+				}
+			},
+			{
+				route: '/chat',
+				entry: {
+					id: 'act-new-message',
+					group: 'Actions',
+					tag: 'Command',
+					icon: 'message',
+					label: 'New message',
+					sub: 'Start a conversation in Chat',
+					keywords: 'dm chat message send talk new',
+					action: () => triggerNewAction('message', '/chat')
+				}
+			},
+			{
+				route: '/teams/members',
+				entry: {
+					id: 'act-add-person',
+					group: 'Actions',
+					tag: 'Command',
+					icon: 'user-plus',
+					label: 'Add a person',
+					sub: 'Invite a teammate to this organization',
+					keywords: 'invite teammate person member human new',
+					action: () => triggerNewAction('person', '/teams/members')
+				}
+			}
+		];
+		return defs.filter((d) => areaCapability(d.route).available).map((d) => d.entry);
+	}
+
+	function buildAskTessEntries(): CommandEntry[] {
+		return [
+			{
+				id: 'tess-needs-me',
+				group: 'Ask Tess',
+				tag: 'AI',
+				icon: 'sparkles',
+				label: 'Ask: What needs me first?',
+				sub: 'Summarize active blockers and pending sign-offs',
+				keywords: 'tess chief of staff blockers inbox urgent approvals',
+				action: () => handoffToTess('What needs me first?')
+			},
+			{
+				id: 'tess-budget-offices',
+				group: 'Ask Tess',
+				tag: 'AI',
+				icon: 'sparkles',
+				label: 'Ask: Budget, offices & active agents',
+				sub: 'Check monthly spend, offices & agent activity',
+				keywords: 'tess spend cost budget capacity offices idle agents',
+				action: () => handoffToTess('Budget, offices & active agents')
+			},
+			{
+				id: 'tess-projects',
+				group: 'Ask Tess',
+				tag: 'AI',
+				icon: 'sparkles',
+				label: 'Ask: Which projects need attention?',
+				sub: 'Review project health, blockers, and delivery pace',
+				keywords: 'tess projects slow risk behind off track',
+				action: () => handoffToTess('Which projects need attention?')
+			},
+			{
+				id: 'tess-task-time',
+				group: 'Ask Tess',
+				tag: 'AI',
+				icon: 'sparkles',
+				label: 'Ask: Where is task time going?',
+				sub: 'Inspect open work distribution and queue pressure',
+				keywords: 'tess task time queue bottleneck capacity',
+				action: () => handoffToTess('Where is task time going?')
+			}
+		];
+	}
+
+	function buildNavigateEntries(): CommandEntry[] {
+		const all: CommandEntry[] = [
 			{
 				id: 'go-home',
 				group: 'Navigate',
-				label: 'Go to Home',
+				tag: 'Page',
+				icon: 'house',
+				label: 'Home',
 				sub: 'Executive briefing & Spotlight',
+				keywords: 'go to home overview index',
 				href: '/home'
 			},
 			{
 				id: 'go-inbox',
 				group: 'Navigate',
-				label: 'Go to Inbox',
-				sub: 'Decisions waiting on you',
+				tag: 'Page',
+				icon: 'inbox',
+				label: 'Inbox',
+				sub: openInboxCount > 0 ? `${openInboxCount} waiting on you` : 'Decisions waiting on you',
+				keywords: 'go to inbox approvals triage',
 				href: '/inbox'
-			},
-			{
-				id: 'go-projects',
-				group: 'Navigate',
-				label: 'Go to Projects',
-				sub: 'Portfolio health & teams',
-				href: '/projects'
 			},
 			{
 				id: 'go-work',
 				group: 'Navigate',
-				label: 'Go to Work',
+				tag: 'Page',
+				icon: 'clipboard',
+				label: 'Work',
 				sub: 'Tasks, bugs & requests',
+				keywords: 'go to work tasks bugs requests board',
 				href: '/work'
+			},
+			{
+				id: 'go-chat',
+				group: 'Navigate',
+				tag: 'Page',
+				icon: 'message',
+				label: 'Chat',
+				sub: 'Team channels & direct messages',
+				keywords: 'go to chat messages channels dm',
+				href: '/chat'
+			},
+			{
+				id: 'go-activity',
+				group: 'Navigate',
+				tag: 'Page',
+				icon: 'activity',
+				label: 'Activity',
+				sub: 'Live runs & organization timeline',
+				keywords: 'go to activity runs feed log',
+				href: '/activity'
+			},
+			{
+				id: 'go-projects',
+				group: 'Navigate',
+				tag: 'Page',
+				icon: 'folder',
+				label: 'Projects',
+				sub: 'Portfolio health & teams',
+				keywords: 'go to projects portfolio',
+				href: '/projects'
 			},
 			{
 				id: 'go-teams',
 				group: 'Navigate',
-				label: 'Go to Teams',
+				tag: 'Page',
+				icon: 'users',
+				label: 'Teams',
 				sub: 'Teams & project ownership',
+				keywords: 'go to teams org chart',
 				href: '/teams'
 			},
 			{
 				id: 'go-members',
 				group: 'Navigate',
-				label: 'Go to Members',
+				tag: 'Page',
+				icon: 'users',
+				label: 'Members',
 				sub: 'People, agents & presence',
+				keywords: 'go to members people agents directory',
 				href: '/teams/members'
 			},
 			{
 				id: 'go-offices',
 				group: 'Navigate',
-				label: 'Go to Offices',
+				tag: 'Page',
+				icon: 'building',
+				label: 'Offices',
 				sub: 'Connected machines & status',
+				keywords: 'go to offices machines hq satellite',
 				href: '/settings/offices'
 			},
 			{
 				id: 'go-costs',
 				group: 'Navigate',
-				label: 'Go to Costs',
+				tag: 'Page',
+				icon: 'dollar',
+				label: 'Costs',
 				sub: 'Monthly spend & agent budgets',
+				keywords: 'go to costs billing budgets spend',
 				href: '/settings/costs'
 			},
 			{
 				id: 'go-settings',
 				group: 'Navigate',
-				label: 'Go to Settings',
+				tag: 'Page',
+				icon: 'settings',
+				label: 'Settings',
 				sub: 'Organization & appearance themes',
+				keywords: 'go to settings preferences',
 				href: '/settings'
+			}
+		];
+		return all.filter((e) => !e.href || areaCapability(e.href).available);
+	}
+
+	function buildWorkspaceEntries(): CommandEntry[] {
+		return [
+			{
+				id: 'ws-toggle-sidebar',
+				group: 'Workspace',
+				tag: 'Command',
+				icon: 'panel-left',
+				label: 'Toggle sidebar',
+				sub: uiPrefs.navCollapsed
+					? 'Pin the navigation sidebar open'
+					: 'Auto-hide the navigation rail',
+				keywords: 'collapse expand sidebar rail navigation',
+				action: () => uiPrefs.toggleNavCollapsed()
 			},
-			...UI_THEMES.map((t) => ({
+			...UI_THEMES.map((t): CommandEntry => ({
 				id: `theme-${t.id}`,
-				group: 'Appearance',
+				group: 'Workspace',
+				tag: 'Theme',
+				icon: 'palette',
 				label: `Theme: ${t.label}`,
 				sub: t.description,
+				keywords: `appearance theme ${t.id} ${t.shortLabel}`,
 				action: () => uiPrefs.setTheme(t.id)
 			}))
 		];
+	}
 
+	function buildDynamicEntries(): CommandEntry[] {
+		const out: CommandEntry[] = [];
 		if (snapshot) {
 			for (const p of (snapshot.projects ?? []).filter((x) => !x.archived)) {
-				list.push({
+				out.push({
 					id: `proj-${p.id}`,
 					group: 'Projects',
+					tag: 'Project',
+					icon: 'folder',
 					label: p.name,
 					sub: p.key ? `Project · ${p.key.toUpperCase()}` : 'Project',
 					keywords: `${p.id} ${p.key ?? ''}`,
@@ -301,9 +542,11 @@
 				});
 			}
 			for (const m of nonOwners(snapshot)) {
-				list.push({
+				out.push({
 					id: `mem-${m.id}`,
 					group: 'Team',
+					tag: 'Member',
+					icon: 'users',
 					label: m.name,
 					sub: m.agent?.title ?? m.agent?.role ?? m.kind,
 					keywords: `${m.id} ${m.agent?.role ?? ''} ${m.agent?.messaging_name ?? ''}`,
@@ -311,11 +554,12 @@
 				});
 			}
 		}
-
 		for (const inboxItem of inboxItems) {
-			list.push({
+			out.push({
 				id: `inbox-${inboxItem.id}`,
 				group: 'Inbox',
+				tag: 'Inbox',
+				icon: 'inbox',
 				label: inboxItem.title,
 				sub: `${inboxItem.source} · ${inboxItem.who.name}`,
 				keywords: `${inboxItem.id} ${inboxItem.project?.name ?? ''} ${inboxItem.why}`,
@@ -325,51 +569,76 @@
 						: `/inbox?item=${encodeURIComponent(inboxItem.id)}`
 			});
 		}
-
 		for (const item of items.filter((i) => !i.deleted)) {
 			const dest =
-				item.kind === 'request'
+				item.kind === 'request' || !item.project_id
 					? `/work/${encodeURIComponent(item.short_id)}`
-					: item.project_id
-						? `/projects/${encodeURIComponent(item.project_id)}/work`
-						: `/work/${encodeURIComponent(item.short_id)}`;
-			list.push({
+					: `/projects/${encodeURIComponent(item.project_id)}/work`;
+			out.push({
 				id: `work-${item.id}`,
 				group: 'Work',
+				tag: 'Work',
+				icon: 'clipboard',
 				label: item.title,
 				sub: `${item.short_id} · ${item.status.replace('_', ' ')}`,
 				keywords: `${item.short_id} ${item.kind} ${item.id}`,
 				href: dest
 			});
 		}
+		return out;
+	}
 
-		if (!q) return list.slice(0, 15);
-		const searchable = isChat ? [...channelEntries, ...list] : [...list, ...channelEntries];
-		const allMatched = searchable.filter(
-			(e) =>
-				e.label.toLowerCase().includes(q) ||
-				e.sub.toLowerCase().includes(q) ||
-				e.group.toLowerCase().includes(q) ||
-				(e.keywords ? e.keywords.toLowerCase().includes(q) : false)
+	function entryMatchesQuery(entry: CommandEntry, q: string): boolean {
+		return (
+			entry.label.toLowerCase().includes(q) ||
+			entry.sub.toLowerCase().includes(q) ||
+			entry.group.toLowerCase().includes(q) ||
+			entry.tag.toLowerCase().includes(q) ||
+			Boolean(entry.keywords?.toLowerCase().includes(q))
 		);
+	}
+
+	const entries = $derived.by<CommandEntry[]>(() => {
+		const trimmed = query.trim();
+		if (trimmed.startsWith('#')) {
+			const cq = trimmed.slice(1).trim().toLowerCase();
+			return cq ? channelEntries.filter((e) => entryMatchesQuery(e, cq)) : channelEntries;
+		}
+		const baseList: CommandEntry[] = [
+			...buildActionEntries(),
+			...buildAskTessEntries(),
+			...buildNavigateEntries(),
+			...buildWorkspaceEntries()
+		];
+		const q = trimmed.toLowerCase();
+		if (!q) return baseList;
+
+		const dynamicEntries = buildDynamicEntries();
+		const searchable = isChat
+			? [...channelEntries, ...baseList, ...dynamicEntries]
+			: [...baseList, ...dynamicEntries, ...channelEntries];
+		const allMatched = searchable.filter((e) => entryMatchesQuery(e, q));
 		const shown = !open && allMatched.length > 11 ? allMatched.slice(0, 11) : [...allMatched];
 
 		if (!open && allMatched.length > 11) {
 			shown.push({
 				id: 'show-all-matches',
 				group: 'Search',
+				tag: 'All',
+				icon: 'search',
 				label: `Show all ${allMatched.length} matches`,
 				sub: 'Open full searchable results list',
-				action: () => openModalWithQuery('cmd', trimmed)
+				action: () => openModalWithQuery(trimmed)
 			});
 		}
-
 		shown.push({
-			id: 'ask-org-ai-fallback',
-			group: 'Org AI',
-			label: `Ask Org AI about '${trimmed}'`,
-			sub: 'Get an executive summary for this query',
-			action: () => askQuestion(trimmed)
+			id: 'ask-tess-fallback',
+			group: 'Ask Tess',
+			tag: 'AI',
+			icon: 'sparkles',
+			label: `Ask Tess about '${trimmed}'`,
+			sub: 'Open Tess Chief of Staff panel for this question',
+			action: () => handoffToTess(trimmed)
 		});
 		return shown;
 	});
@@ -382,7 +651,7 @@
 		return Math.min(activeIdx, entries.length - 1);
 	});
 	const activeOptionId = $derived(
-		mode === 'cmd' && safeActiveIdx >= 0 ? `exec-cmdk-opt-${safeActiveIdx}` : undefined
+		open && safeActiveIdx >= 0 ? `exec-cmdk-opt-${safeActiveIdx}` : undefined
 	);
 	const inlineListboxVisible = $derived(isHome && inlineOpen && entries.length > 0);
 	const inlineActiveOptionId = $derived(
@@ -398,10 +667,6 @@
 		activeIdx = 0;
 		activeEntryId = undefined;
 	}
-	const currentAi = $derived(aiHistory[0]);
-	const earlierAi = $derived(aiHistory.slice(1, 5));
-	const askedSet = $derived(new Set(aiHistory.map((h) => h.query.toLowerCase())));
-	const followUps = $derived(AI_STARTERS.filter((s) => !askedSet.has(s.toLowerCase())));
 
 	afterNavigate(() => {
 		if (inlineOpen) {
@@ -424,30 +689,27 @@
 
 	function openInline() {
 		open = false;
-		mode = 'cmd';
 		inlineOpen = true;
 		resetActive();
 		void loadChatConversations(organizationId);
 		void tick().then(() => homeInputEl?.focus());
 	}
 
-	function openModal(nextMode: 'cmd' | 'ai') {
+	function openModal() {
 		closeInline(false);
 		skipRestoreFocus = false;
-		mode = nextMode;
 		open = true;
 		resetActive();
-		if (nextMode === 'cmd') void loadChatConversations(organizationId);
+		void loadChatConversations(organizationId);
 	}
 
-	function openModalWithQuery(nextMode: 'cmd' | 'ai', nextQuery: string) {
+	function openModalWithQuery(nextQuery: string) {
 		closeInline(false);
 		skipRestoreFocus = false;
 		query = nextQuery;
-		mode = nextMode;
 		open = true;
 		resetActive();
-		if (nextMode === 'cmd') void loadChatConversations(organizationId);
+		void loadChatConversations(organizationId);
 		void tick().then(() => {
 			if (!inputEl) return;
 			inputEl.focus();
@@ -472,39 +734,16 @@
 		else if (entry.href) void goto(resolve(entry.href as '/'));
 	}
 
-	function submitAi(raw: string, opts?: ShellAiAskOptions) {
-		const trimmed = raw.trim();
-		if (!trimmed || (!snapshot && !opts?.decision)) return;
-		const ans = answerExecutiveQuestion(trimmed, {
-			snapshot,
-			items,
-			offices,
-			ownerId,
-			domain: { inboxItems },
-			decisionId: opts?.decisionId,
-			decision: opts?.decision
-		});
-		aiHistory = [
-			ans,
-			...aiHistory.filter((x) => x.query.toLowerCase() !== ans.query.toLowerCase())
-		];
-		query = '';
-		resetActive();
+	function handleAskClick() {
+		const pending = query.trim();
+		if (isHome && pending) {
+			handoffToTess(pending);
+			return;
+		}
+		if (inlineOpen) closeInline(false);
+		if (open) closeModal(false);
+		onToggleTess?.();
 	}
-
-	function askQuestion(prompt: string, opts?: ShellAiAskOptions) {
-		closeInline(true);
-		skipRestoreFocus = false;
-		mode = 'ai';
-		open = true;
-		resetActive();
-		submitAi(prompt, opts);
-		void tick().then(() => inputEl?.focus());
-	}
-
-	$effect(() => {
-		registerAsk?.(askQuestion);
-	});
 
 	function handleWindowPointerDown(event: PointerEvent) {
 		if (!inlineOpen) return;
@@ -527,20 +766,15 @@
 					openInline();
 				}
 			} else {
-				openModal('cmd');
+				openModal();
 			}
 			return;
 		}
 		if ((event.metaKey || event.ctrlKey) && event.key === '/') {
 			event.preventDefault();
-			if (open) {
-				mode = mode === 'cmd' ? 'ai' : 'cmd';
-				resetActive();
-				if (mode === 'cmd') void loadChatConversations(organizationId);
-				void tick().then(() => inputEl?.focus());
-			} else {
-				openModal('ai');
-			}
+			if (inlineOpen) closeInline(false);
+			if (open) closeModal(false);
+			onToggleTess?.();
 			return;
 		}
 		const overlaySelector =
@@ -566,7 +800,7 @@
 			!overlayOpen
 		) {
 			event.preventDefault();
-			openModalWithQuery('cmd', '#');
+			openModalWithQuery('#');
 			return;
 		}
 		if (
@@ -600,12 +834,12 @@
 		) {
 			event.preventDefault();
 			if (isHome) openInline();
-			else openModal('cmd');
+			else openModal();
 		}
 	}
 
 	$effect(() => {
-		if ((!open || mode !== 'cmd') && !inlineListboxVisible) return;
+		if (!open && !inlineListboxVisible) return;
 		if (entries.length === 0 || safeActiveIdx < 0) return;
 		void query;
 		const targetId = inlineListboxVisible
@@ -624,13 +858,6 @@
 
 	function handleInputKeydown(event: KeyboardEvent) {
 		if (event.isComposing || event.keyCode === 229) return;
-		if (mode === 'ai' && open) {
-			if (event.key === 'Enter' && query.trim()) {
-				event.preventDefault();
-				submitAi(query);
-			}
-			return;
-		}
 		if (event.key === 'Tab' && isHome && !open && inlineOpen) {
 			inlineOpen = false;
 			return;
@@ -662,7 +889,7 @@
 				);
 			}
 		} else if (event.key === 'Enter') {
-			const canRun = (open && mode === 'cmd') || (isHome && !open && inlineOpen);
+			const canRun = open || (isHome && !open && inlineOpen);
 			if (canRun && safeActiveIdx >= 0 && entries[safeActiveIdx]) {
 				event.preventDefault();
 				runEntry(entries[safeActiveIdx]);
@@ -679,6 +906,111 @@
 		}
 	}
 </script>
+
+{#snippet renderIcon(icon: CommandIcon)}
+	{#if icon === 'plus'}
+		<Plus class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'folder'}
+		<Folder class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'sparkles'}
+		<Sparkles class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'message'}
+		<MessageSquare class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'user-plus'}
+		<UserPlus class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'panel-left'}
+		<PanelLeft class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'palette'}
+		<Palette class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'house'}
+		<House class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'inbox'}
+		<Inbox class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'clipboard'}
+		<ClipboardList class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'activity'}
+		<Activity class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'users'}
+		<Users class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'building'}
+		<Building2 class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'dollar'}
+		<DollarSign class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'settings'}
+		<Settings class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'hash'}
+		<Hash class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else}
+		<Search class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{/if}
+{/snippet}
+
+{#snippet renderEntries(listboxId: string, optPrefix: string, preventBlur: boolean)}
+	{#if entries.length === 0}
+		<div class="flex flex-col items-center gap-2 py-7 text-center">
+			<p class="text-sm text-[var(--exec-muted)]">
+				{isChannelQuery ? `No channels matching “${query.trim()}”.` : `No matches for “${query}”.`}
+			</p>
+			{#if query.trim() && !isChannelQuery}
+				<button
+					type="button"
+					onmousedown={preventBlur ? (e) => e.preventDefault() : undefined}
+					onclick={() => handoffToTess(query)}
+					class="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-[var(--exec-accent-soft)] px-3 text-xs font-semibold text-[var(--exec-accent-ink)] shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]"
+				>
+					<Sparkles class="size-3.5" aria-hidden="true" />
+					<span>Ask Tess “{query.trim()}”</span>
+				</button>
+			{/if}
+		</div>
+	{:else}
+		<ul id={listboxId} class="flex flex-col gap-0.5" role="listbox" aria-label="Search results">
+			{#each entries as entry, idx (entry.id)}
+				{@const showGroup = idx === 0 || entries[idx - 1].group !== entry.group}
+				{#if showGroup}
+					<li
+						role="presentation"
+						class={[
+							'exec-cmdk-grp px-3 pt-2.5 pb-1 text-[11px] font-semibold tracking-[0.08em] uppercase',
+							idx === 0 && 'pt-1.5'
+						]}
+					>
+						{entry.group}
+					</li>
+				{/if}
+				<li role="presentation">
+					<button
+						type="button"
+						id="{optPrefix}-{idx}"
+						role="option"
+						tabindex={-1}
+						aria-selected={idx === safeActiveIdx}
+						onmousedown={preventBlur ? (e) => e.preventDefault() : undefined}
+						onmouseenter={() => setActiveIndex(idx)}
+						onclick={() => runEntry(entry)}
+						class={[
+							'exec-cmdk-opt flex min-h-10 w-full items-center gap-3 rounded-[10px] px-3 py-2 text-left text-sm transition-colors',
+							idx === safeActiveIdx && 'is-active'
+						]}
+					>
+						{@render renderIcon(entry.icon)}
+						<span class="flex min-w-0 flex-1 items-baseline gap-2.5 overflow-hidden">
+							<span class="exec-cmdk-opt-lbl shrink-0 font-medium">{entry.label}</span>
+							<span class="hidden min-w-0 truncate text-xs text-[var(--exec-dim)] sm:inline">
+								{entry.sub}
+							</span>
+						</span>
+						<span
+							class="exec-cmdk-opt-tag shrink-0 rounded-[6px] px-2 py-0.5 text-[11px] font-medium"
+						>
+							{entry.tag}
+						</span>
+					</button>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+{/snippet}
 
 <svelte:window onkeydown={handleWindowKeydown} onpointerdown={handleWindowPointerDown} />
 
@@ -697,152 +1029,80 @@
 			/>
 		</div>
 	{/if}
-	<div
-		bind:this={homeShellEl}
-		class="exec-cmdk-bar relative flex min-w-0 flex-1 max-w-[640px] items-center"
-	>
-		{#if isHome}
-			<label
-				class="exec-cmdk-trigger exec-cmdk-home-field flex min-w-0 flex-1 items-center text-left"
-			>
-				<Search class="exec-cmdk-ico size-[18px] shrink-0" aria-hidden="true" />
-				<input
-					bind:this={homeInputEl}
-					bind:value={query}
-					type="search"
-					autocomplete="off"
-					placeholder="Search, run a command, or ask Org AI…"
-					aria-label="Search, run a command, or ask Org AI"
-					role="combobox"
-					aria-autocomplete="list"
-					aria-expanded={inlineListboxVisible}
-					aria-controls={inlineListboxVisible ? 'exec-cmdk-home-listbox' : undefined}
-					aria-activedescendant={inlineActiveOptionId}
-					onfocus={() => {
-						inlineOpen = true;
-						resetActive();
-						void loadChatConversations(organizationId);
-					}}
-					oninput={(event) => {
-						inlineOpen = true;
-						resetActive();
-						if (
-							event.currentTarget.value.trimStart().startsWith('#') &&
-							chatConversationsOrgId !== organizationId
-						) {
+	<div bind:this={homeShellEl} class="relative flex min-w-0 flex-1 max-w-[640px] flex-col">
+		<div class="exec-cmdk-bar flex w-full items-center">
+			{#if isHome}
+				<label
+					class="exec-cmdk-trigger exec-cmdk-home-field flex min-w-0 flex-1 items-center text-left"
+				>
+					<Search class="exec-cmdk-ico size-[18px] shrink-0" aria-hidden="true" />
+					<input
+						bind:this={homeInputEl}
+						bind:value={query}
+						type="search"
+						autocomplete="off"
+						placeholder="Search, run a command, or ask Tess…"
+						aria-label="Search, run a command, or ask Tess"
+						role="combobox"
+						aria-autocomplete="list"
+						aria-expanded={inlineListboxVisible}
+						aria-controls={inlineListboxVisible ? 'exec-cmdk-home-listbox' : undefined}
+						aria-activedescendant={inlineActiveOptionId}
+						onfocus={() => {
+							inlineOpen = true;
+							resetActive();
 							void loadChatConversations(organizationId);
-						}
-					}}
-					onkeydown={handleInputKeydown}
-					class="exec-cmdk-home-input min-w-0 flex-1 bg-transparent text-sm text-[var(--exec-ink)] outline-none"
-				/>
-				<kbd class="exec-cmdk-kbd hidden sm:inline-flex" aria-hidden="true">⌘K</kbd>
-			</label>
-		{:else}
+						}}
+						oninput={(event) => {
+							inlineOpen = true;
+							resetActive();
+							if (
+								event.currentTarget.value.trimStart().startsWith('#') &&
+								chatConversationsOrgId !== organizationId
+							) {
+								void loadChatConversations(organizationId);
+							}
+						}}
+						onkeydown={handleInputKeydown}
+						class="exec-cmdk-home-input min-w-0 flex-1 bg-transparent text-sm text-[var(--exec-ink)] outline-none"
+					/>
+					<kbd class="exec-cmdk-kbd hidden sm:inline-flex" aria-hidden="true">⌘K</kbd>
+				</label>
+			{:else}
+				<button
+					type="button"
+					onclick={() => openModal()}
+					aria-haspopup="dialog"
+					aria-expanded={open}
+					class="exec-cmdk-trigger flex min-w-0 flex-1 items-center text-left"
+				>
+					<Search class="exec-cmdk-ico size-[18px] shrink-0" aria-hidden="true" />
+					<span class="min-w-0 flex-1 truncate">Search, run a command, or ask Tess…</span>
+					<kbd class="exec-cmdk-kbd hidden sm:inline-flex">⌘K</kbd>
+				</button>
+			{/if}
+			<span class="exec-cmdk-sep mx-1.5 h-[22px] w-px shrink-0" aria-hidden="true"></span>
 			<button
+				bind:this={askBtnEl}
 				type="button"
-				onclick={() => openModal('cmd')}
-				aria-haspopup="dialog"
-				aria-expanded={open}
-				class="exec-cmdk-trigger flex min-w-0 flex-1 items-center text-left"
+				aria-expanded={tessOpen}
+				onclick={handleAskClick}
+				class="exec-ai-btn inline-flex shrink-0 items-center px-3.5"
 			>
-				<Search class="exec-cmdk-ico size-[18px] shrink-0" aria-hidden="true" />
-				<span class="min-w-0 flex-1 truncate">Search, run a command, or ask Org AI…</span>
-				<kbd class="exec-cmdk-kbd hidden sm:inline-flex">⌘K</kbd>
+				<Sparkles class="exec-ai-ico size-[15px] shrink-0" aria-hidden="true" />
+				<span>Ask</span>
 			</button>
-		{/if}
-		<span class="exec-cmdk-sep mx-1.5 h-[22px] w-px shrink-0" aria-hidden="true"></span>
-		<button
-			type="button"
-			onclick={() => {
-				const pending = query.trim();
-				if (isHome && pending) {
-					askQuestion(pending);
-				} else {
-					openModal('ai');
-				}
-			}}
-			class="exec-ai-btn inline-flex shrink-0 items-center px-3.5"
-		>
-			<Sparkles class="exec-ai-ico size-[15px] shrink-0" aria-hidden="true" />
-			<span>Ask</span>
-		</button>
+		</div>
 
 		{#if isHome && inlineOpen}
 			<div
-				class="exec-cmdk-home-results flex flex-col overflow-hidden rounded-[14px] bg-[var(--popover)] shadow-[inset_0_0_0_1px_var(--exec-border-hi),0_18px_42px_color-mix(in_srgb,var(--shade)_36%,transparent)]"
+				class="exec-cmdk-home-results exec-cmdk-surface flex flex-col overflow-hidden rounded-[14px]"
 			>
 				<div class="min-h-0 flex-1 overflow-y-auto p-2">
-					{#if entries.length === 0}
-						<div class="flex flex-col items-center gap-2 py-6 text-center">
-							<p class="text-sm text-[var(--exec-muted)]">
-								{isChannelQuery
-									? `No channels matching “${query.trim()}”.`
-									: `No matches for “${query}”.`}
-							</p>
-							{#if query.trim() && !isChannelQuery}
-								<button
-									type="button"
-									onmousedown={(e) => e.preventDefault()}
-									onclick={() => askQuestion(query)}
-									class="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-[var(--exec-accent-soft)] px-3 text-xs font-semibold text-[var(--exec-accent-ink)] shadow-[inset_0_0_0_1px_var(--exec-accent-ring)]"
-								>
-									<Sparkles class="size-3.5" aria-hidden="true" />
-									<span>Ask Org AI “{query.trim()}”</span>
-								</button>
-							{/if}
-						</div>
-					{:else}
-						<ul
-							id="exec-cmdk-home-listbox"
-							class="flex flex-col gap-0.5"
-							role="listbox"
-							aria-label="Search results"
-						>
-							{#each entries as entry, idx (entry.id)}
-								<li>
-									<button
-										type="button"
-										id="exec-cmdk-home-opt-{idx}"
-										role="option"
-										tabindex={-1}
-										aria-selected={idx === safeActiveIdx}
-										onmousedown={(e) => e.preventDefault()}
-										onmouseenter={() => setActiveIndex(idx)}
-										onclick={() => runEntry(entry)}
-										class={[
-											'exec-cmdk-home-opt flex min-h-9 w-full items-center gap-3 rounded-[10px] px-3 py-2 text-left text-sm transition-colors',
-											idx === safeActiveIdx && 'is-active'
-										]}
-									>
-										{#if entry.group === 'Channels'}
-											<Hash class="size-4 shrink-0" aria-hidden="true" />
-										{:else if entry.group === 'Projects'}
-											<Folder class="size-4 shrink-0" aria-hidden="true" />
-										{:else if entry.group === 'Team'}
-											<Users class="size-4 shrink-0" aria-hidden="true" />
-										{:else if entry.group === 'Work' || entry.group === 'Inbox'}
-											<Inbox class="size-4 shrink-0" aria-hidden="true" />
-										{:else}
-											<Search class="size-4 shrink-0" aria-hidden="true" />
-										{/if}
-										<span class="min-w-0 flex-1 truncate font-medium">{entry.label}</span>
-										<span class="hidden truncate text-xs text-[var(--exec-dim)] sm:inline">
-											{entry.sub}
-										</span>
-										<span
-											class="shrink-0 rounded-[5px] bg-[var(--exec-well)] px-[7px] py-[1px] text-[0.6875rem] font-medium text-[var(--exec-muted)]"
-										>
-											{entry.group}
-										</span>
-									</button>
-								</li>
-							{/each}
-						</ul>
-					{/if}
+					{@render renderEntries('exec-cmdk-home-listbox', 'exec-cmdk-home-opt', true)}
 				</div>
 				<div
-					class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--exec-border)] bg-[var(--exec-well)] px-3.5 py-2 text-[11px] text-[var(--exec-dim)]"
+					class="exec-cmdk-foot flex flex-wrap items-center justify-between gap-3 border-t border-[var(--exec-border)] px-3.5 py-2 text-[11px] text-[var(--exec-dim)]"
 					aria-hidden="true"
 				>
 					<div class="flex items-center gap-3">
@@ -850,15 +1110,13 @@
 						<span><kbd class={[kbdClass, 'mr-1']}>↵</kbd> Open</span>
 						<span><kbd class={[kbdClass, 'mr-1']}>Esc</kbd> Close</span>
 					</div>
-					<span><kbd class={[kbdClass, 'mr-1']}>⌘/</kbd> Ask Org AI</span>
+					<span><kbd class={[kbdClass, 'mr-1']}>⌘/</kbd> Ask Tess</span>
 				</div>
 			</div>
 		{/if}
 	</div>
 	{#if connection}
-		<div class="shrink-0">
-			<NewMenu bind:this={newMenu} {connection} shortcutHint={singleKeyShortcutsOn()} />
-		</div>
+		<NewMenu bind:this={newMenu} {connection} headless />
 	{/if}
 </header>
 
@@ -884,63 +1142,17 @@
 				skipRestoreFocus = false;
 			}
 		}}
-		class="exec-cmdk-dialog top-[9vh] flex max-h-[78vh] w-full max-w-[calc(100%-2rem)] translate-y-0 flex-col gap-0 overflow-hidden rounded-[18px] bg-[var(--popover)] p-0 shadow-[inset_0_0_0_1px_var(--exec-border-hi),0_24px_64px_color-mix(in_srgb,var(--shade)_38%,transparent)] ring-0 motion-reduce:animate-none motion-reduce:transition-none motion-reduce:duration-0 motion-reduce:data-closed:animate-none motion-reduce:data-open:animate-none sm:max-w-[650px]"
+		class="exec-cmdk-dialog exec-cmdk-surface top-[9vh] flex max-h-[78vh] w-full max-w-[calc(100%-2rem)] translate-y-0 flex-col gap-0 overflow-hidden rounded-[16px] p-0 ring-0 motion-reduce:animate-none motion-reduce:transition-none motion-reduce:duration-0 motion-reduce:data-closed:animate-none motion-reduce:data-open:animate-none sm:max-w-[640px]"
 	>
-		<Dialog.Title class="sr-only" text="Command palette and Org AI" />
+		<Dialog.Title class="sr-only" text="Command palette" />
 		<Dialog.Description class="sr-only">
-			Search projects, work, team members, run commands, or ask Org AI.
+			Search projects, work, team members, run commands, or ask Tess.
 		</Dialog.Description>
-
-		<div
-			class="exec-cmdk-tabs flex items-center justify-between gap-3 border-b border-[var(--exec-border)] bg-[var(--exec-well)] px-4 py-3 text-[var(--exec-dim)]"
-		>
-			<div
-				class="exec-cmdk-tab-grp inline-flex items-center gap-1 rounded-[10px] bg-[var(--exec-surface)] p-0.5 shadow-[inset_0_0_0_1px_var(--exec-border)]"
-				role="tablist"
-			>
-				<button
-					type="button"
-					role="tab"
-					aria-selected={mode === 'cmd'}
-					onclick={() => {
-						mode = 'cmd';
-						resetActive();
-						void loadChatConversations(organizationId);
-					}}
-					class="exec-cmdk-tab inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
-				>
-					<Search class="size-3.5" aria-hidden="true" />
-					<span>Search &amp; Commands</span>
-				</button>
-				<button
-					type="button"
-					role="tab"
-					aria-selected={mode === 'ai'}
-					onclick={() => (mode = 'ai')}
-					class="exec-cmdk-tab inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
-				>
-					<Sparkles class="size-3.5" aria-hidden="true" />
-					<span>Ask Org AI</span>
-				</button>
-			</div>
-			<Dialog.Close
-				class={cn(
-					kbdClass,
-					'exec-cmdk-close inline-flex min-h-9 min-w-9 items-center justify-center px-2.5 text-[11px]'
-				)}
-			>
-				ESC
-			</Dialog.Close>
-		</div>
 
 		<div
 			class="exec-cmdk-input-row flex items-center gap-3 border-b border-[var(--exec-border)] px-4 py-3.5"
 		>
-			{#if mode === 'ai'}
-				<Sparkles class="size-5 shrink-0 text-[var(--exec-accent-ink)]" aria-hidden="true" />
-			{:else}
-				<Search class="size-5 shrink-0 text-[var(--exec-accent-ink)]" aria-hidden="true" />
-			{/if}
+			<Search class="size-[18px] shrink-0 text-[var(--exec-accent-ink)]" aria-hidden="true" />
 			<input
 				bind:this={inputEl}
 				bind:value={query}
@@ -954,179 +1166,39 @@
 					}
 				}}
 				onkeydown={handleInputKeydown}
-				type={mode === 'cmd' ? 'text' : 'search'}
-				role={mode === 'cmd' ? 'combobox' : undefined}
-				aria-autocomplete={mode === 'cmd' ? 'list' : undefined}
-				aria-expanded={mode === 'cmd' ? entries.length > 0 : undefined}
-				aria-controls={mode === 'cmd' && entries.length > 0 ? 'exec-cmdk-listbox' : undefined}
+				type="text"
+				role="combobox"
+				aria-autocomplete="list"
+				aria-expanded={entries.length > 0}
+				aria-controls={entries.length > 0 ? 'exec-cmdk-listbox' : undefined}
 				aria-activedescendant={activeOptionId}
-				placeholder={mode === 'ai'
-					? 'Ask Org AI — what needs you, project risks, or office status…'
-					: 'Search projects, work, team, or jump anywhere…'}
+				placeholder="Search, run a command, or ask Tess…"
 				class="exec-cmdk-input min-w-0 flex-1 bg-transparent text-[15px] text-[var(--exec-ink)] outline-none"
 			/>
-			{#if mode === 'ai'}
-				<button
-					type="button"
-					disabled={!query.trim()}
-					onclick={() => submitAi(query)}
-					class="min-h-9 rounded-lg bg-[var(--exec-accent)] px-3.5 py-1.5 text-xs font-semibold text-[var(--exec-on-accent)] disabled:cursor-not-allowed disabled:opacity-45"
-				>
-					Ask
-				</button>
-			{/if}
+			<Dialog.Close
+				class={cn(
+					kbdClass,
+					'exec-cmdk-close inline-flex min-h-9 min-w-9 items-center justify-center px-2.5 text-[11px]'
+				)}
+			>
+				ESC
+			</Dialog.Close>
 		</div>
 
 		<div class="min-h-0 flex-1 overflow-y-auto p-2.5">
-			{#if mode === 'cmd'}
-				{#if entries.length === 0}
-					<p class="py-8 text-center text-sm text-[var(--exec-muted)]">
-						{isChannelQuery
-							? `No channels matching “${query.trim()}”.`
-							: `No matches for “${query}”. Switch to Ask Org AI for a live summary.`}
-					</p>
-				{:else}
-					<ul
-						id="exec-cmdk-listbox"
-						class="flex flex-col gap-0.5"
-						role="listbox"
-						aria-label="Search results"
-					>
-						{#each entries as entry, idx (entry.id)}
-							<li>
-								<button
-									type="button"
-									id="exec-cmdk-opt-{idx}"
-									role="option"
-									tabindex={-1}
-									aria-selected={idx === safeActiveIdx}
-									onmouseenter={() => setActiveIndex(idx)}
-									onclick={() => runEntry(entry)}
-									class={[
-										'exec-cmdk-opt flex min-h-9 w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left text-sm transition-colors',
-										idx === safeActiveIdx && 'is-active'
-									]}
-								>
-									{#if entry.group === 'Channels'}
-										<Hash class="size-4 shrink-0" aria-hidden="true" />
-									{:else if entry.group === 'Projects'}
-										<Folder class="size-4 shrink-0" aria-hidden="true" />
-									{:else if entry.group === 'Team'}
-										<Users class="size-4 shrink-0" aria-hidden="true" />
-									{:else if entry.group === 'Work' || entry.group === 'Inbox'}
-										<Inbox class="size-4 shrink-0" aria-hidden="true" />
-									{:else}
-										<Search class="size-4 shrink-0" aria-hidden="true" />
-									{/if}
-									<span class="min-w-0 flex-1 truncate font-medium">{entry.label}</span>
-									<span class="hidden truncate text-xs text-[var(--exec-dim)] sm:inline"
-										>{entry.sub}</span
-									>
-									<span
-										class="shrink-0 rounded-[5px] bg-[var(--exec-well)] px-[7px] py-[1px] text-[0.6875rem] font-medium text-[var(--exec-muted)]"
-									>
-										{entry.group}
-									</span>
-								</button>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			{:else}
-				<div class="flex flex-col gap-3 p-1">
-					{#if currentAi}
-						<div
-							class="relative overflow-hidden rounded-xl bg-[var(--exec-accent-soft)] p-4 pl-5 shadow-[inset_0_0_0_1px_var(--exec-accent-ring)] before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-[var(--exec-accent)] before:content-['']"
-						>
-							<div
-								class="mb-2 flex items-center justify-between gap-2 text-xs font-semibold text-[var(--exec-accent-ink)]"
-							>
-								<span class="inline-flex items-center gap-1.5">
-									<Sparkles class="size-3.5" aria-hidden="true" />
-									<span>Org AI · “{currentAi.query}”</span>
-								</span>
-								<button
-									type="button"
-									onclick={() => (aiHistory = [])}
-									class="rounded px-1.5 py-0.5 text-[11px] text-[var(--exec-muted)] hover:text-[var(--exec-ink)]"
-								>
-									Clear
-								</button>
-							</div>
-							<p class="text-sm font-semibold text-[var(--exec-ink)]">
-								{currentAi.headline}
-							</p>
-							<ul class="mt-2 flex flex-col gap-1.5 text-sm text-[var(--exec-body)]">
-								{#each currentAi.bullets as bullet (bullet.text)}
-									<li class="flex flex-wrap items-baseline gap-x-2">
-										<span>• {bullet.text}</span>
-										{#if bullet.href && bullet.linkLabel}
-											<a
-												href={resolve(bullet.href as '/')}
-												onclick={() => closeModal(false)}
-												class="text-xs font-semibold text-[var(--exec-accent-ink)] underline underline-offset-2"
-											>
-												{bullet.linkLabel}
-											</a>
-										{/if}
-									</li>
-								{/each}
-							</ul>
-						</div>
-					{/if}
-
-					{#if earlierAi.length > 0}
-						<div class="flex flex-wrap items-center gap-1.5">
-							<span
-								class="text-[11px] font-semibold tracking-wider text-[var(--exec-dim)] uppercase"
-							>
-								Earlier
-							</span>
-							{#each earlierAi as turn (turn.query)}
-								<button
-									type="button"
-									onclick={() => submitAi(turn.query)}
-									class="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-[var(--exec-well)] px-2.5 py-1 text-xs font-medium text-[var(--exec-body)] shadow-[inset_0_0_0_1px_var(--exec-border)] transition-colors hover:bg-[var(--exec-accent-soft)] hover:text-[var(--exec-ink)] hover:shadow-[inset_0_0_0_1.5px_var(--tone-accent-ink)]"
-								>
-									<Clock class="size-3" aria-hidden="true" />
-									<span>{turn.query}</span>
-								</button>
-							{/each}
-						</div>
-					{/if}
-
-					{#if followUps.length > 0}
-						<div>
-							<div
-								class="mb-2 text-[11px] font-semibold tracking-wider text-[var(--exec-dim)] uppercase"
-							>
-								{aiHistory.length > 0 ? 'Ask a follow-up' : 'Suggested executive questions'}
-							</div>
-							<div class="flex flex-wrap gap-2">
-								{#each followUps as starter (starter)}
-									<button
-										type="button"
-										onclick={() => submitAi(starter)}
-										class="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-[var(--exec-well)] px-3 py-1.5 text-xs font-medium text-[var(--exec-body)] shadow-[inset_0_0_0_1px_var(--exec-border)] transition-colors hover:bg-[var(--exec-accent-soft)] hover:text-[var(--exec-ink)] hover:shadow-[inset_0_0_0_1.5px_var(--tone-accent-ink)]"
-									>
-										<Sparkles class="size-3.5 text-[var(--exec-accent-ink)]" aria-hidden="true" />
-										<span>{starter}</span>
-									</button>
-								{/each}
-							</div>
-						</div>
-					{/if}
-				</div>
-			{/if}
+			{@render renderEntries('exec-cmdk-listbox', 'exec-cmdk-opt', false)}
 		</div>
 
 		<div
-			class="flex flex-wrap items-center gap-4 border-t border-[var(--exec-border)] bg-[var(--exec-well)] px-4 py-2 text-[11px] text-[var(--exec-dim)]"
+			class="exec-cmdk-foot flex flex-wrap items-center justify-between gap-3 border-t border-[var(--exec-border)] px-4 py-2 text-[11px] text-[var(--exec-dim)]"
 			aria-hidden="true"
 		>
-			<span><kbd class={[kbdClass, 'mr-1']}>↵</kbd> Run / Ask</span>
-			<span><kbd class={[kbdClass, 'mr-1']}>⌘/</kbd> Switch Search &amp; AI</span>
-			<span><kbd class={[kbdClass, 'mr-1']}>Esc</kbd> Close</span>
+			<div class="flex items-center gap-3">
+				<span><kbd class={[kbdClass, 'mr-1']}>↑↓</kbd> Move</span>
+				<span><kbd class={[kbdClass, 'mr-1']}>↵</kbd> Open</span>
+				<span><kbd class={[kbdClass, 'mr-1']}>Esc</kbd> Close</span>
+			</div>
+			<span><kbd class={[kbdClass, 'mr-1']}>⌘/</kbd> Ask Tess</span>
 		</div>
 	</Dialog.Content>
 </Dialog.Root>
@@ -1181,43 +1253,54 @@
 	.exec-cmdk-home-field {
 		cursor: text;
 	}
-	/* Visible >= 3.0:1 focus indicator across all 6 themes (var(--focus): 5.24:1 - 12.14:1) */
 	.exec-cmdk-home-field:focus-within,
 	.exec-cmdk-input-row:focus-within {
 		outline: 2px solid var(--focus);
 		outline-offset: -2px;
 	}
+	:global(.exec-cmdk-surface) {
+		background: var(--exec-cmdk-menu-bg);
+		-webkit-backdrop-filter: var(--exec-cmdk-menu-blur);
+		backdrop-filter: var(--exec-cmdk-menu-blur);
+		box-shadow: var(--exec-cmdk-menu-shadow);
+	}
 	.exec-cmdk-home-results {
 		position: absolute;
-		top: calc(100% + 6px);
+		top: calc(100% + 8px);
 		inset-inline: 0;
 		z-index: 40;
-		max-height: min(26rem, 55dvh);
-		-webkit-backdrop-filter: none;
-		backdrop-filter: none;
+		max-height: min(27rem, 58dvh);
 	}
-	.exec-cmdk-home-opt,
+	.exec-cmdk-grp {
+		color: var(--exec-dim);
+	}
 	.exec-cmdk-opt {
 		color: var(--exec-body);
 	}
-	:global(.exec-cmdk-tab) {
+	.exec-cmdk-opt-lbl {
+		color: var(--exec-ink);
+	}
+	.exec-cmdk-opt :global(.exec-cmdk-row-ico) {
 		color: var(--exec-muted);
+		transition: color 0.14s ease;
 	}
-	:global(.exec-cmdk-tab:hover) {
-		color: var(--exec-ink);
+	.exec-cmdk-opt-tag {
+		background: var(--exec-well);
+		color: var(--exec-muted);
+		box-shadow: inset 0 0 0 1px var(--exec-border);
 	}
-	:global(.exec-cmdk-tab[aria-selected='true']) {
-		background: var(--exec-accent-soft);
-		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1.5px var(--tone-accent-ink);
-	}
-	.exec-cmdk-home-opt:hover,
 	.exec-cmdk-opt:hover,
-	.exec-cmdk-home-opt.is-active,
 	.exec-cmdk-opt.is-active {
 		background: var(--exec-accent-soft);
 		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1.5px var(--tone-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
+	.exec-cmdk-opt:hover :global(.exec-cmdk-row-ico),
+	.exec-cmdk-opt.is-active :global(.exec-cmdk-row-ico) {
+		color: var(--exec-accent-ink);
+	}
+	.exec-cmdk-foot {
+		background: color-mix(in srgb, var(--exec-well) 72%, transparent);
 	}
 	.exec-cmdk-trigger:hover {
 		color: var(--exec-ink);
@@ -1269,13 +1352,15 @@
 		transition: color 0.15s ease;
 	}
 	.exec-ai-btn:hover,
-	.exec-ai-btn:focus-visible {
+	.exec-ai-btn:focus-visible,
+	.exec-ai-btn[aria-expanded='true'] {
 		background: var(--exec-ai-bg-hover);
 		box-shadow: var(--exec-ai-shadow-hover);
 		color: var(--exec-ai-ink-hover);
 	}
 	.exec-ai-btn:hover :global(.exec-ai-ico),
-	.exec-ai-btn:focus-visible :global(.exec-ai-ico) {
+	.exec-ai-btn:focus-visible :global(.exec-ai-ico),
+	.exec-ai-btn[aria-expanded='true'] :global(.exec-ai-ico) {
 		color: var(--exec-ai-ico-hover);
 	}
 	@media (max-width: 720px), (pointer: coarse) {
@@ -1291,7 +1376,6 @@
 		}
 		.exec-cmdk-trigger,
 		.exec-ai-btn,
-		.exec-cmdk-home-opt,
 		.exec-cmdk-opt,
 		:global(.exec-cmdk-close) {
 			height: auto;

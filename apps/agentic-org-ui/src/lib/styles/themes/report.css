@@ -225,11 +225,23 @@ html[data-ui-theme='report'] {
 	--exec-deny-confirm-hover: var(--tone-bad-ink);
 	--exec-deny-confirm-ink: #ffffff;
 
-	/* Executive Brief memo (borderless editorial column on Report Day) */
-	--exec-cos-bg: transparent;
-	--exec-cos-fade: #ffffff;
+	/* Executive Brief memo (shaded editorial callout with 3px accent bar matching poc/v6.html:3380) */
+	--exec-cos-bg: #f7f9fc;
+	--exec-cos-fade: #f7f9fc;
 	--exec-cos-border: transparent;
-	--exec-cos-rule: transparent;
+	--exec-cos-rule: var(--tone-accent);
+	--exec-memo-bg: #f7f9fc;
+	--exec-memo-shadow: inset 3px 0 0 var(--tone-accent);
+	--exec-lens-on-bg: #0b101b;
+	--exec-lens-on-ink: #ffffff;
+	--exec-lens-on-shadow: none;
+	--exec-cmdk-menu-bg: #ffffff;
+	--exec-cmdk-menu-blur: none;
+	--exec-cmdk-menu-shadow: inset 0 0 0 1px #dce2ec, 0 20px 48px -20px rgba(11, 16, 27, 0.18);
+	--exec-scroll-hint-bg: #ffffff;
+	--exec-scroll-hint-pill-bg: transparent;
+	--exec-scroll-hint-ink: #475569;
+	--exec-scroll-hint-ink-hover: #0b101b;
 
 	/* Unread rail dot */
 	--exec-nav-dot: var(--tone-warn);
@@ -288,6 +300,7 @@ html[data-ui-theme^='report'] {
 	--exec-hero-align: flex-end;
 	--exec-hero-pad-b: 18px;
 	--exec-hero-border: 1.5px solid var(--report-masthead-rule);
+	--exec-h1-size: clamp(1.55rem, 2.4vw, 2.05rem);
 	--exec-h1-weight: 700;
 	--exec-h1-tracking: -0.038em;
 	--exec-h1-em-decoration: underline;
@@ -325,10 +338,14 @@ html[data-ui-theme^='report'] {
 	--exec-pillar-pad: 4px 28px;
 	--exec-pillar-pad-sm: 16px 0;
 	--exec-pillar-edge-pad: 0px;
-	--exec-kpi-num-size: 2.2rem;
+	--exec-kpi-num-size: 2.35rem;
 	--exec-kpi-num-lh: 1.05;
 	--exec-kpi-num-weight: 750;
 	--exec-kpi-num-tracking: -0.045em;
+	--exec-kpi-sub-lbl-size: 0.68rem;
+	--exec-kpi-sub-lbl-weight: 550;
+	--exec-kpi-sub-lbl-transform: uppercase;
+	--exec-kpi-sub-lbl-tracking: 0.05em;
 
 	--exec-bar-height: 6px;
 	--exec-bar-radius: 1px;
@@ -343,13 +360,11 @@ html[data-ui-theme^='report'] {
 	--exec-spot-pad-xl: 0 36px 0 0;
 	--exec-brief-pad: 0 0 0 36px;
 	--exec-brief-pad-sm: 24px 0 0;
-	--exec-memo-bg: transparent;
-	--exec-memo-shadow: none;
-	--exec-memo-radius: 0px;
-	--exec-memo-pad: 0px;
-	--exec-memo-gap: 0px;
-	--exec-memo-item-py: 12px;
-	--exec-memo-first-pt: 2px;
+	--exec-memo-radius: 0 4px 4px 0;
+	--exec-memo-pad: 1rem 1.125rem;
+	--exec-memo-gap: 0.875rem;
+	--exec-memo-item-py: 0px;
+	--exec-memo-first-pt: 0px;
 
 	--exec-lenses-radius: 4px;
 	--exec-lenses-shadow: inset 0 0 0 1px var(--report-rule);

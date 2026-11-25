@@ -747,7 +747,7 @@
 			"src/lib/home/**",
 			"src/lib/styles/**",
 			"src/lib/modules/shell/**",
-			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,projects,workitems,docs,features,releases,insights,costs,budgets,access,updates}/**",
+			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,projects,workitems,docs,features,releases,insights,costs,budgets,access,updates,tess}/**",
 			"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
 			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
 			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",

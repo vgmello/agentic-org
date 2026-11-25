@@ -296,7 +296,7 @@ test('our-org §7: no Add agent anywhere; Hire an agent opens the Hire flow', as
 	await openChart(page);
 	await expect(page.getByText(/Add (an )?agent/i)).toHaveCount(0);
 	await page.keyboard.press('ControlOrMeta+k');
-	const cmdk = page.getByRole('dialog', { name: 'Command palette and Org AI' });
+	const cmdk = page.getByRole('dialog', { name: 'Command palette' });
 	await expect(cmdk).toBeVisible();
 	await cmdk.getByRole('combobox').fill('agent');
 	await expect.poll(() => cmdk.getByRole('option').count()).toBeGreaterThan(0);

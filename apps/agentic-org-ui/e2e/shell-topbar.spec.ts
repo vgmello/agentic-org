@@ -12,34 +12,32 @@ async function openOffice(page: Page, createPath = '/create') {
 	).toBeVisible();
 }
 
-// ExecutiveCommandBar replaces the retired ShellTopbar & New menu: Cmd+K search/commands and Ask Org AI.
-test('Command bar Cmd+K navigates cleanly and Ask Org AI answers live questions with focus return', async ({
+// ExecutiveCommandBar replaces the retired ShellTopbar & New menu: Cmd+K search/commands and Tess Side Panel.
+test('Command bar Cmd+K navigates cleanly and Ask Tess answers live questions with focus return', async ({
 	page
 }) => {
 	await enterMockedOrganization(page, 'Topbar reference');
-	const cmdTrigger = page.getByRole('button', { name: /Search, run a command, or ask Org AI/ });
+	const cmdTrigger = page.getByRole('button', { name: /Search, run a command, or ask Tess/ });
 	await expect(cmdTrigger).toBeVisible();
 	await page.keyboard.press('ControlOrMeta+k');
-	const dialog = page.getByRole('dialog', { name: 'Command palette and Org AI' });
+	const dialog = page.getByRole('dialog', { name: 'Command palette' });
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByRole('combobox')).toBeFocused();
 	await dialog.getByRole('combobox').fill('Go to Work');
 	await page.keyboard.press('Enter');
 	await expect(dialog).toBeHidden();
 	await expect(page).toHaveURL(/\/work$/);
-	await expect(page.locator('#shell-page-title')).toHaveText('Work');
+	await expect(page.locator('#shell-page-title')).toContainText('Work');
 
 	const askButton = page.getByRole('button', { name: 'Ask', exact: true });
 	await askButton.click();
-	await expect(dialog).toBeVisible();
-	await expect(dialog.getByRole('tab', { name: 'Ask Org AI', exact: true })).toHaveAttribute(
-		'aria-selected',
-		'true'
-	);
-	await dialog.getByRole('button', { name: 'Team & office status' }).click();
-	await expect(dialog).toContainText('agents active');
+	const tessPanel = page.getByTestId('tess-panel');
+	await expect(tessPanel).toBeVisible();
+	await tessPanel.getByRole('button', { name: 'Budget, offices & active agents' }).click();
+	await expect(tessPanel).toContainText('agents active');
+	await expect(tessPanel).toContainText('Offline quick summary · Local data only');
 	await page.keyboard.press('Escape');
-	await expect(dialog).toBeHidden();
+	await expect(tessPanel).toBeHidden();
 	await expect(askButton).toBeFocused();
 
 	// Hire page retains its heading, document title and non-dialog form directly from Members.
@@ -75,7 +73,7 @@ for (const width of [720, 960]) {
 			expect(box.x + box.width).toBeLessThanOrEqual(width + 0.5);
 			// The command bar holds the Cmd+K trigger and Ask button, with no inline nav links.
 			await expect(
-				header.getByRole('button', { name: /Search, run a command, or ask Org AI/ })
+				header.getByRole('button', { name: /Search, run a command, or ask Tess/ })
 			).toBeVisible();
 			await expect(header.getByRole('button', { name: 'Ask', exact: true })).toBeVisible();
 			await expect(header.locator('a[href]')).toHaveCount(0);

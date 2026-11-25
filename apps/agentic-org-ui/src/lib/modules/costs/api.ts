@@ -1,5 +1,7 @@
+import { orgApi } from '$lib/modules/organization/api';
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { createHttpCostsReadApi } from './http-api';
 import { createHttpSubscriptionUsageApi } from './subscription-http-api';
 import type {
 	AgentBudgetAction,
@@ -142,24 +144,37 @@ function signedInSession() {
 	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
 }
 
-const gatewaySubscriptionUsageApi = createHttpSubscriptionUsageApi({
-	http: {
-		read: (path, signal) => appSession.controller().read(path, signal),
-		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
-	}
+const gatewayHttp = {
+	read: (path: string, signal?: AbortSignal) => appSession.controller().read(path, signal),
+	submit: (path: string, body: unknown, signal?: AbortSignal) =>
+		appSession.controller().submit(path, body, signal)
+};
+
+const gatewayCostsReadApi = createHttpCostsReadApi({
+	http: gatewayHttp,
+	orgApi
 });
 
-// Ledger/price/budget HTTP adapters are not wired yet; subscription usage (TASK-79) is wired to the
-// authenticated gateway and fails closed when signed out. Under `bun run dev:mock`,
+const gatewaySubscriptionUsageApi = createHttpSubscriptionUsageApi({
+	http: gatewayHttp
+});
+
+// Organization cost summary, agent budgets, and subscription usage (TASK-79) are wired to the
+// authenticated gateway and fail closed when signed out. Remaining cost/insights routes stay
+// unavailable until their full gateway adapters land. Under `bun run dev:mock`,
 // `e2e/fakes/modules/costs.ts` stands in for this file.
 export const costsApi: CostsApi = {
 	prices: unavailableCall,
 	addPrice: unavailableCall,
 	priceOperation: unavailableCall,
-	organizationCost: unavailableCall,
+	organizationCost: (organizationId, period) =>
+		signedInSession()
+			? gatewayCostsReadApi.organizationCost(organizationId, period)
+			: unavailableCall(),
 	records: unavailableCall,
 	projectInvestment: unavailableCall,
-	agentBudgets: unavailableCall,
+	agentBudgets: (organizationId) =>
+		signedInSession() ? gatewayCostsReadApi.agentBudgets(organizationId) : unavailableCall(),
 	projectInsights: unavailableCall,
 	projectRecords: unavailableCall,
 	organizationInsights: unavailableCall,

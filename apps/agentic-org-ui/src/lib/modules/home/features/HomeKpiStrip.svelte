@@ -80,7 +80,7 @@
 			<div class="flex items-baseline justify-between gap-2">
 				<div class="flex items-baseline gap-1.5">
 					<span class="pillar-num">{kpis.financials.spentLabel}</span>
-					<span class="text-xs font-medium text-[var(--exec-muted)]">
+					<span class="text-[0.8125rem] font-medium text-[var(--exec-muted)]">
 						{kpis.financials.budgetLabel}
 					</span>
 				</div>
@@ -154,7 +154,7 @@
 			<div class="flex items-baseline justify-between gap-2">
 				<div class="flex items-baseline gap-1.5">
 					<span class="pillar-num">{kpis.totalAgents > 0 ? `${kpis.autonomyPct}%` : '—'}</span>
-					<span class="text-xs font-medium text-[var(--exec-muted)]">autonomous</span>
+					<span class="text-[0.8125rem] font-medium text-[var(--exec-muted)]">autonomous</span>
 				</div>
 				<span class="text-xs font-semibold text-[var(--exec-dim)] tabular-nums">
 					{#if kpis.totalAgents > 0}
@@ -208,7 +208,7 @@
 					: `${kpis.onlineOffices} online`}
 			>
 				<span class="sub-lbl truncate">Offices</span>
-				<span class="flex items-baseline gap-1.5 truncate text-[13px] font-semibold tabular-nums">
+				<span class="flex items-baseline gap-1.5 truncate text-sm font-semibold tabular-nums">
 					<span class="text-[var(--exec-ok)]">{kpis.onlineOffices} online</span>
 					{#if kpis.offlineOffices > 0}
 						<span class="text-[var(--exec-dim)]" aria-hidden="true">·</span>
@@ -248,7 +248,7 @@
 								? `${kpis.completionPct}%`
 								: '—'}
 					</span>
-					<span class="text-xs font-medium text-[var(--exec-muted)]">
+					<span class="text-[0.8125rem] font-medium text-[var(--exec-muted)]">
 						{kpis.doneCount > 0 ? 'approved first try' : 'complete'}
 					</span>
 				</div>
@@ -382,8 +382,10 @@
 		font-variant-numeric: tabular-nums;
 	}
 	.sub-lbl {
-		font-size: 0.7rem;
-		font-weight: 500;
+		font-size: var(--exec-kpi-sub-lbl-size);
+		font-weight: var(--exec-kpi-sub-lbl-weight);
+		text-transform: var(--exec-kpi-sub-lbl-transform);
+		letter-spacing: var(--exec-kpi-sub-lbl-tracking);
 		color: var(--exec-dim);
 	}
 	.bar-track {

@@ -33,8 +33,22 @@
 	const sigHref = $derived(
 		brief.chiefOfStaff ? `/members/${encodeURIComponent(brief.chiefOfStaff.id)}` : '/activity'
 	);
-	const sigName = $derived(brief.chiefOfStaff?.name ?? 'Org AI');
+	const sigName = $derived(brief.chiefOfStaff?.name ?? 'Tess');
 	const sigRole = $derived(brief.chiefOfStaff?.role ?? 'Chief of Staff');
+
+	/** Emphasize the opening factual lead phrase of a brief paragraph without raw HTML injection. */
+	function splitLead(text: string): { lead: string; rest: string } | null {
+		const markers = [' across ', ' — ', ', ', ' ('];
+		let best = -1;
+		for (const marker of markers) {
+			const idx = text.indexOf(marker);
+			if (idx >= 12 && idx <= 44 && (best === -1 || idx < best)) {
+				best = idx;
+			}
+		}
+		if (best === -1) return null;
+		return { lead: text.slice(0, best), rest: text.slice(best) };
+	}
 
 	onDestroy(() => {
 		clearTimeout(briefCopyTimer);
@@ -114,10 +128,15 @@
 			tabindex="0"
 		>
 			{#each activeBrief.sections as sec (sec.id)}
-				<div class="brief-entry flex flex-col gap-1">
+				{@const split = splitLead(sec.body)}
+				<div class="brief-entry flex flex-col gap-1.5">
 					<span class={['brief-kicker', `tone-${sec.tone}`]}>{sec.kicker}</span>
-					<p class="text-[13px] leading-relaxed text-[var(--exec-body)]">
-						{sec.body}
+					<p class="text-[0.9375rem] leading-[1.58] text-[var(--exec-body)]">
+						{#if split}
+							<strong class="font-semibold text-[var(--exec-ink)]">{split.lead}</strong>{split.rest}
+						{:else}
+							{sec.body}
+						{/if}
 					</p>
 				</div>
 			{/each}
@@ -216,6 +235,7 @@
 
 <style>
 	.brief-panel {
+		min-height: 360px;
 		background: var(--exec-panel-bg);
 		-webkit-backdrop-filter: var(--exec-panel-blur);
 		backdrop-filter: var(--exec-panel-blur);
@@ -234,7 +254,7 @@
 			border-top: 0;
 			border-left: var(--exec-col-divider);
 			height: 0;
-			min-height: 100%;
+			min-height: max(100%, var(--exec-stage-min-h));
 			overflow: hidden;
 		}
 	}
@@ -260,9 +280,9 @@
 		color: var(--exec-ink);
 	}
 	.lens-tab.is-on {
-		background: var(--exec-accent-soft);
-		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+		background: var(--exec-lens-on-bg);
+		color: var(--exec-lens-on-ink);
+		box-shadow: var(--exec-lens-on-shadow);
 	}
 	.brief-memo {
 		background: var(--exec-memo-bg);
@@ -286,12 +306,9 @@
 	.brief-entry:first-child {
 		padding-top: var(--exec-memo-first-pt);
 	}
-	.brief-entry + .brief-entry {
-		border-top: var(--exec-col-divider);
-	}
 	.brief-kicker {
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.7rem;
+		font-size: 0.72rem;
 		font-weight: 700;
 		letter-spacing: 0.1em;
 		text-transform: uppercase;

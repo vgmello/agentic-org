@@ -16,12 +16,12 @@
 html[data-ui-theme='cozy'] {
 	color-scheme: dark;
 
-	/* Cozy Glass layered warm espresso tokens */
-	--cozy-shell: linear-gradient(155deg, rgba(40, 33, 28, 0.72), rgba(26, 21, 18, 0.8));
-	--cozy-panel-sheen: linear-gradient(165deg, rgba(64, 54, 46, 0.28), transparent 75%);
-	--cozy-sidebar-sheen: linear-gradient(155deg, rgba(56, 48, 42, 0.28), transparent 72%);
-	--cozy-panel-edge: rgba(255, 246, 235, 0.14);
-	--cozy-well: rgba(16, 13, 11, 0.44);
+	/* Cozy Glass layered warm espresso tokens (lightened to match POC warm studio glass while keeping Svelte emerald CTAs) */
+	--cozy-shell: linear-gradient(155deg, rgba(52, 44, 38, 0.56), rgba(36, 30, 26, 0.64));
+	--cozy-panel-sheen: linear-gradient(165deg, rgba(72, 61, 52, 0.3), transparent 75%);
+	--cozy-sidebar-sheen: linear-gradient(155deg, rgba(64, 54, 46, 0.26), transparent 72%);
+	--cozy-panel-edge: rgba(255, 246, 235, 0.16);
+	--cozy-well: rgba(18, 14, 12, 0.38);
 	--cozy-well-edge: rgba(255, 245, 232, 0.12);
 	--cozy-summary-surface: linear-gradient(
 		90deg,
@@ -146,11 +146,11 @@ html[data-ui-theme='cozy'] {
 
 	/* Cozy Glass executive surfaces */
 	--exec-bg: #3f342b;
-	--exec-sidebar-bg: rgba(36, 30, 26, 0.72);
+	--exec-sidebar-bg: rgba(46, 39, 34, 0.58);
 	--exec-sidebar-blur: blur(28px) saturate(135%);
 	--exec-sidebar-sheen: var(--cozy-sidebar-sheen);
-	--exec-surface: rgba(40, 33, 28, 0.64);
-	--exec-surface-hi: rgba(50, 42, 36, 0.74);
+	--exec-surface: rgba(52, 44, 38, 0.46);
+	--exec-surface-hi: rgba(62, 52, 45, 0.56);
 	--exec-well: var(--cozy-well);
 	--exec-panel-sheen: var(--cozy-panel-sheen);
 	--exec-panel-bg: var(--cozy-panel-sheen), var(--exec-surface);
@@ -182,15 +182,20 @@ html[data-ui-theme='cozy'] {
 	--exec-topbar-border: 0px solid transparent;
 	--exec-topbar-fade: linear-gradient(
 		180deg,
-		rgba(36, 30, 26, 0.72) 0%,
-		rgba(36, 30, 26, 0.36) 72%,
-		rgba(36, 30, 26, 0) 100%
+		rgba(48, 40, 34, 0.56) 0%,
+		rgba(42, 35, 30, 0.26) 72%,
+		rgba(42, 35, 30, 0) 100%
 	);
 	--exec-topbar-fade-blur: blur(18px);
 	--exec-cmdk-radius: 9999px;
-	--exec-cmdk-bg: rgba(16, 13, 11, 0.44);
-	--exec-cmdk-bg-hover: rgba(24, 19, 16, 0.56);
+	--exec-cmdk-bg: rgba(24, 20, 17, 0.38);
+	--exec-cmdk-bg-hover: rgba(32, 26, 22, 0.48);
 	--exec-cmdk-blur: blur(20px) saturate(125%);
+	--exec-cmdk-menu-bg: rgba(26, 20, 16, 0.88);
+	--exec-cmdk-menu-blur: blur(32px) saturate(150%);
+	--exec-cmdk-menu-shadow:
+		inset 0 1px 0 rgba(255, 248, 238, 0.16), inset 0 0 0 1px rgba(255, 245, 232, 0.18),
+		0 22px 54px -14px rgba(10, 7, 5, 0.72);
 	--exec-cmdk-shadow: var(--cozy-panel-shadow);
 	--exec-cmdk-shadow-hover: var(--cozy-panel-shadow-hi);
 	--exec-cmdk-hover-lift: none;
@@ -282,11 +287,19 @@ html[data-ui-theme='cozy'] {
 	--exec-nav-dot-halo: rgba(232, 169, 78, 0.18);
 	--exec-nav-dot-ring: #241e19;
 
-	/* Home scroll cue — transparent fade over Cozy ambient canvas with legible glass pill */
-	--exec-scroll-hint-bg: transparent;
-	--exec-scroll-hint-pill-bg: rgba(26, 21, 18, 0.86);
-	--exec-scroll-hint-ink: #faf6f0;
-	--exec-scroll-hint-ink-hover: #ffffff;
+	/* Home scroll cue — transparent fade matching POC cozy.css */
+	--exec-scroll-hint-bg: linear-gradient(
+		to top,
+		rgba(44, 36, 30, 0.62) 0%,
+		rgba(44, 36, 30, 0.22) 60%,
+		transparent 100%
+	);
+	--exec-scroll-hint-pill-bg: transparent;
+	--exec-scroll-hint-ink: #c6bab0;
+	--exec-scroll-hint-ink-hover: #faf6f0;
+	--exec-lens-on-bg: rgba(110, 196, 199, 0.16);
+	--exec-lens-on-ink: #faf6f0;
+	--exec-lens-on-shadow: inset 0 0 0 1px rgba(158, 223, 224, 0.45);
 
 	--exec-hor-item-bg: var(--cozy-well);
 	--exec-hor-item-bg-hover: rgba(255, 248, 240, 0.09);
@@ -359,7 +372,8 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high'] {
 	--exec-cta-glass-shadow-hover: inset 0 0 0 1px #88dfae;
 
 	--exec-cos-fade: #1a1512;
-	--exec-scroll-hint-pill-bg: #1a1512;
+	--exec-scroll-hint-bg: rgba(26, 21, 18, 0.94);
+	--exec-scroll-hint-pill-bg: transparent;
 	--exec-scroll-hint-ink: #ffffff;
 	--exec-scroll-hint-ink-hover: #ffffff;
 	--side-panel-surface: #1a1512;

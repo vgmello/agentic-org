@@ -187,10 +187,12 @@
 
 	/* Executive layout & density tokens (carded defaults for Ocean & Classic; overridden by Report) */
 	--exec-page-max-w: none;
-	--exec-page-gap: 1.5rem;
+	--exec-page-gap: 1.625rem;
+	--exec-stage-min-h: 456px;
 	--exec-hero-align: center;
 	--exec-hero-pad-b: 0px;
 	--exec-hero-border: 0px solid transparent;
+	--exec-h1-size: clamp(1.375rem, 2.2vw, 1.875rem);
 	--exec-h1-weight: 600;
 	--exec-h1-tracking: -0.03em;
 	--exec-h1-em-decoration: none;
@@ -233,15 +235,19 @@
 	--exec-panel-shadow-hover: var(--exec-shadow-hi);
 	--exec-panel-radius: 16px;
 
-	--exec-pillar-pad: 1.125rem;
+	--exec-pillar-pad: 1.25rem 1.375rem;
 	--exec-pillar-pad-sm: 1.125rem;
-	--exec-pillar-edge-pad: 1.125rem;
-	--exec-kpi-num-size: 1.625rem;
-	--exec-kpi-num-lh: 1.1;
-	--exec-kpi-num-weight: 650;
-	--exec-kpi-num-tracking: -0.03em;
+	--exec-pillar-edge-pad: 1.375rem;
+	--exec-kpi-num-size: 2.125rem;
+	--exec-kpi-num-lh: 1.05;
+	--exec-kpi-num-weight: 700;
+	--exec-kpi-num-tracking: -0.04em;
+	--exec-kpi-sub-lbl-size: 0.72rem;
+	--exec-kpi-sub-lbl-weight: 500;
+	--exec-kpi-sub-lbl-transform: none;
+	--exec-kpi-sub-lbl-tracking: 0em;
 
-	--exec-bar-height: 5px;
+	--exec-bar-height: 6px;
 	--exec-bar-radius: 999px;
 	--exec-time-bar-height: 10px;
 	--exec-time-bar-radius: 999px;
@@ -261,13 +267,16 @@
 	--exec-memo-bg: var(--exec-cos-bg);
 	--exec-memo-shadow: inset 3px 0 0 var(--exec-cos-rule), inset 0 0 0 1px var(--exec-cos-border);
 	--exec-memo-radius: 12px;
-	--exec-memo-pad: 1rem;
+	--exec-memo-pad: 1rem 1.125rem;
 	--exec-memo-gap: 0.875rem;
 	--exec-memo-item-py: 0px;
 	--exec-memo-first-pt: 0px;
 
 	--exec-lenses-radius: 8px;
 	--exec-lenses-shadow: inset 0 0 0 1px var(--exec-border);
+	--exec-lens-on-bg: var(--exec-accent-soft);
+	--exec-lens-on-ink: var(--exec-ink);
+	--exec-lens-on-shadow: inset 0 0 0 1px var(--exec-accent-ring);
 	--exec-sm-radius: 6px;
 	--exec-ctrl-radius: 8px;
 	--exec-inset-radius: 12px;
@@ -280,14 +289,18 @@
 	--exec-proj-row-pt-md: 1.25rem;
 	--exec-proj-row-mt-md: 0px;
 
-	/* Home below-fold scroll cue tokens */
+	/* Home below-fold scroll cue tokens (flat POC band, no dark oval pill) */
 	--exec-scroll-hint-bg: var(--exec-bg);
-	--exec-scroll-hint-pill-bg: var(--exec-well);
-	--exec-scroll-hint-ink: var(--exec-body);
+	--exec-scroll-hint-pill-bg: transparent;
+	--exec-scroll-hint-ink: var(--exec-muted);
 	--exec-scroll-hint-ink-hover: var(--exec-ink);
 
-	/* Command palette / Ask Org AI lighter non-blurred overlay (poc/v6.html:364) */
+	/* Command palette menu surface & lighter non-blurred overlay (poc/v6.html:364) */
 	--exec-cmdk-overlay: rgba(0, 0, 0, 0.26);
+	--exec-cmdk-menu-bg: var(--popover);
+	--exec-cmdk-menu-blur: none;
+	--exec-cmdk-menu-shadow:
+		inset 0 0 0 1px var(--exec-border-hi), 0 22px 54px -14px rgba(0, 0, 0, 0.56);
 
 	/* Release horizon / milestone strip tokens */
 	--exec-horizon-pad: 1rem 1.125rem;
@@ -317,10 +330,17 @@
 	backdrop-filter: none;
 }
 
-/* Ocean blends the Home scroll cue transparently over its ambient radial canvas */
+/* Ocean blends the Home scroll cue transparently over its ambient dot-grid radial canvas */
 html[data-ui-theme='ocean'] {
-	--exec-scroll-hint-bg: transparent;
-	--exec-scroll-hint-pill-bg: rgba(9, 17, 30, 0.88);
+	--exec-scroll-hint-bg: linear-gradient(
+		to top,
+		rgba(6, 11, 20, 0.72) 0%,
+		rgba(6, 11, 20, 0.28) 60%,
+		transparent 100%
+	);
+	--exec-scroll-hint-pill-bg: transparent;
+	--exec-scroll-hint-ink: #99a1af;
+	--exec-scroll-hint-ink-hover: #f8fafc;
 }
 
 /* Shared semantic status pills */

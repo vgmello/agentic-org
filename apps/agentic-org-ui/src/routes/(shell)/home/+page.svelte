@@ -14,6 +14,7 @@
 	import ProjectScorecard from '$lib/modules/home/features/ProjectScorecard.svelte';
 	import { officesApi } from '$lib/modules/offices/api';
 	import { layerOffices } from '$lib/modules/offices/layer';
+	import { useTessPanel } from '$lib/modules/tess/tess-panel.svelte';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import {
 		deriveCatchUpDigest,
@@ -36,6 +37,7 @@
 	const ownerMember = $derived(owner(snapshot));
 	const ownerId = $derived(ownerMember?.id ?? 'owner');
 	const shellData = useShellData();
+	const tessPanel = useTessPanel();
 
 	const live = new HomeLiveState({
 		overview: (id) => officesApi.overview(id),
@@ -126,6 +128,14 @@
 		projectRows: liveForOrg ? live.projectRows : undefined,
 		homeProjects: liveForOrg ? live.homeProjects : undefined,
 		activityRows: liveForOrg ? live.activityRows : undefined
+	});
+
+	$effect(() => {
+		const nextDomain = domain;
+		tessPanel?.setDomainContext(nextDomain);
+		return () => {
+			tessPanel?.setDomainContext(undefined);
+		};
 	});
 
 	const kpis = $derived(deriveKpiMetrics(snapshot, workItems, activeOffices, ownerId, domain));
@@ -282,8 +292,8 @@
 		border-bottom: var(--exec-hero-border);
 	}
 	.home-h1 {
-		font-size: clamp(1.375rem, 2.2vw, 1.875rem);
-		line-height: 1.22;
+		font-size: var(--exec-h1-size);
+		line-height: 1.2;
 		font-weight: var(--exec-h1-weight);
 		letter-spacing: var(--exec-h1-tracking);
 		color: var(--exec-ink);

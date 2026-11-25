@@ -6,6 +6,10 @@
   Below 640 px it is a 44 px icon button named New. `openMenu()` is what the N / Shift+N shortcut calls.
   Closing or finishing a flow returns focus to this button.
 -->
+<script module lang="ts">
+	export type NewMenuAction = 'task' | 'request' | 'project' | 'hire' | 'message' | 'person';
+</script>
+
 <script lang="ts">
 	import { goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -28,8 +32,11 @@
 	import { sessionFor } from '$lib/modules/organization/session';
 	import type { Connection, OrgSnapshot } from '$lib/proto';
 
-	let { connection, shortcutHint = false }: { connection: Connection; shortcutHint?: boolean } =
-		$props();
+	let {
+		connection,
+		shortcutHint = false,
+		headless = false
+	}: { connection: Connection; shortcutHint?: boolean; headless?: boolean } = $props();
 
 	const organizationId = $derived(connection.organization.id);
 	const workAvailable = $derived(areaCapability('/work').available);
@@ -47,7 +54,38 @@
 
 	/** Opens the menu; the N / Shift+N shortcut calls this. */
 	export function openMenu() {
+		if (headless) {
+			if (workAvailable) flow = 'work_item';
+			else void goto(resolve(newProjectUrl() as '/'));
+			return;
+		}
 		menuOpen = true;
+	}
+
+	/** Invokes a real creation flow directly (used by CMD+K Actions). */
+	export function runAction(kind: NewMenuAction) {
+		switch (kind) {
+			case 'task':
+				if (workAvailable) flow = 'work_item';
+				else void goto(resolve('/work?new=1' as '/work'));
+				break;
+			case 'request':
+				if (workAvailable) flow = 'request';
+				else void goto(resolve('/work?new=1' as '/work'));
+				break;
+			case 'project':
+				void goto(resolve(newProjectUrl() as '/'));
+				break;
+			case 'hire':
+				void goto(resolve(hireUrl() as '/')).then(focusDestinationHeading);
+				break;
+			case 'message':
+				void startOrgFlow('message');
+				break;
+			case 'person':
+				void startOrgFlow('person');
+				break;
+		}
 	}
 
 	// Message and Add a person read the current organization snapshot; Work item / Request load their own choices.
@@ -89,73 +127,75 @@
 	const itemClass = 'min-h-9 max-[639px]:min-h-11';
 </script>
 
-<Tooltip.Provider delayDuration={150}>
-	<DropdownMenu.Root bind:open={menuOpen}>
-		<Tooltip.Root disabled={menuOpen}>
-			<DropdownMenu.Trigger bind:ref={trigger}>
-				{#snippet child({ props: menuProps })}
-					<Tooltip.Trigger>
-						{#snippet child({ props: tipProps })}
-							<button
-								{...mergeProps(menuProps, tipProps)}
-								type="button"
-								aria-label="New"
-								aria-busy={loading}
-								aria-keyshortcuts={shortcutHint ? 'N Shift+N' : undefined}
-								class="inline-flex shrink-0 items-center justify-center gap-x-1.5 rounded-md text-sm/6 font-semibold text-fg outline-1 -outline-offset-1 outline-field-border hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:size-11 min-[640px]:h-9 min-[640px]:px-3 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11"
-							>
-								<MiniIcon name="plus" class="size-5 text-fg-muted" />
-								<span class="max-[639px]:sr-only" aria-hidden="true">New</span>
-								{#if shortcutHint}
-									<kbd
-										aria-hidden="true"
-										class="rounded border border-line px-1.5 font-sans text-xs/5 font-normal text-fg-muted max-[1023px]:hidden"
-										>N</kbd
-									>
-								{/if}
-							</button>
-						{/snippet}
-					</Tooltip.Trigger>
-				{/snippet}
-			</DropdownMenu.Trigger>
-			<Tooltip.Portal>
-				<Tooltip.Content
-					side="bottom"
-					sideOffset={6}
-					class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line min-[640px]:hidden"
-					>New</Tooltip.Content
+{#if !headless}
+	<Tooltip.Provider delayDuration={150}>
+		<DropdownMenu.Root bind:open={menuOpen}>
+			<Tooltip.Root disabled={menuOpen}>
+				<DropdownMenu.Trigger bind:ref={trigger}>
+					{#snippet child({ props: menuProps })}
+						<Tooltip.Trigger>
+							{#snippet child({ props: tipProps })}
+								<button
+									{...mergeProps(menuProps, tipProps)}
+									type="button"
+									aria-label="New"
+									aria-busy={loading}
+									aria-keyshortcuts={shortcutHint ? 'N Shift+N' : undefined}
+									class="inline-flex shrink-0 items-center justify-center gap-x-1.5 rounded-md text-sm/6 font-semibold text-fg outline-1 -outline-offset-1 outline-field-border hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:size-11 min-[640px]:h-9 min-[640px]:px-3 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11"
+								>
+									<MiniIcon name="plus" class="size-5 text-fg-muted" />
+									<span class="max-[639px]:sr-only" aria-hidden="true">New</span>
+									{#if shortcutHint}
+										<kbd
+											aria-hidden="true"
+											class="rounded border border-line px-1.5 font-sans text-xs/5 font-normal text-fg-muted max-[1023px]:hidden"
+											>N</kbd
+										>
+									{/if}
+								</button>
+							{/snippet}
+						</Tooltip.Trigger>
+					{/snippet}
+				</DropdownMenu.Trigger>
+				<Tooltip.Portal>
+					<Tooltip.Content
+						side="bottom"
+						sideOffset={6}
+						class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line min-[640px]:hidden"
+						>New</Tooltip.Content
+					>
+				</Tooltip.Portal>
+			</Tooltip.Root>
+			<DropdownMenu.Content align="end" class="w-56 bg-surface ring-line">
+				<!-- The Projects page opens New project; the sheet takes focus, and returns it to that page's heading. -->
+				<DropdownMenu.Item class={itemClass} onSelect={() => goto(resolve(newProjectUrl() as '/'))}
+					>Project</DropdownMenu.Item
 				>
-			</Tooltip.Portal>
-		</Tooltip.Root>
-		<DropdownMenu.Content align="end" class="w-56 bg-surface ring-line">
-			<!-- The Projects page opens New project; the sheet takes focus, and returns it to that page's heading. -->
-			<DropdownMenu.Item class={itemClass} onSelect={() => goto(resolve(newProjectUrl() as '/'))}
-				>Project</DropdownMenu.Item
-			>
-			{#if workAvailable}
-				<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'work_item')}
-					>Work item</DropdownMenu.Item
+				{#if workAvailable}
+					<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'work_item')}
+						>Work item</DropdownMenu.Item
+					>
+					<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'request')}
+						>Request</DropdownMenu.Item
+					>
+				{/if}
+				<DropdownMenu.Item class={itemClass} onSelect={() => startOrgFlow('message')}
+					>Message</DropdownMenu.Item
 				>
-				<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'request')}
-					>Request</DropdownMenu.Item
+				<DropdownMenu.Separator class="bg-surface-overlay" />
+				<!-- Hire is a page of its own (our-org-in-the-app §7): opening it moves focus to its heading. -->
+				<DropdownMenu.Item
+					class={itemClass}
+					onSelect={() => goto(resolve(hireUrl() as '/')).then(focusDestinationHeading)}
+					>Hire an agent</DropdownMenu.Item
 				>
-			{/if}
-			<DropdownMenu.Item class={itemClass} onSelect={() => startOrgFlow('message')}
-				>Message</DropdownMenu.Item
-			>
-			<DropdownMenu.Separator class="bg-surface-overlay" />
-			<!-- Hire is a page of its own (our-org-in-the-app §7): opening it moves focus to its heading. -->
-			<DropdownMenu.Item
-				class={itemClass}
-				onSelect={() => goto(resolve(hireUrl() as '/')).then(focusDestinationHeading)}
-				>Hire an agent</DropdownMenu.Item
-			>
-			<DropdownMenu.Item class={itemClass} onSelect={() => startOrgFlow('person')}
-				>Add a person</DropdownMenu.Item
-			>
-		</DropdownMenu.Content>
-	</DropdownMenu.Root>
-</Tooltip.Provider>
+				<DropdownMenu.Item class={itemClass} onSelect={() => startOrgFlow('person')}
+					>Add a person</DropdownMenu.Item
+				>
+			</DropdownMenu.Content>
+		</DropdownMenu.Root>
+	</Tooltip.Provider>
+{/if}
 
 {#if workAvailable}
 	<CaptureDialog

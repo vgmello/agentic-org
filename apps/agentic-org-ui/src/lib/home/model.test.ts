@@ -763,4 +763,113 @@ describe('executive home view model', () => {
 			'Ada recommends: approve failover to secondary cluster.'
 		);
 	});
+
+	it('treats placed active directory agents as active when live presence telemetry is absent', () => {
+		const snap = sampleOrg('hq');
+		const kpis = deriveKpiMetrics(snap, [], offices, 'you', {
+			memberRows: [
+				{
+					id: 'a1',
+					kind: 'agent',
+					name: 'Backend Lead',
+					handle: 'backend-lead',
+					status: 'active',
+					owner: false,
+					canSignIn: false,
+					office: { id: 'hq', name: 'HQ' },
+					directReports: 0
+				},
+				{
+					id: 'a2',
+					kind: 'agent',
+					name: 'Paused Agent',
+					handle: 'paused',
+					status: 'paused',
+					owner: false,
+					canSignIn: false,
+					office: { id: 'hq', name: 'HQ' },
+					directReports: 0
+				},
+				{
+					id: 'a3',
+					kind: 'agent',
+					name: 'Unplaced Agent',
+					handle: 'unplaced',
+					status: 'active',
+					owner: false,
+					canSignIn: false,
+					office: null,
+					directReports: 0
+				}
+			]
+		});
+		expect(kpis.totalAgents).toBe(3);
+		expect(kpis.activeAgents).toBe(1);
+		expect(kpis.pausedAgents).toBe(1);
+		expect(kpis.unplacedAgents).toBe(1);
+	});
+
+	it('resolves raw member, project, and team UUIDs in Decision Spotlight from the org snapshot', () => {
+		const base = sampleOrg('hq');
+		const memberUuid = 'a3b2bb1e-0000-7000-8000-000000000001';
+		const projectUuid = '019c0000-0000-7000-8000-000000000002';
+		const templateAgent = base.members.find((m) => m.kind === 'agent' && m.agent)!;
+		const templateProject = base.projects![0]!;
+		const snap = {
+			...base,
+			members: [
+				...base.members,
+				{
+					...templateAgent,
+					id: memberUuid,
+					name: 'Main EU Engineer',
+					office_id: 'hq'
+				}
+			],
+			projects: [
+				...(base.projects ?? []),
+				{
+					...templateProject,
+					id: projectUuid,
+					name: 'Agentic Org v1',
+					key: 'P-1',
+					archived: false
+				}
+			]
+		};
+		const spot = deriveDecisionSpotlight([], snap, 'you', Date.parse('2026-11-25T16:00:00Z'), [
+			{
+				id: 'office-hq:msg:m-1',
+				kind: 'question',
+				source: 'Chat message',
+				title: 'Status check',
+				who: { id: memberUuid, name: memberUuid, kind: 'agent' },
+				project: { id: projectUuid, name: projectUuid },
+				why: 'Detailed status update',
+				created_at: '2026-11-25T15:55:00Z',
+				actions: ['reply', 'dismiss'],
+				state: 'open'
+			}
+		]);
+		expect(spot).toHaveLength(1);
+		expect(spot[0].actorName).toBe('Main EU Engineer');
+		expect(spot[0].actorInitials).toBe('ME');
+		expect(spot[0].projectName).toBe('Agentic Org v1');
+	});
+
+	it('answers combined budget, offices & active agents prompts with both spend and team status', () => {
+		const snap = sampleOrg('hq');
+		const answer = answerExecutiveQuestion('Budget, offices & active agents', {
+			snapshot: snap,
+			items: [],
+			offices,
+			ownerId: 'you',
+			domain: { orgCost: sampleOrgCost }
+		});
+		expect(answer.headline).toContain('agents active');
+		expect(answer.headline).toContain('$142');
+		expect(answer.bullets.some((b) => b.href === '/settings/costs')).toBe(true);
+		expect(answer.bullets.some((b) => b.href === '/teams/members')).toBe(true);
+		expect(answer.bullets.some((b) => b.href === '/settings/offices')).toBe(true);
+	});
 });

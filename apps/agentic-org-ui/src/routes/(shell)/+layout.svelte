@@ -3,6 +3,8 @@
 	import ExecutiveSidebar from '$lib/platform/shell/ExecutiveSidebar.svelte';
 	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
 	import HomeScrollHint from '$lib/modules/home/features/HomeScrollHint.svelte';
+	import TessPanel from '$lib/modules/tess/TessPanel.svelte';
+	import { provideTessPanel } from '$lib/modules/tess/tess-panel.svelte';
 	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
@@ -37,10 +39,27 @@
 	$effect.pre(() => chatDrafts.syncScope());
 	onDestroy(() => chatDrafts.dispose());
 
-	let askHandler: ((prompt: string, opts?: ShellAiAskOptions) => void) | undefined;
+	const tessPanel = provideTessPanel();
+	let focusAskTrigger: (() => void) | undefined;
+
+	function askTess(prompt: string, opts?: ShellAiAskOptions) {
+		tessPanel.ask(
+			prompt,
+			{
+				snapshot: shellData.snapshot,
+				items: shellData.workItems,
+				offices: shellData.offices,
+				ownerId: shellData.ownerId,
+				domain: { inboxItems: shellData.inboxItems },
+				routeLabel: areaFor(page.url.pathname) ?? 'Home'
+			},
+			opts
+		);
+	}
+
 	provideShellAi({
 		ask(prompt: string, opts?: ShellAiAskOptions) {
-			askHandler?.(prompt, opts);
+			askTess(prompt, opts);
 		}
 	});
 	setScopedSearchContext(createScopedSearchHost());
@@ -59,6 +78,7 @@
 		if (routeChanged) {
 			navKeys.cancel(false);
 			mobileMenuOpen = false;
+			tessPanel.noteRouteChange();
 		}
 		if (routeChanged && !move.to?.url?.hash && mainEl) {
 			mainEl.scrollTop = 0;
@@ -326,25 +346,43 @@
 			inboxItems={shellData.inboxItems}
 			offices={shellData.offices}
 			ownerId={shellData.ownerId}
-			registerAsk={(fn) => {
-				askHandler = fn;
+			tessOpen={tessPanel.open}
+			onToggleTess={() => tessPanel.toggle()}
+			onAskTess={askTess}
+			registerAskTriggerFocus={(fn) => {
+				focusAskTrigger = fn;
 			}}
 		/>
-		<div class="relative flex min-h-0 flex-1 flex-col">
-			{#if isHome}
-				<HomeScrollHint scrollContainer={mainEl} />
-			{/if}
-			<main
-				bind:this={mainEl}
-				tabindex="-1"
-				aria-label={areaFor(page.url.pathname) ?? 'Agentic Org'}
-				class="flex min-h-0 flex-1 flex-col overflow-y-auto focus:outline-none"
-			>
-				{#if showPaused}<div class="shrink-0">
-						<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />
-					</div>{/if}
-				{@render children()}
-			</main>
+		<div class="relative flex min-h-0 flex-1 flex-row overflow-hidden">
+			<div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
+				{#if isHome}
+					<HomeScrollHint scrollContainer={mainEl} />
+				{/if}
+				<main
+					bind:this={mainEl}
+					tabindex="-1"
+					aria-label={areaFor(page.url.pathname) ?? 'Agentic Org'}
+					class="flex min-h-0 flex-1 flex-col overflow-y-auto focus:outline-none"
+				>
+					{#if showPaused}<div class="shrink-0">
+							<LiveBanner
+								loadedAt={liveState.loadedAt[organizationId]}
+								{retrying}
+								onretry={retry}
+							/>
+						</div>{/if}
+					{@render children()}
+				</main>
+			</div>
+			<TessPanel
+				panel={tessPanel}
+				snapshot={shellData.snapshot}
+				items={shellData.workItems}
+				inboxItems={shellData.inboxItems}
+				offices={shellData.offices}
+				ownerId={shellData.ownerId}
+				onCloseRestoreFocus={() => focusAskTrigger?.()}
+			/>
 		</div>
 	</div>
 </div>

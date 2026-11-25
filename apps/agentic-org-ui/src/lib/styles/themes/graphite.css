@@ -245,6 +245,12 @@ html[data-ui-theme='graphite'] {
 	--exec-cos-fade: var(--graphite-canvas);
 	--exec-cos-border: #35373d;
 	--exec-cos-rule: var(--tone-accent);
+	--exec-lens-on-bg: var(--graphite-active);
+	--exec-lens-on-ink: #f1f1f3;
+	--exec-lens-on-shadow: none;
+	--exec-cmdk-menu-bg: var(--graphite-raised);
+	--exec-cmdk-menu-blur: none;
+	--exec-cmdk-menu-shadow: inset 0 0 0 1px #35373d, 0 16px 40px rgb(0 0 0 / 0.42);
 
 	/* Unread rail dot (no glow halo in matte Graphite) */
 	--exec-nav-dot: var(--tone-warn);
@@ -253,8 +259,8 @@ html[data-ui-theme='graphite'] {
 
 	/* Home scroll cue */
 	--exec-scroll-hint-bg: var(--graphite-canvas);
-	--exec-scroll-hint-pill-bg: #1b1d20;
-	--exec-scroll-hint-ink: #c6c8ce;
+	--exec-scroll-hint-pill-bg: transparent;
+	--exec-scroll-hint-ink: #a2a5ad;
 	--exec-scroll-hint-ink-hover: #f1f1f3;
 
 	--exec-hor-item-bg: var(--graphite-canvas);

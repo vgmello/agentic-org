@@ -204,7 +204,7 @@
 	bind:this={panelEl}
 	id="hb-spotlight"
 	class={[
-		'spot-panel relative flex min-h-[280px] flex-col gap-4 overflow-hidden',
+		'spot-panel relative flex flex-col gap-4 overflow-hidden',
 		currentDecision?.urgent && 'is-urgent',
 		pulsing && 'is-pulse'
 	]}
@@ -323,7 +323,7 @@
 							Recommendation · {currentDecision.recRiskLabel}
 						</p>
 					{/if}
-					<p class="leading-relaxed">{currentDecision.recommendation}</p>
+					<p class="line-clamp-3 leading-relaxed">{currentDecision.recommendation}</p>
 				</div>
 			</div>
 
@@ -554,12 +554,15 @@
 			</button>
 		{/if}
 	{:else}
-		<HomeDayOne {isDayOne} {inboxState} />
+		<div class="my-auto flex flex-col justify-center">
+			<HomeDayOne {isDayOne} {inboxState} />
+		</div>
 	{/if}
 </article>
 
 <style>
 	.spot-panel {
+		min-height: 320px;
 		background: var(--exec-panel-bg);
 		-webkit-backdrop-filter: var(--exec-panel-blur);
 		backdrop-filter: var(--exec-panel-blur);
@@ -584,6 +587,7 @@
 	}
 	@media (min-width: 1280px) {
 		.spot-panel {
+			min-height: var(--exec-stage-min-h);
 			padding: var(--exec-spot-pad-xl);
 		}
 	}
