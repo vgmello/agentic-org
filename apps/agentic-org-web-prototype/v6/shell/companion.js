@@ -8,6 +8,7 @@ import { esc, ic } from "../ui.js";
 
 const COMP = {
   mode: "pill", // "hidden" | "pill" | "open" | "expanded"
+  prevMode: "pill",
   dismissedCtxKey: null,
   draft: "",
   returnTo: null,
@@ -161,15 +162,35 @@ function syncCompanionClasses(panel, scrim, compact) {
   if (scrim) scrim.hidden = !(expanded || (open && mobile));
 }
 
+function resolveModeAnim(prev, next) {
+  if (prev === next || next === "hidden") return "";
+  if (next === "expanded") return "expand";
+  if (next === "pill") return prev === "open" || prev === "expanded" ? "pill" : "";
+  if (next === "open") return prev === "expanded" ? "restore" : "open";
+  return "";
+}
+
+function triggerPanelAnimation(panel, anim) {
+  delete panel.dataset.anim;
+  if (!anim) return;
+  void panel.offsetWidth;
+  panel.dataset.anim = anim;
+  panel.addEventListener("animationend", () => {
+    if (panel.dataset.anim === anim) delete panel.dataset.anim;
+  }, { once: true });
+}
+
 function renderCompanion() {
   const panel = document.getElementById("tess-panel");
   if (!panel) return;
   if (COMP.mode === "pill" && !S.showTessPill) COMP.mode = "hidden";
   if (COMP.mode === "hidden" && S.showTessPill) COMP.mode = "pill";
+  const anim = resolveModeAnim(COMP.prevMode, COMP.mode);
+  COMP.prevMode = COMP.mode;
   const compact = CMDK.aiHistory.length === 0;
   syncCompanionClasses(panel, document.getElementById("tess-panel-scrim"), compact);
-  if (COMP.mode === "hidden") return;
-  if (COMP.mode === "pill") { renderRestingPill(panel); return; }
+  if (COMP.mode === "hidden") { delete panel.dataset.anim; return; }
+  if (COMP.mode === "pill") { renderRestingPill(panel); triggerPanelAnimation(panel, anim); return; }
 
   panel.innerHTML = `
     ${renderTessHeader(COMP.mode === "expanded")}
@@ -181,6 +202,7 @@ function renderCompanion() {
       <button type="submit" class="btn primary sm icon tess-send-btn" aria-label="Send to Tess">${ic("send", "ic14")}</button>
     </form>`;
 
+  triggerPanelAnimation(panel, anim);
   const body = document.getElementById("tess-panel-body");
   if (body) body.scrollTop = body.scrollHeight;
 }
