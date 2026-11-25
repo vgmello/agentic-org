@@ -228,9 +228,9 @@ agentic-org office list --name hq --json
 - `agentic-org hr hire|list|inspect|confirm|withdraw`
   Hire and manage agents across HQ and satellite offices over an approved office channel.
   **Use when:** hiring an agent onto HQ or a remote satellite office from the terminal.
-- `agentic-org agent list|inspect|pause|resume|offboard`
-  Inspect or manage hired agents over an approved office channel.
-  **Use when:** checking agent status, placement, or lifecycle state.
+- `agentic-org agent inspect|update|move|pause|resume|offboard|execution-get|execution-set`
+  Inspect or manage hired agents and their execution configuration (`model_profile_id`, `model_id`, `permission_preset`, `system_prompt_markdown`) over an approved office channel.
+  **Use when:** checking agent status, placement, lifecycle state, or configuring an agent's model profile, permission preset, and system prompt.
 - `agentic-org team list|inspect|create|update`
   Discover, inspect, or create organization teams over an approved office channel.
   **Use when:** finding a `team_id` before hiring agents or creating projects.

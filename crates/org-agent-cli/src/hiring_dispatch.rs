@@ -3,8 +3,8 @@
 
 use org_command::{Ack, Answer, Refusal, Request};
 use org_proto::hiring::{
-    EntityOpResult, HireOpResult, HireProposalWire, HireRequestRecord, HrHireListResult,
-    RoleListResult, RoleRecord,
+    AgentExecutionRecord, EntityOpResult, HireOpResult, HireProposalWire, HireRequestRecord,
+    HrHireListResult, RoleListResult, RoleRecord,
 };
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
@@ -31,6 +31,8 @@ pub(crate) fn try_execute<T: OfficeTransport + ?Sized>(
         ("agent", "pause") => write_agent_status(transport, request, true),
         ("agent", "resume") => write_agent_status(transport, request, false),
         ("agent", "offboard") => write_agent_offboard(transport, request),
+        ("agent", "execution-get") => read_agent_execution_get(transport, request),
+        ("agent", "execution-set") => write_agent_execution_set(transport, request),
         ("member", "set-hiring") => write_member_set_may_hire(transport, request),
         ("team", "set-limit") => write_team_set_max_members(transport, request),
         _ => return None,
@@ -320,6 +322,53 @@ fn write_agent_offboard<T: OfficeTransport + ?Sized>(
     params.insert("member_id".into(), json!(member_id));
     params.insert("expected_version".into(), json!(expected));
     send_entity_write(transport, request, "member.agent_offboard", params)
+}
+
+fn read_agent_execution_get<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let employee_id = require_str(request, "member")?;
+    let raw = transport.call_method(
+        "member.agent_execution_get",
+        json!({ "employee_id": employee_id }),
+    )?;
+    let record: AgentExecutionRecord =
+        serde_json::from_value(raw).map_err(|_| decode_err("member.agent_execution_get"))?;
+    Ok(Answer::completed(
+        serde_json::to_value(record).expect("AgentExecutionRecord serializes"),
+    ))
+}
+
+fn write_agent_execution_set<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let employee_id = require_str(request, "member")?;
+    let model_profile_id = require_str(request, "model_profile_id")?;
+    let model_id = require_str(request, "model_id")?;
+    let system_prompt_markdown = require_str(request, "system_prompt_markdown")?;
+    let mut params = Map::new();
+    params.insert("employee_id".into(), json!(employee_id));
+    if let Some(expected) = request.if_match {
+        params.insert("expected_version".into(), json!(expected));
+    }
+    params.insert("model_profile_id".into(), json!(model_profile_id));
+    params.insert("model_id".into(), json!(model_id));
+    copy_opt_str(
+        request,
+        &mut params,
+        "permission_preset",
+        "permission_preset",
+    );
+    if let Some(enabled) = opt_bool(request, "enabled") {
+        params.insert("enabled".into(), json!(enabled));
+    }
+    params.insert(
+        "system_prompt_markdown".into(),
+        json!(system_prompt_markdown),
+    );
+    send_entity_write(transport, request, "member.agent_execution_set", params)
 }
 
 fn write_member_set_may_hire<T: OfficeTransport + ?Sized>(

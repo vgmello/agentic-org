@@ -1853,6 +1853,14 @@ impl SessionManager {
                 .map_err(|e| ApiError::new(ErrorCode::StorageError, e.to_string()))??,
             Err(err) => return Err(err),
         };
+        let exec_prompt = self
+            .office
+            .load_agent_execution(employee.id.as_str())
+            .ok()
+            .flatten()
+            .map(|cfg| cfg.system_prompt_markdown);
+        let combined_agent_instructions =
+            combine_agent_instructions(&employee.body, exec_prompt.as_deref());
         let table = org_agent_cli::table::table();
         let input = InstructionInput {
             organization_name: &info.org_name,
@@ -1865,7 +1873,7 @@ impl SessionManager {
             role_instructions: role.as_ref().map(|r| r.body.as_str()),
             process_instructions: (!rendered_processes.text.is_empty())
                 .then_some(rendered_processes.text.as_str()),
-            agent_instructions: &employee.body,
+            agent_instructions: &combined_agent_instructions,
             is_hr_lead: employee.builtin_key == Some(BuiltinKey::Hr),
             private_home: &home.display().to_string(),
             workspace: &workspace.display().to_string(),
@@ -2860,6 +2868,18 @@ fn canonical_or_spec(path: &Path) -> Result<SpecPath, ApiError> {
 fn next_entropy_hex(bytes_len: usize) -> Result<String, ApiError> {
     random_hex(bytes_len)
         .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))
+}
+
+fn combine_agent_instructions(profile_body: &str, system_prompt: Option<&str>) -> String {
+    let body = profile_body.trim();
+    let prompt = system_prompt.map(str::trim).unwrap_or("");
+    match (prompt.is_empty(), body.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => prompt.to_owned(),
+        (true, false) => body.to_owned(),
+        (false, false) if prompt == body => prompt.to_owned(),
+        (false, false) => format!("{prompt}\n\n{body}"),
+    }
 }
 
 fn next_uuid_v4() -> Result<String, ApiError> {
