@@ -42,6 +42,7 @@ describe('production shell capabilities', () => {
 			'/projects/0193a5c0-0000-7000-8000-000000000003',
 			'/projects/0193a5c0-0000-7000-8000-000000000003/work',
 			'/projects/0193a5c0-0000-7000-8000-000000000003/activity',
+			'/projects/0193a5c0-0000-7000-8000-000000000003/conversations',
 			'/projects/0193a5c0-0000-7000-8000-000000000003/team',
 			'/projects/0193a5c0-0000-7000-8000-000000000003/settings'
 		])

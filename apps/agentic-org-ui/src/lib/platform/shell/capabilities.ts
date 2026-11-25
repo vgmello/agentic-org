@@ -47,7 +47,7 @@ const ROLE_ROUTE =
 	/^\/settings\/roles\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TEAM_ROUTE = /^\/teams\/([^/]+)(?:\/(?:members|projects))?$/;
 const MEMBER_ROUTE = /^\/members\/([^/]+)(?:\/role)?$/;
-const PROJECT_ROUTE = /^\/projects\/([^/]+)(?:\/(?:work|activity|team|settings))?$/;
+const PROJECT_ROUTE = /^\/projects\/([^/]+)(?:\/(?:work|activity|conversations|team|settings))?$/;
 const WORK_ITEM_ROUTE = /^\/work\/[^/]+$/;
 
 function normalizePathname(pathname: string): string {
