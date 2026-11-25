@@ -72,6 +72,17 @@ pub struct RelayedWake {
 /// Returns `Ok(())` only after the wake has been durably persisted on the destination (`TASK-52` #14).
 pub type WakeRelayHandler = Arc<dyn Fn(RelayedWake) -> Result<(), String> + Send + Sync>;
 
+/// Optional callback invoked after an inbound cross-office native message/answer/withdrawal/accept
+/// is durably committed on this office, notifying local ask waiters, mailbox waiters, live SSE
+/// streams, and the channel watcher (`TASK-117`).
+pub type InboundDeliveryNotifier = Arc<dyn Fn(&org_office::RelayedMessageOutcome) + Send + Sync>;
+
+#[derive(Clone, Copy, Default)]
+struct InboundCallbacks<'a> {
+    wake: Option<&'a WakeRelayHandler>,
+    notify: Option<&'a InboundDeliveryNotifier>,
+}
+
 struct StaticPeer(PeerIdentity);
 
 impl VerifiedPeer for StaticPeer {
@@ -135,6 +146,18 @@ impl HqFederationServer {
         san_hosts: &[String],
         wake_handler: Option<WakeRelayHandler>,
     ) -> Result<Self, String> {
+        Self::start_with_notifier(office, bind_addr, san_hosts, wake_handler, None)
+    }
+
+    /// Starts HQ's Org-CA TLS federation listener with both durable wake and local delivery
+    /// notification callbacks (`TASK-117`).
+    pub fn start_with_notifier(
+        office: Arc<Office>,
+        bind_addr: SocketAddr,
+        san_hosts: &[String],
+        wake_handler: Option<WakeRelayHandler>,
+        delivery_notifier: Option<InboundDeliveryNotifier>,
+    ) -> Result<Self, String> {
         let hq_tls = office
             .ensure_hq_tls_identity(san_hosts)
             .map_err(|e| format!("failed preparing HQ TLS identity: {e}"))?;
@@ -171,6 +194,7 @@ impl HqFederationServer {
                         ca_der,
                         stop: stop_bg,
                         wake_handler,
+                        delivery_notifier,
                         snapshot_budget: HqSnapshotTransferBudget::production(),
                     },
                     active_conns,
@@ -259,6 +283,7 @@ struct AcceptCtx {
     ca_der: Arc<Vec<u8>>,
     stop: Arc<AtomicBool>,
     wake_handler: Option<WakeRelayHandler>,
+    delivery_notifier: Option<InboundDeliveryNotifier>,
     snapshot_budget: HqSnapshotTransferBudget,
 }
 
@@ -399,7 +424,10 @@ fn handle_hq_connection(stream: TcpStream, ctx: AcceptCtx) {
                 &verified.office_id,
                 &verified.serial_hex,
                 &ctx.stop,
-                ctx.wake_handler.as_ref(),
+                InboundCallbacks {
+                    wake: ctx.wake_handler.as_ref(),
+                    notify: ctx.delivery_notifier.as_ref(),
+                },
                 &ctx.snapshot_budget,
             );
         }
@@ -703,7 +731,7 @@ fn handle_hq_satellite_session(
     satellite_office_id: &str,
     cert_serial_hex: &str,
     stop: &AtomicBool,
-    wake_handler: Option<&WakeRelayHandler>,
+    callbacks: InboundCallbacks<'_>,
     snapshot_budget: &HqSnapshotTransferBudget,
 ) {
     let Ok(org_id) = OrgId::new(&office.info().org_id) else {
@@ -764,7 +792,7 @@ fn handle_hq_satellite_session(
                     snapshot_budget,
                     &mut active_snapshot,
                     frame,
-                    wake_handler,
+                    callbacks,
                 ) {
                     return;
                 }
@@ -789,7 +817,7 @@ fn dispatch_hq_frame(
     snapshot_budget: &HqSnapshotTransferBudget,
     active_snapshot: &mut Option<ActiveSnapshotTransfer>,
     frame: SyncFrame,
-    wake_handler: Option<&WakeRelayHandler>,
+    callbacks: InboundCallbacks<'_>,
 ) -> bool {
     if !matches!(frame, SyncFrame::OrgSnapshotRequest { .. }) {
         *active_snapshot = None;
@@ -862,7 +890,7 @@ fn dispatch_hq_frame(
         } => handle_hq_message_deliver(
             tls,
             peer,
-            wake_handler,
+            callbacks,
             InboundMessage {
                 org_id: msg_org,
                 origin_office,
@@ -913,7 +941,7 @@ fn dispatch_hq_frame(
                 peer.org_id,
                 peer.sat_id,
                 peer.cert_serial_hex,
-                wake_handler,
+                callbacks.wake,
                 wake,
             );
             true
@@ -1513,7 +1541,7 @@ fn forward_hq_relay_to_satellite(
 fn handle_hq_message_deliver(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
     peer: &HqSessionPeer<'_>,
-    wake_handler: Option<&WakeRelayHandler>,
+    callbacks: InboundCallbacks<'_>,
     msg: InboundMessage,
 ) -> bool {
     let office = peer.office;
@@ -1565,7 +1593,7 @@ fn handle_hq_message_deliver(
             deliver_inbound_message_checked(
                 office,
                 &static_peer,
-                wake_handler,
+                callbacks,
                 &msg,
                 sync_msg,
                 &payload,
@@ -2388,6 +2416,20 @@ impl SatelliteSyncSession {
         &mut self,
         wake_handler: Option<&WakeRelayHandler>,
     ) -> Result<usize, String> {
+        self.receive_inbound_relays_with_notifier(wake_handler, None)
+    }
+
+    /// Receives inbound relays and invokes `delivery_notifier` after each durably committed
+    /// message/answer/withdrawal/accept (`TASK-117`).
+    pub fn receive_inbound_relays_with_notifier(
+        &mut self,
+        wake_handler: Option<&WakeRelayHandler>,
+        delivery_notifier: Option<&InboundDeliveryNotifier>,
+    ) -> Result<usize, String> {
+        let callbacks = InboundCallbacks {
+            wake: wake_handler,
+            notify: delivery_notifier,
+        };
         let mut received = 0usize;
         let peer = StaticPeer(self.hq_peer.clone());
         loop {
@@ -2422,7 +2464,7 @@ impl SatelliteSyncSession {
                         &mut self.tls,
                         &self.office,
                         &peer,
-                        wake_handler,
+                        callbacks,
                         InboundMessage {
                             org_id,
                             origin_office,
@@ -2627,7 +2669,7 @@ fn handle_inbound_relayed_message(
     tls: &mut StreamOwned<ClientConnection, TcpStream>,
     office: &Office,
     peer: &StaticPeer,
-    wake_handler: Option<&WakeRelayHandler>,
+    callbacks: InboundCallbacks<'_>,
     msg: InboundMessage,
 ) -> Result<bool, String> {
     if msg.org_id != office.info().org_id || msg.destination_office != office.info().office_id {
@@ -2649,7 +2691,7 @@ fn handle_inbound_relayed_message(
         deadline_ms: msg.deadline_ms,
     };
     let delivered =
-        deliver_inbound_message_checked(office, peer, wake_handler, &msg, sync_msg, &payload, fp);
+        deliver_inbound_message_checked(office, peer, callbacks, &msg, sync_msg, &payload, fp);
     write_sync_frame(
         tls,
         &SyncFrame::MessageReceipt {
@@ -2878,25 +2920,20 @@ fn emit_local_wakes_for_delivered_message(
             return false;
         }
     }
-    if outcome.message_id.is_empty() || outcome.local_agent_recipients.is_empty() {
+    if outcome.message_id.is_empty() || outcome.local_recipient_wakes.is_empty() {
         return true;
     }
-    let kind = if outcome.is_dm {
-        "direct_message"
-    } else {
-        "mention"
-    };
     let answered_asker = outcome.answered_ask.as_ref().map(|a| a.asker_id.as_str());
-    for emp_id in &outcome.local_agent_recipients {
-        if answered_asker == Some(emp_id.as_str()) {
+    for wake in &outcome.local_recipient_wakes {
+        if answered_asker == Some(wake.employee_id.as_str()) {
             continue;
         }
         if handler(RelayedWake {
             origin_office: origin_office.to_owned(),
             destination_office: destination_office.to_owned(),
-            employee_id: emp_id.clone(),
-            kind: kind.to_owned(),
-            source_id: format!("{}:{emp_id}", outcome.message_id),
+            employee_id: wake.employee_id.clone(),
+            kind: wake.kind.clone(),
+            source_id: format!("{}:{}", outcome.message_id, wake.employee_id),
             sender_id: outcome.sender_id.clone(),
             sender_name: outcome.sender_name.clone(),
             sender_is_person: outcome.sender_is_person,
@@ -3175,11 +3212,12 @@ fn apply_message_outbox_reply(
 
 /// Validates and delivers an inbound cross-office message safely on both HQ and satellites:
 /// short-circuits exact replays, refuses native digest mismatches WITHOUT recording `delivered: true`,
-/// and persists local wakes before recording terminal receipt (`TASK-52` P5-#10 / P6-#11 / P7-#10).
+/// persists local wakes before recording terminal receipt, and notifies local waiters/live streams
+/// (`TASK-52` P5-#10 / P6-#11 / P7-#10, `TASK-117`).
 fn deliver_inbound_message_checked(
     office: &Office,
     peer: &StaticPeer,
-    wake_handler: Option<&WakeRelayHandler>,
+    callbacks: InboundCallbacks<'_>,
     msg: &InboundMessage,
     mut sync_msg: Message,
     payload: &[u8],
@@ -3225,20 +3263,26 @@ fn deliver_inbound_message_checked(
     };
     let wakes_ok = outcome.as_ref().is_none_or(|info| {
         emit_local_wakes_for_delivered_message(
-            wake_handler,
+            callbacks.wake,
             &msg.origin_office,
             &office.info().office_id,
             info,
         )
     });
-    wakes_ok
+    let delivered = wakes_ok
         && matches!(
             receive(office.replication().as_ref(), peer, sync_msg, now),
             Ok(MessageOutput::Receipt(Receipt {
                 delivered: true,
                 ..
             }))
-        )
+        );
+    if delivered {
+        if let (Some(notify), Some(info)) = (callbacks.notify, outcome.as_ref()) {
+            notify(info);
+        }
+    }
+    delivered
 }
 
 fn validate_inbound_message_before_native_apply(
@@ -3463,85 +3507,6 @@ pub fn sync_native_message_relays(office: &Office) {
     };
     if advance_to > 0 {
         let _ = office.advance_message_relay_consumer(advance_to);
-    }
-}
-
-/// Durably enqueues cross-office wake notifications on HQ for each target agent's actual placed
-/// satellite office (`TASK-52` #14 / P3-#11).
-pub fn enqueue_remote_chat_wakes(
-    office: &Office,
-    sender_id: &str,
-    committed: &org_office::messaging::features::ChatSendCommitted,
-) {
-    if !office.is_multi_office().unwrap_or(false)
-        || office.info().role != org_office::OfficeRole::Hq
-    {
-        return;
-    }
-    let Ok(snap) = office.org_snapshot() else {
-        return;
-    };
-    let sender = snap.members.iter().find(|m| m.id == sender_id);
-    let sender_name = sender.map_or("member", |m| m.name.as_str()).to_owned();
-    let sender_is_person = sender.is_some_and(|m| m.kind == org_proto::MemberKind::Person);
-    let summary: String = committed.message.body_markdown.chars().take(180).collect();
-    let kind = match committed.conversation_kind {
-        org_proto::chat::ConversationKind::Dm => "direct_message",
-        _ => "mention",
-    };
-    let agent_targets: Vec<String> = committed
-        .delivered_headers()
-        .iter()
-        .filter(|h| h.to_member_id != sender_id)
-        .filter(|h| {
-            snap.members
-                .iter()
-                .any(|m| m.id == h.to_member_id && m.kind == org_proto::MemberKind::Agent)
-                && office
-                    .load_employee(&h.to_member_id)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|e| {
-                        e.status == org_office::organization_family::records::EmployeeStatus::Active
-                    })
-        })
-        .map(|h| h.to_member_id.clone())
-        .collect();
-    for emp_id in &agent_targets {
-        let Ok(target_office) = org_office::resolve_employee_office(office, emp_id) else {
-            continue;
-        };
-        if target_office == office.info().office_id {
-            continue;
-        }
-        let source_id = format!("{}:{}", committed.message.id, emp_id);
-        let frame = SyncFrame::WakeNotify {
-            org_id: office.info().org_id.clone(),
-            origin_office: office.info().office_id.clone(),
-            destination_office: target_office.clone(),
-            employee_id: emp_id.clone(),
-            kind: kind.to_owned(),
-            source_id: source_id.clone(),
-            sender_id: sender_id.to_owned(),
-            sender_name: sender_name.clone(),
-            sender_is_person,
-            conversation_id: Some(committed.message.conversation_id.as_str().to_owned()),
-            summary: summary.clone(),
-        };
-        if let Ok(payload_json) = serde_json::to_string(&frame) {
-            let _ = org_office::admit_relay_item_if_active(
-                office,
-                StoredRelayItem {
-                    id: format!("wake:{source_id}:{target_office}"),
-                    origin_office: office.info().office_id.clone(),
-                    destination_office: target_office,
-                    fingerprint_hex: String::new(),
-                    kind: "wake".into(),
-                    payload_json,
-                    expires_at_ms: now_ms().saturating_add(WAKE_RELAY_TTL_MS),
-                },
-            );
-        }
     }
 }
 

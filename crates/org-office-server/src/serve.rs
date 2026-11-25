@@ -859,6 +859,17 @@ pub(crate) fn serve_grant_bound_stream_for_test(
 }
 
 fn snapshot_unavailable_response(shared: &Shared, id: u64) -> Option<Response> {
+    // Only satellite offices can be blocked awaiting their initial HQ snapshot (`TASK-52`);
+    // checking `ports.snapshot()` on HQ would pay a full org snapshot read on every subscribe,
+    // wait, or mailbox RPC and violates inbox fixtures that forbid snapshot reads.
+    if !shared
+        .hello
+        .office
+        .as_ref()
+        .is_some_and(|o| o.office.role == OfficeRole::Satellite)
+    {
+        return None;
+    }
     if matches!((shared.ports.snapshot)(), Err(SnapshotFailure::Unavailable)) {
         Some(Response::error(
             id,
@@ -1731,6 +1742,42 @@ fn sessions_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option
     ))
 }
 
+fn try_chat_override(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    let Some(chat) = &shared.ports.chat else {
+        return None;
+    };
+    if request.is::<org_proto::msg::MsgDone>() || request.is::<org_proto::msg::MsgReply>() {
+        return chat(
+            binding.member(),
+            binding.via_grant(),
+            &shared.stopping,
+            request,
+        );
+    }
+    None
+}
+
+fn check_hr_message_guard(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+) -> Option<Response> {
+    if !request.is::<org_proto::msg::MsgSend>() {
+        return None;
+    }
+    let (Some(guard), Some(member)) = (&shared.ports.hr_message_guard, binding.member()) else {
+        return None;
+    };
+    let Ok(params) = request.params::<org_proto::msg::MsgSend>() else {
+        return None;
+    };
+    match guard(member, &params.to) {
+        Ok(Ok(())) => None,
+        Ok(Err(refusal)) => Some(Response::error(request.id, refusal)),
+        Err(_) => Some(internal(request.id)),
+    }
+}
+
 fn answer_message(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
     if crate::chat_calls::is_chat_method(request) {
         return Some(match &shared.ports.chat {
@@ -1744,39 +1791,20 @@ fn answer_message(request: &Request, shared: &Shared, binding: &Binding) -> Opti
             None => msg_calls::unsupported(request.id),
         });
     }
-    // High #1: when `ports.chat` is active, let `ChatService` close any asker-owned channel
-    // watch on `msg.done`; when `ports.chat` is `None`, preserve the `msg_calls::answer` fallback.
-    if request.is::<org_proto::msg::MsgDone>() {
-        if let Some(chat) = &shared.ports.chat {
-            if let Some(resp) = chat(
-                binding.member(),
-                binding.via_grant(),
-                &shared.stopping,
-                request,
-            ) {
-                return Some(resp);
-            }
-        }
+    // When `ports.chat` is active, let `ChatService` handle `msg.done` (closing asker-owned
+    // channel watches) and `msg.reply` (native conversation-aware reply with wakes & cross-office
+    // relay); when `ports.chat` is `None`, preserve the `msg_calls::answer` fallback.
+    if let Some(resp) = try_chat_override(request, shared, binding) {
+        return Some(resp);
     }
-    if request.is::<org_proto::msg::MsgSend>() {
-        if let (Some(guard), Some(member)) = (&shared.ports.hr_message_guard, binding.member()) {
-            if let Ok(params) = request.params::<org_proto::msg::MsgSend>() {
-                match guard(member, &params.to) {
-                    Ok(Ok(())) => {}
-                    Ok(Err(refusal)) => return Some(Response::error(request.id, refusal)),
-                    Err(_) => return Some(internal(request.id)),
-                }
-            }
-        }
+    if let Some(resp) = check_hr_message_guard(request, shared, binding) {
+        return Some(resp);
     }
-    if matches!((shared.ports.snapshot)(), Err(SnapshotFailure::Unavailable)) {
-        return Some(Response::error(
-            request.id,
-            ApiError::new(
-                ErrorCode::Unavailable,
-                "organization snapshot is not available yet",
-            ),
-        ));
+    if !msg_calls::is_mailbox_call(request) {
+        return None;
+    }
+    if let Some(unavailable) = snapshot_unavailable_response(shared, request.id) {
+        return Some(unavailable);
     }
     let is_owner = binding.via_grant()
         && match live_owner(shared, binding) {

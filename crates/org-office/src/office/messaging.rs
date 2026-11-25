@@ -12,7 +12,7 @@ use org_proto::chat::{
 use org_proto::directory::{
     MemberPresence, MemberPresenceChangedData, StatusSetParams, StatusSetResult,
 };
-use org_proto::msg::{HeaderPage, MessageHeader};
+use org_proto::msg::{HeaderPage, MessageHeader, MsgReplyParams};
 use org_proto::org::OrgChangedData;
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
@@ -31,7 +31,7 @@ use crate::{
         },
         ChannelCreateOp, ChannelMembershipOp, ChannelMessagesForCallerRead, ChannelMessagesRawRead,
         ChatAnswerOp, ChatInboxRead, ChatMarkReadOp, ChatMessagesRead, ChatMuteOp, ChatReactOp,
-        ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, ConversationByIdRead,
+        ChatReplyOp, ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, ConversationByIdRead,
         DeliverAnswerCandidatesOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
         InspectAskStatusRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead,
         ListConversationsRead, ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxDeferOp,
@@ -216,6 +216,28 @@ impl Office {
         let now_utc = time::format_rfc3339_ms(self.monotonic_now_ms());
         self.store
             .run(ChatSendOp {
+                here: self.identity.clone(),
+                owner: self.owner.clone(),
+                caller: caller_id,
+                params,
+                org_seq,
+                now_utc,
+            })
+            .map_err(storage)
+    }
+
+    pub fn chat_reply(
+        &self,
+        caller: &str,
+        params: MsgReplyParams,
+    ) -> Result<Result<ChatSendCommitted, ApiError>, OfficeError> {
+        let Ok(caller_id) = parse_member_id(caller) else {
+            return Ok(Err(ApiError::new(ErrorCode::NotBound, "invalid caller")));
+        };
+        let org_seq = self.org_snapshot()?.position.seq;
+        let now_utc = time::format_rfc3339_ms(self.monotonic_now_ms());
+        self.store
+            .run(ChatReplyOp {
                 here: self.identity.clone(),
                 owner: self.owner.clone(),
                 caller: caller_id,

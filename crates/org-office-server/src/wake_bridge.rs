@@ -80,7 +80,12 @@ pub(crate) fn on_chat_send_committed(
         if target_id == sender_id || state.owner_office_id.as_str() != office.info().office_id {
             continue;
         }
-        let kind = wake_kind_for_send(committed, target_id, state.delivered_because);
+        let is_mentioned = committed
+            .result
+            .mentions
+            .iter()
+            .any(|m| m.employee_id == target_id);
+        let kind = wake_kind_for_send(committed, target_id, state.delivered_because, is_mentioned);
         let Some(kind) = kind else { continue };
         let item = PendingWakeItem {
             item_id: format!("msg:{}:{target_id}", committed.message.id),
@@ -104,6 +109,7 @@ fn wake_kind_for_send(
     committed: &ChatSendCommitted,
     target_id: &str,
     delivered_because: DeliveredBecause,
+    is_mentioned: bool,
 ) -> Option<WakeKind> {
     if committed.message.kind == KIND_HANDOFF
         && (delivered_because == DeliveredBecause::Addressed
@@ -114,7 +120,11 @@ fn wake_kind_for_send(
     {
         return Some(WakeKind::Handoff);
     }
-    if delivered_because == DeliveredBecause::Mention {
+    // Thread reply in an agent's OWN open question wakes the asker for continuation (`ADR-0023` d2, `LIVE-7`).
+    if committed.open_question_asker_id.as_deref() == Some(target_id) {
+        return Some(WakeKind::AskAnswer);
+    }
+    if delivered_because == DeliveredBecause::Mention || is_mentioned {
         return Some(WakeKind::Mention);
     }
     if matches!(
@@ -122,10 +132,6 @@ fn wake_kind_for_send(
         ConversationKind::Dm | ConversationKind::GroupDm
     ) {
         return Some(WakeKind::DirectMessage);
-    }
-    // Thread reply in an agent's OWN open question wakes the asker; closed question starts nothing (`LIVE-7`).
-    if committed.open_question_asker_id.as_deref() == Some(target_id) {
-        return Some(WakeKind::AskAnswer);
     }
     None
 }
