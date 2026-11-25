@@ -17,9 +17,10 @@ import sys
 from pathlib import Path
 
 INTERNAL_ID_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:(?:TASK|ADR|FC|LNX)-\d+|doc-\d+)(?![A-Za-z0-9_])"
+    r"(?<![A-Za-z0-9_])(?:(?:(?i:task|adr|lnx|doc)|FC)-\d+[A-Za-z]?)(?![A-Za-z0-9_])"
 )
-BROKEN_INTERNAL_LINK_RE = re.compile(r"\.\./\.\./docs/(?:adr|design)/")
+INTERNAL_PATH_RE = re.compile(r"(?i)backlog/(?:tasks|docs|decisions)/")
+MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
 EXPLICIT_TARGETS = (
     ".github/workflows/release.yml",
@@ -30,37 +31,83 @@ EXPLICIT_TARGETS = (
 )
 
 
-def collect_target_files(repo_root: Path) -> list[Path]:
-    files: list[Path] = []
+def collect_script_files(repo_root: Path) -> list[Path]:
     scripts_dir = repo_root / "scripts"
-    if scripts_dir.is_dir():
-        for path in sorted(scripts_dir.iterdir()):
-            if path.is_file() and path.suffix in (".sh", ".py"):
-                files.append(path)
+    if not scripts_dir.is_dir():
+        raise SystemExit("missing expected scripts/ directory")
+    files = [
+        p
+        for p in sorted(scripts_dir.rglob("*"))
+        if "__pycache__" not in p.parts and p.is_file() and p.suffix in (".sh", ".py")
+    ]
+    if not any(p.suffix == ".sh" for p in files):
+        raise SystemExit("no .sh scripts found under scripts/")
+    return files
+
+
+def collect_target_files(repo_root: Path) -> list[Path]:
+    files = collect_script_files(repo_root)
     for rel in EXPLICIT_TARGETS:
         path = repo_root / rel
-        if path.is_file():
-            files.append(path)
-        else:
+        if not path.is_file():
             raise SystemExit(f"missing expected published file: {rel}")
+        files.append(path)
     return files
+
+
+def check_markdown_link(
+    repo_resolved: Path, path: Path, rel: str, lineno: int, raw_target: str
+) -> str | None:
+    if raw_target.startswith(("http://", "https://", "mailto:", "#")):
+        return None
+    target_path = raw_target.split("#", 1)[0].split("?", 1)[0]
+    if not target_path:
+        return None
+    resolved = (path.parent / target_path).resolve()
+    try:
+        resolved.relative_to(repo_resolved)
+    except ValueError:
+        return f"{rel}:{lineno}: relative markdown link escapes repository `{raw_target}`"
+    if not resolved.exists():
+        return f"{rel}:{lineno}: broken relative markdown link `{raw_target}`"
+    return None
+
+
+def check_markdown_file_links(
+    repo_resolved: Path, path: Path, rel: str, lines: list[str]
+) -> list[str]:
+    errors: list[str] = []
+    in_fence = False
+    for lineno, line in enumerate(lines, start=1):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        for match in MARKDOWN_LINK_RE.finditer(line):
+            err = check_markdown_link(repo_resolved, path, rel, lineno, match.group(1))
+            if err:
+                errors.append(err)
+    return errors
 
 
 def check_text_hygiene(repo_root: Path, files: list[Path]) -> list[str]:
     errors: list[str] = []
+    repo_resolved = repo_root.resolve()
     for path in files:
         rel = path.relative_to(repo_root).as_posix()
-        for lineno, line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for lineno, line in enumerate(lines, start=1):
             for match in INTERNAL_ID_RE.finditer(line):
                 errors.append(
                     f"{rel}:{lineno}: internal tracking ID `{match.group(0)}` in published file"
                 )
-            for match in BROKEN_INTERNAL_LINK_RE.finditer(line):
+            for match in INTERNAL_PATH_RE.finditer(line):
                 errors.append(
-                    f"{rel}:{lineno}: broken internal docs link `{match.group(0)}`"
+                    f"{rel}:{lineno}: internal backlog path `{match.group(0)}` in published file"
                 )
+        if path.suffix == ".md":
+            errors.extend(check_markdown_file_links(repo_resolved, path, rel, lines))
     return errors
 
 

@@ -80,19 +80,41 @@ done
 
 require_cmd tar
 require_cmd awk
-require_cmd sed
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
   echo "install.sh: required command not found: sha256sum or shasum" >&2
   exit 1
+fi
+
+if [[ ! "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "install.sh: invalid --repo value (expected owner/repo): $REPO" >&2
+  exit 2
+fi
+
+if [[ -n "$BASE_URL" ]]; then
+  BASE_URL="${BASE_URL%/}"
+  if [[ ! "$BASE_URL" =~ ^https?:// ]]; then
+    echo "install.sh: --base-url must start with http:// or https://: $BASE_URL" >&2
+    exit 2
+  fi
+fi
+
+if [[ "$ALLOW_UNSIGNED" -eq 1 && -n "$PUBKEY_FILE" ]]; then
+  echo "install.sh: --allow-unsigned cannot be combined with --pubkey" >&2
+  exit 2
+fi
+
+if [[ "$ALLOW_UNSIGNED" -eq 1 && -z "$ARCHIVE" ]]; then
+  echo "install.sh: --allow-unsigned is only supported with local --archive installs" >&2
+  exit 2
 fi
 
 download_file() {
   local url="$1"
   local dest="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$dest"
+    curl -fsSL -o "$dest" -- "$url"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$dest" "$url"
+    LC_ALL=C wget -q -O "$dest" -- "$url"
   else
     echo "install.sh: required command not found: curl or wget" >&2
     exit 1
@@ -104,12 +126,13 @@ resolve_latest_version() {
   local latest_url="https://github.com/${repo}/releases/latest"
   local effective_url=""
   if command -v curl >/dev/null 2>&1; then
-    effective_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' "$latest_url")" || {
+    effective_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' -- "$latest_url")" || {
       echo "install.sh: failed to query latest release for ${repo}" >&2
       exit 1
     }
   elif command -v wget >/dev/null 2>&1; then
-    effective_url="$(wget --max-redirect=5 --spider "$latest_url" 2>&1 | awk '/^Location: / { loc = $2 } END { gsub(/\r/, "", loc); print loc }')" || true
+    effective_url="$(LC_ALL=C wget -v -S --max-redirect=5 --spider -- "$latest_url" 2>&1 \
+      | awk 'tolower($1) == "location:" { loc = $2 } END { gsub(/\r/, "", loc); print loc }')" || true
     if [[ -z "$effective_url" ]]; then
       echo "install.sh: failed to query latest release for ${repo}" >&2
       exit 1
@@ -351,6 +374,15 @@ lookup_manifest_file_sha256() {
   ' "$manifest_file"
 }
 
+hex_to_bin() {
+  local hex="$1"
+  local i byte
+  for ((i = 0; i < ${#hex}; i += 2)); do
+    byte="${hex:i:2}"
+    printf '%b' "\\0$(printf '%03o' "0x${byte}")"
+  done
+}
+
 resolve_registry_pubkey_pem() {
   local manifest_file="$1"
   local registry_file="$2"
@@ -374,9 +406,8 @@ resolve_registry_pubkey_pem() {
     exit 1
   fi
   verify_registry_sequence_bounds "$seq" "${min_seq:-}" "${max_seq:-}"
-  require_cmd xxd
   local spki_der="$TMP_DIR/publisher.pub.der"
-  printf '302a300506032b6570032100%s' "$pub_hex" | xxd -r -p > "$spki_der"
+  hex_to_bin "302a300506032b6570032100${pub_hex}" > "$spki_der"
   openssl pkey -pubin -inform DER -in "$spki_der" -out "$out_pem" >/dev/null 2>&1
 }
 
@@ -506,6 +537,19 @@ verify_installed_binary_in_store() {
   esac
 }
 
+TRUSTED_CLI=""
+if TRUSTED_CLI="$(find_trusted_installed_cli)"; then
+  :
+else
+  TRUSTED_CLI=""
+fi
+
+# Fail closed BEFORE downloading or mutating any directories when no trust anchor is available.
+if [[ -z "$TRUSTED_CLI" && -z "$SHA256_INPUT" && -z "$PUBKEY_FILE" && "$ALLOW_UNSIGNED" -ne 1 ]]; then
+  echo "install.sh: cold install requires explicit out-of-band verification: pass --sha256 <file|hex> or --pubkey <publisher.pub.pem|trust-registry.json>" >&2
+  exit 1
+fi
+
 OUT_OF_BAND_VERIFIED=0
 ORIGINAL_BASENAME=""
 if [[ -z "$ARCHIVE" ]]; then
@@ -555,11 +599,27 @@ fi
 TAR_VERBOSE_FILE="$TMP_DIR/tar.verbose"
 TAR_NAMES_FILE="$TMP_DIR/tar.names"
 validate_tar_entries "$STAGED_ARCHIVE" "$TAR_VERBOSE_FILE" "$TAR_NAMES_FILE"
-mkdir -p "$BIN_DIR"
 
 if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
    && grep -qxF "release.v1.sig" "$TAR_NAMES_FILE"; then
+  BOOTSTRAP_DIR="$TMP_DIR/bootstrap"
+  mkdir -p "$BOOTSTRAP_DIR"
+  chmod 0700 "$BOOTSTRAP_DIR"
+
+  # Always verify caller-supplied --pubkey when provided (even during upgrades).
+  if [[ -n "$PUBKEY_FILE" ]]; then
+    tar -xzf "$STAGED_ARCHIVE" -C "$BOOTSTRAP_DIR" release.v1.json release.v1.sig
+    verify_pubkey_signature "$BOOTSTRAP_DIR/release.v1.json" "$BOOTSTRAP_DIR/release.v1.sig" "$PUBKEY_FILE"
+    echo "Verified Ed25519 manifest signature." >&2
+  fi
+
+  if [[ -z "$TRUSTED_CLI" && "$OUT_OF_BAND_VERIFIED" -ne 1 && -z "$PUBKEY_FILE" ]]; then
+    echo "install.sh: cold install requires explicit out-of-band verification: pass --sha256 <file|hex> or --pubkey <publisher.pub.pem|trust-registry.json>" >&2
+    exit 1
+  fi
+
   echo "Installing signed release bundle into protected release store ..." >&2
+  mkdir -p "$BIN_DIR"
   if [[ -z "$STORE_DIR" ]]; then
     if [[ "$PLATFORM" == "linux" ]]; then
       mkdir -p "${HOME}/.local/share/agentic-org"
@@ -579,24 +639,10 @@ if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
   fi
 
   # On upgrades, always use the existing trusted installed binary — never execute the untrusted archive.
-  TRUSTED_CLI=""
-  if TRUSTED_CLI="$(find_trusted_installed_cli)"; then
+  if [[ -n "$TRUSTED_CLI" ]]; then
     echo "Using existing trusted installer: $TRUSTED_CLI" >&2
     INSTALL_JSON="$("$TRUSTED_CLI" "${INSTALL_ARGS[@]}")"
   else
-    # Cold bootstrap requires explicit out-of-band trust (--sha256 or --pubkey).
-    if [[ "$OUT_OF_BAND_VERIFIED" -ne 1 && -z "$PUBKEY_FILE" ]]; then
-      echo "install.sh: cold install requires explicit out-of-band verification: pass --sha256 <file|hex> or --pubkey <publisher.pub.pem|trust-registry.json>" >&2
-      exit 1
-    fi
-    BOOTSTRAP_DIR="$TMP_DIR/bootstrap"
-    mkdir -p "$BOOTSTRAP_DIR"
-    chmod 0700 "$BOOTSTRAP_DIR"
-    if [[ -n "$PUBKEY_FILE" ]]; then
-      tar -xzf "$STAGED_ARCHIVE" -C "$BOOTSTRAP_DIR" release.v1.json release.v1.sig
-      verify_pubkey_signature "$BOOTSTRAP_DIR/release.v1.json" "$BOOTSTRAP_DIR/release.v1.sig" "$PUBKEY_FILE"
-      echo "Verified Ed25519 manifest signature." >&2
-    fi
     tar -xzf "$STAGED_ARCHIVE" -C "$BOOTSTRAP_DIR" agentic-org
     if [[ ! -f "$BOOTSTRAP_DIR/agentic-org" || -L "$BOOTSTRAP_DIR/agentic-org" ]]; then
       echo "install.sh: extracted agentic-org is not a regular file" >&2
@@ -627,6 +673,7 @@ else
     echo "install.sh: refusing unsigned archive (pass --allow-unsigned only for unsigned local archives)" >&2
     exit 1
   fi
+  mkdir -p "$BIN_DIR"
   BUNDLE_NAME="${ORIGINAL_BASENAME%.tar.gz}"
   if [[ ! "$BUNDLE_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$ ]]; then
     echo "install.sh: unsafe archive filename: $BUNDLE_NAME" >&2

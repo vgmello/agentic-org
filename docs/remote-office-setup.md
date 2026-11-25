@@ -1,6 +1,6 @@
 # Remote Satellite Office Setup (Linux over Tailscale)
 
-This runbook documents the exact, reproducible commands to run a local HQ (macOS or Linux) with one or more remote Linux satellite offices (for example `apps-worker-eu` and `apps-main-eu`) connected over Tailscale mTLS, using prebuilt signed release packages with **no Rust or Node compiler on remote hosts**.
+This runbook documents the exact, reproducible commands to run a local HQ (macOS or Linux) with one or more remote Linux satellite offices (for example `worker-eu` and `main-eu`) connected over Tailscale mTLS, using prebuilt signed release packages with **no build toolchain required on remote hosts**.
 
 For full flag details on every command, see [CLI Reference](cli-reference.md).
 
@@ -9,16 +9,16 @@ For full flag details on every command, see [CLI Reference](cli-reference.md).
 ## Architecture Overview
 
 ```
-Local HQ (e.g. mac-air — 100.64.54.90)
+Local HQ (e.g. hq-host — 100.64.0.10)
   ├── Browser UI / API:  http://127.0.0.1:7420
-  ├── Federation mTLS:   0.0.0.0:7443 (SANs: 100.64.54.90, mac-air.tail68a573.ts.net)
+  ├── Federation mTLS:   0.0.0.0:7443 (SANs: 100.64.0.10, hq-host.tailnet.ts.net)
   └── Hosts local agents (e.g. @backend, @ui, @pm, @poc)
 
-Remote Satellite 1 (apps-worker-eu — 100.79.93.22, Ubuntu x86_64)
+Remote Satellite 1 (worker-eu — 100.64.0.21, Ubuntu x86_64)
   ├── systemd --user service running signed release store
   └── Hosts managed remote agents (e.g. @worker-eu-eng via claude / codex / agy)
 
-Remote Satellite 2 (apps-main-eu — 100.75.102.17, Ubuntu x86_64, zero compiler)
+Remote Satellite 2 (main-eu — 100.64.0.22, Ubuntu x86_64, no build toolchain)
   ├── systemd --user service running identical prebuilt signed release package
   └── Hosts managed remote agents (e.g. @main-eu-eng via claude / codex / agy)
 ```
@@ -35,7 +35,7 @@ Remote Satellite 2 (apps-main-eu — 100.75.102.17, Ubuntu x86_64, zero compiler
   loginctl enable-linger "$USER"
   systemctl --user is-system-running
   ```
-- Base tools: `curl` (or `wget`), `tar`, `sha256sum` (no Python or compiler required to install)
+- Base tools: `curl` (or `wget`), `tar`, `sha256sum`, and OpenSSL 3+ (if using `--pubkey`; no Python or compiler required to install)
 - AI agent CLI runtime(s) installed and signed in under the service user (e.g. `claude --version`, `codex --version`, or `agy --version`)
 - **Required on Linux for Claude Code sandboxing and subprocess env scrubbing (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`):**
   ```bash
@@ -51,7 +51,7 @@ Remote Satellite 2 (apps-main-eu — 100.75.102.17, Ubuntu x86_64, zero compiler
     sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict || true
   fi
   ```
-- **Not required on remote hosts:** Rust (`cargo`/`rustc`), Node.js, Bun, or a C compiler.
+- **Not required on remote hosts:** any build toolchain or compiler.
 
 ---
 
@@ -73,7 +73,7 @@ For a signed release build with OS service registration (`launchd` / `systemd --
 ```bash
 agentic-org setup \
   --federation-bind 0.0.0.0:7443 \
-  --federation-advertise 100.64.54.90,mac-air.tail68a573.ts.net
+  --federation-advertise 100.64.0.10,hq-host.tailnet.ts.net
 agentic-org service status
 ```
 
@@ -98,7 +98,7 @@ cat > "$HOME/.config/agentic-org/hq-setup.json" <<EOF
   },
   "federation": {
     "bind": "0.0.0.0:7443",
-    "advertise": ["100.64.54.90", "mac-air.tail68a573.ts.net"]
+    "advertise": ["100.64.0.10", "hq-host.tailnet.ts.net"]
   }
 }
 EOF
@@ -132,7 +132,7 @@ lsof -iTCP:7420 -iTCP:7443 -sTCP:LISTEN
 
 ## Step 2: Install Prebuilt Binaries on Remote Linux Satellites
 
-Run on each remote Linux host (`apps-worker-eu`, `apps-main-eu`, etc.) — **zero Rust compilation**.
+Run on each remote Linux host (`worker-eu`, `main-eu`, etc.) — **zero local compilation**.
 
 ### Option A: Install or upgrade from GitHub Releases
 ```bash
@@ -194,8 +194,8 @@ Repeat for each satellite (`apps-worker-eu`, `apps-main-eu`, etc.).
 
 ### 3a. Issue a one-time invitation on HQ
 ```bash
-# On HQ (replace 100.64.54.90:7443 with your HQ Tailscale IP:port)
-agentic-org office invite "apps-worker-eu" --address 100.64.54.90:7443 --json > /tmp/inv-worker-eu.json
+# On HQ (replace 100.64.0.10:7443 with your HQ Tailscale IP:port)
+agentic-org office invite "worker-eu" --address 100.64.0.10:7443 --json > /tmp/inv-worker-eu.json
 ```
 
 ### 3b. Start the join on the satellite host (piping the token over stdin)
@@ -373,7 +373,7 @@ ssh agents@apps-main-eu '
 - **`service conflict: ... is not a definition this adapter wrote`:** Keep the exact quoted `ExecStart="<binary>" "serve" "--name" "<instance>"` format in the systemd unit file when updating the release path.
 - **Claude Code exits before `initialize` on Linux (`bubblewrap is required for subprocess env scrubbing`):** Install `sudo apt-get install -y bubblewrap socat` on the Linux satellite so Claude Code can enforce `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` and OS-level sandboxing (plus `socat` for proxying `AGENT_OS_SOCKET` into the sandbox).
 - **macOS `cannot write ~/Library/LaunchAgents/...: Permission denied`:** Fix ownership (`sudo chown "$USER":staff ~/Library/LaunchAgents`) or run HQ in foreground mode via `agentic-org serve --setup <config.json>`.
-- **Satellite cannot reach HQ port `7443`:** Verify HQ is listening (`lsof -iTCP:7443 -sTCP:LISTEN`) and reachable over Tailscale (`nc -vz 100.64.54.90 7443`). Remember HQ starts its mTLS listener after the first organization is created.
+- **Satellite cannot reach HQ port `7443`:** Verify HQ is listening (`lsof -iTCP:7443 -sTCP:LISTEN`) and reachable over Tailscale (`nc -vz 100.64.0.10 7443`). Remember HQ starts its mTLS listener after the first organization is created.
 
 ---
 
