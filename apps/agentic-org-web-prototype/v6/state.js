@@ -32,7 +32,7 @@ if (VALID_THEMES.has(urlTheme)) {
   S.theme = urlTheme;
 } else {
   try {
-    const savedTheme = normalizeTheme(localStorage.getItem(THEME_STORE) ?? localStorage.getItem("agentic-org.v5.theme"));
+    const savedTheme = normalizeTheme(localStorage.getItem(THEME_STORE));
     if (VALID_THEMES.has(savedTheme)) S.theme = savedTheme;
   } catch (e) {}
 }
@@ -92,7 +92,7 @@ S.assemblyDividers = false;
 try { S.assemblyDividers = localStorage.getItem(ASSEMBLY_DIVIDERS_STORE) === "1"; } catch (e) {}
 document.documentElement.toggleAttribute("data-assembly-dividers", S.assemblyDividers);
 document.documentElement.toggleAttribute("data-hide-work-subtasks", !S.workSubtasks);
-const NAV_PIN_STORE = "agentic-org.v5.navPinned";
+const NAV_PIN_STORE = "agentic-org.v6.navPinned";
 S.navPinned = false;
 S.navHover = false;
 try { if (localStorage.getItem(NAV_PIN_STORE) === "1") S.navPinned = true; } catch (e) {}

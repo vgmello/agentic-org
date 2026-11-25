@@ -11,9 +11,8 @@ or `bun apps/agentic-org-web-prototype/smoke.ts --all` to run all 5 behavioral c
 - Shell: `v6.html` (links stylesheets in cascade order + `<script type="module" src="./v6/main.js">`).
 - Styles: `v6/styles/` (`base.css`, `home.css`, `theme-ocean-classic.css`, `theme-report.css`, `theme-graphite.css`), plus shared `operations.css` and `cozy.css`.
 - Core JS: `v6/data.js`, `v6/state.js`, `v6/ui.js`, `v6/main.js`.
-- Pages: `v6/pages/` (`home.js`, `inbox.js`, `work.js`, `projects.js`, `insights.js`, `chat.js`, `activity.js`, `teams.js`, `agent-profile.js`, `agent-focus.js`, `settings.js`).
+- Pages: `v6/pages/` (`home.js`, `inbox.js`, `work.js`, `task-composer.js`, `projects.js`, `insights.js`, `chat.js`, `activity.js`, `teams.js`, `agent-profile.js`, `agent-focus.js`, `settings.js`).
 - App shell: `v6/shell/` (`sidebar.js`, `router.js`, `cmdk.js`, `keyboard.js`, `dialogs.js`, `actions.js`).
-- Keep `v5.html` untouched (historical snapshot).
 
 ## Fast UX Craft (No Ceremony, Proper Taste)
 
