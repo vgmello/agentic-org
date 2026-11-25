@@ -18,19 +18,15 @@ pub(super) fn open_own_executable() -> io::Result<OwnExecutable> {
         Ok(file) => Ok(OwnExecutable::File(file)),
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
             // SAFETY: PR_GET_DUMPABLE is a read-only process attribute query with no pointer args.
+            // Execute-only (0111) sealed memfd images leave the child non-user-dumpable:
+            // 0 (SUID_DUMP_DISABLE) or 2 (SUID_DUMP_ROOT, Ubuntu default suid_dumpable=2), never 1.
             let dumpable = unsafe { libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) };
-            if dumpable != 0 {
-                return Err(error);
-            }
-            // Non-dumpable processes (such as an execute-only 0111 sealed memfd child) are
-            // refused both open() and readlink() on /proc/self/exe by the Linux kernel.
-            // If readlink still succeeds, require it to name a memfd image.
-            let memfd_or_unreadable = match fs::read_link("/proc/self/exe") {
-                Ok(link) => link.to_str().is_some_and(|s| s.starts_with("/memfd:")),
-                Err(link_err) if link_err.kind() == io::ErrorKind::PermissionDenied => true,
-                Err(_) => false,
-            };
-            if memfd_or_unreadable {
+            let non_user_dumpable = dumpable == 0 || dumpable == 2;
+            let is_memfd = fs::read_link("/proc/self/exe")
+                .ok()
+                .and_then(|link| link.to_str().map(|s| s.starts_with("/memfd:")))
+                .unwrap_or(false);
+            if non_user_dumpable && is_memfd {
                 Ok(OwnExecutable::SealedMemfd)
             } else {
                 Err(error)
