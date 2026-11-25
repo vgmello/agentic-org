@@ -6,8 +6,7 @@ import { shot } from './shot';
 // gateway adapter stay explicitly unavailable in production builds.
 const areas = [
 	['settings', 'Organization settings'],
-	['processes', 'Organization settings'],
-	['sessions', 'Activity']
+	['processes', 'Organization settings']
 ] as const;
 const heading = (area?: string) =>
 	area ? `${area} isn't available yet` : "Agentic Org isn't ready in the browser yet";
@@ -65,6 +64,7 @@ test('A3, A4, U1, B7: enabled session, live org, home, inbox, and chat routes re
 		'/work',
 		'/chat',
 		'/activity',
+		'/insights',
 		'/teams',
 		'/teams/members',
 		'/teams/org-chart',
@@ -86,7 +86,7 @@ test('A3, A4, U1, B7: enabled session, live org, home, inbox, and chat routes re
 			page.getByRole('heading', { level: 1, name: 'This link has expired or was already used.' })
 		).toBeVisible();
 	}
-	await visit(page, '/insights');
+	await visit(page, '/processes');
 	await expect(page.getByTestId('area-unavailable')).toBeVisible();
 });
 
@@ -101,16 +101,12 @@ test(
 				JSON.stringify([{ organization: { id: 'forged', name: 'Forged sample' } }])
 			);
 		});
-		await visit(page, '/activity?org=empty&mock=healthy&copilot=on');
-		await expect(page.getByRole('heading', { name: "Activity isn't available yet" })).toBeVisible();
+		await visit(page, '/processes?org=empty&mock=healthy&copilot=on');
+		await expect(
+			page.getByRole('heading', { name: "Organization settings isn't available yet" })
+		).toBeVisible();
 		await expect(page.getByText('Forged sample')).toHaveCount(0);
 		await expect(page.getByRole('button', { name: /add|create|bring in/i })).toHaveCount(0);
-		await page.getByRole('link', { name: 'Work', exact: true }).click();
-		await expect(page.getByRole('heading', { name: "Work isn't available yet" })).toBeVisible();
-		await expect(page.getByRole('link', { name: 'Work', exact: true })).toHaveAttribute(
-			'aria-current',
-			'page'
-		);
 		await shot(page, 'SRV-18-unavailable-navigation');
 	}
 );
@@ -136,7 +132,7 @@ test('SRV-18 / BUG-53: unknown routes keep their error and a named browser tab',
 	await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
 });
 
-for (const [path, area] of [['/activity', 'Activity']] as const) {
+for (const [path, area] of [['/processes', 'Organization settings']] as const) {
 	test(`BUG-53: ${path} keeps its wrapping navigation and readable copy at 320px`, async ({
 		page
 	}) => {
@@ -181,8 +177,6 @@ test('Step 6 routes stay unavailable in the static production release with zero 
 		['/projects/a-project/features/feat-1', 'Projects'],
 		['/projects/a-project/releases', 'Projects'],
 		['/projects/a-project/releases/rel-1', 'Projects'],
-		['/projects/a-project/insights', 'Projects'],
-		['/insights', undefined],
 		['/members/sam/cost', 'Teams'],
 		['/search?q=Why+is+SQLite+used', undefined]
 	] as const) {
@@ -199,7 +193,7 @@ test('Step 6 routes stay unavailable in the static production release with zero 
 test('BUG-53: the unavailable header home link has the design-system keyboard focus ring', async ({
 	page
 }) => {
-	await visit(page, '/activity');
+	await visit(page, '/processes');
 	await page.keyboard.press('Tab');
 	const home = page.getByRole('link', { name: 'Agentic Org', exact: true });
 	await expect(home).toBeFocused();

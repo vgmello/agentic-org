@@ -1,7 +1,9 @@
 import { orgApi } from '$lib/modules/organization/api';
+import { workItemsApi } from '$lib/modules/workitems/api';
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { createHttpCostsReadApi } from './http-api';
+import { createHttpInsightsReadApi } from './insights-http-api';
 import { createHttpSubscriptionUsageApi } from './subscription-http-api';
 import type {
 	AgentBudgetAction,
@@ -155,13 +157,20 @@ const gatewayCostsReadApi = createHttpCostsReadApi({
 	orgApi
 });
 
+const gatewayInsightsReadApi = createHttpInsightsReadApi({
+	http: gatewayHttp,
+	orgApi,
+	costsReadApi: gatewayCostsReadApi,
+	workItemsApi
+});
+
 const gatewaySubscriptionUsageApi = createHttpSubscriptionUsageApi({
 	http: gatewayHttp
 });
 
-// Organization cost summary, agent budgets, and subscription usage (TASK-79) are wired to the
-// authenticated gateway and fail closed when signed out. Remaining cost/insights routes stay
-// unavailable until their full gateway adapters land. Under `bun run dev:mock`,
+// Organization cost summary, insights (TASK-151), agent budgets, and subscription usage (TASK-79)
+// are wired to the authenticated gateway and fail closed when signed out. Remaining cost write/ledger
+// drill-down routes stay unavailable until their full gateway adapters land. Under `bun run dev:mock`,
 // `e2e/fakes/modules/costs.ts` stands in for this file.
 export const costsApi: CostsApi = {
 	prices: unavailableCall,
@@ -175,9 +184,15 @@ export const costsApi: CostsApi = {
 	projectInvestment: unavailableCall,
 	agentBudgets: (organizationId) =>
 		signedInSession() ? gatewayCostsReadApi.agentBudgets(organizationId) : unavailableCall(),
-	projectInsights: unavailableCall,
+	projectInsights: (organizationId, projectId, period) =>
+		signedInSession()
+			? gatewayInsightsReadApi.projectInsights(organizationId, projectId, period)
+			: unavailableCall(),
 	projectRecords: unavailableCall,
-	organizationInsights: unavailableCall,
+	organizationInsights: (organizationId, period) =>
+		signedInSession()
+			? gatewayInsightsReadApi.organizationInsights(organizationId, period)
+			: unavailableCall(),
 	exportRecords: unavailableCall,
 	memberCost: unavailableCall,
 	memberRecords: unavailableCall,
