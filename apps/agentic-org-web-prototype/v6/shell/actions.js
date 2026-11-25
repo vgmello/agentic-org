@@ -289,9 +289,10 @@ const CLICK_ACTIONS = {
   "work-archived": (_e, t) => {
     const menuId = t.closest(".menu")?.id;
     S.workShowArchived = !S.workShowArchived;
-    try { localStorage.setItem(WORK_ARCHIVED_STORE, S.workShowArchived ? "1" : "0"); } catch (e) {}
+    try { sessionStorage.setItem(WORK_ARCHIVED_STORE, S.workShowArchived ? "1" : "0"); } catch (e) {}
     render(false);
-    const trigger = menuId ? document.querySelector(`[aria-controls="${menuId}"]`) : null;
+    const trigger = menuId ? document.querySelector(`[aria-controls="${menuId}"]`)
+      : document.querySelector('[aria-controls="menu-scoped-work-display"], [aria-controls="menu-work-display"]');
     trigger?.focus();
   },
   "fav-proj": (_e, _t, id) => { const idx = S.favProjs.indexOf(id); if (idx >= 0) { S.favProjs.splice(idx, 1); toast(`Removed ${P[id].name} from favorites.`); } else { S.favProjs.push(id); toast(`Added ${P[id].name} to favorites.`); } render(false); },

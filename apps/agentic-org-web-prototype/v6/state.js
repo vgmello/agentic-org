@@ -78,7 +78,7 @@ S.workShowArchived = false;
 S.archiveAfterDays = 10;
 try { S.workDividers = localStorage.getItem(WORK_DIVIDERS_STORE) === "1"; } catch (e) {}
 try { S.workSubtasks = localStorage.getItem(WORK_SUBTASKS_STORE) !== "0"; } catch (e) {}
-try { S.workShowArchived = localStorage.getItem(WORK_ARCHIVED_STORE) === "1"; } catch (e) {}
+try { S.workShowArchived = sessionStorage.getItem(WORK_ARCHIVED_STORE) === "1"; } catch (e) {}
 try {
   const rawDays = localStorage.getItem(ARCHIVE_AFTER_DAYS_STORE);
   if (rawDays !== null) {

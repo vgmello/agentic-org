@@ -64,9 +64,14 @@ const SCOPED_WORK_GROUPS = {
 };
 
 function scopedWorkPresets(type, id) {
-  return type === "person" && id === "you"
-    ? [["all", "All"], ["needs-me", "Needs me"]]
-    : [["all", "All"], ["needs-me", "Needs me"], ["mine", "Mine"]];
+  if (type === "person" && id === "you") return [["all", "All"], ["needs-me", "Needs me"]];
+  const mineLabel = isRequestedMineScope(type, id) ? "Requested by me" : "Mine";
+  return [["all", "All"], ["needs-me", "Needs me"], ["mine", mineLabel]];
+}
+
+function workArchivedChip() {
+  if (!S.workShowArchived) return "";
+  return `<button class="work-archived-chip" type="button" data-act="work-archived" aria-label="Hide archived tasks" title="Click to hide archived tasks">Showing archived${ic("x", "ic14")}</button>`;
 }
 
 function isRequestedMineScope(type, id) {
@@ -160,6 +165,7 @@ function scopedWorkToolbar(type, id, items) {
       </div>
       ${workLayoutToggle("scopedWorkLayout")}
       ${scopedWorkMenus(type)}
+      ${workArchivedChip()}
     </div>
   </div>`;
 }
@@ -682,6 +688,7 @@ function pageWork() {
       </div>
       ${workLayoutToggle("workLayout")}
       ${workViewControls(selection.group, selection.subgroup)}
+      ${workArchivedChip()}
       <button class="btn primary" id="work-new-task" type="button" data-act="work-new-task">${ic("plus", "ic16")}New task</button>
     </div>
   </header>${workWorkspace(workResults(filtered, selection))}`;

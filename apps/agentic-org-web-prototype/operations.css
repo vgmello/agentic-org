@@ -440,6 +440,25 @@ html[data-theme="report"] {
   line-height: 1.2;
   vertical-align: middle;
 }
+.work-archived-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--tone-accent-ring, var(--line2));
+  border-radius: 999px;
+  background: var(--tone-accent-soft, var(--hover));
+  color: var(--tone-accent-ink, var(--white));
+  font-size: .75rem;
+  font-weight: 550;
+  line-height: 1;
+  white-space: nowrap;
+}
+.work-archived-chip:hover {
+  background: var(--hover);
+  color: var(--white);
+}
 @media (max-width: 720px), (pointer: coarse) {
   .work-layout-toggle { padding: 2px; }
   .work-layout-toggle .queue-tab { min-height: calc(var(--control-height) - 4px); }
