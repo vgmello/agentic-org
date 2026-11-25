@@ -80,6 +80,11 @@ def load_config(repo):
     return c
 
 
+def codex_config_path(repo):
+    consolidated = repo / ".agents/codex/config.toml"
+    return consolidated if consolidated.exists() else repo / ".codex/config.toml"
+
+
 def configure(repo, backend, executable, reason, limits=None):
     if backend != "repowise":
         raise ValueError("The supported stack uses Repowise only")
@@ -91,7 +96,7 @@ def configure(repo, backend, executable, reason, limits=None):
          "timeout_seconds": 600, "selection_reason": reason}
     if limits:
         c.update({k: limits[k] for k in ("max_chars", "timeout_seconds")})
-    mcp_path, codex_path = repo / ".mcp.json", repo / ".codex/config.toml"
+    mcp_path, codex_path = repo / ".mcp.json", codex_config_path(repo)
     hybrid = installed_mode(repo) == "hybrid"
     mcp = json.loads(mcp_path.read_text()) if hybrid and mcp_path.exists() else {}
     if not isinstance(mcp, dict) or not isinstance(mcp.get("mcpServers", {}), dict):
