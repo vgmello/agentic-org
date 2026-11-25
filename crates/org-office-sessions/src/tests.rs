@@ -3676,7 +3676,6 @@ fn task126_worktree_sandbox_grants_protect_git_metadata_and_compile_cleanly_for_
         "/office.db-journal",
         "/office.db.new",
         "/office.db.new-wal",
-        "/config.toml",
         "/credentials.toml",
         &format!("/teams/{root_team_id}/teams/**"),
     ] {
@@ -3685,6 +3684,12 @@ fn task126_worktree_sandbox_grants_protect_git_metadata_and_compile_cleanly_for_
             "denied_office_globs must deny `{needle}`: {denied_strs:?}"
         );
     }
+    assert!(
+        !denied_strs
+            .iter()
+            .any(|s| s.ends_with("/.cargo/config.toml") || s.ends_with("/.cargo/config")),
+        "must not read-deny ~/.cargo/config.toml (breaks cargo under Linux bwrap): {denied_strs:?}"
+    );
     assert!(
         !denied_strs
             .iter()
@@ -3730,14 +3735,47 @@ fn task126_worktree_sandbox_grants_protect_git_metadata_and_compile_cleanly_for_
         "/worktrees/self-admin/gitdir",
         "/worktrees/self-admin/config.worktree",
         "/.git",
-        "/.git/hooks",
-        "/.git/hooks/**",
     ] {
         assert!(
             deny_strs.iter().any(|s| s.ends_with(needle)),
             "worktree_sandbox_grants missing write deny `{needle}`: {deny_strs:?}"
         );
     }
+    // Optional non-existent bare-cache files (`packed-refs`, `shallow`) and `.git/hooks` on a
+    // worktree `.git` file must NOT be emitted into `deny_write` (Linux bwrap turns missing
+    // denyWrite files into EACCES stubs; `<cache>` stays outside `writable_roots`).
+    for absent in ["/packed-refs", "/shallow", "/.git/hooks"] {
+        assert!(
+            !deny_strs.iter().any(|s| s.ends_with(absent)),
+            "absent optional git path `{absent}` must not be emitted into deny_write: {deny_strs:?}"
+        );
+    }
+    // A dangling symlink at `packed-refs` MUST be detected via `symlink_metadata` and write-denied.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            cache_dir.join("nonexistent-target"),
+            cache_dir.join("packed-refs"),
+        )
+        .unwrap();
+        let (_, wt_write_denies_dangling) = mgr.worktree_sandbox_grants(&self_emp_id, false);
+        assert!(
+            wt_write_denies_dangling
+                .iter()
+                .any(|p| p.as_str().ends_with("/packed-refs")),
+            "dangling symlink at packed-refs must still be write-denied"
+        );
+        std::fs::remove_file(cache_dir.join("packed-refs")).unwrap();
+    }
+    // When `packed-refs` DOES exist on disk, it MUST be protected in `deny_write`.
+    std::fs::write(cache_dir.join("packed-refs"), "# pack-refs\n").unwrap();
+    let (_, wt_write_denies_with_packed) = mgr.worktree_sandbox_grants(&self_emp_id, false);
+    assert!(
+        wt_write_denies_with_packed
+            .iter()
+            .any(|p| p.as_str().ends_with("/packed-refs")),
+        "existing packed-refs must be write-denied"
+    );
 
     // Verify Codex adapter compiles the resulting policy without downgrading self worktree root.
     let ws_dir = tempfile::tempdir().unwrap();
@@ -4532,6 +4570,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
         },
         preset: PermissionPreset::AutonomousSandboxed,
         allowed_tools: None,
+        writable_roots: Vec::new(),
         suspended_on_asks: Vec::new(),
         waiting_for_member_id: None,
         waiting_for_name: None,
@@ -4854,4 +4893,765 @@ fn task126_org_topology_invalidates_warm_digest_and_expiring_oauth_triggers_stal
         err.starts_with("WARM_ROUTE_STALE"),
         "expected WARM_ROUTE_STALE on expiring OAuth, got: {err}"
     );
+}
+
+#[test]
+fn task126_approval_bridge_enforces_writable_roots_and_strict_git_admin_names() {
+    use org_office::git::{OfficeGitState, TaskWorkspaceRecord};
+
+    let dir = tempfile::tempdir().unwrap();
+    let canon_dir = dir.path().canonicalize().unwrap();
+    let ws = canon_dir.join("workspace");
+    let wt = canon_dir.join("worktree");
+    let cargo_home = canon_dir.join("host-cargo");
+    let bare_cache = canon_dir.join("cache.git");
+    let admin_dir = bare_cache.join("worktrees/self-admin");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(wt.join("src")).unwrap();
+    std::fs::create_dir_all(&cargo_home).unwrap();
+    std::fs::create_dir_all(&admin_dir).unwrap();
+    std::fs::write(wt.join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
+
+    let ws_spec = SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+    let wt_spec = SpecPath::try_from(wt.to_str().unwrap()).unwrap();
+    let admin_spec = SpecPath::try_from(admin_dir.to_str().unwrap()).unwrap();
+    let mut cfg = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let write_denies = vec![org_agent_runtime::PathPattern::try_from(
+        admin_dir.join("config.worktree").to_str().unwrap(),
+    )
+    .unwrap()];
+    crate::preset::apply_worktree_sandbox_rules(&mut cfg, &[wt_spec, admin_spec], &write_denies);
+
+    let edit_req = |path: &std::path::Path| {
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("req-1"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({ "file_path": path.to_str().unwrap(), "content": "x" }),
+        );
+        req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        req
+    };
+
+    // Allowed: existing and new files inside worktree writable root.
+    assert_eq!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_req(&wt.join("src/lib.rs")),
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AllowByPolicy
+    );
+    assert_eq!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_req(&wt.join("src/new_dir/new_mod.rs")),
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AllowByPolicy
+    );
+
+    // Denied: host `$CARGO_HOME/config.toml`, absent bare-cache metadata (`packed-refs`,
+    // `refs/replace/x`), and `worktrees/self-admin/config.worktree` (inside writable admin_dir
+    // but explicitly write-denied).
+    for forbidden in [
+        cargo_home.join("config.toml"),
+        bare_cache.join("packed-refs"),
+        bare_cache.join("refs/replace/deadbeef"),
+        admin_dir.join("config.worktree"),
+    ] {
+        assert!(
+            matches!(
+                crate::preset::decide_escalation_with_roots(
+                    &edit_req(&forbidden),
+                    &cfg.policy,
+                    cfg.preset,
+                    cfg.allowed_tools.as_deref(),
+                    Some(cfg.sandbox.writable_roots.as_slice()),
+                ),
+                crate::preset::EscalationDisposition::AutoDeny { .. }
+            ),
+            "expected AutoDeny for write target outside writable_roots/denied: {}",
+            forbidden.display()
+        );
+    }
+
+    // Denied: leaf and intermediate dangling symlinks inside writable root pointing outside.
+    #[cfg(unix)]
+    {
+        let leaf_link = wt.join("escape-leaf.toml");
+        std::os::unix::fs::symlink(cargo_home.join("config.toml"), &leaf_link).unwrap();
+        let dir_link = wt.join("escape-dir");
+        std::os::unix::fs::symlink(cargo_home.join("missing-subdir"), &dir_link).unwrap();
+        for escaped in [leaf_link, dir_link.join("config.toml")] {
+            assert!(
+                matches!(
+                    crate::preset::decide_escalation_with_roots(
+                        &edit_req(&escaped),
+                        &cfg.policy,
+                        cfg.preset,
+                        cfg.allowed_tools.as_deref(),
+                        Some(cfg.sandbox.writable_roots.as_slice()),
+                    ),
+                    crate::preset::EscalationDisposition::AutoDeny { .. }
+                ),
+                "dangling symlink escape must be AutoDenied: {}",
+                escaped.display()
+            );
+        }
+    }
+
+    // Verify `.git` as directory emits `.git/hooks` and `.git/hooks/**`, and unsafe glob/whitespace
+    // chars in `repository_id` / `admin_dir_name` are rejected from worktree grants.
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let hire_req = Request::new::<HrHire>(
+        127,
+        &HrHireParams {
+            command_id: new_uuid_v7(),
+            request_id: new_uuid_v7(),
+            employee_id: new_uuid_v7(),
+            home_team_id: root_team_id.clone(),
+            role_id: None,
+            proposal: HireProposalWire {
+                name: "Dir Git Agent".into(),
+                handle: "dir-git-agent".into(),
+                title: Some("Engineer".into()),
+                focus: None,
+                role_text: None,
+                title_in_team: Some("Engineer".into()),
+                reports_to_employee_id: Some(owner_id.clone()),
+                office_id: None,
+                model_profile_id: None,
+                model_id: None,
+                permission_preset: Some("autonomous_sandboxed".into()),
+                tools_config: Vec::new(),
+                system_prompt_markdown: None,
+                body: Some("Work.".into()),
+            },
+            reason: "Dir git test hire".into(),
+        },
+    )
+    .unwrap();
+    let emp_id = match office
+        .dispatch_hiring_rpc(Some(&owner_id), &hire_req)
+        .unwrap()
+        .outcome
+    {
+        org_proto::Outcome::Result(v) => {
+            serde_json::from_value::<org_proto::hiring::HireOpResult>(v)
+                .unwrap()
+                .employee_id
+                .unwrap()
+        }
+        org_proto::Outcome::Error(e) => panic!("hire failed: {e:?}"),
+    };
+    let office_id = office.info().office_id.clone();
+    let office_rt = office.runtime_root().join(&office_id);
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    );
+    let repo_ok = "01a212a8-982e-71ca-a6de-322dba762f01";
+    let emp_root = office_rt
+        .join("teams")
+        .join(&root_team_id)
+        .join("agents")
+        .join(&emp_id);
+    let wt_with_dir_git = emp_root.join("tasks/t-dir/repositories").join(repo_ok);
+    std::fs::create_dir_all(wt_with_dir_git.join(".git")).unwrap();
+    std::fs::create_dir_all(
+        office_rt
+            .join("repositories")
+            .join(format!("{repo_ok}.git/worktrees/adm-ok")),
+    )
+    .unwrap();
+    let mut gs = OfficeGitState::default();
+    gs.workspaces.insert(
+        OfficeGitState::workspace_key("t-dir", repo_ok, &emp_id),
+        TaskWorkspaceRecord {
+            office_id: office_id.clone(),
+            employee_id: emp_id.clone(),
+            task_id: "t-dir".into(),
+            task_key: "T-DIR".into(),
+            repository_id: repo_ok.into(),
+            repository_key: Some("ok".into()),
+            branch: "task/T-DIR".into(),
+            worktree_path: wt_with_dir_git.display().to_string(),
+            admin_dir_name: "adm-ok".into(),
+            base_commit: "abc".into(),
+            pushed_head: None,
+            state: "active".into(),
+        },
+    );
+    for (idx, bad) in [
+        "bad]name",
+        "bad(name)",
+        "bad{name}",
+        "bad~name",
+        "bad name",
+        "bad*name",
+        "bad?name",
+        "bad[name",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let bad_wt = emp_root.join(format!("tasks/t-check-{idx}/repositories/repo"));
+        std::fs::create_dir_all(&bad_wt).unwrap();
+        gs.workspaces.insert(
+            OfficeGitState::workspace_key(&format!("t-bad-admin-{idx}"), repo_ok, &emp_id),
+            TaskWorkspaceRecord {
+                office_id: office_id.clone(),
+                employee_id: emp_id.clone(),
+                task_id: format!("t-bad-admin-{idx}"),
+                task_key: format!("T-BA-{idx}"),
+                repository_id: repo_ok.into(),
+                repository_key: Some("ok".into()),
+                branch: "task/T-BA".into(),
+                worktree_path: bad_wt.display().to_string(),
+                admin_dir_name: (*bad).into(),
+                base_commit: "abc".into(),
+                pushed_head: None,
+                state: "active".into(),
+            },
+        );
+        gs.workspaces.insert(
+            OfficeGitState::workspace_key(&format!("t-bad-repo-{idx}"), bad, &emp_id),
+            TaskWorkspaceRecord {
+                office_id: office_id.clone(),
+                employee_id: emp_id.clone(),
+                task_id: format!("t-bad-repo-{idx}"),
+                task_key: format!("T-BR-{idx}"),
+                repository_id: (*bad).into(),
+                repository_key: Some("bad".into()),
+                branch: "task/T-BR".into(),
+                worktree_path: bad_wt.display().to_string(),
+                admin_dir_name: "adm-ok".into(),
+                base_commit: "abc".into(),
+                pushed_head: None,
+                state: "active".into(),
+            },
+        );
+    }
+    gs.save(office.runtime_root(), &office_id).unwrap();
+
+    let (writable, denies) = mgr.worktree_sandbox_grants(&emp_id, false);
+    assert!(
+        denies.iter().any(|p| p.as_str().ends_with("/.git/hooks"))
+            && denies
+                .iter()
+                .any(|p| p.as_str().ends_with("/.git/hooks/**")),
+        "directory .git must emit .git/hooks and .git/hooks/** write denies: {denies:?}"
+    );
+    for s in writable
+        .iter()
+        .map(|p| p.as_str())
+        .chain(denies.iter().map(|p| p.as_str()))
+    {
+        assert!(
+            !s.contains("bad"),
+            "unsafe admin_dir_name or repository_id leaked into sandbox rules: {s}"
+        );
+    }
+}
+
+#[test]
+fn task126_approval_bridge_blocks_canonical_deny_bypasses_trailing_slash_symlinks_and_opaque_changes(
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let canon_dir = dir.path().canonicalize().unwrap();
+    let ws = canon_dir.join("workspace");
+    let wt = canon_dir.join("worktree");
+    let cargo_home = canon_dir.join("host-cargo");
+    let bare_cache = canon_dir.join("cache.git");
+    let admin_dir = bare_cache.join("worktrees/self-admin");
+    let objects_dir = bare_cache.join("objects");
+    let objects_info = objects_dir.join("info");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::create_dir_all(&cargo_home).unwrap();
+    std::fs::create_dir_all(&admin_dir).unwrap();
+    std::fs::create_dir_all(&objects_info).unwrap();
+    std::fs::write(
+        wt.join(".git"),
+        "gitdir: ../cache.git/worktrees/self-admin\n",
+    )
+    .unwrap();
+
+    let ws_spec = SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+    let wt_spec = SpecPath::try_from(wt.to_str().unwrap()).unwrap();
+    let admin_spec = SpecPath::try_from(admin_dir.to_str().unwrap()).unwrap();
+    let objects_spec = SpecPath::try_from(objects_dir.to_str().unwrap()).unwrap();
+
+    let mut cfg = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let write_denies = vec![
+        org_agent_runtime::PathPattern::try_from(
+            admin_dir.join("config.worktree").to_str().unwrap(),
+        )
+        .unwrap(),
+        org_agent_runtime::PathPattern::try_from(wt.join(".git").to_str().unwrap()).unwrap(),
+        org_agent_runtime::PathPattern::try_from(format!("{}/**", objects_info.display()).as_str())
+            .unwrap(),
+    ];
+    crate::preset::apply_worktree_sandbox_rules(
+        &mut cfg,
+        &[wt_spec.clone(), admin_spec.clone(), objects_spec],
+        &write_denies,
+    );
+
+    let edit_raw = |raw: &str| {
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("req-bypass"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({ "file_path": raw, "content": "evil" }),
+        );
+        req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        req
+    };
+
+    // Finding 1A: `/./`, `//`, and non-canonical path forms cannot evade fixed write denies.
+    for evasive in [
+        format!("{}/./config.worktree", admin_dir.display()),
+        format!("{}//config.worktree", admin_dir.display()),
+        format!("{}/./.git", wt.display()),
+        format!("{}/./info/alternates", objects_dir.display()),
+    ] {
+        assert!(
+            matches!(
+                crate::preset::decide_escalation_with_roots(
+                    &edit_raw(&evasive),
+                    &cfg.policy,
+                    cfg.preset,
+                    cfg.allowed_tools.as_deref(),
+                    Some(cfg.sandbox.writable_roots.as_slice()),
+                ),
+                crate::preset::EscalationDisposition::AutoDeny { .. }
+            ),
+            "evasive path must be AutoDenied: {evasive}"
+        );
+    }
+
+    // Finding 1B + 2: in-root symlinks to denied targets and trailing `/` / `/.` on dangling symlinks.
+    #[cfg(unix)]
+    {
+        let adm_link = wt.join("adm");
+        std::os::unix::fs::symlink(&admin_dir, &adm_link).unwrap();
+        let git_link = wt.join("g");
+        std::os::unix::fs::symlink(wt.join(".git"), &git_link).unwrap();
+        let oi_link = wt.join("oi");
+        std::os::unix::fs::symlink(&objects_info, &oi_link).unwrap();
+        let dangling = wt.join("escape");
+        std::os::unix::fs::symlink(cargo_home.join("config.toml"), &dangling).unwrap();
+
+        for bypass in [
+            format!("{}/config.worktree", adm_link.display()),
+            git_link.display().to_string(),
+            format!("{}/alternates", oi_link.display()),
+            format!("{}/", dangling.display()),
+            format!("{}/.", dangling.display()),
+        ] {
+            assert!(
+                matches!(
+                    crate::preset::decide_escalation_with_roots(
+                        &edit_raw(&bypass),
+                        &cfg.policy,
+                        cfg.preset,
+                        cfg.allowed_tools.as_deref(),
+                        Some(cfg.sandbox.writable_roots.as_slice()),
+                    ),
+                    crate::preset::EscalationDisposition::AutoDeny { .. }
+                ),
+                "symlink/trailing-slash bypass must be AutoDenied: {bypass}"
+            );
+        }
+    }
+
+    // Finding 2b: filesystem root `/` is ignored as a writable root.
+    let root_only = vec![SpecPath::try_from("/").unwrap()];
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&wt.join("ok.rs").display().to_string()),
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(root_only.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+}
+
+#[test]
+fn task126_approval_bridge_covers_opaque_rename_targets_and_safe_ask_readonly_presets() {
+    let dir = tempfile::tempdir().unwrap();
+    let canon_dir = dir.path().canonicalize().unwrap();
+    let ws = canon_dir.join("workspace");
+    let wt = canon_dir.join("worktree");
+    let tmp = canon_dir.join("agent-tmp");
+    let cargo_home = canon_dir.join("host-cargo");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::create_dir_all(&cargo_home).unwrap();
+
+    let ws_spec = SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+    let wt_spec = SpecPath::try_from(wt.to_str().unwrap()).unwrap();
+    let mut cfg = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    crate::preset::apply_worktree_sandbox_rules(&mut cfg, &[wt_spec], &[]);
+    let edit_raw = |raw: &str| {
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("req-preset"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({ "file_path": raw, "content": "x" }),
+        );
+        req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        req
+    };
+
+    // Finding 3: notebook_path (real Claude `capability: None`), rename move_path / kind.move_path,
+    // and mixed malformed / dual-key changes.
+    let nb_outside = ApprovalRequest::new(
+        ApprovalId::new("nb-1"),
+        ApprovalKind::FileChange,
+        Escalation::None,
+        "NotebookEdit",
+        serde_json::json!({ "notebook_path": cargo_home.join("nb.ipynb").to_str().unwrap() }),
+    );
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &nb_outside,
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    let mut rename_map = ApprovalRequest::new(
+        ApprovalId::new("mv-1"),
+        ApprovalKind::FileChange,
+        Escalation::None,
+        "ApplyPatch",
+        serde_json::json!({
+            "fileChanges": {
+                wt.join("src.rs").to_str().unwrap(): {
+                    "kind": { "type": "update", "move_path": cargo_home.join("config.toml").to_str().unwrap() }
+                }
+            }
+        }),
+    );
+    rename_map.capability = Some(org_agent_runtime::ToolCapability::Edit);
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &rename_map,
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    let mut mixed_opaque = ApprovalRequest::new(
+        ApprovalId::new("op-1"),
+        ApprovalKind::FileChange,
+        Escalation::None,
+        "ApplyPatch",
+        serde_json::json!({
+            "file_path": wt.join("ok.rs").to_str().unwrap(),
+            "changes": [{ "unexpected_field": 123 }]
+        }),
+    );
+    mixed_opaque.capability = Some(org_agent_runtime::ToolCapability::Edit);
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &mixed_opaque,
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    // Finding 4: SafeAsk escalates inside root & auto-denies outside; ReadOnly omits tmpdir.
+    let safe_cfg = crate::preset::build_session_policy(
+        PermissionPreset::SafeAsk,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let safe_roots = crate::manager::effective_approval_writable_roots_from(
+        PermissionPreset::SafeAsk,
+        &safe_cfg.sandbox.writable_roots,
+        &tmp,
+    );
+    assert!(
+        safe_roots
+            .iter()
+            .any(|p| p.as_str() == tmp.to_str().unwrap()),
+        "non-ReadOnly preset must include canonical tmpdir in approval writable roots"
+    );
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&ws.join("ok.rs").display().to_string()),
+            &safe_cfg.policy,
+            safe_cfg.preset,
+            safe_cfg.allowed_tools.as_deref(),
+            Some(safe_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::EscalateToOwner { .. }
+    ));
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&cargo_home.join("config.toml").display().to_string()),
+            &safe_cfg.policy,
+            safe_cfg.preset,
+            safe_cfg.allowed_tools.as_deref(),
+            Some(safe_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    let ro_cfg = crate::preset::build_session_policy(
+        PermissionPreset::ReadOnly,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let ro_roots = crate::manager::effective_approval_writable_roots_from(
+        PermissionPreset::ReadOnly,
+        &ro_cfg.sandbox.writable_roots,
+        &tmp,
+    );
+    assert!(
+        !ro_roots.iter().any(|p| p.as_str() == tmp.to_str().unwrap()),
+        "ReadOnly preset must NOT add tmpdir to approval writable roots"
+    );
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&tmp.join("x").display().to_string()),
+            &ro_cfg.policy,
+            ro_cfg.preset,
+            ro_cfg.allowed_tools.as_deref(),
+            Some(ro_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+}
+
+#[test]
+fn task126_pass3_notebook_edit_unsandboxed_deny_resolver_macos_case_and_dual_key_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let canon_dir = dir.path().canonicalize().unwrap();
+    let ws = canon_dir.join("workspace");
+    let wt = canon_dir.join("worktree");
+    let admin_dir = canon_dir.join("cache.git/worktrees/self-admin");
+    let cargo_home = canon_dir.join("host-cargo");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::create_dir_all(&admin_dir).unwrap();
+    std::fs::create_dir_all(&cargo_home).unwrap();
+    std::fs::write(
+        wt.join(".git"),
+        "gitdir: ../cache.git/worktrees/self-admin\n",
+    )
+    .unwrap();
+
+    let ws_spec = SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+    let wt_spec = SpecPath::try_from(wt.to_str().unwrap()).unwrap();
+    let admin_spec = SpecPath::try_from(admin_dir.to_str().unwrap()).unwrap();
+    let mut cfg = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let write_denies = vec![
+        org_agent_runtime::PathPattern::try_from(
+            admin_dir.join("config.worktree").to_str().unwrap(),
+        )
+        .unwrap(),
+        org_agent_runtime::PathPattern::try_from(wt.join(".git").to_str().unwrap()).unwrap(),
+    ];
+    crate::preset::apply_worktree_sandbox_rules(&mut cfg, &[wt_spec, admin_spec], &write_denies);
+    // Simulate an owner previously granting `AllowAlways` on `NotebookEdit`.
+    cfg.policy.allow.push(org_agent_runtime::Rule {
+        tool: org_agent_runtime::RuleTool::try_from("NotebookEdit").unwrap(),
+        scope: org_agent_runtime::RuleScope::Any,
+    });
+
+    // Finding 1: NotebookEdit (`capability: None`, `kind: FileChange`) must still hit `cap:edit` denies.
+    #[cfg(unix)]
+    {
+        let adm_link = wt.join("adm");
+        std::os::unix::fs::symlink(&admin_dir, &adm_link).unwrap();
+        let dangling_cw = wt.join("cw");
+        std::os::unix::fs::symlink(admin_dir.join("config.worktree"), &dangling_cw).unwrap();
+
+        for target in [adm_link.join("config.worktree"), wt.join(".git")] {
+            let nb_req = ApprovalRequest::new(
+                ApprovalId::new("nb-deny"),
+                ApprovalKind::FileChange,
+                Escalation::None,
+                "NotebookEdit",
+                serde_json::json!({ "notebook_path": target.to_str().unwrap() }),
+            );
+            assert!(
+                matches!(
+                    crate::preset::decide_escalation_with_roots(
+                        &nb_req,
+                        &cfg.policy,
+                        cfg.preset,
+                        None,
+                        Some(cfg.sandbox.writable_roots.as_slice()),
+                    ),
+                    crate::preset::EscalationDisposition::AutoDeny { ref reason }
+                        if reason.contains("denied by office security policy")
+                ),
+                "NotebookEdit (capability: None) must AutoDeny via policy deny on target: {}",
+                target.display()
+            );
+        }
+
+        // Finding 2: Unsandboxed (`writable_roots: None`) dangling symlink & symlink+`..` traversal.
+        for unsandboxed_bypass in [
+            dangling_cw.display().to_string(),
+            format!("{}/sub/../config.worktree", adm_link.display()),
+        ] {
+            let mut req = ApprovalRequest::new(
+                ApprovalId::new("unsbx"),
+                ApprovalKind::FileChange,
+                Escalation::None,
+                "Write",
+                serde_json::json!({ "file_path": unsandboxed_bypass, "content": "x" }),
+            );
+            req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+            assert!(
+                matches!(
+                    crate::preset::decide_escalation_with_roots(
+                        &req,
+                        &cfg.policy,
+                        cfg.preset,
+                        cfg.allowed_tools.as_deref(),
+                        None,
+                    ),
+                    crate::preset::EscalationDisposition::AutoDeny { .. }
+                ),
+                "unsandboxed deny bypass must AutoDeny: {unsandboxed_bypass}"
+            );
+        }
+    }
+
+    // Finding 3: macOS APFS case-folded absent denied target inside writable admin dir.
+    #[cfg(target_os = "macos")]
+    {
+        let mut upper = ApprovalRequest::new(
+            ApprovalId::new("apfs-case"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({
+                "file_path": admin_dir.join("CONFIG.WORKTREE").to_str().unwrap(),
+                "content": "x"
+            }),
+        );
+        upper.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        assert!(matches!(
+            crate::preset::decide_escalation_with_roots(
+                &upper,
+                &cfg.policy,
+                cfg.preset,
+                cfg.allowed_tools.as_deref(),
+                Some(cfg.sandbox.writable_roots.as_slice()),
+            ),
+            crate::preset::EscalationDisposition::AutoDeny { .. }
+        ));
+    }
+
+    // Finding 4: Dual-key array `changes` item and `notebookPath` inside object `changes`.
+    for payload in [
+        serde_json::json!({
+            "changes": [{
+                "path": wt.join("ok.rs").to_str().unwrap(),
+                "file_path": cargo_home.join("config.toml").to_str().unwrap()
+            }]
+        }),
+        serde_json::json!({
+            "changes": [{
+                "path": wt.join("ok.rs").to_str().unwrap(),
+                "file_path": 123
+            }]
+        }),
+        serde_json::json!({
+            "fileChanges": {
+                wt.join("ok.rs").to_str().unwrap(): {
+                    "notebookPath": cargo_home.join("nb.ipynb").to_str().unwrap()
+                }
+            }
+        }),
+    ] {
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("chg-dual"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "ApplyPatch",
+            payload,
+        );
+        req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        assert!(matches!(
+            crate::preset::decide_escalation_with_roots(
+                &req,
+                &cfg.policy,
+                cfg.preset,
+                cfg.allowed_tools.as_deref(),
+                Some(cfg.sandbox.writable_roots.as_slice()),
+            ),
+            crate::preset::EscalationDisposition::AutoDeny { .. }
+        ));
+    }
 }

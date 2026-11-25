@@ -21,7 +21,7 @@ use org_supervise::StopMode;
 use crate::binding::RunBindingRegistry;
 use crate::credentials::{format_rfc3339_ms, now_ms, redact_secrets, rfc3339_now};
 use crate::instructions::{compose_turn_objective, TurnTrigger, SAME_USER_ISOLATION_NOTICE};
-use crate::preset::{decide_escalation_with_tools, EscalationDisposition};
+use crate::preset::{decide_escalation_with_roots, EscalationDisposition};
 use crate::recovery::{SessionStore, StallWatchdog};
 use crate::subagents::{BackgroundKind, BackgroundRegistry};
 
@@ -113,6 +113,7 @@ pub(crate) struct SessionRuntimeState {
     pub policy: PermissionPolicy,
     pub preset: PermissionPreset,
     pub allowed_tools: Option<Vec<ToolName>>,
+    pub writable_roots: Vec<org_agent_runtime::SpecPath>,
     pub suspended_on_asks: Vec<String>,
     pub waiting_for_member_id: Option<String>,
     pub waiting_for_name: Option<String>,
@@ -1093,11 +1094,15 @@ fn handle_approval_request(
     req: &ApprovalRequest,
     active_tokens: &[&str],
 ) -> Option<Control> {
-    match decide_escalation_with_tools(
+    let writable_roots = state
+        .sandbox_enabled
+        .then_some(state.writable_roots.as_slice());
+    match decide_escalation_with_roots(
         req,
         &state.policy,
         state.preset,
         state.allowed_tools.as_deref(),
+        writable_roots,
     ) {
         EscalationDisposition::AllowByPolicy => Some(Control::Answer {
             request_id: req.id.clone(),
@@ -1298,6 +1303,7 @@ mod pump_tests {
             },
             preset: PermissionPreset::AutonomousSandboxed,
             allowed_tools: None,
+            writable_roots: Vec::new(),
             suspended_on_asks: Vec::new(),
             waiting_for_member_id: None,
             waiting_for_name: None,
@@ -1441,5 +1447,75 @@ mod pump_tests {
         assert_eq!(req.reason, "auth_expired");
         assert_eq!(req.objective, "turn-1\n\nturn-2\n\nturn-3");
         assert_eq!(req.oauth_token_fp.as_deref(), Some("deadbeefcafebabe"));
+    }
+
+    #[test]
+    fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
+        let dir = tempfile::tempdir().unwrap();
+        let canon = dir.path().canonicalize().unwrap();
+        let ws = canon.join("ws");
+        let outside = canon.join("outside");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let ws_spec = org_agent_runtime::SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+        let preset_cfg = crate::preset::build_session_policy(
+            PermissionPreset::AutonomousSandboxed,
+            true,
+            &ws_spec,
+            None,
+            &[],
+            1,
+        )
+        .unwrap();
+
+        let ctx = test_pump_ctx(&canon, None, None);
+        let mut st = ctx.state.lock().unwrap();
+        st.policy = preset_cfg.policy;
+        st.preset = preset_cfg.preset;
+        st.allowed_tools = preset_cfg.allowed_tools;
+        st.writable_roots = vec![ws_spec];
+        st.sandbox_enabled = true;
+
+        let make_req = |p: std::path::PathBuf| {
+            let mut req = ApprovalRequest::new(
+                ApprovalId::new("a-pump"),
+                org_agent_runtime::ApprovalKind::FileChange,
+                org_agent_runtime::Escalation::None,
+                "Write",
+                serde_json::json!({ "file_path": p.to_str().unwrap(), "content": "ok" }),
+            );
+            req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+            req
+        };
+
+        // Sandboxed: write inside writable_roots is allowed; write outside is auto-denied.
+        let inside_ctrl = handle_approval_request(&mut st, &make_req(ws.join("a.rs")), &[]);
+        assert!(matches!(
+            inside_ctrl,
+            Some(Control::Answer {
+                decision: Decision::AllowOnce,
+                ..
+            })
+        ));
+        let outside_ctrl = handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+        assert!(matches!(
+            outside_ctrl,
+            Some(Control::Answer {
+                decision: Decision::Deny { .. },
+                ..
+            })
+        ));
+
+        // Unsandboxed: writable_roots check is skipped so preset allow rule governs.
+        st.sandbox_enabled = false;
+        let unsandboxed_ctrl =
+            handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+        assert!(matches!(
+            unsandboxed_ctrl,
+            Some(Control::Answer {
+                decision: Decision::AllowOnce,
+                ..
+            })
+        ));
     }
 }

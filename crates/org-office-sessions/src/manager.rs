@@ -223,6 +223,7 @@ struct PreparedSessionLaunch {
     task_ref: Option<String>,
     tried_connections: Vec<String>,
     home: PathBuf,
+    tmpdir: PathBuf,
     binding_file: PathBuf,
     preset_cfg: PresetConfig,
     spec_hash: String,
@@ -1704,6 +1705,7 @@ impl SessionManager {
             task_ref,
             tried_connections,
             home,
+            tmpdir,
             binding_file,
             preset_cfg,
             spec_hash,
@@ -2019,7 +2021,9 @@ impl SessionManager {
         ];
         // Preserve host read-only Rust toolchain directories when present so managed agents can
         // run `rustc`/`cargo --offline` inside their isolated task worktrees (`TASK-126`).
-        // Host `~/.cargo/{credentials*,config*}` are explicitly denied in `denied_office_globs_for`.
+        // Host `~/.cargo/credentials{,.toml}` are explicitly read+write denied; `$CARGO_HOME`
+        // stays outside `writable_roots` (enforced by OS sandbox and approval bridge), and host
+        // `~/.cargo/config.toml` must not store secrets when shared with agents.
         let rust_forbidden = vec![
             home.to_path_buf(),
             workspace.to_path_buf(),
@@ -2343,9 +2347,14 @@ impl SessionManager {
             }
             collect_existing_worktree_dirs(&canon_root, 0, &mut wt_dirs);
             for wt_dir in wt_dirs {
-                push_exact_pattern(&mut write_denies, &wt_dir.join(".git"));
-                push_exact_pattern(&mut write_denies, &wt_dir.join(".git").join("hooks"));
-                push_glob_pattern(&mut write_denies, &wt_dir.join(".git").join("hooks"));
+                let dot_git = wt_dir.join(".git");
+                push_exact_pattern(&mut write_denies, &dot_git);
+                // Worktrees have a regular `.git` file (not a directory); only deny `.git/hooks`
+                // when `.git` is a directory so Linux `bwrap` never tries to mask under a file.
+                if dot_git.is_dir() {
+                    push_exact_pattern(&mut write_denies, &dot_git.join("hooks"));
+                    push_glob_pattern(&mut write_denies, &dot_git.join("hooks"));
+                }
             }
         }
         // Scope bare-cache writable grants strictly to repositories targeted by `employee_id`'s
@@ -2646,6 +2655,7 @@ fn build_initial_runtime_state(
         policy: prepared.preset_cfg.policy.clone(),
         preset: prepared.preset_cfg.preset,
         allowed_tools: prepared.preset_cfg.allowed_tools.clone(),
+        writable_roots: effective_approval_writable_roots(prepared),
         suspended_on_asks: Vec::new(),
         waiting_for_member_id: None,
         waiting_for_name: None,
@@ -2653,6 +2663,34 @@ fn build_initial_runtime_state(
         pending_wake_count: 0,
         pending_wake_reason: None,
     }
+}
+
+fn effective_approval_writable_roots(prepared: &PreparedSessionLaunch) -> Vec<SpecPath> {
+    effective_approval_writable_roots_from(
+        prepared.preset_cfg.preset,
+        &prepared.preset_cfg.sandbox.writable_roots,
+        &prepared.tmpdir,
+    )
+}
+
+pub(crate) fn effective_approval_writable_roots_from(
+    preset: PermissionPreset,
+    sandbox_writable_roots: &[SpecPath],
+    tmpdir: &Path,
+) -> Vec<SpecPath> {
+    let mut roots = sandbox_writable_roots.to_vec();
+    if preset == PermissionPreset::ReadOnly {
+        return roots;
+    }
+    let canon_tmp = canonicalize_with_tail(tmpdir);
+    if let Some(spec) = canon_tmp
+        .to_str()
+        .and_then(|s| SpecPath::try_from(s).ok())
+        .filter(|spec| !roots.contains(spec))
+    {
+        roots.push(spec);
+    }
+    roots
 }
 
 fn spawn_pump_thread(
@@ -3678,8 +3716,10 @@ fn is_safe_worktree_admin_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
-        && !name.contains(['/', '\\', '\0'])
         && !name.contains("..")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 fn collect_self_active_admins(
@@ -3691,6 +3731,7 @@ fn collect_self_active_admins(
     for ws in git_state.workspaces.values() {
         if ws.employee_id == employee_id
             && ws.state == "active"
+            && is_safe_worktree_admin_name(&ws.repository_id)
             && is_safe_worktree_admin_name(&ws.admin_dir_name)
         {
             by_repo
@@ -3716,8 +3757,12 @@ fn append_cargo_credential_denies(out: &mut Vec<PathPattern>) {
             dirs.push(p);
         }
     }
+    // Deny Cargo registry token files (`credentials`, `credentials.toml`) only. Do NOT read-deny
+    // `config` / `config.toml`: Cargo unconditionally opens them on every `cargo` invocation, and
+    // Linux `bwrap` turns read-denies on non-existent files into `EACCES` stubs, breaking `cargo`.
+    // `$CARGO_HOME` stays outside `writable_roots`, so agents still cannot modify `config.toml`.
     for dir in dirs {
-        for file in ["credentials", "credentials.toml", "config", "config.toml"] {
+        for file in ["credentials", "credentials.toml"] {
             push_exact_pattern(out, &dir.join(file));
         }
     }
@@ -3750,30 +3795,34 @@ fn append_bare_cache_sandbox_rules(
             );
         }
     }
-    for rel_dir in [
-        "hooks",
-        "info",
-        "objects/info",
-        "refs/remotes",
-        "refs/tags",
-        "refs/office",
-        "refs/replace",
-    ] {
-        // Deny both the exact directory (prevents rename/replace via writable parent like `objects/`)
-        // and its subtree (`/**`).
+    // Always protect directories inside writable roots (`objects/info`) and core bare-repo dirs
+    // (`hooks`, `info`, `refs/remotes`, `refs/tags`). Note `org-git::cache::init_bare_cache`
+    // deletes `<cache>/hooks`; keeping `hooks` write-denied prevents re-creation. Guard optional
+    // dirs (`refs/office`, `refs/replace`) via `symlink_metadata` (catches dangling symlinks too)
+    // so `bwrap` never turns absent `refs/replace` into an `EACCES` stub; `<cache>` and
+    // `<cache>/refs` remain outside `writable_roots` (enforced by OS sandbox and approval bridge).
+    for rel_dir in ["hooks", "info", "objects/info", "refs/remotes", "refs/tags"] {
         push_raw_pattern(write_denies, &format!("{}/{rel_dir}", canon.display()));
         push_raw_pattern(write_denies, &format!("{}/{rel_dir}/**", canon.display()));
     }
-    for rel_file in [
-        "config",
-        "config.worktree",
-        "HEAD",
-        "packed-refs",
-        "description",
-        "FETCH_HEAD",
-        "shallow",
-    ] {
+    for rel_dir in ["refs/office", "refs/replace"] {
+        if std::fs::symlink_metadata(canon.join(rel_dir)).is_ok() {
+            push_raw_pattern(write_denies, &format!("{}/{rel_dir}", canon.display()));
+            push_raw_pattern(write_denies, &format!("{}/{rel_dir}/**", canon.display()));
+        }
+    }
+    // Always protect core bare-repo metadata files (`config`, `HEAD`, `description`). Guard
+    // optional Git files (`packed-refs`, `shallow`, `FETCH_HEAD`, `config.worktree`) ONLY when
+    // present (`symlink_metadata().is_ok()` catches dangling symlinks too): `<cache>` stays
+    // outside `writable_roots` (enforced by both OS sandbox and approval bridge), and listing
+    // absent `packed-refs` in `denyWrite` makes Linux `bwrap` return `EACCES` instead of `ENOENT`.
+    for rel_file in ["config", "HEAD", "description"] {
         push_raw_pattern(write_denies, &format!("{}/{rel_file}", canon.display()));
+    }
+    for rel_file in ["packed-refs", "shallow", "FETCH_HEAD", "config.worktree"] {
+        if std::fs::symlink_metadata(canon.join(rel_file)).is_ok() {
+            push_raw_pattern(write_denies, &format!("{}/{rel_file}", canon.display()));
+        }
     }
 }
 
