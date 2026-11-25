@@ -354,7 +354,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "hr",
         verb: "inspect",
-        summary: "Inspect an HR hire request by ID",
+        summary: "Inspect HR hire request",
         call: "hr.hire.inspect",
         kind: Kind::Read,
         input: HR_INSPECT_INPUT,
@@ -369,7 +369,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "hr",
         verb: "hire",
-        summary: "Hire, draft, confirm, or withdraw an agent hire",
+        summary: "Hire, draft, confirm, or withdraw agent",
         call: "hr.hire",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -405,7 +405,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "agent",
         verb: "move",
-        summary: "Move an agent to another home team",
+        summary: "Move agent to another team",
         call: "member.agent_move",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -423,7 +423,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "agent",
         verb: "pause",
-        summary: "Pause an active agent",
+        summary: "Pause agent",
         call: "member.agent_set_status",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -441,7 +441,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "agent",
         verb: "resume",
-        summary: "Resume a paused agent",
+        summary: "Resume paused agent",
         call: "member.agent_set_status",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -459,7 +459,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "agent",
         verb: "offboard",
-        summary: "Offboard an agent",
+        summary: "Offboard agent",
         call: "member.agent_offboard",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -495,7 +495,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
     Command {
         resource: "team",
         verb: "set-limit",
-        summary: "Set a team's maximum member limit (1..=100)",
+        summary: "Set team member cap (1..=100)",
         call: "team.set_max_members",
         kind: Kind::Write {
             ack: Ack::Committed,

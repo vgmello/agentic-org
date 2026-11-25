@@ -22,11 +22,13 @@ use org_host::setup_flow::{self, Platform, Request};
 
 pub(crate) const HELP: &str = "Set up this computer's instance and register its service:\n  \
 agentic-org setup [--name <instance>] [--port <port>] [--federation-bind <IP:port>] [--federation-advertise <host,...>]\n\
+Use when: initializing a new Agentic Org instance on this computer, registering its OS background service, or enabling HQ mTLS federation for remote satellites (do not use setup flags to enroll a satellite; run `setup` first, then `agentic-org office join`).\n\
 Without --name the instance is \"default\" on port 7420; a named instance takes the first free port from 7421.\n\
 Pass --federation-bind (for example 0.0.0.0:7443) to enable HQ mTLS federation for remote satellites;\n\
 --federation-advertise adds comma-separated DNS/IP SANs (hostnames or IPs without ports) to HQ's federation cert.\n\
 Without a terminal, from a file (service mode, data folder, credential directory, \
-address, optional federation):\n  agentic-org setup --non-interactive --config <file> [--name <instance>]";
+address, optional federation):\n  agentic-org setup --non-interactive --config <file> [--name <instance>]\n\
+Use when: automating headless, CI, or container instance setup from a strict JSON config file.";
 
 pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
     run_as(arguments, org_host::Config::refuse_root)

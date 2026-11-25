@@ -3,7 +3,7 @@
 //! Keeps `apps/agent-os/src/main.rs` a thin composition root (`AGENTS.md` Rule 1,
 //! Non-Negotiable #15). Legacy `org-spool` and file-queue fallbacks are removed.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 pub mod attach;
 pub mod budget_dispatch;
@@ -11,6 +11,7 @@ pub mod budget_table;
 pub mod dispatch;
 pub mod git_dispatch;
 pub mod git_table;
+pub mod help_guidance;
 pub mod hiring_dispatch;
 pub mod hiring_table;
 pub mod keys;
@@ -32,6 +33,12 @@ use keys::UuidV7KeySource;
 use office::{Binding, BoundOffice};
 use org_command::{Office, Output};
 use sources::StdSources;
+
+/// Help text for `agent-os session attach`.
+pub const SESSION_ATTACH_HELP: &str = "Usage: agent-os session attach\n\
+Use when: batching multiple agent-os commands in one shell turn over a persistent office socket.\n\
+Binds once to the office socket and executes one JSON command per line of stdin:\n  \
+{\"command\":\"msg inbox\",\"input\":{},\"options\":{\"limit\":5}}\n";
 
 /// Runs the shared `org-command` table against any supplied [`Office`] implementation
 /// (either a bound agent socket or a grant-bound person host channel).
@@ -62,14 +69,15 @@ pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Offi
     let table = table::table();
     let mut sources = StdSources;
     let mut keys = UuidV7KeySource;
-    org_command::run(
+    let output = org_command::run(
         &table,
         program,
         effective_args,
         &mut sources,
         &mut keys,
         office,
-    )
+    );
+    help_guidance::augment_help(&table, program, effective_args, output)
 }
 
 /// Runs `agent-os` with the supplied command-line arguments and binding, returning the
@@ -92,10 +100,7 @@ pub fn run(args: &[String]) -> u8 {
 
 fn run_session_attach(args: &[String], binding: Binding) -> u8 {
     if matches!(args, [_, _, flag] if flag == "--help" || flag == "-h") {
-        let help = "Usage: agent-os session attach\n\
-            Binds once to the office socket and executes one JSON command per line of stdin:\n  \
-            {\"command\":\"msg inbox\",\"input\":{},\"options\":{\"limit\":5}}\n";
-        let _ = io::stdout().write_all(help.as_bytes());
+        let _ = io::stdout().write_all(SESSION_ATTACH_HELP.as_bytes());
         return 0;
     }
     let mut office = BoundOffice::new(binding);
