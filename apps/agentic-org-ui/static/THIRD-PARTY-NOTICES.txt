@@ -2,8 +2,9 @@ Agentic Org Web UI — License & Third-Party Notices
 Copyright 2026 Vitor M
 
 Agentic Org is licensed under the Functional Source License, Version 1.1,
-ALv2 Future License (FSL-1.1-ALv2). See LICENSE in the repository root or
-https://github.com/vgmello/agentic-org/blob/main/LICENSE for the full terms.
+ALv2 Future License (FSL-1.1-ALv2). The full license text is bundled beside
+this file in LICENSE.txt (identical to LICENSE at the repository root;
+specification at https://fsl.software/FSL-1.1-ALv2.template.md).
 
 ========================================================================
 Heroicons v2.2.0 (https://github.com/tailwindlabs/heroicons/tree/v2.2.0)
