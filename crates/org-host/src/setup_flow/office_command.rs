@@ -1,39 +1,64 @@
-//! `agentic-org office list` and `agentic-org office restart` (implementation plan O1,
-//! FC-019, FC-021): native session calls over `host.sock` (`office.list` and `office.restart`).
+//! `agentic-org office` host-level commands (`list`, `restart`, `join`, `remove-pending`,
+//! `re-enroll`) and shared CLI session establishment (`TASK-113`, FC-019, FC-020, FC-021).
 //!
-//! Uses the interim terminal sign-in (`account.verify`) until browser-approved CLI sign-in
-//! lands in A5: before asking for a password it verifies the host binary (`verify_host` +
-//! `may_receive_secrets`), then always ends the session before returning.
+//! Authentication selection for CLI commands:
+//! - When `--login <user>` is supplied, signs in via `account.verify` after verifying the host
+//!   binary (`verify_host` + `may_receive_secrets`).
+//! - When `--login` is omitted, tries `session.local` (immediate on local authless HTTP
+//!   instances) and falls back to browser-approved CLI sign-in (`cli.approval.*`), printing
+//!   the approval URL to stderr so `--json` stdout stays pure JSON.
+//! - Satellite bootstrap commands (`join`, `remove-pending`, `re-enroll`) also support
+//!   sessionless `local-bootstrap` on fresh HTTPS satellites with zero administrator accounts.
+
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
+use std::time::Duration;
 
 use org_host_control::ops::{
     AccountVerify, AccountVerifyParams, OfficeJoin, OfficeJoinParams, OfficeList, OfficeListParams,
     OfficeReEnroll, OfficeReEnrollParams, OfficeRemovePending, OfficeRemovePendingParams,
-    OfficeRestart, OfficeRestartParams, SessionEnd, SessionParams,
+    OfficeRestart, OfficeRestartParams, SessionEnd, SessionLocal, SessionLocalParams,
+    SessionParams,
 };
-use org_host_control::{HostOpResult, InvitationTokenSecret, Password, SessionHandle};
-use org_proto::{ErrorCode, OfficeInfo};
+use org_host_control::{
+    Administrator, HostOpResult, InstanceStatus, InstanceStatusParams, InvitationTokenSecret,
+    Password, SessionHandle,
+};
+use org_proto::{Call, ErrorCode, OfficeInfo};
 
 use super::{connect_verified, not_running, registered, say};
+use crate::human::Wire;
 
 /// Help text for `agentic-org office`.
 pub const HELP: &str = "agentic-org office <subcommand>\n\n\
 Subcommands:\n  \
-list --login <login> [--org <org_id>] [--name <instance>] [--json]\n      \
-List offices visible to the signed-in account with their live readiness status\n  \
-restart <office_id> --login <login> [--name <instance>] [--json]\n      \
+list [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
+List offices visible to the account with their live readiness status\n  \
+restart <office_id> [--login <login>] [--name <instance>] [--json]\n      \
 Restart an offline or unavailable office (requires administrator or organization owner)\n  \
-join (--invitation-file <path> | --invitation-stdin) --login <login> --yes [--name <instance>] [--json]\n      \
+invite <office_name> --address <host:port> [--address <host:port>...] [--org <org_id>] [--ttl <secs>] [--re-enroll-office <office_id>] [--login <login>] [--name <instance>] [--json]\n      \
+Create a one-time satellite office invitation on HQ (owner-only)\n  \
+invitations [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
+List satellite office invitations on HQ with status and expiry (check codes appear only on the satellite)\n  \
+approve <invitation_id> --code <check_code> [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
+Approve a pending satellite enrollment on HQ using its check code\n  \
+decline <invitation_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
+Decline an active satellite invitation on HQ\n  \
+cancel <invitation_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
+Cancel an active satellite invitation on HQ\n  \
+remove <office_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
+Revoke a satellite office's certificates and remove it on HQ\n  \
+sync-status [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]\n      \
+Show live replication and federation sync status for an HQ or satellite office\n  \
+join (--invitation-file <path> | --invitation-stdin) --yes [--login <login>] [--name <instance>] [--json]\n      \
 Join this host as a satellite office using an HQ-issued invitation token\n  \
-remove-pending <office_id> --login <login> [--name <instance>] [--json]\n      \
+remove-pending <office_id> [--login <login>] [--name <instance>] [--json]\n      \
 Cancel and remove a pending satellite join before approval completes\n  \
-re-enroll <office_id> (--invitation-file <path> | --invitation-stdin) --login <login> --yes [--name <instance>] [--json]\n      \
+re-enroll <office_id> (--invitation-file <path> | --invitation-stdin) --yes [--login <login>] [--name <instance>] [--json]\n      \
 Re-enroll an existing satellite onto a replacement HQ after R1 import (D25)\n\n\
-Asks for the account password at the terminal. On systems that cannot identify the host's \
-program (Linux, containers), terminal password sign-in is refused until browser-approved \
-CLI sign-in is available.";
+When --login is omitted, uses the local authless session if authentication is disabled,\n\
+or prints a browser approval link to stderr when authentication is enabled.";
 
 /// What office commands need from the person: their password, asked once after the host is verified.
 pub(crate) type AskPassword<'a> = &'a mut dyn FnMut() -> Result<Password, String>;
@@ -45,15 +70,19 @@ pub(crate) struct Target<'a> {
     pub(crate) name: Option<&'a str>,
 }
 
+const APPROVAL_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const APPROVAL_MAX_WAIT: Duration = Duration::from_secs(10 * 60);
+
 /// `agentic-org office list` for registered instance `name`.
 pub fn office_list(
     name: Option<&str>,
-    login: &str,
+    login: Option<&str>,
     org_id: Option<&str>,
     json: bool,
     out: &mut dyn Write,
 ) -> Result<(), String> {
     let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
+    let mut err_out = std::io::stderr().lock();
     list(
         &Target {
             socket: &socket,
@@ -64,6 +93,7 @@ pub fn office_list(
         org_id,
         json,
         &mut crate::human::password,
+        &mut err_out,
         out,
     )
 }
@@ -71,12 +101,13 @@ pub fn office_list(
 /// `agentic-org office restart` for registered instance `name`.
 pub fn office_restart(
     name: Option<&str>,
-    login: &str,
+    login: Option<&str>,
     office_id: &str,
     json: bool,
     out: &mut dyn Write,
 ) -> Result<(), String> {
     let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
+    let mut err_out = std::io::stderr().lock();
     restart(
         &Target {
             socket: &socket,
@@ -87,6 +118,7 @@ pub fn office_restart(
         office_id,
         json,
         &mut crate::human::password,
+        &mut err_out,
         out,
     )
 }
@@ -95,7 +127,7 @@ pub fn office_restart(
 pub fn office_join(
     name: Option<&str>,
     login: Option<&str>,
-    invitation: String,
+    invitation: InvitationTokenSecret,
     consent: bool,
     json: bool,
     out: &mut dyn Write,
@@ -106,34 +138,23 @@ pub fn office_join(
         instance_id: &id,
         name,
     };
-    let secret = InvitationTokenSecret::new(invitation)
-        .map_err(|_| "invitation token cannot be empty".to_owned())?;
     let operation_id = crate::ids::uuid_v7().map_err(|_| "no operation ID could be generated")?;
-    let (mut wire, session) = match login {
-        Some(user) => {
-            let (w, s) = connect_and_sign_in(&target, user, &mut crate::human::password)?;
-            (w, Some(s))
-        }
-        None => (connect_only(&target)?, None),
-    };
-    let handle = || {
-        session
-            .as_ref()
-            .map(|s| SessionHandle::new(s.expose().into()).expect("a live handle"))
-    };
-    let answer = wire.call_answer::<OfficeJoin>(
-        &OfficeJoinParams {
-            session: handle(),
-            operation_id: operation_id.clone(),
-            invitation: secret,
-            consent,
+    let mut err_out = std::io::stderr().lock();
+    let answer = run_join_authority_call::<OfficeJoin, _>(
+        &target,
+        login,
+        &mut crate::human::password,
+        &mut err_out,
+        move |session| {
+            Ok(OfficeJoinParams {
+                session,
+                operation_id: operation_id.clone(),
+                invitation,
+                consent,
+            })
         },
-        None,
-    );
-    if let Some(s) = handle() {
-        let _ = wire.call::<SessionEnd>(&SessionParams { session: s }, None);
-    }
-    match answer? {
+    )?;
+    match answer {
         Ok(HostOpResult::Completed { result }) => {
             if json {
                 let encoded = serde_json::to_string_pretty(&result)
@@ -185,30 +206,21 @@ pub fn office_remove_pending(
         name,
     };
     let operation_id = crate::ids::uuid_v7().map_err(|_| "no operation ID could be generated")?;
-    let (mut wire, session) = match login {
-        Some(user) => {
-            let (w, s) = connect_and_sign_in(&target, user, &mut crate::human::password)?;
-            (w, Some(s))
-        }
-        None => (connect_only(&target)?, None),
-    };
-    let handle = || {
-        session
-            .as_ref()
-            .map(|s| SessionHandle::new(s.expose().into()).expect("a live handle"))
-    };
-    let answer = wire.call_answer::<OfficeRemovePending>(
-        &OfficeRemovePendingParams {
-            session: handle(),
-            operation_id: operation_id.clone(),
-            office_id: office_id.to_owned(),
+    let mut err_out = std::io::stderr().lock();
+    let answer = run_join_authority_call::<OfficeRemovePending, _>(
+        &target,
+        login,
+        &mut crate::human::password,
+        &mut err_out,
+        |session| {
+            Ok(OfficeRemovePendingParams {
+                session,
+                operation_id: operation_id.clone(),
+                office_id: office_id.to_owned(),
+            })
         },
-        None,
-    );
-    if let Some(s) = handle() {
-        let _ = wire.call::<SessionEnd>(&SessionParams { session: s }, None);
-    }
-    match answer? {
+    )?;
+    match answer {
         Ok(HostOpResult::Completed { .. }) => {
             if json {
                 say(
@@ -240,7 +252,7 @@ pub fn office_re_enroll(
     name: Option<&str>,
     login: Option<&str>,
     office_id: &str,
-    invitation: String,
+    invitation: InvitationTokenSecret,
     consent: bool,
     json: bool,
     out: &mut dyn Write,
@@ -251,35 +263,24 @@ pub fn office_re_enroll(
         instance_id: &id,
         name,
     };
-    let secret = InvitationTokenSecret::new(invitation)
-        .map_err(|_| "invitation token cannot be empty".to_owned())?;
     let operation_id = crate::ids::uuid_v7().map_err(|_| "no operation ID could be generated")?;
-    let (mut wire, session) = match login {
-        Some(l) => {
-            let (w, s) = connect_and_sign_in(&target, l, &mut crate::human::password)?;
-            (w, Some(s))
-        }
-        None => (connect_only(&target)?, None),
-    };
-    let handle = || {
-        session
-            .as_ref()
-            .map(|s| SessionHandle::new(s.expose().into()).expect("a live handle"))
-    };
-    let answer = wire.call_answer::<OfficeReEnroll>(
-        &OfficeReEnrollParams {
-            session: handle(),
-            operation_id: operation_id.clone(),
-            office_id: office_id.to_owned(),
-            invitation: secret,
-            consent,
+    let mut err_out = std::io::stderr().lock();
+    let answer = run_join_authority_call::<OfficeReEnroll, _>(
+        &target,
+        login,
+        &mut crate::human::password,
+        &mut err_out,
+        move |session| {
+            Ok(OfficeReEnrollParams {
+                session,
+                operation_id: operation_id.clone(),
+                office_id: office_id.to_owned(),
+                invitation,
+                consent,
+            })
         },
-        None,
-    );
-    if let Some(s) = handle() {
-        let _ = wire.call::<SessionEnd>(&SessionParams { session: s }, None);
-    }
-    match answer? {
+    )?;
+    match answer {
         Ok(HostOpResult::Completed { result }) => {
             if json {
                 let encoded = serde_json::to_string_pretty(&result)
@@ -314,11 +315,76 @@ pub fn office_re_enroll(
     }
 }
 
-fn connect_only(target: &Target<'_>) -> Result<crate::human::Wire, String> {
+/// Executes a satellite join-authority call (`office.join`, `office.remove_pending`,
+/// `office.re_enroll`) using:
+/// 1. `--login <user>` password sign-in when explicitly given,
+/// 2. `session.local` when local authless mode is active,
+/// 3. sessionless `local-bootstrap` when the host has no administrator account, or
+/// 4. browser-approved CLI sign-in (`cli.approval.*`) when authentication is enabled.
+fn run_join_authority_call<C, F>(
+    target: &Target<'_>,
+    login: Option<&str>,
+    password: AskPassword<'_>,
+    prompt_out: &mut dyn Write,
+    build_params: F,
+) -> Result<Result<C::Result, ErrorCode>, String>
+where
+    C: Call,
+    F: FnOnce(Option<SessionHandle>) -> Result<C::Params, String>,
+{
+    if let Some(user) = login {
+        let (mut wire, session) = connect_and_sign_in(target, user, password)?;
+        let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
+        let params = build_params(Some(handle))?;
+        let answer = wire.call_answer::<C>(&params, None);
+        end_session(&mut wire, &session);
+        return answer;
+    }
+
+    let mut wire = connect_local_peer(target)?;
+    match wire.call_answer::<SessionLocal>(&SessionLocalParams {}, None)? {
+        Ok(signed) => {
+            let handle = SessionHandle::new(signed.session.expose().into()).expect("a live handle");
+            let params = build_params(Some(handle))?;
+            let answer = wire.call_answer::<C>(&params, None);
+            end_session(&mut wire, &signed.session);
+            return answer;
+        }
+        Err(ErrorCode::NotAuthorized) => {}
+        Err(code) => return Err(format!("the service refused local sign-in ({code:?})")),
+    }
+
+    // Check open `instance.status` BEFORE building or sending secret-bearing join parameters:
+    // only a fresh host with `Administrator::None` admits sessionless `local-bootstrap`.
+    let status = match wire.call_answer::<InstanceStatus>(&InstanceStatusParams {}, None)? {
+        Ok(status) => status,
+        Err(code) => return Err(format!("the service refused status lookup ({code:?})")),
+    };
+    if status.administrator == Administrator::None {
+        let params = build_params(None)?;
+        return wire.call_answer::<C>(&params, None);
+    }
+
+    // Host has an administrator and authentication is enabled: authenticate via browser approval
+    // on the already-verified `host.sock` wire before transmitting any join secret.
+    let (mut wire, session, _, _) = super::sign_in_command::approve_on_wire(
+        wire,
+        APPROVAL_POLL_INTERVAL,
+        APPROVAL_MAX_WAIT,
+        prompt_out,
+    )?;
+    let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
+    let params = build_params(Some(handle))?;
+    let answer = wire.call_answer::<C>(&params, None);
+    end_session(&mut wire, &session);
+    answer
+}
+
+pub(super) fn connect_local_peer(target: &Target<'_>) -> Result<Wire, String> {
     let refused = std::cell::RefCell::new(None);
     connect_verified(target.socket, target.instance_id, |stream: &UnixStream| {
         crate::human::verify_host(stream)
-            .and_then(|host| host.may_receive_secrets())
+            .map(|_| ())
             .inspect_err(|why| *refused.borrow_mut() = Some(why.clone()))
     })
     .map_err(|why| {
@@ -329,11 +395,45 @@ fn connect_only(target: &Target<'_>) -> Result<crate::human::Wire, String> {
     })
 }
 
+pub(super) fn end_session(wire: &mut Wire, session: &SessionHandle) {
+    let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
+    let _ = wire.call::<SessionEnd>(&SessionParams { session: handle }, None);
+}
+
+/// Establishes an authenticated `host.sock` session for a CLI command:
+/// - `--login <user>` -> verified-host password sign-in (`account.verify`).
+/// - no `--login` -> `session.local` (instant on local authless HTTP), falling back to
+///   browser-approved CLI sign-in (`cli.approval.*`) when authentication is enabled.
+pub(super) fn connect_cli_session(
+    target: &Target<'_>,
+    login: Option<&str>,
+    password: AskPassword<'_>,
+    prompt_out: &mut dyn Write,
+) -> Result<(Wire, SessionHandle), String> {
+    if let Some(user) = login {
+        return connect_and_sign_in(target, user, password);
+    }
+    let mut wire = connect_local_peer(target)?;
+    match wire.call_answer::<SessionLocal>(&SessionLocalParams {}, None)? {
+        Ok(signed) => Ok((wire, signed.session)),
+        Err(ErrorCode::NotAuthorized) => {
+            let (wire, session, _, _) = super::sign_in_command::approve_on_wire(
+                wire,
+                APPROVAL_POLL_INTERVAL,
+                APPROVAL_MAX_WAIT,
+                prompt_out,
+            )?;
+            Ok((wire, session))
+        }
+        Err(code) => Err(format!("the service refused local sign-in ({code:?})")),
+    }
+}
+
 pub(super) fn connect_and_sign_in(
     target: &Target<'_>,
     login: &str,
     password: AskPassword<'_>,
-) -> Result<(crate::human::Wire, SessionHandle), String> {
+) -> Result<(Wire, SessionHandle), String> {
     let refused = std::cell::RefCell::new(None);
     let mut wire = connect_verified(target.socket, target.instance_id, |stream: &UnixStream| {
         crate::human::verify_host(stream)
@@ -369,22 +469,23 @@ pub(super) fn connect_and_sign_in(
 /// Lists offices visible to the signed-in account.
 pub(crate) fn list(
     target: &Target<'_>,
-    login: &str,
+    login: Option<&str>,
     org_id: Option<&str>,
     json: bool,
     password: AskPassword<'_>,
+    prompt_out: &mut dyn Write,
     out: &mut dyn Write,
 ) -> Result<(), String> {
-    let (mut wire, session) = connect_and_sign_in(target, login, password)?;
-    let handle = || SessionHandle::new(session.expose().into()).expect("a live handle");
+    let (mut wire, session) = connect_cli_session(target, login, password, prompt_out)?;
+    let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
     let answer = wire.call_answer::<OfficeList>(
         &OfficeListParams {
-            session: handle(),
+            session: handle,
             org_id: org_id.map(str::to_owned),
         },
         None,
     );
-    let _ = wire.call::<SessionEnd>(&SessionParams { session: handle() }, None);
+    end_session(&mut wire, &session);
     let listed = match answer? {
         Ok(listed) => listed,
         Err(ErrorCode::NotFound) => return Err("organization not found".into()),
@@ -422,24 +523,25 @@ fn format_office_line(office: &OfficeInfo) -> String {
 /// Requests a restart of `office_id` through `office.restart` on `host.sock`.
 pub(crate) fn restart(
     target: &Target<'_>,
-    login: &str,
+    login: Option<&str>,
     office_id: &str,
     json: bool,
     password: AskPassword<'_>,
+    prompt_out: &mut dyn Write,
     out: &mut dyn Write,
 ) -> Result<(), String> {
     let operation_id = crate::ids::uuid_v7().map_err(|_| "no operation ID could be generated")?;
-    let (mut wire, session) = connect_and_sign_in(target, login, password)?;
-    let handle = || SessionHandle::new(session.expose().into()).expect("a live handle");
+    let (mut wire, session) = connect_cli_session(target, login, password, prompt_out)?;
+    let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
     let answer = wire.call_answer::<OfficeRestart>(
         &OfficeRestartParams {
-            session: handle(),
+            session: handle,
             operation_id: operation_id.clone(),
             office_id: office_id.to_owned(),
         },
         None,
     );
-    let _ = wire.call::<SessionEnd>(&SessionParams { session: handle() }, None);
+    end_session(&mut wire, &session);
     match answer? {
         Ok(HostOpResult::Completed { .. }) => {
             if json {
@@ -483,7 +585,7 @@ mod tests {
             organization_id: "0193a5c0-0000-7000-8000-000000000001".into(),
             name: "HQ".into(),
             role: OfficeRole::Hq,
-            host: "This Mac".into(),
+            host: "This Computer".into(),
             endpoint: Some("/private/should-never-appear.sock".into()),
             status: OfficeStatus::Offline,
             status_reason: Some(OfficeStatusReason::Crashed),

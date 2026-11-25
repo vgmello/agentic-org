@@ -21,10 +21,12 @@ use std::io::{BufRead, IsTerminal, Write};
 use org_host::setup_flow::{self, Platform, Request};
 
 pub(crate) const HELP: &str = "Set up this computer's instance and register its service:\n  \
-agentic-org setup [--name <instance>] [--port <port>]\nWithout --name the instance is \
-\"default\" on port 7420; a named instance takes the first free port from 7421.\n\
+agentic-org setup [--name <instance>] [--port <port>] [--federation-bind <IP:port>] [--federation-advertise <host,...>]\n\
+Without --name the instance is \"default\" on port 7420; a named instance takes the first free port from 7421.\n\
+Pass --federation-bind (for example 0.0.0.0:7443) to enable HQ mTLS federation for remote satellites;\n\
+--federation-advertise adds comma-separated DNS/IP SANs (hostnames or IPs without ports) to HQ's federation cert.\n\
 Without a terminal, from a file (service mode, data folder, credential directory, \
-address):\n  agentic-org setup --non-interactive --config <file> [--name <instance>]";
+address, optional federation):\n  agentic-org setup --non-interactive --config <file> [--name <instance>]";
 
 pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
     run_as(arguments, org_host::Config::refuse_root)
@@ -60,11 +62,29 @@ fn run_as(
         .filter(|arg| *arg != "--non-interactive")
         .cloned()
         .collect();
-    let options = crate::options(&arguments, &["--name", "--port", "--config"])?;
+    let options = crate::options(
+        &arguments,
+        &[
+            "--name",
+            "--port",
+            "--config",
+            "--federation-bind",
+            "--federation-advertise",
+        ],
+    )?;
     match (non_interactive, options.get("--config")) {
         (true, Some(file)) => {
             if options.contains_key("--port") {
                 return Err("--port is not used with --config: the address is in the file".into());
+            }
+            if options.contains_key("--federation-bind")
+                || options.contains_key("--federation-advertise")
+            {
+                return Err(
+                    "--federation-bind and --federation-advertise are not used with --config: \
+                     set \"federation\" in the file"
+                        .into(),
+                );
             }
             return configured(
                 std::path::Path::new(file),
@@ -86,6 +106,10 @@ fn run_as(
                 .ok_or_else(|| format!("--port must be a number from 1 to 65535, not {p:?}"))
         })
         .transpose()?;
+    let federation = parse_federation_flags(
+        options.get("--federation-bind").map(String::as_str),
+        options.get("--federation-advertise").map(String::as_str),
+    )?;
     let platform = platform(false)?;
     let program = own_program()?;
     let mut ask = ask_port;
@@ -101,9 +125,37 @@ fn run_as(
         terminal,
         development_keys: development_keys()?,
         configuration: None,
+        federation,
     };
     let mut out = std::io::stdout().lock();
     setup_flow::run(&platform, request, &mut out).map(drop)
+}
+
+fn parse_federation_flags(
+    bind: Option<&str>,
+    advertise: Option<&str>,
+) -> Result<Option<setup_flow::FederationConfig>, String> {
+    match (bind, advertise) {
+        (None, None) => Ok(None),
+        (None, Some(_)) => {
+            Err("--federation-advertise requires --federation-bind <IP:port>".into())
+        }
+        (Some(bind), adv) => {
+            let entries: Vec<String> = match adv {
+                None => Vec::new(),
+                Some(raw) => {
+                    if raw.trim().is_empty() {
+                        return Err(
+                            "--federation-advertise needs at least one hostname or IP address"
+                                .into(),
+                        );
+                    }
+                    raw.split(',').map(str::to_owned).collect()
+                }
+            };
+            setup_flow::FederationConfig::parse(bind, entries).map(Some)
+        }
+    }
 }
 
 fn own_program() -> Result<std::path::PathBuf, String> {
@@ -166,6 +218,7 @@ fn apply(
         terminal: false,
         development_keys,
         configuration: Some(configuration),
+        federation: None,
     };
     let mut out = std::io::stdout().lock();
     setup_flow::run(&platform, request, &mut out)
@@ -379,5 +432,53 @@ mod tests {
             org_host::Config::refuse_root().is_err(),
             org_socket::effective_uid() == 0
         );
+    }
+
+    #[test]
+    fn federation_flags_are_validated_before_setup_runs() {
+        let allow = || Ok(());
+        let no_bind =
+            run_as(&args(&["--federation-advertise", "hq.example.com"]), allow).unwrap_err();
+        assert!(no_bind.contains("--federation-bind"), "{no_bind}");
+        let bad_bind = run_as(&args(&["--federation-bind", "0.0.0.0:0"]), allow).unwrap_err();
+        assert!(bad_bind.contains("1 to 65535"), "{bad_bind}");
+        let bad_adv = run_as(
+            &args(&[
+                "--federation-bind",
+                "0.0.0.0:7443",
+                "--federation-advertise",
+                "hq.example.com:7443",
+            ]),
+            allow,
+        )
+        .unwrap_err();
+        assert!(bad_adv.contains("without a port"), "{bad_adv}");
+        for empty_adv in ["", ",,,", "büro.example.com"] {
+            assert!(
+                run_as(
+                    &args(&[
+                        "--federation-bind",
+                        "0.0.0.0:7443",
+                        "--federation-advertise",
+                        empty_adv,
+                    ]),
+                    allow,
+                )
+                .is_err(),
+                "--federation-advertise {empty_adv:?} should be refused"
+            );
+        }
+        let with_cfg = run_as(
+            &args(&[
+                "--non-interactive",
+                "--config",
+                "/tmp/nonexistent.json",
+                "--federation-bind",
+                "0.0.0.0:7443",
+            ]),
+            allow,
+        )
+        .unwrap_err();
+        assert!(with_cfg.contains("not used with --config"), "{with_cfg}");
     }
 }

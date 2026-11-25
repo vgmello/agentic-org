@@ -61,6 +61,10 @@ pub const MAX_WEB_CHANNELS: usize = 7;
 /// The largest transfer-record header, in bytes (a contract choice, X-02 §5.2).
 pub const TRANSFER_HEADER_MAX_BYTES: usize = 1024;
 
+/// The largest `--join` handoff header, in bytes: holds the office secrets key, grant key,
+/// and one-time invitation token (`InvitationSecret`, up to 16 KiB including pinned CA DER).
+pub const JOIN_HANDOFF_HEADER_MAX_BYTES: usize = 20 * 1024;
+
 /// The send and receive buffer both ends set on a transfer socket, in bytes.
 pub const TRANSFER_SOCKET_BUFFER_BYTES: usize = 64 * 1024;
 

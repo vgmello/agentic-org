@@ -114,7 +114,7 @@ pub fn project_create(
     )
 }
 
-struct OfficeSession {
+pub(super) struct OfficeSession {
     office_id: String,
     channel_id: String,
     reader: BufReader<UnixStream>,
@@ -122,10 +122,37 @@ struct OfficeSession {
 }
 
 impl OfficeSession {
-    fn open(
+    pub(super) fn open(
         wire: &mut Wire,
         session: &SessionHandle,
         org_id: Option<&str>,
+    ) -> Result<Self, String> {
+        Self::open_selected(wire, session, org_id, None, false)
+    }
+
+    pub(super) fn open_hq(
+        wire: &mut Wire,
+        session: &SessionHandle,
+        org_id: Option<&str>,
+    ) -> Result<Self, String> {
+        Self::open_selected(wire, session, org_id, None, true)
+    }
+
+    pub(super) fn open_for_office(
+        wire: &mut Wire,
+        session: &SessionHandle,
+        org_id: Option<&str>,
+        office_id: Option<&str>,
+    ) -> Result<Self, String> {
+        Self::open_selected(wire, session, org_id, office_id, false)
+    }
+
+    fn open_selected(
+        wire: &mut Wire,
+        session: &SessionHandle,
+        org_id: Option<&str>,
+        explicit_office_id: Option<&str>,
+        require_hq: bool,
     ) -> Result<Self, String> {
         let handle = || SessionHandle::new(session.expose().into()).expect("a live handle");
         let listed = match wire.call_answer::<OfficeList>(
@@ -145,7 +172,7 @@ impl OfficeSession {
         if listed.offices.is_empty() {
             return Err("no offices found for this account".into());
         }
-        if org_id.is_none() {
+        if org_id.is_none() && explicit_office_id.is_none() {
             let distinct_orgs: std::collections::BTreeSet<&str> = listed
                 .offices
                 .iter()
@@ -155,13 +182,30 @@ impl OfficeSession {
                 return Err("multiple organizations found; pass --org <org_id>".into());
             }
         }
-        let office_id = listed
-            .offices
-            .iter()
-            .find(|o| o.role == OfficeRole::Hq)
-            .or_else(|| listed.offices.first())
-            .map(|o| o.id.clone())
-            .ok_or_else(|| "no HQ office found".to_owned())?;
+        let office_id = if let Some(requested) = explicit_office_id {
+            listed
+                .offices
+                .iter()
+                .find(|o| o.id == requested)
+                .map(|o| o.id.clone())
+                .ok_or_else(|| format!("office `{requested}` not found"))?
+        } else if require_hq {
+            listed
+                .offices
+                .iter()
+                .find(|o| o.role == OfficeRole::Hq)
+                .map(|o| o.id.clone())
+                .ok_or_else(|| {
+                    "no HQ office found on this host; run this command on the HQ instance"
+                        .to_owned()
+                })?
+        } else if let Some(hq) = listed.offices.iter().find(|o| o.role == OfficeRole::Hq) {
+            hq.id.clone()
+        } else if listed.offices.len() == 1 {
+            listed.offices[0].id.clone()
+        } else {
+            return Err("multiple offices found; pass --office <office_id>".into());
+        };
         let opened = match wire.call_answer::<OfficeOpenChannel>(
             &OfficeOpenChannelParams {
                 session: handle(),
@@ -208,7 +252,7 @@ impl OfficeSession {
         })
     }
 
-    fn call<C: Call>(
+    pub(super) fn call<C: Call>(
         &mut self,
         wire: &mut Wire,
         session: &SessionHandle,

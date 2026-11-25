@@ -8,6 +8,7 @@ mod cli_approvals;
 pub(crate) mod listener;
 mod local_access;
 mod multi_person;
+mod native_org;
 mod office_join;
 mod office_ops;
 pub(crate) mod organizations;
@@ -726,6 +727,8 @@ impl Service {
             self.poll_cli_approval(authentication, request, connection);
         } else if request.is::<OfficeOpenChannel>() {
             self.open_authenticated_channel(authentication, request, connection);
+        } else if native_org::dispatch(self, authentication, request, connection) {
+            return true;
         } else if !office_ops::dispatch_session_office_op(self, authentication, request, connection)
         {
             dispatch_session_lifecycle(self, authentication, request, connection);
@@ -774,24 +777,40 @@ impl Service {
             .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid channel request"))
             .and_then(|p| {
                 let account = authentication.authorize(connection, &p.session)?;
+                let allow_unlinked_satellite =
+                    connection.channel_kind() == org_office_launch::ChannelKind::Local;
                 let office = self
                     .offices
                     .offices()
                     .into_iter()
                     .find(|o| o.id == p.office_id)
                     .filter(|o| {
-                        account
-                            .links()
-                            .iter()
-                            .any(|l| l.org_id() == o.organization_id)
+                        office_ops::office_visible_to_account(&account, o, allow_unlinked_satellite)
                     })
                     .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "office not found"))?;
                 let endpoint = self.offices.endpoint(&p.office_id).ok_or_else(|| {
                     ApiError::new(ErrorCode::Unavailable, "office channel unavailable")
                 })?;
-                authentication
-                    .open_channel(connection, &p.session, endpoint, &office.organization_id)
-                    .map(|(id, socket, witness)| (id, socket, witness, p.office_id))
+                let linked = account
+                    .links()
+                    .iter()
+                    .any(|l| l.org_id() == office.organization_id);
+                let opened = if linked {
+                    authentication.open_channel(
+                        connection,
+                        &p.session,
+                        endpoint,
+                        &office.organization_id,
+                    )
+                } else {
+                    authentication.open_satellite_operator_channel(
+                        connection,
+                        &p.session,
+                        endpoint,
+                        &office.organization_id,
+                    )
+                };
+                opened.map(|(id, socket, witness)| (id, socket, witness, p.office_id))
             });
         match result {
             Ok((id, socket, witness, office)) => {
@@ -1019,6 +1038,7 @@ fn session_auth_method(request: &Request) -> bool {
     request.is::<AccountVerify>()
         || request.is::<CliApprovalCreate>()
         || request.is::<CliApprovalPoll>()
+        || native_org::is_native_org_or_local_session(request)
         || request.is::<SessionRenew>()
         || request.is::<SessionEnd>()
         || request.is::<OfficeOpenChannel>()
@@ -1440,6 +1460,7 @@ pub(crate) mod tests {
                 keys: Arc::new(MemoryKeys::default()),
                 server_check: Arc::new(crate::server_check::ServerCheck::Skip),
                 sweep_orphans: false,
+                federation: None,
             },
             "01JD5Z00000000000000000NST",
         );

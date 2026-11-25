@@ -825,6 +825,7 @@ mod tests {
                     keys: Arc::new(MemoryKeys::default()),
                     server_check: Arc::new(crate::server_check::ServerCheck::Skip),
                     sweep_orphans: false,
+                    federation: None,
                 },
                 &instance_id,
             )

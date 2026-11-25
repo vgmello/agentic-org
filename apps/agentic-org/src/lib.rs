@@ -5,6 +5,7 @@
 mod admin;
 mod context;
 mod office;
+mod org;
 mod project;
 mod serve;
 mod service;
@@ -13,7 +14,7 @@ mod sign_in;
 
 use std::collections::BTreeMap;
 
-const HELP: &str = "Agentic Org\n\nUsage: agentic-org <command>\n\nCommands:\n  serve      Run the installed service host in the foreground\n  setup      Set up this computer's instance and register its service\n  sign-in    Sign in from this terminal via a browser approval link (no password)\n  context    context show|use|clear: manage saved default instance and office\n  admin      admin reset: a new administrator registration link; admin tls set: replace the TLS pair\n  office     office list: list offices; office restart: restart an offline or unavailable office\n  project    project list|inspect|create: list, inspect, or create projects\n  repo       repo register|list|attach|status|push: manage repositories and push task branches\n  worktree   worktree list|prepare: list or prepare isolated task worktrees\n  task       task create|list|inspect|update|transition|assign|comment|watch|deps|labels\n  checklist  checklist add|check|edit|remove|move: manage task checklists\n  service    start, stop or show the instance's service\n\nOptions:\n  --help     Show this help\n  --version  Show the release version\n\nSatellite enrollment is initiated separately from HQ.";
+const HELP: &str = "Agentic Org\n\nUsage: agentic-org <command>\n\nCommands:\n  serve      Run the installed service host in the foreground\n  setup      Set up this computer's instance and register its service\n  sign-in    Sign in from this terminal via a browser approval link (no password)\n  context    context show|use|clear: manage saved default instance and office\n  admin      admin reset: a new administrator registration link; admin tls set: replace the TLS pair\n  org        org create|list: create or list organizations on this host\n  office     office list|restart|invite|invitations|approve|decline|cancel|remove|sync-status|join|remove-pending|re-enroll\n  project    project list|inspect|create: list, inspect, or create projects\n  repo       repo register|list|attach|status|push: manage repositories and push task branches\n  worktree   worktree list|prepare: list or prepare isolated task worktrees\n  task       task create|list|inspect|update|transition|assign|comment|watch|deps|labels\n  checklist  checklist add|check|edit|remove|move: manage task checklists\n  service    start, stop or show the instance's service\n\nOptions:\n  --help     Show this help\n  --version  Show the release version\n\nSatellite enrollment is initiated from HQ (`office invite`) and completed on the satellite (`office join`) and HQ (`office approve`).";
 
 /// Dispatches a human CLI command.
 pub fn run(arguments: Vec<String>) -> Result<(), String> {
@@ -25,6 +26,14 @@ pub fn run(arguments: Vec<String>) -> Result<(), String> {
         [flag] if matches!(flag.as_str(), "--help" | "-h" | "help") => {
             println!("{HELP}");
             Ok(())
+        }
+        [verb, target, ..] if verb == "help" => {
+            if matches!(target.as_str(), "help" | "--help" | "-h") {
+                println!("{HELP}");
+                Ok(())
+            } else {
+                run(vec![target.clone(), "--help".to_owned()])
+            }
         }
         [flag] if matches!(flag.as_str(), "--version" | "-V") => {
             println!("agentic-org {}", env!("CARGO_PKG_VERSION"));
@@ -40,6 +49,7 @@ pub fn run(arguments: Vec<String>) -> Result<(), String> {
         [command, rest @ ..] if command == "sign-in" => sign_in::run(rest),
         [command, rest @ ..] if command == "context" => context::run(rest),
         [command, rest @ ..] if command == "admin" => admin::run(rest),
+        [command, rest @ ..] if command == "org" => org::run(rest),
         [command, rest @ ..] if command == "office" => office::run(rest),
         [command, rest @ ..] if command == "project" => project::run(rest),
         [command, ..]
@@ -75,4 +85,85 @@ pub(crate) fn options(
         }
     }
     Ok(options)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run, HELP};
+
+    const CLI_REFERENCE: &str = include_str!("../../../docs/cli-reference.md");
+
+    #[test]
+    fn help_subcommand_routes_to_command_help() {
+        for args in [
+            vec!["help"],
+            vec!["help", "help"],
+            vec!["help", "setup"],
+            vec!["help", "serve"],
+            vec!["help", "org"],
+            vec!["help", "office"],
+            vec!["help", "project"],
+            vec!["help", "sign-in"],
+            vec!["help", "context"],
+            vec!["help", "admin"],
+            vec!["help", "service"],
+        ] {
+            let owned: Vec<String> = args.into_iter().map(str::to_owned).collect();
+            assert_eq!(run(owned), Ok(()), "expected help to succeed");
+        }
+    }
+
+    #[test]
+    fn cli_reference_documents_every_top_level_and_office_command() {
+        for command in [
+            "serve",
+            "setup",
+            "sign-in",
+            "context",
+            "admin",
+            "org",
+            "office",
+            "project",
+            "repo",
+            "worktree",
+            "task",
+            "checklist",
+            "service",
+        ] {
+            assert!(HELP.contains(command), "top-level HELP missing `{command}`");
+            assert!(
+                CLI_REFERENCE.contains(&format!("agentic-org {command}")),
+                "docs/cli-reference.md missing `agentic-org {command}`"
+            );
+        }
+        for sub in [
+            "list",
+            "restart",
+            "invite",
+            "invitations",
+            "approve",
+            "decline",
+            "cancel",
+            "remove",
+            "sync-status",
+            "join",
+            "remove-pending",
+            "re-enroll",
+        ] {
+            assert!(
+                org_host::setup_flow::OFFICE_HELP.contains(sub),
+                "OFFICE_HELP missing `{sub}`"
+            );
+            assert!(
+                CLI_REFERENCE.contains(&format!("agentic-org office {sub}")),
+                "docs/cli-reference.md missing `agentic-org office {sub}`"
+            );
+        }
+        for sub in ["create", "list"] {
+            assert!(
+                CLI_REFERENCE.contains(&format!("agentic-org org {sub}")),
+                "docs/cli-reference.md missing `agentic-org org {sub}`"
+            );
+        }
+    }
 }

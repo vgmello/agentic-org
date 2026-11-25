@@ -66,17 +66,35 @@ const PASSED_ENV: [&str; 8] = [
     "AGENTIC_ORG_FEDERATION_ADVERTISE",
 ];
 
+const FEDERATION_BIND_ENV: &str = "AGENTIC_ORG_FEDERATION_BIND";
+const FEDERATION_ADVERTISE_ENV: &str = "AGENTIC_ORG_FEDERATION_ADVERTISE";
+
 /// A server's whole environment: the [`PASSED_ENV`] names the host has (read through `host_var`),
-/// then `ORG_OFFICE_HOME` and, if set, `ORG_OFFICE_RUNTIME_DIR`. Nothing else of the host's.
+/// overridden by any persisted setup `federation` config, then `ORG_OFFICE_HOME` and, if set,
+/// `ORG_OFFICE_RUNTIME_DIR`. Nothing else of the host's.
 fn server_env(
     home: &Path,
     runtime_dir: Option<&Path>,
+    federation: Option<&crate::instance::setup::FederationConfig>,
     host_var: impl Fn(&str) -> Option<OsString>,
 ) -> Vec<(OsString, OsString)> {
     let mut env: Vec<(OsString, OsString)> = PASSED_ENV
         .iter()
+        .filter(|name| {
+            federation.is_none()
+                || (**name != FEDERATION_BIND_ENV && **name != FEDERATION_ADVERTISE_ENV)
+        })
         .filter_map(|name| host_var(name).map(|value| ((*name).into(), value)))
         .collect();
+    if let Some(federation) = federation {
+        env.push((FEDERATION_BIND_ENV.into(), federation.bind.clone().into()));
+        if !federation.advertise.is_empty() {
+            env.push((
+                FEDERATION_ADVERTISE_ENV.into(),
+                federation.advertise.join(",").into(),
+            ));
+        }
+    }
     env.push((OFFICE_HOME_ENV.into(), home.as_os_str().to_owned()));
     if let Some(runtime) = runtime_dir {
         env.push((
@@ -177,6 +195,8 @@ pub(crate) struct Spawner {
     pub(crate) images: Arc<Images>,
     /// The instance's launch rendezvous: every create, start and discard goes through it.
     pub(super) broker: Arc<super::channels::Broker>,
+    /// Optional persisted HQ federation config from setup.
+    pub(crate) federation: Option<crate::instance::setup::FederationConfig>,
     /// Tests only: variables added to every server's environment after the host's own, so a
     /// test can show what the platform refuses there.
     #[cfg(test)]
@@ -504,9 +524,12 @@ impl Spawner {
     /// A server's whole environment ([`server_env`]). A variable that changes how the loader
     /// runs the image is refused by the platform on every system: nothing is started then.
     fn child_env(&self) -> Result<ChildEnv, SpawnError> {
-        let variables = server_env(&self.home, self.runtime_dir.as_deref(), |name| {
-            std::env::var_os(name)
-        });
+        let variables = server_env(
+            &self.home,
+            self.runtime_dir.as_deref(),
+            self.federation.as_ref(),
+            |name| std::env::var_os(name),
+        );
         #[cfg(test)]
         let variables = variables.into_iter().chain(self.extra_env.iter().cloned());
         let mut env = ChildEnv::new();
@@ -733,7 +756,7 @@ mod tests {
     fn a_server_gets_only_the_allowed_environment() {
         let host_var = |name: &str| Some(OsString::from(format!("value-of-{name}")));
         let asked = std::cell::RefCell::new(Vec::new());
-        let env = server_env(Path::new("/h"), Some(Path::new("/r")), |name| {
+        let env = server_env(Path::new("/h"), Some(Path::new("/r")), None, |name| {
             asked.borrow_mut().push(name.to_owned());
             host_var(name)
         });
@@ -748,6 +771,8 @@ mod tests {
             "PATH",
             "TMPDIR",
             "LANG",
+            FEDERATION_BIND_ENV,
+            FEDERATION_ADVERTISE_ENV,
             OFFICE_HOME_ENV,
             OFFICE_RUNTIME_DIR_ENV,
         ]
@@ -771,10 +796,60 @@ mod tests {
         }
     }
 
+    /// Persisted setup federation config overrides ambient host federation variables cleanly
+    /// without duplicating keys or leaking stale advertised hosts.
+    #[test]
+    fn persisted_federation_config_overrides_ambient_environment() {
+        let fed = crate::instance::setup::FederationConfig::parse(
+            "0.0.0.0:7443",
+            vec!["hq.example.com".into(), "10.0.0.5".into()],
+        )
+        .unwrap();
+        let env = server_env(Path::new("/h"), None, Some(&fed), |name| match name {
+            "PATH" => Some(OsString::from("/bin")),
+            FEDERATION_BIND_ENV => Some(OsString::from("127.0.0.1:9999")),
+            FEDERATION_ADVERTISE_ENV => Some(OsString::from("stale.invalid")),
+            _ => None,
+        });
+        assert_eq!(
+            env,
+            vec![
+                (OsString::from("PATH"), OsString::from("/bin")),
+                (
+                    OsString::from(FEDERATION_BIND_ENV),
+                    OsString::from("0.0.0.0:7443")
+                ),
+                (
+                    OsString::from(FEDERATION_ADVERTISE_ENV),
+                    OsString::from("hq.example.com,10.0.0.5")
+                ),
+                (OsString::from(OFFICE_HOME_ENV), OsString::from("/h")),
+            ]
+        );
+        // Without advertise entries, stale ambient AGENTIC_ORG_FEDERATION_ADVERTISE is omitted.
+        let bind_only =
+            crate::instance::setup::FederationConfig::parse("127.0.0.1:7443", vec![]).unwrap();
+        let env_bind_only =
+            server_env(Path::new("/h"), None, Some(&bind_only), |name| match name {
+                FEDERATION_ADVERTISE_ENV => Some(OsString::from("stale.invalid")),
+                _ => None,
+            });
+        assert_eq!(
+            env_bind_only,
+            vec![
+                (
+                    OsString::from(FEDERATION_BIND_ENV),
+                    OsString::from("127.0.0.1:7443")
+                ),
+                (OsString::from(OFFICE_HOME_ENV), OsString::from("/h")),
+            ]
+        );
+    }
+
     /// A name the host doesn't have is left out, and no runtime folder means no variable for it.
     #[test]
     fn missing_host_names_and_no_runtime_folder_are_left_out() {
-        let env = server_env(Path::new("/h"), None, |name| {
+        let env = server_env(Path::new("/h"), None, None, |name| {
             (name == "PATH").then(|| OsString::from("/bin"))
         });
         let names: Vec<&OsStr> = env.iter().map(|(n, _)| n.as_os_str()).collect();

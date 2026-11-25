@@ -63,6 +63,8 @@ pub(crate) struct SupervisorConfig {
     /// Whether [`Supervisor::sweep_orphan_keys`] may delete keys (see `keys::sweep_orphans`
     /// for when that's safe).
     pub(crate) sweep_orphans: bool,
+    /// Optional persisted HQ mTLS federation listener configuration from setup.
+    pub(crate) federation: Option<crate::instance::setup::FederationConfig>,
 }
 
 pub(crate) struct Supervisor {
@@ -261,6 +263,7 @@ impl Supervisor {
             // Built from here on, once for this host's lifetime: every server starts from it.
             images: child::Images::new(Arc::clone(&config.server_check), config.program.clone()),
             broker: Arc::new(channels::Broker::new(instance.into(), runtime)),
+            federation: config.federation.clone(),
             #[cfg(test)]
             extra_env: Vec::new(),
         };
@@ -1314,6 +1317,7 @@ pub(crate) mod tests {
                 keys: Arc::clone(keys) as Arc<dyn OfficeSecretsKeys>,
                 server_check: Arc::new(check),
                 sweep_orphans: false,
+                federation: None,
             },
             INSTANCE,
         )
@@ -2453,6 +2457,7 @@ pub(crate) mod tests {
             keys: Arc::clone(&keys) as Arc<dyn OfficeSecretsKeys>,
             server_check: Arc::new(ServerCheck::Skip),
             sweep_orphans: false,
+            federation: None,
         });
         let err = supervisor.discard(OFFICE).unwrap_err();
         assert!(err.to_string().contains("setup must run first"), "{err}");

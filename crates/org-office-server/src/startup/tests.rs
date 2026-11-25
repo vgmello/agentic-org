@@ -1490,3 +1490,57 @@ fn explicit_teardown_ends_the_write_half_after_the_host_half_closed() {
     let late = (&ours).write_all(b"late");
     assert_eq!(late.map_err(|e| e.kind()), Err(io::ErrorKind::BrokenPipe));
 }
+
+#[test]
+fn join_handoff_accepts_full_ca_invitation_over_1024_bytes_and_wipes_buffer() {
+    use std::os::fd::AsRawFd;
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (_dir, listener, path) = listener();
+    let (mut control, output) = launch(&first(&path, FirstLine::Join));
+    let (transfer, _host_end) = UnixDatagram::pair().unwrap();
+    // Simulate a real agorg-inv1 token carrying a DER CA cert (> 1024 bytes).
+    let long_token = format!("agorg-inv1.{}", "a".repeat(1800));
+    let join_handoff = Handoff::Join {
+        office_secrets_key: OfficeSecretsKey::from_bytes([0xb3; 32]),
+        grant_key: GrantKey::from_bytes([7; 32]),
+        invitation: org_office_launch::InvitationSecret::new(long_token.clone()).unwrap(),
+        fds: vec![HandoffFd::Transfer],
+    };
+    let wire = org_office_launch::encode_handoff(&join_handoff).unwrap();
+    assert!(
+        wire.len() > HANDOFF_HEADER_MAX_BYTES && wire.len() <= JOIN_HANDOFF_HEADER_MAX_BYTES,
+        "join handoff len {}",
+        wire.len()
+    );
+    let sender = std::thread::spawn(move || {
+        let (mut stream, mut reader) = accept(listener);
+        stream.write_all(&wire).unwrap();
+        send_fds(
+            &stream,
+            org_office_launch::FD_MARKER,
+            &[transfer.as_raw_fd()],
+        );
+        assert_eq!(
+            event(&mut reader),
+            json!({"v":1,"event":"fds_received","of":"handoff"})
+        );
+    });
+    let req = control.read(FirstLine::Join).unwrap().unwrap();
+    sender.join().unwrap();
+    stdout_is_empty(output);
+    match req {
+        Request::Launch {
+            handoff: Handoff::Join { invitation, .. },
+            ..
+        } => assert_eq!(invitation.expose(), long_token),
+        _ => panic!("expected Handoff::Join"),
+    }
+    assert_eq!(
+        crate::zeroed::take_secret_wipes(),
+        vec![crate::zeroed::SecretWipe {
+            len: JOIN_HANDOFF_HEADER_MAX_BYTES + 1,
+            had_data: true,
+            zeroed: true,
+        }]
+    );
+}

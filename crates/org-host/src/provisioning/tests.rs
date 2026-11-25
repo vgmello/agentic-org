@@ -107,6 +107,7 @@ fn offices_in(
             keys,
             server_check: Arc::new(check),
             sweep_orphans: false,
+            federation: None,
         },
         instance,
     )
@@ -820,6 +821,7 @@ fn actual_selected_hq_creation_and_exact_retry() {
                     keys: keys_for_restart.clone(),
                     server_check: Arc::new(ServerCheck::Skip),
                     sweep_orphans: false,
+                    federation: None,
                 },
                 &instance,
             )

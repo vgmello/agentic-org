@@ -147,6 +147,7 @@ fn issued_grant_absolute_expiry_and_idle_or_eof_revoke_without_another_signin() 
                 Channel {
                     endpoint: Arc::downgrade(&endpoint),
                     organization: "org".into(),
+                    satellite_operator: false,
                     _slot: slot,
                 },
             );
@@ -227,6 +228,7 @@ fn protected_account_changes_revoke_both_independently_issued_session_grants() {
                     Channel {
                         endpoint: Arc::downgrade(&endpoint),
                         organization: "org".into(),
+                        satellite_operator: false,
                         _slot: slot,
                     },
                 );
@@ -716,4 +718,81 @@ fn actual_close_denies_grants_and_logout_revokes_without_freeing_a_held_descript
     await_closed(&slot);
     assert!(worker.endpoint.open(ChannelKind::Local).is_ok());
     assert!(worker.endpoint.is_live());
+}
+
+#[test]
+fn satellite_operator_channel_survives_reap_while_admin_and_revokes_on_demotion() {
+    use crate::supervisor::channels::tests::worker_fixture;
+    let (_root, auth, connection) = fixture();
+    let signed_in = login(&auth, &connection);
+    let admin_id = AccountId::parse(&signed_in.account).unwrap();
+
+    // Seed a second non-admin account, link both to a shared org so we can perform a real
+    // `handover_administrator` demotion later, while keeping `"sat-org"` completely unlinked.
+    let verifier =
+        hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
+    let second_acct = crate::ids::generate().unwrap();
+    let second_id = AccountId::parse(&second_acct).unwrap();
+    auth.db
+        .seed_account(&second_acct, "Successor", &verifier, false, 10_000)
+        .unwrap();
+    auth.db
+        .seed_link_for_test(&signed_in.account, "shared-org", "mem-admin")
+        .unwrap();
+    auth.db
+        .seed_link_for_test(&second_acct, "shared-org", "mem-successor")
+        .unwrap();
+
+    let worker = worker_fixture("sat-office");
+
+    // Non-admin is refused `open_satellite_operator_channel` on an unlinked org.
+    let second_conn = Connection::for_test();
+    let second_signed = auth
+        .verify(
+            &second_conn,
+            "Successor",
+            &Password::new("synthetic test password".into()).unwrap(),
+        )
+        .unwrap();
+    assert!(auth
+        .open_satellite_operator_channel(
+            &second_conn,
+            &second_signed.session,
+            Arc::clone(&worker.endpoint),
+            "sat-org",
+        )
+        .is_err());
+
+    // Unlinked admin opens a satellite operator channel, survives `reap()`, and gets a grant
+    // whose `claims.member` equals the satellite `office_id`.
+    let (ch_id, _stream, slot) = auth
+        .open_satellite_operator_channel(
+            &connection,
+            &signed_in.session,
+            Arc::clone(&worker.endpoint),
+            "sat-org",
+        )
+        .unwrap();
+    connection.record_received_slot_for_test(&ch_id, slot);
+    auth.reap();
+    let granted = auth
+        .grant(&connection, &signed_in.session, "sat-office", &ch_id)
+        .expect("admin satellite operator session must survive reap()");
+    assert_eq!(granted.grant.claims.member, "sat-office");
+    assert_eq!(granted.grant.claims.org_id, "sat-org");
+
+    // Demoting the admin via `handover_administrator` causes `reap()` to revoke the session
+    // and deny subsequent grants immediately.
+    let handover = auth
+        .db
+        .handover_administrator(&admin_id, &second_id)
+        .unwrap();
+    assert!(matches!(
+        handover,
+        crate::hostdb::sqlite::accounts::multi_person::AdminHandoverOutcome::Transferred
+    ));
+    auth.reap();
+    assert!(auth
+        .grant(&connection, &signed_in.session, "sat-office", &ch_id)
+        .is_err());
 }

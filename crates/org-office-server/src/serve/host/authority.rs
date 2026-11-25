@@ -1,7 +1,7 @@
 //! Ordered, per-request authority checks. The worker supplies clock, MAC and live state.
 use super::super::{live_owner, live_person, Binding, Shared};
 use crate::revocations::Revocations;
-use org_proto::{ErrorCode, Grant, OfficeInfo, Request};
+use org_proto::{Call, ErrorCode, Grant, OfficeInfo, OfficeRole, Request};
 use std::sync::Mutex;
 
 pub(super) struct Live<'a> {
@@ -119,6 +119,14 @@ pub(super) fn authorize(
     }
     if requires_owner(&request.method) {
         checks.owner(&claims.member).ok_or(ErrorCode::NotAuthorized)
+    } else if office.role == OfficeRole::Satellite
+        && request.method == org_proto::federation::OfficeSyncStatus::METHOD
+        && claims.member == office.id
+    {
+        // A satellite host's local instance administrator may not hold an org member link yet;
+        // the host signs a local-only operator grant with `member == office.id`, admitted here
+        // exclusively for read-only replication health (`office.sync_status`).
+        Ok(claims.member.clone())
     } else {
         checks
             .person(&claims.member)
