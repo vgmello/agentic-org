@@ -5169,3 +5169,314 @@ fn task126_approval_bridge_enforces_writable_roots_and_strict_git_admin_names() 
         );
     }
 }
+
+#[test]
+fn task126_approval_bridge_blocks_canonical_deny_bypasses_trailing_slash_symlinks_and_opaque_changes(
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let canon_dir = dir.path().canonicalize().unwrap();
+    let ws = canon_dir.join("workspace");
+    let wt = canon_dir.join("worktree");
+    let cargo_home = canon_dir.join("host-cargo");
+    let bare_cache = canon_dir.join("cache.git");
+    let admin_dir = bare_cache.join("worktrees/self-admin");
+    let objects_dir = bare_cache.join("objects");
+    let objects_info = objects_dir.join("info");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::create_dir_all(&cargo_home).unwrap();
+    std::fs::create_dir_all(&admin_dir).unwrap();
+    std::fs::create_dir_all(&objects_info).unwrap();
+    std::fs::write(
+        wt.join(".git"),
+        "gitdir: ../cache.git/worktrees/self-admin\n",
+    )
+    .unwrap();
+
+    let ws_spec = SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+    let wt_spec = SpecPath::try_from(wt.to_str().unwrap()).unwrap();
+    let admin_spec = SpecPath::try_from(admin_dir.to_str().unwrap()).unwrap();
+    let objects_spec = SpecPath::try_from(objects_dir.to_str().unwrap()).unwrap();
+
+    let mut cfg = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let write_denies = vec![
+        org_agent_runtime::PathPattern::try_from(
+            admin_dir.join("config.worktree").to_str().unwrap(),
+        )
+        .unwrap(),
+        org_agent_runtime::PathPattern::try_from(wt.join(".git").to_str().unwrap()).unwrap(),
+        org_agent_runtime::PathPattern::try_from(format!("{}/**", objects_info.display()).as_str())
+            .unwrap(),
+    ];
+    crate::preset::apply_worktree_sandbox_rules(
+        &mut cfg,
+        &[wt_spec.clone(), admin_spec.clone(), objects_spec],
+        &write_denies,
+    );
+
+    let edit_raw = |raw: &str| {
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("req-bypass"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({ "file_path": raw, "content": "evil" }),
+        );
+        req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        req
+    };
+
+    // Finding 1A: `/./`, `//`, and non-canonical path forms cannot evade fixed write denies.
+    for evasive in [
+        format!("{}/./config.worktree", admin_dir.display()),
+        format!("{}//config.worktree", admin_dir.display()),
+        format!("{}/./.git", wt.display()),
+        format!("{}/./info/alternates", objects_dir.display()),
+    ] {
+        assert!(
+            matches!(
+                crate::preset::decide_escalation_with_roots(
+                    &edit_raw(&evasive),
+                    &cfg.policy,
+                    cfg.preset,
+                    cfg.allowed_tools.as_deref(),
+                    Some(cfg.sandbox.writable_roots.as_slice()),
+                ),
+                crate::preset::EscalationDisposition::AutoDeny { .. }
+            ),
+            "evasive path must be AutoDenied: {evasive}"
+        );
+    }
+
+    // Finding 1B + 2: in-root symlinks to denied targets and trailing `/` / `/.` on dangling symlinks.
+    #[cfg(unix)]
+    {
+        let adm_link = wt.join("adm");
+        std::os::unix::fs::symlink(&admin_dir, &adm_link).unwrap();
+        let git_link = wt.join("g");
+        std::os::unix::fs::symlink(wt.join(".git"), &git_link).unwrap();
+        let oi_link = wt.join("oi");
+        std::os::unix::fs::symlink(&objects_info, &oi_link).unwrap();
+        let dangling = wt.join("escape");
+        std::os::unix::fs::symlink(cargo_home.join("config.toml"), &dangling).unwrap();
+
+        for bypass in [
+            format!("{}/config.worktree", adm_link.display()),
+            git_link.display().to_string(),
+            format!("{}/alternates", oi_link.display()),
+            format!("{}/", dangling.display()),
+            format!("{}/.", dangling.display()),
+        ] {
+            assert!(
+                matches!(
+                    crate::preset::decide_escalation_with_roots(
+                        &edit_raw(&bypass),
+                        &cfg.policy,
+                        cfg.preset,
+                        cfg.allowed_tools.as_deref(),
+                        Some(cfg.sandbox.writable_roots.as_slice()),
+                    ),
+                    crate::preset::EscalationDisposition::AutoDeny { .. }
+                ),
+                "symlink/trailing-slash bypass must be AutoDenied: {bypass}"
+            );
+        }
+    }
+
+    // Finding 2b: filesystem root `/` is ignored as a writable root.
+    let root_only = vec![SpecPath::try_from("/").unwrap()];
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&wt.join("ok.rs").display().to_string()),
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(root_only.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+}
+
+#[test]
+fn task126_approval_bridge_covers_opaque_rename_targets_and_safe_ask_readonly_presets() {
+    let dir = tempfile::tempdir().unwrap();
+    let canon_dir = dir.path().canonicalize().unwrap();
+    let ws = canon_dir.join("workspace");
+    let wt = canon_dir.join("worktree");
+    let tmp = canon_dir.join("agent-tmp");
+    let cargo_home = canon_dir.join("host-cargo");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::create_dir_all(&cargo_home).unwrap();
+
+    let ws_spec = SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+    let wt_spec = SpecPath::try_from(wt.to_str().unwrap()).unwrap();
+    let mut cfg = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    crate::preset::apply_worktree_sandbox_rules(&mut cfg, &[wt_spec], &[]);
+    let edit_raw = |raw: &str| {
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("req-preset"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({ "file_path": raw, "content": "x" }),
+        );
+        req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        req
+    };
+
+    // Finding 3: notebook_path, rename move_path / kind.move_path, and mixed malformed changes.
+    let mut nb_outside = ApprovalRequest::new(
+        ApprovalId::new("nb-1"),
+        ApprovalKind::FileChange,
+        Escalation::None,
+        "NotebookEdit",
+        serde_json::json!({ "notebook_path": cargo_home.join("nb.ipynb").to_str().unwrap() }),
+    );
+    nb_outside.capability = Some(org_agent_runtime::ToolCapability::Edit);
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &nb_outside,
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    let mut rename_map = ApprovalRequest::new(
+        ApprovalId::new("mv-1"),
+        ApprovalKind::FileChange,
+        Escalation::None,
+        "ApplyPatch",
+        serde_json::json!({
+            "fileChanges": {
+                wt.join("src.rs").to_str().unwrap(): {
+                    "kind": { "type": "update", "move_path": cargo_home.join("config.toml").to_str().unwrap() }
+                }
+            }
+        }),
+    );
+    rename_map.capability = Some(org_agent_runtime::ToolCapability::Edit);
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &rename_map,
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    let mut mixed_opaque = ApprovalRequest::new(
+        ApprovalId::new("op-1"),
+        ApprovalKind::FileChange,
+        Escalation::None,
+        "ApplyPatch",
+        serde_json::json!({
+            "file_path": wt.join("ok.rs").to_str().unwrap(),
+            "changes": [{ "unexpected_field": 123 }]
+        }),
+    );
+    mixed_opaque.capability = Some(org_agent_runtime::ToolCapability::Edit);
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &mixed_opaque,
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    // Finding 4: SafeAsk escalates inside root & auto-denies outside; ReadOnly omits tmpdir.
+    let safe_cfg = crate::preset::build_session_policy(
+        PermissionPreset::SafeAsk,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let safe_roots = crate::manager::effective_approval_writable_roots_from(
+        PermissionPreset::SafeAsk,
+        &safe_cfg.sandbox.writable_roots,
+        &tmp,
+    );
+    assert!(
+        safe_roots
+            .iter()
+            .any(|p| p.as_str() == tmp.to_str().unwrap()),
+        "non-ReadOnly preset must include canonical tmpdir in approval writable roots"
+    );
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&ws.join("ok.rs").display().to_string()),
+            &safe_cfg.policy,
+            safe_cfg.preset,
+            safe_cfg.allowed_tools.as_deref(),
+            Some(safe_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::EscalateToOwner { .. }
+    ));
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&cargo_home.join("config.toml").display().to_string()),
+            &safe_cfg.policy,
+            safe_cfg.preset,
+            safe_cfg.allowed_tools.as_deref(),
+            Some(safe_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    let ro_cfg = crate::preset::build_session_policy(
+        PermissionPreset::ReadOnly,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let ro_roots = crate::manager::effective_approval_writable_roots_from(
+        PermissionPreset::ReadOnly,
+        &ro_cfg.sandbox.writable_roots,
+        &tmp,
+    );
+    assert!(
+        !ro_roots.iter().any(|p| p.as_str() == tmp.to_str().unwrap()),
+        "ReadOnly preset must NOT add tmpdir to approval writable roots"
+    );
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&tmp.join("x").display().to_string()),
+            &ro_cfg.policy,
+            ro_cfg.preset,
+            ro_cfg.allowed_tools.as_deref(),
+            Some(ro_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+}

@@ -2666,14 +2666,29 @@ fn build_initial_runtime_state(
 }
 
 fn effective_approval_writable_roots(prepared: &PreparedSessionLaunch) -> Vec<SpecPath> {
-    let mut roots = prepared.preset_cfg.sandbox.writable_roots.clone();
-    if prepared.preset_cfg.preset != PermissionPreset::ReadOnly {
-        let canon_tmp = canonicalize_with_tail(&prepared.tmpdir);
-        if let Ok(spec) = SpecPath::try_from(canon_tmp.to_string_lossy().as_ref()) {
-            if !roots.contains(&spec) {
-                roots.push(spec);
-            }
-        }
+    effective_approval_writable_roots_from(
+        prepared.preset_cfg.preset,
+        &prepared.preset_cfg.sandbox.writable_roots,
+        &prepared.tmpdir,
+    )
+}
+
+pub(crate) fn effective_approval_writable_roots_from(
+    preset: PermissionPreset,
+    sandbox_writable_roots: &[SpecPath],
+    tmpdir: &Path,
+) -> Vec<SpecPath> {
+    let mut roots = sandbox_writable_roots.to_vec();
+    if preset == PermissionPreset::ReadOnly {
+        return roots;
+    }
+    let canon_tmp = canonicalize_with_tail(tmpdir);
+    if let Some(spec) = canon_tmp
+        .to_str()
+        .and_then(|s| SpecPath::try_from(s).ok())
+        .filter(|spec| !roots.contains(spec))
+    {
+        roots.push(spec);
     }
     roots
 }
