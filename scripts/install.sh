@@ -102,13 +102,34 @@ fi
 mkdir -p "$BIN_DIR"
 
 # Detect signed ADR-0009 release bundle vs dev bundle by inspecting archive entries.
-if tar -tzf "$ARCHIVE" | grep -qx "release.v1.json"; then
+# Capture listing first so `set -o pipefail` never fails on `tar` SIGPIPE when `grep -q` exits early.
+ARCHIVE_ENTRIES="$(tar -tzf "$ARCHIVE")"
+if printf '%s\n' "$ARCHIVE_ENTRIES" | grep -qx "release.v1.json"; then
   echo "Detected signed ADR-0009 release bundle; installing into protected release store ..." >&2
+  # ADR-0009 requires non-group/other-writable ancestors for both the release store and input archive.
+  # On Linux distros with User Private Groups (umask 0002), ~/.local and ~/.local/share default to 0775.
+  if [[ -z "$STORE_DIR" ]]; then
+    if [[ "$PLATFORM" == "linux" ]]; then
+      mkdir -p "${HOME}/.local/share/agentic-org"
+      chmod go-w "${HOME}/.local" "${HOME}/.local/share" 2>/dev/null || true
+      chmod 0700 "${HOME}/.local/share/agentic-org"
+    elif [[ "$PLATFORM" == "macos" ]]; then
+      mkdir -p "${HOME}/Library/Application Support/agentic.org"
+      chmod 0700 "${HOME}/Library/Application Support/agentic.org"
+    fi
+  else
+    mkdir -p "$(dirname "$STORE_DIR")"
+    chmod go-w "$(dirname "$STORE_DIR")" 2>/dev/null || true
+  fi
+  STAGED_ARCHIVE="$TMP_DIR/release.tar.gz"
+  cp "$ARCHIVE" "$STAGED_ARCHIVE"
+  chmod 0600 "$STAGED_ARCHIVE"
   BOOTSTRAP_DIR="$TMP_DIR/bootstrap"
   mkdir -p "$BOOTSTRAP_DIR"
-  tar -xzf "$ARCHIVE" -C "$BOOTSTRAP_DIR" agentic-org
+  chmod 0700 "$BOOTSTRAP_DIR"
+  tar -xzf "$STAGED_ARCHIVE" -C "$BOOTSTRAP_DIR" agentic-org
   chmod 0700 "$BOOTSTRAP_DIR/agentic-org"
-  INSTALL_ARGS=(release install "$ARCHIVE" --json)
+  INSTALL_ARGS=(release install "$STAGED_ARCHIVE" --json)
   if [[ -n "$STORE_DIR" ]]; then
     INSTALL_ARGS+=(--store "$STORE_DIR")
   fi

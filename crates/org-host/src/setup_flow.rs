@@ -83,7 +83,8 @@ pub use project_command::{
 pub(crate) mod provider_command;
 pub use provider_command::{
     provider_bind, provider_bindings, provider_create, provider_list, provider_models,
-    ProviderBindInput, ProviderCreateInput, HELP as PROVIDER_HELP,
+    provider_refresh, ProviderBindInput, ProviderCreateInput, ProviderRefreshInput,
+    HELP as PROVIDER_HELP,
 };
 pub mod sign_in_command;
 pub use sign_in_command::{

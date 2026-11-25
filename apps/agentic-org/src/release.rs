@@ -78,9 +78,14 @@ fn run_install(arguments: &[String]) -> Result<(), String> {
     let meta = fs::metadata(&source)
         .map_err(|e| format!("reading bundle path `{}`: {e}", source.display()))?;
 
+    if let Some(parent) = store_dir.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("creating release store parent ({}): {e}", parent.display()))?;
+        let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+    }
     let mut store = ReleaseStore::open(&store_dir).map_err(|e| {
         format!(
-            "opening release store ({}): {e} (if a service host is running, stop it first with `agentic-org service stop`)",
+            "opening release store ({}): {e} (ensure parent directories are not group/world-writable, e.g. `chmod go-w ~/.local ~/.local/share`, and stop any running service first with `agentic-org service stop`)",
             store_dir.display()
         )
     })?;

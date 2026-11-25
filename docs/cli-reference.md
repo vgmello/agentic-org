@@ -195,7 +195,7 @@ agentic-org office list --name hq --json
 
 ### Providers, Releases, Messaging & Agents
 
-- `agentic-org provider create <name> --key <key> --provider <type> --runtime <claude|codex|agy> [--auth-mode <cli_subscription|api_key>] [--max-turns <n>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+- `agentic-org provider create <name> --key <key> --provider <type> --runtime <claude|codex|agy> [--auth-mode <subscription_cli|api_key|cloud_iam>] [--subscription-id <id>] [--max-turns <n>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   Create an org-wide provider connection and auto-generated model profile on HQ.
   **Use when:** enabling Claude, Codex, or Agy for agents across an organization.
 - `agentic-org provider list [--include-archived] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
@@ -204,6 +204,9 @@ agentic-org office list --name hq --json
 - `agentic-org provider bind <connection_id> --auth-ref <ref> [--binary <path>] [--account-ref <ref>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   Bind a provider connection to the local HQ or satellite office.
   **Use when:** configuring a headless Linux satellite or HQ office to run local `claude`, `codex`, or `agy` turns.
+- `agentic-org provider refresh <connection_id> --driver-version <ver> --model <id[:driver_id]> [--account-ref <ref>] [--ttl <secs>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+  Record a fresh local readiness and discovered-model observation for a bound provider connection.
+  **Use when:** marking a headless office's local runtime binding ready for agent session routing (accepts comma-separated `--model` entries).
 - `agentic-org provider bindings [--connection <id>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   List provider bindings and local readiness on this office.
   **Use when:** verifying an office has a local binding for a provider connection.

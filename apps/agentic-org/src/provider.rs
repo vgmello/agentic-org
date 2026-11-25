@@ -1,6 +1,6 @@
-//! `agentic-org provider create|list|bind|bindings|models` (`TASK-120`).
+//! `agentic-org provider create|list|bind|refresh|bindings|models` (`TASK-120`).
 
-use org_host::setup_flow::{ProviderBindInput, ProviderCreateInput};
+use org_host::setup_flow::{ProviderBindInput, ProviderCreateInput, ProviderRefreshInput};
 
 pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
     match arguments {
@@ -11,6 +11,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         [sub, rest @ ..] if sub == "create" => run_create(rest),
         [sub, rest @ ..] if sub == "list" => run_list(rest),
         [sub, rest @ ..] if sub == "bind" => run_bind(rest),
+        [sub, rest @ ..] if sub == "refresh" => run_refresh(rest),
         [sub, rest @ ..] if sub == "bindings" => run_bindings(rest),
         [sub, rest @ ..] if sub == "models" => run_models(rest),
         _ => Err(org_host::setup_flow::PROVIDER_HELP.to_owned()),
@@ -60,6 +61,47 @@ fn require_positional<'a>(
     Ok((first.as_str(), tail))
 }
 
+fn require_option<'a>(
+    options: &'a std::collections::BTreeMap<String, String>,
+    flag: &str,
+) -> Result<&'a str, String> {
+    options.get(flag).map(String::as_str).ok_or_else(|| {
+        format!(
+            "{flag} is required\n{}",
+            org_host::setup_flow::PROVIDER_HELP
+        )
+    })
+}
+
+fn parse_positive_u64(raw: &str, flag: &str) -> Result<u64, String> {
+    raw.parse::<u64>()
+        .ok()
+        .filter(|v| *v >= 1)
+        .ok_or_else(|| format!("{flag} must be a positive integer, not {raw:?}"))
+}
+
+fn parse_model_specs(raw: &str) -> Result<Vec<(String, String)>, String> {
+    let mut out = Vec::new();
+    for item in raw.split(',') {
+        let trimmed = item.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (model_id, driver_id) = match trimmed.split_once(':') {
+            Some((id, driver)) => (id.trim(), driver.trim()),
+            None => (trimmed, trimmed),
+        };
+        if model_id.is_empty() || driver_id.is_empty() {
+            return Err(format!("invalid --model entry {trimmed:?}"));
+        }
+        out.push((model_id.to_owned(), driver_id.to_owned()));
+    }
+    if out.is_empty() {
+        return Err("--model requires at least one model id".into());
+    }
+    Ok(out)
+}
+
 fn run_create(arguments: &[String]) -> Result<(), String> {
     if matches!(arguments, [flag] if flag == "--help" || flag == "-h") {
         println!("{}", org_host::setup_flow::PROVIDER_HELP);
@@ -77,48 +119,30 @@ fn run_create(arguments: &[String]) -> Result<(), String> {
             "--provider",
             "--runtime",
             "--auth-mode",
+            "--subscription-id",
             "--max-turns",
             "--org",
             "--login",
             "--name",
         ],
     )?;
-    let key = options
-        .get("--key")
-        .ok_or_else(|| format!("--key is required\n{}", org_host::setup_flow::PROVIDER_HELP))?;
-    let provider_type = options.get("--provider").ok_or_else(|| {
-        format!(
-            "--provider is required\n{}",
-            org_host::setup_flow::PROVIDER_HELP
-        )
-    })?;
-    let runtime_driver = options.get("--runtime").ok_or_else(|| {
-        format!(
-            "--runtime is required\n{}",
-            org_host::setup_flow::PROVIDER_HELP
-        )
-    })?;
     let auth_mode = options
         .get("--auth-mode")
         .map(String::as_str)
-        .unwrap_or("cli_subscription");
+        .unwrap_or("subscription_cli");
     let max_concurrent_turns = options
         .get("--max-turns")
-        .map(|raw| {
-            raw.parse::<u64>()
-                .ok()
-                .filter(|v| *v >= 1)
-                .ok_or_else(|| format!("--max-turns must be a positive integer, not {raw:?}"))
-        })
+        .map(|raw| parse_positive_u64(raw, "--max-turns"))
         .transpose()?
         .unwrap_or(2);
     let input = ProviderCreateInput {
         org_id: options.get("--org").map(String::as_str),
         name,
-        key,
-        provider_type,
-        runtime_driver,
+        key: require_option(&options, "--key")?,
+        provider_type: require_option(&options, "--provider")?,
+        runtime_driver: require_option(&options, "--runtime")?,
         auth_mode,
+        subscription_identity: options.get("--subscription-id").map(String::as_str),
         max_concurrent_turns,
         json,
     };
@@ -195,6 +219,54 @@ fn run_bind(arguments: &[String]) -> Result<(), String> {
     )
 }
 
+fn run_refresh(arguments: &[String]) -> Result<(), String> {
+    if matches!(arguments, [flag] if flag == "--help" || flag == "-h") {
+        println!("{}", org_host::setup_flow::PROVIDER_HELP);
+        return Ok(());
+    }
+    let (connection_id, tail) = require_positional(arguments, "<connection_id>")?;
+    let (rest, json, archived) = strip_flags(tail)?;
+    if archived {
+        return Err("unrecognized argument \"--include-archived\"".into());
+    }
+    let options = crate::options(
+        &rest,
+        &[
+            "--driver-version",
+            "--model",
+            "--account-ref",
+            "--ttl",
+            "--office",
+            "--org",
+            "--login",
+            "--name",
+        ],
+    )?;
+    let driver_version = require_option(&options, "--driver-version")?;
+    let models = parse_model_specs(require_option(&options, "--model")?)?;
+    let ttl_seconds = options
+        .get("--ttl")
+        .map(|raw| parse_positive_u64(raw, "--ttl"))
+        .transpose()?;
+    let input = ProviderRefreshInput {
+        org_id: options.get("--org").map(String::as_str),
+        office_id: options.get("--office").map(String::as_str),
+        connection_id,
+        driver_version,
+        models,
+        account_identity_ref: options.get("--account-ref").map(String::as_str),
+        ttl_seconds,
+        json,
+    };
+    let mut out = std::io::stdout().lock();
+    org_host::setup_flow::provider_refresh(
+        options.get("--name").map(String::as_str),
+        options.get("--login").map(String::as_str),
+        &input,
+        &mut out,
+    )
+}
+
 fn run_bindings(arguments: &[String]) -> Result<(), String> {
     if matches!(arguments, [flag] if flag == "--help" || flag == "-h") {
         println!("{}", org_host::setup_flow::PROVIDER_HELP);
@@ -259,11 +331,19 @@ mod tests {
             vec!["create", "--help"],
             vec!["list", "--help"],
             vec!["bind", "--help"],
+            vec!["refresh", "--help"],
             vec!["bindings", "--help"],
             vec!["models", "--help"],
         ] {
             assert_eq!(run(&help), Ok(()));
         }
+        assert!(run(&["refresh"]).unwrap_err().contains("<connection_id>"));
+        assert!(run(&["refresh", "conn-1"])
+            .unwrap_err()
+            .contains("--driver-version is required"));
+        assert!(run(&["refresh", "conn-1", "--driver-version", "2.1.332"])
+            .unwrap_err()
+            .contains("--model is required"));
         assert!(run(&["create"]).unwrap_err().contains("<name>"));
         assert!(run(&["create", "Claude"])
             .unwrap_err()

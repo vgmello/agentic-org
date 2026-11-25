@@ -9,8 +9,10 @@ use org_proto::hiring::{
     ProviderConnectionCreateParams,
 };
 use org_proto::providers::{
-    ProviderBindingList, ProviderBindingListParams, ProviderBindingSet, ProviderBindingSetParams,
-    ProviderConnectionList, ProviderConnectionListParams,
+    DiscoveredModelEntitlement, DiscoveredModelInput, ProviderBindingList,
+    ProviderBindingListParams, ProviderBindingSet, ProviderBindingSetParams,
+    ProviderConnectionList, ProviderConnectionListParams, ProviderConnectionRefresh,
+    ProviderConnectionRefreshParams,
 };
 use org_proto::{ApiError, Call};
 
@@ -20,9 +22,9 @@ use super::{registered, say};
 
 /// Help text for `agentic-org provider`.
 pub const HELP: &str = "agentic-org provider <subcommand>\n\
-Use when: registering org-wide AI provider connections on HQ, binding local CLI runtimes on HQ or satellite offices, or listing available model profiles.\n\n\
+Use when: registering org-wide AI provider connections on HQ, binding local CLI runtimes on HQ or satellite offices, refreshing office readiness observations, or listing available model profiles.\n\n\
 Subcommands:\n  \
-create <name> --key <key> --provider <type> --runtime <claude|codex|agy> [--auth-mode <cli_subscription|api_key>] [--max-turns <n>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
+create <name> --key <key> --provider <type> --runtime <claude|codex|agy> [--auth-mode <subscription_cli|api_key|cloud_iam>] [--subscription-id <id>] [--max-turns <n>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
 Create an org-wide provider connection and auto-generated model profile on HQ\n      \
 Use when: enabling Claude, Codex, or Agy for agents in an organization.\n  \
 list [--include-archived] [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
@@ -31,6 +33,9 @@ Use when: finding a provider `connection_id` before binding it on an office.\n  
 bind <connection_id> --auth-ref <ref> [--binary <path>] [--account-ref <ref>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
 Bind a provider connection to this local HQ or satellite office\n      \
 Use when: configuring a headless Linux satellite or HQ office to run local `claude`, `codex`, or `agy` turns.\n  \
+refresh <connection_id> --driver-version <ver> --model <id[:driver_id]> [--account-ref <ref>] [--ttl <secs>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
+Record a fresh local readiness and discovered-model observation for a bound provider connection\n      \
+Use when: marking a headless office's local runtime binding ready for agent session routing (accepts comma-separated `--model` entries).\n  \
 bindings [--connection <id>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
 List provider bindings and readiness state on this office\n      \
 Use when: verifying that an office has a ready local binding for a provider connection.\n  \
@@ -49,6 +54,7 @@ pub struct ProviderCreateInput<'a> {
     pub provider_type: &'a str,
     pub runtime_driver: &'a str,
     pub auth_mode: &'a str,
+    pub subscription_identity: Option<&'a str>,
     pub max_concurrent_turns: u64,
     pub json: bool,
 }
@@ -62,6 +68,19 @@ pub struct ProviderBindInput<'a> {
     pub auth_context_ref: &'a str,
     pub runtime_binary_path: Option<&'a str>,
     pub account_identity_ref: Option<&'a str>,
+    pub json: bool,
+}
+
+/// Input for `agentic-org provider refresh`.
+#[derive(Debug, Clone)]
+pub struct ProviderRefreshInput<'a> {
+    pub org_id: Option<&'a str>,
+    pub office_id: Option<&'a str>,
+    pub connection_id: &'a str,
+    pub driver_version: &'a str,
+    pub models: Vec<(String, String)>,
+    pub account_identity_ref: Option<&'a str>,
+    pub ttl_seconds: Option<u64>,
     pub json: bool,
 }
 
@@ -112,6 +131,12 @@ pub fn provider_create(
     let connection_id = crate::ids::uuid_v7().map_err(|_| "could not generate connection ID")?;
     let default_profile_id =
         crate::ids::uuid_v7().map_err(|_| "could not generate model profile ID")?;
+    let auth_mode = input.auth_mode.trim();
+    let subscription_identity = match input.subscription_identity {
+        Some(raw) if !raw.trim().is_empty() => Some(raw.trim().to_owned()),
+        _ if auth_mode == "subscription_cli" => Some(format!("sub:{}", input.key.trim())),
+        _ => None,
+    };
     let params = ProviderConnectionCreateParams {
         command_id,
         connection_id: connection_id.clone(),
@@ -119,8 +144,8 @@ pub fn provider_create(
         key: input.key.trim().to_owned(),
         name: input.name.trim().to_owned(),
         provider_type: input.provider_type.trim().to_owned(),
-        auth_mode: input.auth_mode.trim().to_owned(),
-        subscription_identity: None,
+        auth_mode: auth_mode.to_owned(),
+        subscription_identity,
         runtime_driver: input.runtime_driver.trim().to_owned(),
         endpoint_url: None,
         max_concurrent_turns: input.max_concurrent_turns.max(1),
@@ -242,6 +267,61 @@ pub fn provider_bind(
     )
 }
 
+/// `agentic-org provider refresh`
+pub fn provider_refresh(
+    instance_name: Option<&str>,
+    login: Option<&str>,
+    input: &ProviderRefreshInput<'_>,
+    out: &mut dyn Write,
+) -> Result<(), String> {
+    let models = input
+        .models
+        .iter()
+        .map(|(model_id, driver_model_id)| DiscoveredModelInput {
+            model_id: model_id.clone(),
+            driver_model_id: driver_model_id.clone(),
+            entitlement: DiscoveredModelEntitlement::Confirmed,
+            capabilities_json: "{}".into(),
+        })
+        .collect();
+    let params = ProviderConnectionRefreshParams {
+        connection_id: input.connection_id.trim().to_owned(),
+        driver_version: Some(input.driver_version.trim().to_owned()),
+        auth_signed_in: Some(true),
+        observed_subscription_identity: input.account_identity_ref.map(|s| s.trim().to_owned()),
+        operator_attested_subscription: true,
+        models,
+        issue_code: None,
+        ttl_seconds: input.ttl_seconds,
+    };
+    let refreshed = match run_provider_rpc::<ProviderConnectionRefresh>(
+        instance_name,
+        login,
+        input.org_id,
+        input.office_id,
+        false,
+        &params,
+    )? {
+        Ok(res) => res,
+        Err(err) => return Err(office_error("refreshing provider connection", err)),
+    };
+    if input.json {
+        let encoded = serde_json::to_string_pretty(&refreshed)
+            .map_err(|_| "could not encode provider refresh response".to_owned())?;
+        return say(out, encoded);
+    }
+    say(
+        out,
+        format!(
+            "Refreshed connection {} on office {}: status={} models={}",
+            refreshed.state.connection_id,
+            refreshed.state.office_id,
+            refreshed.state.status.as_str(),
+            refreshed.models.len()
+        ),
+    )
+}
+
 /// `agentic-org provider bindings`
 pub fn provider_bindings(
     instance_name: Option<&str>,
@@ -342,11 +422,11 @@ mod tests {
 
     #[test]
     fn provider_help_covers_every_subcommand_with_use_when() {
-        for sub in ["create", "list", "bind", "bindings", "models"] {
+        for sub in ["create", "list", "bind", "refresh", "bindings", "models"] {
             assert!(HELP.contains(sub), "provider HELP missing `{sub}`");
         }
         assert!(
-            HELP.matches("Use when:").count() >= 6,
+            HELP.matches("Use when:").count() >= 7,
             "provider HELP missing Use when cues:\n{HELP}"
         );
     }
