@@ -1827,6 +1827,7 @@ impl SessionManager {
             task_ref,
             tried_connections,
             oauth_refresh_attempted,
+            oauth_expires_at_ms,
             oauth_token_fp,
             store: self.store.clone(),
             bindings: self.bindings.clone(),

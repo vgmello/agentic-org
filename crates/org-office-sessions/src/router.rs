@@ -763,6 +763,16 @@ fn compute_route_digest(
     exec_rev: u64,
 ) -> String {
     let wt_digest = compute_worktree_sandbox_digest(office, employee_id);
+    compute_route_digest_with_wt(conn, binding_rev, resolved_model, exec_rev, &wt_digest)
+}
+
+fn compute_route_digest_with_wt(
+    conn: &ProviderConnection,
+    binding_rev: u64,
+    resolved_model: &str,
+    exec_rev: u64,
+    wt_digest: &str,
+) -> String {
     let digest_input = format!(
         "conn={}:rev={}:bind={}:endpoint={}:model={}:exec={}:wt={}",
         conn.id.as_str(),
@@ -832,13 +842,18 @@ pub(crate) fn acquire_warm_permit_for_office(
             Ok(Err(_)) | Err(_) => return WarmPermitOutcome::StaleWarm,
         };
     if let Some(expected) = expected_route_digest {
-        let current_digest = compute_route_digest(
-            office,
-            employee_id,
+        let wt_digest = compute_worktree_sandbox_digest(office, employee_id);
+        // Never allow a persistent `"err"` sentinel to match a prior `"err"` digest; fail closed
+        // into `StaleWarm` so topology or repository changes are never masked.
+        if wt_digest == "err" {
+            return WarmPermitOutcome::StaleWarm;
+        }
+        let current_digest = compute_route_digest_with_wt(
             &conn,
             binding_rev,
             &resolved_model,
             cfg.meta.revision,
+            &wt_digest,
         );
         if current_digest != expected {
             return WarmPermitOutcome::StaleWarm;

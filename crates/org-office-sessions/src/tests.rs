@@ -4057,6 +4057,44 @@ fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_r
         "newly prepared task worktree must invalidate warm session route digest"
     );
 
+    // Corrupt `git-state.json` at BOTH admission and warm permit acquisition MUST fail closed into
+    // `StaleWarm` (never matching `"err" == "err"` across turns).
+    let git_state_path = office
+        .runtime_root()
+        .join(&info.office_id)
+        .join("git-state.json");
+    std::fs::write(&git_state_path, "{corrupt").unwrap();
+    let admitted_corrupt =
+        crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
+            office: &office,
+            vault: &vault,
+            runtimes: &registry,
+            hq_permits: None,
+            employee_id: &agent_id,
+            task_id: None,
+            is_failover_switch: false,
+            excluded_connections: &excluded,
+        })
+        .unwrap();
+    let digest_corrupt = admitted_corrupt.route_digest_suffix.clone();
+    if let Some((pid, _)) = admitted_corrupt.permit {
+        let _ = office.release_turn_permit(&pid);
+    }
+    assert!(
+        matches!(
+            crate::router::acquire_warm_permit_for_office(
+                &office,
+                None,
+                &conn_id,
+                &agent_id,
+                None,
+                Some(&digest_corrupt),
+            ),
+            crate::router::WarmPermitOutcome::StaleWarm
+        ),
+        "corrupt git-state.json must never match stored err digest on warm permit acquisition"
+    );
+
     // Verify `claude-code` runtime_driver is eligible for host subscription OAuth refresh.
     let mut mgr_cfg = SessionManagerConfig::production(office.durable_root().join("sock"));
     let fake_bin = tempfile::tempdir().unwrap();

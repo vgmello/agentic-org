@@ -163,6 +163,7 @@ pub(crate) struct PumpContext {
     pub task_ref: Option<String>,
     pub tried_connections: Vec<String>,
     pub oauth_refresh_attempted: bool,
+    pub oauth_expires_at_ms: Option<u64>,
     pub oauth_token_fp: Option<String>,
     pub store: SessionStore,
     pub bindings: RunBindingRegistry,
@@ -438,6 +439,22 @@ fn should_finish_after_exit(
         .is_some_and(|at| at.elapsed() >= POST_EXIT_DRAIN_GRACE)
 }
 
+fn build_stale_failover_request(ctx: &PumpContext, objective: String) -> FailoverRequest {
+    FailoverRequest {
+        employee_id: ctx.employee_id.clone(),
+        failed_run_id: ctx.run_id.clone(),
+        failed_connection_id: ctx.connection_id.clone().unwrap_or_default(),
+        objective,
+        workspace: ctx.workspace.clone(),
+        task_ref: ctx.task_ref.clone(),
+        tried_connections: Vec::new(),
+        oauth_refresh_attempted: false,
+        oauth_token_fp: ctx.oauth_token_fp.clone(),
+        reason: "warm_route_stale",
+        rate_limit_resets_at: None,
+    }
+}
+
 fn drain_commands(
     commands: &Receiver<PumpCommand>,
     stdin: &mut org_supervise::ChildStdin,
@@ -445,6 +462,7 @@ fn drain_commands(
     loop_state: &mut PumpLoopState,
     session: &mut Box<dyn org_agent_runtime::Session>,
 ) {
+    let mut stop_preserve: Option<bool> = None;
     while let Ok(cmd) = commands.try_recv() {
         match cmd {
             PumpCommand::SendTurn(text) => loop_state.pending_turns.push(text),
@@ -470,28 +488,12 @@ fn drain_commands(
             }
             PumpCommand::Stop { reason } => {
                 loop_state.stop_requested = true;
-                let preserve_queued = matches!(
+                let preserve = matches!(
                     reason.as_str(),
                     "warm_route_stale" | "oauth_token_expiring" | "pool_reroute"
                 );
-                if preserve_queued && !loop_state.pending_turns.is_empty() {
-                    let objective = loop_state.pending_turns.join("\n\n");
-                    loop_state.pending_turns.clear();
-                    loop_state.failover_pending = Some(FailoverRequest {
-                        employee_id: ctx.employee_id.clone(),
-                        failed_run_id: ctx.run_id.clone(),
-                        failed_connection_id: ctx.connection_id.clone().unwrap_or_default(),
-                        objective,
-                        workspace: ctx.workspace.clone(),
-                        task_ref: ctx.task_ref.clone(),
-                        tried_connections: Vec::new(),
-                        oauth_refresh_attempted: false,
-                        oauth_token_fp: ctx.oauth_token_fp.clone(),
-                        reason: "warm_route_stale",
-                        rate_limit_resets_at: None,
-                    });
-                } else {
-                    loop_state.failover_pending = None;
+                if stop_preserve != Some(false) {
+                    stop_preserve = Some(preserve);
                 }
                 if let Ok(outs) = session.control(Control::Close, Instant::now()) {
                     apply_outputs(outs, stdin, ctx, loop_state, session);
@@ -499,6 +501,24 @@ fn drain_commands(
                 record_stop_note(ctx, &reason);
             }
         }
+    }
+    finalize_drained_stop(stop_preserve, ctx, loop_state);
+}
+
+fn finalize_drained_stop(
+    stop_preserve: Option<bool>,
+    ctx: &PumpContext,
+    loop_state: &mut PumpLoopState,
+) {
+    match stop_preserve {
+        Some(true) if !loop_state.pending_turns.is_empty() => {
+            let objective = std::mem::take(&mut loop_state.pending_turns).join("\n\n");
+            loop_state.failover_pending = Some(build_stale_failover_request(ctx, objective));
+        }
+        Some(_) => {
+            loop_state.failover_pending = None;
+        }
+        None => {}
     }
 }
 
@@ -524,6 +544,9 @@ enum PermitCheck {
 }
 
 fn ensure_permit_for_turn(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> PermitCheck {
+    if crate::host_auth::is_oauth_expiring(ctx.oauth_expires_at_ms, now_ms()) {
+        return PermitCheck::StaleWarm;
+    }
     let Some(conn_id) = ctx.connection_id.as_deref() else {
         return PermitCheck::Ready;
     };
@@ -575,21 +598,8 @@ fn dispatch_next_turn(
     match ensure_permit_for_turn(ctx, loop_state) {
         PermitCheck::Ready => {}
         PermitCheck::StaleWarm => {
-            let objective = loop_state.pending_turns.join("\n\n");
-            loop_state.pending_turns.clear();
-            loop_state.failover_pending = Some(FailoverRequest {
-                employee_id: ctx.employee_id.clone(),
-                failed_run_id: ctx.run_id.clone(),
-                failed_connection_id: ctx.connection_id.clone().unwrap_or_default(),
-                objective,
-                workspace: ctx.workspace.clone(),
-                task_ref: ctx.task_ref.clone(),
-                tried_connections: Vec::new(),
-                oauth_refresh_attempted: false,
-                oauth_token_fp: ctx.oauth_token_fp.clone(),
-                reason: "warm_route_stale",
-                rate_limit_resets_at: None,
-            });
+            let objective = std::mem::take(&mut loop_state.pending_turns).join("\n\n");
+            loop_state.failover_pending = Some(build_stale_failover_request(ctx, objective));
             loop_state.stop_requested = true;
             return;
         }
@@ -1027,11 +1037,20 @@ fn evaluate_turn_failover(
     if !tried.contains(conn_id) {
         tried.push(conn_id.clone());
     }
+    let mut objective = loop_state.current_objective.clone();
+    if !loop_state.pending_turns.is_empty() {
+        let queued = std::mem::take(&mut loop_state.pending_turns).join("\n\n");
+        if objective.is_empty() {
+            objective = queued;
+        } else {
+            objective = format!("{objective}\n\n{queued}");
+        }
+    }
     loop_state.failover_pending = Some(FailoverRequest {
         employee_id: ctx.employee_id.clone(),
         failed_run_id: ctx.run_id.clone(),
         failed_connection_id: conn_id.clone(),
-        objective: loop_state.current_objective.clone(),
+        objective,
         workspace: ctx.workspace.clone(),
         task_ref: ctx.task_ref.clone(),
         tried_connections: tried,
@@ -1231,4 +1250,140 @@ pub(crate) fn finalize_child(
         }
     });
     cleanup_verified
+}
+
+#[cfg(test)]
+mod pump_tests {
+    use super::*;
+
+    fn test_pump_ctx(
+        dir: &std::path::Path,
+        connection_id: Option<String>,
+        oauth_expires_at_ms: Option<u64>,
+    ) -> PumpContext {
+        let state = Arc::new(Mutex::new(SessionRuntimeState {
+            employee_id: "emp-1".into(),
+            office_id: "office-1".into(),
+            state: SessionState::Running,
+            run_id: Some("run-1".into()),
+            session_id: Some("sess-1".into()),
+            runtime_id: Some("claude".into()),
+            runtime_session_id: None,
+            private_home: dir.display().to_string(),
+            permission_preset: "autonomous_sandboxed".into(),
+            sandbox_enabled: true,
+            spec_hash: "h".into(),
+            watchdog: StallWatchdog::new(Duration::from_secs(60), Instant::now()),
+            recovery_required: false,
+            last_reply: None,
+            last_error: None,
+            backgrounds: BackgroundRegistry::default(),
+            pending_approvals: Vec::new(),
+            policy: PermissionPolicy {
+                version: 1,
+                allow: Vec::new(),
+                deny: Vec::new(),
+            },
+            preset: PermissionPreset::AutonomousSandboxed,
+            allowed_tools: None,
+            suspended_on_asks: Vec::new(),
+            waiting_for_member_id: None,
+            waiting_for_name: None,
+            suspended_since: None,
+            pending_wake_count: 0,
+            pending_wake_reason: None,
+        }));
+        PumpContext {
+            employee_id: "emp-1".into(),
+            run_id: "run-1".into(),
+            runtime_id: "claude".into(),
+            connection_id,
+            active_permit: Arc::new(Mutex::new(None)),
+            workspace: None,
+            task_ref: None,
+            tried_connections: Vec::new(),
+            oauth_refresh_attempted: false,
+            oauth_expires_at_ms,
+            oauth_token_fp: Some("deadbeefcafebabe".into()),
+            store: SessionStore::new(dir, "office-1"),
+            bindings: RunBindingRegistry::new(),
+            state,
+            stop_plan: org_agent_runtime::StopPlan { steps: Vec::new() },
+            cleanup_paths: Vec::new(),
+            binding_file: dir.join("binding"),
+            hooks: PumpHooks {
+                has_open_required_asks: None,
+                on_turn_ended: None,
+                on_suspended: None,
+                on_usage: None,
+                on_permit_acquire: None,
+                on_permit_renew: None,
+                on_permit_release: None,
+                on_permit_release_pending: None,
+                on_rate_limit: None,
+                on_failover: None,
+            },
+        }
+    }
+
+    #[test]
+    fn finalize_drained_stop_preserves_recycle_pending_turns_and_clears_on_user_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), Some(1));
+        let mut loop_state = PumpLoopState::new(false);
+
+        // Simulate recycle Stop arriving before SendTurn in the same drain pass.
+        loop_state.pending_turns.push("queued-wake".into());
+        finalize_drained_stop(Some(true), &ctx, &mut loop_state);
+        assert!(loop_state.pending_turns.is_empty());
+        let req = loop_state
+            .failover_pending
+            .as_ref()
+            .expect("recycle stop must preserve pending_turns into failover_pending");
+        assert_eq!(req.reason, "warm_route_stale");
+        assert_eq!(req.objective, "queued-wake");
+        assert_eq!(req.oauth_token_fp.as_deref(), Some("deadbeefcafebabe"));
+
+        // Non-recycle Stop (e.g. user stop / shutdown) clears failover_pending.
+        loop_state.pending_turns.push("discard-on-user-stop".into());
+        finalize_drained_stop(Some(false), &ctx, &mut loop_state);
+        assert!(loop_state.failover_pending.is_none());
+
+        // Legacy employee without connection_id still triggers StaleWarm on expiring OAuth.
+        let legacy_ctx = test_pump_ctx(dir.path(), None, Some(1));
+        assert!(matches!(
+            ensure_permit_for_turn(&legacy_ctx, &mut loop_state),
+            PermitCheck::StaleWarm
+        ));
+    }
+
+    #[test]
+    fn evaluate_turn_failover_coalesces_queued_pending_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), None);
+        let mut loop_state = PumpLoopState::new(false);
+        loop_state.current_objective = "turn-1".into();
+        loop_state.pending_turns.push("turn-2".into());
+        loop_state.pending_turns.push("turn-3".into());
+        loop_state.turn_reply = Some("API Error: 401 OAuth token has expired".into());
+
+        let mut st = ctx.state.lock().unwrap();
+        let blocked = evaluate_turn_failover(
+            &mut st,
+            &mut loop_state,
+            &ctx,
+            &org_agent_runtime::TurnOutcome::Completed,
+            &[],
+        );
+        assert!(!blocked);
+        assert!(loop_state.stop_requested);
+        assert!(loop_state.pending_turns.is_empty());
+        let req = loop_state
+            .failover_pending
+            .as_ref()
+            .expect("401 failover must produce FailoverRequest");
+        assert_eq!(req.reason, "auth_expired");
+        assert_eq!(req.objective, "turn-1\n\nturn-2\n\nturn-3");
+        assert_eq!(req.oauth_token_fp.as_deref(), Some("deadbeefcafebabe"));
+    }
 }

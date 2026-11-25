@@ -1560,7 +1560,23 @@ fn try_send_wake_on_live_handle(
         }
         Err(LivePermitError::Hold(reason)) => return Err(reason),
     };
-    if tx.send(PumpCommand::SendTurn(objective)).is_ok() {
+    let sent = {
+        let reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
+        let still_live = !reg.draining
+            && !reg.shutting_down
+            && !reg.starting.contains(employee_id)
+            && reg.live.get(employee_id).is_some_and(|handle| {
+                handle
+                    .state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .run_id
+                    .as_deref()
+                    == Some(run_id.as_str())
+            });
+        still_live && tx.send(PumpCommand::SendTurn(objective)).is_ok()
+    };
+    if sent {
         return Ok(true);
     }
     if let Some(pid) = acquired_pid {
