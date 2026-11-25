@@ -4,9 +4,14 @@ Standalone interactive static HTML prototypes used to explore and iterate on the
 
 ## Contents
 
-- `v6.html` — Current Executive UI prototype (served at `/` and `/v6`). Includes the 4 production themes (`Ocean`, `Classic`, `Report`, and `Report Night`) plus experimental prototype themes (`Graphite`, `Cozy Glass`).
+- `v6.html` — Current Executive UI prototype shell (served at `/` and `/v6`). Includes the 4 production themes (`Ocean`, `Classic`, `Report`, and `Report Night`) plus experimental prototype themes (`Graphite`, `Cozy Glass`).
+- `v6/` — Modular stylesheets and plain ES modules imported by `v6.html` (bundled natively by Bun with zero build config):
+  - `v6/styles/` — Base, Home, and per-theme stylesheets (`base.css`, `home.css`, `theme-ocean-classic.css`, `theme-report.css`, `theme-graphite.css`).
+  - `v6/data.js`, `v6/state.js`, `v6/ui.js`, `v6/main.js` — Mock org fixtures, persisted prototype state, shared UI helpers, and boot entry.
+  - `v6/pages/` — Page renderers (`home.js`, `inbox.js`, `work.js`, `projects.js`, `insights.js`, `chat.js`, `activity.js`, `teams.js`, `agent-profile.js`, `settings.js`).
+  - `v6/shell/` — App shell (`sidebar.js`, `router.js`, `cmdk.js`, `keyboard.js`, `dialogs.js`, `actions.js`).
 - `v5.html` — Earlier Executive UI prototype iteration (served at `/v5`).
-- `cozy.css`, `operations.css`, `fonts/` — Prototype-local stylesheets and font assets.
+- `cozy.css`, `operations.css`, `fonts/` — Shared prototype stylesheets and font assets.
 - `server.ts` — Local Bun static dev server with HMR.
 
 ## Running locally

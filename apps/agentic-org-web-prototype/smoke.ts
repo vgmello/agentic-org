@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
-import { chromium } from "../apps/agentic-org-ui/node_modules/playwright";
+import { chromium } from "../agentic-org-ui/node_modules/playwright";
 import { servePrototype } from "./server";
 
 const [pageRoute = "work", theme = "graphite"] = process.argv.slice(2);
@@ -353,7 +353,7 @@ try {
     }
 
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
-    const screenshot = resolve(import.meta.dir, "../.playwright", `poc-${route.replace(/[^a-z0-9]+/gi, "-")}-${theme}.png`);
+    const screenshot = resolve(import.meta.dir, "../../.playwright", `poc-${route.replace(/[^a-z0-9]+/gi, "-")}-${theme}.png`);
     await page.screenshot({ path: screenshot });
     if (route === "inbox") {
       await page.keyboard.press("s");
