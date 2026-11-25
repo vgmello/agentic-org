@@ -309,47 +309,26 @@ impl SessionManager {
         Ok(self.process_due_wakes_for(target_employee_id))
     }
 
-    /// Populates office-verified `sender_handle` and reporting-chain `sender_relation` badge
-    /// (`doc-78`, `doc-101` §4C) so untrusted message fences carry authenticated provenance.
+    /// Populates office-verified `sender_handle`, canonical `sender_name`/`sender_is_person`, and
+    /// reporting-chain `sender_relation` badge (`doc-78`, `doc-101` §4C) unconditionally from
+    /// office state so untrusted callers cannot forge provenance.
     fn enrich_wake_provenance(&self, target: &Employee, item: &mut PendingWakeItem) {
         let sender_emp = self.office.load_employee(&item.sender_id).ok().flatten();
-        if item.sender_handle.is_none() {
-            if let Some(emp) = sender_emp.as_ref().filter(|e| !e.handle.is_empty()) {
-                item.sender_handle = Some(emp.handle.clone());
-            }
+        if let Some(emp) = sender_emp.as_ref() {
+            item.sender_name = emp.name.clone();
+            item.sender_is_person = emp.kind == EmployeeKind::Person;
+            item.sender_handle = (!emp.handle.is_empty()).then(|| emp.handle.clone());
+        } else {
+            item.sender_handle = None;
         }
-        if item.sender_relation.is_none() {
-            let relation = if item.sender_id == self.office.owner_member_id() {
-                "owner"
-            } else if target
-                .reports_to_employee_id
-                .as_ref()
-                .is_some_and(|id| id.as_str() == item.sender_id)
-            {
-                "reports_to"
-            } else if self
-                .office
-                .org_snapshot()
-                .ok()
-                .and_then(|snap| {
-                    snap.teams
-                        .into_iter()
-                        .find(|t| t.id == target.home_team_id.as_str())
-                })
-                .is_some_and(|team| team.lead_member_id.as_deref() == Some(item.sender_id.as_str()))
-            {
-                "team_lead"
-            } else if item.sender_is_person
-                || sender_emp
-                    .as_ref()
-                    .is_some_and(|e| e.kind == EmployeeKind::Person)
-            {
-                "person"
-            } else {
-                "peer"
-            };
-            item.sender_relation = Some(relation.to_owned());
-        }
+        let relation = if item.kind == WakeKind::Recovery
+            && item.sender_relation.as_deref() == Some("office_supervisor")
+        {
+            "office_supervisor"
+        } else {
+            resolve_verified_sender_relation(&self.office, target, item, sender_emp.as_ref())
+        };
+        item.sender_relation = Some(relation.to_owned());
     }
 
     fn notify_live_pump_pending_wakes(&self, employee_id: &str) {
@@ -420,6 +399,10 @@ impl SessionManager {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         self.open_required_asks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(employee_id);
+        self.mid_turn_rates
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(employee_id);
@@ -895,15 +878,21 @@ impl SessionManager {
             trigger,
         ) {
             Ok(_) => {
-                let _lock = self
-                    .lifecycle_lock
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner());
-                if !person_triggered {
-                    self.record_quota_start_locked(emp_id, ts);
+                let notify_remaining = {
+                    let _lock = self
+                        .lifecycle_lock
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    if !person_triggered {
+                        self.record_quota_start_locked(emp_id, ts);
+                    }
+                    let claimed: HashSet<String> =
+                        matching.into_iter().map(|i| i.item_id).collect();
+                    self.remove_claimed_wakes_locked(emp_id, &claimed)
+                };
+                if notify_remaining {
+                    self.notify_live_pump_pending_wakes(emp_id);
                 }
-                let claimed: HashSet<String> = matching.into_iter().map(|i| i.item_id).collect();
-                self.remove_claimed_wakes_locked(emp_id, &claimed);
                 WakeOutcome::Started
             }
             Err(_) => {
@@ -1023,15 +1012,21 @@ impl SessionManager {
             trigger,
         ) {
             Ok(_) => {
-                let _lock = self
-                    .lifecycle_lock
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner());
-                if !person_triggered {
-                    self.record_quota_start_locked(emp_id, ts);
+                let notify_remaining = {
+                    let _lock = self
+                        .lifecycle_lock
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    if !person_triggered {
+                        self.record_quota_start_locked(emp_id, ts);
+                    }
+                    let claimed: HashSet<String> =
+                        queue.items.into_iter().map(|i| i.item_id).collect();
+                    self.remove_claimed_wakes_locked(emp_id, &claimed)
+                };
+                if notify_remaining {
+                    self.notify_live_pump_pending_wakes(emp_id);
                 }
-                let claimed: HashSet<String> = queue.items.into_iter().map(|i| i.item_id).collect();
-                self.remove_claimed_wakes_locked(emp_id, &claimed);
                 WakeOutcome::Started
             }
             Err(_) => {
@@ -1171,14 +1166,16 @@ impl SessionManager {
         let _ = self.store.write_wake_quota(&quota);
     }
 
-    fn remove_claimed_wakes_locked(&self, emp_id: &str, claimed: &HashSet<String>) {
+    fn remove_claimed_wakes_locked(&self, emp_id: &str, claimed: &HashSet<String>) -> bool {
         let Ok(Some(mut queue)) = self.store.read_pending_wakes(emp_id) else {
-            return;
+            return false;
         };
         queue.items.retain(|i| !claimed.contains(&i.item_id));
+        let has_remaining_mid_turn = queue.items.iter().any(|i| i.kind.is_mid_turn_eligible());
         if queue.items.is_empty() && queue.seen_item_ids.is_empty() {
-            let _ = self.store.clear_pending_wakes(emp_id);
-            set_waiting_messages_count(&self.waiting_messages, emp_id, 0);
+            if self.store.clear_pending_wakes(emp_id).is_ok() {
+                set_waiting_messages_count(&self.waiting_messages, emp_id, 0);
+            }
         } else {
             if queue.items.is_empty() {
                 // Retain `seen_item_ids` across drain so replay after receipt commit failure
@@ -1191,6 +1188,7 @@ impl SessionManager {
             self.write_wakes_redacted(&queue);
             set_waiting_messages_count(&self.waiting_messages, emp_id, queue.items.len());
         }
+        has_remaining_mid_turn
     }
 
     fn mark_queue_hold_locked(
@@ -1351,29 +1349,105 @@ struct TurnEndDrainCtx {
     window_ms: u64,
 }
 
+fn sender_in_reports_to_chain(office: &Office, target: &Employee, sender_id: &str) -> bool {
+    let mut visited = HashSet::new();
+    visited.insert(target.id.as_str().to_owned());
+    let mut cursor = target
+        .reports_to_employee_id
+        .as_ref()
+        .map(|id| id.as_str().to_owned());
+    while let Some(mgr_id) = cursor {
+        if mgr_id == sender_id {
+            return true;
+        }
+        if !visited.insert(mgr_id.clone()) {
+            break;
+        }
+        cursor = office
+            .load_employee(&mgr_id)
+            .ok()
+            .flatten()
+            .and_then(|e| e.reports_to_employee_id)
+            .map(|id| id.as_str().to_owned());
+    }
+    false
+}
+
+fn sender_in_ancestor_team_leads(office: &Office, target: &Employee, sender_id: &str) -> bool {
+    let Ok(snap) = office.org_snapshot() else {
+        return false;
+    };
+    let by_id: HashMap<&str, (&Option<String>, &Option<String>)> = snap
+        .teams
+        .iter()
+        .map(|t| (t.id.as_str(), (&t.lead_member_id, &t.owner_team_id)))
+        .collect();
+    let mut visited = HashSet::new();
+    let mut cursor = Some(target.home_team_id.as_str());
+    while let Some(team_id) = cursor {
+        if !visited.insert(team_id) {
+            break;
+        }
+        let Some((lead, parent)) = by_id.get(team_id) else {
+            break;
+        };
+        if lead.as_deref() == Some(sender_id) {
+            return true;
+        }
+        cursor = parent.as_deref();
+    }
+    false
+}
+
+fn resolve_verified_sender_relation(
+    office: &Office,
+    target: &Employee,
+    item: &PendingWakeItem,
+    sender_emp: Option<&Employee>,
+) -> &'static str {
+    if item.sender_id == office.owner_member_id() {
+        return "owner";
+    }
+    if sender_in_reports_to_chain(office, target, &item.sender_id) {
+        return "reports_to";
+    }
+    if sender_in_ancestor_team_leads(office, target, &item.sender_id) {
+        return "team_lead";
+    }
+    if item.sender_is_person || sender_emp.is_some_and(|e| e.kind == EmployeeKind::Person) {
+        "person"
+    } else {
+        "peer"
+    }
+}
+
 fn build_mid_turn_hooks(mgr: &SessionManager) -> (StageMidTurnWakesHook, MidTurnDeliveredHook) {
     let stage_store = mgr.store.clone();
     let stage_office = Arc::clone(&mgr.office);
     let stage_budget = Arc::clone(&mgr.budget_hold);
     let stage_lock = Arc::clone(&mgr.lifecycle_lock);
+    let stage_dispatching = Arc::clone(&mgr.dispatching_wakes);
     let stage_rates = Arc::clone(&mgr.mid_turn_rates);
     let stage_limits: MidTurnLimits = mgr.config.mid_turn_limits;
     let delivery_seq = Arc::new(AtomicU64::new(1));
 
-    let stage_hook: StageMidTurnWakesHook = Arc::new(move |emp_id, turn_total, turn_agent| {
-        stage_mid_turn_batch(
-            &stage_office,
-            &stage_store,
-            &stage_budget,
-            &stage_lock,
-            &stage_rates,
-            &delivery_seq,
-            stage_limits,
-            emp_id,
-            turn_total,
-            turn_agent,
-        )
-    });
+    let stage_hook: StageMidTurnWakesHook =
+        Arc::new(move |emp_id, task_ref, turn_total, turn_agent| {
+            stage_mid_turn_batch(
+                &stage_office,
+                &stage_store,
+                &stage_budget,
+                &stage_lock,
+                &stage_dispatching,
+                &stage_rates,
+                &delivery_seq,
+                stage_limits,
+                emp_id,
+                task_ref,
+                turn_total,
+                turn_agent,
+            )
+        });
 
     let commit_store = mgr.store.clone();
     let commit_lock = Arc::clone(&mgr.lifecycle_lock);
@@ -1403,6 +1477,7 @@ fn employee_allows_mid_turn_staging(
     store: &SessionStore,
     budget_hold: &Mutex<Option<String>>,
     emp_id: &str,
+    task_ref: Option<&str>,
 ) -> bool {
     let Some(emp) = office.load_employee(emp_id).ok().flatten() else {
         return false;
@@ -1426,7 +1501,7 @@ fn employee_allows_mid_turn_staging(
         .unwrap_or_else(|p| p.into_inner())
         .is_some();
     let has_db_hold = office
-        .active_budget_holds(Some(emp_id), None)
+        .active_budget_holds(Some(emp_id), task_ref)
         .is_ok_and(|h| !h.is_empty());
     !has_mem_hold && !has_db_hold
 }
@@ -1472,14 +1547,25 @@ fn stage_mid_turn_batch(
     store: &SessionStore,
     budget_hold: &Mutex<Option<String>>,
     lifecycle_lock: &Mutex<()>,
+    dispatching_wakes: &Mutex<HashSet<String>>,
     mid_turn_rates: &Mutex<HashMap<String, MidTurnRateTracker>>,
     delivery_seq: &AtomicU64,
     limits: MidTurnLimits,
     emp_id: &str,
+    task_ref: Option<&str>,
     turn_total: u32,
     turn_agent: u32,
 ) -> MidTurnStageOutcome {
-    if !employee_allows_mid_turn_staging(office, store, budget_hold, emp_id) {
+    // Wait briefly if a turn-start dispatch is currently removing its claimed wakes so the warm
+    // pump cannot re-stage those same items mid-turn (`TASK-115` zero-duplicate invariant).
+    if dispatching_wakes
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .contains(emp_id)
+    {
+        return MidTurnStageOutcome::Wait(Duration::from_millis(50));
+    }
+    if !employee_allows_mid_turn_staging(office, store, budget_hold, emp_id, task_ref) {
         return MidTurnStageOutcome::None;
     }
     // Phase 2A: read pending-wakes.v1.json WITHOUT mutating disk so a crash or failed delivery
@@ -1530,8 +1616,9 @@ fn commit_mid_turn_delivered(
                 .items
                 .retain(|i| !claimed.contains(i.item_id.as_str()));
             if queue.items.is_empty() && queue.seen_item_ids.is_empty() {
-                let _ = store.clear_pending_wakes(emp_id);
-                set_waiting_messages_count(waiting_messages, emp_id, 0);
+                if store.clear_pending_wakes(emp_id).is_ok() {
+                    set_waiting_messages_count(waiting_messages, emp_id, 0);
+                }
             } else {
                 if queue.items.is_empty() {
                     // Retain `seen_item_ids` across mid-turn drain for `TASK-52` P7-#12 idempotency.
@@ -1540,8 +1627,9 @@ fn commit_mid_turn_delivered(
                     queue.retry_after_ms = None;
                 }
                 queue.updated_at = rfc3339_now();
-                let _ = store.write_pending_wakes_redacted(&queue, &refs);
-                set_waiting_messages_count(waiting_messages, emp_id, queue.items.len());
+                if store.write_pending_wakes_redacted(&queue, &refs).is_ok() {
+                    set_waiting_messages_count(waiting_messages, emp_id, queue.items.len());
+                }
             }
         }
     }

@@ -669,6 +669,16 @@ impl ChatService {
                 Err(e) => return Ok(Err(e)),
             };
         }
+        // Unregister BEFORE the final check so any responder that observed `has_active_waiter ==
+        // true` and skipped wake enqueue has already committed its answer and is returned inline
+        // (`TASK-115` zero-loss handoff).
+        drop(_waiter_guard);
+        if max_hold > 0 && latest.status == AskStatus::Waiting {
+            latest = match self.office.inspect_ask_status(member, ask_id)? {
+                Ok(v) => v,
+                Err(e) => return Ok(Err(e)),
+            };
+        }
         Ok(Ok(latest))
     }
 

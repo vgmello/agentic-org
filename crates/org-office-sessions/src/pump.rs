@@ -63,7 +63,7 @@ pub(crate) enum MidTurnStageOutcome {
 
 /// Inspects eligible mid-turn wakes without removing them from disk (`TASK-115`).
 pub(crate) type StageMidTurnWakesHook =
-    Arc<dyn Fn(&str, u32, u32) -> MidTurnStageOutcome + Send + Sync>;
+    Arc<dyn Fn(&str, Option<&str>, u32, u32) -> MidTurnStageOutcome + Send + Sync>;
 /// Commits removal of only the runtime-acknowledged `item_ids` (preserving `seen_item_ids`)
 /// after `SessionEvent::MidTurnDelivered` (`TASK-115` / `doc-101` §4B).
 pub(crate) type MidTurnDeliveredHook = Arc<dyn Fn(&str, &StagedMidTurnBatch) + Send + Sync>;
@@ -738,6 +738,7 @@ fn maybe_deliver_mid_turn(
     loop_state.mid_turn_next_check = None;
     match stage_hook(
         &ctx.employee_id,
+        ctx.task_ref.as_deref(),
         loop_state.mid_turn_total_this_turn,
         loop_state.mid_turn_agent_this_turn,
     ) {
@@ -886,6 +887,16 @@ fn spawn_pipe_reader(mut file: File, tx: Sender<ReaderMsg>, is_stderr: bool) -> 
     })
 }
 
+fn rollback_failed_write_delivery(loop_state: &mut PumpLoopState, delivery_id: &str) {
+    if loop_state
+        .in_flight_delivery
+        .as_ref()
+        .is_some_and(|b| b.delivery_id == delivery_id)
+    {
+        loop_state.in_flight_delivery = None;
+    }
+}
+
 fn apply_outputs(
     outputs: Vec<org_agent_runtime::Output>,
     stdin: &mut org_supervise::ChildStdin,
@@ -894,16 +905,24 @@ fn apply_outputs(
     session: &mut Box<dyn org_agent_runtime::Session>,
 ) {
     let mut follow_up = Vec::new();
+    let mut write_failed = false;
     for output in outputs {
         match output {
             org_agent_runtime::Output::Write(line) => {
-                let _ = stdin.write_all(line.as_bytes());
-                let _ = stdin.flush();
+                if stdin.write_all(line.as_bytes()).is_err() || stdin.flush().is_err() {
+                    write_failed = true;
+                }
             }
             org_agent_runtime::Output::CloseStdin => {
                 let _ = stdin.close();
             }
             org_agent_runtime::Output::Event(mut event) => {
+                if write_failed {
+                    if let SessionEvent::MidTurnDelivered { delivery_id } = &event {
+                        rollback_failed_write_delivery(loop_state, delivery_id);
+                        continue;
+                    }
+                }
                 let tokens = ctx.bindings.active_tokens();
                 let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
                 // Evaluate approval requests against the ORIGINAL unredacted structured input
@@ -1043,15 +1062,16 @@ fn handle_event(
         }
         SessionEvent::ToolStarted { .. } => {
             loop_state.had_external_effect = true;
-            return handle_tool_or_approval_event(&mut state, event);
+            return handle_tool_or_approval_event(&mut state, loop_state, event);
         }
-        other => return handle_tool_or_approval_event(&mut state, other),
+        other => return handle_tool_or_approval_event(&mut state, loop_state, other),
     }
     None
 }
 
 fn handle_tool_or_approval_event(
     state: &mut SessionRuntimeState,
+    loop_state: &mut PumpLoopState,
     event: &SessionEvent,
 ) -> Option<Control> {
     match event {
@@ -1086,6 +1106,10 @@ fn handle_tool_or_approval_event(
             state
                 .pending_approvals
                 .retain(|p| p.approval_id != id.as_str());
+            if state.pending_approvals.is_empty() && state.state == SessionState::WaitingApproval {
+                state.state = SessionState::Running;
+                loop_state.mid_turn_dirty = true;
+            }
         }
         _ => {}
     }

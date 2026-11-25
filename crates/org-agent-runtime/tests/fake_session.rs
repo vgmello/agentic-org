@@ -83,7 +83,7 @@ enum Bug {
     EndedNotLastWithApproval,
     /// Approvals: an Answer after the runtime cancelled the approval is accepted.
     AnswerAfterCancelAccepted,
-    /// Steering: an urgent Send steers although this runtime can't.
+    /// Mid-turn delivery: accepts `DeliverMidTurn` although this runtime declares `None`.
     UrgentSendSteers,
     /// Bypass: the opening sets a bypass permission mode in-band.
     BypassInOpening,

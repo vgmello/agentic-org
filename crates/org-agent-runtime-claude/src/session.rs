@@ -1370,12 +1370,15 @@ fn handle_hook_callback(
     req: &serde_json::Map<String, Value>,
 ) -> Vec<Output> {
     let callback_id = req.get("callback_id").and_then(Value::as_str).unwrap_or("");
-    let delivered =
-        if callback_id == POST_TOOL_USE_CALLBACK_ID && !s.aborting && s.phase == Phase::Busy {
-            s.staged_mid_turn.take()
-        } else {
-            None
-        };
+    let delivered = if callback_id == POST_TOOL_USE_CALLBACK_ID
+        && !s.aborting
+        && s.phase == Phase::Busy
+        && s.pending_approvals.is_empty()
+    {
+        s.staged_mid_turn.take()
+    } else {
+        None
+    };
     let (body, event) = match delivered {
         Some((delivery_id, text)) => (
             json!({

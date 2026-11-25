@@ -1155,7 +1155,7 @@ fn attach_waiting_messages_hint(
     cached: &mut Option<(String, Arc<std::sync::atomic::AtomicU32>)>,
     response: &mut Response,
 ) {
-    if binding.via_grant() {
+    if binding.via_grant() || !matches!(response.outcome, org_proto::Outcome::Result(_)) {
         return;
     }
     let (Some(member), Some(lookup)) = (binding.member(), &shared.ports.waiting_messages_counter)

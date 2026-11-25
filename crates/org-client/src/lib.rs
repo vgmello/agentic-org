@@ -646,6 +646,14 @@ impl Client {
         (count > 0).then_some(count)
     }
 
+    /// Resets the cached `waiting_messages` hint before executing a new command so a non-RPC
+    /// dispatch path can never inherit a stale count from an earlier request.
+    pub fn clear_last_waiting_messages(&self) {
+        self.shared
+            .last_waiting_messages
+            .store(0, Ordering::Relaxed);
+    }
+
     fn send_request(
         &self,
         request: Request,

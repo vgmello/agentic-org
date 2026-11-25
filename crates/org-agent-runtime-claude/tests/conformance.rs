@@ -2016,7 +2016,52 @@ fn task115_step_hook_registers_post_tool_use_delivers_additional_context_and_fai
         }))
     );
 
-    // 4. Stage another payload and finish turn before next hook -> MidTurnDeliveryFailed BEFORE TurnEnded.
+    // 4. Staged mid-turn payload MUST NOT inject while a `can_use_tool` approval is pending
+    // (parallel tool calls / WaitingApproval control-plane isolation), and delivers once answered.
+    session
+        .control(
+            Control::DeliverMidTurn {
+                delivery_id: "del-appr".into(),
+                text: "HOLD WHILE APPROVAL PENDING".into(),
+            },
+            now,
+        )
+        .unwrap();
+    let _ = session.on_line(
+        br#"{"type":"control_request","request_id":"perm-hold","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"echo hi"}}}"#,
+        now,
+    );
+    let held = session.on_line(
+        br#"{"type":"control_request","request_id":"hk-held","request":{"subtype":"hook_callback","callback_id":"office-mid-turn-post-tool-use","input":{"tool_name":"Read"}}}"#,
+        now,
+    );
+    assert!(
+        !held
+            .iter()
+            .any(|o| matches!(o, Output::Event(SessionEvent::MidTurnDelivered { .. }))),
+        "hook_callback must not inject mid-turn notice while approval is pending: {held:?}"
+    );
+    let _ = session
+        .control(
+            Control::Answer {
+                request_id: ApprovalId::new("perm-hold"),
+                decision: Decision::AllowOnce,
+            },
+            now,
+        )
+        .unwrap();
+    let resumed_del = session.on_line(
+        br#"{"type":"control_request","request_id":"hk-after-appr","request":{"subtype":"hook_callback","callback_id":"office-mid-turn-post-tool-use","input":{"tool_name":"Bash"}}}"#,
+        now,
+    );
+    assert!(
+        resumed_del.contains(&Output::Event(SessionEvent::MidTurnDelivered {
+            delivery_id: "del-appr".into(),
+        })),
+        "staged payload should deliver on PostToolUse after approval resolves: {resumed_del:?}"
+    );
+
+    // 5. Stage another payload and finish turn before next hook -> MidTurnDeliveryFailed BEFORE TurnEnded.
     session
         .control(
             Control::DeliverMidTurn {

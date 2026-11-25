@@ -1,7 +1,7 @@
 //! Conformance checks for [`Session`] implementations (the `testkit` feature).
 //!
 //! The [`Session`] trait states three contract rules the office relies on. These checks
-//! drive any session through them (and through the approval and steering rules), using the
+//! drive any session through them (and through the approval and mid-turn delivery rules), using the
 //! adapter's own fixture lines (a [`Script`]), and panic with a message naming the broken
 //! rule. [`check_plan`] checks a [`LaunchPlan`] for banned switches. Every adapter runs them
 //! in its tests:
