@@ -258,6 +258,9 @@ pub(crate) fn run_pump(
         drain_commands(&commands, &mut stdin, &ctx, &mut loop_state, &mut session);
         enqueue_background_wakes(&ctx, &mut loop_state);
         dispatch_next_turn(&mut stdin, &ctx, &mut loop_state, &mut session);
+        if loop_state.stop_requested {
+            break;
+        }
 
         if poll_io(&io_rx, &mut stdin, &ctx, &mut loop_state, &mut session) {
             break;
@@ -1015,6 +1018,9 @@ fn persist_turn_update(
     mutate: impl FnOnce(&mut crate::recovery::ActiveTurnRecord),
 ) {
     let _ = ctx.store.update_active_turn(&ctx.employee_id, |persisted| {
+        if persisted.run_id != ctx.run_id {
+            return;
+        }
         mutate(persisted);
         persisted.updated_at = rfc3339_now();
     });

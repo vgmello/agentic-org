@@ -128,9 +128,18 @@ impl Drop for BgSpawnGuard<'_> {
     }
 }
 
-struct StartSlotGuard<'a> {
+pub(crate) struct StartSlotGuard<'a> {
     registry: &'a Mutex<SessionRegistry>,
     employee_id: String,
+}
+
+impl<'a> StartSlotGuard<'a> {
+    pub(crate) fn new(registry: &'a Mutex<SessionRegistry>, employee_id: String) -> Self {
+        Self {
+            registry,
+            employee_id,
+        }
+    }
 }
 
 impl Drop for StartSlotGuard<'_> {
@@ -2119,7 +2128,9 @@ impl SessionManager {
                     && name_str != "snapshot-import"
                     && name_str != "snapshot-export"
                 {
-                    push_glob_pattern(out, &entry.path());
+                    let p = entry.path();
+                    push_exact_pattern(out, &p);
+                    push_glob_pattern(out, &p);
                 }
             }
         }
@@ -2168,7 +2179,23 @@ impl SessionManager {
             return;
         };
         let self_admins_by_repo = collect_self_active_admins(&git_state, emp_id);
-        for cache_dir in self.collect_bare_cache_dirs(&repos_root, Some(&git_state)) {
+        if self_admins_by_repo.is_empty() {
+            // Zero active worktrees: blanket-deny `<office_rt>/repositories/**` so repositories
+            // cloned after session launch can never be read by this session (`doc-35`).
+            push_glob_pattern(out, &repos_root);
+            return;
+        }
+        let Ok((cache_dirs, extra_entries)) =
+            self.collect_bare_cache_entries(&repos_root, Some(&git_state))
+        else {
+            push_glob_pattern(out, &repos_root);
+            return;
+        };
+        for extra in extra_entries {
+            push_exact_pattern(out, &extra);
+            push_glob_pattern(out, &extra);
+        }
+        for cache_dir in cache_dirs {
             let repo_id = cache_dir
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -2191,22 +2218,16 @@ impl SessionManager {
         office_rt: &Path,
         emp_id: &str,
     ) {
-        let chain = self.resolve_employee_team_chain(emp_id);
-        if chain.is_empty() {
+        let Some((chain, all_team_ids)) = self.resolve_employee_team_chain_and_ids(emp_id) else {
             push_glob_pattern(out, &office_rt.join("teams"));
             return;
-        }
-        let all_teams = self
-            .office
-            .org_snapshot()
-            .map(|s| s.teams)
-            .unwrap_or_default();
+        };
         let mut cursor = office_rt.to_path_buf();
         for (idx, team_id) in chain.iter().enumerate() {
             let teams_dir = cursor.join("teams");
-            for team in &all_teams {
-                if team.id != *team_id {
-                    push_glob_pattern(out, &teams_dir.join(&team.id));
+            for other_team_id in &all_team_ids {
+                if other_team_id != team_id {
+                    push_glob_pattern(out, &teams_dir.join(other_team_id));
                 }
             }
             if let Ok(entries) = std::fs::read_dir(&teams_dir) {
@@ -2230,31 +2251,41 @@ impl SessionManager {
         }
     }
 
-    pub(crate) fn resolve_employee_team_chain(&self, employee_id: &str) -> Vec<String> {
-        let Ok(Some(emp)) = self.office.load_employee(employee_id) else {
-            return Vec::new();
-        };
-        let Ok(snapshot) = self.office.org_snapshot() else {
-            // Fail closed on snapshot read failure so caller denies `office_rt/teams/**`.
-            return Vec::new();
-        };
+    fn resolve_employee_team_chain_and_ids(
+        &self,
+        employee_id: &str,
+    ) -> Option<(Vec<String>, Vec<String>)> {
+        let emp = self.office.load_employee(employee_id).ok()??;
+        let snapshot = self.office.org_snapshot().ok()?;
         let parent_by_id: HashMap<&str, Option<&str>> = snapshot
             .teams
             .iter()
             .map(|t| (t.id.as_str(), t.owner_team_id.as_deref()))
             .collect();
+        if !parent_by_id.contains_key(emp.home_team_id.as_str()) {
+            return None;
+        }
         let mut chain = Vec::new();
         let mut cur = Some(emp.home_team_id.as_str());
         let mut visited = HashSet::new();
         while let Some(tid) = cur {
             if !visited.insert(tid) {
-                break;
+                // Fail closed on team hierarchy cycle.
+                return None;
             }
+            let &parent = parent_by_id.get(tid)?;
             chain.push(tid.to_owned());
-            cur = parent_by_id.get(tid).copied().flatten();
+            cur = parent;
         }
         chain.reverse();
-        chain
+        let all_team_ids = snapshot.teams.into_iter().map(|t| t.id).collect();
+        Some((chain, all_team_ids))
+    }
+
+    pub(crate) fn resolve_employee_team_chain(&self, employee_id: &str) -> Vec<String> {
+        self.resolve_employee_team_chain_and_ids(employee_id)
+            .map(|(chain, _)| chain)
+            .unwrap_or_default()
     }
 
     pub(crate) fn worktree_sandbox_grants(
@@ -2293,8 +2324,9 @@ impl SessionManager {
             let mut wt_dirs = std::collections::BTreeSet::new();
             if let Some(gs) = &git_state {
                 for ws in gs.workspaces.values() {
-                    if ws.employee_id == employee_id && ws.state == "active" {
-                        wt_dirs.insert(canonicalize_with_tail(Path::new(&ws.worktree_path)));
+                    let p = Path::new(&ws.worktree_path);
+                    if ws.employee_id == employee_id && ws.state == "active" && p.is_absolute() {
+                        wt_dirs.insert(canonicalize_with_tail(p));
                     }
                 }
             }
@@ -2324,18 +2356,25 @@ impl SessionManager {
         (writable, write_denies)
     }
 
-    fn collect_bare_cache_dirs(
+    fn collect_bare_cache_entries(
         &self,
         repos_root: &Path,
         git_state: Option<&org_office::git::OfficeGitState>,
-    ) -> Vec<PathBuf> {
+    ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), ()> {
+        let repos = self
+            .office
+            .list_repositories(None)
+            .map_err(|_| ())?
+            .map_err(|_| ())?;
         let mut dirs = std::collections::BTreeSet::new();
-        if let Ok(Ok(repos)) = self.office.list_repositories(None) {
-            for r in repos {
-                dirs.insert(repos_root.join(format!("{}.git", r.record.id.as_str())));
-            }
+        let mut extra = std::collections::BTreeSet::new();
+        for r in repos {
+            dirs.insert(repos_root.join(format!("{}.git", r.record.id.as_str())));
         }
         if let Some(gs) = git_state {
+            for rid in gs.caches.keys() {
+                dirs.insert(repos_root.join(format!("{rid}.git")));
+            }
             for ws in gs.workspaces.values() {
                 dirs.insert(repos_root.join(format!("{}.git", ws.repository_id)));
             }
@@ -2344,10 +2383,12 @@ impl SessionManager {
             for entry in entries.flatten() {
                 if entry.file_name().to_string_lossy().ends_with(".git") {
                     dirs.insert(entry.path());
+                } else {
+                    extra.insert(entry.path());
                 }
             }
         }
-        dirs.into_iter().collect()
+        Ok((dirs.into_iter().collect(), extra.into_iter().collect()))
     }
 
     fn append_sibling_and_socket_denies(
@@ -2465,6 +2506,16 @@ pub(crate) fn spawn_bg_worker_checked(
         reg.bg_workers.retain(|h| !h.is_finished());
         reg.bg_spawning += 1;
     }
+    spawn_bg_worker_reserved(mgr, name, f)
+}
+
+/// Spawns a background worker consuming a `bg_spawning` slot that the caller already reserved
+/// atomically under `mgr.registry` lock (no unlocked gap against `stop_all_inner`).
+pub(crate) fn spawn_bg_worker_reserved(
+    mgr: &Arc<SessionManager>,
+    name: &str,
+    f: impl FnOnce(Arc<SessionManager>) + Send + 'static,
+) -> bool {
     let _spawn_guard = BgSpawnGuard {
         registry: &mgr.registry,
     };
@@ -2926,7 +2977,7 @@ fn try_refresh_host_claude_subscription(mgr: &SessionManager, req: &FailoverRequ
     else {
         return false;
     };
-    crate::host_auth::refresh_host_claude_oauth(&binary)
+    crate::host_auth::refresh_host_claude_oauth_reactive(&binary)
 }
 
 fn warm_handle_stop_reason(
@@ -2973,7 +3024,7 @@ fn collect_non_self_admin_names(
     if let Some(rid) = repo_id {
         for ws in git_state.workspaces.values() {
             if ws.repository_id == rid
-                && !ws.admin_dir_name.is_empty()
+                && is_safe_worktree_admin_name(&ws.admin_dir_name)
                 && !self_admins.contains(&ws.admin_dir_name)
             {
                 other_admins.insert(ws.admin_dir_name.clone());
@@ -3034,13 +3085,16 @@ fn take_failed_live_handle(
     Some(old)
 }
 
-fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
+pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
     let is_stale_recycle = req.reason == "warm_route_stale";
     let refreshed_same_conn = !is_stale_recycle && try_refresh_host_claude_subscription(mgr, &req);
     if !is_stale_recycle && !refreshed_same_conn {
         record_failover_connection_health(mgr, &req);
     }
     let Some(dead_handle) = take_failed_live_handle(mgr, &req) else {
+        if is_stale_recycle && !is_admissions_closed(mgr) {
+            enqueue_recovery_wake(mgr, &req, None);
+        }
         return;
     };
     if let Some(mut old) = dead_handle {
@@ -3124,6 +3178,18 @@ fn record_failover_exhausted(mgr: &SessionManager, req: &FailoverRequest, err: &
         .unwrap_or_else(|p| p.into_inner())
         .insert(req.employee_id.clone(), last_view);
     // Queue a Recovery wake so the exhausted turn automatically retries when cooldown/capacity clears.
+    enqueue_recovery_wake(
+        mgr,
+        req,
+        Some(crate::wake::WakeHoldReason::AdmissionRefused),
+    );
+}
+
+fn enqueue_recovery_wake(
+    mgr: &SessionManager,
+    req: &FailoverRequest,
+    hold: Option<crate::wake::WakeHoldReason>,
+) {
     let ts = crate::credentials::now_ms();
     let _lock = mgr.lifecycle_lock.lock().unwrap_or_else(|p| p.into_inner());
     let mut queue = mgr
@@ -3133,7 +3199,10 @@ fn record_failover_exhausted(mgr: &SessionManager, req: &FailoverRequest, err: &
         .flatten()
         .unwrap_or_else(|| crate::wake::PendingWakeQueueRecord::empty(&req.employee_id));
     queue.push_dedup(crate::wake::PendingWakeItem {
-        item_id: format!("failover:{}:{}", req.failed_connection_id, ts),
+        item_id: format!(
+            "failover:{}:{}:{}",
+            req.reason, req.failed_connection_id, ts
+        ),
         kind: crate::wake::WakeKind::Recovery,
         sender_id: mgr.office.owner_member_id().to_owned(),
         sender_name: "Office Supervisor".into(),
@@ -3143,7 +3212,9 @@ fn record_failover_exhausted(mgr: &SessionManager, req: &FailoverRequest, err: &
         summary: req.objective.clone(),
         enqueued_at_ms: ts,
     });
-    queue.set_hold(crate::wake::WakeHoldReason::AdmissionRefused, ts, None);
+    if let Some(reason) = hold {
+        queue.set_hold(reason, ts, None);
+    }
     let tokens = mgr.bindings.active_tokens();
     let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
     let _ = mgr.store.write_pending_wakes_redacted(&queue, &refs);
@@ -3508,14 +3579,28 @@ fn canonicalize_with_tail(path: &Path) -> PathBuf {
 }
 
 fn host_rust_dir_env(name: &str, default_rel: &str, forbidden: &[PathBuf]) -> Option<OsString> {
-    let candidate = match std::env::var_os(name) {
+    host_rust_dir_env_from(
+        std::env::var_os(name),
+        std::env::var_os("HOME"),
+        default_rel,
+        forbidden,
+    )
+}
+
+pub(crate) fn host_rust_dir_env_from(
+    explicit: Option<OsString>,
+    home: Option<OsString>,
+    default_rel: &str,
+    forbidden: &[PathBuf],
+) -> Option<OsString> {
+    let candidate = match explicit {
         Some(raw) => PathBuf::from(raw),
-        None => PathBuf::from(std::env::var_os("HOME")?).join(default_rel),
+        None => PathBuf::from(home?).join(default_rel),
     };
     if !candidate.is_absolute() || !candidate.is_dir() {
         return None;
     }
-    let resolved = candidate.canonicalize().unwrap_or(candidate);
+    let resolved = candidate.canonicalize().ok()?;
     let forbidden_canon: Vec<PathBuf> = forbidden
         .iter()
         .map(|p| canonicalize_with_tail(p))
@@ -3554,6 +3639,14 @@ fn collect_existing_worktree_dirs(
     }
 }
 
+fn is_safe_worktree_admin_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains(['/', '\\', '\0'])
+        && !name.contains("..")
+}
+
 fn collect_self_active_admins(
     git_state: &org_office::git::OfficeGitState,
     employee_id: &str,
@@ -3561,7 +3654,10 @@ fn collect_self_active_admins(
     let mut by_repo: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
         std::collections::BTreeMap::new();
     for ws in git_state.workspaces.values() {
-        if ws.employee_id == employee_id && ws.state == "active" && !ws.admin_dir_name.is_empty() {
+        if ws.employee_id == employee_id
+            && ws.state == "active"
+            && is_safe_worktree_admin_name(&ws.admin_dir_name)
+        {
             by_repo
                 .entry(ws.repository_id.clone())
                 .or_default()

@@ -1426,9 +1426,18 @@ fn recycle_stale_warm_handle(
     let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) else {
         return false;
     };
+    recycle_stale_warm_handle_in(&mgr, employee_id, expected_run_id, reason)
+}
+
+pub(crate) fn recycle_stale_warm_handle_in(
+    mgr: &Arc<SessionManager>,
+    employee_id: &str,
+    expected_run_id: &str,
+    reason: &str,
+) -> bool {
     let removed = {
-        let mut reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
-        if reg.draining || reg.shutting_down {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if reg.draining || reg.shutting_down || reg.starting.contains(employee_id) {
             return false;
         }
         let still_recyclable = reg.live.get(employee_id).is_some_and(|handle| {
@@ -1448,6 +1457,9 @@ fn recycle_stale_warm_handle(
         let Some(handle) = reg.live.remove(employee_id) else {
             return false;
         };
+        reg.starting.insert(employee_id.to_owned());
+        reg.bg_workers.retain(|h| !h.is_finished());
+        reg.bg_spawning += 1;
         let _ = handle.tx.send(PumpCommand::Stop {
             reason: reason.to_owned(),
         });
@@ -1456,19 +1468,23 @@ fn recycle_stale_warm_handle(
     let emp = employee_id.to_owned();
     let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(removed)));
     let worker_slot = std::sync::Arc::clone(&slot);
-    let spawned = crate::manager::spawn_bg_worker_checked(&mgr, "org-warm-recycle", move |m| {
-        if let Some(mut old) = worker_slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
-            if let Some(thread) = old.thread.take() {
-                let _ = thread.join();
+    let spawned = crate::manager::spawn_bg_worker_reserved(mgr, "org-warm-recycle", move |m| {
+        {
+            let _start_guard = crate::manager::StartSlotGuard::new(&m.registry, emp.clone());
+            if let Some(mut old) = worker_slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                if let Some(thread) = old.thread.take() {
+                    let _ = thread.join();
+                }
             }
         }
         let _ = m.process_due_wakes_for(&emp);
     });
     if !spawned {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(old) = slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
-            let mut reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
-            reg.live.entry(employee_id.to_owned()).or_insert(old);
+            reg.live.insert(employee_id.to_owned(), old);
         }
+        reg.starting.remove(employee_id);
         return false;
     }
     true

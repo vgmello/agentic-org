@@ -630,25 +630,97 @@ pub(crate) enum WarmPermitOutcome {
     Refused(ApiError),
 }
 
-fn compute_worktree_sandbox_digest(office: &Office, employee_id: &str) -> String {
-    let Ok(git_state) =
-        org_office::git::OfficeGitState::load(office.runtime_root(), &office.info().office_id)
+pub(crate) fn compute_worktree_sandbox_digest(office: &Office, employee_id: &str) -> String {
+    let office_id = &office.info().office_id;
+    let Ok(git_state) = org_office::git::OfficeGitState::load(office.runtime_root(), office_id)
     else {
         return "err".to_owned();
     };
-    let mut entries: Vec<String> = git_state
-        .workspaces
-        .values()
-        .filter(|ws| ws.employee_id == employee_id && ws.state == "active")
-        .map(|ws| {
-            format!(
+    let mut self_entries = Vec::new();
+    let mut targeted_repos = std::collections::BTreeSet::new();
+    for ws in git_state.workspaces.values() {
+        if ws.employee_id == employee_id && ws.state == "active" {
+            targeted_repos.insert(ws.repository_id.as_str());
+            self_entries.push(format!(
                 "{}:{}:{}",
                 ws.repository_id, ws.admin_dir_name, ws.worktree_path
-            )
-        })
-        .collect();
-    entries.sort();
-    hex_short_sha256(entries.join("|").as_bytes())
+            ));
+        }
+    }
+    if targeted_repos.is_empty() {
+        // Zero-worktree sessions emit a blanket `<office_rt>/repositories/**` deny, so untargeted
+        // repos cloned later are already blocked without needing a warm recycle.
+        return hex_short_sha256(b"none");
+    }
+    self_entries.sort();
+    let Ok(Ok(repos)) = office.list_repositories(None) else {
+        return "err".to_owned();
+    };
+    let repos_root = office.runtime_root().join(office_id).join("repositories");
+    let known_repos = collect_digest_repo_ids(
+        repos.iter().map(|r| r.record.id.as_str()),
+        &git_state,
+        &repos_root,
+    );
+    let peer_admins = collect_digest_peer_admins(&git_state, &targeted_repos, &repos_root);
+    let material = format!(
+        "self={}|repos={}|peers={}",
+        self_entries.join(","),
+        known_repos.join(","),
+        peer_admins.join(",")
+    );
+    hex_short_sha256(material.as_bytes())
+}
+
+fn collect_digest_repo_ids<'a>(
+    repo_ids: impl IntoIterator<Item = &'a str>,
+    git_state: &org_office::git::OfficeGitState,
+    repos_root: &std::path::Path,
+) -> Vec<String> {
+    let mut ids = std::collections::BTreeSet::new();
+    for rid in repo_ids {
+        ids.insert(rid.to_owned());
+    }
+    for rid in git_state.caches.keys() {
+        ids.insert(rid.clone());
+    }
+    for ws in git_state.workspaces.values() {
+        ids.insert(ws.repository_id.clone());
+    }
+    if let Ok(entries) = std::fs::read_dir(repos_root) {
+        for name in entries
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+        {
+            ids.insert(name);
+        }
+    }
+    ids.into_iter().collect()
+}
+
+fn collect_digest_peer_admins(
+    git_state: &org_office::git::OfficeGitState,
+    targeted_repos: &std::collections::BTreeSet<&str>,
+    repos_root: &std::path::Path,
+) -> Vec<String> {
+    let mut peers = std::collections::BTreeSet::new();
+    for ws in git_state.workspaces.values() {
+        if targeted_repos.contains(ws.repository_id.as_str()) && !ws.admin_dir_name.is_empty() {
+            peers.insert(format!("{}:{}", ws.repository_id, ws.admin_dir_name));
+        }
+    }
+    for rid in targeted_repos {
+        let wt_dir = repos_root.join(format!("{rid}.git")).join("worktrees");
+        if let Ok(entries) = std::fs::read_dir(wt_dir) {
+            for name in entries
+                .flatten()
+                .filter_map(|e| e.file_name().into_string().ok())
+            {
+                peers.insert(format!("{rid}:{name}"));
+            }
+        }
+    }
+    peers.into_iter().collect()
 }
 
 fn compute_route_digest(
