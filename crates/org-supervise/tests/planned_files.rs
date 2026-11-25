@@ -387,7 +387,10 @@ fn adapter_declared_auth_and_exact_agent_os_context_and_probe_config_dir_switche
                 std::slice::from_ref(&root),
             )
             .unwrap(),
-            &[],
+            &[
+                ("RUSTUP_HOME".into(), "/opt/rustup".into()),
+                ("CARGO_HOME".into(), "/opt/cargo".into()),
+            ],
         )
         .unwrap()
     };

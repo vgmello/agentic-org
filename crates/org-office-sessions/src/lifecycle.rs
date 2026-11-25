@@ -480,7 +480,12 @@ impl SessionManager {
         out
     }
 
-    pub(crate) fn build_pump_hooks(&self, employee_id: &str, route_digest: String) -> PumpHooks {
+    pub(crate) fn build_pump_hooks(
+        &self,
+        employee_id: &str,
+        route_digest: String,
+        oauth_expires_at_ms: Option<u64>,
+    ) -> PumpHooks {
         let open_asks_check = Arc::clone(&self.open_required_asks);
         let has_open: OpenRequiredAsksHook = Arc::new(move |emp_id: &str| {
             open_asks_check
@@ -526,6 +531,7 @@ impl SessionManager {
             bindings: self.bindings.clone(),
             office: Arc::clone(&self.office),
             hq_permits: self.config.hq_permits.clone(),
+            weak_mgr: self.weak_self(),
             hourly_limit: self.config.hourly_wake_limit,
             window_ms: self.config.wake_window.as_millis() as u64,
         };
@@ -544,7 +550,7 @@ impl SessionManager {
         });
 
         let (on_permit_acquire, on_permit_renew, on_permit_release, on_permit_release_pending) =
-            build_permit_hooks(self, employee_id, route_digest);
+            build_permit_hooks(self, employee_id, route_digest, oauth_expires_at_ms);
 
         let rl_office = Arc::clone(&self.office);
         let rl_hq_permits = self.config.hq_permits.clone();
@@ -1252,6 +1258,7 @@ struct TurnEndDrainCtx {
     bindings: RunBindingRegistry,
     office: Arc<Office>,
     hq_permits: Option<Arc<dyn crate::router::HqPermitCoordinator>>,
+    weak_mgr: Option<std::sync::Weak<SessionManager>>,
     hourly_limit: usize,
     window_ms: u64,
 }
@@ -1347,6 +1354,7 @@ fn build_permit_hooks(
     mgr: &SessionManager,
     employee_id: &str,
     route_digest: String,
+    oauth_expires_at_ms: Option<u64>,
 ) -> (
     PermitAcquireHook,
     PermitRenewHook,
@@ -1357,6 +1365,9 @@ fn build_permit_hooks(
     let acq_hq_permits = mgr.config.hq_permits.clone();
     let acq_emp = employee_id.to_owned();
     let on_permit_acquire: PermitAcquireHook = Arc::new(move |conn_id, task_id| {
+        if crate::host_auth::is_oauth_expiring(oauth_expires_at_ms, now_ms()) {
+            return Err("WARM_ROUTE_STALE: oauth token expiring".into());
+        }
         let digest = (!route_digest.is_empty()).then_some(route_digest.as_str());
         match crate::router::acquire_warm_permit_for_office(
             &acq_office,
@@ -1415,6 +1426,79 @@ fn build_permit_hooks(
     )
 }
 
+fn recycle_stale_warm_handle(
+    employee_id: &str,
+    expected_run_id: &str,
+    reason: &str,
+    ctx: &TurnEndDrainCtx,
+) -> bool {
+    let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) else {
+        return false;
+    };
+    recycle_stale_warm_handle_in(&mgr, employee_id, expected_run_id, reason)
+}
+
+pub(crate) fn recycle_stale_warm_handle_in(
+    mgr: &Arc<SessionManager>,
+    employee_id: &str,
+    expected_run_id: &str,
+    reason: &str,
+) -> bool {
+    let removed = {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if reg.draining || reg.shutting_down || reg.starting.contains(employee_id) {
+            return false;
+        }
+        let still_recyclable = reg.live.get(employee_id).is_some_and(|handle| {
+            let permit_free = handle
+                .active_permit
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_none();
+            let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+            st.run_id.as_deref() == Some(expected_run_id)
+                && st.state == SessionState::Idle
+                && permit_free
+        });
+        if !still_recyclable {
+            return false;
+        }
+        let Some(handle) = reg.live.remove(employee_id) else {
+            return false;
+        };
+        reg.starting.insert(employee_id.to_owned());
+        reg.bg_workers.retain(|h| !h.is_finished());
+        reg.bg_spawning += 1;
+        let _ = handle.tx.send(PumpCommand::Stop {
+            reason: reason.to_owned(),
+        });
+        handle
+    };
+    let emp = employee_id.to_owned();
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(removed)));
+    let worker_slot = std::sync::Arc::clone(&slot);
+    let spawned = crate::manager::spawn_bg_worker_reserved(mgr, "org-warm-recycle", move |m| {
+        {
+            let _start_guard = crate::manager::StartSlotGuard::new(&m.registry, emp.clone());
+            if let Some(mut old) = worker_slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                if let Some(thread) = old.thread.take() {
+                    let _ = thread.join();
+                }
+            }
+        }
+        let _ = m.process_due_wakes_for(&emp);
+    });
+    if !spawned {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(old) = slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            reg.live.insert(employee_id.to_owned(), old);
+        }
+        reg.starting.remove(employee_id);
+        return false;
+    }
+    true
+}
+
 fn try_send_wake_on_live_handle(
     employee_id: &str,
     queue_task_id: Option<&str>,
@@ -1424,18 +1508,43 @@ fn try_send_wake_on_live_handle(
     let handle_info = {
         let reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
         reg.live.get(employee_id).map(|handle| {
+            let run_id = handle
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .run_id
+                .clone()
+                .unwrap_or_default();
             (
+                run_id,
                 handle.tx.clone(),
                 handle.connection_id.clone(),
                 handle.route_digest.clone(),
+                handle.oauth_expires_at_ms,
                 Arc::clone(&handle.active_permit),
             )
         })
     };
-    let Some((tx, conn_id, route_digest, active_permit)) = handle_info else {
+    let Some((run_id, tx, conn_id, route_digest, oauth_expires_at_ms, active_permit)) = handle_info
+    else {
         return Ok(false);
     };
-    let acquired_pid = match acquire_live_handle_permit(
+    if crate::host_auth::is_oauth_expiring(oauth_expires_at_ms, now_ms()) {
+        recycle_stale_warm_handle(employee_id, &run_id, "oauth_token_expiring", ctx);
+        return Ok(false);
+    }
+    if conn_id.is_none()
+        && ctx
+            .office
+            .load_agent_execution(employee_id)
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        recycle_stale_warm_handle(employee_id, &run_id, "warm_route_stale", ctx);
+        return Ok(false);
+    }
+    let acquired_permit = match acquire_live_handle_permit(
         &ctx.office,
         ctx.hq_permits.as_deref(),
         conn_id.as_deref(),
@@ -1444,26 +1553,78 @@ fn try_send_wake_on_live_handle(
         employee_id,
         queue_task_id,
     ) {
-        Ok(pid) => pid,
+        Ok(permit) => permit,
         Err(LivePermitError::Stale) => {
-            let _ = tx.send(PumpCommand::Stop {
-                reason: "warm_route_stale".into(),
-            });
-            return Err(WakeHoldReason::AdmissionRefused);
+            recycle_stale_warm_handle(employee_id, &run_id, "warm_route_stale", ctx);
+            return Ok(false);
         }
         Err(LivePermitError::Hold(reason)) => return Err(reason),
     };
-    if tx.send(PumpCommand::SendTurn(objective)).is_ok() {
-        return Ok(true);
-    }
-    if let Some(pid) = acquired_pid {
-        let _ = active_permit
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take();
+    let (sent, release_pid) = commit_wake_send_locked(
+        &ctx.registry,
+        employee_id,
+        &run_id,
+        &tx,
+        &active_permit,
+        acquired_permit,
+        objective,
+    );
+    if let Some(pid) = release_pid {
         crate::router::release_turn_permit_any(&ctx.office, ctx.hq_permits.as_deref(), &pid);
     }
-    Ok(false)
+    Ok(sent)
+}
+
+fn commit_wake_send_locked(
+    registry: &Arc<Mutex<SessionRegistry>>,
+    employee_id: &str,
+    run_id: &str,
+    tx: &std::sync::mpsc::Sender<PumpCommand>,
+    active_permit: &Arc<Mutex<Option<(String, u64)>>>,
+    acquired_permit: Option<(String, u64)>,
+    objective: String,
+) -> (bool, Option<String>) {
+    let reg = registry.lock().unwrap_or_else(|p| p.into_inner());
+    let still_live = !reg.draining
+        && !reg.shutting_down
+        && !reg.starting.contains(employee_id)
+        && reg.live.get(employee_id).is_some_and(|handle| {
+            handle
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .run_id
+                .as_deref()
+                == Some(run_id)
+        });
+    if !still_live {
+        return (false, acquired_permit.map(|(pid, _)| pid));
+    }
+    let (installed_pid, redundant_pid) = match acquired_permit {
+        Some(p) => {
+            let mut slot = active_permit.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.is_none() {
+                let pid = p.0.clone();
+                *slot = Some(p);
+                (Some(pid), None)
+            } else {
+                (None, Some(p.0))
+            }
+        }
+        None => (None, None),
+    };
+    if tx.send(PumpCommand::SendTurn(objective)).is_ok() {
+        return (true, redundant_pid);
+    }
+    let rollback_pid = installed_pid.and_then(|pid| {
+        let mut slot = active_permit.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_some_and(|(cur, _)| cur == &pid) {
+            slot.take().map(|(id, _)| id)
+        } else {
+            None
+        }
+    });
+    (false, rollback_pid.or(redundant_pid))
 }
 
 enum LivePermitError {
@@ -1479,7 +1640,7 @@ fn acquire_live_handle_permit(
     active_permit: &Arc<Mutex<Option<(String, u64)>>>,
     employee_id: &str,
     task_id: Option<&str>,
-) -> Result<Option<String>, LivePermitError> {
+) -> Result<Option<(String, u64)>, LivePermitError> {
     let Some(cid) = conn_id else {
         return Ok(None);
     };
@@ -1498,17 +1659,7 @@ fn acquire_live_handle_permit(
         task_id,
         route_digest,
     ) {
-        crate::router::WarmPermitOutcome::Granted(p) => {
-            let pid = p.0.clone();
-            let mut slot = active_permit.lock().unwrap_or_else(|e| e.into_inner());
-            if slot.is_none() {
-                *slot = Some(p);
-                return Ok(Some(pid));
-            }
-            drop(slot);
-            crate::router::release_turn_permit_any(office, hq_permits, &pid);
-            Ok(None)
-        }
+        crate::router::WarmPermitOutcome::Granted(p) => Ok(Some(p)),
         crate::router::WarmPermitOutcome::StaleWarm => Err(LivePermitError::Stale),
         crate::router::WarmPermitOutcome::Unavailable { .. } => {
             Err(LivePermitError::Hold(WakeHoldReason::AdmissionRefused))
