@@ -119,6 +119,8 @@
       </button>
       <div class="menu up" id="menu-acct" role="menu" hidden>
         <button role="menuitem" type="button" data-act="go" data-v="#/settings/appearance"><svg class="ic ic20" aria-hidden="true"><use href="#i-adjustments"/></svg>Your preferences</button>
+        <button role="menuitemcheckbox" id="menu-tess-toggle" type="button" data-act="toggle-tess-pill" aria-checked="true"><svg class="ic ic20" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Show Tess on screen</span><span class="menu-chk" aria-hidden="true">✓</span></button>
+        <button role="menuitem" type="button" data-act="shortcuts-help"><svg class="ic ic20" aria-hidden="true"><use href="#i-question"/></svg><span>Keyboard shortcuts</span><kbd class="menu-kbd">?</kbd></button>
         <button role="menuitem" type="button" data-act="proto" data-v="Switch organization (goes to the welcome screen)"><svg class="ic ic20" aria-hidden="true"><use href="#i-arrows-updown"/></svg>Switch organization</button>
         <button role="menuitem" type="button" data-act="proto" data-v="About Agentic Org"><svg class="ic ic20" aria-hidden="true"><use href="#i-info"/></svg>About</button>
       </div>
@@ -156,9 +158,6 @@
       <div class="cmdk-dialog cmdk-home-results" id="cmdk-home-results" hidden></div>
     </div>
     <div class="topbar-utils" id="topbar-utils">
-      <button class="util-btn util-tess" id="tess-trigger" type="button" data-act="tess-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="tess-panel" aria-keyshortcuts="Meta+/ Control+/" title="Ask Tess (⌘/)">
-        <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg><span class="util-lbl">Tess</span>
-      </button>
       <div class="notif-wrap" id="notif-wrap">
         <button class="util-btn util-notif" id="notif-trigger" type="button" data-act="notif-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="notif-popover" aria-label="Notifications" title="Notifications">
           <svg class="ic ic16" aria-hidden="true"><use href="#i-bell"/></svg>

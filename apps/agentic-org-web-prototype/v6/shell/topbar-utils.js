@@ -1,4 +1,4 @@
-import { CMDK, closeCmdk, isMacPlatform } from "./cmdk.js";
+import { CMDK, closeCmdk } from "./cmdk.js";
 import {
   COMP,
   clearCompanionHistory,
@@ -7,21 +7,19 @@ import {
   handleCompanionEscape,
   handleCompanionInput,
   isCompanionModal,
-  minimizeCompanion,
   openCompanion,
   registerCompanionHooks,
   renderCompanion,
   sendCompanionMessage,
-  setCompanionTarget,
   syncCompanionRoute,
   toggleCompanion,
-  toggleCompanionPicker,
   toggleExpandCompanion,
+  toggleTessPillVisible,
 } from "./companion.js";
 import { S } from "../state.js";
 import { esc, ic } from "../ui.js";
 
-/* ---------------------------------------------------------------- topbar utilities (Notifications + Floating Companion triggers) */
+/* ---------------------------------------------------------------- topbar Notifications + Floating Tess coordination */
 
 const runningJobs = [];
 const notifications = [
@@ -91,7 +89,7 @@ function activeTessJobs() {
   return runningJobs.filter((j) => j.source === "tess");
 }
 
-/* ---------------------------------------------------------------- triggers */
+/* ---------------------------------------------------------------- notifications trigger & popover */
 
 function syncNotifTrigger() {
   const btn = document.getElementById("notif-trigger");
@@ -111,28 +109,6 @@ function syncNotifTrigger() {
   const ring = running > 0 ? `<span class="notif-ring" aria-hidden="true"></span>` : "";
   btn.innerHTML = `${ring}${ic("bell", "ic16")}${badge}`;
 }
-
-function syncTessTrigger() {
-  const btn = document.getElementById("tess-trigger");
-  if (!btn) return;
-  const busy = activeTessJobs();
-  const offline = isOfflineMode();
-  const active = COMP.mode !== "closed";
-  const kbd = isMacPlatform ? "⌘/" : "Ctrl /";
-  btn.classList.toggle("is-busy", busy.length > 0);
-  btn.classList.toggle("is-offline", offline);
-  btn.classList.toggle("is-active", active);
-  btn.setAttribute("aria-expanded", String(active && COMP.mode !== "minimized"));
-  const statusText = busy.length
-    ? `Tess · ${busy.length > 1 ? `Refining ${busy.length} tasks` : busy[0].step || "Working"}`
-    : offline ? `Tess · Offline local summary (${kbd})` : `Ask Tess or message an agent (${kbd})`;
-  btn.title = statusText;
-  btn.setAttribute("aria-label", statusText);
-  const dot = busy.length > 0 ? `<span class="tess-live-dot" aria-hidden="true"></span>` : "";
-  btn.innerHTML = `${ic(offline ? "offline" : "sparkle", "ic14")}<span class="util-lbl">Tess</span>${dot}`;
-}
-
-/* ---------------------------------------------------------------- notifications popover */
 
 function renderNotifRunningSection() {
   if (!runningJobs.length) return "";
@@ -291,18 +267,16 @@ function finishBackgroundJob(id, { title, summary, href = "#/work", icon = "chec
 function syncTopbarUtils(r = null) {
   syncCompanionRoute(r);
   syncNotifTrigger();
-  syncTessTrigger();
   if (UTIL.notifOpen) renderNotifPopover();
 }
 
 registerCompanionHooks({
-  onChange: () => syncTessTrigger(),
   activeJobs: activeTessJobs,
   closeNotif: closeNotificationsPopover,
 });
 
 window.addEventListener("resize", () => {
-  if (COMP.mode !== "closed") renderCompanion();
+  renderCompanion();
   if (UTIL.notifOpen) positionNotifPopover();
 });
 
@@ -320,14 +294,12 @@ export {
   isCompanionModal,
   markAllNotificationsRead,
   markNotificationRead,
-  minimizeCompanion,
   openCompanion as openTessPanel,
   sendCompanionMessage as askTessInPanel,
-  setCompanionTarget,
   startBackgroundJob,
   syncTopbarUtils,
   toggleCompanion as toggleTessPanel,
-  toggleCompanionPicker,
   toggleExpandCompanion,
   toggleNotificationsPopover,
+  toggleTessPillVisible,
 };

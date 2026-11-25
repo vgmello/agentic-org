@@ -3,8 +3,9 @@ import { answerOrgQuestion } from "../pages/home.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { canonicalWorkRef, workHref, workItems } from "../pages/work.js";
 import { closeMenus } from "./actions.js";
+import { openShortcutsHelp } from "./dialogs.js";
 import { homeSearchField, homeSearchInput, homeSearchResults, pageSearchTools, render, route } from "./router.js";
-import { closeNotificationsPopover, openTessPanel } from "./topbar-utils.js";
+import { closeNotificationsPopover, openTessPanel, toggleTessPillVisible } from "./topbar-utils.js";
 import { S, toggleNavPinned } from "../state.js";
 import { av, esc, ic, kindWord, leadTxt, memberIds, toast, unhandled } from "../ui.js";
 
@@ -71,7 +72,9 @@ function cmdkCommands() {
     { group: "Navigate", label: "Go to Activity", sub: "Autonomous run history", icon: "signal", href: "#/activity" },
     { group: "Navigate", label: "Go to Teams", sub: "Teams, members & org chart", icon: "user-group", href: "#/teams" },
     { group: "Navigate", label: "Go to Settings", sub: "Offices, budgets & agent setup", icon: "cog", href: "#/settings" },
-    { group: "Workspace", label: "Toggle sidebar", sub: "Pin open or auto-hide navigation rail", icon: "sidebar", tag: "View", run: () => { toggleNavPinned(); } }
+    { group: "Workspace", label: "Toggle sidebar", sub: "Pin open or auto-hide navigation rail", icon: "sidebar", tag: "View", run: () => { toggleNavPinned(); } },
+    { group: "Workspace", label: S.showTessPill ? "Hide Tess on screen" : "Show Tess on screen", sub: "⌘/ always opens Tess even when hidden", icon: "sparkle", tag: "View", run: () => { toggleTessPillVisible(); } },
+    { group: "Workspace", label: "Keyboard shortcuts", sub: "View all keyboard shortcuts (?)", icon: "question", tag: "?", run: () => { openShortcutsHelp(); } }
   ];
 }
 function askInCmdk(rawQ) {

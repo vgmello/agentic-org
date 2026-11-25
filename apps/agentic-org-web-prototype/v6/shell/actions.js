@@ -10,10 +10,10 @@ import { removeTeam } from "../pages/projects.js";
 import { addIdeationComment, changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkCounts, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
-import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, setSheetReturn } from "./dialogs.js";
+import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, openShortcutsHelp, setSheetReturn } from "./dialogs.js";
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
 import { homeSearchField, homeSearchInput, homeSearchResults, pageSearchInput, render, route } from "./router.js";
-import { UTIL, askTessInPanel, clearCompanionHistory, clearReadNotifications, closeCompanion, closeNotificationsPopover, dismissCompanionContext, handleCompanionEscape, handleCompanionInput, isCompanionModal, markAllNotificationsRead, markNotificationRead, minimizeCompanion, openTessPanel, setCompanionTarget, toggleCompanionPicker, toggleExpandCompanion, toggleNotificationsPopover, toggleTessPanel } from "./topbar-utils.js";
+import { UTIL, askTessInPanel, clearCompanionHistory, clearReadNotifications, closeCompanion, closeNotificationsPopover, dismissCompanionContext, handleCompanionEscape, handleCompanionInput, isCompanionModal, markAllNotificationsRead, markNotificationRead, openTessPanel, toggleExpandCompanion, toggleNotificationsPopover, toggleTessPanel, toggleTessPillVisible } from "./topbar-utils.js";
 import { ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
 import { spotQueue, toast } from "../ui.js";
 
@@ -347,16 +347,17 @@ const CLICK_ACTIONS = {
   "tess-toggle": (_e, t) => toggleTessPanel(t),
   "tess-close": () => { if (!handleCompanionEscape()) closeCompanion(true); },
   "cmp-close": () => closeCompanion(true),
-  "cmp-minimize": () => minimizeCompanion(),
   "cmp-restore": (_e, t) => openTessPanel("", t),
   "cmp-expand": () => toggleExpandCompanion(),
-  "cmp-open-chat": () => closeCompanion(false),
   "cmp-clear": () => clearCompanionHistory(),
-  "cmp-target": (_e, _t, _id, v) => setCompanionTarget(v),
-  "cmp-picker-toggle": () => toggleCompanionPicker(),
-  "cmp-pick": (_e, _t, _id, v) => setCompanionTarget(v),
   "cmp-ask-chip": (_e, _t, _id, v) => askTessInPanel(v),
   "cmp-dismiss-ctx": (_e, _t, _id, v) => dismissCompanionContext(v),
+  "toggle-tess-pill": (_e, t) => {
+    toggleTessPillVisible();
+    if (t.matches('[role="switch"]')) render(false);
+    toast(S.showTessPill ? "Tess shown at bottom-right." : "Tess hidden. Press ⌘/ anytime to open.", "sparkle");
+  },
+  "shortcuts-help": (_e, t) => { closeMenus(); closeNotificationsPopover(false); openShortcutsHelp(t); },
   "notif-toggle": (_e, t) => toggleNotificationsPopover(t),
   "notif-close": () => closeNotificationsPopover(true),
   "notif-open": (_e, _t, id) => markNotificationRead(id),
@@ -399,7 +400,8 @@ function dismissTopbarOverlaysForLink(link) {
   const act = link.dataset.act;
   if (act === "notif-open" && link.dataset.id) { markNotificationRead(link.dataset.id); return; }
   if (act === "notif-close") { closeNotificationsPopover(false); return; }
-  if (act === "cmp-open-chat" || (link.closest("#tess-panel") && isCompanionModal())) closeCompanion(false);
+  if (link.closest("#tess-panel") && isCompanionModal()) closeCompanion(false);
+  if (act === "close-sheet") closeSheet();
 }
 
 function handleHashLinkClick(e) {
@@ -724,8 +726,16 @@ function isNewTaskKey(e) {
   return e.key === "n" || e.key === "N" || (!/^[a-z]$/i.test(e.key) && e.code === "KeyN");
 }
 
+function tryShortcutsHelpKey(e) {
+  if (e.key !== "?" || e.isComposing || e.repeat || inTextField(e.target) || overlayOpen()) return false;
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  e.preventDefault();
+  openShortcutsHelp(document.activeElement);
+  return true;
+}
+
 function handleSingleKeyShortcut(e) {
-  if (isSingleKeyBlocked(e) || tryPunctuationShortcut(e)) return;
+  if (tryShortcutsHelpKey(e) || isSingleKeyBlocked(e) || tryPunctuationShortcut(e)) return;
   if (e.metaKey || e.ctrlKey || e.altKey || tryInboxApprovalShortcut(e)) return;
   if (isNewTaskKey(e)) { e.preventDefault(); openSmartTaskComposer(document.activeElement); }
 }
@@ -738,6 +748,26 @@ function isCmdSlashCombo(e) {
   return (e.metaKey || e.ctrlKey) && !e.altKey && e.key === "/";
 }
 
+function isTessExpandCombo(e) {
+  return (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.key === "e" || e.key === "E" || e.key === "m" || e.key === "M");
+}
+
+function tryTessGlobalShortcut(e) {
+  if (isCmdSlashCombo(e)) {
+    e.preventDefault();
+    if (CMDK.open) { const q = CMDK.q; closeCmdk(false); openTessPanel(q); }
+    else toggleTessPanel(document.activeElement);
+    return true;
+  }
+  if (isTessExpandCombo(e)) {
+    e.preventDefault();
+    if (CMDK.open) closeCmdk(false);
+    toggleExpandCompanion();
+    return true;
+  }
+  return false;
+}
+
 function handleSearchGlobalKeydown(e) {
   if (isCmdKCombo(e)) {
     e.preventDefault();
@@ -746,12 +776,7 @@ function handleSearchGlobalKeydown(e) {
     else openCmdk(pageInput?.value || "");
     return true;
   }
-  if (isCmdSlashCombo(e)) {
-    e.preventDefault();
-    if (CMDK.open) { const q = CMDK.q; closeCmdk(false); openTessPanel(q); }
-    else toggleTessPanel(document.activeElement);
-    return true;
-  }
+  if (tryTessGlobalShortcut(e)) return true;
   if (!CMDK.open && e.target === homeSearchInput && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
     e.preventDefault(); openCmdk(homeSearchInput.value, "cmd", homeSearchInput, true); return true;
   }
