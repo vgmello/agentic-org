@@ -12,7 +12,9 @@ use std::{
     },
     path::{Path, PathBuf},
 };
-const HELP:&str="agentic-org recovery <status|release> [--name NAME] [--org ORGANIZATION_NAME | --org-id ID] [--login LOGIN] [--redeliver] [--package NEW_FILE]\nOr select an explicit --host-socket PATH --instance-id ID. Collection requires this Mac's foreground terminal and a fresh OS confirmation. REC-1 HQ-loss recovery is unsupported.";
+const HELP: &str = "agentic-org recovery <status|release> [--name NAME] [--org ORGANIZATION_NAME | --org-id ID] [--login LOGIN] [--redeliver] [--package NEW_FILE]\n\
+Use when: inspecting recovery code delivery status (`status`) or releasing and exporting an organization's encrypted public recovery package on this Mac's foreground terminal (`release`).\n\
+Or select an explicit --host-socket PATH --instance-id ID. Collection requires this Mac's foreground terminal and a fresh OS confirmation. REC-1 HQ-loss recovery is unsupported.";
 fn error<T>(_: T) -> String {
     "recovery is unresolved; inspect persisted status before explicit redelivery; no retention acknowledgement was inferred".into()
 }
@@ -371,8 +373,18 @@ fn resolve_org(orgs: &[ops::LinkedOrg], name: &str) -> Result<String, String> {
     ))
 }
 
+fn is_recovery_help_request(arguments: &[String]) -> bool {
+    let is_help_flag = |flag: &str| flag == "--help" || flag == "-h";
+    match arguments {
+        [] => true,
+        [flag] => is_help_flag(flag),
+        [command, flag] => matches!(command.as_str(), "status" | "release") && is_help_flag(flag),
+        _ => false,
+    }
+}
+
 pub fn recovery(arguments: &[String]) -> Result<(), String> {
-    if arguments.is_empty() || arguments == ["--help"] || arguments == ["-h"] {
+    if is_recovery_help_request(arguments) {
         println!("{HELP}");
         return Ok(());
     }

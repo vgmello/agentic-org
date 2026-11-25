@@ -23,14 +23,18 @@ use super::{registered, say};
 use crate::human::Wire;
 
 /// Help text for `agentic-org project`.
-pub const HELP: &str = "agentic-org project <subcommand>\n\n\
+pub const HELP: &str = "agentic-org project <subcommand>\n\
+Use when: listing, inspecting, or creating organization projects from the operator CLI.\n\n\
 Subcommands:\n  \
 list --login <login> [--org <org_id>] [--include-archived] [--name <instance>] [--json]\n      \
-List projects in an organization\n  \
+List projects in an organization\n      \
+Use when: discovering active (or archived with --include-archived) projects, keys, slugs, and owning teams.\n  \
 inspect <project> --login <login> [--org <org_id>] [--name <instance>] [--json]\n      \
-Inspect one project by ID, P-<number> key, or slug\n  \
+Inspect one project by ID, P-<number> key, or slug\n      \
+Use when: checking one project's owning team, contributing teams, and status.\n  \
 create <name> --login <login> [--org <org_id>] [--slug <slug>] [--owner-team <team_id>] [--parent-team <team_id>] [--name <instance>] [--json]\n      \
-Create a project (creates a dedicated owning team automatically unless --owner-team is given)\n\n\
+Create a project (creates a dedicated owning team automatically unless --owner-team is given)\n      \
+Use when: starting a new project with an accountable owning team.\n\n\
 Asks for the account password at the terminal. On systems that cannot identify the host's \
 program (Linux, containers), terminal password sign-in is refused until browser-approved \
 CLI sign-in is available.";
@@ -496,5 +500,13 @@ mod tests {
             "{line}"
         );
         assert!(line.contains("status=active\tname=Billing"), "{line}");
+    }
+
+    #[test]
+    fn help_includes_use_when_guidance_for_each_subcommand() {
+        assert!(
+            HELP.matches("Use when:").count() >= 4,
+            "expected command + 3 subcommand Use when cues:\n{HELP}"
+        );
     }
 }

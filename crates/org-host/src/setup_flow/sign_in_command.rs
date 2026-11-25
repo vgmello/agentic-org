@@ -23,18 +23,25 @@ use crate::human::Wire;
 
 /// Help text for `agentic-org sign-in`.
 pub const SIGN_IN_HELP: &str =
-    "agentic-org sign-in [--name <instance>] [--office <office_id>] [-- <command...>]\n\n\
+    "agentic-org sign-in [--name <instance>] [--office <office_id>] [-- <command...>]\n\
+Use when: authenticating from a terminal via a browser approval link without typing a password\n\
+(especially on Linux, containers, or HTTPS instances), or running one command over a grant-bound\n\
+office channel (`-- <command...>`).\n\n\
 Prints a one-time approval link (expires in 10 minutes). Open it in a signed-in browser\n\
 and approve to sign this terminal in without entering a password (SIGN-40 / SES-8).\n\
 When `-- <command...>` is supplied, runs the organization/project CLI command over the\n\
 approved grant-bound channel and ends the session on exit.";
 
 /// Help text for `agentic-org context`.
-pub const CONTEXT_HELP: &str = "agentic-org context <subcommand>\n\n\
+pub const CONTEXT_HELP: &str = "agentic-org context <subcommand>\n\
+Use when: viewing, setting, or clearing the default instance and office targeted by operator commands.\n\n\
 Subcommands:\n  \
-show                                          Show the saved instance and office context\n  \
-use --office <office_id> [--name <instance>]  Save default instance and office selection\n  \
-clear                                         Remove the saved CLI context";
+show                                          Show the saved instance and office context\n      \
+Use when: checking which default instance and office ID future CLI commands will use.\n  \
+use --office <office_id> [--name <instance>]  Save default instance and office selection\n      \
+Use when: pinning a default office so you do not pass --office/--name on every command.\n  \
+clear                                         Remove the saved CLI context\n      \
+Use when: resetting saved defaults before switching to another instance or office.";
 
 /// An approved connection-bound `host.sock` session paired with an open office channel.
 /// Dropping it sends `session.end` so grants are revoked immediately (`SES-8`).
@@ -385,5 +392,19 @@ pub fn context_clear(out: &mut dyn Write) -> Result<(), String> {
         say(out, "Cleared saved CLI context.")
     } else {
         say(out, "No saved CLI context.")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CONTEXT_HELP, SIGN_IN_HELP};
+
+    #[test]
+    fn sign_in_and_context_help_include_use_when_guidance() {
+        assert!(SIGN_IN_HELP.contains("Use when:"), "{SIGN_IN_HELP}");
+        assert!(
+            CONTEXT_HELP.matches("Use when:").count() >= 4,
+            "expected command + 3 subcommand Use when cues:\n{CONTEXT_HELP}"
+        );
     }
 }
