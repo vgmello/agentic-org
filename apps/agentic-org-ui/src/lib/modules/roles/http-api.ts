@@ -80,6 +80,8 @@ type PendingUpdate = {
 export interface HttpRolesApi extends RolesApi {
 	/** Drops abandoned pending retry state for `caller` (or all callers when omitted) on sign-out. */
 	clearCaller(caller?: string): void;
+	/** Reclaims settled detail-evicted entries for a discarded draft `attemptId`. */
+	releaseEvictedAttempt(attemptId: string): void;
 }
 
 function samePayload(a: SubmittedRolePayload, b: SubmittedRolePayload): boolean {
@@ -235,14 +237,40 @@ function deleteIfCurrent<T>(map: Map<string, T>, key: string | undefined, expect
 	if (key && map.get(key) === expected) map.delete(key);
 }
 
-function pruneResolved<T extends { attemptId?: string; resolved?: Role }>(
+function isReclaimableEvicted(
+	entry: {
+		attemptId?: string;
+		committedRevision?: number;
+		hasUnresolvedFollowUp?: boolean;
+		resolved?: Role;
+	},
+	isAttemptRetained?: (attemptId: string) => boolean
+): boolean {
+	if (!isAttemptRetained || entry.resolved || entry.committedRevision === undefined) return false;
+	if (entry.hasUnresolvedFollowUp) return false;
+	return !entry.attemptId || !isAttemptRetained(entry.attemptId);
+}
+
+function pruneResolved<
+	T extends {
+		attemptId?: string;
+		committedRevision?: number;
+		hasUnresolvedFollowUp?: boolean;
+		resolved?: Role;
+	}
+>(
 	map: Map<string, T>,
 	activeKeys: ReadonlyMap<string, Promise<unknown>>,
 	isAttemptRetained?: (attemptId: string) => boolean
 ): void {
 	let settled = 0;
 	for (const [key, entry] of map) {
-		if (entry.resolved && !activeKeys.has(key)) settled++;
+		if (activeKeys.has(key)) continue;
+		if (entry.resolved) {
+			settled++;
+		} else if (isReclaimableEvicted(entry, isAttemptRetained)) {
+			map.delete(key);
+		}
 	}
 	if (settled <= MAX_RESOLVED_ATTEMPTS) return;
 	for (const [key, entry] of map) {
@@ -250,7 +278,7 @@ function pruneResolved<T extends { attemptId?: string; resolved?: Role }>(
 		if (!entry.resolved || activeKeys.has(key)) continue;
 		entry.resolved = undefined;
 		settled--;
-		if (isAttemptRetained && (!entry.attemptId || !isAttemptRetained(entry.attemptId))) {
+		if (isReclaimableEvicted(entry, isAttemptRetained)) {
 			map.delete(key);
 		}
 	}
@@ -642,13 +670,13 @@ export function createHttpRolesApi({
 				existing.conflicted = true;
 				existing.hasUnresolvedFollowUp = false;
 			} else if (
-				prevResolved &&
 				isPreCommitValidationRefusal(code) &&
-				existing.committedRevision === prevResolved.revision &&
 				(!followUpKey || !pendingUpdates.has(followUpKey))
 			) {
-				existing.resolved = prevResolved;
 				existing.hasUnresolvedFollowUp = false;
+				if (prevResolved && existing.committedRevision === prevResolved.revision) {
+					existing.resolved = prevResolved;
+				}
 			}
 			throw err;
 		}
@@ -862,6 +890,22 @@ export function createHttpRolesApi({
 			}
 			for (const [key, entry] of pendingUpdates) {
 				if (entry.caller === caller) pendingUpdates.delete(key);
+			}
+		},
+
+		releaseEvictedAttempt(attemptId: string) {
+			for (const map of [pendingCreates, pendingUpdates]) {
+				for (const [key, entry] of map) {
+					if (
+						entry.attemptId === attemptId &&
+						!inFlightKeys.has(key) &&
+						!entry.resolved &&
+						entry.committedRevision !== undefined &&
+						!entry.hasUnresolvedFollowUp
+					) {
+						map.delete(key);
+					}
+				}
 			}
 		},
 

@@ -6,7 +6,8 @@ import {
 	draftKey,
 	hasRetainedAttempt,
 	keepDraft,
-	keptDraft
+	keptDraft,
+	onAttemptReleased
 } from './kept-drafts';
 
 it('keeps a draft per organization and role until it is discarded', () => {
@@ -89,10 +90,18 @@ it('discards only the matching draft version so a late save never deletes newer 
 		expectedRevision: 0,
 		attemptId: 'att-shared'
 	});
-	discardDraftIfVersion(key, v1);
-	expect(keptDraft(key)?.name).toBe('Version 2');
-	expect(hasRetainedAttempt('att-shared')).toBe(true);
-	discardDraftIfVersion(key, v2);
-	expect(keptDraft(key)).toBeUndefined();
-	expect(hasRetainedAttempt('att-shared')).toBe(false);
+	const released: string[] = [];
+	const unsub = onAttemptReleased((id) => released.push(id));
+	try {
+		discardDraftIfVersion(key, v1);
+		expect(keptDraft(key)?.name).toBe('Version 2');
+		expect(hasRetainedAttempt('att-shared')).toBe(true);
+		expect(released).toEqual([]);
+		discardDraftIfVersion(key, v2);
+		expect(keptDraft(key)).toBeUndefined();
+		expect(hasRetainedAttempt('att-shared')).toBe(false);
+		expect(released).toEqual(['att-shared']);
+	} finally {
+		unsub();
+	}
 });

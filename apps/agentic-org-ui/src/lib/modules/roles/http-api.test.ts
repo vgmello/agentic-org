@@ -1301,6 +1301,79 @@ describe('createHttpRolesApi', () => {
 		const beforeNonRetained = submit.mock.calls.length;
 		await api.create(ORG, { name: 'Role 2', bodyMarkdown: 'Body.', attemptId: 'cap-2' });
 		expect(submit.mock.calls.length).toBe(beforeNonRetained + 1);
+
+		// Once retained `cap-1` has its detail evicted again and its draft reference is dropped,
+		// the next save reclaims the evicted identity entry so discarded draft text is not retained.
+		for (let i = 67; i <= 131; i++) {
+			await api.create(ORG, { name: `Role ${i}`, bodyMarkdown: 'Body.', attemptId: `cap-${i}` });
+		}
+		retained.delete('cap-1');
+		await api.create(ORG, { name: 'Role 132', bodyMarkdown: 'Body.', attemptId: 'cap-132' });
+		const beforeReclaimed = submit.mock.calls.length;
+		const freshAfterReclaim = await api.create(ORG, {
+			name: 'Role 1',
+			bodyMarkdown: 'Body.',
+			attemptId: 'cap-1'
+		});
+		expect(submit.mock.calls.length).toBe(beforeReclaimed + 1);
+		expect(freshAfterReclaim.id).not.toBe(first.id);
+	});
+
+	it('does not write a redundant rev 2 when a timed-out create is followed by a refused validation edit and then retried with original text', async () => {
+		let seq = 1;
+		const nextId = () => `0193a5c0-0000-7000-8000-0000000011${String(seq++).padStart(2, '0')}`;
+		const submit = vi
+			.fn()
+			// 1. Initial create times out (committed rev 1 on server, no cached Role object).
+			.mockResolvedValueOnce({ status: 504, body: { outcome: 'unknown' } })
+			// 2. Edited retry with duplicate key replays create -> confirms rev 1...
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: { id: '0193a5c0-0000-7000-8000-000000001102', revision: 1, generation: 90 }
+				}
+			})
+			// 3. ...then follow-up update is deterministically refused (already_exists key).
+			.mockResolvedValueOnce({
+				status: 409,
+				body: { error: { code: 'already_exists', message: 'a role with that key already exists' } }
+			});
+
+		const api = createHttpRolesApi({
+			http: { read: vi.fn().mockRejectedValue(new Error('offline')), submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			sessionScope: () => 'inst-1:acct-a',
+			sessionGeneration: () => 1,
+			newCommandId: nextId,
+			newEntityId: nextId
+		});
+
+		await expect(
+			api.create(ORG, { name: 'SRE', bodyMarkdown: 'Original.', attemptId: 'att-val-refusal' })
+		).rejects.toMatchObject({ code: 'unavailable' });
+
+		await expect(
+			api.create(ORG, {
+				name: 'SRE',
+				key: 'software-engineer',
+				bodyMarkdown: 'Original.',
+				attemptId: 'att-val-refusal'
+			})
+		).rejects.toMatchObject({ code: 'already_exists', field: 'key' });
+
+		// Retrying original text returns rev 1 directly with ZERO redundant POST /roles/update!
+		const restored = await api.create(ORG, {
+			name: 'SRE',
+			bodyMarkdown: 'Original.',
+			attemptId: 'att-val-refusal'
+		});
+		expect(submit).toHaveBeenCalledTimes(3);
+		expect(restored).toMatchObject({
+			id: '0193a5c0-0000-7000-8000-000000001102',
+			name: 'SRE',
+			bodyMarkdown: 'Original.',
+			revision: 1
+		});
 	});
 
 	it('never silently adopts a conflict revision or restores stale cached success on conflict', async () => {

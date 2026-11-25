@@ -28,6 +28,18 @@ type KeptEntry = {
 
 const kept = new Map<string, KeptEntry>();
 let nextVersion = 0;
+let attemptReleasedListeners: ((attemptId: string) => void)[] = [];
+
+function notifyIfAttemptReleased(attemptId: string | undefined) {
+	if (!attemptId || hasRetainedAttempt(attemptId)) return;
+	for (const listener of [...attemptReleasedListeners]) {
+		try {
+			listener(attemptId);
+		} catch {
+			/* Keep draft cleanup isolated from listener failures. */
+		}
+	}
+}
 
 /** One editor per caller, organization and role; a new role has one slot per caller+organization. */
 export const draftKey = (organizationId: string, roleId?: string, caller = '') =>
@@ -35,8 +47,12 @@ export const draftKey = (organizationId: string, roleId?: string, caller = '') =
 
 /** Stores a copy of `draft` and returns its monotonic version stamp for safe late-save cleanup. */
 export function keepDraft(key: string, draft: KeptDraft): number {
+	const previousAttempt = kept.get(key)?.draft.attemptId;
 	const version = ++nextVersion;
 	kept.set(key, { draft: structuredClone(draft), version });
+	if (previousAttempt && previousAttempt !== draft.attemptId) {
+		notifyIfAttemptReleased(previousAttempt);
+	}
 	return version;
 }
 
@@ -47,13 +63,18 @@ export function keptDraft(key: string): KeptDraft | undefined {
 }
 
 export function discardDraft(key: string) {
+	const attemptId = kept.get(key)?.draft.attemptId;
 	kept.delete(key);
+	notifyIfAttemptReleased(attemptId);
 }
 
 /** Discards the kept draft only when its version matches `version`, preserving newer edits. */
 export function discardDraftIfVersion(key: string, version: number | undefined) {
 	if (version === undefined) return;
-	if (kept.get(key)?.version === version) kept.delete(key);
+	const entry = kept.get(key);
+	if (entry?.version !== version) return;
+	kept.delete(key);
+	notifyIfAttemptReleased(entry.draft.attemptId);
 }
 
 /** True while any retained draft still references `attemptId` so retry identity outlives detail-cache eviction. */
@@ -62,6 +83,14 @@ export function hasRetainedAttempt(attemptId: string): boolean {
 		if (entry.draft.attemptId === attemptId) return true;
 	}
 	return false;
+}
+
+/** Fires when the last retained draft referencing an `attemptId` is discarded or replaced. */
+export function onAttemptReleased(listener: (attemptId: string) => void): () => void {
+	if (!attemptReleasedListeners.includes(listener)) attemptReleasedListeners.push(listener);
+	return () => {
+		attemptReleasedListeners = attemptReleasedListeners.filter((entry) => entry !== listener);
+	};
 }
 
 /** Removes all retained drafts belonging to `caller` (or all drafts if `caller` is omitted). */

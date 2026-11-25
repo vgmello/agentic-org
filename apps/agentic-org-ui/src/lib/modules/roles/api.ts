@@ -1,7 +1,7 @@
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { orgApi } from '$lib/modules/organization/api';
-import { hasRetainedAttempt } from './features/editor/kept-drafts';
+import { hasRetainedAttempt, onAttemptReleased } from './features/editor/kept-drafts';
 import { createHttpRolesApi } from './http-api';
 import type { RolesApi } from './types';
 
@@ -26,6 +26,10 @@ const gatewayRolesApi = createHttpRolesApi({
 
 appSession.onSessionEnded((caller) => {
 	gatewayRolesApi.clearCaller(caller);
+});
+
+onAttemptReleased((attemptId) => {
+	gatewayRolesApi.releaseEvictedAttempt(attemptId);
 });
 
 // Production roles API backed by `/api/v1/organizations/{org}/roles*` and the organization snapshot.
