@@ -42,6 +42,25 @@ use refused as native;
 use crate::Refused;
 use std::io;
 
+/// How this process's own executable image is exposed to it on systems that identify
+/// executables by content digest rather than CodeDirectory hash (GNU/Linux).
+#[derive(Debug)]
+pub enum OwnExecutable {
+    /// Readable file descriptor for `/proc/self/exe` (opened once with `O_CLOEXEC`).
+    File(std::fs::File),
+    /// Executed by the admitted host from a sealed execute-only (`0111`) `memfd` with
+    /// `PR_SET_DUMPABLE == 0`, so `/proc/self/exe` is unreadable by design (`doc-64` §3.1).
+    SealedMemfd,
+}
+
+/// Opens this process's own executable image for SHA-256 verification on GNU/Linux, or
+/// reports [`OwnExecutable::SealedMemfd`] when launched from an execute-only sealed memfd
+/// while non-dumpable. Systems that identify loaded images by CodeDirectory hash (macOS)
+/// or unsupported targets return the `image identity` refusal.
+pub fn open_own_executable() -> io::Result<OwnExecutable> {
+    native::open_own_executable()
+}
+
 /// The kernel's CodeDirectory hash of this running image (macOS). A replaced on-disk
 /// executable cannot change this result. A system without a loaded-image query
 /// returns the `image identity` refusal: it never answers for another image.

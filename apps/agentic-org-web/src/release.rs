@@ -3,8 +3,9 @@
 mod files;
 use crate::assets::{BuildError, BuildFiles};
 use org_host_control::web::WebRelease;
-use org_platform::image::{ReleaseArchitecture, ReleasePlatform};
+use org_platform::image::{OwnExecutable, ReleaseArchitecture, ReleasePlatform};
 use org_release::{Architecture, Platform, TrustedKeys, TrustedPolicy, VerifiedManifest};
+use std::io::Read;
 use std::path::Path;
 // Public policy data only: the reviewed build script validates the registry
 // and always supplies this compile-time floor. No generated Rust is included.
@@ -100,24 +101,59 @@ pub(crate) fn load(assets: &Path, pin: Option<&WebRelease>) -> Result<BuildFiles
     let (policy, keys) = policy()?;
     let root = files::Directory::open_root(assets.parent().ok_or(BuildError::UnsafeBuildEntry)?)?;
     let (manifest, signature) = authenticate(&root, pin, &policy, &keys)?;
-    verify_running_image(&manifest)?;
+    verify_running_image(&root, &manifest)?;
     preload(&root, &manifest, &signature)
 }
 
-/// The running image must be the manifest's `agentic-org-web`. The image adapter
-/// (`org_platform::image`) refuses on a platform without a loaded-image query, so a
-/// valid manifest alone never admits this process or permits asset preload.
-fn verify_running_image(manifest: &VerifiedManifest) -> Result<(), BuildError> {
-    let expected = manifest
+/// The running image must be the manifest's `agentic-org-web`. On macOS this compares the
+/// kernel CodeDirectory hash; on GNU/Linux this verifies `/proc/self/exe` SHA-256 (or, when
+/// the admitted host launched this process from a sealed execute-only `0111` memfd, verifies
+/// the immutable release executable entry against the signed manifest). Platforms without an
+/// image adapter refuse, so a valid manifest alone never admits this process.
+fn verify_running_image(
+    root: &files::Directory,
+    manifest: &VerifiedManifest,
+) -> Result<(), BuildError> {
+    let entry = manifest
         .file("agentic-org-web")
-        .and_then(|f| f.macos_cdhash())
         .ok_or(BuildError::ReleaseImageMismatch)?;
-    if &org_platform::image::own_loaded_cdhash().map_err(|_| BuildError::ReleaseImageMismatch)?
-        != expected
-    {
-        return Err(BuildError::ReleaseImageMismatch);
+    match manifest.manifest().platform() {
+        Platform::Macos => {
+            let expected = entry
+                .macos_cdhash()
+                .ok_or(BuildError::ReleaseImageMismatch)?;
+            if &org_platform::image::own_loaded_cdhash()
+                .map_err(|_| BuildError::ReleaseImageMismatch)?
+                != expected
+            {
+                return Err(BuildError::ReleaseImageMismatch);
+            }
+            Ok(())
+        }
+        Platform::Linux => match org_platform::image::open_own_executable()
+            .map_err(|_| BuildError::ReleaseImageMismatch)?
+        {
+            OwnExecutable::File(mut file) => {
+                let mut verifier = entry.payload_verifier();
+                let mut buf = [0_u8; 64 * 1024];
+                loop {
+                    let n = file
+                        .read(&mut buf)
+                        .map_err(|_| BuildError::ReleaseImageMismatch)?;
+                    if n == 0 {
+                        break;
+                    }
+                    verifier
+                        .update(&buf[..n])
+                        .map_err(|_| BuildError::ReleaseImageMismatch)?;
+                }
+                verifier
+                    .finish()
+                    .map_err(|_| BuildError::ReleaseImageMismatch)
+            }
+            OwnExecutable::SealedMemfd => root.verify_executable(entry),
+        },
     }
-    Ok(())
 }
 
 fn authenticate(

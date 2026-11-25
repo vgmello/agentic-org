@@ -1,8 +1,12 @@
 //! The refusing image adapter: no image is identified and no release target is named.
 
-use super::ReleasePlatform;
+use super::{OwnExecutable, ReleasePlatform};
 use crate::Refused;
 use std::io;
+
+pub(super) fn open_own_executable() -> io::Result<OwnExecutable> {
+    Err(image_identity().into())
+}
 
 /// The refusal of the loaded-image queries. The Linux adapter returns it too until it
 /// has a rule of its own.

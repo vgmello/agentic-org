@@ -4,12 +4,33 @@
 //! (it depends on the C library only): the host applies the rule in
 //! `org_platform_host::admission` (`own_image`, and the sealed image of a child).
 
-use super::{refused, ReleasePlatform};
+use super::{refused, OwnExecutable, ReleasePlatform};
 use crate::Refused;
+use std::fs;
 use std::io;
 
 pub(super) fn own_loaded_cdhash() -> io::Result<[u8; 20]> {
     Err(refused::image_identity().into())
+}
+
+pub(super) fn open_own_executable() -> io::Result<OwnExecutable> {
+    match fs::File::open("/proc/self/exe") {
+        Ok(file) => Ok(OwnExecutable::File(file)),
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            let is_memfd = fs::read_link("/proc/self/exe")
+                .ok()
+                .and_then(|p| p.to_str().map(|s| s.starts_with("/memfd:")))
+                .unwrap_or(false);
+            // SAFETY: PR_GET_DUMPABLE is a read-only process attribute query with no pointer args.
+            let dumpable = unsafe { libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) };
+            if is_memfd && dumpable == 0 {
+                Ok(OwnExecutable::SealedMemfd)
+            } else {
+                Err(error)
+            }
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(super) fn loaded_cdhash_for_audit_token(_token: &[u8; 32]) -> io::Result<[u8; 20]> {

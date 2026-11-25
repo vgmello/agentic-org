@@ -80,6 +80,11 @@ pub(crate) mod project_command;
 pub use project_command::{
     project_create, project_inspect, project_list, ProjectCreateInput, HELP as PROJECT_HELP,
 };
+pub(crate) mod provider_command;
+pub use provider_command::{
+    provider_bind, provider_bindings, provider_create, provider_list, provider_models,
+    ProviderBindInput, ProviderCreateInput, HELP as PROVIDER_HELP,
+};
 pub mod sign_in_command;
 pub use sign_in_command::{
     context_clear, context_show, context_use, open_for_command, sign_in_only,
@@ -823,7 +828,9 @@ fn fail(context: &str, why: impl std::fmt::Display) -> String {
 }
 
 /// The release this setup records. Development builds record a fixed development pin; a
-/// release build refuses until it carries a pinned runtime release (SRV-1).
+/// release build admits the currently installed release in the account's protected release
+/// store (`default_release_store_dir`) and records its verified pin, releasing the store lock
+/// before the service host starts.
 pub(crate) fn release_pin() -> Result<ReleasePin, String> {
     if cfg!(debug_assertions) {
         use sha2::Digest;
@@ -836,11 +843,20 @@ pub(crate) fn release_pin() -> Result<ReleasePin, String> {
             manifest_sha256: digest.iter().map(|b| format!("{b:02x}")).collect(),
         })
     } else {
-        Err(
-            "setup needs a pinned runtime release, which this build does not carry yet \
-             (SRV-1); nothing was changed"
-                .into(),
-        )
+        let store_dir = crate::default_release_store_dir()?;
+        let store = crate::release::ReleaseStore::open(&store_dir).map_err(|e| {
+            format!(
+                "opening release store ({}): {e}; install a signed release first with `agentic-org release install <bundle.tar.gz>`; nothing was changed",
+                store_dir.display()
+            )
+        })?;
+        let admitted = store.admit_self().map_err(|e| {
+            format!(
+                "admitting installed release ({}): {e}; run the installed binary from the release store or install with `agentic-org release install <bundle.tar.gz>`; nothing was changed",
+                store_dir.display()
+            )
+        })?;
+        Ok(admitted.pin().clone())
     }
 }
 

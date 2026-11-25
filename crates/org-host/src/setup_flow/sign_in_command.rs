@@ -250,9 +250,13 @@ pub(crate) fn open_approved_office(
     })
 }
 
-/// Interactive `agentic-org sign-in`: obtains browser approval without asking for a password,
-/// optionally opens the selected office channel for a follow-up command, and saves context when
-/// an office is selected or uniquely identified.
+/// Opens an office channel for a human/operator CLI command (`agentic-org task|msg|hr|...` or
+/// `agentic-org sign-in -- <cmd>`).
+///
+/// Authentication tries `session.local` first (instant on local authless HTTP instances per
+/// ADR-0034) and falls back to browser-approved sign-in when authentication is enabled.
+/// When no `--office` and no saved context are present, auto-selects the host's HQ or sole
+/// office; when multiple offices exist without a unique HQ, refuses with an actionable hint.
 pub fn open_for_command(
     explicit_instance: Option<&str>,
     explicit_office: Option<&str>,
@@ -260,13 +264,22 @@ pub fn open_for_command(
 ) -> Result<ApprovedOfficeChannel, String> {
     let ctx_path = cli_context::default_context_path()?;
     let saved = cli_context::load_from(&ctx_path)?;
-    let (instance_name, office_id) =
-        cli_context::resolve_selection(explicit_instance, explicit_office, saved.as_ref())?;
+    let (instance_name, selected_office) =
+        match cli_context::resolve_selection(explicit_instance, explicit_office, saved.as_ref()) {
+            Ok((inst, office)) => (inst, Some(office)),
+            Err(_) if explicit_office.is_none() => (
+                explicit_instance
+                    .map(str::to_owned)
+                    .or_else(|| saved.as_ref().and_then(|s| s.instance_name.clone())),
+                None,
+            ),
+            Err(err) => return Err(err),
+        };
     let (_, instance_id, socket) = registered(
         &crate::human::paths(instance_name.as_deref())?,
         instance_name.as_deref(),
     )?;
-    if explicit_office.is_none() || explicit_instance.is_none() {
+    if selected_office.is_some() && (explicit_office.is_none() || explicit_instance.is_none()) {
         if let Some(ctx) = &saved {
             if ctx.instance_id != instance_id {
                 return Err(format!(
@@ -276,17 +289,59 @@ pub fn open_for_command(
             }
         }
     }
-    let (wire, session, _account, _orgs) = approve_on_target(
-        &Target {
-            socket: &socket,
-            instance_id: &instance_id,
-            name: instance_name.as_deref(),
-        },
-        Duration::from_millis(250),
-        Duration::from_secs(10 * 60),
+    let target = Target {
+        socket: &socket,
+        instance_id: &instance_id,
+        name: instance_name.as_deref(),
+    };
+    let (mut wire, session) = super::office_command::connect_cli_session(
+        &target,
+        None,
+        &mut crate::human::password,
         out,
     )?;
+    let office_id = match selected_office {
+        Some(id) => id,
+        None => resolve_default_office(&mut wire, &session)?,
+    };
     open_approved_office(wire, session, office_id)
+}
+
+fn resolve_default_office(wire: &mut Wire, session: &SessionHandle) -> Result<String, String> {
+    use org_host_control::ops::{OfficeList, OfficeListParams};
+    let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
+    let listed = match wire.call_answer::<OfficeList>(
+        &OfficeListParams {
+            session: handle,
+            org_id: None,
+        },
+        None,
+    )? {
+        Ok(listed) => listed,
+        Err(code) => return Err(format!("the service refused office lookup ({code:?})")),
+    };
+    if listed.offices.is_empty() {
+        return Err(
+            "no offices found on this host; create an organization with `agentic-org org create` or join as a satellite with `agentic-org office join`"
+                .into(),
+        );
+    }
+    let hqs: Vec<&str> = listed
+        .offices
+        .iter()
+        .filter(|o| o.role == org_proto::OfficeRole::Hq)
+        .map(|o| o.id.as_str())
+        .collect();
+    if hqs.len() == 1 {
+        return Ok(hqs[0].to_owned());
+    }
+    if listed.offices.len() == 1 {
+        return Ok(listed.offices[0].id.clone());
+    }
+    Err(
+        "multiple offices found; pass --office <office_id> [--name <instance>] or save a default with `agentic-org context use --office <office_id>`"
+            .into(),
+    )
 }
 
 /// Standalone `agentic-org sign-in` (without `-- <command>`): verifies browser approval, saves
