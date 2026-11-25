@@ -670,7 +670,6 @@ html[data-theme^="report"] .k-doc {
   backdrop-filter: none; -webkit-backdrop-filter: none;
   box-shadow: none;
 }
-html[data-theme^="report"] .agent-rail,
 html[data-theme^="report"] .chlist,
 html[data-theme^="report"] .prof,
 html[data-theme^="report"] .subnav,
@@ -1093,7 +1092,6 @@ html[data-theme="report-dark"] .card,
 html[data-theme="report-dark"] .bcard,
 html[data-theme="report-dark"] .c-entry,
 html[data-theme="report-dark"] .k-doc { background: #1a2433; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
-html[data-theme="report-dark"] .agent-rail,
 html[data-theme="report-dark"] .chlist,
 html[data-theme="report-dark"] .prof,
 html[data-theme="report-dark"] .subnav,

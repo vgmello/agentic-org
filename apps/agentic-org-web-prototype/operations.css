@@ -811,7 +811,7 @@ html:is([data-theme="classic"], [data-theme="report-dark"]) {
 html:is([data-theme="classic"], [data-theme^="report"]) { --assembly-surface: var(--gray-800); }
 html[data-theme="report"] { --workspace-secondary-surface: var(--gray-800); }
 html:is([data-theme="classic"], [data-theme="report-dark"])[data-interior-page]
-  :is(#triage-reading, .thread, .agent-rail, .sheet, .assembly-release) {
+  :is(#triage-reading, .thread, .sheet, .assembly-release) {
   background: var(--detail-panel-surface);
 }
 /* Work uses the Inbox reading layout in a right-side panel. */
