@@ -2,7 +2,7 @@
 
 ## Prototype work
 
-Before working under `poc/`, read and follow [the prototype instructions](poc/AGENTS.md).
+Before working under `apps/agentic-org-web-prototype/`, read and follow [the prototype instructions](apps/agentic-org-web-prototype/AGENTS.md).
 They cover prototype verification, publishing, and owner-approved Svelte handoffs.
 Compare approved snapshots for each release summary and checkpoint any release in
 progress before context compaction.

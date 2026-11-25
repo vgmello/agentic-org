@@ -1,4 +1,4 @@
-# Design Prototypes (`poc/`)
+# Design Prototypes (`apps/agentic-org-web-prototype/`)
 
 Standalone interactive static HTML prototypes used to explore and iterate on the Executive UI before porting patterns into the SvelteKit app.
 
@@ -12,16 +12,16 @@ Standalone interactive static HTML prototypes used to explore and iterate on the
 ## Running locally
 
 ```bash
-bun poc/server.ts
+bun apps/agentic-org-web-prototype/server.ts
 ```
 
-Defaults to `http://localhost:3000` (override with `PORT=3001 bun poc/server.ts`).
+Defaults to `http://localhost:3000` (override with `PORT=3001 bun apps/agentic-org-web-prototype/server.ts`).
 
 ## Quick browser check
 
 ```bash
-bun poc/smoke.ts work graphite
-bun poc/smoke.ts activity ocean
+bun apps/agentic-org-web-prototype/smoke.ts work graphite
+bun apps/agentic-org-web-prototype/smoke.ts activity ocean
 ```
 
 Pass a v6 route and theme to check the affected page in Chromium. The command uses
@@ -31,4 +31,4 @@ panels and keyboard dismissal.
 
 ## Production boundary
 
-The production web UI lives in [`apps/agentic-org-ui/`](../apps/agentic-org-ui/). Nothing in `poc/` is imported into or bundled with production builds.
+The production web UI lives in [`apps/agentic-org-ui/`](../agentic-org-ui/). Nothing in `apps/agentic-org-web-prototype/` is imported into or bundled with production builds.

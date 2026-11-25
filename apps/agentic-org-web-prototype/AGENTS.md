@@ -1,9 +1,9 @@
 # Standalone prototypes
 
-For changes confined to `poc/`, use targeted local checks and relevant browser
+For changes confined to `apps/agentic-org-web-prototype/`, use targeted local checks and relevant browser
 verification for acceptance. This replaces the repository's code review cycle
 for prototype work, including reviewer agents and final review.
-Use `bun poc/smoke.ts <route> <theme>` for a quick Chromium check and screenshot.
+Use `bun apps/agentic-org-web-prototype/smoke.ts <route> <theme>` for a quick Chromium check and screenshot.
 
 Commit and push each verified prototype update to `poc/ui-themes-prototype`
 with a normal commit subject. When the owner explicitly approves a release,
@@ -14,7 +14,7 @@ Find release markers from the branch history without a path filter so empty
 commits are included.
 
 Before writing the marker, compare the last approved snapshot to the new
-approved snapshot with `git diff <previous-release-marker> <approved-tip> -- poc/`.
+approved snapshot with `git diff <previous-release-marker> <approved-tip> -- apps/agentic-org-web-prototype/`.
 An empty marker has the same snapshot as its parent. For the first marker, use
 the agreed integration baseline. Use the diff and the owner's feedback to
 describe the final changes by page or behavior. Leave out intermediate
