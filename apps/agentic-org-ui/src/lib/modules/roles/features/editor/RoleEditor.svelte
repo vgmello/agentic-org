@@ -41,7 +41,9 @@
 		SheetTitle
 	} from '$lib/components/ui/sheet';
 	import { toAppError } from '$lib/proto';
+	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { registerModalBack } from '$lib/platform/shell/modal-back';
+	import { newStableId } from '$lib/modules/organization/commands';
 	import { rolesApi } from '../../api';
 	import {
 		NOTHING_TO_SAVE,
@@ -82,6 +84,8 @@
 	let latest = $state.raw<Role | undefined>();
 	let conflictMessage = $state('');
 	let expectedRevision = $state(0);
+	let attemptId = $state('');
+	let editorCaller = $state('');
 	/** Text kept from an earlier close was put back in the fields. */
 	let restored = $state(false);
 	/** Set by Cancel and by a save: this close leaves nothing to keep. */
@@ -95,14 +99,16 @@
 
 	const editing = $derived(mode.kind === 'edit' ? mode.role : undefined);
 	const lockedBy = $derived(editing?.keyNamedBy?.length ? editing.keyNamedBy.join(', ') : '');
-	const slot = $derived(draftKey(organizationId, editing?.id));
+	const slot = $derived(draftKey(organizationId, editing?.id, editorCaller));
 
 	/** Opens the editor for `next`, with any text kept from the last time this editor closed unsaved. */
 	export function start(next: EditorMode) {
 		mode = next;
+		const caller = appSession.callerScope ?? '';
+		editorCaller = caller;
 		const role = next.kind === 'edit' ? next.role : undefined;
 		const draft = next.kind === 'new' ? next.draft : undefined;
-		const slotKey = draftKey(organizationId, role?.id);
+		const slotKey = draftKey(organizationId, role?.id, caller);
 		// A fresh HR draft is what the person just asked for: it replaces text kept for a new role.
 		if (next.kind === 'new' && next.fromHr) discardDraft(slotKey);
 		const kept = keptDraft(slotKey);
@@ -112,6 +118,7 @@
 		expectedRevision = kept?.expectedRevision ?? role?.revision ?? 0;
 		latest = kept?.latest;
 		conflictMessage = kept?.conflictMessage ?? '';
+		attemptId = kept?.attemptId ?? newStableId();
 		restored = !!kept;
 		errors = {};
 		failure = undefined;
@@ -136,8 +143,10 @@
 	}
 
 	function keepOrDiscard() {
-		if (!discarding && typed())
-			keepDraft(slot, { name, key, body, expectedRevision, latest, conflictMessage });
+		const sameSession =
+			appSession.state.kind !== 'signed-out' && (appSession.callerScope ?? '') === editorCaller;
+		if (!discarding && sameSession && typed())
+			keepDraft(slot, { name, key, body, expectedRevision, latest, conflictMessage, attemptId });
 		else discardDraft(slot);
 		discarding = false;
 	}
@@ -195,9 +204,14 @@
 		busy = true;
 		failure = undefined;
 		try {
+			const currentAttempt = attemptId || (attemptId = newStableId());
 			const saved = editing
-				? await rolesApi.update(organizationId, editing.id, { ...draft, expectedRevision })
-				: await rolesApi.create(organizationId, draft);
+				? await rolesApi.update(organizationId, editing.id, {
+						...draft,
+						expectedRevision,
+						attemptId: currentAttempt
+					})
+				: await rolesApi.create(organizationId, { ...draft, attemptId: currentAttempt });
 			discarding = true;
 			open = false;
 			onsaved(saved, !editing);
@@ -206,9 +220,14 @@
 			const field = refusedField(e);
 			const message = toAppError(e).message;
 			if (newer) {
+				if (mode.kind === 'new') {
+					discardDraft(slot);
+					mode = { kind: 'edit', role: newer, employeeCount: 0 };
+				}
 				latest = newer;
 				expectedRevision = newer.revision;
 				conflictMessage = message;
+				attemptId = newStableId();
 				// The notice is at the top of the sheet, away from Save: bring it into view and read it.
 				setTimeout(() => document.getElementById('role-conflict')?.focus(), 0);
 			} else if (field) {

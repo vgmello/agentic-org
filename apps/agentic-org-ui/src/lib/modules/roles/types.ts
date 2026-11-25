@@ -98,6 +98,8 @@ export interface RoleDraft {
 	/** Empty or missing: no key. */
 	key?: string;
 	bodyMarkdown: string;
+	/** Optional client-local logical-save correlation token for safe idempotent retries. */
+	attemptId?: string;
 }
 
 export interface RoleEdit extends RoleDraft {

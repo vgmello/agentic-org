@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { areaCapability } from './capabilities';
 
+const VALID_ROLE_ID = '0193a5c0-0000-7000-8000-000000000040';
+
 describe('production shell capabilities', () => {
-	it('enables session, onboarding, security, U1 org/office/project, and B7 home/inbox/chat routes', () => {
+	it('enables session, onboarding, security, U1 org/office/project, B7 home/inbox/chat, and FC-108 roles routes', () => {
 		for (const path of [
 			'/',
 			'/sign-in',
@@ -18,6 +20,10 @@ describe('production shell capabilities', () => {
 			'/chat',
 			'/settings/offices',
 			'/offices',
+			'/settings/roles',
+			'/settings/roles/',
+			`/settings/roles/${VALID_ROLE_ID}`,
+			`/settings/roles/${VALID_ROLE_ID}/`,
 			'/settings/access',
 			'/teams',
 			'/teams/members',
@@ -37,7 +43,7 @@ describe('production shell capabilities', () => {
 			expect(areaCapability(path), path).toEqual({ available: true });
 	});
 
-	it('keeps unbuilt areas and subroutes unavailable until their adapters land', () => {
+	it('keeps unbuilt areas, reserved/malformed role segments, and subroutes unavailable until their adapters land', () => {
 		for (const path of [
 			'/create/x',
 			'/security/x',
@@ -49,6 +55,12 @@ describe('production shell capabilities', () => {
 			'/settings/costs',
 			'/settings/agents',
 			'/settings/processes',
+			'/settings/roles/update',
+			'/settings/roles/update/',
+			'/settings/roles/role-swe',
+			`/settings/roles/${VALID_ROLE_ID.toUpperCase()}`,
+			`/settings/roles/${VALID_ROLE_ID}/extra`,
+			'/settings/roles//',
 			'/teams/hire',
 			'/teams/hires',
 			'/teams/t1/work',

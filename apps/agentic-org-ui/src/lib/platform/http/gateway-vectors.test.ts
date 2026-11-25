@@ -566,6 +566,25 @@ it('rejects unsafe versions and positions at every known snapshot record boundar
 		expect(() => wire.readOrgSnapshot(snapshot)).toThrow(wire.WireDecodeError);
 	}
 });
+it('validates optional UUIDv7 role_id and strict boolean owner on snapshot members', () => {
+	const validRoleId = '0193a5c0-0000-7000-8000-000000000040';
+	const withRole = populatedSnapshot();
+	(withRole.members[0] as Record<string, unknown>).role_id = validRoleId;
+	expect(wire.readOrgSnapshot(withRole).members[0].role_id).toBe(validRoleId);
+
+	const withoutRole = populatedSnapshot();
+	expect(wire.readOrgSnapshot(withoutRole).members[0].role_id).toBeUndefined();
+
+	for (const badRoleId of ['not-a-uuid', validRoleId.toUpperCase(), 42, '']) {
+		const bad = populatedSnapshot();
+		(bad.members[0] as Record<string, unknown>).role_id = badRoleId;
+		expect(() => wire.readOrgSnapshot(bad)).toThrow(wire.WireDecodeError);
+	}
+
+	const stringOwner = populatedSnapshot();
+	(stringOwner.members[0] as Record<string, unknown>).owner = 'false';
+	expect(() => wire.readOrgSnapshot(stringOwner)).toThrow(wire.WireDecodeError);
+});
 it('does not hide malformed known frames behind future-scope compatibility', () => {
 	const scope = { kind: 'project', project_id: 'future' };
 	expect(() =>

@@ -808,6 +808,7 @@ fn member_owner_flag_and_kind_round_trip() {
         name: "Vitor".into(),
         handle: None,
         home_team_id: None,
+        role_id: None,
         title_in_team: None,
         contact: None,
         owner: true,
@@ -824,10 +825,16 @@ fn member_owner_flag_and_kind_round_trip() {
     assert_eq!(v["kind"], "person");
     let agent: Member = serde_json::from_value(json!({
         "id": "a1", "kind": "agent", "name": "ada", "office_id": "o1",
+        "role_id": "0193a5c0-0000-7000-8000-000000000040",
         "reports_to_member_id": "p1", "version": 3
     }))
     .unwrap();
     assert_eq!(agent.reports_to_member_id.as_deref(), Some("p1"));
+    assert_eq!(
+        agent.role_id.as_deref(),
+        Some("0193a5c0-0000-7000-8000-000000000040")
+    );
+    assert!(v.get("role_id").is_none());
     assert!(!agent.owner);
     assert!(serde_json::to_value(&agent).unwrap().get("owner").is_none());
     let robot: Member =
@@ -1113,6 +1120,7 @@ fn a_member_carries_its_agent_profile_in_one_record() {
         name: "River".into(),
         handle: None,
         home_team_id: None,
+        role_id: None,
         title_in_team: None,
         contact: None,
         owner: false,
@@ -1135,7 +1143,7 @@ fn a_member_carries_its_agent_profile_in_one_record() {
 
     // One entity, one version: the change carries the profile.
     let change = OrgChange::MemberUpserted {
-        member: agent.clone(),
+        member: Box::new(agent.clone()),
     };
     let back: OrgChange = serde_json::from_value(serde_json::to_value(&change).unwrap()).unwrap();
     assert_eq!(back, change);
@@ -1380,12 +1388,13 @@ fn the_changes_of_a_member_move_that_leaves_a_led_team_have_these_wire_shapes() 
         command_id: "01C".into(),
         changes: vec![
             OrgChange::MemberUpserted {
-                member: Member {
+                member: Box::new(Member {
                     id: "a1".into(),
                     kind: MemberKind::Agent,
                     name: "Ada".into(),
                     handle: Some("ada".into()),
                     home_team_id: Some("t2".into()),
+                    role_id: None,
                     title_in_team: None,
                     contact: None,
                     owner: false,
@@ -1394,7 +1403,7 @@ fn the_changes_of_a_member_move_that_leaves_a_led_team_have_these_wire_shapes() 
                     reports_to_member_id: None,
                     created_at: None,
                     version: 2,
-                },
+                }),
             },
             OrgChange::TeamUpserted {
                 team: Team {
@@ -1504,6 +1513,7 @@ fn an_offboarded_agent_is_a_status_and_a_timestamp_on_the_same_member_record() {
         name: "River".into(),
         handle: None,
         home_team_id: None,
+        role_id: None,
         title_in_team: None,
         contact: None,
         owner: false,
@@ -1513,7 +1523,9 @@ fn an_offboarded_agent_is_a_status_and_a_timestamp_on_the_same_member_record() {
         created_at: None,
         version: 6,
     };
-    let change = OrgChange::MemberUpserted { member };
+    let change = OrgChange::MemberUpserted {
+        member: Box::new(member),
+    };
     let back: OrgChange = serde_json::from_value(serde_json::to_value(&change).unwrap()).unwrap();
     assert_eq!(back, change);
 
@@ -1705,6 +1717,7 @@ fn a_member_carries_when_hq_created_it_and_older_records_without_it_still_read()
         name: "River".into(),
         handle: None,
         home_team_id: None,
+        role_id: None,
         title_in_team: None,
         contact: None,
         owner: false,

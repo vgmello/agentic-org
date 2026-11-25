@@ -100,6 +100,7 @@ fn bound_agent_os_reads_teams_and_directory_over_office_socket() {
                                 name: "Owner".into(),
                                 handle: Some("owner".into()),
                                 home_team_id: Some("0193a5c0-0000-7000-8000-000000000001".into()),
+                                role_id: None,
                                 title_in_team: None,
                                 contact: None,
                                 owner: true,
@@ -371,7 +372,11 @@ fn c2_cli14_roles_and_hr_hire_authorized_and_unauthorized() {
                                 body: "Builds Rust services.".into(),
                                 revision: 1,
                                 created_at: None,
+                                created_by_kind: None,
+                                created_by_id: None,
                                 updated_at: None,
+                                updated_by_kind: None,
+                                updated_by_id: None,
                             }],
                         },
                     )
@@ -386,7 +391,11 @@ fn c2_cli14_roles_and_hr_hire_authorized_and_unauthorized() {
                             body: "Builds Rust services.".into(),
                             revision: 1,
                             created_at: None,
+                            created_by_kind: None,
+                            created_by_id: None,
                             updated_at: None,
+                            updated_by_kind: None,
+                            updated_by_id: None,
                         },
                     )
                     .unwrap()

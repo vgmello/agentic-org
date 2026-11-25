@@ -92,7 +92,7 @@ pub(super) fn try_route(
     match tail {
         ["roles"] if is_get => Some(auth_org(api, request, org, HiringRoute::RoleList)),
         ["roles"] if post => Some(auth_org(api, request, org, HiringRoute::RoleCreate)),
-        ["roles", role] if is_get && *role != "update" => Some(auth_org_arg(
+        ["roles", role] if is_get && *role != "update" => Some(auth_org_role_uuid_arg(
             api,
             request,
             org,
@@ -161,6 +161,21 @@ pub(super) fn try_route(
     }
 }
 
+fn auth_org_role_uuid_arg(
+    api: &SessionApi,
+    request: &Parts,
+    org: &str,
+    arg: &str,
+    build: fn(CallerAuth, String, String) -> HiringRoute,
+) -> Result<Route, ApiReply> {
+    let caller = api.caller_auth(request)?;
+    valid_org_id(org)?;
+    if !org_proto::is_uuid_v7(arg) {
+        return Err(invalid());
+    }
+    Ok(Route::Hiring(build(caller, org.to_owned(), arg.to_owned())))
+}
+
 fn auth_org_uuid_arg(
     api: &SessionApi,
     request: &Parts,
@@ -168,10 +183,12 @@ fn auth_org_uuid_arg(
     arg: &str,
     build: fn(CallerAuth, String, String) -> HiringRoute,
 ) -> Result<Route, ApiReply> {
+    let caller = api.caller_auth(request)?;
+    valid_org_id(org)?;
     if !org_office_launch::is_storage_id(arg) {
         return Err(invalid());
     }
-    auth_org_arg(api, request, org, arg, build)
+    Ok(Route::Hiring(build(caller, org.to_owned(), arg.to_owned())))
 }
 
 fn auth_org(
@@ -183,21 +200,6 @@ fn auth_org(
     let caller = api.caller_auth(request)?;
     valid_org_id(org)?;
     Ok(Route::Hiring(build(caller, org.to_owned())))
-}
-
-fn auth_org_arg(
-    api: &SessionApi,
-    request: &Parts,
-    org: &str,
-    arg: &str,
-    build: fn(CallerAuth, String, String) -> HiringRoute,
-) -> Result<Route, ApiReply> {
-    let caller = api.caller_auth(request)?;
-    valid_org_id(org)?;
-    if arg.is_empty() || arg.len() > 128 {
-        return Err(invalid());
-    }
-    Ok(Route::Hiring(build(caller, org.to_owned(), arg.to_owned())))
 }
 
 fn decode_mutation<P: serde::de::DeserializeOwned>(
@@ -303,17 +305,17 @@ pub(super) fn prepare(route: HiringRoute, bytes: &[u8]) -> Result<PreparedCall<C
     }
 }
 
-async fn run_office<C: org_proto::Call>(
+async fn call_office<C: org_proto::Call>(
     api: &SessionApi,
     pair: CallerAuth,
     org_id: &str,
     params: &C::Params,
     is_read: bool,
-) -> ApiReply {
+) -> Result<C::Result, ApiReply> {
     let mut office_id = match resolve_hq_office(api, pair, org_id).await {
         Ok(id) => id,
-        Err(Failure::Refused(_)) => return unavailable(),
-        Err(error) => return failure(error),
+        Err(Failure::Refused(_)) => return Err(unavailable()),
+        Err(error) => return Err(failure(error)),
     };
     let auth = api.auth(&pair);
     let mut reply = api
@@ -326,17 +328,27 @@ async fn run_office<C: org_proto::Call>(
     ) {
         office_id = match revalidate_and_resolve_hq(api, pair, org_id).await {
             Ok(id) => id,
-            Err(Failure::Refused(_)) => return unavailable(),
-            Err(error) => return failure(error),
+            Err(Failure::Refused(_)) => return Err(unavailable()),
+            Err(error) => return Err(failure(error)),
         };
         reply = api
             .offices
             .call_typed::<C>(&auth, &office_id, params, is_read)
             .await;
     }
-    match reply {
+    reply.map_err(map_office_failure)
+}
+
+async fn run_office<C: org_proto::Call>(
+    api: &SessionApi,
+    pair: CallerAuth,
+    org_id: &str,
+    params: &C::Params,
+    is_read: bool,
+) -> ApiReply {
+    match call_office::<C>(api, pair, org_id, params, is_read).await {
         Ok(res) => result(res),
-        Err(err) => map_office_failure(err),
+        Err(reply) => reply,
     }
 }
 
@@ -374,7 +386,12 @@ pub(super) async fn execute(api: &SessionApi, call: HiringCall) -> ApiReply {
             run_office::<RoleList>(api, c, &o, &RoleListParams {}, true).await
         }
         HiringCall::RoleInspect(c, o, role) => {
-            run_office::<RoleInspect>(api, c, &o, &RoleInspectParams { role }, true).await
+            let expected_id = role.clone();
+            match call_office::<RoleInspect>(api, c, &o, &RoleInspectParams { role }, true).await {
+                Ok(record) if record.id == expected_id => result(record),
+                Ok(_) => not_found(),
+                Err(reply) => reply,
+            }
         }
         HiringCall::RoleCreate(c, o, p) => run_office::<RoleCreate>(api, c, &o, &p, false).await,
         HiringCall::RoleUpdate(c, o, p) => run_office::<RoleUpdate>(api, c, &o, &p, false).await,

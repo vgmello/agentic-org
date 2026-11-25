@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { discardDraft, draftKey, keepDraft, keptDraft } from './kept-drafts';
+import { clearDraftsForCaller, discardDraft, draftKey, keepDraft, keptDraft } from './kept-drafts';
 
 it('keeps a draft per organization and role until it is discarded', () => {
 	const edit = draftKey('org-a', 'role-swe');
@@ -21,4 +21,29 @@ it('hands out copies, so editing the restored text does not change what is kept'
 	restored.body = 'changed';
 	expect(keptDraft(key)!.body).toBe('one');
 	discardDraft(key);
+});
+
+it('isolates retained drafts by caller and clears only the signed-out caller', () => {
+	const alice = draftKey('org-a', undefined, 'inst-1:acct-alice');
+	const bob = draftKey('org-a', undefined, 'inst-1:acct-bob');
+	expect(alice).not.toBe(bob);
+	keepDraft(alice, {
+		name: 'Alice Draft',
+		key: '',
+		body: 'secret',
+		expectedRevision: 0,
+		attemptId: 'att-alice'
+	});
+	keepDraft(bob, {
+		name: 'Bob Draft',
+		key: '',
+		body: 'other',
+		expectedRevision: 0,
+		attemptId: 'att-bob'
+	});
+	expect(keptDraft(bob)?.name).toBe('Bob Draft');
+	clearDraftsForCaller('inst-1:acct-alice');
+	expect(keptDraft(alice)).toBeUndefined();
+	expect(keptDraft(bob)?.name).toBe('Bob Draft');
+	clearDraftsForCaller('inst-1:acct-bob');
 });

@@ -1814,7 +1814,7 @@ fn map_receipt_to_org_changes(
             .get(entity_id)
             .map(|m| {
                 vec![OrgChange::MemberUpserted {
-                    member: (*m).clone(),
+                    member: Box::new((*m).clone()),
                 }]
             })
             .unwrap_or_else(|| {
