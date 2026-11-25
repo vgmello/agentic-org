@@ -1,12 +1,12 @@
 use serde_json::{json, Value};
 
 use org_agent_runtime::{
-    encode_line, ApprovalId, ApprovalKind, ApprovalRequest, Escalation, LimitKind, LimitStatus,
-    NoticeKind, Output, RateLimit, SessionEvent, ToolCapability, TurnOutcome, Window,
+    encode_line, ApprovalId, ApprovalKind, ApprovalRequest, Escalation, LimitKind, NoticeKind,
+    Output, SessionEvent, ToolCapability, TurnOutcome,
 };
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct MessageUsage {
+pub(crate) struct AcpUsage {
     pub(crate) input: u64,
     pub(crate) output: u64,
     pub(crate) cache_read: u64,
@@ -14,51 +14,177 @@ pub(crate) struct MessageUsage {
     pub(crate) reasoning: u64,
 }
 
-impl MessageUsage {
-    pub(crate) fn merge_max(&mut self, other: &MessageUsage) {
-        self.input = self.input.max(other.input);
-        self.output = self.output.max(other.output);
-        self.cache_read = self.cache_read.max(other.cache_read);
-        self.cache_write = self.cache_write.max(other.cache_write);
-        self.reasoning = self.reasoning.max(other.reasoning);
+impl AcpUsage {
+    pub(crate) fn add_assign(&mut self, other: &AcpUsage) {
+        self.input = self.input.saturating_add(other.input);
+        self.output = self.output.saturating_add(other.output);
+        self.cache_read = self.cache_read.saturating_add(other.cache_read);
+        self.cache_write = self.cache_write.saturating_add(other.cache_write);
+        self.reasoning = self.reasoning.saturating_add(other.reasoning);
     }
 
-    pub(crate) fn saturating_sub(&self, base: &MessageUsage) -> MessageUsage {
-        MessageUsage {
-            input: self.input.saturating_sub(base.input),
-            output: self.output.saturating_sub(base.output),
-            cache_read: self.cache_read.saturating_sub(base.cache_read),
-            cache_write: self.cache_write.saturating_sub(base.cache_write),
-            reasoning: self.reasoning.saturating_sub(base.reasoning),
+    pub(crate) fn is_zero(&self) -> bool {
+        self.input == 0
+            && self.output == 0
+            && self.cache_read == 0
+            && self.cache_write == 0
+            && self.reasoning == 0
+    }
+}
+
+/// Converts a JSON-RPC request/response `id` (string or integer) into a stable lookup key.
+pub(crate) fn rpc_id_key(id: &Value) -> Option<String> {
+    match id {
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+pub(crate) fn encode_initialize(req_id: u64) -> Output {
+    let line = encode_line(&json!({
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": 1,
+            "clientCapabilities": {},
+            "clientInfo": {
+                "name": "agentic-org",
+                "version": env!("CARGO_PKG_VERSION"),
+            },
+        },
+    }))
+    .expect("initialize JSON-RPC encodes");
+    Output::Write(line)
+}
+
+pub(crate) fn encode_session_open(
+    req_id: u64,
+    cwd: &str,
+    mcp_servers: &[Value],
+    system_prompt_append: Option<&str>,
+    resume_session_id: Option<&str>,
+) -> Output {
+    let mut params = json!({
+        "cwd": cwd,
+        "mcpServers": mcp_servers,
+    });
+    if let Some(prompt) = system_prompt_append {
+        params["_meta"] = json!({
+            "antigravity": {
+                "systemPrompt": {
+                    "append": prompt,
+                }
+            }
+        });
+    }
+    let method = match resume_session_id {
+        Some(sid) => {
+            params["sessionId"] = Value::String(sid.to_owned());
+            "session/resume"
         }
-    }
-}
-
-pub(crate) fn is_banned_mode(mode: &str) -> bool {
-    matches!(
-        mode.to_ascii_lowercase().as_str(),
-        "yolo" | "bypasspermissions" | "danger-full-access"
-    )
-}
-
-pub(crate) fn has_remote_control(obj: &Value) -> bool {
-    obj.get("remoteControl")
-        .or_else(|| obj.get("remote_control"))
-        .and_then(Value::as_bool)
-        == Some(true)
-}
-
-pub(crate) fn extract_agent_names(val: Option<&Value>) -> Vec<String> {
-    let Some(arr) = val.and_then(Value::as_array) else {
-        return Vec::new();
+        None => "session/new",
     };
-    arr.iter()
-        .filter_map(|v| {
-            v.as_str()
-                .or_else(|| v.get("name").and_then(Value::as_str))
-                .map(ToOwned::to_owned)
-        })
-        .collect()
+    let line = encode_line(&json!({
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "method": method,
+        "params": params,
+    }))
+    .expect("session open JSON-RPC encodes");
+    Output::Write(line)
+}
+
+pub(crate) fn encode_set_model(req_id: u64, session_id: &str, model_id: &str) -> Output {
+    let line = encode_line(&json!({
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "method": "session/set_model",
+        "params": {
+            "sessionId": session_id,
+            "modelId": model_id,
+        },
+    }))
+    .expect("session/set_model JSON-RPC encodes");
+    Output::Write(line)
+}
+
+pub(crate) fn encode_session_prompt(req_id: u64, session_id: &str, text: &str) -> Output {
+    let line = encode_line(&json!({
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "method": "session/prompt",
+        "params": {
+            "sessionId": session_id,
+            "prompt": [{ "type": "text", "text": text }],
+        },
+    }))
+    .expect("session/prompt JSON-RPC encodes");
+    Output::Write(line)
+}
+
+pub(crate) fn encode_session_cancel(session_id: &str) -> Output {
+    let line = encode_line(&json!({
+        "jsonrpc": "2.0",
+        "method": "session/cancel",
+        "params": { "sessionId": session_id },
+    }))
+    .expect("session/cancel notification encodes");
+    Output::Write(line)
+}
+
+pub(crate) fn encode_session_close(req_id: u64, session_id: &str) -> Output {
+    let line = encode_line(&json!({
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "method": "session/close",
+        "params": { "sessionId": session_id },
+    }))
+    .expect("session/close JSON-RPC encodes");
+    Output::Write(line)
+}
+
+pub(crate) fn encode_permission_selected(raw_id: &Value, option_id: &str) -> Output {
+    let line = encode_line(&json!({
+        "jsonrpc": "2.0",
+        "id": raw_id,
+        "result": {
+            "outcome": {
+                "outcome": "selected",
+                "optionId": option_id,
+            }
+        }
+    }))
+    .expect("permission selected response encodes");
+    Output::Write(line)
+}
+
+pub(crate) fn encode_permission_cancelled(raw_id: &Value) -> Output {
+    let line = encode_line(&json!({
+        "jsonrpc": "2.0",
+        "id": raw_id,
+        "result": {
+            "outcome": {
+                "outcome": "cancelled",
+            }
+        }
+    }))
+    .expect("permission cancelled response encodes");
+    Output::Write(line)
+}
+
+pub(crate) fn encode_jsonrpc_error(raw_id: &Value, code: i64, message: &str) -> Output {
+    let line = encode_line(&json!({
+        "jsonrpc": "2.0",
+        "id": raw_id,
+        "error": {
+            "code": code,
+            "message": message,
+        }
+    }))
+    .expect("jsonrpc error encodes");
+    Output::Write(line)
 }
 
 pub(crate) fn classify_tool_capability(tool: &str) -> Option<ToolCapability> {
@@ -91,9 +217,20 @@ pub(crate) fn classify_tool_kind(tool: &str) -> ApprovalKind {
         | "enterplanmode"
         | "exit_plan_mode"
         | "enter_plan_mode" => ApprovalKind::Permissions,
-        "read_file" | "view_file" | "list_dir" | "find_by_name" | "grep_search" | "glob"
-        | "grep" | "read" | "webfetch" | "websearch" | "invoke_subagent" | "spawn_subagent"
-        | "subagent" => ApprovalKind::Other,
+        "read_file"
+        | "view_file"
+        | "list_dir"
+        | "find_by_name"
+        | "grep_search"
+        | "glob"
+        | "grep"
+        | "read"
+        | "webfetch"
+        | "websearch"
+        | "invoke_subagent"
+        | "spawn_subagent"
+        | "subagent"
+        | "sandboxnetworkaccess" => ApprovalKind::Other,
         other if other.starts_with("mcp_") => ApprovalKind::Other,
         _ => ApprovalKind::Unknown,
     }
@@ -109,7 +246,8 @@ fn is_bypass_flag_triggered(val: Option<&Value>) -> bool {
 }
 
 pub(crate) fn classify_escalation(tool: &str, kind: ApprovalKind, input: &Value) -> Escalation {
-    if is_bypass_flag_triggered(input.get("dangerouslyDisableSandbox"))
+    if tool.eq_ignore_ascii_case("SandboxNetworkAccess")
+        || is_bypass_flag_triggered(input.get("dangerouslyDisableSandbox"))
         || is_bypass_flag_triggered(input.get("unsandboxed"))
     {
         return Escalation::SandboxBypass;
@@ -123,289 +261,171 @@ pub(crate) fn classify_escalation(tool: &str, kind: ApprovalKind, input: &Value)
     Escalation::None
 }
 
-pub(crate) fn build_approval_request(
-    request_id: &str,
-    req: &serde_json::Map<String, Value>,
-) -> ApprovalRequest {
-    let tool = req
-        .get("tool_name")
+/// Extracted ACP `session/request_permission` payload plus selected allow/deny option IDs.
+pub(crate) struct ParsedPermission {
+    pub(crate) request: ApprovalRequest,
+    pub(crate) allow_option_id: String,
+    pub(crate) deny_option_id: String,
+    pub(crate) tool_call_id: Option<String>,
+}
+
+pub(crate) fn parse_permission_request(
+    approval_id: ApprovalId,
+    params: &Value,
+) -> ParsedPermission {
+    let tc = params.get("toolCall").unwrap_or(&Value::Null);
+    let tool = tc
+        .get("name")
+        .or_else(|| tc.get("title"))
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    let input = req.get("input").cloned().unwrap_or(Value::Null);
+    let input = tc
+        .get("rawInput")
+        .or_else(|| tc.get("args"))
+        .cloned()
+        .unwrap_or(Value::Null);
     let kind = classify_tool_kind(tool);
     let escalation = classify_escalation(tool, kind, &input);
-    let id = ApprovalId::new(request_id);
-    let mut approval = ApprovalRequest::new(id, kind, escalation, tool, input.clone());
-    approval.capability = classify_tool_capability(tool);
-    approval.display_name = req
-        .get("display_name")
+    let mut request = ApprovalRequest::new(approval_id, kind, escalation, tool, input.clone());
+    request.capability = classify_tool_capability(tool);
+    request.display_name = tc
+        .get("title")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    approval.justification_untrusted = req
-        .get("description")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    approval.blocked_path = req
-        .get("blocked_path")
-        .or_else(|| req.get("blockedPath"))
-        .or_else(|| input.get("path"))
+    request.blocked_path = input
+        .get("path")
         .or_else(|| input.get("file_path"))
+        .or_else(|| input.get("Path"))
         .or_else(|| input.get("TargetFile"))
+        .or_else(|| input.get("AbsolutePath"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    approval.tool_use_id = req
-        .get("tool_use_id")
+    let tool_call_id = tc
+        .get("toolCallId")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    approval
-}
+    request.tool_use_id = tool_call_id.clone();
 
-pub(crate) fn encode_allow_response(request_id: &str) -> Output {
-    let line = encode_line(&json!({
-        "type": "control_response",
-        "response": {
-            "subtype": "success",
-            "request_id": request_id,
-            "response": { "behavior": "allow" }
-        }
-    }))
-    .expect("static allow encodes");
-    Output::Write(line)
-}
-
-pub(crate) fn encode_deny_response(request_id: &str, message: &str, interrupt: bool) -> Output {
-    let mut body = json!({ "behavior": "deny", "message": message });
-    if interrupt {
-        body["interrupt"] = Value::Bool(true);
+    let (allow_option_id, deny_option_id) = extract_permission_options(params.get("options"));
+    ParsedPermission {
+        request,
+        allow_option_id,
+        deny_option_id,
+        tool_call_id,
     }
-    let line = encode_line(&json!({
-        "type": "control_response",
-        "response": {
-            "subtype": "success",
-            "request_id": request_id,
-            "response": body
-        }
-    }))
-    .expect("static deny encodes");
-    Output::Write(line)
 }
 
-pub(crate) fn parse_agy_usage(val: &Value) -> MessageUsage {
-    MessageUsage {
+fn extract_permission_options(options: Option<&Value>) -> (String, String) {
+    let mut allow = None;
+    let mut deny = None;
+    if let Some(arr) = options.and_then(Value::as_array) {
+        for opt in arr {
+            let Some(opt_id) = opt.get("optionId").and_then(Value::as_str) else {
+                continue;
+            };
+            let kind = opt.get("kind").and_then(Value::as_str).unwrap_or("");
+            if allow.is_none() && (kind == "allow_once" || opt_id == "allow") {
+                allow = Some(opt_id.to_owned());
+            }
+            if deny.is_none() && (kind == "reject_once" || opt_id == "deny") {
+                deny = Some(opt_id.to_owned());
+            }
+        }
+    }
+    (
+        allow.unwrap_or_else(|| "allow".to_owned()),
+        deny.unwrap_or_else(|| "deny".to_owned()),
+    )
+}
+
+pub(crate) fn parse_acp_usage(val: &Value) -> AcpUsage {
+    AcpUsage {
         input: val
-            .get("input_tokens")
-            .or_else(|| val.get("prompt_token_count"))
+            .get("inputTokens")
+            .or_else(|| val.get("input_tokens"))
             .and_then(Value::as_u64)
             .unwrap_or(0),
         output: val
-            .get("output_tokens")
-            .or_else(|| val.get("candidates_token_count"))
+            .get("outputTokens")
+            .or_else(|| val.get("output_tokens"))
             .and_then(Value::as_u64)
             .unwrap_or(0),
         cache_read: val
-            .get("cache_read_tokens")
-            .or_else(|| val.get("cached_content_token_count"))
+            .get("cachedReadTokens")
+            .or_else(|| val.get("cache_read_tokens"))
             .and_then(Value::as_u64)
             .unwrap_or(0),
         cache_write: val
-            .get("cache_write_tokens")
+            .get("cachedWriteTokens")
+            .or_else(|| val.get("cache_write_tokens"))
             .and_then(Value::as_u64)
             .unwrap_or(0),
         reasoning: val
-            .get("reasoning_tokens")
-            .or_else(|| val.get("thoughts_token_count"))
+            .get("thoughtTokens")
+            .or_else(|| val.get("reasoning_tokens"))
             .and_then(Value::as_u64)
             .unwrap_or(0),
     }
 }
 
-pub(crate) fn parse_stream_event(val: &Value) -> Vec<Output> {
-    let Some(delta) = val.pointer("/event/delta").and_then(Value::as_object) else {
-        return Vec::new();
-    };
-    match delta.get("type").and_then(Value::as_str) {
-        Some("text_delta") => delta
-            .get("text")
-            .and_then(Value::as_str)
-            .filter(|t| !t.is_empty())
-            .map(|t| {
-                vec![Output::Event(SessionEvent::TextDelta {
-                    text: t.to_owned(),
-                })]
-            })
-            .unwrap_or_default(),
-        Some("thinking_delta") => vec![Output::Event(SessionEvent::Thinking)],
-        _ => Vec::new(),
-    }
-}
-
-pub(crate) fn parse_user_blocks(val: &Value) -> Vec<Output> {
-    let mut out = Vec::new();
-    let Some(blocks) = val.pointer("/message/content").and_then(Value::as_array) else {
-        return out;
-    };
-    for block in blocks {
-        if block.get("type").and_then(Value::as_str) == Some("tool_result") {
-            out.push(Output::Event(SessionEvent::ToolFinished {
-                tool_use_id: block
-                    .get("tool_use_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned(),
-                is_error: block
-                    .get("is_error")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            }));
-        }
-    }
-    out
-}
-
-pub(crate) fn parse_assistant_blocks(
-    msg: &serde_json::Map<String, Value>,
-    msg_id: &Option<String>,
-) -> Vec<Output> {
-    let mut out = Vec::new();
-    let Some(blocks) = msg.get("content").and_then(Value::as_array) else {
-        return out;
-    };
-    for block in blocks {
-        match block.get("type").and_then(Value::as_str) {
-            Some("text") => {
-                if let Some(t) = block
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .filter(|s| !s.is_empty())
-                {
-                    out.push(Output::Event(SessionEvent::AssistantText {
-                        message_id: msg_id.clone(),
-                        text: t.to_owned(),
-                    }));
-                }
-            }
-            Some("tool_use") => {
-                let name = block
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_owned();
-                let capability = classify_tool_capability(&name);
-                out.push(Output::Event(SessionEvent::ToolStarted {
-                    tool_use_id: block
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_owned(),
-                    name,
-                    capability,
-                    input: block.get("input").cloned().unwrap_or(Value::Null),
-                }));
-            }
-            Some("thinking") => out.push(Output::Event(SessionEvent::Thinking)),
-            _ => {}
-        }
-    }
-    out
-}
-
-pub(crate) fn parse_permission_denials(val: &Value) -> Vec<Output> {
-    let Some(denials) = val.get("permission_denials").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    denials
-        .iter()
-        .map(|entry| {
-            let tool = entry
-                .get("tool_name")
-                .or_else(|| entry.get("tool"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_owned();
-            let tool_use_id = entry
-                .get("tool_use_id")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
-            let message = entry
-                .get("message")
-                .or_else(|| entry.get("reason"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
-            Output::Event(SessionEvent::ActionDenied {
-                tool,
-                tool_use_id,
-                message,
-            })
-        })
-        .collect()
-}
-
-pub(crate) fn parse_result_errors(val: &Value) -> Vec<String> {
-    val.get("errors")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| {
-                    v.as_str()
-                        .or_else(|| v.get("message").and_then(Value::as_str))
-                        .map(ToOwned::to_owned)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-pub(crate) fn classify_result_outcome(val: &Value, errors: &[String]) -> TurnOutcome {
-    let is_error = val
-        .get("is_error")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let subtype = val.get("subtype").and_then(Value::as_str).unwrap_or("");
-    let reason_text = val
-        .get("result")
-        .and_then(Value::as_str)
-        .or_else(|| errors.first().map(String::as_str))
-        .unwrap_or("");
-    let lower = reason_text.to_ascii_lowercase();
-
-    match subtype {
-        "interrupted" => TurnOutcome::Interrupted,
-        "error_max_turns" | "max_turns" => TurnOutcome::Limit {
-            kind: LimitKind::MaxTurns,
-        },
-        "error_max_tokens" | "max_tokens" => TurnOutcome::Limit {
+pub(crate) fn classify_stop_reason(reason: Option<&str>) -> TurnOutcome {
+    match reason.unwrap_or("end_turn") {
+        "end_turn" | "stop_sequence" => TurnOutcome::Completed,
+        "cancelled" => TurnOutcome::Interrupted,
+        "max_tokens" => TurnOutcome::Limit {
             kind: LimitKind::MaxTokens,
         },
-        "error_timeout" | "timeout" => TurnOutcome::Limit {
+        "max_turn_requests" | "max_turns" => TurnOutcome::Limit {
+            kind: LimitKind::MaxTurns,
+        },
+        "timeout" => TurnOutcome::Limit {
             kind: LimitKind::Timeout,
         },
-        "refused" => TurnOutcome::Refused,
-        "quota_exceeded" | "error_quota" => TurnOutcome::Quota,
-        "signed_out" | "auth_required" => TurnOutcome::SignedOut,
-        _ if is_error || subtype.starts_with("error") => {
-            if lower.contains("authentication required")
-                || lower.contains("not authenticated")
-                || lower.contains("not logged in")
-                || lower.contains("unauthorized")
-            {
-                TurnOutcome::SignedOut
-            } else if lower.contains("quota") || lower.contains("rate limit") {
-                TurnOutcome::Quota
-            } else if lower.contains("refused") {
-                TurnOutcome::Refused
-            } else {
-                TurnOutcome::Failed {
-                    reason: if reason_text.is_empty() {
-                        "turn failed".to_owned()
-                    } else {
-                        reason_text.to_owned()
-                    },
-                }
-            }
-        }
-        "" | "success" => TurnOutcome::Completed,
+        "refusal" | "refused" => TurnOutcome::Refused,
         _ => TurnOutcome::Unknown,
     }
+}
+
+pub(crate) fn extract_rpc_error_message(err: &Value) -> String {
+    let msg = err
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("ACP JSON-RPC error");
+    let data = err
+        .get("data")
+        .and_then(|d| {
+            d.as_str()
+                .or_else(|| d.get("details").and_then(Value::as_str))
+        })
+        .filter(|s| !s.is_empty());
+    match data {
+        Some(detail) => format!("{msg}: {detail}"),
+        None => msg.to_owned(),
+    }
+}
+
+pub(crate) fn classify_rpc_error_outcome(err: &Value) -> (TurnOutcome, Vec<String>) {
+    let msg = extract_rpc_error_message(err);
+    let code = err.get("code").and_then(Value::as_i64);
+    let lower = msg.to_ascii_lowercase();
+    let outcome = if code == Some(-32000)
+        || lower.contains("authentication required")
+        || lower.contains("not authenticated")
+        || lower.contains("unauthorized")
+        || lower.contains("not logged in")
+    {
+        TurnOutcome::SignedOut
+    } else if lower.contains("quota") || lower.contains("rate limit") || lower.contains("exhausted")
+    {
+        TurnOutcome::Quota
+    } else if lower.contains("cancelled") || lower.contains("canceled") {
+        TurnOutcome::Interrupted
+    } else {
+        TurnOutcome::Failed {
+            reason: msg.clone(),
+        }
+    };
+    (outcome, vec![msg])
 }
 
 pub(crate) fn parse_stderr_line(text: &str) -> Option<Output> {
@@ -435,33 +455,4 @@ pub(crate) fn parse_stderr_line(text: &str) -> Option<Output> {
         kind: NoticeKind::Warning,
         text: trimmed.to_owned(),
     }))
-}
-
-pub(crate) fn handle_rate_limit(val: &Value) -> Vec<Output> {
-    let Some(info) = val.get("rate_limit_info").and_then(Value::as_object) else {
-        return Vec::new();
-    };
-    let status = match info.get("status").and_then(Value::as_str) {
-        Some("allowed") => LimitStatus::Ok,
-        Some("allowed_warning") => LimitStatus::Warning,
-        Some("rejected") => LimitStatus::Rejected,
-        _ => LimitStatus::Unknown,
-    };
-    let mut rl = RateLimit::new(
-        Window::Other {
-            id: info
-                .get("rateLimitType")
-                .and_then(Value::as_str)
-                .unwrap_or("quota")
-                .to_owned(),
-            mins: None,
-        },
-        status,
-    );
-    rl.used_fraction = info.get("utilization").and_then(Value::as_f64);
-    rl.resets_at = info
-        .get("resetsAt")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    vec![Output::Event(SessionEvent::RateLimit(rl))]
 }

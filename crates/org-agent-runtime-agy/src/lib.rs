@@ -1,7 +1,8 @@
-//! # org-agent-runtime-agy: sans-I/O Google Antigravity (`agy`) adapter
+//! # org-agent-runtime-agy: sans-I/O Google Antigravity (`agy acp --stdio`) adapter
 //!
 //! Implements the [`org_agent_runtime::AgentRuntime`] and [`org_agent_runtime::Session`]
-//! contracts for Antigravity CLI (`agy -p --input-format stream-json --output-format stream-json`).
+//! contracts for Antigravity CLI over its native Agent Client Protocol (`agy acp --stdio`,
+//! verified live on `agy 1.5.16–1.5.17`).
 //!
 //! This crate performs **no I/O and spawns no processes**: `org-supervise` executes every
 //! [`org_agent_runtime::LaunchPlan`] and [`org_agent_runtime::ProbePlan`].
@@ -19,16 +20,17 @@ use org_agent_runtime::{
     UsageScope, VersionRange,
 };
 
+pub use crate::plan::AGY_CONFIG_CREDENTIAL_FILES;
 use crate::plan::{build_headless_plan, build_take_over_plan};
 use crate::probe::{TESTED_VERSION_MAX, TESTED_VERSION_MIN};
 use crate::session::AgySession;
 
-/// Stateless factory for Antigravity (`agy`) headless and take-over sessions.
+/// Stateless factory for Antigravity (`agy acp --stdio`) headless and take-over sessions.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AgyRuntime;
 
 impl AgyRuntime {
-    /// Creates a new stateless Antigravity CLI runtime adapter.
+    /// Creates a new stateless Antigravity ACP runtime adapter.
     pub const fn new() -> Self {
         Self
     }
@@ -45,21 +47,23 @@ impl AgentRuntime for AgyRuntime {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            mid_turn_delivery: MidTurnDelivery::None,
+            mid_turn_delivery: MidTurnDelivery::NativeSteer,
             interrupt_in_band: true,
             idle_interrupt_ends_turn: false,
             approval_bridge: true,
-            deny_message_reaches_model: true,
+            // ACP `session/request_permission` selects an optionId ("allow"/"deny"); no free-form
+            // deny reason string is carried in the ACP Selected outcome.
+            deny_message_reaches_model: false,
             runtime_cancels_approvals: true,
-            unsolicited_turns: true,
+            unsolicited_turns: false,
             session_id_known_up_front: false,
             resume_ignores_cwd: false,
             resume_applies_instructions: true,
             reads_workspace_instruction_files: false,
             tools_detach_from_group: true,
             take_over: true,
-            // Enforcement flags remain false until live-binary tests verify each guarantee,
-            // keeping the office approval-bridge fallback active (B2).
+            // Enforcement flags remain false until live-binary confinement tests prove every
+            // guarantee, keeping the office approval-bridge fallback active (B2).
             enforces_writable_roots: false,
             enforces_deny_write: false,
             enforces_deny_read: false,
@@ -67,7 +71,7 @@ impl AgentRuntime for AgyRuntime {
             enforces_tool_allowlist: false,
             enforces_deny_rules: false,
             usage_scope: UsageScope::TurnDelta,
-            cost: CostBasis::ListPriceEstimate,
+            cost: CostBasis::None,
             tested_versions: VersionRange {
                 min: TESTED_VERSION_MIN.to_owned(),
                 max: TESTED_VERSION_MAX.to_owned(),
@@ -81,27 +85,8 @@ impl AgentRuntime for AgyRuntime {
         ctx: &LaunchContext,
     ) -> Result<(LaunchPlan, Box<dyn Session>), PlanError> {
         let caps = self.capabilities();
-        let (plan, expected_mode, expanded_tools) = build_headless_plan(spec, ctx, &caps)?;
-        let allowed_tools = expanded_tools.map(|tools| tools.into_iter().collect());
-        let allowed_mcp_servers = spec
-            .mcp_servers
-            .keys()
-            .map(|name| name.as_str().to_owned())
-            .collect();
-        let allowed_mcp_prefixes = spec
-            .mcp_servers
-            .keys()
-            .map(|name| format!("mcp_{}_", name.as_str()))
-            .collect();
-        let session = AgySession::new(
-            spec.agent.name.as_str().to_owned(),
-            expected_mode,
-            allowed_tools,
-            allowed_mcp_servers,
-            allowed_mcp_prefixes,
-            ctx.resume.is_some(),
-        );
-        Ok((plan, Box::new(session)))
+        let (plan, cfg) = build_headless_plan(spec, ctx, &caps)?;
+        Ok((plan, Box::new(AgySession::new(cfg))))
     }
 
     fn plan_take_over(
