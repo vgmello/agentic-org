@@ -19,7 +19,7 @@
 </script>
 
 <div
-	class="relative flex min-w-0 flex-wrap content-start items-baseline justify-between gap-x-4 gap-y-2 bg-surface px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8"
+	class="relative flex min-w-0 flex-col justify-start gap-2 bg-surface px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8"
 >
 	<dt class="min-w-0 text-sm/6 font-medium wrap-break-word text-fg-muted">
 		{#if href}
@@ -30,12 +30,12 @@
 			>
 		{:else}{label}{/if}
 	</dt>
-	{#if detail}
-		<dd class="min-w-0 text-xs/5 wrap-break-word text-fg-muted">{detail}</dd>
-	{/if}
-	<dd
-		class="w-full min-w-0 flex-none text-3xl/9 font-semibold tracking-tight wrap-break-word text-fg tabular-nums"
-	>
-		{value}
+	<dd class="flex min-w-0 flex-col gap-1">
+		<span class="text-3xl/9 font-semibold tracking-tight wrap-break-word text-fg tabular-nums">
+			{value}
+		</span>
+		{#if detail}
+			<span class="min-w-0 text-xs/5 wrap-break-word text-fg-muted">{detail}</span>
+		{/if}
 	</dd>
 </div>

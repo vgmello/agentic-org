@@ -24,7 +24,7 @@
 </script>
 
 <dl class={cn('divide-y divide-line-subtle', className)}>
-	{#each items as item, i (item.id ?? `${i}:${item.term}`)}
+	{#each items as item (item.id ?? item.term)}
 		<div
 			class="flex flex-col gap-1 px-4 py-4 min-[640px]:grid min-[640px]:grid-cols-3 min-[640px]:items-baseline min-[640px]:gap-x-6 min-[640px]:px-6 min-[1024px]:px-8"
 		>
@@ -41,7 +41,7 @@
 					>
 						{#if item.content}{@render item.content()}{:else}{item.value}{/if}
 					</div>
-					<div class="shrink-0">{@render item.action()}</div>
+					<div class="ms-auto shrink-0">{@render item.action()}</div>
 				</dd>
 			{:else}
 				<dd
