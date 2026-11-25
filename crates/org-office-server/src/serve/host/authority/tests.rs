@@ -242,3 +242,109 @@ fn subscription_usage_methods_require_owner_at_host_authority() {
         );
     }
 }
+
+#[test]
+fn satellite_operator_grant_allows_only_sync_status_on_satellite_after_security_checks() {
+    let satellite: OfficeInfo = serde_json::from_value(serde_json::json!({
+        "id": "office",
+        "organization_id": "org",
+        "name": "Berlin",
+        "role": "satellite",
+        "host": "test",
+        "status": "active"
+    }))
+    .unwrap();
+    let mut sat_claims = claims();
+    sat_claims.member = "office".into();
+
+    // Read-only `office.sync_status` succeeds on a satellite after verify + clock + revoked.
+    let mut sync_req = request(sat_claims.clone());
+    sync_req.method = "office.sync_status".into();
+    let checks = Probe {
+        owner: None,
+        ..Probe::default()
+    };
+    assert_eq!(
+        authorize(&sync_req, "channel", &satellite, &checks),
+        Ok("office".into())
+    );
+    assert_eq!(*checks.calls.borrow(), ["verify", "clock", "revoked"]);
+
+    // Expired or revoked satellite operator grant is still refused.
+    let expired_checks = Probe {
+        now: Some(10),
+        owner: None,
+        ..Probe::default()
+    };
+    assert_eq!(
+        authorize(&sync_req, "channel", &satellite, &expired_checks),
+        Err(ErrorCode::NotAuthorized)
+    );
+    let revoked_checks = Probe {
+        revoked: true,
+        owner: None,
+        ..Probe::default()
+    };
+    assert_eq!(
+        authorize(&sync_req, "channel", &satellite, &revoked_checks),
+        Err(ErrorCode::NotAuthorized)
+    );
+
+    // Every other method (org reads, projects, invitations, mutations) is refused for an unlinked
+    // satellite operator grant because `office` is not a live person or owner.
+    struct DenyNonMember;
+    impl Checks for DenyNonMember {
+        fn verify(&self, _: &Grant) -> bool {
+            true
+        }
+        fn now_ms(&self) -> Option<u64> {
+            Some(9)
+        }
+        fn revoked(&self, _: &str) -> bool {
+            false
+        }
+        fn owner(&self, _: &str) -> Option<String> {
+            None
+        }
+    }
+    for method in [
+        "office.directory",
+        "provider.connection.list",
+        "provider.binding.list",
+        "provider.binding.set",
+        "provider.connection.refresh",
+        "model_profile.list",
+    ] {
+        let mut req = request(sat_claims.clone());
+        req.method = method.into();
+        assert_eq!(
+            authorize(&req, "channel", &satellite, &DenyNonMember),
+            Ok("office".into()),
+            "satellite operator grant must authorize local/read-only {method}"
+        );
+    }
+
+    for method in [
+        "org.snapshot",
+        "project.list",
+        "who",
+        "team.create",
+        "provider.connection.create",
+        "office.invitation.list",
+        "office.remove",
+    ] {
+        let mut req = request(sat_claims.clone());
+        req.method = method.into();
+        assert_eq!(
+            authorize(&req, "channel", &satellite, &DenyNonMember),
+            Err(ErrorCode::NotAuthorized),
+            "satellite operator grant must NOT authorize {method}"
+        );
+    }
+
+    // On HQ, `claims.member == office.id` does NOT bypass live person verification even for sync_status.
+    assert_eq!(
+        authorize(&sync_req, "channel", &office(), &DenyNonMember),
+        Err(ErrorCode::NotAuthorized)
+    );
+}

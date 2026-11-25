@@ -3,8 +3,8 @@
 
 use org_command::{Ack, Answer, Refusal, Request};
 use org_proto::hiring::{
-    EntityOpResult, HireOpResult, HireProposalWire, HireRequestRecord, HrHireListResult,
-    RoleListResult, RoleRecord,
+    AgentExecutionRecord, EntityOpResult, HireOpResult, HireProposalWire, HireRequestRecord,
+    HrHireListResult, RoleListResult, RoleRecord,
 };
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
@@ -31,6 +31,8 @@ pub(crate) fn try_execute<T: OfficeTransport + ?Sized>(
         ("agent", "pause") => write_agent_status(transport, request, true),
         ("agent", "resume") => write_agent_status(transport, request, false),
         ("agent", "offboard") => write_agent_offboard(transport, request),
+        ("agent", "execution-get") => read_agent_execution_get(transport, request),
+        ("agent", "execution-set") => write_agent_execution_set(transport, request),
         ("member", "set-hiring") => write_member_set_may_hire(transport, request),
         ("team", "set-limit") => write_team_set_max_members(transport, request),
         _ => return None,
@@ -322,6 +324,53 @@ fn write_agent_offboard<T: OfficeTransport + ?Sized>(
     send_entity_write(transport, request, "member.agent_offboard", params)
 }
 
+fn read_agent_execution_get<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let employee_id = require_str(request, "member")?;
+    let raw = transport.call_method(
+        "member.agent_execution_get",
+        json!({ "employee_id": employee_id }),
+    )?;
+    let record: AgentExecutionRecord =
+        serde_json::from_value(raw).map_err(|_| decode_err("member.agent_execution_get"))?;
+    Ok(Answer::completed(
+        serde_json::to_value(record).expect("AgentExecutionRecord serializes"),
+    ))
+}
+
+fn write_agent_execution_set<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let employee_id = require_str(request, "member")?;
+    let model_profile_id = require_str(request, "model_profile_id")?;
+    let model_id = require_str(request, "model_id")?;
+    let system_prompt_markdown = require_str(request, "system_prompt_markdown")?;
+    let mut params = Map::new();
+    params.insert("employee_id".into(), json!(employee_id));
+    if let Some(expected) = request.if_match {
+        params.insert("expected_version".into(), json!(expected));
+    }
+    params.insert("model_profile_id".into(), json!(model_profile_id));
+    params.insert("model_id".into(), json!(model_id));
+    copy_opt_str(
+        request,
+        &mut params,
+        "permission_preset",
+        "permission_preset",
+    );
+    if let Some(enabled) = opt_bool(request, "enabled") {
+        params.insert("enabled".into(), json!(enabled));
+    }
+    params.insert(
+        "system_prompt_markdown".into(),
+        json!(system_prompt_markdown),
+    );
+    send_entity_write(transport, request, "member.agent_execution_set", params)
+}
+
 fn write_member_set_may_hire<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
@@ -503,4 +552,108 @@ fn decode_err(method: &str) -> Refusal {
         format!("The office returned an unreadable `{method}` reply."),
         "Retry the command or check the office version.",
     )
+}
+
+#[cfg(test)]
+mod execution_cli_tests {
+    use super::*;
+
+    struct MockTransport {
+        last_method: Option<String>,
+        last_params: Option<Value>,
+        reply: Value,
+    }
+
+    impl OfficeTransport for MockTransport {
+        fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
+            self.last_method = Some(method.to_owned());
+            self.last_params = Some(params);
+            Ok(self.reply.clone())
+        }
+    }
+
+    #[test]
+    fn agent_execution_get_and_set_dispatch_expected_rpc_payloads() {
+        let get_cmd = crate::hiring_table::HIRING_COMMANDS
+            .iter()
+            .find(|c| c.resource == "agent" && c.verb == "execution-get")
+            .unwrap();
+        let set_cmd = crate::hiring_table::HIRING_COMMANDS
+            .iter()
+            .find(|c| c.resource == "agent" && c.verb == "execution-set")
+            .unwrap();
+
+        let mut get_tx = MockTransport {
+            last_method: None,
+            last_params: None,
+            reply: json!({
+                "employee_id": "0193a5c0-0000-7000-8000-000000000051",
+                "model_profile_id": "0193a5c0-0000-7000-8000-000000000060",
+                "model_id": "sonnet",
+                "tools_config": [],
+                "permission_preset": "autonomous_sandboxed",
+                "enabled": true,
+                "system_prompt_markdown": "You are an engineer.",
+                "revision": 2
+            }),
+        };
+        let get_req = Request {
+            command: get_cmd,
+            input: json!({ "member": "0193a5c0-0000-7000-8000-000000000051" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            limit: None,
+            cursor: None,
+            dry_run: false,
+            idempotency_key: None,
+            if_match: None,
+            durable: false,
+        };
+        let ans = try_execute(&mut get_tx, &get_req).unwrap().unwrap();
+        assert_eq!(
+            get_tx.last_method.as_deref(),
+            Some("member.agent_execution_get")
+        );
+        assert_eq!(ans.data["model_id"], "sonnet");
+
+        let mut set_tx = MockTransport {
+            last_method: None,
+            last_params: None,
+            reply: json!({
+                "id": "0193a5c0-0000-7000-8000-000000000051",
+                "revision": 3,
+                "generation": 12
+            }),
+        };
+        let set_req = Request {
+            command: set_cmd,
+            input: json!({
+                "member": "0193a5c0-0000-7000-8000-000000000051",
+                "model_profile_id": "0193a5c0-0000-7000-8000-000000000060",
+                "model_id": "sonnet",
+                "permission_preset": "autonomous_sandboxed",
+                "enabled": true,
+                "system_prompt_markdown": "Focus on Rust."
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+            limit: None,
+            cursor: None,
+            dry_run: false,
+            idempotency_key: Some("0193a5c0-0000-7000-8000-000000000099".into()),
+            if_match: Some(2),
+            durable: false,
+        };
+        let _ = try_execute(&mut set_tx, &set_req).unwrap().unwrap();
+        assert_eq!(
+            set_tx.last_method.as_deref(),
+            Some("member.agent_execution_set")
+        );
+        let sent = set_tx.last_params.unwrap();
+        assert_eq!(sent["expected_version"], 2);
+        assert_eq!(sent["permission_preset"], "autonomous_sandboxed");
+        assert_eq!(sent["system_prompt_markdown"], "Focus on Rust.");
+    }
 }

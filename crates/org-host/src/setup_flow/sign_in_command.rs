@@ -18,23 +18,30 @@ use serde_json::Value;
 
 use super::cli_context::{self, CliContext};
 use super::office_command::Target;
-use super::{connect_verified, not_running, registered, say};
+use super::{registered, say};
 use crate::human::Wire;
 
 /// Help text for `agentic-org sign-in`.
 pub const SIGN_IN_HELP: &str =
-    "agentic-org sign-in [--name <instance>] [--office <office_id>] [-- <command...>]\n\n\
+    "agentic-org sign-in [--name <instance>] [--office <office_id>] [-- <command...>]\n\
+Use when: authenticating from a terminal via a browser approval link without typing a password\n\
+(especially on Linux, containers, or HTTPS instances), or running one command over a grant-bound\n\
+office channel (`-- <command...>`).\n\n\
 Prints a one-time approval link (expires in 10 minutes). Open it in a signed-in browser\n\
 and approve to sign this terminal in without entering a password (SIGN-40 / SES-8).\n\
 When `-- <command...>` is supplied, runs the organization/project CLI command over the\n\
 approved grant-bound channel and ends the session on exit.";
 
 /// Help text for `agentic-org context`.
-pub const CONTEXT_HELP: &str = "agentic-org context <subcommand>\n\n\
+pub const CONTEXT_HELP: &str = "agentic-org context <subcommand>\n\
+Use when: viewing, setting, or clearing the default instance and office targeted by operator commands.\n\n\
 Subcommands:\n  \
-show                                          Show the saved instance and office context\n  \
-use --office <office_id> [--name <instance>]  Save default instance and office selection\n  \
-clear                                         Remove the saved CLI context";
+show                                          Show the saved instance and office context\n      \
+Use when: checking which default instance and office ID future CLI commands will use.\n  \
+use --office <office_id> [--name <instance>]  Save default instance and office selection\n      \
+Use when: pinning a default office so you do not pass --office/--name on every command.\n  \
+clear                                         Remove the saved CLI context\n      \
+Use when: resetting saved defaults before switching to another instance or office.";
 
 /// An approved connection-bound `host.sock` session paired with an open office channel.
 /// Dropping it sends `session.end` so grants are revoked immediately (`SES-8`).
@@ -123,11 +130,17 @@ pub(crate) fn approve_on_target(
     max_wait: Duration,
     out: &mut dyn Write,
 ) -> Result<(Wire, SessionHandle, String, Vec<LinkedOrg>), String> {
-    let mut wire = connect_verified(target.socket, target.instance_id, |_stream: &UnixStream| {
-        Ok(())
-    })
-    .map_err(|why| not_running(target.name, why))?;
+    let wire = super::office_command::connect_local_peer(target)?;
+    approve_on_wire(wire, poll_interval, max_wait, out)
+}
 
+/// Runs the browser-approved sign-in flow over an already-verified `host.sock` [`Wire`].
+pub(super) fn approve_on_wire(
+    mut wire: Wire,
+    poll_interval: Duration,
+    max_wait: Duration,
+    out: &mut dyn Write,
+) -> Result<(Wire, SessionHandle, String, Vec<LinkedOrg>), String> {
     let created = match wire.call_answer::<CliApprovalCreate>(&CliApprovalCreateParams {}, None)? {
         Ok(created) => created,
         Err(ErrorCode::NotAuthorized) => {
@@ -237,9 +250,13 @@ pub(crate) fn open_approved_office(
     })
 }
 
-/// Interactive `agentic-org sign-in`: obtains browser approval without asking for a password,
-/// optionally opens the selected office channel for a follow-up command, and saves context when
-/// an office is selected or uniquely identified.
+/// Opens an office channel for a human/operator CLI command (`agentic-org task|msg|hr|...` or
+/// `agentic-org sign-in -- <cmd>`).
+///
+/// Authentication tries `session.local` first (instant on local authless HTTP instances per
+/// ADR-0034) and falls back to browser-approved sign-in when authentication is enabled.
+/// When no `--office` and no saved context are present, auto-selects the host's HQ or sole
+/// office; when multiple offices exist without a unique HQ, refuses with an actionable hint.
 pub fn open_for_command(
     explicit_instance: Option<&str>,
     explicit_office: Option<&str>,
@@ -247,13 +264,22 @@ pub fn open_for_command(
 ) -> Result<ApprovedOfficeChannel, String> {
     let ctx_path = cli_context::default_context_path()?;
     let saved = cli_context::load_from(&ctx_path)?;
-    let (instance_name, office_id) =
-        cli_context::resolve_selection(explicit_instance, explicit_office, saved.as_ref())?;
+    let (instance_name, selected_office) =
+        match cli_context::resolve_selection(explicit_instance, explicit_office, saved.as_ref()) {
+            Ok((inst, office)) => (inst, Some(office)),
+            Err(_) if explicit_office.is_none() => (
+                explicit_instance
+                    .map(str::to_owned)
+                    .or_else(|| saved.as_ref().and_then(|s| s.instance_name.clone())),
+                None,
+            ),
+            Err(err) => return Err(err),
+        };
     let (_, instance_id, socket) = registered(
         &crate::human::paths(instance_name.as_deref())?,
         instance_name.as_deref(),
     )?;
-    if explicit_office.is_none() || explicit_instance.is_none() {
+    if selected_office.is_some() && (explicit_office.is_none() || explicit_instance.is_none()) {
         if let Some(ctx) = &saved {
             if ctx.instance_id != instance_id {
                 return Err(format!(
@@ -263,17 +289,65 @@ pub fn open_for_command(
             }
         }
     }
-    let (wire, session, _account, _orgs) = approve_on_target(
-        &Target {
-            socket: &socket,
-            instance_id: &instance_id,
-            name: instance_name.as_deref(),
-        },
-        Duration::from_millis(250),
-        Duration::from_secs(10 * 60),
+    let target = Target {
+        socket: &socket,
+        instance_id: &instance_id,
+        name: instance_name.as_deref(),
+    };
+    let (mut wire, session) = super::office_command::connect_cli_session(
+        &target,
+        None,
+        &mut crate::human::password,
         out,
     )?;
+    let office_id = match selected_office {
+        Some(id) => id,
+        None => match resolve_default_office(&mut wire, &session) {
+            Ok(id) => id,
+            Err(err) => {
+                super::office_command::end_session(&mut wire, &session);
+                return Err(err);
+            }
+        },
+    };
     open_approved_office(wire, session, office_id)
+}
+
+fn resolve_default_office(wire: &mut Wire, session: &SessionHandle) -> Result<String, String> {
+    use org_host_control::ops::{OfficeList, OfficeListParams};
+    let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
+    let listed = match wire.call_answer::<OfficeList>(
+        &OfficeListParams {
+            session: handle,
+            org_id: None,
+        },
+        None,
+    )? {
+        Ok(listed) => listed,
+        Err(code) => return Err(format!("the service refused office lookup ({code:?})")),
+    };
+    if listed.offices.is_empty() {
+        return Err(
+            "no offices found on this host; create an organization with `agentic-org org create` or join as a satellite with `agentic-org office join`"
+                .into(),
+        );
+    }
+    let hqs: Vec<&str> = listed
+        .offices
+        .iter()
+        .filter(|o| o.role == org_proto::OfficeRole::Hq)
+        .map(|o| o.id.as_str())
+        .collect();
+    if hqs.len() == 1 {
+        return Ok(hqs[0].to_owned());
+    }
+    if listed.offices.len() == 1 {
+        return Ok(listed.offices[0].id.clone());
+    }
+    Err(
+        "multiple offices found; pass --office <office_id> [--name <instance>] or save a default with `agentic-org context use --office <office_id>`"
+            .into(),
+    )
 }
 
 /// Standalone `agentic-org sign-in` (without `-- <command>`): verifies browser approval, saves
@@ -379,5 +453,19 @@ pub fn context_clear(out: &mut dyn Write) -> Result<(), String> {
         say(out, "Cleared saved CLI context.")
     } else {
         say(out, "No saved CLI context.")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CONTEXT_HELP, SIGN_IN_HELP};
+
+    #[test]
+    fn sign_in_and_context_help_include_use_when_guidance() {
+        assert!(SIGN_IN_HELP.contains("Use when:"), "{SIGN_IN_HELP}");
+        assert!(
+            CONTEXT_HELP.matches("Use when:").count() >= 4,
+            "expected command + 3 subcommand Use when cues:\n{CONTEXT_HELP}"
+        );
     }
 }

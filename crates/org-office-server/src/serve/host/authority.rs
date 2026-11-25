@@ -1,7 +1,7 @@
 //! Ordered, per-request authority checks. The worker supplies clock, MAC and live state.
 use super::super::{live_owner, live_person, Binding, Shared};
 use crate::revocations::Revocations;
-use org_proto::{ErrorCode, Grant, OfficeInfo, Request};
+use org_proto::{Call, ErrorCode, Grant, OfficeInfo, OfficeRole, Request};
 use std::sync::Mutex;
 
 pub(super) struct Live<'a> {
@@ -90,6 +90,19 @@ fn requires_owner(method: &str) -> bool {
     )
 }
 
+fn is_satellite_operator_method(method: &str) -> bool {
+    matches!(
+        method,
+        org_proto::federation::OfficeSyncStatus::METHOD
+            | org_proto::federation::OfficeDirectoryList::METHOD
+            | org_proto::providers::ProviderConnectionList::METHOD
+            | org_proto::providers::ProviderBindingList::METHOD
+            | org_proto::providers::ProviderBindingSet::METHOD
+            | org_proto::providers::ProviderConnectionRefresh::METHOD
+            | org_proto::hiring::ModelProfileList::METHOD
+    )
+}
+
 pub(super) fn authorize(
     request: &Request,
     channel: &str,
@@ -119,6 +132,15 @@ pub(super) fn authorize(
     }
     if requires_owner(&request.method) {
         checks.owner(&claims.member).ok_or(ErrorCode::NotAuthorized)
+    } else if office.role == OfficeRole::Satellite
+        && is_satellite_operator_method(&request.method)
+        && claims.member == office.id
+    {
+        // A satellite host's local instance administrator may not hold an org member link yet;
+        // the host signs a local-only operator grant with `member == office.id`, admitted here
+        // exclusively for read-only replication/org-office/provider discovery and office-local
+        // runtime binding/readiness operations (never org-wide mutations).
+        Ok(claims.member.clone())
     } else {
         checks
             .person(&claims.member)

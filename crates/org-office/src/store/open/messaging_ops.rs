@@ -13,7 +13,7 @@ use org_proto::chat::{
     DmOpenParams, DmOpenResult, MsgAcceptParams, MsgAcceptResult,
 };
 use org_proto::msg::{
-    HeaderPage, Message, MessageHeader, MessageLifecycleState, Meta, NotifyReason,
+    HeaderPage, Message, MessageHeader, MessageLifecycleState, Meta, MsgReplyParams, NotifyReason,
     KIND_DELIVERY_FAILED, OFFICE_SENDER,
 };
 use org_proto::org::{OrgChange, OrgChangedData, Position};
@@ -159,6 +159,37 @@ impl StoreOp for ChatSendOp {
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
             let (change, res) = features::decide_chat_send(
+                uow,
+                &self.here,
+                &self.owner,
+                &self.caller,
+                &self.params,
+                self.org_seq,
+                &self.now_utc,
+            )?;
+            *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(res);
+            Ok(change)
+        });
+        unwrap_reply(reply, out)
+    }
+}
+
+pub struct ChatReplyOp {
+    pub here: OfficeIdentity,
+    pub owner: Id,
+    pub caller: Id,
+    pub params: MsgReplyParams,
+    pub org_seq: u64,
+    pub now_utc: String,
+}
+
+impl StoreOp for ChatReplyOp {
+    type Out = Result<Result<ChatSendCommitted, ApiError>, StoreError>;
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let out = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot = std::sync::Arc::clone(&out);
+        let reply = store.submit(None, false, move |uow| {
+            let (change, res) = features::decide_chat_reply(
                 uow,
                 &self.here,
                 &self.owner,
@@ -1814,7 +1845,7 @@ fn map_receipt_to_org_changes(
             .get(entity_id)
             .map(|m| {
                 vec![OrgChange::MemberUpserted {
-                    member: (*m).clone(),
+                    member: Box::new((*m).clone()),
                 }]
             })
             .unwrap_or_else(|| {

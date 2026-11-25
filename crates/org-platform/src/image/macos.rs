@@ -1,9 +1,13 @@
 //! The macOS image adapter: the kernel's CodeDirectory hash of a running image, read
 //! with `csops` and `csops_audittoken` (the C library only, no framework).
 
-use super::ReleasePlatform;
+use super::{refused, OwnExecutable, ReleasePlatform};
 use crate::Refused;
 use std::io;
+
+pub(super) fn open_own_executable() -> io::Result<OwnExecutable> {
+    Err(refused::image_identity().into())
+}
 
 /// Darwin's kernel CodeDirectory hash of this running image. A replaced on-disk
 /// executable cannot change this result.

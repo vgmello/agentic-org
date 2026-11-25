@@ -13,7 +13,7 @@ use org_proto::providers::{
     TurnPermitState,
 };
 use org_proto::{ApiError, ErrorCode};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::OfficeError;
 use crate::private_fs::{
@@ -425,6 +425,92 @@ impl ProviderPoolStore for SqliteProviderPoolStore {
         }
         tx.commit().map_err(OfficeError::storage)?;
         Ok(())
+    }
+
+    fn renew_ready_observation_if_unchanged(
+        &self,
+        expected_binding_revision: u64,
+        state: &OfficeConnectionState,
+        models: &[OfficeConnectionModel],
+    ) -> Result<bool, OfficeError> {
+        let mut conn = self.lock_db();
+        let tx = conn.transaction().map_err(OfficeError::storage)?;
+        let current_binding_rev: Option<i64> = tx
+            .query_row(
+                "SELECT revision FROM office_connection_bindings \
+                 WHERE organization_id=?1 AND office_id=?2 AND connection_id=?3",
+                params![
+                    &state.organization_id,
+                    &state.office_id,
+                    &state.connection_id
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(OfficeError::storage)?;
+        let current_state: Option<(String, i64)> = tx
+            .query_row(
+                "SELECT status, binding_revision FROM office_connection_state \
+                 WHERE organization_id=?1 AND office_id=?2 AND connection_id=?3",
+                params![
+                    &state.organization_id,
+                    &state.office_id,
+                    &state.connection_id
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(OfficeError::storage)?;
+        let expected = expected_binding_revision as i64;
+        if current_binding_rev != Some(expected)
+            || current_state
+                .as_ref()
+                .is_none_or(|(status, rev)| status != "ready" || *rev != expected)
+        {
+            return Ok(false);
+        }
+        tx.execute(
+            "UPDATE office_connection_state SET \
+             driver_version=?4, observed_at=?5, valid_until=?6, issue_code=?7 \
+             WHERE organization_id=?1 AND office_id=?2 AND connection_id=?3",
+            params![
+                &state.organization_id,
+                &state.office_id,
+                &state.connection_id,
+                state.driver_version.as_deref(),
+                state.observed_at.as_deref(),
+                state.valid_until.as_deref(),
+                state.issue_code.as_deref(),
+            ],
+        )
+        .map_err(OfficeError::storage)?;
+        tx.execute(
+            "DELETE FROM office_connection_models WHERE organization_id=?1 AND office_id=?2 AND connection_id=?3",
+            params![&state.organization_id, &state.office_id, &state.connection_id],
+        )
+        .map_err(OfficeError::storage)?;
+        for m in models {
+            tx.execute(
+                "INSERT INTO office_connection_models(\
+                 organization_id, office_id, connection_id, model_id, driver_model_id, \
+                 entitlement, capabilities_json, observed_at, valid_until) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![
+                    &m.organization_id,
+                    &m.office_id,
+                    &m.connection_id,
+                    &m.model_id,
+                    &m.driver_model_id,
+                    m.entitlement.as_str(),
+                    &m.capabilities_json,
+                    &m.observed_at,
+                    &m.valid_until,
+                ],
+            )
+            .map_err(OfficeError::storage)?;
+        }
+        tx.commit().map_err(OfficeError::storage)?;
+        Ok(true)
     }
 
     fn coordinator_generation(&self) -> Result<u64, OfficeError> {
@@ -1011,4 +1097,146 @@ fn write_json_atomic<T: serde::Serialize>(path: &Path, val: &T) -> Result<(), Of
 fn ensure_dir_0700(dir: &Path) -> Result<(), OfficeError> {
     private_dir(dir).map_err(OfficeError::storage)?;
     tighten_dir(dir).map_err(OfficeError::storage)
+}
+
+#[cfg(test)]
+mod sqlite_renewal_cas_tests {
+    use super::*;
+
+    fn sample_binding(revision: u64) -> OfficeConnectionBinding {
+        OfficeConnectionBinding {
+            organization_id: "org-1".into(),
+            office_id: "off-1".into(),
+            connection_id: "conn-1".into(),
+            revision,
+            auth_context_ref: "local-host-oauth".into(),
+            runtime_binary_path: None,
+            account_identity_ref: Some("sub:team".into()),
+            updated_at: "2026-11-25T12:00:00.000Z".into(),
+            last_operation_id: None,
+            last_operation_hash: None,
+        }
+    }
+
+    fn sample_state(
+        status: ConnectionReadinessStatus,
+        revision: u64,
+        until: Option<&str>,
+    ) -> OfficeConnectionState {
+        OfficeConnectionState {
+            organization_id: "org-1".into(),
+            office_id: "off-1".into(),
+            connection_id: "conn-1".into(),
+            status,
+            binding_revision: revision,
+            driver_version: Some("2.1.332".into()),
+            observed_at: Some("2026-11-25T12:00:00.000Z".into()),
+            valid_until: until.map(str::to_owned),
+            issue_code: None,
+        }
+    }
+
+    fn sample_model(until: &str) -> OfficeConnectionModel {
+        OfficeConnectionModel {
+            organization_id: "org-1".into(),
+            office_id: "off-1".into(),
+            connection_id: "conn-1".into(),
+            model_id: "sonnet".into(),
+            driver_model_id: "sonnet".into(),
+            entitlement: DiscoveredModelEntitlement::Confirmed,
+            capabilities_json: "{}".into(),
+            observed_at: "2026-11-25T12:00:00.000Z".into(),
+            valid_until: until.into(),
+        }
+    }
+
+    #[test]
+    fn sqlite_renew_ready_observation_refuses_promotion_after_auth_expired_or_revision_bump() {
+        let dir = tempfile::tempdir().unwrap();
+        let durable = dir.path().join("durable");
+        let runtime = dir.path().join("runtime");
+        std::fs::create_dir_all(&durable).unwrap();
+        std::fs::create_dir_all(&runtime).unwrap();
+        let store =
+            SqliteProviderPoolStore::open(&durable, &runtime, "off-1", "org-1", true).unwrap();
+
+        store
+            .save_binding_and_invalidate(&sample_binding(1))
+            .unwrap();
+        let initial = sample_state(
+            ConnectionReadinessStatus::Ready,
+            1,
+            Some("2026-11-25T12:05:00.000Z"),
+        );
+        store
+            .save_observation(&initial, &[sample_model("2026-11-25T12:05:00.000Z")])
+            .unwrap();
+
+        let renewed = sample_state(
+            ConnectionReadinessStatus::Ready,
+            1,
+            Some("2026-11-25T12:10:00.000Z"),
+        );
+        assert!(store
+            .renew_ready_observation_if_unchanged(
+                1,
+                &renewed,
+                &[sample_model("2026-11-25T12:10:00.000Z")],
+            )
+            .unwrap());
+        assert_eq!(
+            store
+                .get_state("org-1", "off-1", "conn-1")
+                .unwrap()
+                .unwrap()
+                .valid_until
+                .as_deref(),
+            Some("2026-11-25T12:10:00.000Z")
+        );
+
+        let expired = sample_state(ConnectionReadinessStatus::AuthExpired, 1, None);
+        store.save_observation(&expired, &[]).unwrap();
+        assert!(!store
+            .renew_ready_observation_if_unchanged(
+                1,
+                &renewed,
+                &[sample_model("2026-11-25T12:15:00.000Z")],
+            )
+            .unwrap());
+        assert_eq!(
+            store
+                .get_state("org-1", "off-1", "conn-1")
+                .unwrap()
+                .unwrap()
+                .status,
+            ConnectionReadinessStatus::AuthExpired
+        );
+
+        store
+            .save_binding_and_invalidate(&sample_binding(2))
+            .unwrap();
+        let ready_v2 = sample_state(
+            ConnectionReadinessStatus::Ready,
+            2,
+            Some("2026-11-25T12:20:00.000Z"),
+        );
+        store
+            .save_observation(&ready_v2, &[sample_model("2026-11-25T12:20:00.000Z")])
+            .unwrap();
+        assert!(!store
+            .renew_ready_observation_if_unchanged(
+                1,
+                &renewed,
+                &[sample_model("2026-11-25T12:25:00.000Z")],
+            )
+            .unwrap());
+        assert_eq!(
+            store
+                .get_state("org-1", "off-1", "conn-1")
+                .unwrap()
+                .unwrap()
+                .binding_revision,
+            2
+        );
+    }
 }

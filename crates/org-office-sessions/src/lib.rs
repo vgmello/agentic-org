@@ -14,6 +14,7 @@
 
 pub mod binding;
 pub mod credentials;
+mod host_auth;
 pub mod instructions;
 mod lifecycle;
 pub mod manager;
@@ -40,8 +41,8 @@ pub use instructions::{
 pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{SessionManager, SessionManagerConfig};
 pub use preset::{
-    build_grants_summary, build_session_policy, decide_escalation, decide_escalation_with_tools,
-    EscalationDisposition, PresetConfig, PresetError,
+    build_grants_summary, build_session_policy, decide_escalation, decide_escalation_with_roots,
+    decide_escalation_with_tools, EscalationDisposition, PresetConfig, PresetError,
 };
 pub use recovery::{
     ActiveTurnRecord, PendingStartRecord, ProcessExitOracle, RecoveryAction, RecoveryReport,

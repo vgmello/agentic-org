@@ -126,6 +126,31 @@ impl Directory {
         }
         Err(BuildError::UnsafeBuildEntry)
     }
+    pub(super) fn verify_executable(&self, entry: &FileEntry) -> Result<(), BuildError> {
+        let mut file = self.payload(entry.path())?;
+        let before = file.metadata().map_err(unsafe_entry)?;
+        if before.len() != entry.size() {
+            return Err(BuildError::ReleaseImageMismatch);
+        }
+        let mut verifier = entry.payload_verifier();
+        let mut buf = [0_u8; 64 * 1024];
+        loop {
+            let n = file.read(&mut buf).map_err(unsafe_entry)?;
+            if n == 0 {
+                break;
+            }
+            verifier
+                .update(&buf[..n])
+                .map_err(|_| BuildError::ReleaseImageMismatch)?;
+        }
+        verifier
+            .finish()
+            .map_err(|_| BuildError::ReleaseImageMismatch)?;
+        if identity(&before) != identity(&file.metadata().map_err(unsafe_entry)?) {
+            return Err(BuildError::UnsafeBuildEntry);
+        }
+        Ok(())
+    }
     pub(super) fn read_control(&self, name: &str, max: usize) -> Result<Vec<u8>, BuildError> {
         let mut file = self.file(name, false)?;
         let before = file.metadata().map_err(unsafe_entry)?;

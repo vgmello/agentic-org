@@ -91,7 +91,7 @@ pub use office::{
     HqTlsIdentity, InvitationPollStatus, InvitationStatus, InvitationSummaryView,
     JoinRequestAccepted, JoinRequestParams, Office, OfficePermitSpec, OrgDeltaPayload,
     PeerSessionGuard, PendingMessageJournalEntry, RelayAdmission, RelayedAskAnswer,
-    RelayedAskWithdrawal, RelayedMessageOutcome, SatelliteFederationConfig, SatelliteProvisionSpec,
-    SatelliteReEnrollSpec, SatelliteRemovalResult, SatelliteTlsIdentity, SnapshotExportProgress,
-    SnapshotPathClass, LOCK_WAIT,
+    RelayedAskWithdrawal, RelayedMessageOutcome, RelayedRecipientWake, SatelliteFederationConfig,
+    SatelliteProvisionSpec, SatelliteReEnrollSpec, SatelliteRemovalResult, SatelliteTlsIdentity,
+    SnapshotExportProgress, SnapshotPathClass, LOCK_WAIT,
 };

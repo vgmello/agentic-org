@@ -730,7 +730,7 @@ macro_rules! sqlite_messaging_read {
                     "SELECT organization_id, conversation_id, message_id, employee_id, revision, \
                      accepted_by, accepted_at, reason, answer_json \
                      FROM messaging_answers WHERE organization_id = ?1 AND message_id = ?2 \
-                     ORDER BY CASE WHEN reason = 'origin-close' THEN 0 ELSE 1 END, \
+                     ORDER BY CASE WHEN reason = 'origin-close' AND answer_json IS NOT NULL THEN 0 ELSE 1 END, \
                      COALESCE(accepted_at, '') ASC, employee_id ASC LIMIT 1",
                     vec![text(scope), text(message_id)],
                     |row| {

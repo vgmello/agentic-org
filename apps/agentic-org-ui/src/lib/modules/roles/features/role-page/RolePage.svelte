@@ -244,7 +244,14 @@
 				{/if}
 			</Section>
 
-			<Section level={3} title="History" description="Every saved revision, newest first.">
+			{@const hasFullHistory = d.history.at(-1)?.revision === 1}
+			<Section
+				level={3}
+				title="History"
+				description={hasFullHistory
+					? 'Every saved revision, newest first.'
+					: 'Current revision. Earlier revisions are not served by this server yet.'}
+			>
 				<ol
 					role="list"
 					class="divide-y divide-line-subtle border-y border-line-subtle"
@@ -265,7 +272,9 @@
 								{#if older && older.name !== rev.name}<span aria-hidden="true">·</span><span
 										class="[overflow-wrap:anywhere]">Renamed from {older.name}</span
 									>{/if}
-								{#if !older}<span aria-hidden="true">·</span><span>Created</span>{/if}
+								{#if !older && rev.revision === 1}<span aria-hidden="true">·</span><span
+										>Created</span
+									>{/if}
 							</p>
 							{#if i > 0}
 								<details class="group mt-2">

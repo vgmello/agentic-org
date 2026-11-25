@@ -4,16 +4,14 @@
 @import '@fontsource-variable/inter';
 @import './lib/styles/themes/index.css';
 
-/* The app is dark only: <html class="dark"> is set in app.html. Tailwind Plus markup uses its
-   `dark:` classes as written. */
+/* Dark variant tracks the active theme class on <html>. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
  * Look tokens: every colour in the app comes from these, named for their role, never raw palette
  * classes (src/lib/components/README-screens.md "Look tokens"; the guard is
  * src/lib/platform/tooling/look-tokens.test.ts). A new scheme, or a light mode later, changes
- * these values and docs/specs/app-shell-ux.md §6a together, not component markup. Each value is
- * the Tailwind Plus dark palette colour the screens used before the tokens existed.
+ * these values and docs/specs/app-shell-ux.md §6a together, not component markup.
  */
 :root {
 	color-scheme: dark;

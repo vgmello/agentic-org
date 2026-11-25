@@ -52,22 +52,39 @@ use org_proto::{Hello, HelloParams};
 
 use crate::human::Wire;
 use crate::instance::registry::Registry;
+pub use crate::instance::setup::FederationConfig;
 use crate::instance::setup::{Configured, Input, Journal, Paths, Record, Service};
 use crate::release::ReleasePin;
+pub use org_host_control::InvitationTokenSecret;
 
 pub mod cli_context;
+pub(crate) mod federation_command;
 #[cfg(all(feature = "test-support", debug_assertions))]
 pub mod fixture;
 pub(crate) mod office_command;
+pub(crate) mod org_command;
 #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub mod seed;
+pub use federation_command::{
+    office_approve, office_cancel, office_decline, office_invitations, office_invite,
+    office_remove, office_sync_status, OfficeInviteInput,
+};
 pub use office_command::{
     office_join, office_list, office_re_enroll, office_remove_pending, office_restart,
     HELP as OFFICE_HELP,
 };
+pub use org_command::{
+    org_create, org_list, validate_create_plan, OrgCreateInput, HELP as ORG_HELP,
+};
 pub(crate) mod project_command;
 pub use project_command::{
     project_create, project_inspect, project_list, ProjectCreateInput, HELP as PROJECT_HELP,
+};
+pub(crate) mod provider_command;
+pub use provider_command::{
+    provider_bind, provider_bindings, provider_create, provider_list, provider_models,
+    provider_refresh, ProviderBindInput, ProviderCreateInput, ProviderRefreshInput,
+    HELP as PROVIDER_HELP,
 };
 pub mod sign_in_command;
 pub use sign_in_command::{
@@ -670,6 +687,9 @@ pub struct Request<'a> {
     /// Non-interactive setup: the whole input comes from a file, nothing is asked, `port`
     /// and `prompt` are not used, and no link is asked for or printed (ADR-0022, UX §4a.2).
     pub configuration: Option<Configuration>,
+    /// Optional HQ mTLS federation listener configuration for interactive/flag setup
+    /// (`--federation-bind` / `--federation-advertise`). Unused when `configuration` is `Some`.
+    pub federation: Option<FederationConfig>,
 }
 
 /// The configuration of non-interactive, offline setup (`setup --non-interactive --config
@@ -809,7 +829,9 @@ fn fail(context: &str, why: impl std::fmt::Display) -> String {
 }
 
 /// The release this setup records. Development builds record a fixed development pin; a
-/// release build refuses until it carries a pinned runtime release (SRV-1).
+/// release build admits the currently installed release in the account's protected release
+/// store (`default_release_store_dir`) and records its verified pin, releasing the store lock
+/// before the service host starts.
 pub(crate) fn release_pin() -> Result<ReleasePin, String> {
     if cfg!(debug_assertions) {
         use sha2::Digest;
@@ -822,11 +844,20 @@ pub(crate) fn release_pin() -> Result<ReleasePin, String> {
             manifest_sha256: digest.iter().map(|b| format!("{b:02x}")).collect(),
         })
     } else {
-        Err(
-            "setup needs a pinned runtime release, which this build does not carry yet \
-             (SRV-1); nothing was changed"
-                .into(),
-        )
+        let store_dir = crate::default_release_store_dir()?;
+        let store = crate::release::ReleaseStore::open(&store_dir).map_err(|e| {
+            format!(
+                "opening release store ({}): {e}; install a signed release first with `agentic-org release install <bundle.tar.gz>`; nothing was changed",
+                store_dir.display()
+            )
+        })?;
+        let admitted = store.admit_self().map_err(|e| {
+            format!(
+                "admitting installed release ({}): {e}; run the installed binary from the release store or install with `agentic-org release install <bundle.tar.gz>`; nothing was changed",
+                store_dir.display()
+            )
+        })?;
+        Ok(admitted.pin().clone())
     }
 }
 
@@ -1167,6 +1198,58 @@ fn make_folders(home: &Path, resolved: &Path, wanted: impl IntoIterator<Item = P
     }
 }
 
+fn report_setup_summary(
+    out: &mut dyn Write,
+    record: &Record,
+    tls_line: Option<String>,
+) -> Result<(), String> {
+    say(out, format!("Data: {}", record.input.root.display()))?;
+    say(
+        out,
+        format!("Address: {}", record.input.listen.origin().as_str()),
+    )?;
+    if record.input.listen.scheme() == org_host_control::listen::ListenMode::Https {
+        let line = tls_line.unwrap_or_else(|| tls_notice(record));
+        say(out, format!("TLS: {line}"))?;
+    }
+    if let Some(federation) = &record.input.federation {
+        if federation.advertise.is_empty() {
+            say(out, format!("Federation: {}", federation.bind))?;
+        } else {
+            say(
+                out,
+                format!(
+                    "Federation: {} (advertise: {})",
+                    federation.bind,
+                    federation.advertise.join(", ")
+                ),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn report_foreground_service(
+    out: &mut dyn Write,
+    shown: &str,
+    name: Option<&str>,
+) -> Result<(), String> {
+    let command = reset_hint(name);
+    let link = if crate::human::host_is_named_by_user_alone() {
+        format!("run as root: {command} --user {}", user_name())
+    } else {
+        format!("run as the service user: {command}")
+    };
+    say(
+        out,
+        format!(
+            "Service: none is registered (foreground mode). Instance \"{shown}\" runs \
+             while agentic-org serve --setup <file> runs. For the administrator's \
+             registration link, {link}"
+        ),
+    )
+}
+
 pub(crate) fn run_at(
     paths: &Paths,
     platform: &Platform,
@@ -1231,8 +1314,8 @@ pub(crate) fn run_at(
         {
             return Err(format!(
                 "instance \"{shown}\" was set up with a different configuration (service \
-                 mode, data folder, credential directory or address); its configuration \
-                 does not change on a later run; nothing was changed"
+                 mode, data folder, credential directory, federation or address); its \
+                 configuration does not change on a later run; nothing was changed"
             ));
         }
         Some(record) => {
@@ -1255,6 +1338,13 @@ pub(crate) fn run_at(
                      later run; nothing was changed",
                     record.input.listen.port()
                 ));
+            }
+            if request.federation.is_some() && request.federation != record.input.federation {
+                return Err(
+                    "this instance was set up with a different federation configuration; its \
+                     configuration does not change on a later run; nothing was changed"
+                        .into(),
+                );
             }
             // The same file again, after a run that froze the record and stopped before it
             // reserved the instance: asked again, and its address held, as on a first run.
@@ -1298,6 +1388,11 @@ pub(crate) fn run_at(
                     }
                 }
             }
+            if let Some(federation) = &request.federation {
+                federation
+                    .validate()
+                    .map_err(|e| fail("validating federation", e))?;
+            }
             let root = paths
                 .instance_root(name)
                 .map_err(|e| fail("preparing the instance folder", e))?;
@@ -1307,6 +1402,7 @@ pub(crate) fn run_at(
                 root,
                 credentials: None,
                 listen: loopback(port)?,
+                federation: request.federation.clone(),
             };
             development = development_needed(&input, None)?;
             journal
@@ -1314,15 +1410,7 @@ pub(crate) fn run_at(
                 .map_err(|e| fail("saving setup", e))?
         }
     };
-    say(out, format!("Data: {}", record.input.root.display()))?;
-    say(
-        out,
-        format!("Address: {}", record.input.listen.origin().as_str()),
-    )?;
-    if record.input.listen.scheme() == org_host_control::listen::ListenMode::Https {
-        let line = tls_line.unwrap_or_else(|| tls_notice(&record));
-        say(out, format!("TLS: {line}"))?;
-    }
+    report_setup_summary(out, &record, tls_line)?;
 
     // 3. Reserve the instance, record its listener and prepare its layout, then record its
     // ID. Once the ID is recorded all three are done, and a running host holds the root lock,
@@ -1373,20 +1461,7 @@ pub(crate) fn run_at(
     // for, and no link is asked for: whoever runs `serve` is the supervisor, and the
     // administrator's first link comes from `admin reset`.
     if record.input.service == Service::Foreground {
-        let command = reset_hint(name);
-        let link = if crate::human::host_is_named_by_user_alone() {
-            format!("run as root: {command} --user {}", user_name())
-        } else {
-            format!("run as the service user: {command}")
-        };
-        say(
-            out,
-            format!(
-                "Service: none is registered (foreground mode). Instance \"{shown}\" runs \
-                 while agentic-org serve --setup <file> runs. For the administrator's \
-                 registration link, {link}"
-            ),
-        )?;
+        report_foreground_service(out, shown, name)?;
         return Ok(held);
     }
     // The service binds the address itself once it is started.

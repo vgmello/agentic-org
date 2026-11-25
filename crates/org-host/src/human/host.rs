@@ -61,7 +61,15 @@ pub(crate) fn verify_host(stream: &UnixStream) -> Result<VerifiedHost, String> {
     };
     host_kind(signed, crate::app_auth::is_this_user(&host), || {
         #[cfg(debug_assertions)]
-        let own = crate::peer::executable(stream).ok() == std::env::current_exe().ok();
+        let own = crate::peer::executable(stream)
+            .ok()
+            .and_then(|p| p.canonicalize().ok())
+            .zip(
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.canonicalize().ok()),
+            )
+            .is_some_and(|(peer_exe, own_exe)| peer_exe == own_exe);
         #[cfg(not(debug_assertions))]
         let own = false;
         own

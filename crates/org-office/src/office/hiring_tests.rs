@@ -136,6 +136,10 @@ fn c2_roles_provider_two_step_hire_fail_retry_and_private_home() {
         )
         .unwrap();
         assert_eq!(inspected.name, "Senior Backend Engineer");
+        assert_eq!(inspected.created_by_kind.as_deref(), Some("employee"));
+        assert_eq!(inspected.created_by_id.as_deref(), Some(CREATOR));
+        assert_eq!(inspected.updated_by_kind.as_deref(), Some("employee"));
+        assert_eq!(inspected.updated_by_id.as_deref(), Some(CREATOR));
 
         // 2. Provider connection atomically creates an auto-generated default model profile.
         call_c2::<ProviderConnectionCreate>(
@@ -214,6 +218,12 @@ fn c2_roles_provider_two_step_hire_fail_retry_and_private_home() {
         .unwrap();
         assert_eq!(hired.state, "hired");
         assert_eq!(hired.employee_id.as_deref(), Some(AGENT_1));
+        let hired_member = snapshot(&office)
+            .members
+            .into_iter()
+            .find(|m| m.id == AGENT_1)
+            .expect("hired agent in snapshot");
+        assert_eq!(hired_member.role_id.as_deref(), Some(ROLE_BE));
         let home = office.agent_private_home_path(AGENT_1);
         assert!(home.is_dir(), "private home must exist after confirm");
         assert_eq!(
@@ -1149,4 +1159,48 @@ fn verify_confirm_after_hirer_revoked(office: &Office) {
         .state,
         "hired"
     );
+}
+
+#[test]
+fn role_inspect_prefers_exact_id_over_colliding_key() {
+    const ROLE_A: &str = "01900000-0000-7000-8000-0000000000a1";
+    const ROLE_B: &str = "01900000-0000-7000-8000-0000000000b2";
+    for engine in ENGINES {
+        let site = Site::new();
+        let office = site.provision(engine).unwrap();
+        call_c2::<RoleCreate>(
+            &office,
+            CREATOR,
+            &RoleCreateParams {
+                command_id: cmd_id(90),
+                role_id: ROLE_A.into(),
+                key: Some(ROLE_B.into()),
+                name: "Shadowing Role".into(),
+                body: "First role with colliding key.".into(),
+            },
+        )
+        .unwrap();
+        call_c2::<RoleCreate>(
+            &office,
+            CREATOR,
+            &RoleCreateParams {
+                command_id: cmd_id(91),
+                role_id: ROLE_B.into(),
+                key: Some("real-role-b".into()),
+                name: "Target Role".into(),
+                body: "Second role targeted by exact ID.".into(),
+            },
+        )
+        .unwrap();
+        let inspected: RoleRecord = call_c2::<RoleInspect>(
+            &office,
+            CREATOR,
+            &RoleInspectParams {
+                role: ROLE_B.into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(inspected.id, ROLE_B);
+        assert_eq!(inspected.name, "Target Role");
+    }
 }

@@ -54,7 +54,7 @@ const BUDGET_STATUS_OUTPUT: &[Field] = &[
 pub const BUDGET_COMMANDS: &[Command] = &[Command {
     resource: "budget",
     verb: "status",
-    summary: "Check your own budget status",
+    summary: "Check own budget status",
     call: "budget.agent_own",
     kind: Kind::Read,
     input: BUDGET_STATUS_INPUT,

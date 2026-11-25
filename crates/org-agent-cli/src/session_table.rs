@@ -188,7 +188,7 @@ pub static SESSION_COMMANDS: &[Command] = &[
     Command {
         resource: "session",
         verb: "inspect",
-        summary: "Inspect the current or named agent session state",
+        summary: "Inspect current or named agent session",
         call: "member.session_inspect",
         kind: Kind::Read,
         input: SESSION_INSPECT_INPUT,
@@ -203,7 +203,7 @@ pub static SESSION_COMMANDS: &[Command] = &[
     Command {
         resource: "grant",
         verb: "list",
-        summary: "List effective permission grants and sandbox boundaries for an agent",
+        summary: "List effective grants and sandbox rules",
         call: "member.session_grants",
         kind: Kind::Read,
         input: GRANT_LIST_INPUT,
@@ -218,7 +218,7 @@ pub static SESSION_COMMANDS: &[Command] = &[
     Command {
         resource: "directory",
         verb: "list",
-        summary: "List members in the organization directory (`who`)",
+        summary: "List org directory members (`who`)",
         call: "who",
         kind: Kind::List,
         input: DIRECTORY_LIST_INPUT,

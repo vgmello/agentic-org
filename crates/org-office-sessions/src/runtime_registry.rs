@@ -86,6 +86,10 @@ impl RuntimeRegistry {
     }
 
     /// Resolves the canonical absolute path to the runtime binary.
+    ///
+    /// Checks explicit overrides first, then `search_path` (or `PATH`), and when `search_path`
+    /// is not overridden also probes standard user-local and Homebrew binary directories so
+    /// background services (`systemd --user`, `launchd`) locate `claude`, `codex`, and `agy`.
     pub fn resolve_binary(
         &self,
         adapter: &dyn AgentRuntime,
@@ -99,37 +103,118 @@ impl RuntimeRegistry {
                 .map_err(|_| RuntimeRegistryError::BinaryNotFound(explicit.display().to_string()));
         }
         let binary = adapter.binary_name();
-        let path_env = search_path
-            .map(ToOwned::to_owned)
-            .or_else(|| std::env::var("PATH").ok())
-            .unwrap_or_default();
-        for dir in std::env::split_paths(&path_env) {
-            let candidate = dir.join(binary);
-            if candidate.is_file() {
-                if let Ok(real) = candidate.canonicalize() {
-                    return Ok(real);
-                }
-            }
-        }
-        Err(RuntimeRegistryError::BinaryNotFound(binary.to_owned()))
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        resolve_binary_in_dirs(
+            binary,
+            search_path,
+            std::env::var_os("PATH").as_deref(),
+            home.as_deref(),
+        )
     }
 
-    /// Resolves the pinned helper directory containing `agent-os` (falling back to current exe dir).
+    /// Resolves the pinned helper directory containing `agent-os`.
+    ///
+    /// Checks `explicit`, then `current_exe().parent()` (when it names an actual file holding a
+    /// sibling `agent-os`), then `argv[0].parent()` (essential on GNU/Linux where admitted
+    /// workers execute from `/memfd:... (deleted)` with their pinned path in `argv[0]`), then
+    /// `PATH` and `$HOME/.local/bin`.
     pub fn resolve_helper_dir(explicit: Option<&Path>) -> PathBuf {
-        if let Some(dir) = explicit.filter(|p| p.is_dir()) {
-            if let Ok(real) = dir.canonicalize() {
-                return real;
-            }
-        }
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(parent) = exe.parent() {
-                if let Ok(real) = parent.canonicalize() {
-                    return real;
-                }
-            }
-        }
-        PathBuf::from("/usr/bin")
+        let current_exe = std::env::current_exe().ok();
+        let argv0 = std::env::args_os().next().map(PathBuf::from);
+        let path_env = std::env::var_os("PATH");
+        let home_dir = std::env::var_os("HOME").map(PathBuf::from);
+        resolve_helper_dir_from(
+            explicit,
+            current_exe.as_deref(),
+            argv0.as_deref(),
+            path_env.as_deref(),
+            home_dir.as_deref(),
+        )
     }
+}
+
+fn fallback_user_bin_dirs(home: Option<&Path>) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(home) = home {
+        dirs.push(home.join(".local/bin"));
+        dirs.push(home.join(".bun/bin"));
+        dirs.push(home.join(".cargo/bin"));
+        dirs.push(home.join(".npm-global/bin"));
+    }
+    dirs.push(PathBuf::from("/opt/homebrew/bin"));
+    dirs.push(PathBuf::from("/usr/local/bin"));
+    dirs
+}
+
+fn find_binary_in_dirs(dirs: impl IntoIterator<Item = PathBuf>, binary: &str) -> Option<PathBuf> {
+    dirs.into_iter()
+        .map(|dir| dir.join(binary))
+        .filter(|candidate| candidate.is_file())
+        .find_map(|candidate| candidate.canonicalize().ok())
+}
+
+fn resolve_binary_in_dirs(
+    binary: &str,
+    explicit_search_path: Option<&str>,
+    env_path: Option<&std::ffi::OsStr>,
+    home: Option<&Path>,
+) -> Result<PathBuf, RuntimeRegistryError> {
+    let primary: Vec<PathBuf> = match explicit_search_path {
+        Some(raw) => std::env::split_paths(raw).collect(),
+        None => env_path
+            .map(std::env::split_paths)
+            .into_iter()
+            .flatten()
+            .collect(),
+    };
+    if let Some(found) = find_binary_in_dirs(primary, binary) {
+        return Ok(found);
+    }
+    if explicit_search_path.is_none() {
+        if let Some(found) = find_binary_in_dirs(fallback_user_bin_dirs(home), binary) {
+            return Ok(found);
+        }
+    }
+    Err(RuntimeRegistryError::BinaryNotFound(binary.to_owned()))
+}
+
+fn parent_with_agent_os(exe: Option<&Path>) -> Option<PathBuf> {
+    let parent = exe
+        .filter(|p| p.is_absolute() && p.is_file())
+        .and_then(Path::parent)?;
+    parent
+        .join("agent-os")
+        .is_file()
+        .then(|| parent.canonicalize().ok())
+        .flatten()
+}
+
+fn canonical_exe_parent(exe: Option<&Path>) -> Option<PathBuf> {
+    exe.filter(|p| p.is_absolute() && p.is_file())
+        .and_then(Path::parent)
+        .and_then(|p| p.canonicalize().ok())
+}
+
+fn resolve_helper_dir_from(
+    explicit: Option<&Path>,
+    current_exe: Option<&Path>,
+    argv0: Option<&Path>,
+    path_env: Option<&std::ffi::OsStr>,
+    home_dir: Option<&Path>,
+) -> PathBuf {
+    explicit
+        .filter(|p| p.is_dir())
+        .and_then(|p| p.canonicalize().ok())
+        .or_else(|| parent_with_agent_os(current_exe))
+        .or_else(|| parent_with_agent_os(argv0))
+        .or_else(|| {
+            resolve_binary_in_dirs("agent-os", None, path_env, home_dir)
+                .ok()
+                .and_then(|bin| bin.parent().map(Path::to_path_buf))
+        })
+        .or_else(|| canonical_exe_parent(current_exe))
+        .or_else(|| canonical_exe_parent(argv0))
+        .unwrap_or_else(|| PathBuf::from("/usr/bin"))
 }
 
 fn normalize_runtime_key(raw: &str) -> &str {
@@ -138,5 +223,60 @@ fn normalize_runtime_key(raw: &str) -> &str {
         "openai" | "codex" | "codex-cli" | "gpt" => "codex",
         "google" | "agy" | "antigravity" | "antigravity-cli" | "gemini" => "agy",
         _ => raw.trim(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn resolve_helper_dir_falls_back_to_argv0_when_current_exe_is_memfd() {
+        let dir = tempfile::tempdir().unwrap();
+        let release = dir.path().join("release");
+        fs::create_dir_all(&release).unwrap();
+        let office_bin = release.join("agentic-org-office");
+        let agent_os = release.join("agent-os");
+        fs::write(&office_bin, b"office").unwrap();
+        fs::write(&agent_os, b"agent-os").unwrap();
+
+        let memfd = PathBuf::from("/memfd:agentic-org-office (deleted)");
+        let resolved = resolve_helper_dir_from(None, Some(&memfd), Some(&office_bin), None, None);
+        assert_eq!(resolved, release.canonicalize().unwrap());
+
+        // Relative argv[0] must never resolve CWD.
+        let rel = PathBuf::from("./agentic-org-office");
+        assert!(parent_with_agent_os(Some(&rel)).is_none());
+        assert!(canonical_exe_parent(Some(&rel)).is_none());
+    }
+
+    #[test]
+    fn resolve_binary_discovers_user_local_bin_when_systemd_path_is_minimal() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let local_bin = home.join(".local/bin");
+        fs::create_dir_all(&local_bin).unwrap();
+        let claude = local_bin.join("claude");
+        fs::write(&claude, b"#!/bin/sh\n").unwrap();
+
+        let empty_bin = dir.path().join("empty");
+        fs::create_dir_all(&empty_bin).unwrap();
+        let resolved =
+            resolve_binary_in_dirs("claude", None, Some(empty_bin.as_os_str()), Some(&home))
+                .unwrap();
+        assert_eq!(resolved, claude.canonicalize().unwrap());
+
+        // Explicit search_path remains strict and does not scan HOME fallbacks.
+        let strict = resolve_binary_in_dirs(
+            "claude",
+            Some(empty_bin.to_str().unwrap()),
+            None,
+            Some(&home),
+        );
+        assert!(matches!(
+            strict,
+            Err(RuntimeRegistryError::BinaryNotFound(_))
+        ));
     }
 }

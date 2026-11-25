@@ -3,7 +3,7 @@
 The browser application of Agentic Org: a static SvelteKit 2 application with
 Svelte 5, TypeScript and Tailwind CSS 4, built with shadcn-svelte on Bits UI and
 managed with Bun. It builds to static assets that `agentic-org-web` serves; it has no
-server of its own. Licensed Tailwind Plus components stay inside this application.
+server of its own.
 
 ## What it does today
 

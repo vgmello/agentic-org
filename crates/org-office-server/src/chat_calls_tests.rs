@@ -22,7 +22,10 @@ use org_proto::org::{TeamCreate, TeamCreateParams};
 use org_proto::{ErrorCode, Outcome, Request, Response, Subscribe, SubscribeParams};
 use serde_json::{json, Value};
 
-use crate::{build_office_ports, inbox, live, org_feed, serve, start_session_manager};
+use crate::{
+    build_messaging_ports, build_office_ports, inbox, live, org_feed, serve, start_session_manager,
+    SatSyncWake,
+};
 
 fn uuidv7(seed: u16) -> String {
     // Matches `TestOffice`'s fixed clock (`CREATION_AT = 1_700_000_000_000` ms).
@@ -82,12 +85,21 @@ impl LiveOfficeFixture {
             Arc::clone(&office),
             Some(Arc::clone(&sessions)),
         ));
+        let messaging = build_messaging_ports(
+            &office,
+            &live,
+            &wake,
+            &sessions,
+            &channel_watcher,
+            Arc::new(SatSyncWake::default()),
+        );
         let ports = build_office_ports(
             Arc::clone(&office),
             Arc::clone(&sessions),
             channel_watcher,
             live,
             &wake,
+            messaging,
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
         let mut shared =

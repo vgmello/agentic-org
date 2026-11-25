@@ -163,3 +163,31 @@ impl Call for OfficeSyncStatus {
     type Params = OfficeSyncStatusParams;
     type Result = OfficeSyncStatusResult;
 }
+
+/// Summary of an office registered in the organization's replicated office directory.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrgOfficeSummary {
+    pub id: String,
+    pub organization_id: String,
+    pub name: String,
+    pub slug: String,
+    pub role: crate::OfficeRole,
+}
+
+/// `office.directory`: lists all offices registered in the organization's replicated state
+/// (HQ plus every enrolled satellite office).
+pub struct OfficeDirectoryList;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeDirectoryListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeDirectoryListResult {
+    pub offices: Vec<OrgOfficeSummary>,
+}
+
+impl Call for OfficeDirectoryList {
+    const METHOD: &'static str = "office.directory";
+    type Params = OfficeDirectoryListParams;
+    type Result = OfficeDirectoryListResult;
+}

@@ -418,6 +418,7 @@ fn https_setup_verifies_a_supplied_pair_before_anything_is_saved() {
             root: base.join("data"),
             credentials: None,
             listen,
+            federation: None,
         };
         let platform = Platform {
             service: Box::new(Untouchable),
@@ -436,6 +437,7 @@ fn https_setup_verifies_a_supplied_pair_before_anything_is_saved() {
             terminal: false,
             development_keys: None,
             configuration: Some(Configuration(Configured { input, tls })),
+            federation: None,
         };
         let mut out = Vec::new();
         let result = run_at(&paths, &platform, request, &mut out).map(drop);
@@ -503,6 +505,7 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
         root: base.join("data"),
         credentials: None,
         listen: loopback(port).unwrap(),
+        federation: None,
     };
     let platform = Platform {
         service: Box::new(Untouchable),
@@ -523,6 +526,7 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
             terminal: true,
             development_keys: None,
             configuration: Some(Configuration::from(input.clone())),
+            federation: None,
         };
         assert!(request.configuration.as_ref().unwrap().foreground());
         let mut out = Vec::new();
@@ -622,6 +626,7 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
             terminal: false,
             development_keys: None,
             configuration: Some(Configuration::from(changed)),
+            federation: None,
         };
         let mut out = Vec::new();
         let refused = run_at(&paths, &platform, request, &mut out).unwrap_err();
@@ -704,6 +709,7 @@ fn a_refused_setup_from_a_file_leaves_nothing_and_a_corrected_file_then_works() 
             // that records no credential directory needs it.
             development_keys: Some(temp.path().canonicalize().unwrap().join("k")),
             configuration: Some(Configuration::from(input.clone())),
+            federation: None,
         };
         let mut out = Vec::new();
         run_at(&paths, &platform, request, &mut out)
@@ -743,6 +749,7 @@ fn a_refused_setup_from_a_file_leaves_nothing_and_a_corrected_file_then_works() 
         root: outside.join("data"),
         credentials,
         listen: published(port),
+        federation: None,
     };
     // 1. A credential directory that cannot be used (a path that does not exist: the typo;
     //    a plain folder, which is no mount and, here, below a shared temporary folder).
@@ -774,6 +781,7 @@ fn a_refused_setup_from_a_file_leaves_nothing_and_a_corrected_file_then_works() 
         root: outside.join("data"),
         credentials: None,
         listen: loopback(port).unwrap(),
+        federation: None,
     };
     let refused = run(&registered(held.local_addr().unwrap().port())).unwrap_err();
     assert!(
@@ -924,6 +932,7 @@ fn roots_reset_escapes_what_a_failed_lookup_of_the_service_users_instance_says()
         root: root.clone(),
         credentials: None,
         listen: loopback(7420).unwrap(),
+        federation: None,
     };
     let record = journal
         .freeze(input, false, release_pin().unwrap())
@@ -1001,6 +1010,7 @@ fn a_fifo_is_refused_as_a_configuration_and_as_a_data_folder_without_waiting() {
         root: root.clone(),
         credentials: Some(secrets),
         listen: loopback(free_port()).unwrap(),
+        federation: None,
     };
     let dir_for_records = dir.clone();
     let refused = within(
@@ -1559,6 +1569,7 @@ mod credentials {
             terminal: false,
             development_keys: None,
             configuration: None,
+            federation: None,
         };
         let mut out = Vec::new();
         let result = run_at(&paths, &platform, request, &mut out);
@@ -1583,6 +1594,7 @@ mod credentials {
             root: account.base.join("data"),
             credentials: None,
             listen: loopback(port).unwrap(),
+            federation: None,
         };
         let run = |credentials: CredentialDirectory| {
             let platform = Platform {
@@ -1602,6 +1614,7 @@ mod credentials {
                 terminal: false,
                 development_keys: Some(account.base.join("keys")),
                 configuration: Some(Configuration::from(input.clone())),
+                federation: None,
             };
             let mut out = Vec::new();
             run_at(&paths, &platform, request, &mut out)
@@ -1738,7 +1751,9 @@ mod credentials {
                 root: home.join("data"),
                 credentials: Some(bound.clone()),
                 listen: loopback(free_port()).unwrap(),
+                federation: None,
             })),
+            federation: None,
         };
         let refused = run_at(&paths, &platform, request, &mut Vec::new()).unwrap_err();
         if refused.contains("writable by others") || refused.contains("owned by another") {
@@ -1866,6 +1881,7 @@ fn a_set_up_instance_continues_after_its_runtime_folders_are_gone() {
         root: base.join("data"),
         credentials: None,
         listen: loopback(free_port()).unwrap(),
+        federation: None,
     };
     let platform = Platform {
         service: Box::new(Untouchable),
@@ -1885,6 +1901,7 @@ fn a_set_up_instance_continues_after_its_runtime_folders_are_gone() {
             terminal: false,
             development_keys: None,
             configuration: Some(Configuration::from(input.clone())),
+            federation: None,
         };
         run_at(&paths, &platform, request, &mut Vec::new()).map(drop)
     };
@@ -2003,6 +2020,7 @@ fn a_development_build_needs_and_makes_its_development_key_folder() {
         root: base.join("data"),
         credentials,
         listen: loopback(7420).unwrap(),
+        federation: None,
     };
     let unused = platform(CredentialDirectory::Unused);
     let registered = input(Service::Registered, None);
@@ -2091,6 +2109,7 @@ fn a_development_build_needs_and_makes_its_development_key_folder() {
         terminal: false,
         development_keys: None,
         configuration: None,
+        federation: None,
     };
     let refused = run_at(&paths, &unused, request, &mut Vec::new()).unwrap_err();
     assert!(refused.contains("ORG_OFFICE_DEV_KEY_DIR"), "{refused}");
@@ -2128,6 +2147,7 @@ fn a_refused_reservation_says_what_the_locator_holds() {
         root: base.join("data"),
         credentials: None,
         listen: loopback(7420).unwrap(),
+        federation: None,
     };
     let said =
         |file| refused_reservation("disk full".into(), &registry, &journal, file, None, &input);
@@ -2284,4 +2304,103 @@ fn this_user_is_named_by_its_account() {
     if let Some(name) = plain_account_name(crate::home::euid()) {
         assert_eq!(user_name(), name);
     }
+}
+
+#[test]
+fn foreground_setup_persists_federation_config_and_prints_summary() {
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let base = temp.path().canonicalize().unwrap().join("b");
+    for dir in [base.clone(), base.join("t")] {
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let paths = Paths::at(&base, base.join("t"), None).unwrap();
+    let fed = FederationConfig::parse("0.0.0.0:7443", vec!["hq.example.com".into()]).unwrap();
+    let input = Input {
+        version: 1,
+        service: Service::Foreground,
+        root: base.join("data"),
+        credentials: None,
+        listen: loopback(free_port()).unwrap(),
+        federation: Some(fed.clone()),
+    };
+    let platform = Platform {
+        service: Box::new(Untouchable),
+        disk: Box::new(org_platform::testing::FakeDiskEncryption(
+            EncryptionState::Unknown("a test".into()),
+        )),
+        credentials: CredentialDirectory::Unused,
+    };
+    let request = Request {
+        name: None,
+        port: None,
+        prompt: None,
+        named_port_base: NAMED_PORT_BASE,
+        program: PathBuf::from("/no-such-program"),
+        env: Vec::new(),
+        terminal: false,
+        development_keys: None,
+        configuration: Some(Configuration::from(input.clone())),
+        federation: None,
+    };
+    let mut out = Vec::new();
+    run_at(&paths, &platform, request, &mut out).unwrap();
+    let printed = String::from_utf8(out).unwrap();
+    assert!(
+        printed.contains("Federation: 0.0.0.0:7443 (advertise: hq.example.com)"),
+        "{printed}"
+    );
+    let record = Journal::snapshot(&base, None).unwrap();
+    assert_eq!(record.input.federation, Some(fed.clone()));
+
+    // Re-running with a different `--config` federation block is refused and changes nothing.
+    let mut changed_input = input.clone();
+    changed_input.federation =
+        Some(FederationConfig::parse("0.0.0.0:7444", vec!["other.example.com".into()]).unwrap());
+    let mut err_out = Vec::new();
+    let cfg_mismatch = run_at(
+        &paths,
+        &platform,
+        Request {
+            name: None,
+            port: None,
+            prompt: None,
+            named_port_base: NAMED_PORT_BASE,
+            program: PathBuf::from("/no-such-program"),
+            env: Vec::new(),
+            terminal: false,
+            development_keys: None,
+            configuration: Some(Configuration::from(changed_input)),
+            federation: None,
+        },
+        &mut err_out,
+    )
+    .unwrap_err();
+    assert!(cfg_mismatch.contains("federation"), "{cfg_mismatch}");
+
+    // Re-running with differing interactive `--federation-bind` flags is also refused.
+    let flag_mismatch = run_at(
+        &paths,
+        &platform,
+        Request {
+            name: None,
+            port: None,
+            prompt: None,
+            named_port_base: NAMED_PORT_BASE,
+            program: PathBuf::from("/no-such-program"),
+            env: Vec::new(),
+            terminal: false,
+            development_keys: None,
+            configuration: None,
+            federation: Some(FederationConfig::parse("127.0.0.1:7445", vec![]).unwrap()),
+        },
+        &mut err_out,
+    )
+    .unwrap_err();
+    assert!(flag_mismatch.contains("federation"), "{flag_mismatch}");
+    assert_eq!(
+        Journal::snapshot(&base, None).unwrap().input.federation,
+        Some(fed)
+    );
 }

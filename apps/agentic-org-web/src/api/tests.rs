@@ -2260,3 +2260,58 @@ fn cost_budget_get_query_routes_and_account_preferences_method_not_allowed() {
     assert_eq!(ok_budgets.status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(calls.methods().contains(&"organization.list".to_owned()));
 }
+
+#[test]
+fn role_inspect_route_requires_canonical_uuidv7_before_reaching_office() {
+    let (gateway, calls) = gateway(organization_script(|method, _| {
+        (method == "organization.list").then(|| {
+            vec![json!({"result": {"organizations": [host_organization()], "creating": []}})]
+        })
+    }));
+    let pair = sign_in(&gateway).pair();
+
+    // Non-UUIDv7 role aliases and reserved segments are rejected at the gateway without calling HQ.
+    for bad in [
+        "software-engineer",
+        "update",
+        "0193A5C0-0000-7000-8000-000000000040",
+        "550e8400-e29b-41d4-a716-446655440000",
+    ] {
+        let reply = send(
+            &gateway,
+            Method::GET,
+            &format!("/api/v1/organizations/{ORG}/roles/{bad}"),
+            "",
+            Some(&pair),
+            &[],
+        );
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "role={bad}");
+    }
+    assert!(
+        !calls.methods().contains(&"organization.list".to_owned()),
+        "invalid role IDs must fail before resolving HQ"
+    );
+
+    // Unauthenticated requests still fail with 401 before validating the role ID.
+    let unauth = send(
+        &gateway,
+        Method::GET,
+        &format!("/api/v1/organizations/{ORG}/roles/software-engineer"),
+        "",
+        None,
+        &[],
+    );
+    assert_eq!(unauth.status, StatusCode::UNAUTHORIZED);
+
+    // Canonical lowercase UUIDv7 proceeds to HQ resolution (503 in fixture with no office socket).
+    let valid = send(
+        &gateway,
+        Method::GET,
+        &format!("/api/v1/organizations/{ORG}/roles/0193a5c0-0000-7000-8000-000000000040"),
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(valid.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(calls.methods().contains(&"organization.list".to_owned()));
+}

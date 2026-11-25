@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, request as playwrightRequest, test, type Page } from '@playwright/test';
+import { formatUuidV7 } from '../src/lib/platform/http/clock';
 import { startInstance, type Instance } from './instance';
 import { removeInstance } from './teardown';
 
@@ -246,5 +247,130 @@ test('U1: Offices, Teams, People, Org Chart, Projects, and Access work end-to-en
 	await expect(dialog).toContainText('Invite Ada Lovelace to sign in');
 	await expect(dialog.locator('input')).toHaveValue(/\/register#/);
 	await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+	await expect(dialog).toBeHidden();
+
+	// 8. Roles (/settings/roles, FC-108): empty state -> create role -> role page -> edit -> duplicate-key refusal -> persistence.
+	await page.goto(`${base}/settings/roles`);
+	await expect(page.getByRole('heading', { level: 2, name: /^Roles/ })).toBeVisible();
+	await expect(page.getByText('No roles yet', { exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Ask HR to draft…', exact: true })).toBeDisabled();
+	await expect(page.getByTestId('hr-reason')).toHaveText(
+		"The HR lead can't run right now, so it can't draft roles."
+	);
+
+	await page.getByRole('button', { name: 'New role…', exact: true }).click();
+	dialog = page.getByRole('dialog');
+	await dialog.getByLabel('Name').fill('Software Engineer');
+	await dialog.getByLabel('Key (optional)').fill('software-engineer');
+	await dialog
+		.getByLabel('Text', { exact: true })
+		.fill('## Mission\nBuild reliable software across the workspace.\n');
+	await dialog.getByRole('button', { name: 'Create role', exact: true }).click();
+	await expect(dialog).toBeHidden();
+
+	await expect(page).toHaveURL(/\/settings\/roles\/[^/]+$/);
+	const roleId = new URL(page.url()).pathname.split('/').pop()!;
+	await expect(page.locator('#role-heading')).toHaveText('Software Engineer');
+	await expect(page.locator('main header').first()).toContainText('software-engineer');
+	await expect(page.locator('main header').first()).toContainText('rev 1');
+	await expect(page.getByTestId('role-body')).toContainText(
+		'Build reliable software across the workspace.'
+	);
+
+	// Edit the role to rev 2 and verify honest history wording + persistence across reload.
+	await page.getByRole('button', { name: 'Edit', exact: true }).click();
+	dialog = page.getByRole('dialog');
+	await dialog.getByLabel('Name').fill('Staff Software Engineer');
+	await dialog
+		.getByLabel('Text', { exact: true })
+		.fill('## Mission\nLead architecture and build reliable software.\n');
+	await dialog.getByRole('button', { name: 'Save role', exact: true }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.locator('#role-heading')).toHaveText('Staff Software Engineer');
+	await expect(page.locator('main header').first()).toContainText('rev 2');
+	await page.reload();
+	await expect(page.locator('#role-heading')).toHaveText('Staff Software Engineer');
+	await expect(page.locator('main header').first()).toContainText('rev 2');
+	await expect(page.locator('main')).toContainText(
+		'Current revision. Earlier revisions are not served by this server yet.'
+	);
+	await expect(page.getByTestId('role-history')).not.toContainText('Created');
+
+	// Hire an agent assigned to this role via live /api/v1 and verify role employee count + Profile > Role (ROLE-9).
+	const engTeamId = new URL(engTeamUrl).pathname.split('/').pop()!;
+	const apiCtx = await playwrightRequest.newContext({
+		baseURL: base,
+		extraHTTPHeaders: { Origin: base }
+	});
+	try {
+		const signInRes = await apiCtx.post('/api/v1/session/sign-in', {
+			data: { login, password }
+		});
+		expect(signInRes.status(), await signInRes.text()).toBe(200);
+		const signInJson = (await signInRes.json()) as { result: { proof: string } };
+		const headers = { 'X-Org-Session-Proof': signInJson.result.proof };
+		const orgsRes = await apiCtx.get('/api/v1/organizations', { headers });
+		expect(orgsRes.status(), await orgsRes.text()).toBe(200);
+		const orgsJson = (await orgsRes.json()) as {
+			result: { organizations: { id: string }[] };
+		};
+		const orgId = orgsJson.result.organizations[0]!.id;
+		const now = Date.now();
+		const uuid = (seed: number) =>
+			formatUuidV7(now, Uint8Array.from([0, 0, 0, 0, 0, 0, 0, 0, 0, seed]));
+		const hireRes = await apiCtx.post(
+			`/api/v1/organizations/${encodeURIComponent(orgId)}/hires/direct`,
+			{
+				headers,
+				data: {
+					command_id: uuid(1),
+					request_id: uuid(2),
+					employee_id: uuid(3),
+					home_team_id: engTeamId,
+					role_id: roleId,
+					proposal: {
+						name: 'Linus Agent',
+						handle: 'linus',
+						title: 'Principal Systems Agent'
+					},
+					reason: 'Verify live role assignment and Profile Role tab'
+				}
+			}
+		);
+		expect(hireRes.status(), await hireRes.text()).toBe(200);
+	} finally {
+		await apiCtx.dispose();
+	}
+
+	// Back to Roles list: verify count, 1 employee, and duplicate-key field refusal.
+	await page.goto(`${base}/settings/roles`);
+	await expect(page.getByRole('heading', { level: 2, name: /^Roles/ })).toContainText('1');
+	const roleRow = page.locator('main ul[aria-labelledby="roles-heading"] > li').first();
+	await expect(roleRow).toContainText('Staff Software Engineer');
+	await expect(roleRow).toContainText('1 employee');
+
+	// Open the role page, follow the assigned agent link, and verify Profile > Role renders the live role.
+	await page.getByRole('link', { name: 'Staff Software Engineer' }).click();
+	await expect(page.getByTestId('role-employees')).toContainText('Linus Agent');
+	await page.getByTestId('role-employees').getByRole('link', { name: 'Linus Agent' }).click();
+	await expect(page).toHaveURL(/\/members\/[^/]+$/);
+	await page.getByRole('link', { name: 'Role', exact: true }).click();
+	await expect(page).toHaveURL(/\/members\/[^/]+\/role$/);
+	await expect(page.locator('main')).toContainText('Staff Software Engineer');
+	await expect(page.locator('main')).toContainText('rev 2');
+	await expect(page.locator('main')).toContainText(
+		'Lead architecture and build reliable software.'
+	);
+
+	await page.goto(`${base}/settings/roles`);
+	await page.getByRole('button', { name: 'New role…', exact: true }).click();
+	dialog = page.getByRole('dialog');
+	await dialog.getByLabel('Name').fill('Duplicate Role');
+	await dialog.getByLabel('Key (optional)').fill('software-engineer');
+	await dialog.getByLabel('Text', { exact: true }).fill('## Mission\nTest duplicate key.\n');
+	await dialog.getByRole('button', { name: 'Create role', exact: true }).click();
+	await expect(dialog.getByLabel('Key (optional)')).toBeFocused();
+	await expect(dialog.getByLabel('Key (optional)')).toHaveAttribute('aria-invalid', 'true');
+	await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
 	await expect(dialog).toBeHidden();
 });

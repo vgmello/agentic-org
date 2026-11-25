@@ -9,6 +9,10 @@ use std::{ffi::CString, io, mem, path::Path, ptr};
 pub(super) use super::refused::refuse_call;
 pub(super) use super::shared::fill_entropy;
 use super::{Confined, Enforcement, Layers};
+
+pub(super) fn unix_socket_path_filter_supported() -> bool {
+    true
+}
 use std::os::unix::net::UnixStream;
 
 const PROFILE: &std::ffi::CStr = c"(version 1)(deny default)(allow network-inbound)(deny network-bind)(allow network-outbound (remote unix-socket (path-literal (param \"RENDEZVOUS\"))))";

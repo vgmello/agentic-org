@@ -124,36 +124,7 @@ has mcp-language-server || need mcp-language-server "Codex's bridge to rust-anal
 	"\`go install github.com/isaacphi/mcp-language-server@v0.1.1\`"
 fi
 
-has python3 || need python3 "runs the agent kit checks (.agents/agent-kit/runtime/kit_hooks.py check)" "install Python 3"
-
-# The agent kit's starter_kit_context MCP server (.mcp.json) serves Repowise lookup
-# and Hindsight recall. Read this checkout's setup receipts and check the recorded
-# memory daemon process; never probe or start services.
-ready() { # ready <receipt> <status>
-	grep -q "\"$2\"" "$1" 2>/dev/null && grep -qF "\"root\": \"$root\"" "$1" 2>/dev/null
-}
-ready .agents/agent-kit/logs/context/setup.json CONTEXT_READY ||
-	need "Repowise code index" "the starter_kit_context lookup tool has no index for this checkout" \
-		"\`python3 .agents/agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs\`"
-memory=.agents/agent-kit/logs/memory/hindsight/setup.json
-pid="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "$memory" 2>/dev/null)"
-running() { # running <pid>: a sandbox (Codex review) may refuse the signal to our own daemon
-	local out owner
-	out="$(kill -0 "$1" 2>&1)" && return 0
-	case "$out" in *"not permitted"*) ;; *) return 1 ;; esac
-	# Outside a sandbox "not permitted" means the PID now belongs to another user (reused
-	# after a reboot): not our daemon. Inside one, ps is refused too (126), so trust the signal.
-	owner="$(ps -o user= -p "$1" 2>/dev/null)"
-	case $? in 126) return 0 ;; esac
-	[ "$(echo $owner)" = "$(id -un)" ]
-}
-if ! has hindsight-embed; then
-	need "Hindsight memory" "the starter_kit_context recall tool needs the local hindsight-embed daemon" \
-		"install it as in the \"Local memory daemon\" section of .agents/agent-kit/ADOPTION.md, then \`python3 .agents/agent-kit/runtime/kit_memory.py setup\`"
-elif ! ready "$memory" HINDSIGHT_READY || [ -z "$pid" ] || ! running "$pid"; then
-	need "Hindsight memory" "the local hindsight-embed daemon is not set up or not running for this checkout" \
-		"\`python3 .agents/agent-kit/runtime/kit_memory.py setup\`"
-fi
+has python3 || need python3 "runs repository schema and tooling verification scripts" "install Python 3"
 has cargo-deny || need cargo-deny "required local check (cargo deny --locked check)" "install cargo-deny 0.20.2 (see DEVELOPMENT.md)"
 has gitleaks || need gitleaks "required local secret scan" "install Gitleaks 8.30.1 (see DEVELOPMENT.md)"
 has playwright-cli || need playwright-cli "the playwright-cli browser skill" "\`bun add --global --exact @playwright/cli@0.1.24\`"

@@ -49,6 +49,6 @@ and feel. The integration agent should use existing Svelte components and
 retain production capabilities beyond the prototype. If approval covers only
 part of the range, name the approved changes explicitly.
 
-If a release is in progress before context compaction or handoff, update
-`.agents/agent-kit/logs/prototype-release.md` with the approval scope, comparison
-revisions, confirmed final changes, verification status, and next step.
+If a release is in progress before context compaction or handoff, checkpoint the
+approval scope, comparison revisions, confirmed final changes, verification status,
+and next step in the parent project's handover notes.

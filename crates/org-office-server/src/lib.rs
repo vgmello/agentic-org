@@ -35,6 +35,7 @@ mod msg_calls;
 mod org_feed;
 mod process_calls;
 mod provider_calls;
+mod provider_refresh;
 mod revocations;
 mod serve;
 mod signals;
@@ -49,6 +50,10 @@ mod watcher;
 mod watcher_store;
 mod zeroed;
 
+#[cfg(test)]
+mod a2a_live_three_runtimes_tests;
+#[cfg(test)]
+mod a2a_messaging_tests;
 #[cfg(test)]
 mod test_teardown;
 
@@ -769,9 +774,50 @@ fn load_or_create_pending_joining_key(
     Ok((request_id, key))
 }
 
+/// Condvar wake signal for the satellite background sync loop so outbound cross-office
+/// messages/answers/withdrawals/accepts flush immediately instead of waiting for the idle poll.
+#[derive(Default)]
+struct SatSyncWake {
+    gen: std::sync::Mutex<u64>,
+    cv: std::sync::Condvar,
+}
+
+impl SatSyncWake {
+    fn notify(&self) {
+        let mut g = self.gen.lock().unwrap_or_else(|p| p.into_inner());
+        *g = g.saturating_add(1);
+        self.cv.notify_all();
+    }
+
+    fn generation(&self) -> u64 {
+        *self.gen.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn wait_or_stop(&self, seen: u64, timeout: std::time::Duration, stop: &AtomicBool) -> u64 {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut g = self.gen.lock().unwrap_or_else(|p| p.into_inner());
+        while *g == seen && !stop.load(Ordering::SeqCst) {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            let step = deadline
+                .saturating_duration_since(now)
+                .min(std::time::Duration::from_millis(100));
+            let (next, _) = self
+                .cv
+                .wait_timeout(g, step)
+                .unwrap_or_else(|p| p.into_inner());
+            g = next;
+        }
+        *g
+    }
+}
+
 struct FederationRuntime {
     hq: Option<federation::HqFederationServer>,
     sat_stop: Arc<AtomicBool>,
+    sat_wake: Arc<SatSyncWake>,
     sat_thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -779,22 +825,31 @@ impl FederationRuntime {
     fn start(
         office: &Arc<Office>,
         session_manager: &Arc<org_office_sessions::SessionManager>,
+        delivery_notifier: federation::InboundDeliveryNotifier,
+        sat_wake: Arc<SatSyncWake>,
         hq_listening: &Arc<AtomicBool>,
     ) -> Result<Self, String> {
         let sat_stop = Arc::new(AtomicBool::new(false));
         let wake_handler = build_federation_wake_handler(session_manager);
-        let hq = start_optional_hq_federation(office, Some(Arc::clone(&wake_handler)))?;
+        let hq = start_optional_hq_federation(
+            office,
+            Some(Arc::clone(&wake_handler)),
+            Some(Arc::clone(&delivery_notifier)),
+        )?;
         hq_listening.store(hq.is_some(), Ordering::SeqCst);
         let sat_thread = start_optional_satellite_sync(
             office,
             &sat_stop,
+            Arc::clone(&sat_wake),
             wake_handler,
+            delivery_notifier,
             Arc::downgrade(session_manager),
         );
         Ok(Self {
             hq,
             sat_thread,
             sat_stop,
+            sat_wake,
         })
     }
 
@@ -803,10 +858,68 @@ impl FederationRuntime {
             fed.stop();
         }
         self.sat_stop.store(true, Ordering::SeqCst);
+        self.sat_wake.notify();
         if let Some(handle) = self.sat_thread {
             let _ = handle.join();
         }
     }
+}
+
+fn build_federation_delivery_notifier(
+    owner_id: String,
+    chat_svc: &Arc<chat_calls::ChatService>,
+    mailbox: &Arc<org_mailbox::Mailbox>,
+    live: &Arc<live::LiveEvents>,
+    watcher: &Arc<watcher::ChannelWatcher>,
+) -> federation::InboundDeliveryNotifier {
+    let chat_svc = Arc::downgrade(chat_svc);
+    let mailbox = Arc::downgrade(mailbox);
+    let live = Arc::downgrade(live);
+    let watcher = Arc::downgrade(watcher);
+    Arc::new(move |outcome: &org_office::RelayedMessageOutcome| {
+        if let Some(ask_id) = outcome.closed_ask_id.as_deref() {
+            if let Some(chat) = chat_svc.upgrade() {
+                chat.notify_ask_waiters();
+            }
+            if let Some(w) = watcher.upgrade() {
+                let reason = outcome.closed_ask_reason.as_deref().unwrap_or("answered");
+                w.on_question_closed(ask_id, reason);
+            }
+            if let Some(lv) = live.upgrade() {
+                lv.record_mailbox_change();
+            }
+        }
+        let mut owner_touched = outcome.handoff_accepted;
+        for header in &outcome.local_delivered_headers {
+            if let Some(mb) = mailbox.upgrade() {
+                mb.notify_member(&header.to_member_id);
+            }
+            if header.to_member_id == owner_id {
+                owner_touched = true;
+            }
+            if outcome.inserted {
+                if let Some(lv) = live.upgrade() {
+                    lv.publish_live(live::Live::Received(Box::new(
+                        org_proto::chat::header_only_received(header.clone()),
+                    )));
+                }
+            }
+        }
+        if owner_touched {
+            if let Some(lv) = live.upgrade() {
+                lv.record_mailbox_change();
+            }
+        }
+        if outcome.inserted {
+            if let (Some(msg), Some(conv_kind), Some(w)) = (
+                outcome.delivered_message.as_ref(),
+                outcome.conversation_kind,
+                watcher.upgrade(),
+            ) {
+                w.on_channel_message_posted(msg, conv_kind);
+            }
+        }
+    })
 }
 
 fn build_federation_wake_handler(
@@ -838,6 +951,7 @@ fn build_federation_wake_handler(
             "mention" => org_office_sessions::WakeKind::Mention,
             "handoff" => org_office_sessions::WakeKind::Handoff,
             "ask" => org_office_sessions::WakeKind::Ask,
+            "ask_answer" => org_office_sessions::WakeKind::AskAnswer,
             "task" => org_office_sessions::WakeKind::TaskAssignment,
             _ => org_office_sessions::WakeKind::DirectMessage,
         };
@@ -864,6 +978,7 @@ fn build_federation_wake_handler(
 fn start_optional_hq_federation(
     office: &Arc<Office>,
     wake_handler: Option<federation::WakeRelayHandler>,
+    delivery_notifier: Option<federation::InboundDeliveryNotifier>,
 ) -> Result<Option<federation::HqFederationServer>, String> {
     if office.info().role != org_office::OfficeRole::Hq {
         return Ok(None);
@@ -885,14 +1000,21 @@ fn start_optional_hq_federation(
             san_hosts.push(item.to_owned());
         }
     }
-    federation::HqFederationServer::start(Arc::clone(office), addr, &san_hosts, wake_handler)
-        .map(Some)
+    federation::HqFederationServer::start_with_notifier(
+        Arc::clone(office),
+        addr,
+        &san_hosts,
+        wake_handler,
+        delivery_notifier,
+    )
+    .map(Some)
 }
 
 fn run_satellite_sync_tick(
     office: &Arc<Office>,
     stop: &Arc<AtomicBool>,
     wake_handler: &federation::WakeRelayHandler,
+    delivery_notifier: &federation::InboundDeliveryNotifier,
     sessions_for_recovery: &std::sync::Weak<org_office_sessions::SessionManager>,
 ) {
     let Ok(mut session) =
@@ -916,13 +1038,16 @@ fn run_satellite_sync_tick(
     let _ = session.pull_org_events();
     let _ = session.flush_work_outbox();
     let _ = session.flush_message_outbox();
-    let _ = session.receive_inbound_relays(Some(wake_handler));
+    let _ =
+        session.receive_inbound_relays_with_notifier(Some(wake_handler), Some(delivery_notifier));
 }
 
 fn start_optional_satellite_sync(
     office: &Arc<Office>,
     stop: &Arc<AtomicBool>,
+    sat_wake: Arc<SatSyncWake>,
     wake_handler: federation::WakeRelayHandler,
+    delivery_notifier: federation::InboundDeliveryNotifier,
     sessions_for_recovery: std::sync::Weak<org_office_sessions::SessionManager>,
 ) -> Option<std::thread::JoinHandle<()>> {
     if office.info().role != org_office::OfficeRole::Satellite {
@@ -933,14 +1058,16 @@ fn start_optional_satellite_sync(
     std::thread::Builder::new()
         .name("sat-federation-sync".into())
         .spawn(move || {
+            let mut seen = sat_wake.generation();
             while !stop.load(Ordering::SeqCst) {
-                run_satellite_sync_tick(&office, &stop, &wake_handler, &sessions_for_recovery);
-                for _ in 0..40 {
-                    if stop.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(250));
-                }
+                run_satellite_sync_tick(
+                    &office,
+                    &stop,
+                    &wake_handler,
+                    &delivery_notifier,
+                    &sessions_for_recovery,
+                );
+                seen = sat_wake.wait_or_stop(seen, std::time::Duration::from_millis(500), &stop);
             }
         })
         .ok()
@@ -1048,27 +1175,49 @@ fn prepare_office_runtime(
     };
     let session_manager = start_session_manager(Arc::clone(office), socket);
     let channel_watcher = start_channel_watcher(Arc::clone(office), &session_manager);
+    let sat_sync_wake = Arc::new(SatSyncWake::default());
+    let messaging = build_messaging_ports(
+        office,
+        &live,
+        &wake,
+        &session_manager,
+        &channel_watcher,
+        Arc::clone(&sat_sync_wake),
+    );
+    let delivery_notifier = build_federation_delivery_notifier(
+        office.owner_member_id().to_owned(),
+        &messaging.chat_svc,
+        &messaging.mailbox,
+        &live,
+        &channel_watcher,
+    );
     let hq_federation_listening = Arc::new(AtomicBool::new(false));
-    let federation_rt =
-        match FederationRuntime::start(office, &session_manager, &hq_federation_listening) {
-            Ok(rt) => rt,
-            Err(reason) => {
-                eprintln!("agentic-org-office: federation listener startup failed: {reason}");
-                let _ = std::fs::remove_file(socket);
-                let _ = fail(
-                    control,
-                    FailCode::StorageError,
-                    "HQ federation listener failed to bind",
-                );
-                return None;
-            }
-        };
+    let federation_rt = match FederationRuntime::start(
+        office,
+        &session_manager,
+        delivery_notifier,
+        sat_sync_wake,
+        &hq_federation_listening,
+    ) {
+        Ok(rt) => rt,
+        Err(reason) => {
+            eprintln!("agentic-org-office: federation listener startup failed: {reason}");
+            let _ = std::fs::remove_file(socket);
+            let _ = fail(
+                control,
+                FailCode::StorageError,
+                "HQ federation listener failed to bind",
+            );
+            return None;
+        }
+    };
     let ports = build_office_ports(
         Arc::clone(office),
         Arc::clone(&session_manager),
         Arc::clone(&channel_watcher),
         live,
         &wake,
+        messaging,
         Arc::clone(&hq_federation_listening),
     );
     let mut shared = serve::Shared::new(info, socket, ports, auth);
@@ -1162,6 +1311,7 @@ fn serve_office(
         prepared.host_gone.load(Ordering::SeqCst) || signals::stop_requested()
     };
     run_serve_loop(
+        &office,
         &listener,
         &shared,
         &prepared.session_manager,
@@ -1184,6 +1334,7 @@ fn serve_office(
 /// The orderly stop: the store closes (flushed, confirmed, written) and leaves its clean-stop
 /// marker. An office something still holds is dropped instead: a stop without the marker.
 fn run_serve_loop(
+    office: &Arc<Office>,
     listener: &std::os::unix::net::UnixListener,
     shared: &Arc<serve::Shared>,
     session_manager: &Arc<org_office_sessions::SessionManager>,
@@ -1201,6 +1352,8 @@ fn run_serve_loop(
         Arc::clone(&wake_stop),
         std::time::Duration::from_secs(2),
     );
+    let readiness_thread =
+        provider_refresh::spawn_readiness_refresh_loop(Arc::clone(office), Arc::clone(&wake_stop));
     let snooze_thread = shared.mailbox().map(|mailbox| {
         let stop_flag = Arc::clone(&wake_stop);
         std::thread::Builder::new()
@@ -1221,6 +1374,9 @@ fn run_serve_loop(
         let _ = t.join();
     }
     let _ = watch_thread.join();
+    if let Some(t) = readiness_thread {
+        let _ = t.join();
+    }
     if let Some(Some(t)) = snooze_thread {
         let _ = t.join();
     }
@@ -1406,6 +1562,7 @@ fn start_session_manager(
 struct MessagingPorts {
     directory: Arc<dyn org_mailbox::MemberDirectory + Send + Sync>,
     mailbox: Arc<org_mailbox::Mailbox>,
+    chat_svc: Arc<chat_calls::ChatService>,
     chat: serve::ChatFn,
     feed: Box<dyn follow::OrgFeed>,
 }
@@ -1416,6 +1573,7 @@ fn build_messaging_ports(
     wake: &Arc<org_feed::FeedWake>,
     session_manager: &Arc<org_office_sessions::SessionManager>,
     channel_watcher: &Arc<watcher::ChannelWatcher>,
+    sat_sync_wake: Arc<SatSyncWake>,
 ) -> MessagingPorts {
     let directory: Arc<dyn org_mailbox::MemberDirectory + Send + Sync> =
         Arc::new(directory::OfficeDirectory::of(Arc::clone(office)));
@@ -1445,15 +1603,19 @@ fn build_messaging_ports(
             ))
         }
     };
-    let chat_svc = Arc::new(chat_calls::ChatService::with_watcher(
-        Arc::clone(office),
-        Arc::clone(live),
-        Arc::clone(&mailbox),
-        Some(Arc::clone(session_manager)),
-        Arc::clone(channel_watcher),
-    ));
+    let chat_svc = Arc::new(
+        chat_calls::ChatService::with_watcher(
+            Arc::clone(office),
+            Arc::clone(live),
+            Arc::clone(&mailbox),
+            Some(Arc::clone(session_manager)),
+            Arc::clone(channel_watcher),
+        )
+        .with_sat_sync_wake(Arc::new(move || sat_sync_wake.notify())),
+    );
+    let chat_for_dispatch = Arc::clone(&chat_svc);
     let chat: serve::ChatFn = Box::new(move |member, via_grant, stopping, request| {
-        chat_svc.dispatch(member, via_grant, stopping, request)
+        chat_for_dispatch.dispatch(member, via_grant, stopping, request)
     });
     let feed: Box<dyn follow::OrgFeed> = Box::new(org_feed::OfficeOrgFeed::new(
         Arc::clone(office),
@@ -1462,6 +1624,7 @@ fn build_messaging_ports(
     MessagingPorts {
         directory,
         mailbox,
+        chat_svc,
         chat,
         feed,
     }
@@ -1715,9 +1878,9 @@ fn build_office_ports(
     channel_watcher: Arc<watcher::ChannelWatcher>,
     live: Arc<live::LiveEvents>,
     wake: &Arc<org_feed::FeedWake>,
+    messaging: MessagingPorts,
     hq_federation_listening: Arc<AtomicBool>,
 ) -> serve::OfficePorts {
-    let messaging = build_messaging_ports(&office, &live, wake, &session_manager, &channel_watcher);
     let session_hooks = build_session_hooks(&session_manager);
     let hiring = build_hiring_port(&office, wake, &session_manager, &channel_watcher);
     let submit = build_submit_port(&office, wake, &session_manager, &channel_watcher);

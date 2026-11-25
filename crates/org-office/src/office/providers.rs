@@ -285,6 +285,53 @@ impl Office {
         self.providers.save_observation(&state, &[])
     }
 
+    /// Atomically renews a locally bound `Ready` provider observation ONLY if the binding
+    /// revision has not changed and the current readiness status is still `Ready`.
+    /// Never promotes `AuthExpired`, `Unavailable`, or `Unknown` connections.
+    pub fn renew_ready_provider_observation_if_unchanged(
+        &self,
+        connection_id: &str,
+        expected_binding_revision: u64,
+        driver_version: Option<String>,
+        models: Vec<org_proto::providers::DiscoveredModelInput>,
+        ttl_seconds: u64,
+    ) -> Result<bool, OfficeError> {
+        let now_ms = self.monotonic_now_ms();
+        let now_utc = format_rfc3339_ms(now_ms);
+        let ttl = ttl_seconds.clamp(1, MAX_OBSERVATION_TTL_SECS);
+        let valid_until = format_rfc3339_ms(now_ms.saturating_add(ttl * 1000));
+        let state = OfficeConnectionState {
+            organization_id: self.info.org_id.clone(),
+            office_id: self.info.office_id.clone(),
+            connection_id: connection_id.to_owned(),
+            status: ConnectionReadinessStatus::Ready,
+            binding_revision: expected_binding_revision,
+            driver_version,
+            observed_at: Some(now_utc.clone()),
+            valid_until: Some(valid_until.clone()),
+            issue_code: None,
+        };
+        let model_records: Vec<OfficeConnectionModel> = models
+            .into_iter()
+            .map(|m| OfficeConnectionModel {
+                organization_id: self.info.org_id.clone(),
+                office_id: self.info.office_id.clone(),
+                connection_id: connection_id.to_owned(),
+                model_id: m.model_id,
+                driver_model_id: m.driver_model_id,
+                entitlement: m.entitlement,
+                capabilities_json: m.capabilities_json,
+                observed_at: now_utc.clone(),
+                valid_until: valid_until.clone(),
+            })
+            .collect();
+        self.providers.renew_ready_observation_if_unchanged(
+            expected_binding_revision,
+            &state,
+            &model_records,
+        )
+    }
+
     pub fn provider_durable_write_count(&self) -> u64 {
         self.providers.durable_write_count()
     }
@@ -312,6 +359,17 @@ impl Office {
             .map_err(OfficeError::storage)?
             .0)
     }
+
+    /// Returns all offices registered in this organization's replicated state (`TASK-120`).
+    pub fn list_org_offices(
+        &self,
+    ) -> Result<Vec<crate::organization::records::Office>, OfficeError> {
+        Ok(self
+            .store
+            .read(crate::store::open::OfficesList)
+            .map_err(OfficeError::storage)?
+            .0)
+    }
 }
 
 // ---- Implementation functions ----
@@ -328,6 +386,29 @@ fn require_owner(office: &Office, actor: &str) -> Result<Result<Id, ApiError>, O
         )));
     }
     Ok(Ok(caller.id))
+}
+
+fn require_hq_owner(office: &Office, actor: &str) -> Result<Result<Id, ApiError>, OfficeError> {
+    if office.info.role != crate::OfficeRole::Hq {
+        return Ok(Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "organization provider connections and model profiles can only be mutated on HQ",
+        )));
+    }
+    require_owner(office, actor)
+}
+
+fn require_office_operator(
+    office: &Office,
+    actor: &str,
+) -> Result<Result<(), ApiError>, OfficeError> {
+    if office.info.role == crate::OfficeRole::Satellite && actor == office.info.office_id {
+        return Ok(Ok(()));
+    }
+    match require_owner(office, actor)? {
+        Ok(_) => Ok(Ok(())),
+        Err(e) => Ok(Err(e)),
+    }
 }
 
 fn parse_uuid(raw: &str, label: &str) -> Result<Id, ApiError> {
@@ -439,8 +520,12 @@ fn op_connection_list(
     actor: &str,
     params: ProviderConnectionListParams,
 ) -> Result<Result<ProviderConnectionListResult, ApiError>, OfficeError> {
-    if let Err(e) = office.require_active_member(actor)? {
-        return Ok(Err(e));
+    let is_sat_operator =
+        office.info.role == crate::OfficeRole::Satellite && actor == office.info.office_id;
+    if !is_sat_operator {
+        if let Err(e) = office.require_active_member(actor)? {
+            return Ok(Err(e));
+        }
     }
     let conns = office
         .load_provider_connections()?
@@ -456,7 +541,7 @@ fn op_connection_update(
     actor: &str,
     params: ProviderConnectionUpdateParams,
 ) -> Result<Result<EntityOpResult, ApiError>, OfficeError> {
-    let owner_id = match require_owner(office, actor)? {
+    let owner_id = match require_hq_owner(office, actor)? {
         Ok(id) => id,
         Err(e) => return Ok(Err(e)),
     };
@@ -482,7 +567,7 @@ fn op_profile_create(
     actor: &str,
     params: ModelProfileCreateParams,
 ) -> Result<Result<EntityOpResult, ApiError>, OfficeError> {
-    let owner_id = match require_owner(office, actor)? {
+    let owner_id = match require_hq_owner(office, actor)? {
         Ok(id) => id,
         Err(e) => return Ok(Err(e)),
     };
@@ -512,7 +597,7 @@ fn op_profile_update(
     actor: &str,
     params: ModelProfileUpdateParams,
 ) -> Result<Result<EntityOpResult, ApiError>, OfficeError> {
-    let owner_id = match require_owner(office, actor)? {
+    let owner_id = match require_hq_owner(office, actor)? {
         Ok(id) => id,
         Err(e) => return Ok(Err(e)),
     };
@@ -588,7 +673,7 @@ fn op_binding_set(
     actor: &str,
     params: ProviderBindingSetParams,
 ) -> Result<Result<ProviderBindingSetResult, ApiError>, OfficeError> {
-    if let Err(e) = require_owner(office, actor)? {
+    if let Err(e) = require_office_operator(office, actor)? {
         return Ok(Err(e));
     }
     if let Err(e) = validate_binding_set_params(&params) {
@@ -675,7 +760,7 @@ fn op_binding_list(
     actor: &str,
     params: ProviderBindingListParams,
 ) -> Result<Result<ProviderBindingListResult, ApiError>, OfficeError> {
-    if let Err(e) = require_owner(office, actor)? {
+    if let Err(e) = require_office_operator(office, actor)? {
         return Ok(Err(e));
     }
     let now_ms = office.monotonic_now_ms();
@@ -719,7 +804,7 @@ fn op_connection_refresh(
     actor: &str,
     params: ProviderConnectionRefreshParams,
 ) -> Result<Result<ProviderConnectionRefreshResult, ApiError>, OfficeError> {
-    if let Err(e) = require_owner(office, actor)? {
+    if let Err(e) = require_office_operator(office, actor)? {
         return Ok(Err(e));
     }
     let Some(conn) = office.load_provider_connection(&params.connection_id)? else {
@@ -1182,7 +1267,7 @@ fn op_quota_status(
     actor: &str,
     params: ProviderQuotaStatusParams,
 ) -> Result<Result<ProviderQuotaStatusResult, ApiError>, OfficeError> {
-    if let Err(e) = require_owner(office, actor)? {
+    if let Err(e) = require_office_operator(office, actor)? {
         return Ok(Err(e));
     }
     let snap = office.providers.quota_snapshot(
@@ -1212,7 +1297,7 @@ fn op_cooldown_record(
     actor: &str,
     params: ProviderCooldownRecordParams,
 ) -> Result<Result<ProviderCooldownRecordResult, ApiError>, OfficeError> {
-    if let Err(e) = require_owner(office, actor)? {
+    if let Err(e) = require_office_operator(office, actor)? {
         return Ok(Err(e));
     }
     if office

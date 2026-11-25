@@ -164,4 +164,107 @@ describe('createHttpMembersApi', () => {
 			code: 'wrong_password'
 		});
 	});
+
+	it('resolves an agent role_id against /roles/{id}, rejects mismatched or malformed payloads, and handles 404/503', async () => {
+		const ROLE_ID = '0193a5c0-0000-7000-8000-000000000040';
+		const OTHER_ROLE_ID = '0193a5c0-0000-7000-8000-000000000041';
+		const AGENT_ID = '0193a5c0-0000-7000-8000-000000000009';
+		const withAgentRole: OrgSnapshot = {
+			...SNAPSHOT,
+			members: [
+				...SNAPSHOT.members,
+				{
+					id: AGENT_ID,
+					kind: 'agent',
+					name: 'Linus Agent',
+					handle: 'linus',
+					home_team_id: TEAM_A,
+					role_id: ROLE_ID,
+					office_id: '0193a5c0-0000-7000-8000-000000000010',
+					agent: {
+						role: 'Systems Engineer',
+						title: 'Principal Systems Agent',
+						runtime: 'claude_code',
+						messaging_name: 'linus',
+						status: 'active'
+					},
+					version: 1
+				}
+			]
+		};
+		const read = vi
+			.fn()
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: {
+						id: ROLE_ID,
+						name: 'Software Engineer',
+						revision: 2,
+						body: '## Mission\nBuild reliably.\n'
+					}
+				}
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: {
+						id: OTHER_ROLE_ID,
+						name: 'Wrong Role',
+						revision: 1,
+						body: ''
+					}
+				}
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: {
+						id: ROLE_ID,
+						name: 'Unsafe Rev',
+						revision: Number.MAX_SAFE_INTEGER + 1,
+						body: ''
+					}
+				}
+			})
+			.mockResolvedValueOnce({
+				status: 404,
+				body: { error: { code: 'not_found', message: 'role not found' } }
+			})
+			.mockResolvedValueOnce({
+				status: 503,
+				body: { error: { code: 'unavailable', message: 'office unreachable' } }
+			});
+
+		const api = createHttpMembersApi({
+			http: { read, submit: vi.fn() },
+			orgApi: {
+				view: vi.fn().mockResolvedValue({ snapshot: withAgentRole, sample: false }),
+				command: vi.fn()
+			},
+			session: () => ({ accountAdmin: true })
+		});
+
+		await expect(api.role(ORG, AGENT_ID)).resolves.toEqual({
+			role: { name: 'Software Engineer', revision: 2, body: '## Mission\nBuild reliably.\n' },
+			roleText: 'Systems Engineer',
+			title: 'Principal Systems Agent'
+		});
+		await expect(api.role(ORG, AGENT_ID)).rejects.toMatchObject({
+			source: 'api',
+			code: 'unavailable'
+		});
+		await expect(api.role(ORG, AGENT_ID)).rejects.toMatchObject({
+			source: 'api',
+			code: 'unavailable'
+		});
+		await expect(api.role(ORG, AGENT_ID)).resolves.toEqual({
+			roleText: 'Systems Engineer',
+			title: 'Principal Systems Agent'
+		});
+		await expect(api.role(ORG, AGENT_ID)).rejects.toMatchObject({
+			source: 'api',
+			code: 'unavailable'
+		});
+	});
 });

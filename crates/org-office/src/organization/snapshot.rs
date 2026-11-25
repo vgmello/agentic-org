@@ -7,13 +7,15 @@
 //! unset until B6 adds live presence tracking. Every employee belongs to one home team
 //! (`Member::home_team_id`, data contract document 01).
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use org_proto::org::{
     AgentProfile, AgentRuntime, AgentStatus, Member, MemberKind, OrgSnapshot, Position, Project,
     ProjectTeam, Team,
 };
 use org_store::{EngineError, Id};
 
-use super::records::{self, EmployeeKind, EmployeeStatus, OfficeRole};
+use super::records::{self, EmployeeKind, EmployeeStatus, HireState, OfficeRole};
 use crate::projects::{ports::ProjectsRead, records::Project as ProjectRecord};
 
 /// The protocol position of directory generation `generation`. The organization's
@@ -36,11 +38,23 @@ pub fn project(read: &impl ProjectsRead, owner: &Id) -> Result<OrgSnapshot, Engi
         .filter(|t| t.is_active())
         .map(team)
         .collect();
-    let hq_office_id = read
-        .offices()?
+    let offices = read.offices()?;
+    let enrolled_offices: BTreeSet<String> =
+        offices.iter().map(|office| office.id.to_string()).collect();
+    let hq_office_id = offices
         .into_iter()
         .find(|office| office.role == OfficeRole::Hq)
         .map(|office| office.id.to_string());
+    let mut employee_offices: BTreeMap<String, String> = BTreeMap::new();
+    for req in read.hire_requests()? {
+        if req.state == HireState::Hired {
+            if let (Some(emp_id), Some(oid)) = (req.employee_id, req.proposal.office_id) {
+                if enrolled_offices.contains(&oid) {
+                    employee_offices.insert(emp_id.to_string(), oid);
+                }
+            }
+        }
+    }
     let employees = read.employees()?;
     let mut members = Vec::with_capacity(employees.len());
     for employee in &employees {
@@ -52,12 +66,11 @@ pub fn project(read: &impl ProjectsRead, owner: &Id) -> Result<OrgSnapshot, Engi
         } else {
             None
         };
-        members.push(member(
-            employee,
-            owner,
-            hq_office_id.as_deref(),
-            exec.as_ref(),
-        ));
+        let agent_office_id = employee_offices
+            .get(employee.id.as_str())
+            .map(String::as_str)
+            .or(hq_office_id.as_deref());
+        members.push(member(employee, owner, agent_office_id, exec.as_ref()));
     }
     let project_records = read.projects()?;
     let mut projects = Vec::with_capacity(project_records.len());
@@ -157,6 +170,7 @@ fn member(
         name: record.name.clone(),
         handle: Some(record.handle.clone()),
         home_team_id: Some(record.home_team_id.to_string()),
+        role_id: record.role_id.as_ref().map(Id::to_string),
         title_in_team: record.title_in_team.clone(),
         contact: record.contact.clone(),
         owner: record.id == *owner,

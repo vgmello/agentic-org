@@ -1220,9 +1220,20 @@ fn is_builtin_plugin(val: &Value) -> bool {
     let Some(obj) = val.as_object() else {
         return false;
     };
+    let source = obj.get("source").and_then(Value::as_str);
+    let path = obj.get("path").and_then(Value::as_str);
+    let name = obj
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|n| !n.is_empty());
+    let builtin_2_1_323 = path == Some("builtin")
+        && name.is_some()
+        && source.and_then(|s| s.strip_suffix("@builtin")) == name;
     obj.get("builtin").and_then(Value::as_bool) == Some(true)
         || obj.get("isBuiltin").and_then(Value::as_bool) == Some(true)
-        || obj.get("source").and_then(Value::as_str) == Some("builtin")
+        || source == Some("builtin")
+        // Claude Code 2.1.323+ emits `{"name": "<id>", "path": "builtin", "source": "<id>@builtin"}`.
+        || builtin_2_1_323
 }
 
 fn plugin_display_name(val: &Value) -> String {
@@ -1394,4 +1405,43 @@ fn map_result_outcome(val: &Value) -> (TurnOutcome, Vec<String>) {
         return (TurnOutcome::Failed { reason }, errors);
     }
     (TurnOutcome::Completed, errors)
+}
+
+#[cfg(test)]
+mod plugin_tests {
+    use super::is_builtin_plugin;
+    use serde_json::json;
+
+    #[test]
+    fn accepts_claude_2_1_323_builtin_plugins_and_rejects_disk_spoofs() {
+        assert!(is_builtin_plugin(&json!({
+            "name": "cc-plugin-agents-md",
+            "path": "builtin",
+            "source": "cc-plugin-agents-md@builtin"
+        })));
+        assert!(is_builtin_plugin(&json!({
+            "name": "legacy",
+            "source": "builtin"
+        })));
+        assert!(!is_builtin_plugin(&json!({
+            "name": "spoofed",
+            "path": "/home/user/.claude/plugins/spoofed",
+            "source": "spoofed@builtin"
+        })));
+        assert!(!is_builtin_plugin(&json!({
+            "name": "user-plugin",
+            "path": "/home/user/.claude/plugins/user-plugin",
+            "source": "user-plugin@marketplace"
+        })));
+        assert!(!is_builtin_plugin(&json!({
+            "name": "",
+            "path": "builtin",
+            "source": "@builtin"
+        })));
+        assert!(!is_builtin_plugin(&json!({
+            "name": "evil",
+            "path": "builtin",
+            "source": "other@builtin"
+        })));
+    }
 }

@@ -24,6 +24,7 @@ use crate::runtime_registry::RuntimeRegistry;
 pub(crate) struct AdmittedRoute {
     pub adapter: Arc<dyn AgentRuntime>,
     pub model_token: Option<Token>,
+    pub auth_mode: Option<ProviderAuthMode>,
     pub auth_env: Vec<(OsString, OsString)>,
     pub endpoint_env: Vec<(OsString, OsString)>,
     pub preset: PermissionPreset,
@@ -229,6 +230,7 @@ struct RouteWalkCtx<'a> {
     model_id: &'a str,
     profile_key: &'a str,
     preset: PermissionPreset,
+    exec_rev: u64,
     is_failover_switch: bool,
     now_ms: u64,
     excluded: &'a HashSet<String>,
@@ -341,14 +343,17 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
         }
     };
     match finalize_admitted_connection(
+        ctx.office,
         ctx.vault,
         ctx.runtimes,
         &conn,
         AdmitParams {
+            employee_id: ctx.employee_id,
             preset: ctx.preset,
             resolved_model: &resolved_model,
             profile_key: ctx.profile_key,
             binding_rev,
+            exec_rev: ctx.exec_rev,
             permit: (permit.id.clone(), permit.coordinator_generation),
         },
     ) {
@@ -396,6 +401,7 @@ pub(crate) fn select_and_admit_route(
         return Ok(AdmittedRoute {
             adapter,
             model_token: None,
+            auth_mode: None,
             auth_env: Vec::new(),
             endpoint_env: Vec::new(),
             preset: PermissionPreset::SafeAsk,
@@ -450,6 +456,7 @@ pub(crate) fn select_and_admit_route(
         model_id: &cfg.model_id,
         profile_key: &profile.key,
         preset: cfg.permission_preset,
+        exec_rev: cfg.meta.revision,
         is_failover_switch,
         now_ms: office.current_time_ms(),
         excluded: excluded_connections,
@@ -525,24 +532,29 @@ fn check_local_readiness(
 }
 
 struct AdmitParams<'a> {
+    employee_id: &'a str,
     preset: PermissionPreset,
     resolved_model: &'a str,
     profile_key: &'a str,
     binding_rev: u64,
+    exec_rev: u64,
     permit: (String, u64),
 }
 
 fn finalize_admitted_connection(
+    office: &Office,
     vault: &CredentialVault,
     runtimes: &RuntimeRegistry,
     conn: &ProviderConnection,
     params: AdmitParams<'_>,
 ) -> Result<AdmittedRoute, ApiError> {
     let AdmitParams {
+        employee_id,
         preset,
         resolved_model,
         profile_key,
         binding_rev,
+        exec_rev,
         permit,
     } = params;
     let adapter = runtimes
@@ -569,18 +581,18 @@ fn finalize_admitted_connection(
     let model_token = Token::try_from(resolved_model)
         .ok()
         .or_else(|| Token::try_from(profile_key).ok());
-    let digest_input = format!(
-        "conn={}:rev={}:bind={}:endpoint={}:model={}",
-        conn.id.as_str(),
-        conn.meta.revision,
+    let route_digest_suffix = compute_route_digest(
+        office,
+        employee_id,
+        conn,
         binding_rev,
-        conn.endpoint_url.as_deref().unwrap_or(""),
-        resolved_model
+        resolved_model,
+        exec_rev,
     );
-    let route_digest_suffix = hex_short_sha256(digest_input.as_bytes());
     Ok(AdmittedRoute {
         adapter,
         model_token,
+        auth_mode: Some(conn.auth_mode),
         auth_env,
         endpoint_env,
         preset,
@@ -603,6 +615,7 @@ fn hex_short_sha256(bytes: &[u8]) -> String {
 }
 
 /// Outcome of attempting to re-acquire a turn permit on an idle warm session's existing connection.
+#[derive(Debug)]
 pub(crate) enum WarmPermitOutcome {
     Granted((String, u64)),
     /// Warm session no longer matches current config/readiness/route digest and must cold-start.
@@ -617,18 +630,158 @@ pub(crate) enum WarmPermitOutcome {
     Refused(ApiError),
 }
 
+pub(crate) fn compute_worktree_sandbox_digest(office: &Office, employee_id: &str) -> String {
+    let office_id = &office.info().office_id;
+    let Ok(git_state) = org_office::git::OfficeGitState::load(office.runtime_root(), office_id)
+    else {
+        return "err".to_owned();
+    };
+    let Some(topo_digest) = compute_org_topology_digest(office, employee_id) else {
+        return "err".to_owned();
+    };
+    let mut self_entries = Vec::new();
+    let mut targeted_repos = std::collections::BTreeSet::new();
+    for ws in git_state.workspaces.values() {
+        if ws.employee_id == employee_id && ws.state == "active" {
+            targeted_repos.insert(ws.repository_id.as_str());
+            self_entries.push(format!(
+                "{}:{}:{}",
+                ws.repository_id, ws.admin_dir_name, ws.worktree_path
+            ));
+        }
+    }
+    if targeted_repos.is_empty() {
+        // Zero-worktree sessions emit a blanket `<office_rt>/repositories/**` deny, so untargeted
+        // repos cloned later are already blocked; topology still invalidates on sibling hires,
+        // new teams, team moves, or newly enrolled offices.
+        return hex_short_sha256(format!("topo={topo_digest}|wt=none").as_bytes());
+    }
+    self_entries.sort();
+    let Ok(Ok(repos)) = office.list_repositories(None) else {
+        return "err".to_owned();
+    };
+    let repos_root = office.runtime_root().join(office_id).join("repositories");
+    let known_repos = collect_digest_repo_ids(
+        repos.iter().map(|r| r.record.id.as_str()),
+        &git_state,
+        &repos_root,
+    );
+    let peer_admins = collect_digest_peer_admins(&git_state, &targeted_repos, &repos_root);
+    let material = format!(
+        "topo={topo_digest}|self={}|repos={}|peers={}",
+        self_entries.join(","),
+        known_repos.join(","),
+        peer_admins.join(",")
+    );
+    hex_short_sha256(material.as_bytes())
+}
+
+fn compute_org_topology_digest(office: &Office, employee_id: &str) -> Option<String> {
+    let emp = office.load_employee(employee_id).ok()??;
+    let snapshot = office.org_snapshot().ok()?;
+    let employees = office.list_employees().ok()?;
+    let mut team_entries: Vec<String> = snapshot
+        .teams
+        .iter()
+        .map(|t| format!("{}:{}", t.id, t.owner_team_id.as_deref().unwrap_or("")))
+        .collect();
+    team_entries.sort();
+    let mut emp_ids: Vec<String> = employees
+        .into_iter()
+        .map(|e| e.id.as_str().to_owned())
+        .collect();
+    emp_ids.sort();
+    let mut office_ids = office.enrolled_office_ids().ok()?;
+    office_ids.sort();
+    let material = format!(
+        "home={}|teams={}|emps={}|offices={}",
+        emp.home_team_id,
+        team_entries.join(","),
+        emp_ids.join(","),
+        office_ids.join(",")
+    );
+    Some(hex_short_sha256(material.as_bytes()))
+}
+
+fn collect_digest_repo_ids<'a>(
+    repo_ids: impl IntoIterator<Item = &'a str>,
+    git_state: &org_office::git::OfficeGitState,
+    repos_root: &std::path::Path,
+) -> Vec<String> {
+    let mut ids = std::collections::BTreeSet::new();
+    for rid in repo_ids {
+        ids.insert(rid.to_owned());
+    }
+    for rid in git_state.caches.keys() {
+        ids.insert(rid.clone());
+    }
+    for ws in git_state.workspaces.values() {
+        ids.insert(ws.repository_id.clone());
+    }
+    if let Ok(entries) = std::fs::read_dir(repos_root) {
+        for name in entries
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+        {
+            ids.insert(name);
+        }
+    }
+    ids.into_iter().collect()
+}
+
+fn collect_digest_peer_admins(
+    git_state: &org_office::git::OfficeGitState,
+    targeted_repos: &std::collections::BTreeSet<&str>,
+    repos_root: &std::path::Path,
+) -> Vec<String> {
+    let mut peers = std::collections::BTreeSet::new();
+    for ws in git_state.workspaces.values() {
+        if targeted_repos.contains(ws.repository_id.as_str()) && !ws.admin_dir_name.is_empty() {
+            peers.insert(format!("{}:{}", ws.repository_id, ws.admin_dir_name));
+        }
+    }
+    for rid in targeted_repos {
+        let wt_dir = repos_root.join(format!("{rid}.git")).join("worktrees");
+        if let Ok(entries) = std::fs::read_dir(wt_dir) {
+            for name in entries
+                .flatten()
+                .filter_map(|e| e.file_name().into_string().ok())
+            {
+                peers.insert(format!("{rid}:{name}"));
+            }
+        }
+    }
+    peers.into_iter().collect()
+}
+
 fn compute_route_digest(
+    office: &Office,
+    employee_id: &str,
     conn: &ProviderConnection,
     binding_rev: u64,
     resolved_model: &str,
+    exec_rev: u64,
+) -> String {
+    let wt_digest = compute_worktree_sandbox_digest(office, employee_id);
+    compute_route_digest_with_wt(conn, binding_rev, resolved_model, exec_rev, &wt_digest)
+}
+
+fn compute_route_digest_with_wt(
+    conn: &ProviderConnection,
+    binding_rev: u64,
+    resolved_model: &str,
+    exec_rev: u64,
+    wt_digest: &str,
 ) -> String {
     let digest_input = format!(
-        "conn={}:rev={}:bind={}:endpoint={}:model={}",
+        "conn={}:rev={}:bind={}:endpoint={}:model={}:exec={}:wt={}",
         conn.id.as_str(),
         conn.meta.revision,
         binding_rev,
         conn.endpoint_url.as_deref().unwrap_or(""),
-        resolved_model
+        resolved_model,
+        exec_rev,
+        wt_digest
     );
     hex_short_sha256(digest_input.as_bytes())
 }
@@ -689,7 +842,19 @@ pub(crate) fn acquire_warm_permit_for_office(
             Ok(Err(_)) | Err(_) => return WarmPermitOutcome::StaleWarm,
         };
     if let Some(expected) = expected_route_digest {
-        let current_digest = compute_route_digest(&conn, binding_rev, &resolved_model);
+        let wt_digest = compute_worktree_sandbox_digest(office, employee_id);
+        // Never allow a persistent `"err"` sentinel to match a prior `"err"` digest; fail closed
+        // into `StaleWarm` so topology or repository changes are never masked.
+        if wt_digest == "err" {
+            return WarmPermitOutcome::StaleWarm;
+        }
+        let current_digest = compute_route_digest_with_wt(
+            &conn,
+            binding_rev,
+            &resolved_model,
+            cfg.meta.revision,
+            &wt_digest,
+        );
         if current_digest != expected {
             return WarmPermitOutcome::StaleWarm;
         }

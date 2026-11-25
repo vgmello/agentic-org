@@ -23,14 +23,18 @@ use super::{registered, say};
 use crate::human::Wire;
 
 /// Help text for `agentic-org project`.
-pub const HELP: &str = "agentic-org project <subcommand>\n\n\
+pub const HELP: &str = "agentic-org project <subcommand>\n\
+Use when: listing, inspecting, or creating organization projects from the operator CLI.\n\n\
 Subcommands:\n  \
 list --login <login> [--org <org_id>] [--include-archived] [--name <instance>] [--json]\n      \
-List projects in an organization\n  \
+List projects in an organization\n      \
+Use when: discovering active (or archived with --include-archived) projects, keys, slugs, and owning teams.\n  \
 inspect <project> --login <login> [--org <org_id>] [--name <instance>] [--json]\n      \
-Inspect one project by ID, P-<number> key, or slug\n  \
+Inspect one project by ID, P-<number> key, or slug\n      \
+Use when: checking one project's owning team, contributing teams, and status.\n  \
 create <name> --login <login> [--org <org_id>] [--slug <slug>] [--owner-team <team_id>] [--parent-team <team_id>] [--name <instance>] [--json]\n      \
-Create a project (creates a dedicated owning team automatically unless --owner-team is given)\n\n\
+Create a project (creates a dedicated owning team automatically unless --owner-team is given)\n      \
+Use when: starting a new project with an accountable owning team.\n\n\
 Asks for the account password at the terminal. On systems that cannot identify the host's \
 program (Linux, containers), terminal password sign-in is refused until browser-approved \
 CLI sign-in is available.";
@@ -114,7 +118,7 @@ pub fn project_create(
     )
 }
 
-struct OfficeSession {
+pub(super) struct OfficeSession {
     office_id: String,
     channel_id: String,
     reader: BufReader<UnixStream>,
@@ -122,10 +126,37 @@ struct OfficeSession {
 }
 
 impl OfficeSession {
-    fn open(
+    pub(super) fn open(
         wire: &mut Wire,
         session: &SessionHandle,
         org_id: Option<&str>,
+    ) -> Result<Self, String> {
+        Self::open_selected(wire, session, org_id, None, false)
+    }
+
+    pub(super) fn open_hq(
+        wire: &mut Wire,
+        session: &SessionHandle,
+        org_id: Option<&str>,
+    ) -> Result<Self, String> {
+        Self::open_selected(wire, session, org_id, None, true)
+    }
+
+    pub(super) fn open_for_office(
+        wire: &mut Wire,
+        session: &SessionHandle,
+        org_id: Option<&str>,
+        office_id: Option<&str>,
+    ) -> Result<Self, String> {
+        Self::open_selected(wire, session, org_id, office_id, false)
+    }
+
+    fn open_selected(
+        wire: &mut Wire,
+        session: &SessionHandle,
+        org_id: Option<&str>,
+        explicit_office_id: Option<&str>,
+        require_hq: bool,
     ) -> Result<Self, String> {
         let handle = || SessionHandle::new(session.expose().into()).expect("a live handle");
         let listed = match wire.call_answer::<OfficeList>(
@@ -145,7 +176,7 @@ impl OfficeSession {
         if listed.offices.is_empty() {
             return Err("no offices found for this account".into());
         }
-        if org_id.is_none() {
+        if org_id.is_none() && explicit_office_id.is_none() {
             let distinct_orgs: std::collections::BTreeSet<&str> = listed
                 .offices
                 .iter()
@@ -155,13 +186,30 @@ impl OfficeSession {
                 return Err("multiple organizations found; pass --org <org_id>".into());
             }
         }
-        let office_id = listed
-            .offices
-            .iter()
-            .find(|o| o.role == OfficeRole::Hq)
-            .or_else(|| listed.offices.first())
-            .map(|o| o.id.clone())
-            .ok_or_else(|| "no HQ office found".to_owned())?;
+        let office_id = if let Some(requested) = explicit_office_id {
+            listed
+                .offices
+                .iter()
+                .find(|o| o.id == requested)
+                .map(|o| o.id.clone())
+                .ok_or_else(|| format!("office `{requested}` not found"))?
+        } else if require_hq {
+            listed
+                .offices
+                .iter()
+                .find(|o| o.role == OfficeRole::Hq)
+                .map(|o| o.id.clone())
+                .ok_or_else(|| {
+                    "no HQ office found on this host; run this command on the HQ instance"
+                        .to_owned()
+                })?
+        } else if let Some(hq) = listed.offices.iter().find(|o| o.role == OfficeRole::Hq) {
+            hq.id.clone()
+        } else if listed.offices.len() == 1 {
+            listed.offices[0].id.clone()
+        } else {
+            return Err("multiple offices found; pass --office <office_id>".into());
+        };
         let opened = match wire.call_answer::<OfficeOpenChannel>(
             &OfficeOpenChannelParams {
                 session: handle(),
@@ -208,7 +256,7 @@ impl OfficeSession {
         })
     }
 
-    fn call<C: Call>(
+    pub(super) fn call<C: Call>(
         &mut self,
         wire: &mut Wire,
         session: &SessionHandle,
@@ -452,5 +500,13 @@ mod tests {
             "{line}"
         );
         assert!(line.contains("status=active\tname=Billing"), "{line}");
+    }
+
+    #[test]
+    fn help_includes_use_when_guidance_for_each_subcommand() {
+        assert!(
+            HELP.matches("Use when:").count() >= 4,
+            "expected command + 3 subcommand Use when cues:\n{HELP}"
+        );
     }
 }

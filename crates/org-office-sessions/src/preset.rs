@@ -159,6 +159,37 @@ pub fn build_session_policy(
     })
 }
 
+/// Extends a [`PresetConfig`] with agent-owned task worktree writable roots and bare-cache
+/// write-only denies (`doc-35` / `FC-103` / `TASK-126`) without denying read access to shared
+/// Git metadata (`HEAD`, `config`, `packed-refs`, `refs/remotes`).
+pub fn apply_worktree_sandbox_rules(
+    cfg: &mut PresetConfig,
+    extra_writable_roots: &[SpecPath],
+    extra_write_denies: &[PathPattern],
+) {
+    if cfg.preset != PermissionPreset::ReadOnly {
+        for root in extra_writable_roots {
+            if !cfg.sandbox.writable_roots.contains(root) {
+                cfg.sandbox.writable_roots.push(root.clone());
+            }
+        }
+    }
+    let edit_tool = RuleTool::try_from(ToolCapability::Edit.as_rule_token())
+        .expect("static edit capability token is valid");
+    for pat in extra_write_denies {
+        if !cfg.sandbox.deny_write.contains(pat) {
+            cfg.sandbox.deny_write.push(pat.clone());
+        }
+        let deny_rule = Rule {
+            tool: edit_tool.clone(),
+            scope: RuleScope::Path(pat.clone()),
+        };
+        if !cfg.policy.deny.contains(&deny_rule) {
+            cfg.policy.deny.push(deny_rule);
+        }
+    }
+}
+
 /// How the office answers an incoming [`ApprovalRequest`] from a runtime session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EscalationDisposition {
@@ -196,6 +227,20 @@ pub fn decide_escalation_with_tools(
     preset: PermissionPreset,
     allowed_tools: Option<&[ToolName]>,
 ) -> EscalationDisposition {
+    decide_escalation_with_roots(request, policy, preset, allowed_tools, None)
+}
+
+/// Evaluates an [`ApprovalRequest`] against the session's policy, optional `allowed_tools`
+/// allowlist, optional sandbox `writable_roots` (for file-editing tools running outside OS shell
+/// confinement such as Claude's built-in `Write`/`Edit` tools, per `doc-29`), and ADR-0032
+/// escalation rules.
+pub fn decide_escalation_with_roots(
+    request: &ApprovalRequest,
+    policy: &PermissionPolicy,
+    preset: PermissionPreset,
+    allowed_tools: Option<&[ToolName]>,
+    writable_roots: Option<&[SpecPath]>,
+) -> EscalationDisposition {
     let escalation = request.effective_escalation();
     if escalation == Escalation::SandboxBypass {
         return EscalationDisposition::AutoDeny {
@@ -208,14 +253,19 @@ pub fn decide_escalation_with_tools(
     if let Some(blocked_path) = &request.blocked_path {
         strings.push(blocked_path.clone());
     }
-    // Include extracted concrete file targets (including map-shaped `changes` object keys)
-    // so every target path accepted as concrete is checked against fixed path denies.
-    for target in extract_concrete_file_targets(request) {
-        if !strings.contains(&target) {
-            strings.push(target);
+    // Include extracted concrete file targets (including map-shaped `changes` object keys and
+    // rename destinations) so every target path is checked against fixed path denies.
+    let (concrete_targets, has_opaque_targets) = extract_concrete_file_targets(request);
+    for target in &concrete_targets {
+        if !strings.contains(target) {
+            strings.push(target.clone());
         }
     }
-    if matches_any_deny(&policy.deny, request, &strings) {
+    // Build a separate deny-check vector augmented with canonicalized/normalized target paths
+    // so `/./`, `//`, OS path aliases (`/var` -> `/private/var`), and in-root symlinks cannot
+    // evade fixed path denies while keeping `matches_any_allow` strictly on raw `strings`.
+    let deny_strings = build_deny_strings(&strings, &concrete_targets);
+    if matches_any_deny(&policy.deny, request, &deny_strings) {
         return EscalationDisposition::AutoDeny {
             reason: format!(
                 "Tool `{}` is denied by office security policy.",
@@ -228,6 +278,18 @@ pub fn decide_escalation_with_tools(
             return EscalationDisposition::AutoDeny {
                 reason: format!(
                     "Tool `{}` is outside this session's allowed tools.",
+                    request.tool
+                ),
+            };
+        }
+    }
+    if let Some(roots) = writable_roots {
+        if is_edit_request(request)
+            && (has_opaque_targets || !all_targets_within_writable_roots(&concrete_targets, roots))
+        {
+            return EscalationDisposition::AutoDeny {
+                reason: format!(
+                    "Write target for tool `{}` is outside this session's writable roots.",
                     request.tool
                 ),
             };
@@ -249,6 +311,192 @@ pub fn decide_escalation_with_tools(
             ),
         },
     }
+}
+
+fn is_edit_request(request: &ApprovalRequest) -> bool {
+    request.kind == ApprovalKind::FileChange || request.capability == Some(ToolCapability::Edit)
+}
+
+fn push_unique_path(out: &mut Vec<String>, path: Option<std::path::PathBuf>) {
+    let Some(s) = path.as_deref().and_then(std::path::Path::to_str) else {
+        return;
+    };
+    if !out.iter().any(|existing| existing == s) {
+        out.push(s.to_owned());
+    }
+}
+
+fn build_deny_strings(raw_strings: &[String], concrete_targets: &[String]) -> Vec<String> {
+    let mut deny_strings = raw_strings.to_vec();
+    for target in concrete_targets {
+        let p = std::path::Path::new(target);
+        push_unique_path(&mut deny_strings, resolve_path_for_root_check(p));
+        push_unique_path(&mut deny_strings, resolve_path_for_deny(p));
+        if p.is_absolute() {
+            push_unique_path(&mut deny_strings, p.canonicalize().ok());
+            push_unique_path(&mut deny_strings, lexical_normalize_abs(p));
+        }
+    }
+    deny_strings
+}
+
+fn push_deny_components(
+    path: &std::path::Path,
+    queue: &mut std::collections::VecDeque<std::ffi::OsString>,
+    prepend: bool,
+) {
+    let mut parts: Vec<std::ffi::OsString> = Vec::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::RootDir => parts.push(std::path::MAIN_SEPARATOR_STR.into()),
+            std::path::Component::Prefix(pref) => parts.push(pref.as_os_str().to_os_string()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => parts.push("..".into()),
+            std::path::Component::Normal(seg) => parts.push(seg.to_os_string()),
+        }
+    }
+    if prepend {
+        for part in parts.into_iter().rev() {
+            queue.push_front(part);
+        }
+    } else {
+        queue.extend(parts);
+    }
+}
+
+/// Bounded component-by-component path resolver used strictly for deny matching (`matches_any_deny`).
+/// Follows both live and dangling symlinks via `read_link` and collapses `..` while canonicalizing
+/// existing prefixes so unsandboxed (`writable_roots = None`) sessions still block writes through
+/// dangling symlinks or symlink+`..` traversals into denied targets.
+fn resolve_path_for_deny(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    const MAX_SYMLINK_HOPS: usize = 40;
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut queue = std::collections::VecDeque::new();
+    push_deny_components(path, &mut queue, false);
+    let mut cur = std::path::PathBuf::new();
+    let mut hops = 0usize;
+    while let Some(seg) = queue.pop_front() {
+        if seg == std::path::MAIN_SEPARATOR_STR {
+            cur = std::path::PathBuf::from(std::path::MAIN_SEPARATOR_STR);
+            continue;
+        }
+        if seg == ".." {
+            if cur.parent().is_some() {
+                cur.pop();
+            }
+            continue;
+        }
+        let next = cur.join(&seg);
+        if let Ok(target) = std::fs::read_link(&next) {
+            hops += 1;
+            if hops > MAX_SYMLINK_HOPS {
+                return None;
+            }
+            if target.is_absolute() {
+                cur = std::path::PathBuf::from(std::path::MAIN_SEPARATOR_STR);
+            }
+            push_deny_components(&target, &mut queue, true);
+            continue;
+        }
+        cur = next.canonicalize().unwrap_or(next);
+    }
+    cur.is_absolute().then_some(cur)
+}
+
+fn lexical_normalize_abs(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut out = std::path::PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::RootDir => out.push(std::path::MAIN_SEPARATOR_STR),
+            std::path::Component::Prefix(pref) => out.push(pref.as_os_str()),
+            std::path::Component::Normal(seg) => out.push(seg),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if out.parent().is_some() {
+                    out.pop();
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+fn all_targets_within_writable_roots(targets: &[String], roots: &[SpecPath]) -> bool {
+    if targets.is_empty() || roots.is_empty() {
+        return false;
+    }
+    let canon_roots: Vec<std::path::PathBuf> = roots
+        .iter()
+        .filter_map(|r| resolve_path_for_root_check(std::path::Path::new(r.as_str())))
+        // Never accept filesystem root `/` as a writable root.
+        .filter(|canon| canon.parent().is_some())
+        .collect();
+    if canon_roots.is_empty() {
+        return false;
+    }
+    targets
+        .iter()
+        .all(|t| target_within_canonical_roots(t, &canon_roots))
+}
+
+fn target_within_canonical_roots(raw: &str, canon_roots: &[std::path::PathBuf]) -> bool {
+    let Some(resolved) = resolve_path_for_root_check(std::path::Path::new(raw)) else {
+        return false;
+    };
+    canon_roots.iter().any(|root| resolved.starts_with(root))
+}
+
+fn normalize_strict_abs_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let raw = path.to_str()?;
+    if raw.is_empty() || raw.contains('\0') {
+        return None;
+    }
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    // Rebuilding from `components()` strips trailing `/`, `/.`, and duplicate separators so
+    // POSIX `lstat` (`symlink_metadata`) never dereferences a trailing-slash dangling symlink.
+    let clean: std::path::PathBuf = path.components().collect();
+    clean.is_absolute().then_some(clean)
+}
+
+fn resolve_path_for_root_check(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let clean = normalize_strict_abs_path(path)?;
+    if let Ok(canon) = clean.canonicalize() {
+        return Some(canon);
+    }
+    let mut tail = Vec::new();
+    let mut cur: &std::path::Path = &clean;
+    while let Some(parent) = cur.parent() {
+        // Fail closed on any symlink (leaf or intermediate) or non-NotFound metadata error
+        // (ELOOP, EACCES, ENOTDIR, InvalidInput) so dangling symlinks cannot escape roots.
+        match std::fs::symlink_metadata(cur) {
+            Ok(meta) if meta.file_type().is_symlink() => return None,
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return None,
+        }
+        if let Some(name) = cur.file_name() {
+            tail.push(name.to_os_string());
+        }
+        if let Ok(mut base) = parent.canonicalize() {
+            for seg in tail.into_iter().rev() {
+                base.push(seg);
+            }
+            return Some(base);
+        }
+        cur = parent;
+    }
+    None
 }
 
 fn evaluate_allow_policy(
@@ -392,42 +640,117 @@ fn is_file_target_request(request: &ApprovalRequest) -> bool {
         )
 }
 
-fn non_empty_str(val: Option<&serde_json::Value>) -> bool {
-    val.and_then(serde_json::Value::as_str)
-        .is_some_and(|s| !s.trim().is_empty())
-}
+const MOVE_DEST_KEYS: &[&str] = &[
+    "move_path",
+    "movePath",
+    "new_path",
+    "newPath",
+    "destination",
+];
 
-fn extract_change_item_path(item: &serde_json::Value) -> Option<&str> {
-    let map = item.as_object()?;
-    map.get("path")
-        .or_else(|| map.get("file_path"))
-        .or_else(|| map.get("filePath"))
-        .and_then(serde_json::Value::as_str)
-        .filter(|s| !s.trim().is_empty())
-}
-
-fn extract_changes_targets(changes: &serde_json::Value, targets: &mut Vec<String>) {
-    match changes {
-        serde_json::Value::Array(items) if !items.is_empty() => {
-            let extracted: Option<Vec<String>> = items
-                .iter()
-                .map(|item| extract_change_item_path(item).map(ToOwned::to_owned))
-                .collect();
-            if let Some(paths) = extracted {
-                targets.extend(paths);
+fn extract_optional_path_keys(
+    map: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+    targets: &mut Vec<String>,
+    opaque: &mut bool,
+) {
+    for key in keys {
+        if let Some(val) = map.get(*key).filter(|v| !v.is_null()) {
+            match val.as_str().filter(|s| !s.trim().is_empty()) {
+                Some(s) => targets.push(s.to_owned()),
+                None => *opaque = true,
             }
         }
-        serde_json::Value::Object(map)
-            if !map.is_empty() && map.keys().all(|k| !k.trim().is_empty()) =>
-        {
-            targets.extend(map.keys().cloned());
-        }
-        _ => {}
     }
 }
 
-fn extract_concrete_file_targets(request: &ApprovalRequest) -> Vec<String> {
+fn extract_change_dest_paths(
+    map: &serde_json::Map<String, serde_json::Value>,
+    targets: &mut Vec<String>,
+    opaque: &mut bool,
+) {
+    extract_optional_path_keys(map, MOVE_DEST_KEYS, targets, opaque);
+    if let Some(kind_map) = map.get("kind").and_then(serde_json::Value::as_object) {
+        extract_optional_path_keys(kind_map, MOVE_DEST_KEYS, targets, opaque);
+    }
+}
+
+const CHANGE_ITEM_PATH_KEYS: &[&str] = &[
+    "path",
+    "file_path",
+    "filePath",
+    "notebook_path",
+    "notebookPath",
+    "TargetFile",
+    "AbsolutePath",
+    "target_file",
+];
+
+fn extract_change_array_item(
+    item: &serde_json::Value,
+    targets: &mut Vec<String>,
+    opaque: &mut bool,
+) {
+    let Some(map) = item.as_object() else {
+        *opaque = true;
+        return;
+    };
+    let before = targets.len();
+    extract_optional_path_keys(map, CHANGE_ITEM_PATH_KEYS, targets, opaque);
+    if targets.len() == before {
+        *opaque = true;
+    }
+    extract_change_dest_paths(map, targets, opaque);
+}
+
+fn extract_changes_targets(
+    changes: &serde_json::Value,
+    targets: &mut Vec<String>,
+    opaque: &mut bool,
+) {
+    match changes {
+        serde_json::Value::Array(items) if !items.is_empty() => {
+            for item in items {
+                extract_change_array_item(item, targets, opaque);
+            }
+        }
+        serde_json::Value::Object(map) if !map.is_empty() => {
+            for (k, v) in map {
+                if k.trim().is_empty() {
+                    *opaque = true;
+                } else {
+                    targets.push(k.clone());
+                }
+                if let Some(vmap) = v.as_object() {
+                    extract_optional_path_keys(vmap, CHANGE_ITEM_PATH_KEYS, targets, opaque);
+                    extract_change_dest_paths(vmap, targets, opaque);
+                }
+            }
+        }
+        _ => *opaque = true,
+    }
+}
+
+fn extract_paths_array(
+    paths_val: &serde_json::Value,
+    targets: &mut Vec<String>,
+    opaque: &mut bool,
+) {
+    let Some(paths) = paths_val.as_array().filter(|a| !a.is_empty()) else {
+        *opaque = true;
+        return;
+    };
+    for v in paths {
+        match v.as_str().filter(|s| !s.trim().is_empty()) {
+            Some(s) => targets.push(s.to_owned()),
+            None => *opaque = true,
+        }
+    }
+}
+
+fn extract_concrete_file_targets(request: &ApprovalRequest) -> (Vec<String>, bool) {
     let mut targets = Vec::new();
+    let mut opaque = false;
     if let Some(bp) = request
         .blocked_path
         .as_deref()
@@ -436,7 +759,10 @@ fn extract_concrete_file_targets(request: &ApprovalRequest) -> Vec<String> {
         targets.push(bp.to_owned());
     }
     let Some(obj) = request.input.as_object() else {
-        return targets;
+        if !request.input.is_null() {
+            opaque = true;
+        }
+        return (targets, opaque);
     };
     const SINGLE_PATH_KEYS: &[&str] = &[
         "file_path",
@@ -445,35 +771,29 @@ fn extract_concrete_file_targets(request: &ApprovalRequest) -> Vec<String> {
         "AbsolutePath",
         "filePath",
         "target_file",
+        "notebook_path",
+        "notebookPath",
+        "move_path",
+        "movePath",
+        "new_path",
+        "newPath",
+        "destination",
     ];
-    for key in SINGLE_PATH_KEYS {
-        if let Some(s) = obj
-            .get(*key)
-            .and_then(serde_json::Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-        {
-            targets.push(s.to_owned());
-        }
-    }
-    if let Some(paths) = obj.get("paths").and_then(serde_json::Value::as_array) {
-        if !paths.is_empty() && paths.iter().all(|v| non_empty_str(Some(v))) {
-            targets.extend(
-                paths
-                    .iter()
-                    .filter_map(|v| v.as_str().map(ToOwned::to_owned)),
-            );
-        }
+    extract_optional_path_keys(obj, SINGLE_PATH_KEYS, &mut targets, &mut opaque);
+    if let Some(paths_val) = obj.get("paths").filter(|v| !v.is_null()) {
+        extract_paths_array(paths_val, &mut targets, &mut opaque);
     }
     for changes_key in ["changes", "fileChanges"] {
-        if let Some(changes) = obj.get(changes_key) {
-            extract_changes_targets(changes, &mut targets);
+        if let Some(changes) = obj.get(changes_key).filter(|v| !v.is_null()) {
+            extract_changes_targets(changes, &mut targets, &mut opaque);
         }
     }
-    targets
+    (targets, opaque)
 }
 
 fn has_concrete_file_target(request: &ApprovalRequest) -> bool {
-    !extract_concrete_file_targets(request).is_empty()
+    let (targets, opaque) = extract_concrete_file_targets(request);
+    !targets.is_empty() && !opaque
 }
 
 fn request_in_allowed_tools(request: &ApprovalRequest, allowlist: &[ToolName]) -> bool {
@@ -497,7 +817,12 @@ fn rule_matches_tool(rule: &Rule, request: &ApprovalRequest, is_deny: bool) -> b
     }
     if ToolCapability::is_capability_token(rule_tool) {
         return match ToolCapability::parse_rule_token(rule_tool) {
-            Some(cap) => request.capability == Some(cap),
+            Some(cap) => {
+                request.capability == Some(cap)
+                    || (is_deny
+                        && cap == ToolCapability::Edit
+                        && request.kind == ApprovalKind::FileChange)
+            }
             // Fail closed on unrecognized capability tokens: always match denies, never allows.
             None => is_deny,
         };
@@ -1156,7 +1481,7 @@ fn matches_any_deny(rules: &[Rule], request: &ApprovalRequest, strings: &[String
             RuleScope::Any => true,
             RuleScope::Path(pattern) => strings
                 .iter()
-                .any(|s| path_matches_glob(s, pattern.as_str())),
+                .any(|s| path_matches_glob_deny(s, pattern.as_str())),
             RuleScope::CommandPrefix(prefix) => {
                 matches_command_prefix_deny(&request.input, prefix.as_str())
             }
@@ -1196,6 +1521,17 @@ fn matches_any_allow(rules: &[Rule], request: &ApprovalRequest, strings: &[Strin
             _ => false, // Unknown allow scope is dropped.
         }
     })
+}
+
+fn path_matches_glob_deny(candidate: &str, pattern: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        path_matches_glob(&candidate.to_lowercase(), &pattern.to_lowercase())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        path_matches_glob(candidate, pattern)
+    }
 }
 
 fn path_matches_glob(candidate: &str, pattern: &str) -> bool {

@@ -38,6 +38,10 @@ pub(super) fn fill_entropy(_bytes: &mut [u8]) -> io::Result<()> {
     Err(Refused::unsupported(CAPABILITY).into())
 }
 
+pub(super) fn unix_socket_path_filter_supported() -> bool {
+    true
+}
+
 /// Test support: nothing here confines with system calls a profile could refuse.
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn refuse_call(

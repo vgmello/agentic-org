@@ -187,6 +187,8 @@ pub struct Config {
     /// The TLS pair setup's configuration supplied for an `https` listener, imported at the
     /// instance's first start (`web_tls`). Set by the registered start from its record.
     supplied_tls: Option<instance::setup::SuppliedTls>,
+    /// Optional HQ mTLS federation listener configuration from the instance's setup record.
+    federation: Option<instance::setup::FederationConfig>,
     /// Signing policy reserved for CLI sessions in 2b.3; it enables no retired host calls.
     app_team_id: Option<String>,
     /// Debug builds only (release builds don't have the field): an unsigned development app
@@ -234,6 +236,7 @@ impl Config {
             max_connections: 64,
             browser_listener: None,
             supplied_tls: None,
+            federation: None,
             app_team_id: app_team_id.map(str::to_owned),
             #[cfg(debug_assertions)]
             dev_app_path: None,
@@ -367,6 +370,12 @@ fn instance_error(error: instance::Error) -> HostError {
 /// app and `agent-os` find `host.sock` by the same rule.
 pub fn default_office_home() -> Option<PathBuf> {
     home::default_office_home()
+}
+
+/// The account's default protected release-store folder (`<trusted-app-base>/release-store`),
+/// used by `agentic-org release install|status` and release-build `setup` / `serve` admission.
+pub fn default_release_store_dir() -> Result<PathBuf, String> {
+    trusted_office_home().map(|home| home.join("release-store"))
 }
 
 /// The office home a trusted (release) host serves: its account's own office home, this
@@ -868,6 +877,7 @@ impl Host {
             keys: Arc::clone(&keys),
             server_check: Arc::new(server_check),
             sweep_orphans,
+            federation: config.federation.clone(),
         };
         let supervisor = match &instance {
             Some(instance) => Supervisor::new(supervisor_config, instance.id()),

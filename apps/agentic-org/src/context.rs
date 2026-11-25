@@ -14,6 +14,13 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
             let mut out = std::io::stdout().lock();
             org_host::setup_flow::context_clear(&mut out)
         }
+        [sub, flag]
+            if matches!(sub.as_str(), "show" | "clear")
+                && matches!(flag.as_str(), "--help" | "-h") =>
+        {
+            println!("{}", org_host::setup_flow::CONTEXT_HELP);
+            Ok(())
+        }
         [sub, rest @ ..] if sub == "use" => {
             if matches!(rest, [flag] if flag == "--help" || flag == "-h") {
                 println!("{}", org_host::setup_flow::CONTEXT_HELP);
@@ -46,7 +53,13 @@ mod tests {
     #[test]
     fn context_cli_validates_arguments_before_host_contact() {
         assert!(run(&["--help"]).is_ok());
+        assert!(run(&["-h"]).is_ok());
+        assert!(run(&["show", "--help"]).is_ok());
+        assert!(run(&["show", "-h"]).is_ok());
+        assert!(run(&["clear", "--help"]).is_ok());
+        assert!(run(&["clear", "-h"]).is_ok());
         assert!(run(&["use", "--help"]).is_ok());
+        assert!(run(&["use", "-h"]).is_ok());
         assert!(run(&["use"])
             .unwrap_err()
             .starts_with("--office is required"));
