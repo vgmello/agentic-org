@@ -23,4 +23,12 @@ describe('B6 draft registry (SIGN-15, SIGN-19)', () => {
 		});
 		expect(registry.hasUnsavedText()).toBe(true);
 	});
+	it('counts off-screen retained probes toward sign-out confirmation without reporting page editability', () => {
+		const registry = createDraftRegistry();
+		const unregister = registry.registerRetained(() => true);
+		expect(registry.hasEditable()).toBe(false);
+		expect(registry.hasUnsavedText()).toBe(true);
+		unregister();
+		expect(registry.hasUnsavedText()).toBe(false);
+	});
 });

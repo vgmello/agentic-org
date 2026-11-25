@@ -493,6 +493,9 @@ pub struct Member {
     /// The employee's single home team ID (Doc 01).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_team_id: Option<String>,
+    /// The employee's optional referenced shared role ID (`roles/<id>.md`, Doc 04).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_id: Option<String>,
     /// The employee's optional title within its home team.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_in_team: Option<String>,
@@ -1256,7 +1259,7 @@ pub enum OrgChange {
         team_id: String,
     },
     MemberUpserted {
-        member: Member,
+        member: Box<Member>,
     },
     MemberRemoved {
         member_id: String,

@@ -370,6 +370,7 @@ mod tests {
             name: name.into(),
             handle: None,
             home_team_id: None,
+            role_id: None,
             title_in_team: None,
             contact: None,
             owner: false,

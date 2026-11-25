@@ -41,7 +41,10 @@
 		SheetTitle
 	} from '$lib/components/ui/sheet';
 	import { toAppError } from '$lib/proto';
+	import { appSession } from '$lib/platform/auth/app-session.svelte';
+	import { drafts } from '$lib/platform/auth/draft-registry';
 	import { registerModalBack } from '$lib/platform/shell/modal-back';
+	import { newStableId } from '$lib/modules/organization/commands';
 	import { rolesApi } from '../../api';
 	import {
 		NOTHING_TO_SAVE,
@@ -56,7 +59,14 @@
 	} from '../../present';
 	import type { RoleField } from '../../types';
 	import RoleBody from '../role-page/RoleBody.svelte';
-	import { discardDraft, draftKey, keepDraft, keptDraft } from './kept-drafts';
+	import {
+		discardDraft,
+		discardDraftIfVersion,
+		draftKey,
+		keepDraft,
+		keptDraft,
+		retainMountedAttempt
+	} from './kept-drafts';
 
 	let {
 		organizationId,
@@ -82,10 +92,17 @@
 	let latest = $state.raw<Role | undefined>();
 	let conflictMessage = $state('');
 	let expectedRevision = $state(0);
+	let attemptId = $state('');
+	let editorCaller = $state('');
+	let editorSessionGeneration = $state(0);
+	let hasUncertainAttempt = $state(false);
 	/** Text kept from an earlier close was put back in the fields. */
 	let restored = $state(false);
-	/** Set by Cancel and by a save: this close leaves nothing to keep. */
+	/** Set by Cancel and by a confirmed save: this close leaves nothing to keep. */
 	let discarding = false;
+	let confirmedSave = false;
+	let unmounted = false;
+	let keptVersion: number | undefined;
 
 	let nameField = $state<HTMLElement | null>(null);
 	let keyField = $state<HTMLElement | null>(null);
@@ -95,14 +112,17 @@
 
 	const editing = $derived(mode.kind === 'edit' ? mode.role : undefined);
 	const lockedBy = $derived(editing?.keyNamedBy?.length ? editing.keyNamedBy.join(', ') : '');
-	const slot = $derived(draftKey(organizationId, editing?.id));
+	const slot = $derived(draftKey(organizationId, editing?.id, editorCaller));
 
 	/** Opens the editor for `next`, with any text kept from the last time this editor closed unsaved. */
 	export function start(next: EditorMode) {
 		mode = next;
+		const caller = appSession.callerScope ?? '';
+		editorCaller = caller;
+		editorSessionGeneration = appSession.sessionGeneration;
 		const role = next.kind === 'edit' ? next.role : undefined;
 		const draft = next.kind === 'new' ? next.draft : undefined;
-		const slotKey = draftKey(organizationId, role?.id);
+		const slotKey = draftKey(organizationId, role?.id, caller);
 		// A fresh HR draft is what the person just asked for: it replaces text kept for a new role.
 		if (next.kind === 'new' && next.fromHr) discardDraft(slotKey);
 		const kept = keptDraft(slotKey);
@@ -112,16 +132,21 @@
 		expectedRevision = kept?.expectedRevision ?? role?.revision ?? 0;
 		latest = kept?.latest;
 		conflictMessage = kept?.conflictMessage ?? '';
+		attemptId = kept?.attemptId ?? newStableId();
+		hasUncertainAttempt = kept?.hasUncertainAttempt ?? false;
 		restored = !!kept;
 		errors = {};
 		failure = undefined;
 		notice = undefined;
 		discarding = false;
+		confirmedSave = false;
+		keptVersion = undefined;
 		open = true;
 	}
 
-	/** What was typed differs from what the editor opened with. */
+	/** What was typed differs from what the editor opened with (or an uncertain/in-flight attempt still needs reconciliation). */
 	function typed(): boolean {
+		if (hasUncertainAttempt || busy) return true;
 		const draft = normalizeDraft({ name, key, bodyMarkdown: body });
 		if (editing) return !!latest || !unchanged(editing, draft);
 		const initial = mode.kind === 'new' ? mode.draft : undefined;
@@ -135,25 +160,81 @@
 		);
 	}
 
+	function isSameEditorSession(): boolean {
+		if (appSession.state.kind === 'signed-out') return false;
+		if ((appSession.callerScope ?? '') !== editorCaller) return false;
+		return appSession.sessionGeneration === editorSessionGeneration;
+	}
+
+	function resetOnSessionEnd() {
+		discarding = true;
+		confirmedSave = false;
+		keptVersion = undefined;
+		discardDraft(slot);
+		name = '';
+		key = '';
+		body = '';
+		errors = {};
+		failure = undefined;
+		notice = undefined;
+		latest = undefined;
+		conflictMessage = '';
+		attemptId = '';
+		hasUncertainAttempt = false;
+		restored = false;
+		open = false;
+	}
+
 	function keepOrDiscard() {
-		if (!discarding && typed())
-			keepDraft(slot, { name, key, body, expectedRevision, latest, conflictMessage });
-		else discardDraft(slot);
+		const shouldKeep = !discarding && !confirmedSave && isSameEditorSession() && typed();
+		if (shouldKeep)
+			keptVersion = keepDraft(slot, {
+				name,
+				key,
+				body,
+				expectedRevision,
+				latest,
+				conflictMessage,
+				attemptId,
+				hasUncertainAttempt: hasUncertainAttempt || busy
+			});
+		else {
+			keptVersion = undefined;
+			discardDraft(slot);
+		}
+		attemptId = '';
 		discarding = false;
 	}
 
 	function cancel() {
 		discarding = true;
+		hasUncertainAttempt = false;
 		open = false;
 	}
 
-	// Back with the sheet open closes it only, and focus returns to its opener (§6).
+	// Back with the sheet open closes it only when not saving, and focus returns to its opener (§6).
 	$effect(() => {
-		if (open) return registerModalBack(() => (open = false));
+		if (open)
+			return registerModalBack(() => {
+				if (!busy) open = false;
+			});
 	});
-	// Leaving the page with the sheet open keeps the text, as Back does.
+	// Cross-tab sign-out or account switch closes and clears any mounted draft immediately;
+	// same-account reauthentication does not fire onSessionEnded, so the draft stays intact.
+	$effect(() => appSession.onSessionEnded(resetOnSessionEnd));
+	// Leaving the page with the sheet open keeps the text BEFORE mounted-attempt retention releases.
 	$effect(() => () => {
+		unmounted = true;
 		if (open) keepOrDiscard();
+	});
+	// Keep retry identity alive while this editor holds an attemptId (including during close animation).
+	$effect(() => {
+		if (attemptId) return retainMountedAttempt(attemptId);
+	});
+	// Register mounted open drafts as editable (SIGN-15/SIGN-19); during close handoff keep only SIGN-19 retention.
+	$effect(() => {
+		if (open) return drafts.register(() => typed());
+		if (attemptId) return drafts.registerRetained(() => typed());
 	});
 
 	const title = $derived(
@@ -179,52 +260,110 @@
 		fieldFor(field === 'key' ? 'key' : 'name')?.focus();
 	}
 
+	function isUnchangedEdit(draft: RoleDraft): boolean {
+		if (!editing || editing.invalid || latest || hasUncertainAttempt) return false;
+		return unchanged(editing, draft);
+	}
+
+	function handleSubmitError(e: unknown, saveSlot: string) {
+		const newer = conflictLatest(e);
+		const field = refusedField(e);
+		const err = toAppError(e);
+		if (newer) {
+			if (mode.kind === 'new') {
+				discardDraft(saveSlot);
+				mode = { kind: 'edit', role: newer, employeeCount: 0 };
+			}
+			latest = newer;
+			expectedRevision = newer.revision;
+			conflictMessage = err.message;
+			attemptId = newStableId();
+			hasUncertainAttempt = false;
+			// The notice is at the top of the sheet, away from Save: bring it into view and read it.
+			setTimeout(() => document.getElementById('role-conflict')?.focus(), 0);
+			return;
+		}
+		if (field) {
+			errors = { ...errors, [field]: err.message };
+			focusField(field);
+			return;
+		}
+		if (err.code === 'unavailable' || err.code === 'unknown') {
+			hasUncertainAttempt = true;
+		}
+		failure = err.message;
+	}
+
+	async function executeSave(draft: RoleDraft) {
+		busy = true;
+		failure = undefined;
+		const saveSlot = slot;
+		const wasCreating = !editing;
+		const currentAttempt = attemptId || (attemptId = newStableId());
+		try {
+			const saved = editing
+				? await rolesApi.update(organizationId, editing.id, {
+						...draft,
+						expectedRevision,
+						attemptId: currentAttempt
+					})
+				: await rolesApi.create(organizationId, { ...draft, attemptId: currentAttempt });
+			if (unmounted) {
+				const kept = keptDraft(saveSlot);
+				if (
+					kept &&
+					unchanged(
+						draft,
+						normalizeDraft({ name: kept.name, key: kept.key, bodyMarkdown: kept.body })
+					)
+				) {
+					discardDraftIfVersion(saveSlot, keptVersion);
+				}
+				return;
+			}
+			if (!isSameEditorSession()) {
+				resetOnSessionEnd();
+				return;
+			}
+			confirmedSave = true;
+			discarding = true;
+			hasUncertainAttempt = false;
+			discardDraft(saveSlot);
+			open = false;
+			onsaved(saved, wasCreating);
+		} catch (e) {
+			if (unmounted || !isSameEditorSession()) return;
+			handleSubmitError(e, saveSlot);
+		} finally {
+			if (!unmounted) busy = false;
+		}
+	}
+
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
 		if (busy) return;
+		if (!isSameEditorSession()) {
+			resetOnSessionEnd();
+			return;
+		}
 		const draft = normalizeDraft({ name, key, bodyMarkdown: body });
 		errors = checkDraft(draft);
 		notice = undefined;
 		const first = (['name', 'key', 'body'] as const).find((f) => errors[f]);
 		if (first) return focusField(first);
-		if (editing && !editing.invalid && !latest && unchanged(editing, draft)) {
+		if (isUnchangedEdit(draft)) {
 			// Nothing to save: the sheet stays open and says so; no revision is added.
 			notice = NOTHING_TO_SAVE;
 			return;
 		}
-		busy = true;
-		failure = undefined;
-		try {
-			const saved = editing
-				? await rolesApi.update(organizationId, editing.id, { ...draft, expectedRevision })
-				: await rolesApi.create(organizationId, draft);
-			discarding = true;
-			open = false;
-			onsaved(saved, !editing);
-		} catch (e) {
-			const newer = conflictLatest(e);
-			const field = refusedField(e);
-			const message = toAppError(e).message;
-			if (newer) {
-				latest = newer;
-				expectedRevision = newer.revision;
-				conflictMessage = message;
-				// The notice is at the top of the sheet, away from Save: bring it into view and read it.
-				setTimeout(() => document.getElementById('role-conflict')?.focus(), 0);
-			} else if (field) {
-				errors = { ...errors, [field]: message };
-				focusField(field);
-			} else failure = message;
-		} finally {
-			busy = false;
-		}
+		await executeSave(draft);
 	}
 </script>
 
 <!-- A click outside or Escape doesn't dismiss the sheet while the role is being saved. -->
 <Sheet
 	bind:open
-	onOpenChange={(next) => !next && busy && (open = true)}
+	onOpenChange={(next) => !next && busy && isSameEditorSession() && (open = true)}
 	onOpenChangeComplete={(next) => !next && keepOrDiscard()}
 >
 	<SheetContent
@@ -320,6 +459,7 @@
 							bind:ref={nameField}
 							id="role-name"
 							bind:value={name}
+							readonly={busy}
 							autocomplete="off"
 							required
 							aria-invalid={errors.name ? true : undefined}
@@ -340,7 +480,7 @@
 							bind:ref={keyField}
 							id="role-key"
 							bind:value={key}
-							readonly={!!lockedBy}
+							readonly={busy || !!lockedBy}
 							autocomplete="off"
 							autocapitalize="none"
 							spellcheck={false}
@@ -371,6 +511,7 @@
 						bind:this={bodyField}
 						id="role-body"
 						bind:value={body}
+						readonly={busy}
 						rows="16"
 						spellcheck="true"
 						aria-invalid={errors.body ? true : undefined}

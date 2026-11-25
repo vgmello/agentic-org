@@ -11,6 +11,7 @@ import { readOrganizationsList, type OrganizationView } from '$lib/platform/orga
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgApi } from '$lib/modules/organization/api';
 import { newStableId } from '$lib/modules/organization/commands';
+import { readRoleRecordWithId } from '$lib/modules/roles/wire';
 import type { MembersApi } from './api';
 import type {
 	EmployeeStatus,
@@ -240,9 +241,28 @@ export function createHttpMembersApi({
 					message: 'That member could not be found.'
 				} satisfies AppError;
 			}
+			const title = member.agent?.title || member.title_in_team || undefined;
+			let role: RoleView['role'];
+			if (member.role_id) {
+				const fallback = "Couldn't load the member's role.";
+				let reply: GatewayReply;
+				try {
+					reply = await http.read(
+						`/api/v1/organizations/${encodeURIComponent(organizationId)}/roles/${encodeURIComponent(member.role_id)}`
+					);
+				} catch {
+					throw { source: 'api', code: 'unavailable', message: fallback } satisfies AppError;
+				}
+				if (reply.status !== 404) {
+					const result = unwrapGatewayResult(reply, fallback);
+					const record = readRoleRecordWithId(result, member.role_id, fallback);
+					role = { name: record.name, revision: record.revision, body: record.body };
+				}
+			}
 			return {
+				...(role ? { role } : {}),
 				...(member.agent?.role ? { roleText: member.agent.role } : {}),
-				...(member.agent?.title ? { title: member.agent.title } : {})
+				...(title ? { title } : {})
 			};
 		},
 

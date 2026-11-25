@@ -419,10 +419,10 @@ impl ReadOp for RoleInspectByRef {
     fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         let target = self.0.trim();
         let roles = read.roles()?;
-        if let Some(found) = roles
-            .iter()
-            .find(|r| r.id.as_str() == target || r.key.as_deref() == Some(target))
-        {
+        if let Some(found) = roles.iter().find(|r| r.id.as_str() == target) {
+            return Ok(Some(found.clone()));
+        }
+        if let Some(found) = roles.iter().find(|r| r.key.as_deref() == Some(target)) {
             return Ok(Some(found.clone()));
         }
         let mut by_name = roles

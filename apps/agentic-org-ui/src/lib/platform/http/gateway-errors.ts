@@ -1,4 +1,5 @@
 import { API_ERROR_CODES, type ApiErrorCode, type AppError } from '$lib/proto';
+import { readJsonObject, readResponse } from './wire';
 
 export type GatewayReply = { status: number; body: unknown };
 
@@ -46,16 +47,22 @@ export function unwrapGatewayResult(
 	if (reply.status !== 200) {
 		throw readGatewayAppError(reply.body, gatewayStatusCode(reply.status), fallbackMessage);
 	}
-	const root =
-		reply.body && typeof reply.body === 'object'
-			? (reply.body as Record<string, unknown>)
-			: undefined;
-	if (!root || !root.result || typeof root.result !== 'object' || Array.isArray(root.result)) {
+	let envelope: ReturnType<typeof readResponse<Record<string, unknown>>>;
+	try {
+		envelope = readResponse(reply.body, readJsonObject);
+	} catch {
 		throw {
 			source: 'api',
 			code: 'unavailable',
 			message: fallbackMessage
 		} satisfies AppError;
 	}
-	return root.result as Record<string, unknown>;
+	if ('error' in envelope) {
+		throw {
+			source: 'api',
+			code: 'unavailable',
+			message: fallbackMessage
+		} satisfies AppError;
+	}
+	return envelope.result;
 }
