@@ -309,7 +309,7 @@ function pageMember(id, tab) {
   const actions = memberActionsHtml(id, m, agent, owner, resolvedTab);
   const line = owner ? "Runs Agentic Org" : statusLine(id);
   const pp = presPill(id, true);
-  const nowLine = pp || line ? `<p class="now">${pp}${line ? `<span>${line}</span>` : ""}</p>` : "";
+  const nowLine = !agent && (pp || line) ? `<p class="now">${pp}${line ? `<span>${line}</span>` : ""}</p>` : "";
   const nav = linkTabs("#/members/" + id, tabs, resolvedTab === "overview" ? "" : resolvedTab, "Profile sections");
   const backLink = owner ? back("#/teams", "Teams") : back("#/teams/members", "Members");
   return `${backLink}<div class="section-header"><header class="prof">${av(id, 40, "word")}<div class="grow"><h1 tabindex="-1">${esc(m.name)} <span class="role">${esc(m.role)}</span></h1>
