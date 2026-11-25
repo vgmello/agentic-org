@@ -242,3 +242,13 @@ export function readStoredLayout(scopeKey: string): LayoutMode {
 export function writeStoredLayout(scopeKey: string, layout: LayoutMode): void {
 	writeStoredString(`agentic-org.workitems.layout.${scopeKey}`, layout);
 }
+
+const WORK_DIVIDERS_KEY = 'agentic-org.workitems.dividers';
+
+export function readStoredDividers(): boolean {
+	return readStoredString(WORK_DIVIDERS_KEY) === '1';
+}
+
+export function writeStoredDividers(show: boolean): void {
+	writeStoredString(WORK_DIVIDERS_KEY, show ? '1' : '0');
+}

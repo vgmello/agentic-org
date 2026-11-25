@@ -10,6 +10,11 @@ async function open(page: Page, url = '/work') {
 	await visit(page, url);
 }
 
+async function selectSavedFilter(page: Page, id: string) {
+	await page.getByTestId('work-filter-btn').click();
+	await page.getByTestId('saved-filters').locator(`[data-filter="${id}"]`).click();
+}
+
 async function noSidewaysScroll(page: Page) {
 	expect(
 		await page.evaluate(
@@ -24,7 +29,7 @@ test(
 	async ({ page }) => {
 		await open(page);
 		await expect(page).toHaveTitle('Work · Agentic Org');
-		await expect(page.getByTestId('show-select')).toHaveValue('needs_me');
+		await expect(page.getByTestId('show-menu')).toHaveAttribute('data-value', 'needs_me');
 		await expect(page.getByTestId('needs-me-list')).toBeVisible();
 		await expect(page.getByTestId('needs-me-inbox-link').first()).toHaveAttribute(
 			'href',
@@ -33,7 +38,8 @@ test(
 		await shot(page, 'work-needs-me');
 
 		// Switch to Show: By project (?view=by_project) and verify projectless items show "No project".
-		await page.getByTestId('show-select').selectOption('by_project');
+		await page.getByTestId('show-menu').click();
+		await page.locator('[data-show-option="by_project"]').click();
 		await expect(page).toHaveURL(/view=by_project/);
 		await expect(
 			page.getByTestId('work-group-heading').filter({ hasText: 'No project' })
@@ -48,7 +54,7 @@ test(
 		await expect(page.getByTestId('board-column')).toHaveCount(4);
 
 		// Saved filter All shows every task across projects, including 7-day Done window + Show all done.
-		await page.getByTestId('saved-filters').locator('[data-filter=all]').click();
+		await selectSavedFilter(page, 'all');
 		const toggleDone = page.getByTestId('toggle-all-done');
 		await expect(toggleDone).toContainText('Show all done (1)');
 		await toggleDone.click();
@@ -78,7 +84,7 @@ test(
 			.getByRole('tablist', { name: 'Work', exact: true })
 			.getByRole('tab', { name: /^Bugs/ })
 			.click();
-		await page.getByTestId('saved-filters').locator('[data-filter=all]').click();
+		await selectSavedFilter(page, 'all');
 		await expect(
 			page.getByTestId('work-group-heading').filter({ hasText: 'Unassigned team' })
 		).toBeVisible();
@@ -92,8 +98,10 @@ test(
 			.getByRole('tablist', { name: 'Work', exact: true })
 			.getByRole('tab', { name: /^Requests/ })
 			.click();
-		await page.getByTestId('saved-filters').locator('[data-filter=all]').click();
-		await page.getByLabel('Filter by project').selectOption('none');
+		await selectSavedFilter(page, 'all');
+		await page.getByTestId('work-filter-btn').click();
+		await page.getByRole('menuitem', { name: /^Project/ }).hover();
+		await page.getByRole('menuitemradio', { name: 'No project', exact: true }).click();
 		await expect(page.locator('[data-testid=work-row][data-ref=T-B17]')).toBeVisible();
 		await expect(page.locator('[data-testid=work-row][data-ref=T-B17]')).toContainText(
 			'No project'
@@ -363,7 +371,7 @@ test('STATES & LAYOUT: unsupported (no Retry), error, empty, stale, not found, a
 	await expect(page.getByTestId('work-card')).toHaveCount(0);
 	await expect(page.getByTestId('work-row')).toHaveCount(0);
 	// Choosing All clears no-employee-note once widened past Mine scope.
-	await page.getByTestId('saved-filters').locator('[data-filter=all]').click();
+	await selectSavedFilter(page, 'all');
 	await expect(page.getByTestId('no-employee-note')).toHaveCount(0);
 
 	// Unsupported private notes & unsupported cost block on /work/T-A40 -> no Retry button.

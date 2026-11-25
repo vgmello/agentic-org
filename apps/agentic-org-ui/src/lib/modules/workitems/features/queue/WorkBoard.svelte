@@ -40,6 +40,7 @@
 		type BoardStatusColumn
 	} from '../../present';
 	import type { Priority, TaskRow } from '../../types';
+	import Avatar from '$lib/components/Avatar.svelte';
 	import WorkIcon from '../../components/WorkIcon.svelte';
 	import StatusBadge from '../../components/StatusBadge.svelte';
 	import BudgetChip from '../../components/BudgetChip.svelte';
@@ -50,6 +51,7 @@
 		boardMode = 'stages',
 		showProject = true,
 		stale = false,
+		selectedRef = null,
 		onchanged,
 		onopen
 	}: {
@@ -58,6 +60,7 @@
 		boardMode?: BoardMode;
 		showProject?: boolean;
 		stale?: boolean;
+		selectedRef?: string | null;
 		onchanged: () => void;
 		onopen?: (row: TaskRow, triggerEl: HTMLElement | null) => void;
 	} = $props();
@@ -296,6 +299,7 @@
 									draggable={!stale && row.type === 'task' && row.status !== 'cancelled'}
 									tabindex="0"
 									aria-label={rowSpeech(row)}
+									aria-current={selectedRef === row.ref ? 'true' : undefined}
 									data-testid="work-card"
 									data-ref={row.ref}
 									ondragstart={() => (dragRow = row)}
@@ -354,7 +358,10 @@
 														>
 													</Tooltip.Portal>
 												</Tooltip.Root>
-												<DropdownMenu.Content align="end" class="w-48 bg-surface-sunken ring-line">
+												<DropdownMenu.Content
+													align="end"
+													class="triage-menu-surface w-48 ring-line"
+												>
 													{#if row.type === 'task' && row.status !== 'cancelled'}
 														<DropdownMenu.Group>
 															<DropdownMenu.GroupHeading>Move to</DropdownMenu.GroupHeading>
@@ -448,6 +455,9 @@
 										class="flex items-center justify-between gap-2 pt-0.5 text-xs/5 text-fg-muted"
 									>
 										<div class="flex min-w-0 items-center gap-1.5">
+											{#if row.assignee}
+												<Avatar name={row.assignee.name} size="sm" />
+											{/if}
 											<span class="truncate">{assignmentText(row)}</span>
 											{#if row.needsMe}
 												<span class="shrink-0" data-testid="card-needs-you">

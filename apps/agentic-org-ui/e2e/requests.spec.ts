@@ -32,6 +32,7 @@ test(
 	async ({ page }) => {
 		await open(page);
 		await openRequestsTab(page);
+		await page.getByTestId('work-filter-btn').click();
 		await page.getByTestId('saved-filters').locator('[data-filter=all]').click();
 
 		// Open New request from Work header.

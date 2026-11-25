@@ -840,6 +840,7 @@ test('Phase 3 Work parity: unified WorkQueueView header, live search & / shortcu
 		.getByRole('tablist', { name: 'Work', exact: true })
 		.getByRole('tab', { name: /^Tasks/ })
 		.click();
+	await page.getByTestId('work-filter-btn').click();
 	await page.getByTestId('saved-filters').locator('[data-filter="all"]').click();
 
 	// Board view renders 4 columns and priority signal bars on every card
@@ -1057,6 +1058,7 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Work' }).click();
 	await expect(page).toHaveURL(/\/work$/);
 	await page.getByRole('tab', { name: /^Tasks/ }).click();
+	await page.getByTestId('work-filter-btn').click();
 	await page.getByTestId('saved-filters').locator('[data-filter="all"]').click();
 	await expect(page.getByTestId('board-column')).toHaveCount(4);
 
@@ -1066,10 +1068,13 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await boardModeToggle.getByRole('button', { name: '4 stages' }).click();
 	await expect(page.getByTestId('board-column')).toHaveCount(4);
 
-	// Switch to List and verify 2-level grouping (Status -> Assignee) puts Blocked first
+	// Switch to List and verify 2-level grouping (Status -> Assignee) via Work display popover
 	await page.getByRole('group', { name: 'Layout' }).getByRole('button', { name: 'List' }).click();
-	await page.getByTestId('group-by-select').selectOption('status');
-	await page.getByTestId('subgroup-by-select').selectOption('assignee');
+	await page.getByTestId('work-display-btn').click();
+	await page.getByTestId('group-by-menu').locator('[data-group-option="status"]').click();
+	await page.getByTestId('work-display-btn').click();
+	await page.getByRole('menuitem', { name: /^Subgroup by/ }).hover();
+	await page.getByTestId('subgroup-by-menu').locator('[data-subgroup-option="assignee"]').click();
 	await expect(page.getByTestId('work-subgroup-heading').first()).toBeVisible();
 
 	// Open Work item -> right-hand sliding panel mounts over inert queue, expands/restores, traps Shift+Tab, backdrop closes
@@ -1102,9 +1107,13 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 
 	// Subgroup state resets cleanly when switching from Bugs (Severity) to Requests
 	await page.getByRole('tab', { name: /^Bugs/ }).click();
-	await page.getByTestId('subgroup-by-select').selectOption('severity');
+	await page.getByTestId('work-display-btn').click();
+	await page.getByRole('menuitem', { name: /^Subgroup by/ }).hover();
+	await page.getByTestId('subgroup-by-menu').locator('[data-subgroup-option="severity"]').click();
 	await page.getByRole('tab', { name: /^Requests/ }).click();
-	await expect(page.getByTestId('subgroup-by-select')).toHaveValue('none');
+	await page.getByTestId('work-display-btn').click();
+	await expect(page.getByRole('menuitem', { name: /^Subgroup by/ })).toContainText('None');
+	await page.keyboard.press('Escape');
 
 	// Activity: full-space Assembly Line with Readiness progress bar & collapsible Release gates dock + tooltip-first Escape
 	await page
@@ -1140,6 +1149,7 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await enterMockedOrganization(page);
 	await visit(page, '/work?mock=default');
 	await page.getByRole('tab', { name: /^Tasks/ }).click();
+	await page.getByTestId('work-filter-btn').click();
 	await page.getByTestId('saved-filters').locator('[data-filter="all"]').click();
 	await page.getByTestId('board-mode-toggle').getByRole('button', { name: '6 statuses' }).click();
 	const awaitingCol = page

@@ -103,6 +103,36 @@ export function bySeverityThenPriority(a: TaskRow, b: TaskRow): number {
 	return rank(a.severity) - rank(b.severity) || byPriorityThenAge(a, b);
 }
 
+export type WorkSortBy = 'default' | 'title' | 'priority' | 'created';
+export type WorkSortDir = 'asc' | 'desc';
+
+export const WORK_SORT_OPTIONS: { id: WorkSortBy; label: string }[] = [
+	{ id: 'default', label: 'Default' },
+	{ id: 'priority', label: 'Priority' },
+	{ id: 'title', label: 'Title' },
+	{ id: 'created', label: 'Created' }
+];
+
+/** Comparator for the Work list Display menu (Sort by + Direction). */
+export function workRowComparator(
+	tab: TaskType | 'all',
+	sortBy: WorkSortBy,
+	sortDir: WorkSortDir
+): (a: TaskRow, b: TaskRow) => number {
+	const base = tab === 'bug' ? bySeverityThenPriority : byPriorityThenAge;
+	const factor = sortDir === 'desc' ? -1 : 1;
+	if (sortBy === 'default') return sortDir === 'desc' ? (a, b) => -base(a, b) : base;
+	return (a, b) => {
+		const cmp =
+			sortBy === 'title'
+				? a.title.localeCompare(b.title)
+				: sortBy === 'priority'
+					? PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
+					: a.createdAt.localeCompare(b.createdAt);
+		return cmp !== 0 ? cmp * factor : base(a, b);
+	};
+}
+
 // ---- Board ---------------------------------------------------------------------------------------------------------
 
 export type BoardColumn = 'todo' | 'in_progress' | 'blocked' | 'done';

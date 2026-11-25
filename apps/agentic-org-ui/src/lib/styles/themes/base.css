@@ -406,6 +406,7 @@ html[data-ui-theme='ocean'] {
 
 /* Match Inbox dropdown menus to Work menus: opaque popover surface without backdrop-blur (Prototype Release 53728c05) */
 [data-slot='dropdown-menu-content'].triage-menu-surface,
+[data-slot='dropdown-menu-sub-content'].triage-menu-surface,
 .triage-toolbar [data-slot='dropdown-menu-content'] {
 	background-color: var(--popover);
 	-webkit-backdrop-filter: none;
