@@ -220,8 +220,9 @@ extract_json_uint() {
   ' <<< "$json_text"
 }
 
-# Order-independent, minified-JSON-safe lookup of a key entry in release-trust-registry.json.
-# Emits `public_key_hex|min_sequence|max_sequence` for the exact matching `key_id`.
+# Order-independent, minified- and pretty-JSON-safe lookup of a key entry in
+# release-trust-registry.json. Emits `public_key_hex|min_sequence|max_sequence`
+# (where `max_sequence` may be `null`) for the exact matching `key_id`.
 lookup_registry_key_entry() {
   local registry_file="$1"
   local target_kid="$2"
@@ -229,8 +230,9 @@ lookup_registry_key_entry() {
     BEGIN { RS = "}" }
     {
       obj = $0
-      # Keep only the innermost `{...` object segment in case outer braces preceded this item.
-      n = split(obj, parts, "{")
+      gsub(/[\r\n]/, " ", obj)
+      # Use regex separator `/[{]/` so macOS BSD awk never splits on newlines when RS != "\n".
+      n = split(obj, parts, /[{]/)
       seg = parts[n]
       got_kid = ""
       if (match(seg, /"key_id"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
@@ -249,7 +251,7 @@ lookup_registry_key_entry() {
         min_s = substr(seg, RSTART, RLENGTH)
         sub(/^[^:]*:[[:space:]]*/, "", min_s)
       }
-      if (match(seg, /"max_sequence"[[:space:]]*:[[:space:]]*[0-9]+/)) {
+      if (match(seg, /"max_sequence"[[:space:]]*:[[:space:]]*([0-9]+|null)/)) {
         max_s = substr(seg, RSTART, RLENGTH)
         sub(/^[^:]*:[[:space:]]*/, "", max_s)
       }
@@ -259,14 +261,17 @@ lookup_registry_key_entry() {
   ' "$registry_file"
 }
 
-# Order-independent, minified-JSON-safe lookup of a file entry SHA-256 in release.v1.json.
+# Order-independent, minified- and pretty-JSON-safe lookup of a file entry SHA-256
+# in release.v1.json.
 lookup_manifest_file_sha256() {
   local manifest_file="$1"
   local target_path="$2"
   awk -v wanted="$target_path" '
     BEGIN { RS = "}" }
     {
-      n = split($0, parts, "{")
+      obj = $0
+      gsub(/[\r\n]/, " ", obj)
+      n = split(obj, parts, /[{]/)
       seg = parts[n]
       got_path = ""
       if (match(seg, /"path"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
@@ -286,6 +291,65 @@ lookup_manifest_file_sha256() {
   ' "$manifest_file"
 }
 
+resolve_registry_pubkey_pem() {
+  local manifest_file="$1"
+  local registry_file="$2"
+  local out_pem="$3"
+  local manifest_text key_id seq reg_line pub_hex min_seq max_seq
+  manifest_text="$(cat "$manifest_file")"
+  key_id="$(extract_json_string "$manifest_text" "key_id")"
+  seq="$(extract_json_uint "$manifest_text" "sequence")"
+  if [[ ! "$key_id" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "install.sh: manifest contains invalid key_id" >&2
+    exit 1
+  fi
+  if [[ ! "$seq" =~ ^[1-9][0-9]*$ ]]; then
+    echo "install.sh: manifest contains invalid sequence" >&2
+    exit 1
+  fi
+  reg_line="$(lookup_registry_key_entry "$registry_file" "$key_id")"
+  IFS='|' read -r pub_hex min_seq max_seq <<< "$reg_line"
+  if [[ ! "${pub_hex:-}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "install.sh: signing key_id not found in trust registry: $registry_file" >&2
+    exit 1
+  fi
+  verify_registry_sequence_bounds "$seq" "${min_seq:-}" "${max_seq:-}"
+  require_cmd xxd
+  local spki_der="$TMP_DIR/publisher.pub.der"
+  printf '302a300506032b6570032100%s' "$pub_hex" | xxd -r -p > "$spki_der"
+  openssl pkey -pubin -inform DER -in "$spki_der" -out "$out_pem" >/dev/null 2>&1
+}
+
+verify_registry_sequence_bounds() {
+  local seq="$1"
+  local min_seq="$2"
+  local max_seq="$3"
+  # Fail closed unless min_sequence is a non-negative integer and max_sequence is either
+  # `null` (unbounded per org-release schema) or a non-negative integer >= min_sequence.
+  if [[ ! "$min_seq" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    echo "install.sh: trust registry key entry missing valid min_sequence bound" >&2
+    exit 1
+  fi
+  if [[ "$max_seq" != "null" && ! "$max_seq" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    echo "install.sh: trust registry key entry missing valid max_sequence bound" >&2
+    exit 1
+  fi
+  if [[ "$seq" -lt "$min_seq" ]]; then
+    echo "install.sh: manifest sequence ($seq) below key min_sequence ($min_seq)" >&2
+    exit 1
+  fi
+  if [[ "$max_seq" != "null" ]]; then
+    if [[ "$min_seq" -gt "$max_seq" ]]; then
+      echo "install.sh: trust registry key has invalid bounds (min_sequence=$min_seq > max_sequence=$max_seq)" >&2
+      exit 1
+    fi
+    if [[ "$seq" -gt "$max_seq" ]]; then
+      echo "install.sh: manifest sequence ($seq) exceeds key max_sequence ($max_seq)" >&2
+      exit 1
+    fi
+  fi
+}
+
 verify_pubkey_signature() {
   local manifest_file="$1"
   local sig_file="$2"
@@ -303,42 +367,8 @@ verify_pubkey_signature() {
   fi
   local pem_file="$pubkey_input"
   if ! grep -q "BEGIN PUBLIC KEY" "$pubkey_input" 2>/dev/null; then
-    local manifest_text key_id seq reg_line pub_hex min_seq max_seq
-    manifest_text="$(cat "$manifest_file")"
-    key_id="$(extract_json_string "$manifest_text" "key_id")"
-    seq="$(extract_json_uint "$manifest_text" "sequence")"
-    if [[ ! "$key_id" =~ ^[0-9a-f]{64}$ ]]; then
-      echo "install.sh: manifest contains invalid key_id" >&2
-      exit 1
-    fi
-    if [[ ! "$seq" =~ ^[1-9][0-9]*$ ]]; then
-      echo "install.sh: manifest contains invalid sequence" >&2
-      exit 1
-    fi
-    reg_line="$(lookup_registry_key_entry "$pubkey_input" "$key_id")"
-    IFS='|' read -r pub_hex min_seq max_seq <<< "$reg_line"
-    if [[ ! "${pub_hex:-}" =~ ^[0-9a-fA-F]{64}$ ]]; then
-      echo "install.sh: signing key_id not found in trust registry: $pubkey_input" >&2
-      exit 1
-    fi
-    # Fail closed unless both sequence bounds are valid positive integers with min <= seq <= max.
-    if [[ ! "${min_seq:-}" =~ ^[1-9][0-9]*$ || ! "${max_seq:-}" =~ ^[1-9][0-9]*$ ]]; then
-      echo "install.sh: trust registry key entry missing valid min_sequence/max_sequence bounds" >&2
-      exit 1
-    fi
-    if [[ "$min_seq" -gt "$max_seq" ]]; then
-      echo "install.sh: trust registry key has invalid bounds (min_sequence=$min_seq > max_sequence=$max_seq)" >&2
-      exit 1
-    fi
-    if [[ "$seq" -lt "$min_seq" || "$seq" -gt "$max_seq" ]]; then
-      echo "install.sh: manifest sequence ($seq) outside key bounds [$min_seq, $max_seq]" >&2
-      exit 1
-    fi
-    require_cmd xxd
     pem_file="$TMP_DIR/publisher.pub.pem"
-    local spki_der="$TMP_DIR/publisher.pub.der"
-    printf '302a300506032b6570032100%s' "$pub_hex" | xxd -r -p > "$spki_der"
-    openssl pkey -pubin -inform DER -in "$spki_der" -out "$pem_file" >/dev/null 2>&1
+    resolve_registry_pubkey_pem "$manifest_file" "$pubkey_input" "$pem_file"
   fi
   if ! openssl pkeyutl -verify -pubin -inkey "$pem_file" -rawin -in "$manifest_file" -sigfile "$sig_file" >/dev/null 2>&1; then
     echo "install.sh: Ed25519 signature verification failed for release.v1.json" >&2
