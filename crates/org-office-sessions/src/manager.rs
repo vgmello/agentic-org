@@ -223,6 +223,7 @@ struct PreparedSessionLaunch {
     task_ref: Option<String>,
     tried_connections: Vec<String>,
     home: PathBuf,
+    tmpdir: PathBuf,
     binding_file: PathBuf,
     preset_cfg: PresetConfig,
     spec_hash: String,
@@ -1704,6 +1705,7 @@ impl SessionManager {
             task_ref,
             tried_connections,
             home,
+            tmpdir,
             binding_file,
             preset_cfg,
             spec_hash,
@@ -2019,7 +2021,9 @@ impl SessionManager {
         ];
         // Preserve host read-only Rust toolchain directories when present so managed agents can
         // run `rustc`/`cargo --offline` inside their isolated task worktrees (`TASK-126`).
-        // Host `~/.cargo/{credentials*,config*}` are explicitly denied in `denied_office_globs_for`.
+        // Host `~/.cargo/credentials{,.toml}` are explicitly read+write denied; `$CARGO_HOME`
+        // stays outside `writable_roots` (enforced by OS sandbox and approval bridge), and host
+        // `~/.cargo/config.toml` must not store secrets when shared with agents.
         let rust_forbidden = vec![
             home.to_path_buf(),
             workspace.to_path_buf(),
@@ -2651,6 +2655,7 @@ fn build_initial_runtime_state(
         policy: prepared.preset_cfg.policy.clone(),
         preset: prepared.preset_cfg.preset,
         allowed_tools: prepared.preset_cfg.allowed_tools.clone(),
+        writable_roots: effective_approval_writable_roots(prepared),
         suspended_on_asks: Vec::new(),
         waiting_for_member_id: None,
         waiting_for_name: None,
@@ -2658,6 +2663,19 @@ fn build_initial_runtime_state(
         pending_wake_count: 0,
         pending_wake_reason: None,
     }
+}
+
+fn effective_approval_writable_roots(prepared: &PreparedSessionLaunch) -> Vec<SpecPath> {
+    let mut roots = prepared.preset_cfg.sandbox.writable_roots.clone();
+    if prepared.preset_cfg.preset != PermissionPreset::ReadOnly {
+        let canon_tmp = canonicalize_with_tail(&prepared.tmpdir);
+        if let Ok(spec) = SpecPath::try_from(canon_tmp.to_string_lossy().as_ref()) {
+            if !roots.contains(&spec) {
+                roots.push(spec);
+            }
+        }
+    }
+    roots
 }
 
 fn spawn_pump_thread(
@@ -3683,8 +3701,10 @@ fn is_safe_worktree_admin_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
-        && !name.contains(['/', '\\', '\0', '*', '?', '['])
         && !name.contains("..")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 fn collect_self_active_admins(
@@ -3753,46 +3773,39 @@ fn append_bare_cache_sandbox_rules(
         if let Ok(spec) = SpecPath::try_from(admin_dir.to_string_lossy().as_ref()) {
             writable.push(spec);
         }
-        for admin_file in ["commondir", "gitdir"] {
+        for admin_file in ["commondir", "gitdir", "config.worktree"] {
             push_raw_pattern(
                 write_denies,
                 &format!("{}/worktrees/{admin}/{admin_file}", canon.display()),
             );
         }
-        // Only deny `config.worktree` when present: Linux `bwrap` masks non-existent `denyWrite`
-        // files with unreadable stubs (turning `ENOENT` into `EACCES`), and `<cache>/config` is
-        // outside `writable_roots` so `extensions.worktreeConfig` cannot be enabled by the agent.
-        if admin_dir.join("config.worktree").exists() {
-            push_raw_pattern(
-                write_denies,
-                &format!("{}/worktrees/{admin}/config.worktree", canon.display()),
-            );
-        }
     }
-    // Always protect directories that live inside writable roots (`objects/info`) or always exist
-    // in bare repos (`hooks`, `info`, `refs/remotes`, `refs/tags`). Guard optional dirs
-    // (`refs/office`, `refs/replace`) when present so `bwrap` never turns missing `refs/replace`
-    // into an `EACCES` stub (`<cache>` and `<cache>/refs` are outside `writable_roots`).
+    // Always protect directories inside writable roots (`objects/info`) and core bare-repo dirs
+    // (`hooks`, `info`, `refs/remotes`, `refs/tags`). Note `org-git::cache::init_bare_cache`
+    // deletes `<cache>/hooks`; keeping `hooks` write-denied prevents re-creation. Guard optional
+    // dirs (`refs/office`, `refs/replace`) via `symlink_metadata` (catches dangling symlinks too)
+    // so `bwrap` never turns absent `refs/replace` into an `EACCES` stub; `<cache>` and
+    // `<cache>/refs` remain outside `writable_roots` (enforced by OS sandbox and approval bridge).
     for rel_dir in ["hooks", "info", "objects/info", "refs/remotes", "refs/tags"] {
         push_raw_pattern(write_denies, &format!("{}/{rel_dir}", canon.display()));
         push_raw_pattern(write_denies, &format!("{}/{rel_dir}/**", canon.display()));
     }
     for rel_dir in ["refs/office", "refs/replace"] {
-        if canon.join(rel_dir).exists() {
+        if std::fs::symlink_metadata(canon.join(rel_dir)).is_ok() {
             push_raw_pattern(write_denies, &format!("{}/{rel_dir}", canon.display()));
             push_raw_pattern(write_denies, &format!("{}/{rel_dir}/**", canon.display()));
         }
     }
     // Always protect core bare-repo metadata files (`config`, `HEAD`, `description`). Guard
     // optional Git files (`packed-refs`, `shallow`, `FETCH_HEAD`, `config.worktree`) ONLY when
-    // they exist on disk: `<cache>` is outside `writable_roots` (already OS-read-only), and
-    // listing non-existent `packed-refs` in `denyWrite` makes Linux `bwrap` return `EACCES`
-    // instead of `ENOENT`, breaking `git status` and `git commit`.
+    // present (`symlink_metadata().is_ok()` catches dangling symlinks too): `<cache>` stays
+    // outside `writable_roots` (enforced by both OS sandbox and approval bridge), and listing
+    // absent `packed-refs` in `denyWrite` makes Linux `bwrap` return `EACCES` instead of `ENOENT`.
     for rel_file in ["config", "HEAD", "description"] {
         push_raw_pattern(write_denies, &format!("{}/{rel_file}", canon.display()));
     }
     for rel_file in ["packed-refs", "shallow", "FETCH_HEAD", "config.worktree"] {
-        if canon.join(rel_file).exists() {
+        if std::fs::symlink_metadata(canon.join(rel_file)).is_ok() {
             push_raw_pattern(write_denies, &format!("{}/{rel_file}", canon.display()));
         }
     }

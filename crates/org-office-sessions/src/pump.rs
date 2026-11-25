@@ -21,7 +21,7 @@ use org_supervise::StopMode;
 use crate::binding::RunBindingRegistry;
 use crate::credentials::{format_rfc3339_ms, now_ms, redact_secrets, rfc3339_now};
 use crate::instructions::{compose_turn_objective, TurnTrigger, SAME_USER_ISOLATION_NOTICE};
-use crate::preset::{decide_escalation_with_tools, EscalationDisposition};
+use crate::preset::{decide_escalation_with_roots, EscalationDisposition};
 use crate::recovery::{SessionStore, StallWatchdog};
 use crate::subagents::{BackgroundKind, BackgroundRegistry};
 
@@ -113,6 +113,7 @@ pub(crate) struct SessionRuntimeState {
     pub policy: PermissionPolicy,
     pub preset: PermissionPreset,
     pub allowed_tools: Option<Vec<ToolName>>,
+    pub writable_roots: Vec<org_agent_runtime::SpecPath>,
     pub suspended_on_asks: Vec<String>,
     pub waiting_for_member_id: Option<String>,
     pub waiting_for_name: Option<String>,
@@ -1093,11 +1094,15 @@ fn handle_approval_request(
     req: &ApprovalRequest,
     active_tokens: &[&str],
 ) -> Option<Control> {
-    match decide_escalation_with_tools(
+    let writable_roots = state
+        .sandbox_enabled
+        .then_some(state.writable_roots.as_slice());
+    match decide_escalation_with_roots(
         req,
         &state.policy,
         state.preset,
         state.allowed_tools.as_deref(),
+        writable_roots,
     ) {
         EscalationDisposition::AllowByPolicy => Some(Control::Answer {
             request_id: req.id.clone(),
@@ -1298,6 +1303,7 @@ mod pump_tests {
             },
             preset: PermissionPreset::AutonomousSandboxed,
             allowed_tools: None,
+            writable_roots: Vec::new(),
             suspended_on_asks: Vec::new(),
             waiting_for_member_id: None,
             waiting_for_name: None,

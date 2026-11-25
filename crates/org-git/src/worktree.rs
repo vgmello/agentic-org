@@ -337,8 +337,12 @@ pub fn sanitize_worktree_links(
         ));
     }
     let wt_cfg = admin_dir.join("config.worktree");
-    if fs::symlink_metadata(&wt_cfg).is_ok() {
-        fs::remove_file(&wt_cfg).map_err(|e| GitError::io(&wt_cfg, e))?;
+    if let Ok(meta) = fs::symlink_metadata(&wt_cfg) {
+        if meta.file_type().is_dir() {
+            fs::remove_dir_all(&wt_cfg).map_err(|e| GitError::io(&wt_cfg, e))?;
+        } else {
+            fs::remove_file(&wt_cfg).map_err(|e| GitError::io(&wt_cfg, e))?;
+        }
     }
     let commondir = admin_dir.join("commondir");
     write_regular_file_no_symlink(&commondir, "../..\n", "worktree/commondir")?;

@@ -227,6 +227,20 @@ pub fn decide_escalation_with_tools(
     preset: PermissionPreset,
     allowed_tools: Option<&[ToolName]>,
 ) -> EscalationDisposition {
+    decide_escalation_with_roots(request, policy, preset, allowed_tools, None)
+}
+
+/// Evaluates an [`ApprovalRequest`] against the session's policy, optional `allowed_tools`
+/// allowlist, optional sandbox `writable_roots` (for file-editing tools running outside OS shell
+/// confinement such as Claude's built-in `Write`/`Edit` tools, per `doc-29`), and ADR-0032
+/// escalation rules.
+pub fn decide_escalation_with_roots(
+    request: &ApprovalRequest,
+    policy: &PermissionPolicy,
+    preset: PermissionPreset,
+    allowed_tools: Option<&[ToolName]>,
+    writable_roots: Option<&[SpecPath]>,
+) -> EscalationDisposition {
     let escalation = request.effective_escalation();
     if escalation == Escalation::SandboxBypass {
         return EscalationDisposition::AutoDeny {
@@ -241,9 +255,10 @@ pub fn decide_escalation_with_tools(
     }
     // Include extracted concrete file targets (including map-shaped `changes` object keys)
     // so every target path accepted as concrete is checked against fixed path denies.
-    for target in extract_concrete_file_targets(request) {
-        if !strings.contains(&target) {
-            strings.push(target);
+    let concrete_targets = extract_concrete_file_targets(request);
+    for target in &concrete_targets {
+        if !strings.contains(target) {
+            strings.push(target.clone());
         }
     }
     if matches_any_deny(&policy.deny, request, &strings) {
@@ -259,6 +274,17 @@ pub fn decide_escalation_with_tools(
             return EscalationDisposition::AutoDeny {
                 reason: format!(
                     "Tool `{}` is outside this session's allowed tools.",
+                    request.tool
+                ),
+            };
+        }
+    }
+    if let Some(roots) = writable_roots {
+        if is_edit_request(request) && !all_targets_within_writable_roots(&concrete_targets, roots)
+        {
+            return EscalationDisposition::AutoDeny {
+                reason: format!(
+                    "Write target for tool `{}` is outside this session's writable roots.",
                     request.tool
                 ),
             };
@@ -280,6 +306,69 @@ pub fn decide_escalation_with_tools(
             ),
         },
     }
+}
+
+fn is_edit_request(request: &ApprovalRequest) -> bool {
+    request.kind == ApprovalKind::FileChange || request.capability == Some(ToolCapability::Edit)
+}
+
+fn all_targets_within_writable_roots(targets: &[String], roots: &[SpecPath]) -> bool {
+    if targets.is_empty() || roots.is_empty() {
+        return false;
+    }
+    let canon_roots: Vec<std::path::PathBuf> = roots
+        .iter()
+        .filter_map(|r| resolve_path_for_root_check(std::path::Path::new(r.as_str())))
+        .collect();
+    if canon_roots.is_empty() {
+        return false;
+    }
+    targets
+        .iter()
+        .all(|t| target_within_canonical_roots(t, &canon_roots))
+}
+
+fn target_within_canonical_roots(raw: &str, canon_roots: &[std::path::PathBuf]) -> bool {
+    let path = std::path::Path::new(raw);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    let Some(resolved) = resolve_path_for_root_check(path) else {
+        return false;
+    };
+    canon_roots.iter().any(|root| resolved.starts_with(root))
+}
+
+fn resolve_path_for_root_check(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    if let Ok(canon) = path.canonicalize() {
+        return Some(canon);
+    }
+    let mut tail = Vec::new();
+    let mut cur = path;
+    while let Some(parent) = cur.parent() {
+        // Fail closed if `cur` (leaf or any intermediate ancestor) is a dangling symlink so an
+        // agent cannot escape writable roots via `<root>/dangling_link` or `<root>/dangling_dir/f`.
+        if let Ok(meta) = std::fs::symlink_metadata(cur) {
+            if meta.file_type().is_symlink() {
+                return None;
+            }
+        }
+        if let Some(name) = cur.file_name() {
+            tail.push(name.to_os_string());
+        }
+        if let Ok(mut base) = parent.canonicalize() {
+            for seg in tail.into_iter().rev() {
+                base.push(seg);
+            }
+            return Some(base);
+        }
+        cur = parent;
+    }
+    None
 }
 
 fn evaluate_allow_policy(
