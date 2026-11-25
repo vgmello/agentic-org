@@ -331,7 +331,7 @@ agentic-org msg inbox
 agentic-org msg list --participant worker-eu-eng
 
 # Create a shared task visible across HQ and both EU satellites
-agentic-org task create --project "<project_id>" --title "Verify remote CI checks" --body "Run checks on apps-worker-eu" --assignee-id "<employee_id>"
+agentic-org task create --project-id "<project_id>" --title "Verify remote CI checks" --body "Run checks on apps-worker-eu" --assignee-id "<employee_id>"
 ```
 
 ---
