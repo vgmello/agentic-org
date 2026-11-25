@@ -302,7 +302,7 @@ html[data-theme="cozy"] {
     box-shadow: var(--cozy-panel-shadow);
     color: var(--white);
   }
-  & :is(.sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast) {
+  & :is(.sheet, .work-task-dialog, .cmdk-dialog, .menu, .sres, .toast, .tess-pill) {
     background: rgb(38 31 25 / .86);
     backdrop-filter: blur(24px) saturate(140%);
     -webkit-backdrop-filter: blur(24px) saturate(140%);

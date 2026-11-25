@@ -206,6 +206,7 @@ function scopedWorkWorkspace() {
 
 /* ---------------------------------------------------------------- work */
 const WORK_STATUS = {
+  "Draft": ["draft", "pencil"],
   "In progress": ["active"], "Rowan is scoping": ["active"],
   "Blocked": ["blocked", "pause"], "Declined": ["blocked", "deny"],
   "Triaged": ["review", "doc-check"], "Scoped": ["review", "doc-check"],
@@ -260,19 +261,23 @@ function workTeam(w) {
   return memberships.find((id) => P[w.proj].teams.includes(id)) ?? memberships[0];
 }
 
+function workRowBadges(w) {
+  const eta = workEta(w);
+  return `${eta ? ` <span class="work-eta">ETA ${esc(eta)}</span>` : ""}${w.status === "Draft" ? '<span class="work-draft-tag">Draft · Ideation</span>' : ""}${isArchivedWork(w) ? '<span class="work-archived-tag">Archived</span>' : ""}`;
+}
+
 function workRow(w, isSubtask = false, hideOwner = false) {
   const sev = ["Critical", "Major"].includes(w.pri)
     ? `<span class="pin ${w.pri === "Critical" ? "c-red" : "c-gray"}">${ic(w.pri === "Critical" ? "warn" : "exclaim", "ic14")}${esc(w.pri)}</span>`
     : esc(w.pri);
   const team = workTeam(w);
   const task = w.kind === "task";
-  const eta = workEta(w);
   return `<li class="${isSubtask ? "work-subtask" : "work-item"}"><div class="work-row" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}>
     <div class="work-summary">
       <span class="work-ident">${workPriority(w.pri)}<span class="work-ref">${esc(w.id)}</span></span>
       <span class="work-heading">
         <span class="work-markers">${workStatus(w.status, showsNeedsYou(w))}${workCriteria(w.criteria, w.id)}</span>
-        <span>${workTitle(w, "work-title")}${eta ? ` <span class="work-eta">ETA ${esc(eta)}</span>` : ""}${isArchivedWork(w) ? '<span class="work-archived-tag">Archived</span>' : ""}</span>
+        <span>${workTitle(w, "work-title")}${workRowBadges(w)}</span>
       </span>
     </div>
     <div class="work-facts">
@@ -283,7 +288,7 @@ function workRow(w, isSubtask = false, hideOwner = false) {
     </div></div>${workSubtasks(w, hideOwner)}</li>`;
 }
 const showsNeedsYou = (w) => needsMe(w) && w.status !== "Scoped";
-const WORK_STATUS_ORDER = ["Blocked", ...ALL_STATUSES.filter((status) => status !== "Blocked")];
+const WORK_STATUS_ORDER = ["Blocked", "Draft", ...ALL_STATUSES.filter((status) => status !== "Blocked")];
 function workGroups(items, field) {
   const groups = new Map();
   for (const item of items) {
@@ -419,6 +424,59 @@ function workDetailSubtasks(w) {
       </section>`;
 }
 
+function workDetailDraftBanner(w) {
+  if (w.status === "Draft") {
+    return `<div class="work-draft-banner" role="region" aria-label="Draft ideation phase">
+      <div class="work-draft-banner-copy">
+        <p class="work-draft-eyebrow">${ic("pencil", "ic14")}Draft · Ideation phase</p>
+        <p class="work-draft-note">Discuss scope and refine below. Publishing materializes this thread into the final spec and excludes ideation comments from default agent context.</p>
+      </div>
+      <button class="btn primary sm" type="button" data-act="work-publish-draft" data-id="${esc(w.id)}">${ic("sparkle", "ic14")}Materialize &amp; Publish</button>
+    </div>`;
+  }
+  if (w.materializedFromIdeation) {
+    return `<p class="work-materialized-stamp">${ic("sparkle", "ic14")}Spec materialized from ${w.ideationComments?.length || 0} ideation notes · Agent execution context starts clean.</p>`;
+  }
+  return "";
+}
+
+function workIdeationCommentsList(comments) {
+  return `<ol class="work-ideation-list" role="list">${comments.map((c) => `<li>
+    <div class="work-ideation-meta">${av(c.who, 20)}<strong>${esc(M[c.who]?.name || c.who)}</strong><span class="work-ideation-role">${esc(M[c.who]?.role || "")}</span>${inboxActivityTime(c.at)}</div>
+    <p class="work-ideation-text">${esc(c.text)}</p>
+  </li>`).join("")}</ol>`;
+}
+
+function workDetailIdeation(w) {
+  const comments = w.ideationComments || [];
+  if (w.status === "Draft") {
+    return `<section class="work-detail-section work-ideation-box" aria-labelledby="work-ideation-title">
+      <div class="work-ideation-head">
+        <h3 id="work-ideation-title">Ideation discussion <span class="cnt">${comments.length}</span></h3>
+        <span class="work-ideation-badge">Folds out on publish</span>
+      </div>
+      ${workIdeationCommentsList(comments)}
+      <form class="triage-comment-form" data-form="work-ideation-comment" data-id="${esc(w.id)}">
+        <label class="sr-only" for="work-ideation-input">Add ideation comment</label>
+        <textarea id="work-ideation-input" name="comment" rows="2" maxlength="2000" placeholder="Add research, constraints, or @tag an agent to refine…" required></textarea>
+        <button class="btn outline icon triage-send" type="submit" aria-label="Add ideation note" title="Add ideation note">${ic("send", "ic16")}</button>
+      </form>
+    </section>`;
+  }
+  if (!comments.length) return "";
+  const open = !!S.openIdeation[w.id];
+  return `<section class="work-ideation-fold" aria-labelledby="work-ideation-fold-h">
+    <div class="work-ideation-fold-bar">
+      <div class="work-ideation-fold-copy">
+        <h3 id="work-ideation-fold-h">Ideation history <span class="cnt">${comments.length}</span></h3>
+        <span class="work-ideation-ax">Excluded from default agent context · <code>--include-ideation</code></span>
+      </div>
+      <button class="btn outline sm" type="button" data-act="work-toggle-ideation" data-id="${esc(w.id)}" aria-expanded="${open}">${open ? "Hide ideation" : "Show ideation"}</button>
+    </div>
+    ${open ? `<div class="work-ideation-fold-body">${workIdeationCommentsList(comments)}</div>` : ""}
+  </section>`;
+}
+
 function workDetail(w, parent) {
   const team = workTeam(w), eta = workEta(w);
   const priority = workPriorityRank(w.pri) ? esc(w.pri) : "";
@@ -435,6 +493,7 @@ function workDetail(w, parent) {
         </div>
       </div>
     <article class="triage-document">
+      ${workDetailDraftBanner(w)}
       <header class="triage-intro">
         ${parent ? `<a class="work-parent alink" href="${esc(workItemHref(parent.id))}">${esc(parent.id)} · ${esc(parent.title)}</a>` : ""}
         <h2 tabindex="-1" id="work-detail-title">${esc(w.title)}</h2>
@@ -447,7 +506,8 @@ function workDetail(w, parent) {
       ${workDetailCriteria(w)}
       ${workDetailSubtasks(w)}
       ${workRelatedInbox(w)}
-      ${workDiscussion(w)}
+      ${workDetailIdeation(w)}
+      ${w.status === "Draft" ? "" : workDiscussion(w)}
     </article>
     </section>
     <div class="toasts" aria-live="polite" role="status"></div>
@@ -739,9 +799,10 @@ function isValidSavedTaskMeta({ pri, etaHours, createdAt }) {
 
 function isValidSavedTaskFields(key, data) {
   const { id, title, proj, who, status } = data;
+  const allowedStatuses = new Set(["Draft", ...ALL_STATUSES]);
   if (typeof id !== "string" || key !== WORK_TASK_STORE + id) return false;
   if (typeof title !== "string" || !title.trim() || !own(P, proj)) return false;
-  if ((who !== null && !own(M, who)) || !STATUSES.task.includes(status)) return false;
+  if ((who !== null && !own(M, who)) || !allowedStatuses.has(status)) return false;
   return isValidSavedTaskMeta(data);
 }
 
@@ -762,11 +823,16 @@ function parseSavedWorkTask(key) {
     if (!data || !isValidSavedTaskFields(key, data)) return null;
     const ids = resolveSavedWorkIds(data.id, data.ref);
     if (!ids) return null;
-    const { title, description, proj, who, status, pri, etaHours, createdAt } = data;
+    const { title, description, proj, who, status, pri, etaHours, createdAt, kind, criteria, ideationComments, materializedFromIdeation, requestedBy } = data;
     return {
       ...ids, title,
       description: typeof description === "string" ? description.slice(0, 4000) : "",
-      proj, who, status, pri, etaHours, createdAt, kind: "task",
+      proj, who, status, pri, etaHours, createdAt,
+      kind: kind || "task",
+      ...(Array.isArray(criteria) ? { criteria } : {}),
+      ...(Array.isArray(ideationComments) ? { ideationComments } : {}),
+      ...(materializedFromIdeation ? { materializedFromIdeation: true } : {}),
+      ...(requestedBy ? { requestedBy } : {}),
     };
   } catch (e) {
     return null;
@@ -831,6 +897,47 @@ function persistCreatedWorkTask(fields) {
   return task;
 }
 
+function publishDraftTask(id) {
+  const w = W.find((item) => item.id === id);
+  if (!w || w.status !== "Draft") return;
+  const userNotes = (w.ideationComments || []).filter((c) => c.who === "you").map((c) => c.text.trim()).filter(Boolean);
+  if (userNotes.length) {
+    w.description = `${w.description.replace(/\s+$/, "")}\n\nRefined decisions:\n${userNotes.map((n) => `• ${n}`).join("\n")}`;
+  }
+  w.status = w.kind === "bug" ? STATUSES.bug[0] : STATUSES.task[0];
+  w.materializedFromIdeation = true;
+  w.publishedAt = Date.now();
+  S.openIdeation[w.id] = false;
+  for (const inboxItem of IN) {
+    if (inboxItem.task === w.id && inboxItem.sub === "Draft refinement") {
+      inboxItem.handled = true;
+      inboxItem.outcome = `Materialized & published to ${w.status}`;
+    }
+  }
+  saveWorkTask(w);
+  WORK_DISCUSSIONS[w.id] = WORK_DISCUSSIONS[w.id] || { events: [] };
+  WORK_DISCUSSIONS[w.id].events.unshift(["sparkle", `Materialized spec from ${(w.ideationComments || []).length} ideation notes and published to ${w.status}`, "Just now"]);
+  toast(`Published ${w.id} to ${w.status} · Ideation folded out of agent context`, "check-circle");
+}
+
+function addIdeationComment(form) {
+  const id = form.dataset.id, w = W.find((item) => item.id === id);
+  const ta = form.elements.comment, text = ta?.value?.trim();
+  if (!w || !text) return;
+  w.ideationComments = w.ideationComments || [];
+  w.ideationComments.push({ id: "ic-" + Date.now(), who: "you", at: Date.now(), text });
+  const lead = w.who && M[w.who] ? w.who : "ada";
+  w.ideationComments.push({
+    id: "ic-ack-" + Date.now(),
+    who: lead,
+    at: Date.now() + 50,
+    text: `Noted — I'll synthesize that into the final spec when you click Materialize & Publish.`,
+  });
+  saveWorkTask(w);
+  ta.value = "";
+  toast("Added ideation note to Draft", "check-circle");
+}
+
 async function createWorkTask(form) {
   const data = new FormData(form);
   const title = data.get("title").trim();
@@ -871,6 +978,7 @@ async function createWorkTask(form) {
 }
 
 export {
+  addIdeationComment,
   canonicalWorkRef,
   changeWorkCriterion,
   closeWorkPanel,
@@ -883,6 +991,7 @@ export {
   openWorkTask,
   pageWork,
   persistCreatedWorkTask,
+  publishDraftTask,
   refreshScopedWorkCounts,
   refreshWorkResults,
   scopedWorkQueries,

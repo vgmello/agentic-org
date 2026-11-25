@@ -7,7 +7,7 @@ import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
 import { removeTeam } from "../pages/projects.js";
-import { changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, normalizeScopedWorkState, openWorkTask, refreshScopedWorkCounts, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
+import { addIdeationComment, changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkCounts, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
 import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, setSheetReturn } from "./dialogs.js";
@@ -276,6 +276,8 @@ const CLICK_ACTIONS = {
   "agent-focus-open": (_e, t, id) => { if (id) openAgentFocus(id, t); },
   "work-close-detail": () => closeWorkPanel(),
   "work-new-task": (_e, t, id) => openSmartTaskComposer(t, { agentId: id || undefined }),
+  "work-publish-draft": (_e, _t, id) => { publishDraftTask(id); render(false); },
+  "work-toggle-ideation": (_e, _t, id) => { S.openIdeation[id] = !S.openIdeation[id]; render(false); },
   "work-cancel-task": (_e, t) => t.closest("dialog").close(),
   run: (_e, _t, id) => { S.openRuns[id] = !S.openRuns[id]; render(false); document.querySelector(`[data-act="run"][data-id="${id}"]`)?.focus(); },
   "v4-acc": (_e, _t, id) => { S.v4Open[id] = !S.v4Open[id]; render(false); document.querySelector(`[data-act="v4-acc"][data-id="${id}"]`)?.focus(); },
@@ -493,6 +495,7 @@ document.addEventListener("submit", (e) => {
   if (e.target.id === "c-prompt-form" || e.target.id === "af-prompt-form" || e.target.id === "hb-ask-form") return;
   e.preventDefault();
   if (["inbox-comment", "work-comment"].includes(e.target.dataset.form)) { postDetailComment(e.target); return; }
+  if (e.target.dataset.form === "work-ideation-comment") { addIdeationComment(e.target); render(false); return; }
   if (e.target.dataset.form === "insight-range") {
     const { from, to } = e.target.elements;
     if (from.value > to.value) { to.setCustomValidity("Choose an end date on or after the start date."); to.reportValidity(); return; }
