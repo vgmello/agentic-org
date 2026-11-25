@@ -224,7 +224,7 @@ def write_deterministic_ustar_gz(
     dest: Path, files: list[tuple[str, bytes, bool]]
 ) -> None:
     # Deterministic USTAR regular-files-only archive with zero directory entries,
-    # compatible with `org_host::release::ArchiveBundle::open` (ADR-0009).
+    # compatible with `org_host::release::ArchiveBundle::open`.
     buf = io.BytesIO()
     with gzip.GzipFile(filename="", mode="wb", fileobj=buf, mtime=0) as gz:
         with tarfile.open(fileobj=gz, mode="w", format=tarfile.USTAR_FORMAT) as tf:

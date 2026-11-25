@@ -1,8 +1,7 @@
 # Agentic Org in a container
 
 The whole instance (the host, the web process and the offices) runs as the main process
-of one container ([ADR-0017](../../docs/adr/0017-linux-and-container-hosting.md),
-decisions 4 and 10; [Linux host design](../../docs/design/linux-host.md), section 3.4).
+of one container.
 
 ## Run it
 
@@ -33,7 +32,7 @@ machine. Docker Desktop on a Mac has a current engine.
 
 Then open **`http://127.0.0.1:8443`** in a browser on the Docker host.
 
-**Default plain HTTP with opt-in HTTPS (ADR-0033 / ADR-0034).** To eliminate first-run
+**Default plain HTTP with opt-in HTTPS.** To eliminate first-run
 certificate and sign-in friction on local hosts, `deploy/container/setup.json` starts on
 plain HTTP (`http_published`, `http://127.0.0.1:8443`) by default with no TLS setup required
 up front. Teams that want encrypted browser transport can opt in to HTTPS at any time from
@@ -56,7 +55,7 @@ of its own (`--network agentic-org`), so that at least no container started with
 network (on Docker's default bridge) shares one with it. Whether a container on another
 network can still reach a published container port depends on the engine: measured for
 this build, Docker Engine 29.1.3 on Linux isolates the networks (no route), and Docker
-Desktop 29.9.3 on a Mac does not (a container on any network reaches it). LNX-2 reports
+Desktop 29.9.3 on a Mac does not (a container on any network reaches it). The container verification script reports
 which case its engine is. **While running plain HTTP, run the instance on a Docker host
 whose other containers you trust, and enable opt-in HTTPS + authentication before exposing
 the instance beyond a trusted local boundary.**
@@ -217,7 +216,7 @@ devpts) inside its own namespaces, where container escapes have been found befor
 Docker host whose kernel is kept patched, and only for agents that need such a sandbox.
 
 Verified on Ubuntu 26.04 (AppArmor enforcing, Docker 29.1.3) by
-`deploy/container/profiles-check.sh` (LNX-2 step 10, `LNX2_PROFILES=1`): under both
+`deploy/container/profiles-check.sh` (run with `LNX2_PROFILES=1`): under both
 profiles the service serves and stops within 2.5 s with exit code 0, and
 `bwrap --unshare-all --ro-bind / / --dev /dev --tmpfs /tmp true` runs in the container as
 the service user; with Docker's default profiles it cannot create its namespace.
@@ -267,7 +266,7 @@ JSON object (an unknown property is refused):
 | `service` | `"foreground"`: nothing is registered; the container runtime is the supervisor. (`"registered"` is the account's service manager, on a machine.) |
 | `root` | The instance's data folder, absolute. |
 | `credentials` | The secrets directory, absolute: a mounted volume that setup never makes. |
-| `listen` | `address`, `port`, `scheme`, `origin`, `hsts` (`"off"`, `"on"`, `"clear"`). By default (ADR-0033), the image starts over plain HTTP using `"http_published"` with `127.0.0.1` as the origin's host (`http://127.0.0.1:<port>`): not `localhost`, which can resolve to `::1`, and not `[::1]`. Teams that want HTTPS can opt in from inside the app (`POST /api/v1/instance/tls`, after enabling authentication) or configure `"scheme": "https"` in `setup.json` (which generates a self-signed certificate on first start or loads a supplied pair). Once an instance is serving `https`, `agentic-org admin tls set` (or `POST /api/v1/instance/tls`) rotates certificates live without restart. |
+| `listen` | `address`, `port`, `scheme`, `origin`, `hsts` (`"off"`, `"on"`, `"clear"`). By default, the image starts over plain HTTP using `"http_published"` with `127.0.0.1` as the origin's host (`http://127.0.0.1:<port>`): not `localhost`, which can resolve to `::1`, and not `[::1]`. Teams that want HTTPS can opt in from inside the app (`POST /api/v1/instance/tls`, after enabling authentication) or configure `"scheme": "https"` in `setup.json` (which generates a self-signed certificate on first start or loads a supplied pair). Once an instance is serving `https`, `agentic-org admin tls set` (or `POST /api/v1/instance/tls`) rotates certificates live without restart. |
 
 The instance's configuration does not change after its first start: a container whose
 file differs from what its volumes were set up with refuses to start.
@@ -286,7 +285,7 @@ image sets no `ORG_OFFICE_DEV_KEY_DIR`, and one given with `-e` is not used.
 - A signed release from the release pipeline, installed under `/opt/agentic-org`, and a
   release build that carries its pinned runtime release (setup refuses without one).
 - Optional out-of-the-box HTTPS setup profiles if an operator chooses `"scheme": "https"` in
-  `setup.json` (plain HTTP remains the ADR-0033 default for local container runs; opt-in HTTPS
+  `setup.json` (plain HTTP remains the default for local container runs; opt-in HTTPS
   is available in-app via `POST /api/v1/instance/tls`).
 
 ## Known limits
@@ -300,20 +299,20 @@ image sets no `ORG_OFFICE_DEV_KEY_DIR`, and one given with `-e` is not used.
   is registered, keeps its record: correct the cause and run the same file again; another
   file is refused until the instance is removed.
 - The image is a development image (above): the worker has no publisher check.
-- By default (ADR-0033), the container serves plain HTTP on a port published on the Docker
+- By default, the container serves plain HTTP on a port published on the Docker
   host's `127.0.0.1`. Until HTTPS is opted in, other containers of the Docker host can reach
   that plain-HTTP port (on its network always, and on Docker Desktop from every network).
   Enable authentication and opt in to HTTPS in-app (`POST /api/v1/instance/tls`) or via
   `"scheme": "https"` in `setup.json` when TLS is desired.
 
-## The test (LNX-2)
+## Container verification suite
 
 `deploy/container/lnx2.sh` builds the image and runs it in real containers. It checks
 registration and sign-in, the web process's confinement, and the administrator creating
 the organization through the web API: the host starts the HQ's office worker under the
 writer custody it reserved, and the worker serves its socket again after a restart and
-in a replacement container. (`agent-os` reaches the office again once an agent is placed
-in it and `agent-os` addresses a selected office; the send and read return with B6.) It checks the private modes in `/secrets`, including a
+in a replacement container. (`agent-os` reaches the office once an agent is placed
+in it and addresses the selected office.) It checks the private modes in `/secrets`, including a
 mode-`600` recovery credential created by the host under `/secrets/host-secrets` after
 organization creation is requested. It verifies that writes stay within the volumes,
 a replacement container keeps its state, and that empty or mismatched secrets volumes
@@ -322,6 +321,6 @@ reset and clean shutdown in the hardened run, plus root's refusal with all capab
 dropped. The network check reports which containers can reach the HTTP port.
 
 Set `LNX2_PROFILES=1` on a Docker host that enforces AppArmor with the profile loaded
-to also run `profiles-check.sh` (step 10). The script builds the Linux executables with
+to also run `profiles-check.sh`. The script builds the Linux executables with
 `build.sh`. It needs the UI built, Docker Engine 28 or
 later, and `curl`.

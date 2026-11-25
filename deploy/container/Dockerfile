@@ -1,4 +1,4 @@
-# Agentic Org as the main process of a container (ADR-0017 decisions 4 and 10, LNX-2).
+# Agentic Org container image (host, web service, office worker, and agent-os CLI).
 #
 # Build, from the repository root, after building the four executables for Linux and the UI:
 #
