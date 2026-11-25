@@ -1114,7 +1114,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .c-thinking-dots i:nth-child(2) { animation-delay: .18s; }
 .c-thinking-dots i:nth-child(3) { animation-delay: .36s; }
 @keyframes trace-dot { 0%, 80%, 100% { opacity: .28; transform: scale(.85); } 40% { opacity: 1; transform: scale(1.15); } }
-.c-trace-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 0; border-radius: 4px; border: 0; background: transparent; color: var(--gray-400); font-size: 0.6875rem; font-weight: 500; letter-spacing: .01em; opacity: .36; cursor: pointer; transition: opacity .16s ease, color .16s ease; }
+.c-trace-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 0 4px 2px 0; border-radius: 4px; border: 0; background: transparent; color: var(--gray-400); font-size: 0.6875rem; font-weight: 500; letter-spacing: .01em; opacity: .36; cursor: pointer; transition: opacity .16s ease, color .16s ease; }
 .c-trace-rule { display: inline-block; width: 10px; height: 1px; background: currentColor; opacity: .7; transition: width .16s ease, background-color .16s ease; }
 :is(.af-turn, .c-entry):is(:hover, :focus-within) .c-trace-toggle { opacity: .72; }
 .c-trace-toggle:is(:hover, :focus-visible) { opacity: 1 !important; color: var(--gray-300); }
@@ -1184,8 +1184,8 @@ body.agent-focus-open #content { overflow: hidden; }
 .af-msg-user { display: flex; flex-direction: column; align-items: flex-end; }
 .af-user-bubble { max-width: min(82%, 540px); padding: 9px 14px; border-radius: 13px; border-bottom-right-radius: 4px; background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); color: var(--white); font-size: 0.90625rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .af-turn-trace:empty { display: none; }
-.af-turn-trace { margin-top: -2px; }
-.af-reply-text { color: var(--gray-300); font-size: 0.96875rem; line-height: 1.72; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 64ch; }
+.af-turn-trace { margin-top: -8px; }
+.af-reply-text { color: var(--gray-300); font-size: 0.96875rem; line-height: 1.62; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 64ch; }
 .af-composer-pill { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 18px; border-radius: 14px; background: rgb(255 255 255 / .02); box-shadow: inset 0 0 0 1px var(--line2); transition: box-shadow .16s ease; }
 .af-composer-pill:focus-within { box-shadow: inset 0 0 0 1px var(--tone-accent-ring), 0 0 0 3px var(--tone-accent-soft); }
 .af-input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--white); font-size: 0.9375rem; line-height: 1.4; padding: 6px 0; outline: none; }
