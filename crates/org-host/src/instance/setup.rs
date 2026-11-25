@@ -35,6 +35,123 @@ pub(crate) enum Service {
     Foreground,
 }
 
+/// Optional HQ mTLS federation listener configuration (`AGENTIC_ORG_FEDERATION_BIND` and
+/// `AGENTIC_ORG_FEDERATION_ADVERTISE`), persisted in the setup record so registered services
+/// (`launchd`/`systemd`) and foreground runs consistently bind the HQ federation listener and
+/// include advertised SAN hostnames/IPs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FederationConfig {
+    pub bind: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub advertise: Vec<String>,
+}
+
+fn is_valid_dns_hostname(host: &str) -> bool {
+    if host.is_empty() || host.len() > 253 || !host.is_ascii() {
+        return false;
+    }
+    host.split('.').all(|label| {
+        let bytes = label.as_bytes();
+        !bytes.is_empty()
+            && bytes.len() <= 63
+            && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+            && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+            && bytes
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
+    })
+}
+
+fn canonical_advertise_key(entry: &str) -> String {
+    if let Ok(ip) = entry.parse::<std::net::IpAddr>() {
+        ip.to_string()
+    } else {
+        entry.to_ascii_lowercase()
+    }
+}
+
+impl FederationConfig {
+    /// Parses, normalizes, and validates CLI or config federation settings.
+    /// `bind` must be an `IP:port` socket address with a non-zero port (e.g. `0.0.0.0:7443`).
+    /// `advertise` entries are ASCII RFC-1123 hostnames or IP literals without ports
+    /// (e.g. `hq.example.com`, `10.0.0.5`, `2001:db8::1`).
+    pub fn parse(bind: &str, advertise: Vec<String>) -> Result<Self, String> {
+        let mut deduped = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for raw in advertise {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Err(
+                    "each federation \"advertise\" entry must be a non-empty ASCII hostname or IP \
+                     address without a port"
+                        .to_owned(),
+                );
+            }
+            let key = canonical_advertise_key(trimmed);
+            if seen.insert(key) {
+                deduped.push(trimmed.to_owned());
+            }
+        }
+        let config = Self {
+            bind: bind.trim().to_owned(),
+            advertise: deduped,
+        };
+        config.validate().map_err(|e| match e {
+            Error::Invalid(why) => why.to_owned(),
+            other => other.to_string(),
+        })?;
+        Ok(config)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        if self.bind.trim() != self.bind {
+            return Err(Error::Invalid(
+                "federation \"bind\" must be a socket address (IP:port) without surrounding \
+                 whitespace",
+            ));
+        }
+        let addr: std::net::SocketAddr = self.bind.parse().map_err(|_| {
+            Error::Invalid(
+                "federation \"bind\" must be a valid IP:port socket address (for example \
+                 0.0.0.0:7443 or [::]:7443)",
+            )
+        })?;
+        if addr.port() == 0 {
+            return Err(Error::Invalid(
+                "federation \"bind\" port must be from 1 to 65535",
+            ));
+        }
+        if self.advertise.len() > 32 {
+            return Err(Error::Invalid(
+                "federation \"advertise\" accepts at most 32 hostnames or IP addresses",
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for entry in &self.advertise {
+            if entry.is_empty() || entry.trim() != entry {
+                return Err(Error::Invalid(
+                    "each federation \"advertise\" entry must be a non-empty ASCII hostname or IP \
+                     address without surrounding whitespace",
+                ));
+            }
+            let valid = entry.parse::<std::net::IpAddr>().is_ok() || is_valid_dns_hostname(entry);
+            if !valid {
+                return Err(Error::Invalid(
+                    "each federation \"advertise\" entry must be a valid ASCII DNS hostname or \
+                     bare IP address without a port",
+                ));
+            }
+            if !seen.insert(canonical_advertise_key(entry)) {
+                return Err(Error::Invalid(
+                    "federation \"advertise\" must not contain duplicate entries",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Input {
@@ -49,6 +166,10 @@ pub(crate) struct Input {
     pub credentials: Option<PathBuf>,
     #[serde(deserialize_with = "strict_listen")]
     pub listen: ListenConfig,
+    /// Optional HQ mTLS federation listener configuration, persisted for registered and
+    /// foreground service starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub federation: Option<FederationConfig>,
 }
 
 /// The two files of a TLS pair the operator supplies for an `https` listener (`"tls":
@@ -161,6 +282,9 @@ impl Input {
         {
             return Err(Error::Invalid(PUBLISHED_NEEDS_FOREGROUND));
         }
+        if let Some(federation) = &self.federation {
+            federation.validate()?;
+        }
         Ok(())
     }
 
@@ -198,6 +322,8 @@ impl Input {
             #[serde(deserialize_with = "strict_listen")]
             listen: ListenConfig,
             #[serde(default)]
+            federation: Option<FederationConfig>,
+            #[serde(default)]
             tls: Option<SuppliedTls>,
         }
         if bytes.len() > LIMIT {
@@ -211,6 +337,7 @@ impl Input {
             root: file.root,
             credentials: file.credentials,
             listen: file.listen,
+            federation: file.federation,
         };
         input.validate()?;
         if let Some(tls) = &file.tls {
@@ -241,7 +368,8 @@ pub(crate) const CONFIGURATION_SHAPE: &str = "the setup configuration is not val
      JSON object with \"version\": 1, \"service\": \"registered\" or \"foreground\", \"root\": an \
      absolute path, \"listen\": {\"address\", \"port\", \"scheme\": \"https\", \"http_loopback\" or \
      \"http_published\", \"origin\", \"hsts\": \"off\", \"on\" or \"clear\"}, and optionally \
-     \"credentials\": an absolute path and, with https, \"tls\": {\"cert\": a path, \"key\": a path} \
+     \"credentials\": an absolute path, \"federation\": {\"bind\": \"IP:port\", \"advertise\": \
+     [hostnames/IPs]} and, with https, \"tls\": {\"cert\": a path, \"key\": a path} \
      (a PEM certificate chain and its key); no other property is accepted";
 // Before setup recorded a service mode, every instance used the service manager.
 #[derive(Deserialize)]
@@ -255,6 +383,8 @@ struct RecordedInput {
     credentials: Option<PathBuf>,
     #[serde(deserialize_with = "strict_listen")]
     listen: ListenConfig,
+    #[serde(default)]
+    federation: Option<FederationConfig>,
 }
 
 fn registered_service() -> Service {

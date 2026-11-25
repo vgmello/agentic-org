@@ -113,3 +113,19 @@ fn an_organization_name_resolves_among_the_accounts_linked_organizations_only() 
         Ok("0193a5c0-0000-7000-8000-000000000005")
     );
 }
+
+#[test]
+fn recovery_help_includes_use_when_guidance() {
+    assert!(HELP.contains("Use when:"), "{HELP}");
+    for args in [
+        vec!["--help"],
+        vec!["-h"],
+        vec!["status", "--help"],
+        vec!["status", "-h"],
+        vec!["release", "--help"],
+        vec!["release", "-h"],
+    ] {
+        let owned: Vec<String> = args.into_iter().map(str::to_owned).collect();
+        assert_eq!(recovery(&owned), Ok(()), "{owned:?}");
+    }
+}

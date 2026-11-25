@@ -502,6 +502,8 @@ fn extract_san_hosts(hq_addresses: &[String]) -> Vec<String> {
         let authority = stripped.split('/').next().unwrap_or("");
         let host = if let Some(rest) = authority.strip_prefix('[') {
             rest.split(']').next().unwrap_or("")
+        } else if authority.parse::<std::net::IpAddr>().is_ok() {
+            authority
         } else {
             authority.split(':').next().unwrap_or("")
         };
@@ -1647,4 +1649,25 @@ fn issue_and_persist_approved_cert(
         epoch: hq_tls.epoch,
         registered,
     }))
+}
+
+#[cfg(test)]
+mod san_host_tests {
+    use super::extract_san_hosts;
+
+    #[test]
+    fn extract_san_hosts_preserves_bare_and_bracketed_ipv6_alongside_dns_and_ipv4() {
+        let hosts = extract_san_hosts(&[
+            "2001:db8::1".to_owned(),
+            "[2001:db8::2]:7443".to_owned(),
+            "10.0.0.5:7443".to_owned(),
+            "https://hq.example.com:7443/federation".to_owned(),
+            "2001:db8::1".to_owned(),
+        ]);
+        assert!(hosts.contains(&"2001:db8::1".to_owned()), "{hosts:?}");
+        assert!(hosts.contains(&"2001:db8::2".to_owned()), "{hosts:?}");
+        assert!(hosts.contains(&"10.0.0.5".to_owned()), "{hosts:?}");
+        assert!(hosts.contains(&"hq.example.com".to_owned()), "{hosts:?}");
+        assert!(!hosts.contains(&"2001".to_owned()), "{hosts:?}");
+    }
 }

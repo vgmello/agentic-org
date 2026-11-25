@@ -258,7 +258,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "org",
         verb: "inspect",
-        summary: "Inspect the organization structure, teams, and members",
+        summary: "Inspect org structure, teams, and members",
         call: "org.snapshot",
         kind: Kind::Read,
         input: &[],
@@ -273,7 +273,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "team",
         verb: "list",
-        summary: "List active teams in the organization",
+        summary: "List active teams",
         call: "org.snapshot",
         kind: Kind::List,
         input: &[],
@@ -288,7 +288,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "team",
         verb: "inspect",
-        summary: "Inspect a team and its active members",
+        summary: "Inspect team and members",
         call: "org.snapshot",
         kind: Kind::Read,
         input: TEAM_INSPECT_INPUT,
@@ -303,7 +303,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "team",
         verb: "create",
-        summary: "Create a team in the organization",
+        summary: "Create a team",
         call: "team.create",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -321,7 +321,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "team",
         verb: "update",
-        summary: "Rename a team or change its lead",
+        summary: "Rename team or change lead",
         call: "team.rename",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -339,7 +339,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "team",
         verb: "move",
-        summary: "Move a team under a different parent team",
+        summary: "Reparent a team",
         call: "team.move",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -375,7 +375,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "person",
         verb: "inspect",
-        summary: "Inspect a person's directory card",
+        summary: "Inspect person directory card",
         call: "who",
         kind: Kind::Read,
         input: MEMBER_INSPECT_INPUT,
@@ -390,7 +390,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "person",
         verb: "add",
-        summary: "Add a person to the organization",
+        summary: "Add a person",
         call: "member.add_person",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -408,7 +408,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "person",
         verb: "update",
-        summary: "Update a person's name, contact, reporting manager, or team title",
+        summary: "Update person profile or manager",
         call: "member.update_person",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -426,7 +426,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "person",
         verb: "move",
-        summary: "Move a person to another home team",
+        summary: "Move person to another team",
         call: "member.move",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -444,7 +444,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "person",
         verb: "deactivate",
-        summary: "Deactivate a person in the organization",
+        summary: "Deactivate a person",
         call: "member.remove",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -462,7 +462,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "agent",
         verb: "inspect",
-        summary: "Inspect an agent's directory card",
+        summary: "Inspect agent directory card",
         call: "who",
         kind: Kind::Read,
         input: MEMBER_INSPECT_INPUT,
@@ -477,7 +477,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "project",
         verb: "list",
-        summary: "List projects in the organization",
+        summary: "List org projects",
         call: "project.list",
         kind: Kind::List,
         input: PROJECT_LIST_INPUT,
@@ -492,7 +492,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "project",
         verb: "inspect",
-        summary: "Inspect a project by ID, P-<number> key, or slug",
+        summary: "Inspect project by ID, key, or slug",
         call: "project.inspect",
         kind: Kind::Read,
         input: PROJECT_INSPECT_INPUT,
@@ -507,7 +507,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         resource: "project",
         verb: "create",
-        summary: "Create a project with an accountable owning team",
+        summary: "Create a project and owning team",
         call: "project.create",
         kind: Kind::Write {
             ack: Ack::Committed,

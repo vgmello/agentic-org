@@ -950,6 +950,7 @@ mod tests {
                 keys: Arc::new(MemoryKeys::default()),
                 server_check: Arc::new(crate::server_check::ServerCheck::ByPath),
                 sweep_orphans: false,
+                federation: None,
             },
             INSTANCE,
         );
@@ -995,6 +996,7 @@ mod tests {
                 keys: Arc::new(MemoryKeys::default()),
                 server_check: Arc::new(crate::server_check::ServerCheck::Skip),
                 sweep_orphans: false,
+                federation: None,
             },
             INSTANCE,
         );
@@ -1053,6 +1055,7 @@ mod tests {
                     keys: Arc::clone(&keys) as Arc<dyn OfficeSecretsKeys>,
                     server_check: Arc::new(crate::server_check::ServerCheck::Skip),
                     sweep_orphans: sweep,
+                    federation: None,
                 },
                 INSTANCE,
             );
@@ -1184,6 +1187,7 @@ mod tests {
                 keys: Arc::new(MemoryKeys::default()),
                 server_check: Arc::new(crate::server_check::ServerCheck::Skip),
                 sweep_orphans: false,
+                federation: None,
             },
             INSTANCE,
         )

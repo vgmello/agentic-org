@@ -64,6 +64,75 @@ impl Call for AccountVerify {
     type Result = AccountVerifyResult;
 }
 
+/// `session.local` (open on `host.sock` only, plain HTTP only, local authless mode only):
+/// issues a connection-bound native session for the implicit local owner account while
+/// authentication is disabled (`ADR-0034`). Refused with `not_authorized` on the web
+/// connection, on HTTPS instances, or whenever authentication is enabled.
+pub struct SessionLocal;
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionLocalParams {}
+
+impl Call for SessionLocal {
+    const METHOD: &'static str = "session.local";
+    type Params = SessionLocalParams;
+    type Result = AccountVerifyResult;
+}
+
+/// `org.create` (`host.sock` only; administrator session; journaled): admits an asynchronous
+/// organization create or reports progress on `operation_id`, mirroring `organization.create`
+/// without browser-session credentials.
+pub struct OrgCreate;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrgCreateParams {
+    pub session: SessionHandle,
+    /// Canonical lowercase UUIDv7 minted by the CLI for this attempt.
+    pub operation_id: String,
+    pub plan: org_proto::selected_bootstrap::PlanV1,
+}
+
+impl Call for OrgCreate {
+    const METHOD: &'static str = "org.create";
+    type Params = OrgCreateParams;
+    type Result = HostOpResult<crate::organization::OrganizationView>;
+}
+
+/// `org.lookup` (`host.sock` only; session): reports the state of one of the account's own
+/// organization-create operations and resumes it if no creation thread is running.
+pub struct OrgOperationLookup;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrgOperationLookupParams {
+    pub session: SessionHandle,
+    pub operation_id: String,
+}
+
+impl Call for OrgOperationLookup {
+    const METHOD: &'static str = "org.lookup";
+    type Params = OrgOperationLookupParams;
+    type Result = HostOpResult<crate::organization::OrganizationView>;
+}
+
+/// `org.list` (`host.sock` only; session): lists organizations linked to the account and its
+/// creates still in flight.
+pub struct OrgList;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrgListParams {
+    pub session: SessionHandle,
+}
+
+impl Call for OrgList {
+    const METHOD: &'static str = "org.list";
+    type Params = OrgListParams;
+    type Result = crate::organization::ListResult;
+}
+
 /// `cli.approval.create` (open on `host.sock`): starts a browser-approved terminal sign-in
 /// (FC-173 / SIGN-40 / SES-8). Returns a one-time approval URL (10-minute TTL) whose secret
 /// travels only after `#`, bound to this `host.sock` connection.

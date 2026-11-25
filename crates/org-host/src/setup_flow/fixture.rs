@@ -40,6 +40,16 @@ pub fn registered_account(
     name: Option<&str>,
     port: u16,
 ) -> Result<RegisteredAccount, String> {
+    registered_account_with_federation(base, name, port, None)
+}
+
+/// [`registered_account`] with an optional persisted HQ mTLS federation listener configuration.
+pub fn registered_account_with_federation(
+    base: &Path,
+    name: Option<&str>,
+    port: u16,
+    federation: Option<crate::instance::setup::FederationConfig>,
+) -> Result<RegisteredAccount, String> {
     let temp = base.join("temp");
     if !temp.exists() {
         std::fs::create_dir(&temp).map_err(|e| e.to_string())?;
@@ -56,6 +66,7 @@ pub fn registered_account(
         root: root.clone(),
         credentials: None,
         listen: super::loopback(port)?,
+        federation,
     };
     let mut record = journal
         .freeze(input, false, super::release_pin()?)

@@ -7,7 +7,10 @@
 //! no `sudo` (a container), `agentic-org admin reset --user <service user>` run as root. Root
 //! acts on that user's instance and writes nothing into its folders.
 pub(crate) const HELP: &str = "agentic-org admin reset [--name <instance>] [--user <service \
-user>]\nOn a Mac: asks for Touch ID or your login password, then prints a new administrator \
+user>]\n\
+Use when: issuing a fresh one-time administrator registration or password-reset link after local \
+OS confirmation (cancels any previous unused link).\n\
+On a Mac: asks for Touch ID or your login password, then prints a new administrator \
 registration link. On Linux: run it as root (sudo, or --user <service user> where there is no \
 sudo, as in a container: docker exec -it -u 0 <container> agentic-org admin reset --user \
 <service user>). For an instance set up with XDG_DATA_HOME, XDG_CACHE_HOME or \
@@ -61,6 +64,10 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
                 &mut out,
             )
         }
+        [tls, flag] if tls == "tls" && matches!(flag.as_str(), "--help" | "-h") => {
+            println!("{}", org_host::setup_flow::ADMIN_TLS_SET_HELP);
+            Ok(())
+        }
         [flag] if flag == "--help" || flag == "-h" => {
             println!("{HELP}\n\n{}", org_host::setup_flow::ADMIN_TLS_SET_HELP);
             Ok(())
@@ -91,7 +98,15 @@ mod tests {
         assert!(!unknown.contains("secret"), "{unknown}");
         let twice = run(&["tls", "set", "--cert", "/a", "--cert", "/b"]).unwrap_err();
         assert!(twice.contains("more than once"), "{twice}");
+        assert!(run(&["tls", "--help"]).is_ok());
+        assert!(run(&["tls", "-h"]).is_ok());
         assert!(run(&["tls", "set", "--help"]).is_ok());
         assert!(run(&["tls"]).unwrap_err().contains("admin tls set"));
+        assert!(super::HELP.contains("Use when:"), "{}", super::HELP);
+        assert!(
+            org_host::setup_flow::ADMIN_TLS_SET_HELP.contains("Use when:"),
+            "{}",
+            org_host::setup_flow::ADMIN_TLS_SET_HELP
+        );
     }
 }

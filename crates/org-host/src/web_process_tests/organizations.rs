@@ -1638,19 +1638,30 @@ fn actual_browser_and_native_cli_list_offices_and_restart_contract() {
             org_platform_host::admission::ImageIdentity::CodeSignature
         );
         let mut out = Vec::new();
+        let mut err = Vec::new();
         if by_code {
             // Wrong password is refused cleanly.
-            let bad_pw = list(&target, "Owner", None, false, &mut wrong, &mut out).unwrap_err();
+            let bad_pw = list(
+                &target,
+                Some("Owner"),
+                None,
+                false,
+                &mut wrong,
+                &mut err,
+                &mut out,
+            )
+            .unwrap_err();
             assert!(bad_pw.contains("invalid login or password"), "{bad_pw}");
 
             // Human-readable list prints office id and status without leaking endpoints.
             out.clear();
             list(
                 &target,
-                "Owner",
+                Some("Owner"),
                 Some(&organization),
                 false,
                 &mut typed,
+                &mut err,
                 &mut out,
             )
             .unwrap();
@@ -1663,10 +1674,11 @@ fn actual_browser_and_native_cli_list_offices_and_restart_contract() {
             out.clear();
             list(
                 &target,
-                "Owner",
+                Some("Owner"),
                 Some(&organization),
                 true,
                 &mut typed,
+                &mut err,
                 &mut out,
             )
             .unwrap();
@@ -1676,8 +1688,16 @@ fn actual_browser_and_native_cli_list_offices_and_restart_contract() {
 
             // CLI restart on an active office reports the human conflict message.
             out.clear();
-            let conflict_msg =
-                restart(&target, "Owner", &office, false, &mut typed, &mut out).unwrap_err();
+            let conflict_msg = restart(
+                &target,
+                Some("Owner"),
+                &office,
+                false,
+                &mut typed,
+                &mut err,
+                &mut out,
+            )
+            .unwrap_err();
             assert!(
                 conflict_msg.contains("not offline or unavailable"),
                 "{conflict_msg}"
@@ -1688,8 +1708,17 @@ fn actual_browser_and_native_cli_list_offices_and_restart_contract() {
                 asked.set(asked.get() + 1);
                 Ok(org_host_control::Password::new(PASSWORD.into()).unwrap())
             };
-            let err = list(&target, "Owner", None, false, &mut count_pw, &mut out).unwrap_err();
-            assert!(err.contains("browser"), "{err}");
+            let err_msg = list(
+                &target,
+                Some("Owner"),
+                None,
+                false,
+                &mut count_pw,
+                &mut err,
+                &mut out,
+            )
+            .unwrap_err();
+            assert!(err_msg.contains("browser"), "{err_msg}");
             assert_eq!(
                 asked.get(),
                 0,

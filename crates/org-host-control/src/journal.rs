@@ -27,8 +27,8 @@ use serde::Serialize;
 
 use crate::ops::{
     OfficeJoin, OfficeJoinParams, OfficeReEnroll, OfficeReEnrollParams, OfficeRemovePending,
-    OfficeRemovePendingParams, OfficeRestart, OfficeRestartParams, TlsPairFingerprint, TlsSet,
-    TlsSetParams,
+    OfficeRemovePendingParams, OfficeRestart, OfficeRestartParams, OrgCreate, OrgCreateParams,
+    TlsPairFingerprint, TlsSet, TlsSetParams,
 };
 
 /// A journaled op's params. Each implementation destructures its params exhaustively, so adding
@@ -80,6 +80,27 @@ impl Journaled for OfficeRestartParams {
             office_id,
         } = self;
         serde_json::to_string(&Fields { office_id })
+    }
+}
+
+impl Journaled for OrgCreateParams {
+    const METHOD: &'static str = OrgCreate::METHOD;
+
+    fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+
+    fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
+        #[derive(Serialize)]
+        struct Fields<'a> {
+            plan: &'a org_proto::selected_bootstrap::PlanV1,
+        }
+        let OrgCreateParams {
+            session: _,
+            operation_id: _,
+            plan,
+        } = self;
+        serde_json::to_string(&Fields { plan })
     }
 }
 
