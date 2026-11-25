@@ -105,6 +105,7 @@ fn agy_script() -> Script {
         turn_end: vec![result],
         stderr: vec![b"agy diagnostic".to_vec()],
         approval: Some(approval),
+        mid_turn_step: None,
     }
 }
 
@@ -414,13 +415,7 @@ fn truncated_invalid_session_id_rate_limits_result_outcomes_stderr_and_crash_exi
 
     // Mid-turn crash emits TurnOutcome::Failed, not Interrupted.
     let _ = session
-        .control(
-            Control::Send {
-                text: "go".into(),
-                urgent: false,
-            },
-            now,
-        )
+        .control(Control::Send { text: "go".into() }, now)
         .unwrap();
     let exit_out = session.on_exit(
         ExitInfo {
@@ -479,13 +474,7 @@ fn resume_usage_baseline_handles_baselined_multiturn_and_unbaselined_first_turn(
         now,
     );
     let _ = s1
-        .control(
-            Control::Send {
-                text: "t1".into(),
-                urgent: false,
-            },
-            now,
-        )
+        .control(Control::Send { text: "t1".into() }, now)
         .unwrap();
     let out1 = s1.on_line(
         br#"{"type":"result","subtype":"success","usage":{"input_tokens":130,"output_tokens":70}}"#,
@@ -496,13 +485,7 @@ fn resume_usage_baseline_handles_baselined_multiturn_and_unbaselined_first_turn(
         Output::Event(SessionEvent::Usage(u)) if u.input == 30 && u.output == 20
     )));
     let _ = s1
-        .control(
-            Control::Send {
-                text: "t2".into(),
-                urgent: false,
-            },
-            now,
-        )
+        .control(Control::Send { text: "t2".into() }, now)
         .unwrap();
     let out2 = s1.on_line(
         br#"{"type":"result","subtype":"success","usage":{"input_tokens":145,"output_tokens":80}}"#,
@@ -521,13 +504,7 @@ fn resume_usage_baseline_handles_baselined_multiturn_and_unbaselined_first_turn(
         now,
     );
     let _ = s2
-        .control(
-            Control::Send {
-                text: "t1".into(),
-                urgent: false,
-            },
-            now,
-        )
+        .control(Control::Send { text: "t1".into() }, now)
         .unwrap();
     let out_no_base = s2.on_line(
         br#"{"type":"result","subtype":"success","usage":{"input_tokens":200,"output_tokens":90}}"#,
@@ -540,13 +517,7 @@ fn resume_usage_baseline_handles_baselined_multiturn_and_unbaselined_first_turn(
         .iter()
         .any(|o| matches!(o, Output::Event(SessionEvent::Notice { .. }))));
     let _ = s2
-        .control(
-            Control::Send {
-                text: "t2".into(),
-                urgent: false,
-            },
-            now,
-        )
+        .control(Control::Send { text: "t2".into() }, now)
         .unwrap();
     let out_after_base = s2.on_line(
         br#"{"type":"result","subtype":"success","usage":{"input_tokens":225,"output_tokens":105}}"#,

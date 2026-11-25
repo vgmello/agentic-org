@@ -1157,6 +1157,7 @@ mod tests {
         connection.send_response(Response {
             id: 4,
             outcome: org_proto::Outcome::Result(Value::Bool(true)),
+            waiting_messages: None,
         });
         let mut stream = org_socket::rights::StreamReceiver::new(peer);
         let until = std::time::Instant::now() + Duration::from_secs(3);
@@ -1240,6 +1241,7 @@ mod tests {
         connection.send_response(Response {
             id: 4,
             outcome: org_proto::Outcome::Result(Value::Bool(true)),
+            waiting_messages: None,
         });
         let mut receiver = org_socket::rights::StreamReceiver::new(peer);
         let receive = |receiver: &mut org_socket::rights::StreamReceiver, count| {
@@ -1552,6 +1554,7 @@ mod tests {
             connection.send_response(Response {
                 id: request.id,
                 outcome: org_proto::Outcome::Result(Value::String(request.method)),
+                waiting_messages: None,
             });
         }
     }
@@ -1623,6 +1626,7 @@ mod tests {
                 connection.send_response(Response {
                     id: request.id,
                     outcome: org_proto::Outcome::Result(Value::String(request.method)),
+                    waiting_messages: None,
                 });
             }
         }
@@ -2018,6 +2022,7 @@ mod channel_lifecycle_tests {
         Response {
             id,
             outcome: Outcome::Result(serde_json::json!({})),
+            waiting_messages: None,
         }
     }
     fn queued_descriptor(

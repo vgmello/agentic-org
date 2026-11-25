@@ -165,7 +165,7 @@ impl AgentRuntime for PoolScriptedRuntime {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            steer: false,
+            mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
             interrupt_in_band: false,
             idle_interrupt_ends_turn: false,
             approval_bridge: false,
@@ -828,6 +828,8 @@ done
             kind: WakeKind::Ask,
             sender_id: agent_a.clone(),
             sender_name: "Agent agent-a".into(),
+            sender_handle: None,
+            sender_relation: None,
             sender_is_person: false,
             conversation_id: Some("conv-1".into()),
             source_id: "ask-live2-1".into(),
@@ -892,6 +894,7 @@ done
         "Yes, ship it!",
         &agent_b,
         "Agent agent-b",
+        false,
         false,
         false,
     );

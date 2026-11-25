@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -59,7 +60,8 @@ use crate::subscription_usage::{
 };
 
 use crate::wake::{
-    SuspendedAskEntry, DEFAULT_HOURLY_WAKE_LIMIT, DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
+    MidTurnLimits, MidTurnRateTracker, SuspendedAskEntry, DEFAULT_HOURLY_WAKE_LIMIT,
+    DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
 };
 
 /// Configuration for [`SessionManager`].
@@ -72,6 +74,7 @@ pub struct SessionManagerConfig {
     pub hourly_wake_limit: usize,
     pub wake_window: Duration,
     pub suspend_grace: Duration,
+    pub mid_turn_limits: MidTurnLimits,
     pub runtimes: RuntimeRegistry,
     pub enrollment_driver: Arc<dyn EnrollmentDriver>,
     pub subscription_usage_collector: Arc<dyn SubscriptionUsageCollector>,
@@ -88,6 +91,7 @@ impl SessionManagerConfig {
             hourly_wake_limit: DEFAULT_HOURLY_WAKE_LIMIT,
             wake_window: DEFAULT_WAKE_WINDOW,
             suspend_grace: DEFAULT_SUSPEND_GRACE,
+            mid_turn_limits: MidTurnLimits::default(),
             runtimes: RuntimeRegistry::production(),
             enrollment_driver: Arc::new(CliEnrollmentDriver),
             subscription_usage_collector: Arc::new(ProviderSubscriptionUsageCollector::production()),
@@ -105,6 +109,7 @@ pub(crate) struct LiveSessionHandle {
     pub oauth_expires_at_ms: Option<u64>,
     pub workspace: Option<String>,
     pub active_permit: Arc<Mutex<Option<(String, u64)>>>,
+    pub supports_mid_turn: bool,
 }
 
 #[derive(Default)]
@@ -187,6 +192,7 @@ struct PlannedSessionLaunch {
     session_id: String,
     mark_str: String,
     runtime_id: String,
+    supports_mid_turn: bool,
     connection_id: Option<String>,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
@@ -213,6 +219,7 @@ struct PreparedSessionLaunch {
     run_id: String,
     session_id: String,
     runtime_id: String,
+    supports_mid_turn: bool,
     connection_id: Option<String>,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
@@ -297,6 +304,8 @@ pub struct SessionManager {
     pub(crate) budget_hold: Arc<Mutex<Option<String>>>,
     pub(crate) lifecycle_lock: Arc<Mutex<()>>,
     pub(crate) dispatching_wakes: Arc<Mutex<HashSet<String>>>,
+    pub(crate) waiting_messages: Arc<Mutex<HashMap<String, Arc<AtomicU32>>>>,
+    pub(crate) mid_turn_rates: Arc<Mutex<HashMap<String, MidTurnRateTracker>>>,
     watch_notice_provider: Mutex<Option<WatchNoticeProvider>>,
     startup_recovery: Mutex<RecoveryReport>,
     command_cache: Mutex<HashMap<(String, String, String), CachedRpcResponse>>,
@@ -338,6 +347,8 @@ impl SessionManager {
             budget_hold: Arc::new(Mutex::new(None)),
             lifecycle_lock: Arc::new(Mutex::new(())),
             dispatching_wakes: Arc::new(Mutex::new(HashSet::new())),
+            waiting_messages: Arc::new(Mutex::new(HashMap::new())),
+            mid_turn_rates: Arc::new(Mutex::new(HashMap::new())),
             watch_notice_provider: Mutex::new(None),
             startup_recovery: Mutex::new(RecoveryReport::default()),
             command_cache: Mutex::new(HashMap::new()),
@@ -360,6 +371,28 @@ impl SessionManager {
 
     pub fn bindings(&self) -> &RunBindingRegistry {
         &self.bindings
+    }
+
+    /// Returns the lock-free per-employee `AtomicU32` counter tracking pending wakes/messages
+    /// (`TASK-115` AC #6). Initialized once from disk on first lookup and maintained in memory on
+    /// every wake queue mutation so bound `agent-os` RPCs read it with zero disk I/O.
+    pub fn waiting_messages_counter(&self, employee_id: &str) -> Arc<AtomicU32> {
+        let mut map = self
+            .waiting_messages
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(existing) = map.get(employee_id) {
+            return Arc::clone(existing);
+        }
+        let initial = self
+            .store
+            .read_pending_wakes(employee_id)
+            .ok()
+            .flatten()
+            .map_or(0, |q| q.items.len().min(u32::MAX as usize) as u32);
+        let counter = Arc::new(AtomicU32::new(initial));
+        map.insert(employee_id.to_owned(), Arc::clone(&counter));
+        counter
     }
 
     pub fn subscription_usage_list(
@@ -1586,6 +1619,7 @@ impl SessionManager {
             session_id,
             mark_str,
             runtime_id: admitted.adapter.id().as_str().to_owned(),
+            supports_mid_turn: admitted.adapter.capabilities().supports_mid_turn_delivery(),
             connection_id: admitted.connection_id,
             route_digest: admitted.route_digest_suffix,
             oauth_expires_at_ms,
@@ -1619,6 +1653,7 @@ impl SessionManager {
             session_id,
             mark_str,
             runtime_id,
+            supports_mid_turn,
             connection_id,
             route_digest,
             oauth_expires_at_ms,
@@ -1695,6 +1730,7 @@ impl SessionManager {
             run_id,
             session_id,
             runtime_id,
+            supports_mid_turn,
             connection_id,
             route_digest,
             oauth_expires_at_ms,
@@ -1797,6 +1833,7 @@ impl SessionManager {
             emp_id,
             run_id,
             runtime_id,
+            supports_mid_turn,
             connection_id,
             route_digest,
             oauth_expires_at_ms,
@@ -1823,6 +1860,7 @@ impl SessionManager {
             employee_id: emp_id.clone(),
             run_id,
             runtime_id,
+            supports_mid_turn,
             connection_id: connection_id.clone(),
             active_permit: Arc::clone(&active_permit),
             workspace: workspace_arg.clone(),
@@ -1885,6 +1923,7 @@ impl SessionManager {
                 oauth_expires_at_ms,
                 workspace: workspace_arg,
                 active_permit,
+                supports_mid_turn,
             },
         );
         Ok(view)
@@ -3279,6 +3318,8 @@ fn enqueue_recovery_wake(
         kind: crate::wake::WakeKind::Recovery,
         sender_id: mgr.office.owner_member_id().to_owned(),
         sender_name: "Office Supervisor".into(),
+        sender_handle: None,
+        sender_relation: Some("office_supervisor".into()),
         sender_is_person: true,
         conversation_id: None,
         source_id: req.failed_connection_id.clone(),
@@ -3291,6 +3332,21 @@ fn enqueue_recovery_wake(
     let tokens = mgr.bindings.active_tokens();
     let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
     let _ = mgr.store.write_pending_wakes_redacted(&queue, &refs);
+    set_waiting_messages_count(&mgr.waiting_messages, &req.employee_id, queue.items.len());
+}
+
+pub(crate) fn set_waiting_messages_count(
+    map: &Mutex<HashMap<String, Arc<AtomicU32>>>,
+    employee_id: &str,
+    count: usize,
+) {
+    let clamped = count.min(u32::MAX as usize) as u32;
+    let mut guard = map.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(counter) = guard.get(employee_id) {
+        counter.store(clamped, Ordering::Relaxed);
+    } else {
+        guard.insert(employee_id.to_owned(), Arc::new(AtomicU32::new(clamped)));
+    }
 }
 
 fn overlay_durable_wake_state(store: &SessionStore, employee_id: &str, view: &mut SessionView) {

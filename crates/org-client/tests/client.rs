@@ -458,6 +458,7 @@ fn a_result_of_the_wrong_shape_is_a_protocol_error() {
         let response = Response {
             id: request.id,
             outcome: Outcome::Result(json!({"api_version": "not a number"})),
+            waiting_messages: None,
         };
         frame::write_message(&mut peer.stream, &response).unwrap();
     });

@@ -198,9 +198,10 @@ pub fn json_string_len(s: &str) -> usize {
         .sum::<usize>()
 }
 
-/// Whether a message is urgent: it interrupts a busy agent instead of waiting for its next
-/// break. True iff `kind` is [`KIND_REQUEST`] or `priority` is `high` or `urgent`. An unknown
-/// priority isn't urgent.
+/// Whether a message is urgent: it signals elevated attention for a busy agent (delivered at a
+/// safe step boundary without aborting running tools, per `ADR-0035` / `doc-101`). True iff
+/// `kind` is [`KIND_REQUEST`] or `priority` is `high` or `urgent`. An unknown priority isn't
+/// urgent.
 pub fn is_urgent(kind: &str, priority: MessagePriority) -> bool {
     kind == KIND_REQUEST || matches!(priority, MessagePriority::High | MessagePriority::Urgent)
 }
@@ -212,12 +213,12 @@ pub fn is_urgent(kind: &str, priority: MessagePriority) -> bool {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum MessagePriority {
-    /// Waits for the recipient's next break.
+    /// Normal priority delivery.
     #[default]
     Normal,
-    /// Urgent: interrupts a busy recipient.
+    /// Elevated priority: surfaced promptly to a busy recipient at a safe step boundary.
     High,
-    /// Urgent: interrupts a busy recipient.
+    /// Highest priority: surfaced promptly to a busy recipient at a safe step boundary.
     Urgent,
     /// A value this build doesn't know (sent by a newer peer). Not urgent. Refused as input:
     /// `msg.send`, `msg.reply`, `msg.ask` and spool ingest refuse it (`invalid_request`).

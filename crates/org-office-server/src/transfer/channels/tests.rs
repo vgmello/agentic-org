@@ -124,6 +124,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             run_binding_verify: None,
             run_binding_active: None,
             record_agent_command: None,
+            waiting_messages_counter: None,
             on_agent_stop: None,
             hr_message_guard: None,
             submit: Box::new(|_, _, _| panic!("host touched Office submit")),

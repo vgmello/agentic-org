@@ -1,5 +1,6 @@
 //! Socket and host-channel dispatch for `dm.open`, `chat.*`, and `msg.accept` (`doc-90`, `B6`).
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -60,34 +61,73 @@ fn is_message_chat_method(request: &Request) -> bool {
 /// Bounded tick interval while waiting on `AskWaiters` so server shutdown wakes promptly.
 const ASK_WAIT_TICK: Duration = Duration::from_millis(100);
 
-/// In-memory condvar registry waking short-hold `chat.ask` / `chat.wait_ask` callers when an
-/// answer or withdrawal commits (`ASK-10`). Uses a single monotonic generation counter (`O(1)`).
+#[derive(Default)]
+struct AskWaitersState {
+    gen: u64,
+    active: HashMap<(String, String), usize>,
+}
+
+/// In-memory condvar & active-waiter registry waking short-hold `chat.ask` / `chat.wait_ask`
+/// callers when an answer or withdrawal commits (`ASK-10`, `TASK-115` / `ADR-0023` d6).
 #[derive(Default)]
 struct AskWaiters {
-    gen: Mutex<u64>,
+    state: Mutex<AskWaitersState>,
     cv: Condvar,
+}
+
+struct AskWaiterGuard<'a> {
+    waiters: &'a AskWaiters,
+    key: (String, String),
+}
+
+impl Drop for AskWaiterGuard<'_> {
+    fn drop(&mut self) {
+        let mut guard = self.waiters.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(count) = guard.active.get_mut(&self.key) {
+            if *count <= 1 {
+                guard.active.remove(&self.key);
+            } else {
+                *count -= 1;
+            }
+        }
+    }
 }
 
 impl AskWaiters {
     fn generation(&self) -> u64 {
-        *self.gen.lock().unwrap_or_else(|p| p.into_inner())
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).gen
+    }
+
+    fn register(&self, asker_id: &str, ask_id: &str) -> AskWaiterGuard<'_> {
+        let key = (asker_id.to_owned(), ask_id.to_owned());
+        let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        *guard.active.entry(key.clone()).or_insert(0) += 1;
+        AskWaiterGuard { waiters: self, key }
+    }
+
+    fn has_active_waiter(&self, asker_id: &str, ask_id: &str) -> bool {
+        let guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .active
+            .get(&(asker_id.to_owned(), ask_id.to_owned()))
+            .is_some_and(|&n| n > 0)
     }
 
     fn notify(&self) {
-        let mut guard = self.gen.lock().unwrap_or_else(|p| p.into_inner());
-        *guard = guard.saturating_add(1);
+        let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        guard.gen = guard.gen.saturating_add(1);
         self.cv.notify_all();
     }
 
     fn wait_change(&self, seen: u64, deadline: Instant, stopping: &AtomicBool) -> u64 {
-        let mut guard = self.gen.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
         loop {
-            if *guard != seen || stopping.load(Ordering::SeqCst) {
-                return *guard;
+            if guard.gen != seen || stopping.load(Ordering::SeqCst) {
+                return guard.gen;
             }
             let now = Instant::now();
             if now >= deadline {
-                return *guard;
+                return guard.gen;
             }
             let step = deadline.saturating_duration_since(now).min(ASK_WAIT_TICK);
             let (next, _) = self
@@ -142,6 +182,12 @@ impl ChatService {
     /// answers and withdrawals).
     pub(crate) fn notify_ask_waiters(&self) {
         self.ask_waiters.notify();
+    }
+
+    /// Returns `true` when `asker_id` currently holds an active short-hold `chat.ask` or
+    /// `chat.wait_ask` waiter for `ask_id` on this office (`TASK-115` / `doc-101` §4A).
+    pub(crate) fn has_active_ask_waiter(&self, asker_id: &str, ask_id: &str) -> bool {
+        self.ask_waiters.has_active_waiter(asker_id, ask_id)
     }
 
     fn notify_sat_sync(&self) {
@@ -601,6 +647,7 @@ impl ChatService {
         stopping: &AtomicBool,
     ) -> Result<Result<ChatWaitAskResult, ApiError>, org_office::OfficeError> {
         let max_hold = hold_ms.unwrap_or(MAX_SHORT_HOLD_MS).min(MAX_SHORT_HOLD_MS);
+        let _waiter_guard = (max_hold > 0).then(|| self.ask_waiters.register(member, ask_id));
         let mut seen = self.ask_waiters.generation();
         let initial = match self.office.inspect_ask_status(member, ask_id)? {
             Ok(v) => v,
@@ -617,6 +664,16 @@ impl ChatService {
             && !stopping.load(Ordering::SeqCst)
         {
             seen = self.ask_waiters.wait_change(seen, deadline, stopping);
+            latest = match self.office.inspect_ask_status(member, ask_id)? {
+                Ok(v) => v,
+                Err(e) => return Ok(Err(e)),
+            };
+        }
+        // Unregister BEFORE the final check so any responder that observed `has_active_waiter ==
+        // true` and skipped wake enqueue has already committed its answer and is returned inline
+        // (`TASK-115` zero-loss handoff).
+        drop(_waiter_guard);
+        if max_hold > 0 && latest.status == AskStatus::Waiting {
             latest = match self.office.inspect_ask_status(member, ask_id)? {
                 Ok(v) => v,
                 Err(e) => return Ok(Err(e)),
@@ -703,6 +760,10 @@ impl ChatService {
         };
         match self.office.chat_answer(member, params) {
             Ok(Ok(committed)) => {
+                let satisfied_active_waiter = committed.asker_id.as_deref().is_some_and(|asker| {
+                    self.ask_waiters
+                        .has_active_waiter(asker, &committed.result.ask_id)
+                });
                 self.ask_waiters.notify();
                 if let Some(header) = committed.reply_header.clone() {
                     self.mailbox.notify_member(&header.to_member_id);
@@ -726,6 +787,7 @@ impl ChatService {
                         sessions,
                         member,
                         &committed,
+                        satisfied_active_waiter,
                     );
                 }
                 ok_reply::<ChatAnswer>(request.id, &committed.result)

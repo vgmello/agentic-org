@@ -1179,6 +1179,8 @@ fn wake_confident_person_matches(
             kind: WakeKind::WatcherAnswer,
             sender_id: sender_id.as_str().to_owned(),
             sender_name: msg.sender_display_name.clone(),
+            sender_handle: None,
+            sender_relation: None,
             sender_is_person: true,
             conversation_id: Some(conversation_id.to_owned()),
             source_id: msg_id.clone(),

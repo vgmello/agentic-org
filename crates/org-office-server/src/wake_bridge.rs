@@ -92,6 +92,8 @@ pub(crate) fn on_chat_send_committed(
             kind,
             sender_id: sender_id.to_owned(),
             sender_name: sender_name.clone(),
+            sender_handle: None,
+            sender_relation: None,
             sender_is_person,
             conversation_id: Some(committed.result.conversation_id.clone()),
             source_id: committed.message.id.clone(),
@@ -208,6 +210,8 @@ pub(crate) fn on_chat_ask_committed(
             kind: WakeKind::Ask,
             sender_id: sender_id.to_owned(),
             sender_name: sender_name.clone(),
+            sender_handle: None,
+            sender_relation: None,
             sender_is_person,
             conversation_id: Some(committed.result.conversation_id.clone()),
             source_id: committed.result.ask_id.clone(),
@@ -221,12 +225,14 @@ pub(crate) fn on_chat_ask_committed(
     (woke, presence)
 }
 
-/// Processes a committed `chat.answer`: resumes a suspended asker (`ASK-5..9`) or wakes an idle asker (`WAKE-7`).
+/// Processes a committed `chat.answer`: resumes a suspended asker (`ASK-5..9`) or enqueues an
+/// `AskAnswer` wake unless an active `msg ask`/`msg wait` waiter already received it (`TASK-115`).
 pub(crate) fn on_chat_answer_committed(
     office: &Office,
     sessions: &SessionManager,
     responder_id: &str,
     committed: &AnswerCommitted,
+    satisfied_active_waiter: bool,
 ) {
     let Some(asker_id) = committed.asker_id.as_deref() else {
         return;
@@ -241,6 +247,7 @@ pub(crate) fn on_chat_answer_committed(
         &responder_name,
         responder_is_person,
         false,
+        satisfied_active_waiter,
     );
 }
 
