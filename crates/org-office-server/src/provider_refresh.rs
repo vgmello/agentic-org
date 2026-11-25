@@ -5,19 +5,20 @@
 //! `<binary> --version`) and renews their readiness and discovered-model observations before the
 //! 300s TTL expires, without ever promoting `AuthExpired`, `Unavailable`, or unbound connections.
 
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use org_office::providers::MAX_OBSERVATION_TTL_SECS;
 use org_office::{Office, OfficeRole};
 use org_office_sessions::RuntimeRegistry;
 use org_proto::providers::{
     BoundConnectionSummary, ConnectionReadinessStatus, DiscoveredModelInput,
-    ProviderBindingListParams, ProviderConnectionRefreshParams,
+    ProviderBindingListParams,
 };
 
 /// Renew ready observations when less than this many seconds remain before `valid_until`.
@@ -26,6 +27,10 @@ const RENEW_BEFORE_EXPIRY_MS: u64 = 150_000;
 const REFRESH_TICK: Duration = Duration::from_secs(60);
 /// Stop-check granularity while sleeping between ticks.
 const SLEEP_STEP: Duration = Duration::from_millis(500);
+/// Hard cap on each `<runtime> --version` probe so a stalled binary never blocks shutdown.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const PROBE_POLL_STEP: Duration = Duration::from_millis(50);
+const MAX_VERSION_OUTPUT_BYTES: u64 = 4096;
 
 /// Spawns the background readiness refresher thread for `office`.
 pub(crate) fn spawn_readiness_refresh_loop(
@@ -37,7 +42,7 @@ pub(crate) fn spawn_readiness_refresh_loop(
         .spawn(move || {
             let runtimes = RuntimeRegistry::production();
             while !stop.load(Ordering::SeqCst) {
-                refresh_ready_bindings_once(&office, &runtimes);
+                refresh_ready_bindings_once(&office, &runtimes, &stop);
                 sleep_interruptible(REFRESH_TICK, &stop);
             }
         })
@@ -99,7 +104,11 @@ fn probe_runtime_version(
     binary_hint: Option<&str>,
     driver: &str,
     runtimes: &RuntimeRegistry,
+    stop: &AtomicBool,
 ) -> Option<String> {
+    if stop.load(Ordering::SeqCst) {
+        return None;
+    }
     let program: PathBuf = match binary_hint.map(str::trim).filter(|s| !s.is_empty()) {
         Some(path) if Path::new(path).is_file() => PathBuf::from(path),
         Some(_) => return None,
@@ -108,22 +117,61 @@ fn probe_runtime_version(
             runtimes.resolve_binary(adapter.as_ref(), None).ok()?
         }
     };
-    let out = Command::new(&program)
+    let mut child = Command::new(&program)
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
+        .spawn()
         .ok()?;
-    if !out.status.success() {
-        return None;
+    let deadline = Instant::now() + PROBE_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut stdout_buf = Vec::new();
+                if let Some(out) = child.stdout.take() {
+                    let _ = out
+                        .take(MAX_VERSION_OUTPUT_BYTES)
+                        .read_to_end(&mut stdout_buf);
+                }
+                let mut stderr_buf = Vec::new();
+                if let Some(err) = child.stderr.take() {
+                    let _ = err
+                        .take(MAX_VERSION_OUTPUT_BYTES)
+                        .read_to_end(&mut stderr_buf);
+                }
+                return Some(
+                    parse_version_output(&stdout_buf, &stderr_buf)
+                        .unwrap_or_else(|| "unknown".to_owned()),
+                );
+            }
+            Ok(None) => {
+                if stop.load(Ordering::SeqCst) || Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                thread::sleep(PROBE_POLL_STEP);
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
     }
-    Some(parse_version_output(&out.stdout, &out.stderr).unwrap_or_else(|| "unknown".to_owned()))
 }
 
 /// Refreshes all locally bound `Ready` provider connections whose observation is stale or nearing
 /// expiry by re-verifying the runtime binary on this host.
-pub(crate) fn refresh_ready_bindings_once(office: &Office, runtimes: &RuntimeRegistry) {
+pub(crate) fn refresh_ready_bindings_once(
+    office: &Office,
+    runtimes: &RuntimeRegistry,
+    stop: &AtomicBool,
+) {
     let actor = office_operator_actor(office);
     let Ok(Ok(listed)) = office.provider_binding_list(
         actor,
@@ -135,6 +183,9 @@ pub(crate) fn refresh_ready_bindings_once(office: &Office, runtimes: &RuntimeReg
     };
     let now_ms = office.current_time_ms();
     for entry in listed.bindings {
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
         if !needs_renewal(&entry, now_ms) {
             continue;
         }
@@ -153,6 +204,7 @@ pub(crate) fn refresh_ready_bindings_once(office: &Office, runtimes: &RuntimeReg
             entry.binding.runtime_binary_path.as_deref(),
             &conn.runtime_driver,
             runtimes,
+            stop,
         );
         let Some(driver_version) = probed else {
             continue;
@@ -172,17 +224,13 @@ pub(crate) fn refresh_ready_bindings_once(office: &Office, runtimes: &RuntimeReg
                 capabilities_json: m.capabilities_json,
             })
             .collect();
-        let params = ProviderConnectionRefreshParams {
-            connection_id: entry.binding.connection_id,
-            driver_version: Some(effective_version),
-            auth_signed_in: Some(true),
-            observed_subscription_identity: entry.binding.account_identity_ref,
-            operator_attested_subscription: true,
+        let _ = office.renew_ready_provider_observation_if_unchanged(
+            &entry.binding.connection_id,
+            entry.binding.revision,
+            Some(effective_version),
             models,
-            issue_code: None,
-            ttl_seconds: Some(MAX_OBSERVATION_TTL_SECS),
-        };
-        let _ = office.provider_connection_refresh(actor, params);
+            MAX_OBSERVATION_TTL_SECS,
+        );
     }
 }
 
@@ -279,5 +327,12 @@ mod tests {
             Some("codex-cli")
         );
         assert_eq!(parse_version_output(b"   \n", b""), None);
+    }
+
+    #[test]
+    fn probe_runtime_version_aborts_immediately_when_stop_is_set() {
+        let stop = AtomicBool::new(true);
+        let runtimes = RuntimeRegistry::production();
+        assert!(probe_runtime_version(Some("/bin/sh"), "claude", &runtimes, &stop).is_none());
     }
 }

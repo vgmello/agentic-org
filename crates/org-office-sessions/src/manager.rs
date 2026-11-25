@@ -758,19 +758,37 @@ impl SessionManager {
         else {
             return secrets;
         };
+        let mut uses_claude_host_subscription = false;
         let conn_ids = prof
             .generated_for_connection_id
             .iter()
             .chain(prof.connection_ids.iter());
         for conn_id in conn_ids {
+            let mut has_vault_secret = false;
             if let Ok(Some(raw)) = self.enrollment.vault().load_unwrapped(conn_id.as_str()) {
                 if let Ok(text) = std::str::from_utf8(&raw) {
+                    has_vault_secret = true;
                     secrets.push(zeroize::Zeroizing::new(text.to_owned()));
                 }
             }
+            if !has_vault_secret {
+                if let Ok(Some(conn)) = self.office.load_provider_connection(conn_id.as_str()) {
+                    if conn.auth_mode
+                        == org_office::organization_family::records::ProviderAuthMode::SubscriptionCli
+                        && matches!(
+                            conn.runtime_driver.trim().to_ascii_lowercase().as_str(),
+                            "anthropic" | "claude" | "claude-code"
+                        )
+                    {
+                        uses_claude_host_subscription = true;
+                    }
+                }
+            }
         }
-        if let Some(tok) = crate::host_auth::resolve_host_claude_oauth_token() {
-            secrets.push(tok);
+        if uses_claude_host_subscription {
+            if let Some(tok) = crate::host_auth::resolve_host_claude_oauth_token() {
+                secrets.push(tok);
+            }
         }
         secrets
     }
@@ -807,7 +825,7 @@ impl SessionManager {
         let (preset, sandbox_enabled) = self.load_preset_and_sandbox(employee.id.as_str())?;
         let socket_str = self.config.office_socket.display().to_string();
         let socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
-        let denied_globs = self.denied_office_globs();
+        let denied_globs = self.denied_office_globs_for(Some(employee.id.as_str()));
         let cfg = build_session_policy(
             preset,
             sandbox_enabled,
@@ -1444,7 +1462,7 @@ impl SessionManager {
 
         let socket_str = self.config.office_socket.display().to_string();
         let office_socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
-        let denied_globs = self.denied_office_globs();
+        let denied_globs = self.denied_office_globs_for(Some(&emp_id));
         let preset_cfg = build_session_policy(
             admitted.preset,
             admitted.sandbox_enabled,
@@ -1580,7 +1598,7 @@ impl SessionManager {
             .bindings
             .issue(&emp_id, &run_id, &session_id, 0)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "could not mint session token"))?;
-        let binding_file = runtime_dir.join("session-binding.v1");
+        let binding_file = runtime_dir.join(format!("session-binding-{run_id}.v1"));
         let mut binding_guard = BindingGuard::new(&self.bindings, &emp_id, &run_id, &binding_file);
         write_owner_only_binding_file(&binding_file, binding.expose_token())?;
         let env = self.build_environment(
@@ -1974,39 +1992,88 @@ impl SessionManager {
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "could not build session env"))
     }
 
+    #[cfg(test)]
     pub(crate) fn denied_office_globs(&self) -> Vec<PathPattern> {
+        self.denied_office_globs_for(None)
+    }
+
+    pub(crate) fn denied_office_globs_for(
+        &self,
+        self_employee_id: Option<&str>,
+    ) -> Vec<PathPattern> {
         let mut out = Vec::new();
-        let mut push_glob = |path: &Path| {
-            let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-            let glob = format!("{}/**", resolved.display());
-            if let Ok(pat) = PathPattern::try_from(glob.as_str()) {
-                out.push(pat);
-            }
-        };
-        push_glob(self.office.folder());
+        push_glob_pattern(&mut out, self.office.folder());
         let durable = self.office.durable_root();
-        let office_local = durable
-            .join("local")
-            .join("offices")
-            .join(&self.office.info().office_id);
-        push_glob(&durable.join("state"));
-        push_glob(&durable.join("journal"));
-        push_glob(&durable.join("authority"));
-        push_glob(&durable.join("private"));
-        push_glob(&durable.join("messaging"));
-        push_glob(&durable.join("budgets"));
-        push_glob(&durable.join("accounting"));
-        push_glob(&durable.join("recovery"));
-        push_glob(&office_local.join("auth"));
-        push_glob(&office_local.join("connections"));
-        push_glob(&office_local.join("sessions"));
-        push_glob(&office_local.join("enroll-tmp"));
-        push_glob(&office_local.join("security"));
-        push_glob(&office_local.join("subscription-usage"));
-        if let Some(org_dir) = durable.parent() {
-            push_glob(&org_dir.join("runtime"));
+        let office_id = &self.office.info().office_id;
+        let office_local = durable.join("local").join("offices").join(office_id);
+        for sub in [
+            "state",
+            "journal",
+            "authority",
+            "private",
+            "messaging",
+            "budgets",
+            "accounting",
+            "recovery",
+        ] {
+            push_glob_pattern(&mut out, &durable.join(sub));
         }
+        for sub in [
+            "auth",
+            "connections",
+            "sessions",
+            "enroll-tmp",
+            "security",
+            "subscription-usage",
+        ] {
+            push_glob_pattern(&mut out, &office_local.join(sub));
+        }
+        if let Some(org_dir) = durable.parent() {
+            push_glob_pattern(&mut out, &org_dir.join("runtime"));
+        }
+        self.append_sibling_and_socket_denies(&mut out, &office_local, office_id, self_employee_id);
         out
+    }
+
+    fn append_sibling_and_socket_denies(
+        &self,
+        out: &mut Vec<PathPattern>,
+        office_local: &Path,
+        office_id: &str,
+        self_employee_id: Option<&str>,
+    ) {
+        if let Some(sock_parent) = self.config.office_socket.parent() {
+            push_exact_pattern(out, &sock_parent.join("host.sock"));
+            let own_slug =
+                self_employee_id.map(|emp| crate::host_auth::agent_tmpdir_slug(office_id, emp));
+            if let Ok(entries) = std::fs::read_dir(sock_parent.join("t")) {
+                for entry in entries.flatten() {
+                    if own_slug.as_deref() != entry.file_name().to_str() {
+                        push_glob_pattern(out, &entry.path());
+                    }
+                }
+            }
+        }
+        let agents_root = office_local.join("agents");
+        let mut sibling_ids = std::collections::BTreeSet::new();
+        if let Ok(entries) = std::fs::read_dir(&agents_root) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    sibling_ids.insert(name.to_owned());
+                }
+            }
+        }
+        if let Ok(employees) = self.office.list_employees() {
+            for emp in employees {
+                sibling_ids.insert(emp.id.as_str().to_owned());
+            }
+        }
+        for other in sibling_ids {
+            if self_employee_id != Some(other.as_str()) {
+                push_glob_pattern(out, &agents_root.join(&other));
+            }
+        }
+        append_privileged_socket_patterns(out);
     }
 
     fn idle_view_for(&self, employee_id: &str) -> Result<SessionView, ApiError> {
@@ -2188,13 +2255,34 @@ fn spawn_pump_thread(
     active_permit: &Arc<Mutex<Option<(String, u64)>>>,
 ) -> Result<JoinHandle<()>, ApiError> {
     let thread_name = format!("org-session-{}", &emp_id[..emp_id.len().min(8)]);
-    match thread::Builder::new()
-        .name(thread_name)
-        .spawn(move || run_pump(spawned, session, rx, pump_ctx))
-    {
+    let payload = Arc::new(Mutex::new(Some((spawned, session, rx, pump_ctx))));
+    let worker_payload = Arc::clone(&payload);
+    match thread::Builder::new().name(thread_name).spawn(move || {
+        let Some((spawned, session, rx, pump_ctx)) = worker_payload
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        else {
+            return;
+        };
+        run_pump(spawned, session, rx, pump_ctx);
+    }) {
         Ok(handle) => Ok(handle),
         Err(_) => {
-            mgr.bindings.revoke(emp_id, None);
+            if let Some((spawned, mut session, _rx, pump_ctx)) =
+                payload.lock().unwrap_or_else(|p| p.into_inner()).take()
+            {
+                let _ = crate::pump::finalize_child(
+                    spawned.child,
+                    spawned.stdin,
+                    &mut session,
+                    &pump_ctx,
+                    org_supervise::StopMode::Graceful,
+                    false,
+                );
+            } else {
+                mgr.bindings.revoke(emp_id, None);
+            }
             if let Some((pid, _)) = active_permit
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
@@ -2927,6 +3015,49 @@ fn next_entropy_hex(bytes_len: usize) -> Result<String, ApiError> {
         .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))
 }
 
+fn push_raw_pattern(out: &mut Vec<PathPattern>, raw: &str) {
+    if let Ok(pat) = PathPattern::try_from(raw) {
+        if !out.contains(&pat) {
+            out.push(pat);
+        }
+    }
+}
+
+fn push_glob_pattern(out: &mut Vec<PathPattern>, path: &Path) {
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    push_raw_pattern(out, &format!("{}/**", resolved.display()));
+}
+
+fn push_exact_pattern(out: &mut Vec<PathPattern>, path: &Path) {
+    push_raw_pattern(out, &path.display().to_string());
+    if let Ok(resolved) = path.canonicalize() {
+        push_raw_pattern(out, &resolved.display().to_string());
+    }
+}
+
+fn append_privileged_socket_patterns(out: &mut Vec<PathPattern>) {
+    for privileged in [
+        "/run/user/*/bus",
+        "/run/user/*/systemd/**",
+        "/run/user/*/podman/**",
+        "/run/dbus/system_bus_socket",
+        "/var/run/dbus/system_bus_socket",
+        "/var/run/docker.sock",
+        "/run/docker.sock",
+        "/run/podman/**",
+    ] {
+        push_raw_pattern(out, privileged);
+    }
+    if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR") {
+        let xdg_path = PathBuf::from(xdg);
+        if xdg_path.is_absolute() {
+            push_exact_pattern(out, &xdg_path.join("bus"));
+            push_glob_pattern(out, &xdg_path.join("systemd"));
+            push_glob_pattern(out, &xdg_path.join("podman"));
+        }
+    }
+}
+
 fn combine_agent_instructions(profile_body: &str, system_prompt: Option<&str>) -> String {
     let body = profile_body.trim();
     let prompt = system_prompt.map(str::trim).unwrap_or("");
@@ -2999,4 +3130,50 @@ fn map_vault_err(err: EnrollmentVaultError) -> ApiError {
         ),
     };
     ApiError::new(code, msg)
+}
+
+#[cfg(test)]
+mod manager_helper_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    #[test]
+    fn combine_agent_instructions_merges_and_deduplicates_cleanly() {
+        assert_eq!(combine_agent_instructions("", None), "");
+        assert_eq!(
+            combine_agent_instructions("  role body  ", None),
+            "role body"
+        );
+        assert_eq!(
+            combine_agent_instructions("", Some("  exec prompt  ")),
+            "exec prompt"
+        );
+        assert_eq!(
+            combine_agent_instructions("same text", Some("same text")),
+            "same text"
+        );
+        assert_eq!(
+            combine_agent_instructions("profile", Some("exec")),
+            "exec\n\nprofile"
+        );
+    }
+
+    #[test]
+    fn binding_file_is_owner_only_and_removed_on_guard_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("session-binding-run-1.v1");
+        let bindings = RunBindingRegistry::new();
+        let issued = bindings.issue("emp-1", "run-1", "sess-1", 0).unwrap();
+        {
+            let _guard = BindingGuard::new(&bindings, "emp-1", "run-1", &file);
+            write_owner_only_binding_file(&file, issued.expose_token()).unwrap();
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+            assert_eq!(
+                std::fs::read_to_string(&file).unwrap(),
+                issued.expose_token()
+            );
+        }
+        assert!(!file.exists(), "BindingGuard drop must unlink binding file");
+    }
 }

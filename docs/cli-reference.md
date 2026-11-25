@@ -225,8 +225,8 @@ agentic-org office list --name hq --json
 - `agentic-org channel list|join|leave|summarize`
   Discover and manage organization messaging channels over an approved office channel.
   **Use when:** finding `#channels` or joining/summarizing shared channels across offices.
-- `agentic-org hr hire|list|inspect|confirm|withdraw`
-  Hire and manage agents across HQ and satellite offices over an approved office channel.
+- `agentic-org hr hire|list|inspect`
+  Hire and manage agents across HQ and satellite offices over an approved office channel (confirm or withdraw pending proposals with `hr hire --id <proposal_id> [--withdraw]`).
   **Use when:** hiring an agent onto HQ or a remote satellite office from the terminal.
 - `agentic-org agent inspect|update|move|pause|resume|offboard|execution-get|execution-set`
   Inspect or manage hired agents and their execution configuration (`model_profile_id`, `model_id`, `permission_preset`, `system_prompt_markdown`) over an approved office channel.

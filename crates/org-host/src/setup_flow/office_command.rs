@@ -538,42 +538,54 @@ fn merge_remote_directory_offices(
     session: &SessionHandle,
     offices: &mut Vec<OfficeInfo>,
 ) {
-    let mut seen_orgs = std::collections::BTreeSet::new();
-    let local_seeds: Vec<(String, String)> = offices
-        .iter()
-        .filter(|o| seen_orgs.insert(o.organization_id.clone()))
-        .map(|o| (o.organization_id.clone(), o.id.clone()))
-        .collect();
-    for (org_id, local_office_id) in local_seeds {
-        let Ok(mut channel) = super::project_command::OfficeSession::open_for_office(
-            wire,
-            session,
-            Some(&org_id),
-            Some(&local_office_id),
-        ) else {
-            continue;
-        };
-        let Ok(Ok(dir)) = channel.call::<org_proto::federation::OfficeDirectoryList>(
-            wire,
-            session,
-            &org_proto::federation::OfficeDirectoryListParams {},
-        ) else {
-            continue;
-        };
-        for remote in dir.offices {
-            if !offices.iter().any(|existing| existing.id == remote.id) {
-                offices.push(OfficeInfo {
-                    id: remote.id,
-                    organization_id: remote.organization_id,
-                    name: remote.name,
-                    role: remote.role,
-                    host: format!("Remote ({})", remote.slug),
-                    endpoint: None,
-                    status: org_proto::OfficeStatus::Active,
-                    status_reason: None,
-                    next_restart_at: None,
-                });
+    let mut by_org: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    // Prefer Active local offices first for each organization, then fall back to non-Active ones.
+    for active_pass in [true, false] {
+        for office in offices.iter() {
+            let is_active = office.status == org_proto::OfficeStatus::Active;
+            if is_active != active_pass {
+                continue;
             }
+            let entry = by_org.entry(office.organization_id.clone()).or_default();
+            if !entry.iter().any(|id| id == &office.id) {
+                entry.push(office.id.clone());
+            }
+        }
+    }
+    for (org_id, candidates) in by_org {
+        for local_office_id in candidates {
+            let Ok(mut channel) = super::project_command::OfficeSession::open_for_office(
+                wire,
+                session,
+                Some(&org_id),
+                Some(&local_office_id),
+            ) else {
+                continue;
+            };
+            let Ok(Ok(dir)) = channel.call::<org_proto::federation::OfficeDirectoryList>(
+                wire,
+                session,
+                &org_proto::federation::OfficeDirectoryListParams {},
+            ) else {
+                continue;
+            };
+            for remote in dir.offices {
+                if !offices.iter().any(|existing| existing.id == remote.id) {
+                    offices.push(OfficeInfo {
+                        id: remote.id,
+                        organization_id: remote.organization_id,
+                        name: remote.name,
+                        role: remote.role,
+                        host: format!("Remote ({})", remote.slug),
+                        endpoint: None,
+                        status: org_proto::OfficeStatus::Active,
+                        status_reason: None,
+                        next_restart_at: None,
+                    });
+                }
+            }
+            break;
         }
     }
 }

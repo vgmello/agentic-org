@@ -179,7 +179,9 @@ fn resolve_binary_in_dirs(
 }
 
 fn parent_with_agent_os(exe: Option<&Path>) -> Option<PathBuf> {
-    let parent = exe.filter(|p| p.is_file()).and_then(Path::parent)?;
+    let parent = exe
+        .filter(|p| p.is_absolute() && p.is_file())
+        .and_then(Path::parent)?;
     parent
         .join("agent-os")
         .is_file()
@@ -188,7 +190,7 @@ fn parent_with_agent_os(exe: Option<&Path>) -> Option<PathBuf> {
 }
 
 fn canonical_exe_parent(exe: Option<&Path>) -> Option<PathBuf> {
-    exe.filter(|p| p.is_file())
+    exe.filter(|p| p.is_absolute() && p.is_file())
         .and_then(Path::parent)
         .and_then(|p| p.canonicalize().ok())
 }
@@ -200,16 +202,16 @@ fn resolve_helper_dir_from(
     path_env: Option<&std::ffi::OsStr>,
     home_dir: Option<&Path>,
 ) -> PathBuf {
-    let explicit_dir = explicit
+    explicit
         .filter(|p| p.is_dir())
-        .and_then(|p| p.canonicalize().ok());
-    let path_helper = resolve_binary_in_dirs("agent-os", None, path_env, home_dir)
-        .ok()
-        .and_then(|bin| bin.parent().map(Path::to_path_buf));
-    explicit_dir
+        .and_then(|p| p.canonicalize().ok())
         .or_else(|| parent_with_agent_os(current_exe))
         .or_else(|| parent_with_agent_os(argv0))
-        .or(path_helper)
+        .or_else(|| {
+            resolve_binary_in_dirs("agent-os", None, path_env, home_dir)
+                .ok()
+                .and_then(|bin| bin.parent().map(Path::to_path_buf))
+        })
         .or_else(|| canonical_exe_parent(current_exe))
         .or_else(|| canonical_exe_parent(argv0))
         .unwrap_or_else(|| PathBuf::from("/usr/bin"))
@@ -242,6 +244,11 @@ mod tests {
         let memfd = PathBuf::from("/memfd:agentic-org-office (deleted)");
         let resolved = resolve_helper_dir_from(None, Some(&memfd), Some(&office_bin), None, None);
         assert_eq!(resolved, release.canonicalize().unwrap());
+
+        // Relative argv[0] must never resolve CWD.
+        let rel = PathBuf::from("./agentic-org-office");
+        assert!(parent_with_agent_os(Some(&rel)).is_none());
+        assert!(canonical_exe_parent(Some(&rel)).is_none());
     }
 
     #[test]

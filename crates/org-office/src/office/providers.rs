@@ -285,6 +285,53 @@ impl Office {
         self.providers.save_observation(&state, &[])
     }
 
+    /// Atomically renews a locally bound `Ready` provider observation ONLY if the binding
+    /// revision has not changed and the current readiness status is still `Ready`.
+    /// Never promotes `AuthExpired`, `Unavailable`, or `Unknown` connections.
+    pub fn renew_ready_provider_observation_if_unchanged(
+        &self,
+        connection_id: &str,
+        expected_binding_revision: u64,
+        driver_version: Option<String>,
+        models: Vec<org_proto::providers::DiscoveredModelInput>,
+        ttl_seconds: u64,
+    ) -> Result<bool, OfficeError> {
+        let now_ms = self.monotonic_now_ms();
+        let now_utc = format_rfc3339_ms(now_ms);
+        let ttl = ttl_seconds.clamp(1, MAX_OBSERVATION_TTL_SECS);
+        let valid_until = format_rfc3339_ms(now_ms.saturating_add(ttl * 1000));
+        let state = OfficeConnectionState {
+            organization_id: self.info.org_id.clone(),
+            office_id: self.info.office_id.clone(),
+            connection_id: connection_id.to_owned(),
+            status: ConnectionReadinessStatus::Ready,
+            binding_revision: expected_binding_revision,
+            driver_version,
+            observed_at: Some(now_utc.clone()),
+            valid_until: Some(valid_until.clone()),
+            issue_code: None,
+        };
+        let model_records: Vec<OfficeConnectionModel> = models
+            .into_iter()
+            .map(|m| OfficeConnectionModel {
+                organization_id: self.info.org_id.clone(),
+                office_id: self.info.office_id.clone(),
+                connection_id: connection_id.to_owned(),
+                model_id: m.model_id,
+                driver_model_id: m.driver_model_id,
+                entitlement: m.entitlement,
+                capabilities_json: m.capabilities_json,
+                observed_at: now_utc.clone(),
+                valid_until: valid_until.clone(),
+            })
+            .collect();
+        self.providers.renew_ready_observation_if_unchanged(
+            expected_binding_revision,
+            &state,
+            &model_records,
+        )
+    }
+
     pub fn provider_durable_write_count(&self) -> u64 {
         self.providers.durable_write_count()
     }

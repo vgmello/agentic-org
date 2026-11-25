@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Reproducible Agentic Org release packager and ADR-0009 Ed25519 signer (TASK-121).
+"""Reproducible Agentic Org release packager and Ed25519 manifest signer.
 
-Produces strict USTAR regular-files-only `.tar.gz` bundles compatible with
-`org_host::release::ArchiveBundle` (ADR-0009 `agentic-org-release-v1`), SHA-256
-checksum files, optional Debian `.deb` packages, and unsigned dev bundles when
-`--signing-key` is omitted.
+Produces strict USTAR regular-files-only `.tar.gz` release bundles compatible with
+`org_host::release::ArchiveBundle` (`agentic-org-release-v1`), SHA-256 checksum files,
+and optional Debian `.deb` development packages when `--signing-key` is omitted.
 """
 
 from __future__ import annotations
@@ -27,6 +26,13 @@ from pathlib import Path
 EXECUTABLES = ("agentic-org", "agentic-org-office", "agentic-org-web", "agent-os")
 RELEASE_FORMAT = "agentic-org-release-v1"
 ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
+RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+MAX_FILES = 16_384
+MAX_PAYLOAD_BYTES = 2 * 1024 * 1024 * 1024
+MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024
+MAX_UI_ASSET_BYTES = 64 * 1024 * 1024
+MAX_UI_BYTES = 64 * 1024 * 1024
+MAX_UI_ENTRIES = 4096
 
 
 def sha256_file(path: Path) -> str:
@@ -86,6 +92,10 @@ def sign_ed25519(key_pem: Path, payload: bytes) -> bytes:
 
 
 def cmd_keygen(args: argparse.Namespace) -> int:
+    if args.min_sequence < 1 or args.max_sequence < args.min_sequence:
+        raise SystemExit(
+            "sequence bounds must satisfy 1 <= min_sequence <= max_sequence"
+        )
     out_dir = Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(out_dir, 0o700)
@@ -95,8 +105,12 @@ def cmd_keygen(args: argparse.Namespace) -> int:
         raise SystemExit(
             f"refusing to overwrite existing key {key_path}; pass --force to replace"
         )
-    run_openssl(["genpkey", "-algorithm", "ED25519", "-out", str(key_path)])
-    os.chmod(key_path, 0o600)
+    old_umask = os.umask(0o077)
+    try:
+        run_openssl(["genpkey", "-algorithm", "ED25519", "-out", str(key_path)])
+        os.chmod(key_path, 0o600)
+    finally:
+        os.umask(old_umask)
     pub_raw = raw_ed25519_pubkey_from_key(key_path)
     key_id = hashlib.sha256(pub_raw).hexdigest()
     registry = {
@@ -204,7 +218,11 @@ def build_deb(
             dst = opt_dir / exe
             shutil.copy2(bin_dir / exe, dst)
             os.chmod(dst, 0o755)
-        shutil.copytree(ui_dir, opt_dir / "ui")
+        for rel, src in collect_ui_files(ui_dir):
+            dst = opt_dir / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            os.chmod(dst, 0o644)
         for link_bin in ("agentic-org", "agent-os"):
             os.symlink(f"/opt/agentic-org/current/{link_bin}", bin_link_dir / link_bin)
         (ctrl_dir / "control").write_text(
@@ -213,8 +231,8 @@ def build_deb(
             f"Section: utils\n"
             f"Priority: optional\n"
             f"Architecture: {deb_arch}\n"
-            f"Maintainer: Agentic Org <ops@agentic-org.local>\n"
-            f"Description: Agentic Org host, office worker, browser BFF, and agent-os CLI\n",
+            f"Maintainer: Agentic Org Contributors <security@agentic-org.dev>\n"
+            f"Description: Agentic Org host, office worker, web service, and agent-os CLI\n",
             encoding="utf-8",
         )
         subprocess.run([dpkg, "--build", "--root-owner-group", str(root), str(deb_path)], check=True)
@@ -303,7 +321,53 @@ def maybe_build_deb(
     return deb_path
 
 
+def validate_manifest_bounds(
+    release_id: str, sequence: int, manifest_files: list[dict[str, object]]
+) -> None:
+    if not RELEASE_ID_RE.match(release_id):
+        raise SystemExit(
+            f"invalid --release-id `{release_id}`: must match {RELEASE_ID_RE.pattern}"
+        )
+    if sequence < 1:
+        raise SystemExit(f"invalid --sequence {sequence}: must be >= 1")
+    if len(manifest_files) > MAX_FILES:
+        raise SystemExit(f"file count {len(manifest_files)} exceeds limit {MAX_FILES}")
+    total_payload = 0
+    ui_bytes = 0
+    ui_dirs: set[str] = set()
+    ui_files = 0
+    for entry in manifest_files:
+        path = str(entry["path"])
+        size = int(entry["size"])
+        role = str(entry["role"])
+        total_payload += size
+        if role == "executable":
+            if size > MAX_EXECUTABLE_BYTES:
+                raise SystemExit(f"executable {path} exceeds {MAX_EXECUTABLE_BYTES} bytes")
+        else:
+            if size > MAX_UI_ASSET_BYTES:
+                raise SystemExit(f"UI asset {path} exceeds {MAX_UI_ASSET_BYTES} bytes")
+            ui_bytes += size
+            ui_files += 1
+            parts = path.split("/")
+            for depth in range(2, len(parts)):
+                ui_dirs.add("/".join(parts[:depth]))
+    if total_payload > MAX_PAYLOAD_BYTES:
+        raise SystemExit(f"total payload {total_payload} exceeds {MAX_PAYLOAD_BYTES} bytes")
+    if ui_bytes > MAX_UI_BYTES:
+        raise SystemExit(f"aggregate UI bytes {ui_bytes} exceeds {MAX_UI_BYTES} bytes")
+    if ui_files + len(ui_dirs) > MAX_UI_ENTRIES:
+        raise SystemExit(
+            f"UI entries ({ui_files + len(ui_dirs)}) exceeds limit {MAX_UI_ENTRIES}"
+        )
+
+
 def cmd_package(args: argparse.Namespace) -> int:
+    if args.deb and args.signing_key:
+        raise SystemExit(
+            "--deb is only supported for unsigned dev bundles; signed Linux releases "
+            "must install via `agentic-org release install` / `scripts/install.sh`."
+        )
     bin_dir = Path(args.bin_dir).resolve()
     ui_dir = Path(args.ui_dir).resolve()
     out_dir = Path(args.out_dir).resolve()
@@ -313,6 +377,7 @@ def cmd_package(args: argparse.Namespace) -> int:
     tar_entries, manifest_files = build_manifest_entries(
         payloads, args.platform, bool(args.signing_key)
     )
+    validate_manifest_bounds(args.release_id, args.sequence, manifest_files)
     tar_entries.extend(signed_metadata_entries(args, manifest_files))
 
     suffix = "" if args.signing_key else "-dev"
@@ -346,14 +411,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Agentic Org release signing & packaging tool")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_key = sub.add_parser("keygen", help="Generate Ed25519 publisher key + ADR-0009 trust registry")
+    p_key = sub.add_parser("keygen", help="Generate Ed25519 publisher key and trust registry")
     p_key.add_argument("--out-dir", required=True)
     p_key.add_argument("--min-sequence", type=int, default=1)
     p_key.add_argument("--max-sequence", type=int, default=1_000_000)
     p_key.add_argument("--force", action="store_true")
     p_key.set_defaults(func=cmd_keygen)
 
-    p_pkg = sub.add_parser("package", help="Build deterministic ADR-0009 release tarball (and optional .deb)")
+    p_pkg = sub.add_parser("package", help="Build deterministic release tarball (and optional dev .deb)")
     p_pkg.add_argument("--bin-dir", required=True)
     p_pkg.add_argument("--ui-dir", required=True)
     p_pkg.add_argument("--release-id", required=True)

@@ -7,8 +7,10 @@
 //! `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` and redacted from transcripts).
 
 use std::ffi::OsString;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use org_agent_runtime::{LaunchPlan, SpecPath};
 use org_office::organization_family::records::ProviderAuthMode;
@@ -18,6 +20,23 @@ const MAX_HOST_CLAUDE_CRED_BYTES: usize = 64 * 1024;
 /// Maximum byte length for an agent's `TMPDIR` so Linux `bwrap`/`socat` bridge sockets
 /// (`$TMPDIR/<name>.sock`, ~35 bytes) stay well under the 108-byte `sun_path` limit.
 const MAX_SHORT_TMPDIR_BYTES: usize = 70;
+/// Upper bound on macOS Keychain lookup so a locked Keychain never hangs session launch or
+/// transcript redaction.
+const KEYCHAIN_LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Deterministic 8-hex per-agent slug used under `<socket_parent>/t/<slug>`.
+pub(crate) fn agent_tmpdir_slug(office_id: &str, employee_id: &str) -> String {
+    let digest = ring::digest::digest(
+        &ring::digest::SHA256,
+        format!("{office_id}:{employee_id}").as_bytes(),
+    );
+    let mut slug = String::with_capacity(8);
+    for &b in &digest.as_ref()[..4] {
+        use std::fmt::Write as _;
+        let _ = write!(slug, "{b:02x}");
+    }
+    slug
+}
 
 /// Chooses an owner-only per-agent `TMPDIR` inside the office's short runtime socket directory
 /// (`<socket_parent>/t/<8-hex>`) whenever that stays within [`MAX_SHORT_TMPDIR_BYTES`] and shorter
@@ -32,16 +51,9 @@ pub(crate) fn resolve_agent_tmpdir(
     let Some(sock_parent) = office_socket.parent() else {
         return durable_fallback.to_path_buf();
     };
-    let digest = ring::digest::digest(
-        &ring::digest::SHA256,
-        format!("{office_id}:{employee_id}").as_bytes(),
-    );
-    let mut slug = String::with_capacity(8);
-    for &b in &digest.as_ref()[..4] {
-        use std::fmt::Write as _;
-        let _ = write!(slug, "{b:02x}");
-    }
-    let candidate = sock_parent.join("t").join(slug);
+    let candidate = sock_parent
+        .join("t")
+        .join(agent_tmpdir_slug(office_id, employee_id));
     let cand_len = candidate.as_os_str().len();
     let fallback_len = durable_fallback.as_os_str().len();
     if cand_len <= MAX_SHORT_TMPDIR_BYTES && cand_len < fallback_len {
@@ -121,7 +133,15 @@ fn read_claude_credentials_file() -> Option<Zeroizing<String>> {
         .map(PathBuf::from)?
         .join(".claude")
         .join(".credentials.json");
-    let bytes = std::fs::read(&cred_path).ok()?;
+    read_claude_credentials_from_path(&cred_path)
+}
+
+fn read_claude_credentials_from_path(cred_path: &Path) -> Option<Zeroizing<String>> {
+    let file = std::fs::File::open(cred_path).ok()?;
+    let mut bytes = Zeroizing::new(Vec::new());
+    file.take(MAX_HOST_CLAUDE_CRED_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
     if bytes.len() > MAX_HOST_CLAUDE_CRED_BYTES {
         return None;
     }
@@ -133,7 +153,7 @@ fn read_claude_keychain_token() -> Option<Zeroizing<String>> {
     if !security_bin.is_file() {
         return None;
     }
-    let out = Command::new(security_bin)
+    let mut child = Command::new(security_bin)
         .args([
             "find-generic-password",
             "-s",
@@ -143,12 +163,42 @@ fn read_claude_keychain_token() -> Option<Zeroizing<String>> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output()
+        .spawn()
         .ok()?;
-    if !out.status.success() || out.stdout.len() > MAX_HOST_CLAUDE_CRED_BYTES {
-        return None;
+    let deadline = Instant::now() + KEYCHAIN_LOOKUP_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut stdout = child.stdout.take()?;
+                let mut buf = Zeroizing::new(Vec::new());
+                stdout
+                    .by_ref()
+                    .take(MAX_HOST_CLAUDE_CRED_BYTES as u64 + 1)
+                    .read_to_end(&mut buf)
+                    .ok()?;
+                if buf.len() > MAX_HOST_CLAUDE_CRED_BYTES {
+                    return None;
+                }
+                return parse_claude_oauth_access_token(&buf);
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
     }
-    parse_claude_oauth_access_token(&out.stdout)
 }
 
 fn parse_claude_oauth_access_token(raw: &[u8]) -> Option<Zeroizing<String>> {
@@ -188,5 +238,57 @@ mod tests {
         assert!(picked.starts_with("/home/agents/.cache/agentic-org/tmp/ao/2oe/t/"));
         assert!(picked.as_os_str().len() <= MAX_SHORT_TMPDIR_BYTES);
         assert_ne!(picked, resolve_agent_tmpdir(sock, deep, "off-1", "emp-2"));
+    }
+
+    #[test]
+    fn allows_host_subscription_auth_enforces_mode_and_empty_vault() {
+        assert!(allows_host_subscription_auth(&[], None));
+        assert!(allows_host_subscription_auth(
+            &[],
+            Some(ProviderAuthMode::SubscriptionCli)
+        ));
+        assert!(!allows_host_subscription_auth(
+            &[],
+            Some(ProviderAuthMode::ApiKey)
+        ));
+        assert!(!allows_host_subscription_auth(
+            &[],
+            Some(ProviderAuthMode::CloudIam)
+        ));
+        let non_empty = vec![(OsString::from("ANTHROPIC_API_KEY"), OsString::from("sk-1"))];
+        assert!(!allows_host_subscription_auth(
+            &non_empty,
+            Some(ProviderAuthMode::SubscriptionCli)
+        ));
+    }
+
+    #[test]
+    fn host_config_dir_for_claude_is_always_none_and_cred_read_is_bounded() {
+        assert!(host_config_dir_for("claude", true).is_none());
+        assert!(host_config_dir_for("codex", false).is_none());
+        assert!(host_config_dir_for("agy", false).is_none());
+
+        let dir = tempfile::tempdir().unwrap();
+        let valid = dir.path().join("valid.json");
+        std::fs::write(
+            &valid,
+            r#"{"claudeAiOauth":{"accessToken":"sk-ant-bounded-tok"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            read_claude_credentials_from_path(&valid)
+                .as_deref()
+                .map(String::as_str),
+            Some("sk-ant-bounded-tok")
+        );
+
+        let oversized = dir.path().join("huge.json");
+        let pad = " ".repeat(MAX_HOST_CLAUDE_CRED_BYTES + 16);
+        std::fs::write(
+            &oversized,
+            format!(r#"{{"claudeAiOauth":{{"accessToken":"sk-too-big"}}}}{pad}"#),
+        )
+        .unwrap();
+        assert!(read_claude_credentials_from_path(&oversized).is_none());
     }
 }

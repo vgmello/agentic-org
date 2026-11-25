@@ -85,11 +85,28 @@ impl Binding {
 
 fn read_binding_file_token(path: &str) -> Option<String> {
     use std::io::Read as _;
-    let file = std::fs::File::open(path).ok()?;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(
+            org_platform::fs::O_NOFOLLOW
+                | org_platform::fs::O_NONBLOCK
+                | org_platform::fs::O_CLOEXEC,
+        )
+        .open(path)
+        .ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_BINDING_FILE_BYTES {
+        return None;
+    }
     let mut buf = String::new();
-    file.take(MAX_BINDING_FILE_BYTES)
+    let n = file
+        .take(MAX_BINDING_FILE_BYTES + 1)
         .read_to_string(&mut buf)
         .ok()?;
+    if (n as u64) > MAX_BINDING_FILE_BYTES {
+        return None;
+    }
     let trimmed = buf.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
@@ -327,5 +344,14 @@ mod tests {
             Some("tok-from-file-123")
         );
         assert_eq!(read_binding_file_token("/nonexistent/binding"), None);
+
+        // Reject symlinks (O_NOFOLLOW) and oversized files.
+        let link = dir.path().join("link-binding.v1");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert_eq!(read_binding_file_token(link.to_str().unwrap()), None);
+
+        let huge = dir.path().join("huge-binding.v1");
+        std::fs::write(&huge, "x".repeat((MAX_BINDING_FILE_BYTES + 1) as usize)).unwrap();
+        assert_eq!(read_binding_file_token(huge.to_str().unwrap()), None);
     }
 }

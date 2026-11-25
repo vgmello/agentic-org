@@ -770,8 +770,19 @@ pub(super) async fn execute_org_offices(
         return not_found();
     };
     let mut offices: Vec<OfficeView> = org.offices.into_iter().map(OfficeView::from).collect();
-    if let Some(local_office_id) = offices.first().map(|o| o.id.clone()) {
-        let auth = api.auth(&pair);
+    // Prefer Active local offices first, falling back through any other local office if offline.
+    let mut candidate_ids: Vec<String> = offices
+        .iter()
+        .filter(|o| o.status == org_proto::OfficeStatus::Active)
+        .map(|o| o.id.clone())
+        .collect();
+    for office in &offices {
+        if !candidate_ids.iter().any(|id| id == &office.id) {
+            candidate_ids.push(office.id.clone());
+        }
+    }
+    let auth = api.auth(&pair);
+    for local_office_id in candidate_ids {
         if let Ok(dir) = api
             .offices
             .call_typed::<org_proto::federation::OfficeDirectoryList>(
@@ -796,6 +807,7 @@ pub(super) async fn execute_org_offices(
                     });
                 }
             }
+            break;
         }
     }
     result(OfficeList { offices })

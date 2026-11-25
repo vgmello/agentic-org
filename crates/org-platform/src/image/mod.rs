@@ -48,8 +48,9 @@ use std::io;
 pub enum OwnExecutable {
     /// Readable file descriptor for `/proc/self/exe` (opened once with `O_CLOEXEC`).
     File(std::fs::File),
-    /// Executed by the admitted host from a sealed execute-only (`0111`) `memfd` with
-    /// `PR_SET_DUMPABLE == 0`, so `/proc/self/exe` is unreadable by design (`doc-64` §3.1).
+    /// Executed by the admitted host from a sealed execute-only (`0111`) `memfd` where
+    /// `PR_GET_DUMPABLE` is `0` (`SUID_DUMP_DISABLE`) or `2` (`SUID_DUMP_ROOT`), so
+    /// `/proc/self/exe` is unreadable by design (`doc-64` §3.1).
     SealedMemfd,
 }
 

@@ -302,7 +302,13 @@ pub fn open_for_command(
     )?;
     let office_id = match selected_office {
         Some(id) => id,
-        None => resolve_default_office(&mut wire, &session)?,
+        None => match resolve_default_office(&mut wire, &session) {
+            Ok(id) => id,
+            Err(err) => {
+                super::office_command::end_session(&mut wire, &session);
+                return Err(err);
+            }
+        },
     };
     open_approved_office(wire, session, office_id)
 }

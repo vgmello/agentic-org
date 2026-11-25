@@ -1222,11 +1222,18 @@ fn is_builtin_plugin(val: &Value) -> bool {
     };
     let source = obj.get("source").and_then(Value::as_str);
     let path = obj.get("path").and_then(Value::as_str);
+    let name = obj
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|n| !n.is_empty());
+    let builtin_2_1_323 = path == Some("builtin")
+        && name.is_some()
+        && source.and_then(|s| s.strip_suffix("@builtin")) == name;
     obj.get("builtin").and_then(Value::as_bool) == Some(true)
         || obj.get("isBuiltin").and_then(Value::as_bool) == Some(true)
         || source == Some("builtin")
         // Claude Code 2.1.323+ emits `{"name": "<id>", "path": "builtin", "source": "<id>@builtin"}`.
-        || (path == Some("builtin") && source.is_some_and(|s| s.ends_with("@builtin")))
+        || builtin_2_1_323
 }
 
 fn plugin_display_name(val: &Value) -> String {
@@ -1425,6 +1432,16 @@ mod plugin_tests {
             "name": "user-plugin",
             "path": "/home/user/.claude/plugins/user-plugin",
             "source": "user-plugin@marketplace"
+        })));
+        assert!(!is_builtin_plugin(&json!({
+            "name": "",
+            "path": "builtin",
+            "source": "@builtin"
+        })));
+        assert!(!is_builtin_plugin(&json!({
+            "name": "evil",
+            "path": "builtin",
+            "source": "other@builtin"
         })));
     }
 }

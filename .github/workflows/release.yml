@@ -10,30 +10,33 @@ on:
         description: "Release ID (e.g. v0.1.0)"
         required: true
       sequence:
-        description: "Monotonic ADR-0009 release sequence (>= 1)"
+        description: "Monotonic release sequence (>= 1)"
         required: true
         default: "1"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-ui:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          bun-version: "1.3.10"
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
       - name: Install UI dependencies and build static UI
         working-directory: apps/agentic-org-ui
         run: |
           bun install --frozen-lockfile
           bun run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: static-ui
           path: apps/agentic-org-ui/build
+          if-no-files-found: error
 
   package:
     needs: build-ui
@@ -45,33 +48,43 @@ jobs:
             platform: linux
             arch: x86_64
             target: x86_64-unknown-linux-gnu
-            deb: "1"
           - os: ubuntu-24.04-arm
             platform: linux
             arch: aarch64
             target: aarch64-unknown-linux-gnu
-            deb: "1"
           - os: macos-15
             platform: macos
             arch: aarch64
             target: aarch64-apple-darwin
-            deb: "0"
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: static-ui
           path: apps/agentic-org-ui/build
       - name: Install pinned Rust toolchain
         run: rustup toolchain install --no-self-update
-      - name: Prepare signing material (when ORG_RELEASE_SIGNING_KEY_PEM & ORG_RELEASE_TRUST_REGISTRY_JSON secrets are set)
+      - name: Prepare signing material
         id: signing
         env:
           SIGNING_KEY_PEM: ${{ secrets.ORG_RELEASE_SIGNING_KEY_PEM }}
           TRUST_REGISTRY_JSON: ${{ secrets.ORG_RELEASE_TRUST_REGISTRY_JSON }}
+          APPLE_TEAM_ID: ${{ secrets.ORG_APP_TEAM_ID }}
+          PLATFORM: ${{ matrix.platform }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           if [[ -n "$SIGNING_KEY_PEM" && -n "$TRUST_REGISTRY_JSON" ]]; then
+            if [[ "$PLATFORM" == "macos" && -z "$APPLE_TEAM_ID" ]]; then
+              if [[ "$IS_TAG" == "true" ]]; then
+                echo "Signed macOS release tags require ORG_APP_TEAM_ID and Developer ID signing." >&2
+                exit 1
+              fi
+              echo "signed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             mkdir -p "$RUNNER_TEMP/release-keys"
             chmod 0700 "$RUNNER_TEMP/release-keys"
             printf '%s\n' "$SIGNING_KEY_PEM" > "$RUNNER_TEMP/release-keys/publisher.key.pem"
@@ -79,6 +92,10 @@ jobs:
             printf '%s\n' "$TRUST_REGISTRY_JSON" > "$RUNNER_TEMP/release-keys/release-trust-registry.json"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
+            if [[ "$IS_TAG" == "true" ]]; then
+              echo "Tagged releases fail closed when ORG_RELEASE_SIGNING_KEY_PEM or ORG_RELEASE_TRUST_REGISTRY_JSON is unset." >&2
+              exit 1
+            fi
             echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Build and package release archive
@@ -86,7 +103,7 @@ jobs:
           RELEASE_ID: ${{ github.event.inputs.release_id || github.ref_name }}
           SEQUENCE: ${{ github.event.inputs.sequence || '1' }}
           SIGNED: ${{ steps.signing.outputs.signed }}
-          BUILD_DEB: ${{ matrix.deb }}
+          ORG_APP_TEAM_ID: ${{ secrets.ORG_APP_TEAM_ID }}
         run: |
           ARGS=(--release-id "$RELEASE_ID" --sequence "$SEQUENCE" --out-dir dist)
           if [[ "$SIGNED" == "true" ]]; then
@@ -94,21 +111,21 @@ jobs:
           else
             ARGS+=(--profile dev)
           fi
-          if [[ "$BUILD_DEB" == "1" ]]; then
-            ARGS+=(--deb)
-          fi
           bash scripts/package-release.sh "${ARGS[@]}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.platform }}-${{ matrix.arch }}
           path: dist/*
+          if-no-files-found: error
 
   publish:
     needs: package
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: artifacts
           merge-multiple: true

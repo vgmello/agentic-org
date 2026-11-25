@@ -224,3 +224,35 @@ fn run_call<C: Call>(
         Err(err) => Response::error(request.id, err),
     }
 }
+
+#[cfg(test)]
+mod directory_rpc_tests {
+    use super::*;
+    use org_office::{EngineChoice, TestOffice};
+    use org_proto::federation::OfficeDirectoryListParams;
+
+    #[test]
+    fn office_directory_rpc_returns_registered_offices_and_requires_bound_caller() {
+        let office = Office::for_test(TestOffice {
+            engine: EngineChoice::Memory,
+        });
+        let req = Request::new::<OfficeDirectoryList>(1, &OfficeDirectoryListParams {}).unwrap();
+
+        let unbound = dispatch_federation_rpc(&office, None, &req, false).unwrap();
+        assert!(matches!(
+            unbound.outcome,
+            org_proto::Outcome::Error(ref e) if e.code == ErrorCode::NotBound
+        ));
+
+        let owner = office.owner_member_id().to_owned();
+        let bound = dispatch_federation_rpc(&office, Some(&owner), &req, false).unwrap();
+        let org_proto::Outcome::Result(val) = bound.outcome else {
+            panic!("expected Ok result, got {:?}", bound.outcome);
+        };
+        let list: OfficeDirectoryListResult = serde_json::from_value(val).unwrap();
+        assert_eq!(list.offices.len(), 1);
+        assert_eq!(list.offices[0].id, office.info().office_id);
+        assert_eq!(list.offices[0].organization_id, office.info().org_id);
+        assert_eq!(list.offices[0].role, WireOfficeRole::Hq);
+    }
+}

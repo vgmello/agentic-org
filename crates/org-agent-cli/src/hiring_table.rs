@@ -281,7 +281,7 @@ const AGENT_EXECUTION_SET_INPUT: &[Field] = &[
             "workspace_edits",
             "autonomous_sandboxed",
         ]),
-        "Execution permission preset",
+        "Execution permission preset (full replacement; defaults to safe_ask when omitted)",
     ),
     Field::optional("enabled", Type::Boolean, "Enable or disable execution"),
     Field::required(

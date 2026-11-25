@@ -1,18 +1,31 @@
 #!/usr/bin/env bash
-# Reproducible Agentic Org release packager (TASK-121, ADR-0009).
-#
-# Usage:
-#   scripts/package-release.sh \
-#     --release-id v0.1.0 \
-#     --sequence 1 \
-#     --out-dir dist \
-#     [--profile release|dev] \
-#     [--signing-key /path/to/publisher.key.pem] \
-#     [--trust-registry /path/to/release-trust-registry.json] \
-#     [--ui-dir /path/to/built/ui] \
-#     [--skip-build] \
-#     [--deb]
+# Reproducible Agentic Org release packager.
 set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Reproducible Agentic Org release packager
+
+Usage:
+  scripts/package-release.sh \
+    --release-id v0.1.0 \
+    --sequence 1 \
+    --out-dir dist \
+    [--profile release|dev] \
+    [--signing-key /path/to/publisher.key.pem] \
+    [--trust-registry /path/to/release-trust-registry.json] \
+    [--ui-dir /path/to/built/ui] \
+    [--skip-build] \
+    [--deb]
+EOF
+}
+
+require_arg() {
+  if [[ $# -lt 2 || -z "${2:-}" ]]; then
+    echo "package-release.sh: option $1 requires a value" >&2
+    exit 2
+  fi
+}
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_ID=""
@@ -22,27 +35,38 @@ PROFILE="release"
 SIGNING_KEY=""
 TRUST_REGISTRY=""
 UI_DIR="$ROOT_DIR/apps/agentic-org-ui/build"
+UI_DIR_EXPLICIT=0
 SKIP_BUILD=0
 BUILD_DEB=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --release-id) RELEASE_ID="$2"; shift 2 ;;
-    --sequence) SEQUENCE="$2"; shift 2 ;;
-    --out-dir) OUT_DIR="$2"; shift 2 ;;
-    --profile) PROFILE="$2"; shift 2 ;;
-    --signing-key) SIGNING_KEY="$2"; shift 2 ;;
-    --trust-registry) TRUST_REGISTRY="$2"; shift 2 ;;
-    --ui-dir) UI_DIR="$2"; shift 2 ;;
+    --release-id) require_arg "$@"; RELEASE_ID="$2"; shift 2 ;;
+    --sequence) require_arg "$@"; SEQUENCE="$2"; shift 2 ;;
+    --out-dir) require_arg "$@"; OUT_DIR="$2"; shift 2 ;;
+    --profile) require_arg "$@"; PROFILE="$2"; shift 2 ;;
+    --signing-key) require_arg "$@"; SIGNING_KEY="$2"; shift 2 ;;
+    --trust-registry) require_arg "$@"; TRUST_REGISTRY="$2"; shift 2 ;;
+    --ui-dir) require_arg "$@"; UI_DIR="$2"; UI_DIR_EXPLICIT=1; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     --deb) BUILD_DEB=1; shift ;;
     -h|--help)
-      sed -n '2,15p' "$0"
+      usage
       exit 0
       ;;
     *) echo "package-release.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+if [[ "$PROFILE" != "release" && "$PROFILE" != "dev" ]]; then
+  echo "package-release.sh: --profile must be 'release' or 'dev' (got '$PROFILE')" >&2
+  exit 2
+fi
+
+if [[ "$BUILD_DEB" -eq 1 && "$PROFILE" == "release" ]]; then
+  echo "package-release.sh: --deb is only supported with --profile dev (signed Linux releases install via agentic-org release install)" >&2
+  exit 2
+fi
 
 if [[ -z "$RELEASE_ID" ]]; then
   SHORT_SHA="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo dev)"
@@ -63,6 +87,10 @@ case "$UNAME_M" in
 esac
 
 if [[ ! -f "$UI_DIR/index.html" ]]; then
+  if [[ "$UI_DIR_EXPLICIT" -eq 1 ]]; then
+    echo "package-release.sh: --ui-dir does not contain index.html: $UI_DIR" >&2
+    exit 1
+  fi
   echo "Building static UI into $UI_DIR ..." >&2
   (cd "$ROOT_DIR/apps/agentic-org-ui" && bun install --frozen-lockfile && bun run build)
 fi
@@ -74,7 +102,7 @@ if [[ "$PROFILE" == "release" ]]; then
   fi
   BIN_DIR="$ROOT_DIR/target/release"
   if [[ "$SKIP_BUILD" -eq 0 ]]; then
-    echo "Building Rust release binaries with embedded trust registry ..." >&2
+    echo "Building release binaries with embedded trust registry ..." >&2
     ORG_RELEASE_TRUST_REGISTRY="$(cd "$(dirname "$TRUST_REGISTRY")" && pwd)/$(basename "$TRUST_REGISTRY")" \
     ORG_RELEASE_MIN_SEQUENCE="$SEQUENCE" \
       cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --release \
@@ -83,7 +111,7 @@ if [[ "$PROFILE" == "release" ]]; then
 else
   BIN_DIR="$ROOT_DIR/target/debug"
   if [[ "$SKIP_BUILD" -eq 0 ]]; then
-    echo "Building Rust dev binaries ..." >&2
+    echo "Building development binaries ..." >&2
     cargo build --manifest-path "$ROOT_DIR/Cargo.toml" \
       -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
   fi

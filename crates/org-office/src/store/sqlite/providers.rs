@@ -13,7 +13,7 @@ use org_proto::providers::{
     TurnPermitState,
 };
 use org_proto::{ApiError, ErrorCode};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::OfficeError;
 use crate::private_fs::{
@@ -425,6 +425,92 @@ impl ProviderPoolStore for SqliteProviderPoolStore {
         }
         tx.commit().map_err(OfficeError::storage)?;
         Ok(())
+    }
+
+    fn renew_ready_observation_if_unchanged(
+        &self,
+        expected_binding_revision: u64,
+        state: &OfficeConnectionState,
+        models: &[OfficeConnectionModel],
+    ) -> Result<bool, OfficeError> {
+        let mut conn = self.lock_db();
+        let tx = conn.transaction().map_err(OfficeError::storage)?;
+        let current_binding_rev: Option<i64> = tx
+            .query_row(
+                "SELECT revision FROM office_connection_bindings \
+                 WHERE organization_id=?1 AND office_id=?2 AND connection_id=?3",
+                params![
+                    &state.organization_id,
+                    &state.office_id,
+                    &state.connection_id
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(OfficeError::storage)?;
+        let current_state: Option<(String, i64)> = tx
+            .query_row(
+                "SELECT status, binding_revision FROM office_connection_state \
+                 WHERE organization_id=?1 AND office_id=?2 AND connection_id=?3",
+                params![
+                    &state.organization_id,
+                    &state.office_id,
+                    &state.connection_id
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(OfficeError::storage)?;
+        let expected = expected_binding_revision as i64;
+        if current_binding_rev != Some(expected)
+            || current_state
+                .as_ref()
+                .is_none_or(|(status, rev)| status != "ready" || *rev != expected)
+        {
+            return Ok(false);
+        }
+        tx.execute(
+            "UPDATE office_connection_state SET \
+             driver_version=?4, observed_at=?5, valid_until=?6, issue_code=?7 \
+             WHERE organization_id=?1 AND office_id=?2 AND connection_id=?3",
+            params![
+                &state.organization_id,
+                &state.office_id,
+                &state.connection_id,
+                state.driver_version.as_deref(),
+                state.observed_at.as_deref(),
+                state.valid_until.as_deref(),
+                state.issue_code.as_deref(),
+            ],
+        )
+        .map_err(OfficeError::storage)?;
+        tx.execute(
+            "DELETE FROM office_connection_models WHERE organization_id=?1 AND office_id=?2 AND connection_id=?3",
+            params![&state.organization_id, &state.office_id, &state.connection_id],
+        )
+        .map_err(OfficeError::storage)?;
+        for m in models {
+            tx.execute(
+                "INSERT INTO office_connection_models(\
+                 organization_id, office_id, connection_id, model_id, driver_model_id, \
+                 entitlement, capabilities_json, observed_at, valid_until) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![
+                    &m.organization_id,
+                    &m.office_id,
+                    &m.connection_id,
+                    &m.model_id,
+                    &m.driver_model_id,
+                    m.entitlement.as_str(),
+                    &m.capabilities_json,
+                    &m.observed_at,
+                    &m.valid_until,
+                ],
+            )
+            .map_err(OfficeError::storage)?;
+        }
+        tx.commit().map_err(OfficeError::storage)?;
+        Ok(true)
     }
 
     fn coordinator_generation(&self) -> Result<u64, OfficeError> {

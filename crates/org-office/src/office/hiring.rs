@@ -30,8 +30,8 @@ use crate::organization::{
     wire,
 };
 use crate::store::open::{
-    AgentExecutionById, CheckHrMessageAccess, EmployeeById, HireInspectById, HiresList,
-    ModelProfileById, ModelProfilesList, ProviderConnectionById, ReceiptById, RoleById,
+    AgentExecutionById, CheckHrMessageAccess, EmployeeById, EmployeesList, HireInspectById,
+    HiresList, ModelProfileById, ModelProfilesList, ProviderConnectionById, ReceiptById, RoleById,
     RoleInspectByRef, RolesList, StructureOp,
 };
 
@@ -64,6 +64,11 @@ impl Office {
             return Ok(None);
         };
         Ok(self.store.read(EmployeeById(id)).map_err(storage)?.0)
+    }
+
+    /// Lists all employees registered in the organization.
+    pub fn list_employees(&self) -> Result<Vec<records::Employee>, OfficeError> {
+        Ok(self.store.read(EmployeesList).map_err(storage)?.0)
     }
 
     /// Reads one role record by canonical UUIDv7 ID.

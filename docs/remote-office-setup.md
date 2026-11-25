@@ -136,8 +136,9 @@ Run on each remote Linux host (`apps-worker-eu`, `apps-main-eu`, etc.) — **zer
 
 ### Option A: Install from a GitHub Release tag
 ```bash
+# Cold install requires out-of-band verification (--sha256 <64-hex|file> or --pubkey <publisher.pub.pem>):
 curl -fsSL https://raw.githubusercontent.com/vgmello/agentic-org/v1/scripts/install.sh \
-  | bash -s -- --version v0.1.0 --bin-dir "$HOME/.local/bin"
+  | bash -s -- --version v0.1.0 --sha256 "<expected-archive-sha256>" --bin-dir "$HOME/.local/bin"
 ```
 
 ### Option B: Install from a locally staged `.tar.gz` + `.sha256` bundle

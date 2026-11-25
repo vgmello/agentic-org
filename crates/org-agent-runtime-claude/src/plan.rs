@@ -506,75 +506,108 @@ fn build_settings_json(
     // Sandbox: always add `ctx.tmpdir` to writable roots; NEVER add `ctx.config_dir` to
     // `allowWrite` (Claude writes it outside the Bash sandbox; tools must not tamper with
     // transcripts or credential files — S2). Pin `allowUnsandboxedCommands: false` (B1).
-    if spec.sandbox.enabled {
-        let mut writable: Vec<String> = spec
-            .sandbox
-            .writable_roots
-            .iter()
-            .map(|p| p.as_str().to_owned())
-            .collect();
-        if !writable.iter().any(|p| p == ctx.tmpdir.as_str()) {
-            writable.push(ctx.tmpdir.as_str().to_owned());
-        }
-
-        let mut deny_write: Vec<String> = spec
-            .sandbox
-            .deny_write
-            .iter()
-            .map(|p| p.as_str().to_owned())
-            .collect();
-        let mut deny_read: Vec<String> = spec
-            .sandbox
-            .deny_read
-            .iter()
-            .map(|p| p.as_str().to_owned())
-            .collect();
-        if let Some(cfg_dir) = &ctx.config_dir {
-            if !deny_write.iter().any(|p| p == cfg_dir.as_str()) {
-                deny_write.push(cfg_dir.as_str().to_owned());
-            }
-            let cred_file = format!(
-                "{}/.credentials.json",
-                cfg_dir.as_str().trim_end_matches('/')
-            );
-            if !deny_read.iter().any(|p| p == &cred_file) {
-                deny_read.push(cred_file);
-            }
-        }
-
-        let network = build_sandbox_network_json(&spec.sandbox.allowed_unix_sockets);
-
-        root.insert(
-            "sandbox".to_owned(),
-            json!({
-                "enabled": true,
-                "autoAllowBashIfSandboxed": false,
-                "allowUnsandboxedCommands": false,
-                "filesystem": {
-                    "allowWrite": writable,
-                    "denyWrite": deny_write,
-                    "denyRead": deny_read,
-                },
-                "network": network,
-            }),
-        );
-    } else {
-        root.insert("sandbox".to_owned(), json!({ "enabled": false }));
-    }
+    root.insert("sandbox".to_owned(), build_sandbox_json(spec, ctx));
 
     Ok(serde_json::to_vec(&Value::Object(root)).expect("settings JSON serialization cannot fail"))
 }
 
-fn build_sandbox_network_json(allowed_unix_sockets: &[SpecPath]) -> Value {
+fn build_sandbox_json(spec: &SessionSpec, ctx: &LaunchContext) -> Value {
+    if !spec.sandbox.enabled {
+        return json!({ "enabled": false });
+    }
+    let mut writable: Vec<String> = spec
+        .sandbox
+        .writable_roots
+        .iter()
+        .map(|p| p.as_str().to_owned())
+        .collect();
+    if !writable.iter().any(|p| p == ctx.tmpdir.as_str()) {
+        writable.push(ctx.tmpdir.as_str().to_owned());
+    }
+
+    let mut deny_write: Vec<String> = spec
+        .sandbox
+        .deny_write
+        .iter()
+        .map(|p| p.as_str().to_owned())
+        .collect();
+    let mut deny_read: Vec<String> = spec
+        .sandbox
+        .deny_read
+        .iter()
+        .map(|p| p.as_str().to_owned())
+        .collect();
+    if let Some(cfg_dir) = &ctx.config_dir {
+        if !deny_write.iter().any(|p| p == cfg_dir.as_str()) {
+            deny_write.push(cfg_dir.as_str().to_owned());
+        }
+        let cred_file = format!(
+            "{}/.credentials.json",
+            cfg_dir.as_str().trim_end_matches('/')
+        );
+        if !deny_read.iter().any(|p| p == &cred_file) {
+            deny_read.push(cred_file);
+        }
+    }
+
+    let allow_all_unix = !spec.sandbox.allowed_unix_sockets.is_empty()
+        && !org_platform::confinement::unix_socket_path_filter_supported();
+    if allow_all_unix {
+        append_linux_privileged_socket_denies(&mut deny_read, &mut deny_write);
+    }
+    let network = build_sandbox_network_json(&spec.sandbox.allowed_unix_sockets, allow_all_unix);
+
+    json!({
+        "enabled": true,
+        "autoAllowBashIfSandboxed": false,
+        "allowUnsandboxedCommands": false,
+        "filesystem": {
+            "allowWrite": writable,
+            "denyWrite": deny_write,
+            "denyRead": deny_read,
+        },
+        "network": network,
+    })
+}
+
+const LINUX_PRIVILEGED_SOCKET_DENIES: &[&str] = &[
+    "/run/user/*/bus",
+    "/run/user/*/systemd/**",
+    "/run/user/*/podman/**",
+    "/run/dbus/system_bus_socket",
+    "/var/run/dbus/system_bus_socket",
+    "/var/run/docker.sock",
+    "/run/docker.sock",
+    "/run/podman/**",
+];
+
+fn append_linux_privileged_socket_denies(
+    deny_read: &mut Vec<String>,
+    deny_write: &mut Vec<String>,
+) {
+    // Defense-in-depth when Linux seccomp requires `allowAllUnixSockets`: hide well-known
+    // privileged host sockets (systemd user D-Bus, system D-Bus, Docker/Podman) inside bwrap.
+    for &pat in LINUX_PRIVILEGED_SOCKET_DENIES {
+        if !deny_read.iter().any(|p| p == pat) {
+            deny_read.push(pat.to_owned());
+        }
+        if !deny_write.iter().any(|p| p == pat) {
+            deny_write.push(pat.to_owned());
+        }
+    }
+}
+
+fn build_sandbox_network_json(
+    allowed_unix_sockets: &[SpecPath],
+    allow_all_unix_sockets: bool,
+) -> Value {
     let allow_sockets: Vec<Value> = allowed_unix_sockets
         .iter()
         .map(|p| Value::String(p.as_str().to_owned()))
         .collect();
     let mut network = Map::new();
     network.insert("allowUnixSockets".to_owned(), Value::Array(allow_sockets));
-    if !allowed_unix_sockets.is_empty()
-        && !org_platform::confinement::unix_socket_path_filter_supported()
-    {
+    if allow_all_unix_sockets {
         // Linux seccomp filters `socket(AF_UNIX)` without inspecting `connect()` paths,
         // so Claude's `bwrap` sandbox blocks `agent-os` unless `allowAllUnixSockets` is set.
         network.insert("allowAllUnixSockets".to_owned(), Value::Bool(true));
@@ -794,4 +827,51 @@ fn secret_env_names() -> Vec<EnvName> {
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static secret env name is valid"))
     .collect()
+}
+
+#[cfg(test)]
+mod sandbox_network_tests {
+    use super::*;
+
+    #[test]
+    fn build_sandbox_network_json_sets_allow_all_only_when_requested() {
+        let sock = SpecPath::try_from("/run/office/off.sock").unwrap();
+        let strict = build_sandbox_network_json(std::slice::from_ref(&sock), false);
+        assert_eq!(strict["allowUnixSockets"], json!(["/run/office/off.sock"]));
+        assert!(strict.get("allowAllUnixSockets").is_none());
+
+        let linux = build_sandbox_network_json(std::slice::from_ref(&sock), true);
+        assert_eq!(linux["allowUnixSockets"], json!(["/run/office/off.sock"]));
+        assert_eq!(linux["allowAllUnixSockets"], json!(true));
+    }
+
+    #[test]
+    fn linux_privileged_socket_denies_mask_dbus_and_docker_without_duplicates() {
+        let mut deny_read = vec!["/run/docker.sock".to_owned()];
+        let mut deny_write = Vec::new();
+        append_linux_privileged_socket_denies(&mut deny_read, &mut deny_write);
+        for expected in [
+            "/run/user/*/bus",
+            "/run/user/*/systemd/**",
+            "/run/dbus/system_bus_socket",
+            "/var/run/docker.sock",
+            "/run/docker.sock",
+        ] {
+            assert!(
+                deny_read.iter().any(|p| p == expected),
+                "deny_read missing {expected}"
+            );
+            assert!(
+                deny_write.iter().any(|p| p == expected),
+                "deny_write missing {expected}"
+            );
+        }
+        assert_eq!(
+            deny_read
+                .iter()
+                .filter(|p| *p == "/run/docker.sock")
+                .count(),
+            1
+        );
+    }
 }

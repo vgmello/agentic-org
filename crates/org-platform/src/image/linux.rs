@@ -13,6 +13,12 @@ pub(super) fn own_loaded_cdhash() -> io::Result<[u8; 20]> {
     Err(refused::image_identity().into())
 }
 
+fn is_sealed_memfd_link(link: &str) -> bool {
+    link.strip_prefix("/memfd:")
+        .and_then(|rest| rest.strip_suffix(" (deleted)"))
+        .is_some_and(|name| !name.is_empty() && !name.contains('/'))
+}
+
 pub(super) fn open_own_executable() -> io::Result<OwnExecutable> {
     match fs::File::open("/proc/self/exe") {
         Ok(file) => Ok(OwnExecutable::File(file)),
@@ -24,7 +30,7 @@ pub(super) fn open_own_executable() -> io::Result<OwnExecutable> {
             let non_user_dumpable = dumpable == 0 || dumpable == 2;
             let is_memfd = fs::read_link("/proc/self/exe")
                 .ok()
-                .and_then(|link| link.to_str().map(|s| s.starts_with("/memfd:")))
+                .and_then(|link| link.to_str().map(is_sealed_memfd_link))
                 .unwrap_or(false);
             if non_user_dumpable && is_memfd {
                 Ok(OwnExecutable::SealedMemfd)
@@ -61,5 +67,14 @@ mod tests {
                 Some(&refused::image_identity())
             );
         }
+    }
+
+    #[test]
+    fn sealed_memfd_link_requires_kernel_deleted_memfd_format() {
+        assert!(is_sealed_memfd_link("/memfd:agentic-org-web (deleted)"));
+        assert!(!is_sealed_memfd_link("/memfd: (deleted)"));
+        assert!(!is_sealed_memfd_link("/memfd:agentic-org-web"));
+        assert!(!is_sealed_memfd_link("/memfd:a/b (deleted)"));
+        assert!(!is_sealed_memfd_link("/usr/bin/agentic-org-web"));
     }
 }

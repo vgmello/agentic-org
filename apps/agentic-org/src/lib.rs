@@ -36,7 +36,7 @@ office     office list|restart|invite|invitations|approve|decline|cancel|remove|
 Use when: listing/restarting offices or running HQ/satellite mTLS enrollment and sync checks.\n  \
 project    project list|inspect|create: list, inspect, or create projects\n             \
 Use when: discovering, inspecting, or creating organization projects and owning teams.\n  \
-provider   provider create|list|bind|bindings|models: manage AI provider connections and local office bindings\n             \
+provider   provider create|list|bind|refresh|bindings|models: manage AI provider connections and local office bindings\n             \
 Use when: configuring org-wide Claude/Codex/Agy connections on HQ or binding local runtimes on HQ/satellite offices.\n  \
 release    release install|status: verify and pin a signed release bundle into this host's release store\n             \
 Use when: installing or upgrading prebuilt signed binaries on macOS or Linux without compiling from source.\n  \
@@ -44,9 +44,9 @@ msg        msg send|inbox|read|reply|ask|accept|withdraw|list|wait: message peop
 Use when: sending DMs, channel messages, or replies to local or remote office agents from your terminal.\n  \
 channel    channel list|join|leave|summarize: manage organization messaging channels\n             \
 Use when: discovering or inspecting shared channels across offices.\n  \
-hr         hr hire|list|inspect|confirm|withdraw: hire and manage agents across HQ and satellite offices\n             \
+hr         hr hire|list|inspect: hire and manage agents across HQ and satellite offices\n             \
 Use when: hiring new agents onto HQ or a remote satellite office from the terminal.\n  \
-agent      agent list|inspect|pause|resume|offboard: inspect or manage hired agents\n             \
+agent      agent inspect|update|move|pause|resume|offboard|execution-get|execution-set: inspect or manage hired agents\n             \
 Use when: checking agent status, execution settings, or lifecycle state.\n  \
 team       team list|inspect|create|update: manage organization teams\n             \
 Use when: discovering or creating teams before hiring agents or creating projects.\n  \

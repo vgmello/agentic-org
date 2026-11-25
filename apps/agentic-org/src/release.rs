@@ -59,6 +59,30 @@ fn resolve_store_dir(explicit: Option<&str>) -> Result<PathBuf, String> {
     }
 }
 
+fn resolve_bundle_source(source_raw: &str) -> Result<(PathBuf, fs::Metadata), String> {
+    let abs = std::path::absolute(Path::new(source_raw))
+        .map_err(|e| format!("resolving bundle path `{source_raw}`: {e}"))?;
+    let sym = fs::symlink_metadata(&abs)
+        .map_err(|e| format!("reading bundle path `{}`: {e}", abs.display()))?;
+    if sym.file_type().is_symlink() {
+        return Err(format!(
+            "bundle path `{}` must not be a symlink",
+            abs.display()
+        ));
+    }
+    // Canonicalize ancestor OS symlinks (e.g. macOS `/var -> /private/var`, `/tmp -> /private/tmp`)
+    // so `ArchiveBundle::open` / `DirectoryBundle::open`'s `O_NOFOLLOW` walk succeeds while
+    // still rejecting a symlinked leaf above.
+    let canonical = match (abs.parent(), abs.file_name()) {
+        (Some(parent), Some(name)) => parent
+            .canonicalize()
+            .map_err(|e| format!("canonicalizing parent of `{}`: {e}", abs.display()))?
+            .join(name),
+        _ => abs,
+    };
+    Ok((canonical, sym))
+}
+
 fn run_install(arguments: &[String]) -> Result<(), String> {
     if matches!(arguments, [flag] if flag == "--help" || flag == "-h") {
         println!("{HELP}");
@@ -72,16 +96,19 @@ fn run_install(arguments: &[String]) -> Result<(), String> {
     }
     let (rest, json) = strip_json_flag(tail)?;
     let options = crate::options(&rest, &["--store"])?;
-    let store_dir = resolve_store_dir(options.get("--store").map(String::as_str))?;
-    let source = std::path::absolute(Path::new(source_raw))
-        .map_err(|e| format!("resolving bundle path `{source_raw}`: {e}"))?;
-    let meta = fs::metadata(&source)
-        .map_err(|e| format!("reading bundle path `{}`: {e}", source.display()))?;
+    let explicit_store = options.get("--store").map(String::as_str);
+    let store_dir = resolve_store_dir(explicit_store)?;
+    let (source, meta) = resolve_bundle_source(source_raw)?;
 
-    if let Some(parent) = store_dir.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("creating release store parent ({}): {e}", parent.display()))?;
-        let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+    // Only auto-create and restrict mode 0700 on our own default app directory; never chmod
+    // an arbitrary user-supplied `--store` parent (such as `$HOME`).
+    if explicit_store.is_none() {
+        if let Some(parent) = store_dir.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                format!("creating release store parent ({}): {e}", parent.display())
+            })?;
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        }
     }
     let mut store = ReleaseStore::open(&store_dir).map_err(|e| {
         format!(
@@ -96,15 +123,27 @@ fn run_install(arguments: &[String]) -> Result<(), String> {
             .install_directory(&bundle)
             .map_err(|e| format!("installing release directory `{}`: {e}", source.display()))?
     } else if meta.is_file() {
-        let prepared = store_dir.join("staging");
-        fs::create_dir_all(&prepared)
-            .map_err(|e| format!("preparing staging folder ({}): {e}", prepared.display()))?;
-        let _ = fs::set_permissions(&prepared, fs::Permissions::from_mode(0o700));
-        let mut bundle = ArchiveBundle::open(&source, &prepared)
+        let staging_root = store_dir.join("staging");
+        fs::create_dir_all(&staging_root)
+            .map_err(|e| format!("preparing staging folder ({}): {e}", staging_root.display()))?;
+        let _ = fs::set_permissions(&staging_root, fs::Permissions::from_mode(0o700));
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let run_staging = staging_root.join(format!("install-{}-{nanos}", std::process::id()));
+        fs::create_dir(&run_staging)
+            .map_err(|e| format!("preparing staging run ({}): {e}", run_staging.display()))?;
+        fs::set_permissions(&run_staging, fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("securing staging run ({}): {e}", run_staging.display()))?;
+        let mut bundle = ArchiveBundle::open(&source, &run_staging)
             .map_err(|e| format!("verifying release archive `{}`: {e}", source.display()))?;
-        store
+        let pin = store
             .install_archive(&mut bundle)
-            .map_err(|e| format!("installing release archive `{}`: {e}", source.display()))?
+            .map_err(|e| format!("installing release archive `{}`: {e}", source.display()))?;
+        drop(bundle);
+        let _ = fs::remove_dir_all(&run_staging);
+        pin
     } else {
         return Err(format!(
             "bundle path `{}` must be a `.tar.gz` archive or release directory",
@@ -219,5 +258,27 @@ mod tests {
         assert!(invoke(&["status", "--json", "--json"])
             .unwrap_err()
             .contains("more than once"));
+    }
+
+    #[test]
+    fn resolve_bundle_source_rejects_symlink_leaf_and_canonicalizes_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let real_dir = dir.path().join("real");
+        std::fs::create_dir_all(&real_dir).unwrap();
+        let archive = real_dir.join("bundle.tar.gz");
+        std::fs::write(&archive, b"archive").unwrap();
+        let parent_link = dir.path().join("alias");
+        std::os::unix::fs::symlink(&real_dir, &parent_link).unwrap();
+
+        let (resolved, meta) =
+            super::resolve_bundle_source(parent_link.join("bundle.tar.gz").to_str().unwrap())
+                .unwrap();
+        assert!(meta.is_file());
+        assert_eq!(resolved, archive.canonicalize().unwrap());
+
+        let leaf_link = real_dir.join("link.tar.gz");
+        std::os::unix::fs::symlink(&archive, &leaf_link).unwrap();
+        let err = super::resolve_bundle_source(leaf_link.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("symlink"), "{err}");
     }
 }
