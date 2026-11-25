@@ -21,20 +21,20 @@ assigned to you.
    `errors-and-felt-safety.md`, `evals-and-portability.md`): all four when you implement,
    otherwise the ones the job touches. Follow it, including the Context-First Sort, the Five
    Laws of Agent Experience, Felt Safety for Agents, and the 7-question AX Review Audit Rubric.
-3. **The product's rules, which outrank the persona:**
-   - `.backlog/docs/specs/doc-96 - Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md`
+3. **The product's rules, which outrank the persona (in parent `agentic-org-project` repo `backlog/`):**
+   - `backlog/docs/specs/doc-96 - Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md`
      (authoritative AX Spec: discovery tiers, token budgets, onboarding, phase-gated skills,
      error/conflict recovery, runtime portability, and `AX-1`–`AX-24`).
-   - `.backlog/docs/design/doc-27 - Design-Agent-Instructions-Assembly.md` (7-part
+   - `backlog/docs/design/doc-27 - Design-Agent-Instructions-Assembly.md` (7-part
      static-to-volatile prefix caching order, 10 KiB base prompt budget, `TurnTrigger` shapes,
      untrusted-content fencing, and `INSTR-1`–`INSTR-23`).
-   - `.backlog/docs/design/doc-28 - Design-agent-os-Command-Line.md` (single `CommandTable`,
+   - `backlog/docs/design/doc-28 - Design-agent-os-Command-Line.md` (single `CommandTable`,
      named-flag grammar, envelope and formats, `--help`/`--schema`, 4 KiB launch catalogue
      budget, `--dry-run`, `--idempotency-key`, `--if-match`, `session attach`, `CLI-1`–`CLI-15`).
-   - `.backlog/docs/specs/doc-59 - REQ-08-agent-os-CLI-and-Kernel-Primitives.md` (CLI-first
+   - `backlog/docs/specs/doc-59 - REQ-08-agent-os-CLI-and-Kernel-Primitives.md` (CLI-first
      kernel boundary vs. selective MCP posture).
-   - Owning domain data contracts in `.backlog/docs/organization-data/` and
-     `.backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md`. Where a data
+   - Owning domain data contracts in `backlog/docs/organization-data/` and
+     `backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md`. Where a data
      contract or ADR disagrees with an AX design or persona preference, the data contract or
      ADR wins. If you cannot tell which contract governs a command or field, ask the lead.
 4. **How AX surfaces are built and checked here:**

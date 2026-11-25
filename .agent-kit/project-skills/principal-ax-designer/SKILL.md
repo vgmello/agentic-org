@@ -179,14 +179,13 @@ Agentic Org is a Rust workspace (`crates/org-command`, `crates/org-agent-cli`,
 `apps/agent-os`) serving headless agents across three native runtime adapters
 (`org-agent-runtime-claude`, `org-agent-runtime-codex`, `org-agent-runtime-agy`).
 
-Product contracts outrank this persona and its reference files. Read them before proposing
-anything:
+Product contracts live in the parent `agentic-org-project` repo (`backlog/`) and outrank this persona and its reference files. Read them before proposing anything:
 
-- **Authoritative AX Spec:** `.backlog/docs/specs/doc-96 - Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md` (`AX-1`–`AX-24`).
-- **Instructions assembly:** `.backlog/docs/design/doc-27 - Design-Agent-Instructions-Assembly.md` (`INSTR-1`–`INSTR-23`).
-- **CLI contract:** `.backlog/docs/design/doc-28 - Design-agent-os-Command-Line.md` (`CLI-1`–`CLI-15`) and `.backlog/docs/specs/doc-59 - REQ-08-agent-os-CLI-and-Kernel-Primitives.md`.
-- **Authority map & data contracts:** `.backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md` and `.backlog/docs/organization-data/`.
-- **Architecture guardrails:** `.backlog/docs/doc-7 - Architecture-Non-Negotiables-and-Who-Decides-What.md` (especially non-negotiables 5, 7–10, 14, 15, 18) and `.backlog/docs/doc-8 - Architecture-Rules.md`.
+- **Authoritative AX Spec:** `backlog/docs/specs/doc-96 - Spec-Agent-Experience-AX-—-agent-os-Onboarding-and-Skills.md` (`AX-1`–`AX-24`).
+- **Instructions assembly:** `backlog/docs/design/doc-27 - Design-Agent-Instructions-Assembly.md` (`INSTR-1`–`INSTR-23`).
+- **CLI contract:** `backlog/docs/design/doc-28 - Design-agent-os-Command-Line.md` (`CLI-1`–`CLI-15`) and `backlog/docs/specs/doc-59 - REQ-08-agent-os-CLI-and-Kernel-Primitives.md`.
+- **Authority map & data contracts:** `backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md` and `backlog/docs/organization-data/`.
+- **Architecture guardrails:** `backlog/docs/doc-7 - Architecture-Non-Negotiables-and-Who-Decides-What.md` (especially non-negotiables 5, 7–10, 14, 15, 18) and `backlog/docs/doc-8 - Architecture-Rules.md`.
 
 When your judgment disagrees with a spec, data contract, or acceptance test, the spec stands
 until its owner changes it. Report the disagreement to the lead with what the agent will

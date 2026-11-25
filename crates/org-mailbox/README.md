@@ -1,14 +1,14 @@
 # org-mailbox
 
 The office's messaging library for directed messages between members
-([ADR-0003](../../.backlog/decisions/decision-3%20-%20ADR-0003-Agent-messaging-is-office-first.md)): the domain rules over
+(`ADR-0003`: `backlog/decisions/decision-3 - ADR-0003-Agent-messaging-is-office-first.md` in parent `agentic-org-project`): the domain rules over
 storage and directory ports. Database implementations, sockets, binding and
 authorization stay outside it. Dependencies: `org-proto`, `serde_json`, `sha2`; no
 database and no async runtime.
 
-Increment B6 of the [implementation plan](../../.backlog/docs/doc-5%20-%20v1-Implementation-Plan.md) replaces this
+Increment B6 of the implementation plan (`backlog/docs/doc-5 - v1-Implementation-Plan.md`) replaces this
 model with the conversations (DMs, group DMs and channels) of the
-[messaging data contract](../../.backlog/docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md).
+messaging data contract (`backlog/docs/organization-data/doc-90 - Organization-Data-15-—-Messaging-and-Chat.md`).
 Nothing here is carried over into that model.
 
 ## What it does today

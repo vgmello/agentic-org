@@ -6,6 +6,7 @@ These exercise SQL projections; they do not implement an application importer.
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -14,33 +15,78 @@ from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parent
-DOCS_ROOT = ROOT.parents[2] / ".backlog" / "docs" / "organization-data"
+REPO_ROOT = ROOT.parents[2]
 NUMBERED_DOC_RE = re.compile(r"Organization-Data-(\d{2})-")
 
 
+def _resolve_backlog_root():
+    env_dir = os.environ.get("ORG_BACKLOG_DIR")
+    if env_dir:
+        candidate = Path(env_dir).expanduser().resolve()
+        if not candidate.is_dir():
+            raise AssertionError(f"ORG_BACKLOG_DIR does not exist: {candidate}")
+        return candidate
+    candidates = [
+        REPO_ROOT / ".backlog",
+        REPO_ROOT.parent / "backlog",
+    ]
+    if len(REPO_ROOT.parents) >= 2:
+        candidates.append(REPO_ROOT.parents[1] / "backlog")
+    if len(REPO_ROOT.parents) >= 4:
+        candidates.append(REPO_ROOT.parents[3] / "backlog")
+    for candidate in candidates:
+        if (candidate / "docs" / "organization-data").is_dir():
+            return candidate
+    return None
+
+
+BACKLOG_ROOT = _resolve_backlog_root()
+DOCS_ROOT = (BACKLOG_ROOT / "docs" / "organization-data") if BACKLOG_ROOT else None
+DECISIONS_ROOT = (BACKLOG_ROOT / "decisions") if BACKLOG_ROOT else None
+STANDALONE_SKIP_REASON = (
+    "Parent backlog/ knowledge repo not present in standalone code checkout; "
+    "set ORG_BACKLOG_DIR to run cross-repo doc-contract checks."
+)
+
+
+def _require_docs_root():
+    if DOCS_ROOT is None:
+        raise unittest.SkipTest(STANDALONE_SKIP_REASON)
+    return DOCS_ROOT
+
+
+def _require_decisions_root():
+    if DECISIONS_ROOT is None:
+        raise unittest.SkipTest(STANDALONE_SKIP_REASON)
+    return DECISIONS_ROOT
+
+
 def numbered_org_data_docs():
+    docs_root = _require_docs_root()
     matched = []
-    for path in DOCS_ROOT.glob("doc-*Organization-Data-[0-9][0-9]-*.md"):
+    for path in docs_root.glob("doc-*Organization-Data-[0-9][0-9]-*.md"):
         match = NUMBERED_DOC_RE.search(path.name)
         if match:
             matched.append((int(match.group(1)), path))
     matched.sort(key=lambda item: item[0])
     if len(matched) != 18:
-        raise AssertionError(f"Expected 18 numbered organization-data docs in {DOCS_ROOT}, found {len(matched)}")
+        raise AssertionError(f"Expected 18 numbered organization-data docs in {docs_root}, found {len(matched)}")
     return matched
 
 
 def org_data_doc(number):
+    docs_root = _require_docs_root()
     for doc_number, path in numbered_org_data_docs():
         if doc_number == number:
             return path
-    raise AssertionError(f"Missing organization-data doc {number:02d} in {DOCS_ROOT}")
+    raise AssertionError(f"Missing organization-data doc {number:02d} in {docs_root}")
 
 
 def schema_coverage_doc():
-    matches = sorted(DOCS_ROOT.glob("doc-74*.md"))
+    docs_root = _require_docs_root()
+    matches = sorted(docs_root.glob("doc-74*.md"))
     if len(matches) != 1:
-        raise AssertionError(f"Expected 1 doc-74 schema coverage doc in {DOCS_ROOT}, found {len(matches)}")
+        raise AssertionError(f"Expected 1 doc-74 schema coverage doc in {docs_root}, found {len(matches)}")
     return matches[0]
 
 
@@ -189,6 +235,11 @@ class DraftSchemaTests(unittest.TestCase):
                 )
             }
 
+        # TASK-10 (H-05): sensitive messaging and budget tables are absent from shared schema.sql.
+        shared_names = {name for (_, name) in definitions(self.db)}
+        for forbidden in ("conversations", "messages", "message_recipient_states", "budgets", "budget_policy_versions", "budget_holds"):
+            self.assertNotIn(forbidden, shared_names)
+
         shared_sections = []
         isolated_docs = {
             15: "messaging-schema.sql",
@@ -214,11 +265,6 @@ class DraftSchemaTests(unittest.TestCase):
         self.addCleanup(documented.close)
         documented.executescript("\n".join(shared_sections))
         self.assertEqual(definitions(documented), definitions(self.db))
-
-        # TASK-10 (H-05): sensitive messaging and budget tables are absent from shared schema.sql.
-        shared_names = {name for (_, name) in definitions(self.db)}
-        for forbidden in ("conversations", "messages", "message_recipient_states", "budgets", "budget_policy_versions", "budget_holds"):
-            self.assertNotIn(forbidden, shared_names)
 
     def test_integrated_execution_schema_and_all_views_resolve(self):
         views = self.db.execute("SELECT name FROM sqlite_schema WHERE type='view'").fetchall()
@@ -738,7 +784,7 @@ class DraftSchemaTests(unittest.TestCase):
                        "UPDATE process_cleanup_records SET execution_process_id='process' WHERE id='other'")
 
     def test_relative_document_links_exist(self):
-        docs = sorted(DOCS_ROOT.glob("*.md"))
+        docs = sorted(_require_docs_root().glob("*.md"))
         self.assertGreaterEqual(len(docs), 21)
         for path in docs:
             in_fence = False
@@ -757,7 +803,11 @@ class DraftSchemaTests(unittest.TestCase):
                     target = unquote(target.split("#", 1)[0])
                     if target and not re.match(r"[a-z]+://", target) and not target.startswith("mailto:"):
                         with self.subTest(document=path.name, target=target):
-                            self.assertTrue((path.parent / target).exists())
+                            in_backlog = (path.parent / target).exists()
+                            in_code_repo = target.startswith("../../../") and (
+                                REPO_ROOT / target.removeprefix("../../../")
+                            ).exists()
+                            self.assertTrue(in_backlog or in_code_repo)
 
 
 class IntegrityAuditTests(unittest.TestCase):
@@ -2453,7 +2503,7 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
 
     def test_eng4_contracts_state_guarantees_without_sqlite_statements(self):
         """ADR-0018 ENG-4: Documents 06 and 11 and numbering/journal ADRs state guarantees without SQLite statements."""
-        decisions_root = ROOT.parents[2] / ".backlog" / "decisions"
+        decisions_root = _require_decisions_root()
         targets = [org_data_doc(6), org_data_doc(11)]
         for prefix in ("decision-6 ", "decision-19 ", "decision-21 "):
             matches = sorted(decisions_root.glob(f"{prefix}*.md"))

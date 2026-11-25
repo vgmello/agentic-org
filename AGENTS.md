@@ -7,20 +7,23 @@ They cover prototype verification, publishing, and owner-approved Svelte handoff
 Compare approved snapshots for each release summary and checkpoint any release in
 progress before context compaction.
 
+## Knowledge & Backlog repository
+
+Backlog tasks, designs, UX/AX specs, ADRs, and organization-data contracts live in the parent **`agentic-org-project`** repo under `backlog/` (`../../../../backlog/` from agent worktrees; `../../backlog/` from `repos/agentic-org`). Run all `backlog` CLI commands from that parent root.
+
 ## Current working mode
 
-Two engineers build v1, each with their own agents. An engineer's lead agent takes an
-increment from the [implementation plan](.backlog/docs/doc-5%20-%20v1-Implementation-Plan.md) and owns it end
-to end: UI, backend, database, shared contracts, documentation and integration. No
-path belongs to a named person. Who owns which files is stated in the increment's
-short plan, written before code. One writer per file at a time; a file that two
-increments need is handed over explicitly.
+Two engineers build v1, each with their own agents. A lead agent takes an
+increment from `backlog/docs/doc-5 - v1-Implementation-Plan.md` and owns it end
+to end: UI, backend, database, shared contracts, docs and integration. No
+path belongs to a named person; file ownership is stated in the increment's
+short plan before code. One writer per file at a time; hand shared files over explicitly.
 
 Use local subagents when useful under `.agent-kit/WORKFLOW.md`. The lead owns the
 complete vertical feature and its integration; give implementation subagents bounded
 scopes and use fresh local reviewers. Agree a shared interface before a second
-increment depends on it, and update affected trait implementations together. No pull
-request and no outside reviewer is a prerequisite.
+increment depends on it, and update affected trait implementations together. No PR
+or outside reviewer is a prerequisite.
 
 Keep working toward the full v1 goal. If one feature is blocked, preserve its
 checkpoint and continue an independent feature. A partial delivery is not v1
@@ -28,34 +31,26 @@ completion and is not a reason to stop.
 
 The product is named **Agentic Org**. For data relationships, fields, identities,
 canonical files and selected execution/control contracts, start with
-[`organization-data README`](.backlog/docs/organization-data/doc-72%20-%20Organization-Data-—-README.md)
-and the [documentation authority map](.backlog/docs/design/doc-62%20-%20Design-Documentation-Authority-Map.md).
-The other designs in `.backlog/docs/design/`, ADRs in `.backlog/decisions/` and UX/AX specs in
-`.backlog/docs/specs/` explain those contracts in their own contexts; where one differs from
-the data contract, the data contract wins. Use `principal-designer` for browser UX and `principal-ax-designer` for `agent-os` AX (`doc-96` outranks persona). A requirement document says what is to be
-built. It does not establish that a command or service exists: what exists is in the
-checklist row's evidence and in the executable status document named below.
+`backlog/docs/organization-data/doc-72 - Organization-Data-—-README.md`
+and `backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md`.
+Designs (`backlog/docs/design/`), ADRs (`backlog/decisions/`) and UX/AX specs
+(`backlog/docs/specs/`) explain those contracts in context; where one differs from
+the data contract, the data contract wins. Use `principal-designer` for browser UX and `principal-ax-designer` for `agent-os` AX (`doc-96` outranks persona). A requirement doc says what is to be
+built; what exists is in the checklist evidence and executable status doc below.
 
-[`Feature Checklist`](.backlog/docs/doc-3%20-%20Feature-Checklist.md) is the single feature delivery checklist.
-Update its relevant row when changing implementation or selecting/deferring scope;
-include evidence and remaining work. Mark Done only for the row's full stated scope,
-and keep unknown implementation status explicit. Requirements stay in their owning
-specifications; historical agent task logs do not establish feature completion.
-Assign each checklist row to one primary category defined in
-[`Feature Areas`](.backlog/docs/doc-4%20-%20Feature-Areas.md). Keep its scope/boundaries and area
-summary consistent with the checklist when changing statuses or categorization;
-cross-area dependencies use links rather than duplicate feature rows.
+`backlog/docs/doc-3 - Feature-Checklist.md` is the single feature delivery checklist.
+Update its relevant row when changing implementation or scope with evidence and remaining work.
+Mark Done only for full stated scope, keeping unknown status explicit. Requirements stay in owning
+specs; historical task logs do not establish completion. Assign each row to one primary category in
+`backlog/docs/doc-4 - Feature-Areas.md`, keeping summaries consistent and linking cross-area dependencies.
 
-The owner-requested [v1 project structure](.backlog/docs/design/doc-68%20-%20Design-v1-Project-Structure.md) defines the target names and domain-module/vertical-slice layout. The worker and UI source paths remain apps/agentic-org-office and apps/agentic-org-ui. Production executable names are agentic-org, agentic-org-office, agentic-org-web and agent-os; host code lives in crates/org-host and is composed by agentic-org serve. Application source/package names now match their executable names; persisted identities remain stable; domain moves remain pending. See [executable migration](.backlog/docs/design/doc-63%20-%20Design-Executables-and-Entry-Points.md) for implemented versus unavailable entry points.
+`backlog/docs/design/doc-68 - Design-v1-Project-Structure.md` defines target names and domain-module/vertical-slice layout. Worker and UI paths remain `apps/agentic-org-office` and `apps/agentic-org-ui`. Executables are `agentic-org`, `agentic-org-office`, `agentic-org-web` and `agent-os`; host code lives in `crates/org-host` composed by `agentic-org serve`. Package names match executables; persisted identities stay stable; domain moves remain pending. See `backlog/docs/design/doc-63 - Design-Executables-and-Entry-Points.md` for entry-point status.
 
-What to build, and in what order, is in the [implementation plan](.backlog/docs/doc-5%20-%20v1-Implementation-Plan.md);
-[`Start Here`](.backlog/docs/doc-2%20-%20Start-Here.md) says where each kind of requirement is written.
-Engineers and their agents make architectural decisions themselves, inside the
-[architecture non-negotiables](.backlog/docs/doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md), and record them.
+Build order is in `backlog/docs/doc-5 - v1-Implementation-Plan.md`; `backlog/docs/doc-2 - Start-Here.md` maps requirement locations. Engineers and agents make architectural decisions inside `backlog/docs/doc-7 - Architecture-Non-Negotiables-and-Who-Decides-What.md` and record them.
 
 ## Rules
-1. **Read [`Architecture Rules`](.backlog/docs/doc-8%20-%20Architecture-Rules.md) first.** For domain/data work, read the authority map and owning organization-data contract before secondary designs or UX criteria. Follow [v1 project structure](.backlog/docs/design/doc-68%20-%20Design-v1-Project-Structure.md): apps compose crates, policies own contracts, `org-proto` deps are intentional, no source cycles, logic in libraries, thin binaries. Planned variation (OS, vendor, storage, deployment) goes behind a consumer-owned adapter from day one; unimplemented OS/provider/engine fails closed ([rule](.backlog/docs/doc-8%20-%20Architecture-Rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
-2. **Branches and integration:** follow [`Branch, Review and Integration`](.backlog/docs/processes/doc-20%20-%20Process-Branch-Review-and-Integration.md).
+1. **Read `backlog/docs/doc-8 - Architecture-Rules.md` first.** For domain/data work, read the authority map and owning organization-data contract before secondary designs or UX criteria. Follow `doc-68`: apps compose crates, policies own contracts, `org-proto` deps are intentional, no source cycles, logic in libraries, thin binaries. Planned variation (OS, vendor, storage, deployment) goes behind a consumer-owned adapter from day one; unimplemented OS/provider/engine fails closed (`doc-8` §Planned variation).
+2. **Branches and integration:** follow `backlog/docs/processes/doc-20 - Process-Branch-Review-and-Integration.md`.
    - Start feature branches from `origin/v1`. Use separate worktrees for concurrent writers; otherwise work in the current checkout.
    - Keep one active implementation branch per lead; preserve blocked checkpoints and advance independent work.
    - Review locally, merge `origin/v1` into your branch, notify other lead sessions, `git merge --no-ff` into `v1` and push. `v1` integrates **all v1 features** (owner, 2026-11-18; `v1-integration` retired); no PR or outside reviewer required.
@@ -169,8 +164,8 @@ managed employees use their injected binding.
 
 ## Session start: check for a handover
 
-First read [`Workstreams Overview`](.backlog/docs/workstreams/doc-14%20-%20Workstreams-Overview.md) and your stream's file
-(`doc-15` backend, `doc-16` linux or `doc-17` UI under `.backlog/docs/workstreams/`): it is the shared record of where each stream stands and
+First read `backlog/docs/workstreams/doc-14 - Workstreams-Overview.md` and your stream's file
+(`doc-15` backend, `doc-16` linux or `doc-17` UI under parent repo `backlog/docs/workstreams/`): it is the shared record of where each stream stands and
 what comes next; a local `HANDOVER.md` only adds checkout detail.
 
 At the start of every lead session, check for `.agent-kit/tasks/HANDOVER.md` in this
@@ -192,7 +187,7 @@ and this repository.
 - Assess independent slices at planning/checkpoints; record parallel splits or why serial is better in the plan.
 - At most two concurrent source writers per increment (including the lead), using separate worktrees, nonoverlapping files, and explicit ownership handoffs for shared files.
 - Before dispatch, specify worktree/base, owned files, interfaces, dependencies, acceptance checks, routed model/effort, escalation rules, and skill packet; preserve author sessions.
-- Every implementation/review handoff references [independent delivery and dependency boundaries](.backlog/docs/doc-8%20-%20Architecture-Rules.md#independent-delivery-and-dependency-boundaries) and includes [`.backlog/docs/doc-6 - Independent-Delivery-and-Dependency-Boundaries.md`](.backlog/docs/doc-6%20-%20Independent-Delivery-and-Dependency-Boundaries.md) in the skill packet, stating usable outcome/foundation, prerequisites, and early production-path verification.
+- Every implementation/review handoff references independent delivery and dependency boundaries (`backlog/docs/doc-8 - Architecture-Rules.md`, `backlog/docs/doc-6 - Independent-Delivery-and-Dependency-Boundaries.md` in parent `agentic-org-project`), stating usable outcome/foundation, prerequisites, and early production-path verification.
 - Workers return concise receipts (changed paths, check results/logs, remaining issues, decisions needed) with full logs on disk. The lead inspects targeted code/contracts without repeating routine investigations; independent reviews, author validation, and full checks remain mandatory.
 
 ### Communication for the lead and delegates
@@ -259,9 +254,9 @@ checks and a live model cycle. Do not claim model availability from a version pr
 
 ## Backlog.md Workflow
 
-This project uses Backlog.md for task and project management.
+This project uses Backlog.md in the parent **`agentic-org-project`** repository (`backlog/`). Run all `backlog` CLI commands from that parent repository root, not inside this code checkout.
 
-**At the beginning of each conversation in this project, run `backlog instructions overview` before answering or taking action. Re-read it only if you have not read it yet in the current conversation.**
+**At the beginning of each conversation in this project, run `backlog instructions overview` (from the parent repo root) before answering or taking action. Re-read it only if you have not read it yet in the current conversation.**
 
 Use the overview to decide whether to search, read, create, or update Backlog tasks.
 

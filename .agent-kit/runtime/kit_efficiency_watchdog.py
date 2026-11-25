@@ -1319,7 +1319,7 @@ def _is_code_rework_path(path_str):
     if not path_str or is_test_path(path_str):
         return False
     norm = Path(path_str).as_posix().lower()
-    if norm.startswith(".backlog/") or norm in NON_CODE_REWORK_EXACT:
+    if norm.startswith((".backlog/", "backlog/")) or norm in NON_CODE_REWORK_EXACT:
         return False
     if norm.endswith((".md", ".lock")):
         return False

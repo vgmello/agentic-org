@@ -3,7 +3,7 @@
 Pure verification for ADR-0009's `agentic-org-release-v1` profile. The host's release
 module (`crates/org-host/src/release`) uses it, and no command reaches that yet:
 installing from a signed release is increment L9 of the
-[implementation plan](../../.backlog/docs/doc-5%20-%20v1-Implementation-Plan.md). The library
+implementation plan (`backlog/docs/doc-5 - v1-Implementation-Plan.md` in parent `agentic-org-project`). The library
 has no filesystem, archive, environment, process, platform-admission or activation
 adapter. Its six direct external dependencies are pinned existing workspace
 versions: ring 0.17.14, serde 1.0.229, serde_json 1.0.154, sha2 0.10.9,

@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "TASK-85.1 AX discipline adoption (2026-11-23); prior sessions at 34ca1855 and origin/v1; Rust quality rollout Codex session 01a20e2b-e672-7a20-86e9-59e253279195",
-  "rationale": "Updated skill catalog for TASK-85.1 (Agent Experience discipline): added the agent-experience skill (.agent-kit/project-skills/principal-ax-designer/SKILL.md) and authoritative AX Spec doc-96 evidence, migrated stale docs/ evidence and guidance paths to .backlog/docs/ and .backlog/decisions/, kept >24 KiB data-contract documents (doc-72, doc-75) in project_evidence while keeping doc-62 and project skill briefs in phase references, and refreshed verified SHA-256 hashes for current workspace manifests, CI workflow, and AGENTS.md. Reassessed manifest and CI evidence for the Rust quality rollout. The workspace inherits five targeted Clippy checks, including safety documentation and suppression reasons. The existing matrix checks production function length in dev and release. The pinned toolchain, dependency graph and role coverage still apply. Updated rust-workspace skill and DEVELOPMENT.md with unsafe-elimination, #![forbid(unsafe_code)], direct // SAFETY: placement, #[expect] vs allow, crates/org-platform/tests/rust_hygiene.rs, kit_rust_hygiene.py, and Linux cross-target Clippy rules.",
+  "reviewed_by": "Parent-repo backlog/ migration (2026-11-25, 885c0326); prior AX & Rust quality sessions on v1",
+  "rationale": "Re-anchored skill catalog after migrating .backlog/ out of the code repo into parent agentic-org-project/backlog/ (commit 885c0326): removed deleted .backlog/ evidence and phase paths while preserving full code-repo skill coverage (AGENTS.md, security-boundaries, rust-workspace, principal-ax-designer, ui-maintenance, kit-maintenance, hq-creation-provider, and docs/design/organization-data), and refreshed verified SHA-256 digests for updated AGENTS.md and principal-ax-designer/SKILL.md.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/principal-ax-designer/SKILL.md",
-      "sha256": "973889f483c0ffda1e30f49eb258e341e3bb942c11859ba509de4540a160e8bb"
+      "sha256": "0199736215bc9e7f998ed071648ffde17d07fac0e692cfd39ff0c04d6b9f856c"
     },
     {
       "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
@@ -73,70 +73,6 @@
       "sha256": "96e025333e54533a31d37f70c7094da8df8b89c3c622a70d7edbf6332b84da47"
     },
     {
-      "path": ".backlog/decisions/decision-10 - ADR-0010-Legacy-task-adoption-LEGACY-ADOPT-1.md",
-      "sha256": "ce161bb8c7c1d32576facaedd33fbf9a4f29be8d3f705eca69d7ee12812ae60d"
-    },
-    {
-      "path": ".backlog/decisions/decision-11 - ADR-0011-Protected-recovery-delivery-REC-DEL-1.md",
-      "sha256": "37deea93036b34e9a5046da5c9a818a5daa6ccfea01384f40b410227b4242004"
-    },
-    {
-      "path": ".backlog/decisions/decision-2 - ADR-0002-Storage-SQLite-with-one-batching-writer-per-database.md",
-      "sha256": "ed9b962dac889e5dee24ff72496c942f31df1a462cafa5c0bd2c99e9462ddfe9"
-    },
-    {
-      "path": ".backlog/decisions/decision-5 - ADR-0005-Standalone-server-HQ-web-application-and-named-instances.md",
-      "sha256": "b0da50c40db2ce0fc9808b9c4a4b7c2c37bbf9d75d66e49de346f8341a065b8a"
-    },
-    {
-      "path": ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md",
-      "sha256": "9819df6ed3763955d551a4e6efd1f7b04fd3308068b227fbb0bf17965b86a612"
-    },
-    {
-      "path": ".backlog/decisions/decision-8 - ADR-0008-macOS-confinement-of-the-web-process-GW-SBX-MAC-1.md",
-      "sha256": "831043943a0dd27d8adb569c03ccc1adac91f09574191fa6ef272755dd72e256"
-    },
-    {
-      "path": ".backlog/decisions/decision-9 - ADR-0009-Authenticated-complete-release-bundles.md",
-      "sha256": "04c375e1020127c5f76774663afd5afbb1ce247c240f891aa1c41d2fac90d43c"
-    },
-    {
-      "path": ".backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md",
-      "sha256": "9850eeeaf88a37737282e3725374a370a889b55e5b0e511023e645473f02ce97"
-    },
-    {
-      "path": ".backlog/docs/design/doc-68 - Design-v1-Project-Structure.md",
-      "sha256": "8f566572f377e970fa5baeac8a9f4c363bd29136745cbc5213737c59ec4f05bb"
-    },
-    {
-      "path": ".backlog/docs/doc-6 - Independent-Delivery-and-Dependency-Boundaries.md",
-      "sha256": "143fb2eda54dbe8f7c08e0ebe89cf56c0f8381acf26c2e3c9d3e8638d87950e1"
-    },
-    {
-      "path": ".backlog/docs/doc-8 - Architecture-Rules.md",
-      "sha256": "f71447c232961fb1c19422f149d2f45bc876160bc4ecb1cf24dfe2172d9ab636"
-    },
-    {
-      "path": ".backlog/docs/organization-data/doc-72 - Organization-Data-\u2014-README.md",
-      "sha256": "6d398c384f5dff3b7c7117fa85e722b6b19144280cb41cd4f34f1234ae74abca"
-    },
-    {
-      "path": ".backlog/docs/organization-data/doc-75 - Organization-Data-01-\u2014-Organization-Structure.md",
-      "sha256": "0fb14cc01484220e8ffbd7fc5b51aac512851101683fa072242a6b37c6d7c36b"
-    },
-    {
-      "path": ".backlog/docs/organization-data/doc-91 - Organization-Data-16-\u2014-Recovery-and-Office-Continuity.md",
-      "sha256": "1cab1de8a8f9ec7b0a0c59167c56c2914c6db4f740070dcfb2286277c764024f"
-    },
-    {
-      "path": ".backlog/docs/processes/doc-20 - Process-Branch-Review-and-Integration.md",
-      "sha256": "eb57835a29aa9d63a3a4fd33a56920679508813cbf07389644f004be23b031b5"
-    },
-    {
-      "path": ".backlog/docs/specs/doc-96 - Spec-Agent-Experience-AX-\u2014-agent-os-Onboarding-and-Skills.md",
-      "sha256": "8eb64bad19320b8ed7ec8ff7a13fc19eb1d95194e9f44d8cf76c2d99eec0d1bb"
-    },
-    {
       "path": ".codex/config.toml",
       "sha256": "44ea359a905970c2f36831b93397413f94d5e623f6b37038358e9c9b32366098"
     },
@@ -146,7 +82,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "5f304e140618f11f0db032a807061914e1a1dedeb877bbb1e4d9e2dfd3380a0b"
+      "sha256": "a19f85550aef300256db80db917c731f11af1111dd7ef53a4b77b1a2b5b65409"
     },
     {
       "path": "Cargo.lock",
@@ -228,14 +164,10 @@
       ],
       "risks": [],
       "implementation": [
-        "AGENTS.md",
-        ".backlog/docs/doc-6 - Independent-Delivery-and-Dependency-Boundaries.md",
-        ".backlog/docs/processes/doc-20 - Process-Branch-Review-and-Integration.md"
+        "AGENTS.md"
       ],
       "review": [
-        "AGENTS.md",
-        ".backlog/docs/doc-6 - Independent-Delivery-and-Dependency-Boundaries.md",
-        ".backlog/docs/processes/doc-20 - Process-Branch-Review-and-Integration.md"
+        "AGENTS.md"
       ],
       "critical": false
     },
@@ -369,15 +301,13 @@
       "id": "selected-data-model",
       "description": "Read owning selected model separately from application implementation",
       "paths": [
-        ".backlog/docs/organization-data"
+        "docs/design/organization-data"
       ],
       "risks": [],
       "implementation": [
-        ".backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md",
         ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "review": [
-        ".backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md",
         ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "critical": true
@@ -451,12 +381,10 @@
       ],
       "risks": [],
       "implementation": [
-        ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        ".backlog/decisions/decision-9 - ADR-0009-Authenticated-complete-release-bundles.md"
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "review": [
-        ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        ".backlog/decisions/decision-9 - ADR-0009-Authenticated-complete-release-bundles.md"
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "critical": true
     },
@@ -465,15 +393,14 @@
       "description": "Reviewed conservative original-source legacy mapping, baseline provenance and adoption fencing",
       "paths": [
         "crates/org-office/src/selected_tasks/adoption.rs",
-        "crates/org-office/src/selected_tasks/adoption",
-        ".backlog/decisions/decision-10 - ADR-0010-Legacy-task-adoption-LEGACY-ADOPT-1.md"
+        "crates/org-office/src/selected_tasks/adoption"
       ],
       "risks": [],
       "implementation": [
-        ".backlog/decisions/decision-10 - ADR-0010-Legacy-task-adoption-LEGACY-ADOPT-1.md"
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "review": [
-        ".backlog/decisions/decision-10 - ADR-0010-Legacy-task-adoption-LEGACY-ADOPT-1.md"
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "critical": true
     },
@@ -485,19 +412,14 @@
         "crates/org-host-control",
         "crates/org-office-launch",
         "apps/agentic-org-office/src/transfer",
-        "apps/agentic-org",
-        ".backlog/decisions/decision-11 - ADR-0011-Protected-recovery-delivery-REC-DEL-1.md"
+        "apps/agentic-org"
       ],
       "risks": [],
       "implementation": [
-        ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md",
-        ".backlog/decisions/decision-11 - ADR-0011-Protected-recovery-delivery-REC-DEL-1.md"
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "review": [
-        ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md",
-        ".backlog/decisions/decision-11 - ADR-0011-Protected-recovery-delivery-REC-DEL-1.md"
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "critical": true
     },
@@ -505,17 +427,14 @@
       "id": "pki-escrow",
       "description": "REC-ESC-1 fixed CA/code/envelope profiles, pre-KDF parser bounds and application-owned secret lifetime",
       "paths": [
-        "crates/org-pki",
-        ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md"
+        "crates/org-pki"
       ],
       "risks": [],
       "implementation": [
-        ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md"
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "review": [
-        ".agent-kit/project-skills/security-boundaries/SKILL.md",
-        ".backlog/decisions/decision-7 - ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md"
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
       ],
       "critical": true
     },
@@ -540,13 +459,11 @@
       "risks": [],
       "implementation": [
         ".agent-kit/tasks/v1-creation-admission-interface.md",
-        ".backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md",
         ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
         ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json"
       ],
       "review": [
         ".agent-kit/tasks/v1-creation-admission-interface.md",
-        ".backlog/docs/design/doc-62 - Design-Documentation-Authority-Map.md",
         ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
         ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json"
       ],
