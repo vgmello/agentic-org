@@ -4,9 +4,9 @@ import { agentRailHtml, agentSessionAvailability, getConsoleSession } from "./ag
 import { INSIGHT_COMPLETIONS, INSIGHT_DAY, INSIGHT_TODAY, insightBuckets, insightChart, insightCompletions, insightDayLabel, insightInRange, insightMedian } from "./insights.js";
 import { conversationPreview, memberRows } from "./projects.js";
 import { healthMark, notFound } from "./settings.js";
-import { scopedWorkControls, scopedWorkWorkspace, teamWork, workGroups, workList } from "./work.js";
+import { agentTasksToolbar, scopedWorkControls, scopedWorkWorkspace, teamWork, workGroups, workList } from "./work.js";
 import { S } from "../state.js";
-import { SEP, acts, av, avStack, back, esc, feed, hireMenu, ic, isPerson, joinSep, kindWord, leadOf, leadTxt, linkTabs, memberIds, menuItem, mlink, moreMenu, needsCard, openFrom, pill, plink, plural, presInline, presPill, progress, projPill, queueHeadline, sectionTabs, seg, showMenu, statusLine } from "../ui.js";
+import { SEP, acts, av, avStack, back, esc, feed, hireMenu, ic, isPerson, joinSep, kindWord, leadOf, leadTxt, linkTabs, memberIds, menuItem, mlink, moreMenu, needsCard, openFrom, pill, plink, plural, presInline, presPill, progress, projPill, queueHeadline, sectionTabs, showMenu, statusLine } from "../ui.js";
 
 /* ---------------------------------------------------------------- teams */
 function teamsHeader(title, count, current, controls = "", actions = "") {
@@ -250,9 +250,7 @@ function agentKnowledgeTab(id, m) {
 function agentTabContent(id, tab, m, avail, myW, myActs) {
   if (tab === "overview") return { controls: "", leftBody: agentOverviewTab(id, m, avail, myW, myActs) };
   if (tab === "tasks") {
-    const openCount = myW.filter(OPEN).length;
-    const filterBar = `<div class="subbar">${seg("taskFilter", [["all", "All", myW.length], ["open", "Open", openCount], ["done", "Done", myW.length - openCount]], "Show")}</div>`;
-    return { controls: "", leftBody: filterBar + scopedWorkWorkspace() };
+    return { controls: "", leftBody: agentTasksToolbar(id, myW) + scopedWorkWorkspace() };
   }
   if (tab === "sessions") return { controls: "", leftBody: `<div id="agent-sessions-root" data-agent="${id}"></div>` };
   if (tab === "journal") {

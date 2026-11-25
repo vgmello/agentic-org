@@ -7,7 +7,7 @@ import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
 import { removeTeam } from "../pages/projects.js";
-import { changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, openWorkTask, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
+import { changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, normalizeAgentTaskState, openWorkTask, refreshAgentTaskCounts, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
 import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, setSheetReturn } from "./dialogs.js";
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
@@ -143,6 +143,7 @@ function handleSetAction(t, v) {
   const val = v === "true" ? true : v === "false" ? false : v;
   const scope = k === "theme" ? t.closest("#main, #banner-ctl") : document;
   S[k] = val;
+  normalizeAgentTaskState(k, val);
   if (k === "theme") applyTheme(true);
   if (menuId === "menu-inbox-filter") resetInboxSelection();
   render(false);
@@ -428,6 +429,7 @@ const INPUT_BY_ID = {
     const currentRoute = route(), view = scopedWorkView(currentRoute, scopedWorkType(currentRoute));
     scopedWorkQueries.set(view.key, target.value);
     document.getElementById("work-results").innerHTML = scopedWorkResults(view);
+    refreshAgentTaskCounts(view);
   },
   "work-search": handleWorkSearchInput,
   "o-name": (target) => target.setCustomValidity(""),
@@ -550,7 +552,7 @@ function handleOpenMenuKeydown(e, openMenu) {
   if (e.key === "ArrowUp") return go(i - 1);
   if (e.key === "Home") return go(0);
   if (e.key === "End") return go(items.length - 1);
-  const applyDisplay = e.key === "Enter" && openMenu.matches("#menu-work-display, #menu-inbox-display, #menu-assembly-display") && e.target.getAttribute("role") === "menuitemcheckbox";
+  const applyDisplay = e.key === "Enter" && openMenu.matches("#menu-work-display, #menu-agent-task-display, #menu-inbox-display, #menu-assembly-display") && e.target.getAttribute("role") === "menuitemcheckbox";
   if (e.key === "Escape" || applyDisplay) {
     e.preventDefault(); if (applyDisplay) e.target.click();
     const trigger = document.querySelector(`[aria-controls="${openMenu.id}"]`);

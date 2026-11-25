@@ -307,6 +307,20 @@
   border-color: var(--line2);
 }
 .work-toolbar #work-new-task { margin-inline-start: auto; }
+.agent-tasks-header {
+  position: relative;
+  z-index: 2;
+  container: agent-tasks-header / inline-size;
+}
+.agent-tasks-toolbar { padding-top: 8px; }
+@container agent-tasks-header (max-width: 34rem) {
+  .agent-tasks-toolbar .menu-wrap { position: static; }
+  .agent-tasks-toolbar .menu {
+    inset-inline: var(--gutter) auto;
+    max-inline-size: calc(100% - 2 * var(--gutter));
+  }
+  .agent-tasks-toolbar .menu button { white-space: normal; }
+}
 
 /* Work board */
 .work-header + #work-results:has(> .board) {
