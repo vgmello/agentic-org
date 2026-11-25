@@ -11,9 +11,22 @@ or `bun apps/agentic-org-web-prototype/smoke.ts --all` to run all 5 behavioral c
 - Shell: `v6.html` (links stylesheets in cascade order + `<script type="module" src="./v6/main.js">`).
 - Styles: `v6/styles/` (`base.css`, `home.css`, `theme-ocean-classic.css`, `theme-report.css`, `theme-graphite.css`), plus shared `operations.css` and `cozy.css`.
 - Core JS: `v6/data.js`, `v6/state.js`, `v6/ui.js`, `v6/main.js`.
-- Pages: `v6/pages/` (`home.js`, `inbox.js`, `work.js`, `projects.js`, `insights.js`, `chat.js`, `activity.js`, `teams.js`, `agent-profile.js`, `settings.js`).
+- Pages: `v6/pages/` (`home.js`, `inbox.js`, `work.js`, `projects.js`, `insights.js`, `chat.js`, `activity.js`, `teams.js`, `agent-profile.js`, `agent-focus.js`, `settings.js`).
 - App shell: `v6/shell/` (`sidebar.js`, `router.js`, `cmdk.js`, `keyboard.js`, `dialogs.js`, `actions.js`).
 - Keep `v5.html` untouched (historical snapshot).
+
+## Fast UX Craft (No Ceremony, Proper Taste)
+
+- Apply `.agents/agent-kit/project-skills/principal-designer/SKILL.md` as the fast design filter (*Simple first*, *Felt safety*, five UX laws, sibling consistency), pulling in **only** the 1 relevant companion file when needed (`layout-and-foundations.md` for page structure/spacing, `components.md` for controls/overlays/rows, `behavior.md` for agent trust/approvals/waiting). Skip `tailwind.md` in plain-CSS `v6/`.
+- When prototyping a new product area, skim only its single owning UX spec in `../../../../backlog/docs/specs/` (or `docs/design/`) before editing—never dump whole spec sets or run formal review ceremonies on prototype drafts.
+- Iterate directly in `v6/` with live HMR (`bun apps/agentic-org-web-prototype/server.ts`) and verify fast with `smoke.ts <route> <theme>`.
+
+## Backlog Task Tracking & Svelte Handoff
+
+- Whenever prototyping a feature, screen, or interaction that does not yet exist in the production Svelte app (`apps/agentic-org-ui/`), check the parent Backlog repo (`../../../../backlog/`, running `backlog` CLI commands from `/Users/vgmello/projects/agentic-org`) for an existing task.
+- If no task covers the new prototype capability, create one (following `backlog instructions task-creation`) capturing the user need, Svelte implementation gap, agreed UX requirements, and testable acceptance criteria. If a task already exists, update its description/notes with the discussion outcomes and prototype changes.
+- Keep the task's notes updated as prototype iterations land so that once the owner approves the prototype, the Svelte implementation agent receives a complete task reflecting everything discussed and agreed—not just a diff.
+- Reference the Backlog task ID (`TASK-<N>`) in prototype commit subjects (e.g., `feat(prototype): ... (TASK-123)`) and in the `Prototype Release:` handoff marker commit.
 
 Commit and push each verified prototype update to `poc/ui-themes-prototype`
 with a normal commit subject. When the owner explicitly approves a release,

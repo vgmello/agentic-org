@@ -2,7 +2,7 @@
 const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
   scopedWorkLayout: "list", actView: "assembly", actProject: "all", actFilter: "all", actPanel: null,
   projectActView: "assembly", projectActFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
-  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false, confirmDeny: null, briefCopied: false };
+  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: false, agentFocusTools: false, openTraces: {}, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false, confirmDeny: null, briefCopied: false };
 const ORG_NAME_STORE = "agentic-org.v6.organizationName";
 let orgName = "Agentic Org";
 try { orgName = localStorage.getItem(ORG_NAME_STORE)?.trim().slice(0, 80) || orgName; } catch (e) {}
@@ -124,7 +124,7 @@ function applyShortcuts() {
   if (on) nav.setAttribute("aria-keyshortcuts", "S"); else nav.removeAttribute("aria-keyshortcuts");
 }
 const inTextField = (el) => !!el && (["input", "textarea", "select"].includes((el.tagName || "").toLowerCase()) || !!el.isContentEditable);
-const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu:not([hidden])") || document.body.classList.contains("drawer"));
+const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu:not([hidden]), .af-shell") || document.body.classList.contains("drawer"));
 const qs = () => new URLSearchParams((location.hash.split("?")[1]) || "");
 
 export {

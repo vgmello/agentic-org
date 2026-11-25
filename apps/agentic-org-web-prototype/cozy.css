@@ -302,12 +302,14 @@ html[data-theme="cozy"] {
   }
 
   & :is(.hb-spot-meta, .hb-spot-next, .hb-cos-memo, .hb-ai-brief, .hb-brief-lenses, .hb-dig-item,
-    .hb-hor-item, .work-group-title, .grp-h, .subnav, .ctx-body, .runlog, .k-doc,
+    .hb-hor-item, .work-group-title, .grp-h, .subnav, .ctx-body, .runlog, .k-doc, .c-trace-panel, .af-tools-drawer,
     .cmdk-tabs, .cmdk-foot, .cmdk-ai-card, .cmdk-tab-grp, .cmdk-trigger kbd, .seg, .search,
     .field, textarea, code, pre, .triage-queue, .triage-audit, .activity-triage) {
     background: var(--cozy-well);
     box-shadow: inset 0 0 0 1px var(--cozy-well-edge);
   }
+  & .af-shell { background: radial-gradient(circle at 26% 52%, rgb(206 142 74 / .12), transparent 48%), rgb(22 18 15 / .93); backdrop-filter: blur(22px) saturate(125%); -webkit-backdrop-filter: blur(22px) saturate(125%); }
+  & :is(.af-chat-card, .af-composer-pill) { background: var(--cozy-panel); box-shadow: var(--cozy-panel-shadow), inset 0 0 0 1px var(--cozy-panel-edge); }
 
   & :is(.triage-queue, .triage-audit, .activity-triage) { box-shadow: none; }
   & :is(.overlay, .scrim), & .work-task-dialog::backdrop { background: rgb(16 13 11 / .62); }

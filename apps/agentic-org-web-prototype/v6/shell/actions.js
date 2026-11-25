@@ -1,5 +1,6 @@
 import { IN, M, OFFICES, P, TEAMS, W, blockedOnOwner } from "../data.js";
 import { activityFilterKey, activityViewKey, addAssemblySample, assemblySimulation, projectActivityId, refreshAssemblySimulation, setActivityPanel, syncAssemblySimulationTimer, updateAssemblyPlayback } from "../pages/activity.js";
+import { closeAgentFocus, isAgentFocusOpen, openAgentFocus } from "../pages/agent-focus.js";
 import { consoleSessions } from "../pages/agent-profile.js";
 import { chatDrafts, sendChatMessage } from "../pages/chat.js";
 import { answerOrgQuestion } from "../pages/home.js";
@@ -270,6 +271,7 @@ const CLICK_ACTIONS = {
   set: (_e, t, _id, v) => handleSetAction(t, v),
   "cozy-contrast": (_e, t) => { S.cozyContrast = !S.cozyContrast; try { localStorage.setItem(COZY_CONTRAST_STORE, S.cozyContrast ? "1" : "0"); } catch (e) {} applyCozyContrast(); t.setAttribute("aria-checked", String(S.cozyContrast)); },
   "work-expand-detail": (_e, t) => { const panel = t.closest("dialog"); setWorkPanelExpanded(panel, !panel.hasAttribute("data-expanded")); },
+  "agent-focus-open": (_e, t, id) => { if (id) openAgentFocus(id, t); },
   "work-close-detail": () => closeWorkPanel(),
   "work-new-task": (_e, t) => openWorkTask(t),
   "work-cancel-task": (_e, t) => t.closest("dialog").close(),
@@ -476,7 +478,7 @@ document.addEventListener("focusin", (e) => {
 });
 
 document.addEventListener("submit", (e) => {
-  if (e.target.id === "c-prompt-form" || e.target.id === "hb-ask-form") return;
+  if (e.target.id === "c-prompt-form" || e.target.id === "af-prompt-form" || e.target.id === "hb-ask-form") return;
   e.preventDefault();
   if (["inbox-comment", "work-comment"].includes(e.target.dataset.form)) { postDetailComment(e.target); return; }
   if (e.target.dataset.form === "insight-range") {
@@ -575,6 +577,7 @@ function dismissLocalEscapeTarget(e) {
 
 function handleEscapeKeydown(e) {
   if (dismissLocalEscapeTarget(e)) return;
+  if (isAgentFocusOpen()) { e.preventDefault(); closeAgentFocus(true); return; }
   const closeThread = e.target.closest(".thread")?.querySelector('[data-act="thread-close"]');
   if (closeThread) { e.preventDefault(); closeThread.click(); return; }
   if (S.confirmDeny) {

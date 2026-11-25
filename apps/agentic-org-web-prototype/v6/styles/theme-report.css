@@ -677,6 +677,13 @@ html[data-theme^="report"] .subnav,
 html[data-theme^="report"] .split .list {
   background: #F9FAFC; backdrop-filter: none; -webkit-backdrop-filter: none;
 }
+html[data-theme="report"] .af-shell { background: radial-gradient(circle at 26% 52%, rgba(29, 78, 137, .07), transparent 48%), #F8FAFC; color: #0B101B; }
+html[data-theme="report"] .af-chat-card,
+html[data-theme="report"] .af-composer-pill,
+html[data-theme="report"] .af-tools-drawer { background: #FFFFFF; box-shadow: inset 0 0 0 1px #DCE2EC, 0 8px 24px -16px rgba(11, 16, 27, .12); }
+html[data-theme="report"] .af-telemetry { background: #FFFFFF; box-shadow: inset 0 0 0 1px #DCE2EC; }
+html[data-theme="report"] .c-trace-panel { background: #F4F6F9; box-shadow: inset 0 0 0 1px #E2E7EF; }
+html[data-theme="report"] .af-msg-user.is-you .af-user-bubble { background: #EEF4FA; color: #0B101B; box-shadow: inset 0 0 0 1px #C5D4E6; }
 
 /* ── Theme 4: Modern 2D Executive Report · Night (Exact Classic Palette, data-theme="report-dark") ─ */
 html[data-theme="report-dark"] {

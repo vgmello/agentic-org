@@ -1,6 +1,6 @@
 import { CH, M, OFFICES, P, PAST_SESSIONS } from "../data.js";
 import { S } from "../state.js";
-import { SEP, av, esc, ic, pill, plural, toast } from "../ui.js";
+import { SEP, av, esc, ic, iconWithTooltip, pill, plural, toast } from "../ui.js";
 
 /* ---------------------------------------------------------------- Neural Orb & Agent Profile Console */
 const TAU = Math.PI * 2;
@@ -9,7 +9,9 @@ const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const clamp01 = (v) => clamp(v, 0, 1);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const fmtTok = (t) => t < 1000 ? String(Math.round(t)) : `${(t / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+const fmtTok = (t) => (t < 1000 ? String(Math.round(t)) : `${(t / 1000).toFixed(1).replace(/\.0$/, "")}k`);
+const fmtDuration = (ms) => (!ms || ms < 100 ? "" : `${(ms / 1000).toFixed(1)}s`);
+const isLightTheme = () => document.documentElement.classList.contains("light");
 
 function createSeededRandom(seed) {
   let s = seed;
@@ -17,6 +19,87 @@ function createSeededRandom(seed) {
 }
 
 const prefersReducedMotion = () => !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+function isTraceOpen(entryId) {
+  const override = S.openTraces[entryId];
+  if (override !== undefined) return !!override;
+  return !!S.consoleTools;
+}
+
+function toggleEntryTrace(entryId) {
+  S.openTraces[entryId] = !isTraceOpen(entryId);
+  return S.openTraces[entryId];
+}
+
+function setGlobalTrace(on) {
+  S.consoleTools = !!on;
+  S.openTraces = {};
+}
+
+function traceMetaText(en) {
+  const parts = [];
+  const toolCount = en.steps?.length || 0;
+  if (toolCount) parts.push(plural(toolCount, "tool", "tools"));
+  else if (en.thoughts?.length) parts.push("reasoning");
+  const dur = fmtDuration(en.durationMs);
+  if (dur) parts.push(dur);
+  if (en.tokPerSec && !en.streaming) parts.push(`${Math.round(en.tokPerSec)} tok/s`);
+  return parts.join(" · ");
+}
+
+function renderTraceBodyHtml(en) {
+  const thoughts = (en.thoughts || []).map((t) => `<li class="c-trace-thought"><span class="c-trace-tag">Reasoning</span><span>${esc(t)}</span></li>`).join("");
+  const steps = (en.steps || []).map((s) => `<div class="c-step${s.running ? " is-running" : ""}">
+    <span class="c-step-dot"></span>
+    <span class="c-step-tool">${esc(s.tool)}</span>
+    <span class="c-step-arg">${esc(s.arg)}</span>
+    <span class="c-step-tok">${s.running ? "running…" : `+${fmtTok(s.tokens)}`}</span>
+  </div>${s.out ? `<div class="c-step-out">${esc(s.out)}</div>` : ""}`).join("");
+  const emptyNote = !thoughts && !steps ? `<p class="c-trace-empty">Preparing turn trace…</p>` : "";
+  return `<div class="c-trace-panel" id="trace-${esc(en.id)}">
+    ${thoughts ? `<ul class="c-trace-thoughts" role="list">${thoughts}</ul>` : ""}
+    ${steps ? `<div class="c-steps">${steps}</div>` : ""}
+    ${emptyNote}
+  </div>`;
+}
+
+function renderTurnTraceHtml(en) {
+  const processing = en.phase === "thinking" || en.phase === "working";
+  const hasTrace = processing || (en.steps?.length || 0) > 0 || (en.thoughts?.length || 0) > 0;
+  if (!hasTrace) return "";
+  const open = isTraceOpen(en.id);
+  const meta = traceMetaText(en);
+  const statusChip = processing
+    ? `<span class="c-thinking-cue" role="status"><span class="c-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Thinking…</span></span>`
+    : "";
+  const btnLabel = open ? "Hide trace" : "Follow trace";
+  return `<div class="c-trace-wrap${open ? " is-open" : ""}" data-trace-entry="${esc(en.id)}">
+    <div class="c-trace-bar">
+      ${statusChip}
+      <button type="button" class="c-trace-toggle" data-trace-toggle="${esc(en.id)}" aria-expanded="${open}" aria-controls="trace-${esc(en.id)}">
+        ${ic("chev-right", "ic14 c-trace-chev")}
+        <span>${btnLabel}</span>
+        ${meta ? `<span class="c-trace-meta">${esc(meta)}</span>` : ""}
+      </button>
+    </div>
+    ${open ? renderTraceBodyHtml(en) : ""}
+  </div>`;
+}
+
+function orbPalette(light) {
+  if (light) {
+    return {
+      auraA: [29, 78, 137], auraB: [14, 116, 144], ring: [29, 78, 137],
+      link: [29, 78, 137], spec: "rgba(255,255,255,0.42)",
+      dot: (f, a) => [Math.round(18 + f * 24 + a * 34), Math.round(58 + f * 64 + a * 58), Math.round(128 + f * 72 + a * 42)]
+    };
+  }
+  return {
+    auraA: [56, 189, 248], auraB: [37, 99, 235], ring: [56, 189, 248],
+    link: [125, 211, 252], spec: "rgba(224,242,254,0.45)",
+    dot: (f, a) => [Math.round(28 + f * 44 + a * 86), Math.round(92 + f * 104 + a * 52), Math.round(205 + f * 48 + a * 2)]
+  };
+}
 
 class NeuralOrb {
   constructor(canvas) {
@@ -33,6 +116,11 @@ class NeuralOrb {
     this.stream = 0;
     this.targetStream = 0;
     this.firing = 0;
+    this.spinKick = 0;
+    this.tokenTimes = [];
+    this.tokensPerSec = 0;
+    this.speedFactor = 0;
+    this.tokenPulseCount = 0;
     this.contextFill = 0.54;
     this.targetContext = 0.54;
     this.ax = { x: 1, y: 0, z: 0 };
@@ -51,8 +139,8 @@ class NeuralOrb {
     const rand = createSeededRandom(7919);
     const out = [];
     const layers = [
-      { count: 400, mult: 1, jitter: 0.14, yJit: 0.045, shell: () => 1.0, dot: [0.017, 0.005], core: false },
-      { count: 90, mult: 1.37, jitter: 0.2, yJit: 0.08, shell: () => 0.48 + rand() * 0.14, dot: [0.014, 0.004], core: true }
+      { count: 420, mult: 1, jitter: 0.14, yJit: 0.045, shell: () => 1.0, dot: [0.0125, 0.0045], core: false },
+      { count: 96, mult: 1.37, jitter: 0.2, yJit: 0.08, shell: () => 0.46 + rand() * 0.16, dot: [0.010, 0.0035], core: true }
     ];
     for (const L of layers) {
       for (let i = 0; i < L.count; i++) {
@@ -72,8 +160,8 @@ class NeuralOrb {
       idle: { e: 0.22, t: 0, s: 0 },
       paused: { e: 0.08, t: 0, s: 0 },
       thinking: { e: 0.58, t: 1, s: 0 },
-      working: { e: 0.74, t: 0.6, s: 0.35 },
-      streaming: { e: 0.9, t: 0.2, s: 1 },
+      working: { e: 0.64, t: 0.85, s: 0.18 },
+      streaming: { e: 0.86, t: 0.15, s: 1 },
       compacting: { e: 0.52, t: 1, s: 0 }
     };
     const cfg = map[st] || map.idle;
@@ -81,6 +169,7 @@ class NeuralOrb {
     this.targetEnergy = cfg.e;
     this.targetThinking = cfg.t;
     this.targetStream = cfg.s;
+    if (st !== "streaming") this.tokenTimes = [];
     if (prefersReducedMotion() && !this._raf && this.canvas) {
       this.energy = cfg.e; this.thinking = cfg.t; this.stream = cfg.s;
       this._draw(0.016);
@@ -100,21 +189,31 @@ class NeuralOrb {
     const ph = HALF_PI + (Math.random() - 0.5) * 2.2;
     this._ripple(Math.sin(ph) * Math.sin(th), Math.cos(ph), -Math.abs(Math.sin(ph) * Math.cos(th)) * 0.85 - 0.15, Math.min(1.3, intensity), 1.85, 0.48);
   }
-  onToken(ch = "") {
+  onToken(tok = "") {
+    const now = performance.now();
+    this.tokenTimes.push(now);
+    const cutoff = now - 1000;
+    while (this.tokenTimes.length && this.tokenTimes[0] < cutoff) this.tokenTimes.shift();
+    const instRate = this.tokenTimes.length;
+    this.tokensPerSec = this.tokensPerSec ? (this.tokensPerSec * 0.72 + instRate * 0.28) : instRate;
+    this.speedFactor = clamp01(this.tokensPerSec / 90);
+    this.tokenPulseCount++;
     if (this.state !== "streaming") this.setState("streaming");
-    this.targetEnergy = 0.94;
-    this.firing = Math.min(1, this.firing + 0.24);
-    this.focusTheta += 0.42 + (Math.random() - 0.5) * 0.32;
-    this.focusPhi = HALF_PI + Math.sin(this.fieldPhase * 1.35 + this.focusTheta * 0.65) * 1.22;
+    this.targetEnergy = clamp(0.68 + this.speedFactor * 0.32, 0.68, 1);
+    this.firing = Math.min(1, this.firing + 0.22 + this.speedFactor * 0.24);
+    this.spinKick = Math.min(1.65, this.spinKick + 0.24 + this.speedFactor * 0.38);
+    this.focusTheta += 0.36 + this.speedFactor * 0.48 + (Math.random() - 0.5) * 0.26;
+    this.focusPhi = HALF_PI + Math.sin(this.fieldPhase * 1.45 + this.focusTheta * 0.68) * 1.24;
     const sp = Math.sin(this.focusPhi);
     const fx = sp * Math.sin(this.focusTheta), fy = Math.cos(this.focusPhi), fz = -Math.abs(sp * Math.cos(this.focusTheta)) * 0.88 - 0.12;
-    if (/[.!?\n]/.test(ch)) this._ripple(fx, fy, fz, 1.15, 1.65, 0.54);
-    else if (ch.trim()) this._ripple(fx, fy, fz, 0.65, 2.2, 0.36);
+    const isBreak = /[.!?\n]/.test(tok);
+    if (isBreak) this._ripple(fx, fy, fz, 1.05 + this.speedFactor * 0.3, 1.75 + this.speedFactor * 1.25, 0.52);
+    else if (tok.trim()) this._ripple(fx, fy, fz, 0.58 + this.speedFactor * 0.42, 2.0 + this.speedFactor * 1.8, 0.34);
   }
   _ripple(fx, fy, fz, intensity, speed, width) {
     const l = Math.hypot(fx, fy, fz) || 1;
     this.ripples.push({ fx: fx / l, fy: fy / l, fz: fz / l, r: 0.02, age: 0, speed, intensity, width });
-    if (this.ripples.length > 14) this.ripples.shift();
+    if (this.ripples.length > 20) this.ripples.shift();
   }
   resize() {
     if (!this.canvas) return;
@@ -129,7 +228,7 @@ class NeuralOrb {
       this.canvas.height = Math.round(h * dpr);
     }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (prefersReducedMotion() && !this._raf) this._draw(0.016);
+    this._draw(0.016);
   }
   start() {
     if (this._raf) return;
@@ -153,19 +252,17 @@ class NeuralOrb {
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
   }
-  _step(dt) {
-    const k = 1 - Math.exp(-dt * 4.2);
-    this.energy += (this.targetEnergy - this.energy) * k;
-    this.thinking += (this.targetThinking - this.thinking) * k;
-    this.stream += (this.targetStream - this.stream) * k;
-    this.contextFill += (this.targetContext - this.contextFill) * k;
-    this.firing *= Math.exp(-dt * 3.2);
-    if (this.state === "streaming") this.targetEnergy = Math.max(0.58, this.targetEnergy - dt * 0.55);
-    this.fieldPhase += dt * (0.62 + this.thinking * 0.42 + this.stream * 0.78);
-    this.breathPhase += dt * (1.35 + this.thinking * 0.65 + this.stream * 0.55);
-
-    const spin = dt * (0.24 + this.thinking * 0.14 + this.stream * 0.24);
-    const nod = dt * Math.sin(this.breathPhase * 0.32) * 0.06;
+  _decayTokenRate(dt) {
+    const cutoff = performance.now() - 1000;
+    while (this.tokenTimes.length && this.tokenTimes[0] < cutoff) this.tokenTimes.shift();
+    const targetRate = this.state === "streaming" ? this.tokenTimes.length : 0;
+    const rateK = 1 - Math.exp(-dt * (targetRate > this.tokensPerSec ? 8 : 3.2));
+    this.tokensPerSec += (targetRate - this.tokensPerSec) * rateK;
+    if (this.tokensPerSec < 0.25) this.tokensPerSec = 0;
+    this.speedFactor = clamp01(this.tokensPerSec / 90);
+    this.spinKick *= Math.exp(-dt * 5.2);
+  }
+  _rotateBasis(spin, nod) {
     const cx = Math.cos(nod), sx = Math.sin(nod), cy = Math.cos(spin), sy = Math.sin(spin);
     const rot = (v) => {
       const y = v.y * cx - v.z * sx, z = v.y * sx + v.z * cx, x = v.x;
@@ -180,24 +277,48 @@ class NeuralOrb {
     this.az.x = this.ax.y * this.ay.z - this.ax.z * this.ay.y;
     this.az.y = this.ax.z * this.ay.x - this.ax.x * this.ay.z;
     this.az.z = this.ax.x * this.ay.y - this.ax.y * this.ay.x;
-
+  }
+  _step(dt) {
+    this._decayTokenRate(dt);
+    const k = 1 - Math.exp(-dt * 4.6);
+    this.energy += (this.targetEnergy - this.energy) * k;
+    this.thinking += (this.targetThinking - this.thinking) * k;
+    this.stream += (this.targetStream - this.stream) * k;
+    this.contextFill += (this.targetContext - this.contextFill) * k;
+    this.firing *= Math.exp(-dt * 3.4);
+    if (this.state === "streaming") this.targetEnergy = Math.max(0.54, this.targetEnergy - dt * 0.5);
+    const spd = this.speedFactor;
+    this.fieldPhase += dt * (0.58 + this.thinking * 0.45 + this.stream * (0.65 + spd * 1.65));
+    this.breathPhase += dt * (1.3 + this.thinking * 0.7 + this.stream * (0.45 + spd * 0.95));
+    const spin = dt * (0.22 + this.thinking * 0.14 + this.stream * (0.22 + spd * 0.95) + this.spinKick * 0.55);
+    const nod = dt * Math.sin(this.breathPhase * 0.35) * (0.06 + spd * 0.08 + this.spinKick * 0.05);
+    this._rotateBasis(spin, nod);
     for (let i = this.ripples.length - 1; i >= 0; i--) {
       const rp = this.ripples[i];
-      rp.age += dt; rp.r += rp.speed * dt; rp.intensity *= Math.pow(0.34, dt);
+      rp.age += dt; rp.r += rp.speed * dt; rp.intensity *= Math.pow(0.32, dt);
       if (rp.r > Math.PI * 1.15 || rp.intensity < 0.02) this.ripples.splice(i, 1);
     }
   }
-  _drawAura(ctx, cx, cy, radius, warmth) {
+  _drawAura(ctx, cx, cy, radius, warmth, pal) {
     const mix = (a, b, t) => Math.round(a + (b - a) * t);
-    const grad = ctx.createRadialGradient(cx - radius * 0.22, cy - radius * 0.24, radius * 0.12, cx, cy, radius * 1.24);
-    grad.addColorStop(0, `rgba(${mix(56, 249, warmth)},${mix(189, 115, warmth)},${mix(248, 22, warmth)},${(0.18 + this.energy * 0.14).toFixed(3)})`);
-    grad.addColorStop(0.58, `rgba(${mix(37, 234, warmth)},${mix(99, 88, warmth)},${mix(235, 12, warmth)},${(0.11 + this.energy * 0.08).toFixed(3)})`);
+    const spd = this.speedFactor;
+    const grad = ctx.createRadialGradient(cx - radius * 0.22, cy - radius * 0.24, radius * 0.12, cx, cy, radius * (1.22 + spd * 0.1));
+    grad.addColorStop(0, `rgba(${mix(pal.auraA[0], 249, warmth)},${mix(pal.auraA[1], 115, warmth)},${mix(pal.auraA[2], 22, warmth)},${(0.16 + this.energy * 0.14 + spd * 0.08).toFixed(3)})`);
+    grad.addColorStop(0.58, `rgba(${mix(pal.auraB[0], 234, warmth)},${mix(pal.auraB[1], 88, warmth)},${mix(pal.auraB[2], 12, warmth)},${(0.1 + this.energy * 0.08).toFixed(3)})`);
     grad.addColorStop(1, "rgba(30, 41, 57, 0)");
     ctx.fillStyle = grad;
-    ctx.beginPath(); ctx.arc(cx, cy, radius * 1.24, 0, TAU); ctx.fill();
-    ctx.strokeStyle = `rgba(${mix(56, 251, warmth)},${mix(189, 146, warmth)},${mix(248, 60, warmth)},${(0.18 + this.energy * 0.12).toFixed(3)})`;
+    ctx.beginPath(); ctx.arc(cx, cy, radius * 1.32, 0, TAU); ctx.fill();
+    ctx.strokeStyle = `rgba(${mix(pal.ring[0], 251, warmth)},${mix(pal.ring[1], 146, warmth)},${mix(pal.ring[2], 60, warmth)},${(0.16 + this.energy * 0.14).toFixed(3)})`;
     ctx.lineWidth = 1.25;
     ctx.beginPath(); ctx.arc(cx, cy, radius * 1.02, 0, TAU); ctx.stroke();
+    if (spd > 0.04) {
+      const start = -HALF_PI + this.fieldPhase * 0.4;
+      const sweep = Math.max(0.28, spd * TAU * 0.88);
+      ctx.strokeStyle = `rgba(${mix(pal.ring[0], 52, 0.35)},${mix(pal.ring[1], 211, 0.35)},${mix(pal.ring[2], 153, 0.35)},${(0.28 + spd * 0.45).toFixed(3)})`;
+      ctx.lineWidth = 2.2;
+      ctx.lineCap = "round";
+      ctx.beginPath(); ctx.arc(cx, cy, radius * 1.08, start, start + sweep); ctx.stroke();
+    }
   }
   _rippleCrest(rx, ry, rz) {
     let crest = 0;
@@ -212,9 +333,10 @@ class NeuralOrb {
   }
   _projectNodes(dt, cx, cy, radius, fill) {
     const { ax: X, ay: Y, az: Z, fieldPhase, breathPhase, fov } = this;
-    const fieldGain = 0.28 + this.energy * 0.58;
-    const morphAmp = (0.008 + this.thinking * 0.015 + this.firing * 0.048) * 0.35;
-    const settle = 1 - Math.pow(0.75, dt * 60);
+    const spd = this.speedFactor;
+    const fieldGain = 0.28 + this.energy * 0.54 + spd * 0.16;
+    const morphAmp = (0.008 + this.thinking * 0.016 + this.firing * 0.056 + spd * 0.028) * 0.38;
+    const settle = 1 - Math.pow(0.74, dt * 60);
     const coreExp = 0.24 + fill * 0.68, coreGlow = 0.16 + fill * 0.44, coreDotScale = 0.82 + fill * 0.42;
     for (let i = 0; i < this.nodes.length; i++) {
       const n = this.nodes[i];
@@ -226,21 +348,22 @@ class NeuralOrb {
       const w3 = Math.sin((rx - ry + rz) * 3.2 - fieldPhase * 1.25);
       const crest = this._rippleCrest(rx, ry, rz);
       const drive = Math.max(0, (w1 * 0.48 + w2 * 0.34 + w3 * 0.18 + 0.1) / 1.1) * fieldGain + crest + (n.core ? coreGlow : 0);
-      n.act += (Math.min(1.25, drive) - n.act) * settle;
-      const breathe = Math.sin(breathPhase + n.phase) * 0.012;
+      n.act += (Math.min(1.28, drive) - n.act) * settle;
+      const breathe = Math.sin(breathPhase + n.phase) * (0.012 + this.thinking * 0.008);
       const lobes = Math.sin(rx * 2.15 + ry * 1.75 + fieldPhase * 1.65) * 0.6 + Math.cos(rz * 2.35 - ry * 1.9 + fieldPhase * 1.35) * 0.4;
       const shell = n.core ? coreExp * (n.shell / 0.56) : n.shell;
-      const rad = shell * (1 + breathe + lobes * morphAmp + (n.act * 0.044 + Math.min(1, crest) * 0.026) * 0.35);
+      const rad = shell * (1 + breathe + lobes * morphAmp + (n.act * 0.048 + Math.min(1, crest) * 0.038) * 0.38);
       const wx = rx * rad, wy = ry * rad, wz = rz * rad, persp = fov / Math.max(0.8, fov + wz);
       const pt = this.pts[i];
       pt.sx = cx + wx * radius * persp; pt.sy = cy + wy * radius * persp; pt.wz = wz;
-      pt.sr = Math.max(0.9, n.dot * radius * persp * (n.core ? coreDotScale : 1) * (0.88 + n.act * 0.46));
+      pt.sr = Math.max(0.9, n.dot * radius * persp * (n.core ? coreDotScale : 1) * (0.88 + n.act * 0.48));
       pt.act = n.act; pt.core = n.core;
     }
   }
-  _drawLinks(ctx, sorted, radius, fill, warmth) {
+  _drawLinks(ctx, sorted, radius, fill, warmth, pal) {
     const mix = (a, b, t) => Math.round(a + (b - a) * t);
-    const linkable = sorted.filter((p) => p.wz < 0.15 && (p.core ? fill > 0.35 && p.act > 0.50 : p.act > 0.54));
+    const thresh = Math.max(0.42, 0.54 - this.speedFactor * 0.1);
+    const linkable = sorted.filter((p) => p.wz < 0.15 && (p.core ? fill > 0.35 && p.act > 0.50 : p.act > thresh));
     const maxD = radius * 0.27, maxDSq = maxD * maxD;
     ctx.lineCap = "round";
     for (let i = 0; i < linkable.length; i++) {
@@ -251,26 +374,26 @@ class NeuralOrb {
         const dx = b.sx - a.sx, dy = b.sy - a.sy, d2 = dx * dx + dy * dy;
         if (d2 <= 16 || d2 >= maxDSq) continue;
         const str = Math.min(1, (a.act + b.act) * 0.46) * (1 - Math.sqrt(d2) / maxD);
-        ctx.strokeStyle = `rgba(${mix(125, 253, warmth)},${mix(211, 186, warmth)},${mix(252, 116, warmth)},${(str * 0.46).toFixed(3)})`;
+        ctx.strokeStyle = `rgba(${mix(pal.link[0], 253, warmth)},${mix(pal.link[1], 186, warmth)},${mix(pal.link[2], 116, warmth)},${(str * 0.46).toFixed(3)})`;
         ctx.lineWidth = 0.75 + str * 1.1;
         ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
         links++;
       }
     }
   }
-  _drawParticles(ctx, sorted, warmth) {
+  _drawParticles(ctx, sorted, warmth, pal) {
     const mix = (a, b, t) => Math.round(a + (b - a) * t);
     for (const p of sorted) {
       const front = clamp01((1.1 - p.wz) / 2.2), act = Math.min(1, p.act);
-      const r = mix(Math.round(28 + front * 44 + act * 86), 249, warmth);
-      const g = mix(Math.round(92 + front * 104 + act * 52), 115, warmth);
-      const b = mix(Math.round(205 + front * 48 + act * 2), 22, warmth);
+      const [dr, dg, db] = pal.dot(front, act);
+      const r = mix(dr, 249, warmth), g = mix(dg, 115, warmth), b = mix(db, 22, warmth);
       const alpha = Math.min(0.98, (p.core ? 0.26 : 0.30) + front * 0.52 + act * 0.22);
-      if (act > 0.34 && front > 0.32) {
-        const bloomR = p.sr * (2.3 + act * 1.15), bloomA = Math.min(0.42, (act - 0.3) * front * 0.38);
+      if (act > 0.42 && front > 0.34) {
+        const bloomR = p.sr * (2.0 + act * 0.95 + this.speedFactor * 0.38);
+        const bloomA = Math.min(0.32, (act - 0.38) * front * 0.3);
         const bloom = ctx.createRadialGradient(p.sx, p.sy, p.sr * 0.15, p.sx, p.sy, bloomR);
         bloom.addColorStop(0, `rgba(${r},${g},${b},${bloomA.toFixed(3)})`);
-        bloom.addColorStop(0.55, `rgba(${r},${g},${b},${(bloomA * 0.35).toFixed(3)})`);
+        bloom.addColorStop(0.55, `rgba(${r},${g},${b},${(bloomA * 0.32).toFixed(3)})`);
         bloom.addColorStop(1, `rgba(${r},${g},${b},0)`);
         ctx.fillStyle = bloom;
         ctx.beginPath(); ctx.arc(p.sx, p.sy, bloomR, 0, TAU); ctx.fill();
@@ -278,22 +401,23 @@ class NeuralOrb {
       ctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
       ctx.beginPath(); ctx.arc(p.sx, p.sy, p.sr, 0, TAU); ctx.fill();
       if (!p.core && front > 0.68 && act > 0.62) {
-        ctx.fillStyle = `rgba(224,242,254,${((act - 0.58) * 0.45).toFixed(3)})`;
+        ctx.fillStyle = pal.spec;
         ctx.beginPath(); ctx.arc(p.sx - p.sr * 0.24, p.sy - p.sr * 0.24, p.sr * 0.36, 0, TAU); ctx.fill();
       }
     }
   }
   _draw(dt) {
     const { ctx, w, h } = this;
-    const cx = w * 0.5, cy = h * 0.5, radius = Math.min(w, h) * 0.42;
+    const cx = w * 0.5, cy = h * 0.5, radius = Math.min(w, h) * 0.41;
     const fill = this.contextFill;
     const warmth = fill > 0.75 ? clamp01((fill - 0.75) / 0.25) : 0;
+    const pal = orbPalette(isLightTheme());
     ctx.clearRect(0, 0, w, h);
-    this._drawAura(ctx, cx, cy, radius, warmth);
+    this._drawAura(ctx, cx, cy, radius, warmth, pal);
     this._projectNodes(dt, cx, cy, radius, fill);
     const sorted = [...this.pts].sort((a, b) => b.wz - a.wz);
-    this._drawLinks(ctx, sorted, radius, fill, warmth);
-    this._drawParticles(ctx, sorted, warmth);
+    this._drawLinks(ctx, sorted, radius, fill, warmth, pal);
+    this._drawParticles(ctx, sorted, warmth, pal);
   }
 }
 
@@ -307,6 +431,18 @@ function agentSessionAvailability(aid) {
   if (m.paused) return { active: false, state: "paused", title: "Paused by owner", reason: "Resume this agent before sending prompts or simulating requests." };
   if (m.live === "asleep" && !m.task) return { active: false, state: "asleep", title: "Asleep", reason: m.setup.how || "Wakes when called." };
   return { active: true, state: null, title: "", reason: "" };
+}
+
+function tokenizeReply(reply) {
+  return reply.match(/[A-Za-z0-9_'-]{1,5}\s*|[^\sA-Za-z0-9_'-]\s*|\n+/g) || [reply];
+}
+
+function tokenDelayMs(tok, mode = "normal") {
+  if (/\n/.test(tok)) return 95;
+  if (/[.!?]\s*$/.test(tok)) return 70;
+  if (/[,;:]\s*$/.test(tok)) return 38;
+  const base = mode === "fast" ? 11 : mode === "deep" ? 26 : 17;
+  return base + Math.round(Math.random() * (mode === "fast" ? 5 : 10));
 }
 
 class ConsoleSession {
@@ -324,8 +460,10 @@ class ConsoleSession {
     this.busy = false;
     this.compacting = false;
     this._aborted = false;
+    this.liveTokPerSec = 0;
     this.orb = null;
     this.onChange = null;
+    this.onTokenFrame = null;
   }
   _initDormant(m, unplaced, office, officeOffline) {
     this.parts = { system: 0, summary: 0, conversation: 0, tools: 0 };
@@ -346,18 +484,24 @@ class ConsoleSession {
     const projName = m.proj ? P[m.proj].name : "assigned organization work";
     return [
       {
-        id: "e1", from: requester, kind: "task", time: "18m ago",
+        id: "e1", from: requester, kind: "task", time: "18m ago", phase: "done", durationMs: 2400, tokPerSec: 62,
         text: m.task || "Audit workspace contract invariants and report status",
+        thoughts: [
+          "Locate active project contract files and verify rule constraints before running checks.",
+          "Workspace assertions passed cleanly; summarize current sync state concisely."
+        ],
         steps: [
-          { tool: "search_code", arg: `"${m.proj || "agency"}"`, tokens: 6400 },
-          { tool: "read_file", arg: `${m.setup.home}/RULES.md`, tokens: 8200 },
-          { tool: "run_tests", arg: "--workspace --quiet", tokens: 12900 }
+          { tool: "search_code", arg: `"${m.proj || "agency"}"`, out: "14 matches across 4 files", tokens: 6400 },
+          { tool: "read_file", arg: `${m.setup.home}/RULES.md`, out: "42 lines loaded", tokens: 8200 },
+          { tool: "run_tests", arg: "--workspace --quiet", out: "All local assertions passed (1.4s)", tokens: 12900 }
         ],
         reply: `${m.name} (${m.role}) is actively tracking ${projName}.\n\nAll local assertions pass and the branch is synced with HQ. Ask a question below or queue a task to see live execution.`
       },
       {
-        id: "e2", from: "you", kind: "chat", time: "4m ago",
-        text: "Give me a quick status check before standup.", steps: [],
+        id: "e2", from: "you", kind: "chat", time: "4m ago", phase: "done", durationMs: 600, tokPerSec: 78,
+        text: "Give me a quick status check before standup.",
+        thoughts: ["Inspect active task focus and current context utilization before replying."],
+        steps: [],
         reply: `Current focus: ${m.task || "Standing by for incoming tasks"}.\n\nNo blockers on my side—context window is healthy at ${Math.round((this.used / this.limit) * 100)}%.`
       }
     ];
@@ -391,14 +535,15 @@ class ConsoleSession {
   get ratio() { return this.used / this.limit; }
   notify() { if (this.onChange) this.onChange(); }
 
-  enqueue(from, kind, text) {
+  enqueue(from, kind, text, immediate = false) {
     const avail = agentSessionAvailability(this.agentId);
     if (!avail.active) return false;
     const item = { id: Date.now(), from, kind, text };
-    this.queue.push(item);
+    if (immediate) this.queue.unshift(item);
+    else this.queue.push(item);
     if (this.orb) this.orb.pulse(0.7);
     this.notify();
-    this._drain();
+    this._drain(immediate);
     return true;
   }
 
@@ -408,9 +553,12 @@ class ConsoleSession {
     this.current = null;
     this.busy = false;
     this.compacting = false;
+    this.liveTokPerSec = 0;
     const streamingEntry = this.entries.find((e) => e.streaming);
     if (streamingEntry) {
       streamingEntry.streaming = false;
+      streamingEntry.phase = "stopped";
+      streamingEntry.steps.forEach((s) => { s.running = false; });
       streamingEntry.reply = (streamingEntry.reply ? streamingEntry.reply + "\n\n" : "") + "[Stopped by owner]";
     }
     this.shellLines.push({ cls: "c-shell-c", txt: "# run stopped by owner" });
@@ -453,7 +601,7 @@ class ConsoleSession {
     return true;
   }
 
-  async _drain() {
+  async _drain(singleTurn = false) {
     if (this.busy) return;
     this.busy = true;
     this._aborted = false;
@@ -462,10 +610,12 @@ class ConsoleSession {
         if (this._aborted || !agentSessionAvailability(this.agentId).active) break;
         const next = this.queue.shift();
         await this._run(next);
+        if (singleTurn) break;
       }
     } finally {
       this.busy = false;
       this.current = null;
+      this.liveTokPerSec = 0;
       const avail = agentSessionAvailability(this.agentId);
       if (!this._aborted) {
         this.status = avail.active
@@ -478,15 +628,19 @@ class ConsoleSession {
   }
 
   async _runStep(st, entry) {
-    this.status = { state: "working", detail: st.tool };
-    if (this.orb) { this.orb.setState("working"); this.orb.pulse(0.75); }
+    entry.phase = "working";
+    this.status = { state: "thinking", detail: "Thinking…" };
+    if (this.orb) { this.orb.setState("thinking"); this.orb.pulse(0.65); }
+    const stepRec = { tool: st.tool, arg: st.arg, out: "", tokens: st.tokens, running: true };
+    entry.steps.push(stepRec);
     this.shellLines.push({ cls: "c-shell-cmd", txt: st.cmd, running: true });
     this.notify();
-    await sleep(750);
+    await sleep(620);
     this.shellLines[this.shellLines.length - 1].running = false;
+    stepRec.running = false;
     if (this._aborted) return false;
+    stepRec.out = st.out;
     this.shellLines.push({ cls: "c-shell-out", txt: st.out });
-    entry.steps.push({ tool: st.tool, arg: st.arg, tokens: st.tokens });
     this.parts.tools += st.tokens;
     this.stats.toolCalls++;
     this.history.push({ used: this.used, label: `${st.tool} ${st.arg}` });
@@ -495,15 +649,25 @@ class ConsoleSession {
     return true;
   }
 
-  async _streamReply(reply, entry) {
-    this.status = { state: "streaming", detail: "writing reply" };
+  async _streamReply(reply, entry, cadence = "normal") {
+    entry.phase = "streaming";
+    this.status = { state: "streaming", detail: "Responding" };
     if (this.orb) this.orb.setState("streaming");
-    for (const ch of reply) {
+    this.notify();
+    const tokens = tokenizeReply(reply);
+    const start = performance.now();
+    let emitted = 0;
+    for (const tok of tokens) {
       if (this._aborted) return false;
-      entry.reply += ch;
-      if (this.orb) this.orb.onToken(ch);
-      this.notify();
-      await sleep(/[.!?]/.test(ch) ? 45 : 14);
+      entry.reply += tok;
+      emitted++;
+      if (this.orb) this.orb.onToken(tok);
+      const elapsedSec = Math.max(0.12, (performance.now() - start) / 1000);
+      this.liveTokPerSec = this.orb ? Math.round(this.orb.tokensPerSec || emitted / elapsedSec) : Math.round(emitted / elapsedSec);
+      entry.tokPerSec = Math.max(entry.tokPerSec || 0, this.liveTokPerSec);
+      if (this.onTokenFrame) this.onTokenFrame(entry);
+      else this.notify();
+      await sleep(tokenDelayMs(tok, cadence));
     }
     return true;
   }
@@ -512,16 +676,28 @@ class ConsoleSession {
     if (this._aborted) return;
     this.current = item;
     if (this.parts.system === 0) this.parts.system = 13800;
-    const entry = { id: "e" + item.id, from: item.from, kind: item.kind, time: "just now", text: item.text, steps: [], reply: "", streaming: true };
+    const t0 = performance.now();
+    const entry = {
+      id: "e" + item.id, from: item.from, kind: item.kind, time: "just now",
+      text: item.text, phase: "thinking", thoughts: [], steps: [], reply: "", streaming: true, durationMs: 0, tokPerSec: 0
+    };
     this.entries.push(entry);
+    this.status = { state: "thinking", detail: "Thinking…" };
+    if (this.orb) { this.orb.setState("thinking"); this.orb.pulse(0.55); }
     this.shellLines.push({ cls: "c-shell-c c-shell-q", txt: `# [ORD-${item.id % 1000}] ${item.kind} from ${M[item.from] ? M[item.from].name : item.from}: ${item.text}` });
-    this.notify();
     const plan = this._plan(item.text);
+    if (plan.thoughts[0]) entry.thoughts.push(plan.thoughts[0]);
+    this.notify();
+    await sleep(480);
+    if (this._aborted) return;
     for (const st of plan.steps) {
       if (this._aborted || !(await this._runStep(st, entry))) return;
     }
-    if (!(await this._streamReply(plan.reply, entry))) return;
+    if (plan.thoughts[1]) entry.thoughts.push(plan.thoughts[1]);
+    entry.durationMs = Math.round(performance.now() - t0);
+    if (!(await this._streamReply(plan.reply, entry, plan.cadence))) return;
     entry.streaming = false;
+    entry.phase = "done";
     this.parts.conversation += Math.max(40, Math.round(plan.reply.length / 4));
     this.stats.requests++;
     this.history.push({ used: this.used, label: "Agent reply" });
@@ -532,8 +708,26 @@ class ConsoleSession {
 
   _plan(text) {
     const m = M[this.agentId];
+    if (/fast|burst|speed|summary/i.test(text)) {
+      return {
+        cadence: "fast",
+        thoughts: [
+          "Gather branch status and active milestone summary for a rapid readout.",
+          "Everything is green; stream a crisp executive breakdown at high cadence."
+        ],
+        steps: [
+          { tool: "search_code", arg: '"release_gate" crates/', cmd: 'rg -n "release_gate" crates/', out: "5 checks active, 0 failing", tokens: 2900 }
+        ],
+        reply: `Quick sync snapshot for ${m.proj ? P[m.proj].name : "the workspace"}:\n\n• Core contract tests: 100% green across workspace crates.\n• Active slice: ${m.task || "Standing by for incoming tasks"}.\n• Queue depth: ${this.queue.length} pending follow-ups.\n• Context budget: ${Math.round(this.ratio * 100)}% used, plenty of headroom before auto-compaction.`
+      };
+    }
     if (/working on|status|doing/i.test(text)) {
       return {
+        cadence: "normal",
+        thoughts: [
+          "Read local backlog state to confirm active slice and queued follow-ups.",
+          "Synthesize concise status update without dumping raw JSON."
+        ],
         steps: [
           { tool: "read_file", arg: `${m.setup.home}/backlog.json`, cmd: `cat ~/${m.setup.home}/backlog.json`, out: "2 queued items, 1 active slice", tokens: 3200 }
         ],
@@ -542,6 +736,11 @@ class ConsoleSession {
     }
     if (/custody|lock|lease/i.test(text)) {
       return {
+        cadence: "deep",
+        thoughts: [
+          "Check custody_lock implementation and verify current lease expiry tests.",
+          "Compare lease-based auto-expiry against manual crash recovery trade-offs."
+        ],
         steps: [
           { tool: "search_code", arg: '"custody_lock" crates/', cmd: 'rg -n "custody_lock" crates/', out: "8 matches in crates/office-sync/src/lock.rs", tokens: 4900 },
           { tool: "run_tests", arg: "office-sync::lock", cmd: "cargo test -p office-sync lock", out: "14 passed, 0 failed (1.8s)", tokens: 7400 }
@@ -551,6 +750,11 @@ class ConsoleSession {
     }
     const kw = (text.match(/[A-Za-z]{4,}/g) || ["workspace"]).sort((a, b) => b.length - a.length)[0];
     return {
+      cadence: "normal",
+      thoughts: [
+        `Scan references to "${kw}" and cross-check recent journal entries.`,
+        "No contract drift detected; draft a direct answer with next-step offer."
+      ],
       steps: [
         { tool: "search_code", arg: `"${kw}"`, cmd: `rg -n "${kw}" .`, out: "6 matching references found", tokens: 4100 },
         { tool: "read_file", arg: `${m.setup.home}/journal.md`, cmd: `tail -n 20 ~/${m.setup.home}/journal.md`, out: "20 lines read", tokens: 3600 }
@@ -568,14 +772,31 @@ function getConsoleSession(agentId) {
 
 let activeOrb = null;
 let activeSession = null;
+let activeProfileAid = null;
+let activeProfileTab = null;
+let focusCloser = null;
 
-function stopAgentOrb() {
+function registerFocusCloser(fn) { focusCloser = fn; }
+
+function stopRailOrbOnly() {
   if (activeOrb) {
     if (activeOrb._ro) { activeOrb._ro.disconnect(); activeOrb._ro = null; }
     activeOrb.stop();
     activeOrb = null;
   }
-  if (activeSession) { activeSession.onChange = null; activeSession.orb = null; activeSession = null; }
+}
+
+function stopAgentOrb() {
+  if (focusCloser) focusCloser(false);
+  stopRailOrbOnly();
+  if (activeSession) {
+    activeSession.onChange = null;
+    activeSession.onTokenFrame = null;
+    activeSession.orb = null;
+    activeSession = null;
+  }
+  activeProfileAid = null;
+  activeProfileTab = null;
 }
 
 function agentRailNowHtml(curNow, avail, canStop) {
@@ -622,10 +843,14 @@ function agentRailHtml(aid, tab) {
   const m = M[aid], sess = getConsoleSession(aid), avail = agentSessionAvailability(aid);
   const st = sess.busy || avail.active ? sess.status : { state: avail.state, detail: avail.title.toLowerCase() };
   const curNow = avail.active ? sess.current : null;
+  const expandLabel = `Expand ${m.name} orb & chat to full screen`;
   const liveLink = tab !== "sessions" && avail.active ? `<a class="link" style="margin-top:10px;font-size:0.75rem" href="#/members/${aid}/sessions">Open live session${ic("chev-right", "ic14")}</a>` : "";
   return `<aside class="agent-rail" aria-label="Agent orb and context">
     <div class="orb-section">
-      <div class="orb-stage"><canvas id="c-orb-canvas" role="img" aria-label="Neural orb reflecting ${esc(m.name)} activity"></canvas></div>
+      <button type="button" class="btn ghost icon sm icon-with-tooltip orb-expand-btn" data-act="agent-focus-open" data-id="${aid}" aria-label="${esc(expandLabel)}">${iconWithTooltip("Expand orb & chat", "maximize")}</button>
+      <button type="button" class="orb-stage orb-stage-btn" data-act="agent-focus-open" data-id="${aid}" aria-label="${esc(expandLabel)}" title="Open full-screen orb & chat">
+        <canvas id="c-orb-canvas" role="img" aria-label="Neural orb reflecting ${esc(m.name)} activity"></canvas>
+      </button>
       <div class="telemetry-strip" id="c-telemetry" data-cstate="${esc(st.state)}">
         <span class="c-dot"></span><span class="c-state-txt" id="c-state-txt">${esc(st.state)}</span><span class="muted">·</span><span class="c-detail-txt" id="c-detail-txt">${esc(st.detail)}</span>
       </div>
@@ -636,22 +861,20 @@ function agentRailHtml(aid, tab) {
   </aside>`;
 }
 
-function sessionsSubbarHtml(disabled) {
+function sessionsSubbarHtml(aid, disabled) {
   const tabs = [["activity", "Activity"], ["chat", "Session prompt"], ["shell", "Shell"]]
     .map(([v, lbl]) => `<button type="button" role="tab" id="ctab-${v}" data-cview="${v}" aria-selected="${S.consoleView === v}" tabindex="${S.consoleView === v ? 0 : -1}">${lbl}</button>`).join("");
   return `<div class="subbar">
         <div class="seg" id="c-tabs" role="tablist" aria-label="Session view">${tabs}</div>
         <span style="flex:1"></span>
-        <div id="c-act-filters" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center" ${S.consoleView !== "activity" ? "hidden" : ""}>
-          <div class="seg" id="c-scope-seg" role="group" aria-label="Filter requests">
+        <div id="c-act-filters" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center" ${S.consoleView === "shell" ? "hidden" : ""}>
+          <div class="seg" id="c-scope-seg" role="group" aria-label="Filter requests" ${S.consoleView !== "activity" ? "hidden" : ""}>
             <button type="button" data-cscope="all" aria-pressed="${S.consoleScope === "all"}">Everyone</button>
             <button type="button" data-cscope="others" aria-pressed="${S.consoleScope === "others"}">Others only</button>
           </div>
-          <div class="seg" id="c-tools-seg" role="group" aria-label="Tool calls">
-            <button type="button" data-ctools="on" aria-pressed="${S.consoleTools}">Tool calls</button>
-            <button type="button" data-ctools="off" aria-pressed="${!S.consoleTools}">Compact</button>
-          </div>
-          <button type="button" class="btn outline" id="c-sim-btn" ${disabled}>${ic("play", "ic16")}Simulate request</button>
+          <button type="button" class="btn outline sm" id="c-trace-global" aria-pressed="${!!S.consoleTools}">${ic("eye", "ic16")}Show traces</button>
+          <button type="button" class="btn outline sm" id="c-sim-btn" ${S.consoleView !== "activity" ? "hidden" : ""} ${disabled}>${ic("play", "ic16")}Simulate request</button>
+          <button type="button" class="btn outline sm" data-act="agent-focus-open" data-id="${aid}">${ic("maximize", "ic16")}Full screen</button>
         </div>
       </div>`;
 }
@@ -694,7 +917,7 @@ function renderSessionsPaneHtml(aid, m, avail) {
           </div></li>`).join("")}</ul>`;
   const disabled = avail.active ? "" : "disabled";
   const liveLabel = avail.active ? `Live session <span class="mono">s-0941</span> · <code>agentic-org attach ${esc(aid)}</code> · ${esc(m.setup.runtime)} (${esc(m.setup.model)})` : `Session offline · <code>agentic-org status ${esc(aid)}</code>`;
-  return `${sessionsSubbarHtml(disabled)}
+  return `${sessionsSubbarHtml(aid, disabled)}
       <div class="c-feed-pane" id="c-feed-pane" ${S.consoleView === "shell" ? "hidden" : ""}>
         ${statusNotice}
         <div class="c-sec-hd" style="padding-bottom:2px"><span class="muted" style="font-size:0.75rem">${liveLabel}</span></div>
@@ -736,8 +959,18 @@ function renderSessionChart(sess) {
       <line x1="${padL}" x2="${W_SVG - padR}" y1="${y(0.95)}" y2="${y(0.95)}" stroke="var(--tone-warn)" stroke-width="1" stroke-dasharray="3 2"/>
       <path d="${d}" fill="none" stroke="var(--tone-accent)" stroke-width="1.75"/>
       <circle cx="${x(samples.length - 1)}" cy="${y(endRatio)}" r="3.5" fill="var(--tone-accent)"/>
-      <text x="${x(samples.length - 1) + 6}" y="${y(endRatio) + 4}" fill="#d1d5dc" font-family="ui-monospace, monospace" font-size="12">${Math.round(endRatio * 100)}%</text>
+      <text x="${x(samples.length - 1) + 6}" y="${y(endRatio) + 4}" fill="currentColor" font-family="ui-monospace, monospace" font-size="12">${Math.round(endRatio * 100)}%</text>
     </svg>`;
+}
+
+function paintAgentActionButtons(curAvail, sess) {
+  const stopBtn = document.getElementById("c-stop-btn");
+  if (stopBtn) stopBtn.hidden = !(curAvail.active && (sess.busy || !!sess.current));
+  const compactBtn = document.getElementById("c-compact-btn");
+  if (!compactBtn) return;
+  compactBtn.disabled = !curAvail.active || sess.busy;
+  compactBtn.setAttribute("aria-busy", String(!!sess.compacting));
+  compactBtn.textContent = sess.compacting ? "Compacting…" : "Compact now";
 }
 
 function paintAgentNowAndControls(aid, sess, tel) {
@@ -745,7 +978,8 @@ function paintAgentNowAndControls(aid, sess, tel) {
   const curState = sess.busy || curAvail.active ? sess.status : { state: curAvail.state, detail: curAvail.title.toLowerCase() };
   tel.dataset.cstate = curState.state;
   document.getElementById("c-state-txt").textContent = curState.state;
-  document.getElementById("c-detail-txt").textContent = curState.detail;
+  const detailText = curState.state === "streaming" && sess.liveTokPerSec ? `${sess.liveTokPerSec} tok/s` : curState.detail;
+  document.getElementById("c-detail-txt").textContent = detailText;
   const nowKind = document.getElementById("c-now-kind"), nowTitle = document.getElementById("c-now-title"), nowSub = document.getElementById("c-now-sub");
   const curNow = curAvail.active ? sess.current : null;
   nowKind.hidden = !curNow;
@@ -758,14 +992,7 @@ function paintAgentNowAndControls(aid, sess, tel) {
     nowTitle.textContent = curAvail.active ? "Nothing in progress" : curAvail.title;
     nowSub.textContent = curAvail.active ? "Waiting for the next request" : curAvail.reason;
   }
-  const stopBtn = document.getElementById("c-stop-btn");
-  if (stopBtn) stopBtn.hidden = !(curAvail.active && (sess.busy || !!sess.current));
-  const compactBtn = document.getElementById("c-compact-btn");
-  if (compactBtn) {
-    compactBtn.disabled = !curAvail.active || sess.busy;
-    compactBtn.setAttribute("aria-busy", String(!!sess.compacting));
-    compactBtn.textContent = sess.compacting ? "Compacting…" : "Compact now";
-  }
+  paintAgentActionButtons(curAvail, sess);
 }
 
 function paintAgentContext(sess) {
@@ -789,10 +1016,11 @@ function paintAgentFeed(sess) {
   if (!feedList) return;
   const visible = sess.entries.filter((en) => (S.consoleView === "chat" ? en.from === "you" : S.consoleScope === "others" ? en.from !== "you" : true));
   feedList.innerHTML = visible.length ? visible.map((en) => {
-    const stepsHtml = S.consoleTools && en.steps?.length
-      ? `<details class="c-work-box" ${en.streaming ? "open" : ""}><summary>Worked · ${plural(en.steps.length, "tool call", "tool calls")}</summary><div class="c-steps">${en.steps.map((s) => `<div class="c-step"><span class="c-step-dot"></span><span class="c-step-tool">${esc(s.tool)}</span><span class="c-step-arg">${esc(s.arg)}</span><span class="c-step-tok">+${fmtTok(s.tokens)}</span></div>`).join("")}</div></details>`
+    const traceHtml = renderTurnTraceHtml(en);
+    const replyHtml = en.reply || en.phase === "streaming"
+      ? `<div class="c-reply" data-entry-reply="${esc(en.id)}">${esc(en.reply)}${en.streaming ? '<span class="c-caret-blink"></span>' : ""}</div>`
       : "";
-    return `<article class="c-entry" data-from="${esc(en.from)}"><div class="c-entry-hd"><span class="c-entry-who">${av(en.from, 24)}${esc(M[en.from] ? M[en.from].name : en.from)} ${pill(en.kind, "gray")}</span><span class="muted" style="font-size:0.75rem">${esc(en.time)}</span></div><div class="c-entry-prompt">${esc(en.text)}</div>${stepsHtml}<div class="c-reply">${esc(en.reply)}${en.streaming ? '<span class="c-caret-blink"></span>' : ""}</div></article>`;
+    return `<article class="c-entry" data-from="${esc(en.from)}"><div class="c-entry-hd"><span class="c-entry-who">${av(en.from, 24)}${esc(M[en.from] ? M[en.from].name : en.from)} ${pill(en.kind, "gray")}</span><span class="muted" style="font-size:0.75rem">${esc(en.time)}</span></div><div class="c-entry-prompt">${esc(en.text)}</div>${traceHtml}${replyHtml}</article>`;
   }).join("") : `<p class="empty-row">No messages yet in this view.</p>`;
 }
 
@@ -806,9 +1034,11 @@ function paintAgentShell(sess) {
   if (sp && !sp.hidden) shellBody.scrollTop = shellBody.scrollHeight;
 }
 
-function paintAgentFeedAndShell(sess) {
-  paintAgentFeed(sess);
-  paintAgentShell(sess);
+function paintRailTokenFrame(sess, entry) {
+  const replyEl = document.querySelector(`#c-feed-list [data-entry-reply="${CSS.escape(entry.id)}"]`);
+  if (replyEl) replyEl.innerHTML = `${esc(entry.reply)}${entry.streaming ? '<span class="c-caret-blink"></span>' : ""}`;
+  const detail = document.getElementById("c-detail-txt");
+  if (detail && sess.status.state === "streaming" && sess.liveTokPerSec) detail.textContent = `${sess.liveTokPerSec} tok/s`;
 }
 
 function bindSessionsListeners(sessionsRoot, aid, sess, avail, paintAll) {
@@ -817,7 +1047,9 @@ function bindSessionsListeners(sessionsRoot, aid, sess, avail, paintAll) {
     sessionsRoot.querySelectorAll("#c-tabs [role='tab']").forEach((b) => { const on = b.dataset.cview === next; b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; });
     const msgBtn = document.querySelector('.profile-actions button[data-v^="#/chat/"]');
     if (msgBtn) { const demote = next === "chat" && avail.active; msgBtn.classList.toggle("primary", !demote); msgBtn.classList.toggle("outline", demote); }
-    document.getElementById("c-act-filters").hidden = next !== "activity";
+    document.getElementById("c-act-filters").hidden = next === "shell";
+    document.getElementById("c-scope-seg").hidden = next !== "activity";
+    document.getElementById("c-sim-btn").hidden = next !== "activity";
     document.getElementById("c-feed-pane").hidden = next === "shell";
     document.getElementById("c-shell-pane").hidden = next !== "shell";
     document.getElementById("c-composer").hidden = next !== "chat";
@@ -831,15 +1063,20 @@ function bindSessionsListeners(sessionsRoot, aid, sess, avail, paintAll) {
     sessionsRoot.querySelectorAll("#c-scope-seg button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.cscope === S.consoleScope)));
     paintAll();
   });
-  document.getElementById("c-tools-seg").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-ctools]"); if (!b) return;
-    S.consoleTools = b.dataset.ctools === "on";
-    sessionsRoot.querySelectorAll("#c-tools-seg button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.ctools === b.dataset.ctools)));
+  document.getElementById("c-trace-global").addEventListener("click", (e) => {
+    setGlobalTrace(!S.consoleTools);
+    e.currentTarget.setAttribute("aria-pressed", String(S.consoleTools));
+    paintAll();
+  });
+  document.getElementById("c-feed-list").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-trace-toggle]");
+    if (!btn) return;
+    toggleEntryTrace(btn.dataset.traceToggle);
     paintAll();
   });
   document.getElementById("c-sim-btn").addEventListener("click", () => {
     if (!agentSessionAvailability(aid).active) return;
-    const samples = [["rowan", "task", "Check custody lock lease renewal timings"], ["tomas", "task", "Verify test coverage on sync recovery"], ["maya", "chat", "Confirm v1.0 release notes status"]];
+    const samples = [["rowan", "task", "Check custody lock lease renewal timings"], ["tomas", "task", "Verify test coverage on sync recovery"], ["maya", "chat", "Give me a fast release status summary"]];
     const [from, kind, text] = samples[Math.floor(Math.random() * samples.length)];
     sess.enqueue(from, kind, text);
   });
@@ -864,19 +1101,17 @@ function bindSessionsListeners(sessionsRoot, aid, sess, avail, paintAll) {
   });
 }
 
-function mountAgentProfile(aid, tab) {
-  stopAgentOrb();
+function attachRailSession(aid) {
   const canvas = document.getElementById("c-orb-canvas");
-  if (!canvas) return;
-  const m = M[aid], sess = getConsoleSession(aid), avail = agentSessionAvailability(aid);
+  if (!canvas) return null;
+  stopRailOrbOnly();
+  const sess = getConsoleSession(aid), avail = agentSessionAvailability(aid);
   activeSession = sess;
-  const sessionsRoot = document.getElementById("agent-sessions-root");
-  if (sessionsRoot && tab === "sessions") sessionsRoot.innerHTML = renderSessionsPaneHtml(aid, m, avail);
   const orb = new NeuralOrb(canvas);
   orb.setState(avail.active ? sess.status.state : "paused");
   orb.setContext(sess.ratio, true);
   orb.start();
-  if (avail.active) orb.pulse(0.7);
+  if (avail.active) orb.pulse(0.65);
   requestAnimationFrame(() => orb.resize());
   if ("ResizeObserver" in window && canvas.parentElement) {
     const ro = new ResizeObserver(() => orb.resize());
@@ -890,20 +1125,52 @@ function mountAgentProfile(aid, tab) {
     if (!tel) return;
     paintAgentNowAndControls(aid, sess, tel);
     paintAgentContext(sess);
-    paintAgentFeedAndShell(sess);
+    paintAgentFeed(sess);
+    paintAgentShell(sess);
+    const gt = document.getElementById("c-trace-global");
+    if (gt) gt.setAttribute("aria-pressed", String(!!S.consoleTools));
   };
   sess.onChange = paintAll;
+  sess.onTokenFrame = (entry) => paintRailTokenFrame(sess, entry);
   paintAll();
-  document.getElementById("c-compact-btn")?.addEventListener("click", () => sess.compactNow());
-  document.getElementById("c-stop-btn")?.addEventListener("click", () => sess.stopRun());
-  if (sessionsRoot && tab === "sessions") bindSessionsListeners(sessionsRoot, aid, sess, avail, paintAll);
+  return { sess, avail, paintAll };
+}
+
+function mountAgentProfile(aid, tab) {
+  stopAgentOrb();
+  const canvas = document.getElementById("c-orb-canvas");
+  if (!canvas) return;
+  activeProfileAid = aid;
+  activeProfileTab = tab;
+  const m = M[aid], avail = agentSessionAvailability(aid);
+  const sessionsRoot = document.getElementById("agent-sessions-root");
+  if (sessionsRoot && tab === "sessions") sessionsRoot.innerHTML = renderSessionsPaneHtml(aid, m, avail);
+  const attached = attachRailSession(aid);
+  if (!attached) return;
+  document.getElementById("c-compact-btn")?.addEventListener("click", () => attached.sess.compactNow());
+  document.getElementById("c-stop-btn")?.addEventListener("click", () => attached.sess.stopRun());
+  if (sessionsRoot && tab === "sessions") bindSessionsListeners(sessionsRoot, aid, attached.sess, attached.avail, attached.paintAll);
+}
+
+function resumeRailOrbAfterFocus() {
+  if (activeProfileAid && document.getElementById("c-orb-canvas")) attachRailSession(activeProfileAid);
 }
 
 export {
+  NeuralOrb,
   agentRailHtml,
   agentSessionAvailability,
   consoleSessions,
+  fmtDuration,
+  fmtTok,
   getConsoleSession,
+  isTraceOpen,
   mountAgentProfile,
+  registerFocusCloser,
+  renderTurnTraceHtml,
+  resumeRailOrbAfterFocus,
+  setGlobalTrace,
   stopAgentOrb,
+  stopRailOrbOnly,
+  toggleEntryTrace,
 };
