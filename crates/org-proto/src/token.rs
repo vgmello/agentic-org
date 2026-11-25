@@ -380,7 +380,10 @@ fn nibble(c: u8) -> Option<u8> {
 // The crate denies unsafe code. This is the one exception: a plain write of zeros to bytes
 // that are about to be dropped is a dead store the optimizer may remove, and safe Rust has no
 // volatile write. `write_volatile` through an exclusive reference is sound.
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "best-effort secret zeroing requires ptr::write_volatile so the optimizer cannot elide dead stores"
+)]
 pub fn zero(bytes: &mut [u8]) {
     for b in bytes.iter_mut() {
         // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.
@@ -435,7 +438,10 @@ mod tests {
     #[test]
     fn decode_errors_inside_a_struct_never_echo_it() {
         #[derive(Debug, Deserialize)]
-        #[allow(dead_code)]
+        #[expect(
+            dead_code,
+            reason = "field exists solely to exercise OfficeSecretsKey deserialization error formatting"
+        )]
         struct Start {
             office_secrets_key: OfficeSecretsKey,
         }
@@ -533,7 +539,10 @@ mod tests {
     #[test]
     fn unquoted_numbers_are_never_echoed() {
         #[derive(Debug, Deserialize)]
-        #[allow(dead_code)]
+        #[expect(
+            dead_code,
+            reason = "field exists solely to exercise OfficeSecretsKey deserialization error formatting"
+        )]
         struct Start {
             office_secrets_key: OfficeSecretsKey,
         }

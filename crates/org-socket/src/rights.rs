@@ -282,14 +282,26 @@ fn control_buffer(space: usize) -> io::Result<Vec<usize>> {
 
 fn control_space(expected: usize) -> Option<usize> {
     let data = expected.checked_mul(mem::size_of::<RawFd>())?;
-    // Check the macro's u32 alignment/addition before calling it.
-    let overhead = unsafe { libc::CMSG_SPACE(0) } as usize;
-    let _: u32 = data
-        .checked_add(overhead)?
-        .checked_add(mem::align_of::<libc::cmsghdr>() - 1)?
-        .try_into()
-        .ok()?;
-    Some(unsafe { libc::CMSG_SPACE(data as u32) } as usize)
+    // Check the macro's u32 alignment/addition before calling it. Derive payload
+    // alignment from CMSG_SPACE itself rather than `align_of::<cmsghdr>()`: on x86_64
+    // musl `cmsghdr` has 4-byte alignment while CMSG_SPACE aligns payloads to 8 bytes.
+    // SAFETY: CMSG_SPACE(0) and CMSG_SPACE(1) perform pure alignment arithmetic with no pointers.
+    let (overhead, align) = unsafe {
+        let zero = libc::CMSG_SPACE(0) as usize;
+        let one = libc::CMSG_SPACE(1) as usize;
+        (zero, one.checked_sub(zero)?)
+    };
+    if !align.is_power_of_two() {
+        return None;
+    }
+    let aligned_input: u32 = data.checked_add(align - 1)?.try_into().ok()?;
+    let rounded_data = (aligned_input as usize) & !(align - 1);
+    let expected_space: u32 = overhead.checked_add(rounded_data)?.try_into().ok()?;
+    let data_u32 = u32::try_from(data).ok()?;
+    // SAFETY: checked arithmetic above proves both `CMSG_ALIGN(data_u32)` and
+    // `CMSG_SPACE(data_u32)` fit in `u32` without wrapping.
+    let space = unsafe { libc::CMSG_SPACE(data_u32) } as usize;
+    (space == expected_space as usize).then_some(space)
 }
 
 fn system_receive(fd: RawFd, message: &mut libc::msghdr, flags: i32) -> io::Result<usize> {
@@ -315,10 +327,15 @@ macro_rules! cloexec_result {
 }
 
 fn close_on_exec(fd: RawFd) -> io::Result<()> {
-    // SAFETY: the receiver owns fd; these commands only inspect/change its descriptor flags.
     cloexec_result!(
-        unsafe { libc::fcntl(fd, libc::F_GETFD) },
-        |flags: i32| unsafe { libc::fcntl(fd, libc::F_SETFD, flags) }
+        {
+            // SAFETY: the receiver owns `fd`; F_GETFD only reads its descriptor flags.
+            unsafe { libc::fcntl(fd, libc::F_GETFD) }
+        },
+        |flags: i32| {
+            // SAFETY: the receiver owns `fd`; F_SETFD updates only its descriptor flags.
+            unsafe { libc::fcntl(fd, libc::F_SETFD, flags) }
+        }
     )
 }
 

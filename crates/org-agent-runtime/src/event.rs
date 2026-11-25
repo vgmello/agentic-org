@@ -198,7 +198,6 @@ const KNOWN_EVENT_TYPES: &[&str] = &[
     content = "data",
     rename_all = "snake_case"
 )]
-#[allow(dead_code)] // only its generated `deserialize` is used
 enum KnownSessionEvent {
     Ready {
         runtime_version: Option<String>,

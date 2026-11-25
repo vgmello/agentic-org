@@ -69,7 +69,10 @@ use linux as native;
 // Linux adapter takes from it the entries that refuse there too.
 #[cfg_attr(
     any(target_os = "macos", all(target_os = "linux", target_env = "gnu")),
-    allow(dead_code)
+    allow(
+        dead_code,
+        reason = "refusing fallback module is used on unsupported targets and in unit tests"
+    )
 )]
 mod refused;
 #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
@@ -453,8 +456,10 @@ impl From<AdmissionError> for io::Error {
 /// macOS reads nothing here: a child's image is checked when the child is started. A
 /// system that executes verified bytes (GNU/Linux) reads and checks the image here,
 /// once: every child of the admission then runs exactly the bytes read now.
-// The conversion is the identity on a system whose adapter reports this error itself.
-#[allow(clippy::useless_conversion)]
+#[allow(
+    clippy::useless_conversion,
+    reason = "conversion is identity on adapters returning this error directly and needed on others"
+)]
 pub fn admission(expected: ExpectedImage) -> Result<Admission, AdmissionError> {
     native::Admission::new(expected)
         .map(Admission)
@@ -760,8 +765,10 @@ pub(crate) mod test_support {
     /// An admission whose image check is answered by `script` instead of the system.
     /// It still starts real children as the adapter does (held until released), and a
     /// pin in `expected` is still checked against the real loaded image.
-    // The conversion is the identity on a system whose adapter reports this error itself.
-    #[allow(clippy::useless_conversion)]
+    #[allow(
+        clippy::useless_conversion,
+        reason = "conversion is identity on adapters returning this error directly and needed on others"
+    )]
     pub fn scripted_admission(
         expected: ExpectedImage,
         script: Script,
@@ -786,8 +793,10 @@ pub(crate) mod test_support {
     ///   adapter's check of the connection (the child's PID, this user, still alive).
     ///
     /// Never part of a production composition: it exists only with `test-support`.
-    // The conversion is the identity on a system whose adapter reports this error itself.
-    #[allow(clippy::useless_conversion)]
+    #[allow(
+        clippy::useless_conversion,
+        reason = "conversion is identity on adapters returning this error directly and needed on others"
+    )]
     pub fn path_admission(expected: ExpectedImage) -> Result<Admission, AdmissionError> {
         native::Admission::by_path(expected)
             .map(Admission)
@@ -803,8 +812,10 @@ pub(crate) mod test_support {
     /// never signalled and never waited for, and dropping it does nothing. For
     /// [`Admission::verify_reader`] and [`Admission::recheck`] against a process the
     /// test chose (itself, usually).
-    // The conversion is the identity on a system whose adapter reports this error itself.
-    #[allow(clippy::useless_conversion)]
+    #[allow(
+        clippy::useless_conversion,
+        reason = "conversion is identity on adapters returning this error directly and needed on others"
+    )]
     pub fn unowned_child(pid: u32, admitted: Option<Peer>) -> io::Result<Child> {
         native::Child::unowned(pid, admitted)
             .map(Child)

@@ -199,11 +199,9 @@ pub(crate) mod tests {
         // SAFETY: a valid descriptor this function owns; fcntl reads or sets its flags.
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
         assert!(flags >= 0);
-        // SAFETY: as above.
-        assert_eq!(
-            unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) },
-            0
-        );
+        // SAFETY: a valid descriptor this function owns; fcntl sets its status flags.
+        let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+        assert_eq!(rc, 0);
         loop {
             match full.write(&[b'x'; 4096]) {
                 Ok(_) => {}
@@ -212,8 +210,9 @@ pub(crate) mod tests {
             }
         }
         // Blocking again (the child shares this open file), and full.
-        // SAFETY: as above.
-        assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFL, flags) }, 0);
+        // SAFETY: a valid descriptor this function owns; fcntl restores its original status flags.
+        let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
+        assert_eq!(rc, 0);
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", test, "--nocapture", "--test-threads=1"])
             .env(variable, "1")

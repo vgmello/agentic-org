@@ -42,7 +42,10 @@ fn unwrap_ca(
 /// neither wrapped nor recovered from the retained record: recovery-required, nothing
 /// touched (ADR-0016 decision 3). The CA records name the native UUIDv7 store operation
 /// directly from the host's request.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "HQ provisioning coordinates folder, identity, optional key, binding, roots, custody, recovery, and import source"
+)]
 pub(crate) fn prepare(
     folder: &Path,
     new: &NewOffice,

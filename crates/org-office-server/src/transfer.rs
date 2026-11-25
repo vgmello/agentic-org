@@ -54,7 +54,10 @@ impl Service {
         })
     }
 }
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "fatal transfer failure must terminate immediately via libc::_exit without running destructors"
+)]
 fn fatal() -> ! {
     use std::io::Write;
     let _ = io::stderr().write_all(b"agentic-org-office: fatal transfer failure\n");

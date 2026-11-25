@@ -147,8 +147,7 @@ fn read_office_file(path: &Path) -> Option<OfficeFile> {
 }
 
 fn effective_uid() -> u32 {
-    // SAFETY: `geteuid` takes nothing, can't fail and touches no memory of ours.
-    unsafe { libc::geteuid() }
+    org_socket::effective_uid()
 }
 
 /// The office spool's folders, in the office's folder (ADR-0003 §3.5): a send is written in

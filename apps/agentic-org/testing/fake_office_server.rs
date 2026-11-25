@@ -732,10 +732,7 @@ fn receive<T>(stream: &UnixStream, mut call: impl FnMut() -> Result<T, ReceiveEr
 }
 
 fn zero(bytes: &mut [u8]) {
-    for b in bytes.iter_mut() {
-        // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.
-        unsafe { std::ptr::write_volatile(b, 0) };
-    }
+    org_proto::zero_bytes(bytes);
 }
 
 /// Records the grant key's fingerprint (never the key) in `fake.log`.
@@ -785,10 +782,7 @@ fn fingerprint(secret: &impl Serialize) -> String {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    for b in json.iter_mut() {
-        // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.
-        unsafe { std::ptr::write_volatile(b, 0) };
-    }
+    org_proto::zero_bytes(&mut json);
     format!("{hash:016x}")
 }
 

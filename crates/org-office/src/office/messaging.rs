@@ -630,7 +630,10 @@ impl Office {
         Ok(out)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mailbox header query exposes explicit filter, sort, cursor, and pagination parameters"
+    )]
     pub fn mailbox_list_headers(
         &self,
         scope_inbox: Option<&str>,

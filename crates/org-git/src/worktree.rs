@@ -530,7 +530,10 @@ fn verify_cleanup_head_and_status(
 /// Cleans up a closed task's worktree after confirming zero uncommitted changes and zero unpushed
 /// commits, pushing a `merged/<branch>` or `archive/<branch>` tag and compare-and-swap deleting
 /// remote and local refs (`doc-35` §When a task is done).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "public worktree cleanup API takes explicit runner, paths, remote, branches, and group mode"
+)]
 pub fn cleanup_worktree(
     runner: &GitRunner,
     cache_dir: &Path,

@@ -8,7 +8,10 @@
 //! it: the host-side custody reservation (`org_host::test_support::custody`), then its
 //! `office.json` and key. The fake server takes the custody admission the host sends.
 
-#![allow(dead_code)] // each test file uses a different part
+#![allow(
+    dead_code,
+    reason = "shared integration-test support module; each test binary uses a different subset"
+)]
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;

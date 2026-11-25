@@ -199,7 +199,10 @@ impl Broker {
             .and_then(Weak::upgrade)
             .filter(|e| e.live.load(Ordering::SeqCst))
     }
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "rendezvous accept passes explicit office, admission, child, handoff secrets, generation, and signal channel"
+    )]
     pub fn accept(
         &self,
         rendezvous: Rendezvous,
@@ -383,7 +386,10 @@ impl Broker {
             })?;
         Ok(())
     }
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "handoff coordinates connected stream, admission, child, secrets, generation, signals, and deadline"
+    )]
     fn handoff(
         &self,
         stream: UnixStream,

@@ -114,40 +114,42 @@ fn item_attributes(store: &Keychain, account: &str) -> Attributes {
     attributes.extend(Keychain::add_policy());
     attributes
 }
-// SAFETY (each `unsafe` below): reads an immutable framework constant.
 #[test]
 fn an_item_is_a_generic_password_for_this_office_in_the_data_protection_keychain() {
     let attributes = item_attributes(&keychain(GROUP, OFFICE_KEYS), A);
     assert_eq!(attributes.len(), 7);
-    let class = value(&attributes, unsafe { kSecClass });
-    assert_eq!(string(class), unsafe {
-        CFString::wrap_under_get_rule(kSecClassGenericPassword).to_string()
-    });
-    assert_eq!(
-        string(value(&attributes, unsafe { kSecAttrService })),
-        OFFICE_KEYS
-    );
-    assert_eq!(string(value(&attributes, unsafe { kSecAttrAccount })), A);
-    assert_eq!(
-        string(value(&attributes, unsafe { kSecAttrAccessGroup })),
-        GROUP
-    );
-    assert_eq!(
-        value(&attributes, unsafe { kSecUseDataProtectionKeychain }),
-        CFBoolean::true_value().into_CFType()
-    );
+    // SAFETY: each constant is immutable and exported by Security.framework.
+    unsafe {
+        let class = value(&attributes, kSecClass);
+        assert_eq!(
+            string(class),
+            CFString::wrap_under_get_rule(kSecClassGenericPassword).to_string()
+        );
+        assert_eq!(string(value(&attributes, kSecAttrService)), OFFICE_KEYS);
+        assert_eq!(string(value(&attributes, kSecAttrAccount)), A);
+        assert_eq!(string(value(&attributes, kSecAttrAccessGroup)), GROUP);
+        assert_eq!(
+            value(&attributes, kSecUseDataProtectionKeychain),
+            CFBoolean::true_value().into_CFType()
+        );
+    }
 }
 #[test]
 fn an_item_stays_on_this_mac_and_is_readable_after_the_first_unlock() {
     let attributes = item_attributes(&keychain(GROUP, OFFICE_KEYS), A);
-    let accessible = value(&attributes, unsafe { kSecAttrAccessible });
-    assert_eq!(string(accessible), unsafe {
-        CFString::wrap_under_get_rule(kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly).to_string()
-    });
-    assert_eq!(
-        value(&attributes, unsafe { kSecAttrSynchronizable }),
-        CFBoolean::false_value().into_CFType()
-    );
+    // SAFETY: each constant is immutable and exported by Security.framework.
+    unsafe {
+        let accessible = value(&attributes, kSecAttrAccessible);
+        assert_eq!(
+            string(accessible),
+            CFString::wrap_under_get_rule(kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
+                .to_string()
+        );
+        assert_eq!(
+            value(&attributes, kSecAttrSynchronizable),
+            CFBoolean::false_value().into_CFType()
+        );
+    }
 }
 /// L3d: `load` and `delete` look the item up by its class, service and account, in the Data
 /// Protection keychain and the access group, and nothing else (no data, no accessibility).
@@ -156,22 +158,20 @@ fn an_item_stays_on_this_mac_and_is_readable_after_the_first_unlock() {
 fn the_load_and_delete_query_is_this_offices_item_in_the_group() {
     let query = keychain(GROUP, OFFICE_KEYS).query(Some(&name(A)));
     assert_eq!(query.len(), 5);
-    let class = value(&query, unsafe { kSecClass });
-    assert_eq!(string(class), unsafe {
-        CFString::wrap_under_get_rule(kSecClassGenericPassword).to_string()
-    });
-    assert_eq!(
-        string(value(&query, unsafe { kSecAttrService })),
-        OFFICE_KEYS
-    );
-    assert_eq!(string(value(&query, unsafe { kSecAttrAccount })), A);
-    assert_eq!(string(value(&query, unsafe { kSecAttrAccessGroup })), GROUP);
-    assert_eq!(
-        value(&query, unsafe { kSecUseDataProtectionKeychain }),
-        CFBoolean::true_value().into_CFType()
-    );
-    // SAFETY: immutable framework constants.
+    // SAFETY: each constant is immutable and exported by Security.framework.
     let (accessible, synchronizable) = unsafe {
+        let class = value(&query, kSecClass);
+        assert_eq!(
+            string(class),
+            CFString::wrap_under_get_rule(kSecClassGenericPassword).to_string()
+        );
+        assert_eq!(string(value(&query, kSecAttrService)), OFFICE_KEYS);
+        assert_eq!(string(value(&query, kSecAttrAccount)), A);
+        assert_eq!(string(value(&query, kSecAttrAccessGroup)), GROUP);
+        assert_eq!(
+            value(&query, kSecUseDataProtectionKeychain),
+            CFBoolean::true_value().into_CFType()
+        );
         (
             CFString::wrap_under_get_rule(kSecAttrAccessible),
             CFString::wrap_under_get_rule(kSecAttrSynchronizable),
@@ -344,9 +344,9 @@ impl Calls for Fake {
     }
     fn copy_matching(&self, query: &Dictionary) -> Result<Option<CFType>, i32> {
         let (service, group) = scope(query);
-        // SAFETY: immutable Security.framework constants.
-        let list = unsafe { attr(query, kSecReturnAttributes).is_some() };
-        unsafe {
+        // SAFETY: each constant is immutable and exported by Security.framework.
+        let list = unsafe {
+            let list = attr(query, kSecReturnAttributes).is_some();
             assert_eq!(query.len(), 6);
             if list {
                 assert_eq!(
@@ -366,7 +366,8 @@ impl Calls for Fake {
                 );
                 assert!(attr(query, kSecMatchLimit).is_none());
             }
-        }
+            list
+        };
         let mut state = self.0.lock().unwrap();
         record(&mut state, Op::Copy)?;
         if let Some(reply) = state.reply.take() {

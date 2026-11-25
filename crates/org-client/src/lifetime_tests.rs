@@ -1,6 +1,6 @@
 use super::*;
 use std::io::Read;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::net::UnixListener;
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -17,20 +17,7 @@ fn connected() -> (tempfile::TempDir, Client, UnixStream) {
 #[test]
 fn dropping_a_client_with_a_backpressured_writer_shuts_down_before_peer_eof() {
     let (_dir, client, mut peer) = connected();
-    let small: libc::c_int = 4096;
-    // SAFETY: the client owns this live socket; the buffer is a correctly sized int.
-    assert_eq!(
-        unsafe {
-            libc::setsockopt(
-                client.shared.stream.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_SNDBUF,
-                (&small as *const libc::c_int).cast(),
-                std::mem::size_of_val(&small) as _,
-            )
-        },
-        0
-    );
+    org_socket::rights::set_buffer_sizes(client.shared.stream.as_fd(), 4096).unwrap();
     let line = vec![b'x'; 8 * 1024 * 1024];
     let total = line.len();
     let state = Arc::new(AtomicU8::new(QUEUED));

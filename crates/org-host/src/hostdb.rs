@@ -200,21 +200,39 @@ pub(crate) mod journal {
 
     pub(crate) use crate::accounts::verifier::Verifier;
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "hostdb idempotency contract consumed by upcoming host wiring and tests"
+        )
+    )]
     pub(crate) enum Lookup {
         Vacant,
         Replay(Stored),
         NeedsVerification { verifier: Verifier, stored: Stored },
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "hostdb idempotency contract consumed by upcoming host wiring and tests"
+        )
+    )]
     pub(crate) struct Effect {
         pub(crate) stored: Stored,
         /// Created account, not the acting account. Required only for a successful account.create.
         pub(crate) verifier: Option<(String, Verifier)>,
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "hostdb idempotency contract consumed by upcoming host wiring and tests"
+        )
+    )]
     pub(crate) enum Write {
         Committed(Stored),
         Existing(Lookup),
@@ -405,7 +423,13 @@ pub(crate) mod web_tls {
 ///
 /// Consuming host subsystems depend on this trait (or its focused sub-contracts
 /// [`AccountStore`], [`OneTimeLinks`], [`BrowserSessions`]) rather than on SQLite internals.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "HostStore trait methods are tested now and composed as host wiring lands"
+    )
+)]
 pub(crate) trait HostStore:
     AccountStore + OneTimeLinks + BrowserSessions + Send + Sync
 {

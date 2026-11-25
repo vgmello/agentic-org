@@ -936,10 +936,9 @@ fn roots_reset_escapes_what_a_failed_lookup_of_the_service_users_instance_says()
         .unwrap();
     drop(journal);
     std::fs::rename(&root, base.join("moved")).unwrap();
-    // SAFETY: getegid and geteuid have no preconditions and cannot fail.
     let me = Account {
-        uid: unsafe { libc::geteuid() },
-        gid: unsafe { libc::getegid() },
+        uid: crate::home::euid(),
+        gid: crate::home::egid(),
     };
     let mut out = Vec::new();
     let refused = reset_for(me, None, || Ok(paths), &mut out).unwrap_err();
@@ -2251,7 +2250,7 @@ fn the_lookup_runs_in_a_child_and_only_its_answer_comes_back() {
     assert_eq!(
         become_account(Account {
             uid: crate::home::euid(),
-            gid: unsafe { libc::getegid() },
+            gid: crate::home::egid(),
         }),
         Ok(())
     );

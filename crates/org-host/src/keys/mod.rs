@@ -160,7 +160,13 @@ impl From<io::Error> for KeyStoreError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StoreError {
     /// A debug build has no development key folder (absolute, outside the office home).
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    #[cfg_attr(
+        not(debug_assertions),
+        allow(
+            dead_code,
+            reason = "release builds never select a development key directory"
+        )
+    )]
     NoDevKeyDir,
     /// A release build has no Keychain access group compiled in.
     NoKeychainGroup,
@@ -169,7 +175,13 @@ pub(crate) enum StoreError {
     /// A release build's own signature can't be read, or it isn't signed with the hardened
     /// runtime, or is entitled to let other code into it (`code_signing::REJECTED_ENTITLEMENTS`):
     /// any same-user process could then read the keys out of it.
-    #[cfg_attr(debug_assertions, allow(dead_code))]
+    #[cfg_attr(
+        debug_assertions,
+        allow(
+            dead_code,
+            reason = "debug builds do not run release Keychain hardening checks; unit tests cover it"
+        )
+    )]
     NotHardened,
     /// A release build on a system that keeps its secrets in a credential directory has none
     /// open: it serves no registered instance, and only setup records the directory.
@@ -310,7 +322,10 @@ fn release_store(
     release_store_scoped(group, None, own_signing)
 }
 
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(
+    debug_assertions,
+    allow(dead_code, reason = "called in release builds and debug unit tests")
+)]
 fn release_store_scoped(
     group: Option<&str>,
     instance_id: Option<&str>,
@@ -336,7 +351,10 @@ fn release_store_scoped(
 /// access group `group` only if that group is in its `keychain-access-groups`, and it runs
 /// hardened with none of the entitlements that let other code in
 /// (`code_signing::hardened_and_clean`). Information that couldn't be read trusts nothing.
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(
+    debug_assertions,
+    allow(dead_code, reason = "called in release builds and debug unit tests")
+)]
 fn self_trusted(group: &str, own: Option<&Signing>) -> Result<(), StoreError> {
     // Its own signature can't be read: nothing about it can be trusted.
     let Some(own) = own else {
@@ -356,7 +374,10 @@ fn self_trusted(group: &str, own: Option<&Signing>) -> Result<(), StoreError> {
 
 /// Whether the access group `group` is one of the host's own `entitled` groups (exactly). No
 /// entitlement, or one that couldn't be read, entitles nothing.
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(
+    debug_assertions,
+    allow(dead_code, reason = "called in release builds and debug unit tests")
+)]
 fn group_entitled(group: &str, entitled: Option<&[String]>) -> bool {
     entitled.is_some_and(|groups| groups.iter().any(|g| g == group))
 }

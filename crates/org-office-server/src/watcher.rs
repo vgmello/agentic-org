@@ -1091,7 +1091,10 @@ fn handle_failed_pass(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "pass state advancement updates store, watches, and watermarks from explicit pass results"
+)]
 fn advance_pass_state(
     store: &WatcherStore,
     config: &WatcherConfig,
@@ -1129,7 +1132,10 @@ fn advance_pass_state(
     let _ = store.write_watermarks(wm_file);
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "confident wake delivery coordinates office, sessions, config, batch, matches, and timestamp"
+)]
 fn wake_confident_person_matches(
     office: &Office,
     sessions: Option<&SessionManager>,

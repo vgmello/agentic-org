@@ -1923,11 +1923,19 @@ fn show_link(
 /// `expires_at_ms` as local `YYYY-MM-DD HH:MM`, or UTC milliseconds if the conversion fails.
 fn local_time(ms: i64) -> String {
     let secs = ms.div_euclid(1000) as libc::time_t;
-    // SAFETY: `tm` is plain data written by localtime_r from a valid time_t.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    if unsafe { libc::localtime_r(&secs, &mut tm) }.is_null() {
+    let mut tm = std::mem::MaybeUninit::<libc::tm>::zeroed();
+    // SAFETY: zero-initializing `tm` initializes all fields (including libc extension
+    // fields), `secs` is a valid `time_t`, and `assume_init()` runs only after
+    // `localtime_r` returns non-null.
+    let Some(tm) = (unsafe {
+        if libc::localtime_r(&secs, tm.as_mut_ptr()).is_null() {
+            None
+        } else {
+            Some(tm.assume_init())
+        }
+    }) else {
         return format!("{ms} ms after the Unix epoch, UTC");
-    }
+    };
     format!(
         "{:04}-{:02}-{:02} {:02}:{:02}",
         tm.tm_year + 1900,

@@ -86,11 +86,22 @@ length separately so missing safety documentation or reasons does not hide
 production function length findings.
 
 The all-targets gate requires safety documentation and a reason on lint
-suppressions. Use safe code where practical. When unsafe is necessary, add a
-`// SAFETY:` comment that explains why the operation's preconditions hold.
-Use a narrowly scoped `#[expect(lint_name, reason = "...")]` for reviewed
-exceptions. Remove the expectation when the lint no longer applies. The
-[unsafe documentation pilot inventory](docs/unsafe-documentation-pilot.md)
+suppressions. Use safe code where practical, reuse existing safe workspace
+helpers (`std::process::id()`, `org_socket::effective_uid()`,
+`org_socket::rights::set_buffer_sizes`, `org_proto::zero_bytes`), and lock
+unsafe-free crates with `#![forbid(unsafe_code)]`. When unsafe is necessary,
+add a `// SAFETY:` comment directly on the `unsafe` block explaining why its
+preconditions hold. Use a narrowly scoped `#[expect(lint_name, reason = "...")]`
+for unconditional exceptions (or `allow(..., reason = "...")` when a lint fires
+only on a subset of targets/profiles), and remove expectations when they no
+longer apply. `crates/org-platform/tests/rust_hygiene.rs` (run in workspace tests
+and `kit_hooks.py check`) enforces cross-platform `allow` reasons and
+`write_volatile` confinement via `syn`/`proc_macro2`, and
+`.agent-kit/runtime/kit_rust_hygiene.py` verifies `[lints] workspace = true` on
+every workspace member manifest. When editing Linux platform
+adapters on macOS, also run
+`cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-gnu -- -D warnings`.
+The [unsafe documentation pilot inventory](docs/unsafe-documentation-pilot.md)
 records the starting findings for cleanup.
 
 ESLint runs the recommended JavaScript, TypeScript and Svelte rules. Its

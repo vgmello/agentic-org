@@ -585,8 +585,8 @@ fn event(bytes: &[u8]) -> Option<(String, serde_json::Value)> {
     #[derive(Deserialize)]
     struct Frame {
         event: String,
-        #[allow(dead_code)]
-        seq: u64,
+        #[serde(rename = "seq")]
+        _seq: u64,
         #[serde(default)]
         data: serde_json::Value,
     }

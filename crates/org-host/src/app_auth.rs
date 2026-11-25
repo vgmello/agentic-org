@@ -480,7 +480,13 @@ mod tests {
     /// token changes between the decision and the answer. Refused by the final re-check.
     #[test]
     fn a_caller_whose_audit_token_changes_after_the_decision_is_refused() {
-        #[allow(unused_mut)] // Release builds have no development app.
+        #[cfg_attr(
+            not(debug_assertions),
+            allow(
+                unused_mut,
+                reason = "release builds have no development app policy to append"
+            )
+        )]
         let mut policies = vec![(
             AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap(),
             Grant::Signed,

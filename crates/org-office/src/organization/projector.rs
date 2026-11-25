@@ -384,7 +384,6 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn verify_team_folders<'a>(
     tx: &impl OrganizationWrite,
     organization_path: &DurablePath,
@@ -428,7 +427,6 @@ fn hiring_records_empty(tx: &impl OrganizationWrite) -> Result<bool, ProjectionE
         && tx.watching_model()?.is_none())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn validate_hiring_and_collect_paths(
     tx: &impl OrganizationWrite,
     organization_path: &DurablePath,
@@ -525,7 +523,10 @@ fn validate_providers_and_profiles(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "projector validation verifies execution records and hire requests against roles, employees, and chains"
+)]
 fn validate_executions_and_hires(
     organization_path: &DurablePath,
     roles: &[records::Role],

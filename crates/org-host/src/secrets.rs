@@ -32,13 +32,9 @@ fn random<T>(wrap: impl FnOnce([u8; 32]) -> T) -> io::Result<T> {
     secret
 }
 
-/// Overwrites with zeros in a way the optimizer can't remove (best effort, as `org_proto::zero_bytes` does).
+/// Overwrites with zeros in a way the optimizer can't remove (best effort via [`org_proto::zero_bytes`]).
 pub(crate) fn zero(bytes: &mut [u8]) {
-    for b in bytes.iter_mut() {
-        // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.
-        unsafe { std::ptr::write_volatile(b, 0) };
-    }
-    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    org_proto::zero_bytes(bytes);
 }
 
 #[cfg(test)]

@@ -74,9 +74,9 @@ impl SocketCleanup {
                 Err(error)
             };
         }
-        // SAFETY: successful fstatat initialized the record; geteuid only queries credentials.
+        // SAFETY: successful fstatat initialized the record.
         let info = unsafe { info.assume_init() };
-        socket_owned(&info, unsafe { libc::geteuid() })?;
+        socket_owned(&info, crate::files::effective_uid())?;
         // The pinned current-UID/0700 parent narrows the window, not atomic. Deliberate
         // same-UID leaf replacement is outside v1's threat model (D-B22/D-B33).
         // SAFETY: literal leaf relative to held private parent, verified own-UID socket.

@@ -375,10 +375,9 @@ mod tests {
             .unwrap_err()
             .contains("setup creates HQ only"));
         // The composition's own check is the host's rule for this process's user.
-        // SAFETY: no arguments and no side effects; it cannot fail.
         assert_eq!(
             org_host::Config::refuse_root().is_err(),
-            unsafe { libc::geteuid() } == 0
+            org_socket::effective_uid() == 0
         );
     }
 }

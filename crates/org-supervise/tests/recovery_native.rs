@@ -282,15 +282,15 @@ fn capture_under_low_fd_limit(exhaust: bool) {
     }
     let mut children = Children(Vec::new());
     let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
-    // SAFETY: getrlimit writes the complete output record.
-    assert_eq!(
-        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()) },
-        0
-    );
-    let mut limit = unsafe { limit.assume_init() };
+    // SAFETY: getrlimit writes the complete output record on success, so assume_init is valid.
+    let mut limit = unsafe {
+        assert_eq!(libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()), 0);
+        limit.assume_init()
+    };
     limit.rlim_cur = limit.rlim_cur.min(if exhaust { 64 } else { 1024 });
     // SAFETY: reduce only this disposable fixture's soft limit.
-    assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) }, 0);
+    let rc = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) };
+    assert_eq!(rc, 0);
     let count = limit.rlim_cur as usize * if exhaust { 6 } else { 3 } / 5;
     for _ in 0..count {
         // SAFETY: after fork the child uses only async-signal-safe libc calls.
@@ -569,10 +569,8 @@ fn native_capture_reports_an_exited_unreaped_child_as_zombie() {
     };
     let mut native = NativeRecovery::new().unwrap();
     // SAFETY: this is the test's owned unreaped child.
-    assert_eq!(
-        unsafe { libc::kill(exact.pid as libc::pid_t, libc::SIGTERM) },
-        0
-    );
+    let rc = unsafe { libc::kill(exact.pid as libc::pid_t, libc::SIGTERM) };
+    assert_eq!(rc, 0);
     assert!(native
         .wait_exited(&exact, Instant::now() + Duration::from_secs(5))
         .unwrap());
@@ -626,57 +624,69 @@ fn native_spawn(
     let mut argv = strings(arguments);
     let mut envp = strings(environment);
     let (stdout, writer) = io::pipe().unwrap();
-    let mut actions = std::mem::MaybeUninit::<libc::posix_spawn_file_actions_t>::zeroed();
+    struct SpawnAttrs(libc::posix_spawnattr_t);
+    impl Drop for SpawnAttrs {
+        fn drop(&mut self) {
+            // SAFETY: `SpawnAttrs` takes ownership only after `posix_spawnattr_init` succeeds.
+            unsafe { libc::posix_spawnattr_destroy(&mut self.0) };
+        }
+    }
+    struct FileActions(libc::posix_spawn_file_actions_t);
+    impl Drop for FileActions {
+        fn drop(&mut self) {
+            // SAFETY: `FileActions` takes ownership only after `posix_spawn_file_actions_init` succeeds.
+            unsafe { libc::posix_spawn_file_actions_destroy(&mut self.0) };
+        }
+    }
     let mut pid = 0;
-    let mut attributes = std::mem::MaybeUninit::<libc::posix_spawnattr_t>::zeroed();
-    // SAFETY: valid attribute storage, initialized before use.
-    assert_eq!(
-        unsafe { libc::posix_spawnattr_init(attributes.as_mut_ptr()) },
-        0
-    );
-    let mut attributes = unsafe { attributes.assume_init() };
+    let mut raw_attributes = std::mem::MaybeUninit::<libc::posix_spawnattr_t>::zeroed();
+    // SAFETY: valid attribute storage; `SpawnAttrs` owns and destroys it on every exit,
+    // including panic unwinding.
+    let rc = unsafe { libc::posix_spawnattr_init(raw_attributes.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+    // SAFETY: `posix_spawnattr_init` succeeded immediately above.
+    let mut attributes = SpawnAttrs(unsafe { raw_attributes.assume_init() });
     if new_session {
         // The flag PreparedSpawn also uses.
-        assert_eq!(
-            unsafe {
-                libc::posix_spawnattr_setflags(
-                    &mut attributes,
-                    org_platform::process::testing::posix_spawn_setsid().unwrap(),
-                )
-            },
-            0
-        );
+        let setsid = org_platform::process::testing::posix_spawn_setsid().unwrap();
+        // SAFETY: `attributes.0` is live and owned by `SpawnAttrs`.
+        let rc = unsafe { libc::posix_spawnattr_setflags(&mut attributes.0, setsid) };
+        assert_eq!(rc, 0);
     }
-    // SAFETY: valid action pointer, open stdout fd and NUL-terminated path
-    // and argument/environment arrays. The raw vectors preserve empty argv[0]
-    // and duplicate environment entries for these fixtures.
+    let mut raw_actions = std::mem::MaybeUninit::<libc::posix_spawn_file_actions_t>::zeroed();
+    // SAFETY: valid action storage; `FileActions` owns and destroys it on every exit,
+    // including panic unwinding.
+    let rc = unsafe { libc::posix_spawn_file_actions_init(raw_actions.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+    // SAFETY: `posix_spawn_file_actions_init` succeeded immediately above.
+    let mut actions = FileActions(unsafe { raw_actions.assume_init() });
+    // SAFETY: `actions.0` and `attributes.0` are initialized and guarded by Drop; `cwd`,
+    // `program`, `argv`, `envp`, and `writer` stay live across `posix_spawn`. The raw
+    // vectors preserve empty argv[0] and duplicate environment entries for these fixtures.
     let spawn = unsafe {
-        assert_eq!(libc::posix_spawn_file_actions_init(actions.as_mut_ptr()), 0);
-        let mut actions = actions.assume_init();
         assert_eq!(
-            libc::posix_spawn_file_actions_addchdir_np(&mut actions, cwd.as_ptr()),
+            libc::posix_spawn_file_actions_addchdir_np(&mut actions.0, cwd.as_ptr()),
             0
         );
         assert_eq!(
             libc::posix_spawn_file_actions_adddup2(
-                &mut actions,
+                &mut actions.0,
                 writer.as_raw_fd(),
                 libc::STDOUT_FILENO,
             ),
             0
         );
-        let result = libc::posix_spawn(
+        libc::posix_spawn(
             &mut pid,
             program.as_ptr(),
-            &actions,
-            &attributes,
+            &actions.0,
+            &attributes.0,
             argv.as_mut_ptr(),
             envp.as_mut_ptr(),
-        );
-        libc::posix_spawn_file_actions_destroy(&mut actions);
-        libc::posix_spawnattr_destroy(&mut attributes);
-        result
+        )
     };
+    drop(actions);
+    drop(attributes);
     assert_eq!(spawn, 0);
     drop(writer);
     (pid, stdout)

@@ -1093,7 +1093,10 @@ fn collect_thread_reply_recipients(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "recipient reason collection evaluates conversation, sender, members, mentions, and reply/thread context"
+)]
 pub(crate) fn collect_recipient_reasons(
     read: &impl MessagingRead,
     conv: &ConversationRecord,
@@ -1216,7 +1219,10 @@ pub(crate) fn build_mention_candidates(
     out
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "replay check compares idempotency record against full send context and caller identity"
+)]
 fn check_chat_send_replay(
     read: &impl MessagingRead,
     here: &OfficeIdentity,
@@ -1324,7 +1330,10 @@ fn resolve_reply_thread_root(
     Ok(Some(parent.thread_root_id.unwrap_or(parent.id)))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "message record builder receives explicit identity, conversation, sender, params, priority, and metadata"
+)]
 fn build_new_message_record(
     here: &OfficeIdentity,
     conv_id: &Id,
@@ -1406,7 +1415,10 @@ pub(super) fn recipient_owner_office_id(
     hq_id
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "recipient state builder threads read view, message record, roster, reasons, and delivery metadata"
+)]
 pub(super) fn append_send_recipient_states(
     read: &impl MessagingRead,
     here: &OfficeIdentity,
@@ -1474,7 +1486,10 @@ pub(super) fn append_send_recipient_states(
     Ok((change, recipients))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "send commit builder coordinates conversation state, record, recipients, and change assembly"
+)]
 fn build_send_commit_change(
     read: &impl MessagingRead,
     here: &OfficeIdentity,
@@ -2555,7 +2570,10 @@ pub fn deliver_answer_candidates<E: Engine<Tx: MessagingWrite>>(
     Ok((change, newly_delivered))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "answer candidate merge combines existing state, candidate delivery, office identity, and roster"
+)]
 fn merge_answer_candidate_state(
     existing: Option<RecipientStateRecord>,
     d: &AnswerCandidateDelivery,

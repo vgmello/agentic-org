@@ -49,16 +49,16 @@ fn example() -> PathBuf {
 
 /// A descriptor of this test process that every process it starts inherits: open, and not
 /// close-on-exec, for as long as this is held.
-struct Inherited(#[allow(dead_code)] fs::File);
+struct Inherited(
+    #[expect(dead_code, reason = "holds the non-CLOEXEC descriptor open until drop")] fs::File,
+);
 
 fn inherited() -> Inherited {
     let file = fs::File::open("/").unwrap();
     assert!(file.as_raw_fd() > 2);
     // SAFETY: clears close-on-exec on a descriptor this test owns.
-    assert_eq!(
-        unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFD, 0) },
-        0
-    );
+    let rc = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFD, 0) };
+    assert_eq!(rc, 0);
     Inherited(file)
 }
 

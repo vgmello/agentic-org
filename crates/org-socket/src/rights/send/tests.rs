@@ -534,10 +534,8 @@ fn sigpipe_child() {
     drop(peer);
     // SAFETY: this is a fresh process running only this test. Reset Rust's ignored SIGPIPE
     // so MSG_NOSIGNAL is independently observable without changing the parent test process.
-    assert_ne!(
-        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) },
-        libc::SIG_ERR
-    );
+    let prev = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+    assert_ne!(prev, libc::SIG_ERR);
     let result = send(socket.as_fd(), &[MARKER], &[], later());
     assert!(matches!(result, Err(SendError::Io(e)) if e.raw_os_error() == Some(libc::EPIPE)));
     println!("EPIPE without SIGPIPE");

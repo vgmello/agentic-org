@@ -143,7 +143,13 @@ impl Options {
     }
 
     fn config(&self, roots: &DataRoots, custody: &Custody) -> StoreConfig {
-        #[cfg_attr(not(any(test, feature = "testkit")), allow(unused_mut))]
+        #[cfg_attr(
+            not(any(test, feature = "testkit")),
+            allow(
+                unused_mut,
+                reason = "test and testkit builds populate `config.testing` below"
+            )
+        )]
         let mut config = StoreConfig::new(
             self.engine,
             roots.durable.clone(),

@@ -235,19 +235,15 @@ fn adoption_child() {
             // SAFETY: successful socket returned one fresh fd, wrapped once here.
             let descriptor = unsafe { OwnedFd::from_raw_fd(fd) };
             // SAFETY: F_SETFD updates this test-owned descriptor with a valid flag.
-            assert_eq!(
-                unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) },
-                0
-            );
+            let rc = unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+            assert_eq!(rc, 0);
             descriptor
         }
         "no-cloexec" => {
             let (stream, peer) = UnixStream::pair().unwrap();
             // SAFETY: clear flags only on this test-owned fd to construct the refusal.
-            assert_eq!(
-                unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_SETFD, 0) },
-                0
-            );
+            let rc = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_SETFD, 0) };
+            assert_eq!(rc, 0);
             unix_peer = Some(peer);
             stream.into()
         }

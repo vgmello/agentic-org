@@ -1,4 +1,7 @@
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "transfer tests inspect descriptors via poll/fcntl and send raw SCM_RIGHTS frames via libc FFI"
+)]
 use super::*;
 use org_office_launch::ChannelKind;
 use std::os::unix::net::UnixDatagram;

@@ -147,7 +147,6 @@ impl Office {
     /// generates the CA; with the records an earlier attempt committed, it must verify and
     /// return them unchanged. Returns once the creation is durable and its files are
     /// written, with `office.json` written last.
-    #[allow(clippy::too_many_arguments)]
     pub fn provision_hq(
         folder: impl Into<PathBuf>,
         new: &NewOffice,
@@ -174,7 +173,10 @@ impl Office {
     /// new HQ office, writing all imported state records and a fresh HQ CA in Entry 1 of the new
     /// journal incarnation. `load_import` runs only if Entry 1 has not already committed locally,
     /// so crash recovery after Entry 1 never requires reaching the remote Git repository again.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "public HQ import entry point accepts explicit folder, descriptor, key, binding, roots, custody, recovery, and loader"
+    )]
     pub fn import_hq(
         folder: impl Into<PathBuf>,
         new: &NewOffice,
@@ -200,7 +202,10 @@ impl Office {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "internal provisioning helper forwards explicit setup inputs to the shared seed path"
+    )]
     pub(crate) fn provision_with(
         folder: PathBuf,
         new: &NewOffice,
@@ -224,7 +229,10 @@ impl Office {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "shared HQ seeding helper coordinates folder, identity, custody, roots, recovery, and seed mode"
+    )]
     fn seed_with(
         folder: PathBuf,
         new: &NewOffice,
@@ -368,7 +376,10 @@ fn open_seed_store(
     open_store(&config).map_err(storage)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Entry 1 seed commits office store, CA material, and initial records from explicit provisioning inputs"
+)]
 fn run_seed_entry_one(
     store: &OfficeStore,
     mode: SeedMode,

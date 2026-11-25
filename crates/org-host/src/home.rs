@@ -118,6 +118,13 @@ pub(crate) fn euid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+/// The effective group id of this process.
+#[cfg(test)]
+pub(crate) fn egid() -> u32 {
+    // SAFETY: getegid has no preconditions and can't fail.
+    unsafe { libc::getegid() }
+}
+
 /// The longest socket path this system takes, in bytes (`org_platform::dirs`).
 pub(crate) fn socket_path_limit() -> io::Result<usize> {
     Ok(org_platform::dirs::socket_path_limit()?)

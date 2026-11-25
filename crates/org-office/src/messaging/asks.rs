@@ -597,7 +597,6 @@ fn collect_ask_recipient_reasons(
     reasons
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn decide_msg_ask<E>(
     uow: &UnitOfWork<'_, E>,
     here: &OfficeIdentity,
@@ -733,7 +732,10 @@ where
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "ask commit helper threads read view, conversation state, recipients, card, and clock explicitly"
+)]
 fn commit_ask_record(
     read: &impl MessagingRead,
     here: &OfficeIdentity,
@@ -1061,7 +1063,10 @@ pub(crate) fn render_answer_summary(card: &AskCard, answers: &[QuestionAnswer]) 
     lines.join("\n")
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "answer command decision takes explicit transaction, identity, caller, params, and clock inputs"
+)]
 pub fn decide_chat_answer<E>(
     uow: &UnitOfWork<'_, E>,
     here: &OfficeIdentity,
@@ -1196,7 +1201,10 @@ pub(crate) fn mark_ask_recipients_done(
     Ok((change, affected))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "answer persistence updates ask card, responder reply, and recipient states in one unit of work"
+)]
 fn persist_answer_and_reply<E>(
     uow: &UnitOfWork<'_, E>,
     here: &OfficeIdentity,
@@ -1290,7 +1298,10 @@ where
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "reply append helper takes explicit read view, ask context, responder, body, and timestamps"
+)]
 fn append_answer_reply_message(
     read: &impl MessagingRead,
     here: &OfficeIdentity,
@@ -1399,7 +1410,10 @@ fn authorize_withdraw_office(
     Ok(is_origin || hq_finalizes_removed)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "withdraw decision takes explicit transaction, identity, owner, caller, params, and clock inputs"
+)]
 pub fn decide_msg_withdraw<E>(
     uow: &UnitOfWork<'_, E>,
     here: &OfficeIdentity,
