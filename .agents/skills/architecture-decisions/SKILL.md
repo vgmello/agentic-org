@@ -14,8 +14,8 @@ applicable active decisions after the lead checks their scope and currency.
 ## Preserve the reasons, not a transcript
 
 Use the project's existing ADR location if established; otherwise create
-`.agent-kit/decisions/<ADR-ID>-<slug>.md` from `.agent-kit/templates/ARCHITECTURE_DECISION.md`.
-This is the canonical versioned record. Keep `.agent-kit/DECISIONS.md` a short index of governing
+`.agents/agent-kit/decisions/<ADR-ID>-<slug>.md` from `.agents/agent-kit/templates/ARCHITECTURE_DECISION.md`.
+This is the canonical versioned record. Keep `.agents/agent-kit/DECISIONS.md` a short index of governing
 constraints, status and links. Contracts, task checkpoints and maps link to the
 record; they do not copy its rationale. Commit accepted decisions with the work.
 

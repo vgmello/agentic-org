@@ -1,0 +1,473 @@
+{
+  "version": 1,
+  "status": "ready",
+  "reviewed_by": "Parent-repo backlog/ migration (2026-11-25, 885c0326); prior AX & Rust quality sessions on v1",
+  "rationale": "Re-anchored skill catalog after migrating .backlog/ out of the code repo into parent agentic-org-project/backlog/ (commit 885c0326): removed deleted .backlog/ evidence and phase paths while preserving full code-repo skill coverage (AGENTS.md, security-boundaries, rust-workspace, principal-ax-designer, ui-maintenance, kit-maintenance, hq-creation-provider, and docs/design/organization-data), and refreshed verified SHA-256 digests for updated AGENTS.md and principal-ax-designer/SKILL.md.",
+  "project_evidence": [
+    {
+      "path": ".agents/agent-kit/project-roles/code-reviewer.md",
+      "sha256": "cddb511e8b74c37d520e2915eee4d023d85af66dc3769423d130825b32ee8682"
+    },
+    {
+      "path": ".agents/agent-kit/project-roles/codebase-scout.md",
+      "sha256": "eab077f845496d3a677536b44e31589728a8738f9f3cd650352a0eb0c7cbe640"
+    },
+    {
+      "path": ".agents/agent-kit/project-roles/fullstack-engineer.md",
+      "sha256": "de8c62418b8041c74fb9d5b330b108b3d394bf25ccf5bd73c467489bc6a3a7bc"
+    },
+    {
+      "path": ".agents/agent-kit/project-roles/staff-engineer.md",
+      "sha256": "cd2620176f20cb6ef01bc5418c2608c0dbd3e77e7975b822b2e6db968c59c00d"
+    },
+    {
+      "path": ".agents/agent-kit/project-skills/hq-creation-provider/SKILL.md",
+      "sha256": "8c415b1df618756743687c5f83cc6f2eea8292d362d519cf25af2340d67bea9d"
+    },
+    {
+      "path": ".agents/agent-kit/project-skills/kit-maintenance/SKILL.md",
+      "sha256": "9034015870774e754825535ebd29dfc6093968278ac3fbbdad139d4a30e6139f"
+    },
+    {
+      "path": ".agents/agent-kit/project-skills/principal-ax-designer/SKILL.md",
+      "sha256": "0199736215bc9e7f998ed071648ffde17d07fac0e692cfd39ff0c04d6b9f856c"
+    },
+    {
+      "path": ".agents/agent-kit/project-skills/rust-workspace/SKILL.md",
+      "sha256": "7e7d4ff5349f8bca9a8a51c4fc5c599b99f77f471bed3bf9e45352636de5ad1b"
+    },
+    {
+      "path": ".agents/agent-kit/project-skills/security-boundaries/SKILL.md",
+      "sha256": "6c73aeeb56f77763040df08af66fba0573436e82cb9be778ebe010d5713503f6"
+    },
+    {
+      "path": ".agents/agent-kit/project-skills/ui-maintenance/SKILL.md",
+      "sha256": "11d116e4c74230df0151bf8a3a7581f9884416d4cfdf4a80911c61c8477cae9b"
+    },
+    {
+      "path": ".agents/agent-kit/tasks/v1-creation-admission-interface.md",
+      "sha256": "a1781d7d7883f73bac20c1f1413ab7e9b76d175591baff0a73e3876cc4012781"
+    },
+    {
+      "path": ".agents/agent-kit/tasks/v1-hq-creation-provider-source-grant.json",
+      "sha256": "77bac99ef8ac2069ad0fafb054643063712700c0d2a7c2e59b90645c51f7b3b8"
+    },
+    {
+      "path": ".agents/skills/caveman/SKILL.md",
+      "sha256": "d59325d69f2da932f525ca69dd42a3dba6abb0c6e07c3908b941c7be6ece4fb6"
+    },
+    {
+      "path": ".agents/skills/playwright-cli/SKILL.md",
+      "sha256": "b07a6cbe4e5b638046fe0b9df0e84783cb9899f0aed3db1eef915601c3260a64"
+    },
+    {
+      "path": ".agents/skills/shadcn-svelte/SKILL.md",
+      "sha256": "1c11b03e380578beb93807b46f3a0c4b243e1aeeef27e8782fe8bf2c8dfcf862"
+    },
+    {
+      "path": ".agents/skills/svelte-code-writer/SKILL.md",
+      "sha256": "b0652d3c73c1728afdb7f5bffd38a49d86a8a5b4ef7949ef8c1508ce9d46d45e"
+    },
+    {
+      "path": ".agents/skills/svelte-core-bestpractices/SKILL.md",
+      "sha256": "96e025333e54533a31d37f70c7094da8df8b89c3c622a70d7edbf6332b84da47"
+    },
+    {
+      "path": ".codex/config.toml",
+      "sha256": "44ea359a905970c2f36831b93397413f94d5e623f6b37038358e9c9b32366098"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "1d55ebe0d6bd4c229e35fbb5ee5a134480318ac2542b911a744a6835191bd82b"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "a19f85550aef300256db80db917c731f11af1111dd7ef53a4b77b1a2b5b65409"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "0ad9cb41e78f73c6f07b019d8aecc8885d815315378f1c18f68b401d4375c43e"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "ef0319f9c082ab8cab9b0a836d888804bc0504081239bbd6ca6c8a6d6cce00c1"
+    },
+    {
+      "path": "apps/agentic-org-office/Cargo.toml",
+      "sha256": "92d79b42defad40728fd2ac2454fdfd7da77bf4f41350d979fa555fb8883c70a"
+    },
+    {
+      "path": "apps/agentic-org-ui/AGENTS.md",
+      "sha256": "9c9a6e9fc1ce69df8ced43afadc5b7457dc57eb7fb00c187f1aae117f480cafa"
+    },
+    {
+      "path": "apps/agentic-org-ui/components.json",
+      "sha256": "9f67d2b4c696eb7e1c32042d299ad72a6aaccebf704cce256b1a5671a85a0a0d"
+    },
+    {
+      "path": "apps/agentic-org-ui/package.json",
+      "sha256": "5e96653467593d91eda3e7571a441faebf0ad0a20c18741103f4b8e445349d9c"
+    },
+    {
+      "path": "apps/agentic-org-web/Cargo.toml",
+      "sha256": "236807d184b990b343030baae00b616d6c8c758efd43abca158e386c61c4bb71"
+    },
+    {
+      "path": "crates/org-client/Cargo.toml",
+      "sha256": "679acfca9dc521e43a6b95749cf6ebe72377211ac990b5daae9b6cf3c5dd68a8"
+    },
+    {
+      "path": "crates/org-host-control/Cargo.toml",
+      "sha256": "c8388c6e87843f59c7948af07089143d71bb231b5bf3bcfcddc944ce85f8c779"
+    },
+    {
+      "path": "crates/org-host/Cargo.toml",
+      "sha256": "50d886f116c751d7f1a633708b80e816f6e1e5215bfea0c253c67001fb68ae7c"
+    },
+    {
+      "path": "crates/org-office-launch/Cargo.toml",
+      "sha256": "d52183f688e4d3089cf558320d38372b4387c48be50bd8963863d1fbe7f12f94"
+    },
+    {
+      "path": "crates/org-office/Cargo.toml",
+      "sha256": "64898c6fe76be6a344ceb64d7f48506c21c5a3d8ad2c4892518fc5df12899dde"
+    },
+    {
+      "path": "crates/org-pki/Cargo.toml",
+      "sha256": "69ea93a6bab1057f954797f1c5497b995cd28b9a19663dc558a54969e6030757"
+    },
+    {
+      "path": "crates/org-release/Cargo.toml",
+      "sha256": "6837040ef9f4431459915781b513971b69f09d720935c6fefa1ed2b2fc70c484"
+    },
+    {
+      "path": "crates/org-socket/Cargo.toml",
+      "sha256": "5a73be63d84d0f790cc7a42816fc421d61117651e96d540cb32f19f9eeb64f9a"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "5e7517b95a2b4e810124f84091dd4a6e3f2192523fcac7b6d52abc7fc6aff91d"
+    }
+  ],
+  "roles": {
+    "staff-engineer": ".agents/agent-kit/project-roles/staff-engineer.md",
+    "fullstack-engineer": ".agents/agent-kit/project-roles/fullstack-engineer.md",
+    "code-reviewer": ".agents/agent-kit/project-roles/code-reviewer.md",
+    "codebase-scout": ".agents/agent-kit/project-roles/codebase-scout.md"
+  },
+  "skills": [
+    {
+      "id": "project-conventions",
+      "description": "Solo Codex workflow, architecture and local integration process",
+      "paths": [
+        "."
+      ],
+      "risks": [],
+      "implementation": [
+        "AGENTS.md"
+      ],
+      "review": [
+        "AGENTS.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "delegate-communication",
+      "description": "Delegate-only concise reporting; main lead keeps concise normal prose",
+      "paths": [
+        "."
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/skills/caveman/SKILL.md"
+      ],
+      "review": [
+        ".agents/skills/caveman/SKILL.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "rust-workspace",
+      "description": "Rust composition and pinned verification",
+      "paths": [
+        "crates",
+        "apps/agentic-org",
+        "apps/agentic-org-office",
+        "apps/agentic-org-web",
+        "apps/agent-os"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/agent-kit/project-skills/rust-workspace/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/rust-workspace/SKILL.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "agent-experience",
+      "description": "Principal AX Designer discipline for agent-os CLI, standing instructions, Day-1 onboarding, skills, conflict recovery, and multi-runtime AX evals",
+      "paths": [
+        "crates/org-command",
+        "crates/org-agent-cli",
+        "crates/org-office-sessions/src/instructions.rs",
+        "crates/org-process/src/skills.rs",
+        "apps/agent-os",
+        ".agents/agent-kit/project-skills/principal-ax-designer",
+        ".claude/agents/principal-ax-designer.md",
+        ".codex/agents/principal-ax-designer.toml"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/agent-kit/project-skills/principal-ax-designer/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/principal-ax-designer/SKILL.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "static-ui",
+      "description": "Static SvelteKit UI and maintained component/browser skills",
+      "paths": [
+        "apps/agentic-org-ui"
+      ],
+      "risks": [],
+      "implementation": [
+        "apps/agentic-org-ui/AGENTS.md",
+        ".agents/agent-kit/project-skills/ui-maintenance/SKILL.md",
+        ".agents/skills/shadcn-svelte/SKILL.md",
+        ".agents/skills/playwright-cli/SKILL.md",
+        ".agents/skills/svelte-code-writer/SKILL.md",
+        ".agents/skills/svelte-core-bestpractices/SKILL.md"
+      ],
+      "review": [
+        "apps/agentic-org-ui/AGENTS.md",
+        ".agents/agent-kit/project-skills/ui-maintenance/SKILL.md",
+        ".agents/skills/shadcn-svelte/SKILL.md",
+        ".agents/skills/playwright-cli/SKILL.md",
+        ".agents/skills/svelte-code-writer/SKILL.md",
+        ".agents/skills/svelte-core-bestpractices/SKILL.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "host-and-storage",
+      "description": "Host credential, PKI, authorization and durable storage boundaries",
+      "paths": [
+        "crates/org-host",
+        "crates/org-office",
+        "apps/agentic-org",
+        "apps/agentic-org-web",
+        "crates/org-pki",
+        "crates/org-socket",
+        "crates/org-release",
+        "crates/org-platform",
+        "crates/org-platform-host",
+        "crates/org-store"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "public-contracts",
+      "description": "Protocol/runtime compatibility and local contract review",
+      "paths": [
+        "crates/org-proto",
+        "crates/org-sync-proto",
+        "crates/org-office-launch",
+        "crates/org-agent-runtime",
+        "crates/org-agent-runtime-claude",
+        "crates/org-host-control",
+        "crates/org-release"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "selected-data-model",
+      "description": "Read owning selected model separately from application implementation",
+      "paths": [
+        "docs/design/organization-data"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "credential-risk",
+      "description": "Cross-path credential/authorization risks",
+      "paths": [
+        "."
+      ],
+      "risks": [
+        "credentials",
+        "authorization",
+        "durability"
+      ],
+      "implementation": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "kit-maintenance",
+      "description": "Project kit setup and truthful service/review evidence",
+      "paths": [
+        ".agents/agent-kit",
+        ".codex",
+        ".agents/skills",
+        "AGENTS.md",
+        ".claude/agents"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/agent-kit/project-skills/kit-maintenance/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/kit-maintenance/SKILL.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "agent-execution-risk",
+      "description": "Model/process execution and configuration effects",
+      "paths": [
+        "."
+      ],
+      "risks": [
+        "agent-execution"
+      ],
+      "implementation": [
+        ".agents/agent-kit/project-skills/kit-maintenance/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/kit-maintenance/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "release-verification",
+      "description": "Publisher-signed complete release inventory, build-pinned trust, runtime image/asset binding and durable staging/pins",
+      "paths": [
+        "crates/org-release",
+        "crates/org-host/src/release",
+        "apps/agentic-org/src/setup",
+        "apps/agentic-org-web/src/process.rs",
+        "crates/org-host/build.rs",
+        "apps/agentic-org-web/build.rs",
+        "crates/org-socket/src/image"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "legacy-adoption-profile",
+      "description": "Reviewed conservative original-source legacy mapping, baseline provenance and adoption fencing",
+      "paths": [
+        "crates/org-office/src/selected_tasks/adoption.rs",
+        "crates/org-office/src/selected_tasks/adoption"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "protected-recovery-delivery",
+      "description": "Reviewed native OS presence/ARC callback lifecycle, durable secret delivery ACK/deletion and bounded worker public escrow transport",
+      "paths": [
+        "crates/org-host",
+        "crates/org-host-control",
+        "crates/org-office-launch",
+        "apps/agentic-org-office/src/transfer",
+        "apps/agentic-org"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "pki-escrow",
+      "description": "REC-ESC-1 fixed CA/code/envelope profiles, pre-KDF parser bounds and application-owned secret lifetime",
+      "paths": [
+        "crates/org-pki"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        ".agents/agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "hq-creation-provider",
+      "description": "Reviewed worker HQ creation/owner admission/canonical bootstrap boundary and recoverable phases; host producer remains separate",
+      "paths": [
+        "crates/org-proto/src/identity.rs",
+        "crates/org-proto/src/selected_bootstrap.rs",
+        "crates/org-office/src/hq_creation.rs",
+        "crates/org-office/src/office/hq_creation",
+        "crates/org-office/src/store/hq_creation.rs",
+        "crates/org-office/src/organization",
+        "crates/org-office-launch/src/writer.rs",
+        "apps/agentic-org-office/src/hq_creation",
+        "apps/agentic-org-office/src/transfer/writer.rs",
+        ".agents/agent-kit/tasks/v1-hq-creation-provider-contract.md",
+        ".agents/agent-kit/tasks/v1-creation-admission-interface.md",
+        "crates/org-proto/src/location.rs",
+        "apps/agentic-org-office/tests/launch/activation.rs"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/agent-kit/tasks/v1-creation-admission-interface.md",
+        ".agents/agent-kit/project-skills/hq-creation-provider/SKILL.md",
+        ".agents/agent-kit/tasks/v1-hq-creation-provider-source-grant.json"
+      ],
+      "review": [
+        ".agents/agent-kit/tasks/v1-creation-admission-interface.md",
+        ".agents/agent-kit/project-skills/hq-creation-provider/SKILL.md",
+        ".agents/agent-kit/tasks/v1-hq-creation-provider-source-grant.json"
+      ],
+      "critical": true
+    }
+  ]
+}

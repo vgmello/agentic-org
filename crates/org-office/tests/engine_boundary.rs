@@ -21,7 +21,7 @@ use syn::visit::Visit;
 const ENGINE_CRATE: &str = "rusqlite";
 
 /// Folders that hold no source of this workspace.
-const SKIPPED: [&str; 4] = ["target", "node_modules", ".git", ".agent-kit"];
+const SKIPPED: [&str; 4] = ["target", "node_modules", ".git", ".agents"];
 
 /// The only folder of `crates/org-office` that may name the engine or hold SQL.
 const ENGINE_ADAPTER: &str = "src/store/sqlite";

@@ -16,8 +16,8 @@ Measure a whole delivery across all slices OR disjoint slices; never sum overlap
 parent/child records. Read-only lookups belong to their parent task's usage.
 
 ```bash
-python3 .agent-kit/runtime/kit_metrics.py begin --task TASK --category bounded-fix \
-  --contract .agent-kit/tasks/TASK-contract.md --environment MACHINE-TOOLCHAIN-LABEL
+python3 .agents/agent-kit/runtime/kit_metrics.py begin --task TASK --category bounded-fix \
+  --contract .agents/agent-kit/tasks/TASK-contract.md --environment MACHINE-TOOLCHAIN-LABEL
 ```
 
 Save the returned journal path in task state. Use `--registration late` if work has
@@ -29,7 +29,7 @@ material scope change, close it as abandoned with the reason and register anew.
 Collect EVERY Sol run, including blocked/rejected ones, before task finalization:
 
 ```bash
-python3 .agent-kit/runtime/kit_metrics.py collect --run TASK_JOURNAL --review SOL_RUN_FOLDER
+python3 .agents/agent-kit/runtime/kit_metrics.py collect --run TASK_JOURNAL --review SOL_RUN_FOLDER
 ```
 
 Recollection replaces the component; it never adds cumulative snapshots. Copy
@@ -46,7 +46,7 @@ estimate with dated prices and ALL billable dimensions. Never convert subscripti
 allowance to dollars. Cost completeness is independent of token completeness.
 
 ```bash
-python3 .agent-kit/runtime/kit_metrics.py finish --run TASK_JOURNAL \
+python3 .agents/agent-kit/runtime/kit_metrics.py finish --run TASK_JOURNAL \
   --outcome accepted --review SOL_RUN_FOLDER --observations OBSERVATIONS.json \
   --note "Intent, checks and fresh final output review accepted"
 ```
@@ -68,8 +68,8 @@ compare equal mature windows. Never manufacture future observation cutoffs.
 After ten completed tasks or an evidenced recurring failure, generate a scorecard:
 
 ```bash
-python3 .agent-kit/runtime/kit_metrics.py report --directory .agent-kit/logs/task-metrics \
-  --output .agent-kit/logs/efficiency-snapshot.json
+python3 .agents/agent-kit/runtime/kit_metrics.py report --directory .agents/agent-kit/logs/task-metrics \
+  --output .agents/agent-kit/logs/efficiency-snapshot.json
 ```
 
 Inspect categories, failures, accepted median/p90 latency, cost per accepted task,
@@ -113,7 +113,7 @@ rollback version/trigger/owner. Reuse normal change review, not an extra committ
 Fix correctness bugs on reproducible evidence immediately; require measurements
 before claiming efficiency gains. No automatic policy promotion occurs.
 
-For memory comparisons use `.agent-kit/templates/HINDSIGHT_PILOT.md`. Freeze the
+For memory comparisons use `.agents/agent-kit/templates/HINDSIGHT_PILOT.md`. Freeze the
 same approved Git corpus for all paired trials; do not feed earlier answers into
 later trials. Include `kit_memory.py usage` events and cold setup/CPU/storage in
 whole-task measurements. Verified local memory operations use no paid LLM; returned

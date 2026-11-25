@@ -51,9 +51,9 @@ HINDSIGHT_DISABLED=true AGENT_KIT_MEMORY_ACCESS=review \
 codex exec -m gpt-6.2-sol -c 'model_reasoning_effort="xhigh"' \
   -c 'agents.enabled=false' -c 'features.hooks=false' \
   -c 'mcp_servers.hindsight.enabled=false' -c 'approval_policy="never"' -s read-only --json \
-  --output-schema .agent-kit/templates/PLAN_REVIEW_SCHEMA.json \
-  --output-last-message .agent-kit/logs/plan-review/result.json \
-  - < .agent-kit/logs/plan-review/prompt.txt > .agent-kit/logs/plan-review/events.jsonl
+  --output-schema .agents/agent-kit/templates/PLAN_REVIEW_SCHEMA.json \
+  --output-last-message .agents/agent-kit/logs/plan-review/result.json \
+  - < .agents/agent-kit/logs/plan-review/prompt.txt > .agents/agent-kit/logs/plan-review/events.jsonl
 ```
 
 Use a unique folder per pass; save its observed thread ID and actual completion

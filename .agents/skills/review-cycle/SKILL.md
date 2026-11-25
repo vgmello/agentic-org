@@ -23,9 +23,9 @@ manual Claude final reviews as well. Shared-memory promotion/sync belongs to the
    and, when applicable, --risk for the catalog's semantic risk tags:
 
    ```bash
-   python3 .agent-kit/runtime/kit_codex.py start --base BASE_SHA \
-     --task .agent-kit/tasks/TASK-contract.md \
-     --assessment .agent-kit/tasks/TASK-assessment.json --scope src --scope tests \
+   python3 .agents/agent-kit/runtime/kit_codex.py start --base BASE_SHA \
+     --task .agents/agent-kit/tasks/TASK-contract.md \
+     --assessment .agents/agent-kit/tasks/TASK-assessment.json --scope src --scope tests \
      --origin-session ORIGINAL_SESSION_ID --origin-model OBSERVED_MODEL_ID
    ```
 
@@ -41,7 +41,7 @@ manual Claude final reviews as well. Shared-memory promotion/sync belongs to the
    do not undo a correct fix merely because it differs. Save a substantive note:
 
    ```bash
-   python3 .agent-kit/runtime/kit_codex.py origin --run RUN_FOLDER \
+   python3 .agents/agent-kit/runtime/kit_codex.py origin --run RUN_FOLDER \
      --session ORIGINAL_SESSION_ID --decision accept --notes RUN_FOLDER/intent.md
    ```
 
@@ -50,7 +50,7 @@ manual Claude final reviews as well. Shared-memory promotion/sync belongs to the
 4. In codex-only mode, run the fresh read-only final Sol pass:
 
    ```bash
-   python3 .agent-kit/runtime/kit_codex.py final-review --run RUN_FOLDER
+   python3 .agents/agent-kit/runtime/kit_codex.py final-review --run RUN_FOLDER
    ```
 
    It uses High, or Xhigh when the assessment requires it, and covers actual outputs
@@ -62,7 +62,7 @@ manual Claude final reviews as well. Shared-memory promotion/sync belongs to the
    Record the actual result using FINAL_REVIEW.json and:
 
    ```bash
-   python3 .agent-kit/runtime/kit_codex.py final --run RUN_FOLDER --result RESULT.json
+   python3 .agents/agent-kit/runtime/kit_codex.py final --run RUN_FOLDER --result RESULT.json
    ```
 
    Model identity fields are local declarations/request bindings, not authenticated

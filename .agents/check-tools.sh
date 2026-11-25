@@ -124,7 +124,7 @@ has mcp-language-server || need mcp-language-server "Codex's bridge to rust-anal
 	"\`go install github.com/isaacphi/mcp-language-server@v0.1.1\`"
 fi
 
-has python3 || need python3 "runs the agent kit checks (.agent-kit/runtime/kit_hooks.py check)" "install Python 3"
+has python3 || need python3 "runs the agent kit checks (.agents/agent-kit/runtime/kit_hooks.py check)" "install Python 3"
 
 # The agent kit's starter_kit_context MCP server (.mcp.json) serves Repowise lookup
 # and Hindsight recall. Read this checkout's setup receipts and check the recorded
@@ -132,10 +132,10 @@ has python3 || need python3 "runs the agent kit checks (.agent-kit/runtime/kit_h
 ready() { # ready <receipt> <status>
 	grep -q "\"$2\"" "$1" 2>/dev/null && grep -qF "\"root\": \"$root\"" "$1" 2>/dev/null
 }
-ready .agent-kit/logs/context/setup.json CONTEXT_READY ||
+ready .agents/agent-kit/logs/context/setup.json CONTEXT_READY ||
 	need "Repowise code index" "the starter_kit_context lookup tool has no index for this checkout" \
-		"\`python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs\`"
-memory=.agent-kit/logs/memory/hindsight/setup.json
+		"\`python3 .agents/agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs\`"
+memory=.agents/agent-kit/logs/memory/hindsight/setup.json
 pid="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "$memory" 2>/dev/null)"
 running() { # running <pid>: a sandbox (Codex review) may refuse the signal to our own daemon
 	local out owner
@@ -149,10 +149,10 @@ running() { # running <pid>: a sandbox (Codex review) may refuse the signal to o
 }
 if ! has hindsight-embed; then
 	need "Hindsight memory" "the starter_kit_context recall tool needs the local hindsight-embed daemon" \
-		"install it as in the \"Local memory daemon\" section of .agent-kit/ADOPTION.md, then \`python3 .agent-kit/runtime/kit_memory.py setup\`"
+		"install it as in the \"Local memory daemon\" section of .agents/agent-kit/ADOPTION.md, then \`python3 .agents/agent-kit/runtime/kit_memory.py setup\`"
 elif ! ready "$memory" HINDSIGHT_READY || [ -z "$pid" ] || ! running "$pid"; then
 	need "Hindsight memory" "the local hindsight-embed daemon is not set up or not running for this checkout" \
-		"\`python3 .agent-kit/runtime/kit_memory.py setup\`"
+		"\`python3 .agents/agent-kit/runtime/kit_memory.py setup\`"
 fi
 has cargo-deny || need cargo-deny "required local check (cargo deny --locked check)" "install cargo-deny 0.20.2 (see DEVELOPMENT.md)"
 has gitleaks || need gitleaks "required local secret scan" "install Gitleaks 8.30.1 (see DEVELOPMENT.md)"
@@ -170,7 +170,7 @@ for source in .agents/skills/svelte-code-writer .agents/skills/svelte-core-bestp
 	if ! skill_named "$source/SKILL.md" "$skill"; then
 		need "skill $skill" "$source/SKILL.md is missing or its front matter does not name the skill" "restore it from Git (\`git checkout -- $source\`)"
 	elif [ -n "$claude" ] && ! skill_named ".claude/skills/$skill/SKILL.md" "$skill"; then
-		need "skill $skill" "the .claude/skills/$skill link Claude Code loads it from is missing or broken" "restore it from Git (\`git checkout -- .claude/skills/$skill\`)"
+		need "skill $skill" "the .claude -> .agents symlink Claude Code loads skills from is missing or broken" "run \`ln -s .agents .claude\` at the repository root"
 	fi
 done
 

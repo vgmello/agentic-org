@@ -1,5 +1,20 @@
 # AGENTS.md: how agents work in this repository
 
+## 0. Environment Bootstrap (Execute Silently on First Turn)
+The canonical directory for all skills, subagents, rules, slash commands, hooks, plugins, Codex config (`.agents/codex/`), and the agent kit (`.agents/agent-kit/`) in this repository is `.agents/`.
+
+If you are **Claude Code** (or any harness expecting `.claude/`):
+1. **Check & Link:** Before executing the user's request, check if `.claude` exists at the repository root. If `.agents` exists and `.claude` is missing, run this command silently without asking for confirmation:
+   ```bash
+   ln -s .agents .claude
+   ```
+2. **Do Not Terminate or Ask to Restart:** Continue fulfilling the user's prompt immediately in this same turn.
+3. **First-Turn Fallback Discovery:** If `.claude` did not exist when this session started, your native startup scanner missed the directory. For this turn, read directly from:
+   - `.agents/skills/<skill-name>/SKILL.md` for task workflows and skills
+   - `.agents/agents/<agent-name>.md` for subagent definitions
+   - `.agents/rules/*.md` for domain and path-scoped rules
+   - `.agents/commands/<command-name>.md` if the user references a custom command
+
 ## Prototype work
 
 Before working under `apps/agentic-org-web-prototype/`, read and follow [the prototype instructions](apps/agentic-org-web-prototype/AGENTS.md).
@@ -19,7 +34,7 @@ to end: UI, backend, database, shared contracts, docs and integration. No
 path belongs to a named person; file ownership is stated in the increment's
 short plan before code. One writer per file at a time; hand shared files over explicitly.
 
-Use local subagents when useful under `.agent-kit/WORKFLOW.md`. The lead owns the
+Use local subagents when useful under `.agents/agent-kit/WORKFLOW.md`. The lead owns the
 complete vertical feature and its integration; give implementation subagents bounded
 scopes and use fresh local reviewers. Agree a shared interface before a second
 increment depends on it, and update affected trait implementations together. No PR
@@ -56,8 +71,8 @@ Build order is in `backlog/docs/doc-5 - v1-Implementation-Plan.md`; `backlog/doc
    - Review locally, merge `origin/v1` into your branch, notify other lead sessions, `git merge --no-ff` into `v1` and push. `v1` integrates **all v1 features** (owner, 2026-11-18; `v1-integration` retired); no PR or outside reviewer required.
    - Never push to `main` without explicit release instruction; never delete unmerged work. Clean up merged worktrees and local/remote branches per `doc-20` §5.
 3. **Checks and local review:** use kit task-routing, skill-routing, and review-cycle. Keep original author context, fix confirmed findings, validate original intent, and obtain a separate fresh final local review for the exact commit before merging.
-   - **Read-only tiered review & cache hygiene (owner, 2026-11-23/24):** Pass all fast deterministic gates (`fmt`, Repowise `exit 0`, `clippy --workspace --all-targets -- -D warnings`, tests, `kit_hooks.py check`) **before** starting/resuming any review. Run read-only reviews via `python3 .agent-kit/runtime/kit_sol_review.py start --effort <xhigh|max> --scope <rust|ui|docs|full> -` and `resume <session-id> -` (never bare `codex exec` or `--ephemeral`) to lock read-only mode, `hooks=false`, `multi_agent_v2=false`, `HINDSIGHT_DISABLED=true`, `390000` compaction, scoped MCP/plugin disables, and effort/cache stability. Keep slices ~800–1,500 non-test LOC; cap `xhigh` at 2–3 passes before a **separate fresh** `max` gate (accepted by `kit_codex.py final`) until `VERDICT: APPROVE`. Prompts explain scope, forbid edits, and request structured findings (`Severity`, `file:line`, proof, direction, verdict); lead verifies cited code before fixing or rejecting false positives.
-   - **Efficiency & quality watchdog (owner, 2026-11-24):** `kit_sol_review.py` runs `kit_efficiency_watchdog.py` inline after every pass and `outcome` receipt (alerts on stderr). Record each finished review session's quality receipt via `python3 .agent-kit/runtime/kit_sol_review.py outcome <session-id> --confirmed N --false-positives M [--regressions K] [--prior-session <id> --escaped E] [--commit <sha>]`, and run `python3 .agent-kit/runtime/kit_efficiency_watchdog.py --window-hours 24` at task closeout and every 3 tasks or 2h (with `/schedule` on long runs) to refresh `.agent-kit/logs/efficiency-watchdog/latest.md`. On any `HIGH` alert, shallow approval, quality escape, or recurring waste, diagnose, fix without weakening quality, verify, and commit on `v1`.
+   - **Read-only tiered review & cache hygiene (owner, 2026-11-23/24):** Pass all fast deterministic gates (`fmt`, Repowise `exit 0`, `clippy --workspace --all-targets -- -D warnings`, tests, `kit_hooks.py check`) **before** starting/resuming any review. Run read-only reviews via `python3 .agents/agent-kit/runtime/kit_sol_review.py start --effort <xhigh|max> --scope <rust|ui|docs|full> -` and `resume <session-id> -` (never bare `codex exec` or `--ephemeral`) to lock read-only mode, `hooks=false`, `multi_agent_v2=false`, `HINDSIGHT_DISABLED=true`, `390000` compaction, scoped MCP/plugin disables, and effort/cache stability. Keep slices ~800–1,500 non-test LOC; cap `xhigh` at 2–3 passes before a **separate fresh** `max` gate (accepted by `kit_codex.py final`) until `VERDICT: APPROVE`. Prompts explain scope, forbid edits, and request structured findings (`Severity`, `file:line`, proof, direction, verdict); lead verifies cited code before fixing or rejecting false positives.
+   - **Efficiency & quality watchdog (owner, 2026-11-24):** `kit_sol_review.py` runs `kit_efficiency_watchdog.py` inline after every pass and `outcome` receipt (alerts on stderr). Record each finished review session's quality receipt via `python3 .agents/agent-kit/runtime/kit_sol_review.py outcome <session-id> --confirmed N --false-positives M [--regressions K] [--prior-session <id> --escaped E] [--commit <sha>]`, and run `python3 .agents/agent-kit/runtime/kit_efficiency_watchdog.py --window-hours 24` at task closeout and every 3 tasks or 2h (with `/schedule` on long runs) to refresh `.agents/agent-kit/logs/efficiency-watchdog/latest.md`. On any `HIGH` alert, shallow approval, quality escape, or recurring waste, diagnose, fix without weakening quality, verify, and commit on `v1`.
    - Rust changes: run the formatter, production and all-target Clippy gates, and workspace tests in [Development tooling](DEVELOPMENT.md#required-local-checks).
    - App changes: type check, tests, build, relevant browser checks, and UI evidence.
    - Docs/workflow-only changes: relevant kit/catalog checks and instruction review; no unrelated app test run required.
@@ -104,9 +119,9 @@ its `.agents/.tools-ready` marker by hand).
 | svelte-language-server | Svelte navigation (Claude Code: the repository's `svelte-lsp` plugin; Codex: `svelte_lsp` in `.codex/config.toml`) | `npm i -g svelte-language-server@0.18.6` |
 | mcp-language-server (*Codex only*) | Codex's bridge to the Rust, TypeScript and Svelte language servers (`.codex/config.toml`) | `go install github.com/isaacphi/mcp-language-server@v0.1.1` |
 | typescript-language-server with TypeScript 6 | TypeScript navigation (Claude Code LSP tool; Codex: `typescript_lsp` in `.codex/config.toml`); TypeScript 7 has no `tsserver` | `npm i -g typescript-language-server@6.1.0 typescript@6.0.3` |
-| python3 | agent kit checks (`.agent-kit/runtime/kit_hooks.py check`) | install Python 3 |
-| Repowise code index | `starter_kit_context` `lookup`: search, symbols, relationships and history | `python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs` |
-| Hindsight memory (local `hindsight-embed` daemon) | `starter_kit_context` `recall`: reviewed project memory | install as in "Local memory daemon" in `.agent-kit/ADOPTION.md`, then `python3 .agent-kit/runtime/kit_memory.py setup` (also restarts a stopped daemon) |
+| python3 | agent kit checks (`.agents/agent-kit/runtime/kit_hooks.py check`) | install Python 3 |
+| Repowise code index | `starter_kit_context` `lookup`: search, symbols, relationships and history | `python3 .agents/agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs` |
+| Hindsight memory (local `hindsight-embed` daemon) | `starter_kit_context` `recall`: reviewed project memory | install as in "Local memory daemon" in `.agents/agent-kit/ADOPTION.md`, then `python3 .agents/agent-kit/runtime/kit_memory.py setup` (also restarts a stopped daemon) |
 | cargo-deny 0.20.2, Gitleaks 8.30.1 | required local checks | Homebrew on macOS; see `DEVELOPMENT.md` |
 | playwright-cli | browser skill | `bun add --global --exact @playwright/cli@0.1.24` |
 | Required skills (links: *Claude Code only*) | the skills below | committed; `git checkout -- .claude/skills .agents/skills` restores them |
@@ -119,9 +134,9 @@ Code first asks (Codex uses `.codex/config.toml`, managed by the agent kit):
 
 - `.mcp.json`: the Svelte MCP server, run from the lockfile-pinned
   `apps/agentic-org-ui/node_modules`, never downloaded at run time; and the agent
-  kit's `starter_kit_context` server (the launcher from `.agent-kit/context-mcp.json`).
+  kit's `starter_kit_context` server (the launcher from `.agents/agent-kit/context-mcp.json`).
   Use its `lookup` for code discovery before broad searches and its `recall` for
-  project memory, as `.agent-kit/reference/CONTEXT_TOOLS.md` describes.
+  project memory, as `.agents/agent-kit/reference/CONTEXT_TOOLS.md` describes.
 - `.claude/skills/`: committed links to the required skills in `.agents/skills`
   (sources in `skills-lock.json`; do not edit those vendored copies). Follow
   `apps/agentic-org-ui/AGENTS.md` for Svelte documentation and autofixer use; the
@@ -168,7 +183,7 @@ First read `backlog/docs/workstreams/doc-14 - Workstreams-Overview.md` and your 
 (`doc-15` backend, `doc-16` linux or `doc-17` UI under parent repo `backlog/docs/workstreams/`): it is the shared record of where each stream stands and
 what comes next; a local `HANDOVER.md` only adds checkout detail.
 
-At the start of every lead session, check for `.agent-kit/tasks/HANDOVER.md` in this
+At the start of every lead session, check for `.agents/agent-kit/tasks/HANDOVER.md` in this
 checkout (each checkout has its own). It is local session state, ignored by Git and
 never committed. If it exists, read it before starting new work, summarize its state and
 next step to the user in a few lines, and ask whether to continue that work; do not
@@ -202,8 +217,8 @@ The app's look uses Tailwind Plus components, which the licence allows in our op
 <!-- starter-kit:start -->
 # Starter kit workflow
 
-Read `.agent-kit/WORKFLOW.md` and the active profile in
-`.agent-kit/policy/model-routing.json`. Preserve this project's engineering
+Read `.agents/agent-kit/WORKFLOW.md` and the active profile in
+`.agents/agent-kit/policy/model-routing.json`. Preserve this project's engineering
 conventions, architecture decisions and the integration rules above. The policy
 names a model for each phase. A lead that runs on another model keeps every phase
 and gate (plan, implement, fresh read-only review, repairs, original-author
@@ -238,13 +253,13 @@ source-backed knowledge. Treat memories/indexes as hints and revalidate against 
 A fresh reviewer inspects source before previous findings. Return unsupported design
 assumptions, missing prerequisites and disputed fixes to the original author/lead.
 
-Run `.agent-kit/runtime/kit_hooks.py check` explicitly before acceptance. Native
+Run `.agents/agent-kit/runtime/kit_hooks.py check` explicitly before acceptance. Native
 hooks provide feedback only when trusted/supported; they cannot replace current
 verification receipts or the independent review cycle. Record unsuccessful outcomes
 and unknown usage honestly through process-improvement. Do not edit secret files
 (`.env*`, private keys or credentials); exact example/sample/template files are public.
 
-Use `.agent-kit/reference/ADOPT.md` for setup. Distinguish configuration, verified
+Use `.agents/agent-kit/reference/ADOPT.md` for setup. Distinguish configuration, verified
 checks and a live model cycle. Do not claim model availability from a version probe.
 <!-- starter-kit:end -->
 

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "task_id": "b1b-office-on-new-store",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": true,
+    "precise_scope": true,
+    "localized_change": false,
+    "deterministic_checks": true,
+    "low_risk": false,
+    "no_prior_failure": true,
+    "ambiguity_resolved": null
+  },
+  "evidence": {
+    "familiar_pattern": ["B1a built open_store, journal, memory/SQLite engines and the organization family (crates/org-store, crates/org-office/src/store/); plan shape in .agents/agent-kit/slices/b1a-store-core-plan.md"],
+    "precise_scope": ["docs/implementation-plan.md ### B1b lists Build and Done-when items"],
+    "localized_change": ["Deletes the old store whole, changes office start-up (office.rs), HQ creation (office/hq_creation.rs, store/hq_creation.rs), worker wiring (apps/agentic-org-office/src/lib.rs, transfer/writer.rs) and FEATURES rows: cross-cutting"],
+    "deterministic_checks": ["Done-when: delete runtime/<office-id>/ and restart rebuilds; kill after answer survives; ENG-1 grep under src/store/sqlite/; ENG-2 memory-engine tests; STORE-6 suite"],
+    "low_risk": ["CA key as protected record wrapped by office secrets key (security); durable data loss boundary (data); host writer custody per flush (concurrency)"],
+    "no_prior_failure": ["No failed B1b attempt recorded in .agents/agent-kit/tasks/v1-milestone-1.md"],
+    "ambiguity_resolved": []
+  }
+}

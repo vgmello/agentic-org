@@ -6,7 +6,7 @@ description: During adoption or material project change, assess required skills,
 The adopting agent performs this assessment in its existing session. Reuse generic
 roles; create their project-specific operating guidance, not a permanent agent per
 language. No framework, database or architecture is presumed from examples.
-Read `.agent-kit/reference/PROJECT_CAPABILITIES.md` for the catalog schema/commands.
+Read `.agents/agent-kit/reference/PROJECT_CAPABILITIES.md` for the catalog schema/commands.
 
 1. Inspect actual manifests/versions, workspace members, existing local skills,
    project instructions, representative code, CI, ADRs, operations and maintenance
@@ -25,7 +25,7 @@ Read `.agent-kit/reference/PROJECT_CAPABILITIES.md` for the catalog schema/comma
    uses the reviewer brief; test-runner uses the scout brief. The full-stack owner
    owns the complete feature, including all applicable layers and integration.
    Preserve native role names, model policy, permissions and verification hooks.
-4. Fill `.agent-kit/skill-catalog.json`: role brief paths, bounded skill descriptions,
+4. Fill `.agents/agent-kit/skill-catalog.json`: role brief paths, bounded skill descriptions,
    literal path prefixes, semantic risk tags, implementation/review references and
    critical flags. Include baseline project conventions, normally covering `.`.
    Add narrower rules for material stack/component/risk differences. Every critical

@@ -15,7 +15,7 @@ client restart/trust; do not relax the review sandbox.
 For shell-capable lead sessions, the equivalent discovery command is:
 
 ```bash
-python3 .agent-kit/runtime/kit_memory.py recall --query "Specific decision or constraint needed for this task" --path src/area
+python3 .agents/agent-kit/runtime/kit_memory.py recall --query "Specific decision or constraint needed for this task" --path src/area
 ```
 
 Recall requires a path and defaults to **4,000 characters for the complete JSON
@@ -36,19 +36,19 @@ not authority and does not resolve conflicting decisions.
 The lead owns shared knowledge. Workers propose reusable facts, decisions or map
 updates with rationale and current source references using the KNOWLEDGE.json
 template, then run `kit_memory.py propose --input PATH`. Pending proposals stay
-private under `.agent-kit/logs/memory/proposals/`; they are not governing decisions.
+private under `.agents/agent-kit/logs/memory/proposals/`; they are not governing decisions.
 
 After validating intent and source, the lead runs:
 
 ```bash
-python3 .agent-kit/runtime/kit_memory.py promote --input PROPOSAL_PATH --reviewer-session ACTUAL_SESSION_ID --rationale "Why this is correct and useful"
+python3 .agents/agent-kit/runtime/kit_memory.py promote --input PROPOSAL_PATH --reviewer-session ACTUAL_SESSION_ID --rationale "Why this is correct and useful"
 ```
 
 Promotion rejects changed source evidence and creates a versionable accepted record
-in `.agent-kit/knowledge/`. Commit it with the relevant work, then run
-`python3 .agent-kit/runtime/kit_memory.py sync`. Repeat if `remaining_records` is
+in `.agents/agent-kit/knowledge/`. Commit it with the relevant work, then run
+`python3 .agents/agent-kit/runtime/kit_memory.py sync`. Repeat if `remaining_records` is
 nonzero; uncommitted records are never synced. Curate governing choices
-in DECISIONS.md, update PROJECT_MAP.md or a focused `.agent-kit/maps/<area>.md` capsule,
+in DECISIONS.md, update PROJECT_MAP.md or a focused `.agents/agent-kit/maps/<area>.md` capsule,
 and explicitly mark superseded accepted JSON records `SUPERSEDED`. Do not accumulate
 contradictory active records. The recorded reviewer is a declaration, not proof of
 identity; semantic correctness remains the lead's responsibility.
@@ -61,7 +61,7 @@ not an automatic replacement for accepted decisions.
 
 For architecture, use architecture-decisions and ARCHITECTURE_DECISION.md. The
 canonical versioned record lives in the existing ADR directory, otherwise
-`.agent-kit/decisions/`; the ledger, maps and task contracts link to it. Preserve
+`.agents/agent-kit/decisions/`; the ledger, maps and task contracts link to it. Preserve
 premise IDs, evidence/state, original rationale, challenge history and replacement
 links. Accepted knowledge about that decision includes the decision file itself
 and relevant current implementation files in `sources`; changing its status/premises
@@ -85,7 +85,7 @@ Do not copy the same rationale into a ledger, map, task record and accepted reco
 choose its canonical home and link it elsewhere. After memory changes run:
 
 ```bash
-python3 .agent-kit/runtime/kit_memory.py audit
+python3 .agents/agent-kit/runtime/kit_memory.py audit
 ```
 
 The doctor also reports these soft-limit warnings. Neither command truncates files

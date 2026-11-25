@@ -28,5 +28,5 @@ retain production capabilities beyond the prototype. If approval covers only
 part of the range, name the approved changes explicitly.
 
 If a release is in progress before context compaction or handoff, update
-`.agent-kit/logs/prototype-release.md` with the approval scope, comparison
+`.agents/agent-kit/logs/prototype-release.md` with the approval scope, comparison
 revisions, confirmed final changes, verification status, and next step.

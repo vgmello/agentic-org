@@ -18,8 +18,8 @@ project-memory for its query, path and review-phase rules. It cannot retain memo
 or edit source.
 
 Kinds: search (discovery), context (file relationships), symbol (target source), why
-(Repowise's recorded rationale). Inspect `.agent-kit/context-tools.json`.
-Shell-capable agents can use `python3 .agent-kit/runtime/kit_context.py query --query TEXT`.
+(Repowise's recorded rationale). Inspect `.agents/agent-kit/context-tools.json`.
+Shell-capable agents can use `python3 .agents/agent-kit/runtime/kit_context.py query --query TEXT`.
 
 - Prepare before starting agent work. The gateway reuses a successful refresh only
   when HEAD, index and current tracked/nonignored source fingerprints match;
@@ -45,8 +45,8 @@ Shell-capable agents can use `python3 .agent-kit/runtime/kit_context.py query --
   report the gap, and repair setup; do not claim indexed coverage. Inferred impacted
   tests guide exploration and never replace the configured acceptance checks.
 
-During adoption, run `python3 .agent-kit/runtime/kit_context.py setup --query REAL_SYMBOL
+During adoption, run `python3 .agents/agent-kit/runtime/kit_context.py setup --query REAL_SYMBOL
 --expect-path path/to/source.py` after reading that project symbol. This installs the
 fixed provider and hash-pinned dependencies, connects the selected profile's clients and proves the
 configured MCP can locate the source. The agent supplies project facts; the user
-does not choose infrastructure. See `.agent-kit/reference/CONTEXT_TOOLS.md`.
+does not choose infrastructure. See `.agents/agent-kit/reference/CONTEXT_TOOLS.md`.

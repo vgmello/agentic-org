@@ -1,7 +1,7 @@
 // What Organization settings › Updates reads (server-installation-and-access-ux §5; app-shell-ux §0.1).
 // The instance's version is the web API's instance view `server_version`, the release pin's version
 // (docs/design/web-api-v1.md §3). The update check and each office's version are not served by the web API yet:
-// these shapes are the UI's proposal for that read (see .agent-kit/tasks/v1-ui-updates-contract.md).
+// these shapes are the UI's proposal for that read (see .agents/agent-kit/tasks/v1-ui-updates-contract.md).
 
 /**
  * What HQ last learned about a newer release. Background checks discover and stage updates under the instance's

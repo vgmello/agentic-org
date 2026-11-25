@@ -3,8 +3,8 @@ name: code-navigation
 description: Navigate source and verify symbols using installed language tools, targeted search and shared project knowledge in Claude Code or Codex.
 ---
 
-Read AGENTS.md/CLAUDE.md as applicable, active `.agent-kit/DECISIONS.md` entries and
-`.agent-kit/PROJECT_MAP.md`. Verify map references against current source.
+Read AGENTS.md/CLAUDE.md as applicable, active `.agents/agent-kit/DECISIONS.md` entries and
+`.agents/agent-kit/PROJECT_MAP.md`. Verify map references against current source.
 
 1. For large-project exploration, use indexed-context and the shared checkout-bound
    lookup tool first. Reuse returned source and narrow follow-ups. Use `rg --files`
@@ -20,8 +20,8 @@ Read AGENTS.md/CLAUDE.md as applicable, active `.agent-kit/DECISIONS.md` entries
 4. Record definition/caller paths, limits of dynamic resolution, exact commands
    and missing tooling. Missing navigation is not proof that no callers exist.
 
-Both harnesses run the same `.agent-kit/verification.json` checks via
-`python3 .agent-kit/runtime/kit_hooks.py check`. Each adapter has native hooks;
+Both harnesses run the same `.agents/agent-kit/verification.json` checks via
+`python3 .agents/agent-kit/runtime/kit_hooks.py check`. Each adapter has native hooks;
 Codex hooks require local support and project/hook trust. Its review runner also
 explicitly checks before acceptance and after fix commits. Use installed formatters
 as needed; a configured hook is not evidence that it ran in this environment.

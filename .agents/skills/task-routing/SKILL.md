@@ -6,15 +6,15 @@ description: Plan new work, assess evidence and assign the installed profile's m
 The lead owns one overall plan. Before substantive planning, use process-improvement
 to register the stable request/acceptance contract, separately from the evolving
 plan. Workers refine assigned slices; they do not restart top-level planning.
-Read `.agent-kit/policy/model-routing.json` and use cost-aware-execution. The active
+Read `.agents/agent-kit/policy/model-routing.json` and use cost-aware-execution. The active
 mode is explicit: hybrid uses Claude planning/workers and Sol review; codex-only
 uses Sol throughout. Never silently switch profiles because a model is unavailable.
 
-Copy TASK_ASSESSMENT.json from `.agent-kit/templates` to `.agent-kit/tasks/TASK-assessment.json`.
+Copy TASK_ASSESSMENT.json from `.agents/agent-kit/templates` to `.agents/agent-kit/tasks/TASK-assessment.json`.
 Give source/contract/check evidence for every known fact. Unknown stays null. Run:
 
 ```bash
-python3 .agent-kit/runtime/kit_policy.py --assessment .agent-kit/tasks/TASK-assessment.json
+python3 .agents/agent-kit/runtime/kit_policy.py --assessment .agents/agent-kit/tasks/TASK-assessment.json
 ```
 
 Save the result with the slice contract. Code maps facts to model/effort; the lead

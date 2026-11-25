@@ -5,16 +5,16 @@ description: Select project-specific skills and role guidance for a scoped assig
 
 Use after task scoping/model routing and before direct implementation or delegation.
 The shared workflow remains authoritative; this skill supplies project knowledge.
-If `.agent-kit/skill-catalog.json` is unconfigured/stale, use project-capabilities.
+If `.agents/agent-kit/skill-catalog.json` is unconfigured/stale, use project-capabilities.
 The catalog contains small descriptions and references; read bodies only as needed.
 
-Create an ignored per-assignment folder under `.agent-kit/logs/skills/TASK-WORKER/`.
+Create an ignored per-assignment folder under `.agents/agent-kit/logs/skills/TASK-WORKER/`.
 Resolve the actual affected/planned paths and semantic risks identified from the
 contract/source. Paths are literal repository prefixes, not language-specific rules:
 
 ```bash
-python3 .agent-kit/runtime/kit_skills.py resolve --path path/to/area \
-  --role fullstack-engineer --phase implementation > .agent-kit/logs/skills/TASK-WORKER/packet.json
+python3 .agents/agent-kit/runtime/kit_skills.py resolve --path path/to/area \
+  --role fullstack-engineer --phase implementation > .agents/agent-kit/logs/skills/TASK-WORKER/packet.json
 ```
 
 Repeat --path for affected areas and --risk for applicable catalog risk tags.
@@ -30,9 +30,9 @@ and uses SKILL_PREFLIGHT.json to record its observed session, ordered read hashe
 applicable constraints/tools/checks. Missing capability returns a blocker. Then run:
 
 ```bash
-python3 .agent-kit/runtime/kit_skills.py preflight \
-  --packet .agent-kit/logs/skills/TASK-WORKER/packet.json \
-  --ack .agent-kit/logs/skills/TASK-WORKER/preflight.json
+python3 .agents/agent-kit/runtime/kit_skills.py preflight \
+  --packet .agents/agent-kit/logs/skills/TASK-WORKER/packet.json \
+  --ack .agents/agent-kit/logs/skills/TASK-WORKER/preflight.json
 ```
 
 For a helper without shell/write tools, the lead resolves the packet, supplies

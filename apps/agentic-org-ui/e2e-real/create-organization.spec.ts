@@ -6,7 +6,7 @@ import { removeInstance } from './teardown';
 // A4.5: create organization in the real browser against a real host, web process and worker
 // (FC-018; offices-and-teams UX §5a). Its own instance under its own disposable root and port
 // range: the setup link works once, and first-slice.spec.ts uses and then stops the shared one.
-const shots = '../../.agent-kit/logs/a4/screens';
+const shots = '../../.agents/agent-kit/logs/a4/screens';
 const PREFIX = 'a4pw';
 const PORT_BASE = 24180;
 const login = 'alex';

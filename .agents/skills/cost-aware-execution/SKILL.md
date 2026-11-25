@@ -3,7 +3,7 @@ name: cost-aware-execution
 description: Keep context, delegation, caching and review budgets efficient under the selected profile; optimize accepted work rather than token price.
 ---
 
-Use task-routing and `.agent-kit/policy/model-routing.json`. Load long benchmark
+Use task-routing and `.agents/agent-kit/policy/model-routing.json`. Load long benchmark
 reports only when revisiting policy; do not paste them into every agent context.
 A routing profile is a starting policy, not a measured project optimum.
 

@@ -10,7 +10,7 @@ mode, accounts or project conventions to make checks pass.
 Run the installed doctor from that root:
 
 ```bash
-python3 .agent-kit/runtime/kit_doctor.py --project . --live --json
+python3 .agents/agent-kit/runtime/kit_doctor.py --project . --live --json
 ```
 
 This checks managed files, effective instructions, routing, skills, check commands,
@@ -25,7 +25,7 @@ During adoption, and after relevant changes, inspect the configured commands and
 run the project checks too. Commands can mutate files; follow project conventions:
 
 ```bash
-python3 .agent-kit/runtime/kit_doctor.py --project . --live --checks --json
+python3 .agents/agent-kit/runtime/kit_doctor.py --project . --live --checks --json
 ```
 
 Read every failed check and its evidence. Fix the cause within authorized setup:
@@ -37,7 +37,7 @@ Do not weaken checks, remove required tools or fabricate results. Ask for login
 only when the actual login/access blocker needs the user's intervention.
 
 Rerun failed probes after repairs; rerun the full doctor before completion. Inspect
-`.agent-kit/logs/health/latest.json` and linked command receipts. Record the tested
+`.agents/agent-kit/logs/health/latest.json` and linked command receipts. Record the tested
 revision/time, passed/failed checks and unresolved next steps in ADOPTION.md.
 `health_passed`, `services_ready` and `checks_verified` are diagnostic evidence;
 `LIVE_VALIDATED` still requires the actual selected-profile model/review cycle.

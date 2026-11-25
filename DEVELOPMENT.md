@@ -97,7 +97,7 @@ only on a subset of targets/profiles), and remove expectations when they no
 longer apply. `crates/org-platform/tests/rust_hygiene.rs` (run in workspace tests
 and `kit_hooks.py check`) enforces cross-platform `allow` reasons and
 `write_volatile` confinement via `syn`/`proc_macro2`, and
-`.agent-kit/runtime/kit_rust_hygiene.py` verifies `[lints] workspace = true` on
+`.agents/agent-kit/runtime/kit_rust_hygiene.py` verifies `[lints] workspace = true` on
 every workspace member manifest. When editing Linux platform
 adapters on macOS, also run
 `cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-gnu -- -D warnings`.
@@ -147,7 +147,7 @@ servers. Install the binaries both harnesses run:
 rustup component add rust-analyzer rust-src
 bun add --global --exact typescript@6.0.3 typescript-language-server@6.1.0 svelte-language-server@0.18.6
 go install github.com/isaacphi/mcp-language-server@v0.1.1
-python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs
+python3 .agents/agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs
 ```
 
 Codex needs `mcp-language-server`; Claude Code does not. Run `bun install` in
@@ -178,7 +178,7 @@ reviews, a lead may dispatch the `principal-designer` agent when it is useful. I
 for both tools:
 `.claude/agents/principal-designer.md` for Claude Code and
 `.codex/agents/principal-designer.toml` for Codex. Both are thin: they point at one persona,
-`.agent-kit/project-skills/principal-designer/`, so the knowledge is maintained in one
+`.agents/agent-kit/project-skills/principal-designer/`, so the knowledge is maintained in one
 place. The assignment names the job: design (propose), implement (build) or review
 (read-only). The agent sorts what a screen shows by what the data is worth to the person,
 weighs Fitts's, Hick's and Jakob's laws, proximity and the isolation effect while building,
