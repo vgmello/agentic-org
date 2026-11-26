@@ -3,10 +3,11 @@
 //!
 //! The state file stays the single commit point. It names the log's committed extent
 //! ([`StoredEventsLog`]): a commit that only adds events appends their lines and syncs the
-//! log, then writes the small state file atomically, so a commit costs what it adds rather
-//! than the whole history. Bytes past the committed extent are an append whose state file
-//! never committed (a crash in between, or a failed write): they are never read and are cut
-//! before the next append and at open. Any other change of the events (a snapshot install or
+//! log (and, for the log's first lines, its folder), then writes the small state file
+//! atomically, so a commit costs what it adds rather than the whole history. Bytes past the
+//! committed extent are an append whose state file never committed (a crash in between, or a
+//! failed write): they are never read and are cut before the next append, and at open once
+//! the state file has decoded. Any other change of the events (a snapshot install or
 //! a re-enrollment clears them) commits by writing them inline into the state file first, then
 //! moves them to a freshly written log; until that move succeeds the inline copy is the
 //! authority and the log is ignored. A state file from before the log (inline `events`, no
@@ -17,7 +18,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::error::OfficeError;
-use crate::private_fs::{full_sync, private_file, write_private_atomic};
+use crate::private_fs::{full_sync, private_file, sync_dir, write_private_atomic};
 use crate::replication::{
     memory::ReplicationCoreData, ReplicationStateFile, StoredEventsLog, StoredOrgEvent,
 };
@@ -56,8 +57,10 @@ impl EventsLog {
         (log, EMPTY)
     }
 
-    /// Reads the events the committed state file `file` names, from the log or inline, and
-    /// cuts any uncommitted tail off the log.
+    /// Reads the events the committed state file `file` names, from the log or inline. Reads
+    /// only: the caller cuts any uncommitted tail ([`Self::cut_uncommitted_tail`]) once the
+    /// state file and these events have decoded, so a state file that fails to decode never
+    /// changes the log.
     pub(super) fn open(
         dir: &Path,
         file: &ReplicationStateFile,
@@ -75,12 +78,21 @@ impl EventsLog {
             return Err(invalid("malformed durable replication state"));
         }
         let events = read_committed(&path, &extent)?;
-        cut_uncommitted_tail(&path, extent.bytes)?;
         let log = Self {
             path,
             committed: Some(extent),
         };
         Ok((log, events))
+    }
+
+    /// Cuts the log back to its committed extent: what lies past it never committed. Nothing
+    /// to cut while the committed state holds the events inline (the log is not read then,
+    /// and the next commit rewrites it).
+    pub(super) fn cut_uncommitted_tail(&self) -> Result<(), OfficeError> {
+        match &self.committed {
+            Some(extent) => truncate_to(&self.path, extent.bytes),
+            None => Ok(()),
+        }
     }
 
     /// Commits `after` (the store holds `before`): the one durable commit of a mutation. On
@@ -100,14 +112,14 @@ impl EventsLog {
                 for event in &added {
                     encode_line(&mut lines, &stored_event(event))?;
                 }
+                // Durable before the state file names it: the lines, and the log's folder
+                // entry when this append created it.
                 self.append_at(extent.bytes, &lines)?;
                 let next = StoredEventsLog {
                     bytes: extent.bytes.saturating_add(lines.len() as u64),
                     count: extent.count.saturating_add(added.len() as u64),
                     last_digest_hex: added.last().map(|e| e.digest.to_hex()),
                 };
-                // The state file's atomic write syncs this folder after its rename, which
-                // also makes a log file created by this append durable.
                 write_state(state_path, after, Some(&next))?;
                 self.committed = Some(next);
                 Ok(())
@@ -116,7 +128,7 @@ impl EventsLog {
                 write_state(state_path, after, Some(&EMPTY))?;
                 self.committed = Some(EMPTY);
                 // Tidying only: nothing past the committed extent (none) is ever read.
-                let _ = cut_uncommitted_tail(&self.path, 0);
+                let _ = truncate_to(&self.path, 0);
                 Ok(())
             }
             _ => {
@@ -152,8 +164,11 @@ impl EventsLog {
     }
 
     /// Writes `lines` at the committed end `at`, first cutting any uncommitted tail, and
-    /// syncs the log. A log shorter than its committed extent fails closed.
+    /// syncs the log. When the log is new (created here, or its committed extent is empty)
+    /// its folder is synced too, so the state file's rename can never become durable before
+    /// the log's folder entry. A log shorter than its committed extent fails closed.
     fn append_at(&self, at: u64, lines: &[u8]) -> Result<(), OfficeError> {
+        let created = !self.path.exists();
         let mut file = private_file(&self.path).map_err(OfficeError::storage)?;
         let len = file.metadata().map_err(OfficeError::storage)?.len();
         if len < at {
@@ -167,7 +182,15 @@ impl EventsLog {
         file.seek(SeekFrom::Start(at))
             .map_err(OfficeError::storage)?;
         file.write_all(lines).map_err(OfficeError::storage)?;
-        full_sync(&file).map_err(OfficeError::storage)
+        full_sync(&file).map_err(OfficeError::storage)?;
+        if created || at == 0 {
+            let parent = self
+                .path
+                .parent()
+                .ok_or_else(|| invalid("durable replication events log has no folder"))?;
+            sync_dir(parent).map_err(OfficeError::storage)?;
+        }
+        Ok(())
     }
 }
 
@@ -238,7 +261,7 @@ fn read_committed(
 
 /// Cuts the log back to `committed` bytes: what lies past it never committed. A missing log
 /// has nothing to cut.
-fn cut_uncommitted_tail(path: &Path, committed: u64) -> Result<(), OfficeError> {
+fn truncate_to(path: &Path, committed: u64) -> Result<(), OfficeError> {
     let file = match OpenOptions::new().write(true).open(path) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),

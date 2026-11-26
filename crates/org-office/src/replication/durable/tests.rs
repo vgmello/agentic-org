@@ -366,3 +366,139 @@ fn clearing_the_events_commits_an_empty_log() {
     assert!(reopened.org_events_after(2, 0).unwrap().is_empty());
     assert!(reopened.org_events_after(1, 0).unwrap().is_empty());
 }
+
+/// Review N1a: a state file that does not decode (here an unknown version) is refused before
+/// the log is touched, so an uncommitted tail past its extent stays exactly as it was.
+#[test]
+fn a_refused_state_file_never_cuts_the_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let repl = replication_dir(dir.path());
+    let log = repl.join("events.v1.ndjson");
+    {
+        let store = DurableReplicationStore::open_unprojected(params(dir.path())).unwrap();
+        append(&store, PAYLOADS[0]).unwrap();
+        append(&store, PAYLOADS[1]).unwrap();
+    }
+    let committed = std::fs::read(&log).unwrap();
+    let first_payload = log_lines(&repl)[0]["payload_b64"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut with_tail = committed.clone();
+    with_tail.extend_from_slice(b"{\"epoch\":1,\"seq\":3,\"torn");
+    std::fs::write(&log, &with_tail).unwrap();
+
+    let state_path = repl.join("state.v1.json");
+    let good_state = std::fs::read(&state_path).unwrap();
+    let mut state = read_json(&state_path);
+    state["version"] = serde_json::json!(2);
+    std::fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    assert!(DurableReplicationStore::open_unprojected(params(dir.path())).is_err());
+    assert_eq!(
+        std::fs::read(&log).unwrap(),
+        with_tail,
+        "the log is untouched"
+    );
+
+    // A committed event whose own digest no longer checks out is refused the same way.
+    std::fs::write(&state_path, &good_state).unwrap();
+    let mut altered = with_tail.clone();
+    let at = altered
+        .windows(first_payload.len())
+        .position(|w| w == first_payload.as_bytes())
+        .unwrap();
+    altered[at] = if altered[at] == b'A' { b'B' } else { b'A' };
+    std::fs::write(&log, &altered).unwrap();
+    assert!(DurableReplicationStore::open_unprojected(params(dir.path())).is_err());
+    assert_eq!(
+        std::fs::read(&log).unwrap(),
+        altered,
+        "the log is untouched"
+    );
+
+    // The intact state file opens and only then cuts the uncommitted tail.
+    std::fs::write(&log, &with_tail).unwrap();
+    let store = DurableReplicationStore::open_unprojected(params(dir.path())).unwrap();
+    assert_eq!(payloads(&store), PAYLOADS[..2]);
+    assert_eq!(std::fs::read(&log).unwrap(), committed);
+}
+
+/// Review N1b: the committed log names its extent consistently (bytes, count, last digest),
+/// yet repeats a position: opening fails closed rather than keeping either copy.
+#[test]
+fn a_log_that_repeats_an_event_position_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let repl = replication_dir(dir.path());
+    let log = repl.join("events.v1.ndjson");
+    {
+        let store = DurableReplicationStore::open_unprojected(params(dir.path())).unwrap();
+        append(&store, PAYLOADS[0]).unwrap();
+        append(&store, PAYLOADS[1]).unwrap();
+    }
+    let lines = log_lines(&repl);
+    let mut repeated = Vec::new();
+    for line in [&lines[0], &lines[1], &lines[1]] {
+        repeated.extend_from_slice(line.to_string().as_bytes());
+        repeated.push(b'\n');
+    }
+    std::fs::write(&log, &repeated).unwrap();
+    let state_path = repl.join("state.v1.json");
+    let mut state = read_json(&state_path);
+    state["events_log"]["bytes"] = serde_json::json!(repeated.len());
+    state["events_log"]["count"] = serde_json::json!(3);
+    state["events_log"]["last_digest_hex"] = lines[1]["digest_hex"].clone();
+    std::fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+    let refused = DurableReplicationStore::open_unprojected(params(dir.path()));
+    assert!(refused.is_err());
+    assert_eq!(
+        std::fs::read(&log).unwrap(),
+        repeated,
+        "the log is untouched"
+    );
+}
+
+/// Review N1b: stored events whose digests each check out, but which do not chain within
+/// their epoch (one spliced from another history, or one missing between two), fail closed.
+#[test]
+fn stored_events_that_do_not_chain_within_an_epoch_fail_closed() {
+    let ours = tempfile::tempdir().unwrap();
+    let theirs = tempfile::tempdir().unwrap();
+    for (dir, payloads) in [
+        (ours.path(), [PAYLOADS[0], PAYLOADS[1], PAYLOADS[2]]),
+        (theirs.path(), [&b"uno"[..], b"dos", b"tres"]),
+    ] {
+        let store = DurableReplicationStore::open_unprojected(params(dir)).unwrap();
+        for payload in payloads {
+            append(&store, payload).unwrap();
+        }
+    }
+    let our_lines = log_lines(&replication_dir(ours.path()));
+    let their_lines = log_lines(&replication_dir(theirs.path()));
+    let state_path = replication_dir(ours.path()).join("state.v1.json");
+    let committed = read_json(&state_path);
+    let with_inline = |events: Vec<serde_json::Value>| {
+        let mut state = committed.clone();
+        let object = state.as_object_mut().unwrap();
+        object.remove("events_log");
+        object.insert("events".into(), serde_json::Value::Array(events));
+        std::fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    };
+
+    // Seq 2 from another history: its own digest is right, its predecessor is not ours.
+    with_inline(vec![
+        our_lines[0].clone(),
+        their_lines[1].clone(),
+        our_lines[2].clone(),
+    ]);
+    assert!(DurableReplicationStore::open_unprojected(params(ours.path())).is_err());
+
+    // Seq 2 missing.
+    with_inline(vec![our_lines[0].clone(), our_lines[2].clone()]);
+    assert!(DurableReplicationStore::open_unprojected(params(ours.path())).is_err());
+
+    // The unbroken chain opens.
+    with_inline(our_lines.clone());
+    let store = DurableReplicationStore::open_unprojected(params(ours.path())).unwrap();
+    assert_eq!(payloads(&store), PAYLOADS[..3]);
+}

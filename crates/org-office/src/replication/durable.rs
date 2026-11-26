@@ -134,7 +134,11 @@ impl DurableReplicationStore {
             let parsed: ReplicationStateFile = serde_json::from_slice(&bytes)
                 .map_err(|_| OfficeError::Invalid("malformed durable replication state"))?;
             let (log, events) = EventsLog::open(&state_dir, &parsed)?;
-            (core_from_file(&parsed, &events)?, log)
+            let data = core_from_file(&parsed, &events)?;
+            // Only a state file that decoded, with every event it names intact, may change
+            // the log: a refused one leaves both files as they were.
+            log.cut_uncommitted_tail()?;
+            (data, log)
         } else {
             let initial = ReplicationCoreData::new(
                 p.org_id,

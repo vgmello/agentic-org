@@ -294,10 +294,11 @@ impl<E: Engine> Store<E> {
     /// the flush interval, and returns at once: it waits for nothing (`TASK-140`). A
     /// buffered write another office is waiting on (a cross-office message, a relay) uses
     /// it so the entry is confirmed in milliseconds rather than after the group-flush
-    /// interval. A no-op once the store has stopped.
+    /// interval. A no-op once the store has stopped, and when nothing is waiting to be
+    /// flushed: the flusher is not woken for nothing.
     pub fn request_flush(&self) {
         let mut flow = self.core.flow();
-        if flow.dead || flow.fatal.is_some() {
+        if flow.dead || flow.fatal.is_some() || flow.unflushed.is_empty() {
             return;
         }
         flow.flush_now = true;

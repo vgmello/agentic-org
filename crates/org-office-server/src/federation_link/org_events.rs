@@ -7,12 +7,15 @@ use std::sync::Arc;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use org_office::{Office, OrgDeltaPayload};
+use org_sync::error::{Refusal, SyncError};
 use org_sync::organization::{
-    apply as apply_org_event, apply_batch as apply_org_events, OrgEvent, OrgOutput, PeerIdentity,
+    apply as apply_org_event, apply_batch as apply_org_events, OrgCheckpoint, OrgEvent, OrgOutput,
+    PeerIdentity, PeerRole,
 };
 use org_sync_proto::{Codec, Digest, Epoch, OrgId, Position, SyncFrame};
+use sha2::{Digest as _, Sha256};
 
-use super::{deterministic_uuid_v7, SnapshotFileBatch, StaticPeer};
+use super::{deterministic_uuid_v7, hex_lower, SnapshotFileBatch, StaticPeer};
 
 /// Most consecutive `OrgEvent` frames applied as one batch (`TASK-140`).
 pub(crate) const ORG_EVENT_BATCH_MAX: usize = 64;
@@ -22,15 +25,20 @@ pub(crate) const ORG_EVENT_BATCH_MAX: usize = 64;
 const ORG_EVENT_BATCH_FILE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Applies consecutive HQ `OrgEvent` frames in order and returns how many were new
-/// (`TASK-140`). Every frame is decoded and verified first (organization, epoch, predecessor
-/// chain, digest, codec) against the checkpoint the frames before it reach. Verified events
-/// then apply in batches of up to [`ORG_EVENT_BATCH_MAX`]: one replicated-files operation and
-/// one replication transaction per batch instead of one durable sync each, so a 420-task
-/// burst costs a handful of commits. An event touching anything but task or messaging files
-/// (organization structure, which the self-echo filter and HQ office ordering read) applies
-/// alone, exactly as before. The checkpoint never passes files that are not applied: files
-/// first, then the events. When a frame fails, the events before it are applied first and
-/// the same error is returned, as one call per frame would.
+/// (`TASK-140`). Every frame is decoded and verified first against the checkpoint the frames
+/// before it reach: `org-sync`'s gates on any apply (HQ authority and epoch, no restore
+/// fence, no initial snapshot owed), then organization, predecessor chain, digest and codec.
+/// Verified events then apply in batches of up to [`ORG_EVENT_BATCH_MAX`]: one
+/// replicated-files operation and one replication transaction per batch instead of one
+/// durable sync each, so a 420-task burst costs a handful of commits. Three kinds of event
+/// apply alone, after the batch before them, exactly as one call per frame would: one touching
+/// anything but task or messaging files (organization structure, which the self-echo filter
+/// and HQ office ordering read), a duplicate (only `org-sync` can tell it from a divergent
+/// one) and one of any codec but `org.native.changes` v1 (no files to verify, and possibly
+/// unsupported). Their outcome is therefore known before any later event's files reach
+/// `org-store`. The checkpoint never passes files that are not applied: files first, then the
+/// events. When a frame fails, the events before it are applied first and the same error is
+/// returned, as one call per frame would.
 pub(crate) fn apply_satellite_org_event_frames(
     office: &Office,
     hq_peer: &PeerIdentity,
@@ -40,11 +48,16 @@ pub(crate) fn apply_satellite_org_event_frames(
         .replication()
         .org_checkpoint()
         .map_err(|e| e.to_string())?;
+    let initial_snapshot_required = office
+        .sync_status()
+        .map_err(|e| e.to_string())?
+        .initial_snapshot_required;
     let mut burst = Burst::default();
     let mut applied = 0usize;
     for frame in frames {
         let verified = decode_org_event_frame(frame).and_then(|ev| {
-            let files = verify_org_event_before_apply(&cursor, hq_peer, &ev)?;
+            let files =
+                verify_org_event_before_apply(&cursor, initial_snapshot_required, hq_peer, &ev)?;
             Ok((ev, files))
         });
         let (ev, files) = match verified {
@@ -55,15 +68,16 @@ pub(crate) fn apply_satellite_org_event_frames(
                 return Err(e);
             }
         };
-        let alone = files
-            .as_ref()
-            .is_some_and(|files| !files.iter().all(|(path, _)| is_work_path(path)));
+        let duplicate = is_duplicate(&cursor, &ev);
+        let alone = duplicate
+            || !is_native_changes(&ev.codec)
+            || files
+                .as_ref()
+                .is_some_and(|files| !files.iter().all(|(path, _)| is_work_path(path)));
         let bytes = files.as_ref().map_or(0, file_bytes);
         if alone || burst.is_full(bytes) {
             applied += burst.apply(office, hq_peer)?;
         }
-        let duplicate =
-            ev.position.epoch == cursor.position.epoch && ev.position.seq <= cursor.position.seq;
         if !duplicate {
             cursor.position = ev.position;
             cursor.digest = ev.digest;
@@ -79,6 +93,65 @@ pub(crate) fn apply_satellite_org_event_frames(
 
 fn is_work_path(path: &str) -> bool {
     path.starts_with("state/work/") || path.starts_with("messaging/")
+}
+
+/// The one codec whose payload this side decodes into files before applying.
+fn is_native_changes(codec: &Codec) -> bool {
+    codec.id() == "org.native.changes" && codec.version() == 1
+}
+
+/// An event at or before the cursor in its epoch: `org-sync` acknowledges it as a duplicate
+/// or refuses it as divergent against the retained history.
+fn is_duplicate(cur: &OrgCheckpoint, ev: &OrgEvent) -> bool {
+    ev.position.epoch == cur.position.epoch && ev.position.seq <= cur.position.seq
+}
+
+/// The `org-store` operation ID of the replicated files applied for the events `first..=last`:
+/// named by the events AND by exactly what is applied for them (`files`, after the self-echo
+/// filter). An exact retry derives the same ID and meets its idempotency receipt; a retry the
+/// filter trims (a local task update already applied before a crash) is a new operation,
+/// never a reuse of the old ID with other files (`StoreError::Conflict`).
+pub(crate) fn replicated_files_op_id(
+    hq_office: &str,
+    first: &OrgEvent,
+    last: &OrgEvent,
+    files: &SnapshotFileBatch,
+) -> String {
+    let org = first.org_id.as_str();
+    let files = files_sha256_hex(files);
+    let name = if first.position == last.position {
+        let (epoch, seq) = (first.position.epoch.get(), first.position.seq);
+        format!("org-event:{hq_office}:{org}:{epoch}:{seq}:{files}")
+    } else {
+        let (from, to) = (first.position, last.position);
+        format!(
+            "org-event-batch:{hq_office}:{org}:{}:{}:{}:{}:{files}",
+            from.epoch.get(),
+            from.seq,
+            to.epoch.get(),
+            to.seq
+        )
+    };
+    deterministic_uuid_v7(&name)
+}
+
+/// SHA-256 over `files` in order: each path, whether it is written or removed, and the
+/// written bytes, every variable part length-prefixed so two batches never share an encoding.
+fn files_sha256_hex(files: &SnapshotFileBatch) -> String {
+    let mut hasher = Sha256::new();
+    for (path, content) in files {
+        hasher.update((path.len() as u64).to_le_bytes());
+        hasher.update(path.as_bytes());
+        match content {
+            Some(bytes) => {
+                hasher.update([1u8]);
+                hasher.update((bytes.len() as u64).to_le_bytes());
+                hasher.update(bytes);
+            }
+            None => hasher.update([0u8]),
+        }
+    }
+    hex_lower(&hasher.finalize())
 }
 
 fn file_bytes(files: &SnapshotFileBatch) -> usize {
@@ -131,32 +204,25 @@ impl Burst {
                 .filter_self_echoed_org_event_files(files)
                 .map_err(|e| format!("filter self-echoed org event failed: {e}"))?;
             if !filtered.is_empty() {
-                let (hq, org) = (hq_peer.office_id.as_str(), first.org_id.as_str());
-                let name = if events.len() == 1 {
-                    let (epoch, seq) = (first.position.epoch.get(), first.position.seq);
-                    format!("org-event:{hq}:{org}:{epoch}:{seq}")
-                } else {
-                    let (from, to) = (first.position, last.position);
-                    format!(
-                        "org-event-batch:{hq}:{org}:{}:{}:{}:{}",
-                        from.epoch.get(),
-                        from.seq,
-                        to.epoch.get(),
-                        to.seq
-                    )
-                };
+                let op_id =
+                    replicated_files_op_id(hq_peer.office_id.as_str(), first, last, &filtered);
                 office
-                    .apply_replicated_state_files(&deterministic_uuid_v7(&name), filtered)
+                    .apply_replicated_state_files(&op_id, filtered)
                     .map_err(|e| format!("apply replicated delta failed: {e}"))?;
             }
         }
         let peer = StaticPeer(hq_peer.clone());
         let store = office.replication();
-        let outputs = match apply_org_events(store.as_ref(), &peer, events.clone()) {
-            Ok(outputs) => outputs,
-            // The batch committed nothing: replay one at a time so the events before the
-            // failing one commit and its error is the one a lone apply reports.
-            Err(_) => {
+        let batched = if events.len() > 1 {
+            apply_org_events(store.as_ref(), &peer, events.clone()).ok()
+        } else {
+            None
+        };
+        let outputs = match batched {
+            Some(outputs) => outputs,
+            // A lone event, or a batch that committed nothing: one `apply` per event, so the
+            // events before a failing one commit and its error is the one a lone apply reports.
+            None => {
                 let mut outputs = Vec::with_capacity(events.len());
                 for ev in events {
                     let output = apply_org_event(store.as_ref(), &peer, ev)
@@ -240,18 +306,37 @@ pub(crate) fn collect_pending_work_paths_checked(
     Ok(keep)
 }
 
+/// Verifies `ev` against the checkpoint `cur` before anything of it is buffered or applied,
+/// and returns the files of an `org.native.changes` v1 event. Refuses first what `org-sync`
+/// refuses for any event (`organization::apply`): another HQ office, role or authority epoch,
+/// an event outside the highest epoch, a restore fence, an initial snapshot still owed; with
+/// the error a lone apply reports. A duplicate is left to `org-sync` (`Ok(None)`).
 fn verify_org_event_before_apply(
-    cur: &org_sync::organization::OrgCheckpoint,
+    cur: &OrgCheckpoint,
+    initial_snapshot_required: bool,
     hq_peer: &PeerIdentity,
     ev: &OrgEvent,
 ) -> Result<Option<SnapshotFileBatch>, String> {
     if ev.org_id != cur.org_id || hq_peer.org_id != cur.org_id {
         return Err("org event organization mismatch".into());
     }
+    if hq_peer.office_id != cur.hq_office
+        || hq_peer.role != PeerRole::Hq
+        || hq_peer.authority != cur.highest_epoch
+        || ev.position.epoch != cur.highest_epoch
+    {
+        return Err(refused(Refusal::NotAuthorized));
+    }
+    if cur.restore_pending {
+        return Err(refused(Refusal::RestorePending));
+    }
+    if initial_snapshot_required {
+        return Err("snapshot required before applying org events".into());
+    }
     if ev.position.epoch < cur.position.epoch {
         return Err("stale org event epoch".into());
     }
-    if ev.position.epoch == cur.position.epoch && ev.position.seq <= cur.position.seq {
+    if is_duplicate(cur, ev) {
         return Ok(None);
     }
     if ev.position.epoch != cur.position.epoch
@@ -271,11 +356,16 @@ fn verify_org_event_before_apply(
     if ev.digest != expected_digest {
         return Err("org event digest verification failed".into());
     }
-    if ev.codec.id() == "org.native.changes" && ev.codec.version() == 1 {
+    if is_native_changes(&ev.codec) {
         let delta: OrgDeltaPayload = serde_json::from_slice(&ev.payload)
             .map_err(|e| format!("malformed org.native.changes payload: {e}"))?;
         let files = delta.decode_files().map_err(|e| e.to_string())?;
         return Ok(Some(files));
     }
     Ok(None)
+}
+
+/// The error a lone `organization::apply` reports for `refusal`.
+fn refused(refusal: Refusal) -> String {
+    format!("apply_org_event failed: {}", SyncError::from(refusal))
 }

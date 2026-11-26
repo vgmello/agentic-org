@@ -35,9 +35,9 @@ pub(crate) struct HqPeerHandle {
     pub(crate) wake: WakePipe,
     wake_gen: AtomicU64,
     rpc_queue: Mutex<PeerRpcQueue>,
-    /// Set once the session asked for the organization stream (`SyncFrame::OrgGap`): it is the
-    /// satellite's persistent sync session, not a short-lived permit or RPC connection
-    /// (`TASK-174` AC #1).
+    /// Set once the session, after its `Hello`, asked for the organization stream
+    /// (`SyncFrame::OrgGap`) and was sent it: it is the satellite's persistent sync session,
+    /// not a short-lived permit or RPC connection (`TASK-174` AC #1).
     persistent: AtomicBool,
 }
 

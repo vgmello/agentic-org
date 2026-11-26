@@ -204,9 +204,6 @@ fn drain_hq_inbound_frames(
                         after_epoch,
                         after_seq,
                     } => {
-                        // Only the satellite's persistent sync session follows the organization
-                        // stream; proxied session RPCs prefer it (`TASK-174` AC #1).
-                        peer_handle.mark_persistent();
                         state.active_snapshot = None;
                         let Some(last_sent) =
                             send_hq_org_events_after(tls, peer, after_epoch, after_seq)
@@ -214,6 +211,12 @@ fn drain_hq_inbound_frames(
                             return false;
                         };
                         state.peer_org_cursor = Some(last_sent);
+                        // Only the satellite's persistent sync session follows the organization
+                        // stream; proxied session RPCs prefer it (`TASK-174` AC #1). Marked only
+                        // once the session said Hello and its gap was answered.
+                        if state.hello_done {
+                            peer_handle.mark_persistent();
+                        }
                     }
                     other => {
                         let is_hello = matches!(other, SyncFrame::Hello { .. });

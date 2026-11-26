@@ -360,6 +360,13 @@ fn a_committed_write_is_answered_while_the_flush_is_held_and_a_durable_one_is_no
 fn request_flush_flushes_buffered_entries_now_without_waiting_for_the_interval() {
     let office = Office::new();
     let store = office.create();
+    // Nothing waits to be flushed: the request neither raises the flag nor wakes the flusher.
+    store.request_flush();
+    assert!(
+        !store.core.flow().flush_now,
+        "no request for an empty queue"
+    );
+
     office.put(&store, "b", Ack::Committed).unwrap();
     assert_eq!(store.status().flushed, 0, "the interval has not passed");
     assert_eq!(office.file("b"), None);

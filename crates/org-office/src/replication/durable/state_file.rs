@@ -9,7 +9,7 @@ use org_sync::{
     messages::Queue,
     organization::{OrgCheckpoint, OrgEvent},
 };
-use org_sync_proto::{Codec, Epoch, OfficeId, OrgId, Position};
+use org_sync_proto::{Codec, Digest, Epoch, OfficeId, OrgId, Position};
 
 use crate::error::OfficeError;
 use crate::replication::{
@@ -157,6 +157,7 @@ pub(super) fn core_from_file(
     };
     let mut events = BTreeMap::new();
     let mut applied_org = Vec::with_capacity(stored_events.len());
+    let mut previous: Option<(Position, Digest)> = None;
     for ev in stored_events {
         let payload: Arc<[u8]> = Arc::from(decode_b64(&ev.payload_b64)?);
         let event = OrgEvent {
@@ -184,7 +185,20 @@ pub(super) fn core_from_file(
         if expected != event.digest {
             return Err(OfficeError::Invalid("stored event digest mismatch"));
         }
-        events.insert((ev.epoch, ev.seq), event);
+        // Within an epoch the stored events are one unbroken chain, each the successor of the
+        // one stored before it: a repeated, reordered or spliced history fails closed.
+        if let Some((position, digest)) = previous {
+            if position.epoch == event.position.epoch
+                && (position.seq.checked_add(1) != Some(event.position.seq)
+                    || event.previous != digest)
+            {
+                return Err(OfficeError::Invalid("stored event chain is broken"));
+            }
+        }
+        previous = Some((event.position, event.digest));
+        if events.insert((ev.epoch, ev.seq), event).is_some() {
+            return Err(OfficeError::Invalid("duplicate stored event position"));
+        }
         applied_org.push(payload);
     }
     let work_outbox = outbox_from_stored(
