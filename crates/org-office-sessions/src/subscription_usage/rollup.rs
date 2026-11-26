@@ -1,7 +1,36 @@
 //! Office and credential-vault orchestration of subscription usage listing, credentials, and
 //! bounded concurrent collection (called by `SessionManager`).
 
-use super::*;
+use std::time::{Duration, Instant};
+
+use org_office::accounting::{
+    build_snapshot_view, StoredSubscriptionUsageSnapshot, SubscriptionCredentialPresence,
+    SUBSCRIPTION_USAGE_FRESHNESS_MS,
+};
+use org_office::organization_family::records::{ProviderAuthMode, ProviderConnection};
+use org_office::Office;
+use org_proto::costs::{
+    CostSubscriptionUsageCollectParams, CostSubscriptionUsageCollectResult,
+    CostSubscriptionUsageCredentialRevokeParams, CostSubscriptionUsageCredentialRevokeResult,
+    CostSubscriptionUsageCredentialSetParams, CostSubscriptionUsageCredentialSetResult,
+    CostSubscriptionUsageListParams, CostSubscriptionUsageListResult, SubscriptionUsageAuthSource,
+    SubscriptionUsageSnapshotView, SubscriptionUsageStatus,
+};
+use org_proto::{ApiError, ErrorCode};
+
+use crate::credentials::{CredentialVault, EnrollmentVaultError, UnwrappedCredential};
+
+use super::endpoint::{
+    is_valid_bearer_token, resolve_expected_origin, transport_error_msg,
+    validate_usage_endpoint_url,
+};
+use super::transport::{attempt_schedule_map, record_scheduling_attempt};
+use super::{
+    SubscriptionUsageCollectOutcome, SubscriptionUsageCollectRequest, SubscriptionUsageCollector,
+    MAX_ACCOUNT_HINT_BYTES, MAX_COLLECT_RESPONSE_BYTES, MAX_CONCURRENT_COLLECTORS,
+    TOTAL_COLLECTION_BUDGET,
+};
+
 use crate::credentials::format_rfc3339_ms;
 
 // ---------------------------------------------------------------------------

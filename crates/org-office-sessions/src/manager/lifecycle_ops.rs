@@ -201,12 +201,12 @@ pub(super) fn reap_cleared_handle(
     old: LiveSessionHandle,
 ) -> Result<(), ApiError> {
     if old.thread.is_some() {
-        crate::bwrap_isolation::reap_live_handle(
+        super::reap::reap_live_handle(
             mgr,
             employee_id,
             old,
             None,
-            crate::bwrap_isolation::ReapMode::FailClosedRestore {
+            super::reap::ReapMode::FailClosedRestore {
                 conflict_message: format!(
                     "could not verify teardown of session `{employee_id}` during recovery clear; resolve recovery first"
                 ),
@@ -233,6 +233,13 @@ pub(super) fn stop_session_impl(
 ) -> Result<SessionView, ApiError> {
     let removed = {
         let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        let start_in_flight = reg.starting.contains(employee_id);
+        if start_in_flight {
+            // The stop still wins over an in-flight start, warm send or failover relaunch: the
+            // epoch moves before refusing, so that launch aborts at registration (and drops its
+            // failover turn) instead of leaving a live session behind (`TASK-190`).
+            reg.record_explicit_stop(employee_id);
+        }
         if let Some(handle) = reg.live.get(employee_id) {
             let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
             if let Err(err) = ensure_live_handle_not_recovery_required(&st) {
@@ -241,7 +248,7 @@ pub(super) fn stop_session_impl(
                 mgr.bindings.revoke(employee_id, None);
                 return Err(err);
             }
-            if reg.starting.contains(employee_id) {
+            if start_in_flight {
                 return Err(ApiError::new(
                     ErrorCode::Conflict,
                     "agent session start or teardown is already in progress",
@@ -257,7 +264,7 @@ pub(super) fn stop_session_impl(
             reg.record_explicit_stop(employee_id);
             handle
         } else {
-            if reg.starting.contains(employee_id) {
+            if start_in_flight {
                 return Err(ApiError::new(
                     ErrorCode::Conflict,
                     "agent session start or teardown is already in progress",
@@ -272,12 +279,12 @@ pub(super) fn stop_session_impl(
         return mgr.idle_view_for(employee_id);
     };
     let slot_guard = StartSlotGuard::new(&mgr.registry, employee_id.to_owned());
-    let reaped = crate::bwrap_isolation::reap_live_handle(
+    let reaped = super::reap::reap_live_handle(
         mgr,
         employee_id,
         handle,
         Some(reason),
-        crate::bwrap_isolation::ReapMode::FailClosedRestore {
+        super::reap::ReapMode::FailClosedRestore {
             conflict_message: format!(
                 "could not verify teardown of session `{employee_id}`; resolve recovery first"
             ),
@@ -298,12 +305,12 @@ pub(super) fn reap_replaced_handle(
     let Some(handle) = old else {
         return Ok(());
     };
-    crate::bwrap_isolation::reap_live_handle(
+    super::reap::reap_live_handle(
         mgr,
         emp_id,
         handle,
         None,
-        crate::bwrap_isolation::ReapMode::FailClosedRestore {
+        super::reap::ReapMode::FailClosedRestore {
             conflict_message: format!(
                 "could not verify teardown of prior session `{emp_id}`; resolve recovery first"
             ),
@@ -326,12 +333,12 @@ pub(super) fn stop_session_for_shutdown(mgr: &SessionManager, employee_id: &str,
     };
     if let Some(handle) = removed {
         let _slot_guard = StartSlotGuard::new(&mgr.registry, employee_id.to_owned());
-        let _ = crate::bwrap_isolation::reap_live_handle(
+        let _ = super::reap::reap_live_handle(
             mgr,
             employee_id,
             handle,
             Some(reason),
-            crate::bwrap_isolation::ReapMode::ShutdownDrain,
+            super::reap::ReapMode::ShutdownDrain,
         );
     }
 }

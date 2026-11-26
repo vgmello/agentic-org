@@ -9,6 +9,8 @@ mod stream;
 mod system;
 
 #[cfg(test)]
+mod classify_tests;
+#[cfg(test)]
 mod plugin_tests;
 
 use std::collections::{BTreeMap, BTreeSet};

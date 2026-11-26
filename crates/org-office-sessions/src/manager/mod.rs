@@ -40,6 +40,7 @@ use crate::wake::{
 };
 
 mod auth_guards;
+mod bwrap_isolation;
 mod environment;
 mod failover;
 #[cfg(test)]
@@ -47,6 +48,7 @@ mod helper_tests;
 mod install;
 mod launch;
 mod lifecycle_ops;
+mod reap;
 mod registry_guards;
 mod rpc;
 mod rust_toolchain;
@@ -57,7 +59,9 @@ mod spec;
 mod views;
 mod warm;
 
-pub(crate) use environment::ensure_owner_only_dir;
+pub(crate) use bwrap_isolation::has_unmasked_bwrap_sibling_in_office;
+#[cfg(test)]
+pub(crate) use bwrap_isolation::{enforce_bwrap_sibling_isolation, ensure_bwrap_deny_dirs};
 #[cfg(test)]
 pub(crate) use failover::{
     is_host_claude_subscription_refresh_eligible, requeue_contended_failover, run_failover_relaunch,
@@ -66,9 +70,9 @@ pub(crate) use failover::{
 pub(crate) use install::{install_unrecovered_pre_pump_handle, PrePumpHandleMeta};
 #[cfg(test)]
 pub(crate) use lifecycle_ops::{take_clearable_live_handle, ClearableHandle};
+pub(crate) use reap::{reap_live_handle, ReapMode};
 #[cfg(test)]
 pub(crate) use rust_toolchain::host_rust_dir_env_from;
-pub(crate) use sandbox_rules::collect_self_active_admins;
 #[cfg(test)]
 pub(crate) use spec::effective_approval_writable_roots_from;
 
@@ -171,6 +175,7 @@ impl Drop for BgSpawnGuard<'_> {
 pub(crate) struct StartSlotGuard<'a> {
     registry: &'a Mutex<SessionRegistry>,
     employee_id: String,
+    armed: bool,
 }
 
 impl<'a> StartSlotGuard<'a> {
@@ -178,12 +183,28 @@ impl<'a> StartSlotGuard<'a> {
         Self {
             registry,
             employee_id,
+            armed: true,
         }
+    }
+
+    /// Releases the slot inside the `registry` critical section the caller already holds, so
+    /// registering a handle and releasing its start slot are one atomic step (`TASK-190`).
+    pub(crate) fn release_locked(mut self, reg: &mut SessionRegistry) {
+        reg.starting.remove(&self.employee_id);
+        self.armed = false;
+    }
+
+    /// Keeps the slot reserved for the next owner (a warm send handing over to a cold start).
+    pub(crate) fn keep_reserved(mut self) {
+        self.armed = false;
     }
 }
 
 impl Drop for StartSlotGuard<'_> {
     fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
         let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
         reg.starting.remove(&self.employee_id);
     }
@@ -241,6 +262,7 @@ struct PlannedSessionLaunch {
     permit: Option<(String, u64)>,
     task_ref: Option<String>,
     tried_connections: Vec<String>,
+    start_stop_epoch: u64,
     home: PathBuf,
     workspace_real: PathBuf,
     runtime_dir: PathBuf,
@@ -270,6 +292,9 @@ struct PreparedSessionLaunch {
     permit: Option<(String, u64)>,
     task_ref: Option<String>,
     tried_connections: Vec<String>,
+    /// The explicit-stop epoch when the start slot was reserved; registration refuses the
+    /// handle when a stop was accepted or refused in between (`TASK-190`).
+    start_stop_epoch: u64,
     home: PathBuf,
     tmpdir: PathBuf,
     binding_file: PathBuf,

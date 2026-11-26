@@ -1,7 +1,15 @@
 //! Durable usage capture: staging, FIFO overflow flush, watermarks, and rejected-usage
 //! dead letters (`TASK-97`).
 
-use super::*;
+use std::fs::{self};
+use std::io;
+
+use serde::{Deserialize, Serialize};
+
+use super::{
+    ensure_owner_dirs_synced, read_optional_json, write_atomic_json_durable, ActiveTurnRecord,
+    PendingStartRecord, SessionStore,
+};
 
 impl SessionStore {
     /// Atomically stages a raw usage observation (and any older overflow observations first, in

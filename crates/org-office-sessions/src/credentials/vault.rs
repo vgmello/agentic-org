@@ -1,7 +1,26 @@
 //! Wrapped, owner-only credential vault for provider CLI enrollments and usage credentials
 //! (`ADR-0032`, `ENROLL-4..6`).
 
-use super::*;
+use std::fmt;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use org_pki::wrap::{
+    derive_wrapping_key, unwrap_provider_credential, wrap_provider_credential, KeyClass,
+    ProviderCredentialBinding,
+};
+use org_proto::costs::SubscriptionUsageCredentialView;
+use org_proto::sessions::ProviderCredentialView;
+use zeroize::Zeroizing;
+
+use super::{
+    is_safe_id, random_hex, rfc3339_now, CredentialMetadata, EnrollmentVaultError,
+    UnwrappedCredential, CREDENTIAL_VERSION,
+};
 
 /// Persists wrapped provider credentials under `<durable>/local/offices/<office_id>/auth/<connection_id>/credential.v1.json`.
 #[derive(Clone)]

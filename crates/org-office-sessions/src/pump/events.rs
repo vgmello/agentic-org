@@ -7,7 +7,8 @@ use std::time::Instant;
 use org_agent_runtime::{Control, SessionEvent};
 use org_proto::sessions::SessionState;
 
-use crate::credentials::{redact_secrets, rfc3339_now};
+use crate::credentials::rfc3339_now;
+use crate::redact::redact_text;
 use crate::subagents::BackgroundKind;
 
 use super::approval::handle_approval_request;
@@ -22,6 +23,21 @@ pub(super) fn rollback_failed_write_delivery(loop_state: &mut PumpLoopState, del
         .is_some_and(|b| b.delivery_id == delivery_id)
     {
         loop_state.in_flight_delivery = None;
+    }
+}
+
+/// Redacts `event` in place through the crate's single choke-point and appends it to the
+/// durable history (`ENROLL-3`, `TASK-190`), which redacts the stored JSON structurally again.
+pub(super) fn redact_event_into_history(
+    ctx: &PumpContext,
+    event: &mut SessionEvent,
+    active_secrets: &[&str],
+) {
+    event.redact(&mut |s| *s = redact_text(s, active_secrets));
+    if let Ok(json_val) = serde_json::to_value(&*event) {
+        let _ = ctx
+            .store
+            .append_history(&ctx.employee_id, &json_val, active_secrets);
     }
 }
 
@@ -60,12 +76,7 @@ pub(super) fn apply_outputs(
                     SessionEvent::ApprovalRequested(req) => Some(req.clone()),
                     _ => None,
                 };
-                event.redact(&mut |s| {
-                    *s = redact_secrets(s, &refs);
-                });
-                if let Ok(json_val) = serde_json::to_value(&event) {
-                    let _ = ctx.store.append_history(&ctx.employee_id, &json_val, &refs);
-                }
+                redact_event_into_history(ctx, &mut event, &refs);
                 let ctrl = if let Some(raw_req) = unredacted_approval {
                     let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
                     state.watchdog.record_activity(Instant::now());

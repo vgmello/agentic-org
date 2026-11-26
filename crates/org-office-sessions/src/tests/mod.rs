@@ -67,6 +67,7 @@ mod presets;
 mod real_process;
 mod recovery;
 mod recovery_clear;
+mod redaction;
 mod sandbox;
 mod subagents_binding;
 mod subscription_usage;

@@ -145,14 +145,14 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
             return;
         }
     };
-    let _guard = StartSlotGuard::new(&mgr.registry, req.employee_id.clone());
+    let slot = StartSlotGuard::new(&mgr.registry, req.employee_id.clone());
     if let Some(old) = dead_handle {
-        if crate::bwrap_isolation::reap_live_handle(
+        if super::reap::reap_live_handle(
             mgr,
             &req.employee_id,
             old,
             Some("pool_failover"),
-            crate::bwrap_isolation::ReapMode::FailClosedRestore {
+            super::reap::ReapMode::FailClosedRestore {
                 conflict_message: format!(
                     "could not verify teardown of failed session `{}`; resolve recovery first",
                     req.employee_id
@@ -195,12 +195,15 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
         } else {
             req.tried_connections.clone()
         },
+        // `take_failed_live_handle` reserved the slot only while the epoch still matched, so a
+        // stop from here on makes the relaunch abort at registration (`TASK-190`).
+        start_stop_epoch: req.stop_epoch,
     };
     let objective = mgr.prepend_watch_notices(employee.id.as_str(), req.objective.clone());
     let launch_res = mgr
         .plan_session_launch(&employee, &params, opts)
         .and_then(|planned| mgr.issue_and_spawn_launch(objective, planned))
-        .and_then(|prepared| mgr.install_live_session(prepared));
+        .and_then(|prepared| mgr.install_live_session(prepared, slot));
     if let Err(err) = launch_res {
         record_failover_exhausted(mgr, &req, &err);
     }
@@ -215,11 +218,7 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
 /// `stop_session` ([`FailoverSlot::Abandoned`]); a transient admission refusal (a satellite
 /// awaiting its HQ snapshot, an unreadable record) keeps the turn, never drops it.
 pub(crate) fn requeue_contended_failover(mgr: &SessionManager, req: &FailoverRequest) {
-    let abandoned = {
-        let reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
-        reg.draining || reg.shutting_down || reg.stop_epoch(&req.employee_id) != req.stop_epoch
-    };
-    if abandoned || is_retired_agent(mgr, &req.employee_id) {
+    if is_failover_abandoned(mgr, req) || is_retired_agent(mgr, &req.employee_id) {
         return;
     }
     let note = serde_json::json!({
@@ -230,6 +229,13 @@ pub(crate) fn requeue_contended_failover(mgr: &SessionManager, req: &FailoverReq
     });
     let _ = mgr.store.append_history(&req.employee_id, &note, &[]);
     enqueue_recovery_wake(mgr, req, None);
+}
+
+/// `true` once admissions closed or an explicit stop moved the employee's stop epoch past the
+/// failed run's: the failover is intentionally dropped.
+fn is_failover_abandoned(mgr: &SessionManager, req: &FailoverRequest) -> bool {
+    let reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+    reg.draining || reg.shutting_down || reg.stop_epoch(&req.employee_id) != req.stop_epoch
 }
 
 /// `true` only when the employee record says the agent will never run again here.
@@ -245,6 +251,11 @@ pub(super) fn record_failover_exhausted(
     req: &FailoverRequest,
     err: &ApiError,
 ) {
+    if is_failover_abandoned(mgr, req) {
+        // Explicitly stopped (pause, offboard, owner stop) or shutting down while relaunching:
+        // the turn is dropped on purpose, so nothing is recorded or requeued (`TASK-190`).
+        return;
+    }
     let note = serde_json::json!({
         "type": "pool_failover_exhausted",
         "failed_connection_id": req.failed_connection_id,

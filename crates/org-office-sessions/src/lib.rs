@@ -11,10 +11,9 @@
 //! - Restart continuation & stall watchdog (`ADR-0030` / `LIVE-9..13`)
 //! - Browser-driven provider CLI enrollment & wrapped credential custody (`ADR-0032` / `ENROLL-1..6`)
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 pub mod binding;
-pub(crate) mod bwrap_isolation;
 pub mod credentials;
 mod employee_locks;
 mod host_auth;
@@ -24,6 +23,7 @@ pub mod manager;
 pub mod preset;
 mod pump;
 pub mod recovery;
+pub mod redact;
 pub mod router;
 pub mod runtime_registry;
 pub mod subagents;

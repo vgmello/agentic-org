@@ -1,6 +1,6 @@
 //! Concrete file-target extraction from runtime tool-call inputs (edits, moves, patches).
 
-use super::*;
+use org_agent_runtime::{ApprovalKind, ApprovalRequest, ToolCapability};
 
 pub(super) fn collect_json_strings(value: &serde_json::Value, out: &mut Vec<String>) {
     match value {

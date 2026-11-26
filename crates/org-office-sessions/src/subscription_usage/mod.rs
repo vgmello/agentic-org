@@ -7,44 +7,31 @@
 //! by monotonic attempt generation, and delegates external collection behind consumer-owned ports
 //! ([`SubscriptionUsageCollector`] and [`SubscriptionUsageTransport`]).
 
-use std::collections::BTreeMap;
 use std::fmt;
-use std::io::{Read, Write};
-use std::net::{IpAddr, ToSocketAddrs};
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use org_office::accounting::{
-    build_snapshot_view, canonical_provider_namespace, StoredSubscriptionUsageSnapshot,
-    SubscriptionCredentialPresence, SUBSCRIPTION_USAGE_FRESHNESS_MS,
-};
-use org_office::organization_family::records::{ProviderAuthMode, ProviderConnection};
-use org_office::Office;
-use org_proto::costs::{
-    CostSubscriptionUsageCollectParams, CostSubscriptionUsageCollectResult,
-    CostSubscriptionUsageCredentialRevokeParams, CostSubscriptionUsageCredentialRevokeResult,
-    CostSubscriptionUsageCredentialSetParams, CostSubscriptionUsageCredentialSetResult,
-    CostSubscriptionUsageListParams, CostSubscriptionUsageListResult, SubscriptionModelUsageView,
-    SubscriptionUsageAuthSource, SubscriptionUsageSnapshotView, SubscriptionUsageStatus,
-};
-use org_proto::{ApiError, ErrorCode};
+use org_office::accounting::canonical_provider_namespace;
+use org_proto::costs::{SubscriptionModelUsageView, SubscriptionUsageAuthSource};
 use zeroize::Zeroizing;
 
-use crate::credentials::{
-    redact_secrets, CredentialVault, EnrollmentVaultError, UnwrappedCredential,
+use crate::redact::redact_text;
+use endpoint::{
+    classify_http_and_parse, default_provider_origin, is_valid_bearer_token,
+    resolve_provider_endpoint, transport_error_msg,
 };
-use parse::parse_provider_payload;
 
 mod endpoint;
 mod parse;
 mod rollup;
 mod transport;
 
-pub use endpoint::*;
-pub(crate) use rollup::*;
-pub use transport::*;
+pub use endpoint::{validate_usage_endpoint_url, ValidatedEndpoint};
+pub(crate) use rollup::{
+    collect_subscription_usage, list_subscription_usage, revoke_subscription_usage_credential,
+    set_subscription_usage_credential,
+};
+pub use transport::SystemHttpsUsageTransport;
 
 const MAX_USAGE_SECRET_BYTES: usize = 4096;
 const MAX_USAGE_RESPONSE_BYTES: usize = 256 * 1024;
@@ -172,7 +159,7 @@ impl SubscriptionUsageCollector for ProviderSubscriptionUsageCollector {
             Err(err) => {
                 return SubscriptionUsageCollectOutcome::Unavailable {
                     issue_code: "INVALID_ENDPOINT".into(),
-                    message: redact_secrets(&transport_error_msg(err), &[token]),
+                    message: redact_text(&transport_error_msg(err), &[token]),
                 };
             }
         };
@@ -209,7 +196,7 @@ impl SubscriptionUsageCollector for ProviderSubscriptionUsageCollector {
             Err(UsageTransportError::InvalidEndpoint(msg)) => {
                 return SubscriptionUsageCollectOutcome::Unavailable {
                     issue_code: "INVALID_ENDPOINT".into(),
-                    message: redact_secrets(&msg, &[token]),
+                    message: redact_text(&msg, &[token]),
                 };
             }
             Err(UsageTransportError::DeadlineExceeded) => {
@@ -224,7 +211,7 @@ impl SubscriptionUsageCollector for ProviderSubscriptionUsageCollector {
             Err(UsageTransportError::Unavailable(msg)) => {
                 return SubscriptionUsageCollectOutcome::Unavailable {
                     issue_code: "PROVIDER_UNAVAILABLE".into(),
-                    message: redact_secrets(&msg, &[token]),
+                    message: redact_text(&msg, &[token]),
                 };
             }
         };

@@ -702,3 +702,192 @@ fn agent_git_identity_allows_plain_git_commit_without_global_config() {
         format!("{git_name}|{git_email}|{git_name}|{git_email}")
     );
 }
+
+#[test]
+fn rust_cache_and_env_dirs_refuse_ancestors_of_forbidden_roots_symmetrically() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let durable = root.join("host").join("durable");
+    let cargo_dir = root.join("cargo");
+    let registry = cargo_dir.join("registry");
+    let agent_home = root.join("agent-home");
+    std::fs::create_dir_all(&durable).unwrap();
+    std::fs::create_dir_all(registry.join("office-inside")).unwrap();
+    std::fs::create_dir_all(&agent_home).unwrap();
+    std::fs::set_permissions(&agent_home, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    // A host Rust dir that CONTAINS a forbidden root would expose it (rules §3.1).
+    let forbidden = vec![durable.clone()];
+    assert!(super::host_rust_dir_env_from(
+        Some(root.join("host").into_os_string()),
+        None,
+        ".cargo",
+        &forbidden,
+    )
+    .is_none());
+    assert!(super::host_rust_dir_env_from(
+        Some(durable.join("..").join("..").into_os_string()),
+        None,
+        ".cargo",
+        &forbidden,
+    )
+    .is_none());
+    // A sibling of the forbidden root is still accepted.
+    assert_eq!(
+        super::host_rust_dir_env_from(
+            Some(cargo_dir.clone().into_os_string()),
+            None,
+            ".cargo",
+            &forbidden
+        )
+        .map(PathBuf::from),
+        Some(cargo_dir.clone())
+    );
+
+    // The same holds for the read-only cache links planted in the agent home.
+    let forbidden = vec![agent_home.clone(), registry.join("office-inside")];
+    assert!(link_host_rust_caches(&agent_home, None, Some(&cargo_dir), &forbidden).is_none());
+    assert!(
+        std::fs::symlink_metadata(agent_home.join(".cargo").join("registry")).is_err(),
+        "a cache that contains a forbidden root must never be linked"
+    );
+    let forbidden = vec![agent_home.clone(), root.join("elsewhere")];
+    assert!(link_host_rust_caches(&agent_home, None, Some(&cargo_dir), &forbidden).is_some());
+}
+
+#[test]
+fn bwrap_pruned_claude_plan_has_no_double_globstar_and_no_concrete_sibling_globs() {
+    use org_agent_runtime::{AgentRuntime, Rule, RuleScope, RuleTool, SandboxSpec};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let workspace = root.join("workspace");
+    let sibling = root.join("agents").join("sibling-live");
+    let hooks = workspace.join(".git").join("hooks");
+    let runtime_dir = root.join("rt");
+    let tmpdir = root.join("tmp");
+    for d in [&workspace, &sibling, &hooks, &runtime_dir, &tmpdir] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let pat = |p: String| PathPattern::try_from(p.as_str()).unwrap();
+    let sp = |p: &Path| SpecPath::try_from(p.to_str().unwrap()).unwrap();
+    let mut spec = SessionSpec {
+        runtime: RuntimeId::try_from("claude").unwrap(),
+        kind: SessionKind::Home {},
+        agent: AgentIdentity {
+            name: AgentName::try_from("eng").unwrap(),
+            description: "Engineer".to_owned(),
+            prompt: "Engineer".to_owned(),
+        },
+        model: None,
+        effort: None,
+        workspace: sp(&workspace),
+        read_only_dirs: vec![sp(&sibling)],
+        instructions: String::new(),
+        permission_mode: org_agent_runtime::PermissionMode::Ask,
+        policy: org_agent_runtime::PermissionPolicy {
+            version: 1,
+            allow: Vec::new(),
+            deny: vec![Rule {
+                tool: RuleTool::try_from("*").unwrap(),
+                scope: RuleScope::Path(pat(format!("{}/**/**", sibling.display()))),
+            }],
+        },
+        sandbox: SandboxSpec {
+            enabled: true,
+            writable_roots: vec![sp(&workspace)],
+            deny_write: vec![
+                pat(format!("{}/**/**", hooks.display())),
+                pat(format!("{}/**", sibling.display())),
+            ],
+            deny_read: vec![
+                pat(format!("{}/**", sibling.display())),
+                pat(format!("{}/**/**", sibling.display())),
+            ],
+            allowed_unix_sockets: Vec::new(),
+        },
+        mcp_servers: Default::default(),
+        tools: None,
+    };
+    let linux_bwrap = !org_platform::confinement::unix_socket_path_filter_supported();
+    if linux_bwrap {
+        apply_linux_claude_bwrap_pruning(&mut spec);
+        let deny_write: Vec<&str> = spec
+            .sandbox
+            .deny_write
+            .iter()
+            .map(PathPattern::as_str)
+            .collect();
+        assert!(
+            deny_write.contains(&hooks.to_str().unwrap()),
+            "{deny_write:?}"
+        );
+        assert!(
+            deny_write.contains(&sibling.to_str().unwrap()),
+            "{deny_write:?}"
+        );
+    }
+    let ctx = LaunchContext {
+        runtime_path: PathBuf::from("/usr/local/bin/claude"),
+        runtime_version: None,
+        runtime_dir: sp(&runtime_dir),
+        tmpdir: sp(&tmpdir),
+        office_env_names: office_env_names(),
+        new_session_id: Some(SessionId::try_from("11111111-1111-4111-8111-111111111111").unwrap()),
+        resume: None,
+        config_dir: None,
+    };
+    let (plan, _) = org_agent_runtime_claude::ClaudeRuntime::new()
+        .plan_session(&spec, &ctx)
+        .unwrap();
+    let settings: serde_json::Value = serde_json::from_slice(
+        &plan
+            .files
+            .iter()
+            .find(|f| f.rel_path.as_str() == "claude-settings.json")
+            .unwrap()
+            .contents,
+    )
+    .unwrap();
+    let mut emitted: Vec<String> = Vec::new();
+    for list in [
+        &settings["permissions"]["deny"],
+        &settings["sandbox"]["filesystem"]["denyWrite"],
+        &settings["sandbox"]["filesystem"]["denyRead"],
+    ] {
+        for entry in list
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+        {
+            let path = entry
+                .split_once('(')
+                .and_then(|(_, rest)| rest.strip_suffix(')'))
+                .unwrap_or(entry);
+            emitted.push(path.trim_start_matches('/').to_owned());
+        }
+    }
+    for path in &emitted {
+        assert!(
+            !path.contains("/**/**"),
+            "malformed `/**/**` emitted: {path}"
+        );
+    }
+    if linux_bwrap {
+        let sibling_rel = sibling.to_str().unwrap().trim_start_matches('/');
+        let hooks_rel = hooks.to_str().unwrap().trim_start_matches('/');
+        for path in &emitted {
+            assert!(
+                !path.starts_with(sibling_rel) || !path.ends_with("/**"),
+                "sibling directory walked with `/**` on Linux bwrap: {path}"
+            );
+            assert!(
+                !path.starts_with(hooks_rel) || !path.ends_with("/**"),
+                "concrete denyWrite directory walked with `/**` on Linux bwrap: {path}"
+            );
+        }
+        assert!(emitted.iter().any(|p| p == sibling_rel), "{emitted:?}");
+        assert!(emitted.iter().any(|p| p == hooks_rel), "{emitted:?}");
+    }
+}

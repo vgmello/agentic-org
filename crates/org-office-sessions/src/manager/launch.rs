@@ -1,19 +1,20 @@
 //! Session launch: admission, route planning, warm reuse checks, and spawn + persist.
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::{BTreeSet, HashSet};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 
 use org_office::organization_family::records::Employee;
-use org_office::Office;
 use org_proto::sessions::{MemberSessionStartParams, SessionState, SessionView};
 use org_proto::{ApiError, ErrorCode};
 use org_supervise::SessionMark;
 
 use crate::credentials::rfc3339_now;
-use crate::pump::PumpCommand;
+use crate::pump::{PumpCommand, SessionRuntimeState};
 use crate::recovery::{ActiveTurnRecord, PendingStartRecord};
 use crate::subagents::{build_general_subagent_definition, write_subagent_definition};
 
+use super::bwrap_isolation::has_unmasked_bwrap_sibling_in_office;
 use super::environment::{
     assemble_launch_env, build_objective_text, resolve_workspace, write_owner_only_binding_file,
     SessionEnvInput,
@@ -24,82 +25,216 @@ use super::spec::{
     compute_launch_spec_hash, is_linux_claude_bwrap,
 };
 use super::warm::{
-    dispatch_warm_handle_turn, warm_handle_stop_reason, LaunchRouteOpts, WarmHandleTurn,
+    dispatch_warm_handle_turn, warm_handle_stop_reason, LaunchRouteOpts, WarmFreshness,
+    WarmHandleTurn,
 };
 use super::{
     next_entropy_hex, next_uuid_v4, BindingGuard, LiveSessionHandle, PermitGuard,
     PlannedSessionLaunch, PreparedSessionLaunch, SessionManager,
 };
 
+/// Times a start re-plans when its warm handle is replaced while freshness checks run unlocked.
+const MAX_WARM_REVALIDATIONS: usize = 3;
+
+/// The outcome of reserving a start: a live or warm-send view, or a reserved start slot with
+/// the handle it replaces and the explicit-stop epoch at reservation (`TASK-190`).
+pub(super) struct StartReservation {
+    pub(super) live_view: Option<SessionView>,
+    pub(super) finished_handle: Option<LiveSessionHandle>,
+    pub(super) start_stop_epoch: u64,
+}
+
+/// A warm handle as seen under a brief lock: its identity (the runtime-state `Arc`) and the
+/// immutable fields the unlocked disk and SQLite freshness checks read.
+struct WarmHandleSnapshot {
+    state: Arc<Mutex<SessionRuntimeState>>,
+    has_connection: bool,
+    bwrap_masked_siblings: Option<BTreeSet<String>>,
+}
+
+/// What a start does once its warm handle (if any) is re-validated under the lock.
+enum StartDecision {
+    LiveView(Box<SessionView>),
+    WarmSend(WarmSendTarget),
+    Cold {
+        finished: Option<LiveSessionHandle>,
+        start_stop_epoch: u64,
+    },
+}
+
+struct WarmSendTarget {
+    tx: Sender<PumpCommand>,
+    state: Arc<Mutex<SessionRuntimeState>>,
+    conn_id: Option<String>,
+    route_digest: String,
+    active_permit: Arc<Mutex<Option<(String, u64)>>>,
+    start_stop_epoch: u64,
+}
+
 impl SessionManager {
+    /// Reserves the start slot or sends a turn to the warm handle. No disk, SQLite or
+    /// watch-notice I/O runs under `registry` or a handle's state lock (`TASK-190`, rules §3.4):
+    /// the handle is snapshotted under a brief lock, checked unlocked, then re-validated by
+    /// identity under the lock before anything is decided.
     pub(super) fn reserve_start_or_send(
         &self,
         employee: &Employee,
         objective: Option<String>,
         task_ref: Option<&str>,
         requested_workspace: Option<&str>,
-    ) -> Result<(Option<SessionView>, Option<LiveSessionHandle>), ApiError> {
+    ) -> Result<StartReservation, ApiError> {
         let emp_id = employee.id.as_str();
-        let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-        check_registry_startable(&reg, emp_id)?;
-        let finished = if let Some(handle) = reg.live.get(emp_id) {
-            let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-            ensure_live_handle_not_recovery_required(&state)?;
-            let bwrap_topology_stale = is_bwrap_topology_stale(&self.office, emp_id, handle);
-            let stop_reason = warm_handle_stop_reason(
-                &self.office,
+        for _ in 0..MAX_WARM_REVALIDATIONS {
+            let snapshot = self.snapshot_warm_handle(emp_id)?;
+            let freshness = snapshot
+                .as_ref()
+                .map(|snap| self.warm_handle_freshness(emp_id, snap));
+            let decision = self.decide_start_or_send(
                 emp_id,
-                handle,
+                snapshot.as_ref(),
+                freshness,
+                objective.is_some(),
                 requested_workspace,
-                state.state,
-                bwrap_topology_stale,
-            );
-            if stop_reason.is_none() && is_warm_state_reusable(state.state) {
-                if let Some(text) = objective {
-                    ensure_warm_bwrap_not_stale(bwrap_topology_stale)?;
-                    let text = self.prepend_watch_notices(emp_id, text);
-                    let tx = handle.tx.clone();
-                    let st = Arc::clone(&handle.state);
-                    let conn_id = handle.connection_id.clone();
-                    let route_digest = handle.route_digest.clone();
-                    let active_permit = Arc::clone(&handle.active_permit);
-                    drop(state);
-                    // Reserve `starting` BEFORE releasing `reg` lock so no concurrent caller
-                    // can race into a second spawn (`Finding #3`).
-                    reg.starting.insert(emp_id.to_owned());
-                    drop(reg);
+            )?;
+            match decision {
+                None => continue,
+                Some(StartDecision::LiveView(view)) => {
+                    return Ok(StartReservation {
+                        live_view: Some(*view),
+                        finished_handle: None,
+                        start_stop_epoch: 0,
+                    });
+                }
+                Some(StartDecision::Cold {
+                    finished,
+                    start_stop_epoch,
+                }) => {
+                    return Ok(StartReservation {
+                        live_view: None,
+                        finished_handle: finished,
+                        start_stop_epoch,
+                    });
+                }
+                Some(StartDecision::WarmSend(target)) => {
                     return dispatch_warm_handle_turn(
                         self,
                         WarmHandleTurn {
                             emp_id,
                             task_ref,
-                            tx,
-                            state: st,
-                            conn_id,
-                            route_digest,
-                            active_permit,
-                            text,
+                            tx: target.tx,
+                            state: target.state,
+                            conn_id: target.conn_id,
+                            route_digest: target.route_digest,
+                            active_permit: target.active_permit,
+                            text: objective.unwrap_or_default(),
+                            start_stop_epoch: target.start_stop_epoch,
                         },
                     );
                 }
-                return Ok((Some(state.to_view()), None));
             }
-            if let Some(reason) = stop_reason {
-                let _ = handle.tx.send(PumpCommand::Stop {
-                    reason: reason.into(),
-                });
+        }
+        Err(ApiError::new(
+            ErrorCode::Conflict,
+            "agent session changed while the start was being planned; retry",
+        ))
+    }
+
+    fn snapshot_warm_handle(&self, emp_id: &str) -> Result<Option<WarmHandleSnapshot>, ApiError> {
+        let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        check_registry_startable(&reg, emp_id)?;
+        let Some(handle) = reg.live.get(emp_id) else {
+            return Ok(None);
+        };
+        ensure_live_handle_not_recovery_required(
+            &handle.state.lock().unwrap_or_else(|p| p.into_inner()),
+        )?;
+        Ok(Some(WarmHandleSnapshot {
+            state: Arc::clone(&handle.state),
+            has_connection: handle.connection_id.is_some(),
+            bwrap_masked_siblings: handle.bwrap_masked_siblings.clone(),
+        }))
+    }
+
+    /// Disk (`read_dir`) and SQLite (`list_employees`, `load_agent_execution`) checks, run
+    /// with no lock held.
+    fn warm_handle_freshness(&self, emp_id: &str, snap: &WarmHandleSnapshot) -> WarmFreshness {
+        WarmFreshness {
+            bwrap_topology_stale: snap.bwrap_masked_siblings.as_ref().is_some_and(|masked| {
+                has_unmasked_bwrap_sibling_in_office(&self.office, emp_id, masked)
+            }),
+            route_stale: !snap.has_connection
+                && self
+                    .office
+                    .load_agent_execution(emp_id)
+                    .ok()
+                    .flatten()
+                    .is_some(),
+        }
+    }
+
+    /// Re-validates the snapshotted handle by identity under the lock and decides. `None` means
+    /// the handle was replaced or removed while unlocked, so the caller plans again.
+    fn decide_start_or_send(
+        &self,
+        emp_id: &str,
+        snapshot: Option<&WarmHandleSnapshot>,
+        freshness: Option<WarmFreshness>,
+        wants_turn: bool,
+        requested_workspace: Option<&str>,
+    ) -> Result<Option<StartDecision>, ApiError> {
+        let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        check_registry_startable(&reg, emp_id)?;
+        let handle = reg.live.get(emp_id);
+        let unchanged = match (snapshot, handle) {
+            (None, None) => true,
+            (Some(snap), Some(handle)) => Arc::ptr_eq(&snap.state, &handle.state),
+            _ => false,
+        };
+        if !unchanged {
+            return Ok(None);
+        }
+        let (Some(handle), Some(freshness)) = (handle, freshness) else {
+            reg.starting.insert(emp_id.to_owned());
+            return Ok(Some(StartDecision::Cold {
+                finished: None,
+                start_stop_epoch: reg.stop_epoch(emp_id),
+            }));
+        };
+        let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+        ensure_live_handle_not_recovery_required(&state)?;
+        let stop_reason =
+            warm_handle_stop_reason(handle, requested_workspace, state.state, freshness);
+        if stop_reason.is_none() && is_warm_state_reusable(state.state) {
+            if !wants_turn {
+                return Ok(Some(StartDecision::LiveView(Box::new(state.to_view()))));
             }
-            true
-        } else {
-            false
-        };
-        let old = if finished {
-            reg.live.remove(emp_id)
-        } else {
-            None
-        };
+            ensure_warm_bwrap_not_stale(freshness.bwrap_topology_stale)?;
+            let target = WarmSendTarget {
+                tx: handle.tx.clone(),
+                state: Arc::clone(&handle.state),
+                conn_id: handle.connection_id.clone(),
+                route_digest: handle.route_digest.clone(),
+                active_permit: Arc::clone(&handle.active_permit),
+                start_stop_epoch: reg.stop_epoch(emp_id),
+            };
+            drop(state);
+            // Reserve `starting` BEFORE releasing the `registry` lock so no concurrent caller
+            // can race into a second spawn (`Finding #3`).
+            reg.starting.insert(emp_id.to_owned());
+            return Ok(Some(StartDecision::WarmSend(target)));
+        }
+        if let Some(reason) = stop_reason {
+            let _ = handle.tx.send(PumpCommand::Stop {
+                reason: reason.into(),
+            });
+        }
+        drop(state);
+        let finished = reg.live.remove(emp_id);
         reg.starting.insert(emp_id.to_owned());
-        Ok((None, old))
+        Ok(Some(StartDecision::Cold {
+            finished,
+            start_stop_epoch: reg.stop_epoch(emp_id),
+        }))
     }
 
     pub(super) fn prepare_and_spawn(
@@ -108,13 +243,21 @@ impl SessionManager {
         employee: &Employee,
         params: &MemberSessionStartParams,
         resume_runtime_session_id: Option<&str>,
+        start_stop_epoch: u64,
     ) -> Result<PreparedSessionLaunch, ApiError> {
         let objective = params
             .instruction
             .as_deref()
             .map(|text| build_objective_text(employee, actor_member_id, text))
             .unwrap_or_default();
-        self.prepare_and_spawn_raw(employee, params, objective, resume_runtime_session_id, None)
+        self.prepare_and_spawn_raw(
+            employee,
+            params,
+            objective,
+            resume_runtime_session_id,
+            None,
+            start_stop_epoch,
+        )
     }
 
     pub(super) fn prepare_and_spawn_raw(
@@ -124,6 +267,7 @@ impl SessionManager {
         objective: String,
         resume_runtime_session_id: Option<&str>,
         task_ref: Option<&str>,
+        start_stop_epoch: u64,
     ) -> Result<PreparedSessionLaunch, ApiError> {
         let opts = LaunchRouteOpts {
             resume_runtime_session_id,
@@ -132,6 +276,7 @@ impl SessionManager {
             oauth_refresh_attempted: false,
             excluded_connections: HashSet::new(),
             tried_connections: Vec::new(),
+            start_stop_epoch,
         };
         let objective = self.prepend_watch_notices(employee.id.as_str(), objective);
         let planned = self.plan_session_launch(employee, params, opts)?;
@@ -148,7 +293,7 @@ impl SessionManager {
         // Before creating this agent's runtime directory or session-binding token on disk,
         // ensure no already-running Linux `bwrap` sibling lacks a mount mask for `emp_id`
         // (`TASK-166`).
-        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(self, &emp_id)?;
+        super::bwrap_isolation::enforce_bwrap_sibling_isolation(self, &emp_id)?;
         let home = self
             .office
             .ensure_private_home(&emp_id)
@@ -180,7 +325,7 @@ impl SessionManager {
         let is_linux_claude_bwrap =
             is_linux_claude_bwrap(admitted.sandbox_enabled, admitted.adapter.id().as_str());
         let bwrap_masked_siblings = if is_linux_claude_bwrap {
-            Some(crate::bwrap_isolation::ensure_bwrap_deny_dirs(
+            Some(super::bwrap_isolation::ensure_bwrap_deny_dirs(
                 self, &emp_id,
             )?)
         } else {
@@ -268,6 +413,7 @@ impl SessionManager {
             permit: permit_guard.take(),
             task_ref: opts.task_ref.map(str::to_owned),
             tried_connections: opts.tried_connections,
+            start_stop_epoch: opts.start_stop_epoch,
             home,
             workspace_real,
             runtime_dir,
@@ -306,6 +452,7 @@ impl SessionManager {
             permit,
             task_ref,
             tried_connections,
+            start_stop_epoch,
             home,
             workspace_real,
             runtime_dir,
@@ -354,7 +501,7 @@ impl SessionManager {
             .flatten()
             .map_or(0, |r| r.consecutive_stalls);
 
-        crate::bwrap_isolation::verify_bwrap_masked_before_spawn(
+        super::bwrap_isolation::verify_bwrap_masked_before_spawn(
             self,
             &emp_id,
             bwrap_masked_siblings.as_ref(),
@@ -393,6 +540,7 @@ impl SessionManager {
             permit: permit_guard.take(),
             task_ref,
             tried_connections,
+            start_stop_epoch,
             home,
             tmpdir,
             binding_file,
@@ -472,16 +620,6 @@ impl SessionManager {
                 ApiError::new(ErrorCode::StorageError, "could not persist child identity")
             })
     }
-}
-
-pub(super) fn is_bwrap_topology_stale(
-    office: &Office,
-    emp_id: &str,
-    handle: &LiveSessionHandle,
-) -> bool {
-    handle.bwrap_masked_siblings.as_ref().is_some_and(|masked| {
-        crate::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(office, emp_id, masked)
-    })
 }
 
 pub(super) fn ensure_warm_bwrap_not_stale(bwrap_topology_stale: bool) -> Result<(), ApiError> {

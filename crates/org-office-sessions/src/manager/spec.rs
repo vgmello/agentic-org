@@ -145,12 +145,22 @@ pub(super) fn build_session_spec(
     })
 }
 
+/// `raw` without its trailing directory glob: any run of `/**` (a malformed `dir/**/**`
+/// included, `TASK-190`), or else one `/*`.
+fn strip_dir_glob_suffix(raw: &str) -> &str {
+    let mut stripped = raw;
+    while let Some(shorter) = stripped.strip_suffix("/**") {
+        stripped = shorter;
+    }
+    if stripped.len() == raw.len() {
+        return raw.strip_suffix("/*").unwrap_or(raw);
+    }
+    stripped
+}
+
 pub(super) fn pattern_exists_for_bwrap(pat: &PathPattern) -> bool {
     let raw = pat.as_str();
-    let stripped = raw
-        .strip_suffix("/**")
-        .or_else(|| raw.strip_suffix("/*"))
-        .unwrap_or(raw);
+    let stripped = strip_dir_glob_suffix(raw);
     let prefix = if stripped.is_empty() { "/" } else { stripped };
     if prefix.contains('*') || prefix.contains('?') || prefix.contains('[') {
         return true;
@@ -164,10 +174,9 @@ pub(super) fn pattern_exists_for_bwrap(pat: &PathPattern) -> bool {
 /// following symlinks (such as a sibling agent's `.cargo/registry` or `.rustup`, `TASK-163`).
 pub(super) fn normalize_bwrap_concrete_dir_pattern(pat: &PathPattern) -> (PathPattern, bool) {
     let raw = pat.as_str();
-    let Some(stripped) = raw.strip_suffix("/**").or_else(|| raw.strip_suffix("/*")) else {
-        return (pat.clone(), false);
-    };
-    if stripped.is_empty()
+    let stripped = strip_dir_glob_suffix(raw);
+    if stripped.len() == raw.len()
+        || stripped.is_empty()
         || stripped.contains('*')
         || stripped.contains('?')
         || stripped.contains('[')
@@ -184,9 +193,9 @@ pub(super) fn normalize_bwrap_concrete_dir_pattern(pat: &PathPattern) -> (PathPa
 
 /// Drops non-existent concrete paths from Linux Claude `bwrap` `sandbox.deny_read`,
 /// `sandbox.deny_write`, and `policy.deny` `RuleScope::Path` entries (`TASK-144`), and normalizes
-/// concrete existing directory globs (`dir/**` -> `dir`) on `deny_read` and `policy.deny` so
-/// `@anthropic-ai/sandbox-runtime` never traverses symlinks inside denied sibling agent homes
-/// (`TASK-163`). Returns `true` if any `policy.deny` rule was pruned or normalized. Callers must
+/// concrete existing directory globs (`dir/**` -> `dir`) on `deny_read`, `deny_write` and
+/// `policy.deny` so `@anthropic-ai/sandbox-runtime` never traverses symlinks inside denied
+/// sibling agent homes (`TASK-163`, `TASK-190`). Returns `true` if any `policy.deny` rule was pruned or normalized. Callers must
 /// leave `preset_cfg.policy.deny` untouched so `SessionManager`'s approval bridge
 /// (`decide_escalation_with_roots`) retains 100% coverage of absent/future and glob paths.
 pub(crate) fn prune_nonexistent_bwrap_denies(
@@ -199,6 +208,10 @@ pub(crate) fn prune_nonexistent_bwrap_denies(
         *pat = norm;
     }
     sandbox.deny_write.retain(pattern_exists_for_bwrap);
+    for pat in &mut sandbox.deny_write {
+        let (norm, _) = normalize_bwrap_concrete_dir_pattern(pat);
+        *pat = norm;
+    }
     let before = policy.deny.len();
     policy.deny.retain(|rule| match &rule.scope {
         org_agent_runtime::RuleScope::Path(pat) => pattern_exists_for_bwrap(pat),

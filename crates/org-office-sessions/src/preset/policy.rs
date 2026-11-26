@@ -1,6 +1,18 @@
 //! Allow/deny rule matching of an approval request against the session policy.
 
-use super::*;
+use org_agent_runtime::{
+    ApprovalKind, ApprovalRequest, PermissionPolicy, Rule, RuleScope, ToolCapability, ToolName,
+};
+use org_office::organization_family::records::PermissionPreset;
+
+use super::paths::{path_matches_glob, path_matches_glob_deny};
+use super::shell::{
+    command_value_matches_safe_prefix, decoded_argv_matches_deny_prefix,
+    decoded_str_matches_deny_prefix, extract_shell_command, is_shell_binary, is_shell_cmd_flag,
+    shell_command_is_unambiguously_decoded,
+};
+use super::targets::{has_concrete_file_target, is_file_target_request, is_shell_request};
+use super::EscalationDisposition;
 
 pub(super) fn evaluate_allow_policy(
     request: &ApprovalRequest,

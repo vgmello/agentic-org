@@ -1,7 +1,7 @@
 //! Deny-path and writable-root path resolution for escalation decisions (lexical and
 //! canonical, symlink-aware).
 
-use super::*;
+use org_agent_runtime::SpecPath;
 
 pub(super) fn push_unique_path(out: &mut Vec<String>, path: Option<std::path::PathBuf>) {
     let Some(s) = path.as_deref().and_then(std::path::Path::to_str) else {

@@ -4,12 +4,13 @@ use std::collections::HashSet;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-use org_office::Office;
 use org_proto::sessions::{SessionState, SessionView};
 use org_proto::{ApiError, ErrorCode};
 
 use crate::pump::{PumpCommand, SessionRuntimeState};
 
+use super::launch::StartReservation;
+use super::reap::{reap_live_handle, ReapMode};
 use super::{LiveSessionHandle, PermitGuard, SessionManager, StartSlotGuard};
 
 pub(super) struct LaunchRouteOpts<'a> {
@@ -19,6 +20,8 @@ pub(super) struct LaunchRouteOpts<'a> {
     pub(super) oauth_refresh_attempted: bool,
     pub(super) excluded_connections: HashSet<String>,
     pub(super) tried_connections: Vec<String>,
+    /// The explicit-stop epoch when the start slot was reserved (`TASK-190`).
+    pub(super) start_stop_epoch: u64,
 }
 
 pub(super) struct WarmHandleTurn<'a> {
@@ -30,17 +33,32 @@ pub(super) struct WarmHandleTurn<'a> {
     pub(super) route_digest: String,
     pub(super) active_permit: Arc<Mutex<Option<(String, u64)>>>,
     pub(super) text: String,
+    pub(super) start_stop_epoch: u64,
+}
+
+/// Results of a warm handle's disk and SQLite freshness checks, run with no lock held.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct WarmFreshness {
+    /// A sibling appeared that this Linux `bwrap` session does not mask.
+    pub(super) bwrap_topology_stale: bool,
+    /// The handle has no pool connection but the agent now has an execution config.
+    pub(super) route_stale: bool,
 }
 
 pub(super) fn dispatch_warm_handle_turn(
     mgr: &SessionManager,
     turn: WarmHandleTurn<'_>,
-) -> Result<(Option<SessionView>, Option<LiveSessionHandle>), ApiError> {
+) -> Result<StartReservation, ApiError> {
     // Caller already reserved `reg.starting` for `turn.emp_id`. Release it on warm success or
-    // error, and keep it reserved only when transferring to cold-start (`Ok((None, old))`).
-    let slot_guard = StartSlotGuard {
-        registry: &mgr.registry,
-        employee_id: turn.emp_id.to_owned(),
+    // error, and keep it reserved only when transferring to a cold start.
+    let slot_guard = StartSlotGuard::new(&mgr.registry, turn.emp_id.to_owned());
+    // Both `registry` and the handle's state lock are released here: the watch-notice callback
+    // may do I/O and must never run under them (`TASK-190`, rules §3.4).
+    let text = mgr.prepend_watch_notices(turn.emp_id, turn.text);
+    let cold = |old: Option<LiveSessionHandle>| StartReservation {
+        live_view: None,
+        finished_handle: old,
+        start_stop_epoch: turn.start_stop_epoch,
     };
     let needs_permit = turn.conn_id.is_some()
         && turn
@@ -49,13 +67,14 @@ pub(super) fn dispatch_warm_handle_turn(
             .unwrap_or_else(|p| p.into_inner())
             .is_none();
     if !needs_permit {
-        if turn.tx.send(PumpCommand::SendTurn(turn.text)).is_ok() {
-            let view = turn
-                .state
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .to_view();
-            return Ok((Some(view), None));
+        if turn.tx.send(PumpCommand::SendTurn(text)).is_ok() {
+            return finish_warm_send(
+                mgr,
+                &turn.state,
+                turn.emp_id,
+                turn.start_stop_epoch,
+                slot_guard,
+            );
         }
         let old = mgr
             .registry
@@ -63,19 +82,29 @@ pub(super) fn dispatch_warm_handle_turn(
             .unwrap_or_else(|p| p.into_inner())
             .live
             .remove(turn.emp_id);
-        std::mem::forget(slot_guard);
-        return Ok((None, old));
+        slot_guard.keep_reserved();
+        return Ok(cold(old));
     }
     let cid = turn.conn_id.as_deref().unwrap_or_default();
     let digest = (!turn.route_digest.is_empty()).then_some(turn.route_digest.as_str());
-    let granted =
-        match acquire_or_reroute_warm_permit(mgr, cid, turn.emp_id, turn.task_ref, digest)? {
-            Ok(p) => p,
-            Err(old) => {
-                std::mem::forget(slot_guard);
-                return Ok((None, old));
-            }
-        };
+    let granted = match acquire_or_reroute_warm_permit(mgr, cid, turn.emp_id, turn.task_ref, digest)
+    {
+        Ok(Ok(p)) => p,
+        Ok(Err(old)) => {
+            slot_guard.keep_reserved();
+            return Ok(cold(old));
+        }
+        Err(err) => {
+            release_warm_slot(
+                mgr,
+                &turn.state,
+                turn.emp_id,
+                turn.start_stop_epoch,
+                slot_guard,
+            )?;
+            return Err(err);
+        }
+    };
     let mut pguard = PermitGuard::new(&mgr.office, mgr.config.hq_permits.as_deref(), Some(granted));
     let mut installed_pid: Option<String> = None;
     {
@@ -87,13 +116,14 @@ pub(super) fn dispatch_warm_handle_turn(
             }
         }
     }
-    if turn.tx.send(PumpCommand::SendTurn(turn.text)).is_ok() {
-        let view = turn
-            .state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .to_view();
-        return Ok((Some(view), None));
+    if turn.tx.send(PumpCommand::SendTurn(text)).is_ok() {
+        return finish_warm_send(
+            mgr,
+            &turn.state,
+            turn.emp_id,
+            turn.start_stop_epoch,
+            slot_guard,
+        );
     }
     if let Some(ref pid) = installed_pid {
         let mut slot = turn.active_permit.lock().unwrap_or_else(|p| p.into_inner());
@@ -113,8 +143,66 @@ pub(super) fn dispatch_warm_handle_turn(
         .unwrap_or_else(|p| p.into_inner())
         .live
         .remove(turn.emp_id);
-    std::mem::forget(slot_guard);
-    Ok((None, old))
+    slot_guard.keep_reserved();
+    Ok(cold(old))
+}
+
+/// Releases a delivered warm turn's start slot and reports the handle's view.
+fn finish_warm_send(
+    mgr: &SessionManager,
+    state: &Arc<Mutex<SessionRuntimeState>>,
+    emp_id: &str,
+    start_stop_epoch: u64,
+    slot_guard: StartSlotGuard<'_>,
+) -> Result<StartReservation, ApiError> {
+    let reaped = release_warm_slot(mgr, state, emp_id, start_stop_epoch, slot_guard)?;
+    let view = reaped.unwrap_or_else(|| state.lock().unwrap_or_else(|p| p.into_inner()).to_view());
+    Ok(StartReservation {
+        live_view: Some(view),
+        finished_handle: None,
+        start_stop_epoch,
+    })
+}
+
+/// Releases a warm send's start slot in the same critical section that checks the explicit-stop
+/// epoch. A stop (pause, offboard, owner stop) refused while the slot was held still wins: the
+/// handle is removed and reaped, with the slot held through the reap, and its final view is
+/// returned (`TASK-190`).
+fn release_warm_slot(
+    mgr: &SessionManager,
+    state: &Arc<Mutex<SessionRuntimeState>>,
+    emp_id: &str,
+    start_stop_epoch: u64,
+    slot_guard: StartSlotGuard<'_>,
+) -> Result<Option<SessionView>, ApiError> {
+    let stopped = {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if reg.stop_epoch(emp_id) == start_stop_epoch {
+            slot_guard.release_locked(&mut reg);
+            return Ok(None);
+        }
+        let same_handle = reg
+            .live
+            .get(emp_id)
+            .is_some_and(|h| Arc::ptr_eq(&h.state, state));
+        same_handle.then(|| reg.live.remove(emp_id)).flatten()
+    };
+    let Some(handle) = stopped else {
+        return Ok(None);
+    };
+    let reaped = reap_live_handle(
+        mgr,
+        emp_id,
+        handle,
+        Some("explicit_stop_during_turn_delivery"),
+        ReapMode::FailClosedRestore {
+            conflict_message: format!(
+                "could not verify teardown of session `{emp_id}` stopped during turn delivery; resolve recovery first"
+            ),
+        },
+    )?;
+    drop(slot_guard);
+    Ok(Some(reaped.view))
 }
 
 pub(super) fn acquire_or_reroute_warm_permit(
@@ -162,13 +250,13 @@ pub(super) fn acquire_or_reroute_warm_permit(
     }
 }
 
+/// Why a warm handle must be recycled before this start, decided under the `registry` lock
+/// from facts only: the disk and SQLite checks arrive precomputed in `freshness`.
 pub(super) fn warm_handle_stop_reason(
-    office: &Office,
-    emp_id: &str,
     handle: &LiveSessionHandle,
     requested_workspace: Option<&str>,
     state: SessionState,
-    bwrap_topology_stale: bool,
+    freshness: WarmFreshness,
 ) -> Option<&'static str> {
     if handle.workspace.as_deref() != requested_workspace {
         return Some("workspace_changed");
@@ -176,16 +264,14 @@ pub(super) fn warm_handle_stop_reason(
     if state != SessionState::Idle {
         return None;
     }
-    if bwrap_topology_stale {
+    if freshness.bwrap_topology_stale {
         return Some("bwrap_sibling_topology_changed");
     }
     if crate::host_auth::is_oauth_expiring(handle.oauth_expires_at_ms, crate::credentials::now_ms())
     {
         return Some("oauth_token_expiring");
     }
-    if handle.connection_id.is_none()
-        && office.load_agent_execution(emp_id).ok().flatten().is_some()
-    {
+    if freshness.route_stale {
         return Some("warm_route_stale");
     }
     None
