@@ -10,15 +10,15 @@
 //! line that names another key, another `format`, `--stdin` or `--help` is refused and nothing
 //! is sent for it. Flags are read only from `options`, one bare name per key with its value passed
 //! inline, so no flag can reach the table past those checks (`command` with a flag, a key with
-//! `=`, or a value that looks like a flag).
+//! `=`, or a value that looks like a flag). Only a yes-or-no flag of the command is written bare
+//! for `true`: a flag that takes a value would read the next flag as that value.
 
 use std::io::{self, BufRead, Write};
 
-use org_command::{CommandTable, Office, Refusal, Sources};
+use org_command::{Command, CommandTable, Office, Refusal, Sources};
 use org_proto::ErrorCode;
 use serde_json::{Map, Value};
 
-use crate::aliases::normalize_args;
 use crate::keys::UuidV7KeySource;
 use crate::sources::StdSources;
 use crate::table;
@@ -69,7 +69,7 @@ pub fn run_attach_loop<R: BufRead, W: Write>(
         if trimmed.is_empty() {
             continue;
         }
-        let reply = match parse_line_args(trimmed) {
+        let reply = match parse_line_args(table, trimmed) {
             Ok(args) => run_one(table, program, &args, &mut sources, &mut keys, office),
             Err(message) => error_envelope(ErrorCode::InvalidRequest, &message),
         };
@@ -104,7 +104,7 @@ fn run_one(
 }
 
 /// The command line of one attach line, refusing what attach cannot answer in one JSON line.
-fn parse_line_args(raw: &str) -> Result<Vec<String>, String> {
+fn parse_line_args(table: &CommandTable, raw: &str) -> Result<Vec<String>, String> {
     let value: Value = serde_json::from_str(raw).map_err(|_| {
         "Each line in `session attach` must be a JSON object with `command`.".to_owned()
     })?;
@@ -126,7 +126,8 @@ fn parse_line_args(raw: &str) -> Result<Vec<String>, String> {
     if let Some(word) = parts.iter().find(|word| word.starts_with('-')) {
         return Err(command_flag(word));
     }
-    let mut args = normalize_args(&parts).into_owned();
+    let mut args = table.expand(&parts).into_owned();
+    let row = table.command_for(&args);
     if let Some(input) = obj.get("input").filter(|v| !v.is_null()) {
         let json = serde_json::to_string(input)
             .map_err(|_| "Could not serialize `input` as JSON.".to_owned())?;
@@ -137,24 +138,24 @@ fn parse_line_args(raw: &str) -> Result<Vec<String>, String> {
         let Some(options) = opt_val.as_object() else {
             return Err("`options` in `session attach` must be a JSON object.".into());
         };
-        append_options(&mut args, options)?;
+        append_options(&mut args, row, options)?;
     }
     Ok(args)
 }
 
 /// An option `session attach` refuses, and why: each would answer something other than one
 /// line of JSON, or read the stream of lines as a command's content.
-fn refused_option(flag: &str, value: &Value) -> Option<String> {
-    match (flag, value) {
-        ("--format", Value::String(format)) if format == "json" => None,
-        ("--format", _) => Some(format!(
+fn refused_option(name: &str, value: &Value) -> Option<String> {
+    match (name, value) {
+        ("format", Value::String(format)) if format == "json" => None,
+        ("format", _) => Some(format!(
             "`session attach` answers every line in JSON, so `format` {value} is refused. Drop `format`, or give \"json\"."
         )),
-        ("--stdin", _) => Some(
+        ("stdin", _) => Some(
             "`stdin` is refused: standard input carries the `session attach` lines. Give the text in `input`, or a file with `input-file`."
                 .to_owned(),
         ),
-        ("--help" | "-h", _) => Some(
+        ("help", _) => Some(
             "`help` is refused in `session attach`; run `agent-os <resource> <verb> --help` outside it."
                 .to_owned(),
         ),
@@ -170,38 +171,62 @@ fn command_flag(word: &str) -> String {
     )
 }
 
-/// The refusal of an `options` key that is not one bare flag name: a key with `=` or a space
-/// would carry a value or a second flag past the refused options.
-fn option_key_refusal(key: &str) -> Option<String> {
-    (key.contains('=') || key.chars().any(char::is_whitespace)).then(|| {
-        format!(
-            "Option `{key}` is not a flag name: name one flag per key (e.g. `limit`) and give its value as the key's value, never with `=` or spaces."
-        )
-    })
+/// The flag name of an `options` key (`limit`, `--limit`, `max_results` as `max-results`), or
+/// the refusal of a key that is not one bare flag name: a key with `=` or a space would carry a
+/// value or a second flag past the refused options, and one with another leading `-` (`-h`) is
+/// no flag the table reads.
+fn option_name(key: &str) -> Result<String, String> {
+    let name = match key.strip_prefix("--") {
+        Some(name) => name.to_owned(),
+        None => key.replace('_', "-"),
+    };
+    if name.is_empty()
+        || name.starts_with('-')
+        || name.contains('=')
+        || name.chars().any(char::is_whitespace)
+    {
+        return Err(format!(
+            "Option `{key}` is not a flag name: name one flag per key (e.g. `limit` or `--limit`) and give its value as the key's value, never with `=`, spaces or a short `-x` form."
+        ));
+    }
+    Ok(name)
 }
 
-/// Turns `options` into flags. A string or number is passed inline (`--name=value`), so a value
-/// is only ever read as that flag's value, never as a flag of its own.
-fn append_options(args: &mut Vec<String>, options: &Map<String, Value>) -> Result<(), String> {
+/// The bare flag of an option given `true`. Only a yes-or-no flag of the command is written
+/// bare: a flag that takes a value would read the flag after it as that value (`--body
+/// --dry-run` sends the text `--dry-run`). A line naming no command is refused by the table
+/// before it reads any flag, so its switches are left out.
+fn switch(row: Option<&Command>, key: &str, name: &str) -> Result<Option<String>, String> {
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    match row.flag_takes_value(name) {
+        Some(false) => Ok(Some(format!("--{name}"))),
+        Some(true) => Err(format!("Option `{key}` takes a value, not `true`.")),
+        None => Err(format!("Option `{key}` is not a flag of `{}`.", row.name())),
+    }
+}
+
+/// Turns `options` into flags for `row`, the command the line runs. A string or number is passed
+/// inline (`--name=value`), so a value is only ever read as that flag's value, never as a flag of
+/// its own; `true` is a bare flag only for a yes-or-no flag ([`switch`]).
+fn append_options(
+    args: &mut Vec<String>,
+    row: Option<&Command>,
+    options: &Map<String, Value>,
+) -> Result<(), String> {
     for (key, value) in options {
-        if let Some(refusal) = option_key_refusal(key) {
-            return Err(refusal);
-        }
-        let flag = if key.starts_with("--") {
-            key.clone()
-        } else {
-            format!("--{}", key.replace('_', "-"))
-        };
+        let name = option_name(key)?;
         if matches!(value, Value::Bool(false) | Value::Null) {
             continue;
         }
-        if let Some(refusal) = refused_option(&flag, value) {
+        if let Some(refusal) = refused_option(&name, value) {
             return Err(refusal);
         }
         match value {
-            Value::Bool(_) => args.push(flag),
-            Value::String(s) => args.push(format!("{flag}={s}")),
-            Value::Number(n) => args.push(format!("{flag}={n}")),
+            Value::Bool(_) => args.extend(switch(row, key, &name)?),
+            Value::String(s) => args.push(format!("--{name}={s}")),
+            Value::Number(n) => args.push(format!("--{name}={n}")),
             _ => {
                 return Err(format!(
                     "Option `{key}` in `session attach` must be a string, number, or boolean."

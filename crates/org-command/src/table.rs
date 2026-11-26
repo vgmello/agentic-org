@@ -112,6 +112,15 @@ impl CommandTable {
             .find(|row| row.resource == resource && row.verb == verb)
     }
 
+    /// The row a command line runs, read as the parser reads it: a leading shorthand expanded,
+    /// then the first two words as resource and verb. `None` when they name no command.
+    pub fn command_for(&self, args: &[String]) -> Option<&'static Command> {
+        match self.expand(args).as_ref() {
+            [resource, verb, ..] => self.find(resource, verb),
+            _ => None,
+        }
+    }
+
     /// The resources, in name order, each once.
     pub fn resources(&self) -> Vec<&'static str> {
         let mut resources: Vec<&'static str> = self.rows.iter().map(|row| row.resource).collect();

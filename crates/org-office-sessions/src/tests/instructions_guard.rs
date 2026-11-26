@@ -117,7 +117,7 @@ agent-os msg inbox --state unread | head -5
 not a command line
 ```
 ";
-    let cited = cited_command_lines(text);
+    let cited = cited_command_lines(text, &org_agent_cli::table::table());
     assert_eq!(cited.len(), 7, "{cited:#?}");
     assert!(
         !cited
@@ -274,6 +274,58 @@ fn attach_lines_are_held_to_the_rules_session_attach_applies_first() {
     ] {
         assert!(problems(good).is_empty(), "{good}: {:#?}", problems(good));
     }
+}
+
+#[test]
+fn attach_lines_give_true_only_to_yes_or_no_flags_as_session_attach_does() {
+    // A flag that takes a value, given `true`, would read the next flag as its value (`--body
+    // --dry-run`), so attach refuses the line, and the guard with it.
+    for (line, why) in [
+        (
+            r#"{"command":"msg send","input":{"to":"@ada"},"options":{"body":true,"dry-run":true}}"#,
+            "Option `body` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"msg send","input":{"to":"@ada"},"options":{"body":true,"durable":true}}"#,
+            "Option `body` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"status set","options":{"--text":true,"dry-run":true}}"#,
+            "Option `--text` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"status set","input":{"text":"ok"},"options":{"idempotency-key":true,"dry-run":true}}"#,
+            "Option `idempotency-key` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"who","options":{"cursor":true}}"#,
+            "Option `cursor` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"status set","input":{"text":"ok"},"options":{"bogus":true}}"#,
+            "Option `bogus` is not a flag of `status set`.",
+        ),
+        (
+            r#"{"command":"status set","input":{"text":"ok"},"options":{"-h":true}}"#,
+            "Option `-h` is not a flag name",
+        ),
+    ] {
+        assert_fails(&format!("```text\n{line}\n```"), why);
+    }
+    // A yes-or-no flag, common or the command's own, with or without `--`, holds; a line naming
+    // no command fails on its command.
+    for good in [
+        r#"{"command":"status set","input":{"text":"ok"},"options":{"dry-run":true}}"#,
+        r#"{"command":"task list","options":{"unassigned":true,"cursor":false}}"#,
+        r#"{"command":"task list","options":{"--unassigned":true,"limit":5}}"#,
+    ] {
+        let text = format!("```text\n{good}\n```");
+        assert!(problems(&text).is_empty(), "{good}: {:#?}", problems(&text));
+    }
+    assert_fails(
+        "```text\n{\"command\":\"task frobnicate\",\"options\":{\"body\":true}}\n```",
+        "`task frobnicate` is not a command",
+    );
 }
 
 #[test]

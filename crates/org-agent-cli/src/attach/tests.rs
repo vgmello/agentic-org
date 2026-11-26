@@ -76,9 +76,11 @@ fn attach_rejects_non_object_options_and_wraps_help_as_single_line_json() {
     assert_eq!(l2["ok"], true);
     assert_eq!(l2["data"]["status"], "building");
 
-    let parsed =
-        parse_line_args(r#"{"command":"task note add","input":{"task":"T-A1","text":"plan"}}"#)
-            .unwrap();
+    let parsed = parse_line_args(
+        table::runtime_table(),
+        r#"{"command":"task note add","input":{"task":"T-A1","text":"plan"}}"#,
+    )
+    .unwrap();
     assert_eq!(parsed[0], "task-note");
     assert_eq!(parsed[1], "add");
 }
@@ -222,7 +224,7 @@ fn shorthands_mean_the_same_command_in_attach() {
         ),
         (r#"{"command":"task note list"}"#, vec!["task-note", "list"]),
     ] {
-        let args = parse_line_args(line).unwrap();
+        let args = parse_line_args(table::runtime_table(), line).unwrap();
         assert_eq!(&args[..words.len()], words.as_slice(), "{line}");
     }
 }
@@ -279,8 +281,11 @@ fn a_flag_smuggled_past_the_option_checks_is_refused_before_any_write() {
         assert!(office.0.calls.is_empty(), "{line}: a write was sent");
     }
     // Values are passed inline, so a value that starts with `--` is still only a value.
-    let args = parse_line_args(r#"{"command":"status set","options":{"text":"--format yaml"}}"#)
-        .expect("parsed");
+    let args = parse_line_args(
+        table::runtime_table(),
+        r#"{"command":"status set","options":{"text":"--format yaml"}}"#,
+    )
+    .expect("parsed");
     assert_eq!(args, ["status", "set", "--text=--format yaml"]);
     let mut office = recording();
     let envelopes = attach_lines(
@@ -290,4 +295,116 @@ fn a_flag_smuggled_past_the_option_checks_is_refused_before_any_write() {
     assert_eq!(envelopes[0]["ok"], true, "{}", envelopes[0]);
     assert_eq!(office.0.calls.len(), 1);
     assert_eq!(office.0.calls[0].1["text"], "--format=yaml");
+}
+
+#[test]
+fn true_for_a_flag_that_takes_a_value_is_refused_before_any_write() {
+    // Written bare, a flag that takes a value would read the next flag as its value: `--body
+    // --dry-run` would send the text `--dry-run` for real. Keys are read in name order.
+    let refused = [
+        (
+            r#"{"command":"msg send","input":{"to":"@ada"},"options":{"body":true,"dry-run":true}}"#,
+            "Option `body` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"msg send","input":{"to":"@ada"},"options":{"body":true,"durable":true}}"#,
+            "Option `body` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"status set","options":{"--text":true,"dry-run":true}}"#,
+            "Option `--text` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"status set","input":{"text":"ok"},"options":{"idempotency-key":true,"dry-run":true}}"#,
+            "Option `idempotency-key` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"task list","options":{"cursor":true,"unassigned":true}}"#,
+            "Option `cursor` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"status set","input":{"text":"ok"},"options":{"bogus":true,"dry-run":true}}"#,
+            "Option `bogus` is not a flag of `status set`.",
+        ),
+        (
+            r#"{"command":"status set","input":{"text":"ok"},"options":{"-h":true}}"#,
+            "Option `-h` is not a flag name",
+        ),
+        (
+            r#"{"command":"status set","input":{"text":"ok"},"options":{"--":true}}"#,
+            "Option `--` is not a flag name",
+        ),
+    ];
+    for (line, message) in refused {
+        let mut office = recording();
+        let envelopes = attach_lines(&format!("{line}\n"), &mut office);
+        assert_eq!(envelopes.len(), 1, "{line}");
+        assert_eq!(envelopes[0]["ok"], false, "{line}: {}", envelopes[0]);
+        assert_eq!(envelopes[0]["error"]["code"], "invalid_request", "{line}");
+        assert!(
+            envelopes[0]["error"]["message"]
+                .as_str()
+                .is_some_and(|text| text.starts_with(message)),
+            "{line}: {}",
+            envelopes[0]
+        );
+        assert!(office.0.calls.is_empty(), "{line}: a write was sent");
+    }
+}
+
+#[test]
+fn true_is_a_bare_flag_for_yes_or_no_flags_only() {
+    let table = table::runtime_table();
+    // A common yes-or-no option reaches the table bare, as a dry run (which `status set`
+    // answers itself, sending nothing).
+    let line = r#"{"command":"status set","input":{"text":"ok"},"options":{"dry-run":true}}"#;
+    let args = parse_line_args(table, line).expect("parsed");
+    assert_eq!(
+        args,
+        ["status", "set", "--json", r#"{"text":"ok"}"#, "--dry-run"]
+    );
+    let mut office = recording();
+    let envelopes = attach_lines(&format!("{line}\n"), &mut office);
+    assert_eq!(
+        envelopes[0]["error"]["code"], "unsupported",
+        "{}",
+        envelopes[0]
+    );
+    assert!(office.0.calls.is_empty());
+    // A command's own yes-or-no flag, with or without `--`; `false` and `null` leave a flag
+    // out, whatever it takes.
+    for line in [
+        r#"{"command":"task list","options":{"unassigned":true,"limit":5,"cursor":false}}"#,
+        r#"{"command":"task list","options":{"--unassigned":true,"limit":5,"status":null}}"#,
+    ] {
+        let args = parse_line_args(table, line).expect("parsed");
+        assert!(
+            args.contains(&"--unassigned".to_owned()),
+            "{line}: {args:?}"
+        );
+        let mut office = recording();
+        attach_lines(&format!("{line}\n"), &mut office);
+        assert_eq!(office.0.calls.len(), 1, "{line}");
+        assert_eq!(office.0.calls[0].0, "tasks.list", "{line}");
+        assert_eq!(office.0.calls[0].1["unassigned"], true, "{line}");
+    }
+    // ...and through a shorthand.
+    let args =
+        parse_line_args(table, r#"{"command":"boot","options":{"offline":true}}"#).expect("parsed");
+    assert_eq!(args, ["session", "boot", "--offline"]);
+    // A line naming no command is refused by the table, with its own hint, and sends nothing.
+    let mut office = recording();
+    let envelopes = attach_lines(
+        "{\"command\":\"task frobnicate\",\"options\":{\"body\":true,\"dry-run\":true}}\n",
+        &mut office,
+    );
+    assert_eq!(envelopes[0]["error"]["code"], "invalid_request");
+    assert!(
+        envelopes[0]["error"]["message"]
+            .as_str()
+            .is_some_and(|text| text.contains("`task frobnicate` is not a command")),
+        "{}",
+        envelopes[0]
+    );
+    assert!(office.0.calls.is_empty());
 }
