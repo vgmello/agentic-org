@@ -3613,6 +3613,24 @@ fn is_linux_claude_bwrap(sandbox_enabled: bool, runtime_id: &str) -> bool {
         && !org_platform::confinement::unix_socket_path_filter_supported()
 }
 
+fn apply_linux_claude_bwrap_pruning(spec: &mut SessionSpec) {
+    // Keep `preset_cfg.policy.deny` 100% complete in `SessionManager` (enforced by
+    // `decide_escalation_with_roots` over `--permission-mode manual` on every tool call),
+    // while pruning absent concrete paths from Linux Claude's `spec.sandbox` and
+    // `spec.policy.deny` so Claude 2.1.x `@anthropic-ai/sandbox-runtime` (`bwrap`), which
+    // merges `permissions.deny` into `bwrap` mounts, never materializes permanent 0-byte
+    // `0444` files on the host (`TASK-144`).
+    if prune_nonexistent_bwrap_denies(&mut spec.sandbox, &mut spec.policy) {
+        // Pin approval-bridge mediation explicitly whenever any policy deny rule is pruned:
+        // never rely on `capabilities().enforces_deny_rules` or surviving deny count to clear
+        // `permissions.allow` or downgrade `AcceptEdits -> Ask`.
+        spec.policy.allow.clear();
+        if spec.permission_mode == org_agent_runtime::PermissionMode::AcceptEdits {
+            spec.permission_mode = org_agent_runtime::PermissionMode::Ask;
+        }
+    }
+}
+
 fn build_session_spec_for_launch(
     runtime: RuntimeId,
     employee: &Employee,
@@ -3631,22 +3649,7 @@ fn build_session_spec_for_launch(
         preset_cfg,
     )?;
     if linux_claude_bwrap {
-        // Keep `preset_cfg.policy.deny` 100% complete in `SessionManager` (enforced by
-        // `decide_escalation_with_roots` over `--permission-mode manual` on every tool call),
-        // while pruning absent concrete paths from Linux Claude's `spec.sandbox` and
-        // `spec.policy.deny` so Claude 2.1.x `@anthropic-ai/sandbox-runtime` (`bwrap`), which
-        // merges `permissions.deny` into `bwrap` mounts, never materializes permanent 0-byte
-        // `0444` files on the host (`TASK-144`).
-        let dropped_policy = prune_nonexistent_bwrap_denies(&mut spec.sandbox, &mut spec.policy);
-        if dropped_policy {
-            // Pin approval-bridge mediation explicitly whenever any policy deny rule is pruned:
-            // never rely on `capabilities().enforces_deny_rules` or surviving deny count to clear
-            // `permissions.allow` or downgrade `AcceptEdits -> Ask`.
-            spec.policy.allow.clear();
-            if spec.permission_mode == org_agent_runtime::PermissionMode::AcceptEdits {
-                spec.permission_mode = org_agent_runtime::PermissionMode::Ask;
-            }
-        }
+        apply_linux_claude_bwrap_pruning(&mut spec);
     }
     Ok(spec)
 }
@@ -4390,29 +4393,16 @@ mod manager_helper_tests {
             PathPattern::try_from(format!("{}/**", absent_hooks.display()).as_str()).unwrap();
         apply_worktree_sandbox_rules(&mut preset_cfg, &[], &[absent_hooks_pat]);
 
-        let mut sandbox = preset_cfg.sandbox.clone();
+        // Exercise `apply_linux_claude_bwrap_pruning` directly with `AcceptEdits` and a non-empty
+        // allow rule so we verify absent-path pruning clears `spec.policy.allow` and downgrades
+        // `AcceptEdits -> Ask`, while `preset_cfg.policy` stays 100% intact for
+        // `decide_escalation_with_roots`.
         let mut spec_policy = preset_cfg.policy.clone();
-        let dropped = prune_nonexistent_bwrap_denies(&mut sandbox, &mut spec_policy);
-        assert!(
-            dropped,
-            "expected absent paths to be pruned from spec_policy"
-        );
-        spec_policy.allow.clear();
-
-        let deny_read: Vec<&str> = sandbox.deny_read.iter().map(PathPattern::as_str).collect();
-        let deny_write: Vec<&str> = sandbox.deny_write.iter().map(PathPattern::as_str).collect();
-        assert!(deny_read.contains(&existing_db.to_str().unwrap()));
-        assert!(deny_read.iter().any(|p| p.contains("objects/info/**")));
-        assert!(deny_read.contains(&"/run/user/*/bus"));
-        assert!(!deny_read.contains(&absent_journal.to_str().unwrap()));
-        assert!(!deny_read.iter().any(|p| p.contains("sibling-1")));
-        assert!(!deny_write.iter().any(|p| p.contains("repo.git/hooks")));
-        assert!(!deny_write.iter().any(|p| p.contains(".git/hooks")));
-
-        // On Linux Claude `bwrap`, `spec_policy.deny` also omits absent concrete paths so
-        // Claude Code 2.1.x never feeds them into `bwrap` (which creates 0-byte `0444` stubs),
-        // while `preset_cfg.policy` stays 100% intact for `decide_escalation_with_roots`.
-        let spec = SessionSpec {
+        spec_policy.allow.push(org_agent_runtime::Rule {
+            tool: org_agent_runtime::RuleTool::try_from("Read").unwrap(),
+            scope: org_agent_runtime::RuleScope::Any,
+        });
+        let mut spec = SessionSpec {
             runtime: RuntimeId::try_from("claude").unwrap(),
             kind: SessionKind::Home {},
             agent: AgentIdentity {
@@ -4425,12 +4415,35 @@ mod manager_helper_tests {
             workspace: ws_spec,
             read_only_dirs: Vec::new(),
             instructions: String::new(),
-            permission_mode: preset_cfg.permission_mode,
+            permission_mode: org_agent_runtime::PermissionMode::AcceptEdits,
             policy: spec_policy,
-            sandbox,
+            sandbox: preset_cfg.sandbox.clone(),
             mcp_servers: Default::default(),
             tools: preset_cfg.allowed_tools.clone(),
         };
+        apply_linux_claude_bwrap_pruning(&mut spec);
+        assert_eq!(spec.permission_mode, org_agent_runtime::PermissionMode::Ask);
+        assert!(spec.policy.allow.is_empty());
+
+        let deny_read: Vec<&str> = spec
+            .sandbox
+            .deny_read
+            .iter()
+            .map(PathPattern::as_str)
+            .collect();
+        let deny_write: Vec<&str> = spec
+            .sandbox
+            .deny_write
+            .iter()
+            .map(PathPattern::as_str)
+            .collect();
+        assert!(deny_read.contains(&existing_db.to_str().unwrap()));
+        assert!(deny_read.iter().any(|p| p.contains("objects/info/**")));
+        assert!(deny_read.contains(&"/run/user/*/bus"));
+        assert!(!deny_read.contains(&absent_journal.to_str().unwrap()));
+        assert!(!deny_read.iter().any(|p| p.contains("sibling-1")));
+        assert!(!deny_write.iter().any(|p| p.contains("repo.git/hooks")));
+        assert!(!deny_write.iter().any(|p| p.contains(".git/hooks")));
         let runtime_dir = root.join("rt");
         let tmpdir = root.join("tmp");
         std::fs::create_dir_all(&runtime_dir).unwrap();

@@ -540,11 +540,7 @@ fn is_valid_https_host(host: &str) -> bool {
         return false;
     }
     if let Some(inner) = host.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        return !inner.is_empty()
-            && inner.contains(':')
-            && inner
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.');
+        return inner.parse::<std::net::Ipv6Addr>().is_ok();
     }
     host.bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'))
@@ -1751,6 +1747,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_office_git_credential_enforces_owner_only_helpers_and_origin_scoping() {
         use std::os::unix::fs::PermissionsExt as _;
@@ -1836,6 +1833,7 @@ mod tests {
             "https://*.github.com/org/repo.git",
             "https://github.com:0/org/repo.git",
             "https://github.com:abc/org/repo.git",
+            "https://[::::]/org/repo.git",
             "https://user@github.com/org/repo.git",
         ] {
             assert!(

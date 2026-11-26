@@ -663,7 +663,7 @@ mod tests {
             Type::Enum(values) => values,
             other => panic!("expected Type::Enum for presence, got {other:?}"),
         };
-        for variant in [
+        let variants = [
             org_proto::directory::MemberPresence::Online,
             org_proto::directory::MemberPresence::Available,
             org_proto::directory::MemberPresence::Busy,
@@ -676,7 +676,13 @@ mod tests {
             org_proto::directory::MemberPresence::Asleep,
             org_proto::directory::MemberPresence::Offline,
             org_proto::directory::MemberPresence::Unknown,
-        ] {
+        ];
+        assert_eq!(
+            allowed.len(),
+            variants.len(),
+            "DIRECTORY_CARD_FIELDS presence enum must match MemberPresence variants 1:1"
+        );
+        for variant in variants {
             let wire = serde_json::to_value(variant).unwrap();
             let wire_str = wire.as_str().unwrap();
             assert!(
