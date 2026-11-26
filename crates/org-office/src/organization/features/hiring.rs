@@ -548,6 +548,7 @@ fn build_provisioned_change(
                 .proposal
                 .permission_preset
                 .unwrap_or(PermissionPreset::SafeAsk),
+            effort: req.proposal.effort,
             enabled: true,
             meta: Meta::created(by, now),
             system_prompt_markdown: prompt,

@@ -9,8 +9,8 @@ use crate::organization::{
     records::{
         AgentExecutionConfig, BuiltinKey, Employee, EmployeeKind, EmployeeStatus, HireProposal,
         HireRequest, HireState, ModelProfile, Office, OfficeCode, OfficeRole, Organization,
-        PermissionPreset, ProviderAuthMode, ProviderConnection, Repository, RepositoryKind, Role,
-        Team, TeamAllocation, TeamCounter, TeamStatus, WatchingModelSetting,
+        PermissionPreset, ProviderAuthMode, ProviderConnection, ReasoningEffort, Repository,
+        RepositoryKind, Role, Team, TeamAllocation, TeamCounter, TeamStatus, WatchingModelSetting,
     },
 };
 
@@ -173,6 +173,10 @@ pub(super) fn agent_execution_row(row: &Row<'_>) -> rusqlite::Result<AgentExecut
     let preset_text: String = row.get(5)?;
     let permission_preset = PermissionPreset::parse(&preset_text)
         .ok_or_else(|| foreign(5, "not a permission preset"))?;
+    let effort_text: Option<String> = row.get(7)?;
+    let effort = effort_text
+        .map(|text| ReasoningEffort::parse(&text).ok_or_else(|| foreign(7, "not an effort")))
+        .transpose()?;
     Ok(AgentExecutionConfig {
         employee_id: id(row, 0)?,
         model_profile_id: id(row, 1)?,
@@ -180,8 +184,9 @@ pub(super) fn agent_execution_row(row: &Row<'_>) -> rusqlite::Result<AgentExecut
         system_prompt_markdown: row.get(3)?,
         tools_config,
         permission_preset,
+        effort,
         enabled: row.get(6)?,
-        meta: meta(row, 7)?,
+        meta: meta(row, 8)?,
     })
 }
 

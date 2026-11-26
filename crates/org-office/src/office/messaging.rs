@@ -76,7 +76,7 @@ impl Office {
         let (rows, _) = self
             .store
             .read(OrgChangesAfterRead {
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 after_seq,
                 limit,
             })
@@ -101,7 +101,7 @@ impl Office {
         self.store
             .run(DmOpenOp {
                 here: self.identity.clone(),
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 now_utc,
@@ -122,7 +122,7 @@ impl Office {
             .store
             .read(ListChannelsRead {
                 viewer: caller_id,
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 params,
                 now_utc,
             })
@@ -148,7 +148,7 @@ impl Office {
         self.store
             .run(ChannelCreateOp {
                 here: self.identity.clone(),
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 now_utc,
@@ -174,7 +174,7 @@ impl Office {
         let now_utc = time::format_rfc3339_ms(self.monotonic_now_ms());
         self.store
             .run(ChannelMembershipOp {
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 join,
@@ -196,7 +196,7 @@ impl Office {
             .store
             .read(ListConversationsRead {
                 viewer: caller_id,
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 params,
                 now_utc,
             })
@@ -217,7 +217,7 @@ impl Office {
         self.store
             .run(ChatSendOp {
                 here: self.identity.clone(),
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 org_seq,
@@ -239,7 +239,7 @@ impl Office {
         self.store
             .run(ChatReplyOp {
                 here: self.identity.clone(),
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 org_seq,
@@ -259,7 +259,7 @@ impl Office {
         let (res, _) = self
             .store
             .read(ChatInboxRead {
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
             })
@@ -279,7 +279,7 @@ impl Office {
         let (res, _) = self
             .store
             .read(ChatMessagesRead {
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 now_utc,
@@ -300,7 +300,7 @@ impl Office {
         self.store
             .run(ChatMarkReadOp {
                 here: self.identity.clone(),
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 now_utc,
@@ -320,7 +320,7 @@ impl Office {
         self.store
             .run(ChatMuteOp {
                 here: self.identity.clone(),
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 now_utc,
@@ -340,7 +340,7 @@ impl Office {
         self.store
             .run(ChatReactOp {
                 here: self.identity.clone(),
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 now_utc,
@@ -382,7 +382,7 @@ impl Office {
         self.store
             .run(MsgAskOp {
                 here: self.identity.clone(),
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 org_seq,
@@ -414,7 +414,7 @@ impl Office {
         self.store
             .run(ChatAnswerOp {
                 here: self.identity.clone(),
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 reply_id,
@@ -445,7 +445,7 @@ impl Office {
         self.store
             .run(MsgWithdrawOp {
                 here: self.identity.clone(),
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 params,
                 org_seq,
@@ -467,7 +467,7 @@ impl Office {
         let (res, _) = self
             .store
             .read(InspectAskStatusRead {
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 ask_id: ask_id.to_owned(),
                 now_ms,
@@ -483,7 +483,7 @@ impl Office {
         let (rows, _) = self
             .store
             .read(OpenOwnerInboxRead {
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 limit,
             })
             .map_err(storage)?;
@@ -507,7 +507,7 @@ impl Office {
         self.store
             .run(DeliverAnswerCandidatesOp {
                 here: self.identity.clone(),
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 conversation_id: conv_id,
                 deliveries,
                 org_seq,
@@ -540,7 +540,7 @@ impl Office {
         let (res, _) = self
             .store
             .read(ChannelMessagesForCallerRead {
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 caller: caller_id,
                 channel_ref: channel_ref.to_owned(),
                 limit,

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use org_agent_runtime::{AgentRuntime, Token};
 use org_office::organization_family::features::validate_endpoint_url;
 use org_office::organization_family::records::{
-    PermissionPreset, ProviderAuthMode, ProviderConnection,
+    PermissionPreset, ProviderAuthMode, ProviderConnection, ReasoningEffort,
 };
 use org_office::providers::PermitAcquireOutcome;
 use org_office::Office;
@@ -24,14 +24,17 @@ mod warm_permit;
 
 use warm_permit::compute_route_digest;
 
-#[cfg(test)]
-pub(crate) use warm_permit::compute_worktree_sandbox_digest;
 pub(crate) use warm_permit::{acquire_warm_permit_for_office, WarmPermitOutcome};
+#[cfg(test)]
+pub(crate) use warm_permit::{compute_route_digest_with_wt, compute_worktree_sandbox_digest};
 
 /// Fully admitted connection route ready to spawn a supervised agent session.
 pub(crate) struct AdmittedRoute {
     pub adapter: Arc<dyn AgentRuntime>,
     pub model_token: Option<Token>,
+    /// The agent's reasoning effort (`TASK-181`) as the session spec's token, in the office's
+    /// names; each runtime adapter maps it onto its own. `None` keeps the runtime's default.
+    pub effort: Option<Token>,
     pub auth_mode: Option<ProviderAuthMode>,
     pub auth_env: Vec<(OsString, OsString)>,
     pub endpoint_env: Vec<(OsString, OsString)>,
@@ -238,6 +241,7 @@ struct RouteWalkCtx<'a> {
     model_id: &'a str,
     profile_key: &'a str,
     preset: PermissionPreset,
+    effort: Option<ReasoningEffort>,
     exec_rev: u64,
     is_failover_switch: bool,
     now_ms: u64,
@@ -360,6 +364,7 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
             preset: ctx.preset,
             resolved_model: &resolved_model,
             profile_key: ctx.profile_key,
+            effort: ctx.effort,
             binding_rev,
             exec_rev: ctx.exec_rev,
             permit: (permit.id.clone(), permit.coordinator_generation),
@@ -409,6 +414,7 @@ pub(crate) fn select_and_admit_route(
         return Ok(AdmittedRoute {
             adapter,
             model_token: None,
+            effort: None,
             auth_mode: None,
             auth_env: Vec::new(),
             endpoint_env: Vec::new(),
@@ -464,6 +470,7 @@ pub(crate) fn select_and_admit_route(
         model_id: &cfg.model_id,
         profile_key: &profile.key,
         preset: cfg.permission_preset,
+        effort: cfg.effort,
         exec_rev: cfg.meta.revision,
         is_failover_switch,
         now_ms: office.current_time_ms(),
@@ -544,6 +551,7 @@ struct AdmitParams<'a> {
     preset: PermissionPreset,
     resolved_model: &'a str,
     profile_key: &'a str,
+    effort: Option<ReasoningEffort>,
     binding_rev: u64,
     exec_rev: u64,
     permit: (String, u64),
@@ -561,6 +569,7 @@ fn finalize_admitted_connection(
         preset,
         resolved_model,
         profile_key,
+        effort,
         binding_rev,
         exec_rev,
         permit,
@@ -589,17 +598,24 @@ fn finalize_admitted_connection(
     let model_token = Token::try_from(resolved_model)
         .ok()
         .or_else(|| Token::try_from(profile_key).ok());
+    // Every level is a valid token; were one ever not, refuse rather than drop the effort.
+    let effort_token = effort
+        .map(|e| Token::try_from(e.as_str()))
+        .transpose()
+        .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid reasoning effort"))?;
     let route_digest_suffix = compute_route_digest(
         office,
         employee_id,
         conn,
         binding_rev,
         resolved_model,
+        effort,
         exec_rev,
     );
     Ok(AdmittedRoute {
         adapter,
         model_token,
+        effort: effort_token,
         auth_mode: Some(conn.auth_mode),
         auth_env,
         endpoint_env,

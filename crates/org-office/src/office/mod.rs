@@ -202,8 +202,12 @@ pub struct Office {
     durable: PathBuf,
     runtime_root: PathBuf,
     identity: OfficeIdentity,
-    /// The member whose account owns the organization: the creator.
+    /// The member whose account owns the organization: the creator (on HQ) or the satellite's
+    /// own `office_id` for local custody (on satellites).
     owner: Id,
+    /// On satellites, the `(hq_office_id, owner_member_id)` pair received over mTLS `Hello`
+    /// and persisted in `hq-owner.v1.json` (`TASK-141`); always `None` on HQ.
+    replicated_owner: std::sync::RwLock<Option<(String, Id)>>,
     /// The store operation that created the organization.
     creation: Id,
     /// The creation request's canonical lowercase UUIDv7 command ID as the host sent it.
@@ -402,9 +406,91 @@ impl Office {
         &self.durable
     }
 
-    /// The canonical UUIDv7 member ID of the organization's current owner.
+    /// The canonical UUIDv7 member ID of the organization's current owner (or local satellite
+    /// custody ID on a satellite office).
     pub fn owner_member_id(&self) -> &str {
         self.owner.as_str()
+    }
+
+    /// Returns the owner ID for organization/directory/messaging/relay ops: on HQ this is always
+    /// the host-authoritative `self.owner`; on a satellite this prefers the HQ-replicated active
+    /// owner employee ID from mTLS `Hello` (`hq-owner.v1.json`) when present, else `self.owner`
+    /// (`TASK-141`).
+    pub(crate) fn effective_owner_for_ops(&self) -> Id {
+        if self.info.role == crate::model::OfficeRole::Satellite {
+            if let Some((_, id)) = self
+                .replicated_owner
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .as_ref()
+            {
+                return id.clone();
+            }
+        }
+        self.owner.clone()
+    }
+
+    /// Persists the HQ-authoritative active owner employee ID received on a verified mTLS `Hello`
+    /// handshake for a satellite office (`TASK-141`).
+    pub fn record_replicated_hq_owner(
+        &self,
+        hq_office_id: &str,
+        owner_member_id: &str,
+    ) -> Result<(), OfficeError> {
+        if self.info.role != crate::model::OfficeRole::Satellite {
+            return Err(OfficeError::Invalid(
+                "only satellite offices record a replicated HQ owner",
+            ));
+        }
+        if !org_proto::is_uuid_v7(hq_office_id)
+            || !org_proto::is_valid_member_id(owner_member_id)
+            || owner_member_id == self.info.office_id
+            || owner_member_id == hq_office_id
+        {
+            return Err(OfficeError::Invalid("invalid replicated HQ owner id"));
+        }
+        let parsed = Id::parse(owner_member_id)
+            .map_err(|_| OfficeError::Invalid("invalid replicated HQ owner id"))?;
+        if self
+            .replicated_owner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .is_some_and(|(hq, id)| hq == hq_office_id && id == &parsed)
+        {
+            return Ok(());
+        }
+        let _guard = self
+            .federation_io_lock
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if self
+            .replicated_owner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .is_some_and(|(hq, id)| hq == hq_office_id && id == &parsed)
+        {
+            return Ok(());
+        }
+        let cp = self.replication.org_checkpoint()?;
+        if cp.hq_office.as_str() != hq_office_id {
+            return Err(OfficeError::Invalid(
+                "replicated HQ owner does not match active HQ checkpoint",
+            ));
+        }
+        satellite::write_replicated_hq_owner(
+            &self.durable,
+            &self.info.office_id,
+            &self.info.org_id,
+            hq_office_id,
+            &parsed,
+        )?;
+        *self
+            .replicated_owner
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = Some((hq_office_id.to_owned(), parsed));
+        Ok(())
     }
 
     /// Engine-independent replication store for `org-sync` state (`TASK-52` / `ENG-3`).

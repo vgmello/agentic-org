@@ -1450,3 +1450,69 @@ fn task115_codex_native_steer_gates_active_turn_id_and_tracks_rpc_ack_or_error()
         .position(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. })));
     assert!(matches!((fail_idx, end_idx), (Some(f), Some(e)) if f < e));
 }
+
+/// `TASK-181`: the office's five effort levels on Codex. `low`..`xhigh` are Codex's own names;
+/// `max` runs as `xhigh`, Codex's highest. The same value goes on the command line and into
+/// `thread/start`; one Codex does not know refuses the spec instead of failing at start.
+#[test]
+fn every_office_effort_level_maps_onto_codex_reasoning_effort() {
+    let runtime = CodexRuntime::new();
+    let now = Instant::now();
+    for (level, codex) in [
+        ("low", "low"),
+        ("medium", "medium"),
+        ("high", "high"),
+        ("xhigh", "xhigh"),
+        ("max", "xhigh"),
+        ("minimal", "minimal"),
+    ] {
+        let mut spec = sample_spec();
+        spec.effort = Some(Token::try_from(level).unwrap());
+        let (plan, mut session) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+        let overrides: Vec<&String> = plan
+            .args
+            .iter()
+            .filter(|a| a.starts_with("model_reasoning_effort="))
+            .collect();
+        assert_eq!(
+            overrides,
+            [&format!("model_reasoning_effort=\"{codex}\"")],
+            "{level}"
+        );
+        let _ = session.start(now);
+        let thread_start = session
+            .on_line(
+                br#"{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"version":"0.169.0"}}}"#,
+                now,
+            )
+            .iter()
+            .filter_map(|o| match o {
+                Output::Write(l) => std::str::from_utf8(l.as_bytes()).ok().map(str::to_owned),
+                _ => None,
+            })
+            .collect::<String>();
+        assert!(
+            thread_start.contains(&format!(r#""reasoningEffort":"{codex}""#)),
+            "{level}: {thread_start}"
+        );
+    }
+
+    let mut spec = sample_spec();
+    spec.effort = None;
+    let (plan, _) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    assert!(!plan
+        .args
+        .iter()
+        .any(|a| a.starts_with("model_reasoning_effort=")));
+
+    for unknown in ["turbo", "XHIGH", "ultra"] {
+        spec.effort = Some(Token::try_from(unknown).unwrap());
+        assert!(
+            matches!(
+                runtime.plan_session(&spec, &sample_ctx()),
+                Err(PlanError::InvalidSpec(_))
+            ),
+            "{unknown}"
+        );
+    }
+}

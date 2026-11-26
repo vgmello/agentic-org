@@ -75,6 +75,8 @@ pub(crate) use reap::{reap_live_handle, ReapMode};
 pub(crate) use rust_toolchain::host_rust_dir_env_from;
 #[cfg(test)]
 pub(crate) use spec::effective_approval_writable_roots_from;
+#[cfg(test)]
+pub(crate) use spec::{build_session_spec, ModelChoice};
 
 /// Configuration for [`SessionManager`].
 #[derive(Clone)]

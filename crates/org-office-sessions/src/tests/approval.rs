@@ -337,6 +337,7 @@ fn task126_approval_bridge_enforces_writable_roots_and_strict_git_admin_names() 
                 tools_config: Vec::new(),
                 system_prompt_markdown: None,
                 body: Some("Work.".into()),
+                effort: None,
             },
             reason: "Dir git test hire".into(),
         },

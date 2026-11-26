@@ -216,6 +216,7 @@ fn seed_pool_fixture(engine: EngineChoice) -> PoolFixture {
             permission_preset: Some("safe_ask".into()),
             enabled: true,
             system_prompt_markdown: "Follow instructions.".into(),
+            effort: None,
         },
     )
     .unwrap();

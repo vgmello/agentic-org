@@ -350,7 +350,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
 
   <h3>How an agent gets its model <span class="st ok">Runs in v1</span></h3>
   <ol>
-    <li>An agent's <strong>execution config</strong> names its system prompt, one <strong>model profile</strong>, one model name, and one <code>permission_preset</code>. The system never picks an implicit default model.</li>
+    <li>An agent's <strong>execution config</strong> names its system prompt, one <strong>model profile</strong>, one model name, one <code>permission_preset</code>, and optionally a reasoning <code>effort</code> (<code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code> or <code>max</code>; absent keeps the runtime's default). The system never picks an implicit default model.</li>
     <li>A model profile is an <strong>ordered pool</strong> of 1 to 64 <strong>provider connections</strong>. Each office holds its own local wrapped binding (<code>durable/local/offices/&lt;office-id&gt;/auth/&lt;connection-id&gt;/</code>) and discovered models (<code>protected/providers.db</code>).</li>
     <li><strong><code>office_local</code> vs <code>hq_pool</code> admission (<code>TASK-2</code>, <code>TASK-54</code>).</strong> Unshared per-office bindings admit and sustain turns locally even while disconnected from HQ ("Works alone"). Shared multi-office pools (<code>hq_pool</code>) request 60 s quota permits (renewed every 10 s) and shared rate-limit cooldowns from HQ, failing over safely across eligible pool connections for the same model.</li>
   </ol>

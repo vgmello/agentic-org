@@ -404,6 +404,7 @@ impl WakeFixture {
                     tools_config: Vec::new(),
                     system_prompt_markdown: None,
                     body: Some("Work concisely.".into()),
+                    effort: None,
                 },
                 reason: "Test hire".into(),
             },

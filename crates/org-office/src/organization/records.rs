@@ -41,7 +41,7 @@ pub use hiring::{
     encode_model_profile, encode_provider_connection, encode_watching_model, hire_request_path,
     model_profile_path, provider_connection_path, watching_model_path, AgentExecutionConfig,
     HireProposal, HireRequest, HireState, ModelProfile, PermissionPreset, ProviderAuthMode,
-    ProviderConnection, WatchingModelSetting,
+    ProviderConnection, ReasoningEffort, WatchingModelSetting,
 };
 pub use yaml::RecordError;
 use yaml::{Fields, Reader};

@@ -24,7 +24,7 @@ use super::registry_guards::{
 };
 use super::spec::{
     build_launch_context, build_session_spec_for_launch, canonical_or_spec,
-    compute_launch_spec_hash, is_linux_claude_bwrap,
+    compute_launch_spec_hash, is_linux_claude_bwrap, ModelChoice,
 };
 use super::warm::{
     dispatch_warm_handle_turn, warm_handle_stop_reason, LaunchRouteOpts, StartReservation,
@@ -352,7 +352,10 @@ impl SessionManager {
         let spec = build_session_spec_for_launch(
             admitted.adapter.id(),
             employee,
-            admitted.model_token,
+            ModelChoice {
+                model: admitted.model_token,
+                effort: admitted.effort,
+            },
             workspace_spec,
             read_only_dirs,
             instructions,

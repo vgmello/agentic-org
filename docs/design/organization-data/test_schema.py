@@ -343,6 +343,23 @@ class DraftSchemaTests(unittest.TestCase):
         self.db.rollback()
         self.assertEqual(self.db.execute("SELECT model_profile_id FROM agent_execution_configs WHERE employee_id='ana'").fetchone()[0], "pool")
 
+    def test_agent_reasoning_effort_is_optional_and_one_of_five_levels(self):
+        # TASK-181: absent (NULL) keeps the runtime's default; anything else is one of five.
+        self.seed_pool()
+        config = dict(organization_id="org", employee_id="ana", schema_version=1, revision=1,
+                      model_profile_id="pool", model_id="target-model", system_prompt_markdown="Instructions")
+        insert(self.db, "agent_execution_configs", **config)
+        self.db.commit()
+        self.assertIsNone(self.db.execute("SELECT effort FROM agent_execution_configs WHERE employee_id='ana'").fetchone()[0])
+        for level in ("low", "medium", "high", "xhigh", "max"):
+            self.db.execute("UPDATE agent_execution_configs SET effort=? WHERE employee_id='ana'", (level,))
+            self.db.commit()
+        for wrong in ("", "none", "XHIGH", "turbo", 3):
+            with self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute("UPDATE agent_execution_configs SET effort=? WHERE employee_id='ana'", (wrong,))
+            self.db.rollback()
+        self.assertEqual(self.db.execute("SELECT effort FROM agent_execution_configs WHERE employee_id='ana'").fetchone()[0], "max")
+
     def test_profile_catalog_is_the_union_of_confirmed_connection_models(self):
         self.seed_pool()
         insert(self.db, "offices", organization_id="org", id="hq", slug="hq",

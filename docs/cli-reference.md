@@ -279,8 +279,8 @@ Any other key, a control character or an over-long value makes it invalid (exit 
   Hire and manage agents across HQ and satellite offices over an approved office channel (confirm or withdraw pending proposals with `hr hire --id <proposal_id> [--withdraw]`).
   **Use when:** hiring an agent onto HQ or a remote satellite office from the terminal.
 - `agentic-org agent inspect|update|move|pause|resume|offboard|execution-get|execution-set`
-  Inspect or manage hired agents and their execution configuration (`model_profile_id`, `model_id`, `permission_preset`, `system_prompt_markdown`) over an approved office channel.
-  **Use when:** checking agent status, placement, lifecycle state, or configuring an agent's model profile, permission preset, and system prompt.
+  Inspect or manage hired agents and their execution configuration (`model_profile_id`, `model_id`, `permission_preset`, optional `effort`, `system_prompt_markdown`) over an approved office channel. `execution-set` is a full replacement: `--effort low|medium|high|xhigh|max` sets the agent's reasoning effort (any other value is refused), and leaving it out returns the agent to the runtime's default. Claude Code receives the level as `--effort`; Codex receives it as `model_reasoning_effort`, with `max` running as Codex's highest level, `xhigh`. A changed effort recycles the agent's warm session. `hr hire --effort <level>` sets it at hire.
+  **Use when:** checking agent status, placement, lifecycle state, or configuring an agent's model profile, permission preset, reasoning effort, and system prompt.
 - `agentic-org team list|inspect|create|update`
   Discover, inspect, or create organization teams over an approved office channel.
   **Use when:** finding a `team_id` before hiring agents or creating projects.

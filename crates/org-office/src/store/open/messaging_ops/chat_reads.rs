@@ -29,9 +29,10 @@ pub struct InspectAskStatusRead {
 impl ReadOp for InspectAskStatusRead {
     type Out = Result<ChatWaitAskResult, ApiError>;
     fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        let owner = crate::organization::owner::effective_owner_id(snapshot, &self.owner)?;
         Ok(asks::inspect_ask_status(
             snapshot,
-            &self.owner,
+            &owner,
             &self.caller,
             &self.ask_id,
             self.now_ms,
@@ -55,8 +56,9 @@ pub struct OpenOwnerInboxRead {
 impl ReadOp for OpenOwnerInboxRead {
     type Out = Vec<OwnerInboxEntry>;
     fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        let owner = crate::organization::owner::effective_owner_id(snapshot, &self.owner)?;
         let mut entries = Vec::new();
-        for st in snapshot.recipient_states_for_employee(&self.owner)? {
+        for st in snapshot.recipient_states_for_employee(&owner)? {
             if st.state == MessageLifecycleState::Done {
                 continue;
             }
@@ -110,10 +112,11 @@ pub struct ListChannelsRead {
 impl ReadOp for ListChannelsRead {
     type Out = ChatChannelsResult;
     fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        let owner = crate::organization::owner::effective_owner_id(snapshot, &self.owner)?;
         Ok(features::list_channels(
             snapshot,
             &self.viewer,
-            &self.owner,
+            &owner,
             &self.params,
             &self.now_utc,
         )?)
@@ -130,10 +133,11 @@ pub struct ListConversationsRead {
 impl ReadOp for ListConversationsRead {
     type Out = ChatConversationsResult;
     fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        let owner = crate::organization::owner::effective_owner_id(snapshot, &self.owner)?;
         Ok(features::list_conversations(
             snapshot,
             &self.viewer,
-            &self.owner,
+            &owner,
             &self.params,
             &self.now_utc,
         )?)
@@ -149,9 +153,10 @@ pub struct ChatInboxRead {
 impl ReadOp for ChatInboxRead {
     type Out = Result<ChatInboxResult, ApiError>;
     fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        let owner = crate::organization::owner::effective_owner_id(snapshot, &self.owner)?;
         Ok(features::list_chat_inbox(
             snapshot,
-            &self.owner,
+            &owner,
             &self.caller,
             &self.params,
         ))
@@ -168,9 +173,10 @@ pub struct ChatMessagesRead {
 impl ReadOp for ChatMessagesRead {
     type Out = Result<ChatMessagesResult, ApiError>;
     fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        let owner = crate::organization::owner::effective_owner_id(snapshot, &self.owner)?;
         Ok(features::list_chat_messages(
             snapshot,
-            &self.owner,
+            &owner,
             &self.caller,
             &self.params,
             &self.now_utc,
@@ -192,9 +198,10 @@ impl ReadOp for ChannelMessagesForCallerRead {
     type Out = Result<(ConversationRecord, Vec<MessageRecord>), ApiError>;
 
     fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        let owner = crate::organization::owner::effective_owner_id(snapshot, &self.owner)?;
         Ok(features::channel_messages_for_caller(
             snapshot,
-            &self.owner,
+            &owner,
             &self.caller,
             &self.channel_ref,
             self.limit,

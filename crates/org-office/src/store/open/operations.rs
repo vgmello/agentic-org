@@ -595,7 +595,8 @@ impl ReadOp for CheckHrMessageAccess {
         let Some(sender) = employees.iter().find(|e| e.id == self.sender) else {
             return Ok(false);
         };
-        crate::organization::features::authority::may_hire_anywhere(read, &self.owner, sender)
+        let owner = crate::organization::owner::effective_owner_id(read, &self.owner)?;
+        crate::organization::features::authority::may_hire_anywhere(read, &owner, sender)
     }
 }
 
