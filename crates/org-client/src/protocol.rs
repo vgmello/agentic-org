@@ -216,7 +216,9 @@ impl Client {
             from_work_position: None,
         };
         match self.call_tracked::<Subscribe>(&params, timeout, &mut sent) {
-            Ok(Empty {}) => Ok(subscription),
+            Ok(CallOutcome {
+                value: Empty {}, ..
+            }) => Ok(subscription),
             Err(error) => {
                 if sent && matches!(error, ClientError::Timeout) {
                     self.shared.close();
