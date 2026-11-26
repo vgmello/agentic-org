@@ -1,6 +1,6 @@
 //! Strict transfer/revocation service and real rendezvous reset cleanup.
 use super::*;
-use org_office_launch::{ChannelKind, TransferRecord};
+use org_office_launch::{ChannelKind, TransferRecord, MAX_CHANNELS, MAX_WEB_CHANNELS};
 fn assert_transfer_fatal(run: &mut Run, case: &str) {
     let status = run.wait();
     let stderr = run.stderr();
@@ -690,34 +690,47 @@ fn close_live_channel(session: &mut Session, id: &str, peer: BufReader<UnixStrea
 #[test]
 fn real_channel_limits_refuse_capacity_without_losing_worker_or_live_rpc() {
     let _process = process_isolation();
-    for case in ["eighth-web", "ninth-local", "ninth-web", "ninth-all-local"] {
+    // Counts come from the launch contract, so the cases follow any change to the limits.
+    // Each case fills the web allowance (MAX_WEB_CHANNELS, all local in the last case); the
+    // `total-cap` cases then fill the ordinary slots left for local callers up to
+    // MAX_CHANNELS. One more channel of `refused_kind` is then refused for capacity.
+    for (case, first_kind, fill_total, refused_kind) in [
+        ("web-cap-web", ChannelKind::Web, false, ChannelKind::Web),
+        (
+            "total-cap-local",
+            ChannelKind::Web,
+            true,
+            ChannelKind::Local,
+        ),
+        ("total-cap-web", ChannelKind::Web, true, ChannelKind::Web),
+        (
+            "total-cap-all-local",
+            ChannelKind::Local,
+            true,
+            ChannelKind::Local,
+        ),
+    ] {
         let world = World::new();
         let mut session = ready_create(&world);
         let mut peers = Vec::new();
-        for n in 0..7 {
+        for n in 0..MAX_WEB_CHANNELS {
             let id = format!("live-{n}");
-            let peer = open_live_channel(
-                &mut session,
-                if case == "ninth-all-local" {
-                    ChannelKind::Local
-                } else {
-                    ChannelKind::Web
-                },
-                &id,
-            );
+            let peer = open_live_channel(&mut session, first_kind, &id);
             peers.push((id, peer));
         }
-        if case.starts_with("ninth-") {
-            peers.push((
-                "eighth-local".into(),
-                open_live_channel(&mut session, ChannelKind::Local, "eighth-local"),
-            ));
+        if fill_total {
+            for n in MAX_WEB_CHANNELS..MAX_CHANNELS {
+                let id = format!("local-{n}");
+                let peer = open_live_channel(&mut session, ChannelKind::Local, &id);
+                peers.push((id, peer));
+            }
         }
-        let refused_kind = if case.ends_with("web") {
-            ChannelKind::Web
+        let expected = if fill_total {
+            MAX_CHANNELS
         } else {
-            ChannelKind::Local
+            MAX_WEB_CHANNELS
         };
+        assert_eq!(peers.len(), expected, "{case}");
         assert_capacity_refused(&mut session, refused_kind);
         // Every existing channel still serves real API-2 RPC after the refusal.
         for (_, peer) in &mut peers {

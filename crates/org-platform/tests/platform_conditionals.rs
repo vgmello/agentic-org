@@ -67,6 +67,23 @@ const CONDITIONALS: [&str; 2] = ["cfg", "cfg_attr"];
 const SELECTORS: [&str; 2] = ["cfg_select", "cfg_match"];
 /// A build output directory, wherever it is and whatever it is called, has this file.
 const BUILD_OUTPUT_MARKER: &str = "CACHEDIR.TAG";
+/// The variables that point git at a repository, its index or its objects: what
+/// `git rev-parse --local-env-vars` lists, less the configuration ones (a sandbox may
+/// pass `safe.directory` through them).
+const REPOSITORY_VARIABLES: [&str; 12] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_DIR",
+    "GIT_GRAFT_FILE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PREFIX",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_SHALLOW_FILE",
+    "GIT_WORK_TREE",
+];
 
 /// What one source file holds.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -295,6 +312,19 @@ fn repository() -> PathBuf {
         .to_path_buf()
 }
 
+/// `git -C root`, without the calling environment's repository variables. A test run
+/// from a git hook (or a worktree hook) inherits `GIT_DIR` and `GIT_INDEX_FILE`, which
+/// would point every command, those on a temporary repository included, at the calling
+/// repository and its index.
+fn git(root: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("git");
+    command.arg("-C").arg(root);
+    for name in REPOSITORY_VARIABLES {
+        command.env_remove(name);
+    }
+    command
+}
+
 /// Every `.rs` file under `root` outside `crates/org-platform`, as a path relative to
 /// the root with `/` separators, sorted. Skipped: hidden directories, `node_modules`,
 /// and build output (a directory holding `CACHEDIR.TAG`, as every cargo target
@@ -336,9 +366,7 @@ fn sources(root: &Path) -> Vec<String> {
 /// The `.rs` files git tracks under `root`, outside `crates/org-platform`; `None` where
 /// there is no git checkout to ask (a source archive).
 fn tracked(root: &Path) -> Option<Vec<String>> {
-    let listed = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
+    let listed = git(root)
         .args(["ls-files", "-z", "--", "*.rs"])
         .output()
         .ok()
@@ -825,7 +853,7 @@ mod walk {
 }
 
 mod coverage {
-    use super::{repository, sources, tracked, unread};
+    use super::{git, repository, sources, tracked, unread};
 
     #[test]
     fn a_tracked_source_the_walk_skips_is_reported() {
@@ -842,17 +870,15 @@ mod coverage {
     #[test]
     fn a_tracked_source_that_is_gone_from_disk_is_not_reported() {
         let root = tempfile::tempdir().unwrap();
-        let git = |arguments: &[&str]| {
-            std::process::Command::new("git")
-                .arg("-C")
-                .arg(root.path())
+        let run_git = |arguments: &[&str]| {
+            git(root.path())
                 .args(arguments)
                 .output()
                 .is_ok_and(|output| output.status.success())
         };
         std::fs::write(root.path().join("kept.rs"), "").unwrap();
         std::fs::write(root.path().join("renamed.rs"), "").unwrap();
-        if !(git(&["init", "-q"]) && git(&["add", "kept.rs", "renamed.rs"])) {
+        if !(run_git(&["init", "-q"]) && run_git(&["add", "kept.rs", "renamed.rs"])) {
             return; // no usable git here; the rule is then skipped altogether
         }
         std::fs::rename(root.path().join("renamed.rs"), root.path().join("new.rs")).unwrap();
