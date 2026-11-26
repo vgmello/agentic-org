@@ -37,7 +37,7 @@ function pageProject(id, tab) {
   const tabs = [
     ["", "Overview"],
     ["activity", "Activity"],
-    ["work", "Work", ws.filter(OPEN).length],
+    ["work", "Work", `${ws.filter(OPEN).length} open`],
     ["calendar", "Calendar"],
     ["insights", "Insights"],
     ["conversations", "Conversations"],

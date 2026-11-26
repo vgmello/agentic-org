@@ -3526,7 +3526,8 @@ html[data-theme="report"] .assembly-release {
 .work-toolbar .menu-textbtn > .menu-textbtn-sub { font-weight: 500; color: var(--gray-400); }
 .work-toolbar .menu-textbtn > .menu-textbtn-chev { margin-inline-start: -2px; color: var(--gray-400); }
 @media (max-width: 420px) {
-  .work-toolbar .menu-textbtn > .menu-textbtn-sub { display: none; }
+  .work-toolbar .menu-textbtn { gap: 4px; }
+  .work-toolbar .menu-textbtn > .menu-textbtn-sub { max-width: 6.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 /* Calendar overflows into Display when the toolbar would otherwise need a third row */
 .work-toolbar .queue-controls .menu .work-cal-overflow { display: none; }
@@ -3608,3 +3609,64 @@ html[data-theme="report"] .assembly-release {
 .board .bcard .board-subhits .board-subhit-word { flex: none; font-size: var(--fs-xs); font-weight: 600; color: var(--gray-400); }
 .board .bcard .board-subhits a { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--white); }
 
+
+/* ── Work board, review round 7 ───────────────────────────────────────────
+   Scoped to the board and toolbar, so they win whatever order the stylesheets are bundled in. */
+
+/* One filter summary above the board: how many cards show, what filters them, and the one Clear filters */
+#work-results > .board-filterbar {
+  display: flex; flex: none; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px;
+  padding: 8px var(--gutter) 0; font-size: var(--fs-sm); color: var(--gray-300);
+}
+#work-results > .board-filterbar > p { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+#work-results > .board-filterbar strong { font-weight: 600; color: var(--white); }
+
+/* Done lanes name the history window they show */
+.board .bcol > .bcol-h > .bcol-window { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 500; color: var(--gray-400); }
+
+/* Priority in words beside the bars; an inferred one says so in text, not only with fainter bars */
+.board .bcard .board-ref > .bpri { display: inline-flex; flex: none; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 500; color: var(--gray-300); }
+.board .bcard .board-ref > .bpri:is([data-priority="high"], [data-priority="urgent"]) { font-weight: 600; color: var(--white); }
+/* The item type is a small outlined label, so "inferred" never reads as part of "Bug" */
+.board .bcard .board-ref > .btype { padding: 0 5px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line2); font-size: var(--fs-xs); line-height: 1.45; }
+.board .bcard .board-ref > .bpri[data-priority="urgent"] { color: var(--tone-bad-ink); }
+.board .bcard .board-ref > .bpri.is-inferred { font-weight: 500; color: var(--gray-400); }
+.board .bcard .board-ref .bpri-tilde { display: none; }
+.board .bcard .bsev { color: var(--gray-300); font-weight: 600; }
+.board .bcard .bsev[data-severity="critical"] { color: var(--tone-bad-ink); }
+
+/* The project is always the last fact line, at every lane width */
+.board .bcard .board-facts > .board-card-meta { display: contents; }
+.board .bcard .board-facts > .board-card-meta > .board-ref { order: 0; }
+.board .bcard .board-facts > .board-tags { order: 1; }
+.board .bcard .board-facts > .board-card-meta > .board-project { order: 2; justify-self: start; max-width: 100%; }
+.board .bcard .btag-short { display: none; }
+@container board-lane (max-width: 15.5rem) {
+  .board .bcard .board-facts > .board-card-meta > .board-project { order: 2; flex: 1 0 100%; }
+  .board .bcard .board-ref .bpri-inf { display: none; }
+  .board .bcard .board-ref .bpri-tilde { display: inline; }
+  .board .bcard .btag > .btag-short { display: inline; margin-inline-start: 2px; }
+}
+
+/* Phones and touch: project, owner and subtask links get a 44px hit area of their own, in the layout,
+   so it never reaches over the card title or the request badge */
+@media (max-width: 639px), (pointer: coarse) {
+  .board .bcard :is(.board-project a, .board-owner-label a, .board-subhits a) {
+    display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; padding-block: 0; margin-block: 0; vertical-align: middle;
+  }
+  .board .bcard .board-facts { row-gap: 0; }
+  .board .bcard .board-card-footer { min-height: 44px; }
+  .board .bcard .board-subhits { padding-block: 0; }
+}
+
+/* 420px and below: a trigger that names its current value ("Display  Stages", "Filter  Fixed") keeps its icon and
+   the value in compact form; the word stays in its accessible name */
+@media (max-width: 420px) {
+  .work-toolbar .queue-controls .menu-textbtn:has(> .menu-textbtn-sub) > .menu-textbtn-label { display: none; }
+}
+@container queue-header (max-width: 23.5rem) {
+  .work-toolbar .queue-controls .menu-textbtn:has(> .menu-textbtn-sub) > .ic:first-child { display: inline-block; }
+}
+@container work-subbar (max-width: 23.5rem) {
+  .work-toolbar .queue-controls .menu-textbtn:has(> .menu-textbtn-sub) > .ic:first-child { display: inline-block; }
+}

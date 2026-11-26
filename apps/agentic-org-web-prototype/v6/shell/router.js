@@ -10,7 +10,7 @@ import { pageInsights } from "../pages/org-insights.js";
 import { mountProjectQueue, pageProject, pageProjects } from "../pages/projects.js";
 import { SET, notFound, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
 import { pageMember, pageMembersDir, pageOrgChart, pageTeam, pageTeams } from "../pages/teams.js";
-import { boardPlace, fitTextarea, mountBoard, pageWork, restoreBoardPlace, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
+import { boardPlace, fitTextarea, mountBoard, pageWork, restoreBoardPlace, setWorkPanelExpanded, settleWorkResults, showSidePanel, workPanelOpener } from "../pages/work.js";
 import { adoptBoardReturn, takeBoardReturnPlace } from "./board-return.js";
 import { isMacPlatform } from "./cmdk.js";
 import { endNavigationKeys } from "./keyboard.js";
@@ -135,7 +135,7 @@ function mountActivityAfterRender(main, sameActivity, priorActivity, panelScroll
 
 function resolveRouteFocus(main, r0, r1, priorPanel, sameWorkPage) {
   const requestedFocus = S.focusAfter ? document.querySelector(S.focusAfter) : null;
-  const workLink = sameWorkPage && priorPanel ? main.querySelector(`#work-results .work-item-link[data-item="${CSS.escape(priorPanel.dataset.item)}"]`) : null;
+  const workLink = sameWorkPage && priorPanel ? workPanelOpener(main, priorPanel.dataset.item) : null;
   const keep = [requestedFocus, workLink].find((control) => control?.getClientRects().length);
   const target = keep || (r0 === "inbox" && r1 && main.querySelector("#triage-detail-title")) || main.querySelector("h1");
   return { keep, target };
@@ -151,7 +151,7 @@ function restoreFocusAfterRender({ main, content, r0, r1, key, focus, workPanel,
     const { keep, target } = resolveRouteFocus(main, r0, r1, priorPanel, sameWorkPage);
     if (!sameWorkPage) content.scrollTop = 0;
     target?.focus({ preventScroll: true });
-    if (keep?.matches(".work-item-link") && !sameWorkPage) keep.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (keep?.matches("[data-item]") && !sameWorkPage) keep.scrollIntoView({ block: "nearest", inline: "nearest" });
     return;
   }
   if (!toolbarFocus) return;
@@ -195,6 +195,7 @@ function pageTitle(r0, r1) {
 /* An in-place re-render (search opened, Display changed, panel opened) keeps the board's lane and scroll */
 function restoreBoardInPlace(results, place) {
   if (results && place) restoreBoardPlace(results, place, "");
+  settleWorkResults(results);
 }
 
 /* Coming back to a board you left (Back, or "Back to work board" in Inbox) returns to its lanes, scroll and control */
