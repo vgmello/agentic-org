@@ -195,20 +195,28 @@ fn entries_list_every_name_but_dot_entries_from_an_independent_offset() {
     let root = tempfile::tempdir().unwrap();
     let dir = File::open(root.path()).unwrap();
     assert_eq!(Entries::of(&dir).unwrap().count(), 0);
+    let mut expected = Vec::new();
     for name in ["b", "a", "c"] {
         std::fs::write(root.path().join(name), b"").unwrap();
+        expected.push(name.as_bytes().to_vec());
     }
-    std::fs::write(root.path().join(std::ffi::OsStr::from_bytes(b"\xff")), b"").unwrap();
+    // A name that is not UTF-8, where the filesystem keeps one (APFS refuses it).
+    let not_utf8 = root.path().join(std::ffi::OsStr::from_bytes(b"\xff"));
+    match std::fs::write(&not_utf8, b"") {
+        Ok(()) => expected.push(vec![0xff]),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::InvalidInput
+                || error.raw_os_error() == Some(libc::EILSEQ) => {}
+        Err(error) => panic!("{}: {error}", not_utf8.display()),
+    }
+    expected.sort();
     for _ in 0..2 {
         let mut names: Vec<Vec<u8>> = Entries::of(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().into_bytes())
             .collect();
         names.sort();
-        assert_eq!(
-            names,
-            [b"a".to_vec(), b"b".to_vec(), b"c".to_vec(), vec![0xff]]
-        );
+        assert_eq!(names, expected);
     }
     let file = File::open(root.path().join("a")).unwrap();
     assert_eq!(
@@ -337,13 +345,23 @@ fn a_signal_set_holds_its_signals_and_a_blocked_signal_stays_pending() {
 #[test]
 fn a_fork_with_other_threads_running_is_refused_before_anything_forks() {
     let _other = std::thread::spawn(|| std::thread::sleep(Duration::from_millis(200)));
+    // Where the process adapter refuses, no thread count is known, so nothing forks.
+    let refused = matches!(
+        crate::process::thread_count(),
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported
+    );
+    let expected = if refused {
+        std::io::ErrorKind::Unsupported
+    } else {
+        std::io::ErrorKind::WouldBlock
+    };
     let error = fork_single_threaded().unwrap_err();
-    assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
-    assert!(error.to_string().contains("threads"), "{error}");
+    assert_eq!(error.kind(), expected, "{error}");
+    if !refused {
+        assert!(error.to_string().contains("threads"), "{error}");
+    }
     match answer_from_child(|_| unreachable!("no child runs"), Duration::from_secs(1), 8) {
-        Err(ChildAnswerError::NotStarted(error)) => {
-            assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
-        }
+        Err(ChildAnswerError::NotStarted(error)) => assert_eq!(error.kind(), expected),
         other => panic!("{other:?}"),
     }
 }

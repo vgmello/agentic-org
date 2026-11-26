@@ -112,18 +112,27 @@ impl Standard {
 /// Make `stream` refer to what `fd` refers to (`dup2`), so this process reads or writes it
 /// there and a program it starts inherits it. Whatever the standard descriptor referred to
 /// before is closed for it; take a copy first ([`duplicate_above`]) to keep it. `fd` itself
-/// stays open and the caller's.
+/// stays open and the caller's. When `fd` already is that standard number (it was closed,
+/// and `fd` took the number), only its close-on-exec flag is cleared: it stays the
+/// caller's, and closing it closes the stream.
 ///
 /// The standard descriptors belong to the process, not to a value: the standard library
 /// never closes them. Call it before any thread reads or writes the standard streams.
 pub fn replace_standard(stream: Standard, fd: impl AsFd) -> io::Result<()> {
+    let fd = fd.as_fd();
+    if fd.as_raw_fd() == stream.number() {
+        // `dup2` onto itself changes nothing, so the close-on-exec flag it was opened with
+        // would stay, and a started program would not inherit the stream.
+        return set_close_on_exec(fd, false);
+    }
     // SAFETY: `fd` is borrowed from its owner and the target is one of the three standard
     // numbers, which no Rust value owns; `dup2` atomically replaces what it refers to.
-    check(unsafe { libc::dup2(fd.as_fd().as_raw_fd(), stream.number()) }).map(drop)
+    check(unsafe { libc::dup2(fd.as_raw_fd(), stream.number()) }).map(drop)
 }
 
 /// Points each of `streams` at `/dev/null` (read and write), so a program this process
-/// starts inherits the null device there ([`replace_standard`]).
+/// starts inherits the null device there ([`replace_standard`]). A standard descriptor
+/// that is closed and not one of `streams` stays closed.
 pub fn reopen_standard_on_null(streams: &[Standard]) -> io::Result<()> {
     let null = std::fs::OpenOptions::new()
         .read(true)
@@ -133,13 +142,13 @@ pub fn reopen_standard_on_null(streams: &[Standard]) -> io::Result<()> {
     for &stream in streams {
         replace_standard(stream, &null)?;
     }
-    if null.as_raw_fd() <= libc::STDERR_FILENO {
-        // A standard descriptor was closed when this process started, so the null device
-        // took its number: keep that number (inherited) and give up ownership of it.
-        let number = std::os::fd::IntoRawFd::into_raw_fd(null);
-        // SAFETY: `number` is the open descriptor just released from `null`; F_SETFD
-        // with 0 only clears its close-on-exec flag.
-        check(unsafe { libc::fcntl(number, libc::F_SETFD, 0) })?;
+    if streams
+        .iter()
+        .any(|stream| stream.number() == null.as_raw_fd())
+    {
+        // One of `streams` was closed, so the null device took its number, which
+        // `replace_standard` left inherited: give up ownership so that it stays open.
+        let _ = std::os::fd::IntoRawFd::into_raw_fd(null);
     }
     Ok(())
 }

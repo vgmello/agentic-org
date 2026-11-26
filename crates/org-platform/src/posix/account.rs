@@ -92,10 +92,16 @@ pub fn initialize_groups(name: &CStr, gid: u32) -> io::Result<()> {
     check(unsafe { libc::initgroups(name.as_ptr(), gid as _) }).map(drop)
 }
 
-/// Make `groups` this process's supplementary groups (`setgroups`). Needs privilege.
+/// Make `groups` this process's supplementary groups (`setgroups`). Needs privilege. More
+/// groups than an `int` holds (the narrowest count any supported system takes: macOS's;
+/// GNU/Linux takes a `size_t`) is [`io::ErrorKind::InvalidInput`].
 pub fn set_groups(groups: &[u32]) -> io::Result<()> {
-    // SAFETY: the pointer and count describe the live `groups` slice, which is only read.
-    check(unsafe { libc::setgroups(groups.len() as _, groups.as_ptr()) }).map(drop)
+    let count = libc::c_int::try_from(groups.len()).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "too many supplementary groups")
+    })?;
+    // SAFETY: the pointer and count describe the live `groups` slice, which is only read;
+    // the count is not negative, so it is the same number in the call's own count type.
+    check(unsafe { libc::setgroups(count as _, groups.as_ptr()) }).map(drop)
 }
 
 /// Set this process's group ID (`setgid`): as root, the real, effective and saved IDs.

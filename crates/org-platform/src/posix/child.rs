@@ -2,7 +2,7 @@
 //! output is a bounded answer read within a deadline.
 
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::time::{Duration, Instant};
 
 use super::check;
@@ -59,10 +59,12 @@ pub fn fork_single_threaded() -> io::Result<Forked> {
 
 impl ForkChild {
     /// Let go of everything the parent held open: the three standard descriptors and every
-    /// other open one but `keep` are pointed at `/dev/null` (`dup2`), so this process holds
-    /// none of its parent's files, sockets, terminals or locks. Each number stays open (on
-    /// the null device), so nothing the copied memory still owns is ever closed twice or
-    /// reused under it.
+    /// other open one but `keep` are pointed at `/dev/null` (`dup2`, retried when
+    /// interrupted), so this process holds none of its parent's files, sockets, terminals
+    /// or locks. Each number stays open (on the null device), so nothing the copied memory
+    /// still owns is ever closed twice or reused under it. A standard descriptor the parent
+    /// had closed is open on the null device too, and a program this child starts inherits
+    /// the three; every other released number is close-on-exec.
     pub fn release_inherited_descriptors(&self, keep: &[RawFd]) -> io::Result<()> {
         let null = std::fs::OpenOptions::new()
             .read(true)
@@ -79,13 +81,40 @@ impl ForkChild {
             if fd > libc::STDERR_FILENO && !super::is_open(fd) {
                 continue;
             }
-            // SAFETY: `null` is open and owned here; `fd` is a standard number or one open
-            // in this single-threaded child, and `dup2` replaces its referent atomically
-            // without freeing the number.
-            check(unsafe { libc::dup2(null.as_raw_fd(), fd) })?;
+            point_at(&null, fd)?;
+        }
+        if null.as_raw_fd() <= libc::STDERR_FILENO {
+            // A standard descriptor was closed in the parent, so the null device took its
+            // number: keep that number open there (inherited, as the other two are), and
+            // give up ownership of it so that it is not closed when `null` goes.
+            super::set_close_on_exec(&null, false)?;
+            let _ = null.into_raw_fd();
         }
         Ok(())
     }
+}
+
+/// Point `fd` at what `null` refers to (`dup2`), retried when interrupted. A standard
+/// number is left inherited by a program this child starts; any other is close-on-exec,
+/// which `dup2` clears on its copy.
+fn point_at(null: &OwnedFd, fd: RawFd) -> io::Result<()> {
+    loop {
+        // SAFETY: `null` is open and borrowed for the call; `fd` is a standard number or
+        // one open in this single-threaded child, and `dup2` replaces its referent
+        // atomically without freeing the number, so a copied value that owns it still
+        // holds an open descriptor.
+        match check(unsafe { libc::dup2(null.as_raw_fd(), fd) }) {
+            Ok(_) => break,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    if fd > libc::STDERR_FILENO {
+        // SAFETY: `fd` was just made a copy of `null` above, so it is open, and F_SETFD
+        // with FD_CLOEXEC (its only descriptor flag) changes nothing but that copy.
+        check(unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) })?;
+    }
+    Ok(())
 }
 
 /// Why [`answer_from_child`] has no answer.
@@ -155,6 +184,9 @@ fn read_bounded(
     let mut chunk = [0_u8; 8192];
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(ChildAnswerError::TimedOut);
+        }
         let mut slot = [super::poll_slot(file.as_raw_fd(), libc::POLLIN)];
         match super::poll(&mut slot, Some(left)) {
             Ok(0) => return Err(ChildAnswerError::TimedOut),
@@ -164,7 +196,7 @@ fn read_bounded(
         }
         match file.read(&mut chunk) {
             Ok(0) => return Ok(bytes),
-            Ok(n) if bytes.len() + n <= most => bytes.extend_from_slice(&chunk[..n]),
+            Ok(n) if n <= most.saturating_sub(bytes.len()) => bytes.extend_from_slice(&chunk[..n]),
             Ok(_) => return Err(ChildAnswerError::TooLarge),
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error) => return Err(ChildAnswerError::Read(error)),

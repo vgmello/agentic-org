@@ -170,8 +170,10 @@ impl Iterator for Entries {
             }
             // SAFETY: a non-null readdir result points at an entry whose `d_name` is a
             // NUL-terminated string, valid until the next readdir or closedir on this
-            // stream; it is copied out before either.
-            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+            // stream; it is copied out before either. The record is only as long as its
+            // name (`d_reclen`), not the declared array, so the field is reached through a
+            // raw place (`&raw const`) and no reference to the whole array is made.
+            let name = unsafe { CStr::from_ptr((&raw const (*entry).d_name).cast()) };
             if matches!(name.to_bytes(), b"." | b"..") {
                 continue;
             }

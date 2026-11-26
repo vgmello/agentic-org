@@ -148,9 +148,22 @@ pub fn open_max() -> io::Result<usize> {
 }
 
 fn configured(name: libc::c_int) -> io::Result<usize> {
+    // sysconf answers -1 both for a failure, which sets errno, and for a value the system
+    // does not fix, which leaves errno alone: clear errno first to tell them apart. Where
+    // it cannot be cleared, a -1 is never reported with an errno that may be stale.
+    let cleared = crate::fs::set_errno(0).is_ok();
     // SAFETY: sysconf takes one integer and touches no memory of this process.
     let value = unsafe { libc::sysconf(name) };
-    usize::try_from(value).map_err(|_| io::Error::last_os_error())
+    if let Ok(value) = usize::try_from(value) {
+        return Ok(value);
+    }
+    let error = io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(code) if cleared && code != 0 => Err(error),
+        _ => Err(io::Error::other(format!(
+            "sysconf({name}) has no determinate value"
+        ))),
+    }
 }
 
 /// Set this process's file mode creation mask to `mask` and return the one it replaces

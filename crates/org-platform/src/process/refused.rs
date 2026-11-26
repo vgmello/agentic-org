@@ -300,6 +300,20 @@ mod tests {
         }
     }
 
+    /// No thread count is known, so nothing forks; no program starts.
+    #[test]
+    fn no_thread_is_counted_and_no_program_starts() {
+        assert_refused(super::thread_count());
+        let root = std::path::Path::new("/");
+        assert_refused(super::spawn_raw(
+            root,
+            std::path::Path::new("/bin/sh"),
+            &[c"sh", c"-c", c"exit 0"],
+            &[],
+            true,
+        ));
+    }
+
     #[test]
     fn no_entropy_is_read() {
         let mut bytes = [0x5a; 32];

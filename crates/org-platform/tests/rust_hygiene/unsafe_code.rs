@@ -16,7 +16,9 @@ use std::process::Command;
 
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 
-use super::{is_attribute_bracket, punct, repository, sources, strip_bom_and_shebang, tracked};
+use super::{
+    is_attribute_bracket, named, punct, repository, sources, strip_bom_and_shebang, tracked,
+};
 
 /// The crates that hold the workspace's unsafe code.
 const PLATFORM_CRATES: [&str; 2] = ["crates/org-platform", "crates/org-platform-host"];
@@ -55,26 +57,26 @@ pub(crate) struct UnsafeFindings {
     pub(crate) allowances: Vec<usize>,
 }
 
-fn ident(token: Option<&TokenTree>, names: &[&str]) -> bool {
-    // A raw identifier (`r#unsafe`) is a name, not the keyword.
-    matches!(token, Some(TokenTree::Ident(i)) if names.contains(&i.to_string().as_str()))
-}
-
+/// A lint list (the arguments of `allow(..)`) names `unsafe_code` itself: one entry that is
+/// that single, bare name, raw (`r#unsafe_code`) or not. A tool's lint of the same name
+/// (`clippy::unsafe_code`) is another lint.
 fn lint_names(args: TokenStream) -> bool {
-    args.into_iter()
-        .any(|token| ident(Some(&token), &["unsafe_code"]))
+    let tokens: Vec<TokenTree> = args.into_iter().collect();
+    tokens
+        .split(|token| punct(Some(token), ','))
+        .any(|entry| matches!(entry, [TokenTree::Ident(id)] if named(id, &["unsafe_code"])))
 }
 
 /// One attribute body: `allow(..)`-like with `unsafe_code`, an unsafe attribute, or
-/// `cfg_attr(predicate, attr, ..)` holding either.
+/// `cfg_attr(predicate, attr, ..)` holding either. An attribute's name is the same written
+/// raw (`r#no_mangle`), which the compiler honours.
 fn check_attribute(attribute: TokenStream, findings: &mut UnsafeFindings) {
     let tokens: Vec<TokenTree> = attribute.into_iter().collect();
     let Some(TokenTree::Ident(head)) = tokens.first() else {
         return;
     };
-    let head_name = head.to_string();
     let line = head.span().start().line;
-    if UNSAFE_ATTRIBUTES.contains(&head_name.as_str()) {
+    if named(head, &UNSAFE_ATTRIBUTES) {
         findings.code.push(line);
         return;
     }
@@ -84,13 +86,12 @@ fn check_attribute(attribute: TokenStream, findings: &mut UnsafeFindings) {
     if args.delimiter() != Delimiter::Parenthesis {
         return;
     }
-    if head_name == "cfg_attr" {
+    if named(head, &["cfg_attr"]) {
         let inner: Vec<TokenTree> = args.stream().into_iter().collect();
         for attr in inner.split(|tok| punct(Some(tok), ',')).skip(1) {
             check_attribute(attr.iter().cloned().collect(), findings);
         }
-    } else if ["allow", "expect", "warn"].contains(&head_name.as_str()) && lint_names(args.stream())
-    {
+    } else if named(head, &["allow", "expect", "warn"]) && lint_names(args.stream()) {
         findings.allowances.push(line);
     }
 }
@@ -105,6 +106,7 @@ fn walk(tokens: TokenStream, findings: &mut UnsafeFindings) {
                 }
                 walk(group.stream(), findings);
             }
+            // A raw identifier (`r#unsafe`) is a name, not the keyword.
             TokenTree::Ident(i) if i == "unsafe" => findings.code.push(i.span().start().line),
             _ => {}
         }
@@ -124,7 +126,8 @@ pub(crate) fn scan_unsafe(source: &str) -> Result<UnsafeFindings, String> {
 }
 
 /// The top-level inner attributes of a file declare `#![<level>(.., unsafe_code, ..)]`
-/// unconditionally (not under `cfg_attr`, not in a nested module).
+/// unconditionally (not under `cfg_attr`, not in a nested module, not another tool's lint
+/// of that name); `level` and the lint may be written raw.
 pub(crate) fn declares(source: &str, level: &str) -> Result<bool, String> {
     let tokens: Vec<TokenTree> = strip_bom_and_shebang(source)
         .parse::<TokenStream>()
@@ -135,14 +138,19 @@ pub(crate) fn declares(source: &str, level: &str) -> Result<bool, String> {
         let [hash, bang, TokenTree::Group(body)] = window else {
             return false;
         };
-        if !punct(Some(hash), '#') || !punct(Some(bang), '!') {
+        if !punct(Some(hash), '#')
+            || !punct(Some(bang), '!')
+            || body.delimiter() != Delimiter::Bracket
+        {
             return false;
         }
         let body: Vec<TokenTree> = body.stream().into_iter().collect();
         matches!(
             body.as_slice(),
             [TokenTree::Ident(head), TokenTree::Group(args)]
-                if head == level && lint_names(args.stream())
+                if named(head, &[level])
+                    && args.delimiter() == Delimiter::Parenthesis
+                    && lint_names(args.stream())
         )
     }))
 }
@@ -211,10 +219,14 @@ fn unsafe_code_stays_in_the_platform_crates() {
         .collect();
     let mut seen = BTreeMap::new();
     let mut files = sources(&root);
-    if let Ok(Some(tracked)) = tracked(&root) {
-        files.extend(tracked);
-        files.sort();
-        files.dedup();
+    match tracked(&root) {
+        Ok(Some(tracked)) => {
+            files.extend(tracked);
+            files.sort();
+            files.dedup();
+        }
+        Ok(None) => {}
+        Err(error) => problems.push(format!("git completeness check failed: {error}")),
     }
     for path in files.iter().filter(|path| !in_platform(path)) {
         let source = fs::read_to_string(root.join(path))
@@ -297,12 +309,38 @@ mod scanner_tests {
             "#[deny(unsafe_code)]\nfn i() {}\n",
             "#[allow(unsafe_op_in_unsafe_fn, reason = \"name only\")]\nfn j() {}\n",
             "/// unsafe in documentation\nfn k() {}\n",
+            "#[allow(clippy::unsafe_code, reason = \"another tool's lint\")]\nfn l() {}\n",
         );
         assert_eq!(
             scan_unsafe(source).expect("parses"),
             UnsafeFindings {
                 code: vec![4, 5, 7, 8, 10, 12],
                 allowances: vec![14, 16],
+            }
+        );
+    }
+
+    /// The compiler honours an attribute or lint name written raw, so the scanner does.
+    #[test]
+    fn finds_unsafe_attributes_and_allowances_written_as_raw_identifiers() {
+        let source = concat!(
+            "#[r#no_mangle]\nextern \"C\" fn a() {}\n",
+            "#[r#export_name = \"b\"]\nextern \"C\" fn b() {}\n",
+            "#[r#link_section = \".c\"]\nstatic C: u8 = 0;\n",
+            "#[r#cfg_attr(all(), r#no_mangle)]\nextern \"C\" fn d() {}\n",
+            "#[r#allow(unsafe_code, reason = \"fixture\")]\nfn e() {}\n",
+            "#[allow(r#unsafe_code, reason = \"fixture\")]\nfn f() {}\n",
+            "#[r#expect(unsafe_code, reason = \"fixture\")]\nfn g() {}\n",
+            "#[r#warn(unsafe_code)]\nfn h() {}\n",
+            "#[r#cfg_attr(all(), allow(unsafe_code, reason = \"fixture\"))]\nfn i() {}\n",
+            "#[cfg_attr(all(), r#allow(r#unsafe_code, reason = \"fixture\"))]\nfn j() {}\n",
+            "#[r#deny(r#unsafe_code)]\nfn k() { let r#unsafe = 1; let _ = r#unsafe; }\n",
+        );
+        assert_eq!(
+            scan_unsafe(source).expect("parses"),
+            UnsafeFindings {
+                code: vec![1, 3, 5, 7],
+                allowances: vec![9, 11, 13, 15, 17, 19],
             }
         );
     }
@@ -321,5 +359,17 @@ mod scanner_tests {
             "#![forbid(missing_docs)]\n// #![forbid(unsafe_code)]\n"
         ));
         assert!(declares("#![deny(unsafe_code)]\n", "deny").expect("parses"));
+        // The compiler honours a raw level or lint name.
+        assert!(forbids("#![r#forbid(unsafe_code)]\n"));
+        assert!(forbids("#![forbid(r#unsafe_code)]\n"));
+        // Another tool's lint of the same name forbids nothing.
+        assert!(!forbids("#![forbid(clippy::unsafe_code)]\n"));
+        assert!(!forbids("#![forbid(missing_docs, clippy::unsafe_code)]\n"));
+        assert!(!forbids("#![forbid(unsafe_code::nested)]\n"));
+        // Only a bracketed attribute with a parenthesized lint list.
+        assert!(!forbids("#![forbid[unsafe_code]]\n"));
+        assert!(!forbids("#![forbid{unsafe_code}]\n"));
+        assert!(!forbids("//! docs\n#!{forbid(unsafe_code)}\n"));
+        assert!(!forbids("//! docs\n#!(forbid(unsafe_code))\n"));
     }
 }

@@ -576,3 +576,18 @@ fn invalid_buffer_sizes_and_non_socket_descriptors_are_refused() {
     let error = set_buffer_sizes(file.as_fd(), 64 * 1024).unwrap_err();
     assert_eq!(error.raw_os_error(), Some(libc::ENOTSOCK));
 }
+
+#[test]
+#[should_panic(expected = "control space is too small for the descriptors")]
+fn a_message_is_never_built_past_its_control_space() {
+    let (a, b) = UnixStream::pair().unwrap();
+    let fds = [a.as_raw_fd(), b.as_raw_fd(), a.as_raw_fd()];
+    // Storage for all three, but a space that claims room for one only.
+    let mut control = control_buffer(control_space(fds.len()).unwrap()).unwrap();
+    let mut data = libc::iovec {
+        iov_base: std::ptr::null_mut(),
+        iov_len: 0,
+    };
+    let short = control_space(1).unwrap();
+    let _ = rights_message(&mut data, &mut control, short, &fds);
+}

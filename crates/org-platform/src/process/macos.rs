@@ -512,8 +512,11 @@ pub(super) fn thread_count() -> io::Result<usize> {
             size,
         )
     };
-    if written != size {
+    if written <= 0 {
         return Err(io::Error::last_os_error());
+    }
+    if written != size {
+        return Err(invalid("truncated proc_taskinfo response"));
     }
     // SAFETY: proc_pidinfo wrote the complete record.
     let threads = unsafe { info.assume_init() }.pti_threadnum;

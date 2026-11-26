@@ -139,6 +139,10 @@ fn rights_message(
         space <= mem::size_of_val(control),
         "control storage is too small"
     );
+    assert!(
+        control_space(fds.len()).is_some_and(|needed| needed <= space),
+        "control space is too small for the descriptors"
+    );
     // SAFETY: msghdr is plain data for which all-zero bytes (null pointers, zero lengths)
     // are a valid value.
     let mut message: libc::msghdr = unsafe { mem::zeroed() };
@@ -147,17 +151,24 @@ fn rights_message(
     if !fds.is_empty() {
         message.msg_control = control.as_mut_ptr().cast();
         message.msg_controllen = space as _;
+        // SAFETY: `message` describes the live `control` storage of `space` bytes, which
+        // CMSG_FIRSTHDR only reads the length and pointer of.
+        let header = unsafe { libc::CMSG_FIRSTHDR(&message) };
+        assert!(!header.is_null(), "control space holds no header");
         // SAFETY: `control` is live, usize-aligned (which meets cmsghdr's alignment on the
-        // supported systems) and holds `space` bytes, which `control_space` sized for one
-        // header and `fds.len()` descriptors, so CMSG_FIRSTHDR is non-null and the header
-        // and data writes below stay inside it.
+        // supported systems) and holds `space` bytes, at least what `control_space` (checked
+        // above) sizes for one header and `fds.len()` descriptors, so the header and data
+        // writes below stay inside it. The descriptors are copied as bytes, so the data's
+        // own alignment does not matter.
         unsafe {
-            let header = libc::CMSG_FIRSTHDR(&message);
             (*header).cmsg_level = libc::SOL_SOCKET;
             (*header).cmsg_type = libc::SCM_RIGHTS;
             (*header).cmsg_len = libc::CMSG_LEN(mem::size_of_val(fds) as u32) as _;
-            let data = libc::CMSG_DATA(header).cast::<RawFd>();
-            std::ptr::copy_nonoverlapping(fds.as_ptr(), data, fds.len());
+            std::ptr::copy_nonoverlapping(
+                fds.as_ptr().cast::<u8>(),
+                libc::CMSG_DATA(header),
+                mem::size_of_val(fds),
+            );
         }
     }
     message
