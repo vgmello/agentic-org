@@ -672,7 +672,6 @@ html[data-theme^="report"] .hb-skel-card:last-child { padding-right: 0; }
 html[data-theme^="report"] .ctx > summary { color: var(--tone-accent-ink); }
 html[data-theme^="report"] .ctx-body { border-radius: 3px; background: #F7F8FA; color: #2C3646; box-shadow: inset 2px 0 0 #CBD3DF; }
 html[data-theme^="report"] .card,
-html[data-theme^="report"] .bcard,
 html[data-theme^="report"] .c-entry,
 html[data-theme^="report"] .k-doc {
   border-radius: 4px; background: #F9FAFC;
@@ -1102,7 +1101,6 @@ html[data-theme="report-dark"] .hb-skel-grid { border-bottom-color: rgba(255, 25
 html[data-theme="report-dark"] .hb-skel-card + .hb-skel-card { border-left-color: rgba(255, 255, 255, .08); }
 html[data-theme="report-dark"] .ctx-body { background: #16202e; color: #d1d5dc; box-shadow: inset 2px 0 0 var(--indigo-400); }
 html[data-theme="report-dark"] .card,
-html[data-theme="report-dark"] .bcard,
 html[data-theme="report-dark"] .c-entry,
 html[data-theme="report-dark"] .k-doc { background: #1a2433; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
 html[data-theme="report-dark"] .chlist,

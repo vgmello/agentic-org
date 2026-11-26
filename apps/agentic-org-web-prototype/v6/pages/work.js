@@ -1,6 +1,7 @@
 import { ALL_STATUSES, IN, KIND, M, OPEN, P, STATUSES, TEAMS, W, WORK_DISCUSSIONS, executionHold, needsMe, ownerAsks } from "../data.js";
 import { detailCommentDrafts, detailEvent, inboxActivityTime, localDetailRecords, workCommentsHtml } from "./inbox.js";
 import { closeMenus } from "../shell/actions.js";
+import { bindBoardTips } from "./board-tip.js";
 import { own, route } from "../shell/router.js";
 import { S, WORK_ARCHIVED_STORE, qs } from "../state.js";
 import { SEP, av, displayCheckbox, esc, ic, iconWithTooltip, kindWord, memberIds, mlink, pill, plink, queueHeadline, searchRow, searchToggle, showMenu, toast } from "../ui.js";
@@ -493,27 +494,58 @@ function boardNeedBadge(w, { badge, asks }) {
   return `<div class="menu-wrap board-need-wrap"><button class="pill t-amber chip board-need" type="button" data-act="menu" data-id="${esc(menuId)}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${esc(menuId)}"${describedBy}>${ic("bell", "ic14")}${esc(badge)}${ic("chev-down", "ic14")}</button>
     <div class="menu board-need-menu board-pop-menu" id="menu-${esc(menuId)}" role="menu" aria-label="${esc(`Requests waiting on you for ${w.id}`)}" popover="manual" hidden>${ordered.map(boardNeedItem).join("")}</div></div>${due}`;
 }
-/* Reference row: priority (bars and word) and the reference, as in the List */
-function boardMeta(w) {
-  const type = w.kind === "bug" ? "Bug" : w.kind === "request" ? "Request" : "";
-  return `<div class="board-card-meta"><span class="board-ref">${boardPriorityMark(w)}${type ? `<span class="btype">${type}</span>` : ""}<span class="mono">${esc(w.id)}</span></span></div>`;
+/* Chip row (top of the card): the project chip, then labelled flags (type, bug severity, priority in words, the exact
+   status when it differs from the lane, Archived), with the reference at the end. Priority keeps the List's bars and
+   always a word; bug severity is its own fact, never read as priority. */
+const BOARD_TYPES = { bug: "Bug", request: "Request" };
+function boardChips(w, hideProject) {
+  const project = hideProject ? "" : `<span class="board-project">${plink(w.proj)}</span>`;
+  const type = BOARD_TYPES[w.kind] ? `<span class="bchip btype">${BOARD_TYPES[w.kind]}</span>` : "";
+  const status = S.workBoardStages !== "detailed" && !BOARD_STAGES.includes(w.status) ? `<span class="bchip bstatus">${workStatus(w.status)}${esc(w.status)}</span>` : "";
+  const archived = isArchivedWork(w) ? '<span class="bchip barchived">Archived</span>' : "";
+  return `<div class="board-chips">${project}${type}${boardSeverity(w)}${boardPriorityMark(w)}${status}${archived}<span class="board-ref mono">${esc(w.id)}</span></div>`;
 }
-/* Small facts, each said once: exact status when it differs from the lane, bug severity, ETA, criteria, subtasks,
-   then the team and Archived as the List shows them. Counts always keep their full word ("0/2 criteria"), at every
-   lane width, so "criteria" never reads as "Critical". */
-function boardCountTags(w) {
-  const crit = w.criteria?.length ? `<span class="btag btag-count">${ic("check-circle", "ic14")}${workCriteria(w.criteria, w.id)}<span class="btag-word" aria-hidden="true">criteria</span></span>` : "";
-  const n = w.subtasks?.length ?? 0, word = n === 1 ? "subtask" : "subtasks";
-  const subs = n ? `<span class="btag btag-count" title="${n} ${word}">${ic("list", "ic14")}<span aria-hidden="true">${n}</span><span class="btag-word" aria-hidden="true">${word}</span><span class="sr-only">${n} ${word}</span></span>` : "";
-  return crit + subs;
+/* One or two muted lines under the title: the description's first sentence */
+function boardDesc(w) {
+  const text = w.desc ?? (w.description ?? "").split(/\n/)[0].match(/^.*?[.!?](?=\s|$)/)?.[0] ?? "";
+  return text ? `<p class="board-desc">${esc(text)}</p>` : "";
 }
-function boardTags(w, sortKey) {
-  const st = S.workBoardStages !== "detailed" && !BOARD_STAGES.includes(w.status) ? `<span class="bstatus">${workStatus(w.status)}${esc(w.status)}</span>` : "";
+/* Progress: acceptance criteria when the item has them, otherwise its subtasks. A ring, "1/4 criteria", and the
+   percentage at the end; the counts keep their full word at every width, so "criteria" never reads as "Critical". */
+function boardProgressCounts(w) {
+  if (w.criteria?.length) {
+    const done = w.criteria.filter((c) => c.done).length;
+    return { done, total: w.criteria.length, word: "criteria", label: `${done} of ${w.criteria.length} acceptance criteria complete` };
+  }
+  const subs = w.subtasks ?? [];
+  if (!subs.length) return null;
+  const done = subs.filter((t) => !OPEN(t)).length, word = subs.length === 1 ? "subtask" : "subtasks";
+  return { done, total: subs.length, word, label: `${done} of ${subs.length} ${word} done` };
+}
+const boardRing = (pct) => `<svg class="bring" viewBox="0 0 16 16" aria-hidden="true"><circle class="bring-track" cx="8" cy="8" r="6"/>${pct ? `<circle class="bring-fill" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray="${pct} 100" transform="rotate(-90 8 8)"/>` : ""}</svg>`;
+function boardProgress(w) {
+  const p = boardProgressCounts(w);
+  if (!p) return "";
+  const pct = Math.round((p.done / p.total) * 100);
+  return `<div class="board-progress" data-board-progress="${esc(w.id)}"${pct === 100 ? " data-complete" : ""} title="${esc(p.label)}">${boardRing(pct)}<span class="bprog-count" aria-hidden="true">${p.done}/${p.total} ${p.word}</span><span class="sr-only">${esc(p.label)}</span><span class="bprog-pct" aria-hidden="true">${pct}%</span></div>`;
+}
+/* The card's date: ETA where the board already shows one; when it closed, for finished work */
+function boardWhen(w, sortKey) {
   const eta = w.etaHours != null || sortKey === "eta" ? workEta(w) : "";
-  const etaTag = eta ? `<span class="btag beta">${ic("clock", "ic14")}ETA ${esc(eta)}</span>` : "";
-  const team = workTeam(w), teamTag = team ? `<span class="work-team board-team">${esc(TEAMS[team].name)}</span>` : "";
-  const tags = `${st}${boardSeverity(w)}${etaTag}${boardCountTags(w)}${teamTag}${isArchivedWork(w) ? pill("Archived", "gray", null, true) : ""}`;
-  return tags ? `<div class="board-tags">${tags}</div>` : "";
+  if (eta && OPEN(w)) return { text: `ETA ${eta}`, icon: "clock" };
+  if (!OPEN(w) && w.closedDaysAgo != null) return { text: w.closedDaysAgo === 0 ? "Closed today" : `Closed ${w.closedDaysAgo}d ago`, icon: "calendar-check" };
+  return null;
+}
+/* Comments people have written on the item: the shared discussion plus any added on this device */
+function boardCommentCount(w) {
+  return (WORK_DISCUSSIONS[w.id]?.comments?.length ?? 0) + localDetailRecords(workCommentPrefix(w.id)).length;
+}
+function boardFooterFacts(w, sortKey) {
+  const n = boardCommentCount(w), word = n === 1 ? "comment" : "comments";
+  const comments = n ? `<span class="bfoot-count" title="${n} ${word}">${ic("chat", "ic14")}<span aria-hidden="true">${n}</span><span class="sr-only">${n} ${word}</span></span>` : "";
+  const when = boardWhen(w, sortKey);
+  const date = when ? `<span class="bdate">${ic(when.icon, "ic14")}${esc(when.text)}</span>` : "";
+  return comments || date ? `<span class="bfoot-facts">${comments}${date}</span>` : "";
 }
 /* A search that matches a subtask says which one on its parent card, with a link to it */
 function boardSubtaskHits(w, query) {
@@ -526,25 +558,29 @@ function boardOwner(w) {
   if (!w.who || !M[w.who]) return `<span class="board-assignee">${av(null, 24)}<span class="board-owner-label">Unassigned</span></span>`;
   return `<span class="board-assignee">${av(w.who, 24)}<span class="board-owner-label">${mlink(w.who)}</span><span class="board-kind">${esc(kindWord(w.who))}</span></span>`;
 }
-/* Context row: the assignee first, then the project; it wraps for long names, so the assignee always starts the row */
-function boardContext(w, hideOwner, hideProject) {
-  const project = hideProject ? "" : `<span class="board-project">${plink(w.proj)}</span>`;
-  if (hideOwner && !project) return "";
-  return `<div class="board-card-context">${hideOwner ? "" : boardOwner(w)}${project}</div>`;
+/* Footer: who has it (avatar, name, Agent or Person) and their team; then comments and the date at the end */
+function boardFooter(w, hideOwner, sortKey) {
+  const team = workTeam(w), teamTag = team ? `<span class="work-team board-team">${esc(TEAMS[team].name)}</span>` : "";
+  const facts = boardFooterFacts(w, sortKey);
+  if (hideOwner && !teamTag && !facts) return "";
+  return `<div class="board-card-context">${hideOwner ? "" : boardOwner(w)}${teamTag}${facts}</div>`;
 }
-/* What the card asks of you comes straight after its title: the request badge (or why it is blocked) and any
-   execution hold; then who has it and where, in a predictable place; then the supporting facts */
+/* The hover and focus tooltip names the card (its title), then where it stands and when: "In progress · ETA 2h" */
+function boardTip(w, sortKey) {
+  return [w.status, boardWhen(w, sortKey)?.text].filter(Boolean).join(" · ");
+}
+/* Top to bottom: chips, title, a short description, what the card asks of you (the request badge, or why it is
+   blocked) and any execution hold, progress, then who has it and when */
 function boardCard(w, { hideOwner, hideProject, selected, sortKey, query }) {
   const attention = showsNeedsYou(w), reason = boardReason(w);
   const badge = reason.badge ? boardNeedBadge(w, reason) : "";
   const status = badge ? `<div class="board-status">${badge}</div>` : reason.line ? `<p class="board-reason">${ic("pause", "ic14")}${esc(reason.line)}</p>` : "";
   const team = workTeam(w);
-  return `<li class="bcard" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}${attention ? " data-attention" : ""}${selected ? ' aria-current="true"' : ""}>
-    <a class="work-item-link t" data-item="${esc(w.id)}" href="${esc(workItemHref(w.id))}" aria-haspopup="dialog" title="${esc(w.title)}">${esc(w.title)}</a>
-    ${status}${boardHold(w)}
-    ${boardContext(w, hideOwner, hideProject)}
-    <div class="board-facts">${boardMeta(w)}${boardTags(w, sortKey)}</div>
-    ${boardSubtaskHits(w, query)}
+  return `<li class="bcard" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}${attention ? " data-attention" : ""}${selected ? ' aria-current="true"' : ""} data-board-tip="${esc(boardTip(w, sortKey))}">
+    ${boardChips(w, hideProject)}
+    <a class="work-item-link t" data-item="${esc(w.id)}" href="${esc(workItemHref(w.id))}" aria-haspopup="dialog">${esc(w.title)}</a>
+    ${boardDesc(w)}${status}${boardHold(w)}${boardProgress(w)}${boardSubtaskHits(w, query)}
+    ${boardFooter(w, hideOwner, sortKey)}
   </li>`;
 }
 /* Attention first (the board's default): owner asks that expire, soonest deadline first; then other cards that
@@ -613,12 +649,13 @@ function laneCount(stage, tasks) {
   const { recent, older } = doneWindow(stage, tasks);
   return { recent, older, text: older ? `${recent.length} shown · ${older} older` : String(tasks.length) };
 }
-/* The lane heading is where a column jump lands, so it takes focus (tabindex=-1). Every terminal lane names its
-   history window with a button that opens the one Done history control in Display. */
+/* The lane heading is where a column jump lands, so it takes focus (tabindex=-1): status icon, name and a count pill.
+   Every terminal lane names its history window beside the count, and its quiet "More" button opens the one Done
+   history control in Display. Cards are never moved between lanes, so a lane has no other options. */
 function boardColumnHead(stage, count) {
-  const range = esc(DONE_WINDOW_LABEL[doneHistory()]);
-  const history = isDoneStage(stage) ? `<button class="bcol-window" type="button" data-act="board-history" aria-haspopup="menu" aria-label="Done history: ${range}. Change" title="Change Done history">${ic("clock", "ic14")}${range}${ic("chev-down", "ic14")}</button>` : "";
-  return `<div class="bcol-h" data-popover-inset><h3 class="bcol-title" tabindex="-1"><span class="bcol-ic" aria-hidden="true">${workStatus(BOARD_STAGE_STATUS[stage] || stage)}</span><span class="bcol-name">${esc(stage)}</span><span class="cnt">${esc(count.text)}</span></h3>${history}</div>`;
+  const range = esc(DONE_WINDOW_LABEL[doneHistory()]), done = isDoneStage(stage);
+  const history = done ? `<button class="bcol-window" type="button" data-act="board-history" aria-haspopup="menu" aria-label="Done history: ${range}. Change" title="Done history: ${range}">${ic("ellipsis", "ic16")}</button>` : "";
+  return `<div class="bcol-h" data-popover-inset><h3 class="bcol-title" tabindex="-1"><span class="bcol-ic" aria-hidden="true">${workStatus(BOARD_STAGE_STATUS[stage] || stage)}</span><span class="bcol-name">${esc(stage)}</span><span class="cnt">${esc(count.text)}</span>${done ? `<span class="bcol-range">${range}</span>` : ""}</h3>${history}</div>`;
 }
 function boardColumnHtml(stage, tasks, opts) {
   const count = laneCount(stage, tasks), { recent, older } = count;
@@ -740,6 +777,7 @@ function bindLanePicker(select, main) {
 let boardResize = null;
 /* Keep the column jump control in sync with horizontal scrolling and with the board's width */
 function mountBoard(main) {
+  bindBoardTips();
   boardResize?.disconnect();
   boardResize = null;
   const board = main.querySelector(".board"), nav = main.querySelector(".board-lanes");
@@ -1239,6 +1277,7 @@ function changeWorkCriterion(input) {
   for (const progress of document.querySelectorAll(`[data-work-progress="${CSS.escape(item.id)}"]`)) {
     progress.outerHTML = workCriteria(item.criteria, item.id);
   }
+  for (const progress of document.querySelectorAll(`[data-board-progress="${CSS.escape(item.id)}"]`)) progress.outerHTML = boardProgress(item);
   document.getElementById("work-history").innerHTML = workHistory(item);
   document.getElementById("work-criteria-status").textContent = `${item.criteria.filter((entry) => entry.done).length} of ${item.criteria.length} complete.`;
 }
@@ -1422,7 +1461,7 @@ function pageWork() {
   S.workGroup = selection.group;
   S.workSubgroup = selection.subgroup;
   return `<header class="work-header queue-header">
-    ${queueHeadline("Work", `Across all work: ${W.filter(OPEN).length} open · ${W.filter(needsMe).length} need you`)}
+    ${queueHeadline("Work", `Across all work: ${W.filter(OPEN).length} open · ${W.filter(needsMe).length} need you`, false, workNewTaskButton())}
     <div class="work-toolbar queue-toolbar">
       <div class="primary-tab-row" data-page-menu>
         <div class="queue-tabs" role="group" aria-label="Work views">
@@ -1430,7 +1469,6 @@ function pageWork() {
             data-v="${value}" aria-pressed="${selection.view === value}" data-menu-label="${esc(label)}">${label}<span data-work-count="${value}">${visibleCount(workPresetItems(filtered, value), value, S.workLayout)}</span></button>`).join("")}
         </div>
       </div>
-      ${workNewTaskButton()}
       ${workLayoutToggle("workLayout")}
       ${workViewControls(selection.group, selection.subgroup)}
       ${workArchivedChip(S.workLayout)}

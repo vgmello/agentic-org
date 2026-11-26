@@ -1,0 +1,258 @@
+/* ── Work board (review round 10) ─────────────────────────────────────────
+   Lanes are softly tinted rounded panels; cards are raised surfaces on them. Nothing on the board draws an outline:
+   lanes and cards separate from the canvas by surface colour and a soft shadow, and cards have no divider lines.
+   Every colour is a token. Each theme supplies its canvas (and, where needed, its surfaces and shadows); the rest
+   is mixed from the theme's own ink and surface tokens. Selectors are scoped to the board (.board .bcol,
+   .board .bcard) and the theme rules to html[data-theme], so they hold whatever order the stylesheets load in. */
+
+.board {
+  --bd-canvas: var(--gray-950);
+  --bd-lane: color-mix(in srgb, var(--white) 4%, var(--bd-canvas));
+  --bd-card: color-mix(in srgb, var(--white) 8%, var(--bd-canvas));
+  --bd-card-hover: color-mix(in srgb, var(--white) 10%, var(--bd-canvas));
+  --bd-shadow: 0 1px 2px rgb(0 0 0 / .32), 0 1px 1px rgb(0 0 0 / .18);
+  --bd-lift: 0 10px 24px -8px rgb(0 0 0 / .55), 0 3px 6px rgb(0 0 0 / .28);
+  --bd-chip: color-mix(in srgb, var(--white) 8%, var(--bd-card));
+  --bd-pill: color-mix(in srgb, var(--white) 10%, var(--bd-lane));
+  --bd-ink: var(--white);
+  --bd-body: var(--gray-300);
+  --bd-muted: var(--gray-400);
+  --bd-ring-track: color-mix(in srgb, var(--white) 16%, var(--bd-card));
+  --bd-ring: var(--tone-accent-ink);
+  --bd-ring-done: var(--tone-ok-ink);
+  --bd-tip: #0b0d12;
+  --bd-tip-ink: #ffffff;
+  --bd-tip-muted: #c3c8d2;
+  --bd-radius-lane: 14px;
+  --bd-radius-card: 12px;
+}
+/* Canvases behind the board, per theme (Ocean and Cozy paint a gradient; these sit at its middle) */
+html[data-theme="ocean"] .board, html:not([data-theme]) .board { --bd-canvas: #12233a; --bd-card: #1d3250; --bd-card-hover: #213958; }
+/* Classic and Report Night: their muted grey needs a lighter step on the raised card to hold 4.5:1 */
+html:is([data-theme="classic"], [data-theme="report-dark"]) .board {
+  --bd-canvas: #1e2939;
+  --bd-muted: color-mix(in srgb, var(--gray-400) 75%, var(--gray-300));
+}
+html[data-theme="graphite"] .board { --bd-canvas: #18191a; }
+html[data-theme="cozy"] .board { --bd-canvas: #2f2721; --bd-card: #3d332b; --bd-card-hover: #443930; }
+/* Light themes: a pale grey lane and white cards lifted by a soft shadow */
+html[data-theme="report"] .board, html[data-theme="graphite-light"] .board {
+  --bd-lane: color-mix(in srgb, var(--white) 4.5%, var(--bd-canvas));
+  --bd-card: #ffffff;
+  --bd-card-hover: #ffffff;
+  --bd-shadow: 0 1px 2px rgb(16 24 40 / .07), 0 1px 3px rgb(16 24 40 / .09);
+  --bd-lift: 0 12px 24px -10px rgb(16 24 40 / .22), 0 3px 6px rgb(16 24 40 / .08);
+  --bd-chip: color-mix(in srgb, var(--white) 5%, #ffffff);
+  --bd-pill: color-mix(in srgb, var(--white) 8%, var(--bd-lane));
+  --bd-ring-track: color-mix(in srgb, var(--white) 13%, #ffffff);
+  --bd-tip: #111827;
+}
+html[data-theme="report"] .board { --bd-canvas: #ffffff; --bd-ring: var(--tone-accent); }
+html[data-theme="graphite-light"] .board { --bd-canvas: #fafafa; --bd-ring: #3f3f46; }
+
+/* Lanes */
+/* Phones keep their own lane width and gap (one full-width lane at a time) */
+@media (min-width: 640px) { .board .board-columns { --board-column-gap: 14px; } }
+.board .bcol {
+  container: board-lane / inline-size;
+  display: flex; flex-direction: column; gap: 10px; min-width: 0;
+  padding: 0 8px 10px;
+  border-radius: var(--bd-radius-lane);
+  background: var(--bd-lane);
+}
+/* Lane header: status icon, name, a count pill, then the lane's quiet actions at the end. It stays visible while
+   the board scrolls, in the lane's own colour. */
+.board .bcol > .bcol-h {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 6px;
+  min-height: 44px; margin-inline: -8px; padding: 6px 8px 4px 14px;
+  border-radius: var(--bd-radius-lane) var(--bd-radius-lane) 0 0;
+  background: var(--bd-lane);
+  font-size: var(--fs-base); font-weight: 600; color: var(--bd-ink);
+}
+.board .bcol-title { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-width: 0; margin: 0; font: inherit; }
+.board .bcol-ic { display: inline-flex; flex: none; }
+.board .bcol-ic .work-status { transform: scale(.85); }
+.board .bcol-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board .bcol-h .cnt {
+  flex: none; padding: 1px 8px; border-radius: 999px; background: var(--bd-pill);
+  font-size: var(--fs-xs); font-weight: 600; line-height: 1.5; color: var(--bd-body); font-variant-numeric: tabular-nums;
+}
+.board .bcol-h .bcol-range { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); font-weight: 500; color: var(--bd-muted); }
+.board .bcol > .bcol-h > button.bcol-window {
+  position: relative; flex: none; display: inline-grid; place-items: center; width: 30px; height: 30px;
+  border-radius: 8px; color: var(--bd-muted);
+}
+.board .bcol > .bcol-h > button.bcol-window:hover { color: var(--bd-ink); background: var(--bd-pill); }
+.board .bcol > .bcol-h > button.bcol-window:focus-visible { outline: 2px solid var(--tone-accent-ink); outline-offset: 1px; }
+@media (max-width: 639px), (pointer: coarse) {
+  .board .bcol > .bcol-h > button.bcol-window::after { content: ""; position: absolute; inset: -7px; }
+}
+.board .bcol-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.board .bcol-empty { padding: 14px 8px; font-size: var(--fs-sm); color: var(--bd-body); }
+
+/* Cards */
+.board .bcard {
+  position: relative;
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--bd-radius-card);
+  background: var(--bd-card);
+  box-shadow: var(--bd-shadow);
+  color: var(--bd-body);
+  font-size: var(--fs-sm); line-height: 1.4;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  transition: transform .16s ease, box-shadow .16s ease, background-color .16s ease;
+}
+.board .bcard:hover { transform: translateY(-2px); background: var(--bd-card-hover); box-shadow: var(--bd-lift); }
+@media (prefers-reduced-motion: reduce) {
+  .board .bcard { transition: none; }
+  .board .bcard:hover { transform: none; }
+}
+/* Selected (its detail is open): an accent ring drawn as a shadow, not a border */
+.board .bcard[aria-current="true"] { box-shadow: 0 0 0 2px var(--tone-accent-ink), var(--bd-shadow); }
+/* The attention stripe is its own logical border on a layer above the card, so no shadow can hide it */
+.board .bcard[data-attention]::before {
+  content: ""; position: absolute; inset: -1px; z-index: 0; pointer-events: none;
+  border-inline-start: 3px solid var(--tone-warn); border-radius: inherit;
+}
+/* The title link covers the card; focus rings the whole card */
+.board .bcard > .work-item-link::after { border-radius: var(--bd-radius-card); }
+.board .bcard > .work-item-link:focus-visible { outline: none; }
+.board .bcard > .work-item-link:focus-visible::after { outline: none; }
+.board .bcard:has(> .work-item-link:focus-visible) { outline: 2px solid var(--tone-accent-ink); outline-offset: 2px; }
+
+/* 1. Chips: project, type, severity, priority, exact status; the reference at the end */
+.board .bcard .board-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.board .bcard :is(.board-project > a, .bchip, .bpri, .bsev) {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-height: 22px; padding: 0 8px;
+  border-radius: 6px; background: var(--bd-chip);
+  font-size: var(--fs-xs); font-weight: 500; line-height: 1.2; color: var(--bd-body); white-space: nowrap;
+}
+.board .bcard .board-project { display: inline-flex; min-width: 0; max-width: 100%; }
+.board .bcard .board-project > a {
+  position: relative; z-index: 1; overflow: hidden; text-overflow: ellipsis; display: inline-block; padding-block: 3px; line-height: 1.35;
+  color: var(--bd-body); text-decoration: none;
+}
+.board .bcard .board-project > a:hover { color: var(--bd-ink); text-decoration: underline; text-underline-offset: 2px; }
+.board .bcard .btype { font-weight: 600; }
+.board .bcard .bstatus > .work-status { transform: scale(.8); margin-inline-start: -3px; }
+.board .bcard .bsev { font-weight: 600; }
+.board .bcard :is(.bsev[data-severity="critical"], .bpri[data-priority="urgent"]) { background: var(--tone-bad-soft); color: var(--tone-bad-ink); }
+.board .bcard .bsev[data-severity="major"] { color: var(--bd-ink); }
+.board .bcard .bpri .work-priority-mark { color: currentColor; }
+.board .bcard .bpri:is([data-priority="high"]) { font-weight: 600; color: var(--bd-ink); }
+.board .bcard .bpri[data-priority="urgent"] { font-weight: 600; }
+/* An inferred priority is not a flag: plain muted text with fainter bars, and it says "inferred" */
+.board .bcard .bpri.is-inferred { padding-inline: 2px; background: none; color: var(--bd-muted); }
+.board .bcard .bpri.is-inferred .work-priority-mark { opacity: .55; }
+.board .bcard .bpri-tilde { display: none; }
+.board .bcard .board-ref { margin-inline-start: auto; font-size: var(--fs-xs); color: var(--bd-muted); white-space: nowrap; }
+
+/* 2. Title, 3. description */
+.board .bcard > .t {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere;
+  font-size: var(--item-title-size); font-weight: 600; line-height: 1.35; color: var(--bd-ink); text-decoration: none;
+}
+.board .bcard .board-desc {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  margin: -4px 0 0; color: var(--bd-muted); font-size: var(--fs-sm); line-height: 1.45;
+}
+
+/* What the card asks of you: the request badge with its expiry, or why it is blocked; an execution hold */
+.board .bcard .board-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.board .bcard .board-status .board-need { max-width: 100%; white-space: normal; text-align: start; line-height: 1.3; padding-block: 3px; }
+.board .bcard .board-need { position: relative; z-index: 1; flex: none; }
+.board .bcard .board-need .ic:last-child { opacity: .7; }
+.board .bcard .board-reason { display: flex; align-items: center; gap: 6px; margin: 0; font-size: var(--fs-sm); color: var(--bd-muted); }
+.board .bcard .board-hold { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; font-size: var(--fs-sm); color: var(--bd-body); }
+.board .bcard .board-hold > .ic { flex: none; color: var(--bd-muted); }
+.board .bcard .board-hold a {
+  position: relative; z-index: 1; min-width: 0; color: inherit;
+  text-decoration: underline; text-decoration-thickness: 1px; text-decoration-color: var(--gray-500); text-underline-offset: 3px;
+}
+.board .bcard .board-hold a:hover { color: var(--bd-ink); text-decoration-color: currentColor; }
+.board .bcard .board-hold-word { font-weight: 600; color: var(--bd-ink); }
+
+/* 4. Progress: ring, "x/y criteria", the percentage at the end */
+.board .bcard .board-progress { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--fs-sm); color: var(--bd-body); }
+.board .bcard .bring { flex: none; width: 16px; height: 16px; fill: none; stroke-width: 2.25; }
+.board .bcard .bring-track { stroke: var(--bd-ring-track); }
+.board .bcard .bring-fill { stroke: var(--bd-ring); stroke-linecap: round; }
+.board .bcard .board-progress[data-complete] .bring-fill { stroke: var(--bd-ring-done); }
+.board .bcard .bprog-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.board .bcard .bprog-pct { margin-inline-start: auto; font-weight: 700; color: var(--bd-ink); font-variant-numeric: tabular-nums; }
+
+/* Search that matches a subtask names it on the parent card */
+.board .bcard .board-subhits { display: grid; gap: 2px; margin: 0; padding: 4px 8px; list-style: none; border-radius: 8px; background: var(--bd-chip); font-size: var(--fs-sm); color: var(--bd-body); }
+.board .bcard .board-subhits li { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.board .bcard .board-subhit-word { flex: none; font-size: var(--fs-xs); font-weight: 600; color: var(--bd-muted); }
+.board .bcard .board-subhits a {
+  position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis; color: var(--bd-ink);
+  text-decoration: underline; text-decoration-thickness: 1px; text-decoration-color: var(--gray-500); text-underline-offset: 3px;
+}
+
+/* 5. Footer: avatar, name and kind, team; comments and the date pill at the end */
+.board .bcard .board-card-context { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; margin-top: 2px; font-size: var(--fs-sm); color: var(--bd-body); }
+.board .bcard .board-assignee { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; }
+.board .bcard .board-owner-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--bd-ink); font-weight: 500; }
+.board .bcard .board-owner-label a {
+  display: inline-block; max-width: 100%; padding-block: 4px; margin-block: -4px; vertical-align: bottom;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit;
+  text-decoration: underline; text-decoration-thickness: 1px; text-decoration-color: var(--gray-500); text-underline-offset: 3px;
+}
+.board .bcard .board-owner-label a:hover { text-decoration-color: currentColor; }
+.board .bcard .board-kind { flex: none; font-size: var(--fs-xs); color: var(--bd-muted); }
+.board .bcard .board-team { display: inline-flex; min-width: 0; padding: 0; border: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--bd-muted); }
+.board .bcard .bfoot-facts { display: inline-flex; flex: none; align-items: center; gap: 10px; margin-inline-start: auto; font-size: var(--fs-xs); color: var(--bd-muted); }
+.board .bcard .bfoot-count { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.board .bcard .bdate {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 22px; padding: 0 8px;
+  border-radius: 6px; background: var(--bd-chip); color: var(--bd-body); font-weight: 500; white-space: nowrap;
+}
+
+/* Secondary controls on a card get their own focus ring */
+.board .bcard :is(.board-project a, .board-owner-label a, .board-subhits a, .board-hold a, a.board-need, button.board-need):focus-visible {
+  outline: 2px solid var(--tone-accent-ink); outline-offset: 1px; border-radius: 4px; text-decoration-color: currentColor;
+}
+.board .bcard :is(a.board-need, button.board-need):focus-visible { border-radius: var(--radius-md); }
+
+/* Narrow lanes (Status columns): tighter padding; the team and the "inferred" word give way first */
+@container board-lane (max-width: 15.5rem) {
+  .board .bcard { padding: 12px; gap: 7px; }
+  .board .bcard .board-team { display: none; }
+  .board .bcard .bpri-inf { display: none; }
+  .board .bcard .bpri-tilde { display: inline; }
+}
+
+/* Phones and touch: project, owner, subtask and hold links are 44px targets. The extra height sits in negative
+   margins, so the chip keeps its look and the row its height, and it never reaches over the title or the badge. */
+@media (max-width: 639px), (pointer: coarse) {
+  .board .bcard .board-project { padding: 0 8px; border-radius: 6px; background: var(--bd-chip); }
+  .board .bcard .board-project > a { min-height: 44px; min-width: 44px; margin-block: -11px; padding: 11px 0; line-height: 22px; background: none; }
+  .board .bcard .board-owner-label a { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; padding-block: 0; margin-block: -10px; }
+  .board .bcard .board-subhits a { min-height: 44px; min-width: 44px; }
+  .board .bcard .board-subhits { padding-block: 0; }
+  .board .bcard .board-hold a { display: inline-flex; align-items: center; min-height: 44px; margin-block: -10px; }
+}
+
+/* Forced colours: shadows disappear, so lanes and cards keep a real (system-coloured) outline */
+@media (forced-colors: active) {
+  .board .bcol, .board .bcard { border: 1px solid CanvasText; }
+  .board .bcard:hover { transform: none; }
+}
+
+/* Hover and focus tooltip (board-tip.js): a small dark label above the card */
+.board-tip {
+  position: fixed; inset: auto; margin: 0; padding: 7px 10px; border: 0; max-width: min(18rem, calc(100vw - 16px));
+  display: grid; gap: 1px;
+  border-radius: 8px; background: var(--bd-tip, #0b0d12); color: var(--bd-tip-ink, #fff);
+  box-shadow: 0 8px 24px -6px rgb(0 0 0 / .45);
+  font-size: var(--fs-xs); line-height: 1.35;
+}
+.board-tip:not(:popover-open) { display: none; }
+.board-tip .board-tip-title { font-weight: 600; color: #ffffff; }
+.board-tip .board-tip-meta { color: #c9ced8; }
+@media (forced-colors: active) { .board-tip { border: 1px solid CanvasText; } }
