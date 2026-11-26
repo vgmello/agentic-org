@@ -300,7 +300,7 @@ const AGENT_EXECUTION_SET_INPUT: &[Field] = &[
     Field::optional(
         "effort",
         EFFORT_TYPE,
-        "Reasoning effort (full replacement; omitted keeps the runtime default)",
+        "Reasoning effort (full replacement; omitted resets to the runtime default)",
     ),
     Field::optional("enabled", Type::Boolean, "Enable or disable execution"),
     Field::required(

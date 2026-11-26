@@ -1,3 +1,4 @@
+mod effort;
 mod sandbox;
 
 use serde_json::{json, Map, Value};
@@ -9,6 +10,7 @@ use org_agent_runtime::{
     Stdio, StopPlan, StopSignal, StopStep, ToolCapability, ToolName,
 };
 
+use self::effort::claude_effort;
 use self::sandbox::{
     build_sandbox_json, is_concrete_path, normalize_bwrap_pattern, split_trailing_globstar,
 };
@@ -100,6 +102,7 @@ pub(crate) fn build_headless_plan(
 ) -> Result<(LaunchPlan, ExpectedMode, Option<Vec<String>>), PlanError> {
     validate_plan_paths(spec, ctx)?;
     let (session_id, is_resume) = resolve_session_id(ctx)?;
+    let effort = claude_effort(spec)?;
     let effective_mode = spec.effective_permission_mode(caps);
     let expected_mode = map_permission_mode(effective_mode)?;
     let expanded_tools = spec
@@ -157,7 +160,7 @@ pub(crate) fn build_headless_plan(
         args.push(format!("--session-id={}", session_id.as_str()));
     }
 
-    append_common_options(&mut args, spec, expanded_tools.as_deref());
+    append_common_options(&mut args, spec, effort, expanded_tools.as_deref());
 
     let mut files = vec![
         PlannedFile {
@@ -234,6 +237,7 @@ pub(crate) fn build_take_over_plan(
             "take-over requires LaunchContext::resume to be set".to_owned(),
         ));
     };
+    let effort = claude_effort(spec)?;
     let effective_mode = spec.effective_permission_mode(caps);
     let expected_mode = map_permission_mode(effective_mode)?;
     let expanded_tools = spec
@@ -274,7 +278,7 @@ pub(crate) fn build_take_over_plan(
         args.push(instructions_path);
     }
 
-    append_common_options(&mut args, spec, expanded_tools.as_deref());
+    append_common_options(&mut args, spec, effort, expanded_tools.as_deref());
 
     let mut files = vec![
         PlannedFile {
@@ -335,18 +339,20 @@ fn resolve_session_id(ctx: &LaunchContext) -> Result<(SessionId, bool), PlanErro
     }
 }
 
+/// `effort` is the spec's effort as [`claude_effort`] validated it.
 fn append_common_options(
     args: &mut Vec<String>,
     spec: &SessionSpec,
+    effort: Option<&str>,
     expanded_tools: Option<&[String]>,
 ) {
     if let Some(model) = &spec.model {
         args.push("--model".to_owned());
         args.push(model.as_str().to_owned());
     }
-    if let Some(effort) = &spec.effort {
+    if let Some(effort) = effort {
         args.push("--effort".to_owned());
-        args.push(effort.as_str().to_owned());
+        args.push(effort.to_owned());
     }
     if let Some(tools) = expanded_tools {
         args.push("--tools".to_owned());

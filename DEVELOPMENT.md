@@ -107,13 +107,20 @@ scripts/prune-cargo-targets.sh --max-age-days 0 --root ~/projects   # every idle
 ```
 
 It considers only directories that hold Cargo's `CACHEDIR.TAG` and lie strictly inside a
-`--root`. It follows no symlinks, skips `.git` and `node_modules`, and searches
-`--max-depth` levels (default 5). It never removes a target that is in use: one with a held
-Cargo lock (a build, check, test or run), one whose workspace has a running `cargo`,
-`rustc`, `rustdoc`, Clippy or `rust-analyzer` process, or one a running process names on
-its command line (such as a test binary). While it removes a target it holds every Cargo
-lock in it, so a build that starts meanwhile waits and then builds from scratch. It prints
-the space reclaimed, and a second run removes nothing more. It needs `python3`.
+`--root`. It follows no symlinks, skips `.git` and `node_modules`, and finds target
+directories up to `--max-depth` levels below a root (default 12, deep enough for
+`~/projects` and the office's runtime worktree roots). A target is idle when nothing
+anywhere in it changed within `--max-age-days`; with `0` its age is not checked at all. It
+never removes a target that is in use: one with a held Cargo lock at any depth (a build,
+check, test or run), one whose workspace has a running `cargo`, `rustc`, `rustdoc`, Clippy
+or `rust-analyzer` process, or one a running process names on its command line (such as a
+test binary). To remove a target it takes every Cargo lock in it, renames it aside within
+its parent (`.cargo-prune-*`) while holding them, and only then deletes the renamed tree, so
+a build that starts meanwhile builds from scratch and the deletion never touches the new
+`target/`. In the rare case that a build creates a new lock in the moment before that
+rename, the script puts the directory back. If a new `target/` already exists by then, it
+leaves the old one at its `.cargo-prune-*` name for a later run instead. It prints the space
+reclaimed, and a second run removes nothing more. It needs `python3`.
 `scripts/test-prune-cargo-targets.sh` runs its self-test on throwaway fixtures.
 
 ## Lint and formatting

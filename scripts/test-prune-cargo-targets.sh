@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Self-test for prune-cargo-targets.sh on throwaway fixtures in a temporary folder: stale,
-# fresh, locked and busy Cargo target directories, look-alikes that are not Cargo's, and a
-# symlink to a target outside the root. Prints "ok" and exits 0 when every check passes.
+# fresh, locked and busy Cargo target directories, look-alikes that are not Cargo's, a
+# symlink to a target outside the root, the --max-depth boundary, changes and locks deep in a
+# target, future dates, and symlinks inside a target. Prints "ok" and exits 0 when every check
+# passes.
 
 set -euo pipefail
 
@@ -158,5 +160,95 @@ gone scan/ws-locked/target
 gone scan/ws-busy/target
 exists outside/ws-elsewhere/target
 exists scan/ws-plain/target
+
+# --max-depth N reaches a target directory N levels below the root (its tag is N + 1 down),
+# and not one a level deeper.
+workspace depth old    # depth/target: 1 level below the root depth/
+workspace depth/ws old # depth/ws/target: 2 levels below
+run --max-depth 1 --root "$root/depth" || fail "the depth 1 run failed"
+says "from 1 of 1 Cargo target directories (0 kept)"
+gone depth/target
+exists depth/Cargo.toml
+exists depth/ws/target
+run --max-depth 2 --root "$root/depth" || fail "the depth 2 run failed"
+gone depth/ws/target
+
+# The default depth (12) reaches a target 12 levels below the root, and not one at 13.
+deep=deep/1/2/3/4/5/6/7/8/9/10
+workspace "$deep/ws12" old      # 10 levels, ws12 at 11, its target at 12
+workspace "$deep/more/ws13" old # more at 11, ws13 at 12, its target at 13
+run --root "$root/deep" || fail "the default depth run failed"
+says "from 1 of 1 Cargo target directories"
+gone "$deep/ws12/target"
+exists "$deep/more/ws13/target"
+
+# A change anywhere in a target is a use: a fingerprint under a target triple sits deeper than
+# the top three levels.
+workspace deep-use/ws old
+fingerprint="$root/deep-use/ws/target/x86_64-unknown-linux-gnu/debug/.fingerprint/fixture-1"
+mkdir -p "$fingerprint"
+: >"$fingerprint/lib-fixture"
+find "$root/deep-use" -exec touch -h -t 202001010000 {} +
+touch "$fingerprint/lib-fixture"
+run --root "$root/deep-use" || fail "the deep use run failed"
+says "kept (used within 7 days)  $root/deep-use/ws/target"
+exists deep-use/ws/target/debug/deps/libfixture.rlib
+
+# A file dated in the future keeps a target at any age but 0, which does not look at age.
+workspace future/ws old
+touch -t 209901010000 "$root/future/ws/target/debug/deps/libfixture.rlib"
+run --max-age-days 7 --root "$root/future" || fail "the future date run failed"
+says "kept (used within 7 days)  $root/future/ws/target"
+exists future/ws/target
+run --max-age-days 0 --root "$root/future" || fail "the future date age 0 run failed"
+gone future/ws/target
+
+# A symlink inside a target is never followed: a fresh file behind it does not keep the
+# target, and the removal deletes the link, never what it points to.
+workspace links/ws old
+mkdir -p "$root/links/elsewhere"
+: >"$root/links/elsewhere/fresh"
+ln -s "$root/links/elsewhere" "$root/links/ws/target/debug/build-link"
+touch -h -t 202001010000 "$root/links/ws/target/debug/build-link" "$root/links/ws/target/debug"
+run --root "$root/links" || fail "the inner symlink run failed"
+gone links/ws/target
+exists links/elsewhere/fresh
+
+# A Cargo lock held anywhere in a target keeps it, whatever its name and however deep (a nested
+# package build puts one five levels in); nothing is renamed or removed meanwhile.
+workspace locks/ws old
+workspace locks/ws-artifact old
+nested="$root/locks/ws/target/package/fixture-0.1.0/target/debug"
+mkdir -p "$nested"
+: >"$nested/.cargo-lock"
+: >"$root/locks/ws-artifact/target/debug/.cargo-artifact-lock"
+find "$root/locks" -exec touch -h -t 202001010000 {} +
+hold "$nested/.cargo-lock" lock
+hold "$root/locks/ws-artifact/target/debug/.cargo-artifact-lock" lock
+for mode in --dry-run --max-age-days=0; do
+  run "$mode" --root "$root/locks" || fail "the locked run ($mode) failed"
+  says "kept (in use: a Cargo build lock is held)  $root/locks/ws/target"
+  says "kept (in use: a Cargo build lock is held)  $root/locks/ws-artifact/target"
+  says "from 0 of 2 Cargo target directories (2 kept)"
+done
+exists locks/ws/target/debug/deps/libfixture.rlib
+exists locks/ws-artifact/target/debug/deps/libfixture.rlib
+[ -z "$(find "$root/locks" -name '.cargo-prune-*' -print)" ] || fail "a locked target was renamed"
+
+# Once the locks are released, the targets are renamed aside and removed, leaving no staging
+# directory and the rest of the workspace as it was.
+for pid in "${holders[@]}"; do
+  kill "$pid"
+  wait "$pid" 2>/dev/null || true
+done
+holders=()
+run --max-age-days 0 --root "$root/locks" || fail "the unlocked run failed"
+says "from 2 of 2 Cargo target directories (0 kept)"
+gone locks/ws/target
+gone locks/ws-artifact/target
+exists locks/ws/Cargo.toml
+exists locks/ws-artifact/Cargo.toml
+leftover=$(find "$root/locks" -name '.cargo-prune-*' -print)
+[ -z "$leftover" ] || fail "a staging directory was left behind: $leftover"
 
 echo ok

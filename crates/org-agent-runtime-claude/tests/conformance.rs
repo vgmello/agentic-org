@@ -2282,3 +2282,49 @@ fn every_office_effort_level_reaches_claude_as_effort_flag() {
         plan.args
     );
 }
+
+/// `TASK-181`: an effort Claude Code does not take fails closed in both the headless and the
+/// take-over plan, instead of reaching `--effort` (where Claude would reject it at start) or
+/// being dropped. That covers Codex-only names (`none`, `minimal`) and other spellings.
+#[test]
+fn unknown_effort_level_fails_closed_in_headless_and_take_over_plans() {
+    let runtime = ClaudeRuntime::new();
+    let mut resume_ctx = sample_ctx();
+    resume_ctx.resume = Some(SessionId::try_from("00000000-0000-0000-0000-000000000001").unwrap());
+
+    // The empty string never reaches an adapter: it is not a `Token`.
+    assert!(Token::try_from("").is_err());
+    for unknown in [
+        "turbo", "none", "minimal", "XHIGH", "High", "ultra", "max:1", "xhigh.",
+    ] {
+        let mut spec = sample_spec();
+        spec.effort = Some(Token::try_from(unknown).unwrap());
+        assert!(
+            matches!(
+                runtime.plan_session(&spec, &sample_ctx()),
+                Err(PlanError::InvalidSpec(_))
+            ),
+            "headless accepted effort {unknown}"
+        );
+        assert!(
+            matches!(
+                runtime.plan_take_over(&spec, &resume_ctx, 120, 40),
+                Err(PlanError::InvalidSpec(_))
+            ),
+            "take-over accepted effort {unknown}"
+        );
+    }
+
+    // A known level still reaches the take-over command line.
+    let mut spec = sample_spec();
+    spec.effort = Some(Token::try_from("max").unwrap());
+    let plan = runtime
+        .plan_take_over(&spec, &resume_ctx, 120, 40)
+        .expect("take-over with a known effort");
+    let at = plan
+        .args
+        .iter()
+        .position(|a| a == "--effort")
+        .expect("--effort");
+    assert_eq!(plan.args[at + 1], "max", "{:?}", plan.args);
+}
