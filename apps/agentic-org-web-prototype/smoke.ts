@@ -92,6 +92,7 @@ async function checkWorkBoard(page: Page) {
   await checkPendingApprovalAndHold(page, board);
   await checkListBoardPriority(page, board);
   await checkCardLayout(page, board);
+  await checkCardTooltip(page, board);
   assert.match((await page.getByRole("button", { name: /^Work display/ }).getAttribute("aria-label"))!, /Stages columns/, "Display names the column mode");
   const trailingGutter = await board.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
@@ -126,7 +127,7 @@ async function checkWorkBoard(page: Page) {
 async function checkBoardCountsAndLabels(page: Page, board: ReturnType<Page["locator"]>) {
   assert.equal(await board.locator(".bcard").count(), Number(await page.locator('[data-work-count="all"]').textContent()),
     "All counts the cards the Board shows, inside the Done history window");
-  assert.match((await board.locator("#bcol-done .bcol-window").textContent())!, /Last 7 days/, "Done names its history window");
+  assert.match((await board.locator("#bcol-done .bcol-title .bcol-range").textContent())!, /Last 7 days/, "Done names its history window beside its count");
   assert.equal(await board.locator("#bcol-done").getByRole("button", { name: "Done history: Last 7 days. Change" }).count(), 1, "The history window is a button");
   const set = board.locator('.bcard[data-work-id="T-A146"] .bpri');
   assert.equal(await set.getAttribute("aria-label"), "High priority");
@@ -274,18 +275,19 @@ async function checkPhoneSearchRevealsLane(page: Page) {
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
-/* 1024px: lanes keep about 260px and overflow into the column jump. Compact cards put the assignee straight under the
-   title and request, keep severity, and leave criteria and subtask totals to the detail. */
+/* 1024px: lanes keep about 260px and overflow into the column jump. Compact cards keep severity and keep the
+   progress row on one line; the order stays request, progress, then the assignee. */
 async function checkCompactCardLabels(page: Page) {
   await page.setViewportSize({ width: 1024, height: 800 });
   await page.waitForFunction(() => document.querySelector(".board-lanes")?.hasAttribute("data-overflow"));
   const widths = await page.locator(".board .bcol").evaluateAll((cols) => cols.map((c) => c.getBoundingClientRect().width));
   assert.ok(widths.every((w) => w >= 255), `Lanes keep a readable width at 1024 (${widths.map(Math.round)})`);
   const card = page.locator('.board .bcard[data-work-id="T-A146"]');
-  assert.equal(await card.locator(".btag-count").evaluateAll((els) => els.filter((el) => el.getClientRects().length).length), 0, "Compact cards leave subtask and criteria totals to detail");
   assert.ok(await page.locator('.board .bcard[data-work-id="T-A88"] .bsev').isVisible(), "Compact cards keep severity");
-  const [status, owner, facts] = await card.evaluate((el) => [".board-status", ".board-assignee", ".board-facts"].map((sel) => el.querySelector(sel)!.getBoundingClientRect().top));
-  assert.ok(status < owner && owner < facts, "The assignee sits directly under the request, before the facts");
+  const progressHeight = await card.locator(".board-progress").evaluate((el) => el.getBoundingClientRect().height);
+  assert.ok(progressHeight <= 24, `The progress row stays on one line (${progressHeight}px)`);
+  const [status, progress, owner] = await card.evaluate((el) => [".board-status", ".board-progress", ".board-assignee"].map((sel) => el.querySelector(sel)!.getBoundingClientRect().top));
+  assert.ok(status < progress && progress < owner, "Request, then progress, then the assignee");
   await card.locator(":scope > .work-item-link").click();
   await page.locator("#work-detail-subtasks").waitFor();
   await page.keyboard.press("Escape");
@@ -330,18 +332,25 @@ async function checkBoardPrioritySort(page: Page, board: ReturnType<Page["locato
   await page.keyboard.press("Escape");
 }
 
-/* Attention cards put the request straight under the title; project and assignee share one context row */
+/* Cards read top to bottom: project chip, title, the request, progress, then the assignee in the footer */
 async function checkCardLayout(page: Page, board: ReturnType<Page["locator"]>) {
   await page.setViewportSize({ width: 375, height: 812 });
   const card = board.locator('.bcard[data-work-id="T-A146"]');
   /* Resizing can re-render the page, so measure in one pass once it has settled */
   await page.waitForTimeout(300);
-  const [title, status, facts, project, owner, box] = await card.evaluate((el) => [":scope > .work-item-link", ".board-status", ".board-facts", ".board-project a", ".board-owner-label a", ":scope"]
+  const [title, status, progress, project, owner, box] = await card.evaluate((el) => [":scope > .work-item-link", ".board-status", ".board-progress", ".board-project", ".board-owner-label a", ":scope"]
     .map((sel) => { const r = (sel === ":scope" ? el : el.querySelector(sel))!.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }));
-  assert.ok(status!.y >= title!.y + title!.height - 1 && status!.y + status!.height <= facts!.y + 1, "The request sits between the title and the facts");
-  assert.ok(Math.abs(project!.y - owner!.y) < 2, "Project and assignee share one row at 375px");
-  assert.ok(project!.height >= 44 && owner!.height >= 44 && owner!.width >= 44, "Both context links are 44px targets");
-  assert.ok(box!.height <= 200, `The first card is compact at 375px (${Math.round(box!.height)}px)`);
+  assert.ok(project!.y + project!.height <= title!.y + 1, "The project chip sits above the title");
+  assert.ok(status!.y >= title!.y + title!.height - 1 && status!.y + status!.height <= progress!.y + 1, "The request sits between the title and the progress row");
+  assert.ok(owner!.y >= progress!.y + progress!.height - 1, "The assignee is in the footer, under the progress row");
+  const [projectLink, ownerLink] = await card.evaluate((el) => [".board-project a", ".board-owner-label a"].map((sel) => { const r = el.querySelector(sel)!.getBoundingClientRect(); return [r.width, r.height]; }));
+  assert.ok(projectLink[1] >= 44 && ownerLink[0] >= 44 && ownerLink[1] >= 44, `Both card links are 44px targets (${projectLink} ${ownerLink})`);
+  assert.ok(box!.height <= 300, `The first card stays compact at 375px (${Math.round(box!.height)}px)`);
+  const borders = await board.evaluate((el) => [el.querySelector(".bcol")!, el.querySelector(".bcard")!].map((n) => {
+    const st = getComputedStyle(n);
+    return st.borderTopStyle === "none" || st.borderTopWidth === "0px" || st.borderTopColor === "rgba(0, 0, 0, 0)" ? "none" : `${st.borderTopWidth} ${st.borderTopColor}`;
+  }));
+  assert.deepEqual(borders, ["none", "none"], "Lanes and cards draw no outline");
   await page.setViewportSize({ width: 1440, height: 900 });
   for (const theme of ["ocean", "classic", "report", "report-dark", "graphite", "graphite-light", "cozy"]) {
     await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
@@ -354,6 +363,28 @@ async function checkCardLayout(page: Page, board: ReturnType<Page["locator"]>) {
     assert.notEqual(stripe.color, "rgba(0, 0, 0, 0)", `The attention stripe has a colour in ${theme}`);
   }
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "graphite"));
+}
+
+/* Hovering a card, or focusing its title from the keyboard, shows a dark label: title, status and ETA. It never
+   offers drag (cards do not move between lanes), and Escape dismisses it. */
+async function checkCardTooltip(page: Page, board: ReturnType<Page["locator"]>) {
+  const tip = page.locator(".board-tip");
+  await board.locator('.bcard[data-work-id="T-A121"] > .work-item-link').hover();
+  await page.locator(".board-tip:popover-open").waitFor();
+  assert.equal((await tip.innerText()).replace(/\s+/g, " ").trim(), "Split codec 2a.3.2b In progress · ETA 2h", "The tooltip names the card, its status and ETA");
+  assert.doesNotMatch(await tip.innerText(), /drag/i);
+  assert.equal(await board.locator(".bcard[data-tip], .bcard [data-tip], .bcard[title]").count(), 0, "Cards have one tooltip, not the shell's or the browser's as well");
+  assert.equal(await tip.getAttribute("aria-hidden"), "true", "The tooltip repeats the card, so it is hidden from assistive technology");
+  const [tipBox, cardBox] = await Promise.all([tip.boundingBox(), board.locator('.bcard[data-work-id="T-A121"]').boundingBox()]);
+  assert.ok(tipBox!.y + tipBox!.height <= cardBox!.y + 1, "The tooltip sits above the card, clear of its content");
+  await page.keyboard.press("Escape");
+  await page.locator(".board-tip:popover-open").waitFor({ state: "detached" });
+  await page.mouse.move(0, 0);
+  await board.locator('.bcard[data-work-id="T-A146"] .board-project a').focus();
+  await page.keyboard.press("Tab");
+  await page.locator(".board-tip:popover-open").waitFor();
+  assert.match(await tip.innerText(), /^Sign the Apple developer agreement for notarization\s+To do$/, "Keyboard focus on a title shows its tooltip");
+  await page.keyboard.press("Escape");
 }
 
 /* Filtered results that leave out archived matches say so beside the count, with the way to reveal them */
@@ -645,10 +676,12 @@ async function checkPhoneLaneJump(page: Page) {
   await page.waitForTimeout(150);
   const rows = await page.locator(".work-toolbar > *").evaluateAll((els) => els.filter((el) => el.getClientRects().length).map((el) => el.getBoundingClientRect().top).sort((a, b) => a - b)
     .filter((top, i, tops) => i === 0 || top - tops[i - 1] > 20).length);
-  /* Two rows at 320px: the views with New, then layout, search, Filter and Display; nothing is clipped or scrolls sideways */
+  /* Two rows at 320px: the views, then layout, search, Filter and Display; nothing is clipped or scrolls sideways */
   assert.equal(rows, 2, `The 320px toolbar has two rows (${rows})`);
-  const [tabsTop, newBox] = await page.evaluate(() => [document.querySelector(".work-toolbar .primary-tab-row")!.getBoundingClientRect().top, document.getElementById("work-new-task")!.getBoundingClientRect().toJSON()]);
-  assert.ok(Math.abs(newBox.top - tabsTop) < 20, "New sits beside the views");
+  /* New task is the page's primary action: at the end of the title row, above the toolbar, at every width */
+  const [titleBox, tabsTop, newBox] = await page.evaluate(() => [document.querySelector("#main h1")!.getBoundingClientRect().toJSON(), document.querySelector(".work-toolbar .primary-tab-row")!.getBoundingClientRect().top, document.getElementById("work-new-task")!.getBoundingClientRect().toJSON()]);
+  assert.ok(newBox.top < tabsTop && newBox.top < titleBox.bottom && newBox.left > titleBox.right, "New sits at the end of the title row, above the views");
+  assert.ok(newBox.right <= 320, "New stays inside the 320px viewport");
   assert.ok(newBox.width >= 44 && newBox.height >= 44, "New stays a 44px target");
   assert.match((await page.getByRole("button", { name: /^Filter work/ }).innerText()).trim(), /^Filter$/, "At 320px Filter keeps its word");
   assert.ok(await page.locator("#work-results > .board-filterbar .bsum-mode").isVisible(), "At 320px the summary names the column mode the toolbar hides");

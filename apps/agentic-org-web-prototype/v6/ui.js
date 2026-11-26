@@ -73,9 +73,9 @@ function statusLine(id) {
 function hdr(title, count, trailing = "", extra = "") {
   return `<header class="ph"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>${extra}${count ? `<p class="cnt">${count}</p>` : ""}</div>${trailing ? `<div class="ph-actions">${trailing}</div>` : ""}</header>`;
 }
-function queueHeadline(title, count, announce = false) {
+function queueHeadline(title, count, announce = false, trailing = "") {
   return `<div class="ph queue-headline"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>
-    <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}</span></div></div>`;
+    <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}</span></div>${trailing ? `<div class="ph-actions">${trailing}</div>` : ""}</div>`;
 }
 /* Section header shared by Home, project Overview and other pages. repTitle swaps the label in Report themes. */
 function sectionHead({ id, title, repTitle = title, count = "", right = "", cls = "", level = "h2" }) {
