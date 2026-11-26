@@ -11,7 +11,7 @@ vi.mock('$lib/modules/organization/api', () => ({
 		view: (...args: unknown[]) => orgView(...args)
 	}
 }));
-vi.mock('$lib/modules/work', () => ({
+vi.mock('$lib/modules/work/client', () => ({
 	workApi: {
 		snapshot: (...args: unknown[]) => workSnapshot(...args)
 	}

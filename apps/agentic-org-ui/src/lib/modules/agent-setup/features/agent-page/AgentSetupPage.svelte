@@ -309,7 +309,7 @@
 							variant="outline"
 							class={actionBtn}>View profile</Button
 						>
-						{#if canChange && record}
+						{#if canChange && record && !d.builtIn}
 							<DropdownMenu>
 								<DropdownMenuTrigger>
 									{#snippet child({ props })}
@@ -328,14 +328,12 @@
 											>Pause…</DropdownMenuItem
 										>
 									{/if}
-									{#if !d.builtIn}
-										<DropdownMenuSeparator />
-										<DropdownMenuItem
-											variant="destructive"
-											class="max-[639px]:min-h-11"
-											onSelect={() => open('offboard')}>Offboard…</DropdownMenuItem
-										>
-									{/if}
+									<DropdownMenuSeparator />
+									<DropdownMenuItem
+										variant="destructive"
+										class="max-[639px]:min-h-11"
+										onSelect={() => open('offboard')}>Offboard…</DropdownMenuItem
+									>
 								</DropdownMenuContent>
 							</DropdownMenu>
 						{/if}

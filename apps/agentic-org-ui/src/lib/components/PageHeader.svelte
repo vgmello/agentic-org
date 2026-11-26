@@ -47,7 +47,7 @@
 </script>
 
 <header
-	class="border-b border-line-subtle px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8 {className}"
+	class="page-header-lit border-b border-line-subtle px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8 {className}"
 >
 	{#if back}
 		<a

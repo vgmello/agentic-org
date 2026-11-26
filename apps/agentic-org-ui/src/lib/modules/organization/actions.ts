@@ -1,6 +1,6 @@
 // What the org chart's dialogs do, as functions over `OrgApi`: each is a small sequence of commands, and each
 // reports every failure instead of stopping at the first (TEAM-5, TEAM-6, TEAM-7). Pure of the UI.
-import { toAppError } from '$lib/proto';
+import { isBuiltInAgent, toAppError } from '$lib/proto';
 import type { AgentRuntime, AppError, OrgSnapshot, RunMode, Schedule, Team } from '$lib/proto';
 import { newStableId } from './commands';
 import { membersOfTeam } from './model';
@@ -533,6 +533,13 @@ export async function setAgentStatus(
 	seenVersion?: number
 ): Promise<void> {
 	const m = await currentMember(api, memberId, seenVersion);
+	if (isBuiltInAgent(m)) {
+		throw {
+			source: 'api',
+			code: 'not_authorized',
+			message: 'Built-in agents cannot be paused or resumed.'
+		} satisfies AppError;
+	}
 	await api.command({
 		method: 'member.set_agent_status',
 		params: { member_id: memberId, expected_version: m.version, status }
@@ -546,6 +553,13 @@ export async function offboardAgent(
 	seenVersion?: number
 ): Promise<void> {
 	const m = await currentMember(api, memberId, seenVersion);
+	if (isBuiltInAgent(m)) {
+		throw {
+			source: 'api',
+			code: 'not_authorized',
+			message: 'Built-in agents cannot be offboarded.'
+		} satisfies AppError;
+	}
 	await api.command({
 		method: 'member.offboard',
 		params: { member_id: memberId, expected_version: m.version }

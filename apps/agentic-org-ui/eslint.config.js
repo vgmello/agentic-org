@@ -31,5 +31,23 @@ export default defineConfig(
 		languageOptions: {
 			parserOptions: { parser: ts.parser, svelteConfig }
 		}
+	},
+	{
+		files: ['src/lib/platform/**/*.ts', 'src/lib/platform/**/*.svelte'],
+		ignores: ['**/*.test.ts', '**/*.spec.ts'],
+		rules: {
+			'no-restricted-imports': [
+				'error',
+				{
+					patterns: [
+						{
+							regex: '^\\$lib/modules/[^/]+$',
+							message:
+								'Platform shell code must not import top-level domain barrels (causes shell bundle bloat). Import specific non-UI subpaths or lazy-load UI components.'
+						}
+					]
+				}
+			]
+		}
 	}
 );

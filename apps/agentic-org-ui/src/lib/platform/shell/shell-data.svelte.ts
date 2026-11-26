@@ -4,7 +4,7 @@ import { inboxApi } from '$lib/modules/inbox/api';
 import type { InboxItem } from '$lib/modules/inbox/types';
 import { orgApi } from '$lib/modules/organization/api';
 import { owner } from '$lib/modules/organization/model';
-import { workApi } from '$lib/modules/work';
+import { workApi } from '$lib/modules/work/client';
 import { needsYou } from '$lib/modules/work/saved';
 import { workItemsApi } from '$lib/modules/workitems/api';
 import type { TaskRow } from '$lib/modules/workitems/types';

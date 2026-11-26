@@ -16,15 +16,13 @@
 	import { toast } from 'svelte-sonner';
 	import { Tooltip, mergeProps } from 'bits-ui';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
-	import AddPersonSheet from '$lib/modules/organization/features/add-person/AddPersonSheet.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import { hireUrl } from '$lib/modules/employees';
-	import { newProjectUrl } from '$lib/modules/projects';
-	import { CaptureDialog, taskHref } from '$lib/modules/workitems';
+	import { hireUrl } from '$lib/modules/employees/hire';
+	import { newProjectUrl } from '$lib/modules/projects/present';
+	import { taskHref } from '$lib/modules/workitems/present';
 	import { areaCapability } from './capabilities';
 	import { focusDestinationHeading } from './focus-destination';
 	import { useShellData } from './shell-data.svelte';
-	import { NewMessageDialog } from '$lib/modules/messaging';
 	import { chatMembers } from '$lib/modules/messaging/model';
 	import { toAppError } from '$lib/proto';
 	import { orgApi } from '$lib/modules/organization/api';
@@ -197,35 +195,44 @@
 	</Tooltip.Provider>
 {/if}
 
-{#if workAvailable}
-	<CaptureDialog
-		bind:open={
-			() => flow === 'work_item' || flow === 'request',
-			(open) => {
-				if (!open) flow = undefined;
+{#if workAvailable && (flow === 'work_item' || flow === 'request')}
+	{#await import('$lib/modules/workitems/features/capture/CaptureDialog.svelte') then { default: CaptureDialog }}
+		<CaptureDialog
+			bind:open={
+				() => flow === 'work_item' || flow === 'request',
+				(open) => {
+					if (!open) flow = undefined;
+				}
 			}
-		}
-		{organizationId}
-		initialType={flow === 'request' ? 'request' : 'task'}
-		allowTypeSwitch={flow === 'work_item'}
-		oncreated={(created) => {
-			void shellData?.refresh();
-			void goto(resolve(taskHref(created.ref) as '/'));
-		}}
-	/>
+			{organizationId}
+			initialType={flow === 'request' ? 'request' : 'task'}
+			allowTypeSwitch={flow === 'work_item'}
+			oncreated={(created) => {
+				void shellData?.refresh();
+				void goto(resolve(taskHref(created.ref) as '/'));
+			}}
+		/>
+	{/await}
 {/if}
 
-{#if snapshot}
-	<NewMessageDialog
-		bind:open={() => flow === 'message', (open) => (flow = open ? 'message' : undefined)}
-		members={chatMembers(snapshot)}
-		onsubmit={openDm}
-	/>
-	<AddPersonSheet
-		bind:open={() => flow === 'person', (open) => (flow = open ? 'person' : undefined)}
-		snapshot={withoutFormer(snapshot)}
-		{session}
-		organization={connection.organization.name}
-		ondone={added}
-	/>
+{#if snapshot && flow === 'message'}
+	{#await import('$lib/modules/messaging/features/open-dm/NewMessageDialog.svelte') then { default: NewMessageDialog }}
+		<NewMessageDialog
+			bind:open={() => flow === 'message', (open) => (flow = open ? 'message' : undefined)}
+			members={chatMembers(snapshot)}
+			onsubmit={openDm}
+		/>
+	{/await}
+{/if}
+
+{#if snapshot && flow === 'person'}
+	{#await import('$lib/modules/organization/features/add-person/AddPersonSheet.svelte') then { default: AddPersonSheet }}
+		<AddPersonSheet
+			bind:open={() => flow === 'person', (open) => (flow = open ? 'person' : undefined)}
+			snapshot={withoutFormer(snapshot)}
+			{session}
+			organization={connection.organization.name}
+			ondone={added}
+		/>
+	{/await}
 {/if}

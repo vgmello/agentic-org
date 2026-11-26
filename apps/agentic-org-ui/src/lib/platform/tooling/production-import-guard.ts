@@ -6,6 +6,15 @@ const mockEngines =
 const fixtureModule =
 	/\/(?:__mocks__|mocks?|fakes?|samples?|fixtures?|testkit|testing)(?:[A-Z./-]|$)/;
 const testModule = /\.(?:test|spec)\.(?:[cm]?[jt]sx?|svelte(?:\.[jt]s)?)$/;
+
+/** Single source of truth for whether a slash-prefixed UI path is non-production (tests/fakes/fixtures). */
+export function isNonProductionModule(pathWithLeadingSlash: string): boolean {
+	return (
+		fixtureModule.test(pathWithLeadingSlash) ||
+		testModule.test(pathWithLeadingSlash) ||
+		mockEngines.test(pathWithLeadingSlash)
+	);
+}
 const forbiddenName = (name: unknown): boolean =>
 	typeof name === 'string' && (name === 'inTauri' || name.startsWith('createMock'));
 

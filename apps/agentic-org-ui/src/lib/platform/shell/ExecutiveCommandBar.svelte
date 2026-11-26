@@ -25,7 +25,7 @@
 	import { cn } from '$lib/utils';
 	import type { Connection, OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/modules/inbox/types';
-	import type { Conversation } from '$lib/modules/messaging';
+	import type { Conversation } from '$lib/modules/messaging/types';
 	import { nonOwners } from '$lib/modules/organization/model';
 	import NewMenu, { type NewMenuAction } from './NewMenu.svelte';
 	import NotificationsButton from './NotificationsButton.svelte';

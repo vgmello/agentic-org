@@ -533,7 +533,7 @@
 										{/snippet}
 									</DropdownMenuTrigger>
 									<DropdownMenuContent align="end" class="triage-menu-surface">
-										{#if p.kind === 'agent'}
+										{#if p.kind === 'agent' && !isBuiltInAgent(record)}
 											{#if p.status === 'paused'}
 												<DropdownMenuItem
 													class="max-[639px]:min-h-11"
@@ -548,7 +548,7 @@
 										<DropdownMenuItem class="max-[639px]:min-h-11" onSelect={() => act('edit')}
 											>Edit…</DropdownMenuItem
 										>
-										{#if p.homeTeam}
+										{#if p.homeTeam && !isBuiltInAgent(record)}
 											<DropdownMenuItem class="max-[639px]:min-h-11" onSelect={() => act('move')}
 												>Move home team…</DropdownMenuItem
 											>

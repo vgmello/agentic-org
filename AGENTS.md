@@ -65,6 +65,8 @@ Build order is in `backlog/docs/doc-5 - v1-Implementation-Plan.md`; `backlog/doc
 
 ## Rules
 1. **Read `backlog/docs/doc-8 - Architecture-Rules.md` first.** For domain/data work, read the authority map and owning organization-data contract before secondary designs or UX criteria. Follow `doc-68`: apps compose crates, policies own contracts, `org-proto` deps are intentional, no source cycles, logic in libraries, thin binaries. Planned variation (OS, vendor, storage, deployment) goes behind a consumer-owned adapter from day one; unimplemented OS/provider/engine fails closed (`doc-8` §Planned variation).
+   - **Rust changes (`**/*.rs`):** follow [`.agents/rules/rust-security-and-modularity.md`](.agents/rules/rust-security-and-modularity.md).
+   - **Svelte / UI changes (`apps/agentic-org-ui/**`):** follow [`.agents/rules/svelte-architecture-and-quality.md`](.agents/rules/svelte-architecture-and-quality.md) and [`apps/agentic-org-ui/AGENTS.md`](apps/agentic-org-ui/AGENTS.md) before editing (covers the 700/500 LOC file-size ratchet, non-UI barrels & bundle budgets, zero source cycles, auth/XSS/built-in HR & Tess guards, Svelte 5 async/lifecycle hygiene, icon-only tooltips, and periodic audit cadence).
 2. **Branches and integration:** follow `backlog/docs/processes/doc-20 - Process-Branch-Review-and-Integration.md`.
    - Start feature branches from `origin/v1`. Use separate worktrees for concurrent writers; otherwise work in the current checkout.
    - Keep one active implementation branch per lead; preserve blocked checkpoints and advance independent work.
