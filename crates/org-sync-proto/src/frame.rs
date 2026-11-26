@@ -536,4 +536,45 @@ mod tests {
         assert_eq!(read_sync_frame(&mut cursor).unwrap().unwrap(), req);
         assert_eq!(read_sync_frame(&mut cursor).unwrap().unwrap(), resp);
     }
+
+    #[test]
+    fn round_trips_hello_with_and_without_owner_member_id() {
+        let with_owner = SyncFrame::Hello {
+            org_id: "0190a5d2-0000-7000-8000-000000000001".into(),
+            office_id: "0190a5d2-0000-7000-8000-000000000002".into(),
+            role: WireOfficeRole::Hq,
+            epoch: 1,
+            protocol_level: 1,
+            supported_max: 1,
+            codec_max: 1,
+            hq_addresses: Vec::new(),
+            owner_member_id: Some("0190a5d2-0000-7000-8000-000000000003".into()),
+        };
+        let without_owner = SyncFrame::Hello {
+            org_id: "0190a5d2-0000-7000-8000-000000000001".into(),
+            office_id: "0190a5d2-0000-7000-8000-000000000002".into(),
+            role: WireOfficeRole::Satellite,
+            epoch: 1,
+            protocol_level: 1,
+            supported_max: 1,
+            codec_max: 1,
+            hq_addresses: Vec::new(),
+            owner_member_id: None,
+        };
+        let mut buf = Vec::new();
+        write_sync_frame(&mut buf, &with_owner).unwrap();
+        write_sync_frame(&mut buf, &without_owner).unwrap();
+        let mut cursor = Cursor::new(&buf);
+        assert_eq!(read_sync_frame(&mut cursor).unwrap().unwrap(), with_owner);
+        assert_eq!(
+            read_sync_frame(&mut cursor).unwrap().unwrap(),
+            without_owner
+        );
+
+        // Absent `owner_member_id` in legacy JSON deserializes cleanly to `None`.
+        let encoded_none = serde_json::to_string(&without_owner).unwrap();
+        assert!(!encoded_none.contains("owner_member_id"));
+        let decoded_none: SyncFrame = serde_json::from_str(&encoded_none).unwrap();
+        assert_eq!(decoded_none, without_owner);
+    }
 }

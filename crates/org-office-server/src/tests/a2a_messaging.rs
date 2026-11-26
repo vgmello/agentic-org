@@ -2900,9 +2900,9 @@ fn task141_satellite_tracks_owner_handover_across_reconnect_and_offline_restart(
     });
     assert_sat_owner_is(&sat1, &sat1_node, &ben, &alice);
 
-    // Simulate `browser.org_owner_handover` (Alice -> Bob) + HQ reload: close HQ and reopen via
-    // `Office::open_as_owner(..., &bob)` on the same federation port while Alice stays active.
-    drop(sat1_node);
+    // Simulate `browser.org_owner_handover` (Alice -> Bob) + live HQ reload: keep `sat1_node`
+    // connected while HQ closes and reopens via `Office::open_as_owner(..., &bob)` on the same
+    // federation port so `sat1_node` automatically reconnects and adopts Bob via `Hello`.
     drop(hq_node);
     Arc::try_unwrap(hq).unwrap().close().unwrap();
 
@@ -2922,6 +2922,7 @@ fn task141_satellite_tracks_owner_handover_across_reconnect_and_offline_restart(
         hq_sock_addr,
         &hq_addr,
         sat1,
+        sat1_node,
         sat1_folder,
         sat1_roots,
         &org_id,
@@ -2945,6 +2946,7 @@ fn verify_post_handover_convergence_and_offline_restart(
     hq_sock_addr: std::net::SocketAddr,
     hq_addr: &str,
     sat1: Arc<Office>,
+    sat1_node: LiveOfficeNode,
     sat1_folder: PathBuf,
     sat1_roots: DataRoots,
     org_id: &str,
@@ -2961,11 +2963,11 @@ fn verify_post_handover_convergence_and_offline_restart(
 
     let hq_bob_node =
         LiveOfficeNode::start_with_hq_addr(Arc::clone(&hq_bob), Some(hq_sock_addr), false);
+    sat1_node.sat_wake.notify();
     let (_sat2_dir, sat2) = enroll_satellite(&hq_bob, bob, hq_addr, "Post-Handover Sat2", 53);
     let sat2_id = sat2.info().office_id.clone();
     let cy = hire_agent_at(&hq_bob, bob, team_id, &sat2_id, profile_id, "Cy", "cy");
     bind_provider_on_office(&sat2, sat2.owner_member_id(), conn_id);
-    let sat1_node = LiveOfficeNode::start(Arc::clone(&sat1), false, true);
     let sat2_node = LiveOfficeNode::start(Arc::clone(&sat2), false, true);
 
     // Pre-handover Sat1 AND post-handover Sat2 BOTH resolve "owner" to Bob (zero split-brain,

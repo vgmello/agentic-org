@@ -205,9 +205,9 @@ pub struct Office {
     /// The member whose account owns the organization: the creator (on HQ) or the satellite's
     /// own `office_id` for local custody (on satellites).
     owner: Id,
-    /// On satellites, the HQ-authoritative active owner employee UUIDv7 received over mTLS `Hello`
+    /// On satellites, the `(hq_office_id, owner_member_id)` pair received over mTLS `Hello`
     /// and persisted in `hq-owner.v1.json` (`TASK-141`); always `None` on HQ.
-    replicated_owner: std::sync::RwLock<Option<Id>>,
+    replicated_owner: std::sync::RwLock<Option<(String, Id)>>,
     /// The store operation that created the organization.
     creation: Id,
     /// The creation request's canonical lowercase UUIDv7 command ID as the host sent it.
@@ -418,13 +418,13 @@ impl Office {
     /// (`TASK-141`).
     pub(crate) fn effective_owner_for_ops(&self) -> Id {
         if self.info.role == crate::model::OfficeRole::Satellite {
-            if let Some(id) = self
+            if let Some((_, id)) = self
                 .replicated_owner
                 .read()
                 .unwrap_or_else(|p| p.into_inner())
-                .clone()
+                .as_ref()
             {
-                return id;
+                return id.clone();
             }
         }
         self.owner.clone()
@@ -445,6 +445,7 @@ impl Office {
         if !org_proto::is_uuid_v7(hq_office_id)
             || !org_proto::is_valid_member_id(owner_member_id)
             || owner_member_id == self.info.office_id
+            || owner_member_id == hq_office_id
         {
             return Err(OfficeError::Invalid("invalid replicated HQ owner id"));
         }
@@ -455,7 +456,7 @@ impl Office {
             .read()
             .unwrap_or_else(|p| p.into_inner())
             .as_ref()
-            == Some(&parsed)
+            .is_some_and(|(hq, id)| hq == hq_office_id && id == &parsed)
         {
             return Ok(());
         }
@@ -463,6 +464,21 @@ impl Office {
             .federation_io_lock
             .lock()
             .unwrap_or_else(|p| p.into_inner());
+        if self
+            .replicated_owner
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .is_some_and(|(hq, id)| hq == hq_office_id && id == &parsed)
+        {
+            return Ok(());
+        }
+        let cp = self.replication.org_checkpoint()?;
+        if cp.hq_office.as_str() != hq_office_id {
+            return Err(OfficeError::Invalid(
+                "replicated HQ owner does not match active HQ checkpoint",
+            ));
+        }
         satellite::write_replicated_hq_owner(
             &self.durable,
             &self.info.office_id,
@@ -473,7 +489,7 @@ impl Office {
         *self
             .replicated_owner
             .write()
-            .unwrap_or_else(|p| p.into_inner()) = Some(parsed);
+            .unwrap_or_else(|p| p.into_inner()) = Some((hq_office_id.to_owned(), parsed));
         Ok(())
     }
 

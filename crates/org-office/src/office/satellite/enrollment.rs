@@ -369,11 +369,11 @@ fn re_enroll_satellite_impl(
             .federation_io_lock
             .lock()
             .unwrap_or_else(|p| p.into_inner());
+        super::remove_replicated_hq_owner(&office.durable, &office.info.office_id)?;
         *office
             .replicated_owner
             .write()
             .unwrap_or_else(|p| p.into_inner()) = None;
-        super::remove_replicated_hq_owner(&office.durable, &office.info.office_id);
     }
     persist_satellite_tls(
         &office.durable,

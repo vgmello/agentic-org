@@ -284,12 +284,19 @@ impl Office {
             )?;
         }
         let replicated_owner = if info.role == crate::model::OfficeRole::Satellite {
+            let active_hq = companions
+                .replication
+                .org_checkpoint()?
+                .hq_office
+                .as_str()
+                .to_owned();
             satellite::read_replicated_hq_owner(
                 &roots.durable,
                 &info.office_id,
                 &info.org_id,
-                &hq_office_id,
+                &active_hq,
             )?
+            .map(|id| (active_hq, id))
         } else {
             None
         };

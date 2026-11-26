@@ -282,11 +282,12 @@ fn try_connect_hq_sock_addr(
             {
                 return Err("HQ Hello identity does not match verified TLS leaf".into());
             }
-            if let Some(owner_id) = owner_member_id {
-                office
-                    .record_replicated_hq_owner(&office_id, &owner_id)
-                    .map_err(|e| format!("invalid HQ Hello owner_member_id: {e}"))?;
-            }
+            let Some(owner_id) = owner_member_id else {
+                return Err("HQ Hello missing owner_member_id".into());
+            };
+            office
+                .record_replicated_hq_owner(&office_id, &owner_id)
+                .map_err(|e| format!("invalid HQ Hello owner_member_id: {e}"))?;
             (office_id, epoch)
         }
         Some(SyncFrame::Error { code, message }) => {
