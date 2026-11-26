@@ -494,9 +494,10 @@ function toggleSearch(id) {
 function turnIntoTask(t, id, mid) {
   const ch = CH[id], m = ch.msgs.find((x) => x.id === mid);
   if (!m) return;
-  const prompt = `${m.text}\n\nFrom ${M[m.who].name} in ${chatTitle(ch)} (${m.time}): #/chat/${id}/${m.id}`;
-  /* The task starts in the channel's project (e.g. #platform -> Office federation). */
-  openSmartTaskComposer(t, { prompt, proj: ch.proj });
+  const prompt = `${m.text}\n\nFrom ${M[m.who].name} in ${chatTitle(ch)} (${m.time})`;
+  /* The task starts in the channel's project (e.g. #platform -> Office federation). The message and the ones
+     before it go along as context, with their ids; the prompt carries no raw link. */
+  openSmartTaskComposer(t, { prompt, proj: ch.proj, excerpt: { ch: id, mid } });
 }
 
 /* ---------------------------------------------------------------- overlays: open, close, focus return, Back */

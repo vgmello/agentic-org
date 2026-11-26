@@ -4,6 +4,7 @@ import { closeMenus } from "../shell/actions.js";
 import { own, route } from "../shell/router.js";
 import { S, WORK_ARCHIVED_STORE, qs } from "../state.js";
 import { SEP, av, displayCheckbox, esc, ic, iconWithTooltip, kindWord, memberIds, mlink, pill, plink, queueHeadline, searchRow, searchToggle, showMenu, toast } from "../ui.js";
+import { workDetailContext } from "./task-context.js";
 
 /* Work with a pending owner ask (a fix waiting for your approval) is never archived out of sight */
 function isArchivedWork(w) {
@@ -1167,6 +1168,7 @@ function workDetail(w, parent) {
         <h2 tabindex="-1" id="work-detail-title">${esc(w.title)}</h2>
         ${w.description ? `<p class="triage-description work-description">${esc(w.description)}</p>` : ""}
       </header>
+      ${workDetailContext(w)}
       <section class="triage-context" aria-labelledby="work-detail-context">
         <h3 id="work-detail-context">Work details</h3>
         ${workDetailFields(w, team, eta, priority)}
