@@ -1000,60 +1000,7 @@ impl SessionManager {
         hq_attested_owner: bool,
         employee_id: &str,
     ) -> Result<SessionView, ApiError> {
-        self.authorize_owner_only_inner(actor_member_id, hq_attested_owner)?;
-        let _ = self.require_agent(employee_id)?;
-        let _ = self.store.clear_pending_start(employee_id);
-        let _ = self.store.update_active_turn(employee_id, |persisted| {
-            persisted.consecutive_stalls = 0;
-            persisted.stall_locked = false;
-            persisted.recovery_required = false;
-            persisted.updated_at = rfc3339_now();
-        });
-        let dead_handle = {
-            let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-            let should_remove = reg.live.get(employee_id).is_some_and(|handle| {
-                let mut guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-                guard.watchdog.clear_stall_lock(Instant::now());
-                guard.recovery_required = false;
-                matches!(
-                    guard.state,
-                    SessionState::StallLocked
-                        | SessionState::RecoveryRequired
-                        | SessionState::Stopped
-                        | SessionState::Suspended
-                )
-            });
-            if should_remove {
-                reg.live.remove(employee_id)
-            } else {
-                None
-            }
-        };
-        if let Some(mut old) = dead_handle {
-            if let Some(thread) = old.thread.take() {
-                let _ = thread.join();
-            }
-        }
-        self.last_states
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(employee_id);
-        let _ = self.process_due_wakes_for(employee_id);
-        let live_view = {
-            let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-            reg.live.get(employee_id).map(|handle| {
-                handle
-                    .state
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .to_view()
-            })
-        };
-        if let Some(mut view) = live_view {
-            overlay_durable_wake_state(&self.store, employee_id, &mut view);
-            return Ok(view);
-        }
-        self.idle_view_for(employee_id)
+        clear_stall_lock_impl(self, actor_member_id, hq_attested_owner, employee_id)
     }
 
     /// Dispatches all C3 session & provider-enrollment RPCs with caller-scoped `command_id` replay.
@@ -1964,7 +1911,7 @@ impl SessionManager {
             binding_file,
             objective,
             spawned,
-            mut session,
+            session,
             lifecycle,
             ..
         } = prepared;
@@ -1997,33 +1944,19 @@ impl SessionManager {
             binding_file,
             hooks,
         };
-        let bwrap_pre_raced = crate::bwrap_isolation::verify_bwrap_masked_before_spawn(
-            self,
-            &emp_id,
-            bwrap_masked_siblings.as_ref(),
-        )
-        .is_err();
-        if is_admissions_closed(self) || bwrap_pre_raced {
-            let _ = abort_pre_pump_shutdown(
-                self,
-                &emp_id,
-                spawned,
-                &mut session,
-                &pump_ctx,
-                &active_permit,
-            );
-            return Err(if bwrap_pre_raced {
-                ApiError::new(
-                    ErrorCode::Conflict,
-                    "a newly started sibling agent was not masked in this sandbox; retry launch",
-                )
-            } else {
-                ApiError::new(
-                    ErrorCode::Unavailable,
-                    "office session manager is shutting down",
-                )
-            });
-        }
+        let pre_pump_meta = PrePumpHandleMeta {
+            tx: tx.clone(),
+            state: Arc::clone(&runtime_state),
+            connection_id: connection_id.clone(),
+            route_digest: route_digest.clone(),
+            oauth_expires_at_ms,
+            workspace: workspace_arg.clone(),
+            active_permit: Arc::clone(&active_permit),
+            supports_mid_turn,
+            bwrap_masked_siblings: bwrap_masked_siblings.clone(),
+        };
+        let ready =
+            ensure_pre_pump_isolation(self, &emp_id, spawned, session, pump_ctx, pre_pump_meta)?;
         // Enqueue the initial turn BEFORE starting the pump thread so `run_pump` always sees
         // Turn 1 immediately upon `Ready` without transitioning `Starting -> Idle` prematurely.
         if !objective.is_empty() {
@@ -2032,11 +1965,11 @@ impl SessionManager {
         let thread = spawn_pump_thread(
             self,
             &emp_id,
-            spawned,
-            session,
+            ready.spawned,
+            ready.session,
             rx,
-            pump_ctx,
-            &active_permit,
+            ready.pump_ctx,
+            ready.meta,
         )?;
         let view = runtime_state
             .lock()
@@ -2763,17 +2696,149 @@ pub(crate) fn spawn_bg_worker_reserved(
     false
 }
 
+fn take_clearable_live_handle(
+    mgr: &SessionManager,
+    employee_id: &str,
+) -> Result<Option<LiveSessionHandle>, ApiError> {
+    let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+    if reg.starting.contains(employee_id) {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "agent session start or teardown is already in progress",
+        ));
+    }
+    let should_remove = reg.live.get(employee_id).is_some_and(|handle| {
+        let mut guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+        let removable = guard.recovery_required
+            || matches!(
+                guard.state,
+                SessionState::StallLocked
+                    | SessionState::RecoveryRequired
+                    | SessionState::Stopped
+                    | SessionState::Suspended
+            );
+        if !removable {
+            guard.watchdog.clear_stall_lock(Instant::now());
+        }
+        removable
+    });
+    reg.starting.insert(employee_id.to_owned());
+    let old = if should_remove {
+        reg.live.remove(employee_id)
+    } else {
+        None
+    };
+    if let Some(ref handle) = old {
+        prepare_handle_for_clear_reap(handle);
+    }
+    Ok(old)
+}
+
+fn prepare_handle_for_clear_reap(handle: &LiveSessionHandle) {
+    if handle.thread.is_none() {
+        return;
+    }
+    let mut guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+    guard.watchdog.clear_stall_lock(Instant::now());
+    guard.recovery_required = false;
+    if guard.state == SessionState::RecoveryRequired {
+        guard.state = SessionState::Stopping;
+    }
+}
+
+fn clear_persisted_recovery_state(mgr: &SessionManager, employee_id: &str) {
+    let _ = mgr.store.clear_pending_start(employee_id);
+    let _ = mgr.store.update_active_turn(employee_id, |persisted| {
+        persisted.consecutive_stalls = 0;
+        persisted.stall_locked = false;
+        persisted.recovery_required = false;
+        persisted.updated_at = rfc3339_now();
+    });
+    mgr.last_states
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(employee_id);
+}
+
+fn clear_stall_lock_impl(
+    mgr: &SessionManager,
+    actor_member_id: &str,
+    hq_attested_owner: bool,
+    employee_id: &str,
+) -> Result<SessionView, ApiError> {
+    mgr.authorize_owner_only_inner(actor_member_id, hq_attested_owner)?;
+    let _ = mgr.require_agent(employee_id)?;
+    let dead_handle = take_clearable_live_handle(mgr, employee_id)?;
+    let slot_guard = StartSlotGuard::new(&mgr.registry, employee_id.to_owned());
+    if let Some(old) = dead_handle {
+        reap_cleared_handle(mgr, employee_id, old)?;
+    }
+    clear_persisted_recovery_state(mgr, employee_id);
+    drop(slot_guard);
+    let _ = mgr.process_due_wakes_for(employee_id);
+    let live_view = {
+        let reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.live.get(employee_id).map(|handle| {
+            handle
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .to_view()
+        })
+    };
+    if let Some(mut view) = live_view {
+        overlay_durable_wake_state(&mgr.store, employee_id, &mut view);
+        return Ok(view);
+    }
+    mgr.idle_view_for(employee_id)
+}
+
+fn reap_cleared_handle(
+    mgr: &SessionManager,
+    employee_id: &str,
+    old: LiveSessionHandle,
+) -> Result<(), ApiError> {
+    if old.thread.is_some() {
+        crate::bwrap_isolation::reap_live_handle(
+            mgr,
+            employee_id,
+            old,
+            None,
+            crate::bwrap_isolation::ReapMode::FailClosedRestore {
+                conflict_message: format!(
+                    "could not verify teardown of session `{employee_id}` during recovery clear; resolve recovery first"
+                ),
+            },
+        )?;
+        return Ok(());
+    }
+    mgr.bindings.revoke(employee_id, None);
+    if let Some((pid, _)) = old
+        .active_permit
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take()
+    {
+        let _ = mgr.office.mark_turn_permit_release_pending(&pid);
+    }
+    Ok(())
+}
+
 fn stop_session_impl(
     mgr: &SessionManager,
     employee_id: &str,
     reason: &str,
 ) -> Result<SessionView, ApiError> {
-    mgr.bindings.revoke(employee_id, None);
     let removed = {
         let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(handle) = reg.live.get(employee_id) {
             let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-            ensure_live_handle_not_recovery_required(&st)?;
+            if let Err(err) = ensure_live_handle_not_recovery_required(&st) {
+                drop(st);
+                drop(reg);
+                mgr.bindings.revoke(employee_id, None);
+                return Err(err);
+            }
             if reg.starting.contains(employee_id) {
                 return Err(ApiError::new(
                     ErrorCode::Conflict,
@@ -2791,6 +2856,7 @@ fn stop_session_impl(
         }
     };
     let Some(handle) = removed else {
+        mgr.bindings.revoke(employee_id, None);
         return mgr.idle_view_for(employee_id);
     };
     let slot_guard = StartSlotGuard::new(&mgr.registry, employee_id.to_owned());
@@ -3026,6 +3092,125 @@ pub(crate) fn effective_approval_writable_roots_from(
     roots
 }
 
+pub(crate) struct PrePumpHandleMeta {
+    pub(crate) tx: Sender<PumpCommand>,
+    pub(crate) state: Arc<Mutex<SessionRuntimeState>>,
+    pub(crate) connection_id: Option<String>,
+    pub(crate) route_digest: String,
+    pub(crate) oauth_expires_at_ms: Option<u64>,
+    pub(crate) workspace: Option<String>,
+    pub(crate) active_permit: Arc<Mutex<Option<(String, u64)>>>,
+    pub(crate) supports_mid_turn: bool,
+    pub(crate) bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+}
+
+struct VerifiedPrePump {
+    spawned: org_supervise::Spawned,
+    session: Box<dyn org_agent_runtime::Session>,
+    pump_ctx: PumpContext,
+    meta: PrePumpHandleMeta,
+}
+
+fn ensure_pre_pump_isolation(
+    mgr: &SessionManager,
+    emp_id: &str,
+    spawned: org_supervise::Spawned,
+    mut session: Box<dyn org_agent_runtime::Session>,
+    pump_ctx: PumpContext,
+    meta: PrePumpHandleMeta,
+) -> Result<VerifiedPrePump, ApiError> {
+    let bwrap_pre_raced = crate::bwrap_isolation::verify_bwrap_masked_before_spawn(
+        mgr,
+        emp_id,
+        meta.bwrap_masked_siblings.as_ref(),
+    )
+    .is_err();
+    let shutting_down = is_admissions_closed(mgr);
+    if !shutting_down && !bwrap_pre_raced {
+        return Ok(VerifiedPrePump {
+            spawned,
+            session,
+            pump_ctx,
+            meta,
+        });
+    }
+    let cleanup_verified = abort_pre_pump_shutdown(
+        mgr,
+        emp_id,
+        spawned,
+        &mut session,
+        &pump_ctx,
+        &meta.active_permit,
+    );
+    if !cleanup_verified && !shutting_down {
+        install_unrecovered_pre_pump_handle(mgr, emp_id, meta);
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            format!(
+                "could not verify teardown of aborted sandboxed session `{emp_id}`; resolve recovery first"
+            ),
+        ));
+    }
+    Err(if bwrap_pre_raced {
+        ApiError::new(
+            ErrorCode::Conflict,
+            "a newly started sibling agent was not masked in this sandbox; retry launch",
+        )
+    } else {
+        ApiError::new(
+            ErrorCode::Unavailable,
+            "office session manager is shutting down",
+        )
+    })
+}
+
+pub(crate) fn install_unrecovered_pre_pump_handle(
+    mgr: &SessionManager,
+    emp_id: &str,
+    meta: PrePumpHandleMeta,
+) {
+    let (run_id, session_id, runtime_session_id, view) = {
+        let mut st = meta.state.lock().unwrap_or_else(|p| p.into_inner());
+        st.recovery_required = true;
+        st.state = SessionState::RecoveryRequired;
+        (
+            st.run_id.clone(),
+            st.session_id.clone(),
+            st.runtime_session_id.clone(),
+            st.to_view(),
+        )
+    };
+    mgr.last_states
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(emp_id.to_owned(), view);
+    let _ = mgr.store.persist_recovery_required(
+        emp_id,
+        run_id.as_deref(),
+        session_id.as_deref(),
+        runtime_session_id.as_deref(),
+    );
+    if !is_admissions_closed(mgr) {
+        let handle = LiveSessionHandle {
+            state: meta.state,
+            tx: meta.tx,
+            thread: None,
+            connection_id: meta.connection_id,
+            route_digest: meta.route_digest,
+            oauth_expires_at_ms: meta.oauth_expires_at_ms,
+            workspace: meta.workspace,
+            active_permit: meta.active_permit,
+            supports_mid_turn: meta.supports_mid_turn,
+            bwrap_masked_siblings: meta.bwrap_masked_siblings,
+        };
+        mgr.registry
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .live
+            .insert(emp_id.to_owned(), handle);
+    }
+}
+
 fn spawn_pump_thread(
     mgr: &SessionManager,
     emp_id: &str,
@@ -3033,7 +3218,7 @@ fn spawn_pump_thread(
     session: Box<dyn org_agent_runtime::Session>,
     rx: mpsc::Receiver<PumpCommand>,
     pump_ctx: PumpContext,
-    active_permit: &Arc<Mutex<Option<(String, u64)>>>,
+    meta: PrePumpHandleMeta,
 ) -> Result<JoinHandle<()>, ApiError> {
     let thread_name = format!("org-session-{}", &emp_id[..emp_id.len().min(8)]);
     let payload = Arc::new(Mutex::new(Some((spawned, session, rx, pump_ctx))));
@@ -3050,30 +3235,39 @@ fn spawn_pump_thread(
     }) {
         Ok(handle) => Ok(handle),
         Err(_) => {
-            if let Some((spawned, mut session, _rx, pump_ctx)) =
+            let cleanup_verified = if let Some((spawned, mut session, _rx, pump_ctx)) =
                 payload.lock().unwrap_or_else(|p| p.into_inner()).take()
             {
-                let _ = crate::pump::finalize_child(
+                crate::pump::finalize_child(
                     spawned.child,
                     spawned.stdin,
                     &mut session,
                     &pump_ctx,
                     org_supervise::StopMode::Graceful,
                     false,
-                );
+                )
             } else {
                 mgr.bindings.revoke(emp_id, None);
-            }
-            if let Some((pid, _)) = active_permit
+                false
+            };
+            if let Some((pid, _)) = meta
+                .active_permit
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .take()
             {
-                crate::router::release_turn_permit_any(
-                    &mgr.office,
-                    mgr.config.hq_permits.as_deref(),
-                    &pid,
-                );
+                if cleanup_verified {
+                    crate::router::release_turn_permit_any(
+                        &mgr.office,
+                        mgr.config.hq_permits.as_deref(),
+                        &pid,
+                    );
+                } else {
+                    let _ = mgr.office.mark_turn_permit_release_pending(&pid);
+                }
+            }
+            if !cleanup_verified {
+                install_unrecovered_pre_pump_handle(mgr, emp_id, meta);
             }
             Err(ApiError::new(
                 ErrorCode::Unavailable,
@@ -3090,7 +3284,7 @@ fn abort_pre_pump_shutdown(
     session: &mut Box<dyn org_agent_runtime::Session>,
     pump_ctx: &PumpContext,
     active_permit: &Arc<Mutex<Option<(String, u64)>>>,
-) -> ApiError {
+) -> bool {
     let cleanup_verified = crate::pump::finalize_child(
         spawned.child,
         spawned.stdin,
@@ -3114,7 +3308,22 @@ fn abort_pre_pump_shutdown(
             let _ = mgr.office.mark_turn_permit_release_pending(&pid);
         }
     }
-    persist_shutdown_cancellation(mgr, emp_id, &pump_ctx.run_id, !cleanup_verified)
+    if !cleanup_verified {
+        let session_id = pump_ctx
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .session_id
+            .clone();
+        let _ = mgr.store.persist_recovery_required(
+            emp_id,
+            Some(&pump_ctx.run_id),
+            session_id.as_deref(),
+            None,
+        );
+    }
+    let _ = persist_shutdown_cancellation(mgr, emp_id, &pump_ctx.run_id, !cleanup_verified);
+    cleanup_verified
 }
 
 fn register_live_session_or_abort(
@@ -3187,7 +3396,10 @@ fn abort_post_spawn_shutdown(
     let joined_ok = thread.join().is_ok();
     let (cancelled_run_id, recovery_required) = {
         let st = runtime_state.lock().unwrap_or_else(|p| p.into_inner());
-        (st.run_id.clone(), !joined_ok || st.recovery_required)
+        (
+            st.run_id.clone(),
+            !joined_ok || st.recovery_required || st.state == SessionState::RecoveryRequired,
+        )
     };
     if let Some((pid, _)) = active_permit
         .lock()
@@ -3305,10 +3517,14 @@ fn dispatch_warm_handle_turn(
             }
         };
     let mut pguard = PermitGuard::new(&mgr.office, mgr.config.hq_permits.as_deref(), Some(granted));
+    let mut installed_pid: Option<String> = None;
     {
         let mut slot = turn.active_permit.lock().unwrap_or_else(|p| p.into_inner());
         if slot.is_none() {
-            *slot = pguard.take();
+            if let Some(pair) = pguard.take() {
+                installed_pid = Some(pair.0.clone());
+                *slot = Some(pair);
+            }
         }
     }
     if turn.tx.send(PumpCommand::SendTurn(turn.text)).is_ok() {
@@ -3319,13 +3535,17 @@ fn dispatch_warm_handle_turn(
             .to_view();
         return Ok((Some(view), None));
     }
-    if let Some((pid, _)) = turn
-        .active_permit
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .take()
-    {
-        crate::router::release_turn_permit_any(&mgr.office, mgr.config.hq_permits.as_deref(), &pid);
+    if let Some(ref pid) = installed_pid {
+        let mut slot = turn.active_permit.lock().unwrap_or_else(|p| p.into_inner());
+        if slot.as_ref().is_some_and(|(cur, _)| cur == pid) {
+            let _ = slot.take();
+            drop(slot);
+            crate::router::release_turn_permit_any(
+                &mgr.office,
+                mgr.config.hq_permits.as_deref(),
+                pid,
+            );
+        }
     }
     let old = mgr
         .registry

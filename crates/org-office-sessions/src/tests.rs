@@ -6173,3 +6173,166 @@ fn task166_recycle_stale_warm_handle_fails_closed_and_updates_existing_active_tu
     mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
     crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
 }
+
+#[test]
+fn task166_clear_stall_lock_rejects_starting_and_fails_closed_on_panicking_pump() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    ));
+    let owner_id = office.owner_member_id().to_owned();
+    let hr_agent_id = office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == org_office::organization_family::records::EmployeeKind::Agent)
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+    let emp_c = "01a212a8-982e-7000-8000-000000000c03";
+
+    // 1. Concurrent `clear_stall_lock` while `reg.starting` holds `hr_agent_id` MUST reject with
+    // `Conflict` without mutating persisted `recovery_required = true` (`B5-1`).
+    mgr.store
+        .persist_recovery_required(&hr_agent_id, Some("run-1"), Some("sess-1"), None)
+        .unwrap();
+    mgr.registry
+        .lock()
+        .unwrap()
+        .starting
+        .insert(hr_agent_id.clone());
+    let starting_err = mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap_err();
+    assert_eq!(starting_err.code, org_proto::ErrorCode::Conflict);
+    assert!(
+        mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required,
+        "rejected clear_stall_lock must not clear persisted recovery_required"
+    );
+    mgr.registry.lock().unwrap().starting.remove(&hr_agent_id);
+
+    // 2. `clear_stall_lock` against a `StallLocked` handle whose pump thread panics MUST fail
+    // closed: persist `recovery_required = true`, restore handle into `reg.live`, return `Conflict`,
+    // and keep `emp_c` sibling isolation blocked until a subsequent clear (`B5-1`).
+    let (tx, _rx) = std::sync::mpsc::channel::<crate::pump::PumpCommand>();
+    let (mut panic_handle, _) = spawn_stub_bwrap_handle(
+        &office.info().office_id,
+        &hr_agent_id,
+        SessionState::StallLocked,
+        std::collections::BTreeSet::new(),
+    );
+    let _ = panic_handle.tx.send(crate::pump::PumpCommand::Stop {
+        reason: "test_cleanup".into(),
+    });
+    if let Some(t) = panic_handle.thread.take() {
+        let _ = t.join();
+    }
+    panic_handle.tx = tx;
+    panic_handle.thread = Some(std::thread::spawn(|| {
+        panic!("simulated StallLocked pump teardown panic");
+    }));
+    mgr.registry
+        .lock()
+        .unwrap()
+        .live
+        .insert(hr_agent_id.clone(), panic_handle);
+
+    let clear_err = mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap_err();
+    assert_eq!(clear_err.code, org_proto::ErrorCode::Conflict);
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    assert!(!mgr.registry.lock().unwrap().starting.contains(&hr_agent_id));
+    assert!(
+        mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required
+    );
+    let sib_err = crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    assert_eq!(sib_err.code, org_proto::ErrorCode::Conflict);
+
+    // Second `clear_stall_lock` (now that `thread` is `None`) clears recovery cleanly.
+    mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
+    assert!(!mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    assert!(
+        !mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required
+    );
+    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
+}
+
+#[test]
+fn task166_unrecovered_pre_pump_abort_persists_and_blocks_sibling_isolation() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    ));
+    let owner_id = office.owner_member_id().to_owned();
+    let hr_agent_id = office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == org_office::organization_family::records::EmployeeKind::Agent)
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+    let emp_c = "01a212a8-982e-7000-8000-000000000c03";
+    let (handle, _) = spawn_stub_bwrap_handle(
+        &office.info().office_id,
+        &hr_agent_id,
+        SessionState::Starting,
+        std::collections::BTreeSet::new(),
+    );
+    let _ = handle.tx.send(crate::pump::PumpCommand::Stop {
+        reason: "test_cleanup".into(),
+    });
+    if let Some(t) = handle.thread {
+        let _ = t.join();
+    }
+    crate::manager::install_unrecovered_pre_pump_handle(
+        &mgr,
+        &hr_agent_id,
+        crate::manager::PrePumpHandleMeta {
+            tx: handle.tx,
+            state: handle.state,
+            connection_id: None,
+            route_digest: String::new(),
+            oauth_expires_at_ms: None,
+            workspace: None,
+            active_permit: handle.active_permit,
+            supports_mid_turn: false,
+            bwrap_masked_siblings: Some(std::collections::BTreeSet::new()),
+        },
+    );
+
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    assert!(
+        mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required,
+        "pre-pump unverified teardown must upsert durable recovery_required=true"
+    );
+    assert_eq!(
+        mgr.stop_session(&hr_agent_id, "bypass").unwrap_err().code,
+        org_proto::ErrorCode::Conflict
+    );
+    assert_eq!(
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c)
+            .unwrap_err()
+            .code,
+        org_proto::ErrorCode::Conflict
+    );
+    mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
+    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
+}
