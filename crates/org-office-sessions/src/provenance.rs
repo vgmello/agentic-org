@@ -37,7 +37,11 @@ pub(crate) fn verified_sender_relation(
     }
 }
 
-fn sender_in_reports_to_chain(office: &Office, target: &Employee, sender_id: &str) -> bool {
+pub(crate) fn sender_in_reports_to_chain(
+    office: &Office,
+    target: &Employee,
+    sender_id: &str,
+) -> bool {
     let mut visited = HashSet::new();
     visited.insert(target.id.as_str().to_owned());
     let mut cursor = target
@@ -61,7 +65,11 @@ fn sender_in_reports_to_chain(office: &Office, target: &Employee, sender_id: &st
     false
 }
 
-fn sender_in_ancestor_team_leads(office: &Office, target: &Employee, sender_id: &str) -> bool {
+pub(crate) fn sender_in_ancestor_team_leads(
+    office: &Office,
+    target: &Employee,
+    sender_id: &str,
+) -> bool {
     let Ok(snap) = office.org_snapshot() else {
         return false;
     };

@@ -17,7 +17,9 @@ fn bin() -> Command {
         .env_remove("AGENT_OS_RUNTIME_DIR")
         .env_remove("ORG_OFFICE_HOME")
         .env_remove("AGENT_OS_SESSION_TOKEN")
-        .env_remove("AGENT_OS_AGENT_ID");
+        .env_remove("AGENT_OS_AGENT_ID")
+        // No signed-in workspace of the account running the tests is ever picked up.
+        .env("AGENT_OS_STATE_DIR", "/nonexistent/agent-os-test-state");
     cmd
 }
 

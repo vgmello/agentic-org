@@ -1,21 +1,29 @@
 //! Per-run cryptographic `AGENT_OS_SESSION_TOKEN` registry and kernel descendant check
 //! (`CLI-9`, `CLI-10`, `CLI-12`, `SUB-3`, `B2 Q9`).
+//!
+//! Two binding modes share one registry and one constant-time token check, in separate maps so
+//! a managed teardown never touches an external lease (and the reverse):
+//!
+//! - [`BindingMode::Managed`]: an office-launched run. Token + kernel peer-PID ancestry.
+//! - [`BindingMode::External`]: a BYOA workspace holding an approved lease (`TASK-137`).
+//!   Token + an unexpired RAM entry that exists only while the lease is active; the same-UID
+//!   peer check is the office socket's accept gate (`peer_allowed`). See [`external`].
 
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use ring::rand::{SecureRandom, SystemRandom};
+use zeroize::Zeroizing;
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (&x, &y) in a.iter().zip(b.iter()) {
-        diff |= std::hint::black_box(x ^ y);
-    }
-    std::hint::black_box(diff) == 0
+mod external;
+
+/// Constant-time equality of two secrets (tokens, code halves) through `subtle`, the audited
+/// constant-time primitive (`ring`'s slice comparison is deprecated and makes no side-channel
+/// promise). Unequal lengths are unequal at once: a fixed-size token's length is not secret.
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    use subtle::ConstantTimeEq as _;
+    bool::from(a.ct_eq(b))
 }
 
 /// One accepted `agent-os` command recorded for a live run (`ADR-0030` decision 8).
@@ -25,14 +33,26 @@ pub struct AcceptedCommandRecord {
     pub summary: String,
 }
 
-/// Live run binding authorizing `agent-os` invocations from an agent process or its descendants.
+/// How a live binding authenticates the peer that presents its token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingMode {
+    /// An office-launched run: the peer must be `root_pid` or one of its live descendants.
+    Managed { root_pid: libc::pid_t },
+    /// An external lease's fast token: valid until `expires_at_ms` (the earlier of the token's
+    /// own lifetime and the lease's) and only while the lease is active.
+    External { expires_at_ms: u64 },
+}
+
+/// Live run binding authorizing `agent-os` invocations from an agent process or its descendants
+/// (managed) or from an approved external workspace (external).
 #[derive(Clone)]
 pub struct ActiveRunBinding {
-    token: String,
+    /// Wiped from memory when the binding (and every clone of it) is dropped.
+    token: Zeroizing<String>,
     pub employee_id: String,
     pub run_id: String,
     pub session_id: String,
-    pub root_pid: libc::pid_t,
+    pub mode: BindingMode,
     pub accepted_commands: Vec<AcceptedCommandRecord>,
 }
 
@@ -43,7 +63,7 @@ impl fmt::Debug for ActiveRunBinding {
             .field("employee_id", &self.employee_id)
             .field("run_id", &self.run_id)
             .field("session_id", &self.session_id)
-            .field("root_pid", &self.root_pid)
+            .field("mode", &self.mode)
             .field("accepted_commands_len", &self.accepted_commands.len())
             .finish()
     }
@@ -51,7 +71,20 @@ impl fmt::Debug for ActiveRunBinding {
 
 impl ActiveRunBinding {
     pub fn expose_token(&self) -> &str {
-        &self.token
+        self.token.as_str()
+    }
+
+    /// The managed run's root process, `None` for an external binding.
+    pub fn root_pid(&self) -> Option<libc::pid_t> {
+        match self.mode {
+            BindingMode::Managed { root_pid } => Some(root_pid),
+            BindingMode::External { .. } => None,
+        }
+    }
+
+    /// Whether this binding is an external (BYOA) lease's fast token.
+    pub fn is_external(&self) -> bool {
+        matches!(self.mode, BindingMode::External { .. })
     }
 }
 
@@ -63,12 +96,16 @@ pub enum BindingRejection {
     MemberMismatch,
     MissingPeerPid,
     NotDescendant,
+    /// An external fast token past its lifetime (or its lease's): refresh by challenge-response.
+    Expired,
 }
 
-/// Thread-safe registry of live per-run `AGENT_OS_SESSION_TOKEN` bindings on one office.
+/// Thread-safe registry of live per-run `AGENT_OS_SESSION_TOKEN` bindings on one office: the
+/// managed runs and, separately, the external leases' fast tokens (RAM-only, never persisted).
 #[derive(Clone, Default)]
 pub struct RunBindingRegistry {
     inner: Arc<Mutex<HashMap<String, ActiveRunBinding>>>,
+    external: Arc<Mutex<HashMap<String, ActiveRunBinding>>>,
 }
 
 impl RunBindingRegistry {
@@ -76,15 +113,17 @@ impl RunBindingRegistry {
         Self::default()
     }
 
-    /// Generates a cryptographically random 32-byte hex session token.
-    pub fn mint_token() -> Result<String, String> {
-        let mut bytes = [0u8; 32];
+    /// Generates a cryptographically random 32-byte hex session token, wiped when dropped.
+    pub fn mint_token() -> Result<Zeroizing<String>, String> {
+        let mut bytes = Zeroizing::new([0u8; 32]);
         SystemRandom::new()
-            .fill(&mut bytes)
+            .fill(bytes.as_mut())
             .map_err(|_| "system entropy unavailable".to_owned())?;
-        let mut out = String::with_capacity(64);
-        for byte in bytes {
-            out.push_str(&format!("{byte:02x}"));
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut out = Zeroizing::new(String::with_capacity(64));
+        for byte in bytes.iter() {
+            out.push(char::from(HEX[usize::from(byte >> 4)]));
+            out.push(char::from(HEX[usize::from(byte & 0x0f)]));
         }
         Ok(out)
     }
@@ -104,7 +143,7 @@ impl RunBindingRegistry {
             employee_id: employee_id.into(),
             run_id: run_id.into(),
             session_id: session_id.into(),
-            root_pid,
+            mode: BindingMode::Managed { root_pid },
             accepted_commands: Vec::new(),
         };
         let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
@@ -117,12 +156,13 @@ impl RunBindingRegistry {
         let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(binding) = map.get_mut(employee_id) {
             if binding.run_id == run_id {
-                binding.root_pid = root_pid;
+                binding.mode = BindingMode::Managed { root_pid };
             }
         }
     }
 
-    /// Revokes the active run binding for `employee_id` (if its `run_id` matches, or any if `None`).
+    /// Revokes the active managed run binding for `employee_id` (if its `run_id` matches, or any
+    /// if `None`). External leases are revoked only through [`Self::revoke_external`].
     pub fn revoke(&self, employee_id: &str, run_id: Option<&str>) {
         let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let matches = map
@@ -173,26 +213,34 @@ impl RunBindingRegistry {
         if !constant_time_eq(binding.token.as_bytes(), token.as_bytes()) {
             return Err(BindingRejection::UnknownToken);
         }
-        if binding.root_pid <= 0 || !is_descendant(peer_pid, binding.root_pid) {
+        let root_pid = binding.root_pid().unwrap_or(0);
+        if root_pid <= 0 || !is_descendant(peer_pid, root_pid) {
             return Err(BindingRejection::NotDescendant);
         }
         Ok(binding)
     }
 
-    /// Records one accepted `agent-os` command for `employee_id`'s active run (`ADR-0030` d8).
+    /// Records one accepted `agent-os` command for `employee_id`'s active managed run
+    /// (`ADR-0030` d8), or else its external binding (bounded). Answers the mode it recorded
+    /// under, `None` when `employee_id` holds no binding.
     pub fn record_accepted_command(
         &self,
         employee_id: &str,
         method: impl Into<String>,
         summary: impl Into<String>,
-    ) {
-        let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(binding) = map.get_mut(employee_id) {
-            binding.accepted_commands.push(AcceptedCommandRecord {
-                method: method.into(),
-                summary: summary.into(),
-            });
+    ) -> Option<BindingMode> {
+        let record = AcceptedCommandRecord {
+            method: method.into(),
+            summary: summary.into(),
+        };
+        {
+            let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(binding) = map.get_mut(employee_id) {
+                binding.accepted_commands.push(record);
+                return Some(binding.mode);
+            }
         }
+        self.record_external_command(employee_id, record)
     }
 
     /// Snapshot of accepted commands recorded on `employee_id`'s current run.
@@ -203,7 +251,8 @@ impl RunBindingRegistry {
             .unwrap_or_default()
     }
 
-    /// Whether `employee_id` currently holds a live run binding.
+    /// Whether `employee_id` currently holds a live *managed* run binding (an external lease's
+    /// token is [`Self::has_active_external`]).
     pub fn has_active(&self, employee_id: &str) -> bool {
         self.inner
             .lock()
@@ -211,9 +260,15 @@ impl RunBindingRegistry {
             .contains_key(employee_id)
     }
 
-    /// Collects all active session tokens so output/log redaction can scrub them (`ENROLL-3`).
+    /// Collects all active session tokens, managed and external, so output/log redaction can
+    /// scrub them (`ENROLL-3`).
     pub fn active_tokens(&self) -> Vec<String> {
-        let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        map.values().map(|b| b.token.clone()).collect()
+        let mut out: Vec<String> = {
+            let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+            map.values().map(|b| b.token.to_string()).collect()
+        };
+        let external = self.external.lock().unwrap_or_else(|p| p.into_inner());
+        out.extend(external.values().map(|b| b.token.to_string()));
+        out
     }
 }

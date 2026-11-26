@@ -549,6 +549,7 @@ const DOMAINS: &[&[Command]] = &[
     crate::git_table::GIT_COMMANDS,
     crate::process_table::PROCESS_COMMANDS,
     crate::budget_table::BUDGET_COMMANDS,
+    crate::external_auth::operator::EXTERNAL_COMMANDS,
 ];
 
 /// Builds and validates the shared organization/project/HR/session/messaging command table:

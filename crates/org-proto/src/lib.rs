@@ -94,6 +94,7 @@ pub mod budgets;
 pub mod chat;
 pub mod costs;
 pub mod directory;
+pub mod external_auth;
 pub mod federation;
 pub mod frame;
 pub mod git;

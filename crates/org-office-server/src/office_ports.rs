@@ -360,6 +360,9 @@ pub(crate) fn build_office_ports(
         sessions: Some(session_hooks.sessions),
         run_binding_verify: Some(session_hooks.run_binding_verify),
         run_binding_active: Some(session_hooks.run_binding_active),
+        external_auth: Some(Arc::new(crate::session_proxy::ExternalAuth(Arc::clone(
+            &session_manager,
+        )))),
         record_agent_command: Some(session_hooks.record_agent_command),
         waiting_messages_counter: {
             let sessions = Arc::clone(&session_manager);

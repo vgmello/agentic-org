@@ -206,6 +206,8 @@ impl SessionManager {
 
     /// Called when an agent is offboarded: discards pending starts & suspended state (`ADR-0030` d3).
     pub fn on_agent_offboarded(&self, employee_id: &str) {
+        // Before any employee lock: ending the lease takes the outer lease lock.
+        self.revoke_external_lease(employee_id, "offboarded");
         let _ = self.stop_session(employee_id, "offboarded");
         let _lock = self.employee_locks.lock(employee_id);
         self.open_required_asks
@@ -284,6 +286,18 @@ impl SessionManager {
     pub fn member_runtime_presence(&self, employee_id: &str) -> Option<MemberRuntime> {
         if let Some(live) = self.live_pump_presence(employee_id) {
             return Some(live);
+        }
+        if let Some(lease) = self
+            .external_lease(employee_id)
+            .filter(|l| l.is_active(now_ms()))
+        {
+            return Some(MemberRuntime {
+                presence: MemberPresence::Busy,
+                last_seen_at: Some(lease.approved_at),
+                status: Some(format!("External session: {}", lease.workspace_label)),
+                status_expires_at: Some(lease.expires_at),
+                current_task_id: None,
+            });
         }
         if let Ok(Some(susp)) = self.store.read_suspended_state(employee_id) {
             return Some(MemberRuntime {
@@ -371,20 +385,12 @@ impl SessionManager {
         Some(emp)
     }
 
-    fn has_live_active_turn(&self, employee_id: &str) -> bool {
+    /// Whether `employee_id` has a live *managed* turn (starting, running or awaiting approval,
+    /// or an unmanaged socket binding). An external lease is [`Self::has_active_external_lease`]:
+    /// both block autonomous wakes, but only a managed turn can be taken over.
+    pub(crate) fn has_active_managed_turn(&self, employee_id: &str) -> bool {
         let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-        if reg.starting.contains(employee_id) {
-            return true;
-        }
-        if let Some(handle) = reg.live.get(employee_id) {
-            let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-            return matches!(
-                state.state,
-                SessionState::Starting | SessionState::Running | SessionState::WaitingApproval
-            );
-        }
-        // Only treat an unmanaged socket binding (no SessionManager pump) as active (`High #1`).
-        self.bindings.has_active(employee_id)
+        managed_turn_live_in(&reg, &self.bindings, employee_id)
     }
 
     fn live_pump_presence(&self, employee_id: &str) -> Option<MemberRuntime> {
@@ -409,6 +415,25 @@ impl SessionManager {
     }
 }
 
+/// [`SessionManager::has_active_managed_turn`] for a caller already holding `registry`.
+pub(crate) fn managed_turn_live_in(
+    reg: &crate::manager::SessionRegistry,
+    bindings: &crate::binding::RunBindingRegistry,
+    employee_id: &str,
+) -> bool {
+    if reg.starting.contains(employee_id) {
+        return true;
+    }
+    if let Some(handle) = reg.live.get(employee_id) {
+        let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+        return matches!(
+            state.state,
+            SessionState::Starting | SessionState::Running | SessionState::WaitingApproval
+        );
+    }
+    // Only treat an unmanaged socket binding (no SessionManager pump) as active (`High #1`).
+    bindings.has_active(employee_id)
+}
 /// Spawns a lightweight background wake-retry thread that sleeps in short 50ms slices so
 /// office shutdown is never blocked (`Low #15`, `WAKE-4`, `LIVE-3`).
 pub fn spawn_wake_retry_loop(

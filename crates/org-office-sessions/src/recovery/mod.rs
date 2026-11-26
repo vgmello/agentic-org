@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::credentials::{is_safe_id, rfc3339_now};
 
+mod external_store;
 mod startup;
 mod usage_store;
 mod wake_store;

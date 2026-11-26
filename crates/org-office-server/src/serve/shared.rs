@@ -26,6 +26,8 @@ pub struct Shared {
     pub(crate) inbox: Option<crate::inbox::Hq>,
     pub(super) hint: Option<crate::inbox::Hint>,
     pub(crate) stopping: std::sync::atomic::AtomicBool,
+    /// The office-wide budgets of the unbound sign-in calls (`auth.*`).
+    pub(super) auth_limits: super::auth_limits::AuthRateLimits,
 }
 
 impl Shared {
@@ -53,6 +55,7 @@ impl Shared {
             inbox: None,
             hint: None,
             stopping: std::sync::atomic::AtomicBool::new(false),
+            auth_limits: super::auth_limits::AuthRateLimits::default(),
             // Part 1 implements only what every server of this api_version has: no capabilities.
             hello: HelloResult::office(
                 env!("CARGO_PKG_VERSION"),

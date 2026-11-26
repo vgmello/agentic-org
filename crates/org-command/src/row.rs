@@ -153,6 +153,20 @@ impl Command {
         self.input.iter().find(|field| field.name == name)
     }
 
+    /// Whether `--<name>` (written without `=value`) takes the next word as its value on this
+    /// command: a common option with a value, or an input flag that is not yes-or-no. `None`
+    /// when it is no flag of the command. A scan that must step over values the way the parser
+    /// does (help detection, a positional shorthand) asks this, never a list of its own.
+    pub fn flag_takes_value(&self, name: &str) -> Option<bool> {
+        if let Some(option) = common_option(name) {
+            return Some(option.value.is_some());
+        }
+        self.input
+            .iter()
+            .find(|field| field.is_flag() && field.flag() == name)
+            .map(|field| field.ty != Type::Boolean)
+    }
+
     pub fn is_write(&self) -> bool {
         matches!(self.kind, Kind::Write { .. })
     }

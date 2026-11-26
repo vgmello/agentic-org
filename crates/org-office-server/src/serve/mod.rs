@@ -10,9 +10,11 @@
 //! touches a database that is closing.
 
 mod auth;
+mod auth_limits;
 mod binding;
 mod connection;
 mod dispatch;
+mod external;
 mod held;
 mod host;
 mod listener;
@@ -40,6 +42,9 @@ use org_work::{Caller, WorkCall};
 
 use self::dispatch::answer;
 
+#[cfg(test)]
+pub(crate) use self::external::close_after_approval;
+pub use self::external::ExternalAuthPort;
 pub use self::listener::{bind, run};
 pub use self::shared::Shared;
 
@@ -174,6 +179,9 @@ pub struct OfficePorts {
     pub sessions: Option<SessionsFn>,
     pub run_binding_verify: Option<RunBindingVerifyFn>,
     pub run_binding_active: Option<RunBindingActiveFn>,
+    /// External (BYOA) agent sign-in, leases and fast tokens (`TASK-137`). `None`: `auth.*`
+    /// answers `unsupported` and only managed runs bind.
+    pub external_auth: Option<Arc<dyn ExternalAuthPort>>,
     pub record_agent_command: Option<RecordCommandFn>,
     pub waiting_messages_counter: Option<WaitingMessagesCounterFn>,
     pub on_agent_stop: Option<AgentLifecycleHookFn>,

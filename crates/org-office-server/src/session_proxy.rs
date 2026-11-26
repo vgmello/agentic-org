@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::federation_runtime::HqFederationSlot;
 use crate::{federation_stream, serve};
 use org_office::Office;
+use org_proto::external_auth as ext;
 
 pub(crate) struct SessionHooks {
     pub(crate) sessions: serve::SessionsFn,
@@ -218,8 +219,93 @@ pub(crate) fn build_session_hooks(
         on_agent_stop: {
             let sessions = Arc::clone(session_manager);
             Box::new(move |employee_id, reason| {
+                // Pausing or offboarding ends both leases: the managed run and any external one.
+                sessions.revoke_external_lease(employee_id, reason);
                 let _ = sessions.stop_session(employee_id, reason);
             })
         },
+    }
+}
+
+/// External (BYOA) agent auth over the office's session manager (`TASK-137`).
+pub(crate) struct ExternalAuth(pub(crate) Arc<org_office_sessions::SessionManager>);
+
+impl serve::ExternalAuthPort for ExternalAuth {
+    fn login_request(
+        &self,
+        member_id: &str,
+        params: &ext::AuthLoginRequestParams,
+    ) -> Result<ext::AuthLoginRequestResult, org_proto::ApiError> {
+        self.0.external_login_request(member_id, params)
+    }
+
+    fn login_poll(
+        &self,
+        request_id: &str,
+    ) -> Result<ext::AuthLoginPollResult, org_proto::ApiError> {
+        self.0.external_login_poll(request_id)
+    }
+
+    fn challenge(
+        &self,
+        member_id: &str,
+        session_id: &str,
+        purpose: ext::ChallengePurpose,
+    ) -> Result<ext::AuthChallengeResult, org_proto::ApiError> {
+        self.0.external_challenge(member_id, session_id, purpose)
+    }
+
+    fn exchange(
+        &self,
+        member_id: &str,
+        params: &ext::SignedChallengeParams,
+    ) -> Result<ext::AuthExchangeResult, org_proto::ApiError> {
+        self.0.external_exchange(member_id, params)
+    }
+
+    fn logout(
+        &self,
+        member_id: &str,
+        params: &ext::SignedChallengeParams,
+    ) -> Result<ext::AuthLogoutResult, org_proto::ApiError> {
+        self.0.external_logout(member_id, params)
+    }
+
+    fn whoami(&self, member_id: &str, external_session: Option<&str>) -> ext::AuthWhoamiResult {
+        self.0.external_whoami(member_id, external_session)
+    }
+
+    fn approve(
+        &self,
+        actor: &str,
+        params: &ext::MemberExternalApproveParams,
+    ) -> Result<ext::ExternalSessionView, org_proto::ApiError> {
+        self.0.external_approve(actor, params)
+    }
+
+    fn sessions(
+        &self,
+        actor: &str,
+        employee_id: &str,
+        limit: Option<u32>,
+    ) -> Result<ext::MemberExternalSessionsResult, org_proto::ApiError> {
+        self.0.external_sessions(actor, employee_id, limit)
+    }
+
+    fn revoke(
+        &self,
+        actor: &str,
+        employee_id: &str,
+        session_id: Option<&str>,
+    ) -> Result<ext::MemberExternalRevokeResult, org_proto::ApiError> {
+        self.0.external_revoke(actor, employee_id, session_id)
+    }
+
+    fn verify(&self, member_id: &str, token: Option<&str>) -> Option<String> {
+        self.0.verify_external_token(member_id, token)
+    }
+
+    fn is_active(&self, member_id: &str, session_id: &str) -> bool {
+        self.0.external_binding_active(member_id, session_id)
     }
 }

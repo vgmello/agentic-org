@@ -77,6 +77,8 @@ impl SessionManager {
         requested_workspace: Option<&str>,
     ) -> Result<StartReservation, ApiError> {
         let emp_id = employee.id.as_str();
+        // Load the lease cache now, so the check under the registry lock below never misses it.
+        let _ = self.external_lease(emp_id);
         for _ in 0..MAX_WARM_REVALIDATIONS {
             let snapshot = self.snapshot_warm_handle(emp_id)?;
             let freshness = snapshot
@@ -177,6 +179,15 @@ impl SessionManager {
     ) -> Result<Option<StartDecision>, ApiError> {
         let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
         check_registry_startable(&reg, emp_id)?;
+        if self
+            .external
+            .cached_active(emp_id, crate::credentials::now_ms())
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "this agent is signed in from an external workspace; revoke that session first",
+            ));
+        }
         let handle = reg.live.get(emp_id);
         let unchanged = match (snapshot, handle) {
             (None, None) => true,
