@@ -3,12 +3,139 @@ use super::*;
 mod authority;
 use crate::revocations::Revocations;
 
+/// Maximum concurrent push-woken `chat.events_poll` waiters on one multiplexed host channel.
+const MAX_HELD_EVENT_POLLS: usize = 16;
+
 pub(crate) struct HostChannel {
     pub _channel_id: String,
     pub _kind: org_office_launch::ChannelKind,
     pub hello: HelloResult,
     pub _revocations: Arc<Mutex<Revocations>>,
 }
+
+struct HeldPollSlot<'a> {
+    active: &'a AtomicUsize,
+}
+
+impl Drop for HeldPollSlot<'_> {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn is_blocking_events_poll(request: &Request) -> bool {
+    request.is::<org_proto::chat::ChatEventsPoll>()
+        && request
+            .params::<org_proto::chat::ChatEventsPoll>()
+            .ok()
+            .and_then(|p| p.wait_ms)
+            .is_some_and(|ms| ms > 0)
+}
+
+fn spawn_held_events_poll<'scope, 'env>(
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    request: Request,
+    shared: &'env Shared,
+    context: &'env HostChannel,
+    out: &'env Mutex<UnixStream>,
+    channel_stop: &'env Arc<std::sync::atomic::AtomicBool>,
+    held_polls: &'env AtomicUsize,
+) -> bool {
+    let Some(office) = shared.hello.office.as_ref() else {
+        return send(
+            out,
+            request.id,
+            &refuse(request.id, ErrorCode::NotAuthorized),
+            Timing::default(),
+        );
+    };
+    let checks = authority::Live {
+        shared,
+        revocations: &context._revocations,
+    };
+    let owner = match authority::authorize(&request, &context._channel_id, &office.office, &checks)
+    {
+        Ok(owner) => owner,
+        Err(code) => {
+            return send(
+                out,
+                request.id,
+                &refuse(request.id, code),
+                Timing::default(),
+            )
+        }
+    };
+    if !matches!(allowed(&request), HostPolicy::Serve) {
+        return send(
+            out,
+            request.id,
+            &refuse(request.id, ErrorCode::NotAuthorized),
+            Timing::default(),
+        );
+    }
+    if held_polls.fetch_add(1, Ordering::SeqCst) >= MAX_HELD_EVENT_POLLS {
+        held_polls.fetch_sub(1, Ordering::SeqCst);
+        let busy = Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::Unavailable,
+                "too many concurrent event streams on this channel",
+            ),
+        );
+        return send(out, request.id, &busy, Timing::default());
+    }
+    let office_info = office.office.clone();
+    let request_id = request.id;
+    let started = std::thread::Builder::new()
+        .name("org-host-events-poll".into())
+        .spawn_scoped(scope, move || {
+            let _slot = HeldPollSlot { active: held_polls };
+            let id = request.id;
+            let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                shared
+                    .ports
+                    .chat
+                    .as_ref()
+                    .and_then(|chat| chat(Some(&owner), true, channel_stop, &request))
+                    .unwrap_or_else(|| {
+                        Response::error(
+                            id,
+                            ApiError::new(
+                                ErrorCode::UnknownMethod,
+                                format!("this office does not know `{}`", request.method),
+                            ),
+                        )
+                    })
+            }))
+            .unwrap_or_else(|_| internal(id));
+            // Re-run full live authorization (session revocation, grant expiry, and live person
+            // membership) before emitting any held event frame so offboarded/removed persons and
+            // revoked browser sessions never receive post-revocation events (`doc-7` #9).
+            let post_checks = authority::Live {
+                shared,
+                revocations: &context._revocations,
+            };
+            let still_authorized =
+                authority::authorize(&request, &context._channel_id, &office_info, &post_checks)
+                    .is_ok();
+            let final_resp = if still_authorized {
+                answer
+            } else {
+                refuse(id, ErrorCode::NotAuthorized)
+            };
+            let _ = send(out, id, &final_resp, Timing::default());
+        });
+    if started.is_err() {
+        held_polls.fetch_sub(1, Ordering::SeqCst);
+        let busy = Response::error(
+            request_id,
+            ApiError::new(ErrorCode::Unavailable, "the office is busy"),
+        );
+        return send(out, request_id, &busy, Timing::default());
+    }
+    true
+}
+
 pub(super) fn serve(
     stream: UnixStream,
     shared: &Shared,
@@ -17,42 +144,62 @@ pub(super) fn serve(
 ) {
     let Ok(out) = stream.try_clone() else { return };
     let out = Mutex::new(out);
-    let mut reader = org_socket::Ticked::new(stream, || stopping.load(Ordering::SeqCst));
-    let mut negotiated = false;
-    while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
-        let (response, close) = if !negotiated && !request.is::<Hello>() {
-            (refuse(request.id, ErrorCode::UnsupportedVersion), true)
-        } else if request.is::<Hello>() {
-            match request.params::<Hello>() {
-                Ok(params) if params.api_range().contains(2) => {
-                    negotiated = true;
-                    (
-                        Response::ok::<Hello>(request.id, &context.hello)
-                            .unwrap_or_else(|_| internal(request.id)),
-                        false,
-                    )
-                }
-                Ok(_) => (refuse(request.id, ErrorCode::UnsupportedVersion), true),
-                Err(_) => (refuse(request.id, ErrorCode::InvalidRequest), false),
-            }
-        } else {
-            (
-                dispatch(
-                    &request,
+    let channel_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let held_polls = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let mut reader = org_socket::Ticked::new(stream, || stopping.load(Ordering::SeqCst));
+        let mut negotiated = false;
+        while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
+            if negotiated && is_blocking_events_poll(&request) {
+                if !spawn_held_events_poll(
+                    scope,
+                    request,
                     shared,
                     &context,
-                    &authority::Live {
+                    &out,
+                    &channel_stop,
+                    &held_polls,
+                ) {
+                    break;
+                }
+                continue;
+            }
+            let (response, close) = if !negotiated && !request.is::<Hello>() {
+                (refuse(request.id, ErrorCode::UnsupportedVersion), true)
+            } else if request.is::<Hello>() {
+                match request.params::<Hello>() {
+                    Ok(params) if params.api_range().contains(2) => {
+                        negotiated = true;
+                        (
+                            Response::ok::<Hello>(request.id, &context.hello)
+                                .unwrap_or_else(|_| internal(request.id)),
+                            false,
+                        )
+                    }
+                    Ok(_) => (refuse(request.id, ErrorCode::UnsupportedVersion), true),
+                    Err(_) => (refuse(request.id, ErrorCode::InvalidRequest), false),
+                }
+            } else {
+                (
+                    dispatch(
+                        &request,
                         shared,
-                        revocations: &context._revocations,
-                    },
-                ),
-                false,
-            )
-        };
-        if !send(&out, request.id, &response, Timing::default()) || close {
-            break;
+                        &context,
+                        &authority::Live {
+                            shared,
+                            revocations: &context._revocations,
+                        },
+                    ),
+                    false,
+                )
+            };
+            if !send(&out, request.id, &response, Timing::default()) || close {
+                break;
+            }
         }
-    }
+        // Wake and drain all held event-poll threads cleanly before exiting the scope.
+        channel_stop.store(true, Ordering::SeqCst);
+    });
 }
 fn dispatch(
     request: &Request,

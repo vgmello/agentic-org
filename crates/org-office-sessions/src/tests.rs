@@ -1760,7 +1760,7 @@ impl AgentRuntime for ScriptedRuntime {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            steer: false,
+            mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
             interrupt_in_band: false,
             idle_interrupt_ends_turn: false,
             approval_bridge: false,
@@ -2117,8 +2117,9 @@ printf '{"kind":"reply","text":"Completed in %s with token=%s"}\n' "$pwd_now" "$
         org_proto::Outcome::Result(_)
     ));
 
-    // Medium #5 + TASK-120/124 Pass 1: denied_office_globs_for covers enroll-tmp, sibling runtime/,
-    // host.sock, sibling agents' runtime dirs, and Linux privileged sockets (while excluding self).
+    // Medium #5 + TASK-120/124/126: denied_office_globs_for surgically protects runtime DBs,
+    // protected companion stores, git-state/git-home, snapshot-import, sibling agent worktrees,
+    // host.sock, and Linux privileged sockets while keeping self agent home & worktree root open.
     let denied_strs: Vec<String> = manager
         .denied_office_globs_for(Some(&agent_id))
         .iter()
@@ -2129,8 +2130,33 @@ printf '{"kind":"reply","text":"Completed in %s with token=%s"}\n' "$pwd_now" "$
         "denied_office_globs must include enroll-tmp: {denied_strs:?}"
     );
     assert!(
-        denied_strs.iter().any(|s| s.contains("/runtime/**")),
-        "denied_office_globs must include runtime/: {denied_strs:?}"
+        !denied_strs.iter().any(|s| s.ends_with("/runtime/**")),
+        "denied_office_globs must NOT blanket-deny runtime/** (blocks self task worktrees): {denied_strs:?}"
+    );
+    for needle in [
+        "/runtime/snapshot-import/**",
+        "/office.db",
+        "/protected/**",
+        "/git-state.json",
+        "/git-home/**",
+    ] {
+        assert!(
+            denied_strs.iter().any(|s| s.contains(needle)),
+            "denied_office_globs must protect `{needle}`: {denied_strs:?}"
+        );
+    }
+    let (wt_writable, wt_write_denies) = manager.worktree_sandbox_grants(&agent_id, false);
+    assert!(
+        wt_writable
+            .iter()
+            .any(|p| p.as_str().ends_with(&format!("/agents/{agent_id}"))),
+        "worktree_sandbox_grants must include agent's own worktree root: {wt_writable:?}"
+    );
+    assert!(
+        wt_write_denies
+            .iter()
+            .all(|p| !p.as_str().contains("/**/") && !p.as_str().contains("/*/")),
+        "worktree_sandbox_grants must never emit interior wildcards (breaks Codex path_pattern_base): {wt_write_denies:?}"
     );
     assert!(
         denied_strs.iter().any(|s| s.ends_with("/host.sock")),
@@ -2877,13 +2903,14 @@ fn real_process_fake_cli_runs_native_agy_and_codex_adapters_end_to_end() {
         "agy",
         r#"#!/bin/sh
 read init_line
-echo '{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["neo-agy"],"mode":"ask","version":"1.5.14"}}}'
-read user_line
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"antigravity","version":"1.5.17"}}}'
+read open_line
+echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"agy-live-1","models":{"currentModelId":"gemini-2.5-pro"},"modes":{"currentModeId":"default"}}}'
+read prompt_line
 mkdir -p "$HOME/.gemini/antigravity-cli/brain/agy-live-1/.system_generated/logs"
 printf '{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-22T06:00:00Z","content":"Transcript leak key=%s"}\n' "$GEMINI_API_KEY" > "$HOME/.gemini/antigravity-cli/brain/agy-live-1/.system_generated/logs/transcript.jsonl"
-echo '{"type":"system","subtype":"init","conversation_id":"agy-live-1","mode":"ask"}'
-printf '{"type":"assistant","message":{"id":"m1","model":"gemini-2.5-pro","content":[{"type":"text","text":"Agy reply tok=%s key=%s"}],"usage":{"input_tokens":20,"output_tokens":10}}}\n' "$AGENT_OS_SESSION_TOKEN" "$GEMINI_API_KEY"
-echo '{"type":"result","subtype":"success","is_error":false}'
+printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"agy-live-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Agy reply tok=%s key=%s"}}}}\n' "$AGENT_OS_SESSION_TOKEN" "$GEMINI_API_KEY"
+echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage":{"inputTokens":20,"outputTokens":10}}}'
 "#,
     );
     let fake_codex = write_fake_cli(
@@ -3123,21 +3150,14 @@ fn session_launch_injects_effective_processes_and_refuses_mandatory_budget_overf
         "agy",
         &format!(
             r#"#!/bin/sh
-settings=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--settings" ]; then
-    shift
-    settings="$1"
-  fi
-  shift
-done
-cat "$(dirname "$settings")/agy-instructions.md" > "{capture}"
 read init_line
-echo '{{"type":"control_response","response":{{"subtype":"success","request_id":"host-1","response":{{"agents":["proc-bot"],"mode":"ask","version":"1.5.14"}}}}}}'
-read user_line
-echo '{{"type":"system","subtype":"init","conversation_id":"agy-proc-1","mode":"ask"}}'
-echo '{{"type":"assistant","message":{{"id":"m1","model":"gemini-2.5-pro","content":[{{"type":"text","text":"Ack"}}],"usage":{{"input_tokens":5,"output_tokens":2}}}}}}'
-echo '{{"type":"result","subtype":"success","is_error":false}}'
+echo '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"antigravity","version":"1.5.17"}}}}}}'
+read open_line
+printf '%s\n' "$open_line" > "{capture}"
+echo '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"agy-proc-1","models":{{"currentModelId":"gemini-2.5-pro"}},"modes":{{"currentModeId":"default"}}}}}}'
+read prompt_line
+echo '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"agy-proc-1","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"Ack"}}}}}}}}'
+echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inputTokens":5,"outputTokens":2}}}}}}'
 "#,
             capture = capture_path.display()
         ),
@@ -3402,21 +3422,14 @@ fn task_assignment_wake_injects_project_owning_chain_for_contributing_agent() {
         "agy",
         &format!(
             r#"#!/bin/sh
-settings=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--settings" ]; then
-    shift
-    settings="$1"
-  fi
-  shift
-done
-cat "$(dirname "$settings")/agy-instructions.md" > "{capture}"
 read init_line
-echo '{{"type":"control_response","response":{{"subtype":"success","request_id":"host-1","response":{{"agents":["qa-bot"],"mode":"ask","version":"1.5.14"}}}}}}'
-read user_line
-echo '{{"type":"system","subtype":"init","conversation_id":"agy-task-1","mode":"ask"}}'
-echo '{{"type":"assistant","message":{{"id":"m1","model":"gemini-2.5-pro","content":[{{"type":"text","text":"Audited"}}],"usage":{{"input_tokens":5,"output_tokens":2}}}}}}'
-echo '{{"type":"result","subtype":"success","is_error":false}}'
+echo '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"antigravity","version":"1.5.17"}}}}}}'
+read open_line
+printf '%s\n' "$open_line" > "{capture}"
+echo '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"agy-task-1","models":{{"currentModelId":"gemini-2.5-pro"}},"modes":{{"currentModeId":"default"}}}}}}'
+read prompt_line
+echo '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"agy-task-1","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"Audited"}}}}}}}}'
+echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inputTokens":5,"outputTokens":2}}}}}}'
 "#,
             capture = capture_path.display()
         ),
@@ -3514,4 +3527,2812 @@ fn bind_and_refresh_test_connection(
         )
         .unwrap()
         .unwrap();
+}
+
+#[test]
+fn task126_worktree_sandbox_grants_protect_git_metadata_and_compile_cleanly_for_codex() {
+    use org_agent_runtime::{
+        AgentIdentity, AgentName, AgentRuntime as _, LaunchContext, RuntimeId, SessionKind,
+        SessionSpec, SpecPath,
+    };
+    use org_office::git::{OfficeGitState, TaskWorkspaceRecord};
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    let hire_agent = |name: &str, handle: &str| -> String {
+        let req = Request::new::<HrHire>(
+            1,
+            &HrHireParams {
+                command_id: new_uuid_v7(),
+                request_id: new_uuid_v7(),
+                employee_id: new_uuid_v7(),
+                home_team_id: root_team_id.clone(),
+                role_id: None,
+                proposal: HireProposalWire {
+                    name: name.into(),
+                    handle: handle.into(),
+                    title: Some("Engineer".into()),
+                    focus: None,
+                    role_text: None,
+                    title_in_team: Some("Engineer".into()),
+                    reports_to_employee_id: Some(owner_id.clone()),
+                    office_id: None,
+                    model_profile_id: None,
+                    model_id: None,
+                    permission_preset: Some("autonomous_sandboxed".into()),
+                    tools_config: Vec::new(),
+                    system_prompt_markdown: None,
+                    body: Some("Work.".into()),
+                },
+                reason: "Test hire".into(),
+            },
+        )
+        .unwrap();
+        let resp = office.dispatch_hiring_rpc(Some(&owner_id), &req).unwrap();
+        let hired: org_proto::hiring::HireOpResult = match resp.outcome {
+            org_proto::Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+            org_proto::Outcome::Error(e) => panic!("hire failed: {e:?}"),
+        };
+        hired.employee_id.expect("hired employee id")
+    };
+    let self_emp_id = hire_agent("Self Agent", "self-agent");
+    let peer_emp_id = hire_agent("Peer Agent", "peer-agent");
+
+    let office_id = office.info().office_id.clone();
+    let office_rt = office.runtime_root().join(&office_id);
+    let repo_id = "01a212a8-982e-71ca-a6de-322dba762da2";
+    let untargeted_repo_id = "01a212a8-982e-71ca-a6de-322dba762da9";
+    let cache_dir = office_rt
+        .join("repositories")
+        .join(format!("{repo_id}.git"));
+    let untargeted_cache = office_rt
+        .join("repositories")
+        .join(format!("{untargeted_repo_id}.git"));
+    let self_wt = office_rt
+        .join("teams")
+        .join(&root_team_id)
+        .join("agents")
+        .join(&self_emp_id)
+        .join("tasks/t-1/repositories")
+        .join(repo_id);
+    let peer_wt = office_rt
+        .join("teams")
+        .join(&root_team_id)
+        .join("agents")
+        .join(&peer_emp_id)
+        .join("tasks/t-2/repositories")
+        .join(repo_id);
+    std::fs::create_dir_all(cache_dir.join("worktrees/self-admin")).unwrap();
+    std::fs::create_dir_all(cache_dir.join("worktrees/peer-admin")).unwrap();
+    std::fs::create_dir_all(cache_dir.join("worktrees/unknown-admin")).unwrap();
+    std::fs::create_dir_all(&untargeted_cache).unwrap();
+    std::fs::create_dir_all(&self_wt).unwrap();
+    std::fs::create_dir_all(&peer_wt).unwrap();
+    std::fs::write(self_wt.join(".git"), "gitdir: /dummy\n").unwrap();
+
+    let mut git_state = OfficeGitState::default();
+    git_state.workspaces.insert(
+        OfficeGitState::workspace_key("t-1", repo_id, &self_emp_id),
+        TaskWorkspaceRecord {
+            office_id: office_id.clone(),
+            employee_id: self_emp_id.clone(),
+            task_id: "t-1".into(),
+            task_key: "T-1".into(),
+            repository_id: repo_id.into(),
+            repository_key: Some("org".into()),
+            branch: "task/T-1-test".into(),
+            worktree_path: self_wt.display().to_string(),
+            admin_dir_name: "self-admin".into(),
+            base_commit: "abc".into(),
+            pushed_head: None,
+            state: "active".into(),
+        },
+    );
+    git_state.workspaces.insert(
+        OfficeGitState::workspace_key("t-2", repo_id, &peer_emp_id),
+        TaskWorkspaceRecord {
+            office_id: office_id.clone(),
+            employee_id: peer_emp_id.clone(),
+            task_id: "t-2".into(),
+            task_key: "T-2".into(),
+            repository_id: repo_id.into(),
+            repository_key: Some("org".into()),
+            branch: "task/T-2-test".into(),
+            worktree_path: peer_wt.display().to_string(),
+            admin_dir_name: "peer-admin".into(),
+            base_commit: "abc".into(),
+            pushed_head: None,
+            state: "active".into(),
+        },
+    );
+    git_state.save(office.runtime_root(), &office_id).unwrap();
+
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    );
+    let denied = mgr.denied_office_globs_for(Some(&self_emp_id));
+    let denied_strs: Vec<String> = denied.iter().map(|p| p.as_str().to_owned()).collect();
+    for needle in [
+        "/worktrees/peer-admin/**",
+        "/worktrees/unknown-admin/**",
+        &format!("/repositories/{untargeted_repo_id}.git/**"),
+        "/snapshot-export/**",
+        "/office.db-journal",
+        "/office.db.new",
+        "/office.db.new-wal",
+        "/credentials.toml",
+        &format!("/teams/{root_team_id}/teams/**"),
+    ] {
+        assert!(
+            denied_strs.iter().any(|s| s.ends_with(needle)),
+            "denied_office_globs must deny `{needle}`: {denied_strs:?}"
+        );
+    }
+    assert!(
+        !denied_strs
+            .iter()
+            .any(|s| s.ends_with("/.cargo/config.toml") || s.ends_with("/.cargo/config")),
+        "must not read-deny ~/.cargo/config.toml (breaks cargo under Linux bwrap): {denied_strs:?}"
+    );
+    assert!(
+        !denied_strs
+            .iter()
+            .any(|s| s.ends_with("/worktrees/self-admin/**")),
+        "self git admin dir must not be read-denied: {denied_strs:?}"
+    );
+
+    let (wt_writable, wt_write_denies) = mgr.worktree_sandbox_grants(&self_emp_id, false);
+    let writable_strs: Vec<String> = wt_writable.iter().map(|p| p.as_str().to_owned()).collect();
+    assert!(
+        !writable_strs.iter().any(|s| s.ends_with("/worktrees")),
+        "parent <cache>/worktrees must NEVER be in writable_roots: {writable_strs:?}"
+    );
+    assert!(
+        writable_strs
+            .iter()
+            .any(|s| s.ends_with("/worktrees/self-admin")),
+        "concrete self admin dir must be in writable_roots: {writable_strs:?}"
+    );
+    assert!(
+        !writable_strs.iter().any(|s| s.contains(untargeted_repo_id)),
+        "untargeted repo must NEVER be in writable_roots: {writable_strs:?}"
+    );
+    let deny_strs: Vec<String> = wt_write_denies
+        .iter()
+        .map(|p| p.as_str().to_owned())
+        .collect();
+    assert!(
+        deny_strs
+            .iter()
+            .all(|s| !s.contains("/**/") && !s.contains("/*/")),
+        "must have zero interior wildcards for Codex compatibility: {deny_strs:?}"
+    );
+    for needle in [
+        "/hooks",
+        "/hooks/**",
+        "/objects/info",
+        "/objects/info/**",
+        "/config",
+        "/HEAD",
+        "/refs/remotes/**",
+        "/worktrees/self-admin/commondir",
+        "/worktrees/self-admin/gitdir",
+        "/worktrees/self-admin/config.worktree",
+        "/.git",
+    ] {
+        assert!(
+            deny_strs.iter().any(|s| s.ends_with(needle)),
+            "worktree_sandbox_grants missing write deny `{needle}`: {deny_strs:?}"
+        );
+    }
+    // Optional non-existent bare-cache files (`packed-refs`, `shallow`) and `.git/hooks` on a
+    // worktree `.git` file must NOT be emitted into `deny_write` (Linux bwrap turns missing
+    // denyWrite files into EACCES stubs; `<cache>` stays outside `writable_roots`).
+    for absent in ["/packed-refs", "/shallow", "/.git/hooks"] {
+        assert!(
+            !deny_strs.iter().any(|s| s.ends_with(absent)),
+            "absent optional git path `{absent}` must not be emitted into deny_write: {deny_strs:?}"
+        );
+    }
+    // A dangling symlink at `packed-refs` MUST be detected via `symlink_metadata` and write-denied.
+    org_platform::fs::create_symlink(
+        &cache_dir.join("nonexistent-target"),
+        &cache_dir.join("packed-refs"),
+    )
+    .unwrap();
+    let (_, wt_write_denies_dangling) = mgr.worktree_sandbox_grants(&self_emp_id, false);
+    assert!(
+        wt_write_denies_dangling
+            .iter()
+            .any(|p| p.as_str().ends_with("/packed-refs")),
+        "dangling symlink at packed-refs must still be write-denied"
+    );
+    std::fs::remove_file(cache_dir.join("packed-refs")).unwrap();
+    // When `packed-refs` DOES exist on disk, it MUST be protected in `deny_write`.
+    std::fs::write(cache_dir.join("packed-refs"), "# pack-refs\n").unwrap();
+    let (_, wt_write_denies_with_packed) = mgr.worktree_sandbox_grants(&self_emp_id, false);
+    assert!(
+        wt_write_denies_with_packed
+            .iter()
+            .any(|p| p.as_str().ends_with("/packed-refs")),
+        "existing packed-refs must be write-denied"
+    );
+
+    // Verify Codex adapter compiles the resulting policy without downgrading self worktree root.
+    let ws_dir = tempfile::tempdir().unwrap();
+    let rt_dir = tempfile::tempdir().unwrap();
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let ws_spec =
+        SpecPath::try_from(ws_dir.path().canonicalize().unwrap().to_str().unwrap()).unwrap();
+    let mut preset = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &denied,
+        1,
+    )
+    .unwrap();
+    crate::preset::apply_worktree_sandbox_rules(&mut preset, &wt_writable, &wt_write_denies);
+    let spec = SessionSpec {
+        runtime: RuntimeId::try_from("codex").unwrap(),
+        kind: SessionKind::Home {},
+        agent: AgentIdentity {
+            name: AgentName::try_from("self-agent").unwrap(),
+            description: "Engineer".into(),
+            prompt: "Work".into(),
+        },
+        model: None,
+        effort: None,
+        workspace: ws_spec,
+        read_only_dirs: vec![],
+        instructions: "Work".into(),
+        permission_mode: preset.permission_mode,
+        policy: preset.policy,
+        sandbox: preset.sandbox,
+        mcp_servers: Default::default(),
+        tools: None,
+    };
+    let ctx = LaunchContext {
+        runtime_path: std::path::PathBuf::from("/usr/bin/true"),
+        runtime_version: Some("0.172.0".into()),
+        runtime_dir: SpecPath::try_from(rt_dir.path().canonicalize().unwrap().to_str().unwrap())
+            .unwrap(),
+        tmpdir: SpecPath::try_from(tmp_dir.path().canonicalize().unwrap().to_str().unwrap())
+            .unwrap(),
+        office_env_names: vec![],
+        new_session_id: Some(
+            org_agent_runtime::SessionId::try_from(new_uuid_v7().as_str()).unwrap(),
+        ),
+        resume: None,
+        config_dir: None,
+    };
+    let (plan, _session) = org_agent_runtime_codex::CodexRuntime::new()
+        .plan_session(&spec, &ctx)
+        .expect("Codex must compile worktree sandbox grants cleanly");
+    let self_root_canon = office_rt
+        .join("teams")
+        .join(&root_team_id)
+        .join("agents")
+        .join(&self_emp_id)
+        .canonicalize()
+        .unwrap();
+    let fs_arg = plan
+        .args
+        .iter()
+        .find(|a| a.starts_with("permissions.office.filesystem="))
+        .expect("Codex profile filesystem arg present");
+    let expected_write = format!("\"{}\"=\"write\"", self_root_canon.display());
+    assert!(
+        fs_arg.contains(&expected_write),
+        "Codex must keep self worktree root writable (`{expected_write}`), got: {fs_arg}"
+    );
+}
+
+#[test]
+fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_reply_filter() {
+    use org_proto::hiring::{AgentExecutionSet, AgentExecutionSetParams};
+
+    assert!(crate::pump::is_claude_auth_expired_reply(
+        r#"Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}"#
+    ));
+    assert!(crate::pump::is_claude_auth_expired_reply(
+        "401 OAuth access token has expired"
+    ));
+    assert!(!crate::pump::is_claude_auth_expired_reply(
+        "I fixed the 401 OAuth access token has expired bug in pump.rs and ran cargo test."
+    ));
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    let conn_id = new_uuid_v7();
+    let prof_id = new_uuid_v7();
+    let conn_req = Request::new::<ProviderConnectionCreate>(
+        1,
+        &ProviderConnectionCreateParams {
+            command_id: new_uuid_v7(),
+            connection_id: conn_id.clone(),
+            default_profile_id: prof_id.clone(),
+            key: "claude-sub-test".into(),
+            name: "Claude Sub Test".into(),
+            provider_type: "anthropic".into(),
+            auth_mode: "subscription_cli".into(),
+            subscription_identity: Some("dev@example.com".into()),
+            runtime_driver: "claude-code".into(),
+            endpoint_url: None,
+            max_concurrent_turns: 2,
+        },
+    )
+    .unwrap();
+    let conn_resp = office
+        .dispatch_hiring_rpc(Some(&owner_id), &conn_req)
+        .unwrap();
+    assert!(
+        matches!(conn_resp.outcome, org_proto::Outcome::Result(_)),
+        "provider connection create failed: {:?}",
+        conn_resp.outcome
+    );
+    office
+        .provider_binding_set(
+            &owner_id,
+            org_proto::providers::ProviderBindingSetParams {
+                operation_id: new_uuid_v7(),
+                connection_id: conn_id.clone(),
+                expected_revision: None,
+                auth_context_ref: "subscription://local".into(),
+                runtime_binary_path: None,
+                account_identity_ref: Some("dev@example.com".into()),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .provider_connection_refresh(
+            &owner_id,
+            org_proto::providers::ProviderConnectionRefreshParams {
+                connection_id: conn_id.clone(),
+                driver_version: Some("2.1.323".into()),
+                auth_signed_in: Some(true),
+                observed_subscription_identity: Some("dev@example.com".into()),
+                operator_attested_subscription: true,
+                models: vec![org_proto::providers::DiscoveredModelInput {
+                    model_id: "claude-sonnet-4-6".into(),
+                    driver_model_id: "claude-sonnet-4-6".into(),
+                    entitlement: org_proto::providers::DiscoveredModelEntitlement::Confirmed,
+                    capabilities_json: "{}".into(),
+                }],
+                issue_code: None,
+                ttl_seconds: Some(300),
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+    let emp_id = new_uuid_v7();
+    let hire_req = Request::new::<HrHire>(
+        2,
+        &HrHireParams {
+            command_id: new_uuid_v7(),
+            request_id: new_uuid_v7(),
+            employee_id: emp_id.clone(),
+            home_team_id: root_team_id,
+            role_id: None,
+            proposal: HireProposalWire {
+                name: "Warm Exec".into(),
+                handle: "warm-exec".into(),
+                title: Some("Engineer".into()),
+                focus: None,
+                role_text: None,
+                title_in_team: Some("Engineer".into()),
+                reports_to_employee_id: Some(owner_id.clone()),
+                office_id: None,
+                model_profile_id: Some(prof_id.clone()),
+                model_id: Some("claude-sonnet-4-6".into()),
+                permission_preset: Some("autonomous_sandboxed".into()),
+                tools_config: Vec::new(),
+                system_prompt_markdown: Some("Prompt v1".into()),
+                body: Some("Work.".into()),
+            },
+            reason: "Test warm exec".into(),
+        },
+    )
+    .unwrap();
+    let hired: org_proto::hiring::HireOpResult = match office
+        .dispatch_hiring_rpc(Some(&owner_id), &hire_req)
+        .unwrap()
+        .outcome
+    {
+        org_proto::Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+        org_proto::Outcome::Error(e) => panic!("hire failed: {e:?}"),
+    };
+    let agent_id = hired.employee_id.unwrap();
+
+    let registry = crate::runtime_registry::RuntimeRegistry::production();
+    let info = office.info();
+    let vault = crate::credentials::CredentialVault::new(
+        office.durable_root().to_path_buf(),
+        info.org_id.clone(),
+        info.office_id.clone(),
+        None,
+    );
+    let excluded = std::collections::HashSet::new();
+    let admitted = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
+        office: &office,
+        vault: &vault,
+        runtimes: &registry,
+        hq_permits: None,
+        employee_id: &agent_id,
+        task_id: None,
+        is_failover_switch: false,
+        excluded_connections: &excluded,
+    })
+    .unwrap();
+    let digest_v1 = admitted.route_digest_suffix.clone();
+    if let Some((pid, _)) = admitted.permit {
+        let _ = office.release_turn_permit(&pid);
+    }
+
+    match crate::router::acquire_warm_permit_for_office(
+        &office,
+        None,
+        &conn_id,
+        &agent_id,
+        None,
+        Some(&digest_v1),
+    ) {
+        crate::router::WarmPermitOutcome::Granted((pid, _)) => {
+            let _ = office.release_turn_permit(&pid);
+        }
+        other => panic!("expected Granted for unchanged exec rev, got {other:?}"),
+    }
+
+    // Bump agent execution config instructions (revision 1 -> 2) and verify warm digest goes stale.
+    let set_req = Request::new::<AgentExecutionSet>(
+        3,
+        &AgentExecutionSetParams {
+            command_id: new_uuid_v7(),
+            employee_id: agent_id.clone(),
+            expected_version: None,
+            model_profile_id: prof_id,
+            model_id: "claude-sonnet-4-6".into(),
+            tools_config: Vec::new(),
+            permission_preset: Some("autonomous_sandboxed".into()),
+            enabled: true,
+            system_prompt_markdown: "Prompt v2".into(),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        office
+            .dispatch_hiring_rpc(Some(&owner_id), &set_req)
+            .unwrap()
+            .outcome,
+        org_proto::Outcome::Result(_)
+    ));
+    assert!(
+        matches!(
+            crate::router::acquire_warm_permit_for_office(
+                &office,
+                None,
+                &conn_id,
+                &agent_id,
+                None,
+                Some(&digest_v1),
+            ),
+            crate::router::WarmPermitOutcome::StaleWarm
+        ),
+        "agent execution-set revision bump must invalidate warm session route digest"
+    );
+
+    // Verify worktree sandbox fingerprint invalidates warm session when a new worktree is prepared.
+    let admitted_v2 = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
+        office: &office,
+        vault: &vault,
+        runtimes: &registry,
+        hq_permits: None,
+        employee_id: &agent_id,
+        task_id: None,
+        is_failover_switch: false,
+        excluded_connections: &excluded,
+    })
+    .unwrap();
+    let digest_v2 = admitted_v2.route_digest_suffix.clone();
+    if let Some((pid, _)) = admitted_v2.permit {
+        let _ = office.release_turn_permit(&pid);
+    }
+    let mut gs = org_office::git::OfficeGitState::default();
+    gs.workspaces.insert(
+        org_office::git::OfficeGitState::workspace_key("t-new", "repo-new", &agent_id),
+        org_office::git::TaskWorkspaceRecord {
+            office_id: info.office_id.clone(),
+            employee_id: agent_id.clone(),
+            task_id: "t-new".into(),
+            task_key: "T-NEW".into(),
+            repository_id: "repo-new".into(),
+            repository_key: Some("org".into()),
+            branch: "task/T-NEW".into(),
+            worktree_path: "/tmp/wt-new".into(),
+            admin_dir_name: "admin-new".into(),
+            base_commit: "abc".into(),
+            pushed_head: None,
+            state: "active".into(),
+        },
+    );
+    gs.save(office.runtime_root(), &info.office_id).unwrap();
+    assert!(
+        matches!(
+            crate::router::acquire_warm_permit_for_office(
+                &office,
+                None,
+                &conn_id,
+                &agent_id,
+                None,
+                Some(&digest_v2),
+            ),
+            crate::router::WarmPermitOutcome::StaleWarm
+        ),
+        "newly prepared task worktree must invalidate warm session route digest"
+    );
+
+    // Corrupt `git-state.json` at BOTH admission and warm permit acquisition MUST fail closed into
+    // `StaleWarm` (never matching `"err" == "err"` across turns).
+    let git_state_path = office
+        .runtime_root()
+        .join(&info.office_id)
+        .join("git-state.json");
+    std::fs::write(&git_state_path, "{corrupt").unwrap();
+    let admitted_corrupt =
+        crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
+            office: &office,
+            vault: &vault,
+            runtimes: &registry,
+            hq_permits: None,
+            employee_id: &agent_id,
+            task_id: None,
+            is_failover_switch: false,
+            excluded_connections: &excluded,
+        })
+        .unwrap();
+    let digest_corrupt = admitted_corrupt.route_digest_suffix.clone();
+    if let Some((pid, _)) = admitted_corrupt.permit {
+        let _ = office.release_turn_permit(&pid);
+    }
+    assert!(
+        matches!(
+            crate::router::acquire_warm_permit_for_office(
+                &office,
+                None,
+                &conn_id,
+                &agent_id,
+                None,
+                Some(&digest_corrupt),
+            ),
+            crate::router::WarmPermitOutcome::StaleWarm
+        ),
+        "corrupt git-state.json must never match stored err digest on warm permit acquisition"
+    );
+
+    // Verify `claude-code` runtime_driver is eligible for host subscription OAuth refresh.
+    let mut mgr_cfg = SessionManagerConfig::production(office.durable_root().join("sock"));
+    let fake_bin = tempfile::tempdir().unwrap();
+    let fake_claude = fake_bin.path().join("claude");
+    std::fs::write(&fake_claude, "#!/bin/sh\nexit 0\n").unwrap();
+    mgr_cfg.runtimes.register(
+        Arc::new(org_agent_runtime_claude::ClaudeRuntime::new()),
+        Some(fake_claude.clone()),
+    );
+    let mgr = SessionManager::new(Arc::clone(&office), mgr_cfg);
+    assert_eq!(
+        crate::manager::is_host_claude_subscription_refresh_eligible(&mgr, &conn_id),
+        Some(fake_claude.canonicalize().unwrap()),
+        "claude-code subscription_cli connection must be eligible for host OAuth refresh"
+    );
+
+    // Verify classify_turn_failover_reason covers SignedOut, Failed reason, non-claude exclusion, and length cap.
+    assert_eq!(
+        crate::pump::classify_turn_failover_reason(
+            "claude",
+            &org_agent_runtime::TurnOutcome::SignedOut,
+            &[],
+            None,
+            false,
+            false,
+        ),
+        Some("auth_expired")
+    );
+    assert_eq!(
+        crate::pump::classify_turn_failover_reason(
+            "claude",
+            &org_agent_runtime::TurnOutcome::Failed {
+                reason: "401 unauthorized".into(),
+            },
+            &[],
+            None,
+            false,
+            false,
+        ),
+        Some("auth_expired")
+    );
+    assert_eq!(
+        crate::pump::classify_turn_failover_reason(
+            "codex",
+            &org_agent_runtime::TurnOutcome::Completed,
+            &[],
+            Some("401 OAuth access token has expired"),
+            false,
+            false,
+        ),
+        None
+    );
+    let long_prose = format!("401 OAuth access token has expired {}", "x".repeat(1200));
+    assert!(!crate::pump::is_claude_auth_expired_reply(&long_prose));
+}
+
+#[test]
+fn task126_nested_team_hierarchy_and_readonly_preset_enforce_strict_isolation() {
+    use org_agent_runtime::{
+        AgentIdentity, AgentName, AgentRuntime as _, LaunchContext, RuntimeId, SessionKind,
+        SessionSpec, SpecPath,
+    };
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let parent_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    // Create child team T2 under parent team T1.
+    let child_team_id = new_uuid_v7();
+    office
+        .submit_org(
+            &owner_id,
+            org_office::rules::OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+                command_id: new_uuid_v7(),
+                team_id: child_team_id.clone(),
+                name: "Sub Team".into(),
+                owner_team_id: Some(parent_team_id.clone()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+    let hire_in = |team_id: &str, name: &str, handle: &str| -> String {
+        let req = Request::new::<HrHire>(
+            2,
+            &HrHireParams {
+                command_id: new_uuid_v7(),
+                request_id: new_uuid_v7(),
+                employee_id: new_uuid_v7(),
+                home_team_id: team_id.to_owned(),
+                role_id: None,
+                proposal: HireProposalWire {
+                    name: name.into(),
+                    handle: handle.into(),
+                    title: Some("Engineer".into()),
+                    focus: None,
+                    role_text: None,
+                    title_in_team: Some("Engineer".into()),
+                    reports_to_employee_id: Some(owner_id.clone()),
+                    office_id: None,
+                    model_profile_id: None,
+                    model_id: None,
+                    permission_preset: Some("read_only".into()),
+                    tools_config: Vec::new(),
+                    system_prompt_markdown: None,
+                    body: Some("Work.".into()),
+                },
+                reason: "Test nested hire".into(),
+            },
+        )
+        .unwrap();
+        let resp = office.dispatch_hiring_rpc(Some(&owner_id), &req).unwrap();
+        let hired: org_proto::hiring::HireOpResult = match resp.outcome {
+            org_proto::Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+            org_proto::Outcome::Error(e) => panic!("hire failed: {e:?}"),
+        };
+        hired.employee_id.unwrap()
+    };
+    let parent_agent = hire_in(&parent_team_id, "Parent Agent", "parent-agent");
+    let child_agent = hire_in(&child_team_id, "Child Agent", "child-agent");
+
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    );
+    // Child agent in T2 MUST have ancestor T1's `agents/**` denied.
+    let child_denied: Vec<String> = mgr
+        .denied_office_globs_for(Some(&child_agent))
+        .iter()
+        .map(|p| p.as_str().to_owned())
+        .collect();
+    assert!(
+        child_denied
+            .iter()
+            .any(|s| s.ends_with(&format!("/teams/{parent_team_id}/agents/**"))),
+        "child-team agent must have ancestor team agents/** denied: {child_denied:?}"
+    );
+    // Parent agent in T1 MUST have child subteams `teams/T1/teams/**` denied.
+    let parent_denied: Vec<String> = mgr
+        .denied_office_globs_for(Some(&parent_agent))
+        .iter()
+        .map(|p| p.as_str().to_owned())
+        .collect();
+    assert!(
+        parent_denied
+            .iter()
+            .any(|s| s.ends_with(&format!("/teams/{parent_team_id}/teams/**"))),
+        "parent-team agent must have descendant teams/** denied: {parent_denied:?}"
+    );
+
+    // Verify ReadOnly preset with apply_worktree_sandbox_rules never adds writable_roots for Codex or Claude.
+    let (wt_writable, wt_write_denies) = mgr.worktree_sandbox_grants(&child_agent, false);
+    assert!(!wt_writable.is_empty());
+    let ws_dir = tempfile::tempdir().unwrap();
+    let rt_dir = tempfile::tempdir().unwrap();
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let ws_spec =
+        SpecPath::try_from(ws_dir.path().canonicalize().unwrap().to_str().unwrap()).unwrap();
+    let mut ro = crate::preset::build_session_policy(
+        PermissionPreset::ReadOnly,
+        true,
+        &ws_spec,
+        None,
+        &mgr.denied_office_globs_for(Some(&child_agent)),
+        1,
+    )
+    .unwrap();
+    crate::preset::apply_worktree_sandbox_rules(&mut ro, &wt_writable, &wt_write_denies);
+    assert!(
+        ro.sandbox.writable_roots.is_empty(),
+        "ReadOnly preset must never gain worktree writable_roots: {:?}",
+        ro.sandbox.writable_roots
+    );
+    let ctx = LaunchContext {
+        runtime_path: std::path::PathBuf::from("/usr/bin/true"),
+        runtime_version: Some("1.0.0".into()),
+        runtime_dir: SpecPath::try_from(rt_dir.path().canonicalize().unwrap().to_str().unwrap())
+            .unwrap(),
+        tmpdir: SpecPath::try_from(tmp_dir.path().canonicalize().unwrap().to_str().unwrap())
+            .unwrap(),
+        office_env_names: vec![],
+        new_session_id: Some(
+            org_agent_runtime::SessionId::try_from(new_uuid_v7().as_str()).unwrap(),
+        ),
+        resume: None,
+        config_dir: None,
+    };
+    let make_spec = |rt: &str| SessionSpec {
+        runtime: RuntimeId::try_from(rt).unwrap(),
+        kind: SessionKind::Home {},
+        agent: AgentIdentity {
+            name: AgentName::try_from("child-agent").unwrap(),
+            description: "Read-only".into(),
+            prompt: "Inspect".into(),
+        },
+        model: None,
+        effort: None,
+        workspace: ws_spec.clone(),
+        read_only_dirs: vec![],
+        instructions: "Inspect".into(),
+        permission_mode: ro.permission_mode,
+        policy: ro.policy.clone(),
+        sandbox: ro.sandbox.clone(),
+        mcp_servers: Default::default(),
+        tools: ro.allowed_tools.clone(),
+    };
+    org_agent_runtime_codex::CodexRuntime::new()
+        .plan_session(&make_spec("codex"), &ctx)
+        .expect("Codex compiles ReadOnly + worktree denies");
+    org_agent_runtime_claude::ClaudeRuntime::new()
+        .plan_session(&make_spec("claude"), &ctx)
+        .expect("Claude compiles ReadOnly + worktree denies");
+}
+
+#[test]
+fn task126_zero_worktree_corrupt_git_state_and_digest_invalidation() {
+    use org_office::git::{OfficeGitState, TaskWorkspaceRecord};
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    let hire_agent = |name: &str, handle: &str| -> String {
+        let req = Request::new::<HrHire>(
+            1,
+            &HrHireParams {
+                command_id: new_uuid_v7(),
+                request_id: new_uuid_v7(),
+                employee_id: new_uuid_v7(),
+                home_team_id: root_team_id.clone(),
+                role_id: None,
+                proposal: HireProposalWire {
+                    name: name.into(),
+                    handle: handle.into(),
+                    title: Some("Engineer".into()),
+                    focus: None,
+                    role_text: None,
+                    title_in_team: Some("Engineer".into()),
+                    reports_to_employee_id: Some(owner_id.clone()),
+                    office_id: None,
+                    model_profile_id: None,
+                    model_id: None,
+                    permission_preset: Some("autonomous_sandboxed".into()),
+                    tools_config: Vec::new(),
+                    system_prompt_markdown: None,
+                    body: Some("Work.".into()),
+                },
+                reason: "Test hire".into(),
+            },
+        )
+        .unwrap();
+        let resp = office.dispatch_hiring_rpc(Some(&owner_id), &req).unwrap();
+        match resp.outcome {
+            org_proto::Outcome::Result(v) => {
+                serde_json::from_value::<org_proto::hiring::HireOpResult>(v)
+                    .unwrap()
+                    .employee_id
+                    .unwrap()
+            }
+            org_proto::Outcome::Error(e) => panic!("hire failed: {e:?}"),
+        }
+    };
+    let emp_a = hire_agent("Agent A", "agent-a");
+    let emp_b = hire_agent("Agent B", "agent-b");
+
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    );
+    let office_id = office.info().office_id.clone();
+    let office_rt = office.runtime_root().join(&office_id);
+
+    // 1. Zero active worktrees: MUST blanket-deny `<office_rt>/repositories/**` and grant zero
+    // bare-cache writable roots so newly cloned repos later cannot be read.
+    let denied_zero: Vec<String> = mgr
+        .denied_office_globs_for(Some(&emp_a))
+        .iter()
+        .map(|p| p.as_str().to_owned())
+        .collect();
+    assert!(
+        denied_zero
+            .iter()
+            .any(|s| s.ends_with(&format!("/{office_id}/repositories/**"))),
+        "zero-worktree employee must get blanket repositories/** deny: {denied_zero:?}"
+    );
+    let (wt_zero_writable, _) = mgr.worktree_sandbox_grants(&emp_a, false);
+    assert!(
+        !wt_zero_writable
+            .iter()
+            .any(|s| s.as_str().contains("/repositories/")),
+        "zero-worktree employee must get zero bare-cache writable grants: {wt_zero_writable:?}"
+    );
+
+    // 2. Active worktree on repo R1: verify worktree digest changes whenever a new untargeted repo
+    // R2 is cloned OR a peer agent creates a worktree admin dir on R1.
+    let repo1 = "01a212a8-982e-71ca-a6de-322dba762d01";
+    let repo2 = "01a212a8-982e-71ca-a6de-322dba762d02";
+    let r1_cache = office_rt.join("repositories").join(format!("{repo1}.git"));
+    let self_wt = office_rt
+        .join("teams")
+        .join(&root_team_id)
+        .join("agents")
+        .join(&emp_a)
+        .join("tasks/t-1/repositories")
+        .join(repo1);
+    std::fs::create_dir_all(r1_cache.join("worktrees/admin-a")).unwrap();
+    std::fs::create_dir_all(&self_wt).unwrap();
+    let mut gs = OfficeGitState::default();
+    gs.workspaces.insert(
+        OfficeGitState::workspace_key("t-1", repo1, &emp_a),
+        TaskWorkspaceRecord {
+            office_id: office_id.clone(),
+            employee_id: emp_a.clone(),
+            task_id: "t-1".into(),
+            task_key: "T-1".into(),
+            repository_id: repo1.into(),
+            repository_key: Some("r1".into()),
+            branch: "task/T-1".into(),
+            worktree_path: self_wt.display().to_string(),
+            admin_dir_name: "admin-a".into(),
+            base_commit: "abc".into(),
+            pushed_head: None,
+            state: "active".into(),
+        },
+    );
+    gs.save(office.runtime_root(), &office_id).unwrap();
+    let d1 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+
+    // Clone untargeted repo R2 on disk -> digest MUST change.
+    std::fs::create_dir_all(office_rt.join("repositories").join(format!("{repo2}.git"))).unwrap();
+    let d2 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    assert_ne!(
+        d1, d2,
+        "newly cloned untargeted repository must invalidate warm worktree digest"
+    );
+
+    // Peer agent prepares worktree on R1 -> digest MUST change again.
+    std::fs::create_dir_all(r1_cache.join("worktrees/admin-peer")).unwrap();
+    gs.workspaces.insert(
+        OfficeGitState::workspace_key("t-2", repo1, &emp_b),
+        TaskWorkspaceRecord {
+            office_id: office_id.clone(),
+            employee_id: emp_b.clone(),
+            task_id: "t-2".into(),
+            task_key: "T-2".into(),
+            repository_id: repo1.into(),
+            repository_key: Some("r1".into()),
+            branch: "task/T-2".into(),
+            worktree_path: office_rt.join("peer").display().to_string(),
+            admin_dir_name: "admin-peer".into(),
+            base_commit: "abc".into(),
+            pushed_head: None,
+            state: "active".into(),
+        },
+    );
+    gs.save(office.runtime_root(), &office_id).unwrap();
+    let d3 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    assert_ne!(
+        d2, d3,
+        "peer worktree added on targeted repo must invalidate warm worktree digest"
+    );
+
+    // 3. Corrupt `git-state.json`: MUST fail closed with blanket `repositories/**` deny,
+    // zero bare-cache writable roots, and `"err"` digest.
+    std::fs::write(office_rt.join("git-state.json"), "{corrupt-json").unwrap();
+    let denied_corrupt: Vec<String> = mgr
+        .denied_office_globs_for(Some(&emp_a))
+        .iter()
+        .map(|p| p.as_str().to_owned())
+        .collect();
+    assert!(
+        denied_corrupt
+            .iter()
+            .any(|s| s.ends_with(&format!("/{office_id}/repositories/**"))),
+        "corrupt git-state.json must fail closed with blanket repositories/** deny: {denied_corrupt:?}"
+    );
+    let (wt_corrupt_writable, _) = mgr.worktree_sandbox_grants(&emp_a, false);
+    assert!(
+        !wt_corrupt_writable
+            .iter()
+            .any(|s| s.as_str().contains("/repositories/")),
+        "corrupt git-state.json must grant zero bare-cache writable roots: {wt_corrupt_writable:?}"
+    );
+    assert_eq!(
+        crate::router::compute_worktree_sandbox_digest(&office, &emp_a),
+        "err"
+    );
+}
+
+#[test]
+fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    ));
+    SessionManager::attach_self(&mgr);
+    let emp_id = "01a212a8-982e-7000-8000-000000000126";
+
+    let (tx, rx) = std::sync::mpsc::channel::<crate::pump::PumpCommand>();
+    let stopped_flag = Arc::new(AtomicBool::new(false));
+    let stopped_clone = Arc::clone(&stopped_flag);
+    let worker = std::thread::spawn(move || {
+        while let Ok(cmd) = rx.recv() {
+            if matches!(cmd, crate::pump::PumpCommand::Stop { .. }) {
+                stopped_clone.store(true, Ordering::SeqCst);
+                break;
+            }
+        }
+    });
+    let state = Arc::new(Mutex::new(crate::pump::SessionRuntimeState {
+        employee_id: emp_id.into(),
+        office_id: office.info().office_id.clone(),
+        state: SessionState::Idle,
+        run_id: Some("run-old".into()),
+        session_id: Some("sess-old".into()),
+        runtime_id: Some("claude".into()),
+        runtime_session_id: None,
+        private_home: "/tmp/home".into(),
+        permission_preset: "autonomous_sandboxed".into(),
+        sandbox_enabled: true,
+        spec_hash: "h".into(),
+        watchdog: crate::recovery::StallWatchdog::new(Duration::from_secs(60), Instant::now()),
+        recovery_required: false,
+        last_reply: None,
+        last_error: None,
+        backgrounds: crate::subagents::BackgroundRegistry::default(),
+        pending_approvals: Vec::new(),
+        policy: org_agent_runtime::PermissionPolicy {
+            version: 1,
+            allow: Vec::new(),
+            deny: Vec::new(),
+        },
+        preset: PermissionPreset::AutonomousSandboxed,
+        allowed_tools: None,
+        writable_roots: Vec::new(),
+        suspended_on_asks: Vec::new(),
+        waiting_for_member_id: None,
+        waiting_for_name: None,
+        suspended_since: None,
+        pending_wake_count: 0,
+        pending_wake_reason: None,
+    }));
+    let permit = Arc::new(Mutex::new(None));
+    {
+        let mut reg = mgr.registry.lock().unwrap();
+        reg.live.insert(
+            emp_id.into(),
+            crate::manager::LiveSessionHandle {
+                state: Arc::clone(&state),
+                tx,
+                thread: Some(worker),
+                connection_id: Some("conn-1".into()),
+                route_digest: "old".into(),
+                oauth_expires_at_ms: None,
+                workspace: None,
+                active_permit: Arc::clone(&permit),
+                supports_mid_turn: false,
+                bwrap_masked_siblings: None,
+            },
+        );
+    }
+
+    // 1. Refuse while `reg.starting` already holds employee_id (concurrent start_session).
+    {
+        mgr.registry.lock().unwrap().starting.insert(emp_id.into());
+    }
+    assert!(!crate::lifecycle::recycle_stale_warm_handle_in(
+        &mgr,
+        emp_id,
+        "run-old",
+        "warm_route_stale"
+    ));
+    assert!(mgr.registry.lock().unwrap().live.contains_key(emp_id));
+    {
+        mgr.registry.lock().unwrap().starting.remove(emp_id);
+    }
+
+    // 2. Refuse while `reg.draining` is true (shutdown in progress).
+    {
+        mgr.registry.lock().unwrap().draining = true;
+    }
+    assert!(!crate::lifecycle::recycle_stale_warm_handle_in(
+        &mgr,
+        emp_id,
+        "run-old",
+        "warm_route_stale"
+    ));
+    assert!(mgr.registry.lock().unwrap().live.contains_key(emp_id));
+    {
+        mgr.registry.lock().unwrap().draining = false;
+    }
+
+    // 3. Refuse while handle is Running or holds an active permit.
+    {
+        state.lock().unwrap().state = SessionState::Running;
+    }
+    assert!(!crate::lifecycle::recycle_stale_warm_handle_in(
+        &mgr,
+        emp_id,
+        "run-old",
+        "warm_route_stale"
+    ));
+    {
+        state.lock().unwrap().state = SessionState::Idle;
+        *permit.lock().unwrap() = Some(("perm-1".into(), 1));
+    }
+    assert!(!crate::lifecycle::recycle_stale_warm_handle_in(
+        &mgr,
+        emp_id,
+        "run-old",
+        "warm_route_stale"
+    ));
+    {
+        *permit.lock().unwrap() = None;
+    }
+
+    // 4. Stale-recycle failover when a concurrent start holds `reg.starting` MUST persist
+    // `req.objective` into durable `pending_wakes` instead of silently dropping it.
+    {
+        mgr.registry.lock().unwrap().starting.insert(emp_id.into());
+    }
+    crate::manager::run_failover_relaunch(
+        &mgr,
+        crate::pump::FailoverRequest {
+            employee_id: emp_id.into(),
+            failed_run_id: "run-old".into(),
+            failed_connection_id: "conn-1".into(),
+            objective: "do-not-drop-stale-turn".into(),
+            workspace: None,
+            task_ref: None,
+            tried_connections: Vec::new(),
+            oauth_refresh_attempted: false,
+            oauth_token_fp: None,
+            reason: "warm_route_stale",
+            rate_limit_resets_at: None,
+        },
+    );
+    {
+        mgr.registry.lock().unwrap().starting.remove(emp_id);
+    }
+    let wakes = mgr
+        .store
+        .read_pending_wakes(emp_id)
+        .unwrap()
+        .expect("stale recycle contention must persist durable recovery wake");
+    assert!(
+        wakes
+            .items
+            .iter()
+            .any(|i| i.summary == "do-not-drop-stale-turn"),
+        "queued stale objective must be preserved: {:?}",
+        wakes.items
+    );
+
+    // 5. Idle + permit-free recycle succeeds atomically; stop_all waits until bg worker finishes.
+    assert!(crate::lifecycle::recycle_stale_warm_handle_in(
+        &mgr,
+        emp_id,
+        "run-old",
+        "warm_route_stale"
+    ));
+    mgr.stop_all("test_shutdown");
+    assert!(
+        stopped_flag.load(Ordering::SeqCst),
+        "recycled handle must receive Stop and be joined before stop_all returns"
+    );
+    let reg = mgr.registry.lock().unwrap();
+    assert!(reg.live.is_empty());
+    assert!(reg.starting.is_empty());
+    assert_eq!(reg.bg_spawning, 0);
+}
+
+#[test]
+fn task126_host_rust_dir_env_rejects_office_roots_and_symlinks() {
+    let dir = tempfile::tempdir().unwrap();
+    let durable_root = dir.path().join("durable");
+    let runtime_root = dir.path().join("runtime");
+    let external_cargo = dir.path().join("external-cargo");
+    let inside_durable = durable_root.join("cargo");
+    let inside_runtime = runtime_root.join("cargo");
+    let symlink_escape = dir.path().join("symlink-to-durable");
+    std::fs::create_dir_all(&external_cargo).unwrap();
+    std::fs::create_dir_all(&inside_durable).unwrap();
+    std::fs::create_dir_all(&inside_runtime).unwrap();
+    std::os::unix::fs::symlink(&inside_durable, &symlink_escape).unwrap();
+
+    let forbidden = vec![durable_root.clone(), runtime_root.clone()];
+    let ok = crate::manager::host_rust_dir_env_from(
+        Some(external_cargo.as_os_str().to_os_string()),
+        None,
+        ".cargo",
+        &forbidden,
+    );
+    assert_eq!(
+        ok.map(std::path::PathBuf::from),
+        Some(external_cargo.canonicalize().unwrap())
+    );
+    assert!(
+        crate::manager::host_rust_dir_env_from(
+            Some(inside_durable.as_os_str().to_os_string()),
+            None,
+            ".cargo",
+            &forbidden,
+        )
+        .is_none(),
+        "must reject directory inside durable_root"
+    );
+    assert!(
+        crate::manager::host_rust_dir_env_from(
+            Some(inside_runtime.as_os_str().to_os_string()),
+            None,
+            ".cargo",
+            &forbidden,
+        )
+        .is_none(),
+        "must reject directory inside runtime_root"
+    );
+    assert!(
+        crate::manager::host_rust_dir_env_from(
+            Some(symlink_escape.as_os_str().to_os_string()),
+            None,
+            ".cargo",
+            &forbidden,
+        )
+        .is_none(),
+        "must reject symlink escaping into durable_root"
+    );
+}
+
+#[test]
+fn task126_org_topology_invalidates_warm_digest_and_expiring_oauth_triggers_stale_permit() {
+    use org_office::git::{OfficeGitState, TaskWorkspaceRecord};
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    let hire_in = |team_id: &str, name: &str, handle: &str| -> String {
+        let req = Request::new::<HrHire>(
+            1,
+            &HrHireParams {
+                command_id: new_uuid_v7(),
+                request_id: new_uuid_v7(),
+                employee_id: new_uuid_v7(),
+                home_team_id: team_id.to_owned(),
+                role_id: None,
+                proposal: HireProposalWire {
+                    name: name.into(),
+                    handle: handle.into(),
+                    title: Some("Engineer".into()),
+                    focus: None,
+                    role_text: None,
+                    title_in_team: Some("Engineer".into()),
+                    reports_to_employee_id: Some(owner_id.clone()),
+                    office_id: None,
+                    model_profile_id: None,
+                    model_id: None,
+                    permission_preset: Some("autonomous_sandboxed".into()),
+                    tools_config: Vec::new(),
+                    system_prompt_markdown: None,
+                    body: Some("Work.".into()),
+                },
+                reason: "Topology test hire".into(),
+            },
+        )
+        .unwrap();
+        let resp = office.dispatch_hiring_rpc(Some(&owner_id), &req).unwrap();
+        match resp.outcome {
+            org_proto::Outcome::Result(v) => {
+                serde_json::from_value::<org_proto::hiring::HireOpResult>(v)
+                    .unwrap()
+                    .employee_id
+                    .unwrap()
+            }
+            org_proto::Outcome::Error(e) => panic!("hire failed: {e:?}"),
+        }
+    };
+    let emp_a = hire_in(&root_team_id, "Warm A", "warm-a");
+
+    // 1. Zero-worktree state: hiring a sibling agent OR creating a new team MUST invalidate digest.
+    let d_zero_0 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    let _emp_b = hire_in(&root_team_id, "Warm B", "warm-b");
+    let d_zero_1 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    assert_ne!(
+        d_zero_0, d_zero_1,
+        "hiring sibling agent must invalidate zero-worktree warm digest"
+    );
+    let sub_team = new_uuid_v7();
+    office
+        .submit_org(
+            &owner_id,
+            org_office::rules::OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+                command_id: new_uuid_v7(),
+                team_id: sub_team.clone(),
+                name: "New Team".into(),
+                owner_team_id: Some(root_team_id.clone()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let d_zero_2 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    assert_ne!(
+        d_zero_1, d_zero_2,
+        "creating a team must invalidate zero-worktree warm digest"
+    );
+
+    // 2. Active-worktree state with pre-existing R1 and R2: hiring emp_c MUST still invalidate
+    // emp_a's digest even when R1/R2 repo list and R1 peer admins do not change.
+    let office_id = office.info().office_id.clone();
+    let office_rt = office.runtime_root().join(&office_id);
+    let repo1 = "01a212a8-982e-71ca-a6de-322dba762e01";
+    let repo2 = "01a212a8-982e-71ca-a6de-322dba762e02";
+    std::fs::create_dir_all(
+        office_rt
+            .join("repositories")
+            .join(format!("{repo1}.git/worktrees/a1")),
+    )
+    .unwrap();
+    std::fs::create_dir_all(office_rt.join("repositories").join(format!("{repo2}.git"))).unwrap();
+    let mut gs = OfficeGitState::default();
+    gs.workspaces.insert(
+        OfficeGitState::workspace_key("t-1", repo1, &emp_a),
+        TaskWorkspaceRecord {
+            office_id: office_id.clone(),
+            employee_id: emp_a.clone(),
+            task_id: "t-1".into(),
+            task_key: "T-1".into(),
+            repository_id: repo1.into(),
+            repository_key: Some("r1".into()),
+            branch: "task/T-1".into(),
+            worktree_path: office_rt.join("wt-a1").display().to_string(),
+            admin_dir_name: "a1".into(),
+            base_commit: "abc".into(),
+            pushed_head: None,
+            state: "active".into(),
+        },
+    );
+    gs.save(office.runtime_root(), &office_id).unwrap();
+    let d_act_0 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    let _emp_c = hire_in(&sub_team, "Warm C", "warm-c");
+    let d_act_1 = crate::router::compute_worktree_sandbox_digest(&office, &emp_a);
+    assert_ne!(
+        d_act_0, d_act_1,
+        "hiring sibling agent must invalidate active-worktree warm digest even when repos do not change"
+    );
+
+    // 3. `build_pump_hooks` with an expiring OAuth timestamp must return `WARM_ROUTE_STALE` from
+    // `on_permit_acquire` so queued in-pump turns recycle cleanly instead of using an expiring token.
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    );
+    let hooks = mgr.build_pump_hooks(&emp_a, "digest".into(), Some(1), None);
+    let acquire = hooks.on_permit_acquire.expect("permit acquire hook");
+    let err = acquire("conn-1", None).expect_err("expiring OAuth must fail warm permit acquire");
+    assert!(
+        err.starts_with("WARM_ROUTE_STALE"),
+        "expected WARM_ROUTE_STALE on expiring OAuth, got: {err}"
+    );
+}
+
+#[test]
+fn task126_approval_bridge_enforces_writable_roots_and_strict_git_admin_names() {
+    use org_office::git::{OfficeGitState, TaskWorkspaceRecord};
+
+    let dir = tempfile::tempdir().unwrap();
+    let canon_dir = dir.path().canonicalize().unwrap();
+    let ws = canon_dir.join("workspace");
+    let wt = canon_dir.join("worktree");
+    let cargo_home = canon_dir.join("host-cargo");
+    let bare_cache = canon_dir.join("cache.git");
+    let admin_dir = bare_cache.join("worktrees/self-admin");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(wt.join("src")).unwrap();
+    std::fs::create_dir_all(&cargo_home).unwrap();
+    std::fs::create_dir_all(&admin_dir).unwrap();
+    std::fs::write(wt.join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
+
+    let ws_spec = SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+    let wt_spec = SpecPath::try_from(wt.to_str().unwrap()).unwrap();
+    let admin_spec = SpecPath::try_from(admin_dir.to_str().unwrap()).unwrap();
+    let mut cfg = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let write_denies = vec![org_agent_runtime::PathPattern::try_from(
+        admin_dir.join("config.worktree").to_str().unwrap(),
+    )
+    .unwrap()];
+    crate::preset::apply_worktree_sandbox_rules(&mut cfg, &[wt_spec, admin_spec], &write_denies);
+
+    let edit_req = |path: &std::path::Path| {
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("req-1"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({ "file_path": path.to_str().unwrap(), "content": "x" }),
+        );
+        req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        req
+    };
+
+    // Allowed: existing and new files inside worktree writable root.
+    assert_eq!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_req(&wt.join("src/lib.rs")),
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AllowByPolicy
+    );
+    assert_eq!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_req(&wt.join("src/new_dir/new_mod.rs")),
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AllowByPolicy
+    );
+
+    // Denied: host `$CARGO_HOME/config.toml`, absent bare-cache metadata (`packed-refs`,
+    // `refs/replace/x`), and `worktrees/self-admin/config.worktree` (inside writable admin_dir
+    // but explicitly write-denied).
+    for forbidden in [
+        cargo_home.join("config.toml"),
+        bare_cache.join("packed-refs"),
+        bare_cache.join("refs/replace/deadbeef"),
+        admin_dir.join("config.worktree"),
+    ] {
+        assert!(
+            matches!(
+                crate::preset::decide_escalation_with_roots(
+                    &edit_req(&forbidden),
+                    &cfg.policy,
+                    cfg.preset,
+                    cfg.allowed_tools.as_deref(),
+                    Some(cfg.sandbox.writable_roots.as_slice()),
+                ),
+                crate::preset::EscalationDisposition::AutoDeny { .. }
+            ),
+            "expected AutoDeny for write target outside writable_roots/denied: {}",
+            forbidden.display()
+        );
+    }
+
+    // Denied: leaf and intermediate dangling symlinks inside writable root pointing outside.
+    let leaf_link = wt.join("escape-leaf.toml");
+    org_platform::fs::create_symlink(&cargo_home.join("config.toml"), &leaf_link).unwrap();
+    let dir_link = wt.join("escape-dir");
+    org_platform::fs::create_symlink(&cargo_home.join("missing-subdir"), &dir_link).unwrap();
+    for escaped in [leaf_link, dir_link.join("config.toml")] {
+        assert!(
+            matches!(
+                crate::preset::decide_escalation_with_roots(
+                    &edit_req(&escaped),
+                    &cfg.policy,
+                    cfg.preset,
+                    cfg.allowed_tools.as_deref(),
+                    Some(cfg.sandbox.writable_roots.as_slice()),
+                ),
+                crate::preset::EscalationDisposition::AutoDeny { .. }
+            ),
+            "dangling symlink escape must be AutoDenied: {}",
+            escaped.display()
+        );
+    }
+
+    // Verify `.git` as directory emits `.git/hooks` and `.git/hooks/**`, and unsafe glob/whitespace
+    // chars in `repository_id` / `admin_dir_name` are rejected from worktree grants.
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let hire_req = Request::new::<HrHire>(
+        127,
+        &HrHireParams {
+            command_id: new_uuid_v7(),
+            request_id: new_uuid_v7(),
+            employee_id: new_uuid_v7(),
+            home_team_id: root_team_id.clone(),
+            role_id: None,
+            proposal: HireProposalWire {
+                name: "Dir Git Agent".into(),
+                handle: "dir-git-agent".into(),
+                title: Some("Engineer".into()),
+                focus: None,
+                role_text: None,
+                title_in_team: Some("Engineer".into()),
+                reports_to_employee_id: Some(owner_id.clone()),
+                office_id: None,
+                model_profile_id: None,
+                model_id: None,
+                permission_preset: Some("autonomous_sandboxed".into()),
+                tools_config: Vec::new(),
+                system_prompt_markdown: None,
+                body: Some("Work.".into()),
+            },
+            reason: "Dir git test hire".into(),
+        },
+    )
+    .unwrap();
+    let emp_id = match office
+        .dispatch_hiring_rpc(Some(&owner_id), &hire_req)
+        .unwrap()
+        .outcome
+    {
+        org_proto::Outcome::Result(v) => {
+            serde_json::from_value::<org_proto::hiring::HireOpResult>(v)
+                .unwrap()
+                .employee_id
+                .unwrap()
+        }
+        org_proto::Outcome::Error(e) => panic!("hire failed: {e:?}"),
+    };
+    let office_id = office.info().office_id.clone();
+    let office_rt = office.runtime_root().join(&office_id);
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    );
+    let repo_ok = "01a212a8-982e-71ca-a6de-322dba762f01";
+    let emp_root = office_rt
+        .join("teams")
+        .join(&root_team_id)
+        .join("agents")
+        .join(&emp_id);
+    let wt_with_dir_git = emp_root.join("tasks/t-dir/repositories").join(repo_ok);
+    std::fs::create_dir_all(wt_with_dir_git.join(".git")).unwrap();
+    std::fs::create_dir_all(
+        office_rt
+            .join("repositories")
+            .join(format!("{repo_ok}.git/worktrees/adm-ok")),
+    )
+    .unwrap();
+    let mut gs = OfficeGitState::default();
+    gs.workspaces.insert(
+        OfficeGitState::workspace_key("t-dir", repo_ok, &emp_id),
+        TaskWorkspaceRecord {
+            office_id: office_id.clone(),
+            employee_id: emp_id.clone(),
+            task_id: "t-dir".into(),
+            task_key: "T-DIR".into(),
+            repository_id: repo_ok.into(),
+            repository_key: Some("ok".into()),
+            branch: "task/T-DIR".into(),
+            worktree_path: wt_with_dir_git.display().to_string(),
+            admin_dir_name: "adm-ok".into(),
+            base_commit: "abc".into(),
+            pushed_head: None,
+            state: "active".into(),
+        },
+    );
+    for (idx, bad) in [
+        "bad]name",
+        "bad(name)",
+        "bad{name}",
+        "bad~name",
+        "bad name",
+        "bad*name",
+        "bad?name",
+        "bad[name",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let bad_wt = emp_root.join(format!("tasks/t-check-{idx}/repositories/repo"));
+        std::fs::create_dir_all(&bad_wt).unwrap();
+        gs.workspaces.insert(
+            OfficeGitState::workspace_key(&format!("t-bad-admin-{idx}"), repo_ok, &emp_id),
+            TaskWorkspaceRecord {
+                office_id: office_id.clone(),
+                employee_id: emp_id.clone(),
+                task_id: format!("t-bad-admin-{idx}"),
+                task_key: format!("T-BA-{idx}"),
+                repository_id: repo_ok.into(),
+                repository_key: Some("ok".into()),
+                branch: "task/T-BA".into(),
+                worktree_path: bad_wt.display().to_string(),
+                admin_dir_name: (*bad).into(),
+                base_commit: "abc".into(),
+                pushed_head: None,
+                state: "active".into(),
+            },
+        );
+        gs.workspaces.insert(
+            OfficeGitState::workspace_key(&format!("t-bad-repo-{idx}"), bad, &emp_id),
+            TaskWorkspaceRecord {
+                office_id: office_id.clone(),
+                employee_id: emp_id.clone(),
+                task_id: format!("t-bad-repo-{idx}"),
+                task_key: format!("T-BR-{idx}"),
+                repository_id: (*bad).into(),
+                repository_key: Some("bad".into()),
+                branch: "task/T-BR".into(),
+                worktree_path: bad_wt.display().to_string(),
+                admin_dir_name: "adm-ok".into(),
+                base_commit: "abc".into(),
+                pushed_head: None,
+                state: "active".into(),
+            },
+        );
+    }
+    gs.save(office.runtime_root(), &office_id).unwrap();
+
+    let (writable, denies) = mgr.worktree_sandbox_grants(&emp_id, false);
+    assert!(
+        denies.iter().any(|p| p.as_str().ends_with("/.git/hooks"))
+            && denies
+                .iter()
+                .any(|p| p.as_str().ends_with("/.git/hooks/**")),
+        "directory .git must emit .git/hooks and .git/hooks/** write denies: {denies:?}"
+    );
+    for s in writable
+        .iter()
+        .map(|p| p.as_str())
+        .chain(denies.iter().map(|p| p.as_str()))
+    {
+        assert!(
+            !s.contains("bad"),
+            "unsafe admin_dir_name or repository_id leaked into sandbox rules: {s}"
+        );
+    }
+}
+
+#[test]
+fn task126_approval_bridge_blocks_canonical_deny_bypasses_trailing_slash_symlinks_and_opaque_changes(
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let canon_dir = dir.path().canonicalize().unwrap();
+    let ws = canon_dir.join("workspace");
+    let wt = canon_dir.join("worktree");
+    let cargo_home = canon_dir.join("host-cargo");
+    let bare_cache = canon_dir.join("cache.git");
+    let admin_dir = bare_cache.join("worktrees/self-admin");
+    let objects_dir = bare_cache.join("objects");
+    let objects_info = objects_dir.join("info");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::create_dir_all(&cargo_home).unwrap();
+    std::fs::create_dir_all(&admin_dir).unwrap();
+    std::fs::create_dir_all(&objects_info).unwrap();
+    std::fs::write(
+        wt.join(".git"),
+        "gitdir: ../cache.git/worktrees/self-admin\n",
+    )
+    .unwrap();
+
+    let ws_spec = SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+    let wt_spec = SpecPath::try_from(wt.to_str().unwrap()).unwrap();
+    let admin_spec = SpecPath::try_from(admin_dir.to_str().unwrap()).unwrap();
+    let objects_spec = SpecPath::try_from(objects_dir.to_str().unwrap()).unwrap();
+
+    let mut cfg = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let write_denies = vec![
+        org_agent_runtime::PathPattern::try_from(
+            admin_dir.join("config.worktree").to_str().unwrap(),
+        )
+        .unwrap(),
+        org_agent_runtime::PathPattern::try_from(wt.join(".git").to_str().unwrap()).unwrap(),
+        org_agent_runtime::PathPattern::try_from(format!("{}/**", objects_info.display()).as_str())
+            .unwrap(),
+    ];
+    crate::preset::apply_worktree_sandbox_rules(
+        &mut cfg,
+        &[wt_spec.clone(), admin_spec.clone(), objects_spec],
+        &write_denies,
+    );
+
+    let edit_raw = |raw: &str| {
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("req-bypass"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({ "file_path": raw, "content": "evil" }),
+        );
+        req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        req
+    };
+
+    // Finding 1A: `/./`, `//`, and non-canonical path forms cannot evade fixed write denies.
+    for evasive in [
+        format!("{}/./config.worktree", admin_dir.display()),
+        format!("{}//config.worktree", admin_dir.display()),
+        format!("{}/./.git", wt.display()),
+        format!("{}/./info/alternates", objects_dir.display()),
+    ] {
+        assert!(
+            matches!(
+                crate::preset::decide_escalation_with_roots(
+                    &edit_raw(&evasive),
+                    &cfg.policy,
+                    cfg.preset,
+                    cfg.allowed_tools.as_deref(),
+                    Some(cfg.sandbox.writable_roots.as_slice()),
+                ),
+                crate::preset::EscalationDisposition::AutoDeny { .. }
+            ),
+            "evasive path must be AutoDenied: {evasive}"
+        );
+    }
+
+    // Finding 1B + 2: in-root symlinks to denied targets and trailing `/` / `/.` on dangling symlinks.
+    {
+        let adm_link = wt.join("adm");
+        org_platform::fs::create_symlink(&admin_dir, &adm_link).unwrap();
+        let git_link = wt.join("g");
+        org_platform::fs::create_symlink(&wt.join(".git"), &git_link).unwrap();
+        let oi_link = wt.join("oi");
+        org_platform::fs::create_symlink(&objects_info, &oi_link).unwrap();
+        let dangling = wt.join("escape");
+        org_platform::fs::create_symlink(&cargo_home.join("config.toml"), &dangling).unwrap();
+
+        for bypass in [
+            format!("{}/config.worktree", adm_link.display()),
+            git_link.display().to_string(),
+            format!("{}/alternates", oi_link.display()),
+            format!("{}/", dangling.display()),
+            format!("{}/.", dangling.display()),
+        ] {
+            assert!(
+                matches!(
+                    crate::preset::decide_escalation_with_roots(
+                        &edit_raw(&bypass),
+                        &cfg.policy,
+                        cfg.preset,
+                        cfg.allowed_tools.as_deref(),
+                        Some(cfg.sandbox.writable_roots.as_slice()),
+                    ),
+                    crate::preset::EscalationDisposition::AutoDeny { .. }
+                ),
+                "symlink/trailing-slash bypass must be AutoDenied: {bypass}"
+            );
+        }
+    }
+
+    // Finding 2b: filesystem root `/` is ignored as a writable root.
+    let root_only = vec![SpecPath::try_from("/").unwrap()];
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&wt.join("ok.rs").display().to_string()),
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(root_only.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+}
+
+#[test]
+fn task126_approval_bridge_covers_opaque_rename_targets_and_safe_ask_readonly_presets() {
+    let dir = tempfile::tempdir().unwrap();
+    let canon_dir = dir.path().canonicalize().unwrap();
+    let ws = canon_dir.join("workspace");
+    let wt = canon_dir.join("worktree");
+    let tmp = canon_dir.join("agent-tmp");
+    let cargo_home = canon_dir.join("host-cargo");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::create_dir_all(&cargo_home).unwrap();
+
+    let ws_spec = SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+    let wt_spec = SpecPath::try_from(wt.to_str().unwrap()).unwrap();
+    let mut cfg = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    crate::preset::apply_worktree_sandbox_rules(&mut cfg, &[wt_spec], &[]);
+    let edit_raw = |raw: &str| {
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("req-preset"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({ "file_path": raw, "content": "x" }),
+        );
+        req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        req
+    };
+
+    // Finding 3: notebook_path (real Claude `capability: None`), rename move_path / kind.move_path,
+    // and mixed malformed / dual-key changes.
+    let nb_outside = ApprovalRequest::new(
+        ApprovalId::new("nb-1"),
+        ApprovalKind::FileChange,
+        Escalation::None,
+        "NotebookEdit",
+        serde_json::json!({ "notebook_path": cargo_home.join("nb.ipynb").to_str().unwrap() }),
+    );
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &nb_outside,
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    let mut rename_map = ApprovalRequest::new(
+        ApprovalId::new("mv-1"),
+        ApprovalKind::FileChange,
+        Escalation::None,
+        "ApplyPatch",
+        serde_json::json!({
+            "fileChanges": {
+                wt.join("src.rs").to_str().unwrap(): {
+                    "kind": { "type": "update", "move_path": cargo_home.join("config.toml").to_str().unwrap() }
+                }
+            }
+        }),
+    );
+    rename_map.capability = Some(org_agent_runtime::ToolCapability::Edit);
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &rename_map,
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    let mut mixed_opaque = ApprovalRequest::new(
+        ApprovalId::new("op-1"),
+        ApprovalKind::FileChange,
+        Escalation::None,
+        "ApplyPatch",
+        serde_json::json!({
+            "file_path": wt.join("ok.rs").to_str().unwrap(),
+            "changes": [{ "unexpected_field": 123 }]
+        }),
+    );
+    mixed_opaque.capability = Some(org_agent_runtime::ToolCapability::Edit);
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &mixed_opaque,
+            &cfg.policy,
+            cfg.preset,
+            cfg.allowed_tools.as_deref(),
+            Some(cfg.sandbox.writable_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    // Finding 4: SafeAsk escalates inside root & auto-denies outside; ReadOnly omits tmpdir.
+    let safe_cfg = crate::preset::build_session_policy(
+        PermissionPreset::SafeAsk,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let safe_roots = crate::manager::effective_approval_writable_roots_from(
+        PermissionPreset::SafeAsk,
+        &safe_cfg.sandbox.writable_roots,
+        &tmp,
+    );
+    assert!(
+        safe_roots
+            .iter()
+            .any(|p| p.as_str() == tmp.to_str().unwrap()),
+        "non-ReadOnly preset must include canonical tmpdir in approval writable roots"
+    );
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&ws.join("ok.rs").display().to_string()),
+            &safe_cfg.policy,
+            safe_cfg.preset,
+            safe_cfg.allowed_tools.as_deref(),
+            Some(safe_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::EscalateToOwner { .. }
+    ));
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&cargo_home.join("config.toml").display().to_string()),
+            &safe_cfg.policy,
+            safe_cfg.preset,
+            safe_cfg.allowed_tools.as_deref(),
+            Some(safe_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+
+    let ro_cfg = crate::preset::build_session_policy(
+        PermissionPreset::ReadOnly,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let ro_roots = crate::manager::effective_approval_writable_roots_from(
+        PermissionPreset::ReadOnly,
+        &ro_cfg.sandbox.writable_roots,
+        &tmp,
+    );
+    assert!(
+        !ro_roots.iter().any(|p| p.as_str() == tmp.to_str().unwrap()),
+        "ReadOnly preset must NOT add tmpdir to approval writable roots"
+    );
+    assert!(matches!(
+        crate::preset::decide_escalation_with_roots(
+            &edit_raw(&tmp.join("x").display().to_string()),
+            &ro_cfg.policy,
+            ro_cfg.preset,
+            ro_cfg.allowed_tools.as_deref(),
+            Some(ro_roots.as_slice()),
+        ),
+        crate::preset::EscalationDisposition::AutoDeny { .. }
+    ));
+}
+
+#[test]
+fn task126_pass3_notebook_edit_unsandboxed_deny_resolver_macos_case_and_dual_key_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let canon_dir = dir.path().canonicalize().unwrap();
+    let ws = canon_dir.join("workspace");
+    let wt = canon_dir.join("worktree");
+    let admin_dir = canon_dir.join("cache.git/worktrees/self-admin");
+    let cargo_home = canon_dir.join("host-cargo");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::create_dir_all(&admin_dir).unwrap();
+    std::fs::create_dir_all(&cargo_home).unwrap();
+    std::fs::write(
+        wt.join(".git"),
+        "gitdir: ../cache.git/worktrees/self-admin\n",
+    )
+    .unwrap();
+
+    let ws_spec = SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+    let wt_spec = SpecPath::try_from(wt.to_str().unwrap()).unwrap();
+    let admin_spec = SpecPath::try_from(admin_dir.to_str().unwrap()).unwrap();
+    let mut cfg = crate::preset::build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &[],
+        1,
+    )
+    .unwrap();
+    let write_denies = vec![
+        org_agent_runtime::PathPattern::try_from(
+            admin_dir.join("config.worktree").to_str().unwrap(),
+        )
+        .unwrap(),
+        org_agent_runtime::PathPattern::try_from(wt.join(".git").to_str().unwrap()).unwrap(),
+    ];
+    crate::preset::apply_worktree_sandbox_rules(&mut cfg, &[wt_spec, admin_spec], &write_denies);
+    // Simulate an owner previously granting `AllowAlways` on `NotebookEdit`.
+    cfg.policy.allow.push(org_agent_runtime::Rule {
+        tool: org_agent_runtime::RuleTool::try_from("NotebookEdit").unwrap(),
+        scope: org_agent_runtime::RuleScope::Any,
+    });
+
+    // Finding 1: NotebookEdit (`capability: None`, `kind: FileChange`) must still hit `cap:edit` denies.
+    {
+        let adm_link = wt.join("adm");
+        org_platform::fs::create_symlink(&admin_dir, &adm_link).unwrap();
+        let dangling_cw = wt.join("cw");
+        org_platform::fs::create_symlink(&admin_dir.join("config.worktree"), &dangling_cw).unwrap();
+
+        for target in [adm_link.join("config.worktree"), wt.join(".git")] {
+            let nb_req = ApprovalRequest::new(
+                ApprovalId::new("nb-deny"),
+                ApprovalKind::FileChange,
+                Escalation::None,
+                "NotebookEdit",
+                serde_json::json!({ "notebook_path": target.to_str().unwrap() }),
+            );
+            assert!(
+                matches!(
+                    crate::preset::decide_escalation_with_roots(
+                        &nb_req,
+                        &cfg.policy,
+                        cfg.preset,
+                        None,
+                        Some(cfg.sandbox.writable_roots.as_slice()),
+                    ),
+                    crate::preset::EscalationDisposition::AutoDeny { ref reason }
+                        if reason.contains("denied by office security policy")
+                ),
+                "NotebookEdit (capability: None) must AutoDeny via policy deny on target: {}",
+                target.display()
+            );
+        }
+
+        // Finding 2: Unsandboxed (`writable_roots: None`) dangling symlink & symlink+`..` traversal.
+        for unsandboxed_bypass in [
+            dangling_cw.display().to_string(),
+            format!("{}/sub/../config.worktree", adm_link.display()),
+        ] {
+            let mut req = ApprovalRequest::new(
+                ApprovalId::new("unsbx"),
+                ApprovalKind::FileChange,
+                Escalation::None,
+                "Write",
+                serde_json::json!({ "file_path": unsandboxed_bypass, "content": "x" }),
+            );
+            req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+            assert!(
+                matches!(
+                    crate::preset::decide_escalation_with_roots(
+                        &req,
+                        &cfg.policy,
+                        cfg.preset,
+                        cfg.allowed_tools.as_deref(),
+                        None,
+                    ),
+                    crate::preset::EscalationDisposition::AutoDeny { .. }
+                ),
+                "unsandboxed deny bypass must AutoDeny: {unsandboxed_bypass}"
+            );
+        }
+    }
+
+    // Finding 3: macOS APFS case-folded absent denied target inside writable admin dir.
+    if org_platform::fs::paths_case_insensitive_by_default() {
+        let mut upper = ApprovalRequest::new(
+            ApprovalId::new("apfs-case"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "Write",
+            serde_json::json!({
+                "file_path": admin_dir.join("CONFIG.WORKTREE").to_str().unwrap(),
+                "content": "x"
+            }),
+        );
+        upper.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        assert!(matches!(
+            crate::preset::decide_escalation_with_roots(
+                &upper,
+                &cfg.policy,
+                cfg.preset,
+                cfg.allowed_tools.as_deref(),
+                Some(cfg.sandbox.writable_roots.as_slice()),
+            ),
+            crate::preset::EscalationDisposition::AutoDeny { .. }
+        ));
+    }
+
+    // Finding 4: Dual-key array `changes` item and `notebookPath` inside object `changes`.
+    for payload in [
+        serde_json::json!({
+            "changes": [{
+                "path": wt.join("ok.rs").to_str().unwrap(),
+                "file_path": cargo_home.join("config.toml").to_str().unwrap()
+            }]
+        }),
+        serde_json::json!({
+            "changes": [{
+                "path": wt.join("ok.rs").to_str().unwrap(),
+                "file_path": 123
+            }]
+        }),
+        serde_json::json!({
+            "fileChanges": {
+                wt.join("ok.rs").to_str().unwrap(): {
+                    "notebookPath": cargo_home.join("nb.ipynb").to_str().unwrap()
+                }
+            }
+        }),
+    ] {
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("chg-dual"),
+            ApprovalKind::FileChange,
+            Escalation::None,
+            "ApplyPatch",
+            payload,
+        );
+        req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+        assert!(matches!(
+            crate::preset::decide_escalation_with_roots(
+                &req,
+                &cfg.policy,
+                cfg.preset,
+                cfg.allowed_tools.as_deref(),
+                Some(cfg.sandbox.writable_roots.as_slice()),
+            ),
+            crate::preset::EscalationDisposition::AutoDeny { .. }
+        ));
+    }
+}
+
+#[test]
+fn task166_bwrap_deny_dirs_fail_closed_and_precreate_unstarted_siblings_and_git_credentials() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let sock_dir = office.durable_root().join("run-sock");
+    std::fs::create_dir_all(&sock_dir).unwrap();
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(sock_dir.join("office.sock")),
+    );
+    let employees = office.list_employees().unwrap();
+    assert!(!employees.is_empty());
+    let me = employees[0].id.as_str().to_owned();
+    let unstarted_sibling = "01a212a8-982e-7000-8000-000000000166";
+    let office_id = office.info().office_id.clone();
+    let office_local = office
+        .durable_root()
+        .join("local")
+        .join("offices")
+        .join(&office_id);
+    // Register an unstarted sibling agent dir name by hiring or placing an employee dir check:
+    // also verify all existing employees (like HR Lead) are pre-created as `0700` dirs.
+    let sibling_ids = crate::bwrap_isolation::ensure_bwrap_deny_dirs(&mgr, &me).unwrap();
+    assert!(
+        !sibling_ids.is_empty(),
+        "default test office must have at least one sibling employee (e.g. HR Lead)"
+    );
+    for other in &sibling_ids {
+        let agent_dir = office_local.join("agents").join(other);
+        assert!(
+            agent_dir.is_dir(),
+            "unstarted sibling dir must be pre-created"
+        );
+        assert_eq!(
+            std::fs::symlink_metadata(&agent_dir)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        let slug = crate::host_auth::agent_tmpdir_slug(&office_id, other);
+        let tmp_dir = sock_dir.join("t").join(slug);
+        assert!(tmp_dir.is_dir(), "sibling tmpdir must be pre-created");
+    }
+    assert!(office.durable_root().join("authority").is_dir());
+    assert!(office.folder().join("git-credentials").is_dir());
+    // Cross-team sibling directories along the team hierarchy are pre-created (`TASK-166`).
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let child_team_a = new_uuid_v7();
+    let child_team_b = new_uuid_v7();
+    for (tid, name) in [(&child_team_a, "Team A"), (&child_team_b, "Team B")] {
+        office
+            .submit_org(
+                &me,
+                org_office::rules::OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+                    command_id: new_uuid_v7(),
+                    team_id: tid.clone(),
+                    name: name.into(),
+                    owner_team_id: Some(root_team_id.clone()),
+                }),
+            )
+            .unwrap()
+            .unwrap();
+    }
+    let (emp_a, _) = hire_agent_with_runtime(
+        &office,
+        &me,
+        &child_team_a,
+        "anthropic",
+        "claude",
+        "team-a-eng",
+        "claude-sonnet-4-6",
+    );
+    crate::bwrap_isolation::ensure_bwrap_deny_dirs(&mgr, &emp_a).unwrap();
+    let office_rt = office.runtime_root().join(&office_id);
+    assert!(
+        office_rt
+            .join("teams")
+            .join(&root_team_id)
+            .join("teams")
+            .join(&child_team_b)
+            .is_dir(),
+        "sibling team dir must be pre-created for bwrap masking"
+    );
+    assert!(
+        office_rt
+            .join("teams")
+            .join(&root_team_id)
+            .join("agents")
+            .is_dir(),
+        "ancestor team agents dir must be pre-created for bwrap masking"
+    );
+    assert!(
+        office_rt
+            .join("teams")
+            .join(&root_team_id)
+            .join("teams")
+            .join(&child_team_a)
+            .join("teams")
+            .is_dir(),
+        "leaf child subteam dir must be pre-created for bwrap masking"
+    );
+    let denies = mgr.denied_office_globs_for(Some(&me));
+    let git_creds_canon = office
+        .folder()
+        .join("git-credentials")
+        .canonicalize()
+        .unwrap();
+    assert!(
+        denies
+            .iter()
+            .any(|p| p.as_str().starts_with(git_creds_canon.to_str().unwrap())),
+        "denied globs must cover host-local git-credentials dir"
+    );
+
+    // Fail-closed: if a required deny directory is replaced by a regular file, `ensure_bwrap_deny_dirs`
+    // MUST return `Err` instead of silently swallowing it with `let _ = ...`.
+    let tampered = office_local.join("agents").join(unstarted_sibling);
+    std::fs::write(&tampered, b"not-a-dir").unwrap();
+    let err = crate::bwrap_isolation::ensure_bwrap_deny_dirs(&mgr, &me).unwrap_err();
+    assert_eq!(err.code, org_proto::ErrorCode::StorageError);
+}
+
+fn spawn_stub_bwrap_handle(
+    office_id: &str,
+    emp_id: &str,
+    state_kind: SessionState,
+    masked: std::collections::BTreeSet<String>,
+) -> (
+    crate::manager::LiveSessionHandle,
+    Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let (tx, rx) = std::sync::mpsc::channel::<crate::pump::PumpCommand>();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let stopped_c = Arc::clone(&stopped);
+    let worker = std::thread::spawn(move || {
+        while let Ok(cmd) = rx.recv() {
+            if matches!(cmd, crate::pump::PumpCommand::Stop { .. }) {
+                stopped_c.store(true, Ordering::SeqCst);
+                break;
+            }
+        }
+    });
+    let state = Arc::new(Mutex::new(crate::pump::SessionRuntimeState {
+        employee_id: emp_id.into(),
+        office_id: office_id.into(),
+        state: state_kind,
+        run_id: Some("run-a".into()),
+        session_id: Some("sess-a".into()),
+        runtime_id: Some("claude".into()),
+        runtime_session_id: None,
+        private_home: "/tmp/home-a".into(),
+        permission_preset: "autonomous_sandboxed".into(),
+        sandbox_enabled: true,
+        spec_hash: "h".into(),
+        watchdog: crate::recovery::StallWatchdog::new(Duration::from_secs(60), Instant::now()),
+        recovery_required: false,
+        last_reply: None,
+        last_error: None,
+        backgrounds: crate::subagents::BackgroundRegistry::default(),
+        pending_approvals: Vec::new(),
+        policy: org_agent_runtime::PermissionPolicy {
+            version: 1,
+            allow: Vec::new(),
+            deny: Vec::new(),
+        },
+        preset: PermissionPreset::AutonomousSandboxed,
+        allowed_tools: None,
+        writable_roots: Vec::new(),
+        suspended_on_asks: Vec::new(),
+        waiting_for_member_id: None,
+        waiting_for_name: None,
+        suspended_since: None,
+        pending_wake_count: 0,
+        pending_wake_reason: None,
+    }));
+    (
+        crate::manager::LiveSessionHandle {
+            state,
+            tx,
+            thread: Some(worker),
+            connection_id: None,
+            route_digest: String::new(),
+            oauth_expires_at_ms: None,
+            workspace: None,
+            active_permit: Arc::new(Mutex::new(None)),
+            supports_mid_turn: false,
+            bwrap_masked_siblings: Some(masked),
+        },
+        stopped,
+    )
+}
+
+#[test]
+fn task166_enforce_bwrap_sibling_isolation_blocks_working_and_stops_idle_for_post_launch_sibling() {
+    use std::sync::atomic::Ordering;
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    ));
+    let emp_a = "01a212a8-982e-7000-8000-000000000a01";
+    let emp_b = "01a212a8-982e-7000-8000-000000000b02";
+    let emp_c = "01a212a8-982e-7000-8000-000000000c03";
+
+    // 1. Pre-launch sibling `emp_b` IS masked by `emp_a`, while post-launch `emp_c` is NOT.
+    // While `emp_a` is actively `Running`:
+    //   - `emp_b` passes cleanly without disturbing `emp_a`.
+    //   - `emp_c` MUST fail closed with `Conflict` before any binding file is written.
+    let masked: std::collections::BTreeSet<String> = [emp_b.to_owned()].into_iter().collect();
+    let (handle_a, stopped_a) = spawn_stub_bwrap_handle(
+        &office.info().office_id,
+        emp_a,
+        SessionState::Running,
+        masked,
+    );
+    mgr.registry
+        .lock()
+        .unwrap()
+        .live
+        .insert(emp_a.into(), handle_a);
+
+    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_b).unwrap();
+    assert!(!stopped_a.load(Ordering::SeqCst));
+
+    let conflict =
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    assert_eq!(conflict.code, org_proto::ErrorCode::Conflict);
+    assert!(!stopped_a.load(Ordering::SeqCst));
+
+    // 2. While another sibling is concurrently in `reg.starting`, fail closed with `Conflict`.
+    {
+        mgr.registry.lock().unwrap().starting.insert(emp_a.into());
+    }
+    let starting_conflict =
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    assert_eq!(starting_conflict.code, org_proto::ErrorCode::Conflict);
+    {
+        mgr.registry.lock().unwrap().starting.remove(emp_a);
+    }
+
+    // 3. Once `emp_a` becomes `Idle`, starting post-launch sibling `emp_c` MUST stop & reap
+    // `emp_a`'s stale bwrap session, revoke its binding, release `reg.starting`, and record state.
+    {
+        let reg = mgr.registry.lock().unwrap();
+        reg.live[emp_a].state.lock().unwrap().state = SessionState::Idle;
+    }
+    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
+    assert!(stopped_a.load(Ordering::SeqCst));
+    assert!(!mgr.registry.lock().unwrap().live.contains_key(emp_a));
+    assert!(!mgr.registry.lock().unwrap().starting.contains(emp_a));
+}
+
+fn spawn_panicking_bwrap_handle(
+    office_id: &str,
+    emp_id: &str,
+    masked: std::collections::BTreeSet<String>,
+) -> crate::manager::LiveSessionHandle {
+    let (mut handle, _) = spawn_stub_bwrap_handle(office_id, emp_id, SessionState::Idle, masked);
+    let (ptx, prx) = std::sync::mpsc::channel::<crate::pump::PumpCommand>();
+    let panicking = std::thread::spawn(move || {
+        let _ = prx.recv();
+        panic!("simulated unverified teardown");
+    });
+    let _ = handle.tx.send(crate::pump::PumpCommand::Stop {
+        reason: "test_cleanup".into(),
+    });
+    if let Some(t) = handle.thread.take() {
+        let _ = t.join();
+    }
+    handle.tx = ptx;
+    handle.thread = Some(panicking);
+    handle
+}
+
+#[test]
+fn task166_panicking_bwrap_reap_persists_without_existing_file_and_blocks_stop_and_start() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    ));
+    let emp_b = "01a212a8-982e-7000-8000-000000000b02";
+    let emp_c = "01a212a8-982e-7000-8000-000000000c03";
+    let masked: std::collections::BTreeSet<String> = [emp_b.to_owned()].into_iter().collect();
+
+    // Intentionally do NOT pre-seed `active-turn.v1.json`: panicking reap must upsert it (`B4-2`).
+    let owner_id = office.owner_member_id().to_owned();
+    let hr_agent_id = office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == org_office::organization_family::records::EmployeeKind::Agent)
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+    assert!(mgr.store.read_active_turn(&hr_agent_id).unwrap().is_none());
+
+    let panic_handle = spawn_panicking_bwrap_handle(&office.info().office_id, &hr_agent_id, masked);
+    mgr.registry
+        .lock()
+        .unwrap()
+        .live
+        .insert(hr_agent_id.clone(), panic_handle);
+
+    let reap_err =
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    assert_eq!(reap_err.code, org_proto::ErrorCode::Conflict);
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    assert!(
+        mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required,
+        "panicking bwrap reap must upsert recovery_required=true even when active-turn.v1.json was absent"
+    );
+
+    // `stop_session` on a restored RecoveryRequired handle MUST fail closed and keep it in `reg.live` (`B4-1`).
+    let stop_err = mgr.stop_session(&hr_agent_id, "bypass_stop").unwrap_err();
+    assert_eq!(stop_err.code, org_proto::ErrorCode::Conflict);
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+
+    // `start_session` on `hr_agent_id` itself MUST fail closed.
+    let start_hr_err = mgr
+        .start_session(
+            &owner_id,
+            &MemberSessionStartParams {
+                command_id: new_uuid_v7(),
+                employee_id: hr_agent_id.clone(),
+                instruction: Some("bypass?".into()),
+                workspace: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(start_hr_err.code, org_proto::ErrorCode::Conflict);
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+
+    // Retry on `emp_c` must STILL fail closed until owner clears recovery on `hr_agent_id`.
+    let retry_err =
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    assert_eq!(retry_err.code, org_proto::ErrorCode::Conflict);
+    mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
+    assert!(!mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
+}
+
+#[test]
+fn task166_start_and_recycle_fail_closed_on_panicking_stale_bwrap_and_stop_all_drains_cleanly() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    ));
+    let owner_id = office.owner_member_id().to_owned();
+    let hr_agent_id = office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == org_office::organization_family::records::EmployeeKind::Agent)
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+    let emp_c = "01a212a8-982e-7000-8000-000000000c03";
+    // Create sibling directory on disk so `hr_agent_id`'s empty mask is stale.
+    std::fs::create_dir_all(
+        office
+            .durable_root()
+            .join("local")
+            .join("offices")
+            .join(&office.info().office_id)
+            .join("agents")
+            .join(emp_c),
+    )
+    .unwrap();
+    let empty_mask = std::collections::BTreeSet::new();
+
+    // 1. `start_session` hitting an Idle stale bwrap handle whose pump panics MUST persist
+    // `recovery_required = true`, restore handle into `reg.live`, return `Conflict`, and keep
+    // `emp_c` blocked until `clear_stall_lock` (`B4-3`).
+    let panic_start =
+        spawn_panicking_bwrap_handle(&office.info().office_id, &hr_agent_id, empty_mask.clone());
+    mgr.registry
+        .lock()
+        .unwrap()
+        .live
+        .insert(hr_agent_id.clone(), panic_start);
+    let start_err = mgr
+        .start_session(
+            &owner_id,
+            &MemberSessionStartParams {
+                command_id: new_uuid_v7(),
+                employee_id: hr_agent_id.clone(),
+                instruction: Some("trigger stale recycle".into()),
+                workspace: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(start_err.code, org_proto::ErrorCode::Conflict);
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    assert!(
+        mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required
+    );
+    let sib_err = crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    assert_eq!(sib_err.code, org_proto::ErrorCode::Conflict);
+    mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
+
+    // 2. `stop_session` hitting a panicking bwrap handle MUST fail closed and keep `emp_c` blocked,
+    // while `stop_all` / `shutdown` MUST still drain cleanly to empty `reg.live` (`B4-1`).
+    let panic_stop =
+        spawn_panicking_bwrap_handle(&office.info().office_id, &hr_agent_id, empty_mask);
+    mgr.registry
+        .lock()
+        .unwrap()
+        .live
+        .insert(hr_agent_id.clone(), panic_stop);
+    let stop_err = mgr.stop_session(&hr_agent_id, "user_stop").unwrap_err();
+    assert_eq!(stop_err.code, org_proto::ErrorCode::Conflict);
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    assert!(
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).is_err(),
+        "sibling isolation must remain blocked after failed stop_session reap"
+    );
+
+    mgr.stop_all("office_restart");
+    assert!(
+        mgr.registry.lock().unwrap().live.is_empty(),
+        "stop_all must converge even with RecoveryRequired handles present"
+    );
+    assert!(
+        mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required,
+        "stop_all drain must preserve durable recovery_required=true"
+    );
+}
+
+#[test]
+fn task166_recycle_stale_warm_handle_fails_closed_and_updates_existing_active_turn() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    ));
+    let owner_id = office.owner_member_id().to_owned();
+    let hr_agent_id = office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == org_office::organization_family::records::EmployeeKind::Agent)
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+    let emp_c = "01a212a8-982e-7000-8000-000000000c03";
+    std::fs::create_dir_all(
+        office
+            .durable_root()
+            .join("local")
+            .join("offices")
+            .join(&office.info().office_id)
+            .join("agents")
+            .join(emp_c),
+    )
+    .unwrap();
+
+    // Pre-seed `active-turn.v1.json` to prove `persist_recovery_required` preserves existing
+    // metadata while flipping `active = false, recovery_required = true` (`B4-2`).
+    mgr.store
+        .write_active_turn(&ActiveTurnRecord {
+            version: 1,
+            employee_id: hr_agent_id.clone(),
+            run_id: "run-existing".into(),
+            session_id: "sess-existing".into(),
+            runtime_session_id: Some("rt-existing".into()),
+            mark: "m-existing".into(),
+            pid: None,
+            pgid: None,
+            started_identity: None,
+            boot_identity: None,
+            objective: "work".into(),
+            accepted_commands: Vec::new(),
+            resume_attempts: 0,
+            consecutive_stalls: 0,
+            stall_locked: false,
+            recovery_required: false,
+            active: true,
+            updated_at: "2026-11-26T00:00:00Z".into(),
+        })
+        .unwrap();
+
+    let panic_recycle = spawn_panicking_bwrap_handle(
+        &office.info().office_id,
+        &hr_agent_id,
+        std::collections::BTreeSet::new(),
+    );
+    mgr.registry
+        .lock()
+        .unwrap()
+        .live
+        .insert(hr_agent_id.clone(), panic_recycle);
+
+    assert!(crate::lifecycle::recycle_stale_warm_handle_in(
+        &mgr,
+        &hr_agent_id,
+        "run-a",
+        "bwrap_sibling_topology_changed",
+    ));
+    let bg_handles = std::mem::take(&mut mgr.registry.lock().unwrap().bg_workers);
+    for h in bg_handles {
+        let _ = h.join();
+    }
+
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    assert!(!mgr.registry.lock().unwrap().starting.contains(&hr_agent_id));
+    let persisted = mgr.store.read_active_turn(&hr_agent_id).unwrap().unwrap();
+    assert!(!persisted.active);
+    assert!(persisted.recovery_required);
+    assert_eq!(persisted.run_id, "run-existing");
+    assert_eq!(persisted.mark, "m-existing");
+
+    let sib_err = crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    assert_eq!(sib_err.code, org_proto::ErrorCode::Conflict);
+    mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
+    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
+}
+
+#[test]
+fn task166_clear_stall_lock_rejects_starting_and_fails_closed_on_panicking_pump() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    ));
+    let owner_id = office.owner_member_id().to_owned();
+    let hr_agent_id = office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == org_office::organization_family::records::EmployeeKind::Agent)
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+    let emp_c = "01a212a8-982e-7000-8000-000000000c03";
+
+    // 1. Concurrent `clear_stall_lock` while `reg.starting` holds `hr_agent_id` MUST reject with
+    // `Conflict` without mutating persisted `recovery_required = true` (`B5-1`).
+    mgr.store
+        .persist_recovery_required(&hr_agent_id, Some("run-1"), Some("sess-1"), None)
+        .unwrap();
+    mgr.registry
+        .lock()
+        .unwrap()
+        .starting
+        .insert(hr_agent_id.clone());
+    let starting_err = mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap_err();
+    assert_eq!(starting_err.code, org_proto::ErrorCode::Conflict);
+    assert!(
+        mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required,
+        "rejected clear_stall_lock must not clear persisted recovery_required"
+    );
+    mgr.registry.lock().unwrap().starting.remove(&hr_agent_id);
+
+    // 2. `clear_stall_lock` against a `StallLocked` handle whose pump thread panics MUST fail
+    // closed: persist `recovery_required = true`, restore handle into `reg.live`, return `Conflict`,
+    // and keep `emp_c` sibling isolation blocked until a subsequent clear (`B5-1`).
+    let (tx, _rx) = std::sync::mpsc::channel::<crate::pump::PumpCommand>();
+    let (mut panic_handle, _) = spawn_stub_bwrap_handle(
+        &office.info().office_id,
+        &hr_agent_id,
+        SessionState::StallLocked,
+        std::collections::BTreeSet::new(),
+    );
+    let _ = panic_handle.tx.send(crate::pump::PumpCommand::Stop {
+        reason: "test_cleanup".into(),
+    });
+    if let Some(t) = panic_handle.thread.take() {
+        let _ = t.join();
+    }
+    panic_handle.tx = tx;
+    panic_handle.thread = Some(std::thread::spawn(|| {
+        panic!("simulated StallLocked pump teardown panic");
+    }));
+    mgr.registry
+        .lock()
+        .unwrap()
+        .live
+        .insert(hr_agent_id.clone(), panic_handle);
+
+    let clear_err = mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap_err();
+    assert_eq!(clear_err.code, org_proto::ErrorCode::Conflict);
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    assert!(!mgr.registry.lock().unwrap().starting.contains(&hr_agent_id));
+    assert!(
+        mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required
+    );
+    let sib_err = crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    assert_eq!(sib_err.code, org_proto::ErrorCode::Conflict);
+
+    // Second `clear_stall_lock` (now that `thread` is `None`) clears recovery cleanly.
+    mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
+    assert!(!mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    assert!(
+        !mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required
+    );
+    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
+}
+
+#[test]
+fn task166_unrecovered_pre_pump_abort_persists_and_blocks_sibling_isolation() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    ));
+    let owner_id = office.owner_member_id().to_owned();
+    let hr_agent_id = office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == org_office::organization_family::records::EmployeeKind::Agent)
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+    let emp_c = "01a212a8-982e-7000-8000-000000000c03";
+    let (handle, _) = spawn_stub_bwrap_handle(
+        &office.info().office_id,
+        &hr_agent_id,
+        SessionState::Starting,
+        std::collections::BTreeSet::new(),
+    );
+    let _ = handle.tx.send(crate::pump::PumpCommand::Stop {
+        reason: "test_cleanup".into(),
+    });
+    if let Some(t) = handle.thread {
+        let _ = t.join();
+    }
+    crate::manager::install_unrecovered_pre_pump_handle(
+        &mgr,
+        &hr_agent_id,
+        crate::manager::PrePumpHandleMeta {
+            tx: handle.tx,
+            state: handle.state,
+            connection_id: None,
+            route_digest: String::new(),
+            oauth_expires_at_ms: None,
+            workspace: None,
+            active_permit: handle.active_permit,
+            supports_mid_turn: false,
+            bwrap_masked_siblings: Some(std::collections::BTreeSet::new()),
+        },
+    );
+
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    assert!(
+        mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required,
+        "pre-pump unverified teardown must upsert durable recovery_required=true"
+    );
+    assert_eq!(
+        mgr.stop_session(&hr_agent_id, "bypass").unwrap_err().code,
+        org_proto::ErrorCode::Conflict
+    );
+    assert_eq!(
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c)
+            .unwrap_err()
+            .code,
+        org_proto::ErrorCode::Conflict
+    );
+    mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
+    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
 }

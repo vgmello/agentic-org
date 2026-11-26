@@ -352,6 +352,90 @@ pub(crate) fn open_companion_stores(
     })
 }
 
+fn check_standing_on(
+    store: &OfficeStore,
+    info: &OfficeInfo,
+    identity: &OfficeIdentity,
+) -> Result<(), OfficeError> {
+    let read = OfficeStanding {
+        office: identity.office_id.clone(),
+    };
+    let (standing, _) = store.read(read).map_err(storage)?;
+    match info.role {
+        crate::model::OfficeRole::Hq => {
+            let ours = standing.organization.as_ref() == Some(&identity.organization_id);
+            if !ours || !standing.hq {
+                return Err(recovery());
+            }
+        }
+        crate::model::OfficeRole::Satellite => {
+            if let Some(org) = standing.organization.as_ref() {
+                if org != &identity.organization_id || standing.hq {
+                    return Err(OfficeError::Invalid(
+                        "satellite projection does not match its enrolled organization or role",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Verifies writer custody against the opened projection BEFORE companion stores are opened so a
+/// refused start never bumps `durable/authority/agent-execution/coordinator.json` (`TASK-146`).
+fn check_admitted_custody_on(
+    store: &OfficeStore,
+    info: &OfficeInfo,
+    identity: &OfficeIdentity,
+    owner: &Id,
+    expected_owner: &str,
+) -> Result<(), OfficeError> {
+    let ok = match info.role {
+        crate::model::OfficeRole::Satellite => {
+            expected_owner == info.office_id
+                && identity.office_id.as_str() == info.office_id
+                && identity.organization_id.as_str() == info.org_id
+        }
+        crate::model::OfficeRole::Hq => {
+            let (snapshot, _) = store
+                .read(DirectorySnapshot {
+                    owner: owner.clone(),
+                })
+                .map_err(storage)?;
+            snapshot
+                .members
+                .into_iter()
+                .find(|member| member.owner)
+                .is_some_and(|member| member.id == expected_owner)
+        }
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(OfficeError::CustodyMismatch)
+    }
+}
+
+fn verify_store_on_open(
+    store: OfficeStore,
+    info: &OfficeInfo,
+    identity: &OfficeIdentity,
+    owner: &Id,
+    active_owner: Option<&str>,
+) -> Result<OfficeStore, OfficeError> {
+    if let Err(err) = check_standing_on(&store, info, identity) {
+        let _ = store.close();
+        return Err(err);
+    }
+    if let Some(expected_owner) = active_owner {
+        if let Err(err) = check_admitted_custody_on(&store, info, identity, owner, expected_owner) {
+            let _ = store.close();
+            return Err(err);
+        }
+    }
+    Ok(store)
+}
+
 /// Roots that are absolute and plain: no `.` or `..`, and two different folders.
 pub(crate) fn check_roots(roots: &DataRoots) -> Result<(), OfficeError> {
     let plain = |path: &Path| {
@@ -513,6 +597,7 @@ impl Office {
             };
 
         let store = open_store(&options.config(&roots, &custody)).map_err(storage)?;
+        let store = verify_store_on_open(store, &info, &custody.identity, &owner, active_owner)?;
         let ca_digest = satellite::read_ca_digest_for_open(&roots.durable, &info, &hq_office_id);
         let companions = open_companion_stores(CompanionOpenSpec {
             engine: options.engine,
@@ -563,37 +648,12 @@ impl Office {
             #[cfg(any(test, feature = "testkit"))]
             _test_root: None,
         };
-        office.check_standing()?;
         register_startup_journal_consumers(&office)?;
         Ok(office)
     }
 
-    /// Verifies this office's standing against its projection (`ARCH-02`): HQ requires both
-    /// matching organization and `standing.hq == true`; a satellite allows either pre-snapshot
-    /// empty standing or matching organization with `standing.hq == false`.
     fn check_standing(&self) -> Result<(), OfficeError> {
-        let read = OfficeStanding {
-            office: self.identity.office_id.clone(),
-        };
-        let (standing, _) = self.store.read(read).map_err(storage)?;
-        match self.info.role {
-            crate::model::OfficeRole::Hq => {
-                let ours = standing.organization.as_ref() == Some(&self.identity.organization_id);
-                if !ours || !standing.hq {
-                    return Err(recovery());
-                }
-            }
-            crate::model::OfficeRole::Satellite => {
-                if let Some(org) = standing.organization.as_ref() {
-                    if org != &self.identity.organization_id || standing.hq {
-                        return Err(OfficeError::Invalid(
-                            "satellite projection does not match its enrolled organization or role",
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(())
+        check_standing_on(&self.store, &self.info, &self.identity)
     }
 
     /// The HQ's CA records, checked against the creation (M1): both files there, the

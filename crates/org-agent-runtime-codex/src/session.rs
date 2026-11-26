@@ -47,6 +47,8 @@ pub(crate) struct CodexSession {
     active_subagents: BTreeSet<String>,
     turn_tokens: Option<CodexTokens>,
     last_total_tokens: Option<CodexTokens>,
+    /// Tracks in-flight `turn/steer` JSON-RPC request ids -> office `delivery_id` (`doc-101`).
+    in_flight_deliveries: BTreeMap<u64, String>,
 }
 
 impl CodexSession {
@@ -68,7 +70,20 @@ impl CodexSession {
             active_subagents: BTreeSet::new(),
             turn_tokens: None,
             last_total_tokens: None,
+            in_flight_deliveries: BTreeMap::new(),
         }
+    }
+
+    fn fail_in_flight_deliveries(&mut self, reason: &str) -> Vec<Output> {
+        std::mem::take(&mut self.in_flight_deliveries)
+            .into_values()
+            .map(|delivery_id| {
+                Output::Event(SessionEvent::MidTurnDeliveryFailed {
+                    delivery_id,
+                    reason: reason.to_owned(),
+                })
+            })
+            .collect()
     }
 
     fn alloc_id(&mut self) -> u64 {
@@ -128,6 +143,22 @@ fn handle_rpc_response(s: &mut CodexSession, id: u64, val: &Value, now: Instant)
     if s.phase == Phase::OpeningThread && s.thread_req_id == Some(id) {
         return handle_thread_response(s, val);
     }
+    if let Some(delivery_id) = s.in_flight_deliveries.remove(&id) {
+        if let Some(err) = val.get("error").filter(|v| !v.is_null()) {
+            let reason = err
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("Codex turn/steer RPC error")
+                .to_owned();
+            return vec![Output::Event(SessionEvent::MidTurnDeliveryFailed {
+                delivery_id,
+                reason,
+            })];
+        }
+        return vec![Output::Event(SessionEvent::MidTurnDelivered {
+            delivery_id,
+        })];
+    }
     if let Some(err) = val.get("error").filter(|v| !v.is_null()) {
         let msg = err
             .get("message")
@@ -138,7 +169,7 @@ fn handle_rpc_response(s: &mut CodexSession, id: u64, val: &Value, now: Instant)
             s.turn_start_req_id = None;
             s.active_turn_id = None;
             s.turn_tokens = None;
-            let mut out = Vec::new();
+            let mut out = s.fail_in_flight_deliveries("turn failed to start");
             if s.turn_open {
                 s.turn_open = false;
                 out.push(Output::Event(SessionEvent::TurnEnded {
@@ -579,6 +610,7 @@ fn handle_turn_completed(s: &mut CodexSession, p: &Value) -> Vec<Output> {
     s.active_turn_id = None;
     s.turn_start_req_id = None;
     s.pending_file_changes.clear();
+    out.extend(s.fail_in_flight_deliveries("turn ended before steer acknowledgement"));
     if s.turn_open {
         s.turn_open = false;
         out.push(Output::Event(SessionEvent::TurnEnded { outcome, errors }));
@@ -595,38 +627,10 @@ fn handle_turn_completed(s: &mut CodexSession, p: &Value) -> Vec<Output> {
     out
 }
 
-fn handle_send(
-    s: &mut CodexSession,
-    text: String,
-    urgent: bool,
-) -> Result<Vec<Output>, ControlError> {
+fn handle_send(s: &mut CodexSession, text: String) -> Result<Vec<Output>, ControlError> {
     match s.phase {
         Phase::OpeningInit | Phase::OpeningThread => Err(ControlError::NotReady),
-        Phase::Busy if !urgent => Err(ControlError::Busy),
-        Phase::Busy => {
-            let tid = s
-                .thread_id
-                .as_ref()
-                .ok_or(ControlError::NotReady)?
-                .as_str()
-                .to_owned();
-            let req_id = s.alloc_id();
-            let mut params = json!({
-                "threadId": tid,
-                "input": [{ "type": "text", "text": text }]
-            });
-            if let Some(turn_id) = &s.active_turn_id {
-                params["expectedTurnId"] = Value::String(turn_id.clone());
-            }
-            let line = encode_line(&json!({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "method": "turn/steer",
-                "params": params
-            }))
-            .expect("turn/steer encodes");
-            Ok(vec![Output::Write(line)])
-        }
+        Phase::Busy => Err(ControlError::Busy),
         Phase::Idle => {
             let tid = s
                 .thread_id
@@ -663,6 +667,45 @@ fn handle_send(
                 }),
                 Output::Event(SessionEvent::Status(s.busy_status())),
             ])
+        }
+        _ => Err(ControlError::Closed),
+    }
+}
+
+fn handle_deliver_mid_turn(
+    s: &mut CodexSession,
+    delivery_id: String,
+    text: String,
+) -> Result<Vec<Output>, ControlError> {
+    match s.phase {
+        Phase::OpeningInit | Phase::OpeningThread => Err(ControlError::NotReady),
+        Phase::Idle => Err(ControlError::InvalidState),
+        Phase::Busy => {
+            let tid = s
+                .thread_id
+                .as_ref()
+                .ok_or(ControlError::NotReady)?
+                .as_str()
+                .to_owned();
+            let turn_id = s
+                .active_turn_id
+                .as_ref()
+                .ok_or(ControlError::NotReady)?
+                .clone();
+            let req_id = s.alloc_id();
+            let line = encode_line(&json!({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "method": "turn/steer",
+                "params": {
+                    "threadId": tid,
+                    "expectedTurnId": turn_id,
+                    "input": [{ "type": "text", "text": text }]
+                }
+            }))
+            .expect("turn/steer encodes");
+            s.in_flight_deliveries.insert(req_id, delivery_id);
+            Ok(vec![Output::Write(line)])
         }
         _ => Err(ControlError::Closed),
     }
@@ -820,6 +863,7 @@ impl Session for CodexSession {
                 out.push(Output::Event(SessionEvent::StartFailed { reason }));
             }
             Phase::Busy => {
+                out.extend(self.fail_in_flight_deliveries("Codex stdout closed before steer ack"));
                 if let Some(u) = self.flush_turn_usage() {
                     out.push(u);
                 }
@@ -836,6 +880,7 @@ impl Session for CodexSession {
                 out.push(Output::Event(SessionEvent::Status(Activity::Idle)));
             }
             Phase::Closing => {
+                out.extend(self.fail_in_flight_deliveries("Codex stdout closed before steer ack"));
                 if let Some(u) = self.flush_turn_usage() {
                     out.push(u);
                 }
@@ -873,6 +918,7 @@ impl Session for CodexSession {
                 out.push(Output::Event(SessionEvent::StartFailed { reason }));
             }
             Phase::Busy => {
+                out.extend(self.fail_in_flight_deliveries("Codex exited before steer ack"));
                 if let Some(u) = self.flush_turn_usage() {
                     out.push(u);
                 }
@@ -886,6 +932,7 @@ impl Session for CodexSession {
                 }));
             }
             Phase::Closing => {
+                out.extend(self.fail_in_flight_deliveries("Codex exited before steer ack"));
                 if let Some(u) = self.flush_turn_usage() {
                     out.push(u);
                 }
@@ -909,7 +956,10 @@ impl Session for CodexSession {
             return Err(ControlError::Closed);
         }
         match cmd {
-            Control::Send { text, urgent } => handle_send(self, text, urgent),
+            Control::Send { text } => handle_send(self, text),
+            Control::DeliverMidTurn { delivery_id, text } => {
+                handle_deliver_mid_turn(self, delivery_id, text)
+            }
             Control::Interrupt => handle_interrupt(self),
             Control::Answer {
                 request_id,

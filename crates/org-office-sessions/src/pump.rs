@@ -21,7 +21,7 @@ use org_supervise::StopMode;
 use crate::binding::RunBindingRegistry;
 use crate::credentials::{format_rfc3339_ms, now_ms, redact_secrets, rfc3339_now};
 use crate::instructions::{compose_turn_objective, TurnTrigger, SAME_USER_ISOLATION_NOTICE};
-use crate::preset::{decide_escalation_with_tools, EscalationDisposition};
+use crate::preset::{decide_escalation_with_roots, EscalationDisposition};
 use crate::recovery::{SessionStore, StallWatchdog};
 use crate::subagents::{BackgroundKind, BackgroundRegistry};
 
@@ -29,6 +29,7 @@ const POST_EXIT_DRAIN_GRACE: Duration = Duration::from_millis(500);
 
 pub(crate) enum PumpCommand {
     SendTurn(String),
+    NotifyPendingWakes,
     AnswerApproval {
         approval_id: String,
         decision: Decision,
@@ -41,6 +42,31 @@ pub(crate) enum PumpCommand {
         reason: String,
     },
 }
+
+/// One coalesced, fenced mid-turn delivery staged from `pending-wakes.v1.json` without yet
+/// mutating disk (`TASK-115` / `doc-101` §4B).
+#[derive(Clone, Debug)]
+pub(crate) struct StagedMidTurnBatch {
+    pub delivery_id: String,
+    pub item_ids: Vec<String>,
+    pub text: String,
+    pub has_agent_item: bool,
+    pub agent_sender_convs: Vec<(String, String)>,
+}
+
+/// Result of inspecting `pending-wakes.v1.json` for mid-turn delivery while a turn is active.
+pub(crate) enum MidTurnStageOutcome {
+    None,
+    Wait(Duration),
+    Ready(StagedMidTurnBatch),
+}
+
+/// Inspects eligible mid-turn wakes without removing them from disk (`TASK-115`).
+pub(crate) type StageMidTurnWakesHook =
+    Arc<dyn Fn(&str, Option<&str>, u32, u32) -> MidTurnStageOutcome + Send + Sync>;
+/// Commits removal of only the runtime-acknowledged `item_ids` (preserving `seen_item_ids`)
+/// after `SessionEvent::MidTurnDelivered` (`TASK-115` / `doc-101` §4B).
+pub(crate) type MidTurnDeliveredHook = Arc<dyn Fn(&str, &StagedMidTurnBatch) + Send + Sync>;
 
 pub(crate) type TurnEndedHook = Arc<dyn Fn(&str) + Send + Sync>;
 pub(crate) type OpenRequiredAsksHook = Arc<dyn Fn(&str) -> bool + Send + Sync>;
@@ -68,10 +94,15 @@ pub(crate) struct FailoverRequest {
     pub workspace: Option<String>,
     pub task_ref: Option<String>,
     pub tried_connections: Vec<String>,
+    pub oauth_refresh_attempted: bool,
+    pub oauth_token_fp: Option<String>,
     pub reason: &'static str,
     pub rate_limit_resets_at: Option<String>,
 }
 pub(crate) type FailoverHook = Arc<dyn Fn(FailoverRequest) + Send + Sync>;
+/// Returns `true` when this Linux `bwrap` session's masked sibling set is stale because a new
+/// sibling employee appeared after launch (`TASK-166`).
+pub(crate) type BwrapTopologyStaleHook = Arc<dyn Fn() -> bool + Send + Sync>;
 /// Returns `true` when durable suspension was recorded (non-empty required asks), `false` if
 /// all required asks were answered/withdrawn before suspension took effect (`High #3`).
 pub(crate) type SuspendedHook =
@@ -88,6 +119,9 @@ pub(crate) struct PumpHooks {
     pub on_permit_release_pending: Option<PermitReleasePendingHook>,
     pub on_rate_limit: Option<RateLimitHook>,
     pub on_failover: Option<FailoverHook>,
+    pub stage_mid_turn_wakes: Option<StageMidTurnWakesHook>,
+    pub on_mid_turn_delivered: Option<MidTurnDeliveredHook>,
+    pub is_bwrap_topology_stale: Option<BwrapTopologyStaleHook>,
 }
 
 pub(crate) struct SessionRuntimeState {
@@ -111,6 +145,7 @@ pub(crate) struct SessionRuntimeState {
     pub policy: PermissionPolicy,
     pub preset: PermissionPreset,
     pub allowed_tools: Option<Vec<ToolName>>,
+    pub writable_roots: Vec<org_agent_runtime::SpecPath>,
     pub suspended_on_asks: Vec<String>,
     pub waiting_for_member_id: Option<String>,
     pub waiting_for_name: Option<String>,
@@ -154,11 +189,16 @@ impl SessionRuntimeState {
 pub(crate) struct PumpContext {
     pub employee_id: String,
     pub run_id: String,
+    pub runtime_id: String,
+    pub supports_mid_turn: bool,
     pub connection_id: Option<String>,
     pub active_permit: Arc<Mutex<Option<(String, u64)>>>,
     pub workspace: Option<String>,
     pub task_ref: Option<String>,
     pub tried_connections: Vec<String>,
+    pub oauth_refresh_attempted: bool,
+    pub oauth_expires_at_ms: Option<u64>,
+    pub oauth_token_fp: Option<String>,
     pub store: SessionStore,
     pub bindings: RunBindingRegistry,
     pub state: Arc<Mutex<SessionRuntimeState>>,
@@ -193,11 +233,19 @@ struct PumpLoopState {
     last_permit_renew: Instant,
     permit_lease_deadline: Option<Instant>,
     current_objective: String,
+    turn_reply: Option<String>,
+    turns_dispatched: u64,
+    oauth_refresh_attempted: bool,
     failover_pending: Option<FailoverRequest>,
+    mid_turn_dirty: bool,
+    mid_turn_next_check: Option<Instant>,
+    in_flight_delivery: Option<StagedMidTurnBatch>,
+    mid_turn_total_this_turn: u32,
+    mid_turn_agent_this_turn: u32,
 }
 
 impl PumpLoopState {
-    fn new() -> Self {
+    fn new(oauth_refresh_attempted: bool) -> Self {
         Self {
             out_framer: LineFramer::new(),
             err_framer: LineFramer::new(),
@@ -217,7 +265,15 @@ impl PumpLoopState {
             last_permit_renew: Instant::now(),
             permit_lease_deadline: None,
             current_objective: String::new(),
+            turn_reply: None,
+            turns_dispatched: 0,
+            oauth_refresh_attempted,
             failover_pending: None,
+            mid_turn_dirty: false,
+            mid_turn_next_check: None,
+            in_flight_delivery: None,
+            mid_turn_total_this_turn: 0,
+            mid_turn_agent_this_turn: 0,
         }
     }
 }
@@ -237,7 +293,7 @@ pub(crate) fn run_pump(
     let (io_tx, io_rx) = mpsc::channel::<ReaderMsg>();
     let out_reader = spawn_pipe_reader(stdout, io_tx.clone(), false);
     let err_reader = spawn_pipe_reader(stderr, io_tx, true);
-    let mut loop_state = PumpLoopState::new();
+    let mut loop_state = PumpLoopState::new(ctx.oauth_refresh_attempted);
 
     apply_outputs(
         session.start(Instant::now()),
@@ -251,6 +307,10 @@ pub(crate) fn run_pump(
         drain_commands(&commands, &mut stdin, &ctx, &mut loop_state, &mut session);
         enqueue_background_wakes(&ctx, &mut loop_state);
         dispatch_next_turn(&mut stdin, &ctx, &mut loop_state, &mut session);
+        maybe_deliver_mid_turn(&mut stdin, &ctx, &mut loop_state, &mut session);
+        if loop_state.stop_requested {
+            break;
+        }
 
         if poll_io(&io_rx, &mut stdin, &ctx, &mut loop_state, &mut session) {
             break;
@@ -341,7 +401,12 @@ fn should_exit_loop(
             // acquires/verifies its own permit right before `Control::Send` (`doc-88` §6).
             release_active_permit(ctx);
             loop_state.permit_lease_deadline = None;
-            if let Some(hook) = &ctx.hooks.on_turn_ended {
+            if let Some(hook) = ctx
+                .hooks
+                .on_turn_ended
+                .as_ref()
+                .filter(|_| loop_state.pending_turns.is_empty())
+            {
                 hook(&ctx.employee_id);
             }
         }
@@ -421,6 +486,22 @@ fn should_finish_after_exit(
         .is_some_and(|at| at.elapsed() >= POST_EXIT_DRAIN_GRACE)
 }
 
+fn build_stale_failover_request(ctx: &PumpContext, objective: String) -> FailoverRequest {
+    FailoverRequest {
+        employee_id: ctx.employee_id.clone(),
+        failed_run_id: ctx.run_id.clone(),
+        failed_connection_id: ctx.connection_id.clone().unwrap_or_default(),
+        objective,
+        workspace: ctx.workspace.clone(),
+        task_ref: ctx.task_ref.clone(),
+        tried_connections: Vec::new(),
+        oauth_refresh_attempted: false,
+        oauth_token_fp: ctx.oauth_token_fp.clone(),
+        reason: "warm_route_stale",
+        rate_limit_resets_at: None,
+    }
+}
+
 fn drain_commands(
     commands: &Receiver<PumpCommand>,
     stdin: &mut org_supervise::ChildStdin,
@@ -428,15 +509,30 @@ fn drain_commands(
     loop_state: &mut PumpLoopState,
     session: &mut Box<dyn org_agent_runtime::Session>,
 ) {
+    let mut stop_preserve: Option<bool> = None;
     while let Ok(cmd) = commands.try_recv() {
         match cmd {
             PumpCommand::SendTurn(text) => loop_state.pending_turns.push(text),
+            PumpCommand::NotifyPendingWakes => {
+                loop_state.mid_turn_dirty = true;
+                loop_state.mid_turn_next_check = None;
+            }
             PumpCommand::AnswerApproval {
                 approval_id,
                 decision,
                 allow_always_tool,
             } => {
                 apply_approval_resolution(&ctx.state, &approval_id, allow_always_tool.as_deref());
+                // Wake mid-turn staging once pending approvals clear (`doc-101` §4A).
+                if ctx
+                    .state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .pending_approvals
+                    .is_empty()
+                {
+                    loop_state.mid_turn_dirty = true;
+                }
                 let ctrl = Control::Answer {
                     request_id: ApprovalId::new(approval_id),
                     decision,
@@ -453,13 +549,45 @@ fn drain_commands(
             }
             PumpCommand::Stop { reason } => {
                 loop_state.stop_requested = true;
-                loop_state.failover_pending = None;
+                stop_preserve = merge_stop_preserve(stop_preserve, &reason);
                 if let Ok(outs) = session.control(Control::Close, Instant::now()) {
                     apply_outputs(outs, stdin, ctx, loop_state, session);
                 }
                 record_stop_note(ctx, &reason);
             }
         }
+    }
+    finalize_drained_stop(stop_preserve, ctx, loop_state);
+}
+
+fn merge_stop_preserve(current: Option<bool>, reason: &str) -> Option<bool> {
+    if current == Some(false) {
+        return Some(false);
+    }
+    Some(matches!(
+        reason,
+        "warm_route_stale"
+            | "oauth_token_expiring"
+            | "pool_reroute"
+            | "bwrap_sibling_isolation_refresh"
+            | "bwrap_sibling_topology_changed"
+    ))
+}
+
+fn finalize_drained_stop(
+    stop_preserve: Option<bool>,
+    ctx: &PumpContext,
+    loop_state: &mut PumpLoopState,
+) {
+    match stop_preserve {
+        Some(true) if !loop_state.pending_turns.is_empty() => {
+            let objective = std::mem::take(&mut loop_state.pending_turns).join("\n\n");
+            loop_state.failover_pending = Some(build_stale_failover_request(ctx, objective));
+        }
+        Some(_) => {
+            loop_state.failover_pending = None;
+        }
+        None => {}
     }
 }
 
@@ -478,9 +606,32 @@ fn enqueue_background_wakes(ctx: &PumpContext, loop_state: &mut PumpLoopState) {
     }
 }
 
-fn ensure_permit_for_turn(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> bool {
+enum PermitCheck {
+    Ready,
+    StaleWarm,
+    Refused,
+}
+
+fn ensure_permit_for_turn(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> PermitCheck {
+    // Only proactively recycle on OAuth pre-expiry during warm reuse (Turn 2+). Turn 1 of a fresh
+    // cold start already attempted pre-launch refresh and must run so an unrotatable/revoked token
+    // surfaces bounded `auth_expired` failover instead of an infinite cold-start loop.
+    if loop_state.turns_dispatched > 0
+        && crate::host_auth::is_oauth_expiring(ctx.oauth_expires_at_ms, now_ms())
+    {
+        return PermitCheck::StaleWarm;
+    }
+    if loop_state.turns_dispatched > 0
+        && ctx
+            .hooks
+            .is_bwrap_topology_stale
+            .as_ref()
+            .is_some_and(|check| check())
+    {
+        return PermitCheck::StaleWarm;
+    }
     let Some(conn_id) = ctx.connection_id.as_deref() else {
-        return true;
+        return PermitCheck::Ready;
     };
     let already_held = ctx
         .active_permit
@@ -491,24 +642,25 @@ fn ensure_permit_for_turn(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> 
         loop_state
             .permit_lease_deadline
             .get_or_insert_with(|| Instant::now() + Duration::from_secs(60));
-        return true;
+        return PermitCheck::Ready;
     }
     let Some(acquire) = ctx.hooks.on_permit_acquire.as_ref() else {
-        return true;
+        return PermitCheck::Ready;
     };
     match acquire(conn_id, ctx.task_ref.as_deref()) {
         Ok(permit) => {
             *ctx.active_permit.lock().unwrap_or_else(|p| p.into_inner()) = Some(permit);
             loop_state.permit_lease_deadline = Some(Instant::now() + Duration::from_secs(60));
-            true
+            PermitCheck::Ready
         }
+        Err(reason) if reason.starts_with("WARM_ROUTE_STALE") => PermitCheck::StaleWarm,
         Err(reason) => {
             let mut st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
             st.last_error = Some(reason);
             if st.state == SessionState::Running {
                 st.state = SessionState::Idle;
             }
-            false
+            PermitCheck::Refused
         }
     }
 }
@@ -526,26 +678,36 @@ fn dispatch_next_turn(
     {
         return;
     }
-    if !ensure_permit_for_turn(ctx, loop_state) {
-        loop_state.pending_turns.clear();
-        return;
+    match ensure_permit_for_turn(ctx, loop_state) {
+        PermitCheck::Ready => {}
+        PermitCheck::StaleWarm => {
+            let objective = std::mem::take(&mut loop_state.pending_turns).join("\n\n");
+            loop_state.failover_pending = Some(build_stale_failover_request(ctx, objective));
+            loop_state.stop_requested = true;
+            return;
+        }
+        PermitCheck::Refused => {
+            loop_state.pending_turns.clear();
+            return;
+        }
     }
     let text = loop_state.pending_turns.remove(0);
     let objective_for_disk = text.clone();
     loop_state.current_objective = text.clone();
+    loop_state.turn_reply = None;
     loop_state.had_external_effect = false;
     loop_state.accepted_commands_baseline = ctx.bindings.accepted_commands(&ctx.employee_id).len();
     loop_state.rate_limited = false;
     loop_state.rate_limit_resets_at = None;
     loop_state.last_permit_renew = Instant::now();
-    if let Ok(outs) = session.control(
-        Control::Send {
-            text,
-            urgent: false,
-        },
-        Instant::now(),
-    ) {
+    if let Ok(outs) = session.control(Control::Send { text }, Instant::now()) {
         loop_state.turn_active = true;
+        loop_state.turns_dispatched = loop_state.turns_dispatched.saturating_add(1);
+        loop_state.in_flight_delivery = None;
+        loop_state.mid_turn_total_this_turn = 0;
+        loop_state.mid_turn_agent_this_turn = 0;
+        loop_state.mid_turn_dirty = true;
+        loop_state.mid_turn_next_check = None;
         persist_turn_update(ctx, |rec| {
             rec.objective = objective_for_disk;
             rec.active = true;
@@ -554,6 +716,70 @@ fn dispatch_next_turn(
     } else {
         release_active_permit(ctx);
         loop_state.permit_lease_deadline = None;
+    }
+}
+
+const MID_TURN_NOT_READY_RETRY: Duration = Duration::from_millis(50);
+
+fn maybe_deliver_mid_turn(
+    stdin: &mut org_supervise::ChildStdin,
+    ctx: &PumpContext,
+    loop_state: &mut PumpLoopState,
+    session: &mut Box<dyn org_agent_runtime::Session>,
+) {
+    if !loop_state.turn_active
+        || loop_state.stop_requested
+        || loop_state.suspend_now
+        || loop_state.in_flight_delivery.is_some()
+        || !ctx.supports_mid_turn
+    {
+        return;
+    }
+    let Some(stage_hook) = ctx.hooks.stage_mid_turn_wakes.as_ref() else {
+        return;
+    };
+    let due = loop_state.mid_turn_dirty
+        || loop_state
+            .mid_turn_next_check
+            .is_some_and(|at| Instant::now() >= at);
+    if !due {
+        return;
+    }
+    {
+        let st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+        if st.state != SessionState::Running || !st.pending_approvals.is_empty() {
+            return;
+        }
+    }
+    loop_state.mid_turn_dirty = false;
+    loop_state.mid_turn_next_check = None;
+    match stage_hook(
+        &ctx.employee_id,
+        ctx.task_ref.as_deref(),
+        loop_state.mid_turn_total_this_turn,
+        loop_state.mid_turn_agent_this_turn,
+    ) {
+        MidTurnStageOutcome::None => {}
+        MidTurnStageOutcome::Wait(dur) => {
+            loop_state.mid_turn_next_check = Some(Instant::now() + dur);
+        }
+        MidTurnStageOutcome::Ready(batch) => {
+            let ctrl = Control::DeliverMidTurn {
+                delivery_id: batch.delivery_id.clone(),
+                text: batch.text.clone(),
+            };
+            match session.control(ctrl, Instant::now()) {
+                Ok(outs) => {
+                    loop_state.in_flight_delivery = Some(batch);
+                    apply_outputs(outs, stdin, ctx, loop_state, session);
+                }
+                Err(org_agent_runtime::ControlError::NotReady) => {
+                    loop_state.mid_turn_next_check =
+                        Some(Instant::now() + MID_TURN_NOT_READY_RETRY);
+                }
+                Err(_) => {}
+            }
+        }
     }
 }
 
@@ -678,6 +904,16 @@ fn spawn_pipe_reader(mut file: File, tx: Sender<ReaderMsg>, is_stderr: bool) -> 
     })
 }
 
+fn rollback_failed_write_delivery(loop_state: &mut PumpLoopState, delivery_id: &str) {
+    if loop_state
+        .in_flight_delivery
+        .as_ref()
+        .is_some_and(|b| b.delivery_id == delivery_id)
+    {
+        loop_state.in_flight_delivery = None;
+    }
+}
+
 fn apply_outputs(
     outputs: Vec<org_agent_runtime::Output>,
     stdin: &mut org_supervise::ChildStdin,
@@ -686,16 +922,24 @@ fn apply_outputs(
     session: &mut Box<dyn org_agent_runtime::Session>,
 ) {
     let mut follow_up = Vec::new();
+    let mut write_failed = false;
     for output in outputs {
         match output {
             org_agent_runtime::Output::Write(line) => {
-                let _ = stdin.write_all(line.as_bytes());
-                let _ = stdin.flush();
+                if stdin.write_all(line.as_bytes()).is_err() || stdin.flush().is_err() {
+                    write_failed = true;
+                }
             }
             org_agent_runtime::Output::CloseStdin => {
                 let _ = stdin.close();
             }
             org_agent_runtime::Output::Event(mut event) => {
+                if write_failed {
+                    if let SessionEvent::MidTurnDelivered { delivery_id } = &event {
+                        rollback_failed_write_delivery(loop_state, delivery_id);
+                        continue;
+                    }
+                }
                 let tokens = ctx.bindings.active_tokens();
                 let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
                 // Evaluate approval requests against the ORIGINAL unredacted structured input
@@ -750,12 +994,56 @@ fn handle_event(
             persist_turn_update(ctx, |rec| rec.runtime_session_id = Some(id));
         }
         SessionEvent::TurnStarted { .. } => {
+            if !loop_state.turn_active {
+                loop_state.in_flight_delivery = None;
+                loop_state.mid_turn_total_this_turn = 0;
+                loop_state.mid_turn_agent_this_turn = 0;
+            }
             loop_state.turn_active = true;
+            loop_state.turn_reply = None;
+            loop_state.mid_turn_dirty = true;
             state.state = SessionState::Running;
             drop(state);
             persist_turn_update(ctx, |rec| rec.active = true);
         }
-        SessionEvent::AssistantText { text, .. } => state.last_reply = Some(text.clone()),
+        SessionEvent::MidTurnDelivered { delivery_id } => {
+            let matched = loop_state
+                .in_flight_delivery
+                .as_ref()
+                .is_some_and(|b| b.delivery_id == *delivery_id)
+                .then(|| loop_state.in_flight_delivery.take())
+                .flatten();
+            if let Some(batch) = matched {
+                loop_state.mid_turn_total_this_turn =
+                    loop_state.mid_turn_total_this_turn.saturating_add(1);
+                if batch.has_agent_item {
+                    loop_state.mid_turn_agent_this_turn =
+                        loop_state.mid_turn_agent_this_turn.saturating_add(1);
+                }
+                loop_state.mid_turn_dirty = true;
+                loop_state.mid_turn_next_check = None;
+                let emp_id = ctx.employee_id.clone();
+                let hook = ctx.hooks.on_mid_turn_delivered.clone();
+                drop(state);
+                if let Some(cb) = hook {
+                    cb(&emp_id, &batch);
+                }
+            }
+        }
+        SessionEvent::MidTurnDeliveryFailed { delivery_id, .. } => {
+            // Rollback without touching disk so pending items drain cleanly on TurnEnded (`doc-101` §4B).
+            if loop_state
+                .in_flight_delivery
+                .as_ref()
+                .is_some_and(|b| b.delivery_id == *delivery_id)
+            {
+                loop_state.in_flight_delivery = None;
+            }
+        }
+        SessionEvent::AssistantText { text, .. } => {
+            state.last_reply = Some(text.clone());
+            loop_state.turn_reply = Some(text.clone());
+        }
         SessionEvent::TurnEnded {
             outcome, errors, ..
         } => {
@@ -791,15 +1079,16 @@ fn handle_event(
         }
         SessionEvent::ToolStarted { .. } => {
             loop_state.had_external_effect = true;
-            return handle_tool_or_approval_event(&mut state, event);
+            return handle_tool_or_approval_event(&mut state, loop_state, event);
         }
-        other => return handle_tool_or_approval_event(&mut state, other),
+        other => return handle_tool_or_approval_event(&mut state, loop_state, other),
     }
     None
 }
 
 fn handle_tool_or_approval_event(
     state: &mut SessionRuntimeState,
+    loop_state: &mut PumpLoopState,
     event: &SessionEvent,
 ) -> Option<Control> {
     match event {
@@ -834,6 +1123,10 @@ fn handle_tool_or_approval_event(
             state
                 .pending_approvals
                 .retain(|p| p.approval_id != id.as_str());
+            if state.pending_approvals.is_empty() && state.state == SessionState::WaitingApproval {
+                state.state = SessionState::Running;
+                loop_state.mid_turn_dirty = true;
+            }
         }
         _ => {}
     }
@@ -849,6 +1142,9 @@ fn handle_turn_ended(
 ) {
     loop_state.turn_active = false;
     loop_state.turn_just_ended = true;
+    loop_state.in_flight_delivery = None;
+    loop_state.mid_turn_dirty = false;
+    loop_state.mid_turn_next_check = None;
     state.watchdog.record_turn_completed(Instant::now());
     if !errors.is_empty() {
         state.last_error = Some(errors.join("; "));
@@ -875,6 +1171,48 @@ fn handle_turn_ended(
     });
 }
 
+pub(crate) fn is_claude_auth_expired_reply(reply: &str) -> bool {
+    let trimmed = reply.trim();
+    if trimmed.is_empty() || trimmed.len() > 1024 {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    (lower.starts_with("failed to authenticate")
+        && (lower.contains("401")
+            || lower.contains("oauth")
+            || lower.contains("authentication_error")))
+        || (lower.starts_with("api error: 401")
+            && (lower.contains("oauth") || lower.contains("authentication_error")))
+        || lower.starts_with("401 oauth access token has expired")
+        || lower == "oauth access token has expired"
+}
+
+pub(crate) fn classify_turn_failover_reason(
+    runtime_id: &str,
+    outcome: &org_agent_runtime::TurnOutcome,
+    errors: &[String],
+    turn_reply: Option<&str>,
+    has_effects: bool,
+    rate_limited: bool,
+) -> Option<&'static str> {
+    let reply_auth_expired = !has_effects
+        && runtime_id == "claude"
+        && turn_reply.is_some_and(is_claude_auth_expired_reply);
+    if matches!(outcome, org_agent_runtime::TurnOutcome::Completed) && !reply_auth_expired {
+        return None;
+    }
+    if reply_auth_expired || matches!(outcome, org_agent_runtime::TurnOutcome::SignedOut) {
+        return Some("auth_expired");
+    }
+    if let Some(reason) = crate::router::classify_failover_error(errors, rate_limited) {
+        return Some(reason);
+    }
+    if let org_agent_runtime::TurnOutcome::Failed { reason } = outcome {
+        return crate::router::classify_failover_error(std::slice::from_ref(reason), false);
+    }
+    None
+}
+
 fn evaluate_turn_failover(
     state: &mut SessionRuntimeState,
     loop_state: &mut PumpLoopState,
@@ -882,19 +1220,25 @@ fn evaluate_turn_failover(
     outcome: &org_agent_runtime::TurnOutcome,
     errors: &[String],
 ) -> bool {
-    if matches!(outcome, org_agent_runtime::TurnOutcome::Completed) {
-        return false;
-    }
-    let Some(reason) = crate::router::classify_failover_error(errors, loop_state.rate_limited)
-    else {
+    let turn_cmds = ctx.bindings.accepted_commands(&ctx.employee_id).len();
+    let has_effects =
+        loop_state.had_external_effect || turn_cmds > loop_state.accepted_commands_baseline;
+    let Some(reason) = classify_turn_failover_reason(
+        &ctx.runtime_id,
+        outcome,
+        errors,
+        loop_state.turn_reply.as_deref(),
+        has_effects,
+        loop_state.rate_limited,
+    ) else {
+        if matches!(outcome, org_agent_runtime::TurnOutcome::Completed) {
+            loop_state.oauth_refresh_attempted = false;
+        }
         return false;
     };
     let Some(conn_id) = ctx.connection_id.as_ref() else {
         return false;
     };
-    let turn_cmds = ctx.bindings.accepted_commands(&ctx.employee_id).len();
-    let has_effects =
-        loop_state.had_external_effect || turn_cmds > loop_state.accepted_commands_baseline;
     if has_effects {
         state.state = SessionState::RecoveryRequired;
         state.recovery_required = true;
@@ -906,14 +1250,25 @@ fn evaluate_turn_failover(
     if !tried.contains(conn_id) {
         tried.push(conn_id.clone());
     }
+    let mut objective = loop_state.current_objective.clone();
+    if !loop_state.pending_turns.is_empty() {
+        let queued = std::mem::take(&mut loop_state.pending_turns).join("\n\n");
+        if objective.is_empty() {
+            objective = queued;
+        } else {
+            objective = format!("{objective}\n\n{queued}");
+        }
+    }
     loop_state.failover_pending = Some(FailoverRequest {
         employee_id: ctx.employee_id.clone(),
         failed_run_id: ctx.run_id.clone(),
         failed_connection_id: conn_id.clone(),
-        objective: loop_state.current_objective.clone(),
+        objective,
         workspace: ctx.workspace.clone(),
         task_ref: ctx.task_ref.clone(),
         tried_connections: tried,
+        oauth_refresh_attempted: loop_state.oauth_refresh_attempted,
+        oauth_token_fp: ctx.oauth_token_fp.clone(),
         reason,
         rate_limit_resets_at: loop_state.rate_limit_resets_at.clone(),
     });
@@ -926,6 +1281,9 @@ fn persist_turn_update(
     mutate: impl FnOnce(&mut crate::recovery::ActiveTurnRecord),
 ) {
     let _ = ctx.store.update_active_turn(&ctx.employee_id, |persisted| {
+        if persisted.run_id != ctx.run_id {
+            return;
+        }
         mutate(persisted);
         persisted.updated_at = rfc3339_now();
     });
@@ -936,11 +1294,15 @@ fn handle_approval_request(
     req: &ApprovalRequest,
     active_tokens: &[&str],
 ) -> Option<Control> {
-    match decide_escalation_with_tools(
+    let writable_roots = state
+        .sandbox_enabled
+        .then_some(state.writable_roots.as_slice());
+    match decide_escalation_with_roots(
         req,
         &state.policy,
         state.preset,
         state.allowed_tools.as_deref(),
+        writable_roots,
     ) {
         EscalationDisposition::AllowByPolicy => Some(Control::Answer {
             request_id: req.id.clone(),
@@ -1105,4 +1467,259 @@ pub(crate) fn finalize_child(
         }
     });
     cleanup_verified
+}
+
+#[cfg(test)]
+mod pump_tests {
+    use super::*;
+
+    fn test_pump_ctx(
+        dir: &std::path::Path,
+        connection_id: Option<String>,
+        oauth_expires_at_ms: Option<u64>,
+    ) -> PumpContext {
+        let state = Arc::new(Mutex::new(SessionRuntimeState {
+            employee_id: "emp-1".into(),
+            office_id: "office-1".into(),
+            state: SessionState::Running,
+            run_id: Some("run-1".into()),
+            session_id: Some("sess-1".into()),
+            runtime_id: Some("claude".into()),
+            runtime_session_id: None,
+            private_home: dir.display().to_string(),
+            permission_preset: "autonomous_sandboxed".into(),
+            sandbox_enabled: true,
+            spec_hash: "h".into(),
+            watchdog: StallWatchdog::new(Duration::from_secs(60), Instant::now()),
+            recovery_required: false,
+            last_reply: None,
+            last_error: None,
+            backgrounds: BackgroundRegistry::default(),
+            pending_approvals: Vec::new(),
+            policy: PermissionPolicy {
+                version: 1,
+                allow: Vec::new(),
+                deny: Vec::new(),
+            },
+            preset: PermissionPreset::AutonomousSandboxed,
+            allowed_tools: None,
+            writable_roots: Vec::new(),
+            suspended_on_asks: Vec::new(),
+            waiting_for_member_id: None,
+            waiting_for_name: None,
+            suspended_since: None,
+            pending_wake_count: 0,
+            pending_wake_reason: None,
+        }));
+        PumpContext {
+            employee_id: "emp-1".into(),
+            run_id: "run-1".into(),
+            runtime_id: "claude".into(),
+            supports_mid_turn: false,
+            connection_id,
+            active_permit: Arc::new(Mutex::new(None)),
+            workspace: None,
+            task_ref: None,
+            tried_connections: Vec::new(),
+            oauth_refresh_attempted: false,
+            oauth_expires_at_ms,
+            oauth_token_fp: Some("deadbeefcafebabe".into()),
+            store: SessionStore::new(dir, "office-1"),
+            bindings: RunBindingRegistry::new(),
+            state,
+            stop_plan: org_agent_runtime::StopPlan { steps: Vec::new() },
+            cleanup_paths: Vec::new(),
+            binding_file: dir.join("binding"),
+            hooks: PumpHooks {
+                has_open_required_asks: None,
+                on_turn_ended: None,
+                on_suspended: None,
+                on_usage: None,
+                on_permit_acquire: None,
+                on_permit_renew: None,
+                on_permit_release: None,
+                on_permit_release_pending: None,
+                on_rate_limit: None,
+                on_failover: None,
+                stage_mid_turn_wakes: None,
+                on_mid_turn_delivered: None,
+                is_bwrap_topology_stale: None,
+            },
+        }
+    }
+
+    #[test]
+    fn finalize_drained_stop_preserves_recycle_pending_turns_and_clears_on_user_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), Some(1));
+        let mut loop_state = PumpLoopState::new(false);
+
+        // Verify stop_preserve precedence across mixed Stop reason orderings:
+        // non-recycle Stop always wins over recycle Stop in either order.
+        assert_eq!(merge_stop_preserve(None, "warm_route_stale"), Some(true));
+        assert_eq!(
+            merge_stop_preserve(None, "oauth_token_expiring"),
+            Some(true)
+        );
+        assert_eq!(merge_stop_preserve(None, "pool_reroute"), Some(true));
+        assert_eq!(
+            merge_stop_preserve(Some(true), "user_stop"),
+            Some(false),
+            "non-recycle Stop after recycle Stop must win"
+        );
+        assert_eq!(
+            merge_stop_preserve(Some(false), "warm_route_stale"),
+            Some(false),
+            "recycle Stop after non-recycle Stop must not override"
+        );
+
+        // Simulate recycle Stop arriving before SendTurn in the same drain pass.
+        loop_state.pending_turns.push("queued-wake".into());
+        finalize_drained_stop(
+            merge_stop_preserve(None, "warm_route_stale"),
+            &ctx,
+            &mut loop_state,
+        );
+        assert!(loop_state.pending_turns.is_empty());
+        let req = loop_state
+            .failover_pending
+            .as_ref()
+            .expect("recycle stop must preserve pending_turns into failover_pending");
+        assert_eq!(req.reason, "warm_route_stale");
+        assert_eq!(req.objective, "queued-wake");
+        assert_eq!(req.oauth_token_fp.as_deref(), Some("deadbeefcafebabe"));
+
+        // Non-recycle Stop (e.g. user stop / shutdown) clears failover_pending.
+        loop_state.pending_turns.push("discard-on-user-stop".into());
+        finalize_drained_stop(
+            merge_stop_preserve(Some(true), "user_stop"),
+            &ctx,
+            &mut loop_state,
+        );
+        assert!(loop_state.failover_pending.is_none());
+
+        // Turn 1 (`turns_dispatched == 0`) with expiring OAuth MUST remain Ready (prevents
+        // unbounded cold-start loop when refresh fails or token doesn't rotate in 5m lead window).
+        let legacy_ctx = test_pump_ctx(dir.path(), None, Some(1));
+        assert!(matches!(
+            ensure_permit_for_turn(&legacy_ctx, &mut loop_state),
+            PermitCheck::Ready
+        ));
+        assert!(matches!(
+            ensure_permit_for_turn(&ctx, &mut loop_state),
+            PermitCheck::Ready
+        ));
+
+        // Warm reuse (Turn 2+, `turns_dispatched > 0`) triggers StaleWarm on expiring OAuth for
+        // BOTH connected and legacy (`connection_id: None`) sessions.
+        loop_state.turns_dispatched = 1;
+        assert!(matches!(
+            ensure_permit_for_turn(&legacy_ctx, &mut loop_state),
+            PermitCheck::StaleWarm
+        ));
+        assert!(matches!(
+            ensure_permit_for_turn(&ctx, &mut loop_state),
+            PermitCheck::StaleWarm
+        ));
+    }
+
+    #[test]
+    fn evaluate_turn_failover_coalesces_queued_pending_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), None);
+        let mut loop_state = PumpLoopState::new(false);
+        loop_state.current_objective = "turn-1".into();
+        loop_state.pending_turns.push("turn-2".into());
+        loop_state.pending_turns.push("turn-3".into());
+        loop_state.turn_reply = Some("API Error: 401 OAuth token has expired".into());
+
+        let mut st = ctx.state.lock().unwrap();
+        let blocked = evaluate_turn_failover(
+            &mut st,
+            &mut loop_state,
+            &ctx,
+            &org_agent_runtime::TurnOutcome::Completed,
+            &[],
+        );
+        assert!(!blocked);
+        assert!(loop_state.stop_requested);
+        assert!(loop_state.pending_turns.is_empty());
+        let req = loop_state
+            .failover_pending
+            .as_ref()
+            .expect("401 failover must produce FailoverRequest");
+        assert_eq!(req.reason, "auth_expired");
+        assert_eq!(req.objective, "turn-1\n\nturn-2\n\nturn-3");
+        assert_eq!(req.oauth_token_fp.as_deref(), Some("deadbeefcafebabe"));
+    }
+
+    #[test]
+    fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
+        let dir = tempfile::tempdir().unwrap();
+        let canon = dir.path().canonicalize().unwrap();
+        let ws = canon.join("ws");
+        let outside = canon.join("outside");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let ws_spec = org_agent_runtime::SpecPath::try_from(ws.to_str().unwrap()).unwrap();
+        let preset_cfg = crate::preset::build_session_policy(
+            PermissionPreset::AutonomousSandboxed,
+            true,
+            &ws_spec,
+            None,
+            &[],
+            1,
+        )
+        .unwrap();
+
+        let ctx = test_pump_ctx(&canon, None, None);
+        let mut st = ctx.state.lock().unwrap();
+        st.policy = preset_cfg.policy;
+        st.preset = preset_cfg.preset;
+        st.allowed_tools = preset_cfg.allowed_tools;
+        st.writable_roots = vec![ws_spec];
+        st.sandbox_enabled = true;
+
+        let make_req = |p: std::path::PathBuf| {
+            let mut req = ApprovalRequest::new(
+                ApprovalId::new("a-pump"),
+                org_agent_runtime::ApprovalKind::FileChange,
+                org_agent_runtime::Escalation::None,
+                "Write",
+                serde_json::json!({ "file_path": p.to_str().unwrap(), "content": "ok" }),
+            );
+            req.capability = Some(org_agent_runtime::ToolCapability::Edit);
+            req
+        };
+
+        // Sandboxed: write inside writable_roots is allowed; write outside is auto-denied.
+        let inside_ctrl = handle_approval_request(&mut st, &make_req(ws.join("a.rs")), &[]);
+        assert!(matches!(
+            inside_ctrl,
+            Some(Control::Answer {
+                decision: Decision::AllowOnce,
+                ..
+            })
+        ));
+        let outside_ctrl = handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+        assert!(matches!(
+            outside_ctrl,
+            Some(Control::Answer {
+                decision: Decision::Deny { .. },
+                ..
+            })
+        ));
+
+        // Unsandboxed: writable_roots check is skipped so preset allow rule governs.
+        st.sandbox_enabled = false;
+        let unsandboxed_ctrl =
+            handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+        assert!(matches!(
+            unsandboxed_ctrl,
+            Some(Control::Answer {
+                decision: Decision::AllowOnce,
+                ..
+            })
+        ));
+    }
 }

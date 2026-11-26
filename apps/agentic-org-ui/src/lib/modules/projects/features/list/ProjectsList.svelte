@@ -261,7 +261,7 @@
 							<span class="proj-kpi-label">Active projects</span>
 							<span
 								class={[
-									'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold',
+									'inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-semibold',
 									summary.attentionProjects > 0 ? 't-amber' : 't-green'
 								]}
 							>
@@ -281,7 +281,7 @@
 							<span class="proj-kpi-label">Open tasks</span>
 							<span
 								class={[
-									'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold tabular-nums',
+									'inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-semibold tabular-nums',
 									summary.blockedTasks > 0 ? 't-amber' : 't-green'
 								]}
 							>
@@ -297,7 +297,7 @@
 							<span class="proj-kpi-label">Open bugs</span>
 							<span
 								class={[
-									'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold tabular-nums',
+									'inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-semibold tabular-nums',
 									summary.criticalBugs > 0 ? 't-red' : summary.openBugs > 0 ? 't-amber' : 't-green'
 								]}
 							>
@@ -363,7 +363,7 @@
 
 				<div class="exec-card @container overflow-hidden">
 					<div
-						class="hidden border-b border-line px-4 py-2.5 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase min-[640px]:px-6 {amounts
+						class="hidden border-b border-line px-4 py-2.5 text-xs/5 font-semibold tracking-wider text-fg-muted uppercase min-[640px]:px-6 {amounts
 							? withMoney
 							: withoutMoney}"
 						aria-hidden="true"
@@ -396,12 +396,12 @@
 											><span class="absolute inset-0" aria-hidden="true"></span>{r.name}</a
 										>
 										<span
-											class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[11px]/4 text-fg-muted ring-1 ring-line ring-inset"
+											class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs/4 text-fg-muted ring-1 ring-line ring-inset"
 											>{projectRef(r)}</span
 										>
 										<span
 											class={[
-												'inline-flex max-w-full shrink-0 items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold whitespace-nowrap',
+												'inline-flex max-w-full shrink-0 items-center rounded-full px-2 py-0.5 text-xs/4 font-semibold whitespace-nowrap',
 												healthPillClass(tone)
 											]}>{projectHealthLabel(tone)}</span
 										>
@@ -450,7 +450,7 @@
 											></span>
 										</div>
 										{#if total > 0}
-											<span class="shrink-0 text-[11px]/4 font-semibold text-fg-muted tabular-nums"
+											<span class="shrink-0 text-xs/4 font-semibold text-fg-muted tabular-nums"
 												>{pct}%</span
 											>
 										{/if}

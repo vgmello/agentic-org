@@ -323,8 +323,14 @@ impl SqliteEngine {
             return Err(EngineError::new("the projection's path must be absolute"));
         }
         let msg_path = messaging::messaging_db_path(path);
-        // What an interrupted `replace` left behind.
+        let protected_office_new = msg_path
+            .parent()
+            .expect("messaging.db sits inside protected/")
+            .join("office.db.new");
+        // What an interrupted `replace` left behind (both current `protected/office.db.new`
+        // and legacy sibling `office.db.new`).
         remove_database(&beside(path, ".new"))?;
+        remove_database(&protected_office_new)?;
         remove_database(&beside(&msg_path, ".new"))?;
         let (writer, office_recreated) = match Self::existing(path, &schema)? {
             Some(writer) => (writer, false),
@@ -498,7 +504,7 @@ impl SqliteEngine {
         }
     }
 
-    /// Builds both replacement projections (`office.db.new` and `protected/messaging.db.new`)
+    /// Builds both replacement projections (`protected/office.db.new` and `protected/messaging.db.new`)
     /// and leaves them closed and synced.
     fn build_replacement(
         &self,
@@ -506,6 +512,9 @@ impl SqliteEngine {
         new_msg_path: &Path,
         build: &mut dyn FnMut(&mut SqliteTx) -> Result<Cursor, StoreError>,
     ) -> Result<(), StoreError> {
+        // Ensure `protected/` exists with `0700` BEFORE opening `protected/office.db.new`
+        // so recovery still works even if `protected/` was deleted while open (`TASK-166`).
+        messaging::ensure_protected_dir(new_msg_path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
         let db = connect(new_path, flags)?;
         db.execute_batch(
@@ -559,22 +568,28 @@ impl SqliteEngine {
             return Err(refused("closing the old messaging projection", error));
         }
         let swap_one = |src: &Path, dst: &Path| -> std::io::Result<()> {
-            let sync_folder = || match dst.parent() {
+            let sync_folder = |dir: Option<&Path>| match dir {
                 Some(folder) => crate::private_fs::sync_dir(folder),
                 None => Ok(()),
             };
             remove_if_present(&beside(dst, "-wal"))?;
             remove_if_present(&beside(dst, "-shm"))?;
-            sync_folder()?;
+            sync_folder(dst.parent())?;
             fs::rename(src, dst)?;
-            sync_folder()
+            sync_folder(dst.parent())?;
+            if src.parent() != dst.parent() {
+                sync_folder(src.parent())?;
+            }
+            Ok(())
         };
         let swapped = swap_one(new_path, &self.path)
             .and_then(|()| swap_one(new_msg_path, &self.msg_path))
             .map_err(|error| refused("installing the replacement", error))
             .and_then(|()| messaging::protect_messaging_file(&self.msg_path));
         let new_office = connect_writer(&self.path)?;
+        let _ = receipts::cursor(&new_office)?;
         let new_msg = connect_writer(&self.msg_path)?;
+        let _ = messaging::read_messaging_cursor(&new_msg)?;
         *writer = Some((new_office, new_msg));
         drop(checkpointer);
         swapped
@@ -700,7 +715,14 @@ impl Engine for SqliteEngine {
         &self,
         build: &mut dyn FnMut(&mut SqliteTx) -> Result<Cursor, StoreError>,
     ) -> Result<(), StoreError> {
-        let new_path = beside(&self.path, ".new");
+        // Stage `office.db.new` (and its DELETE-mode rollback journal) inside the `0700`
+        // `protected/` directory so Linux `bwrap` directory masks always isolate rebuild files
+        // while keeping `fs::rename` atomic on the same filesystem (`TASK-166`).
+        let new_path = self
+            .msg_path
+            .parent()
+            .expect("messaging.db sits inside protected/")
+            .join("office.db.new");
         let new_msg_path = beside(&self.msg_path, ".new");
         remove_database(&new_path)?;
         remove_database(&new_msg_path)?;

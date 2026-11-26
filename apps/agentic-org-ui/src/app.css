@@ -129,6 +129,7 @@ html {
 
 @theme inline {
 	--font-sans: 'Inter Variable', sans-serif;
+	--font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 	/* Look tokens as colour utilities: bg-surface-raised, text-fg-muted, outline-focus, bg-danger-emphasis/10 … */
 	--color-surface: var(--surface);
 	--color-surface-sunken: var(--surface-sunken);

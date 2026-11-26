@@ -32,7 +32,7 @@ fn total_and_web_bounds_are_independent_and_release_on_drop() {
     for local in [true, false] {
         let registry: Registry = Arc::default();
         let mut slots = Vec::new();
-        for n in 0..7 {
+        for n in 0..MAX_WEB_CHANNELS {
             slots.push(
                 register(
                     &registry,
@@ -48,14 +48,24 @@ fn total_and_web_bounds_are_independent_and_release_on_drop() {
             );
         }
         if !local {
-            assert!(register(&registry, "eighth-web", ChannelKind::Web, &socket).is_err());
+            assert!(register(&registry, "over-web", ChannelKind::Web, &socket).is_err());
         }
-        slots.push(register(&registry, "eighth-local", ChannelKind::Local, &socket).unwrap());
-        assert!(register(&registry, "ninth-local", ChannelKind::Local, &socket).is_err());
-        assert!(register(&registry, "ninth-web", ChannelKind::Web, &socket).is_err());
+        for n in MAX_WEB_CHANNELS..MAX_CHANNELS {
+            slots.push(
+                register(
+                    &registry,
+                    &format!("tail-local-{n}"),
+                    ChannelKind::Local,
+                    &socket,
+                )
+                .unwrap(),
+            );
+        }
+        assert!(register(&registry, "over-local", ChannelKind::Local, &socket).is_err());
+        assert!(register(&registry, "over-web-total", ChannelKind::Web, &socket).is_err());
         slots.remove(0);
         slots.push(register(&registry, "replacement", ChannelKind::Web, &socket).unwrap());
-        assert_eq!(registry.lock().unwrap().len(), 8);
+        assert_eq!(registry.lock().unwrap().len(), MAX_CHANNELS);
         drop(slots);
         assert!(registry.lock().unwrap().is_empty());
     }
@@ -124,6 +134,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             run_binding_verify: None,
             run_binding_active: None,
             record_agent_command: None,
+            waiting_messages_counter: None,
             on_agent_stop: None,
             hr_message_guard: None,
             submit: Box::new(|_, _, _| panic!("host touched Office submit")),
@@ -797,7 +808,7 @@ fn ordinary_capacity_refusal_keeps_existing_rpc_and_transfer_manager_live() {
     let (mut channels, events, _, _, _office_root) = manager();
     let mut events = BufReader::new(events);
     let mut held = Vec::new();
-    for n in 0..8 {
+    for n in 0..MAX_CHANNELS {
         let (stream, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
             .unwrap();
@@ -832,7 +843,7 @@ fn ordinary_capacity_refusal_keeps_existing_rpc_and_transfer_manager_live() {
     .unwrap();
     let response: Value = frame::read_message(&mut live).unwrap().unwrap();
     assert_eq!(response["result"]["instance_id"], "verified-instance");
-    assert_eq!(channels.registry.lock().unwrap().len(), 8);
+    assert_eq!(channels.registry.lock().unwrap().len(), MAX_CHANNELS);
 }
 
 #[test]
@@ -917,7 +928,7 @@ fn actual_transfer_capacity_negative_receipt_preserves_fifo_revocation_and_exist
     .unwrap();
     let mut events = BufReader::new(events);
     let mut held = Vec::new();
-    for n in 0..9 {
+    for n in 0..=MAX_CHANNELS {
         let (source, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(std::time::Duration::from_secs(2)))
             .unwrap();
@@ -931,7 +942,7 @@ fn actual_transfer_capacity_negative_receipt_preserves_fifo_revocation_and_exist
         let event = org_office_launch::read_server_event(&mut events)
             .unwrap()
             .unwrap();
-        if n < 8 {
+        if n < MAX_CHANNELS {
             assert_eq!(
                 event,
                 RendezvousEvent::FdsReceived {

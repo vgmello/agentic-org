@@ -12,7 +12,6 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Write;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -233,30 +232,11 @@ pub(crate) fn cleanup_stale_hq_snapshot_exports(office: &Office) {
 }
 
 fn create_private_dir(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(path)
-    }
-    #[cfg(not(unix))]
-    {
-        fs::create_dir_all(path)
-    }
+    org_platform::fs::create_owner_only_dir_all(path)
 }
 
 fn write_private_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut opts = fs::OpenOptions::new();
-    opts.create(true).truncate(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut file = opts.open(path)?;
-    file.write_all(bytes)
+    org_platform::fs::write_owner_only_file(path, bytes)
 }
 
 fn page_file_path(dir: &Path, page_index: u32) -> PathBuf {
@@ -1290,7 +1270,6 @@ mod tests {
         assert!(!path_b.exists());
     }
 
-    #[cfg(unix)]
     #[test]
     fn staged_import_guard_fails_closed_when_abandoned_cleanup_fails() {
         use std::os::unix::fs::PermissionsExt as _;

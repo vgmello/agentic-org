@@ -111,6 +111,7 @@ fn codex_script() -> Script {
         br#"{"jsonrpc":"2.0","method":"serverRequest/resolved","params":{"requestId":"apr-7"}}"#
             .to_vec();
     let turn_done = br#"{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn_1","status":"completed"}}}"#.to_vec();
+    let steer_ack = br#"{"jsonrpc":"2.0","id":4,"result":{"turnId":"turn_1"}}"#.to_vec();
 
     let mut approval = ScriptApproval::new(approval_req, ApprovalId::new("apr-7"));
     approval.cancel = Some(approval_cancel);
@@ -120,6 +121,7 @@ fn codex_script() -> Script {
         turn_end: vec![turn_done],
         stderr: vec![b"codex diagnostic".to_vec()],
         approval: Some(approval),
+        mid_turn_step: Some(steer_ack),
     }
 }
 
@@ -129,7 +131,11 @@ fn passes_org_agent_runtime_testkit_conformance_and_plan_checks() {
     let spec = sample_spec();
     let ctx = sample_ctx();
     let caps = runtime.capabilities();
-    assert!(caps.steer);
+    assert_eq!(
+        caps.mid_turn_delivery,
+        org_agent_runtime::MidTurnDelivery::NativeSteer
+    );
+    assert!(caps.supports_mid_turn_delivery());
     assert_eq!(caps.cost, CostBasis::None);
     let (plan, _) = runtime.plan_session(&spec, &ctx).expect("plan_session");
 
@@ -288,7 +294,7 @@ fn plan_pins_shell_env_policy_clears_mcp_and_enforces_paths_and_take_over() {
         .push(sp("/var/nested"));
     let mut non_private_tmp_ctx = sample_ctx();
     non_private_tmp_ctx.tmpdir = sp("/work/tmp-run-2");
-    if cfg!(target_os = "macos") {
+    if org_platform::fs::has_macos_private_root_aliases() {
         assert!(matches!(
             runtime.plan_session(&alias_spec, &ctx),
             Err(PlanError::InvalidSpec(_))
@@ -551,7 +557,6 @@ fn handshake_validates_sandbox_policy_resume_failure_and_empty_agents() {
         .control(
             Control::Send {
                 text: "hello".into(),
-                urgent: false,
             },
             now,
         )
@@ -635,7 +640,6 @@ fn turn_error_recovery_multistep_usage_escalations_unknown_server_req_and_rate_l
         .control(
             Control::Send {
                 text: "fail first".into(),
-                urgent: false,
             },
             now,
         )
@@ -663,7 +667,6 @@ fn turn_error_recovery_multistep_usage_escalations_unknown_server_req_and_rate_l
         .control(
             Control::Send {
                 text: "second turn".into(),
-                urgent: false,
             },
             now,
         )
@@ -762,7 +765,6 @@ fn turn_error_recovery_multistep_usage_escalations_unknown_server_req_and_rate_l
         .control(
             Control::Send {
                 text: "crash".into(),
-                urgent: false,
             },
             now,
         )
@@ -1315,4 +1317,136 @@ fn codex_capability_approvals_subagents_and_unknown_capability_guards() {
         runtime.plan_session(&bad_deny, &sample_ctx()),
         Err(PlanError::Unsupported(_))
     ));
+}
+
+#[test]
+fn task115_codex_native_steer_gates_active_turn_id_and_tracks_rpc_ack_or_error() {
+    let runtime = CodexRuntime::new();
+    let (_, mut session) = runtime.plan_session(&sample_spec(), &sample_ctx()).unwrap();
+    let now = Instant::now();
+
+    let _ = session.start(now);
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"codex","version":"0.172.0"}}}"#,
+        now,
+    );
+    let _ = session.on_line(&thread_ok_reply("thr_steer_1"), now);
+
+    // Idle DeliverMidTurn -> InvalidState.
+    assert_eq!(
+        session.control(
+            Control::DeliverMidTurn {
+                delivery_id: "d-idle".into(),
+                text: "msg".into(),
+            },
+            now
+        ),
+        Err(ControlError::InvalidState)
+    );
+
+    // Start turn; BEFORE `turn/started` arrives, active_turn_id is None -> NotReady (no write!).
+    let _ = session
+        .control(Control::Send { text: "go".into() }, now)
+        .unwrap();
+    assert_eq!(
+        session.control(
+            Control::DeliverMidTurn {
+                delivery_id: "d-early".into(),
+                text: "too early".into(),
+            },
+            now
+        ),
+        Err(ControlError::NotReady)
+    );
+
+    // After `turn/started`, DeliverMidTurn writes `turn/steer` with `expectedTurnId` and tracks req id.
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","method":"turn/started","params":{"turn":{"id":"turn_42"}}}"#,
+        now,
+    );
+    let out = session
+        .control(
+            Control::DeliverMidTurn {
+                delivery_id: "d-ok".into(),
+                text: "peer steer".into(),
+            },
+            now,
+        )
+        .unwrap();
+    let Output::Write(line) = &out[0] else {
+        panic!("expected turn/steer write")
+    };
+    let req: serde_json::Value = serde_json::from_slice(line.as_bytes()).unwrap();
+    assert_eq!(req["method"], "turn/steer");
+    assert_eq!(req["params"]["expectedTurnId"], "turn_42");
+    let rpc_id = req["id"].as_u64().unwrap();
+
+    // RPC success -> MidTurnDelivered.
+    let ack = session.on_line(
+        format!(r#"{{"jsonrpc":"2.0","id":{rpc_id},"result":{{"turnId":"turn_42"}}}}"#).as_bytes(),
+        now,
+    );
+    assert_eq!(
+        ack,
+        vec![Output::Event(SessionEvent::MidTurnDelivered {
+            delivery_id: "d-ok".into(),
+        })]
+    );
+
+    // Second steer RPC error -> MidTurnDeliveryFailed.
+    let out2 = session
+        .control(
+            Control::DeliverMidTurn {
+                delivery_id: "d-err".into(),
+                text: "stale".into(),
+            },
+            now,
+        )
+        .unwrap();
+    let Output::Write(line2) = &out2[0] else {
+        panic!("expected turn/steer write")
+    };
+    let rpc_id2 = serde_json::from_slice::<serde_json::Value>(line2.as_bytes()).unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let err_out = session.on_line(
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{rpc_id2},"error":{{"code":-32000,"message":"expectedTurnId mismatch"}}}}"#
+        )
+        .as_bytes(),
+        now,
+    );
+    assert_eq!(
+        err_out,
+        vec![Output::Event(SessionEvent::MidTurnDeliveryFailed {
+            delivery_id: "d-err".into(),
+            reason: "expectedTurnId mismatch".into(),
+        })]
+    );
+
+    // Third steer still unacked when turn/completed arrives -> MidTurnDeliveryFailed BEFORE TurnEnded.
+    let _ = session
+        .control(
+            Control::DeliverMidTurn {
+                delivery_id: "d-race".into(),
+                text: "race".into(),
+            },
+            now,
+        )
+        .unwrap();
+    let end = session.on_line(
+        br#"{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn_42","status":"completed"}}}"#,
+        now,
+    );
+    let fail_idx = end.iter().position(|o| {
+        matches!(
+            o,
+            Output::Event(SessionEvent::MidTurnDeliveryFailed { delivery_id, .. })
+                if delivery_id == "d-race"
+        )
+    });
+    let end_idx = end
+        .iter()
+        .position(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. })));
+    assert!(matches!((fail_idx, end_idx), (Some(f), Some(e)) if f < e));
 }

@@ -143,11 +143,8 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 		.click();
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
 	await expect(page.locator('.cozy-room')).toBeHidden();
-	await expect(page.locator('.exec-cta-glass').first()).toHaveCSS(
-		'background-color',
-		'rgb(83, 83, 83)'
-	);
-	await expect(page.locator('.exec-cta-glass').first()).toHaveCSS('border-radius', '5px');
+	await expect(page.locator('.exec-cta').first()).toHaveCSS('background-color', 'rgb(83, 83, 83)');
+	await expect(page.locator('.exec-cta').first()).toHaveCSS('border-radius', '5px');
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/prod-home-graphite.png` });
 	}
@@ -505,8 +502,10 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	await tessPanel.getByRole('button', { name: 'Close Tess panel' }).click();
 	await expect(tessPanel).toBeHidden();
 
-	// Clicking "New task" on Home opens the task creation dialog on /work and strips ?new=1
-	await page.getByRole('link', { name: 'New task' }).click();
+	// Home overview does not show a "New task" CTA; deep-linking /work?new=1 opens the task dialog and strips ?new=1
+	await expect(page.getByRole('link', { name: 'New task' })).toHaveCount(0);
+	await page.goto('/work?new=1');
+	await page.locator('html[data-hydrated="true"]').waitFor();
 	await expect(page).toHaveURL(/\/work$/);
 	const newTaskDialog = page.getByRole('dialog', { name: 'New task' });
 	await expect(newTaskDialog).toBeVisible();

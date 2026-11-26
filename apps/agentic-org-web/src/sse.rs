@@ -4,6 +4,7 @@
 use std::{
     collections::BTreeSet,
     convert::Infallible,
+    future::Future,
     pin::Pin,
     task::{Context, Poll},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -35,8 +36,12 @@ const HUB_CAPACITY: usize = 256;
 const STREAM_QUEUE: usize = 32;
 /// Periodic keepalive heartbeat interval for open SSE streams.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
-/// Interval for polling office live events over the authenticated host channel.
-const OFFICE_POLL_INTERVAL: Duration = Duration::from_millis(150);
+/// Server-side condvar wait window for push-woken `chat.events_poll` streams (`TASK-140`).
+const OFFICE_EVENT_WAIT_MS: u64 = 10_000;
+/// RPC deadline for push-woken `chat.events_poll` (exceeds `OFFICE_EVENT_WAIT_MS` with headroom).
+const OFFICE_EVENT_RPC_TIMEOUT: Duration = Duration::from_secs(15);
+/// Backoff after a transient office channel error before re-subscribing.
+const OFFICE_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 /// Poll slice used to notice closed client streams promptly without waiting a full heartbeat.
 const CLOSE_CHECK_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -464,6 +469,24 @@ fn is_permanent_poll_denial(err: &OfficeFailure) -> bool {
     }
 }
 
+async fn race_until_closed<T>(
+    tx: &mpsc::Sender<StreamInput>,
+    fut: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    let mut closed = std::pin::pin!(tx.closed());
+    let mut fut = std::pin::pin!(fut);
+    std::future::poll_fn(|cx| {
+        if closed.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(None);
+        }
+        if let Poll::Ready(out) = fut.as_mut().poll(cx) {
+            return Poll::Ready(Some(out));
+        }
+        Poll::Pending
+    })
+    .await
+}
+
 async fn poll_office_loop(
     bridge: OfficeBridge,
     target: OfficePollTarget,
@@ -477,22 +500,40 @@ async fn poll_office_loop(
         if tx.is_closed() {
             break;
         }
-        if !first {
-            tokio::time::sleep(OFFICE_POLL_INTERVAL).await;
-        }
+        // First request bootstraps current cursors immediately; subsequent requests block on
+        // the office's `FeedWake` condvar and wake within <1 ms on any committed change (`TASK-140`).
+        let wait_ms = (!first).then_some(OFFICE_EVENT_WAIT_MS);
         first = false;
         let params = ChatEventsPollParams {
             after_org_seq: after_org,
             after_live_seq: after_live,
             after_presence_seq: after_presence,
+            wait_ms,
         };
-        let res = match bridge
-            .call_typed::<ChatEventsPoll>(&target.auth, &target.office_id, &params, true)
-            .await
-        {
+        let Some(call_res) = race_until_closed(
+            &tx,
+            bridge.call_typed_with_timeout::<ChatEventsPoll>(
+                &target.auth,
+                &target.office_id,
+                &params,
+                true,
+                OFFICE_EVENT_RPC_TIMEOUT,
+            ),
+        )
+        .await
+        else {
+            break;
+        };
+        let res = match call_res {
             Ok(res) => res,
             Err(err) => {
                 if is_permanent_poll_denial(&err) {
+                    break;
+                }
+                if race_until_closed(&tx, tokio::time::sleep(OFFICE_RETRY_BACKOFF))
+                    .await
+                    .is_none()
+                {
                     break;
                 }
                 continue;

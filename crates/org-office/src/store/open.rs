@@ -648,6 +648,9 @@ fn companion_store_exclusions(office_id: &Id) -> Vec<org_store::DurablePath> {
         format!("local/offices/{office_id}/local-execution"),
         format!("local/offices/{office_id}/invitations"),
         format!("local/offices/{office_id}/tls"),
+        format!("local/offices/{office_id}/security/git-https-helper"),
+        format!("local/offices/{office_id}/security/git-ssh-key"),
+        format!("local/offices/{office_id}/security/git-known-hosts"),
     ]
     .into_iter()
     .map(|p| org_store::DurablePath::parse(&p).expect("valid companion store prefix"))

@@ -411,7 +411,11 @@ fn path_is_same_or_under_for_os(path: &str, base: &str, is_macos: bool) -> bool 
 }
 
 fn path_is_same_or_under(path: &str, base: &str) -> bool {
-    path_is_same_or_under_for_os(path, base, cfg!(target_os = "macos"))
+    path_is_same_or_under_for_os(
+        path,
+        base,
+        org_platform::fs::has_macos_private_root_aliases(),
+    )
 }
 
 fn paths_overlap_via_alias_only_for_os(path: &str, base: &str, is_macos: bool) -> bool {
@@ -426,7 +430,11 @@ fn paths_overlap_via_alias_only_for_os(path: &str, base: &str, is_macos: bool) -
 }
 
 fn paths_overlap_via_alias_only(path: &str, base: &str) -> bool {
-    paths_overlap_via_alias_only_for_os(path, base, cfg!(target_os = "macos"))
+    paths_overlap_via_alias_only_for_os(
+        path,
+        base,
+        org_platform::fs::has_macos_private_root_aliases(),
+    )
 }
 
 fn access_rank(level: &str) -> u8 {

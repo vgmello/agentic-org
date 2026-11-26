@@ -225,6 +225,24 @@ pub enum SyncFrame {
         reason: Option<String>,
     },
 
+    // --- HQ -> Satellite proxied session-control RPCs (`TASK-143` AC #3) ---
+    /// Authenticated session-control RPC forwarded by HQ to the satellite office where the target
+    /// agent is placed (`member.session_inspect|approval|stop|start|transcript|clear_stall|grants`).
+    SessionRpcRequest {
+        request_id: String,
+        caller_member_id: String,
+        #[serde(default)]
+        caller_is_owner: bool,
+        method: String,
+        params_json: String,
+    },
+    /// Reply from the placed satellite office for a [`SyncFrame::SessionRpcRequest`], encoding
+    /// the serialized `org_proto::Outcome` JSON.
+    SessionRpcResponse {
+        request_id: String,
+        outcome_json: String,
+    },
+
     // --- Keepalive / explicit refusal ---
     Ping {
         nonce: u64,
@@ -492,5 +510,26 @@ mod tests {
             }
         }
         assert_eq!(decoded, vec![f1, f2]);
+    }
+
+    #[test]
+    fn round_trips_session_rpc_frames() {
+        let req = SyncFrame::SessionRpcRequest {
+            request_id: "srpc-42".into(),
+            caller_member_id: "0190a5d2-0000-7000-8000-000000000001".into(),
+            caller_is_owner: true,
+            method: "member.session_clear_stall".into(),
+            params_json: r#"{"employee_id":"0190a5d2-0000-7000-8000-000000000002"}"#.into(),
+        };
+        let resp = SyncFrame::SessionRpcResponse {
+            request_id: "srpc-42".into(),
+            outcome_json: r#"{"result":{"state":"idle"}}"#.into(),
+        };
+        let mut buf = Vec::new();
+        write_sync_frame(&mut buf, &req).unwrap();
+        write_sync_frame(&mut buf, &resp).unwrap();
+        let mut cursor = Cursor::new(&buf);
+        assert_eq!(read_sync_frame(&mut cursor).unwrap().unwrap(), req);
+        assert_eq!(read_sync_frame(&mut cursor).unwrap().unwrap(), resp);
     }
 }

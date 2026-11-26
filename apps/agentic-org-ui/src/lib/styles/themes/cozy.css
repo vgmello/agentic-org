@@ -659,8 +659,6 @@ html[data-ui-theme='cozy'] .work-items {
 
 html[data-ui-theme='cozy'] .work-ref {
 	color: var(--fg-secondary);
-	font-size: 0.875rem;
-	font-weight: 500;
 }
 
 html[data-ui-theme='cozy'] .work-group-title {

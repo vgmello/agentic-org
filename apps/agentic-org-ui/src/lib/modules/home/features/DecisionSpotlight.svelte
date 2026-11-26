@@ -319,7 +319,7 @@
 				{/if}
 				<div class="min-w-0 flex-1">
 					{#if currentDecision.recRiskLabel}
-						<p class="rec-lbl mb-0.5 text-[11px] font-semibold tracking-wider uppercase">
+						<p class="rec-lbl mb-0.5 text-xs font-semibold tracking-wider uppercase">
 							Recommendation · {currentDecision.recRiskLabel}
 						</p>
 					{/if}
@@ -355,7 +355,7 @@
 							<div class="truncate text-xs font-semibold text-[var(--exec-ink)]">
 								{cell.label}
 							</div>
-							<div class="truncate text-[11px] text-[var(--exec-muted)]">
+							<div class="truncate text-xs text-[var(--exec-muted)]">
 								{cell.sub}
 							</div>
 						</div>
@@ -528,9 +528,7 @@
 				class="exec-well next-bar flex min-h-9 items-center justify-between gap-2 px-3 py-2 text-left text-xs"
 			>
 				<span class="flex min-w-0 items-center gap-2">
-					<span
-						class="shrink-0 text-[10px] font-bold tracking-wider text-[var(--exec-dim)] uppercase"
-					>
+					<span class="shrink-0 text-xs font-bold tracking-wider text-[var(--exec-dim)] uppercase">
 						Up next
 					</span>
 					<span class="truncate font-medium text-[var(--exec-body)]">

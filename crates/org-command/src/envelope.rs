@@ -43,6 +43,9 @@ pub(crate) fn success_meta(answer: &Answer, dry_run: bool, key: Option<&str>) ->
     if let Some(cursor) = &answer.next_cursor {
         meta.push(("next_cursor".to_owned(), Node::text(cursor)));
     }
+    if let Some(count) = answer.waiting_messages.filter(|&n| n > 0) {
+        meta.push(("waiting_messages".to_owned(), Node::Number(count.into())));
+    }
     if dry_run {
         meta.push(("dry_run".to_owned(), Node::Bool(true)));
     }
@@ -110,6 +113,7 @@ pub fn envelope_schema() -> Value {
                     "ack": {"type": "string", "enum": [Ack::Committed.as_str(), Ack::Durable.as_str()]},
                     "revision": {"type": "integer", "minimum": 0},
                     "next_cursor": {"type": "string"},
+                    "waiting_messages": {"type": "integer", "minimum": 1},
                     "dry_run": {"type": "boolean"}
                 }
             },

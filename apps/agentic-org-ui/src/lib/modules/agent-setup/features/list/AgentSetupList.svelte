@@ -120,7 +120,7 @@
 					</span>
 					{#if healthSummary.setup > 0}
 						<span
-							class="t-amber inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold"
+							class="t-amber inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-semibold"
 							>Action</span
 						>
 					{/if}
@@ -147,7 +147,7 @@
 		<!-- The columns follow the list's own width: Organization settings' side column narrows it from 960 px. -->
 		<div class="exec-card @container overflow-hidden">
 			<div
-				class="hidden grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(10rem,5fr)] gap-x-4 border-b border-line px-4 py-3 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase min-[640px]:grid min-[640px]:px-6 @4xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(0,4fr)_minmax(10rem,5fr)]"
+				class="hidden grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(10rem,5fr)] gap-x-4 border-b border-line px-4 py-3 text-xs/5 font-semibold tracking-wider text-fg-muted uppercase min-[640px]:grid min-[640px]:px-6 @4xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(0,4fr)_minmax(10rem,5fr)]"
 				aria-hidden="true"
 			>
 				<span>Agent</span>

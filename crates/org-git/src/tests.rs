@@ -128,6 +128,18 @@ fn symlink_tampering_on_cache_config_and_worktree_dot_git_is_refused() {
         false,
     )
     .unwrap();
+    // Directory planted at `worktrees/<admin>/config.worktree` is removed cleanly (not EISDIR).
+    let wt_cfg_dir = cache_dir
+        .join("worktrees")
+        .join(&created.admin_dir_name)
+        .join("config.worktree");
+    fs::create_dir_all(&wt_cfg_dir).unwrap();
+    fs::write(wt_cfg_dir.join("evil"), "x").unwrap();
+    crate::sanitize_worktree_links(&cache_dir, &created.admin_dir_name, &wt_dir).unwrap();
+    assert!(
+        !wt_cfg_dir.exists(),
+        "directory config.worktree must be removed"
+    );
     fs::remove_file(wt_dir.join(".git")).unwrap();
     symlink(&target, wt_dir.join(".git")).unwrap();
     assert!(matches!(

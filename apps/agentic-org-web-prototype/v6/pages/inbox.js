@@ -1,0 +1,283 @@
+import { CH, IN, KIND, M, P, TEAMS, WORK_DISCUSSIONS } from "../data.js";
+import { itemActionsV4 } from "./home.js";
+import { findWorkItem, fitTextarea, workCommentPrefix, workHref } from "./work.js";
+import { route } from "../shell/router.js";
+import { S } from "../state.js";
+import { av, displayCheckbox, esc, ic, kindWord, mlink, plink, plural, queueHeadline, recommendationCallout, showMenu, toast, unhandled } from "../ui.js";
+
+const INBOX_TABS = ["all", "approval", "decision"];
+const INBOX_MORE = ["question", "problem", "suggestion", "handled"];
+const inboxUrgent = (item) => Boolean(item.expires || item.assign);
+function matchesInboxQuery(item, query) {
+  if (!query) return true;
+  const fields = [item.what, item.why, item.rec, item.sub, item.task, M[item.from].name, P[item.proj].name, CH[P[item.proj].channel].name];
+  return fields.some((value) => value && value.toLowerCase().includes(query));
+}
+function matchesInboxKind(item, kind) {
+  if (kind === "handled") return Boolean(item.handled);
+  return !item.handled && (kind === "all" || item.kind === kind);
+}
+function inboxItems(kind = S.inboxKind) {
+  const query = S.inboxQuery.trim().toLowerCase();
+  const priorityFirst = S.inboxOrder === "priority";
+  return IN.filter((item) =>
+    matchesInboxKind(item, kind)
+    && (S.inboxProj === "all" || item.proj === S.inboxProj)
+    && (S.inboxTeam === "all" || TEAMS[S.inboxTeam].members.includes(item.from))
+    && (!S.inboxUrgent || inboxUrgent(item))
+    && matchesInboxQuery(item, query)
+  ).sort((a, b) => (priorityFirst ? Number(inboxUrgent(b)) - Number(inboxUrgent(a)) : 0)
+    || Number(b.group === "Today") - Number(a.group === "Today"));
+}
+function inboxTabLabel(key) {
+  return key === "all" ? "All" : key === "handled" ? "Handled" : KIND[key].plural;
+}
+function inboxViewControls() {
+  const inboxFiltered = S.inboxUrgent || S.inboxProj !== "all" || S.inboxTeam !== "all";
+  const filter = showMenu("inbox-filter", [
+    ["inboxUrgent", "Urgency", [[false, "All items"], [true, "Urgent only"]]],
+    ["inboxProj", "Project", [["all", "All projects"], ...Object.keys(P).filter((p) => !P[p].archived).map((p) => [p, P[p].name])]],
+    ["inboxTeam", "Team", [["all", "All teams"], ...Object.keys(TEAMS).map((t) => [t, TEAMS[t].name])]],
+  ], { icon: "filter", label: "Filter inbox", active: inboxFiltered });
+  const display = showMenu("inbox-display", [
+    ["inboxOrder", "Grouping", [["priority", "Priority first"], ["date", "By date"]]],
+  ], {
+    icon: "adjustments", label: "Inbox display", active: S.inboxOrder === "date",
+    footer: `<hr>${displayCheckbox("inbox-dividers", "Row dividers", S.inboxDividers)}`,
+  });
+  return `<div class="queue-controls" role="group" aria-label="Inbox view controls">${filter}${display}</div>`;
+}
+function inboxCategories() {
+  const moreActive = INBOX_MORE.includes(S.inboxKind);
+  return `<div class="primary-tab-row" role="group" aria-label="Inbox queue controls"${S.singleKey ? ' aria-keyshortcuts="M"' : ""}>
+    <div class="queue-tabs">${INBOX_TABS.map((key) => `
+      <button class="queue-tab" type="button" data-act="inbox-category" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}
+    </div>
+      <div class="menu-wrap"><button class="queue-tab" type="button" data-act="menu" data-id="inbox-kinds"
+        aria-haspopup="menu" aria-expanded="false" aria-controls="menu-inbox-kinds"${moreActive ? ` data-current-kind title="Viewing ${esc(inboxTabLabel(S.inboxKind))}"` : ""}>More${ic("chev-down", "ic14")}</button>
+        <div class="menu" id="menu-inbox-kinds" role="menu" aria-label="More inbox categories" hidden>${INBOX_MORE.map((key) => `
+          <button type="button" role="menuitemradio" aria-checked="${S.inboxKind === key}" data-act="inbox-category" data-v="${key}">${inboxTabLabel(key)}<span class="triage-menu-count">${inboxItems(key).length}</span></button>`).join("")}</div></div>
+  </div>${inboxViewControls()}`;
+}
+function inboxSelection(items, sel) {
+  return IN.find((item) => item.id === sel) || (narrow() ? null : items[0]);
+}
+function inboxQueueRow(item, selected) {
+  const kind = KIND[item.kind];
+  const state = item.handled ? "handled" : inboxUrgent(item) ? "urgent" : "pending";
+  const stateLabel = { handled: "Handled", urgent: "Urgent", pending: kind.label }[state];
+  const stateIcon = { handled: "check-circle", urgent: "bell", pending: item.kind === "approval" ? "inbox" : kind.icon }[state];
+  return `<li><a class="triage-item" href="#/inbox/${item.id}" ${selected?.id === item.id ? 'aria-current="true"' : ""}>
+    <span class="triage-person">
+      ${av(item.from, 24)}
+      <span class="triage-sender"><strong>${esc(M[item.from].name)}</strong><span class="triage-kind">${ic(kind.icon, "ic14")}${esc(item.sub)}</span></span>
+      <span class="triage-stamp"><span class="triage-state-icon" data-state="${state}">${ic(stateIcon, "ic14")}<span class="sr-only">${esc(stateLabel)}</span></span><time>${esc(item.time)}</time></span>
+    </span>
+    <span class="triage-title">${esc(item.what)}</span>
+    <span class="triage-meta">${esc(P[item.proj].name)}${item.handled ? `<span>${esc(item.outcome)}</span>` : item.expires ? `<span class="triage-expiry">${ic("clock", "ic14")}${esc(item.expires)}</span>` : ""}</span>
+  </a></li>`;
+}
+function inboxQueue(items, selected) {
+  if (!items.length) return `<div class="triage-empty">${ic("inbox", "ic20")}<h2>${S.inboxQuery.trim() ? "No matching items" : "Queue cleared for this view"}</h2><p>${S.inboxQuery.trim() ? "Try another search." : "Pick another category to see more items."}</p></div>`;
+  const groups = [["Today", (i) => i.group === "Today"], ["Earlier", () => true]];
+  if (S.inboxOrder === "priority") groups.unshift(["Urgent", (i) => !i.handled && inboxUrgent(i)]);
+  let remaining = items.slice();
+  return groups.map(([label, includes]) => {
+    const group = remaining.filter(includes);
+    remaining = remaining.filter((item) => !includes(item));
+    if (!group.length) return "";
+    return `<section class="triage-group"><h2>${label}</h2><ul class="triage-list">${group.map((item) => inboxQueueRow(item, selected)).join("")}</ul></section>`;
+  }).join("");
+}
+function pageInbox(sel) {
+  const items = inboxItems(), item = inboxSelection(items, sel);
+  const queueLabel = INBOX_MORE.includes(S.inboxKind)
+    ? (S.inboxKind === "handled" ? "Handled items" : inboxTabLabel(S.inboxKind))
+    : (S.inboxOrder === "date" ? "By date" : "Priority first");
+  return `<section class="triage-workspace${sel && item ? " triage-has-detail" : ""}" aria-label="Inbox workspace">
+    <header class="triage-header queue-header">
+      ${queueHeadline("Inbox", unhandled().length + " waiting on you", true)}
+      <div class="triage-toolbar queue-toolbar" id="triage-categories">${inboxCategories()}</div>
+    </header>
+    <div class="triage-split">
+      <section class="triage-queue" aria-label="Inbox queue"><div class="triage-queue-summary"><span>${queueLabel}</span><span id="triage-visible" role="status">${plural(items.length, "item in view", "items in view")}</span></div>
+        <div id="triage-list">${inboxQueue(items, item)}</div>
+      </section>
+      <section class="triage-reading" id="triage-reading" aria-label="Item details">${item ? inboxDetail(item) : inboxEmptyDetail()}</section>
+    </div>
+  </section>`;
+}
+const inboxEmptyDetail = () => `<div class="triage-empty">${ic("inbox", "ic20")}<h2>No item selected</h2><p>Your queue appears on the left.</p></div>`;
+const inboxCopy = (label, value, title) => `<button class="triage-copy" type="button" data-act="inbox-copy" data-v="${esc(value)}" aria-label="Copy ${esc(title)}">${ic("copy", "ic14")}<span>${esc(label)}</span></button>`;
+const detailCommentDrafts = new Map();
+const inboxCommentPrefix = (id) => "agentic-org.v6.inbox-comment." + id + ".";
+
+function inboxActivityTime(at) {
+  if (at == null) return "";
+  const date = new Date(at);
+  return `<time class="triage-event-time" datetime="${date.toISOString()}">${esc(date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }))}</time>`;
+}
+
+function localDetailRecords(prefix) {
+  const records = [];
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith(prefix)) continue;
+      try {
+        const entry = JSON.parse(localStorage.getItem(key));
+        if (Number.isFinite(entry?.at) && Number.isFinite(new Date(entry.at).getTime())) records.push(entry);
+      } catch (e) {}
+    }
+  } catch (e) {}
+  return records.sort((a, b) => a.at - b.at);
+}
+
+function detailCommentsHtml(prefix, heading, seeded = []) {
+  const stored = localDetailRecords(prefix)
+    .filter(({ text }) => typeof text === "string" && text.trim() && text.length <= 2000)
+    .map((entry) => ({ ...entry, who: "you" }));
+  const comments = seeded.map(([who, text, time]) => ({ who, text, time })).concat(stored);
+  if (!comments.length) return "";
+  return `<section class="triage-comments" aria-labelledby="${heading}">
+    <h4 id="${heading}">Comments</h4>
+    <ol class="triage-comment-list" role="list" aria-labelledby="${heading}">${comments.map(({ who, text, time, at }) => `
+      <li>${av(who, 24)}<div><p><strong>${who === "you" ? "You" : mlink(who)}</strong> ${time ? `<span class="triage-event-time">${esc(time)}</span>` : inboxActivityTime(at)}</p>
+      <p class="triage-comment-text">${esc(text)}</p></div></li>`).join("")}</ol>
+  </section>`;
+}
+
+const inboxCommentsHtml = (id) => detailCommentsHtml(inboxCommentPrefix(id), "triage-comments-title");
+const workCommentsHtml = (id) => detailCommentsHtml(workCommentPrefix(id), "work-comments-title", WORK_DISCUSSIONS[id]?.comments);
+
+function detailEvent(icon, text, time = "") {
+  return `<li><span class="triage-event-marker">${ic(icon, "ic16")}</span><p>${text} ${time}</p></li>`;
+}
+
+function inboxActivityRows(it) {
+  const outcomes = it.activity || (it.handled ? [{ icon: "check-circle", text: it.outcome }] : []);
+  return [
+    detailEvent("inbox", `<strong>${esc(M[it.from].name)}</strong> opened this request`, `<span class="triage-event-time">${esc(it.time)}</span>`),
+    detailEvent("clock", it.kind === "approval" ? "Waiting for approval" : "Waiting for your input"),
+    ...(it.audit || []).map((text) => detailEvent("check-circle", `<span class="sr-only">Audit entry. </span>${esc(text)}`)),
+    ...outcomes.map(({ icon, text, at }) => detailEvent(icon, esc(text), inboxActivityTime(at)))
+  ].join("");
+}
+
+function postDetailComment(form) {
+  const field = form.elements.comment;
+  const text = field.value.trim();
+  if (!text) {
+    field.setCustomValidity("Enter a comment.");
+    field.reportValidity();
+    return;
+  }
+  const id = form.dataset.id, work = form.dataset.form === "work-comment";
+  const prefix = work ? workCommentPrefix(id) : inboxCommentPrefix(id);
+  try {
+    localStorage.setItem(prefix + crypto.randomUUID(), JSON.stringify({ text, at: Date.now() }));
+  } catch (e) {
+    toast("Could not save the comment on this device.");
+    field.focus();
+    return;
+  }
+  detailCommentDrafts.delete(prefix);
+  field.value = "";
+  if (work) fitTextarea(field);
+  document.getElementById(work ? "work-comments" : "triage-comments").innerHTML = work ? workCommentsHtml(id) : inboxCommentsHtml(id);
+  document.getElementById(work ? "work-comment-status" : "triage-comment-status").textContent = "Comment posted.";
+  field.focus();
+}
+
+function inboxActivity(it) {
+  return `<section class="triage-activity" aria-labelledby="triage-activity-title">
+    <h3 id="triage-activity-title">Activity</h3>
+    <form class="triage-comment-form" data-form="inbox-comment" data-id="${esc(it.id)}">
+      <label class="sr-only" for="triage-comment">Comment on this request</label>
+      <textarea id="triage-comment" name="comment" rows="2" maxlength="2000" placeholder="Leave a comment…" required>
+${esc(detailCommentDrafts.get(inboxCommentPrefix(it.id)) || "")}</textarea>
+      <button class="btn outline icon triage-send" type="submit" aria-label="Send comment" title="Send comment">${ic("send", "ic16")}</button>
+    </form>
+    <p id="triage-comment-status" class="sr-only" role="status"></p>
+    <div id="triage-comments">${inboxCommentsHtml(it.id)}</div>
+    <div class="triage-history">
+      <h4 id="triage-history-title">Request history</h4>
+      <ol class="triage-activity-log" role="list" aria-labelledby="triage-history-title">${inboxActivityRows(it)}</ol>
+    </div>
+  </section>`;
+}
+
+function inboxDetail(it) {
+  const m = M[it.from], k = KIND[it.kind], project = P[it.proj];
+  const channel = CH[project.channel], work = it.task && findWorkItem(it.task).item;
+  return `<article class="triage-document" aria-labelledby="triage-detail-title">
+    <a class="triage-back btn ghost sm" href="#/inbox">${ic("chev-left", "ic16")}Back to Inbox</a>
+    <header class="triage-intro">
+      <p class="triage-from">
+        <span>From:</span>
+        <span class="triage-from-member">
+          <a class="alink" href="#/members/${esc(it.from)}" aria-describedby="triage-from-role">${esc(m.name)}</a>
+          <span class="triage-from-card">
+            ${av(it.from, 32)}
+            <span><strong aria-hidden="true">${esc(m.name)}</strong><span id="triage-from-role">${esc(m.role)} · ${kindWord(it.from)}</span></span>
+          </span>
+        </span>
+        <span aria-hidden="true">·</span><span class="triage-from-time">${esc(it.time)}</span>
+      </p>
+      <h2 tabindex="-1" id="triage-detail-title">${esc(it.what)}</h2>
+    </header>
+    ${it.why ? `<p class="triage-description">${esc(it.why)}</p>` : ""}
+    <section class="triage-context" aria-labelledby="triage-context-title">
+      <h3 id="triage-context-title">Request details</h3>
+      <dl class="triage-fields">
+        <div><dt>Kind</dt><dd>${esc(k.label)} · ${esc(it.sub)}</dd></div>
+        <div><dt>Project</dt><dd>${plink(it.proj)}</dd></div>
+        ${it.task ? `<div><dt>Work item</dt><dd><a class="alink" href="${esc(workHref({ item: it.task }))}">${esc(it.task)}${work ? " · " + esc(work.title) : ""}</a>${inboxCopy("Copy", it.task, it.task)}</dd></div>` : ""}
+        ${it.expires ? `<div><dt>Expires</dt><dd${it.handled ? "" : ' class="triage-expiry"'}>${esc(it.expires)}</dd></div>` : ""}
+        <div><dt>Clears</dt><dd>${esc(it.clears || k.clears)}</dd></div>
+        ${channel ? `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd></div>` : ""}
+        ${it.src ? `<div><dt>Related page</dt><dd><a class="alink" href="${esc(it.src.href)}">${esc(it.src.label)}</a></dd></div>` : ""}
+      </dl>
+    </section>
+    <div class="triage-decision">
+      ${it.rec ? recommendationCallout(it, "h3") : ""}
+      <div class="triage-actions">${itemActionsV4(it, { hideDetails: true })}${it.handled
+        ? `<button class="btn outline sm" type="button" data-act="inbox-reopen" data-id="${it.id}">${ic("refresh", "ic16")}Reopen item</button>` : ""}</div>
+    </div>
+    ${inboxActivity(it)}
+  </article>`;
+}
+function refreshInboxSearch() {
+  const items = inboxItems(), sel = route()[1];
+  const keep = items.some((item) => item.id === sel);
+  if (sel && !keep) resetInboxSelection();
+  const item = inboxSelection(items, keep ? sel : null);
+  document.querySelector(".triage-workspace").classList.toggle("triage-has-detail", Boolean(keep && item));
+  document.getElementById("triage-categories").innerHTML = inboxCategories();
+  document.getElementById("triage-visible").textContent = plural(items.length, "item in view", "items in view");
+  document.getElementById("triage-list").innerHTML = inboxQueue(items, item);
+  document.getElementById("triage-reading").innerHTML = item ? inboxDetail(item) : inboxEmptyDetail();
+}
+function resetInboxSelection() {
+  history.replaceState(null, "", "#/inbox");
+  S.lastRoute = location.hash;
+  S.confirmDeny = null;
+  S.replying = null;
+  S.replyMode = null;
+}
+const narrow = () => !!(window.matchMedia && window.matchMedia("(max-width: 959px)").matches);
+
+export {
+  detailCommentDrafts,
+  detailEvent,
+  inboxActivityTime,
+  inboxCommentPrefix,
+  inboxItems,
+  inboxTabLabel,
+  localDetailRecords,
+  narrow,
+  pageInbox,
+  postDetailComment,
+  refreshInboxSearch,
+  resetInboxSelection,
+  workCommentsHtml,
+};

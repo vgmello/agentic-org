@@ -566,6 +566,7 @@ fn session_inspect_grant_list_who_and_run_binding_refusals() {
                                     "member_id": live_agent,
                                     "office_id": "0193a5c0-0000-7000-8000-000000000000"
                                 })),
+                                waiting_messages: None,
                             }
                         } else {
                             Response::error(
@@ -604,6 +605,7 @@ fn session_inspect_grant_list_who_and_run_binding_refusals() {
                             "accepted_commands_count": 2,
                             "spec_hash": "0123456789abcdef"
                         })),
+                        waiting_messages: None,
                     },
                     "member.session_grants" if bound_token_ok => Response {
                         id: req.id,
@@ -618,6 +620,7 @@ fn session_inspect_grant_list_who_and_run_binding_refusals() {
                             "denied_read_patterns": [],
                             "rules": [{"effect": "allow", "tool": "Read", "scope": "any"}]
                         })),
+                        waiting_messages: None,
                     },
                     "who" if bound_token_ok => Response {
                         id: req.id,
@@ -634,6 +637,7 @@ fn session_inspect_grant_list_who_and_run_binding_refusals() {
                                 "teams": []
                             }]
                         })),
+                        waiting_messages: None,
                     },
                     other => Response::error(
                         req.id,

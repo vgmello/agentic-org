@@ -20,6 +20,9 @@ pub enum OfficeError {
     /// another request), or `Office::discard` found a creation intent, an `office.json`, the host's
     /// custody marker or a file it stages one in.
     OfficeExists,
+    /// The host's writer admission owner/identity did not match the opened office's canonical
+    /// owner or office identity, so startup was refused before mutating companion stores.
+    CustodyMismatch,
     /// Disk, database or OS failure. The cause is kept for the server's log only; `Display`
     /// never includes paths or SQL, so it is safe to show to a client.
     Storage(Box<dyn Error + Send + Sync>),
@@ -41,6 +44,7 @@ impl fmt::Display for OfficeError {
             Self::NotFound => f.write_str("the office does not exist"),
             Self::SnapshotPending => f.write_str("organization snapshot is not available yet"),
             Self::OfficeExists => f.write_str("the office already exists"),
+            Self::CustodyMismatch => f.write_str("protected writer admission requires recovery"),
             Self::Storage(_) => f.write_str("the office could not read or write its storage"),
         }
     }

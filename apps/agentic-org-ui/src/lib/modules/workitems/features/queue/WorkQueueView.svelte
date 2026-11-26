@@ -209,7 +209,7 @@
 		});
 	}
 
-	// Home's "New task" CTA links to /work?new=1: open the task composer and strip the parameter so reload doesn't reopen it.
+	// Deep links to /work?new=1 open the task composer and strip the parameter so reload doesn't reopen it.
 	const wantsNewTask = $derived(isOrgScope && page.url.searchParams.get('new') === '1');
 	$effect(() => {
 		if (!wantsNewTask) return;
@@ -882,6 +882,9 @@
 										aria-keyshortcuts={shortcutsEnabled ? '/' : undefined}
 										class={inputClass}
 									/>
+									<span id="{uid}-search-scope" class="sr-only">
+										Searches shared titles, references, teams and projects.
+									</span>
 								</div>
 							{/if}
 

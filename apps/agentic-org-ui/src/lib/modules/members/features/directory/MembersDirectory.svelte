@@ -236,7 +236,7 @@
 					</span>
 					{#if workforce.attention > 0}
 						<span
-							class="t-amber inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold"
+							class="t-amber inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-semibold"
 							>Review</span
 						>
 					{/if}
@@ -311,7 +311,7 @@
 				<div class={GRID}>
 					<div
 						aria-hidden="true"
-						class="hidden border-b border-line px-4 py-3 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase min-[640px]:px-6 {SUBGRID}"
+						class="hidden border-b border-line px-4 py-3 text-xs/5 font-semibold tracking-wider text-fg-muted uppercase min-[640px]:px-6 {SUBGRID}"
 					>
 						<span class="col-span-2">Member</span><span>Home team</span><span>Working on</span><span
 							>Presence</span

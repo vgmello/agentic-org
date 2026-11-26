@@ -13,6 +13,7 @@
 #![deny(unsafe_code)]
 
 pub mod binding;
+pub(crate) mod bwrap_isolation;
 pub mod credentials;
 mod host_auth;
 pub mod instructions;
@@ -41,8 +42,8 @@ pub use instructions::{
 pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{SessionManager, SessionManagerConfig};
 pub use preset::{
-    build_grants_summary, build_session_policy, decide_escalation, decide_escalation_with_tools,
-    EscalationDisposition, PresetConfig, PresetError,
+    build_grants_summary, build_session_policy, decide_escalation, decide_escalation_with_roots,
+    decide_escalation_with_tools, EscalationDisposition, PresetConfig, PresetError,
 };
 pub use recovery::{
     ActiveTurnRecord, PendingStartRecord, ProcessExitOracle, RecoveryAction, RecoveryReport,
@@ -61,9 +62,14 @@ pub use subscription_usage::{
     SystemHttpsUsageTransport, UsageTransportError,
 };
 pub use wake::{
-    PendingAskAnswer, PendingWakeItem, PendingWakeQueueRecord, SuspendedAskEntry,
-    SuspendedStateRecord, WakeHoldReason, WakeKind, WakeOutcome, WakeQuotaRecord,
-    DEFAULT_HOURLY_WAKE_LIMIT, DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
+    compose_coalesced_wake_objective, compose_mid_turn_notice_batch, sanitize_untrusted_body,
+    MidTurnLimits, MidTurnRateTracker, MidTurnSelection, PendingAskAnswer, PendingWakeItem,
+    PendingWakeQueueRecord, SuspendedAskEntry, SuspendedStateRecord, WakeHoldReason, WakeKind,
+    WakeOutcome, WakeQuotaRecord, DEFAULT_HOURLY_WAKE_LIMIT, DEFAULT_MID_TURN_COALESCE_AGENT,
+    DEFAULT_MID_TURN_COALESCE_PERSON, DEFAULT_MID_TURN_HOURLY_AGENT_CAP,
+    DEFAULT_MID_TURN_PER_TURN_AGENT_CAP, DEFAULT_MID_TURN_PER_TURN_HARD_CAP,
+    DEFAULT_MID_TURN_SENDER_COOLDOWN, DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
+    MAX_MID_TURN_BATCH_BYTES, MAX_WAKE_ITEM_BODY_BYTES,
 };
 
 #[cfg(test)]

@@ -197,7 +197,7 @@
 		<div class="exec-card overflow-hidden">
 			<div
 				aria-hidden="true"
-				class="hidden border-b border-line px-6 py-3 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase min-[1024px]:grid {GRID}"
+				class="hidden border-b border-line px-6 py-3 text-xs/5 font-semibold tracking-wider text-fg-muted uppercase min-[1024px]:grid {GRID}"
 			>
 				<span>Team</span><span>Lead</span><span class="text-right">People</span><span
 					class="text-right">Agents</span
@@ -234,7 +234,7 @@
 									></a
 								>
 								{#if team.ref}<span
-										class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[11px]/4 text-fg-muted ring-1 ring-line ring-inset"
+										class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs/4 text-fg-muted ring-1 ring-line ring-inset"
 										>{team.ref}</span
 									>{/if}
 							</p>
