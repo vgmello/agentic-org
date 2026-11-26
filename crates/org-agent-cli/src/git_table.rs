@@ -1,4 +1,5 @@
-//! `org-command` command table rows for C7 repositories and worktrees (`TASK-51`, `doc-28` §3.6).
+//! `org-command` command table rows for C7 repositories and worktrees (`TASK-51`, `TASK-173`,
+//! `doc-28` §3.6).
 
 use org_command::{Ack, Command, Example, Field, IfMatch, Kind, Type};
 use org_proto::ErrorCode;
@@ -22,6 +23,17 @@ const WRITE_ERRORS: &[ErrorCode] = &[
     ErrorCode::Conflict,
     ErrorCode::OperationReused,
     ErrorCode::Unavailable,
+];
+
+const FETCH_ERRORS: &[ErrorCode] = &[
+    ErrorCode::InvalidRequest,
+    ErrorCode::NotAuthorized,
+    ErrorCode::NotBound,
+    ErrorCode::NotFound,
+    ErrorCode::RateLimited,
+    ErrorCode::StorageError,
+    ErrorCode::Unavailable,
+    ErrorCode::Unsupported,
 ];
 
 const REPO_FIELDS: &[Field] = &[
@@ -74,6 +86,35 @@ const REPO_STATUS_OUTPUT: &[Field] = &[
     ),
     Field::optional("bare_path", Type::String, "Bare cache path"),
     Field::optional("reason", Type::String, "Failure reason"),
+];
+
+const REPO_FETCH_OUTPUT: &[Field] = &[
+    Field::required("office_id", Type::String, "Office UUIDv7"),
+    Field::required("repository_id", Type::String, "Repository UUIDv7"),
+    Field::optional("repository_key", Type::String, "Repository key"),
+    Field::required(
+        "state",
+        Type::Enum(&["unprepared", "cloning", "ready", "failed"]),
+        "Cache state",
+    ),
+    Field::optional("default_branch", Type::String, "Origin HEAD branch"),
+    Field::optional("head_oid", Type::String, "Default branch commit OID"),
+    Field::required("branch_count", Type::Integer, "Origin branches cached"),
+    Field::required("added", Type::List(&STRING_TYPE), "New branches (max 50)"),
+    Field::required("added_count", Type::Integer, "New branch count"),
+    Field::required(
+        "updated",
+        Type::List(&STRING_TYPE),
+        "Moved branches (max 50)",
+    ),
+    Field::required("updated_count", Type::Integer, "Moved branch count"),
+    Field::required(
+        "pruned",
+        Type::List(&STRING_TYPE),
+        "Removed branches (max 50)",
+    ),
+    Field::required("pruned_count", Type::Integer, "Removed branch count"),
+    Field::required("fetched_at", Type::String, "Fetch completion time"),
 ];
 
 const REPO_PUSH_OUTPUT: &[Field] = &[
@@ -136,6 +177,12 @@ const REPO_ATTACH_INPUT: &[Field] = &[
 ];
 
 const REPO_STATUS_INPUT: &[Field] = &[Field::required(
+    "repo",
+    Type::String,
+    "Repository ID or key",
+)];
+
+const REPO_FETCH_INPUT: &[Field] = &[Field::required(
     "repo",
     Type::String,
     "Repository ID or key",
@@ -227,6 +274,24 @@ pub const GIT_COMMANDS: &[Command] = &[
         example: Example {
             input: r#"{"repo":"api"}"#,
             output: r#"{"office_id":"01950000-0000-7000-8000-000000000001","repository_id":"01950000-0000-7000-8000-000000000301","state":"ready"}"#,
+        },
+    },
+    Command {
+        resource: "repo",
+        verb: "fetch",
+        summary: "Fetch origin branches",
+        call: "repo.fetch",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::No,
+        },
+        input: REPO_FETCH_INPUT,
+        content_field: None,
+        output: REPO_FETCH_OUTPUT,
+        errors: FETCH_ERRORS,
+        example: Example {
+            input: r#"{"repo":"api"}"#,
+            output: r#"{"office_id":"01950000-0000-7000-8000-000000000001","repository_id":"01950000-0000-7000-8000-000000000301","repository_key":"api","state":"ready","default_branch":"main","head_oid":"0123456789abcdef0123456789abcdef01234567","branch_count":3,"added":["feature/x"],"added_count":1,"updated":["main"],"updated_count":1,"pruned":[],"pruned_count":0,"fetched_at":"2026-11-26T12:00:00.000Z"}"#,
         },
     },
     Command {

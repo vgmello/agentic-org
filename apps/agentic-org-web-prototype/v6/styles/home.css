@@ -1429,3 +1429,7 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 
 /* Spotlight recommendation uses the shared toned callout */
 .hb-spot .recommendation { font-size: var(--fs-base); padding: 10px 14px; }
+
+/* Where task time goes: header outside like the other Home sections */
+.hb-time-sec { display: flex; flex-direction: column; gap: 12px; }
+.hb-time-sec > .sec-head { margin: 0; }

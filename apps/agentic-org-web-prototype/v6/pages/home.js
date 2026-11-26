@@ -702,8 +702,10 @@ function renderTaskTimeSection(st, openCount, idleSpecsN) {
     ? `<a class="hb-inline-act" href="#/settings/offices">Check Build box office${ic("chev-right", "ic14")}</a><a class="hb-inline-act" href="#/teams/members">Review ${idleSpecsN} idle agents${ic("chev-right", "ic14")}</a>`
     : humanPct >= 25 ? `<a class="hb-inline-act" href="#/inbox">Review pending decisions${ic("chev-right", "ic14")}</a>`
       : `<a class="hb-inline-act" href="#/activity">Open activity log${ic("chev-right", "ic14")}</a>`;
-  return `<section class="hb-time" aria-labelledby="hb-time-h">
-        <div class="hb-time-hd"><h2 class="hb-time-title" id="hb-time-h"><span class="lbl-std">Where task time goes</span><span class="lbl-rep">Capacity &amp; Bottleneck Analysis</span></h2><span class="hb-time-unit">${totalHrs.toFixed(1)}h total across ${W.filter(OPEN).length} open tasks</span></div>
+  /* Same section pattern as Projects/Upcoming: shared header above, card below */
+  return `<section class="hb-time-sec" aria-labelledby="hb-time-h">
+        ${sectionHead({ id: "hb-time-h", title: "Where task time goes", repTitle: "Capacity &amp; Bottleneck Analysis", count: `${totalHrs.toFixed(1)}h across ${W.filter(OPEN).length} open tasks`, right: `<a class="link" href="#/insights">Insights${ic("chev-right", "ic16")}</a>` })}
+      <div class="hb-time">
         <div class="hb-time-bar" role="group" aria-label="Task time breakdown across open tasks">
           <a class="hb-tseg agents" href="#/teams/members" style="width:${agentPct}%" aria-label="Agents working: ${agentH.toFixed(1)}h (${agentPct}%)" title="Agents working: ${agentH.toFixed(1)}h (${agentPct}%)"></a>
           <a class="hb-tseg ci" href="#/activity" style="width:${ciPct}%" aria-label="Automated checks: ${ciH.toFixed(1)}h (${ciPct}%)" title="Automated checks: ${ciH.toFixed(1)}h (${ciPct}%)"></a>
@@ -717,7 +719,7 @@ function renderTaskTimeSection(st, openCount, idleSpecsN) {
           <a class="hb-tleg queued${queuedHighCls}" href="#/work"><span class="hb-tleg-dot" aria-hidden="true"></span><strong>${queuedPct}%</strong><span class="hrs">${queuedH.toFixed(1)}h</span><span>Waiting for an agent</span></a>
         </div>
         <div class="hb-time-foot"><p class="hb-time-note">${esc(constraint)}</p><div class="hb-time-acts">${actions}</div></div>
-      </section>`;
+      </div></section>`;
 }
 
 function summarizeHomeFleet(st) {
