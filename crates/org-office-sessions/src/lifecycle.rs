@@ -1876,6 +1876,7 @@ pub(crate) fn recycle_stale_warm_handle_in(
             let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
             st.run_id.as_deref() == Some(expected_run_id)
                 && st.state == SessionState::Idle
+                && !st.recovery_required
                 && permit_free
         });
         if !still_recyclable {
@@ -1896,15 +1897,27 @@ pub(crate) fn recycle_stale_warm_handle_in(
     let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(removed)));
     let worker_slot = std::sync::Arc::clone(&slot);
     let spawned = crate::manager::spawn_bg_worker_reserved(mgr, "org-warm-recycle", move |m| {
+        let mut reaped_cleanly = true;
         {
             let _start_guard = crate::manager::StartSlotGuard::new(&m.registry, emp.clone());
-            if let Some(mut old) = worker_slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
-                if let Some(thread) = old.thread.take() {
-                    let _ = thread.join();
-                }
+            if let Some(old) = worker_slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                reaped_cleanly = crate::bwrap_isolation::reap_live_handle(
+                    &m,
+                    &emp,
+                    old,
+                    None,
+                    crate::bwrap_isolation::ReapMode::FailClosedRestore {
+                        conflict_message: format!(
+                            "could not verify teardown of recycled warm session `{emp}`; resolve recovery first"
+                        ),
+                    },
+                )
+                .is_ok();
             }
         }
-        let _ = m.process_due_wakes_for(&emp);
+        if reaped_cleanly {
+            let _ = m.process_due_wakes_for(&emp);
+        }
     });
     if !spawned {
         let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());

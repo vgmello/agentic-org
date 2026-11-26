@@ -528,46 +528,9 @@ impl SessionManager {
 
     /// Stops any active session for `employee_id`, reaps background tasks, and revokes its
     /// run binding immediately (called on pause, offboard, or explicit stop; `SUB-5`, `B2 Q9`).
+    /// Refuses evicting handles already in `RecoveryRequired` and fails closed on unverified teardown.
     pub fn stop_session(&self, employee_id: &str, reason: &str) -> Result<SessionView, ApiError> {
-        self.bindings.revoke(employee_id, None);
-        let handle = {
-            let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-            reg.live.remove(employee_id)
-        };
-        if let Some(mut handle) = handle {
-            let _ = handle.tx.send(PumpCommand::Stop {
-                reason: reason.to_owned(),
-            });
-            if let Some(thread) = handle.thread.take() {
-                let _ = thread.join();
-            }
-            if let Some((pid, _)) = handle
-                .active_permit
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .take()
-            {
-                crate::router::release_turn_permit_any(
-                    &self.office,
-                    self.config.hq_permits.as_deref(),
-                    &pid,
-                );
-                if !is_admissions_closed(self) {
-                    self.process_due_wakes();
-                }
-            }
-            let view = handle
-                .state
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .to_view();
-            self.last_states
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .insert(employee_id.to_owned(), view.clone());
-            return Ok(view);
-        }
-        self.idle_view_for(employee_id)
+        stop_session_impl(self, employee_id, reason)
     }
 
     /// Stops every live session cleanly while waiting for any in-flight starts and background
@@ -611,18 +574,11 @@ impl SessionManager {
             .map(|text| build_objective_text(&employee, actor_member_id, text));
         let (live_view, finished_handle) =
             self.reserve_start_or_send(&employee, initial_obj, None, params.workspace.as_deref())?;
-        if let Some(mut old) = finished_handle {
-            if let Some(thread) = old.thread.take() {
-                let _ = thread.join();
-            }
-        }
         if let Some(view) = live_view {
             return Ok(view);
         }
-        let _guard = StartSlotGuard {
-            registry: &self.registry,
-            employee_id: emp_id.to_owned(),
-        };
+        let _guard = StartSlotGuard::new(&self.registry, emp_id.to_owned());
+        reap_replaced_handle(self, emp_id, finished_handle)?;
         self.check_not_recovery_required(emp_id)?;
         self.clear_persisted_stall_only(emp_id);
         let tokens = self.bindings.active_tokens();
@@ -662,22 +618,17 @@ impl SessionManager {
         };
         let (live_view, finished_handle) =
             self.reserve_start_or_send(employee, Some(objective.clone()), task_ref, None)?;
-        if let Some(mut old) = finished_handle {
-            if let Some(thread) = old.thread.take() {
-                let _ = thread.join();
-            }
-        }
-        let tokens = self.bindings.active_tokens();
-        let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
         if let Some(view) = live_view {
+            let tokens = self.bindings.active_tokens();
+            let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
             let _ = self.store.append_history(emp_id, &trigger_entry, &refs);
             return Ok(view);
         }
-        let _guard = StartSlotGuard {
-            registry: &self.registry,
-            employee_id: emp_id.to_owned(),
-        };
+        let _guard = StartSlotGuard::new(&self.registry, emp_id.to_owned());
+        reap_replaced_handle(self, emp_id, finished_handle)?;
         self.check_not_blocked(emp_id)?;
+        let tokens = self.bindings.active_tokens();
+        let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
         let _ = self.store.append_history(emp_id, &trigger_entry, &refs);
         let prepared = self.prepare_and_spawn_raw(
             employee,
@@ -2812,6 +2763,101 @@ pub(crate) fn spawn_bg_worker_reserved(
     false
 }
 
+fn stop_session_impl(
+    mgr: &SessionManager,
+    employee_id: &str,
+    reason: &str,
+) -> Result<SessionView, ApiError> {
+    mgr.bindings.revoke(employee_id, None);
+    let removed = {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(handle) = reg.live.get(employee_id) {
+            let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+            ensure_live_handle_not_recovery_required(&st)?;
+            if reg.starting.contains(employee_id) {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "agent session start or teardown is already in progress",
+                ));
+            }
+            drop(st);
+            let handle = reg.live.remove(employee_id);
+            if handle.is_some() {
+                reg.starting.insert(employee_id.to_owned());
+            }
+            handle
+        } else {
+            None
+        }
+    };
+    let Some(handle) = removed else {
+        return mgr.idle_view_for(employee_id);
+    };
+    let slot_guard = StartSlotGuard::new(&mgr.registry, employee_id.to_owned());
+    let reaped = crate::bwrap_isolation::reap_live_handle(
+        mgr,
+        employee_id,
+        handle,
+        Some(reason),
+        crate::bwrap_isolation::ReapMode::FailClosedRestore {
+            conflict_message: format!(
+                "could not verify teardown of session `{employee_id}`; resolve recovery first"
+            ),
+        },
+    )?;
+    drop(slot_guard);
+    if reaped.permit_released && !is_admissions_closed(mgr) {
+        mgr.process_due_wakes();
+    }
+    Ok(reaped.view)
+}
+
+fn reap_replaced_handle(
+    mgr: &SessionManager,
+    emp_id: &str,
+    old: Option<LiveSessionHandle>,
+) -> Result<(), ApiError> {
+    let Some(handle) = old else {
+        return Ok(());
+    };
+    crate::bwrap_isolation::reap_live_handle(
+        mgr,
+        emp_id,
+        handle,
+        None,
+        crate::bwrap_isolation::ReapMode::FailClosedRestore {
+            conflict_message: format!(
+                "could not verify teardown of prior session `{emp_id}`; resolve recovery first"
+            ),
+        },
+    )?;
+    Ok(())
+}
+
+fn stop_session_for_shutdown(mgr: &SessionManager, employee_id: &str, reason: &str) {
+    let removed = {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if reg.starting.contains(employee_id) {
+            return;
+        }
+        let handle = reg.live.remove(employee_id);
+        if handle.is_some() {
+            reg.starting.insert(employee_id.to_owned());
+        }
+        handle
+    };
+    if let Some(handle) = removed {
+        let _slot_guard = StartSlotGuard::new(&mgr.registry, employee_id.to_owned());
+        let _ = crate::bwrap_isolation::reap_live_handle(
+            mgr,
+            employee_id,
+            handle,
+            Some(reason),
+            crate::bwrap_isolation::ReapMode::ShutdownDrain,
+        );
+    }
+}
+
 fn stop_all_inner(mgr: &SessionManager, reason: &str, permanent: bool) {
     {
         let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
@@ -2826,7 +2872,7 @@ fn stop_all_inner(mgr: &SessionManager, reason: &str, permanent: bool) {
             reg.live.keys().cloned().collect()
         };
         for id in ids {
-            let _ = mgr.stop_session(&id, reason);
+            stop_session_for_shutdown(mgr, &id, reason);
         }
         let bg_handles: Vec<JoinHandle<()>> = {
             let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
@@ -3088,7 +3134,25 @@ fn register_live_session_or_abort(
                 .any(|other| other != &emp_id && !masked.contains(other))
         });
     if reg.draining || reg.shutting_down || bwrap_raced_unmasked {
+        let shutting_down = reg.draining || reg.shutting_down;
         drop(reg);
+        if bwrap_raced_unmasked && !shutting_down {
+            let _ = crate::bwrap_isolation::reap_live_handle(
+                mgr,
+                &emp_id,
+                handle,
+                Some("bwrap_sibling_race_abort"),
+                crate::bwrap_isolation::ReapMode::FailClosedRestore {
+                    conflict_message: format!(
+                        "could not verify teardown of raced sandboxed session `{emp_id}`; resolve recovery first"
+                    ),
+                },
+            )?;
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "a newly started sibling agent was not masked in this sandbox; retry launch",
+            ));
+        }
         if let Some(thread) = handle.thread.take() {
             let _ = abort_post_spawn_shutdown(
                 mgr,
@@ -3099,17 +3163,10 @@ fn register_live_session_or_abort(
                 &handle.active_permit,
             );
         }
-        return Err(if bwrap_raced_unmasked {
-            ApiError::new(
-                ErrorCode::Conflict,
-                "a newly started sibling agent was not masked in this sandbox; retry launch",
-            )
-        } else {
-            ApiError::new(
-                ErrorCode::Unavailable,
-                "office session manager is shutting down",
-            )
-        });
+        return Err(ApiError::new(
+            ErrorCode::Unavailable,
+            "office session manager is shutting down",
+        ));
     }
     reg.live.insert(emp_id, handle);
     Ok(())
@@ -3139,6 +3196,11 @@ fn abort_post_spawn_shutdown(
     {
         // If `run_pump` did not finish cleanly to take the permit itself, fail closed (`AE-07`).
         let _ = mgr.office.mark_turn_permit_release_pending(&pid);
+    }
+    if recovery_required {
+        let _ =
+            mgr.store
+                .persist_recovery_required(emp_id, cancelled_run_id.as_deref(), None, None);
     }
     if let Some(cancelled_run_id) = cancelled_run_id {
         return persist_shutdown_cancellation(mgr, emp_id, &cancelled_run_id, recovery_required);
@@ -3474,14 +3536,11 @@ fn take_failed_live_handle(
         return None;
     }
     if let Some(existing) = reg.live.get(&req.employee_id) {
-        let matches_failed_run = existing
-            .state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .run_id
-            .as_deref()
-            == Some(req.failed_run_id.as_str());
-        if !matches_failed_run {
+        let st = existing.state.lock().unwrap_or_else(|p| p.into_inner());
+        if st.recovery_required
+            || st.state == SessionState::RecoveryRequired
+            || st.run_id.as_deref() != Some(req.failed_run_id.as_str())
+        {
             return None;
         }
     }
@@ -3505,18 +3564,25 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
         }
         return;
     };
-    if let Some(mut old) = dead_handle {
-        let _ = old.tx.send(PumpCommand::Stop {
-            reason: "pool_failover".into(),
-        });
-        if let Some(thread) = old.thread.take() {
-            let _ = thread.join();
+    let _guard = StartSlotGuard::new(&mgr.registry, req.employee_id.clone());
+    if let Some(old) = dead_handle {
+        if crate::bwrap_isolation::reap_live_handle(
+            mgr,
+            &req.employee_id,
+            old,
+            Some("pool_failover"),
+            crate::bwrap_isolation::ReapMode::FailClosedRestore {
+                conflict_message: format!(
+                    "could not verify teardown of failed session `{}`; resolve recovery first",
+                    req.employee_id
+                ),
+            },
+        )
+        .is_err()
+        {
+            return;
         }
     }
-    let _guard = StartSlotGuard {
-        registry: &mgr.registry,
-        employee_id: req.employee_id.clone(),
-    };
     let Ok(employee) = mgr.require_active_agent(&req.employee_id) else {
         return;
     };
