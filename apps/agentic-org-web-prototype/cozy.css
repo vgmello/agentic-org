@@ -278,7 +278,7 @@ html[data-theme="cozy"] {
     --h4-dim: var(--gray-400);
   }
 
-  & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-horizon, .hb-skel-card,
+  & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-cal, .hb-horizon, .hb-skel-card,
     .card, .bcard, .c-entry, .prof, .split .list) {
     background: var(--cozy-panel);
     backdrop-filter: none;

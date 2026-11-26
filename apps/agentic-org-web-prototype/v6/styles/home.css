@@ -1173,6 +1173,38 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
 
 /* Zone 3: Clean Bento Portfolio Row */
 .hb-proj-sec { display: flex; flex-direction: column; gap: 14px; }
+
+/* Upcoming (calendar) */
+.hb-cal-sec { display: flex; flex-direction: column; gap: 12px; }
+.hb-cal {
+  padding: 6px 20px; border-radius: 16px;
+  background: var(--hb-surface);
+  backdrop-filter: var(--hb-blur); -webkit-backdrop-filter: var(--hb-blur);
+  box-shadow: var(--hb-shadow);
+}
+.hb-cal-list { list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; }
+.hb-cal-ev { display: flex; align-items: center; gap: 16px; padding: 14px 0; border-top: 1px solid var(--hb-border); min-width: 0; }
+.hb-cal-ev:nth-child(-n+2) { border-top: 0; }
+.hb-cal-date {
+  flex: none; width: 52px; padding: 7px 0; border-radius: 10px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  background: rgba(186, 222, 255, .06); box-shadow: inset 0 0 0 1px var(--hb-border);
+}
+.hb-cal-date span { font-size: var(--fs-2xs); line-height: 1; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--hb-muted); }
+.hb-cal-date strong { font-size: 1.25rem; line-height: 1.1; font-weight: 600; color: var(--hb-ink); font-variant-numeric: tabular-nums; }
+.hb-cal-main {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;
+  padding-left: 14px; box-shadow: inset 3px 0 0 var(--tone-accent); border-radius: 1px;
+}
+.hb-cal-t { font-size: var(--fs-base); line-height: 1.35; font-weight: 600; color: var(--hb-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb-cal-proj { font-weight: 400; color: var(--hb-body); }
+.hb-cal-main:hover .hb-cal-t { text-decoration: underline; text-underline-offset: 3px; }
+.hb-cal-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: var(--fs-sm); color: var(--hb-muted); }
+.hb-cal-ev .avstack { flex: none; }
+@media (max-width: 1120px) {
+  .hb-cal-list { grid-template-columns: 1fr; }
+  .hb-cal-ev:nth-child(2) { border-top: 1px solid var(--hb-border); }
+}
 .hb-proj-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .hb-proj-head-l { display: flex; align-items: baseline; gap: 10px; }
 .hb-proj-head h2 { font-family: var(--font-display); font-size: var(--section-title-size); font-weight: var(--fw-heading); letter-spacing: var(--ls-display); font-optical-sizing: auto; color: var(--hb-ink); }

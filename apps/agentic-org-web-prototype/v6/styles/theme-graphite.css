@@ -224,7 +224,7 @@ html:is([data-theme="classic"], [data-theme="graphite"]) {
     .cmdk-shell, .cmdk-tab-grp, .cmdk-trigger, .cmdk-trigger kbd, .cmdk-esc, .cmdk-ai-btn, .cmdk-ai-chip, .cmdk-ai-prev-chip),
   & .h4-cta.hb-cta-glass { border-radius: var(--radius-md); }
   & :is(.cmdk-dialog, .menu, .toast, .sres,
-    .hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-skel-card, .hb-ai-brief) { border-radius: var(--radius-lg); }
+    .hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-cal, .hb-skel-card, .hb-ai-brief) { border-radius: var(--radius-lg); }
 }
 html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
   & .hb-stage:not(.is-single) > .hb-spot {

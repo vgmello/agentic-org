@@ -1125,3 +1125,18 @@ html[data-theme="report-dark"] .hb-stage > .hb-sec-hd.is-brief, html[data-theme=
   html[data-theme^="report"] .hb-stage > .hb-sec-hd.is-spot { padding-right: 0; }
   html[data-theme^="report"] .hb-stage > .hb-sec-hd.is-brief { padding-left: 0; border-left: 0; }
 }
+
+/* Upcoming (calendar): open list, no card chrome */
+html[data-theme^="report"] .hb-cal { border-radius: 0; box-shadow: none; background: transparent; padding: 0; border-top: 1px solid #E2E7EF; border-bottom: 1px solid #E2E7EF; }
+html[data-theme^="report"] .hb-cal-ev { border-top-color: #EEF1F6; }
+html[data-theme^="report"] .hb-cal-date { border-radius: 4px; background: #F4F6F9; box-shadow: none; }
+html[data-theme^="report"] .hb-cal-date span { color: #64748B; }
+html[data-theme^="report"] :is(.hb-cal-date strong, .hb-cal-t) { color: #0B101B; }
+html[data-theme^="report"] .hb-cal-proj { color: #2C3646; }
+html[data-theme^="report"] .hb-cal-meta { color: #64748B; }
+html[data-theme="report-dark"] .hb-cal { border-color: rgba(255, 255, 255, .08); }
+html[data-theme="report-dark"] .hb-cal-ev { border-top-color: rgba(255, 255, 255, .06); }
+html[data-theme="report-dark"] .hb-cal-date { background: rgba(255, 255, 255, .05); }
+html[data-theme="report-dark"] :is(.hb-cal-date strong, .hb-cal-t) { color: #ffffff; }
+html[data-theme="report-dark"] .hb-cal-proj { color: #d1d5dc; }
+html[data-theme="report-dark"] :is(.hb-cal-meta, .hb-cal-date span) { color: #99a1af; }

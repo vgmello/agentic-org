@@ -1,4 +1,4 @@
-import { A, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
+import { A, EVENTS, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
 import { S } from "../state.js";
 import { ATYPE, av, avStack, effectiveHealth, esc, ic, leadOf, leadTxt, memberIds, mlink, pill, plink, plural, presence, projMembers, projPill, skel, spotQueue, unhandled } from "../ui.js";
 
@@ -715,6 +715,27 @@ function homeProjectsSectionHtml(st, projs, queue, needsAttnProjs) {
       </section></div>`;
 }
 
+function upcomingEventHtml(e) {
+  const proj = P[e.proj];
+  return `<li class="hb-cal-ev">
+          <span class="hb-cal-date" aria-hidden="true"><span>${esc(e.mon)}</span><strong>${esc(e.day)}</strong></span>
+          <a class="hb-cal-main" href="#/projects/${esc(e.proj)}">
+            <span class="hb-cal-t">${esc(e.title)}<span class="hb-cal-proj"> – ${esc(proj?.name ?? "")}</span></span>
+            <span class="hb-cal-meta"><span class="sr-only">${esc(e.mon)} ${Number(e.day)}, </span><span>${esc(e.when)}</span><span aria-hidden="true">·</span><span class="tnum">${esc(e.start)} – ${esc(e.end)}</span><span aria-hidden="true">·</span><span>${plural(e.attendees.length, "attendee", "attendees")}</span></span>
+          </a>
+          ${avStack(e.attendees, 3)}
+        </li>`;
+}
+
+function homeUpcomingSectionHtml(st) {
+  if (st === "error" || st === "empty") return "";
+  const body = st === "loading" ? skel(2, "Loading upcoming meetings…") : `<ul class="hb-cal-list">${EVENTS.map(upcomingEventHtml).join("")}</ul>`;
+  return `<section class="hb-cal-sec" aria-labelledby="hb-cal-h">
+        ${secHeadHtml({ id: "hb-cal-h", title: "Upcoming", count: st === "loading" ? "" : `${EVENTS.length} in the next 8 days`, right: `<button type="button" class="link" data-act="proto" data-v="Calendar (coming soon)">View calendar${ic("chev-right", "ic16")}</button>` })}
+        <div class="hb-cal">${body}</div>
+      </section>`;
+}
+
 function pageHome() {
   const st = S.homeState, isEmpty = st === "empty";
   const open = isEmpty ? [] : unhandled(), queue = isEmpty ? [] : spotQueue();
@@ -732,7 +753,7 @@ function pageHome() {
   const mainBody = isEmpty
     ? `<div class="hb-stage is-single">${spotlightHtml}</div>${metricsHtml}`
     : `${metricsHtml}<div class="hb-stage${st === "error" ? " is-single" : " has-heads"}">${stageHeadsHtml(st, open)}${spotlightHtml}${renderHomeCatchup(st, fleet.liveWorkingN)}</div>`;
-  return `<div class="hb"><header class="hb-hero"><div class="hb-brief"><h1 class="hb-title" tabindex="-1">${headline}</h1></div></header>${mainBody}${homeProjectsSectionHtml(st, projs, queue, offTrackProjs + atRiskProjs)}${renderTaskTimeSection(st, open.length, fleet.idleSpecsN)}</div>`;
+  return `<div class="hb"><header class="hb-hero"><div class="hb-brief"><h1 class="hb-title" tabindex="-1">${headline}</h1></div></header>${mainBody}${homeProjectsSectionHtml(st, projs, queue, offTrackProjs + atRiskProjs)}${homeUpcomingSectionHtml(st)}${renderTaskTimeSection(st, open.length, fleet.idleSpecsN)}</div>`;
 }
 
 export {
