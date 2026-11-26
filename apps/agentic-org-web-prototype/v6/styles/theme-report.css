@@ -328,7 +328,7 @@ html[data-theme^="report"] .hb-rep-sec-hd {
   margin-bottom: 4px;
 }
 html[data-theme^="report"] .hb-rep-sec-title {
- line-height: 1.25; font-weight: 700;
+  font-size: var(--section-title-size); line-height: 1.25; font-weight: 700;
   letter-spacing: -.028em; color: #0B101B;
 }
 
@@ -426,7 +426,7 @@ html[data-theme^="report"] .hb-catchup {
 }
 html[data-theme^="report"] .hb-cu-hd { align-items: baseline; margin-bottom: 4px; }
 html[data-theme^="report"] .hb-cu-title {
- line-height: 1.25; font-weight: 700;
+  font-size: var(--section-title-size); line-height: 1.25; font-weight: 700;
   letter-spacing: -.028em; text-transform: none; color: #0B101B;
 }
 html[data-theme^="report"] .hb-cu-title .ic { display: none; }
@@ -496,7 +496,7 @@ html[data-theme^="report"] .hb-proj-sec {
 html[data-theme^="report"] .hb-proj-head { align-items: baseline; }
 html[data-theme^="report"] .hb-proj-head h2,
 html[data-theme^="report"] .hb-proj-title {
- line-height: 1.25; font-weight: 700;
+  font-size: var(--section-title-size); line-height: 1.25; font-weight: 700;
   letter-spacing: -.028em; text-transform: none; color: #0B101B;
 }
 html[data-theme^="report"] .hb-proj-head .link,
@@ -564,7 +564,7 @@ html[data-theme^="report"] .hb-time {
   background: transparent;
 }
 html[data-theme^="report"] .hb-time-title {
- line-height: 1.25; font-weight: 700;
+  font-size: var(--section-title-size); line-height: 1.25; font-weight: 700;
   letter-spacing: -.028em; text-transform: none; color: #0B101B;
 }
 html[data-theme^="report"] .hb-time-unit { font-family: var(--font-mono); color: #526074; }
