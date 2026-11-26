@@ -507,7 +507,9 @@ const EVENTS = [
 const OPEN = (w) => !["Done", "Fixed", "Closed", "Approved", "Declined"].includes(w.status);
 const NEEDS_ME_SUBS = ["Review requested", "Hand-off"];
 const blockedOnOwner = (w) => w.status === "Blocked" && w.waitsOn === "you";
-const needsMe = (w) => OPEN(w) && (blockedOnOwner(w) || IN.some((i) => !i.handled && i.task === w.id && NEEDS_ME_SUBS.includes(i.sub)));
+/* Needs the owner: blocked on you, a review/hand-off waiting on you, or open Critical work nobody is assigned to */
+const needsMe = (w) => OPEN(w) && (blockedOnOwner(w) || (!w.who && w.pri === "Critical")
+  || IN.some((i) => !i.handled && i.task === w.id && NEEDS_ME_SUBS.includes(i.sub)));
 
 const officeName = (o) => (OFFICES[o] ? OFFICES[o].name : "Not placed");
 
