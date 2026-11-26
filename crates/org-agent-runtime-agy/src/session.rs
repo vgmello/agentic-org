@@ -13,7 +13,7 @@ use crate::protocol::{
     classify_rpc_error_outcome, classify_stop_reason, classify_tool_capability, encode_initialize,
     encode_jsonrpc_error, encode_permission_cancelled, encode_permission_selected,
     encode_session_cancel, encode_session_close, encode_session_open, encode_session_prompt,
-    encode_set_model, extract_rpc_error_message, is_auth_rpc_error, is_banned_mode,
+    encode_set_model, extract_rpc_error_message, first_str, is_auth_rpc_error, is_banned_mode,
     parse_acp_usage, parse_permission_request, parse_stderr_line, rpc_error, rpc_id_key,
     rpc_result, AcpUsage,
 };
@@ -35,8 +35,8 @@ enum Phase {
 #[derive(Debug, Clone)]
 struct PendingApproval {
     raw_id: Value,
-    allow_option_id: String,
-    deny_option_id: String,
+    allow_option_id: Option<String>,
+    deny_option_id: Option<String>,
     tool_call_id: Option<String>,
 }
 
@@ -429,7 +429,7 @@ fn handle_prompt_slot_response(s: &mut AgySession, idx: usize, val: &Value) -> V
             }
         }
     }
-    if let Some(usage_val) = result.get("usage") {
+    if let Some(usage_val) = result.get("usage").filter(|v| v.is_object()) {
         s.confirmed_usage.add_assign(&parse_acp_usage(usage_val));
         s.saw_confirmed_usage = true;
         s.streamed_usage = None;
@@ -605,13 +605,27 @@ fn handle_current_mode_update(
     s: &mut AgySession,
     update: &serde_json::Map<String, Value>,
 ) -> Vec<Output> {
-    let Some(mode) = update
-        .get("currentModeId")
-        .or_else(|| update.get("mode"))
-        .and_then(Value::as_str)
-    else {
+    let Some(mode) = first_str(&[update.get("currentModeId"), update.get("mode")]) else {
         return Vec::new();
     };
+    if is_opening(s.phase) {
+        if is_banned_mode(mode) || mode != s.cfg.expected_mode.reported_name {
+            s.handshake_deadline = None;
+            s.phase = Phase::Failed;
+            let mut out = vec![Output::Event(SessionEvent::StartFailed {
+                reason: StartFailure::ModeMismatch {
+                    requested: s.cfg.expected_mode.reported_name.to_owned(),
+                    reported: mode.to_owned(),
+                },
+            })];
+            if is_banned_mode(mode) {
+                out.push(Output::CloseStdin);
+            }
+            return out;
+        }
+        s.reported_mode = Some(mode.to_owned());
+        return Vec::new();
+    }
     s.reported_mode = Some(mode.to_owned());
     let mut out = vec![Output::Event(SessionEvent::ModeChanged {
         mode: Some(mode.to_owned()),
@@ -650,16 +664,14 @@ fn handle_message_chunk(
 }
 
 fn handle_tool_call_update_start(update: &serde_json::Map<String, Value>) -> Vec<Output> {
-    let name = update
-        .get("name")
-        .or_else(|| update.get("title"))
-        .and_then(Value::as_str)
+    let name = first_str(&[update.get("name"), update.get("title")])
         .unwrap_or("unknown")
         .to_owned();
     let capability = classify_tool_capability(&name);
     let input = update
         .get("rawInput")
-        .or_else(|| update.get("args"))
+        .filter(|v| !v.is_null())
+        .or_else(|| update.get("args").filter(|v| !v.is_null()))
         .cloned()
         .unwrap_or(Value::Null);
     vec![Output::Event(SessionEvent::ToolStarted {
@@ -710,7 +722,7 @@ fn handle_usage_update(s: &mut AgySession, update: &serde_json::Map<String, Valu
     if !s.turn_open {
         return Vec::new();
     }
-    if let Some(usage_val) = update.get("usage") {
+    if let Some(usage_val) = update.get("usage").filter(|v| v.is_object()) {
         let parsed = parse_acp_usage(usage_val);
         if !parsed.is_zero() {
             match &mut s.streamed_usage {
@@ -797,12 +809,24 @@ fn control_answer(
         .pending_approvals
         .remove(&request_id)
         .expect("verified present");
-    let option_id = if use_allow {
-        &pending.allow_option_id
+    let mut out = Vec::new();
+    let chosen = if use_allow {
+        pending.allow_option_id.as_deref()
     } else {
-        &pending.deny_option_id
+        pending.deny_option_id.as_deref()
     };
-    let mut out = vec![encode_permission_selected(&pending.raw_id, option_id)];
+    match chosen {
+        Some(option_id) => out.push(encode_permission_selected(&pending.raw_id, option_id)),
+        None => {
+            out.push(encode_permission_cancelled(&pending.raw_id));
+            if use_allow {
+                out.push(Output::Event(SessionEvent::Notice {
+                    kind: NoticeKind::Warning,
+                    text: "Agy ACP permission request offered no one-shot allow option; failed closed with cancel".to_owned(),
+                }));
+            }
+        }
+    }
     if stop_turn {
         if let Some(sid) = &s.session_id {
             out.push(encode_session_cancel(sid.as_str()));

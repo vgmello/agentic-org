@@ -1043,3 +1043,100 @@ fn opening_mode_mismatch_auth_error_and_resume_failure_scoping() {
         })
     )));
 }
+
+#[test]
+fn pass2_allow_always_fail_closed_opening_mode_update_and_null_fallbacks() {
+    let runtime = AgyRuntime::new();
+    let mut spec = sample_spec();
+    spec.model = Some(Token::try_from("gemini-4-neon-xhigh").unwrap());
+    let now = Instant::now();
+
+    // 1. Opening-phase `current_mode_update` with mismatched or banned mode during OpeningModel
+    // MUST emit StartFailure::ModeMismatch (and CloseStdin for banned) rather than reaching Ready.
+    for (bad_mode, expect_close) in [("accept-edits", false), ("yolo", true)] {
+        let (_, mut s_open) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+        let _ = s_open.start(now);
+        let _ = s_open.on_line(
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}"#,
+            now,
+        );
+        let _ = s_open.on_line(
+            br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-om","models":{"currentModelId":"gemini-4-neon-high"}}}"#,
+            now,
+        );
+        let frame = format!(
+            r#"{{"jsonrpc":"2.0","method":"session/update","params":{{"update":{{"sessionUpdate":"current_mode_update","currentModeId":"{bad_mode}"}}}}}}"#
+        );
+        let res = s_open.on_line(frame.as_bytes(), now);
+        assert!(res.iter().any(|o| matches!(
+            o,
+            Output::Event(SessionEvent::StartFailed {
+                reason: StartFailure::ModeMismatch { reported, .. }
+            }) if reported == bad_mode
+        )));
+        assert_eq!(
+            res.iter().any(|o| matches!(o, Output::CloseStdin)),
+            expect_close
+        );
+        // Subsequent set_model response must NOT emit Ready.
+        let late_model = s_open.on_line(br#"{"jsonrpc":"2.0","id":3,"result":{}}"#, now);
+        assert!(!late_model
+            .iter()
+            .any(|o| matches!(o, Output::Event(SessionEvent::Ready { .. }))));
+    }
+
+    // 2. When `options` offers only `allow_always` (no `allow_once`), `AllowOnce` MUST fail
+    // closed with `cancelled` + warning Notice and NEVER emit `optionId: "allow"`.
+    // Also verify null `"path": null` falls through to `toolCall.locations[0].path` and
+    // `"usage": null` in prompt result preserves streamed usage fallback.
+    let base_spec = sample_spec();
+    let (_, mut s) = runtime.plan_session(&base_spec, &sample_ctx()).unwrap();
+    let _ = s.start(now);
+    for line in &agy_acp_script().opening {
+        let _ = s.on_line(line, now);
+    }
+    let perm = s.on_line(
+        br#"{"jsonrpc":"2.0","id":"aa-1","method":"session/request_permission","params":{"toolCall":{"toolCallId":"tc-aa","name":null,"title":"Edit file","kind":"edit","rawInput":{"path":null},"locations":[{"path":"/work/t-1/b.rs"}]},"options":[{"optionId":"allow","kind":"allow_always"},{"optionId":"deny","kind":"reject_once"}]}}"#,
+        now,
+    );
+    let req = perm
+        .iter()
+        .find_map(|o| match o {
+            Output::Event(SessionEvent::ApprovalRequested(r)) => Some(r),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(req.blocked_path.as_deref(), Some("/work/t-1/b.rs"));
+    let ans = s
+        .control(
+            Control::Answer {
+                request_id: ApprovalId::new("aa-1"),
+                decision: Decision::AllowOnce,
+            },
+            now,
+        )
+        .unwrap();
+    let ans_json: serde_json::Value = match &ans[0] {
+        Output::Write(line) => serde_json::from_slice(line.as_bytes()).unwrap(),
+        other => panic!("expected Write, got {other:?}"),
+    };
+    assert_eq!(ans_json["result"]["outcome"]["outcome"], "cancelled");
+    assert!(ans_json["result"]["outcome"].get("optionId").is_none());
+    assert!(ans
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::Notice { .. }))));
+
+    let _ = s.control(Control::Send { text: "go".into() }, now).unwrap();
+    let _ = s.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"usage_update","usage":{"inputTokens":null,"input_tokens":55,"outputTokens":11}}}}"#,
+        now,
+    );
+    let done = s.on_line(
+        br#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage":null}}"#,
+        now,
+    );
+    assert!(done.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::Usage(u)) if u.input == 55 && u.output == 11
+    )));
+}

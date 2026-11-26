@@ -50,6 +50,19 @@ pub(crate) fn rpc_result(val: &Value) -> Option<&Value> {
     val.get("result").filter(|v| !v.is_null())
 }
 
+/// Returns the first non-null JSON string across `candidates`, avoiding `null` short-circuiting.
+pub(crate) fn first_str<'a>(candidates: &[Option<&'a Value>]) -> Option<&'a str> {
+    candidates.iter().find_map(|c| c.and_then(Value::as_str))
+}
+
+/// Returns the first non-null JSON `u64` across `candidates`, defaulting to `0`.
+pub(crate) fn first_u64(candidates: &[Option<&Value>]) -> u64 {
+    candidates
+        .iter()
+        .find_map(|c| c.and_then(Value::as_u64))
+        .unwrap_or(0)
+}
+
 /// Returns `true` for ACP permission modes that bypass office approval enforcement.
 pub(crate) fn is_banned_mode(mode: &str) -> bool {
     matches!(
@@ -302,11 +315,11 @@ pub(crate) fn classify_escalation(tool: &str, kind: ApprovalKind, input: &Value)
     Escalation::None
 }
 
-/// Extracted ACP `session/request_permission` payload plus selected allow/deny option IDs.
+/// Extracted ACP `session/request_permission` payload plus selected one-shot allow/deny option IDs.
 pub(crate) struct ParsedPermission {
     pub(crate) request: ApprovalRequest,
-    pub(crate) allow_option_id: String,
-    pub(crate) deny_option_id: String,
+    pub(crate) allow_option_id: Option<String>,
+    pub(crate) deny_option_id: Option<String>,
     pub(crate) tool_call_id: Option<String>,
 }
 
@@ -315,14 +328,11 @@ pub(crate) fn parse_permission_request(
     params: &Value,
 ) -> ParsedPermission {
     let tc = params.get("toolCall").unwrap_or(&Value::Null);
-    let tool = tc
-        .get("name")
-        .or_else(|| tc.get("title"))
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
+    let tool = first_str(&[tc.get("name"), tc.get("title")]).unwrap_or("unknown");
     let input = tc
         .get("rawInput")
-        .or_else(|| tc.get("args"))
+        .filter(|v| !v.is_null())
+        .or_else(|| tc.get("args").filter(|v| !v.is_null()))
         .cloned()
         .unwrap_or(Value::Null);
     let kind = match classify_tool_kind(tool) {
@@ -336,15 +346,15 @@ pub(crate) fn parse_permission_request(
         .get("title")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    request.blocked_path = input
-        .get("path")
-        .or_else(|| input.get("file_path"))
-        .or_else(|| input.get("Path"))
-        .or_else(|| input.get("TargetFile"))
-        .or_else(|| input.get("AbsolutePath"))
-        .or_else(|| tc.pointer("/locations/0/path"))
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
+    request.blocked_path = first_str(&[
+        input.get("path"),
+        input.get("file_path"),
+        input.get("Path"),
+        input.get("TargetFile"),
+        input.get("AbsolutePath"),
+        tc.pointer("/locations/0/path"),
+    ])
+    .map(ToOwned::to_owned);
     let tool_call_id = tc
         .get("toolCallId")
         .and_then(Value::as_str)
@@ -361,73 +371,42 @@ pub(crate) fn parse_permission_request(
 }
 
 /// Selects one-shot allow/deny option IDs, strictly preferring `allow_once` / `reject_once`
-/// over bare option IDs and never selecting `allow_always` / `reject_always` (`AllowOnce`).
-fn extract_permission_options(options: Option<&Value>) -> (String, String) {
+/// and NEVER falling back to `allow_always` / `reject_always` (`Decision::AllowOnce`).
+/// Defaults to `("allow", "deny")` only when `options` is absent or empty (`[]`).
+fn extract_permission_options(options: Option<&Value>) -> (Option<String>, Option<String>) {
+    let Some(arr) = options.and_then(Value::as_array).filter(|a| !a.is_empty()) else {
+        return (Some("allow".to_owned()), Some("deny".to_owned()));
+    };
     let mut exact_allow = None;
     let mut exact_deny = None;
-    let mut fallback_allow = None;
-    let mut fallback_deny = None;
-    if let Some(arr) = options.and_then(Value::as_array) {
-        for opt in arr {
-            let Some(opt_id) = opt.get("optionId").and_then(Value::as_str) else {
-                continue;
-            };
-            let kind = opt.get("kind").and_then(Value::as_str).unwrap_or("");
-            if exact_allow.is_none() && kind == "allow_once" {
-                exact_allow = Some(opt_id.to_owned());
-            } else if fallback_allow.is_none()
-                && opt_id == "allow"
-                && !matches!(kind, "allow_always" | "reject_always")
-            {
-                fallback_allow = Some(opt_id.to_owned());
-            }
-            if exact_deny.is_none() && kind == "reject_once" {
-                exact_deny = Some(opt_id.to_owned());
-            } else if fallback_deny.is_none()
-                && opt_id == "deny"
-                && !matches!(kind, "allow_always" | "reject_always")
-            {
-                fallback_deny = Some(opt_id.to_owned());
-            }
+    let mut bare_allow = None;
+    let mut bare_deny = None;
+    for opt in arr {
+        let Some(opt_id) = opt.get("optionId").and_then(Value::as_str) else {
+            continue;
+        };
+        let kind = opt.get("kind").and_then(Value::as_str).unwrap_or("");
+        if exact_allow.is_none() && kind == "allow_once" {
+            exact_allow = Some(opt_id.to_owned());
+        } else if bare_allow.is_none() && opt_id == "allow" && kind.is_empty() {
+            bare_allow = Some(opt_id.to_owned());
+        }
+        if exact_deny.is_none() && kind == "reject_once" {
+            exact_deny = Some(opt_id.to_owned());
+        } else if bare_deny.is_none() && opt_id == "deny" && kind.is_empty() {
+            bare_deny = Some(opt_id.to_owned());
         }
     }
-    (
-        exact_allow
-            .or(fallback_allow)
-            .unwrap_or_else(|| "allow".to_owned()),
-        exact_deny
-            .or(fallback_deny)
-            .unwrap_or_else(|| "deny".to_owned()),
-    )
+    (exact_allow.or(bare_allow), exact_deny.or(bare_deny))
 }
 
 pub(crate) fn parse_acp_usage(val: &Value) -> AcpUsage {
     AcpUsage {
-        input: val
-            .get("inputTokens")
-            .or_else(|| val.get("input_tokens"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        output: val
-            .get("outputTokens")
-            .or_else(|| val.get("output_tokens"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        cache_read: val
-            .get("cachedReadTokens")
-            .or_else(|| val.get("cache_read_tokens"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        cache_write: val
-            .get("cachedWriteTokens")
-            .or_else(|| val.get("cache_write_tokens"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        reasoning: val
-            .get("thoughtTokens")
-            .or_else(|| val.get("reasoning_tokens"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
+        input: first_u64(&[val.get("inputTokens"), val.get("input_tokens")]),
+        output: first_u64(&[val.get("outputTokens"), val.get("output_tokens")]),
+        cache_read: first_u64(&[val.get("cachedReadTokens"), val.get("cache_read_tokens")]),
+        cache_write: first_u64(&[val.get("cachedWriteTokens"), val.get("cache_write_tokens")]),
+        reasoning: first_u64(&[val.get("thoughtTokens"), val.get("reasoning_tokens")]),
     }
 }
 
