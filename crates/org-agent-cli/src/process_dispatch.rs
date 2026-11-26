@@ -34,6 +34,27 @@ pub fn try_execute<T: OfficeTransport + ?Sized>(
     }
 }
 
+/// The refusal of an office answer this build cannot read: the same read once more, then the
+/// likely cause.
+fn unreadable(method: &str, command: &str) -> Refusal {
+    Refusal::new(
+        ErrorCode::Unavailable,
+        format!("unreadable {method} response"),
+        format!(
+            "Retry `agent-os {command}` once; if it fails again, the office and agent-os versions differ."
+        ),
+    )
+}
+
+/// The refusal of a write whose answer this build cannot read: the office may have applied it.
+fn unreadable_write(method: &str) -> Refusal {
+    Refusal::new(
+        ErrorCode::Unavailable,
+        format!("unreadable {method} response"),
+        "The write may have been applied: retry with the same --idempotency-key to read its result without writing twice.",
+    )
+}
+
 fn opt_str(input: &Map<String, Value>, key: &str) -> Option<String> {
     input.get(key).and_then(Value::as_str).map(str::to_owned)
 }
@@ -104,13 +125,8 @@ fn read_process_list<T: OfficeTransport + ?Sized>(
         ProcessEffective::METHOD,
         serde_json::to_value(params).unwrap(),
     )?;
-    let res: ProcessEffectiveResult = serde_json::from_value(raw).map_err(|_| {
-        Refusal::new(
-            ErrorCode::Unavailable,
-            "unreadable process.effective response",
-            "Retry.",
-        )
-    })?;
+    let res: ProcessEffectiveResult =
+        serde_json::from_value(raw).map_err(|_| unreadable("process.effective", "process list"))?;
     let items = match serde_json::to_value(res.entries) {
         Ok(Value::Array(items)) => items,
         _ => Vec::new(),
@@ -182,13 +198,8 @@ fn read_process_why<T: OfficeTransport + ?Sized>(
         r#for: target_for,
     };
     let raw = transport.call_method(ProcessWhy::METHOD, serde_json::to_value(params).unwrap())?;
-    let res: ProcessWhyResult = serde_json::from_value(raw).map_err(|_| {
-        Refusal::new(
-            ErrorCode::Unavailable,
-            "unreadable process.why response",
-            "Retry.",
-        )
-    })?;
+    let res: ProcessWhyResult =
+        serde_json::from_value(raw).map_err(|_| unreadable("process.why", "process why"))?;
     Ok(Answer::completed(serde_json::to_value(res).unwrap()))
 }
 
@@ -255,13 +266,8 @@ fn read_process_inspect<T: OfficeTransport + ?Sized>(
             }
             refusal
         })?;
-    let res: ProcessShowResult = serde_json::from_value(raw).map_err(|_| {
-        Refusal::new(
-            ErrorCode::Unavailable,
-            "unreadable process.show response",
-            "Retry.",
-        )
-    })?;
+    let res: ProcessShowResult =
+        serde_json::from_value(raw).map_err(|_| unreadable("process.show", "process inspect"))?;
     Ok(Answer::completed(serde_json::to_value(res).unwrap()))
 }
 
@@ -328,16 +334,11 @@ fn write_process<T: OfficeTransport + ?Sized>(
         expected_revision: request.if_match,
     };
     let raw = transport.call_method(ProcessWrite::METHOD, serde_json::to_value(params).unwrap())?;
-    let res: ProcessWriteResult = serde_json::from_value(raw).map_err(|_| {
-        Refusal::new(
-            ErrorCode::Unavailable,
-            "unreadable process.write response",
-            "Retry.",
-        )
-    })?;
+    let res: ProcessWriteResult =
+        serde_json::from_value(raw).map_err(|_| unreadable_write(ProcessWrite::METHOD))?;
     let mut ans = Answer::completed(serde_json::to_value(res).unwrap());
     ans.ack = Some(write_ack(request));
-    ans.operation_id = Some(command_id);
+    ans.operation_id = request.idempotency_key.clone().or(Some(command_id));
     Ok(ans)
 }
 
@@ -350,13 +351,8 @@ fn read_skill_list<T: OfficeTransport + ?Sized>(
         SkillList::METHOD,
         serde_json::to_value(SkillListParams {}).unwrap(),
     )?;
-    let res: SkillListResult = serde_json::from_value(raw).map_err(|_| {
-        Refusal::new(
-            ErrorCode::Unavailable,
-            "unreadable skill.list response",
-            "Retry.",
-        )
-    })?;
+    let res: SkillListResult =
+        serde_json::from_value(raw).map_err(|_| unreadable("skill.list", "skill list"))?;
     let items = match serde_json::to_value(res.skills) {
         Ok(Value::Array(items)) => items,
         _ => Vec::new(),
@@ -373,13 +369,8 @@ fn read_skill_read<T: OfficeTransport + ?Sized>(
         SkillRead::METHOD,
         serde_json::to_value(SkillReadParams { name }).unwrap(),
     )?;
-    let res: SkillReadResult = serde_json::from_value(raw).map_err(|_| {
-        Refusal::new(
-            ErrorCode::Unavailable,
-            "unreadable skill.read response",
-            "Retry.",
-        )
-    })?;
+    let res: SkillReadResult =
+        serde_json::from_value(raw).map_err(|_| unreadable("skill.read", "skill read"))?;
     Ok(Answer::completed(serde_json::to_value(res).unwrap()))
 }
 

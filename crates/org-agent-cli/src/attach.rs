@@ -8,7 +8,9 @@
 //! A line is checked whole before anything runs: only `command`, `input` and `options` are
 //! read, the answer is always one line of JSON, and standard input is the stream of lines, so a
 //! line that names another key, another `format`, `--stdin` or `--help` is refused and nothing
-//! is sent for it.
+//! is sent for it. Flags are read only from `options`, one bare name per key with its value passed
+//! inline, so no flag can reach the table past those checks (`command` with a flag, a key with
+//! `=`, or a value that looks like a flag).
 
 use std::io::{self, BufRead, Write};
 
@@ -121,6 +123,9 @@ fn parse_line_args(raw: &str) -> Result<Vec<String>, String> {
     if parts.is_empty() {
         return Err("`command` must name a resource and verb (e.g. `msg inbox`).".into());
     }
+    if let Some(word) = parts.iter().find(|word| word.starts_with('-')) {
+        return Err(command_flag(word));
+    }
     let mut args = normalize_args(&parts).into_owned();
     if let Some(input) = obj.get("input").filter(|v| !v.is_null()) {
         let json = serde_json::to_string(input)
@@ -157,8 +162,31 @@ fn refused_option(flag: &str, value: &Value) -> Option<String> {
     }
 }
 
+/// The refusal of a flag written into `command`, which names only a resource, a verb or a
+/// shorthand: every flag goes in `options`, where the refused ones are checked.
+fn command_flag(word: &str) -> String {
+    format!(
+        "`command` names only a resource and verb (or a shorthand), and `{word}` is a flag. Give flags in `options`, e.g. {{\"options\":{{\"limit\":5}}}}."
+    )
+}
+
+/// The refusal of an `options` key that is not one bare flag name: a key with `=` or a space
+/// would carry a value or a second flag past the refused options.
+fn option_key_refusal(key: &str) -> Option<String> {
+    (key.contains('=') || key.chars().any(char::is_whitespace)).then(|| {
+        format!(
+            "Option `{key}` is not a flag name: name one flag per key (e.g. `limit`) and give its value as the key's value, never with `=` or spaces."
+        )
+    })
+}
+
+/// Turns `options` into flags. A string or number is passed inline (`--name=value`), so a value
+/// is only ever read as that flag's value, never as a flag of its own.
 fn append_options(args: &mut Vec<String>, options: &Map<String, Value>) -> Result<(), String> {
     for (key, value) in options {
+        if let Some(refusal) = option_key_refusal(key) {
+            return Err(refusal);
+        }
         let flag = if key.starts_with("--") {
             key.clone()
         } else {
@@ -172,14 +200,8 @@ fn append_options(args: &mut Vec<String>, options: &Map<String, Value>) -> Resul
         }
         match value {
             Value::Bool(_) => args.push(flag),
-            Value::String(s) => {
-                args.push(flag);
-                args.push(s.clone());
-            }
-            Value::Number(n) => {
-                args.push(flag);
-                args.push(n.to_string());
-            }
+            Value::String(s) => args.push(format!("{flag}={s}")),
+            Value::Number(n) => args.push(format!("{flag}={n}")),
             _ => {
                 return Err(format!(
                     "Option `{key}` in `session attach` must be a string, number, or boolean."
@@ -195,6 +217,15 @@ fn append_options(args: &mut Vec<String>, options: &Map<String, Value>) -> Resul
 /// with the line hint.
 pub fn error_envelope(code: ErrorCode, message: &str) -> String {
     org_command::failure_envelope_json(&Refusal::new(code, message, LINE_HINT), false)
+}
+
+/// Whether `session attach` was asked for its help: `--help` (or `-h`) anywhere after it wins
+/// over every other word, as it does on every command (`doc-28` §2.1).
+pub fn wants_help(args: &[String]) -> bool {
+    args.get(2..)
+        .unwrap_or_default()
+        .iter()
+        .any(|arg| arg == "--help" || arg == "-h")
 }
 
 /// The refusal of `session attach` written with anything after it but `--help`: it reads its

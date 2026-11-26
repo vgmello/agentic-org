@@ -235,4 +235,59 @@ fn session_attach_with_a_flag_is_a_usage_refusal() {
     assert_eq!(refusal.code, ErrorCode::InvalidRequest);
     assert!(refusal.message.contains("--limit 5"), "{}", refusal.message);
     assert!(refusal.hint.contains("--help"), "{}", refusal.hint);
+    // `--help` wins over any other word, wherever it stands (`doc-28` §2.1).
+    for line in [
+        "session attach --help",
+        "session attach -h",
+        "session attach --bad --help",
+        "session attach --help --limit 5",
+    ] {
+        assert!(wants_help(&words(line)), "{line}");
+    }
+    for line in [
+        "session attach",
+        "session attach --bad",
+        "session attach help",
+    ] {
+        assert!(!wants_help(&words(line)), "{line}");
+    }
+}
+
+#[test]
+fn a_flag_smuggled_past_the_option_checks_is_refused_before_any_write() {
+    let smuggled = [
+        // A flag in `command`, which names only a resource, a verb or a shorthand.
+        r#"{"command":"status set --text x --format yaml"}"#,
+        r#"{"command":"status set --format=compact","input":{"text":"x"}}"#,
+        r#"{"command":"status set --help","input":{"text":"x"}}"#,
+        r#"{"command":"msg send --stdin","input":{"to":"owner"}}"#,
+        r#"{"command":"who -h"}"#,
+        // An option key carrying its own value or a second flag.
+        r#"{"command":"status set","input":{"text":"x"},"options":{"--format=yaml":true}}"#,
+        r#"{"command":"status set","input":{"text":"x"},"options":{"format=compact":true}}"#,
+        r#"{"command":"status set","input":{"text":"x"},"options":{"dry-run --format":"yaml"}}"#,
+        // A value that looks like a flag is that option's value, never a flag of its own.
+        r#"{"command":"status set","input":{"text":"x"},"options":{"dry-run":"--format=yaml"}}"#,
+        r#"{"command":"status set","input":{"text":"x"},"options":{"dry-run":"--help"}}"#,
+    ];
+    for line in smuggled {
+        let mut office = recording();
+        let envelopes = attach_lines(&format!("{line}\n"), &mut office);
+        assert_eq!(envelopes.len(), 1, "{line}");
+        assert_eq!(envelopes[0]["ok"], false, "{line}: {}", envelopes[0]);
+        assert_eq!(envelopes[0]["error"]["code"], "invalid_request", "{line}");
+        assert!(office.0.calls.is_empty(), "{line}: a write was sent");
+    }
+    // Values are passed inline, so a value that starts with `--` is still only a value.
+    let args = parse_line_args(r#"{"command":"status set","options":{"text":"--format yaml"}}"#)
+        .expect("parsed");
+    assert_eq!(args, ["status", "set", "--text=--format yaml"]);
+    let mut office = recording();
+    let envelopes = attach_lines(
+        "{\"command\":\"status set\",\"options\":{\"text\":\"--format=yaml\"}}\n",
+        &mut office,
+    );
+    assert_eq!(envelopes[0]["ok"], true, "{}", envelopes[0]);
+    assert_eq!(office.0.calls.len(), 1);
+    assert_eq!(office.0.calls[0].1["text"], "--format=yaml");
 }

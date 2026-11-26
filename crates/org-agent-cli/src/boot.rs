@@ -12,6 +12,7 @@
 
 use org_command::{Answer, Refusal, Request};
 use org_proto::directory::{DirectoryCard, WhoResult};
+use org_proto::external_auth::{AuthWhoami, AuthWhoamiResult};
 use org_proto::org::MemberKind;
 use org_proto::processes::{
     DocumentKindWire, EffectiveProcessEntryWire, ProcessEffective, ProcessEffectiveParams,
@@ -104,6 +105,14 @@ fn common(mode: &str) -> Map<String, Value> {
     data
 }
 
+/// The bound boot briefing (`data` of `agent-os boot`) over `transport`, for every project scope:
+/// what `agent-os login` prints once a workspace is signed in (`TASK-137`).
+pub(crate) fn bound_briefing<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+) -> Result<Value, Refusal> {
+    bound_boot(transport, None)
+}
+
 fn bound_boot<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     project: Option<&str>,
@@ -145,16 +154,13 @@ fn bound_boot<T: OfficeTransport + ?Sized>(
     Ok(Value::Object(data))
 }
 
-/// The caller's directory card: by the employee the binding names, or the one its session runs.
+/// The caller's directory card: by the employee the binding names, else the member the office
+/// bound the connection to (`auth.whoami`: an agent, or a person through a grant), else the
+/// employee whose session the connection runs (`member.session_inspect`, agents only).
 fn caller_card<T: OfficeTransport + ?Sized>(transport: &mut T) -> Result<DirectoryCard, Refusal> {
     let member = match transport.caller_member_id() {
         Some(member) => member,
-        None => {
-            let raw = transport.call_method("member.session_inspect", json!({}))?;
-            let inspected: SessionInspectResult =
-                serde_json::from_value(raw).map_err(|_| unreadable("member.session_inspect"))?;
-            inspected.session.employee_id
-        }
+        None => bound_member(transport)?,
     };
     let raw = transport.call_method("who", json!({ "member": member }))?;
     let who: WhoResult = serde_json::from_value(raw).map_err(|_| unreadable("who"))?;
@@ -165,6 +171,23 @@ fn caller_card<T: OfficeTransport + ?Sized>(transport: &mut T) -> Result<Directo
             "Check that your session is still active with `agent-os session inspect`.",
         )
     })
+}
+
+fn bound_member<T: OfficeTransport + ?Sized>(transport: &mut T) -> Result<String, Refusal> {
+    match transport.call_method(AuthWhoami::METHOD, json!({})) {
+        Ok(raw) => serde_json::from_value::<AuthWhoamiResult>(raw)
+            .map(|who| who.member_id)
+            .map_err(|_| unreadable(AuthWhoami::METHOD)),
+        // An office without external agents, or a connection the office has not bound to a
+        // member (a session-token-only run): ask which session's employee this is.
+        Err(refusal) if matches!(refusal.code, ErrorCode::Unsupported | ErrorCode::NotBound) => {
+            let raw = transport.call_method("member.session_inspect", json!({}))?;
+            let inspected: SessionInspectResult =
+                serde_json::from_value(raw).map_err(|_| unreadable("member.session_inspect"))?;
+            Ok(inspected.session.employee_id)
+        }
+        Err(refusal) => Err(refusal),
+    }
 }
 
 fn identity(card: &DirectoryCard) -> Value {
@@ -213,9 +236,10 @@ fn pack_mandatory<'a>(
     let mut omitted = Vec::new();
     for entry in entries {
         let doc = &entry.document;
-        let size = doc.title.len() + doc.body_markdown.len();
-        if omitted.is_empty() && used + size <= MANDATORY_LIMIT {
-            used += size;
+        let size = doc.title.len().saturating_add(doc.body_markdown.len());
+        let total = used.saturating_add(size);
+        if omitted.is_empty() && total <= MANDATORY_LIMIT {
+            used = total;
             kept.push(document(entry));
         } else {
             omitted.push(match &doc.key {

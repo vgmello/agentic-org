@@ -241,9 +241,10 @@ fn is_shell_operator(word: &str) -> bool {
 }
 
 /// The arguments `agent-os session attach` builds for one JSON line, by the same rules as
-/// `org-agent-cli`'s `attach`: the command's words, `input` as `--json`, and `options` as flags;
-/// a key other than `command`, `input` and `options`, a `format` other than json, `stdin` and
-/// `help` are refused there before the table reads the line, so here too.
+/// `org-agent-cli`'s `attach`: the command's words, `input` as `--json`, and `options` as flags
+/// with string and number values inline (`--name=value`); a key other than `command`, `input`
+/// and `options`, a flag in `command`, an option key with `=` or a space, a `format` other than
+/// json, `stdin` and `help` are refused there before the table reads the line, so here too.
 /// `None` for a JSON line without `command` (an example, not an attach line); `Err` with
 /// attach's own message for a line it refuses before the table.
 fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
@@ -270,6 +271,11 @@ fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
             "`command` must name a resource and verb (e.g. `msg inbox`).".into(),
         ));
     }
+    if let Some(word) = args.iter().find(|word| word.starts_with('-')) {
+        return Some(Err(format!(
+            "`command` names only a resource and verb (or a shorthand), and `{word}` is a flag"
+        )));
+    }
     if let Some(input) = object.get("input").filter(|v| !v.is_null()) {
         args.push("--json".to_owned());
         args.push(input.to_string());
@@ -278,6 +284,9 @@ fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
         None => {}
         Some(Value::Object(options)) => {
             for (key, value) in options {
+                if key.contains('=') || key.chars().any(char::is_whitespace) {
+                    return Some(Err(format!("Option `{key}` is not a flag name")));
+                }
                 let flag = if key.starts_with("--") {
                     key.clone()
                 } else {
@@ -299,8 +308,8 @@ fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
                 match value {
                     Value::Bool(true) => args.push(flag),
                     Value::Bool(false) | Value::Null => {}
-                    Value::String(text) => args.extend([flag, text.clone()]),
-                    Value::Number(n) => args.extend([flag, n.to_string()]),
+                    Value::String(text) => args.push(format!("{flag}={text}")),
+                    Value::Number(n) => args.push(format!("{flag}={n}")),
                     Value::Array(_) | Value::Object(_) => {
                         let why = "in `session attach` must be a string, number, or boolean.";
                         return Some(Err(format!("Option `{key}` {why}")));

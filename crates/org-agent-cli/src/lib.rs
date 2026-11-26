@@ -140,7 +140,7 @@ pub fn emit(out: &mut dyn Write, text: &str, exit_code: u8) -> u8 {
 }
 
 fn run_session_attach(args: &[String], mut office: BoundOffice) -> u8 {
-    if matches!(args, [_, _, flag] if is_help_flag(flag)) {
+    if attach::wants_help(args) {
         return emit(&mut io::stdout().lock(), SESSION_ATTACH_HELP, 0);
     }
     // A flag is refused before anything binds: exit 2, as every command line that cannot be

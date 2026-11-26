@@ -88,13 +88,21 @@ fn every_write_declares_its_ack_class_and_durable_is_refused_where_it_cannot_hol
         .filter(|row| row.ack() == Some(Ack::Committed))
         .map(|row| row.name())
         .collect();
-    // Only what the office does not journal before it answers.
+    // Only what the office does not journal before it answers (with the external lease verbs
+    // of `TASK-137`, which declare their own commit acknowledgement).
     for name in &committed {
         assert!(
             ["msg ", "channel ", "status "]
                 .iter()
                 .any(|p| name.starts_with(p))
-                || ["repo fetch", "repo push", "worktree prepare"].contains(&name.as_str()),
+                || [
+                    "repo fetch",
+                    "repo push",
+                    "worktree prepare",
+                    "agent approve",
+                    "agent revoke",
+                ]
+                .contains(&name.as_str()),
             "`{name}` is acknowledged at commit"
         );
     }
@@ -427,7 +435,8 @@ fn reply_and_list_refuse_flag_combinations_they_would_drop() {
     assert_eq!(code, 0, "{envelope}");
 }
 
-/// The eight lists that answered everything at once, each with the reply that holds two items.
+/// The seven lists that answered everything at once, each with the reply that holds two items
+/// (`task list`, the eighth, pages on the office and is tested on its own).
 fn list_cases() -> Vec<(Vec<&'static str>, &'static str, Value)> {
     let card = |n: u8| json!({"id": format!("0193a5c0-0000-7000-8000-00000000000{n}"), "name": "A", "kind": "agent", "presence": "busy", "teams": []});
     let channel = |n: u8| json!({"id": format!("0193a5c0-0000-7000-8000-00000000010{n}"), "kind": "channel", "name": "general", "archived": false, "revision": 1, "created_at": "2026-11-26T00:00:00.000Z", "members": [], "is_member": true});
@@ -436,6 +445,17 @@ fn list_cases() -> Vec<(Vec<&'static str>, &'static str, Value)> {
     let note = |n: u8| json!({"id": format!("0193a5c0-0000-7000-8000-00000000040{n}"), "task_id": "0193a5c0-0000-7000-8000-000000000100", "author_id": "0193a5c0-0000-7000-8000-000000000001", "revision": 1, "body_markdown": "x", "created_at": "2026-11-26T00:00:00.000Z", "updated_at": "2026-11-26T00:00:00.000Z", "editable": true});
     let skill =
         |key: &str| json!({"key": key, "title": "T", "description": "D", "source": "built_in"});
+    let process = |n: u8| {
+        let id = format!("0193a5c0-0000-7000-8000-00000000050{n}");
+        json!({"id": id, "key": null, "kind": "process", "applies": true, "mandatory": false,
+            "winner_kind": null, "replaces": null, "problem": null, "chain": [],
+            "document": {"id": id, "key": null, "revision": 1, "kind": "process", "title": "P",
+                "status": "current", "owner_employee_id": null, "owner_name": null,
+                "level": "organization", "team_id": null, "project_id": null, "scope_name": null,
+                "overridable": true, "summary": "S", "body_markdown": "B", "path": "p.md",
+                "created_at": null, "created_by_kind": "person", "created_by_id": null,
+                "updated_at": null, "updated_by_kind": "person", "updated_by_id": null}})
+    };
     vec![
         (vec!["who"], "who", json!({"members": [card(1), card(2)]})),
         (
@@ -462,6 +482,12 @@ fn list_cases() -> Vec<(Vec<&'static str>, &'static str, Value)> {
             vec!["skill", "list"],
             "skill.list",
             json!({"skills": [skill("a"), skill("b")]}),
+        ),
+        (
+            vec!["process", "list"],
+            "process.effective",
+            json!({"scope_chain": ["Organization"], "entries": [process(1), process(2)],
+                "problems": [], "computed_at": "2026-11-26T00:00:00Z"}),
         ),
     ]
 }
@@ -506,6 +532,29 @@ fn every_list_answers_bounded_pages_with_a_cursor_and_a_total() {
     }
 }
 
+/// One `tasks.list` task as the office answers it.
+fn task_view(n: u64) -> Value {
+    json!({
+        "id": format!("0193a5c0-0000-7000-8000-{n:012}"),
+        "office_code": "A",
+        "number": n,
+        "key": format!("T-A{n}"),
+        "revision": 1,
+        "team_id": "0193a5c0-0000-7000-8000-000000000001",
+        "type": "task",
+        "title": format!("Task {n}"),
+        "status": "todo",
+        "body_markdown": "",
+        "priority": "normal",
+        "created_by_kind": "person",
+        "updated_by_kind": "person",
+        "checklist_total": 0,
+        "checklist_done": 0,
+        "comment_count": 0,
+        "watcher_count": 0
+    })
+}
+
 #[test]
 fn task_list_pages_on_the_office_and_sends_every_filter() {
     let reply = json!({"tasks": [], "total": 45});
@@ -538,6 +587,21 @@ fn task_list_pages_on_the_office_and_sends_every_filter() {
         (json!(20), json!(20))
     );
     assert_eq!(envelope["meta"]["total"], 45);
+    // An empty page short of the total never points on: its cursor would be its own.
+    assert_eq!(envelope["meta"].get("next_cursor"), None, "{envelope}");
+    // A page with tasks points past the tasks it returned.
+    let tasks: Vec<Value> = (0..3).map(task_view).collect();
+    let mut office = Office::with(&[("tasks.list", json!({"tasks": tasks, "total": 45}))]);
+    let (code, envelope) = run(&mut office, &["task", "list", "--cursor", "20"]);
+    assert_eq!(code, 0, "{envelope}");
+    assert_eq!(envelope["data"].as_array().map(Vec::len), Some(3));
+    assert_eq!(envelope["meta"]["next_cursor"], "23", "{envelope}");
+    // The last page does not.
+    let tasks: Vec<Value> = (0..2).map(task_view).collect();
+    let mut office = Office::with(&[("tasks.list", json!({"tasks": tasks, "total": 45}))]);
+    let (code, envelope) = run(&mut office, &["task", "list", "--cursor", "43"]);
+    assert_eq!(code, 0, "{envelope}");
+    assert_eq!(envelope["meta"].get("next_cursor"), None, "{envelope}");
     // `--count`: no task, only the total.
     let mut office = Office::with(&[("tasks.list", reply)]);
     let (code, envelope) = run(

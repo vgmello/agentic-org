@@ -114,9 +114,12 @@ pub(super) fn read_task_list<T: OfficeTransport + ?Sized>(
     let limit = params.limit.unwrap_or(0) as usize;
     // The office answers at most the page; anything more is a fault, not more data to print.
     let items: Vec<Value> = res.tasks.iter().take(limit).map(task_to_row).collect();
-    let next = offset.saturating_add(items.len());
+    let returned = items.len();
+    let next = offset.saturating_add(returned);
     let mut answer = Answer::completed(Value::Array(items));
-    if limit > 0 && (next as u64) < res.total {
+    // An empty page never points on: its cursor would be its own, and a caller paging until
+    // `next_cursor` is absent would loop (the total moved under it, or the office answered short).
+    if limit > 0 && returned > 0 && (next as u64) < res.total {
         answer.next_cursor = Some(next.to_string());
     }
     answer.total = Some(res.total);

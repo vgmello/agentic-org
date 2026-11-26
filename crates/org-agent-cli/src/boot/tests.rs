@@ -17,7 +17,14 @@ struct Stub {
     calls: Vec<(String, Value)>,
     documents: Vec<(Option<&'static str>, usize, bool)>,
     refuse: bool,
+    /// The employee the binding names; `None` for a grant-bound person's channel.
+    caller: Option<&'static str>,
+    /// How `auth.whoami` is refused; `None` answers it.
+    whoami_refused: Option<ErrorCode>,
 }
+
+const AGENT: &str = "0193a5c0-0000-7000-8000-000000000003";
+const PERSON: &str = "0193a5c0-0000-7000-8000-000000000009";
 
 impl Stub {
     fn new(bound: bool) -> Self {
@@ -26,7 +33,16 @@ impl Stub {
             calls: Vec::new(),
             documents: Vec::new(),
             refuse: false,
+            caller: Some(AGENT),
+            whoami_refused: None,
         }
+    }
+
+    fn methods(&self) -> Vec<&str> {
+        self.calls
+            .iter()
+            .map(|(method, _)| method.as_str())
+            .collect()
     }
 }
 
@@ -76,7 +92,7 @@ fn document(
 
 impl OfficeTransport for Stub {
     fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
-        self.calls.push((method.to_owned(), params));
+        self.calls.push((method.to_owned(), params.clone()));
         if self.refuse {
             return Err(Refusal::new(
                 ErrorCode::NotAuthorized,
@@ -85,8 +101,17 @@ impl OfficeTransport for Stub {
             ));
         }
         match method {
+            "auth.whoami" => match self.whoami_refused {
+                Some(code) => Err(Refusal::new(code, "no auth.whoami here", "Retry.")),
+                None => Ok(json!({"member_id": PERSON, "office_id": "o", "mode": "managed"})),
+            },
+            "member.session_inspect" => Err(Refusal::new(
+                ErrorCode::NotFound,
+                "target employee is not an agent",
+                "Check the member.",
+            )),
             "who" => Ok(json!({"members": [{
-                "id": "0193a5c0-0000-7000-8000-000000000003",
+                "id": params["member"],
                 "name": "Ada",
                 "handle": "ada",
                 "kind": "agent",
@@ -119,7 +144,7 @@ impl OfficeTransport for Stub {
     }
 
     fn caller_member_id(&self) -> Option<String> {
-        Some("0193a5c0-0000-7000-8000-000000000003".into())
+        self.caller.map(str::to_owned)
     }
 }
 
@@ -295,4 +320,65 @@ fn a_binding_requested_by_the_environment_fails_closed_without_a_token() {
     let output = crate::execute_with_office("agent-os", &args, &mut office);
     assert_eq!(output.exit_code, 0, "{}", output.stdout);
     assert_eq!(envelope(&output)["data"]["mode"], "offline");
+}
+
+#[test]
+fn a_person_on_a_grant_boots_as_the_member_the_office_bound_never_as_an_agent_session() {
+    let mut stub = Stub::new(true);
+    stub.caller = None;
+    let (output, stub) = boot(stub, &["boot"]);
+    assert_eq!(output.exit_code, 0, "{}", output.stdout);
+    assert_eq!(envelope(&output)["data"]["identity"]["id"], PERSON);
+    assert_eq!(
+        stub.methods(),
+        ["auth.whoami", "who", "process.effective"],
+        "member.session_inspect is for agents only"
+    );
+    assert_eq!(stub.calls[1].1, json!({ "member": PERSON }));
+}
+
+#[test]
+fn an_office_without_auth_whoami_falls_back_to_the_session_and_any_other_refusal_stands() {
+    for (code, expected) in [
+        (
+            ErrorCode::Unsupported,
+            vec!["auth.whoami", "member.session_inspect"],
+        ),
+        (
+            ErrorCode::NotBound,
+            vec!["auth.whoami", "member.session_inspect"],
+        ),
+        (ErrorCode::NotAuthorized, vec!["auth.whoami"]),
+    ] {
+        let mut stub = Stub::new(true);
+        stub.caller = None;
+        stub.whoami_refused = Some(code);
+        let (output, stub) = boot(stub, &["boot"]);
+        assert_eq!(output.exit_code, 1, "{code:?}: {}", output.stdout);
+        assert_eq!(envelope(&output)["ok"], false);
+        assert_eq!(stub.methods(), expected, "{code:?}");
+    }
+}
+
+#[test]
+fn a_signed_in_workspace_is_bound_and_its_boot_fails_closed_when_the_binding_is_gone() {
+    use crate::office::{Binding, BoundOffice};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut office = BoundOffice::new(Binding {
+        external_state: Some(dir.path().join("signed-out")),
+        ..Binding::default()
+    });
+    assert!(
+        office.is_bound(),
+        "a workspace binding without a token yet is bound"
+    );
+    let args = vec!["boot".to_owned()];
+    let output = crate::execute_with_office("agent-os", &args, &mut office);
+    assert_eq!(output.exit_code, 1, "{}", output.stdout);
+    let env = envelope(&output);
+    assert_eq!(
+        (env["ok"].clone(), env["data"].clone()),
+        (json!(false), Value::Null),
+        "{env}"
+    );
 }

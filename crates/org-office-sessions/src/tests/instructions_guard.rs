@@ -245,9 +245,26 @@ fn attach_lines_are_held_to_the_rules_session_attach_applies_first() {
             r#"{"command":"task list","inputs":{"status":"todo"}}"#,
             "`inputs` is not a key of a `session attach` line",
         ),
+        (
+            r#"{"command":"task list --format yaml"}"#,
+            "`--format` is a flag",
+        ),
+        (
+            r#"{"command":"task list","options":{"--format=yaml":true}}"#,
+            "Option `--format=yaml` is not a flag name",
+        ),
+        (
+            r#"{"command":"task list","options":{"limit 5":true}}"#,
+            "Option `limit 5` is not a flag name",
+        ),
     ] {
         assert_fails(&format!("```text\n{line}\n```"), why);
     }
+    // A value that looks like a flag stays that option's value, as attach passes it inline.
+    assert_fails(
+        "```text\n{\"command\":\"boot\",\"options\":{\"offline\":\"--format=yaml\"}}\n```",
+        "yes-or-no",
+    );
     // Scalars and booleans become flags as attach makes them; a JSON example without
     // `command` is not an attach line.
     for good in [

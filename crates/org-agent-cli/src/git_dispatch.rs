@@ -12,7 +12,7 @@ use org_proto::git::{
 use org_proto::{Call, ErrorCode};
 use serde_json::{Map, Value};
 
-use crate::transport::{command_id, paginate, write_ack, OfficeTransport};
+use crate::transport::{command_id, paginate, parse_cursor, write_ack, OfficeTransport};
 
 pub fn try_execute<T: OfficeTransport + ?Sized>(
     transport: &mut T,
@@ -140,6 +140,8 @@ fn read_repo_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    // A bad cursor is refused before the office is asked.
+    parse_cursor(request.cursor.as_deref())?;
     let params = RepoListParams {
         project: opt_str(&request.input, "project"),
     };
@@ -215,6 +217,8 @@ fn read_worktree_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    // A bad cursor is refused before the office is asked.
+    parse_cursor(request.cursor.as_deref())?;
     let params = WorktreeListParams {
         task: opt_str(&request.input, "task"),
     };

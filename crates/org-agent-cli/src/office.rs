@@ -366,10 +366,12 @@ pub(crate) fn map_client_error(error: ClientError) -> Refusal {
             "The request exceeded the office socket frame limit.",
             "Reduce the request size and retry.",
         ),
+        // A write the office did not answer in time may have been made: the one timeout hint
+        // says to retry it with the same --idempotency-key.
         ClientError::Timeout => Refusal::new(
             ErrorCode::Timeout,
             "The office did not answer before the timeout.",
-            "Retry the command; if it persists, check the office status.",
+            hint_for(ErrorCode::Timeout),
         ),
         ClientError::Disconnected | ClientError::Io(_) | ClientError::Protocol(_) => Refusal::new(
             ErrorCode::Unavailable,
@@ -387,6 +389,18 @@ pub(crate) fn map_client_error(error: ClientError) -> Refusal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_timeout_says_to_retry_with_the_same_idempotency_key() {
+        let refusal = map_client_error(ClientError::Timeout);
+        assert_eq!(refusal.code, ErrorCode::Timeout);
+        assert_eq!(refusal.hint, hint_for(ErrorCode::Timeout));
+        assert!(
+            refusal.hint.contains("--idempotency-key"),
+            "{}",
+            refusal.hint
+        );
+    }
 
     #[test]
     fn binding_debug_redacts_session_token() {
