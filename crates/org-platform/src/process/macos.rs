@@ -210,6 +210,9 @@ pub(super) unsafe fn exit_this_thread() -> ! {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+pub(super) use super::raw_spawn::spawn_raw;
+
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn posix_spawn_setsid() -> io::Result<libc::c_short> {
     Ok(POSIX_SPAWN_SETSID)
 }
@@ -492,6 +495,29 @@ pub(super) unsafe fn session_flags(
         | libc::POSIX_SPAWN_SETSIGMASK
         | libc::POSIX_SPAWN_SETSIGDEF;
     Ok(flags)
+}
+
+/// `pti_threadnum` of this process's `proc_taskinfo` (`proc_pidinfo`).
+pub(super) fn thread_count() -> io::Result<usize> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    // SAFETY: getpid has no preconditions; the output record is correctly sized for
+    // PROC_PIDTASKINFO and exclusively borrowed for the call.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            libc::getpid(),
+            libc::PROC_PIDTASKINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if written != size {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: proc_pidinfo wrote the complete record.
+    let threads = unsafe { info.assume_init() }.pti_threadnum;
+    usize::try_from(threads).map_err(|_| invalid("negative thread count"))
 }
 
 pub(super) fn entropy(bytes: &mut [u8; 32]) -> io::Result<()> {

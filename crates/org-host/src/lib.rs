@@ -20,6 +20,9 @@
 //!
 //! The agentic-org serve composition parses arguments, waits for shutdown and calls [`Host`].
 
+// No unsafe code: the system calls are `org-platform`'s (`posix` and the capabilities).
+#![forbid(unsafe_code)]
+
 // A release-profile build (or any build for the app bundle, `ORG_BUNDLE=1`) with debug
 // assertions on would ship every development path (see build.rs): refuse it, whatever turned
 // them on (the profile, `-C debug-assertions`, `-C opt-level=0`). rustdoc compiles with debug

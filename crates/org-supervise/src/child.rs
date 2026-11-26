@@ -5,6 +5,7 @@ use std::process::ExitStatus;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use org_platform::posix;
 use org_platform::process::{self, Watch};
 
 /// Identity to persist before the first protocol write. Start and boot IDs are opaque
@@ -184,17 +185,14 @@ impl OwnedChild {
             return Err(io::Error::other("owned process group was not established"));
         }
         loop {
-            // SAFETY: waitid verified our unreaped child; its pid/group cannot be reused.
-            let result = unsafe {
-                match target {
-                    crate::SignalTarget::Leader => libc::kill(self.pid, signal),
-                    crate::SignalTarget::Group => libc::killpg(self.pid, signal),
-                }
+            // waitid verified our unreaped child; its pid/group cannot be reused.
+            let result = match target {
+                crate::SignalTarget::Leader => posix::kill(self.pid, signal),
+                crate::SignalTarget::Group => posix::kill_group(self.pid, signal),
             };
-            if result == 0 {
+            let Err(error) = result else {
                 return Ok(());
-            }
-            let error = io::Error::last_os_error();
+            };
             if error.raw_os_error() == Some(libc::ESRCH) {
                 // The child exited between observation and signal, or its group is empty.
                 return Ok(());
@@ -228,14 +226,15 @@ impl OwnedChild {
             ));
         }
         loop {
-            let mut status = 0;
-            // SAFETY: this owner alone reaps this previously observed terminal child.
-            let result = unsafe { libc::waitpid(self.pid, &mut status, 0) };
-            if result == self.pid {
-                self.owned = false;
-                return Ok(ExitStatus::from_raw(status));
-            }
-            let error = io::Error::last_os_error();
+            // This owner alone reaps this previously observed terminal child.
+            let error = match posix::wait_pid(self.pid, 0) {
+                Ok(Some(status)) => {
+                    self.owned = false;
+                    return Ok(ExitStatus::from_raw(status));
+                }
+                Ok(None) => continue,
+                Err(error) => error,
+            };
             if error.raw_os_error() == Some(libc::ECHILD) {
                 self.owned = false;
             }
@@ -252,24 +251,14 @@ impl Drop for OwnedChild {
         if self.try_exit().is_err() {
             return;
         }
-        // SAFETY: this pid is still an unreaped child and cannot have been reused.
-        unsafe {
-            libc::kill(self.pid, libc::SIGTERM);
-            if self.group {
-                libc::killpg(self.pid, libc::SIGKILL);
-            }
-            libc::kill(self.pid, libc::SIGKILL);
-            loop {
-                let rc = libc::waitpid(self.pid, std::ptr::null_mut(), 0);
-                if rc == self.pid {
-                    self.owned = false;
-                    break;
-                }
-                let e = io::Error::last_os_error();
-                if e.kind() != io::ErrorKind::Interrupted {
-                    break;
-                }
-            }
+        // This pid is still an unreaped child and cannot have been reused.
+        let _ = posix::kill(self.pid, libc::SIGTERM);
+        if self.group {
+            let _ = posix::kill_group(self.pid, libc::SIGKILL);
+        }
+        let _ = posix::kill(self.pid, libc::SIGKILL);
+        if posix::reap(self.pid).is_ok() {
+            self.owned = false;
         }
         if !self.owned {
             if let Some(directory) = self.cleanup_dir.as_mut() {

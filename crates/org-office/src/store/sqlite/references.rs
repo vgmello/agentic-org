@@ -6,7 +6,17 @@ use rusqlite::{ffi, Connection};
 use super::failed;
 
 /// Zero exactly when every reference of the open transaction is resolved, deferred or not.
-fn unresolved_references(db: &Connection) -> Result<i32, EngineError> {
+///
+/// The workspace's one `unsafe` block outside `org-platform` (`tests/rust_hygiene.rs` pins
+/// it here): rusqlite 0.42 has no safe wrapper for `sqlite3_db_status`, and the deferred-
+/// foreign-key counter has no SQL equivalent (a trial `COMMIT` would end the transaction and
+/// `PRAGMA foreign_key_check` scans every table). The engine boundary keeps rusqlite here,
+/// so the call cannot move to `org-platform`, which links only the C library.
+#[expect(
+    unsafe_code,
+    reason = "rusqlite has no safe sqlite3_db_status; the deferred-reference counter needs the connection handle"
+)]
+pub(super) fn unresolved_references(db: &Connection) -> Result<i32, EngineError> {
     let (mut current, mut high) = (0, 0);
     // SAFETY: `handle` is this open connection's own, `db` is borrowed for the whole call
     // so it cannot close meanwhile, and both out-pointers are valid for writes. rusqlite

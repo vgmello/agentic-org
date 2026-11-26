@@ -1,8 +1,3 @@
-#![expect(
-    unsafe_code,
-    reason = "startup tests construct raw SCM_RIGHTS control messages via libc FFI"
-)]
-
 use crate::test_teardown::teardown_failed;
 
 use super::*;
@@ -11,7 +6,7 @@ use org_proto::{GrantKey, OfficeRole, OfficeSecretsKey, RecoveryCode};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, Write};
-use std::os::fd::{AsFd, RawFd};
+use std::os::fd::{AsFd, BorrowedFd};
 use std::os::unix::net::{UnixDatagram, UnixListener};
 use std::path::Path;
 use std::time::Duration;
@@ -188,49 +183,19 @@ fn event(reader: &mut impl io::BufRead) -> Value {
     serde_json::from_slice(&frame::read_line(reader).unwrap().expect("event missing")).unwrap()
 }
 
-fn send_fds(stream: &UnixStream, byte: u8, fds: &[RawFd]) {
+fn send_fds(stream: &UnixStream, byte: u8, fds: &[BorrowedFd<'_>]) {
     try_send_fds(stream, byte, fds).unwrap();
 }
 
-fn try_send_fds(mut stream: &UnixStream, byte: u8, fds: &[RawFd]) -> io::Result<()> {
+fn try_send_fds(mut stream: &UnixStream, byte: u8, fds: &[BorrowedFd<'_>]) -> io::Result<()> {
     if fds.is_empty() {
         return stream.write_all(&[byte]);
     }
-    let mut byte = [byte];
-    let mut iov = libc::iovec {
-        iov_base: byte.as_mut_ptr().cast(),
-        iov_len: 1,
-    };
-    // SAFETY: aligned control storage, valid iovec, and borrowed live descriptors.
-    unsafe {
-        let count = std::mem::size_of_val(fds);
-        let space = if fds.is_empty() {
-            0
-        } else {
-            libc::CMSG_SPACE(count as _) as usize
-        };
-        let mut storage = vec![0usize; space.div_ceil(std::mem::size_of::<usize>())];
-        let mut msg: libc::msghdr = std::mem::zeroed();
-        msg.msg_iov = &mut iov;
-        msg.msg_iovlen = 1;
-        msg.msg_control = storage.as_mut_ptr().cast();
-        msg.msg_controllen = space as _;
-        if !fds.is_empty() {
-            let header = libc::CMSG_FIRSTHDR(&msg);
-            (*header).cmsg_level = libc::SOL_SOCKET;
-            (*header).cmsg_type = libc::SCM_RIGHTS;
-            (*header).cmsg_len = libc::CMSG_LEN(count as _) as _;
-            std::ptr::copy_nonoverlapping(
-                fds.as_ptr().cast::<u8>(),
-                libc::CMSG_DATA(header),
-                count,
-            );
-        }
-        if libc::sendmsg(stream.as_raw_fd(), &msg, 0) != 1 {
-            return Err(io::Error::last_os_error());
-        }
+    // One byte with exactly these borrowed live descriptors in one SCM_RIGHTS message.
+    match org_socket::rights::send_once(stream.as_fd(), &[byte], fds, 0)? {
+        1 => Ok(()),
+        _ => Err(io::Error::other("the descriptor byte was not sent")),
     }
-    Ok(())
 }
 
 fn stdout_is_empty(mut output: File) {
@@ -256,11 +221,7 @@ fn launch_owns_cloexec_transfer_before_receipt_and_routes_events_without_overrea
             assert!(
                 !org_socket::poll_readable(stream.as_raw_fd(), Duration::from_millis(100)).unwrap()
             );
-            send_fds(
-                &stream,
-                org_office_launch::FD_MARKER,
-                &[transfer.as_raw_fd()],
-            );
+            send_fds(&stream, org_office_launch::FD_MARKER, &[transfer.as_fd()]);
             assert_eq!(
                 event(&mut reader),
                 json!({"v":1,"event":"fds_received","of":"handoff"})
@@ -439,7 +400,7 @@ fn handoff_fault_child() {
                     });
                 }
                 let _ = stream.write_all(&header);
-                let _ = try_send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd()]);
+                let _ = try_send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_fd()]);
             }
             "poison_fence_marker" => {
                 stream.write_all(&header).unwrap();
@@ -452,19 +413,19 @@ fn handoff_fault_child() {
                         panic!("poison original caller fence only after complete header");
                     });
                 }
-                send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd()]);
+                send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_fd()]);
                 resume.send(()).unwrap();
             }
             "early_fd" => {
-                send_fds(&stream, header[0], &[fd.as_raw_fd()]);
+                send_fds(&stream, header[0], &[fd.as_fd()]);
                 let _ = stream.write_all(&header[1..]);
                 // A later correct marker makes silent loss of the early fd observable:
                 // an ordinary-read header mutant would otherwise fail only at marker EOF.
-                let _ = try_send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd()]);
+                let _ = try_send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_fd()]);
             }
             "ctrunc_header" => {
                 stream.write_all(&header[..16]).unwrap();
-                send_fds(&stream, header[16], &[fd.as_raw_fd(); 8]);
+                send_fds(&stream, header[16], &[fd.as_fd(); 8]);
                 let _ = stream.write_all(&header[17..]);
             }
             "eof_header" => {
@@ -479,7 +440,7 @@ fn handoff_fault_child() {
                         &org_office_launch::encode_handoff(&handoff(FirstLine::Start)).unwrap(),
                     )
                     .unwrap();
-                let _ = try_send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd()]);
+                let _ = try_send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_fd()]);
             }
             "bad_version" => {
                 header[5] = b'4';
@@ -514,12 +475,10 @@ fn handoff_fault_child() {
                     "extra_fds" => send_fds(
                         &stream,
                         org_office_launch::FD_MARKER,
-                        &[fd.as_raw_fd(), fd.as_raw_fd()],
+                        &[fd.as_fd(), fd.as_fd()],
                     ),
-                    "ctrunc" => {
-                        send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd(); 8])
-                    }
-                    "wrong_marker" => send_fds(&stream, 9, &[fd.as_raw_fd()]),
+                    "ctrunc" => send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_fd(); 8]),
+                    "wrong_marker" => send_fds(&stream, 9, &[fd.as_fd()]),
                     _ => panic!("unknown test case"),
                 }
             }
@@ -1320,11 +1279,7 @@ fn a_failed_handshake_write_ends_the_rendezvous(at: HandshakeWrite) {
         (&stream)
             .write_all(&org_office_launch::encode_handoff(&handoff(FirstLine::Start)).unwrap())
             .unwrap();
-        send_fds(
-            &stream,
-            org_office_launch::FD_MARKER,
-            &[transfer.as_raw_fd()],
-        );
+        send_fds(&stream, org_office_launch::FD_MARKER, &[transfer.as_fd()]);
         let _ = hold.recv_timeout(WAIT);
     });
     let failed = control.read(FirstLine::Start);
@@ -1493,7 +1448,6 @@ fn explicit_teardown_ends_the_write_half_after_the_host_half_closed() {
 
 #[test]
 fn join_handoff_accepts_full_ca_invitation_over_1024_bytes_and_wipes_buffer() {
-    use std::os::fd::AsRawFd;
     let _spawn = crate::transfer::tests::without_process_spawn();
     let (_dir, listener, path) = listener();
     let (mut control, output) = launch(&first(&path, FirstLine::Join));
@@ -1515,11 +1469,7 @@ fn join_handoff_accepts_full_ca_invitation_over_1024_bytes_and_wipes_buffer() {
     let sender = std::thread::spawn(move || {
         let (mut stream, mut reader) = accept(listener);
         stream.write_all(&wire).unwrap();
-        send_fds(
-            &stream,
-            org_office_launch::FD_MARKER,
-            &[transfer.as_raw_fd()],
-        );
+        send_fds(&stream, org_office_launch::FD_MARKER, &[transfer.as_fd()]);
         assert_eq!(
             event(&mut reader),
             json!({"v":1,"event":"fds_received","of":"handoff"})

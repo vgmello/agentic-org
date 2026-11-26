@@ -5,7 +5,7 @@ use org_office_server::test_support::FakeWriter;
 use org_proto::{GrantKey, RecoveryCode};
 use serde_json::{json, Value};
 use std::io::BufRead;
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 use std::os::unix::net::{UnixDatagram, UnixListener};
 
 pub(super) const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
@@ -121,32 +121,13 @@ fn line(reader: &mut impl BufRead) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
-fn pass_fd(stream: &UnixStream, fd: RawFd) {
+fn pass_fd(stream: &UnixStream, fd: BorrowedFd<'_>) {
     pass_fds(stream, org_office_launch::FD_MARKER, &[fd]);
 }
-fn pass_fds(stream: &UnixStream, byte: u8, fds: &[RawFd]) {
-    let mut marker = [byte];
-    let mut iov = libc::iovec {
-        iov_base: marker.as_mut_ptr().cast(),
-        iov_len: 1,
-    };
-    // SAFETY: usize-aligned ancillary storage and live pointers sized for the fd slice.
-    unsafe {
-        let bytes = std::mem::size_of_val(fds);
-        let space = libc::CMSG_SPACE(bytes as _) as usize;
-        let mut control = vec![0usize; space.div_ceil(std::mem::size_of::<usize>())];
-        let mut message: libc::msghdr = std::mem::zeroed();
-        message.msg_iov = &mut iov;
-        message.msg_iovlen = 1;
-        message.msg_control = control.as_mut_ptr().cast();
-        message.msg_controllen = space as _;
-        let header = libc::CMSG_FIRSTHDR(&message);
-        (*header).cmsg_level = libc::SOL_SOCKET;
-        (*header).cmsg_type = libc::SCM_RIGHTS;
-        (*header).cmsg_len = libc::CMSG_LEN(bytes as _) as _;
-        std::ptr::copy_nonoverlapping(fds.as_ptr().cast::<u8>(), libc::CMSG_DATA(header), bytes);
-        assert_eq!(libc::sendmsg(stream.as_raw_fd(), &message, 0), 1);
-    }
+fn pass_fds(stream: &UnixStream, byte: u8, fds: &[BorrowedFd<'_>]) {
+    // One byte with exactly these borrowed live descriptors.
+    let sent = org_socket::rights::send_once(stream.as_fd(), &[byte], fds, 0).unwrap();
+    assert_eq!(sent, 1);
 }
 
 #[test]
@@ -187,7 +168,7 @@ fn launch_receives_keys_and_acknowledges_handoff_before_ready() {
     let mut header = org_office_launch::encode_handoff(&handoff).unwrap();
     stream.write_all(&header).unwrap();
     header.fill(0);
-    pass_fd(&stream, transfer.as_raw_fd());
+    pass_fd(&stream, transfer.as_fd());
     assert_eq!(
         line(&mut reader),
         json!({"v":1,"event":"fds_received","of":"handoff"})
@@ -393,7 +374,7 @@ fn handshake_as(
     let transfer_host = if op != FirstLine::Discard {
         let (transfer, host_end) = UnixDatagram::pair().unwrap();
         transfer.shutdown(std::net::Shutdown::Write).unwrap();
-        pass_fd(&stream, transfer.as_raw_fd());
+        pass_fd(&stream, transfer.as_fd());
         assert_eq!(
             line(&mut reader),
             json!({"v":1,"event":"fds_received","of":"handoff"})
@@ -800,7 +781,7 @@ fn undefined_lifetime_bytes_and_rights_exit_the_real_worker_and_close_reported_f
         let (passed, mut peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(WAIT)).unwrap();
         if rights {
-            pass_fd(&session.stream, passed.as_raw_fd());
+            pass_fd(&session.stream, passed.as_fd());
         } else {
             session.stream.write_all(b"!").unwrap();
         }
@@ -844,7 +825,7 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
         peer.set_read_timeout(Some(WAIT)).unwrap();
         match case {
             "early_fd" => {
-                pass_fds(&stream, header[0], &[passed.as_raw_fd()]);
+                pass_fds(&stream, header[0], &[passed.as_fd()]);
                 let _ = stream.write_all(&header[1..]);
             }
             "eof_header" => {
@@ -855,17 +836,13 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
                 stream.write_all(&header).unwrap();
                 match case {
                     "zero_fds" => stream.write_all(&[org_office_launch::FD_MARKER]).unwrap(),
-                    "extra_fds" => pass_fds(
-                        &stream,
-                        org_office_launch::FD_MARKER,
-                        &[passed.as_raw_fd(); 2],
-                    ),
-                    "ctrunc" => pass_fds(
-                        &stream,
-                        org_office_launch::FD_MARKER,
-                        &[passed.as_raw_fd(); 8],
-                    ),
-                    "wrong_marker" => pass_fds(&stream, 9, &[passed.as_raw_fd()]),
+                    "extra_fds" => {
+                        pass_fds(&stream, org_office_launch::FD_MARKER, &[passed.as_fd(); 2])
+                    }
+                    "ctrunc" => {
+                        pass_fds(&stream, org_office_launch::FD_MARKER, &[passed.as_fd(); 8])
+                    }
+                    "wrong_marker" => pass_fds(&stream, 9, &[passed.as_fd()]),
                     _ => unreachable!(),
                 }
             }

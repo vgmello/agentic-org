@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
@@ -105,17 +104,14 @@ impl Connection {
         if self.closed.load(Ordering::SeqCst) {
             return false;
         }
-        let mut byte = 0u8;
-        // SAFETY: live socket and one writable byte, non-consuming/non-blocking.
-        let n = unsafe {
-            libc::recv(
-                self.stream.as_raw_fd(),
-                (&mut byte as *mut u8).cast(),
-                1,
-                libc::MSG_PEEK | libc::MSG_DONTWAIT,
-            )
-        };
-        n < 0 && std::io::Error::last_os_error().kind() == io::ErrorKind::WouldBlock
+        let mut byte = [0u8];
+        // Non-consuming and non-blocking: only "nothing to read yet" means idle.
+        let peeked = org_platform::posix::receive(
+            &self.stream,
+            &mut byte,
+            libc::MSG_PEEK | libc::MSG_DONTWAIT,
+        );
+        peeked.is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock)
     }
     pub(crate) fn clear_recovery_permission(&self) {
         *lock(&self.recovery_permission) = None;

@@ -247,8 +247,8 @@ fn wait_for_exit(child: &mut Child) -> ExitStatus {
 }
 
 fn signal(child: &Child, signal: i32) {
-    // SAFETY: sends a signal to our own child.
-    assert_eq!(unsafe { libc::kill(child.id() as libc::pid_t, signal) }, 0);
+    // Sends a signal to our own child.
+    org_platform::posix::kill(child.id() as libc::pid_t, signal).unwrap();
 }
 
 #[cfg(debug_assertions)]
@@ -299,10 +299,7 @@ fn a_worker_that_ignores_the_stop_is_killed_and_the_service_exits_0_within_its_b
     instance.wait_until_active(&mut host);
     let pids = instance.pids(A);
     assert_eq!(pids.len(), 1);
-    let alive = |pid: u32| {
-        // SAFETY: signal 0 performs only a process-existence check on the test worker PID.
-        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
-    };
+    let alive = |pid: u32| org_platform::posix::process_exists(pid as libc::pid_t);
     assert!(alive(pids[0]));
     let asked = Instant::now();
     signal(&host, libc::SIGTERM);
@@ -405,8 +402,7 @@ fn a_second_host_binary_on_the_same_home_exits_at_once() {
 #[cfg(debug_assertions)]
 #[test]
 fn serve_started_as_root_refuses_before_it_makes_anything() {
-    // SAFETY: no arguments and no side effects; it cannot fail.
-    if unsafe { libc::geteuid() } != 0 {
+    if org_platform::posix::effective_uid() != 0 {
         eprintln!(
             "serve_started_as_root_refuses_before_it_makes_anything: SKIPPED: only root can \
              start the service as root"
@@ -460,8 +456,7 @@ fn serve_started_as_root_refuses_before_it_makes_anything() {
 #[cfg(debug_assertions)]
 #[test]
 fn setup_started_as_root_refuses_before_it_makes_anything() {
-    // SAFETY: no arguments and no side effects; it cannot fail.
-    if unsafe { libc::geteuid() } != 0 {
+    if org_platform::posix::effective_uid() != 0 {
         eprintln!(
             "setup_started_as_root_refuses_before_it_makes_anything: SKIPPED: only root can \
              start setup as root"

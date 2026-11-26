@@ -452,7 +452,7 @@ fn blocked_office_snapshot_does_not_block_fifo_revocation_or_channel_ownership_a
             channel_id: "independent".into(),
         })
         .unwrap();
-    super::super::tests::send_rights(&host, &record, &[source.as_raw_fd()]);
+    super::super::tests::send_rights(&host, &record, &[std::os::fd::AsFd::as_fd(&source)]);
     let mut events = BufReader::new(events);
     assert_eq!(
         org_office_launch::read_server_event(&mut events).unwrap(),
@@ -915,7 +915,6 @@ fn actual_transfer_capacity_negative_receipt_preserves_fifo_revocation_and_exist
     use org_proto::frame;
     use serde_json::{json, Value};
     use std::io::{BufReader, Read};
-    use std::os::fd::AsRawFd;
     let (mut channels, events, _, policy, _office_root) = manager();
     let (host, child) = std::os::unix::net::UnixDatagram::pair().unwrap();
     let service = super::super::Service::start(
@@ -939,7 +938,7 @@ fn actual_transfer_capacity_negative_receipt_preserves_fifo_revocation_and_exist
             channel_id: format!("actual-{n}"),
         })
         .unwrap();
-        super::super::tests::send_rights(&host, &record, &[source.as_raw_fd()]);
+        super::super::tests::send_rights(&host, &record, &[std::os::fd::AsFd::as_fd(&source)]);
         let event = org_office_launch::read_server_event(&mut events)
             .unwrap()
             .unwrap();
@@ -978,7 +977,7 @@ fn actual_transfer_capacity_negative_receipt_preserves_fifo_revocation_and_exist
         channel_id: "after-revoked".into(),
     })
     .unwrap();
-    super::super::tests::send_rights(&host, &record, &[source.as_raw_fd()]);
+    super::super::tests::send_rights(&host, &record, &[std::os::fd::AsFd::as_fd(&source)]);
     assert_eq!(
         org_office_launch::read_server_event(&mut events).unwrap(),
         Some(RendezvousEvent::FdsRefused {

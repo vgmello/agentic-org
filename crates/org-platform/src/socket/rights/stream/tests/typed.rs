@@ -51,7 +51,7 @@ fn ipv6_loopback() -> bool {
 
 fn run_typed(case: &str) {
     run_child(
-        "rights::stream::tests::typed::typed_child",
+        "socket::rights::stream::tests::typed::typed_child",
         "ORG_SOCKET_TYPED_CASE",
         case,
     );
@@ -121,12 +121,14 @@ fn typed_child() {
             assert!(socket.local_addr().unwrap().is_unnamed());
             if let Some(peer) = datagram_peer {
                 socket.send(b"out").unwrap();
-                assert!(crate::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap());
+                assert!(
+                    crate::posix::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap()
+                );
                 let mut bytes = [0; 3];
                 assert_eq!(peer.recv(&mut bytes).unwrap(), 3);
                 assert_eq!(&bytes, b"out");
                 peer.send(b"in").unwrap();
-                assert!(crate::poll_readable(raw, Duration::from_secs(1)).unwrap());
+                assert!(crate::posix::poll_readable(raw, Duration::from_secs(1)).unwrap());
                 assert_eq!(socket.recv(&mut bytes).unwrap(), 2);
                 assert_eq!(&bytes[..2], b"in");
             }
@@ -140,10 +142,12 @@ fn typed_child() {
             let listener = result.unwrap();
             assert_eq!(listener.as_raw_fd(), raw, "must adopt without duplication");
             let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-            assert!(crate::poll_readable(raw, Duration::from_secs(1)).unwrap());
+            assert!(crate::posix::poll_readable(raw, Duration::from_secs(1)).unwrap());
             let (mut accepted, _) = listener.accept().unwrap();
             client.write_all(b"x").unwrap();
-            assert!(crate::poll_readable(accepted.as_raw_fd(), Duration::from_secs(1)).unwrap());
+            assert!(
+                crate::posix::poll_readable(accepted.as_raw_fd(), Duration::from_secs(1)).unwrap()
+            );
             let mut byte = [0];
             accepted.read_exact(&mut byte).unwrap();
             assert_eq!(byte, [b'x']);
@@ -223,12 +227,12 @@ fn received_typed_descriptors_keep_the_receive_fence_flags_without_repair() {
     let (sender, receiver) = UnixDatagram::pair().unwrap();
     let (datagram, peer) = UnixDatagram::pair().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    crate::rights::tests::send_rights(
+    crate::socket::rights::tests::send_rights(
         sender.as_raw_fd(),
         b"!",
         &[datagram.as_raw_fd(), listener.as_raw_fd()],
     );
-    let mut receiver = crate::rights::DatagramReceiver::new(receiver);
+    let mut receiver = crate::socket::rights::DatagramReceiver::new(receiver);
     let mut received = receiver
         .receive_up_to(&mut [0], 2, &std::sync::Mutex::new(()))
         .unwrap();
@@ -262,7 +266,7 @@ fn received_typed_descriptors_keep_the_receive_fence_flags_without_repair() {
     };
     assert_eq!(after, flags);
     datagram_adopted.send(b"ok").unwrap();
-    assert!(crate::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap());
+    assert!(crate::posix::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap());
     let mut bytes = [0; 2];
     assert_eq!(peer.recv(&mut bytes).unwrap(), 2);
     assert_eq!(&bytes, b"ok");

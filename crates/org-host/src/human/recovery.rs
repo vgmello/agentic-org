@@ -13,10 +13,7 @@ use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
     io::{IsTerminal, Read, Write},
-    os::{
-        fd::{AsRawFd, FromRawFd},
-        unix::{ffi::OsStrExt, fs::OpenOptionsExt, net::UnixStream},
-    },
+    os::unix::{ffi::OsStrExt, fs::OpenOptionsExt, net::UnixStream},
     path::{Path, PathBuf},
 };
 const HELP: &str = "agentic-org recovery <status|release> [--name NAME] [--org ORGANIZATION_NAME | --org-id ID] [--login LOGIN] [--redeliver] [--package NEW_FILE]\n\
@@ -147,22 +144,14 @@ fn export(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(path.parent().ok_or_else(|| error(()))?)
         .map_err(error)?;
-    // SAFETY: held directory, valid C filename, fixed exclusive-create flags/mode.
-    let fd = unsafe {
-        libc::openat(
-            parent.as_raw_fd(),
-            name.as_ptr(),
-            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            0o600,
-        )
-    };
-    if fd < 0 {
+    // A held directory, a valid C filename, fixed exclusive-create flags and mode.
+    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let Ok(fd) = org_platform::posix::open_at(&parent, &name, flags, 0o600) else {
         return Err(
             "package export refused; destination must be a new local file; no ACK was sent".into(),
         );
-    }
-    // SAFETY: openat returned a new owned descriptor exactly once.
-    let mut file = unsafe { File::from_raw_fd(fd) };
+    };
+    let mut file = File::from(fd);
     file.write_all(bytes)
         .and_then(|_| org_platform::fs::full_sync(&file))
         .map_err(error)?;

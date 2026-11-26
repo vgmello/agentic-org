@@ -713,9 +713,9 @@ fn a_pinned_check_never_starts_an_image_that_is_not_the_pinned_one() {
                 .expect("an image that is not the pinned one was started");
             let refused = SpawnRefused::of(&error).expect("an image refusal");
             assert_eq!(refused.refusal, ImageRefusal::Unidentified);
-            // SAFETY: signal 0 only probes whether the refused child PID exists.
-            let rc = unsafe { libc::kill(refused.pid as libc::pid_t, 0) };
-            assert!(rc != 0, "the refused child was left behind");
+            // Signal 0 only probes whether the refused child PID exists.
+            let left = org_platform::posix::process_exists(refused.pid as libc::pid_t);
+            assert!(!left, "the refused child was left behind");
         }
         (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
     }
@@ -869,9 +869,9 @@ fn a_real_child_that_isnt_the_signed_server_is_refused() {
             let refused = SpawnRefused::of(&error).expect("an image refusal");
             assert_eq!(refused.refusal, ImageRefusal::NotTheImage);
             assert!(check.why(&refused.refusal).contains("office server"));
-            // SAFETY: signal 0 only probes whether the refused child PID exists.
-            let rc = unsafe { libc::kill(refused.pid as libc::pid_t, 0) };
-            assert!(rc != 0, "the refused child was left behind");
+            // Signal 0 only probes whether the refused child PID exists.
+            let left = org_platform::posix::process_exists(refused.pid as libc::pid_t);
+            assert!(!left, "the refused child was left behind");
         }
         (ImageIdentity::VerifiedBytes, Err(NoAdmission::Refused(why))) => {
             assert_eq!(why, check.why(&ImageRefusal::Unpinned));

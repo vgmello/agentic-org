@@ -22,7 +22,7 @@ mod support;
 
 use std::fs::{self, File};
 use std::io::Read;
-use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::DirBuilderExt;
 
 use std::path::{Path, PathBuf};
@@ -155,39 +155,25 @@ impl Foreground {
 
 /// A pipe whose buffer is full: a write to its write end waits until the read end is read.
 fn full_pipe() -> (File, OwnedFd) {
-    let mut fds = [0; 2];
-    // SAFETY: `fds` has room for the two descriptors pipe makes, which only these handles own.
-    let (read, write) = unsafe {
-        assert_eq!(libc::pipe(fds.as_mut_ptr()), 0);
-        (File::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1]))
-    };
-    use std::os::fd::AsRawFd;
-    for fd in [read.as_raw_fd(), write.as_raw_fd()] {
-        // SAFETY: fcntl on a descriptor this function owns. The child's standard output is
-        // a copy of the write end, which does not keep the flag.
-        unsafe { assert_ne!(libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC), -1) };
-    }
-    let fd = write.as_raw_fd();
-    // SAFETY: plain fcntl and write calls on a descriptor this function owns.
-    unsafe {
-        let flags = libc::fcntl(fd, libc::F_GETFL);
-        assert_ne!(libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK), -1);
-        let chunk = [b'.'; 512];
-        while libc::write(fd, chunk.as_ptr().cast(), chunk.len()) > 0 {}
-        while libc::write(fd, chunk.as_ptr().cast(), 1) > 0 {}
-        // Blocking again for the child: the flag belongs to the pipe's one open file.
-        assert_ne!(libc::fcntl(fd, libc::F_SETFL, flags), -1);
-    }
-    (read, write)
+    // Both ends close-on-exec; the child's standard output is a copy of the write end, which
+    // does not keep the flag.
+    use std::io::Write;
+    let (read, mut write) = std::io::pipe().unwrap();
+    org_platform::posix::set_nonblocking(&write, true).unwrap();
+    let chunk = [b'.'; 512];
+    while write.write(&chunk).is_ok_and(|n| n > 0) {}
+    while write.write(&chunk[..1]).is_ok_and(|n| n > 0) {}
+    // Blocking again for the child: the flag belongs to the pipe's one open file.
+    org_platform::posix::set_nonblocking(&write, false).unwrap();
+    (File::from(OwnedFd::from(read)), OwnedFd::from(write))
 }
 
 /// Sends SIGTERM to `serve` and returns its status once it exits (within 30 s), with how
 /// long after the signal it did.
 fn stop(serve: &mut Serve) -> (ExitStatus, Duration) {
     let sent = Instant::now();
-    // SAFETY: sends SIGTERM to this test's own live child process.
-    let rc = unsafe { libc::kill(serve.0.id() as libc::pid_t, libc::SIGTERM) };
-    assert_eq!(rc, 0);
+    // Sends SIGTERM to this test's own live child process.
+    org_platform::posix::kill(serve.0.id() as libc::pid_t, libc::SIGTERM).unwrap();
     loop {
         if let Some(status) = serve.0.try_wait().unwrap() {
             return (status, sent.elapsed());

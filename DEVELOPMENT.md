@@ -139,16 +139,23 @@ length separately so missing safety documentation or reasons does not hide
 production function length findings.
 
 The all-targets gate requires safety documentation and a reason on lint
-suppressions. Use safe code where practical, reuse existing safe workspace
-helpers (`std::process::id()`, `org_socket::effective_uid()`,
-`org_socket::rights::set_buffer_sizes`, `org_proto::zero_bytes`), and lock
-unsafe-free crates with `#![forbid(unsafe_code)]`. When unsafe is necessary,
-add a `// SAFETY:` comment directly on the `unsafe` block explaining why its
-preconditions hold. Use a narrowly scoped `#[expect(lint_name, reason = "...")]`
-for unconditional exceptions (or `allow(..., reason = "...")` when a lint fires
-only on a subset of targets/profiles), and remove expectations when they no
-longer apply. `crates/org-platform/tests/rust_hygiene.rs` (run in workspace tests)
-enforces cross-platform `allow` reasons and `write_volatile` confinement via
+suppressions. Unsafe code lives only in `crates/org-platform` and
+`crates/org-platform-host`: every other crate root declares
+`#![forbid(unsafe_code)]`, and the workspace's system calls go through their
+audited safe wrappers (`org_platform::posix` for plain POSIX calls: descriptors,
+directory-relative files, signals, accounts, terminals and the single-threaded
+fork; `org_platform::socket::rights` for descriptor passing; the capabilities for
+what differs by system). Reuse those and other safe helpers (`std::process::id()`,
+`org_proto::zero_bytes`), and add a wrapper to `org-platform` rather than `unsafe`
+anywhere else. Inside the platform crates, add a `// SAFETY:` comment directly on
+the `unsafe` block explaining why its preconditions hold. Use a narrowly scoped
+`#[expect(lint_name, reason = "...")]` for unconditional exceptions (or
+`allow(..., reason = "...")` when a lint fires only on a subset of
+targets/profiles), and remove expectations when they no longer apply.
+`crates/org-platform/tests/rust_hygiene.rs` (run in workspace tests) enforces
+cross-platform `allow` reasons, `write_volatile` confinement and unsafe
+confinement (a missing `forbid` or any `unsafe` outside the platform crates
+beyond its exact, shrink-only `ALLOWED_UNSAFE` entries fails) via
 `syn`/`proc_macro2`. When editing Linux platform
 adapters on macOS, also run
 `cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-gnu -- -D warnings`.

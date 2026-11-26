@@ -1,9 +1,9 @@
 //! Descriptor-relative control-file operations. Never follow an instance-owned symlink.
 
+use org_platform::posix;
 use std::ffi::{CStr, CString};
 use std::fs::{File, TryLockError};
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
@@ -118,18 +118,14 @@ fn leaf(name: &str) -> Result<CString, Error> {
     cstring(std::ffi::OsStr::new(name))
 }
 
-fn from_fd(fd: libc::c_int) -> io::Result<File> {
-    if fd < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        // SAFETY: the successful open/dup transferred this new descriptor to us.
-        Ok(unsafe { File::from_raw_fd(fd) })
-    }
+/// A directory `name` of `parent`, never through a symbolic link in its last component.
+fn open_directory_at(parent: &File, name: &CStr) -> io::Result<File> {
+    let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    posix::open_at(parent, name, flags, 0).map(File::from)
 }
 
 fn effective_user() -> u32 {
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    unsafe { libc::geteuid() }
+    posix::effective_uid()
 }
 
 impl Directory {
@@ -187,16 +183,8 @@ impl Directory {
             .collect();
         for (index, part) in parts.iter().enumerate() {
             let name = cstring(part)?;
-            let open = || {
-                // SAFETY: each component is relative to a retained parent descriptor.
-                from_fd(unsafe {
-                    libc::openat(
-                        directory.as_raw_fd(),
-                        name.as_ptr(),
-                        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                    )
-                })
-            };
+            // Each component is relative to a retained parent descriptor.
+            let open = || open_directory_at(&directory, &name);
             let final_part = index + 1 == parts.len();
             let child = match open() {
                 Err(error)
@@ -207,14 +195,11 @@ impl Directory {
                     if root {
                         probe(&directory, &traversed, true)?;
                     }
-                    // SAFETY: retained parent and validated NUL-terminated component.
-                    if unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
-                        let error = io::Error::last_os_error();
-                        if error.kind() != io::ErrorKind::AlreadyExists {
-                            return Err(error.into());
-                        }
-                    } else {
-                        directory.sync_all()?;
+                    // A retained parent and a validated NUL-terminated component.
+                    match posix::make_directory_at(&directory, &name, 0o700) {
+                        Ok(()) => directory.sync_all()?,
+                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                        Err(error) => return Err(error.into()),
                     }
                     open()?
                 }
@@ -252,24 +237,15 @@ impl Directory {
         self.verify()?;
         let component = leaf(name)?;
         if create {
-            // SAFETY: the verified parent fd and checked leaf are valid.
-            if unsafe { libc::mkdirat(self.file.as_raw_fd(), component.as_ptr(), 0o700) } != 0 {
-                let error = io::Error::last_os_error();
-                if error.kind() != io::ErrorKind::AlreadyExists {
-                    return Err(error.into());
-                }
-            } else {
-                self.file.sync_all()?;
+            // The verified parent and checked leaf.
+            match posix::make_directory_at(&self.file, &component, 0o700) {
+                Ok(()) => self.file.sync_all()?,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
             }
         }
-        // SAFETY: this opens only a directory relative to the verified retained parent.
-        let file = from_fd(unsafe {
-            libc::openat(
-                self.file.as_raw_fd(),
-                component.as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        })?;
+        // Only a directory relative to the verified retained parent.
+        let file = open_directory_at(&self.file, &component)?;
         let mut child = Self::from_file(file, self.path.join(name))?;
         self.require_device(child.identity.device)?;
         child.root_device = self.root_device;
@@ -282,14 +258,11 @@ impl Directory {
     pub(super) fn claim_child(&self, name: &str) -> Result<Option<Self>, Error> {
         self.verify()?;
         let component = leaf(name)?;
-        // SAFETY: the retained parent fd and module-owned component are valid.
-        if unsafe { libc::mkdirat(self.file.as_raw_fd(), component.as_ptr(), 0o700) } != 0 {
-            let error = io::Error::last_os_error();
-            return if error.kind() == io::ErrorKind::AlreadyExists {
-                Ok(None)
-            } else {
-                Err(error.into())
-            };
+        // The retained parent and a module-owned component.
+        match posix::make_directory_at(&self.file, &component, 0o700) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(None),
+            Err(error) => return Err(error.into()),
         }
         self.file.sync_all()?;
         Ok(Some(self.child(name, false)?))
@@ -361,21 +334,7 @@ impl Directory {
 
     pub(super) fn verify_file(&self, name: &str, held: &File) -> Result<(), Error> {
         let name = leaf(name)?;
-        let mut current = std::mem::MaybeUninit::<libc::stat>::uninit();
-        // SAFETY: the retained dirfd, valid leaf and writable stat output are live.
-        if unsafe {
-            libc::fstatat(
-                self.file.as_raw_fd(),
-                name.as_ptr(),
-                current.as_mut_ptr(),
-                libc::AT_SYMLINK_NOFOLLOW,
-            )
-        } != 0
-        {
-            return Err(io::Error::last_os_error().into());
-        }
-        // SAFETY: fstatat initialized the output.
-        let current = unsafe { current.assume_init() };
+        let current = posix::status_at(&self.file, &name, libc::AT_SYMLINK_NOFOLLOW)?;
         if current.st_mode & libc::S_IFMT != libc::S_IFREG
             || current.st_uid != effective_user()
             || current.st_mode & 0o7777 != 0o600
@@ -396,15 +355,9 @@ impl Directory {
 
     fn open_file(&self, name: &str, flags: i32) -> Result<File, Error> {
         let name = leaf(name)?;
-        // SAFETY: the fd is retained and the name is a single, module-owned component.
-        let file = from_fd(unsafe {
-            libc::openat(
-                self.file.as_raw_fd(),
-                name.as_ptr(),
-                flags | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
-                0o600,
-            )
-        })?;
+        // The descriptor is retained and the name is a single, module-owned component.
+        let flags = flags | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+        let file = File::from(posix::open_at(&self.file, &name, flags, 0o600)?);
         let metadata = file.metadata()?;
         self.require_device(metadata.dev())?;
         if !metadata.is_file()
@@ -471,16 +424,13 @@ impl Directory {
             self.verify()?;
             self.verify_file(&temporary, &file)?;
             let from = leaf(&temporary)?;
-            let fd = self.file.as_raw_fd();
             before_commit();
             if let Some(previous) = previous {
                 self.verify_file(name, &previous.file)?;
             }
             if previous.is_some() {
-                // SAFETY: both names are module-owned components relative to our retained fd.
-                if unsafe { libc::renameat(fd, from.as_ptr(), fd, to.as_ptr()) } != 0 {
-                    return Err(io::Error::last_os_error().into());
-                }
+                // Both names are module-owned components relative to our retained directory.
+                posix::rename_at(&self.file, &from, &self.file, &to)?;
             } else {
                 org_platform::fs::rename_noreplace_at(&self.file, &from, &self.file, &to)?;
             }
@@ -489,8 +439,8 @@ impl Directory {
             self.verify()
         })();
         let temporary = cstring(std::ffi::OsStr::new(&temporary))?;
-        // SAFETY: removes only our own temporary name; after publication it is absent.
-        unsafe { libc::unlinkat(self.file.as_raw_fd(), temporary.as_ptr(), 0) };
+        // Removes only our own temporary name; after publication it is absent.
+        let _ = posix::remove_at(&self.file, &temporary, 0);
         result?;
         Ok(ControlFile {
             file,
@@ -500,49 +450,10 @@ impl Directory {
 
     pub(super) fn is_empty(&self) -> Result<bool, Error> {
         // A separately opened description avoids sharing a directory iteration offset.
-        let dot = c".";
-        // SAFETY: the retained directory fd and static component are valid.
-        let descriptor = from_fd(unsafe {
-            libc::openat(
-                self.file.as_raw_fd(),
-                dot.as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
-            )
-        })?;
-        use std::os::fd::IntoRawFd;
-        let fd = descriptor.into_raw_fd();
-        // SAFETY: fdopendir takes ownership on success.
-        let stream = unsafe { libc::fdopendir(fd) };
-        if stream.is_null() {
-            let error = io::Error::last_os_error();
-            // SAFETY: fdopendir failed, so ownership remains ours.
-            unsafe { libc::close(fd) };
-            return Err(error.into());
-        }
-        struct Stream(*mut libc::DIR);
-        impl Drop for Stream {
-            fn drop(&mut self) {
-                // SAFETY: this guard uniquely owns the successful fdopendir result.
-                unsafe { libc::closedir(self.0) };
-            }
-        }
-        let stream = Stream(stream);
-        loop {
-            org_platform::fs::set_errno(0)?;
-            // SAFETY: stream is live and exclusively used by this loop.
-            let entry = unsafe { libc::readdir(stream.0) };
-            if entry.is_null() {
-                let error = io::Error::last_os_error();
-                if error.raw_os_error() != Some(0) {
-                    return Err(error.into());
-                }
-                return Ok(true);
-            }
-            // SAFETY: the name is NUL-terminated and valid until the next readdir.
-            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
-            if name != b"." && name != b".." {
-                return Ok(false);
-            }
+        match posix::Entries::of(&self.file)?.next() {
+            None => Ok(true),
+            Some(Ok(_)) => Ok(false),
+            Some(Err(error)) => Err(error.into()),
         }
     }
 
@@ -587,32 +498,19 @@ impl RootProbe {
             }
         };
         let parent = Directory::walk_with_probe(&parent_path, false, false, check_path_component)?;
-        let open = || {
-            // SAFETY: a retained parent descriptor and a validated single component.
-            from_fd(unsafe {
-                libc::openat(
-                    parent.as_raw_fd(),
-                    name.as_ptr(),
-                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                )
-            })
-        };
+        // A retained parent descriptor and a validated single component.
+        let open = || open_directory_at(&parent, &name);
         let (root, made) = match open() {
             Ok(root) => (root, false),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 // As a reservation would: the filesystem it would be made on is judged first.
                 check_path_component(&parent, &parent_path, true)?;
-                // SAFETY: as above.
-                if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
-                    return Err(io::Error::last_os_error().into());
-                }
+                posix::make_directory_at(&parent, &name, 0o700)?;
                 match open() {
                     Ok(root) => (root, true),
                     Err(error) => {
-                        // SAFETY: as above; the folder this call just made.
-                        unsafe {
-                            libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR)
-                        };
+                        // The folder this call just made.
+                        let _ = posix::remove_at(&parent, &name, libc::AT_REMOVEDIR);
                         return Err(error.into());
                     }
                 }
@@ -639,25 +537,15 @@ impl Drop for RootProbe {
         let Some((parent, name)) = &self.made else {
             return;
         };
-        // SAFETY: plain data that fstatat fills in.
-        let mut found: libc::stat = unsafe { std::mem::zeroed() };
-        // SAFETY: a retained parent descriptor, a NUL-terminated name and a writable stat.
-        let named = unsafe {
-            libc::fstatat(
-                parent.as_raw_fd(),
-                name.as_ptr(),
-                &mut found,
-                libc::AT_SYMLINK_NOFOLLOW,
-            )
-        } == 0;
-        let ours = named
-            && matches!(
+        let ours = posix::status_at(parent, name, libc::AT_SYMLINK_NOFOLLOW).is_ok_and(|found| {
+            matches!(
                 (Identity::of(&self.root), org_platform::fs::device_and_inode(&found)),
                 (Ok(ours), Ok((device, inode))) if ours.device == device && ours.inode == inode
-            );
+            )
+        });
         if ours {
-            // SAFETY: as above; a folder that is no longer empty stays.
-            unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) };
+            // A folder that is no longer empty stays.
+            let _ = posix::remove_at(parent, name, libc::AT_REMOVEDIR);
         }
     }
 }

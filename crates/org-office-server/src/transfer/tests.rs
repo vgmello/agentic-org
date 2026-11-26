@@ -1,9 +1,6 @@
-#![expect(
-    unsafe_code,
-    reason = "transfer tests inspect descriptors via poll/fcntl and send raw SCM_RIGHTS frames via libc FFI"
-)]
 use super::*;
 use org_office_launch::ChannelKind;
+use std::os::fd::AsFd;
 use std::os::unix::net::UnixDatagram;
 
 // A fork temporarily copies unrelated tests' descriptors, even with CLOEXEC.
@@ -321,16 +318,14 @@ fn real_datagram_sender_full_buffer_and_oversize_report_distinct_errors() {
             Err(error) => break error,
         }
     };
-    let mut readiness = libc::pollfd {
-        fd: host.as_raw_fd(),
-        events: libc::POLLOUT,
-        revents: 0,
-    };
-    // SAFETY: readiness is a live, initialized single-element poll array.
-    let polled = unsafe { libc::poll(&mut readiness, 1, 0) };
+    let mut readiness = [org_platform::posix::poll_slot(
+        host.as_raw_fd(),
+        libc::POLLOUT,
+    )];
+    let polled = org_platform::posix::poll(&mut readiness, Some(Duration::ZERO)).unwrap();
     eprintln!(
         "measured sender full: queued={queued} bytes=866 kind={:?} errno={:?} poll={polled} revents={}",
-        full.kind(), full.raw_os_error(), readiness.revents
+        full.kind(), full.raw_os_error(), readiness[0].revents
     );
     // macOS: ENOBUFS; Linux: EAGAIN, the send would block.
     assert_eq!(
@@ -383,7 +378,7 @@ fn receipt_bounds_are_enforced_before_json_or_record_fd_count_can_mask_them() {
         let (host, child) = UnixDatagram::pair().unwrap();
         let (source, mut peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-        send_rights(&host, &[b'x'; 1024], &vec![source.as_raw_fd(); count]);
+        send_rights(&host, &[b'x'; 1024], &vec![source.as_fd(); count]);
         let mut transport = startup::Transfer {
             receiver: org_socket::rights::DatagramReceiver::new(child),
             fence: Arc::default(),
@@ -395,10 +390,8 @@ fn receipt_bounds_are_enforced_before_json_or_record_fd_count_can_mask_them() {
                 assert_eq!(payload.as_slice(), &[b'x'; 1024]);
                 assert_eq!(received.descriptors.len(), count);
                 for descriptor in received.descriptors {
-                    // SAFETY: F_GETFD only queries this owned received descriptor.
-                    let flags = unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_GETFD) };
-                    assert_ne!(flags, -1);
-                    assert_ne!(flags & libc::FD_CLOEXEC, 0);
+                    // This owned received descriptor.
+                    assert!(org_platform::posix::is_close_on_exec(descriptor.as_raw_fd()).unwrap());
                 }
             }
             Err(ReceiveError::Fatal(_)) => {
@@ -436,41 +429,11 @@ fn receipt_bounds_are_enforced_before_json_or_record_fd_count_can_mask_them() {
 pub(crate) fn send_rights(
     socket: &UnixDatagram,
     payload: &[u8],
-    descriptors: &[std::os::fd::RawFd],
+    descriptors: &[std::os::fd::BorrowedFd<'_>],
 ) {
-    // SAFETY: CMSG_SPACE computes storage for the bounded test-owned descriptor slice.
-    let space = unsafe { libc::CMSG_SPACE(std::mem::size_of_val(descriptors) as u32) } as usize;
-    let mut control = vec![0usize; space.div_ceil(std::mem::size_of::<usize>())];
-    let mut data = libc::iovec {
-        iov_base: payload.as_ptr().cast_mut().cast(),
-        iov_len: payload.len(),
-    };
-    // SAFETY: live aligned buffers cover all lengths; passed fds stay owned by this test.
-    let sent = unsafe {
-        let mut message: libc::msghdr = std::mem::zeroed();
-        message.msg_iov = &mut data;
-        message.msg_iovlen = 1;
-        if !descriptors.is_empty() {
-            message.msg_control = control.as_mut_ptr().cast();
-            message.msg_controllen = space as _;
-            let header = libc::CMSG_FIRSTHDR(&message);
-            (*header).cmsg_level = libc::SOL_SOCKET;
-            (*header).cmsg_type = libc::SCM_RIGHTS;
-            (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of_val(descriptors) as u32) as _;
-            std::ptr::copy_nonoverlapping(
-                descriptors.as_ptr(),
-                libc::CMSG_DATA(header).cast(),
-                descriptors.len(),
-            );
-        }
-        libc::sendmsg(socket.as_raw_fd(), &message, 0)
-    };
-    assert_eq!(
-        sent,
-        payload.len() as isize,
-        "{}",
-        io::Error::last_os_error()
-    );
+    // Live borrowed descriptors that stay owned by this test.
+    let sent = org_socket::rights::send_once(socket.as_fd(), payload, descriptors, 0);
+    assert_eq!(sent.unwrap(), payload.len());
 }
 
 #[test]
@@ -558,7 +521,7 @@ fn channel_handler_refusal_stops_before_any_later_revocation_can_be_applied() {
         channel_id: "staged".into(),
     })
     .unwrap();
-    send_rights(&host, &channel, &[source.as_raw_fd()]);
+    send_rights(&host, &channel, &[source.as_fd()]);
     host.send(
         &org_office_launch::encode_transfer_record(&TransferRecord::Revoked {
             session_ids: vec!["must-not-apply".into()],

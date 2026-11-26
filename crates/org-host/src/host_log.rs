@@ -193,15 +193,8 @@ pub(crate) mod tests {
         variable: &str,
         within: Duration,
     ) -> Option<(std::process::ExitStatus, String)> {
-        use std::os::fd::AsRawFd;
         let (reader, mut full) = std::io::pipe().unwrap();
-        let fd = full.as_raw_fd();
-        // SAFETY: a valid descriptor this function owns; fcntl reads or sets its flags.
-        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-        assert!(flags >= 0);
-        // SAFETY: a valid descriptor this function owns; fcntl sets its status flags.
-        let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
-        assert_eq!(rc, 0);
+        org_platform::posix::set_nonblocking(&full, true).unwrap();
         loop {
             match full.write(&[b'x'; 4096]) {
                 Ok(_) => {}
@@ -210,9 +203,7 @@ pub(crate) mod tests {
             }
         }
         // Blocking again (the child shares this open file), and full.
-        // SAFETY: a valid descriptor this function owns; fcntl restores its original status flags.
-        let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
-        assert_eq!(rc, 0);
+        org_platform::posix::set_nonblocking(&full, false).unwrap();
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", test, "--nocapture", "--test-threads=1"])
             .env(variable, "1")

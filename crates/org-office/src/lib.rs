@@ -10,6 +10,11 @@
 //! a folder. The organization family (`organization_family`) holds the organization's
 //! rules; `rules` reads the native protocol's organization commands.
 
+// No unsafe code but one call: the SQLite engine's deferred-reference counter, which rusqlite
+// does not wrap (`store/sqlite/references.rs`, the one exception `tests/rust_hygiene.rs` of
+// `org-platform` allows). Every other crate but the platform's forbids unsafe code.
+#![deny(unsafe_code)]
+
 pub mod accounting;
 pub mod backup;
 pub mod budgets;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::rights::{DatagramReceiver, StreamReceiver};
+use crate::socket::rights::{DatagramReceiver, StreamReceiver};
 use std::cell::{Cell, RefCell};
 use std::io::{Read, Write};
 use std::os::fd::AsFd;
@@ -508,13 +508,13 @@ fn a_blocking_socket_still_sends_nonblocking_under_the_deadline() {
 /// stream fails with `EPIPE` and raises no signal. Elsewhere the caller owns `SIGPIPE`.
 #[test]
 fn a_closed_stream_does_not_raise_sigpipe() {
-    if !org_platform::socket::SEND_SUPPRESSES_SIGPIPE {
+    if !crate::socket::SEND_SUPPRESSES_SIGPIPE {
         return;
     }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "rights::send::tests::sigpipe_child",
+            "socket::rights::send::tests::sigpipe_child",
             "--nocapture",
             "--test-threads=1",
         ])

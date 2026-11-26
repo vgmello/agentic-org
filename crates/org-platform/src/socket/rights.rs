@@ -8,10 +8,10 @@
 
 mod send;
 mod stream;
-pub use send::{send, set_buffer_sizes, SendError};
+pub use send::{send, send_once, set_buffer_sizes, SendError};
 pub use stream::{connected_unix_stream, tcp_listener, unix_datagram};
 
-use org_platform::socket::descriptor_receive;
+use super::descriptor_receive;
 use std::fmt;
 use std::io;
 use std::mem;

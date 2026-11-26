@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::{mpsc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
+use org_platform::posix;
 use org_platform::process::{
     AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER, SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS,
     SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE, SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS,
@@ -268,41 +269,23 @@ fn capture_under_low_fd_limit(exhaust: bool) {
     impl Drop for Children {
         fn drop(&mut self) {
             for pid in &self.0 {
-                // SAFETY: the fixture owns these unreaped children.
-                unsafe {
-                    libc::kill(*pid, libc::SIGKILL);
-                    while libc::waitpid(*pid, std::ptr::null_mut(), 0) < 0 {
-                        if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
-                            break;
-                        }
-                    }
-                }
+                // The fixture owns these unreaped children.
+                let _ = posix::kill(*pid, libc::SIGKILL);
+                let _ = posix::reap(*pid);
             }
         }
     }
     let mut children = Children(Vec::new());
-    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
-    // SAFETY: getrlimit writes the complete output record on success, so assume_init is valid.
-    let mut limit = unsafe {
-        assert_eq!(libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()), 0);
-        limit.assume_init()
-    };
+    let mut limit = posix::resource_limit(posix::Resource::OpenFiles).unwrap();
     limit.rlim_cur = limit.rlim_cur.min(if exhaust { 64 } else { 1024 });
-    // SAFETY: reduce only this disposable fixture's soft limit.
-    let rc = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) };
-    assert_eq!(rc, 0);
+    // Reduce only this disposable fixture's soft limit.
+    posix::set_resource_limit(posix::Resource::OpenFiles, limit).unwrap();
     let count = limit.rlim_cur as usize * if exhaust { 6 } else { 3 } / 5;
     for _ in 0..count {
-        // SAFETY: after fork the child uses only async-signal-safe libc calls.
-        let pid = unsafe { libc::fork() };
-        assert!(pid >= 0);
-        if pid == 0 {
-            // SAFETY: bound this synthetic child's lifetime without Rust runtime activity.
-            unsafe {
-                libc::sleep(20);
-                libc::_exit(0);
-            }
-        }
+        // A synthetic child that only sleeps, its lifetime bounded.
+        let pid =
+            posix::testing::fork_child(posix::testing::ForkedChild::SleepThenExit { seconds: 20 })
+                .unwrap();
         children.0.push(pid);
     }
     let mark = unique_mark();
@@ -358,10 +341,7 @@ fn native_recovery_explains_descriptor_exhaustion() {
 }
 
 fn page_size() -> usize {
-    // SAFETY: _SC_PAGESIZE requires no pointer arguments.
-    let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-    assert!(size > 0);
-    size as usize
+    posix::page_size().unwrap()
 }
 
 /// The environment's address range, from fields 48 and 49 of `/proc/<pid>/stat`.
@@ -470,46 +450,9 @@ fn native_capture_quarantines_a_nul_terminated_partial_environment() {
     }
 }
 
-// SAFETY: start_leader_exit_fixture uses only raw C library calls and cannot unwind.
-org_platform::process::run_before_main!(unsafe LEADER_EXIT_FIXTURE = start_leader_exit_fixture);
-
-extern "C" fn start_leader_exit_fixture() {
-    // SAFETY: the loader has initialized libc and the test harness has yet to start.
-    let mode = unsafe { libc::getenv(c"ORG_TEST_CASE".as_ptr()) };
-    if mode.is_null()
-        // SAFETY: a successful getenv returns a NUL-terminated string.
-        || unsafe { std::ffi::CStr::from_ptr(mode) } != c"leader-exit"
-    {
-        return;
-    }
-    let mut worker = std::mem::MaybeUninit::<libc::pthread_t>::uninit();
-    // SAFETY: a correctly sized output slot, default attributes and a C entry point.
-    if unsafe {
-        libc::pthread_create(
-            worker.as_mut_ptr(),
-            std::ptr::null(),
-            hold_worker,
-            std::ptr::null_mut(),
-        )
-    } != 0
-    {
-        // SAFETY: terminate this disposable test child on fixture initialization failure.
-        unsafe { libc::_exit(125) };
-    }
-    // SAFETY: before main, nothing on this thread's stack is borrowed, pinned or owed a
-    // drop. Exit only the calling thread; the worker keeps this process alive.
-    unsafe { org_platform::process::testing::exit_this_thread() }
-}
-
-extern "C" fn hold_worker(_: *mut libc::c_void) -> *mut libc::c_void {
-    let ready = b"RECOVERY_READY\n";
-    // SAFETY: the fixture owns its stdout pipe. Bound its lifetime even on test failure.
-    unsafe {
-        libc::write(libc::STDOUT_FILENO, ready.as_ptr().cast(), ready.len());
-        libc::sleep(20);
-        libc::_exit(0);
-    }
-}
+// In a child started with `ORG_TEST_CASE=leader-exit`, the main thread ends before the
+// harness starts while a worker keeps the process alive (the platform's fixture).
+org_platform::process::testing::leader_exit_fixture_before_main!();
 
 /// Where a process whose main thread ended while a worker runs is a zombie leader
 /// ([`AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER`]), recovery must not take it for gone.
@@ -568,9 +511,8 @@ fn native_capture_reports_an_exited_unreaped_child_as_zombie() {
         boot: child.identity().boot.clone(),
     };
     let mut native = NativeRecovery::new().unwrap();
-    // SAFETY: this is the test's owned unreaped child.
-    let rc = unsafe { libc::kill(exact.pid as libc::pid_t, libc::SIGTERM) };
-    assert_eq!(rc, 0);
+    // This is the test's owned unreaped child.
+    posix::kill(exact.pid as libc::pid_t, libc::SIGTERM).unwrap();
     assert!(native
         .wait_exited(&exact, Instant::now() + Duration::from_secs(5))
         .unwrap());
@@ -608,88 +550,15 @@ fn native_spawn(
     environment: &[&std::ffi::CStr],
     new_session: bool,
 ) -> (libc::pid_t, io::PipeReader) {
-    use std::ffi::CString;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::ffi::OsStrExt;
-
-    let cwd = CString::new(directory.as_os_str().as_bytes()).unwrap();
-    let program = CString::new(program.as_os_str().as_bytes()).unwrap();
-    let strings = |items: &[&std::ffi::CStr]| {
-        items
-            .iter()
-            .map(|item| item.as_ptr().cast_mut())
-            .chain(std::iter::once(std::ptr::null_mut()))
-            .collect::<Vec<_>>()
-    };
-    let mut argv = strings(arguments);
-    let mut envp = strings(environment);
-    let (stdout, writer) = io::pipe().unwrap();
-    struct SpawnAttrs(libc::posix_spawnattr_t);
-    impl Drop for SpawnAttrs {
-        fn drop(&mut self) {
-            // SAFETY: `SpawnAttrs` takes ownership only after `posix_spawnattr_init` succeeds.
-            unsafe { libc::posix_spawnattr_destroy(&mut self.0) };
-        }
-    }
-    struct FileActions(libc::posix_spawn_file_actions_t);
-    impl Drop for FileActions {
-        fn drop(&mut self) {
-            // SAFETY: `FileActions` takes ownership only after `posix_spawn_file_actions_init` succeeds.
-            unsafe { libc::posix_spawn_file_actions_destroy(&mut self.0) };
-        }
-    }
-    let mut pid = 0;
-    let mut raw_attributes = std::mem::MaybeUninit::<libc::posix_spawnattr_t>::zeroed();
-    // SAFETY: valid attribute storage; `SpawnAttrs` owns and destroys it on every exit,
-    // including panic unwinding.
-    let rc = unsafe { libc::posix_spawnattr_init(raw_attributes.as_mut_ptr()) };
-    assert_eq!(rc, 0);
-    // SAFETY: `posix_spawnattr_init` succeeded immediately above.
-    let mut attributes = SpawnAttrs(unsafe { raw_attributes.assume_init() });
-    if new_session {
-        // The flag PreparedSpawn also uses.
-        let setsid = org_platform::process::testing::posix_spawn_setsid().unwrap();
-        // SAFETY: `attributes.0` is live and owned by `SpawnAttrs`.
-        let rc = unsafe { libc::posix_spawnattr_setflags(&mut attributes.0, setsid) };
-        assert_eq!(rc, 0);
-    }
-    let mut raw_actions = std::mem::MaybeUninit::<libc::posix_spawn_file_actions_t>::zeroed();
-    // SAFETY: valid action storage; `FileActions` owns and destroys it on every exit,
-    // including panic unwinding.
-    let rc = unsafe { libc::posix_spawn_file_actions_init(raw_actions.as_mut_ptr()) };
-    assert_eq!(rc, 0);
-    // SAFETY: `posix_spawn_file_actions_init` succeeded immediately above.
-    let mut actions = FileActions(unsafe { raw_actions.assume_init() });
-    // SAFETY: `actions.0` and `attributes.0` are initialized and guarded by Drop; `cwd`,
-    // `program`, `argv`, `envp`, and `writer` stay live across `posix_spawn`. The raw
-    // vectors preserve empty argv[0] and duplicate environment entries for these fixtures.
-    let spawn = unsafe {
-        assert_eq!(
-            libc::posix_spawn_file_actions_addchdir_np(&mut actions.0, cwd.as_ptr()),
-            0
-        );
-        assert_eq!(
-            libc::posix_spawn_file_actions_adddup2(
-                &mut actions.0,
-                writer.as_raw_fd(),
-                libc::STDOUT_FILENO,
-            ),
-            0
-        );
-        libc::posix_spawn(
-            &mut pid,
-            program.as_ptr(),
-            &actions.0,
-            &attributes.0,
-            argv.as_mut_ptr(),
-            envp.as_mut_ptr(),
-        )
-    };
-    drop(actions);
-    drop(attributes);
-    assert_eq!(spawn, 0);
-    drop(writer);
-    (pid, stdout)
+    // The raw argv and envp keep an empty argv[0] and repeated environment entries.
+    org_platform::process::testing::spawn_raw(
+        directory,
+        program,
+        arguments,
+        environment,
+        new_session,
+    )
+    .unwrap()
 }
 
 fn native_fixture_mark(
@@ -715,17 +584,9 @@ fn native_fixture_mark(
     };
     let capture = NativeRecovery::new()
         .and_then(|mut native| native.snapshot(Instant::now() + Duration::from_secs(5)));
-    // SAFETY: this test alone owns and reaps the fixture. Reap after capture.
-    let reaped = unsafe {
-        libc::kill(pid, libc::SIGKILL);
-        loop {
-            let reaped = libc::waitpid(pid, std::ptr::null_mut(), 0);
-            if reaped == pid || io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
-                break reaped;
-            }
-        }
-    };
-    assert_eq!(reaped, pid);
+    // This test alone owns and reaps the fixture. Reap after capture.
+    let _ = posix::kill(pid, libc::SIGKILL);
+    posix::reap(pid).unwrap();
     assert!(ready, "native fixture did not report readiness");
     capture
         .unwrap()
@@ -871,11 +732,9 @@ fn hold_restricted_job(escape: bool) {
     println!("RECOVERY_READY {} {} {}", id.pid, id.started, id.boot);
     io::stdout().flush().unwrap();
     std::thread::sleep(Duration::from_secs(20));
-    // SAFETY: this fixture owns this unreaped child and its PID until waitpid.
-    unsafe {
-        libc::kill(pid, libc::SIGKILL);
-        libc::waitpid(pid, std::ptr::null_mut(), 0);
-    }
+    // This fixture owns this unreaped child and its PID until it is reaped.
+    let _ = posix::kill(pid, libc::SIGKILL);
+    let _ = posix::reap(pid);
 }
 
 #[test]

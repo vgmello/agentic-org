@@ -409,8 +409,6 @@ fn a_status_change_publishes_the_whole_office_record() {
 #[test]
 fn retired_calls_stay_refused_when_another_process_writes_the_connection() {
     use std::io::{BufRead, BufReader, Write};
-    use std::os::fd::AsRawFd;
-    use std::os::unix::process::CommandExt;
 
     let home = TestHome::registered();
     home.write_office(&hq(A, ORG_A, "Acme", T));
@@ -432,7 +430,6 @@ fn retired_calls_stay_refused_when_another_process_writes_the_connection() {
     assert_eq!(read_line().id, 1);
 
     // A child writes the call on the same connection (its fd 3).
-    let fd = out.as_raw_fd();
     let request = format!(
         "{{\"id\":2,\"method\":\"office.app_token\",\"params\":{{\"office_id\":\"{A}\"}}}}"
     );
@@ -441,21 +438,7 @@ fn retired_calls_stay_refused_when_another_process_writes_the_connection() {
         .args(["--exact", "write_on_fd3_when_asked", "--test-threads=1"])
         .env(WRITE_ON_FD3, request)
         .stdout(std::process::Stdio::null());
-    // SAFETY: only async-signal-safe calls (dup2, fcntl) between fork and exec.
-    unsafe {
-        command.pre_exec(move || {
-            let rc = if fd == 3 {
-                libc::fcntl(3, libc::F_SETFD, 0)
-            } else {
-                libc::dup2(fd, 3)
-            };
-            if rc < 0 {
-                Err(std::io::Error::last_os_error())
-            } else {
-                Ok(())
-            }
-        });
-    }
+    org_platform::posix::testing::inherit_at(&mut command, &out, 3);
     let mut child = command.spawn().unwrap();
     let answer = read_line();
     child.wait().unwrap();
@@ -477,13 +460,13 @@ const WRITE_ON_FD3: &str = "ORG_HOST_TEST_WRITE_ON_FD3";
 #[test]
 fn write_on_fd3_when_asked() {
     use std::io::Write;
-    use std::os::fd::FromRawFd;
     let Ok(line) = std::env::var(WRITE_ON_FD3) else {
         return;
     };
-    // SAFETY: fd 3 is the connection the parent handed down (dup2 before exec); it is never
-    // closed here (ManuallyDrop), only written to.
-    let mut connection = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(3) });
+    // fd 3 is the connection the parent handed down (dup2 before exec): a copy of it is
+    // written to; fd 3 itself is never closed here.
+    let mut connection =
+        std::fs::File::from(org_platform::posix::testing::adopt_inherited(3).unwrap());
     connection
         .write_all(format!("{line}\n").as_bytes())
         .unwrap();

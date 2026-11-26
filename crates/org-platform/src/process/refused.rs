@@ -76,6 +76,17 @@ pub(super) unsafe fn exit_this_thread() -> ! {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+pub(super) fn spawn_raw(
+    _directory: &std::path::Path,
+    _program: &std::path::Path,
+    _arguments: &[&CStr],
+    _environment: &[&CStr],
+    _new_session: bool,
+) -> io::Result<(libc::pid_t, io::PipeReader)> {
+    refused()
+}
+
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn posix_spawn_setsid() -> io::Result<libc::c_short> {
     refused()
 }
@@ -165,6 +176,10 @@ pub(super) unsafe fn add_chdir(
 pub(super) unsafe fn session_flags(
     _actions: *mut libc::posix_spawn_file_actions_t,
 ) -> io::Result<libc::c_int> {
+    refused()
+}
+
+pub(super) fn thread_count() -> io::Result<usize> {
     refused()
 }
 

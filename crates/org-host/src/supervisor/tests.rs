@@ -880,9 +880,11 @@ fn an_hq_create_reported_after_shutdown_began_is_stopped_not_adopted() {
     assert_eq!(supervisor.adopt(*adoptable).status, OfficeStatus::Offline);
     assert_eq!(supervisor.state(OFFICE), None, "adopted after shutdown");
     // The stop reaps the server: signal 0 then finds no such process.
-    // SAFETY: signal 0 only probes whether the stopped child PID exists.
-    let rc = unsafe { libc::kill(pid, 0) };
-    assert!(rc != 0, "the server outlived the shutdown");
+    // Signal 0 only probes whether the stopped child PID exists.
+    assert!(
+        !org_platform::posix::process_exists(pid),
+        "the server outlived the shutdown"
+    );
     // The HQ's original key stays: it was installed before the create, not by it.
     assert!(keys.holds(OFFICE, &key));
 }
@@ -910,8 +912,8 @@ fn a_shutdown_returns_only_after_a_create_in_flight_has_no_server_left() {
         let waiting = scope.spawn(move || pending.wait(Duration::from_secs(30)));
         let began = Instant::now();
         supervisor.shutdown();
-        // SAFETY: signal 0 only checks the pid.
-        let left = unsafe { libc::kill(pid, 0) } == 0;
+        // Signal 0 only checks the pid.
+        let left = org_platform::posix::process_exists(pid);
         assert!(!left, "the create's server outlived the shutdown");
         assert!(
             began.elapsed() >= Duration::from_millis(200),
@@ -957,9 +959,11 @@ fn a_shutdown_waits_for_a_run_until_its_margin_after_the_hosts_deadline() {
         "{took:?}"
     );
     drop(pending);
-    // SAFETY: signal 0 only probes whether the stopped child PID exists.
-    let rc = unsafe { libc::kill(pid, 0) };
-    assert!(rc != 0, "the run's server outlived its owner");
+    // Signal 0 only probes whether the stopped child PID exists.
+    assert!(
+        !org_platform::posix::process_exists(pid),
+        "the run's server outlived its owner"
+    );
 }
 
 /// X5 review V2: a create whose worker has not connected to its launch rendezvous yet
@@ -1002,9 +1006,11 @@ fn a_shutdown_ends_a_launch_handshake_at_once_and_kills_its_worker() {
         assert!(failed, "the create did not fail");
         let took = returned.duration_since(asked);
         assert!(took < Duration::from_secs(1), "{took:?}");
-        // SAFETY: signal 0 only probes whether the stopped worker PID exists.
-        let rc = unsafe { libc::kill(pid, 0) };
-        assert!(rc != 0, "the worker outlived its handshake");
+        // Signal 0 only probes whether the stopped worker PID exists.
+        assert!(
+            !org_platform::posix::process_exists(pid),
+            "the worker outlived its handshake"
+        );
     });
 }
 

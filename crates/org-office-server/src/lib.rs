@@ -14,7 +14,8 @@
 //! and the socket. Every create and start takes the host's writer control first, before it
 //! creates or opens anything. The server never touches a Keychain.
 
-#![deny(unsafe_code)]
+// No unsafe code: descriptors, signals and the immediate exit are `org_platform::posix`'s.
+#![forbid(unsafe_code)]
 
 mod bounded;
 mod chat_calls;

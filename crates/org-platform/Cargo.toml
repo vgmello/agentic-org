@@ -21,5 +21,11 @@ serde_json.workspace = true
 syn = { version = "=2.0.119", default-features = false, features = ["full", "parsing"] }
 proc-macro2 = { version = "=1.0.107", features = ["span-locations"] }
 
+# `posix::answer_from_child` forks only a process with one thread: this test is its own
+# `main`, which starts no thread, unlike the standard harness.
+[[test]]
+name = "single_threaded_fork"
+harness = false
+
 [lints]
 workspace = true

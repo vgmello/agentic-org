@@ -1,34 +1,16 @@
 //! SIGTERM and SIGINT ask the server to stop: the handler only sets a flag (all it may safely
-//! do), and the accept loop notices it, closes the databases and exits cleanly.
-#![expect(
-    unsafe_code,
-    reason = "installing POSIX SIGTERM/SIGINT handlers requires libc::sigaction FFI"
-)]
+//! do; `org_platform::posix::request_stop_on`), and the accept loop notices it, closes the
+//! databases and exits cleanly.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use org_platform::posix;
 
-static STOP: AtomicBool = AtomicBool::new(false);
-
-extern "C" fn on_signal(_signal: libc::c_int) {
-    STOP.store(true, Ordering::SeqCst);
-}
-
-/// Installs the handlers.
+/// Installs the handlers. The signals are fixed and valid, so installing them cannot fail on
+/// a supported system; a failure is ignored as before (the default disposition stays).
 pub fn install() {
-    // SAFETY: `on_signal` only stores to an atomic, which is async-signal-safe, and the
-    // sigaction struct is fully initialised before use.
-    unsafe {
-        let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as usize;
-        libc::sigemptyset(&mut action.sa_mask);
-        action.sa_flags = 0;
-        for signal in [libc::SIGTERM, libc::SIGINT] {
-            libc::sigaction(signal, &action, std::ptr::null_mut());
-        }
-    }
+    let _ = posix::request_stop_on(&[libc::SIGTERM, libc::SIGINT]);
 }
 
 /// Whether a stop signal arrived.
 pub fn stop_requested() -> bool {
-    STOP.load(Ordering::SeqCst)
+    posix::stop_requested()
 }
