@@ -497,9 +497,11 @@ const needWhat = (w, asks) => (asks.length > 1 ? `${asks.length} requests` : !w.
 function boardNeedFace(asks, due) {
   const count = asks.length > 1 ? `<span class="board-need-n">${asks.length}</span>` : "";
   const when = due.short ? `<span class="board-need-when">${esc(due.short)}</span>` : "";
-  return `${ic("bell", "ic14")}${count}${when}`;
+  /* "3 · 4h": a dot keeps the count and the expiry from reading as one number */
+  const sep = count && when ? '<span class="board-need-sep" aria-hidden="true">·</span>' : "";
+  return `${ic("bell", "ic14")}${count}${sep}${when}`;
 }
-/* The Needs you control sits at the end of the card's footer. One request opens it in Inbox; several open a menu that
+/* The Needs you control sits among the icons at the end of the assignee row. One request opens it in Inbox; several open a menu that
    lists each of them (a top-layer popover, so the board's scroller never clips it). With no linked ask (blocked on
    you, or Critical work nobody has) it opens the item, where the owner can act. */
 function boardNeedControl(w, asks) {
@@ -516,7 +518,8 @@ function boardNeedControl(w, asks) {
 const exactStatus = (w) => (S.workBoardStages !== "detailed" && !BOARD_STAGES.includes(w.status) ? w.status : "");
 function boardTop(w, hideProject) {
   const project = hideProject ? "" : `<span class="board-project">${plink(w.proj)}</span>`;
-  return `<div class="board-top">${project}${boardPill(w)}<span class="board-ref mono">${esc(w.id)}</span></div>`;
+  /* Spaces between the parts keep "High T-A118" apart even before the board's stylesheet applies */
+  return `<div class="board-top">${project} ${boardPill(w)} <span class="board-ref mono">${esc(w.id)}</span></div>`;
 }
 /* One or two muted lines under the title: the description's first sentence */
 function boardDesc(w) {
@@ -558,7 +561,7 @@ function boardWhen(w, sortKey) {
 function boardCommentCount(w) {
   return (WORK_DISCUSSIONS[w.id]?.comments?.length ?? 0) + localDetailRecords(workCommentPrefix(w.id)).length;
 }
-/* A small footer icon: focusable, its full text in its accessible name and its tooltip (board-tip.js) */
+/* A small card icon: focusable, its full text in its accessible name and its tooltip (board-tip.js) */
 function boardIcon(icon, label, { tone = "", cls = "", face = "" } = {}) {
   return `<span class="bicon${cls ? " " + cls : ""}" role="img" tabindex="0" aria-label="${esc(label)}" data-icon-tip="${esc(label)}"${tone ? ` data-tone="${tone}"` : ""}>${icon}${face}</span>`;
 }
@@ -580,7 +583,7 @@ function boardFooterFacts(w, sortKey) {
   const when = boardWhen(w, sortKey);
   const date = when ? boardIcon(ic(when.icon, "ic16"), when.text, { cls: "bdate", tone: when.pending ? "warn" : "" }) : "";
   const archived = isArchivedWork(w) ? boardIcon(ic("archive", "ic16"), "Archived", { cls: "barchived" }) : "";
-  return { comments, date: date + archived };
+  return { comments, date: [date, archived].filter(Boolean).join(" ") };
 }
 /* A search that matches a subtask says which one on its parent card, with a link to it */
 function boardSubtaskHits(w, query) {
@@ -589,42 +592,58 @@ function boardSubtaskHits(w, query) {
   if (!hits.length) return "";
   return `<ul class="board-subhits" role="list" aria-label="${esc(`Matching subtasks of ${w.id}`)}">${hits.map((t) => `<li>${ic("search", "ic14")}<span class="board-subhit-word">Subtask</span><a class="alink" data-item="${esc(t.id)}" href="${esc(workItemHref(t.id))}" aria-haspopup="dialog">${workStatus(t.status)}<span class="mono">${esc(t.id)}</span><span class="board-subhit-title">${esc(t.title)}</span></a></li>`).join("")}</ul>`;
 }
-function boardOwner(w) {
-  if (!w.who || !M[w.who]) return `<span class="board-assignee">${av(null, 24)}<span class="board-owner-label">Unassigned</span></span>`;
-  return `<span class="board-assignee">${av(w.who, 24)}<span class="board-owner-label">${mlink(w.who)}</span><span class="board-kind">${esc(kindWord(w.who))}</span></span>`;
+/* Agent, Person or Owner is a small icon after the name; the word is its tooltip and accessible name. It is not a Tab
+   stop (the name link is); a tap or click focuses it, which shows the tooltip on touch. */
+const KIND_ICON = { Agent: "sparkle", Person: "user", Owner: "star" };
+function boardKind(id) {
+  const word = kindWord(id);
+  return `<span class="board-kind" role="img" tabindex="-1" aria-label="${word}" data-icon-tip="${word}" data-kind="${word.toLowerCase()}">${ic(KIND_ICON[word], "ic14")}</span>`;
 }
-/* Assignee row: avatar, name, Agent or Person, and the team */
-function boardAssignee(w, hideOwner) {
-  const team = workTeam(w), teamTag = team ? `<span class="work-team board-team">${esc(TEAMS[team].name)}</span>` : "";
-  if (hideOwner && !teamTag) return "";
-  return `<div class="board-card-context">${hideOwner ? "" : boardOwner(w)}${teamTag}</div>`;
+function boardOwner(w) {
+  if (!w.who || !M[w.who]) return `<span class="board-assignee">${av(null, 24)} <span class="board-owner-label">Unassigned</span></span>`;
+  return `<span class="board-assignee">${av(w.who, 24)} <span class="board-owner-label">${mlink(w.who)}</span> ${boardKind(w.who)}</span>`;
+}
+/* The team is its colour dot; the name is in the dot's tooltip and accessible name, and shows beside the dot while the
+   card is hovered or has keyboard focus (board.css). On touch it stays a dot; a tap on it shows the tooltip. */
+function boardTeam(w) {
+  const team = workTeam(w);
+  if (!team) return "";
+  const name = esc(TEAMS[team].name);
+  return `<span class="board-team"><span class="work-team board-team-tag" role="img" tabindex="-1" aria-label="${name}" data-icon-tip="${name}" data-tip-when-clipped><span class="board-team-name" aria-hidden="true">${name}</span></span></span>`;
+}
+/* The assignee row: avatar, name, kind icon and team dot, with the card's icons right-aligned on the same line. When the
+   line is too narrow the icons wrap under it, still right-aligned, so the name is never cut short for them. */
+function boardAssignee(w, hideOwner, icons) {
+  const team = boardTeam(w);
+  if (hideOwner && !team && !icons) return "";
+  const facts = icons ? ` <span class="board-facts">${icons}</span>` : "";
+  return `<div class="board-card-context">${hideOwner ? "" : boardOwner(w)} ${team}${facts}</div>`;
 }
 /* Exceptions (blocked and who it waits on, an access request denied, an execution hold) are one short muted line
-   above the footer, never extra chip rows */
+   under the assignee row, never extra chip rows */
 function boardException(w, reason) {
   const line = reason.line ? `<p class="board-reason">${ic("pause", "ic14")}${esc(reason.line)}</p>` : "";
   return line + boardHold(w);
 }
-/* Footer, right-aligned small icons: severity, exact status, the Needs you bell, comments, then when (date or ETA) */
-function boardFoot(w, sortKey, reason) {
+/* The card's small icons, in order: severity, exact status, the Needs you bell, comments, then when (date or ETA) */
+function boardIcons(w, sortKey, reason) {
   const { comments, date } = boardFooterFacts(w, sortKey), need = reason.need ? boardNeedControl(w, reason.asks) : "";
-  const icons = boardSeverityIcon(w) + boardStatusIcon(w) + need + comments + date;
-  return icons ? `<div class="board-foot">${icons}</div>` : "";
+  return [boardSeverityIcon(w), boardStatusIcon(w), need, comments, date].filter(Boolean).join(" ");
 }
 /* The hover and focus tooltip names the card (its title), then where it stands and when: "Triaged · ETA 2h". It shows
    only when the card's title is clamped, so it reveals the rest of it. */
 function boardTip(w, sortKey) {
   return [w.status, boardWhen(w, sortKey)?.text].filter(Boolean).join(" · ");
 }
-/* One canonical card: top row (project, pill, reference), title, description, progress, who has it, any exception
-   line, then the right-aligned footer (Needs you bell, comments, date) */
+/* One canonical card: top row (project, pill, reference), title, description, progress, then who has it with the
+   card's icons (Needs you bell, comments, date) right-aligned on that line, and any exception line */
 function boardCard(w, { hideOwner, hideProject, selected, sortKey, query }) {
   const reason = boardReason(w), team = workTeam(w);
   return `<li class="bcard" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}${reason.need ? " data-attention" : ""}${selected ? ' aria-current="true"' : ""} data-board-tip="${esc(boardTip(w, sortKey))}">
     ${boardTop(w, hideProject)}
     <a class="work-item-link t" data-item="${esc(w.id)}" href="${esc(workItemHref(w.id))}" aria-haspopup="dialog">${esc(w.title)}</a>
     ${boardDesc(w)}${boardProgress(w)}${boardSubtaskHits(w, query)}
-    ${boardAssignee(w, hideOwner)}${boardException(w, reason)}${boardFoot(w, sortKey, reason)}
+    ${boardAssignee(w, hideOwner, boardIcons(w, sortKey, reason))}${boardException(w, reason)}
   </li>`;
 }
 /* Attention first (the board's default): owner asks that expire, soonest deadline first; then other cards that

@@ -189,8 +189,10 @@ html[data-theme="graphite-light"] .board { --bd-canvas: #fafafa; --bd-ring: #3f3
 }
 .board .bcard .board-subhit-title { min-width: 0; white-space: normal; }
 
-/* 5. Assignee row: avatar, name, Agent or Person, team (with its dot). Wraps instead of hiding the team. */
-.board .bcard .board-card-context { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; margin-top: 2px; font-size: var(--fs-sm); color: var(--bd-body); }
+/* 5. Assignee row: avatar, name, the kind icon (Agent, Person, Owner) and the team dot, then the card's icons
+   right-aligned on the same line. When the line is too narrow the icon group wraps under it, still right-aligned;
+   the name is never cut short to make room for the icons. */
+.board .bcard .board-card-context { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; margin-top: 2px; font-size: var(--fs-sm); color: var(--bd-body); }
 .board .bcard .board-assignee { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; }
 .board .bcard .board-owner-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--bd-ink); font-weight: 500; }
 .board .bcard .board-owner-label a {
@@ -199,12 +201,25 @@ html[data-theme="graphite-light"] .board { --bd-canvas: #fafafa; --bd-ring: #3f3
   text-decoration: underline; text-decoration-thickness: 1px; text-decoration-color: var(--gray-500); text-underline-offset: 3px;
 }
 .board .bcard .board-owner-label a:hover { text-decoration-color: currentColor; }
-.board .bcard .board-kind { flex: none; font-size: var(--fs-xs); color: var(--bd-muted); }
-.board .bcard .board-team { display: inline-flex; min-width: 0; padding: 0; border: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--bd-muted); }
+.board .bcard .board-kind { position: relative; z-index: 1; display: inline-flex; flex: none; margin-inline-start: -2px; color: var(--bd-muted); }
+/* The team: its dot by default. The slot takes no room when the line is full (so it never pushes the icons to a new
+   line) and grows into the free space; the name shows there, cut short if it must, while the card is hovered or holds
+   keyboard focus. Touch has no hover, so it stays a dot there and a tap shows the tooltip. */
+.board .bcard .board-team { display: flex; flex: 1 1 0; min-width: 7px; }
+.board .bcard .board-team-tag {
+  position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 5px; min-width: 7px; max-width: 100%;
+  padding: 0; border: 0; border-radius: 0; font-size: var(--fs-xs); color: var(--bd-muted);
+}
+.board .bcard .board-team-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (hover: hover) {
+  .board .bcard:hover .board-team-name { position: static; width: auto; height: auto; clip: auto; min-width: 0; text-overflow: ellipsis; }
+}
+.board .bcard:has(:focus-visible) .board-team-name { position: static; width: auto; height: auto; clip: auto; min-width: 0; text-overflow: ellipsis; }
+.board .bcard .board-facts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 2px; margin-inline-start: auto; min-width: 0; }
+.board .bcard .board-need .board-need-sep { font-weight: 600; opacity: .8; }
 
-/* 6. Footer: small right-aligned icons, each with a tooltip and an accessible name: severity (triangle), the exact
-   status (its status icon), the Needs you bell, comments, then when (calendar or clock) */
-.board .bcard .board-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 2px; min-width: 0; margin-top: -2px; }
+/* 6. Card icons: small, each with a tooltip and an accessible name: severity (triangle), the exact status (its status
+   icon), the Needs you bell, comments, then when (calendar or clock) */
 .board .bcard :is(.bicon, .board-need) {
   position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; gap: 3px;
   min-width: 26px; height: 26px; padding: 0 4px; border-radius: 6px;
@@ -225,7 +240,7 @@ html[data-theme="graphite-light"] .board { --bd-canvas: #fafafa; --bd-ring: #3f3
 .board .bcard .board-need-wrap { display: inline-flex; }
 
 /* Secondary controls and icons on a card get their own focus ring */
-.board .bcard :is(.board-project a, .board-owner-label a, .board-subhits a, .board-hold a, .board-need, .bicon, .bpill[tabindex]):focus-visible {
+.board .bcard :is(.board-project a, .board-owner-label a, .board-subhits a, .board-hold a, .board-need, .bicon, .bpill[tabindex], .board-kind, .board-team-tag):focus-visible {
   outline: 2px solid var(--tone-accent-ink); outline-offset: 1px; border-radius: 6px; text-decoration-color: currentColor;
 }
 
@@ -243,9 +258,12 @@ html[data-theme="graphite-light"] .board { --bd-canvas: #fafafa; --bd-ring: #3f3
   .board .bcard .board-subhits a { min-height: 44px; min-width: 44px; }
   .board .bcard .board-subhits { padding-block: 0; }
   .board .bcard .board-hold a { display: inline-flex; align-items: center; min-height: 44px; margin-block: -10px; }
-  /* Footer icons, the bell and the pill: 44px hit areas around their small faces */
+  /* Card icons, the bell and the pill: 44px hit areas around their small faces */
   .board .bcard :is(.bicon, .board-need, .bpill[tabindex])::after { content: ""; position: absolute; inset: -9px -5px; }
-  .board .bcard .board-foot { gap: 10px; }
+  .board .bcard .board-facts { gap: 10px; }
+  /* The kind icon and the team dot: 44px-high tap areas (a tap shows their tooltip) */
+  .board .bcard :is(.board-kind, .board-team-tag)::after { content: ""; position: absolute; inset: -15px -10px; }
+  .board .bcard .board-team-tag::after { inset: -19px -14px; }
 }
 
 /* Forced colours: shadows disappear, so lanes and cards keep a real (system-coloured) outline */

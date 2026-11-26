@@ -75,8 +75,8 @@ async function checkWorkBoard(page: Page) {
   assert.equal(await columns.count(), 4, "Stages board has 4 columns");
   const stageIds = await cardIds();
   const attention = board.locator(".bcard[data-attention]").first();
-  await attention.locator(".board-foot .board-need").waitFor();
-  assert.match((await attention.locator(".board-foot .board-need").getAttribute("aria-label"))!, /^Needs you: /, "The Needs you bell's name says what is needed");
+  await attention.locator(".board-card-context .board-facts .board-need").waitFor();
+  assert.match((await attention.locator(".board-card-context .board-facts .board-need").getAttribute("aria-label"))!, /^Needs you: /, "The Needs you bell's name says what is needed");
   assert.equal(await board.locator(".bcard[data-attention]").count(), Number(await page.locator('[data-work-count="needs-me"]').textContent()),
     "Needs you count and amber bells come from the same pending owner actions");
   assert.equal(await board.locator(".bcard .board-need").count(), await board.locator(".bcard[data-attention]").count(), "Every card that needs you has its bell");
@@ -95,6 +95,7 @@ async function checkWorkBoard(page: Page) {
   await checkPendingApprovalAndHold(page, board);
   await checkListBoardPriority(page, board);
   await checkCardLayout(page, board);
+  await checkAssigneeRow(page, board);
   await checkCardTooltip(page, board);
   assert.match((await page.getByRole("button", { name: /^Work display/ }).getAttribute("aria-label"))!, /Stages columns/, "Display names the column mode");
   const trailingGutter = await board.evaluate((el) => {
@@ -145,8 +146,8 @@ async function checkBoardCountsAndLabels(page: Page, board: ReturnType<Page["loc
   assert.equal(await bug.locator(".bpri").getAttribute("aria-label"), "Inferred priority: High (none set)");
   assert.equal(await bug.locator(".bpill").getAttribute("aria-label"), "Bug · Inferred priority: High (none set)", "The pill names the bug and the inferred priority");
   assert.equal(await bug.locator(".bpill .ic").count(), 1, "A bug has a small bug icon in its pill");
-  const sev = bug.locator(".board-foot .bsev");
-  assert.equal(await sev.getAttribute("aria-label"), "Critical severity", "Bug severity is a footer icon, labelled apart from priority");
+  const sev = bug.locator(".board-facts .bsev");
+  assert.equal(await sev.getAttribute("aria-label"), "Critical severity", "Bug severity is a card icon, labelled apart from priority");
   assert.equal(await sev.getAttribute("data-tone"), "bad", "Critical severity is red");
 }
 
@@ -284,8 +285,8 @@ async function checkPhoneSearchRevealsLane(page: Page) {
   const sizes = await page.locator(".board .bcard :is(.board-project a, .board-owner-label a, .board-subhits a)").evaluateAll((links) =>
     links.filter((a) => a.getClientRects().length).map((a) => { const r = a.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }));
   assert.ok(sizes.length >= 3 && sizes.every(([w, h]) => w >= 44 && h >= 44), `Secondary links are 44px targets (${JSON.stringify(sizes)})`);
-  /* Footer icons, the bell and a focusable pill reach 44px through their hit area (::after) */
-  const hits = await page.locator(".board .bcard :is(.bicon, .board-need, .bpill[tabindex])").evaluateAll((els) =>
+  /* Card icons, the bell, a focusable pill, the kind icon and the team dot reach 44px through their hit area (::after) */
+  const hits = await page.locator(".board .bcard :is(.bicon, .board-need, .bpill[tabindex], .board-kind, .board-team-tag)").evaluateAll((els) =>
     els.filter((el) => el.getClientRects().length).map((el) => { const a = getComputedStyle(el, "::after"), r = el.getBoundingClientRect();
       return [Math.round(r.width - parseFloat(a.left) - parseFloat(a.right)), Math.round(r.height - parseFloat(a.top) - parseFloat(a.bottom))]; }));
   assert.ok(hits.length >= 3 && hits.every(([w, h]) => w >= 34 && h >= 44), `Card icons have 44px-high touch targets (${JSON.stringify(hits)})`);
@@ -295,8 +296,8 @@ async function checkPhoneSearchRevealsLane(page: Page) {
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
-/* 1024px: lanes keep about 260px and overflow into the column jump. Compact cards keep the team (the footer wraps
-   instead) and keep the progress row on one line; the order stays progress, the assignee, then the footer icons. */
+/* 1024px: lanes keep about 260px and overflow into the column jump. Compact cards keep the team dot and keep the
+   progress row on one line; the order stays progress, then the assignee row, its icons on that line or wrapped under it. */
 async function checkCompactCardLabels(page: Page) {
   await page.setViewportSize({ width: 1024, height: 800 });
   await page.waitForFunction(() => document.querySelector(".board-lanes")?.hasAttribute("data-overflow"));
@@ -305,11 +306,11 @@ async function checkCompactCardLabels(page: Page) {
   const card = page.locator('.board .bcard[data-work-id="T-A146"]');
   assert.ok(await page.locator('.board .bcard[data-work-id="T-A88"] .bsev').isVisible(), "Compact cards keep severity");
   const teams = await page.locator(".board .bcard .board-team").evaluateAll((els) => els.filter((el) => !el.getClientRects().length).length);
-  assert.equal(teams, 0, "No card hides its team at 1024");
+  assert.equal(teams, 0, "No card hides its team dot at 1024");
   const progressHeight = await card.locator(".board-progress").evaluate((el) => el.getBoundingClientRect().height);
   assert.ok(progressHeight <= 24, `The progress row stays on one line (${progressHeight}px)`);
-  const [progress, owner, foot] = await card.evaluate((el) => [".board-progress", ".board-assignee", ".board-foot"].map((sel) => el.querySelector(sel)!.getBoundingClientRect().top));
-  assert.ok(progress < owner && owner < foot, "Progress, then the assignee, then the footer icons");
+  const [progress, owner, icons] = await card.evaluate((el) => [".board-progress", ".board-assignee", ".board-facts"].map((sel) => el.querySelector(sel)!.getBoundingClientRect().top));
+  assert.ok(progress < owner && owner - 4 <= icons, "Progress, then the assignee row with its icons");
   await card.locator(":scope > .work-item-link").click();
   await page.locator("#work-detail-subtasks").waitFor();
   await page.keyboard.press("Escape");
@@ -361,12 +362,12 @@ async function checkCardLayout(page: Page, board: ReturnType<Page["locator"]>) {
   const card = board.locator('.bcard[data-work-id="T-A146"]');
   /* Resizing can re-render the page, so measure in one pass once it has settled */
   await page.waitForTimeout(300);
-  const [top, title, progress, owner, foot, need, box] = await card.evaluate((el) => [".board-top", ":scope > .work-item-link", ".board-progress", ".board-owner-label a", ".board-foot", ".board-foot .board-need", ":scope"]
+  const [top, title, progress, owner, foot, need, box] = await card.evaluate((el) => [".board-top", ":scope > .work-item-link", ".board-progress", ".board-owner-label a", ".board-facts", ".board-facts .board-need", ":scope"]
     .map((sel) => { const r = (sel === ":scope" ? el : el.querySelector(sel))!.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }));
   assert.ok(top!.y + top!.height <= title!.y + 1, "The top row sits above the title");
   assert.ok(progress!.y >= title!.y + title!.height - 1 && owner!.y >= progress!.y + progress!.height - 1, "Progress, then the assignee");
-  assert.ok(foot!.y >= owner!.y, "The footer comes last");
-  assert.ok(Math.abs(need!.x + need!.width - (foot!.x + foot!.width)) <= 60, "The bell sits at the right of the footer");
+  assert.ok(foot!.y + foot!.height / 2 >= owner!.y, "The icons sit on the assignee line or under it");
+  assert.ok(Math.abs(need!.x + need!.width - (box!.x + box!.width)) <= 80, "The bell sits at the right of the card");
   const [projectLink, ownerLink] = await card.evaluate((el) => [".board-project a", ".board-owner-label a"].map((sel) => { const r = el.querySelector(sel)!.getBoundingClientRect(); return [r.width, r.height]; }));
   assert.ok(projectLink[1] >= 44 && ownerLink[0] >= 44 && ownerLink[1] >= 44, `Both card links are 44px targets (${projectLink} ${ownerLink})`);
   assert.ok(box!.height <= 300, `The first card stays compact at 375px (${Math.round(box!.height)}px)`);
@@ -378,6 +379,45 @@ async function checkCardLayout(page: Page, board: ReturnType<Page["locator"]>) {
   await page.setViewportSize({ width: 1440, height: 900 });
   for (const theme of ALL_THEMES) await checkCardTheme(page, board, theme);
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "graphite"));
+}
+
+/* The assignee row carries the card's icons (no separate footer row); Agent, Person and Owner are icons named by their
+   word; the team is a dot named by its team, its name shown on hover. The top row's parts stay apart without CSS. */
+async function checkAssigneeRow(page: Page, board: ReturnType<Page["locator"]>) {
+  await page.mouse.move(0, 0);
+  assert.equal(await board.locator(".board-foot").count(), 0, "No card has a separate footer row");
+  const card = board.locator('.bcard[data-work-id="T-A118"]');
+  const [ownerMid, iconsMid] = await card.evaluate((el) => [".board-assignee", ".board-facts"].map((sel) => { const r = el.querySelector(sel)!.getBoundingClientRect(); return r.top + r.height / 2; }));
+  assert.ok(Math.abs(ownerMid - iconsMid) <= 4, `The icons share the assignee's line at 1440 (${ownerMid} ${iconsMid})`);
+  assert.equal((await card.locator(".board-top").textContent())!.replace(/\s+/g, " ").trim(), "Office federation High T-A118", "The top row's parts are spaced in the markup");
+  const kinds = await board.locator(".bcard .board-kind").evaluateAll((els) => els.map((el) => [el.getAttribute("aria-label"), el.getAttribute("data-icon-tip"), el.getAttribute("role"), el.querySelectorAll(".ic").length, (el as HTMLElement).innerText.trim()]));
+  assert.ok(kinds.length > 5 && kinds.every(([name, tip, role, icons, text]) => ["Agent", "Person", "Owner"].includes(name!) && tip === name && role === "img" && icons === 1 && !text), `Kind is an icon named Agent, Person or Owner (${JSON.stringify(kinds)})`);
+  assert.equal(await card.locator(".board-kind").getAttribute("aria-label"), "Agent");
+  assert.equal(await board.locator('.bcard[data-work-id="T-A142"] .board-kind').getAttribute("aria-label"), "Owner");
+  const words = await board.locator(".bcard .board-card-context").evaluateAll((els) => els.filter((el) => /\b(Agent|Person)\b/.test((el as HTMLElement).innerText)).length);
+  assert.equal(words, 0, "No card spells out Agent or Person");
+  assert.equal((await board.locator('.bcard[data-work-id="T-A121"] .board-need').innerText()).replace(/\s+/g, " ").trim(), "3 · 4h", "The bell's count and expiry read apart");
+  await checkTeamDot(page, card);
+}
+
+/* The team is a dot named by its team; hovering the card, or keyboard focus inside it, shows the name in place */
+async function checkTeamDot(page: Page, card: ReturnType<Page["locator"]>) {
+  const team = card.locator(".board-team-tag"), name = team.locator(".board-team-name");
+  assert.equal(await team.getAttribute("aria-label"), "Platform (Rust)", "The team dot is named by its team");
+  assert.equal(await team.getAttribute("data-icon-tip"), "Platform (Rust)", "…and its tooltip says it");
+  assert.ok((await name.evaluate((el) => el.getBoundingClientRect().width)) <= 1, "At rest the team is only its dot");
+  await card.locator(".board-desc").hover({ force: true });
+  await page.waitForTimeout(250);
+  assert.ok((await name.evaluate((el) => el.getBoundingClientRect().width)) > 20, "Hovering the card shows the team name");
+  const height = await card.evaluate((el) => el.getBoundingClientRect().height);
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(250);
+  assert.ok(Math.abs(height - (await card.evaluate((el) => el.getBoundingClientRect().height))) <= 1, "Showing the team name never changes the card's height");
+  await card.locator(".board-owner-label a").focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  assert.ok((await name.evaluate((el) => el.getBoundingClientRect().width)) > 20, "Keyboard focus inside the card shows the team name");
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 }
 
 /* In one theme: every card has exactly one chip row and no stripe; the bell and descriptions keep their contrast */
@@ -572,7 +612,7 @@ async function checkBoardRequestMenus(page: Page, board: ReturnType<Page["locato
   await trigger.press("Enter");
   await page.keyboard.press("Tab");
   assert.equal(await menu.count(), 0, "Tab closes the menu");
-  assert.ok(await page.evaluate(() => Boolean(document.activeElement?.closest('.bcard[data-work-id="T-A121"] .board-foot')) && !document.activeElement?.matches(".board-need")), "Tab moves on to the next control on the card");
+  assert.ok(await page.evaluate(() => Boolean(document.activeElement?.closest('.bcard[data-work-id="T-A121"] .board-facts')) && !document.activeElement?.matches(".board-need")), "Tab moves on to the next control on the card");
   /* Scrolling the badge under its lane's sticky header closes its menu, though the badge is still in the viewport */
   await board.evaluate((el) => { el.scrollTop = 0; });
   await trigger.click();
