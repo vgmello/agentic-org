@@ -808,4 +808,6 @@ export {
   answerOrgQuestion,
   itemActionsV4,
   pageHome,
+  v4BuildButtons,
+  v4ReplyBox,
 };
