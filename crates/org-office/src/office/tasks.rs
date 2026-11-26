@@ -32,7 +32,7 @@ pub(super) fn ensure_local_task_write_authority(
     office: &Office,
     task_ref: &str,
 ) -> Result<Result<(), ApiError>, OfficeError> {
-    if office.info.role == OfficeRole::Hq && !office.is_multi_office().unwrap_or(false) {
+    if office.info.role == OfficeRole::Hq && !office.is_multi_office()? {
         return Ok(Ok(()));
     }
     let inspect = match office.task_inspect(task_ref)? {
@@ -40,11 +40,7 @@ pub(super) fn ensure_local_task_write_authority(
         // Let the underlying command return canonical `NotFound` / `InvalidRequest`.
         Err(_) => return Ok(Ok(())),
     };
-    let allowed = crate::office::satellite::has_local_task_write_authority(
-        office,
-        &inspect.task.office_code,
-    )?;
-    if allowed {
+    if office.has_local_task_write_authority_for_code(&inspect.task.office_code)? {
         return Ok(Ok(()));
     }
     Ok(Err(ApiError::new(
@@ -63,7 +59,7 @@ impl Office {
         &self,
         task_office_code: &str,
     ) -> Result<bool, OfficeError> {
-        if self.info.role == OfficeRole::Hq && !self.is_multi_office().unwrap_or(false) {
+        if self.info.role == OfficeRole::Hq && !self.is_multi_office()? {
             return Ok(true);
         }
         crate::office::satellite::has_local_task_write_authority(self, task_office_code)

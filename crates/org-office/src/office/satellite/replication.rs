@@ -329,7 +329,7 @@ fn sync_satellite_work_outbox_locked(office: &Office) -> Result<usize, OfficeErr
                 .map(|fv| (fv.path, fv.bytes))
                 .collect();
             if !task_versions.is_empty()
-                && is_locally_owned_satellite_work_entry(office, &local_codes, &task_versions)
+                && is_locally_owned_satellite_work_entry(office, &local_codes, &task_versions)?
             {
                 let files: Vec<(String, Option<String>)> = task_versions
                     .into_iter()
@@ -360,61 +360,70 @@ fn sync_satellite_work_outbox_locked(office: &Office) -> Result<usize, OfficeErr
 }
 
 /// Belt-and-suspenders guard (`TASK-192`) ensuring a satellite never enqueues a `WorkChange`
-/// touching another office's task or task counter (which HQ would reject and stall sync).
+/// touching another office's task/counter or immutable-history deletion (which HQ would reject
+/// and stall sync), while propagating transient storage errors so the outbox consumer watermark
+/// never advances past an unverified local entry.
 fn is_locally_owned_satellite_work_entry(
     office: &Office,
     local_codes: &std::collections::BTreeSet<String>,
     versions: &[(&DurablePath, Option<&[u8]>)],
-) -> bool {
+) -> Result<bool, OfficeError> {
     if local_codes.is_empty() {
-        return false;
+        return Ok(false);
     }
     let mut verified_tasks = std::collections::BTreeSet::new();
     let mut sidecar_tasks = Vec::new();
     for (path, bytes) in versions {
         match crate::tasks::records::kind_of(path) {
             Some(crate::tasks::records::Kind::OfficeTaskCounter(code)) => {
-                if !local_codes.contains(&code) {
-                    return false;
+                if bytes.is_none() || !local_codes.contains(&code) {
+                    return Ok(false);
                 }
             }
             Some(crate::tasks::records::Kind::Task(tid)) => {
                 let Some(raw) = bytes else {
-                    return false;
+                    return Ok(false);
                 };
                 let Ok(rec) = serde_json::from_slice::<crate::tasks::records::TaskRecord>(raw)
                 else {
-                    return false;
+                    return Ok(false);
                 };
-                if !local_codes.contains(&rec.office_code) {
-                    return false;
+                if rec.id != tid || !local_codes.contains(&rec.office_code) {
+                    return Ok(false);
                 }
                 verified_tasks.insert(tid);
             }
             Some(
-                crate::tasks::records::Kind::Checklist(tid)
-                | crate::tasks::records::Kind::Comment(tid, _)
-                | crate::tasks::records::Kind::Watchers(tid)
-                | crate::tasks::records::Kind::Links(tid)
+                crate::tasks::records::Kind::Comment(tid, _)
                 | crate::tasks::records::Kind::Event(tid, _),
+            ) => {
+                if bytes.is_none() {
+                    return Ok(false);
+                }
+                sidecar_tasks.push(tid);
+            }
+            Some(
+                crate::tasks::records::Kind::Checklist(tid)
+                | crate::tasks::records::Kind::Watchers(tid)
+                | crate::tasks::records::Kind::Links(tid),
             ) => sidecar_tasks.push(tid),
-            None => return false,
+            None => return Ok(false),
         }
     }
     for tid in sidecar_tasks {
         if verified_tasks.contains(&tid) {
             continue;
         }
-        let locally_owned = office
-            .task_inspect(tid.as_str())
-            .ok()
-            .and_then(Result::ok)
-            .is_some_and(|res| local_codes.contains(&res.task.office_code));
+        let locally_owned = match office.task_inspect(tid.as_str())? {
+            Ok(res) => local_codes.contains(&res.task.office_code),
+            Err(_) => false,
+        };
         if !locally_owned {
-            return false;
+            return Ok(false);
         }
+        verified_tasks.insert(tid);
     }
-    true
+    Ok(true)
 }
 
 fn extract_primary_task_id(files: &[(String, Option<String>)]) -> Option<String> {
@@ -474,4 +483,211 @@ pub(crate) fn reconcile_satellite_replication_on_open(
         replication.reset_for_re_enrollment(new_hq, ca_digest, new_ep)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod work_outbox_filter_tests {
+    use std::collections::BTreeSet;
+
+    use org_proto::tasks::{TaskPriority, TaskStatus, TasksCreateParams};
+    use org_store::{DurablePath, Id};
+
+    use super::is_locally_owned_satellite_work_entry;
+    use crate::office::Office;
+    use crate::store::open::EngineChoice;
+    use crate::tasks::records::{TaskMeta, TaskRecord};
+    use crate::TestOffice;
+
+    fn task_json(id: &str, code: &str, number: u64, team_id: &str, actor: &str) -> Vec<u8> {
+        let rec = TaskRecord {
+            id: Id::parse(id).unwrap(),
+            office_code: code.into(),
+            number,
+            team_id: Id::parse(team_id).unwrap(),
+            assigned_team_id: None,
+            project_id: None,
+            task_type: "task".into(),
+            work_type: None,
+            title: "Filter test".into(),
+            status: TaskStatus::Todo,
+            assignee_id: None,
+            body_markdown: String::new(),
+            feature_id: None,
+            milestone_id: None,
+            priority: TaskPriority::Normal,
+            effort: None,
+            severity: None,
+            resolution: None,
+            blocked_reason: None,
+            rank_order: None,
+            labels: Vec::new(),
+            reference_files: Vec::new(),
+            modified_files: Vec::new(),
+            repositories: Vec::new(),
+            details: None,
+            meta: TaskMeta::created(&Id::parse(actor).unwrap(), "2026-11-26T00:00:00.000Z"),
+        };
+        serde_json::to_vec(&rec).unwrap()
+    }
+
+    #[test]
+    fn satellite_work_outbox_filter_accepts_only_valid_local_work_entries() {
+        let office = Office::for_test(TestOffice {
+            engine: EngineChoice::Sqlite,
+        });
+        let owner = office.owner_member_id().to_owned();
+        let team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+
+        // Create one real task with office_code "A" inside `office` so sidecar lookups resolve it.
+        let created = office
+            .task_create(
+                &owner,
+                TasksCreateParams {
+                    command_id: office.next_uuid_v7(),
+                    task_id: office.next_uuid_v7(),
+                    team_id: Some(team_id.clone()),
+                    assigned_team_id: None,
+                    project_id: None,
+                    task_type: Some("task".into()),
+                    work_type: None,
+                    title: "Existing task".into(),
+                    body_markdown: String::new(),
+                    assignee_id: None,
+                    priority: None,
+                    effort: None,
+                    severity: None,
+                    rank_order: None,
+                    labels: Vec::new(),
+                    reference_files: Vec::new(),
+                    modified_files: Vec::new(),
+                    depends_on: Vec::new(),
+                    details: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let existing_a_id = created.task.id;
+        let local_b_id = office.next_uuid_v7();
+        let other_id = office.next_uuid_v7();
+
+        let local_b: BTreeSet<String> = ["B".to_owned()].into_iter().collect();
+        let local_a: BTreeSet<String> = ["A".to_owned()].into_iter().collect();
+        let empty: BTreeSet<String> = BTreeSet::new();
+
+        let p_counter_b = DurablePath::parse("state/work/office-task-counters/b.json").unwrap();
+        let p_counter_a = DurablePath::parse("state/work/office-task-counters/a.json").unwrap();
+        let p_task_b =
+            DurablePath::parse(&format!("state/work/tasks/{local_b_id}/task.json")).unwrap();
+        let p_ev_b = DurablePath::parse(&format!(
+            "state/work/tasks/{local_b_id}/events/0000000001.json"
+        ))
+        .unwrap();
+        let p_cmt_b = DurablePath::parse(&format!(
+            "state/work/tasks/{local_b_id}/comments/0000000001.json"
+        ))
+        .unwrap();
+        let p_chk_b =
+            DurablePath::parse(&format!("state/work/tasks/{local_b_id}/checklist.json")).unwrap();
+        let p_task_a =
+            DurablePath::parse(&format!("state/work/tasks/{existing_a_id}/task.json")).unwrap();
+        let p_chk_a =
+            DurablePath::parse(&format!("state/work/tasks/{existing_a_id}/checklist.json"))
+                .unwrap();
+        let p_ev_a = DurablePath::parse(&format!(
+            "state/work/tasks/{existing_a_id}/events/0000000002.json"
+        ))
+        .unwrap();
+
+        let raw_b = task_json(&local_b_id, "B", 1, &team_id, &owner);
+        let raw_a = task_json(&existing_a_id, "A", 1, &team_id, &owner);
+        let raw_mismatch_id = task_json(&other_id, "B", 2, &team_id, &owner);
+        let dummy = b"{}".as_slice();
+
+        // 1. Valid local task + counter + immutable sidecar + mutable sidecar deletion.
+        assert!(is_locally_owned_satellite_work_entry(
+            &office,
+            &local_b,
+            &[
+                (&p_counter_b, Some(dummy)),
+                (&p_task_b, Some(&raw_b)),
+                (&p_ev_b, Some(dummy)),
+                (&p_chk_b, None),
+            ],
+        )
+        .unwrap());
+
+        // 2. Sidecar-only entry for an existing locally owned task succeeds; for remote task fails.
+        assert!(is_locally_owned_satellite_work_entry(
+            &office,
+            &local_a,
+            &[(&p_chk_a, Some(dummy))]
+        )
+        .unwrap());
+        assert!(!is_locally_owned_satellite_work_entry(
+            &office,
+            &local_b,
+            &[(&p_chk_a, Some(dummy))]
+        )
+        .unwrap());
+
+        // 3. Remote task, remote counter, mixed local+remote entry, and empty local_codes fail.
+        assert!(!is_locally_owned_satellite_work_entry(
+            &office,
+            &local_b,
+            &[(&p_task_a, Some(&raw_a))]
+        )
+        .unwrap());
+        assert!(!is_locally_owned_satellite_work_entry(
+            &office,
+            &local_b,
+            &[(&p_counter_a, Some(dummy))]
+        )
+        .unwrap());
+        assert!(!is_locally_owned_satellite_work_entry(
+            &office,
+            &local_b,
+            &[(&p_task_b, Some(&raw_b)), (&p_ev_a, Some(dummy))],
+        )
+        .unwrap());
+        assert!(!is_locally_owned_satellite_work_entry(
+            &office,
+            &empty,
+            &[(&p_task_b, Some(&raw_b))]
+        )
+        .unwrap());
+
+        // 4. Deletions of Task, OfficeTaskCounter, Event, Comment, mismatched rec.id, and bad JSON fail.
+        assert!(
+            !is_locally_owned_satellite_work_entry(&office, &local_b, &[(&p_task_b, None)])
+                .unwrap()
+        );
+        assert!(
+            !is_locally_owned_satellite_work_entry(&office, &local_b, &[(&p_counter_b, None)])
+                .unwrap()
+        );
+        assert!(!is_locally_owned_satellite_work_entry(
+            &office,
+            &local_b,
+            &[(&p_task_b, Some(&raw_b)), (&p_ev_b, None)],
+        )
+        .unwrap());
+        assert!(!is_locally_owned_satellite_work_entry(
+            &office,
+            &local_b,
+            &[(&p_task_b, Some(&raw_b)), (&p_cmt_b, None)],
+        )
+        .unwrap());
+        assert!(!is_locally_owned_satellite_work_entry(
+            &office,
+            &local_b,
+            &[(&p_task_b, Some(&raw_mismatch_id))],
+        )
+        .unwrap());
+        assert!(!is_locally_owned_satellite_work_entry(
+            &office,
+            &local_b,
+            &[(&p_task_b, Some(b"not-json"))],
+        )
+        .unwrap());
+    }
 }

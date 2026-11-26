@@ -272,6 +272,8 @@ impl Office {
         if let Err(err) = super::tasks::ensure_local_task_write_authority(self, task_id.as_str())? {
             return Ok(Err(err));
         }
+        let enforce_satellite_office_id = (self.info.role == crate::model::OfficeRole::Satellite)
+            .then(|| self.identity.office_id.clone());
         let res = self
             .store
             .run(RecordTaskRepoBranchOp {
@@ -281,6 +283,7 @@ impl Office {
                 repository_id: repository_id.clone(),
                 branch,
                 integrated_commit,
+                enforce_satellite_office_id,
             })
             .map_err(storage)?;
         if res.is_ok() {

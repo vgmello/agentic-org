@@ -2183,9 +2183,9 @@ fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_s
             TasksCreateParams {
                 command_id: hq.next_uuid_v7(),
                 task_id: hq.next_uuid_v7(),
-                team_id: Some(team_id),
+                team_id: Some(team_id.clone()),
                 assigned_team_id: None,
-                project_id: Some(project_id),
+                project_id: Some(project_id.clone()),
                 task_type: Some("task".into()),
                 work_type: None,
                 title: "Satellite worktree sync test".into(),
@@ -2324,5 +2324,235 @@ fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_s
     );
     assert_eq!(sat1.sync_status().unwrap().pending_work_count, 0);
     assert_proxied_session_ops_succeed(&hq_node, &hq, &owner, &ben, &sat1_id);
+
+    // Blocking #4a: Satellite-owned task (`T-B1`) created on sat1 records its durable branch
+    // locally via `worktree.prepare`, syncs via `sync_satellite_work_outbox`, and replicates to HQ.
+    assert_sat_owned_worktree_syncs_to_hq(
+        &hq,
+        &sat1,
+        &sat1_node,
+        &sat_git,
+        &owner,
+        &ben,
+        &team_id,
+        &project_id,
+        &repo_id_parsed,
+    );
+    // Blocking #1 & #4b: HQ-owned tasks with an already-integrated or mismatched durable link are
+    // refused by satellite `worktree.prepare` with `Conflict` before creating a worktree.
+    assert_sat_worktree_rejects_hq_durable_conflicts(
+        &hq,
+        &hq_node,
+        &sat1,
+        &sat_git,
+        &owner,
+        &ben,
+        &team_id,
+        &project_id,
+        &repo_id_parsed,
+    );
     drop(sat1_node);
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "focused test helper shares fixture handles without adding wrapper boilerplate"
+)]
+fn assert_sat_owned_worktree_syncs_to_hq(
+    hq: &Office,
+    sat1: &Office,
+    sat1_node: &LiveOfficeNode,
+    sat_git: &crate::git_calls::GitService,
+    owner: &str,
+    ben: &str,
+    team_id: &str,
+    project_id: &str,
+    repo_id_parsed: &org_store::Id,
+) {
+    use org_proto::git::{WorktreePrepare, WorktreePrepareParams, WorktreePrepareResult};
+    use org_proto::tasks::TasksCreateParams;
+
+    let sat_task = sat1
+        .task_create(
+            ben,
+            TasksCreateParams {
+                command_id: sat1.next_uuid_v7(),
+                task_id: sat1.next_uuid_v7(),
+                team_id: Some(team_id.to_owned()),
+                assigned_team_id: None,
+                project_id: Some(project_id.to_owned()),
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Satellite owned worktree task".into(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: Vec::new(),
+                assignee_id: Some(ben.to_owned()),
+                body_markdown: "owned by sat1".into(),
+                reference_files: Vec::new(),
+                modified_files: Vec::new(),
+                depends_on: Vec::new(),
+                details: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let sat_task_id = sat_task.task.id.clone();
+    let sat_prep_req = Request::new::<WorktreePrepare>(
+        5,
+        &WorktreePrepareParams {
+            command_id: sat1.next_uuid_v7(),
+            task: sat_task_id.clone(),
+            repository: "sat-repo".into(),
+            base_branch: None,
+        },
+    )
+    .unwrap();
+    let Outcome::Result(sat_prep_val) = sat_git.dispatch(Some(ben), &sat_prep_req).unwrap().outcome
+    else {
+        panic!("sat1 worktree prepare for sat1-owned task failed");
+    };
+    let sat_prepared: WorktreePrepareResult = serde_json::from_value(sat_prep_val).unwrap();
+    sat1_node.sat_wake.notify();
+    wait_until(
+        Duration::from_secs(10),
+        "HQ receives sat1-owned task with recorded durable branch and sat1 processes WorkAck",
+        || {
+            sat1.sync_status().is_ok_and(|s| s.pending_work_count == 0)
+                && hq.task_git_context(owner, &sat_task_id).is_ok_and(|r| {
+                    r.is_ok_and(|ctx| {
+                        ctx.task.repositories.iter().any(|link| {
+                            link.repository_id == *repo_id_parsed
+                                && link.branch.as_deref()
+                                    == Some(sat_prepared.worktree.branch.as_str())
+                        })
+                    })
+                })
+        },
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "focused test helper shares fixture handles without adding wrapper boilerplate"
+)]
+fn assert_sat_worktree_rejects_hq_durable_conflicts(
+    hq: &Office,
+    hq_node: &LiveOfficeNode,
+    sat1: &Office,
+    sat_git: &crate::git_calls::GitService,
+    owner: &str,
+    ben: &str,
+    team_id: &str,
+    project_id: &str,
+    repo_id_parsed: &org_store::Id,
+) {
+    use org_proto::git::{WorktreePrepare, WorktreePrepareParams};
+    use org_proto::tasks::TasksCreateParams;
+
+    let make_hq_task = |title: &str| {
+        hq.task_create(
+            owner,
+            TasksCreateParams {
+                command_id: hq.next_uuid_v7(),
+                task_id: hq.next_uuid_v7(),
+                team_id: Some(team_id.to_owned()),
+                assigned_team_id: None,
+                project_id: Some(project_id.to_owned()),
+                task_type: Some("task".into()),
+                work_type: None,
+                title: title.into(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: Vec::new(),
+                assignee_id: Some(ben.to_owned()),
+                body_markdown: title.into(),
+                reference_files: Vec::new(),
+                modified_files: Vec::new(),
+                depends_on: Vec::new(),
+                details: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+    };
+
+    let integrated_task = make_hq_task("Already integrated HQ task");
+    let integrated_tid = org_store::Id::parse(&integrated_task.task.id).unwrap();
+    hq.record_task_repository_branch(
+        owner,
+        &hq.next_uuid_v7(),
+        &integrated_tid,
+        repo_id_parsed,
+        format!(
+            "task/{}-already-integrated-hq-task",
+            integrated_task.task.key
+        ),
+        Some("0123456789abcdef0123456789abcdef01234567".into()),
+    )
+    .unwrap()
+    .unwrap();
+    let overwrite_err = hq
+        .record_task_repository_branch(
+            owner,
+            &hq.next_uuid_v7(),
+            &integrated_tid,
+            repo_id_parsed,
+            format!("task/{}-other", integrated_task.task.key),
+            None,
+        )
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(overwrite_err.code, org_proto::ErrorCode::Conflict);
+
+    let mismatched_task = make_hq_task("Mismatched branch HQ task");
+    let mismatched_tid = org_store::Id::parse(&mismatched_task.task.id).unwrap();
+    hq.record_task_repository_branch(
+        owner,
+        &hq.next_uuid_v7(),
+        &mismatched_tid,
+        repo_id_parsed,
+        format!("task/{}-custom-hq-branch", mismatched_task.task.key),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    hq_node.hq_fed.as_ref().unwrap().handle().notify_all_peers();
+
+    wait_until(
+        Duration::from_secs(10),
+        "sat1 syncs integrated & mismatched HQ tasks",
+        || {
+            sat1.task_inspect(&integrated_task.task.id)
+                .is_ok_and(|r| r.is_ok_and(|t| t.task.revision >= 2))
+                && sat1
+                    .task_inspect(&mismatched_task.task.id)
+                    .is_ok_and(|r| r.is_ok_and(|t| t.task.revision >= 2))
+        },
+    );
+
+    for (req_id, conflict_tid) in [
+        (6u64, &integrated_task.task.id),
+        (7u64, &mismatched_task.task.id),
+    ] {
+        let req = Request::new::<WorktreePrepare>(
+            req_id,
+            &WorktreePrepareParams {
+                command_id: sat1.next_uuid_v7(),
+                task: conflict_tid.clone(),
+                repository: "sat-repo".into(),
+                base_branch: None,
+            },
+        )
+        .unwrap();
+        let resp = sat_git.dispatch(Some(ben), &req).unwrap();
+        assert!(
+            matches!(resp.outcome, Outcome::Error(ref e) if e.code == org_proto::ErrorCode::Conflict),
+            "expected Conflict for task {conflict_tid}, got {resp:?}"
+        );
+    }
 }

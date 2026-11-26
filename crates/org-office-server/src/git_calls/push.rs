@@ -140,6 +140,19 @@ fn select_push_workspace(
     }
 }
 
+fn is_valid_canonical_task_branch(task_key: &str, branch: &str) -> bool {
+    let expected_prefix = format!("task/{task_key}-");
+    let Some(suffix) = branch.strip_prefix(&expected_prefix) else {
+        return false;
+    };
+    !suffix.is_empty()
+        && !suffix.contains('/')
+        && !suffix.contains("..")
+        && suffix
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 fn verify_durable_push_branch(
     task: &org_office::tasks::records::TaskRecord,
     ws: &TaskWorkspaceRecord,
@@ -170,14 +183,13 @@ fn verify_durable_push_branch(
             "workspace repository is not recorded on the durable task record",
         ));
     }
-    // Satellite offices never mutate HQ-owned `task.json` locally (`TASK-192`), so no durable
-    // `task_repositories` link exists yet; enforce the canonical `task/<KEY>-` branch prefix
-    // against the office-private `TaskWorkspaceRecord`.
-    let expected_prefix = format!("task/{}-", task.key());
-    if !ws.branch.starts_with(&expected_prefix) {
+    // Non-owning offices (e.g. satellites working on HQ-owned tasks, `TASK-192`) never mutate
+    // remote-owned `task.json` locally, so no durable `task_repositories` link exists yet; enforce
+    // the canonical flat `task/<KEY>-<slug>` branch shape against the office-private record.
+    if !is_valid_canonical_task_branch(&task.key(), &ws.branch) {
         return Err(ApiError::new(
             ErrorCode::Conflict,
-            "satellite workspace branch does not match the task branch prefix",
+            "workspace branch does not match the canonical task branch prefix",
         ));
     }
     Ok(())
@@ -258,8 +270,18 @@ mod tests {
         // Satellite on remote-owned task allows valid `task/<KEY>-` workspace branch.
         assert!(verify_durable_push_branch(&no_link, &ws, false).is_ok());
 
-        // Satellite rejects any tampered or wrong-task branch prefix.
-        for bad in ["main", "v1", "task/T-A7", "task/T-A8-other", "feature/T-A7"] {
+        // Satellite rejects any tampered, empty, hierarchical, or wrong-task branch suffix.
+        for bad in [
+            "main",
+            "v1",
+            "task/T-A7",
+            "task/T-A7-",
+            "task/T-A7-foo/bar",
+            "task/T-A7-../main",
+            "task/T-A70-other",
+            "task/T-A8-other",
+            "feature/T-A7",
+        ] {
             assert_eq!(
                 verify_durable_push_branch(&no_link, &sample_ws(bad), false)
                     .unwrap_err()
