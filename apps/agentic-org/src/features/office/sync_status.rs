@@ -53,7 +53,7 @@ pub(super) fn run(args: SyncStatusArgs, ctx: &mut ExecutionContext) -> Result<()
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),
-        args.office.as_deref(),
+        target.office(),
     )?;
     let json = view::json(&status)?;
     view::detail(ctx, &json, &json, "local_office", &FIELDS)

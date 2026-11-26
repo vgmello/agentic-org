@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::selection;
 use crate::view::{self, column, Column, Show};
 
-pub(super) const EXAMPLES: &str = "Examples:\n  agentic-org provider create \"Claude team\" --key claude-team --provider anthropic --runtime claude\n  agentic-org provider create Codex --key codex --provider openai --runtime codex --auth-mode subscription --dry-run";
+pub(super) const EXAMPLES: &str = "Examples:\n  agentic-org provider create \"Claude team\" --key claude-team --provider anthropic --runtime claude\n  agentic-org provider create Codex --key codex --provider openai --runtime codex --auth-mode subscription_cli --dry-run";
 
 #[derive(Args, Debug)]
 pub(crate) struct CreateArgs {

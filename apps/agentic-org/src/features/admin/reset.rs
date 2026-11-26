@@ -36,23 +36,46 @@ pub(crate) struct ResetArgs {
 /// terminal, or root on Linux) decides.
 pub(super) fn run(args: ResetArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let terminal = ctx.is_tty_stdout();
+    let target = selection::select(args.instance.name.as_deref(), None)?;
+    // The host's own refusals (SSH on a Mac, not a terminal, not root on Linux) come first:
+    // a person is never asked and then refused.
+    org_host::setup_flow::admin_reset_precheck(target.instance(), args.user.as_deref(), terminal)?;
     if ctx.modes().dry_run {
         let plan = json!({"action": "admin_reset", "user": args.user});
         return Ok(ctx.render_dry_run("would issue a new one-time administrator link", &plan)?);
     }
-    if terminal && ctx.can_prompt() && !ctx.modes().yes {
-        let question = "Issue a new administrator link? Any earlier unused link stops working";
-        if !confirm(ctx, question, false)? {
-            return Err(ShellError::Cancelled.into());
-        }
-    }
-    let target = selection::select(args.instance.name.as_deref(), None)?;
+    confirm_reset(ctx)?;
     let link =
         org_host::setup_flow::admin_reset(target.instance(), args.user.as_deref(), terminal)?;
     if ctx.modes().json {
         return Ok(ctx.write_json(&link)?);
     }
     show(ctx, &link)
+}
+
+/// Any earlier unused link stops working, so a person at the terminal is asked (no by
+/// default), and a run that opted out of questions (`--json`, `-q`, `--no-input`) needs
+/// `--yes`. Where no one can be asked only because there is no input terminal, the host's own
+/// confirmation (Touch ID or the login password on a Mac, root on Linux) is what guards it.
+fn confirm_reset(ctx: &mut ExecutionContext) -> Result<(), CliError> {
+    let modes = ctx.modes();
+    if modes.yes {
+        return Ok(());
+    }
+    if ctx.can_prompt() {
+        let question = "Issue a new administrator link? Any earlier unused link stops working";
+        if !confirm(ctx, question, false)? {
+            return Err(ShellError::Cancelled.into());
+        }
+        return Ok(());
+    }
+    if modes.json || modes.quiet || modes.no_input {
+        return Err(ShellError::ConfirmationRequired {
+            action: "Issue a new administrator link".to_owned(),
+        }
+        .into());
+    }
+    Ok(())
 }
 
 fn show(ctx: &mut ExecutionContext, link: &AdminResetLink) -> Result<(), CliError> {
@@ -81,8 +104,13 @@ fn show(ctx: &mut ExecutionContext, link: &AdminResetLink) -> Result<(), CliErro
     if ctx.modes().quiet {
         return Ok(ctx.out(&format!("{url}\n"))?);
     }
+    // SIGN-33: root's reset names the Linux user whose instance it acted on, first.
+    let whose = match &link.service_user {
+        Some(user) => format!("Instance {} of Linux user {user}.\n", link.instance),
+        None => String::new(),
+    };
     let text = format!(
-        "\n{opening}\nIt works once and expires in 24 hours (at {}):\n  {url}\nIf it expires or is lost, run: {}\n",
+        "{whose}\n{opening}\nIt works once and expires in 24 hours (at {}):\n  {url}\nIf it expires or is lost, run: {}\n",
         view::utc_time(expires),
         link.reset_command
     );

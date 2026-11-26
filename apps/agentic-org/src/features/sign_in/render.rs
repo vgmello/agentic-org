@@ -8,7 +8,7 @@ use org_cli_shell::output::{Cell, ListView, Row, Style, Table};
 use org_command::{Command, Output};
 use serde_json::{Map, Value};
 
-use super::office_proxy::exited;
+use super::office_proxy::print_answer;
 use crate::error::CliError;
 
 /// Shows `output` (a `--format json` answer of `command`).
@@ -20,8 +20,7 @@ pub(super) fn answer(
 ) -> Result<(), CliError> {
     let Ok(envelope) = serde_json::from_str::<Value>(output.stdout.trim_end()) else {
         // Not an envelope (help text): as it is.
-        ctx.out(&output.stdout)?;
-        return exited(output.exit_code);
+        return print_answer(ctx, &output.stdout, output.exit_code);
     };
     if envelope["ok"] != Value::Bool(true) {
         return Err(refusal(&envelope["error"], output.exit_code));
@@ -31,7 +30,10 @@ pub(super) fn answer(
         Value::Array(items) => list(items, command, quiet, ctx),
         Value::Object(record) => detail(record, command, quiet, ctx),
         Value::Null => Ok(()),
-        other => Ok(ctx.out(&format!("{}\n", plain(other)))?),
+        other => Ok(ctx.out(&format!(
+            "{}\n",
+            org_cli_shell::terminal::sanitize(&plain(other))
+        ))?),
     }
 }
 

@@ -54,9 +54,10 @@ const FIELDS: [Column; 6] = [
 ];
 
 pub(super) fn run(args: BindArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
+    let target = selection::select(args.instance.name.as_deref(), args.office.as_deref())?;
     let input = ProviderBindInput {
         org_id: args.org.org.as_deref(),
-        office_id: args.office.as_deref(),
+        office_id: target.office(),
         connection_id: &args.connection_id,
         auth_context_ref: &args.auth_context_ref,
         runtime_binary_path: args.runtime_binary_path.as_deref(),
@@ -76,7 +77,6 @@ pub(super) fn run(args: BindArgs, ctx: &mut ExecutionContext) -> Result<(), CliE
         );
         return Ok(ctx.render_dry_run(&summary, &plan)?);
     }
-    let target = selection::select(args.instance.name.as_deref(), args.office.as_deref())?;
     let bound = org_host::setup_flow::provider_bind(
         target.instance(),
         args.login.login.as_deref(),

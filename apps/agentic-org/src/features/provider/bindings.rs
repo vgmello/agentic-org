@@ -43,7 +43,7 @@ pub(super) fn run(args: BindingsArgs, ctx: &mut ExecutionContext) -> Result<(), 
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),
-        args.office.as_deref(),
+        target.office(),
         args.connection_id.as_deref(),
     )?;
     let json = view::json(&listed)?;

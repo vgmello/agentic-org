@@ -83,23 +83,27 @@ fn env_is_ssh() -> bool {
         .any(|var| std::env::var_os(var).is_some_and(|v| !v.is_empty()))
 }
 
-/// `agentic-org admin reset`: a new registration link after presence at the host.
-/// `terminal` says whether the command's output is a terminal: the link may be shown only
-/// there, so otherwise this refuses (`Usage`) before asking the host, and no link is issued
-/// or cancelled.
-///
-/// Run by root for the service user's instance (SIGN-33; ADR-0017 decisions 10 and 11): the
-/// account is `user`, or the one `sudo` names (`SUDO_UID`). Root finds the instance as that
-/// user ([`as_account`]), so nothing in the instance's folders is made or changed by root,
-/// and then connects as root, which is what the service admits for this one call. Any other
-/// user acts only for itself. Not being allowed to reset (over SSH on a Mac, not root on
-/// Linux) is `Auth`.
-pub fn admin_reset(
+/// What `admin reset` refuses before it asks the host anything, in its order: over SSH on a
+/// Mac (SIGN-34), output that is not a terminal, an unknown `--user`, and anyone but root
+/// where the system names a peer by its user alone (SIGN-33). A command line checks these
+/// before it asks its person to confirm, so a refusal is never preceded by a question.
+pub fn admin_reset_precheck(
     name: Option<&str>,
     user: Option<&str>,
     terminal: bool,
-) -> Result<AdminResetLink, HostCliError> {
+) -> Result<(), HostCliError> {
     let named_by_user = crate::human::host_is_named_by_user_alone();
+    acting_for(name, user, terminal, named_by_user).map(drop)
+}
+
+/// The account root acts for (`None`: the caller acts for itself), after the refusals of
+/// [`admin_reset_precheck`].
+fn acting_for(
+    name: Option<&str>,
+    user: Option<&str>,
+    terminal: bool,
+    named_by_user: bool,
+) -> Result<Option<Account>, HostCliError> {
     // SIGN-34: SSH refusal on macOS is shown before anything else.
     if let Some(refusal) = ssh_reset_refusal(named_by_user, env_is_ssh()) {
         return Err(HostCliError::auth(refusal));
@@ -121,6 +125,27 @@ pub fn admin_reset(
     if acting_for.is_none() && named_by_user {
         return Err(HostCliError::auth(reset_needs_root(name)));
     }
+    Ok(acting_for)
+}
+
+/// `agentic-org admin reset`: a new registration link after presence at the host.
+/// `terminal` says whether the command's output is a terminal: the link may be shown only
+/// there, so otherwise this refuses (`Usage`) before asking the host, and no link is issued
+/// or cancelled.
+///
+/// Run by root for the service user's instance (SIGN-33; ADR-0017 decisions 10 and 11): the
+/// account is `user`, or the one `sudo` names (`SUDO_UID`). Root finds the instance as that
+/// user ([`as_account`]), so nothing in the instance's folders is made or changed by root,
+/// and then connects as root, which is what the service admits for this one call. Any other
+/// user acts only for itself. Not being allowed to reset (over SSH on a Mac, not root on
+/// Linux) is `Auth`.
+pub fn admin_reset(
+    name: Option<&str>,
+    user: Option<&str>,
+    terminal: bool,
+) -> Result<AdminResetLink, HostCliError> {
+    let named_by_user = crate::human::host_is_named_by_user_alone();
+    let acting_for = acting_for(name, user, terminal, named_by_user)?;
     match acting_for {
         Some(account) => reset_for(account, name, || crate::human::paths(name)),
         None => {

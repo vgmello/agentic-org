@@ -57,17 +57,18 @@ fn short_help_and_command_examples_run_without_binding() {
 }
 
 #[test]
-fn a_closed_standard_output_exits_0_without_a_panic() {
-    for args in [
-        &["--help"][..],
-        &["team", "list", "--schema"],
-        &["--version"],
-        &["team", "list"],
+fn a_closed_standard_output_keeps_the_exit_code_without_a_panic() {
+    // A refusal (unbound `team list`, exit 1) stays a refusal when its reader went away.
+    for (args, code) in [
+        (&["--help"][..], 0),
+        (&["team", "list", "--schema"], 0),
+        (&["--version"], 0),
+        (&["team", "list"], 1),
     ] {
         let (reader, writer) = std::io::pipe().unwrap();
         drop(reader);
         let out = bin().args(args).stdout(writer).output().unwrap();
-        assert_eq!(out.status.code(), Some(0), "{args:?}: {out:?}");
+        assert_eq!(out.status.code(), Some(code), "{args:?}: {out:?}");
         assert!(
             out.stderr.is_empty(),
             "{args:?}: {}",

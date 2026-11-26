@@ -72,11 +72,16 @@ pub fn install_interrupt_handler() {
     let _ = ctrlc::set_handler(on_interrupt);
 }
 
+/// Restores the cursor on the controlling terminal and exits 130. It writes to a freshly
+/// opened `/dev/tty`, never through `io::stderr()`: the main thread may hold the standard
+/// error lock for as long as it waits (a browser approval poll), and the handler must not
+/// wait for it.
 fn on_interrupt() {
-    let mut stderr = io::stderr();
-    if stderr.is_terminal() {
-        let _ = stderr.write_all(SHOW_CURSOR);
-        let _ = stderr.flush();
+    if io::stderr().is_terminal() {
+        if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") {
+            let _ = tty.write_all(SHOW_CURSOR);
+            let _ = tty.flush();
+        }
     }
     std::process::exit(i32::from(EXIT_CANCELLED));
 }

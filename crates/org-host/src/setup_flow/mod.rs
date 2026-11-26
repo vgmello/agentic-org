@@ -114,7 +114,7 @@ pub(crate) use adapters::release_pin;
 pub use adapters::{platform, CredentialDirectory, Platform};
 pub(crate) use address::{choose_port, loopback};
 use address::{port_free, saved_ports, tls_preflight};
-pub use admin_reset::{admin_reset, AdminLink, AdminResetLink};
+pub use admin_reset::{admin_reset, admin_reset_precheck, AdminLink, AdminResetLink};
 use credentials::{development_folder, development_keys, open_records, preflight};
 use output::{fail, say};
 pub(crate) use protection::{mode_exceptions, protection_report};

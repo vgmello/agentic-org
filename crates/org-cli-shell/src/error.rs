@@ -12,7 +12,7 @@ use std::io::{self, Write};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::escape::{escape_json_controls, sanitize};
+use crate::escape::{escape_json_controls, sanitize, sanitize_lines};
 
 /// Success, and a closed standard output (the reader went away; nothing is wrong).
 pub const EXIT_OK: u8 = 0;
@@ -233,6 +233,8 @@ fn human_text(diag: &dyn CliDiagnostic, color: bool) -> String {
     } else {
         String::from("× ")
     };
+    // The message is one line whatever it holds (a host's text cannot forge another line of
+    // the diagnostic); a help of several lines (a usage text) keeps its lines, each escaped.
     text.push_str(&format!("[{}] {}\n", sanitize(&code), sanitize(&message)));
     if let Some(help) = diag.help() {
         let label = if color {
@@ -240,7 +242,8 @@ fn human_text(diag: &dyn CliDiagnostic, color: bool) -> String {
         } else {
             String::from("help:")
         };
-        text.push_str(&format!("  {label} {}\n", sanitize(&help)));
+        let help = sanitize_lines(&help).replace('\n', "\n        ");
+        text.push_str(&format!("  {label} {help}\n"));
     }
     text
 }

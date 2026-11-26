@@ -19,10 +19,15 @@ pub(crate) struct InviteArgs {
     #[arg(value_name = "OFFICE_NAME")]
     pub(super) office_name: String,
     /// HQ's federation address the satellite dials (HOST:PORT); repeat for several
-    #[arg(long = "address", value_name = "HOST:PORT", required = true)]
+    #[arg(
+        long = "address",
+        value_name = "HOST:PORT",
+        required = true,
+        value_delimiter = ','
+    )]
     pub(super) addresses: Vec<String>,
     /// How long the invitation stays valid, in seconds
-    #[arg(long, value_name = "SECONDS")]
+    #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..))]
     pub(super) ttl: Option<u64>,
     /// Invite an existing office again (re-enrollment)
     #[arg(long, value_name = "OFFICE_ID")]

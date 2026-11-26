@@ -43,7 +43,7 @@ struct LazyGrantTransport {
 impl LazyGrantTransport {
     fn channel_mut(&mut self) -> Result<&mut ApprovedOfficeChannel, Refusal> {
         if self.channel.is_none() {
-            let mut err = std::io::stderr().lock();
+            let mut err = std::io::stderr();
             let opened = org_host::setup_flow::open_for_command(
                 self.instance.as_deref(),
                 self.office.as_deref(),
@@ -186,9 +186,22 @@ pub(super) fn execute(
             render::answer(&output, command, shown == Shown::Quiet, ctx)
         }
         Shown::AsWritten | Shown::Json | Shown::Compact => {
-            ctx.out(&output.stdout)?;
-            exited(output.exit_code)
+            print_answer(ctx, &output.stdout, output.exit_code)
         }
+    }
+}
+
+/// Prints the table's answer. A reader that went away does not turn a refusal into a
+/// success: the table's own exit code stands (0 only when it succeeded).
+pub(super) fn print_answer(
+    ctx: &mut ExecutionContext,
+    text: &str,
+    code: u8,
+) -> Result<(), CliError> {
+    match ctx.out(text) {
+        Err(org_cli_shell::error::ShellError::OutputClosed) if code != 0 => exited(code),
+        Err(error) => Err(error.into()),
+        Ok(()) => exited(code),
     }
 }
 

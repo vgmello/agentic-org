@@ -87,7 +87,12 @@ pub(crate) fn run(arguments: Vec<String>, ctx: &mut ExecutionContext) -> Result<
     if matches!(arguments.as_slice(), [flag] if flag == "--help" || flag == "-h") {
         return Ok(ctx.out(&format!("{HELP}\n"))?);
     }
-    match run::run(arguments)? {
+    let served = run::run(arguments).map_err(|message| match message.split_once('\n') {
+        // An argument error: its first line, and the usage as its help (exit 2).
+        Some((first, usage)) => CliError::usage(first).with_help(usage),
+        None => CliError::from(message),
+    })?;
+    match served {
         run::Served::Version => {
             Ok(ctx.out(&format!("agentic-org {}\n", env!("CARGO_PKG_VERSION")))?)
         }

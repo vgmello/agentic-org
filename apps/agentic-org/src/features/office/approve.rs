@@ -36,6 +36,18 @@ const FIELDS: [Column; 5] = [
 ];
 
 pub(super) fn run(args: ApproveArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
+    if ctx.modes().dry_run {
+        let plan = serde_json::json!({
+            "action": "office_approve",
+            "invitation_id": args.invitation_id,
+            "org_id": args.org.org,
+        });
+        let summary = format!(
+            "would approve invitation {} and issue the satellite's certificate",
+            args.invitation_id
+        );
+        return Ok(ctx.render_dry_run(&summary, &plan)?);
+    }
     let target = selection::select(args.instance.name.as_deref(), None)?;
     let approved = org_host::setup_flow::office_approve(
         target.instance(),

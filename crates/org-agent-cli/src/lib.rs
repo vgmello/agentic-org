@@ -97,13 +97,14 @@ pub fn run(args: &[String]) -> u8 {
     emit(&mut io::stdout().lock(), &output.stdout, output.exit_code)
 }
 
-/// Writes `text` and answers the exit code: `exit_code` once it is written; 0 when the reader
-/// closed the pipe (`agent-os ... | head -1`), which is not a failure of the command; 1 when
-/// standard output fails otherwise (a full disk, an I/O error), which the caller must see.
+/// Writes `text` and answers the exit code. A reader that closed the pipe
+/// (`agent-os ... | head -1`) is not a failure of its own: the command's `exit_code` stands
+/// (0 for a success, 1 or 2 for a refusal, so `set -o pipefail` still sees it). Standard
+/// output that fails otherwise (a full disk, an I/O error) is 1, which the caller must see.
 pub fn emit(out: &mut dyn Write, text: &str, exit_code: u8) -> u8 {
     match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
         Ok(()) => exit_code,
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => 0,
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => exit_code,
         Err(_) => 1,
     }
 }
@@ -146,11 +147,12 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_pipe_exits_0_and_any_other_write_failure_exits_1() {
+    fn a_closed_pipe_keeps_the_exit_code_and_any_other_write_failure_exits_1() {
         let mut written = Vec::new();
         assert_eq!(emit(&mut written, "{}\n", 2), 2);
         assert_eq!(written, b"{}\n");
-        assert_eq!(emit(&mut Failing(io::ErrorKind::BrokenPipe), "x", 1), 0);
+        assert_eq!(emit(&mut Failing(io::ErrorKind::BrokenPipe), "x", 0), 0);
+        assert_eq!(emit(&mut Failing(io::ErrorKind::BrokenPipe), "x", 1), 1);
         assert_eq!(emit(&mut Failing(io::ErrorKind::StorageFull), "x", 0), 1);
         assert_eq!(emit(&mut Failing(io::ErrorKind::Other), "x", 0), 1);
     }

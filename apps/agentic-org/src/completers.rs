@@ -54,7 +54,14 @@ fn of_instance(kind: &str, current: &OsStr) -> Vec<CompletionCandidate> {
     let Some(cache) = cache() else {
         return Vec::new();
     };
-    let partition = partition(typed_instance().as_deref());
+    // The typed `--name`, else what the other tiers select (environment, `agentic-org.toml`,
+    // saved context): the partition the list commands wrote to.
+    let instance = typed_instance().or_else(|| {
+        crate::selection::select(None, None)
+            .ok()
+            .and_then(|target| target.instance().map(str::to_owned))
+    });
+    let partition = partition(instance.as_deref());
     candidates(cache.load(&[&partition], kind), current)
 }
 

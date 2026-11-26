@@ -19,15 +19,13 @@ const FIELDS: [Column; 3] = [
 pub(crate) fn run(args: SignInArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let target = selection::select(args.instance.name.as_deref(), args.office.as_deref())?;
     let (instance, office) = (target.explicit_instance(), target.explicit_office());
-    let mut prompt = std::io::stderr().lock();
+    let mut prompt = std::io::stderr();
     if !args.command.is_empty() {
         let channel = org_host::setup_flow::open_for_command(instance, office, &mut prompt)?;
-        drop(prompt);
         let mut transport = TransportOffice(GrantTransport(channel));
         return office_proxy::execute(args.command, ctx, &mut transport);
     }
     let signed = org_host::setup_flow::sign_in_only(instance, office, &mut prompt)?;
-    drop(prompt);
     let json = view::json(&signed)?;
     view::detail(ctx, &json, &json, "account", &FIELDS)?;
     if json["saved_context"] == Value::Null {

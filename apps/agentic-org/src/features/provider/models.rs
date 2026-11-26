@@ -39,7 +39,7 @@ pub(super) fn run(args: ModelsArgs, ctx: &mut ExecutionContext) -> Result<(), Cl
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),
-        args.office.as_deref(),
+        target.office(),
     )?;
     let json = view::json(&listed)?;
     let rows = view::items(&json, "profiles");

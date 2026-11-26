@@ -7,7 +7,7 @@ mod stop;
 
 use clap::{Args, Subcommand};
 use org_cli_shell::context::ExecutionContext;
-use org_host::setup_flow::{ServiceAction, ServiceReport, ServiceState};
+use org_host::setup_flow::ServiceAction;
 use serde_json::json;
 
 use crate::args::InstanceArgs;
@@ -59,31 +59,6 @@ pub(crate) fn run(args: ServiceArgs, ctx: &mut ExecutionContext) -> Result<(), C
     }
 }
 
-/// The line a person reads (also in a pipe: it is a tested contract): `running (pid 42)`,
-/// `stopped`, `registered, not loaded`, `not registered`; `Service for "lab" started.`.
-fn summary(report: &ServiceReport) -> String {
-    match (report.state, report.foreground) {
-        (ServiceState::Running, true) => {
-            "running in the foreground (no service is registered)".to_owned()
-        }
-        (ServiceState::Stopped, true) => {
-            "not running (foreground mode: it runs while agentic-org serve --setup <file> runs)"
-                .to_owned()
-        }
-        (ServiceState::Running, false) => match report.pid {
-            Some(pid) => format!("running (pid {pid})"),
-            None => "running".to_owned(),
-        },
-        (ServiceState::Stopped, false) => "stopped".to_owned(),
-        (ServiceState::Unloaded, _) => "registered, not loaded".to_owned(),
-        (ServiceState::NotRegistered, _) => "not registered".to_owned(),
-        (ServiceState::Started, _) => format!("Service for \"{}\" started.", report.instance),
-        (ServiceState::StoppedByRequest, _) => {
-            format!("Service for \"{}\" stopped.", report.instance)
-        }
-    }
-}
-
 /// `start`, `stop` or `status` through the platform's service adapter (the one setup used).
 fn act(
     args: InstanceArgs,
@@ -104,7 +79,7 @@ fn act(
     if ctx.modes().quiet {
         return Ok(ctx.out(&format!("{state}\n"))?);
     }
-    let mut text = summary(&report);
+    let mut text = host::service_summary(&report);
     if ctx.is_tty_stdout() {
         let glyph = org_cli_shell::output::glyph(crate::view::status_style(&state));
         text = format!("{glyph}{text}");

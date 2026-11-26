@@ -75,9 +75,10 @@ fn model_specs(raw: &str) -> Result<Vec<(String, String)>, CliError> {
 }
 
 pub(super) fn run(args: RefreshArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
+    let target = selection::select(args.instance.name.as_deref(), args.office.as_deref())?;
     let input = ProviderRefreshInput {
         org_id: args.org.org.as_deref(),
-        office_id: args.office.as_deref(),
+        office_id: target.office(),
         connection_id: &args.connection_id,
         driver_version: &args.driver_version,
         models: model_specs(&args.models)?,
@@ -98,7 +99,6 @@ pub(super) fn run(args: RefreshArgs, ctx: &mut ExecutionContext) -> Result<(), C
         );
         return Ok(ctx.render_dry_run(&summary, &plan)?);
     }
-    let target = selection::select(args.instance.name.as_deref(), args.office.as_deref())?;
     let refreshed = org_host::setup_flow::provider_refresh(
         target.instance(),
         args.login.login.as_deref(),

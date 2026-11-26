@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{self, Write};
 
-use org_host::setup_flow::{self, Platform, Request};
+use org_host::setup_flow::{self, Platform, Request, ServiceReport, ServiceState};
 
 pub(crate) fn own_program() -> Result<std::path::PathBuf, String> {
     std::env::current_exe()
@@ -298,6 +298,91 @@ impl<W: Write> Write for ReportOut<W> {
     }
 }
 
+/// The CLI's configuration and cache directories: `AGENTIC_ORG_CONFIG_DIR` /
+/// `AGENTIC_ORG_CACHE_DIR`, an absolute `XDG_*` folder, or this account's application base
+/// and temporary base (`org_platform::dirs`). `None` when none can be resolved (no home):
+/// the cache and the manifest's directories are then simply not used.
+pub(crate) fn cli_dirs() -> Option<org_cli_shell::paths::ShellDirs> {
+    let home = std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(std::path::PathBuf::from);
+    let config = || {
+        let home = home.as_deref()?;
+        org_platform::dirs::application_base(home)
+            .ok()
+            .map(|base| base.join("cli"))
+    };
+    let cache = || {
+        let home = home.as_deref()?;
+        org_platform::dirs::user_temp_base(home)
+            .ok()
+            .and_then(|temp| temp.parent().map(|base| base.join("cli-cache")))
+    };
+    org_cli_shell::paths::resolve_dirs(&|name| std::env::var_os(name), &config, &cache).ok()
+}
+
+/// The line a person reads for a service report (also in a pipe: it is a tested contract):
+/// `running (pid 42)`, `stopped`, `registered, not loaded`, `not registered`;
+/// `Service for "lab" started.`.
+pub(crate) fn service_summary(report: &ServiceReport) -> String {
+    match (report.state, report.foreground) {
+        (ServiceState::Running, true) => {
+            "running in the foreground (no service is registered)".to_owned()
+        }
+        (ServiceState::Stopped, true) => {
+            "not running (foreground mode: it runs while agentic-org serve --setup <file> runs)"
+                .to_owned()
+        }
+        (ServiceState::Running, false) => match report.pid {
+            Some(pid) => format!("running (pid {pid})"),
+            None => "running".to_owned(),
+        },
+        (ServiceState::Stopped, false) => "stopped".to_owned(),
+        (ServiceState::Unloaded, _) => "registered, not loaded".to_owned(),
+        (ServiceState::NotRegistered, _) => "not registered".to_owned(),
+        (ServiceState::Started, _) => format!("Service for \"{}\" started.", report.instance),
+        (ServiceState::StoppedByRequest, _) => {
+            format!("Service for \"{}\" stopped.", report.instance)
+        }
+    }
+}
+
+/// The instance's service, as `status` shows it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct ServiceView {
+    /// `running`, `stopped`, `unloaded` or `not_registered`; `foreground` is set for an
+    /// instance that runs in the foreground mode.
+    pub(crate) state: String,
+    pub(crate) foreground: bool,
+    pub(crate) pid: Option<u32>,
+    /// One line for a person: `running (pid 42)`, `stopped`, ...
+    pub(crate) summary: String,
+}
+
+impl ServiceView {
+    pub(crate) fn style(&self) -> org_cli_shell::output::Style {
+        crate::view::status_style(&self.state)
+    }
+}
+
+/// The service of `instance`, or `None` when it cannot be read (no such instance, no
+/// service manager): `status` reports what it can and never fails on it.
+pub(crate) fn service_view(instance: Option<&str>) -> Option<ServiceView> {
+    let platform = platform(false).ok()?;
+    let report = setup_flow::service(
+        instance,
+        &*platform.service,
+        setup_flow::ServiceAction::Status,
+    )
+    .ok()?;
+    Some(ServiceView {
+        state: setup_flow::wire_name(&report.state),
+        foreground: report.foreground,
+        pid: report.pid,
+        summary: service_summary(&report),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,56 +419,4 @@ mod tests {
         assert!(options(&args(&["--name", "a", "--name", "b"]), &["--name"]).is_err());
         assert!(options(&args(&["--port", "1"]), &["--name"]).is_err());
     }
-}
-
-/// The CLI's configuration and cache directories: `AGENTIC_ORG_CONFIG_DIR` /
-/// `AGENTIC_ORG_CACHE_DIR`, an absolute `XDG_*` folder, or this account's application base
-/// and temporary base (`org_platform::dirs`). `None` when none can be resolved (no home):
-/// the cache and the manifest's directories are then simply not used.
-pub(crate) fn cli_dirs() -> Option<org_cli_shell::paths::ShellDirs> {
-    let home = std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .map(std::path::PathBuf::from);
-    let config = || {
-        let home = home.as_deref()?;
-        org_platform::dirs::application_base(home)
-            .ok()
-            .map(|base| base.join("cli"))
-    };
-    let cache = || {
-        let home = home.as_deref()?;
-        org_platform::dirs::user_temp_base(home)
-            .ok()
-            .and_then(|temp| temp.parent().map(|base| base.join("cli-cache")))
-    };
-    org_cli_shell::paths::resolve_dirs(&|name| std::env::var_os(name), &config, &cache).ok()
-}
-
-/// The instance's service, as `status` and `service status` show it.
-#[derive(Debug, Clone, serde::Serialize)]
-pub(crate) struct ServiceView {
-    /// `running`, `stopped`, `unloaded`, `not_registered`, `foreground_running`,
-    /// `foreground_stopped` or `unknown`.
-    pub(crate) state: String,
-    pub(crate) pid: Option<u32>,
-    /// One line for a person: `running (pid 42)`, `stopped`, ...
-    pub(crate) summary: String,
-}
-
-impl ServiceView {
-    pub(crate) fn style(&self) -> org_cli_shell::output::Style {
-        use org_cli_shell::output::Style;
-        match self.state.as_str() {
-            "running" | "foreground_running" => Style::Active,
-            "stopped" | "foreground_stopped" => Style::Error,
-            "unloaded" => Style::Warn,
-            _ => Style::Pending,
-        }
-    }
-}
-
-/// The service of `instance`, or `None` when it cannot be read (no such instance): `status`
-/// reports what it can and never fails on it.
-pub(crate) fn service_view(_instance: Option<&str>) -> Option<ServiceView> {
-    None
 }

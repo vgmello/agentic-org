@@ -178,13 +178,21 @@ fn clap_answer(error: &clap::Error, pre: &Prescan) -> u8 {
     let mut err = io::stderr();
     if pre.json {
         let mut lines = rendered.lines().filter(|line| !line.trim().is_empty());
-        let message = lines
-            .next()
-            .unwrap_or("the command line could not be read")
-            .trim_start_matches("error: ")
-            .to_owned();
-        let help: Vec<&str> = lines.collect();
-        let usage = CliError::usage(message).with_help(help.join("\n"));
+        let (message, help) = if error.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        {
+            (
+                "a subcommand is required".to_owned(),
+                rendered.trim_end().to_owned(),
+            )
+        } else {
+            let message = lines
+                .next()
+                .unwrap_or("the command line could not be read")
+                .trim_start_matches("error: ")
+                .to_owned();
+            (message, lines.collect::<Vec<_>>().join("\n"))
+        };
+        let usage = CliError::usage(message).with_help(help);
         render_diagnostic(&usage, true, terminal.stderr_tty, false, &mut err);
     } else {
         let text: Vec<String> = rendered
@@ -196,8 +204,47 @@ fn clap_answer(error: &clap::Error, pre: &Prescan) -> u8 {
     u8::try_from(error.exit_code()).unwrap_or(EXIT_FAILURE)
 }
 
+/// `serve`, `setup` and `recovery` report in prose and have no preview; `sign-in` signs in
+/// and saves its context: a global flag they cannot honour is refused, never ignored.
+fn refuse_unsupported_modes(top: &TopCommand, ctx: &ExecutionContext) -> Result<(), CliError> {
+    let (name, refused): (&str, &[(&str, bool)]) = match top {
+        TopCommand::Serve(_) => (
+            "serve",
+            &[
+                ("--json", ctx.modes().json),
+                ("--quiet", ctx.modes().quiet),
+                ("--dry-run", ctx.modes().dry_run),
+            ],
+        ),
+        TopCommand::Setup(_) => (
+            "setup",
+            &[
+                ("--json", ctx.modes().json),
+                ("--quiet", ctx.modes().quiet),
+                ("--dry-run", ctx.modes().dry_run),
+            ],
+        ),
+        TopCommand::Recovery(_) => (
+            "recovery",
+            &[
+                ("--json", ctx.modes().json),
+                ("--quiet", ctx.modes().quiet),
+                ("--dry-run", ctx.modes().dry_run),
+            ],
+        ),
+        TopCommand::SignIn(_) => ("sign-in", &[("--dry-run", ctx.modes().dry_run)]),
+        _ => return Ok(()),
+    };
+    match refused.iter().find(|(_, given)| *given) {
+        Some((flag, _)) => Err(CliError::usage(format!("`{name}` does not take {flag}"))
+            .with_help(format!("agentic-org {name} --help"))),
+        None => Ok(()),
+    }
+}
+
 fn dispatch(top: TopCommand, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     use features::*;
+    refuse_unsupported_modes(&top, ctx)?;
     if let Some((resource, words)) = top.office_resource() {
         let words = std::iter::once(resource.to_owned())
             .chain(words.iter().cloned())
