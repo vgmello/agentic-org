@@ -2,9 +2,7 @@
 
 use org_proto::directory::{StatusSet, Who};
 use org_proto::msg::MsgBind;
-use org_proto::work::TaskCreate;
 use org_proto::{ApiError, ErrorCode, Hello, OrgSnapshotCall, Request, Response};
-use org_work::{Caller, WorkCall};
 
 use super::auth::Binding;
 use super::binding::bind_connection;
@@ -78,9 +76,6 @@ fn answer_with_peer(
         return response;
     }
     if let Some(response) = answer_directory_or_session(request, shared, binding, peer_pid) {
-        return response;
-    }
-    if let Some(response) = answer_work_call(request, shared, binding) {
         return response;
     }
     if let Some(response) = answer_org_command(request, shared, binding) {
@@ -192,46 +187,6 @@ fn answer_directory_or_session(
         return Some(bind_connection(request, shared, binding, peer_pid));
     }
     answer_message(request, shared, binding)
-}
-
-fn answer_work_call(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
-    let parsed = match WorkCall::parse(request) {
-        Ok(None) => return None,
-        other => other,
-    };
-    let (id, via_grant) = match binding {
-        Binding::Member { id, via_grant } => (id, via_grant),
-        Binding::External { id, .. } => (id, &false),
-        Binding::Anonymous => {
-            return Some(bind_error(
-                request.id,
-                ErrorCode::NotBound,
-                "bind as a member to change work",
-            ))
-        }
-    };
-    if WorkCall::is_grant_only(request) && !*via_grant {
-        return Some(Response::error(
-            request.id,
-            WorkCall::grant_only_refusal(&request.method),
-        ));
-    }
-    let call = match parsed {
-        Err(refusal) => return Some(Response::error(request.id, refusal)),
-        Ok(Some(call)) => call,
-        Ok(None) => unreachable!("unknown work method fell through"),
-    };
-    let caller = if *via_grant {
-        Caller::grant_bound(id.as_str())
-    } else {
-        Caller::agent(id.as_str())
-    };
-    Some(match (shared.ports.work)(caller, call) {
-        Ok(Ok(accepted)) => Response::ok::<TaskCreate>(request.id, &accepted)
-            .unwrap_or_else(|_| internal(request.id)),
-        Ok(Err(refusal)) => Response::error(request.id, refusal),
-        Err(_) => internal(request.id),
-    })
 }
 
 #[cfg(test)]

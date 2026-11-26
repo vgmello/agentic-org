@@ -1,11 +1,12 @@
 //! The office's socket: JSON lines (`org_proto::frame`), one thread per connection. It answers
 //! `hello`, `org.snapshot`, `msg.bind`, `who`, `msg.send` / `msg.inbox` / `msg.read` /
 //! `msg.wait`, `subscribe` and the organization commands, which only an app-bound connection may
-//! send, and the work writes made as a bound member; other methods are `unknown_method`. With no
-//! `mailbox` or `feed` port (the worker since B1b) `msg.send`/`inbox`/`read`/`wait` and `subscribe` answer
-//! `unsupported`, and composition answers work writes, `status.set` and `operation.get` the same
-//! way; see [`OfficePorts`]. A `msg.wait` is held on a thread of its own
-//! (at most [`MAX_HELD`] per connection), so the connection keeps answering meanwhile. When the
+//! send; other methods, the retired phase-1 work calls (`task.*`, `bug.*`, `checklist.*`,
+//! `work.*`) included, are `unknown_method`. With no `mailbox` or `feed` port (the worker since
+//! B1b) `msg.send`/`inbox`/`read`/`wait` and `subscribe` answer `unsupported`, and composition
+//! answers `status.set` and `operation.get` the same way; see [`OfficePorts`]. A `msg.wait` is
+//! held on a thread of its own (at most [`MAX_HELD`] per connection), so the connection keeps
+//! answering meanwhile. When the
 //! server stops, every connection is closed and its thread joined BEFORE the office is, so no thread
 //! touches a database that is closing.
 
@@ -36,9 +37,7 @@ use org_proto::org::CommandAccepted;
 use org_proto::projects::{
     ProjectInspectParams, ProjectListParams, ProjectListResult, ProjectRecord,
 };
-use org_proto::work::WorkAccepted;
 use org_proto::{ApiError, OrgSnapshot, Request, Response};
-use org_work::{Caller, WorkCall};
 
 use self::dispatch::answer;
 
@@ -106,9 +105,6 @@ pub type StatusFn = Box<
         + Send
         + Sync,
 >;
-
-pub type WorkFn =
-    Box<dyn Fn(Caller, WorkCall) -> Result<Result<WorkAccepted, ApiError>, String> + Send + Sync>;
 
 /// Lists projects in this organization (`project.list`).
 pub type ProjectsListFn = Box<
@@ -190,7 +186,6 @@ pub struct OfficePorts {
     pub on_agent_stop: Option<AgentLifecycleHookFn>,
     pub hr_message_guard: Option<HrMessageGuardFn>,
     pub submit: SubmitFn,
-    pub work: WorkFn,
     pub operation_get: OperationFn,
     pub who: WhoFn,
     pub status: StatusFn,

@@ -5,7 +5,6 @@ use org_mailbox::testkit::fixture::{OWNER_ID, POSITION};
 use org_office::rules::OrgCommand;
 use org_proto::directory::WhoResult;
 use org_proto::{Grant, Member, MemberKind};
-use org_work::WorkCall;
 use serde_json::{json, Value};
 
 fn shared() -> Shared {
@@ -23,12 +22,6 @@ fn shared() -> Shared {
             json!({"status":"committed","position":{"epoch":1,"seq":2}}),
         )
         .unwrap()))
-    });
-    ports.work = Box::new(|caller, _| {
-        assert_eq!(caller, org_work::Caller::grant_bound(OWNER_ID));
-        Ok(Ok(
-            serde_json::from_value(json!({"status":"queued"})).unwrap()
-        ))
     });
     ports.who = Box::new(|_| Ok(Ok(WhoResult { members: vec![] })));
     ports.projects_list = Box::new(|_| {
@@ -125,15 +118,11 @@ fn verified_owner_dispatches_snapshot_who_operation_inbox_and_all_current_writes
         assert!(response.get("result").is_some(), "{method}: {response}");
     }
     let rows: Value = serde_json::from_str(include_str!("operations.json")).unwrap();
-    assert_eq!(rows.as_array().unwrap().len(), 44);
+    assert_eq!(rows.as_array().unwrap().len(), 19);
     for row in rows.as_array().unwrap() {
         let method = row["method"].as_str().unwrap();
         let request = signed(&shared, method, row["params"].clone());
-        if row["group"] == "org" {
-            assert!(OrgCommand::parse(&request).unwrap().is_some(), "{method}");
-        } else {
-            assert!(WorkCall::parse(&request).unwrap().is_some(), "{method}");
-        }
+        assert!(OrgCommand::parse(&request).unwrap().is_some(), "{method}");
         let response = answer(&shared, &ctx, &request);
         if method == "member.set_run_mode" {
             refused(response, "not_authorized");
@@ -189,13 +178,36 @@ fn host_policy_is_closed_and_preserves_unknown_method_for_unserved_allowed_famil
         "msg.notify",
         "msg.threads",
         "msg.human_needs_you",
-        "work.list",
     ] {
         let response = answer(&shared, &ctx, &signed(&shared, method, json!({})));
         assert_eq!(
             response["error"]["code"], "unknown_method",
             "{method}: {response}"
         );
+    }
+}
+
+/// The retired phase-1 work calls have no policy row, so a host channel refuses each one like any
+/// method it does not list, before the office sees it: with the owner's verified grant, with a
+/// grant for another office, and with no principal at all.
+#[test]
+fn retired_work_methods_have_no_policy_row_and_are_refused_on_host_channels() {
+    let shared = shared();
+    let ctx = context();
+    for method in crate::serve::tests::retired_work::RETIRED {
+        assert!(
+            operations().iter().all(|row| row.method != *method),
+            "{method}"
+        );
+        let params = json!({"change_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","item_id":"item",
+            "project_id":"project","title":"Task","expected_version":1});
+        let mut request = signed(&shared, method, params);
+        refused(answer(&shared, &ctx, &request), "not_authorized");
+        request.principal.as_mut().unwrap()["grant"]["office_id"] = "wrong".into();
+        sign(&mut request.principal.as_mut().unwrap()["grant"]);
+        refused(answer(&shared, &ctx, &request), "not_found");
+        request.principal = None;
+        refused(answer(&shared, &ctx, &request), "not_authorized");
     }
 }
 
@@ -519,10 +531,10 @@ fn host_keeps_operation_result_refusals_distinct_from_channel_authority_refusals
             "org operation refusal",
         )))
     });
-    shared.ports.work = Box::new(|_, _| {
+    shared.ports.operation_get = Box::new(|_, _| {
         Ok(Err(ApiError::new(
             ErrorCode::NotAuthorized,
-            "work operation refusal",
+            "operation lookup refusal",
         )))
     });
     for (method, params, message) in [
@@ -532,9 +544,9 @@ fn host_keeps_operation_result_refusals_distinct_from_channel_authority_refusals
             "org operation refusal",
         ),
         (
-            "task.create",
-            json!({"change_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","item_id":"item","project_id":"project","title":"Task"}),
-            "work operation refusal",
+            "operation.get",
+            json!({"kind":"org","id":"0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0"}),
+            "operation lookup refusal",
         ),
     ] {
         let response = answer(&shared, &context(), &signed(&shared, method, params));
