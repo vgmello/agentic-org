@@ -234,6 +234,21 @@ fn bare_cache_worktree_commit_push_hostile_config_hooks_and_cleanup() {
         false,
     )
     .unwrap();
+    // TASK-155: the cache and the worktree's folders are owner-only whatever the mask.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&cache_dir), 0o700);
+        for folder in [
+            "teams/t1/agents/a1/tasks/k1",
+            "teams/t1/agents/a1/tasks/k1/repositories",
+        ] {
+            assert_eq!(
+                mode(&tmp.path().join("runtime/office-1").join(folder)),
+                0o700
+            );
+        }
+    }
     let rules = derive_sandbox_rules(&cache_dir, &created.admin_dir_name, &wt_dir);
     assert!(rules.writable_roots.contains(&wt_dir));
     assert!(rules.fixed_write_denies.contains(&cache_dir.join("config")));
@@ -318,4 +333,33 @@ fn bare_cache_worktree_commit_push_hostile_config_hooks_and_cleanup() {
         "teardown leaves no Cargo target"
     );
     assert!(!wt_dir.exists());
+}
+
+/// TASK-155: the folders the office makes for Git are owner-only (`0700`) whatever the
+/// process's file-creation mask (a user-private-group account's `0002`); folders that exist
+/// are left as they are.
+#[test]
+fn git_folders_are_created_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let tmp = tempfile::tempdir().unwrap();
+    let existing = tmp.path().join("existing");
+    fs::create_dir(&existing).unwrap();
+    fs::set_permissions(&existing, fs::Permissions::from_mode(0o755)).unwrap();
+    let nested = existing.join("teams/t1/agents/a1/tasks/k1/repositories");
+    crate::create_git_dirs(&nested, false).unwrap();
+    let mut at = existing.clone();
+    for part in ["teams", "t1", "agents", "a1", "tasks", "k1", "repositories"] {
+        at.push(part);
+        assert_eq!(mode(&at), 0o700, "{}", at.display());
+    }
+    assert_eq!(mode(&existing), 0o755, "an existing folder is not changed");
+    crate::create_git_dirs(&nested, false).unwrap();
+    // A file in the way is an error naming the folder, never replaced.
+    fs::write(tmp.path().join("file"), b"x").unwrap();
+    assert!(matches!(
+        crate::create_git_dirs(&tmp.path().join("file/below"), false),
+        Err(GitError::Io { .. })
+    ));
+    assert_eq!(fs::read(tmp.path().join("file")).unwrap(), b"x");
 }

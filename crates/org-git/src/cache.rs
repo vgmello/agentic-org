@@ -164,7 +164,7 @@ pub fn init_bare_cache(
     if cache_dir.join("HEAD").is_file() {
         return verify_cache_integrity(cache_dir, shared_group);
     }
-    fs::create_dir_all(cache_dir).map_err(|e| GitError::io(cache_dir, e))?;
+    crate::create_git_dirs(cache_dir, shared_group)?;
     let target = cache_dir
         .to_str()
         .ok_or_else(|| GitError::InvalidInput("cache_dir is not valid UTF-8".into()))?;

@@ -1364,3 +1364,45 @@ fn agent_execution_effort_round_trips_on_every_engine_and_unknown_levels_are_ref
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0], seen[1]);
 }
+
+/// TASK-155: an agent's folder and home are made owner-only even when they already existed
+/// more open (an earlier build, a `0002` mask), and a link in the home's place is refused,
+/// never followed.
+#[test]
+fn an_existing_open_agent_home_is_made_owner_only_and_a_linked_one_is_refused() {
+    let site = Site::new();
+    let office = site.provision(ENGINES[1]).unwrap();
+    let mode = |path: &std::path::Path| {
+        std::fs::symlink_metadata(path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    let home = office.agent_private_home_path(AGENT_1);
+    let agent = home.parent().unwrap().to_path_buf();
+    std::fs::create_dir_all(&home).unwrap();
+    for dir in [&agent, &home] {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o775)).unwrap();
+    }
+    std::fs::write(home.join("notes.md"), b"x").unwrap();
+    std::fs::set_permissions(
+        home.join("notes.md"),
+        std::fs::Permissions::from_mode(0o664),
+    )
+    .unwrap();
+    assert_eq!(office.ensure_private_home(AGENT_1).unwrap(), home);
+    assert_eq!(mode(&agent), 0o700);
+    assert_eq!(mode(&home), 0o700);
+    // What the agent wrote inside keeps its own mode: the folder is the boundary.
+    assert_eq!(mode(&home.join("notes.md")), 0o664);
+
+    let other_home = office.agent_private_home_path(AGENT_2);
+    let outside = site.root.join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::create_dir_all(other_home.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&outside, &other_home).unwrap();
+    assert!(office.ensure_private_home(AGENT_2).is_err());
+    assert_eq!(mode(&outside), 0o755, "a linked home is never followed");
+}

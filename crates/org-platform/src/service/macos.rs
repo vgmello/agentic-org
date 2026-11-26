@@ -390,6 +390,65 @@ impl ServiceManager for Launchd {
             _ => Ok(()),
         }
     }
+
+    fn definition(&self, instance_id: &str) -> Result<Option<Unit>, ServiceError> {
+        let label = self.label(instance_id)?;
+        let file = self.file(&label);
+        let loaded = self.print_ours(&label)?.is_some();
+        match self.read_definition(&file)? {
+            Some(bytes) => match definition(&label, &bytes) {
+                Some(unit) => Ok(Some(Unit {
+                    instance_id: instance_id.to_owned(),
+                    ..unit
+                })),
+                None => Err(ServiceError::Conflict(format!(
+                    "{} is not a definition this adapter wrote (it was changed by hand); it \
+                     is left untouched",
+                    file.display()
+                ))),
+            },
+            None if loaded => Err(ServiceError::Conflict(format!(
+                "launchd already runs {label} from another definition"
+            ))),
+            None => Ok(None),
+        }
+    }
+
+    fn redefine(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+        validate(unit)?;
+        let label = self.label(&unit.instance_id)?;
+        let file = self.file(&label);
+        let bytes = render(&label, unit);
+        let printed = self.print_ours(&label)?;
+        if let Some(ServiceStatus::Running { .. }) = printed.as_deref().map(parse_print) {
+            return Err(ServiceError::Conflict(format!(
+                "{label} is running; stop it before its definition is replaced"
+            )));
+        }
+        match self.read_definition(&file)? {
+            Some(existing) if existing == bytes => Ok(Registration::Unchanged),
+            // Only an exact earlier rendering, which holds the instance's ID, is replaced, as
+            // in register. Its job is booted out and not loaded again: launchd would start it
+            // (RunAtLoad), and redefine never starts a service.
+            Some(existing) => {
+                if definition(&label, &existing).is_none() {
+                    return Err(ServiceError::Conflict(format!(
+                        "{} already defines {label} differently; it is left untouched",
+                        file.display()
+                    )));
+                }
+                if printed.is_some() {
+                    self.boot_out(&label)?;
+                }
+                self.write_definition(&file, &bytes, true)?;
+                Ok(Registration::Loaded)
+            }
+            None if printed.is_some() => Err(ServiceError::Conflict(format!(
+                "launchd already runs {label} from another definition"
+            ))),
+            None => Err(ServiceError::Invalid("the service is not registered")),
+        }
+    }
 }
 
 /// `state = running` and `pid = N` from `launchctl print`'s top-level block.

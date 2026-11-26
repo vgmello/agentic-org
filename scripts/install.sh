@@ -31,7 +31,13 @@ Options:
   --bin-dir <dir>        Directory for CLI symlinks (default: ~/.local/bin)
   --store <dir>          Explicit release store directory
   --allow-unsigned       Allow installing an unsigned local archive
+  --no-restart           Do not start again the services the upgrade stopped
   -h, --help             Show this help
+
+Upgrades move each instance's registered service (launchd/systemd) that setup wrote to the
+new release: a running service is stopped for the install and started again on the new
+release (unless --no-restart), a stopped one stays stopped, and a service definition changed
+by hand is left untouched with the steps to upgrade it.
 EOF
 }
 
@@ -58,6 +64,7 @@ BASE_URL=""
 BIN_DIR="${HOME}/.local/bin"
 STORE_DIR=""
 ALLOW_UNSIGNED=0
+NO_RESTART=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -70,6 +77,7 @@ while [[ $# -gt 0 ]]; do
     --bin-dir) require_arg "$@"; BIN_DIR="$2"; shift 2 ;;
     --store) require_arg "$@"; STORE_DIR="$2"; shift 2 ;;
     --allow-unsigned) ALLOW_UNSIGNED=1; shift ;;
+    --no-restart) NO_RESTART=1; shift ;;
     -h|--help)
       usage
       exit 0
@@ -537,6 +545,32 @@ verify_installed_binary_in_store() {
   esac
 }
 
+# Whether an agentic-org CLI moves the registered services to the release it installs
+# (its `release install` has `--no-restart`). Help is captured first, never piped into an
+# early-exit grep under pipefail.
+cli_refreshes_services() {
+  local help
+  help="$("$1" release install --help 2>/dev/null </dev/null || true)"
+  [[ "$help" == *"--no-restart"* ]]
+}
+
+# One line per registered service from `release install --json` (compact in a pipe): the
+# instance, what the install did and whether it runs. Instance names are [a-z0-9-] only.
+report_services() {
+  awk '
+    { buf = buf $0 }
+    END {
+      while (match(buf, /"instance":"[a-z0-9-]+","outcome":"[a-z_]+","was_running":(true|false),"running":(true|false)/)) {
+        s = substr(buf, RSTART, RLENGTH)
+        buf = substr(buf, RSTART + RLENGTH)
+        split(s, parts, "\"")
+        state = (parts[13] == ":true") ? "running" : "not running"
+        printf "Service of instance \"%s\": %s (%s).\n", parts[4], parts[8], state
+      }
+    }
+  ' <<< "$1" >&2
+}
+
 TRUSTED_CLI=""
 if TRUSTED_CLI="$(find_trusted_installed_cli)"; then
   :
@@ -641,7 +675,7 @@ if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
   # On upgrades, always use the existing trusted installed binary — never execute the untrusted archive.
   if [[ -n "$TRUSTED_CLI" ]]; then
     echo "Using existing trusted installer: $TRUSTED_CLI" >&2
-    INSTALL_JSON="$("$TRUSTED_CLI" "${INSTALL_ARGS[@]}")"
+    INSTALLER_CLI="$TRUSTED_CLI"
   else
     tar -xzf "$STAGED_ARCHIVE" -C "$BOOTSTRAP_DIR" agentic-org
     if [[ ! -f "$BOOTSTRAP_DIR/agentic-org" || -L "$BOOTSTRAP_DIR/agentic-org" ]]; then
@@ -653,8 +687,22 @@ if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
       verify_sha256 "$BOOTSTRAP_DIR/agentic-org" "$EXPECTED_CLI_SHA"
     fi
     chmod 0700 "$BOOTSTRAP_DIR/agentic-org"
-    INSTALL_JSON="$("$BOOTSTRAP_DIR/agentic-org" "${INSTALL_ARGS[@]}")"
+    INSTALLER_CLI="$BOOTSTRAP_DIR/agentic-org"
   fi
+
+  # A CLI that moves the registered services to the new release does it within its install
+  # (a running service holds the store, so it is stopped for the install and started again).
+  # An older installed CLI does not: it needs those services stopped first, and the newly
+  # installed release, verified into the protected store, then moves them below.
+  RUN_ARGS=("${INSTALL_ARGS[@]}")
+  INSTALLER_REFRESHES=0
+  if cli_refreshes_services "$INSTALLER_CLI"; then
+    INSTALLER_REFRESHES=1
+    if [[ "$NO_RESTART" -eq 1 ]]; then
+      RUN_ARGS+=(--no-restart)
+    fi
+  fi
+  INSTALL_JSON="$("$INSTALLER_CLI" "${RUN_ARGS[@]}" </dev/null)"
 
   RELEASE_ID="$(extract_json_string "$INSTALL_JSON" "release_id")"
   if [[ ! "$RELEASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$ ]]; then
@@ -668,6 +716,23 @@ if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
   ln -sfn "$INSTALLED_CLI" "$BIN_DIR/agentic-org"
   ln -sfn "$INSTALLED_AGENT_OS" "$BIN_DIR/agent-os"
   echo "Pinned release ${RELEASE_ID} in ${EFFECTIVE_STORE_DIR}." >&2
+  if [[ "$INSTALLER_REFRESHES" -eq 1 ]]; then
+    report_services "$INSTALL_JSON"
+  elif cli_refreshes_services "$INSTALLED_CLI"; then
+    # The release is pinned already (an install of the same release changes nothing); this
+    # run moves the stopped services to it and reports them in its own words.
+    REFRESH_ARGS=(release install "$STAGED_ARCHIVE")
+    if [[ -n "$STORE_DIR" ]]; then
+      REFRESH_ARGS+=(--store "$STORE_DIR")
+    fi
+    if [[ "$NO_RESTART" -eq 1 ]]; then
+      REFRESH_ARGS+=(--no-restart)
+    fi
+    echo "Moving registered services to release ${RELEASE_ID} ..." >&2
+    if ! "$INSTALLED_CLI" "${REFRESH_ARGS[@]}" </dev/null >&2; then
+      echo "install.sh: release ${RELEASE_ID} is pinned, but its registered services were not moved to it; stop them (agentic-org service stop --yes) and run: agentic-org release install <archive>" >&2
+    fi
+  fi
 else
   if [[ "$ALLOW_UNSIGNED" -ne 1 ]]; then
     echo "install.sh: refusing unsigned archive (pass --allow-unsigned only for unsigned local archives)" >&2

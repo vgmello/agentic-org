@@ -1928,3 +1928,81 @@ fn a_unit_directory_other_users_can_write_to_holds_no_definition() {
         0o700
     );
 }
+
+/// TASK-155: a release upgrade reads the registered unit back and points it at the new
+/// program. `definition` reads only an exact rendering (a file changed by hand is a
+/// conflict); `redefine` refuses a running unit, replaces an earlier rendering of a stopped
+/// one and reloads systemd without starting it (it stays enabled), and never takes over
+/// another file.
+#[test]
+fn an_upgrade_reads_the_unit_back_and_redefines_it_only_while_it_is_stopped() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    let file = temp.path().join(format!("systemd/user/{NAME}"));
+    assert_eq!(systemd.definition(ID).unwrap(), None);
+    assert!(matches!(
+        systemd.redefine(&unit()),
+        Err(ServiceError::Invalid(_))
+    ));
+    systemd.register(&unit()).unwrap();
+    assert_eq!(systemd.definition(ID).unwrap(), Some(unit()));
+    let upgraded = Unit {
+        program: "/opt/agentic org/releases/2/agentic-org".into(),
+        ..unit()
+    };
+
+    // A running unit is never redefined underneath.
+    fake.clear();
+    assert!(matches!(
+        systemd.redefine(&upgraded),
+        Err(ServiceError::Conflict(_))
+    ));
+    assert_eq!(fs::read(&file).unwrap(), render(NAME, &unit()));
+    assert_eq!(fake.verbs(), ["show"]);
+
+    // Stopped: replaced and reloaded, still enabled, and not started.
+    systemd.stop(ID).unwrap();
+    fake.clear();
+    assert_eq!(systemd.redefine(&upgraded).unwrap(), Registration::Loaded);
+    assert_eq!(fs::read(&file).unwrap(), render(NAME, &upgraded));
+    assert_eq!(fake.verbs(), ["show", "daemon-reload"]);
+    assert_eq!(systemd.status(ID).unwrap(), ServiceStatus::Stopped);
+    assert_eq!(systemd.definition(ID).unwrap(), Some(upgraded.clone()));
+    assert_eq!(
+        systemd.redefine(&upgraded).unwrap(),
+        Registration::Unchanged
+    );
+    // Register finds it settled; start runs the new program.
+    assert_eq!(
+        systemd.register(&upgraded).unwrap(),
+        Registration::Unchanged
+    );
+    systemd.start(ID).unwrap();
+    assert_eq!(
+        systemd.status(ID).unwrap(),
+        ServiceStatus::Running { pid: 43 }
+    );
+    let entries = fs::read_dir(temp.path().join("systemd/user"))
+        .unwrap()
+        .count();
+    assert_eq!(entries, 1, "a temporary file remains");
+
+    // A file changed by hand is read back as a conflict and never replaced.
+    systemd.stop(ID).unwrap();
+    let edited = String::from_utf8(render(NAME, &upgraded))
+        .unwrap()
+        .replace("Restart=on-failure", "Restart=always");
+    fs::write(&file, &edited).unwrap();
+    let error = systemd.definition(ID).unwrap_err();
+    assert!(
+        matches!(&error, ServiceError::Conflict(why) if why.contains("changed by hand")),
+        "{error}"
+    );
+    fake.clear();
+    assert!(matches!(
+        systemd.redefine(&unit()),
+        Err(ServiceError::Conflict(_))
+    ));
+    assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+    assert!(!fake.verbs().contains(&"daemon-reload".to_string()));
+}

@@ -4,7 +4,7 @@
 //! terminal). This manager therefore changes nothing and asks no service manager anything:
 //! `register`, `start`, `stop` and `unregister` succeed without doing anything, and
 //! `status` answers [`ServiceStatus::NotRegistered`], which is all a manager that registers
-//! nothing can know. Whether the instance runs is known to the instance's own socket, which
+//! nothing can know; `definition` finds none, and `redefine` has none to replace. Whether the instance runs is known to the instance's own socket, which
 //! the consumer asks. A unit or an instance ID that no definition could carry is still
 //! refused, as in every mode.
 use super::{
@@ -34,5 +34,15 @@ impl ServiceManager for Foreground {
 
     fn unregister(&self, instance_id: &str) -> Result<(), ServiceError> {
         valid_instance_id(instance_id)
+    }
+
+    fn definition(&self, instance_id: &str) -> Result<Option<Unit>, ServiceError> {
+        valid_instance_id(instance_id)?;
+        Ok(None)
+    }
+
+    fn redefine(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+        validate(unit)?;
+        Err(ServiceError::Invalid("the service is not registered"))
     }
 }

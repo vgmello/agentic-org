@@ -1037,3 +1037,31 @@ fn a_linked_saved_context_is_refused_and_can_be_cleared() {
     assert!(fs::symlink_metadata(sandbox.context_file()).is_err());
     assert!(!target.exists());
 }
+
+/// TASK-155: `release install` takes `--no-restart`, and its dry run lists what it would do
+/// to each registered service (none in a fresh account) without making the store.
+#[test]
+fn release_install_dry_run_lists_the_registered_services_it_would_move() {
+    let sandbox = Sandbox::new();
+    let bundle = sandbox.root.join("bundle");
+    fs::create_dir(&bundle).unwrap();
+    let store = sandbox.root.join("store");
+    let preview = sandbox.run(&[
+        "--dry-run",
+        "--json",
+        "release",
+        "install",
+        bundle.to_str().unwrap(),
+        "--store",
+        store.to_str().unwrap(),
+        "--no-restart",
+    ]);
+    assert_eq!(preview.status.code(), Some(0), "{}", text(&preview.stderr));
+    assert!(preview.stderr.is_empty(), "{}", text(&preview.stderr));
+    let plan: Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(plan["dry_run"], true);
+    assert_eq!(plan["action"], "release_install");
+    assert_eq!(plan["kind"], "directory");
+    assert_eq!(plan["services"], serde_json::json!([]));
+    assert!(!store.exists(), "a dry run makes no store");
+}

@@ -17,7 +17,7 @@ pub mod runner;
 mod tests;
 pub mod worktree;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub use cache::{
     canonical_cache_config, fetch_cache, init_bare_cache, ls_remote_heads, verify_cache_integrity,
@@ -87,4 +87,19 @@ impl GitError {
             source,
         }
     }
+}
+
+/// Creates `path` and every missing folder above it for Git. Owner-only (`0700`) whatever
+/// the process's file-creation mask, so a cache, worktree or checkpoint folder is never
+/// group- or world-accessible even under a `0002` mask (TASK-155); with `shared_group`
+/// (`core.sharedRepository = group`), with the mask's modes, which the group must traverse.
+/// Folders that exist are left as they are.
+pub(crate) fn create_git_dirs(path: &Path, shared_group: bool) -> Result<(), GitError> {
+    use std::os::unix::fs::DirBuilderExt;
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    if !shared_group {
+        builder.mode(0o700);
+    }
+    builder.create(path).map_err(|e| GitError::io(path, e))
 }
