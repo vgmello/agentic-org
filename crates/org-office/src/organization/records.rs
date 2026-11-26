@@ -22,7 +22,7 @@ pub use org::{
     encode_repositories, office_codes_path, office_path, organization_path, repositories_path,
     Office, OfficeCode, Organization, Repository, MAX_CA_ESCROW_BYTES,
 };
-use teams::team_folder;
+pub(crate) use teams::team_folder;
 pub use teams::{
     decode_team, decode_team_allocation, decode_team_counter, encode_team, encode_team_allocation,
     encode_team_counter, team_allocation_path, team_counter_path, team_key, team_path, Team,

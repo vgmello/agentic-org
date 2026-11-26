@@ -1,58 +1,100 @@
 //! Classification of replicated snapshot paths, and filtering of stale snapshot work files and
 //! self-echoed HQ org events on satellites.
 
-use org_store::{DurablePath, Files, Id};
+use std::collections::{BTreeMap, BTreeSet};
+
+use org_store::{DurablePath, Files, Id, StoreError};
 
 use crate::error::OfficeError;
 use crate::office::{storage, Office};
+use crate::store::open::ReadOp;
+use crate::tasks::ports::TasksRead;
+use crate::tasks::replica::{incoming_tasks, SnapshotTasks};
 
 use super::work_ingest::ReadOfficeCodesOp;
 use super::ReplicatedFileBatch;
 
+/// Each named task this office has, with its owning office code and effective revision.
+struct ReadTaskRevisionsOp(Vec<Id>);
+
+impl ReadOp for ReadTaskRevisionsOp {
+    type Out = BTreeMap<Id, (String, u64)>;
+
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        let mut out = BTreeMap::new();
+        for id in self.0 {
+            if let Some(task) = snapshot.task(&id)? {
+                out.insert(id, (task.office_code, task.meta.revision));
+            }
+        }
+        Ok(out)
+    }
+}
+
 impl Office {
+    /// The local tasks of `ids`, with their owning office code and effective revision.
+    fn local_task_revisions(
+        &self,
+        ids: impl IntoIterator<Item = Id>,
+    ) -> Result<BTreeMap<Id, (String, u64)>, OfficeError> {
+        let ids: Vec<Id> = ids.into_iter().collect();
+        if ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let (local, _) = self.store.read(ReadTaskRevisionsOp(ids)).map_err(storage)?;
+        Ok(local)
+    }
+
+    /// The tasks of a whole snapshot (every page indexed, `TASK-52` P21-#2) this satellite
+    /// keeps rather than take from it: those it holds at a strictly later effective revision
+    /// than the snapshot brings them to, for the same owning office code. Both sides count
+    /// child-only history, so a task with comments, checklist or watcher changes after its
+    /// last `task.md` write is never taken for newer here than it is (`doc-79`). Strict, so an
+    /// interrupted snapshot resuming at the same revision still applies missing files.
+    pub fn protected_snapshot_tasks(
+        &self,
+        snapshot: &SnapshotTasks,
+    ) -> Result<BTreeSet<String>, OfficeError> {
+        if self.info.role != crate::model::OfficeRole::Satellite {
+            return Ok(BTreeSet::new());
+        }
+        let local = self.local_task_revisions(snapshot.iter().map(|(id, _)| id.clone()))?;
+        let mut protected = BTreeSet::new();
+        for (id, incoming) in snapshot.iter() {
+            let Some((code, revision)) = local.get(id) else {
+                continue;
+            };
+            let same_office = incoming.office_code.as_ref().is_none_or(|c| c == code);
+            if same_office && *revision > incoming.revision {
+                protected.insert(id.as_str().to_owned());
+            }
+        }
+        Ok(protected)
+    }
+
     /// Reconciles an entire incoming snapshot against committed local satellite-owned tasks and
     /// pending local outbox edits BEFORE chunking into <= 8 MiB batches (`TASK-52` P11-#2 / P12-#1):
-    /// - Uses strict `local.revision > incoming.revision` so an interrupted snapshot resuming at
-    ///   equal revision still applies any missing sidecars.
-    /// - Scans all incoming `task.json` entries BEFORE removing `pending_work_paths` and protects
-    ///   every task (and all its sidecars) touched by `pending_work_paths`.
+    /// protects every task [`Office::protected_snapshot_tasks`] names, and every task (and all
+    /// its files) touched by `pending_work_paths`.
     pub fn filter_stale_snapshot_work_files(
         &self,
         mut files: ReplicatedFileBatch,
-        pending_work_paths: &std::collections::BTreeSet<String>,
+        pending_work_paths: &BTreeSet<String>,
     ) -> Result<ReplicatedFileBatch, OfficeError> {
         if self.info.role != crate::model::OfficeRole::Satellite {
             return Ok(files);
         }
-        let mut protected_tasks = collect_task_ids_from_paths(pending_work_paths);
-        for (path, opt_bytes) in &files {
-            let Some(bytes) = opt_bytes else {
-                continue;
-            };
-            let Ok(dp) = DurablePath::parse(path) else {
-                continue;
-            };
-            let Some(crate::tasks::records::Kind::Task(tid)) = crate::tasks::records::kind_of(&dp)
-            else {
-                continue;
-            };
-            let incoming = serde_json::from_slice::<crate::tasks::records::TaskRecord>(bytes)
-                .map_err(|_| OfficeError::Invalid("malformed TaskRecord in snapshot"))?;
-            match self.task_inspect(tid.as_str())? {
-                Ok(local) => {
-                    if local.task.office_code == incoming.office_code
-                        && local.task.revision > incoming.meta.revision
-                    {
-                        protected_tasks.insert(tid);
-                    }
-                }
-                Err(api_err) if api_err.code == org_proto::ErrorCode::NotFound => {}
-                Err(_) => {
-                    return Err(OfficeError::Invalid(
-                        "failed inspecting local task during snapshot reconciliation",
-                    ));
-                }
+        let mut snapshot = SnapshotTasks::default();
+        for (path, bytes) in &files {
+            if let Some(bytes) = bytes {
+                snapshot
+                    .observe(path, bytes)
+                    .map_err(|_| OfficeError::Invalid("malformed task.md in snapshot"))?;
             }
+        }
+        let mut protected_tasks = collect_task_ids_from_paths(pending_work_paths);
+        for tid in self.protected_snapshot_tasks(&snapshot)? {
+            protected_tasks.insert(Id::parse(&tid).map_err(storage)?);
         }
         if protected_tasks.is_empty() && pending_work_paths.is_empty() {
             return Ok(files);
@@ -75,9 +117,16 @@ impl Office {
         Ok(files)
     }
 
-    /// Filters out stale self-echoes of this satellite's own single-writer task counter, tasks,
-    /// and sidecars from an HQ `OrgEvent` so a satellite creating task N+1 before pulling HQ's echo
-    /// of task N never stalls its own org stream on SQLite's monotonic counter trigger (`TASK-52` P8-#1).
+    /// Filters out stale self-echoes of this satellite's own single-writer tasks from an HQ
+    /// `OrgEvent` so an echo of an older local revision never rolls a task back (`TASK-52`
+    /// P8-#1). An echo is judged per task by the revision it brings the task to: its
+    /// `task.md`'s or its latest history event's, so a child-only change (a checklist step,
+    /// a watcher, a comment: no `task.md`) echoed back after a later local one never
+    /// rewrites `checklist.yaml` or `operations.yaml` to the older content. Every written
+    /// file of a task this office owns and already holds at that revision or later is
+    /// dropped, unless the echo writes its `task.md` at another path: a relocation
+    /// (`MoveTeam`) passes whole. The office's task counter is office-local and never
+    /// replicated (`doc-80`), so it never echoes.
     pub fn filter_self_echoed_org_event_files(
         &self,
         files: ReplicatedFileBatch,
@@ -86,7 +135,7 @@ impl Office {
             return Ok(files);
         }
         let (codes, _) = self.store.read(ReadOfficeCodesOp).map_err(storage)?;
-        let local_codes: std::collections::BTreeSet<String> = codes
+        let local_codes: BTreeSet<String> = codes
             .into_iter()
             .filter(|c| c.office_id == self.identity.office_id)
             .map(|c| c.code)
@@ -94,74 +143,56 @@ impl Office {
         if local_codes.is_empty() {
             return Ok(files);
         }
+        // A `task.md` that does not decode: the projector refuses the batch whole.
+        let Ok(incoming) = incoming_tasks(files.iter().map(|(p, b)| (p.as_str(), b.as_deref())))
+        else {
+            return Ok(files);
+        };
+        let local = self.local_task_revisions(incoming.keys().cloned())?;
         let durable_files = Files::open(&self.durable).map_err(OfficeError::storage)?;
-        let mut skipped_tasks: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
-        let mut out = Vec::with_capacity(files.len());
-        // Pass 1: identify stale echoed local tasks & counters.
-        for (path, opt_bytes) in files {
-            let Ok(dp) = DurablePath::parse(&path) else {
-                out.push((path, opt_bytes));
+        let here = |path: &str| {
+            DurablePath::parse(path)
+                .ok()
+                .is_some_and(|dp| durable_files.read(&dp).ok().flatten().is_some())
+        };
+        let mut echoed: BTreeSet<Id> = BTreeSet::new();
+        for (tid, batch) in &incoming {
+            let Some((local_code, local_revision)) = local.get(tid) else {
                 continue;
             };
-            match crate::tasks::records::kind_of(&dp) {
-                Some(crate::tasks::records::Kind::OfficeTaskCounter(ref code))
-                    if local_codes.contains(code) =>
-                {
-                    if should_skip_echoed_counter(&durable_files, &dp, opt_bytes.as_deref()) {
-                        continue;
-                    }
-                    out.push((path, opt_bytes));
-                }
-                Some(crate::tasks::records::Kind::Task(ref tid)) => {
-                    if should_skip_echoed_task(self, &local_codes, tid, opt_bytes.as_deref()) {
-                        skipped_tasks.insert(tid.as_str().to_owned());
-                        continue;
-                    }
-                    out.push((path, opt_bytes));
-                }
-                _ => out.push((path, opt_bytes)),
+            let code = batch.task.as_ref().map_or(local_code, |t| &t.office_code);
+            if !local_codes.contains(code) || *local_revision < batch.revision {
+                continue;
+            }
+            let relocated = files.iter().any(|(path, bytes)| {
+                bytes.is_some()
+                    && DurablePath::parse(path).is_ok_and(|dp| {
+                        matches!(
+                            crate::tasks::records::kind_of(&dp),
+                            Some(crate::tasks::records::Kind::Task(ref id)) if id == tid
+                        )
+                    })
+                    && !here(path)
+            });
+            if !relocated {
+                echoed.insert(tid.clone());
             }
         }
-        // Pass 2: drop already-present sidecars for skipped local tasks.
-        out.retain(|(path, opt_bytes)| {
-            let Ok(dp) = DurablePath::parse(path) else {
-                return true;
-            };
-            let sidecar_tid = match crate::tasks::records::kind_of(&dp) {
-                Some(
-                    crate::tasks::records::Kind::Checklist(tid)
-                    | crate::tasks::records::Kind::Comment(tid, _)
-                    | crate::tasks::records::Kind::Watchers(tid)
-                    | crate::tasks::records::Kind::Links(tid)
-                    | crate::tasks::records::Kind::Event(tid, _),
-                ) => tid,
-                _ => return true,
-            };
-            if opt_bytes.is_some()
-                && skipped_tasks.contains(sidecar_tid.as_str())
-                && durable_files.read(&dp).ok().flatten().is_some()
-            {
-                return false;
-            }
-            true
-        });
-        Ok(out)
+        if echoed.is_empty() {
+            return Ok(files);
+        }
+        Ok(files
+            .into_iter()
+            .filter(|(path, bytes)| {
+                let task = crate::tasks::replica::task_of_path(path);
+                !(bytes.is_some() && task.is_some_and(|tid| echoed.contains(&tid)))
+            })
+            .collect())
     }
 }
 
 fn task_id_of_work_path(dp: &DurablePath) -> Option<Id> {
-    match crate::tasks::records::kind_of(dp) {
-        Some(
-            crate::tasks::records::Kind::Task(tid)
-            | crate::tasks::records::Kind::Checklist(tid)
-            | crate::tasks::records::Kind::Comment(tid, _)
-            | crate::tasks::records::Kind::Watchers(tid)
-            | crate::tasks::records::Kind::Links(tid)
-            | crate::tasks::records::Kind::Event(tid, _),
-        ) => Some(tid),
-        _ => None,
-    }
+    crate::tasks::records::kind_of(dp).map(|kind| kind.task_id().clone())
 }
 
 fn collect_task_ids_from_paths(
@@ -174,7 +205,8 @@ fn collect_task_ids_from_paths(
         .collect()
 }
 
-/// Returns the owning task ID string if `path` is a task record or task sidecar under `state/work/`.
+/// Returns the owning task ID string if `path` is a task folder file (`task.md` or a sidecar)
+/// or a task history event.
 pub fn task_id_for_work_path(path: &str) -> Option<String> {
     DurablePath::parse(path)
         .ok()
@@ -182,38 +214,40 @@ pub fn task_id_for_work_path(path: &str) -> Option<String> {
         .map(|id| id.as_str().to_owned())
 }
 
-/// Returns `Ok(Some(task_id))` when `office` is a satellite that already holds a strictly newer
-/// local revision for this incoming snapshot `task.json`, failing closed on storage or non-`NotFound`
-/// lookup errors so newer sidecars can never be overwritten (`TASK-52` P12-#1 / P21-#2 / P27-#1).
-pub fn is_stale_snapshot_task_entry(
-    office: &Office,
-    path: &str,
-    bytes: &[u8],
-) -> Result<Option<String>, OfficeError> {
-    if office.info.role != crate::model::OfficeRole::Satellite {
-        return Ok(None);
-    }
-    let dp = DurablePath::parse(path).map_err(storage)?;
-    let Some(crate::tasks::records::Kind::Task(tid)) = crate::tasks::records::kind_of(&dp) else {
-        return Ok(None);
-    };
-    let incoming: crate::tasks::records::TaskRecord = serde_json::from_slice(bytes)
-        .map_err(|_| OfficeError::Invalid("malformed TaskRecord in snapshot"))?;
-    match office.task_inspect(tid.as_str())? {
-        Ok(local) => {
-            if local.task.office_code == incoming.office_code
-                && local.task.revision > incoming.meta.revision
-            {
-                Ok(Some(tid.as_str().to_owned()))
-            } else {
-                Ok(None)
-            }
-        }
-        Err(api_err) if api_err.code == org_proto::ErrorCode::NotFound => Ok(None),
-        Err(_) => Err(OfficeError::Invalid(
-            "failed inspecting local task during snapshot indexing",
-        )),
-    }
+/// The local task folder files a snapshot moves elsewhere: each is of a task whose `task.md`
+/// the snapshot (`incoming`) carries in another folder, as HQ's `MoveTeam` leaves it. Snapshot
+/// reconciliation removes them, history and comments included, so no copy of a moved task
+/// is left in its old folder; the projector keeps the moved task's rows (`doc-77`).
+pub fn relocated_task_paths<'a>(
+    local: impl IntoIterator<Item = &'a String>,
+    incoming: &std::collections::BTreeSet<String>,
+) -> std::collections::BTreeSet<String> {
+    let folders: std::collections::BTreeMap<Id, String> = incoming
+        .iter()
+        .filter_map(|p| DurablePath::parse(p).ok())
+        .filter(|p| {
+            matches!(
+                crate::tasks::records::kind_of(p),
+                Some(crate::tasks::records::Kind::Task(_))
+            )
+        })
+        .filter_map(|p| crate::tasks::records::task_dir_of(&p))
+        .map(|dir| (dir.task_id.clone(), dir.folder()))
+        .collect();
+    local
+        .into_iter()
+        .filter(|raw| {
+            let dir = DurablePath::parse(raw)
+                .ok()
+                .and_then(|p| crate::tasks::records::task_dir_of(&p));
+            dir.is_some_and(|dir| {
+                folders
+                    .get(&dir.task_id)
+                    .is_some_and(|folder| *folder != dir.folder())
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 /// Canonical dependency classification for replicated snapshot files derived directly from
@@ -251,8 +285,7 @@ pub fn classify_replicated_snapshot_path(path: &str) -> SnapshotPathClass {
     };
     if let Some(tk) = crate::tasks::records::kind_of(&dp) {
         return match tk {
-            crate::tasks::records::Kind::OfficeTaskCounter(_)
-            | crate::tasks::records::Kind::Task(_) => SnapshotPathClass::WorkCore,
+            crate::tasks::records::Kind::Task(_) => SnapshotPathClass::WorkCore,
             _ => SnapshotPathClass::WorkSidecar,
         };
     }
@@ -309,52 +342,4 @@ pub(super) fn is_replicated_journal_entry(
                 .is_replicated_op_id(op.id.as_str())
                 .unwrap_or(false)
     })
-}
-
-fn should_skip_echoed_counter(
-    durable_files: &Files,
-    dp: &DurablePath,
-    incoming_bytes: Option<&[u8]>,
-) -> bool {
-    let Some(in_raw) = incoming_bytes else {
-        return false;
-    };
-    let Ok(in_val) = serde_json::from_slice::<serde_json::Value>(in_raw) else {
-        return false;
-    };
-    let Some(in_num) = in_val
-        .get("last_number")
-        .and_then(serde_json::Value::as_u64)
-    else {
-        return false;
-    };
-    let Ok(Some(local_raw)) = durable_files.read(dp) else {
-        return false;
-    };
-    serde_json::from_slice::<serde_json::Value>(&local_raw)
-        .ok()
-        .and_then(|v| v.get("last_number").and_then(serde_json::Value::as_u64))
-        .is_some_and(|local_num| local_num >= in_num)
-}
-
-fn should_skip_echoed_task(
-    office: &Office,
-    local_codes: &std::collections::BTreeSet<String>,
-    tid: &Id,
-    incoming_bytes: Option<&[u8]>,
-) -> bool {
-    let Some(in_raw) = incoming_bytes else {
-        return false;
-    };
-    let Ok(in_rec) = serde_json::from_slice::<crate::tasks::records::TaskRecord>(in_raw) else {
-        return false;
-    };
-    if !local_codes.contains(&in_rec.office_code) {
-        return false;
-    }
-    office
-        .task_inspect(tid.as_str())
-        .ok()
-        .and_then(|r| r.ok())
-        .is_some_and(|local| local.task.revision >= in_rec.meta.revision)
 }

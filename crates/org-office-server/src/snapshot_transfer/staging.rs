@@ -10,7 +10,7 @@ use std::time::Instant;
 use crate::federation_link::{hex_lower, SatelliteSyncSession, FIRST_FRAME_DEADLINE};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
-use org_office::Office;
+use org_office::tasks::replica::SnapshotTasks;
 use org_sync_proto::{write_sync_frame, SyncFrame};
 use sha2::{Digest as _, Sha256};
 
@@ -123,6 +123,8 @@ pub(super) struct StagedSnapshotImport {
     pub(super) total_files: usize,
     pub(super) incoming_paths: BTreeSet<String>,
     pub(super) protected_tasks: BTreeSet<String>,
+    /// Every task of the snapshot, with the effective revision it brings each to.
+    pub(super) tasks: SnapshotTasks,
 }
 
 fn validate_first_snapshot_page_meta(
@@ -291,14 +293,10 @@ struct PageScanAcc {
     max_struct_depth: usize,
     total_files: usize,
     incoming_paths: BTreeSet<String>,
-    protected_tasks: BTreeSet<String>,
+    tasks: SnapshotTasks,
 }
 
-fn index_validated_snapshot_page(
-    office: &Office,
-    page_raw: &[u8],
-    acc: &mut PageScanAcc,
-) -> Result<(), String> {
+fn index_validated_snapshot_page(page_raw: &[u8], acc: &mut PageScanAcc) -> Result<(), String> {
     let encoded: Vec<(String, String)> =
         serde_json::from_slice(page_raw).map_err(|e| format!("malformed snapshot payload: {e}"))?;
     let decoded = decode_and_validate_snapshot_files(encoded)?;
@@ -320,11 +318,9 @@ fn index_validated_snapshot_page(
                 acc.max_struct_depth = acc.max_struct_depth.max(depth);
             }
         }
-        if let Some(tid) = org_office::is_stale_snapshot_task_entry(office, &path, &bytes)
-            .map_err(|e| format!("failed checking local task revision for {path}: {e}"))?
-        {
-            acc.protected_tasks.insert(tid);
-        }
+        acc.tasks
+            .observe(&path, &bytes)
+            .map_err(|bad| format!("malformed task.md in snapshot: {bad}"))?;
         acc.incoming_paths.insert(path);
     }
     acc.page_tiers.push(mask);
@@ -350,7 +346,7 @@ pub(super) fn fetch_and_stage_snapshot_pages(
         max_struct_depth: 0,
         total_files: 0,
         incoming_paths: BTreeSet::new(),
-        protected_tasks: BTreeSet::new(),
+        tasks: SnapshotTasks::default(),
     };
     let mut page_idx = 0u32;
     loop {
@@ -383,7 +379,7 @@ pub(super) fn fetch_and_stage_snapshot_pages(
         if staged_bytes > MAX_SATELLITE_STAGED_SNAPSHOT_BYTES {
             return Err("staged snapshot exceeds satellite disk budget".into());
         }
-        index_validated_snapshot_page(&session.office, &page.raw, &mut acc)?;
+        index_validated_snapshot_page(&page.raw, &mut acc)?;
         write_private_bytes(&page_file_path(dir_guard.path(), page_idx), &page.raw)
             .map_err(|e| format!("failed staging snapshot page {page_idx}: {e}"))?;
         page_sha256s.push(page.sha256_hex);
@@ -391,6 +387,12 @@ pub(super) fn fetch_and_stage_snapshot_pages(
         let expected_total = header.as_ref().map_or(0, |m| m.total_pages);
         if page_idx == expected_total {
             let meta = header.ok_or_else(|| "missing snapshot header".to_owned())?;
+            // Only with every page indexed is a task's effective revision known: its
+            // `task.md` and its later child-only history can be pages apart (`doc-79`).
+            let protected_tasks = session
+                .office
+                .protected_snapshot_tasks(&acc.tasks)
+                .map_err(|e| format!("failed checking local task revisions: {e}"))?;
             return Ok(StagedSnapshotImport {
                 dir_guard,
                 meta,
@@ -401,7 +403,8 @@ pub(super) fn fetch_and_stage_snapshot_pages(
                 max_struct_depth: acc.max_struct_depth,
                 total_files: acc.total_files,
                 incoming_paths: acc.incoming_paths,
-                protected_tasks: acc.protected_tasks,
+                protected_tasks,
+                tasks: acc.tasks,
             });
         }
     }

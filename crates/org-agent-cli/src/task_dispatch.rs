@@ -75,6 +75,7 @@ fn entity_id(request: &Request, domain: &str) -> Result<String, Refusal> {
     crate::transport::entity_id(request, None, domain)
 }
 
+/// The answer to a write, acknowledged in the class its row declares (`doc-79`, `ADR-0014`).
 fn write_answer(request: &Request, data: Value, revision: Option<u64>) -> Answer {
     Answer {
         data,

@@ -16,8 +16,8 @@ use org_store::DurablePath;
 pub(crate) use enrollment::validate_satellite_open_binding;
 pub use enrollment::{SatelliteProvisionSpec, SatelliteReEnrollSpec};
 pub use filters::{
-    classify_replicated_snapshot_path, is_stale_snapshot_task_entry,
-    strip_org_core_employee_refs_typed, task_id_for_work_path, SnapshotPathClass,
+    classify_replicated_snapshot_path, relocated_task_paths, strip_org_core_employee_refs_typed,
+    task_id_for_work_path, SnapshotPathClass,
 };
 pub(crate) use identity::{
     check_replicated_hq_owner, read_active_identity_binding, read_ca_digest_for_open, read_intent,

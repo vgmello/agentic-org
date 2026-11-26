@@ -2,7 +2,7 @@
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 use org_proto::tasks::{
@@ -16,7 +16,7 @@ use org_proto::tasks::{
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::{
-    Actor, Change, Id, OfficeIdentity, Operation, Outcome, Refusal, Reply, Sha256, Store,
+    Ack, Actor, Change, Id, OfficeIdentity, Operation, Outcome, Refusal, Reply, Sha256, Store,
     StoreError,
 };
 use serde::{Deserialize, Serialize};
@@ -24,11 +24,11 @@ use serde::{Deserialize, Serialize};
 use crate::tasks::features::{
     self, build_task_view, comment_to_wire, decode_refusal, step_to_wire, AddDependency,
     AssignTask, ChecklistAdd, ChecklistCheck, ChecklistEdit, ChecklistMove, ChecklistRemove,
-    CommentTask, CreateTask, RemoveDependency, TaskWriteOutcome, TransitionTask, UnwatchTask,
-    UpdateTask, WatchTask,
+    CommentTask, CreateTask, RemoveDependency, TaskNumbering, TaskWriteOutcome, TransitionTask,
+    UnwatchTask, UpdateTask, WatchTask,
 };
 use crate::tasks::ports::TasksRead;
-use crate::tasks::records::TaskCommentRecord;
+use crate::tasks::records::{OfficeTaskCounterRecord, TaskCommentRecord};
 
 use super::{OfficeEngine, ReadOp, StoreOp};
 
@@ -170,6 +170,8 @@ pub struct TaskCreateOp {
     pub actor: String,
     pub here: OfficeIdentity,
     pub params: TasksCreateParams,
+    /// [`super::OfficeStore::task_numbering`]: the store's task numbering (`ADR-0019`).
+    pub numbering: Arc<TaskNumbering>,
 }
 
 impl StoreOp for TaskCreateOp {
@@ -181,23 +183,38 @@ impl StoreOp for TaskCreateOp {
             &self.actor,
             &self.params,
         );
+        let numbering = Arc::clone(&self.numbering);
+        // The counter the last decision left, and whether it was answered `durable`.
+        let issued: Arc<Mutex<Option<(OfficeTaskCounterRecord, bool)>>> = Arc::default();
+        let decided = Arc::clone(&issued);
         let cmd = CreateTask {
             actor_member_id: self.actor,
             params: self.params,
+            numbering: self.numbering,
         };
         let (reply, replayed) = match submit_task(store, op, move |uow| {
-            let (change, id, agent) = cmd.decide(uow, &self.here)?;
+            let created = cmd.decide(uow, &self.here)?;
+            let durable = created.change.ack == Ack::Durable;
+            *decided.lock().unwrap_or_else(|p| p.into_inner()) = Some((created.counter, durable));
             Ok(with_reply(
-                change,
+                created.change,
                 &TaskCommitReply {
-                    task_id: id.as_str().to_owned(),
-                    newly_assigned_agent: agent.map(|a| a.as_str().to_owned()),
+                    task_id: created.task_id.as_str().to_owned(),
+                    newly_assigned_agent: created.assigned_agent.map(|a| a.as_str().to_owned()),
                 },
             ))
         })? {
             Ok(pair) => pair,
             Err(api_err) => return Ok(Err(api_err)),
         };
+        // A `durable` create that ran here and completed is flushed with its counter, so the
+        // creates inside that reservation may be answered `committed` (`ADR-0019`).
+        if !replayed && reply.outcome == Outcome::Completed {
+            let issued = issued.lock().unwrap_or_else(|p| p.into_inner()).take();
+            if let Some((counter, true)) = issued {
+                numbering.flushed(&counter);
+            }
+        }
         finish_view(store, reply, replayed)
     }
 }

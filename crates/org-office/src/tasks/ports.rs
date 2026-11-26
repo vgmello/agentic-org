@@ -20,6 +20,8 @@ pub trait TasksRead: MessagingRead + ProcessesRead {
     ) -> Result<Option<TaskRecord>, EngineError>;
     /// All tasks in this organization ordered by `(office_code, number, id)`.
     fn tasks(&self) -> Result<Vec<TaskRecord>, EngineError>;
+    /// The highest task number issued under `office_code`; 0 when it has none (`doc-80`).
+    fn max_task_number(&self, office_code: &str) -> Result<u64, EngineError>;
     /// Indexed lookup of task IDs carrying normalized `label` (`TASK-77`).
     fn task_ids_by_label(&self, label: &str) -> Result<Vec<Id>, EngineError>;
     /// Distinct normalized labels with task counts, ordered alphabetically (`TASK-77`).

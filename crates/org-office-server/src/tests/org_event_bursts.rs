@@ -22,18 +22,18 @@ use crate::federation_link::org_events::{
 };
 use crate::federation_link::StaticPeer;
 
-struct Fixture {
-    hq: Arc<Office>,
-    owner: String,
-    hq_team: String,
-    server: HqFederationServer,
+pub(super) struct Fixture {
+    pub(super) hq: Arc<Office>,
+    pub(super) owner: String,
+    pub(super) hq_team: String,
+    pub(super) server: HqFederationServer,
     _sat_dir: tempfile::TempDir,
-    sat: Arc<Office>,
-    hq_peer: PeerIdentity,
+    pub(super) sat: Arc<Office>,
+    pub(super) hq_peer: PeerIdentity,
 }
 
 /// A real HQ serving federation, and a satellite enrolled with it and holding HQ's snapshot.
-fn fixture(name: &str, suffix: u8) -> Fixture {
+pub(super) fn fixture(name: &str, suffix: u8) -> Fixture {
     let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
         engine: EngineChoice::Sqlite,
     }));
@@ -66,7 +66,7 @@ fn fixture(name: &str, suffix: u8) -> Fixture {
     }
 }
 
-fn create_task(office: &Office, actor: &str, team_id: &str, title: &str) -> String {
+pub(super) fn create_task(office: &Office, actor: &str, team_id: &str, title: &str) -> String {
     let task_id = office.next_uuid_v7();
     office
         .task_create(
@@ -98,15 +98,18 @@ fn create_task(office: &Office, actor: &str, team_id: &str, title: &str) -> Stri
     task_id
 }
 
-/// HQ publishes its committed journal and returns its events after `after`.
-fn hq_events_after(hq: &Office, after: Position) -> Vec<OrgEvent> {
+/// HQ publishes its committed journal and returns its events after `after`. A task create
+/// inside the office's reserved number block is answered `committed` (`ADR-0019`): HQ
+/// publishes it once it is flushed and confirmed, which the sync waits for.
+pub(super) fn hq_events_after(hq: &Office, after: Position) -> Vec<OrgEvent> {
+    hq.sync_store().unwrap();
     hq.sync_org_journal_to_replication().unwrap();
     hq.replication()
         .org_events_after(after.epoch.get(), after.seq)
         .unwrap()
 }
 
-fn sat_position(sat: &Office) -> Position {
+pub(super) fn sat_position(sat: &Office) -> Position {
     sat.replication().org_checkpoint().unwrap().position
 }
 
@@ -166,7 +169,7 @@ fn rechained(after: &OrgEvent, events: &[OrgEvent]) -> Vec<OrgEvent> {
     out
 }
 
-fn files_of(ev: &OrgEvent) -> Vec<(String, Option<Vec<u8>>)> {
+pub(super) fn files_of(ev: &OrgEvent) -> Vec<(String, Option<Vec<u8>>)> {
     serde_json::from_slice::<OrgDeltaPayload>(&ev.payload)
         .unwrap()
         .decode_files()

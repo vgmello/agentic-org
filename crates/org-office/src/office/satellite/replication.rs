@@ -1,6 +1,8 @@
 //! Replicated `state/` application on satellites, HQ ingest of satellite work batches, and
 //! the org journal and satellite work outbox feeds into `org-sync`.
 
+use std::collections::BTreeMap;
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use org_store::{Actor, DurablePath, Id, Outcome};
 use org_sync_proto::{Digest, Epoch, OfficeId};
@@ -30,7 +32,31 @@ impl Office {
                 "only satellites apply replicated state batches",
             ));
         }
-        self.apply_replicated_files_inner(operation_id, files)
+        self.apply_replicated_files_inner(operation_id, files, false, BTreeMap::new())
+    }
+
+    /// Applies one batch of an HQ snapshot applied in several (`TASK-52` P21-#2):
+    /// `task_revisions` names, for the tasks of the batch, the effective revision the whole
+    /// snapshot brings each to, so a batch holding a task's `task.md` without its later
+    /// history (or the reverse) is never taken for stale (`doc-79`).
+    pub fn apply_replicated_snapshot_batch(
+        &self,
+        operation_id: &str,
+        files: Vec<(String, Option<Vec<u8>>)>,
+        task_revisions: BTreeMap<String, u64>,
+    ) -> Result<(), OfficeError> {
+        if self.info.role != OfficeRole::Satellite {
+            return Err(OfficeError::Invalid(
+                "only satellites apply replicated state batches",
+            ));
+        }
+        let mut revisions = BTreeMap::new();
+        for (task, revision) in task_revisions {
+            let id = Id::parse(&task)
+                .map_err(|_| OfficeError::Invalid("invalid task id in snapshot revisions"))?;
+            revisions.insert(id, revision);
+        }
+        self.apply_replicated_files_inner(operation_id, files, false, revisions)
     }
 
     /// Applies a validated satellite-originated work file batch strictly under projector-owned
@@ -47,7 +73,7 @@ impl Office {
             ));
         }
         validate_work_file_paths(&files)?;
-        self.apply_replicated_files_inner(operation_id, files)
+        self.apply_replicated_files_inner(operation_id, files, true, BTreeMap::new())
     }
 
     /// Validates a satellite's typed work batch against HQ's organization snapshot (actor/team
@@ -84,15 +110,19 @@ impl Office {
             expected_record_id,
             &files,
         )?;
-        self.apply_replicated_files_inner(operation_id, files)?;
+        self.apply_replicated_files_inner(operation_id, files, true, BTreeMap::new())?;
         self.replication.record_remote_work_seq(origin, seq)?;
         Ok(prev_hw)
     }
 
+    /// `rehome_tasks`: HQ ingesting a satellite's work writes each task folder file in the
+    /// folder its own projection names for the task (`ApplyReplicatedFiles::rehome_tasks`).
     fn apply_replicated_files_inner(
         &self,
         operation_id: &str,
         files: Vec<(String, Option<Vec<u8>>)>,
+        rehome_tasks: bool,
+        task_revisions: BTreeMap<Id, u64>,
     ) -> Result<(), OfficeError> {
         let op_id = Id::parse(operation_id)
             .map_err(|_| OfficeError::Invalid("invalid replication operation_id"))?;
@@ -102,7 +132,11 @@ impl Office {
             .run(ApplyReplicatedFilesOp {
                 operation_id: op_id,
                 actor: Actor::System,
-                command: ApplyReplicatedFiles { files },
+                command: ApplyReplicatedFiles {
+                    files,
+                    rehome_tasks,
+                    task_revisions,
+                },
             })
             .map_err(storage)?;
         match reply.outcome {
@@ -373,7 +407,7 @@ impl crate::store::open::ReadOp for ReadTaskOfficeCodeOp {
 }
 
 /// Belt-and-suspenders guard (`TASK-192`) ensuring a satellite never enqueues a `WorkChange`
-/// touching another office's task/counter or immutable-history deletion (which HQ would reject
+/// touching another office's task or an immutable-history deletion (which HQ would reject
 /// and stall sync), while propagating transient storage errors so the outbox consumer watermark
 /// never advances past an unverified local entry.
 fn is_locally_owned_satellite_work_entry(
@@ -388,20 +422,14 @@ fn is_locally_owned_satellite_work_entry(
     let mut sidecar_tasks = Vec::new();
     for (path, bytes) in versions {
         match crate::tasks::records::kind_of(path) {
-            Some(crate::tasks::records::Kind::OfficeTaskCounter(code)) => {
-                if bytes.is_none() || !local_codes.contains(&code) {
-                    return Ok(false);
-                }
-            }
             Some(crate::tasks::records::Kind::Task(tid)) => {
                 let Some(raw) = bytes else {
                     return Ok(false);
                 };
-                let Ok(rec) = serde_json::from_slice::<crate::tasks::records::TaskRecord>(raw)
-                else {
+                let Ok(doc) = crate::tasks::records::decode_task_md(raw) else {
                     return Ok(false);
                 };
-                if rec.id != tid || !local_codes.contains(&rec.office_code) {
+                if doc.task.id != tid || !local_codes.contains(&doc.task.office_code) {
                     return Ok(false);
                 }
                 verified_tasks.insert(tid);
@@ -417,8 +445,7 @@ fn is_locally_owned_satellite_work_entry(
             }
             Some(
                 crate::tasks::records::Kind::Checklist(tid)
-                | crate::tasks::records::Kind::Watchers(tid)
-                | crate::tasks::records::Kind::Links(tid),
+                | crate::tasks::records::Kind::Operations(tid),
             ) => sidecar_tasks.push(tid),
             None => return Ok(false),
         }
@@ -440,29 +467,16 @@ fn is_locally_owned_satellite_work_entry(
 }
 
 fn extract_primary_task_id(files: &[(String, Option<String>)]) -> Option<String> {
-    for (path, _) in files {
-        if let Ok(dp) = DurablePath::parse(path) {
-            if let Some(crate::tasks::records::Kind::Task(id)) = crate::tasks::records::kind_of(&dp)
-            {
-                return Some(id.as_str().to_owned());
-            }
-        }
-    }
-    for (path, _) in files {
-        if let Ok(dp) = DurablePath::parse(path) {
-            if let Some(
-                crate::tasks::records::Kind::Checklist(id)
-                | crate::tasks::records::Kind::Watchers(id)
-                | crate::tasks::records::Kind::Links(id)
-                | crate::tasks::records::Kind::Comment(id, _)
-                | crate::tasks::records::Kind::Event(id, _),
-            ) = crate::tasks::records::kind_of(&dp)
-            {
-                return Some(id.as_str().to_owned());
-            }
-        }
-    }
-    None
+    let kinds: Vec<crate::tasks::records::Kind> = files
+        .iter()
+        .filter_map(|(path, _)| DurablePath::parse(path).ok())
+        .filter_map(|dp| crate::tasks::records::kind_of(&dp))
+        .collect();
+    let primary = kinds
+        .iter()
+        .find(|k| matches!(k, crate::tasks::records::Kind::Task(_)))
+        .or_else(|| kinds.first())?;
+    Some(primary.task_id().as_str().to_owned())
 }
 
 pub(crate) fn reconcile_satellite_replication_on_open(
@@ -499,208 +513,5 @@ pub(crate) fn reconcile_satellite_replication_on_open(
 }
 
 #[cfg(test)]
-mod work_outbox_filter_tests {
-    use std::collections::BTreeSet;
-
-    use org_proto::tasks::{TaskPriority, TaskStatus, TasksCreateParams};
-    use org_store::{DurablePath, Id};
-
-    use super::is_locally_owned_satellite_work_entry;
-    use crate::office::Office;
-    use crate::store::open::EngineChoice;
-    use crate::tasks::records::{TaskMeta, TaskRecord};
-    use crate::TestOffice;
-
-    fn task_json(id: &str, code: &str, number: u64, team_id: &str, actor: &str) -> Vec<u8> {
-        let rec = TaskRecord {
-            id: Id::parse(id).unwrap(),
-            office_code: code.into(),
-            number,
-            team_id: Id::parse(team_id).unwrap(),
-            assigned_team_id: None,
-            project_id: None,
-            task_type: "task".into(),
-            work_type: None,
-            title: "Filter test".into(),
-            status: TaskStatus::Todo,
-            assignee_id: None,
-            body_markdown: String::new(),
-            feature_id: None,
-            milestone_id: None,
-            priority: TaskPriority::Normal,
-            effort: None,
-            severity: None,
-            resolution: None,
-            blocked_reason: None,
-            rank_order: None,
-            labels: Vec::new(),
-            reference_files: Vec::new(),
-            modified_files: Vec::new(),
-            repositories: Vec::new(),
-            details: None,
-            meta: TaskMeta::created(&Id::parse(actor).unwrap(), "2026-11-26T00:00:00.000Z"),
-        };
-        serde_json::to_vec(&rec).unwrap()
-    }
-
-    #[test]
-    fn satellite_work_outbox_filter_accepts_only_valid_local_work_entries() {
-        let office = Office::for_test(TestOffice {
-            engine: EngineChoice::Sqlite,
-        });
-        let owner = office.owner_member_id().to_owned();
-        let team_id = office.org_snapshot().unwrap().teams[0].id.clone();
-
-        // Create one real task with office_code "A" inside `office` so sidecar lookups resolve it.
-        let created = office
-            .task_create(
-                &owner,
-                TasksCreateParams {
-                    command_id: office.next_uuid_v7(),
-                    task_id: office.next_uuid_v7(),
-                    team_id: Some(team_id.clone()),
-                    assigned_team_id: None,
-                    project_id: None,
-                    task_type: Some("task".into()),
-                    work_type: None,
-                    title: "Existing task".into(),
-                    body_markdown: String::new(),
-                    assignee_id: None,
-                    priority: None,
-                    effort: None,
-                    severity: None,
-                    rank_order: None,
-                    labels: Vec::new(),
-                    reference_files: Vec::new(),
-                    modified_files: Vec::new(),
-                    depends_on: Vec::new(),
-                    details: None,
-                },
-            )
-            .unwrap()
-            .unwrap();
-        let existing_a_id = created.task.id;
-        let local_b_id = office.next_uuid_v7();
-        let other_id = office.next_uuid_v7();
-
-        let local_b: BTreeSet<String> = ["B".to_owned()].into_iter().collect();
-        let local_a: BTreeSet<String> = ["A".to_owned()].into_iter().collect();
-        let empty: BTreeSet<String> = BTreeSet::new();
-
-        let p_counter_b = DurablePath::parse("state/work/office-task-counters/b.json").unwrap();
-        let p_counter_a = DurablePath::parse("state/work/office-task-counters/a.json").unwrap();
-        let p_task_b =
-            DurablePath::parse(&format!("state/work/tasks/{local_b_id}/task.json")).unwrap();
-        let p_ev_b = DurablePath::parse(&format!(
-            "state/work/tasks/{local_b_id}/events/0000000001.json"
-        ))
-        .unwrap();
-        let p_cmt_b = DurablePath::parse(&format!(
-            "state/work/tasks/{local_b_id}/comments/0000000001.json"
-        ))
-        .unwrap();
-        let p_chk_b =
-            DurablePath::parse(&format!("state/work/tasks/{local_b_id}/checklist.json")).unwrap();
-        let p_task_a =
-            DurablePath::parse(&format!("state/work/tasks/{existing_a_id}/task.json")).unwrap();
-        let p_chk_a =
-            DurablePath::parse(&format!("state/work/tasks/{existing_a_id}/checklist.json"))
-                .unwrap();
-        let p_ev_a = DurablePath::parse(&format!(
-            "state/work/tasks/{existing_a_id}/events/0000000002.json"
-        ))
-        .unwrap();
-
-        let raw_b = task_json(&local_b_id, "B", 1, &team_id, &owner);
-        let raw_a = task_json(&existing_a_id, "A", 1, &team_id, &owner);
-        let raw_mismatch_id = task_json(&other_id, "B", 2, &team_id, &owner);
-        let dummy = b"{}".as_slice();
-
-        // 1. Valid local task + counter + immutable sidecar + mutable sidecar deletion.
-        assert!(is_locally_owned_satellite_work_entry(
-            &office,
-            &local_b,
-            &[
-                (&p_counter_b, Some(dummy)),
-                (&p_task_b, Some(&raw_b)),
-                (&p_ev_b, Some(dummy)),
-                (&p_chk_b, None),
-            ],
-        )
-        .unwrap());
-
-        // 2. Sidecar-only entry for an existing locally owned task succeeds; for remote task fails.
-        assert!(is_locally_owned_satellite_work_entry(
-            &office,
-            &local_a,
-            &[(&p_chk_a, Some(dummy))]
-        )
-        .unwrap());
-        assert!(!is_locally_owned_satellite_work_entry(
-            &office,
-            &local_b,
-            &[(&p_chk_a, Some(dummy))]
-        )
-        .unwrap());
-
-        // 3. Remote task, remote counter, mixed local+remote entry, and empty local_codes fail.
-        assert!(!is_locally_owned_satellite_work_entry(
-            &office,
-            &local_b,
-            &[(&p_task_a, Some(&raw_a))]
-        )
-        .unwrap());
-        assert!(!is_locally_owned_satellite_work_entry(
-            &office,
-            &local_b,
-            &[(&p_counter_a, Some(dummy))]
-        )
-        .unwrap());
-        assert!(!is_locally_owned_satellite_work_entry(
-            &office,
-            &local_b,
-            &[(&p_task_b, Some(&raw_b)), (&p_ev_a, Some(dummy))],
-        )
-        .unwrap());
-        assert!(!is_locally_owned_satellite_work_entry(
-            &office,
-            &empty,
-            &[(&p_task_b, Some(&raw_b))]
-        )
-        .unwrap());
-
-        // 4. Deletions of Task, OfficeTaskCounter, Event, Comment, mismatched rec.id, and bad JSON fail.
-        assert!(
-            !is_locally_owned_satellite_work_entry(&office, &local_b, &[(&p_task_b, None)])
-                .unwrap()
-        );
-        assert!(
-            !is_locally_owned_satellite_work_entry(&office, &local_b, &[(&p_counter_b, None)])
-                .unwrap()
-        );
-        assert!(!is_locally_owned_satellite_work_entry(
-            &office,
-            &local_b,
-            &[(&p_task_b, Some(&raw_b)), (&p_ev_b, None)],
-        )
-        .unwrap());
-        assert!(!is_locally_owned_satellite_work_entry(
-            &office,
-            &local_b,
-            &[(&p_task_b, Some(&raw_b)), (&p_cmt_b, None)],
-        )
-        .unwrap());
-        assert!(!is_locally_owned_satellite_work_entry(
-            &office,
-            &local_b,
-            &[(&p_task_b, Some(&raw_mismatch_id))],
-        )
-        .unwrap());
-        assert!(!is_locally_owned_satellite_work_entry(
-            &office,
-            &local_b,
-            &[(&p_task_b, Some(b"not-json"))],
-        )
-        .unwrap());
-    }
-}
+#[path = "replication_tests.rs"]
+mod work_outbox_filter_tests;

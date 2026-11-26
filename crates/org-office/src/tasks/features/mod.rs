@@ -1,8 +1,11 @@
 //! Engine-independent domain features and read queries for unified typed tasks (`TASK-49`, `TASK-77`).
 
+pub mod checklist;
 pub mod core;
+pub mod create;
 pub mod ops;
 pub mod queries;
+mod write;
 
 use std::collections::{BTreeSet, VecDeque};
 
@@ -11,21 +14,23 @@ use org_proto::tasks::{
     TaskWatcherWire, TASK_BODY_MAX_CHARS, TASK_TITLE_MAX_CHARS,
 };
 use org_proto::{ApiError, ErrorCode};
-use org_store::{Change, Id, Refusal};
-use serde_json::{json, Value};
+use org_store::{Id, Refusal};
+use serde_json::json;
 
 use crate::organization::records::{Employee, EmployeeStatus, TeamStatus};
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{
-    encode_json, event_path, task_path, ChecklistStepRecord, TaskCommentRecord, TaskDetailsRecord,
-    TaskEventRecord, TaskRecord, TaskWatcherRecord,
+    ChecklistStepRecord, TaskCommentRecord, TaskDetailsRecord, TaskEventRecord, TaskRecord,
+    TaskWatcherRecord,
 };
 
-pub use self::core::{AssignTask, CreateTask, TransitionTask, UpdateTask};
-pub use self::ops::{
-    AddDependency, ChecklistAdd, ChecklistCheck, ChecklistEdit, ChecklistMove, ChecklistRemove,
-    CommentTask, RemoveDependency, UnwatchTask, WatchTask,
+pub use self::checklist::{
+    ChecklistAdd, ChecklistCheck, ChecklistEdit, ChecklistMove, ChecklistRemove,
 };
+pub(crate) use self::core::rewrite_task;
+pub use self::core::{AssignTask, TransitionTask, UpdateTask};
+pub use self::create::{CreateTask, CreatedTask, TaskNumbering, TASK_NUMBER_BLOCK};
+pub use self::ops::{AddDependency, CommentTask, RemoveDependency, UnwatchTask, WatchTask};
 pub use self::queries::{
     inspect_task, list_comments, list_history, list_labels, list_tasks, task_dependencies,
 };
@@ -339,33 +344,6 @@ pub(crate) fn check_dependency_acyclic<R: TasksRead>(
         }
     }
     Ok(())
-}
-
-/// Appends the updated `task.json` and immutable `events/<rev>.json` into `change`.
-pub(crate) fn write_task_and_event(
-    change: Change,
-    task: &TaskRecord,
-    actor_id: &Id,
-    at: &str,
-    command_id: &str,
-    event_change: Value,
-) -> Result<Change, Refusal> {
-    let task_bytes = encode_json(task)
-        .map_err(|e| refuse(ErrorCode::StorageError, format!("encode task: {e}")))?;
-    let event = TaskEventRecord::build(
-        task.id.clone(),
-        task.meta.revision,
-        at.to_owned(),
-        actor_id.clone(),
-        command_id.to_owned(),
-        &event_change,
-    )
-    .map_err(|e| refuse(e.code, e.message))?;
-    let event_bytes = encode_json(&event)
-        .map_err(|e| refuse(ErrorCode::StorageError, format!("encode event: {e}")))?;
-    Ok(change
-        .put(task_path(&task.id), task_bytes)
-        .put(event_path(&task.id, task.meta.revision), event_bytes))
 }
 
 pub(crate) fn build_ref_summary(task: &TaskRecord) -> TaskRefSummary {
