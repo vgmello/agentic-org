@@ -1872,6 +1872,83 @@ async function checkA2AScale(page: Page) {
   await checkA2ADrawerTargets(page);
   await checkAgentProfileA2A(page);
 }
+/* ---------------------------------------------------------------- composer: @ mentions and / commands */
+const assistOptions = (page: Page, field: string) => page.locator(`#${field}-assist [role="option"] .chat-assist-label`).allInnerTexts();
+async function checkMentionAutocomplete(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  const field = page.locator("#compose");
+  await field.click();
+  await page.keyboard.type("@");
+  assert.equal((await assistOptions(page, "compose"))[0], "@here", "@here is offered in a channel");
+  assert.equal(await field.getAttribute("aria-activedescendant"), "compose-assist-0");
+  await page.keyboard.press("ArrowDown");
+  assert.equal(await field.getAttribute("aria-activedescendant"), "compose-assist-1", "Arrow keys move the highlight");
+  assert.equal(await page.locator("#compose-assist-1").getAttribute("aria-selected"), "true");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("#compose-assist").count(), 0, "Esc closes the list");
+  assert.equal(await field.getAttribute("aria-expanded"), "false");
+  await field.fill("");
+  await page.keyboard.type("Thanks @ka");
+  assert.equal((await assistOptions(page, "compose"))[0], "Kai", "Filtered by display name");
+  assert.match(await page.locator("#compose-assist-0 .chat-assist-hint").innerText(), /in this conversation/, "This conversation's members first");
+  await page.keyboard.press("Enter");
+  assert.equal(await field.inputValue(), "Thanks @kai ", "Enter completes to the handle");
+  await page.keyboard.type("for the fix");
+  await page.keyboard.press("Control+Enter");
+  await page.locator('.chmain .msgs > .msg:last-child .tx a[href="#/members/kai"]').waitFor();
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  await page.locator("#thread-compose").click();
+  await page.keyboard.type("cc @ad");
+  await page.keyboard.press("Tab");
+  assert.equal(await page.locator("#thread-compose").inputValue(), "cc @ada ", "Tab completes in the thread composer too");
+  await page.locator("#thread-compose").fill("");
+  await page.locator(".thread [data-act=thread-close]").click();
+}
+async function checkSlashCommands(page: Page) {
+  const field = page.locator("#compose");
+  await field.click();
+  await page.keyboard.type("/");
+  assert.deepEqual(await assistOptions(page, "compose"), ["/task", "/ask", "/assign", "/files"]);
+  assert.ok((await page.locator("#compose-assist-0 .chat-assist-hint").innerText()).length > 10, "Each command says what it does");
+  await page.keyboard.type("fi");
+  await page.keyboard.press("Enter");
+  await page.locator("#chat-files").waitFor();
+  await page.locator('#chat-files [data-act="chat-files"]').click();
+  await field.click();
+  await page.keyboard.type("/ta");
+  await page.keyboard.press("Enter");
+  const dlg = page.locator("#work-task-dialog");
+  await dlg.waitFor();
+  assert.match(await dlg.locator(".stc-ctx-title").innerText(), /Conversation excerpt · #agentic-org-v1/, "/task attaches the conversation excerpt");
+  await page.keyboard.press("Escape");
+  await dlg.waitFor({ state: "detached" });
+  await field.click();
+  await page.keyboard.type("/as");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  assert.equal(await field.inputValue(), "/assign @");
+  assert.ok((await assistOptions(page, "compose")).every((n) => !["Maya Chen", "@here"].includes(n)), "Assign offers agents only");
+  await page.keyboard.type("aver");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("T-A84");
+  await page.keyboard.press("Control+Enter");
+  await page.locator(".toast", { hasText: "Assigned T-A84 to Avery." }).waitFor();
+  assert.equal(await field.inputValue(), "");
+  await page.keyboard.type("/ask @row");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Can the flag go in v1.1?");
+  await page.keyboard.press("Control+Enter");
+  assert.match(await page.locator(".chmain .msgs > .msg:last-child .chat-ask-line").innerText(), /Question for Rowan/, "/ask posts a structured question");
+  await page.keyboard.type("/nope");
+  await page.keyboard.press("Control+Enter");
+  assert.match(await page.locator('form[data-form="send"] .chat-compose-hint').innerText(), /Unknown command/);
+  await field.fill("");
+}
+async function checkComposerAssists(page: Page) {
+  await viewport(page, 1440, 900);
+  await checkMentionAutocomplete(page);
+  await checkSlashCommands(page);
+}
 async function checkChat(page: Page) {
   await checkChatAsks(page);
   await checkChatRecords(page);
@@ -1892,6 +1969,8 @@ async function checkChat(page: Page) {
   await checkChatRound7(page);
   await page.reload();
   await checkA2AScale(page);
+  await page.reload();
+  await checkComposerAssists(page);
 }
 
 const ROUTE_CHECKS: Record<string, (page: Page, href: string, theme: string) => Promise<void>> = {

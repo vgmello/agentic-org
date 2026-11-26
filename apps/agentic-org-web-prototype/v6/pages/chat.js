@@ -1,4 +1,4 @@
-import { CH, IN, M, OFFICES } from "../data.js";
+import { CH, IN, M, OFFICES, W } from "../data.js";
 import { fitTextarea } from "./work.js";
 import { openSmartTaskComposer } from "./task-composer.js";
 import {
@@ -13,6 +13,7 @@ import {
 import { endVisit, markAllRead, newFromId, startVisit, watchUnread } from "./chat-read.js";
 import { listIsOverlay, watchListMode } from "./chat-layout.js";
 import { bindPanelResize, panelWidthStyle } from "./chat-panel-width.js";
+import { closeAssist, mentionsIn, onAssistKeydown, parseCommand, updateAssist } from "./chat-compose-assist.js";
 import {
   DEFAULT_CHAT, chatTitle, dmSources, inboxItem, openAsks, openDirectMessage, resolveChatId, sentAt, sourceHref, sourceLabel, splitTime,
 } from "./chat-model.js";
@@ -22,7 +23,7 @@ import { VIEW_CLICKS, attachmentNameHit, filesButton, filesPanelHtml, messageAtt
 import { render, route } from "../shell/router.js";
 import { CHAT_SEND_SHORTCUTS, S } from "../state.js";
 import {
-  av, esc, ic, joinSep, kindWord, mlink, moreMenu, plink, plural, presence, statusLine,
+  av, esc, ic, joinSep, kindWord, mlink, moreMenu, plink, plural, presence, statusLine, toast,
 } from "../ui.js";
 
 const chatDrafts = new Map();      /* conversation id -> unsent message */
@@ -45,6 +46,7 @@ const authorWord = (who) => (M[who].owner ? "" : kindWord(who));
 /* ---------------------------------------------------------------- message text: T- refs and @mentions become links */
 function mentionRef(match, name) {
   const lower = name.toLowerCase();
+  if (lower === "here") return `<span class="chat-here">@here</span>`;
   const key = Object.keys(M).find((k) => k === lower || M[k].name.split(" ")[0].toLowerCase() === lower);
   return key && !M[key].owner ? `<a class="alink chat-ref" href="#/members/${key}">@${esc(M[key].name)}</a>` : match;
 }
@@ -92,6 +94,11 @@ function threadHitLine(m, q) {
   return `<p class="msg-src chat-thread-hit">${ic("thread", "ic14")}<span><b>${esc(M[r.who].name)}</b> in the thread: <q class="chat-hit-quote">${esc(r.text)}</q>${more}
     <button class="alink chat-ref" type="button" data-act="thread" data-id="${esc(m.id)}" data-hit="${hits[0]}">Open in thread</button></span></p>`;
 }
+/* A structured question the owner asked an agent with /ask. */
+function askLine(m) {
+  if (!m.ask || !M[m.ask.to]) return "";
+  return `<p class="msg-src chat-ask-line">${ic("question", "ic14")}<span>Question for ${mlink(m.ask.to)} · waiting for an answer</span></p>`;
+}
 /* A thread reply also sent to the channel links back to its thread. */
 function threadCopyLine(m) {
   if (!m.inThread) return "";
@@ -115,7 +122,7 @@ function messageHtml(m, prev, opts = {}) {
   const text = m.text || status ? `<p class="tx">${richText(m.text || "")}${status}</p>` : "";
   return `<div class="msg${cont ? " cont" : ""}${m.pending ? " is-pending" : ""}" data-mid="${esc(m.id)}">${gutter}<div class="body">${head}
     ${text}${messageAttachmentsHtml(m, opts.ch)}${tools}
-    ${sourceLine(m)}${threadCopyLine(m)}${threadHitLine(m, opts.q)}${needs}${threadButton(m)}</div></div>`;
+    ${askLine(m)}${sourceLine(m)}${threadCopyLine(m)}${threadHitLine(m, opts.q)}${needs}${threadButton(m)}</div></div>`;
 }
 /* Shared preview (project Overview) renders chips, not cards; it is called as Array.map(msgHtml). */
 const msgHtml = (m, i, list) => messageHtml(m, list && i ? list[i - 1] : null);
@@ -176,7 +183,7 @@ function composerHtml(o) {
     <div class="chat-compose-row">
       ${attachButton(o.field)}
       <label class="sr-only" for="${o.field}">${esc(o.label)}</label>
-      <textarea class="field" id="${o.field}" name="message" rows="1" placeholder="${esc(o.label)}" aria-describedby="${o.note ? o.field + "-note " : ""}${o.field}-help" autocomplete="off" enterkeyhint="enter">
+      <textarea class="field" id="${o.field}" name="message" rows="1" placeholder="${esc(o.label)}" aria-describedby="${o.note ? o.field + "-note " : ""}${o.field}-help" autocomplete="off" enterkeyhint="enter" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false">
 ${esc(o.draft || "")}</textarea>
       <button class="btn ${o.button}" type="submit" title="${o.submit} (${shortcut.label})" aria-keyshortcuts="${shortcut.keys}">${ic("send", "ic20")}${o.submit}</button>
     </div>
@@ -243,10 +250,59 @@ function sendable(form, field) {
   clearAttachments(form);
   return att.files.length ? { text, files: att.files } : { text };
 }
+/* ---------------------------------------------------------------- / commands */
+/* /task: a task with this conversation's latest messages as context (the task-context excerpt). */
+function taskFromConversation(id, field) {
+  const ch = CH[id], last = [...ch.msgs].reverse().find((m) => !m.pending);
+  openSmartTaskComposer(field, last ? { prompt: "", proj: ch.proj, excerpt: { ch: id, mid: last.id } } : { prompt: "", proj: ch.proj });
+}
+function runCommand(name, id, field) {
+  if (name === "task") taskFromConversation(id, field);
+  else if (name === "files") toggleFiles();
+}
+function clearComposer(id, field) {
+  chatDrafts.delete(id);
+  field.value = "";
+  fitTextarea(field);
+}
+/* /ask @agent question: posted as the owner's structured question to that agent. */
+function postQuestion(form, field, cmd) {
+  const id = form.dataset.id;
+  if (M[cmd.who]?.kind !== "agent") { showEmptySendHint(form, field, "Use /ask @agent and your question, naming an agent."); return; }
+  CH[id].msgs.push({ id: "u" + Date.now(), who: "you", time: clock(), text: cmd.question, ask: { to: cmd.who }, mentions: [cmd.who] });
+  markAllRead(id);
+  clearComposer(id, field);
+  replaceStream(streamFor(id), streamHtml(id), true);
+  field.focus();
+}
+/* /assign @agent T-A…: the work item's assignee changes (prototype: in memory) and a toast confirms it. */
+function assignItem(form, field, cmd) {
+  const w = W.find((x) => x.id === cmd.item);
+  if (!w || M[cmd.who]?.kind !== "agent") { showEmptySendHint(form, field, "Use /assign @agent T-A…, naming an agent and an existing work item."); return; }
+  w.who = cmd.who;
+  clearComposer(form.dataset.id, field);
+  toast(`Assigned ${w.id} to ${M[cmd.who].name}.`, "check-circle");
+  field.focus();
+}
+/* A message starting with "/" is a command; true when it was handled (run, or explained). */
+function sendCommand(form, field) {
+  const cmd = parseCommand(field.value);
+  if (!cmd) return false;
+  if (cmd.name === "ask" && !cmd.invalid) postQuestion(form, field, cmd);
+  else if (cmd.name === "assign" && !cmd.invalid) assignItem(form, field, cmd);
+  else if (cmd.name === "task" || cmd.name === "files") { clearComposer(form.dataset.id, field); runCommand(cmd.name, form.dataset.id, field); }
+  else showEmptySendHint(form, field, cmd.name === "ask" || cmd.name === "assign" ? `Finish the command: /${cmd.name} @agent …` : "Unknown command. Type / to see the commands.");
+  return true;
+}
 function sendChatMessage(form) {
-  const field = form.elements.message, body = sendable(form, field);
+  const field = form.elements.message;
+  closeAssist();
+  if (sendCommand(form, field)) return;
+  const body = sendable(form, field);
   if (!body) return;
   const id = form.dataset.id, ch = CH[id];
+  const mentions = mentionsIn(body.text || "", id);
+  if (mentions.length) body.mentions = mentions;
   /* Prototype: the office confirms after a short delay; until then the message says "Sending…". */
   const message = { id: "u" + Date.now(), who: "you", time: clock(), ...body, pending: true };
   if (dmSources.has(id)) { message.src = dmSources.get(id); dmSources.delete(id); form.querySelector(".chat-compose-src")?.remove(); }
@@ -265,6 +321,9 @@ function sendThreadReply(form) {
   const field = form.elements.message, body = sendable(form, field);
   if (!body) return false;
   const ch = CH[form.dataset.ch], root = ch.msgs.find((m) => m.id === form.dataset.id);
+  closeAssist();
+  const mentions = mentionsIn(body.text || "", form.dataset.ch);
+  if (mentions.length) body.mentions = mentions;
   /* Like a main send, the reply (and its copy in the channel) says "Sending…" until the office confirms. */
   const reply = { who: "you", time: clock(), ...body, text: body.text.trim(), pending: true }, also = threadDraft(root.id).also;
   (root.thread ||= []).push(reply);
@@ -734,6 +793,7 @@ function onChatClick(e) {
 }
 function onChatInput(e) {
   const t = e.target;
+  if (t.id === "compose" || t.id === "thread-compose") updateAssist(t, t.form.dataset.ch || t.form.dataset.id, t.id === "compose");
   if (t.id === "thread-compose") { saveThreadDraft(t.form.dataset.id, { text: t.value }); fitTextarea(t); }
   else if (t.name === "also" && t.form?.dataset.form === "thread-send") saveThreadDraft(t.form.dataset.id, { also: t.checked });
   else if (t.id.startsWith("ar-")) saveAskDraft(t);
@@ -742,6 +802,7 @@ function onChatInput(e) {
 }
 function onChatKeydown(e) {
   const t = e.target;
+  if (onAssistKeydown(e)) return;
   if (t.id === "chat-search-input" && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); toggleSearch(local.search.id); return; }
   if (e.key === "Escape" && t.closest(".chat-members-panel")) { e.preventDefault(); e.stopPropagation(); toggleMembers(); return; }
   if (e.key === "Escape" && t.closest(".chat-files-panel")) { e.preventDefault(); e.stopPropagation(); toggleFiles(); return; }
@@ -806,6 +867,8 @@ function mountChat() {
   root.addEventListener("click", onChatClick);
   root.addEventListener("input", onChatInput);
   root.addEventListener("keydown", onChatKeydown);
+  root.addEventListener("focusout", (e) => { if (e.target.id === "compose" || e.target.id === "thread-compose") closeAssist(); });
+  root.addEventListener("chat-command", (e) => runCommand(e.detail.name, root.dataset.ch, e.target));
   bindAttachments(root);
   mountStream(root);
   mountThread(root);
