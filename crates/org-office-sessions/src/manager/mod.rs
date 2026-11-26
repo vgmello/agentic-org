@@ -365,6 +365,8 @@ pub struct SessionManager {
     pub(crate) config: SessionManagerConfig,
     pub(crate) store: SessionStore,
     pub(crate) bindings: RunBindingRegistry,
+    /// External (BYOA) pending logins, nonces and the lease cache (`TASK-137`).
+    pub(crate) external: crate::external::ExternalAuthState,
     enrollment: EnrollmentManager,
     pub(crate) registry: Arc<Mutex<SessionRegistry>>,
     pub(crate) last_states: Arc<Mutex<HashMap<String, SessionView>>>,
@@ -408,6 +410,7 @@ impl SessionManager {
             config,
             store,
             bindings: RunBindingRegistry::new(),
+            external: crate::external::ExternalAuthState::default(),
             enrollment,
             registry: Arc::new(Mutex::new(SessionRegistry::default())),
             last_states: Arc::new(Mutex::new(HashMap::new())),
@@ -533,9 +536,15 @@ impl SessionManager {
 
     /// Records an accepted `agent-os` command in memory and durably in `active-turn.v1.json`
     /// so mid-turn office crashes preserve accepted commands on restart (`ADR-0030` d8).
+    /// An externally bound connection's command goes to `external-history.jsonl` instead.
     pub fn record_accepted_command(&self, employee_id: &str, method: &str) {
-        self.bindings
+        let mode = self
+            .bindings
             .record_accepted_command(employee_id, method, method);
+        if matches!(mode, Some(crate::binding::BindingMode::External { .. })) {
+            self.record_external_command(employee_id, method);
+            return;
+        }
         let method_owned = method.to_owned();
         let _ = self.store.update_active_turn(employee_id, |rec| {
             rec.accepted_commands.push(method_owned);

@@ -175,7 +175,8 @@ pub(super) fn status_set(request: &Request, shared: &Shared, binding: &Binding) 
         Binding::Member {
             id,
             via_grant: false,
-        } => id,
+        }
+        | Binding::External { id, .. } => id,
         Binding::Member { .. } => {
             return bind_error(
                 request.id,

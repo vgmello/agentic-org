@@ -12,9 +12,12 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "agent-os"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "org-agent-cli",
  "org-proto",
+ "ring",
  "serde_json",
+ "sha2",
  "tempfile",
 ]
 
@@ -1105,13 +1108,17 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 name = "org-agent-cli"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "org-client",
  "org-command",
  "org-platform",
  "org-proto",
+ "ring",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]

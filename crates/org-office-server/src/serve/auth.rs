@@ -35,6 +35,9 @@ pub(crate) enum Binding {
     /// owner acts through a verified grant on a host channel, for that one call; an agent binds on
     /// the office socket without one.
     Member { id: String, via_grant: bool },
+    /// Bound as an agent through an external (BYOA) lease's fast token (`TASK-137`): `id` is the
+    /// agent, `session_id` the lease. Never via a grant; limited to collaboration calls.
+    External { id: String, session_id: String },
 }
 
 impl Binding {
@@ -58,7 +61,15 @@ impl Binding {
     /// The member the connection acts as, if it is bound as one.
     pub(super) fn member(&self) -> Option<&str> {
         match self {
-            Binding::Member { id, .. } => Some(id),
+            Binding::Member { id, .. } | Binding::External { id, .. } => Some(id),
+            Binding::Anonymous => None,
+        }
+    }
+
+    /// The lease session of an externally bound connection.
+    pub(super) fn external_session(&self) -> Option<&str> {
+        match self {
+            Binding::External { session_id, .. } => Some(session_id),
             _ => None,
         }
     }

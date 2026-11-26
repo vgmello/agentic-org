@@ -12,6 +12,7 @@ use org_proto::{frame, ApiError, ErrorCode, Hello, Request, Response};
 use super::auth::Binding;
 use super::binding::{is_gone, lookup_live_binding, Lookup};
 use super::dispatch::{answer_and_record, hello_response};
+use super::external::answer_auth;
 use super::held::{CancelOnDrop, Control, Registration};
 use super::messaging::{attach_waiting_messages_hint, handle_msg_wait_request};
 use super::shared::{deliver_hint, Shared, Subscriber};
@@ -133,6 +134,8 @@ pub(super) fn serve_connection_as(
             poll,
         );
         let mut binding = initial;
+        // `auth.*` calls made on this connection, against its budget.
+        let mut auth_calls = 0u32;
         let mut bound_waiting: Option<(String, Arc<std::sync::atomic::AtomicU32>)> = None;
         let mut subscribed = false;
         // The last subscription's thread: a new one waits for it, so a client that binds and
@@ -173,6 +176,12 @@ pub(super) fn serve_connection_as(
                 generation.fetch_add(1, Ordering::SeqCst);
                 subscribed = false;
                 held.cancel_all();
+            }
+            if let Some(auth) = answer_auth(&request, shared, &binding, &mut auth_calls) {
+                if !send(&out, request.id, &auth.response, shared.timing) || auth.close {
+                    break;
+                }
+                continue;
             }
             if request.is::<Hello>() {
                 let response = hello_response(&request, shared);

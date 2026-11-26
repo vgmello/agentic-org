@@ -164,6 +164,12 @@ fn cli_reference_documents_every_top_level_and_office_command() {
     for sub in ["create", "list", "inspect"] {
         assert_cli_reference_entry_has_use_when(&format!("`agentic-org org {sub}"));
     }
+    for sub in ["approve", "sessions", "revoke"] {
+        assert_cli_reference_entry_has_use_when(&format!("`agentic-org agent {sub}"));
+    }
+    for verb in ["login", "whoami", "logout", "exec"] {
+        assert_cli_reference_entry_has_use_when(&format!("`agent-os {verb}"));
+    }
     let office = cli::command()
         .find_subcommand_mut("office")
         .expect("office")

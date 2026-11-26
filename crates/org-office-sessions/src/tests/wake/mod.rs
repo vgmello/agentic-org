@@ -31,6 +31,7 @@ use crate::manager::{SessionManager, SessionManagerConfig};
 use crate::runtime_registry::RuntimeRegistry;
 use crate::wake::{PendingWakeItem, SuspendedAskEntry, WakeHoldReason, WakeKind, WakeOutcome};
 
+mod external_lease;
 mod lock_scope;
 mod mid_turn;
 mod queue;

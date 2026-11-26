@@ -278,9 +278,18 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org hr hire|list|inspect`
   Hire and manage agents across HQ and satellite offices over an approved office channel (confirm or withdraw pending proposals with `hr hire --id <proposal_id> [--withdraw]`).
   **Use when:** hiring an agent onto HQ or a remote satellite office from the terminal.
-- `agentic-org agent inspect|update|move|pause|resume|offboard|execution-get|execution-set`
+- `agentic-org agent inspect|update|move|pause|resume|offboard|execution-get|execution-set|approve|sessions|revoke`
   Inspect or manage hired agents and their execution configuration (`model_profile_id`, `model_id`, `permission_preset`, optional `effort`, `system_prompt_markdown`) over an approved office channel. `execution-set` is a full replacement: `--effort low|medium|high|xhigh|max` sets the agent's reasoning effort (any other value is refused), and leaving it out returns the agent to the runtime's default. Claude Code receives the level as `--effort`; Codex receives it as `model_reasoning_effort`, with `max` running as Codex's highest level, `xhigh`. A changed effort recycles the agent's warm session. `hr hire --effort <level>` sets it at hire.
   **Use when:** checking agent status, placement, lifecycle state, or configuring an agent's model profile, permission preset, reasoning effort, and system prompt.
+- `agentic-org agent approve <code> [--ttl <duration>] [--takeover]` (also `--code <code>`)
+  Approve an external ("bring your own agent") workspace that ran `agent-os login --as @<handle>`: the code is the one `agent-os login` printed (`ABCD-EFGH`, valid 10 minutes, locked after 3 wrong attempts). The agent gets one active external lease (default `--ttl 24h`, 5 minutes to 7 days); approving supersedes the agent's previous external session and closes its connections. A live managed turn is refused unless `--takeover` parks it first; while the lease is active, the agent's wakes stay queued instead of starting managed runs. Only the owner, a person who may hire, or the agent's manager or team lead may approve; an agent can never approve itself.
+  **Use when:** letting a terminal, IDE or external agent harness act as an organization agent after it asked to sign in.
+- `agentic-org agent sessions @<handle>` (also `--member <handle|employee_id>`)
+  Show an agent's active external lease (workspace, key fingerprint, approver, expiry) and its recent sign-in history (`approved`, `superseded`, `token_issued`, `revoked`, `logout`, `offboarded`, commands).
+  **Use when:** checking which external workspace an agent is signed in from and until when.
+- `agentic-org agent revoke @<handle> [<session_id>]` (also `--member`, `--session`)
+  End an agent's external lease at once: its fast tokens stop working, its connections close, and its held wakes run again as managed turns. Pausing or offboarding the agent revokes it too.
+  **Use when:** cutting off an external agent session immediately (a lost laptop, a finished pairing session).
 - `agentic-org team list|inspect|create|update`
   Discover, inspect, or create organization teams over an approved office channel.
   **Use when:** finding a `team_id` before hiring agents or creating projects.
@@ -361,6 +370,21 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
 - `agent-os budget status`
   Own daily, monthly, and task budget status.
   **Use when:** checking remaining budget allowance before starting expensive work.
+- `agent-os login --as @<handle> [--office <office_id> | --socket <path>] [--wait <seconds>] [--workspace <dir>] [--label <text>]`
+  Sign a workspace in as an organization agent you bring yourself: generates a workspace Ed25519 key, prints `agentic-org agent approve <code>` (and the agent's page in the web app) on standard error, waits for a person to approve it, then saves the binding outside Git in `<application base>/agent-os/workspaces/<sha256 of the workspace root>/` (`0700`: `binding.v1.json`, `key.ed25519.pkcs8`, `token.v1`, each `0600`, never through a symbolic link) and prints `whoami` plus the command catalogue. The workspace root is the Git root of the working folder (else the folder). A development build may move the state with `AGENT_OS_STATE_DIR` or `ORG_DEV_ACCOUNT_BASE`.
+  **Use when:** running your own agent harness (or a terminal) as an organization agent instead of an office-launched managed run.
+- `agent-os whoami`
+  The agent, office, mode (`managed` or `external`), session and expiries this shell acts as.
+  **Use when:** checking which identity a command will act as before running it.
+- `agent-os logout [--workspace <dir>]`
+  End this workspace's external session on the office (signed with the workspace key) and remove its local binding, key and token.
+  **Use when:** finishing work in an external workspace or handing the agent back to managed runs.
+- `agent-os exec --as @<handle> [--ttl <duration>] [--takeover] [--office <office_id> | --socket <path>] -- <command...>`
+  Mint an external session with your signed-in `agentic-org` (`agentic-org agent approve`, or `AGENTIC_ORG_BIN`), run the command with `AGENT_OS_SESSION_TOKEN`, `AGENT_OS_BINDING_FILE`, `AGENT_OS_SOCKET` and `AGENT_OS_AGENT_ID` set (the token file is refreshed while it runs), and end the session when it exits.
+  **Use when:** launching one external agent harness as an organization agent without a manual approval step.
+
+Binding order: `AGENT_OS_BINDING_FILE` / `AGENT_OS_SESSION_TOKEN` with `AGENT_OS_SOCKET` (or `AGENT_OS_OFFICE`) always win (managed runs and `agent-os exec`); otherwise `agent-os` walks up from the working folder to its Git root looking for a signed-in workspace. An external workspace's fast token lives in office memory only (1 hour); a stale token, or one the office no longer knows after a restart, is refreshed with one Ed25519 challenge-response. An external session may only use collaboration commands (messages, chat, tasks, directory, status, projects, processes, skills, own budget).
+
 - `agent-os org|team|person|agent|project|role|hr|member <verb>`
   Organization structure, directory cards, role catalog, and HR hiring lifecycle.
   **Use when:** inspecting org/team/project structure, reading role definitions, or running authorized HR hiring and agent lifecycle workflows.

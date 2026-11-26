@@ -133,6 +133,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             sessions: None,
             run_binding_verify: None,
             run_binding_active: None,
+            external_auth: None,
             record_agent_command: None,
             waiting_messages_counter: None,
             on_agent_stop: None,

@@ -8,6 +8,8 @@
 //! - Standing 7-part agent instructions & generated `agent-os` command catalogue (`doc-27` / `FC-171`)
 //! - Office-owned sub-agents and cross-turn background task tracking & reaping (`ADR-0025`)
 //! - Per-run cryptographic `AGENT_OS_SESSION_TOKEN` & kernel descendant verification (`CLI-12`, `SUB-3`)
+//! - External (BYOA) agent leases, Ed25519 challenge-response and RAM-only fast tokens under a
+//!   single-active-lease invariant (`TASK-137`)
 //! - Restart continuation & stall watchdog (`ADR-0030` / `LIVE-9..13`)
 //! - Browser-driven provider CLI enrollment & wrapped credential custody (`ADR-0032` / `ENROLL-1..6`)
 
@@ -16,6 +18,7 @@
 pub mod binding;
 pub mod credentials;
 mod employee_locks;
+mod external;
 mod host_auth;
 pub mod instructions;
 mod lifecycle;
@@ -31,11 +34,14 @@ pub mod subscription_usage;
 pub mod transcript;
 pub mod wake;
 
-pub use binding::{AcceptedCommandRecord, ActiveRunBinding, BindingRejection, RunBindingRegistry};
+pub use binding::{
+    AcceptedCommandRecord, ActiveRunBinding, BindingMode, BindingRejection, RunBindingRegistry,
+};
 pub use credentials::{
     CliEnrollmentDriver, CredentialMetadata, CredentialVault, EnrollmentDriver, EnrollmentManager,
     EnrollmentOutcome, EnrollmentPrompt, EnrollmentVaultError,
 };
+pub use external::{ExternalLeaseRecord, EXTERNAL_LEASE_VERSION};
 pub use instructions::{
     assemble_standing_instructions, compose_turn_objective, install_command_catalogue,
     verify_command_references, CommandCatalogue, InstructionInput, TurnTrigger,
