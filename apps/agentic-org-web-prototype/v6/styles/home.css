@@ -601,7 +601,7 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 .hb-pillar-name {
   display: inline-flex; align-items: center; gap: 7px;
   font-size: var(--fs-xs); line-height: 1rem; font-weight: 600;
-  letter-spacing: .11em; text-transform: uppercase; color: #C5D8EC;
+  letter-spacing: .05em; text-transform: uppercase; color: var(--hb-muted);
 }
 .hb-pillar-name:hover { color: var(--hb-ink); }
 .hb-pillar-pill {
@@ -625,11 +625,11 @@ a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
 .hb-pillar-primary { display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
 .hb-pillar-num {
   font-family: var(--font-sans);
-  font-size: clamp(1.5rem, 1.85vw, 1.95rem); line-height: 1.05; font-weight: var(--fw-kpi);
+  font-size: clamp(1.625rem, 2vw, 2.125rem); line-height: 1; font-weight: 500;
   letter-spacing: var(--ls-kpi); color: var(--hb-ink); font-variant-numeric: tabular-nums;
 }
-.hb-pillar-unit { font-size: var(--fs-sm); font-weight: 500; color: var(--hb-muted); white-space: nowrap; }
-.hb-pillar-right { font-size: var(--fs-xs); font-weight: 600; color: var(--hb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hb-pillar-unit { font-size: var(--fs-sm); font-weight: 400; color: var(--hb-muted); white-space: nowrap; }
+.hb-pillar-right { font-size: var(--fs-xs); font-weight: 500; color: var(--hb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hb-pillar-right.ok { color: var(--tone-ok-ink); }
 .hb-pillar-right.warn { color: var(--tone-warn-ink); }
 
@@ -658,17 +658,17 @@ a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
   transition: background-color .14s ease;
 }
 a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
-.hb-sub-lbl { font-size: var(--fs-xs); font-weight: 500; color: var(--hb-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb-sub-lbl { font-size: var(--fs-xs); font-weight: 400; color: var(--hb-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hb-sub-val {
   display: inline-flex; align-items: baseline; gap: 6px;
-  font-size: var(--fs-base); line-height: 1.25; font-weight: 600; color: var(--hb-body);
+  font-size: var(--fs-base); line-height: 1.25; font-weight: 500; color: var(--hb-ink);
   font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .hb-sub-val.is-offices { gap: 5px; font-size: var(--fs-base); }
 .hb-sub-ok { color: var(--tone-ok-ink); }
 .hb-sub-bad { color: var(--tone-bad-ink); }
 .hb-sub-sep { color: var(--hb-dim); font-weight: 500; }
-.hb-sub-meta { font-size: var(--fs-xs); font-weight: 600; color: var(--hb-muted); }
+.hb-sub-meta { font-size: var(--fs-xs); font-weight: 500; color: var(--hb-muted); }
 .hb-sub-meta.ok { color: var(--tone-ok-ink); }
 .hb-sub-meta.warn { color: var(--tone-warn-ink); }
 .hb-sub-meta.bad { color: var(--tone-bad-ink); }
@@ -759,6 +759,7 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   font-size: clamp(1.25rem, 1.8vw, 1.5rem);
   line-height: 1.26; font-weight: var(--fw-heading); letter-spacing: var(--ls-display); color: var(--hb-ink);
   font-optical-sizing: auto;
+  text-wrap: balance;
   max-width: 48ch;
 }
 .hb-spot-rec {
@@ -948,8 +949,7 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 }
 .hb-ai-eyebrow {
   display: inline-flex; align-items: center; gap: 6px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs); font-weight: 600; letter-spacing: .11em;
+  font-size: var(--fs-xs); font-weight: 600; letter-spacing: .06em;
   text-transform: uppercase; color: var(--tone-accent-ink);
 }
 .hb-ai-eyebrow .ic { width: 12px; height: 12px; color: var(--tone-accent); }
@@ -975,8 +975,7 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 .hb-dig-subhd {
   display: flex; align-items: center; justify-content: space-between;
   padding-top: 2px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs); font-weight: 600; letter-spacing: .11em;
+  font-size: var(--fs-xs); font-weight: 600; letter-spacing: .06em;
   text-transform: uppercase; color: var(--hb-dim);
 }
 
@@ -1049,16 +1048,16 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   .hb-cos-memo.is-expanded .hb-cos-scroll::after { display: none; }
   .hb-cos-expand { display: inline-flex; }
 }
-.hb-cos-sec { display: flex; flex-direction: column; gap: 5px; }
+.hb-cos-sec { display: flex; flex-direction: column; gap: 6px; }
 .hb-cos-k {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs); font-weight: 700; letter-spacing: .10em;
+  font-size: var(--fs-xs); line-height: 1rem; font-weight: 600; letter-spacing: .06em;
   text-transform: uppercase; color: var(--tone-accent-ink);
 }
 .hb-cos-k.is-warn { color: var(--tone-warn-ink); }
 .hb-cos-k.is-ok { color: var(--tone-ok-ink); }
 .hb-cos-p {
-  font-size: var(--fs-md); line-height: 1.58; color: var(--hb-body);
+  font-size: var(--fs-base); line-height: 1.62; color: var(--hb-body);
+  text-wrap: pretty;
 }
 .hb-cos-p strong { color: var(--hb-ink); font-weight: 600; }
 .hb-cos-sig {
@@ -1078,7 +1077,6 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 .hb-cos-sig-name { font-size: var(--fs-base); font-weight: 600; color: var(--hb-ink); }
 .hb-cos-sig-role { font-size: var(--fs-xs); color: var(--hb-muted); }
 .hb-cos-sig-meta {
-  font-family: var(--font-mono);
   font-size: var(--fs-xs); color: var(--hb-dim); white-space: nowrap;
 }
 .hb-cos-sig-r { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
@@ -1259,7 +1257,7 @@ a.hb-card-lead:hover { color: var(--hb-ink); }
 .hb-hor-hd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .hb-hor-title {
   font-size: var(--fs-xs); line-height: 1rem; font-weight: 600;
-  letter-spacing: .12em; text-transform: uppercase; color: #DCEBFA;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--hb-muted);
 }
 .hb-hor-sub { font-size: var(--fs-xs); color: var(--hb-dim); }
 .hb-hor-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }

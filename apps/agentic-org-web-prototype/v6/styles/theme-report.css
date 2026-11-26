@@ -298,11 +298,11 @@ html[data-theme^="report"] .hb-pillar:last-child { padding-right: 0; }
 html[data-theme^="report"] .hb-pillar + .hb-pillar { border-left: 1px solid #EEF1F6; }
 html[data-theme^="report"] .hb-pillar:hover { background: transparent; box-shadow: none; }
 html[data-theme^="report"] .hb-pillar-name {
-  color: #475569; font-weight: 700; letter-spacing: .12em;
+  color: #475569; font-weight: 600; letter-spacing: .05em;
 }
 html[data-theme^="report"] .hb-pillar-name .ic { color: #64748B; }
 html[data-theme^="report"] .hb-pillar-num {
-  line-height: 1.05; font-weight: var(--fw-kpi); letter-spacing: var(--ls-kpi); color: #0B101B;
+  line-height: 1; font-weight: 500; letter-spacing: var(--ls-kpi); color: #0B101B;
 }
 html[data-theme^="report"] .hb-pillar-pill {
   border-radius: 3px; font-weight: 600; letter-spacing: .01em;
@@ -552,7 +552,7 @@ html[data-theme^="report"] .hb-card-foot { border-top: 1px solid #F1F4F8; }
 html[data-theme^="report"] .hb-horizon {
   border-radius: 0; border-bottom: 1px solid #EAEEF4; box-shadow: none; padding: 20px 0;
 }
-html[data-theme^="report"] .hb-hor-title { color: #0B101B; letter-spacing: .12em; font-weight: 700; }
+html[data-theme^="report"] .hb-hor-title { color: #475569; letter-spacing: .06em; font-weight: 600; }
 html[data-theme^="report"] .hb-hor-item { border-radius: 4px; background: #F8F9FB; box-shadow: none; }
 html[data-theme^="report"] .hb-hor-item:hover { background: #F1F4F8; box-shadow: none; }
 html[data-theme^="report"] .hb-hor-date { border-radius: 3px; background: #0B101B; box-shadow: none; }
