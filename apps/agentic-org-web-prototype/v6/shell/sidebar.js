@@ -1,21 +1,16 @@
 import { P, TEAMS } from "../data.js";
 import { fitTextarea } from "../pages/work.js";
 import { CMDK, closeCmdk } from "./cmdk.js";
-import { homeSearchField, homeSearchInput, own } from "./router.js";
+import { own } from "./router.js";
+import { getRunningJobs, unreadNotificationsCount } from "./topbar-utils.js";
 import { S, THEME_OPTIONS, applyNavCollapsed, sidebarHasOpenMenu } from "../state.js";
 import { effectiveHealth, esc, ic, seg, unhandled } from "../ui.js";
 
 /* ---------------------------------------------------------------- sidebar */
 const NAV_CAP = 5;
 const TEAM_ICON = { leadership: "flag", product: "adjustments", platform: "terminal", app: "bolt", quality: "doc-check" };
-function syncNavSearchChrome(homeError, r0) {
-  const cmdkShell = document.getElementById("cmdk-shell");
+function syncNavSearchChrome(homeError) {
   const cmdkTr = document.getElementById("cmdk-trigger");
-  homeSearchField.classList.toggle("is-offline", homeError);
-  homeSearchInput.disabled = homeError;
-  homeSearchInput.placeholder = homeError ? "HQ office offline — search unavailable"
-    : r0 === "home" ? "Search, run a command, or ask Tess…" : "Search…";
-  if (cmdkShell) cmdkShell.classList.toggle("is-offline", homeError);
   if (cmdkTr) { cmdkTr.classList.toggle("is-offline", homeError); cmdkTr.disabled = homeError; }
   if (homeError && CMDK.open) closeCmdk(false);
 }
@@ -78,8 +73,8 @@ function renderNav(route) {
   const [r0, r1] = route;
   const homeEmpty = r0 === "home" && S.homeState === "empty";
   const homeError = r0 === "home" && S.homeState === "error";
-  const badge = (homeEmpty || homeError) ? 0 : unhandled().length;
-  syncNavSearchChrome(homeError, r0);
+  const badge = (homeEmpty || homeError) ? 0 : unhandled().length + unreadNotificationsCount() + getRunningJobs().length;
+  syncNavSearchChrome(homeError);
   syncOfficeNavStatus(homeError);
   const item = (href, label, icon, cur, extra = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span>${extra}</a></li>`;
   const favs = homeEmpty ? [] : S.favProjs.filter((p) => P[p] && !P[p].archived);

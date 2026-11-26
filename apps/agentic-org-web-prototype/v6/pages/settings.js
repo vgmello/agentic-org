@@ -66,10 +66,6 @@ function pagePreferences() {
         <div><p class="lbl" id="cozy-contrast-label">AA Contrast</p><p class="muted help" id="cozy-contrast-help">Makes glass surfaces more opaque and text easier to read.</p></div>
         <button class="switch" type="button" role="switch" data-act="cozy-contrast" aria-checked="${S.cozyContrast}" aria-labelledby="cozy-contrast-label" aria-describedby="cozy-contrast-help"></button>
       </div>` : ""}
-      <div class="pref theme-contrast">
-        <div><p class="lbl" id="tess-pill-label">Show Tess on screen</p><p class="muted help" id="tess-pill-help">Keep Tess parked at bottom-right. You can always press ⌘/ (or Ctrl /) to open Tess even when hidden.</p></div>
-        <button class="switch" type="button" role="switch" data-act="toggle-tess-pill" aria-checked="${S.showTessPill}" aria-labelledby="tess-pill-label" aria-describedby="tess-pill-help"></button>
-      </div>
     </div></section>
     <section class="section" aria-labelledby="h-keys"><div class="sec-h"><h2 id="h-keys">Keyboard</h2></div>
     <div class="pref"><div><p class="lbl" id="sk-l">Single-key shortcuts</p><p class="muted" id="sk-d" style="font-size:13px">Outside text fields, N opens New task and / focuses Search. Press S for the sidebar or M for the Inbox menu, then type an item's first letter. Repeat the letter to select the next match.</p></div>

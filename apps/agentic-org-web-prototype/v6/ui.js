@@ -230,19 +230,31 @@ function feed(items, opts = {}) {
   return `<${tag} class="feed${opts.day ? " activity-timeline" : ""}" role="list">${items.map((a) => feedItemHtml(a, opts)).join("")}</${tag}>`;
 }
 
-function toast(text, icon = "info", undoFn = null) {
+function toast(text, icon = "info", action = null) {
   const t = document.createElement("div");
   t.className = "toast";
   t.innerHTML = `${ic(icon)}<p>${esc(text)}</p>`;
-  if (typeof undoFn === "function") {
+  if (typeof action === "function") {
     const b = document.createElement("button");
     b.type = "button"; b.className = "toast-undo"; b.textContent = "Undo";
-    b.addEventListener("click", () => { t.remove(); undoFn(); });
+    b.addEventListener("click", () => { t.remove(); action(); });
     t.appendChild(b);
+  } else if (action && typeof action === "object" && action.label) {
+    const el = document.createElement(action.href ? "a" : "button");
+    el.className = "toast-undo";
+    el.textContent = action.label;
+    if (action.href) {
+      el.href = action.href;
+      el.addEventListener("click", () => t.remove());
+    } else {
+      el.type = "button";
+      el.addEventListener("click", () => { t.remove(); action.onClick?.(); });
+    }
+    t.appendChild(el);
   }
   const box = document.querySelector(".work-panel[open] .toasts") || document.getElementById("toasts");
   box.appendChild(t);
-  setTimeout(() => t.remove(), undoFn ? 5500 : 3200);
+  setTimeout(() => t.remove(), action ? 5500 : 3200);
 }
 
 export {

@@ -109,6 +109,17 @@
       </svg>
     </button>
   </div>
+  <div class="sidebar-start" id="sidebar-start" role="group" aria-label="Start menu">
+    <button class="start-search" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-label="Search or run command" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog" title="Search (⌘K)">
+      <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
+      <span class="lbl">Search…</span>
+      <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
+    </button>
+    <button class="start-tess" id="sidebar-tess-trigger" type="button" data-act="tess-toggle" aria-label="Ask Tess" aria-keyshortcuts="Meta+/ Control+/" aria-pressed="false" title="Ask Tess (⌘/)">
+      <svg class="ic ic16" aria-hidden="true"><use href="#i-sparkle"/></svg>
+      <span class="start-tess-busy" id="sidebar-tess-busy" hidden aria-hidden="true"></span>
+    </button>
+  </div>
   <nav class="nav" aria-label="Main" id="nav"></nav>
   <div class="foot">
     <div class="menu-wrap">
@@ -119,7 +130,6 @@
       </button>
       <div class="menu up" id="menu-acct" role="menu" hidden>
         <button role="menuitem" type="button" data-act="go" data-v="#/settings/appearance"><svg class="ic ic20" aria-hidden="true"><use href="#i-adjustments"/></svg>Your preferences</button>
-        <button role="menuitemcheckbox" id="menu-tess-toggle" type="button" data-act="toggle-tess-pill" aria-checked="true"><svg class="ic ic20" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Show Tess on screen</span><span class="menu-chk" aria-hidden="true">✓</span></button>
         <button role="menuitem" type="button" data-act="shortcuts-help"><svg class="ic ic20" aria-hidden="true"><use href="#i-question"/></svg><span>Keyboard shortcuts</span><kbd class="menu-kbd">?</kbd></button>
         <button role="menuitem" type="button" data-act="proto" data-v="Switch organization (goes to the welcome screen)"><svg class="ic ic20" aria-hidden="true"><use href="#i-arrows-updown"/></svg>Switch organization</button>
         <button role="menuitem" type="button" data-act="proto" data-v="About Agentic Org"><svg class="ic ic20" aria-hidden="true"><use href="#i-info"/></svg>About</button>
@@ -143,28 +153,10 @@
   </div>
   <header class="topbar" id="home-toolbar">
     <button class="btn ghost icon menu-btn" type="button" data-act="drawer" aria-label="Open navigation" aria-controls="sidebar"><svg class="ic ic20" aria-hidden="true"><use href="#i-menu"/></svg></button>
-    <div class="cmdk-shell" id="cmdk-shell">
+    <div class="cmdk-shell" id="cmdk-shell" hidden>
       <div class="cmdk-local" id="cmdk-local" hidden></div>
-      <label class="cmdk-trigger cmdk-home-field" id="cmdk-home-field" hidden>
-        <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
-        <input id="cmdk-home-input" type="search" placeholder="Search, run a command, or ask Tess…" autocomplete="off" aria-label="Search, run a command, or ask Tess" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cmdk-list">
-        <kbd id="cmdk-home-kbd" aria-hidden="true">⌘K</kbd>
-      </label>
-      <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-label="Search workspace" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog" title="Search workspace">
-        <svg class="ic ic16" aria-hidden="true"><use href="#i-terminal"/></svg>
-        <span class="cmdk-ph">Workspace</span>
-        <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
-      </button>
-      <div class="cmdk-dialog cmdk-home-results" id="cmdk-home-results" hidden></div>
     </div>
-    <div class="topbar-utils" id="topbar-utils">
-      <div class="notif-wrap" id="notif-wrap">
-        <button class="util-btn util-notif" id="notif-trigger" type="button" data-act="notif-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="notif-popover" aria-label="Notifications" title="Notifications">
-          <svg class="ic ic16" aria-hidden="true"><use href="#i-bell"/></svg>
-        </button>
-      </div>
-      <span class="sr-only" id="notif-live" aria-live="polite"></span>
-    </div>
+    <span class="sr-only" id="notif-live" aria-live="polite"></span>
   </header>
   <main id="main" tabindex="-1"></main>
 </div>
@@ -173,7 +165,6 @@
 </p>
 
 <div id="overlay-root"></div>
-<div class="notif-popover" id="notif-popover" role="dialog" aria-label="Notifications" hidden></div>
 <div class="tess-panel-scrim" id="tess-panel-scrim" data-act="tess-close" hidden></div>
 <aside class="tess-panel" id="tess-panel" aria-label="Tess assistant" hidden></aside>
 <div class="cmdk-backdrop" id="cmdk-root" hidden>
