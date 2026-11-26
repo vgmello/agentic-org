@@ -11,6 +11,10 @@
 //! rules; `rules` reads the native protocol's organization commands.
 
 pub mod accounting;
+/// Attachments: blobs, media validation, staging, the shared family and the private space.
+pub mod attachments;
+/// The one Phase-1 authorization choke-point for attachments (`TASK-98.1`).
+pub mod authz;
 pub mod backup;
 pub mod budgets;
 /// The stores an office keeps beside its journal, which agents' sandboxes mask.

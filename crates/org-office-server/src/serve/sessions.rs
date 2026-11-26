@@ -4,7 +4,9 @@ use org_proto::{ApiError, ErrorCode, Request, Response};
 
 use super::auth::Binding;
 use super::org::{notify_agent_stop_on_lifecycle, project_read, revoke_bound_member};
-use super::rpc::{costs_rpc, federation_rpc, git_rpc, processes_rpc, providers_rpc, tasks_rpc};
+use super::rpc::{
+    attachments_rpc, costs_rpc, federation_rpc, git_rpc, processes_rpc, providers_rpc, tasks_rpc,
+};
 use super::shared::Shared;
 
 /// Dispatches `project.list` and `project.inspect` when `request` names one of them.
@@ -99,6 +101,7 @@ pub(super) fn project_or_hiring(
         .or_else(|| hiring_rpc(request, shared, binding))
         .or_else(|| sessions_rpc(request, shared, binding))
         .or_else(|| tasks_rpc(request, shared, binding))
+        .or_else(|| attachments_rpc(request, shared, binding))
         .or_else(|| git_rpc(request, shared, binding))
         .or_else(|| processes_rpc(request, shared, binding))
         .or_else(|| costs_rpc(request, shared, binding))

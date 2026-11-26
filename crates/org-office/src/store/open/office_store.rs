@@ -15,6 +15,7 @@ use org_store::{
 use super::super::sqlite::SqliteEngine;
 use super::{EngineChoice, OfficeEngine, ReadOp, StoreConfig, StoreOp};
 use crate::{
+    attachments::projector::AttachmentFiles,
     messaging::projector::MessagingFiles,
     office_local::{clean_stop, projector::OfficeLocalFiles, records::CleanStop},
     organization::projector::OrganizationFiles,
@@ -87,6 +88,7 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let messaging: Arc<dyn Projector<E>> = Arc::new(MessagingFiles::new(organization.clone()));
     let tasks: Arc<dyn Projector<E>> = Arc::new(TaskFiles::new());
     let processes: Arc<dyn Projector<E>> = Arc::new(ProcessFiles::new());
+    let attachments: Arc<dyn Projector<E>> = Arc::new(AttachmentFiles::new());
     let local = OfficeLocalFiles::new(organization, here.office_id.clone());
     #[cfg_attr(
         not(any(test, feature = "testkit")),
@@ -101,6 +103,7 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
         messaging,
         tasks,
         processes,
+        attachments,
         Arc::new(local),
     ];
     #[cfg(any(test, feature = "testkit"))]

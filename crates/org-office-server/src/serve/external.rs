@@ -98,8 +98,9 @@ const EXTERNAL_CALLS: &[&str] = &[
     "subscribe",
 ];
 
-/// Call families an externally bound connection may make: messages, chat and tasks.
-const EXTERNAL_FAMILIES: &[&str] = &["msg.", "chat.", "dm.", "tasks."];
+/// Call families an externally bound connection may make: messages, chat, tasks and their
+/// files (`attachment.*`, each file decided by the office's policy; never a private one).
+const EXTERNAL_FAMILIES: &[&str] = &["msg.", "chat.", "dm.", "tasks.", "attachment."];
 
 /// Whether an externally bound connection may call `method`: the organization's collaboration
 /// primitives only.
@@ -116,7 +117,7 @@ pub(super) fn external_refusal(id: u64) -> Response {
         id,
         ApiError::new(
             ErrorCode::NotAuthorized,
-            "an external agent session may only use collaboration commands (messages, chat, tasks, directory, status)",
+            "an external agent session may only use collaboration commands (messages, chat, tasks, attachments, directory, status)",
         ),
     )
 }

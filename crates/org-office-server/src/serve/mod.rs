@@ -158,6 +158,9 @@ pub type ChatFn = Box<
 /// Dispatches B4/B5/B4b unified `tasks.*` RPCs (`TASK-49`, `TASK-77`).
 pub type TasksFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches the nine chunked `attachment.*` RPCs (`TASK-98.1`).
+pub type AttachmentsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// Dispatches C7 repository, worktree, and Git push RPCs (`TASK-51`).
 pub type GitFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
@@ -204,6 +207,9 @@ pub struct OfficePorts {
     pub chat: Option<ChatFn>,
     /// B4/B5/B4b unified typed tasks dispatcher (`TASK-49`, `TASK-77`).
     pub tasks: Option<TasksFn>,
+    /// The chunked `attachment.*` dispatcher (`TASK-98.1`). `None`: they answer
+    /// `unknown_method`.
+    pub attachments: Option<AttachmentsFn>,
     /// C7 repository, worktree, and Git push dispatcher (`TASK-51`).
     pub git: Option<GitFn>,
     /// C5 organization processes, standards, and built-in skills dispatcher (`TASK-44`).

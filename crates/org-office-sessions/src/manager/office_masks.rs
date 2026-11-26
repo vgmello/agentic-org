@@ -1,5 +1,6 @@
 //! The office's own trees every agent sandbox masks (`TASK-203`): each durable family, each
-//! office-local companion store ([`org_office::companion_paths`]), the restore backups beside
+//! office-local companion store ([`org_office::companion_paths`], the attachment staging area
+//! included, and every sibling office's staging area, `TASK-98.1`), the restore backups beside
 //! the two data roots ([`RESTORE_BACKUPS_DIR_NAME`]), and anything else found beside the
 //! office's `agents/` folder or beside the data roots (a legacy `durable.before-restore-*`, a
 //! store added later), so none of them is readable through `$HOME/..`. One list feeds both
@@ -14,7 +15,8 @@ use std::path::{Path, PathBuf};
 use org_agent_runtime::PathPattern;
 use org_office::backup::RESTORE_BACKUPS_DIR_NAME;
 use org_office::companion_paths::{
-    office_local_entries, CompanionKind, AGENTS_DIR_NAME, OFFICE_LOCAL_DIR,
+    office_local_entries, CompanionKind, AGENTS_DIR_NAME, ATTACHMENT_STAGING_DIR_NAME,
+    OFFICE_LOCAL_DIR,
 };
 use org_office::{Office, OfficeRole};
 
@@ -93,6 +95,11 @@ impl OfficeMasks {
                 CompanionKind::File => files.push(office_local.join(entry)),
             }
         }
+        push_sibling_staging(
+            &mut folders,
+            &durable.join(OFFICE_LOCAL_DIR),
+            &office.info().office_id,
+        );
         Self {
             folders,
             files,
@@ -122,6 +129,25 @@ impl OfficeMasks {
             .iter()
             .filter(|folder| folder.pre_create)
             .map(|folder| folder.path.as_path())
+    }
+}
+
+/// Every other office's staged uploads under the same durable root
+/// (`local/offices/*/attachment-staging/`, `TASK-98.1`), masked whole. Never pre-created: a
+/// sandbox makes nothing in another office's folder.
+fn push_sibling_staging(folders: &mut Vec<MaskedFolder>, offices: &Path, own: &str) {
+    let Ok(entries) = std::fs::read_dir(offices) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let is_own = entry.file_name().to_str() == Some(own);
+        let is_folder = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        if !is_own && is_folder {
+            folders.push(MaskedFolder {
+                path: entry.path().join(ATTACHMENT_STAGING_DIR_NAME),
+                pre_create: false,
+            });
+        }
     }
 }
 

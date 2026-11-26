@@ -348,3 +348,49 @@ fn satellite_operator_grant_allows_only_sync_status_on_satellite_after_security_
         Err(ErrorCode::NotAuthorized)
     );
 }
+
+/// A live person who is not the owner, or nobody.
+struct PersonOnly(Option<String>);
+impl Checks for PersonOnly {
+    fn verify(&self, _: &Grant) -> bool {
+        true
+    }
+    fn now_ms(&self) -> Option<u64> {
+        Some(9)
+    }
+    fn revoked(&self, _: &str) -> bool {
+        false
+    }
+    fn owner(&self, _: &str) -> Option<String> {
+        None
+    }
+    fn person(&self, _: &str) -> Option<String> {
+        self.0.clone()
+    }
+}
+
+#[test]
+fn attachment_methods_are_person_scoped_never_owner_only() {
+    for method in org_proto::attachments::ATTACHMENT_METHODS {
+        assert!(!requires_owner(method), "{method}");
+        assert!(is_member_scoped_method(method), "{method}");
+        let mut req = request(claims());
+        req.method = method.into();
+        assert_eq!(
+            authorize(
+                &req,
+                "channel",
+                &office(),
+                &PersonOnly(Some("person".into()))
+            ),
+            Ok("person".into()),
+            "any live person may call {method}"
+        );
+        assert_eq!(
+            authorize(&req, "channel", &office(), &PersonOnly(None)),
+            Err(ErrorCode::NotAuthorized),
+            "{method} needs a live person"
+        );
+    }
+    assert!(!is_member_scoped_method("attachment.future"));
+}

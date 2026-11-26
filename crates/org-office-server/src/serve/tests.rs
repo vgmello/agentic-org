@@ -1,3 +1,4 @@
+mod attachments;
 mod inbox;
 mod office_socket;
 mod unserved;
@@ -890,6 +891,7 @@ pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
         mailbox: Some(mailbox),
         chat: None,
         tasks: None,
+        attachments: None,
         git: None,
         processes: None,
         costs: None,
@@ -1356,6 +1358,7 @@ fn serving(
             mailbox: Some(mailbox),
             chat: None,
             tasks: None,
+            attachments: None,
             git: None,
             processes: None,
             costs: None,
@@ -1837,6 +1840,7 @@ fn following_with(
                 mailbox: Some(mailbox),
                 chat: None,
                 tasks: None,
+                attachments: None,
                 git: None,
                 processes: None,
                 costs: None,
@@ -2345,6 +2349,7 @@ fn asking(
             mailbox: Some(mailbox),
             chat: None,
             tasks: None,
+            attachments: None,
             git: None,
             processes: None,
             costs: None,

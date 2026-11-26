@@ -1804,6 +1804,147 @@ class BudgetSchemaTests(unittest.TestCase):
         self.db.rollback()
 
 
+class AttachmentSchemaTests(unittest.TestCase):
+    """TASK-98.1 (ADR-0037): one polymorphic, metadata-only attachments table in office.db; rich
+    Day-1 metadata on message and ask-answer attachments; the human-private space isolated."""
+
+    SHA = "a" * 64
+
+    def setUp(self):
+        self.db = database()
+        self.addCleanup(self.db.close)
+        seed_organization(self.db)
+
+    def attachment(self, identity="file", **overrides):
+        fields = dict(organization_id="org", id=identity, target_kind="project", target_id="project",
+                      content_sha256=self.SHA, mime_type="application/pdf", byte_count=10,
+                      filename="spec.pdf", title="Spec", artifact_status="final", page_count=3,
+                      uploaded_by_employee_id="ana", created_at="2026-11-26T00:00:00Z",
+                      updated_at="2026-11-26T00:00:00Z")
+        insert(self.db, "attachments", **(fields | overrides))
+        self.db.commit()
+
+    def refused(self, **overrides):
+        with self.assertRaises(sqlite3.IntegrityError, msg=str(overrides)):
+            self.attachment("bad", **overrides)
+        self.db.rollback()
+
+    def test_attachments_are_strict_metadata_only_and_trigger_free(self):
+        sql = self.db.execute("SELECT sql FROM sqlite_schema WHERE name = 'attachments'").fetchone()[0]
+        self.assertTrue(sql.rstrip().endswith("STRICT"))
+        columns = {row[1]: row[2] for row in self.db.execute("PRAGMA table_xinfo(attachments)")}
+        self.assertEqual(list(columns), [
+            "organization_id", "id", "target_kind", "target_id", "content_sha256", "mime_type",
+            "byte_count", "filename", "title", "description", "artifact_status", "width", "height",
+            "page_count", "uploaded_by_employee_id", "created_at", "updated_at"])
+        self.assertNotIn("BLOB", columns.values(), "bytes never live in a database")
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = 'attachments'").fetchone()[0], 0)
+        indexes = {row[0] for row in self.db.execute(
+            "SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'attachments' AND sql IS NOT NULL")}
+        self.assertEqual(indexes, {"attachments_by_target", "attachments_by_uploader", "attachments_by_content"})
+        # The human-private space never appears in the shared schema.
+        shared = (ROOT / "schema.sql").read_text()
+        self.assertNotIn("user_private", shared)
+        self.assertNotIn("user_space", shared)
+
+    def test_every_shared_target_kind_and_status_is_accepted(self):
+        for n, kind in enumerate(("task", "task_comment", "review_finding", "review_finding_reply", "project")):
+            self.attachment(f"k{n}", target_kind=kind, target_id=f"target-{n}")
+        self.attachment("org-wide", target_kind="organization", target_id=None)
+        for n, status in enumerate(("draft", "review", "final", "superseded", "archived")):
+            self.attachment(f"s{n}", artifact_status=status)
+        insert(self.db, "attachments", organization_id="org", id="defaulted", target_kind="organization",
+               content_sha256=self.SHA, mime_type="text/plain", byte_count=0, filename="a.txt", title="A",
+               uploaded_by_employee_id="reporter", created_at="t", updated_at="t")
+        self.assertEqual(self.db.execute(
+            "SELECT artifact_status FROM attachments WHERE id = 'defaulted'").fetchone()[0], "final")
+        # The same bytes bound twice are two rows, each its own attachment.
+        self.attachment("copy-1")
+        self.attachment("copy-2")
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM attachments WHERE content_sha256 = ?", (self.SHA,)).fetchone()[0], 14)
+
+    def test_attachment_rows_break_no_contract(self):
+        for overrides in (
+            {"target_kind": "user_private", "target_id": "reporter"},
+            {"target_kind": "message"},
+            {"target_kind": "organization"},
+            {"target_kind": "project", "target_id": None},
+            {"content_sha256": "A" * 64},
+            {"content_sha256": "a" * 63},
+            {"mime_type": "text/html"},
+            {"mime_type": "image/svg+xml"},
+            {"mime_type": "application/octet-stream"},
+            {"byte_count": -1},
+            {"filename": ""},
+            {"title": ""},
+            {"title": "t" * 161},
+            {"description": "d" * 281},
+            {"artifact_status": "published"},
+            {"width": 0},
+            {"page_count": 0},
+            {"organization_id": "another"},
+        ):
+            with self.subTest(overrides=overrides):
+                self.refused(**overrides)
+        self.attachment("bounds", title="t" * 160, description="d" * 280, width=1, height=1)
+
+    def test_message_and_answer_attachments_carry_day_one_metadata(self):
+        msg = database("messaging-schema.sql")
+        self.addCleanup(msg.close)
+        columns = [row[1] for row in msg.execute("PRAGMA table_xinfo(message_attachments)")]
+        for column in ("title", "description", "artifact_status", "page_count", "uploaded_by_employee_id"):
+            self.assertIn(column, columns)
+        answer = [row[1] for row in msg.execute("PRAGMA table_xinfo(message_answer_attachments)")]
+        self.assertEqual(answer[:7], ["organization_id", "message_id", "employee_id", "id", "media_type",
+                                      "byte_count", "content_sha256"])
+        for column in ("title", "description", "artifact_status", "page_count", "uploaded_by_employee_id"):
+            self.assertIn(column, answer)
+        sql = msg.execute("SELECT sql FROM sqlite_schema WHERE name = 'message_answer_attachments'").fetchone()[0]
+        self.assertTrue(sql.rstrip().endswith("STRICT"))
+        msg.execute("PRAGMA foreign_keys = ON")
+        # The rows the messaging adapter writes today still fit: every new column has a default.
+        msg.execute("INSERT INTO message_attachments (organization_id, message_id, id, content_ref, media_type, "
+                    "byte_count, content_sha256) VALUES ('org', 'm', 'a', 'ref', 'text/plain', 1, ?)", (self.SHA,))
+        self.assertEqual(msg.execute("SELECT artifact_status FROM message_attachments").fetchone()[0], "final")
+        msg.rollback()
+        for column, value in (("title", "t" * 161), ("description", "d" * 281), ("artifact_status", "x"), ("page_count", 0)):
+            with self.subTest(column=column), self.assertRaises(sqlite3.IntegrityError):
+                msg.execute(f"INSERT INTO message_answer_attachments (organization_id, message_id, employee_id, id, "
+                            f"media_type, byte_count, content_sha256, created_at, {column}) "
+                            f"VALUES ('org', 'm', 'e', 'a', 'text/plain', 1, ?, 't', ?)", (self.SHA, value))
+            msg.rollback()
+
+    def test_the_private_space_is_its_own_database_keyed_by_owner_and_command(self):
+        private = database("user-space-schema.sql")
+        self.addCleanup(private.close)
+        tables = {row[0] for row in private.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")}
+        self.assertEqual(tables, {"user_space_files"})
+        shared_tables = {row[0] for row in self.db.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")}
+        self.assertNotIn("user_space_files", shared_tables)
+
+        def row(identity, operation, **overrides):
+            fields = dict(organization_id="org", id=identity, owner_employee_id="reporter",
+                          operation_id=operation, content_sha256=self.SHA, mime_type="image/png",
+                          byte_count=5, filename="me.png", title="Me", width=4, height=4,
+                          created_at="t", updated_at="t")
+            insert(private, "user_space_files", **(fields | overrides))
+
+        row("one", "op-1")
+        row("two", "op-2", description=None)
+        for identity, operation, overrides in (
+            ("three", "op-1", {}),
+            ("one", "op-3", {}),
+            ("four", "op-4", {"mime_type": "text/html"}),
+            ("five", "op-5", {"title": "t" * 161}),
+            ("six", "op-6", {"artifact_status": "secret"}),
+        ):
+            with self.subTest(identity=identity), self.assertRaises(sqlite3.IntegrityError):
+                row(identity, operation, **overrides)
+        self.assertEqual(private.execute("SELECT COUNT(*) FROM sqlite_schema WHERE type = 'trigger'").fetchone()[0], 0)
+
+
 class ProcessPackageAndDocumentationTests(unittest.TestCase):
     """Document 18: process packages, the documentation tree, issued versions and convergence."""
 

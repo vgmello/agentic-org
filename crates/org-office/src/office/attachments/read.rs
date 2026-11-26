@@ -1,0 +1,244 @@
+//! `attachment.inspect`, `attachment.list` and `attachment.read_chunk`, plus the model
+//! derivative a later phase hands to agents. Every read passes the policy first; a file the
+//! caller may not read does not exist for them.
+
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use org_proto::attachments::{
+    AttachmentInspectParams, AttachmentListParams, AttachmentListResult, AttachmentReadChunkParams,
+    AttachmentReadChunkResult, AttachmentResult, AttachmentScope, AttachmentTargetKind,
+    ATTACHMENT_CHUNK_MAX_BYTES, ATTACHMENT_LIST_MAX_LIMIT,
+};
+use org_proto::{ApiError, ErrorCode};
+use org_store::Id;
+
+use super::{invalid, not_found, record_ref, target_ref, Answer, Office};
+use crate::attachments::blobs::ContentHash;
+use crate::attachments::media::{self, MediaType, ModelDerivative};
+use crate::attachments::records::AttachmentRecord;
+use crate::attachments::user_space::satellite_refusal;
+use crate::authz::PrincipalContext;
+use crate::error::OfficeError;
+use crate::office::storage;
+use crate::store::open::attachment_ops::AttachmentsForTarget;
+
+const DEFAULT_LIST_LIMIT: u32 = 50;
+
+impl Office {
+    /// A record the caller may read, or `not_found`.
+    fn readable(&self, caller: &PrincipalContext, attachment_id: &str) -> Answer<AttachmentRecord> {
+        let Some(record) = self.find_attachment(attachment_id)? else {
+            return Ok(Err(not_found()));
+        };
+        let resource = record_ref(&record);
+        if let Err(refusal) = self.decide(|policy| policy.can_read(caller, &resource))? {
+            return Ok(Err(refusal));
+        }
+        Ok(Ok(record))
+    }
+
+    /// `attachment.inspect`.
+    pub fn attachment_inspect(
+        &self,
+        actor: &str,
+        params: AttachmentInspectParams,
+    ) -> Answer<AttachmentResult> {
+        let caller = match self.attachment_caller(actor)? {
+            Ok(caller) => caller,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        Ok(self
+            .readable(&caller, &params.attachment_id)?
+            .map(|record| AttachmentResult {
+                attachment: record.to_view(),
+            }))
+    }
+
+    /// `attachment.list`: one target's files, or the caller's own private space, by ID.
+    pub fn attachment_list(
+        &self,
+        actor: &str,
+        params: AttachmentListParams,
+    ) -> Answer<AttachmentListResult> {
+        let private = params.target_kind == Some(AttachmentTargetKind::UserPrivate)
+            || (params.target_kind.is_none() && params.scope == Some(AttachmentScope::UserPrivate));
+        // A satellite holds no private space: refused the same for every caller.
+        if private && !self.attachments.user_space.available() {
+            return Ok(Err(satellite_refusal()));
+        }
+        let caller = match self.attachment_caller(actor)? {
+            Ok(caller) => caller,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let limit = params.limit.unwrap_or(DEFAULT_LIST_LIMIT);
+        if limit == 0 || limit > ATTACHMENT_LIST_MAX_LIMIT {
+            return Ok(Err(invalid("limit is 1 to 200")));
+        }
+        let after = match params.cursor.as_deref() {
+            None => None,
+            Some(cursor) => match Id::parse(cursor)
+                .ok()
+                .filter(|_| org_proto::is_uuid_v7(cursor))
+            {
+                Some(after) => Some(after),
+                None => return Ok(Err(invalid("cursor is the next_cursor of a previous page"))),
+            },
+        };
+        let Some(kind) = params
+            .target_kind
+            .or(private.then_some(AttachmentTargetKind::UserPrivate))
+        else {
+            return Ok(Err(invalid(
+                "name a target_kind, or the user_private scope",
+            )));
+        };
+        let target_text = if private {
+            Some(
+                params
+                    .target_id
+                    .clone()
+                    .unwrap_or_else(|| caller.employee_id.clone()),
+            )
+        } else {
+            params.target_id.clone()
+        };
+        let target_id = match target_text.as_deref() {
+            None => None,
+            Some(text) => match Id::parse(text).ok().filter(|_| org_proto::is_uuid_v7(text)) {
+                Some(id) => Some(id),
+                None => {
+                    return Ok(Err(invalid(
+                        "target_id must be a canonical lowercase UUIDv7",
+                    )))
+                }
+            },
+        };
+        if (kind == AttachmentTargetKind::Organization) != target_id.is_none() {
+            return Ok(Err(invalid(
+                "name a target_id for every target_kind but organization",
+            )));
+        }
+        let resource = target_ref(
+            kind,
+            target_id.as_ref(),
+            &Id::parse(&caller.employee_id).map_err(|_| OfficeError::Invalid("a caller id"))?,
+        );
+        if let Err(refusal) = self.decide(|policy| policy.can_read(&caller, &resource))? {
+            return Ok(Err(refusal));
+        }
+        let page = limit as usize + 1;
+        let mut rows = if private {
+            let owner = target_id.as_ref().map(Id::as_str).unwrap_or_default();
+            self.attachments.user_space.list(
+                &self.info.org_id,
+                owner,
+                after.as_ref().map(Id::as_str),
+                page,
+            )?
+        } else {
+            let read = AttachmentsForTarget {
+                kind,
+                target_id,
+                after,
+                limit: page,
+            };
+            self.store.read(read).map_err(storage)?.0
+        };
+        let next_cursor = if rows.len() > limit as usize {
+            rows.truncate(limit as usize);
+            rows.last().map(|r| r.id.to_string())
+        } else {
+            None
+        };
+        Ok(Ok(AttachmentListResult {
+            attachments: rows.iter().map(AttachmentRecord::to_view).collect(),
+            next_cursor,
+        }))
+    }
+
+    /// `attachment.read_chunk`: at most 512 KiB of a readable file from `offset`.
+    pub fn attachment_read_chunk(
+        &self,
+        actor: &str,
+        params: AttachmentReadChunkParams,
+    ) -> Answer<AttachmentReadChunkResult> {
+        let caller = match self.attachment_caller(actor)? {
+            Ok(caller) => caller,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let max = params.max_bytes.unwrap_or(ATTACHMENT_CHUNK_MAX_BYTES);
+        if max == 0 || max > ATTACHMENT_CHUNK_MAX_BYTES {
+            return Ok(Err(invalid("max_bytes is 1 to 524288")));
+        }
+        let record = match self.readable(&caller, &params.attachment_id)? {
+            Ok(record) => record,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        if params.offset > record.byte_count {
+            return Ok(Err(invalid("offset is past the end of the file")));
+        }
+        let Some(bytes) = self.blob_range(&record, params.offset, max as usize)? else {
+            return Ok(Err(ApiError::new(
+                ErrorCode::Unavailable,
+                "the attachment's bytes are not on this office",
+            )));
+        };
+        let end = params.offset + bytes.len() as u64;
+        Ok(Ok(AttachmentReadChunkResult {
+            attachment_id: record.id.to_string(),
+            offset: params.offset,
+            data_base64: STANDARD.encode(&bytes),
+            eof: end >= record.byte_count,
+            total_bytes: record.byte_count,
+            content_sha256: record.content_sha256.to_string(),
+        }))
+    }
+
+    fn blob_range(
+        &self,
+        record: &AttachmentRecord,
+        offset: u64,
+        max: usize,
+    ) -> Result<Option<Vec<u8>>, OfficeError> {
+        let Some(blobs) = self.blobs_for(record) else {
+            return Ok(None);
+        };
+        blobs.read_range(&record.content_sha256, offset, max)
+    }
+
+    /// The bounded copy of a readable image a model reads (at most 1568 px on its longest
+    /// side and 1 MiB), made from the stored bytes.
+    pub fn attachment_model_derivative(
+        &self,
+        actor: &str,
+        attachment_id: &str,
+    ) -> Answer<ModelDerivative> {
+        let caller = match self.attachment_caller(actor)? {
+            Ok(caller) => caller,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let record = match self.readable(&caller, attachment_id)? {
+            Ok(record) => record,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let Some(media) = MediaType::from_mime(&record.mime_type).filter(|m| m.is_image()) else {
+            return Ok(Err(media::unsupported(
+                "only images have a model derivative",
+            )));
+        };
+        let Some(blobs) = self.blobs_for(&record) else {
+            return Ok(Err(satellite_refusal()));
+        };
+        let Some(bytes) = blobs.read_all(&record.content_sha256, media.max_bytes())? else {
+            return Ok(Err(ApiError::new(
+                ErrorCode::Unavailable,
+                "the attachment's bytes are not on this office",
+            )));
+        };
+        if ContentHash::of(&bytes) != record.content_sha256 {
+            return Err(OfficeError::Invalid(
+                "an attachment blob does not match its hash",
+            ));
+        }
+        Ok(media::model_derivative(media, &bytes))
+    }
+}
