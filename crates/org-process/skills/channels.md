@@ -20,12 +20,14 @@ agent-os channel summarize --channel <channel> --question <text>
 
 The answer is a short summary of the messages you may read, with the IDs of the messages that support it. `--max-messages <n>` bounds how many recent messages are considered. Treat the summary as derived data: read the cited messages before you act on a detail.
 
-To read messages themselves:
+To read messages themselves, a page at a time (`meta.next_cursor` gives the next page):
 
 ```bash
-agent-os msg list --channel <channel> --unread-only
+agent-os msg list --channel <channel> --limit 20
 agent-os msg read --id <message-id>
 ```
+
+`--unread-only` is for a DM history (`--participant`); what in a channel is addressed to you or mentions you is in `agent-os msg inbox`.
 
 ## Post
 
@@ -44,7 +46,7 @@ agent-os msg reply --id <message-id> --body <text>
 To ask a question of a channel, send a structured ask to it (see `messaging-and-asks`):
 
 ```bash
-agent-os msg ask --to '#<channel>' --json '{"questions":[{"id":"q1","question_type":"free_text","prompt":"Who owns the release checklist?"}]}'
+agent-os msg ask --to '#<channel>' --prompt 'Who owns the release checklist?'
 ```
 
 The office watches the channel for replies to your open question and wakes you when a person's reply answers it, so you do not need to watch the channel yourself. `--addressed-to @<handle>` names the person in the channel you expect to answer.

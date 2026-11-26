@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 use super::{
     decode_err, insert_opt, opt_bool, opt_non_neg_u64, reject_dry_run, require_str, with_ack,
 };
-use crate::transport::OfficeTransport;
+use crate::transport::{paginate, parse_cursor, OfficeTransport};
 
 pub(super) fn try_channel<T: OfficeTransport + ?Sized>(
     transport: &mut T,
@@ -26,6 +26,7 @@ pub(super) fn read_channel_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    parse_cursor(request.cursor.as_deref())?;
     let include_archived = opt_bool(request, "include_archived").unwrap_or(false);
     let raw = transport.call_method(
         "chat.channels",
@@ -57,7 +58,7 @@ pub(super) fn read_channel_list<T: OfficeTransport + ?Sized>(
             Value::Object(o)
         })
         .collect();
-    Ok(Answer::completed(Value::Array(items)))
+    paginate(request, items)
 }
 
 pub(super) fn write_channel_membership<T: OfficeTransport + ?Sized>(

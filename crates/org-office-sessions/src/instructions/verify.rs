@@ -73,8 +73,8 @@ impl CitedLine {
 }
 
 /// Every `agent-os` command line cited in `text`: the fenced code block lines in order, then
-/// the inline code spans in order.
-pub fn cited_command_lines(text: &str) -> Vec<CitedLine> {
+/// the inline code spans in order. `table` is the one `session attach` reads its lines against.
+pub fn cited_command_lines(text: &str, table: &CommandTable) -> Vec<CitedLine> {
     let mut cited = Vec::new();
     let mut prose = String::new();
     let mut in_block = false;
@@ -99,16 +99,16 @@ pub fn cited_command_lines(text: &str) -> Vec<CitedLine> {
         }
         let whole = format!("{pending}{trimmed}");
         pending.clear();
-        cite_block_line(&whole, &mut cited);
+        cite_block_line(&whole, table, &mut cited);
     }
     cite_inline_spans(&prose, &mut cited);
     cited
 }
 
-fn cite_block_line(line: &str, cited: &mut Vec<CitedLine>) {
+fn cite_block_line(line: &str, table: &CommandTable, cited: &mut Vec<CitedLine>) {
     let line = line.strip_prefix("$ ").unwrap_or(line).trim();
     if line.starts_with('{') {
-        match attach_line_args(line) {
+        match attach_line_args(line, table) {
             Some(Ok(args)) => cited.push(CitedLine::invocation(line, args)),
             Some(Err(why)) => cited.push(CitedLine {
                 refused: Some(why),
@@ -241,14 +241,27 @@ fn is_shell_operator(word: &str) -> bool {
 }
 
 /// The arguments `agent-os session attach` builds for one JSON line, by the same rules as
-/// `org-agent-cli`'s `attach`: the command's words, `input` as `--json`, and `options` as flags.
-/// `None` for a JSON line without `command` (an example, not an attach line); `Err` with
-/// attach's own message for a line it refuses before the table.
-fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
+/// `org-agent-cli`'s `attach`: the command's words, `input` as `--json`, and `options` as flags
+/// with string and number values inline (`--name=value`) and `true` bare for a yes-or-no flag of
+/// the command only; a key other than `command`, `input` and `options`, a flag in `command`, an
+/// option key with `=`, a space or another leading `-`, `true` for a flag that takes a value or
+/// is no flag of the command, a `format` other than json, `stdin` and `help` are refused there
+/// before the table reads the line, so here too. `None` for a JSON line without `command` (an
+/// example, not an attach line); `Err` with attach's own message for a line it refuses before
+/// the table.
+fn attach_line_args(line: &str, table: &CommandTable) -> Option<Result<Vec<String>, String>> {
     let Value::Object(object) = serde_json::from_str::<Value>(line).ok()? else {
         return None;
     };
     let command = object.get("command")?;
+    if let Some(key) = object
+        .keys()
+        .find(|key| !["command", "input", "options"].contains(&key.as_str()))
+    {
+        return Some(Err(format!(
+            "`{key}` is not a key of a `session attach` line; a line has only `command`, `input` and `options`."
+        )));
+    }
     let Some(command) = command.as_str() else {
         return Some(Err(
             "`command` must be a string naming a resource and verb.".into(),
@@ -260,6 +273,12 @@ fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
             "`command` must name a resource and verb (e.g. `msg inbox`).".into(),
         ));
     }
+    if let Some(word) = args.iter().find(|word| word.starts_with('-')) {
+        return Some(Err(format!(
+            "`command` names only a resource and verb (or a shorthand), and `{word}` is a flag"
+        )));
+    }
+    let row = table.command_for(&args);
     if let Some(input) = object.get("input").filter(|v| !v.is_null()) {
         args.push("--json".to_owned());
         args.push(input.to_string());
@@ -268,16 +287,38 @@ fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
         None => {}
         Some(Value::Object(options)) => {
             for (key, value) in options {
-                let flag = if key.starts_with("--") {
-                    key.clone()
-                } else {
-                    format!("--{}", key.replace('_', "-"))
+                let name = match key.strip_prefix("--") {
+                    Some(name) => name.to_owned(),
+                    None => key.replace('_', "-"),
                 };
+                if name.is_empty()
+                    || name.starts_with('-')
+                    || name.contains('=')
+                    || name.chars().any(char::is_whitespace)
+                {
+                    return Some(Err(format!("Option `{key}` is not a flag name")));
+                }
+                let refused = match (name.as_str(), value) {
+                    (_, Value::Bool(false) | Value::Null) => None,
+                    ("format", Value::String(format)) if format == "json" => None,
+                    ("format", _) => Some("`session attach` answers every line in JSON"),
+                    ("stdin", _) => Some(
+                        "`stdin` is refused: standard input carries the `session attach` lines",
+                    ),
+                    ("help", _) => Some("`help` is refused in `session attach`"),
+                    _ => None,
+                };
+                if let Some(why) = refused {
+                    return Some(Err(why.to_owned()));
+                }
                 match value {
-                    Value::Bool(true) => args.push(flag),
+                    Value::Bool(true) => match attach_switch(row, key, &name) {
+                        Ok(flag) => args.extend(flag),
+                        Err(why) => return Some(Err(why)),
+                    },
                     Value::Bool(false) | Value::Null => {}
-                    Value::String(text) => args.extend([flag, text.clone()]),
-                    Value::Number(n) => args.extend([flag, n.to_string()]),
+                    Value::String(text) => args.push(format!("--{name}={text}")),
+                    Value::Number(n) => args.push(format!("--{name}={n}")),
                     Value::Array(_) | Value::Object(_) => {
                         let why = "in `session attach` must be a string, number, or boolean.";
                         return Some(Err(format!("Option `{key}` {why}")));
@@ -294,19 +335,18 @@ fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
     Some(Ok(args))
 }
 
-/// `who` and `task note` as the command line rewrites them (`org-agent-cli`).
-fn expand_aliases(args: &[String]) -> Vec<String> {
-    match args {
-        [who, rest @ ..] if who == "who" => ["directory".to_owned(), "list".to_owned()]
-            .into_iter()
-            .chain(rest.iter().cloned())
-            .collect(),
-        [task, note, rest @ ..] if task == "task" && note == "note" => {
-            std::iter::once("task-note".to_owned())
-                .chain(rest.iter().cloned())
-                .collect()
-        }
-        _ => args.to_vec(),
+/// The bare flag `session attach` writes for an option given `true`, by its rule: only a
+/// yes-or-no flag of the command is written bare, since a flag that takes a value would read the
+/// flag after it as that value; a line naming no command leaves it out (the table refuses that
+/// line first).
+fn attach_switch(row: Option<&Command>, key: &str, name: &str) -> Result<Option<String>, String> {
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    match row.flag_takes_value(name) {
+        Some(false) => Ok(Some(format!("--{name}"))),
+        Some(true) => Err(format!("Option `{key}` takes a value, not `true`.")),
+        None => Err(format!("Option `{key}` is not a flag of `{}`.", row.name())),
     }
 }
 
@@ -483,7 +523,8 @@ fn check_line(line: &CitedLine, table: &CommandTable) -> Option<String> {
     if let Some(why) = &line.refused {
         return Some(why.clone());
     }
-    let args = expand_aliases(&line.args);
+    // The table's own shorthands (`who`, `task note`, `boot`), as `agent-os` reads them.
+    let args = table.expand(&line.args).into_owned();
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     match words.as_slice() {
         [] | ["--version" | "-V" | "--help" | "-h"] => return None,
@@ -522,7 +563,7 @@ fn check_line(line: &CitedLine, table: &CommandTable) -> Option<String> {
 /// problem per citation that does not hold, as `` `<citation>`: <why> ``; empty when all do.
 pub fn verify_command_references(text: &str, table: &CommandTable) -> Vec<String> {
     let mut problems = Vec::new();
-    for line in cited_command_lines(text) {
+    for line in cited_command_lines(text, table) {
         if let Some(why) = check_line(&line, table) {
             let problem = format!("`{}`: {why}", line.cited);
             if !problems.contains(&problem) {

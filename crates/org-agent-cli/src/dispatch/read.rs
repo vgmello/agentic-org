@@ -8,7 +8,7 @@ use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
 use super::{decode_err, opt_bool, require_str};
-use crate::transport::{parse_cursor, OfficeTransport, Refusal};
+use crate::transport::{paginate, OfficeTransport, Refusal};
 
 pub(super) fn fetch_snapshot<T: OfficeTransport + ?Sized>(
     transport: &mut T,
@@ -34,24 +34,11 @@ pub(super) fn read_team_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
-    let offset = parse_cursor(request.cursor.as_deref())?;
+    crate::transport::parse_cursor(request.cursor.as_deref())?;
     let snapshot = fetch_snapshot(transport)?;
     let mut teams: Vec<&Team> = snapshot.teams.iter().collect();
     teams.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
-    let total = teams.len();
-    let limit = request.limit.unwrap_or(org_command::DEFAULT_LIMIT) as usize;
-    let items: Vec<Value> = teams
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .map(team_value)
-        .collect();
-    let next = offset.saturating_add(items.len());
-    let mut answer = Answer::completed(Value::Array(items));
-    if next < total {
-        answer.next_cursor = Some(next.to_string());
-    }
-    Ok(answer)
+    paginate(request, teams.into_iter().map(team_value).collect())
 }
 
 pub(super) fn read_team_inspect<T: OfficeTransport + ?Sized>(
@@ -99,7 +86,8 @@ pub(super) fn read_project_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
-    let offset = parse_cursor(request.cursor.as_deref())?;
+    // A bad cursor is refused before the office is asked.
+    crate::transport::parse_cursor(request.cursor.as_deref())?;
     let include_archived = opt_bool(request, "include_archived").unwrap_or(false);
     let raw = transport.call_method(
         "project.list",
@@ -107,21 +95,7 @@ pub(super) fn read_project_list<T: OfficeTransport + ?Sized>(
     )?;
     let listed: ProjectListResult =
         serde_json::from_value(raw).map_err(|_| decode_err("project.list"))?;
-    let total = listed.projects.len();
-    let limit = request.limit.unwrap_or(org_command::DEFAULT_LIMIT) as usize;
-    let items: Vec<Value> = listed
-        .projects
-        .iter()
-        .skip(offset)
-        .take(limit)
-        .map(project_value)
-        .collect();
-    let next = offset.saturating_add(items.len());
-    let mut answer = Answer::completed(Value::Array(items));
-    if next < total {
-        answer.next_cursor = Some(next.to_string());
-    }
-    Ok(answer)
+    paginate(request, listed.projects.iter().map(project_value).collect())
 }
 
 pub(super) fn read_project_inspect<T: OfficeTransport + ?Sized>(

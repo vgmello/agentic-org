@@ -326,8 +326,29 @@ pub(super) const TASK_LIST_INPUT: &[Field] = &[
         Type::Enum(&["order", "number", "updated_desc"]),
         "Sort order (default: order)",
     ),
-    Field::optional("max_results", Type::Integer, "Maximum tasks returned"),
+    Field::optional(
+        "exclude_status",
+        Type::List(&TASK_STATUS_TYPE),
+        "Leave out tasks in this status (repeat for several)",
+    ),
+    Field::optional(
+        "unassigned",
+        Type::Boolean,
+        "Only tasks no employee is assigned to",
+    ),
+    Field::optional(
+        "modified_file",
+        Type::String,
+        "Only tasks whose modified files name this path or a file under it",
+    ),
+    Field::optional(
+        "count",
+        Type::Boolean,
+        "Answer no tasks, only how many match (meta.total)",
+    ),
 ];
+
+const TASK_STATUS_TYPE: Type = Type::Enum(&["todo", "in_progress", "blocked", "cancelled", "done"]);
 
 pub(super) const TASK_REF_INPUT: &[Field] = &[Field::required(
     "task",

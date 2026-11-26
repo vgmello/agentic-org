@@ -216,7 +216,7 @@ pub const GIT_COMMANDS: &[Command] = &[
         summary: "Register a repository",
         call: "repo.register",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: REPO_REGISTER_INPUT,
@@ -249,7 +249,7 @@ pub const GIT_COMMANDS: &[Command] = &[
         summary: "Attach repo to project",
         call: "repo.attach",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: REPO_ATTACH_INPUT,

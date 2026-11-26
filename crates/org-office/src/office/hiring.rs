@@ -204,14 +204,22 @@ impl Office {
                 .join("offices")
                 .join(self.identity.office_id.as_str())
                 .join("agents"),
-            base,
-            home,
+            base.clone(),
+            home.clone(),
         ] {
             match org_platform::fs::create_owner_only_dir(&dir) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(e) => return Err(OfficeError::storage(e)),
             }
+        }
+        // The agent's folder and home are the 700 boundary that keeps what the agent's tools
+        // write inside private, whatever modes they use (setup checks the boundary, not what
+        // is inside: TASK-155). One that already existed more open (an earlier build, a
+        // looser mask) is made owner-only again; a link or another user's folder in its
+        // place is refused.
+        for dir in [base, home] {
+            org_platform::fs::set_owner_only_dir(&dir).map_err(OfficeError::storage)?;
         }
         Ok(())
     }

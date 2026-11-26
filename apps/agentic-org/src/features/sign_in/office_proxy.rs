@@ -18,7 +18,7 @@
 //! the table refuses (exit 2) or answers alone (`--help`, `--schema`) never reaches the host.
 //! `sign-in -- <command>` reads its line the same way ([`sign_in_and_execute`]).
 
-use org_agent_cli::dispatch::{hint_for, OfficeTransport, TransportOffice};
+use org_agent_cli::dispatch::{OfficeTransport, TransportOffice};
 use org_cli_shell::context::{ColorMode, ExecutionContext};
 use org_command::{Command, Office, Output, Refusal};
 use org_host::setup_flow::{ApprovedOfficeChannel, HostCliError, HostCliErrorKind};
@@ -105,7 +105,7 @@ impl OfficeTransport for LazyGrantTransport {
     fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
         self.channel_mut()?
             .call_method(method, params)
-            .map_err(|api| Refusal::new(api.code, api.message, hint_for(api.code)))
+            .map_err(org_agent_cli::office::api_refusal)
     }
 }
 

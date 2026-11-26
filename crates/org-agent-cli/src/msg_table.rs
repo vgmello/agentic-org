@@ -2,17 +2,19 @@
 
 use org_command::{Ack, Command, Example, IfMatch, Kind};
 
+mod ask_schema;
 mod schema;
 
+use ask_schema::{MSG_ASK_INPUT, MSG_ASK_OUTPUT};
 use schema::{
     CHANNEL_LIST_INPUT, CHANNEL_MEMBERSHIP_INPUT, CHANNEL_MEMBERSHIP_OUTPUT,
     CHANNEL_SUMMARIZE_INPUT, CHANNEL_SUMMARIZE_OUTPUT, CHANNEL_SUMMARY_FIELDS, MSG_ACCEPT_INPUT,
-    MSG_ACCEPT_OUTPUT, MSG_ASK_INPUT, MSG_ASK_OUTPUT, MSG_DEFER_INPUT, MSG_DEFER_OUTPUT,
-    MSG_DONE_INPUT, MSG_DONE_OUTPUT, MSG_INBOX_INPUT, MSG_INBOX_ITEM_FIELDS, MSG_LIST_INPUT,
-    MSG_LIST_ITEM_FIELDS, MSG_READ_INPUT, MSG_READ_OUTPUT, MSG_REPLY_INPUT, MSG_REPLY_OUTPUT,
-    MSG_SEND_INPUT, MSG_SEND_OUTPUT, MSG_UNSNOOZE_INPUT, MSG_UNSNOOZE_OUTPUT, MSG_WAIT_INPUT,
-    MSG_WAIT_OUTPUT, MSG_WITHDRAW_INPUT, MSG_WITHDRAW_OUTPUT, READ_ERRORS, STATUS_CLEAR_INPUT,
-    STATUS_OUTPUT, STATUS_SET_INPUT, WRITE_ERRORS,
+    MSG_ACCEPT_OUTPUT, MSG_DEFER_INPUT, MSG_DEFER_OUTPUT, MSG_DONE_INPUT, MSG_DONE_OUTPUT,
+    MSG_INBOX_INPUT, MSG_INBOX_ITEM_FIELDS, MSG_LIST_INPUT, MSG_LIST_ITEM_FIELDS, MSG_READ_INPUT,
+    MSG_READ_OUTPUT, MSG_REPLY_INPUT, MSG_REPLY_OUTPUT, MSG_SEND_INPUT, MSG_SEND_OUTPUT,
+    MSG_UNSNOOZE_INPUT, MSG_UNSNOOZE_OUTPUT, MSG_WAIT_INPUT, MSG_WAIT_OUTPUT, MSG_WITHDRAW_INPUT,
+    MSG_WITHDRAW_OUTPUT, READ_ERRORS, STATUS_CLEAR_INPUT, STATUS_OUTPUT, STATUS_SET_INPUT,
+    WRITE_ERRORS,
 };
 
 pub static MSG_COMMANDS: &[Command] = &[
@@ -31,7 +33,7 @@ pub static MSG_COMMANDS: &[Command] = &[
         errors: WRITE_ERRORS,
         example: Example {
             input: r##"{"to":"#general","body":"Status update for @ada"}"##,
-            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","conversation_id":"0193a5c0-0000-7000-8000-000000000100","thread_id":"0193a5c0-0000-7000-8000-000000000101","local_seq":1,"origin_seq":1,"mentions":[{"employee_id":"0193a5c0-0000-7000-8000-000000000004","handle":"ada","display_name":"Ada"}],"unmatched_mentions":[]}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","conversation_id":"0193a5c0-0000-7000-8000-000000000100","thread_id":"0193a5c0-0000-7000-8000-000000000101","local_seq":1,"origin_seq":1,"mentions":[{"employee_id":"0193a5c0-0000-7000-8000-000000000004","handle":"ada","display_name":"Ada"}],"unmatched_mentions":[],"recipient_presence":[{"member_id":"0193a5c0-0000-7000-8000-000000000004","presence":"asleep"}],"woke_agents":["0193a5c0-0000-7000-8000-000000000004"]}"#,
         },
     },
     Command {
@@ -48,8 +50,8 @@ pub static MSG_COMMANDS: &[Command] = &[
         output: MSG_ASK_OUTPUT,
         errors: WRITE_ERRORS,
         example: Example {
-            input: r#"{"to":"owner","questions":[{"id":"env","question_type":"choice","prompt":"Target environment?","options":[{"id":"dev","label":"Dev"},{"id":"prod","label":"Prod"}],"default_value":"dev"}]}"#,
-            output: r#"{"status":"waiting","ask_id":"0193a5c0-0000-7000-8000-000000000105","conversation_id":"0193a5c0-0000-7000-8000-000000000100","thread_id":"0193a5c0-0000-7000-8000-000000000105","local_seq":5,"origin_seq":5,"wait_until":"2026-11-21T12:10:00.000Z","remaining_ms":510000}"#,
+            input: r#"{"to":"owner","prompt":"Target environment?","question_type":"choice","option":["dev=Dev","prod=Prod"],"default_value":"dev"}"#,
+            output: r#"{"status":"waiting","ask_id":"0193a5c0-0000-7000-8000-000000000105","conversation_id":"0193a5c0-0000-7000-8000-000000000100","thread_id":"0193a5c0-0000-7000-8000-000000000105","local_seq":5,"origin_seq":5,"wait_until":"2026-11-21T12:10:00.000Z","remaining_ms":510000,"recipient_presence":[{"member_id":"0193a5c0-0000-7000-8000-000000000002","presence":"online"}],"woke_agents":[]}"#,
         },
     },
     Command {

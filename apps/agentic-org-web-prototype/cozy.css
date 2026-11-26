@@ -279,7 +279,7 @@ html[data-theme="cozy"] {
   }
 
   & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-cal, .hb-horizon, .hb-skel-card,
-    .card, .bcard, .c-entry, .prof, .split .list) {
+    .card, .c-entry, .prof, .split .list) {
     background: var(--cozy-panel);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;

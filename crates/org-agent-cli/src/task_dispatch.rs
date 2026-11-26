@@ -1,28 +1,28 @@
 //! Dispatch for unified `task` and `checklist` commands over [`OfficeTransport`]
 //! (`TASK-49` AC #3 `CLI-15` + `TASK-77` B4b).
 
-use org_command::{Ack, Answer, Refusal, Request, Status};
+use org_command::{Answer, Refusal, Request, Status};
 use org_proto::tasks::{
-    LabelMatchMode, PatchField, TaskDependenciesResult, TaskInspectResult, TaskPriority,
-    TaskSortMode, TaskStatus, TaskView, TasksAddDependency, TasksAddDependencyParams, TasksAssign,
-    TasksAssignParams, TasksComment, TasksCommentParams, TasksCommentResult, TasksCreate,
-    TasksCreateParams, TasksDependencies, TasksDependenciesParams, TasksHistory,
-    TasksHistoryParams, TasksHistoryResult, TasksInspect, TasksInspectParams, TasksLabels,
-    TasksLabelsParams, TasksLabelsResult, TasksList, TasksListParams, TasksListResult,
-    TasksMutationResult, TasksRemoveDependency, TasksRemoveDependencyParams, TasksTransition,
-    TasksTransitionParams, TasksUnwatch, TasksUnwatchParams, TasksUpdate, TasksUpdateParams,
-    TasksWatch, TasksWatchParams, WorkType,
+    PatchField, TaskDependenciesResult, TaskInspectResult, TaskPriority, TaskStatus, TaskView,
+    TasksAddDependency, TasksAddDependencyParams, TasksAssign, TasksAssignParams, TasksComment,
+    TasksCommentParams, TasksCommentResult, TasksCreate, TasksCreateParams, TasksDependencies,
+    TasksDependenciesParams, TasksHistory, TasksHistoryParams, TasksHistoryResult, TasksInspect,
+    TasksInspectParams, TasksLabels, TasksLabelsParams, TasksLabelsResult, TasksMutationResult,
+    TasksRemoveDependency, TasksRemoveDependencyParams, TasksTransition, TasksTransitionParams,
+    TasksUnwatch, TasksUnwatchParams, TasksUpdate, TasksUpdateParams, TasksWatch, TasksWatchParams,
+    WorkType,
 };
 use org_proto::{Call, ErrorCode};
 use serde_json::{json, Map, Value};
 
-use crate::keys::try_new_uuid_v7;
-use crate::transport::OfficeTransport;
+use crate::transport::{command_id, paginate, parse_cursor, write_ack, OfficeTransport};
 
 mod checklist;
+mod list;
 mod note;
 
 use checklist::try_checklist;
+use list::read_task_list;
 use note::try_task_note;
 
 pub fn try_execute<T: OfficeTransport + ?Sized>(
@@ -68,30 +68,11 @@ fn cmd_id(request: &Request) -> Result<String, Refusal> {
             "Re-run without `--dry-run`.",
         ));
     }
-    if let Some(key) = request.idempotency_key.as_deref() {
-        if org_proto::is_uuid_v7(key) {
-            return Ok(key.to_owned());
-        }
-        return Ok(crate::transport::derive_uuid_v7("task-command", key));
-    }
-    fresh_id()
+    command_id(request, "task-command")
 }
 
 fn entity_id(request: &Request, domain: &str) -> Result<String, Refusal> {
-    if let Some(key) = request.idempotency_key.as_deref() {
-        return Ok(crate::transport::derive_uuid_v7(domain, key));
-    }
-    fresh_id()
-}
-
-fn fresh_id() -> Result<String, Refusal> {
-    try_new_uuid_v7().ok_or_else(|| {
-        Refusal::new(
-            ErrorCode::StorageError,
-            "could not mint a UUIDv7 identifier",
-            "Retry the command.",
-        )
-    })
+    crate::transport::entity_id(request, None, domain)
 }
 
 fn write_answer(request: &Request, data: Value, revision: Option<u64>) -> Answer {
@@ -99,15 +80,12 @@ fn write_answer(request: &Request, data: Value, revision: Option<u64>) -> Answer
         data,
         status: Status::Completed,
         operation_id: request.idempotency_key.clone(),
-        ack: Some(Ack::Committed),
+        ack: Some(write_ack(request)),
         revision,
         next_cursor: None,
         waiting_messages: None,
+        total: None,
     }
-}
-
-fn list_answer(items: Vec<Value>) -> Answer {
-    Answer::completed(Value::Array(items))
 }
 
 fn req_str<'a>(input: &'a Map<String, Value>, key: &str) -> Result<&'a str, Refusal> {
@@ -167,11 +145,13 @@ fn require_revision(request: &Request) -> Result<u64, Refusal> {
     })
 }
 
+/// An answer the office sent that this build cannot read: a fault between `agent-os` and the
+/// office (`unavailable`, which a retry with the same key may cure), never the office's storage.
 fn decode_err(e: serde_json::Error) -> Refusal {
     Refusal::new(
-        ErrorCode::StorageError,
-        format!("office returned malformed task payload: {e}"),
-        "Retry or inspect office logs.",
+        ErrorCode::Unavailable,
+        format!("The office returned a task answer this agent-os cannot read: {e}."),
+        "Retry the command; if it persists, the office and agent-os versions differ.",
     )
 }
 
@@ -264,69 +244,6 @@ fn write_task_create<T: OfficeTransport + ?Sized>(
         task_to_row(&res.task),
         Some(res.task.revision),
     ))
-}
-
-fn read_task_list<T: OfficeTransport + ?Sized>(
-    transport: &mut T,
-    request: &Request,
-) -> Result<Answer, Refusal> {
-    let i = &request.input;
-    let status = opt_str(i, "status")
-        .map(|s| {
-            TaskStatus::parse(&s).ok_or_else(|| {
-                Refusal::new(
-                    ErrorCode::InvalidRequest,
-                    format!("invalid status `{s}`"),
-                    "Use todo, in_progress, blocked, cancelled, or done.",
-                )
-            })
-        })
-        .transpose()?;
-    let label_match = match opt_str(i, "label_match").as_deref() {
-        None | Some("all") => LabelMatchMode::All,
-        Some("any") => LabelMatchMode::Any,
-        Some(other) => {
-            return Err(Refusal::new(
-                ErrorCode::InvalidRequest,
-                format!("invalid label_match `{other}`"),
-                "Use `all` or `any`.",
-            ))
-        }
-    };
-    let sort = match opt_str(i, "sort").as_deref() {
-        None | Some("order") => TaskSortMode::Order,
-        Some("number") => TaskSortMode::Number,
-        Some("updated_desc") => TaskSortMode::UpdatedDesc,
-        Some(other) => {
-            return Err(Refusal::new(
-                ErrorCode::InvalidRequest,
-                format!("invalid sort `{other}`"),
-                "Use `order`, `number`, or `updated_desc`.",
-            ))
-        }
-    };
-    let limit = opt_u64(i, "max_results")?
-        .or(request.limit.map(u64::from))
-        .map(|v| v.min(500) as u32);
-    let params = TasksListParams {
-        task_type: opt_str(i, "type"),
-        status,
-        team_id: opt_str(i, "team_id"),
-        assigned_team_id: opt_str(i, "assigned_team_id"),
-        assignee_id: opt_str(i, "assignee_id"),
-        project_id: opt_str(i, "project_id"),
-        labels: opt_str_list(i, "labels").unwrap_or_default(),
-        label_match,
-        depends_on: opt_str(i, "depends_on"),
-        dependent_of: opt_str(i, "dependent_of"),
-        query: opt_str(i, "query"),
-        sort,
-        limit,
-    };
-    let raw = transport.call_method(TasksList::METHOD, json!(params))?;
-    let res: TasksListResult = serde_json::from_value(raw).map_err(decode_err)?;
-    let items: Vec<Value> = res.tasks.iter().map(task_to_row).collect();
-    Ok(list_answer(items))
 }
 
 fn read_task_inspect<T: OfficeTransport + ?Sized>(
@@ -532,13 +449,14 @@ fn read_task_history<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    parse_cursor(request.cursor.as_deref())?;
     let params = TasksHistoryParams {
         task: req_str(&request.input, "task")?.to_owned(),
     };
     let raw = transport.call_method(TasksHistory::METHOD, json!(params))?;
     let res: TasksHistoryResult = serde_json::from_value(raw).map_err(decode_err)?;
     let items: Vec<Value> = res.events.into_iter().map(|e| json!(e)).collect();
-    Ok(list_answer(items))
+    paginate(request, items)
 }
 
 fn read_task_deps<T: OfficeTransport + ?Sized>(
@@ -585,13 +503,14 @@ fn read_task_labels<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    parse_cursor(request.cursor.as_deref())?;
     let params = TasksLabelsParams {
         query: opt_str(&request.input, "query"),
     };
     let raw = transport.call_method(TasksLabels::METHOD, json!(params))?;
     let res: TasksLabelsResult = serde_json::from_value(raw).map_err(decode_err)?;
     let items: Vec<Value> = res.labels.into_iter().map(|l| json!(l)).collect();
-    Ok(list_answer(items))
+    paginate(request, items)
 }
 
 #[cfg(test)]

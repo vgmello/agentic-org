@@ -73,9 +73,10 @@ function statusLine(id) {
 function hdr(title, count, trailing = "", extra = "") {
   return `<header class="ph"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>${extra}${count ? `<p class="cnt">${count}</p>` : ""}</div>${trailing ? `<div class="ph-actions">${trailing}</div>` : ""}</header>`;
 }
-function queueHeadline(title, count, announce = false) {
+/* countTail: optional trusted markup after the escaped count (a part a narrow page can drop) */
+function queueHeadline(title, count, announce = false, trailing = "", countTail = "") {
   return `<div class="ph queue-headline"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>
-    <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}</span></div></div>`;
+    <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}${countTail}</span></div>${trailing ? `<div class="ph-actions">${trailing}</div>` : ""}</div>`;
 }
 /* Section header shared by Home, project Overview and other pages. repTitle swaps the label in Report themes. */
 function sectionHead({ id, title, repTitle = title, count = "", right = "", cls = "", level = "h2" }) {
@@ -255,7 +256,7 @@ function feedItemHtml(a, opts) {
   const stamp = opts.day === a.time ? "" : `<time>${esc(a.time)}</time>`;
   const proj = opts.noProj ? "" : " · " + plink(a.proj);
   const summary = a.summary ? `<br><span class="muted">${esc(a.summary)}</span>` : "";
-  const triage = inboxItem ? `<div class="activity-triage" id="activity-triage-${inboxItem.id}" tabindex="-1"><a class="alink" href="#/inbox/${inboxItem.id}">${esc(inboxItem.what)}</a>${itemActionsV4(inboxItem, { hideDetails: true })}</div>` : "";
+  const triage = inboxItem ? `<div class="activity-triage" id="activity-triage-${inboxItem.id}" tabindex="-1"><a class="alink" href="#/inbox/${inboxItem.id}">${esc(inboxItem.what)}</a>${itemActionsV4(inboxItem, { hideDetails: true, route: true })}</div>` : "";
   return `<li><div class="l1">${av(a.who, 24, opts.noDots ? false : "tip")}<span class="actor">${mlink(a.who)}<span class="kind">${ic(t.icon, "ic14")}${t.label}</span></span>${stamp}</div>
       <p class="l2">${esc(a.text)}${proj}${summary}</p>
       ${feedRunLogHtml(a)}

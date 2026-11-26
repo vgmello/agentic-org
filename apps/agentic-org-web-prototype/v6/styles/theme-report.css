@@ -672,7 +672,6 @@ html[data-theme^="report"] .hb-skel-card:last-child { padding-right: 0; }
 html[data-theme^="report"] .ctx > summary { color: var(--tone-accent-ink); }
 html[data-theme^="report"] .ctx-body { border-radius: 3px; background: #F7F8FA; color: #2C3646; box-shadow: inset 2px 0 0 #CBD3DF; }
 html[data-theme^="report"] .card,
-html[data-theme^="report"] .bcard,
 html[data-theme^="report"] .c-entry,
 html[data-theme^="report"] .k-doc {
   border-radius: 4px; background: #F9FAFC;
@@ -701,17 +700,18 @@ html[data-theme="report-dark"] {
   --line: rgb(255 255 255 / .06); --line2: rgb(255 255 255 / .11);
   --hover: rgb(255 255 255 / .05); --sidebar: #161f2d;
   --bar-track: rgba(148, 163, 184, .20);
-  --tone-accent: #615fff;
-  --tone-accent-bar: #615fff;
-  --tone-accent-ink: #a3b3ff;
-  --tone-accent-hover: #c7d2fe;
-  --tone-accent-on-soft: #e0e7ff;
-  --tone-accent-solid: var(--tone-accent);
-  /* Hover and focus darken the action fill, so white text keeps at least 4.5:1 (#4f46e5: 6.3:1). */
-  --tone-accent-solid-hi: #4f46e5;
-  --tone-accent-soft: rgba(97, 95, 255, .14);
-  --tone-accent-soft-hi: rgba(97, 95, 255, .20);
-  --tone-accent-ring: rgba(124, 134, 255, .30);
+  /* Report Night accent: Classic's steel blue (owner, replaces the #615fff indigo scale) */
+  --tone-accent: #86a9cc;
+  --tone-accent-bar: linear-gradient(90deg, #5f84a8, #86a9cc);
+  --tone-accent-ink: #a9c3de;
+  --tone-accent-hover: #cbdcee;
+  --tone-accent-on-soft: #e2ecf6;
+  --tone-accent-solid: #4a7096;
+  --tone-accent-solid-hi: #52789e;
+  --tone-accent-edge: rgba(134, 169, 204, .62);
+  --tone-accent-soft: rgba(134, 169, 204, .14);
+  --tone-accent-soft-hi: rgba(134, 169, 204, .22);
+  --tone-accent-ring: rgba(134, 169, 204, .34);
   --tone-ok: #34D399;
   --tone-ok-bar: #34D399;
   --tone-ok-ink: #6EE7B7;
@@ -741,7 +741,7 @@ html[data-theme="report-dark"] {
   --blocker-bad-bg: rgba(251, 113, 133, .07);
   --blocker-warn-bg: rgba(251, 191, 36, .07);
   --blocker-ok-bg: rgba(52, 211, 153, .07);
-  --blocker-accent-bg: rgba(97, 95, 255, .10);
+  --blocker-accent-bg: rgba(134, 169, 204, .10);
   --blocker-accent-stripe: var(--indigo-400);
   --nav-dot-halo: rgba(251, 191, 36, .18);
   --dot-idle: rgba(186, 222, 255, .24);
@@ -750,7 +750,7 @@ html[data-theme="report-dark"] {
   --dot-urgent: rgba(251, 191, 36, .68);
   --dot-cur-urgent: var(--tone-warn);
   --dot-cleared: rgba(52, 211, 153, .70);
-  --indigo-500: var(--tone-accent); --indigo-400: #7c86ff; --indigo-300: var(--tone-accent-ink);
+  --indigo-500: var(--tone-accent); --indigo-400: #86a9cc; --indigo-300: var(--tone-accent-ink);
 }
 html[data-theme="report-dark"], html[data-theme="report-dark"] body {
   background: #1e2939; color: #ffffff;
@@ -829,13 +829,13 @@ html[data-theme="report-dark"] .cmdk-ai-btn {
   color: var(--tone-accent-on-soft);
 }
 html[data-theme="report-dark"] .cmdk-ai-btn .ic { color: var(--tone-accent-ink); }
-html[data-theme="report-dark"] .cmdk-ai-btn:hover { background: var(--tone-accent); box-shadow: inset 0 0 0 1px var(--indigo-400); color: #ffffff; }
+html[data-theme="report-dark"] .cmdk-ai-btn:hover { background: var(--tone-accent-solid); box-shadow: inset 0 0 0 1px var(--indigo-400); color: #ffffff; }
 html[data-theme="report-dark"] .cmdk-ai-btn:hover .ic { color: #ffffff; }
 html[data-theme="report-dark"] .cmdk-dialog { background: #182230; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14), 0 24px 60px -16px rgba(0, 0, 0, .58); }
 html[data-theme="report-dark"] .cmdk-in-row { border-bottom-color: rgba(255, 255, 255, .07); }
 html[data-theme="report-dark"] .cmdk-in-row input { color: #ffffff; }
 html[data-theme="report-dark"] .cmdk-in-row input::placeholder { color: #99a1af; }
-html[data-theme="report-dark"] .cmdk-ask-go { background: var(--tone-accent); color: #ffffff; }
+html[data-theme="report-dark"] .cmdk-ask-go { background: var(--tone-accent-solid); color: #ffffff; }
 html[data-theme="report-dark"] .cmdk-ask-go:hover:not(:disabled) { background: var(--indigo-400); }
 html[data-theme="report-dark"] .cmdk-ask-go:disabled { background: #243144; color: #6a7282; }
 html[data-theme="report-dark"] .cmdk-ai-card { background: var(--blocker-accent-bg); box-shadow: inset 3px 0 0 var(--tone-accent), inset 0 0 0 1px var(--blocker-accent-ring); color: #d1d5dc; }
@@ -1000,7 +1000,7 @@ html[data-theme="report-dark"] .hb-dig-subhd { color: #99a1af; }
 html[data-theme="report-dark"] .hb-brief-lenses { background: #101828; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .09); }
 html[data-theme="report-dark"] .hb-brief-lenses button { color: #99a1af; }
 html[data-theme="report-dark"] .hb-brief-lenses button:hover { color: #ffffff; }
-html[data-theme="report-dark"] .hb-brief-lenses button[aria-pressed="true"] { background: var(--tone-accent); color: #ffffff; }
+html[data-theme="report-dark"] .hb-brief-lenses button[aria-pressed="true"] { background: var(--tone-accent-solid); color: #ffffff; }
 html[data-theme="report-dark"] .hb-cos-memo { --hb-cos-fade: #16202e; background: #16202e; box-shadow: inset 3px 0 0 var(--indigo-400), inset 0 0 0 1px rgba(255, 255, 255, .09); }
 html[data-theme="report-dark"] .hb-cos-p { color: #d1d5dc; }
 html[data-theme="report-dark"] .hb-cos-p strong { color: #ffffff; }
@@ -1011,7 +1011,7 @@ html[data-theme="report-dark"] .hb-cos-sig-role,
 html[data-theme="report-dark"] .hb-cos-sig-meta { color: #99a1af; }
 html[data-theme="report-dark"] .hb-cos-copy:hover,
 html[data-theme="report-dark"] .hb-cos-expand:hover,
-html[data-theme="report-dark"] .hb-spot-ai-ask:hover { background: var(--tone-accent); color: #ffffff; box-shadow: inset 0 0 0 1px var(--indigo-400); }
+html[data-theme="report-dark"] .hb-spot-ai-ask:hover { background: var(--tone-accent-solid); color: #ffffff; box-shadow: inset 0 0 0 1px var(--indigo-400); }
 html[data-theme="report-dark"] .hb-dig-item { border-top-color: rgba(255, 255, 255, .07); }
 html[data-theme="report-dark"] .hb-dig-item:first-child { border-top-color: rgba(255, 255, 255, .10); }
 html[data-theme="report-dark"] a.hb-dig-item:hover { background: rgba(255, 255, 255, .05); }
@@ -1060,10 +1060,10 @@ html[data-theme="report-dark"] .hb-time-unit { color: #99a1af; }
 
 /* Report Night Buttons, Tags & Sub-Pages (Exact Classic Colors) */
 html[data-theme="report-dark"] .btn.primary.h4-cta,
-html[data-theme="report-dark"] .h4-cta { background: var(--tone-accent); color: #ffffff; }
+html[data-theme="report-dark"] .h4-cta { background: var(--tone-accent-solid); color: #ffffff; }
 html[data-theme="report-dark"] .h4-cta-fill,
 html[data-theme="report-dark"] .h4-cta[data-cta-tone="ocean"] .h4-cta-fill,
-html[data-theme="report-dark"] .h4-cta[data-cta-tone="reply"] .h4-cta-fill { background: var(--tone-accent); }
+html[data-theme="report-dark"] .h4-cta[data-cta-tone="reply"] .h4-cta-fill { background: var(--tone-accent-solid); }
 html[data-theme="report-dark"] .h4-cta:hover,
 html[data-theme="report-dark"] .h4-cta:focus-visible,
 html[data-theme="report-dark"] .btn.primary.h4-cta:hover,
@@ -1101,7 +1101,6 @@ html[data-theme="report-dark"] .hb-skel-grid { border-bottom-color: rgba(255, 25
 html[data-theme="report-dark"] .hb-skel-card + .hb-skel-card { border-left-color: rgba(255, 255, 255, .08); }
 html[data-theme="report-dark"] .ctx-body { background: #16202e; color: #d1d5dc; box-shadow: inset 2px 0 0 var(--indigo-400); }
 html[data-theme="report-dark"] .card,
-html[data-theme="report-dark"] .bcard,
 html[data-theme="report-dark"] .c-entry,
 html[data-theme="report-dark"] .k-doc { background: #1a2433; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
 html[data-theme="report-dark"] .chlist,
@@ -1144,5 +1143,25 @@ html[data-theme="report-dark"] .hb-cal-proj { color: #d1d5dc; }
 html[data-theme="report-dark"] :is(.hb-cal-meta, .hb-cal-date span) { color: #99a1af; }
 
 /* Report Night: selected Inbox / priority-queue row uses Classic's tinted fill */
-html[data-theme="report-dark"] :is(.triage-workspace .triage-queue, .pj-queue-pane) { --triage-row-selected: rgba(97, 95, 255, .14); }
+html[data-theme="report-dark"] :is(.triage-workspace .triage-queue, .pj-queue-pane) { --triage-row-selected: rgba(134, 169, 204, .14); }
 html[data-theme^="report"] .hb-time-sec .hb-time { padding-top: 8px; }
+
+/* Report Night actions: Classic's steel-blue button treatment (white text on the deep step, 5.2:1) */
+html[data-theme="report-dark"] { --cmdk-tab-selected-ring: rgba(134, 169, 204, .44); }
+html[data-theme="report-dark"] :is(.btn.primary, .btn.primary.h4-cta, .h4-cta, .h4-d-foot .btn.primary) {
+  background: var(--tone-accent-solid); color: #ffffff; box-shadow: inset 0 0 0 1px var(--tone-accent-edge);
+}
+html[data-theme="report-dark"] :is(.btn.primary, .h4-d-foot .btn.primary, .h4-cta, .btn.primary.h4-cta):is(:hover, :focus-visible) {
+  background: var(--tone-accent-solid-hi); transform: none; box-shadow: inset 0 0 0 1px var(--tone-accent-edge);
+}
+html[data-theme="report-dark"] :is(.h4-cta-fill, .h4-cta[data-cta-tone="ocean"] .h4-cta-fill, .h4-cta[data-cta-tone="reply"] .h4-cta-fill) { background: var(--tone-accent-solid-hi); }
+html[data-theme="report-dark"] .h4-cta-sheen { display: none; }
+html[data-theme="report-dark"] .h4-cta.hb-cta-glass {
+  background: var(--tone-accent-soft); backdrop-filter: none; -webkit-backdrop-filter: none;
+  box-shadow: inset 0 0 0 1px var(--tone-accent-ring); color: var(--tone-accent-on-soft);
+}
+html[data-theme="report-dark"] .h4-cta.hb-cta-glass .h4-cta-lbl .ic { color: var(--tone-accent-ink); }
+html[data-theme="report-dark"] .h4-cta.hb-cta-glass:is(:hover, :focus-visible) { background: var(--tone-accent-solid); box-shadow: inset 0 0 0 1px var(--tone-accent-edge); color: #ffffff; transform: none; }
+html[data-theme="report-dark"] .btn.new-btn { background: var(--tone-accent-soft-hi); color: var(--tone-accent-on-soft); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); }
+html[data-theme="report-dark"] .btn.new-btn:hover { background: rgba(134, 169, 204, .30); box-shadow: inset 0 0 0 1px var(--tone-accent-edge); transform: none; }
+html[data-theme="report-dark"] .new-btn .new-chev { color: var(--tone-accent-ink); }

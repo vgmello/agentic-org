@@ -8,7 +8,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use org_client::{Client, ClientError};
-use org_command::{Answer, Office, Refusal, Request};
+use org_command::{Answer, Office, Refusal, RefusalDetails, Request};
 use org_proto::location::{selected_office_socket_in, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::msg::{MsgBind, MsgBindParams};
 use org_proto::ErrorCode;
@@ -120,21 +120,47 @@ fn read_binding_file_token(path: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
+/// Whether the process environment asks for an office binding: it names a session token or a
+/// binding file, even one that cannot be read. Such a caller is bound: a command that could run
+/// without the office fails closed instead (`session boot`).
+pub fn env_requests_binding() -> bool {
+    [SESSION_TOKEN_ENV, BINDING_FILE_ENV]
+        .iter()
+        .any(|name| env::var_os(name).is_some_and(|value| !value.is_empty()))
+}
+
 /// Connects lazily to the bound office socket and executes `org-command` requests.
 pub struct BoundOffice {
     binding: Binding,
     client: Option<Client>,
     /// Per-command `waiting_messages` hint returned by the most recent office RPC call.
     waiting_messages: Option<u32>,
+    /// Whether the caller asked for a binding ([`OfficeTransport::is_bound`]).
+    bound: bool,
+    /// The employee the office bound the connection to (`msg.bind`), once connected.
+    bound_member: Option<String>,
 }
 
 impl BoundOffice {
+    /// An office for `binding`, bound when it carries a session token or names a signed-in
+    /// workspace (`TASK-137`), whose token is refreshed when the connection is made.
     pub fn new(binding: Binding) -> Self {
+        let bound = binding.session_token.is_some() || binding.external_state.is_some();
         Self {
             binding,
             client: None,
             waiting_messages: None,
+            bound,
+            bound_member: None,
         }
+    }
+
+    /// Marks the office bound because the environment asked for a binding
+    /// ([`env_requests_binding`]), even when its token could not be read: then every office
+    /// command fails closed instead of running unbound.
+    pub fn with_binding_requested(mut self, requested: bool) -> Self {
+        self.bound |= requested;
+        self
     }
 
     fn connect_selected(&self, office_id: &str) -> Result<Client, Refusal> {
@@ -164,13 +190,14 @@ impl BoundOffice {
             .map_err(|e| map_connect_error(e, Some(office_id)))
     }
 
-    fn bind_agent(&self, client: &Client, agent_id: &str) -> Result<(), Refusal> {
+    fn bind_agent(&self, client: &Client, agent_id: &str) -> Result<Option<String>, Refusal> {
         let params = match &self.binding.session_token {
             Some(token) => MsgBindParams::member_with_token(agent_id.to_owned(), token.clone()),
             None => MsgBindParams::member(agent_id.to_owned()),
         };
-        let Err(error) = client.call::<MsgBind>(&params) else {
-            return Ok(());
+        let error = match client.call::<MsgBind>(&params) {
+            Ok(bound) => return Ok(bound.member_id),
+            Err(error) => error,
         };
         let office_label = self
             .binding
@@ -186,7 +213,14 @@ impl BoundOffice {
         Err(refusal)
     }
 
-    fn connect_client(&self) -> Result<Client, Refusal> {
+    fn connect_client(&self) -> Result<(Client, Option<String>), Refusal> {
+        if self.binding.session_token.is_none() && self.bound {
+            return Err(Refusal::new(
+                ErrorCode::NotAuthorized,
+                "AGENT_OS_SESSION_TOKEN or AGENT_OS_BINDING_FILE is set, but no session token could be read from it.",
+                "Check that AGENT_OS_BINDING_FILE names this session's owner-only binding file (a regular file, not a symlink, at most 4 KiB), or start the session again; `agent-os boot --offline` works without the office.",
+            ));
+        }
         if self.binding.session_token.is_none() {
             return Err(Refusal::new(
                 ErrorCode::NotAuthorized,
@@ -206,10 +240,11 @@ impl BoundOffice {
                 "Set AGENT_OS_SOCKET or AGENT_OS_OFFICE + AGENT_OS_RUNTIME_DIR alongside AGENT_OS_SESSION_TOKEN.",
             ));
         };
-        if let Some(agent_id) = &self.binding.agent_id {
-            self.bind_agent(&client, agent_id)?;
-        }
-        Ok(client)
+        let member = match &self.binding.agent_id {
+            Some(agent_id) => self.bind_agent(&client, agent_id)?,
+            None => None,
+        };
+        Ok((client, member))
     }
 
     /// Eagerly connects and binds to the office socket once (used by `session attach`).
@@ -219,12 +254,14 @@ impl BoundOffice {
 
     fn client(&mut self) -> Result<&mut Client, Refusal> {
         if self.client.is_none() {
-            let client = if self.binding.external_state.is_some() {
-                crate::external_auth::connect_workspace(&mut self.binding)?
+            let (client, member) = if self.binding.external_state.is_some() {
+                let client = crate::external_auth::connect_workspace(&mut self.binding)?;
+                (client, self.binding.agent_id.clone())
             } else {
                 self.connect_client()?
             };
             self.client = Some(client);
+            self.bound_member = member;
         }
         Ok(self.client.as_mut().expect("client just connected"))
     }
@@ -255,6 +292,16 @@ impl OfficeTransport for BoundOffice {
         self.waiting_messages = outcome.meta.waiting_messages;
         Ok(outcome.value)
     }
+
+    fn is_bound(&self) -> bool {
+        self.bound
+    }
+
+    fn caller_member_id(&self) -> Option<String> {
+        self.bound_member
+            .clone()
+            .or_else(|| self.binding.agent_id.clone())
+    }
 }
 
 impl Office for BoundOffice {
@@ -278,27 +325,53 @@ fn map_connect_error(error: ClientError, office_id: Option<&str>) -> Refusal {
     }
 }
 
+/// The refusal of an office error, with everything the office said in its structured fields:
+/// `retry_after_ms` for `rate_limited`, and the `field` and `rule` an input failed. The one
+/// mapping for `agent-os` and for `agentic-org`'s grant-bound channel alike.
+pub fn api_refusal(api: org_proto::ApiError) -> Refusal {
+    let hint = match (api.code, api.retry_after_ms, &api.field, &api.rule) {
+        (ErrorCode::NotAuthorized, ..) if api.message.contains("Ask your team lead.") => {
+            "Ask your team lead.".to_owned()
+        }
+        (ErrorCode::RateLimited, Some(after), ..) => format!(
+            "Wait {after} ms (error.retry_after_ms), then retry the command with the same flags."
+        ),
+        (_, _, Some(field), Some(rule)) => format!(
+            "Fix `{field}`: it does not meet the `{rule}` rule (error.field, error.rule). Then retry."
+        ),
+        (_, _, Some(field), None) => {
+            format!("Fix `{field}` (error.field), then retry.")
+        }
+        (code, ..) => hint_for(code).to_owned(),
+    };
+    let details =
+        (api.retry_after_ms.is_some() || api.field.is_some() || api.rule.is_some()).then(|| {
+            Box::new(RefusalDetails {
+                retry_after_ms: api.retry_after_ms,
+                field: api.field,
+                rule: api.rule,
+            })
+        });
+    Refusal {
+        details,
+        ..Refusal::new(api.code, api.message, hint)
+    }
+}
+
 pub(crate) fn map_client_error(error: ClientError) -> Refusal {
     match error {
-        ClientError::Api(api) => {
-            let hint = if api.code == ErrorCode::NotAuthorized
-                && api.message.contains("Ask your team lead.")
-            {
-                "Ask your team lead."
-            } else {
-                hint_for(api.code)
-            };
-            Refusal::new(api.code, api.message, hint)
-        }
+        ClientError::Api(api) => api_refusal(api),
         ClientError::RequestTooLarge => Refusal::new(
             ErrorCode::TooLarge,
             "The request exceeded the office socket frame limit.",
             "Reduce the request size and retry.",
         ),
+        // A write the office did not answer in time may have been made: the one timeout hint
+        // says to retry it with the same --idempotency-key.
         ClientError::Timeout => Refusal::new(
             ErrorCode::Timeout,
             "The office did not answer before the timeout.",
-            "Retry the command; if it persists, check the office status.",
+            hint_for(ErrorCode::Timeout),
         ),
         ClientError::Disconnected | ClientError::Io(_) | ClientError::Protocol(_) => Refusal::new(
             ErrorCode::Unavailable,
@@ -316,6 +389,18 @@ pub(crate) fn map_client_error(error: ClientError) -> Refusal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_timeout_says_to_retry_with_the_same_idempotency_key() {
+        let refusal = map_client_error(ClientError::Timeout);
+        assert_eq!(refusal.code, ErrorCode::Timeout);
+        assert_eq!(refusal.hint, hint_for(ErrorCode::Timeout));
+        assert!(
+            refusal.hint.contains("--idempotency-key"),
+            "{}",
+            refusal.hint
+        );
+    }
 
     #[test]
     fn binding_debug_redacts_session_token() {

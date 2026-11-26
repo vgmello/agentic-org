@@ -21,14 +21,14 @@ fn the_four_audited_inaccuracies_fail_the_guard() {
         "Use `agent-os channel summarize --channel <ch> --about <topic>`.",
         "--about is not a flag of `channel summarize`",
     );
-    // `msg ask` has no --prompt; its questions are structure given in --json.
+    // `msg ask` takes one question as --prompt, never an invented --question; it needs --to.
     assert_fails(
-        "Ask with `agent-os msg ask --to <person> --prompt <text>`.",
-        "--prompt is not a flag of `msg ask`",
+        "Ask with `agent-os msg ask --to <person> --question <text>`.",
+        "--question is not a flag of `msg ask`",
     );
     assert_fails(
-        "`agent-os msg ask --to <person> --subject <text>`",
-        "`questions` is required",
+        "`agent-os msg ask --prompt <text> --subject <text>`",
+        "`to` is required",
     );
     // `task transition` takes --blocked-reason, and requires --if-match.
     assert_fails(
@@ -49,6 +49,11 @@ fn the_four_audited_inaccuracies_fail_the_guard() {
         "`agent-os channel summarize --channel <ch> --question <text>`",
         "`agent-os task transition --task <ref> --status blocked --blocked-reason <text> --if-match <rev>`",
         r#"`agent-os msg ask --to @<handle> --json '{"questions":[{"id":"q1","question_type":"yes_no","prompt":"Ship?"}]}'`"#,
+        "`agent-os msg ask --to @<handle> --prompt <text> --question-type choice --option <id>=<label> --default-value <id>`",
+        "`agent-os member set-hiring --member <id> --allow --if-match <rev>`",
+        "`agent-os process create --kind standard --title <t> --non-overridable --input-file <path>`",
+        "`agent-os boot --format yaml`",
+        "`agent-os instructions overview --offline`",
         "`agent-os team create --name <name> --dry-run`",
     ] {
         assert!(problems(good).is_empty(), "{good}: {:#?}", problems(good));
@@ -67,8 +72,21 @@ fn unknown_commands_resources_flags_and_values_fail() {
         "--status is one of",
     );
     assert_fails(
-        "`agent-os task list --max-results many`",
+        "`agent-os msg wait --timeout-ms many`",
         "takes a whole number",
+    );
+    // The flags that were replaced are gone.
+    assert_fails(
+        "`agent-os task list --max-results 50`",
+        "--max-results is not a flag of `task list`",
+    );
+    assert_fails(
+        "`agent-os member set-hiring --member <id> --may-hire --if-match <rev>`",
+        "--may-hire is not a flag of `member set-hiring`",
+    );
+    assert_fails(
+        "`agent-os process update --id <id> --kind standard --title <t> --overridable --if-match <rev>`",
+        "--overridable is not a flag of `process update`",
     );
     assert_fails(
         "`agent-os skill read`  `agent-os skill read --nam x`",
@@ -77,7 +95,7 @@ fn unknown_commands_resources_flags_and_values_fail() {
     assert_fails("`agent-os task inspect <ref>`", "is a bare word");
     assert_fails("`agent-os session attach --limit 5`", "takes no flags");
     // A placeholder still has to fit an enum or number flag it fills: it becomes a valid value.
-    assert!(problems("`agent-os task list --status <status> --max-results <n>`").is_empty());
+    assert!(problems("`agent-os task list --status <status> --limit <n>`").is_empty());
 }
 
 #[test]
@@ -99,7 +117,7 @@ agent-os msg inbox --state unread | head -5
 not a command line
 ```
 ";
-    let cited = cited_command_lines(text);
+    let cited = cited_command_lines(text, &org_agent_cli::table::table());
     assert_eq!(cited.len(), 7, "{cited:#?}");
     assert!(
         !cited
@@ -165,24 +183,24 @@ fn json_placeholders_keep_every_key_and_type_so_unknown_fields_and_wrong_types_f
         "`status` must be one of",
     );
     assert_fails(
-        r#"`agent-os task list --json '{"max_results":"many"}'`"#,
-        "`max_results` must be a whole number",
+        r#"`agent-os msg wait --json '{"timeout_ms":"many"}'`"#,
+        "`timeout_ms` must be a whole number",
     );
     assert_fails(
-        "```text\n{\"command\":\"task list\",\"input\":{\"labels\":\"<label>\",\"max_results\":true}}\n```",
-        "`max_results` must be a whole number",
+        "```text\n{\"command\":\"msg wait\",\"input\":{\"from\":\"<who>\",\"timeout_ms\":true}}\n```",
+        "`timeout_ms` must be a whole number",
     );
     // JSON that is not JSON is not waved through either.
     assert_fails(
-        "`agent-os task list --json '{\"max_results\": <n>}'`",
+        "`agent-os msg wait --json '{\"timeout_ms\": <n>}'`",
         "--json",
     );
     // Placeholder leaves become values of their declared types; a bare placeholder is `{}`.
     for good in [
-        r#"`agent-os task list --json '{"status":"<status>","max_results":"<n>","labels":["<label>"]}'`"#,
+        r#"`agent-os task list --json '{"status":"<status>","exclude_status":["<status>"],"labels":["<label>"]}'`"#,
         r#"`agent-os task list --json '{"labels":"<labels>","label_match":"<mode>"}'`"#,
         "`agent-os task list --json '<json>'`",
-        "```text\n{\"command\":\"task list\",\"input\":{\"status\":\"<status>\",\"max_results\":\"<n>\"}}\n```",
+        "```text\n{\"command\":\"msg wait\",\"input\":{\"timeout_ms\":\"<n>\"}}\n```",
     ] {
         assert!(problems(good).is_empty(), "{good}: {:#?}", problems(good));
     }
@@ -211,17 +229,103 @@ fn attach_lines_are_held_to_the_rules_session_attach_applies_first() {
             r#"{"command":"  "}"#,
             "`command` must name a resource and verb",
         ),
+        (
+            r#"{"command":"task list","options":{"format":"yaml"}}"#,
+            "answers every line in JSON",
+        ),
+        (
+            r#"{"command":"msg send","input":{"to":"owner"},"options":{"stdin":true}}"#,
+            "`stdin` is refused",
+        ),
+        (
+            r#"{"command":"task list","options":{"help":true}}"#,
+            "`help` is refused",
+        ),
+        (
+            r#"{"command":"task list","inputs":{"status":"todo"}}"#,
+            "`inputs` is not a key of a `session attach` line",
+        ),
+        (
+            r#"{"command":"task list --format yaml"}"#,
+            "`--format` is a flag",
+        ),
+        (
+            r#"{"command":"task list","options":{"--format=yaml":true}}"#,
+            "Option `--format=yaml` is not a flag name",
+        ),
+        (
+            r#"{"command":"task list","options":{"limit 5":true}}"#,
+            "Option `limit 5` is not a flag name",
+        ),
     ] {
         assert_fails(&format!("```text\n{line}\n```"), why);
     }
+    // A value that looks like a flag stays that option's value, as attach passes it inline.
+    assert_fails(
+        "```text\n{\"command\":\"boot\",\"options\":{\"offline\":\"--format=yaml\"}}\n```",
+        "yes-or-no",
+    );
     // Scalars and booleans become flags as attach makes them; a JSON example without
     // `command` is not an attach line.
     for good in [
-        "```text\n{\"command\":\"task list\",\"options\":{\"status\":\"todo\",\"max_results\":5,\"limit\":null}}\n```",
+        "```text\n{\"command\":\"task list\",\"options\":{\"status\":\"todo\",\"exclude_status\":\"done\",\"format\":\"json\",\"limit\":null}}\n```",
+        "```text\n{\"command\":\"boot\",\"options\":{\"offline\":true}}\n```",
         "```text\n{\"questions\":[{\"id\":\"q1\"}]}\n```",
     ] {
         assert!(problems(good).is_empty(), "{good}: {:#?}", problems(good));
     }
+}
+
+#[test]
+fn attach_lines_give_true_only_to_yes_or_no_flags_as_session_attach_does() {
+    // A flag that takes a value, given `true`, would read the next flag as its value (`--body
+    // --dry-run`), so attach refuses the line, and the guard with it.
+    for (line, why) in [
+        (
+            r#"{"command":"msg send","input":{"to":"@ada"},"options":{"body":true,"dry-run":true}}"#,
+            "Option `body` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"msg send","input":{"to":"@ada"},"options":{"body":true,"durable":true}}"#,
+            "Option `body` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"status set","options":{"--text":true,"dry-run":true}}"#,
+            "Option `--text` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"status set","input":{"text":"ok"},"options":{"idempotency-key":true,"dry-run":true}}"#,
+            "Option `idempotency-key` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"who","options":{"cursor":true}}"#,
+            "Option `cursor` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"status set","input":{"text":"ok"},"options":{"bogus":true}}"#,
+            "Option `bogus` is not a flag of `status set`.",
+        ),
+        (
+            r#"{"command":"status set","input":{"text":"ok"},"options":{"-h":true}}"#,
+            "Option `-h` is not a flag name",
+        ),
+    ] {
+        assert_fails(&format!("```text\n{line}\n```"), why);
+    }
+    // A yes-or-no flag, common or the command's own, with or without `--`, holds; a line naming
+    // no command fails on its command.
+    for good in [
+        r#"{"command":"status set","input":{"text":"ok"},"options":{"dry-run":true}}"#,
+        r#"{"command":"task list","options":{"unassigned":true,"cursor":false}}"#,
+        r#"{"command":"task list","options":{"--unassigned":true,"limit":5}}"#,
+    ] {
+        let text = format!("```text\n{good}\n```");
+        assert!(problems(&text).is_empty(), "{good}: {:#?}", problems(&text));
+    }
+    assert_fails(
+        "```text\n{\"command\":\"task frobnicate\",\"options\":{\"body\":true}}\n```",
+        "`task frobnicate` is not a command",
+    );
 }
 
 #[test]

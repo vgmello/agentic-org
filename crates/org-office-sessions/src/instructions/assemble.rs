@@ -7,7 +7,7 @@
 use org_command::CommandTable;
 
 use super::identity::Placement;
-use super::{builtin_instructions, render_command_catalogue, HR_LEAD, SAME_USER_ISOLATION_NOTICE};
+use super::{builtin_instructions, HR_LEAD, SAME_USER_ISOLATION_NOTICE};
 use crate::wake::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
 
 /// Inputs for assembling an agent's standing prompt.
@@ -111,7 +111,8 @@ fn identity_section(input: &InstructionInput<'_>) -> String {
 /// Assembles the standing prompt for an agent session (`doc-27` §1, `FC-171`):
 ///
 /// 1. built-in instructions (release-static, at most `BUILTIN_INSTRUCTIONS_MAX_BYTES`);
-/// 2. the command catalogue generated from the live table (release-static, at most 4 KiB);
+/// 2. the live table's grouped command catalogue, `CommandTable::catalogue` as it is
+///    (release-static, at most 4 KiB);
 /// 3. the organization's processes and standards for the home team chain;
 /// 4. the role's instructions;
 /// 5. identity and boundaries: name, home team and leads by name, HR lead duties, isolation,
@@ -125,7 +126,7 @@ pub fn assemble_standing_instructions(
 ) -> StandingInstructions {
     let mut parts: Vec<String> = Vec::with_capacity(6);
     parts.push(builtin_instructions());
-    parts.push(render_command_catalogue(table));
+    parts.push(table.catalogue().trim_end().to_owned());
     if let Some(processes) = non_empty(input.process_instructions) {
         parts.push(format!(
             "## Standing processes and standards\nThese apply to your work. A turn about a task that resolves against another chain names the documents that apply to that task instead.\n\n{processes}"

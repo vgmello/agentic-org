@@ -1,6 +1,6 @@
 //! Real-binary `agent-os login`, `whoami` and `logout` against a scripted office that checks
 //! every Ed25519 signature (`TASK-137`): owner-only workspace state outside Git, walk-up
-//! resolution, environment precedence and logout cleanup.
+//! resolution, environment precedence, the boot briefing of a sign-in and logout cleanup.
 
 use std::io::BufReader;
 use std::os::unix::fs::PermissionsExt;
@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use base64::Engine as _;
+use org_proto::directory::{Who, WhoResult};
 use org_proto::external_auth::{
     challenge_message, AuthChallenge, AuthChallengeResult, AuthExchange, AuthExchangeResult,
     AuthLoginPoll, AuthLoginPollResult, AuthLoginRequest, AuthLoginRequestResult, AuthLogout,
@@ -18,6 +19,7 @@ use org_proto::external_auth::{
     SessionMode,
 };
 use org_proto::msg::{MsgBind, MsgBindResult};
+use org_proto::processes::{ProcessEffective, ProcessEffectiveResult};
 use org_proto::{frame, ApiError, ErrorCode, Hello, HelloResult, Request, Response};
 use ring::signature::{UnparsedPublicKey, ED25519};
 use serde_json::Value;
@@ -195,6 +197,21 @@ fn answer(req: &Request, office: &mut Office) -> Response {
             },
         )
         .unwrap()
+    } else if req.is::<Who>() {
+        // The boot briefing `login` answers once the workspace is bound.
+        let who: WhoResult = serde_json::from_value(serde_json::json!({"members": [{
+            "id": ADA, "name": "Ada", "handle": "ada", "kind": "agent", "teams": [],
+            "presence": "online"
+        }]}))
+        .unwrap();
+        Response::ok::<Who>(id, &who).unwrap()
+    } else if req.is::<ProcessEffective>() {
+        let effective: ProcessEffectiveResult = serde_json::from_value(serde_json::json!({
+            "scope_chain": ["Organization"], "entries": [], "problems": [],
+            "computed_at": "2026-11-26T00:00:00Z"
+        }))
+        .unwrap();
+        Response::ok::<ProcessEffective>(id, &effective).unwrap()
     } else {
         panic!("unexpected method {}", req.method)
     }
@@ -288,10 +305,24 @@ fn login_whoami_and_logout_keep_owner_only_state_outside_git() {
     assert_eq!(env["data"]["mode"], "external");
     assert_eq!(env["data"]["session_id"], SESSION);
     assert_eq!(env["data"]["workspace_root"], repo.display().to_string());
+    // The grouped catalogue: one `resource: verbs` line per resource.
     assert!(env["data"]["commands"]
         .as_str()
         .unwrap()
-        .contains("msg send"));
+        .lines()
+        .any(|line| line.starts_with("msg: ") && line.contains("send")));
+    // The sign-in answers the bound boot briefing over the binding it saved.
+    let boot = &env["data"]["boot"];
+    assert_eq!(boot["mode"], "bound", "{env}");
+    assert_eq!(boot["identity"]["id"], ADA, "{env}");
+    assert!(
+        boot["rules"].as_str().is_some_and(|r| !r.is_empty()),
+        "{env}"
+    );
+    assert!(
+        boot.get("catalogue").is_none(),
+        "`commands` carries it: {env}"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("agentic-org agent approve ABCD-EFGH"),
@@ -320,6 +351,25 @@ fn login_whoami_and_logout_keep_owner_only_state_outside_git() {
     assert_eq!(env["data"]["mode"], "external");
     assert_eq!(office.lock().unwrap().bound_with.last(), Some(&token));
 
+    // The signed-in workspace is a bound shell: `--help` opens with the bound quickstart, and
+    // `boot` reads the office over the workspace binding instead of answering offline.
+    let help = |cwd: &Path| {
+        let out = agent_os(cwd, &state, &root).arg("--help").output().unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert!(
+        help(&sub).starts_with("Agent quickstart: this shell is bound"),
+        "{}",
+        help(&sub)
+    );
+    assert!(help(&root).starts_with("Agent quickstart: this shell has no office binding"));
+    let out = agent_os(&sub, &state, &root).arg("boot").output().unwrap();
+    let env = envelope(&out);
+    assert_eq!(out.status.code(), Some(0), "{env}");
+    assert_eq!(env["data"]["mode"], "bound", "{env}");
+    assert_eq!(env["data"]["identity"]["id"], ADA, "{env}");
+
     // Environment bindings always win over the workspace.
     let out = agent_os(&sub, &state, &root)
         .arg("whoami")
@@ -330,6 +380,16 @@ fn login_whoami_and_logout_keep_owner_only_state_outside_git() {
         .unwrap();
     let env = envelope(&out);
     assert_eq!(env["data"]["mode"], "managed", "{env}");
+    // A managed binding that names an unreadable binding file fails closed: it never falls back
+    // to acting as the workspace's agent.
+    let out = agent_os(&sub, &state, &root)
+        .arg("whoami")
+        .env("AGENT_OS_BINDING_FILE", root.join("missing-binding"))
+        .env("AGENT_OS_SOCKET", &sock)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(envelope(&out)["error"]["code"], "not_authorized");
 
     // Outside the workspace nothing is bound.
     let out = agent_os(&root, &state, &root)

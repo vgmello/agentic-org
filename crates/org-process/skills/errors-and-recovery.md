@@ -16,7 +16,8 @@ The set of codes is closed. What each one asks of you:
 - `checklist_incomplete`: required checklist steps are not ticked.
 - `cycle`, `not_empty`, `not_a_member`, `owner_protected`: the change would break the organization's structure.
 - `unavailable`, `not_ready`, `timeout`, `storage_error`: a temporary failure. Retry later with the same idempotency key.
-- `rate_limited`: wait before you retry.
+- `rate_limited`: wait `error.retry_after_ms` before you retry.
+- `error.field` and `error.rule`, when present, name the input that failed and the rule it broke.
 - `unsupported`: this command or option is not available here, such as `--dry-run` on most writes.
 - `operation_reused`: you reused an idempotency key for a different change. Use a new key.
 - `expired`, `clock_skew`, `snapshot_required`, `unsupported_version`, `unknown_method`, `not_bound`, `cancelled`, `unknown`: tell a person if it repeats.

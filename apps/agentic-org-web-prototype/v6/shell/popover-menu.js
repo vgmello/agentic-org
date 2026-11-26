@@ -32,11 +32,35 @@ function closePopoverMenu(menu) {
   if (menu.matches(":popover-open")) menu.hidePopover();
 }
 
-/* Keep an open menu attached to its trigger while the board or page scrolls; close it once the trigger is gone */
+/* The area a trigger can be seen in: the viewport, narrowed to its scroller ([data-popover-scroller]) and, at the top,
+   to below any sticky header in that scroller ([data-popover-inset]) that sits over the trigger's column
+   (other than one that holds the trigger) */
+function visibleArea(trigger) {
+  const area = { top: 0, bottom: window.innerHeight, left: 0, right: document.documentElement.clientWidth };
+  const scroller = trigger.closest("[data-popover-scroller]");
+  if (!scroller) return area;
+  const s = scroller.getBoundingClientRect(), t = trigger.getBoundingClientRect();
+  Object.assign(area, { top: Math.max(area.top, s.top), bottom: Math.min(area.bottom, s.bottom), left: Math.max(area.left, s.left), right: Math.min(area.right, s.right) });
+  for (const inset of scroller.querySelectorAll("[data-popover-inset]")) {
+    /* A trigger inside the sticky header itself (a lane's ⋯) is never under it */
+    if (inset.contains(trigger)) continue;
+    const r = inset.getBoundingClientRect();
+    if (r.left < t.right && r.right > t.left && r.top <= t.top) area.top = Math.max(area.top, r.bottom);
+  }
+  return area;
+}
+/* A trigger counts as gone once its middle has left that area (scrolled under a sticky header, or out of the board) */
+function triggerHidden(trigger) {
+  const r = trigger?.getBoundingClientRect();
+  if (!r || !r.width) return true;
+  const area = visibleArea(trigger), x = r.left + r.width / 2, y = r.top + r.height / 2;
+  return y < area.top || y > area.bottom || x < area.left || x > area.right;
+}
+/* Keep an open menu attached to its trigger while the board or page scrolls; close it once the trigger is out of sight */
 function followOpenPopoverMenus() {
   for (const menu of document.querySelectorAll(".menu[popover]:popover-open")) {
-    const trigger = popoverTrigger(menu), r = trigger?.getBoundingClientRect();
-    if (!r || r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > document.documentElement.clientWidth) {
+    const trigger = popoverTrigger(menu);
+    if (triggerHidden(trigger)) {
       closePopoverMenu(menu);
       menu.hidden = true;
       trigger?.setAttribute("aria-expanded", "false");

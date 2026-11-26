@@ -1,7 +1,7 @@
 //! Dispatch for C2 HR hiring, role catalog, permission, team limit, and agent lifecycle
 //! commands (`TASK-41`, `ADR-0029`, `CLI-14`).
 
-use org_command::{Ack, Answer, Refusal, Request};
+use org_command::{Answer, Refusal, Request};
 use org_proto::hiring::{
     AgentExecutionRecord, EntityOpResult, HireOpResult, HireProposalWire, HireRequestRecord,
     HrHireListResult, RoleListResult, RoleRecord,
@@ -9,9 +9,7 @@ use org_proto::hiring::{
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
-use crate::keys::UuidV7KeySource;
-use crate::transport::{derive_uuid_v7, parse_cursor, OfficeTransport};
-use org_command::KeySource;
+use crate::transport::{command_id, paginate, parse_cursor, write_ack, OfficeTransport};
 
 /// Dispatches a C2 hiring/role/agent command, returning `None` if not handled here.
 pub(crate) fn try_execute<T: OfficeTransport + ?Sized>(
@@ -44,7 +42,7 @@ fn read_role_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
-    let offset = parse_cursor(request.cursor.as_deref())?;
+    parse_cursor(request.cursor.as_deref())?;
     let raw = transport.call_method("role.list", json!({}))?;
     let listed: RoleListResult =
         serde_json::from_value(raw).map_err(|_| decode_err("role.list"))?;
@@ -52,7 +50,7 @@ fn read_role_list<T: OfficeTransport + ?Sized>(
         .ok()
         .and_then(|v| v.as_array().cloned())
         .unwrap_or_default();
-    Ok(paginate_values(items, offset, request.limit))
+    paginate(request, items)
 }
 
 fn read_role_inspect<T: OfficeTransport + ?Sized>(
@@ -71,7 +69,7 @@ fn read_hr_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
-    let offset = parse_cursor(request.cursor.as_deref())?;
+    parse_cursor(request.cursor.as_deref())?;
     let mut params = Map::new();
     if let Some(team_id) = opt_str(request, "team_id") {
         params.insert("team_id".into(), json!(team_id));
@@ -86,7 +84,7 @@ fn read_hr_list<T: OfficeTransport + ?Sized>(
         .ok()
         .and_then(|v| v.as_array().cloned())
         .unwrap_or_default();
-    Ok(paginate_values(items, offset, request.limit))
+    paginate(request, items)
 }
 
 fn read_hr_inspect<T: OfficeTransport + ?Sized>(
@@ -378,13 +376,26 @@ fn write_member_set_may_hire<T: OfficeTransport + ?Sized>(
     request: &Request,
 ) -> Result<Answer, Refusal> {
     let member_id = require_str(request, "member")?;
-    let may_hire = opt_bool(request, "may_hire").ok_or_else(|| {
-        Refusal::new(
-            ErrorCode::InvalidRequest,
-            "Missing required --may-hire flag.",
-            "Pass --may-hire true or --may-hire false.",
-        )
-    })?;
+    let allow = opt_bool(request, "allow").unwrap_or(false);
+    let revoke = opt_bool(request, "revoke").unwrap_or(false);
+    let may_hire = match (allow, revoke) {
+        (true, false) => true,
+        (false, true) => false,
+        (true, true) => {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                "--allow and --revoke cannot be given together.",
+                "Pass --allow to grant the right to hire, or --revoke to take it away.",
+            ))
+        }
+        (false, false) => {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                "`member set-hiring` needs --allow or --revoke.",
+                "Pass --allow to grant the right to hire, or --revoke to take it away.",
+            ))
+        }
+    };
     let expected = require_if_match(request)?;
     let mut params = Map::new();
     params.insert("member_id".into(), json!(member_id));
@@ -425,14 +436,17 @@ fn prepare_write_params(request: &Request, params: &mut Map<String, Value>) -> R
             "Remove --dry-run to run this command.",
         ));
     }
-    let key = request.idempotency_key.as_deref().ok_or_else(|| {
-        Refusal::new(
+    if request.idempotency_key.is_none() {
+        return Err(Refusal::new(
             ErrorCode::InvalidRequest,
             "Write is missing an idempotency key.",
-            "Pass --idempotency-key <uuidv7> or let the CLI mint one.",
-        )
-    })?;
-    params.insert("command_id".into(), json!(key));
+            "Pass --idempotency-key <key> or let the CLI make one.",
+        ));
+    }
+    params.insert(
+        "command_id".into(),
+        json!(command_id(request, "hiring-command")?),
+    );
     Ok(())
 }
 
@@ -472,36 +486,12 @@ fn finalize_write_answer(request: &Request, data: Value, revision: u64) -> Answe
     let mut answer = Answer::completed(data);
     answer.operation_id = request.idempotency_key.clone();
     answer.revision = Some(revision);
-    answer.ack = Some(if request.durable {
-        Ack::Durable
-    } else {
-        Ack::Committed
-    });
-    answer
-}
-
-fn paginate_values(items: Vec<Value>, offset: usize, limit: Option<u32>) -> Answer {
-    let total = items.len();
-    let cap = limit.unwrap_or(org_command::DEFAULT_LIMIT) as usize;
-    let slice: Vec<Value> = items.into_iter().skip(offset).take(cap).collect();
-    let next = offset.saturating_add(slice.len());
-    let mut answer = Answer::completed(Value::Array(slice));
-    if next < total {
-        answer.next_cursor = Some(next.to_string());
-    }
+    answer.ack = Some(write_ack(request));
     answer
 }
 
 fn entity_id(request: &Request, field: &str, domain: &str) -> Result<String, Refusal> {
-    if let Some(explicit) = opt_str(request, field) {
-        return Ok(explicit.to_owned());
-    }
-    if let Some(key) = &request.idempotency_key {
-        Ok(derive_uuid_v7(domain, key))
-    } else {
-        let mut keys = UuidV7KeySource;
-        Ok(keys.new_key())
-    }
+    crate::transport::entity_id(request, opt_str(request, field), domain)
 }
 
 fn require_str<'a>(request: &'a Request, field: &str) -> Result<&'a str, Refusal> {
@@ -557,105 +547,4 @@ fn decode_err(method: &str) -> Refusal {
 }
 
 #[cfg(test)]
-mod execution_cli_tests {
-    use super::*;
-
-    struct MockTransport {
-        last_method: Option<String>,
-        last_params: Option<Value>,
-        reply: Value,
-    }
-
-    impl OfficeTransport for MockTransport {
-        fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
-            self.last_method = Some(method.to_owned());
-            self.last_params = Some(params);
-            Ok(self.reply.clone())
-        }
-    }
-
-    #[test]
-    fn agent_execution_get_and_set_dispatch_expected_rpc_payloads() {
-        let get_cmd = crate::hiring_table::HIRING_COMMANDS
-            .iter()
-            .find(|c| c.resource == "agent" && c.verb == "execution-get")
-            .unwrap();
-        let set_cmd = crate::hiring_table::HIRING_COMMANDS
-            .iter()
-            .find(|c| c.resource == "agent" && c.verb == "execution-set")
-            .unwrap();
-
-        let mut get_tx = MockTransport {
-            last_method: None,
-            last_params: None,
-            reply: json!({
-                "employee_id": "0193a5c0-0000-7000-8000-000000000051",
-                "model_profile_id": "0193a5c0-0000-7000-8000-000000000060",
-                "model_id": "sonnet",
-                "tools_config": [],
-                "permission_preset": "autonomous_sandboxed",
-                "enabled": true,
-                "system_prompt_markdown": "You are an engineer.",
-                "revision": 2
-            }),
-        };
-        let get_req = Request {
-            command: get_cmd,
-            input: json!({ "member": "0193a5c0-0000-7000-8000-000000000051" })
-                .as_object()
-                .unwrap()
-                .clone(),
-            limit: None,
-            cursor: None,
-            dry_run: false,
-            idempotency_key: None,
-            if_match: None,
-            durable: false,
-        };
-        let ans = try_execute(&mut get_tx, &get_req).unwrap().unwrap();
-        assert_eq!(
-            get_tx.last_method.as_deref(),
-            Some("member.agent_execution_get")
-        );
-        assert_eq!(ans.data["model_id"], "sonnet");
-
-        let mut set_tx = MockTransport {
-            last_method: None,
-            last_params: None,
-            reply: json!({
-                "id": "0193a5c0-0000-7000-8000-000000000051",
-                "revision": 3,
-                "generation": 12
-            }),
-        };
-        let set_req = Request {
-            command: set_cmd,
-            input: json!({
-                "member": "0193a5c0-0000-7000-8000-000000000051",
-                "model_profile_id": "0193a5c0-0000-7000-8000-000000000060",
-                "model_id": "sonnet",
-                "permission_preset": "autonomous_sandboxed",
-                "enabled": true,
-                "system_prompt_markdown": "Focus on Rust."
-            })
-            .as_object()
-            .unwrap()
-            .clone(),
-            limit: None,
-            cursor: None,
-            dry_run: false,
-            idempotency_key: Some("0193a5c0-0000-7000-8000-000000000099".into()),
-            if_match: Some(2),
-            durable: false,
-        };
-        let _ = try_execute(&mut set_tx, &set_req).unwrap().unwrap();
-        assert_eq!(
-            set_tx.last_method.as_deref(),
-            Some("member.agent_execution_set")
-        );
-        let sent = set_tx.last_params.unwrap();
-        assert_eq!(sent["expected_version"], 2);
-        assert_eq!(sent["permission_preset"], "autonomous_sandboxed");
-        assert_eq!(sent["system_prompt_markdown"], "Focus on Rust.");
-    }
-}
+mod tests;

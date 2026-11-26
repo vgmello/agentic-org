@@ -43,6 +43,9 @@ pub(crate) fn success_meta(answer: &Answer, dry_run: bool, key: Option<&str>) ->
     if let Some(cursor) = &answer.next_cursor {
         meta.push(("next_cursor".to_owned(), Node::text(cursor)));
     }
+    if let Some(total) = answer.total {
+        meta.push(("total".to_owned(), Node::Number(total.into())));
+    }
     if let Some(count) = answer.waiting_messages.filter(|&n| n > 0) {
         meta.push(("waiting_messages".to_owned(), Node::Number(count.into())));
     }
@@ -84,6 +87,17 @@ pub(crate) fn failure(refusal: &Refusal, dry_run: bool) -> Node {
         ("message".to_owned(), Node::text(&refusal.message)),
         ("hint".to_owned(), Node::text(&refusal.hint)),
     ];
+    if let Some(details) = &refusal.details {
+        if let Some(field) = &details.field {
+            error.push(("field".to_owned(), Node::text(field)));
+        }
+        if let Some(rule) = &details.rule {
+            error.push(("rule".to_owned(), Node::text(rule)));
+        }
+        if let Some(after) = details.retry_after_ms {
+            error.push(("retry_after_ms".to_owned(), Node::Number(after.into())));
+        }
+    }
     if let Some(retry_with) = &refusal.retry_with {
         error.push((
             "retry_with".to_owned(),
@@ -113,6 +127,7 @@ pub fn envelope_schema() -> Value {
                     "ack": {"type": "string", "enum": [Ack::Committed.as_str(), Ack::Durable.as_str()]},
                     "revision": {"type": "integer", "minimum": 0},
                     "next_cursor": {"type": "string"},
+                    "total": {"type": "integer", "minimum": 0},
                     "waiting_messages": {"type": "integer", "minimum": 1},
                     "dry_run": {"type": "boolean"}
                 }
@@ -139,6 +154,9 @@ pub fn envelope_schema() -> Value {
                             "code": {"type": "string"},
                             "message": {"type": "string"},
                             "hint": {"type": "string"},
+                            "field": {"type": "string"},
+                            "rule": {"type": "string"},
+                            "retry_after_ms": {"type": "integer", "minimum": 0},
                             "retry_with": {"type": "object"}
                         }
                     }

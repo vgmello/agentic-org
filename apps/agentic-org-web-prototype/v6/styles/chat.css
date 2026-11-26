@@ -43,6 +43,10 @@
 .chat .chat-members-btn { padding: 0; font: inherit; background: none; cursor: pointer; }
 .chat-readas { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--gray-300); }
 .chat-readas .ic14 { flex: none; }
+/* The access label beside an agents' conversation title, shown only where the context line is hidden (< 640). */
+.chat .chat-title .chat-readas-tag { display: none; }
+/* A DM's other requests: by name when wide, one "N other requests" control when the line is constrained. */
+.chat .chat-wait-compact { display: none; }
 .chat .chat-search[aria-expanded="true"] { background: var(--hover); color: var(--white); }
 
 /* "and N more" in a DM's context line: the agent's other requests in a top-layer list. */
@@ -52,6 +56,10 @@
 .chat-pop-menu a:hover, .chat-pop-menu a:focus-visible { background: var(--hover); outline-offset: -2px; }
 .chat-pop-sub { font-size: var(--fs-xs); font-weight: 600; color: var(--gray-400); }
 .chat-pop-what { font-weight: 500; line-height: 1.4; }
+@media (max-width: 1279px) {
+  .chat .chat-context .chat-wait-full { display: none; }
+  .chat .chat-context .chat-wait-compact { display: inline; }
+}
 
 /* ---------------------------------------------------------------- attention: "Needs you" vs unread
    Own classes (not .badge) so no theme can neutralise them: amber bell count vs accent dot. */
@@ -144,6 +152,14 @@
 .chat-asks-jump .btn { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px); color: var(--tone-warn-ink); background: var(--gray-800); box-shadow: inset 0 0 0 1px var(--tone-warn-ring), 0 4px 12px rgb(0 0 0 / .2); }
 .chat-asks-jump .btn span { overflow: hidden; text-overflow: ellipsis; }
 .chat-asks-jump .chat-up { transform: rotate(180deg); }
+/* Jump to latest: floats at the stream's foot while the newest message is below the fold; zero-height, so nothing moves. */
+.chat-latest-jump { position: relative; z-index: 3; flex: none; height: 0; }
+.chat-latest-jump .btn { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); color: var(--white); background: var(--gray-800); box-shadow: inset 0 0 0 1px var(--line2), 0 4px 12px rgb(0 0 0 / .2); }
+/* A search match inside a thread: the first matching reply, quoted, with the way into the thread. */
+.chat-thread-hit > span { display: inline; min-width: 0; overflow-wrap: anywhere; }
+.chat-thread-hit b { font-weight: 600; color: var(--gray-300); }
+.chat-hit-quote { color: var(--gray-300); }
+.chat-thread-hit .chat-ref { margin-inline-start: 6px; padding: 0; font: inherit; font-weight: 500; background: none; cursor: pointer; }
 .thread-scrim { display: none; }
 /* Members panel: the channel's admitted members, each with a way to message them. */
 .chat-member-list { display: grid; gap: 2px; padding: 8px var(--gutter, 16px); overflow-y: auto; }
@@ -201,6 +217,9 @@
 .chat-needs-why summary:hover { color: var(--white); }
 .chat-needs-why p { margin-block-start: 4px; font-size: var(--fs-sm); line-height: 1.5; color: var(--gray-300); }
 .chat-needs-why .chat-needs-rec { color: var(--white); }
+/* A one-tap question's context, above its answers: what the choice weighs, then the agent's recommendation. */
+.chat-needs-context { display: grid; gap: 4px; font-size: var(--fs-sm); line-height: 1.5; color: var(--gray-300); }
+.chat-needs-context .chat-needs-rec { font-weight: 600; color: var(--white); }
 .chat-needs .actions .hb-act-sep { align-self: center; background: var(--line2); }
 .chat-ask-reply .chat-compose-hint { min-height: 0; }
 /* Where a follow-up will appear, stated before it is sent. */
@@ -258,6 +277,9 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
   /* Earlier asks: a row of its own above the stream, never over a message. */
   .chat-asks-jump { height: auto; padding: 0 var(--gutter, 16px); }
   .chat-asks-jump .btn { position: static; transform: none; width: 100%; max-width: none; margin-block: 8px 0; justify-content: center; }
+  /* Jump to latest: likewise a row of its own under the stream, never over a card's actions. */
+  .chat-latest-jump { height: auto; padding: 0 var(--gutter, 16px); }
+  .chat-latest-jump .btn { position: static; transform: none; width: 100%; margin-block: 8px 0; justify-content: center; }
   /* The title gets its own full row; context moves behind Details. */
   #main .chat > .chhead { grid-template-columns: var(--control-height) auto minmax(0, 1fr) auto; grid-template-areas: "menu list . actions" "title title title title" "details details details details"; gap: 4px; row-gap: 2px; }
   .chat .chat-context { display: none; }
@@ -269,6 +291,7 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
   .chat-needs .actions .hb-act-sep { display: none; }
   .chat .chat-title .av, .chat .chat-pair { display: none; }
   .chat .chat-heading h1 { font-size: 1.125rem; }
+  .chat .chat-title .chat-readas-tag { display: inline-flex; flex: none; margin-inline-start: auto; font-size: var(--fs-xs); white-space: nowrap; }
   #main .chat.withthread .thread { width: 100%; }
   .chat-needs-why summary { min-height: 44px; }
   .chat-pop-menu a { min-height: 44px; }
@@ -290,7 +313,8 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
   /* The touch menu carries the time that grouped messages show only on hover. */
   .chat .msg-menu-time { display: flex; align-items: center; gap: 8px; padding: 8px 12px 6px; font-size: var(--fs-xs); color: var(--gray-400); border-block-end: 1px solid var(--line2); }
 }
+/* Touch has no Ctrl/⌘ shortcut, so its hint goes; where a follow-up posts and that the ask stays open always show,
+   as does a validation message. */
 @media (pointer: coarse) {
-  .chat-compose-hint { display: none; }
-  .chat-compose-hint.is-error { display: flex; }
+  .chat-compose-hint:not(.chat-ask-dest, .is-error) { display: none; }
 }

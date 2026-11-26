@@ -1,5 +1,3 @@
-sample create: Create a sample
-sample inspect: One sample
-sample list: The samples, newest first
-sample ping: Whether the office answers
-sample update: Change a sample
+## Commands
+Each line is a resource and its verbs: run `<resource> <verb> --flag value`. `--help` after a resource or a command lists its verbs or flags, with an example; `--schema` shows a command's input and answer.
+sample: create, inspect, list, ping, update

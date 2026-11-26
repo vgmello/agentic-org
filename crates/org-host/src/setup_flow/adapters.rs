@@ -81,17 +81,24 @@ pub(crate) fn release_pin() -> Result<ReleasePin, String> {
 /// Systems without them refuse here, before anything is changed. `foreground` composes
 /// the manager that registers nothing, which every system has.
 pub fn platform(foreground: bool) -> Result<Platform, String> {
+    let home = crate::home::account_dir().ok_or("the account home folder is unavailable")?;
+    Ok(Platform {
+        service: service_manager(foreground)?,
+        disk: org_platform::disk::disk_encryption().map_err(|e| e.to_string())?,
+        credentials: CredentialDirectory::for_host(&home)?,
+    })
+}
+
+/// The account's service manager alone, as [`platform`] composes it: what `release install`
+/// needs to move the registered services, so a disk-encryption probe or a credential folder
+/// that cannot be determined never stops that.
+pub fn service_manager(foreground: bool) -> Result<Box<dyn ServiceManager>, String> {
     use org_platform::service::ServiceMode;
     let home = crate::home::account_dir().ok_or("the account home folder is unavailable")?;
-    let refused = |e: org_platform::Refused| e.to_string();
     let mode = if foreground {
         ServiceMode::Foreground
     } else {
         ServiceMode::Registered
     };
-    Ok(Platform {
-        service: org_platform::service::service(mode, &home).map_err(refused)?,
-        disk: org_platform::disk::disk_encryption().map_err(refused)?,
-        credentials: CredentialDirectory::for_host(&home)?,
-    })
+    org_platform::service::service(mode, &home).map_err(|e| e.to_string())
 }

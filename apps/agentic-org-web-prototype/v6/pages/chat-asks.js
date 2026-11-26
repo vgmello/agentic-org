@@ -13,6 +13,7 @@ import { esc, ic, joinSep, pill } from "../ui.js";
 import { chatTitle, inboxItem } from "./chat-model.js";
 import { followThreadEnd } from "./chat-scroll.js";
 import { receiptHtml } from "./ask-receipt.js";
+import { decidedInInbox, reviewInInbox, routeReasonHtml } from "./ask-route.js";
 
 const askDrafts = new Map(); /* inbox item id -> unsent follow-up on that request */
 const asks = { followUp: null, note: null };
@@ -62,18 +63,24 @@ function needsActions(it, where) {
   if (it.handled) return handledLine(it);
   if (S.replying === it.id) return v4ReplyBox(it);
   if (asks.followUp === it.id) return followUpBox(it, where);
-  const inbox = Boolean(it.consequential);
-  const primary = inbox ? [inboxLink(it, `${ic("inbox", "ic16")}Review in Inbox`, "btn primary sm")] : inlineControls(it);
+  const inbox = decidedInInbox(it);
+  const primary = inbox ? [reviewInInbox(it)] : inlineControls(it);
   const followUp = `<button class="btn ghost sm" type="button" data-act="chat-ask-reply" data-id="${esc(it.id)}">${ic("reply", "ic16")}Ask a follow-up</button>`;
   const open = inbox ? "" : inboxLink(it, `${ic("inbox", "ic16")}<span><span class="chat-long">Open in </span>Inbox</span>`);
-  const why = inbox ? `<p class="chat-needs-route">${ic("inbox", "ic14")}<span>Decide in Inbox · ${esc(it.consequential)}</span></p>` : "";
+  const why = inbox ? routeReasonHtml(it, "chat-needs-route") : "";
   const sentTo = where.thread ? " in this thread" : "";
   const note = asks.note === it.id ? `<p class="chat-needs-note" role="status">${ic("check-circle", "ic14")}Follow-up sent to ${esc(M[it.from].name)}${sentTo}. The request stays open until ${settles(it)}.</p>` : "";
   return `${note}${why}<div class="actions">${[...primary, followUp, open].join("")}</div>`;
 }
 function tradeoff(it) {
-  if (!it.consequential || it.handled || !it.why) return "";
+  if (!decidedInInbox(it) || !it.why) return "";
   return `<details class="chat-needs-why"><summary>${ic("scale", "ic14")}Tradeoff${ic("chev-right", "ic14 chat-needs-chev")}</summary><p>${esc(it.why)}</p>${it.rec ? `<p class="chat-needs-rec">${esc(it.rec)}</p>` : ""}</details>`;
+}
+/* A one-tap question shows what the choice weighs (the same context Inbox shows) right above its answers. */
+function choiceContext(it) {
+  if (decidedInInbox(it) || it.handled || !it.answers?.length || !it.why) return "";
+  const rec = it.rec ? `<p class="chat-needs-rec">${esc(it.rec)}</p>` : "";
+  return `<div class="chat-needs-context"><p>${esc(it.why).replace(/\bT-A\d+\b/g, workRef)}</p>${rec}</div>`;
 }
 /* `where.thread`: the card is shown in that thread's panel, so a follow-up from it posts in the thread. */
 function needsCardHtml(it, msgId, where = {}) {
@@ -87,7 +94,7 @@ function needsCardHtml(it, msgId, where = {}) {
     <h3 class="chat-needs-q" id="${titleId}" tabindex="-1">${esc(it.what)}</h3>
     ${meta ? `<p class="chat-needs-meta">${meta}</p>` : ""}
     ${it.scope && !it.handled ? `<p class="chat-needs-scope">${ic("lock", "ic14")}<span>Scope: ${esc(it.scope)}</span></p>` : ""}
-    ${tradeoff(it)}
+    ${tradeoff(it)}${choiceContext(it)}
     ${needsActions(it, where)}
   </section>`;
 }
@@ -96,7 +103,7 @@ function needsCardHtml(it, msgId, where = {}) {
 function chipRoute(it, here) {
   const inbox = `#/inbox/${it.id}`;
   if (it.handled) return [inbox, `Handled · ${it.outcome}`];
-  if (it.consequential) return [inbox, "Needs you · Decide in Inbox"];
+  if (decidedInInbox(it)) return [inbox, "Needs you · Decide in Inbox"];
   const home = askHomeId(it), msg = home && CH[home].kind !== "a2a" && CH[home].msgs.find((m) => m.needs === it.id);
   if (msg && home !== here) return [`#/chat/${home}/${msg.id}`, `Needs you · Answer in ${placeName(home)}`];
   return [inbox, `Needs you · ${KIND[it.kind].label} in Inbox`];
@@ -108,7 +115,7 @@ function needsChipHtml(it, here) {
 /* While the ask's message is open in the thread panel, its card lives there; the stream points to it.
    A consequential ask is still decided in Inbox, so its chip says so and goes there. */
 function inThreadChip(it, msgId) {
-  if (it.consequential && !it.handled) return needsChipHtml(it);
+  if (decidedInInbox(it)) return needsChipHtml(it);
   const label = it.handled ? `Handled · ${esc(it.outcome)}` : "Needs you · answer in the thread";
   return `<p class="chat-needs-chip${it.handled ? " is-done" : ""}"><button type="button" data-act="chat-thread-card" data-id="${esc(msgId)}">${ic(it.handled ? "check-circle" : "bell", "ic14")}<span>${label}</span>${ic("chev-right", "ic14")}</button></p>`;
 }

@@ -321,7 +321,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "Create a team",
         call: "team.create",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: TEAM_CREATE_INPUT,
@@ -339,7 +339,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "Rename team or change lead",
         call: "team.rename",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: TEAM_UPDATE_INPUT,
@@ -357,7 +357,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "Reparent a team",
         call: "team.move",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: TEAM_MOVE_INPUT,
@@ -375,7 +375,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "Archive an empty team",
         call: "team.delete",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: TEAM_ARCHIVE_INPUT,
@@ -408,7 +408,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "Add a person",
         call: "member.add_person",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: PERSON_ADD_INPUT,
@@ -426,7 +426,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "Update person profile or manager",
         call: "member.update_person",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: PERSON_UPDATE_INPUT,
@@ -444,7 +444,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "Move person to another team",
         call: "member.move",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: PERSON_MOVE_INPUT,
@@ -462,7 +462,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "Deactivate a person",
         call: "member.remove",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: PERSON_DEACTIVATE_INPUT,
@@ -525,7 +525,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "Create a project and owning team",
         call: "project.create",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: PROJECT_CREATE_INPUT,
@@ -556,7 +556,9 @@ const DOMAINS: &[&[Command]] = &[
 /// every row's names, fields and example are checked. For the contract tests; a running
 /// command uses [`runtime_table`].
 pub fn table() -> CommandTable {
-    CommandTable::new(DOMAINS).expect("agent-os command table is valid")
+    CommandTable::new(DOMAINS)
+        .expect("agent-os command table is valid")
+        .with_aliases(crate::aliases::ALIASES)
 }
 
 /// The same rows for a running command, built once per process and without the checks:
@@ -564,7 +566,14 @@ pub fn table() -> CommandTable {
 /// `doc-7` #18), and [`table`]'s contract tests are what make skipping the checks safe.
 pub fn runtime_table() -> &'static CommandTable {
     static TABLE: OnceLock<CommandTable> = OnceLock::new();
-    TABLE.get_or_init(|| CommandTable::unchecked(DOMAINS))
+    TABLE.get_or_init(|| CommandTable::unchecked(DOMAINS).with_aliases(crate::aliases::ALIASES))
+}
+
+/// The [`runtime_table`] by value, for a composition root that takes a table builder (the
+/// office's standing instructions, `org_office_sessions::install_command_catalogue`): the rows
+/// unchecked, built once per process, never re-validating every example per session.
+pub fn catalogue_table() -> CommandTable {
+    runtime_table().clone()
 }
 
 #[cfg(test)]

@@ -18,7 +18,13 @@ use crate::error::CliError;
 const INSTALL_EXAMPLES: &str = "Examples:
   agentic-org release install ./agentic-org-1.2.0.tar.gz
   agentic-org release install ./agentic-org-1.2.0.tar.gz --dry-run
-  agentic-org release install ./release-dir --store /srv/agentic-org/releases --json";
+  agentic-org release install ./agentic-org-1.2.0.tar.gz --no-restart
+  agentic-org release install ./release-dir --store /srv/agentic-org/releases --json
+
+Each instance's registered service (launchd/systemd) that setup wrote moves to the new
+release: a running one is stopped for the install and started again on it, a stopped one
+stays stopped. A service definition changed by hand is left untouched, with the steps to
+upgrade it.";
 
 const STATUS_EXAMPLES: &str = "Examples:
   agentic-org release status
@@ -36,7 +42,7 @@ pub(crate) struct ReleaseArgs {
 
 #[derive(Subcommand, Debug)]
 enum ReleaseCommand {
-    /// Verify the Ed25519 signature, closed inventory and binary hashes, then atomically pin the release
+    /// Verify the Ed25519 signature, closed inventory and binary hashes, atomically pin the release, and move registered services to it
     /// Use when: installing or upgrading a prebuilt signed Agentic Org release package without compiling from source.
     #[command(verbatim_doc_comment, after_help = INSTALL_EXAMPLES)]
     Install {
@@ -45,6 +51,9 @@ enum ReleaseCommand {
         bundle: String,
         #[command(flatten)]
         store: StoreArgs,
+        /// Do not start again the services the install stopped (they still move to the new release)
+        #[arg(long)]
+        no_restart: bool,
     },
     /// Show the active pinned release ID, sequence, manifest SHA-256 and installed executables
     /// Use when: verifying which release version is currently installed and active on this host.
@@ -64,9 +73,11 @@ struct StoreArgs {
 
 pub(crate) fn run(args: ReleaseArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     match args.command {
-        ReleaseCommand::Install { bundle, store } => {
-            install::run(&bundle, store.store.as_deref(), ctx)
-        }
+        ReleaseCommand::Install {
+            bundle,
+            store,
+            no_restart,
+        } => install::run(&bundle, store.store.as_deref(), !no_restart, ctx),
         ReleaseCommand::Status { store } => status::run(store.store.as_deref(), ctx),
     }
 }

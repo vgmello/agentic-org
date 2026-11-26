@@ -1,6 +1,9 @@
 //! Recognizing `--help` requests and enriching their plain-text output with `Use when:` guidance.
 
-use org_command::{Command, CommandTable, Output, Type};
+use org_command::{Ack, Command, CommandTable, Output, Type};
+
+/// The help `org-command` prints for `--durable`.
+const DURABLE_OPTION_HELP: &str = "Answer only after the drive has it";
 
 use super::{command_use_when, resource_use_when_for, COMMON_VALUE_OPTIONS, TOP_USE_WHEN};
 
@@ -189,14 +192,33 @@ pub(super) fn augment_resource_help(
     out
 }
 
+/// What `--durable` does for `command`, as `agent-os` dispatches it: always on for a write the
+/// office acknowledges only once durable, refused for one it acknowledges at commit
+/// (`transport::refuse_durable`).
+fn durable_help(command: &Command) -> Option<&'static str> {
+    match command.ack()? {
+        Ack::Durable => Some("Always on: this command answers only after the drive has it"),
+        Ack::Committed => {
+            Some("Refused: this command is acknowledged at commit (`ack: committed` in --schema)")
+        }
+    }
+}
+
 pub(super) fn augment_command_help(command: &Command, help: &str) -> String {
-    let Some(cue) = command_use_when(command.resource, command.verb) else {
-        return help.to_owned();
-    };
-    let mut out = String::with_capacity(help.len() + cue.len() + 16);
+    let durable = durable_help(command);
+    let cue = command_use_when(command.resource, command.verb);
+    let mut out = String::with_capacity(help.len() + 256);
     for (idx, line) in help.lines().enumerate() {
-        out.push_str(line);
+        match durable {
+            Some(text) if line.trim_start().starts_with("--durable ") => {
+                out.push_str(&line.replace(DURABLE_OPTION_HELP, text));
+            }
+            _ => out.push_str(line),
+        }
         out.push('\n');
+        let Some(cue) = cue else {
+            continue;
+        };
         // Line 0 is `Usage: ...`, line 1 is blank, line 2 is `{summary}`.
         if idx == 2 {
             out.push_str(&format!("Use when: {cue}\n"));

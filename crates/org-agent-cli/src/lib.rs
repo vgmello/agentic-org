@@ -5,7 +5,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod aliases;
 pub mod attach;
+pub mod boot;
 pub mod budget_dispatch;
 pub mod budget_table;
 pub mod dispatch;
@@ -29,21 +31,27 @@ pub mod task_dispatch;
 pub mod task_table;
 pub mod transport;
 
+use std::borrow::Cow;
 use std::io::{self, Write};
 
+use aliases::normalize_args;
 use keys::UuidV7KeySource;
 use office::{Binding, BoundOffice};
 use org_command::{Office, Output};
 use sources::StdSources;
+use transport::OfficeTransport;
 
 /// Help text for `agent-os session attach`.
 pub const SESSION_ATTACH_HELP: &str = "Usage: agent-os session attach\n\
 Use when: batching multiple agent-os commands in one shell turn over a persistent office socket.\n\
 Binds once to the office socket and executes one JSON command per line of stdin:\n  \
-{\"command\":\"msg inbox\",\"input\":{},\"options\":{\"limit\":5}}\n";
+{\"command\":\"msg inbox\",\"input\":{},\"options\":{\"limit\":5}}\n\
+A line has only `command`, `input` and `options`; every answer is one line of JSON, so the \
+`format` option is json or absent, and `stdin` and `help` are refused.\n";
 
 /// Runs the shared `org-command` table against any supplied [`Office`] implementation
-/// (either a bound agent socket or a grant-bound person host channel).
+/// (either a bound agent socket or a grant-bound person host channel). A shorthand (`who`,
+/// `task note`, `boot`, `instructions overview`) is read as its command ([`normalize_args`]).
 pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Office) -> Output {
     if matches!(args, [flag] if flag == "--version" || flag == "-V") {
         return Output {
@@ -51,25 +59,11 @@ pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Offi
             exit_code: 0,
         };
     }
-    let normalized: Vec<String>;
-    let effective_args: &[String] = if args.first().map(String::as_str) == Some("who") {
-        let mut rewritten = Vec::with_capacity(args.len() + 1);
-        rewritten.push("directory".to_owned());
-        rewritten.push("list".to_owned());
-        rewritten.extend_from_slice(&args[1..]);
-        normalized = rewritten;
-        &normalized
-    } else if matches!(args, [a, b, ..] if a == "task" && b == "note") {
-        let mut rewritten = Vec::with_capacity(args.len().saturating_sub(1));
-        rewritten.push("task-note".to_owned());
-        rewritten.extend_from_slice(&args[2..]);
-        normalized = rewritten;
-        &normalized
-    } else if let Some(rewritten) = external_auth::operator::rewrite_positional(args) {
-        normalized = rewritten;
-        &normalized
-    } else {
-        args
+    let expanded = normalize_args(args);
+    // `agent approve <code>` and the other operator verbs read their bare words as named flags.
+    let effective_args = match external_auth::operator::rewrite_positional(&expanded) {
+        Some(rewritten) => Cow::Owned(rewritten),
+        None => expanded,
     };
     let table = table::runtime_table();
     let mut sources = StdSources;
@@ -77,19 +71,45 @@ pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Offi
     let output = org_command::run(
         table,
         program,
-        effective_args,
+        &effective_args,
         &mut sources,
         &mut keys,
         office,
     );
-    help_guidance::augment_help(table, program, effective_args, output)
+    help_guidance::augment_help(table, program, &effective_args, output)
 }
 
 /// Runs `agent-os` with the supplied command-line arguments and binding, returning the
 /// formatted stdout text and process exit code.
 pub fn execute(args: &[String], binding: Binding) -> Output {
-    let mut office = BoundOffice::new(binding);
-    execute_with_office("agent-os", args, &mut office)
+    execute_bound(args, &mut BoundOffice::new(binding))
+}
+
+/// Runs `agent-os` over `office`; `agent-os --help` opens with the quickstart of the shell's
+/// binding state ([`help_guidance::quickstart`]).
+fn execute_bound(args: &[String], office: &mut BoundOffice) -> Output {
+    let mut output = execute_with_office("agent-os", args, office);
+    if output.exit_code == 0 && matches!(args, [flag] if is_help_flag(flag)) {
+        output.stdout = format!(
+            "{}\n{}",
+            help_guidance::quickstart(office.is_bound()),
+            output.stdout
+        );
+    }
+    output
+}
+
+fn is_help_flag(arg: &str) -> bool {
+    arg == "--help" || arg == "-h"
+}
+
+/// The office of this process ([`external_auth::resolve_binding`]): its `AGENT_OS_*` binding,
+/// bound when the environment names a session token or a binding file
+/// ([`office::env_requests_binding`]), else the signed-in workspace of the working folder, bound
+/// too. Either is bound even when its token cannot be read yet, so `boot` never drops to offline.
+fn env_office() -> BoundOffice {
+    BoundOffice::new(external_auth::resolve_binding())
+        .with_binding_requested(office::env_requests_binding())
 }
 
 /// Runs `agent-os`, writing the single envelope or help output to stdout and returning the exit
@@ -101,9 +121,9 @@ pub fn run(args: &[String]) -> u8 {
         return emit(&mut io::stdout().lock(), &stdout, exit_code);
     }
     if matches!(args, [a, b, ..] if a == "session" && b == "attach") {
-        return run_session_attach(args, external_auth::resolve_binding());
+        return run_session_attach(args, env_office());
     }
-    let output = execute(args, external_auth::resolve_binding());
+    let output = execute_bound(args, &mut env_office());
     emit(&mut io::stdout().lock(), &output.stdout, output.exit_code)
 }
 
@@ -119,11 +139,20 @@ pub fn emit(out: &mut dyn Write, text: &str, exit_code: u8) -> u8 {
     }
 }
 
-fn run_session_attach(args: &[String], binding: Binding) -> u8 {
-    if matches!(args, [_, _, flag] if flag == "--help" || flag == "-h") {
+fn run_session_attach(args: &[String], mut office: BoundOffice) -> u8 {
+    if attach::wants_help(args) {
         return emit(&mut io::stdout().lock(), SESSION_ATTACH_HELP, 0);
     }
-    let mut office = BoundOffice::new(binding);
+    // A flag is refused before anything binds: exit 2, as every command line that cannot be
+    // read is.
+    if let Some(refusal) = attach::usage_refusal(args) {
+        let line = org_command::failure_envelope_json(&refusal, false);
+        return emit(
+            &mut io::stdout().lock(),
+            &format!("{line}\n"),
+            org_command::EXIT_USAGE,
+        );
+    }
     if let Err(refusal) = office.ensure_connected() {
         // The refusal's own hint says how to get a binding; exit 1 as a one-shot command's
         // refusal does (`doc-96` AX-15). Exit 2 is only for a command line that cannot be read.
@@ -137,6 +166,9 @@ fn run_session_attach(args: &[String], binding: Binding) -> u8 {
         &mut office,
     )
 }
+
+#[cfg(test)]
+mod ax_tests;
 
 #[cfg(test)]
 mod tests {

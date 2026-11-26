@@ -1,5 +1,5 @@
 import { calendarAction } from "../pages/calendar.js";
-import { IN, M, OFFICES, P, TEAMS, W, blockedOnOwner } from "../data.js";
+import { IN, M, OFFICES, OPEN, P, TEAMS, W, blockedOnOwner } from "../data.js";
 import { activityFilterKey, activityViewKey, addAssemblySample, assemblySimulation, projectActivityId, refreshAssemblySimulation, setActivityPanel, syncAssemblySimulationTimer, updateAssemblyPlayback } from "../pages/activity.js";
 import { closeAgentFocus, isAgentFocusOpen, openAgentFocus } from "../pages/agent-focus.js";
 import { consoleSessions } from "../pages/agent-profile.js";
@@ -9,7 +9,7 @@ import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
 import { removeTeam } from "../pages/projects.js";
-import { addIdeationComment, boardPlace, changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, jumpToBoardLane, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkResults, refreshWorkResults, scopedWorkQueries, scopedWorkType, scopedWorkView, selectWorkView, setDoneHistory, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
+import { addIdeationComment, boardPlace, changeWorkCriterion, focusRevealedWork, shownWorkIds, closeWorkPanel, createWorkTask, fitTextarea, jumpToBoardLane, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkResults, refreshWorkResults, scopedWorkQueries, scopedWorkType, scopedWorkView, selectWorkView, setDoneHistory, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
 import { rememberBoardExit, returnToBoard } from "./board-return.js";
@@ -24,15 +24,39 @@ import { spotQueue, toast } from "../ui.js";
 /* ---------------------------------------------------------------- actions */
 
 /* An answer clears only the blocker it settles: the task stops waiting on the owner (To do) once no other
-   ask for it is open. In progress is set by the task's start event when the agent next runs, never inferred here. */
+   ask for it is open. In progress is set by the task's start event when the agent next runs, never inferred here.
+   A denial keeps the block, says so ("Access denied") and hands the next step to whoever asked. Work the answer
+   closes is dated today, so it lands in recent Done history. */
+const DENIED = /Denied|Declined|Dismissed/;
+const WORK_FIELDS = ["who", "status", "waitsOn", "blockNote", "closedDaysAgo"];
+const workSnapshot = (w) => Object.fromEntries(WORK_FIELDS.map((key) => [key, w[key]]));
+function restoreWork(w, prev) {
+  for (const key of WORK_FIELDS) { if (prev[key] !== undefined) w[key] = prev[key]; else delete w[key]; }
+}
+function applyDenialToWork(w, it) {
+  w.waitsOn = it.from;
+  w.blockNote = `${(it.sub || "Request").replace(/\s+request$/i, "")} denied`;
+}
+/* The answer settles the owner's block when no other ask for the work is open */
+function settleOwnerBlock(w, it, outcome) {
+  const otherAsks = IN.some((i) => i !== it && !i.handled && i.task === w.id);
+  if (!blockedOnOwner(w) || otherAsks) return;
+  if (DENIED.test(outcome)) applyDenialToWork(w, it);
+  else { delete w.waitsOn; delete w.blockNote; w.status = "To do"; }
+}
+function nextWorkStatus(w, it, outcome) {
+  if (it.sets?.[outcome]) return it.sets[outcome];
+  if (w.status === "Scoped") return /Approve/.test(outcome) ? "Approved" : "Declined";
+  return w.status;
+}
 function applyHandleToWork(w, it, outcome, assignee) {
   if (!w) return;
   const assignedTo = assignee || it.assignTo?.[outcome];
   if (assignedTo) w.who = assignedTo;
-  const otherAsks = IN.some((i) => i !== it && !i.handled && i.task === w.id);
-  if (blockedOnOwner(w) && !otherAsks && !/Denied|Declined|Dismissed/.test(outcome)) { delete w.waitsOn; w.status = "To do"; }
-  if (it.sets?.[outcome]) w.status = it.sets[outcome];
-  else if (w.status === "Scoped") w.status = /Approve/.test(outcome) ? "Approved" : "Declined";
+  const before = w.status, wasOpen = OPEN(w);
+  settleOwnerBlock(w, it, outcome);
+  w.status = nextWorkStatus(w, it, outcome);
+  if (!OPEN(w) && (wasOpen || w.status !== before)) w.closedDaysAgo = 0;
 }
 
 function advanceSpotlightAfterHandle() {
@@ -47,10 +71,7 @@ function makeReopenCallback(it, w, prevW, appliedW, prevSpotIdx) {
   const reopen = () => {
     if (it.reopen !== reopen) return;
     delete it.reopen;
-    if (w && Object.keys(appliedW).every((key) => w[key] === appliedW[key])) {
-      w.who = prevW.who; w.status = prevW.status;
-      if (prevW.waitsOn !== undefined) w.waitsOn = prevW.waitsOn; else delete w.waitsOn;
-    }
+    if (w && Object.keys(appliedW).every((key) => w[key] === appliedW[key])) restoreWork(w, prevW);
     S.spotIdx = prevSpotIdx;
     reopenInboxItem(it);
   };
@@ -73,7 +94,7 @@ function advanceInboxAfterHandle(id, it, next) {
 function handle(id, outcome, assignee = null, text = "") {
   const it = IN.find((i) => i.id === id); if (!it || it.handled) return;
   const w = it.task && W.find((x) => x.id === it.task);
-  const prevW = w ? { who: w.who, status: w.status, waitsOn: w.waitsOn } : null;
+  const prevW = w ? workSnapshot(w) : null;
   const prevSpotIdx = S.spotIdx, inInbox = route()[0] === "inbox";
   const visible = inInbox ? inboxItems() : [], index = visible.indexOf(it);
   const next = index < 0 ? null : visible[index + 1] || visible[index - 1];
@@ -84,7 +105,7 @@ function handle(id, outcome, assignee = null, text = "") {
     assemblyRun: assemblySimulation.run, assemblyHour: assemblySimulation.hours,
   });
   applyHandleToWork(w, it, outcome, assignee);
-  it.reopen = makeReopenCallback(it, w, prevW, w ? { who: w.who, status: w.status, waitsOn: w.waitsOn } : null, prevSpotIdx);
+  it.reopen = makeReopenCallback(it, w, prevW, w ? workSnapshot(w) : null, prevSpotIdx);
   toast(`${outcome}. ${M[it.from].name} has been notified.`, "check-circle", it.reopen);
   if (inInbox) advanceInboxAfterHandle(id, it, next);
   if (route()[0] === "home") advanceSpotlightAfterHandle();
@@ -312,11 +333,12 @@ const CLICK_ACTIONS = {
     render(false);
     document.querySelector('[aria-controls="menu-work-display"], [aria-controls="menu-scoped-work-display"]')?.focus();
   },
-  /* An empty state's "Show N older/archived matches" widens history, then lands on the first revealed item */
+  /* "Show N older/archived matches" widens history, then lands on the first item it added and says how many */
   "work-reveal": (_e, _t, _id, v) => {
+    const before = shownWorkIds();
     setDoneHistory(v);
     render(false);
-    (document.querySelector("#work-results .work-item-link") ?? document.getElementById("work-results"))?.focus();
+    focusRevealedWork(before);
   },
   "work-clear-filters": () => clearWorkFilters(),
   "board-lane": (_e, _t, _id, v) => jumpToBoardLane(v),

@@ -4,7 +4,7 @@ use crate::{
     service::{Registration, ServiceError, ServiceManager, ServiceStatus, Unit},
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -17,61 +17,91 @@ pub enum Call {
     Stop(String),
     Status(String),
     Unregister(String),
+    Definition(String),
+    Redefine(Unit),
 }
 
 /// Records every call and keeps the registrations in memory. A registered unit starts
 /// running (as `RunAtLoad` does); it never runs a process.
 #[derive(Default)]
 pub struct FakeServiceManager {
-    state: Mutex<(Registrations, Vec<Call>)>,
+    state: Mutex<FakeState>,
 }
 
-/// Each instance's unit and whether it runs.
-type Registrations = BTreeMap<String, (Unit, bool)>;
+#[derive(Default)]
+struct FakeState {
+    /// Each instance's unit and whether it runs.
+    units: BTreeMap<String, (Unit, bool)>,
+    /// Instances whose definition someone changed by hand ([`FakeServiceManager::edit_by_hand`]).
+    edited: BTreeSet<String>,
+    calls: Vec<Call>,
+}
 
 impl FakeServiceManager {
     pub fn calls(&self) -> Vec<Call> {
-        self.state.lock().unwrap().1.clone()
+        self.state.lock().unwrap().calls.clone()
     }
+
+    /// The instance's definition is changed by hand from now on: no call reads it back,
+    /// replaces it or registers over it (a conflict), as no adapter takes over a definition
+    /// it did not write.
+    pub fn edit_by_hand(&self, id: &str) {
+        self.state.lock().unwrap().edited.insert(id.to_owned());
+    }
+
+    /// The unit registered for `id`, if any, without recording a call.
+    pub fn unit(&self, id: &str) -> Option<Unit> {
+        let s = self.state.lock().unwrap();
+        s.units.get(id).map(|(unit, _)| unit.clone())
+    }
+}
+
+fn edited(id: &str) -> ServiceError {
+    ServiceError::Conflict(format!("the definition of {id} was changed by hand"))
 }
 
 impl ServiceManager for FakeServiceManager {
     fn register(&self, unit: &Unit) -> Result<Registration, ServiceError> {
         crate::service::validate(unit)?;
         let mut s = self.state.lock().unwrap();
-        s.1.push(Call::Register(unit.clone()));
-        match s.0.get(&unit.instance_id) {
+        s.calls.push(Call::Register(unit.clone()));
+        if s.edited.contains(&unit.instance_id) {
+            return Err(edited(&unit.instance_id));
+        }
+        match s.units.get(&unit.instance_id) {
             Some((existing, _)) if existing != unit => Err(ServiceError::Conflict(
                 "another definition uses this instance".into(),
             )),
             Some(_) => Ok(Registration::Unchanged),
             None => {
-                s.0.insert(unit.instance_id.clone(), (unit.clone(), true));
+                s.units
+                    .insert(unit.instance_id.clone(), (unit.clone(), true));
                 Ok(Registration::Loaded)
             }
         }
     }
     fn start(&self, id: &str) -> Result<(), ServiceError> {
         let mut s = self.state.lock().unwrap();
-        s.1.push(Call::Start(id.into()));
-        let entry =
-            s.0.get_mut(id)
-                .ok_or(ServiceError::Invalid("the service is not registered"))?;
+        s.calls.push(Call::Start(id.into()));
+        let entry = s
+            .units
+            .get_mut(id)
+            .ok_or(ServiceError::Invalid("the service is not registered"))?;
         entry.1 = true;
         Ok(())
     }
     fn stop(&self, id: &str) -> Result<(), ServiceError> {
         let mut s = self.state.lock().unwrap();
-        s.1.push(Call::Stop(id.into()));
-        if let Some(entry) = s.0.get_mut(id) {
+        s.calls.push(Call::Stop(id.into()));
+        if let Some(entry) = s.units.get_mut(id) {
             entry.1 = false;
         }
         Ok(())
     }
     fn status(&self, id: &str) -> Result<ServiceStatus, ServiceError> {
         let mut s = self.state.lock().unwrap();
-        s.1.push(Call::Status(id.into()));
-        Ok(match s.0.get(id) {
+        s.calls.push(Call::Status(id.into()));
+        Ok(match s.units.get(id) {
             None => ServiceStatus::NotRegistered,
             Some((_, true)) => ServiceStatus::Running { pid: 1 },
             Some((_, false)) => ServiceStatus::Stopped,
@@ -79,9 +109,37 @@ impl ServiceManager for FakeServiceManager {
     }
     fn unregister(&self, id: &str) -> Result<(), ServiceError> {
         let mut s = self.state.lock().unwrap();
-        s.1.push(Call::Unregister(id.into()));
-        s.0.remove(id);
+        s.calls.push(Call::Unregister(id.into()));
+        s.units.remove(id);
         Ok(())
+    }
+    fn definition(&self, id: &str) -> Result<Option<Unit>, ServiceError> {
+        crate::service::valid_instance_id(id)?;
+        let mut s = self.state.lock().unwrap();
+        s.calls.push(Call::Definition(id.into()));
+        if s.edited.contains(id) {
+            return Err(edited(id));
+        }
+        Ok(s.units.get(id).map(|(unit, _)| unit.clone()))
+    }
+    fn redefine(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+        crate::service::validate(unit)?;
+        let mut s = self.state.lock().unwrap();
+        s.calls.push(Call::Redefine(unit.clone()));
+        if s.edited.contains(&unit.instance_id) {
+            return Err(edited(&unit.instance_id));
+        }
+        match s.units.get_mut(&unit.instance_id) {
+            None => Err(ServiceError::Invalid("the service is not registered")),
+            Some((_, true)) => Err(ServiceError::Conflict(
+                "the service is running; stop it before its definition is replaced".into(),
+            )),
+            Some((existing, false)) if existing == unit => Ok(Registration::Unchanged),
+            Some((existing, false)) => {
+                *existing = unit.clone();
+                Ok(Registration::Loaded)
+            }
+        }
     }
 }
 
@@ -270,6 +328,38 @@ impl ServiceManager for ChildServiceManager {
         let _ = std::fs::remove_file(self.unit_file(id));
         Ok(())
     }
+
+    fn definition(&self, id: &str) -> Result<Option<Unit>, ServiceError> {
+        crate::service::valid_instance_id(id)?;
+        match std::fs::read(self.unit_file(id)) {
+            Ok(bytes) => Self::decode(&bytes)
+                .filter(|u| u.instance_id == id)
+                .map(Some)
+                .ok_or_else(|| {
+                    ServiceError::Conflict("the registered definition is not this manager's".into())
+                }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(Self::system(e)),
+        }
+    }
+
+    fn redefine(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+        crate::service::validate(unit)?;
+        if self.pid(&unit.instance_id).is_some() {
+            return Err(ServiceError::Conflict(
+                "the service is running; stop it before its definition is replaced".into(),
+            ));
+        }
+        let Some(existing) = self.definition(&unit.instance_id)? else {
+            return Err(ServiceError::Invalid("the service is not registered"));
+        };
+        if existing == *unit {
+            return Ok(Registration::Unchanged);
+        }
+        std::fs::write(self.unit_file(&unit.instance_id), Self::encode(unit))
+            .map_err(Self::system)?;
+        Ok(Registration::Loaded)
+    }
 }
 
 #[cfg(test)]
@@ -336,5 +426,66 @@ mod tests {
         fake.stop("abc").unwrap();
         assert_eq!(fake.status("abc").unwrap(), ServiceStatus::Stopped);
         assert_eq!(fake.calls()[0], Call::Register(unit));
+    }
+
+    /// The fakes read a definition back, replace it only while it is stopped and never
+    /// start it, and refuse one changed by hand (as the adapters do).
+    #[test]
+    fn the_fakes_read_back_and_redefine_only_a_stopped_definition_of_their_own() {
+        let unit = Unit {
+            instance_id: "abc".into(),
+            program: "/bin/sleep".into(),
+            args: vec!["30".into()],
+            env: vec![],
+        };
+        let upgraded = Unit {
+            program: "/bin/cat".into(),
+            ..unit.clone()
+        };
+        let fake = FakeServiceManager::default();
+        assert_eq!(fake.definition("abc").unwrap(), None);
+        assert!(matches!(
+            fake.redefine(&unit),
+            Err(ServiceError::Invalid(_))
+        ));
+        fake.register(&unit).unwrap();
+        assert_eq!(fake.definition("abc").unwrap(), Some(unit.clone()));
+        assert!(matches!(
+            fake.redefine(&upgraded),
+            Err(ServiceError::Conflict(_))
+        ));
+        fake.stop("abc").unwrap();
+        assert_eq!(fake.redefine(&upgraded).unwrap(), Registration::Loaded);
+        assert_eq!(fake.redefine(&upgraded).unwrap(), Registration::Unchanged);
+        assert_eq!(fake.status("abc").unwrap(), ServiceStatus::Stopped);
+        assert_eq!(fake.unit("abc"), Some(upgraded.clone()));
+        fake.edit_by_hand("abc");
+        for refused in [
+            fake.definition("abc").map(drop),
+            fake.redefine(&unit).map(drop),
+            fake.register(&upgraded).map(drop),
+        ] {
+            assert!(matches!(refused, Err(ServiceError::Conflict(_))));
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let child = ChildServiceManager::new(dir.path());
+        assert_eq!(child.definition("abc").unwrap(), None);
+        child.register(&unit).unwrap();
+        assert_eq!(child.definition("abc").unwrap(), Some(unit.clone()));
+        child.start("abc").unwrap();
+        assert!(matches!(
+            child.redefine(&upgraded),
+            Err(ServiceError::Conflict(_))
+        ));
+        child.stop("abc").unwrap();
+        assert_eq!(child.redefine(&upgraded).unwrap(), Registration::Loaded);
+        assert_eq!(child.status("abc").unwrap(), ServiceStatus::Stopped);
+        assert_eq!(child.definition("abc").unwrap(), Some(upgraded));
+        std::fs::write(dir.path().join("abc.unit"), b"edited").unwrap();
+        assert!(matches!(
+            child.definition("abc"),
+            Err(ServiceError::Conflict(_))
+        ));
     }
 }
