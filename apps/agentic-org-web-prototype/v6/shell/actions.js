@@ -3,7 +3,7 @@ import { IN, M, OFFICES, P, TEAMS, W, blockedOnOwner } from "../data.js";
 import { activityFilterKey, activityViewKey, addAssemblySample, assemblySimulation, projectActivityId, refreshAssemblySimulation, setActivityPanel, syncAssemblySimulationTimer, updateAssemblyPlayback } from "../pages/activity.js";
 import { closeAgentFocus, isAgentFocusOpen, openAgentFocus } from "../pages/agent-focus.js";
 import { consoleSessions } from "../pages/agent-profile.js";
-import { chatDrafts, openDirectMessage, sendChatMessage, sendThreadReply } from "../pages/chat.js";
+import { chatDrafts, openDirectMessage, recordAskReply, sendChatMessage, sendThreadReply } from "../pages/chat.js";
 import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
@@ -140,6 +140,8 @@ function handleSendReply(id) {
   }
   const outcome = S.replyMode === "changes" ? "Changes requested" : "Answered";
   S.replyMode = null;
+  /* In Chat the owner's words stay in the conversation and on the request, not only its outcome. */
+  if (ta.closest(".chat")) recordAskReply(id, txt);
   handle(id, outcome);
 }
 
@@ -361,7 +363,7 @@ const CLICK_ACTIONS = {
   sgo: (_e, _t, _id, v) => goSearch(v),
   "chat-jump": (_e, t) => openCmdk("#", "cmd", t, false),
   "chat-list": (_e, _t, id) => toggleChatList(id),
-  "chat-dm": (_e, _t, id) => { location.hash = openDirectMessage(id); },
+  "chat-dm": (_e, _t, id, v) => { location.hash = openDirectMessage(id, v); },
   "search-toggle": (_e, _t, _id, v) => toggleInlineSearch(v),
   "search-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
   "cmdk-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
