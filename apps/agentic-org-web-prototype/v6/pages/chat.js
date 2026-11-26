@@ -9,8 +9,11 @@ import { CHAT_VIEWS, chatViewHtml, isChatView } from "./chat-views.js";
 import { bindOverlays, syncOverlayHistory } from "./chat-overlays.js";
 import { chatListHtml, needsCount, onListClick, onListInput, onListKeydown, prepareList, takeListFocus, unreadDot } from "./chat-list.js";
 import {
-  DEFAULT_CHAT, chatTitle, dmSources, inboxItem, openAsks, openDirectMessage, resolveChatId, sourceHref, sourceLabel,
+  DEFAULT_CHAT, chatTitle, dmSources, inboxItem, openAsks, openDirectMessage, resolveChatId, sentAt, sourceHref, sourceLabel, splitTime,
 } from "./chat-model.js";
+import "./chat-attach-seed.js";
+import { ATTACH_CLICKS, attachButton, attachmentsForSend, bindAttachments, clearAttachments, trayHtml } from "./chat-attachments.js";
+import { VIEW_CLICKS, attachmentNameHit, filesButton, filesPanelHtml, messageAttachmentsHtml } from "./chat-attach-view.js";
 import { render, route } from "../shell/router.js";
 import { CHAT_SEND_SHORTCUTS, S } from "../state.js";
 import {
@@ -19,7 +22,7 @@ import {
 
 const chatDrafts = new Map();      /* conversation id -> unsent message */
 const threadDrafts = new Map();    /* thread root message id -> { text, also }: unsent reply and its "Also send to" choice */
-const local = { search: null, linked: null, pendingLink: null, details: false, members: false, threadFrom: "", openThread: null, threadLand: null };
+const local = { search: null, linked: null, pendingLink: null, details: false, members: false, files: false, threadFrom: "", openThread: null, threadLand: null };
 const OVERLAY_THREAD = "(max-width: 1279px)";
 const NARROW_LIST = "(max-width: 959px)";
 const matchesMedia = (q) => Boolean(window.matchMedia?.(q).matches);
@@ -29,14 +32,8 @@ function chatDocTitle(id) {
   if (isChatView(id)) return `${CHAT_VIEWS[id].title} · Chat`;
   return `${chatTitle(CH[id && Object.hasOwn(CH, id) ? id : DEFAULT_CHAT])} · Chat`;
 }
-const DAY_RE = /^([A-Z][a-z]{2} \d{1,2}|Yesterday),?\s*/;
-function splitTime(time) {
-  const day = DAY_RE.exec(time || "");
-  return day ? [day[1], time.slice(day[0].length)] : ["Today", time || ""];
-}
 const clock = () => new Date().toTimeString().slice(0, 5);
 const authorWord = (who) => (M[who].owner ? "" : kindWord(who));
-const sentAt = (m) => splitTime(m.time).join(" ");
 
 /* ---------------------------------------------------------------- message text: T- refs and @mentions become links */
 function mentionRef(match, name) {
@@ -104,8 +101,9 @@ function messageHtml(m, prev, opts = {}) {
   const status = cont && m.pending ? sendingStatus() : "";
   const tools = opts.tools ? messageTools(m, opts.readOnly) : "";
   const needs = messageNeeds(m, opts.tools && S.thread === m.id ? "in-thread" : opts.cards, opts.ch);
+  const text = m.text || status ? `<p class="tx">${richText(m.text || "")}${status}</p>` : "";
   return `<div class="msg${cont ? " cont" : ""}${m.pending ? " is-pending" : ""}" data-mid="${esc(m.id)}">${gutter}<div class="body">${head}
-    <p class="tx">${richText(m.text)}${status}</p>${tools}
+    ${text}${messageAttachmentsHtml(m, opts.ch)}${tools}
     ${sourceLine(m)}${threadCopyLine(m)}${threadHitLine(m, opts.q)}${needs}${threadButton(m)}</div></div>`;
 }
 /* Shared preview (project Overview) renders chips, not cards; it is called as Array.map(msgHtml). */
@@ -117,12 +115,12 @@ function emptyConversation(ch) {
   return `<div class="chat-empty">${dm ? av(ch.with, 32) : ic("hash", "ic20")}<h2>This is the start of ${dm ? "your conversation with " : ""}${esc(name)}</h2>${text ? `<p>${esc(text)}</p>` : ""}</div>`;
 }
 const searchQuery = (id) => (local.search && local.search.id === id ? local.search.q.trim().toLowerCase() : "");
-const hit = (m, q) => m.text.toLowerCase().includes(q) || M[m.who].name.toLowerCase().includes(q);
+const hit = (m, q) => m.text.toLowerCase().includes(q) || M[m.who].name.toLowerCase().includes(q) || attachmentNameHit(m, q);
 /* Indexes of a message's thread replies that match; a match there lists the message with a way into its thread. */
 const threadHits = (m, q) => (m.thread || []).flatMap((r, i) => (hit(r, q) ? [i] : []));
 const matches = (m, q) => hit(m, q) || threadHits(m, q).length > 0;
 function noMatches(ch, q) {
-  return `<div class="chat-empty"><h2>No messages match “${esc(q)}”</h2><p>Search looks at the messages and thread replies in ${esc(chatTitle(ch))}.</p></div>`;
+  return `<div class="chat-empty"><h2>No messages match “${esc(q)}”</h2><p>Search looks at the messages, thread replies and file names in ${esc(chatTitle(ch))}.</p></div>`;
 }
 function streamHtml(id) {
   const ch = CH[id], q = searchQuery(id);
@@ -152,7 +150,9 @@ function composerHtml(o) {
   const shortcut = CHAT_SEND_SHORTCUTS[S.chatSend];
   return `<form class="compose chat-compose${o.cls || ""}" data-form="${o.form}" data-id="${esc(o.id)}"${o.ch ? ` data-ch="${esc(o.ch)}"` : ""}>
     ${o.before || ""}${o.note ? `<p class="chat-compose-note" id="${o.field}-note">${o.note}</p>` : ""}
+    ${trayHtml(o.attach)}
     <div class="chat-compose-row">
+      ${attachButton(o.field)}
       <label class="sr-only" for="${o.field}">${esc(o.label)}</label>
       <textarea class="field" id="${o.field}" name="message" rows="1" placeholder="${esc(o.label)}" aria-describedby="${o.note ? o.field + "-note " : ""}${o.field}-help" autocomplete="off" enterkeyhint="enter">
 ${esc(o.draft || "")}</textarea>
@@ -185,7 +185,7 @@ function availabilityNote(ch) {
   return `${ic("info", "ic14")}<span>${esc(text)}${href ? ` <a class="alink chat-ref" href="${esc(href)}">Open Agent setup</a>` : ""}</span>`;
 }
 const chatComposer = (id, title) => composerHtml({
-  form: "send", id, field: "compose", label: "Message " + title, draft: chatDrafts.get(id), button: "primary", submit: "Send",
+  form: "send", id, field: "compose", label: "Message " + title, draft: chatDrafts.get(id), button: "primary", submit: "Send", attach: `c:${id}`,
   before: composeSource(id), note: availabilityNote(CH[id]),
 });
 const threadDraft = (rootId) => threadDrafts.get(rootId) || { text: "", also: false };
@@ -198,12 +198,12 @@ function alsoSendBox(id, rootId) {
 }
 const threadComposer = (id, root) => composerHtml({
   form: "thread-send", id: root.id, ch: id, cls: " thread-compose", field: "thread-compose", label: "Reply in thread",
-  draft: threadDraft(root.id).text, button: "outline", submit: "Reply", after: alsoSendBox(id, root.id),
+  draft: threadDraft(root.id).text, button: "outline", submit: "Reply", attach: `t:${id}:${root.id}`, after: alsoSendBox(id, root.id),
 });
-function showEmptySendHint(form, field) {
+function showEmptySendHint(form, field, text = "Write a message or attach a file first.") {
   const hint = form.querySelector(".chat-compose-hint");
   hint.classList.add("is-error");
-  hint.innerHTML = `${ic("info", "ic14")}<span>Write a message first.</span>`;
+  hint.innerHTML = `${ic("info", "ic14")}<span>${esc(text)}</span>`;
   field.focus();
   field.addEventListener("input", () => { hint.classList.remove("is-error"); hint.innerHTML = shortcutHint(); }, { once: true });
 }
@@ -213,12 +213,20 @@ function confirmSent(id, message) {
   const s = streamFor(id);
   if (s) replaceStream(s, streamHtml(id));
 }
+/* What a composer would send: its text and ready attachments; null (with the reason shown) when it can't send yet. */
+function sendable(form, field) {
+  const att = attachmentsForSend(form), text = field.value.trim() ? field.value : "";
+  if (att.busy) { showEmptySendHint(form, field, `Wait for ${att.busy === 1 ? "1 file" : `${att.busy} files`} to finish uploading.`); return null; }
+  if (!text && !att.files.length) { showEmptySendHint(form, field); return null; }
+  clearAttachments(form);
+  return att.files.length ? { text, files: att.files } : { text };
+}
 function sendChatMessage(form) {
-  const field = form.elements.message;
-  if (!field.value.trim()) { showEmptySendHint(form, field); return; }
+  const field = form.elements.message, body = sendable(form, field);
+  if (!body) return;
   const id = form.dataset.id, ch = CH[id];
   /* Prototype: the office confirms after a short delay; until then the message says "Sending…". */
-  const message = { id: "u" + Date.now(), who: "you", time: clock(), text: field.value, pending: true };
+  const message = { id: "u" + Date.now(), who: "you", time: clock(), ...body, pending: true };
   if (dmSources.has(id)) { message.src = dmSources.get(id); dmSources.delete(id); form.querySelector(".chat-compose-src")?.remove(); }
   ch.msgs.push(message);
   chatDrafts.delete(id);
@@ -231,10 +239,10 @@ function sendChatMessage(form) {
   setTimeout(() => confirmSent(id, message), 700);
 }
 function sendThreadReply(form) {
-  const field = form.elements.message, text = field.value.trim();
-  if (!text) { showEmptySendHint(form, field); return false; }
+  const field = form.elements.message, body = sendable(form, field);
+  if (!body) return false;
   const ch = CH[form.dataset.ch], root = ch.msgs.find((m) => m.id === form.dataset.id);
-  const reply = { who: "you", time: clock(), text }, also = threadDraft(root.id).also;
+  const reply = { who: "you", time: clock(), ...body, text: body.text.trim() }, also = threadDraft(root.id).also;
   (root.thread ||= []).push(reply);
   threadDrafts.delete(root.id);
   followThreadEnd();
@@ -306,6 +314,7 @@ function headerLead(ch) {
 function headerActions(id, title) {
   const open = local.search?.id === id;
   return `<div class="ph-actions chat-actions">
+      ${filesButton(local.files, title)}
       <button class="btn ghost sm chat-details-btn" type="button" data-act="chat-details" aria-expanded="${local.details}" aria-controls="chat-details">${ic("info", "ic16")}Details</button>
       <button class="btn ghost icon chat-search" type="button" data-act="chat-search" aria-expanded="${open}" aria-controls="chat-search-row" aria-label="Search in ${esc(title)}" title="Search in ${esc(title)}">${ic("search", "ic20")}</button>
     </div>`;
@@ -420,14 +429,15 @@ function pageChat(id) {
   if (S.chatList && S.chatList !== id) S.chatList = null;
   takeLink(id);
   takeThread(id);
-  if (S.thread) local.members = false;
+  if (S.thread) Object.assign(local, { members: false, files: false });
   const root = S.thread && ch.msgs.find((m) => m.id === S.thread);
   const title = chatTitle(ch), members = local.members && ch.kind === "channel";
-  const cls = [root || members ? "withthread" : "", local.details ? "details-open" : ""];
+  const cls = [root || members || local.files ? "withthread" : "", local.details ? "details-open" : ""];
   const main = `${searchRowHtml(id, title)}${askJump()}
       <div class="msgs" aria-label="Messages" data-ch="${esc(id)}">${streamHtml(id)}</div>${latestJump()}
       ${ch.kind === "a2a" ? readOnlyFoot(id, ch) : chatComposer(id, title)}`;
-  return chatFrame(id, cls, chatHeaderHtml(id, ch, title), main, chatThreadHtml(id, root, title) + membersPanelHtml(ch, title));
+  return chatFrame(id, cls, chatHeaderHtml(id, ch, title), main, chatThreadHtml(id, root, title) + membersPanelHtml(ch, title)
+    + filesPanelHtml(ch, id, title, { open: local.files, modal: panelModal() }));
 }
 
 /* ---------------------------------------------------------------- after render: position, overlays, local controls */
@@ -465,7 +475,7 @@ function focusLinked(s) {
 }
 function highlightMatches(s, q) {
   if (!q) return;
-  const walker = document.createTreeWalker(s, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentElement.closest(".tx, .hd b, .chat-hit-quote") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT) });
+  const walker = document.createTreeWalker(s, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentElement.closest(".tx, .hd b, .chat-hit-quote, .chat-att-name") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT) });
   const nodes = [];
   while (walker.nextNode()) nodes.push(walker.currentNode);
   for (const node of nodes) {
@@ -546,10 +556,18 @@ function closeThread() {
 }
 function toggleMembers() {
   local.members = !local.members;
-  if (local.members) S.thread = null;
+  if (local.members) { S.thread = null; local.files = false; }
   render(false);
   (local.members ? document.getElementById("chat-members-title") : null)?.focus();
   if (!local.members) focusFirst([".chat-context .chat-members-btn", ".chat-details .chat-members-btn", ".chat-details-btn"]);
+  syncOverlayHistory();
+}
+/* Files: every attachment in the conversation, as a side panel like Members. */
+function toggleFiles() {
+  local.files = !local.files;
+  if (local.files) { S.thread = null; local.members = false; }
+  render(false);
+  document.querySelector(local.files ? "#chat-files-title" : ".chat-files-btn")?.focus();
   syncOverlayHistory();
 }
 function toggleDetails() {
@@ -566,11 +584,12 @@ function toggleChatList(id) {
   (open ? document.querySelector('.chlist [aria-current="page"]') : document.querySelector(".chat-list-btn"))?.focus();
   syncOverlayHistory();
 }
-const anyOverlay = () => route()[0] === "chat" && Boolean(S.thread || local.members || S.chatList || local.details);
+const anyOverlay = () => route()[0] === "chat" && Boolean(S.thread || local.members || local.files || S.chatList || local.details);
 /* Back closes the topmost overlay first: a side panel, then the drawer, then Details. */
 function closeTopOverlay() {
   if (S.thread) closeThread();
   else if (local.members) toggleMembers();
+  else if (local.files) toggleFiles();
   else if (S.chatList) toggleChatList(S.chatList);
   else if (local.details) toggleDetails();
 }
@@ -586,6 +605,10 @@ function openViewThread(t) {
 
 const CLICKS = {
   ...ASK_CLICKS,
+  ...ATTACH_CLICKS,
+  ...VIEW_CLICKS,
+  "chat-files": () => toggleFiles(),
+  "chat-file-open": () => { local.files = false; },
   thread: (id, t) => toggleThread(id, t),
   "thread-close": () => closeThread(),
   "chat-members": () => toggleMembers(),
@@ -632,6 +655,7 @@ function onChatKeydown(e) {
   const t = e.target;
   if (t.id === "chat-search-input" && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); toggleSearch(local.search.id); return; }
   if (e.key === "Escape" && t.closest(".chat-members-panel")) { e.preventDefault(); e.stopPropagation(); toggleMembers(); return; }
+  if (e.key === "Escape" && t.closest(".chat-files-panel")) { e.preventDefault(); e.stopPropagation(); toggleFiles(); return; }
   onListKeydown(e, e.currentTarget);
   onAskKeydown(e);
 }
@@ -679,6 +703,7 @@ function mountChat() {
   root.addEventListener("click", onChatClick);
   root.addEventListener("input", onChatInput);
   root.addEventListener("keydown", onChatKeydown);
+  bindAttachments(root);
   mountStream(root);
   mountThread(root);
   fitTextarea(document.getElementById("thread-compose"));
@@ -707,7 +732,7 @@ const startNewMessage = () => openChatList("new");
 window.addEventListener("hashchange", () => {
   releaseInert();
   resetAsks();
-  Object.assign(local, { details: false, members: false, linked: null });
+  Object.assign(local, { details: false, members: false, files: false, linked: null });
 });
 /* A link to the URL already open causes no hash change (the shell re-renders in place): capture phase, before it. */
 document.addEventListener("click", (e) => {

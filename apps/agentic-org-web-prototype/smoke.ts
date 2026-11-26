@@ -1374,6 +1374,139 @@ async function checkChatRound6(page: Page) {
   await checkCompactRequests(page);
   await checkShortScreens(page);
 }
+/* Attachments (TASK-206): picker, tray, remove, size limit, attachment-only send, image viewer, Files panel, search. */
+const PNG_1PX = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+const mainComposer = (page: Page) => page.locator('#main .chat form[data-form="send"]');
+const trayItems = (page: Page) => mainComposer(page).locator(".chat-att-item");
+async function waitUploads(page: Page) {
+  await page.waitForFunction(() => document.querySelectorAll("#main .chat .chat-att-item").length > 0 && !document.querySelector("#main .chat .chat-att-item.is-uploading"));
+}
+async function checkAttachTray(page: Page) {
+  await page.getByRole("button", { name: /^Attach files, up to 25 MB each$/ }).waitFor();
+  await mainComposer(page).locator(".chat-att-input").setInputFiles([
+    { name: "board.png", mimeType: "image/png", buffer: PNG_1PX },
+    { name: "notes.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 test") },
+    { name: "extra.txt", mimeType: "text/plain", buffer: Buffer.from("extra") },
+  ]);
+  assert.equal(await trayItems(page).count(), 3, "Picked files show in the tray");
+  assert.equal(await trayItems(page).locator("img").count(), 1, "An image shows a thumbnail");
+  assert.match(await trayItems(page).nth(1).innerText(), /notes\.pdf[\s\S]*PDF/, "A file shows its name and type");
+  await page.locator(".chat-att-item.is-uploading").first().waitFor();
+  await waitUploads(page);
+  await page.getByRole("button", { name: "Remove extra.txt" }).click();
+  assert.equal(await trayItems(page).count(), 2, "Remove takes the file out of the tray");
+  assert.equal(await page.evaluate(() => document.activeElement?.closest("form")?.dataset.form), "send", "Focus stays in the composer after Remove");
+}
+async function checkAttachLimit(page: Page) {
+  /* Built in the page: sending 26 MB through the driver is slow. */
+  await page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>('#main .chat form[data-form="send"] .chat-att-input')!, dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(26 * 1024 * 1024)], "huge.zip", { type: "application/zip" }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  assert.match(await mainComposer(page).locator(".chat-att-error").innerText(), /huge\.zip.*26\.0 MB.*up to 25 MB/, "An oversize file is rejected with the limit");
+  assert.equal(await trayItems(page).count(), 2, "The rejected file is not attached");
+}
+async function checkAttachSend(page: Page) {
+  await mainComposer(page).getByRole("button", { name: "Send" }).click();
+  const sent = page.locator("#main .chat .chmain .msgs > .msg").last();
+  await sent.locator(".chat-att-img img").waitFor();
+  await page.waitForFunction(() => !document.querySelector("#main .chat .msg.is-pending"));
+  assert.equal(await sent.locator(".chat-att-file .chat-att-name").innerText(), "notes.pdf", "A sent file renders as a card");
+  assert.equal(await sent.locator(".tx").count(), 0, "A message can carry only attachments");
+  assert.equal(await trayItems(page).count(), 0, "Sending clears the tray");
+  await mainComposer(page).getByRole("button", { name: "Send" }).click();
+  assert.match(await mainComposer(page).locator(".chat-compose-hint").innerText(), /Write a message or attach a file first/);
+}
+async function checkAttachViewer(page: Page) {
+  const tile = page.locator('.msg[data-mid="m1"] .chat-att-img').first();
+  await tile.click();
+  const viewer = page.getByRole("dialog", { name: "ia-v2-nav-before.png" });
+  await viewer.waitFor();
+  assert.ok(await viewer.evaluate((d) => d.contains(document.activeElement)), "Focus moves into the viewer");
+  assert.equal(await viewer.getByRole("link", { name: "Download" }).getAttribute("download"), "ia-v2-nav-before.png");
+  await page.keyboard.press("ArrowRight");
+  await page.getByRole("dialog", { name: "ia-v2-nav-after.png" }).waitFor();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  assert.ok(await page.evaluate(() => Boolean(document.activeElement?.closest("dialog.chat-lightbox"))), "Focus stays in the viewer");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("dialog.chat-lightbox").count(), 0, "Esc closes the viewer");
+  assert.equal(await activeAttr(page, "data-act"), "chat-att-view", "Focus returns to the image");
+  assert.equal(await activeAttr(page, "data-id"), "m1");
+}
+async function checkAttachDropAndPaste(page: Page) {
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["drop"], "dropped.log", { type: "text/plain" }));
+    const zone = document.querySelector("#main .chat .chmain .msgs")!;
+    zone.dispatchEvent(new DragEvent("dragenter", { bubbles: true, dataTransfer: dt }));
+    zone.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+  });
+  assert.match(await page.locator("#main .chat .chmain > .chat-drop").innerText(), /Drop to attach/, "Dragging files shows the drop target");
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["drop"], "dropped.log", { type: "text/plain" }));
+    document.querySelector("#main .chat .chmain .msgs")!.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+    const paste = new DataTransfer();
+    paste.items.add(new File([new Uint8Array([137, 80, 78, 71])], "pasted.png", { type: "image/png" }));
+    document.getElementById("compose")!.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: paste }));
+  });
+  assert.equal(await page.locator("#main .chat .chat-drop").count(), 0, "Drop clears the target");
+  assert.deepEqual(await trayItems(page).locator(".chat-att-name").allInnerTexts(), ["dropped.log", "pasted.png"], "Drop and paste attach");
+  await page.getByRole("button", { name: "Remove dropped.log" }).click();
+  await page.getByRole("button", { name: "Remove pasted.png" }).click();
+}
+async function checkAttachFilesAndSearch(page: Page) {
+  await page.locator(".chat-files-btn").click();
+  const panel = page.locator("#chat-files");
+  await panel.waitFor();
+  assert.ok((await panel.locator(".chat-file-row").count()) >= 4, "Files lists the conversation's attachments");
+  assert.match(await panel.locator(".chat-file-row").last().innerText(), /Ada · Today 09:12/, "Each file says who sent it and when");
+  await panel.getByRole("link", { name: "ia-v2-nav-before.png", exact: true }).click();
+  await page.locator('.msg.is-linked[data-mid="m1"]').waitFor();
+  assert.equal(await page.locator("#chat-files").count(), 0, "Following a file closes Files");
+  await navTo(page, "#/chat/platform");
+  await page.locator(".chat-search").click();
+  await page.locator("#chat-search-input").fill("lease-race");
+  assert.equal(await page.locator("#chat-search-status").innerText(), "1 message", "Search finds an attachment name");
+  assert.equal(await page.locator('.msgs > .msg[data-mid="p1"] .chat-att-name mark').count(), 1, "The matching name is marked");
+  await page.locator("#chat-search-input").press("Escape");
+}
+async function checkAttachThread(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  const form = page.locator('aside.thread form[data-form="thread-send"]');
+  await form.locator(".chat-att-input").setInputFiles([{ name: "review.diff", mimeType: "text/x-diff", buffer: Buffer.from("+ok") }]);
+  await waitUploads(page);
+  await form.locator("#thread-compose").press("Control+Enter");
+  await page.locator('aside.thread .msgs > .msg:last-child .chat-att-file .chat-att-name', { hasText: "review.diff" }).waitFor();
+  assert.equal(await form.locator(".chat-att-item").count(), 0, "Ctrl+Enter sends a thread reply with only an attachment");
+  await page.locator("aside.thread [data-act=thread-close]").click();
+}
+async function checkAttachReadOnly(page: Page) {
+  await navTo(page, "#/chat/a2a-kai-rowan");
+  await page.locator('.msg[data-mid="k1"] .chat-att-file').waitFor();
+  assert.equal(await page.locator(".chat-attach-btn").count(), 0, "Agents' conversations have no Attach");
+}
+async function checkChatAttachments(page: Page) {
+  const errors: string[] = [];
+  page.on("console", (msg) => { if (msg.type() === "error") errors.push(msg.text()); });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await navTo(page, "#/chat/agency-v1");
+  assert.equal(await page.locator('.msg[data-mid="m1"] .chat-att-img').count(), 2, "Seeded screenshots show");
+  await checkAttachTray(page);
+  await checkAttachLimit(page);
+  await checkAttachSend(page);
+  await checkAttachViewer(page);
+  await checkAttachDropAndPaste(page);
+  await checkAttachFilesAndSearch(page);
+  await checkAttachThread(page);
+  await checkAttachReadOnly(page);
+  assert.deepEqual(errors, [], "No console errors while attaching");
+}
 async function checkChat(page: Page) {
   await checkChatAsks(page);
   await checkChatRecords(page);
@@ -1386,6 +1519,8 @@ async function checkChat(page: Page) {
   await page.reload();
   await checkChatRound6(page);
   await checkPrimaryContrast(page);
+  await page.reload();
+  await checkChatAttachments(page);
 }
 
 const ROUTE_CHECKS: Record<string, (page: Page, href: string, theme: string) => Promise<void>> = {

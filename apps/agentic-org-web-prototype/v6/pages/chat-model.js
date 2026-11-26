@@ -6,6 +6,14 @@ import { memberIds } from "../ui.js";
 const DEFAULT_CHAT = "agency-v1";
 const dmSources = new Map(); /* DM id -> { ch, msg? } the owner's first message will link to */
 
+/* "Nov 10, 16:02" / "Yesterday, 09:26" / "09:12" -> [day, time]; a bare time is today. */
+const DAY_RE = /^([A-Z][a-z]{2} \d{1,2}|Yesterday),?\s*/;
+function splitTime(time) {
+  const day = DAY_RE.exec(time || "");
+  return day ? [day[1], time.slice(day[0].length)] : ["Today", time || ""];
+}
+const sentAt = (m) => splitTime(m.time).join(" ");
+
 const chatTitle = (ch) => (ch.kind === "channel" ? "#" + ch.name : ch.kind === "dm" ? M[ch.with].name : ch.name);
 const inboxItem = (id) => IN.find((i) => i.id === id);
 
@@ -55,6 +63,8 @@ function recipients(q) {
 }
 
 export {
+  sentAt,
+  splitTime,
   DEFAULT_CHAT,
   chatTitle,
   dmSources,
