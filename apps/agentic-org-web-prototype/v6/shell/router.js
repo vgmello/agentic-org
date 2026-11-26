@@ -3,7 +3,7 @@ import { activityPanelResize, pageActivity, projectActivityId, refreshActivityPa
 import { mountAgentProfile, stopAgentOrb } from "../pages/agent-profile.js";
 import { mountOrgChart } from "../pages/org-chart.js";
 import { pageCalendar } from "../pages/calendar-page.js";
-import { pageChat } from "../pages/chat.js";
+import { chatDocTitle, mountChat, pageChat } from "../pages/chat.js";
 import { pageHome } from "../pages/home.js";
 import { pageInbox } from "../pages/inbox.js";
 import { pageInsights } from "../pages/org-insights.js";
@@ -185,6 +185,12 @@ function syncActivityScopeState(r0, projectId) {
   return sameActivity;
 }
 
+function pageTitle(r0, r1) {
+  if (r0 === "members" && own(M, r1)) return M[r1].name;
+  if (r0 === "chat") return chatDocTitle(own(CH, r1) ? r1 : null);
+  return TITLES[r0] || "Not found";
+}
+
 function render(focus = true) {
   endNavigationKeys();
   const r = normalizeRouteRedirects();
@@ -208,7 +214,7 @@ function render(focus = true) {
   renderNav(r);
   renderBanner(r0);
   mountActivityAfterRender(main, sameActivity, snap.priorActivity, snap.panelScroll, projectId);
-  document.title = (r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found")) + " · Agentic Org";
+  document.title = pageTitle(r0, r1) + " · Agentic Org";
   if (sameWorkPage) {
     content.scrollTop = snap.pageScroll;
     if (snap.workBoardScroll) main.querySelector("#work-results .board")?.scrollTo(snap.workBoardScroll);
@@ -218,6 +224,7 @@ function render(focus = true) {
   mountHomeProjectHint();
   fitTextarea(document.getElementById("work-comment"));
   fitTextarea(document.getElementById("compose"));
+  if (r0 === "chat") mountChat();
   applyShortcuts();
   syncTopbarUtils(r);
   syncAssemblySimulationTimer();
