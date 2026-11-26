@@ -192,12 +192,7 @@ impl ChannelWatcher {
     pub fn on_agent_team_moved(&self, employee_id: &str) {
         let member_channels: BTreeSet<String> = self
             .office
-            .list_channels(
-                employee_id,
-                ChatChannelsParams {
-                    include_archived: false,
-                },
-            )
+            .list_channels(employee_id, ChatChannelsParams::default())
             .ok()
             .and_then(Result::ok)
             .map(|res| {

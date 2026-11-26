@@ -11,7 +11,7 @@ use org_store::{Id, StoreError};
 
 use crate::messaging::{
     asks::{self, AskCard},
-    features::{self, to_wire_header},
+    features::{self, to_wire_header, ChannelCatchup},
     records::{ConversationRecord, MessageRecord},
 };
 use crate::store::open::ReadOp;
@@ -200,6 +200,32 @@ impl ReadOp for ChannelMessagesForCallerRead {
     fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         let owner = crate::organization::owner::effective_owner_id(snapshot, &self.owner)?;
         Ok(features::channel_messages_for_caller(
+            snapshot,
+            &owner,
+            &self.caller,
+            &self.channel_ref,
+            self.limit,
+            &self.now_utc,
+        ))
+    }
+}
+
+/// Reads the caller's new channel messages after its read marker for a `since_read` digest
+/// (`TASK-99` rung 3), oldest first, at most `limit`.
+pub struct ChannelCatchupRead {
+    pub owner: Id,
+    pub caller: Id,
+    pub channel_ref: String,
+    pub limit: usize,
+    pub now_utc: String,
+}
+
+impl ReadOp for ChannelCatchupRead {
+    type Out = Result<ChannelCatchup, ApiError>;
+
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        let owner = crate::organization::owner::effective_owner_id(snapshot, &self.owner)?;
+        Ok(features::channel_catchup_for_caller(
             snapshot,
             &owner,
             &self.caller,

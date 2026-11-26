@@ -1513,7 +1513,7 @@ fn verify_cross_office_withdraw_and_handoff(
                         conversation: Some(conv_id.clone()),
                         thread_id: None,
                         limit: Some(50),
-                        cursor: None,
+                        ..Default::default()
                     },
                 )
                 .ok()
@@ -1714,7 +1714,7 @@ fn relayed_handoff_accept_enforces_placement_addressing_validation_and_tiebreak(
                 conversation: Some(conv_id),
                 thread_id: None,
                 limit: Some(50),
-                cursor: None,
+                ..Default::default()
             },
         )
         .unwrap()
@@ -1806,7 +1806,7 @@ fn chat_reply_enforces_oversize_snooze_clear_offboarded_dm_and_thread_mention_wa
                 from: None,
                 thread_id: None,
                 limit: Some(50),
-                cursor: None,
+                ..Default::default()
             },
         )
         .unwrap()

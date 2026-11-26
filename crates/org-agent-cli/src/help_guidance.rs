@@ -57,7 +57,7 @@ pub const RESOURCE_GUIDANCE: &[(&str, &str)] = &[
     ),
     (
         "channel",
-        "listing visible channels, joining/leaving manual channels, or summarizing channel Q&A.",
+        "listing visible channels and what is new in them, joining/leaving manual channels, marking a channel read, or summarizing channel Q&A and catch-ups.",
     ),
     (
         "checklist",
@@ -215,12 +215,17 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
     (
         "channel",
         "list",
-        "discovering available `#channels`, their scope, member counts, and whether you are a member.",
+        "discovering available `#channels`, whether you are a member, and how many messages are new since your read marker (`--unread-only`).",
+    ),
+    (
+        "channel",
+        "mark-read",
+        "recording that you have caught up on a `#channel` (to `--up-to` or its latest message) so `--since-read` starts after it.",
     ),
     (
         "channel",
         "summarize",
-        "answering a specific question from recent caller-visible `#channel` history without dumping every message.",
+        "answering a question from recent `#channel` history, or digesting what is new since your read marker (`--since-read`), without dumping every message.",
     ),
     // checklist
     (
@@ -311,7 +316,7 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
     (
         "msg",
         "list",
-        "browsing message history in a `#channel`, DM participant conversation, or thread.",
+        "browsing message history in a `#channel`, DM participant conversation, or thread; catching up with `--since-read --top-level-only --headers-only`.",
     ),
     (
         "msg",

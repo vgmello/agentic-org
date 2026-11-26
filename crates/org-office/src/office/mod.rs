@@ -30,6 +30,7 @@ pub(crate) mod import;
 mod intent;
 mod invitations;
 mod messaging;
+mod messaging_catchup;
 mod opening;
 mod org;
 mod private_notes;

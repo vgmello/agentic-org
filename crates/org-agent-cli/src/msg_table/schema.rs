@@ -270,7 +270,31 @@ pub(super) const MSG_LIST_INPUT: &[Field] = &[
         Type::String,
         "Filter by participant employee ID or handle",
     ),
-    Field::optional("unread_only", Type::Boolean, "Return only unread messages"),
+    Field::optional(
+        "unread_only",
+        Type::Boolean,
+        "DM history only: unread messages (in a channel use --since-read)",
+    ),
+    Field::optional(
+        "since_read",
+        Type::Boolean,
+        "Only others' messages after your read marker, oldest first",
+    ),
+    Field::optional(
+        "after_id",
+        Type::String,
+        "Only messages after this message UUIDv7, oldest first",
+    ),
+    Field::optional(
+        "top_level_only",
+        Type::Boolean,
+        "Only thread roots (and replies also posted to the channel)",
+    ),
+    Field::optional(
+        "headers_only",
+        Type::Boolean,
+        "Omit body: answer a one-line snippet and body_bytes",
+    ),
 ];
 
 pub(super) const MSG_LIST_ITEM_FIELDS: &[Field] = &[
@@ -287,7 +311,24 @@ pub(super) const MSG_LIST_ITEM_FIELDS: &[Field] = &[
         Type::String,
         "Message body (when reading a conversation)",
     ),
+    Field::optional(
+        "snippet",
+        Type::String,
+        "--headers-only: body on one line, at most 160 characters",
+    ),
+    Field::optional(
+        "body_bytes",
+        Type::Integer,
+        "--headers-only: full body size in bytes",
+    ),
     Field::required("created_at", Type::String, "RFC 3339 UTC timestamp"),
+    Field::optional("reply_count", Type::Integer, "Replies in this thread"),
+    Field::optional(
+        "latest_reply_at",
+        Type::String,
+        "RFC 3339 UTC time of the thread's latest reply",
+    ),
+    Field::optional("attachment_count", Type::Integer, "Attached files"),
 ];
 
 pub(super) const MSG_DONE_INPUT: &[Field] = &[
@@ -414,11 +455,18 @@ pub(super) const MSG_WAIT_OUTPUT: &[Field] = &[
     ),
 ];
 
-pub(super) const CHANNEL_LIST_INPUT: &[Field] = &[Field::optional(
-    "include_archived",
-    Type::Boolean,
-    "Include archived channels",
-)];
+pub(super) const CHANNEL_LIST_INPUT: &[Field] = &[
+    Field::optional(
+        "include_archived",
+        Type::Boolean,
+        "Include archived channels",
+    ),
+    Field::optional(
+        "unread_only",
+        Type::Boolean,
+        "Only channels with new messages or unread inbox items",
+    ),
+];
 
 pub(super) const CHANNEL_SUMMARY_FIELDS: &[Field] = &[
     Field::required("id", Type::String, "Channel conversation UUIDv7"),
@@ -432,6 +480,64 @@ pub(super) const CHANNEL_SUMMARY_FIELDS: &[Field] = &[
     Field::required("archived", Type::Boolean, "Whether archived"),
     Field::required("member_count", Type::Integer, "Active member count"),
     Field::required("is_member", Type::Boolean, "Whether the caller is a member"),
+    Field::required(
+        "new_message_count",
+        Type::Integer,
+        "Others' messages after your read marker (all of them before your first mark-read)",
+    ),
+    Field::required(
+        "unread_count",
+        Type::Integer,
+        "Unread inbox items here (mentions, thread replies)",
+    ),
+    Field::optional(
+        "last_read_message_id",
+        Type::String,
+        "Your read marker's message UUIDv7",
+    ),
+    Field::optional(
+        "last_read_at",
+        Type::String,
+        "RFC 3339 UTC time your read marker last moved",
+    ),
+    Field::optional("last_message_id", Type::String, "Latest message UUIDv7"),
+    Field::optional(
+        "last_message_at",
+        Type::String,
+        "RFC 3339 UTC time of the latest message",
+    ),
+];
+
+pub(super) const CHANNEL_MARK_READ_INPUT: &[Field] = &[
+    Field::required(
+        "channel",
+        Type::String,
+        "Channel name (#name or name) or conversation UUIDv7",
+    ),
+    Field::optional(
+        "up_to",
+        Type::String,
+        "Message UUIDv7 read up to (default: the latest message)",
+    ),
+];
+
+pub(super) const CHANNEL_MARK_READ_OUTPUT: &[Field] = &[
+    Field::required("conversation_id", Type::String, "Conversation UUIDv7"),
+    Field::optional(
+        "last_read_message_id",
+        Type::String,
+        "Your read marker's message UUIDv7 after the call",
+    ),
+    Field::required(
+        "read_at",
+        Type::String,
+        "RFC 3339 UTC time the marker last moved",
+    ),
+    Field::required(
+        "advanced",
+        Type::Boolean,
+        "Whether the marker moved forward (false: it already covered the message)",
+    ),
 ];
 
 pub(super) const CHANNEL_MEMBERSHIP_INPUT: &[Field] = &[Field::required(
@@ -456,15 +562,20 @@ pub(super) const CHANNEL_SUMMARIZE_INPUT: &[Field] = &[
         Type::String,
         "Channel name (#name or name) or conversation UUIDv7",
     ),
-    Field::required(
+    Field::optional(
         "question",
         Type::String,
-        "Question to answer from caller-visible channel messages",
+        "Question to answer (required unless --since-read)",
+    ),
+    Field::optional(
+        "since_read",
+        Type::Boolean,
+        "Digest only others' messages after your read marker (never moves it)",
     ),
     Field::optional(
         "max_messages",
         Type::Integer,
-        "Maximum recent channel messages to inspect (1..=200, default 200)",
+        "Maximum channel messages to inspect (1..=200, default 200)",
     ),
 ];
 
@@ -493,6 +604,21 @@ pub(super) const CHANNEL_SUMMARIZE_OUTPUT: &[Field] = &[
         "usage_record_id",
         Type::String,
         "Caller-attributed usage record identifier",
+    ),
+    Field::optional(
+        "new_message_count",
+        Type::Integer,
+        "--since-read: new messages this digest covers",
+    ),
+    Field::optional(
+        "remaining_unread",
+        Type::Integer,
+        "--since-read: new messages left after through_message_id",
+    ),
+    Field::optional(
+        "through_message_id",
+        Type::String,
+        "--since-read: last message covered (pass to channel mark-read --up-to)",
     ),
 ];
 

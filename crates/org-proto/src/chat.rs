@@ -20,6 +20,21 @@ use crate::msg::{
 };
 use crate::org::OrgChangedData;
 
+mod watching;
+
+pub use watching::{
+    ChatChannelSummarize, ChatChannelSummarizeParams, ChatChannelSummarizeResult,
+    ChatWatchingModelGet, ChatWatchingModelGetParams, ChatWatchingModelResult,
+    ChatWatchingModelSet, ChatWatchingModelSetParams, MAX_SUMMARIZE_WINDOW,
+};
+
+/// Most characters in a headers-only `snippet` (`TASK-99` rung 4).
+pub const SNIPPET_MAX_CHARS: usize = 160;
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
 /// Conversation kind (`doc-90`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -117,14 +132,31 @@ pub struct ConversationSummary {
     pub members: Vec<ConversationMembershipView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pins: Vec<ConversationPinView>,
+    /// Unread inbox items (addressed, mentions, thread replies) the caller holds here.
     #[serde(default)]
     pub unread_count: u64,
+    /// Messages after the caller's read marker that the caller did not send: every such message
+    /// when it has no marker yet (`TASK-99` rung 1). Channel posts reach no inbox (`ADR-0024`
+    /// d6), so this, not `unread_count`, is what is new in a channel.
+    #[serde(default)]
+    pub new_message_count: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_read_message_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_read_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_message_at: Option<String>,
     #[serde(default)]
     pub is_member: bool,
+}
+
+impl ConversationSummary {
+    /// Whether the caller has anything new here: `new_message_count > 0 || unread_count > 0`.
+    pub fn has_unread(&self) -> bool {
+        self.new_message_count > 0 || self.unread_count > 0
+    }
 }
 
 /// One resolved `@handle` mention recorded by the office (`WATCH-2/9`).
@@ -207,11 +239,26 @@ pub struct ChatMessageView {
     pub priority: MessagePriority,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    pub body: String,
+    /// The full body; `None` only in a headers-only read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    /// Headers-only reads: the body on one line, at most [`SNIPPET_MAX_CHARS`] characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+    /// Headers-only reads: the full body's length in UTF-8 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub meta: Meta,
     pub created_at: String,
     pub origin_sequence: u64,
+    /// Replies in the thread this message roots (0 for a reply).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reply_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_reply_at: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub attachment_count: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentions: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -231,7 +278,8 @@ impl fmt::Debug for ChatMessageView {
             .field("conversation_id", &self.conversation_id)
             .field("thread_id", &self.thread_id)
             .field("kind", &self.kind)
-            .field("body_len", &self.body.len())
+            .field("body_len", &self.body.as_ref().map_or(0, String::len))
+            .field("body_bytes", &self.body_bytes)
             .field("meta_keys", &self.meta.len())
             .finish()
     }
@@ -269,6 +317,9 @@ pub struct ChatChannels;
 pub struct ChatChannelsParams {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub include_archived: bool,
+    /// Only channels where [`ConversationSummary::has_unread`] holds.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unread_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,8 +483,36 @@ pub struct ChatMessagesParams {
     pub thread_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// Backward page cursor (`next_cursor`) of a plain read; never with a delta read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<u64>,
+    /// Delta read: the messages after the caller's read marker in `conversation` that the
+    /// caller did not send, oldest first (`TASK-99` rung 2).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub since_read: bool,
+    /// Delta read: the messages strictly after this message (canonical UUIDv7) in the
+    /// conversation's `(created_at, local_seq, id)` order, oldest first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_id: Option<String>,
+    /// Delta read paging: the page starts strictly after this message (the previous page's
+    /// `next_after_id`), never before the `since_read` / `after_id` anchor, and `total` still
+    /// counts every match after that anchor, so it holds steady from page to page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_after_id: Option<String>,
+    /// Only thread roots and replies also posted to the channel; a thread's replies show in its
+    /// root's `reply_count` and `latest_reply_at`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub top_level_only: bool,
+    /// Omit `body` and `meta`; answer a one-line `snippet` and `body_bytes` instead.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub headers_only: bool,
+}
+
+impl ChatMessagesParams {
+    /// Whether this is a delta read (`since_read` or `after_id`): oldest first, forward pages.
+    pub fn is_delta(&self) -> bool {
+        self.since_read || self.after_id.is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -442,6 +521,13 @@ pub struct ChatMessagesResult {
     pub messages: Vec<ChatMessageView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<u64>,
+    /// Delta reads with more to read: the `page_after_id` that reads the next page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_after_id: Option<String>,
+    /// Delta reads: how many messages match after the `since_read` / `after_id` anchor,
+    /// across every page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
 }
 
 impl Call for ChatMessages {
@@ -487,22 +573,33 @@ impl Call for ChatInbox {
     type Result = ChatInboxResult;
 }
 
-/// `chat.mark_read`: update the caller's read marker in a conversation (`doc-90`).
+/// `chat.mark_read`: advance the caller's read marker in a conversation (`doc-90`, `TASK-99`).
+/// The marker only moves forward, and inbox items (`message_recipient_states`) never change.
 pub struct ChatMarkRead;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatMarkReadParams {
+    /// Conversation UUIDv7, `#channel`, or channel name.
     pub conversation_id: String,
+    /// The message read up to; omitted, the conversation's latest message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_read_message_id: Option<String>,
+    /// Decide and validate without changing anything.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatMarkReadResult {
     pub conversation_id: String,
+    /// When the marker was last moved (now when this call moved it).
     pub read_at: String,
+    /// The marker after the call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_read_message_id: Option<String>,
+    /// Whether the call moved the marker forward; `false` when it already covered the message.
+    #[serde(default)]
+    pub advanced: bool,
 }
 
 impl Call for ChatMarkRead {
@@ -634,152 +731,10 @@ impl Call for ChatEventsPoll {
     type Result = ChatEventsPollResult;
 }
 
-/// `chat.watching_model_get`: read the organization's watching model profile setting
-/// (`ADR-0024` d13, `WATCH-5`).
-pub struct ChatWatchingModelGet;
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChatWatchingModelGetParams {}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChatWatchingModelResult {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_profile_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_profile_name: Option<String>,
-    pub enabled: bool,
-    pub revision: u64,
-}
-
-impl Call for ChatWatchingModelGet {
-    const METHOD: &'static str = "chat.watching_model_get";
-    type Params = ChatWatchingModelGetParams;
-    type Result = ChatWatchingModelResult;
-}
-
-/// `chat.watching_model_set`: owner-only toggle setting or clearing the organization's
-/// watching model profile (`ADR-0024` d8/d13, `WATCH-5`).
-pub struct ChatWatchingModelSet;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChatWatchingModelSetParams {
-    pub command_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_profile_id: Option<String>,
-}
-
-impl Call for ChatWatchingModelSet {
-    const METHOD: &'static str = "chat.watching_model_set";
-    type Params = ChatWatchingModelSetParams;
-    type Result = ChatWatchingModelResult;
-}
-
-/// `chat.channel_summarize`: answer a question about a channel using a tool-less run over
-/// exactly the messages `msg list` would return to the caller (`ADR-0024` d18, `WATCH-10`).
-pub struct ChatChannelSummarize;
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChatChannelSummarizeParams {
-    pub channel: String,
-    pub question: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-}
-
-impl fmt::Debug for ChatChannelSummarizeParams {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ChatChannelSummarizeParams")
-            .field("channel", &self.channel)
-            .field("question_len", &self.question.len())
-            .field("limit", &self.limit)
-            .finish()
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChatChannelSummarizeResult {
-    pub conversation_id: String,
-    pub summary: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub message_ids: Vec<String>,
-    pub derived_notice: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub usage_record_id: Option<String>,
-}
-
-impl fmt::Debug for ChatChannelSummarizeResult {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ChatChannelSummarizeResult")
-            .field("conversation_id", &self.conversation_id)
-            .field("summary_len", &self.summary.len())
-            .field("message_ids_len", &self.message_ids.len())
-            .finish()
-    }
-}
-
-impl Call for ChatChannelSummarize {
-    const METHOD: &'static str = "chat.channel_summarize";
-    type Params = ChatChannelSummarizeParams;
-    type Result = ChatChannelSummarizeResult;
-}
-
 /// Helper to build a header-only `MessageReceivedData` with zero body exposure.
 pub fn header_only_received(header: MessageHeader) -> MessageReceivedData {
     MessageReceivedData { header }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn chat_wire_shapes_round_trip_and_redact_body_in_debug() {
-        let send = ChatSendParams {
-            id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a0".into(),
-            to: "#general".into(),
-            kind: "msg".into(),
-            priority: None,
-            subject: Some("Standup".into()),
-            body: "super-secret-body-text".into(),
-            meta: Meta::new(),
-            reply_to: None,
-            also_in_channel: false,
-            reason: None,
-        };
-        let dbg = format!("{send:?}");
-        assert!(!dbg.contains("super-secret-body-text"), "{dbg}");
-        let encoded = serde_json::to_value(&send).unwrap();
-        let decoded: ChatSendParams = serde_json::from_value(encoded).unwrap();
-        assert_eq!(decoded, send);
-
-        let item = ChatInboxItem {
-            id: send.id.clone(),
-            conversation_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1".into(),
-            thread_id: send.id.clone(),
-            reply_to: None,
-            from_member_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a2".into(),
-            from_display_name: "Ada".into(),
-            kind: "msg".into(),
-            priority: MessagePriority::Normal,
-            urgent: false,
-            subject: None,
-            created_at: "2026-11-21T12:00:00.000Z".into(),
-            state: MessageLifecycleState::Unread,
-            triage_gen: 0,
-            snoozed_until: None,
-            snooze_after_task: false,
-            snooze_note: None,
-            read_at: None,
-            delivered_because: DeliveredBecause::Mention,
-            related_message_ids: vec![],
-            reason: None,
-            local_seq: 1,
-        };
-        let encoded = serde_json::to_value(&item).unwrap();
-        assert_eq!(encoded["delivered_because"], "mention");
-        assert_eq!(
-            serde_json::from_value::<ChatInboxItem>(encoded).unwrap(),
-            item
-        );
-    }
-}
+mod tests;

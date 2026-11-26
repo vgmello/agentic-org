@@ -7,14 +7,14 @@ mod schema;
 
 use ask_schema::{MSG_ASK_INPUT, MSG_ASK_OUTPUT};
 use schema::{
-    CHANNEL_LIST_INPUT, CHANNEL_MEMBERSHIP_INPUT, CHANNEL_MEMBERSHIP_OUTPUT,
-    CHANNEL_SUMMARIZE_INPUT, CHANNEL_SUMMARIZE_OUTPUT, CHANNEL_SUMMARY_FIELDS, MSG_ACCEPT_INPUT,
-    MSG_ACCEPT_OUTPUT, MSG_DEFER_INPUT, MSG_DEFER_OUTPUT, MSG_DONE_INPUT, MSG_DONE_OUTPUT,
-    MSG_INBOX_INPUT, MSG_INBOX_ITEM_FIELDS, MSG_LIST_INPUT, MSG_LIST_ITEM_FIELDS, MSG_READ_INPUT,
-    MSG_READ_OUTPUT, MSG_REPLY_INPUT, MSG_REPLY_OUTPUT, MSG_SEND_INPUT, MSG_SEND_OUTPUT,
-    MSG_UNSNOOZE_INPUT, MSG_UNSNOOZE_OUTPUT, MSG_WAIT_INPUT, MSG_WAIT_OUTPUT, MSG_WITHDRAW_INPUT,
-    MSG_WITHDRAW_OUTPUT, READ_ERRORS, STATUS_CLEAR_INPUT, STATUS_OUTPUT, STATUS_SET_INPUT,
-    WRITE_ERRORS,
+    CHANNEL_LIST_INPUT, CHANNEL_MARK_READ_INPUT, CHANNEL_MARK_READ_OUTPUT,
+    CHANNEL_MEMBERSHIP_INPUT, CHANNEL_MEMBERSHIP_OUTPUT, CHANNEL_SUMMARIZE_INPUT,
+    CHANNEL_SUMMARIZE_OUTPUT, CHANNEL_SUMMARY_FIELDS, MSG_ACCEPT_INPUT, MSG_ACCEPT_OUTPUT,
+    MSG_DEFER_INPUT, MSG_DEFER_OUTPUT, MSG_DONE_INPUT, MSG_DONE_OUTPUT, MSG_INBOX_INPUT,
+    MSG_INBOX_ITEM_FIELDS, MSG_LIST_INPUT, MSG_LIST_ITEM_FIELDS, MSG_READ_INPUT, MSG_READ_OUTPUT,
+    MSG_REPLY_INPUT, MSG_REPLY_OUTPUT, MSG_SEND_INPUT, MSG_SEND_OUTPUT, MSG_UNSNOOZE_INPUT,
+    MSG_UNSNOOZE_OUTPUT, MSG_WAIT_INPUT, MSG_WAIT_OUTPUT, MSG_WITHDRAW_INPUT, MSG_WITHDRAW_OUTPUT,
+    READ_ERRORS, STATUS_CLEAR_INPUT, STATUS_OUTPUT, STATUS_SET_INPUT, WRITE_ERRORS,
 };
 
 pub static MSG_COMMANDS: &[Command] = &[
@@ -234,7 +234,25 @@ pub static MSG_COMMANDS: &[Command] = &[
         errors: READ_ERRORS,
         example: Example {
             input: "{}",
-            output: r#"[{"id":"0193a5c0-0000-7000-8000-000000000100","kind":"channel","name":"general","auto_scope":"organization","archived":false,"member_count":2,"is_member":true}]"#,
+            output: r#"[{"id":"0193a5c0-0000-7000-8000-000000000100","kind":"channel","name":"general","auto_scope":"organization","archived":false,"member_count":2,"is_member":true,"new_message_count":3,"unread_count":1,"last_read_message_id":"0193a5c0-0000-7000-8000-000000000101","last_read_at":"2026-11-21T12:00:00.000Z","last_message_id":"0193a5c0-0000-7000-8000-000000000104","last_message_at":"2026-11-21T12:05:00.000Z"}]"#,
+        },
+    },
+    Command {
+        resource: "channel",
+        verb: "mark-read",
+        summary: "Advance your channel read marker",
+        call: "chat.mark_read",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::No,
+        },
+        input: CHANNEL_MARK_READ_INPUT,
+        content_field: None,
+        output: CHANNEL_MARK_READ_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r##"{"channel":"#general","up_to":"0193a5c0-0000-7000-8000-000000000104"}"##,
+            output: r#"{"conversation_id":"0193a5c0-0000-7000-8000-000000000100","last_read_message_id":"0193a5c0-0000-7000-8000-000000000104","read_at":"2026-11-21T12:06:00.000Z","advanced":true}"#,
         },
     },
     Command {
@@ -276,7 +294,7 @@ pub static MSG_COMMANDS: &[Command] = &[
     Command {
         resource: "channel",
         verb: "summarize",
-        summary: "Summarize channel Q&A",
+        summary: "Summarize channel Q&A or catch up",
         call: "chat.channel_summarize",
         kind: Kind::Read,
         input: CHANNEL_SUMMARIZE_INPUT,

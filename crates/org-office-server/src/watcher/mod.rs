@@ -7,6 +7,7 @@
 //!   isolation (`WATCH-4`: empty temp dir, stdin prompt, `CancelToken` kill+reap, fail-closed for
 //!   drivers lacking a true tool-less mode) and tests inject deterministic fakes.
 
+mod catchup;
 mod channel_watcher;
 mod pass;
 mod runtime;

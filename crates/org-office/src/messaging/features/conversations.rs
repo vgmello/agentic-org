@@ -10,6 +10,7 @@ use org_store::Id;
 use crate::messaging::{ports::MessagingRead, records::ConversationRecord};
 
 use super::auto_channels::{active_member, effective_auto_members, virtual_auto_channels};
+use super::catchup::{new_messages, watermark_boundary};
 
 pub(super) fn summarize_conversation(
     read: &impl MessagingRead,
@@ -24,7 +25,15 @@ pub(super) fn summarize_conversation(
         .count() as u64;
     let marker = read.read_marker(&conv.id, viewer)?;
     let msgs = read.messages_in_conversation(&conv.id)?;
-    let last_message_at = msgs.last().map(|m| m.created_at.clone());
+    let boundary = watermark_boundary(&msgs, marker.as_ref());
+    let new_message_count = new_messages(&msgs, boundary, viewer).count() as u64;
+    let (last_message_id, last_message_at) = msgs
+        .last()
+        .map(|m| (m.id.clone(), m.created_at.clone()))
+        .unzip();
+    let (last_read_message_id, last_read_at) = marker
+        .map(|m| (m.last_read_message_id, m.read_at))
+        .unwrap_or_default();
     let effective = effective_auto_members(read, conv, owner)?;
     let is_member = effective.contains(viewer) || active_member(conv, viewer);
 
@@ -70,7 +79,10 @@ pub(super) fn summarize_conversation(
             })
             .collect(),
         unread_count,
-        last_read_message_id: marker.and_then(|m| m.last_read_message_id),
+        new_message_count,
+        last_read_message_id,
+        last_read_at,
+        last_message_id,
         last_message_at,
         is_member,
     })
@@ -106,7 +118,11 @@ pub fn list_channels(
         if conv.archived && !params.include_archived {
             continue;
         }
-        channels.push(summarize_conversation(read, conv, viewer, owner)?);
+        let summary = summarize_conversation(read, conv, viewer, owner)?;
+        if params.unread_only && !summary.has_unread() {
+            continue;
+        }
+        channels.push(summary);
     }
     Ok(ChatChannelsResult { channels })
 }
