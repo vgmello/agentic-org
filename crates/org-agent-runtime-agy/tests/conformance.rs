@@ -1504,3 +1504,371 @@ fn plan_session_and_take_over_both_reject_effort() {
         Err(PlanError::Unsupported("effort"))
     ));
 }
+
+#[test]
+fn explicit_tool_name_blocks_acp_kind_reclassification_and_title_never_classifies() {
+    let runtime = AgyRuntime::new();
+    let spec = sample_spec();
+    let now = Instant::now();
+    let (_, mut session) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let _ = session.start(now);
+    for line in &agy_acp_script().opening {
+        let _ = session.on_line(line, now);
+    }
+
+    // Known explicit tool names MUST NOT be reclassified by misleading ACP `kind` values.
+    let explicit_cases = [
+        (
+            "bash",
+            "search",
+            ApprovalKind::Command,
+            Some(ToolCapability::Shell),
+            Escalation::None,
+        ),
+        (
+            "shell",
+            "read",
+            ApprovalKind::Command,
+            Some(ToolCapability::Shell),
+            Escalation::None,
+        ),
+        (
+            "write",
+            "read",
+            ApprovalKind::FileChange,
+            Some(ToolCapability::Edit),
+            Escalation::None,
+        ),
+        (
+            "edit",
+            "search",
+            ApprovalKind::FileChange,
+            Some(ToolCapability::Edit),
+            Escalation::None,
+        ),
+        (
+            "websearch",
+            "search",
+            ApprovalKind::Other,
+            None,
+            Escalation::None,
+        ),
+        (
+            "mcp_any_tool",
+            "read",
+            ApprovalKind::Other,
+            None,
+            Escalation::None,
+        ),
+        (
+            "set_permission_mode",
+            "read",
+            ApprovalKind::Permissions,
+            None,
+            Escalation::PermissionChange,
+        ),
+    ];
+    for (idx, (tool_name, acp_kind, exp_kind, exp_cap, exp_esc)) in
+        explicit_cases.into_iter().enumerate()
+    {
+        let perm_frame = format!(
+            r#"{{"jsonrpc":"2.0","id":"exp-{idx}","method":"session/request_permission","params":{{"toolCall":{{"toolCallId":"tc-exp-{idx}","name":"{tool_name}","title":"Innocent title","kind":"{acp_kind}"}}}}}}"#
+        );
+        let perm_out = session.on_line(perm_frame.as_bytes(), now);
+        let req = perm_out
+            .iter()
+            .find_map(|o| match o {
+                Output::Event(SessionEvent::ApprovalRequested(r)) => Some(r),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(req.kind, exp_kind, "kind for {tool_name} + kind={acp_kind}");
+        assert_eq!(
+            req.capability, exp_cap,
+            "capability for {tool_name} + kind={acp_kind}"
+        );
+        assert_eq!(
+            req.escalation, exp_esc,
+            "escalation for {tool_name} + kind={acp_kind}"
+        );
+
+        let tool_frame = format!(
+            r#"{{"jsonrpc":"2.0","method":"session/update","params":{{"update":{{"sessionUpdate":"tool_call","toolCallId":"tc-exp-s-{idx}","name":"{tool_name}","title":"Innocent title","kind":"{acp_kind}"}}}}}}"#
+        );
+        let tool_out = session.on_line(tool_frame.as_bytes(), now);
+        assert!(
+            tool_out.iter().any(|o| matches!(
+                o,
+                Output::Event(SessionEvent::ToolStarted { capability, .. })
+                    if *capability == exp_cap
+            )),
+            "ToolStarted capability for {tool_name} + kind={acp_kind}"
+        );
+    }
+
+    // Missing or whitespace-only `name` with spoofed `title: "read_file"` and `kind: "execute"`
+    // MUST classify strictly from ACP `kind` (Command + Shell), NEVER from `title`.
+    for (idx, name_field) in ["", r#""name":"  ","#].into_iter().enumerate() {
+        let perm_frame = format!(
+            r#"{{"jsonrpc":"2.0","id":"spoof-{idx}","method":"session/request_permission","params":{{"toolCall":{{"toolCallId":"tc-sp-{idx}",{name_field}"title":"read_file","kind":"execute"}}}}}}"#
+        );
+        let perm_out = session.on_line(perm_frame.as_bytes(), now);
+        let req = perm_out
+            .iter()
+            .find_map(|o| match o {
+                Output::Event(SessionEvent::ApprovalRequested(r)) => Some(r),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(req.tool, "read_file");
+        assert_eq!(req.kind, ApprovalKind::Command);
+        assert_eq!(req.capability, Some(ToolCapability::Shell));
+
+        let tool_frame = format!(
+            r#"{{"jsonrpc":"2.0","method":"session/update","params":{{"update":{{"sessionUpdate":"tool_call","toolCallId":"tc-sp-s-{idx}",{name_field}"title":"read_file","kind":"execute"}}}}}}"#
+        );
+        let tool_out = session.on_line(tool_frame.as_bytes(), now);
+        assert!(tool_out.iter().any(|o| matches!(
+            o,
+            Output::Event(SessionEvent::ToolStarted {
+                name,
+                capability: Some(ToolCapability::Shell),
+                ..
+            }) if name == "read_file"
+        )));
+    }
+}
+
+#[test]
+fn sandbox_bypass_detects_alternate_casing_nested_keys_and_non_bools_without_string_false_positives(
+) {
+    let runtime = AgyRuntime::new();
+    let spec = sample_spec();
+    let now = Instant::now();
+    let (_, mut session) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let _ = session.start(now);
+    for line in &agy_acp_script().opening {
+        let _ = session.on_line(line, now);
+    }
+
+    let cases = [
+        ("null", r#"{"BypassSandbox":null}"#, Escalation::None),
+        ("num-1", r#"{"BypassSandbox":1}"#, Escalation::SandboxBypass),
+        ("num-0", r#"{"BypassSandbox":0}"#, Escalation::SandboxBypass),
+        ("obj", r#"{"BypassSandbox":{}}"#, Escalation::SandboxBypass),
+        ("arr", r#"{"BypassSandbox":[]}"#, Escalation::SandboxBypass),
+        (
+            "unsandboxed-cap",
+            r#"{"Unsandboxed":true}"#,
+            Escalation::SandboxBypass,
+        ),
+        (
+            "bypass-upper",
+            r#"{"BYPASS_SANDBOX":true}"#,
+            Escalation::SandboxBypass,
+        ),
+        (
+            "danger-pascal",
+            r#"{"DangerouslyDisableSandbox":true}"#,
+            Escalation::SandboxBypass,
+        ),
+        (
+            "bypass-kebab",
+            r#"{"bypass-sandbox":true}"#,
+            Escalation::SandboxBypass,
+        ),
+        (
+            "nested-obj",
+            r#"{"options":{"BypassSandbox":true}}"#,
+            Escalation::SandboxBypass,
+        ),
+        (
+            "nested-arr",
+            r#"{"args":[{"bypass_sandbox":"1"}]}"#,
+            Escalation::SandboxBypass,
+        ),
+        (
+            "cmd-string-no-fp",
+            r#"{"CommandLine":"echo BypassSandbox dangerouslyDisableSandbox unsandboxed"}"#,
+            Escalation::None,
+        ),
+    ];
+    for (label, raw_input, expected) in cases {
+        let frame = format!(
+            r#"{{"jsonrpc":"2.0","id":"sb-{label}","method":"session/request_permission","params":{{"toolCall":{{"toolCallId":"tc-sb-{label}","name":"run_command","rawInput":{raw_input}}}}}}}"#
+        );
+        let out = session.on_line(frame.as_bytes(), now);
+        let req = out
+            .iter()
+            .find_map(|o| match o {
+                Output::Event(SessionEvent::ApprovalRequested(r)) => Some(r),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(req.escalation, expected, "case {label}: {raw_input}");
+    }
+}
+
+#[test]
+fn opening_mode_edge_cases_banned_variants_and_terminal_mode_update_guard() {
+    let runtime = AgyRuntime::new();
+    let now = Instant::now();
+
+    // 1. Trimmed/banned modes in `session/new` fail immediately with CloseStdin and NEVER emit `session/set_mode`.
+    let ask_spec = sample_spec();
+    for banned in [" yolo ", "bypassPermissions", "danger-full-access"] {
+        let (_, mut s) = runtime.plan_session(&ask_spec, &sample_ctx()).unwrap();
+        let _ = s.start(now);
+        let _ = s.on_line(
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}"#,
+            now,
+        );
+        let frame = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"sid-ban","modes":{{"currentModeId":"{banned}"}}}}}}"#
+        );
+        let out = s.on_line(frame.as_bytes(), now);
+        assert!(out.iter().any(|o| matches!(
+            o,
+            Output::Event(SessionEvent::StartFailed {
+                reason: StartFailure::ModeMismatch { reported, .. }
+            }) if reported == banned
+        )));
+        assert!(out.iter().any(|o| matches!(o, Output::CloseStdin)));
+        assert!(!out.iter().any(|o| matches!(o, Output::Write(_))));
+        // Late `current_mode_update` after terminal Phase::Failed MUST be ignored (no ModeChanged).
+        let late = s.on_line(
+            br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"current_mode_update","currentModeId":"default"}}}"#,
+            now,
+        );
+        assert!(late.is_empty());
+    }
+
+    // 2. OpeningMode: Control::Send -> NotReady, on_tick past deadline -> ProtocolTimeout.
+    let mut plan_spec = sample_spec();
+    plan_spec.permission_mode = PermissionMode::Plan;
+    let (_, mut s_wait) = runtime.plan_session(&plan_spec, &sample_ctx()).unwrap();
+    let _ = s_wait.start(now);
+    let _ = s_wait.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}"#,
+        now,
+    );
+    let _ = s_wait.on_line(
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-w","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default"}}}"#,
+        now,
+    );
+    assert_eq!(
+        s_wait.control(Control::Send { text: "hi".into() }, now),
+        Err(ControlError::NotReady)
+    );
+    let timed = s_wait.on_tick(now + Duration::from_secs(31));
+    assert!(timed.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::StartFailed {
+            reason: StartFailure::ProtocolTimeout
+        })
+    )));
+
+    // 3. OpeningMode drift to third non-banned mode ("accept-edits" when "plan" requested)
+    // fails closed with ModeMismatch, ignores late id=3 response, and ignores late mode updates.
+    let (_, mut s_drift) = runtime.plan_session(&plan_spec, &sample_ctx()).unwrap();
+    let _ = s_drift.start(now);
+    let _ = s_drift.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}"#,
+        now,
+    );
+    let _ = s_drift.on_line(
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-dr","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default"}}}"#,
+        now,
+    );
+    let drift = s_drift.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"current_mode_update","currentModeId":"accept-edits"}}}"#,
+        now,
+    );
+    assert!(drift.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::StartFailed {
+            reason: StartFailure::ModeMismatch { requested, reported }
+        }) if requested == "plan" && reported == "accept-edits"
+    )));
+    assert!(s_drift
+        .on_line(br#"{"jsonrpc":"2.0","id":3,"result":{}}"#, now)
+        .is_empty());
+    assert!(s_drift
+        .on_line(
+            br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"current_mode_update","currentModeId":"plan"}}}"#,
+            now,
+        )
+        .is_empty());
+
+    // 4. `session/set_mode` with `result: null` fails closed; if `current_mode_update(expected)`
+    // arrived before error/null, reported falls back to `"<rejected>"` (never `reported == expected`).
+    let (_, mut s_null) = runtime.plan_session(&plan_spec, &sample_ctx()).unwrap();
+    let _ = s_null.start(now);
+    let _ = s_null.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}"#,
+        now,
+    );
+    let _ = s_null.on_line(
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-n","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default"}}}"#,
+        now,
+    );
+    let null_res = s_null.on_line(br#"{"jsonrpc":"2.0","id":3,"result":null}"#, now);
+    assert!(null_res.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::StartFailed {
+            reason: StartFailure::ModeMismatch { requested, reported }
+        }) if requested == "plan" && reported == "default"
+    )));
+
+    let (_, mut s_pre) = runtime.plan_session(&plan_spec, &sample_ctx()).unwrap();
+    let _ = s_pre.start(now);
+    let _ = s_pre.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}"#,
+        now,
+    );
+    let _ = s_pre.on_line(
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-pre","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default"}}}"#,
+        now,
+    );
+    let _ = s_pre.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"current_mode_update","currentModeId":"plan"}}}"#,
+        now,
+    );
+    let pre_err = s_pre.on_line(
+        br#"{"jsonrpc":"2.0","id":3,"error":{"code":-32602,"message":"rejected"}}"#,
+        now,
+    );
+    assert!(pre_err.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::StartFailed {
+            reason: StartFailure::ModeMismatch { requested, reported }
+        }) if requested == "plan" && reported == "<rejected>"
+    )));
+
+    // 5. `session/set_mode` transitions directly to Ready when `currentModelId` already matches.
+    let (_, mut s_direct) = runtime.plan_session(&plan_spec, &sample_ctx()).unwrap();
+    let _ = s_direct.start(now);
+    let _ = s_direct.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.5.17"}}}"#,
+        now,
+    );
+    let mode_req = s_direct.on_line(
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-dir","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default"}}}"#,
+        now,
+    );
+    assert!(matches!(mode_req.as_slice(), [Output::Write(_)]));
+    let ready = s_direct.on_line(br#"{"jsonrpc":"2.0","id":3,"result":{}}"#, now);
+    assert!(!ready.iter().any(|o| matches!(o, Output::Write(_))));
+    assert!(ready.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::SessionStarted { runtime_session_id })
+            if runtime_session_id.as_str() == "sid-dir"
+    )));
+    assert!(ready.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::Ready {
+            permission_mode: Some(m),
+            ..
+        }) if m == "plan"
+    )));
+}

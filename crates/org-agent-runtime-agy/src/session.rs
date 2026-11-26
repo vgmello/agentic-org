@@ -10,12 +10,12 @@ use org_agent_runtime::{
 
 use crate::plan::AgySessionConfig;
 use crate::protocol::{
-    classify_acp_kind_str, classify_rpc_error_outcome, classify_stop_reason,
-    classify_tool_capability, encode_initialize, encode_jsonrpc_error, encode_permission_cancelled,
-    encode_permission_selected, encode_session_cancel, encode_session_close, encode_session_open,
-    encode_session_prompt, encode_set_mode, encode_set_model, extract_rpc_error_message, first_str,
-    is_auth_rpc_error, is_banned_mode, parse_acp_usage, parse_permission_request,
-    parse_stderr_line, rpc_error, rpc_id_key, rpc_result, AcpUsage,
+    classify_rpc_error_outcome, classify_stop_reason, encode_initialize, encode_jsonrpc_error,
+    encode_permission_cancelled, encode_permission_selected, encode_session_cancel,
+    encode_session_close, encode_session_open, encode_session_prompt, encode_set_mode,
+    encode_set_model, extract_rpc_error_message, first_str, is_auth_rpc_error, is_banned_mode,
+    parse_acp_usage, parse_permission_request, parse_stderr_line, resolve_tool_classification,
+    rpc_error, rpc_id_key, rpc_result, AcpUsage,
 };
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -417,10 +417,13 @@ fn handle_set_mode_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
     }
     let err = rpc_error(val);
     if err.is_some() || rpc_result(val).is_none() {
+        let expected = s.cfg.expected_mode.reported_name;
         let reported = s
             .reported_mode
-            .clone()
-            .unwrap_or_else(|| "<rejected>".to_owned());
+            .as_deref()
+            .filter(|m| *m != expected)
+            .unwrap_or("<rejected>")
+            .to_owned();
         return fail_opening_mode_mismatch(s, &reported, err.is_some_and(is_auth_rpc_error));
     }
     s.reported_mode = Some(s.cfg.expected_mode.reported_name.to_owned());
@@ -660,6 +663,9 @@ fn handle_current_mode_update(
     s: &mut AgySession,
     update: &serde_json::Map<String, Value>,
 ) -> Vec<Output> {
+    if matches!(s.phase, Phase::Failed | Phase::Ended) {
+        return Vec::new();
+    }
     let Some(mode) = first_str(&[update.get("currentModeId"), update.get("mode")]) else {
         return Vec::new();
     };
@@ -720,11 +726,21 @@ fn handle_message_chunk(
 }
 
 fn handle_tool_call_update_start(update: &serde_json::Map<String, Value>) -> Vec<Output> {
-    let name = first_str(&[update.get("name"), update.get("title")])
+    let explicit_name = update
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty());
+    let name = explicit_name
+        .or_else(|| {
+            update
+                .get("title")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+        })
         .unwrap_or("unknown")
         .to_owned();
-    let capability = classify_tool_capability(&name)
-        .or_else(|| classify_acp_kind_str(update.get("kind").and_then(Value::as_str)));
+    let (_, capability) =
+        resolve_tool_classification(explicit_name, update.get("kind").and_then(Value::as_str));
     let input = update
         .get("rawInput")
         .filter(|v| !v.is_null())
