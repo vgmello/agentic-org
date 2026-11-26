@@ -1105,7 +1105,7 @@ async function checkChatThreads(page: Page) {
 async function checkChatContext(page: Page) {
   const nav = (h: string) => page.evaluate((x) => { location.hash = x; }, h);
   await nav("#/chat/dm-ada");
-  await page.locator(".chat-context .chat-more-btn").click();
+  await page.locator(".chat-context .chat-wait-full .chat-more-btn").click();
   const more = page.locator("#menu-chat-more-ctx");
   await more.waitFor();
   assert.deepEqual(await more.getByRole("menuitem").evaluateAll((els) => els.map((e) => e.getAttribute("href"))), ["#/inbox/in4"], "Ada's other requests link to their Inbox records");
@@ -1174,6 +1174,206 @@ async function checkPrimaryContrast(page: Page) {
     assert.ok(await ratio() >= 4.5, `${theme}: primary focus text contrast`);
   }
 }
+/* ---------------------------------------------------------------- Chat review round 6 */
+const navTo = (page: Page, h: string) => page.evaluate((x) => { location.hash = x; }, h);
+const activeAttr = (page: Page, name: string) => page.evaluate((n) => document.activeElement?.getAttribute(n) ?? null, name);
+/* Touch keeps where a follow-up posts and that the ask stays open; only the shortcut hint goes. */
+async function checkChatTouch(page: Page) {
+  const context = await page.context().browser()!.newContext({ viewport: { width: 375, height: 667 }, hasTouch: true, isMobile: true, reducedMotion: "reduce" });
+  const touch = await context.newPage();
+  const errors: string[] = [];
+  touch.on("pageerror", (e) => errors.push(e.message));
+  touch.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+  try {
+    touch.setDefaultTimeout(5000);
+    await touch.goto(page.url().split("#")[0] + "#/chat/agency-v1");
+    assert.ok(await touch.evaluate(() => matchMedia("(pointer: coarse)").matches), "Touch context reports a coarse pointer");
+    assert.equal(await touch.locator("#compose-help").isVisible(), false, "The Ctrl/⌘ hint is hidden on touch");
+    await touch.locator('.chat-needs:has(#needs-m3) [data-act="chat-ask-reply"]').click();
+    const dest = touch.locator(".chat-needs .chat-ask-dest");
+    assert.ok(await dest.isVisible(), "The follow-up destination shows on touch");
+    assert.match(await dest.innerText(), /^Posts in #agentic-org-v1 and on the Inbox request\. It stays open until you decide\.$/);
+    await touch.locator('.chat-needs [data-act="chat-ask-send"]').click();
+    assert.ok(await touch.locator(".chat-needs .chat-ask-dest.is-error").isVisible(), "An empty follow-up's error shows on touch");
+    assert.deepEqual(errors, [], "No errors in the touch context");
+  } finally {
+    await context.close();
+  }
+}
+/* The linked message's author line is clear of the stuck day band, and focused. */
+async function linkedPlacement(page: Page, mid: string) {
+  await page.locator(`.msg.is-linked[data-mid="${mid}"]`).waitFor();
+  await page.waitForTimeout(300);
+  return page.evaluate((id) => {
+    const s = document.querySelector(".chmain .msgs[data-ch]")!, el = s.querySelector(`:scope > [data-mid="${id}"]`)!;
+    const band = [...s.querySelectorAll(":scope > .chat-day")].filter((d) => d.classList.contains("is-stuck")).pop();
+    const head = el.querySelector(".hd")!.getBoundingClientRect(), top = s.getBoundingClientRect().top;
+    return { focused: document.activeElement === el, headTop: head.top - top, bandBottom: band ? band.getBoundingClientRect().bottom - top : 0, inView: head.top >= top };
+  }, mid);
+}
+async function assertLinked(page: Page, mid: string, label: string) {
+  const at = await linkedPlacement(page, mid);
+  assert.ok(at.focused, `${label}: focus moves to the linked message`);
+  assert.ok(at.inView && at.headTop >= at.bandBottom, `${label}: the day band does not cover the author line (${JSON.stringify(at)})`);
+}
+/* Every source navigation re-anchors: a repeat visit to the same URL, and a click on the URL already open. */
+async function checkChatSourceRepeat(page: Page) {
+  await page.setViewportSize({ width: 375, height: 667 });
+  for (const visit of ["first", "repeat"]) {
+    await navTo(page, "#/inbox/in1");
+    await page.getByRole("link", { name: "Open source message" }).click();
+    await assertLinked(page, "m2", `${visit} visit`);
+    await page.evaluate(() => { document.querySelector(".chmain .msgs[data-ch]")!.scrollTop = 0; (document.activeElement as HTMLElement)?.blur(); });
+  }
+  await page.evaluate(() => {
+    const a = document.createElement("a");
+    a.href = location.hash; a.id = "same-url-link"; a.textContent = "same";
+    document.querySelector("#main .chat-heading")!.append(a);
+  });
+  await page.locator("#same-url-link").click();
+  await assertLinked(page, "m2", "same-URL click");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+/* Home's Spotlight and cards route a consequential ask to Inbox with the same reason as Chat. */
+async function checkHomeRouting(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  const chatReason = await page.locator('.chat-needs:has(#needs-m2) .chat-needs-route').innerText();
+  await navTo(page, "#/home");
+  const spot = page.locator("#hb-spotlight");
+  await spot.getByRole("link", { name: "Review in Inbox" }).waitFor();
+  assert.equal(await spot.getByRole("link", { name: "Review in Inbox" }).getAttribute("href"), "#/inbox/in1");
+  assert.equal(await spot.locator(".ask-route").innerText(), chatReason, "Home states the same short reason as Chat");
+  const direct = await page.locator("#main [data-act='handle'], #main [data-act='deny-arm'], #main [data-act='reply']").evaluateAll((els) => els.map((e) => e.getAttribute("data-id")));
+  for (const id of ["in1", "in2", "in4", "in16"]) assert.ok(!direct.includes(id), `Home offers no direct decision on consequential ${id}`);
+}
+/* The thread's "Also send to" choice is kept with its draft and cleared on send. */
+async function checkThreadAlsoDraft(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  await page.locator("#thread-compose").fill("Holding the merge until the fixtures land.");
+  await page.locator(".thread .chat-also input").check();
+  await page.locator(".thread [data-act=thread-close]").click();
+  await page.locator(".chat-search").click(); /* an unrelated re-render */
+  await page.locator(".chat-search-row [aria-label='Close search']").click();
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  assert.equal(await page.locator("#thread-compose").inputValue(), "Holding the merge until the fixtures land.");
+  assert.ok(await page.locator(".thread .chat-also input").isChecked(), "The cross-post choice is kept with the draft");
+  await page.locator("#thread-compose").press("Control+Enter");
+  await page.locator(".chmain .msgs > .msg", { hasText: "Holding the merge until the fixtures land." }).locator(".msg-src").waitFor();
+  assert.equal(await page.locator(".thread .chat-also input").isChecked(), false, "Sending clears the cross-post choice");
+  await page.locator(".thread [data-act=thread-close]").click();
+}
+/* Search covers thread replies; a match opens in its thread, marked and focused. */
+async function checkChatSearchThread(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator(".chat-search").click();
+  await page.keyboard.type("as soon as");
+  const hitLine = page.locator('.chmain .msg[data-mid="m2"] .chat-thread-hit');
+  await hitLine.waitFor();
+  assert.match(await hitLine.innerText(), /Kai in the thread: .*I'll merge as soon as it's approved/);
+  assert.equal(await page.locator("#chat-search-status").innerText(), "1 message");
+  await hitLine.getByRole("button", { name: "Open in thread" }).click();
+  const reply = page.locator(".thread .msgs > .msg.is-linked");
+  await reply.waitFor();
+  assert.match(await reply.innerText(), /I'll merge as soon as it's approved/);
+  assert.ok(await reply.evaluate((el) => el === document.activeElement), "Focus moves to the matching reply");
+  assert.equal(await page.locator(".thread mark").first().innerText(), "as soon as");
+  await page.locator(".thread [data-act=thread-close]").click();
+  await page.locator(".chat-search-row [aria-label='Close search']").click();
+}
+/* Eden's one-tap question shows what the choice weighs above the answers. */
+async function checkChoiceContext(page: Page) {
+  await navTo(page, "#/chat/dm-eden");
+  const card = page.locator(".chat-needs");
+  const context = card.locator(".chat-needs-context");
+  assert.match(await context.innerText(), /Splitting them makes reporting lines harder to follow[\s\S]*Eden recommends: one tree/);
+  assert.ok(await context.evaluate((el) => Boolean(el.compareDocumentPosition(el.parentElement!.querySelector(".actions")!) & Node.DOCUMENT_POSITION_FOLLOWING)), "Context sits above the answers");
+  await card.getByRole("button", { name: "One tree", exact: true }).waitFor();
+}
+/* Agents' conversations: owner access by the title at 375; DM actions name their destination. */
+async function checkA2AHeader(page: Page) {
+  await navTo(page, "#/chat/a2a-kai-rowan");
+  assert.deepEqual(await page.locator(".readfoot .actions .btn").allInnerTexts(), ["DM Kai", "DM Rowan"]);
+  assert.equal(await page.locator(".chat-title .chat-readas-tag").isVisible(), false, "Wide: the context line carries access");
+  await page.setViewportSize({ width: 375, height: 667 });
+  const tag = page.locator(".chat-title .chat-readas-tag");
+  assert.ok(await tag.isVisible(), "Narrow: access label beside the title");
+  assert.equal(await tag.innerText(), "Reading as the owner");
+  const [title, label] = await Promise.all([page.locator("#ch-title").boundingBox(), tag.boundingBox()]);
+  assert.ok(title && label && label.y < title.y + title.height && label.y + label.height > title.y, "The label shares the title's row");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+/* Choosing any conversation in the drawer, the open one included, closes it and focuses the heading. */
+async function checkDrawerChoice(page: Page) {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await navTo(page, "#/chat/design");
+  for (const pick of ['#chat-nav a[aria-current="page"]', '#chat-nav a[href="#/chat/general"]']) {
+    await page.locator(".chat-list-btn").click();
+    await page.locator(pick).click();
+    await page.locator(".chat.list-open").waitFor({ state: "detached" });
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "ch-title", `${pick}: focus on the conversation heading`);
+    assert.equal(await page.evaluate(() => document.querySelectorAll("[inert]").length), 0, `${pick}: nothing left inert`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+/* Ada's other requests at a constrained width: one compact control opening the full list. */
+async function checkCompactRequests(page: Page) {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await navTo(page, "#/chat/dm-ada");
+  const compact = page.locator(".chat-context .chat-wait-compact .chat-more-btn");
+  assert.equal(await compact.innerText(), "2 other requests");
+  assert.equal(await page.locator(".chat-context .chat-wait-full").isVisible(), false);
+  assert.equal(await page.locator(".chat").evaluate((el) => el.classList.contains("ctx-overflow")), false, "The context line fits");
+  await compact.click();
+  const hrefs = await page.locator("#menu-chat-more-ctx-compact").getByRole("menuitem").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+  assert.equal(hrefs.length, 2);
+  assert.ok(hrefs.includes("#/inbox/in4"));
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+/* Short screens: a reply-count tap lands on the replies with the ask above; Jump to latest when the newest is below. */
+async function checkShortScreens(page: Page) {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.reload();
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  const landing = await page.evaluate(() => {
+    const s = document.querySelector(".thread .msgs")!, sr = s.getBoundingClientRect();
+    const first = s.querySelector(":scope > .chat-thread-count + .msg")!.getBoundingClientRect();
+    return { firstReplyVisible: first.top >= sr.top && first.top < sr.bottom - 24, askAbove: s.scrollTop > 0 };
+  });
+  assert.ok(landing.firstReplyVisible && landing.askAbove, `Reply count lands on the replies (${JSON.stringify(landing)})`);
+  await page.locator(".thread [data-act=thread-close]").click();
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page.goto(page.url().split("#")[0] + "#/chat/agency-v1");
+  await page.waitForTimeout(500);
+  const jump = page.locator('[data-act="chat-latest-jump"]');
+  const newestBelow = () => page.evaluate(() => { const s = document.querySelector(".chmain .msgs[data-ch]")!; return [...s.querySelectorAll(":scope > .msg")].pop()!.getBoundingClientRect().bottom > s.getBoundingClientRect().bottom + 1; });
+  assert.equal(await jump.isVisible(), await newestBelow(), "Jump to latest shows exactly when the newest message is below the fold");
+  if (await jump.isVisible()) {
+    const [stream, button] = await Promise.all([page.locator(".chmain .msgs[data-ch]").boundingBox(), jump.boundingBox()]);
+    assert.ok(stream && button && button.y >= stream.y + stream.height - 1, "On phones Jump to latest is its own row, never over the stream");
+  }
+  await page.evaluate(() => { document.querySelector(".chmain .msgs[data-ch]")!.scrollTop = 0; });
+  await jump.waitFor();
+  await jump.click();
+  assert.equal(await newestBelow(), false, "Jump to latest shows the newest message");
+  assert.equal(await activeAttr(page, "data-mid"), "m4", "Focus moves to the newest message");
+  assert.equal(await jump.isVisible(), false);
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+async function checkChatRound6(page: Page) {
+  await checkChatTouch(page);
+  await checkChatSourceRepeat(page);
+  await checkHomeRouting(page);
+  await checkThreadAlsoDraft(page);
+  await checkChatSearchThread(page);
+  await checkChoiceContext(page);
+  await checkA2AHeader(page);
+  await checkDrawerChoice(page);
+  await checkCompactRequests(page);
+  await checkShortScreens(page);
+}
 async function checkChat(page: Page) {
   await checkChatAsks(page);
   await checkChatRecords(page);
@@ -1183,6 +1383,8 @@ async function checkChat(page: Page) {
   await checkChatThreads(page);
   await checkChatContext(page);
   await checkChatLayout(page);
+  await page.reload();
+  await checkChatRound6(page);
   await checkPrimaryContrast(page);
 }
 

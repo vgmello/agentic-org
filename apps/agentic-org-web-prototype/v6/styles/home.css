@@ -382,6 +382,9 @@
 .ask-receipt { display: grid; justify-items: start; gap: 6px; min-width: 0; }
 .triage-actions > .ask-receipt { flex: 1 1 100%; }
 .ask-receipt-text { margin: 0; padding: 2px 0 2px 12px; border-inline-start: 2px solid var(--line2); font-size: var(--fs-sm); line-height: 1.5; color: var(--gray-300); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Outside Inbox, a consequential ask's short reason sits beside its "Review in Inbox" control (ask-route.js). */
+.ask-route { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin: 0; font-size: var(--fs-sm); color: var(--gray-400); overflow-wrap: anywhere; }
+.ask-route .ic14 { flex: none; }
 /* Satisfying completion win burst on handled card */
 .h4-handled-win {
   display: inline-flex; align-items: center; gap: 6px;

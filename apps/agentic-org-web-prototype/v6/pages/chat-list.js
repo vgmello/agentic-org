@@ -109,8 +109,19 @@ const LIST_CLICKS = {
   "chat-new-cancel": (root) => setPicker(root, false),
   "chat-to": (root, id) => startMessage(root, id),
 };
+/* Choosing any conversation closes the drawer. Choosing the one already open changes no URL, so the caller
+   closes the drawer in place and focuses the conversation's heading ("same-conversation"). */
+function chooseConversation(e, link) {
+  list.q = "";
+  S.chatList = null;
+  if (link.getAttribute("href") !== location.hash) return "";
+  e.preventDefault();
+  e.stopPropagation();
+  return "same-conversation";
+}
 function onListClick(e, root) {
-  if (e.target.closest("#chat-nav a")) list.q = "";
+  const link = e.target.closest("#chat-nav a");
+  if (link) return chooseConversation(e, link);
   const t = e.target.closest("[data-act]"), fn = t && LIST_CLICKS[t.dataset.act];
   return fn ? fn(root, t.dataset.id) : "";
 }
