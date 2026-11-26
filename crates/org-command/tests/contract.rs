@@ -761,6 +761,127 @@ fn help_is_text_at_three_levels_and_never_calls_the_office() {
 }
 
 #[test]
+fn short_help_is_help_at_three_levels_and_a_value_where_a_flag_takes_one() {
+    let table = sample_table();
+    for (short, long) in [
+        (&["-h"][..], &["--help"][..]),
+        (&["sample", "-h"], &["sample", "--help"]),
+        (&["sample", "create", "-h"], &["sample", "create", "--help"]),
+        (
+            &["sample", "create", "--priority", "high", "-h"],
+            &["sample", "create", "--help"],
+        ),
+    ] {
+        let (output, office) = run_stub(&table, &args(short), &mut StubSources::default());
+        let (expected, _) = run_stub(&table, &args(long), &mut StubSources::default());
+        assert_eq!(output, expected, "{short:?}");
+        assert_eq!(output.exit_code, 0, "{short:?}");
+        assert!(office.calls.is_empty(), "{short:?}");
+    }
+    // As the value of a flag that takes one, `-h` is that value.
+    let request = sent(&table, &["sample", "create", "--title", "-h"]);
+    assert_eq!(Value::Object(request.input), json!({"title": "-h"}));
+}
+
+#[test]
+fn command_help_ends_with_its_example_as_one_line_a_shell_reads_back() {
+    let table = sample_table();
+    let (output, _) = run_stub(
+        &table,
+        &args(&["sample", "create", "--help"]),
+        &mut StubSources::default(),
+    );
+    let example = output
+        .stdout
+        .split("\nExample:\n  ")
+        .nth(1)
+        .expect("an Example section");
+    assert!(
+        example.ends_with('\n') && example.lines().count() == 1,
+        "{example}"
+    );
+    assert!(
+        example.starts_with("agent-os sample create --title 1.5 "),
+        "{example}"
+    );
+    // A list repeats its flag, a yes-or-no is bare, text a shell would split is quoted and
+    // fields with structure go in one --json object, in name order.
+    for part in [
+        "--body 'Short body'",
+        "--labels 'a b' --labels yes",
+        "--urgent",
+        r#"--json '{"extra":{"a":[null],"z":1},"owner":{"id":"E-1","name":"Ada"}}'"#,
+    ] {
+        assert!(example.contains(part), "`{part}` is not in {example}");
+    }
+    let (inspect, _) = run_stub(
+        &table,
+        &args(&["sample", "update", "--help"]),
+        &mut StubSources::default(),
+    );
+    assert!(
+        inspect.stdout.ends_with(
+            "\nExample:\n  agent-os sample update --id S-1 --title Renamed --if-match 1\n"
+        ),
+        "{}",
+        inspect.stdout
+    );
+    let words = org_command::testkit::shell_words("a 'b c' 'it'\\''s' --json '{\"k\":\"v\"}'");
+    assert_eq!(words, ["a", "b c", "it's", "--json", r#"{"k":"v"}"#]);
+}
+
+#[test]
+fn json_escapes_del_c1_and_line_separators_and_reads_back_the_same() {
+    let hostile =
+        "ok\u{7f}del\u{80}c1\u{9b}31mcsi\u{9f}\u{2028}ls\u{2029}ps\u{1b}[2Jesc\u{a0}nbsp é";
+    let node = Node::map([
+        ("text", Node::text(hostile)),
+        (hostile, Node::List(vec![Node::text(hostile)])),
+    ]);
+    let json = node.to_json();
+    for raw in [
+        '\u{7f}', '\u{80}', '\u{9b}', '\u{9f}', '\u{2028}', '\u{2029}', '\u{1b}',
+    ] {
+        assert!(!json.contains(raw), "{raw:?} is raw in {json}");
+    }
+    for escape in [
+        "\\u007f", "\\u0080", "\\u009b", "\\u009f", "\\u2028", "\\u2029", "\\u001b",
+    ] {
+        assert!(json.contains(escape), "{escape} is not in {json}");
+    }
+    // Printable text past the C1 block is kept as it is.
+    assert!(json.contains("\u{a0}nbsp é"), "{json}");
+    let back: Value = serde_json::from_str(&json).expect("valid JSON");
+    assert_eq!(back, node.to_value());
+    assert_eq!(json.lines().count(), 1);
+}
+
+#[test]
+fn a_refusal_envelope_line_matches_the_envelope_schema_and_keeps_the_hint() {
+    let mut refusal = Refusal::new(
+        ErrorCode::NotAuthorized,
+        "No office binding.\u{9b}31m",
+        "Run agent-os inside an office-started agent session.",
+    );
+    refusal.operation_id = Some("op-1".to_owned());
+    let line = org_command::failure_envelope_json(&refusal, true);
+    assert!(!line.contains('\n') && !line.contains('\u{9b}'), "{line}");
+    let envelope: Value = serde_json::from_str(&line).expect("one JSON line");
+    validate_schema(&envelope_schema(), &envelope).expect("the envelope schema");
+    assert_eq!(
+        envelope,
+        json!({"ok": false, "data": null, "meta": {"operation_id": "op-1", "dry_run": true}, "error": {
+            "code": "not_authorized", "message": "No office binding.\u{9b}31m",
+            "hint": "Run agent-os inside an office-started agent session."
+        }})
+    );
+    assert!(
+        line.starts_with(r#"{"ok":false,"data":null,"meta":{"#),
+        "{line}"
+    );
+}
+
+#[test]
 fn a_table_refuses_a_row_that_breaks_the_grammar() {
     let good = SAMPLE_ROWS[0];
     const RESERVED: &[Field] = &[Field::optional("dry_run", Type::Boolean, "No")];

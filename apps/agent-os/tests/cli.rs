@@ -45,6 +45,61 @@ fn help_schema_and_version_run_without_binding() {
 }
 
 #[test]
+fn short_help_and_command_examples_run_without_binding() {
+    let long = bin().arg("--help").output().unwrap();
+    let short = bin().arg("-h").output().unwrap();
+    assert_eq!(short.status.code(), Some(0));
+    assert_eq!(short.stdout, long.stdout);
+    let command = bin().args(["team", "list", "-h"]).output().unwrap();
+    assert_eq!(command.status.code(), Some(0));
+    let text = String::from_utf8(command.stdout).unwrap();
+    assert!(text.contains("\nExample:\n  agent-os team list"), "{text}");
+}
+
+#[test]
+fn a_closed_standard_output_exits_0_without_a_panic() {
+    for args in [
+        &["--help"][..],
+        &["team", "list", "--schema"],
+        &["--version"],
+        &["team", "list"],
+    ] {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let out = bin().args(args).stdout(writer).output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {out:?}");
+        assert!(
+            out.stderr.is_empty(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+fn unbound_session_attach_refuses_like_a_one_shot_command() {
+    let one_shot = bin().args(["team", "list"]).output().unwrap();
+    let attach = bin()
+        .args(["session", "attach"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    // The same envelope, byte for byte: `data` null, `meta` {}, the refusal's own hint, and
+    // exit 1 (a refusal), not 2 (a command line that cannot be read).
+    assert_eq!(attach.status.code(), Some(1));
+    assert_eq!(attach.stdout, one_shot.stdout);
+    let env: Value = serde_json::from_slice(&attach.stdout).unwrap();
+    assert_eq!(env["data"], Value::Null);
+    assert_eq!(env["meta"], serde_json::json!({}));
+    assert_eq!(env["error"]["code"], "not_authorized");
+    let hint = env["error"]["hint"].as_str().unwrap();
+    assert!(
+        !hint.is_empty() && !hint.contains("one JSON object per line"),
+        "{hint}"
+    );
+}
+
+#[test]
 fn invalid_cli_exits_2_and_unbound_call_refuses_with_not_authorized() {
     let bad = bin()
         .args(["team", "list", "extra-positional"])

@@ -97,7 +97,7 @@ fn flag_takes_value(forwarded: &[String], flag_name: &str) -> bool {
         [r, v, ..] => (r.as_str(), v.as_str()),
         _ => return false,
     };
-    let table = org_agent_cli::table::table();
+    let table = org_agent_cli::table::runtime_table();
     let Some(cmd) = table.find(resource, verb) else {
         return false;
     };
@@ -112,7 +112,7 @@ fn command_accepts_flag(forwarded: &[String], flag_name: &str) -> bool {
         [r, v, ..] => (r.as_str(), v.as_str()),
         _ => return false,
     };
-    org_agent_cli::table::table()
+    org_agent_cli::table::runtime_table()
         .find(resource, verb)
         .is_some_and(|cmd| {
             cmd.input

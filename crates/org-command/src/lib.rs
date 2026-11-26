@@ -67,6 +67,15 @@ fn failed(refusal: &Refusal, dry_run: bool) -> Output {
     }
 }
 
+/// The failure envelope of `refusal` as one line of JSON, without the new line: `ok` false,
+/// `data` null, `meta` (its `operation_id`, and `dry_run` when `dry_run`), and `error` with the
+/// refusal's code, message, hint and `retry_with`. It is the envelope [`run`] prints for a
+/// refusal, for a caller that is refused before any command line is read (`session attach`
+/// when its office cannot be reached), so that caller never writes an envelope by hand.
+pub fn failure_envelope_json(refusal: &Refusal, dry_run: bool) -> String {
+    envelope::failure(refusal, dry_run).to_one_line()
+}
+
 /// Runs one command line. `program` is the executable's name, for help and hints; `args` are
 /// the arguments after it. The command line is read first: one that cannot be read is answered
 /// with `invalid_request` and exit code 2, and neither the key source nor the office is called.

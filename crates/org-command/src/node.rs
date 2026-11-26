@@ -298,8 +298,30 @@ fn compact_key(key: &str) -> String {
     }
 }
 
+/// A JSON string literal. Beyond what JSON itself escapes (`U+0000..=U+001F`, `"` and `\\`),
+/// DEL, the C1 controls (the 8-bit CSI `U+009B` among them) and the Unicode line and paragraph
+/// separators are written as escapes: `serde_json` leaves them raw, a terminal acts on them
+/// (CVE-2021-25743) and some line readers split on them. They can only be inside the literal,
+/// so escaping them in the serialized text reads back as the same string.
 fn json_string(text: &str) -> String {
-    Value::String(text.to_owned()).to_string()
+    let json = Value::String(text.to_owned()).to_string();
+    if !json.chars().any(json_leaves_raw) {
+        return json;
+    }
+    let mut out = String::with_capacity(json.len() + 12);
+    for c in json.chars() {
+        if json_leaves_raw(c) {
+            out.push_str(&format!("\\u{:04x}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// A character `serde_json` writes raw that no printed JSON may hold raw.
+fn json_leaves_raw(c: char) -> bool {
+    matches!(c, '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}')
 }
 
 /// Characters YAML does not hold as they are, or holds as a line break.

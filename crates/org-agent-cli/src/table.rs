@@ -1,5 +1,7 @@
 //! The shared B2.4 / B3 organization and project command table (`org-command` rows, `doc-28` §3.2).
 
+use std::sync::OnceLock;
+
 use org_command::{Ack, Command, CommandTable, Example, Field, IfMatch, Kind, Type};
 use org_proto::ErrorCode;
 
@@ -537,19 +539,31 @@ pub const COMMANDS: &[Command] = &[
     },
 ];
 
-/// Builds and validates the shared organization/project/HR/session/messaging command table.
+/// Every domain's rows: the one list both tables below are built from.
+const DOMAINS: &[&[Command]] = &[
+    COMMANDS,
+    crate::hiring_table::HIRING_COMMANDS,
+    crate::session_table::SESSION_COMMANDS,
+    crate::msg_table::MSG_COMMANDS,
+    crate::task_table::TASK_COMMANDS,
+    crate::git_table::GIT_COMMANDS,
+    crate::process_table::PROCESS_COMMANDS,
+    crate::budget_table::BUDGET_COMMANDS,
+];
+
+/// Builds and validates the shared organization/project/HR/session/messaging command table:
+/// every row's names, fields and example are checked. For the contract tests; a running
+/// command uses [`runtime_table`].
 pub fn table() -> CommandTable {
-    CommandTable::new(&[
-        COMMANDS,
-        crate::hiring_table::HIRING_COMMANDS,
-        crate::session_table::SESSION_COMMANDS,
-        crate::msg_table::MSG_COMMANDS,
-        crate::task_table::TASK_COMMANDS,
-        crate::git_table::GIT_COMMANDS,
-        crate::process_table::PROCESS_COMMANDS,
-        crate::budget_table::BUDGET_COMMANDS,
-    ])
-    .expect("agent-os command table is valid")
+    CommandTable::new(DOMAINS).expect("agent-os command table is valid")
+}
+
+/// The same rows for a running command, built once per process and without the checks:
+/// `agent-os` does nothing before its call that the call does not need (`doc-28` §2.11,
+/// `doc-7` #18), and [`table`]'s contract tests are what make skipping the checks safe.
+pub fn runtime_table() -> &'static CommandTable {
+    static TABLE: OnceLock<CommandTable> = OnceLock::new();
+    TABLE.get_or_init(|| CommandTable::unchecked(DOMAINS))
 }
 
 #[cfg(test)]
@@ -577,6 +591,14 @@ mod tests {
     fn command_table_passes_all_org_command_contract_checks() {
         let table = table();
         org_command::testkit::check_rows(&table);
+    }
+
+    #[test]
+    fn the_runtime_table_holds_the_checked_rows_and_is_built_once() {
+        let checked = table();
+        let runtime = runtime_table();
+        assert_eq!(runtime.rows(), checked.rows());
+        assert!(std::ptr::eq(runtime, runtime_table()));
     }
 
     #[test]
