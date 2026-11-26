@@ -878,7 +878,7 @@ html:is([data-theme="classic"], [data-theme="report-dark"]) {
   & .cmdk-tab[aria-selected="true"] {
     background: #2b3a54;
     color: #ffffff;
-    box-shadow: inset 0 0 0 1px rgba(139, 152, 255, .44);
+    box-shadow: inset 0 0 0 1px var(--cmdk-tab-selected-ring, rgba(139, 152, 255, .44));
   }
   & .cmdk-tab[aria-selected="true"] .ic { color: var(--tone-accent-ink); }
   & .cmdk-esc {
