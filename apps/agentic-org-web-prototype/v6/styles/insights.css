@@ -313,3 +313,6 @@ html[data-theme="graphite"] :is(.project-insights, .team-overview, .org-insights
 html[data-theme="graphite-light"] :is(.project-insights, .team-overview, .org-insights) { --chart-accent: #6366f1; --chart-tint: #0d9488; }
 html[data-theme="graphite"] .hb-spark i { background: linear-gradient(to bottom, #818cf8, color-mix(in srgb, #818cf8 55%, transparent)); }
 html[data-theme="graphite-light"] .hb-spark i { background: linear-gradient(to bottom, #6366f1, color-mix(in srgb, #6366f1 55%, transparent)); }
+/* Home summary bars in Graphite: grey read as "disabled", so progress uses the chart indigo */
+html[data-theme="graphite"] .hb-pillar-bar :is(.seg-auto, .seg-spend) { background: linear-gradient(90deg, #6366f1, #818cf8); }
+html[data-theme="graphite-light"] .hb-pillar-bar :is(.seg-auto, .seg-spend) { background: linear-gradient(90deg, #4f46e5, #6366f1); }
