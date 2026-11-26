@@ -732,6 +732,13 @@ impl Office {
         Ok(out)
     }
 
+    /// Returns `true` while `org-store` still has queued, unconfirmed, or unmaterialized journal
+    /// entries in flight (e.g. a freshly committed message whose projection is still catching up).
+    pub fn has_pending_journal_pipeline(&self) -> bool {
+        let st = self.store.status();
+        st.materialized != st.confirmed || st.flushed != st.confirmed || st.queued > 0
+    }
+
     /// Scans newly committed native messaging journal entries via the `ARCH-03` consumer
     /// `"org-sync-message-relay"`, returning bounded per-message relay files and recipient-routed
     /// destination offices for each locally committed message (`TASK-52` #10 / P3-#1 / P3-#4).

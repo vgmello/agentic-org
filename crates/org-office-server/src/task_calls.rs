@@ -75,6 +75,7 @@ pub(crate) struct TaskService {
     office: Arc<Office>,
     live: Arc<LiveEvents>,
     sessions: Option<Arc<org_office_sessions::SessionManager>>,
+    sync_wake: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl TaskService {
@@ -87,6 +88,18 @@ impl TaskService {
             office,
             live,
             sessions,
+            sync_wake: None,
+        }
+    }
+
+    pub(crate) fn with_sync_wake(mut self, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.sync_wake = Some(wake);
+        self
+    }
+
+    fn notify_sync(&self) {
+        if let Some(wake) = &self.sync_wake {
+            wake();
         }
     }
 
@@ -164,6 +177,7 @@ impl TaskService {
             Ok((res, replayed)) => {
                 if !replayed {
                     self.live.record_mailbox_change();
+                    self.notify_sync();
                 }
                 Ok(Ok(res))
             }
@@ -306,6 +320,7 @@ impl TaskService {
             Ok(Ok(outcome)) => {
                 if !outcome.replayed {
                     self.live.record_mailbox_change();
+                    self.notify_sync();
                     self.maybe_wake_assigned_agent(actor, &outcome);
                 }
                 ok_reply::<C>(request.id, &TasksMutationResult { task: outcome.task })

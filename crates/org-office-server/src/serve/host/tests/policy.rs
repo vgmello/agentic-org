@@ -616,5 +616,123 @@ fn msg_send_enforces_hr_message_guard_before_delivery() {
     }
 }
 
+#[test]
+fn task140_host_channel_blocking_events_poll_avoids_hol_blocking_and_enforces_revocation() {
+    let mut shared = shared();
+    let entered = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let entered_cb = Arc::clone(&entered);
+    let release_cb = Arc::clone(&release);
+    shared.ports.chat = Some(Box::new(move |_member, _via_grant, _stop, req| {
+        if !req.is::<org_proto::chat::ChatEventsPoll>() {
+            return None;
+        }
+        {
+            let mut g = entered_cb.0.lock().unwrap();
+            *g = true;
+            entered_cb.1.notify_all();
+        }
+        let mut r = release_cb.0.lock().unwrap();
+        while !*r {
+            r = release_cb.1.wait(r).unwrap();
+        }
+        Some(
+            Response::ok::<org_proto::chat::ChatEventsPoll>(
+                req.id,
+                &org_proto::chat::ChatEventsPollResult {
+                    org_head_seq: 1,
+                    live_head_seq: 0,
+                    presence_head_seq: 0,
+                    snapshot_required: false,
+                    live_lost: false,
+                    org_changes: Vec::new(),
+                    messages_received: Vec::new(),
+                    message_states: Vec::new(),
+                    presence_changes: Vec::new(),
+                    inbox_changes: Vec::new(),
+                },
+            )
+            .unwrap(),
+        )
+    }));
+    let ctx = context();
+    let revocations = Arc::clone(&ctx._revocations);
+    let poll_req = {
+        let mut r = signed(
+            &shared,
+            "chat.events_poll",
+            json!({"after_org_seq": 1, "wait_ms": 2000}),
+        );
+        r.id = 101;
+        r
+    };
+    let who_req = {
+        let mut r = signed(&shared, "who", json!({}));
+        r.id = 102;
+        r
+    };
+
+    let (socket, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    let shared = Arc::new(shared);
+    let srv_shared = Arc::clone(&shared);
+    let srv = std::thread::spawn(move || {
+        serve(socket, &srv_shared, ctx, &Default::default());
+    });
+    let mut reader = std::io::BufReader::new(peer);
+
+    // Negotiate host channel v2 hello.
+    let hello = exchange(&mut reader, "hello", json!({"api": {"min": 2, "max": 2}}));
+    assert_eq!(hello["result"]["api_version"], 2);
+
+    // Send held chat.events_poll (id 101) and wait until its worker thread is blocking.
+    frame::write_message(reader.get_mut(), &poll_req).unwrap();
+    {
+        let mut g = entered.0.lock().unwrap();
+        while !*g {
+            g = entered.1.wait(g).unwrap();
+        }
+    }
+
+    // Send normal `who` (id 102) on the same multiplexed channel while 101 is held.
+    let who_started = std::time::Instant::now();
+    frame::write_message(reader.get_mut(), &who_req).unwrap();
+    let first_reply: Value = frame::read_message(&mut reader).unwrap().unwrap();
+    assert_eq!(
+        first_reply["id"], 102,
+        "non-blocking RPC must not wait behind held chat.events_poll: {first_reply}"
+    );
+    assert!(
+        first_reply["result"]["members"].is_array(),
+        "unexpected who reply: {first_reply}"
+    );
+    assert!(
+        who_started.elapsed() < Duration::from_millis(500),
+        "who took {:?}",
+        who_started.elapsed()
+    );
+
+    // Revoke the browser session while 101 is still waiting, then release 101.
+    revocations
+        .lock()
+        .unwrap()
+        .apply_batch(vec!["session".into()])
+        .unwrap();
+    {
+        let mut r = release.0.lock().unwrap();
+        *r = true;
+        release.1.notify_all();
+    }
+    let second_reply: Value = frame::read_message(&mut reader).unwrap().unwrap();
+    assert_eq!(second_reply["id"], 101);
+    assert_eq!(
+        second_reply["error"]["code"], "not_authorized",
+        "revoked session must never receive held poll result: {second_reply}"
+    );
+
+    drop(reader);
+    srv.join().unwrap();
+}
+
 #[path = "inventory.rs"]
 mod inventory;

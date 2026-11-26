@@ -1,11 +1,12 @@
 //! Multi-office Org-CA mTLS federation listener (HQ) and full-duplex sync/relay client
 //! (satellite) (`TASK-52` / `S1`, `doc-67`, `X-05`, `FC-020`, `FC-024`, `FC-145`).
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::io;
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::os::fd::{AsRawFd, RawFd};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -38,6 +39,9 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConnection, ServerConnection, StreamOwned};
 use sha2::{Digest as _, Sha256};
 
+pub use crate::federation_stream::HqFederationHandle;
+use crate::federation_stream::{spawn_satellite_session_rpc, HqPeerRegistry, SatRpcContext};
+use crate::org_feed::FeedWake;
 use crate::snapshot_transfer::{self, ActiveSnapshotTransfer, HqSnapshotTransferBudget};
 
 const POLL_SLEEP: Duration = Duration::from_millis(25);
@@ -133,6 +137,7 @@ pub(crate) fn hex_lower(bytes: &[u8]) -> String {
 pub struct HqFederationServer {
     addr: SocketAddr,
     office: Arc<Office>,
+    peers: Arc<HqPeerRegistry>,
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     workers: Arc<Mutex<Vec<JoinHandle<()>>>>,
@@ -178,9 +183,11 @@ impl HqFederationServer {
         let stop = Arc::new(AtomicBool::new(false));
         let active_conns = Arc::new(AtomicUsize::new(0));
         let workers = Arc::new(Mutex::new(Vec::new()));
+        let peers = Arc::new(HqPeerRegistry::default());
         let stop_bg = Arc::clone(&stop);
         let office_bg = Arc::clone(&office);
         let workers_bg = Arc::clone(&workers);
+        let peers_bg = Arc::clone(&peers);
         let ca_der = Arc::new(hq_tls.ca_cert_der);
         let cached_tls = Arc::new(Mutex::new((hq_tls.hq_cert_der.clone(), tls_cfg)));
         let handle = thread::Builder::new()
@@ -195,6 +202,7 @@ impl HqFederationServer {
                         stop: stop_bg,
                         wake_handler,
                         delivery_notifier,
+                        peers: peers_bg,
                         snapshot_budget: HqSnapshotTransferBudget::production(),
                     },
                     active_conns,
@@ -205,6 +213,7 @@ impl HqFederationServer {
         Ok(Self {
             addr,
             office,
+            peers,
             stop,
             handle: Some(handle),
             workers,
@@ -213,6 +222,12 @@ impl HqFederationServer {
 
     pub fn local_addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Returns a cloneable handle for pushing immediate sync wakeups and proxying remote
+    /// satellite session-control RPCs (`TASK-140`, `TASK-143` AC #3).
+    pub fn handle(&self) -> HqFederationHandle {
+        HqFederationHandle::new(Arc::clone(&self.peers))
     }
 
     /// Durably enqueues a cross-office frame for delivery to a connected satellite office.
@@ -242,7 +257,10 @@ impl HqFederationServer {
         )
         .map_err(|e| e.to_string())?
         {
-            org_office::RelayAdmission::Admitted => Ok(()),
+            org_office::RelayAdmission::Admitted => {
+                self.peers.notify_peer(destination_office_id);
+                Ok(())
+            }
             org_office::RelayAdmission::OriginRemoved => Err("origin office removed".into()),
             org_office::RelayAdmission::DestinationRemoved => {
                 Err("destination office removed".into())
@@ -260,6 +278,7 @@ impl HqFederationServer {
 
     fn shutdown_inner(&mut self) {
         self.stop.store(true, Ordering::Release);
+        self.peers.notify_all();
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
@@ -284,6 +303,7 @@ struct AcceptCtx {
     stop: Arc<AtomicBool>,
     wake_handler: Option<WakeRelayHandler>,
     delivery_notifier: Option<InboundDeliveryNotifier>,
+    peers: Arc<HqPeerRegistry>,
     snapshot_budget: HqSnapshotTransferBudget,
 }
 
@@ -331,6 +351,7 @@ fn run_hq_accept_loop(
                     continue;
                 };
                 let _ = stream.set_nonblocking(false);
+                let _ = stream.set_nodelay(true);
                 let _ = stream.set_read_timeout(Some(SOCKET_READ_TIMEOUT));
                 let _ = stream.set_write_timeout(Some(SOCKET_WRITE_TIMEOUT));
                 let ctx = base_ctx.clone();
@@ -428,6 +449,7 @@ fn handle_hq_connection(stream: TcpStream, ctx: AcceptCtx) {
                     wake: ctx.wake_handler.as_ref(),
                     notify: ctx.delivery_notifier.as_ref(),
                 },
+                &ctx.peers,
                 &ctx.snapshot_budget,
             );
         }
@@ -725,6 +747,234 @@ fn flush_durable_relays_to_satellite(
     true
 }
 
+fn read_hq_frame_nonblocking(
+    tls: &mut StreamOwned<ServerConnection, TcpStream>,
+    reader: &mut FrameReader,
+) -> Result<Option<SyncFrame>, FrameCodecError> {
+    let _ = tls.sock.set_nonblocking(true);
+    let res = reader.read_frame(tls, PARTIAL_FRAME_DEADLINE);
+    let _ = tls.sock.set_nonblocking(false);
+    res
+}
+
+fn push_hq_org_events_if_behind(
+    tls: &mut StreamOwned<ServerConnection, TcpStream>,
+    peer: &HqSessionPeer<'_>,
+    peer_org_cursor: &mut Option<(u64, u64)>,
+) -> bool {
+    let Some((after_epoch, after_seq)) = *peer_org_cursor else {
+        return true;
+    };
+    if peer.office.sync_org_journal_to_replication().is_err() {
+        return false;
+    }
+    let Ok(events) = peer
+        .office
+        .replication()
+        .org_events_after(after_epoch, after_seq)
+    else {
+        return false;
+    };
+    for ev in events {
+        let ep = ev.position.epoch.get();
+        let sq = ev.position.seq;
+        let frame = SyncFrame::OrgEvent {
+            org_id: ev.org_id.as_str().to_owned(),
+            epoch: ep,
+            seq: sq,
+            previous_hex: ev.previous.to_hex(),
+            digest_hex: ev.digest.to_hex(),
+            codec_name: ev.codec.id().to_owned(),
+            codec_version: ev.codec.version(),
+            payload_b64: STANDARD.encode(&ev.payload),
+        };
+        if !write_sync_frame_if_peer_active(tls, peer, &frame) {
+            return false;
+        }
+        *peer_org_cursor = Some((ep, sq));
+    }
+    true
+}
+
+type InflightRpcMap =
+    HashMap<String, mpsc::Sender<Result<org_proto::Outcome, org_proto::ApiError>>>;
+
+fn flush_hq_session_rpcs(
+    tls: &mut StreamOwned<ServerConnection, TcpStream>,
+    peer: &HqSessionPeer<'_>,
+    peer_handle: &crate::federation_stream::HqPeerHandle,
+    inflight_rpcs: &mut InflightRpcMap,
+) -> bool {
+    for rpc in peer_handle.take_rpcs() {
+        let frame = SyncFrame::SessionRpcRequest {
+            request_id: rpc.request_id.clone(),
+            caller_member_id: rpc.caller_member_id,
+            caller_is_owner: rpc.caller_is_owner,
+            method: rpc.method,
+            params_json: rpc.params_json,
+        };
+        if !write_sync_frame_if_peer_active(tls, peer, &frame) {
+            let _ = rpc.reply.send(Err(org_proto::ApiError::new(
+                org_proto::ErrorCode::Unavailable,
+                "failed sending session RPC to satellite office",
+            )));
+            return false;
+        }
+        inflight_rpcs.insert(rpc.request_id, rpc.reply);
+    }
+    true
+}
+
+fn deliver_hq_session_rpc_response(
+    inflight_rpcs: &mut InflightRpcMap,
+    request_id: &str,
+    outcome_json: &str,
+) {
+    let Some(tx) = inflight_rpcs.remove(request_id) else {
+        return;
+    };
+    let parsed = serde_json::from_str::<org_proto::Outcome>(outcome_json).map_err(|_| {
+        org_proto::ApiError::new(
+            org_proto::ErrorCode::Unavailable,
+            "malformed session RPC response from satellite office",
+        )
+    });
+    let _ = tx.send(parsed);
+}
+
+struct HqSessionState<'a> {
+    reader: FrameReader,
+    sent_in_session: BTreeSet<String>,
+    active_snapshot: Option<ActiveSnapshotTransfer>,
+    peer_org_cursor: Option<(u64, u64)>,
+    inflight_rpcs: InflightRpcMap,
+    hello_done: bool,
+    callbacks: InboundCallbacks<'a>,
+}
+
+fn drain_hq_inbound_frames(
+    tls: &mut StreamOwned<ServerConnection, TcpStream>,
+    peer: &HqSessionPeer<'_>,
+    snapshot_budget: &HqSnapshotTransferBudget,
+    peers: &HqPeerRegistry,
+    state: &mut HqSessionState<'_>,
+) -> bool {
+    loop {
+        match read_hq_frame_nonblocking(tls, &mut state.reader) {
+            Ok(Some(frame)) => {
+                if peer.session_stop.load(Ordering::Acquire)
+                    || !check_not_revoked_fail_closed(
+                        tls,
+                        peer.office,
+                        peer.sat_id.as_str(),
+                        peer.cert_serial_hex,
+                    )
+                {
+                    return false;
+                }
+                if let SyncFrame::SessionRpcResponse {
+                    request_id,
+                    outcome_json,
+                } = frame
+                {
+                    deliver_hq_session_rpc_response(
+                        &mut state.inflight_rpcs,
+                        &request_id,
+                        &outcome_json,
+                    );
+                    continue;
+                }
+                let is_hello = matches!(frame, SyncFrame::Hello { .. });
+                let is_org_gap = matches!(frame, SyncFrame::OrgGap { .. });
+                if !dispatch_hq_frame(
+                    tls,
+                    peer,
+                    snapshot_budget,
+                    &mut state.active_snapshot,
+                    frame,
+                    state.callbacks,
+                    peers,
+                ) {
+                    return false;
+                }
+                if is_hello {
+                    state.hello_done = true;
+                }
+                if is_org_gap {
+                    if let Ok(cp) = peer.office.replication().org_checkpoint() {
+                        state.peer_org_cursor = Some((cp.position.epoch.get(), cp.position.seq));
+                    }
+                }
+            }
+            Ok(None) => return false,
+            Err(FrameCodecError::Io(e))
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
+            {
+                return true;
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
+fn hq_session_flush_outbound(
+    tls: &mut StreamOwned<ServerConnection, TcpStream>,
+    peer: &HqSessionPeer<'_>,
+    peer_handle: &crate::federation_stream::HqPeerHandle,
+    state: &mut HqSessionState<'_>,
+    buffered_flush_until: &mut Option<Instant>,
+    wake_triggered: &mut bool,
+) -> bool {
+    if !state.hello_done || state.reader.has_partial_frame() {
+        return true;
+    }
+    let sent_before = state.sent_in_session.len();
+    let cursor_before = state.peer_org_cursor;
+    if !flush_durable_relays_to_satellite(tls, peer, &mut state.sent_in_session)
+        || !push_hq_org_events_if_behind(tls, peer, &mut state.peer_org_cursor)
+        || !flush_hq_session_rpcs(tls, peer, peer_handle, &mut state.inflight_rpcs)
+    {
+        return false;
+    }
+    let sent_any =
+        state.sent_in_session.len() != sent_before || state.peer_org_cursor != cursor_before;
+    update_buffered_flush_deadline(
+        buffered_flush_until,
+        sent_any,
+        *wake_triggered || peer.office.has_pending_journal_pipeline(),
+    );
+    *wake_triggered = false;
+    true
+}
+
+fn update_buffered_flush_deadline(deadline: &mut Option<Instant>, sent_any: bool, triggered: bool) {
+    if sent_any {
+        *deadline = None;
+    } else if triggered {
+        *deadline = Some(Instant::now() + Duration::from_millis(80));
+    } else if deadline.is_some_and(|until| Instant::now() >= until) {
+        *deadline = None;
+    }
+}
+
+fn hq_session_poll_wait(
+    office: &Office,
+    state: &HqSessionState<'_>,
+    buffered_flush_until: Option<Instant>,
+) -> Duration {
+    if buffered_flush_until.is_some() || office.has_pending_journal_pipeline() {
+        Duration::from_millis(5)
+    } else if state.reader.has_partial_frame() || state.active_snapshot.is_some() {
+        Duration::from_millis(250)
+    } else {
+        Duration::from_millis(500)
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "HQ satellite session handler coordinates stream, office, peer identity, callbacks, registry, and snapshot budget"
+)]
 fn handle_hq_satellite_session(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
     office: &Office,
@@ -732,12 +982,14 @@ fn handle_hq_satellite_session(
     cert_serial_hex: &str,
     stop: &AtomicBool,
     callbacks: InboundCallbacks<'_>,
+    peers: &Arc<HqPeerRegistry>,
     snapshot_budget: &HqSnapshotTransferBudget,
 ) {
-    let Ok(org_id) = OrgId::new(&office.info().org_id) else {
-        return;
-    };
-    let Ok(sat_id) = OfficeId::new(satellite_office_id) else {
+    let (Ok(org_id), Ok(sat_id), Ok(peer_reg)) = (
+        OrgId::new(&office.info().org_id),
+        OfficeId::new(satellite_office_id),
+        peers.register(satellite_office_id),
+    ) else {
         return;
     };
     let session_stop = Arc::new(AtomicBool::new(false));
@@ -754,58 +1006,45 @@ fn handle_hq_satellite_session(
         session_stop: &session_stop,
         server_stop: stop,
     };
-    let mut reader = FrameReader::new();
-    let mut sent_in_session = BTreeSet::new();
-    let mut active_snapshot: Option<ActiveSnapshotTransfer> = None;
-    // Complete `Hello` BEFORE pushing queued relays so the client's first reply is always `Hello` (P2-10).
-    let mut hello_done = false;
+    let mut state = HqSessionState {
+        reader: FrameReader::new(),
+        sent_in_session: BTreeSet::new(),
+        active_snapshot: None,
+        peer_org_cursor: None,
+        inflight_rpcs: HashMap::new(),
+        hello_done: false,
+        callbacks,
+    };
+    let mut buffered_flush_until: Option<Instant> = None;
+    let mut wake_triggered = false;
     while !stop.load(Ordering::Acquire) && !session_stop.load(Ordering::Acquire) {
-        // Expire idle staged snapshot transfers on every loop tick (including read timeouts) so
-        // paused sessions cannot hold disk or budget slots indefinitely (`TASK-52` P21-#2).
-        ActiveSnapshotTransfer::expire_if_idle(&mut active_snapshot);
-        if !check_not_revoked_fail_closed(tls, office, satellite_office_id, cert_serial_hex) {
-            return;
-        }
-        if hello_done
-            && !reader.has_partial_frame()
-            && !flush_durable_relays_to_satellite(tls, &peer, &mut sent_in_session)
-        {
-            return;
-        }
-        match reader.read_frame(tls, PARTIAL_FRAME_DEADLINE) {
-            Ok(Some(frame)) => {
-                // Re-check revocation at dispatch right after blocking read (`TASK-52` F10).
-                if session_stop.load(Ordering::Acquire)
-                    || !check_not_revoked_fail_closed(
-                        tls,
-                        office,
-                        satellite_office_id,
-                        cert_serial_hex,
-                    )
-                {
-                    return;
-                }
-                let is_hello = matches!(frame, SyncFrame::Hello { .. });
-                if !dispatch_hq_frame(
+        ActiveSnapshotTransfer::expire_if_idle(&mut state.active_snapshot);
+        let alive =
+            check_not_revoked_fail_closed(tls, office, satellite_office_id, cert_serial_hex)
+                && drain_hq_inbound_frames(tls, &peer, snapshot_budget, peers, &mut state)
+                && hq_session_flush_outbound(
                     tls,
                     &peer,
-                    snapshot_budget,
-                    &mut active_snapshot,
-                    frame,
-                    callbacks,
-                ) {
-                    return;
-                }
-                if is_hello {
-                    hello_done = true;
-                }
-            }
-            Ok(None) => return,
-            Err(FrameCodecError::Io(e))
-                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
-            {
-                continue;
-            }
+                    peer_reg.handle(),
+                    &mut state,
+                    &mut buffered_flush_until,
+                    &mut wake_triggered,
+                );
+        if !alive {
+            return;
+        }
+        peer_reg.handle().wake.drain();
+        if peer_reg.handle().has_pending_rpcs() {
+            continue;
+        }
+        let wait = hq_session_poll_wait(office, &state, buffered_flush_until);
+        match org_socket::poll_readable_either(
+            tls.sock.as_raw_fd(),
+            peer_reg.handle().wake.read_fd(),
+            wait,
+        ) {
+            Ok((_, wake_ready)) => wake_triggered |= wake_ready,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => return,
         }
     }
@@ -818,6 +1057,7 @@ fn dispatch_hq_frame(
     active_snapshot: &mut Option<ActiveSnapshotTransfer>,
     frame: SyncFrame,
     callbacks: InboundCallbacks<'_>,
+    peers: &HqPeerRegistry,
 ) -> bool {
     if !matches!(frame, SyncFrame::OrgSnapshotRequest { .. }) {
         *active_snapshot = None;
@@ -878,6 +1118,7 @@ fn dispatch_hq_frame(
                 required_org_seq,
                 created_ms,
             },
+            peers,
         ),
         SyncFrame::MessageDeliver {
             org_id: msg_org,
@@ -891,6 +1132,7 @@ fn dispatch_hq_frame(
             tls,
             peer,
             callbacks,
+            peers,
             InboundMessage {
                 org_id: msg_org,
                 origin_office,
@@ -922,6 +1164,7 @@ fn dispatch_hq_frame(
                         peer.sat_id,
                         delivered,
                         relayed_by_hq,
+                        peers,
                         InboundMessageReceipt {
                             org_id: r_org,
                             origin_office,
@@ -942,6 +1185,7 @@ fn dispatch_hq_frame(
                 peer.sat_id,
                 peer.cert_serial_hex,
                 callbacks.wake,
+                peers,
                 wake,
             );
             true
@@ -1094,6 +1338,7 @@ fn handle_hq_wake_notify(
     sat_id: &OfficeId,
     cert_serial_hex: &str,
     wake_handler: Option<&WakeRelayHandler>,
+    peers: &HqPeerRegistry,
     frame: SyncFrame,
 ) {
     let SyncFrame::WakeNotify {
@@ -1165,18 +1410,24 @@ fn handle_hq_wake_notify(
             summary,
         };
         if let Ok(payload_json) = serde_json::to_string(&relay_frame) {
-            let _ = org_office::admit_relay_item_if_active(
-                office,
-                StoredRelayItem {
-                    id: format!("wake:{source_id}:{destination_office}"),
-                    origin_office,
-                    destination_office,
-                    fingerprint_hex: String::new(),
-                    kind: "wake".into(),
-                    payload_json,
-                    expires_at_ms: now_ms().saturating_add(WAKE_RELAY_TTL_MS),
-                },
-            );
+            let dest_for_wake = destination_office.clone();
+            if matches!(
+                org_office::admit_relay_item_if_active(
+                    office,
+                    StoredRelayItem {
+                        id: format!("wake:{source_id}:{destination_office}"),
+                        origin_office,
+                        destination_office,
+                        fingerprint_hex: String::new(),
+                        kind: "wake".into(),
+                        payload_json,
+                        expires_at_ms: now_ms().saturating_add(WAKE_RELAY_TTL_MS),
+                    },
+                ),
+                Ok(org_office::RelayAdmission::Admitted)
+            ) {
+                peers.notify_peer(&dest_for_wake);
+            }
         }
     }
 }
@@ -1347,6 +1598,7 @@ fn handle_hq_work_change(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
     peer: &HqSessionPeer<'_>,
     input: WorkChangeInput,
+    peers: &HqPeerRegistry,
 ) -> bool {
     let ValidatedWorkChange {
         inc,
@@ -1418,6 +1670,9 @@ fn handle_hq_work_change(
     let Ok(proof) = work_ack_proof_digest_v1(&ack) else {
         return false;
     };
+    // Wake all connected satellites immediately so the newly ingested work delta pushes out
+    // without waiting for an idle poll (`TASK-140`).
+    peers.notify_all();
     write_sync_frame_if_peer_active(
         tls,
         peer,
@@ -1443,6 +1698,7 @@ struct InboundMessage {
 fn forward_hq_relay_to_satellite(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
     peer: &HqSessionPeer<'_>,
+    peers: &HqPeerRegistry,
     msg: InboundMessage,
 ) -> bool {
     let relay_frame = SyncFrame::MessageDeliver {
@@ -1520,7 +1776,9 @@ fn forward_hq_relay_to_satellite(
                 },
             );
         }
-        Ok(org_office::RelayAdmission::Admitted) => {}
+        Ok(org_office::RelayAdmission::Admitted) => {
+            peers.notify_peer(&msg.destination_office);
+        }
     }
     write_sync_frame_if_peer_active(
         tls,
@@ -1542,6 +1800,7 @@ fn handle_hq_message_deliver(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
     peer: &HqSessionPeer<'_>,
     callbacks: InboundCallbacks<'_>,
+    peers: &HqPeerRegistry,
     msg: InboundMessage,
 ) -> bool {
     let office = peer.office;
@@ -1559,7 +1818,7 @@ fn handle_hq_message_deliver(
         );
     }
     if msg.destination_office != office.info().office_id {
-        return forward_hq_relay_to_satellite(tls, peer, msg);
+        return forward_hq_relay_to_satellite(tls, peer, peers, msg);
     }
     let Ok(dest_id) = OfficeId::new(&msg.destination_office) else {
         return false;
@@ -1653,10 +1912,11 @@ fn handle_hq_message_receipt_frame(
     sat_id: &OfficeId,
     delivered: bool,
     relayed_by_hq: bool,
+    peers: &HqPeerRegistry,
     receipt: InboundMessageReceipt,
 ) -> bool {
     if delivered {
-        return handle_hq_message_receipt(office, org_id, sat_id, receipt);
+        return handle_hq_message_receipt(office, org_id, sat_id, peers, receipt);
     }
     if !relayed_by_hq
         && !receipt.message_id.starts_with("close-")
@@ -1678,11 +1938,14 @@ fn handle_hq_message_receipt(
     office: &Office,
     org_id: &OrgId,
     sat_id: &OfficeId,
+    peers: &HqPeerRegistry,
     receipt: InboundMessageReceipt,
 ) -> bool {
     if receipt.org_id != org_id.as_str() || receipt.destination_office != sat_id.as_str() {
         return true;
     }
+    let forward_dest =
+        (receipt.origin_office != office.info().office_id).then(|| receipt.origin_office.clone());
     // Atomically remove the destination's message relay AND enqueue the forwarded delivery
     // receipt for the origin satellite in ONE durable transaction (`TASK-52` P7-#11).
     let forwarded = if receipt.origin_office != office.info().office_id {
@@ -1714,7 +1977,7 @@ fn handle_hq_message_receipt(
     } else {
         None
     };
-    org_office::ack_message_relay_and_enqueue_receipt_checked(
+    let ok = org_office::ack_message_relay_and_enqueue_receipt_checked(
         office,
         &receipt.destination_office,
         &receipt.origin_office,
@@ -1722,7 +1985,13 @@ fn handle_hq_message_receipt(
         &receipt.fingerprint_hex,
         forwarded,
     )
-    .is_ok()
+    .is_ok();
+    if ok {
+        if let Some(dest) = forward_dest {
+            peers.notify_peer(&dest);
+        }
+    }
+    ok
 }
 
 struct PermitSyncInput {
@@ -2147,40 +2416,23 @@ impl SatelliteSyncSession {
         Err(format!("cannot establish HQ mTLS session: {last_err}"))
     }
 
-    /// Reads the next correlated reply frame while buffering any unsolicited HQ-pushed relays
-    /// (`MessageDeliver`, `WakeNotify`, or non-matching `MessageReceipt`) so queued relays never
-    /// disrupt snapshot/gap/work/permit RPCs (`TASK-52` H-14).
+    pub(crate) fn raw_fd(&self) -> RawFd {
+        self.tls.sock.as_raw_fd()
+    }
+
+    pub(crate) fn write_frame(&mut self, frame: &SyncFrame) -> Result<(), String> {
+        write_sync_frame(&mut self.tls, frame).map_err(|e| format!("federation write failed: {e}"))
+    }
+
+    /// Reads the next correlated reply frame while buffering any unsolicited HQ-pushed relays,
+    /// `OrgEvent`s, or `SessionRpcRequest`s so queued pushes never disrupt snapshot/work/message/
+    /// permit RPCs (`TASK-52` H-14, `TASK-140`, `TASK-143` AC #3).
     pub(crate) fn read_correlated_frame(
         &mut self,
         timeout: Duration,
         expected_receipt_msg_id: Option<&str>,
     ) -> Result<Option<SyncFrame>, String> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return Err("timed out waiting for HQ reply".into());
-            }
-            match read_client_frame(&mut self.tls, &mut self.reader, left)? {
-                Some(frame @ (SyncFrame::MessageDeliver { .. } | SyncFrame::WakeNotify { .. })) => {
-                    self.pending_inbound.push_back(frame);
-                }
-                Some(frame)
-                    if matches!(
-                        &frame,
-                        SyncFrame::MessageReceipt {
-                            message_id,
-                            delivered: true,
-                            relayed_by_hq: false,
-                            ..
-                        } if expected_receipt_msg_id != Some(message_id.as_str())
-                    ) =>
-                {
-                    self.pending_inbound.push_back(frame);
-                }
-                other => return Ok(other),
-            }
-        }
+        read_correlated_frame_opts(self, timeout, expected_receipt_msg_id, true)
     }
 
     /// Streams, validates, stages to disk, applies in bounded dependency-safe batches, and installs
@@ -2213,77 +2465,12 @@ impl SatelliteSyncSession {
             },
         )
         .map_err(|e| format!("failed sending OrgGap: {e}"))?;
-        let peer = StaticPeer(self.hq_peer.clone());
         let mut applied = 0usize;
         loop {
-            match self.read_correlated_frame(FIRST_FRAME_DEADLINE, None)? {
-                Some(SyncFrame::OrgEvent {
-                    org_id,
-                    epoch,
-                    seq,
-                    previous_hex,
-                    digest_hex,
-                    codec_name,
-                    codec_version,
-                    payload_b64,
-                }) => {
-                    let payload_bytes = STANDARD
-                        .decode(&payload_b64)
-                        .map_err(|_| "payload b64".to_owned())?;
-                    let ev = OrgEvent {
-                        org_id: OrgId::new(&org_id).map_err(|_| "org_id".to_owned())?,
-                        position: Position {
-                            epoch: Epoch::new(epoch).map_err(|_| "epoch".to_owned())?,
-                            seq,
-                        },
-                        previous: Digest::parse_hex(&previous_hex)
-                            .map_err(|_| "prev".to_owned())?,
-                        digest: Digest::parse_hex(&digest_hex).map_err(|_| "digest".to_owned())?,
-                        codec: Codec::new(&codec_name, codec_version)
-                            .map_err(|_| "codec".to_owned())?,
-                        payload: Arc::from(payload_bytes),
-                    };
-                    let cur = self
-                        .office
-                        .replication()
-                        .org_checkpoint()
-                        .map_err(|e| e.to_string())?;
-                    if let Some(files) = verify_org_event_before_apply(&cur, &self.hq_peer, &ev)? {
-                        let filtered = self
-                            .office
-                            .filter_self_echoed_org_event_files(files)
-                            .map_err(|e| format!("filter self-echoed org event failed: {e}"))?;
-                        if !filtered.is_empty() {
-                            // Scope op ID to authenticated HQ office so D25 replacement HQ starting
-                            // at epoch 1 never collides with old HQ receipts (`TASK-52` #7).
-                            let op_id = deterministic_uuid_v7(&format!(
-                                "org-event:{}:{}:{}:{}",
-                                self.hq_peer.office_id.as_str(),
-                                ev.org_id.as_str(),
-                                ev.position.epoch.get(),
-                                ev.position.seq
-                            ));
-                            self.office
-                                .apply_replicated_state_files(&op_id, filtered)
-                                .map_err(|e| format!("apply replicated delta failed: {e}"))?;
-                        }
-                    }
-                    match apply_org_event(self.office.replication().as_ref(), &peer, ev)
-                        .map_err(|e| format!("apply_org_event failed: {e}"))?
-                    {
-                        OrgOutput::Ack {
-                            duplicate: false, ..
-                        } => applied += 1,
-                        OrgOutput::Ack {
-                            duplicate: true, ..
-                        } => {}
-                        OrgOutput::Gap { .. } => {
-                            return Err("org event gap detected; resync required".into());
-                        }
-                        OrgOutput::SnapshotRequired => {
-                            return Err("snapshot required before applying org events".into());
-                        }
-                        other => return Err(format!("unexpected org apply outcome: {other:?}")),
+            match read_correlated_frame_opts(self, FIRST_FRAME_DEADLINE, None, false)? {
+                Some(ev @ SyncFrame::OrgEvent { .. }) => {
+                    if apply_satellite_org_event_frame(&self.office, &self.hq_peer, ev)? {
+                        applied += 1;
                     }
                 }
                 Some(SyncFrame::Pong { .. }) => break,
@@ -2296,117 +2483,14 @@ impl SatelliteSyncSession {
     /// Pushes all pending local work outbox entries to HQ (draining any un-enqueued local satellite
     /// task journal entries first, `TASK-52` H-6) and verifies `WorkAck` proof before pruning.
     pub fn flush_work_outbox(&mut self) -> Result<usize, String> {
-        let _ = self.office.sync_satellite_work_outbox();
-        let outbox = self
-            .office
-            .replication()
-            .load_work_outbox()
-            .map_err(|e| e.to_string())?;
-        let mut acked = 0usize;
-        let mut prev_acked = outbox.acknowledged_seq();
-        for change in outbox.pending() {
-            let SourceKey { origin, seq } = &change.key;
-            write_sync_frame(
-                &mut self.tls,
-                &SyncFrame::WorkChange {
-                    org_id: change.org_id.as_str().to_owned(),
-                    origin_office: origin.office.as_str().to_owned(),
-                    incarnation: origin.incarnation.as_str().to_owned(),
-                    seq: seq.get(),
-                    record_id: change.record_id.clone(),
-                    generation: change.version.generation,
-                    version: change.version.version,
-                    digest_hex: change.digest.to_hex(),
-                    record_digest_hex: change.record_digest.to_hex(),
-                    codec_name: change.codec.id().to_owned(),
-                    codec_version: change.codec.version(),
-                    payload_b64: STANDARD.encode(&change.payload),
-                    required_org_epoch: change.required_org.epoch.get(),
-                    required_org_seq: change.required_org.seq,
-                    created_ms: change.created_ms,
-                },
-            )
-            .map_err(|e| format!("failed sending WorkChange: {e}"))?;
-            match self.read_correlated_frame(FIRST_FRAME_DEADLINE, None)? {
-                Some(SyncFrame::WorkAck {
-                    origin_office,
-                    incarnation,
-                    seq: ack_seq,
-                    proof_hex,
-                }) => {
-                    if origin_office != origin.office.as_str()
-                        || incarnation != origin.incarnation.as_str()
-                        || ack_seq != seq.get()
-                    {
-                        return Err("WorkAck identity or sequence mismatch".into());
-                    }
-                    let expected_ack = org_sync_proto::WorkAck {
-                        origin_office_id: origin.office.clone(),
-                        incarnation: origin.incarnation.clone(),
-                        from_exclusive: prev_acked.min(ack_seq.saturating_sub(1)),
-                        through_seq: ack_seq,
-                        rejected: Vec::new(),
-                    };
-                    let expected_proof = work_ack_proof_digest_v1(&expected_ack)
-                        .map_err(|_| "failed computing expected WorkAck proof".to_owned())?;
-                    if proof_hex != expected_proof.to_hex() {
-                        return Err("WorkAck proof digest verification failed".into());
-                    }
-                    self.office
-                        .replication()
-                        .ack_work_through(ack_seq)
-                        .map_err(|e| format!("failed acking work outbox: {e}"))?;
-                    prev_acked = ack_seq;
-                    acked += 1;
-                }
-                other => return Err(format!("unexpected WorkAck reply: {other:?}")),
-            }
-        }
-        Ok(acked)
+        flush_satellite_work_outbox(self)
     }
 
     /// Flushes all pending cross-office messages from the satellite's durable message outbox to HQ
     /// (draining any un-enqueued committed native messaging journal entries first, `TASK-52` #10)
     /// and matches returned delivery receipts against the original message (`TASK-52` F4 / P3-#8).
     pub fn flush_message_outbox(&mut self) -> Result<usize, String> {
-        sync_native_message_relays(&self.office);
-        let peer = StaticPeer(self.hq_peer.clone());
-        expire_stale_non_close_head_messages(&self.office)?;
-        let pending = self
-            .office
-            .replication()
-            .message_queue_snapshot()
-            .map_err(|e| format!("message queue snapshot error: {e}"))?
-            .pending;
-        let now = now_ms();
-        let mut delivered_count = 0usize;
-        for msg in pending {
-            let is_close = msg.id.starts_with("close-");
-            if !is_close && msg.deadline_ms <= now {
-                continue;
-            }
-            let wire_deadline_ms = if is_close && msg.deadline_ms <= now {
-                now.saturating_add(7 * 24 * 60 * 60 * 1000)
-            } else {
-                msg.deadline_ms
-            };
-            write_sync_frame(
-                &mut self.tls,
-                &SyncFrame::MessageDeliver {
-                    org_id: msg.org_id.as_str().to_owned(),
-                    origin_office: msg.origin.as_str().to_owned(),
-                    destination_office: msg.destination.as_str().to_owned(),
-                    message_id: msg.id.clone(),
-                    fingerprint_hex: msg.fingerprint.to_hex(),
-                    payload_b64: STANDARD.encode(&msg.payload),
-                    deadline_ms: wire_deadline_ms,
-                },
-            )
-            .map_err(|e| format!("failed sending MessageDeliver: {e}"))?;
-            let reply = self.read_correlated_frame(FIRST_FRAME_DEADLINE, Some(&msg.id))?;
-            delivered_count += apply_message_outbox_reply(&self.office, &peer, msg, reply)?;
-        }
-        Ok(delivered_count)
+        flush_satellite_message_outbox(self)
     }
 
     /// Receives and commits any inbound relayed messages/receipts/wakes pushed by HQ (draining
@@ -2426,128 +2510,13 @@ impl SatelliteSyncSession {
         wake_handler: Option<&WakeRelayHandler>,
         delivery_notifier: Option<&InboundDeliveryNotifier>,
     ) -> Result<usize, String> {
-        let callbacks = InboundCallbacks {
-            wake: wake_handler,
-            notify: delivery_notifier,
-        };
-        let mut received = 0usize;
-        let peer = StaticPeer(self.hq_peer.clone());
-        loop {
-            let next_frame = if let Some(buffered) = self.pending_inbound.pop_front() {
-                Some(buffered)
-            } else {
-                match self
-                    .reader
-                    .read_frame(&mut self.tls, PARTIAL_FRAME_DEADLINE)
-                {
-                    Ok(frame) => frame,
-                    Err(FrameCodecError::Io(e))
-                        if e.kind() == io::ErrorKind::WouldBlock
-                            || e.kind() == io::ErrorKind::TimedOut =>
-                    {
-                        break;
-                    }
-                    Err(e) => return Err(e.to_string()),
-                }
-            };
-            match next_frame {
-                Some(SyncFrame::MessageDeliver {
-                    org_id,
-                    origin_office,
-                    destination_office,
-                    message_id,
-                    fingerprint_hex,
-                    payload_b64,
-                    deadline_ms,
-                }) => {
-                    if handle_inbound_relayed_message(
-                        &mut self.tls,
-                        &self.office,
-                        &peer,
-                        callbacks,
-                        InboundMessage {
-                            org_id,
-                            origin_office,
-                            destination_office,
-                            message_id,
-                            fingerprint_hex,
-                            payload_b64,
-                            deadline_ms,
-                        },
-                    )? {
-                        received += 1;
-                    }
-                }
-                Some(SyncFrame::MessageReceipt {
-                    org_id,
-                    origin_office,
-                    destination_office,
-                    message_id,
-                    fingerprint_hex,
-                    delivered: true,
-                    ..
-                }) => {
-                    if apply_inbound_relayed_receipt(
-                        &self.office,
-                        &peer,
-                        &org_id,
-                        &origin_office,
-                        &destination_office,
-                        &message_id,
-                        &fingerprint_hex,
-                    ) {
-                        let _ = write_sync_frame(
-                            &mut self.tls,
-                            &SyncFrame::RelayAck {
-                                relay_id: format!("receipt:{message_id}"),
-                            },
-                        );
-                        received += 1;
-                    }
-                }
-                Some(SyncFrame::WakeNotify {
-                    origin_office,
-                    destination_office,
-                    employee_id,
-                    kind,
-                    source_id,
-                    sender_id,
-                    sender_name,
-                    sender_is_person,
-                    conversation_id,
-                    summary,
-                    ..
-                }) => {
-                    let relay_id = format!("wake:{source_id}:{destination_office}");
-                    // Only acknowledge the wake relay after the destination durably persists it (`TASK-52` #14).
-                    let persisted = match wake_handler {
-                        Some(cb) => cb(RelayedWake {
-                            origin_office,
-                            destination_office,
-                            employee_id,
-                            kind,
-                            source_id,
-                            sender_id,
-                            sender_name,
-                            sender_is_person,
-                            conversation_id,
-                            summary,
-                            ask_answer: None,
-                            ask_withdrawal: None,
-                        })
-                        .is_ok(),
-                        None => false,
-                    };
-                    if persisted {
-                        let _ = write_sync_frame(&mut self.tls, &SyncFrame::RelayAck { relay_id });
-                        received += 1;
-                    }
-                }
-                Some(_) => {}
-                None => break,
-            }
-        }
-        Ok(received)
+        receive_satellite_inbound_relays(
+            self,
+            InboundCallbacks {
+                wake: wake_handler,
+                notify: delivery_notifier,
+            },
+        )
     }
 
     /// Requests a shared `HqPool` turn permit from HQ over the authenticated mTLS session (`TASK-52` P2-14).
@@ -2663,6 +2632,560 @@ impl SatelliteSyncSession {
         )
         .map_err(|e| format!("failed sending WakeNotify: {e}"))
     }
+}
+
+fn read_correlated_frame_opts(
+    session: &mut SatelliteSyncSession,
+    timeout: Duration,
+    expected_receipt_msg_id: Option<&str>,
+    buffer_org_events: bool,
+) -> Result<Option<SyncFrame>, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err("timed out waiting for HQ reply".into());
+        }
+        match read_client_frame(&mut session.tls, &mut session.reader, left)? {
+            Some(
+                frame @ (SyncFrame::MessageDeliver { .. }
+                | SyncFrame::WakeNotify { .. }
+                | SyncFrame::SessionRpcRequest { .. }),
+            ) => {
+                session.pending_inbound.push_back(frame);
+            }
+            Some(frame @ SyncFrame::OrgEvent { .. }) if buffer_org_events => {
+                session.pending_inbound.push_back(frame);
+            }
+            Some(SyncFrame::Pong { .. }) if buffer_org_events => {}
+            Some(SyncFrame::Ping { nonce }) => {
+                let _ = write_sync_frame(&mut session.tls, &SyncFrame::Pong { nonce });
+            }
+            Some(frame)
+                if matches!(
+                    &frame,
+                    SyncFrame::MessageReceipt {
+                        message_id,
+                        delivered: true,
+                        relayed_by_hq: false,
+                        ..
+                    } if expected_receipt_msg_id != Some(message_id.as_str())
+                ) =>
+            {
+                session.pending_inbound.push_back(frame);
+            }
+            other => return Ok(other),
+        }
+    }
+}
+
+fn verify_and_ack_work_change(
+    office: &Office,
+    origin: &Origin,
+    expected_seq: u64,
+    prev_acked: u64,
+    reply: Option<SyncFrame>,
+) -> Result<u64, String> {
+    let Some(SyncFrame::WorkAck {
+        origin_office,
+        incarnation,
+        seq: ack_seq,
+        proof_hex,
+    }) = reply
+    else {
+        return Err(format!("unexpected WorkAck reply: {reply:?}"));
+    };
+    if origin_office != origin.office.as_str()
+        || incarnation != origin.incarnation.as_str()
+        || ack_seq != expected_seq
+    {
+        return Err("WorkAck identity or sequence mismatch".into());
+    }
+    let expected_ack = org_sync_proto::WorkAck {
+        origin_office_id: origin.office.clone(),
+        incarnation: origin.incarnation.clone(),
+        from_exclusive: prev_acked.min(ack_seq.saturating_sub(1)),
+        through_seq: ack_seq,
+        rejected: Vec::new(),
+    };
+    let expected_proof = work_ack_proof_digest_v1(&expected_ack)
+        .map_err(|_| "failed computing expected WorkAck proof".to_owned())?;
+    if proof_hex != expected_proof.to_hex() {
+        return Err("WorkAck proof digest verification failed".into());
+    }
+    office
+        .replication()
+        .ack_work_through(ack_seq)
+        .map_err(|e| format!("failed acking work outbox: {e}"))?;
+    Ok(ack_seq)
+}
+
+fn flush_satellite_work_outbox(session: &mut SatelliteSyncSession) -> Result<usize, String> {
+    let _ = session.office.sync_satellite_work_outbox();
+    let outbox = session
+        .office
+        .replication()
+        .load_work_outbox()
+        .map_err(|e| e.to_string())?;
+    let mut acked = 0usize;
+    let mut prev_acked = outbox.acknowledged_seq();
+    for change in outbox.pending() {
+        let SourceKey { origin, seq } = &change.key;
+        write_sync_frame(
+            &mut session.tls,
+            &SyncFrame::WorkChange {
+                org_id: change.org_id.as_str().to_owned(),
+                origin_office: origin.office.as_str().to_owned(),
+                incarnation: origin.incarnation.as_str().to_owned(),
+                seq: seq.get(),
+                record_id: change.record_id.clone(),
+                generation: change.version.generation,
+                version: change.version.version,
+                digest_hex: change.digest.to_hex(),
+                record_digest_hex: change.record_digest.to_hex(),
+                codec_name: change.codec.id().to_owned(),
+                codec_version: change.codec.version(),
+                payload_b64: STANDARD.encode(&change.payload),
+                required_org_epoch: change.required_org.epoch.get(),
+                required_org_seq: change.required_org.seq,
+                created_ms: change.created_ms,
+            },
+        )
+        .map_err(|e| format!("failed sending WorkChange: {e}"))?;
+        let reply = session.read_correlated_frame(FIRST_FRAME_DEADLINE, None)?;
+        prev_acked =
+            verify_and_ack_work_change(&session.office, origin, seq.get(), prev_acked, reply)?;
+        acked += 1;
+    }
+    Ok(acked)
+}
+
+fn flush_satellite_message_outbox(session: &mut SatelliteSyncSession) -> Result<usize, String> {
+    sync_native_message_relays(&session.office);
+    let peer = StaticPeer(session.hq_peer.clone());
+    expire_stale_non_close_head_messages(&session.office)?;
+    let pending = session
+        .office
+        .replication()
+        .message_queue_snapshot()
+        .map_err(|e| format!("message queue snapshot error: {e}"))?
+        .pending;
+    let now = now_ms();
+    let mut delivered_count = 0usize;
+    for msg in pending {
+        let is_close = msg.id.starts_with("close-");
+        if !is_close && msg.deadline_ms <= now {
+            continue;
+        }
+        let wire_deadline_ms = if is_close && msg.deadline_ms <= now {
+            now.saturating_add(7 * 24 * 60 * 60 * 1000)
+        } else {
+            msg.deadline_ms
+        };
+        write_sync_frame(
+            &mut session.tls,
+            &SyncFrame::MessageDeliver {
+                org_id: msg.org_id.as_str().to_owned(),
+                origin_office: msg.origin.as_str().to_owned(),
+                destination_office: msg.destination.as_str().to_owned(),
+                message_id: msg.id.clone(),
+                fingerprint_hex: msg.fingerprint.to_hex(),
+                payload_b64: STANDARD.encode(&msg.payload),
+                deadline_ms: wire_deadline_ms,
+            },
+        )
+        .map_err(|e| format!("failed sending MessageDeliver: {e}"))?;
+        let reply = session.read_correlated_frame(FIRST_FRAME_DEADLINE, Some(&msg.id))?;
+        delivered_count += apply_message_outbox_reply(&session.office, &peer, msg, reply)?;
+    }
+    Ok(delivered_count)
+}
+
+fn dispatch_inbound_relay_frame(
+    session: &mut SatelliteSyncSession,
+    peer: &StaticPeer,
+    callbacks: InboundCallbacks<'_>,
+    frame: SyncFrame,
+) -> Result<usize, String> {
+    match frame {
+        SyncFrame::MessageDeliver {
+            org_id,
+            origin_office,
+            destination_office,
+            message_id,
+            fingerprint_hex,
+            payload_b64,
+            deadline_ms,
+        } => {
+            let applied = handle_inbound_relayed_message(
+                &mut session.tls,
+                &session.office,
+                peer,
+                callbacks,
+                InboundMessage {
+                    org_id,
+                    origin_office,
+                    destination_office,
+                    message_id,
+                    fingerprint_hex,
+                    payload_b64,
+                    deadline_ms,
+                },
+            )?;
+            Ok(usize::from(applied))
+        }
+        SyncFrame::MessageReceipt {
+            org_id,
+            origin_office,
+            destination_office,
+            message_id,
+            fingerprint_hex,
+            delivered: true,
+            ..
+        } => {
+            if !apply_inbound_relayed_receipt(
+                &session.office,
+                peer,
+                &org_id,
+                &origin_office,
+                &destination_office,
+                &message_id,
+                &fingerprint_hex,
+            ) {
+                return Ok(0);
+            }
+            let _ = write_sync_frame(
+                &mut session.tls,
+                &SyncFrame::RelayAck {
+                    relay_id: format!("receipt:{message_id}"),
+                },
+            );
+            Ok(1)
+        }
+        SyncFrame::WakeNotify {
+            origin_office,
+            destination_office,
+            employee_id,
+            kind,
+            source_id,
+            sender_id,
+            sender_name,
+            sender_is_person,
+            conversation_id,
+            summary,
+            ..
+        } => {
+            let relay_id = format!("wake:{source_id}:{destination_office}");
+            // Only acknowledge the wake relay after the destination durably persists it (`TASK-52` #14).
+            let persisted = callbacks.wake.is_some_and(|cb| {
+                cb(RelayedWake {
+                    origin_office,
+                    destination_office,
+                    employee_id,
+                    kind,
+                    source_id,
+                    sender_id,
+                    sender_name,
+                    sender_is_person,
+                    conversation_id,
+                    summary,
+                    ask_answer: None,
+                    ask_withdrawal: None,
+                })
+                .is_ok()
+            });
+            if !persisted {
+                return Ok(0);
+            }
+            let _ = write_sync_frame(&mut session.tls, &SyncFrame::RelayAck { relay_id });
+            Ok(1)
+        }
+        _ => Ok(0),
+    }
+}
+
+fn receive_satellite_inbound_relays(
+    session: &mut SatelliteSyncSession,
+    callbacks: InboundCallbacks<'_>,
+) -> Result<usize, String> {
+    let mut received = 0usize;
+    let peer = StaticPeer(session.hq_peer.clone());
+    loop {
+        let next_frame = if let Some(buffered) = session.pending_inbound.pop_front() {
+            Some(buffered)
+        } else {
+            match session
+                .reader
+                .read_frame(&mut session.tls, PARTIAL_FRAME_DEADLINE)
+            {
+                Ok(frame) => frame,
+                Err(FrameCodecError::Io(e))
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.kind() == io::ErrorKind::TimedOut =>
+                {
+                    break;
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        };
+        let Some(frame) = next_frame else { break };
+        received += dispatch_inbound_relay_frame(session, &peer, callbacks, frame)?;
+    }
+    Ok(received)
+}
+
+fn read_satellite_frame_nonblocking(
+    session: &mut SatelliteSyncSession,
+) -> Result<Option<SyncFrame>, FrameCodecError> {
+    let _ = session.tls.sock.set_nonblocking(true);
+    let res = session
+        .reader
+        .read_frame(&mut session.tls, PARTIAL_FRAME_DEADLINE);
+    let _ = session.tls.sock.set_nonblocking(false);
+    res
+}
+
+fn apply_satellite_org_event_frame(
+    office: &Office,
+    hq_peer: &PeerIdentity,
+    frame: SyncFrame,
+) -> Result<bool, String> {
+    let SyncFrame::OrgEvent {
+        org_id,
+        epoch,
+        seq,
+        previous_hex,
+        digest_hex,
+        codec_name,
+        codec_version,
+        payload_b64,
+    } = frame
+    else {
+        return Err(format!("expected OrgEvent frame, got {frame:?}"));
+    };
+    let payload_bytes = STANDARD
+        .decode(&payload_b64)
+        .map_err(|_| "payload b64".to_owned())?;
+    let ev = OrgEvent {
+        org_id: OrgId::new(&org_id).map_err(|_| "org_id".to_owned())?,
+        position: Position {
+            epoch: Epoch::new(epoch).map_err(|_| "epoch".to_owned())?,
+            seq,
+        },
+        previous: Digest::parse_hex(&previous_hex).map_err(|_| "prev".to_owned())?,
+        digest: Digest::parse_hex(&digest_hex).map_err(|_| "digest".to_owned())?,
+        codec: Codec::new(&codec_name, codec_version).map_err(|_| "codec".to_owned())?,
+        payload: Arc::from(payload_bytes),
+    };
+    let cur = office
+        .replication()
+        .org_checkpoint()
+        .map_err(|e| e.to_string())?;
+    if let Some(files) = verify_org_event_before_apply(&cur, hq_peer, &ev)? {
+        let filtered = office
+            .filter_self_echoed_org_event_files(files)
+            .map_err(|e| format!("filter self-echoed org event failed: {e}"))?;
+        if !filtered.is_empty() {
+            let op_id = deterministic_uuid_v7(&format!(
+                "org-event:{}:{}:{}:{}",
+                hq_peer.office_id.as_str(),
+                ev.org_id.as_str(),
+                ev.position.epoch.get(),
+                ev.position.seq
+            ));
+            office
+                .apply_replicated_state_files(&op_id, filtered)
+                .map_err(|e| format!("apply replicated delta failed: {e}"))?;
+        }
+    }
+    let peer = StaticPeer(hq_peer.clone());
+    match apply_org_event(office.replication().as_ref(), &peer, ev)
+        .map_err(|e| format!("apply_org_event failed: {e}"))?
+    {
+        OrgOutput::Ack {
+            duplicate: false, ..
+        } => Ok(true),
+        OrgOutput::Ack {
+            duplicate: true, ..
+        } => Ok(false),
+        OrgOutput::Gap { .. } => Err("org event gap detected; resync required".into()),
+        OrgOutput::SnapshotRequired => Err("snapshot required before applying org events".into()),
+        other => Err(format!("unexpected org apply outcome: {other:?}")),
+    }
+}
+
+/// Non-blocking drain of all buffered and socket-ready inbound frames on a persistent
+/// bidirectional mTLS session (`TASK-140`, `TASK-143` AC #3).
+pub(crate) fn drain_satellite_inbound_persistent(
+    session: &mut SatelliteSyncSession,
+    wake_handler: Option<&WakeRelayHandler>,
+    delivery_notifier: Option<&InboundDeliveryNotifier>,
+    feed_wake: Option<&FeedWake>,
+    rpc_ctx: &SatRpcContext<'_>,
+) -> Result<usize, String> {
+    let callbacks = InboundCallbacks {
+        wake: wake_handler,
+        notify: delivery_notifier,
+    };
+    let peer = StaticPeer(session.hq_peer.clone());
+    let mut handled = 0usize;
+    loop {
+        let next_frame = if let Some(buffered) = session.pending_inbound.pop_front() {
+            Some(buffered)
+        } else {
+            match read_satellite_frame_nonblocking(session) {
+                Ok(Some(frame)) => Some(frame),
+                Ok(None) => return Err("HQ closed persistent mTLS session".into()),
+                Err(FrameCodecError::Io(e))
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.kind() == io::ErrorKind::TimedOut =>
+                {
+                    break;
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        };
+        let Some(frame) = next_frame else {
+            break;
+        };
+        handled += 1;
+        handle_persistent_inbound_frame(session, frame, &peer, callbacks, feed_wake, rpc_ctx)?;
+    }
+    Ok(handled)
+}
+
+fn handle_persistent_wake_frame(
+    tls: &mut StreamOwned<ClientConnection, TcpStream>,
+    wake_handler: Option<&WakeRelayHandler>,
+    wake: RelayedWake,
+) {
+    let relay_id = format!("wake:{}:{}", wake.source_id, wake.destination_office);
+    let persisted = wake_handler.is_some_and(|cb| cb(wake).is_ok());
+    if persisted {
+        let _ = write_sync_frame(tls, &SyncFrame::RelayAck { relay_id });
+    }
+}
+
+fn handle_persistent_inbound_frame(
+    session: &mut SatelliteSyncSession,
+    frame: SyncFrame,
+    peer: &StaticPeer,
+    callbacks: InboundCallbacks<'_>,
+    feed_wake: Option<&FeedWake>,
+    rpc_ctx: &SatRpcContext<'_>,
+) -> Result<(), String> {
+    match frame {
+        ev @ SyncFrame::OrgEvent { .. } => {
+            if apply_satellite_org_event_frame(&session.office, &session.hq_peer, ev)? {
+                if let Some(wake) = feed_wake {
+                    wake.notify();
+                }
+            }
+        }
+        SyncFrame::MessageDeliver {
+            org_id,
+            origin_office,
+            destination_office,
+            message_id,
+            fingerprint_hex,
+            payload_b64,
+            deadline_ms,
+        } => {
+            let _ = handle_inbound_relayed_message(
+                &mut session.tls,
+                &session.office,
+                peer,
+                callbacks,
+                InboundMessage {
+                    org_id,
+                    origin_office,
+                    destination_office,
+                    message_id,
+                    fingerprint_hex,
+                    payload_b64,
+                    deadline_ms,
+                },
+            )?;
+        }
+        SyncFrame::MessageReceipt {
+            org_id,
+            origin_office,
+            destination_office,
+            message_id,
+            fingerprint_hex,
+            delivered: true,
+            ..
+        } => {
+            if apply_inbound_relayed_receipt(
+                &session.office,
+                peer,
+                &org_id,
+                &origin_office,
+                &destination_office,
+                &message_id,
+                &fingerprint_hex,
+            ) {
+                let _ = write_sync_frame(
+                    &mut session.tls,
+                    &SyncFrame::RelayAck {
+                        relay_id: format!("receipt:{message_id}"),
+                    },
+                );
+            }
+        }
+        SyncFrame::WakeNotify {
+            origin_office,
+            destination_office,
+            employee_id,
+            kind,
+            source_id,
+            sender_id,
+            sender_name,
+            sender_is_person,
+            conversation_id,
+            summary,
+            ..
+        } => handle_persistent_wake_frame(
+            &mut session.tls,
+            callbacks.wake,
+            RelayedWake {
+                origin_office,
+                destination_office,
+                employee_id,
+                kind,
+                source_id,
+                sender_id,
+                sender_name,
+                sender_is_person,
+                conversation_id,
+                summary,
+                ask_answer: None,
+                ask_withdrawal: None,
+            },
+        ),
+        SyncFrame::SessionRpcRequest {
+            request_id,
+            caller_member_id,
+            caller_is_owner,
+            method,
+            params_json,
+        } => spawn_satellite_session_rpc(
+            request_id,
+            caller_member_id,
+            caller_is_owner,
+            method,
+            params_json,
+            rpc_ctx,
+        ),
+        SyncFrame::Ping { nonce } => {
+            let _ = write_sync_frame(&mut session.tls, &SyncFrame::Pong { nonce });
+        }
+        SyncFrame::Error { code, .. } if code == "revoked" => {
+            return Err("satellite certificate revoked by HQ".into());
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn handle_inbound_relayed_message(
@@ -2962,6 +3485,7 @@ fn try_enroll_sock_addr(
 ) -> Result<(StreamOwned<ClientConnection, TcpStream>, u64), String> {
     let tcp = TcpStream::connect_timeout(&sock_addr, CONNECT_TIMEOUT)
         .map_err(|e| format!("TCP connect {sock_addr}: {e}"))?;
+    let _ = tcp.set_nodelay(true);
     let _ = tcp.set_read_timeout(Some(SOCKET_READ_TIMEOUT));
     let _ = tcp.set_write_timeout(Some(SOCKET_WRITE_TIMEOUT));
     let conn = ClientConnection::new(client_cfg, server_name)
@@ -3057,6 +3581,7 @@ fn try_connect_hq_sock_addr(
 ) -> Result<SatelliteSyncSession, String> {
     let tcp = TcpStream::connect_timeout(&sock_addr, CONNECT_TIMEOUT)
         .map_err(|e| format!("TCP connect: {e}"))?;
+    let _ = tcp.set_nodelay(true);
     let _ = tcp.set_read_timeout(Some(SOCKET_READ_TIMEOUT));
     let _ = tcp.set_write_timeout(Some(SOCKET_WRITE_TIMEOUT));
     let conn =

@@ -23,8 +23,8 @@ use org_proto::{ErrorCode, Outcome, Request, Response, Subscribe, SubscribeParam
 use serde_json::{json, Value};
 
 use crate::{
-    build_messaging_ports, build_office_ports, inbox, live, org_feed, serve, start_session_manager,
-    SatSyncWake,
+    build_messaging_ports, build_office_ports, build_sync_wake_fn, inbox, live, org_feed, serve,
+    start_session_manager, HqFederationSlot, SatSyncWake,
 };
 
 fn uuidv7(seed: u16) -> String {
@@ -85,13 +85,16 @@ impl LiveOfficeFixture {
             Arc::clone(&office),
             Some(Arc::clone(&sessions)),
         ));
+        let sat_wake = Arc::new(SatSyncWake::default());
+        let hq_fed_slot: HqFederationSlot = Arc::default();
+        let sync_wake = build_sync_wake_fn(sat_wake, Arc::clone(&hq_fed_slot));
         let messaging = build_messaging_ports(
             &office,
             &live,
             &wake,
             &sessions,
             &channel_watcher,
-            Arc::new(SatSyncWake::default()),
+            Arc::clone(&sync_wake),
         );
         let ports = build_office_ports(
             Arc::clone(&office),
@@ -101,6 +104,8 @@ impl LiveOfficeFixture {
             &wake,
             messaging,
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            hq_fed_slot,
+            sync_wake,
         );
         let mut shared =
             serve::Shared::new(&info, &socket, ports, crate::test_support::grant_key());
@@ -448,6 +453,7 @@ fn b6_subscribe_org_changes_presence_header_only_messages_and_inbox_hints() {
             after_org_seq: Some(snap.position.seq),
             after_live_seq: Some(0),
             after_presence_seq: Some(0),
+            wait_ms: None,
         },
     )
     .unwrap();
@@ -1774,4 +1780,106 @@ fn task115_agent_os_waiting_messages_meta_and_active_ask_waiter_tracking() {
     let owner_resp = fx.shared.answer_for_test(&req, &fx.owner_id, true);
     assert_eq!(owner_resp.waiting_messages, None);
     owner_counter.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[test]
+fn task140_chat_events_poll_wakes_immediately_on_commit_and_respects_timeout() {
+    let fx = LiveOfficeFixture::start();
+    let owner_id = fx.owner_id.clone();
+
+    // 1. Bootstrap initial cursors with wait_ms = None (returns immediately).
+    let boot_req = Request::new::<ChatEventsPoll>(
+        910,
+        &ChatEventsPollParams {
+            after_org_seq: None,
+            after_live_seq: None,
+            after_presence_seq: None,
+            wait_ms: None,
+        },
+    )
+    .unwrap();
+    let Outcome::Result(boot_val) = fx
+        .shared
+        .answer_for_test(&boot_req, &owner_id, true)
+        .outcome
+    else {
+        panic!("bootstrap chat.events_poll failed");
+    };
+    let boot: org_proto::chat::ChatEventsPollResult = serde_json::from_value(boot_val).unwrap();
+
+    // 2. Idle wait_ms with no events returns cleanly after the requested window.
+    let idle_req = Request::new::<ChatEventsPoll>(
+        911,
+        &ChatEventsPollParams {
+            after_org_seq: Some(boot.org_head_seq),
+            after_live_seq: Some(boot.live_head_seq),
+            after_presence_seq: Some(boot.presence_head_seq),
+            wait_ms: Some(120),
+        },
+    )
+    .unwrap();
+    let idle_start = Instant::now();
+    let Outcome::Result(idle_val) = fx
+        .shared
+        .answer_for_test(&idle_req, &owner_id, true)
+        .outcome
+    else {
+        panic!("idle chat.events_poll failed");
+    };
+    let idle: org_proto::chat::ChatEventsPollResult = serde_json::from_value(idle_val).unwrap();
+    assert!(
+        idle_start.elapsed() >= Duration::from_millis(100),
+        "idle wait returned too early: {:?}",
+        idle_start.elapsed()
+    );
+    assert!(idle.org_changes.is_empty() && idle.messages_received.is_empty());
+
+    // 3. Long wait_ms (3000 ms) wakes via FeedWake condvar in < 400 ms on committed org change.
+    let shared_poll = Arc::clone(&fx.shared);
+    let owner_poll = owner_id.clone();
+    let long_req = Request::new::<ChatEventsPoll>(
+        912,
+        &ChatEventsPollParams {
+            after_org_seq: Some(boot.org_head_seq),
+            after_live_seq: Some(boot.live_head_seq),
+            after_presence_seq: Some(boot.presence_head_seq),
+            wait_ms: Some(3_000),
+        },
+    )
+    .unwrap();
+    let started = Instant::now();
+    let waiter = std::thread::spawn(move || {
+        let resp = shared_poll.answer_for_test(&long_req, &owner_poll, true);
+        (started.elapsed(), resp)
+    });
+    std::thread::sleep(Duration::from_millis(40));
+
+    let root_team = fx.office.org_snapshot().unwrap().teams[0].id.clone();
+    let create_req = Request::new::<TeamCreate>(
+        913,
+        &TeamCreateParams {
+            command_id: uuidv7(91),
+            team_id: uuidv7(92),
+            name: "PushWakeTeam".into(),
+            owner_team_id: Some(root_team),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        fx.shared
+            .answer_for_test(&create_req, &owner_id, true)
+            .outcome,
+        Outcome::Result(_)
+    ));
+
+    let (elapsed, woke_resp) = waiter.join().unwrap();
+    let Outcome::Result(woke_val) = woke_resp.outcome else {
+        panic!("push-woken chat.events_poll failed: {woke_resp:?}");
+    };
+    let woke: org_proto::chat::ChatEventsPollResult = serde_json::from_value(woke_val).unwrap();
+    assert_eq!(woke.org_changes.len(), 1);
+    assert!(
+        elapsed < Duration::from_millis(600),
+        "chat.events_poll must wake promptly via FeedWake, took {elapsed:?}"
+    );
 }

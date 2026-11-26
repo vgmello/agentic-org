@@ -150,6 +150,7 @@ pub(crate) struct ChatService {
     owner_id: String,
     ask_waiters: AskWaiters,
     sat_sync_wake: Option<Arc<dyn Fn() + Send + Sync>>,
+    feed_wake: Option<Arc<crate::org_feed::FeedWake>>,
 }
 
 impl ChatService {
@@ -170,11 +171,17 @@ impl ChatService {
             owner_id,
             ask_waiters: AskWaiters::default(),
             sat_sync_wake: None,
+            feed_wake: None,
         }
     }
 
     pub(crate) fn with_sat_sync_wake(mut self, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
         self.sat_sync_wake = Some(wake);
+        self
+    }
+
+    pub(crate) fn with_feed_wake(mut self, wake: Arc<crate::org_feed::FeedWake>) -> Self {
+        self.feed_wake = Some(wake);
         self
     }
 
@@ -240,7 +247,7 @@ impl ChatService {
             return Some(resp);
         }
         if request.is::<ChatEventsPoll>() {
-            return Some(self.handle_events_poll(member, via_grant, request));
+            return Some(self.handle_events_poll(member, via_grant, stopping, request));
         }
         None
     }
@@ -908,23 +915,16 @@ impl ChatService {
         (messages_received, message_states, inbox_changes, batch.lost)
     }
 
-    fn handle_events_poll(&self, member: &str, via_grant: bool, request: &Request) -> Response {
-        let Ok(params) = request.params::<ChatEventsPoll>() else {
-            return invalid_params(request.id, ChatEventsPoll::METHOD);
-        };
-        let Ok(snapshot) = self.office.org_snapshot() else {
-            return storage_err(request.id);
-        };
+    fn collect_events_poll_result(
+        &self,
+        member: &str,
+        is_owner: bool,
+        params: &org_proto::chat::ChatEventsPollParams,
+    ) -> Result<ChatEventsPollResult, org_office::OfficeError> {
+        let snapshot = self.office.org_snapshot()?;
         let org_head_seq = snapshot.position.seq;
-        let is_owner = via_grant && member == self.owner_id;
         let (org_changes, snapshot_required) =
-            match self.poll_org_changes(is_owner, params.after_org_seq, org_head_seq) {
-                Ok(v) => v,
-                Err(error) => {
-                    crate::logged("chat.events_poll.org", &error);
-                    return storage_err(request.id);
-                }
-            };
+            self.poll_org_changes(is_owner, params.after_org_seq, org_head_seq)?;
         let head = self.live.head();
         let (messages_received, message_states, inbox_changes, live_lost) =
             self.collect_live_events(member, is_owner, params.after_live_seq, head.messages);
@@ -932,22 +932,84 @@ impl ChatService {
             .after_presence_seq
             .map(|after| self.live.presence_since(after, head.presence).0)
             .unwrap_or_default();
-        ok_reply::<ChatEventsPoll>(
-            request.id,
-            &ChatEventsPollResult {
-                org_head_seq,
-                live_head_seq: head.messages,
-                presence_head_seq: head.presence,
-                snapshot_required,
-                live_lost,
-                org_changes,
-                messages_received,
-                message_states,
-                presence_changes,
-                inbox_changes,
-            },
-        )
+        Ok(ChatEventsPollResult {
+            org_head_seq,
+            live_head_seq: head.messages,
+            presence_head_seq: head.presence,
+            snapshot_required,
+            live_lost,
+            org_changes,
+            messages_received,
+            message_states,
+            presence_changes,
+            inbox_changes,
+        })
     }
+
+    fn handle_events_poll(
+        &self,
+        member: &str,
+        via_grant: bool,
+        stopping: &AtomicBool,
+        request: &Request,
+    ) -> Response {
+        let Ok(params) = request.params::<ChatEventsPoll>() else {
+            return invalid_params(request.id, ChatEventsPoll::METHOD);
+        };
+        let is_owner = via_grant && member == self.owner_id;
+        let deadline = events_poll_deadline(&params);
+        loop {
+            let token = self.feed_wake.as_ref().map(|w| w.token());
+            let result = match self.collect_events_poll_result(member, is_owner, &params) {
+                Ok(res) => res,
+                Err(error) => {
+                    crate::logged("chat.events_poll.org", &error);
+                    return storage_err(request.id);
+                }
+            };
+            if events_poll_has_updates(&result) || stopping.load(Ordering::SeqCst) {
+                return ok_reply::<ChatEventsPoll>(request.id, &result);
+            }
+            if !self.wait_events_poll_step(deadline, token) {
+                return ok_reply::<ChatEventsPoll>(request.id, &result);
+            }
+        }
+    }
+
+    fn wait_events_poll_step(&self, deadline: Option<Instant>, token: Option<u64>) -> bool {
+        let (Some(until), Some(wake), Some(seen)) = (deadline, self.feed_wake.as_ref(), token)
+        else {
+            return false;
+        };
+        let now = Instant::now();
+        if now >= until {
+            return false;
+        }
+        let step = until.saturating_duration_since(now).min(ASK_WAIT_TICK);
+        let _ = wake.wait(seen, step);
+        true
+    }
+}
+
+fn events_poll_deadline(params: &org_proto::chat::ChatEventsPollParams) -> Option<Instant> {
+    let has_cursor = params.after_org_seq.is_some()
+        || params.after_live_seq.is_some()
+        || params.after_presence_seq.is_some();
+    let wait_ms = params
+        .wait_ms
+        .unwrap_or(0)
+        .min(org_proto::chat::MAX_EVENTS_POLL_WAIT_MS);
+    (has_cursor && wait_ms > 0).then(|| Instant::now() + Duration::from_millis(wait_ms))
+}
+
+fn events_poll_has_updates(result: &ChatEventsPollResult) -> bool {
+    result.snapshot_required
+        || result.live_lost
+        || !result.org_changes.is_empty()
+        || !result.messages_received.is_empty()
+        || !result.message_states.is_empty()
+        || !result.presence_changes.is_empty()
+        || !result.inbox_changes.is_empty()
 }
 
 fn run_call<C: Call>(

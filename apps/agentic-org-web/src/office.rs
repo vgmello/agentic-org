@@ -106,6 +106,16 @@ impl MultiplexedChannel {
     }
 
     async fn roundtrip_raw(&self, request: &Request, rpc_id: u64) -> io::Result<Value> {
+        self.roundtrip_raw_with_timeout(request, rpc_id, OFFICE_DEADLINE)
+            .await
+    }
+
+    async fn roundtrip_raw_with_timeout(
+        &self,
+        request: &Request,
+        rpc_id: u64,
+        deadline: Duration,
+    ) -> io::Result<Value> {
         let mut bytes = serde_json::to_vec(request).map_err(io::Error::other)?;
         if bytes.len() >= MAX_FRAME_BYTES {
             return Err(io::Error::other("office request exceeds frame limit"));
@@ -128,7 +138,7 @@ impl MultiplexedChannel {
                 "office writer closed",
             ));
         }
-        match time::timeout(OFFICE_DEADLINE, rx).await {
+        match time::timeout(deadline, rx).await {
             Ok(Ok(reply)) => Ok(reply),
             _ => {
                 if let Ok(mut map) = self.pending.lock() {
@@ -254,9 +264,33 @@ impl OfficeBridge {
         params: &C::Params,
         retry_on_transport: bool,
     ) -> Result<C::Result, OfficeFailure> {
-        match self.call_typed_once::<C>(auth, office_id, params).await {
+        self.call_typed_with_timeout::<C>(
+            auth,
+            office_id,
+            params,
+            retry_on_transport,
+            OFFICE_DEADLINE,
+        )
+        .await
+    }
+
+    /// Sends one typed `org-proto` RPC with an explicit reply deadline (used by push-woken
+    /// `chat.events_poll` waiters so long-held waits do not expire at `OFFICE_DEADLINE`, `TASK-140`).
+    pub async fn call_typed_with_timeout<C: org_proto::Call>(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        params: &C::Params,
+        retry_on_transport: bool,
+        deadline: Duration,
+    ) -> Result<C::Result, OfficeFailure> {
+        match self
+            .call_typed_once::<C>(auth, office_id, params, deadline)
+            .await
+        {
             Err(OfficeFailure::Transport) if retry_on_transport => {
-                self.call_typed_once::<C>(auth, office_id, params).await
+                self.call_typed_once::<C>(auth, office_id, params, deadline)
+                    .await
             }
             other => other,
         }
@@ -351,6 +385,7 @@ impl OfficeBridge {
         auth: &BrowserAuth,
         office_id: &str,
         params: &C::Params,
+        deadline: Duration,
     ) -> Result<C::Result, OfficeFailure> {
         let channel = self.get_or_open(auth, office_id).await?;
         let principal = match self.grant(auth, office_id, &channel.channel_id).await {
@@ -365,7 +400,10 @@ impl OfficeBridge {
         let request = Request::new::<C>(rpc_id, params)
             .and_then(|req| req.with_principal(&principal))
             .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
-        let raw = match channel.roundtrip_raw(&request, rpc_id).await {
+        let raw = match channel
+            .roundtrip_raw_with_timeout(&request, rpc_id, deadline)
+            .await
+        {
             Ok(raw) => raw,
             Err(_) => {
                 self.evict(office_id, &channel.channel_id);
