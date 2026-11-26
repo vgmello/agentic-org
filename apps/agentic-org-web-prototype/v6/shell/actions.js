@@ -3,7 +3,8 @@ import { IN, M, OFFICES, P, TEAMS, W, blockedOnOwner } from "../data.js";
 import { activityFilterKey, activityViewKey, addAssemblySample, assemblySimulation, projectActivityId, refreshAssemblySimulation, setActivityPanel, syncAssemblySimulationTimer, updateAssemblyPlayback } from "../pages/activity.js";
 import { closeAgentFocus, isAgentFocusOpen, openAgentFocus } from "../pages/agent-focus.js";
 import { consoleSessions } from "../pages/agent-profile.js";
-import { chatDrafts, findConversation, openDirectMessage, recordAskReply, sendChatMessage, sendThreadReply } from "../pages/chat.js";
+import { chatDrafts, findConversation, openDirectMessage, sendChatMessage, sendThreadReply, toggleChatList } from "../pages/chat.js";
+import { receiptLine, responseRecord } from "../pages/ask-receipt.js";
 import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
@@ -22,11 +23,14 @@ import { spotQueue, toast } from "../ui.js";
 
 /* ---------------------------------------------------------------- actions */
 
+/* An answer clears only the blocker it settles: the task stops waiting on the owner (To do) once no other
+   ask for it is open. In progress is set by the task's start event when the agent next runs, never inferred here. */
 function applyHandleToWork(w, it, outcome, assignee) {
   if (!w) return;
   const assignedTo = assignee || it.assignTo?.[outcome];
   if (assignedTo) w.who = assignedTo;
-  if (blockedOnOwner(w) && !/Denied|Declined|Dismissed/.test(outcome)) { delete w.waitsOn; w.status = "In progress"; }
+  const otherAsks = IN.some((i) => i !== it && !i.handled && i.task === w.id);
+  if (blockedOnOwner(w) && !otherAsks && !/Denied|Declined|Dismissed/.test(outcome)) { delete w.waitsOn; w.status = "To do"; }
   if (it.sets?.[outcome]) w.status = it.sets[outcome];
   else if (w.status === "Scoped") w.status = /Approve/.test(outcome) ? "Approved" : "Declined";
 }
@@ -66,17 +70,17 @@ function advanceInboxAfterHandle(id, it, next) {
   S.lastRoute = location.hash;
 }
 
-function handle(id, outcome, assignee = null) {
+function handle(id, outcome, assignee = null, text = "") {
   const it = IN.find((i) => i.id === id); if (!it || it.handled) return;
   const w = it.task && W.find((x) => x.id === it.task);
   const prevW = w ? { who: w.who, status: w.status, waitsOn: w.waitsOn } : null;
   const prevSpotIdx = S.spotIdx, inInbox = route()[0] === "inbox";
   const visible = inInbox ? inboxItems() : [], index = visible.indexOf(it);
   const next = index < 0 ? null : visible[index + 1] || visible[index - 1];
-  Object.assign(it, { handled: true, handledNow: true, justHandled: true, outcome });
+  Object.assign(it, { handled: true, handledNow: true, justHandled: true, outcome, response: responseRecord(outcome, text) });
   S.replying = null;
   (it.activity ||= []).push({
-    icon: /Denied|Declined|Dismissed/.test(outcome) ? "deny" : "check-circle", text: outcome, at: Date.now(),
+    icon: /Denied|Declined|Dismissed/.test(outcome) ? "deny" : "check-circle", text: receiptLine(it) + (text ? `: “${text}”` : ""), at: Date.now(),
     assemblyRun: assemblySimulation.run, assemblyHour: assemblySimulation.hours,
   });
   applyHandleToWork(w, it, outcome, assignee);
@@ -95,6 +99,7 @@ function reopenInboxItem(item) {
   });
   item.handled = false; item.handledNow = false; item.justHandled = false;
   delete item.outcome;
+  delete item.response;
   if (route()[0] === "inbox") { S.inboxKind = "all"; history.replaceState(history.state, "", "#/inbox/" + item.id); S.lastRoute = location.hash; }
   render(false);
   document.getElementById("triage-detail-title")?.focus();
@@ -131,17 +136,9 @@ function toggleStoredFlag(stateKey, attr, storeKey, t, invertAttr = false) {
   try { localStorage.setItem(storeKey, S[stateKey] ? "1" : "0"); } catch (e) {}
 }
 
-/* Chat conversation list below 960px: an overlay opened from the header. */
-function toggleChatList(id) {
-  const open = S.chatList !== id;
-  S.chatList = open ? id : null;
-  render(false);
-  (open ? document.querySelector('.chlist [aria-current="page"]') : document.querySelector(".chat-list-btn"))?.focus();
-}
-
 function handleSendReply(id) {
   const ta = document.getElementById("r-" + id), txt = ta ? ta.value.trim() : "";
-  if (S.replyMode === "deny") { S.replyMode = null; handle(id, txt ? "Denied with note" : "Denied"); return; }
+  if (S.replyMode === "deny") { S.replyMode = null; handle(id, txt ? "Denied with note" : "Denied", null, txt); return; }
   if (!txt) {
     if (!ta) return;
     let er = document.getElementById("rerr-" + id);
@@ -157,9 +154,8 @@ function handleSendReply(id) {
   }
   const outcome = S.replyMode === "changes" ? "Changes requested" : "Answered";
   S.replyMode = null;
-  /* In Chat the owner's words stay in the conversation and on the request, not only its outcome. */
-  if (ta.closest(".chat")) recordAskReply(id, txt);
-  handle(id, outcome);
+  /* The written answer is kept on the ask's one response record, shown the same in Chat, Inbox and Home. */
+  handle(id, outcome, null, txt);
 }
 
 function handleSetAction(t, v) {
@@ -350,7 +346,7 @@ const CLICK_ACTIONS = {
     if (/^Ask why/i.test(v)) { toast("Prototype: your question goes to the agent; the ask stays open."); return; }
     S.answered[id] = v;
     const it = IN.find((i) => i.id === t.dataset.inbox);
-    if (it && !it.handled) { handle(it.id, (/^(Not now|No|Deny|Decline)/i.test(v) ? "Denied in chat: " : "Answered in chat: ") + v); return; }
+    if (it && !it.handled) { handle(it.id, (/^(Not now|No|Deny|Decline)/i.test(v) ? "Denied: " : "Answered: ") + v); return; }
     render(false);
   },
   pause: (_e, t, id) => handlePauseAgent(t, id),

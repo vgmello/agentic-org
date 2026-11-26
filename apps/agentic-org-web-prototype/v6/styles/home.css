@@ -296,10 +296,10 @@
   transition: transform .32s cubic-bezier(.22, 1, .36, 1);
 }
 .h4-cta[data-cta-tone="reply"] .h4-cta-fill {
-  background: linear-gradient(135deg, #075985 0%, #0284C7 55%, #0EA5E9 100%);
+  background: linear-gradient(135deg, #0C4A6E 0%, #075985 55%, #0369A1 100%);
 }
 .h4-cta[data-cta-tone="ocean"] .h4-cta-fill {
-  background: linear-gradient(135deg, #0369A1 0%, #0284C7 55%, #0EA5E9 100%);
+  background: linear-gradient(135deg, #0C4A6E 0%, #075985 55%, #0369A1 100%);
 }
 .h4-cta.hb-cta-glass {
   height: 36px; padding: 0 15px; border-radius: 10px;
@@ -377,6 +377,10 @@
   transition-duration: .08s;
 }
 
+/* An ask's response receipt (Home, Inbox, Chat): the line, then a written answer quoted under it. */
+.ask-receipt { display: grid; justify-items: start; gap: 6px; min-width: 0; }
+.triage-actions > .ask-receipt { flex: 1 1 100%; }
+.ask-receipt-text { margin: 0; padding: 2px 0 2px 12px; border-inline-start: 2px solid var(--line2); font-size: var(--fs-sm); line-height: 1.5; color: var(--gray-300); white-space: pre-wrap; overflow-wrap: anywhere; }
 /* Satisfying completion win burst on handled card */
 .h4-handled-win {
   display: inline-flex; align-items: center; gap: 6px;

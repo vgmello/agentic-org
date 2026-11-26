@@ -4,6 +4,7 @@ import { CH, M } from "../data.js";
 import { S } from "../state.js";
 import { av, esc, ic, kindWord, plural, presence } from "../ui.js";
 import { chatTitle, findConversations, openAsks, openDirectMessage, recipients } from "./chat-model.js";
+import { viewLinks } from "./chat-views.js";
 
 const GROUPS = [["channel", "Channels"], ["dm", "Direct messages"], ["a2a", "Between agents"]];
 const PRESENCE_WORD = { needs: "Waiting on you", withyou: "With you", working: "Working", paused: "Paused", available: "Available", asleep: "Asleep", offline: "Offline" };
@@ -44,7 +45,7 @@ function navInner(activeId) {
   const q = list.q.trim().toLowerCase();
   const keys = q ? findConversations(q) : Object.keys(CH);
   if (!keys.length) return noConversation(q);
-  return GROUPS.map(([kind, label]) => {
+  return (q ? "" : viewLinks(activeId)) + GROUPS.map(([kind, label]) => {
     const rows = keys.filter((k) => CH[k].kind === kind);
     return rows.length ? `<h2>${label}</h2><ul>${rows.map((k) => chatLinkHtml(k, activeId)).join("")}</ul>` : "";
   }).join("");

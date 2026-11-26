@@ -546,8 +546,61 @@ async function checkChatNarrow(page: Page) {
   assert.ok(heights.every((h) => h >= 44), "Drawer rows are touch-sized");
   await page.setViewportSize({ width: 1440, height: 900 });
 }
+/* One response record per ask: the same receipt in Chat and Inbox; approval clears the blocker without inferring a start. */
+async function checkChatRecords(page: Page) {
+  const nav = (h: string) => page.evaluate((x) => { location.hash = x; }, h);
+  await page.locator(".chat-needs .reply textarea").fill("One tree, with the kind word on each node.");
+  await page.locator('.chat-needs [data-act="send-reply"]').click();
+  const receipt = page.locator(".chat-needs .ask-receipt");
+  assert.match(await receipt.innerText(), /^Answered by you · \d\d:\d\d[\s\S]*One tree, with the kind word on each node\.$/);
+  const line = await receipt.locator("p > span").innerText();
+  await nav("#/inbox/in3");
+  const inbox = page.locator(".triage-actions .ask-receipt");
+  assert.equal(await inbox.locator("p > span").innerText(), line, "Inbox shows the same receipt line");
+  assert.match(await inbox.innerText(), /One tree, with the kind word on each node\./, "Inbox shows the written answer");
+  await nav("#/chat/agency-v1");
+  await page.locator('.chat-needs:has(#needs-m3)').getByRole("button", { name: "Allow test access" }).click();
+  assert.match(await page.locator('.chat-needs:has(#needs-m3) .ask-receipt').innerText(), /^Approved by you · /);
+  await page.locator('.msg[data-mid="m3"] .tx a.chat-ref').first().click();
+  assert.match(await page.locator("#work-panel").innerText(), /Status\s+To do/, "Approval clears the blocker; no inferred In progress");
+}
+/* Threads carry the ask's card; cross-posting only from channel threads; Back closes overlays; source links win over search. */
+async function checkChatOverlays(page: Page) {
+  const nav = (h: string) => page.evaluate((x) => { location.hash = x; }, h);
+  await nav("#/chat/agency-v1");
+  assert.match(await page.locator(".chat-list-btn").getAttribute("aria-label") ?? "", /^Conversations, \d+ requests? waiting on you in other conversations/);
+  assert.deepEqual(await page.locator(".chlist .chat-views .chat-row-name").allInnerTexts(), ["Mentions", "Threads"]);
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  await page.locator(".thread .chat-needs").getByRole("link", { name: "Review in Inbox" }).waitFor();
+  assert.equal(await page.locator(".thread .chat-also").count(), 1, "Channel threads offer cross-posting");
+  await page.goBack();
+  await page.locator(".thread").waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("thr")), true, "Back closes the thread and restores focus");
+  await page.locator(".chat-context .chat-members-btn").click();
+  assert.equal(await page.locator("#chat-members .chat-member").count(), 8, "Members come from the channel's membership");
+  await page.keyboard.press("Escape");
+  await nav("#/chat/dm-ada");
+  await page.locator('.msg[data-mid="x3"]').hover();
+  await page.locator('.msg[data-mid="x3"] .msg-tool[data-act="thread"]').click();
+  assert.equal(await page.locator(".thread .chat-also").count(), 0, "No cross-posting in a DM thread");
+  await page.locator(".thread").getByRole("button", { name: "Accept" }).waitFor();
+  await nav("#/chat/dm-noor");
+  assert.match(await page.locator(".chat-compose-note").innerText(), /can't run right now/);
+  await nav("#/chat/platform");
+  await page.locator(".chat-search").click();
+  await page.keyboard.type("waiting");
+  await nav("#/inbox/in7");
+  assert.match(await page.locator(".triage-fields").innerText(), /Direct message with Rowan[\s\S]*Related\s+Rowan's message in Kai and Rowan/);
+  await nav("#/inbox/in2");
+  await page.getByRole("link", { name: "Open source message" }).click();
+  await page.locator('.msg.is-linked[data-mid="p2"]').waitFor();
+  assert.equal(await page.locator(".chat-search-row").count(), 0, "A source link opens the unfiltered stream");
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-mid")), "p2", "Focus moves to the linked message");
+}
 async function checkChat(page: Page) {
   await checkChatAsks(page);
+  await checkChatRecords(page);
+  await checkChatOverlays(page);
   await checkChatEntryPoints(page);
   await checkChatNarrow(page);
 }

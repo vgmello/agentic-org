@@ -1,3 +1,4 @@
+import { receiptHtml } from "./ask-receipt.js";
 import { A, CAL_TODAY, EVENTS, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
 import { eventContext, eventDate, eventTone, sortEvents } from "./calendar.js";
 import { homeOrgFigures } from "./org-insights.js";
@@ -84,7 +85,7 @@ function v4BuildButtons(it) {
 }
 
 function itemActionsV4(it, opts = {}) {
-  if (it.handled) return `<p class="h4-handled-win" id="handled-${esc(it.id)}">${ic("check-circle", "ic16")}<span>${esc(it.outcome)}</span></p>`;
+  if (it.handled) return receiptHtml(it, "h4-handled-win");
   if (S.replying === it.id) return v4ReplyBox(it);
   const { b, guardedHtml } = v4BuildButtons(it);
   if (guardedHtml) {
