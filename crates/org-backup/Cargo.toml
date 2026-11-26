@@ -1,0 +1,37 @@
+[package]
+name = "org-backup"
+description = "One-command consistent local organization backup, verification and restore: a deterministic, optionally passphrase-encrypted .tar.gz of an office's durable root with a versioned manifest, bounded verified extraction, a disposable projection rebuild and a custody-safe in-place restore."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The office's side of a backup: recorded data roots, the private notes copy and check (the
+# SQLite adapter stays in org-office, ENG-1), the disposable rebuild and projection discard.
+org-office = { path = "../org-office" }
+# The office folder layout and lock names the host and the server share.
+org-office-launch = { path = "../org-office-launch" }
+# The read-only journal inspection and the journal identity types.
+org-store = { path = "../org-store" }
+# `O_NOFOLLOW` opens, owner-only folders, full flushes and the exclusive rename.
+org-platform = { path = "../org-platform" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tempfile.workspace = true
+argon2.workspace = true
+ring = "=0.17.14"
+zeroize = "=1.9.1"
+tar = { version = "=0.4.46", default-features = false }
+flate2 = { version = "=1.1.11", default-features = false, features = ["rust_backend"] }
+
+[dev-dependencies]
+org-office = { path = "../org-office", features = ["testkit"] }
+org-store = { path = "../org-store", features = ["testkit"] }
+org-proto = { path = "../org-proto" }
+tempfile.workspace = true
+
+[lints]
+workspace = true
