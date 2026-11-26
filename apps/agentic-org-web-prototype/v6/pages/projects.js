@@ -1,7 +1,7 @@
 import { CH, IN, KIND, M, OPEN, P, TEAMS, W, needsMe } from "../data.js";
 import { pageActivity, projectReleaseSummary } from "./activity.js";
 import { msgHtml } from "./chat.js";
-import { projectInsights } from "./insights.js";
+import { INSIGHT_DAY, INSIGHT_TODAY, insightCompletions, projectInsights } from "./insights.js";
 import { notFound } from "./settings.js";
 import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
 import { render } from "../shell/router.js";
@@ -67,7 +67,28 @@ function projectBody(id, tab) {
   return notFound();
 }
 
-/* Project at a glance, in the style of Home's summary cards: progress, schedule, open work, team. */
+/* Cycle time: how fast work closes. Tasks closed per day over the last 7 days (per hour when faster
+   than one an hour), the change against the 7 days before, and the median open-to-closed cycle time. */
+function projectCycle(id) {
+  const done = insightCompletions(id), since = (days) => INSIGHT_TODAY - days * INSIGHT_DAY;
+  const week = done.filter((c) => c.day > since(7)), prior = done.filter((c) => c.day > since(14) && c.day <= since(7));
+  const perDay = week.length / 7, priorPerDay = prior.length / 7;
+  const cycles = week.length ? week.map((c) => c.cycle) : done.map((c) => c.cycle);
+  const sorted = [...cycles].sort((a, b) => a - b), median = sorted.length ? sorted[Math.ceil(sorted.length / 2) - 1] : null;
+  const delta = priorPerDay ? Math.round(100 * (perDay - priorPerDay) / priorPerDay) : null;
+  const rate = perDay >= 24 ? { value: (perDay / 24).toFixed(1), unit: "closed / hour" } : { value: perDay.toFixed(1), unit: "closed / day" };
+  return { ...rate, median, delta, closed: week.length };
+}
+function cycleCard(id, card) {
+  const c = projectCycle(id);
+  if (!c.closed && c.median == null) return card("Cycle time", "clock", "—", "no closed tasks yet", "Shows once work closes", `#/projects/${id}/insights`);
+  const trend = c.delta == null ? "" : c.delta === 0 ? `<span>Steady vs last week</span>`
+    : `<span class="pj-pace ${c.delta > 0 ? "is-ok" : "is-warn"}">${c.delta > 0 ? "+" : ""}${c.delta}% vs last week</span>`;
+  return card("Cycle time", "clock", c.value, c.unit, `<span>Median ${fmtHours(c.median)} to close</span>${trend}`, `#/projects/${id}/insights`);
+}
+const fmtHours = (h) => (h == null ? "—" : h >= 48 ? `${(h / 24).toFixed(1)} d` : `${Math.round(h)} h`);
+
+/* Project at a glance, in the style of Home's summary cards: progress, schedule, open work, cycle time, team. */
 function projectSummaryHtml(id, ws) {
   const pr = P[id], done = ws.filter((w) => !OPEN(w)).length, total = ws.length, open = total - done;
   const blocked = ws.filter((w) => w.status === "Blocked").length, mine = ws.filter(needsMe).length;
@@ -81,6 +102,7 @@ function projectSummaryHtml(id, ws) {
       ${card("All work", "check-circle", `${done}/${total}`, "tasks done", `<span class="pj-kpi-bar" aria-hidden="true"><i style="width:${pct}%"></i></span>`, `#/projects/${id}/work`)}
       ${card("Schedule", "calendar-check", pr.due ? esc(pr.due) : "—", pr.due ? "due" : "no due date", pr.pace ? `<span class="pj-pace${tone ? " is-" + tone : ""}">${esc(pr.pace)}</span>${pr.release ? ` · ${esc(pr.release)}` : ""}` : "", `#/projects/${id}/activity`)}
       ${card("Open work", "clipboard", String(open), "open", `${blocked} blocked · ${mine} need you`, `#/projects/${id}/work`)}
+      ${cycleCard(id, card)}
       ${card("Team", "user-group", String(members.length), members.length === 1 ? "member" : "members", `${avStack(members, 5)}<span class="pj-kpi-teams">${pr.teams.map((t) => esc(TEAMS[t].name)).join(", ")}</span>`, `#/projects/${id}/team`)}
     </section>`;
 }

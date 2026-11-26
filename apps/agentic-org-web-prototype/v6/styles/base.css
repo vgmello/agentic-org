@@ -910,14 +910,14 @@ body.nokeys .search kbd { display: none; }
 /* Project Overview: at-a-glance row, goal, decision split, recent activity (single column, page gutter) */
 .pj-overview { display: flex; flex-direction: column; gap: 28px; padding: 20px var(--gutter) 40px; }
 .pj-overview .project-sec > .sec-head { margin-bottom: 12px; }
-.pj-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.pj-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(176px, 1fr)); gap: 12px; }
 .pj-kpi { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: var(--radius-lg); background: var(--gray-900); box-shadow: inset 0 0 0 1px var(--line2); color: inherit; min-width: 0; }
 .pj-kpi:hover { box-shadow: inset 0 0 0 1px var(--gray-500); }
 .pj-kpi-l { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--gray-400); }
 .pj-kpi-v { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .pj-kpi-v b { font-size: 1.625rem; line-height: 1.1; font-weight: 500; color: var(--white); }
 .pj-kpi-v span { font-size: var(--fs-sm); color: var(--gray-400); white-space: nowrap; }
-.pj-kpi-f { display: flex; align-items: center; gap: 8px; min-height: 24px; font-size: var(--fs-xs); color: var(--gray-400); min-width: 0; }
+.pj-kpi-f { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; min-height: 24px; font-size: var(--fs-xs); color: var(--gray-400); min-width: 0; }
 .pj-kpi-teams { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .pj-kpi-bar { flex: 1; height: 6px; border-radius: 999px; background: var(--bar-track); overflow: hidden; }
 .pj-kpi-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--tone-ok-bar); }
@@ -947,7 +947,6 @@ body.nokeys .search kbd { display: none; }
 .pj-overview .feed > li { padding-inline: 0; }
 .tchip { background: var(--hover); border-radius: 999px; box-shadow: none; }
 @media (max-width: 900px) {
-  .pj-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pj-split { grid-template-columns: minmax(0, 1fr); }
   .pj-queue-pane { border-inline-end: 0; border-bottom: 1px solid var(--line2); }
   .pj-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
