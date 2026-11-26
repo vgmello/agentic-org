@@ -98,18 +98,34 @@ function needsCardHtml(it, msgId, where = {}) {
     ${needsActions(it, where)}
   </section>`;
 }
-/* A chip says where the ask is settled: Inbox for a consequential ask, its answerable card when that card is
-   in another conversation (e.g. Rowan's DM, from the agents' conversation), otherwise the Inbox record. */
-function chipRoute(it, here) {
+/* Where a low-risk ask's answerable card is: the message carrying it, outside agents' conversations. */
+function cardMessage(it) {
+  const home = askHomeId(it), msg = home && CH[home].kind !== "a2a" && CH[home].msgs.find((m) => m.needs === it.id);
+  return msg ? { home, msg } : null;
+}
+/* Above or below the chip's own message, in the same conversation. */
+function cardSide(home, cardId, fromId) {
+  const ids = CH[home].msgs.map((m) => m.id), from = ids.indexOf(fromId);
+  return from >= 0 && from < ids.indexOf(cardId) ? "below" : "above";
+}
+/* A chip says where the ask is settled: Inbox for a consequential ask; for a low-risk ask, its answerable card,
+   in another conversation (e.g. Rowan's DM, from the agents' conversation) or in this one (e.g. after a follow-up).
+   The card keeps its own link to the Inbox record. */
+function chipRoute(it, here, fromId) {
   const inbox = `#/inbox/${it.id}`;
   if (it.handled) return [inbox, `Handled · ${it.outcome}`];
   if (decidedInInbox(it)) return [inbox, "Needs you · Decide in Inbox"];
-  const home = askHomeId(it), msg = home && CH[home].kind !== "a2a" && CH[home].msgs.find((m) => m.needs === it.id);
-  if (msg && home !== here) return [`#/chat/${home}/${msg.id}`, `Needs you · Answer in ${placeName(home)}`];
+  const card = cardMessage(it), href = card && `#/chat/${card.home}/${card.msg.id}`;
+  if (card && card.home !== here) return [href, `Needs you · Answer in ${placeName(card.home)}`];
+  if (card) return [href, `Needs you · ${KIND[it.kind].label} on the card ${cardSide(card.home, card.msg.id, fromId)}`];
   return [inbox, `Needs you · ${KIND[it.kind].label} in Inbox`];
 }
-function needsChipHtml(it, here) {
-  const [href, label] = chipRoute(it, here);
+/* In a thread whose root carries the ask, the chip moves focus to that card at the top of the panel. */
+function threadCardChip(it, msgId) {
+  return `<p class="chat-needs-chip"><button type="button" data-act="chat-thread-card" data-id="${esc(msgId)}">${ic("bell", "ic14")}<span>Needs you · ${esc(KIND[it.kind].label)} on the card above</span>${ic("chev-right", "ic14")}</button></p>`;
+}
+function needsChipHtml(it, here, fromId) {
+  const [href, label] = chipRoute(it, here, fromId);
   return `<p class="chat-needs-chip${it.handled ? " is-done" : ""}"><a href="${esc(href)}">${ic(it.handled ? "check-circle" : "bell", "ic14")}<span>${esc(label)}</span>${ic("chev-right", "ic14")}</a></p>`;
 }
 /* While the ask's message is open in the thread panel, its card lives there; the stream points to it.
@@ -122,10 +138,12 @@ function inThreadChip(it, msgId) {
 /* A card where the ask was raised (m.needs); a chip where it is only mentioned (m.ref) or previewed elsewhere.
    `mode`: "card" (writable stream), "thread-card" (card in the thread panel), "in-thread" (the stream's pointer
    to a card shown in the open thread), or a chip. `here` is the conversation being shown. */
-function messageNeeds(m, mode, here) {
+function messageNeeds(m, mode, here, threadRoot) {
   const it = inboxItem(m.needs || m.ref);
   if (!it) return "";
-  if (!m.needs) return needsChipHtml(it, here);
+  const onRoot = threadRoot && threadRoot.needs === it.id && !it.handled && !decidedInInbox(it);
+  if (!m.needs && onRoot) return threadCardChip(it, threadRoot.id);
+  if (!m.needs) return needsChipHtml(it, here, m.id);
   if (mode === "in-thread") return inThreadChip(it, m.id);
   if (mode === "thread-card") return needsCardHtml(it, m.id, { thread: m.id });
   return mode === "card" ? needsCardHtml(it, m.id) : needsChipHtml(it, here);
@@ -183,5 +201,10 @@ function onAskKeydown(e) {
 }
 const saveAskDraft = (t) => askDrafts.set(t.id.slice(3), t.value);
 const resetAsks = () => Object.assign(asks, { followUp: null, note: null });
+/* A message whose ask is answered on its card in Chat (low-risk and open): arriving at it focuses the card. */
+function answerableHere(m) {
+  const it = m?.needs && inboxItem(m.needs);
+  return Boolean(it && !it.handled && !decidedInInbox(it));
+}
 
-export { ASK_CLICKS, messageNeeds, onAskKeydown, recordAskReply, resetAsks, saveAskDraft, workRef };
+export { ASK_CLICKS, answerableHere, messageNeeds, onAskKeydown, recordAskReply, resetAsks, saveAskDraft, workRef };

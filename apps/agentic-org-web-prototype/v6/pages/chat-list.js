@@ -3,8 +3,9 @@
 import { CH, M } from "../data.js";
 import { S } from "../state.js";
 import { av, esc, ic, kindWord, plural, presence } from "../ui.js";
-import { chatTitle, findConversations, openAsks, openDirectMessage, recipients } from "./chat-model.js";
+import { chatTitle, findConversations, matchReason, openAsks, openDirectMessage, recipients } from "./chat-model.js";
 import { viewLinks } from "./chat-views.js";
+import { A2A_CLICKS, a2aSectionHtml } from "./chat-a2a.js";
 
 const GROUPS = [["channel", "Channels"], ["dm", "Direct messages"], ["a2a", "Between agents"]];
 const PRESENCE_WORD = { needs: "Waiting on you", withyou: "With you", working: "Working", paused: "Paused", available: "Available", asleep: "Asleep", offline: "Offline" };
@@ -26,11 +27,17 @@ function rowTrail(ch, unread) {
   const word = M[ch.with].kind === "person" ? "Person" : PRESENCE_WORD[presence(ch.with)];
   return (word ? `<span class="chat-row-word">${word}</span>` : "") + dot;
 }
-function chatLinkHtml(k, activeId) {
+/* `why`: while finding, what matched when the name doesn't show it (a project, a task id, a message's words). */
+function chatLinkHtml(k, activeId, why = "") {
   const ch = CH[k], unread = ch.unread && k !== activeId;
   const attrs = (k === activeId ? ' aria-current="page"' : "") + (unread ? ' class="is-unread"' : "");
   const unreadText = unread ? `<span class="sr-only">, ${plural(ch.unread, "unread message", "unread messages")}</span>` : "";
-  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}</span>${unreadText}${rowTrail(ch, unread)}</a></li>`;
+  const reason = why ? `<span class="chat-row-why"><span class="sr-only">, </span>${esc(why)}</span>` : "";
+  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}${reason}</span>${unreadText}${rowTrail(ch, unread)}</a></li>`;
+}
+function groupHtml(kind, label, rows, activeId, q) {
+  if (kind === "a2a" && !q) return rows.length ? a2aSectionHtml(rows, activeId, (k) => chatLinkHtml(k, activeId)) : "";
+  return rows.length ? `<h2>${label}</h2><ul>${rows.map((k) => chatLinkHtml(k, activeId, q ? matchReason(CH[k], q) : "")).join("")}</ul>` : "";
 }
 function recipientButton(k, act = "chat-to") {
   return `<li><button class="chat-person" type="button" data-act="${act}" data-id="${esc(k)}">${av(k, 24)}<span class="chat-row-name">${esc(M[k].name)}</span><span class="chat-row-word">${esc(kindWord(k))}</span></button></li>`;
@@ -45,10 +52,7 @@ function navInner(activeId) {
   const q = list.q.trim().toLowerCase();
   const keys = q ? findConversations(q) : Object.keys(CH);
   if (!keys.length) return noConversation(q);
-  return (q ? "" : viewLinks(activeId)) + GROUPS.map(([kind, label]) => {
-    const rows = keys.filter((k) => CH[k].kind === kind);
-    return rows.length ? `<h2>${label}</h2><ul>${rows.map((k) => chatLinkHtml(k, activeId)).join("")}</ul>` : "";
-  }).join("");
+  return (q ? "" : viewLinks(activeId)) + GROUPS.map(([kind, label]) => groupHtml(kind, label, keys.filter((k) => CH[k].kind === kind), activeId, q)).join("");
 }
 const findStatus = () => (list.q.trim() ? plural(findConversations(list.q.trim().toLowerCase()).length, "conversation", "conversations") : "");
 
@@ -119,10 +123,19 @@ function chooseConversation(e, link) {
   e.stopPropagation();
   return "same-conversation";
 }
+/* The agents' section's controls re-render the list in place and keep focus on the control used. */
+function onA2AClick(root, t) {
+  const focusId = A2A_CLICKS[t.dataset.act](t.dataset.id);
+  root.querySelector("#chat-nav").innerHTML = navInner(root.dataset.ch);
+  document.getElementById(focusId)?.focus();
+  return "handled";
+}
 function onListClick(e, root) {
   const link = e.target.closest("#chat-nav a");
   if (link) return chooseConversation(e, link);
-  const t = e.target.closest("[data-act]"), fn = t && LIST_CLICKS[t.dataset.act];
+  const t = e.target.closest("[data-act]");
+  if (t && A2A_CLICKS[t.dataset.act]) return onA2AClick(root, t);
+  const fn = t && LIST_CLICKS[t.dataset.act];
   return fn ? fn(root, t.dataset.id) : "";
 }
 function onListInput(e, root) {
@@ -159,6 +172,7 @@ function prepareList(mode) {
 }
 
 export {
+  PRESENCE_WORD,
   chatListHtml,
   needsCount,
   onListClick,

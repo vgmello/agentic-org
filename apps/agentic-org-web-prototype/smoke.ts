@@ -1039,6 +1039,9 @@ async function checkChatNarrow(page: Page) {
   const heights = await page.locator("#chat-nav a").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
   assert.ok(heights.every((h) => h >= 44), "Drawer rows are touch-sized");
   await page.setViewportSize({ width: 1440, height: 900 });
+  /* Widening closes the drawer and steps back over its history entry; let that settle before navigating. */
+  await page.locator(".chat.list-open").waitFor({ state: "detached" });
+  await page.waitForFunction(() => !history.state?.chatOverlay);
 }
 /* One response record per ask: the same receipt in Chat and Inbox; approval clears the blocker without inferring a start. */
 async function checkChatRecords(page: Page) {
@@ -1310,7 +1313,7 @@ async function checkChatSearchThread(page: Page) {
   const hitLine = page.locator('.chmain .msg[data-mid="m2"] .chat-thread-hit');
   await hitLine.waitFor();
   assert.match(await hitLine.innerText(), /Kai in the thread: .*I'll merge as soon as it's approved/);
-  assert.equal(await page.locator("#chat-search-status").innerText(), "1 message");
+  assert.equal(await page.locator("#chat-search-status").innerText(), "1 thread reply", "A match only in a reply counts as a reply");
   await hitLine.getByRole("button", { name: "Open in thread" }).click();
   const reply = page.locator(".thread .msgs > .msg.is-linked");
   await reply.waitFor();
@@ -1583,7 +1586,7 @@ async function checkAttachFilesAndSearch(page: Page) {
   await navTo(page, "#/chat/platform");
   await page.locator(".chat-search").click();
   await page.locator("#chat-search-input").fill("lease-race");
-  assert.equal(await page.locator("#chat-search-status").innerText(), "1 message", "Search finds an attachment name");
+  assert.equal(await page.locator("#chat-search-status").innerText(), "1 post", "Search finds an attachment name");
   assert.equal(await page.locator('.msgs > .msg[data-mid="p1"] .chat-att-name mark').count(), 1, "The matching name is marked");
   await page.locator("#chat-search-input").press("Escape");
 }
@@ -1619,6 +1622,256 @@ async function checkChatAttachments(page: Page) {
   await checkAttachReadOnly(page);
   assert.deepEqual(errors, [], "No console errors while attaching");
 }
+/* ---------------------------------------------------------------- Chat round 7 (TASK-195) */
+const viewport = (page: Page, width: number, height: number) => page.setViewportSize({ width, height });
+/* A low-risk follow-up's chip goes back to the answerable card (same conversation too) and focuses it. */
+async function checkFollowUpChip(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.chat-needs:has(#needs-m3) [data-act="chat-ask-reply"]').click();
+  await page.keyboard.type("Is the sandbox wiped after the run?");
+  await page.keyboard.press("Control+Enter");
+  const chip = page.locator(".chmain .msgs > .msg").last().locator(".chat-needs-chip a");
+  assert.equal(await chip.innerText(), "Needs you · Approval on the card above", "The follow-up's chip names the card, not Inbox");
+  assert.equal(await chip.getAttribute("href"), "#/chat/agency-v1/m3");
+  await chip.click();
+  await page.locator('.msg.is-linked[data-mid="m3"]').waitFor();
+  assert.equal(await activeAttr(page, "id"), "needs-m3", "Arriving focuses the card");
+  assert.equal(await page.locator('.chat-needs:has(#needs-m3) a[href="#/inbox/in5"]').count(), 1, "The card keeps its Inbox record link");
+  await page.locator('.msg[data-mid="m3"]').hover();
+  await page.locator('.msg[data-mid="m3"] .msg-tool[data-act="thread"]').click();
+  await page.locator('.thread [data-act="chat-ask-reply"]').click();
+  await page.keyboard.type("And the logs?");
+  await page.keyboard.press("Control+Enter");
+  const inThread = page.locator(".thread .msgs > .msg").last().locator(".chat-needs-chip button");
+  assert.equal(await inThread.innerText(), "Needs you · Approval on the card above");
+  await inThread.click();
+  assert.ok(await page.evaluate(() => Boolean(document.activeElement?.closest(".thread .chat-needs"))), "In a thread the chip focuses the card at its top");
+  await page.locator(".thread [data-act=thread-close]").click();
+}
+/* Thread replies say "Sending…" like main sends, the channel copy too; focus stays in the thread composer. */
+async function checkThreadPending(page: Page) {
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  await page.locator(".thread .chat-also input").check();
+  await page.locator("#thread-compose").fill("Looks good from here.");
+  await page.locator("#thread-compose").press("Control+Enter");
+  await page.locator(".thread .msgs > .msg.is-pending .msg-status", { hasText: "Sending…" }).waitFor();
+  await page.locator(".chmain .msgs > .msg.is-pending .msg-status", { hasText: "Sending…" }).waitFor();
+  await page.waitForFunction(() => !document.querySelector("#main .chat .msg.is-pending"));
+  assert.equal(await activeAttr(page, "id"), "thread-compose", "Focus stays in the thread composer");
+  await page.locator(".thread [data-act=thread-close]").click();
+}
+/* The drawer is used below 768 px of chat content; widening past it closes the drawer cleanly. */
+async function checkListThreshold(page: Page) {
+  const btnShown = () => page.locator(".chat-list-btn").isVisible();
+  await viewport(page, 800, 800); /* 800 - the app nav's rail = under 768 px of content */
+  await navTo(page, "#/chat/agency-v1");
+  await page.waitForFunction(() => Boolean(document.querySelector("#main .chat.list-overlay")));
+  assert.ok(await page.evaluate(() => document.getElementById("main")!.clientWidth < 768), "The test width gives under 768 px of content");
+  assert.ok(await btnShown(), "Content under 768 px: the Conversations button shows");
+  assert.equal(await page.locator(".chlist").isVisible(), false, "and the list is an overlay");
+  await viewport(page, 900, 800); /* 900 - the rail = over 768 px of content */
+  await page.waitForFunction(() => !document.querySelector("#main .chat.list-overlay"));
+  assert.equal(await btnShown(), false, "Content of 768 px or more: the list is inline, no button");
+  await viewport(page, 800, 800);
+  await page.waitForFunction(() => Boolean(document.querySelector("#main .chat.list-overlay")));
+  await page.locator(".chat-list-btn").click();
+  await page.locator(".chat.list-open").waitFor();
+  assert.ok(await page.evaluate(() => Boolean(history.state?.chatOverlay)), "The drawer adds a history entry");
+  await viewport(page, 1440, 900);
+  await page.locator(".chat.list-open").waitFor({ state: "detached" });
+  await page.waitForFunction(() => !history.state?.chatOverlay);
+  assert.equal(await page.evaluate(() => document.querySelectorAll("[inert]").length), 0, "Nothing left inert");
+  assert.equal(await page.evaluate(() => document.activeElement?.matches('.chlist a[aria-current="page"]')), true, "Focus on the selected inline row");
+  await page.locator("#compose").click();
+  await page.keyboard.type("Still typing");
+  assert.equal(await page.locator("#compose").inputValue(), "Still typing", "The conversation takes typing again");
+  await page.locator("#compose").fill("");
+}
+/* Opening an older message reads only what came into view; the rest stays unread. */
+async function checkReadMarker(page: Page) {
+  const designRow = page.locator('#chat-nav a[href="#/chat/design"]');
+  await viewport(page, 1440, 500);
+  await navTo(page, "#/chat/general");
+  assert.match(await designRow.innerText(), /3 unread messages/);
+  await navTo(page, "#/chat/design/d1");
+  await page.locator('.msg.is-linked[data-mid="d1"]').waitFor();
+  assert.equal(await page.locator(".chat-new-rule + .msg").getAttribute("data-mid"), "d3", "New messages starts at the first unread");
+  await page.waitForTimeout(300);
+  await navTo(page, "#/chat/general");
+  assert.ok(await designRow.evaluate((a) => a.classList.contains("is-unread")), "Messages below the fold stay unread");
+  await navTo(page, "#/chat/design");
+  await page.waitForTimeout(300);
+  await navTo(page, "#/chat/general");
+  assert.equal(await designRow.evaluate((a) => a.classList.contains("is-unread")), false, "Reading to the end clears unread");
+}
+/* At 1024 the opening position cuts into Tomas's ask; its author line stays in view. */
+async function checkCutAuthor(page: Page) {
+  await viewport(page, 1024, 768);
+  await page.reload();
+  await navTo(page, "#/chat/agency-v1");
+  await page.waitForTimeout(400);
+  const at = await page.evaluate(() => {
+    const s = document.querySelector(".chmain .msgs[data-ch]")!, band = s.querySelector(".chat-day")!.getBoundingClientRect().height;
+    const line = s.getBoundingClientRect().top + band;
+    const top = [...s.querySelectorAll(":scope > .msg:not(.cont)")].find((m) => m.getBoundingClientRect().bottom > line + 32)!;
+    const hd = top.querySelector(".hd")!.getBoundingClientRect();
+    return { mid: top.getAttribute("data-mid"), cut: top.getBoundingClientRect().top < line - 1, hdTop: hd.top - line };
+  });
+  assert.ok(!at.cut || at.hdTop >= -1, `The top message's author line is visible (${JSON.stringify(at)})`);
+  await viewport(page, 1440, 900);
+}
+/* Mentions come from recipient data, including thread replies, and never from prose. */
+async function checkMentions(page: Page) {
+  await navTo(page, "#/chat/mentions");
+  const text = await page.locator(".chat-view-list").innerText();
+  assert.doesNotMatch(text, /I asked the owner/, "Prose about the owner is not a mention");
+  const reply = page.locator(".chat-view-item", { hasText: "Approved on my side" });
+  assert.match(await reply.innerText(), /in a thread on Tomas's message/);
+  await reply.getByRole("button", { name: "Open in thread" }).click();
+  const landed = page.locator(".thread .msgs > .msg.is-linked", { hasText: "Approved on my side" });
+  await landed.waitFor();
+  assert.ok(await landed.evaluate((el) => el === document.activeElement), "Focus lands on the mentioning reply");
+  await page.locator(".thread [data-act=thread-close]").click();
+}
+/* A context line that would be cut shows a plain summary; its links move to Details, out of the tab order. */
+async function checkHeaderSummary(page: Page) {
+  await viewport(page, 700, 800);
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator(".chat.ctx-overflow").waitFor();
+  assert.equal(await page.locator(".chat-ctx-summary").innerText(), "Shipping the first release · 8 members");
+  assert.equal(await page.locator(".chat-ctx-full").evaluate((el) => getComputedStyle(el).visibility), "hidden", "The clipped links leave the tab order");
+  await page.locator(".chat-details-btn").click();
+  await page.locator('.chat-details a[href="#/projects/agency-v1"]').waitFor();
+  await page.locator(".chat-details-btn").click();
+  await viewport(page, 1440, 900);
+  await page.waitForFunction(() => !document.querySelector("#main .chat.ctx-overflow"));
+  assert.ok(await page.locator(".chat-ctx-full .chat-members-btn").isVisible(), "Wide: the full line with its links");
+}
+/* Agents' conversations name "Message Rowan about this" on desktop; the DM opens with its composer focused. */
+async function checkA2AMessageAction(page: Page) {
+  await navTo(page, "#/chat/a2a-kai-rowan");
+  await page.locator('.msg[data-mid="k2"]').hover();
+  const action = page.locator('.msg[data-mid="k2"] .msg-tool-text');
+  assert.equal(await action.innerText(), "Message Rowan about this");
+  await action.click();
+  await page.waitForURL((u) => u.hash === "#/chat/dm-rowan");
+  await page.waitForFunction(() => document.activeElement?.id === "compose");
+}
+/* The cross-post choice is a 44 px target at phone width. */
+async function checkAlsoTarget(page: Page) {
+  await viewport(page, 375, 667);
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  const box = await page.locator(".thread .chat-also").boundingBox();
+  assert.ok(box && box.height >= 44, `Also send to is 44 px tall (${box?.height})`);
+  await page.locator(".thread [data-act=thread-close]").click();
+  await viewport(page, 1440, 900);
+}
+/* The side panel is about a third of the chat area at 1440, resizable from its edge by keyboard, and remembered. */
+async function checkPanelWidth(page: Page) {
+  const width = () => page.locator("aside.thread").evaluate((el) => Math.round(el.getBoundingClientRect().width));
+  await viewport(page, 1440, 900);
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  const start = await width();
+  assert.ok(start >= 400 && start <= 480, `The thread panel is 400-480 px at 1440 (${start})`);
+  const sep = page.locator('aside.thread [role="separator"]');
+  assert.equal(await sep.getAttribute("aria-valuenow"), String(start));
+  await sep.focus();
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  assert.equal(await width(), start + 32, "Arrow keys widen it from its left edge");
+  assert.equal(await sep.getAttribute("aria-valuenow"), String(start + 32));
+  await page.reload();
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  assert.equal(await width(), start + 32, "The width is remembered on this device");
+  await page.locator(".thread [data-act=thread-close]").click();
+  await viewport(page, 1024, 768);
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  assert.equal(await page.locator('aside.thread[role="dialog"]').count(), 1, "Below 1280 it is a modal");
+  assert.equal(await page.locator('aside.thread [role="separator"]').count(), 0, "with no resize edge");
+  await page.locator(".thread [data-act=thread-close]").click();
+  await page.evaluate(() => localStorage.removeItem("agentic-org.v6.chat.panelWidth"));
+  await viewport(page, 1440, 900);
+}
+async function checkChatRound7(page: Page) {
+  await checkFollowUpChip(page);
+  await checkThreadPending(page);
+  await checkListThreshold(page);
+  await checkReadMarker(page);
+  await checkCutAuthor(page);
+  await checkMentions(page);
+  await checkHeaderSummary(page);
+  await checkA2AMessageAction(page);
+  await checkAlsoTarget(page);
+  await checkPanelWidth(page);
+}
+/* ---------------------------------------------------------------- agents' conversations at scale */
+const a2aRows = (page: Page) => page.locator('#chat-nav a[href^="#/chat/a2a-"]').evaluateAll((els) => els.map((e) => e.getAttribute("href")!.slice(7)));
+async function checkA2ARecent(page: Page) {
+  await viewport(page, 1440, 900);
+  await navTo(page, "#/chat/general");
+  assert.deepEqual(await a2aRows(page), ["a2a-ada-tomas", "a2a-tomas-sage", "a2a-emery-eden", "a2a-jules-avery"], "The last day's, newest first");
+  const all = page.locator("#chat-a2a-all");
+  assert.match(await all.innerText(), /^Show all 8/);
+  await all.click();
+  assert.equal((await a2aRows(page)).length, 8, "Show all lists every agents' conversation");
+  assert.equal(await page.locator("#chat-a2a-all").getAttribute("aria-expanded"), "true");
+  assert.equal(await activeAttr(page, "id"), "chat-a2a-all", "Focus stays on the control");
+  await page.keyboard.press("Enter");
+  assert.equal((await a2aRows(page)).length, 4, "and the keyboard collapses it");
+}
+async function checkA2AFilter(page: Page) {
+  await page.locator("#chat-a2a-filter-btn").click();
+  await page.locator("#chat-a2a-ag-rowan").click();
+  assert.deepEqual(await a2aRows(page), ["a2a-kai-rowan", "a2a-rowan-sage", "a2a-ada-rowan"], "One agent: every conversation it is in");
+  assert.equal(await page.locator("#chat-a2a-ag-rowan").getAttribute("aria-pressed"), "true");
+  await page.locator("#chat-a2a-ag-kai").focus();
+  await page.keyboard.press("Space");
+  assert.deepEqual(await a2aRows(page), ["a2a-kai-rowan"], "Two agents: that pair");
+  assert.ok(await page.locator("#chat-a2a-ag-sage").isDisabled(), "Two is the most");
+  assert.equal(await activeAttr(page, "id"), "chat-a2a-ag-kai", "Focus stays on the chip");
+  await page.locator("#chat-a2a-clear").click();
+  assert.equal((await a2aRows(page)).length, 4);
+  await page.locator("#chat-a2a-filter-btn").click();
+}
+async function checkA2AFind(page: Page) {
+  const why = (href: string) => page.locator(`#chat-nav a[href="${href}"] .chat-row-why`).innerText();
+  await page.locator("#chat-find").fill("T-A121");
+  assert.match(await why("#/chat/a2a-ada-tomas"), /mentions T-A121/, "A task id finds agents' conversations, saying why");
+  await page.locator("#chat-find").fill("look & feel");
+  assert.match(await why("#/chat/design"), /in Look & feel refresh/, "A project name finds its conversations");
+  await page.locator("#chat-find").fill("soak");
+  assert.match(await why("#/chat/a2a-kai-quinn"), /soak/, "Message words find agents' conversations");
+  await page.locator("#chat-find").fill("");
+}
+async function checkA2ADrawerTargets(page: Page) {
+  await viewport(page, 375, 667);
+  await page.locator(".chat-list-btn").click();
+  await page.locator("#chat-a2a-filter-btn").click();
+  const heights = await page.locator(".chlist :is(.chat-a2a-chip, .chat-a2a-filter-btn, .chat-a2a-all)").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+  assert.ok(heights.length > 2 && heights.every((h) => h >= 44), `Agent filter targets are 44 px in the drawer (${heights})`);
+  await page.locator("#chat-a2a-filter-btn").click();
+  await page.keyboard.press("Escape");
+  await page.locator(".chat.list-open").waitFor({ state: "detached" });
+  await page.waitForFunction(() => !history.state?.chatOverlay);
+  await viewport(page, 1440, 900);
+}
+async function checkAgentProfileA2A(page: Page) {
+  await navTo(page, "#/members/rowan");
+  const rows = page.locator(".c-a2a .c-a2a-row");
+  await rows.first().waitFor();
+  assert.deepEqual(await rows.evaluateAll((els) => els.map((e) => e.getAttribute("href"))), ["#/chat/a2a-kai-rowan", "#/chat/a2a-rowan-sage", "#/chat/a2a-ada-rowan"]);
+  await rows.first().click();
+  await page.waitForURL((u) => u.hash === "#/chat/a2a-kai-rowan");
+}
+async function checkA2AScale(page: Page) {
+  await checkA2ARecent(page);
+  await checkA2AFilter(page);
+  await checkA2AFind(page);
+  await checkA2ADrawerTargets(page);
+  await checkAgentProfileA2A(page);
+}
 async function checkChat(page: Page) {
   await checkChatAsks(page);
   await checkChatRecords(page);
@@ -1635,6 +1888,10 @@ async function checkChat(page: Page) {
   await checkTaskContextSourceLink(page);
   await page.reload();
   await checkChatAttachments(page);
+  await page.reload();
+  await checkChatRound7(page);
+  await page.reload();
+  await checkA2AScale(page);
 }
 
 const ROUTE_CHECKS: Record<string, (page: Page, href: string, theme: string) => Promise<void>> = {

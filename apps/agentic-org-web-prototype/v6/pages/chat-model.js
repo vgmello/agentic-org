@@ -1,6 +1,6 @@
 /* Chat model: conversation names, direct-message creation, conversation search and owner asks.
    Shared by the Chat page, its conversation list and other pages' Message entry points. */
-import { CH, IN, M } from "../data.js";
+import { CH, IN, M, P } from "../data.js";
 import { memberIds } from "../ui.js";
 
 const DEFAULT_CHAT = "agency-v1";
@@ -13,6 +13,30 @@ function splitTime(time) {
   return day ? [day[1], time.slice(day[0].length)] : ["Today", time || ""];
 }
 const sentAt = (m) => splitTime(m.time).join(" ");
+
+/* Prototype clock: today is Thu Nov 26 2026 (data.js CAL_TODAY), 10:30, so "the last day" never depends on
+   when the prototype is opened. */
+const NOW = new Date(2026, 10, 26, 10, 30);
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function sentDate(time) {
+  const [day, hm] = splitTime(time);
+  const [h, min] = (hm || "0:0").split(":").map(Number);
+  const d = new Date(NOW);
+  d.setHours(h || 0, min || 0, 0, 0);
+  if (day === "Yesterday") d.setDate(d.getDate() - 1);
+  else if (day !== "Today") { const [mon, date] = day.split(" "); d.setMonth(MONTHS.indexOf(mon), Number(date)); }
+  return d.getTime();
+}
+/* A conversation's last activity: its newest message or thread reply. */
+function lastActivity(ch) {
+  const times = ch.msgs.flatMap((m) => [m.time, ...(m.thread || []).map((r) => r.time)]);
+  return times.length ? Math.max(...times.map(sentDate)) : 0;
+}
+const activeToday = (ch) => NOW.getTime() - lastActivity(ch) <= DAY_MS;
+const newestFirst = (a, b) => lastActivity(CH[b]) - lastActivity(CH[a]);
+/* Agents' conversations one agent is in, newest first. */
+const agentConversations = (who) => Object.keys(CH).filter((k) => CH[k].kind === "a2a" && CH[k].pair.includes(who)).sort(newestFirst);
 
 const chatTitle = (ch) => (ch.kind === "channel" ? "#" + ch.name : ch.kind === "dm" ? M[ch.with].name : ch.name);
 const inboxItem = (id) => IN.find((i) => i.id === id);
@@ -55,7 +79,27 @@ function conversationNames(ch) {
   const people = ch.kind === "dm" ? [ch.with] : ch.pair || [];
   return [ch.name, chatTitle(ch), ch.topic || "", ...people.map((k) => M[k].name)].join(" ").toLowerCase();
 }
-const findConversations = (q) => Object.keys(CH).filter((k) => conversationNames(CH[k]).includes(q));
+const projectName = (ch) => (ch.proj && P[ch.proj] ? P[ch.proj].name : "");
+const allTexts = (ch) => ch.msgs.flatMap((m) => [m.text || "", ...(m.thread || []).map((r) => r.text || "")]);
+function snippet(text, q) {
+  const i = text.toLowerCase().indexOf(q), from = Math.max(0, i - 16), to = Math.min(text.length, i + q.length + 24);
+  return `${from ? "…" : ""}${text.slice(from, to).trim()}${to < text.length ? "…" : ""}`;
+}
+/* What an agents' conversation's messages matched: a task id by name, otherwise the words around the match. */
+function textReason(ch, q) {
+  const text = allTexts(ch).find((t) => t.toLowerCase().includes(q));
+  if (!text) return null;
+  const task = (text.match(/\bT-A\d+\b/g) || []).find((t) => t.toLowerCase().includes(q));
+  return task ? `mentions ${task}` : `“${snippet(text, q)}”`;
+}
+/* Why a conversation matches the filter: "" when its name, topic or people match (the row shows that), the project's
+   name, or (agents' conversations only) what its messages say; null when it does not match. */
+function matchReason(ch, q) {
+  if (conversationNames(ch).includes(q)) return "";
+  if (projectName(ch).toLowerCase().includes(q)) return `in ${projectName(ch)}`;
+  return ch.kind === "a2a" ? textReason(ch, q) : null;
+}
+const findConversations = (q) => Object.keys(CH).filter((k) => matchReason(CH[k], q) !== null);
 /* Recipients for a new message, people first, then agents; existing DMs are included and simply reopen. */
 function recipients(q) {
   const ids = memberIds().filter(canMessage).filter((k) => !q || `${M[k].name} ${M[k].role}`.toLowerCase().includes(q));
@@ -63,6 +107,11 @@ function recipients(q) {
 }
 
 export {
+  activeToday,
+  agentConversations,
+  lastActivity,
+  matchReason,
+  newestFirst,
   sentAt,
   splitTime,
   DEFAULT_CHAT,

@@ -4,10 +4,15 @@ import { openSmartTaskComposer } from "./task-composer.js";
 import {
   applyPos, followThreadEnd, jumpToAsk, jumpToLatest, placeStream, placeThread, replaceStream, savedPos, syncLatestJump, trackPos, watchAsks,
 } from "./chat-scroll.js";
-import { ASK_CLICKS, messageNeeds, onAskKeydown, resetAsks, saveAskDraft, workRef } from "./chat-asks.js";
+import { ASK_CLICKS, answerableHere, messageNeeds, onAskKeydown, resetAsks, saveAskDraft, workRef } from "./chat-asks.js";
 import { CHAT_VIEWS, chatViewHtml, isChatView } from "./chat-views.js";
 import { bindOverlays, syncOverlayHistory } from "./chat-overlays.js";
-import { chatListHtml, needsCount, onListClick, onListInput, onListKeydown, prepareList, takeListFocus, unreadDot } from "./chat-list.js";
+import {
+  PRESENCE_WORD, chatListHtml, needsCount, onListClick, onListInput, onListKeydown, prepareList, takeListFocus, unreadDot,
+} from "./chat-list.js";
+import { endVisit, markAllRead, newFromId, startVisit, watchUnread } from "./chat-read.js";
+import { listIsOverlay, watchListMode } from "./chat-layout.js";
+import { bindPanelResize, panelWidthStyle } from "./chat-panel-width.js";
 import {
   DEFAULT_CHAT, chatTitle, dmSources, inboxItem, openAsks, openDirectMessage, resolveChatId, sentAt, sourceHref, sourceLabel, splitTime,
 } from "./chat-model.js";
@@ -22,9 +27,11 @@ import {
 
 const chatDrafts = new Map();      /* conversation id -> unsent message */
 const threadDrafts = new Map();    /* thread root message id -> { text, also }: unsent reply and its "Also send to" choice */
-const local = { search: null, linked: null, pendingLink: null, details: false, members: false, files: false, threadFrom: "", openThread: null, threadLand: null };
+const local = {
+  search: null, linked: null, pendingLink: null, details: false, members: false, files: false, threadFrom: "", openThread: null, threadLand: null,
+  focusCompose: false,
+};
 const OVERLAY_THREAD = "(max-width: 1279px)";
-const NARROW_LIST = "(max-width: 959px)";
 const matchesMedia = (q) => Boolean(window.matchMedia?.(q).matches);
 
 /* ---------------------------------------------------------------- names and time */
@@ -48,6 +55,10 @@ const richText = (text) => esc(text).replace(/\bT-A\d+\b/g, workRef).replace(/@(
 function toolButton(act, id, icon, label) {
   return `<button class="btn ghost icon msg-tool" type="button" data-act="${act}" data-id="${id}" aria-label="${esc(label)}" title="${esc(label)}">${ic(icon, "ic16")}</button>`;
 }
+/* In an agents' conversation the one action is named on wide pointers too, not left to a tooltip. */
+function textToolButton(act, id, icon, label) {
+  return `<button class="btn ghost sm msg-tool msg-tool-text" type="button" data-act="${act}" data-id="${id}">${ic(icon, "ic16")}${esc(label)}</button>`;
+}
 const menuEntry = (act, id, icon, label) => `<button role="menuitem" type="button" data-act="${act}" data-id="${id}">${ic(icon, "ic20")}${esc(label)}</button>`;
 function messageTools(m, readOnly) {
   const id = esc(m.id), name = M[m.who].name;
@@ -58,7 +69,7 @@ function messageTools(m, readOnly) {
   const time = `<p class="msg-menu-time" role="none">${ic("clock", "ic14")}Sent ${esc(sentAt(m))}</p>`;
   const menu = time + tools.map(([act, icon, label]) => menuEntry(act, id, icon, label)).join("");
   return `<span class="msg-tools" role="group" aria-label="Message actions">
-    ${tools.map(([act, icon, label]) => toolButton(act, id, icon, label)).join("")}
+    ${tools.map(([act, icon, label]) => (readOnly ? textToolButton : toolButton)(act, id, icon, label)).join("")}
     <span class="msg-menu">${moreMenu("msg-" + m.id, `Actions for message from ${name}, ${sentAt(m)}`, menu, "ghost")}</span>
   </span>`;
 }
@@ -100,7 +111,7 @@ function messageHtml(m, prev, opts = {}) {
   /* A grouped message has no header, so its send status sits after the text, never in the narrow gutter. */
   const status = cont && m.pending ? sendingStatus() : "";
   const tools = opts.tools ? messageTools(m, opts.readOnly) : "";
-  const needs = messageNeeds(m, opts.tools && S.thread === m.id ? "in-thread" : opts.cards, opts.ch);
+  const needs = messageNeeds(m, opts.tools && S.thread === m.id ? "in-thread" : opts.cards, opts.ch, opts.threadRoot);
   const text = m.text || status ? `<p class="tx">${richText(m.text || "")}${status}</p>` : "";
   return `<div class="msg${cont ? " cont" : ""}${m.pending ? " is-pending" : ""}" data-mid="${esc(m.id)}">${gutter}<div class="body">${head}
     ${text}${messageAttachmentsHtml(m, opts.ch)}${tools}
@@ -119,6 +130,14 @@ const hit = (m, q) => m.text.toLowerCase().includes(q) || M[m.who].name.toLowerC
 /* Indexes of a message's thread replies that match; a match there lists the message with a way into its thread. */
 const threadHits = (m, q) => (m.thread || []).flatMap((r, i) => (hit(r, q) ? [i] : []));
 const matches = (m, q) => hit(m, q) || threadHits(m, q).length > 0;
+/* Posts and thread replies are counted apart, so a post and a reply in its thread never read as "1 message". */
+function searchStatus(id, q) {
+  if (!q) return "";
+  const msgs = CH[id].msgs, posts = msgs.filter((m) => hit(m, q)).length;
+  const replies = msgs.reduce((n, m) => n + threadHits(m, q).length, 0);
+  if (!posts && !replies) return "No matches";
+  return [posts ? plural(posts, "post", "posts") : "", replies ? plural(replies, "thread reply", "thread replies") : ""].filter(Boolean).join(", ");
+}
 function noMatches(ch, q) {
   return `<div class="chat-empty"><h2>No messages match “${esc(q)}”</h2><p>Search looks at the messages, thread replies and file names in ${esc(chatTitle(ch))}.</p></div>`;
 }
@@ -130,13 +149,16 @@ function streamHtml(id) {
   const readOnly = ch.kind === "a2a";
   const opts = { cards: readOnly ? "chip" : "card", tools: true, readOnly, ch: id, q };
   let lastDay = "";
+  const newFrom = q ? null : newFromId(id);
   return list.map((m, i) => {
     const [day] = splitTime(m.time);
     /* A static rule marks where the day starts; its label sticks to the stream's top edge until the next day's
        label replaces it, so the first visible message always has a date. */
     const divider = day !== lastDay ? `<div class="chat-day-rule" aria-hidden="true"></div><h2 class="chat-day"><span>${esc(day)}</span></h2>` : "";
     lastDay = day;
-    return divider + messageHtml(m, i ? list[i - 1] : null, opts);
+    /* Where this visit's unread messages begin. */
+    const fresh = m.id === newFrom ? `<p class="chat-new-rule"><span>New messages</span></p>` : "";
+    return divider + fresh + messageHtml(m, i && !fresh ? list[i - 1] : null, opts);
   }).join("");
 }
 
@@ -229,6 +251,7 @@ function sendChatMessage(form) {
   const message = { id: "u" + Date.now(), who: "you", time: clock(), ...body, pending: true };
   if (dmSources.has(id)) { message.src = dmSources.get(id); dmSources.delete(id); form.querySelector(".chat-compose-src")?.remove(); }
   ch.msgs.push(message);
+  markAllRead(id);
   chatDrafts.delete(id);
   local.search = null;
   document.querySelector(".chat-search-row")?.remove();
@@ -242,12 +265,22 @@ function sendThreadReply(form) {
   const field = form.elements.message, body = sendable(form, field);
   if (!body) return false;
   const ch = CH[form.dataset.ch], root = ch.msgs.find((m) => m.id === form.dataset.id);
-  const reply = { who: "you", time: clock(), ...body, text: body.text.trim() }, also = threadDraft(root.id).also;
+  /* Like a main send, the reply (and its copy in the channel) says "Sending…" until the office confirms. */
+  const reply = { who: "you", time: clock(), ...body, text: body.text.trim(), pending: true }, also = threadDraft(root.id).also;
   (root.thread ||= []).push(reply);
   threadDrafts.delete(root.id);
   followThreadEnd();
-  if (also && ch.kind === "channel") ch.msgs.push({ id: "u" + Date.now(), ...reply, inThread: { id: root.id, who: root.who } });
+  const copy = also && ch.kind === "channel" ? { id: "u" + Date.now(), ...reply, inThread: { id: root.id, who: root.who } } : null;
+  if (copy) ch.msgs.push(copy);
+  setTimeout(() => confirmThreadSent(form.dataset.ch, root, reply, copy), 700);
   return true;
+}
+/* Swaps the confirmed reply in place, so the thread composer keeps focus and its next draft. */
+function confirmThreadSent(id, root, reply, copy) {
+  reply.pending = false;
+  const i = root.thread.indexOf(reply), el = document.querySelector(`aside.thread .msgs > [data-mid="${CSS.escape(root.id + "-r" + i)}"]`);
+  if (el) el.outerHTML = threadReplyHtml(id, root, i);
+  if (copy) confirmSent(id, copy);
 }
 
 /* ---------------------------------------------------------------- header */
@@ -302,6 +335,20 @@ function contextParts(ch, chId, slot = "ctx") {
   ];
 }
 const headerContext = (ch, chId) => joinSep(contextParts(ch, chId).map(([, v]) => (v ? `<span>${v}</span>` : "")));
+/* Plain words for when the full context line would be cut off: no links, so nothing clipped is focusable;
+   Details holds the full line with its links. */
+function dmSummary(who) {
+  const m = M[who];
+  if (m.kind === "person") return [m.role, m.last];
+  return [m.role, kindWord(who), PRESENCE_WORD[presence(who)]];
+}
+function summaryParts(ch) {
+  if (ch.kind === "dm") return dmSummary(ch.with);
+  if (ch.kind === "a2a") return ["Reading as the owner", "Between agents"];
+  const n = channelMembers(ch).length;
+  return [ch.topic, n ? plural(n, "member", "members") : ""];
+}
+const headerSummary = (ch) => esc(summaryParts(ch).filter(Boolean).join(" · "));
 function detailsPanel(ch, chId) {
   if (!local.details) return "";
   const rows = contextParts(ch, chId, "details").filter(([, v]) => v).map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
@@ -337,7 +384,7 @@ function chatHeaderHtml(id, ch, title) {
     <div class="ph-t chat-title">
       ${headerLead(ch)}
       <div class="chat-heading"><h1 id="ch-title" tabindex="-1">${esc(title)}</h1>
-        <p class="chat-context">${headerContext(ch, id)}</p>
+        <p class="chat-context"><span class="chat-ctx-full">${headerContext(ch, id)}</span><span class="chat-ctx-summary">${headerSummary(ch)}</span></p>
       </div>
       ${readAsTag(ch)}
     </div>
@@ -347,11 +394,11 @@ function chatHeaderHtml(id, ch, title) {
 }
 function searchRowHtml(id, title) {
   if (local.search?.id !== id) return "";
-  const q = local.search.q.trim(), n = q ? CH[id].msgs.filter((m) => matches(m, q.toLowerCase())).length : null;
+  const status = searchStatus(id, local.search.q.trim().toLowerCase());
   return `<div class="chat-search-row" id="chat-search-row" role="search">
     ${ic("search", "ic16")}<label class="sr-only" for="chat-search-input">Search messages in ${esc(title)}</label>
     <input class="field" id="chat-search-input" type="search" placeholder="Search messages in ${esc(title)}" value="${esc(local.search.q)}" autocomplete="off" aria-describedby="chat-search-status">
-    <span class="chat-search-status" id="chat-search-status" role="status">${n === null ? "" : plural(n, "message", "messages")}</span>
+    <span class="chat-search-status" id="chat-search-status" role="status">${status}</span>
     <button class="btn ghost icon" type="button" data-act="chat-search" aria-label="Close search">${ic("x", "ic20")}</button>
   </div>`;
 }
@@ -359,11 +406,16 @@ function searchRowHtml(id, title) {
 /* ---------------------------------------------------------------- side panels (thread, members) and read-only footer */
 /* Where a side panel covers the conversation it is a modal dialog with a scrim (made inert-outside on mount). */
 const panelModal = () => (matchesMedia(OVERLAY_THREAD) ? ' role="dialog" aria-modal="true"' : "");
+/* A thread reply; a chip for the ask on the thread's own root points up to its card. */
+function threadReplyHtml(id, root, i) {
+  const replies = root.thread, threadRoot = CH[id].kind === "a2a" ? null : root;
+  return messageHtml(Object.assign({ id: root.id + "-r" + i }, replies[i]), i ? replies[i - 1] : null, { ch: id, threadRoot });
+}
 function chatThreadHtml(id, root, title) {
   if (!root) return "";
   const replies = root.thread || [], readOnly = CH[id].kind === "a2a";
   const count = replies.length ? plural(replies.length, "reply", "replies") : "No replies yet";
-  const list = replies.map((r, i) => messageHtml(Object.assign({ id: root.id + "-r" + i }, r), i ? replies[i - 1] : null, { ch: id })).join("");
+  const list = replies.map((_r, i) => threadReplyHtml(id, root, i)).join("");
   /* A writable thread carries the ask's own card, answerable here; the stream points to it while the thread is open. */
   const head = messageHtml(Object.assign({}, root, { thread: null }), null, { cards: readOnly ? "chip" : "thread-card", ch: id });
   return `<div class="thread-scrim" data-act="thread-close" data-scrim aria-hidden="true"></div>
@@ -403,10 +455,12 @@ function takeThread(id) {
   if (local.openThread?.ch !== id) return;
   S.thread = local.openThread.id;
   local.threadFrom = "";
+  const reply = local.openThread.reply;
+  if (reply !== undefined) local.threadLand = { reply: Number(reply) };
 }
 function chatFrame(id, cls, header, main, side = "") {
-  const listOpen = S.chatList === id;
-  return `<div class="${["chat", ...cls, listOpen ? "list-open" : ""].filter(Boolean).join(" ")}" data-ch="${esc(id)}">
+  const overlay = listIsOverlay(), listOpen = overlay && S.chatList === id;
+  return `<div class="${["chat", ...cls, overlay ? "list-overlay" : "", listOpen ? "list-open" : ""].filter(Boolean).join(" ")}" data-ch="${esc(id)}"${panelWidthStyle()}>
     ${header}
     ${chatListHtml(id, listOpen)}
     <div class="chat-scrim" data-act="chat-list" data-id="${id}" data-scrim aria-hidden="true"></div>
@@ -425,7 +479,7 @@ function pageChat(id) {
   if (isChatView(id)) return pageChatView(id);
   id = resolveChatId(id);
   const ch = CH[id];
-  ch.unread = 0;
+  startVisit(id);
   if (S.chatList && S.chatList !== id) S.chatList = null;
   takeLink(id);
   takeThread(id);
@@ -464,11 +518,15 @@ function markLinked(s) {
   const target = route()[2], el = target && s.querySelector(`:scope > [data-mid="${CSS.escape(target)}"]`);
   el?.classList.add("is-linked");
 }
-/* The linked message takes focus (after the router focused the heading), so keyboard and screen-reader users land on it. */
+/* The linked message takes focus (after the router focused the heading), so keyboard and screen-reader users land on it.
+   A message whose ask is answered on its card here focuses the card's question instead (its Inbox link stays on the card). */
 function focusLinked(s) {
   const el = local.pendingLink && s.querySelector(`:scope > [data-mid="${CSS.escape(local.pendingLink)}"]`);
+  const m = el && CH[s.dataset.ch].msgs.find((x) => x.id === local.pendingLink);
   local.pendingLink = null;
   if (!el) return;
+  const card = answerableHere(m) && el.querySelector(".chat-needs-q");
+  if (card) { card.focus({ preventScroll: true }); return; }
   el.tabIndex = -1;
   el.setAttribute("aria-label", `Linked message from ${el.querySelector(".hd b")?.textContent || "this conversation"}`);
   el.focus({ preventScroll: true });
@@ -494,7 +552,8 @@ function refreshSearch(s) {
   highlightMatches(s, q);
   applyPos(s, q ? { top: true } : { end: true });
   const status = document.getElementById("chat-search-status");
-  if (status) status.textContent = q ? plural(CH[id].msgs.filter((m) => matches(m, q)).length, "message", "messages") : "";
+  if (status) status.textContent = searchStatus(id, q);
+  watchUnread(s);
 }
 function toggleSearch(id) {
   local.search = local.search?.id === id ? null : { id, q: "" };
@@ -577,13 +636,36 @@ function toggleDetails() {
   document.querySelector(".chat-details-btn")?.focus();
   syncOverlayHistory();
 }
-/* Conversation list below 960px: an overlay opened from the header (also the "chat-list" app action). */
+/* The selected row of the inline list, or of the open drawer. */
+const focusSelectedRow = () => document.querySelector('.chlist [aria-current="page"]')?.focus();
+/* Conversation list below 768 px of content: an overlay opened from the header (also the "chat-list" app action).
+   Where the list is inline, the action moves focus to its selected row. */
 function toggleChatList(id) {
+  if (!listIsOverlay()) { S.chatList = null; focusSelectedRow(); return; }
   const open = S.chatList !== id;
   S.chatList = open ? id : null;
   render(false);
-  (open ? document.querySelector('.chlist [aria-current="page"]') : document.querySelector(".chat-list-btn"))?.focus();
+  if (open) focusSelectedRow(); else document.querySelector(".chat-list-btn")?.focus();
   syncOverlayHistory();
+}
+/* Crossing the inline-list width. Widening with the drawer open closes it cleanly: no modal state, no inert
+   conversation, no history entry left behind, and focus on the selected inline row. Narrowing moves focus that
+   was in the (now hidden) list to the Conversations button. */
+function closeDrawerInline() {
+  S.chatList = null;
+  focusSelectedRow();
+  syncOverlayHistory();
+}
+function onListModeCross(root, overlay) {
+  if (!overlay && S.chatList) {
+    S.chatList = null;
+    render(false);
+    closeDrawerInline();
+    return;
+  }
+  const inList = root.querySelector(".chlist")?.contains(document.activeElement);
+  root.classList.toggle("list-overlay", overlay);
+  if (overlay && inList) root.querySelector(".chat-list-btn")?.focus();
 }
 const anyOverlay = () => route()[0] === "chat" && Boolean(S.thread || local.members || local.files || S.chatList || local.details);
 /* Back closes the topmost overlay first: a side panel, then the drawer, then Details. */
@@ -600,7 +682,7 @@ function focusThreadCard() {
   document.querySelector(".thread .chat-needs-q, .thread .chat-needs-done")?.focus();
 }
 function openViewThread(t) {
-  local.openThread = { ch: t.dataset.ch, id: t.dataset.id };
+  local.openThread = { ch: t.dataset.ch, id: t.dataset.id, reply: t.dataset.hit };
   location.hash = `#/chat/${t.dataset.ch}`;
 }
 
@@ -622,8 +704,12 @@ const CLICKS = {
   "chat-latest-jump": () => jumpToLatest(),
   "chat-dm-msg": (id, _t, chId) => {
     const m = CH[chId].msgs.find((x) => x.id === id);
-    if (m) location.hash = openDirectMessage(m.who, { ch: chId, msg: id });
+    if (!m) return;
+    local.focusCompose = true;
+    location.hash = openDirectMessage(m.who, { ch: chId, msg: id });
   },
+  /* The footer's DM buttons navigate in the shell's handler; the DM opens with its composer focused. */
+  "chat-dm": () => { local.focusCompose = true; },
   "chat-src-remove": (id) => {
     dmSources.delete(id);
     render(false);
@@ -640,7 +726,9 @@ function stayInConversation(fromRow) {
   syncOverlayHistory();
 }
 function onChatClick(e) {
-  if (onListClick(e, e.currentTarget) === "same-conversation") { stayInConversation(Boolean(e.target.closest("#chat-nav a"))); return; }
+  const listed = onListClick(e, e.currentTarget);
+  if (listed === "handled") return;
+  if (listed === "same-conversation") { stayInConversation(Boolean(e.target.closest("#chat-nav a"))); return; }
   const t = e.target.closest("[data-act]"), fn = t && CLICKS[t.dataset.act];
   if (fn) fn(t.dataset.id, t, e.currentTarget.dataset.ch);
 }
@@ -665,13 +753,14 @@ function mountOverlays(root) {
   const panel = root.querySelector('.thread[aria-modal="true"]');
   if (panel) inertOutside(panel);
 }
-/* Details is offered whenever the context line under the title is cut off (always below 640 px, by CSS). */
+/* When the full context line under the title would be cut off, the header shows a plain summary instead and offers
+   Details with the full line (always below 640 px, by CSS). The full line stays laid out, hidden, for measuring. */
 function watchContext(root) {
-  const ctx = root.querySelector(".chhead .chat-context");
-  if (!ctx || !root.querySelector(".chat-details-btn")) return;
+  const ctx = root.querySelector(".chhead .chat-context"), full = ctx?.querySelector(".chat-ctx-full");
+  if (!full || !root.querySelector(".chat-details-btn")) return;
   const measure = () => {
     if (!ctx.isConnected) { ro.disconnect(); return; }
-    root.classList.toggle("ctx-overflow", local.details || ctx.scrollWidth > ctx.clientWidth + 1);
+    root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1);
   };
   const ro = new ResizeObserver(measure);
   ro.observe(ctx);
@@ -695,7 +784,20 @@ function mountStream(root) {
   placeStream(s, q ? { top: true } : initialPos(id));
   trackPos(s);
   watchAsks(s);
+  watchUnread(s);
   focusLinked(s);
+}
+/* After a navigation started here (Mentions' "Open in thread", "Message … about this", a footer DM button). */
+function takeArrivalFocus() {
+  if (local.openThread) {
+    local.openThread = null;
+    focusThreadLanding();
+    syncOverlayHistory();
+  }
+  if (local.focusCompose) {
+    local.focusCompose = false;
+    document.getElementById("compose")?.focus();
+  }
 }
 function mountChat() {
   releaseInert();
@@ -709,20 +811,20 @@ function mountChat() {
   mountThread(root);
   fitTextarea(document.getElementById("thread-compose"));
   mountOverlays(root);
+  bindPanelResize(root);
   watchContext(root);
+  watchListMode(root, onListModeCross);
+  /* A render at inline width (the shell re-renders at its own breakpoints) closes a drawer left open. */
+  if (S.chatList && !root.classList.contains("list-overlay")) closeDrawerInline();
   takeListFocus();
-  if (local.openThread) {
-    local.openThread = null;
-    document.getElementById("chat-thread-title")?.focus();
-    syncOverlayHistory();
-  }
+  takeArrivalFocus();
 }
 
 /* "#" and the New message command open the list (as the drawer below 960 px) on its search or recipient picker. */
 function openChatList(mode) {
   const here = route()[0] === "chat", r1 = route()[1], id = here ? (isChatView(r1) ? r1 : resolveChatId(r1)) : DEFAULT_CHAT;
   prepareList(mode);
-  if (matchesMedia(NARROW_LIST)) S.chatList = id;
+  if (listIsOverlay()) S.chatList = id;
   if (here) { render(false); syncOverlayHistory(); }
   else location.hash = "#/chat/" + id;
 }
@@ -733,6 +835,7 @@ const startNewMessage = () => openChatList("new");
 window.addEventListener("hashchange", () => {
   releaseInert();
   resetAsks();
+  if (route()[0] !== "chat") endVisit();
   Object.assign(local, { details: false, members: false, files: false, linked: null });
 });
 /* A link to the URL already open causes no hash change (the shell re-renders in place): capture phase, before it. */
@@ -741,7 +844,7 @@ document.addEventListener("click", (e) => {
   if (a && a.getAttribute("href") === location.hash) local.linked = null;
 }, true);
 /* Crossing the overlay width re-renders so a side panel is a dialog only where it covers the conversation. */
-window.matchMedia?.(OVERLAY_THREAD).addEventListener?.("change", () => { if (route()[0] === "chat" && (S.thread || local.members)) render(false); });
+window.matchMedia?.(OVERLAY_THREAD).addEventListener?.("change", () => { if (route()[0] === "chat" && (S.thread || local.members || local.files)) render(false); });
 
 export {
   chatDocTitle,
