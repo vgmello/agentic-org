@@ -225,11 +225,51 @@ html[data-ui-theme='report'] {
 	--exec-deny-confirm-hover: var(--tone-bad-ink);
 	--exec-deny-confirm-ink: #ffffff;
 
-	/* Executive Brief memo (borderless editorial column on Report Day) */
-	--exec-cos-bg: transparent;
-	--exec-cos-fade: #ffffff;
+	/* Executive Brief memo (shaded editorial callout with 3px accent bar matching poc/v6.html:3380) */
+	--exec-cos-bg: #f7f9fc;
+	--exec-cos-fade: #f7f9fc;
 	--exec-cos-border: transparent;
-	--exec-cos-rule: transparent;
+	--exec-cos-rule: var(--tone-accent);
+	--exec-memo-bg: #f7f9fc;
+	--exec-memo-shadow: inset 3px 0 0 var(--tone-accent);
+	--exec-lens-on-bg: #0b101b;
+	--exec-lens-on-ink: #ffffff;
+	--exec-lens-on-shadow: none;
+	--exec-cmdk-dialog-radius: 6px;
+	--exec-cmdk-tab-grp-radius: 4px;
+	--exec-cmdk-tab-radius: 3px;
+	--exec-cmdk-esc-radius: 3px;
+	--exec-cmdk-opt-radius: 3px;
+	--exec-cmdk-tag-radius: 3px;
+	--exec-cmdk-kbd-small-radius: 3px;
+	--exec-cmdk-grp-tracking: 0.1em;
+	--exec-cmdk-menu-bg: #ffffff;
+	--exec-cmdk-menu-blur: none;
+	--exec-cmdk-menu-shadow: inset 0 0 0 1px #dce2ec, 0 20px 48px -20px rgba(11, 16, 27, 0.18);
+	--exec-cmdk-tabs-bg: #f9fafc;
+	--exec-cmdk-tab-grp-bg: #eef1f6;
+	--exec-cmdk-tab-grp-shadow: none;
+	--exec-cmdk-tab-active-bg: #0b101b;
+	--exec-cmdk-tab-active-ink: #ffffff;
+	--exec-cmdk-tab-active-ico: #ffffff;
+	--exec-cmdk-tab-active-shadow: none;
+	--exec-cmdk-esc-bg: #f4f6f9;
+	--exec-cmdk-esc-shadow: none;
+	--exec-cmdk-esc-ink: #475569;
+	--exec-cmdk-opt-hover-bg: #f4f6f9;
+	--exec-cmdk-opt-hover-shadow: inset 2.5px 0 0 #0b101b;
+	--exec-cmdk-opt-active-bg: #f4f6f9;
+	--exec-cmdk-opt-active-shadow: inset 2.5px 0 0 #0b101b;
+	--exec-cmdk-opt-active-ico: #0b101b;
+	--exec-cmdk-tag-bg: #eef1f6;
+	--exec-cmdk-foot-bg: #f9fafc;
+	--exec-cmdk-foot-kbd-bg: #ffffff;
+	--exec-cmdk-foot-kbd-ring: #e2e7ef;
+	--exec-cmdk-foot-kbd-ink: #0b101b;
+	--exec-scroll-hint-bg: #ffffff;
+	--exec-scroll-hint-pill-bg: transparent;
+	--exec-scroll-hint-ink: #475569;
+	--exec-scroll-hint-ink-hover: #0b101b;
 
 	/* Unread rail dot */
 	--exec-nav-dot: var(--tone-warn);
@@ -265,6 +305,19 @@ html[data-ui-theme='report'] {
 	--side-panel-surface: #ffffff;
 	--assembly-surface: #ffffff;
 	--workspace-secondary-surface: #ffffff;
+	--exec-scrim-bg: rgba(11, 16, 27, 0.36);
+	--exec-tess-bg: #ffffff;
+	--exec-tess-border: #cbd3df;
+	--exec-tess-radius: 12px;
+	--exec-tess-blur: none;
+	--exec-tess-shadow: 0 22px 54px -16px rgba(11, 16, 27, 0.22);
+	--exec-tess-pill-shadow: 0 12px 30px -10px rgba(11, 16, 27, 0.2);
+	--exec-notif-bg: #ffffff;
+	--exec-notif-border: #cbd3df;
+	--exec-notif-blur: none;
+	--exec-notif-shadow: 0 20px 48px -14px rgba(11, 16, 27, 0.2);
+	--exec-analysis-bg:
+		radial-gradient(circle at 26% 52%, rgba(29, 78, 137, 0.07), transparent 48%), #f8fafc;
 }
 
 /* Report Day project release readiness strip: white surface with >= 3:1 unfilled progress track (Prototype Release 1149b4f1) */
@@ -288,6 +341,7 @@ html[data-ui-theme^='report'] {
 	--exec-hero-align: flex-end;
 	--exec-hero-pad-b: 18px;
 	--exec-hero-border: 1.5px solid var(--report-masthead-rule);
+	--exec-h1-size: clamp(1.55rem, 2.4vw, 2.05rem);
 	--exec-h1-weight: 700;
 	--exec-h1-tracking: -0.038em;
 	--exec-h1-em-decoration: underline;
@@ -325,10 +379,14 @@ html[data-ui-theme^='report'] {
 	--exec-pillar-pad: 4px 28px;
 	--exec-pillar-pad-sm: 16px 0;
 	--exec-pillar-edge-pad: 0px;
-	--exec-kpi-num-size: 2.2rem;
+	--exec-kpi-num-size: 2.35rem;
 	--exec-kpi-num-lh: 1.05;
 	--exec-kpi-num-weight: 750;
 	--exec-kpi-num-tracking: -0.045em;
+	--exec-kpi-sub-lbl-size: 0.68rem;
+	--exec-kpi-sub-lbl-weight: 550;
+	--exec-kpi-sub-lbl-transform: uppercase;
+	--exec-kpi-sub-lbl-tracking: 0.05em;
 
 	--exec-bar-height: 6px;
 	--exec-bar-radius: 1px;
@@ -343,13 +401,11 @@ html[data-ui-theme^='report'] {
 	--exec-spot-pad-xl: 0 36px 0 0;
 	--exec-brief-pad: 0 0 0 36px;
 	--exec-brief-pad-sm: 24px 0 0;
-	--exec-memo-bg: transparent;
-	--exec-memo-shadow: none;
-	--exec-memo-radius: 0px;
-	--exec-memo-pad: 0px;
-	--exec-memo-gap: 0px;
-	--exec-memo-item-py: 12px;
-	--exec-memo-first-pt: 2px;
+	--exec-memo-radius: 0 4px 4px 0;
+	--exec-memo-pad: 1rem 1.125rem;
+	--exec-memo-gap: 0.875rem;
+	--exec-memo-item-py: 0px;
+	--exec-memo-first-pt: 0px;
 
 	--exec-lenses-radius: 4px;
 	--exec-lenses-shadow: inset 0 0 0 1px var(--report-rule);
@@ -443,7 +499,6 @@ html[data-ui-theme^='report'] .act-page {
 	max-width: none;
 }
 
-html[data-ui-theme^='report'] .triage-page,
 html[data-ui-theme^='report'] .work-page {
 	padding: 0;
 }
@@ -494,18 +549,6 @@ html[data-ui-theme='report']
 	:is(.work-row, .work-bcard):is(:hover, :focus-within, [aria-current='true'])
 	:is(.work-status[data-tone='done'], .work-criteria.is-complete) {
 	color: #0f5d2c;
-}
-
-html[data-ui-theme^='report'] .triage-workspace,
-html[data-ui-theme^='report'] .triage-workspace:hover {
-	border-radius: 0;
-	box-shadow: none;
-}
-
-@media (min-width: 960px) {
-	html[data-ui-theme^='report'] .triage-workspace {
-		height: max(600px, calc(100dvh - var(--exec-topbar-height, 56px)));
-	}
 }
 
 /* Report Day hover & selected row expiry / handled-ok inks (>= 4.5:1 AA on #eaedf3 and #d6e2f0) */

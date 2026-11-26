@@ -303,7 +303,7 @@
 					{/if}
 				</p>
 
-				{#if totals.records === 0 && data.projects.every((p) => p.toDate.records === 0)}
+				{#if totals.records === 0 && data.projects.length === 0 && data.insights.length === 0}
 					<EmptyState
 						level={3}
 						title="No spend yet"

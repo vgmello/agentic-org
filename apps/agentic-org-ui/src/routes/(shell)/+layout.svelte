@@ -2,7 +2,12 @@
 	import ExecutiveCommandBar from '$lib/platform/shell/ExecutiveCommandBar.svelte';
 	import ExecutiveSidebar from '$lib/platform/shell/ExecutiveSidebar.svelte';
 	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
+	import ShortcutsDialog from '$lib/platform/shell/ShortcutsDialog.svelte';
+	import { provideNotifications } from '$lib/platform/shell/notifications.svelte';
 	import HomeScrollHint from '$lib/modules/home/features/HomeScrollHint.svelte';
+	import TessPanel from '$lib/modules/tess/TessPanel.svelte';
+	import { createHttpTessApi } from '$lib/modules/tess/api';
+	import { provideTessPanel, TessPanelState } from '$lib/modules/tess/tess-panel.svelte';
 	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
@@ -25,6 +30,7 @@
 		setScopedSearchContext
 	} from '$lib/platform/shell/scoped-search.svelte';
 	import { provideShellAi, type ShellAiAskOptions } from '$lib/platform/shell/shell-ai';
+	import { provideShellCommand } from '$lib/platform/shell/shell-command';
 	import { provideShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
 	import { officesApi } from '$lib/modules/offices/api';
@@ -37,10 +43,66 @@
 	$effect.pre(() => chatDrafts.syncScope());
 	onDestroy(() => chatDrafts.dispose());
 
-	let askHandler: ((prompt: string, opts?: ShellAiAskOptions) => void) | undefined;
+	const tessPanel = provideTessPanel(
+		new TessPanelState(
+			createHttpTessApi({
+				session: {
+					submit: (path, body, signal) => appSession.controller().submit(path, body, signal),
+					openSseStream: (path, signal) => appSession.controller().openSseStream(path, signal)
+				}
+			})
+		)
+	);
+	$effect(() => {
+		tessPanel.setOrganization(organizationId);
+	});
+	onDestroy(() => tessPanel.dispose());
+	provideNotifications();
+	let shortcutsOpen = $state(false);
+	let commandBar = $state<ReturnType<typeof ExecutiveCommandBar> | undefined>();
+
+	provideShellCommand({
+		openPalette(prefill?: string) {
+			commandBar?.openPalette(prefill);
+		},
+		toggleTess() {
+			tessPanel.toggle(uiPrefs.showTessPill);
+		},
+		toggleTessExpand() {
+			tessPanel.toggleExpand();
+		},
+		async openTessChat() {
+			await commandBar?.openTessChat();
+		},
+		openShortcuts() {
+			shortcutsOpen = true;
+		},
+		openNewTask() {
+			commandBar?.openNewTask();
+		}
+	});
+
+	function askTess(prompt: string, opts?: ShellAiAskOptions) {
+		tessPanel.ask(
+			prompt,
+			{
+				organizationId,
+				snapshot: shellData.snapshot,
+				items: shellData.workItems,
+				offices: shellData.offices,
+				ownerId: shellData.ownerId,
+				domain: { inboxItems: shellData.inboxItems },
+				routeLabel: areaFor(page.url.pathname) ?? 'Home',
+				routePath: page.url.pathname,
+				offline: showPaused
+			},
+			opts
+		);
+	}
+
 	provideShellAi({
 		ask(prompt: string, opts?: ShellAiAskOptions) {
-			askHandler?.(prompt, opts);
+			askTess(prompt, opts);
 		}
 	});
 	setScopedSearchContext(createScopedSearchHost());
@@ -59,6 +121,7 @@
 		if (routeChanged) {
 			navKeys.cancel(false);
 			mobileMenuOpen = false;
+			tessPanel.noteRouteChange();
 		}
 		if (routeChanged && !move.to?.url?.hash && mainEl) {
 			mainEl.scrollTop = 0;
@@ -294,6 +357,10 @@
 			projects={shellData.snapshot?.projects ?? []}
 			collapsed={sidebarCollapsed}
 			pinned={sidebarPinned}
+			tessOpen={tessPanel.open}
+			offline={showPaused}
+			onOpenSearch={() => commandBar?.openPalette()}
+			onToggleTess={() => tessPanel.toggle(uiPrefs.showTessPill)}
 			onToggleCollapse={toggleSidebarPin}
 			onMenuOpenChange={handleSidebarMenuOpenChange}
 			onPointerEnter={handleSidebarEnter}
@@ -320,32 +387,52 @@
 			<span class="text-sm font-semibold">{areaFor(page.url.pathname) ?? 'Agentic Org'}</span>
 		</div>
 		<ExecutiveCommandBar
+			bind:this={commandBar}
 			connection={data.connection}
 			snapshot={shellData.snapshot}
 			items={shellData.workItems}
 			inboxItems={shellData.inboxItems}
 			offices={shellData.offices}
 			ownerId={shellData.ownerId}
-			registerAsk={(fn) => {
-				askHandler = fn;
-			}}
+			offline={showPaused}
+			onToggleTess={() => tessPanel.toggle(uiPrefs.showTessPill)}
+			onToggleTessExpand={() => tessPanel.toggleExpand()}
+			onOpenShortcuts={() => (shortcutsOpen = true)}
+			onAskTess={askTess}
 		/>
-		<div class="relative flex min-h-0 flex-1 flex-col">
-			{#if isHome}
-				<HomeScrollHint scrollContainer={mainEl} />
-			{/if}
-			<main
-				bind:this={mainEl}
-				tabindex="-1"
-				aria-label={areaFor(page.url.pathname) ?? 'Agentic Org'}
-				class="flex min-h-0 flex-1 flex-col overflow-y-auto focus:outline-none"
-			>
-				{#if showPaused}<div class="shrink-0">
-						<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />
-					</div>{/if}
-				{@render children()}
-			</main>
+		<div class="relative flex min-h-0 flex-1 flex-row overflow-hidden">
+			<div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
+				{#if isHome}
+					<HomeScrollHint scrollContainer={mainEl} />
+				{/if}
+				<main
+					bind:this={mainEl}
+					tabindex="-1"
+					aria-label={areaFor(page.url.pathname) ?? 'Agentic Org'}
+					class="flex min-h-0 flex-1 flex-col overflow-y-auto focus:outline-none"
+				>
+					{#if showPaused}<div class="shrink-0">
+							<LiveBanner
+								loadedAt={liveState.loadedAt[organizationId]}
+								{retrying}
+								onretry={retry}
+							/>
+						</div>{/if}
+					{@render children()}
+				</main>
+			</div>
 		</div>
+		<TessPanel
+			panel={tessPanel}
+			{organizationId}
+			snapshot={shellData.snapshot}
+			items={shellData.workItems}
+			inboxItems={shellData.inboxItems}
+			offices={shellData.offices}
+			ownerId={shellData.ownerId}
+			offline={showPaused}
+		/>
+		<ShortcutsDialog bind:open={shortcutsOpen} />
 	</div>
 </div>
 <Toaster position="bottom-right" />
@@ -372,6 +459,13 @@
 	@media (min-height: 640px) {
 		.exec-shell-main :global(.activity-workspace),
 		.exec-shell-main :global(.project-frame-activity) {
+			flex: 1 1 0%;
+			min-height: 0;
+			height: auto;
+		}
+	}
+	@media (min-width: 960px) and (min-height: 640px) {
+		.exec-shell-main main > :global(.triage-page) {
 			flex: 1 1 0%;
 			min-height: 0;
 			height: auto;

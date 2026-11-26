@@ -223,14 +223,19 @@ test('MP-9: below 640px only the mobile section picker is shown and Member Work 
 		})
 	).toHaveCount(0);
 	await visit(page, '/members/noor/work');
+	await expect(page.getByTestId('agent-orb-rail')).toBeVisible();
+	const workMain = page.locator('.agent-main');
 	const search = page.getByTestId('header-scoped-search').getByTestId('scoped-work-search');
 	await expect(search).toBeVisible();
-	await expect(page.getByText('Pay button wraps under the total at 320 px')).toBeVisible();
+	await expect(workMain.getByText('Pay button wraps under the total at 320 px')).toBeVisible();
 	await search.fill('In progress');
-	await expect(page.getByText('Pay button wraps under the total at 320 px')).toBeVisible();
+	await expect(workMain.getByText('Pay button wraps under the total at 320 px')).toBeVisible();
 	await search.fill('zzz-no-match');
-	await expect(page.getByText('Pay button wraps under the total at 320 px')).toHaveCount(0);
-	await expect(page.getByText('No work matches this search.')).toBeVisible();
+	await expect(workMain.getByText('Pay button wraps under the total at 320 px')).toHaveCount(0);
+	await expect(workMain.getByText('No work matches this search.')).toBeVisible();
+	await search.fill('');
+	await workMain.getByRole('button', { name: 'Board', exact: true }).click();
+	await expect(page.getByTestId('member-work-board')).toBeVisible();
 
 	// Opening inline Pause on a wide agent profile, resizing below 640px (hiding inline Pause),
 	// and cancelling returns focus cleanly to the visible More menu button.

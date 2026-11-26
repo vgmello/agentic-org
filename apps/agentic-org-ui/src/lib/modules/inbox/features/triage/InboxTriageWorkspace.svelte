@@ -50,20 +50,23 @@
 	import { toast } from 'svelte-sonner';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ListFilter from '@lucide/svelte/icons/list-filter';
-	import Search from '@lucide/svelte/icons/search';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
-	import X from '@lucide/svelte/icons/x';
+	import InlineSearchRow from '$lib/components/InlineSearchRow.svelte';
+	import InlineSearchToggle from '$lib/components/InlineSearchToggle.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { executeDecisionAction } from '$lib/home/actions';
 	import { isDenyAction } from '$lib/home/model';
 	import { accountZone } from '$lib/modules/preferences';
 	import { toAppError } from '$lib/proto';
+	import NotificationsButton from '$lib/platform/shell/NotificationsButton.svelte';
+	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
 	import type { ShellRefreshResult } from '$lib/platform/shell/shell-data.svelte';
 	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { inboxApi } from '../../api';
 	import type { InboxItem, InboxScope } from '../../types';
 	import InboxDetailPane from './InboxDetailPane.svelte';
+	import InboxNotificationsSplit from './InboxNotificationsSplit.svelte';
 	import InboxQueueList from './InboxQueueList.svelte';
 	import InboxSnoozeDialog from './InboxSnoozeDialog.svelte';
 	import { formatSnoozeError, formatSnoozeReturn } from './snooze-presets';
@@ -125,8 +128,18 @@
 	}
 
 	const wide = new MediaQuery('min-width: 960px');
+	const notifications = useNotifications();
+	const notifTotalCount = $derived(
+		(notifications?.runningJobs.length ?? 0) + (notifications?.items.length ?? 0)
+	);
+	const notifAttentionCount = $derived(
+		(notifications?.runningJobs.length ?? 0) + (notifications?.unreadCount ?? 0)
+	);
 
 	// Writable derived states stay synced with URL query params and org changes without $effect state writes.
+	let viewingNotifications = $derived(
+		(page.url.searchParams.get('tab') ?? '').trim().toLowerCase() === 'notifications'
+	);
 	let activeTab = $derived<TriageTab>(parseTriageTab(page.url.searchParams.get('tab')));
 	let selectedId = $derived<string | undefined>(page.url.searchParams.get('item') ?? undefined);
 	let mobileDetailOpen = $derived<boolean>(
@@ -137,6 +150,7 @@
 		project: page.url.searchParams.get('project') || undefined
 	});
 	let searchQuery = $state('');
+	let searchOpen = $state(false);
 	let urgentOnly = $state(false);
 	let sortOrder = $state<TriageOrder>('priority');
 	let showDividers = $state(safeReadDividers());
@@ -336,7 +350,7 @@
 	}
 
 	function syncUrl(next: {
-		tab?: TriageTab;
+		tab?: TriageTab | 'notifications';
 		item?: string | null;
 		team?: string | null;
 		project?: string | null;
@@ -347,7 +361,7 @@
 		const url = hasPending && pendingUrl ? new URL(pendingUrl) : new URL(page.url);
 		pendingBaseHref = liveHref;
 
-		const nextTab = next.tab ?? activeTab;
+		const nextTab = next.tab ?? (viewingNotifications ? 'notifications' : activeTab);
 		if (nextTab === 'all') url.searchParams.delete('tab');
 		else url.searchParams.set('tab', nextTab);
 
@@ -384,6 +398,7 @@
 
 	function selectTab(tab: TriageTab) {
 		selectionVersion += 1;
+		viewingNotifications = false;
 		activeTab = tab;
 		decliningId = undefined;
 		mobileDetailOpen = false;
@@ -396,6 +411,30 @@
 		});
 		selectedId = wide.current ? nextList[0]?.id : undefined;
 		syncUrl({ tab, item: null });
+	}
+
+	function selectNotificationsTab() {
+		selectionVersion += 1;
+		viewingNotifications = true;
+		decliningId = undefined;
+		mobileDetailOpen = false;
+		syncUrl({ tab: 'notifications', item: null });
+	}
+
+	function toggleInlineSearch() {
+		if (searchOpen && !searchQuery.trim()) {
+			searchOpen = false;
+			return;
+		}
+		searchOpen = true;
+		void tick().then(() => {
+			if (!destroyed) searchInputEl?.focus();
+		});
+	}
+
+	function closeInlineSearch() {
+		searchOpen = false;
+		document.getElementById('shell-page-title')?.focus({ preventScroll: true });
 	}
 
 	function selectItem(id: string) {
@@ -845,6 +884,7 @@
 				mobileDetailOpen = false;
 				syncUrl({ item: null });
 			}
+			searchOpen = true;
 			void tick().then(() => {
 				if (!destroyed) searchInputEl?.focus();
 			});
@@ -906,13 +946,6 @@
 		};
 	}
 
-	function handleSearchInputKeydown(event: KeyboardEvent) {
-		if (event.isComposing || event.keyCode === 229 || event.key !== 'Escape') return;
-		// Prototype Release 1149b4f1: Escape leaves the typed query intact and exits the search field.
-		event.preventDefault();
-		document.getElementById('shell-page-title')?.focus({ preventScroll: true });
-	}
-
 	function handleCategoryKeydown(event: KeyboardEvent) {
 		if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
 		if (
@@ -942,7 +975,7 @@
 
 <div
 	class={[
-		'inbox-page triage-page flex w-full flex-col px-4 pt-2 pb-6 sm:px-6',
+		'inbox-page triage-page flex w-full flex-col',
 		showingMobileDetail && 'triage-has-detail'
 	]}
 >
@@ -950,7 +983,7 @@
 		{@attach workspaceShortcuts}
 		aria-label="Inbox workspace"
 		data-inbox-dividers={showDividers ? '' : undefined}
-		class="exec-card triage-workspace flex min-h-0 w-full flex-col overflow-hidden"
+		class="triage-workspace flex min-h-0 w-full flex-1 flex-col overflow-hidden"
 	>
 		<!-- Header & Controls (poc/operations.css queue-header) -->
 		<Tooltip.Provider delayDuration={150}>
@@ -966,57 +999,12 @@
 						</span>
 					</div>
 
-					<div class="queue-search-wrap">
-						<div class="triage-search">
-							<Search class="triage-search-ico size-4 shrink-0" aria-hidden="true" />
-							<label class="sr-only" for="triage-search-input">Search inbox</label>
-							<input
-								bind:this={searchInputEl}
-								value={searchQuery}
-								oninput={(e) => setSearchQuery(e.currentTarget.value)}
-								onkeydown={handleSearchInputKeydown}
-								id="triage-search-input"
-								type="text"
-								autocomplete="off"
-								placeholder="Search inbox…"
-								aria-keyshortcuts={shortcutsEnabled ? '/' : undefined}
-								class="triage-search-input"
-							/>
-							{#if searchQuery}
-								<Tooltip.Root>
-									<Tooltip.Trigger>
-										{#snippet child({ props })}
-											<button
-												{...props}
-												type="button"
-												onclick={() => {
-													setSearchQuery('');
-													searchInputEl?.focus();
-												}}
-												aria-label="Clear search"
-												class="triage-clear-btn inline-flex min-h-9 min-w-9 items-center justify-center [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-											>
-												<X class="size-3.5" aria-hidden="true" />
-											</button>
-										{/snippet}
-									</Tooltip.Trigger>
-									<Tooltip.Portal>
-										<Tooltip.Content
-											side="bottom"
-											sideOffset={6}
-											class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-											>Clear search</Tooltip.Content
-										>
-									</Tooltip.Portal>
-								</Tooltip.Root>
-							{:else if shortcutsEnabled}
-								<kbd class="triage-search-kbd" aria-hidden="true">/</kbd>
-							{/if}
-						</div>
+					<div class="queue-headline-end">
+						<NotificationsButton />
 					</div>
 				</div>
 
-				<!-- 3 Primary Categories + More dropdown + Filter & Display icon menus -->
+				<!-- Primary Categories + Notifications + More dropdown + Search, Filter & Display icon menus -->
 				<div class="triage-toolbar queue-toolbar section-toolbar">
 					<div
 						id="triage-categories"
@@ -1029,7 +1017,7 @@
 						class="primary-tab-row"
 					>
 						{#each PRIMARY_TABS as tab (tab.id)}
-							{@const isSelected = activeTab === tab.id}
+							{@const isSelected = !viewingNotifications && activeTab === tab.id}
 							<button
 								type="button"
 								data-triage-tab={tab.id}
@@ -1044,6 +1032,22 @@
 							</button>
 						{/each}
 
+						<button
+							type="button"
+							data-triage-tab="notifications"
+							data-triage-label="Notifications"
+							aria-pressed={viewingNotifications}
+							onclick={selectNotificationsTab}
+							onkeydown={handleCategoryKeydown}
+							class="queue-tab"
+						>
+							<span>Notifications</span>
+							{#if notifAttentionCount > 0}
+								<span class="queue-tab-dot" aria-hidden="true"></span>
+							{/if}
+							<span class="queue-tab-count">{notifTotalCount}</span>
+						</button>
+
 						<span class="triage-more-wrap">
 							<DropdownMenu.Root>
 								<DropdownMenu.Trigger>
@@ -1052,8 +1056,10 @@
 											{...mergeProps(props, { onkeydown: handleCategoryKeydown })}
 											type="button"
 											data-triage-more=""
-											data-current-kind={overflowActive ? '' : undefined}
-											title={overflowActive ? `Viewing ${overflowActiveLabel}` : undefined}
+											data-current-kind={!viewingNotifications && overflowActive ? '' : undefined}
+											title={!viewingNotifications && overflowActive
+												? `Viewing ${overflowActiveLabel}`
+												: undefined}
 											class="queue-tab"
 										>
 											<span>More</span>
@@ -1067,7 +1073,7 @@
 									class="triage-menu-surface w-52 motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
 								>
 									<DropdownMenu.RadioGroup
-										value={overflowActive ? activeTab : ''}
+										value={!viewingNotifications && overflowActive ? activeTab : ''}
 										onValueChange={(val) => {
 											if (val) selectTab(val as TriageTab);
 										}}
@@ -1091,6 +1097,12 @@
 					</div>
 
 					<div class="queue-controls" role="group" aria-label="Inbox view controls">
+						<InlineSearchToggle
+							open={searchOpen}
+							hasQuery={searchQuery.trim().length > 0}
+							label={viewingNotifications ? 'Search notifications' : 'Search inbox'}
+							onToggle={toggleInlineSearch}
+						/>
 						<DropdownMenu.Root bind:open={filterMenuOpen}>
 							<Tooltip.Root disabled={filterMenuOpen}>
 								<Tooltip.Trigger>
@@ -1104,7 +1116,7 @@
 													data-active={isFiltered ? '' : undefined}
 													class="queue-icon-btn"
 												>
-													<ListFilter class="size-4" aria-hidden="true" />
+													<ListFilter class="size-5" aria-hidden="true" />
 												</button>
 											{/snippet}
 										</DropdownMenu.Trigger>
@@ -1217,7 +1229,7 @@
 													data-active={displayActive ? '' : undefined}
 													class="queue-icon-btn"
 												>
-													<SlidersHorizontal class="size-4" aria-hidden="true" />
+													<SlidersHorizontal class="size-5" aria-hidden="true" />
 												</button>
 											{/snippet}
 										</DropdownMenu.Trigger>
@@ -1271,11 +1283,24 @@
 						</DropdownMenu.Root>
 					</div>
 				</div>
+				{#if searchOpen || searchQuery.trim().length > 0}
+					<InlineSearchRow
+						bind:inputEl={searchInputEl}
+						id="triage-search-input"
+						value={searchQuery}
+						onValueChange={setSearchQuery}
+						label={viewingNotifications ? 'Search notifications' : 'Search inbox'}
+						placeholder={viewingNotifications ? 'Search notifications…' : 'Search inbox…'}
+						onClose={closeInlineSearch}
+					/>
+				{/if}
 			</header>
 		</Tooltip.Provider>
 
 		<!-- Split Master-Detail Body -->
-		{#if loading}
+		{#if viewingNotifications}
+			<InboxNotificationsSplit {searchQuery} {nowMs} />
+		{:else if loading}
 			<div class="triage-split flex-1" aria-busy="true" aria-label="Loading inbox">
 				<div class="triage-skeleton-col flex flex-col gap-3 p-4">
 					{#each [1, 2, 3, 4] as n (n)}
@@ -1356,17 +1381,17 @@
 	.triage-workspace {
 		--triage-gutter: 24px;
 		--triage-control-height: 36px;
-		border-radius: var(--exec-panel-radius);
-		min-height: min(680px, calc(100dvh - 104px));
+		min-height: min(680px, 100dvh);
 	}
-	/* Override .exec-card hover tint shift on the outer workspace shell */
-	.triage-workspace:hover {
-		background-color: var(--exec-surface);
-		box-shadow: var(--exec-shadow);
-	}
-	@media (min-width: 960px) {
+	@media (min-width: 960px) and (min-height: 640px) {
 		.triage-workspace {
-			height: max(600px, calc(100dvh - 104px));
+			height: 100%;
+			min-height: 0;
+		}
+	}
+	@media (min-width: 960px) and (max-height: 639px) {
+		.triage-workspace {
+			min-height: 600px;
 		}
 	}
 	@media (max-width: 720px), (pointer: coarse) {
@@ -1398,10 +1423,10 @@
 	}
 	.triage-h1 {
 		color: var(--exec-ink);
-		font-size: 1.25rem;
-		line-height: 1.3;
-		font-weight: 650;
-		letter-spacing: -0.02em;
+		font-size: clamp(1.375rem, 2.2vw, 1.875rem);
+		line-height: 1.22;
+		font-weight: 600;
+		letter-spacing: -0.03em;
 	}
 	.triage-h1:focus {
 		outline: none;
@@ -1429,67 +1454,17 @@
 	.queue-count i.is-ok {
 		background: var(--tone-ok);
 	}
-	.queue-search-wrap {
+	.queue-headline-end {
 		display: flex;
 		align-items: center;
-		min-width: 0;
-		max-width: 100%;
-		margin-inline: auto;
+		margin-inline-start: auto;
 	}
-	.triage-search {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		width: min(35rem, 60vw);
-		max-width: 100%;
-		min-width: 0;
-		min-height: max(2.5rem, var(--triage-control-height));
-		padding: 2px 8px 2px 10px;
-		border: 1px solid var(--exec-border-hi);
-		border-radius: var(--exec-ctrl-radius);
-		background: var(--exec-well);
-	}
-	.triage-search:focus-within {
-		border-color: var(--focus);
-		outline: 2px solid var(--focus);
-		outline-offset: -1px;
-	}
-	.triage-search-ico {
-		color: var(--exec-muted);
-	}
-	.triage-search-input {
-		min-width: 0;
-		flex: 1 1 auto;
-		width: 100%;
-		min-height: var(--triage-control-height);
-		border: 0;
-		background: transparent;
-		color: var(--exec-ink);
-		font-size: 0.875rem;
-		outline: none;
-	}
-	.triage-search-input::placeholder {
-		color: var(--exec-muted);
-		opacity: 1;
-	}
-	.triage-search-kbd {
+	.queue-tab-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--tone-accent);
 		flex: none;
-		padding: 1px 6px;
-		border: 1px solid var(--exec-border-hi);
-		border-radius: 4px;
-		color: var(--exec-muted);
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.75rem;
-		line-height: 1.3;
-	}
-	.triage-clear-btn {
-		border-radius: var(--exec-sm-radius);
-		color: var(--exec-muted);
-		cursor: pointer;
-	}
-	.triage-clear-btn:hover {
-		color: var(--exec-ink);
-		background: var(--exec-btn-ghost-bg-hover);
 	}
 	.queue-toolbar {
 		display: flex;
@@ -1542,7 +1517,7 @@
 		border-radius: var(--exec-ctrl-radius) var(--exec-ctrl-radius) 0 0;
 		background: transparent;
 		color: var(--exec-body);
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		font-weight: 600;
 		white-space: nowrap;
 		cursor: pointer;
@@ -1618,64 +1593,10 @@
 		box-shadow: inset 0 0 0 1px var(--exec-border);
 	}
 
-	@container queue-header (min-width: 52rem) {
-		.queue-headline {
-			display: grid;
-			grid-template-columns: minmax(0, 1fr) min(35rem, 48%) minmax(0, 1fr);
-		}
-		.queue-search-wrap {
-			grid-column: 2;
-			width: 100%;
-		}
-		.triage-search {
-			width: 100%;
-		}
-	}
-	@container queue-header (min-width: 75rem) {
-		.queue-headline,
-		.queue-toolbar {
-			--queue-search-width: clamp(24rem, 29cqi, 35rem);
-			padding-inline-end: calc(var(--triage-gutter) + var(--queue-search-width) + 16px);
-		}
-		.queue-headline {
-			display: flex;
-			min-height: calc(max(2.5rem, var(--triage-control-height)) + 16px);
-		}
-		.queue-search-wrap {
-			position: absolute;
-			inset-block-start: 50%;
-			inset-inline-end: var(--triage-gutter);
-			width: var(--queue-search-width);
-			margin-inline: 0;
-			transform: translateY(-50%);
-		}
-	}
-	@container queue-header (max-width: 51.99rem) {
-		.queue-headline {
-			gap: 6px 8px;
-		}
-		.queue-search-wrap {
-			flex: 1 1 100%;
-			width: 100%;
-			margin-inline-start: 0;
-		}
-		.triage-search {
-			width: 100%;
-		}
-	}
 	@container queue-header (max-width: 38rem) {
 		.queue-tab {
 			gap: 4px;
 			padding-inline: 8px;
-		}
-	}
-
-	@media (max-width: 720px), (pointer: coarse) {
-		.triage-search-kbd {
-			display: none;
-		}
-		.triage-search-input {
-			font-size: 1rem;
 		}
 	}
 
@@ -1699,16 +1620,14 @@
 	}
 
 	.queue-tab:focus-visible,
-	.queue-icon-btn:focus-visible,
-	.triage-clear-btn:focus-visible {
+	.queue-icon-btn:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: -2px;
 	}
 
 	@media (forced-colors: active) {
 		.queue-tab,
-		.queue-icon-btn,
-		.triage-search {
+		.queue-icon-btn {
 			border: 1px solid ButtonText;
 		}
 		.queue-tab:is([aria-pressed='true'], [data-current-kind]),

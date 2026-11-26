@@ -14,11 +14,18 @@
 		class: className = ''
 	}: { name: string; size?: 'sm' | 'md' | 'lg'; class?: string } = $props();
 	const sizes = { sm: 'size-6 text-[10px]', md: 'size-9 text-xs', lg: 'size-12 text-sm' } as const;
+
+	function tintIndex(label: string): number {
+		let h = 0;
+		for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) | 0;
+		return Math.abs(h) % 7;
+	}
 </script>
 
 <span
 	aria-hidden="true"
-	class="inline-flex shrink-0 items-center justify-center rounded-full bg-primary/20 font-semibold text-brand-text-strong {sizes[
+	data-tint={tintIndex(name)}
+	class="ao-avatar inline-flex shrink-0 items-center justify-center rounded-full bg-primary/20 font-semibold text-brand-text-strong {sizes[
 		size
 	]} {className}">{initialsOf(name)}</span
 >

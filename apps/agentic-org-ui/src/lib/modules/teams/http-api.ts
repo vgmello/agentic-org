@@ -8,7 +8,12 @@ import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgApi } from '$lib/modules/organization/api';
 import { newStableId } from '$lib/modules/organization/commands';
 import type { TeamRef } from '$lib/modules/members';
+import { aggregateProjectWork } from '$lib/modules/projects/live-hydration';
+import { openTasks } from '$lib/modules/projects/present';
+import type { WorkItemsApi } from '$lib/modules/workitems/api';
+import type { TaskRow } from '$lib/modules/workitems/types';
 import type { TeamsApi } from './api';
+import { buildTeamActivity, buildTeamWorkRows, readTeamConversations } from './live-hydration';
 import type {
 	NewTeamPerson,
 	TeamDetail,
@@ -115,12 +120,32 @@ function isProjectSummary(value: unknown): value is GatewayProjectSummary {
 export function createHttpTeamsApi({
 	http,
 	orgApi,
+	workItemsApi,
 	newEntityId = newStableId
 }: {
 	http: GatewayHttpTransport;
 	orgApi: Pick<OrgApi, 'view' | 'command'>;
+	workItemsApi?: Pick<WorkItemsApi, 'queue'>;
 	newEntityId?: () => string;
 }): TeamsApi {
+	async function safeWorkRows(organizationId: string): Promise<TaskRow[] | undefined> {
+		if (!workItemsApi) return undefined;
+		try {
+			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' });
+			return queue.rows;
+		} catch {
+			return [];
+		}
+	}
+
+	async function teamMemberIds(organizationId: string, teamId: string): Promise<Set<string>> {
+		const { snapshot } = await orgApi.view(organizationId);
+		return new Set(
+			snapshot.members
+				.filter((m) => isMemberActive(m) && m.home_team_id === teamId)
+				.map((m) => m.id)
+		);
+	}
 	async function readProjects(organizationId: string): Promise<GatewayProjectSummary[]> {
 		let reply: GatewayReply;
 		try {
@@ -214,13 +239,22 @@ export function createHttpTeamsApi({
 			};
 		},
 
-		work: unavailableCall,
+		async work(organizationId: string, teamId: string) {
+			if (!workItemsApi) return unavailableCall();
+			const [rows, memberIds] = await Promise.all([
+				safeWorkRows(organizationId),
+				teamMemberIds(organizationId, teamId)
+			]);
+			return buildTeamWorkRows(rows ?? [], teamId, memberIds);
+		},
 
 		async projects(organizationId: string, teamId: string): Promise<TeamProjectRow[]> {
-			const [{ snapshot }, projects] = await Promise.all([
+			const [{ snapshot }, projects, workRows] = await Promise.all([
 				orgApi.view(organizationId),
-				readProjects(organizationId)
+				readProjects(organizationId),
+				safeWorkRows(organizationId)
 			]);
+			const workTotals = workRows ? aggregateProjectWork(workRows) : undefined;
 			const teamsById = new Map(snapshot.teams.map((t) => [t.id, t]));
 			const rows: TeamProjectRow[] = [];
 			for (const p of projects) {
@@ -235,20 +269,41 @@ export function createHttpTeamsApi({
 						const t = teamsById.get(id);
 						return t ? teamRef(t) : { id, name: id, ref: '' };
 					});
+				const totals = workTotals?.get(p.id);
 				rows.push({
 					id: p.id,
 					name: p.name,
 					role: isOwner ? 'owner' : 'contributor',
 					...(p.key ? { key: p.key } : {}),
 					...(!isOwner && ownerTeam ? { ownerTeam: teamRef(ownerTeam) } : {}),
-					...(contributors.length > 0 ? { contributors } : {})
+					...(contributors.length > 0 ? { contributors } : {}),
+					...(totals
+						? { openWork: openTasks(totals.tasks), tasks: totals.tasks, bugs: totals.bugs }
+						: {})
 				});
 			}
 			return rows.sort((a, b) => a.name.localeCompare(b.name));
 		},
 
-		activity: unavailableCall,
-		conversations: async () => [],
+		async activity(organizationId: string, teamId: string) {
+			if (!workItemsApi) return unavailableCall();
+			const [rows, memberIds] = await Promise.all([
+				safeWorkRows(organizationId),
+				teamMemberIds(organizationId, teamId)
+			]);
+			return buildTeamActivity(rows ?? [], teamId, memberIds);
+		},
+
+		async conversations(organizationId: string, teamId: string) {
+			const { snapshot } = await orgApi.view(organizationId);
+			const team = snapshot.teams.find((t) => t.id === teamId);
+			const memberIds = new Set(
+				snapshot.members
+					.filter((m) => isMemberActive(m) && m.home_team_id === teamId)
+					.map((m) => m.id)
+			);
+			return readTeamConversations(http, organizationId, teamId, team?.name ?? '', memberIds);
+		},
 		archive: unavailableCall,
 
 		async delete(organizationId: string, teamId: string): Promise<void> {

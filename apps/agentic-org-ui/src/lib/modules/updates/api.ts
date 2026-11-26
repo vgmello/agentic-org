@@ -1,4 +1,6 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { createHttpUpdatesApi } from './http-api';
 import type { UpdatesOverview } from './types';
 
 /**
@@ -10,8 +12,20 @@ export interface UpdatesApi {
 	overview(organizationId: string): Promise<UpdatesOverview>;
 }
 
-// The web API does not serve this yet: every call refuses, and the screen says so.
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayUpdatesApi = createHttpUpdatesApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	}
+});
+
+// Production updates API backed by `/api/v1/instance` and `/api/v1/organizations/{org}/offices`.
 // Under `bun run dev:mock`, e2e/fakes/modules/updates.ts stands in for this file.
-export const updatesApi: UpdatesApi = {
-	overview: unavailableCall
-};
+export const updatesApi: UpdatesApi = Object.freeze<UpdatesApi>({
+	overview: (organizationId) =>
+		signedInSession() ? gatewayUpdatesApi.overview(organizationId) : unavailableCall()
+});

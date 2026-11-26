@@ -178,7 +178,7 @@
 	.tabs-nav-count {
 		color: var(--exec-muted, var(--fg-muted));
 		font-size: 0.75rem;
-		font-weight: 500;
+		font-weight: 600;
 	}
 	.tabs-nav-link.is-current .tabs-nav-count {
 		color: var(--tone-accent-ink);

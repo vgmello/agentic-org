@@ -10,7 +10,7 @@
 		DialogHeader,
 		DialogTitle
 	} from '$lib/components/ui/dialog';
-	import { toAppError } from '$lib/proto';
+	import { isBuiltInAgent, toAppError } from '$lib/proto';
 	import { offboardAgent } from '$lib/modules/organization/actions';
 	import { offboardSummary } from '$lib/modules/organization/agents';
 	import type { OrgSession } from '$lib/modules/organization/session';
@@ -44,6 +44,7 @@
 		}
 	});
 	const lines = $derived(shown ? offboardSummary(snapshot, shown) : []);
+	const isBuiltIn = $derived(isBuiltInAgent(shown));
 
 	// After a stale edit (HQ changed the agent meanwhile) the page reloads: take the latest as the baseline and the
 	// version to send, but leave anything the owner typed alone, so "Here's the latest" is true and a retry can work.
@@ -57,6 +58,10 @@
 
 	async function confirm() {
 		if (!shown || busy) return;
+		if (isBuiltIn) {
+			error = 'Built-in agents cannot be offboarded.';
+			return;
+		}
 		busy = true;
 		try {
 			await offboardAgent(session, shown.id, shown.version);
@@ -99,7 +104,7 @@
 			<Button
 				type="button"
 				variant="destructive"
-				disabled={busy}
+				disabled={busy || isBuiltIn}
 				onclick={confirm}
 				class="[overflow-wrap:anywhere]">Offboard {shown?.name}</Button
 			>

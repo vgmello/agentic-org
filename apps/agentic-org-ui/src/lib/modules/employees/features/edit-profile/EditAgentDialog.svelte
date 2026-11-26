@@ -11,7 +11,7 @@
 	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/proto';
+	import { isBuiltInAgent, toAppError } from '$lib/proto';
 	import { updateAgent, type AgentChange } from '$lib/modules/organization/actions';
 	import { messagingNameError, runtimeLabel } from '$lib/modules/organization/agents';
 	import type { OrgSession } from '$lib/modules/organization/session';
@@ -72,8 +72,9 @@
 		}
 	});
 
+	const isBuiltIn = $derived(isBuiltInAgent(shown));
 	const handleError = $derived(
-		shown && handle !== shown.agent?.messaging_name
+		!isBuiltIn && shown && handle !== shown.agent?.messaging_name
 			? messagingNameError(snapshot, handle, shown.id)
 			: undefined
 	);
@@ -102,7 +103,7 @@
 		if (!shown?.agent || busy || handleError || missing) return;
 		const a = shown.agent;
 		const change: AgentChange = {};
-		if (name.trim() !== shown.name) change.name = name;
+		if (!isBuiltIn && name.trim() !== shown.name) change.name = name;
 		if (role.trim() !== a.role) change.role = role;
 		if (title.trim() !== a.title) change.title = title;
 		if (focus.trim() !== (a.focus ?? '')) change.focus = focus;
@@ -110,7 +111,7 @@
 			change.runtime = runtimeValue;
 		if (model.trim() !== (a.model ?? '')) change.model = model;
 		if (home.trim() !== (a.home ?? '')) change.home = home.trim();
-		if (handle !== a.messaging_name) change.messagingName = handle;
+		if (!isBuiltIn && handle !== a.messaging_name) change.messagingName = handle;
 		if (Object.keys(change).length === 0) {
 			open = false;
 			return;
@@ -140,8 +141,12 @@
 				<DialogDescription>Changes take effect at the agent's next session.</DialogDescription>
 			</DialogHeader>
 			<div class="space-y-2">
-				<Label for="agent-name">Name</Label>
-				<Input id="agent-name" bind:value={name} disabled={busy} autocomplete="off" />
+				<Label for="agent-name"
+					>Name{#if isBuiltIn}
+						<span class="font-normal text-fg-muted">built-in agent — cannot be renamed</span>
+					{/if}</Label
+				>
+				<Input id="agent-name" bind:value={name} disabled={busy || isBuiltIn} autocomplete="off" />
 			</div>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div class="space-y-2">
@@ -207,13 +212,17 @@
 				<Input
 					id="agent-handle"
 					bind:value={handle}
-					disabled={busy}
+					disabled={busy || isBuiltIn}
 					autocomplete="off"
 					class="font-mono"
 					aria-invalid={handleError ? true : undefined}
 					aria-describedby={handleError ? 'agent-handle-error' : undefined}
 				/>
-				{#if handleError}<p
+				{#if isBuiltIn}
+					<p class="text-sm/6 text-fg-muted">
+						Built-in agent handle is reserved and cannot be changed.
+					</p>
+				{:else if handleError}<p
 						id="agent-handle-error"
 						class="text-sm/6 text-danger [overflow-wrap:anywhere]"
 						role="alert"

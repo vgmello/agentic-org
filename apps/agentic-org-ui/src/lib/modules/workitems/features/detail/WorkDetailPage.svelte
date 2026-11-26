@@ -25,6 +25,11 @@
 	} from '$lib/components/classes';
 	import { workItemsApi } from '../../api';
 	import {
+		isDraftIdeationTask,
+		stripDraftIdeationMarker,
+		withDraftIdeationMarker
+	} from '../../ideation';
+	import {
 		STATUS_WORD,
 		TYPE_WORD,
 		WORK_URL,
@@ -107,6 +112,7 @@
 
 	// Action modals
 	let statusBusy = $state(false);
+	let publishBusy = $state(false);
 	let closeOpen = $state(false);
 	let closeKind = $state<CloseAs['as']>('done');
 	let reopenOpen = $state(false);
@@ -123,7 +129,7 @@
 
 	function startEdit(t: TaskDetail) {
 		editTitle = t.title;
-		editDesc = t.description;
+		editDesc = isDraftIdeationTask(t) ? stripDraftIdeationMarker(t.description) : t.description;
 		editError = undefined;
 		editing = true;
 	}
@@ -139,9 +145,10 @@
 		editBusy = true;
 		editError = undefined;
 		try {
+			const nextDesc = isDraftIdeationTask(t) ? withDraftIdeationMarker(editDesc) : editDesc.trim();
 			await workItemsApi.edit(organizationId, t.id, {
 				title: editTitle.trim(),
-				description: editDesc.trim(),
+				description: nextDesc,
 				expectedRevision: t.revision
 			});
 			editing = false;
@@ -151,6 +158,25 @@
 			editError = toAppError(e).message;
 		} finally {
 			editBusy = false;
+		}
+	}
+
+	/** Deterministic Publish to To do (TASK-142): strips Draft marker with zero AI rewrite. */
+	async function publishDraftTask(t: TaskDetail) {
+		if (publishBusy || t.stale || !t.can.edit) return;
+		publishBusy = true;
+		try {
+			await workItemsApi.edit(organizationId, t.id, {
+				title: t.title,
+				description: stripDraftIdeationMarker(t.description),
+				expectedRevision: t.revision
+			});
+			toast.success(`Published ${t.ref} to To do — ideation comments archived.`);
+			await reloadDetail();
+		} catch (e) {
+			toast.error(toAppError(e).message);
+		} finally {
+			publishBusy = false;
 		}
 	}
 
@@ -249,6 +275,10 @@
 		{:else}
 			{@const t = lookup.task}
 			{@const isStale = !!t.stale}
+			{@const draftIdeation = isDraftIdeationTask(t)}
+			{@const displayDescription = draftIdeation
+				? stripDraftIdeationMarker(t.description)
+				: t.description}
 
 			{#if t.stale}
 				<StaleBanner stale={t.stale} retrying={taskRead.reloading} onretry={() => reloadDetail()} />
@@ -371,6 +401,33 @@
 					: 'lg:grid-cols-[minmax(0,1fr)_22rem]'}"
 			>
 				<div class="flex min-w-0 flex-col gap-6">
+					{#if draftIdeation}
+						<div
+							class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-brand/10 px-4 py-3 text-sm/6 ring-1 ring-brand/30"
+							data-testid="draft-ideation-banner"
+						>
+							<div class="min-w-0 flex-1">
+								<p class="font-semibold text-fg">Draft · Ideation phase</p>
+								<p class="text-xs/5 text-fg-secondary">
+									Agents cannot pick this up yet. Comments posted here stay folded in Ideation
+									history once published — publishing keeps your exact spec with no AI rewrite.
+								</p>
+							</div>
+							{#if !isStale && t.can.edit}
+								<Button
+									type="button"
+									size="sm"
+									class={mobileButton}
+									disabled={publishBusy}
+									onclick={() => void publishDraftTask(t)}
+									data-testid="publish-draft-btn"
+								>
+									{publishBusy ? 'Publishing…' : 'Publish to To do'}
+								</Button>
+							{/if}
+						</div>
+					{/if}
+
 					<!-- Edit title & description inline form -->
 					{#if editing}
 						<form
@@ -424,9 +481,9 @@
 							class="flex flex-col gap-2 rounded-xl bg-surface-raised p-4 outline-1 -outline-offset-1 outline-line"
 						>
 							<h3 id="{uid}-desc-heading" class="text-sm/6 font-semibold text-fg">Description</h3>
-							{#if t.description}
+							{#if displayDescription}
 								<p class="whitespace-pre-wrap text-sm/6 text-fg-body [overflow-wrap:anywhere]">
-									{t.description}
+									{displayDescription}
 								</p>
 							{:else}
 								<p class="text-sm/6 text-fg-muted">No description yet.</p>
@@ -600,6 +657,8 @@
 					<DiscussionSection
 						{organizationId}
 						taskId={t.id}
+						taskRef={t.ref}
+						isDraftIdeation={draftIdeation}
 						comments={t.comments}
 						canComment={t.can.edit}
 						stale={isStale}

@@ -62,13 +62,15 @@
 		{/if}
 	</div>
 
-	<div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+	<div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-[0.8125rem]">
 		<a
 			href={resolve('/teams/members')}
 			class="tleg inline-flex min-h-9 items-center gap-1.5 rounded-md px-1"
 		>
 			<span class="size-2 rounded-full bg-[var(--tone-accent)]"></span>
-			<strong class="text-[var(--exec-sky)] tabular-nums">{taskTime.workingPct}%</strong>
+			<strong class="text-[0.9375rem] font-bold text-[var(--exec-sky)] tabular-nums"
+				>{taskTime.workingPct}%</strong
+			>
 			<span class="text-[var(--exec-muted)]">Agents working ({taskTime.workingCount})</span>
 		</a>
 		<a
@@ -76,7 +78,9 @@
 			class="tleg inline-flex min-h-9 items-center gap-1.5 rounded-md px-1"
 		>
 			<span class="size-2 rounded-full bg-[var(--tone-ok)]"></span>
-			<strong class="text-[var(--exec-ok)] tabular-nums">{taskTime.reviewPct}%</strong>
+			<strong class="text-[0.9375rem] font-bold text-[var(--exec-ok)] tabular-nums"
+				>{taskTime.reviewPct}%</strong
+			>
 			<span class="text-[var(--exec-muted)]">In review ({taskTime.reviewCount})</span>
 		</a>
 		<a
@@ -84,7 +88,9 @@
 			class="tleg inline-flex min-h-9 items-center gap-1.5 rounded-md px-1"
 		>
 			<span class="size-2 rounded-full bg-[var(--tone-warn)]"></span>
-			<strong class="text-[var(--exec-warn)] tabular-nums">{taskTime.waitingYouPct}%</strong>
+			<strong class="text-[0.9375rem] font-bold text-[var(--exec-warn)] tabular-nums"
+				>{taskTime.waitingYouPct}%</strong
+			>
 			<span class="text-[var(--exec-muted)]">Waiting on you ({taskTime.waitingYouCount})</span>
 		</a>
 		<a
@@ -99,7 +105,7 @@
 			></span>
 			<strong
 				class={[
-					'tabular-nums',
+					'text-[0.9375rem] font-bold tabular-nums',
 					taskTime.queuedIsHigh ? 'text-[var(--exec-bad)]' : 'text-[var(--exec-purple)]'
 				]}
 			>
