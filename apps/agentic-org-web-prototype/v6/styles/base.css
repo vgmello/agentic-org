@@ -897,6 +897,9 @@ body.nokeys .search kbd { display: none; }
 .project-sec .why { font-size: var(--fs-base); }
 /* Recommendations inside cards: body-size text so the card's title stays the focus */
 .card .recommendation { padding: 10px 12px; font-size: var(--fs-sm); }
+/* A header whose menu is open must sit above later page regions (e.g. the agent side rail),
+   since the header's own z-index otherwise traps the menu's stacking level. */
+:is(.section-header, .ph, .section-toolbar, .queue-header):has(.menu:not([hidden])) { position: relative; z-index: 40; }
 /* Inline page search row (Inbox, Work) revealed by the toolbar search icon */
 .search-toggle.is-active { color: var(--white); background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); }
 .inline-search { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
