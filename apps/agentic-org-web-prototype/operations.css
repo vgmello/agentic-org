@@ -1132,31 +1132,27 @@ html[data-theme="report"] .start-search kbd { background: #F4F6F9; border-color:
 html[data-theme="report"] :is(.start-search, .start-tess):hover { border-color: #94A3B8; color: #0B101B; }
 html[data-theme="report"] .start-tess.is-active { background: #EEF2FF; border-color: #1D4E89; color: #1D4E89; }
 
-/* Sidebar Tess Contact Card (pinned in footer above Owner account) */
+/* Sidebar "Chief of staff" contact (on-call style row above the account footer) */
+.sb-contacts { flex: none; display: flex; flex-direction: column; gap: 6px; padding-bottom: 2px; }
 .sidebar-tess-contact {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: calc(100% - 20px);
-  padding: 8px 10px;
-  margin: 0 10px 6px;
-  border-radius: 10px;
-  border: 1px solid var(--line2);
-  background: var(--hover);
+  width: 100%;
+  padding: 7px 8px;
+  margin: 0;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--gray-300);
   text-align: left;
   transition: background-color .14s ease, border-color .14s ease, color .14s ease;
 }
-.sidebar-tess-contact:hover {
-  background: rgba(255, 255, 255, .08);
-  border-color: var(--gray-500);
-  color: var(--white);
-}
-.sidebar-tess-contact.is-active {
-  background: var(--tone-accent-soft, var(--hover));
-  border-color: var(--tone-accent-ring, var(--gray-500));
-  color: var(--white);
-}
+.sidebar-tess-contact:hover { background: var(--hover); color: var(--white); }
+.sidebar-tess-contact.is-active { background: var(--tone-accent-soft, var(--hover)); border-color: var(--tone-accent-ring, var(--line2)); color: var(--white); }
+.sidebar-tess-contact .tess-contact-kbd { opacity: 0; transition: opacity .14s ease; }
+.sidebar-tess-contact:is(:hover, :focus-visible, .is-active) .tess-contact-kbd { opacity: 1; }
+.sidebar-tess-contact:not(.is-busy):not(.is-offline) .tess-contact-role { color: var(--tone-ok-ink); }
 .tess-contact-av {
   position: relative;
   flex: none;
@@ -1245,14 +1241,7 @@ html[data-theme="report"] .start-tess.is-active { background: #EEF2FF; border-co
   background: var(--gray-900);
   border: 1px solid var(--line);
 }
-html[data-theme="graphite"] .sidebar-tess-contact {
-  background: #1f2228;
-  border-color: #343842;
-}
-html[data-theme="graphite"] .sidebar-tess-contact:hover {
-  background: #272b33;
-  border-color: #505664;
-}
+html[data-theme="graphite"] .sidebar-tess-contact:hover { background: #23262c; }
 html[data-theme="graphite"] .sidebar-tess-contact.is-active {
   background: #303540;
   border-color: #626a7b;
@@ -1268,15 +1257,8 @@ html[data-theme="graphite"] .tess-contact-star {
 }
 html[data-theme="graphite"] .tess-contact-dot,
 html[data-theme="graphite"] .tess-contact-av .start-tess-busy { box-shadow: 0 0 0 2px #191b20; }
-html[data-theme="report"] .sidebar-tess-contact {
-  background: #FFFFFF;
-  border-color: #DCE2EC;
-  color: #334155;
-}
-html[data-theme="report"] .sidebar-tess-contact:hover {
-  background: #F8FAFC;
-  border-color: #94A3B8;
-}
+html[data-theme="report"] .sidebar-tess-contact { color: #334155; }
+html[data-theme="report"] .sidebar-tess-contact:hover { background: #F4F6F9; }
 html[data-theme="report"] .sidebar-tess-contact.is-active {
   background: #EEF2FF;
   border-color: #1D4E89;

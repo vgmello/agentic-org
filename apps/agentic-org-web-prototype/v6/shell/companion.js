@@ -122,7 +122,8 @@ function syncSidebarTessTrigger() {
   const offline = isOfflineMode();
   const open = COMP.mode !== "hidden";
   const kbd = shortcutLabel("toggle");
-  const tip = busy.length ? `Tess refining (${busy.length}) · ${kbd}` : `Chat with Tess · ${kbd}`;
+  const status = busy.length ? `Refining (${busy.length})…` : offline ? "Offline · local" : "Available";
+  const tip = `Chat with Tess, Chief of Staff · ${status} · ${kbd}`;
   btn.classList.toggle("is-active", open);
   btn.classList.toggle("is-busy", busy.length > 0);
   btn.classList.toggle("is-offline", offline);
@@ -133,7 +134,7 @@ function syncSidebarTessTrigger() {
   const dot = document.getElementById("sidebar-tess-busy");
   if (dot) dot.hidden = busy.length === 0;
   const role = document.getElementById("sidebar-tess-role");
-  if (role) role.textContent = busy.length ? `Refining (${busy.length})…` : offline ? "Offline · local" : "Chief of Staff";
+  if (role) role.textContent = status;
   const kbdEl = document.getElementById("sidebar-tess-kbd");
   if (kbdEl) kbdEl.textContent = kbd;
 }
