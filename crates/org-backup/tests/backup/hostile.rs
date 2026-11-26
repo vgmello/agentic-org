@@ -420,7 +420,7 @@ fn an_archive_listing_a_path_a_backup_never_carries_is_refused_before_extraction
 
 /// Crafts an archive listing `folders` and `files` (each file's content `stale`) and returns
 /// why verification refused it.
-fn refused_listing(dir: &Path, name: &str, folders: &[String], files: &[String]) -> String {
+pub fn refused_listing(dir: &Path, name: &str, folders: &[String], files: &[String]) -> String {
     let mut listed = manifest(&[]);
     listed.directories = folders.iter().map(|f| RelPath::parse(f).unwrap()).collect();
     listed.directories.sort();

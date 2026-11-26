@@ -285,7 +285,10 @@ fn all_nine_attachment_rpcs_work_end_to_end_on_both_engines() {
             )
         };
         assert_eq!(list_private(&owner).unwrap().attachments.len(), 1);
-        assert_eq!(list_private(&agent).unwrap_err().code, ErrorCode::NotFound);
+        // An agent has no private space: it is told so, and pointed at a 1:1 DM instead.
+        let none = list_private(&agent).unwrap_err();
+        assert_eq!(none.code, ErrorCode::NotAuthorized);
+        assert!(none.message.contains("1:1 direct message"), "{none:?}");
         let peek = call::<AttachmentInspect>(
             &office,
             &agent,
@@ -298,7 +301,7 @@ fn all_nine_attachment_rpcs_work_end_to_end_on_both_engines() {
         let staged = upload(&office, &agent, "mine.csv", b"x,y\n").unwrap();
         let refused =
             attach(&office, &agent, &staged, AttachmentTargetKind::UserPrivate).unwrap_err();
-        assert_eq!(refused.code, ErrorCode::NotFound);
+        assert_eq!(refused.code, ErrorCode::NotAuthorized);
         let refused = call::<AttachmentReadChunk>(
             &office,
             &agent,

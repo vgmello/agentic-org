@@ -353,3 +353,194 @@ fn file_names_are_plain_and_match_their_type() {
     let long = format!("{}.txt", "a".repeat(260));
     assert!(check_filename(&long, MediaType::PlainText).is_err());
 }
+
+#[test]
+fn a_gif_sub_frame_larger_than_its_canvas_is_refused_before_it_is_decompressed() {
+    // A 1x1 canvas hiding 2000x2000 and 12200x12200 frames. The frames carry no pixel data:
+    // refusing them as too large (not as damaged) shows the descriptor alone decided.
+    for side in [2_000, 12_200] {
+        let frame = GifRect {
+            left: 0,
+            top: 0,
+            width: side,
+            height: side,
+        };
+        let bomb = gif_frames(1, 1, &[frame], false);
+        assert_eq!(
+            code(validate(MediaType::Gif, bomb)),
+            ErrorCode::TooLarge,
+            "{side}"
+        );
+    }
+    // A frame that fits the canvas but runs past its edge is refused the same way.
+    let past_edge = GifRect {
+        left: 0,
+        top: 0,
+        width: 9,
+        height: 8,
+    };
+    assert_eq!(
+        code(validate(
+            MediaType::Gif,
+            gif_frames(8, 8, &[past_edge], false)
+        )),
+        ErrorCode::TooLarge
+    );
+}
+
+#[test]
+fn a_gif_frame_covering_part_of_its_canvas_still_fits_the_canvas_bounded_budget() {
+    // A full 400x400 frame, then a 200x200 one in the middle: decoding the second holds the
+    // kept canvas, the frame and a new composite at once, all within the canvas's budget.
+    let frames = [
+        GifRect {
+            left: 0,
+            top: 0,
+            width: 400,
+            height: 400,
+        },
+        GifRect {
+            left: 100,
+            top: 100,
+            width: 200,
+            height: 200,
+        },
+    ];
+    let kept = validate(MediaType::Gif, gif_frames(400, 400, &frames, true)).unwrap();
+    assert_eq!(kept.media, MediaType::Gif);
+    assert_eq!((kept.width, kept.height), (Some(400), Some(400)));
+    assert_eq!(gif_frame_count(&kept.bytes), 2);
+}
+
+#[test]
+fn an_encoder_sink_refuses_its_first_byte_past_the_cap_and_never_allocates_beyond_it() {
+    use std::io::Write as _;
+    let mut sink = super::image::BoundedVecWriter::new(10);
+    sink.write_all(b"12345678").unwrap();
+    assert!(!sink.overflowed());
+    assert!(sink.write_all(b"abc").is_err());
+    assert!(sink.overflowed());
+    // Once over, it stays refused, even for a write that would fit.
+    assert!(sink.write_all(b"9").is_err());
+    let bytes = sink.into_inner();
+    assert_eq!(bytes, b"12345678");
+    assert!(bytes.capacity() <= 10, "{}", bytes.capacity());
+}
+
+#[test]
+fn an_object_stream_named_many_times_is_inflated_once() {
+    // 400 `/ObjStm` names before one stream that inflates to ~200 KB: inflating it once per
+    // name would spend 80 MB of the 64 MiB budget and refuse the file.
+    let named = pdf_with_object_stream_named(7, 400, 200_000);
+    let kept = validate(MediaType::Pdf, named).unwrap();
+    assert_eq!(kept.page_count, Some(7));
+}
+
+/// The first occurrence of `from` in `bytes` replaced by `to` (of the same length).
+fn patched(mut bytes: Vec<u8>, from: &[u8], to: &[u8]) -> Vec<u8> {
+    assert_eq!(from.len(), to.len());
+    let at = bytes
+        .windows(from.len())
+        .position(|w| w == from)
+        .expect("present");
+    bytes[at..at + to.len()].copy_from_slice(to);
+    bytes
+}
+
+#[test]
+fn office_documents_hiding_macros_or_disagreeing_headers_are_refused() {
+    // The local header names another entry than the central directory does.
+    let renamed = patched(docx(), b"word/document.xml", b"word/documenT.xml");
+    assert_eq!(
+        code(validate(MediaType::Docx, renamed)),
+        ErrorCode::InvalidRequest
+    );
+    // A stored entry whose two sizes disagree.
+    let types = content_types("wordprocessingml.document");
+    let lying = zip(&[
+        entry("[Content_Types].xml", types.as_bytes()),
+        entry("word/document.xml", b"<w:document/>"),
+        ZipEntry {
+            name: "word/media/a.bin",
+            data: b"0123456789",
+            declared: Some(11),
+        },
+    ]);
+    assert_eq!(
+        code(validate(MediaType::Docx, lying)),
+        ErrorCode::InvalidRequest
+    );
+    // An Excel 4 macro sheet, by name and by content type, and a VBA project's content type.
+    let sheet_types = content_types("spreadsheetml.sheet");
+    let macro_sheet = zip(&[
+        entry("[Content_Types].xml", sheet_types.as_bytes()),
+        entry("xl/workbook.xml", b"<workbook/>"),
+        entry("xl/macrosheets/sheet1.xml", b"<xm:macrosheet/>"),
+    ]);
+    assert_eq!(
+        code(validate(MediaType::Xlsx, macro_sheet)),
+        ErrorCode::Unsupported
+    );
+    for declared in [
+        "application/vnd.ms-excel.macrosheet+xml",
+        "application/vnd.ms-office.vbaProject",
+    ] {
+        let types = sheet_types.replace(
+            "</Types>",
+            &format!("<Override PartName=\"/x\" ContentType=\"{declared}\"/></Types>"),
+        );
+        let hidden = zip(&[
+            entry("[Content_Types].xml", types.as_bytes()),
+            entry("xl/workbook.xml", b"<workbook/>"),
+        ]);
+        assert_eq!(
+            code(validate(MediaType::Xlsx, hidden)),
+            ErrorCode::Unsupported,
+            "{declared}"
+        );
+    }
+}
+
+#[test]
+fn html_behind_comments_or_declarations_is_not_text() {
+    for disguised in [
+        "<!-- x --><html><script>alert(1)</script></html>",
+        "\n  <!-- one -->\n<!-- two -->\n<body onload=alert(1)>",
+        "<!-- a --!><script>alert(1)</script> -->",
+        "<!--><script>alert(1)</script>",
+        "<!---><script>alert(1)</script>",
+        "<?xml x><script>alert(1)</script>?>",
+        "<!x><iframe src=x>",
+        "\u{feff}<!-- bom --><HTML>",
+    ] {
+        assert_eq!(
+            code(validate(
+                MediaType::PlainText,
+                disguised.as_bytes().to_vec()
+            )),
+            ErrorCode::Unsupported,
+            "{disguised}"
+        );
+    }
+    let svg = b"<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"x\"><svg><script/></svg>";
+    assert_eq!(
+        code(validate(MediaType::Markdown, svg.to_vec())),
+        ErrorCode::Unsupported
+    );
+    // Text that only starts with a comment stays text.
+    for text in [
+        "<!-- toc -->\n# Title\n\nBody.\n",
+        "<!-- never closed, so <script> is inside it",
+    ] {
+        assert!(
+            validate(MediaType::Markdown, text.as_bytes().to_vec()).is_ok(),
+            "{text}"
+        );
+    }
+    // Many tiny comments are walked in one pass.
+    let many = "<!---->".repeat(200_000) + "<html>";
+    assert_eq!(
+        code(validate(MediaType::PlainText, many.into_bytes())),
+        ErrorCode::Unsupported
+    );
+}

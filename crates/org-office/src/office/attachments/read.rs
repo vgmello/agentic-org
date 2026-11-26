@@ -59,6 +59,21 @@ impl Office {
         actor: &str,
         params: AttachmentListParams,
     ) -> Answer<AttachmentListResult> {
+        // A scope that says otherwise than the target kind is refused, never ignored.
+        let contradicts = match (params.scope, params.target_kind) {
+            (Some(AttachmentScope::UserPrivate), Some(kind)) => {
+                kind != AttachmentTargetKind::UserPrivate
+            }
+            (Some(AttachmentScope::Shared), Some(kind)) => {
+                kind == AttachmentTargetKind::UserPrivate
+            }
+            _ => false,
+        };
+        if contradicts {
+            return Ok(Err(invalid(
+                "scope and target_kind disagree: user_private files are listed with the user_private scope alone",
+            )));
+        }
         let private = params.target_kind == Some(AttachmentTargetKind::UserPrivate)
             || (params.target_kind.is_none() && params.scope == Some(AttachmentScope::UserPrivate));
         // A satellite holds no private space: refused the same for every caller.

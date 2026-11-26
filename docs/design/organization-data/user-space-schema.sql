@@ -9,8 +9,12 @@ CREATE TABLE user_space_files (
   organization_id TEXT NOT NULL,
   id TEXT NOT NULL,
   owner_employee_id TEXT NOT NULL,
-  -- The command that created the row: a retry is answered with the first row.
+  -- The command that created the row, scoped to its owner: the owner's retry of the same
+  -- request (same operation_fingerprint) is answered with the first row; the owner's reuse of
+  -- operation_id for another request is refused; another person's same operation_id is theirs.
   operation_id TEXT NOT NULL,
+  -- Lowercase hex SHA-256 of the canonical request the command carried.
+  operation_fingerprint TEXT NOT NULL CHECK (length(operation_fingerprint) = 64 AND operation_fingerprint NOT GLOB '*[^0-9a-f]*'),
   content_sha256 TEXT NOT NULL CHECK (length(content_sha256) = 64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
   mime_type TEXT NOT NULL CHECK (mime_type IN (
     'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf',
@@ -28,6 +32,6 @@ CREATE TABLE user_space_files (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (organization_id, id),
-  UNIQUE (organization_id, operation_id)
+  UNIQUE (organization_id, owner_employee_id, operation_id)
 ) STRICT;
 CREATE INDEX user_space_files_by_owner ON user_space_files(organization_id, owner_employee_id, id);

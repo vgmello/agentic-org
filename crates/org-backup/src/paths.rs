@@ -16,6 +16,46 @@ pub const MAX_PATH_BYTES: usize = 1024;
 pub const MAX_DEPTH: usize = 64;
 /// The private task notes database, relative to the durable root.
 pub const NOTES_DB: &str = "private/task-notes.db";
+/// HQ's private file space database, relative to the durable root.
+pub const USER_SPACE_DB: &str = "private/user-space.db";
+
+/// A WAL-mode private SQLite database a backup carries as a consistent `VACUUM INTO` copy and
+/// a verification runs SQLite's integrity check on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum PrivateDb {
+    /// `private/task-notes.db`.
+    TaskNotes,
+    /// `private/user-space.db`.
+    UserSpace,
+}
+
+impl PrivateDb {
+    pub(crate) const ALL: [PrivateDb; 2] = [PrivateDb::TaskNotes, PrivateDb::UserSpace];
+
+    /// Its one canonical path below the durable root.
+    pub(crate) fn path(self) -> &'static str {
+        match self {
+            PrivateDb::TaskNotes => NOTES_DB,
+            PrivateDb::UserSpace => USER_SPACE_DB,
+        }
+    }
+
+    /// Its file name, for the scratch copy.
+    pub(crate) fn file_name(self) -> &'static str {
+        match self {
+            PrivateDb::TaskNotes => "task-notes.db",
+            PrivateDb::UserSpace => "user-space.db",
+        }
+    }
+
+    /// What it is, for a message.
+    pub(crate) fn what(self) -> &'static str {
+        match self {
+            PrivateDb::TaskNotes => "private task notes database",
+            PrivateDb::UserSpace => "private file space database",
+        }
+    }
+}
 
 /// A path below the durable root: UTF-8, `/`-separated, each component non-empty, not `.`
 /// or `..`, without NUL or another control character, at most [`MAX_PATH_BYTES`] long.
@@ -147,43 +187,48 @@ pub(crate) enum Disposition {
     /// files are carried, while a link or a special file (a runtime's `latest` link, a
     /// socket) is left out, never followed and never archived.
     AgentHome,
-    /// Disposable: an enrollment's scratch folder, an agent's runtime or temporary folder,
-    /// and the host toolchain caches the office links into an agent's home again on its next
+    /// Disposable: an enrollment's scratch folder, the unattached uploads waiting in
+    /// `attachment-staging/`, an agent's runtime or temporary folder, and the host toolchain
+    /// caches the office links into an agent's home again on its next
     /// session (`.cargo/registry`, `.cargo/git`, a legacy `.rustup`).
     Skip,
-    /// The WAL-mode private task notes database: carried as a consistent copy.
-    NotesDatabase,
-    /// A `-wal`, `-shm` or `-journal` file beside the notes database: in the copy already.
-    NotesSidecar,
+    /// A WAL-mode private database: carried as a consistent copy.
+    PrivateDatabase(PrivateDb),
+    /// A `-wal`, `-shm` or `-journal` file beside a private database: in the copy already.
+    PrivateSidecar,
 }
 
 impl Disposition {
     /// Whether a backup ever carries a path with this disposition; an archive that lists
     /// one was not written by a backup.
     pub(crate) fn is_carried(self) -> bool {
-        !matches!(self, Disposition::Skip | Disposition::NotesSidecar)
+        !matches!(self, Disposition::Skip | Disposition::PrivateSidecar)
     }
 }
 
 /// The durable layout's policy for `path` (every tree under `<durable>/` is carried; these
 /// are the exceptions). Applies to folders and files alike. Each name is compared ASCII
 /// case-insensitively: on a case-insensitive file system (macOS's default APFS)
-/// `private/Task-Notes.db-WAL` or `.../Enroll-Tmp` is the very file or folder the policy
+/// `private/User-Space.db-WAL` or `.../Enroll-Tmp` is the very file or folder the policy
 /// names, so it must get the same answer ([`Manifest`](crate::manifest::Manifest) then
 /// refuses any spelling but the canonical one where that matters).
 pub(crate) fn disposition(path: &RelPath) -> Disposition {
     let folded: Vec<String> = path.components().map(str::to_ascii_lowercase).collect();
     let parts: Vec<&str> = folded.iter().map(String::as_str).collect();
     match parts.as_slice() {
-        ["local", "offices", _, "enroll-tmp", ..]
+        ["local", "offices", _, "enroll-tmp" | "attachment-staging", ..]
         | ["local", "offices", _, "agents", _, "runtime" | "tmp", ..]
         | ["local", "offices", _, "agents", _, "home", ".cargo", "registry" | "git", ..]
         | ["local", "offices", _, "agents", _, "home", ".rustup", ..] => Disposition::Skip,
         ["local", "offices", _, "agents", _, "home", _, ..] => Disposition::AgentHome,
-        ["private", "task-notes.db"] => Disposition::NotesDatabase,
-        ["private", "task-notes.db-wal" | "task-notes.db-shm" | "task-notes.db-journal"] => {
-            Disposition::NotesSidecar
-        }
+        ["private", "task-notes.db"] => Disposition::PrivateDatabase(PrivateDb::TaskNotes),
+        ["private", "user-space.db"] => Disposition::PrivateDatabase(PrivateDb::UserSpace),
+        ["private", "task-notes.db-wal"
+        | "task-notes.db-shm"
+        | "task-notes.db-journal"
+        | "user-space.db-wal"
+        | "user-space.db-shm"
+        | "user-space.db-journal"] => Disposition::PrivateSidecar,
         _ => Disposition::Keep,
     }
 }

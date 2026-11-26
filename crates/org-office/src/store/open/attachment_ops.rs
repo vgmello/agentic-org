@@ -9,25 +9,29 @@ use org_proto::{ApiError, ErrorCode};
 use org_store::{Ack, Actor, Change, Id, Operation, Outcome, Refusal, Store, StoreError};
 
 use crate::attachments::ports::AttachmentsRead;
-use crate::attachments::records::{self, AttachmentRecord};
+use crate::attachments::records::{self, AttachmentRecord, MetaPatch};
 use crate::authz::{ParentFacts, PrincipalContext, PrincipalKind, ResourceRef};
 use crate::organization::records::{EmployeeKind, EmployeeStatus};
 use crate::tasks::ports::TasksRead;
 
 use super::{OfficeEngine, ReadOp, StoreOp};
 
-/// Whether a write makes a new file or replaces an existing one's metadata.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AttachmentWriteMode {
-    Create,
-    Update,
+/// What a shared write does: make a new file, or edit an existing one's metadata.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum AttachmentWrite {
+    Create(AttachmentRecord),
+    /// Applied onto the file as the writer reads it when it decides, never onto an earlier
+    /// snapshot, so concurrent edits of different fields all survive.
+    Update {
+        id: Id,
+        patch: MetaPatch,
+    },
 }
 
 /// Writes one standalone attachment file (project or organization) through the journal.
 pub struct AttachmentWriteOp {
     pub operation: Operation,
-    pub record: AttachmentRecord,
-    pub mode: AttachmentWriteMode,
+    pub write: AttachmentWrite,
 }
 
 fn refused(code: ErrorCode, message: &str) -> Refusal {
@@ -36,48 +40,48 @@ fn refused(code: ErrorCode, message: &str) -> Refusal {
 
 fn decide<S: TasksRead + AttachmentsRead>(
     view: &S,
-    record: &AttachmentRecord,
-    mode: AttachmentWriteMode,
+    write: &AttachmentWrite,
 ) -> Result<Change, Refusal> {
-    let Some(path) = records::record_path(record) else {
+    let (record, create) = match write {
+        AttachmentWrite::Create(record) => {
+            if view.attachment(&record.id)?.is_some() {
+                return Err(refused(ErrorCode::AlreadyExists, "attachment id in use"));
+            }
+            (record.clone(), true)
+        }
+        AttachmentWrite::Update { id, patch } => {
+            let Some(mut existing) = view.attachment(id)? else {
+                return Err(refused(ErrorCode::NotFound, "attachment not found"));
+            };
+            patch.apply(&mut existing);
+            (existing, false)
+        }
+    };
+    let Some(path) = records::record_path(&record) else {
         return Err(refused(
             ErrorCode::Unsupported,
             "this target has no standalone attachment file",
         ));
     };
-    let existing = view.attachment(&record.id)?;
-    match (mode, &existing) {
-        (AttachmentWriteMode::Create, Some(_)) => {
-            return Err(refused(ErrorCode::AlreadyExists, "attachment id in use"));
-        }
-        (AttachmentWriteMode::Update, None) => {
-            return Err(refused(ErrorCode::NotFound, "attachment not found"));
-        }
-        (AttachmentWriteMode::Update, Some(existing))
-            if existing.target_kind != record.target_kind
-                || existing.target_id != record.target_id =>
-        {
-            return Err(refused(ErrorCode::Conflict, "an attachment never moves"));
-        }
-        _ => {}
-    }
-    // The policy read a snapshot; the writer checks the project again where it decides.
+    // The policy read a snapshot; the writer checks the project again where it decides, for
+    // a new file and an edit alike.
     if let (AttachmentTargetKind::Project, Some(project)) = (record.target_kind, &record.target_id)
     {
         match view.project(project)? {
             None => return Err(refused(ErrorCode::NotFound, "project not found")),
-            Some(project) if project.archived && mode == AttachmentWriteMode::Create => {
+            Some(project) if project.archived => {
                 return Err(refused(ErrorCode::NotAuthorized, "the project is archived"));
             }
             Some(_) => {}
         }
     }
     let reply = serde_json::to_vec(&record.to_view()).expect("a view encodes");
-    let bytes = records::encode(record);
+    let bytes = records::encode(&record);
     let change = Change::new(Ack::Durable);
-    let change = match mode {
-        AttachmentWriteMode::Create => change.create(path, bytes),
-        AttachmentWriteMode::Update => change.put(path, bytes),
+    let change = if create {
+        change.create(path, bytes)
+    } else {
+        change.put(path, bytes)
     };
     Ok(change.reply(reply))
 }
@@ -86,13 +90,9 @@ impl StoreOp for AttachmentWriteOp {
     type Out = Result<Result<AttachmentView, ApiError>, StoreError>;
 
     fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
-        let Self {
-            operation,
-            record,
-            mode,
-        } = self;
+        let Self { operation, write } = self;
         let reply = match store.submit(Some(operation), false, move |uow| {
-            decide(uow.view(), &record, mode)
+            decide(uow.view(), &write)
         }) {
             Ok(reply) => reply,
             Err(StoreError::Conflict) => {

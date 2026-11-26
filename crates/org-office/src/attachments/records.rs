@@ -50,6 +50,35 @@ pub struct AttachmentRecord {
     pub updated_at: String,
 }
 
+/// A partial edit of a standalone file's metadata (`attachment.update_meta`). It is applied
+/// where the write is decided (the journal's single writer, or the private space's
+/// transaction) onto the record as it is then, so two edits of different fields never undo
+/// each other.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MetaPatch {
+    pub title: Option<String>,
+    /// `Some("")` clears the description.
+    pub description: Option<String>,
+    pub artifact_status: Option<ArtifactStatus>,
+    pub updated_at: String,
+}
+
+impl MetaPatch {
+    /// `record` with the named fields replaced and `updated_at` set.
+    pub fn apply(&self, record: &mut AttachmentRecord) {
+        if let Some(title) = &self.title {
+            record.title.clone_from(title);
+        }
+        if let Some(description) = &self.description {
+            record.description = (!description.is_empty()).then(|| description.clone());
+        }
+        if let Some(status) = self.artifact_status {
+            record.artifact_status = status;
+        }
+        record.updated_at.clone_from(&self.updated_at);
+    }
+}
+
 impl AttachmentRecord {
     pub fn scope(&self) -> AttachmentScope {
         if self.target_kind == AttachmentTargetKind::UserPrivate {
@@ -145,6 +174,7 @@ pub fn is_description(text: &str) -> bool {
 
 fn is_filename(text: &str) -> bool {
     !text.is_empty()
+        && text.trim() == text
         && text.len() <= ATTACHMENT_FILENAME_MAX_BYTES
         && !text.starts_with('.')
         && !text

@@ -9,9 +9,14 @@
 //! - **An attached file inherits its parent's read rule** (task, task comment, message, ask
 //!   answer, project, organization). A message or an ask is readable only by the members of
 //!   its conversation.
+//! - **Phase 1: any active employee may publish organization-wide files** (`doc-103` §1.B,
+//!   §1.C, §4.D; `TASK-98.4`, `TASK-98.7`). Phase 2 (`TASK-176`) narrows that to the owner and
+//!   admins.
 //! - **A person's private space is that person's alone.** Read and write need
 //!   `kind == Person && id == owner`: no agent ever (not even one the owner manages), no other
-//!   person, no exception. Others get `NotFound`.
+//!   person, no exception. Anyone asking for another's space gets `NotFound`, so no space's
+//!   existence is ever confirmed; an agent asking for a space of its own is told it has none
+//!   and to send the file in a 1:1 direct message instead (`doc-103`).
 //! - **Binding needs both sides.** Binding a staged upload needs the uploader; re-attaching an
 //!   existing attachment needs `can_read(source)`; either way the target needs
 //!   `can_read(target) && can_write(target)`.
@@ -170,7 +175,13 @@ impl<'a, F: ResourceFacts + ?Sized> AuthorizationPolicy<'a, F> {
         match resource {
             ResourceRef::StagedUpload { uploaded_by, .. } => only(caller.is(uploaded_by)),
             ResourceRef::UserPrivate { owner_employee_id } => {
-                only(caller.is_person() && caller.is(owner_employee_id))
+                if !caller.is(owner_employee_id) {
+                    return Err(Denied::NotFound);
+                }
+                if !caller.is_person() {
+                    return Err(Denied::NotAuthorized(AGENT_HAS_NO_PRIVATE_SPACE));
+                }
+                Ok(())
             }
             // An attachment the caller cannot read through its parent does not exist for them.
             ResourceRef::Attachment { target, .. } => {
@@ -250,10 +261,8 @@ impl<'a, F: ResourceFacts + ?Sized> AuthorizationPolicy<'a, F> {
     ) -> Result<(), Denied> {
         match self.facts.facts(parent)? {
             ParentFacts::Missing => Err(Denied::NotFound),
-            ParentFacts::Organization if caller.is_owner || caller.is_person() => Ok(()),
-            ParentFacts::Organization => Err(Denied::NotAuthorized(
-                "only people may publish organization-wide files",
-            )),
+            // Phase 1: every active employee (`can_read` checked that) publishes org-wide.
+            ParentFacts::Organization => Ok(()),
             ParentFacts::Project { archived: true, .. } => {
                 Err(Denied::NotAuthorized("the project is archived"))
             }
@@ -282,6 +291,10 @@ impl<'a, F: ResourceFacts + ?Sized> AuthorizationPolicy<'a, F> {
         }
     }
 }
+
+/// What an agent asking for a private space of its own is told.
+pub const AGENT_HAS_NO_PRIVATE_SPACE: &str = "agents have no private file space; to hand a file \
+     to one person, send it in a 1:1 direct message with `--attach`";
 
 fn only(allowed: bool) -> Result<(), Denied> {
     if allowed {

@@ -1926,19 +1926,25 @@ class AttachmentSchemaTests(unittest.TestCase):
 
         def row(identity, operation, **overrides):
             fields = dict(organization_id="org", id=identity, owner_employee_id="reporter",
-                          operation_id=operation, content_sha256=self.SHA, mime_type="image/png",
+                          operation_id=operation, operation_fingerprint="b" * 64,
+                          content_sha256=self.SHA, mime_type="image/png",
                           byte_count=5, filename="me.png", title="Me", width=4, height=4,
                           created_at="t", updated_at="t")
             insert(private, "user_space_files", **(fields | overrides))
 
         row("one", "op-1")
         row("two", "op-2", description=None)
+        # A command id is scoped to its owner: another person's same id is their own.
+        row("seven", "op-1", owner_employee_id="someone-else")
         for identity, operation, overrides in (
             ("three", "op-1", {}),
             ("one", "op-3", {}),
             ("four", "op-4", {"mime_type": "text/html"}),
             ("five", "op-5", {"title": "t" * 161}),
             ("six", "op-6", {"artifact_status": "secret"}),
+            ("eight", "op-8", {"operation_fingerprint": "B" * 64}),
+            ("nine", "op-9", {"operation_fingerprint": "b" * 63}),
+            ("ten", "op-10", {"operation_fingerprint": None}),
         ):
             with self.subTest(identity=identity), self.assertRaises(sqlite3.IntegrityError):
                 row(identity, operation, **overrides)

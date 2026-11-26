@@ -273,17 +273,19 @@ fn re_attaching_needs_read_on_the_source_and_write_on_the_target() {
         )
         .unwrap_err();
         assert_eq!(refused.code, ErrorCode::NotAuthorized);
-        // Agents never publish organization-wide.
+        // Phase 1 (`doc-103` §1.B): any active employee, an agent included, publishes
+        // organization-wide.
         let staged = upload(office, &fx.agent, "out.md", "text/markdown", b"# Out").unwrap();
-        let refused = attach_upload(
+        let published = attach_upload(
             office,
             &fx.agent,
             &staged.upload_id,
             AttachmentTargetKind::Organization,
             None,
         )
-        .unwrap_err();
-        assert_eq!(refused.code, ErrorCode::NotAuthorized);
+        .unwrap();
+        assert_eq!(published.scope, AttachmentScope::Shared);
+        inspect(office, &fx.other_person, &published.id).unwrap();
         // A project member may bring it into the project.
         reattach(
             office,
@@ -433,13 +435,17 @@ fn the_private_space_is_its_persons_alone_and_never_an_agents() {
                 ErrorCode::NotFound
             );
         }
-        // An agent has no private space of its own either, and cannot write one.
-        assert_eq!(
-            list_private(office, &fx.agent, None).unwrap_err().code,
-            ErrorCode::NotFound
-        );
+        // An agent has no private space of its own, and is told so, with where to go instead;
+        // a person's space stays one it cannot learn exists.
+        let own = list_private(office, &fx.agent, None).unwrap_err();
+        assert_eq!(own.code, ErrorCode::NotAuthorized);
+        assert!(own.message.contains("1:1 direct message"), "{own:?}");
         let staged = upload(office, &fx.agent, "notes.txt", "text/plain", b"agent notes").unwrap();
-        for target in [None, Some(fx.person.as_str()), Some(fx.agent.as_str())] {
+        for (target, expected) in [
+            (None, ErrorCode::NotAuthorized),
+            (Some(fx.agent.as_str()), ErrorCode::NotAuthorized),
+            (Some(fx.person.as_str()), ErrorCode::NotFound),
+        ] {
             let refused = attach_upload(
                 office,
                 &fx.agent,
@@ -448,8 +454,14 @@ fn the_private_space_is_its_persons_alone_and_never_an_agents() {
                 target,
             )
             .unwrap_err();
-            assert_eq!(refused.code, ErrorCode::NotFound, "{target:?}");
+            assert_eq!(refused.code, expected, "{target:?}");
         }
+        assert_eq!(
+            list_private(office, &fx.agent, Some(&fx.person))
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
         // Not even a person may write another person's space.
         let other = upload(
             office,
@@ -543,4 +555,78 @@ fn an_unknown_or_inactive_caller_is_refused_before_anything_is_read() {
         .unwrap()
         .unwrap_err();
     assert_eq!(refused.code, ErrorCode::NotAuthorized);
+}
+
+#[test]
+fn a_list_whose_scope_contradicts_its_target_kind_is_refused_not_reinterpreted() {
+    let fx = Fixture::new(EngineChoice::Memory);
+    let staged = upload(&fx.office, &fx.person, "mine.txt", "text/plain", b"mine").unwrap();
+    attach_upload(
+        &fx.office,
+        &fx.person,
+        &staged.upload_id,
+        AttachmentTargetKind::UserPrivate,
+        None,
+    )
+    .unwrap();
+    let list = |scope, kind, target: Option<&str>| {
+        fx.office
+            .attachment_list(
+                &fx.person,
+                AttachmentListParams {
+                    target_kind: kind,
+                    target_id: target.map(str::to_owned),
+                    scope,
+                    limit: None,
+                    cursor: None,
+                },
+            )
+            .unwrap()
+            .map(|r| r.attachments.len())
+    };
+    for (scope, kind, target) in [
+        (
+            AttachmentScope::UserPrivate,
+            AttachmentTargetKind::Project,
+            Some(fx.project.as_str()),
+        ),
+        (
+            AttachmentScope::UserPrivate,
+            AttachmentTargetKind::Organization,
+            None,
+        ),
+        (
+            AttachmentScope::Shared,
+            AttachmentTargetKind::UserPrivate,
+            None,
+        ),
+    ] {
+        assert_eq!(
+            list(Some(scope), Some(kind), target).unwrap_err().code,
+            ErrorCode::InvalidRequest,
+            "{scope:?} {kind:?}"
+        );
+    }
+    // Agreeing or absent, the scope lists as before.
+    assert_eq!(list(Some(AttachmentScope::UserPrivate), None, None), Ok(1));
+    assert_eq!(
+        list(
+            Some(AttachmentScope::UserPrivate),
+            Some(AttachmentTargetKind::UserPrivate),
+            None
+        ),
+        Ok(1)
+    );
+    assert_eq!(
+        list(None, Some(AttachmentTargetKind::UserPrivate), None),
+        Ok(1)
+    );
+    assert_eq!(
+        list(
+            Some(AttachmentScope::Shared),
+            Some(AttachmentTargetKind::Organization),
+            None
+        ),
+        Ok(0)
+    );
 }

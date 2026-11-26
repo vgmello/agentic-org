@@ -83,29 +83,93 @@ fn is_pe(bytes: &[u8]) -> bool {
     bytes.get(offset..offset.saturating_add(4)) == Some(b"PE\0\0".as_slice())
 }
 
-/// HTML or SVG at the start of a text file (after a byte-order mark, white space and
-/// comments or an XML declaration).
+/// HTML or SVG at the start of a text file: after a byte-order mark, white space, and any
+/// comments, XML declarations or other `<!`/`<?` constructs before it, each skipped where an
+/// HTML parser ends it (so `<!-- x --><html><script>` is HTML, not text).
 fn markup(bytes: &[u8]) -> Sniffed {
-    let head = &bytes[..bytes.len().min(1024)];
-    let text = String::from_utf8_lossy(head).to_ascii_lowercase();
-    let text = text.trim_start_matches('\u{feff}').trim_start();
-    let html = [
-        "<!doctype html",
-        "<html",
-        "<head",
-        "<body",
-        "<script",
-        "<iframe",
+    const HTML: [&[u8]; 6] = [
+        b"<!doctype html",
+        b"<html",
+        b"<head",
+        b"<body",
+        b"<script",
+        b"<iframe",
     ];
-    if html.iter().any(|tag| text.starts_with(tag)) {
-        return Sniffed::Html;
+    let lead = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    let mut rest = lead;
+    loop {
+        rest = skip_white(rest);
+        let head = lowered(rest, 16);
+        if HTML.iter().any(|tag| head.starts_with(tag)) {
+            return Sniffed::Html;
+        }
+        if head.starts_with(b"<svg") {
+            return Sniffed::Svg;
+        }
+        match past_prolog_item(rest) {
+            Some(after) => rest = after,
+            None => break,
+        }
     }
-    if text.starts_with("<svg")
-        || ((text.starts_with("<?xml") || text.starts_with("<!--")) && text.contains("<svg"))
-    {
+    // An XML file with an `<svg` element anywhere near its start is SVG.
+    let head = lowered(skip_white(lead), 1024);
+    if (head.starts_with(b"<?xml") || head.starts_with(b"<!--")) && contains(&head, b"<svg") {
         return Sniffed::Svg;
     }
     Sniffed::Unknown
+}
+
+fn skip_white(bytes: &[u8]) -> &[u8] {
+    let start = bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    &bytes[start..]
+}
+
+/// At most `n` bytes of `bytes`, ASCII-lowercased.
+fn lowered(bytes: &[u8], n: usize) -> Vec<u8> {
+    bytes[..bytes.len().min(n)].to_ascii_lowercase()
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    find(haystack, needle).is_some()
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// What follows the comment (`<!-- -->`) or other `<!`/`<?` construct `bytes` starts with,
+/// ended where an HTML parser ends it; `None` when it starts with none, or one that runs to
+/// the end of the file (all of the rest is then inside it).
+fn past_prolog_item(bytes: &[u8]) -> Option<&[u8]> {
+    if let Some(comment) = bytes.strip_prefix(b"<!--") {
+        // `<!-->` and `<!--->` end at once; otherwise the first `-->` or `--!>` ends it.
+        if let Some(after) = comment.strip_prefix(b">") {
+            return Some(after);
+        }
+        if let Some(after) = comment.strip_prefix(b"->") {
+            return Some(after);
+        }
+        // One pass to the first `--` that closes: the scan stays linear in the file.
+        let end = comment
+            .windows(2)
+            .enumerate()
+            .filter(|(_, pair)| *pair == b"--")
+            .find_map(|(at, _)| match &comment[at + 2..] {
+                [b'>', ..] => Some(at + 3),
+                [b'!', b'>', ..] => Some(at + 4),
+                _ => None,
+            })?;
+        return Some(&comment[end..]);
+    }
+    if bytes.starts_with(b"<!") || bytes.starts_with(b"<?") {
+        // A doctype, a bogus comment or a processing instruction: the first `>` ends it.
+        let end = bytes.iter().position(|&b| b == b'>')?;
+        return Some(&bytes[end + 1..]);
+    }
+    None
 }
 
 /// Refuses `bytes` unless they begin as `declared` says.

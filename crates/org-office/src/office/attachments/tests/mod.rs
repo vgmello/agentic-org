@@ -4,6 +4,7 @@
 mod acl;
 mod flows;
 mod rebuild;
+mod update_meta;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

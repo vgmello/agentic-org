@@ -121,6 +121,11 @@ fn is_not_authorized(result: Result<(), Denied>) -> bool {
     matches!(result, Err(Denied::NotAuthorized(_)))
 }
 
+/// Refused with the hint that agents have no private space.
+fn is_hint(result: Result<(), Denied>) -> bool {
+    matches!(result, Err(Denied::NotAuthorized(why)) if why == AGENT_HAS_NO_PRIVATE_SPACE)
+}
+
 fn staged(by: &str) -> ResourceRef {
     ResourceRef::StagedUpload {
         id: "up".into(),
@@ -170,17 +175,20 @@ fn the_private_space_admits_only_its_owning_person_and_never_an_agent() {
     let space = private(PERSON);
     policy.can_read(&person(), &space).unwrap();
     policy.can_write(&person(), &space).unwrap();
-    // An agent that shares the person's id (impossible in a directory, but the rule must not
-    // hinge on ids alone), the owner, another person and the owner's own agent: all refused.
-    let impostor = principal(PERSON, PrincipalKind::Agent, &[TEAM]);
+    // The owner, another person and the owner's own agent: refused as if it did not exist.
     let owners_agent = principal(OWNER_AGENT, PrincipalKind::Agent, &[]);
-    for caller in [impostor, owner(), other_person(), agent(), owners_agent] {
+    for caller in [owner(), other_person(), agent(), owners_agent] {
         assert!(is_not_found(policy.can_read(&caller, &space)), "{caller:?}");
         assert!(
             is_not_found(policy.can_write(&caller, &space)),
             "{caller:?}"
         );
     }
+    // An agent that shares the person's id (impossible in a directory, but the rule must not
+    // hinge on ids alone) is refused too: told agents have no space, never let in.
+    let impostor = principal(PERSON, PrincipalKind::Agent, &[TEAM]);
+    assert!(is_hint(policy.can_read(&impostor, &space)));
+    assert!(is_hint(policy.can_write(&impostor, &space)));
     let owners_space = private(OWNER);
     let owners_agent = principal(OWNER_AGENT, PrincipalKind::Agent, &[]);
     assert!(is_not_found(policy.can_read(&owners_agent, &owners_space)));
@@ -257,10 +265,14 @@ fn attachments_inherit_their_parents_read_rule() {
 fn writing_a_parent_follows_its_owner_team_or_author() {
     let facts = facts();
     let policy = AuthorizationPolicy::new(&facts);
+    // Phase 1: every active employee, agents included, publishes organization-wide.
     let org = ResourceRef::Organization;
     policy.can_write(&owner(), &org).unwrap();
     policy.can_write(&other_person(), &org).unwrap();
-    assert!(is_not_authorized(policy.can_write(&agent(), &org)));
+    policy.can_write(&agent(), &org).unwrap();
+    let mut gone = agent();
+    gone.active = false;
+    assert!(is_not_found(policy.can_write(&gone, &org)));
 
     let project = ResourceRef::Project("p1".into());
     policy.can_write(&owner(), &project).unwrap();
@@ -324,12 +336,27 @@ fn re_attaching_needs_read_on_the_source_and_write_on_the_target() {
         &org_file,
         &project
     )));
-    // An agent can never place anything into a private space.
-    assert!(is_not_found(policy.can_attach(
+    // An agent can never place anything into a private space: its own is refused with the
+    // hint to use a direct message, a person's as if it did not exist.
+    assert!(is_hint(policy.can_attach(
         &agent(),
         &org_file,
         &private(AGENT)
     )));
+    assert!(is_hint(policy.can_attach(
+        &agent(),
+        &staged(AGENT),
+        &private(AGENT)
+    )));
+    assert!(is_not_found(policy.can_attach(
+        &agent(),
+        &org_file,
+        &private(PERSON)
+    )));
+    // An agent may publish a staged upload of its own organization-wide.
+    policy
+        .can_attach(&agent(), &staged(AGENT), &ResourceRef::Organization)
+        .unwrap();
     // A DM file cannot leave the conversation through someone outside it.
     let dm_file = attachment(ResourceRef::Message("dm".into()), AGENT);
     assert!(is_not_found(policy.can_attach(

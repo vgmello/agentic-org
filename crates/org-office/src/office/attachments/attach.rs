@@ -15,13 +15,13 @@ use serde_json::json;
 use super::{hq_only, invalid, not_found, record_ref, Answer, Office};
 use crate::attachments::blobs::{BlobStore, ContentHash};
 use crate::attachments::media::MediaType;
-use crate::attachments::records::{is_description, is_title, AttachmentRecord};
-use crate::attachments::user_space::satellite_refusal;
+use crate::attachments::records::{is_description, is_title, AttachmentRecord, MetaPatch};
+use crate::attachments::user_space::{operation_reused, request_fingerprint, satellite_refusal};
 use crate::authz::{PrincipalContext, ResourceRef};
 use crate::error::OfficeError;
 use crate::office::storage;
 use crate::store::open::attachment_ops::{
-    attachment_operation, AttachmentWriteMode, AttachmentWriteOp,
+    attachment_operation, AttachmentWrite, AttachmentWriteOp,
 };
 use crate::store::open::ReceiptById;
 use crate::time::format_rfc3339_ms;
@@ -199,20 +199,32 @@ impl Office {
     }
 
     /// The answer a retried command already got, if any (its staged upload is gone by now).
+    /// A private command is looked up in the caller's own space alone, and answers only the
+    /// same request for the same target: anything else is `operation_reused`.
     fn attach_retry(
         &self,
         caller: &PrincipalContext,
         params: &AttachmentAttachParams,
+        target: &Target,
         fingerprint: &[u8],
     ) -> Answer<Option<AttachmentView>> {
         if params.target_kind == AttachmentTargetKind::UserPrivate {
-            let earlier = self
-                .attachments
-                .user_space
-                .by_operation(&self.info.org_id, &params.command_id)?;
-            return Ok(Ok(earlier
-                .filter(|r| r.uploaded_by_employee_id.as_str() == caller.employee_id)
-                .map(|r| r.to_view())));
+            let Some(earlier) = self.attachments.user_space.by_operation(
+                &self.info.org_id,
+                &caller.employee_id,
+                &params.command_id,
+            )?
+            else {
+                return Ok(Ok(None));
+            };
+            if earlier.record.target_id != target.id
+                || earlier.record.uploaded_by_employee_id.as_str() != caller.employee_id
+            {
+                return Ok(Err(operation_reused()));
+            }
+            return Ok(earlier
+                .replay(&request_fingerprint(fingerprint))
+                .map(|record| Some(record.to_view())));
         }
         let Ok(id) = Id::parse(&params.command_id) else {
             return Ok(Ok(None));
@@ -227,10 +239,7 @@ impl Office {
                 || op.actor != receipt.actor
                 || receipt.kind != ATTACH
         }) {
-            return Ok(Err(ApiError::new(
-                ErrorCode::OperationReused,
-                "command_id reused with a different request",
-            )));
+            return Ok(Err(operation_reused()));
         }
         if receipt.outcome == Outcome::Rejected {
             let refusal = serde_json::from_slice::<ApiError>(&receipt.reply)
@@ -290,7 +299,7 @@ impl Office {
         .expect("a fingerprint encodes");
         let source = match self.attach_source(&caller, &params)? {
             Ok(source) => source,
-            Err(refusal) => match self.attach_retry(&caller, &params, &fingerprint)? {
+            Err(refusal) => match self.attach_retry(&caller, &params, &target, &fingerprint)? {
                 Ok(Some(view)) => return Ok(Ok(AttachmentResult { attachment: view })),
                 Ok(None) => return Ok(Err(refusal)),
                 Err(reused) => return Ok(Err(reused)),
@@ -353,7 +362,12 @@ impl Office {
         let bound = if private {
             self.attachments
                 .user_space
-                .insert(&self.info.org_id, &params.command_id, &record)?
+                .insert(
+                    &self.info.org_id,
+                    &params.command_id,
+                    &request_fingerprint(fingerprint),
+                    &record,
+                )?
                 .map(|r| r.to_view())
         } else {
             let Some(operation) =
@@ -366,11 +380,11 @@ impl Office {
             self.store
                 .run(AttachmentWriteOp {
                     operation,
-                    record,
-                    mode: AttachmentWriteMode::Create,
+                    write: AttachmentWrite::Create(record),
                 })
                 .map_err(storage)?
         };
+        // A refused binding (a reused command, an archived project) leaves the upload staged.
         if bound.is_ok() {
             if let Some(upload_id) = &source.upload_id {
                 self.attachments.staging.remove(upload_id)?;
@@ -424,22 +438,27 @@ impl Office {
         ) {
             return Ok(Err(unsupported_target(kind)));
         }
-        let mut updated = record;
-        if let Some(title) = &params.title {
-            updated.title = title.clone();
-        }
-        if let Some(description) = &params.description {
-            updated.description = (!description.is_empty()).then(|| description.clone());
-        }
-        updated.artifact_status = params.artifact_status.unwrap_or(updated.artifact_status);
-        updated.updated_at = format_rfc3339_ms(self.attachment_now_ms());
+        // Only the named fields travel: each is applied where the write is decided, onto the
+        // file as it is then.
+        let patch = MetaPatch {
+            title: params.title.clone(),
+            description: params.description.clone(),
+            artifact_status: params.artifact_status,
+            updated_at: format_rfc3339_ms(self.attachment_now_ms()),
+        };
         if kind == AttachmentTargetKind::UserPrivate {
-            self.attachments
-                .user_space
-                .update(&self.info.org_id, &updated)?;
-            return Ok(Ok(AttachmentResult {
-                attachment: updated.to_view(),
-            }));
+            let updated = self.attachments.user_space.update_meta(
+                &self.info.org_id,
+                &caller.employee_id,
+                record.id.as_str(),
+                &patch,
+            )?;
+            return Ok(match updated {
+                Some(updated) => Ok(AttachmentResult {
+                    attachment: updated.to_view(),
+                }),
+                None => Err(not_found()),
+            });
         }
         let fingerprint = serde_json::to_vec(&json!({
             "attachment_id": params.attachment_id,
@@ -462,8 +481,10 @@ impl Office {
             .store
             .run(AttachmentWriteOp {
                 operation,
-                record: updated,
-                mode: AttachmentWriteMode::Update,
+                write: AttachmentWrite::Update {
+                    id: record.id,
+                    patch,
+                },
             })
             .map_err(storage)?;
         Ok(written.map(|attachment| AttachmentResult { attachment }))

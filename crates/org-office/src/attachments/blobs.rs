@@ -170,7 +170,7 @@ impl BlobStore for FsBlobStore {
         }
         let mut out = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
         // Bounded even if the file grew after the check: read at most `limit + 1`.
-        file.take(limit + 1)
+        file.take(limit.saturating_add(1))
             .read_to_end(&mut out)
             .map_err(OfficeError::storage)?;
         if out.len() as u64 > limit {

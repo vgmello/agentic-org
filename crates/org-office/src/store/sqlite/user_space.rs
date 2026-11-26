@@ -8,11 +8,11 @@ use std::sync::{Mutex, MutexGuard};
 use org_proto::attachments::{ArtifactStatus, AttachmentTargetKind};
 use org_proto::ApiError;
 use org_store::Id;
-use rusqlite::{params, Connection, ErrorCode, OptionalExtension, Row};
+use rusqlite::{params, Connection, ErrorCode, OptionalExtension, Row, TransactionBehavior};
 
 use crate::attachments::blobs::ContentHash;
-use crate::attachments::records::AttachmentRecord;
-use crate::attachments::user_space::{operation_reused, UserSpaceStore};
+use crate::attachments::records::{AttachmentRecord, MetaPatch};
+use crate::attachments::user_space::{PrivateOperation, UserSpaceStore};
 use crate::error::OfficeError;
 use crate::private_fs::{
     absolute, full_sync, private_dir_synced, private_file, sync_dir, tighten_sqlite_sidecars,
@@ -163,12 +163,32 @@ fn record_row(row: &Row<'_>) -> rusqlite::Result<AttachmentRecord> {
 fn by_operation(
     conn: &Connection,
     org_id: &str,
+    owner: &str,
     operation_id: &str,
-) -> Result<Option<AttachmentRecord>, OfficeError> {
+) -> Result<Option<PrivateOperation>, OfficeError> {
+    // The fingerprint is the column after the record's.
     let sql = format!(
-        "SELECT {COLUMNS} FROM user_space_files WHERE organization_id = ?1 AND operation_id = ?2"
+        "SELECT {COLUMNS}, operation_fingerprint FROM user_space_files \
+         WHERE organization_id = ?1 AND owner_employee_id = ?2 AND operation_id = ?3"
     );
-    conn.query_row(&sql, params![org_id, operation_id], record_row)
+    conn.query_row(&sql, params![org_id, owner, operation_id], |row| {
+        Ok(PrivateOperation {
+            record: record_row(row)?,
+            fingerprint: row.get(14)?,
+        })
+    })
+    .optional()
+    .map_err(OfficeError::storage)
+}
+
+fn by_id(
+    conn: &Connection,
+    org_id: &str,
+    id: &str,
+) -> Result<Option<AttachmentRecord>, OfficeError> {
+    let sql =
+        format!("SELECT {COLUMNS} FROM user_space_files WHERE organization_id = ?1 AND id = ?2");
+    conn.query_row(&sql, params![org_id, id], record_row)
         .optional()
         .map_err(OfficeError::storage)
 }
@@ -182,29 +202,27 @@ impl UserSpaceStore for SqliteUserSpaceStore {
         &self,
         org_id: &str,
         operation_id: &str,
+        fingerprint: &str,
         record: &AttachmentRecord,
     ) -> Result<Result<AttachmentRecord, ApiError>, OfficeError> {
         let Some(owner) = record.target_id.as_ref() else {
             return Err(OfficeError::Invalid("a private file names its owner"));
         };
         let conn = self.lock()?;
-        if let Some(earlier) = by_operation(&conn, org_id, operation_id)? {
-            return Ok(if earlier.target_id == record.target_id {
-                Ok(earlier)
-            } else {
-                Err(operation_reused())
-            });
+        if let Some(earlier) = by_operation(&conn, org_id, owner.as_str(), operation_id)? {
+            return Ok(earlier.replay(fingerprint));
         }
         let inserted = conn.execute(
             "INSERT INTO user_space_files (organization_id, id, owner_employee_id, operation_id, \
-             content_sha256, mime_type, byte_count, filename, title, description, \
-             artifact_status, width, height, page_count, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             operation_fingerprint, content_sha256, mime_type, byte_count, filename, title, \
+             description, artifact_status, width, height, page_count, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 org_id,
                 record.id.as_str(),
                 owner.as_str(),
                 operation_id,
+                fingerprint,
                 record.content_sha256.as_str(),
                 record.mime_type,
                 i64::try_from(record.byte_count).map_err(|_| OfficeError::Invalid("byte count"))?,
@@ -234,22 +252,16 @@ impl UserSpaceStore for SqliteUserSpaceStore {
     }
 
     fn get(&self, org_id: &str, id: &str) -> Result<Option<AttachmentRecord>, OfficeError> {
-        let conn = self.lock()?;
-        let sql = format!(
-            "SELECT {COLUMNS} FROM user_space_files WHERE organization_id = ?1 AND id = ?2"
-        );
-        conn.query_row(&sql, params![org_id, id], record_row)
-            .optional()
-            .map_err(OfficeError::storage)
+        by_id(&*self.lock()?, org_id, id)
     }
 
     fn by_operation(
         &self,
         org_id: &str,
+        owner: &str,
         operation_id: &str,
-    ) -> Result<Option<AttachmentRecord>, OfficeError> {
-        let conn = self.lock()?;
-        by_operation(&conn, org_id, operation_id)
+    ) -> Result<Option<PrivateOperation>, OfficeError> {
+        by_operation(&*self.lock()?, org_id, owner, operation_id)
     }
 
     fn list(
@@ -277,15 +289,32 @@ impl UserSpaceStore for SqliteUserSpaceStore {
             .map_err(OfficeError::storage)
     }
 
-    fn update(&self, org_id: &str, record: &AttachmentRecord) -> Result<(), OfficeError> {
-        let conn = self.lock()?;
-        let changed = conn
+    fn update_meta(
+        &self,
+        org_id: &str,
+        owner: &str,
+        id: &str,
+        patch: &MetaPatch,
+    ) -> Result<Option<AttachmentRecord>, OfficeError> {
+        let mut conn = self.lock()?;
+        // The patch lands on the row as this transaction reads it, never on an earlier copy.
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(OfficeError::storage)?;
+        let Some(mut record) = by_id(&tx, org_id, id)?
+            .filter(|r| r.target_id.as_ref().is_some_and(|o| o.as_str() == owner))
+        else {
+            return Ok(None);
+        };
+        patch.apply(&mut record);
+        let changed = tx
             .execute(
-                "UPDATE user_space_files SET title = ?3, description = ?4, artifact_status = ?5, \
-                 updated_at = ?6 WHERE organization_id = ?1 AND id = ?2",
+                "UPDATE user_space_files SET title = ?4, description = ?5, artifact_status = ?6, \
+                 updated_at = ?7 WHERE organization_id = ?1 AND id = ?2 AND owner_employee_id = ?3",
                 params![
                     org_id,
-                    record.id.as_str(),
+                    id,
+                    owner,
                     record.title,
                     record.description,
                     record.artifact_status.as_str(),
@@ -294,9 +323,13 @@ impl UserSpaceStore for SqliteUserSpaceStore {
             )
             .map_err(OfficeError::storage)?;
         if changed != 1 {
-            return Err(OfficeError::Invalid("no such private file"));
+            return Err(OfficeError::Invalid(
+                "a private file changed under its update",
+            ));
         }
+        tx.commit().map_err(OfficeError::storage)?;
         drop(conn);
-        self.committed()
+        self.committed()?;
+        Ok(Some(record))
     }
 }

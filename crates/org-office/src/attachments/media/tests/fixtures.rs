@@ -175,14 +175,24 @@ pub(crate) fn pdf(pages: usize) -> Vec<u8> {
 
 /// A PDF whose page tree is only inside a compressed object stream.
 pub(crate) fn pdf_with_object_stream(pages: usize) -> Vec<u8> {
-    let inner = format!("2 0 << /Type /Pages /Kids [] /Count {pages} >>");
+    pdf_with_object_stream_named(pages, 0, 0)
+}
+
+/// [`pdf_with_object_stream`] whose stream's dictionary names `/ObjStm` `extra` more times,
+/// and whose inflated objects carry `padding` more bytes of white space.
+pub(crate) fn pdf_with_object_stream_named(pages: usize, extra: usize, padding: usize) -> Vec<u8> {
+    let inner = format!(
+        "2 0 << /Type /Pages /Kids [] /Count {pages} >>{}",
+        " ".repeat(padding)
+    );
+    let names = "/ObjStm ".repeat(extra);
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(inner.as_bytes()).unwrap();
     let compressed = encoder.finish().unwrap();
     let mut body = b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_vec();
     body.extend_from_slice(
         format!(
-            "5 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /FlateDecode /Length {} >>\nstream\n",
+            "5 0 obj\n<< {names}/Type /ObjStm /N 1 /First 4 /Filter /FlateDecode /Length {} >>\nstream\n",
             compressed.len()
         )
         .as_bytes(),
@@ -277,4 +287,84 @@ pub(crate) fn xlsx() -> Vec<u8> {
         entry("[Content_Types].xml", types.as_bytes()),
         entry("xl/workbook.xml", b"<workbook/>"),
     ])
+}
+
+/// Where one frame of a hand-made GIF sits on its canvas, and its size.
+pub(crate) struct GifRect {
+    pub left: u16,
+    pub top: u16,
+    pub width: u16,
+    pub height: u16,
+}
+
+/// LZW codes packed least significant bit first, as GIF stores them.
+#[derive(Default)]
+struct GifBits {
+    bytes: Vec<u8>,
+    pending: u32,
+    count: u32,
+}
+
+impl GifBits {
+    fn push(&mut self, code: u16, width: u32) {
+        self.pending |= u32::from(code) << self.count;
+        self.count += width;
+        while self.count >= 8 {
+            self.bytes.push(self.pending as u8);
+            self.pending >>= 8;
+            self.count -= 8;
+        }
+    }
+
+    fn finish(mut self) -> Vec<u8> {
+        if self.count > 0 {
+            self.bytes.push(self.pending as u8);
+        }
+        self.bytes
+    }
+}
+
+/// A GIF89a of a `width` x `height` canvas with a four-colour global table and `frames`, each
+/// one solid colour. The LZW data is written uncompressed (a clear code before every two
+/// pixels keeps every code 3 bits wide). Without `pixels`, each frame's data is only a clear
+/// code and the end code: a decoder that tried to fill the frame from it would fail.
+pub(crate) fn gif_frames(width: u16, height: u16, frames: &[GifRect], pixels: bool) -> Vec<u8> {
+    const CLEAR: u16 = 4;
+    const END: u16 = 5;
+    let mut out = b"GIF89a".to_vec();
+    out.extend(width.to_le_bytes());
+    out.extend(height.to_le_bytes());
+    out.extend([0b1000_0001, 0, 0]);
+    out.extend([0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255]);
+    for (i, frame) in frames.iter().enumerate() {
+        out.extend([0x21, 0xf9, 4, 0, 5, 0, 0, 0]);
+        out.push(0x2c);
+        for field in [frame.left, frame.top, frame.width, frame.height] {
+            out.extend(field.to_le_bytes());
+        }
+        out.extend([0, 2]);
+        let colour = (i % 3 + 1) as u16;
+        let mut bits = GifBits::default();
+        let mut left = if pixels {
+            u32::from(frame.width) * u32::from(frame.height)
+        } else {
+            0
+        };
+        bits.push(CLEAR, 3);
+        while left > 0 {
+            bits.push(CLEAR, 3);
+            for _ in 0..left.min(2) {
+                bits.push(colour, 3);
+                left -= 1;
+            }
+        }
+        bits.push(END, 3);
+        for block in bits.finish().chunks(255) {
+            out.push(block.len() as u8);
+            out.extend_from_slice(block);
+        }
+        out.push(0);
+    }
+    out.push(0x3b);
+    out
 }

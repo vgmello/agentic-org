@@ -12,15 +12,15 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::error::BackupError;
-use crate::paths::{disposition, shown, Disposition, RelPath, MAX_DEPTH};
+use crate::paths::{disposition, shown, Disposition, PrivateDb, RelPath, MAX_DEPTH};
 
 /// Where a file's bytes come from.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Source {
     /// The file in the durable root.
     Live(PathBuf),
-    /// The live private notes database, to be copied consistently first.
-    Notes(PathBuf),
+    /// A live private database, to be copied consistently first.
+    Private(PrivateDb, PathBuf),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -115,10 +115,9 @@ fn classify(durable: &Path, path: RelPath) -> Result<Option<Item>, BackupError> 
         return Ok(Some(Item::Directory(path)));
     }
     if kind.is_file() {
-        let source = if policy == Disposition::NotesDatabase {
-            Source::Notes(full)
-        } else {
-            Source::Live(full)
+        let source = match policy {
+            Disposition::PrivateDatabase(db) => Source::Private(db, full),
+            _ => Source::Live(full),
         };
         return Ok(Some(Item::File(path, source)));
     }

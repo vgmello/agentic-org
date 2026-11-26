@@ -13,30 +13,60 @@ use org_proto::{ApiError, ErrorCode};
 
 use crate::error::OfficeError;
 
-use super::records::AttachmentRecord;
+use super::records::{AttachmentRecord, MetaPatch};
 
-/// The port of the private space's metadata.
+/// A private file with the fingerprint of the request whose command created it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PrivateOperation {
+    /// Lowercase hex SHA-256 of the canonical request ([`request_fingerprint`]).
+    pub fingerprint: String,
+    pub record: AttachmentRecord,
+}
+
+impl PrivateOperation {
+    /// The answer to the owner's command arriving again: the first record when it carries the
+    /// same request, `operation_reused` when it carries another.
+    pub fn replay(self, fingerprint: &str) -> Result<AttachmentRecord, ApiError> {
+        if self.fingerprint == fingerprint {
+            Ok(self.record)
+        } else {
+            Err(operation_reused())
+        }
+    }
+}
+
+/// The fingerprint a private file keeps of the request that created it.
+pub fn request_fingerprint(request: &[u8]) -> String {
+    super::blobs::ContentHash::of(request).to_string()
+}
+
+/// The port of the private space's metadata. Command IDs are scoped to the private space's
+/// owner: one person's IDs never collide with, or reveal, another's.
 pub trait UserSpaceStore: Send + Sync {
     /// Whether this office holds private spaces (HQ) at all.
     fn available(&self) -> bool;
 
-    /// Records a new private file. Retrying `operation_id` for the same owner returns the
-    /// first record; for anyone else it is `operation_reused`.
+    /// Records a new private file for its owner (`record.target_id`) under the owner's
+    /// `operation_id`. The owner's retry with the same `fingerprint` returns the first record;
+    /// the owner's reuse of `operation_id` with another one is `operation_reused`, and nothing
+    /// is written.
     fn insert(
         &self,
         org_id: &str,
         operation_id: &str,
+        fingerprint: &str,
         record: &AttachmentRecord,
     ) -> Result<Result<AttachmentRecord, ApiError>, OfficeError>;
 
     fn get(&self, org_id: &str, id: &str) -> Result<Option<AttachmentRecord>, OfficeError>;
 
-    /// The record a command created, to answer its retry.
+    /// The file `owner`'s command `operation_id` created, to answer its retry.
     fn by_operation(
         &self,
         org_id: &str,
+        owner: &str,
         operation_id: &str,
-    ) -> Result<Option<AttachmentRecord>, OfficeError>;
+    ) -> Result<Option<PrivateOperation>, OfficeError>;
 
     /// The owner's files in ascending ID order, those after `after` only, at most `limit`.
     fn list(
@@ -47,8 +77,15 @@ pub trait UserSpaceStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<AttachmentRecord>, OfficeError>;
 
-    /// Replaces the title, description, status and `updated_at` of an existing record.
-    fn update(&self, org_id: &str, record: &AttachmentRecord) -> Result<(), OfficeError>;
+    /// Applies `patch` to `owner`'s file `id` as it is when the write is decided (one
+    /// transaction), and returns the result; `None` when `owner` has no such file.
+    fn update_meta(
+        &self,
+        org_id: &str,
+        owner: &str,
+        id: &str,
+        patch: &MetaPatch,
+    ) -> Result<Option<AttachmentRecord>, OfficeError>;
 }
 
 /// The refusal every private call gets on a satellite.
@@ -72,6 +109,7 @@ impl UserSpaceStore for SatelliteRefusedUserSpace {
         &self,
         _org_id: &str,
         _operation_id: &str,
+        _fingerprint: &str,
         _record: &AttachmentRecord,
     ) -> Result<Result<AttachmentRecord, ApiError>, OfficeError> {
         Ok(Err(satellite_refusal()))
@@ -84,8 +122,9 @@ impl UserSpaceStore for SatelliteRefusedUserSpace {
     fn by_operation(
         &self,
         _org_id: &str,
+        _owner: &str,
         _operation_id: &str,
-    ) -> Result<Option<AttachmentRecord>, OfficeError> {
+    ) -> Result<Option<PrivateOperation>, OfficeError> {
         Ok(None)
     }
 
@@ -99,7 +138,13 @@ impl UserSpaceStore for SatelliteRefusedUserSpace {
         Ok(Vec::new())
     }
 
-    fn update(&self, _org_id: &str, _record: &AttachmentRecord) -> Result<(), OfficeError> {
+    fn update_meta(
+        &self,
+        _org_id: &str,
+        _owner: &str,
+        _id: &str,
+        _patch: &MetaPatch,
+    ) -> Result<Option<AttachmentRecord>, OfficeError> {
         Err(OfficeError::Invalid(
             "a satellite office holds no private files",
         ))
@@ -123,12 +168,34 @@ pub mod memory {
 
     use org_proto::ApiError;
 
-    use super::{operation_reused, AttachmentRecord, OfficeError, UserSpaceStore};
+    use super::{AttachmentRecord, MetaPatch, OfficeError, PrivateOperation, UserSpaceStore};
+
+    /// `(organization, id)` to `(operation_id, the file and its request fingerprint)`.
+    type Rows = BTreeMap<(String, String), (String, PrivateOperation)>;
 
     #[derive(Default)]
     pub struct MemoryUserSpaceStore {
-        /// `(organization, id)` to `(operation_id, record)`.
-        rows: Mutex<BTreeMap<(String, String), (String, AttachmentRecord)>>,
+        rows: Mutex<Rows>,
+    }
+
+    fn owned_by(record: &AttachmentRecord, owner: &str) -> bool {
+        record
+            .target_id
+            .as_ref()
+            .is_some_and(|o| o.as_str() == owner)
+    }
+
+    fn find(
+        rows: &Rows,
+        org_id: &str,
+        owner: &str,
+        operation_id: &str,
+    ) -> Option<PrivateOperation> {
+        rows.iter()
+            .find(|((org, _), (op, row))| {
+                org == org_id && op == operation_id && owned_by(&row.record, owner)
+            })
+            .map(|(_, (_, row))| row.clone())
     }
 
     impl MemoryUserSpaceStore {
@@ -136,10 +203,7 @@ pub mod memory {
             Self::default()
         }
 
-        fn lock(
-            &self,
-        ) -> std::sync::MutexGuard<'_, BTreeMap<(String, String), (String, AttachmentRecord)>>
-        {
+        fn lock(&self) -> std::sync::MutexGuard<'_, Rows> {
             self.rows.lock().unwrap_or_else(|p| p.into_inner())
         }
     }
@@ -153,24 +217,25 @@ pub mod memory {
             &self,
             org_id: &str,
             operation_id: &str,
+            fingerprint: &str,
             record: &AttachmentRecord,
         ) -> Result<Result<AttachmentRecord, ApiError>, OfficeError> {
+            let Some(owner) = record.target_id.as_ref() else {
+                return Err(OfficeError::Invalid("a private file names its owner"));
+            };
             let mut rows = self.lock();
-            let earlier = rows
-                .iter()
-                .find(|((org, _), (op, _))| org == org_id && op == operation_id)
-                .map(|(_, (_, earlier))| earlier.clone());
-            if let Some(earlier) = earlier {
-                return Ok(if earlier.target_id == record.target_id {
-                    Ok(earlier)
-                } else {
-                    Err(operation_reused())
-                });
+            if let Some(earlier) = find(&rows, org_id, owner.as_str(), operation_id) {
+                return Ok(earlier.replay(fingerprint));
             }
-            rows.insert(
-                (org_id.to_owned(), record.id.to_string()),
-                (operation_id.to_owned(), record.clone()),
-            );
+            let key = (org_id.to_owned(), record.id.to_string());
+            if rows.contains_key(&key) {
+                return Err(OfficeError::Invalid("a private file breaks its contract"));
+            }
+            let row = PrivateOperation {
+                fingerprint: fingerprint.to_owned(),
+                record: record.clone(),
+            };
+            rows.insert(key, (operation_id.to_owned(), row));
             Ok(Ok(record.clone()))
         }
 
@@ -178,19 +243,16 @@ pub mod memory {
             Ok(self
                 .lock()
                 .get(&(org_id.to_owned(), id.to_owned()))
-                .map(|(_, record)| record.clone()))
+                .map(|(_, row)| row.record.clone()))
         }
 
         fn by_operation(
             &self,
             org_id: &str,
+            owner: &str,
             operation_id: &str,
-        ) -> Result<Option<AttachmentRecord>, OfficeError> {
-            Ok(self
-                .lock()
-                .iter()
-                .find(|((org, _), (op, _))| org == org_id && op == operation_id)
-                .map(|(_, (_, record))| record.clone()))
+        ) -> Result<Option<PrivateOperation>, OfficeError> {
+            Ok(find(&self.lock(), org_id, owner, operation_id))
         }
 
         fn list(
@@ -203,29 +265,32 @@ pub mod memory {
             Ok(self
                 .lock()
                 .iter()
-                .filter(|((org, id), (_, record))| {
+                .filter(|((org, id), (_, row))| {
                     org == org_id
-                        && record
-                            .target_id
-                            .as_ref()
-                            .is_some_and(|o| o.as_str() == owner)
+                        && owned_by(&row.record, owner)
                         && after.is_none_or(|after| id.as_str() > after)
                 })
                 .take(limit)
-                .map(|(_, (_, record))| record.clone())
+                .map(|(_, (_, row))| row.record.clone())
                 .collect())
         }
 
-        fn update(&self, org_id: &str, record: &AttachmentRecord) -> Result<(), OfficeError> {
+        fn update_meta(
+            &self,
+            org_id: &str,
+            owner: &str,
+            id: &str,
+            patch: &MetaPatch,
+        ) -> Result<Option<AttachmentRecord>, OfficeError> {
             let mut rows = self.lock();
-            let Some((_, row)) = rows.get_mut(&(org_id.to_owned(), record.id.to_string())) else {
-                return Err(OfficeError::Invalid("no such private file"));
+            let Some((_, row)) = rows.get_mut(&(org_id.to_owned(), id.to_owned())) else {
+                return Ok(None);
             };
-            row.title = record.title.clone();
-            row.description = record.description.clone();
-            row.artifact_status = record.artifact_status;
-            row.updated_at = record.updated_at.clone();
-            Ok(())
+            if !owned_by(&row.record, owner) {
+                return Ok(None);
+            }
+            patch.apply(&mut row.record);
+            Ok(Some(row.record.clone()))
         }
     }
 }

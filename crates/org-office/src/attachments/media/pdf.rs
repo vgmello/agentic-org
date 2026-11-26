@@ -140,9 +140,13 @@ impl Counts {
             if streams > MAX_OBJECT_STREAMS {
                 return Err(corrupt("the PDF has too many object streams"));
             }
-            let Some(body) = stream_body(data, from, &ends) else {
+            let Some((start, end)) = stream_body(data, from, &ends) else {
                 continue;
             };
+            // Every other `/ObjStm` before this stream's end names it again or lies inside
+            // it: the scan resumes past it, so no stream is ever inflated twice.
+            from = from.max(end);
+            let body = &data[start..end];
             let mut inflated = Vec::new();
             let mut decoder = flate2::read::ZlibDecoder::new(body).take(budget + 1);
             // A damaged stream inflates to what it could; the scan reads what is there.
@@ -159,18 +163,20 @@ impl Counts {
     }
 }
 
-/// The bytes between the next `stream` keyword after `from` and the first `endstream` after
-/// it (`ends` holds every `endstream` offset, ascending).
-fn stream_body<'a>(data: &'a [u8], from: usize, ends: &[usize]) -> Option<&'a [u8]> {
+/// Where the bytes between the next `stream` keyword after `from` and the first `endstream`
+/// after it begin and end (`ends` holds every `endstream` offset, ascending).
+fn stream_body(data: &[u8], from: usize, ends: &[usize]) -> Option<(usize, usize)> {
     let window_end = data.len().min(from.saturating_add(4_096));
-    let start = from + find(&data[from..window_end], b"stream")? + b"stream".len();
-    let start = match data.get(start..start + 2) {
+    let start = from
+        .checked_add(find(data.get(from..window_end)?, b"stream")?)?
+        .checked_add(b"stream".len())?;
+    let start = match data.get(start..start.saturating_add(2)) {
         Some(b"\r\n") => start + 2,
         _ if matches!(data.get(start), Some(b'\n' | b'\r')) => start + 1,
         _ => start,
     };
     let end = *ends.get(ends.partition_point(|&end| end < start))?;
-    Some(&data[start..end])
+    Some((start, end))
 }
 
 /// Every offset of `needle` in `data`, ascending.
@@ -188,7 +194,10 @@ fn positions(data: &[u8], needle: &[u8]) -> Vec<usize> {
 fn count_near(data: &[u8], at: usize) -> Option<u64> {
     let open = find_last(&data[at.saturating_sub(4_096)..at], b"<<")
         .map(|found| at.saturating_sub(4_096) + found)?;
-    let close = at + find(&data[at..data.len().min(at + 4_096)], b">>")?;
+    let close = at.checked_add(find(
+        &data[at..data.len().min(at.saturating_add(4_096))],
+        b">>",
+    )?)?;
     let dict = &data[open..close];
     let count_at = find(dict, b"/Count")? + b"/Count".len();
     let digits: Vec<u8> = skip_space(&dict[count_at..])

@@ -245,6 +245,57 @@ fn the_staging_quota_is_fifty_files_and_200_mib_per_employee() {
 }
 
 #[test]
+fn an_upload_that_grows_past_the_uploaders_quota_when_kept_is_refused_at_commit() {
+    let (_dir, area) = staging();
+    // Bob holds all but 100 bytes of his 200 MiB in one declared upload.
+    begin(&area, 2_000, BOB, MAX_STAGED_BYTES - 100, NOW).unwrap();
+    let id = begin(&area, 2_001, BOB, 50, NOW).unwrap();
+    area.append(BOB, &id, 0, &[b'a'; 50], NOW).unwrap().unwrap();
+    // Its validation keeps 200 bytes (a re-encoded image can grow): past the quota.
+    let grow = |media: MediaType, _raw: Vec<u8>| {
+        Ok(media::ValidatedFile {
+            media,
+            bytes: vec![b'b'; 200],
+            width: None,
+            height: None,
+            page_count: None,
+        })
+    };
+    let refused = area.commit(BOB, &id, NOW, grow).unwrap().unwrap_err();
+    assert_eq!(refused.code, ErrorCode::TooLarge);
+    // Nothing was kept: the upload is still uncommitted, its raw bytes still there.
+    let folder = area.root().join(&id);
+    assert!(!folder.join("kept").exists());
+    assert!(folder.join("data").exists());
+    assert!(area
+        .get(BOB, &id, NOW)
+        .unwrap()
+        .unwrap()
+        .committed
+        .is_none());
+    // Within the quota (100 bytes is exactly what is left), the same upload commits.
+    let fits = |media: MediaType, _raw: Vec<u8>| {
+        Ok(media::ValidatedFile {
+            media,
+            bytes: vec![b'b'; 100],
+            width: None,
+            height: None,
+            page_count: None,
+        })
+    };
+    let kept = area.commit(BOB, &id, NOW, fits).unwrap().unwrap();
+    assert_eq!(kept.committed.unwrap().byte_count, 100);
+    // Another employee's uploads never count against Bob's quota.
+    let alice = begin(&area, 2_002, ALICE, 5, NOW).unwrap();
+    area.append(ALICE, &alice, 0, b"hello", NOW)
+        .unwrap()
+        .unwrap();
+    area.commit(ALICE, &alice, NOW, media::validate)
+        .unwrap()
+        .unwrap();
+}
+
+#[test]
 fn expired_uploads_are_swept_after_24_hours_and_vanish_for_their_uploader() {
     let (_dir, area) = staging();
     let old = begin(&area, 1, ALICE, 3, NOW).unwrap();
@@ -352,6 +403,10 @@ fn a_record_breaking_its_contract_does_not_decode() {
         ("schema_version: 1", "schema_version: 2"),
         ("\"spec v2.pdf\"", "\"../spec.pdf\""),
         ("\"Spec — v2\"", "\"\""),
+        // A hand-edited file name with edge spaces is not one the office ever keeps.
+        ("\"spec v2.pdf\"", "\" spec v2.pdf\""),
+        ("\"spec v2.pdf\"", "\"spec v2.pdf \""),
+        ("\"spec v2.pdf\"", "\"   \""),
     ] {
         let bad = good.replace(from, to);
         assert_ne!(bad, good, "{from}");

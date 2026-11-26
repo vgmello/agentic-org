@@ -248,6 +248,26 @@ impl StagingArea {
         self.gc_locked(now_ms)
     }
 
+    /// What `caller`'s live uploads other than `except` count against the byte quota.
+    fn staged_bytes_locked(
+        &self,
+        caller: &str,
+        except: &str,
+        now_ms: u64,
+    ) -> Result<u64, OfficeError> {
+        Ok(self
+            .all()?
+            .into_iter()
+            .filter_map(|(_, meta)| meta)
+            .filter(|meta| {
+                meta.uploaded_by == caller
+                    && meta.upload_id != except
+                    && now_ms < meta.expires_at_ms
+            })
+            .map(|meta| meta.quota_bytes())
+            .fold(0u64, u64::saturating_add))
+    }
+
     /// Starts an upload after sweeping expired ones and checking the uploader's quota.
     pub fn begin(
         &self,
@@ -267,7 +287,10 @@ impl StagingArea {
                 format!("at most {MAX_STAGED_FILES} uploads may wait to be attached; attach or abort some first"),
             )));
         }
-        let staged: u64 = mine.iter().map(StagedUpload::quota_bytes).sum();
+        let staged = mine
+            .iter()
+            .map(StagedUpload::quota_bytes)
+            .fold(0u64, u64::saturating_add);
         if staged.saturating_add(new.declared_bytes) > MAX_STAGED_BYTES {
             return Ok(Err(ApiError::new(
                 ErrorCode::TooLarge,
@@ -428,8 +451,6 @@ impl StagingArea {
         if upload.committed.is_some() {
             return Ok(Ok(upload));
         }
-        let folder = self.root.join(upload_id);
-        write_private_atomic(&folder.join(KEPT), &kept.bytes).map_err(OfficeError::storage)?;
         upload.committed = Some(CommittedUpload {
             mime_type: kept.media.mime().to_owned(),
             byte_count: kept.bytes.len() as u64,
@@ -438,6 +459,18 @@ impl StagingArea {
             height: kept.height,
             page_count: kept.page_count,
         });
+        // An image may come out of re-encoding larger than it went in: the uploader's quota
+        // holds for what is kept, checked before anything is written.
+        let staged = self.staged_bytes_locked(caller, upload_id, now_ms)?;
+        if staged.saturating_add(upload.quota_bytes()) > MAX_STAGED_BYTES {
+            return Ok(Err(ApiError::new(
+                ErrorCode::TooLarge,
+                "at most 200 MiB may wait to be attached, and this file grew past it once its \
+                 metadata was removed; attach or abort some uploads first",
+            )));
+        }
+        let folder = self.root.join(upload_id);
+        write_private_atomic(&folder.join(KEPT), &kept.bytes).map_err(OfficeError::storage)?;
         self.write_meta(&upload)?;
         // The raw bytes are no longer needed: only the validated copy is ever attached.
         match fs::remove_file(folder.join(DATA)) {

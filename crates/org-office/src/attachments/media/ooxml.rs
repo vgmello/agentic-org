@@ -1,7 +1,9 @@
 //! `.docx` and `.xlsx` attachments, checked as ZIP containers without unpacking them: the end of
 //! central directory record, every central directory entry (bounded count, names, sizes,
-//! compression ratio, local header agreement), the parts each format needs, no macros, and the
-//! main content type in `[Content_Types].xml` (the one entry inflated, under a small cap).
+//! compression ratio, a stored entry's two sizes agreeing, its local header agreeing on the
+//! name), the parts each format needs, no macros (no VBA project, no Excel 4 macro sheet, by
+//! name or by content type), and the main content type in `[Content_Types].xml` (the one
+//! entry inflated, under a small cap). Every offset read from the file is added checked.
 //!
 //! No entry other than `[Content_Types].xml` is decompressed, so a zip bomb costs nothing; its
 //! declared sizes are refused instead.
@@ -60,10 +62,7 @@ pub fn check(media: MediaType, bytes: &[u8]) -> Result<(), ApiError> {
             media.mime()
         )));
     }
-    if names
-        .iter()
-        .any(|name| name.to_ascii_lowercase().ends_with("vbaproject.bin"))
-    {
+    if names.iter().any(|name| is_macro_part(name)) {
         return Err(unsupported("macro-enabled documents are not accepted"));
     }
     let types_entry = entries
@@ -72,7 +71,10 @@ pub fn check(media: MediaType, bytes: &[u8]) -> Result<(), ApiError> {
         .expect("checked above");
     let types = inflate_entry(bytes, types_entry)?;
     let types = String::from_utf8_lossy(&types).to_ascii_lowercase();
-    if types.contains("macroenabled") {
+    if ["macroenabled", "macrosheet", "vbaproject"]
+        .iter()
+        .any(|macros| types.contains(macros))
+    {
         return Err(unsupported("macro-enabled documents are not accepted"));
     }
     if !types.contains(main_type) {
@@ -84,16 +86,32 @@ pub fn check(media: MediaType, bytes: &[u8]) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// A part that holds macros: a VBA project (`vbaProject.bin`, its signature) or an Excel 4
+/// macro sheet (`xl/macrosheets/`).
+fn is_macro_part(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.contains("vbaproject") || name.contains("macrosheet")
+}
+
 fn u16_at(bytes: &[u8], at: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?))
+    Some(u16::from_le_bytes(
+        bytes.get(at..at.checked_add(2)?)?.try_into().ok()?,
+    ))
 }
 
 fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+    Some(u32::from_le_bytes(
+        bytes.get(at..at.checked_add(4)?)?.try_into().ok()?,
+    ))
 }
 
 fn broken() -> ApiError {
     corrupt("the document's ZIP structure is damaged or truncated")
+}
+
+/// `a + b`, or the archive is broken.
+fn add(a: usize, b: usize) -> Result<usize, ApiError> {
+    a.checked_add(b).ok_or_else(broken)
 }
 
 /// Finds the end record within the last 64 KiB + 22 bytes and checks what it says.
@@ -136,12 +154,14 @@ fn central_directory(bytes: &[u8]) -> Result<Vec<Entry>, ApiError> {
             "an office document has 1 to {MAX_ENTRIES} entries"
         )));
     }
-    let cd_end = at + cd_size;
+    let cd_end = add(at, cd_size)?;
     let mut entries = Vec::with_capacity(total);
     let mut seen = BTreeSet::new();
     let mut uncompressed_total: u64 = 0;
     for _ in 0..total {
-        if at + CENTRAL_LEN > cd_end || &bytes[at..at + 4] != CENTRAL_SIGNATURE {
+        if add(at, CENTRAL_LEN)? > cd_end
+            || bytes.get(at..add(at, 4)?) != Some(CENTRAL_SIGNATURE.as_slice())
+        {
             return Err(broken());
         }
         let flags = u16_at(bytes, at + 8).ok_or_else(broken)?;
@@ -152,7 +172,9 @@ fn central_directory(bytes: &[u8]) -> Result<Vec<Entry>, ApiError> {
         let extra_len = usize::from(u16_at(bytes, at + 30).ok_or_else(broken)?);
         let comment_len = usize::from(u16_at(bytes, at + 32).ok_or_else(broken)?);
         let local_offset = u32_at(bytes, at + 42).ok_or_else(broken)? as usize;
-        let next = at + CENTRAL_LEN + name_len + extra_len + comment_len;
+        let name_start = add(at, CENTRAL_LEN)?;
+        let name_end = add(name_start, name_len)?;
+        let next = add(add(name_end, extra_len)?, comment_len)?;
         if next > cd_end {
             return Err(broken());
         }
@@ -164,7 +186,7 @@ fn central_directory(bytes: &[u8]) -> Result<Vec<Entry>, ApiError> {
                 "the document uses an unsupported compression method",
             ));
         }
-        let raw_name = &bytes[at + CENTRAL_LEN..at + CENTRAL_LEN + name_len];
+        let raw_name = &bytes[name_start..name_end];
         let name = std::str::from_utf8(raw_name).map_err(|_| broken())?;
         check_name(name)?;
         if !seen.insert(name.to_owned()) {
@@ -179,7 +201,11 @@ fn central_directory(bytes: &[u8]) -> Result<Vec<Entry>, ApiError> {
                 "the document's compression ratio is not plausible",
             ));
         }
-        check_local_header(bytes, local_offset, name_len, compressed, cd_end - cd_size)?;
+        // A stored entry is its own bytes: two sizes that disagree are a lie about one of them.
+        if method == 0 && compressed != uncompressed {
+            return Err(broken());
+        }
+        check_local_header(bytes, local_offset, raw_name, compressed, cd_end - cd_size)?;
         entries.push(Entry {
             name: name.to_owned(),
             method,
@@ -207,24 +233,29 @@ fn check_name(name: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// The local header an entry points at is before the central directory, says it is one, and
-/// its data fits before the directory.
+/// The local header an entry points at is before the central directory, says it is one,
+/// names the very bytes the central directory names (a reader that trusts the local header
+/// must see the same entry), and its data fits before the directory.
 fn check_local_header(
     bytes: &[u8],
     offset: usize,
-    name_len: usize,
+    name: &[u8],
     compressed: u64,
     cd_start: usize,
 ) -> Result<(), ApiError> {
-    if offset + LOCAL_LEN > cd_start || &bytes[offset..offset + 4] != LOCAL_SIGNATURE {
+    let name_start = add(offset, LOCAL_LEN)?;
+    if name_start > cd_start
+        || bytes.get(offset..add(offset, 4)?) != Some(LOCAL_SIGNATURE.as_slice())
+    {
         return Err(broken());
     }
-    let local_name = usize::from(u16_at(bytes, offset + 26).ok_or_else(broken)?);
-    let local_extra = usize::from(u16_at(bytes, offset + 28).ok_or_else(broken)?);
-    if local_name != name_len {
+    let local_name = usize::from(u16_at(bytes, add(offset, 26)?).ok_or_else(broken)?);
+    let local_extra = usize::from(u16_at(bytes, add(offset, 28)?).ok_or_else(broken)?);
+    let name_end = add(name_start, local_name)?;
+    if bytes.get(name_start..name_end) != Some(name) {
         return Err(broken());
     }
-    let data_start = offset + LOCAL_LEN + local_name + local_extra;
+    let data_start = add(name_end, local_extra)?;
     if (data_start as u64).saturating_add(compressed) > cd_start as u64 {
         return Err(broken());
     }
@@ -234,14 +265,19 @@ fn check_local_header(
 /// The bytes of one small entry, inflated under [`MAX_CONTENT_TYPES`].
 fn inflate_entry(bytes: &[u8], entry: &Entry) -> Result<Vec<u8>, ApiError> {
     let offset = entry.local_offset;
-    let local_name = usize::from(u16_at(bytes, offset + 26).ok_or_else(broken)?);
-    let local_extra = usize::from(u16_at(bytes, offset + 28).ok_or_else(broken)?);
-    let start = offset + LOCAL_LEN + local_name + local_extra;
-    let end = start + usize::try_from(entry.compressed).map_err(|_| broken())?;
+    let local_name = usize::from(u16_at(bytes, add(offset, 26)?).ok_or_else(broken)?);
+    let local_extra = usize::from(u16_at(bytes, add(offset, 28)?).ok_or_else(broken)?);
+    let start = add(add(add(offset, LOCAL_LEN)?, local_name)?, local_extra)?;
+    let end = add(
+        start,
+        usize::try_from(entry.compressed).map_err(|_| broken())?,
+    )?;
     let data = bytes.get(start..end).ok_or_else(broken)?;
     let mut out = Vec::new();
     let read = match entry.method {
-        0 => data.take(MAX_CONTENT_TYPES + 1).read_to_end(&mut out),
+        0 => data
+            .take(MAX_CONTENT_TYPES.saturating_add(1))
+            .read_to_end(&mut out),
         _ => flate2::read::DeflateDecoder::new(data)
             .take(MAX_CONTENT_TYPES + 1)
             .read_to_end(&mut out),
