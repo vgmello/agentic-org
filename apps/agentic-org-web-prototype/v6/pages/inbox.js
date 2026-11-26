@@ -1,6 +1,7 @@
 import { CH, IN, KIND, M, P, TEAMS, WORK_DISCUSSIONS } from "../data.js";
 import { itemActionsV4 } from "./home.js";
-import { findWorkItem, fitTextarea, workCommentPrefix, workHref } from "./work.js";
+import { boardItemHref, findWorkItem, fitTextarea, workCommentPrefix } from "./work.js";
+import { boardOrigin } from "../shell/board-return.js";
 import { route } from "../shell/router.js";
 import { getNotifications, getRunningJobs, markNotificationRead, unreadNotificationsCount } from "../shell/topbar-utils.js";
 import { S } from "../state.js";
@@ -313,9 +314,10 @@ ${esc(detailCommentDrafts.get(inboxCommentPrefix(it.id)) || "")}</textarea>
 
 function inboxDetail(it) {
   const m = M[it.from], k = KIND[it.kind], project = P[it.proj];
-  const channel = CH[project.channel], work = it.task && findWorkItem(it.task).item;
+  const channel = CH[project.channel], work = it.task && findWorkItem(it.task).item, origin = boardOrigin();
   return `<article class="triage-document" aria-labelledby="triage-detail-title">
     <a class="triage-back btn ghost sm" href="#/inbox">${ic("chev-left", "ic16")}Back to Inbox</a>
+    ${origin ? `<a class="triage-board-return btn outline sm" href="${esc(origin)}">${ic("chev-left", "ic16")}Back to work board</a>` : ""}
     <header class="triage-intro">
       <p class="triage-from">
         <span>From:</span>
@@ -336,7 +338,7 @@ function inboxDetail(it) {
       <dl class="triage-fields">
         <div><dt>Kind</dt><dd>${esc(k.label)} · ${esc(it.sub)}</dd></div>
         <div><dt>Project</dt><dd>${plink(it.proj)}</dd></div>
-        ${it.task ? `<div><dt>Work item</dt><dd><a class="alink" href="${esc(workHref({ item: it.task }))}">${esc(it.task)}${work ? " · " + esc(work.title) : ""}</a>${inboxCopy("Copy", it.task, it.task)}</dd></div>` : ""}
+        ${it.task ? `<div><dt>Work item</dt><dd><a class="alink" href="${esc(boardItemHref(origin, it.task))}">${esc(it.task)}${work ? " · " + esc(work.title) : ""}</a>${inboxCopy("Copy", it.task, it.task)}</dd></div>` : ""}
         ${it.expires ? `<div><dt>Expires</dt><dd${it.handled ? "" : ' class="triage-expiry"'}>${esc(it.expires)}</dd></div>` : ""}
         <div><dt>Clears</dt><dd>${esc(it.clears || k.clears)}</dd></div>
         ${channel ? `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd></div>` : ""}
@@ -373,7 +375,7 @@ function refreshInboxSearch() {
   document.getElementById("triage-reading").innerHTML = item ? inboxDetail(item) : inboxEmptyDetail();
 }
 function resetInboxSelection() {
-  history.replaceState(null, "", "#/inbox");
+  history.replaceState(history.state, "", "#/inbox");
   S.lastRoute = location.hash;
   S.confirmDeny = null;
   S.replying = null;

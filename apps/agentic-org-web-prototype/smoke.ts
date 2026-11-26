@@ -83,6 +83,7 @@ async function checkWorkBoard(page: Page) {
   const requests = page.getByRole("menu", { name: /^Requests waiting on you for / }).getByRole("menuitem");
   assert.equal(await requests.count(), asked, "A badge for several requests lists each of them");
   await page.keyboard.press("Escape");
+  await checkBoardRequestMenus(page, board);
   assert.match((await page.getByRole("button", { name: /^Work display/ }).getAttribute("aria-label"))!, /Stages columns/, "Display names the column mode");
   const trailingGutter = await board.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
@@ -94,10 +95,117 @@ async function checkWorkBoard(page: Page) {
   await page.getByRole("menuitemradio", { name: "Status", exact: true }).click();
   assert.ok(await columns.count() > 4, "Status columns split the stages");
   assert.deepEqual(await cardIds(), stageIds, "Status columns keep every card");
+  await checkStatusLaneJump(page);
   await page.getByRole("button", { name: "Work display" }).click();
   await page.getByRole("menuitemradio", { name: "Stages", exact: true }).click();
   assert.equal(await columns.count(), 4);
+  await checkDoneHistory(page, board);
+  await checkBoardClearFilters(page, board);
+  await checkBoardReturnFromInbox(page, board);
+  await checkPhoneLaneJump(page);
   await layout.getByRole("button", { name: "List" }).press("Enter");
+}
+
+const focusedIs = (locator: ReturnType<Page["locator"]>) => locator.evaluate((el) => el === document.activeElement);
+
+/* Request menus live in the top layer, stay inside the viewport and hand focus back predictably */
+async function checkBoardRequestMenus(page: Page, board: ReturnType<Page["locator"]>) {
+  assert.match((await page.locator(".queue-count").textContent())!, /^Across all work: \d+ open · \d+ need you$/, "Headline totals say they cover all work");
+  const card = board.locator('.bcard[data-work-id="T-A121"]');
+  const trigger = card.locator("button.board-need");
+  assert.equal(await card.locator(".board-need-due").textContent(), "1 expires in 4 hours", "The card says when its soonest request expires");
+  await page.setViewportSize({ width: 1024, height: 520 });
+  await board.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+  await trigger.click();
+  const menu = page.locator(".board-need-menu:popover-open");
+  const box = (await menu.boundingBox())!;
+  assert.ok(box.x >= 0 && box.x + box.width <= 1024 && box.y >= 0 && box.y + box.height <= 520, "The menu stays inside the viewport");
+  assert.match((await menu.getByRole("menuitem").first().textContent())!, /Expires in 4 hours/, "The expiring request comes first and says when");
+  await page.keyboard.press("Escape");
+  assert.equal(await menu.count(), 0);
+  assert.ok(await focusedIs(trigger), "Escape returns focus to the badge");
+  await trigger.press("Enter");
+  await page.keyboard.press("Shift+Tab");
+  assert.ok(await focusedIs(trigger), "Shift+Tab leaves the menu for its badge");
+  await trigger.press("Enter");
+  await page.keyboard.press("Tab");
+  assert.equal(await menu.count(), 0, "Tab closes the menu");
+  assert.ok(await page.evaluate(() => Boolean(document.activeElement?.closest('.bcard[data-work-id="T-A121"] .board-owner-label'))), "Tab moves on to the next control on the card");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+/* A chip jump makes its lane current even when the board cannot scroll it to the start edge */
+async function checkStatusLaneJump(page: Page) {
+  const chips = page.locator(".board-lane-chips button");
+  const last = chips.last();
+  await last.click();
+  await page.waitForFunction(() => document.querySelector(".board-lane-chips button:last-child")?.getAttribute("aria-current") === "true");
+  assert.equal(await page.locator('.board-lane-chips button[aria-current="true"]').count(), 1, "Only the jump target is current");
+}
+
+/* One Done history control replaces Show older and Show archived on the board */
+async function checkDoneHistory(page: Page, board: ReturnType<Page["locator"]>) {
+  const done = board.locator("#bcol-done");
+  const trigger = done.getByRole("button", { name: /^Done history: / });
+  assert.equal(await trigger.textContent(), "Last 7 days");
+  assert.equal(await page.getByText("Show older").count(), 0);
+  await page.getByRole("button", { name: /^Work display/ }).click();
+  assert.equal(await page.getByRole("menuitemcheckbox", { name: "Show archived" }).count(), 0, "The board's Display has no second archive control");
+  await page.keyboard.press("Escape");
+  const before = await done.locator(".bcard").count();
+  await trigger.click();
+  await page.getByRole("menu", { name: "Done history" }).getByRole("menuitemradio", { name: /Include archived/ }).click();
+  assert.ok(await done.locator(".bcard").count() > before, "Include archived reaches back past the last week");
+  assert.ok(await focusedIs(done.locator(".bcol-older")), "Focus returns to the Done history control");
+  await done.locator(".bcol-older").press("Enter");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Enter");
+  assert.equal(await done.locator(".bcol-older").textContent(), "Last 7 days");
+  assert.equal(await done.locator(".bcard").count(), before);
+}
+
+async function checkBoardClearFilters(page: Page, board: ReturnType<Page["locator"]>) {
+  const cards = await board.locator(".bcard").count();
+  await page.getByRole("button", { name: "Search work" }).first().click();
+  await page.keyboard.type("zzzz");
+  const clear = page.locator("#work-results").getByRole("button", { name: "Clear filters" });
+  await clear.click();
+  assert.equal(await board.locator(".bcard").count(), cards, "Clear filters brings every card back");
+  assert.ok(await focusedIs(page.getByRole("button", { name: "Filter work" })));
+}
+
+/* Following a request to Inbox and coming back keeps the board's place and the control you used */
+async function checkBoardReturnFromInbox(page: Page, board: ReturnType<Page["locator"]>) {
+  await page.setViewportSize({ width: 1440, height: 600 });
+  const badge = board.locator('.bcard[data-work-id="T-A124"] a.board-need');
+  await board.evaluate((el) => { el.scrollTop = 120; });
+  const top = await board.evaluate((el) => el.scrollTop);
+  await badge.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("link", { name: "Back to work board" }).waitFor();
+  await page.goBack();
+  await badge.waitFor();
+  assert.equal(await board.evaluate((el) => el.scrollTop), top, "Back restores the board's scroll");
+  assert.ok(await focusedIs(badge), "Back returns focus to the badge you followed");
+  await badge.press("Enter");
+  await page.getByRole("link", { name: "Back to work board" }).click();
+  await badge.waitFor();
+  assert.ok(await focusedIs(badge), "Back to work board returns to the same badge");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+/* Phones: the Display trigger keeps the column mode, and a picker jump lands at the top of the lane */
+async function checkPhoneLaneJump(page: Page) {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const display = page.getByRole("button", { name: /^Work display/ });
+  assert.match((await display.innerText()).trim(), /^Stages/, "Phones keep a compact Stages trigger");
+  const board = page.locator(".board");
+  await board.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await page.locator("select[data-board-lane]").selectOption("3");
+  await page.waitForFunction(() => document.querySelector(".board")!.scrollTop === 0);
+  assert.equal(await page.locator("select[data-board-lane]").inputValue(), "3", "The picked lane stays current");
+  await page.setViewportSize({ width: 1440, height: 900 });
 }
 
 async function checkWork(page: Page, href: string) {
