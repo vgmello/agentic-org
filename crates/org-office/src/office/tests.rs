@@ -19,13 +19,15 @@ use org_store::{
 };
 
 use super::{
+    folder::lock_folder,
     testkit::{self, OPERATION},
     *,
 };
 use crate::{
     office_file,
     office_local::{records as local, testkit::ca_material},
-    organization::testkit::creation_files,
+    organization::{testkit::creation_files, wire},
+    rules::OrgCommand,
     store::open::Testing,
 };
 

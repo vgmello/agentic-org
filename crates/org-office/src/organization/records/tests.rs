@@ -1,3 +1,5 @@
+use org_store::StoreError;
+
 use super::*;
 
 fn id(n: u64) -> Id {
