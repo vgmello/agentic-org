@@ -70,7 +70,7 @@ pub(super) fn paths_overlap_via_alias_only(path: &str, base: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{path_is_same_or_under_for_os, paths_overlap_via_alias_only_for_os};
 
     #[test]
     fn linux_keeps_var_and_private_var_disjoint_while_macos_detects_alias_overlap() {

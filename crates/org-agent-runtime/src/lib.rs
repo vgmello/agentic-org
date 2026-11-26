@@ -153,7 +153,7 @@
 //! - [`SessionSpec::spec_hash`] is part of the contract: changing the canonical form or the
 //!   hash changes every stored hash.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod caps;
