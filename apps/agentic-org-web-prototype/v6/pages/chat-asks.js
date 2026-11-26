@@ -76,11 +76,31 @@ function tradeoff(it) {
   if (!decidedInInbox(it) || !it.why) return "";
   return `<details class="chat-needs-why"><summary>${ic("scale", "ic14")}Tradeoff${ic("chev-right", "ic14 chat-needs-chev")}</summary><p>${esc(it.why)}</p>${it.rec ? `<p class="chat-needs-rec">${esc(it.rec)}</p>` : ""}</details>`;
 }
-/* A one-tap question shows what the choice weighs (the same context Inbox shows) right above its answers. */
+/* An ask answered here (a one-tap question or an inline approval) shows what the choice weighs, the same context
+   Inbox shows, right above its controls. */
 function choiceContext(it) {
-  if (decidedInInbox(it) || it.handled || !it.answers?.length || !it.why) return "";
+  if (decidedInInbox(it) || it.handled || !it.why) return "";
   const rec = it.rec ? `<p class="chat-needs-rec">${esc(it.rec)}</p>` : "";
   return `<div class="chat-needs-context"><p>${esc(it.why).replace(/\bT-A\d+\b/g, workRef)}</p>${rec}</div>`;
+}
+/* The risk fact an inline approval rests on, from the item's own impact and audit data: its risk level and what it
+   cannot touch (data, spend, rollback), e.g. "Low risk · Zero production or customer data". */
+function riskFact(it) {
+  const level = (it.impact || []).find(([icon]) => icon.startsWith("shield"));
+  if (!level) return "";
+  const audit = (it.audit || []).find((a) => /\b(data|spend|roll|revers)/i.test(a));
+  return [level[2], (audit || level[3]).replace(/ · T-A\d+$/, "")].join(" · ");
+}
+/* Scope and risk, the facts that justify deciding here, directly above the buttons. A consequential ask keeps its
+   scope only; its risk is weighed in Inbox. */
+function decisionFacts(it) {
+  if (it.handled) return "";
+  const risk = decidedInInbox(it) ? "" : riskFact(it);
+  const rows = [
+    it.scope ? `<li>${ic("lock", "ic14")}<span><span class="chat-needs-fact-k">Scope:</span> ${esc(it.scope)}</span></li>` : "",
+    risk ? `<li>${ic("shield-check", "ic14")}<span><span class="chat-needs-fact-k">Risk:</span> ${esc(risk)}</span></li>` : "",
+  ].filter(Boolean);
+  return rows.length ? `<ul class="chat-needs-facts" role="list" aria-label="Scope and risk">${rows.join("")}</ul>` : "";
 }
 /* `where.thread`: the card is shown in that thread's panel, so a follow-up from it posts in the thread. */
 function needsCardHtml(it, msgId, where = {}) {
@@ -93,8 +113,7 @@ function needsCardHtml(it, msgId, where = {}) {
     ${needsHead(it)}
     <h3 class="chat-needs-q" id="${titleId}" tabindex="-1">${esc(it.what)}</h3>
     ${meta ? `<p class="chat-needs-meta">${meta}</p>` : ""}
-    ${it.scope && !it.handled ? `<p class="chat-needs-scope">${ic("lock", "ic14")}<span>Scope: ${esc(it.scope)}</span></p>` : ""}
-    ${tradeoff(it)}${choiceContext(it)}
+    ${tradeoff(it)}${choiceContext(it)}${decisionFacts(it)}
     ${needsActions(it, where)}
   </section>`;
 }

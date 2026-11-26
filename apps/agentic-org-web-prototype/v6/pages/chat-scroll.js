@@ -92,10 +92,28 @@ function releaseCut(s) {
   const el = s.querySelector(":scope > .msg.is-cut");
   if (el && el.getBoundingClientRect().top >= viewTop(s) - 1) el.classList.remove("is-cut");
 }
+/* Opening at the end (or a boundary) can leave the message cut at the top showing only a sliver of its attachments
+   under the sticky day and author bands. When what shows of it is that thin, the stream opens just past it (a little
+   blank space after the newest message, within the boundary cap), so no thumbnail reads as a broken strip. */
+const SLIVER = 56;
+function clearSliver(s) {
+  const cut = s.querySelector(":scope > .msg.is-cut");
+  const atts = cut?.querySelector(".chat-atts");
+  if (!atts) return;
+  const top = viewTop(s), hd = cut.querySelector(".hd")?.offsetHeight || 0;
+  const r = atts.getBoundingClientRect(), shown = r.bottom - top - hd;
+  if (r.top >= top + hd || shown <= 0 || shown > SLIVER) return;
+  const past = cut.getBoundingClientRect().bottom - top + BOUNDARY_GAP;
+  if (past > Math.min(120, s.clientHeight / 5) + SLIVER) return;
+  scrollToY(s, s.scrollTop + past);
+  markStuckDays(s);
+  markCut(s);
+}
 function applyPos(s, pos) {
   placeAt(s, pos);
   markStuckDays(s);
   markCut(s);
+  if (pos.end || pos.boundary) clearSliver(s);
 }
 const savedPos = (id) => positions.get(id);
 const savePos = (id, pos) => positions.set(id, pos);
@@ -159,8 +177,8 @@ function placeThread(panel, rootId, land = null) {
 export { followThreadEnd, placeThread };
 
 /* ---------------------------------------------------------------- earlier asks above the reading position
-   One button jumps to the nearest, oldest last. On phones it is its own row above the stream (never over a
-   message); when that row appears or goes, the stream scrolls by its height so the text doesn't move. */
+   One button jumps to the nearest, oldest last. On phones it shares one row under the stream with Jump to latest
+   (never over a message); a row above the stream would scroll the stream by its height so the text doesn't move. */
 function asksAbove(s) {
   const top = s.getBoundingClientRect().top;
   return [...s.querySelectorAll(":scope > .msg .chat-needs:not(.is-done)")].filter((c) => c.getBoundingClientRect().bottom < top + 8);
@@ -170,9 +188,12 @@ function syncAskJump(s) {
   if (!btn) return;
   const n = asksAbove(s).length, before = row.offsetHeight;
   btn.hidden = !n;
-  btn.querySelector("span").textContent = n === 1 ? "1 earlier request needs you" : `${n} earlier requests need you`;
+  const label = n === 1 ? "1 earlier request needs you" : `${n} earlier requests need you`;
+  /* Phones show the short form ("2 earlier requests"); the name is always the full sentence. */
+  btn.setAttribute("aria-label", label);
+  btn.querySelector("span").innerHTML = `${n} earlier ${n === 1 ? "request" : "requests"}<span class="chat-long"> ${n === 1 ? "needs" : "need"} you</span>`;
   const delta = row.offsetHeight - before;
-  if (delta) s.scrollTop += delta;
+  if (delta && row.getBoundingClientRect().top < s.getBoundingClientRect().top) s.scrollTop += delta;
 }
 function jumpToAsk() {
   const s = document.querySelector(".chat .chmain .msgs[data-ch]"), card = s && asksAbove(s).pop();
