@@ -332,6 +332,47 @@ fn office_git_credential_files_survive_store_rebuild_while_stray_security_files_
     }
 }
 
+/// Companion office-local files (`hq-owner.v1.json`) and directories (`watcher/`, `repositories/`,
+/// `close-recovery/`) under `local/offices/<id>/` must survive full `org-store::rebuild()`, while
+/// unowned stray sibling files in `local/offices/<id>/` must still fail closed.
+#[test]
+fn office_local_companion_paths_survive_store_rebuild_while_stray_sibling_fails() {
+    for engine in ENGINES {
+        let place = Place::new();
+        let store = place.create(engine);
+        create_organization(&store, 1).unwrap();
+        store.close().unwrap();
+
+        let local = local_folder(&place);
+        std::fs::create_dir_all(local.join("watcher")).unwrap();
+        std::fs::create_dir_all(local.join("repositories")).unwrap();
+        std::fs::create_dir_all(local.join("close-recovery")).unwrap();
+        std::fs::write(local.join("hq-owner.v1.json"), b"{\"v\":1}\n").unwrap();
+        std::fs::write(local.join("watcher/watches.v1.json"), b"{}\n").unwrap();
+        std::fs::write(local.join("repositories/repo-1.json"), b"{}\n").unwrap();
+        std::fs::write(local.join("close-recovery/deadbeef.json"), b"{}\n").unwrap();
+
+        if engine == EngineChoice::Sqlite {
+            std::fs::remove_dir_all(runtime_folder(&place)).unwrap();
+        }
+        let reopened = open_store(&place.config(engine, Opening::Existing)).expect(
+            "rebuild must exclude hq-owner.v1.json, watcher, repositories & close-recovery",
+        );
+        reopened.close().unwrap();
+
+        let stray = local.join("stray-unowned.v1.json");
+        std::fs::write(&stray, b"{}\n").unwrap();
+        if engine == EngineChoice::Sqlite {
+            std::fs::remove_dir_all(runtime_folder(&place)).unwrap();
+        }
+        let err = open_store(&place.config(engine, Opening::Existing))
+            .err()
+            .expect("stray file under local/offices/<id>/ must still fail rebuild")
+            .to_string();
+        assert!(err.contains("stray-unowned.v1.json"), "{engine:?}: {err}");
+    }
+}
+
 /// The marker: written by an orderly close with the journal it closed, reported once by
 /// the next opening and removed by it; absent after a drop, a kill or a failed close.
 #[test]
