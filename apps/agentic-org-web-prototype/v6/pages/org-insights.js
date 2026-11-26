@@ -231,4 +231,21 @@ function pageInsights() {
   </div>`;
 }
 
-export { pageInsights };
+/* Home's summary uses the same data as Insights: delivery figures over the last 7 days (with the
+   7 days before as the comparison), spend and cost per item over the month to date. */
+function homeOrgFigures() {
+  const week = orgData(new URLSearchParams("period=custom&from=2026-11-18&to=2026-11-24"));
+  const prior = orgData(new URLSearchParams("period=custom&from=2026-11-11&to=2026-11-17"));
+  const month = orgData(new URLSearchParams("period=month"));
+  const spend = insightSum(month.records, insightCost), priorSpend = insightSum(month.priorRecords, insightCost);
+  const perItem = month.done.length ? spend / month.done.length : null, priorPerItem = month.priorDone.length ? priorSpend / month.priorDone.length : null;
+  const daily = Array.from({ length: 7 }, (_, i) => week.start + i * INSIGHT_DAY).map((day) => ({ day, count: week.done.filter((c) => c.day === day).length }));
+  return {
+    delivered: week.done.length, deliveredDelta: week.done.length - prior.done.length, perDay: week.done.length / 7, daily,
+    firstTry: share(week.done, "firstTry"), firstTryDelta: share(week.done, "firstTry") - share(prior.done, "firstTry"),
+    autonomous: share(week.done, "autonomous"), cycle: medianOf(week.done, "cycle"), priorCycle: medianOf(prior.done, "cycle"),
+    spend, pace: orgForecast(month, spend), perItem, perItemDelta: perItem && priorPerItem ? Math.round(100 * (perItem - priorPerItem) / priorPerItem) : null,
+  };
+}
+
+export { homeOrgFigures, pageInsights };

@@ -1,7 +1,8 @@
 import { A, CAL_TODAY, EVENTS, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
 import { eventContext, eventDate, eventTone, sortEvents } from "./calendar.js";
+import { homeOrgFigures } from "./org-insights.js";
 import { S } from "../state.js";
-import { ATYPE, av, avStack, sectionHead, effectiveHealth, esc, ic, leadOf, leadTxt, memberIds, mlink, pill, plink, plural, presence, projMembers, projPill, skel, spotQueue, unhandled } from "../ui.js";
+import { ATYPE, av, avStack, effectiveHealth, esc, ic, leadOf, leadTxt, memberIds, mlink, pill, plink, plural, presence, projMembers, projPill, recommendationCallout, sectionHead, skel, spotQueue, unhandled } from "../ui.js";
 
 /* ---------------------------------------------------------------- pages */
 function v4PrimaryBtn(it, act, v, icon, label, tone = "win") {
@@ -262,7 +263,18 @@ function homeHeadline(st, openUrgentCount, openCount) {
   return `${greet} <em class="ok">All clear</em> across your organization.`;
 }
 
+const signed = (n, unit = "") => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(n)}${unit}`;
+const usd = (cents) => `$${Math.round(cents / 100)}`;
+const HOME_BUDGET = 21000;
+/* Seven-day mini column chart of tasks closed per day (same data as Insights > Throughput). */
+function sparkHtml(daily) {
+  const max = Math.max(1, ...daily.map((d) => d.count));
+  const label = daily.map((d) => d.count).join(", ");
+  return `<span class="hb-spark" role="img" aria-label="Closed per day, last 7 days: ${label}">${daily.map((d) => `<i style="height:${Math.max(8, (d.count / max) * 100)}%" title="${d.count} closed"></i>`).join("")}</span>`;
+}
 function financialsPillarHtml(emptyMode) {
+  const f = homeOrgFigures(), pct = Math.round((f.spend / HOME_BUDGET) * 100);
+  const perItem = f.perItem == null ? "—" : `$${(f.perItem / 100).toFixed(2)}${f.perItemDelta == null ? "" : `<span class="hb-sub-meta ${f.perItemDelta <= 0 ? "ok" : "warn"}">${signed(f.perItemDelta, "%")}</span>`}`;
   return `<article class="hb-pillar" aria-labelledby="hb-pil-fin">
         <div class="hb-pillar-hd">
           <a class="hb-pillar-name" id="hb-pil-fin" href="#/settings">${ic("currency", "ic14 c-amber")}<span>Financials</span></a>
@@ -270,13 +282,13 @@ function financialsPillarHtml(emptyMode) {
         </div>
         <a class="hb-pillar-hero" href="#/settings">
           <div class="hb-pillar-valrow">
-            <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "$0" : "$142"}</span><span class="hb-pillar-unit">${emptyMode ? "spent" : "/ $210"}</span></div>
-            <span class="hb-pillar-right" ${emptyMode ? 'style="color:var(--tone-accent-ink)"' : ""}>${emptyMode ? "Set cap" : "68% · ~$204"}</span>
+            <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "$0" : usd(f.spend)}</span><span class="hb-pillar-unit">${emptyMode ? "spent" : `/ ${usd(HOME_BUDGET)}`}</span></div>
+            <span class="hb-pillar-right" ${emptyMode ? 'style="color:var(--tone-accent-ink)"' : ""}>${emptyMode ? "Set cap" : `${pct}% · ~${usd(f.pace)}`}</span>
           </div>
-          <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-spend" style="width:${emptyMode ? 0 : 68}%"></span></div>
+          <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-spend" style="width:${emptyMode ? 0 : pct}%"></span></div>
         </a>
         <div class="hb-pillar-sub">
-          <a class="hb-sub-item" href="#/activity" title="Average AI spend per completed task (last 7 days)"><span class="hb-sub-lbl">Cost / task</span><span class="hb-sub-val">${emptyMode ? "—" : '$7.45<span class="hb-sub-meta ok">-11%</span>'}</span></a>
+          <a class="hb-sub-item" href="#/insights" title="Month-to-date AI spend per completed item, vs the prior period"><span class="hb-sub-lbl">Cost / task</span><span class="hb-sub-val">${emptyMode ? "—" : perItem}</span></a>
           <a class="hb-sub-item" href="#/settings" title="Remaining parallel capacity across your connected AI subscriptions"><span class="hb-sub-lbl">AI capacity</span><span class="hb-sub-val">${emptyMode ? '100%<span class="hb-sub-meta ok">Ready</span>' : '74%<span class="hb-sub-meta ok">free</span>'}</span></a>
         </div>
       </article>`;
@@ -297,7 +309,7 @@ function summarizeHomeOffices(emptyMode) {
 }
 
 function teamPillarHtml(emptyMode, fleet) {
-  const off = summarizeHomeOffices(emptyMode);
+  const off = summarizeHomeOffices(emptyMode), auto = Math.round(homeOrgFigures().autonomous);
   const capVal = emptyMode
     ? '0 agents<span class="hb-sub-meta">· 1 person</span>'
     : `${fleet.liveWorkingN} active<span class="hb-sub-meta warn">· ${fleet.idleSpecsN} idle</span>${fleet.offlineSpecsN ? `<span class="hb-sub-meta bad">· ${fleet.offlineSpecsN} off</span>` : ""}`;
@@ -309,10 +321,10 @@ function teamPillarHtml(emptyMode, fleet) {
         </div>
         <a class="hb-pillar-hero" href="#/teams/members" title="Share of work completed autonomously without needing your input (last 7 days)">
           <div class="hb-pillar-valrow">
-            <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "—" : "78%"}</span><span class="hb-pillar-unit">autonomous</span></div>
-            <span class="hb-pillar-right">${emptyMode ? "No activity" : "22% you · 7d"}</span>
+            <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "—" : `${auto}%`}</span><span class="hb-pillar-unit">autonomous</span></div>
+            <span class="hb-pillar-right">${emptyMode ? "No activity" : `${100 - auto}% you · 7d`}</span>
           </div>
-          <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-auto" style="width:${emptyMode ? 0 : 78}%"></span><span class="seg-human" style="width:${emptyMode ? 0 : 22}%"></span></div>
+          <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-auto" style="width:${emptyMode ? 0 : auto}%"></span><span class="seg-human" style="width:${emptyMode ? 0 : 100 - auto}%"></span></div>
         </a>
         <div class="hb-pillar-sub is-team">
           <a class="hb-sub-item" href="#/teams/members" title="All ${fleet.leadsN + fleet.specsN} hired agents (${fleet.leadsN} leads, ${fleet.specsN} specialists): ${fleet.liveWorkingN} active, ${fleet.idleSpecsN} idle, ${fleet.offlineSpecsN} waiting on an offline office">
@@ -382,25 +394,33 @@ function projectsPillarHtml(emptyMode, projs, offTrackProjs, atRiskProjs) {
       </article>`;
 }
 
+function deliveryFigures(emptyMode) {
+  if (emptyMode) return { cls: "", pill: "No deliveries yet", num: "—", pass: 0, rework: 0, turn: "—", deliv: "—", spark: "" };
+  const f = homeOrgFigures(), ft = Math.round(f.firstTry), dq = Math.round(f.firstTryDelta);
+  const cyc = f.cycle == null ? "—" : `${Math.round(f.cycle)}h`, cycDelta = f.cycle && f.priorCycle ? Math.round(100 * (f.cycle - f.priorCycle) / f.priorCycle) : null;
+  return {
+    cls: dq >= 0 ? "ok" : "warn", pill: `Quality ${signed(dq, " pts")}`, num: `${ft}%`, pass: ft, rework: 100 - ft, spark: sparkHtml(f.daily),
+    turn: `${cyc}${cycDelta == null ? "" : `<span class="hb-sub-meta ${cycDelta <= 0 ? "ok" : "warn"}">${signed(cycDelta, "%")}</span>`}`,
+    deliv: `${f.delivered}<span class="hb-sub-meta ${f.deliveredDelta >= 0 ? "ok" : "warn"}">${signed(f.deliveredDelta)}</span>`,
+  };
+}
 function deliveryPillarHtml(emptyMode) {
-  const d = emptyMode
-    ? { cls: "", pill: "No deliveries yet", num: "—", right: "", pass: 0, rework: 0, turn: "—", deliv: "—" }
-    : { cls: "ok", pill: "Quality +6%", num: "84%", right: "7d avg", pass: 84, rework: 16, turn: '18m<span class="hb-sub-meta ok">-14%</span>', deliv: '19<span class="hb-sub-meta ok">+4</span>' };
+  const d = deliveryFigures(emptyMode);
   return `<article class="hb-pillar" aria-labelledby="hb-pil-proj">
         <div class="hb-pillar-hd">
-          <a class="hb-pillar-name" id="hb-pil-proj" href="#/work">${ic("check-circle", "ic14 c-green")}<span>Delivery</span></a>
-          <a class="hb-pillar-pill ${d.cls}" href="#/work">${d.pill}</a>
+          <a class="hb-pillar-name" id="hb-pil-proj" href="#/insights">${ic("check-circle", "ic14 c-green")}<span>Delivery</span></a>
+          <a class="hb-pillar-pill ${d.cls}" href="#/insights">${d.pill}</a>
         </div>
-        <a class="hb-pillar-hero" href="#/work" title="Percentage of completed tasks approved on the first try without revisions (last 7 days)">
+        <a class="hb-pillar-hero" href="#/insights" title="Share of completed items approved on the first try (last 7 days)">
           <div class="hb-pillar-valrow">
             <div class="hb-pillar-primary"><span class="hb-pillar-num">${d.num}</span><span class="hb-pillar-unit">first try</span></div>
-            <span class="hb-pillar-right ok">${d.right}</span>
+            ${d.spark}
           </div>
           <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-pass" style="width:${d.pass}%"></span><span class="seg-rework" style="width:${d.rework}%"></span></div>
         </a>
         <div class="hb-pillar-sub">
-          <a class="hb-sub-item" href="#/activity" title="Average time from task start to approval (last 7 days)"><span class="hb-sub-lbl">Turnaround</span><span class="hb-sub-val">${d.turn}</span></a>
-          <a class="hb-sub-item" href="#/work" title="Tasks completed and accepted in the last 7 days (+4 vs. prior week)"><span class="hb-sub-lbl">Delivered · 7d</span><span class="hb-sub-val">${d.deliv}</span></a>
+          <a class="hb-sub-item" href="#/insights" title="Median time from start to done (last 7 days)"><span class="hb-sub-lbl">Median cycle</span><span class="hb-sub-val">${d.turn}</span></a>
+          <a class="hb-sub-item" href="#/insights" title="Items completed in the last 7 days, vs the 7 days before"><span class="hb-sub-lbl">Closed · 7d</span><span class="hb-sub-val">${d.deliv}</span></a>
         </div>
       </article>`;
 }
@@ -469,7 +489,8 @@ function spotlightUpNextHtml(queue, it) {
 }
 
 function spotlightBodyHtml(it, ctxKey, ctxOpen) {
-  const rec = it.rec && !it.handled ? `<div class="hb-spot-rec">${ic("info", "ic16")}<span>${esc(it.rec)}</span></div>` : "";
+  /* Same toned recommendation callout as Inbox and the project page (green = low risk, amber = investigate, red = caution) */
+  const rec = it.rec && !it.handled ? recommendationCallout(it) : "";
   const impact = it.impact?.length && !it.handled ? `<div class="hb-spot-meta" role="group" aria-label="Decision risk and impact">${it.impact.map(([ico, tone, title, sub]) => `<div class="hb-spot-cell"><span class="hb-spot-well${tone ? " " + tone : ""}">${ic(ico, "ic16")}</span><div class="hb-spot-cell-txt"><span class="hb-spot-cell-val">${esc(title)}</span><span class="hb-spot-cell-sub">${esc(sub)}</span></div></div>`).join("")}</div>` : "";
   const askBtn = !it.handled ? `<button class="hb-spot-ai-ask" type="button" data-act="brief-ai-ask" data-v="Explain the risk, impact, and recommendation for: ${esc(it.what)}">${ic("sparkle", "ic14")}<span>Ask about this</span></button>` : "";
   const audit = it.audit?.length ? `<div class="hb-ctx-checks" role="list" aria-label="Audit checks and reviewer notes">${it.audit.map((a) => `<span class="hb-ctx-check" role="listitem">${ic("check-circle", "ic14")}<span>${esc(a)}</span></span>`).join("")}</div>` : "";
