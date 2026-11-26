@@ -76,7 +76,10 @@
 /* ---------------------------------------------------------------- Files panel */
 #main .chat .chat-files-btn[aria-expanded="true"] { background: var(--hover); color: var(--white); }
 #main .chat .chat-file-list { display: grid; gap: 2px; padding: 8px var(--gutter, 16px); overflow-y: auto; }
-#main .chat .chat-file-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 4px 0; }
+#main .chat .chat-file-row { display: flex; align-items: flex-start; gap: 10px; min-height: 52px; padding: 6px 0; }
+#main .chat .chat-file-acts { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-block-start: 2px; font-size: var(--fs-xs); }
+#main .chat .chat-file-acts .alink { padding: 0; font: inherit; font-weight: 500; color: var(--gray-300); background: none; cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 3px; }
+#main .chat .chat-file-acts .alink:hover { color: var(--white); text-decoration-color: currentColor; }
 #main .chat .chat-file-row .chat-att-meta { flex: 1 1 auto; }
 #main .chat .chat-file-row > .btn { flex: none; color: var(--gray-400); }
 #main .chat .chat-file-row > .btn:hover { color: var(--white); }
@@ -102,6 +105,7 @@
   #main .chat .chat-compose-row > .chat-attach-btn { width: 44px; min-width: 44px; height: 44px; }
   #main .chat .chat-att-remove, #main .chat .chat-att-actions .btn, #main .chat .chat-file-row > .btn, #main .chat .chat-lb-bar .btn { min-width: 44px; min-height: 44px; }
   #main .chat .chat-att-remove { width: 44px; height: 44px; }
+  #main .chat .chat-file-acts .alink { display: inline-flex; align-items: center; min-height: 44px; }
 }
 @media (max-width: 639px) {
   /* One scrolling row, so attachments never push the conversation off a phone screen. */

@@ -1564,9 +1564,13 @@ async function checkShortScreens(page: Page) {
   const landing = await page.evaluate(() => {
     const s = document.querySelector(".thread .msgs")!, sr = s.getBoundingClientRect();
     const first = s.querySelector(":scope > .chat-thread-count + .msg")!.getBoundingClientRect();
-    return { firstReplyVisible: first.top >= sr.top && first.top < sr.bottom - 24, askAbove: s.scrollTop > 0 };
+    const sum = s.querySelector(":scope > .chat-thread-sum")!.getBoundingClientRect();
+    return { firstReplyVisible: first.top >= sr.top && first.top < sr.bottom - 24, askSummaryAbove: sum.top >= sr.top && sum.bottom <= first.top };
   });
-  assert.ok(landing.firstReplyVisible && landing.askAbove, `Reply count lands on the replies (${JSON.stringify(landing)})`);
+  assert.ok(landing.firstReplyVisible && landing.askSummaryAbove, `A narrow thread shows its replies under a compact summary of the ask (${JSON.stringify(landing)})`);
+  assert.match(await page.locator(".thread .chat-thread-sum").innerText(), /Needs you · Approve publishing[\s\S]*3 replies/, "The summary names the ask and counts the replies");
+  await page.locator(".thread [data-act=chat-thread-root]").click();
+  assert.equal(await page.locator(".thread .chat-thread-root").isVisible(), true, "Show full message opens the ask in place");
   await page.locator(".thread [data-act=thread-close]").click();
   await page.setViewportSize({ width: 420, height: 900 });
   await page.goto(page.url().split("#")[0] + "#/chat/agency-v1");
@@ -1762,7 +1766,7 @@ async function checkAttachFilesAndSearch(page: Page) {
   await panel.waitFor();
   assert.ok((await panel.locator(".chat-file-row").count()) >= 4, "Files lists the conversation's attachments");
   assert.match(await panel.locator(".chat-file-row").last().innerText(), /Ada · Today 09:12/, "Each file says who sent it and when");
-  await panel.getByRole("link", { name: "ia-v2-nav-before.png", exact: true }).click();
+  await panel.getByRole("link", { name: "Open source message for ia-v2-nav-before.png", exact: true }).click();
   await page.locator('.msg.is-linked[data-mid="m1"]').waitFor();
   assert.equal(await page.locator("#chat-files").count(), 0, "Following a file closes Files");
   await navTo(page, "#/chat/platform");
@@ -2234,13 +2238,17 @@ async function checkFilesExactReply(page: Page) {
   await viewport(page, 1440, 900);
   await navTo(page, "#/chat/agency-v1");
   await page.locator(".chat-files-btn").click();
-  const link = page.locator("#chat-files").getByRole("link", { name: "review.diff", exact: true });
+  const link = page.locator("#chat-files").getByRole("link", { name: "Open source message for review.diff", exact: true });
   const href = await link.getAttribute("href");
   assert.match(href!, /^#\/chat\/agency-v1\/m2-r\d+$/, "A reply's file links to that reply");
   await link.click();
   await page.waitForURL((u) => u.hash === href);
-  const reply = page.locator(`aside.thread .msgs > .msg.is-linked[data-mid="${href!.split("/").pop()}"]`);
+  const mid = href!.split("/").pop()!;
+  const reply = page.locator(`aside.thread .msgs > .msg[data-mid="${mid}"]`);
   await reply.waitFor();
+  /* The mark can be brief (a re-render redraws the thread), so wait, every frame, for the landing itself: the reply
+     taking focus, which stays. */
+  await page.waitForFunction((m) => document.activeElement?.matches(`aside.thread .msgs > .msg[data-mid="${m}"]`) ?? false, mid, { polling: "raf" });
   assert.match(await reply.innerText(), /review\.diff/);
   assert.equal(await activeAttr(page, "data-mid"), href!.split("/").pop(), "Focus lands on the reply");
   assert.match(await activeAttr(page, "aria-label") ?? "", /^Linked reply from You/);
@@ -2259,9 +2267,11 @@ async function checkTaskContextAttachments(page: Page) {
   await page.locator("#compose").press("Control+Enter");
   const dlg = page.locator("#work-task-dialog");
   assert.match(await dlg.locator(".stc-ctx-preview").innerText(), /You: Attached: palette\.pdf/, "The preview names the file");
-  await dlg.getByRole("button", { name: /^Show \d+ messages$/ }).click();
+  assert.match(await dlg.locator(".stc-ctx-toggle").innerText(), /^Show \d+ messages · 1 file$/, "The collapsed excerpt counts its files");
+  await dlg.getByRole("button", { name: /^Show \d+ messages · 1 file$/ }).click();
   const file = dlg.locator(".stc-ctx-lines li").last().locator(".stc-ctx-files a");
-  assert.equal(await file.innerText(), "palette.pdf");
+  assert.equal(await dlg.locator(".stc-ctx-lines li").last().locator(".ctx-file-name").innerText(), "palette.pdf");
+  assert.equal(await file.innerText(), "Open source message");
   assert.equal(await file.getAttribute("href"), `#/chat/design/${mid}`, "and links its message");
   await dlg.getByRole("button", { name: "Create as-is" }).click();
   await dlg.waitFor({ state: "detached" });
@@ -2548,14 +2558,16 @@ async function checkFindTaskRef(page: Page) {
   assert.match(await why("#/chat/a2a-ada-tomas"), /mentions T-A121/);
   await page.locator("#chat-find").fill("");
 }
-/* An older open pair is labelled as outside the window; a closed picker keeps the picked names and Clear. */
+/* An older open pair leads its section, labelled as outside the window, with its last-active time; a closed picker
+   keeps the picked names and Clear. */
 async function checkA2APicker(page: Page) {
   await viewport(page, 1440, 900);
   await navTo(page, "#/chat/a2a-kai-rowan");
   const labels = await page.locator(".chat-a2a-window").allInnerTexts();
-  assert.deepEqual(labels, ["Last 24 hours", "Current conversation · outside 24 hours"], "The older pair is not under Last 24 hours");
-  const current = page.locator(".chat-a2a-window").nth(1).locator("xpath=following-sibling::ul[1]//a");
+  assert.deepEqual(labels, ["Older than 24h", "Last 24 hours"], "The older pair leads the section, not under Last 24 hours");
+  const current = page.locator(".chat-a2a-window").nth(0).locator("xpath=following-sibling::ul[1]//a");
   assert.equal(await current.getAttribute("href"), "#/chat/a2a-kai-rowan");
+  assert.equal(await current.locator(".chat-row-when").innerText(), "Yesterday", "It says when the pair last spoke");
   await page.locator("#chat-a2a-filter-btn").click();
   await page.keyboard.type("ro");
   await page.keyboard.press("Enter");
@@ -2567,7 +2579,7 @@ async function checkA2APicker(page: Page) {
   assert.equal(await page.locator(".chat-a2a-active").count(), 0);
   assert.equal(await activeAttr(page, "id"), "chat-a2a-filter-btn", "Clear returns focus to Filter");
 }
-/* 320–375: jumps are as wide as their labels and wrap rather than clip; Jules's scope, risk and action are in the first
+/* 320–375: jumps are as wide as their labels, share one row at 320 ("Latest") and never clip; Jules's scope, risk and action are in the first
    view at 375; the thread's resize edge is a 24 px target with a slim grip. */
 async function bothJumps(page: Page) {
   return page.evaluate(async () => {
@@ -2591,7 +2603,7 @@ async function checkNarrowRound9(page: Page) {
   const at320 = await bothJumps(page);
   assert.ok(at320, "Both jumps show at 320");
   assert.ok(at320!.every((b) => !b.clipped && b.left >= 0 && b.right <= 320), `No label is clipped at 320 (${JSON.stringify(at320)})`);
-  assert.ok(Math.abs(at320![0].top - at320![1].top) >= 1, "They wrap onto two rows when they don't fit side by side");
+  assert.ok(Math.abs(at320![0].top - at320![1].top) < 1 && at320![0].right <= at320![1].left, `Both jumps fit one row at 320 (${JSON.stringify(at320)})`);
   const head = await page.locator("#main .chat > .chhead").evaluate((h) => [...h.querySelectorAll(".chat-list-btn, .chat-actions > .btn")]
     .filter((b) => (b as HTMLElement).offsetParent).map((b) => { const r = b.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }));
   assert.ok(head.every(([l, r], i) => l >= 0 && r <= 320 && (i === 0 || l >= head[i - 1][1] - 1)), `Header controls never overlap at 320 (${JSON.stringify(head)})`);
