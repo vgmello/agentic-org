@@ -9,10 +9,13 @@ use org_copilot::watcher::{
 use org_copilot::Usage;
 use org_office::Office;
 use org_office_sessions::SessionManager;
-use org_proto::chat::{ChatChannelSummarizeParams, ChatChannelSummarizeResult};
+use org_proto::chat::{
+    ChatChannelSummarizeParams, ChatChannelSummarizeResult, MAX_SUMMARIZE_WINDOW,
+};
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
 
+use super::catchup::{plan_digest, Plan};
 use super::watches::resolve_watching_runtime;
 use super::{next_local_id, now_ms, WatcherConfig, WatcherRuntimeProvider};
 
@@ -38,18 +41,15 @@ pub(super) fn summarize_channel_impl(
     caller_id: &str,
     params: &ChatChannelSummarizeParams,
 ) -> Result<ChatChannelSummarizeResult, ApiError> {
-    let question = params.question.trim();
-    if question.is_empty() {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            "question must not be empty",
-        ));
-    }
-    let limit = params.limit.unwrap_or(200).clamp(1, 200) as usize;
-    let (conv, msgs) = office
-        .channel_messages_for_caller(caller_id, &params.channel, limit)
-        .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read channel"))??;
-
+    let limit = params
+        .limit
+        .unwrap_or(MAX_SUMMARIZE_WINDOW)
+        .clamp(1, MAX_SUMMARIZE_WINDOW) as usize;
+    // An empty `--since-read` catch-up is answered before any runtime is resolved.
+    let digest = match plan_digest(office, caller_id, params, limit)? {
+        Plan::Answered(result) => return Ok(*result),
+        Plan::Run(digest) => digest,
+    };
     let (profile_id, runtime) =
         resolve_watching_runtime(office, sessions, provider).map_err(|reason| {
             ApiError::new(
@@ -58,12 +58,10 @@ pub(super) fn summarize_channel_impl(
             )
         })?;
     let input = ChannelSummarizeInput {
-        channel: conv
-            .name
-            .clone()
-            .unwrap_or_else(|| conv.id.as_str().to_owned()),
-        question: question.to_owned(),
-        messages: msgs
+        channel: digest.channel_label(),
+        question: digest.question.clone(),
+        messages: digest
+            .messages
             .iter()
             .map(|m| SummarizeMessageInput {
                 id: m.id.clone(),
@@ -81,8 +79,8 @@ pub(super) fn summarize_channel_impl(
             UsageContext {
                 consumer_kind: "employee",
                 employee_id: Some(caller_id),
-                project_id: conv.project_id.as_ref().map(Id::as_str),
-                conversation_id: conv.id.as_str(),
+                project_id: digest.conversation.project_id.as_ref().map(Id::as_str),
+                conversation_id: digest.conversation.id.as_str(),
                 feature: "channel.summarize",
                 model_profile_id: Some(&profile_id),
                 question_ids: Vec::new(),
@@ -105,13 +103,12 @@ pub(super) fn summarize_channel_impl(
         WatchError::InputRejected => ApiError::new(ErrorCode::InvalidRequest, err.to_string()),
         _ => ApiError::new(ErrorCode::Unavailable, err.to_string()),
     })?;
-    Ok(ChatChannelSummarizeResult {
-        conversation_id: conv.id.as_str().to_owned(),
-        summary: res.summary,
-        message_ids: res.message_ids,
-        derived_notice: res.derived_notice,
+    Ok(digest.result(
+        res.summary,
+        res.message_ids,
+        res.derived_notice,
         usage_record_id,
-    })
+    ))
 }
 
 pub(super) fn record_usage(

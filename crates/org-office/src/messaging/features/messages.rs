@@ -5,8 +5,8 @@ use org_proto::chat::{
     HandoffAcceptanceView, ReactionView,
 };
 use org_proto::msg::{
-    is_urgent, json_string_len, MessageLifecycleState, DEFAULT_PAGE_LIMIT, KIND_MSG, KIND_REPLY,
-    MAX_PAGE_LIMIT,
+    is_urgent, json_string_len, MessageLifecycleState, Meta, DEFAULT_PAGE_LIMIT, KIND_MSG,
+    KIND_REPLY, MAX_PAGE_LIMIT,
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
@@ -17,39 +17,35 @@ use crate::messaging::{
 };
 
 use super::auto_channels::effective_auto_members;
+use super::catchup::{delta_start, is_top_level, sent_by, snippet, ThreadStats};
 use super::conversations::{all_conversations_including_auto, find_channel};
 
-fn resolve_messages_target(
+/// Resolves a conversation UUIDv7, `#channel` or channel name the caller may read.
+pub(super) fn resolve_conversation_ref(
     read: &impl MessagingRead,
     owner: &Id,
     caller: &Id,
-    params: &ChatMessagesParams,
+    reference: &str,
     now_utc: &str,
 ) -> Result<ConversationRecord, ApiError> {
     let all = all_conversations_including_auto(read, now_utc)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to load conversations"))?;
-    let conv = if let Some(ref_str) = &params.conversation {
-        if let Ok(cid) = Id::parse(ref_str.trim()) {
-            all.iter().find(|c| c.id == cid).cloned()
-        } else {
-            find_channel(&all, ref_str)
-        }
-        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "conversation not found"))?
-    } else if let Some(tid) = &params.thread_id {
-        let msg = read
-            .message(tid)
-            .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read thread"))?
-            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "thread not found"))?;
-        all.iter()
-            .find(|c| c.id == msg.conversation_id)
-            .cloned()
-            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "conversation not found"))?
-    } else {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            "pass --conversation or --thread",
-        ));
-    };
+    let trimmed = reference.trim();
+    let by_id = Id::parse(trimmed)
+        .ok()
+        .and_then(|cid| all.iter().find(|c| c.id == cid).cloned());
+    let conv = by_id
+        .or_else(|| find_channel(&all, trimmed))
+        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "conversation not found"))?;
+    require_read_access(read, owner, caller, conv)
+}
+
+fn require_read_access(
+    read: &impl MessagingRead,
+    owner: &Id,
+    caller: &Id,
+    conv: ConversationRecord,
+) -> Result<ConversationRecord, ApiError> {
     let active = effective_auto_members(read, &conv, owner)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to resolve members"))?;
     let allowed =
@@ -60,11 +56,68 @@ fn resolve_messages_target(
     Ok(conv)
 }
 
+fn resolve_messages_target(
+    read: &impl MessagingRead,
+    owner: &Id,
+    caller: &Id,
+    params: &ChatMessagesParams,
+    now_utc: &str,
+) -> Result<ConversationRecord, ApiError> {
+    if let Some(ref_str) = &params.conversation {
+        return resolve_conversation_ref(read, owner, caller, ref_str, now_utc);
+    }
+    let Some(tid) = &params.thread_id else {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "pass --conversation or --thread",
+        ));
+    };
+    let msg = read
+        .message(tid)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read thread"))?
+        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "thread not found"))?;
+    let all = all_conversations_including_auto(read, now_utc)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to load conversations"))?;
+    let conv = all
+        .into_iter()
+        .find(|c| c.id == msg.conversation_id)
+        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "conversation not found"))?;
+    require_read_access(read, owner, caller, conv)
+}
+
+/// Refuses flag combinations a catch-up read cannot honor (`TASK-99` rung 2).
+fn check_read_shape(params: &ChatMessagesParams) -> Result<(), ApiError> {
+    let invalid = |msg: &str| Err(ApiError::new(ErrorCode::InvalidRequest, msg));
+    if params.since_read && params.conversation.is_none() {
+        return invalid("since_read needs a conversation or channel");
+    }
+    if let Some(anchor) = &params.after_id {
+        if !org_proto::is_uuid_v7(anchor) {
+            return invalid("after_id must be a canonical lowercase UUIDv7 message ID");
+        }
+    }
+    if params.is_delta() && params.cursor.is_some() {
+        return invalid("a delta read pages forward with after_id = next_after_id, not cursor");
+    }
+    if params.top_level_only && params.thread_id.is_some() {
+        return invalid("top_level_only lists thread roots; a thread read lists its replies");
+    }
+    Ok(())
+}
+
+/// How one message is shown: full, or headers-only with a snippet.
+#[derive(Clone, Copy)]
+struct ViewShape<'a> {
+    headers_only: bool,
+    threads: &'a ThreadStats,
+}
+
 fn build_chat_message_view(
     read: &impl MessagingRead,
     m: MessageRecord,
     thread_id: String,
     local_seq: u64,
+    shape: ViewShape<'_>,
 ) -> Result<ChatMessageView, ApiError> {
     let reactions = read
         .reactions_for_message(&m.id)
@@ -100,7 +153,20 @@ fn build_chat_message_view(
                 .collect()
         })
         .unwrap_or_default();
+    let (reply_count, latest_reply_at) = shape.threads.of_root(&m.id);
+    let (body, snippet_text, body_bytes, meta) = if shape.headers_only {
+        let bytes = m.body_markdown.len() as u64;
+        (
+            None,
+            Some(snippet(&m.body_markdown)),
+            Some(bytes),
+            Meta::new(),
+        )
+    } else {
+        (Some(m.body_markdown), None, None, m.metadata)
+    };
     Ok(ChatMessageView {
+        attachment_count: m.attachments.len() as u64,
         id: m.id,
         conversation_id: m.conversation_id.as_str().to_owned(),
         thread_id,
@@ -112,16 +178,35 @@ fn build_chat_message_view(
         kind: m.kind,
         priority: m.priority,
         subject: m.subject,
-        body: m.body_markdown,
-        meta: m.metadata,
+        body,
+        snippet: snippet_text,
+        body_bytes,
+        meta,
         created_at: m.created_at,
         origin_sequence: local_seq,
+        reply_count,
+        latest_reply_at,
         mentions,
         reactions,
         acceptance,
         answer,
         withdrawal,
     })
+}
+
+/// One message a read may answer, before its view is built.
+struct Candidate {
+    msg: MessageRecord,
+    thread_id: String,
+    /// Looked up only when needed: for a backward cursor, or once the message is on the page.
+    local_seq: Option<u64>,
+}
+
+fn local_seq_of(read: &impl MessagingRead, m: &MessageRecord) -> Result<u64, ApiError> {
+    Ok(read
+        .message_local_seq(&m.id)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read local_seq"))?
+        .unwrap_or(m.origin_sequence))
 }
 
 pub fn list_chat_messages(
@@ -138,44 +223,120 @@ pub fn list_chat_messages(
             "limit must be 1..=100",
         ));
     }
+    check_read_shape(params)?;
     let conv = resolve_messages_target(read, owner, caller, params, now_utc)?;
     let raw_msgs = read
         .messages_in_conversation(&conv.id)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read messages"))?;
-    let mut views = Vec::new();
-    for m in raw_msgs {
-        let thread_id = m.thread_root_id.clone().unwrap_or_else(|| m.id.clone());
-        if let Some(tid) = &params.thread_id {
-            if thread_id != *tid {
-                continue;
-            }
-        }
-        let local_seq = read
-            .message_local_seq(&m.id)
-            .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read local_seq"))?
-            .unwrap_or(m.origin_sequence);
-        if let Some(cursor) = params.cursor {
-            if local_seq >= cursor {
-                continue;
-            }
-        }
-        views.push(build_chat_message_view(read, m, thread_id, local_seq)?);
-    }
-    let more = views.len() > limit as usize;
-    if more {
-        let skip = views.len() - limit as usize;
-        views = views.split_off(skip);
-    }
-    let next_cursor = if more {
-        views.first().map(|m| m.origin_sequence)
+    let threads = ThreadStats::of(&raw_msgs);
+    let start = if params.is_delta() {
+        delta_start(
+            read,
+            &raw_msgs,
+            &conv.id,
+            caller,
+            params.since_read,
+            params.after_id.as_deref(),
+        )?
     } else {
-        None
+        0
     };
+    let mut candidates = Vec::new();
+    for m in raw_msgs.into_iter().skip(start) {
+        let thread_id = m.thread_root_id.clone().unwrap_or_else(|| m.id.clone());
+        let in_thread = params
+            .thread_id
+            .as_ref()
+            .is_none_or(|tid| *tid == thread_id);
+        let shown = !params.top_level_only || is_top_level(&m);
+        if !in_thread || !shown || (params.since_read && sent_by(&m, caller)) {
+            continue;
+        }
+        let local_seq = match params.cursor {
+            Some(cursor) => {
+                let seq = local_seq_of(read, &m)?;
+                if seq >= cursor {
+                    continue;
+                }
+                Some(seq)
+            }
+            None => None,
+        };
+        candidates.push(Candidate {
+            msg: m,
+            thread_id,
+            local_seq,
+        });
+    }
+    let page = Page::of(candidates, limit as usize, params.is_delta());
+    let shape = ViewShape {
+        headers_only: params.headers_only,
+        threads: &threads,
+    };
+    let mut views = Vec::with_capacity(page.items.len());
+    for c in page.items {
+        let local_seq = match c.local_seq {
+            Some(seq) => seq,
+            None => local_seq_of(read, &c.msg)?,
+        };
+        views.push(build_chat_message_view(
+            read,
+            c.msg,
+            c.thread_id,
+            local_seq,
+            shape,
+        )?);
+    }
+    // A plain read with older messages pages back from its oldest message's `local_seq`.
+    let next_cursor = page
+        .older
+        .then(|| views.first().map(|v| v.origin_sequence))
+        .flatten();
     Ok(ChatMessagesResult {
         conversation_id: conv.id.as_str().to_owned(),
         messages: views,
         next_cursor,
+        next_after_id: page.next_after_id,
+        total: page.total,
     })
+}
+
+/// One page of candidates: a delta read keeps the oldest `limit` and pages forward; a plain
+/// read keeps the newest `limit` and pages backward by `local_seq`.
+struct Page {
+    items: Vec<Candidate>,
+    /// A plain read left older messages behind.
+    older: bool,
+    next_after_id: Option<String>,
+    total: Option<u64>,
+}
+
+impl Page {
+    fn of(mut items: Vec<Candidate>, limit: usize, delta: bool) -> Self {
+        let more = items.len() > limit;
+        if delta {
+            let total = items.len() as u64;
+            items.truncate(limit);
+            let next_after_id = more
+                .then(|| items.last().map(|c| c.msg.id.clone()))
+                .flatten();
+            return Self {
+                items,
+                older: false,
+                next_after_id,
+                total: Some(total),
+            };
+        }
+        if more {
+            items = items.split_off(items.len() - limit);
+        }
+        Self {
+            items,
+            older: more,
+            next_after_id: None,
+            total: None,
+        }
+    }
 }
 
 /// Converts a `MessageRecord` + optional `RecipientStateRecord` into an `org_proto::msg::MessageHeader`.
@@ -245,13 +406,7 @@ pub fn channel_messages_for_caller(
     limit: usize,
     now_utc: &str,
 ) -> Result<(ConversationRecord, Vec<MessageRecord>), ApiError> {
-    let params = ChatMessagesParams {
-        conversation: Some(channel_ref.to_owned()),
-        thread_id: None,
-        cursor: None,
-        limit: Some(100),
-    };
-    let conv = resolve_messages_target(read, owner, caller, &params, now_utc)?;
+    let conv = resolve_conversation_ref(read, owner, caller, channel_ref, now_utc)?;
     if conv.kind != ConversationKind::Channel {
         return Err(ApiError::new(
             ErrorCode::InvalidRequest,

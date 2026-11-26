@@ -38,14 +38,14 @@ pub use git_ops::{
 };
 pub(crate) use import_validation::validate_imported_files;
 pub use messaging_ops::{
-    ChannelCreateOp, ChannelMembershipOp, ChannelMessagesForCallerRead, ChannelMessagesRawRead,
-    ChatAnswerOp, ChatInboxRead, ChatMarkReadOp, ChatMessagesRead, ChatMuteOp, ChatReactOp,
-    ChatReplyOp, ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, ConversationByIdRead,
-    DeliverAnswerCandidatesOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
-    InspectAskStatusRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead, ListConversationsRead,
-    ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxDeferOp, MailboxUnsnoozeOp,
-    MailboxUpdateStateOp, MsgAcceptOp, MsgAskOp, MsgWithdrawOp, OpenOwnerInboxRead,
-    OrgChangesAfterRead, PeekUnreadRead,
+    ChannelCatchupRead, ChannelCreateOp, ChannelMembershipOp, ChannelMessagesForCallerRead,
+    ChannelMessagesRawRead, ChatAnswerOp, ChatInboxRead, ChatMarkReadOp, ChatMessagesRead,
+    ChatMuteOp, ChatReactOp, ChatReplyOp, ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp,
+    ConversationByIdRead, DeliverAnswerCandidatesOp, DmOpenOp, FindReplyForAskRead,
+    GetMailboxMessageRead, InspectAskStatusRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead,
+    ListConversationsRead, ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxDeferOp,
+    MailboxUnsnoozeOp, MailboxUpdateStateOp, MsgAcceptOp, MsgAskOp, MsgWithdrawOp,
+    OpenOwnerInboxRead, OrgChangesAfterRead, PeekUnreadRead,
 };
 pub use office_store::{open_store, OfficeStore};
 pub use operations::{

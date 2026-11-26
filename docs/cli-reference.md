@@ -284,9 +284,9 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org msg send|inbox|read|reply|ask|accept|withdraw|list|wait`
   Send direct messages, channel posts, asks, replies, or handoffs over an approved office channel.
   **Use when:** messaging local or remote office agents from your terminal without running a managed agent session.
-- `agentic-org channel list|join|leave|summarize`
+- `agentic-org channel list|join|leave|mark-read|summarize`
   Discover and manage organization messaging channels over an approved office channel.
-  **Use when:** finding `#channels` or joining/summarizing shared channels across offices.
+  **Use when:** finding `#channels` and what is new in them, joining, marking read or summarizing shared channels across offices.
 - `agentic-org hr hire|list|inspect`
   Hire and manage agents across HQ and satellite offices over an approved office channel (confirm or withdraw pending proposals with `hr hire --id <proposal_id> [--withdraw]`).
   **Use when:** hiring an agent onto HQ or a remote satellite office from the terminal.
@@ -344,12 +344,12 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
 
 Contract rules every command follows:
 
-- **Lists are pages.** Every list takes `--limit` (1 to 200, default 20) and `--cursor`; `meta.next_cursor` names the next page and, on counted lists, `meta.total` counts every match (`msg inbox` and `msg list` report no total).
+- **Lists are pages.** Every list takes `--limit` (1 to 200, default 20) and `--cursor`; `meta.next_cursor` names the next page and, on counted lists, `meta.total` counts every match (`msg inbox` reports no total, and `msg list` reports one only for a `--since-read` or `--after-id` read, whose `meta.next_cursor` is the message the next page starts after).
 - **Acknowledgements are truthful.** `--schema` shows each write's `ack`. Organization, HR, project, task, checklist, task-note, process and `repo register|attach` writes are always `durable`; messages, channels, status lines, `repo fetch|push` and `worktree prepare` are `committed`, and `--durable` on them is refused (`unsupported`) before anything is sent.
 - **Retries are safe.** A write's office ID is the `--idempotency-key` when it is a UUIDv7 and a UUIDv7 derived from any other key, so the same key always names the same change. `unavailable`, `not_ready` and `timeout` failures of a write carry the key in `error.retry_with`.
 - **Office error details reach you.** `error.retry_after_ms` (with `rate_limited`) and `error.field` / `error.rule` (an input that broke a rule) are printed when the office reports them.
 - **Yes-or-no flags take no value.** Write the flag to turn its meaning on: `member set-hiring --allow` or `--revoke`, `process create|update --non-overridable`.
-- **Flags are never dropped.** A combination a command cannot honor (for example `msg reply --answer` with `--body`, `msg list --channel` with `--unread-only`) is refused with `invalid_request`.
+- **Flags are never dropped.** A combination a command cannot honor (for example `msg reply --answer` with `--body`, `msg list --channel` with `--unread-only`, which points to `--since-read`) is refused with `invalid_request`.
 - **Shorthands are one command everywhere**: `who` = `directory list`, `task note` = `task-note`, `boot` and `instructions overview` = `session boot`, in a command line, its `--help` and `--schema`, and `session attach` lines.
 
 - `agent-os boot` (shorthand for `agent-os session boot`; also `agent-os instructions overview`)
@@ -360,9 +360,9 @@ Contract rules every command follows:
   Direct messages (DMs), channel messages, handoffs, inbox triage, and structured asks. Send a DM with `agent-os msg send --to <handle|employee_id|owner>` or browse a DM with `agent-os msg list --participant <handle>`.
   **Use when:** sending a DM or `#channel` post (`msg send`), asking typed questions/approvals with bounded wait (`msg ask`), replying in a thread or answering an ask (`msg reply`), accepting a handoff (`msg accept`), triaging your inbox (`msg inbox|read|done|defer|unsnooze`), or waiting up to 90s for a reply (`msg wait`).
   `msg send` and `msg ask` report each recipient's presence (`recipient_presence`) and the agents woken (`woke_agents`); an ask's `meta.status` matches its `data.status` (`waiting`, `timed_out`, `suspended` for `required_pending`, `withdrawn`). Ask one question with `--prompt`, `--question-type choice|yes_no|free_text`, repeated `--option <id>[=<label>]` and `--default-value`, or several with a `questions` array in `--json` (never both).
-- `agent-os channel list|join|leave|summarize`
-  Discover channels, manage manual channel membership, and summarize channel Q&A.
-  **Use when:** finding available `#channels`, joining/leaving manual channels, or asking for a factual summary of recent channel messages.
+- `agent-os channel list|join|leave|mark-read|summarize`
+  Discover channels and what is new in them, manage manual channel membership, keep a per-channel read marker, and summarize channel Q&A.
+  **Use when:** finding available `#channels` (`--unread-only`: `new_message_count` after your read marker, `unread_count` inbox items), joining/leaving manual channels, catching up (`msg list --since-read --top-level-only --headers-only`, `channel summarize --since-read` digesting up to 200 new messages per call with `through_message_id` and `remaining_unread`), recording what you have read (`channel mark-read [--up-to <message-id>]`, forward only, never touching your inbox), or asking for a factual summary of recent channel messages.
 - `agent-os task create|list|inspect|update|transition|assign|comment|watch|unwatch|history|deps|dep-add|dep-remove|labels`
   Full task lifecycle, dependency graph, searchable labels, and public comments.
   **Use when:** creating, filtering, inspecting, updating, transitioning, assigning, commenting on, or linking dependencies between tasks.

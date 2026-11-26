@@ -10,6 +10,15 @@ struct DryRunAuditTransport {
 impl OfficeTransport for DryRunAuditTransport {
     fn call_method(&mut self, method: &str, params: Value) -> Result<Value, org_command::Refusal> {
         self.calls.push((method.to_owned(), params));
+        // A chat read-marker dry run answers what it would mark, in the call's own shape.
+        if method == "chat.mark_read" {
+            return Ok(json!({
+                "conversation_id": "0193a5c0-0000-7000-8000-000000000100",
+                "read_at": "2026-11-21T12:06:00.000Z",
+                "last_read_message_id": "0193a5c0-0000-7000-8000-000000000104",
+                "advanced": true
+            }));
+        }
         Ok(json!({ "status": "checked" }))
     }
 }

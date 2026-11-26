@@ -41,6 +41,8 @@ use serde_json::json;
 use super::summarize::{record_usage, UsageContext};
 use super::{ChannelWatcher, PassReport, WatcherConfig, WatcherRuntimeProvider};
 
+mod catchup;
+
 fn next_id() -> String {
     let ms = org_office::organization_family::testkit::CREATION_AT.0;
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(9000);
@@ -60,17 +62,30 @@ fn next_id() -> String {
 
 struct ScriptedProvider {
     replies: Mutex<VecDeque<Reply>>,
+    /// Every runtime handed out, so a test can read the prompts a run was given.
+    runtimes: Mutex<Vec<Arc<FakeRuntime>>>,
 }
 
 impl ScriptedProvider {
     fn new(replies: impl IntoIterator<Item = Reply>) -> Arc<Self> {
         Arc::new(Self {
             replies: Mutex::new(replies.into_iter().collect()),
+            runtimes: Mutex::new(Vec::new()),
         })
     }
 
     fn push(&self, reply: Reply) {
         self.replies.lock().unwrap().push_back(reply);
+    }
+
+    /// The prompts of every run so far, oldest first.
+    fn prompts(&self) -> Vec<String> {
+        self.runtimes
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|runtime| runtime.prompts())
+            .collect()
     }
 }
 
@@ -86,7 +101,9 @@ impl WatcherRuntimeProvider for ScriptedProvider {
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| Reply::Text(r#"{"draft":{"matches":[]},"notes":[]}"#.into()));
-        Some(Arc::new(FakeRuntime::new([reply])))
+        let runtime = Arc::new(FakeRuntime::new([reply]));
+        self.runtimes.lock().unwrap().push(Arc::clone(&runtime));
+        Some(runtime)
     }
 }
 
@@ -836,6 +853,7 @@ fn watch_8_and_10_summarize_and_confident_person_only_wake_rule() {
             channel: "#general".into(),
             question: "What Postgres version did the team pick?".into(),
             limit: Some(50),
+            since_read: false,
         },
     )
     .unwrap();

@@ -19,9 +19,9 @@ pub use chat_ops::{
     MsgWithdrawOp,
 };
 pub use chat_reads::{
-    ChannelMessagesForCallerRead, ChannelMessagesRawRead, ChatInboxRead, ChatMessagesRead,
-    ConversationByIdRead, InspectAskStatusRead, ListChannelsRead, ListConversationsRead,
-    OpenOwnerInboxRead, OwnerInboxEntry,
+    ChannelCatchupRead, ChannelMessagesForCallerRead, ChannelMessagesRawRead, ChatInboxRead,
+    ChatMessagesRead, ConversationByIdRead, InspectAskStatusRead, ListChannelsRead,
+    ListConversationsRead, OpenOwnerInboxRead, OwnerInboxEntry,
 };
 pub use mailbox_commit::{
     ClaimMailboxReadOp, CommitMailboxMessageOp, MailboxCommitInput, MailboxCommitOut, MailboxStored,

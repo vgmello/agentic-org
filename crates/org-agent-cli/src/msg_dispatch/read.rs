@@ -2,7 +2,7 @@
 
 use org_command::{Answer, Refusal, Request};
 use org_proto::ask::{AskStatus, ChatWaitAskResult, MAX_SHORT_HOLD_MS};
-use org_proto::chat::{ChatInboxResult, ChatMessagesResult};
+use org_proto::chat::{ChatInboxResult, ChatMessageView, ChatMessagesResult};
 use org_proto::msg::{HeaderPage, MsgReadResult, MsgWaitResult, MAX_WAIT_MS};
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
@@ -93,51 +93,7 @@ pub(super) fn read_msg_list<T: OfficeTransport + ?Sized>(
     let thread = opt_str(request, "thread");
     let participant = opt_str(request, "participant");
     if conversation.is_some() || (thread.is_some() && participant.is_none()) {
-        let mut params = Map::new();
-        insert_opt(&mut params, "conversation", conversation);
-        insert_opt(&mut params, "thread_id", thread);
-        if let Some(limit) = request.limit {
-            params.insert("limit".into(), Value::from(limit));
-        }
-        if let Some(cursor) = parse_u64_cursor(request.cursor.as_deref())? {
-            params.insert("cursor".into(), Value::from(cursor));
-        }
-        let raw = transport.call_method("chat.messages", Value::Object(params))?;
-        let res: ChatMessagesResult =
-            serde_json::from_value(raw).map_err(|_| decode_err("chat.messages"))?;
-        let items: Vec<Value> = res
-            .messages
-            .into_iter()
-            .map(|m| {
-                let mut o = Map::new();
-                o.insert("id".into(), Value::String(m.id));
-                o.insert("thread_id".into(), Value::String(m.thread_id));
-                insert_opt(&mut o, "reply_to", m.reply_to.as_deref());
-                o.insert(
-                    "from_member_id".into(),
-                    Value::String(
-                        m.sender_employee_id
-                            .unwrap_or_else(|| org_proto::msg::OFFICE_SENDER.to_owned()),
-                    ),
-                );
-                o.insert(
-                    "from_display_name".into(),
-                    Value::String(m.sender_display_name),
-                );
-                o.insert("kind".into(), Value::String(m.kind));
-                o.insert(
-                    "priority".into(),
-                    serde_json::to_value(m.priority).unwrap_or(Value::String("normal".into())),
-                );
-                insert_opt(&mut o, "subject", m.subject.as_deref());
-                o.insert("body".into(), Value::String(m.body));
-                o.insert("created_at".into(), Value::String(m.created_at));
-                Value::Object(o)
-            })
-            .collect();
-        let mut answer = Answer::completed(Value::Array(items));
-        answer.next_cursor = res.next_cursor.map(|c| c.to_string());
-        return Ok(answer);
+        return read_conversation_messages(transport, request, conversation, thread);
     }
     let mut params = Map::new();
     insert_opt(&mut params, "participant", participant);
@@ -181,32 +137,150 @@ pub(super) fn read_msg_list<T: OfficeTransport + ?Sized>(
     Ok(answer)
 }
 
-/// The conversation `msg list` reads, refusing flag combinations one of whose flags the list
-/// would otherwise drop: `--conversation` with `--channel`, and `--participant` or
-/// `--unread-only` with a conversation, a channel or a thread alone (only a DM history by
-/// `--participant` filters by participant and unread state).
-fn list_conversation(request: &Request) -> Result<Option<&str>, Refusal> {
-    let refuse = |message: &str| {
-        Err(Refusal::new(
-            ErrorCode::InvalidRequest,
-            message.to_owned(),
-            "Read a channel or conversation with --channel or --conversation (and --thread); read a DM history with --participant (and --thread, --unread-only).",
-        ))
+/// A channel, conversation or thread read over `chat.messages`, plain (newest page, backward
+/// cursor) or delta (`--since-read` / `--after-id`: oldest first, `meta.next_cursor` is the
+/// next page's anchor message and `meta.total` counts every match).
+fn read_conversation_messages<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+    conversation: Option<&str>,
+    thread: Option<&str>,
+) -> Result<Answer, Refusal> {
+    let since_read = opt_bool(request, "since_read").unwrap_or(false);
+    let after_id = opt_str(request, "after_id");
+    let delta = since_read || after_id.is_some();
+    let mut params = Map::new();
+    insert_opt(&mut params, "conversation", conversation);
+    insert_opt(&mut params, "thread_id", thread);
+    if let Some(limit) = request.limit {
+        params.insert("limit".into(), Value::from(limit));
+    }
+    for flag in ["since_read", "top_level_only", "headers_only"] {
+        if opt_bool(request, flag).unwrap_or(false) {
+            params.insert(flag.into(), Value::Bool(true));
+        }
+    }
+    if delta {
+        // A delta read's cursor is the message the next page starts after.
+        let anchor = match request.cursor.as_deref() {
+            Some(cursor) if org_proto::is_uuid_v7(cursor) => Some(cursor),
+            Some(_) => return Err(refuse_list(
+                "In a --since-read or --after-id read, --cursor is the message ID `meta.next_cursor` gave.",
+            )),
+            None => after_id,
+        };
+        insert_opt(&mut params, "after_id", anchor);
+    } else if let Some(cursor) = parse_u64_cursor(request.cursor.as_deref())? {
+        params.insert("cursor".into(), Value::from(cursor));
+    }
+    let raw = transport.call_method("chat.messages", Value::Object(params))?;
+    let res: ChatMessagesResult =
+        serde_json::from_value(raw).map_err(|_| decode_err("chat.messages"))?;
+    let items: Vec<Value> = res.messages.into_iter().map(message_item).collect();
+    let mut answer = Answer::completed(Value::Array(items));
+    answer.next_cursor = if delta {
+        res.next_after_id
+    } else {
+        res.next_cursor.map(|c| c.to_string())
     };
+    answer.total = res.total;
+    Ok(answer)
+}
+
+fn message_item(m: ChatMessageView) -> Value {
+    let mut o = Map::new();
+    o.insert("id".into(), Value::String(m.id));
+    o.insert("thread_id".into(), Value::String(m.thread_id));
+    insert_opt(&mut o, "reply_to", m.reply_to.as_deref());
+    o.insert(
+        "from_member_id".into(),
+        Value::String(
+            m.sender_employee_id
+                .unwrap_or_else(|| org_proto::msg::OFFICE_SENDER.to_owned()),
+        ),
+    );
+    o.insert(
+        "from_display_name".into(),
+        Value::String(m.sender_display_name),
+    );
+    o.insert("kind".into(), Value::String(m.kind));
+    o.insert(
+        "priority".into(),
+        serde_json::to_value(m.priority).unwrap_or(Value::String("normal".into())),
+    );
+    insert_opt(&mut o, "subject", m.subject.as_deref());
+    insert_opt(&mut o, "body", m.body.as_deref());
+    insert_opt(&mut o, "snippet", m.snippet.as_deref());
+    if let Some(bytes) = m.body_bytes {
+        o.insert("body_bytes".into(), Value::from(bytes));
+    }
+    o.insert("created_at".into(), Value::String(m.created_at));
+    if m.reply_count > 0 {
+        o.insert("reply_count".into(), Value::from(m.reply_count));
+    }
+    insert_opt(&mut o, "latest_reply_at", m.latest_reply_at.as_deref());
+    if m.attachment_count > 0 {
+        o.insert("attachment_count".into(), Value::from(m.attachment_count));
+    }
+    Value::Object(o)
+}
+
+const LIST_HINT: &str = "Read a channel or conversation with --channel or --conversation (and --thread); catch up with --since-read, then `channel mark-read --channel <channel>`; read a DM history with --participant (and --thread, --unread-only).";
+
+fn refuse_list(message: &str) -> Refusal {
+    Refusal::new(ErrorCode::InvalidRequest, message.to_owned(), LIST_HINT)
+}
+
+/// The conversation `msg list` reads, refusing flag combinations one of whose flags the list
+/// would otherwise drop: `--conversation` with `--channel`; `--participant` or `--unread-only`
+/// with a conversation, a channel or a thread alone (only a DM history by `--participant`
+/// filters by participant and unread state); the catch-up flags (`--since-read`, `--after-id`,
+/// `--top-level-only`, `--headers-only`) on a DM history; and `--since-read` with `--after-id`.
+fn list_conversation(request: &Request) -> Result<Option<&str>, Refusal> {
     let conversation = opt_str(request, "conversation");
     let channel = opt_str(request, "channel");
     let participant = opt_str(request, "participant").is_some();
-    let unread_only = opt_bool(request, "unread_only").unwrap_or(false);
+    let flag = |name: &str| opt_bool(request, name).unwrap_or(false);
     if conversation.is_some() && channel.is_some() {
-        return refuse("--conversation and --channel cannot be given together.");
+        return Err(refuse_list(
+            "--conversation and --channel cannot be given together.",
+        ));
     }
     let target = conversation.or(channel);
     if target.is_some() && participant {
-        return refuse("--participant cannot be combined with --conversation or --channel.");
+        return Err(refuse_list(
+            "--participant cannot be combined with --conversation or --channel.",
+        ));
     }
     let by_thread_alone = opt_str(request, "thread").is_some() && !participant;
-    if unread_only && (target.is_some() || by_thread_alone) {
-        return refuse("--unread-only reads a DM history and needs --participant; a channel, conversation or thread has no unread filter.");
+    if flag("unread_only") && (target.is_some() || by_thread_alone) {
+        return Err(refuse_list("--unread-only reads a DM history and needs --participant; in a channel or conversation, --since-read lists what is new since your read marker."));
+    }
+    let after_id = opt_str(request, "after_id");
+    if flag("since_read") && after_id.is_some() {
+        return Err(refuse_list("--since-read and --after-id cannot be given together: --since-read starts at your read marker, --after-id at a message you name (page on with --cursor <meta.next_cursor>)."));
+    }
+    if flag("since_read") && target.is_none() {
+        return Err(refuse_list(
+            "--since-read needs --channel or --conversation: a read marker belongs to one conversation.",
+        ));
+    }
+    if after_id.is_some_and(|anchor| !org_proto::is_uuid_v7(anchor)) {
+        return Err(refuse_list(
+            "--after-id must be a message ID (a canonical lowercase UUIDv7).",
+        ));
+    }
+    if flag("top_level_only") && opt_str(request, "thread").is_some() {
+        return Err(refuse_list(
+            "--top-level-only lists thread roots and cannot be combined with --thread, which lists one thread's replies.",
+        ));
+    }
+    let catchup = ["since_read", "top_level_only", "headers_only"]
+        .into_iter()
+        .any(flag)
+        || after_id.is_some();
+    if catchup && participant {
+        return Err(refuse_list("--since-read, --after-id, --top-level-only and --headers-only read a channel or conversation, not a DM history by --participant."));
     }
     Ok(target)
 }

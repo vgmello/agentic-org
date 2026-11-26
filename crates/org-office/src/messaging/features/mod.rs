@@ -15,6 +15,7 @@ use super::{ports::MessagingRead, records::ConversationRecord};
 
 mod answers;
 mod auto_channels;
+mod catchup;
 mod channels;
 mod conversations;
 mod dm;
@@ -29,6 +30,7 @@ mod send;
 pub use answers::{deliver_answer_candidates, AnswerCandidateDelivery};
 pub use auto_channels::virtual_auto_channels;
 pub(crate) use auto_channels::{effective_auto_members, slugify_channel};
+pub use catchup::{channel_catchup_for_caller, snippet, ChannelCatchup};
 pub use channels::{decide_channel_create, decide_channel_membership};
 pub use conversations::{list_channels, list_conversations};
 pub use dm::decide_dm_open;
@@ -37,7 +39,7 @@ pub use inbox::list_chat_inbox;
 pub use messages::{
     channel_messages_for_caller, is_reply_kind, list_chat_messages, to_wire_header,
 };
-pub use read_state::{decide_mark_read, decide_mute, decide_react};
+pub use read_state::{decide_mark_read, decide_mute, decide_react, plan_mark_read, MarkReadPlan};
 pub(super) use recipients::{append_send_recipient_states, resolve_send_target};
 pub(crate) use recipients::{
     build_mention_candidates, collect_recipient_reasons, upsert_participant_snapshot,

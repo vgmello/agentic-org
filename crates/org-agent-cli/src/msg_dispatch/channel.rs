@@ -1,11 +1,13 @@
-//! `channel` commands: listing, membership and summaries.
+//! `channel` commands: listing, membership, read markers and summaries.
 
 use org_command::{Answer, Refusal, Request};
-use org_proto::chat::ChatChannelsResult;
+use org_proto::chat::{ChatChannelsResult, ChatMarkReadResult};
+use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
 use super::{
-    decode_err, insert_opt, opt_bool, opt_non_neg_u64, reject_dry_run, require_str, with_ack,
+    decode_err, insert_opt, opt_bool, opt_non_neg_u64, opt_str, reject_dry_run, require_str,
+    with_ack,
 };
 use crate::transport::{paginate, parse_cursor, OfficeTransport};
 
@@ -17,6 +19,7 @@ pub(super) fn try_channel<T: OfficeTransport + ?Sized>(
         "list" => Some(read_channel_list(transport, request)),
         "join" => Some(write_channel_membership(transport, request, true)),
         "leave" => Some(write_channel_membership(transport, request, false)),
+        "mark-read" => Some(write_channel_mark_read(transport, request)),
         "summarize" => Some(read_channel_summarize(transport, request)),
         _ => None,
     }
@@ -28,9 +31,10 @@ pub(super) fn read_channel_list<T: OfficeTransport + ?Sized>(
 ) -> Result<Answer, Refusal> {
     parse_cursor(request.cursor.as_deref())?;
     let include_archived = opt_bool(request, "include_archived").unwrap_or(false);
+    let unread_only = opt_bool(request, "unread_only").unwrap_or(false);
     let raw = transport.call_method(
         "chat.channels",
-        json!({ "include_archived": include_archived }),
+        json!({ "include_archived": include_archived, "unread_only": unread_only }),
     )?;
     let res: ChatChannelsResult =
         serde_json::from_value(raw).map_err(|_| decode_err("chat.channels"))?;
@@ -55,6 +59,16 @@ pub(super) fn read_channel_list<T: OfficeTransport + ?Sized>(
             let active_count = c.members.iter().filter(|m| m.left_at.is_none()).count();
             o.insert("member_count".into(), Value::from(active_count));
             o.insert("is_member".into(), Value::Bool(c.is_member));
+            o.insert("new_message_count".into(), Value::from(c.new_message_count));
+            o.insert("unread_count".into(), Value::from(c.unread_count));
+            insert_opt(
+                &mut o,
+                "last_read_message_id",
+                c.last_read_message_id.as_deref(),
+            );
+            insert_opt(&mut o, "last_read_at", c.last_read_at.as_deref());
+            insert_opt(&mut o, "last_message_id", c.last_message_id.as_deref());
+            insert_opt(&mut o, "last_message_at", c.last_message_at.as_deref());
             Value::Object(o)
         })
         .collect();
@@ -83,15 +97,63 @@ pub(super) fn write_channel_membership<T: OfficeTransport + ?Sized>(
     Ok(with_ack(Answer::completed(Value::Object(obj)), request))
 }
 
+/// `channel mark-read`: moves the caller's read marker forward to `--up-to`, or to the latest
+/// message. Never backward, and inbox items are left as they are (`TASK-99` rung 2).
+pub(super) fn write_channel_mark_read<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let channel = require_str(request, "channel")?;
+    let mut params = Map::new();
+    params.insert("conversation_id".into(), Value::String(channel.to_owned()));
+    insert_opt(
+        &mut params,
+        "last_read_message_id",
+        opt_str(request, "up_to"),
+    );
+    if request.dry_run {
+        params.insert("dry_run".into(), Value::Bool(true));
+    }
+    let raw = transport.call_method("chat.mark_read", Value::Object(params))?;
+    let res: ChatMarkReadResult =
+        serde_json::from_value(raw).map_err(|_| decode_err("chat.mark_read"))?;
+    let mut obj = Map::new();
+    obj.insert("conversation_id".into(), Value::String(res.conversation_id));
+    insert_opt(
+        &mut obj,
+        "last_read_message_id",
+        res.last_read_message_id.as_deref(),
+    );
+    obj.insert("read_at".into(), Value::String(res.read_at));
+    obj.insert("advanced".into(), Value::Bool(res.advanced));
+    let answer = Answer::completed(Value::Object(obj));
+    Ok(if request.dry_run {
+        answer
+    } else {
+        with_ack(answer, request)
+    })
+}
+
 pub(super) fn read_channel_summarize<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
     let channel = require_str(request, "channel")?;
-    let question = require_str(request, "question")?;
+    let since_read = opt_bool(request, "since_read").unwrap_or(false);
+    let question = opt_str(request, "question").filter(|q| !q.trim().is_empty());
+    if question.is_none() && !since_read {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            "`channel summarize` needs --question, or --since-read for a catch-up digest.",
+            "Ask with --question <text>, or pass --since-read to digest what is new since your read marker.",
+        ));
+    }
     let mut params = Map::new();
     params.insert("channel".into(), Value::String(channel.to_owned()));
-    params.insert("question".into(), Value::String(question.to_owned()));
+    insert_opt(&mut params, "question", question);
+    if since_read {
+        params.insert("since_read".into(), Value::Bool(true));
+    }
     if let Some(limit) = opt_non_neg_u64(request, "max_messages")? {
         params.insert("limit".into(), Value::from(limit.clamp(1, 200)));
     }
@@ -112,5 +174,16 @@ pub(super) fn read_channel_summarize<T: OfficeTransport + ?Sized>(
     );
     obj.insert("derived_notice".into(), Value::String(res.derived_notice));
     insert_opt(&mut obj, "usage_record_id", res.usage_record_id.as_deref());
+    if let Some(count) = res.new_message_count {
+        obj.insert("new_message_count".into(), Value::from(count));
+    }
+    if let Some(remaining) = res.remaining_unread {
+        obj.insert("remaining_unread".into(), Value::from(remaining));
+    }
+    insert_opt(
+        &mut obj,
+        "through_message_id",
+        res.through_message_id.as_deref(),
+    );
     Ok(Answer::completed(Value::Object(obj)))
 }

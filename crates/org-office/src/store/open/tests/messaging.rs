@@ -14,7 +14,10 @@ use org_proto::ErrorCode;
 
 use super::*;
 
-fn seed_org_with_two_people(place: &Place, engine: EngineChoice) -> (OfficeStore, Id, Id) {
+pub(super) fn seed_org_with_two_people(
+    place: &Place,
+    engine: EngineChoice,
+) -> (OfficeStore, Id, Id) {
     let store = place.create(engine);
     let here = identity();
     let cmd = creation_command();
@@ -325,6 +328,7 @@ fn engine_independent_messaging_conversations_channels_mentions_reactions_and_re
                 params: ChatMarkReadParams {
                     conversation_id: dm1.conversation.id.clone(),
                     last_read_message_id: Some(handoff_id.clone()),
+                    dry_run: false,
                 },
                 now_utc: now.clone(),
             })
@@ -596,6 +600,7 @@ fn messaging_pass1_security_mentions_reactions_snooze_and_org_changes_regression
                     params: ChatMarkReadParams {
                         conversation_id: dm.conversation.id.clone(),
                         last_read_message_id: Some(dm_msg_id.clone()),
+                        dry_run: false,
                     },
                     now_utc: now.clone(),
                 })

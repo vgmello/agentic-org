@@ -198,10 +198,29 @@ pub struct ChatMarkReadOp {
 
 impl StoreOp for ChatMarkReadOp {
     type Out = Result<Result<ChatMarkReadResult, ApiError>, StoreError>;
+    /// A marker that already covers the message is answered from a snapshot, so an idempotent
+    /// repeat writes no journal entry. A move is decided on the writer; a dry run decides and
+    /// validates there, then undoes everything (`Store::check`).
     fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let planned = store.read(|snapshot| {
+            let owner = crate::organization::owner::effective_owner_id(snapshot, &self.owner)?;
+            Ok(features::plan_mark_read(
+                snapshot,
+                &owner,
+                &self.caller,
+                &self.params,
+                &self.now_utc,
+            ))
+        });
+        match planned {
+            Ok((Ok(features::MarkReadPlan::Unchanged(result)), _)) => return Ok(Ok(result)),
+            Ok((Err(refusal), _)) => return Ok(Err(features::decode_refusal(&refusal))),
+            Ok((Ok(features::MarkReadPlan::Advance { .. }), _)) | Err(_) => {}
+        }
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
-        let reply = store.submit(None, false, move |uow| {
+        let dry_run = self.params.dry_run;
+        let decide = move |uow: &mut org_store::UnitOfWork<'_, E>| {
             let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = features::decide_mark_read(
                 uow,
@@ -213,7 +232,12 @@ impl StoreOp for ChatMarkReadOp {
             )?;
             *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(res);
             Ok(change)
-        });
+        };
+        let reply = if dry_run {
+            store.check(decide)
+        } else {
+            store.submit(None, false, decide)
+        };
         unwrap_reply(reply, out)
     }
 }
