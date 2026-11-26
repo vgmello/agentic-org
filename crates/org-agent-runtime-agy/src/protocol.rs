@@ -66,7 +66,7 @@ pub(crate) fn first_u64(candidates: &[Option<&Value>]) -> u64 {
 /// Returns `true` for ACP permission modes that bypass office approval enforcement.
 pub(crate) fn is_banned_mode(mode: &str) -> bool {
     matches!(
-        mode.to_ascii_lowercase().as_str(),
+        mode.trim().to_ascii_lowercase().as_str(),
         "yolo" | "bypasspermissions" | "danger-full-access" | "auto"
     )
 }
@@ -132,6 +132,20 @@ pub(crate) fn encode_session_open(
         "params": params,
     }))
     .expect("session open JSON-RPC encodes");
+    Output::Write(line)
+}
+
+pub(crate) fn encode_set_mode(req_id: u64, session_id: &str, mode_id: &str) -> Output {
+    let line = encode_line(&json!({
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "method": "session/set_mode",
+        "params": {
+            "sessionId": session_id,
+            "modeId": mode_id,
+        },
+    }))
+    .expect("session/set_mode JSON-RPC encodes");
     Output::Write(line)
 }
 
@@ -232,10 +246,12 @@ pub(crate) fn classify_tool_capability(tool: &str) -> Option<ToolCapability> {
         "list_dir" | "find_by_name" | "grep_search" => Some(ToolCapability::Search),
         "write_file"
         | "edit_file"
+        | "write"
+        | "edit"
         | "delete_file"
         | "replace_file_content"
         | "multi_replace_file_content" => Some(ToolCapability::Edit),
-        "run_command" => Some(ToolCapability::Shell),
+        "run_command" | "bash" | "shell" => Some(ToolCapability::Shell),
         "invoke_subagent" | "spawn_subagent" | "subagent" => Some(ToolCapability::Subagent),
         _ => None,
     }
@@ -275,18 +291,51 @@ pub(crate) fn classify_tool_kind(tool: &str) -> ApprovalKind {
     }
 }
 
-fn classify_acp_tool_call_kind(tc: &Value) -> ApprovalKind {
-    match tc
-        .get("kind")
-        .and_then(Value::as_str)
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
+pub(crate) fn classify_acp_kind_str(kind: Option<&str>) -> Option<ToolCapability> {
+    match kind.map(str::to_ascii_lowercase).as_deref() {
+        Some("read") => Some(ToolCapability::Read),
+        Some("search") => Some(ToolCapability::Search),
+        Some("edit" | "delete" | "move") => Some(ToolCapability::Edit),
+        Some("execute") => Some(ToolCapability::Shell),
+        Some("subagent") => Some(ToolCapability::Subagent),
+        _ => None,
+    }
+}
+
+fn classify_acp_kind_approval(kind: Option<&str>) -> ApprovalKind {
+    match kind.map(str::to_ascii_lowercase).as_deref() {
         Some("execute") => ApprovalKind::Command,
         Some("edit" | "delete" | "move") => ApprovalKind::FileChange,
         Some("switch_mode") => ApprovalKind::Permissions,
         Some("read" | "search") => ApprovalKind::Other,
         _ => ApprovalKind::Unknown,
+    }
+}
+
+/// Classifies an ACP tool call's [`ApprovalKind`] and [`ToolCapability`].
+///
+/// Only falls back to ACP `kind` when `explicit_name` is absent or classifies as
+/// [`ApprovalKind::Unknown`]; never classifies from display `title`.
+pub(crate) fn resolve_tool_classification(
+    explicit_name: Option<&str>,
+    acp_kind: Option<&str>,
+) -> (ApprovalKind, Option<ToolCapability>) {
+    match explicit_name {
+        Some(name) => {
+            let name_kind = classify_tool_kind(name);
+            if name_kind == ApprovalKind::Unknown {
+                (
+                    classify_acp_kind_approval(acp_kind),
+                    classify_tool_capability(name).or_else(|| classify_acp_kind_str(acp_kind)),
+                )
+            } else {
+                (name_kind, classify_tool_capability(name))
+            }
+        }
+        None => (
+            classify_acp_kind_approval(acp_kind),
+            classify_acp_kind_str(acp_kind),
+        ),
     }
 }
 
@@ -299,11 +348,47 @@ fn is_bypass_flag_triggered(val: Option<&Value>) -> bool {
     }
 }
 
+fn is_sandbox_bypass_key(key: &str) -> bool {
+    let normalized: String = key
+        .chars()
+        .filter(|&c| c != '_' && c != '-')
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    matches!(
+        normalized.as_str(),
+        "bypasssandbox" | "dangerouslydisablesandbox" | "unsandboxed"
+    )
+}
+
+fn input_requests_sandbox_bypass(input: &Value) -> bool {
+    let mut stack = vec![input];
+    while let Some(node) = stack.pop() {
+        match node {
+            Value::Object(map) => {
+                for (key, val) in map {
+                    if is_sandbox_bypass_key(key) && is_bypass_flag_triggered(Some(val)) {
+                        return true;
+                    }
+                    if matches!(val, Value::Object(_) | Value::Array(_)) {
+                        stack.push(val);
+                    }
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    if matches!(item, Value::Object(_) | Value::Array(_)) {
+                        stack.push(item);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 pub(crate) fn classify_escalation(tool: &str, kind: ApprovalKind, input: &Value) -> Escalation {
-    if tool.eq_ignore_ascii_case("SandboxNetworkAccess")
-        || is_bypass_flag_triggered(input.get("dangerouslyDisableSandbox"))
-        || is_bypass_flag_triggered(input.get("unsandboxed"))
-    {
+    if tool.eq_ignore_ascii_case("SandboxNetworkAccess") || input_requests_sandbox_bypass(input) {
         return Escalation::SandboxBypass;
     }
     if kind == ApprovalKind::Permissions || tool.eq_ignore_ascii_case("set_permission_mode") {
@@ -328,20 +413,28 @@ pub(crate) fn parse_permission_request(
     params: &Value,
 ) -> ParsedPermission {
     let tc = params.get("toolCall").unwrap_or(&Value::Null);
-    let tool = first_str(&[tc.get("name"), tc.get("title")]).unwrap_or("unknown");
+    let explicit_name = tc
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty());
+    let tool = explicit_name
+        .or_else(|| {
+            tc.get("title")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+        })
+        .unwrap_or("unknown");
     let input = tc
         .get("rawInput")
         .filter(|v| !v.is_null())
         .or_else(|| tc.get("args").filter(|v| !v.is_null()))
         .cloned()
         .unwrap_or(Value::Null);
-    let kind = match classify_tool_kind(tool) {
-        ApprovalKind::Unknown => classify_acp_tool_call_kind(tc),
-        known => known,
-    };
+    let (kind, capability) =
+        resolve_tool_classification(explicit_name, tc.get("kind").and_then(Value::as_str));
     let escalation = classify_escalation(tool, kind, &input);
     let mut request = ApprovalRequest::new(approval_id, kind, escalation, tool, input.clone());
-    request.capability = classify_tool_capability(tool);
+    request.capability = capability;
     request.display_name = tc
         .get("title")
         .and_then(Value::as_str)
