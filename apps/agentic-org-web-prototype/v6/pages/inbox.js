@@ -360,7 +360,13 @@ function inboxConversation(it, project, channel) {
   if (!src) return channel ? `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd></div>` : "";
   const title = src.kind === "dm" ? "Direct message with " + chatTitle(src) : chatTitle(src);
   return `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${esc(it.origin.ch)}">${esc(title)}</a>
-    · <a class="alink" href="#/chat/${esc(it.origin.ch)}/${esc(it.origin.msg)}">Open source message</a></dd></div>`;
+    · <a class="alink" href="#/chat/${esc(it.origin.ch)}/${esc(it.origin.msg)}">Open source message</a></dd></div>${inboxRelated(it)}`;
+}
+/* A message the ask came out of (e.g. an agent-to-agent exchange the owner can read), kept as context. */
+function inboxRelated(it) {
+  const ch = it.related && CH[it.related.ch], m = ch && ch.msgs.find((x) => x.id === it.related.msg);
+  if (!m) return "";
+  return `<div><dt>Related</dt><dd><a class="alink" href="#/chat/${esc(it.related.ch)}/${esc(m.id)}">${esc(M[m.who].name)}'s message in ${esc(chatTitle(ch))}</a></dd></div>`;
 }
 function refreshInboxSearch() {
   if (S.inboxKind === "notifications") {

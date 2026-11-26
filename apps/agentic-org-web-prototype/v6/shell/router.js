@@ -1,4 +1,4 @@
-import { CH, M, P, TEAMS } from "../data.js";
+import { M, P, TEAMS } from "../data.js";
 import { activityPanelResize, pageActivity, projectActivityId, refreshActivityPanel, syncAssemblySimulationTimer, updateActivityPanelScroll } from "../pages/activity.js";
 import { mountAgentProfile, stopAgentOrb } from "../pages/agent-profile.js";
 import { mountOrgChart } from "../pages/org-chart.js";
@@ -188,7 +188,7 @@ function syncActivityScopeState(r0, projectId) {
 
 function pageTitle(r0, r1) {
   if (r0 === "members" && own(M, r1)) return M[r1].name;
-  if (r0 === "chat") return chatDocTitle(own(CH, r1) ? r1 : null);
+  if (r0 === "chat") return chatDocTitle(r1); /* Chat resolves conversations and its Mentions and Threads views */
   return TITLES[r0] || "Not found";
 }
 

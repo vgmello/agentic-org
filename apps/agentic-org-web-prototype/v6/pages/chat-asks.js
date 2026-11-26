@@ -11,6 +11,7 @@ import { render } from "../shell/router.js";
 import { S } from "../state.js";
 import { esc, ic, joinSep, pill } from "../ui.js";
 import { inboxItem } from "./chat-model.js";
+import { receiptHtml } from "./ask-receipt.js";
 
 const askDrafts = new Map(); /* inbox item id -> unsent follow-up on that request */
 const asks = { followUp: null, note: null };
@@ -32,10 +33,8 @@ function needsHead(it) {
   return `<p class="chat-needs-head">${state}<span>${esc(it.sub)} from ${esc(M[it.from].name)}${it.handled ? "" : " · " + waitingFor(it)}</span></p>`;
 }
 const inboxLink = (it, label, cls = "btn ghost sm") => `<a class="${cls}" href="#/inbox/${esc(it.id)}">${label}</a>`;
-function handledLine(it) {
-  return `<p class="handled chat-needs-done" id="handled-${esc(it.id)}" tabindex="-1">${ic("check-circle", "ic16")}<span>${esc(it.outcome)}</span>
-    ${inboxLink(it, "View in Inbox", "alink chat-needs-record")}</p>`;
-}
+/* The ask's one response record: the same receipt as Inbox and Home, plus the way to the full record. */
+const handledLine = (it) => receiptHtml(it, "handled chat-needs-done", inboxLink(it, "View in Inbox", "alink chat-needs-record"));
 const settles = (it) => (it.kind === "question" ? "you answer" : "you decide");
 function followUpBox(it) {
   const who = esc(M[it.from].name), id = esc(it.id);
@@ -84,11 +83,19 @@ function needsChipHtml(it) {
   const label = it.handled ? `Handled · ${esc(it.outcome)}` : `Needs you · ${esc(KIND[it.kind].label)} in Inbox`;
   return `<p class="chat-needs-chip${it.handled ? " is-done" : ""}"><a href="#/inbox/${esc(it.id)}">${ic(it.handled ? "check-circle" : "bell", "ic14")}<span>${label}</span>${ic("chev-right", "ic14")}</a></p>`;
 }
-/* A card where the ask was raised (m.needs); a chip where it is only mentioned (m.ref) or previewed elsewhere. */
-function messageNeeds(m, cards) {
+/* While the ask's message is open in the thread panel, its card lives there; the stream points to it. */
+function inThreadChip(it, msgId) {
+  const label = it.handled ? `Handled · ${esc(it.outcome)}` : "Needs you · answer in the thread";
+  return `<p class="chat-needs-chip${it.handled ? " is-done" : ""}"><button type="button" data-act="chat-thread-card" data-id="${esc(msgId)}">${ic(it.handled ? "check-circle" : "bell", "ic14")}<span>${label}</span>${ic("chev-right", "ic14")}</button></p>`;
+}
+/* A card where the ask was raised (m.needs); a chip where it is only mentioned (m.ref) or previewed elsewhere.
+   `mode`: "card" (writable stream or thread), "in-thread" (card shown in the open thread), or a chip. */
+function messageNeeds(m, mode) {
   const it = inboxItem(m.needs || m.ref);
   if (!it) return "";
-  return cards && m.needs ? needsCardHtml(it, m.id) : needsChipHtml(it);
+  if (!m.needs) return needsChipHtml(it);
+  if (mode === "in-thread") return inThreadChip(it, m.id);
+  return mode === "card" ? needsCardHtml(it, m.id) : needsChipHtml(it);
 }
 
 /* ---------------------------------------------------------------- follow-ups and answers posted from Chat */
