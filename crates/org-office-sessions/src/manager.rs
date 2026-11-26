@@ -583,7 +583,16 @@ impl SessionManager {
         actor_member_id: &str,
         params: &MemberSessionStartParams,
     ) -> Result<SessionView, ApiError> {
-        self.authorize_owner_or_person(actor_member_id)?;
+        self.start_session_inner(actor_member_id, false, params)
+    }
+
+    fn start_session_inner(
+        &self,
+        actor_member_id: &str,
+        hq_attested_owner: bool,
+        params: &MemberSessionStartParams,
+    ) -> Result<SessionView, ApiError> {
+        self.authorize_owner_or_person_inner(actor_member_id, hq_attested_owner)?;
         let employee = self.require_active_agent(&params.employee_id)?;
         let emp_id = employee.id.as_str();
         self.check_not_recovery_required(emp_id)?;
@@ -679,9 +688,18 @@ impl SessionManager {
         caller_id: &str,
         employee_id: Option<&str>,
     ) -> Result<SessionInspectResult, ApiError> {
+        self.inspect_session_inner(caller_id, false, employee_id)
+    }
+
+    fn inspect_session_inner(
+        &self,
+        caller_id: &str,
+        hq_attested_owner: bool,
+        employee_id: Option<&str>,
+    ) -> Result<SessionInspectResult, ApiError> {
         let target = employee_id.unwrap_or(caller_id);
         if target != caller_id {
-            self.authorize_owner_or_person(caller_id)?;
+            self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
         }
         let employee = self.require_agent(target)?;
         let accepted = self.bindings.accepted_commands(target).len() as u64;
@@ -718,9 +736,18 @@ impl SessionManager {
         caller_id: &str,
         params: &MemberSessionListParams,
     ) -> Result<SessionListResult, ApiError> {
+        self.list_sessions_inner(caller_id, false, params)
+    }
+
+    fn list_sessions_inner(
+        &self,
+        caller_id: &str,
+        hq_attested_owner: bool,
+        params: &MemberSessionListParams,
+    ) -> Result<SessionListResult, ApiError> {
         let target = params.employee_id.as_deref().unwrap_or(caller_id);
         if target != caller_id {
-            self.authorize_owner_or_person(caller_id)?;
+            self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
         }
         if params.limit == Some(0) {
             return Err(ApiError::new(
@@ -749,9 +776,18 @@ impl SessionManager {
         caller_id: &str,
         params: &MemberSessionTranscriptParams,
     ) -> Result<SessionTranscriptResult, ApiError> {
+        self.read_session_transcript_inner(caller_id, false, params)
+    }
+
+    fn read_session_transcript_inner(
+        &self,
+        caller_id: &str,
+        hq_attested_owner: bool,
+        params: &MemberSessionTranscriptParams,
+    ) -> Result<SessionTranscriptResult, ApiError> {
         let target = params.employee_id.as_deref().unwrap_or(caller_id);
         if target != caller_id {
-            self.authorize_owner_or_person(caller_id)?;
+            self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
         }
         if params.limit == Some(0) {
             return Err(ApiError::new(
@@ -877,9 +913,18 @@ impl SessionManager {
         caller_id: &str,
         employee_id: Option<&str>,
     ) -> Result<SessionGrantsResult, ApiError> {
+        self.list_grants_inner(caller_id, false, employee_id)
+    }
+
+    fn list_grants_inner(
+        &self,
+        caller_id: &str,
+        hq_attested_owner: bool,
+        employee_id: Option<&str>,
+    ) -> Result<SessionGrantsResult, ApiError> {
         let target = employee_id.unwrap_or(caller_id);
         if target != caller_id {
-            self.authorize_owner_or_person(caller_id)?;
+            self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
         }
         let employee = self.require_agent(target)?;
         let home = self.office.agent_private_home_path(employee.id.as_str());
@@ -929,7 +974,26 @@ impl SessionManager {
         decision_str: &str,
         reason: Option<String>,
     ) -> Result<SessionView, ApiError> {
-        self.authorize_owner_only(actor_member_id)?;
+        self.decide_approval_inner(
+            actor_member_id,
+            false,
+            employee_id,
+            approval_id,
+            decision_str,
+            reason,
+        )
+    }
+
+    fn decide_approval_inner(
+        &self,
+        actor_member_id: &str,
+        hq_attested_owner: bool,
+        employee_id: &str,
+        approval_id: &str,
+        decision_str: &str,
+        reason: Option<String>,
+    ) -> Result<SessionView, ApiError> {
+        self.authorize_owner_only_inner(actor_member_id, hq_attested_owner)?;
         let decision = parse_decision(decision_str, reason)?;
         let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
         let Some(handle) = reg.live.get(employee_id) else {
@@ -969,7 +1033,16 @@ impl SessionManager {
         actor_member_id: &str,
         employee_id: &str,
     ) -> Result<SessionView, ApiError> {
-        self.authorize_owner_only(actor_member_id)?;
+        self.clear_stall_lock_inner(actor_member_id, false, employee_id)
+    }
+
+    fn clear_stall_lock_inner(
+        &self,
+        actor_member_id: &str,
+        hq_attested_owner: bool,
+        employee_id: &str,
+    ) -> Result<SessionView, ApiError> {
+        self.authorize_owner_only_inner(actor_member_id, hq_attested_owner)?;
         let _ = self.require_agent(employee_id)?;
         let _ = self.store.clear_pending_start(employee_id);
         let _ = self.store.update_active_turn(employee_id, |persisted| {
@@ -1027,6 +1100,27 @@ impl SessionManager {
 
     /// Dispatches all C3 session & provider-enrollment RPCs with caller-scoped `command_id` replay.
     pub fn dispatch_rpc(&self, member: Option<&str>, request: &Request) -> Option<Response> {
+        self.dispatch_rpc_inner(member, false, true, request)
+    }
+
+    /// Dispatches an HQ-authenticated, mTLS-proxied session-control RPC on a satellite office
+    /// (`TASK-143` AC #3). Never dispatches provider-enrollment RPCs.
+    pub fn dispatch_hq_proxied_rpc(
+        &self,
+        caller_id: &str,
+        caller_is_owner: bool,
+        request: &Request,
+    ) -> Option<Response> {
+        self.dispatch_rpc_inner(Some(caller_id), caller_is_owner, false, request)
+    }
+
+    fn dispatch_rpc_inner(
+        &self,
+        member: Option<&str>,
+        hq_attested_owner: bool,
+        allow_enrollment: bool,
+        request: &Request,
+    ) -> Option<Response> {
         if !is_c3_rpc_method(&request.method) {
             return None;
         }
@@ -1036,7 +1130,7 @@ impl SessionManager {
                 ApiError::new(ErrorCode::NotAuthorized, "authenticated caller required"),
             ));
         };
-        if let Err(err) = self.authorize_rpc_caller(caller_id, &request.method) {
+        if let Err(err) = self.authorize_rpc_caller(caller_id, hq_attested_owner, &request.method) {
             return Some(Response::error(request.id, err));
         }
         let cache_meta = command_cache_meta(request);
@@ -1048,8 +1142,12 @@ impl SessionManager {
             }
         }
         let resp = self
-            .dispatch_session_rpcs(Some(caller_id), request)
-            .or_else(|| self.dispatch_enrollment_rpcs(Some(caller_id), request))?;
+            .dispatch_session_rpcs(Some(caller_id), hq_attested_owner, request)
+            .or_else(|| {
+                allow_enrollment
+                    .then(|| self.dispatch_enrollment_rpcs(Some(caller_id), request))
+                    .flatten()
+            })?;
         if let (Some((cid, fp)), org_proto::Outcome::Result(_)) = (cache_meta, &resp.outcome) {
             self.store_command_cache(caller_id, &request.method, cid, fp, &resp);
         }
@@ -1106,7 +1204,12 @@ impl SessionManager {
         );
     }
 
-    fn authorize_rpc_caller(&self, caller_id: &str, method: &str) -> Result<(), ApiError> {
+    fn authorize_rpc_caller(
+        &self,
+        caller_id: &str,
+        hq_attested_owner: bool,
+        method: &str,
+    ) -> Result<(), ApiError> {
         match method {
             "provider.enrollment_start"
             | "provider.enrollment_status"
@@ -1115,25 +1218,32 @@ impl SessionManager {
             | "provider.credential_status"
             | "provider.credential_revoke"
             | "member.session_approval"
-            | "member.session_clear_stall" => self.authorize_owner_only(caller_id),
+            | "member.session_clear_stall" => {
+                self.authorize_owner_only_inner(caller_id, hq_attested_owner)
+            }
             "member.session_start" | "member.session_stop" => {
-                self.authorize_owner_or_person(caller_id)
+                self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)
             }
             _ => Ok(()),
         }
     }
 
-    fn dispatch_session_rpcs(&self, member: Option<&str>, request: &Request) -> Option<Response> {
+    fn dispatch_session_rpcs(
+        &self,
+        member: Option<&str>,
+        hq_attested_owner: bool,
+        request: &Request,
+    ) -> Option<Response> {
         if request.is::<MemberSessionStart>() {
             return Some(handle_call::<MemberSessionStart>(
                 request,
                 member,
-                |m, p| self.start_session(m, &p),
+                |m, p| self.start_session_inner(m, hq_attested_owner, &p),
             ));
         }
         if request.is::<MemberSessionStop>() {
             return Some(handle_call::<MemberSessionStop>(request, member, |m, p| {
-                self.authorize_owner_or_person(m)?;
+                self.authorize_owner_or_person_inner(m, hq_attested_owner)?;
                 self.stop_session(&p.employee_id, p.reason.as_deref().unwrap_or("stopped"))
             }));
         }
@@ -1141,14 +1251,14 @@ impl SessionManager {
             return Some(handle_call::<MemberSessionInspect>(
                 request,
                 member,
-                |m, p| self.inspect_session(m, p.employee_id.as_deref()),
+                |m, p| self.inspect_session_inner(m, hq_attested_owner, p.employee_id.as_deref()),
             ));
         }
         if request.is::<MemberSessionGrants>() {
             return Some(handle_call::<MemberSessionGrants>(
                 request,
                 member,
-                |m, p| self.list_grants(m, p.employee_id.as_deref()),
+                |m, p| self.list_grants_inner(m, hq_attested_owner, p.employee_id.as_deref()),
             ));
         }
         if request.is::<MemberSessionApprovalDecide>() {
@@ -1156,7 +1266,14 @@ impl SessionManager {
                 request,
                 member,
                 |m, p| {
-                    self.decide_approval(m, &p.employee_id, &p.approval_id, &p.decision, p.reason)
+                    self.decide_approval_inner(
+                        m,
+                        hq_attested_owner,
+                        &p.employee_id,
+                        &p.approval_id,
+                        &p.decision,
+                        p.reason,
+                    )
                 },
             ));
         }
@@ -1164,19 +1281,19 @@ impl SessionManager {
             return Some(handle_call::<MemberSessionClearStall>(
                 request,
                 member,
-                |m, p| self.clear_stall_lock(m, &p.employee_id),
+                |m, p| self.clear_stall_lock_inner(m, hq_attested_owner, &p.employee_id),
             ));
         }
         if request.is::<MemberSessionList>() {
             return Some(handle_call::<MemberSessionList>(request, member, |m, p| {
-                self.list_sessions(m, &p)
+                self.list_sessions_inner(m, hq_attested_owner, &p)
             }));
         }
         if request.is::<MemberSessionTranscript>() {
             return Some(handle_call::<MemberSessionTranscript>(
                 request,
                 member,
-                |m, p| self.read_session_transcript(m, &p),
+                |m, p| self.read_session_transcript_inner(m, hq_attested_owner, &p),
             ));
         }
         None
@@ -1282,7 +1399,15 @@ impl SessionManager {
     }
 
     fn authorize_owner_only(&self, member_id: &str) -> Result<(), ApiError> {
-        if member_id == self.office.owner_member_id() {
+        self.authorize_owner_only_inner(member_id, false)
+    }
+
+    fn authorize_owner_only_inner(
+        &self,
+        member_id: &str,
+        hq_attested_owner: bool,
+    ) -> Result<(), ApiError> {
+        if hq_attested_owner || member_id == self.office.owner_member_id() {
             return Ok(());
         }
         Err(ApiError::new(
@@ -1291,8 +1416,12 @@ impl SessionManager {
         ))
     }
 
-    fn authorize_owner_or_person(&self, member_id: &str) -> Result<(), ApiError> {
-        if member_id == self.office.owner_member_id() {
+    fn authorize_owner_or_person_inner(
+        &self,
+        member_id: &str,
+        hq_attested_owner: bool,
+    ) -> Result<(), ApiError> {
+        if hq_attested_owner || member_id == self.office.owner_member_id() {
             return Ok(());
         }
         let found = self
@@ -3787,12 +3916,17 @@ fn ensure_readonly_cache_symlink(
 }
 
 /// Links host read-only Rust cache subdirs (`registry`, `git`, `.rustup`) into an isolated agent
-/// home (`TASK-159`) without ever linking host Cargo credentials or config files (`credentials*`,
-/// `config*`). Refuses symlinked/non-directory `<agent_home>` or `<agent_home>/.cargo` so an
-/// agent can never redirect unsandboxed office writes outside its home (`B1`).
+/// Symlinks safe read-only host Cargo caches (`.cargo/registry`, `.cargo/git`) into an agent's
+/// isolated home (`TASK-159`) without ever linking host Cargo credentials or config files
+/// (`credentials*`, `config*`). Does NOT symlink `.rustup` into `<agent_home>`: `RUSTUP_HOME` is
+/// preserved directly in the environment (surviving `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`), and
+/// removing any legacy `<agent_home>/.rustup` symlink prevents Linux `bwrap` sibling-directory
+/// traversal from ever masking host `.rustup` (`TASK-163`). Refuses symlinked/non-directory
+/// `<agent_home>` or `<agent_home>/.cargo` so an agent can never redirect unsandboxed office
+/// writes outside its home (`B1`).
 pub(crate) fn link_host_rust_caches(
     agent_home: &Path,
-    rustup_dir: Option<&Path>,
+    _rustup_dir: Option<&Path>,
     cargo_dir: Option<&Path>,
     forbidden: &[PathBuf],
 ) -> Option<PathBuf> {
@@ -3802,14 +3936,17 @@ pub(crate) fn link_host_rust_caches(
     if !home_meta.file_type().is_dir() {
         return None;
     }
+    // Clean up any pre-TASK-163 `<agent_home>/.rustup` symlink without touching real directories.
+    let legacy_rustup = agent_home.join(".rustup");
+    if let Ok(meta) = std::fs::symlink_metadata(&legacy_rustup) {
+        if meta.file_type().is_symlink() {
+            let _ = std::fs::remove_file(&legacy_rustup);
+        }
+    }
     let forbidden_canon: Vec<PathBuf> = forbidden
         .iter()
         .map(|p| canonicalize_with_tail(p))
         .collect();
-    if let Some(rustup) = rustup_dir {
-        let _ =
-            ensure_readonly_cache_symlink(&agent_home.join(".rustup"), rustup, &forbidden_canon);
-    }
     let host_cargo = cargo_dir?;
     let agent_cargo = agent_home.join(".cargo");
     if !ensure_real_agent_subdir(agent_home, &agent_cargo) {
@@ -3942,25 +4079,63 @@ fn pattern_exists_for_bwrap(pat: &PathPattern) -> bool {
     std::fs::symlink_metadata(prefix).is_ok()
 }
 
+/// Normalizes a concrete existing directory glob (`<dir>/**` or `<dir>/*` with no internal
+/// wildcards) into `<dir>` for Linux Claude `bwrap` so `@anthropic-ai/sandbox-runtime` mounts
+/// `--tmpfs <dir>` atomically at the directory boundary instead of traversing inside `<dir>` and
+/// following symlinks (such as a sibling agent's `.cargo/registry` or `.rustup`, `TASK-163`).
+fn normalize_bwrap_concrete_dir_pattern(pat: &PathPattern) -> (PathPattern, bool) {
+    let raw = pat.as_str();
+    let Some(stripped) = raw.strip_suffix("/**").or_else(|| raw.strip_suffix("/*")) else {
+        return (pat.clone(), false);
+    };
+    if stripped.is_empty()
+        || stripped.contains('*')
+        || stripped.contains('?')
+        || stripped.contains('[')
+    {
+        return (pat.clone(), false);
+    }
+    if std::fs::symlink_metadata(stripped).is_ok_and(|m| m.file_type().is_dir()) {
+        if let Ok(normalized) = PathPattern::try_from(stripped) {
+            return (normalized, true);
+        }
+    }
+    (pat.clone(), false)
+}
+
 /// Drops non-existent concrete paths from Linux Claude `bwrap` `sandbox.deny_read`,
-/// `sandbox.deny_write`, and `policy.deny` `RuleScope::Path` entries so Claude Code's
-/// `@anthropic-ai/sandbox-runtime` (which merges both `sandbox.filesystem` and `permissions.deny`
-/// into `bwrap` mounts) never materializes permanent 0-byte `0444` files on the host (`TASK-144`).
-/// Returns `true` if any `policy.deny` rule was pruned. Callers must leave `preset_cfg.policy.deny`
-/// untouched so `SessionManager`'s approval bridge (`decide_escalation_with_roots`) retains 100%
-/// coverage of absent/future paths on every tool call.
+/// `sandbox.deny_write`, and `policy.deny` `RuleScope::Path` entries (`TASK-144`), and normalizes
+/// concrete existing directory globs (`dir/**` -> `dir`) on `deny_read` and `policy.deny` so
+/// `@anthropic-ai/sandbox-runtime` never traverses symlinks inside denied sibling agent homes
+/// (`TASK-163`). Returns `true` if any `policy.deny` rule was pruned or normalized. Callers must
+/// leave `preset_cfg.policy.deny` untouched so `SessionManager`'s approval bridge
+/// (`decide_escalation_with_roots`) retains 100% coverage of absent/future and glob paths.
 pub(crate) fn prune_nonexistent_bwrap_denies(
     sandbox: &mut SandboxSpec,
     policy: &mut org_agent_runtime::PermissionPolicy,
 ) -> bool {
     sandbox.deny_read.retain(pattern_exists_for_bwrap);
+    for pat in &mut sandbox.deny_read {
+        let (norm, _) = normalize_bwrap_concrete_dir_pattern(pat);
+        *pat = norm;
+    }
     sandbox.deny_write.retain(pattern_exists_for_bwrap);
     let before = policy.deny.len();
     policy.deny.retain(|rule| match &rule.scope {
         org_agent_runtime::RuleScope::Path(pat) => pattern_exists_for_bwrap(pat),
         _ => true,
     });
-    policy.deny.len() < before
+    let mut modified = policy.deny.len() < before;
+    for rule in &mut policy.deny {
+        if let org_agent_runtime::RuleScope::Path(pat) = &mut rule.scope {
+            let (norm, changed) = normalize_bwrap_concrete_dir_pattern(pat);
+            if changed {
+                *pat = norm;
+                modified = true;
+            }
+        }
+    }
+    modified
 }
 
 fn office_env_names() -> Vec<EnvName> {
@@ -4365,16 +4540,26 @@ mod manager_helper_tests {
         let workspace = root.join("workspace");
         let existing_db = root.join("office.db");
         let existing_dir = root.join("objects").join("info");
+        let existing_sibling = root.join("agents").join("sibling-live");
         let absent_journal = root.join("office.db-journal");
         let absent_sibling = root.join("agents").join("sibling-1");
         let absent_hooks = root.join("repo.git").join("hooks");
         std::fs::create_dir_all(&workspace).unwrap();
         std::fs::create_dir_all(&existing_dir).unwrap();
+        std::fs::create_dir_all(existing_sibling.join("home")).unwrap();
         std::fs::write(&existing_db, b"sqlite").unwrap();
+        // Plant a symlink inside an existing sibling agent's home pointing to a shared host path
+        // (`TASK-163`): Linux bwrap denyRead must mask `sibling-live` at its directory boundary
+        // without `/**` traversal so bwrap never follows the symlink onto host `.rustup`/`.cargo`.
+        let fake_host_rustup = root.join("host-rustup");
+        std::fs::create_dir_all(&fake_host_rustup).unwrap();
+        std::os::unix::fs::symlink(&fake_host_rustup, existing_sibling.join("home/.rustup"))
+            .unwrap();
 
         let denied = vec![
             PathPattern::try_from(existing_db.to_str().unwrap()).unwrap(),
             PathPattern::try_from(format!("{}/**", existing_dir.display()).as_str()).unwrap(),
+            PathPattern::try_from(format!("{}/**", existing_sibling.display()).as_str()).unwrap(),
             PathPattern::try_from(absent_journal.to_str().unwrap()).unwrap(),
             PathPattern::try_from(format!("{}/**", absent_sibling.display()).as_str()).unwrap(),
             PathPattern::try_from("/run/user/*/bus").unwrap(),
@@ -4438,7 +4623,12 @@ mod manager_helper_tests {
             .map(PathPattern::as_str)
             .collect();
         assert!(deny_read.contains(&existing_db.to_str().unwrap()));
-        assert!(deny_read.iter().any(|p| p.contains("objects/info/**")));
+        // Concrete existing directory globs normalize to directory paths without trailing `/**`
+        // so Linux `bwrap` masks them atomically without traversing symlinks (`TASK-163`).
+        assert!(deny_read.contains(&existing_dir.to_str().unwrap()));
+        assert!(!deny_read.iter().any(|p| p.ends_with("objects/info/**")));
+        assert!(deny_read.contains(&existing_sibling.to_str().unwrap()));
+        assert!(!deny_read.iter().any(|p| p.ends_with("sibling-live/**")));
         assert!(deny_read.contains(&"/run/user/*/bus"));
         assert!(!deny_read.contains(&absent_journal.to_str().unwrap()));
         assert!(!deny_read.iter().any(|p| p.contains("sibling-1")));
@@ -4559,7 +4749,8 @@ mod manager_helper_tests {
             .any(|(k, v)| k == "CARGO_HOME" && v == home_dir.join(".cargo").as_os_str()));
         assert!(Environment::new(search, &sandboxed).is_ok());
 
-        // Safe cache dirs are symlinked; credentials and config are NEVER linked into agent home.
+        // Safe Cargo cache dirs are symlinked; credentials, config, and redundant `.rustup` are
+        // NEVER linked into agent home (`TASK-159`, `TASK-163`: `RUSTUP_HOME` is preserved in env).
         assert_eq!(
             std::fs::read_link(home_dir.join(".cargo").join("registry")).unwrap(),
             cargo_dir.join("registry")
@@ -4568,13 +4759,25 @@ mod manager_helper_tests {
             std::fs::read_link(home_dir.join(".cargo").join("git")).unwrap(),
             cargo_dir.join("git")
         );
-        assert_eq!(
-            std::fs::read_link(home_dir.join(".rustup")).unwrap(),
-            rustup_dir
-        );
+        assert!(!home_dir.join(".rustup").exists());
+        assert!(sandboxed
+            .iter()
+            .any(|(k, v)| k == "RUSTUP_HOME" && v == rustup_dir.as_os_str()));
         assert!(!home_dir.join(".cargo").join("credentials").exists());
         assert!(!home_dir.join(".cargo").join("credentials.toml").exists());
         assert!(!home_dir.join(".cargo").join("config.toml").exists());
+
+        // Legacy `<agent_home>/.rustup` symlink is automatically cleaned up (`TASK-163`).
+        std::os::unix::fs::symlink(&rustup_dir, home_dir.join(".rustup")).unwrap();
+        assert!(home_dir.join(".rustup").symlink_metadata().is_ok());
+        assert!(link_host_rust_caches(
+            &home_dir,
+            Some(&rustup_dir),
+            Some(&cargo_dir),
+            &[home_dir.clone(), ws_dir.clone()],
+        )
+        .is_some());
+        assert!(home_dir.join(".rustup").symlink_metadata().is_err());
 
         // B1: symlinked `<agent_home>/.cargo` must be refused without planting symlinks outside home
         // or exporting raw host CARGO_HOME.

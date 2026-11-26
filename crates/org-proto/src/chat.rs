@@ -583,8 +583,11 @@ impl Call for MsgAccept {
     type Result = MsgAcceptResult;
 }
 
-/// `chat.events_poll`: poll committed `org.changed` and live header-only messaging,
-/// presence, and inbox-changed hints for the authenticated host channel (`/api/v1/events/stream`).
+/// Maximum server-side wait duration accepted by `chat.events_poll` (`TASK-140`).
+pub const MAX_EVENTS_POLL_WAIT_MS: u64 = 25_000;
+
+/// `chat.events_poll`: poll or event-wait for committed `org.changed` and live header-only
+/// messaging, presence, and inbox-changed hints for the authenticated host channel (`/api/v1/events/stream`).
 pub struct ChatEventsPoll;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -598,6 +601,10 @@ pub struct ChatEventsPollParams {
     /// Last observed presence ring cursor; `None` starts from the current head.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_presence_seq: Option<u64>,
+    /// Optional server-side condvar wait (milliseconds, clamped to [`MAX_EVENTS_POLL_WAIT_MS`])
+    /// when no changes are immediately ready after the supplied cursors (`TASK-140`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

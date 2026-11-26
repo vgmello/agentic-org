@@ -23,6 +23,7 @@ mod directory;
 pub mod fdswap;
 pub mod federation;
 mod federation_calls;
+mod federation_stream;
 mod follow;
 mod git_calls;
 mod grant;
@@ -774,45 +775,9 @@ fn load_or_create_pending_joining_key(
     Ok((request_id, key))
 }
 
-/// Condvar wake signal for the satellite background sync loop so outbound cross-office
-/// messages/answers/withdrawals/accepts flush immediately instead of waiting for the idle poll.
-#[derive(Default)]
-struct SatSyncWake {
-    gen: std::sync::Mutex<u64>,
-    cv: std::sync::Condvar,
-}
+use federation_stream::SatSyncWake;
 
-impl SatSyncWake {
-    fn notify(&self) {
-        let mut g = self.gen.lock().unwrap_or_else(|p| p.into_inner());
-        *g = g.saturating_add(1);
-        self.cv.notify_all();
-    }
-
-    fn generation(&self) -> u64 {
-        *self.gen.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    fn wait_or_stop(&self, seen: u64, timeout: std::time::Duration, stop: &AtomicBool) -> u64 {
-        let deadline = std::time::Instant::now() + timeout;
-        let mut g = self.gen.lock().unwrap_or_else(|p| p.into_inner());
-        while *g == seen && !stop.load(Ordering::SeqCst) {
-            let now = std::time::Instant::now();
-            if now >= deadline {
-                break;
-            }
-            let step = deadline
-                .saturating_duration_since(now)
-                .min(std::time::Duration::from_millis(100));
-            let (next, _) = self
-                .cv
-                .wait_timeout(g, step)
-                .unwrap_or_else(|p| p.into_inner());
-            g = next;
-        }
-        *g
-    }
-}
+type HqFederationSlot = Arc<std::sync::OnceLock<federation::HqFederationHandle>>;
 
 struct FederationRuntime {
     hq: Option<federation::HqFederationServer>,
@@ -828,6 +793,7 @@ impl FederationRuntime {
         chat_svc: &Arc<chat_calls::ChatService>,
         delivery_notifier: federation::InboundDeliveryNotifier,
         sat_wake: Arc<SatSyncWake>,
+        feed_wake: Arc<org_feed::FeedWake>,
         hq_listening: &Arc<AtomicBool>,
     ) -> Result<Self, String> {
         let sat_stop = Arc::new(AtomicBool::new(false));
@@ -836,6 +802,7 @@ impl FederationRuntime {
             office,
             Some(Arc::clone(&wake_handler)),
             Some(Arc::clone(&delivery_notifier)),
+            Some(Arc::clone(&feed_wake)),
         )?;
         hq_listening.store(hq.is_some(), Ordering::SeqCst);
         let sat_thread = start_optional_satellite_sync(
@@ -844,6 +811,7 @@ impl FederationRuntime {
             Arc::clone(&sat_wake),
             wake_handler,
             delivery_notifier,
+            Some(feed_wake),
             Arc::downgrade(session_manager),
         );
         Ok(Self {
@@ -852,6 +820,10 @@ impl FederationRuntime {
             sat_stop,
             sat_wake,
         })
+    }
+
+    fn hq_handle(&self) -> Option<federation::HqFederationHandle> {
+        self.hq.as_ref().map(federation::HqFederationServer::handle)
     }
 
     fn stop(self) {
@@ -988,6 +960,7 @@ fn start_optional_hq_federation(
     office: &Arc<Office>,
     wake_handler: Option<federation::WakeRelayHandler>,
     delivery_notifier: Option<federation::InboundDeliveryNotifier>,
+    feed_wake: Option<Arc<org_feed::FeedWake>>,
 ) -> Result<Option<federation::HqFederationServer>, String> {
     if office.info().role != org_office::OfficeRole::Hq {
         return Ok(None);
@@ -1009,46 +982,15 @@ fn start_optional_hq_federation(
             san_hosts.push(item.to_owned());
         }
     }
-    federation::HqFederationServer::start_with_notifier(
+    federation::HqFederationServer::start_with_hooks(
         Arc::clone(office),
         addr,
         &san_hosts,
         wake_handler,
         delivery_notifier,
+        feed_wake,
     )
     .map(Some)
-}
-
-fn run_satellite_sync_tick(
-    office: &Arc<Office>,
-    stop: &Arc<AtomicBool>,
-    wake_handler: &federation::WakeRelayHandler,
-    delivery_notifier: &federation::InboundDeliveryNotifier,
-    sessions_for_recovery: &std::sync::Weak<org_office_sessions::SessionManager>,
-) {
-    let Ok(mut session) =
-        federation::SatelliteSyncSession::connect_cancellable(Arc::clone(office), Some(stop))
-    else {
-        return;
-    };
-    if office
-        .sync_status()
-        .is_ok_and(|s| s.initial_snapshot_required)
-    {
-        let op_id = office.next_uuid_v7();
-        if session.sync_initial_snapshot(&op_id).is_err() {
-            return;
-        }
-        // Run deferred session recovery once the full snapshot generation is durably installed (`TASK-52` P8-#4).
-        if let Some(sm) = sessions_for_recovery.upgrade() {
-            let _ = sm.recover_on_startup();
-        }
-    }
-    let _ = session.pull_org_events();
-    let _ = session.flush_work_outbox();
-    let _ = session.flush_message_outbox();
-    let _ =
-        session.receive_inbound_relays_with_notifier(Some(wake_handler), Some(delivery_notifier));
 }
 
 fn start_optional_satellite_sync(
@@ -1057,6 +999,7 @@ fn start_optional_satellite_sync(
     sat_wake: Arc<SatSyncWake>,
     wake_handler: federation::WakeRelayHandler,
     delivery_notifier: federation::InboundDeliveryNotifier,
+    feed_wake: Option<Arc<org_feed::FeedWake>>,
     sessions_for_recovery: std::sync::Weak<org_office_sessions::SessionManager>,
 ) -> Option<std::thread::JoinHandle<()>> {
     if office.info().role != org_office::OfficeRole::Satellite {
@@ -1064,20 +1007,16 @@ fn start_optional_satellite_sync(
     }
     let office = Arc::clone(office);
     let stop = Arc::clone(stop);
+    let hooks = federation_stream::PersistentSyncHooks {
+        wake_handler,
+        delivery_notifier,
+        feed_wake,
+        sessions: sessions_for_recovery,
+    };
     std::thread::Builder::new()
         .name("sat-federation-sync".into())
         .spawn(move || {
-            let mut seen = sat_wake.generation();
-            while !stop.load(Ordering::SeqCst) {
-                run_satellite_sync_tick(
-                    &office,
-                    &stop,
-                    &wake_handler,
-                    &delivery_notifier,
-                    &sessions_for_recovery,
-                );
-                seen = sat_wake.wait_or_stop(seen, std::time::Duration::from_millis(500), &stop);
-            }
+            federation_stream::run_persistent_satellite_sync(&office, &stop, &sat_wake, &hooks);
         })
         .ok()
 }
@@ -1185,13 +1124,15 @@ fn prepare_office_runtime(
     let session_manager = start_session_manager(Arc::clone(office), socket);
     let channel_watcher = start_channel_watcher(Arc::clone(office), &session_manager);
     let sat_sync_wake = Arc::new(SatSyncWake::default());
+    let hq_fed_slot: HqFederationSlot = Arc::default();
+    let sync_wake_fn = build_sync_wake_fn(Arc::clone(&sat_sync_wake), Arc::clone(&hq_fed_slot));
     let messaging = build_messaging_ports(
         office,
         &live,
         &wake,
         &session_manager,
         &channel_watcher,
-        Arc::clone(&sat_sync_wake),
+        Arc::clone(&sync_wake_fn),
     );
     let delivery_notifier = build_federation_delivery_notifier(
         office.owner_member_id().to_owned(),
@@ -1207,6 +1148,7 @@ fn prepare_office_runtime(
         &messaging.chat_svc,
         delivery_notifier,
         sat_sync_wake,
+        Arc::clone(&wake),
         &hq_federation_listening,
     ) {
         Ok(rt) => rt,
@@ -1221,6 +1163,9 @@ fn prepare_office_runtime(
             return None;
         }
     };
+    if let Some(handle) = federation_rt.hq_handle() {
+        let _ = hq_fed_slot.set(handle);
+    }
     let ports = build_office_ports(
         Arc::clone(office),
         Arc::clone(&session_manager),
@@ -1229,6 +1174,8 @@ fn prepare_office_runtime(
         &wake,
         messaging,
         Arc::clone(&hq_federation_listening),
+        hq_fed_slot,
+        sync_wake_fn,
     );
     let mut shared = serve::Shared::new(info, socket, ports, auth);
     let directory_office = Arc::clone(office);
@@ -1577,13 +1524,25 @@ struct MessagingPorts {
     feed: Box<dyn follow::OrgFeed>,
 }
 
+fn build_sync_wake_fn(
+    sat_sync_wake: Arc<SatSyncWake>,
+    hq_fed_slot: HqFederationSlot,
+) -> Arc<dyn Fn() + Send + Sync> {
+    Arc::new(move || {
+        sat_sync_wake.notify();
+        if let Some(hq) = hq_fed_slot.get() {
+            hq.notify_all_peers();
+        }
+    })
+}
+
 fn build_messaging_ports(
     office: &Arc<Office>,
     live: &Arc<live::LiveEvents>,
     wake: &Arc<org_feed::FeedWake>,
     session_manager: &Arc<org_office_sessions::SessionManager>,
     channel_watcher: &Arc<watcher::ChannelWatcher>,
-    sat_sync_wake: Arc<SatSyncWake>,
+    sync_wake: Arc<dyn Fn() + Send + Sync>,
 ) -> MessagingPorts {
     let directory: Arc<dyn org_mailbox::MemberDirectory + Send + Sync> =
         Arc::new(directory::OfficeDirectory::of(Arc::clone(office)));
@@ -1621,7 +1580,8 @@ fn build_messaging_ports(
             Some(Arc::clone(session_manager)),
             Arc::clone(channel_watcher),
         )
-        .with_sat_sync_wake(Arc::new(move || sat_sync_wake.notify())),
+        .with_sat_sync_wake(sync_wake)
+        .with_feed_wake(Arc::clone(wake)),
     );
     let chat_for_dispatch = Arc::clone(&chat_svc);
     let chat: serve::ChatFn = Box::new(move |member, via_grant, stopping, request| {
@@ -1648,11 +1608,189 @@ struct SessionHooks {
     on_agent_stop: serve::AgentLifecycleHookFn,
 }
 
-fn build_session_hooks(session_manager: &Arc<org_office_sessions::SessionManager>) -> SessionHooks {
+fn proxied_session_target_employee(request: &org_proto::Request) -> Option<String> {
+    use org_proto::sessions::{
+        MemberSessionApprovalDecide, MemberSessionClearStall, MemberSessionGrants,
+        MemberSessionInspect, MemberSessionList, MemberSessionStart, MemberSessionStop,
+        MemberSessionTranscript,
+    };
+    if request.is::<MemberSessionStart>() {
+        request
+            .params::<MemberSessionStart>()
+            .ok()
+            .map(|p| p.employee_id)
+    } else if request.is::<MemberSessionStop>() {
+        request
+            .params::<MemberSessionStop>()
+            .ok()
+            .map(|p| p.employee_id)
+    } else if request.is::<MemberSessionApprovalDecide>() {
+        request
+            .params::<MemberSessionApprovalDecide>()
+            .ok()
+            .map(|p| p.employee_id)
+    } else if request.is::<MemberSessionClearStall>() {
+        request
+            .params::<MemberSessionClearStall>()
+            .ok()
+            .map(|p| p.employee_id)
+    } else if request.is::<MemberSessionInspect>() {
+        request
+            .params::<MemberSessionInspect>()
+            .ok()
+            .and_then(|p| p.employee_id)
+    } else if request.is::<MemberSessionGrants>() {
+        request
+            .params::<MemberSessionGrants>()
+            .ok()
+            .and_then(|p| p.employee_id)
+    } else if request.is::<MemberSessionList>() {
+        request
+            .params::<MemberSessionList>()
+            .ok()
+            .and_then(|p| p.employee_id)
+    } else if request.is::<MemberSessionTranscript>() {
+        request
+            .params::<MemberSessionTranscript>()
+            .ok()
+            .and_then(|p| p.employee_id)
+    } else {
+        None
+    }
+}
+
+fn authorize_hq_proxied_session_caller(
+    office: &Office,
+    caller_id: &str,
+    method: &str,
+) -> Result<bool, org_proto::ApiError> {
+    let is_owner = caller_id == office.owner_member_id();
+    let is_active_person = is_owner
+        || office
+            .load_employee(caller_id)
+            .ok()
+            .flatten()
+            .is_some_and(|e| {
+                e.kind == org_office::organization_family::records::EmployeeKind::Person
+                    && e.status == org_office::organization_family::records::EmployeeStatus::Active
+            });
+    match method {
+        "member.session_approval" | "member.session_clear_stall" => {
+            if is_owner {
+                Ok(true)
+            } else {
+                Err(org_proto::ApiError::new(
+                    org_proto::ErrorCode::NotAuthorized,
+                    "only the organization owner may approve or clear agent sessions",
+                ))
+            }
+        }
+        _ => {
+            if is_active_person {
+                Ok(is_owner)
+            } else {
+                Err(org_proto::ApiError::new(
+                    org_proto::ErrorCode::NotAuthorized,
+                    "only an active person or the owner may inspect or manage remote agent sessions",
+                ))
+            }
+        }
+    }
+}
+
+fn rewrite_proxied_employee_id(
+    request: &org_proto::Request,
+    resolved_target_id: &str,
+) -> org_proto::Request {
+    let mut forwarded = request.clone();
+    if let Some(obj) = forwarded.params.as_object_mut() {
+        obj.insert(
+            "employee_id".to_owned(),
+            serde_json::Value::String(resolved_target_id.to_owned()),
+        );
+    }
+    forwarded
+}
+
+fn try_proxy_remote_session_rpc(
+    office: &Office,
+    hq_fed_slot: &HqFederationSlot,
+    member: Option<&str>,
+    request: &org_proto::Request,
+) -> Option<org_proto::Response> {
+    if !matches!(office.is_hq(), Ok(true))
+        || !federation_stream::is_proxied_session_method(&request.method)
+    {
+        return None;
+    }
+    let target_raw = proxied_session_target_employee(request)?;
+    let target_id = office
+        .org_snapshot()
+        .ok()
+        .and_then(|snap| {
+            snap.members
+                .into_iter()
+                .find(|m| m.id == target_raw || m.handle.as_deref() == Some(target_raw.as_str()))
+                .map(|m| m.id)
+        })
+        .unwrap_or(target_raw);
+    let target_office = org_office::resolve_employee_office(office, &target_id).ok()?;
+    if target_office == office.info().office_id {
+        return None;
+    }
+    let Some(caller_id) = member else {
+        return Some(org_proto::Response::error(
+            request.id,
+            org_proto::ApiError::new(org_proto::ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    let caller_is_owner =
+        match authorize_hq_proxied_session_caller(office, caller_id, &request.method) {
+            Ok(is_owner) => is_owner,
+            Err(err) => return Some(org_proto::Response::error(request.id, err)),
+        };
+    let Some(hq_fed) = hq_fed_slot.get() else {
+        return Some(org_proto::Response::error(
+            request.id,
+            org_proto::ApiError::new(
+                org_proto::ErrorCode::Unavailable,
+                format!("satellite office `{target_office}` is not reachable (HQ federation listener disabled)"),
+            ),
+        ));
+    };
+    let forwarded = rewrite_proxied_employee_id(request, &target_id);
+    // Keep the proxy deadline strictly below `agentic-org-web`'s 5 s `OFFICE_DEADLINE` so a
+    // stalled satellite never times out and evicts the Web BFF's shared multiplexed channel.
+    match hq_fed.proxy_session_rpc(
+        &target_office,
+        caller_id,
+        caller_is_owner,
+        &forwarded,
+        std::time::Duration::from_secs(4),
+    ) {
+        Ok(resp) => Some(resp),
+        Err(err) => Some(org_proto::Response::error(request.id, err)),
+    }
+}
+
+fn build_session_hooks(
+    office: &Arc<Office>,
+    session_manager: &Arc<org_office_sessions::SessionManager>,
+    hq_fed_slot: &HqFederationSlot,
+) -> SessionHooks {
     SessionHooks {
         sessions: {
+            let office = Arc::clone(office);
             let sessions = Arc::clone(session_manager);
-            Box::new(move |member, request| sessions.dispatch_rpc(member, request))
+            let hq_fed = Arc::clone(hq_fed_slot);
+            Box::new(move |member, request| {
+                if let Some(proxied) =
+                    try_proxy_remote_session_rpc(&office, &hq_fed, member, request)
+                {
+                    return Some(proxied);
+                }
+                sessions.dispatch_rpc(member, request)
+            })
         },
         run_binding_verify: {
             let sessions = Arc::clone(session_manager);
@@ -1714,6 +1852,7 @@ fn build_hiring_port(
     wake: &Arc<org_feed::FeedWake>,
     session_manager: &Arc<org_office_sessions::SessionManager>,
     channel_watcher: &Arc<watcher::ChannelWatcher>,
+    sync_wake: Arc<dyn Fn() + Send + Sync>,
 ) -> serve::HiringFn {
     let office = Arc::clone(office);
     let wake = Arc::clone(wake);
@@ -1732,6 +1871,7 @@ fn build_hiring_port(
             Some(org_proto::Outcome::Result(_))
         ) {
             wake.notify();
+            sync_wake();
             notify_agent_lifecycle(&sessions, &watcher, request);
         }
         response
@@ -1785,6 +1925,7 @@ fn build_submit_port(
     wake: &Arc<org_feed::FeedWake>,
     session_manager: &Arc<org_office_sessions::SessionManager>,
     channel_watcher: &Arc<watcher::ChannelWatcher>,
+    sync_wake: Arc<dyn Fn() + Send + Sync>,
 ) -> serve::SubmitFn {
     let office = Arc::clone(office);
     let wake = Arc::clone(wake);
@@ -1806,6 +1947,7 @@ fn build_submit_port(
             let res = office.submit_org(member, command);
             if matches!(res, Ok(Ok(_))) {
                 wake.notify();
+                sync_wake();
                 if let Some(cmd) = lifecycle_cmd.as_ref() {
                     notify_org_command_lifecycle(&sessions, &watcher, cmd);
                 }
@@ -1882,6 +2024,10 @@ fn build_read_ports(
 }
 
 /// Composes the office RPC ports passed to `serve::Shared`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "composes the office's domain ports, federation handle, and sync wakeups"
+)]
 fn build_office_ports(
     office: Arc<Office>,
     session_manager: Arc<org_office_sessions::SessionManager>,
@@ -1890,16 +2036,33 @@ fn build_office_ports(
     wake: &Arc<org_feed::FeedWake>,
     messaging: MessagingPorts,
     hq_federation_listening: Arc<AtomicBool>,
+    hq_fed_slot: HqFederationSlot,
+    sync_wake: Arc<dyn Fn() + Send + Sync>,
 ) -> serve::OfficePorts {
-    let session_hooks = build_session_hooks(&session_manager);
-    let hiring = build_hiring_port(&office, wake, &session_manager, &channel_watcher);
-    let submit = build_submit_port(&office, wake, &session_manager, &channel_watcher);
+    let session_hooks = build_session_hooks(&office, &session_manager, &hq_fed_slot);
+    let hiring = build_hiring_port(
+        &office,
+        wake,
+        &session_manager,
+        &channel_watcher,
+        Arc::clone(&sync_wake),
+    );
+    let submit = build_submit_port(
+        &office,
+        wake,
+        &session_manager,
+        &channel_watcher,
+        Arc::clone(&sync_wake),
+    );
     let reads = build_read_ports(&office, &session_manager, &live);
-    let task_svc = Arc::new(task_calls::TaskService::new(
-        Arc::clone(&office),
-        Arc::clone(&live),
-        Some(Arc::clone(&session_manager)),
-    ));
+    let task_svc = Arc::new(
+        task_calls::TaskService::new(
+            Arc::clone(&office),
+            Arc::clone(&live),
+            Some(Arc::clone(&session_manager)),
+        )
+        .with_sync_wake(sync_wake),
+    );
     let git_svc = Arc::new(git_calls::GitService::new(
         Arc::clone(&office),
         Arc::clone(&live),

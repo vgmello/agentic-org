@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -297,6 +297,7 @@ pub(super) struct LiveOfficeNode {
     pub(super) socket: PathBuf,
     pub(super) office: Arc<Office>,
     pub(super) sessions: Arc<SessionManager>,
+    pub(super) shared: Arc<serve::Shared>,
     pub(super) recorded: Arc<RecordedTurns>,
     sat_wake: Arc<SatSyncWake>,
     stop: Arc<AtomicBool>,
@@ -306,28 +307,35 @@ pub(super) struct LiveOfficeNode {
     serve_thread: Option<thread::JoinHandle<()>>,
 }
 
+fn build_test_session_manager(
+    office: &Arc<Office>,
+    socket: &Path,
+) -> (tempfile::TempDir, Arc<RecordedTurns>, Arc<SessionManager>) {
+    let bin_dir = tempfile::Builder::new().prefix("a2ab").tempdir().unwrap();
+    let script_path = bin_dir.path().join("fake-claude");
+    fs::write(&script_path, ECHO_RUNTIME_SCRIPT).unwrap();
+    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+    let recorded = Arc::new(RecordedTurns::default());
+    let mut reg = RuntimeRegistry::production();
+    reg.register(
+        Arc::new(RecordingRuntime {
+            recorded: Arc::clone(&recorded),
+        }),
+        Some(script_path),
+    );
+    let mut cfg = SessionManagerConfig::production(socket.to_path_buf());
+    cfg.runtimes = reg;
+    let sessions = Arc::new(SessionManager::new(Arc::clone(office), cfg));
+    SessionManager::attach_self(&sessions);
+    (bin_dir, recorded, sessions)
+}
+
 impl LiveOfficeNode {
     pub(super) fn start(office: Arc<Office>, start_hq_fed: bool, start_sat_sync: bool) -> Self {
         let _ = org_platform::process::harden_self();
         let sock_dir = tempfile::Builder::new().prefix("a2a").tempdir().unwrap();
-        let bin_dir = tempfile::Builder::new().prefix("a2ab").tempdir().unwrap();
-        let script_path = bin_dir.path().join("fake-claude");
-        fs::write(&script_path, ECHO_RUNTIME_SCRIPT).unwrap();
-        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
-
         let socket = sock_dir.path().join("office.sock");
-        let recorded = Arc::new(RecordedTurns::default());
-        let mut reg = RuntimeRegistry::production();
-        reg.register(
-            Arc::new(RecordingRuntime {
-                recorded: Arc::clone(&recorded),
-            }),
-            Some(script_path),
-        );
-        let mut cfg = SessionManagerConfig::production(socket.clone());
-        cfg.runtimes = reg;
-        let sessions = Arc::new(SessionManager::new(Arc::clone(&office), cfg));
-        SessionManager::attach_self(&sessions);
+        let (bin_dir, recorded, sessions) = build_test_session_manager(&office, &socket);
 
         let wake = Arc::new(org_feed::FeedWake::new());
         let live_wake = Arc::clone(&wake);
@@ -340,13 +348,15 @@ impl LiveOfficeNode {
             Some(Arc::clone(&sessions)),
         ));
         let sat_wake = Arc::new(SatSyncWake::default());
+        let hq_fed_slot: crate::HqFederationSlot = Arc::default();
+        let sync_wake = crate::build_sync_wake_fn(Arc::clone(&sat_wake), Arc::clone(&hq_fed_slot));
         let messaging = build_messaging_ports(
             &office,
             &live,
             &wake,
             &sessions,
             &channel_watcher,
-            Arc::clone(&sat_wake),
+            Arc::clone(&sync_wake),
         );
         let wake_handler = build_federation_wake_handler(&sessions, &messaging.chat_svc);
         let delivery_notifier = build_federation_delivery_notifier(
@@ -357,16 +367,16 @@ impl LiveOfficeNode {
             &channel_watcher,
         );
         let hq_fed = if start_hq_fed {
-            Some(
-                HqFederationServer::start_with_notifier(
-                    Arc::clone(&office),
-                    "127.0.0.1:0".parse().unwrap(),
-                    &["127.0.0.1".into()],
-                    Some(Arc::clone(&wake_handler)),
-                    Some(Arc::clone(&delivery_notifier)),
-                )
-                .unwrap(),
+            let srv = HqFederationServer::start_with_notifier(
+                Arc::clone(&office),
+                "127.0.0.1:0".parse().unwrap(),
+                &["127.0.0.1".into()],
+                Some(Arc::clone(&wake_handler)),
+                Some(Arc::clone(&delivery_notifier)),
             )
+            .unwrap();
+            let _ = hq_fed_slot.set(srv.handle());
+            Some(srv)
         } else {
             None
         };
@@ -378,6 +388,7 @@ impl LiveOfficeNode {
                 Arc::clone(&sat_wake),
                 wake_handler,
                 delivery_notifier,
+                Some(Arc::clone(&wake)),
                 Arc::downgrade(&sessions),
             )
         } else {
@@ -393,6 +404,8 @@ impl LiveOfficeNode {
             &wake,
             messaging,
             Arc::new(AtomicBool::new(hq_fed.is_some())),
+            hq_fed_slot,
+            sync_wake,
         );
         let mut shared = serve::Shared::new(
             office.info(),
@@ -423,6 +436,7 @@ impl LiveOfficeNode {
             socket,
             office,
             sessions,
+            shared,
             recorded,
             sat_wake,
             stop,
@@ -1838,4 +1852,210 @@ fn chat_reply_enforces_oversize_snooze_clear_offboarded_dm_and_thread_mention_wa
         .unwrap()
         .unwrap_err();
     assert_eq!(err_off.code, org_proto::ErrorCode::UnknownRecipient);
+}
+
+fn assert_proxied_session_ops_succeed(
+    hq_node: &LiveOfficeNode,
+    hq: &Office,
+    owner: &str,
+    ben: &str,
+    sat1_id: &str,
+) {
+    for target in [ben, "ben"] {
+        let inspect_req = Request::new::<org_proto::sessions::MemberSessionInspect>(
+            502,
+            &org_proto::sessions::MemberSessionInspectParams {
+                employee_id: Some(target.to_owned()),
+            },
+        )
+        .unwrap();
+        let Outcome::Result(val) = hq_node
+            .shared
+            .answer_for_test(&inspect_req, owner, true)
+            .outcome
+        else {
+            panic!("proxied session_inspect({target}) failed");
+        };
+        let inspected: org_proto::sessions::SessionInspectResult =
+            serde_json::from_value(val).unwrap();
+        assert_eq!(inspected.session.employee_id, ben);
+        assert_eq!(inspected.session.office_id, sat1_id);
+    }
+
+    let grants_req = Request::new::<org_proto::sessions::MemberSessionGrants>(
+        503,
+        &org_proto::sessions::MemberSessionGrantsParams {
+            employee_id: Some(ben.to_owned()),
+        },
+    )
+    .unwrap();
+    let Outcome::Result(grants_val) = hq_node
+        .shared
+        .answer_for_test(&grants_req, owner, true)
+        .outcome
+    else {
+        panic!("proxied session_grants failed");
+    };
+    let grants: org_proto::sessions::SessionGrantsResult =
+        serde_json::from_value(grants_val).unwrap();
+    assert_eq!(grants.employee_id, ben);
+
+    let list_req = Request::new::<org_proto::sessions::MemberSessionList>(
+        504,
+        &org_proto::sessions::MemberSessionListParams {
+            employee_id: Some(ben.to_owned()),
+            limit: Some(10),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        hq_node
+            .shared
+            .answer_for_test(&list_req, owner, true)
+            .outcome,
+        Outcome::Result(_)
+    ));
+
+    let clear_req = Request::new::<org_proto::sessions::MemberSessionClearStall>(
+        505,
+        &org_proto::sessions::MemberSessionClearStallParams {
+            command_id: hq.next_uuid_v7(),
+            employee_id: ben.to_owned(),
+        },
+    )
+    .unwrap();
+    let clear_resp = hq_node.shared.answer_for_test(&clear_req, owner, true);
+    let Outcome::Result(clear_val) = clear_resp.outcome else {
+        panic!("proxied session_clear_stall failed: {clear_resp:?}");
+    };
+    let cleared: org_proto::sessions::SessionView = serde_json::from_value(clear_val).unwrap();
+    assert_eq!(cleared.employee_id, ben);
+    assert!(!cleared.recovery_required);
+    assert!(!cleared.stall_locked);
+}
+
+fn assert_proxied_session_auth_and_disconnect(
+    hq_node: &LiveOfficeNode,
+    sat1_node: &mut LiveOfficeNode,
+    hq: &Office,
+    owner: &str,
+    ada: &str,
+    ben: &str,
+) {
+    let agent_inspect = Request::new::<org_proto::sessions::MemberSessionInspect>(
+        506,
+        &org_proto::sessions::MemberSessionInspectParams {
+            employee_id: Some(ben.to_owned()),
+        },
+    )
+    .unwrap();
+    match hq_node
+        .shared
+        .answer_for_test(&agent_inspect, ada, false)
+        .outcome
+    {
+        Outcome::Error(err) => assert_eq!(err.code, org_proto::ErrorCode::NotAuthorized),
+        other => panic!("expected NotAuthorized for agent proxy inspect, got {other:?}"),
+    }
+    let agent_clear = Request::new::<org_proto::sessions::MemberSessionClearStall>(
+        507,
+        &org_proto::sessions::MemberSessionClearStallParams {
+            command_id: hq.next_uuid_v7(),
+            employee_id: ben.to_owned(),
+        },
+    )
+    .unwrap();
+    match hq_node
+        .shared
+        .answer_for_test(&agent_clear, ada, false)
+        .outcome
+    {
+        Outcome::Error(err) => assert_eq!(err.code, org_proto::ErrorCode::NotAuthorized),
+        other => panic!("expected NotAuthorized for agent proxy clear_stall, got {other:?}"),
+    }
+
+    sat1_node.stop.store(true, Ordering::SeqCst);
+    sat1_node.sat_wake.notify();
+    if let Some(h) = sat1_node.sat_thread.take() {
+        let _ = h.join();
+    }
+    wait_until(
+        Duration::from_secs(3),
+        "hq drops disconnected sat1 peer",
+        || {
+            let probe = Request::new::<org_proto::sessions::MemberSessionInspect>(
+                508,
+                &org_proto::sessions::MemberSessionInspectParams {
+                    employee_id: Some(ben.to_owned()),
+                },
+            )
+            .unwrap();
+            matches!(
+                hq_node.shared.answer_for_test(&probe, owner, true).outcome,
+                Outcome::Error(err) if err.code == org_proto::ErrorCode::Unavailable
+            )
+        },
+    );
+}
+
+#[test]
+fn task140_persistent_mtls_low_latency_and_task143_hq_session_proxy_end_to_end() {
+    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
+        engine: EngineChoice::Sqlite,
+    }));
+    let owner = hq.owner_member_id().to_owned();
+    let team_id = hq.org_snapshot().unwrap().teams[0].id.clone();
+    let hq_id = hq.info().office_id.clone();
+    let (conn_id, profile_id) = setup_provider_on_hq(&hq, &owner);
+    let hq_node = LiveOfficeNode::start(Arc::clone(&hq), true, false);
+    let hq_addr = hq_node.hq_fed_addr();
+
+    let (_sat_dir, sat1) = enroll_satellite(&hq, &owner, &hq_addr, "SatProxy", 11);
+    let sat1_id = sat1.info().office_id.clone();
+    let ada = hire_agent_at(&hq, &owner, &team_id, &hq_id, &profile_id, "Ada", "ada");
+    let ben = hire_agent_at(&hq, &owner, &team_id, &sat1_id, &profile_id, "Ben", "ben");
+    bind_provider_on_office(&sat1, sat1.owner_member_id(), &conn_id);
+    let mut sat1_node = LiveOfficeNode::start(Arc::clone(&sat1), false, true);
+
+    wait_until(Duration::from_secs(10), "sat1 syncs Ben hire", || {
+        sat1.org_snapshot()
+            .is_ok_and(|s| s.members.iter().any(|m| m.id == ben))
+    });
+
+    // TASK-140 AC #1: proactive OrgEvent push on persistent mTLS delivers HQ team.create promptly.
+    let team_req = Request::new::<org_proto::org::TeamCreate>(
+        501,
+        &org_proto::org::TeamCreateParams {
+            command_id: hq.next_uuid_v7(),
+            team_id: hq.next_uuid_v7(),
+            name: "InstantPush".into(),
+            owner_team_id: Some(team_id.clone()),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        hq_node
+            .shared
+            .answer_for_test(&team_req, &owner, true)
+            .outcome,
+        Outcome::Result(_)
+    ));
+    let push_started = Instant::now();
+    wait_until(
+        Duration::from_secs(2),
+        "sat1 receives pushed OrgEvent",
+        || {
+            sat1.org_snapshot()
+                .is_ok_and(|s| s.teams.iter().any(|t| t.name == "InstantPush"))
+        },
+    );
+    assert!(
+        push_started.elapsed() < Duration::from_millis(1500),
+        "persistent mTLS OrgEvent push took {:?}",
+        push_started.elapsed()
+    );
+
+    // TASK-143 AC #3: HQ owner proxies session RPCs over mTLS, rejects agents, and fails closed.
+    assert_proxied_session_ops_succeed(&hq_node, &hq, &owner, &ben, &sat1_id);
+    assert_proxied_session_auth_and_disconnect(&hq_node, &mut sat1_node, &hq, &owner, &ada, &ben);
 }

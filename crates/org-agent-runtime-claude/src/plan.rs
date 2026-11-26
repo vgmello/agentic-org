@@ -463,10 +463,19 @@ fn build_settings_json(
             format_rule(rule, RuleKind::Deny).ok_or(PlanError::Unsupported("deny rule scope"))?;
         deny_rules.extend(formatted.into_iter().map(Value::String));
     }
+    let is_linux_bwrap = !org_platform::confinement::unix_socket_path_filter_supported();
     // Mirror sandbox read/write denies onto Claude's file tools using `//` absolute path
     // grammar so Read/Edit/Write/MultiEdit/NotebookEdit cannot bypass the Bash sandbox (B2).
+    // On Linux `bwrap`, omit trailing `/**` on concrete read-deny directories (`TASK-163`) so
+    // `@anthropic-ai/sandbox-runtime` (which merges `permissions.deny` into `bwrap` mounts)
+    // mounts `--tmpfs <dir>` atomically without traversing symlinks inside sibling homes.
     for path in &spec.sandbox.deny_read {
-        push_file_read_denies(&mut deny_rules, path.as_str(), true);
+        let effective = if is_linux_bwrap {
+            strip_concrete_dir_glob(path.as_str())
+        } else {
+            path.as_str()
+        };
+        push_file_read_denies(&mut deny_rules, effective, !is_linux_bwrap);
     }
     for path in &spec.sandbox.deny_write {
         push_file_write_denies(&mut deny_rules, path.as_str(), true);
@@ -585,6 +594,12 @@ fn apply_linux_bwrap_sandbox_rules(
         append_linux_privileged_socket_denies(deny_read);
     }
     if is_linux_bwrap {
+        // Linux `bwrap` mounts `--tmpfs <dir>` cleanly on concrete directory paths, whereas
+        // `dir/**` causes `@anthropic-ai/sandbox-runtime` to walk inside denied directories and
+        // follow symlinks (e.g. a sibling agent's `.cargo/registry`, `TASK-163`). Strip trailing
+        // `/**`/`/*` on concrete non-wildcard prefixes in `denyRead` so bwrap masks the directory
+        // atomically at its boundary.
+        *deny_read = normalize_linux_bwrap_deny_read(std::mem::take(deny_read));
         // Linux `bwrap` mounts `/` read-only (`--ro-bind / /`) and only `allowWrite` roots are
         // writable. Omitting `denyWrite` entries outside `allowWrite` keeps write protection
         // intact while preventing `@anthropic-ai/sandbox-runtime` from creating 0-byte `0444`
@@ -592,6 +607,34 @@ fn apply_linux_bwrap_sandbox_rules(
         // enforced in `permissions.deny` and the office approval bridge.
         *deny_write = filter_linux_bwrap_deny_write(std::mem::take(deny_write), writable);
     }
+}
+
+fn strip_concrete_dir_glob(raw: &str) -> &str {
+    raw.strip_suffix("/**")
+        .or_else(|| raw.strip_suffix("/*"))
+        .filter(|prefix| {
+            !prefix.is_empty()
+                && !prefix.contains('*')
+                && !prefix.contains('?')
+                && !prefix.contains('[')
+        })
+        .unwrap_or(raw)
+}
+
+pub(crate) fn normalize_linux_bwrap_deny_read(deny_read: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(deny_read.len());
+    for entry in deny_read {
+        let stripped = strip_concrete_dir_glob(&entry);
+        let candidate = if stripped.len() == entry.len() {
+            entry
+        } else {
+            stripped.to_owned()
+        };
+        if !out.iter().any(|existing| existing == &candidate) {
+            out.push(candidate);
+        }
+    }
+    out
 }
 
 fn split_path_segments(raw: &str) -> Vec<&str> {
@@ -924,6 +967,25 @@ mod sandbox_network_tests {
                 .filter(|p| *p == "/run/docker.sock")
                 .count(),
             1
+        );
+
+        // `TASK-163`: concrete `dir/**` entries normalize to `dir` (deduplicated) while wildcard
+        // patterns like `/run/user/*/systemd/**` stay intact.
+        let normalized = normalize_linux_bwrap_deny_read(vec![
+            "/office/agents/sibling-1/**".into(),
+            "/office/agents/sibling-1".into(),
+            "/office/durable/state/**".into(),
+            "/run/user/*/systemd/**".into(),
+            "/home/agents/.cargo/credentials.toml".into(),
+        ]);
+        assert_eq!(
+            normalized,
+            vec![
+                "/office/agents/sibling-1",
+                "/office/durable/state",
+                "/run/user/*/systemd/**",
+                "/home/agents/.cargo/credentials.toml",
+            ]
         );
     }
 

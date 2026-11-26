@@ -144,6 +144,49 @@ pub fn poll_readable(fd: RawFd, tick: Duration) -> io::Result<bool> {
     Ok(slot.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0)
 }
 
+/// Wait for bytes, EOF, or error on either of two descriptors owned by the caller (e.g. a
+/// persistent mTLS socket and a local self-pipe wake descriptor). Returns `(a_ready, b_ready)`.
+/// Zero timeout performs a non-blocking readiness check.
+pub fn poll_readable_either(
+    fd_a: RawFd,
+    fd_b: RawFd,
+    timeout: Duration,
+) -> io::Result<(bool, bool)> {
+    if fd_a < 0 || fd_b < 0 {
+        return Err(io::Error::from_raw_os_error(libc::EBADF));
+    }
+    let mut slots = [
+        libc::pollfd {
+            fd: fd_a,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: fd_b,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+    let millis = if timeout.is_zero() {
+        0
+    } else {
+        timeout.as_millis().clamp(1, libc::c_int::MAX as u128) as libc::c_int
+    };
+    // SAFETY: `slots` is a valid 2-element initialized `pollfd` array for the duration of this call.
+    let result = unsafe { libc::poll(slots.as_mut_ptr(), 2, millis) };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if (slots[0].revents | slots[1].revents) & libc::POLLNVAL != 0 {
+        return Err(io::Error::from_raw_os_error(libc::EBADF));
+    }
+    let ready_mask = libc::POLLIN | libc::POLLHUP | libc::POLLERR;
+    Ok((
+        slots[0].revents & ready_mask != 0,
+        slots[1].revents & ready_mask != 0,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +337,47 @@ mod tests {
                 .unwrap_err()
                 .raw_os_error(),
             Some(libc::EBADF)
+        );
+        assert_eq!(
+            poll_readable_either(-1, 0, Duration::from_millis(1))
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EBADF)
+        );
+    }
+
+    #[test]
+    fn poll_readable_either_wakes_immediately_on_either_fd_and_times_out_cleanly() {
+        let (a_read, mut a_write) = UnixStream::pair().unwrap();
+        let (b_read, mut b_write) = UnixStream::pair().unwrap();
+        assert_eq!(
+            poll_readable_either(
+                a_read.as_raw_fd(),
+                b_read.as_raw_fd(),
+                Duration::from_millis(5)
+            )
+            .unwrap(),
+            (false, false)
+        );
+        b_write.write_all(b"w").unwrap();
+        assert_eq!(
+            poll_readable_either(
+                a_read.as_raw_fd(),
+                b_read.as_raw_fd(),
+                Duration::from_secs(1)
+            )
+            .unwrap(),
+            (false, true)
+        );
+        a_write.write_all(b"x").unwrap();
+        assert_eq!(
+            poll_readable_either(
+                a_read.as_raw_fd(),
+                b_read.as_raw_fd(),
+                Duration::from_secs(1)
+            )
+            .unwrap(),
+            (true, true)
         );
     }
 }
